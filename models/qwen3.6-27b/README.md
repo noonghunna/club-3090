@@ -111,6 +111,7 @@ This is also why TP=2 unlocks 262K context with vision and 4 concurrent streams 
 - [INTERNALS.md](INTERNALS.md) — engineering deep dive (Genesis patches, forensics, Marlin pad, DFlash, upstream tracker)
 - [USE_CASES.md](USE_CASES.md) — per-workload guide with gotchas and tuning levers
 - [CHANGELOG.md](CHANGELOG.md) — dated history (combines single + dual timelines)
+- [/docs/EXAMPLES.md](../../docs/EXAMPLES.md) — Python / TS / curl client snippets + Open WebUI / Cline / Cursor connection settings
 - [vllm/](vllm/) — vLLM-specific recipes for this model
 - [llama-cpp/](llama-cpp/) — llama.cpp recipes (max context on single card)
 - [sglang/](sglang/) — SGLang status (currently blocked)
