@@ -1,0 +1,75 @@
+# Qwen3.6-27B on llama.cpp — single 3090, full 262K context, vision on.
+#
+# The "easy mode" path. No Genesis patches, no AutoRound, no patched vLLM
+# fork — just a stock llama.cpp Docker image and a single GGUF file.
+#
+# Showcase: vLLM single-card caps at 192K opt-in (with prefill caveats);
+# this hits 262K (the model's architectural max) on a stock 3090 thanks to
+# GGUF + q4_0 KV. The KV-cache type is the unlock — fp16 doesn't fit at
+# all, q8 fits but runs much slower on Ampere; q4_0 fits at full speed.
+#
+# Config:
+#   - GGUF:    Qwen3.6-27B-UD-Q3_K_XL (Unsloth dynamic, ~14.5 GB)
+#   - mmproj:  F16 (vision projector, ~0.8 GB)
+#   - Context: 262144 (model max)
+#   - KV:      q4_0 K + q4_0 V
+#   - Slots:   1 (single concurrent request; switch to docker-compose.concurrent.yml for 4)
+#   - FA:      on
+#
+# VRAM budget on 24 GB:
+#   weights (Q3_K_XL):           ~14.5 GB
+#   KV at 262K (q4_0 K+V):        ~4.5 GB
+#   mmproj F16:                   ~0.8 GB
+#   total:                       ~19.8 GB
+#   headroom:                     ~4 GB for prompt + activation peaks
+#
+# Bench (canonical narrative + code prompt) numbers — see BENCHMARKS.md.
+#
+# Quick start:
+#   1. Get the GGUF + mmproj:
+#        hf download unsloth/Qwen3.6-27B-GGUF \
+#          --include "Qwen3.6-27B-UD-Q3_K_XL.gguf" "mmproj-F16.gguf" \
+#          --local-dir /mnt/models/gguf/qwen3.6-27b/unsloth-q3kxl
+#      (mmproj sometimes ships at the repo root rather than under unsloth-q3kxl;
+#       the MMPROJ env var below points at the canonical sidecar location.)
+#   2. From this directory:
+#        MODEL_DIR=/mnt/models/gguf docker compose up -d
+#   3. curl http://localhost:8020/v1/models  → should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models  (default: ../../../../models-cache for repo, /mnt/models/gguf on this stack)
+#   GGUF_FILE              path under /models  (default: qwen3.6-27b/unsloth-q3kxl/Qwen3.6-27B-UD-Q3_K_XL.gguf)
+#   MMPROJ_FILE            path under /models  (default: qwen3.6-27b/mmproj-F16.gguf)
+#   CTX_SIZE               total KV pool       (default: 262144)
+#   KV_TYPE                K and V quant type  (default: q4_0)
+#   PORT                   host port           (default: 8020)
+#   CUDA_VISIBLE_DEVICES   which GPU to use    (default: 0)
+
+services:
+  llama-cpp-qwen36-27b:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-cpp-qwen36-27b
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8020}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../models-cache}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-27b/unsloth-q3kxl/Qwen3.6-27B-UD-Q3_K_XL.gguf}
+      --mmproj /models/${MMPROJ_FILE:-qwen3.6-27b/mmproj-F16.gguf}
+      -c ${CTX_SIZE:-262144}
+      -ngl 99
+      -fa on
+      --cache-type-k ${KV_TYPE:-q4_0}
+      --cache-type-v ${KV_TYPE:-q4_0}
+      -np 1
+      --jinja
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${CUDA_VISIBLE_DEVICES:-0}"]
+              capabilities: [compute, utility]

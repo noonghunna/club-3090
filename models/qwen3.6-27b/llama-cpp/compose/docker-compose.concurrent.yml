@@ -1,0 +1,60 @@
+# Qwen3.6-27B on llama.cpp — single 3090, max concurrency (4 slots), vision on.
+#
+# Trade max context for parallelism. Multi-tenant or batched-agent path:
+# four concurrent requests share a 192K KV pool (~48K each if split evenly,
+# but llama-server allocates dynamically per slot).
+#
+# Config differences from default (docker-compose.yml):
+#   - --parallel 4 (was 1)
+#   - --ctx-size  192000 (was 262144) — 4 slots fit in less total KV
+#   - --cont-batching on (improves throughput when prompts arrive concurrently)
+#   - everything else identical
+#
+# VRAM budget on 24 GB:
+#   weights (Q3_K_XL):       ~14.5 GB
+#   KV at 192K (q4_0 K+V):    ~3.3 GB (shared pool across 4 slots)
+#   mmproj F16:               ~0.8 GB
+#   total:                   ~18.6 GB
+#   headroom:                 ~5 GB
+#
+# When to pick this over docker-compose.yml:
+#   ✅ Multi-tenant chat (e.g. small team, Open WebUI multi-user)
+#   ✅ Agent farm — 4 agents working on tasks in parallel
+#   ✅ A/B testing two prompts simultaneously
+#   ❌ You need >65K per single conversation (default is better)
+#   ❌ You need max single-stream TPS (more slots = some latency floor)
+#
+# Quick start: same as default, plus:
+#   docker compose -f docker-compose.concurrent.yml up -d
+#
+# Env overrides identical to default — see docker-compose.yml header.
+
+services:
+  llama-cpp-qwen36-27b-concurrent:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-cpp-qwen36-27b-concurrent
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8020}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../models-cache}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-27b/unsloth-q3kxl/Qwen3.6-27B-UD-Q3_K_XL.gguf}
+      --mmproj /models/${MMPROJ_FILE:-qwen3.6-27b/mmproj-F16.gguf}
+      -c ${CTX_SIZE:-192000}
+      -ngl 99
+      -fa on
+      --cache-type-k ${KV_TYPE:-q4_0}
+      --cache-type-v ${KV_TYPE:-q4_0}
+      -np ${PARALLEL:-4}
+      --cont-batching
+      --jinja
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${CUDA_VISIBLE_DEVICES:-0}"]
+              capabilities: [compute, utility]

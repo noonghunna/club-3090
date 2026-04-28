@@ -20,26 +20,45 @@ For full pros/cons + general llama.cpp tuning, see [`/docs/engines/LLAMA_CPP.md`
 
 ---
 
-## Recipes
+## Docker compose (recommended)
 
-[`recipes/`](recipes/) contains shell scripts that launch `llama-server` with the right flags for this model.
+Two compose files in [`compose/`](compose/) — both use the official `ghcr.io/ggml-org/llama.cpp:server-cuda` image, no custom build needed.
 
-### `single-card-default.sh`
+### `docker-compose.yml` — max context, single slot, vision
 
-Sane mid-context default (65K, plenty for chat + light agent work). Q4_K_M GGUF.
+Showcase: full **262K context** on one 3090 with vision + q4_0 KV.
 
-### `single-card-max-ctx.sh`
+```bash
+cd models/qwen3.6-27b/llama-cpp/compose
+MODEL_DIR=/mnt/models/gguf docker compose up -d
+```
 
-**The standout recipe.** Full 262K context on a single 3090 via Q4_K_M + q4_0 KV. Memory math:
-- Model: ~16 GB
-- KV at 262K (q4_0 K + q4_0 V): ~5 GB
-- Total: ~21 GB; ~3 GB headroom
+Memory budget: 14.5 GB (Q3_K_XL) + 4.5 GB KV @ 262K + 0.8 GB mmproj ≈ 20 GB / 24 GB.
 
-Sustained throughput at 262K: **35-45 tok/s** on a stock 3090 (community-reported flat curve at any in-budget context).
+### `docker-compose.concurrent.yml` — 4 parallel slots, vision
 
-### `dual-card.sh`
+Trade max context for parallelism. Same image, `--parallel 4` + smaller ctx pool.
 
-TBD — llama.cpp supports multi-GPU but we haven't validated configs for this model. Open an issue if you have one working.
+---
+
+## Recipes (host-binary alternative)
+
+[`recipes/`](recipes/) contains shell scripts that launch a host-built `llama-server` with the same flags. Use these if you've built llama.cpp natively (e.g. for AMD/Intel/Apple Silicon) and don't want Docker.
+
+- **`single-card-default.sh`** — 65K ctx, Q4_K_M
+- **`single-card-max-ctx.sh`** — 262K ctx, Q4_K_M + q4_0 KV
+- `dual-card.sh` — TBD; llama.cpp supports multi-GPU but we haven't validated configs for this model
+
+---
+
+## Measured TPS (2026-04-28, club-3090 substrate)
+
+| Config | Quant | KV | Ctx | Vision | Narr TPS | Code TPS | Notes |
+|---|---|---|---|---|---|---|---|
+| docker-compose.yml | UD-Q3_K_XL | q4_0 | 262K | ✅ | 21 | 21 | Flat across context depth — same TPS at 65K and 262K |
+| `+ --spec-type ngram-mod` (recipe) | Q4_K_M | q8_0 | 32K | ❌ | 22 | **26** | +25% on code via draftless n-gram spec-decode |
+
+The Q3_K_XL number at 262K is **lower than community-reported 35-45 tok/s** ([Reddit](https://www.reddit.com/r/LocalLLaMA/comments/1sx8uok/) + earlier 2026-04-23 measurements showing 28.5 TPS on Q4_K_M). We're investigating whether mainline llama.cpp regressed between commits `9ab47e7d8` (2026-04-23) and `0d0764dfd` (current). For absolute speed today, **vLLM patched is ~2.5× faster** on the same hardware (51-55 narr / 67-70 code) — see [BENCHMARKS](../../../BENCHMARKS.md). llama.cpp's value proposition here is **simplicity + max context + multi-platform**, not throughput.
 
 ---
 

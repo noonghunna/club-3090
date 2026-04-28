@@ -2,6 +2,17 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-04-28 — Genesis pin + .env.example + issue templates + perf chart + llama.cpp compose
+
+- **`scripts/setup.sh`** — `GENESIS_PIN` switched from tag `v7.51-stable-2026-04-27` to commit `bf667c7` (Genesis HEAD as of 2026-04-27, semver "v7.54"). This is the exact tree our published TPS numbers were measured against; pinning to commit removes the doc-vs-runtime mismatch.
+- **`.env.example`** added at repo root — documents `MODEL_DIR`, `HF_TOKEN`, `CUDA_VISIBLE_DEVICES`, `MEM_UTIL`, `MAX_MODEL_LEN`, `GENESIS_PIN`, `SKIP_GENESIS`, `URL`, `WARMUPS`, `RUNS` with defaults.
+- **`.github/ISSUE_TEMPLATE/`** — bug-report template (requires `docker logs --tail 100`, `verify-full.sh` output, `nvidia-smi`, GPU config, compose variant, repo commit) + numbers-from-your-rig template (structured cross-rig TPS contributions). Q&A redirected to GitHub Discussions via `config.yml`.
+- **`docs/performance.svg`** + **`docs/performance.png`** — TPS bar chart across 10 single + dual configs, embedded in top-level README.
+- **`models/qwen3.6-27b/llama-cpp/compose/`** — two new docker compose files using `ghcr.io/ggml-org/llama.cpp:server-cuda`:
+  - `docker-compose.yml` — single slot, 262K ctx, q4_0 KV, vision on (showcase)
+  - `docker-compose.concurrent.yml` — 4 parallel slots, 192K ctx pool, vision on
+- **First measured TPS for UD-Q3_K_XL on this stack:** 21.22 narr / 20.79 code @ 262K + vision (single 3090, q4_0 KV). Lower than 2026-04-23's 28.5 measurement on Q4_K_M — investigating mainline llama.cpp regression between commits `9ab47e7d8` and current `0d0764dfd`. ngram-mod path measured at 22.04 / 26.11 (+25% on code).
+
 ## 2026-04-28 — Repo created (consolidating + superseding old single + dual repos)
 
 `club-3090` was created to replace two predecessor repos:
