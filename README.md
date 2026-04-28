@@ -52,23 +52,28 @@ cd club-3090
 # 2. Download + SHA-verify the model (~20 GB; clones Genesis patches too)
 bash scripts/setup.sh qwen3.6-27b
 
-# 3. Boot the default config (single-card vLLM, 48K context, full features)
-cd models/qwen3.6-27b/vllm/compose && docker compose up -d
+# 3. Pick a config + boot it (interactive wizard — asks engine / cards / workload)
+bash scripts/launch.sh
+#    Or skip the wizard:
+#      bash scripts/launch.sh --variant vllm/default      # single-card chat (recommended)
+#      bash scripts/launch.sh --variant vllm/dual         # dual-card 262K + vision
+#      bash scripts/launch.sh --variant llamacpp/default  # single-card 262K, no cliffs
+#    See all variants:
+#      bash scripts/switch.sh --list
 
-# 4. Watch it come up (~2 min for cold compile)
-docker logs -f vllm-qwen36-27b
-# Wait for "Application startup complete"
-
-# 5. Sanity test
+# 4. Sanity test (launcher already printed this curl)
 curl -sf http://localhost:8020/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"qwen3.6-27b-autoround","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":30}'
 
-# 6. Run the canonical benchmark
-cd /opt/ai/github/club-3090 && bash scripts/bench.sh
+# 5. Run the canonical benchmark
+bash scripts/bench.sh
+
+# 6. Switch later without re-clicking through the wizard:
+bash scripts/switch.sh vllm/long-vision   # for example
 ```
 
-For dual-card setups, opt into `docker-compose.dual.yml` (or one of the dual variants) — see [models/qwen3.6-27b/vllm/](models/qwen3.6-27b/vllm/).
+`launch.sh` calls `switch.sh` (down old, up new) and then `verify-full.sh` so you know it's serving cleanly before you point a client at it. See [`scripts/`](scripts/) for all helpers.
 
 For llama.cpp (different engine, different recipe — useful for max context on single-card):
 ```bash
