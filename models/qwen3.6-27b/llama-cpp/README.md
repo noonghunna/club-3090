@@ -87,8 +87,10 @@ GGUFs of this model are at [unsloth/Qwen3.6-27B-GGUF](https://huggingface.co/uns
 |---|---|---|---|
 | Q4_K_M | ~16.8 GB | Strong baseline | Default; pairs well with q4_0 KV at 262K |
 | Q5_K_S | ~19 GB | Slightly higher quality | If you have ~3 GB extra headroom |
-| UD-Q3_K_XL ([Unsloth dynamic](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF)) | ~14.5 GB | Small quality cost on Qwen3.6 (quantization-friendly); real on harder reasoning | When you want even more KV headroom for huge ctx + multi-shot |
+| **UD-Q3_K_XL** ⭐ ([Unsloth dynamic](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF)) | ~14.5 GB | Small quality cost on Qwen3.6 (quantization-friendly); real on harder reasoning | **Our default** — picked for huge ctx + multi-shot headroom. Independently validated as the best accuracy / token-efficiency / footprint balance by Benjamin Marie's eval (see below). |
 | Q3_K_M | ~13.6 GB | More aggressive 3-bit | When you absolutely need every spare GB for KV |
+
+**Independent third-party eval — Q3_K_XL is the right pick.** Benjamin Marie ([@bnjmn_marie](https://x.com/bnjmn_marie)) ran an H100 GGUF benchmark sweep on Qwen3.6-27B (Q2_K_XL / IQ3_XXS / Q3_K_XL / IQ2_XXS, plus abliterated variants) and concludes Q3_K_XL is the optimal balance between accuracy, token efficiency, and memory footprint — performance drops sharply below 10 GB, and IQ2_XXS produces server errors. Charts + methodology in *[Summary of Qwen3.6 GGUF Evals](https://kaitchup.substack.com/p/summary-of-qwen36-gguf-evals-updating)* (Kaitchup #139, 2026-04-24). We use those findings as our quality lens; our number on this hardware is the speed lens (21 TPS @ 262K + vision via Docker compose).
 
 **⚠️ Don't use `aria2c` to download multi-GB GGUFs.** It silently corrupts files during stall cycles — they'll have the right size but wrong bytes. Use `hf download` instead, and `sha256sum` verify if a hash is published.
 
