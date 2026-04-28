@@ -1,15 +1,22 @@
 # ===========================================================================
-# DFlash spec-decode on TP=2 — TEXT-ONLY VARIANT (no vision tower).
+# Dual-card DFlash text-only — TP=2 + DFlash N=5 + 200K ctx + NO vision.
 #
-# vs docker-compose.dflash.yml (the with-vision variant): drops MoonViT to
-# free ~0.78 GiB per card → bumps max_model_len 185K → 200K (close to the
+# vs `docker-compose.dual-dflash.yml` (the with-vision variant): drops MoonViT
+# to free ~0.78 GiB per card → bumps max_model_len 185K → 200K (close to the
 # absolute DFlash ceiling on dual-3090 with FP16 KV).
 #
-# Numbers (D5 row in BENCHMARKS.md):
-#   77 narr / 124 code TPS, 200K ctx, 1 stream, AL 4.27 warm
+# Best for: long single-prompt text workloads (RAG / summarization / code
+# review across very long codebases) where you don't need image input.
+#
+# Measured: 77 narr / 124 code TPS, 200K ctx, 1 stream, code AL ~4.27 warm.
+#
+# Same DFlash caveats as dual-dflash.yml apply: single-stream only, FP16 KV
+# (no fp8/turbo on DFlash + Ampere), `--dtype bfloat16` for vllm#40334
+# workaround.
 #
 # To run:
-#   cd compose && docker compose -f docker-compose.dflash-noviz.yml up -d
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.dual-dflash-noviz.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b-dual-dflash:

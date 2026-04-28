@@ -1,20 +1,26 @@
 # ===========================================================================
-# EXPLORATORY: TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.14.
+# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_k8v4) + MTP n=3 + Genesis v7.14.
 #
-# Question: with v7.14 P65 (cudagraph downgrade for spec-decode) applied, does
-# MTP × TurboQuant work on dual-card TP=2 with vision + tools + 262K?
+# The 4-stream concurrent-serving variant. Trades ~25% per-stream TPS vs the
+# fp8 default for ~9× the KV pool capacity, unlocking 4 concurrent streams at
+# full 262K context. Aggregate throughput exceeds fp8 above ~3 concurrent users.
 #
-# If yes: this is a strict superset of the fp8 default (more KV pool → either
-# more concurrent streams at 262K or more ctx at same concurrency).
-#
-# Genesis v7.14 also includes:
+# Genesis v7.14 P65 (cudagraph downgrade for spec-decode) makes MTP × TurboQuant
+# work on dual-card TP=2 with vision + tools + 262K. Other relevant patches:
 #   - P4 hybrid turboquant support (replaces standalone PR #39931 patches)
 #   - P5 KV page-size unification for hybrid models
 #   - P64 streaming MTP tool-call edge case
 #   - P66 cudagraph_capture_sizes divisibility filter
-# Plus our patch_tolist_cudagraph.py for the .tolist() crash class.
+# Plus patch_tolist_cudagraph.py for the .tolist() crash class.
 #
-# To run: cd compose && docker compose -f docker-compose.turbo.yml up -d
+# Note: kv-cache-dtype is `turboquant_k8v4` (8-bit keys, 4-bit values; ~6 bits
+# average per token). Earlier predecessor docs claimed `turboquant_3bit_nc`,
+# but the file shipped k8v4 — we kept k8v4 since that's what the published
+# concurrency numbers were measured against.
+#
+# To run:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.dual-turbo.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b-dual-turbo:

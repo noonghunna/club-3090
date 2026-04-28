@@ -1,24 +1,35 @@
 # ===========================================================================
-# Dual RTX 3090 — Qwen3.6-27B Lorbus int4-AutoRound + MTP + fp8 KV + vision.
+# Dual RTX 3090 — DEFAULT for 2× cards. Qwen3.6-27B + MTP n=3 + fp8 KV + vision.
 #
-# What this gives you (vs the single-card project's default):
-#   - TP=2 across both 3090s — meaningfully higher TPS, much more headroom
-#   - max_num_seqs=2 → 2 concurrent agents at full 262K context (KV pool 168K/2.36×)
+# What this gives you (vs the single-card default):
+#   - TP=2 across both 3090s
+#   - max_num_seqs=2 → 2 concurrent agents at full 262K context (KV pool 2.36×)
 #   - max_model_len=262144 → model's natural max, no rope_scaling needed
 #   - vision + tools + MTP n=3 + recall — everything on, no compromises
+#   - Measured: 71 narr / 89 code TPS single-stream
 #
 # What's intentionally NOT enabled:
-#   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e5m2 has none of
-#     that bug's caveats and is plenty for 64K context across both cards.
+#   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e5m2 is plenty for
+#     262K across two cards. For 4-stream concurrency at 262K, switch to
+#     docker-compose.dual-turbo.yml (which uses TurboQuant KV + Genesis P65).
 #
 # Dependencies:
 #   - 2× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine)
 #   - vLLM PR #40361 (Marlin pad-sub-tile-n) — patched files volume-mounted
 #     from /opt/ai/vllm-src/. PR is open upstream; drop the mount when it
-#     lands. See patches/README.md for context.
+#     lands. See ../patches/README.md for the git-clone command.
+#
+# All dual-card variants in this dir:
+#
+#   File                                Ctx    Streams   Narr/Code TPS   KV       Vision
+#   docker-compose.dual.yml (this)      262K   2         71 / 89          fp8      ✅
+#   docker-compose.dual-turbo.yml       262K   4         58 / 69          TQ k8v4  ✅
+#   docker-compose.dual-dflash.yml      185K   1         78 / 128         FP16     ✅
+#   docker-compose.dual-dflash-noviz... 200K   1         77 / 124         FP16     ❌
 #
 # Run:
-#   cd compose && docker compose up -d
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.dual.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b-dual:

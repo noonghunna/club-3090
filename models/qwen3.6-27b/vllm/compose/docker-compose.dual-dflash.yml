@@ -1,18 +1,28 @@
 # ===========================================================================
-# DFlash spec-decode on TP=2 — z-lab Qwen3.6-27B-DFlash draft.
+# Dual-card DFlash — TP=2 + DFlash N=5 spec-decode + 185K ctx + vision.
 #
-# Hypothesis (per BENCHMARKS row 4 for Qwen3.5-27B on the same draft family):
-# DFlash N=4 unlocks ~+47% throughput vs no-spec on dense Qwen3-Next at TP=2.
-# Qwen3.6-27B is dense too (no MoE expert layers) so pad-Marlin should be a
-# no-op and the DFlash×AutoRound combo that crashed on Qwen3.6-35B-A3B (MoE)
-# shouldn't fire here.
+# The peak-single-stream code TPS variant. DFlash N=5 (z-lab's Qwen3.6-27B
+# draft model) unlocks 78 narr / 128 code TPS — substantially faster than
+# the fp8/MTP default's 71/89 on code-heavy workloads (code AL ~4.7 vs MTP's 3.4).
 #
 # Trades vs the fp8/MTP default:
-#   - max_model_len drops from 262K to 16K (DFlash + cudagraph + KV pool tight)
-#   - vision tower ON (verified 2026-04-25 — MoonViT works with DFlash on Qwen3.6-27B)
+#   - max_model_len 262K → 185K (DFlash draft model adds ~500 MB VRAM per card,
+#     and cudagraph + KV pool budget tightens at higher ctx)
+#   - Single-stream only (parallel draft + main model uses concurrency budget)
+#   - DFlash bias toward code hurts narrative AL (drops to ~2.8 on prose)
+#
+# Vision: ON (verified 2026-04-25 — MoonViT works with DFlash on Qwen3.6-27B).
+# Drop vision for 200K ctx via docker-compose.dual-dflash-noviz.yml.
+#
+# KV cache: FP16 (default — DFlash needs head_size=256 + non-causal attention,
+# and no Ampere backend supports that triple with fp8/turbo KV).
+#
+# Required workaround: vllm#40334 dtype mismatch fix is not yet upstream;
+# compose sets `--dtype bfloat16` to match the draft's training dtype.
 #
 # To run:
-#   cd compose && docker compose -f docker-compose.dflash.yml up -d
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.dual-dflash.yml up -d
 # ===========================================================================
 services:
   vllm-qwen36-27b-dual-dflash:
