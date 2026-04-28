@@ -2,6 +2,17 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-04-28 — Add long-vision + long-text composes (R3' / R3''' from formal v714 round)
+
+Previously the 192K and 205K opt-in tiers were documented as "edit max-model-len + mem-util in docker-compose.yml" — fragile for reproducibility against published bench numbers. Promoted both to dedicated compose files:
+
+- **`docker-compose.long-vision.yml`** — TQ3 + Genesis P65 + MTP n=3 + 192K + 0.98 mem-util + vision tower active. Matches R3' bench row (50.93 narr / 67.69 code TPS, AL 3.40-3.58 80-86% accept). Container name: `vllm-qwen36-27b-long-vision`. Same prefill caveats as edit-the-default did.
+- **`docker-compose.long-text.yml`** — Same config + `--language-model-only` + max-model-len 205K. Matches R3''' (50.11 narr / 65.84 code TPS). Container name: `vllm-qwen36-27b-long-text`.
+
+Trade-off: 2 more compose files (now 11 vs 9). Net: every published bench row from the v714 formalization round (R2, R3, R3', R3''', R4, R6, R7) now boots cleanly with one `-f` flag — no error-prone editing for users who want to reproduce. R1 (eager) and R5 (longctx) stay deleted (obsolete, not niche).
+
+Header references updated: model README compose table, USE_CASES.md frontier-context section, default's variant matrix, vllm/README.md "Pick a compose" code block.
+
 ## 2026-04-28 — Repo migration to club-3090
 
 Configs migrated from the predecessor repos (`qwen36-27b-single-3090`, `qwen36-dual-3090`) into this repo's `models/qwen3.6-27b/vllm/compose/` directory. File renames:

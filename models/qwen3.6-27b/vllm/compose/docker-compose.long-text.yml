@@ -1,0 +1,140 @@
+# ===========================================================================
+# Long-text variant — engine-ceiling 205K context, text-only (no vision).
+#
+# Stack: same as the default + long-vision (vLLM nightly + Genesis v7.14 +
+# TurboQuant 3-bit KV + MTP n=3) — but with the vision tower disabled to
+# free ~1 GB of VRAM, lifting the engine ceiling from 192K (long-vision)
+# to ~206K. We ship 205K (just under the absolute ceiling for safety).
+#
+# When to pick this over long-vision:
+#   - You don't need image input
+#   - You want the absolute maximum context on a single 3090
+#   - You're doing very long single-shot text workloads (book-length docs,
+#     whole-codebase analysis, large RAG retrievals)
+#
+# When NOT to pick this:
+#   - Anything that needs vision — use long-vision (192K + vision) instead
+#   - Tool-using agents — same prefill-OOM caveat as long-vision applies
+#     here. Use the default 48K for production agents.
+#
+# Measured (R3''' bench row, 2026-04-27):
+#   50.11 narr / 65.84 code TPS, CV 1.5-1.9%, AL 3.44-3.57 (81-85% per-pos),
+#   VRAM 21.5/24 GB. ~5% slower code than long-vision (more KV pool to manage)
+#   and same caveats — within 2% of long-vision narr.
+#
+# Cliff caveat (must read):
+#   - Same Cliff 1 as long-vision: ≥25K-token tool messages OOM the engine.
+#   - Same Cliff 2 as default: any single prompt above 50-60K tokens triggers
+#     DeltaNet GDN forward OOM. The 205K context is for STEADY-STATE
+#     accumulation across many turns, NOT for stuffing 205K of fresh tokens
+#     in one request.
+#   - With vision dropped, activation headroom is slightly better than
+#     long-vision (~520 MiB vs ~480 MiB) — but still not enough for
+#     production agent workloads.
+#
+# Variants in this dir for reference:
+#
+#   File                                  Ctx     KV       Vision   Notes
+#   docker-compose.yml (default)          48K     TQ3      ✅       Production-safe; below both cliffs
+#   docker-compose.long-vision.yml        192K    TQ3      ✅       Long ctx + vision; prefill caveats apply
+#   docker-compose.long-text.yml (this)   205K    TQ3      ❌       Engine-ceiling text-only; same caveats
+#   docker-compose.fast-chat.yml          20K     fp8      ✅       Fastest TPS at small ctx
+#   docker-compose.tools-text.yml         75K     fp8      ❌       Long prompts (≥60K) — fp8 KV avoids GDN cliff up to 60K
+#
+# Run with:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.long-text.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-long-text:
+    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    container_name: vllm-qwen36-27b-long-text
+    restart: "no"
+    ports:
+      - "8020:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
+    environment:
+      # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
+      # - CUDA_VISIBLE_DEVICES=0
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - VLLM_FLOAT32_MATMUL_PRECISION=high
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_MARLIN_USE_ATOMIC_ADD=1
+      - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
+      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
+      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
+      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        pip install xxhash pandas scipy -q
+        python3 -m vllm._genesis.patches.apply_all
+        python3 /patches/patch_tolist_cudagraph.py
+        exec vllm serve "$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "1"
+      # 205K context — engine ceiling at 0.98 mem-util + no vision is ~206K;
+      # we ship 205K (just under) for safety margin. Same prefill caveats as
+      # long-vision: ≥25K tool prefills OOM, ≥50-60K single prompts OOM in GDN.
+      - --max-model-len
+      - "205000"
+      - --gpu-memory-utilization
+      - "0.98"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "4128"
+      - --kv-cache-dtype
+      - turboquant_3bit_nc
+      # Drops the vision tower → frees ~1 GB VRAM → lifts engine ceiling from
+      # 192K (long-vision) to ~206K. This is the only difference vs long-vision.
+      - --language-model-only
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --no-scheduler-reserve-full-isl
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

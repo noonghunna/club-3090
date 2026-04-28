@@ -44,7 +44,8 @@ For llama.cpp: `cd ../llama-cpp && cat README.md` (different setup; useful for m
 | **Long docs / RAG** | `tools-text.yml` (75K) or [llama.cpp 262K](llama-cpp/recipes/) | `dual-dflash-noviz.yml` (200K) | fp8 KV avoids the GDN cliff |
 | **Vision-heavy** | `yml` (default) | `dual.yml` | Vision tower on, fp8 KV |
 | **Multi-tenant** | n/a | `dual.yml` (2 streams) or `dual-turbo.yml` (4 streams) | Single-card serializes |
-| **Frontier 192K-262K** | opt-in tiers in `yml` (read caveat) or llama.cpp 262K | `dual.yml` (262K native) | Dual unlocks safely |
+| **Frontier 192K (vision)** | `long-vision.yml` (read caveat) | `dual.yml` (262K native) | Dual unlocks safely |
+| **Frontier 205K (text-only)** | `long-text.yml` or [llama.cpp 262K](llama-cpp/recipes/) | `dual.yml` | Single-card engine ceiling |
 
 See [USE_CASES.md](USE_CASES.md) for per-workload recommended config + gotchas + tuning levers.
 
@@ -59,8 +60,10 @@ All under [`vllm/compose/`](vllm/compose/):
 | File | Context | KV | Spec-decode | Vision | Tools | Narr/Code TPS | Best for |
 |---|---|---|---|---|---|---|---|
 | **`docker-compose.yml`** ⭐ | 48K | TQ3 | MTP n=3 | ✅ | ✅ | 51/68 | **Default for ≥20K + tool-using agents** |
+| `docker-compose.long-vision.yml` | **192K** | TQ3 | MTP n=3 | ✅ | ✅ | 51/68 | Long ctx + vision (read prefill caveat — single-prompt unsafe ≥16K tool / ≥50K text) |
+| `docker-compose.long-text.yml` | **205K** | TQ3 | MTP n=3 | ❌ | ✅ | 50/66 | Engine-ceiling text-only; same caveats as long-vision |
 | `docker-compose.fast-chat.yml` | 20K | fp8 | MTP n=3 | ✅ | ✅ | 55/70 | Chat-only, max TPS |
-| `docker-compose.tools-text.yml` | 75K | fp8 | MTP n=3 | ❌ | ✅ | 53/70 | Long single prompts |
+| `docker-compose.tools-text.yml` | 75K | fp8 | MTP n=3 | ❌ | ✅ | 53/70 | Long single prompts (fp8 KV avoids GDN cliff up to ~60K) |
 | `docker-compose.no-genesis-mtp.yml` | 20K | fp8 | MTP n=3 | ✅ | ✅ | 55/68 | Same as fast-chat minus Genesis (control) |
 | `docker-compose.minimal.yml` | 32K | fp8 | none | ✅ | ✅ | 32/33 | Simplest stack, no patches |
 

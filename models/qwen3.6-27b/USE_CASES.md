@@ -15,7 +15,8 @@ Practical guide matched to common workloads. Single-card and dual-card recipes s
 | Coding (single-file or repo with tool truncation) | [`yml`](vllm/compose/docker-compose.yml) (default) | [`dual-dflash.yml`](vllm/compose/docker-compose.dual-dflash.yml) | 51/68 (1× MTP) · 78/128 (2× DFlash) |
 | Long single prompts (RAG, summarization) | [`tools-text.yml`](vllm/compose/docker-compose.tools-text.yml) (75K) or [llama-cpp 262K](llama-cpp/recipes/) | [`dual-dflash-noviz.yml`](vllm/compose/docker-compose.dual-dflash-noviz.yml) (200K) | 53/70 (1× fp8) · 77/124 (2× DFlash text-only) |
 | Vision (images in prompts) | [`yml`](vllm/compose/docker-compose.yml) (default) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 51/68 (1×) · 71/89 (2×) |
-| Frontier 128K-262K | opt-in tiers in [`yml`](vllm/compose/docker-compose.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) (262K native) | 50-51 (1×) · 71/89 (2×) |
+| Frontier 192K (vision) | [`long-vision.yml`](vllm/compose/docker-compose.long-vision.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) (262K native) | 51/68 (1×) · 71/89 (2×) |
+| Frontier 205K (text-only) | [`long-text.yml`](vllm/compose/docker-compose.long-text.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 50/66 (1×) · 71/89 (2×) |
 | **Multi-tenant** (2-4 concurrent users) | n/a — single-card serializes | [`dual.yml`](vllm/compose/docker-compose.dual.yml) (2 streams) or [`dual-turbo.yml`](vllm/compose/docker-compose.dual-turbo.yml) (4 streams) | aggregate 180-257 TPS |
 | **Max context** (262K with vision on 1 card) | [llama-cpp recipe](llama-cpp/recipes/) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 35-45 (1×) · 71/89 (2×) |
 
@@ -111,16 +112,28 @@ Practical guide matched to common workloads. Single-card and dual-card recipes s
 
 ---
 
-## Frontier context (128K-262K)
+## Frontier context (192K-262K)
 
 **Whole-codebase agents. Long research papers in one shot. Multi-step reasoning over very large inputs.**
 
 ### 1× 3090
-- **vLLM default with opt-in tier** (edit `max-model-len=128000` or `192000` or `205000`, adjust mem-util). **Read [INTERNALS.md](INTERNALS.md) Activation-memory caveat first** — opt-in tiers are NOT safe under unrestricted tool prefills.
+
+Two dedicated composes for the frontier-context tier (R3' / R3''' from the v714 formal bench round):
+
+- **[`long-vision.yml`](vllm/compose/docker-compose.long-vision.yml)** — 192K context with vision tower active. 51/68 TPS narr/code. Pick when you need image input + long ctx.
+- **[`long-text.yml`](vllm/compose/docker-compose.long-text.yml)** — 205K context, vision dropped (engine ceiling for single-card TQ3). 50/66 TPS narr/code.
 - **OR llama.cpp at 262K** ([recipe](llama-cpp/recipes/)) — actually achieves the model's natural max on a single card. Trade-off: slower TPS, no MTP spec-decode.
 
+**Read [INTERNALS.md](INTERNALS.md) Activation-memory caveat first** — both long-* composes have prefill caveats:
+- ≥25K-token tool prefills will OOM (Cliff 1) — same root cause as ampersandru's #1
+- ≥50-60K single prompts trigger DeltaNet GDN forward OOM (Cliff 2 — hardware-bound on 24 GB)
+- The full 192K/205K is for *steady-state context accumulation* across many small turns, NOT for stuffing 192K of fresh tokens in one request
+
+If your workload includes either pattern, use the default 48K instead.
+
 ### 2× 3090
-- **`dual.yml`** (262K native — no opt-ins needed). This is what dual-card unlocks: full context with vision + tools + MTP, no prefill cliff caveats.
+
+- **`dual.yml`** (262K native — no opt-ins needed). TP=2 splits activation memory, so cliffs are not active failure modes here. Full context with vision + tools + MTP.
 
 **Gotcha (universal):** Recall degrades past 100K. Test on your actual corpus.
 

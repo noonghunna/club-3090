@@ -13,6 +13,12 @@ The recommended path for this model. Full features, validated end-to-end via `ve
 # Single-card default — 48K + Genesis v7.14 + TurboQuant 3-bit + vision (recommended for ≥20K + tool agents)
 cd compose && docker compose up -d
 
+# Single-card frontier 192K — vision on, prefill caveats apply
+cd compose && docker compose -f docker-compose.long-vision.yml up -d
+
+# Single-card frontier 205K — text-only (engine ceiling), prefill caveats apply
+cd compose && docker compose -f docker-compose.long-text.yml up -d
+
 # Single-card chat-only — 20K + fp8 + MTP (fastest TPS at small ctx)
 cd compose && docker compose -f docker-compose.fast-chat.yml up -d
 

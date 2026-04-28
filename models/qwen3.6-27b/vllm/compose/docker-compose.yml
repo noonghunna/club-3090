@@ -63,7 +63,9 @@
 #
 # Variant matrix (measured on dev205 + Genesis v7.54):
 #
-#   docker-compose.yml             (THIS — default)   48K   51/68 TPS  vision  ⭐ All features safe; opt-in 64K-205K with caveats
+#   docker-compose.yml             (THIS — default)   48K   51/68 TPS  vision  ⭐ Production-safe; below both cliffs
+#   docker-compose.long-vision.yml                    192K   51/68 TPS  vision     Long ctx + vision (R3'); prefill caveats apply
+#   docker-compose.long-text.yml                      205K   50/66 TPS  no vis     Engine-ceiling text-only (R3'''); same caveats
 #   docker-compose.fast-chat.yml                       20K   55/70 TPS  vision     Fastest TPS for chat; fp8 KV
 #   docker-compose.tools-text.yml                      75K   53/70 TPS  no vis     Long prompts (60K+) with fp8 — vision off
 #   docker-compose.no-genesis-mtp.yml                  20K   55/68 TPS  vision     Same as fast-chat minus Genesis patches

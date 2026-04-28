@@ -1,0 +1,141 @@
+# ===========================================================================
+# Long-vision variant — full 192K context with vision on a single 3090.
+#
+# Stack: same as the default (vLLM nightly + Genesis v7.14 + TurboQuant 3-bit
+# KV + MTP n=3 + vision tower) — but pushed to the largest practical context
+# that still keeps vision active on a single 24 GB card.
+#
+# When to pick this over the default:
+#   - You need 100K+ context for whole-codebase / long-document workflows
+#   - You don't expect ≥25K-token tool-response prefills (Hermes-class agents)
+#   - You'll accept that a request with a single oversized tool reply OOMs
+#     the engine — there's no safe-prefill envelope at this mem-util tier
+#
+# When NOT to pick this:
+#   - Tool-using agents (Cline, Roo, Cursor, OpenAI Assistants) where tools
+#     might return large blobs — use the default 48K. The smaller default
+#     was specifically chosen to be below Cliff 1 (TurboQuant tool-prefill OOM)
+#     for production agent workloads.
+#   - Pure chat or simpler tools — default 48K is plenty and faster prefill.
+#
+# Measured (R3' bench row, 2026-04-27):
+#   50.93 narr / 67.69 code TPS, CV 2.4%, AL 3.40-3.58 (80-86% per-pos accept),
+#   VRAM 22.3/24 GB, vision tower active. Identical TPS to the 48K default —
+#   per-stream throughput is hardware-bound; the larger context is a free win
+#   IF your workload doesn't trigger the prefill cliffs.
+#
+# Cliff caveat (must read):
+#   - At 0.98 mem-util, activation headroom is ~480 MiB.
+#   - Cliff 1 (TurboQuant tool-prefill, ~138 MiB allocate at high mem-util)
+#     fires on ≥25K-token tool messages → CUDA OOM, engine dies.
+#   - Cliff 2 (DeltaNet GDN forward, single prompt ≥50-60K tokens) STILL
+#     fires here — same 24 GB VRAM constraint as the default.
+#   - Net safe single-prompt envelope: ~16K. The full 192K is for steady-
+#     state context accumulation across many small turns, NOT for stuffing
+#     192K of new tokens in one request.
+#   - For more activation headroom + safer prefill: drop back to default
+#     48K + 0.92 OR upgrade to dual-3090 (TP=2 splits activation).
+#
+# Variants in this dir for reference:
+#
+#   File                                  Ctx     KV       Vision   Notes
+#   docker-compose.yml (default)          48K     TQ3      ✅       Production-safe; below both cliffs
+#   docker-compose.long-vision.yml (this) 192K    TQ3      ✅       Long ctx + vision; prefill caveats apply
+#   docker-compose.long-text.yml          205K    TQ3      ❌       Long ctx text-only; engine ceiling
+#   docker-compose.fast-chat.yml          20K     fp8      ✅       Fastest TPS at small ctx
+#   docker-compose.tools-text.yml         75K     fp8      ❌       Long prompts (≥60K) without vision
+#
+# Run with:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.long-vision.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-long-vision:
+    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    container_name: vllm-qwen36-27b-long-vision
+    restart: "no"
+    ports:
+      - "8020:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
+    environment:
+      # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
+      # - CUDA_VISIBLE_DEVICES=0
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - VLLM_FLOAT32_MATMUL_PRECISION=high
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_MARLIN_USE_ATOMIC_ADD=1
+      - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
+      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
+      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
+      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        pip install xxhash pandas scipy -q
+        python3 -m vllm._genesis.patches.apply_all
+        python3 /patches/patch_tolist_cudagraph.py
+        exec vllm serve "$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "1"
+      # 192K context — engine ceiling at 0.98 mem-util is ~206K; we ship 192K
+      # to leave a small safety margin. Activation headroom at 0.98 is ~480 MiB
+      # — too tight for ≥25K-token tool prefills (Cliff 1).
+      - --max-model-len
+      - "192000"
+      - --gpu-memory-utilization
+      - "0.98"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "4128"
+      - --kv-cache-dtype
+      - turboquant_3bit_nc
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --no-scheduler-reserve-full-isl
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
