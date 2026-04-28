@@ -1,5 +1,5 @@
 # ===========================================================================
-# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_k8v4) + MTP n=3 + Genesis v7.14.
+# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.14.
 #
 # The 4-stream concurrent-serving variant. Trades ~25% per-stream TPS vs the
 # fp8 default for ~9× the KV pool capacity, unlocking 4 concurrent streams at
@@ -13,10 +13,12 @@
 #   - P66 cudagraph_capture_sizes divisibility filter
 # Plus patch_tolist_cudagraph.py for the .tolist() crash class.
 #
-# Note: kv-cache-dtype is `turboquant_k8v4` (8-bit keys, 4-bit values; ~6 bits
-# average per token). Earlier predecessor docs claimed `turboquant_3bit_nc`,
-# but the file shipped k8v4 — we kept k8v4 since that's what the published
-# concurrency numbers were measured against.
+# KV cache: turboquant_3bit_nc — 3-bit symmetric K and V (~3 bits average per
+# token). Aligned with the single-card v714 default config we test extensively.
+# The predecessor dual-3090 file shipped `turboquant_k8v4` (~6 bits avg) due to
+# config drift from the documented + tested target; corrected here to match
+# what's actually validated. Cross-rig users may see slightly higher concurrency
+# at 262K than the predecessor's published 4.59× (TQ3 is more compact than k8v4).
 #
 # To run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
@@ -85,7 +87,7 @@ services:
       - --max-num-batched-tokens
       - "4128"
       - --kv-cache-dtype
-      - turboquant_k8v4
+      - turboquant_3bit_nc
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
