@@ -2,6 +2,16 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-04-28 (post-launch) — llama.cpp Q3_K_XL + Docker compose + stress-test findings + VRAM diagram
+
+- **First measured TPS for UD-Q3_K_XL on this stack:** 21.22 narr / 20.79 code @ 262K context + vision (single 3090, q4_0 KV). VRAM 20.17 GB / 24 GB at boot. Lower than memory's 28.5 baseline (Q4_K_M, 2026-04-23 on llama.cpp commit `9ab47e7d8`) — investigating mainline regression vs current `0d0764dfd`. ngram-mod path measured at 22.04 / 26.11 (+25% on code, draftless via `--spec-type ngram-mod`).
+- **llama.cpp Docker compose** at `models/qwen3.6-27b/llama-cpp/compose/`:
+  - `docker-compose.yml` — single slot, 262K ctx, q4_0 KV, vision via mmproj. Uses `ghcr.io/ggml-org/llama.cpp:server-cuda`.
+  - `docker-compose.concurrent.yml` — 4 parallel slots, 192K ctx pool, vision. Multi-tenant variant.
+- **All three llama.cpp configs pass verify-full + verify-stress** on this stack. Crucial finding: llama.cpp R1 (Q4_K_M @ 262K + q4_0 KV), Q3_K_XL @ 262K + vision, and Q4_K_M + ngram-mod @ 32K all clear the 90K needle ladder + 25K tool-prefill checks. **No Cliff 1, no Cliff 2** — the prefill OOMs that bite vLLM single-card 192K configs don't fire in llama.cpp on this model. Trade is the ~2-3× lower TPS (21 vs 51-55 vLLM). Reframes our launch positioning around "vLLM dual = max throughput, llama.cpp single = max robustness." Single feature gap: llama.cpp doesn't peel `<think>` into `reasoning_content` (parser issue, not model). Tool calling, streaming, vision, output quality all clean on `--jinja`.
+- **`models/qwen3.6-27b/README.md`** — added "VRAM allocation across configs" section with embedded `docs/img/vram-budget-dual.svg`. Per-card stacked bars across 7 configs (3 single, 4 dual) showing weights / KV / vision / DFlash draft / activations / free headroom on the 24 GB budget. Visualizes the TP=2 unlock concretely.
+- **`models/qwen3.6-27b/llama-cpp/README.md`** — quant table updated. UD-Q3_K_XL marked ⭐ as our default with citation to Benjamin Marie's [Kaitchup Q3.6-27B GGUF eval](https://kaitchup.substack.com/p/summary-of-qwen36-gguf-evals-updating) — independent H100-validated pick of Q3_K_XL as the optimal accuracy/efficiency/footprint balance, complementary to our 3090 speed measurements.
+
 ## 2026-04-28 — Split verify-full.sh → verify-full.sh (fast) + verify-stress.sh (boundary)
 
 Recent additions to `verify-full.sh` (#8 tool-prefill OOM, #9 cascade detection, #10 MTP AL) made the script slow — the longctx needle ladder (#7) alone could run 5+ min, and the full 10-check suite was approaching 10 min. Awkward for "is the stack functional" iteration during dev work.
