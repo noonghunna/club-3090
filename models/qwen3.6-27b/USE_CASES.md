@@ -43,7 +43,7 @@ Practical guide matched to common workloads. Single-card and dual-card recipes s
 **AI coding/research assistants that call tools (read_file, run_command, web_fetch). Multi-turn conversations with structured tool returns.**
 
 ### 1× 3090
-- **Default `docker-compose.yml`** (48K + TQ3 + Genesis P65). Below both prefill cliffs; verify-full.sh #8 (tool prefill OOM) passes at 25-40K tool responses.
+- **Default `docker-compose.yml`** (48K + TQ3 + Genesis P65). Below both prefill cliffs; `verify-stress.sh` (tool prefill OOM check) passes at 25-40K tool responses.
 - **Critical:** verify your agent framework truncates tool responses to ≤20K tokens. **The single most common production crash** is a single tool returning 50K+ tokens. Most frameworks (Cline, OpenAI Assistants, LangChain) do this by default — confirm yours is on.
 
 ### 2× 3090

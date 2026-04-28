@@ -104,7 +104,8 @@ club-3090/
 └── scripts/                               shared, model-aware
     ├── setup.sh                           bash setup.sh <model> → downloads + verifies + clones engine patches
     ├── verify.sh                          quick smoke test (engine-aware via env)
-    ├── verify-full.sh                     functional test (10 checks)
+    ├── verify-full.sh                     fast functional test (8 checks, ~1-2 min)
+    ├── verify-stress.sh                   boundary-case stress test (longctx ladder + tool prefill OOM, ~5-10 min)
     └── bench.sh                           canonical TPS bench
 ```
 

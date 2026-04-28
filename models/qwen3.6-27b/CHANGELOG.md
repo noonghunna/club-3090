@@ -2,6 +2,18 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-04-28 — Split verify-full.sh → verify-full.sh (fast) + verify-stress.sh (boundary)
+
+Recent additions to `verify-full.sh` (#8 tool-prefill OOM, #9 cascade detection, #10 MTP AL) made the script slow — the longctx needle ladder (#7) alone could run 5+ min, and the full 10-check suite was approaching 10 min. Awkward for "is the stack functional" iteration during dev work.
+
+Split into two scripts:
+
+- **`verify-full.sh`** — fast functional smoke, 8 checks, ~1-2 min. Contains: server reachability, Genesis patches applied, basic completion (Paris), tool calling, streaming, thinking mode, output quality / cascade detection, MTP acceptance length. **Run after every config change** to confirm the stack still serves cleanly.
+
+- **`verify-stress.sh`** — boundary-case stress test, 2 checks, ~5-10 min. Contains: long-context needle ladder (4 depths up to 90K tokens) + tool-response prefill OOM (~25K-token mock tool message). **Run before publishing or when investigating prefill-OOM regressions** specifically.
+
+Same env-var conventions (URL, MODEL, CONTAINER, SKIP_LONGCTX, SKIP_TOOL_PREFILL, PREFILL_TARGET_CHARS). Both pass on the new club-3090 default + dual.yml + dual-turbo.
+
 ## 2026-04-28 — Dual-card re-bench on club-3090 substrate (revised TPS numbers)
 
 The published dual-card TPS numbers were measured pre-v714 formalization (April 24-25 timeframe), on a different vLLM nightly + Genesis tree. Re-benched all 4 dual composes on the club-3090 unified substrate (dev205 + Genesis v7.51-stable + Marlin pad fork mounted) to reconcile.

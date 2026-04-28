@@ -37,7 +37,9 @@ models/<model-name>/          everything specific to a model
 
 scripts/                      shared, model-aware
   setup.sh <model>              downloads + verifies model + clones patches
-  verify.sh / verify-full.sh    smoke + functional tests
+  verify.sh                     quick smoke (~10 sec)
+  verify-full.sh                fast functional test, 8 checks (~1-2 min)
+  verify-stress.sh              boundary-case stress test, 2 checks (~5-10 min)
   bench.sh                      canonical TPS bench
 ```
 
@@ -70,7 +72,7 @@ If a patch is general (across engines or models), it bubbles up to `docs/engines
 **A user comes in cold:**
 1. Lands on top-level [README](../README.md) → understands what the stack is, picks their model.
 2. Goes to `models/<m>/README.md` → sees recommended config + quick start for their card count.
-3. Boots; tests with `verify.sh` / `verify-full.sh`; benches with `bench.sh`.
+3. Boots; tests with `verify-full.sh` (fast, 8 checks); for boundary cases (KV-cache pressure, prefill OOM) runs `verify-stress.sh`; benches with `bench.sh`.
 
 **A user hits a problem:**
 1. Reads `models/<m>/USE_CASES.md` for their workload-specific gotchas.
@@ -93,7 +95,7 @@ A few principles the repo follows:
 2. **Honest framing always.** If a config has a known cliff, the cliff is documented at the top of the relevant doc, not buried in a footnote. Users discovering issues at boot should already have read the warning.
 3. **Cross-rig data welcome.** TPS numbers are run-to-run variable; we publish ours and welcome PRs adding "your rig" rows.
 4. **Patches stay surgical.** We don't fork engines. Disk-edits at boot, runtime monkey-patches, or volume-mounts of patched source. When upstream lands a fix, the patch becomes a no-op (anchor doesn't match) and we drop it cleanly.
-5. **Verification gates production.** `verify-full.sh` runs 10 functional checks. We don't claim a config works until the script is green.
+5. **Verification gates production.** `verify-full.sh` runs 8 fast functional checks; `verify-stress.sh` runs the heavy boundary-case tests (long-context needle ladder, ~25K-token tool-response prefill OOM detection). We don't claim a config works until both are green.
 6. **Document the negative results too.** Probes that didn't pan out (PR #40798 backport, `--enforce-eager` mode) are documented so future-us doesn't redo the experiments.
 
 ---
