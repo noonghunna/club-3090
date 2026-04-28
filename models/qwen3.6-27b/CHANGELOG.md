@@ -2,6 +2,25 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-04-28 — Dual-card re-bench on club-3090 substrate (revised TPS numbers)
+
+The published dual-card TPS numbers were measured pre-v714 formalization (April 24-25 timeframe), on a different vLLM nightly + Genesis tree. Re-benched all 4 dual composes on the club-3090 unified substrate (dev205 + Genesis v7.51-stable + Marlin pad fork mounted) to reconcile.
+
+Also: caught a stale mount path in `dual-turbo.yml` — predecessor mounted `patch_tolist_cudagraph.py` from `../patches/genesis/` (where it lived in the old qwen36-dual-3090 layout); club-3090 has it at `../patches/` (top-level). Fixed before measurement; container booted clean. All other composes already had correct paths.
+
+**Measured numbers (3 warmup + 5 measured per prompt arm, narr 1000 tok + code 800 tok):**
+
+| Compose | Narr TPS (CV) | Code TPS (CV) | TTFT | MTP/DFlash AL | VRAM/card | Was claimed | Δ% |
+|---|---|---|---|---|---|---|---|
+| dual.yml | 69.05 (2.3%) | 88.58 (3.4%) | 145ms | 3.38-3.48 | 23.6 GB | 71/89 | -3% / -1% |
+| dual-turbo.yml (now TQ3) | 53.65 (2.7%) | 72.93 (2.7%) | 113ms | 3.41-3.42 | 24.1 GB | 58/69 (k8v4) | -8% / +6% |
+| dual-dflash.yml | 81.94 (4.3%) | 124.93 (5.8%) | 138ms | 4.10-4.35 | 23.6 GB | 78/128 | +5% / -2% |
+| dual-dflash-noviz.yml | 78.19 (2.5%) | 126.99 (2.2%) | 143ms | 4.24-4.37 | 23.8 GB | 77/124 | +2% / +2% |
+
+Net: most numbers within run-to-run variance. The dual.yml fp8 path is essentially unchanged. dual-turbo's TQ3 swap (from k8v4) cost ~8% narrative but recovered ~6% code — net trade for ~9× the KV pool capacity.
+
+All 4 composes pass `verify-full.sh` functional checks (skipped longctx ladder on the DFlash variants for time; fp8 + MTP variants pass full 10/10 including the 90K-token needle). Updated all docs (README compose table, USE_CASES.md, dual.yml header, dual-turbo.yml header) with the measured numbers.
+
 ## 2026-04-28 — Add long-vision + long-text composes (R3' / R3''' from formal v714 round)
 
 Previously the 192K and 205K opt-in tiers were documented as "edit max-model-len + mem-util in docker-compose.yml" — fragile for reproducibility against published bench numbers. Promoted both to dedicated compose files:

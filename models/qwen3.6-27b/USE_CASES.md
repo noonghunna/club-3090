@@ -10,14 +10,14 @@ Practical guide matched to common workloads. Single-card and dual-card recipes s
 
 | Workload | 1× 3090 | 2× 3090 | TPS narr / code |
 |---|---|---|---|
-| General chat / Q&A (≤20K) | [`fast-chat.yml`](vllm/compose/docker-compose.fast-chat.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 55/70 (1×) · 71/89 (2×) |
-| Tool-using agents (Cline / Roo / Cursor / Hermes) | [`yml`](vllm/compose/docker-compose.yml) (default) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 51/68 (1×) · 71/89 (2×) |
-| Coding (single-file or repo with tool truncation) | [`yml`](vllm/compose/docker-compose.yml) (default) | [`dual-dflash.yml`](vllm/compose/docker-compose.dual-dflash.yml) | 51/68 (1× MTP) · 78/128 (2× DFlash) |
-| Long single prompts (RAG, summarization) | [`tools-text.yml`](vllm/compose/docker-compose.tools-text.yml) (75K) or [llama-cpp 262K](llama-cpp/recipes/) | [`dual-dflash-noviz.yml`](vllm/compose/docker-compose.dual-dflash-noviz.yml) (200K) | 53/70 (1× fp8) · 77/124 (2× DFlash text-only) |
-| Vision (images in prompts) | [`yml`](vllm/compose/docker-compose.yml) (default) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 51/68 (1×) · 71/89 (2×) |
-| Frontier 192K (vision) | [`long-vision.yml`](vllm/compose/docker-compose.long-vision.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) (262K native) | 51/68 (1×) · 71/89 (2×) |
-| Frontier 205K (text-only) | [`long-text.yml`](vllm/compose/docker-compose.long-text.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 50/66 (1×) · 71/89 (2×) |
-| **Multi-tenant** (2-4 concurrent users) | n/a — single-card serializes | [`dual.yml`](vllm/compose/docker-compose.dual.yml) (2 streams) or [`dual-turbo.yml`](vllm/compose/docker-compose.dual-turbo.yml) (4 streams) | aggregate 180-257 TPS |
+| General chat / Q&A (≤20K) | [`fast-chat.yml`](vllm/compose/docker-compose.fast-chat.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 55/70 (1×) · 69/89 (2×) |
+| Tool-using agents (Cline / Roo / Cursor / Hermes) | [`yml`](vllm/compose/docker-compose.yml) (default) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 51/68 (1×) · 69/89 (2×) |
+| Coding (single-file or repo with tool truncation) | [`yml`](vllm/compose/docker-compose.yml) (default) | [`dual-dflash.yml`](vllm/compose/docker-compose.dual-dflash.yml) | 51/68 (1× MTP) · 82/125 (2× DFlash) |
+| Long single prompts (RAG, summarization) | [`tools-text.yml`](vllm/compose/docker-compose.tools-text.yml) (75K) or [llama-cpp 262K](llama-cpp/recipes/) | [`dual-dflash-noviz.yml`](vllm/compose/docker-compose.dual-dflash-noviz.yml) (200K) | 53/70 (1× fp8) · 78/127 (2× DFlash text-only) |
+| Vision (images in prompts) | [`yml`](vllm/compose/docker-compose.yml) (default) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 51/68 (1×) · 69/89 (2×) |
+| Frontier 192K (vision) | [`long-vision.yml`](vllm/compose/docker-compose.long-vision.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) (262K native) | 51/68 (1×) · 69/89 (2×) |
+| Frontier 205K (text-only) | [`long-text.yml`](vllm/compose/docker-compose.long-text.yml) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 50/66 (1×) · 69/89 (2×) |
+| **Multi-tenant** (2-4 concurrent users) | n/a — single-card serializes | [`dual.yml`](vllm/compose/docker-compose.dual.yml) (2 streams) or [`dual-turbo.yml`](vllm/compose/docker-compose.dual-turbo.yml) (4 streams, 54/73 per-stream) | aggregate ~180-220 TPS |
 | **Max context** (262K with vision on 1 card) | [llama-cpp recipe](llama-cpp/recipes/) | [`dual.yml`](vllm/compose/docker-compose.dual.yml) | 35-45 (1×) · 71/89 (2×) |
 
 ---

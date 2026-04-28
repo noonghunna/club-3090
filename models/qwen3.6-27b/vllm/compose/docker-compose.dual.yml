@@ -6,7 +6,8 @@
 #   - max_num_seqs=2 → 2 concurrent agents at full 262K context (KV pool 2.36×)
 #   - max_model_len=262144 → model's natural max, no rope_scaling needed
 #   - vision + tools + MTP n=3 + recall — everything on, no compromises
-#   - Measured: 71 narr / 89 code TPS single-stream
+#   - Measured (re-bench 2026-04-28 on club-3090 substrate, dev205 + Genesis v7.51-stable):
+#     69.05 narr (CV 2.3%) / 88.58 code (CV 3.4%) TPS single-stream, AL 3.4, VRAM 23.6 GB/card
 #
 # What's intentionally NOT enabled:
 #   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e5m2 is plenty for
@@ -22,10 +23,10 @@
 # All dual-card variants in this dir:
 #
 #   File                                Ctx    Streams   Narr/Code TPS   KV       Vision
-#   docker-compose.dual.yml (this)      262K   2         71 / 89          fp8      ✅
-#   docker-compose.dual-turbo.yml       262K   4         58 / 69          TQ3      ✅
-#   docker-compose.dual-dflash.yml      185K   1         78 / 128         FP16     ✅
-#   docker-compose.dual-dflash-noviz... 200K   1         77 / 124         FP16     ❌
+#   docker-compose.dual.yml (this)      262K   2         69 / 89          fp8      ✅
+#   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅
+#   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅
+#   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌
 #
 # Run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose

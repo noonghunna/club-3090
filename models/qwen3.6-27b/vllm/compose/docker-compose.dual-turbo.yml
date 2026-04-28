@@ -1,9 +1,12 @@
 # ===========================================================================
 # Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.14.
 #
-# The 4-stream concurrent-serving variant. Trades ~25% per-stream TPS vs the
+# The 4-stream concurrent-serving variant. Trades ~22% per-stream TPS vs the
 # fp8 default for ~9× the KV pool capacity, unlocking 4 concurrent streams at
 # full 262K context. Aggregate throughput exceeds fp8 above ~3 concurrent users.
+#
+# Measured (re-bench 2026-04-28 on club-3090, dev205 + Genesis v7.51-stable, TQ3 KV):
+#   53.65 narr (CV 2.7%) / 72.93 code (CV 2.7%) TPS, AL 3.41, VRAM 24.1 GB/card.
 #
 # Genesis v7.14 P65 (cudagraph downgrade for spec-decode) makes MTP × TurboQuant
 # work on dual-card TP=2 with vision + tools + 262K. Other relevant patches:
@@ -38,7 +41,7 @@ services:
       # Genesis v7.14 modular package (includes P4 hybrid TQ + P65 #40880 fix)
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       # Standalone .tolist() during capture fix (separate bug from P65)
-      - ../patches/genesis/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
+      - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn

@@ -71,10 +71,10 @@ All under [`vllm/compose/`](vllm/compose/):
 
 | File | Context | KV | Spec-decode | Vision | Streams | Narr/Code TPS | Best for |
 |---|---|---|---|---|---|---|---|
-| **`docker-compose.dual.yml`** ⭐ | 262K | fp8 | MTP n=3 | ✅ | 2 | 71/89 | **Default dual** |
-| `docker-compose.dual-turbo.yml` | 262K | TQ3 + Genesis v7.14 | MTP n=3 | ✅ | **4** | 58/69 | Multi-tenant (4 concurrent) |
-| `docker-compose.dual-dflash.yml` | 185K | fp8 | DFlash N=5 | ✅ | 1 | **78/128** | Peak code TPS |
-| `docker-compose.dual-dflash-noviz.yml` | 200K | fp8 | DFlash N=5 | ❌ | 1 | 77/124 | Long-doc text-only, peak speed |
+| **`docker-compose.dual.yml`** ⭐ | 262K | fp8 | MTP n=3 | ✅ | 2 | **69/89** | **Default dual** |
+| `docker-compose.dual-turbo.yml` | 262K | TQ3 + Genesis v7.14 | MTP n=3 | ✅ | **4** | **54/73** | Multi-tenant (4 concurrent) |
+| `docker-compose.dual-dflash.yml` | 185K | FP16 | DFlash N=5 | ✅ | 1 | **82/125** | Peak code TPS |
+| `docker-compose.dual-dflash-noviz.yml` | 200K | FP16 | DFlash N=5 | ❌ | 1 | **78/127** | Long-doc text-only, peak speed |
 
 ---
 
