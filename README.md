@@ -8,11 +8,11 @@ If you have one or two RTX 3090s and want to run modern LLMs at home, in a homel
 
 ## TL;DR — what this is
 
-- **Validated docker compose configs** for serving big models on consumer 24 GB GPUs
-- **Drop-in OpenAI-compatible API** — point any OpenAI SDK at `localhost:8020`
-- **All the features** — chat, vision, tool calling, streaming, reasoning mode, speculative decoding (where supported)
-- **Multi-engine**: pick vLLM (full features) / llama.cpp (max context, lighter footprint) / SGLang (high-throughput multi-tenant — currently blocked, watch list)
-- **Multi-card**: configs for both single-3090 and dual-3090 setups
+- **Two complementary routes** — pick by what your workload breaks on:
+  - 🏎 **vLLM dual** = max throughput. Up to **127 TPS code** (DFlash) or **4 concurrent streams @ 262K** (turbo). Full feature stack (vision · tools · MTP · streaming).
+  - 🛡 **llama.cpp single** = max robustness. Full **262K context** on one 3090. Stress-tested clean: no prefill cliffs, 25K-token tool returns work, 90K needle ladder passes. Slower (~21 TPS) but doesn't crash on real-world tool-using agents.
+- **Validated docker compose configs** for both routes — drop-in OpenAI-compatible API on `localhost:8020`
+- **Multi-engine**: vLLM (full features), llama.cpp (max ctx + robustness), SGLang (currently blocked, watch list)
 - **Model-agnostic**: today ships configs for Qwen3.6-27B; structure scales as we add models
 
 **First time here?** → [Models](#supported-models) — pick yours.
@@ -28,7 +28,7 @@ Each model has its own subdirectory with engine-specific composes / recipes / pa
 
 | Model | Status | Card counts | Engines | Highlights |
 |---|---|---|---|---|
-| **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready ⭐ | 1× / 2× 3090 | vLLM ✅ · llama.cpp ✅ · SGLang ❌ blocked | Vision · tools · MTP n=3 · 48K-262K context · 51-89 TPS depending on config |
+| **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready ⭐ | 1× / 2× 3090 | vLLM ✅ · llama.cpp ✅ · SGLang ❌ blocked | Vision · tools · MTP n=3 · up to 262K ctx · vLLM dual = 89/127 TPS · llama.cpp single = full 262K, no prefill cliffs |
 
 More models coming. The repo structure scales — when we add Qwen3.5-27B / GLM-4.6 / etc., they go under `models/<name>/` with the same internal pattern.
 
