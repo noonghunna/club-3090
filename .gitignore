@@ -1,11 +1,13 @@
-# Model weights — never commit
-models/
+# Model weights — never commit. Default download dir is models-cache/ (set
+# via MODEL_DIR env var if you want a different path).
+models-cache/
 *.safetensors
 *.gguf
 *.bin
 
-# Genesis patches fetched by setup.sh (upstream, not ours to vendor)
-patches/genesis/
+# Genesis patches fetched by setup.sh (upstream, not ours to vendor).
+# Lives at models/<model>/vllm/patches/genesis/ in the new layout.
+models/*/vllm/patches/genesis/
 
 # Python
 __pycache__/
@@ -22,11 +24,14 @@ venv/
 .DS_Store
 
 # Docker compose state
-compose/*.log
+**/compose/*.log
 
 # Local env overrides
 .env
 *.env.local
 
-# Local safety backups of compose files (e.g. docker-compose.v714.yml.default)
-compose/*.default
+# Local safety backups of compose files (e.g. docker-compose.yml.default)
+**/compose/*.default
+
+# Patched vLLM source clone (volume-mounted by dual-card composes)
+vllm-src/

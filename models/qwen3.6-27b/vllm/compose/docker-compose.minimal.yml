@@ -1,0 +1,82 @@
+# ===========================================================================
+# Minimal — no spec-decode, no Genesis patches, no .tolist() patcher.
+#
+# When to pick this variant:
+#   - You want the simplest possible stack (fewer moving parts to debug)
+#   - You don't need MTP / spec-decode speedup
+#   - You're OK with ~30 TPS instead of the 65–95 TPS of the spec-decode variants
+#   - You want vision + tool calls to "just work" without any patches
+#
+# Trade-off vs the default `docker-compose.yml`:
+#   - This: no MTP, no Genesis → ~30 TPS, 32K ctx, vision ✓, tools ✓
+#   - Default: MTP + Genesis → ~65–84 TPS, 20K ctx, vision ✓, tools ✓
+#   - longctx-experimental: 125K ctx but no tools (TurboQuant K+1 cascade bug)
+#
+# This file exists because community feedback (single-3090 issue #1) showed
+# users sometimes hit the spec-decode tool-call cascade by booting the wrong
+# compose. This minimal path removes that whole class of failure modes by
+# never enabling spec-decode in the first place.
+#
+# Run:
+#   cd compose && docker compose -f docker-compose.minimal.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-minimal:
+    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    container_name: vllm-qwen36-27b-minimal
+    restart: "no"
+    ports:
+      - "8020:8000"
+    volumes:
+      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+    environment:
+      # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
+      # - CUDA_VISIBLE_DEVICES=0
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - OMP_NUM_THREADS=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "32768"
+      - --gpu-memory-utilization
+      - "0.92"
+      - --max-num-seqs
+      - "1"
+      - --kv-cache-dtype
+      - fp8_e5m2
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # No --speculative-config (this is the minimal variant — no spec-decode)
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

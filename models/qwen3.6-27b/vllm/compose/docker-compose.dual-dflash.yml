@@ -1,0 +1,83 @@
+# ===========================================================================
+# DFlash spec-decode on TP=2 — z-lab Qwen3.6-27B-DFlash draft.
+#
+# Hypothesis (per BENCHMARKS row 4 for Qwen3.5-27B on the same draft family):
+# DFlash N=4 unlocks ~+47% throughput vs no-spec on dense Qwen3-Next at TP=2.
+# Qwen3.6-27B is dense too (no MoE expert layers) so pad-Marlin should be a
+# no-op and the DFlash×AutoRound combo that crashed on Qwen3.6-35B-A3B (MoE)
+# shouldn't fire here.
+#
+# Trades vs the fp8/MTP default:
+#   - max_model_len drops from 262K to 16K (DFlash + cudagraph + KV pool tight)
+#   - vision tower ON (verified 2026-04-25 — MoonViT works with DFlash on Qwen3.6-27B)
+#
+# To run:
+#   cd compose && docker compose -f docker-compose.dflash.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-dual-dflash:
+    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    container_name: vllm-qwen36-27b-dual-dflash
+    restart: "no"
+    ports:
+      - "8012:8000"
+    volumes:
+      - ${MODEL_DIR:-/mnt/models/huggingface}:/root/.cache/huggingface
+      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "2"
+      - --disable-custom-all-reduce
+      - --max-model-len
+      - "185000"
+      - --gpu-memory-utilization
+      - "0.95"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "8192"
+      # No --kv-cache-dtype: DFlash needs head_size=256 + non-causal attention,
+      # and no Ampere backend supports that triple with fp8/turbo KV. FP16 default
+      # is the only working choice (matches Qwen3.5-27B + DFlash row 4 = 89.7 TPS).
+      # --language-model-only removed to enable MoonViT vision tower (2026-04-25 test).
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"dflash","model":"/root/.cache/huggingface/qwen3.6-27b-dflash","num_speculative_tokens":5}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
