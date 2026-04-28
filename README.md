@@ -75,7 +75,7 @@ bash scripts/switch.sh vllm/long-vision   # for example
 
 `launch.sh` calls `switch.sh` (down old, up new) and then `verify-full.sh` so you know it's serving cleanly before you point a client at it. See [`scripts/`](scripts/) for all helpers.
 
-For client snippets — Python (`openai` SDK + raw `requests`), TypeScript / Node, plus connection settings for Open WebUI, Cline, Cursor, and other OpenAI-compat clients — see [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
+For client snippets — Python (`openai` SDK + raw `requests`), TypeScript / Node, plus connection settings for Open WebUI, Cline, Cursor, and other OpenAI-compat clients — see [`docs/EXAMPLES.md`](docs/EXAMPLES.md). Common questions ("can I use a 4090?", "why MTP not EAGLE?", "why not Ollama?", "what's a prefill cliff?") have answers in [`docs/FAQ.md`](docs/FAQ.md).
 
 For llama.cpp (different engine, different recipe — useful for max context on single-card):
 ```bash
