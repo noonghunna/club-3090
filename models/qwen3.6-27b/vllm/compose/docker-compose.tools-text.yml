@@ -1,26 +1,26 @@
 # ===========================================================================
-# Text-only extended-context variant — use this if you need more than 20K
-# context and don't need vision/image inputs.
+# Tools-text variant — long single prompts (RAG, summarization, large doc Q&A)
+# without vision. Best for workloads that don't need image input but DO need
+# more context than the 48K default's prefill envelope.
 #
-# Compared to the default docker-compose.yml (which has vision enabled at
-# 20K ctx), this drops the MoonViT vision encoder (saves ~0.86 GB VRAM)
-# and spends that budget on KV cache → context grows from 20K to 75K with
-# the same throughput.
+# Drops the MoonViT vision encoder (saves ~0.86 GB VRAM) and spends that
+# budget on KV cache → context grows to 75K. fp8 KV avoids the GDN cliff
+# at 50-60K single prompts (we tested up to 60K-token depth on this variant).
+# Same MTP n=3 spec-decode as the default; same throughput class.
 #
-# Variant matrix:
+# Measured: 53 narr / 70 code TPS (CV 0.5-2.6%).
 #
-#   Compose file                                Max ctx   Narr   Code   Tools   Vision
-#   docker-compose.yml                            20K      66     84     ✅      ✅
-#   docker-compose.tools-text.yml (this file)     75K      65     84     ✅      ❌
-#   docker-compose.longctx-experimental.yml      125K      92     95     ✗       ✅ ⚠
+# All single-card variants in this dir:
 #
-# All three use MTP n=3. This and the default use fp8_e5m2 KV (validated
-# end-to-end via verify-full.sh). The experimental variant uses TurboQuant
-# KV for higher KV pool capacity but has output quality issues — see
-# docker-compose.longctx-experimental.yml header for details.
+#   Compose file                          Max ctx   Narr/Code TPS   KV     Vision   Status
+#   docker-compose.yml (default)            48K       51 / 68       TQ3    ✅       ⭐ recommended
+#   docker-compose.fast-chat.yml            20K       55 / 70       fp8    ✅       fastest at small ctx
+#   docker-compose.tools-text.yml (this)    75K       53 / 70       fp8    ❌       long single prompts
+#   docker-compose.no-genesis-mtp.yml       20K       55 / 68       fp8    ✅       same as fast-chat minus Genesis
+#   docker-compose.minimal.yml              32K       32 / 33       fp8    ✅       no spec-decode, simplest
 #
 # Run with:
-#   cd compose
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
 #   docker compose -f docker-compose.tools-text.yml up -d
 # ===========================================================================
 services:
@@ -31,7 +31,7 @@ services:
     ports:
       - "8020:8000"
     volumes:
-      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # Genesis v7.14+ modular package (replaces patch_genesis_unified.py).
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro

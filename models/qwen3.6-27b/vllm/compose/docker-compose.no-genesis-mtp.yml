@@ -27,7 +27,7 @@ services:
     ports:
       - "8020:8000"
     volumes:
-      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn

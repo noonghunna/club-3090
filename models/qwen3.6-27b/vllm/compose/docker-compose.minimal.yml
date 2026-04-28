@@ -4,18 +4,17 @@
 # When to pick this variant:
 #   - You want the simplest possible stack (fewer moving parts to debug)
 #   - You don't need MTP / spec-decode speedup
-#   - You're OK with ~30 TPS instead of the 65–95 TPS of the spec-decode variants
+#   - You're OK with ~32 TPS instead of the ~50-70 TPS of the spec-decode variants
 #   - You want vision + tool calls to "just work" without any patches
 #
 # Trade-off vs the default `docker-compose.yml`:
-#   - This: no MTP, no Genesis → ~30 TPS, 32K ctx, vision ✓, tools ✓
-#   - Default: MTP + Genesis → ~65–84 TPS, 20K ctx, vision ✓, tools ✓
-#   - longctx-experimental: 125K ctx but no tools (TurboQuant K+1 cascade bug)
+#   - This: no MTP, no Genesis → 32/33 TPS narr/code, 32K ctx, vision ✓, tools ✓
+#   - Default: MTP + Genesis P65 + TQ3 KV → 51/68 TPS, 48K ctx, vision ✓, tools ✓
 #
-# This file exists because community feedback (single-3090 issue #1) showed
-# users sometimes hit the spec-decode tool-call cascade by booting the wrong
-# compose. This minimal path removes that whole class of failure modes by
-# never enabling spec-decode in the first place.
+# This file exists because community feedback (predecessor repo issue #1)
+# showed users sometimes hit the spec-decode tool-call cascade by booting
+# the wrong compose. This minimal path removes that whole class of failure
+# modes by never enabling spec-decode in the first place.
 #
 # Run:
 #   cd compose && docker compose -f docker-compose.minimal.yml up -d
@@ -28,7 +27,7 @@ services:
     ports:
       - "8020:8000"
     volumes:
-      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0

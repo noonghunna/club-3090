@@ -32,7 +32,7 @@ services:
     ports:
       - "8010:8000"
     volumes:
-      - ${MODEL_DIR:-/mnt/models/huggingface}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=2
       # on AutoRound W4A16 models where out-dim shards fall below 64.
       - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro

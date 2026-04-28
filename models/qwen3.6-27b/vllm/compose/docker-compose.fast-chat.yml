@@ -32,7 +32,7 @@ services:
     ports:
       - "8020:8000"
     volumes:
-      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # Genesis v7.14+ modular package (mounted into vLLM's site-packages).
       # Replaces the old patch_genesis_unified.py shim path which Sandermage
       # removed when migrating to the modular layout. Apply via

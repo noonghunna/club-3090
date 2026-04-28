@@ -85,7 +85,7 @@ services:
     ports:
       - "8020:8000"
     volumes:
-      - ${MODEL_DIR:-../models}:/root/.cache/huggingface
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # Genesis v7.14 modular package (mounted into vLLM's site-packages).
       # Apply via `python3 -m vllm._genesis.patches.apply_all` at boot.
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
