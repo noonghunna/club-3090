@@ -1,0 +1,32 @@
+# Model weights — never commit
+models/
+*.safetensors
+*.gguf
+*.bin
+
+# Genesis patches fetched by setup.sh (upstream, not ours to vendor)
+patches/genesis/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Docker compose state
+compose/*.log
+
+# Local env overrides
+.env
+*.env.local
+
+# Local safety backups of compose files (e.g. docker-compose.v714.yml.default)
+compose/*.default

@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 760" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <!-- Background -->
+  <rect width="900" height="760" fill="#fafafa"/>
+
+  <!-- Title -->
+  <text x="450" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">
+    How VRAM is split on a single 24 GB RTX 3090
+  </text>
+  <text x="450" y="58" text-anchor="middle" font-size="13" fill="#475569">
+    <tspan font-family="ui-monospace, 'SF Mono', Consolas, monospace">--max-model-len</tspan> sets the context cap;
+    <tspan font-family="ui-monospace, 'SF Mono', Consolas, monospace">--gpu-memory-utilization</tspan> shifts KV vs activation headroom
+  </text>
+
+  <!-- ===== ANATOMY (top reference bar) ===== -->
+  <text x="40" y="100" font-size="14" font-weight="600" fill="#0f172a">1 — Anatomy</text>
+  <text x="40" y="118" font-size="11" fill="#64748b">Every config is a layout of these three regions inside the 24 GB envelope.</text>
+
+  <!-- Scale ruler: 1 GB = 27px, 24 GB = 648px from x=120 to x=768 -->
+  <!-- Tick marks 0..24 GB -->
+  <g font-size="9" fill="#94a3b8" text-anchor="middle">
+    <text x="120" y="148">0</text>
+    <text x="255" y="148">5</text>
+    <text x="390" y="148">10</text>
+    <text x="525" y="148">15</text>
+    <text x="660" y="148">20</text>
+    <text x="768" y="148">24 GB</text>
+  </g>
+  <line x1="120" y1="152" x2="768" y2="152" stroke="#cbd5e1" stroke-width="1"/>
+  <line x1="120" y1="152" x2="120" y2="158" stroke="#cbd5e1"/>
+  <line x1="255" y1="152" x2="255" y2="158" stroke="#cbd5e1"/>
+  <line x1="390" y1="152" x2="390" y2="158" stroke="#cbd5e1"/>
+  <line x1="525" y1="152" x2="525" y2="158" stroke="#cbd5e1"/>
+  <line x1="660" y1="152" x2="660" y2="158" stroke="#cbd5e1"/>
+  <line x1="768" y1="152" x2="768" y2="158" stroke="#cbd5e1"/>
+
+  <!-- Anatomy bar: model 17.7 GB + KV pool 4.3 + headroom 1.9 (default 48K + 0.92) -->
+  <rect x="120" y="160" width="478" height="46" fill="#1e3a8a" stroke="#0f172a" stroke-width="1"/>
+  <text x="359" y="188" text-anchor="middle" font-size="13" font-weight="600" fill="white">Model weights</text>
+  <text x="359" y="201" text-anchor="middle" font-size="10" fill="#cbd5e1">17.7 GB · fixed</text>
+
+  <rect x="598" y="160" width="116" height="46" fill="#0d9488" stroke="#0f172a" stroke-width="1"/>
+  <text x="656" y="184" text-anchor="middle" font-size="11" font-weight="600" fill="white">KV pool</text>
+  <text x="656" y="197" text-anchor="middle" font-size="9" fill="#ccfbf1">controlled by mem-util</text>
+
+  <rect x="714" y="160" width="54" height="46" fill="#fbbf24" stroke="#0f172a" stroke-width="1"/>
+  <text x="741" y="184" text-anchor="middle" font-size="10" font-weight="600" fill="#451a03">Headroom</text>
+  <text x="741" y="197" text-anchor="middle" font-size="9" fill="#78350f">activations</text>
+
+  <!-- Annotations under anatomy bar -->
+  <g font-size="10" fill="#475569">
+    <line x1="359" y1="216" x2="359" y2="232" stroke="#94a3b8"/>
+    <text x="359" y="246" text-anchor="middle">stays the same regardless of config</text>
+
+    <line x1="598" y1="216" x2="598" y2="232" stroke="#94a3b8" stroke-dasharray="2,2"/>
+    <line x1="714" y1="216" x2="714" y2="232" stroke="#94a3b8" stroke-dasharray="2,2"/>
+    <line x1="598" y1="232" x2="714" y2="232" stroke="#94a3b8"/>
+    <text x="656" y="246" text-anchor="middle" font-weight="600" fill="#0f172a">mem_util × 24 GB cap</text>
+
+    <line x1="714" y1="216" x2="714" y2="232" stroke="#94a3b8" stroke-dasharray="2,2"/>
+    <line x1="768" y1="216" x2="768" y2="232" stroke="#94a3b8" stroke-dasharray="2,2"/>
+    <line x1="714" y1="232" x2="768" y2="232" stroke="#94a3b8"/>
+    <text x="741" y="246" text-anchor="middle" font-weight="600" fill="#0f172a">(1 − mem_util) × 24</text>
+  </g>
+
+  <!-- ===== CONFIG TIERS ===== -->
+  <text x="40" y="298" font-size="14" font-weight="600" fill="#0f172a">2 — Tiers (default + opt-ins)</text>
+  <text x="40" y="316" font-size="11" fill="#64748b">As mem-util rises, KV grows but headroom shrinks. The default ships at 0.92.</text>
+
+  <!-- Tier rows: scale 1 GB = 27 px; bars start at x=200, model = 17.7×27 = 478 px -->
+  <!-- Tier label: y_label = bar_y + 18; bar_y starts at 340, height 28, gap 14 -->
+
+  <!-- Header columns -->
+  <g font-size="10" font-weight="600" fill="#475569">
+    <text x="60" y="335">config</text>
+    <text x="195" y="335">→</text>
+    <text x="785" y="335" text-anchor="start">headroom</text>
+  </g>
+
+  <!-- TIER 1: 48K + 0.92 (DEFAULT) -->
+  <text x="60" y="358" font-size="12" font-weight="700" fill="#0f172a">48K · 0.92</text>
+  <text x="60" y="372" font-size="9" fill="#16a34a" font-weight="700">⭐ DEFAULT</text>
+  <rect x="200" y="345" width="478" height="26" fill="#1e3a8a"/>
+  <rect x="678" y="345" width="116" height="26" fill="#0d9488"/>
+  <rect x="794" y="345" width="52" height="26" fill="#fbbf24"/>
+  <text x="439" y="362" text-anchor="middle" font-size="10" font-weight="600" fill="white">17.7 GB</text>
+  <text x="736" y="362" text-anchor="middle" font-size="9" font-weight="600" fill="white">KV 4.3</text>
+  <text x="820" y="362" text-anchor="middle" font-size="9" font-weight="700" fill="#451a03">1.9</text>
+
+  <!-- TIER 2: 64K + 0.92 (same headroom; row omitted to save space — covered by 48K visually) -->
+
+  <!-- TIER 3: 96K + 0.93 -->
+  <text x="60" y="402" font-size="12" font-weight="700" fill="#0f172a">96K · 0.93</text>
+  <text x="60" y="416" font-size="9" fill="#64748b">opt-in</text>
+  <rect x="200" y="389" width="478" height="26" fill="#1e3a8a"/>
+  <rect x="678" y="389" width="123" height="26" fill="#0d9488"/>
+  <rect x="801" y="389" width="45" height="26" fill="#fbbf24"/>
+  <text x="439" y="406" text-anchor="middle" font-size="10" font-weight="600" fill="white">17.7 GB</text>
+  <text x="740" y="406" text-anchor="middle" font-size="9" font-weight="600" fill="white">KV 4.6</text>
+  <text x="823" y="406" text-anchor="middle" font-size="9" font-weight="700" fill="#451a03">1.7</text>
+
+  <!-- TIER 4: 128K + 0.95 -->
+  <text x="60" y="446" font-size="12" font-weight="700" fill="#0f172a">128K · 0.95</text>
+  <text x="60" y="460" font-size="9" fill="#64748b">opt-in</text>
+  <rect x="200" y="433" width="478" height="26" fill="#1e3a8a"/>
+  <rect x="678" y="433" width="135" height="26" fill="#0d9488"/>
+  <rect x="813" y="433" width="33" height="26" fill="#fbbf24"/>
+  <text x="439" y="450" text-anchor="middle" font-size="10" font-weight="600" fill="white">17.7 GB</text>
+  <text x="745" y="450" text-anchor="middle" font-size="9" font-weight="600" fill="white">KV 5.0</text>
+  <text x="829" y="450" text-anchor="middle" font-size="9" font-weight="700" fill="#451a03">1.2</text>
+
+  <!-- TIER 5: 192K + 0.98 -->
+  <text x="60" y="490" font-size="12" font-weight="700" fill="#0f172a">192K · 0.98</text>
+  <text x="60" y="504" font-size="9" fill="#dc2626">opt-in (risky)</text>
+  <rect x="200" y="477" width="478" height="26" fill="#1e3a8a"/>
+  <rect x="678" y="477" width="155" height="26" fill="#0d9488"/>
+  <rect x="833" y="477" width="13" height="26" fill="#fbbf24"/>
+  <text x="439" y="494" text-anchor="middle" font-size="10" font-weight="600" fill="white">17.7 GB</text>
+  <text x="755" y="494" text-anchor="middle" font-size="9" font-weight="600" fill="white">KV 5.8</text>
+  <text x="839" y="494" text-anchor="middle" font-size="9" font-weight="700" fill="#dc2626">0.5</text>
+
+  <!-- ===== CLIFFS ===== -->
+  <text x="40" y="555" font-size="14" font-weight="600" fill="#0f172a">3 — Activation peaks during prefill must fit in the headroom</text>
+  <text x="40" y="573" font-size="11" fill="#64748b">If a peak exceeds available headroom: hard CUDA OOM, engine dies. No fallback.</text>
+
+  <!-- Cliff 1 -->
+  <g>
+    <rect x="40" y="595" width="395" height="80" rx="6" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+    <text x="60" y="615" font-size="12" font-weight="700" fill="#991b1b">Cliff 1 — TurboQuant tool prefill</text>
+    <text x="60" y="632" font-size="10" fill="#7f1d1d">Triggers: ≥25K-token tool message at high mem-util</text>
+    <text x="60" y="647" font-size="10" fill="#7f1d1d">Peak allocation: ~138 MiB</text>
+    <text x="60" y="664" font-size="10" font-weight="600" fill="#0f172a">Fits at: 48K · 96K · 128K  ·  Fails at: 192K (0.5 GB headroom too tight)</text>
+  </g>
+
+  <!-- Cliff 2 -->
+  <g>
+    <rect x="465" y="595" width="395" height="80" rx="6" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+    <text x="485" y="615" font-size="12" font-weight="700" fill="#991b1b">Cliff 2 — DeltaNet GDN forward</text>
+    <text x="485" y="632" font-size="10" fill="#7f1d1d">Triggers: ANY single prompt above ~50–60K tokens</text>
+    <text x="485" y="647" font-size="10" fill="#7f1d1d">Peak allocation: ~700 MiB to ~1 GB (grows with seq_len)</text>
+    <text x="485" y="664" font-size="10" font-weight="600" fill="#0f172a">Fits only when prompt &lt; 50K tokens — hardware-bound</text>
+  </g>
+
+  <!-- Footer note -->
+  <text x="450" y="710" text-anchor="middle" font-size="11" fill="#475569">
+    Setting <tspan font-family="ui-monospace, 'SF Mono', Consolas, monospace">--max-model-len</tspan> below the cliff = engine HTTP-400-rejects oversize requests cleanly,
+  </text>
+  <text x="450" y="726" text-anchor="middle" font-size="11" fill="#475569">
+    rather than letting them through to OOM. That's why the default ships at 48K.
+  </text>
+
+  <!-- Cliff 1 size visualization (small box matching ~138 MiB to scale on the same 27px/GB scale) -->
+  <!-- 138 MiB ≈ 0.135 GB → 3.6 px wide. Show as a tiny red marker -->
+  <!-- Cliff 2 size: 1 GB → 27 px -->
+  <g transform="translate(40, 696)">
+    <text x="0" y="-2" font-size="9" fill="#475569" font-weight="600">Cliff sizes to scale (1 GB = 27 px):</text>
+    <rect x="220" y="-12" width="4" height="14" fill="#dc2626"/>
+    <text x="226" y="-2" font-size="9" fill="#7f1d1d">Cliff 1 (~138 MiB)</text>
+    <rect x="320" y="-12" width="27" height="14" fill="#dc2626"/>
+    <text x="349" y="-2" font-size="9" fill="#7f1d1d">Cliff 2 (~1 GB)</text>
+  </g>
+</svg>
