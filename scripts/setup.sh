@@ -73,25 +73,29 @@ echo "Model dir:    ${MODEL_DIR}"
 # between v7.13 (monolithic patch_genesis_unified.py shim) and v7.14 (modular
 # vllm/_genesis package + per-patch env opts). Newer composes mount the package;
 # the legacy compose still references the v7.13 shim.
-# Pin Genesis to a tested tag — addresses the "out-of-sync genesis dir vs
-# compose variant" concern from issue #8 in the predecessor repo. We test
-# composes against this specific tag; bumping requires re-running
-# verify-full.sh to confirm the new tag works on your config.
-GENESIS_PIN="${GENESIS_PIN:-v7.51-stable-2026-04-27}"
+# Pin Genesis to the exact commit our published numbers were measured against.
+# This is bf667c7 (Genesis HEAD as of 2026-04-27 — semver "v7.54", untagged).
+# Tagged stable v7.51-stable-2026-04-27 is one minor older; we ship the exact
+# tested commit instead so reproducibility doesn't depend on the upstream tag
+# moving or being garbage-collected. Bumping requires re-running verify-full.sh
+# to confirm the new commit works on your config.
+GENESIS_PIN="${GENESIS_PIN:-bf667c7}"
 
 if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   if [[ -d "${GENESIS_DIR}/.git" ]]; then
     echo "[genesis] Already cloned at ${GENESIS_DIR} — fetching + checking out ${GENESIS_PIN} ..."
-    (cd "${GENESIS_DIR}" && git fetch --tags origin && git checkout "${GENESIS_PIN}" 2>&1 | tail -3)
+    (cd "${GENESIS_DIR}" && git fetch origin && git checkout "${GENESIS_PIN}" 2>&1 | tail -3)
   else
     echo "[genesis] Cloning Sandermage/genesis-vllm-patches at ${GENESIS_PIN} ..."
-    git clone --branch "${GENESIS_PIN}" --depth 1 https://github.com/Sandermage/genesis-vllm-patches.git "${GENESIS_DIR}"
+    # Full clone (commit SHAs aren't reachable via --branch + --depth 1).
+    git clone https://github.com/Sandermage/genesis-vllm-patches.git "${GENESIS_DIR}"
+    (cd "${GENESIS_DIR}" && git checkout "${GENESIS_PIN}")
   fi
 
-  # v7.14 layout sanity check
+  # v7.14+ layout sanity check
   if [[ ! -d "${GENESIS_DIR}/vllm/_genesis" ]]; then
     echo "ERROR: genesis tree at ${GENESIS_PIN} missing vllm/_genesis package." >&2
-    echo "       Re-run with GENESIS_PIN=<other-tag> to try a different version." >&2
+    echo "       Re-run with GENESIS_PIN=<other-ref> to try a different version." >&2
     exit 1
   fi
   echo "[genesis] Pinned to ${GENESIS_PIN} ($(cd "${GENESIS_DIR}" && git rev-parse --short HEAD))"

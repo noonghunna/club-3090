@@ -7,7 +7,8 @@ models-cache/
 
 # Genesis patches fetched by setup.sh (upstream, not ours to vendor).
 # Lives at models/<model>/vllm/patches/genesis/ in the new layout.
-models/*/vllm/patches/genesis/
+# No trailing slash — also matches local symlinks pointing at out-of-tree clones.
+models/*/vllm/patches/genesis
 
 # Python
 __pycache__/

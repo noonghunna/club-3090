@@ -1,0 +1,78 @@
+name: Numbers from your rig
+description: Cross-rig TPS / context-ceiling contribution. We collect these and add them to BENCHMARKS.
+title: "[bench] "
+labels: ["bench-contribution"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for benching! Your numbers help us tell which results are
+        rig-dependent vs. universal. We'll add high-quality contributions to
+        our benchmarks table with attribution.
+
+        Please use the canonical bench prompt so your numbers are comparable
+        to the ones in the repo:
+
+        > **Narrative prompt:** "Write a detailed 800-word essay explaining transformer attention."
+        > `max_tokens=1000, temperature=0.6, top_p=0.95, top_k=20, enable_thinking=false`
+        >
+        > **Code prompt:** "Write a Python implementation of quicksort with comments explaining each step."
+        > `max_tokens=800`, same sampling.
+
+        The shipped `scripts/bench.sh` runs both with these exact settings.
+
+  - type: input
+    id: rig
+    attributes:
+      label: Rig — GPUs + interconnect
+      placeholder: "1× RTX 3090, or 2× RTX 3090 (PCIe Gen4 x16, no NVLink), or 1× RTX 4090, ..."
+    validations:
+      required: true
+
+  - type: input
+    id: cpu-ram
+    attributes:
+      label: CPU + system RAM
+      placeholder: "Ryzen 9 5950X / 64 GB DDR4-3600"
+    validations:
+      required: true
+
+  - type: input
+    id: compose-variant
+    attributes:
+      label: Compose variant + commit
+      description: Which compose file did you run, and at which club-3090 commit?
+      placeholder: "docker-compose.yml @ 5060e22"
+    validations:
+      required: true
+
+  - type: textarea
+    id: bench-output
+    attributes:
+      label: scripts/bench.sh output
+      description: Full output of `bash scripts/bench.sh`. Includes both narrative + code TPS, AL, and per-run numbers.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: vram
+    attributes:
+      label: VRAM used (per card, peak)
+      description: From `nvidia-smi --query-gpu=memory.used --format=csv` while the bench is running.
+      placeholder: "23.6 GB / 24 GB"
+    validations:
+      required: true
+
+  - type: input
+    id: max-ctx
+    attributes:
+      label: Max context that boots cleanly
+      description: If you pushed `--max-model-len` past the shipped default, what's the highest value that boots and survives `verify-full.sh`?
+      placeholder: "48K (shipped default), or 90K, or 'didn't try'"
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything else worth knowing — driver version, distro, custom flags, surprising failures.
