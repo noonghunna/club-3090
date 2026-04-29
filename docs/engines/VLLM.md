@@ -118,7 +118,7 @@ If you're running long-ctx tool flows (50K+ tokens with multiple tools active), 
 |---|---|---|
 | IDE agents (Cline / Cursor / Copilot) + long prompts | `docker-compose.tools-text.yml` | fp8 + 75K + no vision; PN8 closes Cliff 1 |
 | No spec-decode (debugging) | `docker-compose.minimal.yml` | 32K + fp8 + no MTP — simplest stack |
-| No Genesis patches | `docker-compose.no-genesis-mtp.yml` | 20K + fp8 + MTP — control variant |
+| Minimal (no Genesis, no spec-decode) | `docker-compose.minimal.yml` | 32K + fp8 — escape hatch if Genesis clone fails |
 
 See [SINGLE_CARD.md](../SINGLE_CARD.md) and [DUAL_CARD.md](../DUAL_CARD.md) for full per-workload guidance.
 

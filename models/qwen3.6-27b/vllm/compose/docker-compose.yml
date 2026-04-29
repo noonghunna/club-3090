@@ -67,8 +67,7 @@
 #   docker-compose.long-vision.yml                    192K   51/68 TPS  vision     Long ctx + vision (R3'); prefill caveats apply
 #   docker-compose.long-text.yml                      205K   50/66 TPS  no vis     Engine-ceiling text-only (R3'''); same caveats
 #   docker-compose.tools-text.yml                      75K   51/65 TPS  no vis     IDE agents (Cline/Cursor/Copilot) — fp8 KV + PN8 closes Cliff 1
-#   docker-compose.no-genesis-mtp.yml                  20K   55/68 TPS  vision     Plain vLLM nightly + MTP — control variant
-#   docker-compose.minimal.yml                         32K   32/33 TPS  vision     Simplest stack; no spec-decode
+#   docker-compose.minimal.yml                         32K   32/33 TPS  vision     Simplest stack; no Genesis, no spec-decode
 #
 # Upstream tracker: vllm-project/vllm#40880 (Sandermage's root-cause + v7.14
 # patches). Proper kernel fix (P67) designed-but-not-implemented; v7.14 is

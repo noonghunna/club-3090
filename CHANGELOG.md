@@ -2,6 +2,10 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-04-29 — Remove `no-genesis-mtp.yml` (research artifact, not user-facing)
+
+`no-genesis-mtp.yml` was a control variant we used to A/B-test whether MTP-without-Genesis worked (it does — Genesis isn't strictly required for fp8+MTP). Useful for our internal upstream-bug-isolation workflow, but no real reason for end users to pick it over `tools-text.yml` (fp8 + MTP + Genesis bugfixes + 75K, strictly better) or `minimal.yml` (no Genesis at all, simplest stack). Wizard already didn't surface it. Removed from `switch.sh` variant map, sibling compose "see also" tables, patches/README, and engines/VLLM.md.
+
 ## 2026-04-29 — Verified Sandermage's 256K single-prompt claim on dual.yml
 
 Cross-rig verification of [Sandermage's 2026-04-29 claim](https://github.com/noonghunna/qwen36-27b-single-3090/issues/1#issuecomment-4342925976) that 256K single-prompt prefill works on `dual.yml`-class TP=2 setups. He measured 262 104 tokens @ 311s on 2× A5000 (~843 tok/s prefill).

@@ -14,7 +14,7 @@ This directory contains the model + engine-specific patches that different compo
 ## When you need each patch
 
 - **Single-card default** (`docker-compose.yml`) — uses TurboQuant 3-bit KV + Genesis v7.14 P65 + tolist patch. Fetched by `setup.sh qwen3.6-27b`.
-- **Single-card no-genesis-mtp / minimal** — fp8 KV, no patches needed.
+- **Single-card minimal** — fp8 KV, no patches needed (escape hatch if `setup.sh` Genesis clone fails).
 - **Single-card tools-text** — fp8 KV + Genesis (P64 qwen3-coder tool parser fix + PN8 memory savings); no tolist patch (fp8 doesn't trip the bug).
 - **Dual-card default + DFlash variants** — fp8 / fp16 KV. Need only the Marlin pad fork (no Genesis, no tolist).
 - **Dual-card turbo** — TQ KV + Genesis v7.14 + tolist + Marlin pad fork.
@@ -107,4 +107,4 @@ Genesis v7.14+ ships several patches as opt-in env flags. Each compose enables o
 | ~~`GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1`~~ | ~~Long-ctx tool-format adherence~~ — **disabled 2026-04-29**, breaks IDE agents (see [club-3090#2](https://github.com/noonghunna/club-3090/issues/2#issuecomment-4346740245)) | (none — opt-in only) |
 | ~~`GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1`~~ | ~~Long-ctx tool-format reminder~~ — **disabled 2026-04-29**, same reason | (none — opt-in only) |
 
-Composes that don't load Genesis (no-genesis-mtp, minimal, dual-default, dual-dflash, dual-dflash-noviz) ignore these env vars.
+Composes that don't load Genesis (minimal, dual-default, dual-dflash, dual-dflash-noviz) ignore these env vars.

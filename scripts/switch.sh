@@ -19,8 +19,7 @@
 #     vllm/long-vision      192K + TQ3 + vision (Cliff 1 unsafe with big tool prompts)
 #     vllm/long-text        205K + TQ3 + text-only
 #     vllm/tools-text       75K + fp8 + MTP + text-only (IDE agents — Cline / Cursor)
-#     vllm/no-genesis-mtp   20K + fp8 + MTP (no Genesis — control)
-#     vllm/minimal          32K + fp8 (no spec-decode, simplest)
+#     vllm/minimal          32K + fp8 (no Genesis, no spec-decode, simplest)
 #
 #   Dual-card vLLM (TP=2):
 #     vllm/dual             262K + fp8 + 2 streams + vision (recommended dual)
@@ -50,7 +49,6 @@ declare -A VARIANTS=(
   [vllm/long-vision]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.long-vision.yml"
   [vllm/long-text]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.long-text.yml"
   [vllm/tools-text]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.tools-text.yml"
-  [vllm/no-genesis-mtp]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.no-genesis-mtp.yml"
   [vllm/minimal]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.minimal.yml"
   [vllm/dual]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual.yml"
   [vllm/dual-turbo]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-turbo.yml"
