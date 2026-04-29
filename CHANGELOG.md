@@ -6,6 +6,10 @@ Changes that span the entire stack — engine version pins, script behavior, rep
 
 `no-genesis-mtp.yml` was a control variant we used to A/B-test whether MTP-without-Genesis worked (it does — Genesis isn't strictly required for fp8+MTP). Useful for our internal upstream-bug-isolation workflow, but no real reason for end users to pick it over `tools-text.yml` (fp8 + MTP + Genesis bugfixes + 75K, strictly better) or `minimal.yml` (no Genesis at all, simplest stack). Wizard already didn't surface it. Removed from `switch.sh` variant map, sibling compose "see also" tables, patches/README, and engines/VLLM.md.
 
+## 2026-04-29 — Add `docs/CLIFFS.md` — full prefill-cliff synopsis
+
+Single comprehensive document consolidating everything we know about Cliff 1 and Cliff 2: TL;DR table, empirical bisection (with stack traces), root-cause walk-through (FA2 `softmax_lse` cap-leak for Cliff 1, fla.ops GDN intermediate buffer for Cliff 2), why earlier "FFN intermediate buffer" framing was wrong, why mem-util doesn't help (coupling with max-ctx), why PN8 closes Cliff 1 on `tools-text.yml` but not on TQ3 paths, why llama.cpp dodges both structurally, alternative attention backends evaluated, who-can-fix-it landscape with timelines, what we could do at any difficulty level (trivial → out of scope), recommended path forward, and re-test triggers. Cross-linked from FAQ and README. Replaces scattered cliff explanations with one canonical reference.
+
 ## 2026-04-29 — Cliff 1 root cause REVISED (FA2 softmax_lse pre-allocation, not FFN buffer)
 
 Bisected long-vision config space (192K / 128K / 96K / 86K @ 0.98 and 0.92 mem-util) to find Cliff-1-safe ceiling. Surprising result: **at fixed mem-util, lowering max-ctx changes nothing** because vLLM allocates the maximum KV pool the budget allows regardless of max-ctx (max-ctx only caps single-seq depth). And at fixed max-ctx, lowering mem-util forces the engine ceiling down too (the two knobs are coupled).

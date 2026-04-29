@@ -106,6 +106,7 @@ club-3090/
 │   ├── HARDWARE.md                        Ampere SM 8.6+, NVLink note, 24 GB ceilings
 │   ├── GLOSSARY.md                        plain-language definitions (TPS / KV / MTP / TP / etc.)
 │   ├── UPSTREAM.md                        every upstream issue / PR we depend on or have filed
+│   ├── CLIFFS.md                          full synopsis of the prefill cliffs (root causes + fix landscape)
 │   ├── img/                               chart sources (performance.svg, vram-budget-{single,dual,combined}.svg) + PNG exports
 │   └── engines/                           cross-model engine comparison + per-engine deep dives
 │       ├── README.md                      decision tree, pros/cons matrix
