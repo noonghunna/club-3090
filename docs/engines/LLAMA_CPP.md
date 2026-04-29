@@ -34,6 +34,24 @@ The ~4 GB savings going from AutoRound (vLLM) to UD-Q3_K_XL (llama.cpp) translat
 
 ---
 
+## Why llama.cpp doesn't hit the prefill cliffs vLLM does
+
+Both engines run the same model. Both do chunked prefill. Yet vLLM at 192K + TQ3 + vision OOMs on a 25K-token tool message ([Cliff 1](../FAQ.md#whats-a-prefill-cliff)) while llama.cpp at 262K + q4_0 KV processes the same message cleanly. **It's not a tuning gap — it's a structural difference in how each engine allocates per-call workspace.** Three pieces:
+
+**1. Different attention library entirely.** vLLM links Dao-AILab FlashAttention 2 (`_vllm_fa2_C.varlen_fwd`). llama.cpp uses ggml-cuda kernels — `fattn-mma-f16.cu`, `fattn-tile-f16.cu`, `fattn-vec-f16.cu`. **There's no `max_seqlen` parameter to leak.** ggml's attention forward dispatches per batch with output buffers sized by *current* prompt length; FA2's varlen kernel allocates `softmax_lse` as `[num_seqs, num_heads, max_seqlen]` — sized by an upper bound that vLLM passes through cudagraph-capture metadata as `max_model_len`. So a 25K-token tool prefill at vLLM's `max-model-len=192K` reserves softmax_lse for 192K; the same prefill on llama.cpp reserves softmax_lse for 25K. See upstream root cause [Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011) (open since 2024).
+
+**2. Different KV / workspace model.** vLLM uses paged attention with varlen kernels that need per-call workspace pre-allocated from a worst-case bound. llama.cpp pre-allocates the full KV cache at boot as one contiguous slab per layer (sized by `--ctx-size`), then attention forward calls allocate workspace dynamically by current chunk. The static-slab + dynamic-workspace pattern means activation pressure per call is proportional to actual token count, not `max-model-len`.
+
+**3. Cudagraph capture path differs.** llama.cpp's cudagraph support (added recently for decode TPS) is **decode-only** — prefill goes through the imperative ggml graph. So there's no path for `max_model_len` to leak through capture metadata into kernel signatures. The cap can't leak because there's nowhere for it to leak through.
+
+**Bonus — Cliff 2 is also handled differently.** llama.cpp's Qwen3-Next implementation processes DeltaNet/GDN layers with online state updates rather than allocating the O(seq_len × chunk_size) intermediate that `fla.ops.chunk_gated_delta_rule_fwd` materializes in vLLM. So [Cliff 2](../FAQ.md#whats-a-prefill-cliff) doesn't fire either — single prompts at 50K+, 100K+, 200K+ all process cleanly.
+
+**Net effect:** same model, same hardware, but the engines are *different memory machines*. vLLM's design optimizes for batched serving with fixed-shape kernels and cudagraph capture (which requires worst-case workspace allocation). llama.cpp's design serves one request at a time with dynamic shapes (cheaper per-call, no batching wins). The 3-4× TPS gap (70+ vLLM vs ~21 llama.cpp on this stack) and the prefill-cliff gap come from the same architectural choice — they're two sides of the same trade.
+
+This is exactly why our launch frame is **two routes, not one** ([README](../../README.md)): vLLM dual-card for max throughput in environments where you control prompt shape, llama.cpp single-card for max robustness when prompts can balloon unpredictably.
+
+---
+
 ## Pros
 
 | Pro | Detail |
