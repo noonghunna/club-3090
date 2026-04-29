@@ -209,6 +209,7 @@ When PR #40361 lands, we drop the `/opt/ai/vllm-src/` mount from dual composes. 
 
 - [Qwen3.6-27B README](README.md) — model overview, recommended configs, quick start
 - [/docs/SINGLE_CARD.md](../../docs/SINGLE_CARD.md) and [/docs/DUAL_CARD.md](../../docs/DUAL_CARD.md) — per-workload guides (chat, agents, code, RAG, vision, frontier ctx, multi-tenant)
+- [/docs/UPSTREAM.md](../../docs/UPSTREAM.md) — single source of truth for upstream issues / PRs (vLLM, Genesis, fla-org, llama.cpp, transformers, SGLang). Status emoji + what unblocks for us + workaround per row
 - [Qwen3.6-27B CHANGELOG](CHANGELOG.md) — dated history
 - [Cross-engine docs](../../docs/engines/) — comparison + per-engine deep dives
 - [Hardware notes](../../docs/HARDWARE.md) — Ampere SM 8.6+, NVLink, power, etc.

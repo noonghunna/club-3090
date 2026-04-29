@@ -2,6 +2,13 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-04-29 — Add `docs/UPSTREAM.md` + `AGENTS.md` (consolidate upstream tracking)
+
+- **`docs/UPSTREAM.md`** (new) — single source of truth for every upstream issue / PR we depend on, have filed, or use as workaround context. Categorized by upstream (vLLM, Genesis, fla-org, FlashQLA, llama.cpp, transformers, SGLang). Status emoji per row (🟢/🔵/🟡/🟠/🔴/⚫/✅/❌) + what-it-unblocks + local workaround. Replaces scattered cross-references in CHANGELOG / INTERNALS / FAQ / per-compose comment headers.
+- **`AGENTS.md`** (new, repo root) — concise AI-coding-agent guidance. Includes the rule "before filing or referencing an upstream issue, check + update `docs/UPSTREAM.md`" so the tracker stays the canonical place. Also captures the Genesis-opt-in vetting rule from today's P68/P69 bisection (behavioral mitigations need streaming + large-prompt repro before shipping default-on).
+- Cross-links from `README.md`, `CONTRIBUTING.md`, and `models/qwen3.6-27b/INTERNALS.md` "See also" sections updated to point at both new files.
+- Convention going forward: file an upstream issue → add row to `UPSTREAM.md` → cross-link from any code/doc that depends on the workaround → update the row when status changes (don't delete; mark ✅/❌ for historical context).
+
 ## 2026-04-29 — Remove `fast-chat.yml` + extend P68/P69 disable to all Genesis-loading composes
 
 - **`docker-compose.fast-chat.yml`** — deleted. Post-PN8, `fast-chat.yml` (20K, fp8, vision) and `docker-compose.yml` (48K, TQ3, vision) had effectively the same TPS (52/67 vs 50/67), so fast-chat's only remaining differentiator was "smaller context = ~3s faster boot." Not worth a maintained variant when 20K is also actively bad for IDE-agent users (Copilot Gateway tool-schema preamble alone hits 20K).

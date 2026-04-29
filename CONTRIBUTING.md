@@ -70,7 +70,9 @@ Apache-2.0 (see [LICENSE](LICENSE)). By submitting a PR you agree your contribut
 ## See also
 
 - [README](README.md) — top-level overview
+- [AGENTS.md](AGENTS.md) — guidance for AI coding agents (Claude Code, Cursor, etc.) working in this repo
 - [docs/FAQ.md](docs/FAQ.md) — common questions
 - [docs/EXAMPLES.md](docs/EXAMPLES.md) — client snippets
+- [docs/UPSTREAM.md](docs/UPSTREAM.md) — every upstream issue / PR we depend on or have filed (file new issues here first)
 - [models/qwen3.6-27b/INTERNALS.md](models/qwen3.6-27b/INTERNALS.md) — engineering deep dive (where most "why is X this way" answers live)
 - [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) — bug report + numbers-from-your-rig templates

@@ -85,7 +85,7 @@ bash scripts/switch.sh vllm/long-vision   # for example
 
 `launch.sh` calls `switch.sh` (down old, up new) and then `verify-full.sh` so you know it's serving cleanly before you point a client at it. See [`scripts/`](scripts/) for all helpers.
 
-For client snippets — Python (`openai` SDK + raw `requests`), TypeScript / Node, plus connection settings for Open WebUI, Cline, Cursor, and other OpenAI-compat clients — see [`docs/EXAMPLES.md`](docs/EXAMPLES.md). Common questions ("can I use a 4090?", "why MTP not EAGLE?", "why not Ollama?", "what's a prefill cliff?") have answers in [`docs/FAQ.md`](docs/FAQ.md). Trying to decide self-host vs cloud APIs vs other local options? [`docs/COMPARISONS.md`](docs/COMPARISONS.md). Want to contribute numbers, bug repros, or new variants? [`CONTRIBUTING.md`](CONTRIBUTING.md).
+For client snippets — Python (`openai` SDK + raw `requests`), TypeScript / Node, plus connection settings for Open WebUI, Cline, Cursor, and other OpenAI-compat clients — see [`docs/EXAMPLES.md`](docs/EXAMPLES.md). Common questions ("can I use a 4090?", "why MTP not EAGLE?", "why not Ollama?", "what's a prefill cliff?") have answers in [`docs/FAQ.md`](docs/FAQ.md). Trying to decide self-host vs cloud APIs vs other local options? [`docs/COMPARISONS.md`](docs/COMPARISONS.md). Want to contribute numbers, bug repros, or new variants? [`CONTRIBUTING.md`](CONTRIBUTING.md). Tracking the upstream issues and PRs we depend on or have filed? [`docs/UPSTREAM.md`](docs/UPSTREAM.md).
 
 For llama.cpp (different engine, different recipe — useful for max context on single-card):
 ```bash
@@ -105,6 +105,7 @@ club-3090/
 │   ├── ARCHITECTURE.md                    how this stack thinks about LLM serving on 24 GB
 │   ├── HARDWARE.md                        Ampere SM 8.6+, NVLink note, 24 GB ceilings
 │   ├── GLOSSARY.md                        plain-language definitions (TPS / KV / MTP / TP / etc.)
+│   ├── UPSTREAM.md                        every upstream issue / PR we depend on or have filed
 │   ├── img/                               chart sources (performance.svg, vram-budget-{single,dual,combined}.svg) + PNG exports
 │   └── engines/                           cross-model engine comparison + per-engine deep dives
 │       ├── README.md                      decision tree, pros/cons matrix
