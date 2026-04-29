@@ -148,7 +148,9 @@ bash scripts/switch.sh --list              # show all variants
 
 ## Performance summary
 
-For per-config measured numbers + variance + AL / accept rates, see the [TPS chart in the top-level README](../README.md#measured-tps-at-a-glance) and the per-config row docstrings inside each compose YAML.
+![Qwen3.6-27B TPS — 2× 3090 configs (TP=2)](img/performance-dual.png)
+
+For variance, AL / accept rates, per-config row docstrings: see each compose YAML, plus the [TPS chart for the full lineup](../README.md#measured-tps-at-a-glance) in the top-level README.
 
 | Compose | Narr / Code TPS | TTFT | Concurrency | Vision | Best for |
 |---|---|---|---|---|---|

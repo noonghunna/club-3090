@@ -20,9 +20,17 @@ Run any of these via `bash scripts/launch.sh` (interactive) or `bash scripts/swi
 
 ---
 
+## Measured TPS on single 3090
+
+![Qwen3.6-27B TPS — single 3090 configs](img/performance-single.png)
+
+Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `dev205+g07351e088` + Genesis pinned to `917519b` (v7.62.x), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
+
+---
+
 ## VRAM budget on 24 GB
 
-![Per-card VRAM allocation, single-card section](img/vram-budget-dual.png)
+![Per-card VRAM allocation, single-card configs](img/vram-budget-single.png)
 
 What this says about single-card constraints:
 

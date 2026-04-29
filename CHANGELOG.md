@@ -2,12 +2,14 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
-## 2026-04-29 — UX polish: pre-flight checks + cards-first wizard + PNG embeds
+## 2026-04-29 — UX polish: pre-flight checks + cards-first wizard + PNG embeds + per-page chart split
 
 - **`scripts/preflight.sh`** (new) — sourceable library of `preflight_docker`, `preflight_gpu [min]`, `preflight_disk <path> <gb>`, `preflight_gpu_idle`, `preflight_running`. Each prints actionable `Fix:` hints on failure rather than a cryptic mid-run crash.
 - **`scripts/setup.sh`** — runs pre-flight before any work: docker present, GPU detected, ≥25 GB free at `MODEL_DIR` (override via `PREFLIGHT_DISK_GB`). Catches the most common first-run footguns (no docker, no nvidia driver, full disk).
 - **`scripts/launch.sh`** — runs pre-flight, plus inverts the wizard: now asks **cards → workload → auto-pick engine** instead of engine-first. New users can answer "how many GPUs do I have" and "what do I want to do" but rarely "vLLM or llama.cpp" — the engine falls out of the workload pick, with a one-paragraph explanation of why we chose it. `--engine vllm|llamacpp` overrides still work; `--no-preflight` skips the checks.
 - **Embedded charts switched from SVG → PNG** in markdown (`README.md`, `docs/SINGLE_CARD.md`, `docs/DUAL_CARD.md`, `models/qwen3.6-27b/README.md`). Clicking an SVG on GitHub opens the raw XML; clicking a PNG opens a normal viewable image. Both files (.svg + .png at retina resolution) ship in the repo — SVG remains the editable source, PNG is what the docs link to. Convention: re-export PNG when SVG changes.
+- **Charts split per GPU-count page.** SINGLE_CARD.md and DUAL_CARD.md now embed scoped charts (only their card count), instead of the combined diagrams which show both halves. Top-level README.md and the model README still show the combined views. New files in `docs/img/`: `performance-single.{svg,png}` (6 single configs), `performance-dual.{svg,png}` (4 dual configs), `vram-budget-single.{svg,png}`, `vram-budget-combined.{svg,png}` (renamed from `vram-budget-dual` which was actually combined). The `vram-budget-dual.{svg,png}` filename is reclaimed for genuinely-dual content.
+- **`tools/charts/gen-perf.py`** + **`tools/charts/gen-vram.py`** (new) — matplotlib source for all chart files, idempotent re-generation. Run `python3 tools/charts/gen-perf.py` and `python3 tools/charts/gen-vram.py` after editing data. Use uv to bring matplotlib (`uv run --with matplotlib --with numpy python3 ...`).
 
 ## 2026-04-29 — Genesis bumped to v7.62.x + PN8 enabled on FP8 paths
 

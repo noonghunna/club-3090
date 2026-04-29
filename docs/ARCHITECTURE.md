@@ -19,7 +19,7 @@ docs/                         engine + hardware docs (general, model-agnostic)
   engines/                      vLLM / llama.cpp / SGLang — comparison + deep dives
   HARDWARE.md                   Ampere SM 8.6+, 24 GB, no NVLink
   GLOSSARY.md                   plain-language definitions
-  img/                          illustrations (vram-budget.svg, etc.)
+  img/                          chart sources + PNG exports (performance, vram-budget)
 
 models/<model-name>/          everything specific to a model
   README.md                     model overview + quants + Genesis surface

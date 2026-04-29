@@ -105,7 +105,7 @@ club-3090/
 │   ├── ARCHITECTURE.md                    how this stack thinks about LLM serving on 24 GB
 │   ├── HARDWARE.md                        Ampere SM 8.6+, NVLink note, 24 GB ceilings
 │   ├── GLOSSARY.md                        plain-language definitions (TPS / KV / MTP / TP / etc.)
-│   ├── img/                               cross-model illustrations (vram-budget.svg)
+│   ├── img/                               chart sources (performance.svg, vram-budget-{single,dual,combined}.svg) + PNG exports
 │   └── engines/                           cross-model engine comparison + per-engine deep dives
 │       ├── README.md                      decision tree, pros/cons matrix
 │       ├── VLLM.md                        vLLM general docs + tuning
@@ -126,12 +126,20 @@ club-3090/
 │       │   └── recipes/                   single-card 65K + 262K-max-ctx + dual-card recipes
 │       └── sglang/
 │           └── README.md                  blocked status — what would unblock it on this model
-└── scripts/                               shared, model-aware
-    ├── setup.sh                           bash setup.sh <model> → downloads + verifies + clones engine patches
-    ├── verify.sh                          quick smoke test (engine-aware via env)
-    ├── verify-full.sh                     fast functional test (8 checks, ~1-2 min)
-    ├── verify-stress.sh                   boundary-case stress test (longctx ladder + tool prefill OOM, ~5-10 min)
-    └── bench.sh                           canonical TPS bench
+├── scripts/                               shared, model-aware
+│   ├── setup.sh                           bash setup.sh <model> → preflight + downloads + verifies + Genesis
+│   ├── launch.sh                          interactive wizard: cards → workload → boots compose + verifies
+│   ├── switch.sh                          stateless variant switcher (bring down old, up new)
+│   ├── health.sh                          runtime health probe (KV %, MTP AL, recent TPS, errors)
+│   ├── preflight.sh                       sourceable lib: docker / GPU / disk checks with actionable hints
+│   ├── verify.sh                          quick smoke test (engine-aware via env)
+│   ├── verify-full.sh                     fast functional test (8 checks, ~1-2 min)
+│   ├── verify-stress.sh                   boundary-case stress test (longctx ladder + tool prefill OOM, ~5-10 min)
+│   └── bench.sh                           canonical TPS bench
+└── tools/
+    └── charts/                            re-generate docs/img/* SVGs and PNG exports (matplotlib)
+        ├── gen-perf.py                    perf bar charts (combined + single + dual)
+        └── gen-vram.py                    VRAM stacked bars (combined + single + dual)
 ```
 
 ---
