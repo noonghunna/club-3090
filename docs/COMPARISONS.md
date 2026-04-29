@@ -160,4 +160,4 @@ For these, the cost math shifts strongly in favor of self-host even at moderate 
 - [docs/FAQ.md](FAQ.md) — common questions
 - [docs/EXAMPLES.md](EXAMPLES.md) — client snippets for the OpenAI-compat endpoint
 - [docs/HARDWARE.md](HARDWARE.md) — hardware notes
-- [models/qwen3.6-27b/USE_CASES.md](../models/qwen3.6-27b/USE_CASES.md) — which compose for which workload
+- [docs/SINGLE_CARD.md](SINGLE_CARD.md) and [docs/DUAL_CARD.md](DUAL_CARD.md) — which compose for which workload

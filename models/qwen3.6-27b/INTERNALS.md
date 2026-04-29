@@ -185,7 +185,7 @@ Our adjustments in the dual-Turbo variant:
 
 Without these, deep-prefill (60K+) requests OOM. With them, the Turbo variant runs cleanly at full 262K with 4-stream concurrency.
 
-For Sandermage's documented numbers on his A5000 setup, see his [MODELS.md](https://github.com/Sandermage/genesis-vllm-patches). For our adjusted numbers on 3090s, see this model's USE_CASES.md.
+For Sandermage's documented numbers on his A5000 setup, see his [MODELS.md](https://github.com/Sandermage/genesis-vllm-patches). For our adjusted numbers on 3090s, see [/docs/SINGLE_CARD.md](../../docs/SINGLE_CARD.md) and [/docs/DUAL_CARD.md](../../docs/DUAL_CARD.md).
 
 ---
 
@@ -208,7 +208,7 @@ When PR #40361 lands, we drop the `/opt/ai/vllm-src/` mount from dual composes. 
 ## See also
 
 - [Qwen3.6-27B README](README.md) — model overview, recommended configs, quick start
-- [Qwen3.6-27B USE_CASES](USE_CASES.md) — per-workload guides (chat, agents, code, RAG, vision, frontier ctx, multi-tenant)
+- [/docs/SINGLE_CARD.md](../../docs/SINGLE_CARD.md) and [/docs/DUAL_CARD.md](../../docs/DUAL_CARD.md) — per-workload guides (chat, agents, code, RAG, vision, frontier ctx, multi-tenant)
 - [Qwen3.6-27B CHANGELOG](CHANGELOG.md) — dated history
 - [Cross-engine docs](../../docs/engines/) — comparison + per-engine deep dives
 - [Hardware notes](../../docs/HARDWARE.md) — Ampere SM 8.6+, NVLink, power, etc.

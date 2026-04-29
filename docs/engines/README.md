@@ -137,5 +137,5 @@ If MTP isn't a priority for your workload, GPTQ or AWQ are equally valid.
 ## See also
 
 - [docs/INTERNALS.md](../INTERNALS.md) — why this repo picked vLLM specifically (the 9-probe forensics + upstream tracker)
-- [docs/USE_CASES.md](../USE_CASES.md) — workload-specific configs for the vLLM path
+- [docs/SINGLE_CARD.md](../SINGLE_CARD.md) and [docs/DUAL_CARD.md](../DUAL_CARD.md) — workload-specific configs by hardware count
 - [LEARNINGS.md (parent stack)](https://github.com/noonghunna/qwen36-27b-single-3090/blob/master/docs/INTERNALS.md) — why vLLM, why these patches

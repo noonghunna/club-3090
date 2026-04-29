@@ -2,79 +2,44 @@
 
 **Run [Qwen3.6-27B](https://huggingface.co/Qwen) — with vision and tool calling — on 1 or 2 RTX 3090s.** Full OpenAI-compatible API, drop-in replacement for ChatGPT/Claude in any tool that uses the OpenAI SDK.
 
----
-
-## TL;DR
-
-- **27B parameter model** with vision support, on consumer hardware
-- Quant: [`Lorbus/Qwen3.6-27B-int4-AutoRound`](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) — INT4 weights with BF16 `mtp.fc` head preserved (lets vLLM use MTP spec-decode)
-- 1× 3090: 48K-262K context (depending on engine + config), 51-70 TPS (vLLM)
-- 2× 3090: full 262K + 4-stream concurrency, 71/89 TPS single-stream (vLLM)
-- Engines supported: **vLLM** (full features) · **llama.cpp** (max context, lighter footprint) · SGLang (currently blocked, watch list)
+> 👉 **For deployment options + workload-driven config picks**, see the hardware-axis pages:
+> [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md) (1× 3090) · [`docs/DUAL_CARD.md`](../../docs/DUAL_CARD.md) (2× 3090).
+>
+> This page is the **model-specific reference**: quants, what's working / not working, VRAM allocation, engine pointers.
 
 ---
 
-## Quick start (vLLM, single card — most common)
+## What this is
+
+- **27B parameter dense LLM** with vision support (Qwen3-Next family — hybrid DeltaNet + standard attention)
+- **Quant on this stack:** [`Lorbus/Qwen3.6-27B-int4-AutoRound`](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) — INT4 weights with BF16 `mtp.fc` head preserved (lets vLLM use MTP spec-decode)
+- **GGUF alternative:** [`unsloth/Qwen3.6-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF) — Q3_K_XL ⭐ (validated by [Marie's Kaitchup eval](https://kaitchup.substack.com/p/summary-of-qwen36-gguf-evals-updating)), Q4_K_M, Q5_K_S
+- **Engines:** vLLM (full features) · llama.cpp (max context, lighter footprint) · SGLang (currently blocked, watch list)
+
+---
+
+## Quick start
+
+The easiest entry is the wizard at the repo root, which asks engine + workload and boots the right compose:
 
 ```bash
-# from repo root
 bash scripts/setup.sh qwen3.6-27b
-cd models/qwen3.6-27b/vllm/compose && docker compose up -d
-docker logs -f vllm-qwen36-27b
-# wait for "Application startup complete"
+bash scripts/launch.sh
+```
 
+If you already know the variant you want, see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md) or [`docs/DUAL_CARD.md`](../../docs/DUAL_CARD.md) for the menu, then:
+
+```bash
+bash scripts/switch.sh vllm/tools-text   # for example
+```
+
+Sanity check after boot:
+
+```bash
 curl -sf http://localhost:8020/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"qwen3.6-27b-autoround","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":30}'
 ```
-
-For dual-card: `docker compose -f docker-compose.dual.yml up -d` from the same directory.
-
-For llama.cpp: `cd ../llama-cpp && cat README.md` (different setup; useful for max-context single-card).
-
----
-
-## Recommended config — pick by workload
-
-| Workload | 1× 3090 | 2× 3090 | Notes |
-|---|---|---|---|
-| **General chat ≤20K** | `fast-chat.yml` | `dual.yml` | Single-card 55/70 TPS; dual single-stream similar |
-| **Tool-using agents** | `yml` (default) | `dual.yml` | 48K is prefill-safe under realistic tool flows |
-| **Coding** | `yml` (default) | `dual-dflash.yml` | DFlash adds 44% code TPS on dual |
-| **Long docs / RAG** | `tools-text.yml` (75K) or [llama.cpp 262K](llama-cpp/recipes/) | `dual-dflash-noviz.yml` (200K) | fp8 KV avoids the GDN cliff |
-| **Vision-heavy** | `yml` (default) | `dual.yml` | Vision tower on, fp8 KV |
-| **Multi-tenant** | n/a | `dual.yml` (2 streams) or `dual-turbo.yml` (4 streams) | Single-card serializes |
-| **Frontier 192K (vision)** | `long-vision.yml` (read caveat) | `dual.yml` (262K native) | Dual unlocks safely |
-| **Frontier 205K (text-only)** | `long-text.yml` or [llama.cpp 262K](llama-cpp/recipes/) | `dual.yml` | Single-card engine ceiling |
-
-See [USE_CASES.md](USE_CASES.md) for per-workload recommended config + gotchas + tuning levers.
-
----
-
-## Compose variants (vLLM)
-
-All under [`vllm/compose/`](vllm/compose/):
-
-### Single-card
-
-| File | Context | KV | Spec-decode | Vision | Tools | Narr/Code TPS | Best for |
-|---|---|---|---|---|---|---|---|
-| **`docker-compose.yml`** ⭐ | 48K | TQ3 | MTP n=3 | ✅ | ✅ | 51/68 | **Default for ≥20K + tool-using agents** |
-| `docker-compose.long-vision.yml` | **192K** | TQ3 | MTP n=3 | ✅ | ✅ | 51/68 | Long ctx + vision (read prefill caveat — single-prompt unsafe ≥16K tool / ≥50K text) |
-| `docker-compose.long-text.yml` | **205K** | TQ3 | MTP n=3 | ❌ | ✅ | 50/66 | Engine-ceiling text-only; same caveats as long-vision |
-| `docker-compose.fast-chat.yml` | 20K | fp8 | MTP n=3 | ✅ | ✅ | 55/70 | Chat-only, max TPS |
-| `docker-compose.tools-text.yml` | 75K | fp8 | MTP n=3 | ❌ | ✅ | 53/70 | Long single prompts (fp8 KV avoids GDN cliff up to ~60K) |
-| `docker-compose.no-genesis-mtp.yml` | 20K | fp8 | MTP n=3 | ✅ | ✅ | 55/68 | Same as fast-chat minus Genesis (control) |
-| `docker-compose.minimal.yml` | 32K | fp8 | none | ✅ | ✅ | 32/33 | Simplest stack, no patches |
-
-### Dual-card
-
-| File | Context | KV | Spec-decode | Vision | Streams | Narr/Code TPS | Best for |
-|---|---|---|---|---|---|---|---|
-| **`docker-compose.dual.yml`** ⭐ | 262K | fp8 | MTP n=3 | ✅ | 2 | **69/89** | **Default dual** |
-| `docker-compose.dual-turbo.yml` | 262K | TQ3 + Genesis v7.14 | MTP n=3 | ✅ | **4** | **54/73** | Multi-tenant (4 concurrent) |
-| `docker-compose.dual-dflash.yml` | 185K | FP16 | DFlash N=5 | ✅ | 1 | **82/125** | Peak code TPS |
-| `docker-compose.dual-dflash-noviz.yml` | 200K | FP16 | DFlash N=5 | ❌ | 1 | **78/127** | Long-doc text-only, peak speed |
 
 ---
 
@@ -90,30 +55,68 @@ This is also why TP=2 unlocks 262K context with vision and 4 concurrent streams 
 
 ## What's working
 
-- **Vision** — images in messages via OpenAI-compat format
-- **Tool calling** — `tools=[...]` + `tool_choice="auto"`, parsed cleanly into `tool_calls[]` (with Genesis v7.14)
-- **Streaming** — SSE chunks add up to coherent text; tool-call deltas stream too
-- **Reasoning mode** — `chat_template_kwargs.enable_thinking=true` for chain-of-thought
-- **Spec-decode** — MTP n=3 default (~83% per-position-1 accept on code); DFlash N=5 on dual-card for code-heavy
-- **All standard sampling** — temperature, top_p, top_k, repetition_penalty, JSON-mode, structured output
+- **Vision** — images in messages via OpenAI-compat format. Tower is small (~0.5–1.0 GB VRAM); each image consumes 640–1280 tokens at default resolution. Quality is good for charts / screenshots / natural images, less reliable for OCR on dense text. No image *generation* — this model is vision-input-only.
+- **Tool calling** — `tools=[...]` + `tool_choice="auto"`, parsed cleanly into `tool_calls[]`. Genesis v7.62.x ships PN11 (Quentin-M's streaming-tool-call IndexError fix from vllm#41142).
+- **Streaming** — SSE chunks add up to coherent text; tool-call deltas stream too.
+- **Reasoning mode** — `chat_template_kwargs.enable_thinking=true` for chain-of-thought (vLLM extracts into `reasoning_content` field; llama.cpp emits inline).
+- **Spec-decode** — MTP n=3 default on vLLM (~83% per-position-1 accept on code); DFlash N=5 on dual-card for code-heavy workloads.
+- **All standard sampling** — temperature, top_p, top_k, repetition_penalty, JSON-mode, structured output.
 
 ## What's not working today
 
 - **GGUF on vLLM** for Qwen3-Next family — not supported upstream. Use llama.cpp for GGUF on this model.
 - **EAGLE spec-decode on hybrid attention** — DeltaNet rollback issue (cross-engine architectural). Watch upstream.
-- **Single-card 192K with big tool prefills** — Cliff 1 OOMs above ~16K tool-response prefill at 0.98 mem-util. Use dual-card or default 48K.
-- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Use dual-card or llama.cpp.
+- **Single-card 192K with big tool prefills** — Cliff 1 fires above ~25K-token tool returns on TQ3 paths (`long-vision.yml`, `long-text.yml`). Activation-peak issue, not draft-model footprint, so PN8 doesn't reach it. Use `tools-text.yml` (FP8 path, Cliff 1 closes via PN8 since Genesis v7.62.x) or dual-card.
+- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Lives in `fla.ops` upstream, no file-replacement patch. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA). Mitigation: dual-card or llama.cpp 262K.
+
+---
+
+## Quant decision
+
+Why AutoRound INT4 over alternatives:
+
+| Quant | Stack support | Bench | Trade-off |
+|---|---|---|---|
+| **Lorbus AutoRound INT4** ⭐ | vLLM `--quantization auto_round` | 51-89 TPS depending on config | +9% over AWQ (this model); BF16 MTP head preserved; required for MTP spec-decode |
+| AWQ INT4 | vLLM `--quantization awq` | 38 TPS @ 8K | Works; slower; no spec-decode advantage |
+| GPTQ INT4 (palmfuture) | vLLM `--quantization gptq` | 137 TPS @ 262K dual-card | Older path; AWQ + DFlash had a pad-Marlin × aux-layer bug we never reduced |
+| GGUF Q3_K_XL (Unsloth dynamic) | llama.cpp only | 21 TPS @ 262K | One Docker line, no patches, no Cliff 1/2; ⭐ Marie's Kaitchup eval picks this as optimal accuracy/footprint |
+| GGUF Q4_K_M | llama.cpp only | ~28 TPS measured 2026-04-23 (regression to ~21 today on current commit) | Heavier than Q3_K_XL; quality close |
+
+For deeper rationale, comparison tables, and the patched-vLLM-source story (vllm#40361 Marlin pad-sub-tile-n), see [INTERNALS.md](INTERNALS.md).
+
+---
+
+## Genesis patch surface (vLLM)
+
+The vLLM single-card composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `917519b` (v7.62.x release, 2026-04-29) per `scripts/setup.sh`.
+
+Active patches per compose:
+
+| Patch | What it does | Composes |
+|---|---|---|
+| P64 | Streaming tool-call edge case | all single-card vLLM with MTP |
+| P65 | TurboQuant spec-CG downgrade (#40880 fix) | TQ3 paths (default, long-vision, long-text) |
+| P66 | Cudagraph capture-size divisibility | TQ3 paths |
+| P68 | Auto-force tool adherence in long ctx | all single-card vLLM with tools |
+| P69 | Long-ctx tool reminder | all single-card vLLM |
+| **PN8** | MTP draft online-quant propagation (vllm#40849) | **fp8 paths** (`tools-text.yml`, `fast-chat.yml`) — frees ~800-900 MiB, closes Cliff 1 on tools-text |
+
+Dual-card composes (`dual.yml`, `dual-dflash*`) are **Genesis-less by design** — fp8 KV + TP=2 + 0.92 mem-util has plenty of headroom and doesn't trigger the cudagraph bugs Genesis was built to patch. `dual-turbo.yml` does mount Genesis (TQ3 path needs P65).
+
+Forensic chain + per-patch attribution → [INTERNALS.md](INTERNALS.md).
 
 ---
 
 ## See also
 
-- [INTERNALS.md](INTERNALS.md) — engineering deep dive (Genesis patches, forensics, Marlin pad, DFlash, upstream tracker)
-- [USE_CASES.md](USE_CASES.md) — per-workload guide with gotchas and tuning levers
-- [CHANGELOG.md](CHANGELOG.md) — dated history (combines single + dual timelines)
-- [/docs/EXAMPLES.md](../../docs/EXAMPLES.md) — Python / TS / curl client snippets + Open WebUI / Cline / Cursor connection settings
-- [vllm/](vllm/) — vLLM-specific recipes for this model
-- [llama-cpp/](llama-cpp/) — llama.cpp recipes (max context on single card)
-- [sglang/](sglang/) — SGLang status (currently blocked)
-- [/docs/engines/](../../docs/engines/) — cross-model engine comparison + per-engine deep dives
-- [/docs/HARDWARE.md](../../docs/HARDWARE.md) — hardware notes (Ampere, NVLink, power)
+- **[/docs/SINGLE_CARD.md](../../docs/SINGLE_CARD.md)** — 1× 3090 deployment menu (workloads → composes → TPS).
+- **[/docs/DUAL_CARD.md](../../docs/DUAL_CARD.md)** — 2× 3090 deployment menu.
+- **[INTERNALS.md](INTERNALS.md)** — engineering deep dive (Genesis patches, forensics, Marlin pad, DFlash, upstream tracker).
+- **[CHANGELOG.md](CHANGELOG.md)** — dated history (combines single + dual timelines).
+- **[/docs/EXAMPLES.md](../../docs/EXAMPLES.md)** — Python / TS / curl client snippets + Open WebUI / Cline / Cursor connection settings.
+- **[vllm/](vllm/)** — vLLM-specific recipes (compose YAMLs are documented in their own headers).
+- **[llama-cpp/](llama-cpp/)** — llama.cpp recipes (max context on single card, no prefill cliffs).
+- **[sglang/](sglang/)** — SGLang status (currently blocked).
+- **[/docs/engines/](../../docs/engines/)** — cross-model engine comparison + per-engine deep dives.
+- **[/docs/HARDWARE.md](../../docs/HARDWARE.md)** — hardware notes (Ampere, NVLink, power).

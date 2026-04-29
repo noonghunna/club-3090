@@ -22,9 +22,19 @@ If you have one or two RTX 3090s and want to run modern LLMs at home, in a homel
 
 ---
 
-## Supported models
+## Pick your path
 
-Each model has its own subdirectory with engine-specific composes / recipes / patches and per-model docs.
+| You have | Start here |
+|---|---|
+| **1× RTX 3090** | [`docs/SINGLE_CARD.md`](docs/SINGLE_CARD.md) — workload → config → quick start |
+| **2× RTX 3090** (PCIe / no NVLink) | [`docs/DUAL_CARD.md`](docs/DUAL_CARD.md) — workload → config → quick start |
+| Considering self-host vs cloud APIs | [`docs/COMPARISONS.md`](docs/COMPARISONS.md) — cost crossover + when each wins |
+
+Each hardware page lists every supported model with the working composes for that card count, plus measured TPS and per-workload pitfalls. Model-specific deep dives (quants, Genesis patches, engine internals) live under [`models/<name>/`](models/).
+
+---
+
+## Supported models
 
 | Model | Status | Card counts | Engines | Highlights |
 |---|---|---|---|---|
@@ -38,7 +48,7 @@ More models coming. The repo structure scales — when we add Qwen3.5-27B / GLM-
 
 ![Qwen3.6-27B TPS by config](docs/performance.svg)
 
-Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts. Substrate: vLLM nightly `dev205+g07351e088` + Genesis pinned to commit `bf667c7` (v7.54), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config details + run-by-run numbers + VRAM + AL/accept rates: [models/qwen3.6-27b/CHANGELOG.md](models/qwen3.6-27b/CHANGELOG.md) (per-model history) and [scripts/bench.sh](scripts/bench.sh) (canonical bench).
+Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts. Substrate: vLLM nightly `dev205+g07351e088` + Genesis pinned to commit `917519b` (v7.62.x), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config details + run-by-run numbers + VRAM + AL/accept rates: [models/qwen3.6-27b/CHANGELOG.md](models/qwen3.6-27b/CHANGELOG.md) (per-model history) and [scripts/bench.sh](scripts/bench.sh) (canonical bench).
 
 ---
 
@@ -105,7 +115,7 @@ club-3090/
 │   └── qwen3.6-27b/                       all Qwen3.6-27B-specific stuff
 │       ├── README.md                      model overview + variants + recommendations
 │       ├── INTERNALS.md                   model-specific bugs (DeltaNet cliffs, Genesis patches, MTP head, Marlin pad)
-│       ├── USE_CASES.md                   per-workload guides (1× and 2× combined)
+│       └── INTERNALS.md                   engineering rationale (Genesis, Marlin pad, DFlash)
 │       ├── CHANGELOG.md                   model-specific dated history
 │       ├── vllm/
 │       │   ├── README.md                  "vLLM recipes for Qwen3.6-27B"

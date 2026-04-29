@@ -121,7 +121,7 @@ If you're running long-ctx tool flows (50K+ tokens with multiple tools active), 
 | No spec-decode (debugging) | `docker-compose.minimal.yml` | 32K + fp8 + no MTP — simplest stack |
 | No Genesis patches | `docker-compose.no-genesis-mtp.yml` | 20K + fp8 + MTP — control variant |
 
-See [USE_CASES.md](../USE_CASES.md) for full per-workload guidance.
+See [SINGLE_CARD.md](../SINGLE_CARD.md) and [DUAL_CARD.md](../DUAL_CARD.md) for full per-workload guidance.
 
 ---
 

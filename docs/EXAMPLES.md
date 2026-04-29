@@ -255,7 +255,7 @@ In the Cline settings panel:
 - **API Key:** `sk-local` (any non-empty string)
 - **Model ID:** `qwen3.6-27b-autoround`
 
-Cline sends large tool returns (file reads, web fetches) — at 25K+ tokens these hit Cliff 1 on vLLM single-card 192K configs. Use the `vllm/default` (48K) variant or switch to `llamacpp/default` for cliff-free serving. See [USE_CASES.md](../models/qwen3.6-27b/USE_CASES.md) and the [VRAM diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs).
+Cline sends large tool returns (file reads, web fetches) — at 25K+ tokens these hit Cliff 1 on vLLM single-card 192K configs. Use the `vllm/tools-text` variant (Cliff 1 closed via Genesis PN8 since 2026-04-29) or switch to `llamacpp/default` for cliff-free serving. See [docs/SINGLE_CARD.md](SINGLE_CARD.md) and the [VRAM diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs).
 
 ### Cursor
 
@@ -292,6 +292,6 @@ Or override at run-time with `--host 127.0.0.1` (llama.cpp) / by editing the com
 ## See also
 
 - [`models/qwen3.6-27b/README.md`](../models/qwen3.6-27b/README.md) — variant matrix + VRAM diagram
-- [`models/qwen3.6-27b/USE_CASES.md`](../models/qwen3.6-27b/USE_CASES.md) — workload → recommended compose
+- [`docs/SINGLE_CARD.md`](SINGLE_CARD.md) and [`docs/DUAL_CARD.md`](DUAL_CARD.md) — workload → recommended compose
 - [`scripts/launch.sh`](../scripts/launch.sh) — interactive variant picker
 - [`scripts/health.sh`](../scripts/health.sh) — runtime health probe

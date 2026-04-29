@@ -22,9 +22,8 @@ docs/                         engine + hardware docs (general, model-agnostic)
   img/                          illustrations (vram-budget.svg, etc.)
 
 models/<model-name>/          everything specific to a model
-  README.md                     model overview + recommended path
+  README.md                     model overview + quants + Genesis surface
   INTERNALS.md                  this model's quirks (architecture, bugs, fixes)
-  USE_CASES.md                  per-workload guidance for THIS model
   CHANGELOG.md                  this model's dated history
   vllm/                         vLLM-specific configs for this model
     compose/                      docker-compose files
@@ -75,10 +74,11 @@ If a patch is general (across engines or models), it bubbles up to `docs/engines
 3. Boots; tests with `verify-full.sh` (fast, 8 checks); for boundary cases (KV-cache pressure, prefill OOM) runs `verify-stress.sh`; benches with `bench.sh`.
 
 **A user hits a problem:**
-1. Reads `models/<m>/USE_CASES.md` for their workload-specific gotchas.
-2. If still stuck: `models/<m>/INTERNALS.md` for engineering depth.
-3. If engine-related: `docs/engines/<engine>.md` for general engine tuning.
-4. Files an issue with logs.
+1. Checks `docs/SINGLE_CARD.md` or `docs/DUAL_CARD.md` for workload-specific gotchas matching their hardware.
+2. Checks `docs/FAQ.md` "Troubleshooting" section for the specific failure mode.
+3. If still stuck: `models/<m>/INTERNALS.md` for engineering depth.
+4. If engine-related: `docs/engines/<engine>.md` for general engine tuning.
+5. Files an issue with logs.
 
 **A power user wants to push limits:**
 1. `docs/engines/<engine>.md` — engine tuning levers.

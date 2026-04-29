@@ -140,11 +140,28 @@ The [bug report template](https://github.com/noonghunna/club-3090/issues/new?tem
 
 ---
 
+## Troubleshooting
+
+Quick recognition guide for common failure modes:
+
+- **Container dies at boot with `GPTQ_MARLIN_MIN_THREAD_N (64) > out_features`** — dual-card vllm#40361 patch didn't apply. Confirm `/opt/ai/vllm-src/` exists with the patched marlin kernel files.
+- **Container dies during DFlash boot** — vllm#40334 dtype mismatch. Verify the compose has `--dtype bfloat16`.
+- **Tool calls return `<tool_call>` as plain text** — Genesis didn't apply. Check `Genesis Results: 27 applied` in logs (boot-time).
+- **OOM during prefill at 60K+ tokens** — single-card Cliff 2 (DeltaNet GDN forward). Switch to lower max-model-len, dual-card, or llama.cpp + q4_0 KV.
+- **OOM during prefill at 25K+ tool response** — single-card Cliff 1 on TQ3 paths. Use `tools-text.yml` (FP8 + PN8 closes the cliff) or default 48K, OR dual-card.
+- **"Empty response" through VS Code Copilot LLM Gateway** — Copilot sends ~20K tokens of tool schemas + sometimes uses `max_tokens=64` which truncates tool-call JSON. Switch to `tools-text.yml` (75K) and check Copilot's max_tokens setting. See [#2](https://github.com/noonghunna/club-3090/issues/2) for full debug-log analysis.
+- **Per-stream TPS lower than expected** — re-run `bench.sh` with 3+ warmups + 5 measured runs first. Run-to-run variance is ~5%.
+
+If none match, open an issue with `docker logs <container> 2>&1 | tail -200` + `nvidia-smi` — see [`bug-report.yml` template](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml).
+
+---
+
 ## See also
 
 - [README](../README.md) — top-level overview + quick start
-- [models/qwen3.6-27b/README.md](../models/qwen3.6-27b/README.md) — model-specific variants + VRAM diagram
-- [models/qwen3.6-27b/USE_CASES.md](../models/qwen3.6-27b/USE_CASES.md) — workload → recommended compose
+- [docs/SINGLE_CARD.md](SINGLE_CARD.md) — 1× 3090 deployment menu
+- [docs/DUAL_CARD.md](DUAL_CARD.md) — 2× 3090 deployment menu
+- [models/qwen3.6-27b/README.md](../models/qwen3.6-27b/README.md) — model-specific reference
 - [models/qwen3.6-27b/INTERNALS.md](../models/qwen3.6-27b/INTERNALS.md) — engineering deep dive
 - [docs/EXAMPLES.md](EXAMPLES.md) — Python / TS / curl client snippets
 - [docs/HARDWARE.md](HARDWARE.md) — Ampere notes, NVLink, power caps
