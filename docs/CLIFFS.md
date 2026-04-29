@@ -244,7 +244,7 @@ This is why our launch frame is **two routes, not one**: vLLM dual-card for max 
 |---|---|
 | `--max-seq-len-to-capture` < `max-model-len` | Removed in V1 ([vllm#25543](https://github.com/vllm-project/vllm/pull/25543), merged 2025-09-24). Doesn't exist on our nightly. |
 | `--enforce-eager` | Disables ALL cudagraphs, ~30% TPS hit, may break MTP. Partial fix at best — FA2 still receives `attn_metadata.max_seq_len` in eager paths. |
-| `--max-num-batched-tokens 2048` (from 4128) | Halves chunk-size workspace; doesn't fix `softmax_lse[:, :, max_seqlen]` padding (which is sized by max_model_len, not chunk size). Marginal at best. |
+| `--max-num-batched-tokens 2048` (from 4128) | Halves chunk-size workspace; doesn't fix `softmax_lse[:, :, max_seqlen]` padding (which is sized by max_model_len, not chunk size). Marginal at best. **Don't pursue this as a primary fix** — it touches the Q dimension while the cap-leak is on the K dimension. |
 | Lower mem-util (e.g. 0.92 → 0.88) | Coupled with max-ctx — going lower makes the engine ceiling drop too. No standalone benefit. |
 | Extending PN8 to TQ3 paths | PN8 propagates *weight* quant config (FP8 → FP8); TQ3 is *KV* format with target-side-only kernels. Mechanism mismatch — can't naively port. |
 
@@ -301,6 +301,27 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 ### Cheap (1-2 days, no novel CUDA work)
 
 - [ ] **Build a vLLM-side `max_seq_len` clamp** ourselves if Sandermage doesn't take it. ~50 lines of Python text-patch in `turboquant_attn.py` or `flash_attn.py`. Same code shape as our existing `patch_tolist_cudagraph.py`. Closes Cliff 1 on TQ3 paths.
+
+  **Implementation shape (refined via ChatGPT consultation):**
+
+  - Patch targets: `vllm/v1/attention/backends/flash_attn.py` AND `models/qwen3.6-27b/vllm/patches/genesis/.../turboquant_attn.py` (the `_flash_attn_varlen` wrapper around the FA call).
+  - Clamp formula: `max_seqlen_k = min(attn_metadata.max_seq_len, actual_max_seq_len_for_this_batch)`. **NOT** chunk size (`max_num_batched_tokens=4128`) — chunk size is the Q dimension, but `softmax_lse` is shaped by the K dimension which spans accumulated prompt. Using chunk size would break continuation prefill.
+  - Guards (all must hold simultaneously):
+    1. FA2 / Ampere path only (skip on FA3 / Hopper / FlashInfer paths).
+    2. Outside CUDA-graph capture only (capture metadata stays unchanged for shape stability — clamping during capture would break captured graphs).
+    3. Never set below `max(seqused_k)` / actual current KV length (per-sequence; under-clamping = correctness bug).
+  - Env gate: `GENESIS_FA2_CLAMP_MAX_SEQLEN=1` (default-off until validated).
+  - Diagnostic logging at the patched call site: `num_actual_tokens`, `max_query_len`, `attn_metadata.max_seq_len`, `seq_lens.max()`. Useful both for verifying the patch fires correctly and for confirming the cap leak in the first place.
+
+  **Test progression:**
+  1. 86K + 0.92 + TQ3 + vision (known-fail case) — confirm clamp closes Cliff 1
+  2. 75K + FP8 + MTP + PN8 + clamp (`tools-text.yml`) — verify regression doesn't break the existing PN8 mitigation
+  3. 48K + 0.92 + TQ3 + vision (default) — verify no regression on the safe baseline
+  4. 128K + 0.98 + TQ3 + vision — push the new ceiling and bisect to find new long-vision-safe value
+  5. With MTP enabled at each: verify spec-decode AL stays in expected range (3.4-3.8)
+  6. SWA-aware test: ensure no regression on attention-window models (none in our stack but worth verifying — Sandermage's fix also has to not break them)
+  7. CUDA-graph capture validation: confirm capture-time metadata stays at `max_model_len` (clamp is runtime-only)
+
 - [ ] **File `fla-org/flash-linear-attention` issue** with our Cliff 2 bisection data. Doesn't fix the cliff, but raises upstream signal that real users on consumer Ampere are affected. Increases the chance of someone tackling streaming GDN.
 
 ### Moderate (1-2 weeks, vendoring required)
@@ -327,11 +348,15 @@ Ordered by efficiency and likelihood of working:
 
 2. **Meanwhile, do prep work, not implementation:** read `vllm/v1/attention/backends/flash_attn.py` and `turboquant_attn.py` to map the patch surface. Identify the exact call sites where `attn_metadata.max_seq_len` flows into FA2, and verify the runtime-vs-capture distinction is reachable from there. Document findings — useful for Sandermage if he asks.
 
-3. **If Sandermage declines or doesn't respond after 2 weeks:** ship the vLLM-side clamp ourselves. Genesis-style text-patch in `models/qwen3.6-27b/vllm/patches/`. ~1-2 days dev + ~1 day bench. Add to `setup.sh` in the same place as `patch_tolist_cudagraph.py`.
+3. **Keep `default 48K` capped until clamp is verified.** Don't pre-emptively bump max-ctx based on the patch theory; only bump after measurement confirms Cliff 1 closes on each rung (86K → 128K → 192K).
 
-4. **Independently of #1-3, file `fla-org/flash-linear-attention` issue** with Cliff 2 bisection data. Doesn't unblock us, but raises signal. Reference our [DUAL_CARD.md verified-237K-single-prompt-on-TP=2 result](DUAL_CARD.md) as the workaround.
+4. **If Sandermage declines or doesn't respond after 2 weeks:** ship the vLLM-side clamp ourselves with the [refined implementation shape above](#cheap-1-2-days-no-novel-cuda-work) — env gate, dual-target patch (`flash_attn.py` + `turboquant_attn.py`), `min(attn_metadata.max_seq_len, actual_max_seq_len_for_this_batch)` clamp, runtime-not-capture only, never below `max(seqused_k)`. ~1-2 days dev + ~1 day bench progression (86K known-fail → 75K PN8 regression → 48K baseline → 128K push). Add patch to `setup.sh` parallel to `patch_tolist_cudagraph.py`.
 
-5. **Don't pursue FA2 patching, FlashQLA porting, or GDN rewriting.** All are above-budget. The leverage isn't there.
+5. **After clamp passes:** cautiously re-open 75K / 86K / 128K TQ3 configs as new variants, with the clamp env-gated on. Update SINGLE_CARD.md TL;DR.
+
+6. **Independently, file `fla-org/flash-linear-attention` issue** with Cliff 2 bisection data + our 237K-on-TP=2 result. Doesn't unblock us, but raises signal that consumer Ampere users hit this on Qwen3-Next class models.
+
+7. **Cliff 2 stays documented as "not solved on single-card vLLM."** Route those workloads to TP=2 or llama.cpp. Don't pursue FA2 source patching, FlashQLA porting, or GDN rewriting — all above-budget for our team.
 
 ---
 
