@@ -17,6 +17,14 @@ Run any of these via `bash scripts/launch.sh` (interactive) or `bash scripts/swi
 
 ---
 
+## Measured TPS on 2× 3090
+
+![Qwen3.6-27B TPS — 2× 3090 configs (TP=2)](img/performance-dual.png)
+
+Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `dev205+g07351e088` + Genesis pinned to `917519b` (v7.62.x), RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
+
+---
+
 ## VRAM budget on 2× 24 GB (TP=2)
 
 ![Per-card VRAM allocation, dual-card section](img/vram-budget-dual.png)
@@ -147,8 +155,6 @@ bash scripts/switch.sh --list              # show all variants
 ---
 
 ## Performance summary
-
-![Qwen3.6-27B TPS — 2× 3090 configs (TP=2)](img/performance-dual.png)
 
 For variance, AL / accept rates, per-config row docstrings: see each compose YAML, plus the [TPS chart for the full lineup](../README.md#measured-tps-at-a-glance) in the top-level README.
 
