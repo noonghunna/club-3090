@@ -6,14 +6,14 @@ You have **one RTX 3090 (24 GB VRAM)**. This page is the front door for picking 
 
 ## TL;DR — pick by workload
 
-| What you're doing | Compose | Narr / Code TPS | Why |
-|---|---|---|---|
-| Tool-using IDE agents (Cline / Cursor / Copilot Gateway) | [`tools-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml) | **51 / 65** | 75K ctx, **Cliff 1 closed** via Genesis PN8 (2026-04-29) |
-| General-purpose default (≥20K, vision + tools) | [`docker-compose.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.yml) | **50 / 67** | 48K, TQ3 KV, prefill-safe |
-| Long single prompts (RAG / summarization, no vision) | [`tools-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml) (vLLM 75K) **or** [llama.cpp recipe](../models/qwen3.6-27b/llama-cpp/) (262K) | 51/65 (vLLM) · 21/21 (llama.cpp) | fp8 KV avoids GDN cliff up to ~60K; llama.cpp avoids cliffs entirely |
-| Frontier 192K + vision | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | 51 / 68 | Engine ceiling; ⚠️ Cliff 1 still fires on >25K tool prefills |
-| Frontier 205K text-only | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | 50 / 66 | Engine ceiling |
-| Easy mode (one Docker line, 262K, no patches) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | 21 / 21 | Q3_K_XL + q4_0 KV; no prefill cliffs anywhere |
+| What you're doing | Compose | Max ctx | Narr / Code TPS | Why |
+|---|---|---|---|---|
+| Tool-using IDE agents (Cline / Cursor / Copilot Gateway) | [`tools-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml) | **75K** | **51 / 65** | fp8 KV, **Cliff 1 closed** via Genesis PN8 (2026-04-29) |
+| General-purpose default (chat + light tools + vision) | [`docker-compose.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.yml) | **48K** | **50 / 67** | TQ3 KV, prefill-safe at 0.92 mem-util |
+| Long single prompts (RAG / summarization, no vision) | [`tools-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml) (vLLM) **or** [llama.cpp recipe](../models/qwen3.6-27b/llama-cpp/) | 75K (vLLM) / **262K** (llama.cpp) | 51/65 (vLLM) · 21/21 (llama.cpp) | fp8 KV avoids GDN cliff up to ~60K; llama.cpp avoids cliffs entirely |
+| Frontier ctx + vision | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **192K** | 51 / 68 | Engine ceiling; ⚠️ Cliff 1 still fires on >25K tool prefills |
+| Frontier ctx, text-only | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **205K** | 50 / 66 | Engine ceiling |
+| Easy mode (one Docker line, no patches) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | **262K** | 21 / 21 | Q3_K_XL + q4_0 KV; no prefill cliffs anywhere |
 
 Run any of these via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
 
