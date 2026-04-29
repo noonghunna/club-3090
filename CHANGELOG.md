@@ -38,7 +38,7 @@ Polish pass after the launch tweet went live. All click-through paths now lead s
 - **`scripts/setup.sh`** — `GENESIS_PIN` switched from tag `v7.51-stable-2026-04-27` to commit `bf667c7` (Genesis HEAD as of 2026-04-27, semver "v7.54"). This is the exact tree our published TPS numbers were measured against; pinning to commit removes the doc-vs-runtime mismatch.
 - **`.env.example`** added at repo root — documents `MODEL_DIR`, `HF_TOKEN`, `CUDA_VISIBLE_DEVICES`, `MEM_UTIL`, `MAX_MODEL_LEN`, `GENESIS_PIN`, `SKIP_GENESIS`, `URL`, `WARMUPS`, `RUNS` with defaults.
 - **`.github/ISSUE_TEMPLATE/`** — bug-report template (requires `docker logs --tail 100`, `verify-full.sh` output, `nvidia-smi`, GPU config, compose variant, repo commit) + numbers-from-your-rig template (structured cross-rig TPS contributions). Q&A redirected to GitHub Discussions via `config.yml`.
-- **`docs/performance.svg`** + **`docs/performance.png`** — TPS bar chart across 10 single + dual configs, embedded in top-level README.
+- **`docs/img/performance.svg`** + **`docs/img/performance.png`** — TPS bar chart across 10 single + dual configs, embedded in top-level README.
 - **`models/qwen3.6-27b/llama-cpp/compose/`** — two new docker compose files using `ghcr.io/ggml-org/llama.cpp:server-cuda`:
   - `docker-compose.yml` — single slot, 262K ctx, q4_0 KV, vision on (showcase)
   - `docker-compose.concurrent.yml` — 4 parallel slots, 192K ctx pool, vision on
