@@ -61,7 +61,7 @@ Each row covers one upstream link with: **title • status • our dependency / 
 
 | Issue / PR | Status | Why it matters | Workaround |
 |---|---|---|---|
-| **Cliff 2 — DeltaNet GDN forward OOM at 50–60K single-prompt** | 🔴 Open, **no upstream issue filed yet** | The `chunk_gated_delta_rule_fwd` kernel allocates intermediate buffers proportional to `seq_len`. Fires regardless of mem-util. Sandermage explicitly punted (genesis-vllm-patches issue #1: *"can't fix this short of multi-GPU TP=2 or upstream fla.ops changes"*). | None on single-card vLLM. Use `tools-text.yml` (75K cap), `dual.yml` (TP=2 splits per-card seq_len), or `llamacpp/default` (262K, different engine, no DeltaNet OOM). |
+| **Cliff 2 — DeltaNet GDN forward OOM at 50–60K single-prompt** | 🔴 Open, **no upstream issue filed yet**. **Confirmed cleared on dual TP=2** (this rig, 2026-04-29 — see DUAL_CARD.md "237K single-prompt verified"). | The `chunk_gated_delta_rule_fwd` kernel allocates intermediate buffers proportional to `seq_len`. Fires on single-card regardless of mem-util. On dual TP=2 the activation memory splits across cards and the cliff doesn't fire — verified at 237K single-prompt prefill on `dual.yml` (~830 tok/s prefill, matches Sandermage's 262K @ 311s on 2× A5000). Sandermage explicitly punted on the single-card fix (genesis-vllm-patches issue #1: *"can't fix this short of multi-GPU TP=2 or upstream fla.ops changes"*). | Single-card: use `tools-text.yml` (75K cap) or `llamacpp/default` (262K, different engine). Dual: `dual.yml` clears at ≥237K. |
 
 ---
 

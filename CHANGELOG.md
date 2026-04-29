@@ -2,6 +2,25 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-04-29 — Verified Sandermage's 256K single-prompt claim on dual.yml
+
+Cross-rig verification of [Sandermage's 2026-04-29 claim](https://github.com/noonghunna/qwen36-27b-single-3090/issues/1#issuecomment-4342925976) that 256K single-prompt prefill works on `dual.yml`-class TP=2 setups. He measured 262 104 tokens @ 311s on 2× A5000 (~843 tok/s prefill).
+
+Our run on 2× 3090 (`dual.yml`: 262K + fp8_e5m2 + 0.92 mem-util + 2 streams + max-num-batched-tokens=8192):
+
+| Metric | Value |
+|---|---|
+| Prompt tokens | 236 939 (~90% of 262K max) |
+| Wall time | 284s |
+| Prefill throughput | ~834 tok/s |
+| Per-card peak VRAM | 23.5 GB / 24 GB |
+| finish_reason | stop |
+| OOM? | No |
+
+**Conclusion:** Cliff 2 (DeltaNet GDN forward OOM, fires on single-card at 50-60K single prompts) **does NOT fire on dual TP=2** — activation memory splits across cards under tensor parallelism. Same SM 8.6 architecture as A5000, throughput within ~1% of Sandermage's measurement, as expected. UPSTREAM.md + DUAL_CARD.md updated to reflect verified status.
+
+We didn't push to the full 262K (per-card VRAM was already 23.5 GB at 237K, leaving ~500 MiB headroom). Sandermage ran at 0.90 mem-util, we ran at 0.92 — a config tweak would unlock the last 10%.
+
 ## 2026-04-29 — Add `docs/UPSTREAM.md` + `AGENTS.md` (consolidate upstream tracking)
 
 - **`docs/UPSTREAM.md`** (new) — single source of truth for every upstream issue / PR we depend on, have filed, or use as workaround context. Categorized by upstream (vLLM, Genesis, fla-org, FlashQLA, llama.cpp, transformers, SGLang). Status emoji per row (🟢/🔵/🟡/🟠/🔴/⚫/✅/❌) + what-it-unblocks + local workaround. Replaces scattered cross-references in CHANGELOG / INTERNALS / FAQ / per-compose comment headers.

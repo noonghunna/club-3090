@@ -77,7 +77,7 @@ For the single-card picture, see [`SINGLE_CARD.md`](SINGLE_CARD.md).
 | 4 concurrent streams at full context | Single-card serializes; can't fit | `dual-turbo.yml` — 4 streams, 262K each |
 | DFlash N=5 spec-decode | Blocked: DFlash needs head_size=256 + non-causal which doesn't fit single-card head-dim split | `dual-dflash.yml` / `dual-dflash-noviz.yml` |
 | Code TPS >100 | Best single-card is 67 code (default) | 125-127 code (DFlash variants) |
-| Long single prompts safely | Cliff 2 fires at 50-60K on vLLM single-card (forces llama.cpp fallback at 21 TPS) | TP=2 splits activation across cards — Cliff 2 doesn't fire on the prompts we tested |
+| Long single prompts safely | Cliff 2 fires at 50-60K on vLLM single-card (forces llama.cpp fallback at 21 TPS) | TP=2 splits activation across cards — **237K single-prompt verified** on `dual.yml` 2026-04-29 (~830 tok/s prefill, no OOM, peak 23.5 GB / card) |
 | Big tool returns at 192K context | Cliff 1 fires on TQ3 paths regardless | `dual.yml` is below the cliff at 262K — activation budget is bigger per-card after split |
 
 ---
