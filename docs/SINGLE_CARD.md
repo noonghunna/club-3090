@@ -83,7 +83,7 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 - `long-vision.yml`: 192K + vision (engine ceiling at 0.98 mem-util). PN8 testing showed +6K headroom potential (192→198K), opt-in via uncommenting the env var.
 - `long-text.yml`: 205K text-only (engine ceiling capped by attention block-size divisor at ~206K).
 
-**Critical caveat — Cliff 1 still fires on TQ3 paths:** ≥25K-token tool prefills will OOM regardless of mem-util tuning, because the 138 MiB allocate is an FFN intermediate-buffer activation peak (not draft-model footprint that PN8 fixes). For tool-using agents that return large blobs, **drop back to `tools-text.yml` or `docker-compose.yml`** — those are below the cliff. See [FAQ: prefill cliff](FAQ.md#whats-a-prefill-cliff).
+**Critical caveat — Cliff 1 still fires on TQ3 paths:** ≥25K-token tool prefills will OOM at long max-ctx because the FA2 varlen prefill kernel sizes its `softmax_lse` workspace by `max_seqlen` (= `max_model_len` during cudagraph capture), not by the actual prompt length. So at `max-model-len=192K`, even a 25K-token chunk allocates softmax_lse for 192K — eating activation headroom and OOMing on the next ~50–138 MiB allocation. PN8 doesn't reach this on TQ3 paths. Upstream root cause: [Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011). For tool-using agents that return large blobs, **drop back to `tools-text.yml` (PN8 closes the cliff at 75K) or `docker-compose.yml` (default 48K, also safe)** — both have small enough max-ctx that the leaked workspace fits. See [FAQ: prefill cliff](FAQ.md#whats-a-prefill-cliff) and [docs/UPSTREAM.md](UPSTREAM.md).
 
 ### Easy mode — llama.cpp Q3_K_XL
 

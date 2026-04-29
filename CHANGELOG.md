@@ -6,6 +6,18 @@ Changes that span the entire stack — engine version pins, script behavior, rep
 
 `no-genesis-mtp.yml` was a control variant we used to A/B-test whether MTP-without-Genesis worked (it does — Genesis isn't strictly required for fp8+MTP). Useful for our internal upstream-bug-isolation workflow, but no real reason for end users to pick it over `tools-text.yml` (fp8 + MTP + Genesis bugfixes + 75K, strictly better) or `minimal.yml` (no Genesis at all, simplest stack). Wizard already didn't surface it. Removed from `switch.sh` variant map, sibling compose "see also" tables, patches/README, and engines/VLLM.md.
 
+## 2026-04-29 — Cliff 1 root cause REVISED (FA2 softmax_lse pre-allocation, not FFN buffer)
+
+Bisected long-vision config space (192K / 128K / 96K / 86K @ 0.98 and 0.92 mem-util) to find Cliff-1-safe ceiling. Surprising result: **at fixed mem-util, lowering max-ctx changes nothing** because vLLM allocates the maximum KV pool the budget allows regardless of max-ctx (max-ctx only caps single-seq depth). And at fixed max-ctx, lowering mem-util forces the engine ceiling down too (the two knobs are coupled).
+
+Bisected with second-opinion synthesis from ChatGPT + DeepSeek + manual vLLM source review:
+
+**Real root cause of Cliff 1:** `softmax_lse` in FlashAttention 2's varlen kernel is allocated as `[num_seqs, num_heads, max_seqlen]` — sized by the `max_seqlen` *parameter*, not the actual `cu_seqlens`. vLLM passes `attn_metadata.max_seq_len`, which during cudagraph capture gets set to `max_model_len`. So a 25K-token tool prefill at `max-model-len=192K` allocates softmax_lse for 192K, eating activation headroom. The 50–138 MiB OOM allocations we'd been observing are downstream of this leak. Empirical OOM site: `_vllm_fa2_C.varlen_fwd` in `flash_attn_varlen_func`. Upstream root cause: [Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011) (open since 2024). vLLM cap-leak path: [vllm#40961](https://github.com/vllm-project/vllm/pull/40961).
+
+Earlier characterization as "FFN intermediate buffer at 138 MiB" was wrong — empirical site is FA2 not the FFN. Updated `docs/FAQ.md` "What's a prefill cliff?" entry, `docs/SINGLE_CARD.md` "Cliff 1 still fires" caveat, `docs/UPSTREAM.md` (added FA2 #1011 row, vllm#40961, vllm#40069 tracker, noted vllm#25543 removed `max_seq_len_to_capture` so the commonly-suggested mitigation doesn't apply on V1 nightly), and the `qwen36_27b_prefill_cliffs.md` memory entry.
+
+**Practical implication: no new variant ships.** The current default (48K + 0.92 + TQ3 + vision) stays the prefill-safe ceiling at this stack class — pushing higher requires the upstream fix at FA repo, not config tuning. `tools-text.yml` (75K + FP8 + PN8 closes Cliff 1) remains the IDE-agent path.
+
 ## 2026-04-29 — Verified Sandermage's 256K single-prompt claim on dual.yml
 
 Cross-rig verification of [Sandermage's 2026-04-29 claim](https://github.com/noonghunna/qwen36-27b-single-3090/issues/1#issuecomment-4342925976) that 256K single-prompt prefill works on `dual.yml`-class TP=2 setups. He measured 262 104 tokens @ 311s on 2× A5000 (~843 tok/s prefill).

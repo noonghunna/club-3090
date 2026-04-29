@@ -43,6 +43,9 @@ Each row covers one upstream link with: **title • status • our dependency / 
 | [#40875](https://github.com/vllm-project/vllm/issues/40875) — ngram + MTP coexistence | ✅ Closed | Routed via `prompt_lookup_min=8` flag. | Set in compose where applicable. |
 | [#41142](https://github.com/vllm-project/vllm/pull/41142) — Quentin-M streaming tool-call IndexError | 🟡 Open / Genesis backport active | Closes a streaming tool-call crash on Hermes / similar templates. | Genesis PN11 backport (auto-enabled where REC). |
 | [#39598](https://github.com/vllm-project/vllm/pull/39598) — kotori-yan qwen3coder MTP streaming early-return | 🟡 Open / Genesis backport active | Empty `tool_calls[]` when MTP bundles last param + `</function>` in same delta. | Genesis P64 backport: `GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1` (default-on in our composes). |
+| [#40961](https://github.com/vllm-project/vllm/pull/40961) — Preserve max_seq_len in ubatch metadata during CUDA graph capture | 🟡 Open PR | Confirms the cap-leak pattern: cudagraph capture passes `max_model_len` as `max_seq_len` through ubatch metadata. PR is *fixing a missing pass-through* for SWA models (where seqlen=1 at capture broke kernel selection) — by establishing that `max_model_len` is what gets carried through capture metadata, it cements the source of Cliff 1's max-ctx-dependent FA2 workspace sizing. | Stay at `default` 48K — see FA2 #1011 row + INTERNALS.md Cliff 1 mechanism. |
+| [#40069](https://github.com/vllm-project/vllm/issues/40069) — [Tracking] TurboQuant / HIGGS Attention follow-ups | 🟡 Open tracker | Umbrella tracking for TurboQuant + attention backend issues on our stack class. | Watch for cross-references when Cliff 1/2 work lands upstream. |
+| [#25543](https://github.com/vllm-project/vllm/pull/25543) — [V0 Deprecation] Remove `max_seq_len_to_capture` | ✅ Merged 2025-09-24 | Important to know: the `--max-seq-len-to-capture` flag (commonly suggested as a Cliff 1 mitigation) **does not exist in V1**. Don't recommend it. | n/a — flag removed. |
 
 ---
 
@@ -57,11 +60,17 @@ Each row covers one upstream link with: **title • status • our dependency / 
 
 ---
 
+## FlashAttention 2 (`Dao-AILab/flash-attention`)
+
+| Issue / PR | Status | Why it matters | Workaround |
+|---|---|---|---|
+| [#1011](https://github.com/Dao-AILab/flash-attention/issues/1011) — Variable memory allocation with varlen kernels | 🔴 Open since 2024, no fix | **Cliff 1 root cause.** `softmax_lse` is allocated as `[num_seqs, num_heads, max_seqlen]` — sized by `max_seqlen` parameter, NOT actual `cu_seqlens`. So a 25K-token chunked-prefill at `max_model_len=86K` allocates softmax_lse for 86K, not 25K. This is why Cliff 1 fires harder at higher max-ctx even when the actual prompt is the same. | None. Stay at `default` 48K (or `tools-text` 75K with PN8 mitigation). FA2 redesign of softmax_lse format would be the upstream fix. |
+
 ## flash-linear-attention (`fla-org/flash-linear-attention`)
 
 | Issue / PR | Status | Why it matters | Workaround |
 |---|---|---|---|
-| **Cliff 2 — DeltaNet GDN forward OOM at 50–60K single-prompt** | 🔴 Open, **no upstream issue filed yet**. **Confirmed cleared on dual TP=2** (this rig, 2026-04-29 — see DUAL_CARD.md "237K single-prompt verified"). | The `chunk_gated_delta_rule_fwd` kernel allocates intermediate buffers proportional to `seq_len`. Fires on single-card regardless of mem-util. On dual TP=2 the activation memory splits across cards and the cliff doesn't fire — verified at 237K single-prompt prefill on `dual.yml` (~830 tok/s prefill, matches Sandermage's 262K @ 311s on 2× A5000). Sandermage explicitly punted on the single-card fix (genesis-vllm-patches issue #1: *"can't fix this short of multi-GPU TP=2 or upstream fla.ops changes"*). | Single-card: use `tools-text.yml` (75K cap) or `llamacpp/default` (262K, different engine). Dual: `dual.yml` clears at ≥237K. |
+| **Cliff 2 — DeltaNet GDN forward OOM at 50–60K single-prompt** | 🔴 Open, **no upstream issue filed yet**. **Confirmed cleared on dual TP=2** (this rig, 2026-04-29 — see DUAL_CARD.md "237K single-prompt verified"). | The `chunk_gated_delta_rule_fwd` kernel allocates intermediate buffers proportional to `seq_len`. Fires on single-card regardless of mem-util. On dual TP=2 the activation memory splits across cards and the cliff doesn't fire — verified at 237K single-prompt prefill on `dual.yml` (~830 tok/s prefill, matches Sandermage's 262K @ 311s on 2× A5000). Sandermage explicitly punted on the single-card fix (genesis-vllm-patches issue #1: *"can't fix this short of multi-GPU TP=2 or upstream fla.ops changes"*). Likely the same architectural pattern as FA#1011 — recurrent state buffer pre-allocated by max_seq_len. | Single-card: use `tools-text.yml` (75K cap) or `llamacpp/default` (262K, different engine). Dual: `dual.yml` clears at ≥237K. |
 
 ---
 
