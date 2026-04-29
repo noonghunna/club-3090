@@ -78,7 +78,7 @@ Practical guide matched to common workloads. Single-card and dual-card recipes s
 **Loading a long document or document-set in one shot, asking questions about it. Single-shot summarization. Cold-prefill cost is the dominant factor.**
 
 ### 1× 3090
-- **Best path: `tools-text.yml`** (75K + fp8 + no vision). fp8 KV avoids the GDN cliff at 50-60K-token single prompts. Tested up to 60K-token single-prompt depth.
+- **Best path: `tools-text.yml`** (75K + fp8 + no vision + Genesis PN8). fp8 KV avoids the GDN cliff at 50-60K-token single prompts. Tested up to 60K-token single-prompt depth. **Cliff 1 closes** on this compose since 2026-04-29 via Genesis v7.62.x PN8 (frees ~900 MiB) — `verify-stress.sh` 25K-token tool prefill check now passes cleanly.
 - **Alternative: llama.cpp + Q4_K_M + q4_0 KV at 262K** (see [llama-cpp recipes](llama-cpp/recipes/)). 262K is the model's natural max — only achievable on single-card via llama.cpp. ~35-45 TPS sustained.
 - vLLM single-card maxes at ~50K safe single prompts (Cliff 2 hardware-bound).
 

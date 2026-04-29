@@ -74,12 +74,15 @@ echo "Model dir:    ${MODEL_DIR}"
 # vllm/_genesis package + per-patch env opts). Newer composes mount the package;
 # the legacy compose still references the v7.13 shim.
 # Pin Genesis to the exact commit our published numbers were measured against.
-# This is bf667c7 (Genesis HEAD as of 2026-04-27 — semver "v7.54", untagged).
-# Tagged stable v7.51-stable-2026-04-27 is one minor older; we ship the exact
-# tested commit instead so reproducibility doesn't depend on the upstream tag
-# moving or being garbage-collected. Bumping requires re-running verify-full.sh
-# to confirm the new commit works on your config.
-GENESIS_PIN="${GENESIS_PIN:-bf667c7}"
+# Currently pointing at v7.62.x release (commit 917519b, 2026-04-29). Bumped
+# from v7.54 (bf667c7) after benching PN8 (MTP draft online-quant propagation,
+# backport of vllm#40849) — frees ~800-900 MiB on the FP8+MTP single-card
+# paths (tools-text.yml, fast-chat.yml). Cross-rig validation thread:
+# https://github.com/noonghunna/qwen36-27b-single-3090/issues/1#issuecomment-4343317153
+# Bumping GENESIS_PIN requires re-running verify-full.sh against your composes
+# to confirm the new commit works on your config — Genesis releases sometimes
+# alter spec-verify routing in ways that affect tool-call extraction.
+GENESIS_PIN="${GENESIS_PIN:-917519b}"
 
 if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   if [[ -d "${GENESIS_DIR}/.git" ]]; then

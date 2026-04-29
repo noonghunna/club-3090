@@ -77,6 +77,10 @@ services:
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
       - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
       - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      # PN8 (v7.62.x) intentionally not enabled: at 0.98 mem-util the engine
+      # ceiling (~206K) is gated by the attention block-size divisor, not
+      # KV pool. PN8's KV gain has nowhere to go on this config. Tested
+      # 2026-04-29 — confirmed no ctx delta with PN8 enabled.
     shm_size: "16gb"
     ipc: host
     deploy:

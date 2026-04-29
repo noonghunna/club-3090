@@ -78,13 +78,17 @@ It shouldn't, much — we measured 50.93 TPS narr at 192K vs 50.53 at 32K (withi
 ### What's a "prefill cliff"?
 
 VRAM-related OOM during prompt processing on single-card vLLM. Two cliffs documented:
-- **Cliff 1** — TurboQuant tool-prefill OOM at ~138 MiB allocate request, fires on ≥25K tool messages at high mem-util (>0.95). Documented at single-3090 #1.
+- **Cliff 1** — FFN intermediate-buffer activation peak (138 MiB allocate, `intermediate_size × max-num-batched-tokens`). Fires on long-ctx single-card composes at high mem-util (>0.95) when the prefill batch needs the activation buffer. **Closes on `tools-text.yml`** (FP8 KV path) since 2026-04-29 via Genesis PN8 (frees ~900 MiB at boot — enough headroom for the activation peak). Still fires on TQ3 paths (`long-vision.yml`, `long-text.yml`) — PN8's quant-config propagation doesn't reach the activation buffer there. Documented at single-3090 #1.
 - **Cliff 2** — DeltaNet GDN forward OOM at ~50-60K single-prompt regardless of mem-util, fires on long single prompts.
 Both are in `fla.ops` and don't have file-replacement patches. Mitigation: `vllm/default` (48K + 0.92) for tools, dual-card or llama.cpp for long ctx.
 
 ### vllm#40914 keeps coming up — what is it?
 
-Sandermage's K+1 verify routing PR for vLLM. When it lands, the spec-verify cost we're paying on Ampere SM 8.6 (~22 TPS narrative regression vs pre-bug substrate) closes. Our v714 default on `dev205 + Genesis v7.54` will jump from 51 narr to ~70 narr, matching what ampersandru measures on the older `dev21 + v7.13` cascade-prone substrate. We track it in [INTERNALS.md "Upstream tracker"](../models/qwen3.6-27b/INTERNALS.md).
+Sandermage's K+1 verify routing PR for vLLM. When it lands, the spec-verify cost we're paying on Ampere SM 8.6 (~22 TPS narrative regression vs pre-bug substrate) closes. Our default on `dev205 + Genesis v7.62.x` will jump from ~51 narr to ~70 narr, matching what ampersandru measures on the older `dev21 + v7.13` cascade-prone substrate. We track it in [INTERNALS.md "Upstream tracker"](../models/qwen3.6-27b/INTERNALS.md).
+
+### What's PN8?
+
+A Genesis patch (`GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1`) added in v7.62.x — backport of vllm#40849 that makes the MTP draft head inherit the target model's online-quant config. We measured ~800-900 MiB freed on FP8+MTP single-card paths (`tools-text.yml`, `fast-chat.yml`), which **closes Cliff 1 on `tools-text.yml`**. No-op on TQ3 paths. Enabled by default in our two FP8 composes since 2026-04-29; opt-in elsewhere via the env var if you want to test.
 
 ---
 

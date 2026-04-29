@@ -119,6 +119,9 @@ services:
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1        # streaming tool-call edge case
       - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1                 # long-ctx tool adherence
       - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      # PN8 deliberately NOT enabled here: TQ3 + 0.92 has plenty of activation
+      # headroom; PN8 is no-op on TQ3 + small TPS cost. Enabled only on the
+      # FP8+MTP paths (tools-text.yml, fast-chat.yml) where it frees ~800 MiB.
     shm_size: "16gb"
     ipc: host
     deploy:

@@ -2,6 +2,27 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-04-29 — Genesis v7.62.x + PN8 enabled on FP8 paths
+
+Sandermage shipped Genesis v7.62.x (commit `917519b`) on 2026-04-29 with PN8 (MTP draft online-quant propagation — backport of vllm#40849) targeting the FP8+MTP memory-headroom problem. We benched the patch across all 5 single-card composes that use Genesis:
+
+| Compose | KV | mem-util | PN8 effect | TPS Δ | Verdict |
+|---|---|---|---|---|---|
+| `tools-text.yml` (75K, fp8) | fp8 | 0.97 | **−900 MiB at boot · Cliff 1 closes** ⭐ | −7% code | **PN8 enabled** |
+| `fast-chat.yml` (20K, fp8) | fp8 | 0.95 | **−800 MiB at boot** | −4.7% code | **PN8 enabled** |
+| `docker-compose.yml` (48K, TQ3) | TQ3 | 0.92 | no-op (already plenty of headroom) | −3% / −5% | PN8 not enabled |
+| `long-vision.yml` (192K, TQ3) | TQ3 | 0.98 | KV pool +230 MiB, engine ceiling 192K → 198K, but Cliff 1 still fires | −5% | PN8 not enabled (commented in env, opt-in) |
+| `long-text.yml` (205K, TQ3) | TQ3 | 0.98 | no effect (engine ceiling capped by block-size divisor at 206K) | not benched | PN8 not enabled |
+
+Why split-decision: the **Cliff 1 OOM that ampersandru hit on `long-vision.yml`** is an FFN intermediate-buffer activation peak (138 MiB allocate at `intermediate_size=17408 × max-num-batched-tokens=4128`), not a draft-model footprint. PN8's quant-config propagation doesn't reach that buffer on TQ3 paths. On FP8 paths the draft head's own footprint shrinks meaningfully — that's where the win is.
+
+**Cross-rig data + analysis posted to Sandermage**: [single-3090 #1 comment 4343317153](https://github.com/noonghunna/qwen36-27b-single-3090/issues/1#issuecomment-4343317153).
+
+Other v7.62.x items relevant to us (not yet benched here):
+- **PN11** (Quentin-M, vllm#41142 streaming tool-call IndexError fix) — applies cleanly via the auto-detected REC; planned to enable in tools-text + fast-chat next pass.
+- **TurboQuant k8v4 unlocked on hybrid GDN via P4 + P98** — Sandermage's A5000 measurement +1.9%; we'll bench on dual.
+- **Per-GPU recommendation system** (`vllm/_genesis/gpu_profile.py`) — boot log now lists `[REC]/[OFF]` per patch on this card. Nice ergonomics.
+
 ## 2026-04-28 (post-launch) — llama.cpp Q3_K_XL + Docker compose + stress-test findings + VRAM diagram
 
 - **First measured TPS for UD-Q3_K_XL on this stack:** 21.22 narr / 20.79 code @ 262K context + vision (single 3090, q4_0 KV). VRAM 20.17 GB / 24 GB at boot. Lower than memory's 28.5 baseline (Q4_K_M, 2026-04-23 on llama.cpp commit `9ab47e7d8`) — investigating mainline regression vs current `0d0764dfd`. ngram-mod path measured at 22.04 / 26.11 (+25% on code, draftless via `--spec-type ngram-mod`).

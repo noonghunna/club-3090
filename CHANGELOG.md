@@ -2,6 +2,17 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-04-29 — Genesis bumped to v7.62.x + PN8 enabled on FP8 paths
+
+- **`scripts/setup.sh`** — `GENESIS_PIN` bumped from `bf667c7` (v7.54) → `917519b` (v7.62.x release, 2026-04-29). Includes Sandermage's PN8 (MTP draft online-quant propagation, backport of vllm#40849), PN11 (Quentin-M streaming tool-call IndexError fix vllm#41142), per-GPU profile auto-recommendations, and TurboQuant k8v4 unlocked on hybrid GDN via P4+P98.
+- **PN8 enabled on FP8 paths only** (`docker-compose.tools-text.yml` + `docker-compose.fast-chat.yml`). Cross-rig validation on 3090 measured ~800-900 MiB freed at boot, **Cliff 1 closes on `tools-text.yml`** (25K-token tool prefill no longer OOMs). TPS cost is real but small (~−5% narr / −7% code).
+- **PN8 deliberately NOT enabled** on TQ3 paths (`docker-compose.yml` default 48K, `long-vision.yml`, `long-text.yml`). Tested 2026-04-29:
+  - Default 48K + 0.92: PN8 is no-op (KV pool unchanged, plenty of activation headroom already)
+  - long-vision 192K + 0.98: PN8 grows KV pool by 230 MiB and lifts engine ceiling 192K → 198K, but does NOT close Cliff 1 (the 138 MiB allocate is an FFN intermediate-buffer activation peak, not draft-model footprint)
+  - long-text 205K + 0.98: PN8 has no effect (engine ceiling at 206K is gated by attention-block-size divisor, not KV)
+- **PN8 not applied on dual-card configs** — `dual.yml` is intentionally Genesis-less (per its header), and adding Genesis structurally for one patch isn't worth it given dual.yml has no current cliff to close.
+- Cross-rig data shared with Sandermage on [single-3090 #1](https://github.com/noonghunna/qwen36-27b-single-3090/issues/1#issuecomment-4343317153).
+
 ## 2026-04-28 (post-launch) — wizard + switcher + health + examples + FAQ + VRAM diagram + Kaitchup citation
 
 Polish pass after the launch tweet went live. All click-through paths now lead somewhere useful instead of "find the right yml file":
