@@ -47,7 +47,7 @@ curl -sf http://localhost:8020/v1/chat/completions \
 
 How each config splits the 24 GB / card budget — weights, KV cache, vision tower, DFlash draft (where applicable), and activation/cudagraph headroom. Single-card (TP=1) on top, dual-card (TP=2, weights and KV halved across both GPUs) on bottom.
 
-![Per-card VRAM allocation across single + dual configs](../../docs/img/vram-budget-dual.svg)
+![Per-card VRAM allocation across single + dual configs](../../docs/img/vram-budget-dual.png)
 
 This is also why TP=2 unlocks 262K context with vision and 4 concurrent streams while single-card can't — the model + a usable KV pool just doesn't fit on one 24 GB card past ~48K with tool prefills (Cliff 1) or ~50–60K single prompts (Cliff 2).
 

@@ -22,7 +22,7 @@ Run any of these via `bash scripts/launch.sh` (interactive) or `bash scripts/swi
 
 ## VRAM budget on 24 GB
 
-![Per-card VRAM allocation, single-card section](img/vram-budget-dual.svg)
+![Per-card VRAM allocation, single-card section](img/vram-budget-dual.png)
 
 What this says about single-card constraints:
 

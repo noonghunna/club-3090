@@ -19,7 +19,7 @@ Run any of these via `bash scripts/launch.sh` (interactive) or `bash scripts/swi
 
 ## VRAM budget on 2× 24 GB (TP=2)
 
-![Per-card VRAM allocation, dual-card section](img/vram-budget-dual.svg)
+![Per-card VRAM allocation, dual-card section](img/vram-budget-dual.png)
 
 **Tensor parallelism (TP=2) splits weights AND KV symmetrically across both cards.** Each card holds ~7 GB of weights (vs ~14 GB on single-card) plus its half of the KV pool. That's why dual unlocks what single can't:
 

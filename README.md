@@ -46,7 +46,7 @@ More models coming. The repo structure scales — when we add Qwen3.5-27B / GLM-
 
 ## Measured TPS at a glance
 
-![Qwen3.6-27B TPS by config](docs/performance.svg)
+![Qwen3.6-27B TPS by config](docs/performance.png)
 
 Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts. Substrate: vLLM nightly `dev205+g07351e088` + Genesis pinned to commit `917519b` (v7.62.x), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config details + run-by-run numbers + VRAM + AL/accept rates: [models/qwen3.6-27b/CHANGELOG.md](models/qwen3.6-27b/CHANGELOG.md) (per-model history) and [scripts/bench.sh](scripts/bench.sh) (canonical bench).
 

@@ -14,10 +14,11 @@
 #     against HF x-linked-etag
 #
 # Env vars (optional):
-#   MODEL_DIR      Where to place model weights. Default: <repo>/models-cache
-#   HF_TOKEN       HF token (public models, usually unnecessary)
-#   SKIP_MODEL     Set to 1 to skip the model download step
-#   SKIP_GENESIS   Set to 1 to skip cloning Genesis patches
+#   MODEL_DIR           Where to place model weights. Default: <repo>/models-cache
+#   HF_TOKEN            HF token (public models, usually unnecessary)
+#   SKIP_MODEL          Set to 1 to skip the model download step
+#   SKIP_GENESIS        Set to 1 to skip cloning Genesis patches
+#   PREFLIGHT_DISK_GB   Required free space at MODEL_DIR (default: 25)
 #
 # Idempotent: safe to re-run — skips steps already done.
 
@@ -52,6 +53,24 @@ MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models-cache}"
 GENESIS_DIR="${ROOT_DIR}/models/${MODEL_NAME}/vllm/patches/genesis"
 
 cd "${ROOT_DIR}"
+
+# ---------- Pre-flight checks ----------
+# Catches the common "first-run failures": missing docker, no GPU visible,
+# disk too small for the ~14 GB AutoRound int4 download. Fails fast with
+# actionable hints rather than mid-download or first-boot crash.
+# shellcheck source=preflight.sh
+source "${ROOT_DIR}/scripts/preflight.sh"
+
+# Required disk: model is ~14 GB on disk; 25 GB gives buffer for download
+# temp files + safetensors + tokenizer/config.
+PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-25}"
+
+echo "[preflight] checking environment..."
+preflight_docker || exit 1
+preflight_gpu 1  || exit 1
+preflight_disk "${MODEL_DIR}" "${PREFLIGHT_DISK_GB}" || exit 1
+echo "[preflight] ok."
+echo ""
 
 # ---------- Tool checks ----------
 need() {

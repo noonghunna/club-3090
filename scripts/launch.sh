@@ -10,6 +10,8 @@
 #   bash scripts/launch.sh                              # interactive wizard
 #   bash scripts/launch.sh --variant <name>             # skip wizard, boot directly
 #   bash scripts/launch.sh --engine vllm --cards 1      # partial flags, ask the rest
+#   bash scripts/launch.sh --no-verify                  # skip post-launch verify-full
+#   bash scripts/launch.sh --no-preflight               # skip docker/GPU pre-flight
 #
 # All flags accept the same names as `switch.sh --list` produces.
 # Examples:
@@ -20,26 +22,41 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-SWITCH="${ROOT_DIR}/scripts/switch.sh"
-VERIFY="${ROOT_DIR}/scripts/verify-full.sh"
+SWITCH="${SWITCH:-${ROOT_DIR}/scripts/switch.sh}"
+VERIFY="${VERIFY:-${ROOT_DIR}/scripts/verify-full.sh}"
+# shellcheck source=preflight.sh
+source "${ROOT_DIR}/scripts/preflight.sh"
 
 # --- arg parsing ---
 ENGINE=""
 CARDS=""
 VARIANT=""
 SKIP_VERIFY=0
+SKIP_PREFLIGHT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --engine)  ENGINE="$2"; shift 2 ;;
     --cards)   CARDS="$2"; shift 2 ;;
     --variant) VARIANT="$2"; shift 2 ;;
     --no-verify) SKIP_VERIFY=1; shift ;;
+    --no-preflight) SKIP_PREFLIGHT=1; shift ;;
     -h|--help)
       sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "Unknown flag: $1"; exit 1 ;;
   esac
 done
+
+# --- pre-flight ---
+if [[ $SKIP_PREFLIGHT -eq 0 ]]; then
+  echo "[preflight] checking environment..."
+  preflight_docker || exit 1
+  preflight_gpu 1  || exit 1
+  preflight_gpu_idle
+  preflight_running
+  echo "[preflight] ok."
+  echo ""
+fi
 
 ask() {
   # ask "prompt" "default" -> echoes user input or default
@@ -78,47 +95,82 @@ choose() {
 }
 
 # --- wizard ---
+# Flow: cards → workload → auto-pick engine. Newcomers can answer "how
+# many GPUs" and "what do I want to do" but rarely "vLLM or llama.cpp" —
+# so the engine is derived from the workload pick, not asked first.
+# Manual --engine override filters the workload list to that engine.
 if [[ -z "$VARIANT" ]]; then
   echo ""
-  echo "club-3090 launcher — pick a config and we'll boot it."
+  echo "club-3090 launcher — let's pick the right config for your workload."
   echo "(Use --variant <name> next time to skip the wizard.)"
   echo ""
 
-  if [[ -z "$ENGINE" ]]; then
-    ENGINE=$(choose "Which engine?" \
-      "vLLM — full features (vision + tools + spec-decode), max TPS, has prefill cliffs at long ctx" "vllm" \
-      "llama.cpp — max context (262K), no prefill cliffs, simpler setup, slower (~21 TPS)" "llamacpp")
+  # Step 1 — cards.
+  if [[ -z "$CARDS" ]]; then
+    CARDS=$(choose "How many RTX 3090s?" \
+      "1× 3090 (24 GB)"           "1" \
+      "2× 3090 (PCIe / no NVLink)" "2")
   fi
 
-  if [[ "$ENGINE" == "vllm" ]]; then
-    if [[ -z "$CARDS" ]]; then
-      CARDS=$(choose "How many RTX 3090s?" \
-        "1× 3090 (24 GB)"           "1" \
-        "2× 3090 (PCIe, no NVLink)" "2")
+  # Re-validate now that we know the requirement (preflight already ran
+  # with min=1; bump to actual count). Skip if --no-preflight.
+  if [[ $SKIP_PREFLIGHT -eq 0 ]]; then
+    preflight_gpu "$CARDS" || exit 1
+  fi
+
+  # Step 2 — workload, filtered by cards (and --engine override if set).
+  # Each option's value is "engine/file" so engine is implied by the pick.
+  if [[ "$CARDS" == "1" ]]; then
+    if [[ -z "$ENGINE" || "$ENGINE" == "vllm" ]]; then
+      VLLM_OPTS=(
+        "Chat + light tools — recommended default (48K, vision, MTP)"             "vllm/default"
+        "IDE agents with big tool returns (Cline / Cursor / Continue, 75K text)"  "vllm/tools-text"
+        "Pure chat, max TPS (~73 TPS, 20K)"                                       "vllm/fast-chat"
+        "Long context WITH vision (192K — Cliff 1 unsafe past 25K tool prompts)"  "vllm/long-vision"
+        "Long context, text only (205K — same Cliff 1 caveat)"                    "vllm/long-text"
+        "Easy mode — no Genesis, no spec-decode, simplest (32K)"                  "vllm/minimal"
+      )
+    else
+      VLLM_OPTS=()
     fi
-    if [[ "$CARDS" == "1" ]]; then
-      VARIANT=$(choose "What's your main workload?" \
-        "Chat / coding agent (≤48K, tools work, recommended)"        "vllm/default" \
-        "Long context with vision (192K — UNSAFE with 25K+ tool returns: Cliff 1)" "vllm/long-vision" \
-        "Long text-only (205K — same Cliff 1 caveat)"                "vllm/long-text" \
-        "Pure chat, max TPS (20K, fp8 KV)"                           "vllm/fast-chat" \
-        "Long single prompts, text-only (75K, fp8 KV)"               "vllm/tools-text" \
-        "Minimal — no Genesis, no spec-decode (32K)"                 "vllm/minimal")
-    elif [[ "$CARDS" == "2" ]]; then
-      VARIANT=$(choose "Dual-card priority?" \
-        "Balanced default (262K + vision, 2 streams, fp8 KV)"        "vllm/dual" \
-        "Multi-tenant (4 concurrent streams @ 262K, TQ3 KV)"         "vllm/dual-turbo" \
-        "Peak code TPS with vision (185K, DFlash N=5)"               "vllm/dual-dflash" \
-        "Peak code TPS no vision (200K, DFlash N=5)"                 "vllm/dual-dflash-noviz")
+    if [[ -z "$ENGINE" || "$ENGINE" == "llamacpp" ]]; then
+      LLAMA_OPTS=(
+        "Frontier context, no cliffs (262K + vision, ~21 TPS)"                    "llamacpp/default"
+        "4 parallel streams, frontier context (192K pool, vision)"                "llamacpp/concurrent"
+      )
+    else
+      LLAMA_OPTS=()
     fi
-  elif [[ "$ENGINE" == "llamacpp" ]]; then
-    VARIANT=$(choose "llama.cpp mode?" \
-      "Single slot, full 262K context + vision (recommended)"      "llamacpp/default" \
-      "4 parallel slots @ 192K pool + vision (multi-tenant)"       "llamacpp/concurrent")
+    VARIANT=$(choose "What's your main workload?" "${VLLM_OPTS[@]}" "${LLAMA_OPTS[@]}")
+  elif [[ "$CARDS" == "2" ]]; then
+    if [[ -n "$ENGINE" && "$ENGINE" != "vllm" ]]; then
+      echo "ERROR: --engine ${ENGINE} not supported on 2× cards (no llama.cpp dual recipe yet)." >&2
+      exit 1
+    fi
+    VARIANT=$(choose "What's your dual-card priority?" \
+      "Balanced default — 262K + vision + 2 streams (recommended)" "vllm/dual" \
+      "Multi-tenant — 4 concurrent streams @ 262K, TQ3 KV"         "vllm/dual-turbo" \
+      "Peak code TPS with vision (185K, DFlash N=5)"               "vllm/dual-dflash" \
+      "Peak code TPS no vision (200K, DFlash N=5)"                 "vllm/dual-dflash-noviz")
   else
-    echo "ERROR: unknown engine '${ENGINE}' (expected: vllm | llamacpp)" >&2
+    echo "ERROR: --cards ${CARDS} unsupported (expected 1 or 2)." >&2
     exit 1
   fi
+
+  # Step 3 — explain the auto-picked engine.
+  echo ""
+  case "$VARIANT" in
+    llamacpp/*)
+      echo "[wizard] picked llama.cpp — chosen because no prefill cliffs at 262K and the simplest"
+      echo "[wizard]   serving path. Trade-off: ~21 TPS vs 70+ on vLLM. Right call for long-prompt"
+      echo "[wizard]   robustness, frontier context, or anyone who wants the simplest setup."
+      ;;
+    vllm/*)
+      echo "[wizard] picked vLLM — chosen for spec-decode (MTP), tool-call extraction, and best TPS."
+      echo "[wizard]   Watch out for the prefill cliffs (Cliff 1 = 25K+ tool returns; Cliff 2 = 50-60K"
+      echo "[wizard]   single prompts on TQ3) — see docs/SINGLE_CARD.md for the safe-config map."
+      ;;
+  esac
 fi
 
 # --- launch + verify ---
