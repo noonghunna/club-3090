@@ -83,15 +83,38 @@ The unifying trigger: **any prefill batch large enough that vLLM does chunked pr
 
 **The puzzling result:** 48K + 0.92 and 86K + 0.92 have **identical boot stats** (same VRAM used, same KV pool size) yet behave differently on the *same* 25K tool prefill. That's what cracked the diagnosis open — the difference can't be in static allocation.
 
-### Root cause (verified)
+### Root cause — dual mechanism (revised 2026-04-29 PM after P101+P103 testing)
 
-vLLM's FA2 backend ultimately calls `flash_attn_varlen_func`, which internally allocates `softmax_lse` as:
+Cliff 1 has **two mechanisms**; whichever has the larger allocation fires first under tight activation budget:
+
+**Mechanism A — FA2 softmax_lse cap-leak.** vLLM's FA2 backend calls `flash_attn_varlen_func`, which internally allocates `softmax_lse` as `[num_seqs, num_heads, max_seqlen]` — sized by the `max_seqlen` parameter passed into the function call, NOT by the actual `cu_seqlens` of the current batch. vLLM passes `attn_metadata.max_seq_len`, which during cudagraph capture gets set to `max_model_len`. Tracked at [Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011) (open since 2024).
+
+**Mechanism B — FFN intermediate buffer.** The inductor-compiled FFN forward allocates the up_proj output as `[max_num_batched_tokens, intermediate_size]` per chunked-prefill batch. For Qwen3.6-27B with `max_num_batched_tokens=4128`, `intermediate_size=17408`: `4128 × 17408 × 2 bytes ≈ 138 MiB` per chunk. Stack-trace site:
 
 ```
-softmax_lse: [num_seqs, num_heads, max_seqlen]
+File ".../inductor_cache/.../call.py", line 1208, in call
+    buf9 = empty_strided_cuda((s18, 17408), (17408, 1), torch.float16)
 ```
 
-— sized by the **`max_seqlen` parameter passed into the function call**, NOT by the actual `cu_seqlens` of the current batch. This is a known FA2 design choice (shape stability for the backward pass and cudagraph capture), tracked at [Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011) (open since 2024, no fix).
+`max_num_batched_tokens` is bounded below by `block_size` (4128 on hybrid Qwen3-Next due to Mamba cache constraint — asserted at boot if you try to go lower).
+
+**How the two interact under our tested configs (2026-04-29):**
+
+| Config | Dominant cliff | Allocate / Free |
+|---|---|---|
+| 192K + 0.98 + TQ3 + vision (current `long-vision.yml`, no P101/P103) | A (FA2 softmax_lse) | 50 MiB / 30 MiB |
+| 192K + 0.98 + TQ3 + vision + P101 + P103 | **B** (FFN buffer; P101 reroutes around A) | 138 MiB / 130 MiB |
+| 175K + 0.97 + TQ3 + vision + P101 + P103 | B (FFN buffer) | 138 MiB / 110 MiB |
+| 205K + 0.98 + TQ3 + **no-vision** + P101 + P103 | A (FA2 softmax_lse) — vision drop frees ~500 MiB so FFN clears | 50 MiB / 50 MiB |
+| 86K + 0.92 + TQ3 + vision (no P101/P103) | A (FA2 softmax_lse) | 50 MiB / 30 MiB |
+| 48K + 0.92 + TQ3 + vision (default — no P101/P103) | neither — both fit in budget | ✅ passes |
+
+**Implications:**
+
+- Sandermage's P101 (already exists, opt-in) reroutes long-cached-prefix continuation prefill from FA2 → TQ decode kernel — closes Mechanism A but exposes Mechanism B.
+- P103 (already exists, opt-in) addresses Cliff 2 (different code path entirely; not a Cliff 1 mitigation).
+- A hypothetical FA call-site `max_seqlen_k` clamp (asked in [Genesis #11](https://github.com/Sandermage/genesis-vllm-patches/issues/11)) would close Mechanism A. Wouldn't close Mechanism B.
+- A complete fix on TQ3 long-ctx with vision would need: clamp + chunked FFN forward (or activation checkpointing in FFN) + something to relieve the ~500 MiB pressure that vision tower adds.
 
 vLLM passes `attn_metadata.max_seq_len` as the `max_seqlen` argument. During cudagraph capture in vLLM V1, [`gpu_model_runner` sets `max_seq_len = self.max_model_len`](https://docs.vllm.ai/en/latest/api/vllm/v1/worker/gpu_model_runner/) so captured graphs have shape stability across all possible request sizes.
 

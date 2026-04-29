@@ -6,6 +6,18 @@ Changes that span the entire stack — engine version pins, script behavior, rep
 
 `no-genesis-mtp.yml` was a control variant we used to A/B-test whether MTP-without-Genesis worked (it does — Genesis isn't strictly required for fp8+MTP). Useful for our internal upstream-bug-isolation workflow, but no real reason for end users to pick it over `tools-text.yml` (fp8 + MTP + Genesis bugfixes + 75K, strictly better) or `minimal.yml` (no Genesis at all, simplest stack). Wizard already didn't surface it. Removed from `switch.sh` variant map, sibling compose "see also" tables, patches/README, and engines/VLLM.md.
 
+## 2026-04-29 (PM) — Cliff 1 dual-mechanism discovery (P101+P103 cross-rig test)
+
+While preparing to write our own Cliff 1 fix, discovered Sandermage already has **P101** (TQ continuation 64-token slicing, vllm#41123 selective backport) and **P103** (FLA Cliff 2 chunked fwd_h+fwd_o orchestrator) in Genesis tree — both opt-in, default-OFF, and we'd never enabled either. Tested them on long-vision/long-text on RTX 3090.
+
+**Result:** P101 + P103 don't fully close Cliff 1 — they reroute around one mechanism but expose another. Cliff 1 has TWO mechanisms:
+1. **FA2 softmax_lse** (cap-leak, what ChatGPT/DeepSeek pointed at) — fires when continuation prefill goes through FA2 path
+2. **FFN intermediate buffer** (`max_num_batched_tokens × intermediate_size = 4128 × 17408 × 2 bytes = 138 MiB`) — fires when activation budget is tight, regardless of whether FA2 is on the path
+
+P101 reroutes around mechanism 1 (continuation prefill → TQ decode kernel) but exposes mechanism 2. The dominant cliff under tight budget is whichever has the larger allocation. Vision tower's ~500 MiB pressure is the swing factor.
+
+Posted findings to [Sandermage/genesis-vllm-patches#11](https://github.com/Sandermage/genesis-vllm-patches/issues/11#issuecomment-4348299741) — the FA2 clamp ask remains valuable for tools-text/long-text-no-vision but won't fully unlock long-vision (FFN buffer mechanism). Updated [CLIFFS.md](docs/CLIFFS.md) with the dual-mechanism diagnosis. Default 48K + tools-text 75K stay correct; no shipped config changes.
+
 ## 2026-04-29 — Add `docs/CLIFFS.md` — full prefill-cliff synopsis
 
 Single comprehensive document consolidating everything we know about Cliff 1 and Cliff 2: TL;DR table, empirical bisection (with stack traces), root-cause walk-through (FA2 `softmax_lse` cap-leak for Cliff 1, fla.ops GDN intermediate buffer for Cliff 2), why earlier "FFN intermediate buffer" framing was wrong, why mem-util doesn't help (coupling with max-ctx), why PN8 closes Cliff 1 on `tools-text.yml` but not on TQ3 paths, why llama.cpp dodges both structurally, alternative attention backends evaluated, who-can-fix-it landscape with timelines, what we could do at any difficulty level (trivial → out of scope), recommended path forward, and re-test triggers. Cross-linked from FAQ and README. Replaces scattered cliff explanations with one canonical reference.
