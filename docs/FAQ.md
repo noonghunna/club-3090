@@ -110,6 +110,18 @@ You'd need different ports per variant. Edit `ports:` in the second compose (def
 
 Yes. Add a connection in Open WebUI's Settings → Connections → OpenAI: base URL `http://localhost:8020/v1`, any non-empty API key, model `qwen3.6-27b-autoround`. See [docs/EXAMPLES.md](EXAMPLES.md#open-webui).
 
+### Will this work with VS Code GitHub Copilot LLM Gateway?
+
+Yes, but you need a compose with **≥48K context**, not the 20K `fast-chat.yml` default — Copilot's LLM Gateway sends ~20K tokens of tool-schema preamble (50+ VS Code tools enumerated in a structured-outputs JSON schema) on every request, which alone exceeds fast-chat's 20K cap. Use `tools-text.yml` (75K + fp8 + PN8 enabled — Cliff 1 closed):
+
+```bash
+bash scripts/switch.sh vllm/tools-text
+```
+
+There's a second wrinkle: Copilot's LLM Gateway sometimes sends very low `max_tokens` (e.g. 64) on probe-style requests. With `tool_choice: required` (which Copilot enforces via `minItems: 1` on its structured-outputs schema), the model must emit a tool-call JSON that wraps a real argument like a file path — and 64 tokens isn't enough to fit `{"name": "read_file", "parameters": {"filePath": "/long/abs/path"}}`. The truncated JSON arrives at the gateway as "empty response." If you see this pattern, it's a client-side limit, not the server. Other OpenAI-compat clients (Cline / Continue.dev / Cursor) tend to send realistic max_tokens by default and don't hit this.
+
+Background + debug-log analysis: [club-3090 #2](https://github.com/noonghunna/club-3090/issues/2).
+
 ---
 
 ## Community / contribution
