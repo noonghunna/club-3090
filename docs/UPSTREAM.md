@@ -57,6 +57,7 @@ Each row covers one upstream link with: **title • status • our dependency / 
 | [#6](https://github.com/Sandermage/genesis-vllm-patches/issues/6) — P65 PIECEWISE cost quantified | ✅ Closed | We characterized the +22 TPS narrative cost of P65 on Qwen3.6-27B + MTP. Sandermage acknowledged. Will recover when vllm#40914 lands. | Accept the cost on substrate-current; ampersandru's pre-P65 stack avoids it. |
 | [#7](https://github.com/Sandermage/genesis-vllm-patches/issues/7) — P67 Triton CompilationError on Qwen3.6-27B | 🟡 Open | P67 (multi-query verify kernel, +25–35% TPS) crashes on GQA != power-of-2. Affects 27B specifically. | P67 left off by default on 27B configs. |
 | [#9](https://github.com/Sandermage/genesis-vllm-patches/issues/9) — P68/P69 8000-char threshold breaks IDE agents | 🔴 Open (we filed 2026-04-29) | P68 silently rewrites `tool_choice: auto → required`; P69 injects "must use a tool" hint. Both fire at default 8000-char threshold — every IDE agent context exceeds that. | All shipped composes have `P68/P69` commented out. See [`docs/FAQ.md`](FAQ.md#will-this-work-with-vs-code-github-copilot-llm-gateway). |
+| [#11](https://github.com/Sandermage/genesis-vllm-patches/issues/11) — Cliff 1 root cause traced to FA2 softmax_lse padded by max_seqlen, asking about Genesis-style clamp | 🔴 Open (we filed 2026-04-29) | If feasible, would structurally close Cliff 1 on TQ3 paths (`long-vision`, `long-text`) instead of relying on PN8's absorb-the-leak strategy. | Stay at `default` 48K or `tools-text` 75K (PN8). |
 
 ---
 
