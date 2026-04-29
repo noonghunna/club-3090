@@ -66,9 +66,8 @@
 #   docker-compose.yml             (THIS — default)   48K   51/68 TPS  vision  ⭐ Production-safe; below both cliffs
 #   docker-compose.long-vision.yml                    192K   51/68 TPS  vision     Long ctx + vision (R3'); prefill caveats apply
 #   docker-compose.long-text.yml                      205K   50/66 TPS  no vis     Engine-ceiling text-only (R3'''); same caveats
-#   docker-compose.fast-chat.yml                       20K   55/70 TPS  vision     Fastest TPS for chat; fp8 KV
-#   docker-compose.tools-text.yml                      75K   53/70 TPS  no vis     Long prompts (60K+) with fp8 — vision off
-#   docker-compose.no-genesis-mtp.yml                  20K   55/68 TPS  vision     Same as fast-chat minus Genesis patches
+#   docker-compose.tools-text.yml                      75K   51/65 TPS  no vis     IDE agents (Cline/Cursor/Copilot) — fp8 KV + PN8 closes Cliff 1
+#   docker-compose.no-genesis-mtp.yml                  20K   55/68 TPS  vision     Plain vLLM nightly + MTP — control variant
 #   docker-compose.minimal.yml                         32K   32/33 TPS  vision     Simplest stack; no spec-decode
 #
 # Upstream tracker: vllm-project/vllm#40880 (Sandermage's root-cause + v7.14
@@ -117,11 +116,14 @@ services:
       - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1   # core fix for #40880
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1           # capture-size divisibility
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1        # streaming tool-call edge case
-      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1                 # long-ctx tool adherence
-      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      # P68/P69 deliberately DISABLED (2026-04-29) — same reasoning as
+      # tools-text.yml: 8000-char threshold breaks IDE-agent flows with
+      # silent finish_reason=stop. Bisected on club-3090 issue #2.
+      # - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      # - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
       # PN8 deliberately NOT enabled here: TQ3 + 0.92 has plenty of activation
       # headroom; PN8 is no-op on TQ3 + small TPS cost. Enabled only on the
-      # FP8+MTP paths (tools-text.yml, fast-chat.yml) where it frees ~800 MiB.
+      # FP8+MTP path (tools-text.yml) where it frees ~800 MiB.
     shm_size: "16gb"
     ipc: host
     deploy:

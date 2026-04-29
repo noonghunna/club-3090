@@ -13,10 +13,9 @@
 # All single-card variants in this dir:
 #
 #   Compose file                          Max ctx   Narr/Code TPS   KV     Vision   Status
-#   docker-compose.yml (default)            48K       51 / 68       TQ3    ✅       ⭐ recommended
-#   docker-compose.fast-chat.yml            20K       55 / 70       fp8    ✅       fastest at small ctx
-#   docker-compose.tools-text.yml (this)    75K       53 / 70       fp8    ❌       long single prompts
-#   docker-compose.no-genesis-mtp.yml       20K       55 / 68       fp8    ✅       same as fast-chat minus Genesis
+#   docker-compose.yml (default)            48K       51 / 68       TQ3    ✅       ⭐ recommended for chat + light tools
+#   docker-compose.tools-text.yml (this)    75K       51 / 65       fp8    ❌       IDE agents — Cline / Cursor / Copilot
+#   docker-compose.no-genesis-mtp.yml       20K       55 / 68       fp8    ✅       plain vLLM + MTP — control
 #   docker-compose.minimal.yml              32K       32 / 33       fp8    ✅       no spec-decode, simplest
 #
 # Run with:

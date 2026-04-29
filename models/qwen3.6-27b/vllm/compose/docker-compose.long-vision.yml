@@ -42,8 +42,7 @@
 #   docker-compose.yml (default)          48K     TQ3      ✅       Production-safe; below both cliffs
 #   docker-compose.long-vision.yml (this) 192K    TQ3      ✅       Long ctx + vision; prefill caveats apply
 #   docker-compose.long-text.yml          205K    TQ3      ❌       Long ctx text-only; engine ceiling
-#   docker-compose.fast-chat.yml          20K     fp8      ✅       Fastest TPS at small ctx
-#   docker-compose.tools-text.yml         75K     fp8      ❌       Long prompts (≥60K) without vision
+#   docker-compose.tools-text.yml         75K     fp8      ❌       IDE agents — fp8 KV + PN8 closes Cliff 1
 #
 # Run with:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose

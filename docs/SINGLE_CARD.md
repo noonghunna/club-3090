@@ -8,7 +8,6 @@ You have **one RTX 3090 (24 GB VRAM)**. This page is the front door for picking 
 
 | What you're doing | Compose | Narr / Code TPS | Why |
 |---|---|---|---|
-| Chat / Q&A (≤20K) | [`fast-chat.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.fast-chat.yml) | **52 / 67** | Max TPS, fp8 KV, plus PN8 = ~−800 MiB |
 | Tool-using IDE agents (Cline / Cursor / Copilot Gateway) | [`tools-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml) | **51 / 65** | 75K ctx, **Cliff 1 closed** via Genesis PN8 (2026-04-29) |
 | General-purpose default (≥20K, vision + tools) | [`docker-compose.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.yml) | **50 / 67** | 48K, TQ3 KV, prefill-safe |
 | Long single prompts (RAG / summarization, no vision) | [`tools-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml) (vLLM 75K) **or** [llama.cpp recipe](../models/qwen3.6-27b/llama-cpp/) (262K) | 51/65 (vLLM) · 21/21 (llama.cpp) | fp8 KV avoids GDN cliff up to ~60K; llama.cpp avoids cliffs entirely |
@@ -45,12 +44,6 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
 ## Pick a config
 
-### Chat / Q&A — `fast-chat.yml`
-
-**Workload:** single user, short conversations, browser UIs (Open WebUI, LibreChat). Intermittent.
-
-20K context with fp8 KV. Smallest, fastest, no prefill cliff at this depth. PN8 enabled (2026-04-29) — frees ~800 MiB headroom. **Caveat:** 20K fills faster than people expect with system prompts + tool defs + history. A 30-turn coding chat can exceed 20K. Bump to default 48K if conversations grow.
-
 ### Tool-using IDE agents — `tools-text.yml`
 
 **Workload:** Cline, Cursor, GitHub Copilot LLM Gateway, Continue.dev, Hermes — anything that calls tools (`read_file`, `run_in_terminal`, `web_fetch`) and expects structured `tool_calls[]` responses.
@@ -59,7 +52,7 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
 **Two gotchas worth surfacing:**
 
-- **VS Code Copilot LLM Gateway sends ~20K tokens of tool schema** in every request. `fast-chat.yml` (20K cap) won't work for Copilot — this is why we recommend `tools-text.yml` (75K).
+- **VS Code Copilot LLM Gateway sends ~20K tokens of tool schema** in every request. The 48K default *just* fits this with room for a chat turn; `tools-text.yml` (75K) is the safer choice for Copilot specifically.
 - **Truncated `max_tokens`** (some clients send 64) cuts tool-call JSON mid-string — produces malformed output that some gateways report as "empty response." That's a client config issue, not the server. See [FAQ: Copilot Gateway](FAQ.md#will-this-work-with-vs-code-github-copilot-llm-gateway).
 
 ### General-purpose default — `docker-compose.yml`

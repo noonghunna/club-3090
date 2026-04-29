@@ -18,8 +18,7 @@
 #     vllm/default          48K + TQ3 + MTP + vision + tools (recommended)
 #     vllm/long-vision      192K + TQ3 + vision (Cliff 1 unsafe with big tool prompts)
 #     vllm/long-text        205K + TQ3 + text-only
-#     vllm/fast-chat        20K + fp8 + MTP (max TPS, chat)
-#     vllm/tools-text       75K + fp8 + MTP + text-only
+#     vllm/tools-text       75K + fp8 + MTP + text-only (IDE agents — Cline / Cursor)
 #     vllm/no-genesis-mtp   20K + fp8 + MTP (no Genesis — control)
 #     vllm/minimal          32K + fp8 (no spec-decode, simplest)
 #
@@ -50,7 +49,6 @@ declare -A VARIANTS=(
   [vllm/default]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.yml"
   [vllm/long-vision]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.long-vision.yml"
   [vllm/long-text]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.long-text.yml"
-  [vllm/fast-chat]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.fast-chat.yml"
   [vllm/tools-text]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.tools-text.yml"
   [vllm/no-genesis-mtp]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.no-genesis-mtp.yml"
   [vllm/minimal]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.minimal.yml"

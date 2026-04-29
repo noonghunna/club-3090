@@ -19,10 +19,7 @@ cd compose && docker compose -f docker-compose.long-vision.yml up -d
 # Single-card frontier 205K — text-only (engine ceiling), prefill caveats apply
 cd compose && docker compose -f docker-compose.long-text.yml up -d
 
-# Single-card chat-only — 20K + fp8 + MTP (fastest TPS at small ctx)
-cd compose && docker compose -f docker-compose.fast-chat.yml up -d
-
-# Single-card long-prompt — 75K + fp8 + no vision (best for RAG / summarization on 1 card)
+# Single-card IDE-agent / long-prompt — 75K + fp8 + no vision (Cline / Cursor / Copilot / RAG)
 cd compose && docker compose -f docker-compose.tools-text.yml up -d
 
 # Dual-card default — 262K + fp8 + MTP + vision (best general dual-card)

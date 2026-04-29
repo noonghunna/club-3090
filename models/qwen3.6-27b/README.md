@@ -100,7 +100,7 @@ Active patches per compose:
 | P66 | Cudagraph capture-size divisibility | TQ3 paths |
 | P68 | Auto-force tool adherence in long ctx | all single-card vLLM with tools |
 | P69 | Long-ctx tool reminder | all single-card vLLM |
-| **PN8** | MTP draft online-quant propagation (vllm#40849) | **fp8 paths** (`tools-text.yml`, `fast-chat.yml`) — frees ~800-900 MiB, closes Cliff 1 on tools-text |
+| **PN8** | MTP draft online-quant propagation (vllm#40849) | **fp8 path** (`tools-text.yml`) — frees ~800-900 MiB, closes Cliff 1 |
 
 Dual-card composes (`dual.yml`, `dual-dflash*`) are **Genesis-less by design** — fp8 KV + TP=2 + 0.92 mem-util has plenty of headroom and doesn't trigger the cudagraph bugs Genesis was built to patch. `dual-turbo.yml` does mount Genesis (TQ3 path needs P65).
 

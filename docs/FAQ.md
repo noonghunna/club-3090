@@ -68,7 +68,7 @@ AutoRound (Lorbus) gave us +9% TPS over AWQ on this model. GPTQ has a similar qu
 
 Look at the [TPS chart](../README.md#measured-tps-at-a-glance) — single-card vLLM is 51-55 TPS narrative / 67-70 code at 48K, which beats most consumer-3090 numbers we've seen reported. If you're seeing materially lower, the most common causes are:
 1. Power cap < 230 W (this rig benches at 230 W; 280 W gives ~+5%, 350 W ~+10%)
-2. Wrong compose for your prompt shape (use `vllm/fast-chat.yml` for 20K chat, not `long-vision.yml`)
+2. Wrong compose for your prompt shape (use the `docker-compose.yml` 48K default for chat — don't pick `long-vision.yml` if you don't need 192K)
 3. Genesis tree drift — `git pull origin main` between bench runs can change AL by ±15%. We pin to commit `bf667c7` for this reason.
 
 ### My TPS dropped after switching to 192K context. Why?
@@ -88,7 +88,7 @@ Sandermage's K+1 verify routing PR for vLLM. When it lands, the spec-verify cost
 
 ### What's PN8?
 
-A Genesis patch (`GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1`) added in v7.62.x — backport of vllm#40849 that makes the MTP draft head inherit the target model's online-quant config. We measured ~800-900 MiB freed on FP8+MTP single-card paths (`tools-text.yml`, `fast-chat.yml`), which **closes Cliff 1 on `tools-text.yml`**. No-op on TQ3 paths. Enabled by default in our two FP8 composes since 2026-04-29; opt-in elsewhere via the env var if you want to test.
+A Genesis patch (`GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1`) added in v7.62.x — backport of vllm#40849 that makes the MTP draft head inherit the target model's online-quant config. We measured ~800-900 MiB freed on the FP8+MTP single-card path (`tools-text.yml`), which **closes Cliff 1 there**. No-op on TQ3 paths. Enabled by default in `tools-text.yml` since 2026-04-29; opt-in elsewhere via the env var if you want to test.
 
 ---
 
@@ -112,7 +112,7 @@ Yes. Add a connection in Open WebUI's Settings → Connections → OpenAI: base 
 
 ### Will this work with VS Code GitHub Copilot LLM Gateway?
 
-Yes, but you need a compose with **≥48K context**, not the 20K `fast-chat.yml` default — Copilot's LLM Gateway sends ~20K tokens of tool-schema preamble (50+ VS Code tools enumerated in a structured-outputs JSON schema) on every request, which alone exceeds fast-chat's 20K cap. Use `tools-text.yml` (75K + fp8 + PN8 enabled — Cliff 1 closed):
+Yes, but you need a compose with **≥48K context** — Copilot's LLM Gateway sends ~20K tokens of tool-schema preamble (50+ VS Code tools enumerated in a structured-outputs JSON schema) on every request, which alone consumes most of a small context budget. Use `tools-text.yml` (75K + fp8 + PN8 enabled — Cliff 1 closed):
 
 ```bash
 bash scripts/switch.sh vllm/tools-text
@@ -120,7 +120,7 @@ bash scripts/switch.sh vllm/tools-text
 
 There's a second wrinkle: Copilot's LLM Gateway sometimes sends very low `max_tokens` (e.g. 64) on probe-style requests. With `tool_choice: required` (which Copilot enforces via `minItems: 1` on its structured-outputs schema), the model must emit a tool-call JSON that wraps a real argument like a file path — and 64 tokens isn't enough to fit `{"name": "read_file", "parameters": {"filePath": "/long/abs/path"}}`. The truncated JSON arrives at the gateway as "empty response." If you see this pattern, it's a client-side limit, not the server. Other OpenAI-compat clients (Cline / Continue.dev / Cursor) tend to send realistic max_tokens by default and don't hit this.
 
-**Server-side fix landed 2026-04-29:** the Genesis P68/P69 long-context tool-adherence patches were silently overriding `tool_choice: auto → required` and injecting "must use a tool" reminders whenever prompt > 8000 chars. That made greetings + clarifying questions stall on every IDE-agent setup (Cline, Cursor, OpenCode, and Copilot Gateway combined). We disabled both in `tools-text.yml` and `fast-chat.yml`. Behavior now: greeting → plain-text reply ("Hello! How can I help you today?"); tool request → clean `read_file({"path": "..."})` call. P64 and PN8 stay enabled (real targeted bugfixes, no user-intent override).
+**Server-side fix landed 2026-04-29:** the Genesis P68/P69 long-context tool-adherence patches were silently overriding `tool_choice: auto → required` and injecting "must use a tool" reminders whenever prompt > 8000 chars. That made greetings + clarifying questions stall on every IDE-agent setup (Cline, Cursor, OpenCode, and Copilot Gateway combined). We disabled both in `tools-text.yml`. Behavior now: greeting → plain-text reply ("Hello! How can I help you today?"); tool request → clean `read_file({"path": "..."})` call. P64 and PN8 stay enabled (real targeted bugfixes, no user-intent override).
 
 Background + bisection: [club-3090 #2](https://github.com/noonghunna/club-3090/issues/2#issuecomment-4346345554).
 

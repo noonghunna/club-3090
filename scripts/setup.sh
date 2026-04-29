@@ -96,7 +96,7 @@ echo "Model dir:    ${MODEL_DIR}"
 # Currently pointing at v7.62.x release (commit 917519b, 2026-04-29). Bumped
 # from v7.54 (bf667c7) after benching PN8 (MTP draft online-quant propagation,
 # backport of vllm#40849) — frees ~800-900 MiB on the FP8+MTP single-card
-# paths (tools-text.yml, fast-chat.yml). Cross-rig validation thread:
+# path (tools-text.yml). Cross-rig validation thread:
 # https://github.com/noonghunna/qwen36-27b-single-3090/issues/1#issuecomment-4343317153
 # Bumping GENESIS_PIN requires re-running verify-full.sh against your composes
 # to confirm the new commit works on your config — Genesis releases sometimes
