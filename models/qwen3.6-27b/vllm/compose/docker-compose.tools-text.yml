@@ -52,8 +52,14 @@ services:
       - VLLM_MARLIN_USE_ATOMIC_ADD=1
       # Genesis v7.14+ opt-in patches (fp8 KV path — no P4/P65/P67 needed)
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
-      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
-      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      # P68/P69 deliberately DISABLED (2026-04-29). They override user
+      # tool_choice / inject "must use a tool" reminders when the prompt
+      # exceeds 8000 chars — IDE-agent system prompts blow past that on
+      # the first message and get silent stops on greetings / clarifying
+      # questions. Bisected on club-3090 issue #2 (HoodOG1 + tenitram).
+      # Set to 1 only if you specifically want forced-tool-call behavior.
+      # - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      # - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
       # PN8 (v7.62.x): MTP draft online-quant propagation. Targets fp8+MTP
       # path specifically — frees ~600 MiB by inheriting target quant config
       # into the draft head. Sandermage's claim: closes Cliff 1 on this path.

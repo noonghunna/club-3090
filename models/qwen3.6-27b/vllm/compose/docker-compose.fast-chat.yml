@@ -63,8 +63,11 @@ services:
       # We don't enable P4 (TurboQuant-hybrid) — fp8 KV doesn't need it.
       # We don't enable P65/P67 — fp8 KV doesn't trigger #40880 cudagraph bug.
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
-      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
-      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      # P68/P69 deliberately DISABLED (2026-04-29) — see tools-text.yml header
+      # for full reasoning. Short version: 8000-char threshold is too low for
+      # IDE agents and breaks greetings / clarifying questions silently.
+      # - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      # - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
       - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1          # v7.62.x — opt-in test
     shm_size: "16gb"
     ipc: host

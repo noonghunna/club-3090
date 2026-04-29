@@ -2,6 +2,14 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-04-29 — Disable Genesis P68/P69 in shipped composes (silent-stop bugfix)
+
+- **`tools-text.yml`** + **`fast-chat.yml`** — `GENESIS_ENABLE_P68_AUTO_FORCE_TOOL` and `GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER` are now commented out (default-off). Caused silent finish_reason=stop with empty content + no tool_calls on greetings and clarifying questions when the prompt exceeded 8000 chars (the patches' threshold). Affected every realistic IDE-agent setup (Cline, Cursor, OpenCode, Copilot Gateway).
+- **Bisected via cross-rig data on club-3090 issue #2** (HoodOG1 + tenitram). State A (all 4 env vars on) reproduced the silent stop. State B (P68 off, P69 on) still broken — model loops on "I cannot respond with plain text" then stops mid-reasoning. State D (both P68 and P69 off) — clean: greeting → "Hello! How can I help you today?", tool request → clean `read_file` call.
+- **P64 and PN8 stay enabled** — both are real targeted bugfixes (P64 = qwen3coder MTP streaming early-return fix from kotori-yan vllm#39598 backport; PN8 = FP8+MTP draft online-quant memory savings, vllm#40849 backport). Neither overrides user intent.
+- Mechanism: `vllm/_genesis/middleware/long_ctx_tool_adherence.py:227` — P68 silently sets `request.tool_choice = "required"` when prompt > 8000 chars; P69 appends "must use a tool" text to the user message. Either alone makes "hi there" + tools fail. Together they're worse.
+- Threshold of 8000 chars is too low for IDE agents (typical context: 20-50K). We may file an upstream issue with Sandermage suggesting either raising the default or making opt-in+threshold mandatory-explicit.
+
 ## 2026-04-29 — UX polish: pre-flight checks + cards-first wizard + PNG embeds + per-page chart split
 
 - **`scripts/preflight.sh`** (new) — sourceable library of `preflight_docker`, `preflight_gpu [min]`, `preflight_disk <path> <gb>`, `preflight_gpu_idle`, `preflight_running`. Each prints actionable `Fix:` hints on failure rather than a cryptic mid-run crash.
