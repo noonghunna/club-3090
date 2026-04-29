@@ -2,10 +2,10 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
-## 2026-04-29 — Remove `fast-chat.yml` + extend P68/P69 disable to default
+## 2026-04-29 — Remove `fast-chat.yml` + extend P68/P69 disable to all Genesis-loading composes
 
 - **`docker-compose.fast-chat.yml`** — deleted. Post-PN8, `fast-chat.yml` (20K, fp8, vision) and `docker-compose.yml` (48K, TQ3, vision) had effectively the same TPS (52/67 vs 50/67), so fast-chat's only remaining differentiator was "smaller context = ~3s faster boot." Not worth a maintained variant when 20K is also actively bad for IDE-agent users (Copilot Gateway tool-schema preamble alone hits 20K).
-- **`docker-compose.yml`** (default) — also disabled `GENESIS_ENABLE_P68_AUTO_FORCE_TOOL` and `GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER` (was missed in the previous fix). Same bug class — 8000-char threshold breaks IDE agents on long system prompts.
+- **P68/P69 disable extended to every Genesis-loading compose** — `docker-compose.yml`, `long-vision.yml`, `long-text.yml`, `dual-turbo.yml` all had P68 + P69 enabled and would hit the same silent-stop bug on long agent prompts. Now disabled across the board with consistent inline comments. P64 and PN8 (where appropriate) stay enabled — they're targeted bugfixes, not behavioral overrides.
 - `scripts/switch.sh` — dropped `vllm/fast-chat` from the variant map.
 - `scripts/launch.sh` — wizard's vLLM workload list shortened from 6 → 5 entries.
 - `docs/SINGLE_CARD.md`, `docs/FAQ.md`, `docs/engines/VLLM.md`, model README, vllm/README, patches/README, all sibling compose YAML "see also" tables — references removed or updated to point to `docker-compose.yml` (default) or `tools-text.yml` instead.

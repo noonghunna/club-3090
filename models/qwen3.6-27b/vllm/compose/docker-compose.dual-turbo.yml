@@ -57,8 +57,11 @@ services:
       - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
-      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
-      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
+      # reasoning. Short version: 8000-char threshold breaks IDE-agent
+      # flows with silent finish_reason=stop. Bisected on club-3090#2.
+      # - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      # - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
     shm_size: "16gb"
     ipc: host
     deploy:
