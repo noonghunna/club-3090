@@ -31,6 +31,24 @@ Cause: Genesis PN12's anchor expects the next decorator after `SiluAndMul` to be
 
 Local action: added `patch_pn12_ffn_pool_anchor.py`, a repo-local sidecar that patches only `SiluAndMul.forward_cuda` with the PN12 pooled-output body using a class-scoped anchor. It runs after Genesis in `docker-compose.long-text.yml`; runtime pooling remains env-gated by `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`.
 
+Ephemeral container verification (no vLLM boot) showed:
+
+```text
+[pn12_ffn_pool_anchor_fix] SiluAndMul.forward_cuda: applied
+```
+
+## Local P104 Sidecar
+
+The active Genesis checkout does not contain P104. To avoid a false-positive `GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1` run, added `patch_fa_max_seqlen_clamp.py` as a local sidecar and wired it into `docker-compose.long-text.yml` after Genesis.
+
+Runtime behavior is still env-gated by `GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1`; the file patch itself is local and idempotent.
+
+Ephemeral container verification (no vLLM boot) showed:
+
+```text
+[fa_max_seqlen_clamp] _flash_attn_varlen: applied
+```
+
 ## Pending
 
 - Reboot long-text with `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1` and confirm the live `SiluAndMul.forward_cuda` body contains the local marker.

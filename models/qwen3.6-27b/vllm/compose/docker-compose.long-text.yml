@@ -56,6 +56,7 @@ services:
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
       - ../patches/patch_pn12_ffn_pool_anchor.py:/patches/patch_pn12_ffn_pool_anchor.py:ro
+      - ../patches/patch_fa_max_seqlen_clamp.py:/patches/patch_fa_max_seqlen_clamp.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0
@@ -101,6 +102,7 @@ services:
         pip install xxhash pandas scipy -q
         python3 -m vllm._genesis.patches.apply_all
         python3 /patches/patch_pn12_ffn_pool_anchor.py
+        python3 /patches/patch_fa_max_seqlen_clamp.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
       - --
