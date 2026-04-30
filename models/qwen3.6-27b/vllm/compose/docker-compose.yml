@@ -44,12 +44,18 @@
 #
 #   max-model-len   mem-util    boots?   safe single-prompt    notes
 #   ────────────────────────────────────────────────────────────────────────────
-#    48,000          0.92       ✅       up to 48K               ⭐ default — verify-full.sh ALL 10 PASS
-#    64,000          0.92       ✅       up to ~50K               needle scale=900 (~58K) OOMs
-#    96,000          0.93       ✅       up to ~50K               needle scale=900 OOMs
-#   128,000          0.95       ✅       up to ~40K (tool only)   #7 needle 60K+ OOMs, #8 ≤40K passes
-#   192,000          0.98       ✅       up to ~16K               #8 OOMs on 25K+ tool prefill (ampersandru)
-#   205,000          0.98 + no vision    up to ~16K               same as 192K + drops vision
+#    48,000          0.92       ✅       up to 48K               ⭐ default — verify-full.sh ALL 10 PASS, below BOTH cliffs
+#    64,000          0.92       ✅       up to ~50K               needle scale=900 (~58K) OOMs (Cliff 2)
+#    96,000          0.93       ✅       up to ~50K               needle scale=900 OOMs (Cliff 2)
+#   128,000          0.95       ✅       up to ~40K (tool only)   #7 needle 60K+ OOMs (Cliff 2)
+#   198,000          0.98 + vision           up to ~50K           ⭐ long-vision variant — Cliff 1 closed via PN12 anchor sidecar
+#   218,000          0.985 + no vision       up to ~50K           ⭐ long-text variant — same sidecars, vision dropped for higher ceiling
+#
+# Cliff 1 (≥25K-token tool prefills OOM at >0.95 mem-util on TQ3) is now
+# closed across long-* variants since 2026-04-30 PM via the PN12 anchor
+# sidecar — see docs/CLIFFS.md. Cliff 2 (single-prompt >50–60K in DeltaNet
+# GDN) still applies — that's why the 198K/218K variants ship as
+# "steady-state accumulation, not single-shot big prompts."
 #
 # This variant ships **48K + 0.92** as the production default — verify-full.sh
 # passes all 10 checks (including the long-context needle at 10K + 30K depths,
@@ -63,9 +69,9 @@
 #
 # Variant matrix (measured on dev205 + Genesis v7.54):
 #
-#   docker-compose.yml             (THIS — default)   48K   51/68 TPS  vision  ⭐ Production-safe; below both cliffs
-#   docker-compose.long-vision.yml                    192K   51/68 TPS  vision     Long ctx + vision (R3'); prefill caveats apply
-#   docker-compose.long-text.yml                      205K   50/66 TPS  no vis     Engine-ceiling text-only (R3'''); same caveats
+#   docker-compose.yml             (THIS — default)   48K   51/68 TPS  vision  ⭐ Production-safe; below BOTH cliffs
+#   docker-compose.long-vision.yml                    198K   51/68 TPS  vision     Long ctx + vision; Cliff 1 closed via PN12 sidecar; Cliff 2 single-prompt >50K
+#   docker-compose.long-text.yml                      218K   50/66 TPS  no vis     Engine-ceiling text-only at 0.985 mem-util; same Cliff 2 caveat
 #   docker-compose.tools-text.yml                      75K   51/65 TPS  no vis     IDE agents (Cline/Cursor/Copilot) — fp8 KV + PN8 closes Cliff 1
 #   docker-compose.minimal.yml                         32K   32/33 TPS  vision     Simplest stack; no Genesis, no spec-decode
 #
@@ -159,13 +165,14 @@ services:
       # Engine REJECTS oversized requests with HTTP 400 (clean), no crashes.
       # Verify-full.sh ALL 10 checks pass at this combo (2026-04-28).
       #
-      # To push higher (with caveats — read the comment block at the top of
-      # this file + the README Activation memory caveat first):
-      #   - 64K + 0.92  → up to ~50K single prompts safe (most agent flows)
-      #   - 96K + 0.93  → up to ~40-50K; #7 needle scale=900 OOMs in GDN
-      #   - 128K + 0.95 → up to ~40K tool prefill, single prompts >50K may OOM
-      #   - 192K + 0.98 → up to ~16K prefills only — ampersandru-class workload
-      #   - 205K + 0.98 + --language-model-only (uncomment below) → text-only frontier
+      # To push higher: prefer the dedicated long-* variants (which carry the
+      # PN12 anchor sidecar that closes Cliff 1) rather than just bumping
+      # max-model-len here:
+      #   - 64K + 0.92        → up to ~50K single prompts safe (most agent flows)
+      #   - 96K + 0.93        → up to ~40-50K; needle scale=900 OOMs in GDN (Cliff 2)
+      #   - 128K + 0.95       → up to ~40K tool prefill, single prompts >50K may OOM
+      #   - long-vision.yml   → 198K + vision + sidecars (Cliff 1 closed; Cliff 2 caveat)
+      #   - long-text.yml     → 218K text-only + sidecars (same Cliff 2 caveat)
       - --max-model-len
       - "48000"
       - --gpu-memory-utilization
@@ -176,9 +183,9 @@ services:
       - "4128"
       - --kv-cache-dtype
       - turboquant_3bit_nc
-      # For maximum context (205K instead of 192K), uncomment the next line
-      # to drop the vision tower. Frees ~1 GB VRAM, lifts engine ceiling
-      # from 192K to ~206K. Trade-off: text-only.
+      # For maximum context, switch to docker-compose.long-text.yml (218K, no
+      # vision) or docker-compose.long-vision.yml (198K + vision). Both carry
+      # the PN12 anchor sidecar that closes Cliff 1 on TQ3 paths.
       #- --language-model-only
       - --trust-remote-code
       - --reasoning-parser
