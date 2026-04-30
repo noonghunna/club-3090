@@ -19,6 +19,9 @@ cd compose && docker compose -f docker-compose.long-vision.yml up -d
 # Single-card frontier 218K — text-only (engine ceiling at 0.985 mem-util), same Cliff 2 caveat
 cd compose && docker compose -f docker-compose.long-text.yml up -d
 
+# Single-card bounded-thinking — 218K + structured-CoT grammar in reasoning (~30× cheaper think on coding)
+cd compose && docker compose -f docker-compose.bounded-thinking.yml up -d
+
 # Single-card IDE-agent / long-prompt — 75K + fp8 + no vision (Cline / Cursor / Copilot / RAG)
 cd compose && docker compose -f docker-compose.tools-text.yml up -d
 

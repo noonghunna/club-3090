@@ -52,6 +52,7 @@ How each config splits the 24 GB / card budget — weights, KV cache, vision tow
 As of 2026-04-30 PM, single-card recommended options (see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md)):
 - **`long-text.yml` — 218K text-only** at 0.985 mem-util. Verified cliff-safe via anchor-fixed PN12 + P104 sidecars.
 - **`long-vision.yml` — 198K + vision** at 0.98 mem-util. Same sidecars; vision tower's persistent ~1 GB makes 0.985 too tight here.
+- **`bounded-thinking.yml` — 218K text-only + structured-CoT grammar in reasoning** at 0.985 mem-util. Same patches as long-text plus `--structured-outputs-config.enable_in_reasoning true`. ~30× cheaper think output on coding workloads with **+4.3pp HE+ / +24pp LCB v6** vs FREE thinking. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md).
 - **`llamacpp/default` — 262K + vision** at ~21 TPS. Different engine, no cliffs anywhere — production-safe for unpredictable inputs.
 
 The **single shipped limitation** on the vLLM variants: Cliff 2 still fires on single prompts >50–60K (DeltaNet GDN forward OOM). Use llama.cpp single or dual-card for one-shot big prompts. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
@@ -106,9 +107,9 @@ Active patches per compose:
 | P64 | Streaming tool-call edge case | all single-card vLLM with MTP |
 | P65 | TurboQuant spec-CG downgrade (#40880 fix) | TQ3 paths (default, long-vision, long-text) |
 | P66 | Cudagraph capture-size divisibility | TQ3 paths |
-| **P101** | TQ continuation 64-token slicing (anchor-fixed via PR #12) | TQ3 paths (long-vision, long-text) |
-| **P103** | FLA Cliff 2 chunked fwd_h+fwd_o orchestrator | TQ3 paths (long-vision, long-text) |
-| **PN12** | FFN intermediate scratch pool (anchor-fixed via PR #13) — closes Cliff 1 mech B on TQ3 | TQ3 paths (long-vision, long-text) |
+| **P101** | TQ continuation 64-token slicing (anchor-fixed via PR #12) | TQ3 paths (long-vision, long-text, bounded-thinking) |
+| **P103** | FLA Cliff 2 chunked fwd_h+fwd_o orchestrator | TQ3 paths (long-vision, long-text, bounded-thinking) |
+| **PN12** | FFN intermediate scratch pool (anchor-fixed via PR #13) — closes Cliff 1 mech B on TQ3 | TQ3 paths (long-vision, long-text, bounded-thinking) |
 | **PN13** | CUDAGraphWrapper lambda-arity (vllm#41235 backport) | TQ3 paths |
 | **PN8** | MTP draft online-quant propagation (vllm#40849) — closes Cliff 1 on FP8 path | **fp8 path** (`tools-text.yml`) |
 | (P68/P69 disabled 2026-04-29) | Default-on tool-choice rewriting broke IDE agents | all — commented out |

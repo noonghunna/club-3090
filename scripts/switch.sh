@@ -15,11 +15,12 @@
 # Variant names (engine/file, file is the docker-compose.<file>.yml stem):
 #
 #   Single-card vLLM:
-#     vllm/default          48K + TQ3 + MTP + vision + tools (recommended)
-#     vllm/long-vision      198K + TQ3 + vision (cliff-safe; Cliff 2 single-prompt >50K still applies)
-#     vllm/long-text        218K + TQ3 + text-only (same Cliff 2 caveat)
-#     vllm/tools-text       75K + fp8 + MTP + text-only (IDE agents — Cline / Cursor)
-#     vllm/minimal          32K + fp8 (no Genesis, no spec-decode, simplest)
+#     vllm/default            48K + TQ3 + MTP + vision + tools (recommended)
+#     vllm/long-vision        198K + TQ3 + vision (cliff-safe; Cliff 2 single-prompt >50K still applies)
+#     vllm/long-text          218K + TQ3 + text-only (same Cliff 2 caveat)
+#     vllm/bounded-thinking   218K + TQ3 + structured-CoT grammar in reasoning (~30× cheaper think, +24pp LCB v6)
+#     vllm/tools-text         75K + fp8 + MTP + text-only (IDE agents — Cline / Cursor)
+#     vllm/minimal            32K + fp8 (no Genesis, no spec-decode, simplest)
 #
 #   Dual-card vLLM (TP=2):
 #     vllm/dual             262K + fp8 + 2 streams + vision (recommended dual)
@@ -57,6 +58,7 @@ declare -A VARIANT_DEFAULT_PORT=(
   [vllm/default]=8020
   [vllm/long-vision]=8020
   [vllm/long-text]=8020
+  [vllm/bounded-thinking]=8020
   [vllm/tools-text]=8020
   [vllm/minimal]=8020
   [vllm/dual]=8010
@@ -72,6 +74,7 @@ declare -A VARIANTS=(
   [vllm/default]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.yml"
   [vllm/long-vision]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.long-vision.yml"
   [vllm/long-text]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.long-text.yml"
+  [vllm/bounded-thinking]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.bounded-thinking.yml"
   [vllm/tools-text]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.tools-text.yml"
   [vllm/minimal]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.minimal.yml"
   [vllm/dual]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual.yml"
@@ -83,7 +86,7 @@ declare -A VARIANTS=(
 )
 
 # Container name patterns we'll bring down — covers all current composes.
-RUNNING_PATTERN="^(vllm-qwen36-27b|llama-cpp-qwen36-27b)"
+RUNNING_PATTERN="^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-qwen36-27b-bounded-thinking)"
 
 usage() {
   sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'

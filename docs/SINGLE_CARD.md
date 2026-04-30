@@ -6,12 +6,13 @@ You have **one RTX 3090 (24 GB VRAM)**. This page is the front door for picking 
 
 ## TL;DR — pick by workload
 
-Three recommended options:
+Four recommended options:
 
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
 |---|---|---|---|---|
 | **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **198K** | 51 / 68 | ~22.3 GB (mem-util 0.98) |
 | **Long ctx, text-only** (RAG, codebase, books) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **218K** | 50 / 66 | ~22.5 GB (mem-util 0.985) |
+| **Bounded thinking** (coding agents, structured-CoT, cost-bounded thinking) — see [STRUCTURED_COT.md](STRUCTURED_COT.md) | [`bounded-thinking.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) | **218K** | ~53 / ~57 | ~22.5 GB (mem-util 0.985) |
 | **Bulletproof, no cliffs** (production service, unpredictable inputs) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | **262K** | 21 / 21 | ~20 GB |
 
 Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.

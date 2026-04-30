@@ -129,6 +129,7 @@ if [[ -z "$VARIANT" ]]; then
       VLLM_OPTS=(
         "Long ctx + vision (198K + vision, MTP) — recommended for chat/agents"     "vllm/long-vision"
         "Long ctx, text only (218K, MTP) — recommended for RAG/codebase"           "vllm/long-text"
+        "Bounded thinking 218K (structured CoT — ~30× cheaper think on coding)"    "vllm/bounded-thinking"
       )
     else
       VLLM_OPTS=()
@@ -219,6 +220,7 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [vllm/default]=8020
   [vllm/long-vision]=8020
   [vllm/long-text]=8020
+  [vllm/bounded-thinking]=8020
   [vllm/tools-text]=8020
   [vllm/minimal]=8020
   [vllm/dual]=8010

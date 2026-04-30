@@ -123,6 +123,15 @@ services:
       - |
         set -e
         pip install xxhash pandas scipy -q
+        # Pre-flight: Genesis patches must be populated. Empty volume mount
+        # = silent no-op apply_all = boot fails later with cryptic upstream
+        # error (e.g. "TurboQuant KV not supported for hybrid models", #13).
+        if [ ! -f /usr/local/lib/python3.12/dist-packages/vllm/_genesis/patches/apply_all.py ]; then
+          echo "ERROR: Genesis patches missing — host volume models/qwen3.6-27b/vllm/patches/genesis/ is empty." >&2
+          echo "       Run from repo root before 'docker compose up':" >&2
+          echo "         bash scripts/setup.sh qwen3.6-27b" >&2
+          exit 1
+        fi
         python3 -m vllm._genesis.patches.apply_all
         python3 /patches/patch_pn12_ffn_pool_anchor.py
         python3 /patches/patch_fa_max_seqlen_clamp.py

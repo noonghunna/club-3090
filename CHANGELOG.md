@@ -2,6 +2,34 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-04-30 PM — Bounded-thinking compose ships (structured-CoT cross-rig port)
+
+[andthattoo/structured-cot](https://github.com/andthattoo/structured-cot) showed GBNF-grammar-bounded `<think>` blocks compress reasoning ~22-43× on coding benchmarks with no accuracy loss, on Qwen3.6-35B-A3B MoE Q4_K_M / 1× H100 / llama.cpp. We ported the technique to our stack — Qwen3.6-27B AutoRound INT4 dense / 1× RTX 3090 / vLLM nightly + MTP n=3 + TQ3 KV — and re-benched on the full HumanEval+ 164 + LiveCodeBench v6 50.
+
+**Headline measured (max_tokens=4096, greedy):**
+- HumanEval+ 164: FSM **92.7%** vs FREE **88.4%** pass@1 (+4.3pp), **30.7×** think compression
+- LiveCodeBench v6 50: FSM **66.0%** vs FREE **42.0%** pass@1 (+24.0pp), **26.2×** think compression
+
+The +Δpp accuracy gain partly reflects FSM dodging the `max_tokens=4096` truncation trap rather than pure reasoning gain — see [`docs/STRUCTURED_COT.md`](docs/STRUCTURED_COT.md) "Honest caveats" for the full picture.
+
+**Three port surprises worth keeping:**
+1. vLLM dev205+ defaults `StructuredOutputsConfig.enable_in_reasoning=False` — grammar mask only fires post-`</think>` unless overridden. The new `bounded-thinking.yml` compose sets `--structured-outputs-config.enable_in_reasoning true`.
+2. Legacy `extra_body={"guided_grammar": ...}` is silently dropped on dev205+. Use `extra_body={"structured_outputs": {"grammar": ...}}`.
+3. Qwen3.6 chat template auto-prefixes `<think>\n`. Drop the leading literal from upstream grammars when porting.
+
+**Files added:**
+- `models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml` — sister of long-text with the flag baked in
+- `docs/STRUCTURED_COT.md` — public writeup with bench, usage, caveats
+- `models/qwen3.6-27b/vllm/diagnostics/structured-cot-bench.md` — internal diagnostics with full setup details and port findings
+
+**Files updated:**
+- `scripts/launch.sh` wizard + `scripts/switch.sh` variant map
+- `models/qwen3.6-27b/README.md` — bounded-thinking added to recommended single-card list + Genesis patch surface
+- `models/qwen3.6-27b/vllm/README.md` — compose menu
+- `docs/SINGLE_CARD.md` — TL;DR table now four rows
+
+**Credit:** [andthattoo](https://github.com/andthattoo) for the technique, the grammar files, and the eval harness. We did the cross-rig port (one-line API patch + the `enable_in_reasoning` flag dance) and re-benched on a smaller dense model with a different quant + spec-decode stack.
+
 ## 2026-04-29 — Remove `no-genesis-mtp.yml` (research artifact, not user-facing)
 
 `no-genesis-mtp.yml` was a control variant we used to A/B-test whether MTP-without-Genesis worked (it does — Genesis isn't strictly required for fp8+MTP). Useful for our internal upstream-bug-isolation workflow, but no real reason for end users to pick it over `tools-text.yml` (fp8 + MTP + Genesis bugfixes + 75K, strictly better) or `minimal.yml` (no Genesis at all, simplest stack). Wizard already didn't surface it. Removed from `switch.sh` variant map, sibling compose "see also" tables, patches/README, and engines/VLLM.md.
