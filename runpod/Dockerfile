@@ -20,7 +20,7 @@ COPY models/qwen3.6-27b/vllm/patches/patch_tolist_cudagraph.py /patches/patch_to
 COPY runpod/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV VLLM_WORKER_MULTIPROC_METHOD=spawn \
+ENV VLLM_WORKER_MULTIPROC_METHOD=fork \
     NCCL_CUMEM_ENABLE=0 \
     NCCL_P2P_DISABLE=1 \
     VLLM_NO_USAGE_STATS=1 \
