@@ -109,8 +109,14 @@ def make_chart(configs, out_stem, title_subject, figsize):
     ax.legend(handles=legend_elements, loc="upper center", bbox_to_anchor=(0.5, -0.10),
               ncol=2, fontsize=9, frameon=False)
 
+    substrate_parts = ["vLLM nightly dev205+g07351e088 + Genesis 917519b (v7.62.x)"]
+    if any(g == "single-llama" for g in groups):
+        substrate_parts.append("llama.cpp mainline 0d0764dfd")
+    if any(g == "single-luce-watch" for g in groups):
+        substrate_parts.append("Luce DFlash dflash@f12a87c (greedy only)")
+    substrate_parts.append("RTX 3090 sm_86, PCIe-only, 230W")
     ax.text(0.5, -0.22,
-            "Substrate: vLLM nightly dev205+g07351e088 + Genesis 917519b (v7.62.x)  •  llama.cpp mainline 0d0764dfd  •  Luce DFlash dflash@f12a87c (greedy only)  •  RTX 3090 sm_86, PCIe-only, 230W",
+            "Substrate: " + "  •  ".join(substrate_parts),
             transform=ax.transAxes, ha="center", va="top", fontsize=8, color="#555", style="italic")
     if any(g == "single-luce-watch" for g in groups):
         ax.text(0.5, -0.30,
@@ -132,3 +138,9 @@ dual_configs   = [c for c in configs_all if c[3].startswith("dual-")]
 make_chart(configs_all,    "performance",        "per config",          figsize=(18, 7.5))
 make_chart(single_configs, "performance-single", "(single 3090)",       figsize=(13, 6.5))
 make_chart(dual_configs,   "performance-dual",   "(2× 3090, TP=2)",     figsize=(8.5, 6.5))
+
+# Tweet-asset: just the two recommended single-card vLLM routes
+# (long-vision + long-text). Clean visual match for the launch tweet.
+tweet_configs = [c for c in configs_all if c[0].startswith(("long-vision", "long-text"))]
+make_chart(tweet_configs,  "performance-single-vllm",
+           "(single 3090, vLLM patched)", figsize=(7.5, 6.5))
