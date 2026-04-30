@@ -29,10 +29,12 @@ Both wired into `docker-compose.long-text.yml` after `apply_all`.
 
 **Sandermage's PN12 design intent was correct all along** — pooling `SiluAndMul` output is sufficient for Cliff 1 mech B. No `gate_up_proj` extension needed. The bug was patch-application infrastructure, not algorithmic.
 
+**PN12 anchor fix opened as [Sandermage PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13)** (same narrow scope as P101 PR #12). Independent retest from a fresh container boot reproduced closure: verify-stress 671 chars / finish=stop, verify-full all 8 pass, MTP AL 2.45, VRAM 22.6/24 GB.
+
 **Decisions pending:**
-- Whether to PR the PN12 anchor fix to Sandermage (same class as P101 PR #12, narrowly scoped).
 - Whether to flip `long-text.yml` default to the 205K + sidecars config, or ship as a documented variant alongside the conservative 48K default.
-- Whether to bisect the upward ceiling beyond 205K (Cliff 2 still applies on single-prompt >50–60K).
+- Whether to bisect the upward ceiling beyond 205K (Cliff 2 still applies on single-prompt >50–60K, so this is mostly about steady-state accumulation headroom).
+- Whether P104 stays held until Sandermage responds on issue #11, or gets PR'd alongside #12 + #13 now that two anchor-drift fixes are already in his queue (P104 is new functionality, different scoping decision than anchor fixes).
 
 Full diagnostic: [`models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md`](models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md). Branch `cliff1-fa-clamp` carries the change.
 

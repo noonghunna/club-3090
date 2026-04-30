@@ -422,7 +422,7 @@ We had verifiable evidence the cliff fired at `empty_strided_cuda((s18, 17408))`
 
 ## Our recommended path forward (revised post-2026-04-30 PM)
 
-1. **Status:** [P101 PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) opened 2026-04-30. **PN12 anchor drift is the same bug class** — we have the local repair; whether to PR it depends on whether Sandermage wants narrowly-scoped anchor fixes or prefers to fold an anchor health check into a broader update. Holding the decision pending his read on PR #12. P104 still held until he responds on issue #11.
+1. **Status:** [P101 PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) and [PN12 PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13) opened 2026-04-30. Both are narrow anchor-drift fixes (same bug class). P104 still held back until Sandermage responds on issue #11 (P104 is new functionality, not just an anchor fix — different scoping decision).
 
 2. **Update shipped configs (next):** `long-text.yml` can now ship a verified-cliff-safe 205K mode using the two local sidecars + `--num-gpu-blocks-override 50`. Default 48K stays as the conservative production option; 205K becomes the documented frontier-text variant. Pending decision on whether to flip the default or add as a variant.
 
