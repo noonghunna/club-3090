@@ -31,11 +31,12 @@ echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
 if [ "$INTERACTIVE" = "1" ]; then
     echo "=== INTERACTIVE mode — launching jupyter lab on port 8080 ==="
-    python3 -m pip install -q jupyterlab 2>/dev/null || true
-    exec python3 -m jupyterlab \
+    pip install -q jupyterlab notebook 2>/dev/null
+    exec jupyter lab \
         --ip=0.0.0.0 --port=8080 --no-browser \
         --allow-root \
-        --NotebookApp.token='' \
+        --ServerApp.token='' \
+        --ServerApp.password='' \
         --notebook-dir=/workspace
 fi
 
