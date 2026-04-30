@@ -323,7 +323,7 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 
 ### Cheap (1-2 days, no novel CUDA work)
 
-- [x] **Built ✓** — Codex agent shipped **P104 FA max_seqlen_k runtime clamp** (2026-04-30, branch `club-3090-cliff1-prep` in our local Genesis clone). Closes Cliff 1 **mechanism A** (FA2 softmax_lse). Also fixed silent-no-op bug in **P101** anchor — upstream `_arange_cache → torch.arange` change broke the old pattern; P101 was reporting "applied" but actually no-op'd. Both ready to PR to Sandermage's repo. Empirically validated via diagnostic log (`GENESIS_FA_CLAMP_DEBUG=1`); confirmed reroute past FA2 site on long-text.yml + 175K config.
+- [x] **Built ✓** — Codex agent shipped **P104 FA max_seqlen_k runtime clamp** (2026-04-30, branch `club-3090-cliff1-prep` in our local Genesis clone). Closes Cliff 1 **mechanism A** (FA2 softmax_lse). Also fixed silent-no-op bug in **P101** anchor — upstream `_arange_cache → torch.arange` change broke the old pattern; P101 was reporting "applied" but actually no-op'd. **P101 anchor fix opened as [Sandermage PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) on 2026-04-30; P104 held back pending Sandermage's response on issue #11.** Empirically validated via diagnostic log (`GENESIS_FA_CLAMP_DEBUG=1`); confirmed reroute past FA2 site on long-text.yml + 175K config.
 
   **Caveat: P104 alone doesn't close Cliff 1 on TQ3 + long-ctx + MTP at 24GB single-card.** Mechanism B (FFN intermediate buffer at `empty_strided_cuda((s18, 17408))` ≈ 138 MiB per chunk) fires next regardless of max_model_len — measured at 205K, 175K, all hit 138 MiB / 130.5 MiB free, same buffer site. The FFN buffer is sized by `max_num_batched_tokens × intermediate_size`; `max_num_batched_tokens` is pinned at 4128 by Mamba block_size constraint. Architecturally bounded.
 
@@ -431,7 +431,7 @@ So the PRs don't unlock our currently shipped configs but ship two real bugs / f
 
 ## Our recommended path forward (revised post-2026-04-30)
 
-1. **PR P101 anchor fix + P104 to Sandermage** as separate, focused PRs. Independent value to the Genesis user base; clean contributions even if they don't unlock our stack today.
+1. **PR P101 anchor fix + P104 to Sandermage** as separate, focused PRs. Independent value to the Genesis user base; clean contributions even if they don't unlock our stack today. **Status:** [P101 PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) opened 2026-04-30. P104 held pending Sandermage's response on issue #11 (don't pile on his in-progress mechanism-B / FFN-pool work).
 
 2. **Status quo for shipped configs.** Default 48K, tools-text 75K, dual.yml 262K, llama.cpp 262K all stay correct. Cliff 1 stays documented honestly on long-vision/long-text as "frontier ctx with caveats; use for steady-state accumulation, not big tool returns or single-shot RAG."
 
