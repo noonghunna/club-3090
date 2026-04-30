@@ -32,12 +32,20 @@ echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 if [ "$INTERACTIVE" = "1" ]; then
     echo "=== INTERACTIVE mode — launching jupyter lab on port 8080 ==="
     pip install -q jupyterlab notebook 2>/dev/null
-    exec jupyter lab \
-        --ip=0.0.0.0 --port=8080 --no-browser \
-        --allow-root \
-        --ServerApp.token='' \
-        --ServerApp.password='' \
-        --notebook-dir=/workspace
+    cat > /tmp/jupyter_config.py << 'PYEOF'
+c.ServerApp.ip = "0.0.0.0"
+c.ServerApp.port = 8080
+c.ServerApp.open_browser = False
+c.ServerApp.allow_root = True
+c.ServerApp.allow_remote_access = True
+c.ServerApp.allow_origin = "*"
+c.ServerApp.disable_check_xsrf = True
+c.ServerApp.trust_xheaders = True
+c.ServerApp.token = ""
+c.ServerApp.password = ""
+c.ServerApp.root_dir = "/workspace"
+PYEOF
+    exec jupyter lab --config=/tmp/jupyter_config.py
 fi
 
 VLLM_ARGS=(
