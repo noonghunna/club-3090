@@ -5,6 +5,7 @@ This directory contains the model + engine-specific patches that different compo
 | File | Used by | Purpose |
 |---|---|---|
 | `patch_tolist_cudagraph.py` | single-card default + dual-turbo | CUDA graph capture fix for TurboQuant continuation prefill |
+| `patch_pn12_ffn_pool_anchor.py` | long-text | Local PN12 anchor repair for the SiluAndMul FFN intermediate pool on dev205+ |
 | `patch_pr40798_workspace.py` | (none — research artifact) | Negative-result reproducer for vllm#40798 |
 | `genesis/` | single-card default + dual-turbo | Sandermage's Genesis v7.14 patch tree (gitignored; fetched by setup.sh) |
 | External: `/opt/ai/vllm-src/` (Marlin pad fork) | all 4 dual-card composes | vLLM PR #40361 patched source, not a file in this repo |
@@ -68,6 +69,16 @@ capture unless the CPU tensor is pinned.
 **How:** disk-edit at container startup. Wraps both `.tolist()` sites with `torch.cuda.is_current_stream_capturing()` guards. Idempotent — re-running it on already-patched files is a no-op.
 
 **Why this lives here, not Genesis:** the equivalent functionality also ships as Genesis P78 (since v7.14, with attribution). Both running together is harmless. We keep our standalone version because it's pinned in this repo's git history, while Genesis is fetched fresh per setup.
+
+---
+
+## `patch_pn12_ffn_pool_anchor.py` (long-text Cliff 1 attack)
+
+**What it fixes:** Genesis PN12 can silently no-op on vLLM dev205+ because its text anchor expects `SiluAndMul.forward_cuda` to be followed directly by `@CustomOp.register("silu_and_mul_with_clamp")`. Current `activation.py` has the `MulAndSilu` section there instead, so the Genesis dispatcher can say PN12 applied while the live method still allocates with `torch.empty(output_shape, ...)`.
+
+**How:** disk-edit at container startup, after Genesis. Replaces only `SiluAndMul.forward_cuda` with PN12's env-gated pooled-output body, anchored within the current `SiluAndMul` class. Runtime pooling still requires `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`.
+
+**Why this lives here, not Genesis:** this is a local Cliff 1 diagnostic/fix path. Do not push it to Sandermage's tree unless we decide on a PR after the local stack is proven.
 
 ---
 
