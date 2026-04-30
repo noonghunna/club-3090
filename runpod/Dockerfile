@@ -16,12 +16,13 @@ RUN curl -sSL -o /usr/local/lib/python3.12/dist-packages/vllm/model_executor/ker
     curl -sSL -o /usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py \
     https://raw.githubusercontent.com/noonghunna/vllm/marlin-pad-sub-tile-n/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py
 
+RUN apt-get update -qq && apt-get install -y -qq nvidia-modprobe && rm -rf /var/lib/apt/lists/*
+
 COPY models/qwen3.6-27b/vllm/patches/patch_tolist_cudagraph.py /patches/patch_tolist_cudagraph.py
 COPY runpod/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENV VLLM_WORKER_MULTIPROC_METHOD=spawn \
-    NVIDIA_VISIBLE_DEVICES=all \
     NCCL_CUMEM_ENABLE=0 \
     NCCL_P2P_DISABLE=1 \
     VLLM_NO_USAGE_STATS=1 \

@@ -17,7 +17,32 @@ echo "=== club-3090 RunPod entrypoint ==="
 echo "  GPUs detected: ${GPU_COUNT}"
 echo "  Model:         ${MODEL_NAME_OR_PATH}"
 echo "  HF_HOME:       ${HF_HOME}"
-echo "  NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-unset}"
+
+nvidia-modprobe -c 0 -u 2>/dev/null || true
+python3 -c "
+import ctypes
+lib = ctypes.CDLL('libcuda.so.1')
+err = lib.cuInit(0)
+if err != 0:
+    caps = __import__('os').listdir('/dev/nvidia-caps')
+    print(f'CUDA cuInit failed (err={err}), /dev/nvidia-caps has {len(caps)} entries')
+    print()
+    print('This RunPod pod has a GPU passthrough issue — CUDA cannot initialize.')
+    print('nvidia-smi works because it uses NVML, but all CUDA workloads are dead.')
+    print('This is a host-level configuration problem, not a bug in this image.')
+    print()
+    raise SystemExit(1)
+print(f'CUDA cuInit OK')
+" || {
+    echo ""
+    echo "=== CUDA init failed. Try these workarounds ==="
+    echo "1. Stop this pod, start a NEW pod (not restart — fresh allocation)"
+    echo "2. Try a different GPU type or datacenter region on RunPod"
+    echo "3. Contact RunPod support: RTX 3090 + open kernel module 580.65.06"
+    echo "   + empty /dev/nvidia-caps/ + cuInit=999"
+    echo "4. Try a RunPod 'community cloud' pod instead of 'secure cloud'"
+    exit 1
+}
 
 if [ "$TENSOR_PARALLEL_SIZE" -eq 0 ]; then
     TENSOR_PARALLEL_SIZE="$GPU_COUNT"
