@@ -92,6 +92,70 @@ if [ -n "${API_KEY:-}" ]; then
     VLLM_ARGS+=(--api-key "${API_KEY}")
 fi
 
+TAILSCALE_RUNNING=0
+TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME:-runpod-llm}"
+TS_STATE=/workspace/tailscale.state
+TS_STATE_NAME=tailscale.state
+VLLM_PID=""
+
+cleanup() {
+    trap - EXIT SIGTERM SIGINT
+    if [ -n "$VLLM_PID" ]; then
+        kill "$VLLM_PID" 2>/dev/null || true
+    fi
+    if [ "${TAILSCALE_RUNNING}" = "1" ] && [ -n "${TAILSCALE_STATE_REPO:-}" ] && [ -f "${TS_STATE}" ]; then
+        TAILSCALE_RUNNING=0
+        echo ""
+        echo "=== Uploading Tailscale state ==="
+        tailscale down 2>/dev/null || true
+        pkill tailscaled 2>/dev/null || true
+        sleep 1
+        hf upload "${TAILSCALE_STATE_REPO}" "${TS_STATE}" "${TS_STATE_NAME}" \
+            --repo-type dataset 2>/dev/null || echo "  Upload failed — state not saved"
+        echo "  State uploaded to ${TAILSCALE_STATE_REPO}"
+    fi
+    if [ -n "$VLLM_PID" ]; then
+        wait "$VLLM_PID" 2>/dev/null || true
+    fi
+    exit 0
+}
+trap cleanup EXIT SIGTERM SIGINT
+
+if [ -n "${TAILSCALE_AUTH_KEY:-}" ]; then
+    echo ""
+    echo "=== Tailscale setup ==="
+    curl -fsSL https://tailscale.com/install.sh | bash
+
+    if [ -n "${TAILSCALE_STATE_REPO:-}" ]; then
+        echo "  State repo: ${TAILSCALE_STATE_REPO}"
+        if hf download "${TAILSCALE_STATE_REPO}" "${TS_STATE_NAME}" \
+            --local-dir /workspace --repo-type dataset 2>/dev/null && [ -f "${TS_STATE}" ]; then
+            echo "  Restored state from previous pod"
+        else
+            echo "  No prior state — fresh identity"
+            rm -f "${TS_STATE}"
+        fi
+    else
+        echo "  Ephemeral mode — new identity each boot"
+    fi
+
+    echo "  Hostname: ${TAILSCALE_HOSTNAME}"
+
+    /usr/sbin/tailscaled --tun=userspace-networking --state="${TS_STATE}" &
+    sleep 3
+    tailscale up --auth-key="${TAILSCALE_AUTH_KEY}" --hostname="${TAILSCALE_HOSTNAME}"
+
+    TS_IP=$(tailscale ip -4 2>/dev/null || echo "unknown")
+    echo "  Tailscale IP: ${TS_IP}"
+    TAILSCALE_RUNNING=1
+
+    if [ -n "${TAILSCALE_STATE_REPO:-}" ] && [ -f "${TS_STATE}" ]; then
+        hf upload "${TAILSCALE_STATE_REPO}" "${TS_STATE}" "${TS_STATE_NAME}" \
+            --repo-type dataset 2>/dev/null || echo "  State upload failed, will retry on shutdown"
+        echo "  State uploaded to ${TAILSCALE_STATE_REPO}"
+    fi
+fi
+
 if [ "$TENSOR_PARALLEL_SIZE" -ge 2 ]; then
     echo "=== Dual GPU — dual.yml path (262K, fp8 KV, vision + tools, Genesis-less) ==="
     VLLM_ARGS+=(
@@ -124,4 +188,6 @@ echo "  TP=${TENSOR_PARALLEL_SIZE}"
 echo "  max_model_len=${MAX_MODEL_LEN:-default}  mem_util=${GPU_MEMORY_UTILIZATION:-default}  max_seqs=${MAX_NUM_SEQS:-default}"
 echo ""
 
-exec vllm serve "${VLLM_ARGS[@]}"
+vllm serve "${VLLM_ARGS[@]}" &
+VLLM_PID=$!
+wait "$VLLM_PID"

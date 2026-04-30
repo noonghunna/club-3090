@@ -50,6 +50,34 @@ One-click deploy Qwen3.6-27B (AutoRound INT4) on 1× or 2× RTX 3090. Same stack
 | `MULTIMODAL` | `0` | Set to `1` to enable vision (drops `--language-model-only` on 1×3090) |
 | `INTERACTIVE` | `0` | Set to `1` to launch Jupyter Lab on port 8080 instead of vLLM |
 
+### Tailscale VPN (optional — stable private endpoint)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TAILSCALE_AUTH_KEY` | (unset) | Enables Tailscale. Generate at [admin console → Keys](https://login.tailscale.com/admin/settings/keys). Use a **reusable + ephemeral** key tagged `tag:runpod`. |
+| `TAILSCALE_HOSTNAME` | `runpod-llm` | Node name in your tailnet |
+| `TAILSCALE_STATE_REPO` | (unset) | HF dataset repo (`user/repo`) to persist node identity. When set: same IP and MagicDNS hostname survive pod restarts. When unset: ephemeral — new IP each boot. |
+
+**One-time setup:**
+
+```bash
+hf repos create runpod-llms-tailscale --type=dataset --private
+```
+
+Template env vars:
+```
+TAILSCALE_AUTH_KEY=tskey-auth-xxxxx
+TAILSCALE_STATE_REPO=<your-user>/runpod-llms-tailscale
+```
+
+With `TAILSCALE_STATE_REPO` set, the node identity persists across pod restarts — so your `OPENAI_BASE_URL` never changes:
+
+```
+OPENAI_BASE_URL=http://runpod-llm.your-tailnet.ts.net:8000
+```
+
+For multiple simultaneous pods, set a distinct `TAILSCALE_HOSTNAME` per pod template (`runpod-llm-a`, `runpod-llm-b`, etc.).
+
 ## What runs at boot
 
 | GPUs | Config | Context | KV | Vision | Spec decode | Genesis |
