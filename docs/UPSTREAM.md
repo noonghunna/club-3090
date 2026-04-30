@@ -86,6 +86,21 @@ Each row covers one upstream link with: **title • status • our dependency / 
 
 ---
 
+## Luce DFlash (`Luce-Org/lucebox-hub`)
+
+Watch list — promising on code-heavy single-stream workloads but not yet a club-3090 shipping option. Re-benched 2026-04-30 PM on Qwen3.6-27B Q4_K_M + matched z-lab/Qwen3.6-27B-DFlash draft (under training).
+
+| Issue / PR | Status | Why it matters | Workaround |
+|---|---|---|---|
+| [z-lab/Qwen3.6-27B-DFlash](https://huggingface.co/z-lab/Qwen3.6-27B-DFlash) — draft model still under training | 🟡 Snapshot 2026-04-26 | Narrative AL ~3.7, code AL ~7.0. When training finishes, expected to climb toward Qwen3.5 reference (8.31 HE, 7.04 Math). Today: code 72 TPS / narr 40 TPS on our 3090 vs vLLM's 66/50. | Re-test when z-lab tags training-complete. |
+| **Build fragility on `dflash` main HEAD** | 🔴 Reproducible 2026-04-30 PM | `cmake --build` errors with `ggml_turbo_wht` and `GGML_TYPE_TQ3_0` undefined. Required submodule commit `b6ffab4a9` not auto-fetched. Cross-rig signal — fresh clone fails. | After clone: `cd dflash/deps/llama.cpp && git fetch origin && cd ../../.. && git submodule update --init`. |
+| **Daemon-mode "empty prompt" regression** | 🔴 Reproducible 2026-04-30 PM | After streaming requests, subsequent requests return `"empty prompt"` from the test_dflash daemon. Server keeps accepting requests but generates 0 tokens. Forces restart. | Restart server between request flavors; avoid mixing streaming + non-streaming. |
+| **`enable_thinking` chat_template_kwargs honored differently than vLLM** | 🟡 Behavioural difference | Test sends `enable_thinking=true` and expects `reasoning_content` populated. Luce returns `content` directly. Not a missing feature, but breaks our `verify-full.sh` check 6. | Don't treat the thinking-mode test as a Luce-correctness signal until the chat-template path is documented. |
+| **Greedy only** | 🟡 Documented limitation | `temperature` / `top_p` accepted but ignored. Real downside for creative-writing workloads. | Use vLLM long-text/long-vision when sampling matters. |
+| **Prefill OOM in `fattn-chunked.cu` on 25K+ prompts at Q8_0 KV** | 🟡 Open (configuration trade) | Chunked flash-attention CUDA OOMs on large prefill at default Q8_0. **TQ3 KV (`DFLASH27B_KV_TQ3=1`) closes it** at max_ctx=65K — verify-stress passes 791 chars / finish=stop. Higher max_ctx (131K) reopens it. | Always set `DFLASH27B_KV_TQ3=1` for stress-test-passing config. Cap max_ctx at ~65K. |
+
+---
+
 ## llama.cpp (`ggml-org/llama.cpp`)
 
 | Issue / PR | Status | Why it matters | Workaround |
