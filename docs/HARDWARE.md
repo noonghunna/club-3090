@@ -63,10 +63,10 @@ For dual-card: combined power at 230W cap each = ~460W. Most modern 850W+ ATX PS
 
 This is model-specific but the **shapes apply across hybrid-attention models** (Qwen3-Next family, similar architectures):
 
-- **Single 3090 (24 GB):** Two activation-memory cliffs at ~25K-token tool prefills (TurboQuant scratch) and ~50-60K single prompts (DeltaNet GDN forward). [See model-specific INTERNALS.md for deep dive.](../models/qwen3.6-27b/INTERNALS.md)
+- **Single 3090 (24 GB):** Cliff 1 (~25K-token tool prefills, FFN intermediate buffer) closed across all shipped variants since 2026-04-30 PM via Genesis PN8 / PN12 anchor sidecar. Cliff 2 (~50-60K single prompts, DeltaNet GDN forward) still applies. [See `docs/CLIFFS.md` for the full diagnostic.](CLIFFS.md)
 - **Dual 3090 (48 GB combined):** TP=2 splits activation memory across cards. Cliffs are not active failure modes.
 
-For visualization of how VRAM splits, see [vram-budget.svg](img/vram-budget.svg).
+For visualization of how VRAM splits across single + dual configs, see [vram-budget-combined.svg](img/vram-budget-combined.svg) (or per-page: [single](img/vram-budget-single.svg) · [dual](img/vram-budget-dual.svg)).
 
 ---
 
