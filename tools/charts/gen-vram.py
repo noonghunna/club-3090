@@ -106,7 +106,7 @@ def save(fig, stem):
 fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(13, 7.5), dpi=110,
                                       gridspec_kw={"height_ratios": [3, 4]})
 draw_panel(ax_top, rows_single, "Single 3090 — what fits on one card (TP=1)")
-draw_panel(ax_bot, rows_dual,   "Dual 3090 — TP=2, per-card breakdown (each card holds half the weights + half the KV)")
+draw_panel(ax_bot, rows_dual,   "Dual 3090 — vLLM (TP=2), per-card breakdown — all 4 configs run vLLM; dual-dflash uses vLLM's DFlash spec-decode")
 fig.legend(handles=LEGEND, loc="lower center", ncol=3, fontsize=8, frameon=False, bbox_to_anchor=(0.5, -0.02))
 fig.suptitle("Qwen3.6-27B on RTX 3090 — VRAM allocation across configs (single + dual TP=2)",
              fontsize=12, y=0.99)
@@ -133,7 +133,7 @@ save(fig, "vram-budget-single")
 
 # ----- dual-only -----
 fig, ax = plt.subplots(figsize=(13, 5.0), dpi=110)
-draw_panel(ax, rows_dual, "Dual 3090 — TP=2, per-card breakdown (each card holds half the weights + half the KV)")
+draw_panel(ax, rows_dual, "Dual 3090 — vLLM (TP=2), per-card breakdown — all 4 configs run vLLM; dual-dflash uses vLLM's DFlash spec-decode")
 fig.legend(handles=LEGEND, loc="lower center", ncol=3, fontsize=8, frameon=False, bbox_to_anchor=(0.5, -0.04))
 fig.suptitle("Qwen3.6-27B on 2× RTX 3090 — VRAM allocation per config (TP=2)",
              fontsize=12, y=0.99)
