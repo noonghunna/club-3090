@@ -1,10 +1,12 @@
 # ===========================================================================
-# Long-text variant — engine-ceiling 205K context, text-only (no vision).
+# Long-text variant — 218K context, text-only (no vision).
 #
-# Stack: same as the default + long-vision (vLLM nightly + Genesis v7.14 +
-# TurboQuant 3-bit KV + MTP n=3) — but with the vision tower disabled to
-# free ~1 GB of VRAM, lifting the engine ceiling from 192K (long-vision)
-# to ~206K. We ship 205K (just under the absolute ceiling for safety).
+# Stack: same as default + long-vision (vLLM nightly + Genesis v7.62.x with
+# the PN12 anchor fix + TurboQuant 3-bit KV + MTP n=3) — but with the vision
+# tower disabled to free ~1 GB of VRAM. With the anchor-fixed PN12 actually
+# pooling FFN intermediates, we can run at 0.985 mem-util and 218K
+# max-model-len without the override 50 KV cap that previous 205K config
+# needed. Engine ceiling at 0.985 + no vision is 218K (vLLM-reported).
 #
 # When to pick this over long-vision:
 #   - You don't need image input
@@ -24,14 +26,19 @@
 #
 # Cliff caveat (must read):
 #   - Cliff 1 (tool-prefill OOM at 25K+ tool messages) is CLOSED on this
-#     variant as of 2026-04-30 PM via two local sidecars + KV pool override:
+#     variant as of 2026-04-30 PM via two local sidecars + 0.985 mem-util:
 #       * patch_pn12_ffn_pool_anchor.py — repairs PN12's anchor on dev205+
 #         (silent no-op upstream; see Sandermage/genesis-vllm-patches PR #13).
+#         Idempotent: skips if Genesis-side PN12 is already applied.
 #       * patch_fa_max_seqlen_clamp.py  — local P104 FA softmax_lse clamp.
-#       * --num-gpu-blocks-override 50 — caps auto-sized KV at ~206K tokens
-#         (0.77x concurrency at 205K) to reserve activation budget.
-#     Verified by verify-full + verify-stress on RTX 3090 (MTP AL 2.45,
-#     VRAM 22.6/24 GB). See docs/CLIFFS.md for the full diagnostic.
+#       * --gpu-memory-utilization 0.985 (up from 0.98) — gives ~120 MiB
+#         more to vLLM, mostly KV pool. With anchor-fixed PN12 reducing FFN
+#         allocator churn, the activation budget at 218K + 0.985 stays large
+#         enough for 25K-token tool prefills.
+#     Verified by verify-full + verify-stress on RTX 3090 (MTP AL 2.66,
+#     VRAM 23.7/24 GB). See docs/CLIFFS.md for the full diagnostic.
+#     Note: 0.99 mem-util is too aggressive on this hardware (driver/system
+#     reserves ~440 MiB; vLLM startup check fails). 0.985 is the practical max.
 #   - Cliff 2 (single-prompt >50–60K) STILL APPLIES — DeltaNet GDN forward
 #     OOM kernel is unrelated to FFN/FA. The 205K context is for STEADY-
 #     STATE accumulation across many turns, NOT for stuffing 205K of fresh
@@ -133,24 +140,18 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 205K context — engine ceiling at 0.98 mem-util + no vision is ~206K;
-      # we ship 205K (just under) for safety margin. Cliff 1 prefill closes
-      # via PN12 anchor sidecar + P104 sidecar + override 50 (see header).
-      # Cliff 2 (single-prompt ≥50–60K in GDN) is independent and still applies.
+      # 218K context — engine ceiling at 0.985 mem-util + no vision is 218784
+      # (vLLM-reported); we ship 218K for safety margin. Cliff 1 prefill closes
+      # via PN12 anchor sidecar + P104 sidecar (see header). Cliff 2
+      # (single-prompt ≥50–60K in GDN) is independent and still applies.
       - --max-model-len
-      - "205000"
+      - "218000"
       - --gpu-memory-utilization
-      - "0.98"
+      - "0.985"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
       - "4128"
-      # KV pool cap — frees activation budget for chunked-prefill peaks. With
-      # PN12 anchor-fixed pooling SiluAndMul output, override 50 leaves enough
-      # headroom for the 25K-token tool prefill stress to survive at 205K.
-      # Trade: max_concurrency 0.77x at full ctx. OK for max-num-seqs=1.
-      - --num-gpu-blocks-override
-      - "50"
       - --kv-cache-dtype
       - turboquant_3bit_nc
       # Drops the vision tower → frees ~1 GB VRAM → lifts engine ceiling from
