@@ -15,7 +15,7 @@
 #     whole-codebase analysis, large RAG retrievals)
 #
 # When NOT to pick this:
-#   - Anything that needs vision — use long-vision (192K + vision) instead
+#   - Anything that needs vision — use long-vision (198K + vision) instead
 #   - Tool-using agents — same prefill-OOM caveat as long-vision applies
 #     here. Use the default 48K for production agents.
 #
@@ -40,8 +40,8 @@
 #     Note: 0.99 mem-util is too aggressive on this hardware (driver/system
 #     reserves ~440 MiB; vLLM startup check fails). 0.985 is the practical max.
 #   - Cliff 2 (single-prompt >50–60K) STILL APPLIES — DeltaNet GDN forward
-#     OOM kernel is unrelated to FFN/FA. The 205K context is for STEADY-
-#     STATE accumulation across many turns, NOT for stuffing 205K of fresh
+#     OOM kernel is unrelated to FFN/FA. The 218K context is for STEADY-
+#     STATE accumulation across many turns, NOT for stuffing 218K of fresh
 #     tokens in one request. For big single-shot prompts: dual.yml TP=2
 #     (verified at 237K) or llamacpp/default (262K, different engine).
 #
@@ -49,8 +49,8 @@
 #
 #   File                                  Ctx     KV       Vision   Notes
 #   docker-compose.yml (default)          48K     TQ3      ✅       Production-safe; below both cliffs
-#   docker-compose.long-vision.yml        192K    TQ3      ✅       Long ctx + vision; prefill caveats apply
-#   docker-compose.long-text.yml (this)   205K    TQ3      ❌       Engine-ceiling text-only; same caveats
+#   docker-compose.long-vision.yml        198K    TQ3      ✅       Long ctx + vision; Cliff 1 closed via PN12 sidecar
+#   docker-compose.long-text.yml (this)   218K    TQ3      ❌       Engine-ceiling text-only at 0.985 mem-util; same Cliff 2 caveat
 #   docker-compose.tools-text.yml         75K     fp8      ❌       IDE agents — fp8 KV + PN8 closes Cliff 1
 #
 # Run with:
@@ -155,7 +155,7 @@ services:
       - --kv-cache-dtype
       - turboquant_3bit_nc
       # Drops the vision tower → frees ~1 GB VRAM → lifts engine ceiling from
-      # 192K (long-vision) to ~206K. This is the only difference vs long-vision.
+      # 198K (long-vision at 0.98) to 218K (this variant at 0.985). This is the only difference vs long-vision.
       - --language-model-only
       - --trust-remote-code
       - --reasoning-parser
