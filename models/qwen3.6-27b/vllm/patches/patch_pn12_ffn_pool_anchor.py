@@ -113,6 +113,12 @@ def _apply(src: str) -> tuple[str, str]:
     if PATCH_MARKER in src:
         return src, "skip-already-applied"
 
+    # Genesis-side PN12 already applied (e.g., via a Genesis tree that has
+    # the dev205+ anchor fix from PR #13). The pooled body is in place,
+    # nothing for this sidecar to do.
+    if "FFNIntermediateCache" in src and "Genesis PN12" in src:
+        return src, "skip-genesis-pn12-applied"
+
     bounds = _class_body_bounds(src)
     if bounds is None:
         return src, "anchor-not-found-class"
@@ -142,7 +148,7 @@ def main() -> int:
     log.info("%s SiluAndMul.forward_cuda: %s", PATCH_TAG, status)
 
     if patched == src:
-        if status == "skip-already-applied":
+        if status in ("skip-already-applied", "skip-genesis-pn12-applied"):
             return 0
         log.error("%s no changes written; %s", PATCH_TAG, status)
         return 1

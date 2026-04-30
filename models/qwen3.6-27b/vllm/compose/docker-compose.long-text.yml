@@ -23,14 +23,20 @@
 #   and same caveats — within 2% of long-vision narr.
 #
 # Cliff caveat (must read):
-#   - Same Cliff 1 as long-vision: ≥25K-token tool messages OOM the engine.
-#   - Same Cliff 2 as default: any single prompt above 50-60K tokens triggers
-#     DeltaNet GDN forward OOM. The 205K context is for STEADY-STATE
-#     accumulation across many turns, NOT for stuffing 205K of fresh tokens
-#     in one request.
-#   - With vision dropped, activation headroom is slightly better than
-#     long-vision (~520 MiB vs ~480 MiB) — but still not enough for
-#     production agent workloads.
+#   - Cliff 1 (tool-prefill OOM at 25K+ tool messages) is CLOSED on this
+#     variant as of 2026-04-30 PM via two local sidecars + KV pool override:
+#       * patch_pn12_ffn_pool_anchor.py — repairs PN12's anchor on dev205+
+#         (silent no-op upstream; see Sandermage/genesis-vllm-patches PR #13).
+#       * patch_fa_max_seqlen_clamp.py  — local P104 FA softmax_lse clamp.
+#       * --num-gpu-blocks-override 50 — caps auto-sized KV at ~206K tokens
+#         (0.77x concurrency at 205K) to reserve activation budget.
+#     Verified by verify-full + verify-stress on RTX 3090 (MTP AL 2.45,
+#     VRAM 22.6/24 GB). See docs/CLIFFS.md for the full diagnostic.
+#   - Cliff 2 (single-prompt >50–60K) STILL APPLIES — DeltaNet GDN forward
+#     OOM kernel is unrelated to FFN/FA. The 205K context is for STEADY-
+#     STATE accumulation across many turns, NOT for stuffing 205K of fresh
+#     tokens in one request. For big single-shot prompts: dual.yml TP=2
+#     (verified at 237K) or llamacpp/default (262K, different engine).
 #
 # Variants in this dir for reference:
 #
@@ -76,6 +82,16 @@ services:
       - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
+      # 2026-04-30 PM — Cliff 1 closure stack. PN12 + P104 sidecars apply
+      # the file patches; these env vars enable the runtime gates.
+      # P101 anchor-fixed (pending Sandermage/genesis-vllm-patches PR #12);
+      # PN12 anchor-fixed via local sidecar (pending PR #13);
+      # P103 chunks FLA forward; PN13 backports vllm#41235 cudagraph fix.
+      - GENESIS_ENABLE_P101=1
+      - GENESIS_ENABLE_P103=1
+      - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
+      - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
+      - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
       # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
       # reasoning. Short version: 8000-char threshold breaks IDE-agent
       # flows with silent finish_reason=stop. Bisected on club-3090#2.
@@ -118,8 +134,9 @@ services:
       - --tensor-parallel-size
       - "1"
       # 205K context — engine ceiling at 0.98 mem-util + no vision is ~206K;
-      # we ship 205K (just under) for safety margin. Same prefill caveats as
-      # long-vision: ≥25K tool prefills OOM, ≥50-60K single prompts OOM in GDN.
+      # we ship 205K (just under) for safety margin. Cliff 1 prefill closes
+      # via PN12 anchor sidecar + P104 sidecar + override 50 (see header).
+      # Cliff 2 (single-prompt ≥50–60K in GDN) is independent and still applies.
       - --max-model-len
       - "205000"
       - --gpu-memory-utilization
@@ -128,6 +145,12 @@ services:
       - "1"
       - --max-num-batched-tokens
       - "4128"
+      # KV pool cap — frees activation budget for chunked-prefill peaks. With
+      # PN12 anchor-fixed pooling SiluAndMul output, override 50 leaves enough
+      # headroom for the 25K-token tool prefill stress to survive at 205K.
+      # Trade: max_concurrency 0.77x at full ctx. OK for max-num-seqs=1.
+      - --num-gpu-blocks-override
+      - "50"
       - --kv-cache-dtype
       - turboquant_3bit_nc
       # Drops the vision tower → frees ~1 GB VRAM → lifts engine ceiling from

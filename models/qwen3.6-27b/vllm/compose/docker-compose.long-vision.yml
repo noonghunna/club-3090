@@ -59,6 +59,8 @@ services:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
+      - ../patches/patch_pn12_ffn_pool_anchor.py:/patches/patch_pn12_ffn_pool_anchor.py:ro
+      - ../patches/patch_fa_max_seqlen_clamp.py:/patches/patch_fa_max_seqlen_clamp.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0
@@ -78,6 +80,15 @@ services:
       - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
+      # 2026-04-30 PM — Cliff 1 closure stack (same as long-text.yml).
+      # PN12 + P104 sidecars apply file patches; env vars enable runtime gates.
+      # P101 anchor-fixed (pending PR #12); PN12 anchor-fixed via local sidecar
+      # (pending PR #13); P103 chunks FLA forward; PN13 backports vllm#41235.
+      - GENESIS_ENABLE_P101=1
+      - GENESIS_ENABLE_P103=1
+      - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
+      - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
+      - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
       # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
       # reasoning. Short version: 8000-char threshold breaks IDE-agent
       # flows with silent finish_reason=stop. Bisected on club-3090#2.
@@ -107,6 +118,8 @@ services:
         set -e
         pip install xxhash pandas scipy -q
         python3 -m vllm._genesis.patches.apply_all
+        python3 /patches/patch_pn12_ffn_pool_anchor.py
+        python3 /patches/patch_fa_max_seqlen_clamp.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
       - --
