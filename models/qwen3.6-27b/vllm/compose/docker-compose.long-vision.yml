@@ -54,7 +54,7 @@ services:
     container_name: vllm-qwen36-27b-long-vision
     restart: "no"
     ports:
-      - "8020:8000"
+      - "${PORT:-8020}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro

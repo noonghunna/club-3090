@@ -40,8 +40,32 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
-READY_URL="${READY_URL:-http://localhost:8020/v1/models}"
 READY_TIMEOUT="${READY_TIMEOUT:-600}"
+
+# Load .env if present, so PORT / MODEL_DIR / etc. flow through to docker
+# compose AND to the ready-URL probe below.
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env"
+  set +a
+fi
+
+# Per-variant default port (matches each compose's "${PORT:-XXXX}:8000"
+# fallback). Used when neither $PORT nor $READY_URL is set explicitly.
+declare -A VARIANT_DEFAULT_PORT=(
+  [vllm/default]=8020
+  [vllm/long-vision]=8020
+  [vllm/long-text]=8020
+  [vllm/tools-text]=8020
+  [vllm/minimal]=8020
+  [vllm/dual]=8010
+  [vllm/dual-turbo]=8011
+  [vllm/dual-dflash]=8012
+  [vllm/dual-dflash-noviz]=8013
+  [llamacpp/default]=8020
+  [llamacpp/concurrent]=8020
+)
 
 # variant -> "engine|compose_dir|file"  (file relative to compose_dir)
 declare -A VARIANTS=(
@@ -113,6 +137,17 @@ up_variant() {
   (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d)
 }
 
+resolve_ready_url() {
+  # Precedence: $READY_URL (full override) → $PORT (port only, host=localhost)
+  # → per-variant default port from VARIANT_DEFAULT_PORT.
+  local variant="$1"
+  if [[ -n "${READY_URL:-}" ]]; then
+    return 0
+  fi
+  local port="${PORT:-${VARIANT_DEFAULT_PORT[$variant]:-8020}}"
+  READY_URL="http://localhost:${port}/v1/models"
+}
+
 wait_ready() {
   echo "[switch] waiting for ${READY_URL} (timeout ${READY_TIMEOUT}s)..."
   local elapsed=0 step=4
@@ -146,6 +181,7 @@ for arg in "$@"; do
   esac
 done
 
+resolve_ready_url "${VARIANT}"
 down_running
 up_variant "${VARIANT}"
 [[ $WAIT -eq 1 ]] && wait_ready

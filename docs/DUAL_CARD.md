@@ -6,12 +6,14 @@ You have **2× RTX 3090s, PCIe-only (no NVLink)**. This page is the front door f
 
 ## TL;DR — pick by workload
 
-| What you're doing | Compose | Max ctx | Narr / Code TPS | Why |
-|---|---|---|---|---|
-| General-purpose default (vision + tools + long ctx) | [`dual.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual.yml) ⭐ | **262K** (237K single-prompt verified) | **69 / 89** | fp8 KV, 2 streams, full feature set |
-| Multi-tenant (4 concurrent agents at full ctx) | [`dual-turbo.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml) | **262K** | **54 / 73** per-stream (≈ 212/292 aggregate) | TQ3 KV (3 bits/token) frees room for 4 streams |
-| Peak code TPS with vision | [`dual-dflash.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash.yml) | **185K** | **82 / 125** | DFlash N=5, AL ~4.4 (vs MTP's 3.4) |
-| Peak code TPS, no vision | [`dual-dflash-noviz.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash-noviz.yml) | **200K** | **78 / 127** | DFlash + no vision, +15K ctx vs dual-dflash |
+| What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM per card | Why |
+|---|---|---|---|---|---|
+| General-purpose default (vision + tools + long ctx) | [`dual.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual.yml) ⭐ | **262K** (237K single-prompt verified) | **69 / 89** | ~23.6 / 24 GB | fp8 KV, 2 streams, full feature set |
+| Multi-tenant (4 concurrent agents at full ctx) | [`dual-turbo.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml) | **262K** | **54 / 73** per-stream (≈ 212/292 aggregate) | ~24 / 24 GB | TQ3 KV (3 bits/token) frees room for 4 streams |
+| Peak code TPS with vision | [`dual-dflash.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash.yml) | **185K** | **82 / 125** | ~23.6 / 24 GB | DFlash N=5 + 1.75 GB draft per card, AL ~4.4 (vs MTP's 3.4) |
+| Peak code TPS, no vision | [`dual-dflash-noviz.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash-noviz.yml) | **200K** | **78 / 127** | ~23.8 / 24 GB | DFlash + no vision, +15K ctx vs dual-dflash |
+
+> **VRAM column is per-card** under TP=2 (each card holds half the weights + half the KV; both cards' totals are nearly identical). For a 2× 20 GB rig (e.g. 2× 3080-20GB / 40 GB combined), `dual.yml` and `dual-turbo` should fit; `dual-dflash*` won't (FP16 KV + DFlash draft pushes per-card past 20 GB). Component breakdown in [`tools/charts/gen-vram.py`](../tools/charts/gen-vram.py).
 
 Run any of these via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
 

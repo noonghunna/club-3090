@@ -103,9 +103,26 @@ A Genesis patch (`GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1`) added in v7.62.x
 
 `CUDA_VISIBLE_DEVICES=2 bash scripts/launch.sh --variant vllm/default` (substitute your card index). For dual-card, pass two: `CUDA_VISIBLE_DEVICES=2,3`. The compose files inherit env from your shell.
 
+### Container fails to start: "Free memory ... is less than desired GPU memory utilization"
+
+Looks like:
+
+```
+ValueError: Free memory on device cuda:0 (22.76/24.0 GiB) on startup
+is less than desired GPU memory utilization (0.97, 23.28 GiB).
+```
+
+vLLM's startup check reserves `mem-util × total VRAM` of *currently-free* VRAM before booting. If something else on the GPU is holding memory (X11 / Wayland compositor, leftover container, Python process, browser GPU acceleration), the check fails. Most common on `tools-text.yml` (0.97) and the long-* variants (0.98 / 0.985).
+
+Two fixes:
+1. **Free the VRAM** (preferred). `nvidia-smi` shows what's holding it. Common: log out of GUI, stop a leftover container (`docker rm -f $(docker ps -aq --filter "name=vllm-")`), or kill orphaned `python` processes.
+2. **Lower mem-util** in the compose. e.g. on `tools-text.yml`: drop `--gpu-memory-utilization 0.97` to `0.94` and reduce `--max-model-len` proportionally (75K → ~70K). Loses ~6K context but works on any rig.
+
+The 0.97 / 0.98 / 0.985 defaults assume a headless rig with ≥23.3 GiB consistently free. If you're running a desktop session on the same card, `0.92`–`0.94` is the safer ceiling.
+
 ### Can I run multiple variants at once on the same machine?
 
-You'd need different ports per variant. Edit `ports:` in the second compose (default is `8020:8000` → change to `8021:8000`). Watch VRAM — two configs simultaneously typically don't fit on 24 GB.
+You'd need different ports per variant. Set `PORT=9876` in `.env` (or pass inline: `PORT=9876 bash scripts/switch.sh vllm/default`) — every shipped compose now reads `${PORT}` for the host-side port mapping. Watch VRAM — two configs simultaneously typically don't fit on 24 GB.
 
 ### Will this work behind Open WebUI?
 

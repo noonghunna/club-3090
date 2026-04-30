@@ -89,7 +89,7 @@ services:
     container_name: vllm-qwen36-27b
     restart: "no"
     ports:
-      - "8020:8000"
+      - "${PORT:-8020}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # Genesis v7.14 modular package (mounted into vLLM's site-packages).

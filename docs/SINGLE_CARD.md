@@ -8,11 +8,11 @@ You have **one RTX 3090 (24 GB VRAM)**. This page is the front door for picking 
 
 Three recommended options:
 
-| What you're doing | Compose | Max ctx | Narr / Code TPS |
-|---|---|---|---|
-| **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **198K** | 51 / 68 |
-| **Long ctx, text-only** (RAG, codebase, books) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **218K** | 50 / 66 |
-| **Bulletproof, no cliffs** (production service, unpredictable inputs) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | **262K** | 21 / 21 |
+| What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
+|---|---|---|---|---|
+| **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **198K** | 51 / 68 | ~22.3 GB (mem-util 0.98) |
+| **Long ctx, text-only** (RAG, codebase, books) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **218K** | 50 / 66 | ~22.5 GB (mem-util 0.985) |
+| **Bulletproof, no cliffs** (production service, unpredictable inputs) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | **262K** | 21 / 21 | ~20 GB |
 
 Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
 

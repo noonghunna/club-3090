@@ -33,7 +33,7 @@ services:
     container_name: vllm-qwen36-27b-dual-turbo
     restart: "no"
     ports:
-      - "8011:8000"
+      - "${PORT:-8011}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro

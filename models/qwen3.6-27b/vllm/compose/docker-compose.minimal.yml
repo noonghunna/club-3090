@@ -25,7 +25,7 @@ services:
     container_name: vllm-qwen36-27b-minimal
     restart: "no"
     ports:
-      - "8020:8000"
+      - "${PORT:-8020}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
     environment:
