@@ -323,7 +323,9 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 
 ### Cheap (1-2 days, no novel CUDA work)
 
-- [ ] **Build a vLLM-side `max_seq_len` clamp** ourselves if Sandermage doesn't take it. ~50 lines of Python text-patch in `turboquant_attn.py` or `flash_attn.py`. Same code shape as our existing `patch_tolist_cudagraph.py`. Closes Cliff 1 on TQ3 paths.
+- [x] **Built ✓** — Codex agent shipped **P104 FA max_seqlen_k runtime clamp** (2026-04-30, branch `club-3090-cliff1-prep` in our local Genesis clone). Closes Cliff 1 **mechanism A** (FA2 softmax_lse). Also fixed silent-no-op bug in **P101** anchor — upstream `_arange_cache → torch.arange` change broke the old pattern; P101 was reporting "applied" but actually no-op'd. Both ready to PR to Sandermage's repo. Empirically validated via diagnostic log (`GENESIS_FA_CLAMP_DEBUG=1`); confirmed reroute past FA2 site on long-text.yml + 175K config.
+
+  **Caveat: P104 alone doesn't close Cliff 1 on TQ3 + long-ctx + MTP at 24GB single-card.** Mechanism B (FFN intermediate buffer at `empty_strided_cuda((s18, 17408))` ≈ 138 MiB per chunk) fires next regardless of max_model_len — measured at 205K, 175K, all hit 138 MiB / 130.5 MiB free, same buffer site. The FFN buffer is sized by `max_num_batched_tokens × intermediate_size`; `max_num_batched_tokens` is pinned at 4128 by Mamba block_size constraint. Architecturally bounded.
 
   **Implementation shape (refined via ChatGPT consultation):**
 

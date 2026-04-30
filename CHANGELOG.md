@@ -6,6 +6,25 @@ Changes that span the entire stack — engine version pins, script behavior, rep
 
 `no-genesis-mtp.yml` was a control variant we used to A/B-test whether MTP-without-Genesis worked (it does — Genesis isn't strictly required for fp8+MTP). Useful for our internal upstream-bug-isolation workflow, but no real reason for end users to pick it over `tools-text.yml` (fp8 + MTP + Genesis bugfixes + 75K, strictly better) or `minimal.yml` (no Genesis at all, simplest stack). Wizard already didn't surface it. Removed from `switch.sh` variant map, sibling compose "see also" tables, patches/README, and engines/VLLM.md.
 
+## 2026-04-30 — Built P104 (FA max_seqlen_k clamp) + P101 anchor fix (Cliff 1 mech A closes; mech B remains architectural wall)
+
+Codex agent (5h session) built and shipped two Genesis contributions on local branch `club-3090-cliff1-prep`:
+
+**P104 (new)** — FA max_seqlen_k runtime clamp. Env-gated `GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1`, runtime-only (skips under cudagraph capture), never under-clamps below `max(cu_seqlens_k diff)`. Closes Cliff 1 mechanism A (FA2 softmax_lse cap-leak) wherever FA2 dominates. ~260 lines, follows Genesis text-patch infrastructure exactly. PR-ready for Sandermage's repo.
+
+**P101 anchor drift fix** — discovered P101 was silently no-op'd on vLLM dev205+. Upstream replaced `_arange_cache[...]` slicing with inline `torch.arange(...)`; P101's text-replace anchor still expected the old form. apply_all reported "applied" misleadingly while file content was unchanged. Anyone running Genesis v7.62.x with `GENESIS_ENABLE_P101=1` on dev205+ has been getting a no-op. Fix updates anchor to match new upstream form. Independent contribution worth its own PR.
+
+**Empirical findings — TQ3 + single-card + MTP is at the architectural wall**:
+- Tested at 205K + 50-block-override + P101+P103+P104 → fails 138 MiB / 130.5 MiB free at FFN buffer (Cliff 1 mech B)
+- Tested at 175K + 50-block-override + P101+P103+P104 → identical failure, same buffer site, same allocate/free amounts
+- max_model_len is NOT the dominant variable; FFN buffer is sized by `max_num_batched_tokens × intermediate_size = 4128 × 17408 × 2 bytes = 138 MiB` per chunk
+- `max_num_batched_tokens` pinned at 4128 by Mamba block_size constraint (asserted at boot below)
+- Closing mechanism B requires either chunked FFN forward (touches inductor codegen, fragile) or dropping MTP (frees draft model VRAM, but loses the spec-decode value prop)
+
+**No shipped config changes.** Default 48K + tools-text 75K + dual.yml 262K + llama.cpp 262K stay the right ceilings. P104 + P101 anchor fix sit on the local Genesis branch waiting for upstream PR.
+
+Updated `CLIFFS.md` (corrected diagnosis), `UPSTREAM.md` (P104 + P101-fix entries). Branch `cliff1-fa-clamp` in club-3090 holds this changeset; not merged to master.
+
 ## 2026-04-29 (PM) — Cliff 1 dual-mechanism discovery (P101+P103 cross-rig test)
 
 While preparing to write our own Cliff 1 fix, discovered Sandermage already has **P101** (TQ continuation 64-token slicing, vllm#41123 selective backport) and **P103** (FLA Cliff 2 chunked fwd_h+fwd_o orchestrator) in Genesis tree — both opt-in, default-OFF, and we'd never enabled either. Tested them on long-vision/long-text on RTX 3090.
