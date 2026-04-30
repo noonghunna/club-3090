@@ -365,6 +365,32 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 
 ---
 
+## Update 2026-04-30 PM — PN12 + P104 + everything else: STILL hits the wall
+
+Tested the full layered stack on `long-text.yml` at 205K + 0.98 + TQ3 + no-vision:
+
+- **PN12** (Sandermage's new SiluAndMul output pool — Cliff 1 mech B fix on TQ3, opt-in `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`)
+- **PN13** (CUDAGraphWrapper lambda arity bugfix — vllm#41235 backport, opt-in `GENESIS_ENABLE_PN13`)
+- **P101** (TQ continuation 64-token slicing — anchor fixed for dev205+)
+- **P103** (FLA Cliff 2 chunked fwd_h+fwd_o)
+- **P104** (our FA max_seqlen_k runtime clamp — closes Cliff 1 mech A)
+- **`--num-gpu-blocks-override 50`** (frees ~770 MiB activation budget by capping auto-sized KV pool)
+
+Result: **Cliff 1 still fires** at the SAME 138 MiB / 130.5 MiB free signature, on the SAME `empty_strided_cuda((s18, 17408))` site as without PN12.
+
+**Why PN12 is partial:** PN12 pools `SiluAndMul.forward_cuda` output (step 3 of the FFN forward). The OOM site is at step 1 or 2 — `gate_proj(x)` or `up_proj(x)` output, both shape `[max_num_batched_tokens, intermediate_size] = [4128, 17408]` ≈ 138 MiB. PN12 doesn't pool those. Each FFN layer still fresh-allocates 2× 138 MiB tensors per forward-step:
+
+```
+gate = gate_proj(x)        # ~138 MiB, fresh-alloc per layer-per-step  ← unaddressed
+up = up_proj(x)            # ~138 MiB, fresh-alloc per layer-per-step  ← unaddressed
+silu(gate) * up           # ~138 MiB, fresh-alloc per layer-per-step  ← PN12 pools this
+out = down_proj(...)       # ~smaller (back to hidden dim)
+```
+
+PN12 cuts FFN allocator churn from 4× per layer to 3×. Significant but not enough to close Cliff 1 on this stack — the activation pyramid still requires fresh 138 MiB allocations from a heap that has only 130 MiB free at peak.
+
+**Sandermage doesn't know this yet** (we held off commenting on issue #11 while he's actively shipping). Likely fix path: extend PN12 to pool gate_proj/up_proj outputs too (would need to hook into SiluAndMulMergedColumnLinearMethod or similar). Once he's back from his sprint we'll share the data.
+
 ## The architectural wall (post-2026-04-30 empirical conclusion)
 
 After building, validating, and measuring P104 (FA max_seqlen_k clamp) + P101 anchor fix on `long-text.yml` at multiple max_model_len rungs, the empirical conclusion is:
