@@ -86,18 +86,18 @@ def make_chart(configs, out_stem, title_subject, figsize):
     groupseen = {}
     for i, g in enumerate(groups):
         groupseen.setdefault(g, []).append(i)
-    y_band = max(max(narr), max(code)) * 1.10
+    y_band = max(max(narr), max(code)) * 1.18
     for g, idxs in groupseen.items():
         mid = (idxs[0] + idxs[-1]) / 2
         ax.text(mid, y_band, GROUP_LABELS[g], ha="center", va="bottom",
-                fontsize=10, fontweight="bold", color="#222")
+                fontsize=9.5, fontweight="bold", color="#222")
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=9)
     ax.set_ylabel("TPS  (3 warm + 5 measured, canonical bench)", fontsize=10)
     ax.set_title(f"Qwen3.6-27B  —  measured TPS {title_subject}  on  noonghunna/club-3090  (2026-04-30)",
-                 fontsize=12, pad=22)
-    ax.set_ylim(0, max(max(narr), max(code)) * 1.20)
+                 fontsize=12, pad=36)
+    ax.set_ylim(0, max(max(narr), max(code)) * 1.30)
     ax.grid(axis="y", linestyle=":", alpha=0.4)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -129,6 +129,6 @@ def make_chart(configs, out_stem, title_subject, figsize):
 single_configs = [c for c in configs_all if c[3].startswith("single-")]
 dual_configs   = [c for c in configs_all if c[3].startswith("dual-")]
 
-make_chart(configs_all,    "performance",        "per config",          figsize=(14, 6.5))
-make_chart(single_configs, "performance-single", "(single 3090)",       figsize=(11, 6.0))
-make_chart(dual_configs,   "performance-dual",   "(2× 3090, TP=2)",     figsize=(8.5, 6.0))
+make_chart(configs_all,    "performance",        "per config",          figsize=(15, 7.0))
+make_chart(single_configs, "performance-single", "(single 3090)",       figsize=(13, 6.5))
+make_chart(dual_configs,   "performance-dual",   "(2× 3090, TP=2)",     figsize=(8.5, 6.5))
