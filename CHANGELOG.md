@@ -31,9 +31,14 @@ Both wired into `docker-compose.long-text.yml` after `apply_all`.
 
 **PN12 anchor fix opened as [Sandermage PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13)** (same narrow scope as P101 PR #12). Independent retest from a fresh container boot reproduced closure: verify-stress 671 chars / finish=stop, verify-full all 8 pass, MTP AL 2.45, VRAM 22.6/24 GB.
 
+**Bisection of upward ceilings (commit f3e5b52):**
+- `long-text.yml`: 205K → **218K** at 0.985 mem-util (vision off). Engine ceiling at 0.985 is vLLM-reported 218784. Verified by verify-stress + verify-full, MTP AL 2.66.
+- `long-vision.yml`: 192K → **198K** at 0.98 mem-util (vision on). Engine ceiling at 0.98 is vLLM-reported 198144. 0.985 + vision reopens Cliff 1 (more goes to KV at the cost of activation budget; vision tower's persistent ~1 GB allocation makes this fragile).
+- `--num-gpu-blocks-override 50` no longer needed at 0.985 — anchor-fixed PN12 cuts allocator churn enough that natural activation budget at higher mem-util is sufficient on text-only path.
+- 0.99 mem-util ruled out — hardware reserves ~440 MiB (24 GB → 23.56 GiB visible to vLLM), so vLLM's 0.99 startup check fails.
+
 **Decisions pending:**
-- Whether to flip `long-text.yml` default to the 205K + sidecars config, or ship as a documented variant alongside the conservative 48K default.
-- Whether to bisect the upward ceiling beyond 205K (Cliff 2 still applies on single-prompt >50–60K, so this is mostly about steady-state accumulation headroom).
+- Whether to flip the default `docker-compose.yml` (currently 48K + vision) to one of these higher-ctx variants, or keep 48K as the conservative production path.
 - Whether P104 stays held until Sandermage responds on issue #11, or gets PR'd alongside #12 + #13 now that two anchor-drift fixes are already in his queue (P104 is new functionality, different scoping decision than anchor fixes).
 
 Full diagnostic: [`models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md`](models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md). Branch `cliff1-fa-clamp` carries the change.

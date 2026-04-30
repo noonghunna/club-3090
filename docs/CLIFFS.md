@@ -373,38 +373,32 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 
 **Repair + result:** Once a local sidecar (`patch_pn12_ffn_pool_anchor.py`) actually patches `SiluAndMul.forward_cuda` with PN12's pooled-output body, **Cliff 1 closes at 205K** with the existing stack. No `gate_up_proj` extension needed. Sandermage's PN12 design intent was correct all along — the text-patch anchor was just stale.
 
-### Verified config (2026-04-30 PM, RTX 3090 single-card)
+### Verified shipped configs (2026-04-30 PM, RTX 3090 single-card)
 
-```
-docker-compose.long-text.yml
-  --max-model-len           205000
-  --max-num-batched-tokens  4128
-  --num-gpu-blocks-override 50
-  --speculative-config      MTP n=3
-  GENESIS_ENABLE_P101=1                         (anchor-fixed via PR #12)
-  GENESIS_ENABLE_P103=1
-  GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1   (gated by local sidecar that actually applies)
-  GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
-  GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1          (P104, local sidecar)
-+ models/qwen3.6-27b/vllm/patches/patch_pn12_ffn_pool_anchor.py   ← local
-+ models/qwen3.6-27b/vllm/patches/patch_fa_max_seqlen_clamp.py    ← local
-```
+| Variant | max_model_len | mem-util | Vision | Override | KV pool | Verified |
+|---|---|---|---|---|---|---|
+| **long-text.yml** | **218K** | 0.985 | ❌ | none | 280K tokens | verify-stress + verify-full pass, MTP AL 2.66, VRAM 23.7/24 GB |
+| **long-vision.yml** | **198K** | 0.98 | ✅ | none | 260K tokens | verify-stress pass, MTP AL 2.63, VRAM 24/24 GB |
 
-Boot evidence:
-```
-[pn12_ffn_pool_anchor_fix] SiluAndMul.forward_cuda: applied
-[fa_max_seqlen_clamp]       _flash_attn_varlen:     applied
-activation.py contains LOCAL PN12 marker:               True
-activation.py contains FFNIntermediateCache:            True
-turboquant_attn.py contains LOCAL P104 marker:          True
-GPU KV cache size: 206,400 tokens   (override=50, max_concurrency 0.77x)
-Mamba alignment: block_size 4128, 0.02% padding
-```
+Both rely on the same local sidecars wired in via compose:
+- `patch_pn12_ffn_pool_anchor.py` — repairs PN12 anchor on dev205+ (idempotent: skips if Genesis-side PN12 already applied via the bundled tree carrying PR #13's fix).
+- `patch_fa_max_seqlen_clamp.py` — local P104 FA softmax_lse clamp.
 
-Test results:
-- `verify-stress.sh` tool-prefill OK (643 chars, finish=stop) ← was failing 138 MiB allocate / 130 MiB free
-- `verify-full.sh` all 8 checks passed
-- MTP acceptance length: 2.38
+Both also enable the runtime gates: `GENESIS_ENABLE_P101 / P103 / PN12_FFN_INTERMEDIATE_POOL / PN13_CUDA_GRAPH_LAMBDA_ARITY / FA_MAX_SEQLEN_CLAMP=1`.
+
+Bisection that established the ceilings:
+
+| Config | Result |
+|---|---|
+| long-text 220K + 0.985 + no vision | engine refuses (estimated max 218K) |
+| long-text 218K + 0.985 + no vision | ✅ pass (shipped) |
+| long-text 214K + 0.985 + no vision | ✅ pass |
+| long-text 206K + 0.98 + no vision | ✅ pass |
+| long-vision 220K + 0.985 + vision | engine refuses (estimated max 206K) |
+| long-vision 205K + 0.985 + vision | ❌ Cliff 1 reopens (mem-util shifts budget away from activations) |
+| long-vision 200K + 0.985 + vision | ❌ Cliff 1 reopens |
+| long-vision 198K + 0.98 + vision | ✅ pass (shipped) |
+| 240K + 0.99 + anything | hardware OOM at startup (driver reserves ~440 MiB; vLLM's 0.99 check fails) |
 
 Full diagnostic log: [`models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md`](../models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md).
 
