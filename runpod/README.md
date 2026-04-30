@@ -1,5 +1,7 @@
 # club-3090 RunPod Template
 
+**[Deploy on RunPod →](https://console.runpod.io/deploy?template=hz1oxqefse&ref=fhbpvoao)**
+
 One-click deploy Qwen3.6-27B (AutoRound INT4) on 1× or 2× RTX 3090. Same stack as the [club-3090](https://github.com/noonghunna/club-3090) docker-compose configs — all patches baked in, no setup scripts needed.
 
 ## Template configuration
