@@ -17,6 +17,7 @@ echo "=== club-3090 RunPod entrypoint ==="
 echo "  GPUs detected: ${GPU_COUNT}"
 echo "  Model:         ${MODEL_NAME_OR_PATH}"
 echo "  HF_HOME:       ${HF_HOME}"
+echo "  NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-unset}"
 
 if [ "$TENSOR_PARALLEL_SIZE" -eq 0 ]; then
     TENSOR_PARALLEL_SIZE="$GPU_COUNT"
@@ -25,9 +26,6 @@ if [ "$TENSOR_PARALLEL_SIZE" -gt "$GPU_COUNT" ]; then
     echo "WARNING: TENSOR_PARALLEL_SIZE=${TENSOR_PARALLEL_SIZE} > GPU_COUNT=${GPU_COUNT}, capping"
     TENSOR_PARALLEL_SIZE="$GPU_COUNT"
 fi
-
-export CUDA_VISIBLE_DEVICES="$(seq -s, 0 $((GPU_COUNT - 1)))"
-echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
 if [ "$INTERACTIVE" = "1" ]; then
     echo "=== INTERACTIVE mode — launching jupyter lab on port 8080 ==="
