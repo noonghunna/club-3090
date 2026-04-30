@@ -14,6 +14,8 @@ If you just want to use the stack, the model README is enough.
 
 For engine-general docs (vLLM tuning, llama.cpp tradeoffs, SGLang status), see [`/docs/engines/`](../../docs/engines/).
 
+> **Note (2026-04-30 PM):** This file describes the forensic chain that led to the v7.62.x stack. For the **current** Cliff 1 closure (long-text 218K, long-vision 198K via PN12 anchor sidecar + P104), see [`docs/CLIFFS.md`](../../docs/CLIFFS.md) and the [latest CHANGELOG entry](CHANGELOG.md). The PN8 status table below is historical — PN8 still closes Cliff 1 on the FP8 path; PN12 (anchor-fixed) closes it on TQ3 paths.
+
 ---
 
 ## Single-card: why this works where other recipes don't

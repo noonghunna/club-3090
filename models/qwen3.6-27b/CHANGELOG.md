@@ -2,6 +2,22 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-04-30 PM — Cliff 1 closes; long-text 218K + long-vision 198K
+
+PN12 was silently no-op'd on dev205+ via anchor drift (same bug class as P101). Genesis `apply_all` reported "PN12 applied" while live `vllm/model_executor/layers/activation.py` retained the vanilla `SiluAndMul.forward_cuda`. Local sidecar `patch_pn12_ffn_pool_anchor.py` repairs it; bundled Genesis tree carries the fix via [PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13). Combined with local `patch_fa_max_seqlen_clamp.py` (P104 FA softmax_lse clamp), Cliff 1 closes on TQ3 paths.
+
+**New shipped ceilings:**
+- `long-text.yml`: 205K → **218K** at 0.985 mem-util (no vision, no override). Engine ceiling vLLM-reported 218K. Verify-stress + verify-full pass; MTP AL 2.66; VRAM 23.7/24 GB.
+- `long-vision.yml`: 192K → **198K** at 0.98 mem-util (vision on). Engine ceiling vLLM-reported 198K. 0.985 + vision reopens Cliff 1 (more goes to KV at the cost of activation budget; vision tower's persistent ~1 GB makes 0.98 the right balance).
+- `--num-gpu-blocks-override 50` no longer needed at 0.985 — anchor-fixed PN12 cuts allocator churn enough that natural activation budget at higher mem-util is sufficient on text-only path.
+- 0.99 mem-util ruled out — driver/system reserves ~440 MiB; vLLM startup check fails at 0.99.
+
+**Cliff 2 unchanged.** Single-prompt >50–60K still OOMs in DeltaNet GDN. Both long-* variants stay "steady-state accumulation across many turns, not single-shot big prompts."
+
+**Variants stay distinct:** `docker-compose.yml` (48K, below both cliffs, fast boot) and `tools-text.yml` (FP8 path for IDE agents) remain valuable for their respective use cases. Four-variant menu kept; the long-* options now ship at higher ceilings.
+
+Branch `cliff1-fa-clamp` carries the changeset; commits `41eabac` (PN12 sidecar) → `f3e5b52` (218K bisection) → `26e5f65` (docs).
+
 ## 2026-04-29 — Genesis v7.62.x + PN8 enabled on FP8 paths
 
 Sandermage shipped Genesis v7.62.x (commit `917519b`) on 2026-04-29 with PN8 (MTP draft online-quant propagation — backport of vllm#40849) targeting the FP8+MTP memory-headroom problem. We benched the patch across all 5 single-card composes that use Genesis:

@@ -19,10 +19,13 @@ from pathlib import Path
 OUT = Path(__file__).resolve().parents[2] / "docs" / "img"
 
 # (label, narr_tps, code_tps, group)
+# Single-card vLLM TPS from R3' / R3''' bench rows; long-vision/long-text
+# now ship at 198K / 218K respectively (verified 2026-04-30 PM); historical
+# bench numbers carry forward since steady-state TPS is the same regime.
 configs_all = [
     ("v714 48K\n(default)",       55.00, 70.50, "single-vllm"),
-    ("v714 192K\n+ vision",       50.93, 67.69, "single-vllm"),
-    ("v714 205K\ntext-only",      50.11, 65.84, "single-vllm"),
+    ("long-vision 198K\n+ vision",       50.93, 67.69, "single-vllm"),
+    ("long-text 218K\ntext-only",      50.11, 65.84, "single-vllm"),
     ("minimal\n(no spec-dec)",    32.41, 32.56, "single-vllm"),
     ("llama.cpp Q3_K_XL\n262K + vision", 21.22, 20.79, "single-llama"),
     ("llama.cpp Q4_K_M\n+ ngram-mod 32K",22.04, 26.11, "single-llama"),

@@ -10,7 +10,7 @@ This repo's main path is **vLLM** because it has the deepest support for Qwen3-N
 
 | Engine | Status on this stack | Per-stream TPS (1× 3090) | Max ctx (1× 3090) | Vision | Tool calls | Spec-decode | OpenAI API parity |
 |---|---|---|---|---|---|---|---|
-| **[vLLM](VLLM.md)** ⭐ | **Validated, production-grade** (this repo) | 51-55 narr / 67-70 code | 48K safe (192K-205K opt-in with caveats) | ✅ | ✅ | ✅ MTP n=3 | ✅ Full |
+| **[vLLM](VLLM.md)** ⭐ | **Validated, production-grade** (this repo) | 51-55 narr / 67-70 code | 48K default · 75K IDE-agent · **198K vision · 218K text-only** | ✅ | ✅ | ✅ MTP n=3 | ✅ Full |
 | **[llama.cpp](LLAMA_CPP.md)** | Works mainline + [Luce DFlash fork](https://github.com/luce-spec/llama-cpp-dflash) for spec-decode | 35-60 (varies by quant + KV type) | **262K** (Q4_K_M + q4_0 KV) | ✅ (via mmproj) | ⚠️ Limited (no auto-tool-choice in server) | ✅ DFlash N=5 in fork | ⚠️ Partial |
 | **[SGLang](SGLANG.md)** | **Blocked** by same Marlin pad-sub-tile-n bug (vllm#40361 / sglang equivalent); EAGLE spec-decode separately blocked by GDN/DeltaNet rollback | n/a (untested at this state) | n/a | ✅ | ✅ | ⚠️ EAGLE blocked on hybrid | ✅ Full |
 
@@ -22,7 +22,7 @@ This repo's main path is **vLLM** because it has the deepest support for Qwen3-N
 
 **Pros:**
 - Deepest Qwen3-Next feature support upstream
-- TurboQuant 3-bit KV cache (lets us reach 192K+ context on a single 3090)
+- TurboQuant 3-bit KV cache (lets us reach 198K + vision or 218K text-only on a single 3090)
 - MTP speculative decoding works out of the box
 - Genesis patch ecosystem (Sandermage's tree fixes many compatibility edges)
 - Full OpenAI API parity (chat, vision, tools, streaming, reasoning, structured output)

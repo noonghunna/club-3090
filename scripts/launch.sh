@@ -125,8 +125,8 @@ if [[ -z "$VARIANT" ]]; then
       VLLM_OPTS=(
         "Chat + light tools — recommended default (48K, vision, MTP)"             "vllm/default"
         "IDE agents with big tool returns (Cline / Cursor / Continue, 75K text)"  "vllm/tools-text"
-        "Long context WITH vision (192K — Cliff 1 unsafe past 25K tool prompts)"  "vllm/long-vision"
-        "Long context, text only (205K — same Cliff 1 caveat)"                    "vllm/long-text"
+        "Long context WITH vision (198K — cliff-safe; Cliff 2 single-prompt >50K)" "vllm/long-vision"
+        "Long context, text only (218K — same Cliff 2 caveat)"                     "vllm/long-text"
         "Easy mode — no Genesis, no spec-decode, simplest (32K)"                  "vllm/minimal"
       )
     else
