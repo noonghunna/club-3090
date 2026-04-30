@@ -1,111 +1,107 @@
-# RunPod Template — Qwen3.6-27B on RTX 3090(s)
+# club-3090 RunPod Template
 
-Custom Docker image with all club-3090 patches baked in, plus an auto-detecting entrypoint that picks the right vLLM config for your GPU count.
+One-click deploy Qwen3.6-27B (AutoRound INT4) on 1× or 2× RTX 3090. Same stack as the [club-3090](https://github.com/noonghunna/club-3090) docker-compose configs — all patches baked in, no setup scripts needed.
 
-## What's baked into the image
-
-- **vLLM nightly** (`dev205+g07351e088`) — the pinned nightly all composes are tested against
-- **Genesis patches** (Sandermage/genesis-vllm-patches @ `917519b`) — v7.62.x, includes P64 (tool-call streaming fix) + PN8 (MTP draft online-quant, frees ~800 MiB on fp8+MTP)
-- **Marlin pad-sub-tile-n** (vLLM PR #40361 fork) — required for TP=2 AutoRound W4A16 on Ampere
-- **tolist cudagraph fix** (`patch_tolist_cudagraph.py`) — idempotent disk-edit for TQ3 KV + cudagraph capture crash
-- **deps**: xxhash, pandas, scipy (needed by Genesis apply_all)
-
-## Quick start
-
-### 1. Build & push the image
-
-```bash
-cd club-3090
-docker build -f runpod/Dockerfile -t <your-registry>/club-3090-vllm:latest .
-docker push <your-registry>/club-3090-vllm:latest
-```
-
-### 2. Create RunPod templates
-
-Create one template — it auto-detects GPU count at boot:
+## Template configuration
 
 | Field | Value |
 |---|---|
-| Image | `<your-registry>/club-3090-vllm:latest` |
-| GPU type | RTX 3090 |
-| Container disk | 20 GB |
-| Expose port | 8000 |
-| `--shm-size` | 16g |
-| Env vars | see below |
-
-The same template works for 1× and 2×3090 pods. The entrypoint detects GPU count and picks the right config.
-
-vLLM auto-downloads the model from HuggingFace on first boot to `HF_HOME=/workspace`, so it persists across pod restarts.
+| **Container image** | `abhinand5/club-3090-vllm:latest` |
+| **Container disk** | 20 GB |
+| **Volume disk** | 30 GB+ (model is ~14 GB; 30 GB leaves room) |
+| **Volume mount path** | `/workspace` |
+| **Expose HTTP port** | `8000` |
+| **Extra HTTP ports** (optional) | `8080` — for `INTERACTIVE` debug mode |
 
 ## Environment variables
 
-### Required (set on template or as secrets)
+### Optional (set on template or as RunPod secrets)
 
-| Variable | Description | Default |
+| Variable | Default | Description |
 |---|---|---|
-| `HF_TOKEN` | HuggingFace token (only needed for gated models) | (empty) |
+| `HF_TOKEN` | (unset) | HuggingFace token for gated models |
+| `API_KEY` | (unset) | If set, clients must pass `Authorization: Bearer <value>` |
 
-### Optional — override defaults
+### Model config
 
-| Variable | Description | Default |
+| Variable | Default |
+|---|---|
+| `MODEL_NAME_OR_PATH` | `Lorbus/Qwen3.6-27B-int4-AutoRound` |
+| `SERVED_MODEL_NAME` | `Qwen3.6-27B-4bit` |
+| `HF_HOME` | `/workspace/hf_home` |
+
+### Performance (per-GPU defaults picked automatically)
+
+| Variable | 1×3090 | 2×3090 |
 |---|---|---|
-| `MODEL_NAME_OR_PATH` | HF repo ID or local path to model | `Lorbus/Qwen3.6-27B-int4-AutoRound` |
-| `HF_HOME` | HuggingFace cache dir (persistent storage) | `/workspace` |
-| `MAX_MODEL_LEN` | Max context length | `75000` (1×) / `262144` (2×) |
-| `GPU_MEMORY_UTILIZATION` | VRAM fraction for KV cache + weights | `0.97` (1×) / `0.92` (2×) |
-| `MAX_NUM_SEQS` | Max concurrent requests | `1` (1×) / `2` (2×) |
-| `MAX_NUM_BATCHED_TOKENS` | Max tokens per prefill batch | `2048` (1×) / `8192` (2×) |
-| `TENSOR_PARALLEL_SIZE` | Override TP size (0 = auto-detect) | `0` |
-| `VLLM_PORT` | vLLM listen port | `8000` |
+| `TENSOR_PARALLEL_SIZE` | `1` | `2` |
+| `MAX_MODEL_LEN` | `75000` | `262144` |
+| `GPU_MEMORY_UTILIZATION` | `0.97` | `0.92` |
+| `MAX_NUM_SEQS` | `1` | `2` |
+| `MAX_NUM_BATCHED_TOKENS` | `2048` | `8192` |
+| `VLLM_PORT` | `8000` | `8000` |
 
-### Genesis patches (single-card only — dual-card is Genesis-less)
+### Feature toggles
 
-These are set automatically by the entrypoint for 1×3090. Override if you want different behavior:
-
-| Variable | Default (1×) | Effect |
+| Variable | Default | Effect |
 |---|---|---|
-| `GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1` | on | Streaming MTP tool-call edge case fix |
-| `GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1` | on | MTP draft online-quant (frees ~800 MiB on fp8+MTP) |
+| `MULTIMODAL` | `0` | Set to `1` to enable vision (drops `--language-model-only` on 1×3090) |
+| `INTERACTIVE` | `0` | Set to `1` to launch Jupyter Lab on port 8080 instead of vLLM |
 
 ## What runs at boot
 
-The entrypoint:
-  1. Sets `HF_HOME=/workspace` (model downloads persist on network volume)
-  2. Detects GPU count via `nvidia-smi`
-3. **1 GPU**: applies Genesis patches + tolist fix, sets P64+PN8 env vars, launches tools-text config (75K, fp8 KV, text-only, MTP n=3)
-4. **2 GPU**: skips Genesis (dual.yml is Genesis-less by design), launches dual config (262K, fp8 KV, vision + tools, MTP n=3, TP=2)
+| GPUs | Config | Context | KV | Vision | Spec decode | Genesis |
+|---|---|---|---|---|---|---|
+| 1 | tools-text | 75K | fp8 | text-only | MTP n=3 | P64 + PN8 |
+| 2 | dual (default) | 262K | fp8 | vision | MTP n=3 | none |
 
-## Verification
+First boot downloads the model from HuggingFace to `/workspace/hf_home` (~14 GB, ~5-10 min). Subsequent boots skip the download.
 
-After boot, test with:
+## Patches baked into the image
+
+- **Genesis v7.62.x** (Sandermage/genesis-vllm-patches @ `917519b`) — P64 tool-call streaming fix, PN8 MTP draft online-quant (~800 MiB saved on fp8+MTP)
+- **Marlin pad-sub-tile-n** (vLLM PR #40361) — required for TP=2 AutoRound W4A16 on Ampere
+- **tolist cudagraph fix** — idempotent disk-edit for CUDA graph capture crashes
+
+## Testing
 
 ```bash
+# Sanity
 curl -s http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3.6-27b-autoround","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":30}'
+  -d '{"model":"Qwen3.6-27B-4bit","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":30}'
+
+# Tool call
+curl -s http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3.6-27B-4bit","messages":[{"role":"user","content":"Weather in Paris?"}],"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}],"max_tokens":100}'
+
+# Streaming
+curl -s http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen3.6-27B-4bit","messages":[{"role":"user","content":"Write a haiku about GPUs"}],"max_tokens":50,"stream":true}'
 ```
 
-## What this doesn't cover
+## Common pitfalls
 
-These compose variants are NOT in this RunPod image:
+- **Community Cloud pods** may have broken GPU passthrough (`cuInit=999`, empty `/dev/nvidia-caps`). Switch to **Secure Cloud** if CUDA fails to init.
+- If you hit OOM, dial `GPU_MEMORY_UTILIZATION` down by 0.03 and retry.
+- On 1×3090 with `MULTIMODAL=1`, reduce `MAX_MODEL_LEN` to `48000` to free VRAM for the vision tower.
 
-| Variant | Why not |
+## Rebuilding
+
+```bash
+cd club-3090
+docker build -f runpod/Dockerfile -t your-registry/club-3090-vllm:latest .
+docker push your-registry/club-3090-vllm:latest
+```
+
+## Upstream tracker
+
+See [`docs/UPSTREAM.md`](https://github.com/noonghunna/club-3090/blob/master/docs/UPSTREAM.md) — when these land, rebuild and drop the corresponding patch:
+
+| Upstream | Unblocks |
 |---|---|
-| `docker-compose.yml` (TQ3 default, 48K) | Tools-text (fp8 75K) is better for single-card on RunPod — no TQ3 cudagraph crash risk |
-| `dual-turbo.yml` (TQ3 4-stream) | Needs Genesis P65/P66 which are TQ3-specific — dual.yml (fp8) is Genesis-less and safer |
-| `dual-dflash.yml` (DFlash N=5) | DFlash needs non-causal attention path; YAGNI for most deployments |
-| `long-vision.yml` / `long-text.yml` (192K/205K single) | Both fire prefill cliffs on tool-heavy workloads — tools-text (75K) is the safe ceiling |
-
-If you need one of these, build from the repo's docker-compose files directly.
-
-## Upstream dependencies
-
-When these upstream PRs land, rebuild the image and drop the relevant patches:
-
-| Upstream | What it unblocks |
-|---|---|
-| [vllm#40361](https://github.com/vllm-project/vllm/pull/40361) — Marlin pad-sub-tile-n | Drop the Marlin file overrides in Dockerfile |
-| [vllm#40849](https://github.com/vllm-project/vllm/pull/40849) — MTP draft online-quant | Drop PN8 env var; upstream ships the fix |
-| [vllm#39598](https://github.com/vllm-project/vllm/pull/39598) — qwen3coder MTP streaming | Drop P64 env var; upstream ships the fix |
-
-Full upstream tracker: [`docs/UPSTREAM.md`](../docs/UPSTREAM.md)
+| [vllm#40361](https://github.com/vllm-project/vllm/pull/40361) — Marlin pad-sub-tile-n | Drop Marlin file overrides |
+| [vllm#40849](https://github.com/vllm-project/vllm/pull/40849) — MTP online-quant | Drop PN8 env var |
+| [vllm#39598](https://github.com/vllm-project/vllm/pull/39598) — qwen3coder streaming | Drop P64 env var |
