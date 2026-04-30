@@ -365,77 +365,68 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 
 ---
 
-## Update 2026-04-30 PM — PN12 + P104 + everything else: STILL hits the wall
+## Update 2026-04-30 PM — PN12 anchor drift was the real bug; Cliff 1 closes at 205K
 
-Tested the full layered stack on `long-text.yml` at 205K + 0.98 + TQ3 + no-vision:
+**Initial hypothesis (wrong):** PN12 only pools `SiluAndMul` output (1 of 3 FFN allocations) so the cliff fires at the unpooled `gate_up_proj` upstream. We thought extending PN12 to cover gate_up_proj would be required.
 
-- **PN12** (Sandermage's new SiluAndMul output pool — Cliff 1 mech B fix on TQ3, opt-in `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`)
-- **PN13** (CUDAGraphWrapper lambda arity bugfix — vllm#41235 backport, opt-in `GENESIS_ENABLE_PN13`)
-- **P101** (TQ continuation 64-token slicing — anchor fixed for dev205+)
-- **P103** (FLA Cliff 2 chunked fwd_h+fwd_o)
-- **P104** (our FA max_seqlen_k runtime clamp — closes Cliff 1 mech A)
-- **`--num-gpu-blocks-override 50`** (frees ~770 MiB activation budget by capping auto-sized KV pool)
+**Actual finding:** PN12 was **silently no-op'd** on dev205+ — same anchor-drift bug class as P101. Genesis's `apply_all` reported "PN12 applied" while the live `vllm/model_executor/layers/activation.py` retained the vanilla `SiluAndMul.forward_cuda` body (no `Genesis PN12` marker, no `FFNIntermediateCache` import). PN12's anchor expects the next decorator after `SiluAndMul` to be `@CustomOp.register("silu_and_mul_with_clamp")`; in dev205+ that section is `MulAndSilu`, so the text patch skipped without raising.
 
-Result: **Cliff 1 still fires** at the SAME 138 MiB / 130.5 MiB free signature, on the SAME `empty_strided_cuda((s18, 17408))` site as without PN12.
+**Repair + result:** Once a local sidecar (`patch_pn12_ffn_pool_anchor.py`) actually patches `SiluAndMul.forward_cuda` with PN12's pooled-output body, **Cliff 1 closes at 205K** with the existing stack. No `gate_up_proj` extension needed. Sandermage's PN12 design intent was correct all along — the text-patch anchor was just stale.
 
-**Why PN12 is partial:** PN12 pools `SiluAndMul.forward_cuda` output (step 3 of the FFN forward). The OOM site is at step 1 or 2 — `gate_proj(x)` or `up_proj(x)` output, both shape `[max_num_batched_tokens, intermediate_size] = [4128, 17408]` ≈ 138 MiB. PN12 doesn't pool those. Each FFN layer still fresh-allocates 2× 138 MiB tensors per forward-step:
+### Verified config (2026-04-30 PM, RTX 3090 single-card)
 
 ```
-gate = gate_proj(x)        # ~138 MiB, fresh-alloc per layer-per-step  ← unaddressed
-up = up_proj(x)            # ~138 MiB, fresh-alloc per layer-per-step  ← unaddressed
-silu(gate) * up           # ~138 MiB, fresh-alloc per layer-per-step  ← PN12 pools this
-out = down_proj(...)       # ~smaller (back to hidden dim)
+docker-compose.long-text.yml
+  --max-model-len           205000
+  --max-num-batched-tokens  4128
+  --num-gpu-blocks-override 50
+  --speculative-config      MTP n=3
+  GENESIS_ENABLE_P101=1                         (anchor-fixed via PR #12)
+  GENESIS_ENABLE_P103=1
+  GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1   (gated by local sidecar that actually applies)
+  GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
+  GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1          (P104, local sidecar)
++ models/qwen3.6-27b/vllm/patches/patch_pn12_ffn_pool_anchor.py   ← local
++ models/qwen3.6-27b/vllm/patches/patch_fa_max_seqlen_clamp.py    ← local
 ```
 
-PN12 cuts FFN allocator churn from 4× per layer to 3×. Significant but not enough to close Cliff 1 on this stack — the activation pyramid still requires fresh 138 MiB allocations from a heap that has only 130 MiB free at peak.
+Boot evidence:
+```
+[pn12_ffn_pool_anchor_fix] SiluAndMul.forward_cuda: applied
+[fa_max_seqlen_clamp]       _flash_attn_varlen:     applied
+activation.py contains LOCAL PN12 marker:               True
+activation.py contains FFNIntermediateCache:            True
+turboquant_attn.py contains LOCAL P104 marker:          True
+GPU KV cache size: 206,400 tokens   (override=50, max_concurrency 0.77x)
+Mamba alignment: block_size 4128, 0.02% padding
+```
 
-**Sandermage doesn't know this yet** (we held off commenting on issue #11 while he's actively shipping). Likely fix path: extend PN12 to pool gate_proj/up_proj outputs too (would need to hook into SiluAndMulMergedColumnLinearMethod or similar). Once he's back from his sprint we'll share the data.
+Test results:
+- `verify-stress.sh` tool-prefill OK (643 chars, finish=stop) ← was failing 138 MiB allocate / 130 MiB free
+- `verify-full.sh` all 8 checks passed
+- MTP acceptance length: 2.38
 
-## The architectural wall (post-2026-04-30 empirical conclusion)
+Full diagnostic log: [`models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md`](../models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md).
 
-After building, validating, and measuring P104 (FA max_seqlen_k clamp) + P101 anchor fix on `long-text.yml` at multiple max_model_len rungs, the empirical conclusion is:
+### Why our prior diagnosis was wrong
 
-**TQ3 + single-card 24 GB + MTP n=3 hits an architectural wall on Cliff 1 mechanism B (FFN intermediate buffer) regardless of max_model_len.**
+We had verifiable evidence the cliff fired at `empty_strided_cuda((s18, 17408))` with PN12 nominally enabled. We assumed PN12 was applying and concluded its surface area must be too narrow. We didn't verify the live `activation.py` content. Lesson: **for any Genesis text-patch on a fresh upstream pin, grep the live file for the patch marker before drawing implementation conclusions.** The same trap caught us with P101 on the prior cycle. Anchor health verification belongs ahead of implementation analysis.
 
-Specifically:
-- 205K + 50-block-override + P101 (anchor-fixed) + P103 + P104 → fails 138 MiB allocate / 130.5 MiB free at FFN buffer
-- 175K + same stack → identical failure signature, same buffer site, same allocate / free amounts
-- Conclusion: **`max_model_len` is not the dominant variable.** The 138 MiB FFN buffer is sized by `max_num_batched_tokens × intermediate_size = 4128 × 17408 × 2 bytes`; `max_num_batched_tokens` is pinned at 4128 by the Mamba block_size assertion (boot-time enforced); `intermediate_size` is the model architecture (Qwen3.6-27B FFN). Activation-cascade memory pressure at OOM time is approximately constant across max_model_len in [175K, 205K].
+### What's still architecturally bounded
 
-### What an actual complete Cliff 1 mechanism B fix would require
-
-Any of the following would close mechanism B on TQ3 + single-card. None are within the text-patch infrastructure Sandermage's Genesis tree provides; all require deeper engineering:
-
-1. **Chunked / streaming FFN forward** — split the up_proj × silu × down_proj sequence into mini-batches of (e.g.) 1024 tokens internally, never materializing the full `(max_num_batched_tokens, intermediate_size)` intermediate. Conceptually similar to gradient checkpointing but for inference activations. Requires: replacing the inductor-compiled FFN forward with a custom Python wrapper that does internal mini-batching, OR implementing a fused chunked FFN kernel in Triton. Days-to-weeks of CUDA work; correctness validation against reference. Likely upstream-rejected for performance regression on configs where memory isn't the constraint (vast majority of users).
-
-2. **Drop MTP spec-decode** — frees ~1 GB of draft model VRAM + cudagraph capture pools. MTP n=3 contributes meaningfully to the activation budget pressure. Trade: ~25-30% TPS reduction on long-text from losing spec-decode value. Cliff would close at this stack; throughput tier drops.
-
-3. **FA3 / FlashInfer / FlashQLA path on Ampere** — non-FA2 attention backend with different memory layout. None currently support Ampere SM 8.6. FlashQLA's TileLang requires Hopper warp-specialization async tensor cores; porting to Ampere primitives is ~6 months of expert CUDA work (QwenLM territory). FA3 / FlashInfer skip Ampere entirely.
-
-4. **Hardware path: dual-card TP=2** — already shipped (`dual.yml` verified at 237K single-prompt 2026-04-29). Activation memory splits across cards under tensor parallelism; mechanism B fits per-card. **This is the actual practical path for users who hit Cliff 1.**
-
-5. **Hardware path: llama.cpp single-card** — already shipped (`llamacpp/default` at 262K). Different attention library entirely (ggml-cuda); no FA2 cap-leak; GDN uses online state updates. ~21 TPS vs 50+ TPS on vLLM but no cliffs anywhere. **The other practical path.**
-
-### What our P104 + P101 anchor fix DO close (when bundled into Sandermage's tree)
-
-| Where mech A dominates | Result with our PRs |
-|---|---|
-| `tools-text.yml` (FP8 + PN8 + 75K) | Already cliff-safe via PN8 today; P104 redundant insurance |
-| Future `tools-text-extended.yml` (FP8 + PN8 + 100-150K) | Becomes feasible with P104 closing mech A; PN8 absorbs mech B for FP8 path |
-| Genesis users on dev205+ enabling P101 | P101 anchor fix unblocks the silent no-op; P101's reroute-to-TQ-decode-kernel works as designed |
-| Cross-rig users running TQ3 at less-tight activation budgets | P104 closes mech A wherever FA2 dominates; mech B may still fire on tightest configs |
-
-So the PRs don't unlock our currently shipped configs but ship two real bugs / features for the broader Genesis user base, plus give us future variant optionality.
+- **Cliff 2** (DeltaNet GDN forward OOM at 50–60K single-prompt) is unchanged on single-card. `long-text.yml` remains "use for steady-state accumulation across many turns, not for stuffing >50K of fresh tokens in one request." Dual TP=2 (`dual.yml` at 237K) and llama.cpp (`llamacpp/default` at 262K) stay the paths for big single-shot prompts.
+- **`--num-gpu-blocks-override 50`** caps usable concurrency at ~0.77x at 205K. Acceptable for single-stream long-text workloads (max_num_seqs=1); not suitable if multi-seq concurrency matters.
+- **Local sidecars are required**: `patch_pn12_ffn_pool_anchor.py` and `patch_fa_max_seqlen_clamp.py` must be wired in until Genesis ships an anchor-corrected PN12 + P104 (or equivalent).
 
 ---
 
-## Our recommended path forward (revised post-2026-04-30)
+## Our recommended path forward (revised post-2026-04-30 PM)
 
-1. **PR P101 anchor fix + P104 to Sandermage** as separate, focused PRs. Independent value to the Genesis user base; clean contributions even if they don't unlock our stack today. **Status:** [P101 PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) opened 2026-04-30. P104 held pending Sandermage's response on issue #11 (don't pile on his in-progress mechanism-B / FFN-pool work).
+1. **Status:** [P101 PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) opened 2026-04-30. **PN12 anchor drift is the same bug class** — we have the local repair; whether to PR it depends on whether Sandermage wants narrowly-scoped anchor fixes or prefers to fold an anchor health check into a broader update. Holding the decision pending his read on PR #12. P104 still held until he responds on issue #11.
 
-2. **Status quo for shipped configs.** Default 48K, tools-text 75K, dual.yml 262K, llama.cpp 262K all stay correct. Cliff 1 stays documented honestly on long-vision/long-text as "frontier ctx with caveats; use for steady-state accumulation, not big tool returns or single-shot RAG."
+2. **Update shipped configs (next):** `long-text.yml` can now ship a verified-cliff-safe 205K mode using the two local sidecars + `--num-gpu-blocks-override 50`. Default 48K stays as the conservative production option; 205K becomes the documented frontier-text variant. Pending decision on whether to flip the default or add as a variant.
 
-3. **For users who genuinely need cliff-safe long-context single-card text:** route to `llamacpp/default` (different engine, no cliffs, ~21 TPS).
+3. **Dual.yml / llama.cpp paths unchanged** — both remain correct for their respective workloads (multi-stream + max-ctx single-prompt).
 
 4. **For users who genuinely need cliff-safe long-context with vision or 70+ TPS:** route to dual-card `dual.yml` (TP=2, 237K verified single-prompt at ~830 tok/s prefill).
 

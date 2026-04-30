@@ -6,24 +6,45 @@ Changes that span the entire stack — engine version pins, script behavior, rep
 
 `no-genesis-mtp.yml` was a control variant we used to A/B-test whether MTP-without-Genesis worked (it does — Genesis isn't strictly required for fp8+MTP). Useful for our internal upstream-bug-isolation workflow, but no real reason for end users to pick it over `tools-text.yml` (fp8 + MTP + Genesis bugfixes + 75K, strictly better) or `minimal.yml` (no Genesis at all, simplest stack). Wizard already didn't surface it. Removed from `switch.sh` variant map, sibling compose "see also" tables, patches/README, and engines/VLLM.md.
 
-## 2026-04-30 — Built P104 (FA max_seqlen_k clamp) + P101 anchor fix (Cliff 1 mech A closes; mech B remains architectural wall)
+## 2026-04-30 PM — Cliff 1 mech B closes at 205K (PN12 anchor drift was the real bug)
+
+**The real problem was anchor drift in PN12, not pool surface.** Earlier 2026-04-30 we'd built P104 + P101 anchor fix and concluded TQ3 + single-card + MTP hit an "architectural wall" because Cliff 1 mech B fired at 205K and 175K with identical signatures. Hypothesis: PN12 only pools `SiluAndMul` output, leaving the larger `gate_up_proj` allocation upstream — needs extension. **That hypothesis was wrong.**
+
+Investigation found PN12 was silently no-op'd on dev205+: its anchor expected `@CustomOp.register("silu_and_mul_with_clamp")` immediately after `SiluAndMul`, but upstream now has `MulAndSilu` in that slot. Genesis `apply_all` reported "PN12 applied" while the live `vllm/model_executor/layers/activation.py` retained the vanilla body — same anchor-drift class as P101. We had no direct evidence PN12 was applying; we'd inferred it from the OOM signature.
+
+**Local repair via two sidecars in `models/qwen3.6-27b/vllm/patches/`:**
+- `patch_pn12_ffn_pool_anchor.py` — class-scoped anchor fix that actually patches `SiluAndMul.forward_cuda` with PN12's pooled-output body, env-gated by the existing `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`.
+- `patch_fa_max_seqlen_clamp.py` — local P104 sidecar (Genesis pin doesn't ship P104 yet).
+
+Both wired into `docker-compose.long-text.yml` after `apply_all`.
+
+**Verified on RTX 3090 single-card (2026-04-30 PM):**
+- `--max-model-len 205000`, `--max-num-batched-tokens 4128`, `--num-gpu-blocks-override 50`, MTP n=3
+- P101 + P103 + PN12 (anchor-repaired) + PN13 + P104 (sidecar) all enabled
+- `verify-stress.sh` tool-prefill: 643 chars, finish=stop ← was failing 138 MiB allocate / 130 MiB free
+- `verify-full.sh`: all 8 checks passed
+- MTP acceptance length: 2.38
+
+**Lesson:** for any Genesis text-patch on a fresh upstream pin, grep the live file for the patch marker before drawing implementation conclusions. We now have two consecutive bisections (P101, then PN12) where anchor drift masqueraded as design problems and ate substantial debugging time. Anchor health verification belongs ahead of implementation analysis.
+
+**Sandermage's PN12 design intent was correct all along** — pooling `SiluAndMul` output is sufficient for Cliff 1 mech B. No `gate_up_proj` extension needed. The bug was patch-application infrastructure, not algorithmic.
+
+**Decisions pending:**
+- Whether to PR the PN12 anchor fix to Sandermage (same class as P101 PR #12, narrowly scoped).
+- Whether to flip `long-text.yml` default to the 205K + sidecars config, or ship as a documented variant alongside the conservative 48K default.
+- Whether to bisect the upward ceiling beyond 205K (Cliff 2 still applies on single-prompt >50–60K).
+
+Full diagnostic: [`models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md`](models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md). Branch `cliff1-fa-clamp` carries the change.
+
+## 2026-04-30 (AM) — Built P104 (FA max_seqlen_k clamp) + P101 anchor fix (superseded by PM update)
 
 Codex agent (5h session) built and shipped two Genesis contributions on local branch `club-3090-cliff1-prep`:
 
 **P104 (new)** — FA max_seqlen_k runtime clamp. Env-gated `GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1`, runtime-only (skips under cudagraph capture), never under-clamps below `max(cu_seqlens_k diff)`. Closes Cliff 1 mechanism A (FA2 softmax_lse cap-leak) wherever FA2 dominates. ~260 lines, follows Genesis text-patch infrastructure exactly. PR-ready for Sandermage's repo.
 
-**P101 anchor drift fix** — discovered P101 was silently no-op'd on vLLM dev205+. Upstream replaced `_arange_cache[...]` slicing with inline `torch.arange(...)`; P101's text-replace anchor still expected the old form. apply_all reported "applied" misleadingly while file content was unchanged. Anyone running Genesis v7.62.x with `GENESIS_ENABLE_P101=1` on dev205+ has been getting a no-op. Fix updates anchor to match new upstream form. Opened as [Sandermage PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12). P104 held back pending Sandermage's response on issue #11 to avoid piling on his in-progress mechanism-B / FFN-pool work.
+**P101 anchor drift fix** — discovered P101 was silently no-op'd on vLLM dev205+. Upstream replaced `_arange_cache[...]` slicing with inline `torch.arange(...)`; P101's text-replace anchor still expected the old form. apply_all reported "applied" misleadingly while file content was unchanged. Anyone running Genesis v7.62.x with `GENESIS_ENABLE_P101=1` on dev205+ has been getting a no-op. Fix updates anchor to match new upstream form. Opened as [Sandermage PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12).
 
-**Empirical findings — TQ3 + single-card + MTP is at the architectural wall**:
-- Tested at 205K + 50-block-override + P101+P103+P104 → fails 138 MiB / 130.5 MiB free at FFN buffer (Cliff 1 mech B)
-- Tested at 175K + 50-block-override + P101+P103+P104 → identical failure, same buffer site, same allocate/free amounts
-- max_model_len is NOT the dominant variable; FFN buffer is sized by `max_num_batched_tokens × intermediate_size = 4128 × 17408 × 2 bytes = 138 MiB` per chunk
-- `max_num_batched_tokens` pinned at 4128 by Mamba block_size constraint (asserted at boot below)
-- Closing mechanism B requires either chunked FFN forward (touches inductor codegen, fragile) or dropping MTP (frees draft model VRAM, but loses the spec-decode value prop)
-
-**No shipped config changes.** Default 48K + tools-text 75K + dual.yml 262K + llama.cpp 262K stay the right ceilings. P104 + P101 anchor fix sit on the local Genesis branch waiting for upstream PR.
-
-Updated `CLIFFS.md` (corrected diagnosis), `UPSTREAM.md` (P104 + P101-fix entries). Branch `cliff1-fa-clamp` in club-3090 holds this changeset; not merged to master.
+**Empirical findings at this stage (later corrected — see PM update above):** with the partial stack we observed identical 138 MiB / 130 MiB OOM at 205K and 175K and concluded the cliff was architectural. The PM session showed PN12 wasn't actually applying; once repaired, the cliff closes at 205K.
 
 ## 2026-04-29 (PM) — Cliff 1 dual-mechanism discovery (P101+P103 cross-rig test)
 
