@@ -38,7 +38,7 @@ Sanity check after boot:
 ```bash
 curl -sf http://localhost:8020/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3.6-27b-autoround","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":30}'
+  -d '{"model":"qwen3.6-27b-autoround","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":200}'
 ```
 
 ---

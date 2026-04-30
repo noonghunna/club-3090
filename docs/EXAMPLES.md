@@ -19,11 +19,11 @@ curl -sf http://localhost:8020/v1/chat/completions \
   -d '{
     "model": "qwen3.6-27b-autoround",
     "messages": [{"role": "user", "content": "Capital of France?"}],
-    "max_tokens": 30
+    "max_tokens": 200
   }' | jq -r '.choices[0].message.content'
 ```
 
-Expected response: a sentence containing `Paris`.
+Expected response: a sentence containing `Paris`. The `max_tokens: 200` headroom is intentional — Qwen3.6 thinks before answering by default, so even simple questions burn ~50–150 tokens inside `<think>...</think>` before reaching the answer. Set tighter (`max_tokens: 30`) only if you also pass `chat_template_kwargs: {"enable_thinking": false}` to skip the think block — that's what `verify-full.sh` does internally.
 
 ---
 

@@ -156,7 +156,7 @@ bash scripts/launch.sh --variant llamacpp/default  # easy mode
 # 4. Sanity test
 curl -sf http://localhost:8020/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3.6-27b-autoround","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":30}'
+  -d '{"model":"qwen3.6-27b-autoround","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":200}'
 
 # 5. Switch later without re-running setup
 bash scripts/switch.sh vllm/long-vision    # for example
