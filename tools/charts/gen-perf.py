@@ -46,10 +46,10 @@ GROUP_COLORS = {
     "dual-vllm":           ("#a1d99b", "#2c8a2c"),
 }
 GROUP_LABELS = {
-    "single-vllm":         "single 3090 — vLLM patched",
-    "single-llama":        "single 3090 — llama.cpp",
-    "single-luce-watch":   "single 3090 — Luce DFlash *experimental*",
-    "dual-vllm":           "2× 3090 — vLLM (TP=2)",
+    "single-vllm":         "1× 3090\nvLLM patched",
+    "single-llama":        "1× 3090\nllama.cpp",
+    "single-luce-watch":   "1× 3090\nLuce DFlash *experimental*",
+    "dual-vllm":           "2× 3090\nvLLM (TP=2)",
 }
 
 
@@ -129,6 +129,6 @@ def make_chart(configs, out_stem, title_subject, figsize):
 single_configs = [c for c in configs_all if c[3].startswith("single-")]
 dual_configs   = [c for c in configs_all if c[3].startswith("dual-")]
 
-make_chart(configs_all,    "performance",        "per config",          figsize=(15, 7.0))
+make_chart(configs_all,    "performance",        "per config",          figsize=(18, 7.5))
 make_chart(single_configs, "performance-single", "(single 3090)",       figsize=(13, 6.5))
 make_chart(dual_configs,   "performance-dual",   "(2× 3090, TP=2)",     figsize=(8.5, 6.5))
