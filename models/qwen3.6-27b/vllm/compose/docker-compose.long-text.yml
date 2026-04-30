@@ -25,8 +25,22 @@
 #   and same caveats — within 2% of long-vision narr.
 #
 # Cliff caveat (must read):
-#   - Cliff 1 (tool-prefill OOM at 25K+ tool messages) is CLOSED on this
-#     variant as of 2026-04-30 PM via two local sidecars + 0.985 mem-util:
+#   - Cliff 1 (tool-prefill OOM at 25K+ tool messages) is MOSTLY closed on
+#     this variant as of 2026-04-30 PM via two local sidecars + 0.985
+#     mem-util. Verify-stress 25K synthetic passes. **However, real
+#     coding-agent workloads (OpenCode, Cline) with mixed sys-prompt +
+#     tool-schema + user-message prefill shapes can still hit Cliff 1
+#     mech B at ~138 MiB FFN intermediate** — PN12 patches the eager-mode
+#     `SiluAndMul.forward_cuda` but vLLM's torch.compile inductor-compiled
+#     FFN forward inlines the op and bypasses our pool. See issue #16.
+#     If you hit this:
+#       1. Switch to `tools-text.yml` (75K, fp8 KV, PN8 closes the same
+#          cliff via a different mechanism that reaches the compile path)
+#       2. Add `--enforce-eager` to the command list below — forces all
+#          forwards through eager Python where PN12 reliably applies.
+#          ~20-30% TPS hit; preserves 218K context.
+#       3. Lower `--gpu-memory-utilization` to 0.94 — frees ~250 MiB
+#          activation headroom; reduces effective context to ~150K.
 #       * patch_pn12_ffn_pool_anchor.py — repairs PN12's anchor on dev205+
 #         (silent no-op upstream; see Sandermage/genesis-vllm-patches PR #13).
 #         Idempotent: skips if Genesis-side PN12 is already applied.
@@ -34,9 +48,10 @@
 #       * --gpu-memory-utilization 0.985 (up from 0.98) — gives ~120 MiB
 #         more to vLLM, mostly KV pool. With anchor-fixed PN12 reducing FFN
 #         allocator churn, the activation budget at 218K + 0.985 stays large
-#         enough for 25K-token tool prefills.
+#         enough for 25K-token synthetic tool prefills.
 #     Verified by verify-full + verify-stress on RTX 3090 (MTP AL 2.66,
-#     VRAM 23.7/24 GB). See docs/CLIFFS.md for the full diagnostic.
+#     VRAM 23.7/24 GB). See docs/CLIFFS.md for the full diagnostic and
+#     issue #16 for the real-workload gap.
 #     Note: 0.99 mem-util is too aggressive on this hardware (driver/system
 #     reserves ~440 MiB; vLLM startup check fails). 0.985 is the practical max.
 #   - Cliff 2 (single-prompt >50–60K) STILL APPLIES — DeltaNet GDN forward

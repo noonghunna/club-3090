@@ -26,13 +26,27 @@
 #
 # Cliff caveat (must read):
 #   - At 0.98 mem-util, activation headroom is ~480 MiB.
-#   - Cliff 1 (TurboQuant tool-prefill, ~138 MiB allocate at high mem-util)
-#     fires on ≥25K-token tool messages → CUDA OOM, engine dies.
+#   - Cliff 1 (TurboQuant tool-prefill, ~138 MiB allocate) is MOSTLY closed
+#     as of 2026-04-30 PM via PN12 anchor sidecar + P104 FA clamp sidecar.
+#     Verify-stress 25K synthetic tool prefill passes. **However, real
+#     coding-agent workloads (OpenCode, Cline) with mixed sys-prompt +
+#     tool-schema + user-message prefill shapes can still hit Cliff 1
+#     mech B at the FFN intermediate** — PN12 patches the eager-mode
+#     `SiluAndMul.forward_cuda` but vLLM's torch.compile inductor-compiled
+#     FFN forward inlines the op and bypasses our pool. See issue #16.
+#     If you hit this on real workloads:
+#       1. Switch to `tools-text.yml` (75K, fp8 KV, PN8 closes the same
+#          cliff via a different mechanism that reaches the compile path)
+#       2. Add `--enforce-eager` to the command list below — forces all
+#          forwards through eager Python where PN12 reliably applies.
+#          ~20-30% TPS hit; preserves 198K context.
+#       3. Lower `--gpu-memory-utilization` to 0.94 — frees ~250 MiB
+#          activation headroom; reduces effective context to ~140K.
 #   - Cliff 2 (DeltaNet GDN forward, single prompt ≥50-60K tokens) STILL
 #     fires here — same 24 GB VRAM constraint as the default.
-#   - Net safe single-prompt envelope: ~16K. The full 192K is for steady-
+#   - Net safe single-prompt envelope: ~16K. The full 198K is for steady-
 #     state context accumulation across many small turns, NOT for stuffing
-#     192K of new tokens in one request.
+#     198K of new tokens in one request.
 #   - For more activation headroom + safer prefill: drop back to default
 #     48K + 0.92 OR upgrade to dual-3090 (TP=2 splits activation).
 #

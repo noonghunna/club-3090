@@ -55,6 +55,12 @@
 #   - Cliff 2 (single-prompt ≥50–60K in GDN) still applies — same as
 #     long-text. 218K context is for STEADY-STATE accumulation, not
 #     stuffing 218K of fresh tokens in one request.
+#   - Cliff 1 mech B leak on real coding-agent workloads (OpenCode, Cline)
+#     with mixed sys-prompt + tool-schema prefill: same gap as long-text.
+#     PN12's eager-mode pool is bypassed by inductor-compiled FFN forward.
+#     See issue #16. Workarounds: switch to `tools-text.yml` (75K + fp8 +
+#     PN8 reaches compile path), or add `--enforce-eager` below (~20-30%
+#     TPS hit), or lower `--gpu-memory-utilization` to 0.94.
 #
 # Run with:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
