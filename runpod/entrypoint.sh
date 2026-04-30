@@ -4,6 +4,7 @@ set -euo pipefail
 MODEL_NAME_OR_PATH="${MODEL_NAME_OR_PATH:-Lorbus/Qwen3.6-27B-int4-AutoRound}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-0}"
+INTERACTIVE="${INTERACTIVE:-0}"
 
 export HF_HOME="${HF_HOME:-/workspace/hf_home}"
 
@@ -23,6 +24,19 @@ fi
 if [ "$TENSOR_PARALLEL_SIZE" -gt "$GPU_COUNT" ]; then
     echo "WARNING: TENSOR_PARALLEL_SIZE=${TENSOR_PARALLEL_SIZE} > GPU_COUNT=${GPU_COUNT}, capping"
     TENSOR_PARALLEL_SIZE="$GPU_COUNT"
+fi
+
+export CUDA_VISIBLE_DEVICES="$(seq -s, 0 $((GPU_COUNT - 1)))"
+echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+
+if [ "$INTERACTIVE" = "1" ]; then
+    echo "=== INTERACTIVE mode — launching jupyter lab on port 8080 ==="
+    python3 -m pip install -q jupyterlab 2>/dev/null || true
+    exec python3 -m jupyterlab \
+        --ip=0.0.0.0 --port=8080 --no-browser \
+        --allow-root \
+        --NotebookApp.token='' \
+        --notebook-dir=/workspace
 fi
 
 VLLM_ARGS=(
