@@ -51,10 +51,77 @@ Ephemeral container verification (no vLLM boot) showed:
 
 ## Pending
 
-- Reboot long-text with `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1` and confirm the live `SiluAndMul.forward_cuda` body contains the local marker.
-- Re-test 205K with the full stack after the PN12 anchor repair.
-- If the repaired PN12 still fails, capture a CUDA memory snapshot and disambiguate `gate_up_proj` vs `SiluAndMul` allocation as the failure site.
+None for this pass. The stop condition was met at `205K`, so memory-history tracing, gate-up extended pooling, no-MTP testing, and upward ceiling bisection were not run.
+
+## 205K Full-Stack Retest
+
+Booted `docker-compose.long-text.yml` with:
+
+- `--max-model-len 205000`
+- `--max-num-batched-tokens 4128`
+- `--num-gpu-blocks-override 50`
+- MTP on: `{"method":"mtp","num_speculative_tokens":3}`
+- `GENESIS_ENABLE_P101=1`
+- `GENESIS_ENABLE_P103=1`
+- `GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1`
+- `GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1`
+- `GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1`
+
+Patch evidence from the live boot:
+
+```text
+[pn12_ffn_pool_anchor_fix] SiluAndMul.forward_cuda: applied
+[fa_max_seqlen_clamp] _flash_attn_varlen: applied
+```
+
+Live file check inside the running container:
+
+```text
+activation.py contains LOCAL PN12 marker: True
+activation.py contains FFNIntermediateCache: True
+turboquant_attn.py contains LOCAL P104 marker: True
+turboquant_attn.py contains GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP: True
+```
+
+KV/cache evidence:
+
+```text
+Overriding num_gpu_blocks=65 with num_gpu_blocks_override=50
+GPU KV cache size: 206,400 tokens
+Maximum concurrency for 205,000 tokens per request: 0.77x
+```
+
+Mamba alignment did not shrink below the architectural page size:
+
+```text
+Setting attention block size to 4128 tokens to ensure that attention page size is >= mamba page size.
+Padding mamba page size by 0.02% to ensure that mamba page size and attention page size are exactly equal.
+```
+
+Tool-prefill stress result:
+
+```text
+SKIP_LONGCTX=1 CONTAINER=vllm-qwen36-27b-long-text bash scripts/verify-stress.sh
+
+tool prefill OK - text response (643 chars, finish=stop)
+All stress / boundary checks passed.
+```
+
+Functional smoke result:
+
+```text
+CONTAINER=vllm-qwen36-27b-long-text bash scripts/verify-full.sh
+
+All checks passed.
+MTP acceptance length = 2.38
+```
+
+Interpretation: the 205K Cliff 1 tool-prefill failure was caused by PN12 silently no-oping on dev205+ anchor drift, with the already-built P104/P101/P103/PN13/block-override stack active. Once PN12 actually patches `SiluAndMul.forward_cuda`, the standard 25K-token tool-prefill stress check survives at 205K with MTP enabled.
 
 ## Final Verdict
 
-Pending.
+Fix found at: `patch_pn12_ffn_pool_anchor.py` plus the existing local P104 sidecar, with `P101 + P103 + PN12 + PN13 + --num-gpu-blocks-override 50` enabled.
+
+Closes cliff at: `205K`.
+
+New ceiling: not measured. Stopped at verified `205K` per stop condition.
