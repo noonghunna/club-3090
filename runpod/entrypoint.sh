@@ -73,7 +73,7 @@ fi
 
 VLLM_ARGS=(
     --model "${MODEL_NAME_OR_PATH}"
-    --served-model-name qwen3.6-27b-autoround
+    --served-model-name "${SERVED_MODEL_NAME:-Qwen3.6-27B-4bit}"
     --quantization auto_round
     --dtype float16
     --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}"
@@ -87,6 +87,10 @@ VLLM_ARGS=(
     --host 0.0.0.0
     --port "${VLLM_PORT}"
 )
+
+if [ -n "${API_KEY:-}" ]; then
+    VLLM_ARGS+=(--api-key "${API_KEY}")
+fi
 
 if [ "$TENSOR_PARALLEL_SIZE" -ge 2 ]; then
     echo "=== Dual GPU — dual.yml path (262K, fp8 KV, vision + tools, Genesis-less) ==="
@@ -110,8 +114,10 @@ else
         --max-num-seqs "${MAX_NUM_SEQS:-1}"
         --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS:-2048}"
         --kv-cache-dtype fp8_e5m2
-        --language-model-only
     )
+    if [ "${MULTIMODAL:-0}" != "1" ]; then
+        VLLM_ARGS+=(--language-model-only)
+    fi
 fi
 
 echo "  TP=${TENSOR_PARALLEL_SIZE}"
