@@ -323,7 +323,9 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 
 ### Cheap (1-2 days, no novel CUDA work)
 
-- [ ] **Build a vLLM-side `max_seq_len` clamp** ourselves if Sandermage doesn't take it. ~50 lines of Python text-patch in `turboquant_attn.py` or `flash_attn.py`. Same code shape as our existing `patch_tolist_cudagraph.py`. Closes Cliff 1 on TQ3 paths.
+- [x] **Built ✓** — Codex agent shipped **P104 FA max_seqlen_k runtime clamp** (2026-04-30, branch `club-3090-cliff1-prep` in our local Genesis clone). Closes Cliff 1 **mechanism A** (FA2 softmax_lse). Also fixed silent-no-op bug in **P101** anchor — upstream `_arange_cache → torch.arange` change broke the old pattern; P101 was reporting "applied" but actually no-op'd. **P101 anchor fix opened as [Sandermage PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) on 2026-04-30; P104 held back pending Sandermage's response on issue #11.** Empirically validated via diagnostic log (`GENESIS_FA_CLAMP_DEBUG=1`); confirmed reroute past FA2 site on long-text.yml + 175K config.
+
+  **Caveat: P104 alone doesn't close Cliff 1 on TQ3 + long-ctx + MTP at 24GB single-card.** Mechanism B (FFN intermediate buffer at `empty_strided_cuda((s18, 17408))` ≈ 138 MiB per chunk) fires next regardless of max_model_len — measured at 205K, 175K, all hit 138 MiB / 130.5 MiB free, same buffer site. The FFN buffer is sized by `max_num_batched_tokens × intermediate_size`; `max_num_batched_tokens` is pinned at 4128 by Mamba block_size constraint. Architecturally bounded.
 
   **Implementation shape (refined via ChatGPT consultation):**
 
@@ -363,19 +365,68 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 
 ---
 
-## Our recommended path forward
+## Update 2026-04-30 PM — PN12 anchor drift was the real bug; Cliff 1 closes at 205K
 
-Ordered by efficiency and likelihood of working:
+**Initial hypothesis (wrong):** PN12 only pools `SiluAndMul` output (1 of 3 FFN allocations) so the cliff fires at the unpooled `gate_up_proj` upstream. We thought extending PN12 to cover gate_up_proj would be required.
 
-1. **Wait on Sandermage #11** for ~1-2 weeks. He has the most efficient path (existing patch infrastructure, SWA-aware tests, knows the vLLM internals). He just shipped v7.62.x with 5 days of intense work and explicitly said he needs rest before tackling the cliff next.
+**Actual finding:** PN12 was **silently no-op'd** on dev205+ — same anchor-drift bug class as P101. Genesis's `apply_all` reported "PN12 applied" while the live `vllm/model_executor/layers/activation.py` retained the vanilla `SiluAndMul.forward_cuda` body (no `Genesis PN12` marker, no `FFNIntermediateCache` import). PN12's anchor expects the next decorator after `SiluAndMul` to be `@CustomOp.register("silu_and_mul_with_clamp")`; in dev205+ that section is `MulAndSilu`, so the text patch skipped without raising.
 
-2. **Meanwhile, do prep work, not implementation:** read `vllm/v1/attention/backends/flash_attn.py` and `turboquant_attn.py` to map the patch surface. Identify the exact call sites where `attn_metadata.max_seq_len` flows into FA2, and verify the runtime-vs-capture distinction is reachable from there. Document findings — useful for Sandermage if he asks.
+**Repair + result:** Once a local sidecar (`patch_pn12_ffn_pool_anchor.py`) actually patches `SiluAndMul.forward_cuda` with PN12's pooled-output body, **Cliff 1 closes at 205K** with the existing stack. No `gate_up_proj` extension needed. Sandermage's PN12 design intent was correct all along — the text-patch anchor was just stale.
 
-3. **Keep `default 48K` capped until clamp is verified.** Don't pre-emptively bump max-ctx based on the patch theory; only bump after measurement confirms Cliff 1 closes on each rung (86K → 128K → 192K).
+### Verified shipped configs (2026-04-30 PM, RTX 3090 single-card)
 
-4. **If Sandermage declines or doesn't respond after 2 weeks:** ship the vLLM-side clamp ourselves with the [refined implementation shape above](#cheap-1-2-days-no-novel-cuda-work) — env gate, dual-target patch (`flash_attn.py` + `turboquant_attn.py`), `min(attn_metadata.max_seq_len, actual_max_seq_len_for_this_batch)` clamp, runtime-not-capture only, never below `max(seqused_k)`. ~1-2 days dev + ~1 day bench progression (86K known-fail → 75K PN8 regression → 48K baseline → 128K push). Add patch to `setup.sh` parallel to `patch_tolist_cudagraph.py`.
+| Variant | max_model_len | mem-util | Vision | Override | KV pool | Verified |
+|---|---|---|---|---|---|---|
+| **long-text.yml** | **218K** | 0.985 | ❌ | none | 280K tokens | verify-stress + verify-full pass, MTP AL 2.66, VRAM 23.7/24 GB |
+| **long-vision.yml** | **198K** | 0.98 | ✅ | none | 260K tokens | verify-stress pass, MTP AL 2.63, VRAM 24/24 GB |
 
-5. **After clamp passes:** cautiously re-open 75K / 86K / 128K TQ3 configs as new variants, with the clamp env-gated on. Update SINGLE_CARD.md TL;DR.
+Both rely on the same local sidecars wired in via compose:
+- `patch_pn12_ffn_pool_anchor.py` — repairs PN12 anchor on dev205+ (idempotent: skips if Genesis-side PN12 already applied via the bundled tree carrying PR #13's fix).
+- `patch_fa_max_seqlen_clamp.py` — local P104 FA softmax_lse clamp.
+
+Both also enable the runtime gates: `GENESIS_ENABLE_P101 / P103 / PN12_FFN_INTERMEDIATE_POOL / PN13_CUDA_GRAPH_LAMBDA_ARITY / FA_MAX_SEQLEN_CLAMP=1`.
+
+Bisection that established the ceilings:
+
+| Config | Result |
+|---|---|
+| long-text 220K + 0.985 + no vision | engine refuses (estimated max 218K) |
+| long-text 218K + 0.985 + no vision | ✅ pass (shipped) |
+| long-text 214K + 0.985 + no vision | ✅ pass |
+| long-text 206K + 0.98 + no vision | ✅ pass |
+| long-vision 220K + 0.985 + vision | engine refuses (estimated max 206K) |
+| long-vision 205K + 0.985 + vision | ❌ Cliff 1 reopens (mem-util shifts budget away from activations) |
+| long-vision 200K + 0.985 + vision | ❌ Cliff 1 reopens |
+| long-vision 198K + 0.98 + vision | ✅ pass (shipped) |
+| 240K + 0.99 + anything | hardware OOM at startup (driver reserves ~440 MiB; vLLM's 0.99 check fails) |
+
+Full diagnostic log: [`models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md`](../models/qwen3.6-27b/vllm/diagnostics/cliff1-attack.md).
+
+### Why our prior diagnosis was wrong
+
+We had verifiable evidence the cliff fired at `empty_strided_cuda((s18, 17408))` with PN12 nominally enabled. We assumed PN12 was applying and concluded its surface area must be too narrow. We didn't verify the live `activation.py` content. Lesson: **for any Genesis text-patch on a fresh upstream pin, grep the live file for the patch marker before drawing implementation conclusions.** The same trap caught us with P101 on the prior cycle. Anchor health verification belongs ahead of implementation analysis.
+
+### What's still architecturally bounded
+
+- **Cliff 2** (DeltaNet GDN forward OOM at 50–60K single-prompt) is unchanged on single-card. `long-text.yml` remains "use for steady-state accumulation across many turns, not for stuffing >50K of fresh tokens in one request." Dual TP=2 (`dual.yml` at 237K) and llama.cpp (`llamacpp/default` at 262K) stay the paths for big single-shot prompts.
+- **`--num-gpu-blocks-override 50`** caps usable concurrency at ~0.77x at 205K. Acceptable for single-stream long-text workloads (max_num_seqs=1); not suitable if multi-seq concurrency matters.
+- **Local sidecars are required**: `patch_pn12_ffn_pool_anchor.py` and `patch_fa_max_seqlen_clamp.py` must be wired in until Genesis ships an anchor-corrected PN12 + P104 (or equivalent).
+
+---
+
+## Our recommended path forward (revised post-2026-04-30 PM)
+
+1. **Status:** [P101 PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) and [PN12 PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13) opened 2026-04-30. Both are narrow anchor-drift fixes (same bug class). P104 still held back until Sandermage responds on issue #11 (P104 is new functionality, not just an anchor fix — different scoping decision).
+
+2. **Update shipped configs (next):** `long-text.yml` can now ship a verified-cliff-safe 205K mode using the two local sidecars + `--num-gpu-blocks-override 50`. Default 48K stays as the conservative production option; 205K becomes the documented frontier-text variant. Pending decision on whether to flip the default or add as a variant.
+
+3. **Dual.yml / llama.cpp paths unchanged** — both remain correct for their respective workloads (multi-stream + max-ctx single-prompt).
+
+4. **For users who genuinely need cliff-safe long-context with vision or 70+ TPS:** route to dual-card `dual.yml` (TP=2, 237K verified single-prompt at ~830 tok/s prefill).
+
+5. **Don't pursue chunked FFN forward, FA2 source patching, or FlashQLA Ampere port.** All are above-budget work for incremental improvement when better hardware paths already exist.
+
+6. **Continue tracking upstream fixes.** [Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011) (softmax_lse layout), [vllm#40961](https://github.com/vllm-project/vllm/pull/40961) (capture metadata flow), Sandermage's response to [Genesis #11](https://github.com/Sandermage/genesis-vllm-patches/issues/11). Re-test when any lands.
 
 6. **Independently, file `fla-org/flash-linear-attention` issue** with Cliff 2 bisection data + our 237K-on-TP=2 result. Doesn't unblock us, but raises signal that consumer Ampere users hit this on Qwen3-Next class models.
 

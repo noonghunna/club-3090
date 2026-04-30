@@ -10,7 +10,7 @@ This is what the repo's [Quick start](../../README.md#quick-start) ships. Everyt
 - ✅ Full feature set: vision, tools, streaming, thinking, MTP n=3, TurboQuant 3-bit KV
 - ✅ Full OpenAI API parity
 - 51-55 narr / 67-70 code TPS on a single 3090
-- 48K default ctx (opt-in to 192K-205K with caveats)
+- 48K default ctx · 198K with vision · 218K text-only (Cliff 2 still applies single-prompt >50–60K)
 
 ---
 
@@ -49,7 +49,7 @@ bash scripts/bench.sh               # 3 warmups + 5 measured (narr + code)
 | Pro | Detail |
 |---|---|
 | **Deepest Qwen3-Next feature support** | Vision tower, MTP head, all attention variants supported upstream. |
-| **TurboQuant 3-bit KV** | Lets us reach 192K-205K context on 24 GB. No equivalent in llama.cpp; SGLang has it but blocked by other bugs. |
+| **TurboQuant 3-bit KV** | Lets us reach 198K + vision or 218K text-only on 24 GB. No equivalent in llama.cpp; SGLang has it but blocked by other bugs. |
 | **MTP speculative decoding** | Works out of the box on the Lorbus quant; mainline llama.cpp doesn't expose MTP. |
 | **Active development** | Bugs we hit get triaged within days. We've contributed back. |
 | **Full OpenAI API parity** | Tools, streaming, vision-in-message, reasoning-mode, structured output — everything works. |
@@ -80,7 +80,7 @@ Control context vs activation headroom. See the [Activation-memory caveat](../..
 | `turboquant_4bit_nc` | ~23 KB | ~84K | Untested by us — should work |
 | `turboquant_3bit_nc` ⭐ | ~17 KB | ~125K | Default v7.14 variant |
 
-Lower bytes/token = more context, but more dequant scratch + activation pressure. The 3-bit variant is what enables the 192K opt-in tier.
+Lower bytes/token = more context, but more dequant scratch + activation pressure. The 3-bit variant is what enables the 198K + vision and 218K text-only tiers.
 
 ### Spec-decode (`--speculative-config`)
 

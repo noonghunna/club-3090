@@ -13,10 +13,10 @@ The recommended path for this model. Full features, validated end-to-end via `ve
 # Single-card default — 48K + Genesis v7.14 + TurboQuant 3-bit + vision (recommended for ≥20K + tool agents)
 cd compose && docker compose up -d
 
-# Single-card frontier 192K — vision on, prefill caveats apply
+# Single-card frontier 198K — vision on, Cliff 1 closed via PN12 anchor sidecar, Cliff 2 still applies single-prompt >50K
 cd compose && docker compose -f docker-compose.long-vision.yml up -d
 
-# Single-card frontier 205K — text-only (engine ceiling), prefill caveats apply
+# Single-card frontier 218K — text-only (engine ceiling at 0.985 mem-util), same Cliff 2 caveat
 cd compose && docker compose -f docker-compose.long-text.yml up -d
 
 # Single-card IDE-agent / long-prompt — 75K + fp8 + no vision (Cline / Cursor / Copilot / RAG)

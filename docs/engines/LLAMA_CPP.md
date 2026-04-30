@@ -36,7 +36,7 @@ The ~4 GB savings going from AutoRound (vLLM) to UD-Q3_K_XL (llama.cpp) translat
 
 ## Why llama.cpp doesn't hit the prefill cliffs vLLM does
 
-Both engines run the same model. Both do chunked prefill. Yet vLLM at 192K + TQ3 + vision OOMs on a 25K-token tool message ([Cliff 1](../FAQ.md#whats-a-prefill-cliff)) while llama.cpp at 262K + q4_0 KV processes the same message cleanly. **It's not a tuning gap — it's a structural difference in how each engine allocates per-call workspace.** Three pieces:
+Both engines run the same model. Both do chunked prefill. Pre-2026-04-30 PM, vLLM at 192K + TQ3 + vision OOM'd on 25K-token tool messages ([Cliff 1](../FAQ.md#whats-a-prefill-cliff)) while llama.cpp at 262K + q4_0 KV processed them cleanly. We've since closed Cliff 1 on vLLM via the PN12 anchor sidecar (which actually pools FFN intermediates instead of fresh-allocating per layer). The structural reason llama.cpp doesn't fire either of the two cliffs in the first place is still worth understanding — and it's why **Cliff 2 (single-prompt >50–60K) still fires on vLLM single-card and doesn't on llama.cpp.** Three pieces:
 
 **1. Different attention library entirely.** vLLM links Dao-AILab FlashAttention 2 (`_vllm_fa2_C.varlen_fwd`). llama.cpp uses ggml-cuda kernels — `fattn-mma-f16.cu`, `fattn-tile-f16.cu`, `fattn-vec-f16.cu`. **There's no `max_seqlen` parameter to leak.** ggml's attention forward dispatches per batch with output buffers sized by *current* prompt length; FA2's varlen kernel allocates `softmax_lse` as `[num_seqs, num_heads, max_seqlen]` — sized by an upper bound that vLLM passes through cudagraph-capture metadata as `max_model_len`. So a 25K-token tool prefill at vLLM's `max-model-len=192K` reserves softmax_lse for 192K; the same prefill on llama.cpp reserves softmax_lse for 25K. See upstream root cause [Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011) (open since 2024).
 
@@ -244,7 +244,7 @@ The q8 → q4_0 jump is **counter-intuitive** because q8 is "higher precision" �
 ## When to use vLLM instead
 
 - You need full OpenAI API parity (tools, streaming, structured output)
-- You want max context (192K+) on a single 3090 — TurboQuant only available on vLLM
+- You want max context (>218K) on a single 3090 — vLLM single-card tops out at 218K text-only; llama.cpp goes to 262K
 - You need concurrent serving (multi-tenant)
 - You want MTP spec-decode (the integrated head, not DFlash)
 - You're hitting llama.cpp's Qwen3-Next limitations and want the actively-developed path

@@ -49,7 +49,12 @@ How each config splits the 24 GB / card budget — weights, KV cache, vision tow
 
 ![Per-card VRAM allocation across single + dual configs](../../docs/img/vram-budget-combined.png)
 
-This is also why TP=2 unlocks 262K context with vision and 4 concurrent streams while single-card can't — the model + a usable KV pool just doesn't fit on one 24 GB card past ~48K with tool prefills (Cliff 1) or ~50–60K single prompts (Cliff 2).
+As of 2026-04-30 PM, single-card vLLM ceilings are:
+- **218K text-only** (`long-text.yml`, no vision) — verified cliff-safe via anchor-fixed PN12 + P104 sidecars at 0.985 mem-util.
+- **198K with vision** (`long-vision.yml`) — verified cliff-safe at 0.98 mem-util (vision tower's persistent ~1 GB makes 0.985 too tight).
+- 75K FP8 IDE-agent path (`tools-text.yml`) and 48K production-safe baseline (`docker-compose.yml`) still distinct options for their use cases.
+
+TP=2 still unlocks the **262K + 4 concurrent streams** combo and remains the path for single-prompt prefills above 50–60K (Cliff 2 still applies on single-card regardless of Cliff 1 status).
 
 ---
 
@@ -66,8 +71,7 @@ This is also why TP=2 unlocks 262K context with vision and 4 concurrent streams 
 
 - **GGUF on vLLM** for Qwen3-Next family — not supported upstream. Use llama.cpp for GGUF on this model.
 - **EAGLE spec-decode on hybrid attention** — DeltaNet rollback issue (cross-engine architectural). Watch upstream.
-- **Single-card 192K with big tool prefills** — Cliff 1 fires above ~25K-token tool returns on TQ3 paths (`long-vision.yml`, `long-text.yml`). Activation-peak issue, not draft-model footprint, so PN8 doesn't reach it. Use `tools-text.yml` (FP8 path, Cliff 1 closes via PN8 since Genesis v7.62.x) or dual-card.
-- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Lives in `fla.ops` upstream, no file-replacement patch. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA). Mitigation: dual-card or llama.cpp 262K.
+- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Lives in `fla.ops` upstream, no file-replacement patch. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA). Mitigation: dual-card or llama.cpp 262K. **Cliff 1** (tool-prefill OOM at ~25K-token tool returns) was the other historical caveat; closed 2026-04-30 PM via PN12 anchor sidecar + P104 sidecar — see [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
 
 ---
 
@@ -98,9 +102,16 @@ Active patches per compose:
 | P64 | Streaming tool-call edge case | all single-card vLLM with MTP |
 | P65 | TurboQuant spec-CG downgrade (#40880 fix) | TQ3 paths (default, long-vision, long-text) |
 | P66 | Cudagraph capture-size divisibility | TQ3 paths |
-| P68 | Auto-force tool adherence in long ctx | all single-card vLLM with tools |
-| P69 | Long-ctx tool reminder | all single-card vLLM |
-| **PN8** | MTP draft online-quant propagation (vllm#40849) | **fp8 path** (`tools-text.yml`) — frees ~800-900 MiB, closes Cliff 1 |
+| **P101** | TQ continuation 64-token slicing (anchor-fixed via PR #12) | TQ3 paths (long-vision, long-text) |
+| **P103** | FLA Cliff 2 chunked fwd_h+fwd_o orchestrator | TQ3 paths (long-vision, long-text) |
+| **PN12** | FFN intermediate scratch pool (anchor-fixed via PR #13) — closes Cliff 1 mech B on TQ3 | TQ3 paths (long-vision, long-text) |
+| **PN13** | CUDAGraphWrapper lambda-arity (vllm#41235 backport) | TQ3 paths |
+| **PN8** | MTP draft online-quant propagation (vllm#40849) — closes Cliff 1 on FP8 path | **fp8 path** (`tools-text.yml`) |
+| (P68/P69 disabled 2026-04-29) | Default-on tool-choice rewriting broke IDE agents | all — commented out |
+
+Two local sidecars apply outside Genesis:
+- **`patch_pn12_ffn_pool_anchor.py`** — repairs PN12 anchor on dev205+ until [PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13) merges. Idempotent (skips if Genesis-side PN12 already applied).
+- **`patch_fa_max_seqlen_clamp.py`** — local P104 FA softmax_lse clamp, defensive coverage of Cliff 1 mech A. Held back from upstream PR pending Sandermage's response on issue #11.
 
 Dual-card composes (`dual.yml`, `dual-dflash*`) are **Genesis-less by design** — fp8 KV + TP=2 + 0.92 mem-util has plenty of headroom and doesn't trigger the cudagraph bugs Genesis was built to patch. `dual-turbo.yml` does mount Genesis (TQ3 path needs P65).
 

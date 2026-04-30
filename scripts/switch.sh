@@ -16,8 +16,8 @@
 #
 #   Single-card vLLM:
 #     vllm/default          48K + TQ3 + MTP + vision + tools (recommended)
-#     vllm/long-vision      192K + TQ3 + vision (Cliff 1 unsafe with big tool prompts)
-#     vllm/long-text        205K + TQ3 + text-only
+#     vllm/long-vision      198K + TQ3 + vision (cliff-safe; Cliff 2 single-prompt >50K still applies)
+#     vllm/long-text        218K + TQ3 + text-only (same Cliff 2 caveat)
 #     vllm/tools-text       75K + fp8 + MTP + text-only (IDE agents — Cline / Cursor)
 #     vllm/minimal          32K + fp8 (no Genesis, no spec-decode, simplest)
 #
