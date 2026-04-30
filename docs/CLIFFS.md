@@ -365,19 +365,57 @@ Ordered from cheapest to most aggressive, with realistic effort/reward.
 
 ---
 
-## Our recommended path forward
+## The architectural wall (post-2026-04-30 empirical conclusion)
 
-Ordered by efficiency and likelihood of working:
+After building, validating, and measuring P104 (FA max_seqlen_k clamp) + P101 anchor fix on `long-text.yml` at multiple max_model_len rungs, the empirical conclusion is:
 
-1. **Wait on Sandermage #11** for ~1-2 weeks. He has the most efficient path (existing patch infrastructure, SWA-aware tests, knows the vLLM internals). He just shipped v7.62.x with 5 days of intense work and explicitly said he needs rest before tackling the cliff next.
+**TQ3 + single-card 24 GB + MTP n=3 hits an architectural wall on Cliff 1 mechanism B (FFN intermediate buffer) regardless of max_model_len.**
 
-2. **Meanwhile, do prep work, not implementation:** read `vllm/v1/attention/backends/flash_attn.py` and `turboquant_attn.py` to map the patch surface. Identify the exact call sites where `attn_metadata.max_seq_len` flows into FA2, and verify the runtime-vs-capture distinction is reachable from there. Document findings — useful for Sandermage if he asks.
+Specifically:
+- 205K + 50-block-override + P101 (anchor-fixed) + P103 + P104 → fails 138 MiB allocate / 130.5 MiB free at FFN buffer
+- 175K + same stack → identical failure signature, same buffer site, same allocate / free amounts
+- Conclusion: **`max_model_len` is not the dominant variable.** The 138 MiB FFN buffer is sized by `max_num_batched_tokens × intermediate_size = 4128 × 17408 × 2 bytes`; `max_num_batched_tokens` is pinned at 4128 by the Mamba block_size assertion (boot-time enforced); `intermediate_size` is the model architecture (Qwen3.6-27B FFN). Activation-cascade memory pressure at OOM time is approximately constant across max_model_len in [175K, 205K].
 
-3. **Keep `default 48K` capped until clamp is verified.** Don't pre-emptively bump max-ctx based on the patch theory; only bump after measurement confirms Cliff 1 closes on each rung (86K → 128K → 192K).
+### What an actual complete Cliff 1 mechanism B fix would require
 
-4. **If Sandermage declines or doesn't respond after 2 weeks:** ship the vLLM-side clamp ourselves with the [refined implementation shape above](#cheap-1-2-days-no-novel-cuda-work) — env gate, dual-target patch (`flash_attn.py` + `turboquant_attn.py`), `min(attn_metadata.max_seq_len, actual_max_seq_len_for_this_batch)` clamp, runtime-not-capture only, never below `max(seqused_k)`. ~1-2 days dev + ~1 day bench progression (86K known-fail → 75K PN8 regression → 48K baseline → 128K push). Add patch to `setup.sh` parallel to `patch_tolist_cudagraph.py`.
+Any of the following would close mechanism B on TQ3 + single-card. None are within the text-patch infrastructure Sandermage's Genesis tree provides; all require deeper engineering:
 
-5. **After clamp passes:** cautiously re-open 75K / 86K / 128K TQ3 configs as new variants, with the clamp env-gated on. Update SINGLE_CARD.md TL;DR.
+1. **Chunked / streaming FFN forward** — split the up_proj × silu × down_proj sequence into mini-batches of (e.g.) 1024 tokens internally, never materializing the full `(max_num_batched_tokens, intermediate_size)` intermediate. Conceptually similar to gradient checkpointing but for inference activations. Requires: replacing the inductor-compiled FFN forward with a custom Python wrapper that does internal mini-batching, OR implementing a fused chunked FFN kernel in Triton. Days-to-weeks of CUDA work; correctness validation against reference. Likely upstream-rejected for performance regression on configs where memory isn't the constraint (vast majority of users).
+
+2. **Drop MTP spec-decode** — frees ~1 GB of draft model VRAM + cudagraph capture pools. MTP n=3 contributes meaningfully to the activation budget pressure. Trade: ~25-30% TPS reduction on long-text from losing spec-decode value. Cliff would close at this stack; throughput tier drops.
+
+3. **FA3 / FlashInfer / FlashQLA path on Ampere** — non-FA2 attention backend with different memory layout. None currently support Ampere SM 8.6. FlashQLA's TileLang requires Hopper warp-specialization async tensor cores; porting to Ampere primitives is ~6 months of expert CUDA work (QwenLM territory). FA3 / FlashInfer skip Ampere entirely.
+
+4. **Hardware path: dual-card TP=2** — already shipped (`dual.yml` verified at 237K single-prompt 2026-04-29). Activation memory splits across cards under tensor parallelism; mechanism B fits per-card. **This is the actual practical path for users who hit Cliff 1.**
+
+5. **Hardware path: llama.cpp single-card** — already shipped (`llamacpp/default` at 262K). Different attention library entirely (ggml-cuda); no FA2 cap-leak; GDN uses online state updates. ~21 TPS vs 50+ TPS on vLLM but no cliffs anywhere. **The other practical path.**
+
+### What our P104 + P101 anchor fix DO close (when bundled into Sandermage's tree)
+
+| Where mech A dominates | Result with our PRs |
+|---|---|
+| `tools-text.yml` (FP8 + PN8 + 75K) | Already cliff-safe via PN8 today; P104 redundant insurance |
+| Future `tools-text-extended.yml` (FP8 + PN8 + 100-150K) | Becomes feasible with P104 closing mech A; PN8 absorbs mech B for FP8 path |
+| Genesis users on dev205+ enabling P101 | P101 anchor fix unblocks the silent no-op; P101's reroute-to-TQ-decode-kernel works as designed |
+| Cross-rig users running TQ3 at less-tight activation budgets | P104 closes mech A wherever FA2 dominates; mech B may still fire on tightest configs |
+
+So the PRs don't unlock our currently shipped configs but ship two real bugs / features for the broader Genesis user base, plus give us future variant optionality.
+
+---
+
+## Our recommended path forward (revised post-2026-04-30)
+
+1. **PR P101 anchor fix + P104 to Sandermage** as separate, focused PRs. Independent value to the Genesis user base; clean contributions even if they don't unlock our stack today.
+
+2. **Status quo for shipped configs.** Default 48K, tools-text 75K, dual.yml 262K, llama.cpp 262K all stay correct. Cliff 1 stays documented honestly on long-vision/long-text as "frontier ctx with caveats; use for steady-state accumulation, not big tool returns or single-shot RAG."
+
+3. **For users who genuinely need cliff-safe long-context single-card text:** route to `llamacpp/default` (different engine, no cliffs, ~21 TPS).
+
+4. **For users who genuinely need cliff-safe long-context with vision or 70+ TPS:** route to dual-card `dual.yml` (TP=2, 237K verified single-prompt at ~830 tok/s prefill).
+
+5. **Don't pursue chunked FFN forward, FA2 source patching, or FlashQLA Ampere port.** All are above-budget work for incremental improvement when better hardware paths already exist.
+
+6. **Continue tracking upstream fixes.** [Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011) (softmax_lse layout), [vllm#40961](https://github.com/vllm-project/vllm/pull/40961) (capture metadata flow), Sandermage's response to [Genesis #11](https://github.com/Sandermage/genesis-vllm-patches/issues/11). Re-test when any lands.
 
 6. **Independently, file `fla-org/flash-linear-attention` issue** with Cliff 2 bisection data + our 237K-on-TP=2 result. Doesn't unblock us, but raises signal that consumer Ampere users hit this on Qwen3-Next class models.
 
