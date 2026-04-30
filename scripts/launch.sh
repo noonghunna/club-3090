@@ -212,10 +212,29 @@ else
   }
 fi
 
+# Resolve the actual endpoint port the same way switch.sh does:
+# explicit $PORT > per-variant default. Mirrors VARIANT_DEFAULT_PORT in
+# switch.sh — keep in sync if you add a new variant.
+declare -A LAUNCH_DEFAULT_PORT=(
+  [vllm/default]=8020
+  [vllm/long-vision]=8020
+  [vllm/long-text]=8020
+  [vllm/tools-text]=8020
+  [vllm/minimal]=8020
+  [vllm/dual]=8010
+  [vllm/dual-turbo]=8011
+  [vllm/dual-dflash]=8012
+  [vllm/dual-dflash-noviz]=8013
+  [llamacpp/default]=8020
+  [llamacpp/concurrent]=8020
+)
+ENDPOINT_PORT="${PORT:-${LAUNCH_DEFAULT_PORT[$VARIANT]:-8020}}"
+ENDPOINT_URL="http://localhost:${ENDPOINT_PORT}"
+
 echo ""
-echo "[launch] done. Endpoint: http://localhost:8020"
+echo "[launch] done. Endpoint: ${ENDPOINT_URL}"
 echo "[launch] sample request:"
-echo "  curl -sf http://localhost:8020/v1/chat/completions \\"
+echo "  curl -sf ${ENDPOINT_URL}/v1/chat/completions \\"
 echo "    -H 'Content-Type: application/json' \\"
 echo "    -d '{\"model\":\"qwen3.6-27b-autoround\",\"messages\":[{\"role\":\"user\",\"content\":\"Capital of France?\"}],\"max_tokens\":30}'"
 echo ""

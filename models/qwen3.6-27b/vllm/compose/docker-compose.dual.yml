@@ -42,7 +42,7 @@ services:
     container_name: vllm-qwen36-27b-dual
     restart: "no"
     ports:
-      - "8010:8000"
+      - "${PORT:-8010}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=2
