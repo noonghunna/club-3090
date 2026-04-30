@@ -92,7 +92,6 @@ if [ -n "${API_KEY:-}" ]; then
     VLLM_ARGS+=(--api-key "${API_KEY}")
 fi
 
-TAILSCALE_RUNNING=0
 TAILSCALE_HOSTNAME="${TAILSCALE_HOSTNAME:-runpod-llm}"
 TS_STATE=/workspace/tailscale.state
 TS_STATE_NAME=tailscale.state
@@ -102,19 +101,6 @@ cleanup() {
     trap - EXIT SIGTERM SIGINT
     if [ -n "$VLLM_PID" ]; then
         kill "$VLLM_PID" 2>/dev/null || true
-    fi
-    if [ "${TAILSCALE_RUNNING}" = "1" ] && [ -n "${TAILSCALE_STATE_REPO:-}" ] && [ -f "${TS_STATE}" ]; then
-        TAILSCALE_RUNNING=0
-        echo ""
-        echo "=== Uploading Tailscale state ==="
-        tailscale down 2>/dev/null || true
-        pkill tailscaled 2>/dev/null || true
-        sleep 1
-        hf upload "${TAILSCALE_STATE_REPO}" "${TS_STATE}" "${TS_STATE_NAME}" \
-            --repo-type dataset 2>/dev/null || echo "  Upload failed — state not saved"
-        echo "  State uploaded to ${TAILSCALE_STATE_REPO}"
-    fi
-    if [ -n "$VLLM_PID" ]; then
         wait "$VLLM_PID" 2>/dev/null || true
     fi
     exit 0
@@ -147,7 +133,6 @@ if [ -n "${TAILSCALE_AUTH_KEY:-}" ]; then
 
     TS_IP=$(tailscale ip -4 2>/dev/null || echo "unknown")
     echo "  Tailscale IP: ${TS_IP}"
-    TAILSCALE_RUNNING=1
 
     if [ -n "${TAILSCALE_STATE_REPO:-}" ] && [ -f "${TS_STATE}" ]; then
         hf upload "${TAILSCALE_STATE_REPO}" "${TS_STATE}" "${TS_STATE_NAME}" \
