@@ -121,26 +121,45 @@ if [[ -z "$VARIANT" ]]; then
   # Step 2 — workload, filtered by cards (and --engine override if set).
   # Each option's value is "engine/file" so engine is implied by the pick.
   if [[ "$CARDS" == "1" ]]; then
+    # Primary recommended options first; diagnostic / niche variants in
+    # an "Other" group at the end. The only single-card limitation users
+    # need to know: vLLM single-card crashes on a single prompt >50K
+    # (Cliff 2). For unpredictable inputs, use llamacpp/default.
     if [[ -z "$ENGINE" || "$ENGINE" == "vllm" ]]; then
       VLLM_OPTS=(
-        "Chat + light tools — recommended default (48K, vision, MTP)"             "vllm/default"
-        "IDE agents with big tool returns (Cline / Cursor / Continue, 75K text)"  "vllm/tools-text"
-        "Long context WITH vision (198K — cliff-safe; Cliff 2 single-prompt >50K)" "vllm/long-vision"
-        "Long context, text only (218K — same Cliff 2 caveat)"                     "vllm/long-text"
-        "Easy mode — no Genesis, no spec-decode, simplest (32K)"                  "vllm/minimal"
+        "Long ctx + vision (198K + vision, MTP) — recommended for chat/agents"     "vllm/long-vision"
+        "Long ctx, text only (218K, MTP) — recommended for RAG/codebase"           "vllm/long-text"
       )
     else
       VLLM_OPTS=()
     fi
     if [[ -z "$ENGINE" || "$ENGINE" == "llamacpp" ]]; then
       LLAMA_OPTS=(
-        "Frontier context, no cliffs (262K + vision, ~21 TPS)"                    "llamacpp/default"
-        "4 parallel streams, frontier context (192K pool, vision)"                "llamacpp/concurrent"
+        "Bulletproof, no cliffs (262K + vision, ~21 TPS) — production-safe"        "llamacpp/default"
       )
     else
       LLAMA_OPTS=()
     fi
-    VARIANT=$(choose "What's your main workload?" "${VLLM_OPTS[@]}" "${LLAMA_OPTS[@]}")
+    # Diagnostic / niche fallbacks — shown last so they don't dominate the menu
+    if [[ -z "$ENGINE" || "$ENGINE" == "vllm" ]]; then
+      VLLM_FALLBACK_OPTS=(
+        "[fallback] Default 48K + vision (Cliff 2 unreachable; fast boot)"         "vllm/default"
+        "[fallback] tools-text 75K FP8 (FP8 KV alternative for accuracy compare)"  "vllm/tools-text"
+        "[fallback] minimal 32K (no Genesis, no spec-decode — diagnostic stack)"   "vllm/minimal"
+      )
+    else
+      VLLM_FALLBACK_OPTS=()
+    fi
+    if [[ -z "$ENGINE" || "$ENGINE" == "llamacpp" ]]; then
+      LLAMA_FALLBACK_OPTS=(
+        "[fallback] llamacpp/concurrent (4 parallel slots, 192K pool, vision)"     "llamacpp/concurrent"
+      )
+    else
+      LLAMA_FALLBACK_OPTS=()
+    fi
+    VARIANT=$(choose "What's your main workload?" \
+      "${VLLM_OPTS[@]}" "${LLAMA_OPTS[@]}" \
+      "${VLLM_FALLBACK_OPTS[@]}" "${LLAMA_FALLBACK_OPTS[@]}")
   elif [[ "$CARDS" == "2" ]]; then
     if [[ -n "$ENGINE" && "$ENGINE" != "vllm" ]]; then
       echo "ERROR: --engine ${ENGINE} not supported on 2× cards (no llama.cpp dual recipe yet)." >&2

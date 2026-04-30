@@ -49,12 +49,16 @@ How each config splits the 24 GB / card budget — weights, KV cache, vision tow
 
 ![Per-card VRAM allocation across single + dual configs](../../docs/img/vram-budget-combined.png)
 
-As of 2026-04-30 PM, single-card vLLM ceilings are:
-- **218K text-only** (`long-text.yml`, no vision) — verified cliff-safe via anchor-fixed PN12 + P104 sidecars at 0.985 mem-util.
-- **198K with vision** (`long-vision.yml`) — verified cliff-safe at 0.98 mem-util (vision tower's persistent ~1 GB makes 0.985 too tight).
-- 75K FP8 IDE-agent path (`tools-text.yml`) and 48K production-safe baseline (`docker-compose.yml`) still distinct options for their use cases.
+As of 2026-04-30 PM, single-card recommended options (see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md)):
+- **`long-text.yml` — 218K text-only** at 0.985 mem-util. Verified cliff-safe via anchor-fixed PN12 + P104 sidecars.
+- **`long-vision.yml` — 198K + vision** at 0.98 mem-util. Same sidecars; vision tower's persistent ~1 GB makes 0.985 too tight here.
+- **`llamacpp/default` — 262K + vision** at ~21 TPS. Different engine, no cliffs anywhere — production-safe for unpredictable inputs.
 
-TP=2 still unlocks the **262K + 4 concurrent streams** combo and remains the path for single-prompt prefills above 50–60K (Cliff 2 still applies on single-card regardless of Cliff 1 status).
+The **single shipped limitation** on the vLLM variants: Cliff 2 still fires on single prompts >50–60K (DeltaNet GDN forward OOM). Use llama.cpp single or dual-card for one-shot big prompts. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
+
+Other variants (`docker-compose.yml` 48K · `tools-text.yml` 75K FP8 · `minimal.yml` 32K) are kept in the repo as fallbacks / diagnostics, not promoted as primary.
+
+TP=2 unlocks **262K + 4 concurrent streams** on dual-card (`dual.yml`).
 
 ---
 
