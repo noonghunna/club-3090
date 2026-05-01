@@ -158,14 +158,12 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 130K + 0.95 — patch parity with long-text.yml (was 218K + 0.985).
-      # Same FA varlen workspace cliff at 50K-token tool prefills; same
-      # rationale; same backoff. See long-text.yml for the full trade-off
-      # discussion and re-push criteria.
+      # 175K + 0.97 — middle-ground parity with long-text.yml. See
+      # long-text.yml for the full trade-off rationale and re-push criteria.
       - --max-model-len
-      - "130000"
+      - "175000"
       - --gpu-memory-utilization
-      - "0.95"
+      - "0.97"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

@@ -10,7 +10,7 @@ This is what the repo's [Quick start](../../README.md#quick-start) ships. Everyt
 - ✅ Full feature set: vision, tools, streaming, thinking, MTP n=3, TurboQuant 3-bit KV
 - ✅ Full OpenAI API parity
 - 51-55 narr / 67-70 code TPS on a single 3090
-- 48K default ctx · 120K with vision · 130K text-only (backed off from earlier 198K/218K — see [docs/CLIFFS.md](../CLIFFS.md) "vLLM pin compatibility status" for why; Cliff 2 still applies single-prompt >50–60K)
+- 48K default ctx · 140K with vision · 175K text-only (backed off from earlier 198K/218K — see [docs/CLIFFS.md](../CLIFFS.md) "vLLM pin compatibility status" for why; Cliff 2 still applies single-prompt >50–60K)
 
 ---
 
@@ -49,7 +49,7 @@ bash scripts/bench.sh               # 3 warmups + 5 measured (narr + code)
 | Pro | Detail |
 |---|---|
 | **Deepest Qwen3-Next feature support** | Vision tower, MTP head, all attention variants supported upstream. |
-| **TurboQuant 3-bit KV** | Lets us reach 120K + vision or 130K text-only on 24 GB at the current safety-first config. No equivalent in llama.cpp; SGLang has it but blocked by other bugs. |
+| **TurboQuant 3-bit KV** | Lets us reach 140K + vision or 175K text-only on 24 GB at the current safety-first config. No equivalent in llama.cpp; SGLang has it but blocked by other bugs. |
 | **MTP speculative decoding** | Works out of the box on the Lorbus quant; mainline llama.cpp doesn't expose MTP. |
 | **Active development** | Bugs we hit get triaged within days. We've contributed back. |
 | **Full OpenAI API parity** | Tools, streaming, vision-in-message, reasoning-mode, structured output — everything works. |
@@ -80,7 +80,7 @@ Control context vs activation headroom. See the [Activation-memory caveat](../..
 | `turboquant_4bit_nc` | ~23 KB | ~84K | Untested by us — should work |
 | `turboquant_3bit_nc` ⭐ | ~17 KB | ~125K | Default v7.14 variant |
 
-Lower bytes/token = more context, but more dequant scratch + activation pressure. The 3-bit variant is what makes the 120K + vision and 130K text-only tiers reachable on 24 GB.
+Lower bytes/token = more context, but more dequant scratch + activation pressure. The 3-bit variant is what makes the 140K + vision and 175K text-only tiers reachable on 24 GB.
 
 ### Spec-decode (`--speculative-config`)
 

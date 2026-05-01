@@ -49,7 +49,7 @@ andthattoo's headline numbers were on Qwen3.6-35B-A3B MoE Q4_K_M / H100 / llama.
 
 Our FSM pass@1 lands within 2pp of theirs on both benchmarks — the technique reproduces cleanly across the model+quant+engine substitution. Our accuracy *delta* is bigger because our FREE baseline is weaker (more on this in Caveats).
 
-## When to pick this over the standard `long-text` 130K
+## When to pick this over the standard `long-text` 175K
 
 Pick `bounded-thinking` when **all three** of:
 
@@ -57,7 +57,7 @@ Pick `bounded-thinking` when **all three** of:
 2. You want bounded thinking cost as a structural guarantee (not just "the prompt asks nicely").
 3. Your workload tolerates a ~10% per-token TPS hit in exchange for ~30× cheaper think output (per-problem wall-clock is faster, not slower).
 
-Pick `long-text` (the regular variant) when none of those apply. The two composes are otherwise identical (same 130K context, same MTP n=3, same TQ3 KV, same patches). The only difference is one vLLM flag — `--structured-outputs-config.enable_in_reasoning true`, which is what makes grammar enforcement actually fire inside the `<think>` block on this stack.
+Pick `long-text` (the regular variant) when none of those apply. The two composes are otherwise identical (same 175K context, same MTP n=3, same TQ3 KV, same patches). The only difference is one vLLM flag — `--structured-outputs-config.enable_in_reasoning true`, which is what makes grammar enforcement actually fire inside the `<think>` block on this stack.
 
 ## How to use it
 

@@ -166,17 +166,21 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 130K + 0.94 — backed off the edge 2026-05-01 PM. Was 198K + 0.98.
-      # Same rationale as long-text.yml: P37/P38 + PN17 + P104 + compile-safe
-      # close the line 903 torch.cat OOM but the cliff moves downstream to
-      # FA varlen workspace allocation; Mamba block alignment forbids smaller
-      # chunks (must be ≥4128). Vision adds ~1 GiB persistent so 0.94 here
-      # vs 0.95 on long-text — slightly more conservative to leave room for
-      # vision tower transients alongside FA varlen workspace.
+      # 140K + 0.95 — middle-ground config. Was 198K + 0.98 originally; first
+      # backoff went to 120K + 0.94, intermediate tries 160K + 0.96 (boots,
+      # fails 130K stress — vision tower's ~1 GiB persistent overhead leaves
+      # tighter margin than text-only) and 150K + 0.95 (won't boot — engine
+      # ceiling at 0.95 + vision is 140352 per vLLM). 140K + 0.95 is the
+      # verified middle-ground that boots AND passes 130K-char stress.
+      # Trade vs original 198K + 0.98:
+      #   * +720 MiB activation headroom (0.98 → 0.95)
+      #   * 58K less context capacity
+      # See long-text.yml for the full FA varlen workspace cliff rationale
+      # and re-push criteria.
       - --max-model-len
-      - "120000"
+      - "140000"
       - --gpu-memory-utilization
-      - "0.94"
+      - "0.95"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

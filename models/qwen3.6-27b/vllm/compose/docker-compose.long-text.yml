@@ -196,25 +196,25 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 130K + 0.95 — backed off the long-context edge 2026-05-01 PM. Was
-      # 205K + 0.985, before that 218K + 0.985. Trade rationale (per
-      # bench-driven tuning):
-      #   * P37/P38 + PN17 + P104 + compile-safe sidecar close the line 903
-      #     torch.cat OOM that ampersandru hit, but the cliff moves downstream
-      #     to flash_attn_varlen_func internal allocation (turboquant_attn.py:909
-      #     → :394 → flash_attn_interface.py:300). 50-MiB workspace allocation
-      #     fails with 50.5 MiB free — 1 MiB margin at 0.985 + 200K-char prefill.
-      #   * Mamba cache align mode requires block_size <= max_num_batched_tokens
-      #     so we can't lower the chunk size below 4128 to shrink the workspace.
-      #   * Backing off to 130K + 0.95 frees ~1.5 GiB activation headroom AND
-      #     lowers KV pool requirement; 200K-char (~50K-token) tool-prefill
-      #     stress now passes cleanly + verify-full 8/8 (MTP AL 3.22).
-      # Re-push toward 200K when an upstream FA fix or Sandermage's next pin
-      # adds workspace clamp coverage at the FA varlen entry point.
+      # 175K + 0.97 — middle-ground config. Was 218K + 0.985 originally;
+      # initial backoff to 130K + 0.95 was conservative (driven by a synthetic
+      # 200K-char single-shot stress that's heavier than real workloads). Real
+      # OpenCode/agent reports (ampersandru, VolandBerlioz) topped out at
+      # ~30K real tokens with multi-turn accumulation, well within the 130K-char
+      # stress class which both 175K + 0.97 and 130K + 0.95 pass.
+      # Trade vs original 205K + 0.985:
+      #   * +360 MiB activation headroom (0.985 → 0.97 frees the lever)
+      #   * 30K less context capacity
+      #   * 200K-char synthetic stress still fails (FA varlen workspace cliff;
+      #     no patch reaches that allocation site, Mamba alignment forbids
+      #     smaller chunk size). But verify-full 8/8 + 130K-char stress pass.
+      # Re-push toward 200K when upstream FA adds varlen workspace clamping
+      # OR Sandermage's next pin extends PN17 coverage to the kernel entry
+      # point.
       - --max-model-len
-      - "130000"
+      - "175000"
       - --gpu-memory-utilization
-      - "0.95"
+      - "0.97"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
