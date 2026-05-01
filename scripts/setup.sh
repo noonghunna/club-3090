@@ -129,6 +129,16 @@ if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
     exit 1
   fi
   echo "[genesis] Pinned to ${GENESIS_PIN} ($(cd "${GENESIS_DIR}" && git rev-parse --short HEAD))"
+
+  # PN25 worker-spawn registration fix (genesis-vllm-patches#16) — local
+  # backport while upstream PR cycle plays out. Idempotent: re-running is a
+  # no-op once the markers are present. Safe to remove after Sandermage ships
+  # the import-time custom-op registration fix.
+  if [[ -f "${ROOT_DIR}/models/qwen3.6-27b/vllm/patches/patch_pn25_genesis_register_fix.py" ]]; then
+    (cd "${ROOT_DIR}" && python3 models/qwen3.6-27b/vllm/patches/patch_pn25_genesis_register_fix.py) || {
+      echo "[genesis] WARN: PN25 register fix did not apply cleanly. PN25 may not work in workers." >&2
+    }
+  fi
 else
   echo "[genesis] SKIP_GENESIS=1 — not cloning."
 fi

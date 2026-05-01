@@ -380,10 +380,15 @@ body = {
         {"role": "user", "content": user_text},
     ],
     "tools": tools,
-    "tool_choice": "auto",
+    # tool_choice="none" forces content-only output (no tool_calls),
+    # which makes the model go through long-reasoning + code emission —
+    # the path that triggers Cliff 1 mech B inductor leak. With "auto"
+    # the model can short-circuit by emitting a tool_call and exit
+    # before hitting the inductor-compiled reasoning forward, hiding
+    # the bug. We want the bug to surface deterministically.
+    "tool_choice": "none",
     "max_tokens": 2000,
-    "temperature": 0.6,
-    "top_p": 0.95,
+    "temperature": 0.0,
     "stream": False,
 }
 with open(os.environ['REQ_FILE'], 'w') as f:
@@ -396,10 +401,20 @@ PYEOF
   case "$http_code" in
     200)
       body="$(cat "${resp_file}")"
-      local finish content_len
+      local finish content_chars completion_tokens
       finish="$(echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0].get('finish_reason') or '?')" 2>/dev/null || echo "?")"
-      content_len="$(echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); m=d['choices'][0].get('message') or {}; c=m.get('content') or ''; tc=m.get('tool_calls') or []; print(f'{len(c)},{len(tc)}')" 2>/dev/null || echo "0,0")"
-      pass "IDE-agent one-shot OK — finish=${finish} content_chars=${content_len%,*} tool_calls=${content_len##*,}"
+      content_chars="$(echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); m=d['choices'][0].get('message') or {}; print(len(m.get('content') or ''))" 2>/dev/null || echo "0")"
+      completion_tokens="$(echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('usage',{}).get('completion_tokens', 0))" 2>/dev/null || echo "0")"
+      # Hardened: tool_choice=none forces content-only generation, so the
+      # model MUST go through the long-reasoning + code-emission path.
+      # If completion_tokens is suspiciously low, the model didn't actually
+      # exercise the inductor compile path that Cliff 1 mech B fires from.
+      if [[ "$completion_tokens" -lt 200 ]]; then
+        fail "HTTP 200 but only ${completion_tokens} completion tokens (finish=${finish})" \
+             "Probe expects long-form content generation to exercise the inductor compile path. <200 tokens means the bug surface wasn't actually tested. Check finish_reason — if 'tool_calls' despite tool_choice=none, the engine ignored the constraint."
+      else
+        pass "IDE-agent one-shot OK — ${completion_tokens} completion tokens (${content_chars} chars), finish=${finish}"
+      fi
       ;;
     500)
       fail "HTTP 500 — likely Cliff 1 mech B (inductor FFN intermediate OOM)" \
