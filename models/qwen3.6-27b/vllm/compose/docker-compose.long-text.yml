@@ -161,6 +161,22 @@ services:
       - GENESIS_ENABLE_PN14_TQ_DECODE_OOB_CLAMP=1
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
       - GENESIS_ENABLE_PN25_SILU_INDUCTOR_SAFE=1
+      # PN30 — DISABLED on 1×3090 TP=1. Cross-rig validated 2026-05-01 PM:
+      # introduces a CUDA device-side assertion in `triton_turboquant_store.py:425`
+      # (`v_flat = value.float().reshape(NH, D)`) on multi-turn agent shapes
+      # that previously worked. Sander warned he couldn't test on his TP=2
+      # PROD; this is the kind of regression he asked us to surface. Reported
+      # back on Sandermage/genesis-vllm-patches#17.
+      # - GENESIS_ENABLE_PN30_DS_LAYOUT_SPEC_DECODE=1
+      # PN31 — DISABLED on 1×3090. Per-shape persistent VRAM grows as new
+      # shapes are seen during prefill; on TP=1 + 24GB, the residence cost
+      # outpaces the malloc-pressure relief. Sander explicitly warned in
+      # `753344b` he couldn't validate on 24GB; cross-rig validated 2026-05-01
+      # PM here that 0.95→0.93 mem-util can't carry both PN31 + DeltaNet
+      # `chunk_fwd_o` activation peak at 29K depth. Reported back on
+      # Sandermage/genesis-vllm-patches#15. Use tools-text.yml fp8 path for
+      # 25K+ tool-RETURN workloads in the meantime.
+      # - GENESIS_ENABLE_PN31_FA_VARLEN_PERSISTENT_OUT=1
       - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
       - GENESIS_ENABLE_PN22_LOCAL_ARGMAX_TP=1
       # PN26b sparse-V Triton kernel — first SM86 (Ampere consumer) sparse-V
@@ -257,7 +273,7 @@ services:
       # adds ~140 MiB persistent VRAM, which tightened activation budget
       # at DeltaNet `chunk_fwd_o` (`o = torch.empty_like(v)`, 50 MiB) —
       # 0.97 left only 26 MiB free, OOM at 9.8K probe. 0.95 frees ~480 MiB
-      # activation budget, comfortable for 30K+ prompts.
+      # activation budget, validated up to 30K probes.
       - --gpu-memory-utilization
       - "0.95"
       - --max-num-seqs

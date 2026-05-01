@@ -109,7 +109,7 @@ echo "Model dir:    ${MODEL_DIR}"
 # yet tagged; SHA pin is immutable.
 # Bumping GENESIS_PIN requires re-running verify-full.sh against your composes
 # to confirm the new commit works on your config.
-GENESIS_PIN="${GENESIS_PIN:-d89a089}"
+GENESIS_PIN="${GENESIS_PIN:-753344b}"
 
 if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   if [[ -d "${GENESIS_DIR}/.git" ]]; then
@@ -130,10 +130,19 @@ if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   fi
   echo "[genesis] Pinned to ${GENESIS_PIN} ($(cd "${GENESIS_DIR}" && git rev-parse --short HEAD))"
 
-  # PN25 worker-spawn registration fix (genesis-vllm-patches#16) — local
-  # backport while upstream PR cycle plays out. Idempotent: re-running is a
-  # no-op once the markers are present. Safe to remove after Sandermage ships
-  # the import-time custom-op registration fix.
+  # PN25 worker-spawn registration fix — local backport.
+  #
+  # Sandermage shipped his own fix in d92bcb3 (hasattr global-registry guard
+  # in `_register_op_once`), but cross-rig validation on our TP=1 single-card
+  # showed it doesn't work — `torch.ops.genesis.silu_and_mul_pooled` doesn't
+  # exist in spawned workers on TP=1 (whereas it does on his TP=2 PROD).
+  # Reported back as comment on Sandermage/genesis-vllm-patches#16.
+  #
+  # Our local v3 patch takes a different approach: register at activation.py
+  # import time as a module-level cached global, BEFORE any dynamo trace runs.
+  # Survives worker spawn correctly on TP=1.
+  #
+  # Idempotent. Safe to re-run.
   if [[ -f "${ROOT_DIR}/models/qwen3.6-27b/vllm/patches/patch_pn25_genesis_register_fix.py" ]]; then
     (cd "${ROOT_DIR}" && python3 models/qwen3.6-27b/vllm/patches/patch_pn25_genesis_register_fix.py) || {
       echo "[genesis] WARN: PN25 register fix did not apply cleanly. PN25 may not work in workers." >&2
