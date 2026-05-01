@@ -1,0 +1,186 @@
+# ===========================================================================
+# Bounded-thinking variant — long-text 218K + structured-CoT grammar enforcement
+# in the reasoning channel. Compresses think tokens ~30× with iso-or-better
+# accuracy on coding benchmarks. See docs/STRUCTURED_COT.md for the full
+# bench, the grammar files, and the harness.
+#
+# Stack: identical to long-text (vLLM nightly + Genesis v7.62.x with PN12
+# anchor sidecar + TurboQuant 3-bit KV + MTP n=3 + 218K text-only) PLUS one
+# extra flag: --structured-outputs-config.enable_in_reasoning true. That
+# single flag is what makes structured-CoT work end-to-end on this stack —
+# vLLM's default is False, which restricts the grammar mask to post-`</think>`
+# content. Bench numbers don't reproduce without it (the model thinks freely
+# regardless of grammar; FREE and FSM produce identical token counts).
+#
+# When to pick this over long-text:
+#   - You're using grammar-constrained `<think>` blocks (xgrammar GBNF) to
+#     bound reasoning cost. See docs/STRUCTURED_COT.md for the harness +
+#     example grammars (HumanEval+ GOAL/APPROACH/EDGE; LiveCodeBench
+#     GOAL/STATE/ALGO/EDGE/VERIFY; or your own).
+#   - You want per-request bounded thinking with structural guarantee.
+#     PROMPT_TERSE alone (system prompt asking for terse format) often
+#     suffices on easy problems but loses discipline on hard ones; this
+#     compose adds the FSM safety net.
+#   - You're cost-bounded by output token spend and want ~30× cheaper
+#     thinking with no accuracy regression on coding workloads.
+#
+# When NOT to pick this:
+#   - Anything that doesn't use `structured_outputs.{grammar,json,...}` in
+#     extra_body — the flag is harmless then but you gain nothing. Use
+#     long-text instead.
+#   - Workloads where the model's *unstructured* free thinking is itself
+#     the product (chat-of-thought UIs, scratch-pad apps). Bounded thinking
+#     compresses the reasoning into structured slots — fine for code where
+#     you only consume the answer, not the trace.
+#   - Vision input — same as long-text, this drops the vision tower to free
+#     ~1 GB VRAM. Use long-vision-grammar (TODO) if you need both.
+#
+# Measured (full bench 2026-04-30 PM, RTX 3090):
+#   HumanEval+ 164:   FSM 92.7% pass@1, 96 think tok mean, +4.3pp vs FREE,
+#                     30.7× compression vs FREE thinking (2950 tok mean)
+#   LiveCodeBench v6: FSM 66.0% pass@1, 145 think tok mean, +24.0pp vs FREE,
+#                     26.2× compression vs FREE thinking (3797 tok mean)
+#   Sustained TPS:    ~53 (about 10% slower than long-text due to grammar
+#                     mask compute; but per-problem wall-clock 10× faster
+#                     because of the 30× smaller think output)
+#
+# Caveat:
+#   - Some of the +Δpp accuracy gain comes from FSM dodging the
+#     max_tokens=4096 truncation trap rather than pure reasoning gain.
+#     If you re-bench at max_tokens=8192 the headline shrinks toward
+#     andthattoo's published +0.6pp / +14pp. Compression effect is the
+#     reliably-real win. See docs/STRUCTURED_COT.md "Honest caveats".
+#   - Grammar × MTP non-determinism: greedy temp=0 runs on different cards
+#     can produce different verdicts on the same problem (sub-1% rate).
+#   - Cliff 2 (single-prompt ≥50–60K in GDN) still applies — same as
+#     long-text. 218K context is for STEADY-STATE accumulation, not
+#     stuffing 218K of fresh tokens in one request.
+#   - Cliff 1 mech B leak on real coding-agent workloads (OpenCode, Cline)
+#     with mixed sys-prompt + tool-schema prefill: same gap as long-text.
+#     PN12's eager-mode pool is bypassed by inductor-compiled FFN forward.
+#     See issue #16. Workarounds: switch to `tools-text.yml` (75K + fp8 +
+#     PN8 reaches compile path), or add `--enforce-eager` below (~20-30%
+#     TPS hit), or lower `--gpu-memory-utilization` to 0.94.
+#
+# Run with:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.bounded-thinking.yml up -d
+#
+# Then send requests with structured_outputs in extra_body — see
+# docs/STRUCTURED_COT.md for client examples.
+# ===========================================================================
+services:
+  vllm-qwen36-27b-bounded-thinking:
+    image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
+    container_name: vllm-qwen36-27b-bounded-thinking-vllm020
+    restart: "no"
+    ports:
+      - "${PORT:-8020}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
+      - ../patches/patch_workspace_lock_disable.py:/patches/patch_workspace_lock_disable.py:ro
+      - ../patches/patch_pn12_ffn_pool_anchor.py:/patches/patch_pn12_ffn_pool_anchor.py:ro
+      - ../patches/patch_fa_max_seqlen_clamp.py:/patches/patch_fa_max_seqlen_clamp.py:ro
+    environment:
+      # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
+      # - CUDA_VISIBLE_DEVICES=0
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - VLLM_FLOAT32_MATMUL_PRECISION=high
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_MARLIN_USE_ATOMIC_ADD=1
+      - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
+      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
+      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
+      # Cliff 1 closure stack — same as long-text. See its header for the
+      # full reasoning. Mandatory for 218K + tool prefills.
+      - GENESIS_ENABLE_P101=1
+      - GENESIS_ENABLE_P103=1
+      - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
+      - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
+      - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        pip install xxhash pandas scipy -q
+        # Pre-flight: Genesis patches must be populated. Empty volume mount
+        # = silent no-op apply_all = boot fails later with cryptic upstream
+        # error (e.g. "TurboQuant KV not supported for hybrid models", #13).
+        if [ ! -f /usr/local/lib/python3.12/dist-packages/vllm/_genesis/patches/apply_all.py ]; then
+          echo "ERROR: Genesis patches missing — host volume models/qwen3.6-27b/vllm/patches/genesis/ is empty." >&2
+          echo "       Run from repo root before 'docker compose up':" >&2
+          echo "         bash scripts/setup.sh qwen3.6-27b" >&2
+          exit 1
+        fi
+        python3 -m vllm._genesis.patches.apply_all
+        python3 /patches/patch_pn12_ffn_pool_anchor.py
+        python3 /patches/patch_fa_max_seqlen_clamp.py
+        python3 /patches/patch_workspace_lock_disable.py
+        python3 /patches/patch_tolist_cudagraph.py
+        exec vllm serve "$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "1"
+      - --max-model-len
+      - "218000"
+      - --gpu-memory-utilization
+      - "0.985"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "4128"
+      - --kv-cache-dtype
+      - turboquant_3bit_nc
+      - --language-model-only
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      # The whole reason this variant exists. Default is False, which limits
+      # the grammar mask to post-`</think>` content. With this set to true,
+      # xgrammar enforces the GBNF inside the reasoning channel — which is
+      # what structured-CoT is for. Without this flag the grammar is silently
+      # ignored on the `<think>` block and you get FREE-mode token counts.
+      - --structured-outputs-config.enable_in_reasoning
+      - "true"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --no-scheduler-reserve-full-isl
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

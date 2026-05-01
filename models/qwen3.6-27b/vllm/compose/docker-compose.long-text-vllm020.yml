@@ -103,7 +103,7 @@ services:
       - ../patches/patch_workspace_lock_disable.py:/patches/patch_workspace_lock_disable.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
-      # - CUDA_VISIBLE_DEVICES=0
+      - CUDA_VISIBLE_DEVICES=1
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NCCL_CUMEM_ENABLE=0
