@@ -464,6 +464,20 @@ torch.OutOfMemoryError: Tried to allocate 50.00 MiB. ... 50.50 MiB is free.
 | 130K + 0.95 | ✅ | 8/8 (AL 3.22) | ✅ | ✅ | Earlier intermediate config |
 | 218K + 0.985 (original) | ✅ | 8/8 (AL 2.66) | ✅ | ❌ | Same FA varlen cliff |
 
+### Update 2026-05-01 PM — P38 silently no-op'd on TurboQuant KV path
+
+After shipping the 185K + 0.975 / 140K + 0.95 configs, instrumented `_genesis_continuation_prefill` (P38's replacement body) with a call counter + log line. Booted long-text and ran the 33K-token tool-prefill stress (which forces chunked continuation prefills). Result: **the patched body's log NEVER fires** despite the dispatcher's "rebound" line appearing at boot. Confirmed by inspecting the live patched `turboquant_attn.py:903` — it's still the original `v_full = torch.cat([v_cached_trim.to(qdtype), val_chunk], dim=0)` line, exactly the OOM site we observed at 50K-token stress.
+
+**Architectural cause (same class as PN12 forward_native problem we fixed via the compile-safe sidecar):** vLLM's `aot_compile_fullgraph` decorator on the model `forward` captures the call chain `forward → _prefill_attention → _continuation_prefill` at compile time, baking in the ORIGINAL method bodies. P38's class-attribute rebind (`TurboQuantAttentionImpl._continuation_prefill = _genesis_continuation_prefill`) updates the live class but does NOT update the compiled artifact. Subsequent forward calls execute the pre-compiled original code, not the rebound method.
+
+**Why Sandermage may not hit this in PROD:** his documented PROD configs target 35B-A3B-FP8 and 27B-Lorbus-fp8_e5m2. Both use **fp8 KV**, not TurboQuant — which means the entire `TurboQuantAttentionImpl._continuation_prefill` path is inactive there. P38 reports "applied" but never had a chance to take effect because the call site doesn't fire on fp8 paths. Our 27B AutoRound INT4 + TurboQuant 3-bit KV configs are precisely the paths that exercise `_continuation_prefill` — and discover the silent no-op.
+
+**Fix path (mirrors what we did for PN12 → PN25):** convert `_continuation_prefill` to a `torch.library.custom_op` so Inductor treats it as opaque and dispatches via the registered op (which CAN be replaced/redefined). We have a working reference in `models/qwen3.6-27b/vllm/patches/patch_pn12_compile_safe_custom_op.py` for the FFN forward_native case. To-file with Sandermage as a Genesis issue.
+
+**Practical impact on shipped config:** none — long-text + bounded-thinking + long-vision shipped configs are bench-validated at 33K-token tool prefills with the existing patch stack (which doesn't actually include functional P38 on TQ paths). Removing the `GENESIS_ENABLE_P37=1` env var on long-text + bounded-thinking would simplify the config without changing behavior, but we leave it on to track when Sandermage fixes P38 — at that point the cliff at line 903 would close and we could push 50K stress.
+
+---
+
 **Decision:** ship **long-text.yml at 185K + 0.975 / bounded-thinking.yml at 185K + 0.975 / long-vision.yml at 140K + 0.95**. The 175K → 185K bump on text-only recovers usable ctx vs intermediate configs; 0.985 → 0.975 drop frees ~240 MiB activation budget. Vision compose ships at the more conservative 140K + 0.95 because the vision tower's persistent ~1 GiB plus the new patches' persistent allocations (P38 K_full/V_full ~750 MiB at 185K + compile-safe sidecar ~138 MiB) reopen Cliff 2 (DeltaNet GDN forward buffer) on the vision compose at higher ctx; tested 185K + 0.98, 185K + 0.975, 160K + 0.97 vision configs — all reopened Cliff 2 at the 130K-char stress class until ctx dropped to 140K + 0.95. P37 disabled on vision because P37's MoE intermediate cache pool is no-op on dense Qwen3.6-27B and the env-gate doesn't free memory anyway. The synthetic 200K-char single-shot stress remains a known failure on every config — that's beyond what realistic agent workloads emit (ampersandru and VolandBerlioz repros were both ~30K real tokens).
 
 ### Re-push criteria
