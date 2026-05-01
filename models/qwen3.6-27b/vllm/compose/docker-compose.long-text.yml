@@ -84,6 +84,7 @@ services:
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
       - ../patches/patch_pn12_ffn_pool_anchor.py:/patches/patch_pn12_ffn_pool_anchor.py:ro
+      - ../patches/patch_pn12_compile_safe_custom_op.py:/patches/patch_pn12_compile_safe_custom_op.py:ro
       - ../patches/patch_fa_max_seqlen_clamp.py:/patches/patch_fa_max_seqlen_clamp.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
@@ -113,7 +114,25 @@ services:
       - GENESIS_ENABLE_P103=1
       - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
       - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
-      - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
+      # FA_MAX_SEQLEN_CLAMP (our P104 sidecar) — superseded by PN17 in v7.64.
+      # Keeping the sidecar gates and disabling at the env level so we can
+      # easily flip back if PN17 turns out not to cover turboquant_attn.py
+      # (PN17 patches flash_attn.py; ours patches the TQ wrapper). Disable
+      # the sidecar entirely by setting this to 0; the file edit was already
+      # idempotent so re-enabling = re-applying.
+      # - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
+      # v7.64 (2026-04-30 PM) opt-ins. PN17 = Sandermage's anchored version of
+      # our P104 sidecar (FA2 softmax_lse runtime clamp; targets flash_attn.py
+      # rather than turboquant_attn.py — keep our P104 sidecar for the TQ wrapper
+      # layer until we've verified PN17 covers that path on dev205). PN19 sets
+      # max_split_size_mb=20 during model load; estimated win 200-500 MiB on
+      # H100 per vllm#41268, unverified on Ampere — measure delta vs without.
+      - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
+      # PN19 disabled — costs ~120 MiB KV pool on Ampere (3.52 GiB needed at
+      # 218K vs 3.4 GiB available with PN19 on); engine init fails with
+      # "estimated maximum model length is 206400". Re-test if we drop ctx
+      # to <=200K or measure actual memory delta on this hardware.
+      # - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
       # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
       # reasoning. Short version: 8000-char threshold breaks IDE-agent
       # flows with silent finish_reason=stop. Bisected on club-3090#2.
@@ -149,6 +168,10 @@ services:
         fi
         python3 -m vllm._genesis.patches.apply_all
         python3 /patches/patch_pn12_ffn_pool_anchor.py
+        # patch_pn12_compile_safe_custom_op.py — closes the inductor-compiled
+        # forward_native path that the file-edit sidecar above can't reach.
+        # See issue #16 + the new sidecar's docstring.
+        python3 /patches/patch_pn12_compile_safe_custom_op.py
         python3 /patches/patch_fa_max_seqlen_clamp.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
@@ -169,7 +192,7 @@ services:
       # via PN12 anchor sidecar + P104 sidecar (see header). Cliff 2
       # (single-prompt ≥50–60K in GDN) is independent and still applies.
       - --max-model-len
-      - "218000"
+      - "205000"
       - --gpu-memory-utilization
       - "0.985"
       - --max-num-seqs

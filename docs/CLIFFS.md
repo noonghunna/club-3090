@@ -4,6 +4,8 @@ Comprehensive deep-dive into Cliff 1 and Cliff 2: what they are, why they fire, 
 
 This document supersedes earlier characterizations in CHANGELOG and FAQ where they conflict — those have been corrected to match what's documented here.
 
+> **Cross-reference:** Sandermage's Genesis tree maintains a broader catalog of [8 cliffs](https://github.com/Sandermage/genesis-vllm-patches/blob/main/docs/CLIFFS.md) covering patch behavior across configs and pin versions: Cliff 1 (FA2 lse), Cliff 2 (GDN fwd_h), Cliff 3 (TQ + spec-verify K+1 + FULL cudagraph), Cliff 4 (non-pow-2 GQA + P67), Cliff 5 (ngram strict prompt_lookup_min), Cliff 6 (MoE v0.20+ for non-FP8, [vllm#41306](https://github.com/vllm-project/vllm/pull/41306)), Cliff 7 (DFlash 24 GB OOM at >80K), Cliff 8 (anchor drift on vLLM pin bumps). Our doc here focuses on Cliff 1 + Cliff 2 with the Qwen3.6-27B / RTX 3090 forensics that motivated those Genesis cliffs.
+
 ---
 
 ## TL;DR
@@ -20,6 +22,24 @@ This document supersedes earlier characterizations in CHANGELOG and FAQ where th
 | Real fix | vLLM-side clamp at FA call site (asked Sandermage in [Genesis #11](https://github.com/Sandermage/genesis-vllm-patches/issues/11)) OR FA2 source fix ([Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011)) | Streaming GDN forward in `fla.ops` — no upstream effort underway. Or FlashQLA Ampere port (QwenLM, currently SM90+ only) |
 
 **Practical impact today:** users following the SINGLE_CARD.md TL;DR table land on cliff-safe configs by default. The cliffs only bite users who explicitly opt into long-context variants AND have specific workload patterns (big tool returns, RAG single-shot prompts).
+
+---
+
+## vLLM pin compatibility status (2026-05-01)
+
+We currently pin `vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08` (`0.19.2rc1.dev205+g07351e088`). Genesis v7.64 documentation references a newer pin `0.20.1rc1.dev16+g7a1eb8ac2` as the validation substrate. We tested the v0.20 upgrade on `long-text.yml` (218K + 0.985 + TQ3 + MTP) and it currently **does not boot stably for our config** — engine crashes during MTP draft proposal at long prefill with:
+
+```
+AssertionError: Workspace is locked but allocation from
+'turboquant_attn.py:951:_decode_attention' requires 0.76 MB,
+current size is 0.00 MB. Workspace growth is not allowed after locking.
+```
+
+This is **separate from** Cliff 1 / Cliff 2 — root-caused to [vllm#39226](https://github.com/vllm-project/vllm/pull/39226) "workspace-resize GPU memory leak fix" which landed in v0.20.0. The PR adds strict `WorkspaceManager.lock()` semantics: after lock, any allocation that grows the workspace raises `AssertionError`. The TurboQuant `_decode_attention` path requests 0.76 MB at runtime, but workspace was locked at 0.00 MB because TQ decode wasn't exercised during `profile_run` — so the workspace was never sized for it. The lock then refuses the grow.
+
+No env var or migration step unblocks this — resolution is upstream (either `profile_run` exercises TQ decode, or workspace-lock allows protected paths to grow). Until this resolves, **stay on the dev205 pin** for production composes. The experimental v0.20 compose lives on the [`v0.20-experimental` branch](https://github.com/noonghunna/club-3090/tree/v0.20-experimental); main does not ship a v0.20 path.
+
+**Other v0.20 migration items checked** (none currently blocking but listed for awareness): PyTorch 2.11 + CUDA 13.0.2 default ([#34644](https://github.com/vllm-project/vllm/pull/34644), [#40669](https://github.com/vllm-project/vllm/pull/40669)) — host driver R555+ required, our 3090 host is on 595.58.03 + CUDA 13.2 (ample). Transformers v5 baseline ([#30566](https://github.com/vllm-project/vllm/pull/30566)). CUDAGraph memory profiling ON by default ([#38284](https://github.com/vllm-project/vllm/pull/38284)) — can change KV-pool sizing slightly vs dev205.
 
 ---
 

@@ -293,7 +293,9 @@ except Exception as e:
            "Body head: $(head -c 200 "${resp_file}" 2>/dev/null)"
       ;;
   esac
+  local rc=$?
   rm -f "$resp_file"
+  return "$rc"
 }
 run_check "tool_prefill" check_tool_prefill
 

@@ -98,7 +98,7 @@ For deeper rationale, comparison tables, and the patched-vLLM-source story (vllm
 
 ## Genesis patch surface (vLLM)
 
-The vLLM single-card composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `917519b` (v7.62.x release, 2026-04-29) per `scripts/setup.sh`.
+The vLLM single-card composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `64dd18b` (v7.64 release, 2026-04-30 PM) per `scripts/setup.sh`.
 
 Active patches per compose:
 
