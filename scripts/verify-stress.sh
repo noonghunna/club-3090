@@ -31,14 +31,17 @@
 #      Required because check #2 passes on v0.20 + Genesis v7.65 dev tip but
 #      this shape still crashes (see club-3090#16). Repro of VolandBerlioz's
 #      Reddit failure mode; takes ~10s per attempt (one request, fail-fast).
-#
-# Future probe ideas (TODO — not yet implemented):
-#   - Multi-turn agent: sys + tools + user → assistant(tool_call) → tool reply
-#     → user followup. Different inductor compile path from one-shot.
-#   - LCB-coding shape: problem statement → ~300-700 think tokens → code
-#     emission. Triggers DS conv state crash on some configs.
-#   - Reasoning-heavy: math/algorithm prompt + max_tokens=8192. Stresses
-#     spec-decode AL collapse + mamba_cache_mode='align' interactions.
+#   4. Multi-turn agent (added 2026-05-01) — sys + tools + user → assistant
+#      tool_call → tool reply → user followup. Different inductor compile path
+#      than single-turn (check #3) because the prior assistant + tool messages
+#      reshape the prefill.
+#   5. LCB-coding shape (added 2026-05-01) — LeetCode-style problem statement
+#      + structured plan request + max_tokens=4096. Catches DS conv state
+#      crash (see Sandermage/genesis-vllm-patches#17) on configs with
+#      VLLM_SSM_CONV_STATE_LAYOUT=DS + spec-decode + AL>1.
+#   6. Reasoning-heavy (added 2026-05-01) — math/algorithm problem +
+#      max_tokens=8192 to give the model real reasoning room. Stresses
+#      spec-decode AL collapse + mamba_cache_mode='align' interactions.
 #
 # Usage:
 #   CONTAINER=<your-container> bash scripts/verify-stress.sh
@@ -78,7 +81,7 @@ echo ""
 # 1. Long-context needle — put a secret at ~50% depth, ask for it at the end
 # --------------------------------------------------------------------
 check_longctx() {
-  echo "[1/3] Long-context needle (ladder: 10K / 30K / 60K / 90K) ..."
+  echo "[1/6] Long-context needle (ladder: 10K / 30K / 60K / 90K) ..."
   if [[ "${SKIP_LONGCTX:-0}" == "1" ]]; then
     skip "SKIP_LONGCTX=1"
     return 0
@@ -198,7 +201,7 @@ run_check "longctx" check_longctx
 #    idle but OOMs the moment a real-world tool reply is loaded).
 # --------------------------------------------------------------------
 check_tool_prefill() {
-  echo "[2/3] Tool response prefill OOM (~25K-token mock tool response) ..."
+  echo "[2/6] Tool response prefill OOM (~25K-token mock tool response) ..."
   if [[ "${SKIP_TOOL_PREFILL:-0}" == "1" ]]; then
     skip "SKIP_TOOL_PREFILL=1"
     return 0
@@ -320,7 +323,7 @@ run_check "tool_prefill" check_tool_prefill
 # that fires on real coding-agent prompts but NOT on the synthetic 25K tool
 # prefill above. See club-3090#16. Fail-fast: one request, ~10s if green,
 # instant HTTP 500 if the bug fires.
-echo "[3/3] IDE-agent one-shot prompt (sys + tool schemas + user request) ..."
+echo "[3/6] IDE-agent one-shot prompt (sys + tool schemas + user request) ..."
 check_ide_agent() {
   local req_file resp_file http_code body
   req_file="$(mktemp --suffix=.json)"
@@ -416,6 +419,234 @@ PYEOF
   return "$rc"
 }
 run_check "ide_agent" check_ide_agent
+
+# 4. Multi-turn agent — sys + tools + user → assistant(tool_call) → tool reply
+# → user followup. Different inductor compile path than check #3 (single-turn)
+# because the assistant + tool messages reshape the prefill that gets compiled.
+echo "[4/6] Multi-turn agent prompt (sys + tools + 4-turn history) ..."
+check_multiturn_agent() {
+  local req_file resp_file http_code body
+  req_file="$(mktemp --suffix=.json)"
+  resp_file="$(mktemp --suffix=.json)"
+  MODEL_VAR="${MODEL}" REQ_FILE="${req_file}" python3 - <<'PYEOF'
+import json, os
+model = os.environ['MODEL_VAR']
+sys_text = (
+    "You are a coding assistant inside an IDE. Use the provided tools to read "
+    "and edit files. Be concise. After each tool call, verify the result before "
+    "proceeding to the next step. "
+) * 8
+tools = [
+    {"type": "function", "function": {"name": n, "description": d,
+     "parameters": {"type": "object", "properties": {
+         "path": {"type": "string"}, "content": {"type": "string"},
+         "pattern": {"type": "string"},
+     }, "required": ["path"]}}}
+    for n, d in [
+        ("read_file", "Read a file."),
+        ("write_file", "Write a file."),
+        ("search_code", "Search for a regex pattern."),
+        ("list_directory", "List a directory."),
+    ]
+]
+# Realistic 4-turn agent history: user asks → assistant calls tool →
+# tool returns content → user follow-up. The tool reply is ~3K chars
+# of mock file content (smaller than check #2's 25K, larger than check
+# #3's empty history).
+mock_file = "\n".join([
+    f"def function_{i}(arg{i}): return arg{i} * {i+1}  # line {i}"
+    for i in range(80)
+])
+body = {
+    "model": model,
+    "messages": [
+        {"role": "system", "content": sys_text},
+        {"role": "user", "content": "Read src/utils.py and tell me what functions are defined."},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_read_1", "type": "function",
+             "function": {"name": "read_file", "arguments": '{"path": "src/utils.py"}'}}
+        ]},
+        {"role": "tool", "tool_call_id": "call_read_1", "content": mock_file},
+        {"role": "user", "content": "Now refactor function_5 to use a different multiplier."},
+    ],
+    "tools": tools,
+    "tool_choice": "auto",
+    "max_tokens": 1500,
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "stream": False,
+}
+with open(os.environ['REQ_FILE'], 'w') as f:
+    json.dump(body, f)
+PYEOF
+  http_code="$(curl -sS -o "${resp_file}" -w "%{http_code}" --max-time 180 \
+    -H "Content-Type: application/json" -X POST \
+    -d "@${req_file}" "${URL}/v1/chat/completions" 2>/dev/null || echo "000")"
+  rm -f "$req_file"
+  case "$http_code" in
+    200)
+      pass "multi-turn agent OK"
+      ;;
+    500)
+      fail "HTTP 500 — multi-turn prefill crashed engine" \
+           "Different compile path than check #3 — assistant + tool messages reshape the prefill. May indicate a separate inductor bug or different shape of the same Cliff 1 issue. Check: docker logs ${CONTAINER} 2>&1 | tail -80"
+      ;;
+    000)
+      fail "no HTTP response (timeout or container died)" \
+           "Engine likely crashed. Check docker logs."
+      ;;
+    *)
+      fail "unexpected HTTP ${http_code}" \
+           "Body head: $(head -c 200 "${resp_file}" 2>/dev/null)"
+      ;;
+  esac
+  local rc=$?
+  rm -f "$resp_file"
+  return "$rc"
+}
+run_check "multiturn_agent" check_multiturn_agent
+
+# 5. LCB-coding shape — LeetCode-style problem statement requesting structured
+# plan + code. Catches DS conv state crash (genesis-vllm-patches#17) on configs
+# where VLLM_SSM_CONV_STATE_LAYOUT=DS + spec-decode + AL>1 + this prompt shape
+# trip the NotImplementedError in vllm/model_executor/layers/mamba/mamba_utils.py.
+echo "[5/6] LCB-coding shape (LeetCode-style problem + structured plan) ..."
+check_lcb_coding() {
+  local req_file resp_file http_code body
+  req_file="$(mktemp --suffix=.json)"
+  resp_file="$(mktemp --suffix=.json)"
+  MODEL_VAR="${MODEL}" REQ_FILE="${req_file}" python3 - <<'PYEOF'
+import json, os
+model = os.environ['MODEL_VAR']
+problem = (
+    "You are given an integer array nums. Return the length of the longest "
+    "subarray with a sum equal to a target value k. If no such subarray exists, "
+    "return 0.\n\n"
+    "Example 1:\n"
+    "Input: nums = [1, -1, 5, -2, 3], k = 3\n"
+    "Output: 4\n"
+    "Explanation: The subarray [1, -1, 5, -2] sums to 3 and has length 4.\n\n"
+    "Example 2:\n"
+    "Input: nums = [-2, -1, 2, 1], k = 1\n"
+    "Output: 2\n\n"
+    "Constraints:\n"
+    "- 1 <= nums.length <= 2 * 10^5\n"
+    "- -10^4 <= nums[i] <= 10^4\n"
+    "- -10^9 <= k <= 10^9\n\n"
+    "Plan your approach in the format:\n"
+    "GOAL: <one-line restatement>\n"
+    "STATE: <data structures>\n"
+    "ALGO: <key steps>\n"
+    "EDGE: <edge cases>\n"
+    "VERIFY: <how to test>\n\n"
+    "Then implement the solution as `class Solution: def maxSubArrayLen(...)`."
+)
+body = {
+    "model": model,
+    "messages": [{"role": "user", "content": problem}],
+    "max_tokens": 4096,
+    "temperature": 0.0,
+    "stream": False,
+}
+with open(os.environ['REQ_FILE'], 'w') as f:
+    json.dump(body, f)
+PYEOF
+  http_code="$(curl -sS -o "${resp_file}" -w "%{http_code}" --max-time 240 \
+    -H "Content-Type: application/json" -X POST \
+    -d "@${req_file}" "${URL}/v1/chat/completions" 2>/dev/null || echo "000")"
+  rm -f "$req_file"
+  case "$http_code" in
+    200)
+      pass "LCB-coding shape OK"
+      ;;
+    500)
+      fail "HTTP 500 — LCB-coding shape crashed engine" \
+           "Likely DS conv state crash (genesis-vllm-patches#17). Check: docker logs ${CONTAINER} 2>&1 | grep -B2 -A5 'DS conv state\\|NotImplementedError'. Workaround: drop VLLM_SSM_CONV_STATE_LAYOUT=DS from compose env."
+      ;;
+    000)
+      fail "no HTTP response (timeout or container died)" \
+           "Engine likely crashed. Check docker logs."
+      ;;
+    *)
+      fail "unexpected HTTP ${http_code}" \
+           "Body head: $(head -c 200 "${resp_file}" 2>/dev/null)"
+      ;;
+  esac
+  local rc=$?
+  rm -f "$resp_file"
+  return "$rc"
+}
+run_check "lcb_coding" check_lcb_coding
+
+# 6. Reasoning-heavy — math/algorithm problem with max_tokens=8192 budget.
+# Stresses spec-decode AL collapse and mamba_cache_mode='align' interactions
+# over a long generation. Catches regressions where generation completes but
+# AL collapses past a certain decode depth, or where long generations trigger
+# state-copy bugs that don't fire on short outputs.
+echo "[6/6] Reasoning-heavy (math problem + max_tokens=8192) ..."
+check_reasoning_heavy() {
+  local req_file resp_file http_code body
+  req_file="$(mktemp --suffix=.json)"
+  resp_file="$(mktemp --suffix=.json)"
+  MODEL_VAR="${MODEL}" REQ_FILE="${req_file}" python3 - <<'PYEOF'
+import json, os
+model = os.environ['MODEL_VAR']
+problem = (
+    "Prove that for any positive integer n, the sum 1^3 + 2^3 + 3^3 + ... + n^3 "
+    "equals (n(n+1)/2)^2. Show every step of your reasoning, including:\n"
+    "1. The base case verification.\n"
+    "2. The inductive hypothesis.\n"
+    "3. The full algebraic manipulation in the inductive step.\n"
+    "4. A geometric or visual interpretation if you can think of one.\n"
+    "5. A verification by computing both sides for n=1, 2, 3, 4, 5.\n\n"
+    "Be thorough; show every algebraic step rather than skipping any. After the "
+    "proof, also derive a closed-form expression for the sum 1^4 + 2^4 + ... + n^4 "
+    "using the same induction technique, and verify it for n=1, 2, 3."
+)
+body = {
+    "model": model,
+    "messages": [{"role": "user", "content": problem}],
+    "max_tokens": 8192,
+    "temperature": 0.0,
+    "stream": False,
+}
+with open(os.environ['REQ_FILE'], 'w') as f:
+    json.dump(body, f)
+PYEOF
+  http_code="$(curl -sS -o "${resp_file}" -w "%{http_code}" --max-time 600 \
+    -H "Content-Type: application/json" -X POST \
+    -d "@${req_file}" "${URL}/v1/chat/completions" 2>/dev/null || echo "000")"
+  rm -f "$req_file"
+  case "$http_code" in
+    200)
+      body="$(cat "${resp_file}")"
+      local completion_tokens
+      completion_tokens="$(echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('usage',{}).get('completion_tokens', 0))" 2>/dev/null || echo "0")"
+      if [[ "$completion_tokens" -lt 500 ]]; then
+        fail "reasoning-heavy returned only ${completion_tokens} tokens (expected >500 for max=8192)" \
+             "Possible spec-decode AL collapse or early stop. Check finish_reason."
+      else
+        pass "reasoning-heavy OK — ${completion_tokens} completion tokens"
+      fi
+      ;;
+    500)
+      fail "HTTP 500 — long-generation crashed engine" \
+           "Possible mamba state-copy bug at deeper decode positions. Check: docker logs ${CONTAINER} 2>&1 | tail -80"
+      ;;
+    000)
+      fail "no HTTP response (timeout or container died)" \
+           "Engine likely crashed during long generation. Check docker logs."
+      ;;
+    *)
+      fail "unexpected HTTP ${http_code}" \
+           "Body head: $(head -c 200 "${resp_file}" 2>/dev/null)"
+      ;;
+  esac
+  local rc=$?
+  rm -f "$resp_file"
+  return "$rc"
+}
+run_check "reasoning_heavy" check_reasoning_heavy
 
 echo ""
 if [[ "$FAILED" == "0" ]]; then
