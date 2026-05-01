@@ -1,15 +1,18 @@
 # ===========================================================================
-# Long-vision variant — 140K context with vision on a single 3090.
+# Long-vision variant — 198K context with vision on a single 3090.
 #
-# Stack: vLLM nightly + Genesis v7.64 + TurboQuant 3-bit KV + MTP n=3 +
-# vision tower + the full v7.64 patch stack (PN12 anchor sidecar, compile-
-# safe sidecar, PN17, P104, P38 — P37 disabled here, see env block). Backed
-# off from the original 198K + 0.98 to 140K + 0.95 on 2026-05-01 PM because
-# vision tower's persistent ~1 GiB plus the new patches' persistent
-# allocations leave less margin for Cliff 2's GDN intermediate buffer at
-# 30K+ token prefills — 160K + 0.96 booted but failed 33K-token stress.
-# 140K + 0.95 passes verify-full + 33K-token tool-prefill stress cleanly.
-# See docs/CLIFFS.md "Update 2026-05-01 PM" for the full bisection sweep.
+# ⚠️ NOT SAFE FOR IDE-AGENT WORKLOADS WITH TOOL SCHEMAS. Use `tools-text.yml`
+# (no vision, but safe for tool-using agents) until Genesis PN25 lands
+# default-on. See club-3090#16. Same Cliff 1 mech B failure mode as
+# long-text: a ~5K-char sys prompt + 10 tool schemas + 350-char user request
+# crashes the engine with a 98 MiB OOM at `empty_strided_cuda((s, 17408), ...)`
+# in inductor_cache. Vision-only chat (no tools) is safe.
+#
+# Stack: vLLM v0.20.1rc1.dev16 + Genesis v7.65 dev (d89a089) + TurboQuant
+# 3-bit KV + MTP n=3 + vision tower. Restored from the dev205-era 140K + 0.95
+# backoff: v0.20's revised TQ FA paths close the synthetic 50K stress that
+# forced the backoff. Real IDE-agent shapes are a different code path that
+# v0.20 does NOT close — hence the warning above.
 #
 # Recommended client max_tokens: 8192 (FREE thinking on this compose). See
 # docs/EXAMPLES.md "max_tokens defaults" section.

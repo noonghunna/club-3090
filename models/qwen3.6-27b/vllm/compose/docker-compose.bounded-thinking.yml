@@ -1,8 +1,19 @@
 # ===========================================================================
-# Bounded-thinking variant — long-text 185K + structured-CoT grammar enforcement
+# Bounded-thinking variant — long-text 214K + structured-CoT grammar enforcement
 # in the reasoning channel. Compresses think tokens ~30× with iso-or-better
 # accuracy on coding benchmarks. See docs/STRUCTURED_COT.md for the full
 # bench, the grammar files, and the harness.
+#
+# ⚠️ NOT SAFE FOR IDE-AGENT WORKLOADS WITH TOOL SCHEMAS. Same Cliff 1 mech B
+# inductor compile-path leak as long-text/long-vision (club-3090#16). Use
+# `tools-text.yml` for IDE agents until Genesis PN25 lands default-on.
+#
+# Additional bug surfaced 2026-05-01 PM on this compose specifically:
+# `VLLM_SSM_CONV_STATE_LAYOUT=DS` + spec-decode + `mamba_cache_mode='align'`
+# + `num_accepted_tokens > 1` raises `NotImplementedError` on certain prompt
+# shapes (LCB/LeetCode-style problems triggered it on every request). Filed
+# as Sandermage/genesis-vllm-patches#17. Pure long-form text generation with
+# bounded thinking is unaffected; LCB-style problem statements may crash.
 #
 # Stack: identical to long-text (vLLM nightly + Genesis v7.64 with PN12 anchor
 # sidecar + compile-safe sidecar + PN17 + P104 + P37/P38 + TurboQuant 3-bit KV

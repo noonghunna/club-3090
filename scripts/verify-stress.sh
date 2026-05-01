@@ -23,6 +23,22 @@
 #      activation-memory peak class of bug (the one that hit production
 #      at 192K + 0.98 mem-util — see ampersandru's report in the predecessor
 #      single-3090 repo issue #1).
+#   3. IDE-agent one-shot (added 2026-05-01) — synthetic Cline/OpenCode-shape
+#      prompt: ~5K-char sys preamble + 10 tool schemas + ~350-char user request
+#      + max_tokens=2000. Catches Cliff 1 mech B (inductor compile-path FFN
+#      intermediate buffer leak). Different prefill shape than check #2 — bulk
+#      is in the SYSTEM message + tool schemas, not in a 25K-token tool RETURN.
+#      Required because check #2 passes on v0.20 + Genesis v7.65 dev tip but
+#      this shape still crashes (see club-3090#16). Repro of VolandBerlioz's
+#      Reddit failure mode; takes ~10s per attempt (one request, fail-fast).
+#
+# Future probe ideas (TODO — not yet implemented):
+#   - Multi-turn agent: sys + tools + user → assistant(tool_call) → tool reply
+#     → user followup. Different inductor compile path from one-shot.
+#   - LCB-coding shape: problem statement → ~300-700 think tokens → code
+#     emission. Triggers DS conv state crash on some configs.
+#   - Reasoning-heavy: math/algorithm prompt + max_tokens=8192. Stresses
+#     spec-decode AL collapse + mamba_cache_mode='align' interactions.
 #
 # Usage:
 #   CONTAINER=<your-container> bash scripts/verify-stress.sh
@@ -62,7 +78,7 @@ echo ""
 # 1. Long-context needle — put a secret at ~50% depth, ask for it at the end
 # --------------------------------------------------------------------
 check_longctx() {
-  echo "[1/2] Long-context needle (ladder: 10K / 30K / 60K / 90K) ..."
+  echo "[1/3] Long-context needle (ladder: 10K / 30K / 60K / 90K) ..."
   if [[ "${SKIP_LONGCTX:-0}" == "1" ]]; then
     skip "SKIP_LONGCTX=1"
     return 0
@@ -182,7 +198,7 @@ run_check "longctx" check_longctx
 #    idle but OOMs the moment a real-world tool reply is loaded).
 # --------------------------------------------------------------------
 check_tool_prefill() {
-  echo "[2/2] Tool response prefill OOM (~25K-token mock tool response) ..."
+  echo "[2/3] Tool response prefill OOM (~25K-token mock tool response) ..."
   if [[ "${SKIP_TOOL_PREFILL:-0}" == "1" ]]; then
     skip "SKIP_TOOL_PREFILL=1"
     return 0
@@ -298,6 +314,108 @@ except Exception as e:
   return "$rc"
 }
 run_check "tool_prefill" check_tool_prefill
+
+# 3. IDE-agent one-shot — synthetic Cline/OpenCode shape (added 2026-05-01).
+# Catches Cliff 1 mech B (inductor compile-path FFN intermediate buffer leak)
+# that fires on real coding-agent prompts but NOT on the synthetic 25K tool
+# prefill above. See club-3090#16. Fail-fast: one request, ~10s if green,
+# instant HTTP 500 if the bug fires.
+echo "[3/3] IDE-agent one-shot prompt (sys + tool schemas + user request) ..."
+check_ide_agent() {
+  local req_file resp_file http_code body
+  req_file="$(mktemp --suffix=.json)"
+  resp_file="$(mktemp --suffix=.json)"
+  MODEL_VAR="${MODEL}" REQ_FILE="${req_file}" python3 - <<'PYEOF'
+import json, os
+model = os.environ['MODEL_VAR']
+# Synthetic IDE-agent system prompt: realistic Cline/OpenCode preamble x5
+# to bulk it up to ~5K chars, the shape that triggers the bug.
+sys_text = (
+    "You are a helpful AI coding assistant operating inside an IDE. You have access to "
+    "a set of tools to read, write, search, and execute commands in the user's project. "
+    "Always use the appropriate tool when the user requests file operations or code "
+    "execution. Be concise in your reasoning, prefer minimal edits, and verify your "
+    "changes by reading the file back after writing. When refactoring, preserve "
+    "existing behavior unless explicitly asked to change it. When reasoning through "
+    "complex changes, think step by step but keep the explanation focused on the "
+    "specific change being made. Avoid restating the user's request. If a request is "
+    "ambiguous, ask one focused clarifying question rather than guessing. When a task "
+    "requires multiple file edits, plan the edits first, then execute them in order, "
+    "verifying each before moving to the next. Never modify files outside the user's "
+    "project root. Never run destructive commands without explicit confirmation. "
+) * 5
+tools = [
+    {"type": "function", "function": {"name": n, "description": d,
+     "parameters": {"type": "object", "properties": {
+         "path": {"type": "string"}, "pattern": {"type": "string"},
+         "command": {"type": "string"}, "content": {"type": "string"},
+         "recursive": {"type": "boolean"}, "encoding": {"type": "string", "default": "utf-8"},
+     }, "required": ["path"]}}}
+    for n, d in [
+        ("read_file", "Read the contents of a file at the given path."),
+        ("write_file", "Write content to a file at the given path."),
+        ("list_directory", "List files at the given path, optionally recursive."),
+        ("search_code", "Search for a regex pattern across the codebase."),
+        ("run_command", "Execute a shell command in the project directory."),
+        ("get_file_metadata", "Get metadata for a file."),
+        ("create_directory", "Create a directory."),
+        ("delete_file", "Delete a file."),
+        ("git_status", "Get the current git status."),
+        ("git_diff", "Get the diff for current changes."),
+    ]
+]
+user_text = (
+    "I have a Python function `compute_metrics` in `src/analytics/metrics.py` that "
+    "currently calculates running statistics by re-iterating the entire data list "
+    "every call. Refactor it to maintain a streaming aggregation state that updates "
+    "incrementally. Preserve the public API. Show me the diff before applying it."
+)
+body = {
+    "model": model,
+    "messages": [
+        {"role": "system", "content": sys_text},
+        {"role": "user", "content": user_text},
+    ],
+    "tools": tools,
+    "tool_choice": "auto",
+    "max_tokens": 2000,
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "stream": False,
+}
+with open(os.environ['REQ_FILE'], 'w') as f:
+    json.dump(body, f)
+PYEOF
+  http_code="$(curl -sS -o "${resp_file}" -w "%{http_code}" --max-time 180 \
+    -H "Content-Type: application/json" -X POST \
+    -d "@${req_file}" "${URL}/v1/chat/completions" 2>/dev/null || echo "000")"
+  rm -f "$req_file"
+  case "$http_code" in
+    200)
+      body="$(cat "${resp_file}")"
+      local finish content_len
+      finish="$(echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0].get('finish_reason') or '?')" 2>/dev/null || echo "?")"
+      content_len="$(echo "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); m=d['choices'][0].get('message') or {}; c=m.get('content') or ''; tc=m.get('tool_calls') or []; print(f'{len(c)},{len(tc)}')" 2>/dev/null || echo "0,0")"
+      pass "IDE-agent one-shot OK — finish=${finish} content_chars=${content_len%,*} tool_calls=${content_len##*,}"
+      ;;
+    500)
+      fail "HTTP 500 — likely Cliff 1 mech B (inductor FFN intermediate OOM)" \
+           "This is club-3090#16. Real IDE-agent workloads will crash on this compose. Switch to tools-text.yml (fp8 KV path with PN8) until Genesis PN25 lands default-on. Server logs: docker logs ${CONTAINER} 2>&1 | grep -B5 -A5 empty_strided_cuda"
+      ;;
+    000)
+      fail "no HTTP response (timeout or container died)" \
+           "Engine likely crashed. Check: docker logs ${CONTAINER} 2>&1 | tail -50"
+      ;;
+    *)
+      fail "unexpected HTTP ${http_code}" \
+           "Body head: $(head -c 200 "${resp_file}" 2>/dev/null)"
+      ;;
+  esac
+  local rc=$?
+  rm -f "$resp_file"
+  return "$rc"
+}
+run_check "ide_agent" check_ide_agent
 
 echo ""
 if [[ "$FAILED" == "0" ]]; then

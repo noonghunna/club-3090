@@ -49,7 +49,7 @@ For the single-card picture, see [`SINGLE_CARD.md`](SINGLE_CARD.md).
 
 262K context, fp8 KV, MTP n=3, 2 streams, vision tower active. **Genesis-less by design** — fp8 KV doesn't trigger the cudagraph bug (#40880) that drove Genesis's existence on single-card. Pure vLLM nightly path. Tool calls work via `--tool-call-parser qwen3_coder` + `--enable-auto-tool-choice`. All `verify-stress.sh` checks pass clean.
 
-**When to pick:** the obvious starting point. Unless one of the specialized variants below names your exact workload, this is right.
+**When to pick:** the obvious starting point. Unless one of the specialized variants below names your exact workload, this is right. **Strongly recommended for IDE coding agents** (Cline / OpenCode / Roo / Claude Code / Cursor) — fp8 KV avoids the inductor compile-path leak that affects all 4 TQ3-KV variants. See [club-3090#16](https://github.com/noonghunna/club-3090/issues/16).
 
 ### Multi-tenant — `dual-turbo.yml`
 

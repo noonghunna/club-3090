@@ -1,5 +1,12 @@
 # ===========================================================================
-# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.14.
+# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.65 dev.
+#
+# ⚠️ NOT SAFE FOR IDE-AGENT WORKLOADS WITH TOOL SCHEMAS (same Cliff 1 mech B
+# inductor compile-path leak as long-text/long-vision/bounded-thinking — TP=2
+# splits state across cards but doesn't change the inductor compilation path).
+# For coding agents on dual-card, prefer `dual.yml` (fp8 KV — different
+# compile path, not affected) until Genesis PN25 lands default-on. See
+# club-3090#16.
 #
 # The 4-stream concurrent-serving variant. Trades ~22% per-stream TPS vs the
 # fp8 default for ~9× the KV pool capacity, unlocking 4 concurrent streams at

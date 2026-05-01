@@ -17,15 +17,29 @@ Four recommended options:
 
 Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
 
-> ## ⚠️ The one limitation to know
+> ## ⚠️ Two limitations to know
+>
+> ### 1. Cliff 1 mech B — IDE-agent prompts crash on long-text / long-vision / bounded-thinking / dual-turbo
+>
+> **If you're using Cline, OpenCode, Roo, Claude Code, Cursor, or any tool-using agent, default to [`tools-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml) (75K + fp8 KV) — not the 198K/214K/262K variants.**
+>
+> Reproduced 2026-05-01 PM: a 5,900-char system prompt + 10 typical tool schemas + 346-char user request crashes `long-text.yml` (and the other 3 TQ3 composes) with a 98 MiB OOM at `empty_strided_cuda((s, 17408), ...)` in `inductor_cache/...py:1208`. Same site as VolandBerlioz's Reddit reproducer. Genesis PN12 patches the eager `SiluAndMul.forward_cuda` but vLLM's torch.compile inductor inlines `forward_native`, bypassing the pool. PN25 (the proper compile-path fix) is on Genesis dev but [blocked by a worker-fork registration bug](https://github.com/Sandermage/genesis-vllm-patches/issues/16) we filed.
+>
+> Until PN25 lands default-on:
+> - **IDE agents → `tools-text.yml`** (PN8 closes Cliff 1 mech B via a different mechanism that *does* reach the compile path)
+> - **Pure long-form text / RAG / book Q&A → `long-text.yml`** (no tool schemas in prompt → doesn't trigger inductor compile path)
+> - **Vision + chat → `long-vision.yml`** (same as long-text — fine until you add tool schemas)
+> - **Big single prompts → `llamacpp/default`** (262K, different engine entirely — no inductor)
+>
+> Tracking: [club-3090 #16](https://github.com/noonghunna/club-3090/issues/16).
+>
+> ### 2. Cliff 2 — DeltaNet GDN single-prompt OOM at 50–60K tokens
 >
 > **vLLM single-card variants will crash if you send a single prompt above ~50K tokens.**
 >
-> This is Cliff 2 — DeltaNet GDN forward OOMs at 50–60K single-shot regardless of how much VRAM you have left. Both `long-vision.yml` (198K) and `long-text.yml` (214K) are designed for **steady-state accumulation across many turns** — context that builds up across tool calls, replies, retrieved chunks. They are NOT designed for "paste an 80K-token document and ask one question."
+> Architectural — DeltaNet GDN forward state grows with sequence length, OOMs at 50–60K regardless of how much VRAM you have left. Both `long-vision.yml` (198K) and `long-text.yml` (214K) are designed for **steady-state accumulation across many turns**, not single-shot big prompts.
 >
-> **If your workload ever sends single big prompts:** use `llamacpp/default` (262K, no cliffs anywhere — different engine entirely) or move to dual-card (`dual-turbo.yml` TP=2 at 262K with 4.67× concurrency).
->
-> **Cliff 1 mech B closed on v0.20.** Migration to vLLM `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.65 dev tip (commit `d89a089`) on 2026-05-01 closed both Cliff 1 mechanisms (line 903 `torch.cat` + FA varlen workspace) that the dev205 + v7.64 stack hit on 50K-token tool prefills. Both 33K and 50K stress now PASS. The 218K → 185K + the 198K → 140K backoffs that were forced on dev205 have been REVERSED — long-text now runs 214K + 0.985 and long-vision runs 198K + 0.98 cleanly. See [`docs/CLIFFS.md`](CLIFFS.md) "v0.20 unblock" for the full validation log.
+> If your workload sends single big prompts: `llamacpp/default` (262K, no cliffs anywhere) or `dual-turbo.yml` (TP=2 splits state across cards).
 
 ---
 

@@ -1,12 +1,31 @@
 # ===========================================================================
 # Long-text variant — 214K context, text-only (no vision).
 #
+# ⚠️ NOT SAFE FOR IDE-AGENT WORKLOADS (Cline / OpenCode / Roo / Claude Code /
+# Cursor / any flow with sys-prompt + tool schemas). Use `tools-text.yml`
+# instead until Genesis PN25 lands default-on. See club-3090#16.
+#
+# Reproducer (2026-05-01 PM): a 5,900-char system prompt + 10 typical tool
+# schemas + 346-char user request crashes the engine with a 98 MiB OOM at
+# `empty_strided_cuda((s, 17408), ...)` in `inductor_cache/...py:1208`.
+# vLLM's torch.compile inductor inlines `SiluAndMul.forward_native` and
+# bypasses Genesis PN12's `FFNIntermediateCache` pool. PN25 (the proper
+# compile-path opaque-op fix) is on Genesis dev but blocked by a worker-
+# fork registration bug — see Sandermage/genesis-vllm-patches#16.
+#
+# Workloads that ARE safe on this compose:
+#   - Pure long-form text generation (essay, doc Q&A) — no tool schemas in prompt
+#   - RAG without tool calling (just context + question)
+#   - Chat without tools
+# Workloads that should use `tools-text.yml` (75K + fp8 KV + PN8) instead:
+#   - Any IDE coding agent
+#   - Any flow that puts tool/function schemas in the system prompt
+#
 # Stack: vLLM v0.20.1rc1.dev16 + Genesis v7.65 dev (commit d89a089) +
 # TurboQuant 3-bit KV + MTP n=3 + vision tower disabled. Migrated from
-# vLLM dev205 + Genesis v7.64 on 2026-05-01 PM after cross-validating that
-# v0.20 + v7.65 closes Cliff 1 mech B sub-mechanisms (line 903 torch.cat
-# + FA varlen workspace) for our config — empirically 50K-token tool
-# prefill stress passes on v0.20 but fires on dev205.
+# vLLM dev205 + Genesis v7.64 on 2026-05-01 PM. v0.20's revised TQ FA paths
+# close the synthetic 50K-token tool-prefill stress (which fired on dev205);
+# real IDE-agent shapes still hit the inductor compile-path leak above.
 #
 # v7.65 key patches active:
 #   - P38B (Genesis #14 fix): compile-safe in-source hook for
