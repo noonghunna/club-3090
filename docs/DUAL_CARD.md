@@ -169,7 +169,16 @@ For variance, AL / accept rates, per-config row docstrings: see each compose YAM
 | `dual-dflash.yml` | 185K | 82 / 125 | ~140 ms | 1 | ✅ | code + vision |
 | `dual-dflash-noviz.yml` | 200K | 78 / 127 | ~145 ms | 1 | ❌ | pure text code |
 
-`dual-turbo` numbers re-benched 2026-05-01 on the v0.20 + Genesis v7.65 substrate (full PROD env-var stack, +9% TPS over the prior dev205 + v7.64 measurements). Other dual variants pending re-bench on v0.20. All bench runs: 3 warmup + 5 measured per prompt. Run-by-run + CV in `models/qwen3.6-27b/CHANGELOG.md` "Dual-card re-bench" entry.
+All four dual variants re-benched 2026-05-01 PM on the v0.20 + Genesis v7.65 dev tip substrate (n=5 measured + 3 warmup per prompt):
+
+| Variant | Narr / Code wall_TPS (CV) | vs prior chart |
+|---|---|---|
+| `dual.yml` | 68.61 / 90.71 (CV 1.8% both) | flat (within noise) |
+| `dual-turbo.yml` | 58.33 / 76.01 (n=1) · 269 TPS aggregate at n=4 streams | matches prior |
+| `dual-dflash.yml` | 77.12 / 125.97 (CV 2-4%) | code flat, narr -5.9% (slight) |
+| `dual-dflash-noviz.yml` | 78.94 / 123.18 (CV 2-3%) | flat (within noise) |
+
+Code TPS held within bench variance across all 4 variants — no v0.20 regression on fp8 / FP16 paths. Run-by-run + per-config summaries in [`results/v0.20-migration/`](https://github.com/noonghunna/club-3090/tree/master/results/v0.20-migration).
 
 ---
 

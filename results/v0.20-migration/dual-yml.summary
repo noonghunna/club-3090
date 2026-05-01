@@ -1,0 +1,27 @@
+variant: dual.yml
+date: 2026-05-01 PM
+context: 262144
+gpu_mem_util: 0.92
+kv_dtype: fp8_e5m2
+tp: 2
+spec_decode: mtp_n3
+narr_wall_tps: 68.61
+narr_wall_cv: 1.8
+narr_decode_tps: 69.25
+code_wall_tps: 90.71
+code_wall_cv: 1.8
+code_decode_tps: 92.47
+ttft_ms: 146
+mtp_al: 3.44-3.51
+mtp_avg_accept: 0.813-0.838
+vram_per_card_mib: 22246
+kv_pool_tokens: 169600
+max_concurrency: 2.38
+chart_value_narr: 69.05
+chart_value_code: 88.58
+delta_vs_chart_narr: -0.6%
+delta_vs_chart_code: +2.4%
+notes: |
+  No env-var changes vs dev205 (dual.yml is "Genesis-less by design").
+  v0.20 image bump only. TPS within bench variance of chart values.
+  Confirms no v0.20 regression on the fp8 + MTP path.

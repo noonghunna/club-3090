@@ -1,0 +1,31 @@
+variant: dual-dflash.yml
+date: 2026-05-01 PM
+context: 185000
+gpu_mem_util: tbd-from-compose
+kv_dtype: auto (FP16 forced by DFlash non-causal head_size=256)
+tp: 2
+spec_decode: dflash_n5
+narr_wall_tps: 77.12
+narr_wall_cv: 2.2
+narr_decode_tps: 77.88
+code_wall_tps: 125.97
+code_wall_cv: 3.5
+code_decode_tps: 129.53
+ttft_narr_ms: 127
+ttft_code_ms: 143
+dflash_al: 4.23-4.33
+dflash_avg_accept: 0.65-0.67
+vram_per_card_mib: 21720
+kv_pool_tokens: 66096
+max_concurrency: 1.02
+chart_value_narr: 81.94
+chart_value_code: 124.93
+delta_vs_chart_narr: -5.9%
+delta_vs_chart_code: +0.8%
+notes: |
+  No env-var changes vs dev205 (dual-dflash is Genesis-less). Image bump
+  only. Code TPS holds. Narrative -5.9% — slightly outside CV band; could
+  be substrate (different driver / power state) or real microregression
+  in DFlash's spec-decode draft path on v0.20. Chart value (82) still
+  within ±5pp of measured (77); not large enough to update charts but
+  worth flagging if reproducible across reruns.

@@ -1,0 +1,26 @@
+variant: dual-dflash-noviz.yml
+date: 2026-05-01 PM
+context: 200000
+gpu_mem_util: tbd-from-compose
+kv_dtype: auto (FP16 forced by DFlash)
+tp: 2
+spec_decode: dflash_n5
+language_model_only: true
+narr_wall_tps: 78.94
+narr_wall_cv: 3.3
+narr_decode_tps: 79.80
+code_wall_tps: 123.18
+code_wall_cv: 2.8
+code_decode_tps: 126.54
+ttft_narr_ms: 136
+ttft_code_ms: 145
+dflash_al: 4.14-4.38
+dflash_avg_accept: 0.629-0.676
+chart_value_narr: 78.19
+chart_value_code: 126.99
+delta_vs_chart_narr: +1.0%
+delta_vs_chart_code: -3.0%
+notes: |
+  No env-var changes vs dev205. Image bump only. Both narr + code within
+  bench variance of chart values. Confirms no v0.20 regression on the
+  text-only DFlash path.
