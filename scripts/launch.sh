@@ -192,30 +192,8 @@ if [[ -z "$VARIANT" ]]; then
   esac
 fi
 
-# --- launch + verify ---
-echo ""
-echo "[launch] selected variant: ${VARIANT}"
-echo ""
-"$SWITCH" "$VARIANT"
-
-if [[ $SKIP_VERIFY -eq 1 ]]; then
-  echo "[launch] --no-verify — skipping verify-full.sh"
-else
-  echo ""
-  echo "[launch] running verify-full.sh against the new server..."
-  echo ""
-  bash "$VERIFY" || {
-    echo ""
-    echo "[launch] some checks failed — see hints above. Common cases:"
-    echo "  - 'reasoning field empty' on llama.cpp = expected (parser gap, not a bug)"
-    echo "  - 'Genesis patches' / 'MTP acceptance' skipped on llama.cpp = expected (vLLM-only checks)"
-    exit 1
-  }
-fi
-
-# Resolve the actual endpoint port the same way switch.sh does:
-# explicit $PORT > per-variant default. Mirrors VARIANT_DEFAULT_PORT in
-# switch.sh — keep in sync if you add a new variant.
+# Resolve the actual endpoint port and container the same way switch.sh and
+# the compose files do. Keep these maps in sync when adding a new variant.
 declare -A LAUNCH_DEFAULT_PORT=(
   [vllm/default]=8020
   [vllm/long-vision]=8020
@@ -230,8 +208,44 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [llamacpp/default]=8020
   [llamacpp/concurrent]=8020
 )
+declare -A LAUNCH_DEFAULT_CONTAINER=(
+  [vllm/default]=vllm-qwen36-27b
+  [vllm/long-vision]=vllm-qwen36-27b-long-vision
+  [vllm/long-text]=vllm-qwen36-27b-long-text
+  [vllm/bounded-thinking]=vllm-qwen36-27b-bounded-thinking
+  [vllm/tools-text]=vllm-qwen36-27b
+  [vllm/minimal]=vllm-qwen36-27b-minimal
+  [vllm/dual]=vllm-qwen36-27b-dual
+  [vllm/dual-turbo]=vllm-qwen36-27b-dual-turbo
+  [vllm/dual-dflash]=vllm-qwen36-27b-dual-dflash
+  [vllm/dual-dflash-noviz]=vllm-qwen36-27b-dual-dflash-noviz
+  [llamacpp/default]=llama-cpp-qwen36-27b
+  [llamacpp/concurrent]=llama-cpp-qwen36-27b-concurrent
+)
 ENDPOINT_PORT="${PORT:-${LAUNCH_DEFAULT_PORT[$VARIANT]:-8020}}"
 ENDPOINT_URL="http://localhost:${ENDPOINT_PORT}"
+VERIFY_CONTAINER="${CONTAINER:-${LAUNCH_DEFAULT_CONTAINER[$VARIANT]:-vllm-qwen36-27b}}"
+
+# --- launch + verify ---
+echo ""
+echo "[launch] selected variant: ${VARIANT}"
+echo ""
+"$SWITCH" "$VARIANT"
+
+if [[ $SKIP_VERIFY -eq 1 ]]; then
+  echo "[launch] --no-verify — skipping verify-full.sh"
+else
+  echo ""
+  echo "[launch] running verify-full.sh against the new server..."
+  echo ""
+  URL="${ENDPOINT_URL}" CONTAINER="${VERIFY_CONTAINER}" bash "$VERIFY" || {
+    echo ""
+    echo "[launch] some checks failed — see hints above. Common cases:"
+    echo "  - 'reasoning field empty' on llama.cpp = expected (parser gap, not a bug)"
+    echo "  - 'Genesis patches' / 'MTP acceptance' skipped on llama.cpp = expected (vLLM-only checks)"
+    exit 1
+  }
+fi
 
 echo ""
 echo "[launch] done. Endpoint: ${ENDPOINT_URL}"
