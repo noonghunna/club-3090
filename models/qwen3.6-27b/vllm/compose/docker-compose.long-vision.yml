@@ -74,6 +74,7 @@ services:
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
       - ../patches/patch_pn12_ffn_pool_anchor.py:/patches/patch_pn12_ffn_pool_anchor.py:ro
+      - ../patches/patch_pn12_compile_safe_custom_op.py:/patches/patch_pn12_compile_safe_custom_op.py:ro
       - ../patches/patch_fa_max_seqlen_clamp.py:/patches/patch_fa_max_seqlen_clamp.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
@@ -103,6 +104,13 @@ services:
       - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
       - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
       - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
+      # 2026-05-01 — patch parity with long-text.yml. PN17 = Sandermage's
+      # anchored FA softmax_lse clamp (covers flash_attn.py; P104 covers
+      # turboquant_attn.py — keep both). P37 activates the buffer-manager
+      # mode that P38 (TQ _continuation_prefill persistent workspace, the
+      # ampersandru mech B fix) operates with in shared mode.
+      - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
+      - GENESIS_ENABLE_P37=1
       # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
       # reasoning. Short version: 8000-char threshold breaks IDE-agent
       # flows with silent finish_reason=stop. Bisected on club-3090#2.
@@ -142,6 +150,7 @@ services:
         fi
         python3 -m vllm._genesis.patches.apply_all
         python3 /patches/patch_pn12_ffn_pool_anchor.py
+        python3 /patches/patch_pn12_compile_safe_custom_op.py
         python3 /patches/patch_fa_max_seqlen_clamp.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
@@ -157,17 +166,17 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 198K context — engine ceiling at 0.98 mem-util + vision is 198144
-      # (vLLM-reported); we ship 198K for safety margin. With anchor-fixed
-      # PN12 + P104 sidecars, Cliff 1 prefill closes at this ceiling.
-      # Note: pushing mem-util to 0.985 reopens Cliff 1 here (more goes to
-      # KV pool, less to activation budget) — vision tower's persistent
-      # allocation makes 0.98 the right balance. Long-text drops vision
-      # and runs at 0.985 + 218K cleanly.
+      # 130K + 0.94 — backed off the edge 2026-05-01 PM. Was 198K + 0.98.
+      # Same rationale as long-text.yml: P37/P38 + PN17 + P104 + compile-safe
+      # close the line 903 torch.cat OOM but the cliff moves downstream to
+      # FA varlen workspace allocation; Mamba block alignment forbids smaller
+      # chunks (must be ≥4128). Vision adds ~1 GiB persistent so 0.94 here
+      # vs 0.95 on long-text — slightly more conservative to leave room for
+      # vision tower transients alongside FA varlen workspace.
       - --max-model-len
-      - "198000"
+      - "120000"
       - --gpu-memory-utilization
-      - "0.98"
+      - "0.94"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

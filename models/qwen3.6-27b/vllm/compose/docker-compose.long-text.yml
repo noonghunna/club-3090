@@ -114,13 +114,14 @@ services:
       - GENESIS_ENABLE_P103=1
       - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
       - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
-      # FA_MAX_SEQLEN_CLAMP (our P104 sidecar) — superseded by PN17 in v7.64.
-      # Keeping the sidecar gates and disabling at the env level so we can
-      # easily flip back if PN17 turns out not to cover turboquant_attn.py
-      # (PN17 patches flash_attn.py; ours patches the TQ wrapper). Disable
-      # the sidecar entirely by setting this to 0; the file edit was already
-      # idempotent so re-enabling = re-applying.
-      # - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
+      # FA_MAX_SEQLEN_CLAMP (our P104 sidecar) — RE-ENABLED 2026-05-01 after
+      # P37/P38 test showed PN17 alone doesn't cover the TQ wrapper layer.
+      # PN17 patches flash_attn.py; our P104 patches turboquant_attn.py
+      # _flash_attn_varlen (line 394). At 200K chars / ~50K tokens stress on
+      # long-text 205K, OOM moved from line 903 (P38 closes torch.cat peak)
+      # to line 909 → 394 → flash_attn_varlen_func. Stacking PN17 + P104
+      # closes both inner-FA and TQ-wrapper paths.
+      - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
       # v7.64 (2026-04-30 PM) opt-ins. PN17 = Sandermage's anchored version of
       # our P104 sidecar (FA2 softmax_lse runtime clamp; targets flash_attn.py
       # rather than turboquant_attn.py — keep our P104 sidecar for the TQ wrapper
@@ -128,6 +129,14 @@ services:
       # max_split_size_mb=20 during model load; estimated win 200-500 MiB on
       # H100 per vllm#41268, unverified on Ampere — measure delta vs without.
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
+      # P37 = MoE intermediate cache pool (no-op on dense Qwen3.6-27B but per
+      # Sandermage's club-3090#16 reply also activates the buffer-manager mode
+      # P38 depends on for TQ _continuation_prefill persistent workspace — the
+      # actual fix for ampersandru's mech B at turboquant_attn.py:903). P22
+      # (TQ shared dequant prealloc) and P38 (TQ continuation persistent
+      # workspace) auto-apply on platform-eligible boots; P37 ON is the
+      # documented PROD pattern from Sandermage. Testing 2026-05-01.
+      - GENESIS_ENABLE_P37=1
       # PN19 disabled — costs ~120 MiB KV pool on Ampere (3.52 GiB needed at
       # 218K vs 3.4 GiB available with PN19 on); engine init fails with
       # "estimated maximum model length is 206400". Re-test if we drop ctx
@@ -187,14 +196,25 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 218K context — engine ceiling at 0.985 mem-util + no vision is 218784
-      # (vLLM-reported); we ship 218K for safety margin. Cliff 1 prefill closes
-      # via PN12 anchor sidecar + P104 sidecar (see header). Cliff 2
-      # (single-prompt ≥50–60K in GDN) is independent and still applies.
+      # 130K + 0.95 — backed off the long-context edge 2026-05-01 PM. Was
+      # 205K + 0.985, before that 218K + 0.985. Trade rationale (per
+      # bench-driven tuning):
+      #   * P37/P38 + PN17 + P104 + compile-safe sidecar close the line 903
+      #     torch.cat OOM that ampersandru hit, but the cliff moves downstream
+      #     to flash_attn_varlen_func internal allocation (turboquant_attn.py:909
+      #     → :394 → flash_attn_interface.py:300). 50-MiB workspace allocation
+      #     fails with 50.5 MiB free — 1 MiB margin at 0.985 + 200K-char prefill.
+      #   * Mamba cache align mode requires block_size <= max_num_batched_tokens
+      #     so we can't lower the chunk size below 4128 to shrink the workspace.
+      #   * Backing off to 130K + 0.95 frees ~1.5 GiB activation headroom AND
+      #     lowers KV pool requirement; 200K-char (~50K-token) tool-prefill
+      #     stress now passes cleanly + verify-full 8/8 (MTP AL 3.22).
+      # Re-push toward 200K when an upstream FA fix or Sandermage's next pin
+      # adds workspace clamp coverage at the FA varlen entry point.
       - --max-model-len
-      - "205000"
+      - "130000"
       - --gpu-memory-utilization
-      - "0.985"
+      - "0.95"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
