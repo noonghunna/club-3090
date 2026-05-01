@@ -1,0 +1,214 @@
+# ===========================================================================
+# Long-text variant — 218K context, text-only (no vision).
+#
+# Stack: same as default + long-vision (vLLM nightly + Genesis v7.62.x with
+# the PN12 anchor fix + TurboQuant 3-bit KV + MTP n=3) — but with the vision
+# tower disabled to free ~1 GB of VRAM. With the anchor-fixed PN12 actually
+# pooling FFN intermediates, we can run at 0.985 mem-util and 218K
+# max-model-len without the override 50 KV cap that previous 205K config
+# needed. Engine ceiling at 0.985 + no vision is 218K (vLLM-reported).
+#
+# When to pick this over long-vision:
+#   - You don't need image input
+#   - You want the absolute maximum context on a single 3090
+#   - You're doing very long single-shot text workloads (book-length docs,
+#     whole-codebase analysis, large RAG retrievals)
+#
+# When NOT to pick this:
+#   - Anything that needs vision — use long-vision (198K + vision) instead
+#   - Tool-using agents — same prefill-OOM caveat as long-vision applies
+#     here. Use the default 48K for production agents.
+#
+# Measured (R3''' bench row, 2026-04-27):
+#   50.11 narr / 65.84 code TPS, CV 1.5-1.9%, AL 3.44-3.57 (81-85% per-pos),
+#   VRAM 21.5/24 GB. ~5% slower code than long-vision (more KV pool to manage)
+#   and same caveats — within 2% of long-vision narr.
+#
+# Cliff caveat (must read):
+#   - Cliff 1 (tool-prefill OOM at 25K+ tool messages) is MOSTLY closed on
+#     this variant as of 2026-04-30 PM via two local sidecars + 0.985
+#     mem-util. Verify-stress 25K synthetic passes. **However, real
+#     coding-agent workloads (OpenCode, Cline) with mixed sys-prompt +
+#     tool-schema + user-message prefill shapes can still hit Cliff 1
+#     mech B at ~138 MiB FFN intermediate** — PN12 patches the eager-mode
+#     `SiluAndMul.forward_cuda` but vLLM's torch.compile inductor-compiled
+#     FFN forward inlines the op and bypasses our pool. See issue #16.
+#     If you hit this:
+#       1. Switch to `tools-text.yml` (75K, fp8 KV, PN8 closes the same
+#          cliff via a different mechanism that reaches the compile path)
+#       2. Add `--enforce-eager` to the command list below — forces all
+#          forwards through eager Python where PN12 reliably applies.
+#          ~20-30% TPS hit; preserves 218K context.
+#       3. Lower `--gpu-memory-utilization` to 0.94 — frees ~250 MiB
+#          activation headroom; reduces effective context to ~150K.
+#       * patch_pn12_ffn_pool_anchor.py — repairs PN12's anchor on dev205+
+#         (silent no-op upstream; see Sandermage/genesis-vllm-patches PR #13).
+#         Idempotent: skips if Genesis-side PN12 is already applied.
+#       * patch_fa_max_seqlen_clamp.py  — local P104 FA softmax_lse clamp.
+#       * --gpu-memory-utilization 0.985 (up from 0.98) — gives ~120 MiB
+#         more to vLLM, mostly KV pool. With anchor-fixed PN12 reducing FFN
+#         allocator churn, the activation budget at 218K + 0.985 stays large
+#         enough for 25K-token synthetic tool prefills.
+#     Verified by verify-full + verify-stress on RTX 3090 (MTP AL 2.66,
+#     VRAM 23.7/24 GB). See docs/CLIFFS.md for the full diagnostic and
+#     issue #16 for the real-workload gap.
+#     Note: 0.99 mem-util is too aggressive on this hardware (driver/system
+#     reserves ~440 MiB; vLLM startup check fails). 0.985 is the practical max.
+#   - Cliff 2 (single-prompt >50–60K) STILL APPLIES — DeltaNet GDN forward
+#     OOM kernel is unrelated to FFN/FA. The 218K context is for STEADY-
+#     STATE accumulation across many turns, NOT for stuffing 218K of fresh
+#     tokens in one request. For big single-shot prompts: dual.yml TP=2
+#     (verified at 237K) or llamacpp/default (262K, different engine).
+#
+# Variants in this dir for reference:
+#
+#   File                                  Ctx     KV       Vision   Notes
+#   docker-compose.yml (default)          48K     TQ3      ✅       Production-safe; below both cliffs
+#   docker-compose.long-vision.yml        198K    TQ3      ✅       Long ctx + vision; Cliff 1 closed via PN12 sidecar
+#   docker-compose.long-text.yml (this)   218K    TQ3      ❌       Engine-ceiling text-only at 0.985 mem-util; same Cliff 2 caveat
+#   docker-compose.tools-text.yml         75K     fp8      ❌       IDE agents — fp8 KV + PN8 closes Cliff 1
+#
+# Run with:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.long-text.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-long-text-vllm020:
+    # Sandermage's Genesis v7.64 was empirically validated against this exact
+    # vLLM SHA (0.20.1rc1.dev16+g7a1eb8ac2). On dev205 (our older 0.19 pin) we
+    # see PN12 anchor drift, PN19 KV-pool shrinkage, and our compile-safe
+    # sidecar still doesn't close issue #16. Trying the upstream pin he tests
+    # on to see if the v7.64 patches reach their full design intent.
+    image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
+    container_name: vllm-qwen36-27b-long-text-vllm020
+    restart: "no"
+    ports:
+      - "${PORT:-8020}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
+      # PN12 anchor sidecar dropped — Sandermage confirmed PN12 anchor matches
+      # natively on this pin. Genesis-side PN12 should apply via Genesis itself.
+      # patch_fa_max_seqlen_clamp.py dropped — PN17 in v7.64 covers this.
+      # Keeping compile-safe sidecar — forward_native bypass is pin-independent
+      # (still need to verify; if Genesis-side PN12 actually applies under
+      # custom_ops=["none"] on this pin we may be able to drop this too).
+      - ../patches/patch_pn12_compile_safe_custom_op.py:/patches/patch_pn12_compile_safe_custom_op.py:ro
+    environment:
+      # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
+      # - CUDA_VISIBLE_DEVICES=0
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - VLLM_FLOAT32_MATMUL_PRECISION=high
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_MARLIN_USE_ATOMIC_ADD=1
+      - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
+      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
+      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
+      # 2026-04-30 PM — Cliff 1 closure stack. PN12 + P104 sidecars apply
+      # the file patches; these env vars enable the runtime gates.
+      # P101 anchor-fixed (pending Sandermage/genesis-vllm-patches PR #12);
+      # PN12 anchor-fixed via local sidecar (pending PR #13);
+      # P103 chunks FLA forward; PN13 backports vllm#41235 cudagraph fix.
+      - GENESIS_ENABLE_P101=1
+      - GENESIS_ENABLE_P103=1
+      - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
+      - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
+      # P104 sidecar dropped — PN17 in v7.64 is the official replacement.
+      # PN17 + PN19 opt-ins for v7.64. PN19 KV-pool shrinkage observed on
+      # dev205 may not apply on this newer pin — leaving on to measure.
+      - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
+      - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
+      # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
+      # reasoning. Short version: 8000-char threshold breaks IDE-agent
+      # flows with silent finish_reason=stop. Bisected on club-3090#2.
+      # - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      # - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      # PN8 (v7.62.x) intentionally not enabled: at 0.98 mem-util the engine
+      # ceiling (~206K) is gated by the attention block-size divisor, not
+      # KV pool. PN8's KV gain has nowhere to go on this config. Tested
+      # 2026-04-29 — confirmed no ctx delta with PN8 enabled.
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        pip install xxhash pandas scipy -q
+        # Pre-flight: Genesis patches must be populated. Empty volume mount
+        # = silent no-op apply_all = boot fails later with cryptic upstream
+        # error (e.g. "TurboQuant KV not supported for hybrid models", #13).
+        if [ ! -f /usr/local/lib/python3.12/dist-packages/vllm/_genesis/patches/apply_all.py ]; then
+          echo "ERROR: Genesis patches missing — host volume models/qwen3.6-27b/vllm/patches/genesis/ is empty." >&2
+          echo "       Run from repo root before 'docker compose up':" >&2
+          echo "         bash scripts/setup.sh qwen3.6-27b" >&2
+          exit 1
+        fi
+        python3 -m vllm._genesis.patches.apply_all
+        # patch_pn12_compile_safe_custom_op.py — closes the inductor-compiled
+        # forward_native path. Pin-independent — keeping it on this 0.20.1rc1
+        # variant too (custom_ops=["none"] default likely still applies).
+        python3 /patches/patch_pn12_compile_safe_custom_op.py
+        python3 /patches/patch_tolist_cudagraph.py
+        exec vllm serve "$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "1"
+      # 218K context — engine ceiling at 0.985 mem-util + no vision is 218784
+      # (vLLM-reported); we ship 218K for safety margin. Cliff 1 prefill closes
+      # via PN12 anchor sidecar + P104 sidecar (see header). Cliff 2
+      # (single-prompt ≥50–60K in GDN) is independent and still applies.
+      - --max-model-len
+      - "205000"
+      - --gpu-memory-utilization
+      - "0.985"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "4128"
+      - --kv-cache-dtype
+      - turboquant_3bit_nc
+      # Drops the vision tower → frees ~1 GB VRAM → lifts engine ceiling from
+      # 198K (long-vision at 0.98) to 218K (this variant at 0.985). This is the only difference vs long-vision.
+      - --language-model-only
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --no-scheduler-reserve-full-isl
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
