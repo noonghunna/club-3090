@@ -49,13 +49,13 @@ How each config splits the 24 GB / card budget — weights, KV cache, vision tow
 
 ![Per-card VRAM allocation across single + dual configs](../../docs/img/vram-budget-combined.png)
 
-As of 2026-04-30 PM, single-card recommended options (see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md)):
-- **`long-text.yml` — 185K text-only** at 0.975 mem-util. Settled here after P37/P38 testing surfaced the FA varlen workspace cliff at 50K-token single-shot prefills (synthetic). P37/P38 + PN17 + P104 + compile-safe sidecar all on; Mamba block alignment forbids smaller chunk size, so the lever was context + mem-util. Passes verify-full + 130K-char (33K-token) tool-prefill stress, which matches realistic agent workload thresholds. Re-push criteria in [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
-- **`long-vision.yml` — 140K + vision** at 0.95 mem-util, P37 disabled. Vision tower's persistent ~1 GB plus the new patches' persistent allocations leave less margin for Cliff 2's GDN intermediate buffer; vision compose ships at a more conservative ceiling than text-only.
-- **`bounded-thinking.yml` — 185K text-only + structured-CoT grammar in reasoning** at 0.975 mem-util. Same patches as long-text plus `--structured-outputs-config.enable_in_reasoning true`. ~30× cheaper think output on coding workloads with **+4.3pp HE+ / +24pp LCB v6** vs FREE thinking. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md).
+As of 2026-05-01 PM (vLLM v0.20 + Genesis v7.65 dev tip migration), single-card recommended options (see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md)):
+- **`long-text.yml` — 214K text-only** at 0.985 mem-util. Restored from the dev205-era 185K backoff — v0.20's revised TQ FA paths + Genesis v7.65's PN12 + PN17 + P38B in-source hooks close the Cliff 1 mech B sub-mechanisms. Both 33K AND 50K tool-prefill stresses PASS. KV pool 284,832 tokens.
+- **`long-vision.yml` — 198K + vision** at 0.98 mem-util. Restored from the dev205-era 140K backoff (+58K, +41%). KV pool 264,192 tokens.
+- **`bounded-thinking.yml` — 214K text-only + structured-CoT grammar in reasoning** at 0.985 mem-util. Same patch stack as long-text plus `--structured-outputs-config.enable_in_reasoning true`. ~30× cheaper think output on coding workloads with **+4.3pp HE+ / +24pp LCB v6** vs FREE thinking. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md).
 - **`llamacpp/default` — 262K + vision** at ~21 TPS. Different engine, no cliffs anywhere — production-safe for unpredictable inputs.
 
-The **single shipped limitation** on the vLLM variants: Cliff 2 still fires on single prompts >50–60K (DeltaNet GDN forward OOM). Use llama.cpp single or dual-card for one-shot big prompts. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
+The **single shipped limitation** on the vLLM single-card variants: Cliff 2 still fires on single prompts >50–60K (DeltaNet GDN forward OOM — architectural, not closed by v0.20). Use llama.cpp single or dual-card (TP=2 splits state across cards = no Cliff 2) for one-shot big prompts. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
 
 Other variants (`docker-compose.yml` 48K · `tools-text.yml` 75K FP8 · `minimal.yml` 32K) are kept in the repo as fallbacks / diagnostics, not promoted as primary.
 
@@ -76,7 +76,7 @@ TP=2 unlocks **262K + 4 concurrent streams** on dual-card (`dual.yml`).
 
 - **GGUF on vLLM** for Qwen3-Next family — not supported upstream. Use llama.cpp for GGUF on this model.
 - **EAGLE spec-decode on hybrid attention** — DeltaNet rollback issue (cross-engine architectural). Watch upstream.
-- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Lives in `fla.ops` upstream, no file-replacement patch. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA). Mitigation: dual-card or llama.cpp 262K. **Cliff 1** (tool-prefill OOM at ~25K-token tool returns) was the other historical caveat; closed 2026-04-30 PM via PN12 anchor sidecar + P104 sidecar — see [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
+- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Lives in `fla.ops` upstream, no file-replacement patch. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA). Mitigation: dual-card (TP=2 splits state) or llama.cpp 262K. **Cliff 1** (tool-prefill OOM at ~25K-token tool returns) — closed across all paths since the 2026-05-01 v0.20 + Genesis v7.65 dev tip migration. Both 33K AND 50K tool-prefill stresses PASS on every variant. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md) "v0.20 unblock".
 
 ---
 
@@ -98,25 +98,37 @@ For deeper rationale, comparison tables, and the patched-vLLM-source story (vllm
 
 ## Genesis patch surface (vLLM)
 
-The vLLM single-card composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `64dd18b` (v7.64 release, 2026-04-30 PM) per `scripts/setup.sh`.
+The vLLM composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `d89a089` (v7.65 dev tip, 2026-05-01) per `scripts/setup.sh`.
 
-Active patches per compose:
+Active patches per compose (selected highlights — full env-var stack in each compose YAML):
 
 | Patch | What it does | Composes |
 |---|---|---|
+| P4 | Hybrid TurboQuant support | TQ3 paths |
 | P64 | Streaming tool-call edge case | all single-card vLLM with MTP |
-| P65 | TurboQuant spec-CG downgrade (#40880 fix) | TQ3 paths (default, long-vision, long-text) |
+| P65 | TurboQuant spec-CG downgrade (#40880 fix) | TQ3 paths |
 | P66 | Cudagraph capture-size divisibility | TQ3 paths |
-| **P101** | TQ continuation 64-token slicing (anchor-fixed via PR #12) | TQ3 paths (long-vision, long-text, bounded-thinking) |
-| **P103** | FLA Cliff 2 chunked fwd_h+fwd_o orchestrator | TQ3 paths (long-vision, long-text, bounded-thinking) |
-| **PN12** | FFN intermediate scratch pool (anchor-fixed via PR #13) — closes Cliff 1 mech B on TQ3 | TQ3 paths (long-vision, long-text, bounded-thinking) |
-| **PN13** | CUDAGraphWrapper lambda-arity (vllm#41235 backport) | TQ3 paths |
+| P67 | TQ multi-query kernel | TQ3 paths |
+| P68/P69 (50K char threshold) | Long-ctx tool-choice nudge — safe on real IDE-agent prompts since v7.65 raised default 8000 → 50000 | TQ3 paths |
+| P98 | TQ WorkspaceManager revert (auto-skips on v0.20 due to drift marker; covered by `patch_workspace_lock_disable.py` sidecar) | TQ3 paths |
+| P101 | TQ continuation 64-token slicing | TQ3 paths |
+| P103 | FLA Cliff 2 chunked fwd_h+fwd_o orchestrator | TQ3 paths |
+| **PN12** | FFN intermediate scratch pool — closes Cliff 1 mech B on TQ3 (Genesis-native on v0.20, no sidecar needed) | TQ3 paths |
+| **PN17** | FA2 softmax_lse runtime clamp — closes Cliff 1 mech A | TQ3 paths |
+| PN13 | CUDAGraphWrapper lambda-arity (vllm#41235 backport) | all |
+| **P38B** | In-source `_continuation_prefill` hook — Genesis #14 fix for compile-path silent no-op | TQ3 paths |
+| **P15B** | FA varlen `max_seqlen_k` clamp at TQ wrapper — Genesis #15 fix | TQ3 paths |
+| **PN26b** | First public sparse-V Triton kernel for SM86 (Ampere consumer) — 27B-tuned BLOCK_KV=8 num_warps=4 threshold=0.01 | TQ3 paths |
 | **PN8** | MTP draft online-quant propagation (vllm#40849) — closes Cliff 1 on FP8 path | **fp8 path** (`tools-text.yml`) |
-| (P68/P69 disabled 2026-04-29) | Default-on tool-choice rewriting broke IDE agents | all — commented out |
 
 Two local sidecars apply outside Genesis:
-- **`patch_pn12_ffn_pool_anchor.py`** — repairs PN12 anchor on dev205+ until [PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13) merges. Idempotent (skips if Genesis-side PN12 already applied).
-- **`patch_fa_max_seqlen_clamp.py`** — local P104 FA softmax_lse clamp, defensive coverage of Cliff 1 mech A. Held back from upstream PR pending Sandermage's response on issue #11.
+- **`patch_workspace_lock_disable.py`** — relaxes vllm#39226 strict assertion to one-shot WARNING. Sandermage's P98 covers same surface but auto-skips on v0.20 (drift-marker false-positive). Idempotent. Drop when Sandermage ships marker fix.
+- **`patch_tolist_cudagraph.py`** — guards `.tolist()` calls during cudagraph capture. Unblocks TurboQuant KV + spec-decode + chunked-prefill on Qwen3-Next dense on Ampere. Drop when upstream fixes the continuation-prefill `.tolist()` sync.
+
+Local sidecars dropped during 2026-05-01 v0.20 migration:
+- `patch_pn12_ffn_pool_anchor.py` → covered natively by PN12 on v0.20
+- `patch_pn12_compile_safe_custom_op.py` → covered by Genesis PN25
+- `patch_fa_max_seqlen_clamp.py` → covered by PN17 + P15B
 
 Dual-card composes (`dual.yml`, `dual-dflash*`) are **Genesis-less by design** — fp8 KV + TP=2 + 0.92 mem-util has plenty of headroom and doesn't trigger the cudagraph bugs Genesis was built to patch. `dual-turbo.yml` does mount Genesis (TQ3 path needs P65).
 

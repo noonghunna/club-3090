@@ -1,0 +1,41 @@
+
+========== NARRATIVE (prompt=65 chars, max_tokens=1000) ==========
+=== warmups (3) ===
+  warm-1     wall= 25.85s  ttft=  5813ms  toks=1000  wall_TPS= 38.68  decode_TPS= 49.90
+  warm-2     wall= 20.28s  ttft=   157ms  toks=1000  wall_TPS= 49.31  decode_TPS= 49.70
+  warm-3     wall= 19.62s  ttft=   166ms  toks=1000  wall_TPS= 50.96  decode_TPS= 51.39
+
+=== measured (3) ===
+  run-1      wall= 20.60s  ttft=   159ms  toks=1000  wall_TPS= 48.55  decode_TPS= 48.93
+  run-2      wall= 20.36s  ttft=   160ms  toks=1000  wall_TPS= 49.11  decode_TPS= 49.50
+  run-3      wall= 20.49s  ttft=   156ms  toks=1000  wall_TPS= 48.82  decode_TPS= 49.19
+
+=== summary [narrative] (n=3) ===
+  wall_TPS       mean=  48.82   std=  0.28   CV= 0.6%   min=48.55   max=49.11
+  decode_TPS     mean=  49.20   std=  0.28   CV= 0.6%   min=48.93   max=49.50
+  TTFT          mean=   158ms  std=    2ms  min=156ms  max=160ms
+
+========== CODE (prompt=78 chars, max_tokens=800) ==========
+=== warmups (3) ===
+  warm-1     wall=  7.47s  ttft=   157ms  toks= 483  wall_TPS= 64.63  decode_TPS= 66.02
+  warm-2     wall=  9.92s  ttft=   162ms  toks= 641  wall_TPS= 64.63  decode_TPS= 65.70
+  warm-3     wall= 12.24s  ttft=   157ms  toks= 800  wall_TPS= 65.34  decode_TPS= 66.19
+
+=== measured (3) ===
+  run-1      wall= 11.10s  ttft=   155ms  toks= 704  wall_TPS= 63.44  decode_TPS= 64.34
+  run-2      wall= 11.39s  ttft=   156ms  toks= 771  wall_TPS= 67.71  decode_TPS= 68.65
+  run-3      wall= 11.98s  ttft=   161ms  toks= 800  wall_TPS= 66.78  decode_TPS= 67.69
+
+=== summary [code] (n=3) ===
+  wall_TPS       mean=  65.98   std=  2.24   CV= 3.4%   min=63.44   max=67.71
+  decode_TPS     mean=  66.89   std=  2.26   CV= 3.4%   min=64.34   max=68.65
+  TTFT          mean=   157ms  std=    4ms  min=155ms  max=161ms
+
+=== GPU state ===
+0, 92 %, 20826 MiB, 24576 MiB, 228.71 W, 65
+1, 0 %, 4 MiB, 24576 MiB, 22.25 W, 45
+
+=== Last 3 SpecDecoding metrics ===
+(APIServer pid=1) INFO 05-01 17:41:54 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.34, Accepted throughput: 44.69 tokens/s, Drafted throughput: 57.29 tokens/s, Accepted: 447 tokens, Drafted: 573 tokens, Per-position acceptance rate: 0.916, 0.764, 0.660, Avg Draft acceptance rate: 78.0%
+(APIServer pid=1) INFO 05-01 17:42:04 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.45, Accepted throughput: 46.70 tokens/s, Drafted throughput: 57.30 tokens/s, Accepted: 467 tokens, Drafted: 573 tokens, Per-position acceptance rate: 0.953, 0.832, 0.660, Avg Draft acceptance rate: 81.5%
+(APIServer pid=1) INFO 05-01 17:42:14 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.47, Accepted throughput: 46.90 tokens/s, Drafted throughput: 57.00 tokens/s, Accepted: 469 tokens, Drafted: 570 tokens, Per-position acceptance rate: 0.958, 0.826, 0.684, Avg Draft acceptance rate: 82.3%

@@ -1,0 +1,15 @@
+Running STRESS / boundary test against http://localhost:8011 (model=qwen3.6-27b-autoround, container=vllm-qwen36-27b-dual-turbo)
+  This script does the heavy stuff (longctx needle ladder + ~25K-token tool prefill).
+  For the fast functional smoke (~2 min), use verify-full.sh instead.
+
+[1/2] Long-context needle (ladder: 10K / 30K / 60K / 90K) ...
+    [32m✓[0m   9821 tokens: recalled 'crimson axolotl 93' (got: crimson axolotl 93 )
+    [32m✓[0m  29320 tokens: recalled 'crimson capybara 52' (got: crimson capybara 52 )
+    [31m✗[0m scale=900: HTTP 000 (request failed)
+    [31m✗[0m scale=1400: HTTP 000 (request failed)
+  [31m✗[0m partial recall — some in-budget depths failed
+    [33m→[0m Attention quality degrades at longer contexts on this config OR the deployment crashed mid-test. Check docker logs.
+[2/2] Tool response prefill OOM (~25K-token mock tool response) ...
+  [32m✓[0m tool prefill OK — model emitted 1 tool_call(s) (finish=tool_calls, prefill survived)
+
+[31m1 stress check(s) failed.[0m See hints above.

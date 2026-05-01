@@ -1,0 +1,22 @@
+variant: dual-turbo
+context: 262144
+gpu_mem_util: 0.85
+kv_dtype: turboquant_3bit_nc
+tp: 2
+narr_wall_tps: 58.33
+narr_wall_cv: 2.9
+narr_decode_tps: 58.72
+code_wall_tps: 76.01
+code_wall_cv: 4.5
+code_decode_tps: 76.97
+ttft_narr_ms: 112
+ttft_code_ms: 110
+mtp_al: 3.39-3.51
+mtp_avg_accept: 0.796-0.836
+mtp_per_pos: 0.929-0.952 / 0.808-0.845 / 0.652-0.712
+vram_gpu0_mib: 19816
+vram_gpu1_mib: 19816
+kv_pool_tokens: 1523232
+max_concurrency: 4.67
+boot_seconds: 290
+notes: TP=2 dual-3090 — fastest per-stream of all variants (+17% narr, +13% code over single-card). 4.67x KV concurrency unlocks 4-stream concurrent serving at 262K context.

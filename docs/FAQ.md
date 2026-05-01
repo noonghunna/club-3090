@@ -85,7 +85,7 @@ For the full deep dive — empirical bisection, root-cause walk-through, who-can
 
 ### vllm#40914 keeps coming up — what is it?
 
-Sandermage's K+1 verify routing PR for vLLM. When it lands, the spec-verify cost we're paying on Ampere SM 8.6 (~22 TPS narrative regression vs pre-bug substrate) closes. Our default on `dev205 + Genesis v7.62.x` will jump from ~51 narr to ~70 narr, matching what ampersandru measures on the older `dev21 + v7.13` cascade-prone substrate. We track it in [INTERNALS.md "Upstream tracker"](../models/qwen3.6-27b/INTERNALS.md).
+Sandermage's K+1 verify routing PR for vLLM. When it lands, the spec-verify cost we're paying on Ampere SM 8.6 (~22 TPS narrative regression vs pre-bug substrate) closes. Our default on `0.20.1rc1.dev16+g7a1eb8ac2 + Genesis v7.65 dev tip` will jump from ~50 narr to ~70 narr, matching what ampersandru measures on the older `dev21 + v7.13` cascade-prone substrate. We track it in [INTERNALS.md "Upstream tracker"](../models/qwen3.6-27b/INTERNALS.md).
 
 ### What's PN8?
 
