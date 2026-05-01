@@ -1,0 +1,36 @@
+variant: dual-turbo (re-bench with corrected env vars)
+date: 2026-05-01 PM
+context: 262144
+gpu_mem_util: 0.85
+kv_dtype: turboquant_3bit_nc
+tp: 2
+config_change: PN9_ATT→ATTN, PN22 env name fixed, PN26 sub-config naming fixed (BLOCK_KV / NUM_WARPS / THRESHOLD)
+narr_wall_tps: not benched
+code_wall_tps: 76.71
+code_wall_cv: 4.1
+code_decode_tps: 77.64
+ttft_code_ms: 112
+mtp_al: 3.32-3.50
+mtp_avg_accept: 0.772-0.833
+n4_aggregate_tps: 242.94
+n4_per_stream_tps: 71.15
+n4_per_stream_cv: 2.4
+
+delta_vs_prior: |
+  n=1 single-stream:  76.01 → 76.71  (+0.9%, within CV 4-5%)
+  n=4 aggregate:     269.03 → 242.94  (-9.7%, within bench-size variance)
+  PN22 advertised "+9-30% TPS on TP>=2" doesn't materialize at our small
+  bench sample (2 runs per stream, n=2/n=3 CV up to 28%). Headline numbers
+  unchanged in honest reporting. PN22 may help more at sustained higher
+  batch sizes (Sandermage's PROD bench at "100t output × 50-req sustained")
+  where the local-argmax dominates more of the draft-path latency budget.
+
+notes: |
+  Functional changes confirmed in boot logs:
+  - PN22 now APPLY (was silently OFF before naming fix) — vllm#39419 backport
+  - PN26b sparse-V kernel correctly tuned (BLOCK_KV=8 num_warps=4 threshold=0.01)
+  - PN9 self-retires on v0.20 (PR #39930 merged upstream) — correct behavior
+
+  Recommendation: keep the naming fixes (they're real bugs regardless of TPS
+  impact) and ship the migration as-is. PN22 / PN26 27B-specific tuning will
+  show their value in larger-scale benchmarks or future config changes.
