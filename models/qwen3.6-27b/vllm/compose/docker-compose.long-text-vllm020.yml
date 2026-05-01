@@ -95,6 +95,12 @@ services:
       # (still need to verify; if Genesis-side PN12 actually applies under
       # custom_ops=["none"] on this pin we may be able to drop this too).
       - ../patches/patch_pn12_compile_safe_custom_op.py:/patches/patch_pn12_compile_safe_custom_op.py:ro
+      # v0.20-experimental ONLY: disables strict WorkspaceManager.lock()
+      # assertion (vllm#39226) since `profile_run` doesn't exercise the TQ
+      # decode path on our config. P98 should cover this but auto-skips on
+      # v0.20 due to upstream marker drift. Drop when either upstream
+      # resolves vllm#39226 or P98 ships a v0.20-aware anchor.
+      - ../patches/patch_workspace_lock_disable.py:/patches/patch_workspace_lock_disable.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0
@@ -128,6 +134,14 @@ services:
       # dev205 may not apply on this newer pin — leaving on to measure.
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
       - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
+      # P98 = TQ WorkspaceManager revert. Reverts the WorkspaceManager
+      # indirection in turboquant_attn._decode_attention back to the per-layer
+      # cached buffer pattern. Originally a perf hotfix for vllm#40941, but
+      # the side effect is that it sidesteps vllm#39226's strict workspace
+      # lock semantics — the path the lock guards is no longer entered. This
+      # IS the unblock for v0.20 on our config (TurboQuant + MTP + 27B INT4).
+      # Adds ~16 MiB × N_layers persistent dequant overhead.
+      - GENESIS_ENABLE_P98=1
       # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
       # reasoning. Short version: 8000-char threshold breaks IDE-agent
       # flows with silent finish_reason=stop. Bisected on club-3090#2.
@@ -166,6 +180,11 @@ services:
         # forward_native path. Pin-independent — keeping it on this 0.20.1rc1
         # variant too (custom_ops=["none"] default likely still applies).
         python3 /patches/patch_pn12_compile_safe_custom_op.py
+        # patch_workspace_lock_disable.py — relaxes vllm#39226 strict lock
+        # assertion to a one-shot warning. Required on v0.20 + TurboQuant
+        # because profile_run doesn't exercise the TQ decode path so the
+        # lock fires at first real call.
+        python3 /patches/patch_workspace_lock_disable.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
       - --
