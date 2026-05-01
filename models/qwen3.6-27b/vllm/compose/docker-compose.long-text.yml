@@ -196,25 +196,21 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 175K + 0.97 — middle-ground config. Was 218K + 0.985 originally;
-      # initial backoff to 130K + 0.95 was conservative (driven by a synthetic
-      # 200K-char single-shot stress that's heavier than real workloads). Real
-      # OpenCode/agent reports (ampersandru, VolandBerlioz) topped out at
-      # ~30K real tokens with multi-turn accumulation, well within the 130K-char
-      # stress class which both 175K + 0.97 and 130K + 0.95 pass.
-      # Trade vs original 205K + 0.985:
-      #   * +360 MiB activation headroom (0.985 → 0.97 frees the lever)
-      #   * 30K less context capacity
-      #   * 200K-char synthetic stress still fails (FA varlen workspace cliff;
-      #     no patch reaches that allocation site, Mamba alignment forbids
-      #     smaller chunk size). But verify-full 8/8 + 130K-char stress pass.
-      # Re-push toward 200K when upstream FA adds varlen workspace clamping
-      # OR Sandermage's next pin extends PN17 coverage to the kernel entry
-      # point.
+      # 200K + 0.985 — restored from intermediate 175K + 0.97 / 130K + 0.95
+      # backoffs once analysis showed the FA varlen workspace cliff at the
+      # 200K-char synthetic stress is independent of max-model-len (same
+      # 50 MiB / 50 MiB-free OOM at both configs). The activation-headroom
+      # delta from lowering mem-util didn't reach the cliff site, so trading
+      # context capacity for it was a false economy. Realistic agent
+      # workloads (130K-char / 33K-token tool prefills) pass at all tested
+      # configs from 130K + 0.95 up to 218K + 0.985 with the new patch
+      # stack (P37/P38 + PN17 + P104 + compile-safe sidecar).
+      # Cliff 2 (single-prompt ≥50–60K in GDN) is independent and still
+      # applies — route those to TP=2 dual.yml or llama.cpp.
       - --max-model-len
-      - "175000"
+      - "185000"
       - --gpu-memory-utilization
-      - "0.97"
+      - "0.975"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

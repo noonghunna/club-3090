@@ -11,8 +11,8 @@ Four recommended options:
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
 |---|---|---|---|---|
 | **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **140K** | ~50 / ~67 | ~22.4 GB (mem-util 0.95) |
-| **Long ctx, text-only** (RAG, codebase, books) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **175K** | ~50 / ~66 | ~22.8 GB (mem-util 0.97) |
-| **Bounded thinking** (coding agents, structured-CoT, cost-bounded thinking) — see [STRUCTURED_COT.md](STRUCTURED_COT.md) | [`bounded-thinking.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) | **175K** | ~52 / ~56 | ~22.8 GB (mem-util 0.97) |
+| **Long ctx, text-only** (RAG, codebase, books) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **185K** | ~50 / ~66 | ~22.9 GB (mem-util 0.975) |
+| **Bounded thinking** (coding agents, structured-CoT, cost-bounded thinking) — see [STRUCTURED_COT.md](STRUCTURED_COT.md) | [`bounded-thinking.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) | **185K** | ~52 / ~56 | ~22.9 GB (mem-util 0.975) |
 | **Bulletproof, no cliffs** (production service, unpredictable inputs) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | **262K** | 21 / 21 | ~20 GB |
 
 Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
@@ -21,7 +21,7 @@ Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <varia
 >
 > **vLLM single-card variants will crash if you send a single prompt above ~50K tokens.**
 >
-> This is Cliff 2 — DeltaNet GDN forward OOMs at 50–60K single-shot regardless of how much VRAM you have left. Both `long-vision.yml` (140K) and `long-text.yml` (175K) are designed for **steady-state accumulation across many turns** — context that builds up across tool calls, replies, retrieved chunks. They are NOT designed for "paste an 80K-token document and ask one question."
+> This is Cliff 2 — DeltaNet GDN forward OOMs at 50–60K single-shot regardless of how much VRAM you have left. Both `long-vision.yml` (140K) and `long-text.yml` (185K) are designed for **steady-state accumulation across many turns** — context that builds up across tool calls, replies, retrieved chunks. They are NOT designed for "paste an 80K-token document and ask one question."
 >
 > **If your workload ever sends single big prompts:** use `llamacpp/default` (262K, no cliffs anywhere — different engine entirely) or move to dual-card (`dual.yml` TP=2, verified at 237K).
 >
@@ -46,7 +46,7 @@ What this says about single-card constraints:
 - **Model weights** consume ~14 GB (AutoRound INT4 / GGUF Q3_K_XL). Half the card.
 - **KV cache** is the next biggest line; its size depends on `--kv-cache-dtype` × ctx. fp8 ≈ 1 byte/token/(layer×head); TQ3 ≈ 0.4 bytes/token/(layer×head); fp16 ≈ 2 bytes/token/(layer×head).
 - **Vision tower** (mmproj) costs ~0.5–1.0 GB extra when on.
-- **Activations + cudagraph pools** is what's left. At `--gpu-memory-utilization 0.92` (default 48K) you have 2-3 GB of activation headroom — comfortable. **2026-05-01 PM** — long-vision / long-text were previously shipped at 0.98 / 0.985 mem-util but P37/P38 testing surfaced a downstream FA varlen workspace cliff at 50K-token tool prefills that none of our patches reach. Settled on **175K + 0.97 (long-text)** and **140K + 0.95 (long-vision)** — adds ~360-720 MiB activation headroom which the FA workspace can grow into for realistic-workload tool prefills (130K-char class). The synthetic 200K-char (50K-token single-shot) stress still cliffs — that's beyond what most agent workloads emit. Re-push criteria in [`docs/CLIFFS.md`](CLIFFS.md).
+- **Activations + cudagraph pools** is what's left. At `--gpu-memory-utilization 0.92` (default 48K) you have 2-3 GB of activation headroom — comfortable. **2026-05-01 PM** — settled on **185K + 0.975 (long-text + bounded-thinking)** and **140K + 0.95 (long-vision)** after P37/P38 testing surfaced a downstream FA varlen workspace cliff (long-text) and a Cliff 2 GDN buffer regression on vision (the new persistent patches eat into the activation budget vision needs for 30K+ token prefills). Both ceilings pass realistic 130K-char (33K-token) tool-prefill stress. Synthetic 200K-char (50K-token) single-shot stress still cliffs — that's beyond what most agent workloads emit. Re-push criteria in [`docs/CLIFFS.md`](CLIFFS.md).
 
 For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
@@ -64,7 +64,7 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
 **Workload:** RAG ingest, codebase analysis, book/document Q&A, long conversations without image input.
 
-175K + no vision + TQ3 KV + same patch stack at mem-util 0.97. `verify-full.sh` 8/8 (MTP AL 2.87); `verify-stress.sh` 130K-char tool-prefill OK. Vision drop adds ~1 GB headroom over long-vision so this variant runs at higher ctx + mem-util safely.
+185K + no vision + TQ3 KV + same patch stack at mem-util 0.975. `verify-full.sh` 8/8 (MTP AL 2.66); `verify-stress.sh` 130K-char tool-prefill OK. Vision drop adds ~1 GB headroom over long-vision so this variant runs at higher ctx + mem-util safely.
 
 ### Bulletproof / no cliffs — `llamacpp/default` ⭐
 
@@ -88,7 +88,7 @@ Re-tested 2026-04-30 PM against [`Luce-Org/lucebox-hub`](https://github.com/Luce
 
 Measured TPS on this rig (RTX 3090, greedy, single-stream, n_gen=1000):
 
-| Workload | Luce DFlash 3.6+3.6 (TQ3 KV, max_ctx=65K) | vLLM long-text 175K |
+| Workload | Luce DFlash 3.6+3.6 (TQ3 KV, max_ctx=65K) | vLLM long-text 185K |
 |---|---|---|
 | Narrative essay | 37–47 TPS (mean ~40) | 50 TPS |
 | Code (heap/LRU/AST) | 63–76 TPS (mean ~72) | 66 TPS |

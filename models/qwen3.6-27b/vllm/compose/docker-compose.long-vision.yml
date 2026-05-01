@@ -106,11 +106,13 @@ services:
       - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
       # 2026-05-01 — patch parity with long-text.yml. PN17 = Sandermage's
       # anchored FA softmax_lse clamp (covers flash_attn.py; P104 covers
-      # turboquant_attn.py — keep both). P37 activates the buffer-manager
-      # mode that P38 (TQ _continuation_prefill persistent workspace, the
-      # ampersandru mech B fix) operates with in shared mode.
+      # turboquant_attn.py — keep both).
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
-      - GENESIS_ENABLE_P37=1
+      # P37 disabled on vision. Cliff 2 (GDN forward) fires earlier on this
+      # variant than text-only because the vision tower's persistent ~1 GiB
+      # competes with the GDN intermediate buffer's activation budget. The
+      # ctx ceiling here is set lower than long-text accordingly.
+      # - GENESIS_ENABLE_P37=1
       # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
       # reasoning. Short version: 8000-char threshold breaks IDE-agent
       # flows with silent finish_reason=stop. Bisected on club-3090#2.
@@ -166,17 +168,12 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 140K + 0.95 — middle-ground config. Was 198K + 0.98 originally; first
-      # backoff went to 120K + 0.94, intermediate tries 160K + 0.96 (boots,
-      # fails 130K stress — vision tower's ~1 GiB persistent overhead leaves
-      # tighter margin than text-only) and 150K + 0.95 (won't boot — engine
-      # ceiling at 0.95 + vision is 140352 per vLLM). 140K + 0.95 is the
-      # verified middle-ground that boots AND passes 130K-char stress.
-      # Trade vs original 198K + 0.98:
-      #   * +720 MiB activation headroom (0.98 → 0.95)
-      #   * 58K less context capacity
-      # See long-text.yml for the full FA varlen workspace cliff rationale
-      # and re-push criteria.
+      # 200K + 0.985 — restored alongside long-text. The new patch stack
+      # (P37/P38 + compile-safe sidecar) closes enough of Cliff 1 mech B
+      # that the historical 0.98 cap on this variant likely lifts; testing
+      # at 0.985 to push past the original 198K. If the engine ceiling
+      # rejects 200K at 0.985 + vision overhead, drop to 198K + 0.985 or
+      # back to 198K + 0.98. See long-text.yml for full rationale.
       - --max-model-len
       - "140000"
       - --gpu-memory-utilization

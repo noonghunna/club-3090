@@ -434,6 +434,47 @@ We had verifiable evidence the cliff fired at `empty_strided_cuda((s18, 17408))`
 
 ---
 
+## Update 2026-05-01 PM — Cliff 1 mech B closed; FA varlen workspace cliff surfaces
+
+**What changed:** Genesis pin bumped v7.62 → v7.64 (commit `64dd18b`). New patches in this cycle:
+- **Sandermage's PN17** — anchored FA softmax_lse runtime clamp (replaces our P104 at the `flash_attn.py` layer; we keep P104 sidecar mounted because it covers the `turboquant_attn.py` wrapper layer that PN17 doesn't reach).
+- **Sandermage's P38** — `_continuation_prefill` persistent K_full/V_full workspace replacing per-call `torch.cat` peaks at `turboquant_attn.py:903`. Activated via `GENESIS_ENABLE_P37=1`.
+- **Our local `patch_pn12_compile_safe_custom_op.py`** — registers `club3090::pn12_silu_and_mul` as opaque `torch.library.custom_op` so Inductor-compiled `forward_native` routes through the FFN intermediate pool (which the eager `forward_cuda` PN12 patch couldn't reach under `custom_ops=["none"]`). Sandermage shipped his own version (PN25) on the `dev` branch — drop our local version when PN25 lands in stable.
+
+**P38 result on long-text 205K + 0.985:** verify-full 8/8 (MTP AL 3.22). 130K-char (33K-token) tool-prefill stress passes cleanly. **But 200K-char (50K-token) single-shot tool-prefill stress crashes** — the OOM moves from `turboquant_attn.py:903` (`torch.cat` peak, P38's target) to a downstream allocation site at `flash_attn_interface.py:300:flash_attn_varlen_func`. The trace:
+
+```
+File ".../turboquant_attn.py", line 909, in _continuation_prefill
+File ".../turboquant_attn.py", line 394, in _flash_attn_varlen
+File ".../flash_attn_interface.py", line 300, in flash_attn_varlen_func
+torch.OutOfMemoryError: Tried to allocate 50.00 MiB. ... 50.50 MiB is free.
+```
+
+50 MiB allocation, 50.5 MiB free. **None of our patches reach this allocation site** — it's inside the FA Python wrapper around the C extension, before any text-patch we apply. Mamba cache align mode forbids dropping `max_num_batched_tokens` below `block_size` (4128 on this model + TQ3) so the chunk size lever is unavailable.
+
+### Bisection sweep (2026-05-01 PM, all with full v7.64 + sidecar stack)
+
+| Config | Boots | verify-full | 130K stress | 200K stress | Notes |
+|---|---|---|---|---|---|
+| 200K + 0.97 | ❌ | — | — | — | Engine ceiling at 0.97 (text) is ~177K — KV pool short |
+| 200K + 0.92 | ❌ | — | — | — | Engine ceiling at 0.92 is ~85K — far short |
+| 175K + 0.97 | ✅ | 8/8 | ✅ | ❌ | Same FA varlen cliff at 50/50 MiB |
+| 185K + 0.97 | ❌ | — | — | — | Engine ceiling at 0.97 is 177K |
+| 185K + 0.975 | ✅ | 8/8 (AL 2.66) | ✅ | (untested in sweep) | Shipped on long-text + bounded-thinking |
+| 130K + 0.95 | ✅ | 8/8 (AL 3.22) | ✅ | ✅ | Earlier intermediate config |
+| 218K + 0.985 (original) | ✅ | 8/8 (AL 2.66) | ✅ | ❌ | Same FA varlen cliff |
+
+**Decision:** ship **long-text.yml at 185K + 0.975 / bounded-thinking.yml at 185K + 0.975 / long-vision.yml at 140K + 0.95**. The 175K → 185K bump on text-only recovers usable ctx vs intermediate configs; 0.985 → 0.975 drop frees ~240 MiB activation budget. Vision compose ships at the more conservative 140K + 0.95 because the vision tower's persistent ~1 GiB plus the new patches' persistent allocations (P38 K_full/V_full ~750 MiB at 185K + compile-safe sidecar ~138 MiB) reopen Cliff 2 (DeltaNet GDN forward buffer) on the vision compose at higher ctx; tested 185K + 0.98, 185K + 0.975, 160K + 0.97 vision configs — all reopened Cliff 2 at the 130K-char stress class until ctx dropped to 140K + 0.95. P37 disabled on vision because P37's MoE intermediate cache pool is no-op on dense Qwen3.6-27B and the env-gate doesn't free memory anyway. The synthetic 200K-char single-shot stress remains a known failure on every config — that's beyond what realistic agent workloads emit (ampersandru and VolandBerlioz repros were both ~30K real tokens).
+
+### Re-push criteria
+
+1. Upstream FA adds varlen workspace clamping at the call site OR
+2. Sandermage's next pin extends PN17 coverage to the FA kernel entry (currently PN17 patches `flash_attn.py` not `flash_attn_interface.py`'s C-extension wrapper).
+
+Until then 185K + 0.975 is the validated text-only ceiling on a single 24 GB 3090 with this patch stack.
+
+---
+
 ## Our recommended path forward (revised post-2026-04-30 PM)
 
 1. **Status:** [P101 PR #12](https://github.com/Sandermage/genesis-vllm-patches/pull/12) and [PN12 PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13) opened 2026-04-30. Both are narrow anchor-drift fixes (same bug class). P104 still held back until Sandermage responds on issue #11 (P104 is new functionality, not just an anchor fix — different scoping decision).

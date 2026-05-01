@@ -158,12 +158,12 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 175K + 0.97 — middle-ground parity with long-text.yml. See
-      # long-text.yml for the full trade-off rationale and re-push criteria.
+      # 200K + 0.985 — parity with long-text.yml. See long-text.yml for
+      # the full trade-off rationale.
       - --max-model-len
-      - "175000"
+      - "185000"
       - --gpu-memory-utilization
-      - "0.97"
+      - "0.975"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
