@@ -244,7 +244,7 @@ The q8 → q4_0 jump is **counter-intuitive** because q8 is "higher precision" �
 ## When to use vLLM instead
 
 - You need full OpenAI API parity (tools, streaming, structured output)
-- You want max context (>218K) on a single 3090 — vLLM single-card tops out at 218K text-only; llama.cpp goes to 262K
+- You want max context (>130K) on a single 3090 — vLLM single-card currently ships 130K text-only / 120K with vision (backed off from 218K/198K for activation-headroom safety; see [docs/CLIFFS.md](../CLIFFS.md)); llama.cpp goes to 262K
 - You need concurrent serving (multi-tenant)
 - You want MTP spec-decode (the integrated head, not DFlash)
 - You're hitting llama.cpp's Qwen3-Next limitations and want the actively-developed path

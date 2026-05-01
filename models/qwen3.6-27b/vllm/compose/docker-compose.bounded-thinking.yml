@@ -81,6 +81,7 @@ services:
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
       - ../patches/patch_pn12_ffn_pool_anchor.py:/patches/patch_pn12_ffn_pool_anchor.py:ro
+      - ../patches/patch_pn12_compile_safe_custom_op.py:/patches/patch_pn12_compile_safe_custom_op.py:ro
       - ../patches/patch_fa_max_seqlen_clamp.py:/patches/patch_fa_max_seqlen_clamp.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
@@ -108,6 +109,13 @@ services:
       - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
       - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
       - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
+      # 2026-05-01 — patch parity with long-text.yml. PN17 = Sandermage's
+      # anchored FA softmax_lse clamp (covers flash_attn.py; P104 covers
+      # turboquant_attn.py — keep both). P37 activates the buffer-manager
+      # mode that P38 (TQ _continuation_prefill persistent workspace) uses
+      # in shared mode. See long-text.yml for the full rationale.
+      - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
+      - GENESIS_ENABLE_P37=1
     shm_size: "16gb"
     ipc: host
     deploy:
@@ -134,6 +142,7 @@ services:
         fi
         python3 -m vllm._genesis.patches.apply_all
         python3 /patches/patch_pn12_ffn_pool_anchor.py
+        python3 /patches/patch_pn12_compile_safe_custom_op.py
         python3 /patches/patch_fa_max_seqlen_clamp.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
@@ -149,10 +158,14 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
+      # 130K + 0.95 — patch parity with long-text.yml (was 218K + 0.985).
+      # Same FA varlen workspace cliff at 50K-token tool prefills; same
+      # rationale; same backoff. See long-text.yml for the full trade-off
+      # discussion and re-push criteria.
       - --max-model-len
-      - "218000"
+      - "130000"
       - --gpu-memory-utilization
-      - "0.985"
+      - "0.95"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
