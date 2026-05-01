@@ -108,7 +108,11 @@ services:
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
-      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
+      # Disabled on v0.20 to recover the dev205 engine ceiling. v0.20 made
+      # cudagraph memory profiling default-ON (vllm#38284) which shrinks
+      # the KV pool by ~120 MiB and caps long-text at 206K + 0.985 (vs
+      # 218K on dev205). Setting back to 0 restores the 218K ceiling.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - VLLM_NO_USAGE_STATS=1
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
       - VLLM_FLOAT32_MATMUL_PRECISION=high
@@ -199,12 +203,13 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 218K context — engine ceiling at 0.985 mem-util + no vision is 218784
-      # (vLLM-reported); we ship 218K for safety margin. Cliff 1 prefill closes
-      # via PN12 anchor sidecar + P104 sidecar (see header). Cliff 2
-      # (single-prompt ≥50–60K in GDN) is independent and still applies.
+      # 218K context + 0.985 mem-util — restored from intermediate 205K
+      # backoff. v0.20 cross-validation showed the FA varlen workspace +
+      # line 903 cliffs don't reproduce on this pin (different memory
+      # profile via vllm#40092 TQ FA3/FA4 prefill paths). Testing 50K
+      # stress at this ceiling.
       - --max-model-len
-      - "205000"
+      - "214000"
       - --gpu-memory-utilization
       - "0.985"
       - --max-num-seqs
