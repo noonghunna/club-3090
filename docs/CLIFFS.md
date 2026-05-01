@@ -488,9 +488,19 @@ After shipping the 185K + 0.975 / 140K + 0.95 configs, instrumented `_genesis_co
 
 **Why Sandermage may not hit this in PROD:** his documented PROD configs target 35B-A3B-FP8 and 27B-Lorbus-fp8_e5m2. Both use **fp8 KV**, not TurboQuant — which means the entire `TurboQuantAttentionImpl._continuation_prefill` path is inactive there. P38 reports "applied" but never had a chance to take effect because the call site doesn't fire on fp8 paths. Our 27B AutoRound INT4 + TurboQuant 3-bit KV configs are precisely the paths that exercise `_continuation_prefill` — and discover the silent no-op.
 
-**Fix path (mirrors what we did for PN12 → PN25):** convert `_continuation_prefill` to a `torch.library.custom_op` so Inductor treats it as opaque and dispatches via the registered op (which CAN be replaced/redefined). We have a working reference in `models/qwen3.6-27b/vllm/patches/patch_pn12_compile_safe_custom_op.py` for the FFN forward_native case. To-file with Sandermage as a Genesis issue.
+**Fix path (mirrors what we did for PN12 → PN25):** convert `_continuation_prefill` to a `torch.library.custom_op` so Inductor treats it as opaque and dispatches via the registered op (which CAN be replaced/redefined). We have a working reference in `models/qwen3.6-27b/vllm/patches/patch_pn12_compile_safe_custom_op.py` for the FFN forward_native case. **Filed as [Genesis #14](https://github.com/Sandermage/genesis-vllm-patches/issues/14) 2026-05-01 PM.**
 
 **Practical impact on shipped config:** none — long-text + bounded-thinking + long-vision shipped configs are bench-validated at 33K-token tool prefills with the existing patch stack (which doesn't actually include functional P38 on TQ paths). Removing the `GENESIS_ENABLE_P37=1` env var on long-text + bounded-thinking would simplify the config without changing behavior, but we leave it on to track when Sandermage fixes P38 — at that point the cliff at line 903 would close and we could push 50K stress.
+
+**Update 2026-05-01 PM (later) — Sandermage shipped P38B + P15B on `dev`, pending v7.65.** Within hours of filing #14 + #15, Sandermage published two companion patches:
+- **P38B** (Genesis #14 fix) — text-patches `turboquant_attn.py` source to inject a delegate hook at the start of `_continuation_prefill`. Source-level edit survives `aot_compile_fullgraph` capture because the compiler reads our modified source at engine init. Different mechanism from our PN12 → PN25 `torch.library.custom_op` route; both reach the same compile-time visibility. Composes with existing P38 for eager-mode coverage. Env: `GENESIS_ENABLE_P38B_COMPILE_SAFE=1`.
+- **P15B** (Genesis #15 fix) — direct backport of our suggestion path 1. Text-patches `turboquant_attn.py:_flash_attn_varlen` to clamp `max_seqlen_k` from actual `cu_seqlens_k` before invoking the FA wrapper. Trade-off: ONE GPU→CPU sync per call (acceptable on continuation-prefill path which is infrequent). Env: `GENESIS_ENABLE_P15B_FA_VARLEN_CLAMP=1`.
+
+**Cross-validation on v0.20 (separate path):** while the Genesis-side fixes were pending, we tested the v0.20 pin upgrade across all 5 single-card / dual-card variants and found that **the 50K-token cliff doesn't reproduce on v0.20 at all** — different memory profile (likely vllm#40092's TQ FA3/FA4 prefill paths). So we have two independent paths to the same outcome:
+1. **Stay on dev205, adopt v7.65 when it lands** — enable `P38B + P15B + PN25` env-gates, drop our local sidecars one-by-one.
+2. **Migrate to v0.20.1rc1.dev16 + workspace_lock_disable sidecar** — empirically passes 50K stress today; needs Sandermage's marker fix on v7.65 for clean adoption.
+
+Holding both paths open until v7.65 ships so we can do the full migration as one coherent PR (pin bump + Genesis bump + sidecar cleanup + context restoration to 218K/198K).
 
 ---
 
