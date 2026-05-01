@@ -1,0 +1,178 @@
+# ===========================================================================
+# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.14.
+#
+# The 4-stream concurrent-serving variant. Trades ~22% per-stream TPS vs the
+# fp8 default for ~9× the KV pool capacity, unlocking 4 concurrent streams at
+# full 262K context. Aggregate throughput exceeds fp8 above ~3 concurrent users.
+#
+# Measured (re-bench 2026-04-28 on club-3090, dev205 + Genesis v7.51-stable, TQ3 KV):
+#   53.65 narr (CV 2.7%) / 72.93 code (CV 2.7%) TPS, AL 3.41, VRAM 24.1 GB/card.
+#
+# Genesis v7.14 P65 (cudagraph downgrade for spec-decode) makes MTP × TurboQuant
+# work on dual-card TP=2 with vision + tools + 262K. Other relevant patches:
+#   - P4 hybrid turboquant support (replaces standalone PR #39931 patches)
+#   - P5 KV page-size unification for hybrid models
+#   - P64 streaming MTP tool-call edge case
+#   - P66 cudagraph_capture_sizes divisibility filter
+# Plus patch_tolist_cudagraph.py for the .tolist() crash class.
+#
+# KV cache: turboquant_3bit_nc — 3-bit symmetric K and V (~3 bits average per
+# token). Aligned with the single-card v714 default config we test extensively.
+# The predecessor dual-3090 file shipped `turboquant_k8v4` (~6 bits avg) due to
+# config drift from the documented + tested target; corrected here to match
+# what's actually validated. Cross-rig users may see slightly higher concurrency
+# at 262K than the predecessor's published 4.59× (TQ3 is more compact than k8v4).
+#
+# To run:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.dual-turbo.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-dual-turbo:
+    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    container_name: vllm-qwen36-27b-temp-k8v4-full
+    restart: "no"
+    ports:
+      - "${PORT:-8011}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # Genesis v7.14 modular package (includes P4 hybrid TQ + P65 #40880 fix)
+      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+      # Standalone .tolist() during capture fix (separate bug from P65)
+      - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_MARLIN_USE_ATOMIC_ADD=1
+      # FULL env-var set per Sander's bare_metal_27b_int4_TQ_k8v4.sh (PROD).
+      # Disc#19 A/B test — measure wall_TPS gap closure vs A5000 reference (89.23).
+      - GENESIS_ENABLE_P4=1
+      - GENESIS_ENABLE_P58_ASYNC_PLACEHOLDER_FIX=1
+      - GENESIS_ENABLE_P60_GDN_NGRAM_FIX=1
+      - GENESIS_ENABLE_P60B_TRITON_KERNEL=1
+      - GENESIS_ENABLE_P61_QWEN3_MULTI_TOOL=1
+      - GENESIS_ENABLE_P61B_STREAMING_OVERLAP=1
+      - GENESIS_ENABLE_P62_STRUCT_OUT_SPEC_TIMING=1
+      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
+      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
+      - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1
+      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      - GENESIS_P68_P69_LONG_CTX_THRESHOLD_CHARS=50000
+      - GENESIS_ENABLE_P72_PROFILE_RUN_CAP=1
+      - GENESIS_PROFILE_RUN_CAP_M=4096
+      - GENESIS_ENABLE_P74_CHUNK_CLAMP=1
+      - GENESIS_ENABLE_P83=1
+      - GENESIS_ENABLE_P85=1
+      - GENESIS_ENABLE_P87=1
+      - GENESIS_ENABLE_P91=1
+      - GENESIS_ENABLE_P94=1
+      - GENESIS_ENABLE_P98=1
+      - GENESIS_ENABLE_P99=1
+      - GENESIS_ENABLE_P100=1
+      - GENESIS_ENABLE_P101=1
+      - GENESIS_ENABLE_P103=1
+      - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1
+      - GENESIS_ENABLE_PN9_INDEPENDENT_DRAFTER_ATT=1
+      - GENESIS_ENABLE_PN11_GDN_AB_CONTIGUOUS=1
+      - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
+      - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
+      - GENESIS_ENABLE_PN14_TQ_DECODE_OOB_CLAMP=1
+      - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
+      - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
+      - GENESIS_ENABLE_PN22=1
+      # PN26b sparse-V kernel — first SM86 kernel in public tree.
+      # Genesis env: GENESIS_ENABLE_PN26_SPARSE_V (no "B" suffix).
+      - GENESIS_ENABLE_PN26_SPARSE_V=1
+      - GENESIS_PN26_BLOCK_KV=8
+      - GENESIS_PN26_NUM_WARPS=4
+      - GENESIS_PN26_THRESHOLD=0.01
+      # v7.65 #14 + #15 fixes (compile-safe + FA varlen clamp)
+      - GENESIS_ENABLE_P38B_COMPILE_SAFE=1
+      - GENESIS_ENABLE_P15B_FA_VARLEN_CLAMP=1
+      - GENESIS_PREALLOC_TOKEN_BUDGET=4096
+      - GENESIS_BUFFER_MODE=shared
+      # P82 stays OFF (Sander's PROD has it OFF for 27B Lorbus INT4 + MTP K=3)
+      # P78 stays OFF
+      # vLLM env knobs from Sander's launch:
+      - VLLM_FLOAT32_MATMUL_PRECISION=high
+      - VLLM_SSM_CONV_STATE_LAYOUT=DS
+      - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        pip install xxhash pandas scipy -q
+        # Pre-flight: Genesis patches must be populated. Empty volume mount
+        # = silent no-op apply_all = boot fails later with cryptic upstream
+        # error (e.g. "TurboQuant KV not supported for hybrid models", #13).
+        if [ ! -f /usr/local/lib/python3.12/dist-packages/vllm/_genesis/patches/apply_all.py ]; then
+          echo "ERROR: Genesis patches missing — host volume models/qwen3.6-27b/vllm/patches/genesis/ is empty." >&2
+          echo "       Run from repo root before 'docker compose up':" >&2
+          echo "         bash scripts/setup.sh qwen3.6-27b" >&2
+          exit 1
+        fi
+        python3 -m vllm._genesis.patches.apply_all
+        python3 /patches/patch_tolist_cudagraph.py
+        exec vllm serve "$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "2"
+      - --disable-custom-all-reduce
+      # Matching Sander's bare_metal_27b_int4_TQ_k8v4.sh PROD config:
+      #   max_model_len=280000, gpu_mem_util=0.90, max_num_seqs=2,
+      #   max_num_batched_tokens=2048 (+P72 cap), kv-cache-dtype=k8v4,
+      #   no --enable-prefix-caching (DS conv state layout).
+      - --max-model-len
+      - "262144"
+      - --gpu-memory-utilization
+      - "0.90"
+      - --max-num-seqs
+      - "2"
+      - --max-num-batched-tokens
+      - "4128"
+      - --kv-cache-dtype
+      - turboquant_k8v4
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      # No --enable-prefix-caching — DS conv state layout crash on TQ k8v4 hybrid
+      - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
