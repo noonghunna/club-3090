@@ -25,9 +25,11 @@ This document supersedes earlier characterizations in CHANGELOG and FAQ where th
 
 ---
 
-## vLLM pin compatibility status (2026-05-01)
+## vLLM pin compatibility status (updated 2026-05-01 PM)
 
-We currently pin `vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08` (`0.19.2rc1.dev205+g07351e088`). Genesis v7.64 documentation references a newer pin `0.20.1rc1.dev16+g7a1eb8ac2` as the validation substrate. We tested the v0.20 upgrade on `long-text.yml` (218K + 0.985 + TQ3 + MTP) and it currently **does not boot stably for our config** — engine crashes during MTP draft proposal at long prefill with:
+Master ships on `vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08` (`0.19.2rc1.dev205+g07351e088`). Genesis v7.64 documentation references `0.20.1rc1.dev16+g7a1eb8ac2` as the validation substrate.
+
+**v0.20 was initially blocked** for our TurboQuant + MTP single-card configs by [vllm#39226](https://github.com/vllm-project/vllm/pull/39226)'s strict `WorkspaceManager.lock()` semantics. After lock, allocations that grow workspace raise `AssertionError`. The TurboQuant `_decode_attention` path requests 0.76 MB at runtime but `profile_run` doesn't exercise the TQ decode path on our config so workspace gets locked at 0 MB and the first real call raises:
 
 ```
 AssertionError: Workspace is locked but allocation from
@@ -35,9 +37,23 @@ AssertionError: Workspace is locked but allocation from
 current size is 0.00 MB. Workspace growth is not allowed after locking.
 ```
 
-This is **separate from** Cliff 1 / Cliff 2 — root-caused to [vllm#39226](https://github.com/vllm-project/vllm/pull/39226) "workspace-resize GPU memory leak fix" which landed in v0.20.0. The PR adds strict `WorkspaceManager.lock()` semantics: after lock, any allocation that grows the workspace raises `AssertionError`. The TurboQuant `_decode_attention` path requests 0.76 MB at runtime, but workspace was locked at 0.00 MB because TQ decode wasn't exercised during `profile_run` — so the workspace was never sized for it. The lock then refuses the grow.
+**Unblock recipe (verified 2026-05-01 PM, on `v0.20-experimental` branch):**
 
-No env var or migration step unblocks this — resolution is upstream (either `profile_run` exercises TQ decode, or workspace-lock allows protected paths to grow). Until this resolves, **stay on the dev205 pin** for production composes. The experimental v0.20 compose lives on the [`v0.20-experimental` branch](https://github.com/noonghunna/club-3090/tree/v0.20-experimental); main does not ship a v0.20 path.
+1. Sandermage's **P98** (TQ WorkspaceManager revert) is the natural fix but auto-skips on v0.20 — its drift detection misreads the `UNIFORM_SINGLE_TOKEN_DECODE` upstream marker as "patch obsolete." Filed as a side-note in [Genesis #9 reply](https://github.com/Sandermage/genesis-vllm-patches/issues/9#issuecomment-4359541875); awaiting Sandermage's call on whether to fix the marker check or keep P98 explicitly env-overridden.
+2. **Local `patch_workspace_lock_disable.py` sidecar** turns the strict assertion into a one-shot WARNING and proceeds with the grow path. ~80 lines of regex-replacement on `vllm/v1/worker/workspace.py:_ensure_workspace_size`. Idempotent via marker. Mounted + applied only on the v0.20-experimental compose.
+
+**Validation results on v0.20 + Genesis v7.64 + compile-safe sidecar + workspace-lock-disable sidecar (long-text 205K + 0.985):**
+
+| Check | Result |
+|---|---|
+| Boot | ✅ Clean (all v7.64 patches apply natively) |
+| verify-full.sh | ✅ 8/8 (MTP AL 2.79) |
+| 33K-token (130K-char) tool-prefill stress | ✅ PASS |
+| **50K-token (200K-char) tool-prefill stress** | ✅ **PASS** — the cliff that fires on EVERY dev205 config (long-text trips at line 903 `torch.cat`; long-vision trips at line 909 → 394 → flash_attn_varlen_func) does NOT reproduce on v0.20. Different memory profile, likely [vllm#40092](https://github.com/vllm-project/vllm/pull/40092)'s TQ FA3/FA4 prefill paths changing the workspace allocator behavior. |
+
+**Implication:** v0.20 may implicitly resolve [Genesis #14](https://github.com/Sandermage/genesis-vllm-patches/issues/14) (P38 silent no-op) and [Genesis #15](https://github.com/Sandermage/genesis-vllm-patches/issues/15) (FA varlen workspace) for our configs — those fail-sites don't fire when the underlying memory geometry changes. Need cross-validation across long-vision, bounded-thinking, and dual-card before pin-bumping master.
+
+**Master shipped configs stay on dev205** until v0.20 is cross-validated across all variants. v0.20-experimental branch holds the working test compose.
 
 **Other v0.20 migration items checked** (none currently blocking but listed for awareness): PyTorch 2.11 + CUDA 13.0.2 default ([#34644](https://github.com/vllm-project/vllm/pull/34644), [#40669](https://github.com/vllm-project/vllm/pull/40669)) — host driver R555+ required, our 3090 host is on 595.58.03 + CUDA 13.2 (ample). Transformers v5 baseline ([#30566](https://github.com/vllm-project/vllm/pull/30566)). CUDAGraph memory profiling ON by default ([#38284](https://github.com/vllm-project/vllm/pull/38284)) — can change KV-pool sizing slightly vs dev205.
 
