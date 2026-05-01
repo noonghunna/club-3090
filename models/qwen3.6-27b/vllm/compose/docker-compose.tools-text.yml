@@ -23,13 +23,18 @@
 # ===========================================================================
 services:
   vllm-qwen36-27b:
-    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
     container_name: vllm-qwen36-27b
     restart: "no"
     ports:
       - "${PORT:-8020}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
+      # Closes club-3090 #22.
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
       # Genesis v7.14+ modular package (replaces patch_genesis_unified.py).
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
@@ -39,7 +44,7 @@ services:
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
-      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - VLLM_NO_USAGE_STATS=1
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
       - VLLM_FLOAT32_MATMUL_PRECISION=high
@@ -48,20 +53,28 @@ services:
       - CUDA_DEVICE_MAX_CONNECTIONS=8
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
       - VLLM_MARLIN_USE_ATOMIC_ADD=1
-      # Genesis v7.14+ opt-in patches (fp8 KV path — no P4/P65/P67 needed)
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      # Genesis v7.65 opt-ins (fp8 KV path — no TQ-specific patches needed).
+      # Universal safety + spec-decode + tool-call quality stack.
+      - GENESIS_ENABLE_P58_ASYNC_PLACEHOLDER_FIX=1
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
-      # P68/P69 deliberately DISABLED (2026-04-29). They override user
-      # tool_choice / inject "must use a tool" reminders when the prompt
-      # exceeds 8000 chars — IDE-agent system prompts blow past that on
-      # the first message and get silent stops on greetings / clarifying
-      # questions. Bisected on club-3090 issue #2 (HoodOG1 + tenitram).
-      # Set to 1 only if you specifically want forced-tool-call behavior.
-      # - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
-      # - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
-      # PN8 (v7.62.x): MTP draft online-quant propagation. Targets fp8+MTP
-      # path specifically — frees ~600 MiB by inheriting target quant config
-      # into the draft head. Sandermage's claim: closes Cliff 1 on this path.
+      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
+      # P68/P69 — v7.65 raised default threshold 8000 → 50000 chars. Now
+      # safe with typical IDE-agent system+tool prompts.
+      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      - GENESIS_P68_P69_LONG_CTX_THRESHOLD_CHARS=50000
+      - GENESIS_ENABLE_P72_PROFILE_RUN_CAP=1
+      - GENESIS_PROFILE_RUN_CAP_M=4128
+      - GENESIS_ENABLE_P74_CHUNK_CLAMP=1
+      - GENESIS_ENABLE_P94=1
+      # PN8: MTP draft online-quant propagation. fp8+MTP path specifically —
+      # frees ~600 MiB. Closes Cliff 1 on the fp8 path.
       - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1
+      - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
+      - GENESIS_ENABLE_PN14_TQ_DECODE_OOB_CLAMP=1
+      - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
+      - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
     shm_size: "16gb"
     ipc: host
     deploy:

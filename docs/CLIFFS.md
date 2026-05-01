@@ -25,37 +25,45 @@ This document supersedes earlier characterizations in CHANGELOG and FAQ where th
 
 ---
 
-## vLLM pin compatibility status (updated 2026-05-01 PM)
+## vLLM pin compatibility status (master shipped on v0.20 + Genesis v7.65 — 2026-05-01 PM)
 
-Master ships on `vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08` (`0.19.2rc1.dev205+g07351e088`). Genesis v7.64 documentation references `0.20.1rc1.dev16+g7a1eb8ac2` as the validation substrate.
+**Master now ships on `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.65 dev tip (commit `d89a089`).** This pin migration on 2026-05-01 reverts the dev205 + v7.64 backoffs that were forced by Cliff 1 mech B sub-mechanisms. Both 33K and 50K token tool-prefill stresses now PASS across all five main variants.
 
-**v0.20 was initially blocked** for our TurboQuant + MTP single-card configs by [vllm#39226](https://github.com/vllm-project/vllm/pull/39226)'s strict `WorkspaceManager.lock()` semantics. After lock, allocations that grow workspace raise `AssertionError`. The TurboQuant `_decode_attention` path requests 0.76 MB at runtime but `profile_run` doesn't exercise the TQ decode path on our config so workspace gets locked at 0 MB and the first real call raises:
+### v0.20 unblock — what changed
 
-```
-AssertionError: Workspace is locked but allocation from
-'turboquant_attn.py:951:_decode_attention' requires 0.76 MB,
-current size is 0.00 MB. Workspace growth is not allowed after locking.
-```
+The dev205 `WorkspaceManager` strict-lock issue ([vllm#39226](https://github.com/vllm-project/vllm/pull/39226)) doesn't apply on v0.20 the same way; v0.20's revised TQ FA paths ([vllm#40092](https://github.com/vllm-project/vllm/pull/40092)) restructure workspace allocation so the strict assertion never fires under the same calls. Where it *can* fire (rare paths still locked at 0 MB), our `patch_workspace_lock_disable.py` sidecar turns the strict assertion into a one-shot WARNING — same surface as Sandermage's **P98** which auto-skips on v0.20 due to a drift-marker false positive (filed as a Genesis side-note; pending Sandermage's marker fix).
 
-**Unblock recipe (verified 2026-05-01 PM, on `v0.20-experimental` branch):**
+### Genesis v7.65 dev tip — relevant patches active
 
-1. Sandermage's **P98** (TQ WorkspaceManager revert) is the natural fix but auto-skips on v0.20 — its drift detection misreads the `UNIFORM_SINGLE_TOKEN_DECODE` upstream marker as "patch obsolete." Filed as a side-note in [Genesis #9 reply](https://github.com/Sandermage/genesis-vllm-patches/issues/9#issuecomment-4359541875); awaiting Sandermage's call on whether to fix the marker check or keep P98 explicitly env-overridden.
-2. **Local `patch_workspace_lock_disable.py` sidecar** turns the strict assertion into a one-shot WARNING and proceeds with the grow path. ~80 lines of regex-replacement on `vllm/v1/worker/workspace.py:_ensure_workspace_size`. Idempotent via marker. Mounted + applied only on the v0.20-experimental compose.
-
-**Validation results on v0.20 + Genesis v7.64 + compile-safe sidecar + workspace-lock-disable sidecar (long-text 205K + 0.985):**
-
-| Check | Result |
+| Patch | What it does |
 |---|---|
-| Boot | ✅ Clean (all v7.64 patches apply natively) |
-| verify-full.sh | ✅ 8/8 (MTP AL 2.79) |
-| 33K-token (130K-char) tool-prefill stress | ✅ PASS |
-| **50K-token (200K-char) tool-prefill stress** | ✅ **PASS** — the cliff that fires on EVERY dev205 config (long-text trips at line 903 `torch.cat`; long-vision trips at line 909 → 394 → flash_attn_varlen_func) does NOT reproduce on v0.20. Different memory profile, likely [vllm#40092](https://github.com/vllm-project/vllm/pull/40092)'s TQ FA3/FA4 prefill paths changing the workspace allocator behavior. |
+| **PN12** | FFN intermediate scratch pool (Cliff 1 mech B fix on TQ3) — replaces our local `patch_pn12_ffn_pool_anchor.py` |
+| **PN17** | FA2 softmax_lse runtime clamp — frees 50-100 MiB on long-ctx, replaces our local `patch_fa_max_seqlen_clamp.py` |
+| **PN26b** | First public sparse-V Triton kernel for SM86 (Ampere consumer) — 27B-tuned BLOCK_KV=8 num_warps=4 threshold=0.01 |
+| **P38B** | In-source hook for `_continuation_prefill` (Genesis #14 fix) — replaces our local `patch_pn12_compile_safe_custom_op.py` |
+| **P15B** | FA varlen `max_seqlen_k` clamp at TQ wrapper boundary (Genesis #15 fix) |
 
-**Implication:** v0.20 may implicitly resolve [Genesis #14](https://github.com/Sandermage/genesis-vllm-patches/issues/14) (P38 silent no-op) and [Genesis #15](https://github.com/Sandermage/genesis-vllm-patches/issues/15) (FA varlen workspace) for our configs — those fail-sites don't fire when the underlying memory geometry changes. Need cross-validation across long-vision, bounded-thinking, and dual-card before pin-bumping master.
+### Validation across all 5 main variants (2026-05-01 PM)
 
-**Master shipped configs stay on dev205** until v0.20 is cross-validated across all variants. v0.20-experimental branch holds the working test compose.
+| Variant | Ctx | mem-util | Boot | verify-full | 33K stress | 50K stress | Code TPS (n=5) |
+|---|---|---|---|---|---|---|---|
+| `long-text.yml` | 214K | 0.985 | ✅ | ✅ 8/8 | ✅ | ✅ | 67.39 (CV 2.7%) |
+| `long-vision.yml` | 198K | 0.98 | ✅ | ✅ 8/8 | ✅ | ✅ | 66.12 (CV 4.1%) |
+| `bounded-thinking.yml` | 214K | 0.985 | ✅ | ✅ 8/8 | ✅ | ✅ | 65.80 (CV 2.3%) |
+| `tools-text.yml` | 75K | 0.97 | ✅ | ✅ 8/8 | ✅ | ✅ | 69.66 (CV 1.4%) |
+| `dual-turbo.yml` | 262K | 0.85 | ✅ | ✅ 8/8 | ✅ | ✅ | 76.01 (CV 4.5%, 269 TPS aggregate at n=4 streams) |
 
-**Other v0.20 migration items checked** (none currently blocking but listed for awareness): PyTorch 2.11 + CUDA 13.0.2 default ([#34644](https://github.com/vllm-project/vllm/pull/34644), [#40669](https://github.com/vllm-project/vllm/pull/40669)) — host driver R555+ required, our 3090 host is on 595.58.03 + CUDA 13.2 (ample). Transformers v5 baseline ([#30566](https://github.com/vllm-project/vllm/pull/30566)). CUDAGraph memory profiling ON by default ([#38284](https://github.com/vllm-project/vllm/pull/38284)) — can change KV-pool sizing slightly vs dev205.
+### Context restored on v0.20
+
+- `long-vision.yml`: 140K → **198K** (+41%)
+- `long-text.yml`: 185K → **214K** (+16%)
+- `bounded-thinking.yml`: 185K → **214K** (+16%)
+
+### v0.20 baseline checklist (verified)
+
+- PyTorch 2.11 + CUDA 13.0.2 default ([#34644](https://github.com/vllm-project/vllm/pull/34644), [#40669](https://github.com/vllm-project/vllm/pull/40669)) — host on 595.58.03 + CUDA 13.2, fine
+- Transformers v5 baseline ([#30566](https://github.com/vllm-project/vllm/pull/30566)) — fine
+- CUDAGraph memory profiling default-ON ([#38284](https://github.com/vllm-project/vllm/pull/38284)) — disabled via `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0` to recover ~120 MiB KV pool
 
 ---
 

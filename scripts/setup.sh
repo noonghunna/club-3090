@@ -93,19 +93,23 @@ echo "Model dir:    ${MODEL_DIR}"
 # vllm/_genesis package + per-patch env opts). Newer composes mount the package;
 # the legacy compose still references the v7.13 shim.
 # Pin Genesis to the exact commit our published numbers were measured against.
-# Currently pointing at v7.64 release (commit 64dd18b, 2026-04-30 PM). Bumped
-# from v7.62.x (917519b) for PN17 (FA2 softmax_lse runtime clamp — Sandermage's
-# anchored version of our P104 sidecar, closes Cliff 1 mech A) and PN12 native
-# (FFN intermediate scratch pool — closes Cliff 1 mech B in the eager forward
-# path; the inductor-compiled forward_native path is still patched separately
-# by our patch_pn12_compile_safe_custom_op.py sidecar in long-text composes).
-# Drift detection: if the v7.64 anchors don't match your vLLM image, Genesis
-# logs `[Genesis] DRIFT skipped: <patch>` and continues — see CLIFFS.md "Cliff
-# 8 (anchor drift on vLLM pin bumps)" for the failure mode and recovery.
+# Currently pointing at v7.65 dev tip (commit d89a089, 2026-05-01 PM). Bumped
+# from v7.64 (64dd18b) for the v7.65 patch set:
+#   - P38B / P15B — close the Cliff 1 mech B cascade (issues #14 + #15) via
+#     compile-safe in-source hook + FA varlen workspace clamp.
+#   - PN25 — Inductor-safe silu_and_mul opaque op (replaces our local
+#     patch_pn12_compile_safe_custom_op.py — now removed).
+#   - PN26b — Genesis-original sparse-V Triton kernel for SM86 (Ampere
+#     consumer). First sparse-V kernel in any public tree for SM86. Default
+#     ON in v0.20+ composes (BLOCK_KV=8 num_warps=4 threshold=0.01 per
+#     Sandermage's 27B-specific tuning).
+#   - PN28 — merge_attn_states NaN guard backport (vllm#39148).
+#   - Cliff 8 hardening (partial_apply_warnings counter in boot summary).
+# Pinned to dev SHA d89a089 because v7.65 is feature-complete on dev but not
+# yet tagged; SHA pin is immutable.
 # Bumping GENESIS_PIN requires re-running verify-full.sh against your composes
-# to confirm the new commit works on your config — Genesis releases sometimes
-# alter spec-verify routing in ways that affect tool-call extraction.
-GENESIS_PIN="${GENESIS_PIN:-64dd18b}"
+# to confirm the new commit works on your config.
+GENESIS_PIN="${GENESIS_PIN:-d89a089}"
 
 if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   if [[ -d "${GENESIS_DIR}/.git" ]]; then

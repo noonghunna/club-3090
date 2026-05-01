@@ -9,15 +9,16 @@ This is what the repo's [Quick start](../../README.md#quick-start) ships. Everyt
 - ✅ Validated, production-grade
 - ✅ Full feature set: vision, tools, streaming, thinking, MTP n=3, TurboQuant 3-bit KV
 - ✅ Full OpenAI API parity
-- 51-55 narr / 67-70 code TPS on a single 3090
-- 48K default ctx · 140K with vision · 185K text-only (backed off from earlier 198K/218K — see [docs/CLIFFS.md](../CLIFFS.md) "vLLM pin compatibility status" for why; Cliff 2 still applies single-prompt >50–60K)
+- 50-53 narr / 66-70 code TPS on a single 3090; 58 narr / 76 code on dual-card (TP=2)
+- 48K default ctx · 75K IDE-agent · **198K with vision · 214K text-only** · 262K dual-card (since 2026-05-01 v0.20 + Genesis v7.65 dev tip migration). Cliff 2 still applies single-prompt >50–60K — see [docs/CLIFFS.md](../CLIFFS.md).
 
 ---
 
 ## What's in the box
 
-- vLLM nightly (pinned to `vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08` = `dev205+g07351e088`, Sandermage's reference target)
-- Sandermage's [Genesis v7.14 patches](https://github.com/Sandermage/genesis-vllm-patches) (mounted into vLLM's site-packages at boot)
+- vLLM nightly (pinned to `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` = `0.20.1rc1.dev16+g7a1eb8ac2`)
+- Sandermage's [Genesis v7.65 dev tip patches](https://github.com/Sandermage/genesis-vllm-patches) (commit `d89a089`, mounted into vLLM's site-packages at boot)
+- `patch_workspace_lock_disable.py` sidecar — relaxes vllm#39226 strict assertion to one-shot WARNING (covers rare TQ decode paths where `profile_run` doesn't lock workspace at the right size)
 - Our [`patch_tolist_cudagraph.py`](../../patches/patch_tolist_cudagraph.py) (CUDA graph capture fix for TurboQuant continuation prefill)
 - 5 compose variants with different KV/ctx/feature trade-offs (see [README Status](../../README.md#status-at-a-glance))
 
@@ -49,7 +50,7 @@ bash scripts/bench.sh               # 3 warmups + 5 measured (narr + code)
 | Pro | Detail |
 |---|---|
 | **Deepest Qwen3-Next feature support** | Vision tower, MTP head, all attention variants supported upstream. |
-| **TurboQuant 3-bit KV** | Lets us reach 140K + vision or 185K text-only on 24 GB at the current safety-first config. No equivalent in llama.cpp; SGLang has it but blocked by other bugs. |
+| **TurboQuant 3-bit KV** | Lets us reach 198K + vision or 214K text-only on 24 GB single-card (262K on dual-card). No equivalent in llama.cpp; SGLang has it but blocked by other bugs. |
 | **MTP speculative decoding** | Works out of the box on the Lorbus quant; mainline llama.cpp doesn't expose MTP. |
 | **Active development** | Bugs we hit get triaged within days. We've contributed back. |
 | **Full OpenAI API parity** | Tools, streaming, vision-in-message, reasoning-mode, structured output — everything works. |
@@ -60,7 +61,7 @@ bash scripts/bench.sh               # 3 warmups + 5 measured (narr + code)
 |---|---|
 | **Heavyweight** | Docker image is ~9 GB. NVIDIA-only. |
 | **Longer cold start** | ~2 min for compile + cudagraph capture. |
-| **Sensitive to upstream API drift** | We pin to dev205 to avoid this. Bumping pinned image needs re-validation. |
+| **Sensitive to upstream API drift** | We pin to a specific nightly SHA (`7a1eb8ac` = `0.20.1rc1.dev16`) to avoid this. Bumping the pin needs re-validation across all five main variants. |
 | **Frontier features can ship with bugs** | TurboQuant × spec-decode × cudagraph corruption (the whole reason this repo's patches exist). |
 
 ---
@@ -80,7 +81,7 @@ Control context vs activation headroom. See the [Activation-memory caveat](../..
 | `turboquant_4bit_nc` | ~23 KB | ~84K | Untested by us — should work |
 | `turboquant_3bit_nc` ⭐ | ~17 KB | ~125K | Default v7.14 variant |
 
-Lower bytes/token = more context, but more dequant scratch + activation pressure. The 3-bit variant is what makes the 140K + vision and 185K text-only tiers reachable on 24 GB.
+Lower bytes/token = more context, but more dequant scratch + activation pressure. The 3-bit variant is what makes the 198K + vision and 214K text-only tiers reachable on a single 24 GB card.
 
 ### Spec-decode (`--speculative-config`)
 

@@ -1,0 +1,20 @@
+variant: long-text
+context: 214000
+gpu_mem_util: 0.985
+kv_dtype: turboquant_3bit_nc
+tp: 1
+narr_wall_tps: 49.74
+narr_wall_cv: 2.6
+narr_decode_tps: 50.12
+code_wall_tps: 67.39
+code_wall_cv: 2.7
+code_decode_tps: 68.33
+ttft_narr_ms: 154
+ttft_code_ms: 155
+mtp_al: 3.34-3.51
+mtp_avg_accept: 0.78-0.836
+mtp_per_pos: 0.887-0.953 / 0.799-0.865 / 0.649-0.689
+vram_gpu0_mib: 23404
+kv_pool_tokens: 284832
+max_concurrency: 1.03
+boot_seconds: 200

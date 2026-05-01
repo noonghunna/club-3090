@@ -5,7 +5,7 @@ Outputs (in docs/img/):
   performance-single.svg + .png — 6 single-card configs, used by docs/SINGLE_CARD.md
   performance-dual.svg + .png   — 4 dual-card configs, used by docs/DUAL_CARD.md
 
-Source data: /opt/ai/BENCHMARKS.md rows R2/R3'/R3'''/R6, L1, ngram-mod, C1-C4.
+Source data: results/v0.20-migration/*.summary (post-migration n=5 benches).
 
 Re-run:  python3 tools/charts/gen-perf.py
 """
@@ -19,22 +19,27 @@ from pathlib import Path
 OUT = Path(__file__).resolve().parents[2] / "docs" / "img"
 
 # (label, narr_tps, code_tps, group)
-# Single-card vLLM TPS from R3' / R3''' bench rows; long-vision/long-text
-# now ship at 198K / 218K respectively (verified 2026-04-30 PM); historical
-# bench numbers carry forward since steady-state TPS is the same regime.
+# Single-card + dual-turbo numbers re-benched 2026-05-01 PM on the v0.20
+# (0.20.1rc1.dev16+g7a1eb8ac2) + Genesis v7.65 dev tip (commit d89a089)
+# substrate, n=5 measured runs after 3 warmups. Dual.yml / dual-dflash*
+# pending re-bench; their dev205-era numbers carry forward as estimates
+# (steady-state TPS is the same regime — fp8 paths weren't TPS-changed
+# by the v0.20 migration).
 # Luce DFlash measured 2026-04-30 PM on Qwen3.6-27B Q4_K_M + matched 3.6
 # draft (TQ3 KV, max_ctx=65K, greedy only). Group "single-luce-watch" =
 # experimental / not recommended for shipping yet; see docs/UPSTREAM.md.
 configs_all = [
     ("v714 48K\n(default)",       55.00, 70.50, "single-vllm"),
-    ("long-vision 198K\n+ vision",       50.93, 67.69, "single-vllm"),
-    ("long-text 218K\ntext-only",      50.11, 65.84, "single-vllm"),
+    ("long-vision 198K\n+ vision",       50.32, 66.12, "single-vllm"),
+    ("long-text 214K\ntext-only",      49.74, 67.39, "single-vllm"),
+    ("tools-text 75K\nfp8 IDE-agent",  53.32, 69.66, "single-vllm"),
+    ("bounded-thinking 214K\nstructured-CoT",  49.77, 65.80, "single-vllm"),
     ("minimal\n(no spec-dec)",    32.41, 32.56, "single-vllm"),
     ("llama.cpp Q3_K_XL\n262K + vision", 21.22, 20.79, "single-llama"),
     ("llama.cpp Q4_K_M\n+ ngram-mod 32K",22.04, 26.11, "single-llama"),
     ("Luce DFlash 3.6+3.6*\nTQ3, 65K, greedy", 40.00, 71.65, "single-luce-watch"),
     ("dual.yml\n262K + vision",   69.05, 88.58, "dual-vllm"),
-    ("dual-turbo\n4 streams 262K",53.65, 72.93, "dual-vllm"),
+    ("dual-turbo\n4 streams 262K",58.33, 76.01, "dual-vllm"),
     ("dual-dflash\n185K + vision",81.94, 124.93, "dual-vllm"),
     ("dual-dflash-noviz\n200K",   78.19, 126.99, "dual-vllm"),
 ]
@@ -109,7 +114,7 @@ def make_chart(configs, out_stem, title_subject, figsize):
     ax.legend(handles=legend_elements, loc="upper center", bbox_to_anchor=(0.5, -0.10),
               ncol=2, fontsize=9, frameon=False)
 
-    substrate_parts = ["vLLM nightly dev205+g07351e088 + Genesis 917519b (v7.62.x)"]
+    substrate_parts = ["vLLM 0.20.1rc1.dev16+g7a1eb8ac2 + Genesis v7.65 dev (d89a089)"]
     if any(g == "single-llama" for g in groups):
         substrate_parts.append("llama.cpp mainline 0d0764dfd")
     if any(g == "single-luce-watch" for g in groups):

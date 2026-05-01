@@ -1,0 +1,45 @@
+
+========== NARRATIVE (prompt=65 chars, max_tokens=1000) ==========
+=== warmups (3) ===
+  warm-1     wall= 24.02s  ttft=  5437ms  toks=1000  wall_TPS= 41.63  decode_TPS= 53.81
+  warm-2     wall= 18.45s  ttft=   157ms  toks=1000  wall_TPS= 54.20  decode_TPS= 54.67
+  warm-3     wall= 19.45s  ttft=   156ms  toks= 998  wall_TPS= 51.32  decode_TPS= 51.74
+
+=== measured (5) ===
+  run-1      wall= 19.98s  ttft=   159ms  toks=1000  wall_TPS= 50.04  decode_TPS= 50.44
+  run-2      wall= 19.77s  ttft=   154ms  toks=1000  wall_TPS= 50.58  decode_TPS= 50.97
+  run-3      wall= 19.77s  ttft=   160ms  toks=1000  wall_TPS= 50.57  decode_TPS= 50.98
+  run-4      wall= 19.31s  ttft=   159ms  toks=1000  wall_TPS= 51.79  decode_TPS= 52.22
+  run-5      wall= 20.57s  ttft=   165ms  toks=1000  wall_TPS= 48.61  decode_TPS= 49.00
+
+=== summary [narrative] (n=5) ===
+  wall_TPS       mean=  50.32   std=  1.15   CV= 2.3%   min=48.61   max=51.79
+  decode_TPS     mean=  50.72   std=  1.16   CV= 2.3%   min=49.00   max=52.22
+  TTFT          mean=   159ms  std=    4ms  min=154ms  max=165ms
+
+========== CODE (prompt=78 chars, max_tokens=800) ==========
+=== warmups (3) ===
+  warm-1     wall= 12.03s  ttft=   160ms  toks= 800  wall_TPS= 66.49  decode_TPS= 67.39
+  warm-2     wall=  9.56s  ttft=   156ms  toks= 639  wall_TPS= 66.83  decode_TPS= 67.93
+  warm-3     wall= 12.04s  ttft=   162ms  toks= 800  wall_TPS= 66.46  decode_TPS= 67.36
+
+=== measured (5) ===
+  run-1      wall= 10.34s  ttft=   163ms  toks= 699  wall_TPS= 67.60  decode_TPS= 68.68
+  run-2      wall= 11.98s  ttft=   156ms  toks= 800  wall_TPS= 66.75  decode_TPS= 67.63
+  run-3      wall=  7.47s  ttft=   157ms  toks= 458  wall_TPS= 61.31  decode_TPS= 62.62
+  run-4      wall= 11.77s  ttft=   156ms  toks= 800  wall_TPS= 67.98  decode_TPS= 68.89
+  run-5      wall= 10.70s  ttft=   159ms  toks= 717  wall_TPS= 66.98  decode_TPS= 67.99
+
+=== summary [code] (n=5) ===
+  wall_TPS       mean=  66.12   std=  2.74   CV= 4.1%   min=61.31   max=67.98
+  decode_TPS     mean=  67.16   std=  2.59   CV= 3.9%   min=62.62   max=68.89
+  TTFT          mean=   158ms  std=    3ms  min=156ms  max=163ms
+
+=== GPU state ===
+0, 98 %, 22326 MiB, 24576 MiB, 229.16 W, 62
+1, 0 %, 4 MiB, 24576 MiB, 21.48 W, 42
+
+=== Last 3 SpecDecoding metrics ===
+(APIServer pid=1) INFO 05-01 16:27:27 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.45, Accepted throughput: 46.59 tokens/s, Drafted throughput: 56.99 tokens/s, Accepted: 466 tokens, Drafted: 570 tokens, Per-position acceptance rate: 0.942, 0.816, 0.695, Avg Draft acceptance rate: 81.8%
+(APIServer pid=1) INFO 05-01 16:27:37 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.40, Accepted throughput: 45.80 tokens/s, Drafted throughput: 57.30 tokens/s, Accepted: 458 tokens, Drafted: 573 tokens, Per-position acceptance rate: 0.921, 0.822, 0.654, Avg Draft acceptance rate: 79.9%
+(APIServer pid=1) INFO 05-01 16:27:47 [metrics.py:101] SpecDecoding metrics: Mean acceptance length: 3.56, Accepted throughput: 48.60 tokens/s, Drafted throughput: 57.00 tokens/s, Accepted: 486 tokens, Drafted: 570 tokens, Per-position acceptance rate: 0.937, 0.874, 0.747, Avg Draft acceptance rate: 85.3%

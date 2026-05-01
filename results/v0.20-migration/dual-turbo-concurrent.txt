@@ -1,0 +1,21 @@
+warmup...
+
+=== 1 concurrent streams, 1 run(s) each ===
+  total_toks=375  total_wall=4.89s  aggregate_TPS=76.64
+  per-stream  mean=76.66  CV=0.0%
+
+=== 1 concurrent streams, 2 run(s) each ===
+  total_toks=1491  total_wall=20.14s  aggregate_TPS=74.03
+  per-stream  mean=73.99  CV=3.7%
+
+=== 2 concurrent streams, 2 run(s) each ===
+  total_toks=3170  total_wall=24.62s  aggregate_TPS=128.74
+  per-stream  mean=65.57  CV=14.1%
+
+=== 3 concurrent streams, 2 run(s) each ===
+  total_toks=3686  total_wall=29.13s  aggregate_TPS=126.52
+  per-stream  mean=55.41  CV=31.9%
+
+=== 4 concurrent streams, 2 run(s) each ===
+  total_toks=5734  total_wall=21.31s  aggregate_TPS=269.03
+  per-stream  mean=74.05  CV=3.1%

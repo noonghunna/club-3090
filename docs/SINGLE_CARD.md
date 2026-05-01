@@ -10,9 +10,9 @@ Four recommended options:
 
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
 |---|---|---|---|---|
-| **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **140K** | ~50 / ~67 | ~22.4 GB (mem-util 0.95) |
-| **Long ctx, text-only** (RAG, codebase, books) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **185K** | ~50 / ~66 | ~22.9 GB (mem-util 0.975) |
-| **Bounded thinking** (coding agents, structured-CoT, cost-bounded thinking) — see [STRUCTURED_COT.md](STRUCTURED_COT.md) | [`bounded-thinking.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) | **185K** | ~52 / ~56 | ~22.9 GB (mem-util 0.975) |
+| **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **198K** | 50 / 66 | ~22.3 GB (mem-util 0.98) |
+| **Long ctx, text-only** (RAG, codebase, books) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **214K** | 50 / 67 | ~23.4 GB (mem-util 0.985) |
+| **Bounded thinking** (coding agents, structured-CoT, cost-bounded thinking) — see [STRUCTURED_COT.md](STRUCTURED_COT.md) | [`bounded-thinking.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) | **214K** | 50 / 66 | ~21.7 GB (mem-util 0.985) |
 | **Bulletproof, no cliffs** (production service, unpredictable inputs) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | **262K** | 21 / 21 | ~20 GB |
 
 Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
@@ -21,11 +21,11 @@ Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <varia
 >
 > **vLLM single-card variants will crash if you send a single prompt above ~50K tokens.**
 >
-> This is Cliff 2 — DeltaNet GDN forward OOMs at 50–60K single-shot regardless of how much VRAM you have left. Both `long-vision.yml` (140K) and `long-text.yml` (185K) are designed for **steady-state accumulation across many turns** — context that builds up across tool calls, replies, retrieved chunks. They are NOT designed for "paste an 80K-token document and ask one question."
+> This is Cliff 2 — DeltaNet GDN forward OOMs at 50–60K single-shot regardless of how much VRAM you have left. Both `long-vision.yml` (198K) and `long-text.yml` (214K) are designed for **steady-state accumulation across many turns** — context that builds up across tool calls, replies, retrieved chunks. They are NOT designed for "paste an 80K-token document and ask one question."
 >
-> **If your workload ever sends single big prompts:** use `llamacpp/default` (262K, no cliffs anywhere — different engine entirely) or move to dual-card (`dual.yml` TP=2, verified at 237K).
+> **If your workload ever sends single big prompts:** use `llamacpp/default` (262K, no cliffs anywhere — different engine entirely) or move to dual-card (`dual-turbo.yml` TP=2 at 262K with 4.67× concurrency).
 >
-> Cliff 1 mech B (FFN intermediate-buffer activation peak) was largely closed by PN12 + PN17 + P38 + our compile-safe sidecar. The downstream FA varlen workspace cliff at 50K-token tool prefills then surfaced — backing off to 130K + 0.95 (long-text) / 120K + 0.94 (long-vision) gives the necessary activation headroom. Re-push criteria in [`docs/CLIFFS.md`](CLIFFS.md).
+> **Cliff 1 mech B closed on v0.20.** Migration to vLLM `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.65 dev tip (commit `d89a089`) on 2026-05-01 closed both Cliff 1 mechanisms (line 903 `torch.cat` + FA varlen workspace) that the dev205 + v7.64 stack hit on 50K-token tool prefills. Both 33K and 50K stress now PASS. The 218K → 185K + the 198K → 140K backoffs that were forced on dev205 have been REVERSED — long-text now runs 214K + 0.985 and long-vision runs 198K + 0.98 cleanly. See [`docs/CLIFFS.md`](CLIFFS.md) "v0.20 unblock" for the full validation log.
 
 ---
 
@@ -33,7 +33,7 @@ Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <varia
 
 ![Qwen3.6-27B TPS — single 3090 configs](img/performance-single.png)
 
-Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `dev205+g07351e088` + Genesis pinned to `917519b` (v7.62.x), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
+Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.65 dev tip (commit `d89a089`), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
 
 ---
 
@@ -46,7 +46,7 @@ What this says about single-card constraints:
 - **Model weights** consume ~14 GB (AutoRound INT4 / GGUF Q3_K_XL). Half the card.
 - **KV cache** is the next biggest line; its size depends on `--kv-cache-dtype` × ctx. fp8 ≈ 1 byte/token/(layer×head); TQ3 ≈ 0.4 bytes/token/(layer×head); fp16 ≈ 2 bytes/token/(layer×head).
 - **Vision tower** (mmproj) costs ~0.5–1.0 GB extra when on.
-- **Activations + cudagraph pools** is what's left. At `--gpu-memory-utilization 0.92` (default 48K) you have 2-3 GB of activation headroom — comfortable. **2026-05-01 PM** — settled on **185K + 0.975 (long-text + bounded-thinking)** and **140K + 0.95 (long-vision)** after P37/P38 testing surfaced a downstream FA varlen workspace cliff (long-text) and a Cliff 2 GDN buffer regression on vision (the new persistent patches eat into the activation budget vision needs for 30K+ token prefills). Both ceilings pass realistic 130K-char (33K-token) tool-prefill stress. Synthetic 200K-char (50K-token) single-shot stress still cliffs — that's beyond what most agent workloads emit. Re-push criteria in [`docs/CLIFFS.md`](CLIFFS.md).
+- **Activations + cudagraph pools** is what's left. At `--gpu-memory-utilization 0.92` (default 48K) you have 2-3 GB of activation headroom — comfortable. **2026-05-01 PM (v0.20 + v7.65 migration)** — restored ceilings to **214K + 0.985 (long-text + bounded-thinking)** and **198K + 0.98 (long-vision)**. v0.20's revised TQ FA prefill paths ([vllm#40092](https://github.com/vllm-project/vllm/pull/40092)) and Genesis v7.65's PN26b sparse-V kernel + PN17 FA2 lse-clamp + P38B/P15B in-source hooks together close the Cliff 1 mech B sub-cliffs that forced the dev205 backoff. Both 33K-token AND 50K-token single-shot tool-prefill stresses now PASS. See [`docs/CLIFFS.md`](CLIFFS.md) "v0.20 unblock".
 
 For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
@@ -58,13 +58,13 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
 **Workload:** chat with images, vision-aware coding agents, multimodal RAG. Anything where the user might paste a screenshot.
 
-140K + vision tower + TQ3 KV + Genesis MTP n=3 + PN17 + P104 + P37/P38 + compile-safe sidecar at mem-util 0.95. `verify-full.sh` 8/8 (MTP AL 2.49); `verify-stress.sh` 130K-char tool-prefill OK. 200K-char tool-prefill (50K tokens) still cliffs — vision tower's persistent overhead tightens the margin.
+198K + vision tower + TQ3 KV + Genesis MTP n=3 + full v7.65 patch stack (PN12 + PN17 + PN26b + P38B + P15B) at mem-util 0.98. `verify-full.sh` 8/8; `verify-stress.sh` 33K AND 50K tool-prefill PASS on v0.20. KV pool 264,192 tokens. Code 66 / narr 50 TPS (n=5, CV 2-4%), AL 3.40-3.56, MTP avg accept 80-85%.
 
 ### Long ctx, text-only — `long-text.yml` ⭐
 
 **Workload:** RAG ingest, codebase analysis, book/document Q&A, long conversations without image input.
 
-185K + no vision + TQ3 KV + same patch stack at mem-util 0.975. `verify-full.sh` 8/8 (MTP AL 2.66); `verify-stress.sh` 130K-char tool-prefill OK. Vision drop adds ~1 GB headroom over long-vision so this variant runs at higher ctx + mem-util safely.
+214K + no vision + TQ3 KV + same patch stack at mem-util 0.985. `verify-full.sh` 8/8; `verify-stress.sh` 33K AND 50K tool-prefill PASS on v0.20. KV pool 284,832 tokens. Code 67 / narr 50 TPS (n=5, CV 2.6%), AL 3.34-3.51, MTP avg accept 78-84%. Vision drop adds ~1 GB headroom over long-vision so this variant runs at higher ctx + mem-util safely.
 
 ### Bulletproof / no cliffs — `llamacpp/default` ⭐
 
@@ -88,10 +88,10 @@ Re-tested 2026-04-30 PM against [`Luce-Org/lucebox-hub`](https://github.com/Luce
 
 Measured TPS on this rig (RTX 3090, greedy, single-stream, n_gen=1000):
 
-| Workload | Luce DFlash 3.6+3.6 (TQ3 KV, max_ctx=65K) | vLLM long-text 185K |
+| Workload | Luce DFlash 3.6+3.6 (TQ3 KV, max_ctx=65K) | vLLM long-text 214K |
 |---|---|---|
 | Narrative essay | 37–47 TPS (mean ~40) | 50 TPS |
-| Code (heap/LRU/AST) | 63–76 TPS (mean ~72) | 66 TPS |
+| Code (heap/LRU/AST) | 63–76 TPS (mean ~72) | 67 TPS |
 | AL (code) | 5.9–7.1 | 3.4–3.8 (MTP) |
 
 What works since 2026-04-22:
@@ -127,7 +127,7 @@ What still keeps it off the recommended list:
 
 ### Prefill cliffs
 
-- **Cliff 1** — FFN intermediate-buffer activation peak (138 MiB allocate at `intermediate_size × max-num-batched-tokens`). Historically fired on long-ctx composes at >0.95 mem-util when prefill batch needed the buffer. **Closed on `tools-text.yml`** (FP8 KV path) since 2026-04-29 via Genesis PN8. **Closed on TQ3 paths** (`long-vision.yml` 198K, `long-text.yml` 218K) since 2026-04-30 PM via PN12 anchor sidecar — see [`docs/CLIFFS.md`](CLIFFS.md).
+- **Cliff 1** — FFN intermediate-buffer activation peak (138 MiB allocate at `intermediate_size × max-num-batched-tokens`). Historically fired on long-ctx composes at >0.95 mem-util when prefill batch needed the buffer. **Closed on `tools-text.yml`** (FP8 KV path) since 2026-04-29 via Genesis PN8. **Closed on TQ3 paths** (`long-vision.yml` 198K, `long-text.yml` 214K) on v0.20 + Genesis v7.65 since 2026-05-01 via PN12 + PN17 + P38B in-source hooks (replaced our local sidecars) — see [`docs/CLIFFS.md`](CLIFFS.md).
 - **Cliff 2** — DeltaNet GDN forward OOM at 50-60K single-prompt regardless of mem-util. In `fla.ops` upstream, no file-replacement patch available. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA) for upstream fixes.
 
 ### VRAM peak vs idle

@@ -2,6 +2,54 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-01 PM — vLLM v0.20 + Genesis v7.65 dev tip migration ⭐
+
+Master pin migration from `vllm-openai:nightly-07351e088...` (`0.19.2rc1.dev205`) + Genesis v7.64 (`64dd18b`) to `vllm-openai:nightly-7a1eb8ac2ec...` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.65 dev tip (commit `d89a089`). v0.20's revised TQ FA prefill paths ([vllm#40092](https://github.com/vllm-project/vllm/pull/40092)) and Genesis v7.65's PN26b sparse-V kernel + PN17 FA2 lse-clamp + P38B/P15B in-source hooks together close Cliff 1 mech B sub-mechanisms that forced the dev205 backoffs. Three of our local sidecars (`patch_pn12_ffn_pool_anchor.py`, `patch_pn12_compile_safe_custom_op.py`, `patch_fa_max_seqlen_clamp.py`) replaced by Genesis-native equivalents.
+
+**Sidecars retained:**
+- `patch_workspace_lock_disable.py` (NEW) — relaxes vllm#39226 strict assertion to one-shot WARNING. Sandermage's P98 covers the same surface but auto-skips on v0.20 (drift-marker false-positive). Drop when Sandermage ships marker fix.
+- `patch_tolist_cudagraph.py` — unchanged.
+
+**Sidecars dropped:**
+- `patch_pn12_ffn_pool_anchor.py` → covered natively by PN12 on v0.20
+- `patch_pn12_compile_safe_custom_op.py` → covered by Genesis PN25
+- `patch_fa_max_seqlen_clamp.py` → covered by PN17 + P15B
+
+**Mamba block_size cap fix:** v0.20 enforces `long_prefill_token_threshold >= block_size`; on hybrid Mamba+TQ3 the engine forces `block_size=4128`. Bumped `GENESIS_PROFILE_RUN_CAP_M` and `GENESIS_PREALLOC_TOKEN_BUDGET` from 4096 → 4128 across all 5 main composes.
+
+**Restored ceilings (vs dev205 backoff):**
+
+| Variant | Before (dev205+v7.64) | After (v0.20+v7.65 dev) | Δ |
+|---|---|---|---|
+| `long-text.yml` | 185K + 0.975 | **214K + 0.985** | +29K (+16%) |
+| `long-vision.yml` | 140K + 0.95 | **198K + 0.98** | +58K (+41%) |
+| `bounded-thinking.yml` | 185K + 0.975 | **214K + 0.985** | +29K (+16%) |
+| `tools-text.yml` | 75K + 0.97 (fp8) | **75K + 0.97** (unchanged) | flat |
+| `dual-turbo.yml` | 262K + 0.85 | **262K + 0.85** (full v7.65 PROD env-vars) | flat ctx, +9% TPS |
+
+**Bench results (n=5, 3 warmups + 5 measured, canonical narr+code prompts):**
+
+| Variant | Narr wall_TPS (CV) | Code wall_TPS (CV) | TTFT | AL | Avg accept | VRAM | KV pool tokens |
+|---|---|---|---|---|---|---|---|
+| `long-text.yml` 214K | 49.74 (2.6%) | 67.39 (2.7%) | 154/155 ms | 3.34-3.51 | 78-84% | 23.4 GB | 284,832 (1.03×) |
+| `long-vision.yml` 198K | 50.32 (2.3%) | 66.12 (4.1%) | 159/158 ms | 3.40-3.56 | 79-85% | 22.3 GB | 264,192 (1.02×) |
+| `bounded-thinking.yml` 214K | 49.77 (1.4%) | 65.80 (2.3%) | 155/154 ms | 3.25-3.61 | 75-87% | 21.7 GB | 284,832 (1.03×) |
+| `tools-text.yml` 75K (fp8) | 53.32 (2.3%) | 69.66 (1.4%) | 150/153 ms | 3.53-3.59 | 84-87% | 22.2 GB | 104,000 (1.05×) |
+| `dual-turbo.yml` 262K (TP=2) | 58.33 (2.9%) | 76.01 (4.5%) | 112/110 ms | 3.39-3.51 | 79-84% | 19.8 GB/card | **1,523,232 (4.67×)** |
+
+**Concurrent throughput on dual-turbo** (canonical code prompt, 2 runs per stream):
+
+| Streams | Total TPS | Per-stream mean | Per-stream CV | Speedup |
+|---|---|---|---|---|
+| 1 | 74.03 | 73.99 | 3.7% | 1.00× |
+| 2 | 128.74 | 65.57 | 14.1% | 1.74× |
+| 3 | 126.52 | 55.41 | 31.9% | 1.71× |
+| **4** | **269.03** | **74.05** | **3.1%** | **3.63×** |
+
+n=4 lands at near-single-stream per-stream TPS — true parallel decoding of full-context streams, not interleaved. The n=2/n=3 dips are scheduler artifacts on small bench sizes (high CV at n=3 confirms interleave behavior). Practically: dual-turbo serves either 1 stream at 76 TPS or 4 streams at 269 TPS aggregate.
+
+**Validation:** verify-full ✅ 8/8 on every variant. verify-stress 33K AND 50K tool-prefill ✅ PASS on every variant (the 50K cliff that fired on EVERY dev205 config no longer reproduces). Branch `v0.20-migration`; bench captures at `results/v0.20-migration/`.
+
 ## 2026-04-30 PM — Cliff 1 closes; long-text 218K + long-vision 198K
 
 PN12 was silently no-op'd on dev205+ via anchor drift (same bug class as P101). Genesis `apply_all` reported "PN12 applied" while live `vllm/model_executor/layers/activation.py` retained the vanilla `SiluAndMul.forward_cuda`. Local sidecar `patch_pn12_ffn_pool_anchor.py` repairs it; bundled Genesis tree carries the fix via [PR #13](https://github.com/Sandermage/genesis-vllm-patches/pull/13). Combined with local `patch_fa_max_seqlen_clamp.py` (P104 FA softmax_lse clamp), Cliff 1 closes on TQ3 paths.

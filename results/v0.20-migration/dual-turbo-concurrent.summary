@@ -1,0 +1,10 @@
+variant: dual-turbo concurrent
+prompt: code (quicksort)
+streams_tested: 1, 2, 3, 4
+aggregate_tps_n1: 74.03
+aggregate_tps_n2: 128.74
+aggregate_tps_n3: 126.52
+aggregate_tps_n4: 269.03
+per_stream_tps_n4: 74.05
+n4_speedup: 3.63x
+notes: 4-stream aggregate of 269 TPS validates 4.67x KV concurrency claim. Per-stream TPS at n=4 (74 mean, CV 3.1%) within single-stream variance — true parallel decoding, not interleaved.

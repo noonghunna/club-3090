@@ -1,16 +1,26 @@
 # ===========================================================================
-# Long-text variant — 185K context, text-only (no vision).
+# Long-text variant — 214K context, text-only (no vision).
 #
-# Stack: same as default + long-vision (vLLM nightly + Genesis v7.64 with the
-# full v7.64 patch stack — PN12 anchor sidecar, compile-safe sidecar, PN17,
-# P104, P37/P38, TurboQuant 3-bit KV, MTP n=3) — with the vision tower
-# disabled to free ~1 GB of VRAM. We backed off from the original 218K +
-# 0.985 to 185K + 0.975 on 2026-05-01 PM after P37/P38 testing surfaced the
-# downstream FA varlen workspace cliff at 50K-token single-shot tool prefills
-# — see docs/CLIFFS.md "Update 2026-05-01 PM" for the full forensics. The
-# new ceiling passes verify-full + 33K-token (130K-char) tool-prefill stress
-# cleanly; 50K-token (200K-char) synthetic stress still cliffs but is well
-# beyond realistic agent workloads.
+# Stack: vLLM v0.20.1rc1.dev16 + Genesis v7.65 dev (commit d89a089) +
+# TurboQuant 3-bit KV + MTP n=3 + vision tower disabled. Migrated from
+# vLLM dev205 + Genesis v7.64 on 2026-05-01 PM after cross-validating that
+# v0.20 + v7.65 closes Cliff 1 mech B sub-mechanisms (line 903 torch.cat
+# + FA varlen workspace) for our config — empirically 50K-token tool
+# prefill stress passes on v0.20 but fires on dev205.
+#
+# v7.65 key patches active:
+#   - P38B (Genesis #14 fix): compile-safe in-source hook for
+#     _continuation_prefill — replaces our local patch_pn12_compile_safe_
+#     custom_op.py
+#   - P15B (Genesis #15 fix): FA varlen max_seqlen_k clamp at TQ wrapper
+#     boundary — replaces our local patch_fa_max_seqlen_clamp.py
+#   - PN25: Inductor-safe silu_and_mul opaque op (covers the same surface
+#     as our former patch_pn12_compile_safe_custom_op.py)
+#   - PN26b: Genesis-original sparse-V Triton kernel for SM86 (Ampere
+#     consumer) — first SM86 sparse-V kernel in any public tree. 27B
+#     tuning: BLOCK_KV=8 num_warps=4 threshold=0.01.
+#   - Cliff 8 hardening: partial_apply_warnings counter in boot summary
+#     surfaces silent anchor-drift skips
 #
 # Recommended client max_tokens: 8192 (FREE thinking on this compose; budget
 # for hard reasoning runs). 16384 for competition-grade problems. See
@@ -18,63 +28,30 @@
 #
 # When to pick this over long-vision:
 #   - You don't need image input
-#   - You want the absolute maximum context on a single 3090
-#   - You're doing very long single-shot text workloads (book-length docs,
-#     whole-codebase analysis, large RAG retrievals)
+#   - You want the maximum context on a single 3090
+#   - You're doing long-context text workloads (codebase analysis, RAG
+#     retrievals, multi-turn chat with steady-state accumulation)
 #
 # When NOT to pick this:
 #   - Anything that needs vision — use long-vision (198K + vision) instead
-#   - Tool-using agents — same prefill-OOM caveat as long-vision applies
-#     here. Use the default 48K for production agents.
+#   - Single-shot prompts ≥50–60K tokens — Cliff 2 (DeltaNet GDN) still
+#     applies on single-card. Route those to dual.yml (TP=2 splits the
+#     state across cards) or llamacpp/default (262K, different engine).
 #
-# Measured (R3''' bench row, 2026-04-27):
-#   50.11 narr / 65.84 code TPS, CV 1.5-1.9%, AL 3.44-3.57 (81-85% per-pos),
-#   VRAM 21.5/24 GB. ~5% slower code than long-vision (more KV pool to manage)
-#   and same caveats — within 2% of long-vision narr.
+# Local sidecar (single one remaining on this compose):
+#   - patch_workspace_lock_disable.py — relaxes vllm#39226 strict
+#     WorkspaceManager.lock() assertion to a one-shot WARNING. P98 in v7.65
+#     covers this functionally but its drift marker auto-skips on v0.20
+#     (`UNIFORM_SINGLE_TOKEN_DECODE` false-positive). Drop when Sandermage
+#     ships the marker fix.
 #
-# Cliff caveat (must read):
-#   - Cliff 1 (tool-prefill OOM at 25K+ tool messages) is MOSTLY closed on
-#     this variant as of 2026-04-30 PM via two local sidecars + 0.985
-#     mem-util. Verify-stress 25K synthetic passes. **However, real
-#     coding-agent workloads (OpenCode, Cline) with mixed sys-prompt +
-#     tool-schema + user-message prefill shapes can still hit Cliff 1
-#     mech B at ~138 MiB FFN intermediate** — PN12 patches the eager-mode
-#     `SiluAndMul.forward_cuda` but vLLM's torch.compile inductor-compiled
-#     FFN forward inlines the op and bypasses our pool. See issue #16.
-#     If you hit this:
-#       1. Switch to `tools-text.yml` (75K, fp8 KV, PN8 closes the same
-#          cliff via a different mechanism that reaches the compile path)
-#       2. Add `--enforce-eager` to the command list below — forces all
-#          forwards through eager Python where PN12 reliably applies.
-#          ~20-30% TPS hit; preserves 218K context.
-#       3. Lower `--gpu-memory-utilization` to 0.94 — frees ~250 MiB
-#          activation headroom; reduces effective context to ~150K.
-#       * patch_pn12_ffn_pool_anchor.py — repairs PN12's anchor on dev205+
-#         (silent no-op upstream; see Sandermage/genesis-vllm-patches PR #13).
-#         Idempotent: skips if Genesis-side PN12 is already applied.
-#       * patch_fa_max_seqlen_clamp.py  — local P104 FA softmax_lse clamp.
-#       * --gpu-memory-utilization 0.985 (up from 0.98) — gives ~120 MiB
-#         more to vLLM, mostly KV pool. With anchor-fixed PN12 reducing FFN
-#         allocator churn, the activation budget at 218K + 0.985 stays large
-#         enough for 25K-token synthetic tool prefills.
-#     Verified by verify-full + verify-stress on RTX 3090 (MTP AL 2.66,
-#     VRAM 23.7/24 GB). See docs/CLIFFS.md for the full diagnostic and
-#     issue #16 for the real-workload gap.
-#     Note: 0.99 mem-util is too aggressive on this hardware (driver/system
-#     reserves ~440 MiB; vLLM startup check fails). 0.985 is the practical max.
-#   - Cliff 2 (single-prompt >50–60K) STILL APPLIES — DeltaNet GDN forward
-#     OOM kernel is unrelated to FFN/FA. The 218K context is for STEADY-
-#     STATE accumulation across many turns, NOT for stuffing 218K of fresh
-#     tokens in one request. For big single-shot prompts: dual.yml TP=2
-#     (verified at 237K) or llamacpp/default (262K, different engine).
-#
-# Variants in this dir for reference:
-#
+# Variants in this dir:
 #   File                                  Ctx     KV       Vision   Notes
 #   docker-compose.yml (default)          48K     TQ3      ✅       Production-safe; below both cliffs
-#   docker-compose.long-vision.yml        198K    TQ3      ✅       Long ctx + vision; Cliff 1 closed via PN12 sidecar
-#   docker-compose.long-text.yml (this)   218K    TQ3      ❌       Engine-ceiling text-only at 0.985 mem-util; same Cliff 2 caveat
-#   docker-compose.tools-text.yml         75K     fp8      ❌       IDE agents — fp8 KV + PN8 closes Cliff 1
+#   docker-compose.long-vision.yml        198K    TQ3      ✅       Long ctx + vision (cliffs closed by v0.20 + v7.65)
+#   docker-compose.long-text.yml (this)   214K    TQ3      ❌       Engine-ceiling text-only on v0.20 + 0.985 mem-util
+#   docker-compose.bounded-thinking.yml   214K    TQ3      ❌       Long-text + structured-CoT grammar in <think>
+#   docker-compose.tools-text.yml         75K     fp8      ❌       IDE agents — fp8 KV alternative
 #
 # Run with:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
@@ -82,18 +59,29 @@
 # ===========================================================================
 services:
   vllm-qwen36-27b-long-text:
-    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
     container_name: vllm-qwen36-27b-long-text
     restart: "no"
     ports:
       - "${PORT:-8020}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec
+      # for Dynamo trace + Inductor compile + Triton JIT); subsequent boots
+      # reuse cached graphs and skip recompile. Pattern from Sandermage's PROD
+      # launch (start_27b_int4_TQ_k8v4.sh:31-32). Closes club-3090 #22.
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
-      - ../patches/patch_pn12_ffn_pool_anchor.py:/patches/patch_pn12_ffn_pool_anchor.py:ro
-      - ../patches/patch_pn12_compile_safe_custom_op.py:/patches/patch_pn12_compile_safe_custom_op.py:ro
-      - ../patches/patch_fa_max_seqlen_clamp.py:/patches/patch_fa_max_seqlen_clamp.py:ro
+      # workspace_lock_disable — relaxes vllm#39226 strict assertion for the TQ
+      # decode path on v0.20. Drop when Sandermage ships the P98 marker fix
+      # that auto-enables on v0.20 without our help. See docs/CLIFFS.md.
+      - ../patches/patch_workspace_lock_disable.py:/patches/patch_workspace_lock_disable.py:ro
+      # NOTE: patch_pn12_ffn_pool_anchor.py + patch_pn12_compile_safe_custom_op.py
+      # + patch_fa_max_seqlen_clamp.py all DROPPED — Genesis v7.65 covers their
+      # surface natively (PN12 native + PN25 + PN17 + P15B). See migration
+      # commit history if you need to resurrect.
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0
@@ -101,7 +89,9 @@ services:
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
-      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
+      # v0.20 made cudagraph memory profiling default-ON (vllm#38284), eats
+      # ~0.0055 mem-util ≈ 120 MiB KV pool. Disabling restores ~4K of ctx.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - VLLM_NO_USAGE_STATS=1
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
       - VLLM_FLOAT32_MATMUL_PRECISION=high
@@ -110,55 +100,74 @@ services:
       - CUDA_DEVICE_MAX_CONNECTIONS=8
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
       - VLLM_MARLIN_USE_ATOMIC_ADD=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      # FULL Genesis v7.65 PROD env-var set per Sandermage's
+      # bare_metal_27b_int4_TQ_k8v4.sh. Validated 2026-05-01 PM dual-3090:
+      # +50% TPS over the prior subset (code 77 → 116 wall_TPS).
+      - GENESIS_ENABLE_P4=1
+      - GENESIS_ENABLE_P58_ASYNC_PLACEHOLDER_FIX=1
+      - GENESIS_ENABLE_P60_GDN_NGRAM_FIX=1
+      - GENESIS_ENABLE_P60B_TRITON_KERNEL=1
+      - GENESIS_ENABLE_P61_QWEN3_MULTI_TOOL=1
+      - GENESIS_ENABLE_P61B_STREAMING_OVERLAP=1
+      - GENESIS_ENABLE_P62_STRUCT_OUT_SPEC_TIMING=1
+      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
       - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
-      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
-      # 2026-04-30 PM — Cliff 1 closure stack. PN12 + P104 sidecars apply
-      # the file patches; these env vars enable the runtime gates.
-      # P101 anchor-fixed (pending Sandermage/genesis-vllm-patches PR #12);
-      # PN12 anchor-fixed via local sidecar (pending PR #13);
-      # P103 chunks FLA forward; PN13 backports vllm#41235 cudagraph fix.
+      - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1
+      # P68/P69 — v7.65 raised default threshold 8000 → 50000 chars (~12.5K
+      # tokens). Now safe with typical IDE-agent system+tool prompts; below
+      # the threshold both gates are no-op. Override via the env var if needed.
+      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      - GENESIS_P68_P69_LONG_CTX_THRESHOLD_CHARS=50000
+      - GENESIS_ENABLE_P72_PROFILE_RUN_CAP=1
+      - GENESIS_PROFILE_RUN_CAP_M=4128
+      - GENESIS_ENABLE_P74_CHUNK_CLAMP=1
+      - GENESIS_ENABLE_P83=1
+      - GENESIS_ENABLE_P85=1
+      - GENESIS_ENABLE_P87=1
+      - GENESIS_ENABLE_P91=1
+      - GENESIS_ENABLE_P94=1
+      - GENESIS_ENABLE_P98=1
+      - GENESIS_ENABLE_P99=1
+      - GENESIS_ENABLE_P100=1
       - GENESIS_ENABLE_P101=1
       - GENESIS_ENABLE_P103=1
+      - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1
+      - GENESIS_ENABLE_PN9_INDEPENDENT_DRAFTER_ATTN=1
+      - GENESIS_ENABLE_PN11_GDN_AB_CONTIGUOUS=1
       - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
       - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
-      # FA_MAX_SEQLEN_CLAMP (our P104 sidecar) — RE-ENABLED 2026-05-01 after
-      # P37/P38 test showed PN17 alone doesn't cover the TQ wrapper layer.
-      # PN17 patches flash_attn.py; our P104 patches turboquant_attn.py
-      # _flash_attn_varlen (line 394). At 200K chars / ~50K tokens stress on
-      # long-text 205K, OOM moved from line 903 (P38 closes torch.cat peak)
-      # to line 909 → 394 → flash_attn_varlen_func. Stacking PN17 + P104
-      # closes both inner-FA and TQ-wrapper paths.
-      - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
-      # v7.64 (2026-04-30 PM) opt-ins. PN17 = Sandermage's anchored version of
-      # our P104 sidecar (FA2 softmax_lse runtime clamp; targets flash_attn.py
-      # rather than turboquant_attn.py — keep our P104 sidecar for the TQ wrapper
-      # layer until we've verified PN17 covers that path on dev205). PN19 sets
-      # max_split_size_mb=20 during model load; estimated win 200-500 MiB on
-      # H100 per vllm#41268, unverified on Ampere — measure delta vs without.
+      - GENESIS_ENABLE_PN14_TQ_DECODE_OOB_CLAMP=1
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
-      # P37 = MoE intermediate cache pool (no-op on dense Qwen3.6-27B but per
-      # Sandermage's club-3090#16 reply also activates the buffer-manager mode
-      # P38 depends on for TQ _continuation_prefill persistent workspace — the
-      # actual fix for ampersandru's mech B at turboquant_attn.py:903). P22
-      # (TQ shared dequant prealloc) and P38 (TQ continuation persistent
-      # workspace) auto-apply on platform-eligible boots; P37 ON is the
-      # documented PROD pattern from Sandermage. Testing 2026-05-01.
-      - GENESIS_ENABLE_P37=1
-      # PN19 disabled — costs ~120 MiB KV pool on Ampere (3.52 GiB needed at
-      # 218K vs 3.4 GiB available with PN19 on); engine init fails with
-      # "estimated maximum model length is 206400". Re-test if we drop ctx
-      # to <=200K or measure actual memory delta on this hardware.
-      # - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
-      # P68/P69 disabled 2026-04-29 — see tools-text.yml header for full
-      # reasoning. Short version: 8000-char threshold breaks IDE-agent
-      # flows with silent finish_reason=stop. Bisected on club-3090#2.
-      # - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
-      # - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
-      # PN8 (v7.62.x) intentionally not enabled: at 0.98 mem-util the engine
-      # ceiling (~206K) is gated by the attention block-size divisor, not
-      # KV pool. PN8's KV gain has nowhere to go on this config. Tested
-      # 2026-04-29 — confirmed no ctx delta with PN8 enabled.
+      - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
+      - GENESIS_ENABLE_PN22_LOCAL_ARGMAX_TP=1
+      # PN26b sparse-V Triton kernel — first SM86 (Ampere consumer) sparse-V
+      # kernel in any public tree. 27B-specific tuning per Sandermage's PROD.
+      - GENESIS_ENABLE_PN26_SPARSE_V=1
+      - GENESIS_PN26_SPARSE_V_BLOCK_KV=8
+      - GENESIS_PN26_SPARSE_V_NUM_WARPS=4
+      - GENESIS_PN26_SPARSE_V_THRESHOLD=0.01
+      # v7.65 #14 + #15 fixes (compile-safe in-source hook + FA varlen clamp).
+      # Replace our local patch_pn12_compile_safe_custom_op.py + P104 sidecars.
+      - GENESIS_ENABLE_P38B_COMPILE_SAFE=1
+      - GENESIS_ENABLE_P15B_FA_VARLEN_CLAMP=1
+      - GENESIS_PREALLOC_TOKEN_BUDGET=4128
+      - GENESIS_BUFFER_MODE=shared
+      # Explicit OFFs to match Sandermage's PROD env-var set verbatim:
+      # P78 (P78_TOLIST_CAPTURE_GUARD) — superseded by our patch_tolist_cudagraph.py
+      # P81 (FP8 block-scaled M<=8) — FP8-specific, no-op on our TQ3 path
+      # P82 — biased on small-batch single-stream Lorbus INT4 + MTP K=3 (Sander PROD)
+      - GENESIS_ENABLE_P78_TOLIST_CAPTURE_GUARD=0
+      - GENESIS_ENABLE_P81_FP8_BLOCK_SCALED_M_LE_8=0
+      - GENESIS_ENABLE_P82=0
+      - GENESIS_P82_THRESHOLD_SINGLE=0.3
+      # P82 stays OFF — biased on small-batch single-stream Lorbus INT4 + MTP K=3
+      # per Sandermage's PROD memory feedback_p82_*. P78 stays OFF (deprecated).
+      # vLLM env knobs from Sandermage's launch:
+      - VLLM_SSM_CONV_STATE_LAYOUT=DS
+      - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
     shm_size: "16gb"
     ipc: host
     deploy:
@@ -184,12 +193,9 @@ services:
           exit 1
         fi
         python3 -m vllm._genesis.patches.apply_all
-        python3 /patches/patch_pn12_ffn_pool_anchor.py
-        # patch_pn12_compile_safe_custom_op.py — closes the inductor-compiled
-        # forward_native path that the file-edit sidecar above can't reach.
-        # See issue #16 + the new sidecar's docstring.
-        python3 /patches/patch_pn12_compile_safe_custom_op.py
-        python3 /patches/patch_fa_max_seqlen_clamp.py
+        # workspace_lock_disable — relaxes vllm#39226 strict assertion until
+        # Sandermage's P98 marker fix lands.
+        python3 /patches/patch_workspace_lock_disable.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
       - --
@@ -204,21 +210,18 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 200K + 0.985 — restored from intermediate 175K + 0.97 / 130K + 0.95
-      # backoffs once analysis showed the FA varlen workspace cliff at the
-      # 200K-char synthetic stress is independent of max-model-len (same
-      # 50 MiB / 50 MiB-free OOM at both configs). The activation-headroom
-      # delta from lowering mem-util didn't reach the cliff site, so trading
-      # context capacity for it was a false economy. Realistic agent
-      # workloads (130K-char / 33K-token tool prefills) pass at all tested
-      # configs from 130K + 0.95 up to 218K + 0.985 with the new patch
-      # stack (P37/P38 + PN17 + P104 + compile-safe sidecar).
+      # 214K + 0.985 — restored from intermediate 185K backoff after v0.20
+      # migration (2026-05-01 PM). Engine ceiling on v0.20 + cudagraph
+      # profiling-OFF is 214K (vs 218K on dev205); -4K is the cumulative
+      # overhead of v0.20's PyTorch 2.11 + CUDAGraph profiling default-on.
+      # 50K-token cliff that fired on dev205 doesn't reproduce on v0.20 +
+      # Genesis v7.65 — verified verify-full + 33K + 50K stress all PASS.
       # Cliff 2 (single-prompt ≥50–60K in GDN) is independent and still
       # applies — route those to TP=2 dual.yml or llama.cpp.
       - --max-model-len
-      - "185000"
+      - "214000"
       - --gpu-memory-utilization
-      - "0.975"
+      - "0.985"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

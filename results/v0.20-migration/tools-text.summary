@@ -1,0 +1,21 @@
+variant: tools-text
+context: 75000
+gpu_mem_util: 0.97
+kv_dtype: fp8_e5m2
+tp: 1
+narr_wall_tps: 53.32
+narr_wall_cv: 2.3
+narr_decode_tps: 53.76
+code_wall_tps: 69.66
+code_wall_cv: 1.4
+code_decode_tps: 70.79
+ttft_narr_ms: 150
+ttft_code_ms: 153
+mtp_al: 3.53-3.59
+mtp_avg_accept: 0.844-0.865
+mtp_per_pos: 0.954-0.970 / 0.847-0.883 / 0.706-0.746
+vram_gpu0_mib: 22220
+kv_pool_tokens: 104000
+max_concurrency: 1.05
+boot_seconds: 200
+notes: fp8 KV — IDE-agent variant; faster per-stream than TQ3 long variants (~+8% code, +6% narr) but smaller ctx

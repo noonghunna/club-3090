@@ -1,0 +1,20 @@
+variant: default 48K
+context: 48000
+gpu_mem_util: 0.92
+kv_dtype: turboquant_3bit_nc
+tp: 1
+narr_wall_tps: 48.82
+narr_wall_cv: 0.6
+narr_decode_tps: 49.20
+code_wall_tps: 65.98
+code_wall_cv: 3.4
+code_decode_tps: 66.89
+ttft_narr_ms: 158
+ttft_code_ms: 157
+mtp_al: 3.34-3.47
+mtp_avg_accept: 0.78-0.823
+vram_gpu0_mib: 20826
+kv_pool_tokens: 148608
+max_concurrency: 1.33
+boot_seconds: 200
+notes: Required workspace_lock_disable sidecar to be added (initial v0.20 boot hit vllm#39226 strict assertion). After fix, bench n=3 GREEN. Slightly slower than tools-text/long-text on this run (variance + sample size). Below both prefill cliffs — production-safe default.

@@ -1,0 +1,21 @@
+variant: bounded-thinking
+context: 214000
+gpu_mem_util: 0.985
+kv_dtype: turboquant_3bit_nc
+tp: 1
+narr_wall_tps: 49.77
+narr_wall_cv: 1.4
+narr_decode_tps: 50.16
+code_wall_tps: 65.80
+code_wall_cv: 2.3
+code_decode_tps: 66.77
+ttft_narr_ms: 155
+ttft_code_ms: 154
+mtp_al: 3.25-3.61
+mtp_avg_accept: 0.75-0.871
+mtp_per_pos: 0.895-0.958 / 0.764-0.895 / 0.592-0.759
+vram_gpu0_mib: 21704
+kv_pool_tokens: 284832
+max_concurrency: 1.03
+boot_seconds: 200
+notes: structured-CoT FSM-grammar enabled; same TPS as long-text (FSM is decode-time mask only)

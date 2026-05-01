@@ -79,18 +79,23 @@
 # ===========================================================================
 services:
   vllm-qwen36-27b-bounded-thinking:
-    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
     container_name: vllm-qwen36-27b-bounded-thinking
     restart: "no"
     ports:
       - "${PORT:-8020}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
+      # Closes club-3090 #22.
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
-      - ../patches/patch_pn12_ffn_pool_anchor.py:/patches/patch_pn12_ffn_pool_anchor.py:ro
-      - ../patches/patch_pn12_compile_safe_custom_op.py:/patches/patch_pn12_compile_safe_custom_op.py:ro
-      - ../patches/patch_fa_max_seqlen_clamp.py:/patches/patch_fa_max_seqlen_clamp.py:ro
+      # workspace_lock_disable — relaxes vllm#39226 strict assertion until
+      # Sandermage's P98 marker fix lands. v0.20-only requirement.
+      - ../patches/patch_workspace_lock_disable.py:/patches/patch_workspace_lock_disable.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0
@@ -98,7 +103,7 @@ services:
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
-      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - VLLM_NO_USAGE_STATS=1
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
       - VLLM_FLOAT32_MATMUL_PRECISION=high
@@ -107,23 +112,62 @@ services:
       - CUDA_DEVICE_MAX_CONNECTIONS=8
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
       - VLLM_MARLIN_USE_ATOMIC_ADD=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      # FULL Genesis v7.65 PROD env-var set — same as long-text.yml.
+      - GENESIS_ENABLE_P4=1
+      - GENESIS_ENABLE_P58_ASYNC_PLACEHOLDER_FIX=1
+      - GENESIS_ENABLE_P60_GDN_NGRAM_FIX=1
+      - GENESIS_ENABLE_P60B_TRITON_KERNEL=1
+      - GENESIS_ENABLE_P61_QWEN3_MULTI_TOOL=1
+      - GENESIS_ENABLE_P61B_STREAMING_OVERLAP=1
+      - GENESIS_ENABLE_P62_STRUCT_OUT_SPEC_TIMING=1
+      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
       - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
-      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
-      # Cliff 1 closure stack — same as long-text. See its header for the
-      # full reasoning. Mandatory for 218K + tool prefills.
+      - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1
+      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      - GENESIS_P68_P69_LONG_CTX_THRESHOLD_CHARS=50000
+      - GENESIS_ENABLE_P72_PROFILE_RUN_CAP=1
+      - GENESIS_PROFILE_RUN_CAP_M=4128
+      - GENESIS_ENABLE_P74_CHUNK_CLAMP=1
+      - GENESIS_ENABLE_P83=1
+      - GENESIS_ENABLE_P85=1
+      - GENESIS_ENABLE_P87=1
+      - GENESIS_ENABLE_P91=1
+      - GENESIS_ENABLE_P94=1
+      - GENESIS_ENABLE_P98=1
+      - GENESIS_ENABLE_P99=1
+      - GENESIS_ENABLE_P100=1
       - GENESIS_ENABLE_P101=1
       - GENESIS_ENABLE_P103=1
+      - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1
+      - GENESIS_ENABLE_PN9_INDEPENDENT_DRAFTER_ATTN=1
+      - GENESIS_ENABLE_PN11_GDN_AB_CONTIGUOUS=1
       - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
       - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
-      - GENESIS_ENABLE_FA_MAX_SEQLEN_CLAMP=1
-      # 2026-05-01 — patch parity with long-text.yml. PN17 = Sandermage's
-      # anchored FA softmax_lse clamp (covers flash_attn.py; P104 covers
-      # turboquant_attn.py — keep both). P37 activates the buffer-manager
-      # mode that P38 (TQ _continuation_prefill persistent workspace) uses
-      # in shared mode. See long-text.yml for the full rationale.
+      - GENESIS_ENABLE_PN14_TQ_DECODE_OOB_CLAMP=1
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
-      - GENESIS_ENABLE_P37=1
+      - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
+      - GENESIS_ENABLE_PN22_LOCAL_ARGMAX_TP=1
+      - GENESIS_ENABLE_PN26_SPARSE_V=1
+      - GENESIS_PN26_SPARSE_V_BLOCK_KV=8
+      - GENESIS_PN26_SPARSE_V_NUM_WARPS=4
+      - GENESIS_PN26_SPARSE_V_THRESHOLD=0.01
+      - GENESIS_ENABLE_P38B_COMPILE_SAFE=1
+      - GENESIS_ENABLE_P15B_FA_VARLEN_CLAMP=1
+      - GENESIS_PREALLOC_TOKEN_BUDGET=4128
+      - GENESIS_BUFFER_MODE=shared
+      # Explicit OFFs to match Sandermage's PROD env-var set verbatim:
+      # P78 (P78_TOLIST_CAPTURE_GUARD) — superseded by our patch_tolist_cudagraph.py
+      # P81 (FP8 block-scaled M<=8) — FP8-specific, no-op on our TQ3 path
+      # P82 — biased on small-batch single-stream Lorbus INT4 + MTP K=3 (Sander PROD)
+      - GENESIS_ENABLE_P78_TOLIST_CAPTURE_GUARD=0
+      - GENESIS_ENABLE_P81_FP8_BLOCK_SCALED_M_LE_8=0
+      - GENESIS_ENABLE_P82=0
+      - GENESIS_P82_THRESHOLD_SINGLE=0.3
+      - VLLM_SSM_CONV_STATE_LAYOUT=DS
+      - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
     shm_size: "16gb"
     ipc: host
     deploy:
@@ -149,9 +193,7 @@ services:
           exit 1
         fi
         python3 -m vllm._genesis.patches.apply_all
-        python3 /patches/patch_pn12_ffn_pool_anchor.py
-        python3 /patches/patch_pn12_compile_safe_custom_op.py
-        python3 /patches/patch_fa_max_seqlen_clamp.py
+        python3 /patches/patch_workspace_lock_disable.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
       - --
@@ -166,12 +208,12 @@ services:
       - float16
       - --tensor-parallel-size
       - "1"
-      # 200K + 0.985 — parity with long-text.yml. See long-text.yml for
-      # the full trade-off rationale.
+      # 214K + 0.985 — parity with long-text.yml. See long-text.yml for
+      # the full v0.20 + Genesis v7.65 migration rationale.
       - --max-model-len
-      - "185000"
+      - "214000"
       - --gpu-memory-utilization
-      - "0.975"
+      - "0.985"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
