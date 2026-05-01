@@ -11,6 +11,23 @@ The endpoint is **OpenAI-compatible** — anything that speaks OpenAI's `/v1/cha
 
 ---
 
+## `max_tokens` defaults — important if you've enabled thinking
+
+Qwen3.6-27B is a thinking model. The `<think>...</think>` block before the answer routinely runs 2-4K tokens on medium reasoning, 4-8K on harder coding problems, and can exceed 16K on competition-grade problems. If `max_tokens` cuts the response off mid-think, the model never reaches the answer and the request looks like an "empty response" or truncated garbage. We hit this exact trap on our LiveCodeBench v6 baseline ([`docs/STRUCTURED_COT.md`](STRUCTURED_COT.md) caveat section).
+
+**Use these defaults:**
+
+| Scenario | `max_tokens` |
+|---|---|
+| **FREE thinking on (default long-text / long-vision composes)** | **8192** minimum. 16384 for hard reasoning / competition-grade problems. |
+| **FSM bounded thinking (`bounded-thinking.yml`)** | **4096** is fine — grammar caps the think block to a few hundred tokens of structured form. |
+| **`enable_thinking: False`** | Set as tight as the answer needs (50-200 typically). |
+| **Tool-using agents (multi-turn)** | 1024-2048 per turn. If a middle turn needs >2K to think, your prompt structure probably needs work. |
+
+The smoke-test examples below use `max_tokens: 200` because they ask short questions where thinking + answer fits comfortably. Real workloads should follow the table above.
+
+---
+
 ## Quick curl sanity test
 
 ```bash
@@ -137,7 +154,7 @@ print(resp.choices[0].message.content)
 resp = client.chat.completions.create(
     model="qwen3.6-27b-autoround",
     messages=[{"role": "user", "content": "Solve: 7x + 14 = 49. Show your reasoning."}],
-    max_tokens=400,
+    max_tokens=2048,  # FREE thinking on; 2048 fits easy math comfortably. Bump to 8192 for harder reasoning.
     extra_body={"chat_template_kwargs": {"enable_thinking": True}},
 )
 msg = resp.choices[0].message
@@ -208,7 +225,9 @@ const client = new OpenAI({
 const resp = await client.chat.completions.create({
   model: "qwen3.6-27b-autoround",
   messages: [{ role: "user", content: "Quicksort in Rust, please." }],
-  max_tokens: 800,
+  // FREE thinking is on by default. 4096 covers easy code-gen think+answer;
+  // 8192 is the safe default for harder coding problems. 800 traps mid-think.
+  max_tokens: 4096,
   temperature: 0.6,
   top_p: 0.95,
 });

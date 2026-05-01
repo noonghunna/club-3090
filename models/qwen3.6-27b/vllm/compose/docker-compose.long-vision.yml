@@ -1,15 +1,24 @@
 # ===========================================================================
-# Long-vision variant — full 192K context with vision on a single 3090.
+# Long-vision variant — 140K context with vision on a single 3090.
 #
-# Stack: same as the default (vLLM nightly + Genesis v7.14 + TurboQuant 3-bit
-# KV + MTP n=3 + vision tower) — but pushed to the largest practical context
-# that still keeps vision active on a single 24 GB card.
+# Stack: vLLM nightly + Genesis v7.64 + TurboQuant 3-bit KV + MTP n=3 +
+# vision tower + the full v7.64 patch stack (PN12 anchor sidecar, compile-
+# safe sidecar, PN17, P104, P38 — P37 disabled here, see env block). Backed
+# off from the original 198K + 0.98 to 140K + 0.95 on 2026-05-01 PM because
+# vision tower's persistent ~1 GiB plus the new patches' persistent
+# allocations leave less margin for Cliff 2's GDN intermediate buffer at
+# 30K+ token prefills — 160K + 0.96 booted but failed 33K-token stress.
+# 140K + 0.95 passes verify-full + 33K-token tool-prefill stress cleanly.
+# See docs/CLIFFS.md "Update 2026-05-01 PM" for the full bisection sweep.
+#
+# Recommended client max_tokens: 8192 (FREE thinking on this compose). See
+# docs/EXAMPLES.md "max_tokens defaults" section.
 #
 # When to pick this over the default:
 #   - You need 100K+ context for whole-codebase / long-document workflows
-#   - You don't expect ≥25K-token tool-response prefills (Hermes-class agents)
-#   - You'll accept that a request with a single oversized tool reply OOMs
-#     the engine — there's no safe-prefill envelope at this mem-util tier
+#   - You don't expect ≥50K-token single-shot tool-response prefills (would
+#     hit the FA varlen workspace cliff — switch to tools-text.yml fp8 if so)
+#   - You're working with image input
 #
 # When NOT to pick this:
 #   - Tool-using agents (Cline, Roo, Cursor, OpenAI Assistants) where tools

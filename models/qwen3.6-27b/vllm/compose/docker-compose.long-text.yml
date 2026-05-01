@@ -1,12 +1,20 @@
 # ===========================================================================
-# Long-text variant — 218K context, text-only (no vision).
+# Long-text variant — 185K context, text-only (no vision).
 #
-# Stack: same as default + long-vision (vLLM nightly + Genesis v7.62.x with
-# the PN12 anchor fix + TurboQuant 3-bit KV + MTP n=3) — but with the vision
-# tower disabled to free ~1 GB of VRAM. With the anchor-fixed PN12 actually
-# pooling FFN intermediates, we can run at 0.985 mem-util and 218K
-# max-model-len without the override 50 KV cap that previous 205K config
-# needed. Engine ceiling at 0.985 + no vision is 218K (vLLM-reported).
+# Stack: same as default + long-vision (vLLM nightly + Genesis v7.64 with the
+# full v7.64 patch stack — PN12 anchor sidecar, compile-safe sidecar, PN17,
+# P104, P37/P38, TurboQuant 3-bit KV, MTP n=3) — with the vision tower
+# disabled to free ~1 GB of VRAM. We backed off from the original 218K +
+# 0.985 to 185K + 0.975 on 2026-05-01 PM after P37/P38 testing surfaced the
+# downstream FA varlen workspace cliff at 50K-token single-shot tool prefills
+# — see docs/CLIFFS.md "Update 2026-05-01 PM" for the full forensics. The
+# new ceiling passes verify-full + 33K-token (130K-char) tool-prefill stress
+# cleanly; 50K-token (200K-char) synthetic stress still cliffs but is well
+# beyond realistic agent workloads.
+#
+# Recommended client max_tokens: 8192 (FREE thinking on this compose; budget
+# for hard reasoning runs). 16384 for competition-grade problems. See
+# docs/EXAMPLES.md "max_tokens defaults" section for the full table.
 #
 # When to pick this over long-vision:
 #   - You don't need image input

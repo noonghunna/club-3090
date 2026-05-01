@@ -1,16 +1,24 @@
 # ===========================================================================
-# Bounded-thinking variant — long-text 218K + structured-CoT grammar enforcement
+# Bounded-thinking variant — long-text 185K + structured-CoT grammar enforcement
 # in the reasoning channel. Compresses think tokens ~30× with iso-or-better
 # accuracy on coding benchmarks. See docs/STRUCTURED_COT.md for the full
 # bench, the grammar files, and the harness.
 #
-# Stack: identical to long-text (vLLM nightly + Genesis v7.62.x with PN12
-# anchor sidecar + TurboQuant 3-bit KV + MTP n=3 + 218K text-only) PLUS one
-# extra flag: --structured-outputs-config.enable_in_reasoning true. That
-# single flag is what makes structured-CoT work end-to-end on this stack —
-# vLLM's default is False, which restricts the grammar mask to post-`</think>`
-# content. Bench numbers don't reproduce without it (the model thinks freely
-# regardless of grammar; FREE and FSM produce identical token counts).
+# Stack: identical to long-text (vLLM nightly + Genesis v7.64 with PN12 anchor
+# sidecar + compile-safe sidecar + PN17 + P104 + P37/P38 + TurboQuant 3-bit KV
+# + MTP n=3 + 185K text-only at 0.975 mem-util) PLUS one extra flag:
+# --structured-outputs-config.enable_in_reasoning true. That single flag is
+# what makes structured-CoT work end-to-end on this stack — vLLM's default
+# is False, which restricts the grammar mask to post-`</think>` content. Bench
+# numbers don't reproduce without it (the model thinks freely regardless of
+# grammar; FREE and FSM produce identical token counts).
+#
+# Recommended client max_tokens: 4096. The whole design point of this compose
+# is bounded thinking — the grammar caps the think block to ~150-300 structured
+# tokens, then leaves comfortable budget for the answer. 4096 is plenty. (Use
+# 8192+ if you're calling this compose with FREE thinking, but at that point
+# you should be on long-text.yml — the structured-outputs flag costs ~10% TPS
+# for nothing if you're not actually using grammar.)
 #
 # When to pick this over long-text:
 #   - You're using grammar-constrained `<think>` blocks (xgrammar GBNF) to
