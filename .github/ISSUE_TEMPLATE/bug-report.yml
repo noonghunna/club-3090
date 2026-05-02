@@ -6,8 +6,20 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for filing a bug! The fastest path to a fix is starting with a clean
-        rig-state snapshot. Run:
+        ## Before filing — try the 5-step triage ladder first
+
+        If you're hitting a boot OOM, weird MTP behavior, or TQ3 / long-context
+        budget issue, the [troubleshooting ladder in the FAQ](https://github.com/noonghunna/club-3090/blob/master/docs/FAQ.md#before-symptom-matching--boot-the-simplest-stack-first)
+        will tell you which layer of the stack is failing — usually in 5-15
+        minutes. Each step adds one variable on top of the previous (`vllm/minimal`
+        → `tools-text` → `long-text` → `dual` → `dual-turbo`). If step N works
+        and step N+1 fails, you've narrowed the bug to the new variable.
+
+        A lot of "should I file a bug" questions resolve at step 1 or 2 (often
+        re-running `bash scripts/setup.sh` after a `git pull` is the fix). Worth
+        15 min before opening an issue.
+
+        ## If you've run the ladder and still hit a real bug — paste a rig report
 
         ```bash
         bash scripts/report.sh > my-rig.md

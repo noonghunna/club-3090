@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Troubleshooting — try the 5-step triage ladder first
+    url: https://github.com/noonghunna/club-3090/blob/master/docs/FAQ.md#before-symptom-matching--boot-the-simplest-stack-first
+    about: Boot OOMs / MTP weirdness / TQ3 budget issues — boot vllm/minimal first, escalate one variable at a time. Often resolves in 5-15 min without filing a bug.
   - name: General Q&A / discussion
     url: https://github.com/noonghunna/club-3090/discussions
     about: Questions about setup, hardware, or "should I tune X" — please use Discussions instead of opening an issue.

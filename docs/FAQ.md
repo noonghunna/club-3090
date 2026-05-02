@@ -165,9 +165,22 @@ The [bug report template](https://github.com/noonghunna/club-3090/issues/new?tem
 If you're hitting boot OOMs, weird MTP behavior, or memory-budget issues
 on TQ3 / long-context configs, validate that your hardware + driver +
 container runtime + model files are fundamentally sound by booting the
-simplest variant first. Each step adds one variable on top of the
+simplest variant first. Each step adds **one variable** on top of the
 previous; if step N works and step N+1 fails, the new variable is the
 cause.
+
+| Step | Variant | Adds | Tests |
+|---|---|---|---|
+| 1 | `vllm/minimal` | base vLLM, nothing else | hardware, driver, Docker, NVIDIA Container Toolkit, model files |
+| 2 | `vllm/tools-text` | + Genesis + MTP K=3 + fp8 KV | Genesis patch tree + MTP spec-decode + fp8 KV path |
+| 3 | `vllm/long-text` | + TQ3 KV + 180K context | TurboQuant + long-ctx + production single-card stack |
+| 4 | `vllm/dual` | + TP=2, **removes Genesis** | TP=2 NCCL + multi-GPU memory split (single-card layer no longer in scope) |
+| 5 | `vllm/dual-turbo` | + TQ3 + Genesis on TP=2 | full multi-card stack |
+
+**At-a-glance:** if you're single-card-only, run steps 1-3. If you're
+dual-card and step 3 fails, the bug is in single-card; if step 3 works
+but step 4 fails, it's TP=2 NCCL specifically; if step 4 works but step
+5 fails, it's the TQ3-on-TP=2-with-Genesis intersection.
 
 **Step 1 — `vllm/minimal` (32K + fp8 + no Genesis + no spec-decode)**
 
