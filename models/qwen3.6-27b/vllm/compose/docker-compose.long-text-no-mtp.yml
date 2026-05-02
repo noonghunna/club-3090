@@ -1,17 +1,28 @@
 # ===========================================================================
-# Long-text variant — 214K context, text-only (no vision).
+# Long-text NO-MTP variant — max-context safety path (200K, MTP-off, no vision).
 #
-# ⚠️ NOT SAFE FOR IDE-AGENT WORKLOADS (Cline / OpenCode / Roo / Claude Code /
-# Cursor / any flow with sys-prompt + tool schemas). Use `tools-text.yml`
-# instead until Genesis PN25 lands default-on. See club-3090#16.
+# This variant TRADES decode TPS for prefill stability. MTP K=3 spec-decode
+# is OFF, freeing the draft-model residency budget for activation headroom
+# at long single-shot prompts. Cliff 2 ceiling lifts past where it sits on
+# the MTP-on `long-text.yml`; max_model_len declared at 200K (vs 180K on
+# the MTP-on variant).
 #
-# Reproducer (2026-05-01 PM): a 5,900-char system prompt + 10 typical tool
-# schemas + 346-char user request crashes the engine with a 98 MiB OOM at
-# `empty_strided_cuda((s, 17408), ...)` in `inductor_cache/...py:1208`.
-# vLLM's torch.compile inductor inlines `SiluAndMul.forward_native` and
-# bypasses Genesis PN12's `FFNIntermediateCache` pool. PN25 (the proper
-# compile-path opaque-op fix) is on Genesis dev but blocked by a worker-
-# fork registration bug — see Sandermage/genesis-vllm-patches#16.
+# Pick this variant for:
+#   - Long single-shot RAG queries (60K-100K context, 1 turn)
+#   - Whole-codebase analysis (TTFT-bounded workloads)
+#   - Documents Q&A where context >> response length
+#
+# DON'T pick this variant for:
+#   - Multi-turn chat, agentic coding loops — slower per-token decode
+#     hurts UX. Use `long-text.yml` (MTP-on, 180K) instead.
+#   - Tool calling — same Cliff 1 mech B caveats apply (use `tools-text.yml`)
+#
+# Stack: vLLM v0.20.1rc1.dev16 + Genesis v7.69 dev (commit 2db18df) +
+# TurboQuant 3-bit KV + MTP DISABLED + vision tower disabled.
+#
+# vllm#35975 backport sidecar (`patch_inputs_embeds_optional.py`) is
+# applied at boot — frees ~64 MiB GPU + 64 MiB pinned CPU on text-only
+# models. Drops when PR merges upstream.
 #
 # Workloads that ARE safe on this compose:
 #   - Pure long-form text generation (essay, doc Q&A) — no tool schemas in prompt
@@ -21,46 +32,25 @@
 #   - Any IDE coding agent
 #   - Any flow that puts tool/function schemas in the system prompt
 #
-# Stack: vLLM v0.20.1rc1.dev16 + Genesis v7.69 dev (commit 2db18df) +
-# TurboQuant 3-bit KV + MTP n=3 + vision tower disabled.
+# Stack: vLLM v0.20.1rc1.dev16 + Genesis v7.65 dev (commit d89a089) +
+# TurboQuant 3-bit KV + MTP n=3 + vision tower disabled. Migrated from
+# vLLM dev205 + Genesis v7.64 on 2026-05-01 PM. v0.20's revised TQ FA paths
+# close the synthetic 50K-token tool-prefill stress (which fired on dev205);
+# real IDE-agent shapes still hit the inductor compile-path leak above.
 #
-# v7.69 key patches active:
-#   - P103 (Cliff 2 chunked fwd_h+fwd_o orchestrator) — chunk.py self-install
-#     hook survives `exec vllm serve` worker spawn (v7.69 F2 fix). Also
-#     applied: Codex r1 cu_seqlens=[0,T] dense-single-seq gate fix that
-#     allows the chunked path to engage on real serving.
-#   - PN30 v7.68 part1+2+3 — DS conv state layout + spec-decode AL>1 fix
-#     (drift-marker bug fixed in v7.69)
-#   - PN32 v2 — GDN _forward_core chunked-prefill (Cliff 2 outer split)
-#   - PN34 — workspace_lock relaxation (replaces our former
-#     patch_workspace_lock_disable.py sidecar)
+# v7.65 key patches active:
+#   - P38B (Genesis #14 fix): compile-safe in-source hook for
+#     _continuation_prefill — replaces our local patch_pn12_compile_safe_
+#     custom_op.py
+#   - P15B (Genesis #15 fix): FA varlen max_seqlen_k clamp at TQ wrapper
+#     boundary — replaces our local patch_fa_max_seqlen_clamp.py
+#   - PN25: Inductor-safe silu_and_mul opaque op (covers the same surface
+#     as our former patch_pn12_compile_safe_custom_op.py)
 #   - PN26b: Genesis-original sparse-V Triton kernel for SM86 (Ampere
 #     consumer) — first SM86 sparse-V kernel in any public tree. 27B
 #     tuning: BLOCK_KV=8 num_warps=4 threshold=0.01.
-#   - P38B / P15B: Cliff 1 mech B compile-safe hook + FA varlen clamp
-#
-# Cliff 2 closure recipe (cross-rig validated 2026-05-02 PM):
-#   - vllm#35975 backport sidecar (`patch_inputs_embeds_optional.py`) frees
-#     ~444 MiB at boot on text-only models (skips inputs_embeds buffers
-#     for both gpu_model_runner.py + llm_base_proposer.py).
-#   - --gpu-memory-utilization 0.93 — middle ground between 0.92 (cliff
-#     just barely closed) and 0.95 (cliff fires). Recovers ~30K of KV
-#     pool concurrency vs 0.92 while keeping ~494 MiB margin at peak.
-#   - --max-model-len 180000 — engine pre-check admission ceiling on
-#     this config (200K rejected: KV pool needs 3.31 GiB, only 2.19 GiB
-#     available at 0.93). Cliff 2 single-prompt safe envelope: ~60K
-#     verified pass; ~70-80K is the OOM ceiling.
-#
-# Validation (2026-05-02 PM, branch v7.69-cliff2-test):
-#   - 60K MTP-on probe: HTTP 200 in 623s, recall correct, MTP AL=4.00
-#   - 90K MTP-on probe: HTTP 500 OOM at 112s (50 MiB / 24.5 MiB free)
-#   - Probes 2-6 (tool prefill, IDE-agent, multi-turn, LCB-coding,
-#     reasoning-heavy): all PASS
-#
-# For workloads that need >60K single-prompt or 200K declared context,
-# use docker-compose.long-text-no-mtp.yml (max-context safety variant
-# trades MTP decode speedup for prefill stability). For coding agents
-# on dual-card, use docker-compose.dual-turbo.yml.
+#   - Cliff 8 hardening: partial_apply_warnings counter in boot summary
+#     surfaces silent anchor-drift skips
 #
 # Recommended client max_tokens: 8192 (FREE thinking on this compose; budget
 # for hard reasoning runs). 16384 for competition-grade problems. See
@@ -98,12 +88,12 @@
 #   docker compose -f docker-compose.long-text.yml up -d
 # ===========================================================================
 services:
-  vllm-qwen36-27b-long-text:
+  vllm-qwen36-27b-long-text-no-mtp:
     image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
-    container_name: vllm-qwen36-27b-long-text
+    container_name: vllm-qwen36-27b-long-text-no-mtp
     restart: "no"
     ports:
-      - "${PORT:-8020}:8000"
+      - "${PORT:-8021}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec
@@ -312,7 +302,7 @@ services:
       # club-3090#16 — different bug (Cliff 1 mech B inductor leak), not
       # fixed by mem-util tuning. Use tools-text.yml for those.
       - --max-model-len
-      - "180000"
+      - "200000"
       # 0.95 — backed off from 0.97 on 2026-05-01 PM after PN25 v3 closed
       # Cliff 1 mech B at the FFN intermediate buffer (which now sits in
       # PN12+PN25's resident FFNIntermediateCache pool). Pool residence
@@ -321,7 +311,7 @@ services:
       # 0.97 left only 26 MiB free, OOM at 9.8K probe. 0.95 frees ~480 MiB
       # activation budget, validated up to 30K probes.
       - --gpu-memory-utilization
-      - "0.93"
+      - "0.95"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
@@ -340,8 +330,14 @@ services:
       - --enable-prefix-caching
       - --enable-chunked-prefill
       - --no-scheduler-reserve-full-isl
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":3}'
+      # MTP K=3 spec-decode INTENTIONALLY DISABLED on this variant. Frees
+      # ~280 MiB of draft-model residency on top of #35975's ~444 MiB savings,
+      # unlocking max_model_len=200K admission (vs 180K cap with MTP-on).
+      # Trade-off: lose ~3-4x decode TPS speedup vs `long-text.yml` (MTP-on).
+      # Pick this variant for long single-shot RAG / codebase prompts where
+      # TTFT-bounded throughput matters more than per-token decode speed.
+      # - --speculative-config
+      # - '{"method":"mtp","num_speculative_tokens":3}'
       - --host
       - 0.0.0.0
       - --port

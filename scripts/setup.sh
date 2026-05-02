@@ -106,23 +106,37 @@ echo "Model dir:    ${MODEL_DIR}"
 # vllm/_genesis package + per-patch env opts). Newer composes mount the package;
 # the legacy compose still references the v7.13 shim.
 # Pin Genesis to the exact commit our published numbers were measured against.
-# Currently pointing at v7.66 dev tip (commit fc89395, 2026-05-02 AM). Bumped
-# from v7.64 (64dd18b) for the v7.65 patch set:
-#   - P38B / P15B — close the Cliff 1 mech B cascade (issues #14 + #15) via
-#     compile-safe in-source hook + FA varlen workspace clamp.
-#   - PN25 — Inductor-safe silu_and_mul opaque op (replaces our local
-#     patch_pn12_compile_safe_custom_op.py — now removed).
-#   - PN26b — Genesis-original sparse-V Triton kernel for SM86 (Ampere
-#     consumer). First sparse-V kernel in any public tree for SM86. Default
-#     ON in v0.20+ composes (BLOCK_KV=8 num_warps=4 threshold=0.01 per
-#     Sandermage's 27B-specific tuning).
-#   - PN28 — merge_attn_states NaN guard backport (vllm#39148).
-#   - Cliff 8 hardening (partial_apply_warnings counter in boot summary).
-# Pinned to dev SHA fc89395 because v7.66 is feature-complete on dev but not
-# yet tagged; SHA pin is immutable.
-# Bumping GENESIS_PIN requires re-running verify-full.sh against your composes
+# Currently pointing at v7.69 dev tip (commit 2db18df, 2026-05-02 PM). Bumped
+# from v7.66 (fc89395) for the v7.69 patch set, which addresses the 3
+# regressions the v7.68 cross-rig retest found ([club-3090#19] and our
+# v7.68-cliff2-test branch summary):
+#   - F1 (PN30 part3 drift-marker bug) — fixed via specific marker
+#     `[Genesis PN30 v7.68 dst-shaped]` so part3 idempotency check no longer
+#     collides with part1+2 markers in the same file.
+#   - F2 (P103 setattr lost on `exec vllm serve`) — fixed via self-install
+#     hook text-patched into chunk.py end-of-file. Survives any startup
+#     mechanism (workers, fork, spawn, exec). The "rebound at 0 caller sites"
+#     log message in v7.68 was misleading — internal callers DID get the
+#     setattr in the entrypoint shell process, but `exec` replaced the image
+#     and lost it. v7.69 hook fires every time chunk.py imports.
+#   - F3 (PN32 v1 chunked at wrong level) — rewritten as PN32 v2 to patch
+#     `_forward_core` directly + thread initial_state via prior chunk's
+#     last_recurrent_state. Composes with P103: v2 chunks the OUTER FLA
+#     call, P103 chunks INSIDE the FLA inner h tensor.
+# Recommended Cliff 2 closure env bundle for single-24GB-GPU:
+#   GENESIS_ENABLE_P103=1                          (close inner FLA h tensor)
+#   GENESIS_ENABLE_PN32_GDN_CHUNKED_PREFILL=1      (close outer FLA call buffer)
+#   GENESIS_PN32_GDN_CHUNK_SIZE=8192               (default)
+#   GENESIS_PN32_GDN_CHUNK_THRESHOLD=16384         (default)
+#   GENESIS_FLA_FWD_H_MAX_T=16384                  (P103 default)
+# v7.69 also retains v7.68's accept-and-fold of our 3 cross-rig sidecars:
+# PN25 v7.68 (TP=1 worker-spawn registration), PN30 v7.68 (DS conv-state
+# layout dst-shaped temp), PN34 (vllm#39226 runtime workspace_lock).
+# Pinned to dev SHA 2db18df because v7.69 is feature-complete on dev pending
+# our retest validation; if clean, Sander will tag stable.
+# Bumping GENESIS_PIN requires re-running verify-stress.sh against your composes
 # to confirm the new commit works on your config.
-GENESIS_PIN="${GENESIS_PIN:-fc89395}"
+GENESIS_PIN="${GENESIS_PIN:-2db18df}"
 
 if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   if [[ -d "${GENESIS_DIR}/.git" ]]; then
@@ -143,38 +157,11 @@ if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   fi
   echo "[genesis] Pinned to ${GENESIS_PIN} ($(cd "${GENESIS_DIR}" && git rev-parse --short HEAD))"
 
-  # PN25 worker-spawn registration fix — local backport.
-  #
-  # Sandermage shipped his own fix in d92bcb3 (hasattr global-registry guard
-  # in `_register_op_once`), but cross-rig validation on our TP=1 single-card
-  # showed it doesn't work — `torch.ops.genesis.silu_and_mul_pooled` doesn't
-  # exist in spawned workers on TP=1 (whereas it does on his TP=2 PROD).
-  # Reported back as comment on Sandermage/genesis-vllm-patches#16.
-  #
-  # Our local v3 patch takes a different approach: register at activation.py
-  # import time as a module-level cached global, BEFORE any dynamo trace runs.
-  # Survives worker spawn correctly on TP=1.
-  #
-  # Idempotent. Safe to re-run.
-  if [[ -f "${ROOT_DIR}/models/qwen3.6-27b/vllm/patches/patch_pn25_genesis_register_fix.py" ]]; then
-    (cd "${ROOT_DIR}" && python3 models/qwen3.6-27b/vllm/patches/patch_pn25_genesis_register_fix.py) || {
-      echo "[genesis] WARN: PN25 register fix did not apply cleanly. PN25 may not work in workers." >&2
-    }
-  fi
-
-  # PN30 DS conv-state layout fix — local correction for Genesis issue #17.
-  #
-  # Sander's PN30 avoided vLLM's DS+spec-decode NotImplementedError by
-  # compacting state[src_block, :, offset:] and raw-memcpying it into the
-  # destination block. That corrupts DS row strides. Our sidecar patches PN30
-  # so collect_mamba_copy_meta builds a full destination-shaped temp block,
-  # copies the source tail into the dst prefix, then reuses PN30's temp-list
-  # lifetime handling.
-  if [[ -f "${ROOT_DIR}/models/qwen3.6-27b/vllm/patches/patch_pn30_dst_shaped_temp_fix.py" ]]; then
-    (cd "${ROOT_DIR}" && python3 models/qwen3.6-27b/vllm/patches/patch_pn30_dst_shaped_temp_fix.py) || {
-      echo "[genesis] WARN: PN30 dst-shaped temp fix did not apply cleanly. Keep PN30 disabled or use SD layout." >&2
-    }
-  fi
+  # v7.69 ships PN25 + PN30 + PN34 directly (Sander's accept-and-fold of our
+  # cross-rig sidecars). Local patch_pn25_genesis_register_fix.py +
+  # patch_pn30_dst_shaped_temp_fix.py + patch_workspace_lock_disable.py are
+  # now redundant. Sidecar Python files retained in vllm/patches/ for
+  # rollback if any v7.69 patch regresses on your config.
 else
   echo "[genesis] SKIP_GENESIS=1 — not cloning."
 fi
