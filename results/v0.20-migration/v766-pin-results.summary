@@ -1,0 +1,52 @@
+date: 2026-05-02
+genesis_pin_bump: 753344b → fc89395 (v7.65 dev tip → v7.66 dev tip)
+new_patches_active:
+  - PN33 spec-decode warmup K-aware (vllm#37521 backport, default ON)
+  - PN25 v7.66 (direct_register_custom_op refactor, default ON)
+  - PN30 still default OFF — opt-in
+  - PN31 still default OFF — opt-in
+  - PN32 NEW (GDN chunked-prefill for Cliff 2 single-24GB-GPU OOM, default OFF)
+
+cross_rig_findings:
+  PN33_workspace_lock_test: |
+    Sander claimed PN33 closes both ampersandru's mid-stream OOM AND our
+    workspace_lock AssertionError. Cross-rig validation 2026-05-02 AM:
+    PN33 closes BOOT-time workspace_lock issue (engine starts cleanly without
+    our patch_workspace_lock_disable.py sidecar applied), BUT the runtime
+    workspace_lock AssertionError at `turboquant_attn.py:1350:_decode_attention`
+    still fires on the first decode request. Two distinct paths:
+    - Boot-time profile_run workspace lock: closed by PN33 ✅
+    - Runtime decode workspace lock: NOT closed by PN33, still needs our
+      patch_workspace_lock_disable.py sidecar ❌
+    Net: keep our sidecar, but the bug surface narrowed.
+
+  PN25_v766_test: |
+    Sander's v7.66 PN25 (direct_register_custom_op + Library FRAGMENT) does
+    NOT work on TP=1 without our local v3 import-time patch. New failure
+    mode is `Library("genesis", "FRAGMENT")` itself fails inside dynamo
+    trace at `instantiate_user_defined_class_object` (different mechanism
+    from v7.65's @custom_op + infer_schema, but same root cause: Library
+    construction inside trace context not allowed on TP=1).
+    Net: keep our local v3 import-time patch.
+
+  PN30_with_dst_shaped_temp_fix: |
+    Our local PN30 dst-shaped temp fix still applies cleanly on v7.66
+    Genesis tree (anchor matches). All 4 TQ3 composes pass probes 4 + 5
+    (multi-turn agent, LCB-coding) which would otherwise crash with
+    Sander's upstream PN30 a9977d8 (compact .contiguous() row-stride bug).
+
+verify_stress_results_v766:
+  long-text (180K + 0.95): 6/7 (Cliff 2 only fail)
+  long-vision (145K + 0.95): 6/7 (Cliff 2 only fail)
+  bounded-thinking (180K + 0.95): 6/7 (Cliff 2 only fail)
+  dual-turbo (262K + 0.85, TP=2): 6/7 (Cliff 2 only fail)
+
+local_sidecars_kept:
+  - patch_pn25_genesis_register_fix.py (v3 import-time approach for TP=1)
+  - patch_pn30_dst_shaped_temp_fix.py (replaces Sander's compact .contiguous())
+  - patch_workspace_lock_disable.py (PN33 closes boot-time, this still needed for runtime decode path)
+  - patch_tolist_cudagraph.py (cudagraph capture fix)
+
+local_sidecars_dropped: |
+  None this round — PN33 narrowed but didn't close the workspace_lock
+  surface, all 3 sidecars still required.

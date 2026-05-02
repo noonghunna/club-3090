@@ -93,7 +93,7 @@ echo "Model dir:    ${MODEL_DIR}"
 # vllm/_genesis package + per-patch env opts). Newer composes mount the package;
 # the legacy compose still references the v7.13 shim.
 # Pin Genesis to the exact commit our published numbers were measured against.
-# Currently pointing at v7.65 dev tip (commit d89a089, 2026-05-01 PM). Bumped
+# Currently pointing at v7.66 dev tip (commit fc89395, 2026-05-02 AM). Bumped
 # from v7.64 (64dd18b) for the v7.65 patch set:
 #   - P38B / P15B — close the Cliff 1 mech B cascade (issues #14 + #15) via
 #     compile-safe in-source hook + FA varlen workspace clamp.
@@ -105,11 +105,11 @@ echo "Model dir:    ${MODEL_DIR}"
 #     Sandermage's 27B-specific tuning).
 #   - PN28 — merge_attn_states NaN guard backport (vllm#39148).
 #   - Cliff 8 hardening (partial_apply_warnings counter in boot summary).
-# Pinned to dev SHA d89a089 because v7.65 is feature-complete on dev but not
+# Pinned to dev SHA fc89395 because v7.66 is feature-complete on dev but not
 # yet tagged; SHA pin is immutable.
 # Bumping GENESIS_PIN requires re-running verify-full.sh against your composes
 # to confirm the new commit works on your config.
-GENESIS_PIN="${GENESIS_PIN:-753344b}"
+GENESIS_PIN="${GENESIS_PIN:-fc89395}"
 
 if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   if [[ -d "${GENESIS_DIR}/.git" ]]; then
