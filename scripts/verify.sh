@@ -46,18 +46,16 @@ fi
 # Anchors updated 2026-05-02 for Genesis v7.14+ logging conventions. The
 # pre-v7.14 "[OK] Qwen3 tool_call fix" marker is no longer emitted; v7.14+
 # logs "[Genesis] applied:" per patch and "apply_all elapsed:" once at the
-# end. The `|| true` after grep prevents `set -euo pipefail` from killing the
-# pipeline when no anchor matches yet (e.g. mid-boot). Reported by
-# @troymroberts in club-3090#25.
+# end. We don't tail the grep output because v7.14+ prints 50+ apply lines
+# and the canonical "apply_all elapsed:" anchor fires LAST. Reported by
+# @troymroberts in club-3090#25 and refined per @JusefPol in club-3090#29.
 echo "[2/4] Genesis patches applied ..."
 if ! command -v docker >/dev/null 2>&1; then
   echo "  (skipped — docker not in PATH, cannot read container logs)"
 elif ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
   echo "  (skipped — container '${CONTAINER}' not found; if your container has a different name, set CONTAINER=...)"
 else
-  logs="$(docker logs "${CONTAINER}" 2>&1 \
-    | { grep -E "apply_all elapsed|\[Genesis\] FAILED|\[Genesis\] applied:" || true; } \
-    | tail -10)"
+  logs="$(docker logs "${CONTAINER}" 2>&1)"
   if echo "$logs" | grep -q "\[Genesis\] FAILED"; then
     fail "Genesis apply_all reported FAILED patch(es)" \
          "Inspect: docker logs ${CONTAINER} 2>&1 | grep -E 'Genesis.*FAILED' | head"
