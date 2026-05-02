@@ -38,7 +38,7 @@ Each hardware page lists every supported model with the working composes for tha
 
 | Model | Status | Card counts | Engines | Highlights |
 |---|---|---|---|---|
-| **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready ⭐ | 1× / 2× 3090 | vLLM ✅ · llama.cpp ✅ · SGLang ❌ blocked | Vision · tools · MTP n=3 · up to 262K ctx · vLLM dual = 89/127 TPS · llama.cpp single = full 262K, no prefill cliffs |
+| **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready | 1× / 2× 3090 | - vLLM<br> - llama.cpp<br> - SGLang (blocked) | - Vision<br> - tools<br> - MTP n=3<br> - up to 262K ctx<br> - vLLM dual = 89/127 TPS<br> - llama.cpp single = full 262K, no prefill cliffs |
 
 More models coming. The repo structure scales — when we add Qwen3.5-27B / GLM-4.6 / etc., they go under `models/<name>/` with the same internal pattern.
 
