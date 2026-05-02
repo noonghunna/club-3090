@@ -1,0 +1,404 @@
+# v7.69 + Codex round 1 P103 gate fix — verification on TP=1 + 24GB
+Date: 2026-05-02 PM
+Genesis pin: 2db18df (v7.69 dev tip) + Codex's gate-fix patch applied to in-tree
+P103: patched to treat cu_seqlens=[0,T] as dense single-seq (not multi-seq varlen)
+PN32 v2: enabled
+PN34: enabled (workspace_lock relax)
+DS layout: enabled
+GENESIS_FLA_FWD_H_MAX_T: tested at both 16384 (default) and 2048
+
+## Ground truth from diagnostic log
+
+Added `print` at the gate to capture T, q.shape, cu_shape, _single_seq_cu, _true_varlen_multi_seq.
+
+### Run 1: GENESIS_FLA_FWD_H_MAX_T=16384 (Codex default)
+
+T distribution across 442 invocations on 60K probe:
+  T=4128: 394 invocations  (vLLM chunked-prefill chunk size)
+  T=64:    48 invocations  (cudagraph warmup or MTP verify)
+  T>4128:   0 invocations
+
+q.shape[0] = 1 always (B=1, single sequence)
+cu_shape = torch.Size([2]) always (single segment, [0, T])
+_single_seq_cu = True for every invocation
+_true_varlen_multi_seq = False for every invocation
+
+Gate verdict: gate-fix is semantically correct but `q.shape[1] <= _MAX_T`
+(4128 <= 16384) bypasses to original_fwd on EVERY call. Chunked path
+never engages.
+
+OOM: same trace as v7.69 baseline. 50.00 MiB alloc fails, 24.50 MiB free.
+
+### Run 2: GENESIS_FLA_FWD_H_MAX_T=2048 (force chunking on T=4128 calls)
+
+T distribution across 436 invocations:
+  T=4128: 340 invocations  (now ENTERING chunked path: 4128 > 2048)
+  T=64:    48 invocations
+  T=11:    48 invocations  (smaller residuals on chunked path)
+
+Per-call allocation: 24.00 MiB (half of previous 50.00 MiB)
+Cumulative active PyTorch: 23.01 GiB (vs 22.96 GiB on run 1)
+OOM trigger: failed at call ~336/340 (vs ~393/394 on run 1)
+
+Net change: chunking DID reduce per-call peak by half, but cumulative
+state across chunked sub-calls grew slightly (chained state buffers
+between chunks). OOM fires earlier in absolute call count.
+
+## Cumulative diagnosis
+
+The gate-fix Codex proposed is correct in principle:
+  cu_seqlens.shape == (2,) IS dense single-seq, not multi-seq varlen.
+  P103 v7.70 should NOT bypass on cu_seqlens != None when shape == (2,).
+
+But on our TP=1 + 24GB + MTP K=3 + 0.95 mem-util config, the chunked
+path:
+  (a) doesn't engage at MAX_T=16384 because vLLM's outer chunked
+      prefill already caps T at max_num_batched_tokens=4128
+  (b) does engage at MAX_T=2048 but doesn't help because the OOM
+      isn't a single-allocation-too-large problem — it's
+      cumulative-state-too-large
+
+Current allocation breakdown at OOM:
+  Total in use: 23.55 GiB / 23.56 GiB (99.9%)
+  PyTorch active: 23.01 GiB
+    Of which:
+      Model weights:       16.87 GiB (boot log)
+      MTP draft sharing:    0      GiB (shared via embedding+lm_head)
+      KV pool @ 60K TQ3:   ~1     GiB (rough estimate, ~17 KB/tok)
+      Mamba conv state:    ~0.5   GiB (DS layout + GDN forward)
+      PN12/PN25 pools:     ~0.2   GiB
+      FLA temp buffers:    ~0.2   GiB
+      cudagraph private:    0.024 GiB
+      Other PyTorch alloc: ~4     GiB (UNACCOUNTED — likely activations)
+
+The 4 GiB "unaccounted" is the actual headroom problem. Each prefill
+chunk's activations stick around in some lifetime overlap until the
+next chunk's allocation, fragmenting expandable-segments effective
+headroom.
+
+## Conclusions
+
+1. Codex's gate-fix should still ship to Sander as v7.70 — it's
+   semantically correct and unblocks the synthetic single-seq path.
+2. But it does NOT close real-config Cliff 2 at 60K on 24GB.
+3. The actual fix is one of:
+   (a) Lower mem-util to ~0.90 (frees ~700 MiB headroom, costs ~10K ctx)
+   (b) Cap max-model-len to 50K and route 50K+ to TP=2 (`dual.yml`)
+   (c) Genesis-side: tighter activation residency in PN12/PN25/PN30
+       pools + audit FLA temp buffer reuse
+   (d) vLLM-side: scheduler pause prefill chunks when VRAM headroom
+       drops below threshold
+
+Practical recommendation for users on TP=1 + 24GB:
+  Cliff 2 ceiling stays ~50-60K on this config regardless of v7.69
+  patches. Treat it as architectural + use dual.yml for longer prompts.
+
+## Round 2 prompt for Codex queued at /tmp/codex_prompt_cliff2_round2.md
+
+Asks ChatGPT/Codex to:
+  - Diagnose where the 4 GiB unaccounted active PyTorch allocation lives
+  - Recommend instrumentation to bisect (memory_summary per call?)
+  - Propose either Genesis-side or vLLM-side fix that doesn't require
+    per-call chunking (since chunking doesn't help here)
+
+## State of in-tree files
+
+- `models/qwen3.6-27b/vllm/patches/genesis/vllm/_genesis/wiring/hybrid/patch_103_fla_cliff2_chunked.py`
+  has Codex's gate-fix applied + temp diagnostic log. Will revert
+  diagnostic log before any commit.
+- `models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml`
+  has GENESIS_FLA_FWD_H_MAX_T=2048 (testing value). Needs revert to
+  16384 (or whatever final value) before commit.
+
+
+## ROUND 2 — Codex r2 + user PR research bisect (2026-05-02 PM)
+
+### Boot resident snapshot
+
+MTP-on  : 23,156 MiB (model weights + MTP draft 0.28 GiB shared + KV preallocation + Genesis pools)
+MTP-off : 23,164 MiB (same minus MTP, ~280 MiB savings — MTP draft shares embedding+lm_head)
+
+Headroom at 0.95 mem-util ≈ 1,400 MiB before any request.
+
+### MTP-off A/B at 60K — single-variable change
+
+Removed only `--speculative-config '{"method":"mtp",...}'`. All else
+unchanged: P103 (with Codex gate fix) + PN30 + PN32 v2 + PN34 + DS layout
++ MAX_T=16384 + max_num_batched_tokens=4128 + max-model-len=180000 +
+mem-util=0.95.
+
+Manual curl with 600s timeout:
+  HTTP 200 ✅ recalled "violet otter 48" correctly
+  Wall: 504s
+  Engine logs: prompt throughput 227 tok/s, gen 7.5 tok/s, KV usage 6.1%
+  No OOM, no errors
+
+verify-stress harness curl (5 min default timeout):
+  HTTP 000 (harness timed out before engine completed)
+  Engine itself returned 200 a few seconds after harness gave up — both
+  the harness curl AND the manual curl saw the same engine completion;
+  the harness's 5-min cap is the fail signal, not engine correctness.
+
+**Conclusion: MTP-off closes the 60K Cliff 2 cleanly.** Cliff 2 on
+TP1 + 24GB + 0.95 mem-util is dominated by MTP draft residency +
+activation footprint, not P103 cu_seqlens gate.
+
+### MTP-off at 90K — indeterminate within 15 min
+
+Manual curl with 900s (15 min) timeout:
+  HTTP 000 (curl timed out)
+  Wall 900s
+  No OOM trace
+  GPU 0 still at 100% utilization
+  No POST 200 in engine logs after 13:42:37
+  Engine never completed within practical wait
+
+Practical interpretation: 90K MTP-off is past the wall-clock-feasible
+ceiling on this config even without OOM. Throughput drops as
+cumulative state grows; what would take ~7 min at constant 227 tok/s
+takes 25+ min in practice (and may eventually OOM internally without
+reaching us). For users on TP1+24GB, **MTP-off shifts the practical
+ceiling from ~30-60K to ~60K**, but doesn't push to 90K.
+
+### Updated upstream PR research (provided by user)
+
+Three open PRs that could compose with our findings:
+
+| PR | What | Why it matters |
+|---|---|---|
+| [vllm#35975](https://github.com/vllm-project/vllm/pull/35975) | Skip inputs_embeds GPU buffer for text-only models | ~64 MiB GPU + 64 MiB pinned CPU savings. Direct match for our 50 MiB margin failure. **Highest-value test next.** |
+| [vllm#37521](https://github.com/vllm-project/vllm/pull/37521) | Spec-decode warmup memory accounting | Profiling/KV sizing leaves less false headroom. Worth testing for MTP-on path. |
+| [vllm#37429](https://github.com/vllm-project/vllm/pull/37429) | KV cache sizing for hybrid Mamba/attention | Architectural — could free substantial headroom on hybrid Qwen3-Next models. Bigger/riskier. |
+
+vLLM's official Qwen3-Next recipe documents `--tensor-parallel-size 4
+--gpu-memory-utilization 0.8 --no-enable-chunked-prefill` as happy
+path. Our 24GB TP1 long-context MTP case is OUTSIDE the documented
+configuration — context worth flagging to Sander.
+
+### Next: apply PR #35975 as text-patch + retest 60K MTP-on
+
+Plan: modify `vllm/v1/worker/gpu_model_runner.py:623-633` and
+`vllm/v1/spec_decode/eagle.py:192-201` to skip `inputs_embeds` buffer
+allocation when not needed (no MM inputs, no prompt_embeds). 64 MiB
+saved on text-only model + 64 MiB pinned CPU. If that turns 60K
+MTP-on from -25 MiB to +39 MiB free, we have a real closure proof.
+
+
+## ROUND 3 — vllm#35975 backport + mem-util tuning matrix (2026-05-02 PM)
+
+### Closure recipe: PR#35975 + mem-util 0.92 + MTP-on
+
+**60K probe RESULT: HTTP 200 OK, recall correct, MTP AL=4.00**
+
+| Config | Boot resident | OOM/Pass at 60K | Wall | Notes |
+|---|---|---|---|---|
+| MTP-off, 0.95 mem-util | 23,164 MiB | ✅ Pass | 504s | Already established (Round 2) |
+| MTP-on + #35975 + 0.95 mem-util | 22,720 MiB | ❌ Fails 46.5 MiB free / 50 needed | n/a | #35975 freed ~444 MiB at boot, but only ~22 MiB extra at peak |
+| **MTP-on + #35975 + 0.92 mem-util** | **21,980 MiB** | **✅ Pass** | **~11.5 min wall** | **Cliff 2 closed** with full MTP K=3 + correct recall |
+
+Notes on the MTP-on + #35975 + 0.92 run:
+- Boot resident dropped from 22,720 (at 0.95) to 21,980 (at 0.92) — saved 740 MiB
+- KV pool: 3.87 GiB / 305,472 tokens (vs 5.07 GiB / 363,264 at 0.95) — 1.43x → 1.25x concurrency at 180K
+- Wall ~11.5 min (vs 8.4 min on MTP-off + 0.95) — slower than expected; investigation TBD
+- MTP per-position acceptance: 1.000, 1.000, 1.000 (perfect on this prompt)
+
+### Codex r2 verdict (post-bisect)
+
+> #35975 is definitely relevant, but not sufficient alone. MTP-off proving 60K pass means draft residency is the dominant pressure. #35975 + gpu_memory_utilization=0.92 is now the right "keep MTP" candidate. P103 streaming output is lower priority unless 0.92 still fails or you need to recover more context at fixed 0.95.
+
+### Two shippable variants
+
+**Variant A — Long-text with MTP** (`long-text.yml`):
+- Genesis v7.69 + Codex P103 gate fix + PN30 + PN32 + PN34
+- vllm#35975 backport sidecar (`patch_inputs_embeds_optional.py`)
+- `--gpu-memory-utilization 0.92` (down from 0.95)
+- `--speculative-config '{"method":"mtp","num_speculative_tokens":3}'` (retained)
+- Cliff 2 closed at 60K. Probe 7 ceiling moves from 30-60K → 60K+.
+
+**Variant B — Long-text without MTP** (`long-text-no-mtp.yml` — TODO):
+- Same as A but `--speculative-config` REMOVED, `--gpu-memory-utilization 0.95` (recovered)
+- Cliff 2 closed at 60K with full mem-util (KV pool 1.43x at 180K)
+- Lower decode throughput (no MTP speedup)
+- Trade-off: more KV/context vs slower decode
+
+### Codex r2's recommended next bisect (open)
+
+1. ~~#35975 + MTP-on + 0.92: establish pass~~ ✅ DONE (this run)
+2. **#35975 + MTP-on + 0.93/0.935: find less conservative pass point** ← next
+3. ~~MTP-off + 0.95: keep as alternate throughput/context-safe variant~~ ✅ already validated
+4. Only consider P103 streaming output if MTP-on at 0.95 specifically required
+
+User concurs with Codex's plan. Step 2 (midpoint 0.93/0.935) gives margin
+recommendation for shippable.
+
+### Next: 60K test at #35975 + MTP-on + 0.93 (then 0.935 if 0.93 fails)
+
+
+## ROUND 4 — mem-util sweep at 60K (Codex r2 step 2-3)
+
+### 60K results across mem-util at MTP-on + #35975
+
+| mem-util | Boot resident | KV pool size | 60K MTP-on | Wall | Final GPU free | Notes |
+|---|---|---|---|---|---|---|
+| 0.95 | 22,720 MiB | 5.5 GiB / ~388K tok | ❌ OOM 50/46.5 | n/a | n/a | 22 MiB short of margin |
+| 0.93 | 22,260 MiB | 4.4 GiB / ~340K tok | ✅ HTTP 200 | 623s | ~494 MiB | **Best balanced point.** AL=4.0, recall correct |
+| 0.92 | 21,980 MiB | 3.87 GiB / ~305K tok | ✅ HTTP 200 | 689s | ~580 MiB | More margin but slower + less KV |
+
+**Conclusion: 0.93 is the recommended balanced shipping point.** Recovers
+~30K tokens of KV pool concurrency vs 0.92 while still passing 60K
+Cliff 2 with real end-of-run margin (~494 MiB free). Wall improvement
+likely from cudagraph friendlier allocator pattern at higher headroom.
+
+### Three explicit shippable variants (Codex r2 framing, post-bisect)
+
+**Balanced MTP** — `long-text.yml` updated:
+  - Genesis v7.69 + Codex P103 gate fix + PN30 + PN32 v2 + PN34
+  - vllm#35975 backport sidecar (`patch_inputs_embeds_optional.py`)
+  - mem-util 0.93 (down from 0.95)
+  - MTP K=3 retained
+  - Cliff 2 closed at 60K. KV concurrency at 180K: ~1.4x
+
+**Max-context safety** — `long-text-no-mtp.yml` (TODO):
+  - Same patches except no `--speculative-config`
+  - mem-util 0.95 (full KV pool)
+  - For long single-shot RAG / codebase prompts where slow decode is OK
+  - Cliff 2 ceiling: 60K confirmed; 90K probe with max_tokens=1 pending
+
+**Future upstream win**:
+  - vllm#37429 hybrid Mamba/attention KV cache sizing — could free more
+    residency without trading mem-util
+  - Worth testing on a separate branch when CI signals stabilize
+
+### Remaining tests (in progress)
+
+- 90K + max_tokens=1 at 0.93 — measures prefill ceiling without slow decode
+- max_model_len bump (200K? 220K?) at 0.93 (Codex says do this AFTER mem-util pick — admission capacity test, not safety)
+
+
+## ROUND 5 — 90K probe + admission capacity (final)
+
+### 90K MTP-on + #35975 + 0.93, max_tokens=1 (prefill-only timing)
+
+Result: **HTTP 500 OOM at 112s wall**
+- Trace: chunk_fwd_o `o = torch.empty_like(v)` 50 MiB allocation, 24.5 MiB free
+- Engine died (EngineDeadError)
+
+Conclusion: **Cliff 2 ceiling at 0.93 + #35975 + MTP-on = somewhere
+between 60K (passes) and 90K (fails)**. Likely 70-80K. For shipping
+purposes, document 60K as the safe single-prompt envelope.
+
+### Admission capacity test: max_model_len 200K at 0.93 + #35975
+
+Result: Engine pre-check **REJECTED**
+```
+ValueError: To serve at least one request with the models's max seq len
+(200000), (3.31 GiB KV cache is needed, which is larger than the
+available KV cache memory (2.19 GiB). Based on the available memory,
+the estimated maximum model length is 111456.
+```
+
+Per Codex r2 framing: this is *admission* capacity (would-it-fit), not
+*safety*. The 200K declared at 0.93 + #35975 doesn't fit in available
+KV pool.
+
+**180K stays as the practical max_model_len ceiling at 0.93 + #35975 +
+MTP-on.** Pushing higher requires either:
+- Higher mem-util (back toward 0.95) — but then Cliff 2 returns
+- Drop MTP — frees ~280 MiB residency from draft model
+- vllm#37429 hybrid Mamba/attention KV reduction (untested)
+
+### FINAL recommended recipe (Balanced MTP variant)
+
+```yaml
+# docker-compose.long-text.yml
+--max-model-len 180000
+--gpu-memory-utilization 0.93
+--speculative-config '{"method":"mtp","num_speculative_tokens":3}'
+--max-num-batched-tokens 4128
+--kv-cache-dtype turboquant_3bit_nc
+--enable-chunked-prefill
+--language-model-only
+
+# Genesis env (key Cliff 2 + closures):
+GENESIS_ENABLE_P103=1
+GENESIS_ENABLE_PN30_DS_LAYOUT_SPEC_DECODE=1
+GENESIS_ENABLE_PN32_GDN_CHUNKED_PREFILL=1
+GENESIS_PN32_GDN_CHUNK_SIZE=8192
+GENESIS_PN32_GDN_CHUNK_THRESHOLD=16384
+GENESIS_FLA_FWD_H_MAX_T=16384
+GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=1
+VLLM_SSM_CONV_STATE_LAYOUT=DS
+
+# Sidecars (mounted):
+patch_tolist_cudagraph.py             # vllm#40807 workaround
+patch_inputs_embeds_optional.py       # vllm#35975 backport (~444 MiB savings)
+```
+
+### Shippable recipe summary
+
+| Variant | Config | 60K | 90K | KV @ 180K | Best for |
+|---|---|---|---|---|---|
+| **Balanced MTP** (this recipe) | MTP-on + 0.93 + #35975 | ✅ | ❌ ~70-80K cliff | 1.4x | Default. Long-context with spec-decode. |
+| Max-context safety | MTP-off + 0.95 + #35975 | ✅ | TBD (longer test) | 1.43x | RAG / single-shot codebase analysis |
+| Future upstream | + vllm#37429 | TBD | TBD | TBD | When PR matures |
+
+
+## ROUND 6 — Max-context variant (MTP-off + 0.95 + 200K + #35975)
+
+### Setup
+
+Same Genesis v7.69 stack + Codex P103 gate fix + #35975 sidecar, but:
+- `--speculative-config` REMOVED (no MTP K=3 draft)
+- `--gpu-memory-utilization 0.95` (recovered)
+- `--max-model-len 200000` (admission test)
+
+Boot resident: **21,004 MiB** (lower than MTP-on variants because draft model
+residency is gone). KV pool: 5.1 GiB / 272,288 tokens. Concurrency at 200K:
+**1.20x**. **200K ADMISSION PASSES** (vs 180K cap on MTP-on path).
+
+### 60K probe — MTP-off + 0.95 + 200K + #35975
+
+Result: **HTTP 200 OK in 537s wall** (vs 504s without #35975 in earlier
+test — slightly slower, possibly due to 200K ctx vs 180K). Recall correct
+("violet otter 48"). No OOM. Probe matches the closure pattern of round 2's
+MTP-off + 180K test, plus the extra 20K ctx admission headroom.
+
+### 90K probe (max_tokens=1) — MTP-off + 0.95 + 200K + #35975
+
+Result: **HTTP 000 at 1500s curl timeout** (25-min budget). Engine kept
+computing (GPU 100% util, no OOM trace), but never delivered response
+within practical bound. Same pattern as round 2 MTP-off + 180K 90K probe
+(also indeterminate within 15 min budget there).
+
+Practical Cliff 2 ceiling on max-context variant: **60K confirmed**.
+90K is past wall-clock-feasibility on this hardware regardless of
+mem-util/MTP/admission tweaks.
+
+### Final shippable matrix
+
+Both variants share the same single-prompt safety envelope (~60K).
+Differ on declared context, decode TPS, and concurrency:
+
+| Variant | max_model_len | mem-util | MTP | KV @ ctx | 60K | 90K |
+|---|---|---|---|---|---|---|
+| Balanced MTP (`long-text.yml`) | **180K** | 0.93 | ✅ K=3 | 1.40x | ✅ 623s | ❌ OOM 112s |
+| Max-context (`long-text-no-mtp.yml`) | **200K** | 0.95 | ❌ off | 1.20x | ✅ 537s | indeterm. |
+
+### Codex r2 verdict (final)
+
+> Cliff 2 at 60K on 24GB, TP1, Qwen3-Next TQ3, DS layout is not caused by
+> the P103 cu_seqlens gate after the semantic fix. With MTP enabled,
+> draft-model residency removes enough activation headroom that late
+> FLA/GDN prefill fails. Disabling MTP lets the same request complete with
+> HTTP 200; the earlier failure mode was headroom, while the verify
+> harness timeout was client-side.
+
+Plus: vllm#35975 backport frees enough headroom that MTP-on can also
+close 60K when paired with mem-util 0.93.
+
+### Open future tests
+
+- vllm#37429 (hybrid Mamba/attention KV cache sizing) — could free more
+  resident memory without trading mem-util
+- P103 streaming output variant — Codex r2 lower-priority recommendation;
+  on-disk implementation deferred
