@@ -274,7 +274,7 @@ In the Cline settings panel:
 - **API Key:** `sk-local` (any non-empty string)
 - **Model ID:** `qwen3.6-27b-autoround`
 
-Cline sends large tool returns (file reads, web fetches) up to ~25K tokens. As of 2026-05-01 PM (vLLM v0.20 + Genesis v7.65 dev tip migration), both `vllm/long-vision` (198K + vision) and `vllm/long-text` (214K text-only) handle these cleanly. Both 33K-token AND 50K-token tool-prefill stress now PASS on master. The only remaining caveat: don't use vLLM single-card for one-shot prompts >50K (Cliff 2 — DeltaNet GDN forward — still applies; switch to `llamacpp/default` or `dual-turbo.yml` instead). See [docs/SINGLE_CARD.md](SINGLE_CARD.md) and the [VRAM diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs).
+Cline sends large tool returns (file reads, web fetches) up to ~25K tokens. As of 2026-05-02 PM (Genesis v7.69 dev tip + vllm#35975 backport), `vllm/long-text` (180K balanced + MTP K=3) handles these cleanly — 33K AND 50K tool-prefill stress PASS, and **60K single-prompt prefill PASS** (the Cliff 2 wall closed at 60K). For one-shot prompts beyond 60K, switch to `llamacpp/default` (262K, slower) or `dual-turbo.yml` (262K + 4 streams). See [docs/SINGLE_CARD.md](SINGLE_CARD.md), [docs/CLIFFS.md](CLIFFS.md), and the [VRAM diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs).
 
 ### Cursor
 

@@ -2,6 +2,19 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-02 PM — Genesis pin v7.69 master cutover + Cliff 2 60K closure ⭐⭐
+
+Master Genesis pin bump `fc89395` (v7.66) → `2db18df` (v7.69 dev tip) in `scripts/setup.sh`. All three v7.66/v7.68 cross-rig regressions we surfaced (PN30 part3 drift-markers, P103 worker self-install, PN32 v1) landed in v7.69. Three local sidecars retired (`patch_pn25_genesis_register_fix.py`, `patch_pn30_dst_shaped_temp_fix.py`, `patch_workspace_lock_disable.py`); one new local backport added (`patch_inputs_embeds_optional.py` = vllm#35975).
+
+**Cliff 2 closure:** combined v7.69 (PN32 + P103 worker self-install) + #35975 backport closes the **60K single-prompt envelope** on TQ3 + MTP K=3 at 24 GB. Two shippable single-card variants:
+
+| Variant | Compose | Ctx | mem-util | MTP | 60K result |
+|---|---|---|---|---|---|
+| Balanced MTP ⭐ | `long-text.yml` | 180K | 0.93 | K=3 | PASS 623s |
+| Max-context | `long-text-no-mtp.yml` (NEW) | 200K | 0.95 | off | PASS 537s |
+
+Per-model deep dive: [models/qwen3.6-27b/CHANGELOG.md](models/qwen3.6-27b/CHANGELOG.md). Stack synthesis: [docs/CLIFFS.md](docs/CLIFFS.md). Upstream tracking: [docs/UPSTREAM.md](docs/UPSTREAM.md).
+
 ## 2026-04-30 PM — Bounded-thinking compose ships (structured-CoT cross-rig port)
 
 [andthattoo/structured-cot](https://github.com/andthattoo/structured-cot) showed GBNF-grammar-bounded `<think>` blocks compress reasoning ~22-43× on coding benchmarks with no accuracy loss, on Qwen3.6-35B-A3B MoE Q4_K_M / 1× H100 / llama.cpp. We ported the technique to our stack — Qwen3.6-27B AutoRound INT4 dense / 1× RTX 3090 / vLLM nightly + MTP n=3 + TQ3 KV — and re-benched on the full HumanEval+ 164 + LiveCodeBench v6 50.

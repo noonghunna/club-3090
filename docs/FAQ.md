@@ -28,9 +28,7 @@ WSL2: yes, both engines. Make sure GPU passthrough is set up (`nvidia-smi` works
 
 ## Engine choice
 
-### Why ship both vLLM and llama.cpp?
-
-Different trades. vLLM is faster (51-89 TPS depending on config) and has full feature support (vision · tools · MTP spec-decode · streaming · reasoning). As of 2026-04-30 PM, **Cliff 1 (the 25K-token tool-prefill OOM) is closed on every shipped vLLM single-card variant** via Genesis PN8 on the FP8 path and PN12 anchor sidecar on the TQ3 paths. The remaining caveat is **Cliff 2** — single prompts above 50-60K still OOM in DeltaNet GDN forward, and that's a different memory class with no upstream fix yet. llama.cpp is slower (~21 TPS) but **passes every stress test cleanly** at full 262K context with vision and tools — including the big single prompts that vLLM single-card can't yet handle. See the launch frame: [vLLM dual = max throughput, llama.cpp single = max robustness](../README.md#tldr--what-this-is).
+Different trades. vLLM is faster (51-89 TPS depending on config) and has full feature support (vision · tools · MTP spec-decode · streaming · reasoning). As of 2026-04-30 PM **Cliff 1 (25K tool prefills) is closed**, and as of 2026-05-02 PM **Cliff 2 (single prompts up to 60K) is also closed on single-card** via Genesis v7.69 (PN32 GDN chunked-prefill + P103 worker self-install) plus a local backport of vllm#35975 — `long-text.yml` (180K balanced) handles 60K cleanly, `long-text-no-mtp.yml` (200K, no MTP) reaches 60K with more KV pool. Both top out at the 60K hardware-physical wall on 24 GB single-card. For >60K single-prompt or full-262K cold context, llama.cpp single (~21 TPS, no cliffs at 262K) and vLLM dual TP=2 (88-127 TPS, 262K verified at 237K) remain the right answer. See the launch frame: [vLLM dual = max throughput, llama.cpp single = max robustness](../README.md#tldr--what-this-is).
 
 ### Why not Ollama?
 
@@ -79,7 +77,7 @@ It shouldn't, much — we measured 50.93 TPS narr at 192K vs 50.53 at 32K (withi
 
 VRAM-related OOM during prompt processing on single-card vLLM. Two cliffs documented:
 - **Cliff 1** — historical: FFN intermediate buffer (`SiluAndMul` output, 138 MiB at `max_num_batched_tokens=4128 × intermediate_size=17408 × 2 bytes`) fresh-allocated per layer. Plus a related FA2 softmax_lse cap-leak ([Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011)). **Closed on every shipped vLLM single-card variant** as of 2026-04-30 PM: `tools-text.yml` via Genesis PN8 (frees ~900 MiB on FP8 path); `long-vision.yml` and `long-text.yml` via the PN12 anchor sidecar (PR #13 to Sandermage's repo) plus a local P104 FA softmax_lse clamp. Full diagnostic: [docs/CLIFFS.md](CLIFFS.md).
-- **Cliff 2** — DeltaNet GDN forward OOM at ~50-60K single-prompt regardless of mem-util. Different memory class, lives in `fla.ops` upstream, no file-replacement patch yet. Tracked in [UPSTREAM.md](UPSTREAM.md). Mitigation: dual-card TP=2 (verified at 237K) or llama.cpp single-card (262K, different engine).
+- **Cliff 2** — DeltaNet GDN forward OOM at ~50-60K single-prompt regardless of mem-util. **Closed at 60K** as of 2026-05-02 PM via Genesis v7.69 (PN32 GDN chunked-prefill + P103 worker self-install) plus a local backport of [vllm#35975](https://github.com/vllm-project/vllm/pull/35975) (skip `inputs_embeds` GPU buffer for text-only models, ~444 MiB freed). Two shippable variants: `long-text.yml` (180K balanced, 0.93 mem-util, MTP K=3) and `long-text-no-mtp.yml` (200K, 0.95 mem-util, no MTP). Both top out at the 60K hardware-physical wall on 24 GB. For >60K single-prompt: dual-card TP=2 (verified at 237K) or llama.cpp single-card (262K, different engine). Tracked in [UPSTREAM.md](UPSTREAM.md).
 
 For the full deep dive — empirical bisection, root-cause walk-through, who-can-fix-it landscape, and what we could do at any difficulty level — see [docs/CLIFFS.md](CLIFFS.md).
 
@@ -167,7 +165,7 @@ Quick recognition guide for common failure modes:
 - **Container dies at boot with `GPTQ_MARLIN_MIN_THREAD_N (64) > out_features`** — dual-card vllm#40361 patch didn't apply. Confirm `/opt/ai/vllm-src/` exists with the patched marlin kernel files.
 - **Container dies during DFlash boot** — vllm#40334 dtype mismatch. Verify the compose has `--dtype bfloat16`.
 - **Tool calls return `<tool_call>` as plain text** — Genesis didn't apply. Check `Genesis Results: 27 applied` in logs (boot-time).
-- **OOM during prefill at 60K+ tokens** — single-card Cliff 2 (DeltaNet GDN forward). Switch to lower max-model-len, dual-card, or llama.cpp + q4_0 KV.
+- **OOM during prefill at 60K+ tokens** — single-card Cliff 2 (DeltaNet GDN forward). 60K is the closed envelope on `long-text.yml` (Balanced MTP) and `long-text-no-mtp.yml` (Max-context); >60K still hits the hardware-physical wall on 24 GB. For larger prompts: switch to dual-card TP=2 or llama.cpp + q4_0 KV.
 - **OOM during prefill at 25K+ tool response** — historically Cliff 1 on TQ3 paths. **Closed since 2026-04-30 PM** via PN12 anchor sidecar on `long-vision.yml` / `long-text.yml`. If you're hitting it, check your compose has the sidecar wired in (`patch_pn12_ffn_pool_anchor.py` in entrypoint).
 - **"Empty response" through VS Code Copilot LLM Gateway** — Copilot sends ~20K tokens of tool schemas + sometimes uses `max_tokens=64` which truncates tool-call JSON. Switch to `tools-text.yml` (75K) and check Copilot's max_tokens setting. See [#2](https://github.com/noonghunna/club-3090/issues/2) for full debug-log analysis.
 - **Per-stream TPS lower than expected** — re-run `bench.sh` with 3+ warmups + 5 measured runs first. Run-to-run variance is ~5%.

@@ -77,6 +77,56 @@ Cross-rig validation of v7.68 on the `v7.68-cliff2-test` branch (pushed to origi
 
 Full findings in [`results/v0.20-migration/v768-cliff2-test.summary`](../results/v0.20-migration/v768-cliff2-test.summary).
 
+### Genesis v7.69 dev tip (`2db18df`) + vllm#35975 backport — Cliff 2 60K CLOSED 2026-05-02 PM ⭐
+
+After v7.68's regressions, Sander cut v7.69 (commit `2db18df`) with proper fixes for all 3 of our cross-rig findings. We retested + did a 6-round bisect with ChatGPT/Codex CLI to find the actual Cliff 2 closure recipe. **60K Cliff 2 is now closed on TP=1 + 24GB.**
+
+#### v7.69 patch status (verified working)
+
+| v7.69 patch | Result | Detail |
+|---|---|---|
+| **PN30 v7.68 part3 drift-marker** | ✅ FIXED | v7.69 tightened part3's `upstream_drift_markers` to `[Genesis PN30 v7.68 dst-shaped]` (specific to part3's own marker). DS layout now active throughout, all 3 sub-patches APPLY clean. |
+| **P103 self-install hook** | ✅ FIXED | v7.69 ships chunk.py self-install hook appended to end-of-file. Survives `exec vllm serve` worker spawn. The "rebound at 0 caller sites" log message in v7.68 was misleading. |
+| **PN32 v2 _forward_core chunked-prefill** | ✅ FIXED | Rewritten to chunk at `_forward_core` directly + thread initial_state via `last_recurrent_state`. Composes with P103. |
+| **Codex P103 cu_seqlens gate fix** | 🟡 Sent to Sander as v7.70 proposal | [Genesis issue #18](https://github.com/Sandermage/genesis-vllm-patches/issues/18). Semantically correct (cu_seqlens=[0,T] is dense single-seq, not multi-seq varlen) but doesn't independently close real-config Cliff 2 because vLLM's outer chunked-prefill caps T at 4128 — well below P103's MAX_T=16384 — so the chunked path never fires regardless. |
+
+#### The actual Cliff 2 closure: vllm#35975 backport + mem-util tuning
+
+ChatGPT/Codex round 2 diagnosed that the 50 MiB OOM at `chunk_fwd_o:torch.empty_like(v)` after ~394 successful T=4128 chunks on a 60K prompt is **steady cumulative state** (model weights + KV pool + Mamba conv state + Genesis pools + activation residue), not a single allocation that needs splitting. Closure requires freeing residency, not chunking activation.
+
+[vllm#35975](https://github.com/vllm-project/vllm/pull/35975) (open) skips `inputs_embeds` GPU buffer for text-only models — saves ~64 MiB GPU + 64 MiB pinned CPU. We backported it as a setup-time text-patch (`patch_inputs_embeds_optional.py`) — frees ~444 MiB at boot on Qwen3.6-27B (both `gpu_model_runner.py` and `llm_base_proposer.py` call sites compound).
+
+Combined with mem-util tuning, the matrix:
+
+| Config | Boot resident | 60K MTP-on | Wall | Notes |
+|---|---|---|---|---|
+| 0.95 (baseline) | 23,164 MiB | ❌ OOM 50/24.5 free | n/a | Cliff 2 fires |
+| 0.95 + #35975 | 22,720 MiB | ❌ OOM 50/46.5 free | n/a | 444 MiB freed at boot, only 22 MiB at peak |
+| 0.92 + #35975 | 21,980 MiB | ✅ HTTP 200 | 689s | Cliff 2 closed, ~580 MiB end-of-run margin |
+| **0.93 + #35975** | **22,260 MiB** | **✅ HTTP 200** | **623s** | **Best balanced point.** ~494 MiB margin, AL=4.00 |
+
+Plus MTP-off + 0.95: 60K passes in 504s with full 5+ GiB KV pool — separate "max-context safety" variant for users who want max KV admission over decode TPS.
+
+#### Two shippable variants on master post-v7.69
+
+| Variant | File | max_model_len | mem-util | MTP | Cliff 2 60K | Use case |
+|---|---|---|---|---|---|---|
+| **Balanced MTP** | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | 180K | 0.93 | ✅ K=3 | ✅ 623s | Default — multi-turn agentic coding |
+| **Max-context safety** | [`long-text-no-mtp.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text-no-mtp.yml) (NEW) | 200K | 0.95 | ❌ off | ✅ 537s | Long single-shot RAG / codebase analysis |
+
+Both top out at 60K Cliff 2 ceiling — that's the hardware-physical wall on 24 GB single-card. 90K probes hit OOM (Balanced MTP) or fail to complete in 25-min budget (Max-context). For prompts >60K, route to `dual.yml` (TP=2 splits state) or `llamacpp/default` (262K, different engine).
+
+#### Local sidecars on master (post-v7.69)
+
+| Sidecar | Reason |
+|---|---|
+| `patch_inputs_embeds_optional.py` | Backports vllm#35975 (~444 MiB savings on text-only Qwen3.6-27B). **Drop when PR merges upstream.** |
+| `patch_tolist_cudagraph.py` | cudagraph capture fix (vllm#40807). Unchanged. |
+
+The 3 prior sidecars (`patch_pn25_*`, `patch_pn30_dst_shaped_*`, `patch_workspace_lock_disable.py`) are **dropped** — Sander accept-and-folded all three into v7.68/v7.69 (PN25 v7.68 + PN30 v7.68 + PN34).
+
+Full diagnostic trail (6-round bisect): [`results/v0.20-migration/v769-codex-r1-test.summary`](../results/v0.20-migration/v769-codex-r1-test.summary).
+
 ### Validation across all 4 TQ3 variants (2026-05-02 on Genesis v7.66 + local sidecars)
 
 | Variant | Ctx | mem-util | verify-stress.sh probes | Notes |

@@ -6,26 +6,27 @@ You have **one RTX 3090 (24 GB VRAM)**. This page is the front door for picking 
 
 ## TL;DR — pick by workload
 
-Four recommended options:
+Five recommended options on Genesis v7.69 + vllm#35975 backport (2026-05-02 PM):
 
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
 |---|---|---|---|---|
 | **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **145K** | 50 / 66 | ~23.0 GB (mem-util 0.95) |
-| **Long ctx, text-only** (RAG, codebase, books, **IDE agents** ⭐) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **180K** | 50 / 67 | ~22.4 GB (mem-util 0.95) |
+| **Long ctx, text-only — Balanced MTP** ⭐ (RAG, codebase, IDE agents, default) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **180K** | 50 / 67 | ~22.3 GB (mem-util 0.93) |
+| **Long ctx, text-only — Max-context** (long single-shot RAG / codebase analysis) | [`long-text-no-mtp.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text-no-mtp.yml) (NEW) | **200K** | TBD/TBD (slow decode, no MTP) | ~21.0 GB (mem-util 0.95) |
 | **Bounded thinking** (coding agents, structured-CoT, cost-bounded thinking) — see [STRUCTURED_COT.md](STRUCTURED_COT.md) | [`bounded-thinking.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) | **180K** | 50 / 66 | ~21.7 GB (mem-util 0.95) |
 | **Bulletproof, no cliffs** (production service, unpredictable inputs) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | **262K** | 21 / 21 | ~20 GB |
 
 Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
 
-> ## ⚠️ One limitation to know
+> ## ⚠️ One limitation to know — **mostly closed on v7.69**
 >
-> ### Cliff 2 — DeltaNet GDN single-prompt OOM at 50–60K tokens
+> ### Cliff 2 — DeltaNet GDN single-prompt OOM
 >
-> **vLLM single-card variants will crash if you send a single prompt above ~50K tokens.**
+> **Pre-v7.69:** vLLM single-card variants crashed on single prompts >~50K tokens.
 >
-> Architectural — DeltaNet GDN forward state grows with sequence length, OOMs at 50–60K regardless of how much VRAM you have left. The long-* variants are designed for **steady-state accumulation across many turns**, not single-shot big prompts.
+> **Post-v7.69 + vllm#35975 + 0.93 mem-util (Balanced MTP) or MTP-off + 0.95 (Max-context):** **60K single-prompt now passes cleanly** (verified HTTP 200, recall correct, AL=4.00 on Balanced MTP). 90K is past wall-clock-feasible on this hardware. For prompts >60K, use `dual-turbo.yml` (TP=2 splits state) or `llamacpp/default` (262K, different engine).
 >
-> If your workload sends single big prompts: `llamacpp/default` (262K, no cliffs anywhere) or `dual-turbo.yml` (TP=2 splits state across cards).
+> Architectural — DeltaNet GDN forward state grows with sequence length. The fix combines [vllm#35975](https://github.com/vllm-project/vllm/pull/35975) (skip `inputs_embeds` GPU buffer for text-only models, frees ~444 MiB at boot) with mem-util tuning to free activation headroom for the late-stage 50 MiB allocation that previously fired the cliff.
 >
 > ### What was Cliff 1 mech B (now closed) ✅
 >
@@ -37,7 +38,7 @@ Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <varia
 
 ![Qwen3.6-27B TPS — single 3090 configs](img/performance-single.png)
 
-Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.66 dev tip (commit `fc89395`), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
+Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.69 dev tip (commit `2db18df`), with local backports `patch_inputs_embeds_optional.py` (vllm#35975) and `patch_tolist_cudagraph.py`. llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
 
 ---
 
@@ -50,7 +51,7 @@ What this says about single-card constraints:
 - **Model weights** consume ~14 GB (AutoRound INT4 / GGUF Q3_K_XL). Half the card.
 - **KV cache** is the next biggest line; its size depends on `--kv-cache-dtype` × ctx. fp8 ≈ 1 byte/token/(layer×head); TQ3 ≈ 0.4 bytes/token/(layer×head); fp16 ≈ 2 bytes/token/(layer×head).
 - **Vision tower** (mmproj) costs ~0.5–1.0 GB extra when on.
-- **Activations + cudagraph pools** is what's left. **2026-05-02 (v7.66 + Cliff 1 mech B closed)** — settled at **180K + 0.95 (long-text + bounded-thinking)** and **145K + 0.95 (long-vision)** after PN25 v3 import-time fix + PN30 dst-shaped temp fix landed. The pool-residence cost of PN12+PN25 + DeltaNet GDN forward state buffer at 30K+ depths needs ~480 MiB activation headroom that 0.985 didn't leave. Cliff 1 mech B (inductor compile-path FFN intermediate buffer leak) is now CLOSED across all 4 TQ3 composes. See [`docs/CLIFFS.md`](CLIFFS.md).
+- **Activations + cudagraph pools** is what's left. **2026-05-02 PM (v7.69 + vllm#35975 backport + Cliff 2 60K closed)** — settled at **180K + 0.93 (long-text Balanced MTP)**, **200K + 0.95 (long-text-no-mtp Max-context)**, **180K + 0.95 (bounded-thinking)**, and **145K + 0.95 (long-vision)** after v7.69 closed three v7.66/v7.68 regressions and the local #35975 backport freed ~444 MiB by skipping the text-only inputs_embeds GPU buffer. Both Cliff 1 mech B AND Cliff 2 60K are now CLOSED on TQ3 single-card. See [`docs/CLIFFS.md`](CLIFFS.md).
 
 For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
@@ -62,13 +63,19 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
 **Workload:** chat with images, vision-aware coding agents, multimodal RAG. Anything where the user might paste a screenshot.
 
-145K + vision tower + TQ3 KV + DS layout + Genesis MTP n=3 + full v7.66 patch stack (PN12 + PN17 + PN25 v3 + PN30 dst-shaped fix + PN26b + P38B + P15B + PN33) at mem-util 0.95. `verify-stress.sh`: 6/7 probes pass cleanly (only Cliff 2 architectural fails). Code 66 / narr 50 TPS (n=5, CV 2-4%), AL 3.40-3.56.
+145K + vision tower + TQ3 KV + DS layout + Genesis MTP n=3 + full v7.69 patch stack (PN12 + PN17 + PN25 + PN30 part3 + PN26b + P38B + P15B + PN33 + PN32 GDN chunked-prefill) at mem-util 0.95. `verify-stress.sh`: full 7/7 probes pass on text-only paths post-v7.69; vision tower's persistent ~1 GB tightens single-prompt envelope vs long-text. Code 66 / narr 50 TPS (n=5, CV 2-4%), AL 3.40-3.56.
 
-### Long ctx, text-only — `long-text.yml` ⭐
+### Long ctx, text-only — Balanced MTP — `long-text.yml` ⭐
 
-**Workload:** RAG ingest, codebase analysis, book/document Q&A, IDE coding agents (Cline / OpenCode / Roo / Claude Code / Cursor), long conversations.
+**Workload:** RAG ingest, codebase analysis, book/document Q&A, IDE coding agents (Cline / OpenCode / Roo / Claude Code / Cursor), long conversations. **Default recommendation for steady-state agent + chat.**
 
-180K + no vision + TQ3 KV + DS layout + same patch stack at mem-util 0.95. `verify-stress.sh`: 6/7 probes pass cleanly. Code 67 / narr 50 TPS (n=5, CV 2.6%), AL 3.34-3.51. **IDE-agent prompts (sys + tool schemas + user request) work cleanly here** — Cliff 1 mech B closed via PN25 v3 + PN30 dst-shaped fix.
+180K + no vision + TQ3 KV + DS layout + MTP K=3 + same v7.69 patch stack + local vllm#35975 backport at mem-util 0.93. **60K single-prompt PASS @ 623s wall** (HTTP 200, recall correct, AL=4.00). Code 67 / narr 50 TPS (n=5, CV 2.6%), AL 3.34-3.51. **IDE-agent prompts AND big single prompts up to 60K both work cleanly here.**
+
+### Long ctx, text-only — Max-context — `long-text-no-mtp.yml`
+
+**Workload:** one-shot >50K input where you can wait, don't need MTP, and want maximum KV pool capacity.
+
+200K + no vision + TQ3 KV + DS layout + MTP **off** + same v7.69 patch stack + local vllm#35975 backport at mem-util 0.95. **60K single-prompt PASS @ 537s wall** (HTTP 200, recall correct). Decode is slower without spec-decode (~33 narr / ~40 code TPS estimated; canonical bench pending). Use only when steady-state TPS isn't the priority and you need the extra KV headroom.
 
 ### Bulletproof / no cliffs — `llamacpp/default` ⭐
 
@@ -131,8 +138,8 @@ What still keeps it off the recommended list:
 
 ### Prefill cliffs
 
-- **Cliff 1** — FFN intermediate-buffer activation peak (138 MiB allocate at `intermediate_size × max-num-batched-tokens`). Historically fired on long-ctx composes at >0.95 mem-util when prefill batch needed the buffer. **Closed on `tools-text.yml`** (FP8 KV path) since 2026-04-29 via Genesis PN8. **Closed on TQ3 paths** (`long-vision.yml` 198K, `long-text.yml` 214K) on v0.20 + Genesis v7.65 since 2026-05-01 via PN12 + PN17 + P38B in-source hooks (replaced our local sidecars) — see [`docs/CLIFFS.md`](CLIFFS.md).
-- **Cliff 2** — DeltaNet GDN forward OOM at 50-60K single-prompt regardless of mem-util. In `fla.ops` upstream, no file-replacement patch available. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA) for upstream fixes.
+- **Cliff 1** — FFN intermediate-buffer activation peak (138 MiB allocate at `intermediate_size × max-num-batched-tokens`). Historically fired on long-ctx composes at >0.95 mem-util when prefill batch needed the buffer. **Closed on `tools-text.yml`** (FP8 KV path) since 2026-04-29 via Genesis PN8. **Closed on TQ3 paths** on v0.20 + Genesis v7.65+ since 2026-05-01 via PN12 + PN17 + P38B in-source hooks. **Mech B closed** 2026-05-02 (v7.66 + PN25 v3 + PN30 dst-shaped) — see [`docs/CLIFFS.md`](CLIFFS.md).
+- **Cliff 2** — DeltaNet GDN forward OOM. **Closed at 60K single-prompt** as of 2026-05-02 PM via Genesis v7.69 (PN32 GDN chunked-prefill + P103 worker self-install) plus a local backport of vllm#35975 (skip text-only `inputs_embeds` GPU buffer, ~444 MiB freed). Two shippable variants: `long-text.yml` (Balanced MTP, 180K + 0.93) and `long-text-no-mtp.yml` (Max-context, 200K + 0.95). >60K still hits the 24 GB hardware-physical wall — for those prompts use dual-card TP=2 (verified 237K) or llama.cpp single-card (262K, different engine).
 
 ### VRAM peak vs idle
 

@@ -69,7 +69,7 @@ For dual-card: combined power at 230W cap each = ~460W. Most modern 850W+ ATX PS
 
 This is model-specific but the **shapes apply across hybrid-attention models** (Qwen3-Next family, similar architectures):
 
-- **Single 3090 (24 GB):** Cliff 1 (~25K-token tool prefills, FFN intermediate buffer) closed across all shipped variants since 2026-04-30 PM via Genesis PN8 / PN12 anchor sidecar. Cliff 2 (~50-60K single prompts, DeltaNet GDN forward) still applies. [See `docs/CLIFFS.md` for the full diagnostic.](CLIFFS.md)
+- **Single 3090 (24 GB):** Cliff 1 (~25K-token tool prefills, FFN intermediate buffer) closed across all shipped variants since 2026-04-30 PM. **Cliff 2 (~50-60K single prompts, DeltaNet GDN forward) closed at 60K** as of 2026-05-02 PM via Genesis v7.69 (PN32 + P103 worker self-install) plus a local backport of vllm#35975 — see `long-text.yml` (180K + MTP K=3, balanced) and `long-text-no-mtp.yml` (200K + no MTP, max-context). Both top out at 60K hardware-physical wall on 24 GB single-card. [See `docs/CLIFFS.md` for the full diagnostic.](CLIFFS.md)
 - **Dual 3090 (48 GB combined):** TP=2 splits activation memory across cards. Cliffs are not active failure modes.
 
 For visualization of how VRAM splits across single + dual configs, see [vram-budget-combined.svg](img/vram-budget-combined.svg) (or per-page: [single](img/vram-budget-single.svg) · [dual](img/vram-budget-dual.svg)).

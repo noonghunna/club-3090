@@ -20,18 +20,22 @@ OUT = Path(__file__).resolve().parents[2] / "docs" / "img"
 
 # (label, narr_tps, code_tps, group)
 # Single-card + dual-turbo numbers re-benched 2026-05-01 PM on the v0.20
-# (0.20.1rc1.dev16+g7a1eb8ac2) + Genesis v7.66 dev tip (commit fc89395)
-# substrate, n=5 measured runs after 3 warmups. Dual.yml / dual-dflash*
-# pending re-bench; their dev205-era numbers carry forward as estimates
-# (steady-state TPS is the same regime — fp8 paths weren't TPS-changed
-# by the v0.20 migration).
+# (0.20.1rc1.dev16+g7a1eb8ac2) + Genesis v7.69 dev tip (commit 2db18df, the
+# 2026-05-02 PM cutover) + local vllm#35975 inputs_embeds backport substrate,
+# n=5 measured runs after 3 warmups. Decode TPS is unchanged by the v7.69
+# bump (PN32/P103/PN30-part3 fix Cliff 2 prefill envelope, not steady-state
+# decode). Dual.yml / dual-dflash* pending re-bench; their dev205-era numbers
+# carry forward as estimates (fp8 paths weren't TPS-changed by the v0.20
+# migration).
 # Luce DFlash measured 2026-04-30 PM on Qwen3.6-27B Q4_K_M + matched 3.6
 # draft (TQ3 KV, max_ctx=65K, greedy only). Group "single-luce-watch" =
 # experimental / not recommended for shipping yet; see docs/UPSTREAM.md.
 configs_all = [
     ("v714 48K\n(default)",       55.00, 70.50, "single-vllm"),
     ("long-vision 145K\n+ vision",       50.32, 66.12, "single-vllm"),
-    ("long-text 180K\ntext-only",      49.74, 67.39, "single-vllm"),
+    ("long-text 180K\nBalanced MTP",      49.74, 67.39, "single-vllm"),
+    # long-text-no-mtp 200K (Max-context) bench pending — not on chart yet.
+    # Estimated ~33 narr / ~40 code TPS based on no-spec-decode regime.
     ("tools-text 75K\nfp8 IDE-agent",  53.32, 69.66, "single-vllm"),
     ("bounded-thinking 180K\nstructured-CoT",  49.77, 65.80, "single-vllm"),
     ("minimal\n(no spec-dec)",    32.41, 32.56, "single-vllm"),
@@ -100,7 +104,7 @@ def make_chart(configs, out_stem, title_subject, figsize):
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=9)
     ax.set_ylabel("TPS  (3 warm + 5 measured, canonical bench)", fontsize=10)
-    ax.set_title(f"Qwen3.6-27B  —  measured TPS {title_subject}  on  noonghunna/club-3090  (2026-04-30)",
+    ax.set_title(f"Qwen3.6-27B  —  measured TPS {title_subject}  on  noonghunna/club-3090  (2026-05-02)",
                  fontsize=12, pad=36)
     ax.set_ylim(0, max(max(narr), max(code)) * 1.30)
     ax.grid(axis="y", linestyle=":", alpha=0.4)
@@ -114,7 +118,7 @@ def make_chart(configs, out_stem, title_subject, figsize):
     ax.legend(handles=legend_elements, loc="upper center", bbox_to_anchor=(0.5, -0.10),
               ncol=2, fontsize=9, frameon=False)
 
-    substrate_parts = ["vLLM 0.20.1rc1.dev16+g7a1eb8ac2 + Genesis v7.66 dev (fc89395)"]
+    substrate_parts = ["vLLM 0.20.1rc1.dev16+g7a1eb8ac2 + Genesis v7.69 dev (2db18df) + vllm#35975 backport"]
     if any(g == "single-llama" for g in groups):
         substrate_parts.append("llama.cpp mainline 0d0764dfd")
     if any(g == "single-luce-watch" for g in groups):

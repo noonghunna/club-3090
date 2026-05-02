@@ -10,17 +10,17 @@ This is what the repo's [Quick start](../../README.md#quick-start) ships. Everyt
 - ✅ Full feature set: vision, tools, streaming, thinking, MTP n=3, TurboQuant 3-bit KV
 - ✅ Full OpenAI API parity
 - 50-53 narr / 66-70 code TPS on a single 3090; 58 narr / 76 code on dual-card (TP=2)
-- 48K default ctx · 75K IDE-agent · **198K with vision · 214K text-only** · 262K dual-card (since 2026-05-01 v0.20 + Genesis v7.65 dev tip migration). Cliff 2 still applies single-prompt >50–60K — see [docs/CLIFFS.md](../CLIFFS.md).
+- 48K default ctx · 75K IDE-agent · **145K with vision · 180K Balanced MTP · 200K Max-context** (single 3090) · 262K dual-card. **Cliff 2 closed at 60K** since 2026-05-02 PM via Genesis v7.69 + vllm#35975 backport — see [docs/CLIFFS.md](../CLIFFS.md). >60K single-prompt still hits the 24 GB hardware-physical wall on single-card.
 
 ---
 
 ## What's in the box
 
 - vLLM nightly (pinned to `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` = `0.20.1rc1.dev16+g7a1eb8ac2`)
-- Sandermage's [Genesis v7.66 dev tip patches](https://github.com/Sandermage/genesis-vllm-patches) (commit `fc89395`, mounted into vLLM's site-packages at boot)
-- `patch_workspace_lock_disable.py` sidecar — relaxes vllm#39226 strict assertion to one-shot WARNING (covers rare TQ decode paths where `profile_run` doesn't lock workspace at the right size)
+- Sandermage's [Genesis v7.69 dev tip patches](https://github.com/Sandermage/genesis-vllm-patches) (commit `2db18df`, mounted into vLLM's site-packages at boot)
+- `patch_inputs_embeds_optional.py` sidecar — backport of [vllm#35975](https://github.com/vllm-project/vllm/pull/35975), skips the text-only `inputs_embeds` GPU buffer (~444 MiB freed at boot on our 180K + MTP K=3 path). Required for the Cliff 2 60K closure recipe.
 - Our [`patch_tolist_cudagraph.py`](../../patches/patch_tolist_cudagraph.py) (CUDA graph capture fix for TurboQuant continuation prefill)
-- 5 compose variants with different KV/ctx/feature trade-offs (see [README Status](../../README.md#status-at-a-glance))
+- 6 compose variants with different KV/ctx/feature trade-offs (see [README Status](../../README.md#status-at-a-glance))
 
 ---
 

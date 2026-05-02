@@ -14,7 +14,7 @@ If you just want to use the stack, the model README is enough.
 
 For engine-general docs (vLLM tuning, llama.cpp tradeoffs, SGLang status), see [`/docs/engines/`](../../docs/engines/).
 
-> **Note (2026-05-01 PM):** This file describes the forensic chain that led to the v7.62.x stack. For the **current** Cliff 1 closure (long-text 214K, long-vision 198K, both 33K AND 50K stress passing on v0.20 + Genesis v7.65 dev tip + `patch_workspace_lock_disable.py` sidecar), see [`docs/CLIFFS.md`](../../docs/CLIFFS.md) "v0.20 unblock" and the [latest CHANGELOG entry](CHANGELOG.md). The PN8 status table below is historical — PN8 still closes Cliff 1 on the FP8 path; PN12 (Genesis-native on v0.20) closes it on TQ3 paths.
+> **Note (2026-05-02 PM):** This file describes the forensic chain that led to the v7.62.x stack. For the **current** state — **Cliff 2 60K closure** via Genesis v7.69 (PN32 GDN chunked-prefill + P103 worker self-install) + local vllm#35975 inputs_embeds backport, two shippable variants `long-text.yml` (180K balanced + MTP K=3) and `long-text-no-mtp.yml` (200K + no MTP) — see [`docs/CLIFFS.md`](../../docs/CLIFFS.md) and the [latest CHANGELOG entry](CHANGELOG.md). The PN8 status table below is historical (still accurate for the FP8 path); PN12 closes Cliff 1 on TQ3 paths via Genesis-native v0.20+ integration.
 
 ---
 

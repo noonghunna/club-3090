@@ -49,13 +49,14 @@ How each config splits the 24 GB / card budget — weights, KV cache, vision tow
 
 ![Per-card VRAM allocation across single + dual configs](../../docs/img/vram-budget-combined.png)
 
-As of 2026-05-02 (vLLM v0.20 + Genesis v7.66 dev tip + Cliff 1 mech B closed), single-card recommended options (see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md)):
-- **`long-text.yml` — 180K text-only** at 0.95 mem-util. **IDE-agent recommended.** Cliff 1 mech B closed via PN25 v3 import-time + PN30 dst-shaped temp fix. Real OpenCode/Cline/Roo workloads work cleanly here. KV pool ~284K tokens.
-- **`long-vision.yml` — 145K + vision** at 0.95 mem-util. Vision tower's persistent ~1 GB tightens activation budget further than long-text. Same patch stack.
+As of 2026-05-02 PM (vLLM v0.20 + Genesis v7.69 dev tip + local vllm#35975 backport + Cliff 2 60K closed), single-card recommended options (see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md)):
+- **`long-text.yml` — 180K text-only, Balanced MTP** at 0.93 mem-util. **IDE-agent + steady-state default.** Cliff 1 mech B + Cliff 2 60K both closed. KV pool ~284K tokens. AL 3.34-3.51, code 67 / narr 50 TPS.
+- **`long-text-no-mtp.yml` — 200K text-only, Max-context** at 0.95 mem-util (NEW). MTP off; trades ~30% decode TPS for the larger KV pool. Same Cliff 2 60K closure. Use when one-shot input >50K matters more than steady-state throughput.
+- **`long-vision.yml` — 145K + vision** at 0.95 mem-util. Vision tower's persistent ~1 GB tightens activation budget further than long-text. Same v7.69 patch stack.
 - **`bounded-thinking.yml` — 180K text-only + structured-CoT grammar in reasoning** at 0.95 mem-util. Same patch stack as long-text plus `--structured-outputs-config.enable_in_reasoning true`. ~30× cheaper think output on coding workloads with **+4.3pp HE+ / +24pp LCB v6** vs FREE thinking. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md).
 - **`llamacpp/default` — 262K + vision** at ~21 TPS. Different engine, no cliffs anywhere — production-safe for unpredictable inputs.
 
-The **single shipped limitation** on the vLLM single-card variants: Cliff 2 still fires on single prompts >50–60K (DeltaNet GDN forward OOM — architectural, not closed by v0.20 / v7.66 / our patches). Use llama.cpp single or dual-card (TP=2 splits state across cards) for one-shot big prompts. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
+The **remaining shipped limitation** on the vLLM single-card variants: single prompts >60K still hit the 24 GB hardware-physical wall. Use llama.cpp single (262K, slower) or dual-card TP=2 (262K, splits state across cards) for one-shot big prompts. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
 
 Other variants (`docker-compose.yml` 48K · `tools-text.yml` 75K FP8 · `minimal.yml` 32K) are kept in the repo as fallbacks / diagnostics, not promoted as primary.
 
@@ -76,7 +77,7 @@ TP=2 unlocks **262K + 4 concurrent streams** on dual-card (`dual.yml`).
 
 - **GGUF on vLLM** for Qwen3-Next family — not supported upstream. Use llama.cpp for GGUF on this model.
 - **EAGLE spec-decode on hybrid attention** — DeltaNet rollback issue (cross-engine architectural). Watch upstream.
-- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Lives in `fla.ops` upstream, no file-replacement patch. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA). Mitigation: dual-card (TP=2 splits state) or llama.cpp 262K. **Cliff 1 mech B** (inductor compile-path FFN intermediate buffer leak) — **closed since 2026-05-02** via PN25 v3 import-time backport + PN30 dst-shaped temp fix. Real IDE-agent prompts work cleanly. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
+- **Single-card single prompts >60K** — still hit the 24 GB hardware-physical wall. **Cliff 2 closed at 60K** (2026-05-02 PM) via Genesis v7.69 (PN32 GDN chunked-prefill + P103 worker self-install) + local vllm#35975 backport. **Cliff 1 mech B** (inductor compile-path FFN intermediate buffer leak) — **closed since 2026-05-02 AM** via PN25 v3 import-time backport + PN30 dst-shaped temp fix (now native in v7.69). For >60K single prompts: dual-card TP=2 (verified 237K) or llama.cpp single (262K). See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
 
 ---
 
@@ -98,7 +99,7 @@ For deeper rationale, comparison tables, and the patched-vLLM-source story (vllm
 
 ## Genesis patch surface (vLLM)
 
-The vLLM composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `fc89395` (v7.66 dev tip, 2026-05-02) per `scripts/setup.sh`.
+The vLLM composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `2db18df` (v7.69 dev tip, 2026-05-02 PM) per `scripts/setup.sh`.
 
 Active patches per compose (selected highlights — full env-var stack in each compose YAML):
 
@@ -110,7 +111,7 @@ Active patches per compose (selected highlights — full env-var stack in each c
 | P66 | Cudagraph capture-size divisibility | TQ3 paths |
 | P67 | TQ multi-query kernel | TQ3 paths |
 | P68/P69 (50K char threshold) | Long-ctx tool-choice nudge — safe on real IDE-agent prompts since v7.65 raised default 8000 → 50000 | TQ3 paths |
-| P98 | TQ WorkspaceManager revert (auto-skips on v0.20 due to drift marker; covered by `patch_workspace_lock_disable.py` sidecar) | TQ3 paths |
+| P98 | TQ WorkspaceManager revert (auto-skips on v0.20 due to drift marker; covered by Genesis PN34 since v7.69 — env-gate `GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=1`) | TQ3 paths |
 | P101 | TQ continuation 64-token slicing | TQ3 paths |
 | P103 | FLA Cliff 2 chunked fwd_h+fwd_o orchestrator | TQ3 paths |
 | **PN12** | FFN intermediate scratch pool — closes Cliff 1 mech B on TQ3 (Genesis-native on v0.20, no sidecar needed) | TQ3 paths |
@@ -119,13 +120,22 @@ Active patches per compose (selected highlights — full env-var stack in each c
 | **P38B** | In-source `_continuation_prefill` hook — Genesis #14 fix for compile-path silent no-op | TQ3 paths |
 | **P15B** | FA varlen `max_seqlen_k` clamp at TQ wrapper — Genesis #15 fix | TQ3 paths |
 | **PN26b** | First public sparse-V Triton kernel for SM86 (Ampere consumer) — 27B-tuned BLOCK_KV=8 num_warps=4 threshold=0.01 | TQ3 paths |
+| **PN30** part3 | DS conv state row-stride fix (replaces our dst-shaped sidecar, native in v7.69) | TQ3 paths |
+| **PN32** | GDN chunked-prefill threshold + chunk size (env-vars `PN32_GDN_*`) — partial Cliff 2 mitigation | TQ3 paths |
+| **P103** | FLA Cliff 2 chunked fwd_h+fwd_o orchestrator with worker self-install (v7.69 fix) | TQ3 paths |
+| **PN34** | Workspace-lock relax env-gate (`PN34_WORKSPACE_LOCK_RELAX=1`) — replaces our local sidecar | TQ3 paths |
 | **PN8** | MTP draft online-quant propagation (vllm#40849) — closes Cliff 1 on FP8 path | **fp8 path** (`tools-text.yml`) |
 
-Two local sidecars apply outside Genesis:
-- **`patch_workspace_lock_disable.py`** — relaxes vllm#39226 strict assertion to one-shot WARNING. Sandermage's P98 covers same surface but auto-skips on v0.20 (drift-marker false-positive). Idempotent. Drop when Sandermage ships marker fix.
+Two local sidecars apply outside Genesis (post-v7.69):
+- **`patch_inputs_embeds_optional.py`** (NEW 2026-05-02 PM) — backport of [vllm#35975](https://github.com/vllm-project/vllm/pull/35975): skip `inputs_embeds` GPU buffer for text-only models, frees ~444 MiB on our 180K + MTP K=3 path. Two-site regex text-patch on `gpu_model_runner.py` and `llm_base_proposer.py`. Drop when upstream merges.
 - **`patch_tolist_cudagraph.py`** — guards `.tolist()` calls during cudagraph capture. Unblocks TurboQuant KV + spec-decode + chunked-prefill on Qwen3-Next dense on Ampere. Drop when upstream fixes the continuation-prefill `.tolist()` sync.
 
-Local sidecars dropped during 2026-05-01 v0.20 migration:
+Local sidecars dropped during the v7.69 cutover (2026-05-02 PM):
+- `patch_pn25_genesis_register_fix.py` → covered by v7.69 worker-spawn registration
+- `patch_pn30_dst_shaped_temp_fix.py` → covered by v7.69 PN30 part3
+- `patch_workspace_lock_disable.py` → covered by v7.69 `GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=1`
+
+Earlier sidecars dropped during 2026-05-01 v0.20 migration:
 - `patch_pn12_ffn_pool_anchor.py` → covered natively by PN12 on v0.20
 - `patch_pn12_compile_safe_custom_op.py` → covered by Genesis PN25
 - `patch_fa_max_seqlen_clamp.py` → covered by PN17 + P15B

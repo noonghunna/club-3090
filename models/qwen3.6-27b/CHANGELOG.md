@@ -2,6 +2,70 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-02 PM — Genesis v7.69 + vllm#35975 backport — Cliff 2 60K CLOSED ⭐⭐
+
+Genesis pin bump `fc89395` (v7.66) → `2db18df` (v7.69 dev tip). All three v7.66/v7.68 regressions we surfaced upstream landed in v7.69, plus a local backport of [vllm#35975](https://github.com/vllm-project/vllm/pull/35975) brings the Cliff 2 single-prompt envelope to **60K cleanly on TQ3 + MTP K=3 at 24 GB**. Two shippable single-card recipes ship at this pin.
+
+**v7.69 closes upstream:**
+
+| Patch | What | Status before v7.69 | Status in v7.69 |
+|---|---|---|---|
+| PN30 v7.68 part3 | DS conv state row-stride fix (replaces our dst-shaped sidecar) | drift-markers too generic — silent re-fail | landed clean, our sidecar drops |
+| P103 worker self-install | FLA Cliff 2 chunked fwd_h+fwd_o orchestrator survives `exec vllm serve` | setattr lost on worker spawn → "rebound at 0 caller sites" | self-install hook in `chunk.py`, fires on TP=1 |
+| PN32 v1 | GDN chunked-prefill threshold + chunk size env-vars | not yet shipped | landed (`PN32_GDN_CHUNKED_PREFILL=1`, `PN32_GDN_CHUNK_SIZE=8192`, `PN32_GDN_CHUNK_THRESHOLD=16384`) |
+
+**Codex P103 cu_seqlens gate fix queued for v7.70:** filed [Genesis #18](https://github.com/Sandermage/genesis-vllm-patches/issues/18) — `_single_seq_cu` detection lets `cu_seqlens.shape[0] == 2` enter the chunked path. Diagnostic logging on dev205 showed `q.shape[1]` always 4128 (capped by vLLM `max_num_batched_tokens` for spec-decode K=3) so MAX_T=16384 never engages on real serving — gate-redirect works but doesn't fire under our admission cap. Cliff 2 in practice is **residency**, not gate logic: 50 MiB OOM after 394 successful T=4128 chunks → cumulative state filling 22.96 GiB of 23.56 GiB total. Lower mem-util buys activation headroom by spending KV capacity. Three distinct ceilings clarified per Codex round 2: declared `max_model_len` (admission), safe single-prompt prefill length (Cliff 2), concurrency capacity.
+
+**Local backport added:** [vllm#35975](https://github.com/vllm-project/vllm/pull/35975) (skip `inputs_embeds` GPU buffer for text-only models). Two-site regex text-patch via `patch_inputs_embeds_optional.py`:
+- `gpu_model_runner.py`: wraps `self.inputs_embeds = self._make_buffer(...)` in `if self.supports_mm_inputs or self.enable_prompt_embeds:`
+- `llm_base_proposer.py`: wraps `self.inputs_embeds = torch.zeros(...)` in `if self.supports_mm_inputs:`
+
+Measured ~444 MiB freed on text-only paths (claimed ~64 MiB upstream — claim assumes a smaller config; our 180K + MTP K=3 path benefits more).
+
+**Mem-util matrix on long-text 180K + MTP K=3 (60K stress):**
+
+| mem-util | #35975 | 60K result |
+|---|---|---|
+| 0.95 | no | OOM (Cliff 2) |
+| 0.95 | yes | OOM (Cliff 2) |
+| 0.92 | yes | PASS — 643s wall |
+| **0.93** | **yes** | **PASS — 623s wall** ⭐ shipped |
+
+**Two shippable Cliff-2-closed variants:**
+
+| Variant | max-model-len | mem-util | MTP K | TPS regime | Single-prompt envelope | Use when |
+|---|---|---|---|---|---|---|
+| `long-text.yml` (Balanced MTP) ⭐ | 180000 | 0.93 | 3 | 50 narr / 67 code (cold short prompt); decode wins from MTP at high accept | **60K** PASS @ 623s; 90K indeterminate (curl >25 min) | default for steady-state agent + chat |
+| `long-text-no-mtp.yml` (Max-context) | 200000 | 0.95 | off | ~33 narr / ~40 code (no spec-decode) | **60K** PASS @ 537s | one-shot >50K input where you can wait + don't need MTP |
+
+Both top out at the **60K hardware-physical wall on 24 GB single-card.** 90K MTP-off attempt didn't complete in 25 min (HTTP 000 at 1500s curl); not shipped, not failed — indeterminate.
+
+**Sidecars dropped (3, all closed natively in v7.69):**
+- `patch_pn25_genesis_register_fix.py` → covered by v7.66 PN25 + v7.69 worker-spawn registration
+- `patch_pn30_dst_shaped_temp_fix.py` → covered by v7.69 PN30 part3
+- `patch_workspace_lock_disable.py` → covered by v7.69 PN34_WORKSPACE_LOCK_RELAX env-gate
+
+**Sidecars retained on master (2):**
+- `patch_inputs_embeds_optional.py` (NEW) — backport of vllm#35975. Drop when upstream merges.
+- `patch_tolist_cudagraph.py` — unchanged.
+
+**Genesis env bundle (long-text.yml):**
+```
+GENESIS_ENABLE_P103=1
+GENESIS_ENABLE_PN32_GDN_CHUNKED_PREFILL=1
+GENESIS_PN32_GDN_CHUNK_SIZE=8192
+GENESIS_PN32_GDN_CHUNK_THRESHOLD=16384
+GENESIS_FLA_FWD_H_MAX_T=16384
+GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=1
+GENESIS_VLLM_SSM_CONV_STATE_LAYOUT=DS
+```
+
+Branch `v7.69-cliff2-test` merged to master at commit `15b84df`. Per-round bisect log + mem-util sweep at `results/v0.20-migration/v769-codex-r1-test.summary` (404 lines, six bisect rounds).
+
+**Cross-rig contributions filed:**
+- [Genesis discussion #19](https://github.com/Sandermage/genesis-vllm-patches/discussions/19) — three v7.66/v7.68 regression reports + acknowledgement of all closures in v7.69.
+- [Genesis issue #18](https://github.com/Sandermage/genesis-vllm-patches/issues/18) — P103 cu_seqlens gate fix proposal for v7.70.
+
 ## 2026-05-02 — Genesis v7.66 + Cliff 1 mech B closed ⭐
 
 Genesis pin bump `753344b` → `fc89395` (v7.66 dev tip). Cliff 1 mech B closed across all 4 TQ3 composes via two local backports:
