@@ -17,7 +17,7 @@ This is what the repo's [Quick start](../../README.md#quick-start) ships. Everyt
 ## What's in the box
 
 - vLLM nightly (pinned to `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` = `0.20.1rc1.dev16+g7a1eb8ac2`)
-- Sandermage's [Genesis v7.65 dev tip patches](https://github.com/Sandermage/genesis-vllm-patches) (commit `d89a089`, mounted into vLLM's site-packages at boot)
+- Sandermage's [Genesis v7.66 dev tip patches](https://github.com/Sandermage/genesis-vllm-patches) (commit `fc89395`, mounted into vLLM's site-packages at boot)
 - `patch_workspace_lock_disable.py` sidecar — relaxes vllm#39226 strict assertion to one-shot WARNING (covers rare TQ decode paths where `profile_run` doesn't lock workspace at the right size)
 - Our [`patch_tolist_cudagraph.py`](../../patches/patch_tolist_cudagraph.py) (CUDA graph capture fix for TurboQuant continuation prefill)
 - 5 compose variants with different KV/ctx/feature trade-offs (see [README Status](../../README.md#status-at-a-glance))

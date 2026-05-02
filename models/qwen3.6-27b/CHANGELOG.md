@@ -2,6 +2,39 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-02 — Genesis v7.66 + Cliff 1 mech B closed ⭐
+
+Genesis pin bump `753344b` → `fc89395` (v7.66 dev tip). Cliff 1 mech B closed across all 4 TQ3 composes via two local backports:
+
+**PN25 v3 import-time backport** (`patch_pn25_genesis_register_fix.py`):
+Sander's PN25 mechanisms — both v7.65 `@torch.library.custom_op` (which crashes on `infer_schema` inside dynamo trace) AND v7.66 `direct_register_custom_op` + `Library("genesis", "FRAGMENT")` (which crashes on `instantiate_user_defined_class_object` inside dynamo trace) — fail on TP=1 spawn. Our v3 text-patches `vllm/model_executor/layers/activation.py` to register the op at module-import time, BEFORE any trace context exists. Survives both Sander mechanisms because it sidesteps registration-during-trace entirely.
+
+**PN30 dst-shaped temp fix** (`patch_pn30_dst_shaped_temp_fix.py`):
+Sander's PN30 `a9977d8` corrupts DS conv state row strides by raw-memcpying a compact `.contiguous()` source-tail into a strided destination. Our fix builds a destination-shaped temp inside `collect_mamba_copy_meta` (where both source AND destination block IDs are known) and does the strided copy correctly. Diagnosis credit: ChatGPT/Codex CLI cross-check.
+
+**Validation matrix (v7.66 + local sidecars, verify-stress.sh 7-probe ladder):**
+
+| Compose            | Ctx | mem-util | Probes | Failure          |
+|--------------------|-----|----------|--------|------------------|
+| long-text          | 180K | 0.95 | 6/7 | Cliff 2 architectural |
+| long-vision        | 145K | 0.95 | 6/7 | Cliff 2 architectural |
+| bounded-thinking   | 180K | 0.95 | 6/7 | Cliff 2 architectural |
+| dual-turbo (TP=2)  | 262K | 0.85 | 6/7 | Cliff 2 architectural |
+
+Backoff from 214K + 0.985 → 180K + 0.95 (long-text/bounded-thinking) and 198K + 0.98 → 145K + 0.95 (long-vision) was needed to give activation headroom for the PN12+PN25 FFN pool residence + PN30 dst-shaped temp lifecycle. Vision tower's persistent ~1 GB tightens long-vision further.
+
+**Sander's v7.66 PN33 partial:** PN33 (default ON) closes BOOT-time profile_run workspace_lock issue, but the runtime decode workspace_lock at `turboquant_attn.py:1350:_decode_attention` still fires on TP=1. Cross-rig data sent to Sander via [discussion #19 reply](https://github.com/noonghunna/club-3090/discussions/19#discussioncomment-16785590).
+
+**Sander's v7.66 PN31:** still doesn't fit on 24 GB. Per-shape persistent buffers + PN12+PN25 pool residence outpace activation budget at `chunk_fwd_o`. Lower mem-util (0.95) is sufficient to close the 25K tool-RETURN path PN31 was designed to fix without needing PN31 itself.
+
+**Sidecars retained on master (4):**
+- `patch_pn25_genesis_register_fix.py` (PN25 v3 import-time, TP=1 only)
+- `patch_pn30_dst_shaped_temp_fix.py` (replaces Sander's compact `.contiguous()`)
+- `patch_workspace_lock_disable.py` (PN33 narrowed but didn't close runtime decode path)
+- `patch_tolist_cudagraph.py` (cudagraph capture fix, unchanged)
+
+Per-config + cross-rig results in `results/v0.20-migration/v766-pin-results.summary` and the per-compose `*-pn30.summary` files.
+
 ## 2026-05-01 PM — vLLM v0.20 + Genesis v7.65 dev tip migration ⭐
 
 Master pin migration from `vllm-openai:nightly-07351e088...` (`0.19.2rc1.dev205`) + Genesis v7.64 (`64dd18b`) to `vllm-openai:nightly-7a1eb8ac2ec...` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.65 dev tip (commit `d89a089`). v0.20's revised TQ FA prefill paths ([vllm#40092](https://github.com/vllm-project/vllm/pull/40092)) and Genesis v7.65's PN26b sparse-V kernel + PN17 FA2 lse-clamp + P38B/P15B in-source hooks together close Cliff 1 mech B sub-mechanisms that forced the dev205 backoffs. Three of our local sidecars (`patch_pn12_ffn_pool_anchor.py`, `patch_pn12_compile_safe_custom_op.py`, `patch_fa_max_seqlen_clamp.py`) replaced by Genesis-native equivalents.

@@ -25,31 +25,50 @@ This document supersedes earlier characterizations in CHANGELOG and FAQ where th
 
 ---
 
-## vLLM pin compatibility status (master shipped on v0.20 + Genesis v7.65 — 2026-05-01 PM)
+## vLLM pin compatibility status (master shipped on v0.20 + Genesis v7.66 — 2026-05-02)
 
-**Master now ships on `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.65 dev tip (commit `d89a089`).** This pin migration on 2026-05-01 reverts the dev205 + v7.64 backoffs that were forced by Cliff 1 mech B sub-mechanisms. Both 33K and 50K token tool-prefill stresses now PASS across all five main variants.
+**Master now ships on `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.66 dev tip (commit `fc89395`).** Cliff 1 mech B (inductor compile-path FFN intermediate buffer leak) is **closed** across all 4 TQ3 composes via PN25 v3 (local import-time backport for TP=1) + PN30 dst-shaped temp fix (local correction for Sander's compact `.contiguous()`). verify-stress.sh 7-probe ladder: 6/7 pass on every TQ3 variant; only Cliff 2 architectural fails.
 
-### v0.20 unblock — what changed
+### Cliff 1 mech B — what closed it
 
-The dev205 `WorkspaceManager` strict-lock issue ([vllm#39226](https://github.com/vllm-project/vllm/pull/39226)) doesn't apply on v0.20 the same way; v0.20's revised TQ FA paths ([vllm#40092](https://github.com/vllm-project/vllm/pull/40092)) restructure workspace allocation so the strict assertion never fires under the same calls. Where it *can* fire (rare paths still locked at 0 MB), our `patch_workspace_lock_disable.py` sidecar turns the strict assertion into a one-shot WARNING — same surface as Sandermage's **P98** which auto-skips on v0.20 due to a drift-marker false positive (filed as a Genesis side-note; pending Sandermage's marker fix).
+Two compounding fixes:
 
-### Genesis v7.65 dev tip — relevant patches active
+1. **PN25 v3 import-time backport** (`patch_pn25_genesis_register_fix.py`) — text-patches `vllm/model_executor/layers/activation.py` to register `silu_and_mul` as a `torch.library.custom_op` at module-import time, BEFORE any dynamo trace context exists. Required because Sander's upstream PN25 (both v7.65 `@custom_op` and v7.66 `direct_register_custom_op` mechanisms) fails inside the dynamo trace on TP=1 spawn with `infer_schema` / `instantiate_user_defined_class_object`. Our approach moves registration entirely outside the trace and works regardless of which underlying mechanism is used.
+
+2. **PN30 dst-shaped temp fix** (`patch_pn30_dst_shaped_temp_fix.py`) — corrects Sander's PN30 `a9977d8` which materialized a compact `.contiguous()` source-tail and raw-memcpy'd it into a strided destination, corrupting DS conv state row strides on every offset>0 copy. Our fix builds a dst-shaped temp inside `collect_mamba_copy_meta` (where both source AND destination block IDs are known) and does the strided copy correctly. Diagnosis credit: ChatGPT/Codex CLI cross-check.
+
+Both fixes apply at setup time via `bash scripts/setup.sh qwen3.6-27b`. They survive Genesis pin bumps as long as the upstream code anchors don't shift dramatically.
+
+### Genesis v7.66 dev tip — relevant patches active
 
 | Patch | What it does |
 |---|---|
-| **PN12** | FFN intermediate scratch pool (Cliff 1 mech B fix on TQ3) — replaces our local `patch_pn12_ffn_pool_anchor.py` |
-| **PN17** | FA2 softmax_lse runtime clamp — frees 50-100 MiB on long-ctx, replaces our local `patch_fa_max_seqlen_clamp.py` |
-| **PN26b** | First public sparse-V Triton kernel for SM86 (Ampere consumer) — 27B-tuned BLOCK_KV=8 num_warps=4 threshold=0.01 |
-| **P38B** | In-source hook for `_continuation_prefill` (Genesis #14 fix) — replaces our local `patch_pn12_compile_safe_custom_op.py` |
+| **PN12** | FFN intermediate scratch pool (Cliff 1 mech B fix on TQ3 — eager path) |
+| **PN17** | FA2 softmax_lse runtime clamp — frees 50-100 MiB on long-ctx |
+| **PN25** (Sander v7.66) | direct_register_custom_op refactor — superseded on TP=1 by our local v3 import-time patch |
+| **PN26b** | First public sparse-V Triton kernel for SM86 (Ampere consumer) |
+| **PN30** (Sander a9977d8) | DS conv state spec-decode fix — superseded by our local dst-shaped temp fix (Sander's compact `.contiguous()` corrupts DS row strides) |
+| **PN33** (NEW v7.66, default ON) | Spec-decode warmup K-aware (vllm#37521 backport extended to MTP/ngram). Closes boot-time workspace_lock issue but NOT the runtime decode path on TP=1 |
+| **P38B** | In-source hook for `_continuation_prefill` (Genesis #14 fix) |
 | **P15B** | FA varlen `max_seqlen_k` clamp at TQ wrapper boundary (Genesis #15 fix) |
 
-### Validation across all 5 main variants (2026-05-01 PM)
+### Local sidecars retained on master
 
-| Variant | Ctx | mem-util | Boot | verify-full | 33K stress | 50K stress | Code TPS (n=5) |
-|---|---|---|---|---|---|---|---|
-| `long-text.yml` | 214K | 0.985 | ✅ | ✅ 8/8 | ✅ | ✅ | 67.39 (CV 2.7%) |
-| `long-vision.yml` | 198K | 0.98 | ✅ | ✅ 8/8 | ✅ | ✅ | 66.12 (CV 4.1%) |
-| `bounded-thinking.yml` | 214K | 0.985 | ✅ | ✅ 8/8 | ✅ | ✅ | 65.80 (CV 2.3%) |
+| Sidecar | Reason |
+|---|---|
+| `patch_pn25_genesis_register_fix.py` | Sander's PN25 mechanisms (v7.65 `@custom_op` AND v7.66 `Library`) both fail inside dynamo trace on TP=1. Our v3 registers at activation.py import time, outside any trace. Drop when upstream provides a TP=1-compatible registration path. |
+| `patch_pn30_dst_shaped_temp_fix.py` | Replaces Sander's compact `.contiguous()` with a dst-shaped temp that preserves DS row strides. Drop when upstream lands the corrected approach. |
+| `patch_workspace_lock_disable.py` | PN33 closes boot-time `profile_run` workspace_lock but not runtime `turboquant_attn.py:1350:_decode_attention`. Drop when upstream has a fix that covers the runtime decode path. |
+| `patch_tolist_cudagraph.py` | cudagraph capture fix, unchanged from earlier rounds. |
+
+### Validation across all 4 TQ3 variants (2026-05-02 on Genesis v7.66 + local sidecars)
+
+| Variant | Ctx | mem-util | verify-stress.sh probes | Notes |
+|---|---|---|---|---|
+| `long-text.yml` | 180K | 0.95 | 6/7 (Cliff 2 only fail) | IDE-agent recommended |
+| `long-vision.yml` | 145K | 0.95 | 6/7 (Cliff 2 only fail) | Vision tower tightens budget further |
+| `bounded-thinking.yml` | 180K | 0.95 | 6/7 (Cliff 2 only fail) | Parity with long-text |
+| `dual-turbo.yml` | 262K | 0.85 (TP=2) | 6/7 (Cliff 2 only fail) | TP=2 doesn't avoid Cliff 2 |
 | `tools-text.yml` | 75K | 0.97 | ✅ | ✅ 8/8 | ✅ | ✅ | 69.66 (CV 1.4%) |
 | `dual-turbo.yml` | 262K | 0.85 | ✅ | ✅ 8/8 | ✅ | ✅ | 76.01 (CV 4.5%, 269 TPS aggregate at n=4 streams) |
 

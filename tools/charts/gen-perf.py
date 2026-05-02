@@ -20,7 +20,7 @@ OUT = Path(__file__).resolve().parents[2] / "docs" / "img"
 
 # (label, narr_tps, code_tps, group)
 # Single-card + dual-turbo numbers re-benched 2026-05-01 PM on the v0.20
-# (0.20.1rc1.dev16+g7a1eb8ac2) + Genesis v7.65 dev tip (commit d89a089)
+# (0.20.1rc1.dev16+g7a1eb8ac2) + Genesis v7.66 dev tip (commit fc89395)
 # substrate, n=5 measured runs after 3 warmups. Dual.yml / dual-dflash*
 # pending re-bench; their dev205-era numbers carry forward as estimates
 # (steady-state TPS is the same regime — fp8 paths weren't TPS-changed
@@ -30,10 +30,10 @@ OUT = Path(__file__).resolve().parents[2] / "docs" / "img"
 # experimental / not recommended for shipping yet; see docs/UPSTREAM.md.
 configs_all = [
     ("v714 48K\n(default)",       55.00, 70.50, "single-vllm"),
-    ("long-vision 198K\n+ vision",       50.32, 66.12, "single-vllm"),
-    ("long-text 214K\ntext-only",      49.74, 67.39, "single-vllm"),
+    ("long-vision 145K\n+ vision",       50.32, 66.12, "single-vllm"),
+    ("long-text 180K\ntext-only",      49.74, 67.39, "single-vllm"),
     ("tools-text 75K\nfp8 IDE-agent",  53.32, 69.66, "single-vllm"),
-    ("bounded-thinking 214K\nstructured-CoT",  49.77, 65.80, "single-vllm"),
+    ("bounded-thinking 180K\nstructured-CoT",  49.77, 65.80, "single-vllm"),
     ("minimal\n(no spec-dec)",    32.41, 32.56, "single-vllm"),
     ("llama.cpp Q3_K_XL\n262K + vision", 21.22, 20.79, "single-llama"),
     ("llama.cpp Q4_K_M\n+ ngram-mod 32K",22.04, 26.11, "single-llama"),
@@ -114,7 +114,7 @@ def make_chart(configs, out_stem, title_subject, figsize):
     ax.legend(handles=legend_elements, loc="upper center", bbox_to_anchor=(0.5, -0.10),
               ncol=2, fontsize=9, frameon=False)
 
-    substrate_parts = ["vLLM 0.20.1rc1.dev16+g7a1eb8ac2 + Genesis v7.65 dev (d89a089)"]
+    substrate_parts = ["vLLM 0.20.1rc1.dev16+g7a1eb8ac2 + Genesis v7.66 dev (fc89395)"]
     if any(g == "single-llama" for g in groups):
         substrate_parts.append("llama.cpp mainline 0d0764dfd")
     if any(g == "single-luce-watch" for g in groups):

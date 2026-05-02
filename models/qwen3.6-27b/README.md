@@ -49,13 +49,13 @@ How each config splits the 24 GB / card budget — weights, KV cache, vision tow
 
 ![Per-card VRAM allocation across single + dual configs](../../docs/img/vram-budget-combined.png)
 
-As of 2026-05-01 PM (vLLM v0.20 + Genesis v7.65 dev tip migration), single-card recommended options (see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md)):
-- **`long-text.yml` — 214K text-only** at 0.985 mem-util. Restored from the dev205-era 185K backoff — v0.20's revised TQ FA paths + Genesis v7.65's PN12 + PN17 + P38B in-source hooks close the Cliff 1 mech B sub-mechanisms. Both 33K AND 50K tool-prefill stresses PASS. KV pool 284,832 tokens.
-- **`long-vision.yml` — 198K + vision** at 0.98 mem-util. Restored from the dev205-era 140K backoff (+58K, +41%). KV pool 264,192 tokens.
-- **`bounded-thinking.yml` — 214K text-only + structured-CoT grammar in reasoning** at 0.985 mem-util. Same patch stack as long-text plus `--structured-outputs-config.enable_in_reasoning true`. ~30× cheaper think output on coding workloads with **+4.3pp HE+ / +24pp LCB v6** vs FREE thinking. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md).
+As of 2026-05-02 (vLLM v0.20 + Genesis v7.66 dev tip + Cliff 1 mech B closed), single-card recommended options (see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md)):
+- **`long-text.yml` — 180K text-only** at 0.95 mem-util. **IDE-agent recommended.** Cliff 1 mech B closed via PN25 v3 import-time + PN30 dst-shaped temp fix. Real OpenCode/Cline/Roo workloads work cleanly here. KV pool ~284K tokens.
+- **`long-vision.yml` — 145K + vision** at 0.95 mem-util. Vision tower's persistent ~1 GB tightens activation budget further than long-text. Same patch stack.
+- **`bounded-thinking.yml` — 180K text-only + structured-CoT grammar in reasoning** at 0.95 mem-util. Same patch stack as long-text plus `--structured-outputs-config.enable_in_reasoning true`. ~30× cheaper think output on coding workloads with **+4.3pp HE+ / +24pp LCB v6** vs FREE thinking. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md).
 - **`llamacpp/default` — 262K + vision** at ~21 TPS. Different engine, no cliffs anywhere — production-safe for unpredictable inputs.
 
-The **single shipped limitation** on the vLLM single-card variants: Cliff 2 still fires on single prompts >50–60K (DeltaNet GDN forward OOM — architectural, not closed by v0.20). Use llama.cpp single or dual-card (TP=2 splits state across cards = no Cliff 2) for one-shot big prompts. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
+The **single shipped limitation** on the vLLM single-card variants: Cliff 2 still fires on single prompts >50–60K (DeltaNet GDN forward OOM — architectural, not closed by v0.20 / v7.66 / our patches). Use llama.cpp single or dual-card (TP=2 splits state across cards) for one-shot big prompts. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
 
 Other variants (`docker-compose.yml` 48K · `tools-text.yml` 75K FP8 · `minimal.yml` 32K) are kept in the repo as fallbacks / diagnostics, not promoted as primary.
 
@@ -76,7 +76,7 @@ TP=2 unlocks **262K + 4 concurrent streams** on dual-card (`dual.yml`).
 
 - **GGUF on vLLM** for Qwen3-Next family — not supported upstream. Use llama.cpp for GGUF on this model.
 - **EAGLE spec-decode on hybrid attention** — DeltaNet rollback issue (cross-engine architectural). Watch upstream.
-- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Lives in `fla.ops` upstream, no file-replacement patch. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA). Mitigation: dual-card (TP=2 splits state) or llama.cpp 262K. **Cliff 1** (tool-prefill OOM at ~25K-token tool returns) — closed across all paths since the 2026-05-01 v0.20 + Genesis v7.65 dev tip migration. Both 33K AND 50K tool-prefill stresses PASS on every variant. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md) "v0.20 unblock".
+- **Single-card single prompts >50-60K** — Cliff 2 (DeltaNet GDN forward state). Lives in `fla.ops` upstream, no file-replacement patch. Watch [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) and [FlashQLA](https://github.com/QwenLM/FlashQLA). Mitigation: dual-card (TP=2 splits state) or llama.cpp 262K. **Cliff 1 mech B** (inductor compile-path FFN intermediate buffer leak) — **closed since 2026-05-02** via PN25 v3 import-time backport + PN30 dst-shaped temp fix. Real IDE-agent prompts work cleanly. See [`docs/CLIFFS.md`](../../docs/CLIFFS.md).
 
 ---
 
@@ -98,7 +98,7 @@ For deeper rationale, comparison tables, and the patched-vLLM-source story (vllm
 
 ## Genesis patch surface (vLLM)
 
-The vLLM composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `d89a089` (v7.65 dev tip, 2026-05-01) per `scripts/setup.sh`.
+The vLLM composes mount Sandermage's [Genesis tree](https://github.com/Sandermage/genesis-vllm-patches) and apply specific patches at boot. Currently pinned at commit `fc89395` (v7.66 dev tip, 2026-05-02) per `scripts/setup.sh`.
 
 Active patches per compose (selected highlights — full env-var stack in each compose YAML):
 

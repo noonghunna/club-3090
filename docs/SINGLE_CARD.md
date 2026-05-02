@@ -37,7 +37,7 @@ Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <varia
 
 ![Qwen3.6-27B TPS — single 3090 configs](img/performance-single.png)
 
-Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.65 dev tip (commit `d89a089`), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
+Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.66 dev tip (commit `fc89395`), llama.cpp mainline `0d0764dfd`, RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
 
 ---
 
@@ -50,7 +50,7 @@ What this says about single-card constraints:
 - **Model weights** consume ~14 GB (AutoRound INT4 / GGUF Q3_K_XL). Half the card.
 - **KV cache** is the next biggest line; its size depends on `--kv-cache-dtype` × ctx. fp8 ≈ 1 byte/token/(layer×head); TQ3 ≈ 0.4 bytes/token/(layer×head); fp16 ≈ 2 bytes/token/(layer×head).
 - **Vision tower** (mmproj) costs ~0.5–1.0 GB extra when on.
-- **Activations + cudagraph pools** is what's left. At `--gpu-memory-utilization 0.92` (default 48K) you have 2-3 GB of activation headroom — comfortable. **2026-05-01 PM (v0.20 + v7.65 migration)** — restored ceilings to **214K + 0.985 (long-text + bounded-thinking)** and **198K + 0.98 (long-vision)**. v0.20's revised TQ FA prefill paths ([vllm#40092](https://github.com/vllm-project/vllm/pull/40092)) and Genesis v7.65's PN26b sparse-V kernel + PN17 FA2 lse-clamp + P38B/P15B in-source hooks together close the Cliff 1 mech B sub-cliffs that forced the dev205 backoff. Both 33K-token AND 50K-token single-shot tool-prefill stresses now PASS. See [`docs/CLIFFS.md`](CLIFFS.md) "v0.20 unblock".
+- **Activations + cudagraph pools** is what's left. **2026-05-02 (v7.66 + Cliff 1 mech B closed)** — settled at **180K + 0.95 (long-text + bounded-thinking)** and **145K + 0.95 (long-vision)** after PN25 v3 import-time fix + PN30 dst-shaped temp fix landed. The pool-residence cost of PN12+PN25 + DeltaNet GDN forward state buffer at 30K+ depths needs ~480 MiB activation headroom that 0.985 didn't leave. Cliff 1 mech B (inductor compile-path FFN intermediate buffer leak) is now CLOSED across all 4 TQ3 composes. See [`docs/CLIFFS.md`](CLIFFS.md).
 
 For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
@@ -62,13 +62,13 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
 **Workload:** chat with images, vision-aware coding agents, multimodal RAG. Anything where the user might paste a screenshot.
 
-198K + vision tower + TQ3 KV + Genesis MTP n=3 + full v7.65 patch stack (PN12 + PN17 + PN26b + P38B + P15B) at mem-util 0.98. `verify-full.sh` 8/8; `verify-stress.sh` 33K AND 50K tool-prefill PASS on v0.20. KV pool 264,192 tokens. Code 66 / narr 50 TPS (n=5, CV 2-4%), AL 3.40-3.56, MTP avg accept 80-85%.
+145K + vision tower + TQ3 KV + DS layout + Genesis MTP n=3 + full v7.66 patch stack (PN12 + PN17 + PN25 v3 + PN30 dst-shaped fix + PN26b + P38B + P15B + PN33) at mem-util 0.95. `verify-stress.sh`: 6/7 probes pass cleanly (only Cliff 2 architectural fails). Code 66 / narr 50 TPS (n=5, CV 2-4%), AL 3.40-3.56.
 
 ### Long ctx, text-only — `long-text.yml` ⭐
 
-**Workload:** RAG ingest, codebase analysis, book/document Q&A, long conversations without image input.
+**Workload:** RAG ingest, codebase analysis, book/document Q&A, IDE coding agents (Cline / OpenCode / Roo / Claude Code / Cursor), long conversations.
 
-214K + no vision + TQ3 KV + same patch stack at mem-util 0.985. `verify-full.sh` 8/8; `verify-stress.sh` 33K AND 50K tool-prefill PASS on v0.20. KV pool 284,832 tokens. Code 67 / narr 50 TPS (n=5, CV 2.6%), AL 3.34-3.51, MTP avg accept 78-84%. Vision drop adds ~1 GB headroom over long-vision so this variant runs at higher ctx + mem-util safely.
+180K + no vision + TQ3 KV + DS layout + same patch stack at mem-util 0.95. `verify-stress.sh`: 6/7 probes pass cleanly. Code 67 / narr 50 TPS (n=5, CV 2.6%), AL 3.34-3.51. **IDE-agent prompts (sys + tool schemas + user request) work cleanly here** — Cliff 1 mech B closed via PN25 v3 + PN30 dst-shaped fix.
 
 ### Bulletproof / no cliffs — `llamacpp/default` ⭐
 
