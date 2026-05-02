@@ -61,6 +61,22 @@ Both fixes apply at setup time via `bash scripts/setup.sh qwen3.6-27b`. They sur
 | `patch_workspace_lock_disable.py` | PN33 closes boot-time `profile_run` workspace_lock but not runtime `turboquant_attn.py:1350:_decode_attention`. Drop when upstream has a fix that covers the runtime decode path. |
 | `patch_tolist_cudagraph.py` | cudagraph capture fix, unchanged from earlier rounds. |
 
+### Genesis v7.68 dev tip (`18e65e3`) — TESTED 2026-05-02, NOT ADOPTED
+
+Cross-rig validation of v7.68 on the `v7.68-cliff2-test` branch (pushed to origin for reference). Sander accepted our 3 cross-rig sidecars as Genesis-native; we attempted the drop but hit 3 regressions on TP=1 + 24GB:
+
+| v7.68 patch | Result | Detail |
+|---|---|---|
+| **PN25 v7.68** (replaces our `patch_pn25_genesis_register_fix.py`) | ✅ works on TP=1 | `direct_register_custom_op` + `Library("genesis", "FRAGMENT")` survives worker spawn. FFN intermediate pool active across all dynamo traces. |
+| **PN34** (replaces our `patch_workspace_lock_disable.py`) | ✅ works (env-opt-in) | Default OFF; needs `GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=1`. Without it, runtime decode hits `AssertionError: Workspace is locked` at `turboquant_attn.py:1350`. |
+| **PN30 v7.68** (replaces our `patch_pn30_dst_shaped_temp_fix.py`) | ❌ broken | part3's `upstream_drift_markers=["[Genesis PN30"]` (generic prefix) matches markers parts 1+2 wrote on the same file. Part3 skips as "upstream_merged" → apply_all FAILS → vLLM aborts. Needs part3-specific marker. |
+| **P103** (FLA Cliff 2 chunked fwd_h+fwd_o) | ❌ broken | Wrap reports "rebound at 0 caller sites" — never intercepts. Cliff 2 OOM trace passes through `chunk_gated_delta_rule_fwd` directly. v7.68 commit `5743c03` fixed a NameError but the binding mechanism still has 0 callers on Qwen3.6-27B. |
+| **PN32** (GDN chunked-prefill) | ❌ insufficient on TP=1 | Chunks `gdn_linear_attn.forward_cuda` but the inner FLA `chunk_gated_delta_rule_fwd` still allocates the full h tensor. Without PN30 (broken above) the activation budget is so tight Cliff 2 fires at 30K instead of 50-60K. |
+
+**Verdict:** master stays on v7.66 (`fc89395`) + our 3 sidecars. Branch `v7.68-cliff2-test` retained as a snapshot for cross-rig data. Re-evaluate when Sander cuts v7.69 with these 3 fixes applied.
+
+Full findings in [`results/v0.20-migration/v768-cliff2-test.summary`](../results/v0.20-migration/v768-cliff2-test.summary).
+
 ### Validation across all 4 TQ3 variants (2026-05-02 on Genesis v7.66 + local sidecars)
 
 | Variant | Ctx | mem-util | verify-stress.sh probes | Notes |
