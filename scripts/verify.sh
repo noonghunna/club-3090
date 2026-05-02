@@ -41,22 +41,32 @@ else
 fi
 
 # --------------------------------------------------------------------
-# 2. Genesis patches applied cleanly — especially the fragile tool_call one
+# 2. Genesis patches applied cleanly
 # --------------------------------------------------------------------
-echo "[2/4] Genesis patches applied (Qwen3 tool_call fix in particular) ..."
+# Anchors updated 2026-05-02 for Genesis v7.14+ logging conventions. The
+# pre-v7.14 "[OK] Qwen3 tool_call fix" marker is no longer emitted; v7.14+
+# logs "[Genesis] applied:" per patch and "apply_all elapsed:" once at the
+# end. The `|| true` after grep prevents `set -euo pipefail` from killing the
+# pipeline when no anchor matches yet (e.g. mid-boot). Reported by
+# @troymroberts in club-3090#25.
+echo "[2/4] Genesis patches applied ..."
 if ! command -v docker >/dev/null 2>&1; then
   echo "  (skipped — docker not in PATH, cannot read container logs)"
 elif ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
   echo "  (skipped — container '${CONTAINER}' not found; if your container has a different name, set CONTAINER=...)"
 else
-  logs="$(docker logs "${CONTAINER}" 2>&1 | grep -E "Qwen3 tool_call fix|\[FAILED\]" | tail -5)"
-  if echo "$logs" | grep -q "\[OK\] Qwen3 tool_call fix"; then
-    pass "Genesis Qwen3 tool_call fix applied"
-  elif echo "$logs" | grep -q "\[FAILED\] Qwen3 tool_call fix"; then
-    fail "Genesis Qwen3 tool_call fix [FAILED]" \
-         "Your vLLM image drifted past the patch anchor. Pin to sha256:9bba4628a3b9... in compose/docker-compose.yml (already pinned by default). Re-pull if you bumped it manually."
+  logs="$(docker logs "${CONTAINER}" 2>&1 \
+    | { grep -E "apply_all elapsed|\[Genesis\] FAILED|\[Genesis\] applied:" || true; } \
+    | tail -10)"
+  if echo "$logs" | grep -q "\[Genesis\] FAILED"; then
+    fail "Genesis apply_all reported FAILED patch(es)" \
+         "Inspect: docker logs ${CONTAINER} 2>&1 | grep -E 'Genesis.*FAILED' | head"
+  elif echo "$logs" | grep -q "apply_all elapsed"; then
+    pass "Genesis patches applied (apply_all completed clean)"
+  elif echo "$logs" | grep -q "\[Genesis\] applied:"; then
+    pass "Genesis patches applied (apply_all may still be running)"
   else
-    echo "  (warn — no Genesis OK/FAILED marker for tool_call in logs; container may have been restarted. Continuing.)"
+    echo "  (warn — no Genesis marker in logs; container may have been restarted. Continuing.)"
   fi
 fi
 

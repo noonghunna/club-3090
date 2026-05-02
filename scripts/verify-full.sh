@@ -93,15 +93,25 @@ check_patches() {
     skip "container '${CONTAINER}' not found"
     return 0
   fi
+  # Anchors updated 2026-05-02 for Genesis v7.14+ logging conventions (the old
+  # "[OK] Qwen3 tool_call fix" string is no longer emitted; markers are now
+  # "[Genesis] applied:" per patch + "apply_all elapsed" at the end + "FAILED:"
+  # for any patch that errored). The `|| true` guards against grep returning 1
+  # under `set -euo pipefail` when no anchor matches yet (e.g. early boot).
+  # Reported by @troymroberts in club-3090#25.
   local logs
-  logs="$(docker logs "${CONTAINER}" 2>&1 | grep -E "Qwen3 tool_call fix|\[FAILED\]" | tail -5)"
-  if echo "$logs" | grep -q "\[OK\] Qwen3 tool_call fix"; then
-    pass "Genesis Qwen3 tool_call fix applied"
-  elif echo "$logs" | grep -q "\[FAILED\] Qwen3 tool_call fix"; then
-    fail "Genesis Qwen3 tool_call fix [FAILED]" \
-         "vLLM image drifted past patch anchor. Pin sha256:9bba4628a3b9 in compose."
+  logs="$(docker logs "${CONTAINER}" 2>&1 \
+    | { grep -E "apply_all elapsed|\[Genesis\] FAILED|\[Genesis Unified Patch|\[Genesis\] applied:" || true; } \
+    | tail -10)"
+  if echo "$logs" | grep -q "\[Genesis\] FAILED"; then
+    fail "Genesis apply_all reported FAILED patch(es)" \
+         "Inspect: docker logs ${CONTAINER} 2>&1 | grep -E 'Genesis.*FAILED' | head"
+  elif echo "$logs" | grep -q "apply_all elapsed"; then
+    pass "Genesis patches applied (apply_all completed clean)"
+  elif echo "$logs" | grep -q "\[Genesis\] applied:"; then
+    pass "Genesis patches applied (partial log — apply_all may still be running)"
   else
-    skip "no Genesis marker in logs"
+    skip "no Genesis marker in logs (container restarted, or Genesis not loaded)"
   fi
 }
 run_check "patches" check_patches
