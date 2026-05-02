@@ -370,6 +370,38 @@ else
     echo "- **Image:** \`${image:-unknown}\`"
   } | redact
 
+  subsection "Container Python / CUDA versions"
+  {
+    # vLLM version + Torch CUDA build vs host driver mismatch is one of the
+    # rare failure modes that image SHA pinning doesn't catch. Quick docker
+    # exec to surface what the container actually sees.
+    py_versions=$(docker exec "$CONTAINER" python3 -c \
+      'import torch, sys; print(f"torch={torch.__version__} torch_cuda_build={torch.version.cuda} cudnn={torch.backends.cudnn.version()}")' \
+      2>&1)
+    if [[ -n "$py_versions" ]] && [[ "$py_versions" != *"Error"* ]] && [[ "$py_versions" != *"error"* ]]; then
+      echo "- **PyTorch:** \`${py_versions}\`"
+    else
+      echo "- **PyTorch:** (could not query — \`docker exec\` failed or torch not importable)"
+    fi
+
+    vllm_ver=$(docker exec "$CONTAINER" python3 -c 'import vllm; print(vllm.__version__)' 2>&1)
+    if [[ -n "$vllm_ver" ]] && [[ "$vllm_ver" != *"Error"* ]] && [[ "$vllm_ver" != *"error"* ]]; then
+      echo "- **vLLM:** \`${vllm_ver}\`"
+    else
+      echo "- **vLLM:** (could not query)"
+    fi
+
+    # Container's view of the GPUs — should match host driver, but if NVIDIA
+    # Container Toolkit is mis-configured this surfaces the mismatch.
+    cuda_in_container=$(docker exec "$CONTAINER" nvidia-smi --query-gpu=index,name,driver_version --format=csv,noheader 2>&1 | head -4)
+    if [[ -n "$cuda_in_container" ]] && [[ "$cuda_in_container" != *"Error"* ]] && [[ "$cuda_in_container" != *"command not found"* ]]; then
+      echo "- **nvidia-smi inside container:**"
+      echo '  ```'
+      echo "$cuda_in_container" | sed 's/^/  /'
+      echo '  ```'
+    fi
+  } | redact
+
   subsection "Boot log highlights"
   {
     genesis_results=$(docker logs "$CONTAINER" 2>&1 | grep -E '\[INFO:genesis\.apply_all\] (Genesis|✅) Results' | tail -1)
