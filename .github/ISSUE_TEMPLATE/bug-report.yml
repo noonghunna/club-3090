@@ -6,10 +6,25 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for filing a bug! The data we ask for below has saved hours
-        of back-and-forth on every previous report. Please don't skip the
-        log/`verify-full.sh`/`nvidia-smi` blocks — they're how we tell a
-        local-config issue from a real upstream regression.
+        Thanks for filing a bug! The fastest path to a fix is starting with a clean
+        rig-state snapshot. Run:
+
+        ```bash
+        bash scripts/report.sh > my-rig.md
+        ```
+
+        ...and paste the contents into the report field below. That single command
+        captures hardware, GPU details (incl. power caps), container state, Genesis
+        patch status, KV pool sizing, and the engine config — everything we'd
+        otherwise have to ask for individually. Add `--verify` to include
+        `verify-full.sh` output in the same dump:
+
+        ```bash
+        bash scripts/report.sh --verify > my-rig.md
+        ```
+
+        Paths under your home, hostname, username, and any HF tokens are redacted
+        by default before output. Use `--no-redact` only for internal sharing.
 
   - type: textarea
     id: what-happened
@@ -38,71 +53,16 @@ body:
       required: true
 
   - type: textarea
-    id: docker-logs
+    id: rig-report
     attributes:
-      label: docker logs (last 100 lines)
+      label: Rig report — paste contents of `bash scripts/report.sh`
       description: |
-        Output of `docker logs --tail 100 <container-name> 2>&1`. The container
-        name is the `container_name:` field in the compose file you're running.
-      placeholder: |
-        docker logs --tail 100 vllm-qwen36-27b 2>&1
-        # paste the output here
-      render: text
-    validations:
-      required: true
+        Run `bash scripts/report.sh > my-rig.md` from the repo root, then paste
+        the contents here. Add `--verify` if you want verify-full output included.
 
-  - type: textarea
-    id: verify-full
-    attributes:
-      label: verify-full.sh output
-      description: |
-        Run `bash scripts/verify-full.sh` (or `verify-stress.sh` if that's
-        what's failing) against your running container and paste the full output.
-        This tells us which check fails on your rig vs. ours.
-      placeholder: |
-        bash scripts/verify-full.sh
-        # paste full output
-      render: text
-    validations:
-      required: true
-
-  - type: textarea
-    id: nvidia-smi
-    attributes:
-      label: nvidia-smi output
-      description: |
-        `nvidia-smi` output captured while the container is running. We need to
-        see VRAM use per card, driver version, and CUDA version.
-      placeholder: |
-        nvidia-smi
-        # paste full output
-      render: text
-    validations:
-      required: true
-
-  - type: input
-    id: gpu-count
-    attributes:
-      label: GPU configuration
-      placeholder: "1× RTX 3090, or 2× RTX 3090 (PCIe, no NVLink), etc."
-    validations:
-      required: true
-
-  - type: input
-    id: compose-variant
-    attributes:
-      label: Compose variant
-      description: Which `docker-compose.*.yml` file are you running?
-      placeholder: "docker-compose.yml (default 48K) / dual-turbo.yml / long-text.yml / ..."
-    validations:
-      required: true
-
-  - type: input
-    id: commit
-    attributes:
-      label: club-3090 commit
-      description: Output of `git -C /path/to/club-3090 rev-parse --short HEAD`.
-      placeholder: "e.g. 5060e22"
+        If you can't run the script (no shell access on the rig, etc.), note that
+        in "Anything else?" below and share whatever you have.
+      render: markdown
     validations:
       required: true
 
@@ -110,4 +70,14 @@ body:
     id: extras
     attributes:
       label: Anything else?
-      description: Custom environment overrides (`.env`), non-default `MEM_UTIL`, distro/kernel oddities, anything that might matter.
+      description: |
+        Custom env overrides (`.env`), non-default `MEM_UTIL`, distro oddities,
+        cross-references to related issues — anything beyond what `report.sh`
+        captures.
+
+        **If you couldn't run `scripts/report.sh`,** share what you can:
+
+        - `docker logs --tail 100 <container>`
+        - `nvidia-smi`
+        - GPU configuration (1× / 2× cards, NVLink yes/no, power cap)
+        - Compose variant + club-3090 commit (`git rev-parse --short HEAD`)

@@ -87,6 +87,8 @@ bash scripts/switch.sh vllm/long-vision   # for example
 
 For client snippets — Python (`openai` SDK + raw `requests`), TypeScript / Node, plus connection settings for Open WebUI, Cline, Cursor, and other OpenAI-compat clients — see [`docs/EXAMPLES.md`](docs/EXAMPLES.md). Common questions ("can I use a 4090?", "why MTP not EAGLE?", "why not Ollama?", "what's a prefill cliff?") have answers in [`docs/FAQ.md`](docs/FAQ.md). Trying to decide self-host vs cloud APIs vs other local options? [`docs/COMPARISONS.md`](docs/COMPARISONS.md). Want to contribute numbers, bug repros, or new variants? [`CONTRIBUTING.md`](CONTRIBUTING.md). Tracking the upstream issues and PRs we depend on or have filed? [`docs/UPSTREAM.md`](docs/UPSTREAM.md).
 
+**Hit an issue or want to share bench numbers?** Run `bash scripts/report.sh > my-rig.md` (add `--bench` to include canonical TPS) and paste into the [bug](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml) or [bench](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template — single command captures everything we'd otherwise ask for individually.
+
 For llama.cpp (different engine, different recipe — useful for max context on single-card):
 ```bash
 cd models/qwen3.6-27b/llama-cpp && cat README.md
@@ -137,7 +139,8 @@ club-3090/
 │   ├── verify.sh                          quick smoke test (engine-aware via env)
 │   ├── verify-full.sh                     fast functional test (8 checks, ~1-2 min)
 │   ├── verify-stress.sh                   boundary-case stress test (longctx ladder + tool prefill OOM, ~5-10 min)
-│   └── bench.sh                           canonical TPS bench
+│   ├── bench.sh                           canonical TPS bench
+│   └── report.sh                          paste-ready triage report (run before filing a bug or sharing bench numbers)
 └── tools/
     └── charts/                            re-generate docs/img/* SVGs and PNG exports (matplotlib)
         ├── gen-perf.py                    perf bar charts (combined + single + dual)
