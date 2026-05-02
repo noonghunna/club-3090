@@ -36,3 +36,7 @@ venv/
 
 # Patched vLLM source clone (volume-mounted by dual-card composes)
 vllm-src/
+
+# Internal diagnostics / feasibility memos — kept local, not published.
+# Per-model published diagnostics live at models/<name>/vllm/diagnostics/.
+docs/diagnostics/
