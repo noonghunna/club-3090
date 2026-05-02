@@ -1,0 +1,28 @@
+variant: dual-turbo (TP=2)
+date: 2026-05-02
+context: 262144
+gpu_mem_util: 0.85
+kv_dtype: turboquant_3bit_nc
+tp: 2
+genesis_pin: 753344b (v7.65 dev tip)
+patches: PN25 v3 (local) + PN30 dst-shaped temp fix (local) + DS layout enabled
+verify_stress_results: |
+  [1/7] longctx small (10K + 30K): PASS
+  [2/7] 25K tool RETURN: PASS
+  [3/7] IDE-agent one-shot: PASS (66 tokens, finish=stop)
+  [4/7] multi-turn agent: PASS
+  [5/7] LCB-coding: PASS
+  [6/7] reasoning 8192: PASS (8192 tokens, finish=length)
+  [7/7] longctx large (60K+): FAIL (Cliff 2 architectural — DeltaNet GDN forward state OOM, even on TP=2 single-prompt)
+score: 6/7
+notes: |
+  TP=2 splits state but doesn't avoid Cliff 2 on single-prompt 60K+ since
+  the GDN state buffer is per-rank and grows with seq_len, not split across
+  ranks. Cliff 2 is not addressable on this config class regardless of
+  TP factor. Rule for users: dual-turbo for 4-stream concurrent serving at
+  ≤50K each, OR llamacpp/default 262K for single-prompt big inputs.
+  PN30 dst-shaped temp fix passes cleanly on TP=2 — multi-turn agent +
+  LCB-coding shapes both work that previously crashed with Sander's
+  upstream PN30 a9977d8.
+kv_pool_tokens: 1523232
+max_concurrency: 4.67

@@ -71,16 +71,12 @@ services:
       - TRITON_CACHE_DIR=/root/.triton/cache
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - VLLM_FLOAT32_MATMUL_PRECISION=high
-      # VLLM_SSM_CONV_STATE_LAYOUT — disabled 2026-05-01 PM after
-      # ChatGPT/Codex CLI diagnosed PN30 (Sander a9977d8) layout-corruption bug:
-      # PN30's .contiguous() materializes src[block, :, offset:] as compact
-      # 10240×5 memory, then raw-memcpys it into dst whose rows are 10240×6.
-      # Row 1+ start at the wrong destination offset → corrupts DS conv state.
-      # The TQ store CUDA assert we saw on probe 4 was the eventual surfacing,
-      # not the root cause. Until upstream fix lands, drop DS layout (-6% TPS
-      # per Sander's bench) for correctness on probes 4 + 5. Reported back
-      # on Sandermage/genesis-vllm-patches#17 with the row-stride diagnosis.
-      # - VLLM_SSM_CONV_STATE_LAYOUT=DS
+      # VLLM_SSM_CONV_STATE_LAYOUT=DS — RE-ENABLED with our local PN30
+      # dst-shaped temp fix (patch_pn30_dst_shaped_temp_fix.py, applied at
+      # setup time). Without our fix, Sander's PN30 a9977d8 corrupts DS row
+      # strides on spec-decode AL>1. With our fix, PN30 builds destination-
+      # shaped temp via collect_mamba_copy_meta. +6% TPS retained.
+      - VLLM_SSM_CONV_STATE_LAYOUT=DS
       - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
       - CUDA_DEVICE_MAX_CONNECTIONS=8
       # FULL Genesis v7.65 PROD env-var set per Sandermage's
@@ -129,6 +125,10 @@ services:
       - GENESIS_PN26_SPARSE_V_THRESHOLD=0.01
       - GENESIS_ENABLE_P38B_COMPILE_SAFE=1
       - GENESIS_ENABLE_P15B_FA_VARLEN_CLAMP=1
+      - GENESIS_ENABLE_PN25_SILU_INDUCTOR_SAFE=1
+      # PN30 — RE-ENABLED with our local dst-shaped temp fix
+      # (patch_pn30_dst_shaped_temp_fix.py, applied during setup.sh).
+      - GENESIS_ENABLE_PN30_DS_LAYOUT_SPEC_DECODE=1
       - GENESIS_PREALLOC_TOKEN_BUDGET=4128
       - GENESIS_BUFFER_MODE=shared
       # Explicit OFFs to match Sandermage's PROD env-var set verbatim:

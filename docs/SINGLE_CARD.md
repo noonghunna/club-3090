@@ -10,36 +10,26 @@ Four recommended options:
 
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
 |---|---|---|---|---|
-| **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **198K** | 50 / 66 | ~22.3 GB (mem-util 0.98) |
-| **Long ctx, text-only** (RAG, codebase, books) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **214K** | 50 / 67 | ~23.4 GB (mem-util 0.985) |
-| **Bounded thinking** (coding agents, structured-CoT, cost-bounded thinking) — see [STRUCTURED_COT.md](STRUCTURED_COT.md) | [`bounded-thinking.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) | **214K** | 50 / 66 | ~21.7 GB (mem-util 0.985) |
+| **Long ctx + vision** (chat, agents, image input) | [`long-vision.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-vision.yml) | **145K** | 50 / 66 | ~23.0 GB (mem-util 0.95) |
+| **Long ctx, text-only** (RAG, codebase, books, **IDE agents** ⭐) | [`long-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.long-text.yml) | **180K** | 50 / 67 | ~22.4 GB (mem-util 0.95) |
+| **Bounded thinking** (coding agents, structured-CoT, cost-bounded thinking) — see [STRUCTURED_COT.md](STRUCTURED_COT.md) | [`bounded-thinking.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml) | **180K** | 50 / 66 | ~21.7 GB (mem-util 0.95) |
 | **Bulletproof, no cliffs** (production service, unpredictable inputs) | [`llamacpp/default`](../models/qwen3.6-27b/llama-cpp/compose/docker-compose.yml) | **262K** | 21 / 21 | ~20 GB |
 
 Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
 
-> ## ⚠️ Two limitations to know
+> ## ⚠️ One limitation to know
 >
-> ### 1. Cliff 1 mech B — IDE-agent prompts crash on long-text / long-vision / bounded-thinking / dual-turbo
->
-> **If you're using Cline, OpenCode, Roo, Claude Code, Cursor, or any tool-using agent, default to [`tools-text.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.tools-text.yml) (75K + fp8 KV) — not the 198K/214K/262K variants.**
->
-> Reproduced 2026-05-01 PM: a 5,900-char system prompt + 10 typical tool schemas + 346-char user request crashes `long-text.yml` (and the other 3 TQ3 composes) with a 98 MiB OOM at `empty_strided_cuda((s, 17408), ...)` in `inductor_cache/...py:1208`. Same site as VolandBerlioz's Reddit reproducer. Genesis PN12 patches the eager `SiluAndMul.forward_cuda` but vLLM's torch.compile inductor inlines `forward_native`, bypassing the pool. PN25 (the proper compile-path fix) is on Genesis dev but [blocked by a worker-fork registration bug](https://github.com/Sandermage/genesis-vllm-patches/issues/16) we filed.
->
-> Until PN25 lands default-on:
-> - **IDE agents → `tools-text.yml`** (PN8 closes Cliff 1 mech B via a different mechanism that *does* reach the compile path)
-> - **Pure long-form text / RAG / book Q&A → `long-text.yml`** (no tool schemas in prompt → doesn't trigger inductor compile path)
-> - **Vision + chat → `long-vision.yml`** (same as long-text — fine until you add tool schemas)
-> - **Big single prompts → `llamacpp/default`** (262K, different engine entirely — no inductor)
->
-> Tracking: [club-3090 #16](https://github.com/noonghunna/club-3090/issues/16).
->
-> ### 2. Cliff 2 — DeltaNet GDN single-prompt OOM at 50–60K tokens
+> ### Cliff 2 — DeltaNet GDN single-prompt OOM at 50–60K tokens
 >
 > **vLLM single-card variants will crash if you send a single prompt above ~50K tokens.**
 >
-> Architectural — DeltaNet GDN forward state grows with sequence length, OOMs at 50–60K regardless of how much VRAM you have left. Both `long-vision.yml` (198K) and `long-text.yml` (214K) are designed for **steady-state accumulation across many turns**, not single-shot big prompts.
+> Architectural — DeltaNet GDN forward state grows with sequence length, OOMs at 50–60K regardless of how much VRAM you have left. The long-* variants are designed for **steady-state accumulation across many turns**, not single-shot big prompts.
 >
 > If your workload sends single big prompts: `llamacpp/default` (262K, no cliffs anywhere) or `dual-turbo.yml` (TP=2 splits state across cards).
+>
+> ### What was Cliff 1 mech B (now closed) ✅
+>
+> Earlier in 2026-05 we tracked an inductor compile-path FFN intermediate buffer leak ([club-3090 #16](https://github.com/noonghunna/club-3090/issues/16)) that crashed long-* variants on real IDE-agent prompts. **Closed 2026-05-02** via Genesis PN25 (Inductor-safe `silu_and_mul` opaque op) + PN30 (DS conv state dst-shaped temp fix). Both fixes ship by default in our composes; ChatGPT/Codex CLI cross-check helped land the PN30 dst-shaped temp variant. No user action needed — a fresh `bash scripts/setup.sh qwen3.6-27b` picks up the fixes automatically.
 
 ---
 

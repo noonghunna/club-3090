@@ -1,0 +1,22 @@
+variant: bounded-thinking
+date: 2026-05-02
+context: 180000
+gpu_mem_util: 0.95
+kv_dtype: turboquant_3bit_nc
+tp: 1
+genesis_pin: 753344b
+patches: PN25 v3 + PN30 dst-shaped temp fix + DS layout
+structured_outputs_enable_in_reasoning: true
+verify_stress_results: |
+  [1/7] longctx small: PASS
+  [2/7] 25K tool RETURN: PASS
+  [3/7] IDE-agent one-shot: PASS
+  [4/7] multi-turn agent: PASS
+  [5/7] LCB-coding: PASS
+  [6/7] reasoning 8192: PASS
+  [7/7] longctx large 60K+: FAIL Cliff 2
+score: 6/7
+notes: |
+  Parity with long-text — same patch stack + same backoff (180K + 0.95)
+  matches long-text behavior. Structured-CoT grammar enforcement still works
+  on top of the new patches.

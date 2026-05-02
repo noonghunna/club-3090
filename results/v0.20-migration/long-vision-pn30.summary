@@ -1,0 +1,23 @@
+variant: long-vision
+date: 2026-05-02
+context: 145000
+gpu_mem_util: 0.95
+kv_dtype: turboquant_3bit_nc
+tp: 1
+vision: true
+genesis_pin: 753344b
+patches: PN25 v3 (local) + PN30 dst-shaped temp fix (local) + DS layout
+verify_stress_results: |
+  [1/7] longctx small (10K + 30K): PASS
+  [2/7] 25K tool RETURN: PASS
+  [3/7] IDE-agent one-shot: PASS (66 tokens)
+  [4/7] multi-turn agent: PASS
+  [5/7] LCB-coding: PASS
+  [6/7] reasoning 8192: PASS
+  [7/7] longctx large (60K+): FAIL Cliff 2 architectural
+score: 6/7
+backoff_from_198K: |
+  Vision tower's persistent ~1 GB plus PN12+PN25 pool residence + PN30
+  dst-shaped temp lifecycle tightens activation budget further than
+  long-text. Engine pre-check at 175K + 0.95 returned `estimated maximum
+  model length is 148608` → fall back to 145K + 0.95 for safety margin.
