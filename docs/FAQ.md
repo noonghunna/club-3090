@@ -14,7 +14,9 @@ Should work for vLLM (Blackwell adds new kernels but back-compat). The Marlin pa
 
 ### Do I need NVLink?
 
-No. Our dual-card configs use PCIe-only, no NVLink. Custom all-reduce is disabled in the composes. NVLink would help dual-card TPS but it's not required, and the user has explicitly declined NVLink bridges as a default — adding the dependency would exclude most consumer rigs.
+No for the 1× / 2× baseline. The measured dual-card configs were built to work on PCIe-only consumer rigs, and custom all-reduce remains disabled in those composes.
+
+If NVLink bridges are already installed, use them by pinning the process to a real linked pair. On the inspected four-card host, GPUs `0,1` are one pair and `2,3` are the other; cross-pair links are `SYS`. See [`QUAD_CARD.md`](QUAD_CARD.md) for the topology-aware quad variants. Do not add NVLink as a new dependency for ordinary dual-card users.
 
 ### Does this work on AMD / Intel / Apple Silicon?
 

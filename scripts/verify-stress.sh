@@ -44,6 +44,7 @@
 #   URL                    Default: http://localhost:8020
 #   MODEL                  Default: qwen3.6-27b-autoround
 #   CONTAINER              Default: vllm-qwen36-27b
+#   API_KEY                Optional OpenAI-compatible Bearer token.
 #   SKIP_LONGCTX           Set to 1 to skip the long-context needle ladder.
 #   SKIP_TOOL_PREFILL      Set to 1 to skip the tool-response prefill test.
 #   PREFILL_TARGET_CHARS   Tool-response prefill payload size in chars
@@ -55,6 +56,11 @@ set -euo pipefail
 URL="${URL:-http://localhost:8020}"
 MODEL="${MODEL:-qwen3.6-27b-autoround}"
 CONTAINER="${CONTAINER:-vllm-qwen36-27b}"
+API_KEY="${API_KEY:-${OPENAI_API_KEY:-}}"
+CURL_AUTH_ARGS=()
+if [[ -n "$API_KEY" ]]; then
+  CURL_AUTH_ARGS=(-H "Authorization: Bearer ${API_KEY}")
+fi
 
 pass() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 fail() { printf "  \033[31m✗\033[0m %s\n" "$1"; printf "    \033[33m→\033[0m %s\n" "$2"; return 1; }
@@ -90,7 +96,7 @@ check_longctx() {
   local any_skipped=0
 
   local deployed_max
-  deployed_max="$(curl -sf -m 5 "${URL}/v1/models" 2>/dev/null \
+  deployed_max="$(curl -sf -m 5 "${CURL_AUTH_ARGS[@]}" "${URL}/v1/models" 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0].get('max_model_len',0))" 2>/dev/null \
     || echo 0)"
 
@@ -151,6 +157,7 @@ EOF
     http_code="$(curl -s -m 300 -o "${resp_file}" -w '%{http_code}' \
       "${URL}/v1/chat/completions" \
       -H "Content-Type: application/json" \
+      "${CURL_AUTH_ARGS[@]}" \
       --data-binary "@${req_file}")" || http_code="000"
     rm -f "$secret_file" "$req_file"
     if [[ "$http_code" == "400" ]]; then
@@ -277,6 +284,7 @@ EOF
   http_code="$(curl -s -m 240 -o "${resp_file}" -w '%{http_code}' \
     "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${CURL_AUTH_ARGS[@]}" \
     --data-binary "@${req_file}")" || http_code="000"
   rm -f "$req_file"
 

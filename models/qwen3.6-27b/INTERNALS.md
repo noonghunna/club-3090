@@ -124,6 +124,15 @@ This is why we measure both single-stream TPS and "concurrent throughput at full
 - If you have NVLink (e.g., A6000 + bridge, or H100 SXM): single-stream gain from TP=2 is closer to 1.6-1.8×
 - If you're running attention-bound prefill, not decode, the TP win is bigger (prefill is more compute-bound)
 
+### Quad host note: two NVLink pairs, not one TP=4 island
+
+On the inspected four-card host (2026-05-01), GPUs 0-1 are an NV4 pair on NUMA 0 and GPUs 2-3 are an NV3 pair on NUMA 1. Cross-pair links show as `SYS`, which means traffic traverses PCIe plus the CPU interconnect.
+
+That topology changes the right four-card shape:
+- `quad.yml` uses **PP=2 × TP=2** so tensor-parallel all-reduce stays inside the NVLink pairs.
+- `quad-pairs.yml` runs two independent TP=2 replicas, one per pair, and avoids runtime cross-pair GPU traffic entirely. A LiteLLM router on `:8020` gives clients one OpenAI-compatible endpoint while direct pair ports remain available on `:8021` and `:8022`.
+- A flat **TP=4** shape is intentionally not shipped because it would all-reduce across the `SYS` links on every layer.
+
 ---
 
 ## Dual-card: the Marlin pad-sub-tile-n patch (vllm#40361)

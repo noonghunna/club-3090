@@ -2,6 +2,39 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-02 — Raise quad-pairs router default output cap
+
+`vllm/quad-pairs` now defaults omitted client `max_tokens` to **16384** at the LiteLLM router instead of 512. This prevents Qwen3.6 thinking-mode responses from consuming the whole server-side default in `reasoning_content` before final `content` begins, which showed up in Open WebUI as a long thought block followed by an incomplete answer.
+
+The quad-pairs compose now exposes the main router and worker serving defaults through `.env`: router context/default-output/headroom, preferred pair ports, worker max model length, mem-util, sequence/batched-token scheduler caps, KV dtype, dtype/quantization, TP size, NCCL, and allocator knobs. Router request defaults remain separate from worker capacity limits.
+
+## 2026-05-02 — Move quad-pairs direct ports behind router
+
+`vllm/quad-pairs` keeps the LiteLLM router on `:8020`, but the direct pair endpoints now default to `:8021` and `:8022` instead of `:8014` and `:8015`. This keeps `:8014` reserved for the separate `vllm/quad` single-endpoint PP=2 × TP=2 compose and makes the routed-pairs layout less ambiguous.
+
+Updated `docker-compose.quad-pairs.yml`, `scripts/bench.sh --quad-pairs`, `scripts/launch.sh` output, `.env.example`, and the quad-card docs to match.
+
+The same compose now ships default auth keys for that topology: router/client traffic uses `sk-litellm`, while direct worker endpoints and router-to-worker traffic use `sk-vllm`. The verification and benchmark helpers accept `API_KEY` / `OPENAI_API_KEY`; `switch.sh` uses the router key automatically for the quad-pairs readiness probe.
+
+## 2026-05-01 — Add quad 3090 topology variants
+
+Added first-class four-card support for hosts wired as two NVLink pairs. The inspected machine reports GPU0-GPU1 as `NV4` on NUMA 0, GPU2-GPU3 as `NV3` on NUMA 1, and cross-pair links as `SYS`, so the quad path avoids a flat TP=4 layout.
+
+**New variants:**
+- `vllm/quad` → `docker-compose.quad.yml`: one endpoint on `:8014`, PP=2 × TP=2, fp8 KV, vision, 262K, 4 streams. MTP is off because vLLM dev205 rejects `Qwen3_5MTP` under pipeline parallelism; use `vllm/quad-pairs` when you need MTP. TPS intentionally TBD until bench.
+- `vllm/quad-pairs` → `docker-compose.quad-pairs.yml`: two independent dual-style endpoints, GPU pair `0,1` on `:8014` and pair `2,3` on `:8015`, avoiding runtime cross-pair GPU traffic.
+
+**Script / docs updates:**
+- `scripts/switch.sh` and `scripts/launch.sh` now register both quad variants.
+- `launch.sh` now passes the resolved `URL` and `CONTAINER` into `verify-full.sh`, so non-8020 variants verify against the server they just booted.
+- `scripts/preflight.sh` and `scripts/bench.sh` accept `CLUB3090_NVIDIA_SMI_SUDO=1` for hosts where `nvidia-smi` requires sudo.
+- `scripts/bench.sh --quad-pairs` now benchmarks both quad-pair endpoints in one command, defaulting to 8 concurrent requests per endpoint per measured batch and writing a timestamped Markdown report under `bench-results/`.
+- `quad-pairs.yml` now includes a LiteLLM router container on `ROUTER_PORT` (default `8020`) in front of the direct pair endpoints on `8014`/`8015`.
+- The quad-pairs router carries the local tokenizer context guard from Lucebox and normalizes LiteLLM `reasoning_content` back to vLLM's `reasoning` field, so `verify-full.sh` and vLLM-compatible clients see the same thinking response shape through the router.
+- `scripts/switch.sh` now validates that `MODEL_DIR` contains `qwen3.6-27b-autoround-int4` before bringing containers down/up, catching stale `.env` model roots before vLLM turns the missing local path into a Hugging Face repo-id error.
+- vLLM composes now pass `CUDA_VISIBLE_DEVICES` through explicitly, so shell-level GPU pinning works for single-card, dual-card, and quad-card launches.
+- New [`docs/QUAD_CARD.md`](docs/QUAD_CARD.md) documents the topology, variant choice, endpoints, and verification protocol.
+
 ## 2026-04-30 PM — Bounded-thinking compose ships (structured-CoT cross-rig port)
 
 [andthattoo/structured-cot](https://github.com/andthattoo/structured-cot) showed GBNF-grammar-bounded `<think>` blocks compress reasoning ~22-43× on coding benchmarks with no accuracy loss, on Qwen3.6-35B-A3B MoE Q4_K_M / 1× H100 / llama.cpp. We ported the technique to our stack — Qwen3.6-27B AutoRound INT4 dense / 1× RTX 3090 / vLLM nightly + MTP n=3 + TQ3 KV — and re-benched on the full HumanEval+ 164 + LiveCodeBench v6 50.

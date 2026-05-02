@@ -1,0 +1,183 @@
+# ===========================================================================
+# Quad RTX 3090 — two independent dual-card replicas, one per NVLink pair.
+#
+# This is the most topology-conservative quad variant for the inspected host:
+#   GPU0 <NV4> GPU1  on NUMA node 0  -> pair A, served on :8021
+#   GPU2 <NV3> GPU3  on NUMA node 1  -> pair B, served on :8022
+#   cross-pair GPU links are SYS, so this compose avoids cross-pair traffic.
+#
+# What this gives you:
+#   - two separate OpenAI-compatible pair endpoints
+#   - one LiteLLM router endpoint that load-balances across both pairs
+#   - each endpoint is the proven dual.yml shape: TP=2, 262K, fp8 KV, MTP, vision
+#   - default auth: router key sk-litellm, direct worker key sk-vllm
+#   - aggregate capacity is 4 full-context streams total (2 per pair)
+#   - direct pair ports stay available for benchmarking and manual split routing
+#
+# Quad variants in this dir:
+#
+#   File                         Topology       Endpoint(s)            Ctx    Streams  KV   Vision  TPS
+#   docker-compose.quad.yml      PP=2 x TP=2    :8014                  262K   4        fp8  yes     TBD
+#   docker-compose.quad-pairs.yml two TP=2 reps :8020 router, :8021/22 262K   2+2      fp8  yes     measured
+#
+# Run:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.quad-pairs.yml up -d
+# ===========================================================================
+x-dual-pair-common: &dual-pair-common
+  image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+  restart: "no"
+  volumes:
+    - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+    # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=2
+    # on AutoRound W4A16 models where out-dim shards fall below 64.
+    - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+    - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+  environment:
+    - CUDA_DEVICE_ORDER=PCI_BUS_ID
+    - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    - VLLM_API_KEY=${VLLM_API_KEY:-sk-vllm}
+    - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
+    # Use NVLink inside each pair; no container spans the SYS cross-pair link.
+    - NCCL_CUMEM_ENABLE=${NCCL_CUMEM_ENABLE:-0}
+    - NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL:-NVL}
+    - VLLM_NO_USAGE_STATS=${VLLM_NO_USAGE_STATS:-1}
+    - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-1}
+    - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+    - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+  shm_size: "16gb"
+  ipc: host
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+  command: &dual-pair-command
+    - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+    - --served-model-name
+    - qwen3.6-27b-autoround
+    - --api-key
+    - ${VLLM_API_KEY:-sk-vllm}
+    - --quantization
+    - ${VLLM_QUANTIZATION:-auto_round}
+    - --dtype
+    - ${VLLM_DTYPE:-float16}
+    - --tensor-parallel-size
+    - "${VLLM_TENSOR_PARALLEL_SIZE:-2}"
+    - --disable-custom-all-reduce
+    - --max-model-len
+    - "${VLLM_MAX_MODEL_LEN:-262144}"
+    - --gpu-memory-utilization
+    - "${VLLM_GPU_MEMORY_UTILIZATION:-0.92}"
+    - --max-num-seqs
+    - "${VLLM_MAX_NUM_SEQS:-2}"
+    - --max-num-batched-tokens
+    - "${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}"
+    - --kv-cache-dtype
+    - ${VLLM_KV_CACHE_DTYPE:-fp8_e5m2}
+    - --trust-remote-code
+    - --reasoning-parser
+    - qwen3
+    - --enable-auto-tool-choice
+    - --tool-call-parser
+    - qwen3_coder
+    - --enable-prefix-caching
+    - --enable-chunked-prefill
+    - --speculative-config
+    - '{"method":"mtp","num_speculative_tokens":3}'
+    - --host
+    - 0.0.0.0
+    - --port
+    - "8000"
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - python3 -c "import os, urllib.request; req=urllib.request.Request('http://127.0.0.1:8000/v1/models', headers={'Authorization':'Bearer '+os.environ.get('VLLM_API_KEY','sk-vllm')}); urllib.request.urlopen(req, timeout=5).read()"
+    interval: 30s
+    timeout: 10s
+    retries: 20
+    start_period: 10m
+
+services:
+  vllm-qwen36-27b-quad-pair-a:
+    <<: *dual-pair-common
+    container_name: vllm-qwen36-27b-quad-pair-a
+    ports:
+      - "${QUAD_PAIR_A_PORT:-${PORT:-8021}}:8000"
+    environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES_A:-0,1}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_API_KEY=${VLLM_API_KEY:-sk-vllm}
+      - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
+      - NCCL_CUMEM_ENABLE=${NCCL_CUMEM_ENABLE:-0}
+      - NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL:-NVL}
+      - VLLM_NO_USAGE_STATS=${VLLM_NO_USAGE_STATS:-1}
+      - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-1}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+    command: *dual-pair-command
+
+  vllm-qwen36-27b-quad-pair-b:
+    <<: *dual-pair-common
+    container_name: vllm-qwen36-27b-quad-pair-b
+    ports:
+      - "${QUAD_PAIR_B_PORT:-${PORT_B:-8022}}:8000"
+    environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES_B:-2,3}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_API_KEY=${VLLM_API_KEY:-sk-vllm}
+      - VLLM_WORKER_MULTIPROC_METHOD=${VLLM_WORKER_MULTIPROC_METHOD:-spawn}
+      - NCCL_CUMEM_ENABLE=${NCCL_CUMEM_ENABLE:-0}
+      - NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL:-NVL}
+      - VLLM_NO_USAGE_STATS=${VLLM_NO_USAGE_STATS:-1}
+      - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-1}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+    command: *dual-pair-command
+
+  vllm-qwen36-27b-quad-router:
+    image: club3090/vllm-router:local
+    build:
+      context: ..
+      dockerfile: router/Dockerfile
+    container_name: vllm-qwen36-27b-quad-router
+    restart: "no"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}/qwen3.6-27b-autoround-int4:/model:ro
+      - ../router:/app/router:ro
+    environment:
+      - CLUB3090_TOKENIZER=${ROUTER_TOKENIZER:-/model}
+      - CLUB3090_MAX_CTX=${ROUTER_MAX_CTX:-262144}
+      - CLUB3090_SERVER_HEADROOM_TOKENS=${ROUTER_HEADROOM_TOKENS:-20}
+      - CLUB3090_DEFAULT_MAX_TOKENS=${ROUTER_DEFAULT_MAX_TOKENS:-16384}
+      - HF_HOME=/tmp/huggingface
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm}
+      - VLLM_API_KEY=${VLLM_API_KEY:-sk-vllm}
+    command:
+      - --config
+      - /app/router/config.quad-pairs.yaml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      - "${ROUTER_PORT:-8020}:8000"
+    depends_on:
+      vllm-qwen36-27b-quad-pair-a:
+        condition: service_healthy
+      vllm-qwen36-27b-quad-pair-b:
+        condition: service_healthy
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import os, urllib.request; req=urllib.request.Request('http://127.0.0.1:8000/v1/models', headers={'Authorization':'Bearer '+os.environ.get('LITELLM_MASTER_KEY','sk-litellm')}); urllib.request.urlopen(req, timeout=5).read()"
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s

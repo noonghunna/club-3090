@@ -67,7 +67,7 @@ Plain-language definitions for terms used throughout the docs. Roughly grouped b
 | **SGLang** | A high-throughput serving engine with RadixAttention prefix sharing. Often beats vLLM on multi-tenant aggregate. |
 | **Genesis patches** | [Sandermage's vLLM monkey-patch tree](https://github.com/Sandermage/genesis-vllm-patches) that fixes several Qwen3-Next bugs at runtime. We mount it into vLLM's site-packages. |
 | **Cudagraph** | A CUDA optimization that records GPU operation sequences and replays them. Faster than dispatching ops individually. |
-| **OpenAI API** | The HTTP API spec (`/v1/chat/completions`, etc.) used by ChatGPT, Claude (via proxy), and many OSS chat tools. We serve this on `localhost:8020` (single-card) or `localhost:8010` (dual-card). |
+| **OpenAI API** | The HTTP API spec (`/v1/chat/completions`, etc.) used by ChatGPT, Claude (via proxy), and many OSS chat tools. We serve this on `localhost:8020` (single-card or quad-pairs router), `localhost:8010` (dual-card), `localhost:8014` (quad single-endpoint), or `localhost:8021` / `localhost:8022` (quad-pairs direct endpoints). |
 
 ---
 
@@ -75,8 +75,8 @@ Plain-language definitions for terms used throughout the docs. Roughly grouped b
 
 | Term | What it means |
 |---|---|
-| **TP=2 / tensor parallelism** | Splits each model layer's weights across both GPUs; layers compute together, results combined via NCCL all-reduce. Doubles effective VRAM (48 GB total). |
-| **PP / pipeline parallelism** | Different layers go on different GPUs; not used in this stack. |
+| **TP / tensor parallelism** | Splits each model layer's weights across GPUs; layers compute together, results combined via NCCL all-reduce. TP=2 doubles effective VRAM across two cards. |
+| **PP / pipeline parallelism** | Puts different layer ranges on different GPU groups. Quad `PP=2 × TP=2` uses two TP groups, one per NVLink pair. |
 | **NVLink** | NVIDIA's high-bandwidth GPU-to-GPU interconnect (~600 GB/s on H100, ~200 GB/s on 3090 with bridge). Not required by this stack — we run PCIe-only. |
 | **All-reduce** | The collective op TP uses to combine partial results. PCIe-only consumer Ampere is ~3-5× slower than NVLink. |
 | **Concurrent streams** | Multiple users/agents serving simultaneously. KV pool is shared; each stream gets a slice. |

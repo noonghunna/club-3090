@@ -1,0 +1,103 @@
+# ===========================================================================
+# Quad RTX 3090 — single OpenAI endpoint across two NVLink pairs.
+#
+# This host topology was inspected on 2026-05-01:
+#   GPU0 <NV4> GPU1  on NUMA node 0
+#   GPU2 <NV3> GPU3  on NUMA node 1
+#   cross-pair GPU links are SYS (PCIe + CPU interconnect)
+#
+# The important choice is PP=2 x TP=2, not TP=4:
+#   - TP groups stay inside the physical NVLink pairs (0,1) and (2,3)
+#   - cross-pair traffic is limited to pipeline handoff instead of every-layer
+#     tensor-parallel all-reduce across the SYS link
+#   - fp8 KV + four-way model/KV sharding should make 4 full-context streams
+#     fit, but TPS is intentionally marked TBD until bench.sh is run
+#   - MTP is intentionally OFF here: vLLM dev205 rejects Qwen3_5MTP under
+#     pipeline parallelism because the draft model does not implement SupportsPP.
+#     Use quad-pairs.yml when you need MTP on all four cards.
+#
+# If you want the most conservative topology path, use quad-pairs.yml instead:
+# it runs two independent dual-card servers, one per NVLink pair, with zero
+# runtime cross-pair traffic.
+#
+# Quad variants in this dir:
+#
+#   File                         Topology       Endpoint(s)     Ctx    Streams  KV   Vision  Spec TPS
+#   docker-compose.quad.yml      PP=2 x TP=2    :8014           262K   4        fp8  yes     no   TBD
+#   docker-compose.quad-pairs.yml two TP=2 reps :8020 + :8014/15 262K  2+2      fp8  yes     MTP  measured
+#
+# Run:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.quad.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-quad:
+    image: vllm/vllm-openai:nightly-07351e0883470724dd5a7e9730ed10e01fc99d08
+    container_name: vllm-qwen36-27b-quad
+    restart: "no"
+    ports:
+      - "${PORT:-8014}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP shards
+      # on AutoRound W4A16 models where out-dim shards fall below 64. TP=2
+      # inside each pipeline stage still needs the same patch as dual-card.
+      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+    environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      # Keep NCCL P2P on only for the physical NVLink pairs. The full topology
+      # has SYS cross-pair links; PP=2 x TP=2 avoids all-reducing across them.
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_LEVEL=NVL
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+    shm_size: "32gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "2"
+      - --pipeline-parallel-size
+      - "2"
+      - --disable-custom-all-reduce
+      - --max-model-len
+      - "262144"
+      - --gpu-memory-utilization
+      - "0.92"
+      - --max-num-seqs
+      - "4"
+      - --max-num-batched-tokens
+      - "8192"
+      - --kv-cache-dtype
+      - fp8_e5m2
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

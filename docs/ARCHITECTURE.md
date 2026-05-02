@@ -6,7 +6,7 @@ A short orientation to the design choices in this repo. Not a deep technical doc
 
 ## What the stack assumes
 
-You have **1 or 2 RTX 3090s** (or compatible 24 GB Ampere-class cards). You want to serve a modern LLM **locally** for chat / coding / agents / RAG. You're OK with a bit of setup but you don't want to fork engines or write CUDA kernels.
+You have **1, 2, or 4 RTX 3090s** (or compatible 24 GB Ampere-class cards). You want to serve a modern LLM **locally** for chat / coding / agents / RAG. You're OK with a bit of setup but you don't want to fork engines or write CUDA kernels.
 
 ---
 
@@ -17,7 +17,8 @@ The mental model: **engines are general; models are specific; hardware is fixed.
 ```
 docs/                         engine + hardware docs (general, model-agnostic)
   engines/                      vLLM / llama.cpp / SGLang — comparison + deep dives
-  HARDWARE.md                   Ampere SM 8.6+, 24 GB, no NVLink
+  HARDWARE.md                   Ampere SM 8.6+, 24 GB, PCIe / NVLink-pair notes
+  QUAD_CARD.md                  4× 3090 / two-NVLink-pair recipes
   GLOSSARY.md                   plain-language definitions
   img/                          chart sources + PNG exports (performance, vram-budget)
 

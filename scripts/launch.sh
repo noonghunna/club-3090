@@ -18,10 +18,20 @@
 #   bash scripts/launch.sh --variant vllm/default
 #   bash scripts/launch.sh --variant llamacpp/default
 #   bash scripts/launch.sh --variant vllm/dual
+#   bash scripts/launch.sh --variant vllm/quad
 
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Keep launch output/verify settings aligned with switch.sh and setup.sh.
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env"
+  set +a
+fi
+
 SWITCH="${SWITCH:-${ROOT_DIR}/scripts/switch.sh}"
 VERIFY="${VERIFY:-${ROOT_DIR}/scripts/verify-full.sh}"
 # shellcheck source=preflight.sh
@@ -109,7 +119,8 @@ if [[ -z "$VARIANT" ]]; then
   if [[ -z "$CARDS" ]]; then
     CARDS=$(choose "How many RTX 3090s?" \
       "1× 3090 (24 GB)"           "1" \
-      "2× 3090 (PCIe / no NVLink)" "2")
+      "2× 3090"                   "2" \
+      "4× 3090 (two NVLink pairs)" "4")
   fi
 
   # Re-validate now that we know the requirement (preflight already ran
@@ -127,9 +138,9 @@ if [[ -z "$VARIANT" ]]; then
     # (Cliff 2). For unpredictable inputs, use llamacpp/default.
     if [[ -z "$ENGINE" || "$ENGINE" == "vllm" ]]; then
       VLLM_OPTS=(
-        "Long ctx + vision (198K + vision, MTP) — recommended for chat/agents"     "vllm/long-vision"
-        "Long ctx, text only (218K, MTP) — recommended for RAG/codebase"           "vllm/long-text"
-        "Bounded thinking 218K (structured CoT — ~30× cheaper think on coding)"    "vllm/bounded-thinking"
+        "Long ctx + vision (145K + vision, MTP) — recommended for chat/agents"     "vllm/long-vision"
+        "Long ctx, text only (180K, MTP) — recommended for RAG/codebase"           "vllm/long-text"
+        "Bounded thinking 180K (structured CoT — ~30× cheaper think on coding)"    "vllm/bounded-thinking"
       )
     else
       VLLM_OPTS=()
@@ -171,8 +182,16 @@ if [[ -z "$VARIANT" ]]; then
       "Multi-tenant — 4 concurrent streams @ 262K, TQ3 KV"         "vllm/dual-turbo" \
       "Peak code TPS with vision (185K, DFlash N=5)"               "vllm/dual-dflash" \
       "Peak code TPS no vision (200K, DFlash N=5)"                 "vllm/dual-dflash-noviz")
+  elif [[ "$CARDS" == "4" ]]; then
+    if [[ -n "$ENGINE" && "$ENGINE" != "vllm" ]]; then
+      echo "ERROR: --engine ${ENGINE} not supported on 4× cards (no llama.cpp quad recipe yet)." >&2
+      exit 1
+    fi
+    VARIANT=$(choose "What's your quad-card priority?" \
+      "Single endpoint — PP=2 × TP=2, 4 streams @ 262K, no MTP" "vllm/quad" \
+      "Router + two dual endpoints — router on :8020, pairs on :8021/:8022, no cross-pair GPU traffic" "vllm/quad-pairs")
   else
-    echo "ERROR: --cards ${CARDS} unsupported (expected 1 or 2)." >&2
+    echo "ERROR: --cards ${CARDS} unsupported (expected 1, 2, or 4)." >&2
     exit 1
   fi
 
@@ -188,6 +207,10 @@ if [[ -z "$VARIANT" ]]; then
       echo "[wizard] picked vLLM — chosen for spec-decode (MTP), tool-call extraction, and best TPS."
       echo "[wizard]   Watch out for the prefill cliffs (Cliff 1 = 25K+ tool returns; Cliff 2 = 50-60K"
       echo "[wizard]   single prompts on TQ3) — see docs/SINGLE_CARD.md for the safe-config map."
+      if [[ "$VARIANT" == "vllm/quad"* ]]; then
+        echo "[wizard]   Quad variants are topology-aware for this host: GPUs 0,1 and 2,3 are NVLink pairs;"
+        echo "[wizard]   cross-pair links are SYS, so use docs/QUAD_CARD.md when choosing between endpoints."
+      fi
       ;;
   esac
 fi
@@ -212,6 +235,8 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [vllm/dual-turbo]=8011
   [vllm/dual-dflash]=8012
   [vllm/dual-dflash-noviz]=8013
+  [vllm/quad]=8014
+  [vllm/quad-pairs]=8020
   [llamacpp/default]=8020
   [llamacpp/concurrent]=8020
 )
@@ -226,11 +251,22 @@ declare -A LAUNCH_DEFAULT_CONTAINER=(
   [vllm/dual-turbo]=vllm-qwen36-27b-dual-turbo
   [vllm/dual-dflash]=vllm-qwen36-27b-dual-dflash
   [vllm/dual-dflash-noviz]=vllm-qwen36-27b-dual-dflash-noviz
+  [vllm/quad]=vllm-qwen36-27b-quad
+  [vllm/quad-pairs]=vllm-qwen36-27b-quad-pair-a
   [llamacpp/default]=llama-cpp-qwen36-27b
   [llamacpp/concurrent]=llama-cpp-qwen36-27b-concurrent
 )
-ENDPOINT_PORT="${PORT:-${LAUNCH_DEFAULT_PORT[$VARIANT]:-8020}}"
+
+if [[ "$VARIANT" == "vllm/quad-pairs" ]]; then
+  ENDPOINT_PORT="${ROUTER_PORT:-${LAUNCH_DEFAULT_PORT[$VARIANT]:-8020}}"
+else
+  ENDPOINT_PORT="${PORT:-${LAUNCH_DEFAULT_PORT[$VARIANT]:-8020}}"
+fi
 ENDPOINT_URL="http://localhost:${ENDPOINT_PORT}"
+VERIFY_API_KEY="${API_KEY:-${OPENAI_API_KEY:-}}"
+if [[ "$VARIANT" == "vllm/quad-pairs" && -z "$VERIFY_API_KEY" ]]; then
+  VERIFY_API_KEY="${LITELLM_MASTER_KEY:-sk-litellm}"
+fi
 ENDPOINT_CONTAINER="${CONTAINER:-${LAUNCH_DEFAULT_CONTAINER[$VARIANT]:-vllm-qwen36-27b}}"
 
 if [[ $SKIP_VERIFY -eq 1 ]]; then
@@ -239,7 +275,7 @@ else
   echo ""
   echo "[launch] running verify-full.sh against the new server (URL=${ENDPOINT_URL}, CONTAINER=${ENDPOINT_CONTAINER})..."
   echo ""
-  URL="$ENDPOINT_URL" CONTAINER="$ENDPOINT_CONTAINER" bash "$VERIFY" || {
+  URL="${ENDPOINT_URL}" CONTAINER="${ENDPOINT_CONTAINER}" API_KEY="${VERIFY_API_KEY}" bash "$VERIFY" || {
     echo ""
     echo "[launch] some checks failed — see hints above. Common cases:"
     echo "  - 'reasoning field empty' on llama.cpp = expected (parser gap, not a bug)"
@@ -250,9 +286,18 @@ fi
 
 echo ""
 echo "[launch] done. Endpoint: ${ENDPOINT_URL}"
+if [[ "$VARIANT" == "vllm/quad-pairs" ]]; then
+  echo "[launch] direct pair A endpoint: http://localhost:${QUAD_PAIR_A_PORT:-${PORT:-8021}}"
+  echo "[launch] direct pair B endpoint: http://localhost:${QUAD_PAIR_B_PORT:-${PORT_B:-8022}}"
+  echo "[launch] router API key: ${LITELLM_MASTER_KEY:-sk-litellm}"
+  echo "[launch] direct pair API key: ${VLLM_API_KEY:-sk-vllm}"
+fi
 echo "[launch] sample request:"
 echo "  curl -sf ${ENDPOINT_URL}/v1/chat/completions \\"
 echo "    -H 'Content-Type: application/json' \\"
+if [[ "$VARIANT" == "vllm/quad-pairs" ]]; then
+  echo "    -H 'Authorization: Bearer ${LITELLM_MASTER_KEY:-sk-litellm}' \\"
+fi
 echo "    -d '{\"model\":\"qwen3.6-27b-autoround\",\"messages\":[{\"role\":\"user\",\"content\":\"Capital of France?\"}],\"max_tokens\":200}'"
 echo ""
 echo "[launch] switch later with:  bash scripts/switch.sh <variant>"

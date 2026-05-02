@@ -6,6 +6,7 @@ All examples assume:
 
 - Server running: `bash scripts/launch.sh` is up
 - API endpoint: `http://localhost:8020` (override with `OPENAI_BASE_URL` env var or client-side `base_url`)
+- API key: `sk-litellm` for the `vllm/quad-pairs` router; unauthenticated variants ignore the value.
 
 The endpoint is **OpenAI-compatible** — anything that speaks OpenAI's `/v1/chat/completions` API works without modification, just point `base_url` at the local endpoint.
 
@@ -33,6 +34,7 @@ The smoke-test examples below use `max_tokens: 200` because they ask short quest
 ```bash
 curl -sf http://localhost:8020/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${OPENAI_API_KEY:-sk-litellm}" \
   -d '{
     "model": "qwen3.6-27b-autoround",
     "messages": [{"role": "user", "content": "Capital of France?"}],
@@ -40,7 +42,7 @@ curl -sf http://localhost:8020/v1/chat/completions \
   }' | jq -r '.choices[0].message.content'
 ```
 
-Expected response: a sentence containing `Paris`. The `max_tokens: 200` headroom is intentional — Qwen3.6 thinks before answering by default, so even simple questions burn ~50–150 tokens inside `<think>...</think>` before reaching the answer. Set tighter (`max_tokens: 30`) only if you also pass `chat_template_kwargs: {"enable_thinking": false}` to skip the think block — that's what `verify-full.sh` does internally.
+Expected response: a sentence containing `Paris`. The `max_tokens: 200` headroom is intentional — Qwen3.6 thinks before answering by default, so even simple questions burn ~50–150 tokens inside `<think>...</think>` before reaching the answer. The `vllm/quad-pairs` router defaults omitted `max_tokens` to `16384`, but client-specified caps still win. Set tight caps (`max_tokens: 30`) only if you also pass `chat_template_kwargs: {"enable_thinking": false}` to skip the think block — that's what `verify-full.sh` does internally.
 
 ---
 
@@ -55,7 +57,7 @@ pip install openai
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8020/v1", api_key="not-needed")
+client = OpenAI(base_url="http://localhost:8020/v1", api_key="sk-litellm")
 
 resp = client.chat.completions.create(
     model="qwen3.6-27b-autoround",
@@ -219,7 +221,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "http://localhost:8020/v1",
-  apiKey: "not-needed",
+  apiKey: process.env.OPENAI_API_KEY ?? "sk-litellm",
 });
 
 const resp = await client.chat.completions.create({

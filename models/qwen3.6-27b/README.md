@@ -1,9 +1,9 @@
 # Qwen3.6-27B
 
-**Run [Qwen3.6-27B](https://huggingface.co/Qwen) — with vision and tool calling — on 1 or 2 RTX 3090s.** Full OpenAI-compatible API, drop-in replacement for ChatGPT/Claude in any tool that uses the OpenAI SDK.
+**Run [Qwen3.6-27B](https://huggingface.co/Qwen) — with vision and tool calling — on 1, 2, or 4 RTX 3090s.** Full OpenAI-compatible API, drop-in replacement for ChatGPT/Claude in any tool that uses the OpenAI SDK.
 
 > 👉 **For deployment options + workload-driven config picks**, see the hardware-axis pages:
-> [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md) (1× 3090) · [`docs/DUAL_CARD.md`](../../docs/DUAL_CARD.md) (2× 3090).
+> [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md) (1× 3090) · [`docs/DUAL_CARD.md`](../../docs/DUAL_CARD.md) (2× 3090) · [`docs/QUAD_CARD.md`](../../docs/QUAD_CARD.md) (4× 3090 / two NVLink pairs).
 >
 > This page is the **model-specific reference**: quants, what's working / not working, VRAM allocation, engine pointers.
 
@@ -27,10 +27,11 @@ bash scripts/setup.sh qwen3.6-27b
 bash scripts/launch.sh
 ```
 
-If you already know the variant you want, see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md) or [`docs/DUAL_CARD.md`](../../docs/DUAL_CARD.md) for the menu, then:
+If you already know the variant you want, see [`docs/SINGLE_CARD.md`](../../docs/SINGLE_CARD.md), [`docs/DUAL_CARD.md`](../../docs/DUAL_CARD.md), or [`docs/QUAD_CARD.md`](../../docs/QUAD_CARD.md) for the menu, then:
 
 ```bash
 bash scripts/switch.sh vllm/tools-text   # for example
+bash scripts/switch.sh vllm/quad         # 4-card single endpoint
 ```
 
 Sanity check after boot:
@@ -45,7 +46,7 @@ curl -sf http://localhost:8020/v1/chat/completions \
 
 ## VRAM allocation across configs
 
-How each config splits the 24 GB / card budget — weights, KV cache, vision tower, DFlash draft (where applicable), and activation/cudagraph headroom. Single-card (TP=1) on top, dual-card (TP=2, weights and KV halved across both GPUs) on bottom.
+How each measured config splits the 24 GB / card budget — weights, KV cache, vision tower, DFlash draft (where applicable), and activation/cudagraph headroom. Single-card (TP=1) on top, dual-card (TP=2, weights and KV halved across both GPUs) on bottom. Quad variants are new and intentionally not charted until local VRAM peaks are measured.
 
 ![Per-card VRAM allocation across single + dual configs](../../docs/img/vram-budget-combined.png)
 
@@ -59,7 +60,7 @@ The **single shipped limitation** on the vLLM single-card variants: Cliff 2 stil
 
 Other variants (`docker-compose.yml` 48K · `tools-text.yml` 75K FP8 · `minimal.yml` 32K) are kept in the repo as fallbacks / diagnostics, not promoted as primary.
 
-TP=2 unlocks **262K + 4 concurrent streams** on dual-card (`dual.yml`).
+TP=2 unlocks **262K + 4 concurrent streams** on dual-card (`dual.yml` / `dual-turbo.yml`). Four-card systems with two NVLink pairs can use `quad.yml` (single endpoint, PP=2 × TP=2) or `quad-pairs.yml` (LiteLLM router on `:8020` in front of two independent dual endpoints pinned to GPU pairs 0,1 and 2,3).
 
 ---
 
@@ -69,7 +70,7 @@ TP=2 unlocks **262K + 4 concurrent streams** on dual-card (`dual.yml`).
 - **Tool calling** — `tools=[...]` + `tool_choice="auto"`, parsed cleanly into `tool_calls[]`. Genesis v7.62.x ships PN11 (Quentin-M's streaming-tool-call IndexError fix from vllm#41142).
 - **Streaming** — SSE chunks add up to coherent text; tool-call deltas stream too.
 - **Reasoning mode** — `chat_template_kwargs.enable_thinking=true` for chain-of-thought (vLLM extracts into `reasoning_content` field; llama.cpp emits inline).
-- **Spec-decode** — MTP n=3 default on vLLM (~83% per-position-1 accept on code); DFlash N=5 on dual-card for code-heavy workloads.
+- **Spec-decode** — MTP n=3 default on vLLM where parallelism supports it (~83% per-position-1 accept on code; not on the PP=2 quad single-endpoint compose); DFlash N=5 on dual-card for code-heavy workloads.
 - **All standard sampling** — temperature, top_p, top_k, repetition_penalty, JSON-mode, structured output.
 
 ## What's not working today
@@ -130,7 +131,7 @@ Local sidecars dropped during 2026-05-01 v0.20 migration:
 - `patch_pn12_compile_safe_custom_op.py` → covered by Genesis PN25
 - `patch_fa_max_seqlen_clamp.py` → covered by PN17 + P15B
 
-Dual-card composes (`dual.yml`, `dual-dflash*`) are **Genesis-less by design** — fp8 KV + TP=2 + 0.92 mem-util has plenty of headroom and doesn't trigger the cudagraph bugs Genesis was built to patch. `dual-turbo.yml` does mount Genesis (TQ3 path needs P65).
+Dual-card composes (`dual.yml`, `dual-dflash*`) are **Genesis-less by design** — fp8 KV + TP=2 + 0.92 mem-util has plenty of headroom and doesn't trigger the cudagraph bugs Genesis was built to patch. `dual-turbo.yml` does mount Genesis (TQ3 path needs P65). Quad fp8 variants follow the same Genesis-less design; the paired-replica compose is just two dual defaults pinned to NVLink pairs.
 
 Forensic chain + per-patch attribution → [INTERNALS.md](INTERNALS.md).
 
@@ -140,6 +141,7 @@ Forensic chain + per-patch attribution → [INTERNALS.md](INTERNALS.md).
 
 - **[/docs/SINGLE_CARD.md](../../docs/SINGLE_CARD.md)** — 1× 3090 deployment menu (workloads → composes → TPS).
 - **[/docs/DUAL_CARD.md](../../docs/DUAL_CARD.md)** — 2× 3090 deployment menu.
+- **[/docs/QUAD_CARD.md](../../docs/QUAD_CARD.md)** — 4× 3090 / two-NVLink-pair deployment menu.
 - **[INTERNALS.md](INTERNALS.md)** — engineering deep dive (Genesis patches, forensics, Marlin pad, DFlash, upstream tracker).
 - **[CHANGELOG.md](CHANGELOG.md)** — dated history (combines single + dual timelines).
 - **[/docs/EXAMPLES.md](../../docs/EXAMPLES.md)** — Python / TS / curl client snippets + Open WebUI / Cline / Cursor connection settings.

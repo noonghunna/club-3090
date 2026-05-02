@@ -9,7 +9,7 @@ This directory contains the model + engine-specific patches that different compo
 | `patch_fa_max_seqlen_clamp.py` | long-text | Local P104-style FA2 `max_seqlen_k` runtime clamp |
 | `patch_pr40798_workspace.py` | (none — research artifact) | Negative-result reproducer for vllm#40798 |
 | `genesis/` | single-card default + dual-turbo | Sandermage's Genesis v7.14 patch tree (gitignored; fetched by setup.sh) |
-| External: `/opt/ai/vllm-src/` (Marlin pad fork) | all 4 dual-card composes | vLLM PR #40361 patched source, not a file in this repo |
+| External: `/opt/ai/vllm-src/` (Marlin pad fork) | all multi-card composes | vLLM PR #40361 patched source, not a file in this repo |
 
 ---
 
@@ -20,16 +20,17 @@ This directory contains the model + engine-specific patches that different compo
 - **Single-card tools-text** — fp8 KV + Genesis (P64 qwen3-coder tool parser fix + PN8 memory savings); no tolist patch (fp8 doesn't trip the bug).
 - **Dual-card default + DFlash variants** — fp8 / fp16 KV. Need only the Marlin pad fork (no Genesis, no tolist).
 - **Dual-card turbo** — TQ KV + Genesis v7.14 + tolist + Marlin pad fork.
+- **Quad-card fp8 variants** — need the Marlin pad fork. `quad.yml` uses PP=2 × TP=2 across both NVLink pairs; `quad-pairs.yml` runs two dual-default replicas.
 
 ---
 
-## vLLM PR #40361 — Marlin pad-sub-tile-n (dual-card requirement)
+## vLLM PR #40361 — Marlin pad-sub-tile-n (multi-card requirement)
 
-**What it fixes:** Marlin's `GPTQ_MARLIN_MIN_THREAD_N=64` blocks any W4A16 shard where per-rank out-dim falls below 64. Hits on Ampere SM 8.6 with AutoRound INT4 quants under TP=2.
+**What it fixes:** Marlin's `GPTQ_MARLIN_MIN_THREAD_N=64` blocks any W4A16 shard where per-rank out-dim falls below 64. Hits on Ampere SM 8.6 with AutoRound INT4 quants under TP=2, and remains relevant for quad variants that still use TP=2 groups.
 
 **Status:** PR open at https://github.com/vllm-project/vllm/pull/40361, labeled `bug`, awaiting maintainer review.
 
-**Setup:** all 4 dual-card composes volume-mount the patched source from `/opt/ai/vllm-src/`. Clone the fork once before booting any dual-card compose:
+**Setup:** all multi-card composes volume-mount the patched source from `/opt/ai/vllm-src/`. Clone the fork once before booting any dual-card or quad-card compose:
 
 ```bash
 sudo mkdir -p /opt/ai && sudo chown $USER /opt/ai
@@ -44,7 +45,7 @@ volumes:
   - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
 ```
 
-When PR #40361 lands, drop both mounts and the dual composes just use upstream nightly.
+When PR #40361 lands, drop both mounts and the multi-card composes just use upstream nightly.
 
 ### Brittleness note
 
@@ -129,4 +130,4 @@ Genesis v7.14+ ships several patches as opt-in env flags. Each compose enables o
 | ~~`GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1`~~ | ~~Long-ctx tool-format adherence~~ — **disabled 2026-04-29**, breaks IDE agents (see [club-3090#2](https://github.com/noonghunna/club-3090/issues/2#issuecomment-4346740245)) | (none — opt-in only) |
 | ~~`GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1`~~ | ~~Long-ctx tool-format reminder~~ — **disabled 2026-04-29**, same reason | (none — opt-in only) |
 
-Composes that don't load Genesis (minimal, dual-default, dual-dflash, dual-dflash-noviz) ignore these env vars.
+Composes that don't load Genesis (minimal, dual-default, dual-dflash, dual-dflash-noviz, quad, quad-pairs) ignore these env vars.

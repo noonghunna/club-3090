@@ -10,7 +10,7 @@ This is what the repo's [Quick start](../../README.md#quick-start) ships. Everyt
 - ✅ Full feature set: vision, tools, streaming, thinking, MTP n=3, TurboQuant 3-bit KV
 - ✅ Full OpenAI API parity
 - 50-53 narr / 66-70 code TPS on a single 3090; 58 narr / 76 code on dual-card (TP=2)
-- 48K default ctx · 75K IDE-agent · **198K with vision · 214K text-only** · 262K dual-card (since 2026-05-01 v0.20 + Genesis v7.65 dev tip migration). Cliff 2 still applies single-prompt >50–60K — see [docs/CLIFFS.md](../CLIFFS.md).
+- 48K default ctx · 75K IDE-agent · **145K with vision · 180K text-only** · 262K dual-card, plus quad variants for two-NVLink-pair hosts. Cliff 2 still applies single-prompt >50–60K — see [docs/CLIFFS.md](../CLIFFS.md).
 
 ---
 
@@ -20,7 +20,7 @@ This is what the repo's [Quick start](../../README.md#quick-start) ships. Everyt
 - Sandermage's [Genesis v7.66 dev tip patches](https://github.com/Sandermage/genesis-vllm-patches) (commit `fc89395`, mounted into vLLM's site-packages at boot)
 - `patch_workspace_lock_disable.py` sidecar — relaxes vllm#39226 strict assertion to one-shot WARNING (covers rare TQ decode paths where `profile_run` doesn't lock workspace at the right size)
 - Our [`patch_tolist_cudagraph.py`](../../patches/patch_tolist_cudagraph.py) (CUDA graph capture fix for TurboQuant continuation prefill)
-- 5 compose variants with different KV/ctx/feature trade-offs (see [README Status](../../README.md#status-at-a-glance))
+- compose variants with different KV/ctx/feature/topology trade-offs (see [SINGLE_CARD.md](../SINGLE_CARD.md), [DUAL_CARD.md](../DUAL_CARD.md), and [QUAD_CARD.md](../QUAD_CARD.md))
 
 ---
 
@@ -50,7 +50,7 @@ bash scripts/bench.sh               # 3 warmups + 5 measured (narr + code)
 | Pro | Detail |
 |---|---|
 | **Deepest Qwen3-Next feature support** | Vision tower, MTP head, all attention variants supported upstream. |
-| **TurboQuant 3-bit KV** | Lets us reach 198K + vision or 214K text-only on 24 GB single-card (262K on dual-card). No equivalent in llama.cpp; SGLang has it but blocked by other bugs. |
+| **TurboQuant 3-bit KV** | Lets us reach 145K + vision or 180K text-only on 24 GB single-card (262K on dual-card). No equivalent in llama.cpp; SGLang has it but blocked by other bugs. |
 | **MTP speculative decoding** | Works out of the box on the Lorbus quant; mainline llama.cpp doesn't expose MTP. |
 | **Active development** | Bugs we hit get triaged within days. We've contributed back. |
 | **Full OpenAI API parity** | Tools, streaming, vision-in-message, reasoning-mode, structured output — everything works. |
@@ -81,7 +81,7 @@ Control context vs activation headroom. See the [Activation-memory caveat](../..
 | `turboquant_4bit_nc` | ~23 KB | ~84K | Untested by us — should work |
 | `turboquant_3bit_nc` ⭐ | ~17 KB | ~125K | Default v7.14 variant |
 
-Lower bytes/token = more context, but more dequant scratch + activation pressure. The 3-bit variant is what makes the 198K + vision and 214K text-only tiers reachable on a single 24 GB card.
+Lower bytes/token = more context, but more dequant scratch + activation pressure. The 3-bit variant is what makes the 145K + vision and 180K text-only tiers reachable on a single 24 GB card.
 
 ### Spec-decode (`--speculative-config`)
 
@@ -102,14 +102,14 @@ Past 330W: diminishing returns (SM clocks saturate near 1.9 GHz on 3090s).
 
 ### Genesis env-opt-in patches
 
-The default compose enables P64/P65/P66 by default. Optional patches (env-gated):
+The default compose enables targeted bugfixes such as P64/P65/P66 by default. Behavioral long-context tool overrides stay default-off:
 
 ```yaml
-- GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1            # long-ctx tool adherence
+- GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1            # long-ctx tool adherence; opt-in only
 - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
 ```
 
-If you're running long-ctx tool flows (50K+ tokens with multiple tools active), these help with format compliance. They're already enabled in the default v7.14 compose.
+Do not enable P68/P69 by default in shipped composes; they rewrite user intent and previously broke IDE-agent flows. See `docs/UPSTREAM.md` Genesis #9.
 
 ---
 
@@ -121,7 +121,7 @@ If you're running long-ctx tool flows (50K+ tokens with multiple tools active), 
 | No spec-decode (debugging) | `docker-compose.minimal.yml` | 32K + fp8 + no MTP — simplest stack |
 | Minimal (no Genesis, no spec-decode) | `docker-compose.minimal.yml` | 32K + fp8 — escape hatch if Genesis clone fails |
 
-See [SINGLE_CARD.md](../SINGLE_CARD.md) and [DUAL_CARD.md](../DUAL_CARD.md) for full per-workload guidance.
+See [SINGLE_CARD.md](../SINGLE_CARD.md), [DUAL_CARD.md](../DUAL_CARD.md), and [QUAD_CARD.md](../QUAD_CARD.md) for full per-workload guidance.
 
 ---
 

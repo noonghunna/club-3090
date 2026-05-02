@@ -102,8 +102,8 @@ services:
       # surface natively (PN12 native + PN25 + PN17 + P15B). See migration
       # commit history if you need to resurrect.
     environment:
-      # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
-      # - CUDA_VISIBLE_DEVICES=0
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NCCL_CUMEM_ENABLE=0

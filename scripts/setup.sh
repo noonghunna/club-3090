@@ -49,6 +49,16 @@ case "${MODEL_NAME}" in
 esac
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Keep setup and launch/switch on the same local model root when users keep
+# MODEL_DIR/HF_TOKEN in the repo .env.
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.env"
+  set +a
+fi
+
 MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models-cache}"
 GENESIS_DIR="${ROOT_DIR}/models/${MODEL_NAME}/vllm/patches/genesis"
 
@@ -237,13 +247,15 @@ echo "Next — single-card vLLM (default):"
 echo "  cd models/${MODEL_NAME}/vllm/compose && docker compose up -d"
 echo "  docker logs -f vllm-qwen36-27b"
 echo ""
-echo "For dual-card composes, you ALSO need the Marlin pad fork mounted at"
+echo "For multi-card composes, you ALSO need the Marlin pad fork mounted at"
 echo "/opt/ai/vllm-src/ (vLLM PR #40361 — open upstream, drops out when it lands):"
 echo "  sudo mkdir -p /opt/ai && sudo chown \$USER /opt/ai"
 echo "  git clone -b marlin-pad-sub-tile-n https://github.com/noonghunna/vllm.git /opt/ai/vllm-src"
 echo ""
 echo "Then:"
 echo "  cd models/${MODEL_NAME}/vllm/compose && docker compose -f docker-compose.dual.yml up -d"
+echo "  # or, on a four-card host with two NVLink pairs:"
+echo "  cd models/${MODEL_NAME}/vllm/compose && docker compose -f docker-compose.quad.yml up -d"
 echo ""
 echo "Sanity test (after 'Application startup complete'):"
 echo "  curl -sf http://localhost:8020/v1/chat/completions \\"

@@ -16,9 +16,9 @@
 #
 #   Single-card vLLM:
 #     vllm/default            48K + TQ3 + MTP + vision + tools (recommended)
-#     vllm/long-vision        198K + TQ3 + vision (cliff-safe; Cliff 2 single-prompt >50K still applies)
-#     vllm/long-text          218K + TQ3 + text-only (same Cliff 2 caveat)
-#     vllm/bounded-thinking   218K + TQ3 + structured-CoT grammar in reasoning (~30× cheaper think, +24pp LCB v6)
+#     vllm/long-vision        145K + TQ3 + vision (cliff-safe; Cliff 2 single-prompt >50K still applies)
+#     vllm/long-text          180K + TQ3 + text-only (same Cliff 2 caveat)
+#     vllm/bounded-thinking   180K + TQ3 + structured-CoT grammar in reasoning (~30× cheaper think, +24pp LCB v6)
 #     vllm/tools-text         75K + fp8 + MTP + text-only (IDE agents — Cline / Cursor)
 #     vllm/minimal            32K + fp8 (no Genesis, no spec-decode, simplest)
 #
@@ -27,6 +27,10 @@
 #     vllm/dual-turbo       262K + TQ3 + 4 streams + vision (multi-tenant)
 #     vllm/dual-dflash      185K + FP16 + DFlash N=5 + vision (peak code TPS)
 #     vllm/dual-dflash-noviz 200K + FP16 + DFlash N=5 + no vision (peak code, max ctx)
+#
+#   Quad-card vLLM (2 NVLink pairs):
+#     vllm/quad             262K + fp8 + 4 streams + vision, no MTP (single endpoint, PP=2 x TP=2)
+#     vllm/quad-pairs       2× dual endpoints on :8021/:8022 + router on :8020
 #
 #   Single-card llama.cpp:
 #     llamacpp/default      Q3_K_XL + 262K + q4_0 KV + vision (max ctx, no cliffs)
@@ -42,6 +46,10 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
 READY_TIMEOUT="${READY_TIMEOUT:-600}"
+QWEN36_MODEL_SUBDIR="qwen3.6-27b-autoround-int4"
+
+# shellcheck source=preflight.sh
+source "${ROOT_DIR}/scripts/preflight.sh"
 
 # Load .env if present, so PORT / MODEL_DIR / etc. flow through to docker
 # compose AND to the ready-URL probe below.
@@ -65,6 +73,8 @@ declare -A VARIANT_DEFAULT_PORT=(
   [vllm/dual-turbo]=8011
   [vllm/dual-dflash]=8012
   [vllm/dual-dflash-noviz]=8013
+  [vllm/quad]=8014
+  [vllm/quad-pairs]=8020
   [llamacpp/default]=8020
   [llamacpp/concurrent]=8020
 )
@@ -81,6 +91,8 @@ declare -A VARIANTS=(
   [vllm/dual-turbo]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-turbo.yml"
   [vllm/dual-dflash]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-dflash.yml"
   [vllm/dual-dflash-noviz]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-dflash-noviz.yml"
+  [vllm/quad]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.quad.yml"
+  [vllm/quad-pairs]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.quad-pairs.yml"
   [llamacpp/default]="llamacpp|models/qwen3.6-27b/llama-cpp/compose|docker-compose.yml"
   [llamacpp/concurrent]="llamacpp|models/qwen3.6-27b/llama-cpp/compose|docker-compose.concurrent.yml"
 )
@@ -110,6 +122,9 @@ down_running() {
     return
   fi
   for c in $running; do
+    if ! docker inspect "$c" >/dev/null 2>&1; then
+      continue
+    fi
     echo "[switch] bringing down: ${c}"
     # find the compose dir from the container's labels — fallback to direct stop
     local lbl_dir lbl_file
@@ -140,6 +155,15 @@ up_variant() {
   (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d)
 }
 
+validate_variant_assets() {
+  local v="$1"
+  case "$v" in
+    vllm/*)
+      preflight_model_dir "${MODEL_DIR:-${ROOT_DIR}/models-cache}" "${QWEN36_MODEL_SUBDIR}" || exit 1
+      ;;
+  esac
+}
+
 resolve_ready_url() {
   # Precedence: $READY_URL (full override) → $PORT (port only, host=localhost)
   # → per-variant default port from VARIANT_DEFAULT_PORT.
@@ -147,14 +171,27 @@ resolve_ready_url() {
   if [[ -n "${READY_URL:-}" ]]; then
     return 0
   fi
-  local port="${PORT:-${VARIANT_DEFAULT_PORT[$variant]:-8020}}"
+  local port
+  if [[ "$variant" == "vllm/quad-pairs" ]]; then
+    port="${ROUTER_PORT:-${VARIANT_DEFAULT_PORT[$variant]:-8020}}"
+  else
+    port="${PORT:-${VARIANT_DEFAULT_PORT[$variant]:-8020}}"
+  fi
   READY_URL="http://localhost:${port}/v1/models"
 }
 
 wait_ready() {
   echo "[switch] waiting for ${READY_URL} (timeout ${READY_TIMEOUT}s)..."
   local elapsed=0 step=4
-  until curl -sf -o /dev/null --max-time 3 "${READY_URL}"; do
+  local auth_args=()
+  local ready_key="${READY_API_KEY:-${API_KEY:-${OPENAI_API_KEY:-}}}"
+  if [[ "$VARIANT" == "vllm/quad-pairs" && -z "$ready_key" ]]; then
+    ready_key="${LITELLM_MASTER_KEY:-sk-litellm}"
+  fi
+  if [[ -n "$ready_key" ]]; then
+    auth_args=(-H "Authorization: Bearer ${ready_key}")
+  fi
+  until curl -sf -o /dev/null --max-time 3 "${auth_args[@]}" "${READY_URL}"; do
     sleep $step
     elapsed=$((elapsed + step))
     if [[ $elapsed -ge $READY_TIMEOUT ]]; then
@@ -185,6 +222,7 @@ for arg in "$@"; do
 done
 
 resolve_ready_url "${VARIANT}"
+validate_variant_assets "${VARIANT}"
 down_running
 up_variant "${VARIANT}"
 [[ $WAIT -eq 1 ]] && wait_ready

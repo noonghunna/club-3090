@@ -8,15 +8,29 @@
 #   preflight_docker          — docker binary + 'docker compose' subcommand work
 #   preflight_gpu [min]       — nvidia-smi works, GPU detected, count >= min
 #   preflight_disk <path> <gb>— free space at path covers <gb> gigabytes
+#   preflight_model_dir <root> <subdir>
+#                             — model directory exists and contains config/weights
 #   preflight_gpu_idle        — warn if GPUs have significant VRAM already in use
 #   preflight_running         — warn if a club-3090 container is already up
 #
 # Style: each function prints one or more "[preflight] ..." lines.
 # Hard failures get a one-line ERROR + a "Fix:" hint.
+#
+# Env:
+#   CLUB3090_NVIDIA_SMI_SUDO=1  Use `sudo -n nvidia-smi` for hosts where
+#                               nvidia-smi access is gated behind sudo.
 
 # Avoid double-sourcing.
 [[ -n "${_PREFLIGHT_LOADED:-}" ]] && return 0
 _PREFLIGHT_LOADED=1
+
+preflight_nvidia_smi() {
+  if [[ "${CLUB3090_NVIDIA_SMI_SUDO:-0}" == "1" ]]; then
+    sudo -n nvidia-smi "$@"
+  else
+    nvidia-smi "$@"
+  fi
+}
 
 preflight_docker() {
   if ! command -v docker >/dev/null 2>&1; then
@@ -47,15 +61,16 @@ preflight_gpu() {
     return 1
   fi
   local gpu_lines
-  gpu_lines=$(nvidia-smi -L 2>/dev/null || true)
+  gpu_lines=$(preflight_nvidia_smi -L 2>/dev/null || true)
   local gpu_count
   gpu_count=$(echo "$gpu_lines" | grep -c '^GPU ' || true)
   if [[ "$gpu_count" -lt "$min_count" ]]; then
     echo "[preflight] ERROR: needs ${min_count} GPU(s), found ${gpu_count}." >&2
     if [[ "$gpu_count" -eq 0 ]]; then
       echo "            Fix: confirm 'nvidia-smi' lists your GPU(s); check driver/PCIe wiring." >&2
+      echo "                 If this host requires sudo for nvidia-smi, set CLUB3090_NVIDIA_SMI_SUDO=1." >&2
     else
-      echo "            Fix: pick a single-card variant, or install/wire the second GPU." >&2
+      echo "            Fix: pick a variant matching the detected GPU count, or install/wire the missing GPU(s)." >&2
     fi
     return 1
   fi
@@ -93,10 +108,43 @@ preflight_disk() {
   return 0
 }
 
+preflight_model_dir() {
+  local model_root="$1"
+  local model_subdir="$2"
+  local model_path="${model_root%/}/${model_subdir}"
+
+  if [[ ! -d "$model_path" ]]; then
+    echo "[preflight] ERROR: model directory missing: ${model_path}" >&2
+    echo "            Fix: set MODEL_DIR to the parent directory containing ${model_subdir}," >&2
+    echo "                 or run: MODEL_DIR=${model_root} bash scripts/setup.sh qwen3.6-27b" >&2
+    return 1
+  fi
+  if [[ ! -f "${model_path}/config.json" ]]; then
+    echo "[preflight] ERROR: ${model_path}/config.json missing." >&2
+    echo "            Fix: re-run setup, or point MODEL_DIR at the complete HF model cache parent." >&2
+    return 1
+  fi
+  local has_weights=0
+  local weight
+  for weight in "${model_path}"/*.safetensors; do
+    if [[ -f "$weight" ]]; then
+      has_weights=1
+      break
+    fi
+  done
+  if [[ "$has_weights" != "1" ]]; then
+    echo "[preflight] ERROR: no safetensors weights found in ${model_path}." >&2
+    echo "            Fix: re-run setup, or point MODEL_DIR at the complete HF model cache parent." >&2
+    return 1
+  fi
+  echo "[preflight] model:   ${model_path}"
+  return 0
+}
+
 preflight_gpu_idle() {
   command -v nvidia-smi >/dev/null 2>&1 || return 0
   local mem_used_lines
-  mem_used_lines=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null || true)
+  mem_used_lines=$(preflight_nvidia_smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null || true)
   [[ -z "$mem_used_lines" ]] && return 0
   local warned=0
   while IFS=, read -r idx used; do

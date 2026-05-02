@@ -183,5 +183,6 @@ bash scripts/switch.sh --list              # show all variants
 - **[VRAM allocation diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs)** — full per-config breakdown across single + dual.
 - **[FAQ.md](FAQ.md)** — common questions (4090 / 5090 support, why MTP not EAGLE, Copilot Gateway, what's a cliff, etc.).
 - **[EXAMPLES.md](EXAMPLES.md)** — Python / TS / curl client snippets + IDE connection settings.
-- **[HARDWARE.md](HARDWARE.md)** — Ampere SM 8.6 specifics, NVLink (declined), power caps.
-- **[DUAL_CARD.md](DUAL_CARD.md)** — when you need what single-card can't deliver.
+- **[HARDWARE.md](HARDWARE.md)** — Ampere SM 8.6 specifics, PCIe / NVLink-pair notes, power caps.
+- **[DUAL_CARD.md](DUAL_CARD.md)** — when you need what single-card can't deliver on two cards.
+- **[QUAD_CARD.md](QUAD_CARD.md)** — four-card topology with two NVLink pairs.

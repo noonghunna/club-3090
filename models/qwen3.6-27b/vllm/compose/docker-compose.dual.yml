@@ -15,7 +15,9 @@
 #     docker-compose.dual-turbo.yml (which uses TurboQuant KV + Genesis P65).
 #
 # Dependencies:
-#   - 2× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine)
+#   - 2× RTX 3090 (Ampere SM 8.6). PCIe-only works; on a four-card host
+#     with NVLink pairs, CUDA_VISIBLE_DEVICES defaults to 0,1 and can be
+#     overridden to 2,3 for the second pair.
 #   - vLLM PR #40361 (Marlin pad-sub-tile-n) — patched files volume-mounted
 #     from /opt/ai/vllm-src/. PR is open upstream; drop the mount when it
 #     lands. See ../patches/README.md for the git-clone command.
@@ -55,6 +57,8 @@ services:
       - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
       - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
     environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       # PCIe-only stack — disable NCCL features that assume NVLink.

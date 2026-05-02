@@ -2,14 +2,14 @@
 
 **Recipes for serving LLMs locally on RTX 3090s.** Multi-engine (vLLM, llama.cpp, SGLang), multi-model, model-agnostic by design.
 
-If you have one or two RTX 3090s and want to run modern LLMs at home, in a homelab, or as a dev backend — this repo collects the working configs, patches, and benchmarks.
+If you have one, two, or four RTX 3090s and want to run modern LLMs at home, in a homelab, or as a dev backend — this repo collects the working configs, patches, and benchmarks.
 
 ---
 
 ## TL;DR — what this is
 
 - **Two complementary routes** — pick by what your workload breaks on:
-  - 🏎 **vLLM dual** = max throughput. Up to **127 TPS code** (DFlash) or **4 concurrent streams @ 262K** (turbo). Full feature stack (vision · tools · MTP · streaming).
+  - 🏎 **vLLM dual / quad** = max throughput. Dual is measured up to **127 TPS code** (DFlash) or **4 concurrent streams @ 262K** (turbo). Quad-pairs is measured at **370 / 445 aggregate TPS** across two NVLink pairs.
   - 🛡 **llama.cpp single** = max robustness. Full **262K context** on one 3090. Stress-tested clean: no prefill cliffs, 25K-token tool returns work, 90K needle ladder passes. Slower (~21 TPS) but doesn't crash on real-world tool-using agents.
 - **Validated docker compose configs** for both routes — drop-in OpenAI-compatible API on `localhost:8020`
 - **Multi-engine**: vLLM (full features), llama.cpp (max ctx + robustness), SGLang (currently blocked, watch list)
@@ -27,7 +27,8 @@ If you have one or two RTX 3090s and want to run modern LLMs at home, in a homel
 | You have | Start here |
 |---|---|
 | **1× RTX 3090** | [`docs/SINGLE_CARD.md`](docs/SINGLE_CARD.md) — workload → config → quick start |
-| **2× RTX 3090** (PCIe / no NVLink) | [`docs/DUAL_CARD.md`](docs/DUAL_CARD.md) — workload → config → quick start |
+| **2× RTX 3090** | [`docs/DUAL_CARD.md`](docs/DUAL_CARD.md) — workload → config → quick start |
+| **4× RTX 3090** (two NVLink pairs) | [`docs/QUAD_CARD.md`](docs/QUAD_CARD.md) — one endpoint vs two paired endpoints |
 | Considering self-host vs cloud APIs | [`docs/COMPARISONS.md`](docs/COMPARISONS.md) — cost crossover + when each wins |
 
 Each hardware page lists every supported model with the working composes for that card count, plus measured TPS and per-workload pitfalls. Model-specific deep dives (quants, Genesis patches, engine internals) live under [`models/<name>/`](models/).
@@ -38,7 +39,7 @@ Each hardware page lists every supported model with the working composes for tha
 
 | Model | Status | Card counts | Engines | Highlights |
 |---|---|---|---|---|
-| **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready ⭐ | 1× / 2× 3090 | vLLM ✅ · llama.cpp ✅ · SGLang ❌ blocked | Vision · tools · MTP n=3 · up to 262K ctx · vLLM dual = 89/127 TPS · llama.cpp single = full 262K, no prefill cliffs |
+| **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready ⭐ | 1× / 2× / 4× 3090 | vLLM ✅ · llama.cpp ✅ · SGLang ❌ blocked | Vision · tools · MTP n=3 · up to 262K ctx · vLLM dual = 89/127 TPS · quad-pairs = 370/445 aggregate TPS |
 
 More models coming. The repo structure scales — when we add Qwen3.5-27B / GLM-4.6 / etc., they go under `models/<name>/` with the same internal pattern.
 
@@ -67,6 +68,7 @@ bash scripts/launch.sh
 #    Or skip the wizard:
 #      bash scripts/launch.sh --variant vllm/default      # single-card chat (recommended)
 #      bash scripts/launch.sh --variant vllm/dual         # dual-card 262K + vision
+#      bash scripts/launch.sh --variant vllm/quad         # quad-card PP=2 x TP=2 + vision
 #      bash scripts/launch.sh --variant llamacpp/default  # single-card 262K, no cliffs
 #    See all variants:
 #      bash scripts/switch.sh --list
@@ -106,6 +108,7 @@ club-3090/
 │   ├── HARDWARE.md                        Ampere SM 8.6+, NVLink note, 24 GB ceilings
 │   ├── GLOSSARY.md                        plain-language definitions (TPS / KV / MTP / TP / etc.)
 │   ├── UPSTREAM.md                        every upstream issue / PR we depend on or have filed
+│   ├── QUAD_CARD.md                       4× 3090 / two-NVLink-pair recipes
 │   ├── CLIFFS.md                          full synopsis of the prefill cliffs (root causes + fix landscape)
 │   ├── img/                               chart sources (performance.svg, vram-budget-{single,dual,combined}.svg) + PNG exports
 │   └── engines/                           cross-model engine comparison + per-engine deep dives
@@ -121,7 +124,7 @@ club-3090/
 │       ├── CHANGELOG.md                   model-specific dated history
 │       ├── vllm/
 │       │   ├── README.md                  "vLLM recipes for Qwen3.6-27B"
-│       │   ├── compose/                   docker-compose files (single-card + dual-card variants)
+│       │   ├── compose/                   docker-compose files (single-card + dual-card + quad variants)
 │       │   └── patches/                   tolist_cudagraph + Marlin pad README + Genesis pointer
 │       ├── llama-cpp/
 │       │   ├── README.md                  "llama.cpp recipes for Qwen3.6-27B"
@@ -150,7 +153,7 @@ club-3090/
 
 | For any model on this stack | Notes |
 |---|---|
-| 1× or 2× NVIDIA RTX 3090 (24 GB each) | Larger Ampere/Ada cards (4090, A6000) work; smaller cards (12 GB) don't fit 27B-class models. |
+| 1×, 2×, or 4× NVIDIA RTX 3090 (24 GB each) | Larger Ampere/Ada cards (4090, A6000) work; smaller cards (12 GB) don't fit 27B-class models. |
 | Linux (Ubuntu 22.04+ tested) | macOS/Windows: vLLM is Linux + CUDA only. Llama.cpp works on macOS/Windows but recipes assume Linux paths. |
 | Docker + NVIDIA Container Toolkit | For vLLM. llama.cpp works without Docker. |
 | NVIDIA driver 580.x+ | For CUDA 13 runtime in vLLM nightly. |

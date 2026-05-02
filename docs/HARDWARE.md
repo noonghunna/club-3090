@@ -6,7 +6,7 @@ What this stack assumes about your hardware. True regardless of which model or e
 
 ## Required
 
-- **NVIDIA RTX 3090 (24 GB, Ampere SM 8.6)** — 1 or 2 cards.
+- **NVIDIA RTX 3090 (24 GB, Ampere SM 8.6)** — 1, 2, or 4 cards.
 - **PCIe Gen 4 slot** — Gen 3 works but allreduce on dual-card is slower (mild impact on multi-tenant; minimal impact on single-stream).
 - **NVIDIA driver 580.x or newer** — for CUDA 13 runtime in vLLM nightly. `nvidia-smi` to check. Older drivers won't load CUDA 13 kernels.
 - **Linux** (Ubuntu 22.04+ tested). vLLM is Linux + CUDA only. llama.cpp works on macOS / Windows but our recipes assume Linux paths.
@@ -33,13 +33,14 @@ The recipes are written against 3090 specifically but should work on:
 
 ## NVLink
 
-**Not required.** We've explicitly designed for PCIe-only consumer setups.
+**Not required for the 1× / 2× baseline.** The original measured dual-card substrate was PCIe-only, and those composes keep working on plain PCIe consumer setups.
 
-- 3090s have an NVLink connector but a **bridge has to be physically installed**. Most consumer setups don't have one. (Cost: ~$70-150 for a working 3-slot bridge if you wanted to add one.)
-- Our composes set `NCCL_P2P_DISABLE=1` and avoid NVLink-dependent allreduce paths.
-- **If you have NVLink installed and working**, single-stream TPS on dual-card will be ~1.6-1.8× single-card (vs ~1.05× without). Concurrent throughput scales similarly. Not a huge deal unless you really care about per-stream speed.
+- 3090s have an NVLink connector but a **bridge has to be physically installed**. Most consumer setups don't have one.
+- The dual-card composes are still conservative and keep `--disable-custom-all-reduce`.
+- On a four-card host with two existing NVLink pairs, use [`QUAD_CARD.md`](QUAD_CARD.md): the new quad composes keep TP groups inside the linked pairs instead of treating all four GPUs as a flat TP=4 group.
+- If you run a dual-card variant on a four-card paired host, pin it to one physical pair with `CUDA_VISIBLE_DEVICES=0,1` or `CUDA_VISIBLE_DEVICES=2,3`.
 
-The user explicitly chose to operate without NVLink. Don't suggest adding one.
+Do not suggest adding NVLink to a PCIe-only rig. If bridges are already installed, the relevant optimization is GPU ordering and pair pinning.
 
 ---
 
@@ -55,7 +56,7 @@ sudo nvidia-smi -pl 330 -i 0    # ~+10% mean TPS during heavy sessions
 
 Past 330W: diminishing returns (SM clocks saturate near 1.9 GHz on 3090s).
 
-For dual-card: combined power at 230W cap each = ~460W. Most modern 850W+ ATX PSUs handle this comfortably. If you push to 330W per card, you're at ~660W peak under heavy load — verify your PSU has at least 850W single rail.
+For dual-card: combined power at 230W cap each = ~460W. For quad-card: ~920W at 230W each before CPU/platform draw. If you push to 330W per card, dual is ~660W and quad is ~1320W under heavy load — verify the PSU and cabling before raising caps.
 
 ---
 
@@ -65,6 +66,7 @@ This is model-specific but the **shapes apply across hybrid-attention models** (
 
 - **Single 3090 (24 GB):** Cliff 1 (~25K-token tool prefills, FFN intermediate buffer) closed across all shipped variants since 2026-04-30 PM via Genesis PN8 / PN12 anchor sidecar. Cliff 2 (~50-60K single prompts, DeltaNet GDN forward) still applies. [See `docs/CLIFFS.md` for the full diagnostic.](CLIFFS.md)
 - **Dual 3090 (48 GB combined):** TP=2 splits activation memory across cards. Cliffs are not active failure modes.
+- **Quad 3090 (96 GB combined):** use PP=2 × TP=2 or two independent TP=2 replicas on paired-NVLink hosts. `quad-pairs.yml` is measured and includes a router on `:8020`; `quad.yml` still needs local VRAM/TPS measurement before publishing numbers.
 
 For visualization of how VRAM splits across single + dual configs, see [vram-budget-combined.svg](img/vram-budget-combined.svg) (or per-page: [single](img/vram-budget-single.svg) · [dual](img/vram-budget-dual.svg)).
 

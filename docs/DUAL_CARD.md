@@ -1,6 +1,8 @@
 # Dual 3090 — what changes when you add the second card
 
-You have **2× RTX 3090s, PCIe-only (no NVLink)**. This page is the front door for picking a config and knowing what dual-card unlocks vs single. Model-specific deep dives (quants, Genesis, engine internals) live in the model directory — links at the bottom.
+You have **2× RTX 3090s**. The original measured baseline here is PCIe-only (no NVLink), but the same variants also work as one half of a four-card host with two NVLink pairs. This page is the front door for picking a config and knowing what dual-card unlocks vs single. Model-specific deep dives (quants, Genesis, engine internals) live in the model directory — links at the bottom.
+
+> **Four-card paired host note:** on the inspected quad machine, GPUs `0,1` are one NVLink pair and GPUs `2,3` are the other. If you run a dual variant there, pin to a real pair with `CUDA_VISIBLE_DEVICES=0,1` or `CUDA_VISIBLE_DEVICES=2,3`. For four-card-specific variants, see [`QUAD_CARD.md`](QUAD_CARD.md).
 
 ---
 
@@ -108,9 +110,11 @@ git clone https://github.com/vllm-project/vllm.git /opt/ai/vllm-src
 cd /opt/ai/vllm-src && git checkout main
 ```
 
-### PCIe allreduce overhead (no NVLink)
+### PCIe / NVLink pair allreduce
 
-`--disable-custom-all-reduce` is set in all dual composes. Without it, vLLM tries to use a custom CUDA path that assumes NVLink topology and crashes. The trade is some allreduce latency on every layer, hence the per-stream TPS being lower than you'd see on an A100/A5000 dual setup with NVLink. Don't bother with NVLink bridges; this stack is intentionally PCIe-tested.
+`--disable-custom-all-reduce` is set in all dual composes. On the original PCIe-only baseline, this avoids vLLM's topology-sensitive custom CUDA path and trades some allreduce latency on every layer for reliability.
+
+On a host that already has NVLink pairs installed, keep the two-card process on one linked pair (`0,1` or `2,3`). Do not span a dual TP=2 process across `0,2` or `1,3`; those are `SYS` links on the inspected quad machine.
 
 ### `dual.yml` is Genesis-less by design
 
@@ -196,5 +200,6 @@ Code TPS held within bench variance across all 4 variants — no v0.20 regressio
 - **[VRAM allocation diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs)** — full per-config breakdown across single + dual.
 - **[FAQ.md](FAQ.md)** — common questions (NVLink? AMD/Intel? Why fp8 not TQ3 on dual.yml? etc.).
 - **[EXAMPLES.md](EXAMPLES.md)** — Python / TS / curl client snippets + IDE connection settings.
-- **[HARDWARE.md](HARDWARE.md)** — Ampere SM 8.6 specifics, NVLink (declined), power caps, PCIe topology.
+- **[HARDWARE.md](HARDWARE.md)** — Ampere SM 8.6 specifics, NVLink / pair pinning, power caps, PCIe topology.
 - **[SINGLE_CARD.md](SINGLE_CARD.md)** — when one card is enough.
+- **[QUAD_CARD.md](QUAD_CARD.md)** — four-card topology with two NVLink pairs.

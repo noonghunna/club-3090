@@ -1,14 +1,21 @@
 """Generate TPS comparison bar-charts for Qwen3.6-27B on club-3090.
 
 Outputs (in docs/img/):
-  performance.svg + .png        — all 10 configs (single + dual), used by top README
+  performance.svg + .png        — single + dual configs, used by top README
   performance-single.svg + .png — 6 single-card configs, used by docs/SINGLE_CARD.md
   performance-dual.svg + .png   — 4 dual-card configs, used by docs/DUAL_CARD.md
+  performance-quad-pairs.svg + .png
+                                  — 4-card routed-pairs results, used by docs/QUAD_CARD.md
 
 Source data: results/v0.20-migration/*.summary (post-migration n=5 benches).
+Quad-pairs source: bench-results/bench-20260501-195114.md.
 
 Re-run:  python3 tools/charts/gen-perf.py
 """
+import os
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/club3090-matplotlib")
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -17,6 +24,7 @@ from matplotlib.patches import Patch
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[2] / "docs" / "img"
+EXPORT_DPI = 180
 
 # (label, narr_tps, code_tps, group)
 # Single-card + dual-turbo numbers re-benched 2026-05-01 PM on the v0.20
@@ -44,21 +52,31 @@ configs_all = [
     ("dual-dflash-noviz\n200K",   78.19, 126.99, "dual-vllm"),
 ]
 
+quad_pair_configs = [
+    ("Pair A\nGPUs 0,1",            189.08, 229.71, "quad-vllm"),
+    ("Pair B\nGPUs 2,3",            184.95, 225.87, "quad-vllm"),
+    ("Combined\n2× TP=2 pairs",     369.84, 444.57, "quad-vllm-aggregate"),
+]
+
 GROUP_COLORS = {
     "single-vllm":         ("#9ec5e8", "#2c7fb8"),
     "single-llama":        ("#fdd0a2", "#e6550d"),
     "single-luce-watch":   ("#dadaeb", "#807dba"),
     "dual-vllm":           ("#a1d99b", "#2c8a2c"),
+    "quad-vllm":           ("#9dd9d2", "#2b8c83"),
+    "quad-vllm-aggregate": ("#f2c078", "#c05a28"),
 }
 GROUP_LABELS = {
     "single-vllm":         "1× 3090\nvLLM patched",
     "single-llama":        "1× 3090\nllama.cpp",
     "single-luce-watch":   "1× 3090\nLuce DFlash *experimental*",
     "dual-vllm":           "2× 3090\nvLLM (TP=2)",
+    "quad-vllm":           "4× 3090\npair endpoints",
+    "quad-vllm-aggregate": "4× 3090\ncombined",
 }
 
 
-def make_chart(configs, out_stem, title_subject, figsize):
+def make_chart(configs, out_stem, title_subject, figsize, measured_date="2026-04-30"):
     labels = [c[0] for c in configs]
     narr = [c[1] for c in configs]
     code = [c[2] for c in configs]
@@ -100,7 +118,7 @@ def make_chart(configs, out_stem, title_subject, figsize):
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=9)
     ax.set_ylabel("TPS  (3 warm + 5 measured, canonical bench)", fontsize=10)
-    ax.set_title(f"Qwen3.6-27B  —  measured TPS {title_subject}  on  noonghunna/club-3090  (2026-04-30)",
+    ax.set_title(f"Qwen3.6-27B  —  measured TPS {title_subject}  on  noonghunna/club-3090  ({measured_date})",
                  fontsize=12, pad=36)
     ax.set_ylim(0, max(max(narr), max(code)) * 1.30)
     ax.grid(axis="y", linestyle=":", alpha=0.4)
@@ -114,12 +132,21 @@ def make_chart(configs, out_stem, title_subject, figsize):
     ax.legend(handles=legend_elements, loc="upper center", bbox_to_anchor=(0.5, -0.10),
               ncol=2, fontsize=9, frameon=False)
 
-    substrate_parts = ["vLLM 0.20.1rc1.dev16+g7a1eb8ac2 + Genesis v7.66 dev (fc89395)"]
+    if any(g.startswith("quad-") for g in groups):
+        substrate_parts = [
+            "vLLM nightly dev205+g07351e088",
+            "quad-pairs: two TP=2 endpoints + MTP n=3",
+            "8 concurrent requests per pair",
+            "RTX 3090 sm_86, two NVLink pairs",
+        ]
+    else:
+        substrate_parts = ["vLLM 0.20.1rc1.dev16+g7a1eb8ac2 + Genesis v7.66 dev (fc89395)"]
     if any(g == "single-llama" for g in groups):
         substrate_parts.append("llama.cpp mainline 0d0764dfd")
     if any(g == "single-luce-watch" for g in groups):
         substrate_parts.append("Luce DFlash dflash@f12a87c (greedy only)")
-    substrate_parts.append("RTX 3090 sm_86, PCIe-only, 230W")
+    if not any(g.startswith("quad-") for g in groups):
+        substrate_parts.append("RTX 3090 sm_86, PCIe-only, 230W")
     ax.text(0.5, -0.22,
             "Substrate: " + "  •  ".join(substrate_parts),
             transform=ax.transAxes, ha="center", va="top", fontsize=8, color="#555", style="italic")
@@ -127,12 +154,16 @@ def make_chart(configs, out_stem, title_subject, figsize):
         ax.text(0.5, -0.30,
                 "* Luce DFlash 3.6+3.6 = experimental: matched draft still under training (z-lab 2026-04-26 snapshot), greedy-only sampling, no vision, daemon-mode bugs. Not yet recommended for shipping. See docs/UPSTREAM.md.",
                 transform=ax.transAxes, ha="center", va="top", fontsize=7.5, color="#777", style="italic", wrap=True)
+    if any(g.startswith("quad-") for g in groups):
+        ax.text(0.5, -0.30,
+                "Source: bench-results/bench-20260501-195114.md; 3 warmup + 5 measured batches, direct pair endpoints now default to :8021 and :8022.",
+                transform=ax.transAxes, ha="center", va="top", fontsize=7.5, color="#777", style="italic", wrap=True)
 
     plt.tight_layout()
     svg_path = OUT / f"{out_stem}.svg"
     png_path = OUT / f"{out_stem}.png"
     plt.savefig(svg_path, format="svg", bbox_inches="tight")
-    plt.savefig(png_path, format="png", dpi=150, bbox_inches="tight")
+    plt.savefig(png_path, format="png", dpi=EXPORT_DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"Wrote {svg_path.name} + {png_path.name}")
 
@@ -143,6 +174,9 @@ dual_configs   = [c for c in configs_all if c[3].startswith("dual-")]
 make_chart(configs_all,    "performance",        "per config",          figsize=(18, 7.5))
 make_chart(single_configs, "performance-single", "(single 3090)",       figsize=(13, 6.5))
 make_chart(dual_configs,   "performance-dual",   "(2× 3090, TP=2)",     figsize=(8.5, 6.5))
+make_chart(quad_pair_configs, "performance-quad-pairs",
+           "(4× 3090, two TP=2 pairs)", figsize=(10.5, 6.5),
+           measured_date="2026-05-01")
 
 # Tweet-asset: just the two recommended single-card vLLM routes
 # (long-vision + long-text). Clean visual match for the launch tweet.

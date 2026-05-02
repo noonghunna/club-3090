@@ -31,6 +31,7 @@
 #   URL          Default: http://localhost:8020
 #   MODEL        Default: qwen3.6-27b-autoround
 #   CONTAINER    Default: vllm-qwen36-27b
+#   API_KEY      Optional OpenAI-compatible Bearer token.
 #   SKIP_TOOLS   Set to 1 to skip the tool-call test entirely (useful when
 #                running against the default config which is known to fail
 #                tool calls — see README "Known issue" section).
@@ -52,6 +53,11 @@ done
 URL="${URL:-http://localhost:8020}"
 MODEL="${MODEL:-qwen3.6-27b-autoround}"
 CONTAINER="${CONTAINER:-vllm-qwen36-27b}"
+API_KEY="${API_KEY:-${OPENAI_API_KEY:-}}"
+CURL_AUTH_ARGS=()
+if [[ -n "$API_KEY" ]]; then
+  CURL_AUTH_ARGS=(-H "Authorization: Bearer ${API_KEY}")
+fi
 
 pass() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 fail() { printf "  \033[31m✗\033[0m %s\n" "$1"; printf "    \033[33m→\033[0m %s\n" "$2"; return 1; }
@@ -71,7 +77,7 @@ echo ""
 # --------------------------------------------------------------------
 check_server() {
   echo "[1/8] Server reachable on /v1/models ..."
-  if curl -sf -m 5 "${URL}/v1/models" >/dev/null 2>&1; then
+  if curl -sf -m 5 "${CURL_AUTH_ARGS[@]}" "${URL}/v1/models" >/dev/null 2>&1; then
     pass "server is serving"
   else
     fail "no response from ${URL}/v1/models" \
@@ -114,6 +120,7 @@ check_basic() {
   local resp
   resp="$(curl -sf -m 30 "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${CURL_AUTH_ARGS[@]}" \
     -d "{
       \"model\": \"${MODEL}\",
       \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of France? One short sentence.\"}],
@@ -144,6 +151,7 @@ check_tools() {
   local resp
   resp="$(curl -sf -m 60 "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${CURL_AUTH_ARGS[@]}" \
     -d "{
       \"model\": \"${MODEL}\",
       \"messages\": [{\"role\": \"user\", \"content\": \"What is the weather in San Francisco? Use the get_weather tool.\"}],
@@ -188,6 +196,7 @@ check_streaming() {
   local stream_out
   stream_out="$(curl -sf -m 45 --no-buffer "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${CURL_AUTH_ARGS[@]}" \
     -d "{
       \"model\": \"${MODEL}\",
       \"messages\": [{\"role\": \"user\", \"content\": \"Write a three-sentence haiku about debugging.\"}],
@@ -245,6 +254,7 @@ check_thinking() {
   # enable_thinking: true (Qwen3 default). Math problem that needs visible reasoning.
   resp="$(curl -sf -m 120 "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${CURL_AUTH_ARGS[@]}" \
     -d "{
       \"model\": \"${MODEL}\",
       \"messages\": [{\"role\": \"user\", \"content\": \"What is 2+2? One-line answer.\"}],
@@ -295,6 +305,7 @@ check_output_quality() {
   local resp
   resp="$(curl -sf -m 180 "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${CURL_AUTH_ARGS[@]}" \
     -d "{
       \"model\": \"${MODEL}\",
       \"messages\": [{\"role\": \"user\", \"content\": \"Write a detailed 1500-word essay explaining how transformer attention works. Cover: query/key/value projections, scaled dot-product attention, softmax, multi-head attention, positional encodings, and a brief comparison with RNN-based attention.\"}],
@@ -370,6 +381,7 @@ check_mtp_acceptance() {
   # SpecDecoding stats after a non-trivial generation completes).
   curl -sf -m 60 "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${CURL_AUTH_ARGS[@]}" \
     -d "{
       \"model\": \"${MODEL}\",
       \"messages\": [{\"role\": \"user\", \"content\": \"Count from 1 to 80, one number per line.\"}],
@@ -416,7 +428,7 @@ if [[ "$RUN_BENCH" == "1" && "$FAILED" == "0" ]]; then
   echo "  --bench: running scripts/bench.sh"
   echo "=========================================="
   SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  URL="${URL}" MODEL="${MODEL}" CONTAINER="${CONTAINER}" \
+  URL="${URL}" MODEL="${MODEL}" CONTAINER="${CONTAINER}" API_KEY="${API_KEY}" \
     bash "${SCRIPT_DIR}/bench.sh"
 fi
 

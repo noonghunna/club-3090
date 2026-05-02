@@ -2,6 +2,33 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-02 — Quad-pairs router default max_tokens raised to 16K
+
+The `vllm/quad-pairs` router now injects `max_tokens=16384` when a client omits `max_tokens`, up from 512. The failing symptom was Open WebUI receiving only `reasoning_content` for a simple chat prompt because Qwen3.6 spent the entire 512-token server default thinking before it emitted final `content`.
+
+This is a router-side request default, not a worker capacity change. Worker capacity remains governed by the vLLM limits now exposed through `.env` (`VLLM_MAX_MODEL_LEN`, mem-util, sequence/batched-token caps, KV dtype, etc.). Direct pair endpoints bypass the router and still depend on client-supplied request parameters.
+
+## 2026-05-02 — Quad-pairs direct endpoints move to 8021 / 8022
+
+`vllm/quad-pairs` still exposes the router on `:8020`, but the two direct TP=2 pair endpoints now default to `:8021` and `:8022`. The pair containers and internal router targets are unchanged; only the host port mapping changed.
+
+This avoids overloading `:8014`, which remains the default host port for the separate `vllm/quad` PP=2 × TP=2 single-endpoint compose. `scripts/bench.sh --quad-pairs`, `scripts/launch.sh`, `.env.example`, and the current quad docs now use the new direct-port defaults.
+
+Default auth is now enabled for `vllm/quad-pairs`: clients use `sk-litellm` against the router on `:8020`, and the direct pair endpoints use `sk-vllm`. The router forwards to workers with the worker key by default.
+
+## 2026-05-01 — Quad 3090 vLLM variants for two NVLink pairs
+
+Added Qwen3.6-27B vLLM composes for a 4× RTX 3090 host whose topology is two linked pairs:
+
+| Variant | Compose | Shape | Endpoint(s) | Status |
+|---|---|---|---|---|
+| `vllm/quad` | `docker-compose.quad.yml` | PP=2 × TP=2, fp8 KV, no MTP, vision, 262K, 4 streams | `:8014` | new, bench pending |
+| `vllm/quad-pairs` | `docker-compose.quad-pairs.yml` | two independent TP=2 dual-default replicas + LiteLLM router | `:8020` router, `:8014` + `:8015` direct | router verify-full + bench passed; stress pending |
+
+Topology inspected with `sudo nvidia-smi topo -m`: GPU0-GPU1 are `NV4` on NUMA 0, GPU2-GPU3 are `NV3` on NUMA 1, and cross-pair links are `SYS`. We therefore ship PP=2 × TP=2 and paired replicas, not TP=4.
+
+`quad-pairs.yml` measured 369.84 / 444.57 aggregate narrative/code TPS with 8 concurrent requests per pair endpoint, 3 warmup + 5 measured batches, and peak per-card VRAM 22.3 / 22.3 / 22.7 / 22.3 GiB. `quad.yml` still has no TPS claim; publish only after `verify-full.sh`, `verify-stress.sh`, `bench.sh`, and per-card peak VRAM capture on that variant.
+
 ## 2026-05-02 — Genesis v7.66 + Cliff 1 mech B closed ⭐
 
 Genesis pin bump `753344b` → `fc89395` (v7.66 dev tip). Cliff 1 mech B closed across all 4 TQ3 composes via two local backports:

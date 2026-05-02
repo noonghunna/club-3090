@@ -27,9 +27,15 @@ venv/
 # Docker compose state
 **/compose/*.log
 
-# Local env overrides
+# Local benchmark reports
+bench-results/
+
+# Local env overrides. Keep only the committed sample template.
 .env
-*.env.local
+.env.*
+*.env
+*.env.*
+!.env.example
 
 # Local safety backups of compose files (e.g. docker-compose.yml.default)
 **/compose/*.default

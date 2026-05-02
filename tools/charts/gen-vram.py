@@ -4,13 +4,20 @@ Outputs (in docs/img/):
   vram-budget-combined.svg + .png — both single + dual sections (used in model README)
   vram-budget-single.svg + .png   — single-card configs only (used in docs/SINGLE_CARD.md)
   vram-budget-dual.svg + .png     — dual-card configs only (used in docs/DUAL_CARD.md)
+  vram-budget-quad-pairs.svg + .png
+                                   — per-GPU quad-pairs peak (used in docs/QUAD_CARD.md)
 
 Numbers from /opt/ai/BENCHMARKS.md (single-card R3', dual rebench C1-C4 + Q3_K_XL L1).
+Quad-pairs peaks from bench-results/bench-20260501-195114.md.
 Component splits estimated from architectural math + boot-log inspection;
 totals are measured.
 
 Re-run:  python3 tools/charts/gen-vram.py
 """
+import os
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/club3090-matplotlib")
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -18,6 +25,7 @@ from matplotlib.patches import Patch
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[2] / "docs" / "img"
+EXPORT_DPI = 180
 
 # Color palette
 C_W   = "#3a6ea5"   # Model weights (deep blue)
@@ -57,6 +65,26 @@ rows_dual = [
          (1.75, "DFlash draft", C_DFL), (3.55, "activations", C_ACT), (0.2, "free", C_FREE)]),
 ]
 
+
+def quad_pair_peak_row(label, peak_mib):
+    peak_gib = peak_mib / 1024
+    fixed_gib = 7.0 + 10.0 + 0.5
+    runtime_gib = max(peak_gib - fixed_gib, 0.0)
+    free_gib = max(24.0 - peak_gib, 0.0)
+    return (
+        f"{label}\npeak {peak_gib:.2f} GiB",
+        [(7.0, "weights", C_W), (10.0, "KV (fp8)", C_KV), (0.5, "vision", C_VIS),
+         (runtime_gib, "runtime peak", C_ACT), (free_gib, "headroom", C_FREE)],
+    )
+
+
+rows_quad_pairs = [
+    quad_pair_peak_row("Pair A GPU0", 22346),
+    quad_pair_peak_row("Pair A GPU1", 22346),
+    quad_pair_peak_row("Pair B GPU2", 22722),
+    quad_pair_peak_row("Pair B GPU3", 22345),
+]
+
 LEGEND = [
     Patch(facecolor=C_W,   edgecolor="#333", label="Model weights (Lorbus AutoRound INT4 / Q3_K_XL)"),
     Patch(facecolor=C_KV,  edgecolor="#333", label="KV cache"),
@@ -83,11 +111,11 @@ def draw_panel(ax, rows, title):
             x += size
         ax.text(-0.3, i, label, ha="right", va="center", fontsize=8.5)
     ax.set_xticks(range(0, 25, 4))
-    ax.set_xlabel("VRAM per card  (GB / 24 GB)", fontsize=9)
+    ax.set_xlabel("VRAM per card  (GiB / 24 GiB)", fontsize=9)
     ax.set_yticks([])
     ax.set_title(title, fontsize=11, fontweight="bold", pad=10, loc="left")
     ax.axvline(24, color="#aa3333", linestyle="--", linewidth=1, alpha=0.5)
-    ax.text(24.1, -0.5, "24 GB ceiling", color="#aa3333", fontsize=8, va="bottom")
+    ax.text(24.1, -0.5, "24 GiB ceiling", color="#aa3333", fontsize=8, va="bottom")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="x", linestyle=":", alpha=0.3)
@@ -97,7 +125,7 @@ def save(fig, stem):
     svg_path = OUT / f"{stem}.svg"
     png_path = OUT / f"{stem}.png"
     fig.savefig(svg_path, format="svg", bbox_inches="tight")
-    fig.savefig(png_path, format="png", dpi=150, bbox_inches="tight")
+    fig.savefig(png_path, format="png", dpi=EXPORT_DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"Wrote {svg_path.name} + {png_path.name}")
 
@@ -143,3 +171,16 @@ fig.text(0.5, -0.16,
          ha="center", va="top", fontsize=7.5, color="#555", style="italic")
 plt.tight_layout(rect=[0.18, 0.08, 1, 0.96])
 save(fig, "vram-budget-dual")
+
+# ----- quad-pairs peak -----
+fig, ax = plt.subplots(figsize=(10.5, 5.0), dpi=110)
+draw_panel(ax, rows_quad_pairs, "Quad-pairs — two independent TP=2 endpoints, measured peak by GPU")
+fig.legend(handles=LEGEND, loc="lower center", ncol=3, fontsize=8, frameon=False, bbox_to_anchor=(0.5, -0.04))
+fig.suptitle("Qwen3.6-27B on 4× RTX 3090 — quad-pairs VRAM peak during aggregate bench",
+             fontsize=12, y=0.99)
+fig.text(0.5, -0.16,
+         "Source: bench-results/bench-20260501-195114.md, 8 concurrent requests per pair endpoint.\n"
+         "Weights/KV/vision are estimated from the dual-default shape; runtime peak + headroom are backed out from nvidia-smi peak MiB.",
+         ha="center", va="top", fontsize=7.5, color="#555", style="italic")
+plt.tight_layout(rect=[0.18, 0.08, 1, 0.96])
+save(fig, "vram-budget-quad-pairs")
