@@ -18,7 +18,15 @@
 #   HF_TOKEN            HF token (public models, usually unnecessary)
 #   SKIP_MODEL          Set to 1 to skip the model download step
 #   SKIP_GENESIS        Set to 1 to skip cloning Genesis patches
-#   PREFLIGHT_DISK_GB   Required free space at MODEL_DIR (default: 25)
+#   WITH_DFLASH_DRAFT   Set to 1 to ALSO download z-lab/Qwen3.6-27B-DFlash
+#                       (~1.75 GB; required ONLY for dual-dflash.yml /
+#                       dual-dflash-noviz.yml composes). Default: 0.
+#                       Note: draft model is still under training as of
+#                       2026-04-26; bench numbers in DUAL_CARD.md were
+#                       measured against that snapshot. AL improvements
+#                       expected when z-lab tags training-complete.
+#   PREFLIGHT_DISK_GB   Required free space at MODEL_DIR (default: 25, or
+#                       28 if WITH_DFLASH_DRAFT=1)
 #
 # Idempotent: safe to re-run — skips steps already done.
 
@@ -62,8 +70,13 @@ cd "${ROOT_DIR}"
 source "${ROOT_DIR}/scripts/preflight.sh"
 
 # Required disk: model is ~14 GB on disk; 25 GB gives buffer for download
-# temp files + safetensors + tokenizer/config.
-PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-25}"
+# temp files + safetensors + tokenizer/config. Add ~3 GB if also pulling
+# the DFlash draft (~1.75 GB packed + buffer for download tempfiles).
+if [[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]]; then
+  PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-28}"
+else
+  PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-25}"
+fi
 
 echo "[preflight] checking environment..."
 preflight_docker || exit 1
@@ -233,6 +246,42 @@ echo ""
 echo "[done]    ${count} shards SHA-verified."
 [[ -d "${GENESIS_DIR}/.git" ]] && echo "          Genesis pinned at ${GENESIS_PIN} ($(cd "${GENESIS_DIR}" && git rev-parse --short HEAD))."
 echo ""
+
+# ---------- Optional DFlash draft model ----------
+# Required ONLY for `docker-compose.dual-dflash.yml` / `dual-dflash-noviz.yml`.
+# vLLM `method:"dflash"` spec-decode loads this as the draft. The compose
+# expects it at <MODEL_DIR>/qwen3.6-27b-dflash/ (~1.75 GB / card after load).
+#
+# Caveat: as of 2026-04-26, z-lab/Qwen3.6-27B-DFlash is still under training.
+# Published bench in docs/DUAL_CARD.md (82 narr / 125 code TPS on dual-3090)
+# was measured against the 2026-04-26 snapshot at peak code-prompt conditions.
+# Real agent traffic (mixed code + narrative + tool schemas) will see lower
+# AL until z-lab tags training-complete. See docs/UPSTREAM.md for the watch
+# entry and re-test trigger.
+DFLASH_REPO="z-lab/Qwen3.6-27B-DFlash"
+DFLASH_SUBDIR="qwen3.6-27b-dflash"
+if [[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]] && [[ "${SKIP_MODEL:-0}" != "1" ]]; then
+  echo "[dflash]  WITH_DFLASH_DRAFT=1 — downloading ${DFLASH_REPO} ..."
+  mkdir -p "${MODEL_DIR}/${DFLASH_SUBDIR}"
+  if command -v hf >/dev/null 2>&1; then
+    HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1 \
+      hf download "${DFLASH_REPO}" --local-dir "${MODEL_DIR}/${DFLASH_SUBDIR}"
+  elif command -v huggingface-cli >/dev/null 2>&1; then
+    HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1 \
+      huggingface-cli download "${DFLASH_REPO}" --local-dir "${MODEL_DIR}/${DFLASH_SUBDIR}"
+  else
+    echo "[dflash]  ERROR: neither 'hf' nor 'huggingface-cli' available — cannot download DFlash draft." >&2
+    exit 1
+  fi
+  echo "[dflash]  Downloaded ${DFLASH_REPO} to ${MODEL_DIR}/${DFLASH_SUBDIR}"
+elif [[ -d "${MODEL_DIR}/${DFLASH_SUBDIR}" ]]; then
+  echo "[dflash]  ${MODEL_DIR}/${DFLASH_SUBDIR} already exists — using existing draft."
+else
+  echo "[dflash]  Skipping DFlash draft model. Set WITH_DFLASH_DRAFT=1 to fetch"
+  echo "          ${DFLASH_REPO} (~1.75 GB; required only for dual-dflash composes)."
+fi
+echo ""
+
 echo "Next — single-card vLLM (default):"
 echo "  cd models/${MODEL_NAME}/vllm/compose && docker compose up -d"
 echo "  docker logs -f vllm-qwen36-27b"

@@ -69,7 +69,17 @@ For the single-card picture, see [`SINGLE_CARD.md`](SINGLE_CARD.md).
 
 **When to pick:** code is the dominant workload, you want TPS over context budget, vision is still required.
 
-**Caveat:** DFlash's per-position acceptance falls off faster than MTP — narrative TPS (82) is good but not dramatically better than dual.yml's 69. The win is concentrated on code/repetitive prompts.
+**⚠️ Prereq before this compose works:** download the DFlash draft model:
+```bash
+WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
+# OR manually:
+hf download z-lab/Qwen3.6-27B-DFlash --local-dir <MODEL_DIR>/qwen3.6-27b-dflash
+```
+Without it, vLLM falls back silently to baseline bf16 decode (~25 TPS, not 125). Reported by [@lolren in #18](https://github.com/noonghunna/club-3090/discussions/18#discussioncomment-16787831).
+
+**Caveats:**
+- DFlash's per-position acceptance falls off faster than MTP — narrative TPS (82) is good but not dramatically better than `dual.yml`'s 69. The win is concentrated on code/repetitive prompts.
+- The z-lab draft is **still under training** (see [UPSTREAM.md](UPSTREAM.md#luce-dflash-luce-orglucebox-hub--separate-llamacpp-fork-not-our-vllm-dual-dflash)). Published 125 TPS code is against the 2026-04-26 snapshot at peak code-prompt conditions; agent traffic with mixed code + narrative + tool schemas will see lower per-stream TPS until z-lab tags training-complete. **For autonomous coding agents (Cline / OpenCode / Pi / Claude Code) prefer `dual.yml` (FP8 + MTP) until then** — its 89 code TPS is robust across prompt shapes.
 
 ### Peak code TPS, no vision — `dual-dflash-noviz.yml`
 

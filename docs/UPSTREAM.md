@@ -96,13 +96,17 @@ Each row covers one upstream link with: **title • status • our dependency / 
 
 ---
 
-## Luce DFlash (`Luce-Org/lucebox-hub`)
+## Luce DFlash (`Luce-Org/lucebox-hub`) — separate llama.cpp fork (NOT our vLLM dual-dflash)
 
-Watch list — promising on code-heavy single-stream workloads but not yet a club-3090 shipping option. Re-benched 2026-04-30 PM on Qwen3.6-27B Q4_K_M + matched z-lab/Qwen3.6-27B-DFlash draft (under training).
+**Heads-up — naming clarification:**
+- This section tracks **`Luce-Org/lucebox-hub`** (a llama.cpp fork from Luce) on the **single-card** path. Watch list — not yet a club-3090 shipping option for that engine.
+- Our **`docker-compose.dual-dflash.yml` / `dual-dflash-noviz.yml`** (vLLM TP=2 dual-card) IS shipping and is the recommended DFlash path. Both stacks consume the **same draft model** (`z-lab/Qwen3.6-27B-DFlash`), but the engine + topology differ. Don't confuse the two.
+
+Re-benched 2026-04-30 PM on Qwen3.6-27B Q4_K_M + matched z-lab/Qwen3.6-27B-DFlash draft (under training).
 
 | Issue / PR | Status | Why it matters | Workaround |
 |---|---|---|---|
-| [z-lab/Qwen3.6-27B-DFlash](https://huggingface.co/z-lab/Qwen3.6-27B-DFlash) — draft model still under training | 🟡 Snapshot 2026-04-26 | Narrative AL ~3.7, code AL ~7.0. When training finishes, expected to climb toward Qwen3.5 reference (8.31 HE, 7.04 Math). Today: code 72 TPS / narr 40 TPS on our 3090 vs vLLM's 66/50. | Re-test when z-lab tags training-complete. |
+| [z-lab/Qwen3.6-27B-DFlash](https://huggingface.co/z-lab/Qwen3.6-27B-DFlash) — draft model still under training | 🟡 Snapshot 2026-04-26 | Narrative AL ~3.7, code AL ~7.0 on `Luce-Org/lucebox-hub` (single-card llama.cpp). When training finishes, expected to climb toward Qwen3.5 reference (8.31 HE, 7.04 Math). The same caveat applies to vLLM `dual-dflash.yml` — published 82/125 TPS in [`docs/DUAL_CARD.md`](DUAL_CARD.md) was measured against this 2026-04-26 snapshot at peak code-prompt conditions; AL on real agent traffic will be lower until z-lab tags training-complete. | Re-test when z-lab tags training-complete. The vLLM dual-dflash path remains shipping — see [DUAL_CARD.md](DUAL_CARD.md) — but treat its numbers as a snapshot. For autonomous coding agents on dual-3090 today, `dual.yml` (FP8 + MTP) is the recommended robust path. |
 | **Build fragility on `dflash` main HEAD** | 🔴 Reproducible 2026-04-30 PM | `cmake --build` errors with `ggml_turbo_wht` and `GGML_TYPE_TQ3_0` undefined. Required submodule commit `b6ffab4a9` not auto-fetched. Cross-rig signal — fresh clone fails. | After clone: `cd dflash/deps/llama.cpp && git fetch origin && cd ../../.. && git submodule update --init`. |
 | **Daemon-mode "empty prompt" regression** | 🔴 Reproducible 2026-04-30 PM | After streaming requests, subsequent requests return `"empty prompt"` from the test_dflash daemon. Server keeps accepting requests but generates 0 tokens. Forces restart. | Restart server between request flavors; avoid mixing streaming + non-streaming. |
 | **`enable_thinking` chat_template_kwargs honored differently than vLLM** | 🟡 Behavioural difference | Test sends `enable_thinking=true` and expects `reasoning_content` populated. Luce returns `content` directly. Not a missing feature, but breaks our `verify-full.sh` check 6. | Don't treat the thinking-mode test as a Luce-correctness signal until the chat-template path is documented. |

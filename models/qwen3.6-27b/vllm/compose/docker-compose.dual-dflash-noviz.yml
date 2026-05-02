@@ -14,6 +14,17 @@
 # (no fp8/turbo on DFlash + Ampere), `--dtype bfloat16` for vllm#40334
 # workaround.
 #
+# ─── Prerequisite: download the DFlash draft model ──────────────────────
+# Same as dual-dflash.yml — needs `z-lab/Qwen3.6-27B-DFlash` at
+# `<MODEL_DIR>/qwen3.6-27b-dflash/`. Get it via:
+#
+#   WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
+#
+# OR manually `hf download z-lab/Qwen3.6-27B-DFlash --local-dir <MODEL_DIR>/qwen3.6-27b-dflash`.
+# If missing, vLLM falls back silently to baseline bf16 decode (~25 TPS
+# instead of 125 TPS — reported by @lolren in club-3090#18). See
+# `dual-dflash.yml` header for the under-training caveat.
+#
 # To run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
 #   docker compose -f docker-compose.dual-dflash-noviz.yml up -d

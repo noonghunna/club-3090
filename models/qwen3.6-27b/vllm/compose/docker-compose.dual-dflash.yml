@@ -20,6 +20,31 @@
 # Required workaround: vllm#40334 dtype mismatch fix is not yet upstream;
 # compose sets `--dtype bfloat16` to match the draft's training dtype.
 #
+# ─── Prerequisite: download the DFlash draft model ──────────────────────
+# This compose loads `z-lab/Qwen3.6-27B-DFlash` from
+# `<MODEL_DIR>/qwen3.6-27b-dflash/` as the spec-decode draft. The default
+# `bash scripts/setup.sh qwen3.6-27b` does NOT fetch this model — you must
+# either re-run setup with the flag, or download it manually:
+#
+#   bash scripts/setup.sh qwen3.6-27b      # then:
+#   WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
+#
+# OR manually:
+#   hf download z-lab/Qwen3.6-27B-DFlash \
+#     --local-dir <MODEL_DIR>/qwen3.6-27b-dflash
+#
+# If the draft is missing, vLLM falls back silently and your wall TPS will
+# match unquantized bf16 baseline (~25 TPS on dual-3090 at 185K), NOT the
+# DFlash-spec'd 125 TPS this compose is designed for. Reported by
+# @lolren in club-3090#18.
+#
+# Caveat: the z-lab draft is still under training as of 2026-04-26 (per
+# docs/UPSTREAM.md). Published 82 narr / 125 code TPS numbers in
+# docs/DUAL_CARD.md are against the 2026-04-26 snapshot at peak code-prompt
+# conditions. AL (and TPS) on real agent traffic will be lower until z-lab
+# tags training-complete. The dual.yml MTP path remains the safer default
+# for autonomous coding agents until then.
+#
 # To run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
 #   docker compose -f docker-compose.dual-dflash.yml up -d
