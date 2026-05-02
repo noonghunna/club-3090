@@ -58,7 +58,13 @@
 #     state across cards) or llamacpp/default (262K, different engine).
 #
 # Local sidecar (single one remaining on this compose):
-#   - patch_workspace_lock_disable.py — relaxes vllm#39226 strict
+#   - patch_tolist_cudagraph.py — fixes a CUDA graph capture crash in TQ
+#     continuation prefill via .tolist() guard. Still pending upstream fix.
+#
+# Dropped on this branch (now Genesis-native via v7.68):
+#   - patch_workspace_lock_disable.py — covered by Genesis PN34 (boot-time
+#     AND runtime _decode_attention assertion relaxation).
+#     Was: relaxes vllm#39226 strict
 #     WorkspaceManager.lock() assertion to a one-shot WARNING. P98 in v7.65
 #     covers this functionally but its drift marker auto-skips on v0.20
 #     (`UNIFORM_SINGLE_TOKEN_DECODE` false-positive). Drop when Sandermage
@@ -93,10 +99,8 @@ services:
       - ../cache/triton:/root/.triton/cache
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
-      # workspace_lock_disable — relaxes vllm#39226 strict assertion for the TQ
-      # decode path on v0.20. Drop when Sandermage ships the P98 marker fix
-      # that auto-enables on v0.20 without our help. See docs/CLIFFS.md.
-      - ../patches/patch_workspace_lock_disable.py:/patches/patch_workspace_lock_disable.py:ro
+      # workspace_lock_disable DROPPED on v7.68-cliff2-test branch — Genesis
+      # PN34 closes both the boot-time and runtime _decode_attention paths.
       # NOTE: patch_pn12_ffn_pool_anchor.py + patch_pn12_compile_safe_custom_op.py
       # + patch_fa_max_seqlen_clamp.py all DROPPED — Genesis v7.65 covers their
       # surface natively (PN12 native + PN25 + PN17 + P15B). See migration
@@ -153,6 +157,9 @@ services:
       - GENESIS_ENABLE_P100=1
       - GENESIS_ENABLE_P101=1
       - GENESIS_ENABLE_P103=1
+      # PN32 — opt-in Cliff 2 fix (GDN chunked-prefill, default OFF). Companion
+      # to P103 — different mechanism. Genesis v7.68. Testing on this branch.
+      - GENESIS_ENABLE_PN32_GDN_CHUNKED_PREFILL=1
       - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1
       - GENESIS_ENABLE_PN9_INDEPENDENT_DRAFTER_ATTN=1
       - GENESIS_ENABLE_PN11_GDN_AB_CONTIGUOUS=1
@@ -161,15 +168,24 @@ services:
       - GENESIS_ENABLE_PN14_TQ_DECODE_OOB_CLAMP=1
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
       - GENESIS_ENABLE_PN25_SILU_INDUCTOR_SAFE=1
-      # PN30 — RE-ENABLED with our local dst-shaped temp fix
-      # (`patch_pn30_dst_shaped_temp_fix.py`, applied during setup.sh). The
-      # original Sander a9977d8 .contiguous() approach corrupted DS row strides
-      # by raw-memcpying a compact 10240×5 buffer into a 10240×6 destination
-      # block (row 1+ landed at the wrong destination offset, causing later
-      # TQ store CUDA assert). Our fix builds a destination-shaped temp inside
-      # `collect_mamba_copy_meta` and reuses PN30's temp-list lifetime handling.
-      # Diagnosis credit: ChatGPT/Codex CLI cross-check 2026-05-01 PM.
-      - GENESIS_ENABLE_PN30_DS_LAYOUT_SPEC_DECODE=1
+      # PN30 — DISABLED on v7.68-cliff2-test branch.
+      #
+      # v7.68 ships our dst-shaped temp fix as part3, but its idempotency
+      # check has a bug: part3's `upstream_drift_markers=["[Genesis PN30"]`
+      # is a generic prefix that ALSO matches markers inserted by part1 and
+      # part2 on the same file (v1/worker/mamba_utils.py). Result: part3
+      # sees its prefix already in the file (from earlier sub-patches),
+      # treats it as "upstream_merged — skip", and apply_all then reports
+      # FAILED → vLLM aborts.
+      #
+      # Reported back to Sander as Genesis issue (PN30 part3 drift-marker
+      # too generic — should be `"[Genesis PN30 v7.68 dst-shaped]"` not
+      # the bare prefix `"[Genesis PN30"`).
+      #
+      # Workaround on this branch: disable PN30 entirely. Costs ~6% TPS
+      # vs the v7.66 + local dst-shaped sidecar config but unblocks the
+      # rest of v7.68 validation.
+      # - GENESIS_ENABLE_PN30_DS_LAYOUT_SPEC_DECODE=1
       # PN31 — DISABLED on 1×3090. Per-shape persistent VRAM grows as new
       # shapes are seen during prefill; on TP=1 + 24GB, the residence cost
       # outpaces the malloc-pressure relief. Sander explicitly warned in
@@ -191,6 +207,10 @@ services:
       # Replace our local patch_pn12_compile_safe_custom_op.py + P104 sidecars.
       - GENESIS_ENABLE_P38B_COMPILE_SAFE=1
       - GENESIS_ENABLE_P15B_FA_VARLEN_CLAMP=1
+      # PN34 — Genesis-native runtime workspace_lock relaxation. Replaces
+      # our former patch_workspace_lock_disable.py sidecar. Default OFF
+      # (opt-in) per Sander; explicit ON here for the TQ + MTP K=3 path.
+      - GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=1
       - GENESIS_PREALLOC_TOKEN_BUDGET=4128
       - GENESIS_BUFFER_MODE=shared
       # Explicit OFFs to match Sandermage's PROD env-var set verbatim:
@@ -204,12 +224,12 @@ services:
       # P82 stays OFF — biased on small-batch single-stream Lorbus INT4 + MTP K=3
       # per Sandermage's PROD memory feedback_p82_*. P78 stays OFF (deprecated).
       # vLLM env knobs from Sandermage's launch:
-      # VLLM_SSM_CONV_STATE_LAYOUT=DS — RE-ENABLED with our local PN30 fix
-      # (`patch_pn30_dst_shaped_temp_fix.py`, applied during setup.sh).
-      # Without our fix, Sander's PN30 a9977d8 corrupts DS row strides on
-      # spec-decode AL>1 paths. With our fix, PN30 builds a destination-shaped
-      # temp instead of a compact one, preserving DS layout. +6% TPS retained.
-      - VLLM_SSM_CONV_STATE_LAYOUT=DS
+      # VLLM_SSM_CONV_STATE_LAYOUT=SD on v7.68-cliff2-test branch.
+      # PN30 is disabled (drift-marker bug — see comment near
+      # GENESIS_ENABLE_PN30 above), and without PN30 the DS layout +
+      # spec-decode AL>1 path raises NotImplementedError. SD layout is
+      # the safe default that doesn't depend on PN30.
+      - VLLM_SSM_CONV_STATE_LAYOUT=SD
       - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
     shm_size: "16gb"
     ipc: host
@@ -236,9 +256,8 @@ services:
           exit 1
         fi
         python3 -m vllm._genesis.patches.apply_all
-        # workspace_lock_disable — relaxes vllm#39226 strict assertion until
-        # Sandermage's P98 marker fix lands.
-        python3 /patches/patch_workspace_lock_disable.py
+        # patch_tolist_cudagraph.py — still needed pending upstream
+        # vllm#40807 .tolist() capture-stream guard fix.
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
       - --
@@ -273,7 +292,7 @@ services:
       # club-3090#16 — different bug (Cliff 1 mech B inductor leak), not
       # fixed by mem-util tuning. Use tools-text.yml for those.
       - --max-model-len
-      - "180000"
+      - "145000"
       # 0.95 — backed off from 0.97 on 2026-05-01 PM after PN25 v3 closed
       # Cliff 1 mech B at the FFN intermediate buffer (which now sits in
       # PN12+PN25's resident FFNIntermediateCache pool). Pool residence

@@ -104,9 +104,8 @@ services:
       - ../cache/triton:/root/.triton/cache
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
-      # workspace_lock_disable — relaxes vllm#39226 strict assertion until
-      # Sandermage's P98 marker fix lands. v0.20-only requirement.
-      - ../patches/patch_workspace_lock_disable.py:/patches/patch_workspace_lock_disable.py:ro
+      # workspace_lock_disable DROPPED on v7.68-cliff2-test branch — Genesis
+      # PN34 closes both boot-time and runtime _decode_attention paths.
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0
@@ -213,7 +212,6 @@ services:
           exit 1
         fi
         python3 -m vllm._genesis.patches.apply_all
-        python3 /patches/patch_workspace_lock_disable.py
         python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
       - --

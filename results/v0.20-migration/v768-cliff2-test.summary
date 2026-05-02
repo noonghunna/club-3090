@@ -1,0 +1,118 @@
+# v7.68 Cliff 2 Test — Branch v7.68-cliff2-test
+Date: 2026-05-02
+Genesis pin: 18e65e3 (v7.68 dev tip)
+vLLM image: nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8 (v0.20.1rc1.dev16)
+Hardware: 1× RTX 3090 (24 GB), SM 8.6 Ampere consumer
+Compose: long-text.yml @ 145K + 0.95 (downgraded from 180K)
+
+## Goals
+1. Drop our 3 local sidecars (PN25 v3, PN30 dst-shaped, workspace_lock_disable) — Sander accepted them as Genesis-native v7.68 patches
+2. Validate clean v7.68 boot
+3. Test Cliff 2 closure with P103 + PN32 (v7.68's Cliff 2 attempts)
+
+## Findings
+
+### ❌ FINDING 1 — PN30 v7.68 breaks itself via drift-marker false-positive
+PN30 in v7.68 has 3 sub-patches; sub-patches 1 and 2 insert markers like
+`[Genesis PN30 issue #17] Module-level state ...`. Sub-patch 3 has
+`upstream_drift_markers=["[Genesis PN30"]` (generic prefix) and treats the
+prefix already in-file (from earlier sub-patches) as "upstream merged".
+Sub-patch 3 skips → apply_all reports FAILED → vLLM aborts.
+
+Boot log:
+  [PN30 v1/worker/mamba_utils.py — collect_mamba_copy_meta dst-shaped DS temp
+   (issue #17, v7.68)] upstream marker '[Genesis PN30' detected — patch
+   obsolete, skip
+  [Genesis] FAILED: PN30 DS conv state + spec-decode AL>1 (issue #17)
+   — PN30 part3 v1/worker/mamba_utils.py:collect_mamba_copy_meta did not
+   apply safely: upstream_merged — marker '[Genesis PN30' present
+
+Fix at Genesis side: change part3's `upstream_drift_markers` from
+`["[Genesis PN30"]` (generic prefix) to a part3-specific marker like
+`["[Genesis PN30 v7.68 dst-shaped]"]`.
+
+Workaround on this branch: disable PN30 + switch VLLM_SSM_CONV_STATE_LAYOUT
+DS → SD (avoid the spec-decode AL>1 NotImplementedError that PN30 was
+covering).
+
+### ❌ FINDING 2 — P103 wrap "rebound at 0 caller sites" — silent no-op
+Boot log:
+  [Genesis] applied: P103 FLA Cliff 2 chunked fwd_h+fwd_o orchestrator
+  — P103 v7.62.20 applied: chunk.py::chunk_gated_delta_rule_fwd wrapped
+  with chunked fwd_h+fwd_o (MAX_T=16384, **rebound at 0 caller sites**).
+
+P103 wraps `chunk_gated_delta_rule_fwd` but reports 0 caller sites rebound.
+Confirmed broken: probe 7 (60K) hit Cliff 2 OOM with the trace going
+through `vllm/model_executor/layers/fla/ops/chunk.py:71
+chunk_gated_delta_rule_fwd` directly — P103's wrap was not engaged.
+
+Note: v7.68 commit 5743c03 fixed a NameError in P103, but the underlying
+binding mechanism is still broken on Qwen3.6-27B (or for our specific
+caller graph). v7.68 shipped P103 with "rebound at 0 caller sites" as an
+APPLY result — that's not actually applied.
+
+### ❌ FINDING 3 — PN32 alone doesn't close Cliff 2 on TP=1
+PN32 is "GDN chunked-prefill, default OFF, opt-in via
+GENESIS_ENABLE_PN32_GDN_CHUNKED_PREFILL=1". Description claims:
+  "Closes Cliff 2 OOM on single-24GB-GPU configs at >50K-token prompts"
+  "Cross-rig validation needed (our 2×A5000 PROD with TP=2 doesn't hit threshold)"
+
+Result on our TP=1 + 24GB + 145K + 0.95: probe 1 small rung 2 (~30K
+tokens) hit Cliff 2 OOM. WITHOUT PN30, our activation budget is much
+tighter (PN30 saved DS layout headroom). PN32 may chunk the prefill but
+the per-chunk peak still exceeds the available activation memory because
+PN30 is gone.
+
+Cliff 2 OOM trace at 30K (would have been at 50-60K with PN30 + DS):
+  File "vllm/model_executor/layers/fla/ops/chunk.py", line 71,
+   in chunk_gated_delta_rule_fwd
+  torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 50.00 MiB.
+  GPU 0 has a total capacity of 23.56 GiB of which 44.50 MiB is free.
+
+PN32 + P103 SHOULD compose to close Cliff 2, but:
+- P103 doesn't actually wrap (Finding 2)
+- PN32 alone leaves the chunk_gated_delta_rule_fwd-internal `k.new_empty(B, NT, H, V, K)`
+  unbounded; PN32 chunks the GDN forward_cuda but the inner FLA call still
+  allocates the full h tensor
+
+## ✅ Working observations on v7.68 (with workarounds)
+
+### ✅ PN25 v7.68 worker-spawn registration — WORKS on TP=1
+Sander's v7.68 PN25 (replaces our patch_pn25_genesis_register_fix.py):
+  [Genesis] applied: PN25 SiluAndMul.forward_native opaque-op pool —
+  ... registers via direct_register_custom_op + Library("genesis", "FRAGMENT")
+  Survives worker spawn on TP=1. Inductor doesn't inline → FFN intermediate
+  pool stays effective. Cliff 1 mech B inductor leak: closed.
+
+### ✅ PN34 workspace_lock relaxation — WORKS (replaces patch_workspace_lock_disable.py)
+Boot log:
+  [Genesis] applied: PN34 workspace lock runtime relaxation — PN34 applied:
+  WorkspaceManager strict lock relaxed to WARN+grow. Companion to PN33
+  (boot warmup) for the runtime decode path. Mirrors noonghunna's
+  patch_workspace_lock_disable.py setup-time sidecar but landed in Genesis.
+
+NOTE: PN34 is opt-in (default OFF). Must set
+GENESIS_ENABLE_PN34_WORKSPACE_LOCK_RELAX=1 explicitly. Without this,
+runtime decode hits AssertionError at `turboquant_attn.py:1350:_decode_attention`.
+Confirmed cross-rig validated.
+
+## Verdict
+
+DO NOT MERGE this branch to master.
+
+Recommended path forward:
+1. Stay on master (Genesis v7.66 fc89395 + our 3 local sidecars):
+   - patch_pn25_genesis_register_fix.py (closes Cliff 1 mech B inductor
+     leak via activation.py register-time)
+   - patch_pn30_dst_shaped_temp_fix.py (DS layout safe spec-decode AL>1)
+   - patch_workspace_lock_disable.py (TQ runtime decode WorkspaceManager)
+2. Report Findings 1, 2, 3 to Sander on Genesis discussion #19
+3. Wait for Sander's v7.69 with:
+   a) PN30 part3 drift-marker fixed (Finding 1)
+   b) P103 rebind mechanism debugged (Finding 2)
+   c) PN32 + PN30 composed test on TP=1 + 24GB (Finding 3)
+
+## Probes status on v7.68 + P103 + PN32 (no PN30, SD layout, 145K, 0.95)
+1. [10K] needle ✅ recalled
+1. [30K] needle ❌ Cliff 2 OOM (50 MiB alloc fail)
+2-7. ❌ engine dead, all probes cascade-fail
