@@ -160,7 +160,108 @@ The [bug report template](https://github.com/noonghunna/club-3090/issues/new?tem
 
 ## Troubleshooting
 
-Quick recognition guide for common failure modes:
+### Before symptom-matching — boot the simplest stack first
+
+If you're hitting boot OOMs, weird MTP behavior, or memory-budget issues
+on TQ3 / long-context configs, validate that your hardware + driver +
+container runtime + model files are fundamentally sound by booting the
+simplest variant first. Each step adds one variable on top of the
+previous; if step N works and step N+1 fails, the new variable is the
+cause.
+
+**Step 1 — `vllm/minimal` (32K + fp8 + no Genesis + no spec-decode)**
+
+```bash
+bash scripts/launch.sh --variant vllm/minimal
+```
+
+Tests: hardware, driver, Docker, NVIDIA Container Toolkit, model files,
+base vLLM. Strips out everything that could be the cause.
+
+- ✅ Boots cleanly → your stack is fundamentally sound. Continue to step 2.
+- ❌ Fails — the issue is fundamental (driver mismatch, model files
+  missing or corrupt, container runtime, base vLLM image). Fix at this
+  layer before trying anything else. Symptom-match against the table
+  below or run `bash scripts/report.sh > my-rig.md` and file a bug.
+
+**Step 2 — `vllm/tools-text` (75K + fp8 + MTP + Genesis)**
+
+```bash
+bash scripts/switch.sh vllm/tools-text
+```
+
+Adds: Genesis patches + MTP K=3 spec-decode. Still fp8 KV (no TQ3 yet).
+
+- ✅ Boots cleanly → Genesis + MTP layer is sound. Continue to step 3.
+- ❌ Fails — narrow to Genesis or MTP specifically. Most common gap:
+  on-disk Genesis tree at `models/qwen3.6-27b/vllm/patches/genesis/`
+  out of sync with `GENESIS_PIN` in `scripts/setup.sh`. Re-run
+  `bash scripts/setup.sh qwen3.6-27b` to refresh the tree.
+
+**Step 3 — `vllm/long-text` (180K + TQ3 + MTP + full Genesis)**
+
+```bash
+bash scripts/switch.sh vllm/long-text
+```
+
+Adds: TurboQuant 3-bit KV + long-context handling. This is the
+production-target single-card config.
+
+- ✅ Boots cleanly → single-card stack fully validated. If you only
+  need single-card, stop here — this is what we ship as the IDE-agent
+  default.
+- ❌ Fails — narrow to TQ3 or long-context specifically. If `tools-text`
+  worked but `long-text` doesn't, the issue is in TQ3 KV setup, GDN
+  cliff envelope (>60K single prompts hit the hardware wall on 24 GB),
+  or Cliff 1 mech B compile-path (closed since v7.66 + PN25 — confirm
+  Genesis tree is at v7.69 = `2db18df`).
+
+**Step 4 — `vllm/dual` (262K + fp8 + TP=2 + 2 streams, Genesis-less)**
+
+For dual-card users only. `dual.yml` is **intentionally Genesis-less**
+(per its YAML header) — fp8 KV + TP=2 doesn't trigger the cudagraph
+bug class Genesis was built to patch.
+
+```bash
+bash scripts/switch.sh vllm/dual
+```
+
+Adds: TP=2 NCCL coordination + multi-GPU memory split. Removes Genesis.
+
+- ✅ Boots cleanly with steps 1-3 also passing → TP=2 path works. If
+  `long-text` (single-card with Genesis) AND `dual` (TP=2 without
+  Genesis) both work but `dual-turbo` (TP=2 + TQ3 + Genesis) doesn't,
+  the bug is specifically in the TQ3-on-TP=2-with-Genesis intersection.
+- ❌ Fails despite step 3 working — the issue is in TP=2 NCCL
+  coordination or multi-GPU memory budget. WSL2 is the most common
+  trigger here (its vGPU layer adds memory accounting wrinkles that
+  bare-metal Linux doesn't have); native Linux + 2× 3090 PCIe is
+  well-tested. If you're on WSL2 and hitting this, native Linux or
+  switching to single-card `long-text` is the off-ramp.
+
+**Step 5 — `vllm/dual-turbo` (262K + TQ3 + TP=2 + 4 streams, full Genesis)**
+
+```bash
+bash scripts/switch.sh vllm/dual-turbo
+```
+
+Adds: TQ3 KV + Genesis on top of TP=2 + 4-stream concurrency.
+
+- ✅ Boots and verify-stress passes → full dual-card stack validated.
+- ❌ Fails despite steps 3 and 4 working — the bug is specifically in
+  the multi-card TQ3+Genesis intersection. File a bug with `report.sh`
+  output; this is a narrow surface we'd want to debug carefully.
+
+### Why this works for both single and dual-card users
+
+The first 3 steps isolate stack layers (base → Genesis+MTP+fp8 →
+TQ3+long-ctx). Steps 4-5 add TP=2 surface separately. A user on dual
+hardware who's hitting issues should still run steps 1-3 on a single
+card first — it's the only way to tell apart "issue in single-card
+stack that also breaks dual" from "issue specific to TP=2 NCCL /
+multi-GPU coordination."
+
+### Quick recognition guide for common failure modes
 
 - **Container dies at boot with `GPTQ_MARLIN_MIN_THREAD_N (64) > out_features`** — dual-card vllm#40361 patch didn't apply. Confirm `/opt/ai/vllm-src/` exists with the patched marlin kernel files.
 - **Container dies during DFlash boot** — vllm#40334 dtype mismatch. Verify the compose has `--dtype bfloat16`.
