@@ -9,7 +9,7 @@ You have **2× RTX 3090s, PCIe-only (no NVLink)**. This page is the front door f
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM per card | Why |
 |---|---|---|---|---|---|
 | General-purpose default (vision + tools + long ctx) | [`dual.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual.yml) ⭐ | **262K** (237K single-prompt verified) | **69 / 89** | ~23.6 / 24 GB | fp8 KV, 2 streams, full feature set |
-| Multi-tenant (4 concurrent agents at full ctx) | [`dual-turbo.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml) | **262K** | **58 / 76** per-stream (269 TPS aggregate at 4 streams) | ~19.8 / 24 GB | TQ3 KV (3 bits/token) + full v7.65 PROD env-var stack — 4.67× concurrency |
+| Multi-tenant (4 concurrent agents at full ctx) | [`dual-turbo.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml) | **262K** | **58 / 76** per-stream (269 TPS aggregate at 4 streams) | ~19.8 / 24 GB | TQ3 KV (3 bits/token) + full v7.69 PROD env-var stack — 4.67× concurrency |
 | Peak code TPS with vision | [`dual-dflash.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash.yml) | **185K** | **82 / 125** | ~23.6 / 24 GB | DFlash N=5 + 1.75 GB draft per card, AL ~4.4 (vs MTP's 3.4) |
 | Peak code TPS, no vision | [`dual-dflash-noviz.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash-noviz.yml) | **200K** | **78 / 127** | ~23.8 / 24 GB | DFlash + no vision, +15K ctx vs dual-dflash |
 
@@ -23,7 +23,7 @@ Run any of these via `bash scripts/launch.sh` (interactive) or `bash scripts/swi
 
 ![Qwen3.6-27B TPS — 2× 3090 configs (TP=2)](img/performance-dual.png)
 
-Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.66 dev tip (commit `fc89395`), RTX 3090 sm_86 PCIe-only at 230 W. Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
+Bench protocol: 3 warm + 5 measured runs of the canonical narrative + code prompts on each config. Substrate: vLLM nightly `0.20.1rc1.dev16+g7a1eb8ac2` + Genesis v7.69 dev tip (commit `2db18df`), RTX 3090 sm_86 PCIe-only at 230 W. Cliff 2 doesn't apply on TP=2 (DeltaNet GDN forward state splits across cards — 237K single-prompt verified on `dual.yml`); the v7.69 cutover is mostly a hygiene bump for `dual-turbo.yml` (its old workspace_lock sidecar is now covered by Genesis PN34 env-gate). Per-config run-by-run + VRAM peaks: [models/qwen3.6-27b/CHANGELOG.md](../models/qwen3.6-27b/CHANGELOG.md).
 
 ---
 
@@ -55,9 +55,9 @@ For the single-card picture, see [`SINGLE_CARD.md`](SINGLE_CARD.md).
 
 **Workload:** small team or agent farm running 2-4 concurrent sessions. Open WebUI multi-user, GitHub-Actions-with-AI-PRs flows, batch agent runs.
 
-262K + **TurboQuant 3-bit KV** + Genesis v7.65 PROD env-var stack + 4 streams. TQ3 packs each KV slot to ~3 bits/token (vs fp8's ~8 bits), which is what makes 4 × 262K pools fit on 2 cards. KV pool 1.52M tokens, max concurrency **4.67×**. Per-stream TPS lands at **58 narr / 76 code** (n=5, CV 3-5%), AL 3.39-3.51, MTP avg accept 79-84%, VRAM 19.8 GB / card.
+262K + **TurboQuant 3-bit KV** + Genesis v7.69 PROD env-var stack + 4 streams. TQ3 packs each KV slot to ~3 bits/token (vs fp8's ~8 bits), which is what makes 4 × 262K pools fit on 2 cards. KV pool 1.52M tokens, max concurrency **4.67×**. Per-stream TPS lands at **58 narr / 76 code** (n=5, CV 3-5%), AL 3.39-3.51, MTP avg accept 79-84%, VRAM 19.8 GB / card.
 
-**Concurrent throughput** (n=4 streams of the canonical code prompt, 2026-05-01 PM, vLLM v0.20 + Genesis v7.65 dev tip): aggregate code TPS 269 across 4 streams (3.63× speedup over single-stream 74 TPS), per-stream mean 74 (CV 3.1%) — true parallel decoding, not interleaved. See `results/v0.20-migration/dual-turbo-concurrent.summary` for the run-by-run.
+**Concurrent throughput** (n=4 streams of the canonical code prompt, 2026-05-01 PM, vLLM v0.20 + Genesis v7.65 dev tip — re-bench against v7.69 pending but decode TPS regime unchanged by the bump): aggregate code TPS 269 across 4 streams (3.63× speedup over single-stream 74 TPS), per-stream mean 74 (CV 3.1%) — true parallel decoding, not interleaved. See `results/v0.20-migration/dual-turbo-concurrent.summary` for the run-by-run.
 
 **When to pick:** real concurrent load. Solo users won't see the win on the per-stream curve — but per-stream TPS at n=4 is essentially the same as n=1 here (74 vs 76 TPS code), so this is also a viable single-stream config if you want max KV pool. Pick this if you ever serve >1 request at a time, or want the biggest single-card-equivalent context.
 
@@ -179,7 +179,7 @@ For variance, AL / accept rates, per-config row docstrings: see each compose YAM
 | `dual-dflash.yml` | 185K | 82 / 125 | ~140 ms | 1 | ✅ | code + vision |
 | `dual-dflash-noviz.yml` | 200K | 78 / 127 | ~145 ms | 1 | ❌ | pure text code |
 
-All four dual variants re-benched 2026-05-01 PM on the v0.20 + Genesis v7.65 dev tip substrate (n=5 measured + 3 warmup per prompt):
+All four dual variants re-benched 2026-05-01 PM on the v0.20 + Genesis v7.65 dev tip substrate (n=5 measured + 3 warmup per prompt; v7.69 re-bench pending — decode TPS regime unchanged by the bump, which targets Cliff 2 prefill envelope on single-card):
 
 | Variant | Narr / Code wall_TPS (CV) | vs prior chart |
 |---|---|---|

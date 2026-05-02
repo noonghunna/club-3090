@@ -1,12 +1,12 @@
 # ===========================================================================
-# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.65 dev.
+# Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.69 dev.
 #
-# ⚠️ NOT SAFE FOR IDE-AGENT WORKLOADS WITH TOOL SCHEMAS (same Cliff 1 mech B
-# inductor compile-path leak as long-text/long-vision/bounded-thinking — TP=2
-# splits state across cards but doesn't change the inductor compilation path).
-# For coding agents on dual-card, prefer `dual.yml` (fp8 KV — different
-# compile path, not affected) until Genesis PN25 lands default-on. See
-# club-3090#16.
+# 2026-05-02 PM note: setup.sh now pins Genesis to v7.69 (commit 2db18df) which
+# closes the Cliff 1 mech B issue this header used to warn about (PN25 worker
+# self-install lands default-on in v7.69). The patch_workspace_lock_disable
+# sidecar mounted below is now redundant on v7.69 — Genesis PN34 covers the
+# same surface via env-gate. Drop is queued for the next dual-card validation
+# pass (Cliff 2 doesn't apply on TP=2 so the mount is harmless meanwhile).
 #
 # The 4-stream concurrent-serving variant. Trades ~22% per-stream TPS vs the
 # fp8 default for ~9× the KV pool capacity, unlocking 4 concurrent streams at
@@ -79,7 +79,7 @@ services:
       - VLLM_SSM_CONV_STATE_LAYOUT=DS
       - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
       - CUDA_DEVICE_MAX_CONNECTIONS=8
-      # FULL Genesis v7.65 PROD env-var set per Sandermage's
+      # FULL Genesis v7.69 PROD env-var set per Sandermage's
       # bare_metal_27b_int4_TQ_k8v4.sh. Validated 2026-05-01 PM dual-3090:
       # 116.59 code wall_TPS / 92.12 narrative wall_TPS (vs Sander's A5000
       # 89.23 reference — +30.7% over).
