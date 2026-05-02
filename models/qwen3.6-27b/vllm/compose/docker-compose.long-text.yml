@@ -161,13 +161,15 @@ services:
       - GENESIS_ENABLE_PN14_TQ_DECODE_OOB_CLAMP=1
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
       - GENESIS_ENABLE_PN25_SILU_INDUCTOR_SAFE=1
-      # PN30 — DISABLED on 1×3090 TP=1. Cross-rig validated 2026-05-01 PM:
-      # introduces a CUDA device-side assertion in `triton_turboquant_store.py:425`
-      # (`v_flat = value.float().reshape(NH, D)`) on multi-turn agent shapes
-      # that previously worked. Sander warned he couldn't test on his TP=2
-      # PROD; this is the kind of regression he asked us to surface. Reported
-      # back on Sandermage/genesis-vllm-patches#17.
-      # - GENESIS_ENABLE_PN30_DS_LAYOUT_SPEC_DECODE=1
+      # PN30 — RE-ENABLED with our local dst-shaped temp fix
+      # (`patch_pn30_dst_shaped_temp_fix.py`, applied during setup.sh). The
+      # original Sander a9977d8 .contiguous() approach corrupted DS row strides
+      # by raw-memcpying a compact 10240×5 buffer into a 10240×6 destination
+      # block (row 1+ landed at the wrong destination offset, causing later
+      # TQ store CUDA assert). Our fix builds a destination-shaped temp inside
+      # `collect_mamba_copy_meta` and reuses PN30's temp-list lifetime handling.
+      # Diagnosis credit: ChatGPT/Codex CLI cross-check 2026-05-01 PM.
+      - GENESIS_ENABLE_PN30_DS_LAYOUT_SPEC_DECODE=1
       # PN31 — DISABLED on 1×3090. Per-shape persistent VRAM grows as new
       # shapes are seen during prefill; on TP=1 + 24GB, the residence cost
       # outpaces the malloc-pressure relief. Sander explicitly warned in
@@ -202,6 +204,11 @@ services:
       # P82 stays OFF — biased on small-batch single-stream Lorbus INT4 + MTP K=3
       # per Sandermage's PROD memory feedback_p82_*. P78 stays OFF (deprecated).
       # vLLM env knobs from Sandermage's launch:
+      # VLLM_SSM_CONV_STATE_LAYOUT=DS — RE-ENABLED with our local PN30 fix
+      # (`patch_pn30_dst_shaped_temp_fix.py`, applied during setup.sh).
+      # Without our fix, Sander's PN30 a9977d8 corrupts DS row strides on
+      # spec-decode AL>1 paths. With our fix, PN30 builds a destination-shaped
+      # temp instead of a compact one, preserving DS layout. +6% TPS retained.
       - VLLM_SSM_CONV_STATE_LAYOUT=DS
       - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
     shm_size: "16gb"

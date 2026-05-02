@@ -148,6 +148,20 @@ if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
       echo "[genesis] WARN: PN25 register fix did not apply cleanly. PN25 may not work in workers." >&2
     }
   fi
+
+  # PN30 DS conv-state layout fix — local correction for Genesis issue #17.
+  #
+  # Sander's PN30 avoided vLLM's DS+spec-decode NotImplementedError by
+  # compacting state[src_block, :, offset:] and raw-memcpying it into the
+  # destination block. That corrupts DS row strides. Our sidecar patches PN30
+  # so collect_mamba_copy_meta builds a full destination-shaped temp block,
+  # copies the source tail into the dst prefix, then reuses PN30's temp-list
+  # lifetime handling.
+  if [[ -f "${ROOT_DIR}/models/qwen3.6-27b/vllm/patches/patch_pn30_dst_shaped_temp_fix.py" ]]; then
+    (cd "${ROOT_DIR}" && python3 models/qwen3.6-27b/vllm/patches/patch_pn30_dst_shaped_temp_fix.py) || {
+      echo "[genesis] WARN: PN30 dst-shaped temp fix did not apply cleanly. Keep PN30 disabled or use SD layout." >&2
+    }
+  fi
 else
   echo "[genesis] SKIP_GENESIS=1 — not cloning."
 fi

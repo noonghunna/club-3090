@@ -177,7 +177,16 @@ services:
       - GENESIS_ENABLE_P81_FP8_BLOCK_SCALED_M_LE_8=0
       - GENESIS_ENABLE_P82=0
       - GENESIS_P82_THRESHOLD_SINGLE=0.3
-      - VLLM_SSM_CONV_STATE_LAYOUT=DS
+      # VLLM_SSM_CONV_STATE_LAYOUT — disabled 2026-05-01 PM after
+      # ChatGPT/Codex CLI diagnosed PN30 (Sander a9977d8) layout-corruption bug:
+      # PN30's .contiguous() materializes src[block, :, offset:] as compact
+      # 10240×5 memory, then raw-memcpys it into dst whose rows are 10240×6.
+      # Row 1+ start at the wrong destination offset → corrupts DS conv state.
+      # The TQ store CUDA assert we saw on probe 4 was the eventual surfacing,
+      # not the root cause. Until upstream fix lands, drop DS layout (-6% TPS
+      # per Sander's bench) for correctness on probes 4 + 5. Reported back
+      # on Sandermage/genesis-vllm-patches#17 with the row-stride diagnosis.
+      # - VLLM_SSM_CONV_STATE_LAYOUT=DS
       - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
     shm_size: "16gb"
     ipc: host
