@@ -12,7 +12,7 @@ The lightweight path. Best for: max context on a single 3090, lightest cold-star
 
 ## When NOT to pick llama.cpp
 
-- ❌ You need MTP spec-decode (only DFlash N=5 via [Luce z-lab fork](https://github.com/luce-spec/llama-cpp-dflash); mainline doesn't have it)
+- ❌ You need MTP spec-decode (only DFlash N=5 via [Luce z-lab fork](https://github.com/Luce-Org/lucebox-hub); mainline doesn't have it)
 - ❌ You need full OpenAI API parity for tool calling, structured output
 - ❌ You're serving multi-user (llama-server forks per request — sluggish under concurrent load)
 
@@ -122,4 +122,4 @@ For first-class tool calls in OpenAI format, vLLM is still the easier option. Se
 
 ## DFlash spec-decode (Luce z-lab fork)
 
-If you want spec-decode equivalent to vLLM's MTP, build [Luce's fork](https://github.com/luce-spec/llama-cpp-dflash) and download the DFlash N=5 draft. See [`/docs/engines/LLAMA_CPP.md`](../../../docs/engines/LLAMA_CPP.md#recipe--dflash-n5-via-luce-fork-for-code-workloads) for the full recipe. Measured ~106 TPS code on this stack.
+If you want spec-decode equivalent to vLLM's MTP, build [Luce's fork](https://github.com/Luce-Org/lucebox-hub) and download the DFlash N=5 draft. See [`/docs/engines/LLAMA_CPP.md`](../../../docs/engines/LLAMA_CPP.md#recipe--dflash-n5-via-luce-fork-for-code-workloads) for the full recipe. Measured ~106 TPS code on this stack.

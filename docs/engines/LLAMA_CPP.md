@@ -1,6 +1,6 @@
 # llama.cpp — quick recipe + gotchas
 
-If you want a lighter-weight setup, run on non-NVIDIA hardware, or just prefer llama.cpp's ergonomics, here's how to run Qwen3.6-27B on it. **Note:** mainline llama.cpp's Qwen3-Next support is still landing (4 PRs open). The fastest path today is via [Luce z-lab's DFlash fork](https://github.com/luce-spec/llama-cpp-dflash), which adds a custom DFlash spec-decode draft model.
+If you want a lighter-weight setup, run on non-NVIDIA hardware, or just prefer llama.cpp's ergonomics, here's how to run Qwen3.6-27B on it. **Note:** mainline llama.cpp's Qwen3-Next support is still landing (4 PRs open). The fastest path today is via [Luce z-lab's DFlash fork](https://github.com/Luce-Org/lucebox-hub), which adds a custom DFlash spec-decode draft model.
 
 ---
 
@@ -62,7 +62,7 @@ This is exactly why our launch frame is **two routes, not one** ([README](../../
 | **GGUF format** | Many quant options (Q4_K_M, Q5_K_S, IQ4_XS, etc.). Easy to swap. |
 | **Cross-platform** | Works on AMD (ROCm), Intel (oneAPI), Apple Silicon (Metal), CPU-only. vLLM is NVIDIA-only. |
 | **Active community** | Lots of distros — Ollama, LM Studio, LocalAI, koboldcpp, etc. |
-| **Luce DFlash fork available** | If you want spec-decode equivalent to MTP, [Luce's fork](https://github.com/luce-spec/llama-cpp-dflash) ships DFlash N=5 for Qwen3.6-27B. |
+| **Luce DFlash fork available** | If you want spec-decode equivalent to MTP, [Luce's fork](https://github.com/Luce-Org/lucebox-hub) ships DFlash N=5 for Qwen3.6-27B. |
 
 ## Cons
 
@@ -179,16 +179,16 @@ For first-class tool calls in OpenAI format, vLLM is still the easiest option.
 If you want spec-decode equivalent to vLLM's MTP path:
 
 ```bash
-git clone https://github.com/luce-spec/llama-cpp-dflash /opt/llama-cpp-dflash
-cd /opt/llama-cpp-dflash
+git clone --recurse-submodules https://github.com/Luce-Org/lucebox-hub /opt/lucebox-hub
+cd /opt/lucebox-hub
 cmake -B build -DGGML_CUDA=ON
 cmake --build build --config Release -j
 
 # Download draft model (~500 MB)
-hf download luce-spec/dflash-qwen3.6-27b-N5 --local-dir /mnt/models/gguf/qwen3.6-27b-dflash/
+hf download z-lab/Qwen3.6-27B-DFlash --local-dir /mnt/models/huggingface/z-lab/Qwen3.6-27B-DFlash/
 
 # Launch
-/opt/llama-cpp-dflash/build/bin/llama-server \
+/opt/lucebox-hub/build/bin/llama-server \
   -m /mnt/models/gguf/qwen3.6-27b/Qwen3.6-27B-Q4_K_M.gguf \
   --draft /mnt/models/gguf/qwen3.6-27b-dflash/dflash-N5.gguf \
   --draft-max 5 \
@@ -263,5 +263,5 @@ The q8 → q4_0 jump is **counter-intuitive** because q8 is "higher precision" �
 
 - [VLLM.md](VLLM.md) — what this repo ships
 - [SGLANG.md](SGLANG.md) — the third option (currently blocked)
-- [Luce z-lab's llama-cpp-dflash](https://github.com/luce-spec/llama-cpp-dflash) — DFlash fork
+- [Luce z-lab's llama-cpp-dflash](https://github.com/Luce-Org/lucebox-hub) — DFlash fork
 - [Unsloth Qwen3.6-27B GGUFs](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF) — pre-quantized weights
