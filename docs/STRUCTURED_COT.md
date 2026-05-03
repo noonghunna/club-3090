@@ -152,6 +152,8 @@ Two greedy `temperature=0` runs of the same problem on two RTX 3090s (same image
 
 6 problems on HE+ (HE/97, 101, 108, 129, 137, 151) and 3 on LCB v6: FREE solves them, FSM doesn't. Pattern is consistent — FSM produces 36–188 think tokens, the rigid `GOAL/APPROACH/EDGE` shape over-compresses and the model loses necessary context. A 2-stage grammar (allow longer thinking on a complexity-budget signal) might bridge this.
 
+**Active experiment (2026-05-03):** [Holiday_Purpose_3166's tagline grammar](https://www.reddit.com/r/LocalLLaMA/comments/1sx7w55/) from r/LocalLLaMA proposes a different shape — 5 ultra-short fields (`Q=verb / M=method / K=keywords / R=result-keywords / V=verdict`) with comma-separated free-token lists in K and R that act as a pressure-relief valve. Phase-1 smoke validated 2026-05-03 PM (5/5 prompts match the translated xgrammar). Phase-2 30-prompt subset bench pending — targets the 6 known FSM-regress problems above. If Holiday's grammar rescues ≥3 of the 6, we'd run the full HE+ 164 + LCB v6 50 and consider shipping a sibling `bounded-thinking-tagline.yml` compose. See [`tools/grammar-eval/`](../tools/grammar-eval/) for the harness.
+
 ### PROMPT_TERSE is competitive
 
 On HE+, PROMPT_TERSE pass@1 is 92.1% vs FSM's 92.7%. On LCB v6, 64% vs 66%. With *no grammar*, just a system prompt asking for the compact format, the model self-disciplines well enough on most problems. The grammar's incremental value is structural enforcement on hard problems where prompting alone fails. Worth being honest: we're not comparing FSM to "no constraint at all" — both compact modes (FSM and PT) crush FREE.

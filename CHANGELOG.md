@@ -2,6 +2,21 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-03 PM — grammar-eval harness lands; Holiday tagline grammar phase-1 smoke ✅
+
+[Holiday_Purpose_3166's tagline grammar from r/LocalLLaMA](https://www.reddit.com/r/LocalLLaMA/comments/1sx7w55/) translated for vLLM/xgrammar and validated end-to-end against `vllm/bounded-thinking`. Different design philosophy from our shipped `andthattoo/structured-cot` GOAL/APPROACH/EDGE — 5 short fields (`Q=verb / M=method / K=keywords / R=result-keywords / V=verdict`) where K and R hold 1-5 comma-separated free tokens, giving the model a pressure-relief valve that the rigid 3-line shape lacks.
+
+**Hypothesis being tested:** the K/R free-token-list fields rescue some/all of the 6 known HE+ FSM-regress problems (HE/97, 101, 108, 129, 137, 151) where our current grammar over-compresses and FREE wins. Phase-1 smoke (5 prompts × tagline-grammar) all PASS — translation valid, applies on xgrammar via `extra_body.structured_outputs.grammar`. Phase-2 30-prompt subset bench is unblocked, pending compute time.
+
+**Files added:**
+- `tools/grammar-eval/holiday-tagline.gbnf` — translated grammar (xgrammar-compatible)
+- `tools/grammar-eval/TRANSLATION.md` — translation decisions + Phase-1 smoke results
+- `tools/grammar-eval/smoke-test.py` — Phase-1 runner
+- `tools/grammar-eval/subset-bench.py` — Phase-2 30-prompt HE+ A/B harness (FREE vs current vs Holiday vs PROMPT_TERSE)
+- `tools/grammar-eval/README.md` — harness overview + run instructions
+
+**Active experiment** noted in [`docs/STRUCTURED_COT.md`](docs/STRUCTURED_COT.md) "FSM-regress cases are real" section. Implementation by Codex against `docs/diagnostics/grammar-eval-codex-brief.md` (gitignored). Companion design-exercise prompt for refining the grammar further is at `docs/diagnostics/grammar-design-llm-prompt.md` (gitignored, can be passed to ChatGPT/DeepSeek/Gemini for fresh design ideas).
+
 ## 2026-05-03 PM — soak-test v2 continuous fixtures + Cliff 2 reproduction at 25K accumulated context ⭐⭐
 
 `SOAK_MODE=continuous` env knob added to `scripts/soak-test.sh` — opt-in mode where each session is a single multi-turn agentic-coding conversation that ramps to ~22-25K accumulated context by turn 5. Mirrors the hermes/openhands workload pattern that bit @GuiPerPT in [club-3090#41](https://github.com/noonghunna/club-3090/issues/41) and that v1 fresh-mode fixtures (reset conversation each turn) couldn't reproduce.

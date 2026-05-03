@@ -1,0 +1,35 @@
+# Holiday_Purpose_3166 tagline grammar, translated for vLLM/xgrammar.
+# Qwen3.6's chat template auto-prefixes "<think>\n", so root begins at Q=.
+
+root ::= "Q=" q "\n" "M=" m "\n" "K=" toks "\n" "R=" toks "\n" "V=" v "\n" "</think>\n\n" out
+
+q ::= "solve" | "prove" | "route" | "debug" | "patch" | "code" | "calc" | "compare" | "explain"
+m ::= "case" | "enum" | "check" | "derive" | "edit" | "test" | "trace" | "rank"
+v ::= "ok" | "fail" | "done" | "blocked" | "candidate" | "verify"
+
+toks ::= tok | tok "," tok | tok "," tok "," tok | tok "," tok "," tok "," tok | tok "," tok "," tok "," tok "," tok
+tok ::= alpha tail18
+alpha ::= [A-Za-z]
+tok_char ::= [A-Za-z0-9_.!-]
+
+tail18 ::= "" | tok_char tail17
+tail17 ::= "" | tok_char tail16
+tail16 ::= "" | tok_char tail15
+tail15 ::= "" | tok_char tail14
+tail14 ::= "" | tok_char tail13
+tail13 ::= "" | tok_char tail12
+tail12 ::= "" | tok_char tail11
+tail11 ::= "" | tok_char tail10
+tail10 ::= "" | tok_char tail9
+tail9 ::= "" | tok_char tail8
+tail8 ::= "" | tok_char tail7
+tail7 ::= "" | tok_char tail6
+tail6 ::= "" | tok_char tail5
+tail5 ::= "" | tok_char tail4
+tail4 ::= "" | tok_char tail3
+tail3 ::= "" | tok_char tail2
+tail2 ::= "" | tok_char tail1
+tail1 ::= "" | tok_char tail0
+tail0 ::= ""
+
+out ::= [\x09\x0A\x0D\x20-\x7E]+
