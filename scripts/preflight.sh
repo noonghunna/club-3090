@@ -10,6 +10,8 @@
 #   preflight_disk <path> <gb>— free space at path covers <gb> gigabytes
 #   preflight_gpu_idle        — warn if GPUs have significant VRAM already in use
 #   preflight_running         — warn if a club-3090 container is already up
+#   preflight_genesis_pin     — warn if on-disk Genesis tree differs from setup.sh's pin
+#   preflight_repo_drift      — warn if local HEAD is behind origin/master
 #
 # Style: each function prints one or more "[preflight] ..." lines.
 # Hard failures get a one-line ERROR + a "Fix:" hint.
@@ -172,5 +174,73 @@ preflight_genesis_pin() {
     echo "[preflight]        failures at runtime (see #32 for an example)." >&2
     echo "[preflight]        Fix:  bash scripts/setup.sh qwen3.6-27b" >&2
   fi
+  return 0
+}
+
+# preflight_repo_drift — warn if local HEAD is behind origin/master.
+# Catches the most common stale-setup pattern: user cloned weeks ago, master
+# has moved (Genesis pin bumps, compose changes, vendored patch updates),
+# they re-run their compose, hit a stale config, and file an issue we
+# already solved on master.
+#
+# Behavior:
+#   - Skips silently if not in a git repo, on a non-master branch, or if
+#     PREFLIGHT_NO_FETCH=1 (offline rigs / CI / forks tracking elsewhere).
+#   - Runs 'git fetch --quiet origin master' (~1-2s online).
+#   - Compares local HEAD vs origin/master. Behind > 0 → WARN with the
+#     count + last-fetch age + the one-line fix command.
+#   - Returns 0 always; soft-warning only.
+preflight_repo_drift() {
+  local repo_root="${1:-${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
+
+  # Fast bail-outs — silent.
+  [[ "${PREFLIGHT_NO_FETCH:-0}" == "1" ]] && return 0
+  [[ -d "${repo_root}/.git" ]] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+
+  # Only check on master — on a feature branch, "behind master" is expected
+  # state, not drift. Forks / contributors live there.
+  local current_branch
+  current_branch=$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  [[ "$current_branch" == "master" ]] || return 0
+
+  # Verify origin remote points at noonghunna/club-3090. If they've forked
+  # and re-pointed origin elsewhere, we don't know what's "behind."
+  local origin_url
+  origin_url=$(git -C "$repo_root" config --get remote.origin.url 2>/dev/null)
+  [[ "$origin_url" == *"noonghunna/club-3090"* ]] || return 0
+
+  # Fetch silently. 5s timeout so we don't hang on flaky networks.
+  if ! timeout 5 git -C "$repo_root" fetch --quiet origin master 2>/dev/null; then
+    # Network failure / timeout — don't make this fatal or even noisy.
+    return 0
+  fi
+
+  local behind
+  behind=$(git -C "$repo_root" rev-list --count HEAD..origin/master 2>/dev/null)
+  [[ -z "$behind" || "$behind" == "0" ]] && return 0
+
+  # Last-fetch age. FETCH_HEAD's mtime is the cleanest proxy.
+  local fetch_head="${repo_root}/.git/FETCH_HEAD"
+  local age_str=""
+  if [[ -f "$fetch_head" ]]; then
+    local now mtime age_sec
+    now=$(date +%s)
+    mtime=$(stat -c %Y "$fetch_head" 2>/dev/null || stat -f %m "$fetch_head" 2>/dev/null)
+    if [[ -n "$mtime" ]]; then
+      age_sec=$(( now - mtime ))
+      if (( age_sec < 60 )); then age_str="just now"
+      elif (( age_sec < 3600 )); then age_str="${age_sec}s ago"  # < 1h, surface seconds
+      elif (( age_sec < 86400 )); then age_str="$(( age_sec / 3600 ))h ago"
+      else age_str="$(( age_sec / 86400 ))d ago"; fi
+    fi
+  fi
+
+  echo "[preflight] WARN:  Your club-3090 checkout is ${behind} commit(s) behind origin/master." >&2
+  [[ -n "$age_str" ]] && echo "[preflight]          (last origin fetch: ${age_str})" >&2
+  echo "[preflight]        Master may have new configs, patches, or Genesis pin bumps." >&2
+  echo "[preflight]        Easy upgrade:  bash scripts/update.sh" >&2
+  echo "[preflight]        (Will refuse if you have local edits — commit or stash first.)" >&2
+  echo "[preflight]        Skip this check:  PREFLIGHT_NO_FETCH=1 bash scripts/launch.sh" >&2
   return 0
 }

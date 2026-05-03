@@ -144,13 +144,15 @@ up_variant() {
   fi
 
   # Pre-up sanity: warn if the on-disk Genesis tree is out of sync with
-  # the GENESIS_PIN declared in setup.sh. Catches "user pulled latest but
-  # didn't re-run setup.sh" failure mode (see club-3090#32 for context).
-  # Soft-warns via stderr; does not block boot.
+  # the GENESIS_PIN declared in setup.sh (catches "user pulled latest but
+  # didn't re-run setup.sh") AND if the repo itself is behind origin/master
+  # (catches "user cloned weeks ago, never pulled"). Both soft-warn via
+  # stderr and don't block boot. See club-3090#32 for the original case.
   if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
     # shellcheck source=preflight.sh
     source "${ROOT_DIR}/scripts/preflight.sh"
     preflight_genesis_pin "${ROOT_DIR}" || true
+    preflight_repo_drift "${ROOT_DIR}" || true
   fi
 
   echo "[switch] bringing up: ${v}  (${dir}/${file})"
