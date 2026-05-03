@@ -151,6 +151,7 @@ club-3090/
 │   ├── verify.sh                          quick smoke test (engine-aware via env)
 │   ├── verify-full.sh                     fast functional test (8 checks, ~1-2 min)
 │   ├── verify-stress.sh                   boundary-case stress test (longctx ladder + tool prefill OOM, ~5-10 min)
+│   ├── soak-test.sh                       runtime VRAM accretion / multi-turn agent traffic (~10-30 min, opt-in)
 │   ├── bench.sh                           canonical TPS bench
 │   └── report.sh                          paste-ready triage report (run before filing a bug or sharing bench numbers)
 └── tools/

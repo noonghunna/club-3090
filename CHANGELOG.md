@@ -2,6 +2,20 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-03 — `scripts/soak-test.sh` ships v1
+
+Adds a third validation primitive — `bash scripts/soak-test.sh` — that catches runtime VRAM accretion and multi-turn-agent-traffic OOMs that the existing two scripts don't surface. Companion to verify-full + verify-stress:
+
+| Script | Question | Time | Catches |
+|---|---|---|---|
+| `verify-full.sh` | Does it boot + serve correctly? | ~2 min | Patch failures, tool-call regressions |
+| `verify-stress.sh` | Do the **known cliffs** fire under one-shot stress? | ~5-10 min | Boot-time + single-large-prompt OOMs |
+| **`soak-test.sh`** (new) | Does runtime accretion / multi-turn traffic fire OOM? | ~10-30 min | The class that bit [#41](https://github.com/noonghunna/club-3090/issues/41) |
+
+Auto-detects container + endpoint, runs `SOAK_SESSIONS=20` × `SOAK_TURNS=5` synthetic agent shapes (small chat → tool call → large tool result → code completion → reasoning-heavy), watches VRAM growth between turns, and fails when post-warm-baseline growth exceeds `SOAK_MAX_GROWTH_MIB=200` OR engine-dead errors fire OR decode-TPS retention drops below 80%. Outputs CSV turn-log, GPU snapshots, baseline.json, and a summary.md with verdict + recommendation. Read-only against the running deployment; not part of `launch.sh` (slow + opt-in by design).
+
+Implementation by Codex against `docs/diagnostics/soak-test-codex-brief.md`. Validated locally via mock-data PASS/FAIL/INCONCLUSIVE paths and a synthetic replay of #41's 1.2 GiB growth pattern (correctly produces `FAIL: VRAM grew 1165 MiB > 200 MiB threshold`). Live cross-rig validation pending — run on long-vision (expected FAIL pre-fix), long-text + minimal + dual (expected PASS).
+
 ## 2026-05-03 — repo-drift detection + `scripts/update.sh`
 
 Catches the most common stale-setup pattern: user cloned weeks ago, master moved (Genesis pin bumps, compose changes, vendored patch updates), they re-run their compose, hit a stale config, file an issue we already solved on master.
