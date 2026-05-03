@@ -2,6 +2,32 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-03 PM — soak-test v2 continuous fixtures + Cliff 2 reproduction at 25K accumulated context ⭐⭐
+
+`SOAK_MODE=continuous` env knob added to `scripts/soak-test.sh` — opt-in mode where each session is a single multi-turn agentic-coding conversation that ramps to ~22-25K accumulated context by turn 5. Mirrors the hermes/openhands workload pattern that bit @GuiPerPT in [club-3090#41](https://github.com/noonghunna/club-3090/issues/41) and that v1 fresh-mode fixtures (reset conversation each turn) couldn't reproduce.
+
+**Major finding from first cross-rig run:** Cliff 2 (`chunk_gated_delta_rule → chunk_fwd_o → torch.empty_like(v)`) **fires at ~25K accumulated context, not just at 50-60K single prompts.** Both shipping single-card configs OOM under v2 continuous traffic on Qwen3.6-27B AutoRound INT4 + vLLM `0.20.1rc1.dev16` + Genesis `2db18df`/v7.69 + RTX 3090:
+
+| Config | Boot baseline | Max VRAM | Growth | OOM at | Verdict |
+|---|---|---|---|---|---|
+| `vllm/long-vision` 145K + 0.95 | 21778 MiB | 23818 MiB | +2040 MiB | session 1 turn 5 (~26K ctx) | **FAIL** |
+| `vllm/long-text` 180K + 0.93 | 22434 MiB | 23736 MiB | +3240 MiB | session 1 turn 4 (~21K ctx) | **FAIL** |
+
+Both crash with byte-identical stack trace to GuiPerPT's #41 report (`Tried to allocate 38-50 MiB / ~32 MiB free`). Reproducing via fresh mode requires a 60K+ single prompt; reproducing via continuous mode requires only ~21-26K cumulative context across 4-5 multi-turn requests. **Fundamentally re-shapes the operating envelope** — not a long-vision-specific issue, not a 0.95-vs-0.93 calibration issue. Both shipping single-card variants are unsafe for hermes/openhands traffic.
+
+**Practical implications for users:**
+
+- **For multi-turn agent workloads (hermes, openhands, OpenCode multi-turn, Cline with retained context):** route to `vllm/dual.yml` (TP=2 splits activation peaks) or `llamacpp/default` (different memory regime, no Cliff 2). Single-card vLLM long-* variants are not safe for sustained agentic coding.
+- **For single-shot vLLM single-card workloads (fresh chat, RAG with reset-each-query, 1-2 tool calls):** long-text and long-vision still work — the issue is sustained context accumulation, not basic operation.
+- **For the upper-bound on safe single-card multi-turn context:** somewhere between fresh-mode safe (cleared by long-text on the v1 soak) and continuous-mode unsafe (~21K). Need calibration runs at intermediate accumulated-context sizes to find the boundary.
+
+**Implementation:**
+- `soak-helper.py` — adds 5 ramping turn shapes (small chat → tool inspection → grep → run_command → final fix), `init-session`, `request-continuous`, `ingest` commands. State persists in `state-s{N}.json` per session. Synthesizes plausible Python code / grep / pytest filler tool results so context grows even when the model doesn't emit a real tool_call.
+- `cmd_run` extended to capture `content`, `reasoning_content`, and accumulated `tool_calls` from streaming chunks (was metrics-only in v1).
+- `soak-test.sh` — `SOAK_MODE=fresh` (default, v1 backward-compat) or `continuous`. Continuous mode requires `SOAK_TURNS=5` (turn shapes are a designed ramp). Per-session state dir at `results/<run>/states/`.
+
+**Methodology trade-off documented:** v1 fresh mode catches raw VRAM accretion class; v2 continuous mode catches context-accumulation class. They're complementary — both worth running before shipping a new config.
+
 ## 2026-05-03 PM — soak-test calibration + switch.sh boot-progress UX
 
 First cross-rig soak runs surfaced three calibration issues fixed in the same commit batch:

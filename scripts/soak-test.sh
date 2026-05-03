@@ -26,8 +26,18 @@
 #   ENDPOINT / URL         OpenAI endpoint. Default: mapped container port for
 #                          8000/tcp, falling back to http://localhost:8020.
 #   MODEL                  Served model. Default: first id from /v1/models.
+#   SOAK_MODE              "fresh" (default) — each turn is an independent
+#                          conversation; tests raw VRAM accretion across
+#                          requests. "continuous" — each session is one
+#                          multi-turn agentic conversation that ramps to
+#                          ~22-25K accumulated context by turn 5; tests the
+#                          context-accumulation accretion class that bit
+#                          club-3090#41 (hermes/openhands traffic).
 #   SOAK_SESSIONS          Independent sessions. Default: 20.
 #   SOAK_TURNS             Turns per session, max 5 fixture shapes. Default: 5.
+#                          (Continuous mode requires SOAK_TURNS=5 — the
+#                          turn shapes are designed to ramp; partial
+#                          sessions don't reach the target context size.)
 #   SOAK_MAX_GROWTH_MIB    Fail if max VRAM growth exceeds this after warm
 #                          baseline. Default: 200 MiB.
 #   SOAK_TIMEOUT_S         Hard wall-clock cap. Default: 1800 seconds.
@@ -49,10 +59,20 @@ set -euo pipefail
 
 SOAK_SESSIONS="${SOAK_SESSIONS:-20}"
 SOAK_TURNS="${SOAK_TURNS:-5}"
+SOAK_MODE="${SOAK_MODE:-fresh}"
 SOAK_MAX_GROWTH_MIB="${SOAK_MAX_GROWTH_MIB:-200}"
 SOAK_TIMEOUT_S="${SOAK_TIMEOUT_S:-1800}"
 SOAK_REQ_TIMEOUT_S="${SOAK_REQ_TIMEOUT_S:-600}"
 SOAK_OUTPUT="${SOAK_OUTPUT:-results/soak-$(date +%Y%m%d-%H%M%S)}"
+
+case "$SOAK_MODE" in
+  fresh|continuous) ;;
+  *) echo "ERROR: SOAK_MODE='${SOAK_MODE}' — must be 'fresh' or 'continuous'." >&2; exit 2 ;;
+esac
+if [[ "$SOAK_MODE" == "continuous" && "$SOAK_TURNS" -ne 5 ]]; then
+  echo "ERROR: continuous mode requires SOAK_TURNS=5 (got ${SOAK_TURNS}). Turn shapes are designed to ramp; partial runs don't reach target context size." >&2
+  exit 2
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELPER="${REPO_ROOT}/scripts/soak-helper.py"
@@ -136,7 +156,8 @@ GPU_LOG="${SOAK_OUTPUT}/gpu-log.csv"
 SUMMARY_MD="${SOAK_OUTPUT}/summary.md"
 REQUEST_DIR="${SOAK_OUTPUT}/requests"
 RESPONSE_DIR="${SOAK_OUTPUT}/responses"
-mkdir -p "$REQUEST_DIR" "$RESPONSE_DIR"
+STATE_DIR="${SOAK_OUTPUT}/states"
+mkdir -p "$REQUEST_DIR" "$RESPONSE_DIR" "$STATE_DIR"
 
 printf 'session_id,turn_id,t_ms,vram_mib,ttft_ms,decode_tps,status,error\n' > "$TURN_LOG"
 printf 'session_id,turn_id,gpu_index,memory_used_mib,utilization_gpu_pct\n' > "$GPU_LOG"
@@ -146,7 +167,7 @@ python3 "$HELPER" baseline "$SOAK_OUTPUT" "$CONTAINER" "$ENDPOINT" "$MODEL" \
   "$SOAK_SESSIONS" "$SOAK_TURNS" "$SOAK_MAX_GROWTH_MIB"
 
 log "running soak test against ${ENDPOINT} (model=${MODEL}, container=${CONTAINER})"
-log "sessions=${SOAK_SESSIONS} turns=${SOAK_TURNS} max_growth=${SOAK_MAX_GROWTH_MIB}MiB timeout=${SOAK_TIMEOUT_S}s"
+log "mode=${SOAK_MODE} sessions=${SOAK_SESSIONS} turns=${SOAK_TURNS} max_growth=${SOAK_MAX_GROWTH_MIB}MiB timeout=${SOAK_TIMEOUT_S}s"
 log "output=${SOAK_OUTPUT}"
 
 START_SECONDS="$SECONDS"
@@ -155,6 +176,10 @@ TIMED_OUT=0
 
 for session in $(seq 1 "$SOAK_SESSIONS"); do
   log "session ${session}/${SOAK_SESSIONS}"
+  state_file="${STATE_DIR}/state-s${session}.json"
+  if [[ "$SOAK_MODE" == "continuous" ]]; then
+    python3 "$HELPER" init-session "$state_file" "$session"
+  fi
   for turn in $(seq 1 "$SOAK_TURNS"); do
     if (( SECONDS - START_SECONDS >= SOAK_TIMEOUT_S )); then
       TIMED_OUT=1
@@ -164,8 +189,15 @@ for session in $(seq 1 "$SOAK_SESSIONS"); do
 
     req_file="${REQUEST_DIR}/s${session}-t${turn}.json"
     metrics_file="${RESPONSE_DIR}/s${session}-t${turn}.metrics.json"
-    python3 "$HELPER" request "$MODEL" "$session" "$turn" "$req_file"
+    if [[ "$SOAK_MODE" == "continuous" ]]; then
+      python3 "$HELPER" request-continuous "$MODEL" "$state_file" "$turn" "$req_file"
+    else
+      python3 "$HELPER" request "$MODEL" "$session" "$turn" "$req_file"
+    fi
     python3 "$HELPER" run "$ENDPOINT" "$req_file" "$SOAK_REQ_TIMEOUT_S" "$metrics_file"
+    if [[ "$SOAK_MODE" == "continuous" ]]; then
+      python3 "$HELPER" ingest "$state_file" "$metrics_file" "$turn"
+    fi
 
     vram="$(vram_mib)"
     append_gpu_snapshot "$session" "$turn"
