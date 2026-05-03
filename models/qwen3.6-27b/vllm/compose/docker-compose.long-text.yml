@@ -154,7 +154,9 @@ services:
       - GENESIS_ENABLE_P61B_STREAMING_OVERLAP=1
       - GENESIS_ENABLE_P62_STRUCT_OUT_SPEC_TIMING=1
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
-      - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1
+      # P65 (cudagraph downgrade workaround) dropped 2026-05-03 — Genesis
+      # v7.69 dispatcher v2 declares P65 mutually exclusive with P67/P67b
+      # (the proper Triton kernel fix that supersedes the workaround).
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
       - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1
       # P68/P69 — v7.65 raised default threshold 8000 → 50000 chars (~12.5K
@@ -167,7 +169,11 @@ services:
       - GENESIS_PROFILE_RUN_CAP_M=4128
       - GENESIS_ENABLE_P74_CHUNK_CLAMP=1
       - GENESIS_ENABLE_P83=1
-      - GENESIS_ENABLE_P85=1
+      # P85 (hybrid fine-shadow prefix cache) dropped 2026-05-03 — Genesis
+      # v7.69 dispatcher v2 declares P85 requires P84 (hash_block_size
+      # override) which we don't enable. P85 is opt-in optimization not
+      # load-bearing for correctness; enabling P84 separately is a future
+      # decision (would need bench validation).
       - GENESIS_ENABLE_P87=1
       - GENESIS_ENABLE_P91=1
       - GENESIS_ENABLE_P94=1
