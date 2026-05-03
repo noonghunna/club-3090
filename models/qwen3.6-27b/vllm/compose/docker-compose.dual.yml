@@ -52,8 +52,10 @@ services:
       - ../cache/triton:/root/.triton/cache
       # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=2
       # on AutoRound W4A16 models where out-dim shards fall below 64.
-      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
-      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # Vendored in this repo at ../patches/vllm-marlin-pad/ (no host
+      # filesystem dependency). Drops out when vllm#40361 lands upstream.
+      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn

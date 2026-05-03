@@ -9,7 +9,7 @@ This directory contains the model + engine-specific patches that different compo
 | `patch_fa_max_seqlen_clamp.py` | long-text | Local P104-style FA2 `max_seqlen_k` runtime clamp |
 | `patch_pr40798_workspace.py` | (none — research artifact) | Negative-result reproducer for vllm#40798 |
 | `genesis/` | single-card default + dual-turbo | Sandermage's Genesis v7.14 patch tree (gitignored; fetched by setup.sh) |
-| External: `/opt/ai/vllm-src/` (Marlin pad fork) | all 4 dual-card composes | vLLM PR #40361 patched source, not a file in this repo |
+| `vllm-marlin-pad/marlin.py` + `MPLinearKernel.py` | all 4 dual-card composes | vLLM PR #40361 patched source, vendored in-repo |
 
 ---
 
@@ -29,30 +29,25 @@ This directory contains the model + engine-specific patches that different compo
 
 **Status:** PR open at https://github.com/vllm-project/vllm/pull/40361, labeled `bug`, awaiting maintainer review.
 
-**Setup:** all 4 dual-card composes volume-mount the patched source from `/opt/ai/vllm-src/`. Clone the fork once before booting any dual-card compose:
+**Setup:** ✅ Nothing. The patched files are vendored in this repo at `vllm-marlin-pad/`. All 4 dual-card composes mount them via repo-relative paths — no host filesystem dependency, no manual `git clone` step. (Previous design required cloning the fork to `/opt/ai/vllm-src/`; vendored on 2026-05-03 to fix [club-3090#37](https://github.com/noonghunna/club-3090/issues/37).)
 
-```bash
-sudo mkdir -p /opt/ai && sudo chown $USER /opt/ai
-git clone -b marlin-pad-sub-tile-n https://github.com/noonghunna/vllm.git /opt/ai/vllm-src
-```
-
-The compose then mounts two specific files over the nightly image's copies — no rebuild needed:
+The compose mounts look like:
 
 ```yaml
 volumes:
-  - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
-  - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+  - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+  - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
 ```
 
-When PR #40361 lands, drop both mounts and the dual composes just use upstream nightly.
+When PR #40361 lands upstream, the entire `vllm-marlin-pad/` directory + the four compose mount lines get deleted, and dual composes just use upstream nightly.
 
 ### Brittleness note
 
-The Marlin patch is a **file override** (volume-mount the entire patched `marlin.py` and `MPLinearKernel.py` over the container's copies), not an anchor-based disk-edit. If upstream refactors those files in nightly while #40361 is still open, our patched versions could fall out of sync with the rest of vLLM's import graph and crash at load time with `ImportError` or `AttributeError`.
+The Marlin patch is a **file override** (mount the entire patched `marlin.py` and `MPLinearKernel.py` over the container's copies), not an anchor-based disk-edit. If upstream refactors those files in nightly while #40361 is still open, our vendored versions could fall out of sync with the rest of vLLM's import graph and crash at load time with `ImportError` or `AttributeError`.
 
 If that happens:
-1. Pull the latest patched files from https://github.com/noonghunna/vllm/tree/marlin-pad-sub-tile-n into `/opt/ai/vllm-src/`.
-2. If the fork is also out of date, rebase it on current main and re-apply the pad-sub-tile-n change.
+1. Re-sync the vendored files: see `vllm-marlin-pad/README.md` for the procedure (verify upstream files haven't changed since fork base, re-copy from a fresh clone of the patched fork).
+2. If the fork is also out of date, rebase it on current main and re-apply the pad-sub-tile-n change before re-copying.
 3. Pin the image to the last-known-good digest as a fallback while you sort it out.
 
 ---

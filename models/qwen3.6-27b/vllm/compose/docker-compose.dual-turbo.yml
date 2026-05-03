@@ -48,8 +48,10 @@ services:
       # Closes club-3090 #22.
       - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../cache/triton:/root/.triton/cache
-      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
-      - /opt/ai/vllm-src/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # Marlin pad-sub-tile-n (vLLM PR #40361) — vendored in this repo at
+      # ../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
+      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
       # Genesis v7.14 modular package (includes P4 hybrid TQ + P65 #40880 fix)
       - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
       # Standalone .tolist() during capture fix (separate bug from P65)
