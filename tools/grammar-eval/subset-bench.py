@@ -20,6 +20,7 @@ DEFAULT_STRUCTURED_COT_DIR = pathlib.Path("/home/wasif/structured-cot")
 DEFAULT_PRIOR = DEFAULT_STRUCTURED_COT_DIR / "runs/full-humaneval-2026-04-30/results.jsonl"
 DEFAULT_CURRENT_GRAMMAR = DEFAULT_STRUCTURED_COT_DIR / "grammars/fsm_grammar_no_open.gbnf"
 DEFAULT_TAGLINE_GRAMMAR = REPO_ROOT / "tools/grammar-eval/holiday-tagline.gbnf"
+DEFAULT_DEEPSEEK_GRAMMAR = REPO_ROOT / "tools/grammar-eval/deepseek-scratchpad.gbnf"
 
 TARGET_REGRESSIONS = [97, 101, 108, 129, 137, 151]
 CURRENT_RE = re.compile(r"^GOAL: [^\n]+\nAPPROACH: [^\n]+\nEDGE: [^\n]+$")
@@ -31,6 +32,12 @@ TAGLINE_RE = re.compile(
     r"V=(ok|fail|done|blocked|candidate|verify)$",
     re.S,
 )
+DEEPSEEK_RE = re.compile(
+    r"^PLAN: [^\n]+\n"
+    r"(NOTE: [^\n]+\n){0,15}"
+    r"VERDICT: [^\n]+$",
+    re.S,
+)
 
 HOLIDAY_SYSTEM = (
     "You are an expert Python programmer. Think only inside the required "
@@ -38,12 +45,22 @@ HOLIDAY_SYSTEM = (
     "keywords with no spaces, V is status. After </think>, write correct, "
     "efficient, well-tested code in a ```python ... ``` fenced block."
 )
+DEEPSEEK_SYSTEM = (
+    "You are an expert Python programmer. Think only inside the required "
+    "scratchpad fields. Start with PLAN: stating your approach in one line. "
+    "Use NOTE: lines (zero to fifteen of them) to track problem-specific "
+    "values, edge cases, intermediate steps — write at most one observation "
+    "per line. End with VERDICT: stating your conclusion in one line. After "
+    "</think>, write correct, efficient, well-tested code in a "
+    "```python ... ``` fenced block."
+)
 
-CONDITIONS = ("free", "current", "holiday", "prompt_terse")
+CONDITIONS = ("free", "current", "holiday", "deepseek", "prompt_terse")
 LABELS = {
     "free": "FREE",
     "current": "GOAL/APPROACH/EDGE",
     "holiday": "Holiday tagline",
+    "deepseek": "DeepSeek scratchpad",
     "prompt_terse": "PROMPT_TERSE",
 }
 
@@ -102,6 +119,8 @@ def grammar_violation(condition: str, think: str) -> str:
         return "current_shape_mismatch"
     if condition == "holiday" and not TAGLINE_RE.match(think):
         return "holiday_shape_mismatch"
+    if condition == "deepseek" and not DEEPSEEK_RE.match(think):
+        return "deepseek_shape_mismatch"
     return ""
 
 
@@ -125,6 +144,10 @@ def generate(mod, client, args, condition: str, user_prompt: str, grammars: dict
         grammar = grammars["holiday"]
         prompt = mod.fsm_user_prompt_for_grammar(user_prompt, grammar)
         return mod.generate_fsm(client, args.model, prompt, grammar, args.max_tokens, HOLIDAY_SYSTEM)
+    if condition == "deepseek":
+        grammar = grammars["deepseek"]
+        prompt = mod.fsm_user_prompt_for_grammar(user_prompt, grammar)
+        return mod.generate_fsm(client, args.model, prompt, grammar, args.max_tokens, DEEPSEEK_SYSTEM)
     raise ValueError(condition)
 
 
@@ -212,6 +235,15 @@ def write_summary(out_dir: pathlib.Path, results: list[dict], args, selected: li
         results,
         lambda r: r["conditions"]["current"].get("pass") and not r["conditions"]["holiday"].get("pass"),
     )
+    deepseek_target_pass = [r["task_id"] for r in target_rows if r["conditions"]["deepseek"].get("pass")]
+    deepseek_rescues_current = ids_where(
+        results,
+        lambda r: not r["conditions"]["current"].get("pass") and r["conditions"]["deepseek"].get("pass"),
+    )
+    deepseek_new_failures = ids_where(
+        results,
+        lambda r: r["conditions"]["current"].get("pass") and not r["conditions"]["deepseek"].get("pass"),
+    )
 
     lines = [
         "# Grammar A/B subset bench",
@@ -223,6 +255,9 @@ def write_summary(out_dir: pathlib.Path, results: list[dict], args, selected: li
         f"- Holiday target prior-regressions passed: **{len(holiday_target_pass)}/6**",
         f"- Holiday rescues vs current in this run: **{len(holiday_rescues_current)}**",
         f"- Holiday new failures vs current in this run: **{len(holiday_new_failures)}**",
+        f"- DeepSeek target prior-regressions passed: **{len(deepseek_target_pass)}/6**",
+        f"- DeepSeek rescues vs current in this run: **{len(deepseek_rescues_current)}**",
+        f"- DeepSeek new failures vs current in this run: **{len(deepseek_new_failures)}**",
         "",
         "| Grammar | Pass@1 (30) | Mean think tokens | Median think tokens | Failures rescued vs current | New failures introduced |",
         "|---|---:|---:|---:|---|---|",
@@ -250,12 +285,21 @@ def write_summary(out_dir: pathlib.Path, results: list[dict], args, selected: li
             f"| {s['mean_think_tokens']:.0f} | {s['median_think_tokens']:.0f} | {rescues} | {new} |"
         )
 
-    if len(holiday_target_pass) >= 3:
-        verdict = "Run phase 3: Holiday rescued enough of the prior regression cluster to justify a full HE+164 + LCB v6 bench."
-    elif len(holiday_target_pass) >= 1:
+    best_target = max(len(holiday_target_pass), len(deepseek_target_pass))
+    if best_target >= 3:
+        winners = []
+        if len(holiday_target_pass) >= 3:
+            winners.append("Holiday")
+        if len(deepseek_target_pass) >= 3:
+            winners.append("DeepSeek")
+        verdict = (
+            f"Run phase 3: {' and '.join(winners)} rescued enough of the prior "
+            "regression cluster to justify a full HE+164 + LCB v6 bench."
+        )
+    elif best_target >= 1:
         verdict = "Marginal signal: document the result, inspect rescued cases manually, and defer phase 3 unless quality looks clearly better."
     else:
-        verdict = "Stop: Holiday did not rescue the targeted HE+ regression cluster."
+        verdict = "Stop: neither Holiday nor DeepSeek rescued the targeted HE+ regression cluster."
     lines += [
         "",
         "## Target details",
@@ -263,6 +307,9 @@ def write_summary(out_dir: pathlib.Path, results: list[dict], args, selected: li
         f"- Holiday target passes: {', '.join(holiday_target_pass) if holiday_target_pass else '-'}",
         f"- Holiday rescues vs current: {', '.join(holiday_rescues_current) if holiday_rescues_current else '-'}",
         f"- Holiday new failures vs current: {', '.join(holiday_new_failures) if holiday_new_failures else '-'}",
+        f"- DeepSeek target passes: {', '.join(deepseek_target_pass) if deepseek_target_pass else '-'}",
+        f"- DeepSeek rescues vs current: {', '.join(deepseek_rescues_current) if deepseek_rescues_current else '-'}",
+        f"- DeepSeek new failures vs current: {', '.join(deepseek_new_failures) if deepseek_new_failures else '-'}",
         "",
         "## Next step",
         "",
@@ -280,12 +327,15 @@ def write_summary(out_dir: pathlib.Path, results: list[dict], args, selected: li
                 "holiday_target_prior_regression_passes": holiday_target_pass,
                 "holiday_rescues_vs_current": holiday_rescues_current,
                 "holiday_new_failures_vs_current": holiday_new_failures,
+                "deepseek_target_prior_regression_passes": deepseek_target_pass,
+                "deepseek_rescues_vs_current": deepseek_rescues_current,
+                "deepseek_new_failures_vs_current": deepseek_new_failures,
                 "next_step": verdict,
             },
             indent=2,
         )
     )
-    print("\n".join(lines[:16]))
+    print("\n".join(lines[:21]))
     print(f"\nSaved -> {out_dir / 'results.jsonl'}")
     print(f"Saved -> {out_dir / 'summary.md'}")
 
@@ -299,6 +349,7 @@ def main() -> int:
     p.add_argument("--prior-results", type=pathlib.Path, default=DEFAULT_PRIOR)
     p.add_argument("--current-grammar", type=pathlib.Path, default=DEFAULT_CURRENT_GRAMMAR)
     p.add_argument("--holiday-grammar", type=pathlib.Path, default=DEFAULT_TAGLINE_GRAMMAR)
+    p.add_argument("--deepseek-grammar", type=pathlib.Path, default=DEFAULT_DEEPSEEK_GRAMMAR)
     p.add_argument("--out-dir", type=pathlib.Path, default=REPO_ROOT / f"results/grammar-ab-{time.strftime('%Y%m%d-%H%M%S')}")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--max-tokens", type=int, default=4096)
@@ -319,6 +370,7 @@ def main() -> int:
     grammars = {
         "current": args.current_grammar.read_text(),
         "holiday": args.holiday_grammar.read_text(),
+        "deepseek": args.deepseek_grammar.read_text(),
     }
     client_args = SimpleNamespace(
         base_url=args.base_url,

@@ -148,11 +148,37 @@ If you re-bench at `max_tokens=8192`, the FREE baseline recovers and the FSM Δ 
 
 Two greedy `temperature=0` runs of the same problem on two RTX 3090s (same image, same compose, different `CUDA_VISIBLE_DEVICES`) produced different verdicts on a small fraction of problems. Likely from MTP draft-rollback non-determinism interacting with the grammar mask. Per-problem reproducibility caveat — aggregate rates are stable.
 
-### FSM-regress cases are real
+### FSM-regress cases are real — Phase 2 narrows the cause
 
-6 problems on HE+ (HE/97, 101, 108, 129, 137, 151) and 3 on LCB v6: FREE solves them, FSM doesn't. Pattern is consistent — FSM produces 36–188 think tokens, the rigid `GOAL/APPROACH/EDGE` shape over-compresses and the model loses necessary context. A 2-stage grammar (allow longer thinking on a complexity-budget signal) might bridge this.
+6 problems on HE+ (HE/97, 101, 108, 129, 137, 151) and 3 on LCB v6: FREE solves them, FSM doesn't. Pattern is consistent — FSM produces 36–188 think tokens, the rigid `GOAL/APPROACH/EDGE` shape over-compresses and the model loses necessary context.
 
-**Active experiment (2026-05-03):** [Holiday_Purpose_3166's tagline grammar](https://www.reddit.com/r/LocalLLaMA/comments/1sx7w55/) from r/LocalLLaMA proposes a different shape — 5 ultra-short fields (`Q=verb / M=method / K=keywords / R=result-keywords / V=verdict`) with comma-separated free-token lists in K and R that act as a pressure-relief valve. Phase-1 smoke validated 2026-05-03 PM (5/5 prompts match the translated xgrammar). Phase-2 30-prompt subset bench pending — targets the 6 known FSM-regress problems above. If Holiday's grammar rescues ≥3 of the 6, we'd run the full HE+ 164 + LCB v6 50 and consider shipping a sibling `bounded-thinking-tagline.yml` compose. See [`tools/grammar-eval/`](../tools/grammar-eval/) for the harness.
+**Phase 2 grammar A/B (2026-05-03):** we tested two alternative grammars and the no-grammar control on a 30-problem HE+ subset including all 6 known FSM-regressions:
+
+- **Holiday tagline** ([Holiday_Purpose_3166](https://www.reddit.com/r/LocalLLaMA/comments/1sx7w55/) on r/LocalLLaMA, Codex-translated to xgrammar): 5 ultra-short fields (`Q=verb / M=method / K=keywords / R=result-keywords / V=verdict`) with comma-separated free-token lists in K and R as a pressure-relief valve.
+- **DeepSeek scratchpad** (proposed by DeepSeek when we ran the design problem past it): `PLAN: …` + 0–15 `NOTE: …` lines + `VERDICT: …`. Variable-count free-text notes bounded by explicit PLAN/VERDICT markers; pressure-relief via repeatable note count rather than Holiday's bounded-token-list approach.
+- **PROMPT_TERSE** (existing andthattoo control): same `GOAL/APPROACH/EDGE` shape as our shipped FSM, **delivered as a system-prompt instruction with no grammar mask**.
+
+Results on the 30-problem subset (n=30 → noise floor ±3.3pp):
+
+| Grammar              | Pass@1     | Mean think | Prior-regression rescue (of 6) |
+|----------------------|-----------:|-----------:|-------------------------------:|
+| FREE                 | 28/30      |       3036 | 4/6                            |
+| **current** (G/A/E FSM) | 28/30  |         95 | baseline (these 6 fail by definition) |
+| Holiday tagline      | 27/30      |     **23** | 4/6                            |
+| **DeepSeek scratchpad** | 28/30   |        387 | **5/6**                        |
+| PROMPT_TERSE         | **29/30**  |         75 | **5/6**                        |
+
+The interesting finding isn't which new grammar wins — it's that **PROMPT_TERSE rescues 5/6 of the prior FSM-regressions while using the same `GOAL/APPROACH/EDGE` shape, just without the mask**. That's strong evidence that **the FSM enforcement itself is the mechanism causing those 6 regressions**, not the absence of structure. The grammar's value is structural guarantees (can't be talked out of, can't exceed the bound); on this specific failure cluster, the cost of those guarantees is paid in lost solutions.
+
+Of the *grammars*, DeepSeek scratchpad is the strongest candidate: matches `current`'s 28/30 accuracy and rescues 5/6 prior regressions with ~4× the think budget (387 vs 95 tokens). Holiday gets the most aggressive compression (23 tokens — 4× tighter than current) but pays −3pp accuracy on this subset.
+
+Phase 3 (full HE+ 164 + LCB v6 50, all 5 conditions, ~5h single-card or ~2.5h dual-card parallel) will resolve whether the n=30 signals hold at scale. Possible outcomes shape the ship decision:
+
+- If DeepSeek scratchpad keeps its rescue rate at 164 → ship a sibling `bounded-thinking-deepseek.yml` compose.
+- If PROMPT_TERSE keeps its 29/30-equivalent at 164 → strongest argument so far for a "prompt-only" path with no FSM at all on this model+quant.
+- If Holiday's accuracy cost at 30 was real, not noise → keep it as the extreme-compression option for tagging / classification workloads where 23-token thinking is the point.
+
+See [`tools/grammar-eval/`](../tools/grammar-eval/) for the harness, grammars, and the [Phase 2 results](../tools/grammar-eval/results/) when we land them in the repo.
 
 ### PROMPT_TERSE is competitive
 

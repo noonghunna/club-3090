@@ -1,0 +1,37 @@
+# DeepSeek "bounded scratchpad" grammar — Phase 2 candidate (LocalLLaMA discussion 2026-05-03)
+# Translated for vLLM/xgrammar.
+# Qwen3.6's chat template auto-prefixes "<think>\n", so root begins at PLAN:.
+#
+# Design philosophy: variable-count free-text NOTE lines (0-15) bounded by
+# explicit PLAN: opening and VERDICT: closing. Pressure-relief valve via
+# repeatable note count instead of Holiday's bounded-token-list approach.
+# Open vocabulary per line — no closed vocab sets, generalizes across domains.
+
+root ::= "PLAN: " line "\n" notes "VERDICT: " line "\n</think>\n\n" out
+
+# A "line" is one or more printable ASCII chars (incl tab) — no newline.
+line ::= line_char line_chars
+line_char ::= [\x09\x20-\x7E]
+line_chars ::= "" | line_char line_chars
+
+# 0-15 NOTE lines. Right-recursive nullable cascade — same pattern as
+# holiday-tagline.gbnf's tail rules, just for line repetition rather than
+# character bounds. xgrammar handles this fine.
+notes ::= "" | n1
+n1 ::= "NOTE: " line "\n" n2
+n2 ::= "" | "NOTE: " line "\n" n3
+n3 ::= "" | "NOTE: " line "\n" n4
+n4 ::= "" | "NOTE: " line "\n" n5
+n5 ::= "" | "NOTE: " line "\n" n6
+n6 ::= "" | "NOTE: " line "\n" n7
+n7 ::= "" | "NOTE: " line "\n" n8
+n8 ::= "" | "NOTE: " line "\n" n9
+n9 ::= "" | "NOTE: " line "\n" n10
+n10 ::= "" | "NOTE: " line "\n" n11
+n11 ::= "" | "NOTE: " line "\n" n12
+n12 ::= "" | "NOTE: " line "\n" n13
+n13 ::= "" | "NOTE: " line "\n" n14
+n14 ::= "" | "NOTE: " line "\n" n15
+n15 ::= "" | "NOTE: " line "\n"
+
+out ::= [\x09\x0A\x0D\x20-\x7E]+

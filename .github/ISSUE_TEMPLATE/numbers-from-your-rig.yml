@@ -46,6 +46,32 @@ body:
       required: true
 
   - type: textarea
+    id: soak-continuous
+    attributes:
+      label: Soak-continuous summary (optional but high-signal)
+      description: |
+        If you can spare ~25 min, run the multi-turn accumulating-context soak
+        — it's the only test that catches Cliff 2b (single-card vLLM paths
+        OOM at ~25K accumulated tokens across multiple turns, regardless of
+        single-prompt context limits). Cross-rig validation here helps us
+        document which configs escape the cliff on which hardware.
+
+        ```bash
+        SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 \
+          CONTAINER=<container-name> ENDPOINT=<http://localhost:port> \
+          bash scripts/soak-test.sh
+        ```
+
+        Paste the resulting `summary.md` (or just the PASS/FAIL + final
+        accumulated-token count). See [docs/CLIFFS.md](https://github.com/noonghunna/club-3090/blob/master/docs/CLIFFS.md)
+        for the byte-level explanation.
+
+        Leave blank if you didn't run it.
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
     id: notes
     attributes:
       label: Notes (optional)

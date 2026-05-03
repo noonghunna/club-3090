@@ -48,7 +48,29 @@ Thanks for being here. This repo collects working recipes for serving big LLMs o
    - What's the measured impact? (Numbers.)
    - What did you compare it against? (Specific existing variant or BENCHMARKS row.)
    - What's the trade-off? (TPS vs VRAM vs ctx vs feature support.)
+   - The PR template walks you through these — fill it in, don't delete it.
 6. **Sign-off:** if your patch involves upstream code (vLLM source, Genesis tree, llama.cpp), credit the upstream author in the docstring/CHANGELOG. We hold a high bar on attribution because Sandermage / the vLLM maintainers / the llama.cpp folks do most of the actual heavy lifting; we just package and bench.
+
+---
+
+## Submitting a new compose variant — full gate list
+
+New compose files (`models/<model>/<engine>/compose/docker-compose.<name>.yml`) get a tighter checklist than other PRs because they ship as a "supported" path that other people boot blind. The PR template enumerates these — bullets here are the *why*:
+
+1. **Rig report** — `bash scripts/report.sh > my-rig.md`, paste as a PR comment. Captures GENESIS_PIN, vLLM image SHA, container CUDA/Python, PCIe lanes per card, power caps, NVLink topology in one pass. Without it future readers can't tell whether your numbers are reproducible against their environment or rig-specific. **This is a merge gate**, not a nice-to-have.
+2. **`verify-full.sh` PASS** — fast functional smoke. Confirms the variant boots and serves correctly on your rig.
+3. **`verify-stress.sh` 7/7 PASS** — boundary tests including Cliff 2 needle recall (probe 7: 60K + 90K needles). Required for any variant claiming long-context support.
+4. **`SOAK_MODE=continuous` summary (single-card variants: required)** — verify-stress catches single-prompt cliffs but **not** the multi-turn accumulating-context cliff (Cliff 2b) that fires at ~25K accumulated tokens on single-card vLLM paths. Soak-continuous is the only test that exercises that regime. See [docs/CLIFFS.md](docs/CLIFFS.md) for the byte-level explanation and [#41](https://github.com/noonghunna/club-3090/issues/41) for the validation matrix. Multi-card variants: strongly recommended (TP=2 and TP=4 escape Cliff 2b, but expectation isn't evidence — verify on your rig).
+   ```bash
+   SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 \
+     CONTAINER=<container-name> ENDPOINT=<http://localhost:port> \
+     bash scripts/soak-test.sh
+   ```
+5. **`bench.sh` run** — 3 warmups + 5 measured runs of narrative + code prompts. Report `wall_TPS`, `decode_TPS`, `TTFT`, peak VRAM/card per run, MTP/DFlash AL where applicable.
+6. **BENCHMARKS row** — under the appropriate model section, mirroring existing column shape. Attribution is automatic.
+7. **CHANGELOG entry** — in `models/<model>/CHANGELOG.md`.
+
+If any of these don't apply to your variant, say so explicitly in the PR ("N/A — short-prompt-only path; soak-continuous would not exercise the multi-turn regime"). "Forgot to run" gets the PR put on hold; "explained why N/A" gets it merged.
 
 ---
 
