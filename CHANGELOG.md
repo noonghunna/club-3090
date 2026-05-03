@@ -2,6 +2,15 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-03 — repo-drift detection + `scripts/update.sh`
+
+Catches the most common stale-setup pattern: user cloned weeks ago, master moved (Genesis pin bumps, compose changes, vendored patch updates), they re-run their compose, hit a stale config, file an issue we already solved on master.
+
+- **`preflight_repo_drift`** — new function in `scripts/preflight.sh`, wired into both `launch.sh` and `switch.sh` alongside the existing `preflight_genesis_pin`. Soft-warns on boot when local HEAD is behind `origin/master`, with commit count + last-fetch age + the one-line fix. Skips silently on non-master / forks / `PREFLIGHT_NO_FETCH=1`. 5s fetch timeout so flaky networks don't block boot.
+- **`scripts/update.sh`** — one-shot upgrade path. Refuses on dirty trees (preserves any local edits), refuses on non-master branches, then `git pull --ff-only origin master` + re-runs `setup.sh` to re-pin Genesis and re-vendor patches. Doesn't auto-restart the container — tells the user to `bash scripts/switch.sh <variant>` so they can A/B old-vs-new before bringing the new variant up. `--dry-run` and `--force` for the edge cases.
+
+JusefPol's PR #31 (`vllm/dual-nvlink` variant) also landed today — community-experimental opt-in for users with NVLink bridges installed (`bash scripts/switch.sh vllm/dual-nvlink`, port 8014). Not in the launch wizard menu by default to avoid silently booting NVLink configs on PCIe-only rigs.
+
 ## 2026-05-02 PM — Genesis pin v7.69 master cutover + Cliff 2 60K closure ⭐⭐
 
 Master Genesis pin bump `fc89395` (v7.66) → `2db18df` (v7.69 dev tip) in `scripts/setup.sh`. All three v7.66/v7.68 cross-rig regressions we surfaced (PN30 part3 drift-markers, P103 worker self-install, PN32 v1) landed in v7.69. Three local sidecars retired (`patch_pn25_genesis_register_fix.py`, `patch_pn30_dst_shaped_temp_fix.py`, `patch_workspace_lock_disable.py`); one new local backport added (`patch_inputs_embeds_optional.py` = vllm#35975).

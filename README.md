@@ -82,6 +82,16 @@ bash scripts/bench.sh
 
 # 6. Switch later without re-clicking through the wizard:
 bash scripts/switch.sh vllm/long-vision   # for example
+
+# 7. Keep your install up-to-date as the stack moves (Genesis pin bumps,
+#    new compose variants, vendored patch updates):
+bash scripts/update.sh
+#   - bails if your tree has uncommitted edits (commit or stash first)
+#   - git pull --ff-only origin master, then re-runs setup.sh
+#   - tells you to restart your container via switch.sh after — so you can
+#     A/B old-vs-new before bringing the new variant up
+#   launch.sh + switch.sh also soft-warn at boot when your checkout is
+#   behind origin/master, so you'll usually find out before you ask.
 ```
 
 `launch.sh` calls `switch.sh` (down old, up new) and then `verify-full.sh` so you know it's serving cleanly before you point a client at it. See [`scripts/`](scripts/) for all helpers.
@@ -135,8 +145,9 @@ club-3090/
 │   ├── setup.sh                           bash setup.sh <model> → preflight + downloads + verifies + Genesis
 │   ├── launch.sh                          interactive wizard: cards → workload → boots compose + verifies
 │   ├── switch.sh                          stateless variant switcher (bring down old, up new)
+│   ├── update.sh                          one-shot upgrade: git pull + re-pin Genesis + re-vendor patches
 │   ├── health.sh                          runtime health probe (KV %, MTP AL, recent TPS, errors)
-│   ├── preflight.sh                       sourceable lib: docker / GPU / disk checks with actionable hints
+│   ├── preflight.sh                       sourceable lib: docker / GPU / disk / repo-drift / Genesis-pin checks
 │   ├── verify.sh                          quick smoke test (engine-aware via env)
 │   ├── verify-full.sh                     fast functional test (8 checks, ~1-2 min)
 │   ├── verify-stress.sh                   boundary-case stress test (longctx ladder + tool prefill OOM, ~5-10 min)

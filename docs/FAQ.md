@@ -97,6 +97,24 @@ A Genesis patch (`GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1`) added in v7.62.x
 
 `<repo>/models-cache/` by default. Override with `MODEL_DIR=/path/to/your/scratch bash scripts/setup.sh qwen3.6-27b`. See [`.env.example`](../.env.example) for all env vars.
 
+### How do I keep my install up-to-date?
+
+Run `bash scripts/update.sh`. It does the safe sequence:
+
+1. Refuses if your tree has uncommitted edits — `git status` shows you what to commit/stash first. (We don't clobber the rare user who's tweaked a compose locally.)
+2. `git pull --ff-only origin master` — no merge commits, no rebase ambiguity. If your branch has diverged, you'll get a clear pointer to resolve manually.
+3. Re-runs `bash scripts/setup.sh qwen3.6-27b` so any Genesis-pin bump or vendored-patch update on master gets applied to your tree.
+4. Tells you to restart your container via `bash scripts/switch.sh <variant>` — doesn't auto-restart, so you can A/B old-vs-new before bringing the new variant up.
+
+Flags:
+- `--dry-run` — shows what would happen without changing anything.
+- `--force` — re-runs `setup.sh` even when up-to-date (e.g. after you hand-edited the Genesis tree and want it re-pinned).
+- `MODEL=<other-model> bash scripts/update.sh` — defaults to `qwen3.6-27b`.
+
+You'll usually find out you're behind before you ask: `launch.sh` and `switch.sh` both run `preflight_repo_drift` at boot, which soft-warns when your local HEAD is behind `origin/master`, with the commit count + last-fetch age + the one-line fix. Opt out via `PREFLIGHT_NO_FETCH=1` for offline rigs.
+
+If your *Genesis tree* (not the repo) is out of sync — the pin in `setup.sh` moved but you didn't re-run setup — `preflight_genesis_pin` warns separately and tells you to run `setup.sh`. That was the failure mode behind [#32](https://github.com/noonghunna/club-3090/issues/32) and wispborne's `_register_op_once` crash.
+
 ### My GPU isn't card 0 — how do I change it?
 
 `CUDA_VISIBLE_DEVICES=2 bash scripts/launch.sh --variant vllm/default` (substitute your card index). For dual-card, pass two: `CUDA_VISIBLE_DEVICES=2,3`. The compose files inherit env from your shell.
@@ -154,7 +172,9 @@ The [bug report template](https://github.com/noonghunna/club-3090/issues/new?tem
 
 ### How do I bump Genesis to a newer commit?
 
-`GENESIS_PIN=<new-commit-sha> bash scripts/setup.sh qwen3.6-27b` and re-run `bash scripts/verify-full.sh` to confirm tools still work. Don't bump in production without re-running the verify suite — Genesis releases sometimes change spec-verify routing in ways that affect tool-call extraction.
+That's only for testing a newer Genesis than what master ships — the normal "keep up with the stack" path is `bash scripts/update.sh` (covered above), which picks up whatever pin master currently declares.
+
+For a one-off bump: `GENESIS_PIN=<new-commit-sha> bash scripts/setup.sh qwen3.6-27b` and re-run `bash scripts/verify-full.sh` to confirm tools still work. Don't bump in production without re-running the verify suite — Genesis releases sometimes change spec-verify routing in ways that affect tool-call extraction.
 
 ---
 
