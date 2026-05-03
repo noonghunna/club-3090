@@ -1,49 +1,59 @@
 # ===========================================================================
-# Dual RTX 3090 — DEFAULT for 2× cards. Qwen3.6-27B + MTP n=3 + fp8 KV + vision.
+# Quad RTX 3090 — TP=4 baseline. Qwen3.6-27B + MTP n=3 + fp8 KV + vision.
 #
-# What this gives you (vs the single-card default):
-#   - TP=2 across both 3090s
-#   - max_num_seqs=2 → 2 concurrent agents at full 262K context (KV pool 2.36×)
-#   - max_model_len=262144 → model's natural max, no rope_scaling needed
-#   - vision + tools + MTP n=3 + recall — everything on, no compromises
-#   - Measured (re-bench 2026-04-28 on club-3090 substrate, dev205 + Genesis v7.51-stable):
-#     69.05 narr (CV 2.3%) / 88.58 code (CV 3.4%) TPS single-stream, AL 3.4, VRAM 23.6 GB/card
+# Community-validated on Whamp's 4× RTX 3090 PCIe rig (discussion #26),
+# 2026-05-03. Derived from docker-compose.dual.yml by scaling tensor
+# parallelism and concurrent streams from 2 → 4.
 #
-# What's intentionally NOT enabled:
-#   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e5m2 is plenty for
-#     262K across two cards. For 4-stream concurrency at 262K, switch to
-#     docker-compose.dual-turbo.yml (which uses TurboQuant KV + Genesis P65).
+# What this gives you (vs the 2-card default):
+#   - TP=4 across four 3090s
+#   - max_num_seqs=4 with full 262K context admission
+#   - vLLM pre-check accepts max_model_len=262144 + max_num_seqs=4
+#   - KV pool reports 483,200 tokens and 6.77× max concurrency at 262K
+#   - Cliff 2 probe 7 passes: 58,569-token and 91,070-token needles recalled
+#   - vision + tools + MTP n=3 + recall — same feature set as dual.yml
+#
+# Measured on 4× RTX 3090 PCIe, vLLM nightly 0.20.1rc1.dev16+g7a1eb8ac2:
+#   - verify-full.sh: PASS
+#   - verify-stress.sh: PASS 7/7, including 60K + 90K Cliff 2 needles
+#   - bench.sh: 63.01 narr (CV 2.1%) / 76.25 code (CV 4.0%) wall TPS
+#   - MTP AL during code bench: last observed 3.42 / 3.53 / 3.62
+#   - Peak VRAM during bench: 23,494 MiB/card
+#
+# Trade-off vs TP=2 dual.yml:
+#   - More long-context/concurrency headroom and Cliff 2 boundary data.
+#   - Lower single-stream TPS on PCIe-only allreduce (63/76 vs ~69/89 TP=2).
+#     Use this when you need 4-card capacity or Cliff 2 margin, not when you
+#     only want fastest single-stream decode.
 #
 # Dependencies:
-#   - 2× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine)
+#   - 4× RTX 3090 (Ampere SM 8.6), PCIe-only validated (no NVLink required)
 #   - vLLM PR #40361 (Marlin pad-sub-tile-n) — patched files volume-mounted
-#     from /opt/ai/vllm-src/. PR is open upstream; drop the mount when it
-#     lands. See ../patches/README.md for the git-clone command.
+#     from ../patches/vllm-marlin-pad/. At TP=4 the pad fork is still required
+#     because more output-dim shards fall below Marlin's sub-tile threshold.
 #
-# All dual-card variants in this dir:
+# All fp8/MTP long-context variants in this dir:
 #
 #   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  Topology
-#   docker-compose.dual.yml (this)      262K   2         69 / 89          fp8      ✅      2× PCIe
-#   docker-compose.dual4.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
-#   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
-#   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅
-#   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌      2× PCIe
+#   docker-compose.dual.yml             262K   2         69 / 89          fp8      ✅      2× PCIe
+#   docker-compose.dual4.yml (this)     262K   4         63 / 76          fp8      ✅      4× PCIe
+#   docker-compose.dual-nvlink.yml      262K   2         (community)      fp8      ✅      2× NVLink
 #
 # Run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f docker-compose.dual.yml up -d
+#   docker compose -f docker-compose.dual4.yml up -d
 # ===========================================================================
 services:
-  vllm-qwen36-27b-dual:
+  vllm-qwen36-27b-dual4:
     # Tracking latest nightly intentionally — this stack uses fp8 KV (not
     # TurboQuant), so it doesn't accumulate the same anchor-drift exposure
     # the single-card project does. Pin if you hit a regression; otherwise
     # ride the wave.
     image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
-    container_name: vllm-qwen36-27b-dual
+    container_name: vllm-qwen36-27b-dual4
     restart: "no"
     ports:
-      - "${PORT:-8010}:8000"
+      - "${PORT:-8015}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
@@ -51,7 +61,7 @@ services:
       # Closes club-3090 #22.
       - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../cache/triton:/root/.triton/cache
-      # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=2
+      # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=4
       # on AutoRound W4A16 models where out-dim shards fall below 64.
       # Vendored in this repo at ../patches/vllm-marlin-pad/ (no host
       # filesystem dependency). Drops out when vllm#40361 lands upstream.
@@ -86,14 +96,14 @@ services:
       - --dtype
       - float16
       - --tensor-parallel-size
-      - "2"
+      - "4"
       - --disable-custom-all-reduce
       - --max-model-len
       - "262144"
       - --gpu-memory-utilization
       - "0.92"
       - --max-num-seqs
-      - "2"
+      - "4"
       - --max-num-batched-tokens
       - "8192"
       - --kv-cache-dtype

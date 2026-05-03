@@ -2,6 +2,29 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-03 PM — `dual4.yml` TP=4 baseline validated on 4× RTX 3090 PCIe ⭐
+
+Adds `docker-compose.dual4.yml`, a measured 4-card fp8/MTP baseline derived from `dual.yml` by scaling tensor parallelism and streams from 2 → 4. Validation came from Whamp's 4× RTX 3090 PCIe rig in [club-3090 discussion #26](https://github.com/noonghunna/club-3090/discussions/26).
+
+**Config accepted by vLLM pre-check:**
+- `tensor_parallel_size=4`
+- `max_model_len=262144`
+- `max_num_seqs=4`
+- `max_num_batched_tokens=8192`
+- `kv_cache_dtype=fp8_e5m2`
+- reported GPU KV cache size: **483,200 tokens**
+- reported max concurrency at 262K/request: **6.77×**
+
+**Validation:**
+- Boot: clean, ready after 355s on a warm image/model cache.
+- `verify-full.sh`: PASS after warm retry (first Paris request hit a cold-path 30s script timeout; direct retry returned HTTP 200 in 0.2s and full rerun passed).
+- `verify-stress.sh`: PASS 7/7. Canonical Cliff 2 probe 7 recalled both large needles: **58,569 tokens** and **91,070 tokens**.
+- `bench.sh`: **63.01 narrative / 76.25 code wall TPS** (CV 2.1% / 4.0%), TTFT 111ms / 132ms.
+- MTP AL during code bench: last three log samples **3.42 / 3.53 / 3.62**.
+- Peak VRAM during bench: **23,494 MiB/card**.
+
+**Interpretation:** TP=4 gives the first published 4×3090 Cliff 2 boundary data and higher full-context concurrency headroom, but single-stream TPS is lower than TP=2 on PCIe-only allreduce (published TP=2 fp8/MTP baseline is ~69 / 89 TPS). Use `dual4.yml` for 4-card capacity / Cliff 2 margin, not for fastest single-user short-prompt decode.
+
 ## 2026-05-02 PM — Genesis v7.69 + vllm#35975 backport — Cliff 2 60K CLOSED ⭐⭐
 
 Genesis pin bump `fc89395` (v7.66) → `2db18df` (v7.69 dev tip). All three v7.66/v7.68 regressions we surfaced upstream landed in v7.69, plus a local backport of [vllm#35975](https://github.com/vllm-project/vllm/pull/35975) brings the Cliff 2 single-prompt envelope to **60K cleanly on TQ3 + MTP K=3 at 24 GB**. Two shippable single-card recipes ship at this pin.
