@@ -2,6 +2,8 @@
 
 You have **2× RTX 3090s, PCIe-only (no NVLink)**. This page is the front door for picking a config and knowing what dual-card unlocks vs single. Model-specific deep dives (quants, Genesis, engine internals) live in the model directory — links at the bottom.
 
+> **Have 3+ GPUs?** See [`MULTI_CARD.md`](MULTI_CARD.md) — derivation of TP=4 / TP=8 configs from `dual.yml`, valid TP values for Qwen3.6-27B (1, 2, 4, 5, 8, 10), and what scales vs what doesn't.
+
 ---
 
 ## TL;DR — pick by workload
