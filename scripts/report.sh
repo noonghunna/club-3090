@@ -189,18 +189,19 @@ if ! have nvidia-smi; then
   echo "_nvidia-smi not available — no NVIDIA GPU detected or driver not installed_"
 else
   {
-    nvidia-smi --query-gpu=index,name,memory.total,driver_version,vbios_version,persistence_mode,power.limit,power.default_limit,power.max_limit,power.draw \
+    nvidia-smi --query-gpu=index,name,memory.total,driver_version,vbios_version,persistence_mode,power.limit,power.default_limit,power.max_limit,power.draw,pci.bus_id,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max \
       --format=csv,noheader 2>/dev/null \
-      | while IFS=, read -r idx name memtotal driver vbios persistence pwr_limit pwr_default pwr_max pwr_draw; do
+      | while IFS=, read -r idx name memtotal driver vbios persistence pwr_limit pwr_default pwr_max pwr_draw bus_id pcie_gen_cur pcie_gen_max pcie_width_cur pcie_width_max; do
           # trim leading spaces from CSV fields
           idx="${idx# }"; name="${name# }"; memtotal="${memtotal# }"
           driver="${driver# }"; vbios="${vbios# }"; persistence="${persistence# }"
           pwr_limit="${pwr_limit# }"; pwr_default="${pwr_default# }"
           pwr_max="${pwr_max# }"; pwr_draw="${pwr_draw# }"
+          bus_id="${bus_id# }"; pcie_gen_cur="${pcie_gen_cur# }"; pcie_gen_max="${pcie_gen_max# }"
+          pcie_width_cur="${pcie_width_cur# }"; pcie_width_max="${pcie_width_max# }"
 
           # Flag if user has capped below default
           power_note=""
-          # Strip " W" suffix and convert to int for comparison
           pwr_limit_w="${pwr_limit% W}"; pwr_limit_w="${pwr_limit_w%.*}"
           pwr_default_w="${pwr_default% W}"; pwr_default_w="${pwr_default_w%.*}"
           if [[ "$pwr_limit_w" =~ ^[0-9]+$ ]] && [[ "$pwr_default_w" =~ ^[0-9]+$ ]]; then
@@ -211,8 +212,20 @@ else
             fi
           fi
 
+          # Flag if PCIe lane width is below max — that's hardware-level (slot
+          # has fewer lanes wired, riser cables, BIOS bifurcation, etc.) and
+          # affects model load speed + per-card all-reduce bandwidth.
+          # NOTE: pcie.link.gen.current drops to Gen 1 at idle for power
+          # saving — that's normal, not a degradation. Re-check under load if
+          # you want the actual negotiated gen. Width is hardware-fixed.
+          pcie_note=""
+          if [[ -n "$pcie_width_cur" && -n "$pcie_width_max" && "$pcie_width_cur" != "$pcie_width_max" ]]; then
+            pcie_note=" ⚠ slot is narrower than GPU capability — affects load + all-reduce bandwidth"
+          fi
+
           echo "- **GPU $idx:** $name | $memtotal | driver $driver | VBIOS $vbios | persistence=$persistence"
           echo "  - **Power:** limit=${pwr_limit} (default=${pwr_default}, max=${pwr_max}) | current_draw=${pwr_draw}${power_note}"
+          echo "  - **PCIe:** x${pcie_width_cur} lanes negotiated (GPU max x${pcie_width_max}, Gen up to ${pcie_gen_max}) | bus ${bus_id}${pcie_note}"
         done
 
     cuda_ver=$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9.]+' | head -1 | awk '{print $3}')
