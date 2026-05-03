@@ -139,6 +139,17 @@ up_variant() {
     echo "ERROR: compose file missing at ${full_dir}/${file}" >&2
     exit 1
   fi
+
+  # Pre-up sanity: warn if the on-disk Genesis tree is out of sync with
+  # the GENESIS_PIN declared in setup.sh. Catches "user pulled latest but
+  # didn't re-run setup.sh" failure mode (see club-3090#32 for context).
+  # Soft-warns via stderr; does not block boot.
+  if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
+    # shellcheck source=preflight.sh
+    source "${ROOT_DIR}/scripts/preflight.sh"
+    preflight_genesis_pin "${ROOT_DIR}" || true
+  fi
+
   echo "[switch] bringing up: ${v}  (${dir}/${file})"
   (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d)
 }
