@@ -254,14 +254,29 @@ def cmd_run(endpoint, req_path, timeout_s, metrics_path):
 
     wall = time.time() - t0
     if ttft is None:
+        # No streaming content/reasoning/tool_calls delta was observed before
+        # the final chunk arrived. Common with thinking-mode responses where
+        # vLLM occasionally bundles the reasoning into the terminal chunk.
+        # We can't compute a meaningful TTFT or decode rate in that case —
+        # report TTFT as wall and decode_tps as 0 (signals "couldn't measure"
+        # without producing the spurious 2-billion-tps artifact).
         ttft = wall
-    decode_s = max(wall - ttft, 1e-6)
+        decode_tps = 0.0
+    else:
+        decode_s = wall - ttft
+        if decode_s < 0.1 or completion_tokens <= 0:
+            # decode_s < 100ms means streaming closed before any decode steps
+            # were observable separately from prefill — same not-measurable
+            # case as ttft=None above.
+            decode_tps = 0.0
+        else:
+            decode_tps = round(completion_tokens / decode_s, 3)
     data = {
         "status": int(status),
         "error": error.replace("\n", " ")[:300],
         "t_ms": round(wall * 1000),
         "ttft_ms": round(ttft * 1000),
-        "decode_tps": round((completion_tokens / decode_s) if completion_tokens else 0.0, 3),
+        "decode_tps": decode_tps,
         "completion_tokens": completion_tokens,
     }
     pathlib.Path(metrics_path).write_text(json.dumps(data) + "\n")
@@ -319,10 +334,17 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
     sessions = sorted({r["session_id"] for r in rows})
     first = sessions[:5]
     last = sessions[-5:]
-    tps = [r["decode_tps"] for r in rows if r["decode_tps"] > 0]
+    # Filter unrealistic TPS values (>500 t/s) — these come from streaming
+    # responses where ttft ≈ wall (no separate decode time observable),
+    # yielding a divide-by-tiny artifact. The cmd_run path now guards this
+    # for fresh runs but we filter defensively in case of future regressions
+    # or data from older runs that pre-date the fix.
+    def realistic(t):
+        return 0 < t <= 500
+    tps = [r["decode_tps"] for r in rows if realistic(r["decode_tps"])]
     ttft = [r["ttft_ms"] for r in rows if r["ttft_ms"] > 0]
-    first_tps = [r["decode_tps"] for r in rows if r["session_id"] in first and r["decode_tps"] > 0]
-    last_tps = [r["decode_tps"] for r in rows if r["session_id"] in last and r["decode_tps"] > 0]
+    first_tps = [r["decode_tps"] for r in rows if r["session_id"] in first and realistic(r["decode_tps"])]
+    last_tps = [r["decode_tps"] for r in rows if r["session_id"] in last and realistic(r["decode_tps"])]
     first_ttft = [r["ttft_ms"] for r in rows if r["session_id"] in first and r["ttft_ms"] > 0]
     last_ttft = [r["ttft_ms"] for r in rows if r["session_id"] in last and r["ttft_ms"] > 0]
     max_vram = max([r["vram_mib"] for r in rows] + [boot_vram])

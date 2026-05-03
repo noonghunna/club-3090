@@ -2,6 +2,28 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-03 PM — soak-test calibration + switch.sh boot-progress UX
+
+First cross-rig soak runs surfaced three calibration issues fixed in the same commit batch:
+
+**Calibration fixes:**
+- **Baseline timing**: brief said capture warm baseline "after first turn" — but turn 3 ships a 12K-char tool-result paste that fills the prefix cache (~1000 MiB jump), making baseline-after-turn-1 false-positive on every healthy config. Fixed by capturing baseline at **end of session 1**, after all 5 turn shapes have run once and cache fill has completed. From there, sessions 2-N measure real accretion. Validated on long-text and long-vision (both PASS with 0 MiB growth from corrected baseline).
+- **`decode_tps=2e9` artifact**: thinking-mode requests where vLLM bundles all reasoning into the terminal chunk produce `wall ≈ ttft` (no streaming content delta visible until the end). Old code computed `decode_tps = completion_tokens / (wall - ttft)` with `wall - ttft ≈ 0`, yielding ~2 billion TPS. Fixed: detect `wall - ttft < 100ms` or `ttft is None` and report `decode_tps = 0` (filterable).
+- **TPS retention metric pollution**: `tps_retention = last_5_median / first_5_median` was being skewed up by the 2e9 outliers in early sessions. Added defensive filter `0 < t <= 500` for "realistic" decode TPS values across all summary computations.
+
+**Cross-rig results:**
+
+| Config | Boot baseline | Max VRAM | Growth | TPS retention | Verdict |
+|---|---|---|---|---|---|
+| `vllm/long-text` 180K + 0.93 | 23316 MiB | 23316 MiB | 0 MiB | 83.8% | PASS |
+| `vllm/long-vision` 145K + 0.95 | 22778 MiB | 22778 MiB | 0 MiB | 98.0% | PASS |
+
+**Methodology limitation surfaced**: long-vision under our synthetic 5-turn fixtures is soak-clean — but the [#41 hermes/openhands case](https://github.com/noonghunna/club-3090/issues/41) remains real-world reproducible. Our fixtures reset the conversation each turn; hermes accumulates context across turns. To catch the #41 class, v2 fixtures need session = single conversation with growing prefix. v1 catches a different class (raw VRAM accretion across requests) and discriminates that correctly.
+
+**`switch.sh` boot-progress UX** (filed as a UX gap when @noonghunna's first long-text boot crashed silently for 8s before timing out at 600s):
+- `wait_ready` now does crash detection — `docker inspect -f '{{.State.Running}}'` between polls. If container died, dump last 30 log lines + exit 1 immediately. Converts "silent 600s wait on a dead container" into "5s + actual error".
+- `wait_ready` also surfaces boot-stage markers from docker logs: "Resolved architecture", "Loading weights", "Compilation finished", "Capturing CUDA graphs", "Application startup complete". Validated end-to-end on long-vision boot — visible progress at 60s/68s/80s/120s/176s/196s instead of 30s-pulse silence.
+
 ## 2026-05-03 — `scripts/soak-test.sh` ships v1
 
 Adds a third validation primitive — `bash scripts/soak-test.sh` — that catches runtime VRAM accretion and multi-turn-agent-traffic OOMs that the existing two scripts don't surface. Companion to verify-full + verify-stress:

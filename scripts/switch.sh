@@ -171,19 +171,61 @@ resolve_ready_url() {
 }
 
 wait_ready() {
-  echo "[switch] waiting for ${READY_URL} (timeout ${READY_TIMEOUT}s)..."
-  local elapsed=0 step=4
+  # Find the container we just brought up so we can detect crashes mid-boot
+  # AND surface stage progress markers from its logs while we wait.
+  local container
+  container=$(docker ps --format '{{.Names}}' 2>/dev/null \
+    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b)' | head -1)
+
+  if [[ -z "$container" ]]; then
+    # Compose started but no container is up — almost always a syntax error
+    # or env-var issue caught before vLLM even started.
+    echo "[switch] ERROR: no container running after 'compose up' — boot failed before vLLM started." >&2
+    echo "[switch]        Run 'docker compose -f <file> logs' for the compose-level error." >&2
+    exit 1
+  fi
+
+  echo "[switch] waiting for ${READY_URL} (container=${container}, timeout ${READY_TIMEOUT}s)..."
+  local elapsed=0 step=4 last_marker=""
   until curl -sf -o /dev/null --max-time 3 "${READY_URL}"; do
-    sleep $step
-    elapsed=$((elapsed + step))
-    if [[ $elapsed -ge $READY_TIMEOUT ]]; then
-      echo "[switch] timeout — server not ready after ${READY_TIMEOUT}s" >&2
-      echo "[switch] tail logs:  docker logs --tail 100 \$(docker ps --format '{{.Names}}' | grep qwen36-27b | head -1)" >&2
+    # CRASH DETECTION: if the container died, dump tail and exit fast — don't
+    # silently burn through the full timeout on a dead server.
+    local state
+    state=$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo missing)
+    if [[ "$state" != "true" ]]; then
+      local exit_code
+      exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$container" 2>/dev/null || echo "?")
+      echo "[switch] ERROR: container '${container}' is no longer running (state=${state}, exit=${exit_code})." >&2
+      echo "[switch]        Last 30 log lines:" >&2
+      docker logs --tail 30 "$container" 2>&1 | sed 's/^/[switch]   | /' >&2
+      echo "[switch]        Full logs:  docker logs ${container}" >&2
       exit 1
     fi
-    [[ $((elapsed % 30)) -eq 0 ]] && echo "[switch]   ${elapsed}s elapsed, still waiting..."
+
+    sleep $step
+    elapsed=$((elapsed + step))
+
+    # PROGRESS SIGNAL: surface boot-stage markers so users see WHAT vLLM is
+    # doing, not just that it's "still waiting". The grep is selective — one
+    # line per phase transition, not raw log streaming.
+    local marker
+    marker=$(docker logs --tail 50 "$container" 2>&1 | grep -oE \
+      'Genesis Results: .* applied|Resolved architecture: \w+|Loading weights|Compilation finished|Memory profiling|Capturing CUDA graphs|Application startup complete' \
+      | tail -1 || true)
+    if [[ -n "$marker" && "$marker" != "$last_marker" ]]; then
+      echo "[switch]   ${elapsed}s — ${marker}"
+      last_marker="$marker"
+    elif [[ $((elapsed % 30)) -eq 0 ]]; then
+      echo "[switch]   ${elapsed}s elapsed, still waiting..."
+    fi
+
+    if [[ $elapsed -ge $READY_TIMEOUT ]]; then
+      echo "[switch] timeout — server not ready after ${READY_TIMEOUT}s" >&2
+      echo "[switch] tail logs:  docker logs --tail 100 ${container}" >&2
+      exit 1
+    fi
   done
-  echo "[switch] ✓ ready"
+  echo "[switch] ✓ ready (${elapsed}s)"
 }
 
 # --- arg parsing ---

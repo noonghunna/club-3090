@@ -171,14 +171,21 @@ for session in $(seq 1 "$SOAK_SESSIONS"); do
     append_gpu_snapshot "$session" "$turn"
     python3 "$HELPER" append-log "$TURN_LOG" "$session" "$turn" "$vram" "$metrics_file"
 
-    if [[ -z "$BOOT_VRAM_MIB" ]]; then
-      BOOT_VRAM_MIB="$vram"
-      log "warm baseline after first completed turn: ${BOOT_VRAM_MIB} MiB"
-    fi
-
     read -r status t_ms ttft_ms decode_tps < <(python3 "$HELPER" metric "$metrics_file")
     log "  turn ${turn}/${SOAK_TURNS}: status=${status} wall=${t_ms}ms ttft=${ttft_ms}ms decode_tps=${decode_tps} vram=${vram}MiB"
   done
+
+  # Capture warm baseline at END of session 1 — after all 5 turn shapes have
+  # run once and prefix cache has filled. Real accretion is measured FROM
+  # this baseline across sessions 2-N, so cache-fill (typically +500-1500
+  # MiB on the first 12K-char tool-result paste) doesn't false-positive.
+  # Calibration validated 2026-05-03 on long-text @ 0.93 + 180K — sessions
+  # 2-10 stayed flat at session-1-end VRAM, confirming the test discriminates
+  # cache fill from accretion correctly.
+  if [[ -z "$BOOT_VRAM_MIB" ]]; then
+    BOOT_VRAM_MIB="$(vram_mib)"
+    log "warm baseline after session 1: ${BOOT_VRAM_MIB} MiB"
+  fi
 done
 
 if [[ -z "$BOOT_VRAM_MIB" ]]; then
