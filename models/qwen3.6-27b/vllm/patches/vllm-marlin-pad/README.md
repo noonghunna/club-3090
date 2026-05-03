@@ -47,22 +47,63 @@ files ship in this repo.
 - **Pinned image SHA this matches:** `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8`
 - **Last sync date:** 2026-05-03
 
-If the pinned vLLM image bumps **and** upstream changes `marlin.py` /
-`MPLinearKernel.py` between our base and the new image, the vendored copies
-need to be rebased on the new upstream and re-copied. Steps:
+## Sanity-check before ANY image bump or sync
+
+Before vendoring updated patched files (or before assuming the patch is
+still needed at all), run these three checks:
+
+### 1. Is vllm#40361 still open upstream?
 
 ```bash
-# Verify upstream files haven't changed since our fork base
+gh pr view 40361 --repo vllm-project/vllm --json state,mergedAt
+```
+
+- `"state":"OPEN", "mergedAt":null` → patch still needed; continue
+- `"state":"MERGED"` (or `mergedAt` non-null) → upstream landed it.
+  **Delete this entire directory + the four compose mount lines** and
+  bump the vLLM image SHA past the merge commit. Patch obsolete.
+
+### 2. Does the pinned image actually still have the bug?
+
+Check the upstream marlin.py at our pinned image's commit SHA for the
+pad-sub-tile-n symbols. If they're absent, the patch is doing real work:
+
+```bash
+# Replace <pinned-sha> with the actual SHA from the docker image tag
+git -C /path/to/local/vllm-clone show <pinned-sha>:vllm/model_executor/kernels/linear/mixed_precision/marlin.py \
+  | grep -E '_maybe_pad_n|GPTQ_MARLIN_MIN_THREAD_N|round_up|_marlin_orig_n'
+```
+
+- Empty output → upstream marlin.py doesn't have the pad logic; the
+  patch is still doing real work
+- Non-empty output → upstream has SOMETHING related; investigate
+  whether vllm#40361's design merged under a different PR number,
+  or whether a different fix landed. Don't blindly delete — verify
+  the bug doesn't fire on a fresh dual-card boot first
+
+### 3. Have the patched files diverged from upstream?
+
+```bash
 cd /opt/ai/vllm-src    # or wherever your local clone lives
 git log <our-fork-base>..<new-image-sha> -- \
   vllm/model_executor/kernels/linear/mixed_precision/marlin.py \
   vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py
-
-# If empty: re-copy our patched files (no rebase needed)
-cp marlin.py MPLinearKernel.py /path/to/club-3090/models/qwen3.6-27b/vllm/patches/vllm-marlin-pad/
-
-# If non-empty: rebase the patch onto the new upstream first, then re-copy
 ```
+
+- Empty: re-copy our patched files (no rebase needed):
+  ```bash
+  cp marlin.py MPLinearKernel.py /path/to/club-3090/models/qwen3.6-27b/vllm/patches/vllm-marlin-pad/
+  ```
+- Non-empty: rebase the patch onto the new upstream first, then re-copy
+
+### Last-checked log
+
+When syncing, append a row here so future readers can see the
+verification trail without re-running everything:
+
+| Date | Image SHA | PR state | Bug present? | Action taken |
+|---|---|---|---|---|
+| 2026-05-03 | `7a1eb8ac2ec...` | OPEN | yes (grep returned empty) | Initial vendor |
 
 This vendored copy drops out entirely when [vllm#40361](https://github.com/vllm-project/vllm/pull/40361)
 merges upstream — at which point we'd delete this directory and the four
