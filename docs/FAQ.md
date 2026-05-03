@@ -180,6 +180,46 @@ For a one-off bump: `GENESIS_PIN=<new-commit-sha> bash scripts/setup.sh qwen3.6-
 
 ## Troubleshooting
 
+### My hermes / openhands / OpenCode / Cline / OpenClaw / Cursor session OOMs after a few turns. What do I do?
+
+**Short answer:** route to `bash scripts/switch.sh vllm/dual` (if you have 2× 3090s) or `bash scripts/switch.sh llamacpp/default` (if 1× only). Single-card vLLM is **not safe** for accumulating-context multi-turn agent traffic on Qwen3.6-27B. We validated this 2026-05-03 across all six shipped single-card vLLM composes; only TP=2 and llama.cpp survive cleanly.
+
+Symptoms users report: "performance degrades after 20 turns", "throughput drops to 0", "engine becomes unresponsive at ~30K tokens", "OOM after 4-5 turns of hermes", `chunk_fwd_o → torch.empty_like(v) → CUDA OOM`. All same root cause — Cliff 2b in [`docs/CLIFFS.md`](CLIFFS.md). Hardware-physical limit; not a tuning issue.
+
+**Things you might try that don't work** (all tested):
+- Lowering `--gpu-memory-utilization` (0.95 → 0.93 → 0.90) — buys ~258 MiB headroom, +1 turn buffer, doesn't close the cliff
+- Disabling MTP — same +1 turn, doesn't close
+- Reducing `--max-num-batched-tokens` below 4128 — blocked by Qwen3-Next Mamba block_size hard floor
+- Setting `TRITON_CACHE_AUTOTUNING=1` — no effect on Ampere SM86 (the 5090 recovery others reported was Blackwell TMA-specific)
+- `expandable_segments=True` — already on by default in our composes; doesn't fully repack
+- `torch.cuda.empty_cache()` between turns — reclaims allocator state but cliff still fires (next kernel needs more than reclaimed)
+- Switching between `long-text`, `long-vision`, `tools-text`, `bounded-thinking`, `long-text-no-mtp`, `default` — all six FAIL; same kernel under accumulated KV pressure
+
+**What does work** — verified by [running soak test](https://github.com/noonghunna/club-3090/blob/master/scripts/soak-test.sh) under v2 continuous mode:
+
+```bash
+# 2× 3090 — TP=2 splits the failing kernel's working set
+bash scripts/switch.sh vllm/dual    # 111+ TPS p50, 0 errors, 0 MiB growth across 5 sessions
+
+# 1× 3090 — different engine, different kernels, different allocator
+bash scripts/switch.sh llamacpp/default    # 21 TPS, 262K context, cliff-immune
+```
+
+**Want to verify your rig hits the same class:**
+
+```bash
+git pull origin master    # or: bash scripts/update.sh
+SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 \
+  CONTAINER=vllm-qwen36-27b-long-text \
+  bash scripts/soak-test.sh
+```
+
+~20 min. Will OOM at session 1 turn 4-5 with `chunk_fwd_o → empty_like(v)` if same class. If it PASSes on your rig, you've found a different signature than what we've tracked — please file an issue with the soak summary.
+
+**What's in flight:** Genesis sidecar streaming refactor of `chunk_gated_delta_rule_fwd` being filed with Sandermage. ETA 2-4 weeks if accepted. Check [#41](https://github.com/noonghunna/club-3090/issues/41) for the canonical fix-tracking thread.
+
+**Why this happens** (one-paragraph): the GDN forward kernel holds ~500 MiB of simultaneous intermediate tensors at T=4128 prefill chunks. With accumulated multi-turn KV cache (~5 GiB at 25K context) + model weights (14 GiB) + MTP draft (5 GiB) + other workspace, the per-card peak exceeds the 24 GiB ceiling. The fix is rewriting the kernel to stream those intermediates segment-by-segment instead of holding them simultaneously — that's upstream work in `vllm/model_executor/layers/fla/ops/` or via Genesis sidecar. Detailed mechanism analysis in [`docs/CLIFFS.md`](CLIFFS.md) "Why TP=2 escapes" and "Why llama.cpp escapes" sections.
+
 ### Before symptom-matching — boot the simplest stack first
 
 If you're hitting boot OOMs, weird MTP behavior, or memory-budget issues

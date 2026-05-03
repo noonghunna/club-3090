@@ -2,6 +2,18 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-03 PM — docs reflect Cliff 2b accumulated-context envelope ⭐
+
+Updates docs to surface the corrected operating envelope after today's full validation matrix (see prior entry "soak-test v2 continuous fixtures + Cliff 2 reproduction at 25K accumulated context").
+
+- **`docs/SINGLE_CARD.md`** — adds top-of-page ⚠️ section: single-card vLLM is **not safe** for accumulating-context multi-turn agent traffic on Qwen3.6-27B (hermes/openhands/Cline/OpenCode/OpenClaw etc.). Routing tree: 2× 3090 → `vllm/dual`; 1× 3090 → `llamacpp/default`. The "One limitation to know" section split into Cliff 2a (single-prompt, mostly closed) and Cliff 2b (multi-turn, NOT closed).
+- **`docs/CLIFFS.md`** — TL;DR table extended from 2 cliffs to 3 (Cliff 2a + Cliff 2b separated). Two new subsections: **"Why TP=2 escapes"** (per-card live-tensor halving via head sharding — concrete byte math) and **"Why llama.cpp escapes"** (different kernels + ggml flat allocator + no JIT). Mechanism-level explanation for why our two recommended escape paths actually work, not just empirical that they do.
+- **`docs/FAQ.md`** — new entry under Troubleshooting: *"My hermes / openhands / OpenCode / Cline / OpenClaw / Cursor session OOMs after a few turns. What do I do?"* Lists every dead-end mitigation we tested today (mem-util, MTP-off, max-num-batched-tokens, TRITON_CACHE_AUTOTUNING, expandable_segments, empty_cache) so users don't burn time tuning what we already ruled out. Routing recommendations + soak-test reproduction command.
+
+Active issues responded to with the corrected envelope: [#41](https://github.com/noonghunna/club-3090/issues/41) (GuiPerPT), [#42](https://github.com/noonghunna/club-3090/issues/42) (HoodOG1, OpenCode), [#43](https://github.com/noonghunna/club-3090/issues/43) (stiggy2k16, OpenClaw). PR [#44](https://github.com/noonghunna/club-3090/pull/44) (Whamp's TP=4 baseline) reviewed with rig-report ask + optional v2 soak.
+
+Genesis sidecar fix (streaming refactor of `chunk_gated_delta_rule_fwd` to reduce simultaneous live-tensor set) being filed with Sandermage. ETA 2-4 weeks if accepted.
+
 ## 2026-05-03 PM — grammar-eval harness lands; Holiday tagline grammar phase-1 smoke ✅
 
 [Holiday_Purpose_3166's tagline grammar from r/LocalLLaMA](https://www.reddit.com/r/LocalLLaMA/comments/1sx7w55/) translated for vLLM/xgrammar and validated end-to-end against `vllm/bounded-thinking`. Different design philosophy from our shipped `andthattoo/structured-cot` GOAL/APPROACH/EDGE — 5 short fields (`Q=verb / M=method / K=keywords / R=result-keywords / V=verdict`) where K and R hold 1-5 comma-separated free tokens, giving the model a pressure-relief valve that the rigid 3-line shape lacks.

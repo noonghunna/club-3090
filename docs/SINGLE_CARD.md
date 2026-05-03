@@ -4,6 +4,27 @@ You have **one RTX 3090 (24 GB VRAM)**. This page is the front door for picking 
 
 ---
 
+## ⚠️ Critical — read first if you're running an agentic coding client
+
+If your workload is **hermes / openhands / OpenCode / Cline / Roo / OpenClaw / Aider / Cursor with retained context**, single-card vLLM is **not safe** as of 2026-05-03. You will hit a hardware-physical cliff at ~21-26K accumulated multi-turn context regardless of which single-card vLLM variant you pick. Validated across all six shipped single-card vLLM composes.
+
+Symptoms users report: "performance degrades after ~20 turns", "throughput drops to 0", "engine becomes unresponsive then 500s", "OOM after 4-5 turns". Same root cause — see [#41](https://github.com/noonghunna/club-3090/issues/41) for the full validation matrix.
+
+**Two safe paths for these workloads:**
+
+| Have | Run | Why it works |
+|---|---|---|
+| 2× 3090 (any topology, NVLink optional) | `bash scripts/switch.sh vllm/dual` | TP=2 splits the failing kernel's working set across both cards. Validated PASS at v2 continuous soak; 111+ TPS p50 decode. |
+| 1× 3090 only | `bash scripts/switch.sh llamacpp/default` | Different engine, different GDN kernel, different memory allocator. Cliff doesn't exist on this path. 262K context, ~21 TPS — slower decode but cliff-immune. |
+
+Neither acceptable? Two single-card vLLM mitigations: (a) cap session context at <15K via app-layer rolling summarization, OR (b) accept periodic engine restarts. **Mem-util tuning, MTP-off, and `max-num-batched-tokens` adjustments do not close it** — all tested. The cliff is in `chunk_gated_delta_rule_fwd`'s simultaneous live-tensor set (~500 MiB at T=4128) which doesn't fit alongside accumulated KV + model + workspace on a 24 GB card.
+
+A Genesis sidecar fix (streaming refactor) is being filed with Sandermage. ETA 2-4 weeks if accepted. This section will be updated when it ships.
+
+For workloads that **don't** accumulate context across turns (single-shot RAG, simple chat, batch processing), single-card vLLM is fine — see the table below.
+
+---
+
 ## TL;DR — pick by workload
 
 Five recommended options on Genesis v7.69 + vllm#35975 backport (2026-05-02 PM):
@@ -18,16 +39,22 @@ Five recommended options on Genesis v7.69 + vllm#35975 backport (2026-05-02 PM):
 
 Run via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
 
-> ## ⚠️ One limitation to know — **mostly closed on v7.69**
+> ## ⚠️ Two cliffs to know — both same root kernel, different triggers
 >
-> ### Cliff 2 — DeltaNet GDN single-prompt OOM
+> ### Cliff 2a — single-prompt OOM (mostly closed on v7.69) ✅
 >
 > **Pre-v7.69:** vLLM single-card variants crashed on single prompts >~50K tokens.
 >
 > **Post-v7.69 + vllm#35975 + 0.93 mem-util (Balanced MTP) or MTP-off + 0.95 (Max-context):** **60K single-prompt now passes cleanly** (verified HTTP 200, recall correct, AL=4.00 on Balanced MTP). 90K is past wall-clock-feasible on this hardware. For prompts >60K, use `dual-turbo.yml` (TP=2 splits state) or `llamacpp/default` (262K, different engine).
 >
-> Architectural — DeltaNet GDN forward state grows with sequence length. The fix combines [vllm#35975](https://github.com/vllm-project/vllm/pull/35975) (skip `inputs_embeds` GPU buffer for text-only models, frees ~444 MiB at boot) with mem-util tuning to free activation headroom for the late-stage 50 MiB allocation that previously fired the cliff.
+> The fix combines [vllm#35975](https://github.com/vllm-project/vllm/pull/35975) (skip `inputs_embeds` GPU buffer for text-only models, frees ~444 MiB at boot) with mem-util tuning to free activation headroom for the late-stage 50 MiB allocation that previously fired the cliff.
 >
+> ### Cliff 2b — accumulated-context OOM under multi-turn agent traffic (NOT closed) ❌
+>
+> Same kernel, different trigger. The 50 MiB `chunk_fwd_o → torch.empty_like(v)` allocation also fails when accumulated multi-turn KV cache + GDN forward live-tensor cascade peaks above 24 GiB on a single card. Hits at **~21-26K accumulated tokens** across 4-5 turns of hermes/openhands/OpenCode/Cline/OpenClaw — not just at 50-60K single prompts. Validated 2026-05-03 across all six shipped single-card vLLM composes; only `vllm/dual` (TP=2) and `llamacpp/default` survive. See the critical warning at the top of this page.
+>
+> Why this isn't tunable at the config layer: Codex investigation showed the simultaneous live-set of `chunk_gated_delta_rule_fwd` is ~500 MiB at T=4128 (q/k/v/u/v_new/o/w/A/Ai/h tensors all alive at once). Adding accumulated KV + model + workspace + MTP draft puts the per-card peak above 24 GiB. The fix has to be at the kernel level — streaming/pooling these intermediates rather than holding them simultaneously. That's an upstream PR target, not a config knob.
+
 > ### What was Cliff 1 mech B (now closed) ✅
 >
 > Earlier in 2026-05 we tracked an inductor compile-path FFN intermediate buffer leak ([club-3090 #16](https://github.com/noonghunna/club-3090/issues/16)) that crashed long-* variants on real IDE-agent prompts. **Closed 2026-05-02** via Genesis PN25 (Inductor-safe `silu_and_mul` opaque op) + PN30 (DS conv state dst-shaped temp fix). Both fixes ship by default in our composes; ChatGPT/Codex CLI cross-check helped land the PN30 dst-shaped temp variant. No user action needed — a fresh `bash scripts/setup.sh qwen3.6-27b` picks up the fixes automatically.

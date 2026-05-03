@@ -10,18 +10,58 @@ This document supersedes earlier characterizations in CHANGELOG and FAQ where th
 
 ## TL;DR
 
-**Two distinct OOM "cliffs"** fire during prefill on a single 24 GB RTX 3090 when serving Qwen3.6-27B with vLLM + Genesis patches. They affect different workload patterns and live in different libraries:
+**Three distinct OOM "cliffs"** fire on a single 24 GB RTX 3090 when serving Qwen3.6-27B with vLLM + Genesis patches. They affect different workload patterns:
 
-| | **Cliff 1** | **Cliff 2** |
+| | **Cliff 1** | **Cliff 2a (single-prompt)** | **Cliff 2b (multi-turn)** ⭐ NEW |
+|---|---|---|---|
+| Trigger | 25K+ token tool messages → chunked prefill | Single prompt > ~50–60K tokens | ~21-26K **accumulated** multi-turn context (hermes/openhands/Cline/etc.) |
+| OOM site | `_vllm_fa2_C.varlen_fwd` (FlashAttention 2) | `fla.ops.chunk_gated_delta_rule_fwd → chunk_fwd_o → empty_like(v)` | Same kernel as 2a, fires earlier under multi-turn KV pressure |
+| Root cause | `softmax_lse` padded to max_seqlen | GDN forward live-tensor cascade (~500 MiB at T=4128) | Same cascade; multi-turn KV accumulation eats activation headroom |
+| Allocation requested at OOM | varies | 50 MiB | 38-50 MiB (per chunk, not scaled by ctx) |
+| Affects | TQ3 paths at large prompts | All single-card vLLM at long single prompts | **All single-card vLLM under accumulating-context agentic traffic** |
+| Closed status | **CLOSED** ✅ — PN25 + PN30 in v7.69, PN17 (FA clamp) in v7.64 | **MOSTLY CLOSED** ✅ — v7.69 + vllm#35975 + 0.93 mem-util passes 60K | **NOT CLOSED** ❌ — fires in 4-5 turns of agentic traffic regardless of config |
+| Our mitigation | Genesis PN17/PN25 (default-on) | mem-util 0.93, max-model-len ≤180K | **`vllm/dual` (TP=2)** OR **`llamacpp/default`** — see "Why those escape" below |
+| Real fix | Already shipped | Already shipped | **Streaming refactor of `chunk_gated_delta_rule_fwd`** — being filed with Sandermage |
+
+**Practical impact today:** Cliff 1 is closed. Cliff 2a is closed for typical workloads (single prompts up to ~60K). **Cliff 2b is open and bites every user running an agentic coding client on single-card vLLM** — see [#41](https://github.com/noonghunna/club-3090/issues/41) for the full validation matrix.
+
+---
+
+## Why TP=2 escapes Cliff 2b (and Cliff 2a above 60K)
+
+`chunk_gated_delta_rule_fwd` allocates intermediate tensors shaped `[1, T, H, D]` where `H=48` value heads at TP=1. With TP=2, the heads dimension is sharded — each card sees `H=24`. **Same kernel runs on each card, but per-card live-tensor sizes are halved.**
+
+| Tensor | Size at TP=1 (H=48) | Size at TP=2 (H=24 per card) |
 |---|---|---|
-| Trigger | 25K+ token tool messages → chunked prefill | Single prompt > ~50–60K tokens |
-| OOM site | `_vllm_fa2_C.varlen_fwd` (FlashAttention 2) | `fla.ops.chunk_gated_delta_rule_fwd` |
-| Root cause | `softmax_lse` allocated as `[num_seqs, num_heads, max_seqlen]` — padded to **max_seqlen parameter, not actual cu_seqlens** | DeltaNet/GDN intermediate state buffer non-streaming, sized by actual sequence length |
-| Affects | TQ3 paths primarily (`docker-compose.yml` at higher max-ctx, `long-vision.yml`, `long-text.yml`) | All single-card vLLM configs at long single prompts |
-| Our mitigation | **PN8** (Genesis patch) closes it on `tools-text.yml` (FP8+MTP); cap max-ctx at 48K on TQ3 default | **TP=2** (`dual.yml`) splits the GDN state across cards (verified at 237K); **llama.cpp** uses a different GDN implementation entirely |
-| Real fix | vLLM-side clamp at FA call site (asked Sandermage in [Genesis #11](https://github.com/Sandermage/genesis-vllm-patches/issues/11)) OR FA2 source fix ([Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011)) | Streaming GDN forward in `fla.ops` — no upstream effort underway. Or FlashQLA Ampere port (QwenLM, currently SM90+ only) |
+| v, u, v_new, o, w | 48 MiB each (×5 = 240) | **24 MiB each (×5 = 120)** |
+| A | 48 MiB | **24 MiB** |
+| Ai | 24 MiB | **12 MiB** |
+| h | 97 MiB | **49 MiB** |
+| Total per-card live FLA set | ~500 MiB | **~250 MiB** |
 
-**Practical impact today:** users following the SINGLE_CARD.md TL;DR table land on cliff-safe configs by default. The cliffs only bite users who explicitly opt into long-context variants AND have specific workload patterns (big tool returns, RAG single-shot prompts).
+Plus per-card model weights drop from ~14 GB to ~7 GB (sharded), KV cache from full to half, etc. Per-card peak stays comfortably below 24 GB even with 25K accumulated multi-turn context. **Validated 2026-05-03**: dual.yml passed 5×5 v2 continuous soak with 0 errors / 0 MiB growth, 23.5 GB per-card steady, 111 TPS p50 decode.
+
+Cost paid for this: NCCL allreduce per layer between cards (~30-50µs/token on PCIe), ~10-20% TPS overhead vs single-card if single-card actually worked.
+
+## Why llama.cpp escapes Cliff 2b on a single card
+
+llama.cpp uses **different kernels and a different memory allocator** than vLLM. Three concrete differences:
+
+1. **Different GDN kernel implementation.** vLLM uses `flash-linear-attention` (fla-org) Triton kernels — those are the ones with the simultaneous live-tensor cascade. llama.cpp ships its own hand-written CUDA implementation of DeltaNet attention with smaller per-step working buffers and more sequential intermediate computation.
+
+2. **Different memory allocator.** vLLM uses **PyTorch's caching allocator** (designed for training where shapes change a lot — caches freed blocks for fast reuse, which causes our fragmentation under fixed-shape inference). llama.cpp uses **ggml's manual memory management** — pre-allocates fixed buffers per op type at boot, no caching layer, no fragmentation accumulation. For fixed-shape inference, ggml's flat allocator is more predictable on tight VRAM.
+
+3. **No JIT / no Triton autotune.** vLLM relies on `torch.compile` + Triton autotune + lazy cudagraph capture — new shapes at runtime trigger new compilations that pin memory. llama.cpp ships pre-compiled CUDA kernels — memory layout is static from boot.
+
+Trade: llama.cpp gives up ~3× decode speed (21 TPS vs 67 on vLLM single when single works) for cliff-immunity at long context. Different engineering posture for different workload shapes.
+
+---
+
+## vLLM pin compatibility status (master shipped on v0.20 + Genesis v7.66 — 2026-05-02)
+
+**Master now ships on `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.66 dev tip (commit `fc89395`).** Cliff 1 mech B (inductor compile-path FFN intermediate buffer leak) is **closed** across all 4 TQ3 composes via PN25 v3 (local import-time backport for TP=1) + PN30 dst-shaped temp fix (local correction for Sander's compact `.contiguous()`). verify-stress.sh 7-probe ladder: 6/7 pass on every TQ3 variant; only Cliff 2 architectural fails.
+
+### Cliff 1 mech B — what closed it
 
 ---
 
