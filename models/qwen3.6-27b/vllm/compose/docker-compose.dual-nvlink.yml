@@ -34,6 +34,7 @@
 #   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  NVLink
 #   docker-compose.dual.yml (DEFAULT)   262K   2         69 / 89          fp8      ✅      not used
 #   docker-compose.dual4.yml            262K   4         63 / 76          fp8      ✅      not used (4× PCIe)
+#   docker-compose.dual4-dflash.yml     262K   2         64 / 104         FP16     ✅      not used (4× PCIe)
 #   docker-compose.dual-nvlink.yml      262K   2         (community)      fp8      ✅      required
 #   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      not used
 #   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅      not used

@@ -2,6 +2,30 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-03 late PM — `dual4-dflash.yml` TP=4 DFlash validated on 4× RTX 3090 PCIe ⭐
+
+Adds `docker-compose.dual4-dflash.yml`, a 4-card full-context DFlash variant validated on Whamp's 4× RTX 3090 PCIe rig for [club-3090 discussion #26](https://github.com/noonghunna/club-3090/discussions/26). This is a capacity / 262K-code variant, not a replacement for the faster 2-card DFlash short-prompt path.
+
+**Config accepted by vLLM pre-check:**
+- `tensor_parallel_size=4`
+- `max_model_len=262144`
+- `max_num_seqs=2`
+- `max_num_batched_tokens=8192`
+- `dtype=bfloat16`, FP16/default KV (required by DFlash on Ampere)
+- `speculative_config={"method":"dflash","num_speculative_tokens":5}`
+- reported GPU KV cache size: **207,264 tokens**
+- reported max concurrency at 262K/request: **2.27×**
+
+**Validation:**
+- Boot: clean, ready after 375s on a warm image/model cache.
+- `verify-full.sh`: PASS.
+- `verify-stress.sh`: PASS 7/7. Canonical Cliff 2 probe 7 recalled both large needles: **58,570 tokens** and **91,070 tokens**.
+- `bench.sh`: **64.00 narrative / 104.40 code wall TPS** (CV 2.8% / 3.0%), TTFT 143ms / 164ms.
+- DFlash AL during code bench: last three log samples **4.43 / 4.37 / 4.35**.
+- Peak VRAM during bench: **21,960 MiB/card**.
+
+**Interpretation:** TP=4 DFlash gives a useful code-speed uplift over `dual4.yml` (104 vs 76 code TPS) while retaining full 262K admission, but PCIe TP=4 allreduce keeps it below the 2-card DFlash variants' raw single-stream TPS. Use it for 4-card, full-context, code-heavy work with two admitted streams.
+
 ## 2026-05-03 PM — `dual4.yml` TP=4 baseline validated on 4× RTX 3090 PCIe ⭐
 
 Adds `docker-compose.dual4.yml`, a measured 4-card fp8/MTP baseline derived from `dual.yml` by scaling tensor parallelism and streams from 2 → 4. Validation came from Whamp's 4× RTX 3090 PCIe rig in [club-3090 discussion #26](https://github.com/noonghunna/club-3090/discussions/26).

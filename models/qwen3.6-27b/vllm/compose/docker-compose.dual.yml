@@ -25,6 +25,7 @@
 #   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  Topology
 #   docker-compose.dual.yml (this)      262K   2         69 / 89          fp8      ✅      2× PCIe
 #   docker-compose.dual4.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
+#   docker-compose.dual4-dflash.yml     262K   2         64 / 104         FP16     ✅      4× PCIe
 #   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
 #   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅
 #   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌      2× PCIe

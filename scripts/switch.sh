@@ -26,6 +26,7 @@
 #   Dual-card vLLM (TP=2):
 #     vllm/dual             262K + fp8 + 2 streams + vision (recommended dual)
 #     vllm/dual4            262K + fp8 + 4 streams + vision (4× 3090 PCIe baseline)
+#     vllm/dual4-dflash     262K + FP16 + DFlash N=5 + 2 streams + vision (4× 3090 code)
 #     vllm/dual-turbo       262K + TQ3 + 4 streams + vision (multi-tenant)
 #     vllm/dual-dflash      185K + FP16 + DFlash N=5 + vision (peak code TPS)
 #     vllm/dual-dflash-noviz 200K + FP16 + DFlash N=5 + no vision (peak code, max ctx)
@@ -67,6 +68,7 @@ declare -A VARIANT_DEFAULT_PORT=(
   [vllm/minimal]=8020
   [vllm/dual]=8010
   [vllm/dual4]=8015
+  [vllm/dual4-dflash]=8016
   [vllm/dual-turbo]=8011
   [vllm/dual-dflash]=8012
   [vllm/dual-dflash-noviz]=8013
@@ -86,6 +88,7 @@ declare -A VARIANTS=(
   [vllm/minimal]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.minimal.yml"
   [vllm/dual]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual.yml"
   [vllm/dual4]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual4.yml"
+  [vllm/dual4-dflash]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual4-dflash.yml"
   [vllm/dual-turbo]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-turbo.yml"
   [vllm/dual-dflash]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-dflash.yml"
   [vllm/dual-dflash-noviz]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-dflash-noviz.yml"

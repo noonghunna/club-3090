@@ -24,10 +24,10 @@ isn't your topology.
 |---|---|---|---|---|
 | Per-card weight share | 100% (~14 GB) | 50% (~7 GB) | 25% (~3.5 GB) | 12.5% (~1.75 GB) |
 | KV pool capacity | smallest | 2× | ~4× | ~8× |
-| Per-card peak VRAM (262K target) | 23.5+ GB tight | 23.6 GB tight | **23.5 GB measured** | ~10-12 GB |
+| Per-card peak VRAM (262K target) | 23.5+ GB tight | 23.6 GB tight | **23.5 GB fp8 / 22.0 GB DFlash** | ~10-12 GB |
 | Cliff 2 single-prompt | fires at ~60K | doesn't fire (verified at 237K) | **passes 91K needle** | shouldn't fire |
-| Per-stream TPS (PCIe-only) | baseline | ~same as TP=1 | **63 narr / 76 code** | lower still |
-| Concurrent throughput (multi-stream) | 1× | ~1.7-3.6× | KV pre-check **6.77× @ 262K** | derived ~3-12× |
+| Per-stream TPS (PCIe-only) | baseline | ~same as TP=1 | **63/76 fp8, 64/104 DFlash** | lower still |
+| Concurrent throughput (multi-stream) | 1× | ~1.7-3.6× | KV pre-check **6.77× fp8, 2.27× DFlash @ 262K** | derived ~3-12× |
 | Marlin pad-sub-tile-n patch | not needed | required | required | required |
 
 **Two key takeaways:**
@@ -71,9 +71,9 @@ the extras idle, or run separate stacks on different ports.
 
 ---
 
-## Shipped TP=4 baseline — `vllm/dual4`
+## Shipped TP=4 baselines — `vllm/dual4` and `vllm/dual4-dflash`
 
-For 4× RTX 3090 PCIe, start with the measured compose:
+For 4× RTX 3090 PCIe, start with the measured fp8/MTP compose:
 
 ```bash
 bash scripts/switch.sh vllm/dual4
@@ -88,9 +88,27 @@ changes TP/streams from 2 → 4. Validation on Whamp's 4× 3090 PCIe rig:
 - `verify-stress.sh` passes 7/7; probe 7 recalls **58,569-token** and **91,070-token** needles
 - `bench.sh`: **63.01 narr / 76.25 code wall TPS**, peak **23,494 MiB/card**
 
-Single-stream TPS is lower than TP=2 on PCIe-only allreduce, so use this
-when you need 4-card capacity or the extra Cliff 2 margin — not when a
-single user wants fastest short-prompt decode.
+Use the DFlash variant when code throughput matters more than stream count
+and you can download the gated `z-lab/Qwen3.6-27B-DFlash` draft:
+
+```bash
+WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
+bash scripts/switch.sh vllm/dual4-dflash
+```
+
+`docker-compose.dual4-dflash.yml` keeps full 262K context but uses FP16 KV
+and admits two full-context streams:
+
+- boots at `max_model_len=262144`, `max_num_seqs=2`
+- vLLM reports GPU KV cache size **207,264 tokens** and **2.27×** maximum concurrency for 262K-token requests
+- `verify-full.sh` passes
+- `verify-stress.sh` passes 7/7; probe 7 recalls **58,570-token** and **91,070-token** needles
+- `bench.sh`: **64.00 narr / 104.40 code wall TPS**, peak **21,960 MiB/card**
+- DFlash AL during code bench: **4.43 / 4.37 / 4.35** last observed samples
+
+Single-stream TPS is lower than the 2-card DFlash variants on PCIe-only
+allreduce, so use TP=4 DFlash for full-262K code-heavy work and two admitted
+streams — not as a replacement for the fastest 2-card short-prompt DFlash path.
 
 ## Recipe — derive your own config from `dual.yml`
 
@@ -137,16 +155,24 @@ ports:
 
 Measured 2026-05-03 on Whamp's 4× RTX 3090 PCIe rig:
 
-- **Boot time:** 355s cold after model/image cache populated.
-- **vLLM pre-check:** `max_model_len=262144`, `max_num_seqs=4`, GPU KV
+- **fp8/MTP boot time:** 355s cold after model/image cache populated.
+- **fp8/MTP pre-check:** `max_model_len=262144`, `max_num_seqs=4`, GPU KV
   cache size 483,200 tokens, max concurrency 6.77× at 262K.
-- **Per-card VRAM:** 21,714 MiB idle after boot; 23,494 MiB/card peak
+- **fp8/MTP VRAM:** 21,714 MiB idle after boot; 23,494 MiB/card peak
   during canonical bench.
-- **Single-stream TPS:** 63.01 narrative / 76.25 code wall TPS.
+- **fp8/MTP TPS:** 63.01 narrative / 76.25 code wall TPS.
 - **MTP AL:** last three code-bench metrics showed mean acceptance length
   3.42 / 3.53 / 3.62.
+- **DFlash boot time:** 375s cold after model/image cache populated.
+- **DFlash pre-check:** `max_model_len=262144`, `max_num_seqs=2`, GPU KV
+  cache size 207,264 tokens, max concurrency 2.27× at 262K.
+- **DFlash VRAM:** 21,940 MiB idle after boot; 21,960 MiB/card peak during
+  canonical bench.
+- **DFlash TPS:** 64.00 narrative / 104.40 code wall TPS.
+- **DFlash AL:** last three code-bench metrics showed mean acceptance length
+  4.43 / 4.37 / 4.35.
 - **Cliff 2:** canonical `verify-stress.sh` probe 7 passes at both large
-  rungs: 58,569 tokens and 91,070 tokens recalled correctly.
+  rungs on both TP=4 variants: ~58.6K tokens and 91K tokens recalled correctly.
 - **Trade-off:** PCIe allreduce makes single-stream decode slower than
   TP=2, but TP=4 provides more full-context concurrency and the first
   published 4×3090 Cliff 2 boundary data.
