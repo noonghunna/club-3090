@@ -127,8 +127,12 @@ services:
       # Genesis v7.14 opt-in patches — these are OFF by default and must be
       # enabled per-process. Without these, v7.14 produces the same cudagraph
       # behavior as v7.13 (silent tool-call cascade).
-      - GENESIS_ENABLE_P65_TURBOQUANT_SPEC_CG_DOWNGRADE=1   # core fix for #40880
-      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1           # capture-size divisibility
+      # P65 (cudagraph downgrade workaround) replaced with P67 (proper Triton
+      # kernel fix) on 2026-05-03 — same bug class (#40880 cascade) but P67
+      # keeps cudagraphs on instead of forcing PIECEWISE; +25-35% TPS on
+      # spec-decode K+1 verify per Sandermage's measurements.
+      - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1            # core fix for #40880 (proper Triton kernel)
+      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1            # capture-size divisibility
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1        # streaming tool-call edge case
       # P68/P69 deliberately DISABLED (2026-04-29) — same reasoning as
       # tools-text.yml: 8000-char threshold breaks IDE-agent flows with
