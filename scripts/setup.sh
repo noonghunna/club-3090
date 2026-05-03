@@ -21,6 +21,12 @@
 #   WITH_DFLASH_DRAFT   Set to 1 to ALSO download z-lab/Qwen3.6-27B-DFlash
 #                       (~1.75 GB; required ONLY for dual-dflash.yml /
 #                       dual-dflash-noviz.yml composes). Default: 0.
+#   WITH_MARLIN_PATCH   Set to 0 to skip cloning our [vllm#40361 Marlin
+#                       pad-sub-tile-n](https://github.com/vllm-project/vllm/pull/40361)
+#                       patched fork at /opt/ai/vllm-src/. Required for ALL
+#                       dual-card vLLM composes (mounted by dual.yml /
+#                       dual-turbo.yml / dual-dflash*.yml). ~30 MB clone.
+#                       Default: 1 (auto-clone). Drops out when PR lands upstream.
 #                       Note: draft model is still under training as of
 #                       2026-04-26; bench numbers in DUAL_CARD.md were
 #                       measured against that snapshot. AL improvements
@@ -269,16 +275,44 @@ else
 fi
 echo ""
 
+# ---------- Marlin pad-sub-tile-n patched vLLM fork ----------
+# Required for ALL dual-card vLLM composes — they mount our patched marlin.py
+# + MPLinearKernel.py from /opt/ai/vllm-src/. This is our open vllm#40361 PR;
+# drops out when it lands upstream. ~30 MB clone — harmless for single-card
+# users who'll never use it, but removes the post-setup manual step that
+# previously made the dual-card path non-turnkey (reported in #37).
+VLLM_PATCH_DIR="/opt/ai/vllm-src"
+VLLM_PATCH_REPO="https://github.com/noonghunna/vllm.git"
+VLLM_PATCH_BRANCH="marlin-pad-sub-tile-n"
+
+if [[ "${WITH_MARLIN_PATCH:-1}" == "1" ]]; then
+  if [[ -d "${VLLM_PATCH_DIR}/.git" ]]; then
+    echo "[marlin]  ${VLLM_PATCH_DIR} already cloned — fetching + checking out ${VLLM_PATCH_BRANCH} ..."
+    (cd "${VLLM_PATCH_DIR}" && git fetch origin "${VLLM_PATCH_BRANCH}" 2>&1 | tail -3 && \
+      git checkout "${VLLM_PATCH_BRANCH}" 2>&1 | tail -1)
+  else
+    if ! [[ -d /opt/ai ]]; then
+      echo "[marlin]  Creating /opt/ai (may require sudo) ..."
+      if ! mkdir -p /opt/ai 2>/dev/null; then
+        sudo mkdir -p /opt/ai && sudo chown "$USER" /opt/ai
+      fi
+    fi
+    echo "[marlin]  Cloning ${VLLM_PATCH_REPO} (branch ${VLLM_PATCH_BRANCH}) to ${VLLM_PATCH_DIR} ..."
+    git clone -b "${VLLM_PATCH_BRANCH}" --depth 1 "${VLLM_PATCH_REPO}" "${VLLM_PATCH_DIR}"
+  fi
+  echo "[marlin]  ${VLLM_PATCH_DIR} ready ($(cd "${VLLM_PATCH_DIR}" && git rev-parse --short HEAD))"
+else
+  echo "[marlin]  WITH_MARLIN_PATCH=0 set — skipping fork clone."
+  echo "          Dual-card composes will FAIL TO BOOT without ${VLLM_PATCH_DIR}/."
+  echo "          Re-run with WITH_MARLIN_PATCH=1 (default) if you want dual-card."
+fi
+echo ""
+
 echo "Next — single-card vLLM (default):"
 echo "  cd models/${MODEL_NAME}/vllm/compose && docker compose up -d"
 echo "  docker logs -f vllm-qwen36-27b"
 echo ""
-echo "For dual-card composes, you ALSO need the Marlin pad fork mounted at"
-echo "/opt/ai/vllm-src/ (vLLM PR #40361 — open upstream, drops out when it lands):"
-echo "  sudo mkdir -p /opt/ai && sudo chown \$USER /opt/ai"
-echo "  git clone -b marlin-pad-sub-tile-n https://github.com/noonghunna/vllm.git /opt/ai/vllm-src"
-echo ""
-echo "Then:"
+echo "Or dual-card vLLM (Marlin patched fork already mounted from ${VLLM_PATCH_DIR}):"
 echo "  cd models/${MODEL_NAME}/vllm/compose && docker compose -f docker-compose.dual.yml up -d"
 echo ""
 echo "Sanity test (after 'Application startup complete'):"
