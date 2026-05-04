@@ -35,6 +35,8 @@ The recipes are written against 3090 specifically but should work on:
 
 On 20 GB cards (modded 3080) the cudagraph-profiling overhead is a meaningful slice of available VRAM. Drop `--gpu-memory-utilization` to **0.82** (vs shipped 0.95 for 24 GB). vLLM nightly's `gpu_worker.py` reports the equivalent effective KV size in the boot log; tune to keep activation headroom for the ~15K tool-prefill peak (verify-full check 8). Credit: [@troymroberts](https://github.com/troymroberts).
 
+**`dual-turbo.yml` on 20 GB Ampere — swap TQ3 KV → fp8_e5m2.** The shipped `dual-turbo.yml` uses `--kv-cache-dtype turboquant_3bit_nc` because it's the right pick on 24 GB / 3090 (smaller KV pool → more concurrency). On 20 GB cards the trade flips: TQ3's activation peak (~1 GB/card more pressure than fp8 during DeltaNet GDN forward) exceeds the per-card budget after TP=2 split, and Cliff 2 fires at 90K. **Override to `--kv-cache-dtype fp8_e5m2`** and you get the full 262K context working with verify-stress 7/7 PASS including 91K needles. Validated 2026-05-04 by [@efschu](https://github.com/noonghunna/club-3090/issues/47) on 2× 3080 modded 20 GB at 0.82 mem-util: bench 82.4 narr / 107.9 code TPS, full 257K-token auto-discovery needle PASS at 90% depth. Trade-off: fp8 KV is roomier per cached token but each token's KV state is larger, so concurrency at full ctx drops vs TQ3. Single-stream long-ctx works cleanly.
+
 ---
 
 ## NVLink
