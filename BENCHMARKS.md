@@ -126,13 +126,29 @@ Bench harness: `lucebox-hub/dflash/scripts/phase_split_dual_gpu.py bench-niah` (
 | 199,996 | OOM at layer 25 (390 MiB ephemeral alloc) | — | — | — | ✗ ✗ |
 | 259,996 | OOM at layer 18 (507 MiB ephemeral alloc) | — | — | — | ✗ ✗ |
 
-**Headline**: PFlash works flawlessly up to **131K source on 1× 24 GB / 3090** — compresses to 6.5K (5%) in 10.8s with NIAH key + answer retained. Vanilla llama.cpp pp131072 takes ~257s per Luce's published numbers, so PFlash compression alone is **~24× faster** at this context. Adding target prefill on the compressed 6.5K would be ~1-2s, total ~12-13s end-to-end TTFT — matches the README claim of "~25s @ 128K, 10× speedup" within hardware variance.
+**Compression-phase result**: PFlash drafter scoring works up to **131K source on 1× 24 GB / 3090** — compresses to 6.5K (5%) in 10.8s with NIAH key + answer retained. Vanilla llama.cpp pp131072 takes ~257s per Luce's published numbers, so the compression phase alone is **~24× faster** at this context. Adding target prefill on the compressed 6.5K would estimated ~1-2s (untested), suggesting ~12-13s end-to-end TTFT vs ~257s vanilla.
 
 Above 131K source the drafter's **ephemeral forward-pass tensors** (`K_curr/V_curr/Q_last` per layer at full sequence length) exceed 24 GB. K-cache quantization (`--pflash-k-type q8_0`) didn't help — the failing allocs are forward-pass not cache. Bench `lucebox-pflash-niah-q8k-20260504-150600/` confirmed identical OOM at 200K and 260K with both BF16 and q8_0 K cache.
 
 **On the @weicj 24K → 262K phase-split claim** ([PR #78](https://github.com/Luce-Org/lucebox-hub/pull/78)): not refuted but not reproduced on our hardware class either — their setup was 2× 22 GB Ti with **target also loaded** on one card; "24K single-card" was target+drafter co-resident. Our 131K is drafter-alone on 24 GB, which already passes their dual-GPU 262K-style scaling sanity-check. Reproducing 262K specifically would need investigation of their drafter config (chunk_size, lookahead, BSA window) — drafter activation footprint at 200K+ is the binding constraint regardless of how many GPUs are present.
 
-**Practical recommendation for 24 GB / 3090 single-card**: PFlash is shippable for source contexts ≤ 131K. The ~24× TTFT compression is genuine and the NIAH retention holds. Above 131K, fall back to vanilla llama.cpp prefill or wait for upstream drafter optimizations.
+#### What we have NOT validated — gates before "shippable"
+
+This is **directional evidence** (TTFT compression + NIAH retention at 131K), not a complete validation. The gates we hold every other shipped compose to are still open for PFlash:
+
+| Gate | Status | Notes |
+|---|---|---|
+| TTFT speedup at long context | ✅ measured (~24× compression alone) | Single test — needs reproduction across prompt shapes |
+| NIAH single-needle retrieval | ✅ measured at every ctx ≤131K | Synthetic test only — single key+answer pair per prompt |
+| Target prefill on compressed tokens | ❌ unmeasured | Bench harness measures PFlash phase only |
+| Decode TPS after compressed prefill | ❌ unmeasured | End-to-end TTFT + decode pipeline not tested |
+| **HumanEval+ / LCB v6 pass@1** | ❌ **not applicable** — those benches have <2K-token prompts; PFlash's compression path wouldn't even engage | Need long-context coding benches (repo-understanding, RULER+code) |
+| **Long-context QA accuracy** (RULER, LongBench, multi-needle) | ❌ unmeasured | The actual quality gate — does compression preserve task performance, not just synthetic needle retrieval? |
+| `verify-stress.sh` 7/7 | ❌ unmeasured | Never run with PFlash front-end |
+| `SOAK_MODE=continuous` | ❌ unmeasured | Never run with PFlash + DFlash daemon |
+| Multi-turn compression stability | ❌ unmeasured | Does compression hold across turns as context accumulates? |
+
+**Honest read**: PFlash gives us a compelling single-stat win (24× TTFT compression + NIAH-retention) at 131K source on 1× 3090, which is the headline reproduction of Luce's published claim on our hardware. It does **not** mean PFlash is shippable on this stack — same accuracy gates, stress probes, and soak validation we apply to every other compose are still open. Long-context QA harness (RULER or similar) is the meaningful next investment if we want to ship PFlash for any real workload class.
 
 **Setup gotcha** for anyone re-running on consumer rigs: check `nvidia-smi topo -p2p r` before configuring `--target-gpu` / `--draft-gpu`. If the matrix shows `CNS` (Chipset Not Supported), the dual-GPU split won't deliver its claimed uplift on that hardware regardless of whether you have multiple GPUs. NVLink-bonded setups would also typically expose P2P (a different cross-rig contributor would need to confirm on lucebox specifically; @JusefPol's [#31](https://github.com/noonghunna/club-3090/pull/31) NVLink win was measured on vLLM TP=2, not lucebox). PHB-only consumer boards typically lack P2P.
 
