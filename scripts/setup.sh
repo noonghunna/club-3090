@@ -82,6 +82,7 @@ echo "[preflight] checking environment..."
 preflight_docker || exit 1
 preflight_gpu 1  || exit 1
 preflight_disk "${MODEL_DIR}" "${PREFLIGHT_DISK_GB}" || exit 1
+preflight_hf_token  # soft-warn only; downloads will surface the hard failure
 echo "[preflight] ok."
 echo ""
 

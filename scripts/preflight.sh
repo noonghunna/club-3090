@@ -244,3 +244,146 @@ preflight_repo_drift() {
   echo "[preflight]        Skip this check:  PREFLIGHT_NO_FETCH=1 bash scripts/launch.sh" >&2
   return 0
 }
+
+# preflight_hf_token — verify HF_TOKEN is set; warn if not.
+#
+# Soft warning (returns 0) — Qwen3.6-27B is T&C-gated on HuggingFace, so
+# missing HF_TOKEN will cause `hf download` to fail with a generic error
+# later. Surfacing the issue early saves a round-trip.
+#
+# Skip via: PREFLIGHT_NO_HF_TOKEN=1
+preflight_hf_token() {
+  if [[ "${PREFLIGHT_NO_HF_TOKEN:-0}" == "1" ]]; then
+    return 0
+  fi
+  if [[ -z "${HF_TOKEN:-}" ]]; then
+    echo "[preflight] WARNING: HF_TOKEN is not set in the environment." >&2
+    echo "[preflight]          Qwen3.6-27B is T&C-gated on HuggingFace; downloads will fail without a token." >&2
+    echo "[preflight]          Fix: visit https://huggingface.co/settings/tokens, create a read token," >&2
+    echo "[preflight]               accept the model T&C at https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct" >&2
+    echo "[preflight]               (and any other Qwen3-Next variant you'll use)," >&2
+    echo "[preflight]               then export HF_TOKEN=hf_... in your shell or .env file." >&2
+    return 0
+  fi
+  # Sanity check token format — HF tokens start with hf_ and are 30+ chars
+  if [[ ! "${HF_TOKEN}" =~ ^hf_ ]] || [[ "${#HF_TOKEN}" -lt 30 ]]; then
+    echo "[preflight] WARNING: HF_TOKEN doesn't look like a valid HF token (expected 'hf_...' format, 30+ chars)." >&2
+    echo "[preflight]          If downloads fail later, regenerate at https://huggingface.co/settings/tokens" >&2
+  fi
+  return 0
+}
+
+# preflight_compose_deps <compose_file> — verify any model directories the compose
+# expects to mount actually exist on the host. Catches the "you set up the repo
+# but didn't WITH_DFLASH_DRAFT=1, then tried to launch dual-dflash-noviz" failure
+# mode. See club-3090#37 for the canonical case.
+#
+# Hard error (returns 1) — refuses to proceed if a required model dir is missing.
+# Skip via: PREFLIGHT_NO_COMPOSE_DEPS=1
+preflight_compose_deps() {
+  local compose_file="$1"
+  if [[ "${PREFLIGHT_NO_COMPOSE_DEPS:-0}" == "1" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$compose_file" ]]; then
+    echo "[preflight] ERROR: compose file not found: $compose_file" >&2
+    return 1
+  fi
+
+  local model_dir="${MODEL_DIR:-../../../../models-cache}"
+  # Resolve relative to repo root (compose mounts use ${MODEL_DIR:-../../../../models-cache})
+  if [[ "$model_dir" == ../* ]] || [[ "$model_dir" == ./* ]]; then
+    model_dir="$(cd "${ROOT_DIR:-$(dirname "$0")/..}" && cd "$(dirname "$compose_file")" && cd "$model_dir" 2>/dev/null && pwd)"
+  fi
+
+  local missing=()
+  local hint_dflash=0
+  local hint_mtp=0
+
+  # Scan compose file for model paths in --speculative-config blocks (DFlash draft, MTP head).
+  # The compose paths reference the in-container path /root/.cache/huggingface/<subdir>;
+  # the host path is ${MODEL_DIR}/<subdir> (set via the volumes: block).
+  if grep -qE '"model":[[:space:]]*"/root/.cache/huggingface/qwen3.6-27b-dflash"' "$compose_file"; then
+    if [[ ! -f "${model_dir}/qwen3.6-27b-dflash/config.json" ]]; then
+      missing+=("qwen3.6-27b-dflash (DFlash draft model)")
+      hint_dflash=1
+    fi
+  fi
+  if grep -qE '"model":[[:space:]]*"/root/.cache/huggingface/qwen3.6-27b-mtp-head"' "$compose_file"; then
+    if [[ ! -f "${model_dir}/qwen3.6-27b-mtp-head/config.json" ]]; then
+      missing+=("qwen3.6-27b-mtp-head (MTP draft head)")
+      hint_mtp=1
+    fi
+  fi
+
+  # Always check the main model exists (every compose mounts it).
+  if [[ ! -f "${model_dir}/qwen3.6-27b-autoround-int4/config.json" ]]; then
+    missing+=("qwen3.6-27b-autoround-int4 (main model)")
+  fi
+
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  echo "[preflight] ERROR: compose '$compose_file' expects model files that aren't on host." >&2
+  for item in "${missing[@]}"; do
+    echo "[preflight]   missing: ${model_dir}/${item}" >&2
+  done
+  echo "[preflight]" >&2
+  echo "[preflight] Fix:" >&2
+  if [[ $hint_dflash -eq 1 ]]; then
+    echo "[preflight]   WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b" >&2
+    echo "[preflight]   (downloads z-lab/Qwen3.6-27B-DFlash, ~1.75 GB; required for dual-dflash* composes)" >&2
+  fi
+  if [[ $hint_mtp -eq 1 ]]; then
+    echo "[preflight]   bash scripts/setup.sh qwen3.6-27b  (re-run with the right flags for MTP head)" >&2
+  fi
+  if [[ $hint_dflash -eq 0 ]] && [[ $hint_mtp -eq 0 ]]; then
+    echo "[preflight]   bash scripts/setup.sh qwen3.6-27b" >&2
+  fi
+  echo "[preflight] Skip this check:  PREFLIGHT_NO_COMPOSE_DEPS=1 bash scripts/switch.sh ..." >&2
+  return 1
+}
+
+# preflight_kv_format_hint <compose_file> — soft warning if the target compose
+# uses a KV format known to be sub-optimal for the user's VRAM class.
+#
+# Specifically: dual-turbo.yml uses turboquant_3bit_nc which trips Cliff 2 at 90K
+# on 20 GB Ampere even on TP=2. See docs/HARDWARE.md + #47 for the cross-rig data.
+#
+# Soft warning (returns 0). Skip via: PREFLIGHT_NO_KV_HINT=1
+preflight_kv_format_hint() {
+  local compose_file="$1"
+  if [[ "${PREFLIGHT_NO_KV_HINT:-0}" == "1" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$compose_file" ]] || ! command -v nvidia-smi >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Detect smallest VRAM among visible cards (the TP-split ceiling).
+  local min_vram_mib
+  min_vram_mib="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -n | head -1)"
+  if [[ -z "$min_vram_mib" ]] || [[ "$min_vram_mib" -ge 24000 ]]; then
+    return 0   # 24 GB+ cards — TQ3 is the right pick, no hint needed
+  fi
+
+  local vram_gb=$((min_vram_mib / 1024))
+
+  # Only fire on TQ3-using composes — that's where the 20 GB swap matters.
+  if grep -qE -- '--kv-cache-dtype[[:space:]]*\n?[[:space:]]*-?[[:space:]]*turboquant_3bit_nc' "$compose_file" 2>/dev/null; then
+    :
+  elif grep -qE 'turboquant_3bit_nc' "$compose_file"; then
+    :
+  else
+    return 0   # not a TQ3 compose
+  fi
+
+  echo "[preflight] HINT: smallest GPU has ~${vram_gb} GB VRAM and target compose uses TurboQuant 3-bit KV." >&2
+  echo "[preflight]       On <24 GB Ampere, TQ3's activation peak during DeltaNet GDN forward exceeds" >&2
+  echo "[preflight]       the per-card budget after TP split, and Cliff 2 fires at ~90K." >&2
+  echo "[preflight]       Override with --kv-cache-dtype fp8_e5m2 in the compose file." >&2
+  echo "[preflight]       Cross-rig validation: docs/HARDWARE.md + club-3090#47" >&2
+  echo "[preflight]       Predict your config:  bash tools/kv-calc.py --compose <name> --vram ${vram_gb} --kv-format <fp8_e5m2|turboquant_3bit_nc>" >&2
+  return 0
+}

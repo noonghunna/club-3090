@@ -149,16 +149,20 @@ up_variant() {
     exit 1
   fi
 
-  # Pre-up sanity: warn if the on-disk Genesis tree is out of sync with
-  # the GENESIS_PIN declared in setup.sh (catches "user pulled latest but
-  # didn't re-run setup.sh") AND if the repo itself is behind origin/master
-  # (catches "user cloned weeks ago, never pulled"). Both soft-warn via
-  # stderr and don't block boot. See club-3090#32 for the original case.
+  # Pre-up sanity:
+  #  - genesis_pin: warn if on-disk Genesis tree differs from GENESIS_PIN in setup.sh
+  #  - repo_drift: warn if local HEAD is behind origin/master
+  #  - compose_deps: HARD error if compose mounts a model dir that doesn't exist on host
+  #    (catches the "you didn't WITH_DFLASH_DRAFT=1 then tried dual-dflash-noviz" case;
+  #     see club-3090#37 — this is the canonical fix raphael / snoby asked for)
+  #  - kv_format_hint: soft warn if VRAM class needs --kv-cache-dtype override (#47)
   if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
     # shellcheck source=preflight.sh
     source "${ROOT_DIR}/scripts/preflight.sh"
     preflight_genesis_pin "${ROOT_DIR}" || true
     preflight_repo_drift "${ROOT_DIR}" || true
+    preflight_compose_deps "${full_dir}/${file}" || exit 1
+    preflight_kv_format_hint "${full_dir}/${file}" || true
   fi
 
   echo "[switch] bringing up: ${v}  (${dir}/${file})"
