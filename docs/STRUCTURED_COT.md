@@ -61,7 +61,7 @@ Pick `long-text` (the regular variant) when none of those apply. The bounded-thi
 
 ### One compose ships — `bounded-thinking.yml` with the DeepSeek scratchpad as the recommended grammar
 
-After the Phase 3 grammar A/B (2026-05-04, full HE+ 164 + LCB v6 50, 5 grammars × 214 problems), the headline finding is that **DeepSeek scratchpad is the only grammar to net-positive vs the original andthattoo G/A/E baseline at scale (+1)**, and it wins LCB v6 specifically by **+4pp** (66% vs 62%). The original andthattoo grammar is still excellent (and ~4× tighter on think budget), but the per-LCB win + combined edge made DeepSeek the right ship default.
+After the Phase 3 grammar A/B (2026-05-04, full HE+ 164 + LCB v6 50, 5 grammars × 214 problems), the defensible finding is that **DeepSeek scratchpad is the only grammar that doesn't lose combined accuracy vs the original andthattoo G/A/E baseline while improving the harder LCB v6 slice** (LCB +4pp = 2 additional problems on n=50; design signal, not statistical proof). The +0.47pp combined edge (1 problem on n=214) is well below the noise floor and shouldn't be framed as a categorical accuracy win. The stronger evidence for DeepSeek is the LCB tie with Holiday + near-andthattoo HE+ retention, not the +1 combined number alone. The original andthattoo grammar remains excellent and ~4× tighter on think budget; we ship DeepSeek as the recommended default because preserving HE+ accuracy while gaining LCB headroom is the most defensible per-workload posture.
 
 We ship one compose, with the DeepSeek scratchpad as the recommended grammar:
 
@@ -229,19 +229,19 @@ The five conditions:
 
 #### Phase 3 findings
 
-1. **DeepSeek scratchpad is the first grammar to net-beat the andthattoo G/A/E baseline at scale (+1 across 214 problems).** The lead is well within noise (1/214 = 0.5pp), so we don't claim it's "better" categorically — but it ties on combined and **wins on LCB v6 by 4pp**.
+1. **DeepSeek scratchpad is the only grammar that doesn't lose combined accuracy vs andthattoo while gaining on the harder LCB slice** (LCB +4pp = 2 problems / n=50, well within sampling noise). The +0.47pp combined edge (1 problem / n=214) is well below the noise floor and shouldn't be framed as a categorical win. What's defensible is the per-dataset pattern: ties andthattoo's HE+ within noise, ties Holiday's best LCB score. Both DeepSeek and Holiday landing at 66% on LCB suggests the common factor is a pressure-relief channel beyond the rigid 3-line shape, not DeepSeek-specific design.
 
 2. **Holiday's extreme compression (24 mean tokens) ties DeepSeek on LCB v6 at 66%** — beats the original andthattoo grammar by 4pp on LCB despite paying 1.8pp on HE+. Strong fit for code-block-tight workloads (LeetCode-style problems, tagging, log triage). Combined is −1 net.
 
-3. **PROMPT_TERSE doesn't win at scale.** Phase 2's n=30 finding ("PROMPT_TERSE wins, FSM mask hurts") was subset-selection bias — the 30-problem set was weighted toward the 6 prior regressions, which over-represented the failure mode. At full HE+ + LCB, PROMPT_TERSE lands at 82.2% combined, **−10 net**. The FSM mask earns its keep on the long tail.
+3. **PROMPT_TERSE loses on the long tail (−10 net combined), but the right framing is nuanced.** Phase 2's n=30 finding ("PROMPT_TERSE wins, FSM mask hurts") was subset-selection bias — the 30-problem set was weighted toward the 6 prior regressions, which over-represented PROMPT_TERSE's strength. At full HE+ + LCB, PROMPT_TERSE lands at 82.2% combined (92.1% HE+ / 50% LCB) vs the FSM grammars' 86-87%. So the defensible claim isn't "prompting never helps" — PROMPT_TERSE still rescues HE/151 and ties DeepSeek on the 6-problem prior-regression cluster. The right framing is *prompt-only shaping lacks the long-tail reliability needed across the full distribution, even when it preserves flexibility on rigid-FSM failures*.
 
-4. **HE/151 is the universal hard regression.** Only FREE and PROMPT_TERSE pass it. andthattoo / Holiday / DeepSeek all fail. *Some* prior regressions resist any FSM enforcement, regardless of shape — likely because the problem statement requires longer-form reasoning that no compact-grammar shape can fit.
+4. **HE/151 is one example where all three FSM grammars fail.** Only FREE and PROMPT_TERSE pass it. andthattoo / Holiday / DeepSeek all fail. This is *weak* evidence of a failure class — one universal-FSM-fail can't prove that compact grammars are categorically incapable of representing this reasoning shape. It does show that all three tested FSM shapes excluded something useful (more scratch space, a final verification move, or the ability to choose reasoning shape). A different grammar (e.g. one with an explicit final-validation step) might plausibly rescue it; that's a future research question, not a settled architectural fact.
 
 5. **The dataset matters more than the grammar.** All four grammars converge to within 4pp on HE+ (90.2–94.5%) but spread across **28pp on LCB v6** (38.0–66.0%). LCB amplifies grammar-design effects because problems are denser and longer-form-resistant.
 
 #### Ship decision (2026-05-04)
 
-We ship **one compose**, `bounded-thinking.yml`, with the DeepSeek scratchpad as the recommended grammar — the only grammar to net-beat the andthattoo G/A/E baseline at scale (+1 net combined, **+4pp on LCB v6**).
+We ship **one compose**, `bounded-thinking.yml`, with the DeepSeek scratchpad as the recommended grammar — the only grammar that doesn't lose combined accuracy vs the andthattoo G/A/E baseline while improving the harder LCB v6 slice (+4pp on LCB, n=50 = 2 problems; combined +0.47pp is below noise).
 
 The compose is grammar-agnostic — all three validated grammars (DeepSeek, andthattoo G/A/E, Holiday tagline) are available client-side via `extra_body={"structured_outputs": {"grammar": ...}}`. Pick by workload:
 
@@ -255,7 +255,7 @@ We chose to ship one compose rather than three sibling composes because:
 2. Three near-identical composes in `switch.sh --list` creates a paradox-of-choice problem the data doesn't justify.
 3. The compose itself is grammar-agnostic — selecting the grammar at the client is the natural locus of choice.
 
-PROMPT_TERSE is **not shipped** — Phase 3 disproved the n=30 finding (it lands at 82.2% combined, −10 net vs the FSM-enforced grammars). The FSM mask earns its keep on the long tail.
+PROMPT_TERSE is **not shipped as a default** — at full HE+ + LCB, it lands at 82.2% combined (−10 net vs the FSM-enforced grammars), which is a real long-tail reliability gap. It still has its uses (rescues HE/151 + ties DeepSeek on the prior-regression cluster), so the framing is "FSM enforcement earns its keep across the full distribution," not "prompting never helps."
 
 See [`tools/grammar-eval/`](../tools/grammar-eval/) for the harness, all four grammars, and the per-problem results.
 
@@ -263,7 +263,7 @@ See [`tools/grammar-eval/`](../tools/grammar-eval/) for the harness, all four gr
 
 On Phase 1's first run (n=164 HE+, n=50 LCB v6), PROMPT_TERSE landed at 92.1%/64% — close enough to the original FSM (92.7%/66%) to look competitive. Phase 2's n=30 subset bench then showed PROMPT_TERSE leading at 96.7% — but that was subset-selection bias (the 30 problems were weighted toward the 6 known FSM-regressions, which over-represented PROMPT_TERSE's strength).
 
-**Phase 3 at full HE+ 164 + LCB v6 50 lands PROMPT_TERSE at 82.2% combined (−10 net vs FSM)** — the FSM mask earns its keep on the long tail. The case for FSM specifically is *guarantees* — the grammar can't be talked out of by an aggressive system prompt, can't drift on hard problems, can't exceed the bound. PT can't promise any of that, and at scale it can't match the FSM either.
+**Phase 3 at full HE+ 164 + LCB v6 50 lands PROMPT_TERSE at 82.2% combined** (−10 net vs the FSM-enforced grammars). The right framing isn't "prompt-only never wins" but "prompt-only lacks the long-tail reliability needed across the full distribution" — PT still rescues HE/151 and ties DeepSeek on the 6-problem prior-regression cluster, so it's competitive on the rigid-FSM-fail class but loses on the broader tail. The case for FSM specifically is *guarantees* — the grammar can't be talked out of by an aggressive system prompt, can't drift on hard problems, can't exceed the bound. PT can't promise any of that, which is why FSM enforcement is the default ship.
 
 ### Sampling-time cost
 

@@ -3,13 +3,19 @@
 # (PLAN/NOTE×0-15/VERDICT FSM at `tools/grammar-eval/deepseek-scratchpad.gbnf`).
 #
 # **Phase 3 bench 2026-05-04 final (full HE+ 164 + LCB v6 50, n=214):**
-#   - DeepSeek scratchpad: 87.4% combined Pass@1, +4pp on LCB v6 vs the
-#     original andthattoo G/A/E grammar, +1 net vs andthattoo combined
+#   - DeepSeek scratchpad: 93.9% HE+ / 66.0% LCB v6 / 87.4% combined.
+#     Doesn't lose combined accuracy vs the original andthattoo G/A/E
+#     grammar (delta = +0.47pp = 1 problem on n=214, well below noise),
+#     and gains +4pp on LCB v6 (= 2 problems on n=50, design signal not
+#     statistical proof).
 #   - andthattoo G/A/E (the originally-published structured-CoT grammar):
-#     86.9% combined, tighter think budget (mean 134 tokens vs DeepSeek's 541)
+#     94.5% HE+ / 62.0% LCB / 86.9% combined, tighter think budget
+#     (mean 134 tokens vs DeepSeek's 541). Slightly better on HE+ alone.
 #
 # We ship this single compose with DeepSeek as the recommended grammar
-# because it wins both per-LCB and combined at scale. The compose itself is
+# because preserving HE+ accuracy while gaining LCB headroom is the most
+# defensible per-workload posture — not because of a categorical accuracy
+# win. The compose itself is
 # grammar-agnostic — the grammar is selected client-side via
 # `extra_body={"structured_outputs": {"grammar": ...}}`. Users who want
 # tighter compression (the ~4× cheaper andthattoo grammar) can pass

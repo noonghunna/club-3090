@@ -22,7 +22,7 @@ Future related work: `scripts/setup.sh` could pre-flight detect VRAM class and s
 
 ## 2026-05-04 — bounded-thinking Phase 3 grammar A/B complete; DeepSeek scratchpad is the new recommended grammar ⭐
 
-After the Phase 3 5-grammar A/B at full HE+ 164 + LCB v6 50 (n=214), `bounded-thinking.yml` is updated to recommend the **DeepSeek scratchpad grammar** (PLAN/NOTE×0-15/VERDICT FSM at `tools/grammar-eval/deepseek-scratchpad.gbnf`) as the new default. Phase 3 result: **93.9% HE+ / 66.0% LCB v6 (87.4% combined, +1 net vs the andthattoo G/A/E baseline, +4pp on LCB v6)**, mean 541 think tokens.
+After the Phase 3 5-grammar A/B at full HE+ 164 + LCB v6 50 (n=214), `bounded-thinking.yml` is updated to recommend the **DeepSeek scratchpad grammar** (PLAN/NOTE×0-15/VERDICT FSM at `tools/grammar-eval/deepseek-scratchpad.gbnf`) as the new default. Phase 3 result: **93.9% HE+ / 66.0% LCB v6 / 87.4% combined**, mean 541 think tokens. The defensible framing: DeepSeek doesn't lose combined accuracy vs the andthattoo G/A/E baseline (+0.47pp = 1 problem on n=214, below noise) and gains +4pp on LCB v6 (= 2 problems on n=50, design signal not statistical proof). The "+1 net win" framing is too strong; the real evidence is per-LCB improvement at preserved HE+ accuracy.
 
 The compose itself is unchanged engine-side — same vLLM image, same Genesis stack, same TQ3 KV, same MTP n=3, same `enable_in_reasoning` flag. Only the recommended grammar in the docstring + the on-disk grammar files in `tools/grammar-eval/` change. The grammar is selected client-side via `extra_body={"structured_outputs": {"grammar": ...}}`.
 
@@ -34,7 +34,7 @@ The compose itself is unchanged engine-side — same vLLM image, same Genesis st
 
 **We ship one compose, not three.** Combined-accuracy spread across the three grammars is within noise (0.5pp over 214 problems), so creating three sibling composes would have been paradox-of-choice without statistical justification. The compose is grammar-agnostic — choice happens at the client.
 
-Phase 3 also disproved Phase 2's n=30 finding: **PROMPT_TERSE doesn't win at scale** (82.2% combined, −10 net vs the FSM-enforced grammars at 214 problems). The FSM mask earns its keep on the long tail. Phase 1 reproducibility is exact (HE+ Δ +4.3pp, LCB Δ +24.0pp — both match Phase 1's published numbers).
+Phase 3 also recontextualized Phase 2's n=30 finding: **PROMPT_TERSE loses on the long tail at scale** (82.2% combined, −10 net vs the FSM-enforced grammars at 214 problems). The right framing isn't "prompting never helps" — PT still rescues HE/151 and ties DeepSeek on the 6-problem prior-regression cluster, so it's competitive on the rigid-FSM-fail class. The defensible claim is *prompt-only shaping lacks the long-tail reliability needed across the full distribution*. Phase 1 reproducibility is exact (HE+ Δ +4.3pp, LCB Δ +24.0pp — both match Phase 1's published numbers).
 
 **Files updated:**
 - `models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml` — docstring rewritten to recommend DeepSeek scratchpad; references all three available grammars + Phase 3 results
