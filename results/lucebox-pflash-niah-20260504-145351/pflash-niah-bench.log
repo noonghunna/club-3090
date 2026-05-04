@@ -1,0 +1,17 @@
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (251956 > 131072). Running this sequence through the model will result in indexing errors
+Traceback (most recent call last):
+  File "/opt/ai/lucebox-hub/dflash/scripts/phase_split_dual_gpu.py", line 525, in <module>
+    main()
+  File "/opt/ai/lucebox-hub/dflash/scripts/phase_split_dual_gpu.py", line 521, in main
+    args.func(args)
+  File "/opt/ai/lucebox-hub/dflash/scripts/phase_split_dual_gpu.py", line 478, in run_bench_niah
+    run_cases(args, cases)
+  File "/opt/ai/lucebox-hub/dflash/scripts/phase_split_dual_gpu.py", line 332, in run_cases
+    ready_s = daemon.start()
+              ^^^^^^^^^^^^^^
+  File "/opt/ai/lucebox-hub/dflash/scripts/phase_split_dual_gpu.py", line 124, in start
+    self.log.wait_for("[pflash-daemon] ready", 180)
+  File "/opt/ai/lucebox-hub/dflash/scripts/phase_split_dual_gpu.py", line 90, in wait_for
+    raise TimeoutError(f"timed out waiting for {needle!r}; tail={tail[-12:]}")
+TimeoutError: timed out waiting for '[pflash-daemon] ready'; tail=['ggml_cuda_init: found 1 CUDA devices (Total VRAM: 24126 MiB):', '  Device 0: NVIDIA GeForce RTX 3090, compute capability 8.6, VMM: yes, VRAM: 24126 MiB']

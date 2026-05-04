@@ -1,0 +1,20 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 24126 MiB):
+  Device 0: NVIDIA GeForce RTX 3090, compute capability 8.6, VMM: yes, VRAM: 24126 MiB
+[drafter] loaded Qwen3-0.6B BF16: n_layer=28 n_head=16 n_kv=8 n_embd=1024 n_ff=3072 head_dim=128 vocab=151936
+[pflash-daemon] ready load=0.521s vocab=151936
+[pflash-daemon] compress start tokens=131068 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-q8k-20260504-150600/niah_ctx131068/prompt_counted.bin
+[qwen3-0.6b-fp] layer 1/28 done (A=0.193s FP=0.152s B=0.086s)
+[qwen3-0.6b-fp] layer 28/28 done (A=1.584s FP=4.234s B=2.342s)
+[qwen3-0.6b-fp] forward 8.17s (S=131068, A=1.58s FP=4.23s B=2.34s)  tail-score 2.34s  total 10.52s
+[drafter] forward+score in 10.64s S=131068
+[drafter] score_and_compress total 10.64s S=131068 kept=6524 (204/4096 chunks)
+[pflash-daemon] compress done 10.645s in=131068 out=6524 ratio=0.0498
+[pflash-daemon] compress start tokens=199996 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-q8k-20260504-150600/niah_ctx199996/prompt_counted.bin
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 390.62 MiB on device 0: cudaMalloc failed: out of memory
+alloc_tensor_range: failed to allocate CUDA0 buffer of size 409591808
+[pflash-daemon] compress failed: forward_qwen3_0p6b: K_curr/V_curr/Q_last alloc failed at layer 25
+[pflash-daemon] compress start tokens=259996 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-q8k-20260504-150600/niah_ctx259996/prompt_counted.bin
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 507.80 MiB on device 0: cudaMalloc failed: out of memory
+alloc_tensor_range: failed to allocate CUDA0 buffer of size 532471808
+[pflash-daemon] compress failed: forward_qwen3_0p6b: K_curr/V_curr/Q_last alloc failed at layer 18
+[pflash-daemon] stopped

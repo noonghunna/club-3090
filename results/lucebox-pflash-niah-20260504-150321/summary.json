@@ -1,0 +1,89 @@
+{
+  "date": "2026-05-04",
+  "mode": "dual_gpu_pflash_phase_split",
+  "pflash_gpu": 0,
+  "pflash_daemon_ready_s": 0.6323865110753104,
+  "pflash_drafter": "/mnt/models/gguf/qwen3-draft-0.6b/Qwen3-0.6B-BF16.gguf",
+  "tokenizer": "Qwen/Qwen3-0.6B",
+  "keep_ratio": 0.05,
+  "lookahead": 2,
+  "chunk_size": 32,
+  "pool_kernel": 13,
+  "pflash_k_type": "compute",
+  "cases": [
+    {
+      "name": "niah_ctx16372",
+      "source_tokens": 16372,
+      "compressed_tokens": 788,
+      "compress_wall_s": 1.0830025799805298,
+      "compress_tok_s": 15117.230838262947,
+      "compression_ratio": 0.04813095528951869,
+      "retained_key": true,
+      "retained_answer": true
+    },
+    {
+      "name": "niah_ctx32764",
+      "source_tokens": 32764,
+      "compressed_tokens": 1628,
+      "compress_wall_s": 1.799773955019191,
+      "compress_tok_s": 18204.50835430088,
+      "compression_ratio": 0.04968868270052497,
+      "retained_key": true,
+      "retained_answer": true
+    },
+    {
+      "name": "niah_ctx65524",
+      "source_tokens": 65524,
+      "compressed_tokens": 3252,
+      "compress_wall_s": 4.3655310838948935,
+      "compress_tok_s": 15009.399484458598,
+      "compression_ratio": 0.04963066967828582,
+      "retained_key": true,
+      "retained_answer": true
+    },
+    {
+      "name": "niah_ctx131068",
+      "source_tokens": 131068,
+      "compressed_tokens": 6524,
+      "compress_wall_s": 10.801249213982373,
+      "compress_tok_s": 12134.522350463923,
+      "compression_ratio": 0.04977568895535142,
+      "retained_key": true,
+      "retained_answer": true
+    },
+    {
+      "name": "niah_ctx199996",
+      "source_tokens": 199996,
+      "compressed_tokens": 0,
+      "compress_wall_s": 0.10222281608730555,
+      "compress_tok_s": 1956471.2424786773,
+      "compression_ratio": 0.0,
+      "retained_key": false,
+      "retained_answer": false
+    },
+    {
+      "name": "niah_ctx259996",
+      "source_tokens": 259996,
+      "compressed_tokens": 0,
+      "compress_wall_s": 0.09130622097291052,
+      "compress_tok_s": 2847516.820098575,
+      "compression_ratio": 0.0,
+      "retained_key": false,
+      "retained_answer": false
+    }
+  ],
+  "resource_summary": {
+    "samples": 20,
+    "mem_max_mib": 21024.0,
+    "temp_max_c": 61.0,
+    "fan_max_pct": 67.0,
+    "power_avg_w": 198.707,
+    "power_max_w": 228.89,
+    "util_avg_pct": 88.7,
+    "util_max_pct": 100.0
+  },
+  "logs": {
+    "pflash": "/opt/ai/github/club-3090/results/lucebox-pflash-niah-20260504-150321/pflash_daemon.log",
+    "monitor": "/opt/ai/github/club-3090/results/lucebox-pflash-niah-20260504-150321/gpu_monitor.csv"
+  }
+}

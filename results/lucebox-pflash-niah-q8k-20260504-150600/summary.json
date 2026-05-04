@@ -1,0 +1,59 @@
+{
+  "date": "2026-05-04",
+  "mode": "dual_gpu_pflash_phase_split",
+  "pflash_gpu": 0,
+  "pflash_daemon_ready_s": 0.6027854409767315,
+  "pflash_drafter": "/mnt/models/gguf/qwen3-draft-0.6b/Qwen3-0.6B-BF16.gguf",
+  "tokenizer": "Qwen/Qwen3-0.6B",
+  "keep_ratio": 0.05,
+  "lookahead": 2,
+  "chunk_size": 32,
+  "pool_kernel": 13,
+  "pflash_k_type": "q8_0",
+  "cases": [
+    {
+      "name": "niah_ctx131068",
+      "source_tokens": 131068,
+      "compressed_tokens": 6524,
+      "compress_wall_s": 10.65377599094063,
+      "compress_tok_s": 12302.492572722838,
+      "compression_ratio": 0.04977568895535142,
+      "retained_key": true,
+      "retained_answer": true
+    },
+    {
+      "name": "niah_ctx199996",
+      "source_tokens": 199996,
+      "compressed_tokens": 0,
+      "compress_wall_s": 0.10241466399747878,
+      "compress_tok_s": 1952806.2895848923,
+      "compression_ratio": 0.0,
+      "retained_key": false,
+      "retained_answer": false
+    },
+    {
+      "name": "niah_ctx259996",
+      "source_tokens": 259996,
+      "compressed_tokens": 0,
+      "compress_wall_s": 0.10354933398775756,
+      "compress_tok_s": 2510841.837290222,
+      "compression_ratio": 0.0,
+      "retained_key": false,
+      "retained_answer": false
+    }
+  ],
+  "resource_summary": {
+    "samples": 12,
+    "mem_max_mib": 21024.0,
+    "temp_max_c": 54.0,
+    "fan_max_pct": 58.0,
+    "power_avg_w": 190.06916666666666,
+    "power_max_w": 229.25,
+    "util_avg_pct": 82.0,
+    "util_max_pct": 100.0
+  },
+  "logs": {
+    "pflash": "/opt/ai/github/club-3090/results/lucebox-pflash-niah-q8k-20260504-150600/pflash_daemon.log",
+    "monitor": "/opt/ai/github/club-3090/results/lucebox-pflash-niah-q8k-20260504-150600/gpu_monitor.csv"
+  }
+}

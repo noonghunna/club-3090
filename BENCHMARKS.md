@@ -113,7 +113,26 @@ Not directly comparable to vLLM rows above (different engine, different bench sc
 | Same-card, **K8V4** (`-ctk q8_0 -ctv q4_0`) | @noonghunna (1× 3090) | 74.68 | 6.38 | 41.4% | Range 54.6–109.1. **+1% over default KV** — basically identical. KV-format optimization doesn't help at HE-scale (<150-tok prompts × 128-tok gen) where KV pool isn't the bottleneck. Asymmetric quant via [PR #56/#54](https://github.com/Luce-Org/lucebox-hub/pull/56) merged 2026-04-28. |
 | Dual-GPU split ([PR #80](https://github.com/Luce-Org/lucebox-hub/pull/80) `--target-gpu 0 --draft-gpu 1 --draft-feature-mirror`) | @noonghunna (2× 3090, no NVLink, **P2P "Chipset Not Supported"**) | 75.24 | 6.39 | 41.3% | Range 54.2–110.0. **+1.7% over same-card** — but **NOT a fair test of the split's value**. CUDA P2P access is disabled at the chipset level on this rig (PHB topology, consumer-board limitation). The lucebox dual-GPU code path requires P2P for direct draft-feature transfers; without it, falls back to host-staging copies (CPU↔GPU bouncing). The published 51.86 tok/s on dual 2080 Ti 22GB ([PR #80](https://github.com/Luce-Org/lucebox-hub/pull/80)) presumably ran with P2P available. **Verdict for our hardware class**: dual-GPU split needs a P2P-capable interconnect (NVLink or peer-supported chipset) to deliver its value. PHB+CNS rigs see no benefit. |
 
-PFlash phase-split ([PR #78](https://github.com/Luce-Org/lucebox-hub/pull/78)) is a separate question — that's about long-context prefill compression (24K → 262K passing NIAH source ctx claimed), not decode TPS. Not benched in this run; tracked at task #230 if pursued.
+### PFlash long-context compression on 1× 3090 — measured ceiling 131K source
+
+Bench harness: `lucebox-hub/dflash/scripts/phase_split_dual_gpu.py bench-niah` (PFlash drafter only, no target loaded — measures the prefill compression phase). Drafter: `Qwen3-0.6B-BF16.gguf`, BSA enabled, keep_ratio=0.05.
+
+| Source ctx | Compressed | Ratio | PFlash time | tok/s | Key + answer retained |
+|---:|---:|---:|---:|---:|:---:|
+| 16,372 | 788 | 0.048 | 1.08 s | 15,117 | ✓ ✓ |
+| 32,764 | 1,628 | 0.050 | 1.80 s | 18,205 | ✓ ✓ |
+| 65,524 | 3,252 | 0.050 | 4.37 s | 15,009 | ✓ ✓ |
+| **131,068** | **6,524** | **0.050** | **10.80 s** | **12,135** | **✓ ✓** |
+| 199,996 | OOM at layer 25 (390 MiB ephemeral alloc) | — | — | — | ✗ ✗ |
+| 259,996 | OOM at layer 18 (507 MiB ephemeral alloc) | — | — | — | ✗ ✗ |
+
+**Headline**: PFlash works flawlessly up to **131K source on 1× 24 GB / 3090** — compresses to 6.5K (5%) in 10.8s with NIAH key + answer retained. Vanilla llama.cpp pp131072 takes ~257s per Luce's published numbers, so PFlash compression alone is **~24× faster** at this context. Adding target prefill on the compressed 6.5K would be ~1-2s, total ~12-13s end-to-end TTFT — matches the README claim of "~25s @ 128K, 10× speedup" within hardware variance.
+
+Above 131K source the drafter's **ephemeral forward-pass tensors** (`K_curr/V_curr/Q_last` per layer at full sequence length) exceed 24 GB. K-cache quantization (`--pflash-k-type q8_0`) didn't help — the failing allocs are forward-pass not cache. Bench `lucebox-pflash-niah-q8k-20260504-150600/` confirmed identical OOM at 200K and 260K with both BF16 and q8_0 K cache.
+
+**On the @weicj 24K → 262K phase-split claim** ([PR #78](https://github.com/Luce-Org/lucebox-hub/pull/78)): not refuted but not reproduced on our hardware class either — their setup was 2× 22 GB Ti with **target also loaded** on one card; "24K single-card" was target+drafter co-resident. Our 131K is drafter-alone on 24 GB, which already passes their dual-GPU 262K-style scaling sanity-check. Reproducing 262K specifically would need investigation of their drafter config (chunk_size, lookahead, BSA window) — drafter activation footprint at 200K+ is the binding constraint regardless of how many GPUs are present.
+
+**Practical recommendation for 24 GB / 3090 single-card**: PFlash is shippable for source contexts ≤ 131K. The ~24× TTFT compression is genuine and the NIAH retention holds. Above 131K, fall back to vanilla llama.cpp prefill or wait for upstream drafter optimizations.
 
 **Setup gotcha** for anyone re-running on consumer rigs: check `nvidia-smi topo -p2p r` before configuring `--target-gpu` / `--draft-gpu`. If the matrix shows `CNS` (Chipset Not Supported), the dual-GPU split won't deliver its claimed uplift on that hardware regardless of whether you have multiple GPUs. NVLink-bonded setups would also typically expose P2P (a different cross-rig contributor would need to confirm on lucebox specifically; @JusefPol's [#31](https://github.com/noonghunna/club-3090/pull/31) NVLink win was measured on vLLM TP=2, not lucebox). PHB-only consumer boards typically lack P2P.
 

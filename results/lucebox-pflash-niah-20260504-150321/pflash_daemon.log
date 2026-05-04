@@ -1,0 +1,41 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 24126 MiB):
+  Device 0: NVIDIA GeForce RTX 3090, compute capability 8.6, VMM: yes, VRAM: 24126 MiB
+[drafter] loaded Qwen3-0.6B BF16: n_layer=28 n_head=16 n_kv=8 n_embd=1024 n_ff=3072 head_dim=128 vocab=151936
+[pflash-daemon] ready load=0.553s vocab=151936
+[pflash-daemon] compress start tokens=16372 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-20260504-150321/niah_ctx16372/prompt_counted.bin
+[qwen3-0.6b-fp] layer 1/28 done (A=0.142s FP=0.011s B=0.017s)
+[qwen3-0.6b-fp] layer 28/28 done (A=0.314s FP=0.204s B=0.301s)
+[qwen3-0.6b-fp] forward 0.83s (S=16372, A=0.31s FP=0.20s B=0.30s)  tail-score 0.18s  total 1.00s
+[drafter] forward+score in 1.08s S=16372
+[drafter] score_and_compress total 1.08s S=16372 kept=788 (25/512 chunks)
+[pflash-daemon] compress done 1.081s in=16372 out=788 ratio=0.0481
+[pflash-daemon] compress start tokens=32764 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-20260504-150321/niah_ctx32764/prompt_counted.bin
+[qwen3-0.6b-fp] layer 1/28 done (A=0.010s FP=0.015s B=0.023s)
+[qwen3-0.6b-fp] layer 28/28 done (A=0.346s FP=0.539s B=0.602s)
+[qwen3-0.6b-fp] forward 1.49s (S=32764, A=0.35s FP=0.54s B=0.60s)  tail-score 0.20s  total 1.69s
+[drafter] forward+score in 1.80s S=32764
+[drafter] score_and_compress total 1.80s S=32764 kept=1628 (51/1024 chunks)
+[pflash-daemon] compress done 1.797s in=32764 out=1628 ratio=0.0497
+[pflash-daemon] compress start tokens=65524 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-20260504-150321/niah_ctx65524/prompt_counted.bin
+[qwen3-0.6b-fp] layer 1/28 done (A=0.021s FP=0.070s B=0.041s)
+[qwen3-0.6b-fp] layer 28/28 done (A=0.731s FP=1.480s B=1.149s)
+[qwen3-0.6b-fp] forward 3.37s (S=65524, A=0.73s FP=1.48s B=1.15s)  tail-score 0.80s  total 4.17s
+[drafter] forward+score in 4.36s S=65524
+[drafter] score_and_compress total 4.36s S=65524 kept=3252 (102/2048 chunks)
+[pflash-daemon] compress done 4.360s in=65524 out=3252 ratio=0.0496
+[pflash-daemon] compress start tokens=131068 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-20260504-150321/niah_ctx131068/prompt_counted.bin
+[qwen3-0.6b-fp] layer 1/28 done (A=0.050s FP=0.159s B=0.084s)
+[qwen3-0.6b-fp] layer 28/28 done (A=1.466s FP=4.331s B=2.406s)
+[qwen3-0.6b-fp] forward 8.22s (S=131068, A=1.47s FP=4.33s B=2.41s)  tail-score 2.39s  total 10.60s
+[drafter] forward+score in 10.79s S=131068
+[drafter] score_and_compress total 10.79s S=131068 kept=6524 (204/4096 chunks)
+[pflash-daemon] compress done 10.792s in=131068 out=6524 ratio=0.0498
+[pflash-daemon] compress start tokens=199996 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-20260504-150321/niah_ctx199996/prompt_counted.bin
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 390.62 MiB on device 0: cudaMalloc failed: out of memory
+alloc_tensor_range: failed to allocate CUDA0 buffer of size 409591808
+[pflash-daemon] compress failed: forward_qwen3_0p6b: K_curr/V_curr/Q_last alloc failed at layer 25
+[pflash-daemon] compress start tokens=259996 keep=0.050 lookahead=2 chunk=32 pool=13 path=/opt/ai/github/club-3090/results/lucebox-pflash-niah-20260504-150321/niah_ctx259996/prompt_counted.bin
+ggml_backend_cuda_buffer_type_alloc_buffer: allocating 507.80 MiB on device 0: cudaMalloc failed: out of memory
+alloc_tensor_range: failed to allocate CUDA0 buffer of size 532471808
+[pflash-daemon] compress failed: forward_qwen3_0p6b: K_curr/V_curr/Q_last alloc failed at layer 18
+[pflash-daemon] stopped
