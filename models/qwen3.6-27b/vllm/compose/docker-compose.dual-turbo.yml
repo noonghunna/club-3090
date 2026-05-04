@@ -190,6 +190,12 @@ services:
       - "4"
       - --max-num-batched-tokens
       - "4128"
+      # TQ3 is the right pick on 24 GB / 3090 (smaller KV pool → more concurrency).
+      # On 20 GB Ampere (modded 3080 / cap'd 3090) override to fp8_e5m2 — TQ3's
+      # activation peak during DeltaNet GDN forward exceeds the per-card budget
+      # after TP=2 split and Cliff 2 fires at 90K. fp8_e5m2 trades KV-pool
+      # capacity for activation headroom on the smaller-VRAM sub-class. See
+      # docs/HARDWARE.md "Note for sub-24 GB cards" + #47 for cross-rig data.
       - --kv-cache-dtype
       - turboquant_3bit_nc
       - --trust-remote-code

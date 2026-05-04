@@ -11,7 +11,7 @@ You have **2× RTX 3090s, PCIe-only (no NVLink)**. This page is the front door f
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM per card | Why |
 |---|---|---|---|---|---|
 | General-purpose default (vision + tools + long ctx) | [`dual.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual.yml) ⭐ | **262K** (237K single-prompt verified) | **69 / 89** | ~23.6 / 24 GB | fp8 KV, 2 streams, full feature set |
-| Multi-tenant (4 concurrent agents at full ctx) | [`dual-turbo.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml) | **262K** | **58 / 76** per-stream (269 TPS aggregate at 4 streams) | ~19.8 / 24 GB | TQ3 KV (3 bits/token) + full v7.69 PROD env-var stack — 4.67× concurrency |
+| Multi-tenant (4 concurrent agents at full ctx) | [`dual-turbo.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml) | **262K** | **58 / 76** per-stream (269 TPS aggregate at 4 streams) | ~19.8 / 24 GB | TQ3 KV (3 bits/token) + full v7.69 PROD env-var stack — 4.67× concurrency. **20 GB Ampere users:** override `--kv-cache-dtype turboquant_3bit_nc` → `fp8_e5m2`; see [HARDWARE.md](HARDWARE.md#note-for-sub-24-gb-cards) + [#47](https://github.com/noonghunna/club-3090/issues/47). |
 | Peak code TPS with vision | [`dual-dflash.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash.yml) | **185K** | **82 / 125** | ~23.6 / 24 GB | DFlash N=5 + 1.75 GB draft per card, AL ~4.4 (vs MTP's 3.4) |
 | Peak code TPS, no vision | [`dual-dflash-noviz.yml`](../models/qwen3.6-27b/vllm/compose/docker-compose.dual-dflash-noviz.yml) | **200K** | **78 / 127** | ~23.8 / 24 GB | DFlash + no vision, +15K ctx vs dual-dflash |
 

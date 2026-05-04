@@ -395,6 +395,18 @@ Under tensor parallelism with 2 cards, the GDN state buffer's per-card allocatio
 
 This is why our long-prompt single-card recommendation is "use llama.cpp 262K (no cliff at all) or move to dual-card."
 
+### KV format choice tunes the boundary
+
+The Cliff 2 boundary isn't just "context length" — it's the sum of (KV pool bytes) + (DeltaNet GDN forward intermediate at the activation peak), and **the KV format choice trades these against each other**:
+
+- `turboquant_3bit_nc` (TQ3 KV): 0.375 bytes/cached-token — smallest KV pool → most concurrency. Activation peak is *higher* (TQ3 dequant happens during the GDN forward, adding ~1 GB/card to the working set).
+- `fp8_e5m2`: 1 byte/cached-token — larger KV pool but smaller activation peak. Single-prompt long-ctx is roomier; concurrency at full ctx drops.
+- `q4_0` / `q8_0` / `k8v4` (vLLM's other KV options): in between, with their own dequant patterns.
+
+On 24 GB / 3090 the per-card budget absorbs TQ3's activation peak and the smaller KV pool wins. **On 20 GB Ampere (modded 3080 / cap'd cards) the trade flips** — TQ3's activation peak after TP=2 split exceeds the per-card budget at 90K and Cliff 2 fires there. Override to fp8_e5m2 and the full 262K window opens. Validated cross-rig 2026-05-04 by [@efschu](https://github.com/noonghunna/club-3090/issues/47); see [HARDWARE.md](HARDWARE.md#note-for-sub-24-gb-cards) for the byte math.
+
+The general principle: **the variant matrix is per-card-budget × KV-format-tradeoff aware**. Compose defaults are tuned for 24 GB / 3090; users on different VRAM classes may need to override `--kv-cache-dtype` to relocate the activation/pool balance for their hardware.
+
 ### Why llama.cpp doesn't have Cliff 2
 
 llama.cpp's Qwen3-Next implementation processes DeltaNet/GDN layers with **online state updates** (incremental) rather than materializing the full intermediate. State is updated per-token or per-tile, never as a single multi-GB tensor. Different algorithm, different memory profile.

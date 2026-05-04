@@ -2,6 +2,24 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-04 PM — KV format choice is per-VRAM-class, not just per-engine-config (#47) ⭐
+
+Cross-rig validation by [@efschu](https://github.com/noonghunna/club-3090/issues/47) on 2× modded 3080 (20 GB / card) surfaced that **`dual-turbo.yml`'s shipped `turboquant_3bit_nc` KV trips Cliff 2 at 90K on 20 GB Ampere even though the same compose works at 262K on 2× 3090 (24 GB)**. Override to `--kv-cache-dtype fp8_e5m2` and the full window opens — verify-stress 7/7 PASS including the 91K needle, full 257,851-token auto-discovery needle test PASS at 90% depth, bench 82.4 narr / 107.9 code TPS.
+
+The mechanism: TQ3 KV trades 0.375 bytes/cached-token (smallest KV pool → most concurrency) against a higher activation peak during the DeltaNet GDN forward (~1 GB/card more pressure than fp8). On 24 GB / 3090 the budget absorbs the activation peak. On 20 GB the trade flips — there isn't enough activation headroom after TP=2 split, and Cliff 2 fires at single-prompt 90K.
+
+**Repo lesson recorded:** the variant matrix is per-card-budget × KV-format-tradeoff aware. Shipped defaults are tuned for 24 GB / 3090; users on different VRAM classes may need to override `--kv-cache-dtype` to relocate the activation/pool balance for their hardware.
+
+**Files updated:**
+- `docs/HARDWARE.md` — "Note for sub-24 GB cards" section extended with the TQ3→fp8_e5m2 swap rule, byte math, attribution to @efschu, cross-link to #47
+- `docs/CLIFFS.md` — new subsection "KV format choice tunes the boundary" under Cliff 2 root-cause explanation; generalizes from the specific 20 GB finding to the principle
+- `docs/DUAL_CARD.md` — `dual-turbo` picker row gets an inline pointer to the override
+- `models/qwen3.6-27b/vllm/compose/docker-compose.dual-turbo.yml` — inline comment near the `--kv-cache-dtype turboquant_3bit_nc` line so users overriding via env or fork have the rationale at hand
+
+This is a **hardware-class lesson, not a bug fix**. The `dual-turbo.yml` defaults are correct for the canonical hardware. The override path is now discoverable from every doc surface a user would land on when hitting the symptom.
+
+Future related work: `scripts/setup.sh` could pre-flight detect VRAM class and surface KV-format guidance before compose boot. Tracked in #219 (compose-dependency preflight) — likely worth an env override knob (`KV_FORMAT=fp8_e5m2 bash scripts/switch.sh vllm/dual-turbo`) once the preflight lands.
+
 ## 2026-05-04 — bounded-thinking Phase 3 grammar A/B complete; DeepSeek scratchpad is the new recommended grammar ⭐
 
 After the Phase 3 5-grammar A/B at full HE+ 164 + LCB v6 50 (n=214), `bounded-thinking.yml` is updated to recommend the **DeepSeek scratchpad grammar** (PLAN/NOTE×0-15/VERDICT FSM at `tools/grammar-eval/deepseek-scratchpad.gbnf`) as the new default. Phase 3 result: **93.9% HE+ / 66.0% LCB v6 (87.4% combined, +1 net vs the andthattoo G/A/E baseline, +4pp on LCB v6)**, mean 541 think tokens.
