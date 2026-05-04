@@ -22,22 +22,21 @@ what existing variant did you compare against, what's the trade-off? -->
 
 ## Verification
 
-- [ ] **Rig report attached** — paste contents of `bash scripts/report.sh > my-rig.md` (or `--bench` / `--verify` if relevant) as a PR comment. Captures GENESIS_PIN, vLLM image SHA, container CUDA/Python, PCIe lanes, power caps, NVLink topology — everything we'd otherwise have to ask for one bullet at a time.
-- [ ] **`bash scripts/verify-full.sh` PASSES** against this PR's compose. Output attached.
-- [ ] **`bash scripts/verify-stress.sh` 7/7 PASSES** against this PR's compose. Output attached.
-
-### For new compose variants ONLY
-
-- [ ] **`SOAK_MODE=continuous` summary attached** — single-card variants: required (catches Cliff 2b at ~25K accumulated tokens, which `verify-stress` does not). Multi-card variants: strongly recommended.
+- [ ] **Full rig + validation report attached** — single command captures everything:
   ```bash
-  SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 \
-    CONTAINER=<container-name> ENDPOINT=<http://localhost:port> \
-    bash scripts/soak-test.sh
+  bash scripts/report.sh --full > my-rig.md
   ```
-  Paste the resulting `summary.md` as a PR comment. See [docs/CLIFFS.md](../docs/CLIFFS.md) for why soak-continuous is the only test that catches the multi-turn cliff, and [Issue #41](https://github.com/noonghunna/club-3090/issues/41) for the validation matrix.
-- [ ] **`bash scripts/bench.sh` run included** — 3 warmups + 5 measured runs. Report `wall_TPS`, `decode_TPS`, `TTFT`, peak VRAM/card. MTP `AL` if applicable.
-- [ ] **BENCHMARKS row added** — under the appropriate model section, mirroring existing column shape.
+  Runs hardware + stack + boot log capture **plus** verify-full + verify-stress 7/7 + SOAK_MODE=continuous + canonical bench in one ~35-min pass. Paste contents as a PR comment. See [docs/CLIFFS.md](../docs/CLIFFS.md) for why the soak-continuous step is load-bearing (catches Cliff 2b, which verify-stress doesn't).
+- [ ] **BENCHMARKS row added** — under the appropriate model section, mirroring existing column shape (incl. `Rig` column).
 - [ ] **CHANGELOG entry added** in `models/<model>/CHANGELOG.md`.
+
+If you'd rather run the steps separately:
+
+- `bash scripts/report.sh > my-rig.md` (rig only, ~2 sec)
+- `bash scripts/verify-full.sh` — fast functional smoke
+- `bash scripts/verify-stress.sh` — 7/7 boundary checks incl. Cliff 2 needles
+- `SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 bash scripts/soak-test.sh` — required for new single-card composes (catches Cliff 2b)
+- `bash scripts/bench.sh` — canonical TPS (3 warmups + 5 measured)
 
 ### N/A justifications (if any boxes above are unchecked)
 

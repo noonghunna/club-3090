@@ -8,8 +8,8 @@ Thanks for being here. This repo collects working recipes for serving big LLMs o
 
 ### ✅ Yes please
 
-- **Numbers from your rig.** Different power caps, different motherboards, different models — we want all of it. Use the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template (no PR needed). The template asks for `bash scripts/report.sh --bench > my-rig.md` — one pass captures hardware (incl. power caps + NVLink topology), stack version, AND the canonical bench numbers. High-signal contributions land in `BENCHMARKS` with attribution.
-- **Bug reports with the data we ask for.** The [bug report template](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml) leads with `bash scripts/report.sh > my-rig.md` (add `--verify` to include verify-full output) — single command captures the rig state we'd otherwise ask for individually (hardware, container state, Genesis patches, KV pool sizing, engine config). With that paste, the first reply is usually a fix or a clear next step instead of "can you send me…".
+- **Numbers from your rig.** Different power caps, different motherboards, different models — we want all of it. Use the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template (no PR needed). The template asks for `bash scripts/report.sh --full > my-rig.md` — one ~35-min pass captures hardware (incl. power caps + NVLink topology), stack version, verify-full + verify-stress 7/7, **SOAK_MODE=continuous summary (catches Cliff 2b)**, AND the canonical bench numbers. High-signal contributions land in `BENCHMARKS` with attribution.
+- **Bug reports with the data we ask for.** The [bug report template](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml) leads with `bash scripts/report.sh > my-rig.md` (add `--verify` to include verify-full output, `--soak` to also run SOAK_MODE=continuous if you suspect a multi-turn agent cliff) — single command captures the rig state we'd otherwise ask for individually (hardware, container state, Genesis patches, KV pool sizing, engine config). With that paste, the first reply is usually a fix or a clear next step instead of "can you send me…".
 - **Bug reproductions / minimum repros for upstream issues.** vLLM / llama.cpp / Genesis bugs that affect this stack are most useful when they have a one-paragraph reduction. Drop them in an issue or open a draft PR adding a reproducer to `verify-stress.sh`.
 - **New compose variants with measured numbers.** If you've found a config combination that beats one we ship — better TPS, lower VRAM, cleaner stress profile — open a PR with: (a) the `docker-compose.<name>.yml`, (b) `verify-full.sh` output passing, (c) `verify-stress.sh` output passing, (d) a `bench.sh` run (3 warm + 5 measured) showing the delta against the closest existing variant. Bonus points: a footer in the compose file explaining which existing variant you compared against and why this one is better for which workload.
 - **New models.** Adding a model is a real lift but well-defined: clone the `models/qwen3.6-27b/` directory structure, populate the engine subdirs, follow the [canonical learnings template](https://github.com/noonghunna/club-3090/blob/master/CLAUDE.md) layout (this repo doesn't ship that file but the convention is documented in `models/qwen3.6-27b/INTERNALS.md`). Open an issue first to scope.
@@ -57,6 +57,16 @@ Thanks for being here. This repo collects working recipes for serving big LLMs o
 
 New compose files (`models/<model>/<engine>/compose/docker-compose.<name>.yml`) get a tighter checklist than other PRs because they ship as a "supported" path that other people boot blind. The PR template enumerates these — bullets here are the *why*:
 
+**Single command captures all of (1)–(5) in one paste:**
+
+```bash
+bash scripts/report.sh --full > my-rig.md
+```
+
+That runs ~35 min and captures rig + verify-full + verify-stress + soak-continuous + bench. Paste the file contents as a PR comment.
+
+Or run the steps individually if you'd rather:
+
 1. **Rig report** — `bash scripts/report.sh > my-rig.md`, paste as a PR comment. Captures GENESIS_PIN, vLLM image SHA, container CUDA/Python, PCIe lanes per card, power caps, NVLink topology in one pass. Without it future readers can't tell whether your numbers are reproducible against their environment or rig-specific. **This is a merge gate**, not a nice-to-have.
 2. **`verify-full.sh` PASS** — fast functional smoke. Confirms the variant boots and serves correctly on your rig.
 3. **`verify-stress.sh` 7/7 PASS** — boundary tests including Cliff 2 needle recall (probe 7: 60K + 90K needles). Required for any variant claiming long-context support.
@@ -67,10 +77,10 @@ New compose files (`models/<model>/<engine>/compose/docker-compose.<name>.yml`) 
      bash scripts/soak-test.sh
    ```
 5. **`bench.sh` run** — 3 warmups + 5 measured runs of narrative + code prompts. Report `wall_TPS`, `decode_TPS`, `TTFT`, peak VRAM/card per run, MTP/DFlash AL where applicable.
-6. **BENCHMARKS row** — under the appropriate model section, mirroring existing column shape. Attribution is automatic.
+6. **BENCHMARKS row** — under the appropriate model section, mirroring existing column shape (incl. `Rig` column). Attribution is automatic.
 7. **CHANGELOG entry** — in `models/<model>/CHANGELOG.md`.
 
-If any of these don't apply to your variant, say so explicitly in the PR ("N/A — short-prompt-only path; soak-continuous would not exercise the multi-turn regime"). "Forgot to run" gets the PR put on hold; "explained why N/A" gets it merged.
+If any of (1)–(5) don't apply to your variant, say so explicitly in the PR ("N/A — short-prompt-only path; soak-continuous would not exercise the multi-turn regime"). "Forgot to run" gets the PR put on hold; "explained why N/A" gets it merged.
 
 ---
 

@@ -13,14 +13,23 @@ body:
         The fastest way to share everything we need:
 
         ```bash
-        bash scripts/report.sh --bench > my-rig.md
+        bash scripts/report.sh --full > my-rig.md
         ```
 
         That captures rig hardware (GPUs, power caps, NVLink, driver, OS), stack
         version (commit, Genesis pin, vLLM image SHA), boot log highlights (engine
-        config, KV pool sizing, patches applied), AND runs the canonical bench
-        (3 warmups + 5 measured runs of narrative + code prompts) — all in one
-        ~3-5 min pass. Paste the file contents below.
+        config, KV pool sizing, patches applied), runs **verify-full + verify-stress
+        7/7 + SOAK_MODE=continuous + canonical bench** — all in one ~35-min pass.
+        Paste the file contents below.
+
+        Soak-continuous is the only test that catches Cliff 2b (multi-turn
+        accumulating-context cliff at ~25K tokens). Until upstream lands a fix,
+        we ask for it on every cross-rig contribution. See
+        [docs/CLIFFS.md](https://github.com/noonghunna/club-3090/blob/master/docs/CLIFFS.md).
+
+        If 35 min is too long, swap `--full` for `--bench` to skip verify/stress/soak
+        — the bench numbers alone are still useful, but flag in Notes that you
+        haven't run soak-continuous so we don't assume Cliff 2b is clean on your rig.
 
         The bench prompts are pinned so your numbers are directly comparable to
         ours:
@@ -34,7 +43,7 @@ body:
   - type: textarea
     id: rig-bench-report
     attributes:
-      label: Rig + bench report — paste contents of `bash scripts/report.sh --bench`
+      label: Rig + bench report — paste contents of `bash scripts/report.sh --full` (or `--bench` if you couldn't run the full chain)
       description: |
         Full output. The script captures hardware, stack, boot state, AND canonical
         bench numbers in one pass.
@@ -48,13 +57,13 @@ body:
   - type: textarea
     id: soak-continuous
     attributes:
-      label: Soak-continuous summary (optional but high-signal)
+      label: Soak-continuous summary (only fill in if you ran `--bench` instead of `--full`)
       description: |
-        If you can spare ~25 min, run the multi-turn accumulating-context soak
-        — it's the only test that catches Cliff 2b (single-card vLLM paths
-        OOM at ~25K accumulated tokens across multiple turns, regardless of
-        single-prompt context limits). Cross-rig validation here helps us
-        document which configs escape the cliff on which hardware.
+        If you used `bash scripts/report.sh --full` above, soak-continuous is
+        already included — leave this blank.
+
+        If you ran `--bench` (faster, no soak), please run soak separately and
+        paste the summary here, or note "skipped (rig couldn't spare ~25 min)":
 
         ```bash
         SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 \
@@ -62,11 +71,10 @@ body:
           bash scripts/soak-test.sh
         ```
 
-        Paste the resulting `summary.md` (or just the PASS/FAIL + final
-        accumulated-token count). See [docs/CLIFFS.md](https://github.com/noonghunna/club-3090/blob/master/docs/CLIFFS.md)
+        Soak-continuous is the only test that catches Cliff 2b (multi-turn
+        accumulating-context cliff at ~25K tokens). See
+        [docs/CLIFFS.md](https://github.com/noonghunna/club-3090/blob/master/docs/CLIFFS.md)
         for the byte-level explanation.
-
-        Leave blank if you didn't run it.
       render: markdown
     validations:
       required: false

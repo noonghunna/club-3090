@@ -30,7 +30,7 @@ Cross-rig numbers are comparable because the prompt + sampling are pinned. Varia
 
 ## How to add a row for your rig
 
-1. Run `bash scripts/report.sh --bench > my-rig.md` — captures hardware (incl. power caps + PCIe lanes), stack version (vLLM image SHA, Genesis commit), AND the canonical bench numbers in one pass.
+1. Run `bash scripts/report.sh --full > my-rig.md` — captures hardware (incl. power caps + PCIe lanes), stack version (vLLM image SHA, Genesis commit), verify-full + verify-stress + **SOAK_MODE=continuous** + canonical bench numbers in one ~35-min pass. (Or `--bench` for the fast subset; soak-continuous catches Cliff 2b which the others don't.)
 2. Open the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template, paste the report, mention which compose variant you ran.
 3. We'll append your numbers as a row in the appropriate table here, with `Rig` cell formatted `@your-handle (rig-shape)` — e.g. `@whamp (4× 3090 PCIe x4/x8/x16/x16, 300 W)`.
 

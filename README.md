@@ -98,7 +98,7 @@ bash scripts/update.sh
 
 For client snippets — Python (`openai` SDK + raw `requests`), TypeScript / Node, plus connection settings for Open WebUI, Cline, Cursor, and other OpenAI-compat clients — see [`docs/EXAMPLES.md`](docs/EXAMPLES.md). Common questions ("can I use a 4090?", "why MTP not EAGLE?", "why not Ollama?", "what's a prefill cliff?") have answers in [`docs/FAQ.md`](docs/FAQ.md). Trying to decide self-host vs cloud APIs vs other local options? [`docs/COMPARISONS.md`](docs/COMPARISONS.md). Want to contribute numbers, bug repros, or new variants? [`CONTRIBUTING.md`](CONTRIBUTING.md). Tracking the upstream issues and PRs we depend on or have filed? [`docs/UPSTREAM.md`](docs/UPSTREAM.md).
 
-**Hit an issue or want to share bench numbers?** Run `bash scripts/report.sh > my-rig.md` (add `--bench` to include canonical TPS) and paste into the [bug](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml) or [bench](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template — single command captures everything we'd otherwise ask for individually.
+**Hit an issue or want to share bench numbers?** Run `bash scripts/report.sh > my-rig.md` (add `--full` for the canonical "everything" pass: rig + verify-full + verify-stress 7/7 + SOAK_MODE=continuous + bench, ~35 min) and paste into the [bug](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml) or [bench](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template — single command captures everything we'd otherwise ask for individually.
 
 For llama.cpp (different engine, different recipe — useful for max context on single-card):
 ```bash
