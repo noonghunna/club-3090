@@ -1,0 +1,35 @@
+[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+[bench] target = /mnt/models/gguf/qwen3.5-27b/Qwen3.5-27B-Q4_K_M.gguf
+[bench] draft  = /mnt/models/huggingface/qwen3.5-27b-dflash/model.safetensors
+[bench] bin    = /opt/ai/lucebox-hub/dflash/build/test_dflash
+[bench] tmp    = /tmp/dflash_bench
+[bench] tokenizing prompts via HF…
+  [00] has_close_elements           125 tokens
+  [01] separate_paren_groups        135 tokens
+  [02] truncate_number               86 tokens
+  [03] below_zero                   128 tokens
+  [04] mean_absolute_deviation      120 tokens
+  [05] intersperse                  104 tokens
+  [06] parse_nested_parens          139 tokens
+  [07] filter_by_substring           95 tokens
+  [08] sum_product                  131 tokens
+  [09] rolling_max                  120 tokens
+
+[bench] mode=fast  n_gen=128
+prompt                         steps     AL   pct%    tok/s
+--------------------------------------------------------------
+  has_close_elements              28   4.57   28.8    54.36
+  separate_paren_groups           21   6.10   39.0    71.84
+  truncate_number                 22   5.82   38.4    69.30
+  below_zero                      23   5.57   34.8    66.00
+  mean_absolute_deviation         26   4.92   31.2    57.97
+  intersperse                     29   4.41   28.4    52.72
+  parse_nested_parens             13   9.85   63.5   108.74
+  filter_by_substring             23   5.57   35.6    65.75
+  sum_product                     15   8.53   59.2    96.55
+  rolling_max                     15   8.53   54.2    96.44
+--------------------------------------------------------------
+MEAN                                   6.39   41.3    73.97
+
+commit/step range: 4.41 - 9.85
+tok/s range:        52.7 - 108.7

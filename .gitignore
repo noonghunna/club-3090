@@ -49,4 +49,5 @@ docs/diagnostics/
 results/*
 !results/grammar-ab-*/
 !results/grammar-full-*/
+!results/lucebox-*/
 !results/v0.20-migration/
