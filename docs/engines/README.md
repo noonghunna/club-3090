@@ -12,7 +12,7 @@ This repo's main path is **vLLM** because it has the deepest support for Qwen3-N
 |---|---|---|---|---|---|---|---|
 | **[vLLM](VLLM.md)** ⭐ | **Validated, production-grade** (this repo) | 50-53 narr / 66-70 code | 48K default · 75K IDE-agent · **198K vision · 214K text-only** | ✅ | ✅ | ✅ MTP n=3 | ✅ Full |
 | **[llama.cpp](LLAMA_CPP.md)** | Works mainline + [Luce DFlash fork](https://github.com/Luce-Org/lucebox-hub) for spec-decode | 35-60 (varies by quant + KV type) | **262K** (Q4_K_M + q4_0 KV) | ✅ (via mmproj) | ⚠️ Limited (no auto-tool-choice in server) | ✅ DFlash N=5 in fork | ⚠️ Partial |
-| **[SGLang](SGLANG.md)** | **Blocked** by same Marlin pad-sub-tile-n bug (vllm#40361 / sglang equivalent); EAGLE spec-decode separately blocked by GDN/DeltaNet rollback | n/a (untested at this state) | n/a | ✅ | ✅ | ⚠️ EAGLE blocked on hybrid | ✅ Full |
+| **[SGLang](../../models/qwen3.6-27b/sglang/README.md)** | **Re-test pending** (May 2026). Historical block partially out-of-date — DFlash + MTP have landed natively on SGLang mainline; Marlin pad-sub-tile-n fix status unknown. See sglang README for re-test plan. | n/a (untested) | n/a | ✅ | ✅ | ✅ DFlash + MTP native upstream (untested here) | ✅ Full |
 
 ---
 
@@ -68,15 +68,20 @@ This repo's main path is **vLLM** because it has the deepest support for Qwen3-N
 - Good support for batched structured output (constraint decoding)
 
 **Cons:**
-- **Currently blocked on this stack by the same Marlin pad-sub-tile-n bug we hit on vLLM TP=2.** Same kernel-line fix applies (would need a similar patch on SGLang's side or for them to pick up the upstream fix).
-- EAGLE spec-decode (their MTP equivalent) is separately blocked by the DeltaNet/GDN hybrid layer not supporting KV rollback — this is a Qwen3-Next architectural issue, not SGLang-specific.
+- **Last attempt (early 2026): blocked by Marlin pad-sub-tile-n bug** (same kernel-line issue as our [vllm#40361](https://github.com/vllm-project/vllm/pull/40361)). Whether SGLang has picked up the fix on current main is **unverified** — needs re-test. Bug is INT4-specific; FP16/bf16 weights work fine.
+- EAGLE spec-decode was separately blocked by the DeltaNet/GDN hybrid layer not supporting KV rollback. Status on current SGLang main: also unverified, but DFlash and MTP support has landed natively (per z-lab + LMSYS) so spec-decode on Qwen3-Next is at least *intended* to work.
+- TurboQuant 3-bit KV is WIP on SGLang ([Issue #21618](https://github.com/sgl-project/sglang/issues/21618)) — not yet merged.
 - Smaller community than vLLM; fewer eyes on Qwen3-Next bugs.
 
-**When to pick:** Production multi-tenant serving on models that work cleanly on it (not yet Qwen3.6-27B-int4-AutoRound — track the unblock list below).
+**When to pick:** if a contributor with current SGLang main re-runs the boot test on Qwen3.6-27B-INT4 + TP=2 and it works. See the [re-test plan in the per-engine page](../../models/qwen3.6-27b/sglang/README.md). For an FP16/bf16 weight variant, it likely works today.
 
-**Watch list to unblock SGLang on this stack:**
-- Marlin pad-sub-tile-n landing (we [filed PR #40361 on vLLM](https://github.com/vllm-project/vllm/pull/40361); the same fix applies to SGLang's Marlin call site)
-- DeltaNet KV rollback support upstream (vllm#39931 / issue #40124 land would unblock EAGLE on Qwen3-Next family across engines)
+**Re-test plan (pending):**
+1. Pull latest SGLang container/main → smoke-boot at TP=2 + AutoRound INT4 + no spec-decode + fp8/q4 KV (NOT TurboQuant — WIP upstream)
+2. If boot clean: validate verify-stress 7/7
+3. Add DFlash spec-decode (preferred over MTP — higher acceptance rate, z-lab maintains the SGLang integration; Qwen3.6-27B draft at [`z-lab/Qwen3.6-27B-DFlash`](https://huggingface.co/z-lab/Qwen3.6-27B-DFlash))
+4. If competitive vs vLLM `dual-dflash.yml` (78-82 narr / 125-127 code TPS) → ship as a polished compose
+
+Full plan in [models/qwen3.6-27b/sglang/README.md](../../models/qwen3.6-27b/sglang/README.md#re-test-plan).
 
 ---
 
@@ -89,7 +94,7 @@ This repo's main path is **vLLM** because it has the deepest support for Qwen3-N
 | **Best concurrent throughput on dual 3090** | vLLM TP=2 + Turbo (TQ3) | 4 streams at full 262K, ~200 TPS aggregate. See [companion repo](https://github.com/noonghunna/qwen36-dual-3090). |
 | **Non-NVIDIA hardware (AMD / Intel / Apple)** | llama.cpp | Only engine with cross-platform support. |
 | **Lightest setup, fastest cold start** | llama.cpp | Single binary, ~30s cold start. Good for embedded use, quick experiments. |
-| **High-throughput multi-tenant serving** | SGLang (when unblocked — currently blocked on Qwen3.6) | RadixAttention prefix sharing wins at scale. Watch list in SGLANG.md. |
+| **High-throughput multi-tenant serving** | SGLang (re-test pending — DFlash + MTP native upstream as of May 2026; Marlin INT4 fix verification needed) | RadixAttention prefix sharing wins at scale. Re-test plan in [sglang/README.md](../../models/qwen3.6-27b/sglang/README.md). |
 
 ---
 
