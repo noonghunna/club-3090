@@ -70,6 +70,7 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 | `dual-dflash-noviz.yml` | @noonghunna (2× 3090 PCIe) | fp8 | 200K | 78 / **127** | ~23.8 GB | 2026-04-29 | DFlash + no vision tower. +15K ctx vs `dual-dflash`. |
 | `dual-dflash-noviz.yml` | @snoby (2× **4090** PCIe — 5-GPU rig, GPUs 2,3, no NVLink, [#46](https://github.com/noonghunna/club-3090/issues/46)) | fp8 | **180K** | 92.55 / **148.99** | ~21.8 GB | 2026-05-04 | First non-3090 cross-rig data. **Required `max-model-len` drop from 200K→180K** vs 3090 baseline (boot OOM at 200K) — 4090 ctx-ceiling gotcha pending investigation. +17% TPS lift vs same compose on 3090 (78→92.55 narr / 127→148.99 code). |
 | `dual-nvlink.yml` | @JusefPol (2× 3090 PCIe x8 + **NVLink 4× bonded**, i7-11700K, 365 W/card) | fp8 | 262K | **108.81 / 138.55** | ~23.7 GB | 2026-05-04 | First NVLink cross-rig data. **+58% narr / +56% code TPS vs `dual.yml` PCIe-only baseline (69 / 89)** — NVLink reduces the per-token NCCL allreduce latency floor; compounds at multi-stream. verify-stress 7/7 PASS incl. 91K needle. **PASSES v2 continuous soak** (5 sessions × 5 turns, 0 MiB growth, 100% TPS retention). MTP n=3, 65–98% per-position accept. PR [#31](https://github.com/noonghunna/club-3090/pull/31). |
+| `carnice-bf16mtp.yml` | @noonghunna (2× 3090 PCIe, no NVLink) | fp8 | 65K | 65 / 81 | ~22.25 GB | 2026-05-04 | **Carnice-V2-27B (Hermes agentic fine-tune) + BF16 MTP overlay**. ~95% narr / ~91% code TPS of base-Qwen `dual.yml`. Patched chat template for Hermes JSON tool calls. verify-full 7/8 PASS (thinking test lenient due to Carnice short-reasoning style). verify-stress PAS-6/7 (needle recall failures at ≥60K — model-level GDN attention ceiling). |
 
 ### Quad-card (4× RTX 3090, TP=4)
 
@@ -144,11 +145,30 @@ This is **directional evidence** (TTFT compression + NIAH retention at 131K), no
 | Decode TPS after compressed prefill | ❌ unmeasured | End-to-end TTFT + decode pipeline not tested |
 | **HumanEval+ / LCB v6 pass@1** | ❌ **not applicable** — those benches have <2K-token prompts; PFlash's compression path wouldn't even engage | Need long-context coding benches (repo-understanding, RULER+code) |
 | **Long-context QA accuracy** (RULER, LongBench, multi-needle) | ❌ unmeasured | The actual quality gate — does compression preserve task performance, not just synthetic needle retrieval? |
-| `verify-stress.sh` 7/7 | ❌ unmeasured | Never run with PFlash front-end |
-| `SOAK_MODE=continuous` | ❌ unmeasured | Never run with PFlash + DFlash daemon |
-| Multi-turn compression stability | ❌ unmeasured | Does compression hold across turns as context accumulates? |
+| `verify-stress.sh` 7/7 | ❌ **0/7 PASS** (2026-05-04, see below) | OpenAI server gate — multiple distinct failures |
+| `SOAK_MODE=continuous` | ❌ blocked | Daemon dies during stress; soak can't run on a dead daemon |
+| Multi-turn compression stability | ❌ blocked by 3rd-cycle CUDA bug | Daemon hits illegal-mem-access on 3rd compress regardless of GPU layout |
 
-**Honest read**: PFlash gives us a compelling single-stat win (24× TTFT compression + NIAH-retention) at 131K source on 1× 3090, which is the headline reproduction of Luce's published claim on our hardware. It does **not** mean PFlash is shippable on this stack — same accuracy gates, stress probes, and soak validation we apply to every other compose are still open. Long-context QA harness (RULER or similar) is the meaningful next investment if we want to ship PFlash for any real workload class.
+#### verify-stress on PFlash-enabled lucebox server (2026-05-04, single-card and dual-GPU)
+
+Tested via `URL=http://localhost:8004 MODEL=luce-dflash bash scripts/verify-stress.sh` against a `lucebox-hub/dflash/scripts/server.py` boot with `--prefill-compression auto --prefill-threshold 8000 --prefill-keep-ratio 0.05` + Qwen3-0.6B-BF16 drafter. Two configurations:
+
+- **Single-GPU**: target+dflash draft+pflash drafter all on GPU 0 → OOM at 75 MiB on 2nd request, daemon exits, all subsequent probes 503. Logs: `results/lucebox-pflash-verify-stress-20260504-152713/`.
+- **Dual-GPU**: local `server.py` patch reading `LUCEBOX_TARGET_GPU=0 LUCEBOX_DRAFT_GPU=1 LUCEBOX_DRAFT_FEATURE_MIRROR=1` to pin dflash draft to GPU 1. Probes 1 (10K + 30K) survive but **return wrong needle answers** because PFlash @ keep=0.05 drops the needle phrase. Probe 2 (25K tool prefill) crashes the daemon with `CUDA error: an illegal memory access was encountered` on the 3rd compress cycle. Probes 3-7 all 503. Logs: `results/lucebox-pflash-verify-stress-dualgpu-20260504-153220/`.
+
+| Probe | Single-GPU | Dual-GPU | Failure mode |
+|---|---|---|---|
+| 1. 10K + 30K needle | ✗ blank reply | ✗ wrong content | PFlash drops needle phrase from top-5% kept chunks |
+| 2. 25K tool prefill | ✗ daemon dead | ✗ HTTP 500 → daemon dies | CUDA illegal-mem-access on 3rd pflash compress |
+| 3. IDE-agent | ✗ HTTP 503 | ✗ HTTP 500 | Cliff 1 mech B class on lucebox path; daemon already dead in single-GPU run |
+| 4-6. Multi-turn / LCB / reasoning | ✗ HTTP 503 | ✗ HTTP 503 | Daemon died at probe 2 |
+| 7. 60K + 90K needle | ✗ HTTP 500 | ✗ HTTP 500 | Daemon dead |
+
+**Two distinct failure classes in the integrated PFlash + DFlash + OpenAI server path:**
+1. **Compression-vs-retrieval at keep=0.05**: short factual needles (color animal num) don't survive top-15-chunks selection in 10-30K contexts. The standalone NIAH bench (#230) used a needle/filler pattern PFlash's importance scorer favors; verify-stress's pattern doesn't replicate that. Means PFlash's "key+answer retained" claim is filler-pattern-dependent at moderate contexts.
+2. **3rd-cycle multi-cycle daemon stability**: lucebox-hub upstream bug — CUDA illegal-mem-access in `ggml_backend_buffer_free` after the 3rd pflash compress cycle, regardless of single- vs dual-GPU. Daemon doesn't recover; subsequent requests 503.
+
+**Honest read**: PFlash gives us a compelling single-stat win (24× TTFT compression + NIAH-retention) at 131K source on 1× 3090 in the **standalone bench harness**, but the **integrated OpenAI server path fails the verify-stress gate**. PFlash is **not a shippable club-3090 path today**. Re-evaluate when (a) lucebox-hub fixes the 3rd-cycle CUDA stability bug, (b) `--pflash-gpu` lands in `server.py` (currently only standalone bench has it), and (c) the importance scorer / keep ratio reliably preserves arbitrary short needles. Long-context QA harness (RULER or similar) is the meaningful next investment if any of those three land.
 
 **Setup gotcha** for anyone re-running on consumer rigs: check `nvidia-smi topo -p2p r` before configuring `--target-gpu` / `--draft-gpu`. If the matrix shows `CNS` (Chipset Not Supported), the dual-GPU split won't deliver its claimed uplift on that hardware regardless of whether you have multiple GPUs. NVLink-bonded setups would also typically expose P2P (a different cross-rig contributor would need to confirm on lucebox specifically; @JusefPol's [#31](https://github.com/noonghunna/club-3090/pull/31) NVLink win was measured on vLLM TP=2, not lucebox). PHB-only consumer boards typically lack P2P.
 

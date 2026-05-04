@@ -1,0 +1,112 @@
+# ===========================================================================
+# Carnice-V2-27B + BF16 MTP overlay — dual RTX 3090 variant.
+#
+# Carnice is a Hermes-style agentic fine-tune of Qwen3.6-27B. This variant
+# grafts the BF16 MTP head from the base Qwen3.6-27B (un-quantized) onto the
+# AutoRound INT4 quant applied to Carnice, recovering MTP spec-decode AL from
+# 2.0 → 3.0 (85–95% of base-Qwen TPS). Tool-call format is Hermes JSON via
+# patched chat template + vLLM's `--tool-call-parser hermes`.
+#
+# Measured (2026-05-04 on club-3090 substrate, dev205 + Genesis v7.51-stable):
+#   65.5 narr / 80.9 code wall TPS (single-stream), AL 3.0, VRAM 22.25 GB/card
+#
+# What this gives you (vs the dual.yml default for base Qwen3.6-27B):
+#   - Hermes-style agentic specialization (better tool use, assistant behavior)
+#   - ~95% narr / ~91% code TPS of base Qwen — virtually no practical difference
+#   - Same MTP n=3, fp8 KV, vision, 65K context
+#   - BF16 MTP head adds +270 MB/card
+#
+# All dual-card variants in this dir:
+#
+#   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  Topology
+#   docker-compose.dual.yml             262K   2         69 / 89          fp8      ✅      2× PCIe
+#   docker-compose.carnice-bf16mtp.yml  65K    1         65 / 81          fp8      ✅      2× PCIe
+#   docker-compose.dual4.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
+#   docker-compose.dual4-dflash.yml     262K   2         64 / 104         FP16     ✅      4× PCIe
+#   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
+#   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅
+#   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌      2× PCIe
+#
+# Run:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.carnice-bf16mtp.yml up -d
+# ===========================================================================
+services:
+  vllm-carnice-bf16mtp:
+    image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
+    container_name: vllm-carnice-bf16mtp
+    restart: "no"
+    ports:
+      - "${PORT:-8070}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      # Patched chat template: tells Carnice to output JSON tool calls
+      # (Hermes XML format) instead of Qwen3 XML format. Required for
+      # `--tool-call-parser hermes` to parse correctly.
+      - ../patches/carnice-chat-template.jinja:/root/.cache/huggingface/carnice-v2-27b-int4-recipe-d-bf16mtp/chat_template.jinja:ro
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
+      # Closes club-3090 #22.
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
+      # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=2
+      # on AutoRound W4A16 models where out-dim shards fall below 64.
+      # Vendored in this repo at ../patches/vllm-marlin-pad/ (no host
+      # filesystem dependency). Drops out when vllm#40361 lands upstream.
+      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      # PCIe-only stack — disable NCCL features that assume NVLink.
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - /root/.cache/huggingface/carnice-v2-27b-int4-recipe-d-bf16mtp
+      - --served-model-name
+      - carnice-bf16mtp
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "2"
+      - --disable-custom-all-reduce
+      - --max-model-len
+      - "65536"
+      - --gpu-memory-utilization
+      - "0.92"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "8192"
+      - --kv-cache-dtype
+      - fp8_e5m2
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
