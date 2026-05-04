@@ -168,7 +168,16 @@ Please do — open an issue using the [Numbers from your rig](https://github.com
 
 ### Found a bug — what should I include?
 
-The [bug report template](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml) asks for the data we always need: `docker logs --tail 100`, `verify-full.sh` output, `nvidia-smi`, your compose variant, and the repo commit. Skipping these means the first reply will just ask for them, costing you a round-trip.
+The [bug report template](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml) asks for the data we always need. The fastest way is one of these `report.sh` flag combos depending on bug type:
+
+| Bug type | Command | Time |
+|---|---|---|
+| Boot crash, wrong output, tool-call regression | `bash scripts/report.sh --verify > my-rig.md` | ~2 min |
+| OOM mid-conversation, hermes/openhands/IDE-agent failures (Cliff 2b) | `bash scripts/report.sh --soak > my-rig.md` | ~25 min |
+| TPS regression / cross-rig perf | `bash scripts/report.sh --bench > my-rig.md` | ~5 min |
+| Not sure / capture everything | `bash scripts/report.sh --full > my-rig.md` | ~35 min |
+
+Each captures hardware, GPU details (incl. power caps), container state, Genesis patch status, KV pool sizing, and engine config in one paste. Skipping these means the first reply will just ask for them, costing you a round-trip.
 
 ### How do I bump Genesis to a newer commit?
 
@@ -255,7 +264,7 @@ base vLLM. Strips out everything that could be the cause.
 - ❌ Fails — the issue is fundamental (driver mismatch, model files
   missing or corrupt, container runtime, base vLLM image). Fix at this
   layer before trying anything else. Symptom-match against the table
-  below or run `bash scripts/report.sh > my-rig.md` and file a bug.
+  below or run `bash scripts/report.sh --verify > my-rig.md` and file a bug.
 
 **Step 2 — `vllm/tools-text` (75K + fp8 + MTP + Genesis)**
 
@@ -322,8 +331,10 @@ Adds: TQ3 KV + Genesis on top of TP=2 + 4-stream concurrency.
 
 - ✅ Boots and verify-stress passes → full dual-card stack validated.
 - ❌ Fails despite steps 3 and 4 working — the bug is specifically in
-  the multi-card TQ3+Genesis intersection. File a bug with `report.sh`
-  output; this is a narrow surface we'd want to debug carefully.
+  the multi-card TQ3+Genesis intersection. File a bug with
+  `bash scripts/report.sh --full > my-rig.md` output; this is a narrow
+  surface we'd want to debug carefully and the full pass (verify + stress
+  + soak + bench) gives us everything to triage in one paste.
 
 ### Why this works for both single and dual-card users
 

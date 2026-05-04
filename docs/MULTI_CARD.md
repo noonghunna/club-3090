@@ -13,8 +13,8 @@ isn't your topology.
 > on 2026-05-03. The TP=8+ sections remain derived expectations. If you
 > have 4× / 8× hardware and run additional configs, please share results via
 > the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml)
-> issue template — `bash scripts/report.sh --bench > my-rig.md` captures
-> everything we'd want.
+> issue template — `bash scripts/report.sh --full > my-rig.md` captures
+> everything we'd want (verify + stress + soak-continuous + bench, ~35 min).
 
 ---
 
@@ -208,8 +208,10 @@ If you have 4× / 8× hardware and run any config, please share via
 The single command that captures everything:
 
 ```bash
-bash scripts/report.sh --bench > my-rig.md
+bash scripts/report.sh --full > my-rig.md
 ```
+
+That's verify-full + verify-stress 7/7 + SOAK_MODE=continuous + canonical bench in one ~35-min pass. Use `--bench` instead if you want bench numbers without the soak (faster but doesn't probe Cliff 2b).
 
 Specifically interested in:
 
