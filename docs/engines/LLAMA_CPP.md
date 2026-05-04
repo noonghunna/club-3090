@@ -203,6 +203,30 @@ Measured on this stack (single 3090, Q4_K_M main + DFlash N=5 draft, code prompt
 
 **Trade-off:** the server forks per request, so chat UX feels sluggish (second request waits on first). For long generation tasks (single-shot code synthesis, document summarization), the per-request fork is fine.
 
+### 🆕 Dual-GPU split (lucebox-hub PRs #78 + #80, May 2026)
+
+If you have two GPUs (e.g. 2× 3090), lucebox-hub now supports a heterogeneous-spec-decode topology — **target on GPU 0, draft on GPU 1, no TP weight-sharding**. This removes the single-card 65K max_ctx ceiling we previously documented (target + draft + KV all competing for 24 GB).
+
+```bash
+# Target on GPU 0, DFlash draft on GPU 1
+/opt/lucebox-hub/build/bin/llama-server \
+  -m /mnt/models/gguf/qwen3.5-27b/Qwen3.5-27B-Q4_K_M.gguf \
+  --draft /mnt/models/gguf/qwen3.5-27b-dflash/dflash-N5.gguf \
+  --target-gpu 0 --draft-gpu 1 \
+  --draft-max 16 --draft-min 1 \
+  -c 262144 \
+  --host 0.0.0.0 --port 8004 \
+  --jinja
+```
+
+Or pin PFlash drafter to its own GPU via `--pflash-gpu` (separate `pflash_daemon` workflow — see [Luce-Org/lucebox-hub PR #78](https://github.com/Luce-Org/lucebox-hub/pull/78)).
+
+**@weicj's measured result on dual RTX 2080 Ti 22 GB**:
+- DFlash dual-GPU: **51.86 tok/s** HumanEval 10-prompt, AL 7.09, 44.3% accept (Qwen3.5-27B Q4 target + z-lab DFlash draft)
+- PFlash phase-split: **passing NIAH source ctx 24K → 262K (10.7×)** vs single-card co-resident
+
+**Recommended for our 2× 3090 stack today**: only with **Qwen3.5-27B** — the Qwen3.6-27B DFlash draft is still under training (per Luce-Org/lucebox-hub README 2026-04-26 snapshot). Untested on 2× 3090; tracked at club-3090 task #229.
+
 ---
 
 ## Tuning levers
