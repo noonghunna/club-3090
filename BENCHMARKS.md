@@ -69,7 +69,7 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 | `dual-dflash.yml` | @noonghunna (2× 3090 PCIe) | fp8 | 185K | 82 / **125** | ~23.6 GB | 2026-04-29 | DFlash N=5 + 1.75 GB draft / card. AL ~4.4. Fastest 2-card short-prompt code path. |
 | `dual-dflash-noviz.yml` | @noonghunna (2× 3090 PCIe) | fp8 | 200K | 78 / **127** | ~23.8 GB | 2026-04-29 | DFlash + no vision tower. +15K ctx vs `dual-dflash`. |
 | `dual-dflash-noviz.yml` | @snoby (2× **4090** PCIe — 5-GPU rig, GPUs 2,3, no NVLink, [#46](https://github.com/noonghunna/club-3090/issues/46)) | fp8 | **180K** | 92.55 / **148.99** | ~21.8 GB | 2026-05-04 | First non-3090 cross-rig data. **Required `max-model-len` drop from 200K→180K** vs 3090 baseline (boot OOM at 200K) — 4090 ctx-ceiling gotcha pending investigation. +17% TPS lift vs same compose on 3090 (78→92.55 narr / 127→148.99 code). |
-| `dual-nvlink.yml` | TBD ([@JusefPol](https://github.com/JusefPol) PR [#31](https://github.com/noonghunna/club-3090/pull/31)) | fp8 | 262K | TBD | TBD | — | NVLink topology variant. |
+| `dual-nvlink.yml` | @JusefPol (2× 3090 PCIe x8 + **NVLink 4× bonded**, i7-11700K, 365 W/card) | fp8 | 262K | **108.81 / 138.55** | ~23.7 GB | 2026-05-04 | First NVLink cross-rig data. **+58% narr / +56% code TPS vs `dual.yml` PCIe-only baseline (69 / 89)** — NVLink reduces the per-token NCCL allreduce latency floor; compounds at multi-stream. verify-stress 7/7 PASS incl. 91K needle. **PASSES v2 continuous soak** (5 sessions × 5 turns, 0 MiB growth, 100% TPS retention). MTP n=3, 65–98% per-position accept. PR [#31](https://github.com/noonghunna/club-3090/pull/31). |
 
 ### Quad-card (4× RTX 3090, TP=4)
 
