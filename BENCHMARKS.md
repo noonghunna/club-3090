@@ -68,6 +68,7 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 | `dual-turbo.yml` | @noonghunna (2× 3090 PCIe) | TQ3 | 262K | 58 / 76 per-stream (**269 TPS aggregate at 4 streams**) | ~19.8 GB | 2026-04-29 | TQ3 KV — 4.67× concurrency for multi-tenant agent workloads. |
 | `dual-dflash.yml` | @noonghunna (2× 3090 PCIe) | fp8 | 185K | 82 / **125** | ~23.6 GB | 2026-04-29 | DFlash N=5 + 1.75 GB draft / card. AL ~4.4. Fastest 2-card short-prompt code path. |
 | `dual-dflash-noviz.yml` | @noonghunna (2× 3090 PCIe) | fp8 | 200K | 78 / **127** | ~23.8 GB | 2026-04-29 | DFlash + no vision tower. +15K ctx vs `dual-dflash`. |
+| `dual-dflash-noviz.yml` | @snoby (2× **4090** PCIe — 5-GPU rig, GPUs 2,3, no NVLink, [#46](https://github.com/noonghunna/club-3090/issues/46)) | fp8 | **180K** | 92.55 / **148.99** | ~21.8 GB | 2026-05-04 | First non-3090 cross-rig data. **Required `max-model-len` drop from 200K→180K** vs 3090 baseline (boot OOM at 200K) — 4090 ctx-ceiling gotcha pending investigation. +17% TPS lift vs same compose on 3090 (78→92.55 narr / 127→148.99 code). |
 | `dual-nvlink.yml` | TBD ([@JusefPol](https://github.com/JusefPol) PR [#31](https://github.com/noonghunna/club-3090/pull/31)) | fp8 | 262K | TBD | TBD | — | NVLink topology variant. |
 
 ### Quad-card (4× RTX 3090, TP=4)
