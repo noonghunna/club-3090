@@ -46,9 +46,9 @@ If you have a working microk8s pipeline and are willing to PR a manifest example
 
 ---
 
-## Proxmox VE — known footgun on kernel 6.17.x
+## Proxmox VE — known footgun on kernel 6.17.x (workaround: native venv)
 
-> **Proxmox VE 8.x / kernel 6.17.x users**: `vllm/vllm-openai:nightly-7a1eb8ac2…` (and likely current nightlies) crashes with `RuntimeError: this event loop is already running` at `vllm.entrypoints.cli.serve.cmd → uvloop.run(run_server(args))` regardless of Genesis pin, TP, runtime config, or `--init`. Same image boots clean on bare-metal Ubuntu 6.8.x. **If you're on Proxmox + 6.17.x kernel and hit this, the bug is environmental, not in club-3090.**
+> **Proxmox VE 8.x / kernel 6.17.x users**: the Docker image `vllm/vllm-openai:nightly-7a1eb8ac2…` (and likely current nightlies) crashes with `RuntimeError: this event loop is already running` at `vllm.entrypoints.cli.serve.cmd → uvloop.run(run_server(args))` regardless of Genesis pin, TP, runtime config, or `--init`. Same image boots clean on bare-metal Ubuntu 6.8.x. **Native venv `pip install vllm==0.20.1` on the same Proxmox host launches cleanly** ([@lexhoefsloot venv bisect](https://github.com/noonghunna/club-3090/issues/49#issuecomment-4374724719) — same kernel, same `default-runtime: nvidia` runtime, native venv works end-to-end including 4-stream concurrent at 170-195 tok/s aggregate over 200K context). **The bug is bounded to the Docker image × Proxmox container runtime interaction — not the kernel and not vLLM itself. Workaround: drop the Docker image, use a native Python venv.**
 
 ### The data trail (cite for upstream filing)
 
@@ -64,8 +64,10 @@ If you have a working microk8s pipeline and are willing to PR a manifest example
 | vLLM upstream regression | ❌ ruled out | Same image boots clean on bare-metal Ubuntu 2× 3090 PCIe (cross-rig, [Probe B reproduction](https://github.com/noonghunna/club-3090/issues/49#issuecomment-4373220693)) |
 | `default-runtime: nvidia` in daemon.json | ❌ ruled out | Removed + per-command `--runtime=nvidia` still crashes |
 | PID 1 / signal forwarding | ❌ ruled out | `--init` (tini PID 1) still crashes |
-| **Proxmox VE kernel 6.17.2-pve specific** | ⚠️ leading candidate | (kernel × Python 3.12 × this image's lib stack interaction) |
-| **Proxmox VE containerd / namespace setup** | ⚠️ adjacent candidate | (LXC / cgroup / seccomp policy interaction at process startup) |
+| Kernel 6.17.x | ❌ ruled out | Native venv on same kernel works end-to-end |
+| vLLM as a Python package | ❌ ruled out | `pip install vllm==0.20.1` venv works on same host |
+| Proxmox VE at large | ❌ ruled out | Same Proxmox host runs the venv cleanly |
+| **Docker image × Proxmox container runtime interaction** | ⚠️ remaining candidate | Sole surviving suspect after venv-vs-image cross-test |
 
 ### What this means for you
 
@@ -74,11 +76,18 @@ If you're on bare-metal anything (Ubuntu, Debian, RHEL family) on a kernel 6.8-6
 If you're on Proxmox VE LXC/VM and hit the same `uvloop` trace at boot:
 
 1. Confirm it's the same crash: container exits within ~5 seconds of `docker run` (or compose up), the trace mentions `uvloop.loop.Loop.run_forever` → `RuntimeError: this event loop is already running`.
-2. If yes, no club-3090-side fix exists today. The image works on different host stacks; your environment is the differentiator.
-3. **Cheapest workaround attempt** (low signal but free to try): boot with `--privileged`. If that boots clean, the issue is namespace-policy-related and the workaround for your daily driver is `--privileged` (not ideal, but unblocks).
-4. **Better long-term**: file with Proxmox forum (PVE + Docker + GPU passthrough thread) or NVIDIA Container Toolkit — they have the audience that can debug containerd × kernel × Python interactions.
+2. If yes, the **direct workaround is to drop the Docker image and use a native Python venv** on the host:
+   ```bash
+   python3 -m venv /opt/vllm-env
+   source /opt/vllm-env/bin/activate
+   pip install vllm==0.20.1
+   # Run vllm serve directly — same CLI args as the compose `command:` block, just without docker
+   ```
+   This is what [@lexhoefsloot's bisect proved works](https://github.com/noonghunna/club-3090/issues/49#issuecomment-4374724719). Genesis can be applied via the same `apply_all` script against the venv install (Sander's setup supports it). Trade-off: you lose the consistency of a pinned Docker image, but you gain a working serving stack on Proxmox.
+3. **Cheapest in-Docker workaround attempt** (still worth trying if you need Docker for orchestration reasons): boot with `--privileged`. If that boots clean, the issue is namespace-policy-related and the workaround for your daily driver is `--privileged` (not ideal, but unblocks).
+4. **For deeper investigation / upstream filing**: the bug is at the Docker image × Proxmox container runtime layer. Best filing target is NVIDIA Container Toolkit's issue tracker (since Proxmox uses it for GPU passthrough) or the Proxmox forum. Cite the venv-works datapoint to narrow scope.
 
-If you find a workaround that gets dual.yml booting on your Proxmox rig, **please file a docs PR back here** so the next Proxmox user inherits the answer faster.
+If you find an in-Docker workaround that gets dual.yml booting on your Proxmox rig, **please file a docs PR back here** so the next Proxmox user inherits the answer faster.
 
 ### Re-check triggers
 
