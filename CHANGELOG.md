@@ -2,6 +2,33 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-04 — bounded-thinking Phase 3 grammar A/B complete; DeepSeek scratchpad is the new recommended grammar ⭐
+
+After the Phase 3 5-grammar A/B at full HE+ 164 + LCB v6 50 (n=214), `bounded-thinking.yml` is updated to recommend the **DeepSeek scratchpad grammar** (PLAN/NOTE×0-15/VERDICT FSM at `tools/grammar-eval/deepseek-scratchpad.gbnf`) as the new default. Phase 3 result: **93.9% HE+ / 66.0% LCB v6 (87.4% combined, +1 net vs the andthattoo G/A/E baseline, +4pp on LCB v6)**, mean 541 think tokens.
+
+The compose itself is unchanged engine-side — same vLLM image, same Genesis stack, same TQ3 KV, same MTP n=3, same `enable_in_reasoning` flag. Only the recommended grammar in the docstring + the on-disk grammar files in `tools/grammar-eval/` change. The grammar is selected client-side via `extra_body={"structured_outputs": {"grammar": ...}}`.
+
+**Three grammars are now validated and available** (all live in `tools/grammar-eval/`):
+
+- **DeepSeek scratchpad** (new default) — 87.4% combined, best on LCB v6
+- **andthattoo G/A/E** (the originally-published technique we ported) — 86.9% combined, ~4× tighter think budget (134 vs 541 tokens). Available via [`andthattoo/structured-cot`](https://github.com/andthattoo/structured-cot/blob/main/grammars/fsm_grammar.gbnf). Pick this for cost-bounded deployments.
+- **Holiday tagline** — 86.4% combined, 24-token extreme-compression. Wins LCB by 4pp over andthattoo too. Pick this for tagging/classification/log-triage.
+
+**We ship one compose, not three.** Combined-accuracy spread across the three grammars is within noise (0.5pp over 214 problems), so creating three sibling composes would have been paradox-of-choice without statistical justification. The compose is grammar-agnostic — choice happens at the client.
+
+Phase 3 also disproved Phase 2's n=30 finding: **PROMPT_TERSE doesn't win at scale** (82.2% combined, −10 net vs the FSM-enforced grammars at 214 problems). The FSM mask earns its keep on the long tail. Phase 1 reproducibility is exact (HE+ Δ +4.3pp, LCB Δ +24.0pp — both match Phase 1's published numbers).
+
+**Files updated:**
+- `models/qwen3.6-27b/vllm/compose/docker-compose.bounded-thinking.yml` — docstring rewritten to recommend DeepSeek scratchpad; references all three available grammars + Phase 3 results
+- `tools/grammar-eval/deepseek-scratchpad.gbnf` (NEW; landed earlier in Phase 2)
+- `docs/STRUCTURED_COT.md` — Phase 3 final results, three-grammar decision table, single-compose-with-default-grammar rationale
+- `docs/SINGLE_CARD.md`, `docs/CLIFFS.md`, `docs/EXAMPLES.md`, `docs/UPSTREAM.md`, `BENCHMARKS.md` — refreshed to reflect Phase 3 numbers and the single shipped compose
+- `tools/grammar-eval/smoke-test.py` — `--boot` default unchanged, but boots `vllm/bounded-thinking` (canonical name retained)
+
+This wraps active research on bounded-thinking. Reopen if upstream FSM-regress cluster behavior changes (Genesis pin bump, vLLM grammar engine swap, model-family change), or if a user-driven workload demands the Holiday or andthattoo grammar as a default sibling compose.
+
+**Bug fix bundled in this commit:** `tools/grammar-eval/subset-bench.py` `--full --include-lcb` mode now correctly threads dataset kind through `run_condition` so LCB problems use `mod.run_tests_livecodebench` instead of HE+ assertion-based testing. Without this, the Phase 3 LCB shard crashed with `KeyError: 'prompt'` on the HE→LCB transition (which is how we discovered it). Phase 3 LCB results recovered by re-running LCB-only on GPU 0 after the fix.
+
 ## 2026-05-03 PM — docs reflect Cliff 2b accumulated-context envelope ⭐
 
 Updates docs to surface the corrected operating envelope after today's full validation matrix (see prior entry "soak-test v2 continuous fixtures + Cliff 2 reproduction at 25K accumulated context").

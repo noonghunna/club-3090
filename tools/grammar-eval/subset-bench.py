@@ -151,9 +151,10 @@ def generate(mod, client, args, condition: str, user_prompt: str, grammars: dict
     raise ValueError(condition)
 
 
-def run_condition(mod, client, args, prob: dict, condition: str, grammars: dict[str, str]) -> dict:
+def run_condition(mod, client, args, prob: dict, condition: str, grammars: dict[str, str], dataset: str = "humaneval") -> dict:
+    harness_dataset = "livecodebench" if dataset == "lcb_v6" else dataset
     entry_point = prob.get("entry_point") or "candidate"
-    user_prompt = mod.build_user_prompt(prob, "humaneval")
+    user_prompt = mod.build_user_prompt(prob, harness_dataset)
     t0 = time.time()
     try:
         text, total_tokens = generate(mod, client, args, condition, user_prompt, grammars)
@@ -163,9 +164,11 @@ def run_condition(mod, client, args, prob: dict, condition: str, grammars: dict[
         think_tokens = mod.count_tokens(think, args.tokenizer)
         output_tokens = max(int(total_tokens) - think_tokens, 0)
         violation = grammar_violation(condition, think)
-        entry_found = mod._entry_point_found(code, "humaneval", entry_point, prob)
+        entry_found = mod._entry_point_found(code, harness_dataset, entry_point, prob)
         if extraction["extraction_issue"] == "empty_code":
             passed, err = False, "empty_code"
+        elif harness_dataset == "livecodebench":
+            passed, err = mod.run_tests_livecodebench(code, prob, args.timeout)
         else:
             passed, err = mod.run_tests(code, prob.get("test", ""), entry_point, args.timeout)
         wall_ms = round((time.time() - t0) * 1000)
@@ -427,7 +430,7 @@ def main() -> int:
             print(f"{tag}[grammar-full] [{i:03d}/{len(plan)}] {prob['task_id']} ({ds})")
             for condition in CONDITIONS:
                 t0 = time.time()
-                result = run_condition(mod, client, args, prob, condition, grammars)
+                result = run_condition(mod, client, args, prob, condition, grammars, dataset=ds)
                 row["conditions"][condition] = result
                 print(
                     f"{tag}[grammar-full]   {LABELS[condition]:<20s} {result['verdict']:<4s} "

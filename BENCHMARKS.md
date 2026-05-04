@@ -50,7 +50,7 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 | `long-vision.yml` | @noonghunna (1× 3090) | TQ3 | 145K | 50 / 66 | ~23.0 GB | 2026-04-30 | vision + tools + thinking. mem-util 0.95. |
 | `long-text.yml` ⭐ | @noonghunna (1× 3090) | TQ3 | 180K | 50 / 67 | ~22.3 GB | 2026-04-30 | text-only (vision tower dropped). MTP n=3. mem-util 0.93. **Default for RAG / IDE agents below 25K accumulated ctx**. |
 | `long-text-no-mtp.yml` | @noonghunna (1× 3090) | TQ3 | 200K | TBD | ~21.0 GB | — | max-context single-shot, no MTP. Slow decode but biggest ctx window. |
-| `bounded-thinking.yml` | @noonghunna (1× 3090) | TQ3 | 180K | 50 / 66 | ~21.7 GB | 2026-04-30 | structured-CoT FSM + grammar enforcement. Per-token TPS ~10% slower than `long-text` due to mask compute, but per-problem 10× faster on coding bench because thinking is 30× shorter. See [STRUCTURED_COT.md](docs/STRUCTURED_COT.md). 92.7% pass@1 HE+, 66% LCB v6. |
+| `bounded-thinking.yml` | @noonghunna (1× 3090) | TQ3 | 180K | 50 / 66 | ~21.7 GB | 2026-05-04 | structured-CoT FSM in reasoning channel; **recommended grammar: DeepSeek scratchpad** (PLAN/NOTE×0-15/VERDICT). Phase 3 final: **93.9% HE+ / 66.0% LCB v6** (87.4% combined, +1 net vs the andthattoo G/A/E baseline). Andthattoo G/A/E grammar also works (94.5% HE+ / 62.0% LCB / 86.9% combined, ~4× tighter think budget — pass via `extra_body`). See [STRUCTURED_COT.md](docs/STRUCTURED_COT.md). |
 | `tools-text.yml` | @noonghunna (1× 3090) | fp8 | 75K | TBD | TBD | — | IDE-agent path that escapes the long-text Cliff 1 mech B leak (see [#16](https://github.com/noonghunna/club-3090/issues/16)). |
 
 ### Single-card (1× RTX 3090) — llama.cpp

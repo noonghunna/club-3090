@@ -173,7 +173,7 @@ Full diagnostic trail (6-round bisect): [`results/v0.20-migration/v769-codex-r1-
 |---|---|---|---|---|
 | `long-text.yml` | 180K | 0.95 | 6/7 (Cliff 2 only fail) | IDE-agent recommended |
 | `long-vision.yml` | 145K | 0.95 | 6/7 (Cliff 2 only fail) | Vision tower tightens budget further |
-| `bounded-thinking.yml` | 180K | 0.95 | 6/7 (Cliff 2 only fail) | Parity with long-text |
+| `bounded-thinking.yml` | 180K | 0.95 | 6/7 (Cliff 2 only fail) | Parity with long-text. Recommended grammar: DeepSeek scratchpad. |
 | `dual-turbo.yml` | 262K | 0.85 (TP=2) | 6/7 (Cliff 2 only fail) | TP=2 doesn't avoid Cliff 2 |
 | `tools-text.yml` | 75K | 0.97 | ✅ | ✅ 8/8 | ✅ | ✅ | 69.66 (CV 1.4%) |
 | `dual-turbo.yml` | 262K | 0.85 | ✅ | ✅ 8/8 | ✅ | ✅ | 76.01 (CV 4.5%, 269 TPS aggregate at n=4 streams) |

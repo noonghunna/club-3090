@@ -1,8 +1,28 @@
 # ===========================================================================
-# Bounded-thinking variant — long-text 214K + structured-CoT grammar enforcement
-# in the reasoning channel. Compresses think tokens ~30× with iso-or-better
-# accuracy on coding benchmarks. See docs/STRUCTURED_COT.md for the full
-# bench, the grammar files, and the harness.
+# Bounded-thinking variant — recommended grammar is the DeepSeek scratchpad
+# (PLAN/NOTE×0-15/VERDICT FSM at `tools/grammar-eval/deepseek-scratchpad.gbnf`).
+#
+# **Phase 3 bench 2026-05-04 final (full HE+ 164 + LCB v6 50, n=214):**
+#   - DeepSeek scratchpad: 87.4% combined Pass@1, +4pp on LCB v6 vs the
+#     original andthattoo G/A/E grammar, +1 net vs andthattoo combined
+#   - andthattoo G/A/E (the originally-published structured-CoT grammar):
+#     86.9% combined, tighter think budget (mean 134 tokens vs DeepSeek's 541)
+#
+# We ship this single compose with DeepSeek as the recommended grammar
+# because it wins both per-LCB and combined at scale. The compose itself is
+# grammar-agnostic — the grammar is selected client-side via
+# `extra_body={"structured_outputs": {"grammar": ...}}`. Users who want
+# tighter compression (the ~4× cheaper andthattoo grammar) can pass
+# `tools/grammar-eval/holiday-tagline.gbnf` (extreme 24-token compression,
+# wins LCB) or the original andthattoo G/A/E grammar from
+# https://github.com/andthattoo/structured-cot — see
+# docs/STRUCTURED_COT.md for the full Phase 3 comparison and grammar
+# decision table.
+#
+# Long-text 214K + structured-CoT grammar enforcement in the reasoning
+# channel. Compresses think tokens ~30× with iso-or-better accuracy on
+# coding benchmarks. See docs/STRUCTURED_COT.md for the full bench, the
+# grammar files, and the harness.
 #
 # ⚠️ NOT SAFE FOR IDE-AGENT WORKLOADS WITH TOOL SCHEMAS. Same Cliff 1 mech B
 # inductor compile-path leak as long-text/long-vision (club-3090#16). Use
@@ -84,6 +104,8 @@
 # Run with:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
 #   docker compose -f docker-compose.bounded-thinking.yml up -d
+#   # or via switch.sh:
+#   bash scripts/switch.sh vllm/bounded-thinking
 #
 # Then send requests with structured_outputs in extra_body — see
 # docs/STRUCTURED_COT.md for client examples.

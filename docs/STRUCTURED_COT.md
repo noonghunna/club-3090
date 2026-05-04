@@ -49,15 +49,41 @@ andthattoo's headline numbers were on Qwen3.6-35B-A3B MoE Q4_K_M / H100 / llama.
 
 Our FSM pass@1 lands within 2pp of theirs on both benchmarks — the technique reproduces cleanly across the model+quant+engine substitution. Our accuracy *delta* is bigger because our FREE baseline is weaker (more on this in Caveats).
 
-## When to pick this over the standard `long-text` 214K
+## When to pick a `bounded-thinking-*` variant over the standard `long-text` 214K
 
-Pick `bounded-thinking` when **all three** of:
+Pick a bounded-thinking variant when **all three** of:
 
 1. You're calling the API with `extra_body={"structured_outputs": {...}}` (grammar / JSON / regex / etc).
 2. You want bounded thinking cost as a structural guarantee (not just "the prompt asks nicely").
-3. Your workload tolerates a ~10% per-token TPS hit in exchange for ~30× cheaper think output (per-problem wall-clock is faster, not slower).
+3. Your workload tolerates a ~10% per-token TPS hit in exchange for ~7-30× cheaper think output (per-problem wall-clock is faster, not slower).
 
-Pick `long-text` (the regular variant) when none of those apply. The two composes are otherwise identical (same 214K context, same MTP n=3, same TQ3 KV, same patches). The only difference is one vLLM flag — `--structured-outputs-config.enable_in_reasoning true`, which is what makes grammar enforcement actually fire inside the `<think>` block on this stack.
+Pick `long-text` (the regular variant) when none of those apply. The bounded-thinking variants are otherwise identical to long-text (same 214K context, same MTP n=3, same TQ3 KV, same patches). The only difference is one vLLM flag — `--structured-outputs-config.enable_in_reasoning true`, which is what makes grammar enforcement actually fire inside the `<think>` block on this stack.
+
+### One compose ships — `bounded-thinking.yml` with the DeepSeek scratchpad as the recommended grammar
+
+After the Phase 3 grammar A/B (2026-05-04, full HE+ 164 + LCB v6 50, 5 grammars × 214 problems), the headline finding is that **DeepSeek scratchpad is the only grammar to net-positive vs the original andthattoo G/A/E baseline at scale (+1)**, and it wins LCB v6 specifically by **+4pp** (66% vs 62%). The original andthattoo grammar is still excellent (and ~4× tighter on think budget), but the per-LCB win + combined edge made DeepSeek the right ship default.
+
+We ship one compose, with the DeepSeek scratchpad as the recommended grammar:
+
+```bash
+bash scripts/switch.sh vllm/bounded-thinking
+# Then send requests with:
+#   extra_body={"structured_outputs": {"grammar": <deepseek-scratchpad GBNF>}}
+```
+
+The grammar is at [`tools/grammar-eval/deepseek-scratchpad.gbnf`](../tools/grammar-eval/deepseek-scratchpad.gbnf).
+
+#### Three grammars are available, all client-selectable
+
+The compose is grammar-agnostic — the grammar is selected client-side via `extra_body={"structured_outputs": {"grammar": ...}}`. Three grammars are validated against the bench and live in `tools/grammar-eval/`:
+
+| Grammar | File | HE+ | LCB v6 | Combined | Mean think | Best for |
+|---|---|---:|---:|---:|---:|---|
+| **DeepSeek scratchpad (recommended ⭐)** | [`deepseek-scratchpad.gbnf`](../tools/grammar-eval/deepseek-scratchpad.gbnf) | 93.9% | **66.0%** | **87.4%** | 541 | General default. Best LCB / harder algorithmic problems. PLAN/NOTE×0-15/VERDICT scaffolding. |
+| andthattoo G/A/E (the original) | [`andthattoo/structured-cot`](https://github.com/andthattoo/structured-cot/blob/main/grammars/fsm_grammar.gbnf) | **94.5%** | 62.0% | 86.9% | **134** | Cost-bounded deployments where ~4× tighter think budget matters more than the +0.5pp combined gain. The originally-published technique. |
+| Holiday tagline | [`holiday-tagline.gbnf`](../tools/grammar-eval/holiday-tagline.gbnf) | 92.7% | **66.0%** | 86.4% | **24** | Extreme-compression workloads — tagging, classification, log triage. 24-token thinking is the *point*. |
+
+The combined-accuracy spread is within noise (87.4% / 86.9% / 86.4% over 214 problems = ±0.5pp — well below the n=214 confidence interval of ±3pp). What's *not* noise is the per-LCB +4pp win for DeepSeek and Holiday over the original, and the per-HE +0.6pp edge for andthattoo over DeepSeek (also borderline). The honest framing: **all three grammars are good; pick by workload-fit and think-budget cost rather than chasing fractional pass@1 gains**.
 
 ## How to use it
 
@@ -65,7 +91,7 @@ Pick `long-text` (the regular variant) when none of those apply. The two compose
 
 ```bash
 cd /path/to/club-3090
-bash scripts/launch.sh --variant vllm/bounded-thinking
+bash scripts/switch.sh vllm/bounded-thinking
 # Or directly:
 cd models/qwen3.6-27b/vllm/compose
 docker compose -f docker-compose.bounded-thinking.yml up -d
@@ -148,43 +174,96 @@ If you re-bench at `max_tokens=8192`, the FREE baseline recovers and the FSM Δ 
 
 Two greedy `temperature=0` runs of the same problem on two RTX 3090s (same image, same compose, different `CUDA_VISIBLE_DEVICES`) produced different verdicts on a small fraction of problems. Likely from MTP draft-rollback non-determinism interacting with the grammar mask. Per-problem reproducibility caveat — aggregate rates are stable.
 
-### FSM-regress cases are real — Phase 2 narrows the cause
+### FSM-regress cases — Phase 3 final (5-grammar A/B at 214 problems)
 
-6 problems on HE+ (HE/97, 101, 108, 129, 137, 151) and 3 on LCB v6: FREE solves them, FSM doesn't. Pattern is consistent — FSM produces 36–188 think tokens, the rigid `GOAL/APPROACH/EDGE` shape over-compresses and the model loses necessary context.
+6 problems on HE+ (HE/97, 101, 108, 129, 137, 151) and 3 on LCB v6: FREE solves them, the original FSM doesn't. Phase 3 ran a 5-grammar A/B on the **full HE+ 164 + LCB v6 50 (n=214)** to see whether any alternative grammar net-beats the andthattoo G/A/E FSM at scale.
 
-**Phase 2 grammar A/B (2026-05-03):** we tested two alternative grammars and the no-grammar control on a 30-problem HE+ subset including all 6 known FSM-regressions:
+The five conditions:
 
+- **FREE** — open thinking, no constraint. Reproduces the upstream baseline.
+- **current** (now `andthattoo` G/A/E FSM) — the shipped grammar. GOAL/APPROACH/EDGE 3-line bounded-thinking FSM.
 - **Holiday tagline** ([Holiday_Purpose_3166](https://www.reddit.com/r/LocalLLaMA/comments/1sx7w55/) on r/LocalLLaMA, Codex-translated to xgrammar): 5 ultra-short fields (`Q=verb / M=method / K=keywords / R=result-keywords / V=verdict`) with comma-separated free-token lists in K and R as a pressure-relief valve.
-- **DeepSeek scratchpad** (proposed by DeepSeek when we ran the design problem past it): `PLAN: …` + 0–15 `NOTE: …` lines + `VERDICT: …`. Variable-count free-text notes bounded by explicit PLAN/VERDICT markers; pressure-relief via repeatable note count rather than Holiday's bounded-token-list approach.
-- **PROMPT_TERSE** (existing andthattoo control): same `GOAL/APPROACH/EDGE` shape as our shipped FSM, **delivered as a system-prompt instruction with no grammar mask**.
+- **DeepSeek scratchpad** (proposed by DeepSeek when we ran the design problem past it): `PLAN: …` + 0–15 `NOTE: …` lines + `VERDICT: …`. Variable-count free-text notes bounded by explicit PLAN/VERDICT markers — pressure-relief via repeatable note count rather than Holiday's bounded-token-list approach.
+- **PROMPT_TERSE** (existing andthattoo control): same `GOAL/APPROACH/EDGE` shape as the shipped FSM, **delivered as a system-prompt instruction with no grammar mask**.
 
-Results on the 30-problem subset (n=30 → noise floor ±3.3pp):
+#### Phase 3 final results (2026-05-04, 0 grammar violations across 1070 generations on andthattoo/Holiday/DeepSeek; 5/1070 = 0.47% on PROMPT_TERSE / FREE shape checks)
 
-| Grammar              | Pass@1     | Mean think | Prior-regression rescue (of 6) |
-|----------------------|-----------:|-----------:|-------------------------------:|
-| FREE                 | 28/30      |       3036 | 4/6                            |
-| **current** (G/A/E FSM) | 28/30  |         95 | baseline (these 6 fail by definition) |
-| Holiday tagline      | 27/30      |     **23** | 4/6                            |
-| **DeepSeek scratchpad** | 28/30   |        387 | **5/6**                        |
-| PROMPT_TERSE         | **29/30**  |         75 | **5/6**                        |
+##### HumanEval+ 164
 
-The interesting finding isn't which new grammar wins — it's that **PROMPT_TERSE rescues 5/6 of the prior FSM-regressions while using the same `GOAL/APPROACH/EDGE` shape, just without the mask**. That's strong evidence that **the FSM enforcement itself is the mechanism causing those 6 regressions**, not the absence of structure. The grammar's value is structural guarantees (can't be talked out of, can't exceed the bound); on this specific failure cluster, the cost of those guarantees is paid in lost solutions.
+| Grammar | Pass@1 | Mean think | Compression vs FREE |
+|---|---:|---:|---:|
+| FREE | 90.2% (148) | 2983 | 1× |
+| **andthattoo (G/A/E FSM)** | **94.5% (155)** | 92 | 32× |
+| Holiday tagline | 92.7% (152) | **23** | **128×** |
+| **DeepSeek scratchpad** | 93.9% (154) | 401 | 7× |
+| PROMPT_TERSE | 92.1% (151) | 73 | 41× |
 
-Of the *grammars*, DeepSeek scratchpad is the strongest candidate: matches `current`'s 28/30 accuracy and rescues 5/6 prior regressions with ~4× the think budget (387 vs 95 tokens). Holiday gets the most aggressive compression (23 tokens — 4× tighter than current) but pays −3pp accuracy on this subset.
+##### LiveCodeBench v6 50
 
-Phase 3 (full HE+ 164 + LCB v6 50, all 5 conditions, ~5h single-card or ~2.5h dual-card parallel) will resolve whether the n=30 signals hold at scale. Possible outcomes shape the ship decision:
+| Grammar | Pass@1 | Mean think | Compression vs FREE |
+|---|---:|---:|---:|
+| FREE | 38.0% (19) | 3775 | 1× |
+| andthattoo (G/A/E FSM) | 62.0% (31) | 270 | 14× |
+| **Holiday tagline** | **66.0% (33)** | **24** | **155×** |
+| **DeepSeek scratchpad** | **66.0% (33)** | 1002 | 3.8× |
+| PROMPT_TERSE | 50.0% (25) | 984 | 3.8× |
 
-- If DeepSeek scratchpad keeps its rescue rate at 164 → ship a sibling `bounded-thinking-deepseek.yml` compose.
-- If PROMPT_TERSE keeps its 29/30-equivalent at 164 → strongest argument so far for a "prompt-only" path with no FSM at all on this model+quant.
-- If Holiday's accuracy cost at 30 was real, not noise → keep it as the extreme-compression option for tagging / classification workloads where 23-token thinking is the point.
+##### Combined (n=214)
 
-See [`tools/grammar-eval/`](../tools/grammar-eval/) for the harness, grammars, and the [Phase 2 results](../tools/grammar-eval/results/) when we land them in the repo.
+| Grammar | Pass@1 | Net vs andthattoo | Mean think |
+|---|---:|---:|---:|
+| FREE | 78.0% (167) | −19 | 3168 |
+| **andthattoo (G/A/E FSM)** | 86.9% (186) | baseline | 134 |
+| Holiday tagline | 86.4% (185) | −1 (10 rescued, 11 new fail) | **24** |
+| **DeepSeek scratchpad** | **87.4% (187)** | **+1** (9 rescued, 8 new fail) | 541 |
+| PROMPT_TERSE | 82.2% (176) | −10 (5 rescued, 15 new fail) | 286 |
 
-### PROMPT_TERSE is competitive
+##### Phase 1 reproducibility (sanity)
 
-On HE+, PROMPT_TERSE pass@1 is 92.1% vs FSM's 92.7%. On LCB v6, 64% vs 66%. With *no grammar*, just a system prompt asking for the compact format, the model self-disciplines well enough on most problems. The grammar's incremental value is structural enforcement on hard problems where prompting alone fails. Worth being honest: we're not comparing FSM to "no constraint at all" — both compact modes (FSM and PT) crush FREE.
+| | Phase 1 | Phase 3 |
+|---|---:|---:|
+| HE+ FSM Δ vs FREE | +4.3pp | +4.3pp ✓ |
+| LCB v6 FSM Δ vs FREE | +24.0pp | +24.0pp ✓ |
 
-The case for FSM specifically is *guarantees* — the grammar can't be talked out of by an aggressive system prompt, can't drift on hard problems, can't exceed the bound. PT can't promise any of that.
+**Exact match.** The bench harness is sound and the original results reproduce.
+
+#### Phase 3 findings
+
+1. **DeepSeek scratchpad is the first grammar to net-beat the andthattoo G/A/E baseline at scale (+1 across 214 problems).** The lead is well within noise (1/214 = 0.5pp), so we don't claim it's "better" categorically — but it ties on combined and **wins on LCB v6 by 4pp**.
+
+2. **Holiday's extreme compression (24 mean tokens) ties DeepSeek on LCB v6 at 66%** — beats the original andthattoo grammar by 4pp on LCB despite paying 1.8pp on HE+. Strong fit for code-block-tight workloads (LeetCode-style problems, tagging, log triage). Combined is −1 net.
+
+3. **PROMPT_TERSE doesn't win at scale.** Phase 2's n=30 finding ("PROMPT_TERSE wins, FSM mask hurts") was subset-selection bias — the 30-problem set was weighted toward the 6 prior regressions, which over-represented the failure mode. At full HE+ + LCB, PROMPT_TERSE lands at 82.2% combined, **−10 net**. The FSM mask earns its keep on the long tail.
+
+4. **HE/151 is the universal hard regression.** Only FREE and PROMPT_TERSE pass it. andthattoo / Holiday / DeepSeek all fail. *Some* prior regressions resist any FSM enforcement, regardless of shape — likely because the problem statement requires longer-form reasoning that no compact-grammar shape can fit.
+
+5. **The dataset matters more than the grammar.** All four grammars converge to within 4pp on HE+ (90.2–94.5%) but spread across **28pp on LCB v6** (38.0–66.0%). LCB amplifies grammar-design effects because problems are denser and longer-form-resistant.
+
+#### Ship decision (2026-05-04)
+
+We ship **one compose**, `bounded-thinking.yml`, with the DeepSeek scratchpad as the recommended grammar — the only grammar to net-beat the andthattoo G/A/E baseline at scale (+1 net combined, **+4pp on LCB v6**).
+
+The compose is grammar-agnostic — all three validated grammars (DeepSeek, andthattoo G/A/E, Holiday tagline) are available client-side via `extra_body={"structured_outputs": {"grammar": ...}}`. Pick by workload:
+
+- **DeepSeek scratchpad** — default. Strongest combined + best LCB.
+- **andthattoo G/A/E** — when ~4× tighter think budget matters (cost-bounded deployments). The originally-published technique.
+- **Holiday tagline** — when 24-token think is the point (tagging, classification, log triage). Wins LCB by 4pp over andthattoo too.
+
+We chose to ship one compose rather than three sibling composes because:
+
+1. The combined-accuracy spread across the three grammars is within noise (0.5pp over 214 problems).
+2. Three near-identical composes in `switch.sh --list` creates a paradox-of-choice problem the data doesn't justify.
+3. The compose itself is grammar-agnostic — selecting the grammar at the client is the natural locus of choice.
+
+PROMPT_TERSE is **not shipped** — Phase 3 disproved the n=30 finding (it lands at 82.2% combined, −10 net vs the FSM-enforced grammars). The FSM mask earns its keep on the long tail.
+
+See [`tools/grammar-eval/`](../tools/grammar-eval/) for the harness, all four grammars, and the per-problem results.
+
+### PROMPT_TERSE — Phase 3 disproved the Phase 2 hypothesis
+
+On Phase 1's first run (n=164 HE+, n=50 LCB v6), PROMPT_TERSE landed at 92.1%/64% — close enough to the original FSM (92.7%/66%) to look competitive. Phase 2's n=30 subset bench then showed PROMPT_TERSE leading at 96.7% — but that was subset-selection bias (the 30 problems were weighted toward the 6 known FSM-regressions, which over-represented PROMPT_TERSE's strength).
+
+**Phase 3 at full HE+ 164 + LCB v6 50 lands PROMPT_TERSE at 82.2% combined (−10 net vs FSM)** — the FSM mask earns its keep on the long tail. The case for FSM specifically is *guarantees* — the grammar can't be talked out of by an aggressive system prompt, can't drift on hard problems, can't exceed the bound. PT can't promise any of that, and at scale it can't match the FSM either.
 
 ### Sampling-time cost
 

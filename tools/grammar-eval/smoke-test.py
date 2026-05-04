@@ -173,12 +173,12 @@ def main() -> int:
     p.add_argument("--max-tokens", type=int, default=900)
     p.add_argument("--request-timeout", type=float, default=300)
     p.add_argument("--ready-timeout", type=int, default=900)
-    p.add_argument("--boot", action="store_true", help="Run scripts/switch.sh vllm/bounded-thinking first.")
+    p.add_argument("--boot", action="store_true", help="Run scripts/switch.sh vllm/bounded-thinking-andthattoo first.")
     args = p.parse_args()
 
     if args.boot:
-        print("[grammar-smoke] booting vllm/bounded-thinking")
-        subprocess.run(["bash", "scripts/switch.sh", "vllm/bounded-thinking"], cwd=REPO_ROOT, check=True)
+        print("[grammar-smoke] booting vllm/bounded-thinking-andthattoo")
+        subprocess.run(["bash", "scripts/switch.sh", "vllm/bounded-thinking-andthattoo"], cwd=REPO_ROOT, check=True)
 
     model = args.model or wait_models(args.base_url, args.ready_timeout)
     grammar = pathlib.Path(args.grammar_file).read_text()

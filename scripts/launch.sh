@@ -132,7 +132,7 @@ if [[ -z "$VARIANT" ]]; then
         "Long ctx + vision (145K + vision, MTP) — recommended for chat/agents"        "vllm/long-vision"
         "Long ctx, text only — Balanced MTP (180K, MTP K=3) — recommended IDE-agent"  "vllm/long-text"
         "Long ctx, text only — Max-context (200K, no MTP) — one-shot >50K prompts"    "vllm/long-text-no-mtp"
-        "Bounded thinking (180K, structured CoT — ~30× cheaper think on coding)"      "vllm/bounded-thinking"
+        "Bounded thinking (180K, structured-CoT FSM — recommended grammar: DeepSeek scratchpad, 87.4% combined HE+/LCB v6)"  "vllm/bounded-thinking"
       )
     else
       VLLM_OPTS=()

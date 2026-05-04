@@ -20,7 +20,7 @@ Qwen3.6-27B is a thinking model. The `<think>...</think>` block before the answe
 | Scenario | `max_tokens` |
 |---|---|
 | **FREE thinking on (default long-text / long-vision composes)** | **8192** minimum. 16384 for hard reasoning / competition-grade problems. |
-| **FSM bounded thinking (`bounded-thinking.yml`)** | **4096** is fine — grammar caps the think block to a few hundred tokens of structured form. |
+| **FSM bounded thinking (`bounded-thinking.yml`)** | **4096** is comfortable. The recommended DeepSeek scratchpad grammar uses ~500-1000 think tokens; the andthattoo G/A/E grammar uses ~150. Either fits well below 4096. |
 | **`enable_thinking: False`** | Set as tight as the answer needs (50-200 typically). |
 | **Tool-using agents (multi-turn)** | 1024-2048 per turn. If a middle turn needs >2K to think, your prompt structure probably needs work. |
 
