@@ -8,19 +8,20 @@
 # patched chat template + vLLM's `--tool-call-parser hermes`.
 #
 # Measured (2026-05-04 on club-3090 substrate, dev205 + Genesis v7.51-stable):
-#   65.5 narr / 80.9 code wall TPS (single-stream), AL 3.0, VRAM 22.25 GB/card
+#   79.6 narr / 86.6 code wall TPS (single-stream, 262K ctx), AL 3.0
+#   VRAM 22,226 MiB/card (21.7 GiB) — same as base-Qwen dual.yml
 #
 # What this gives you (vs the dual.yml default for base Qwen3.6-27B):
 #   - Hermes-style agentic specialization (better tool use, assistant behavior)
-#   - ~95% narr / ~91% code TPS of base Qwen — virtually no practical difference
-#   - Same MTP n=3, fp8 KV, vision, 65K context
-#   - BF16 MTP head adds +270 MB/card
+#   - Full 262K context, fp8 KV, MTP n=3 — identical capabilities to dual.yml
+#   - TPS: ~115% narr / ~98% code of base Qwen (Carnice is concise → less thinking overhead)
+#   - BF16 MTP head adds +270 MB/card (negligible at full VRAM budget)
 #
 # All dual-card variants in this dir:
 #
 #   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  Topology
 #   docker-compose.dual.yml             262K   2         69 / 89          fp8      ✅      2× PCIe
-#   docker-compose.carnice-bf16mtp.yml  65K    1         65 / 81          fp8      ✅      2× PCIe
+#   docker-compose.carnice-bf16mtp.yml  262K   1         80 / 87          fp8      ✅      2× PCIe
 #   docker-compose.dual4.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
 #   docker-compose.dual4-dflash.yml     262K   2         64 / 104         FP16     ✅      4× PCIe
 #   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
@@ -41,7 +42,7 @@ services:
     volumes:
       - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
       # Patched chat template: tells Carnice to output JSON tool calls
-      # (Hermes XML format) instead of Qwen3 XML format. Required for
+      # inside <tool_call> tags (instead of Qwen3 XML format). Required for
       # `--tool-call-parser hermes` to parse correctly.
       - ../patches/carnice-chat-template.jinja:/root/.cache/huggingface/carnice-v2-27b-int4-recipe-d-bf16mtp/chat_template.jinja:ro
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
@@ -87,7 +88,7 @@ services:
       - "2"
       - --disable-custom-all-reduce
       - --max-model-len
-      - "65536"
+      - "262144"
       - --gpu-memory-utilization
       - "0.92"
       - --max-num-seqs
