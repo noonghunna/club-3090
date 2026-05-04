@@ -99,6 +99,16 @@ If you're on non-NVIDIA hardware, [`/docs/engines/LLAMA_CPP.md`](engines/LLAMA_C
 
 ---
 
+## Note for SM86 long-context single-stream TG
+
+Independent cross-rig measurement ([sztlink/turboquant-cuda-bench, IQ4_NL repro 2026-04-27](https://github.com/sztlink/turboquant-cuda-bench/blob/main/bench/iq4nl-repro/results.md)) shows that on **SM86 (Ampere consumer, RTX 3090)** with `q8_0/turbo4` KV, single-stream token-generation rate degrades **~−71% from 0K to 131K context** vs ~−54% on **SM89 (Ada Lovelace, RTX 4090)** for the same model + KV config. The conclusion in their writeup: "SM86 has a weaker warp dispatch path for the turbo4 dequant kernel. The degradation is architectural, not model-specific." Source originally surfaced by [@lkaupp](https://github.com/ggml-org/llama.cpp/discussions/20969#discussioncomment-16733925) on a 3090.
+
+Practical implication for our stack: even when you can fit the prompt + KV in VRAM (so Cliff 1 and Cliff 2 don't fire), **single-stream TG above ~32K-65K on SM86 pays a structural per-token rate tax** that you can't fix by changing KV format choice. The recommendation in [`docs/SINGLE_CARD.md`](SINGLE_CARD.md) to switch to llama.cpp at >60K context is partly about VRAM cliffs and partly about this dispatch-rate cliff — llama.cpp's CUDA kernels avoid the same warp-dispatch-overhead profile under Triton/AutoRound INT4.
+
+If you're on **SM89+ hardware (RTX 4090 / 5090, A6000 Ada / Blackwell)**, the per-token rate at depth holds up materially better — the −54% drop at 131K on SM89 is still real but ~17 percentage points less severe than SM86. If long-context single-stream throughput is your primary workload, that's the hardware class to target.
+
+---
+
 ## Note for WSL2 / Windows users
 
 WSL2 inherits Windows' GPU timeout policy via WDDM (Windows Display Driver Model). Long-running CUDA kernels can trip **TDR (Timeout Detection and Recovery)** — Windows force-resets the GPU when a kernel exceeds the TDR delay (default 2 seconds), invalidating every CUDA allocation in flight. The signature in vLLM logs is:
