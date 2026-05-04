@@ -2,6 +2,23 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-04 — Carnice-V2-27B + BF16 MTP overlay — new compose variant ⭐
+
+Adds `docker-compose.carnice-bf16mtp.yml`: [kai-os/Carnice-V2-27b](https://huggingface.co/kai-os/Carnice-V2-27b) (Hermes-style agentic fine-tune of Qwen3.6-27B) quantized to INT4 via delta-merge of Lorbus's AutoRound grid, with a BF16 MTP overlay for clean spec-decode acceptance.
+
+**Key findings from the diagnostic push:**
+- Hypothesis B (MTP quant-grid mismatch) accounted for ~70% of the AL gap. Un-quantizing 7 mtp.layers.0.* projections (BF16 overlay) recovered AL from 2.0 → 3.0.
+- Tool-call format: Carnice's Hermes-style template used XML, but vLLM's `--tool-call-parser hermes` expects JSON. Patched chat template instructs JSON output inside `<tool_call>` tags. Vendored at `patches/carnice-chat-template.jinja`.
+- Full 262K context confirmed (22,246 MiB/card), 2 streams, same fp8 KV + MTP n=3 as dual.yml.
+
+**Validation:**
+- `verify-full.sh`: 7/8 PASS (thinking test lenient — Carnice is concise, not verbose)
+- `verify-stress.sh`: 6/7 PASS (needle recall at ≥60K — model-level GDN attention ceiling)
+- `bench.sh` (n=5): **71.75 narr / 80.35 code wall TPS**, MTP AL 3.02-3.14, TTFT 141ms
+- `soak-test.sh` (8×3 turns): PASS — 0 MiB growth, 0 errors, 101.6% TPS retention
+
+**Compose:** `docker-compose.carnice-bf16mtp.yml`
+
 ## 2026-05-03 late PM — `dual4-dflash.yml` TP=4 DFlash validated on 4× RTX 3090 PCIe ⭐
 
 Adds `docker-compose.dual4-dflash.yml`, a 4-card full-context DFlash variant validated on Whamp's 4× RTX 3090 PCIe rig for [club-3090 discussion #26](https://github.com/noonghunna/club-3090/discussions/26). This is a capacity / 262K-code variant, not a replacement for the faster 2-card DFlash short-prompt path.

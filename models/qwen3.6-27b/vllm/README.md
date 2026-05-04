@@ -36,6 +36,9 @@ cd compose && docker compose -f docker-compose.dual-turbo.yml up -d
 
 # Dual-card peak code TPS — DFlash N=5 (78/128 narr/code)
 cd compose && docker compose -f docker-compose.dual-dflash.yml up -d
+
+# Dual-card Hermes agentic — Carnice fine-tune + BF16 MTP (72/80 narr/code, Hermes tool format)
+cd compose && docker compose -f docker-compose.carnice-bf16mtp.yml up -d
 ```
 
 See [the model README's compose table](../README.md#compose-variants-vllm) for the full matrix with TPS numbers and use cases.
