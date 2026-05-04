@@ -1,0 +1,24 @@
+[bench] target = /mnt/models/gguf/qwen3.5-27b/Qwen3.5-27B-Q4_K_M.gguf
+[bench] draft  = /mnt/models/huggingface/qwen3.5-27b-dflash/model.safetensors
+[bench] bin    = /opt/ai/lucebox-hub/dflash/build/test_dflash
+[bench] tmp    = /tmp/dflash_bench
+[bench] skipping tokenize (reusing /tmp/dflash_bench)
+
+[bench] mode=fast  n_gen=128
+prompt                         steps     AL   pct%    tok/s
+--------------------------------------------------------------
+  has_close_elements              28   4.57   28.8    55.54
+  separate_paren_groups           20   6.40   40.9    75.72
+  truncate_number                 22   5.82   38.1    70.09
+  below_zero                      18   7.11   45.1    82.68
+  mean_absolute_deviation         24   5.33   33.3    63.61
+  intersperse                     28   4.57   29.2    54.61
+  parse_nested_parens             13   9.85   63.5   109.09
+  filter_by_substring             21   6.10   38.4    72.09
+  sum_product                     16   8.00   55.5    91.51
+  rolling_max                     21   6.10   41.4    71.83
+--------------------------------------------------------------
+MEAN                                   6.38   41.4    74.68
+
+commit/step range: 4.57 - 9.85
+tok/s range:        54.6 - 109.1
