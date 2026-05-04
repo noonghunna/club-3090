@@ -7,21 +7,21 @@
 # 2.0 → 3.0 (85–95% of base-Qwen TPS). Tool-call format is Hermes JSON via
 # patched chat template + vLLM's `--tool-call-parser hermes`.
 #
-# Measured (2026-05-04 on club-3090 substrate, dev205 + Genesis v7.51-stable):
-#   79.6 narr / 86.6 code wall TPS (single-stream, 262K ctx), AL 3.0
-#   VRAM 22,226 MiB/card (21.7 GiB) — same as base-Qwen dual.yml
+#   Measured (2026-05-04 on club-3090 substrate, dev205):
+#     75.6 code wall TPS (n=5, CV 7.3%), MTP AL 3.15-3.39
+#     VRAM 22,246 MiB/card (21.7 GiB) — 2 concurrent streams at 262K
 #
 # What this gives you (vs the dual.yml default for base Qwen3.6-27B):
 #   - Hermes-style agentic specialization (better tool use, assistant behavior)
-#   - Full 262K context, fp8 KV, MTP n=3 — identical capabilities to dual.yml
-#   - TPS: ~115% narr / ~98% code of base Qwen (Carnice is concise → less thinking overhead)
-#   - BF16 MTP head adds +270 MB/card (negligible at full VRAM budget)
+#   - Full 262K context, 2 streams, fp8 KV, MTP n=3 — identical to dual.yml
+#   - ~85% code TPS of base Qwen — close enough that Hermes specialization wins
+#   - BF16 MTP head adds +270 MB/card (negligible at this VRAM budget)
 #
 # All dual-card variants in this dir:
 #
 #   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  Topology
 #   docker-compose.dual.yml             262K   2         69 / 89          fp8      ✅      2× PCIe
-#   docker-compose.carnice-bf16mtp.yml  262K   1         80 / 87          fp8      ✅      2× PCIe
+#   docker-compose.carnice-bf16mtp.yml  262K   2         76 / —          fp8      ✅      2× PCIe
 #   docker-compose.dual4.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
 #   docker-compose.dual4-dflash.yml     262K   2         64 / 104         FP16     ✅      4× PCIe
 #   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
@@ -92,7 +92,7 @@ services:
       - --gpu-memory-utilization
       - "0.92"
       - --max-num-seqs
-      - "1"
+      - "2"
       - --max-num-batched-tokens
       - "8192"
       - --kv-cache-dtype
