@@ -104,7 +104,12 @@ services:
       - GENESIS_ENABLE_P74_CHUNK_CLAMP=1
       - GENESIS_ENABLE_P83=1
       # P85 dropped 2026-05-03 (requires P84 which we don't enable in v7.69)
-      - GENESIS_ENABLE_P87=1
+      # P87 (marlin pad-sub-tile-n text-patch) disabled because the same fix is
+      # already vendored at ../patches/vllm-marlin-pad/marlin.py and RO-mounted
+      # over the target file (lines 53-54). Letting Genesis re-do the patch fails
+      # with [Errno 30] read-only filesystem and `set -e` propagates exit-1 from
+      # `apply_all` before `vllm serve` runs (club-3090 #49).
+      - GENESIS_ENABLE_P87=0
       - GENESIS_ENABLE_P91=1
       - GENESIS_ENABLE_P94=1
       - GENESIS_ENABLE_P98=1

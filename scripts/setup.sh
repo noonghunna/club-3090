@@ -79,7 +79,12 @@ else
 fi
 
 echo "[preflight] checking environment..."
-preflight_docker || exit 1
+# docker is soft-warn for setup.sh — this script only fetches genesis + models,
+# no docker invocations until you actually `docker compose up` later. Hard-failing
+# blocks non-docker container-runtime users (microk8s / podman / k8s / manual)
+# from running setup at all (club-3090 disc #48). launch.sh keeps the hard check
+# because it actually invokes docker.
+preflight_docker || echo "[preflight] WARN:  docker unavailable — setup will continue (genesis + model fetch don't need docker), but you'll need a working container runtime before 'docker compose up'."
 preflight_gpu 1  || exit 1
 preflight_disk "${MODEL_DIR}" "${PREFLIGHT_DISK_GB}" || exit 1
 preflight_hf_token  # soft-warn only; downloads will surface the hard failure

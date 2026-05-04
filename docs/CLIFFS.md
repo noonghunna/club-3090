@@ -57,17 +57,15 @@ Trade: llama.cpp gives up ~3× decode speed (21 TPS vs 67 on vLLM single when si
 
 ---
 
-## vLLM pin compatibility status (master shipped on v0.20 + Genesis v7.66 — 2026-05-02)
+## vLLM pin compatibility status (master ships on v0.20 + Genesis v7.69 — 2026-05-02 PM)
 
-**Master now ships on `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.66 dev tip (commit `fc89395`).** Cliff 1 mech B (inductor compile-path FFN intermediate buffer leak) is **closed** across all 4 TQ3 composes via PN25 v3 (local import-time backport for TP=1) + PN30 dst-shaped temp fix (local correction for Sander's compact `.contiguous()`). verify-stress.sh 7-probe ladder: 6/7 pass on every TQ3 variant; only Cliff 2 architectural fails.
+**Master now ships on `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.69 dev tip (commit `2db18df`).** Cliff 1 mech B closed across all 4 TQ3 composes; **Cliff 2 60K is now closed on TP=1 + 24 GB** via Genesis v7.69 + vllm#35975 backport + mem-util tuning. See "Genesis v7.69 dev tip" section below for the v7.69 closure recipe.
 
-### Cliff 1 mech B — what closed it
+The v7.66 section that follows is **historical**: it documents the initial v0.20 migration shipped 2026-05-02 AM. v7.68 was tested + rejected; v7.69 is the current pin. `scripts/setup.sh` reflects this (`GENESIS_PIN=2db18df`).
 
----
+### Cliff 1 mech B — what closed it (initial v7.66 work, retained for history)
 
-## vLLM pin compatibility status (master shipped on v0.20 + Genesis v7.66 — 2026-05-02)
-
-**Master now ships on `vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8` (`0.20.1rc1.dev16+g7a1eb8ac2`) + Genesis v7.66 dev tip (commit `fc89395`).** Cliff 1 mech B (inductor compile-path FFN intermediate buffer leak) is **closed** across all 4 TQ3 composes via PN25 v3 (local import-time backport for TP=1) + PN30 dst-shaped temp fix (local correction for Sander's compact `.contiguous()`). verify-stress.sh 7-probe ladder: 6/7 pass on every TQ3 variant; only Cliff 2 architectural fails.
+(History snapshot: `fc89395`, the v7.66 dev tip, was the initial pin. Patch trail and sidecars described in this section are still illustrative of the mechanisms; current sidecar list lives in the v7.69 section.)
 
 ### Cliff 1 mech B — what closed it
 
@@ -113,7 +111,9 @@ Cross-rig validation of v7.68 on the `v7.68-cliff2-test` branch (pushed to origi
 | **P103** (FLA Cliff 2 chunked fwd_h+fwd_o) | ❌ broken | Wrap reports "rebound at 0 caller sites" — never intercepts. Cliff 2 OOM trace passes through `chunk_gated_delta_rule_fwd` directly. v7.68 commit `5743c03` fixed a NameError but the binding mechanism still has 0 callers on Qwen3.6-27B. |
 | **PN32** (GDN chunked-prefill) | ❌ insufficient on TP=1 | Chunks `gdn_linear_attn.forward_cuda` but the inner FLA `chunk_gated_delta_rule_fwd` still allocates the full h tensor. Without PN30 (broken above) the activation budget is so tight Cliff 2 fires at 30K instead of 50-60K. |
 
-**Verdict:** master stays on v7.66 (`fc89395`) + our 3 sidecars. Branch `v7.68-cliff2-test` retained as a snapshot for cross-rig data. Re-evaluate when Sander cuts v7.69 with these 3 fixes applied.
+**Verdict (at the time):** master stayed on v7.66 (`fc89395`) + 3 sidecars after v7.68 didn't work. Branch `v7.68-cliff2-test` retained as a snapshot for cross-rig data.
+
+**Update 2026-05-02 PM:** Sander cut v7.69 with all 3 of these fixes applied — see next section. Master moved to v7.69 (`2db18df`). The 3 sidecars listed in this section are now folded into v7.69 itself.
 
 Full findings in [`results/v0.20-migration/v768-cliff2-test.summary`](../results/v0.20-migration/v768-cliff2-test.summary).
 
@@ -167,7 +167,7 @@ The 3 prior sidecars (`patch_pn25_*`, `patch_pn30_dst_shaped_*`, `patch_workspac
 
 Full diagnostic trail (6-round bisect): [`results/v0.20-migration/v769-codex-r1-test.summary`](../results/v0.20-migration/v769-codex-r1-test.summary).
 
-### Validation across all 4 TQ3 variants (2026-05-02 on Genesis v7.66 + local sidecars)
+### Validation across all 4 TQ3 variants (2026-05-02 — initial v7.66 + local sidecars run; superseded by v7.69 results above)
 
 | Variant | Ctx | mem-util | verify-stress.sh probes | Notes |
 |---|---|---|---|---|
