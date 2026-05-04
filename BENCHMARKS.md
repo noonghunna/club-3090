@@ -103,6 +103,17 @@ Not TPS, but load-bearing. Every shipped variant is validated against:
 
 The single-card vLLM Cliff 2b status is canonicalized in [#41](https://github.com/noonghunna/club-3090/issues/41) — fix is gated on upstream [Sandermage genesis-vllm-patches#19](https://github.com/Sandermage/genesis-vllm-patches/issues/19). See [docs/CLIFFS.md](docs/CLIFFS.md) for the byte-level explanation.
 
+### Cross-engine — Luce DFlash (lucebox-hub) on Qwen3.5-27B
+
+Not directly comparable to vLLM rows above (different engine, different bench script, different model — Qwen3.5-27B not 3.6 because the 3.6 DFlash draft is still under training as of 2026-05-04). Bench harness: `lucebox-hub/dflash/scripts/bench_he.py`, HumanEval 10 prompts, n_gen=128.
+
+| Config | Rig | Mean tok/s | AL | Accept % | Notes |
+|---|---|---:|---:|---:|---|
+| Same-card (target + draft both on GPU 0) | @noonghunna (1× 3090) | 73.97 | 6.39 | 41.3% | Range 52.7–108.7 across 10 HE prompts. AL is the strongest for this draft on this model class. Bench 2026-05-04. |
+| **Dual-GPU split** ([PR #80](https://github.com/Luce-Org/lucebox-hub/pull/80) `--target-gpu 0 --draft-gpu 1 --draft-feature-mirror`) | @noonghunna (2× 3090, no NVLink) | 75.24 | 6.39 | 41.3% | Range 54.2–110.0. **+1.7% over same-card on 24 GB cards** — essentially noise. The split's value is freeing draft from competing with target activation budget; on 24 GB / 3090 there's already 4 GB of headroom so the bottleneck the split addresses isn't binding. **PR #80's 51.86 tok/s on dual 2080 Ti 22GB result still holds** for tighter-VRAM Ampere — that hardware class genuinely needs the split. |
+
+PFlash phase-split ([PR #78](https://github.com/Luce-Org/lucebox-hub/pull/78)) is a separate question — that's about long-context prefill compression (24K → 262K passing NIAH source ctx claimed), not decode TPS. Not benched in this run; tracked at task #230 if pursued.
+
 ---
 
 ## See also
