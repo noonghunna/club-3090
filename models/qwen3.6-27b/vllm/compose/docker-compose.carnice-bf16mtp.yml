@@ -8,8 +8,8 @@
 # patched chat template + vLLM's `--tool-call-parser hermes`.
 #
 #   Measured (2026-05-04 on club-3090 substrate, dev205):
-#     75.6 code wall TPS (n=5, CV 7.3%), MTP AL 3.15-3.39
-#     VRAM 22,246 MiB/card (21.7 GiB) — 2 concurrent streams at 262K
+#     71.8 narr / 80.4 code wall TPS (n=5 each, CV ~11%)
+#     MTP AL 3.02-3.14, TTFT 141ms, VRAM 22,246 MiB/card
 #
 # What this gives you (vs the dual.yml default for base Qwen3.6-27B):
 #   - Hermes-style agentic specialization (better tool use, assistant behavior)
@@ -21,7 +21,7 @@
 #
 #   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  Topology
 #   docker-compose.dual.yml             262K   2         69 / 89          fp8      ✅      2× PCIe
-#   docker-compose.carnice-bf16mtp.yml  262K   2         76 / —          fp8      ✅      2× PCIe
+#   docker-compose.carnice-bf16mtp.yml  262K   2         72 / 80          fp8      ✅      2× PCIe
 #   docker-compose.dual4.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
 #   docker-compose.dual4-dflash.yml     262K   2         64 / 104         FP16     ✅      4× PCIe
 #   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
