@@ -90,9 +90,57 @@ If you'll run multiple models, plan ~20 GB each.
 
 ## Things this stack doesn't support (hardware-wise)
 
-- **macOS / Windows native** — Linux only (vLLM constraint). WSL2 might work but isn't tested.
+- **macOS / Windows native** — Linux only (vLLM constraint). WSL2 works but with caveats (see below).
 - **AMD GPUs** — vLLM has experimental ROCm support but we haven't validated. llama.cpp works on AMD via HIPBLAS.
 - **Apple Silicon** — llama.cpp via Metal works for the model, but our recipes are Linux-x86-64 path-specific.
 - **Intel GPUs** — llama.cpp via SYCL/oneAPI has support; not tested by us.
 
 If you're on non-NVIDIA hardware, [`/docs/engines/LLAMA_CPP.md`](engines/LLAMA_CPP.md) is your starting point.
+
+---
+
+## Note for WSL2 / Windows users
+
+WSL2 inherits Windows' GPU timeout policy via WDDM (Windows Display Driver Model). Long-running CUDA kernels can trip **TDR (Timeout Detection and Recovery)** — Windows force-resets the GPU when a kernel exceeds the TDR delay (default 2 seconds), invalidating every CUDA allocation in flight. The signature in vLLM logs is:
+
+```
+RuntimeError: CUDA driver error: device not ready
+  (during torch.ops._C.marlin_gemm.default or similar long kernel)
+RuntimeError: !handles_.at(i) INTERNAL ASSERT FAILED at CUDACachingAllocator.cpp
+```
+
+This is **not OOM** — the engine is being externally reset by the Windows display driver mid-kernel. Cross-rig validated by [@RossNE99](https://github.com/noonghunna/club-3090/issues/50) on a 2× 3090 WSL2 rig: 156K-token prompt triggers TDR reliably; smaller prompts pass.
+
+### Fix — extend the TDR delay on the Windows host
+
+From an Administrator PowerShell on the Windows host (not inside WSL):
+
+```powershell
+Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\GraphicsDrivers" `
+  -Name TdrDelay -Type DWord -Value 60 -Force
+
+Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\GraphicsDrivers" `
+  -Name TdrDdiDelay -Type DWord -Value 60 -Force
+```
+
+Then **reboot Windows** (registry change only takes effect on boot). After reboot, retry the long-prompt path.
+
+Three TDR options in increasing aggression:
+- **`TdrDelay=60`** (recommended): give kernels up to 60 seconds before TDR triggers
+- **`TdrLevel=0`** (more permissive): disable TDR entirely — appropriate for dedicated AI rigs where the GPU isn't your display adapter
+- **Dual-boot Linux** (no TDR at all): sidesteps the whole class
+
+### Additional WSL2 considerations
+
+- vLLM auto-detects WSL2 and disables `pin_memory` (`Using 'pin_memory=False' as WSL is detected. This may slow down the performance.` in boot log) — expected behavior, can't be overridden cleanly.
+- Host RAM: the 17 GB Q4 model checkpoint loads via paged read. If WSL2 host RAM is < 24 GB, vLLM will warn that auto-prefetch is disabled and fall back to slower load. Allocate at least 24 GB to WSL2 for clean model loading.
+
+---
+
+## Note for non-Docker / non-bare-metal runtimes
+
+Proxmox VE, microk8s, podman, manual k8s — see [CONTAINER_RUNTIMES.md](CONTAINER_RUNTIMES.md) for environmental footnotes when the runtime / host stack diverges from the bare-metal Ubuntu + Docker baseline that the verify-* scripts target. Includes:
+
+- The Proxmox VE 8.x / kernel 6.17.x asyncio crash class (parked, environmental, full elimination trail)
+- microk8s integration (open invitation to PR an example manifest)
+- podman compose env override pattern
