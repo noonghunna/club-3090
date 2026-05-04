@@ -69,6 +69,47 @@ The intersection — TP values that work — is **1, 2, 4, 5, 8, 10**. So:
 If you have an awkward GPU count, use the next-lower valid TP and leave
 the extras idle, or run separate stacks on different ports.
 
+### Picking which cards to use on awkward counts
+
+On a rig with 3 cards (or more, where you only want to use 2 for vLLM),
+**which two you select matters** for both throughput and reliability.
+
+```bash
+# Inspect topology first — connectivity classes affect TP allreduce
+nvidia-smi topo -m
+```
+
+The matrix shows pairwise links between GPUs. Best to worst for TP allreduce:
+
+| Class | Meaning | Implication |
+|---|---|---|
+| `NV#` | NVLink-bonded | Fastest. We don't have it on consumer 3090s by default. |
+| `PIX` | Same PCIe switch (one bridge hop) | Optimal on PCIe-only stacks. |
+| `PXB` | Multiple PCIe bridges, no host bridge | Acceptable; slightly higher latency. |
+| `PHB` | Crosses PCIe Host Bridge (the CPU) | Common on consumer boards; works but ~10-15% allreduce overhead vs PIX. |
+| `SYS` | Crosses NUMA / SMP interconnect | Avoid for TP if there's a same-NUMA pair available. |
+
+**Pick a same-switch pair (`PIX`) if your rig has one** — typically the two
+slots wired into the same PCIe expander on workstation boards. On consumer
+ATX, all GPUs usually traverse the host bridge (`PHB`) so it doesn't matter
+much; on Threadripper / EPYC / dual-CPU server boards, NUMA topology can
+make a measurable difference.
+
+To run TP=2 on cards 1+2 (e.g., card 0 is reserved for ComfyUI / display):
+
+```yaml
+# In your override compose file
+services:
+  vllm-qwen36-27b-dual:
+    environment:
+      - CUDA_VISIBLE_DEVICES=1,2
+```
+
+Cross-rig data: [@lexhoefsloot](https://github.com/noonghunna/club-3090/issues/49)
+runs TP=2 on host GPUs 1+2 of a 3× 3090 rig (same PCIe switch, `PHB` to
+GPU 0) — that's the right pattern for a rig where GPU 0 is doing other
+work or differs in topology.
+
 ---
 
 ## Shipped TP=4 baselines — `vllm/dual4` and `vllm/dual4-dflash`
