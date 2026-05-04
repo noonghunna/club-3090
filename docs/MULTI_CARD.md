@@ -1,32 +1,33 @@
 # Multi-card (3+ GPUs) — derivation, constraints, scaling recipe
 
 You have **3 or more GPUs** and want to know if club-3090 applies. Short
-answer: yes, but we don't ship pre-baked configs because we can't
-hardware-test them. This page explains what scales (and what doesn't)
-when going beyond TP=2, the constraints to know, and the recipe for
-deriving your own compose from `dual.yml`.
+answer: yes. We ship one community-validated 4×3090 baseline and keep
+other 3+ GPU configs as derivation recipes until someone measures them.
+This page explains what scales (and what doesn't) when going beyond TP=2,
+the constraints to know, and how to derive your own compose when `dual4.yml`
+isn't your topology.
 
-> **Honest disclaimer:** the maintainer rig is **2× RTX 3090 PCIe**.
-> Everything below is derived from vLLM's documented tensor parallelism
-> behavior + our measured TP=2 baseline + Marlin pad math. None of it is
-> measured on 3+ card hardware locally. **If you have 4× / 8× hardware
-> and run any of these configs, please share results via the
-> [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml)
-> issue template** — `bash scripts/report.sh --bench > my-rig.md`
-> captures everything we'd want.
+> **Validation note:** the maintainer rig is **2× RTX 3090 PCIe**, but
+> Whamp's 4× RTX 3090 PCIe rig validated the TP=4 fp8/MTP baseline in
+> [discussion #26](https://github.com/noonghunna/club-3090/discussions/26)
+> on 2026-05-03. The TP=8+ sections remain derived expectations. If you
+> have 4× / 8× hardware and run additional configs, please share results via
+> the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml)
+> issue template — `bash scripts/report.sh --bench > my-rig.md` captures
+> everything we'd want.
 
 ---
 
 ## TL;DR — what scales, what doesn't
 
-| Aspect | TP=1 | TP=2 (measured) | TP=4 (derived) | TP=8 (derived) |
+| Aspect | TP=1 | TP=2 (measured) | TP=4 (measured) | TP=8 (derived) |
 |---|---|---|---|---|
 | Per-card weight share | 100% (~14 GB) | 50% (~7 GB) | 25% (~3.5 GB) | 12.5% (~1.75 GB) |
 | KV pool capacity | smallest | 2× | ~4× | ~8× |
-| Per-card peak VRAM (262K target) | 23.5+ GB tight | 23.6 GB tight | ~16-18 GB | ~10-12 GB |
-| Cliff 2 single-prompt | fires at ~60K | doesn't fire (verified at 237K) | shouldn't fire | shouldn't fire |
-| Per-stream TPS (PCIe-only) | baseline | ~same as TP=1 | likely lower | lower still |
-| Concurrent throughput (multi-stream) | 1× | ~1.7-3.6× | derived ~2.5-7× | derived ~3-12× |
+| Per-card peak VRAM (262K target) | 23.5+ GB tight | 23.6 GB tight | **23.5 GB fp8 / 22.0 GB DFlash** | ~10-12 GB |
+| Cliff 2 single-prompt | fires at ~60K | doesn't fire (verified at 237K) | **passes 91K needle** | shouldn't fire |
+| Per-stream TPS (PCIe-only) | baseline | ~same as TP=1 | **63/76 fp8, 64/104 DFlash** | lower still |
+| Concurrent throughput (multi-stream) | 1× | ~1.7-3.6× | KV pre-check **6.77× fp8, 2.27× DFlash @ 262K** | derived ~3-12× |
 | Marlin pad-sub-tile-n patch | not needed | required | required | required |
 
 **Two key takeaways:**
@@ -70,9 +71,49 @@ the extras idle, or run separate stacks on different ports.
 
 ---
 
-## Recipe — derive your config from `dual.yml`
+## Shipped TP=4 baselines — `vllm/dual4` and `vllm/dual4-dflash`
 
-`dual.yml` is the tested baseline. To scale to TP=N, copy it and change
+For 4× RTX 3090 PCIe, start with the measured fp8/MTP compose:
+
+```bash
+bash scripts/switch.sh vllm/dual4
+```
+
+`docker-compose.dual4.yml` keeps the `dual.yml` fp8/MTP feature set and
+changes TP/streams from 2 → 4. Validation on Whamp's 4× 3090 PCIe rig:
+
+- boots at `max_model_len=262144`, `max_num_seqs=4`
+- vLLM reports GPU KV cache size **483,200 tokens** and **6.77×** maximum concurrency for 262K-token requests
+- `verify-full.sh` passes
+- `verify-stress.sh` passes 7/7; probe 7 recalls **58,569-token** and **91,070-token** needles
+- `bench.sh`: **63.01 narr / 76.25 code wall TPS**, peak **23,494 MiB/card**
+
+Use the DFlash variant when code throughput matters more than stream count
+and you can download the gated `z-lab/Qwen3.6-27B-DFlash` draft:
+
+```bash
+WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
+bash scripts/switch.sh vllm/dual4-dflash
+```
+
+`docker-compose.dual4-dflash.yml` keeps full 262K context but uses FP16 KV
+and admits two full-context streams:
+
+- boots at `max_model_len=262144`, `max_num_seqs=2`
+- vLLM reports GPU KV cache size **207,264 tokens** and **2.27×** maximum concurrency for 262K-token requests
+- `verify-full.sh` passes
+- `verify-stress.sh` passes 7/7; probe 7 recalls **58,570-token** and **91,070-token** needles
+- `bench.sh`: **64.00 narr / 104.40 code wall TPS**, peak **21,960 MiB/card**
+- DFlash AL during code bench: **4.43 / 4.37 / 4.35** last observed samples
+
+Single-stream TPS is lower than the 2-card DFlash variants on PCIe-only
+allreduce, so use TP=4 DFlash for full-262K code-heavy work and two admitted
+streams — not as a replacement for the fastest 2-card short-prompt DFlash path.
+
+## Recipe — derive your own config from `dual.yml`
+
+`dual.yml` is the tested 2-card baseline and `dual4.yml` is the measured
+4-card baseline. To scale to another TP=N, copy one of those and change
 **three lines**:
 
 ```diff
@@ -99,39 +140,42 @@ Everything else stays the same:
   needed, not less
 
 Container name + port: pick something distinct so it doesn't collide
-with your other variants:
+with your other variants. `dual4.yml` uses `vllm-qwen36-27b-dual4` and
+port `8015`; reserve a different name/port for further experiments:
 
 ```yaml
-container_name: vllm-qwen36-27b-quad     # or octa
+container_name: vllm-qwen36-27b-octa
 ports:
-  - "${PORT:-8014}:8000"                  # 8010-8013 are dual variants
+  - "${PORT:-8016}:8000"
 ```
 
 ---
 
-## What to expect on TP=4 (4× 3090 PCIe)
+## What we measured on TP=4 (4× 3090 PCIe)
 
-These are **derived expectations**, not measurements. Adjust to your
-rig's actual numbers when you bench:
+Measured 2026-05-03 on Whamp's 4× RTX 3090 PCIe rig:
 
-- **Boot time:** longer than TP=2 (more NCCL handshakes, more weight
-  shards to load). 90s-3min cold boot typical for vLLM at this size.
-- **Per-card VRAM:** roughly 16-18 GB at peak with `--max-model-len
-  262144 + max-num-seqs 4 + fp8 KV`. Significant headroom vs TP=2's
-  23.6 GB — you can push max-num-seqs higher or bump max-model-len if
-  your prompts need it.
-- **Per-stream decode TPS:** likely lower than TP=2's ~70 narr / ~89
-  code (PCIe NCCL overhead). Could be ~50-65 narr / ~70-80 code as a
-  starting estimate — verify with `bench.sh`.
-- **Aggregate concurrent throughput:** higher than TP=2 across multiple
-  streams. The KV pool 2× larger than TP=2 means more in-flight
-  requests fit, and each card's compute is freed by smaller weight
-  share.
-- **Cliff 2:** doesn't apply. DeltaNet GDN forward state splits across
-  4 cards — single-prompt at 262K should work without the per-card 24
-  GB pressure that drives Cliff 2 on single-card.
-- **NVLink bridges if available:** would substantially help per-stream
-  TPS. PCIe-only at TP=4 is functional but compute-bound on NCCL.
+- **fp8/MTP boot time:** 355s cold after model/image cache populated.
+- **fp8/MTP pre-check:** `max_model_len=262144`, `max_num_seqs=4`, GPU KV
+  cache size 483,200 tokens, max concurrency 6.77× at 262K.
+- **fp8/MTP VRAM:** 21,714 MiB idle after boot; 23,494 MiB/card peak
+  during canonical bench.
+- **fp8/MTP TPS:** 63.01 narrative / 76.25 code wall TPS.
+- **MTP AL:** last three code-bench metrics showed mean acceptance length
+  3.42 / 3.53 / 3.62.
+- **DFlash boot time:** 375s cold after model/image cache populated.
+- **DFlash pre-check:** `max_model_len=262144`, `max_num_seqs=2`, GPU KV
+  cache size 207,264 tokens, max concurrency 2.27× at 262K.
+- **DFlash VRAM:** 21,940 MiB idle after boot; 21,960 MiB/card peak during
+  canonical bench.
+- **DFlash TPS:** 64.00 narrative / 104.40 code wall TPS.
+- **DFlash AL:** last three code-bench metrics showed mean acceptance length
+  4.43 / 4.37 / 4.35.
+- **Cliff 2:** canonical `verify-stress.sh` probe 7 passes at both large
+  rungs on both TP=4 variants: ~58.6K tokens and 91K tokens recalled correctly.
+- **Trade-off:** PCIe allreduce makes single-stream decode slower than
+  TP=2, but TP=4 provides more full-context concurrency and the first
+  published 4×3090 Cliff 2 boundary data.
 
 ---
 
@@ -169,8 +213,8 @@ bash scripts/report.sh --bench > my-rig.md
 
 Specifically interested in:
 
-- **TP=4 on 4× 3090 PCIe** — does Cliff 2 disappear entirely as
-  expected? What's per-stream TPS vs concurrent throughput?
+- **More TP=4 on 4× 3090 PCIe** — does your motherboard / power cap / PCIe
+  topology match or beat Whamp's 63 / 76 TPS baseline? What's concurrent throughput?
 - **TP=4 with NVLink topology** (e.g. NVLink across pairs) — how does
   per-stream TPS compare to PCIe-only TP=2?
 - **TP=8 on 8× A6000 / A100** — first server-class data point we'd
@@ -182,25 +226,27 @@ Specifically interested in:
 
 ---
 
-## Why we don't ship pre-baked configs
+## Why we ship only one pre-baked 4-card config
 
-Three reasons:
+We now ship `dual4.yml` because a community rig validated that exact
+4× RTX 3090 PCIe topology with `verify-full.sh`, `verify-stress.sh`, and
+`bench.sh`. We still avoid a broad matrix of untested 4+ GPU composes:
 
-1. **We can't hardware-test them.** Maintainer rig is 2× 3090. Pretending
-   we tested `quad.yml` would set false confidence.
-2. **Hardware combinations explode.** 4× 3090 vs 4× A5000 vs 4× A6000 vs
-   2×3090 + 2×4090 vs 4× modded 3080 — each has different VRAM, NVLink
-   topology, power profile, allreduce characteristics. A single
-   "quad.yml" can't be optimal for all.
+1. **Hardware combinations explode.** 4× 3090 vs 4× A5000 vs 4× A6000 vs
+   2×3090 + 2×4090 vs 4× modded 3080 — each has different VRAM, topology,
+   power profile, and allreduce characteristics.
+2. **Variant count needs discipline.** A single measured fp8/MTP TP=4
+   baseline is useful; a directory full of derived-but-unvalidated variants
+   would create false confidence.
 3. **Users at this scale are typically experienced.** If you have a
    workstation chassis or rack with 4-8 GPUs, you've already done the
    hardware homework. What you need from us is the methodology, the
-   constraints, and the dial — not a hand-held tested compose.
+   constraints, and one validated starting point.
 
-If a community member contributes a tested compose for their specific
-topology (with `verify-stress.sh` passing + `bench.sh` numbers), we'll
-ship it under `models/qwen3.6-27b/vllm/compose/` with credit and a
-header noting which rig validated it.
+If a community member contributes another tested compose for a specific
+topology or workload (with `verify-stress.sh` passing + `bench.sh`
+numbers), we'll ship it with credit and a header noting which rig
+validated it.
 
 ---
 
