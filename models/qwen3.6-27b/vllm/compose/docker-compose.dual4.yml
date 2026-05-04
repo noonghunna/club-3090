@@ -22,6 +22,8 @@
 #
 # Trade-off vs TP=2 dual.yml:
 #   - More long-context/concurrency headroom and Cliff 2 boundary data.
+#   - Pick this over dual.yml when you need >2 concurrent streams or
+#     single-prompt context beyond the 60K Cliff 2 boundary.
 #   - Lower single-stream TPS on PCIe-only allreduce (63/76 vs ~69/89 TP=2).
 #     Use this when you need 4-card capacity or Cliff 2 margin, not when you
 #     only want fastest single-stream decode.
