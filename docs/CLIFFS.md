@@ -389,6 +389,12 @@ This is **not** a max_seqlen cap-leak like Cliff 1. The allocation is sized by *
 
 The architectural fix is a **streaming/tiled forward** — process the sequence in tiles, fold intermediate state at each tile boundary instead of materializing the whole thing. This is exactly what FlashAttention does for attention, and what FlashQLA does for DeltaNet on Hopper. There's no Ampere implementation today.
 
+#### Theoretical grounding
+
+This mechanism is documented in the literature. The PerfMamba paper ([arxiv 2511.22849](https://arxiv.org/html/2511.22849)) measures it directly on the parent architecture: at sequence length 2048, **Mamba-2's SSM consumes 33.5% more memory than Mamba-1 (115.68 GB vs. 86.64 GB) due to "block-wise state materialization"** — the same algorithmic pattern Qwen3-Next inherits via Gated DeltaNet (Mamba-2 + delta rule, [NVlabs ICLR 2025](https://github.com/NVlabs/GatedDeltaNet)). The peak memory grows as **O(γ·D·N·L)** per the paper's analysis: γ = expansion factor, D = hidden dim, N = state dim, L = seq len. That's the formal scaling we'd been describing empirically.
+
+What the literature *doesn't* cover (and is club-3090's contribution): the activation-peak interaction with KV quantization format choice (TQ3 vs fp8 — see "KV format choice tunes the boundary" below) and the per-VRAM-class budget consequences for consumer Ampere deployments. PerfMamba describes the mechanism; we describe the application-side trade-offs.
+
 ### Why TP=2 splits Cliff 2 in half
 
 Under tensor parallelism with 2 cards, the GDN state buffer's per-card allocation is roughly halved (state is sharded across cards along the head dim). At seq_len = 240K, each card holds ~120K worth of state — fits in 24 GB. **Verified at 237K single-prompt prefill on `dual.yml`** (2026-04-29; ~830 tok/s prefill, peak 23.5 GB / card, no OOM).
@@ -719,3 +725,16 @@ Until then 185K + 0.975 is the validated text-only ceiling on a single 24 GB 309
 - [models/qwen3.6-27b/INTERNALS.md](../models/qwen3.6-27b/INTERNALS.md) — engineering deep dive
 - [Cross-rig data on club-3090 issue #2](https://github.com/noonghunna/club-3090/issues/2) — HoodOG1 + tenitram repro thread
 - [Cross-rig data on single-3090 issue #1](https://github.com/noonghunna/qwen36-27b-single-3090/issues/1) — ampersandru's original Cliff 1 OOM trace
+
+### Academic references
+
+The mechanisms documented above are grounded in the published literature; club-3090's contribution is the *applied* analysis (combining these formulas with KV-quantization choice and per-VRAM-class budgets to produce a working variant matrix).
+
+- **Cliff 2 root mechanism** — [PerfMamba: Performance Analysis and Pruning of Selective State Space Models (arxiv 2511.22849)](https://arxiv.org/html/2511.22849) — measures Mamba-2's 33.5% memory delta vs Mamba-1 at seq 2048 due to "block-wise state materialization." Same mechanism Qwen3-Next inherits via Gated DeltaNet. Activation peak scales as O(γ·D·N·L).
+- **Gated DeltaNet architecture** — [Gated Delta Networks: Improving Mamba2 with Delta Rule (NVlabs, ICLR 2025)](https://github.com/NVlabs/GatedDeltaNet) — the architecture Qwen3-Next uses for 75% of its layers (the other 25% being standard attention).
+- **Mamba-2 baseline** — [Mamba: Linear-Time Sequence Modeling with Selective State Spaces (arxiv 2312.00752)](https://arxiv.org/abs/2312.00752) — foundation paper; PerfMamba's Mamba-2-vs-Mamba-1 numbers are anchored to this.
+- **KV cache memory management** — [Efficient Memory Management for Large Language Model Serving with PagedAttention (arxiv 2309.06180)](https://arxiv.org/abs/2309.06180) — vLLM's foundation paper. <4% memory waste vs 60-80% in earlier engines.
+- **TurboQuant 3-bit KV** — [TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate (arxiv 2504.19874, ICLR 2026)](https://arxiv.org/abs/2504.19874) — the technique behind `--kv-cache-dtype turboquant_3bit_nc`. Random rotation + scalar quantizers + 1-bit QJL transform on the residual.
+- **FP8 KV cache** — [An Investigation of FP8 Across Accelerators for LLM Inference (arxiv 2502.01070)](https://arxiv.org/html/2502.01070v1) — covers FP8 e5m2 / e4m3 trade-offs for `--kv-cache-dtype fp8_e5m2`.
+- **GPU inference characterization** — [A Systematic Characterization of LLM Inference on GPUs (arxiv 2512.01644)](https://www.arxiv.org/pdf/2512.01644) — recent (Dec 2025) prefill/decode characterization; useful background for memory-bound vs compute-bound regime analysis.
+- **Peak memory in large-batch inference** — [Mind the Memory Gap: Unveiling GPU Bottlenecks in Large-Batch LLM Inference (arxiv 2503.08311)](https://arxiv.org/pdf/2503.08311) — peak memory patterns in prefill vs decode; relevant context for the activation-peak side of our budget math.
