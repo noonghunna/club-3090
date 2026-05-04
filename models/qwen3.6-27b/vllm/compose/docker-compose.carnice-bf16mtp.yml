@@ -28,6 +28,9 @@
 #   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅
 #   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌      2× PCIe
 #
+# Available on HuggingFace: wasifb/Carnice_V2_27B_INT4_BF16MTP
+# https://huggingface.co/wasifb/Carnice_V2_27B_INT4_BF16MTP
+#
 # Run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
 #   docker compose -f docker-compose.carnice-bf16mtp.yml up -d
