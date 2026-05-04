@@ -1,0 +1,115 @@
+{
+  "args": {
+    "base_url": "http://localhost:8020/v1",
+    "model": "qwen3.6-27b-autoround",
+    "tokenizer": "/opt/ai/github/qwen36-dual-3090/models/qwen3.6-27b-autoround-int4",
+    "structured_cot_dir": "/home/wasif/structured-cot",
+    "prior_results": "/home/wasif/structured-cot/runs/full-humaneval-2026-04-30/results.jsonl",
+    "current_grammar": "/home/wasif/structured-cot/grammars/fsm_grammar_no_open.gbnf",
+    "holiday_grammar": "/opt/ai/github/club-3090/tools/grammar-eval/holiday-tagline.gbnf",
+    "deepseek_grammar": "/opt/ai/github/club-3090/tools/grammar-eval/deepseek-scratchpad.gbnf",
+    "out_dir": "/opt/ai/github/club-3090/results/grammar-ab-20260503-224235",
+    "seed": 42,
+    "max_tokens": 4096,
+    "request_timeout": 600.0,
+    "timeout": 30,
+    "save_raw": false,
+    "list_only": false
+  },
+  "selected_problem_nums": [
+    97,
+    101,
+    108,
+    129,
+    137,
+    151,
+    10,
+    22,
+    36,
+    39,
+    30,
+    6,
+    74,
+    66,
+    61,
+    38,
+    28,
+    148,
+    24,
+    161,
+    115,
+    8,
+    7,
+    25,
+    59,
+    63,
+    138,
+    153,
+    54,
+    114
+  ],
+  "condition_summaries": {
+    "free": {
+      "pass_count": 28,
+      "n": 30,
+      "pass_rate": 0.9333333333333333,
+      "mean_think_tokens": 3036.266666666667,
+      "median_think_tokens": 3463.5
+    },
+    "current": {
+      "pass_count": 28,
+      "n": 30,
+      "pass_rate": 0.9333333333333333,
+      "mean_think_tokens": 94.73333333333333,
+      "median_think_tokens": 82.0
+    },
+    "holiday": {
+      "pass_count": 27,
+      "n": 30,
+      "pass_rate": 0.9,
+      "mean_think_tokens": 23.4,
+      "median_think_tokens": 23.0
+    },
+    "deepseek": {
+      "pass_count": 28,
+      "n": 30,
+      "pass_rate": 0.9333333333333333,
+      "mean_think_tokens": 386.56666666666666,
+      "median_think_tokens": 350.0
+    },
+    "prompt_terse": {
+      "pass_count": 29,
+      "n": 30,
+      "pass_rate": 0.9666666666666667,
+      "mean_think_tokens": 74.66666666666667,
+      "median_think_tokens": 59.0
+    }
+  },
+  "holiday_target_prior_regression_passes": [
+    "HumanEval/97",
+    "HumanEval/101",
+    "HumanEval/129",
+    "HumanEval/137"
+  ],
+  "holiday_rescues_vs_current": [
+    "HumanEval/101"
+  ],
+  "holiday_new_failures_vs_current": [
+    "HumanEval/108",
+    "HumanEval/10"
+  ],
+  "deepseek_target_prior_regression_passes": [
+    "HumanEval/97",
+    "HumanEval/101",
+    "HumanEval/108",
+    "HumanEval/129",
+    "HumanEval/137"
+  ],
+  "deepseek_rescues_vs_current": [
+    "HumanEval/101"
+  ],
+  "deepseek_new_failures_vs_current": [
+    "HumanEval/10"
+  ],
+  "next_step": "Run phase 3: Holiday and DeepSeek rescued enough of the prior regression cluster to justify a full HE+164 + LCB v6 bench."
+}

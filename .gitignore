@@ -40,3 +40,13 @@ vllm-src/
 # Internal diagnostics / feasibility memos — kept local, not published.
 # Per-model published diagnostics live at models/<name>/vllm/diagnostics/.
 docs/diagnostics/
+
+# Bench output. Most runs are intermediate investigations (cliff probes, soak
+# validation matrices, residency instrumentation) — those live in issue threads
+# and gitignored docs/diagnostics/. Bench evidence backing numbers in BENCHMARKS.md
+# / STRUCTURED_COT.md / CHANGELOG is tracked via the negations below; future
+# grammar-ab-* and grammar-full-* runs will auto-track when committed.
+results/*
+!results/grammar-ab-*/
+!results/grammar-full-*/
+!results/v0.20-migration/

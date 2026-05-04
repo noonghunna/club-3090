@@ -1,0 +1,39 @@
+# Codex "check scratchpad" grammar candidate.
+# Qwen3.6's chat template auto-prefixes "<think>\n", so root begins at PLAN:.
+#
+# Design: keep DeepSeek's PLAN/free-note/VERDICT frontier shape, but add:
+# - optional STATE lines for constraints, symbols, invariants, values
+# - optional CASE lines interleaved with NOTE lines for branch-sensitive tasks
+# - mandatory CHECK line before VERDICT to force one compact self-audit
+
+root ::= "PLAN: " line "\n" states notes "CHECK: " line "\n" "VERDICT: " line "\n</think>\n\n" out
+
+# One non-empty printable ASCII line. No newline inside the line body.
+line ::= line_char line_chars
+line_char ::= [\x09\x20-\x7E]
+line_chars ::= "" | line_char line_chars
+
+# 0-3 STATE lines. Intended for problem facts, symbols, constraints, invariants.
+states ::= "" | s1
+s1 ::= "STATE: " line "\n" s2
+s2 ::= "" | "STATE: " line "\n" s3
+s3 ::= "" | "STATE: " line "\n"
+
+# 0-12 reasoning lines. NOTE is general; CASE is for branch/counterexample checks.
+notes ::= "" | n1
+n1 ::= item n2
+n2 ::= "" | item n3
+n3 ::= "" | item n4
+n4 ::= "" | item n5
+n5 ::= "" | item n6
+n6 ::= "" | item n7
+n7 ::= "" | item n8
+n8 ::= "" | item n9
+n9 ::= "" | item n10
+n10 ::= "" | item n11
+n11 ::= "" | item n12
+n12 ::= "" | item
+
+item ::= "NOTE: " line "\n" | "CASE: " line "\n"
+
+out ::= [\x09\x0A\x0D\x20-\x7E]+
