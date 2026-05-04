@@ -340,6 +340,19 @@ def write_summary(out_dir: pathlib.Path, results: list[dict], args, selected: li
     print(f"Saved -> {out_dir / 'summary.md'}")
 
 
+def load_problems_for_dataset(mod, dataset: str, n: int):
+    if dataset == "humaneval":
+        return mod.load_benchmark("humaneval", n)
+    if dataset == "lcb_v6":
+        ns = SimpleNamespace(lcb_version="release_v6", date_cutoff="2025-01-01", platform="leetcode")
+        return mod.load_benchmark("livecodebench", n, ns)
+    raise ValueError(f"unknown dataset: {dataset}")
+
+
+def dataset_kind(task_id: str) -> str:
+    return task_id.split("/")[0]
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--base-url", default="http://localhost:8020/v1")
@@ -357,14 +370,16 @@ def main() -> int:
     p.add_argument("--timeout", type=int, default=30, help="Per-test execution timeout.")
     p.add_argument("--save-raw", action="store_true", help="Store full raw responses in results.jsonl.")
     p.add_argument("--list-only", action="store_true", help="Print the selected 30-problem subset and exit.")
+    p.add_argument("--full", action="store_true",
+                   help="Phase-3 mode: run all 164 HumanEval+ problems (skip the 30-subset selection).")
+    p.add_argument("--include-lcb", action="store_true",
+                   help="Phase-3 mode: also run LiveCodeBench v6 50 (release_v6, leetcode, 2025-01-01 cutoff).")
+    p.add_argument("--he-start", type=int, default=0, help="Phase-3 slicing: HE+ problem index range start (inclusive).")
+    p.add_argument("--he-end", type=int, default=164, help="Phase-3 slicing: HE+ problem index range end (exclusive).")
+    p.add_argument("--lcb-start", type=int, default=0, help="Phase-3 slicing: LCB v6 problem index range start (inclusive).")
+    p.add_argument("--lcb-end", type=int, default=50, help="Phase-3 slicing: LCB v6 problem index range end (exclusive).")
+    p.add_argument("--label", default="", help="Optional shard tag (e.g. 'gpu0', 'gpu1') prepended to log lines.")
     args = p.parse_args()
-
-    prior_rows = read_prior(args.prior_results)
-    selected, buckets = choose_subset(prior_rows, args.seed)
-    if args.list_only:
-        for n in selected:
-            print(f"HumanEval/{n}\t{buckets[n]}")
-        return 0
 
     mod = load_harness(args.structured_cot_dir)
     grammars = {
@@ -378,23 +393,88 @@ def main() -> int:
         request_timeout=args.request_timeout,
     )
     client = mod.make_client(client_args)
-    problems = mod.load_benchmark("humaneval", 164)
-    by_num = {task_num(p["task_id"]): p for p in problems}
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    tag = f"[{args.label}] " if args.label else ""
+
+    if args.full:
+        he_problems = load_problems_for_dataset(mod, "humaneval", 164)
+        he_by_num = {task_num(p["task_id"]): p for p in he_problems}
+        he_indices = list(range(args.he_start, min(args.he_end, 164)))
+
+        lcb_problems = []
+        lcb_indices = []
+        if args.include_lcb:
+            lcb_problems = load_problems_for_dataset(mod, "lcb_v6", 50)
+            lcb_indices = list(range(args.lcb_start, min(args.lcb_end, len(lcb_problems))))
+
+        plan = (
+            [("humaneval", he_by_num[n]) for n in he_indices if n in he_by_num] +
+            [("lcb_v6", lcb_problems[i]) for i in lcb_indices]
+        )
+        if args.list_only:
+            for ds, prob in plan:
+                print(f"{ds}\t{prob['task_id']}")
+            return 0
+
+        results = []
+        for i, (ds, prob) in enumerate(plan, start=1):
+            row = {
+                "task_id": prob["task_id"],
+                "dataset": ds,
+                "subset_bucket": "phase3_full",
+                "conditions": {},
+            }
+            print(f"{tag}[grammar-full] [{i:03d}/{len(plan)}] {prob['task_id']} ({ds})")
+            for condition in CONDITIONS:
+                t0 = time.time()
+                result = run_condition(mod, client, args, prob, condition, grammars)
+                row["conditions"][condition] = result
+                print(
+                    f"{tag}[grammar-full]   {LABELS[condition]:<20s} {result['verdict']:<4s} "
+                    f"think={result['think_token_count']:<4d} total={result['total_tokens']:<4d} "
+                    f"wall={round(time.time() - t0):>4d}s violation={result['grammar_violations'] or '-'}",
+                    flush=True,
+                )
+            results.append(row)
+            with (args.out_dir / "results.jsonl").open("a") as f:
+                f.write(json.dumps(row) + "\n")
+
+        meta = {
+            "phase": "phase3_full",
+            "args": {k: str(v) if isinstance(v, pathlib.Path) else v for k, v in vars(args).items()},
+            "he_indices": he_indices,
+            "lcb_indices": lcb_indices,
+            "plan_size": len(plan),
+        }
+        (args.out_dir / "shard-meta.json").write_text(json.dumps(meta, indent=2))
+        print(f"{tag}[grammar-full] shard complete -> {args.out_dir}")
+        return 0
+
+    # ---- 30-subset Phase-2 path (default) ----
+    prior_rows = read_prior(args.prior_results)
+    selected, buckets = choose_subset(prior_rows, args.seed)
+    if args.list_only:
+        for n in selected:
+            print(f"HumanEval/{n}\t{buckets[n]}")
+        return 0
+
+    problems = load_problems_for_dataset(mod, "humaneval", 164)
+    by_num = {task_num(p["task_id"]): p for p in problems}
 
     results = []
     for i, n in enumerate(selected, start=1):
         prob = by_num[n]
         row = {"task_id": prob["task_id"], "subset_bucket": buckets[n], "conditions": {}}
-        print(f"[grammar-ab] [{i:02d}/{len(selected)}] {prob['task_id']} ({buckets[n]})")
+        print(f"{tag}[grammar-ab] [{i:02d}/{len(selected)}] {prob['task_id']} ({buckets[n]})")
         for condition in CONDITIONS:
             t0 = time.time()
             result = run_condition(mod, client, args, prob, condition, grammars)
             row["conditions"][condition] = result
             print(
-                f"[grammar-ab]   {LABELS[condition]:<20s} {result['verdict']:<4s} "
+                f"{tag}[grammar-ab]   {LABELS[condition]:<20s} {result['verdict']:<4s} "
                 f"think={result['think_token_count']:<4d} total={result['total_tokens']:<4d} "
-                f"wall={round(time.time() - t0):>4d}s violation={result['grammar_violations'] or '-'}"
+                f"wall={round(time.time() - t0):>4d}s violation={result['grammar_violations'] or '-'}",
+                flush=True,
             )
         results.append(row)
         with (args.out_dir / "results.jsonl").open("a") as f:
