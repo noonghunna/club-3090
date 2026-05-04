@@ -159,7 +159,7 @@ RESPONSE_DIR="${SOAK_OUTPUT}/responses"
 STATE_DIR="${SOAK_OUTPUT}/states"
 mkdir -p "$REQUEST_DIR" "$RESPONSE_DIR" "$STATE_DIR"
 
-printf 'session_id,turn_id,t_ms,vram_mib,ttft_ms,decode_tps,status,error\n' > "$TURN_LOG"
+printf 'session_id,turn_id,t_ms,vram_mib,ttft_ms,decode_tps,completion_tokens,status,error\n' > "$TURN_LOG"
 printf 'session_id,turn_id,gpu_index,memory_used_mib,utilization_gpu_pct\n' > "$GPU_LOG"
 
 capture_state "baseline"

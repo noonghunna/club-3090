@@ -642,6 +642,7 @@ def cmd_append_log(log_path, session, turn, vram, metrics_path):
                 vram,
                 metrics.get("ttft_ms", 0),
                 metrics.get("decode_tps", 0),
+                metrics.get("completion_tokens", 0),
                 metrics.get("status", 0),
                 metrics.get("error", ""),
             ]
@@ -678,6 +679,8 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
             for key in ("session_id", "turn_id", "t_ms", "vram_mib", "ttft_ms", "status"):
                 row[key] = int(float(row[key] or 0))
             row["decode_tps"] = float(row["decode_tps"] or 0)
+            # completion_tokens is new (added 2026-05-04) — back-compat for old CSVs
+            row["completion_tokens"] = int(float(row.get("completion_tokens", 0) or 0))
             rows.append(row)
 
     sessions = sorted({r["session_id"] for r in rows})
@@ -699,6 +702,22 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
     max_vram = max([r["vram_mib"] for r in rows] + [boot_vram])
     growth = max_vram - boot_vram
     errors = [r for r in rows if r["status"] != 200 or r["error"]]
+    # Silent-empty turns: HTTP 200 + no transport error + decode_tps == 0
+    # despite t_ms ≥ 1s. These slip past errors[] — the engine ACK'd the
+    # request and the stream closed cleanly, but the model emitted nothing
+    # observable. cmd_run sets decode_tps=0 when completion_tokens <= 0 OR
+    # decode_s < 100ms (both = workload-broken on a 27B model). Common
+    # causes: xgrammar mask rejecting every candidate (club-3090 #43, #47),
+    # client-side max_tokens exhausted by the <think> block, or spec-decode
+    # returning an empty draft batch. Using decode_tps==0 instead of
+    # completion_tokens==0 keeps this back-compat with pre-2026-05-04 CSVs
+    # that lack the completion_tokens column.
+    silent_empty = [
+        r for r in rows
+        if r["status"] == 200 and not r["error"]
+        and r["decode_tps"] == 0 and r["t_ms"] >= 1000
+    ]
+    silent_empty_pct = (100.0 * len(silent_empty) / len(rows)) if rows else 0.0
     first_med = med(first_tps)
     last_med = med(last_tps)
     tps_retention = last_med / first_med if first_med > 0 else 0.0
@@ -725,6 +744,20 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
         warnings.append(f"VRAM session-to-session oscillation reached {oscillation} MiB.")
     if sessions and sessions[-1] < expected_sessions:
         warnings.append(f"Only {sessions[-1]} of {expected_sessions} sessions completed.")
+    # Silent-empty handling — separate from errors[] because HTTP 200 was
+    # returned. ≥50% silent-empty = workload broken (FAIL); 1-49% = WARN.
+    if silent_empty:
+        msg = (
+            f"{len(silent_empty)} of {len(rows)} turn(s) "
+            f"({silent_empty_pct:.1f}%) returned HTTP 200 with empty completion "
+            f"(model thought ≥1s, then emitted zero tokens). Common causes: "
+            f"xgrammar mask rejection (club-3090 #43, #47), client max_tokens "
+            f"exhausted by <think>, or spec-decode empty-draft return."
+        )
+        if silent_empty_pct >= 50.0:
+            failures.append(msg)
+        else:
+            warnings.append(msg)
 
     verdict = "INCONCLUSIVE" if timed_out else ("FAIL" if failures else "PASS")
     exit_code = 2 if timed_out else (1 if failures else 0)
@@ -737,6 +770,7 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
         f"- Max growth observed: {growth} MiB",
         f"- Sessions completed: {len(sessions)}",
         f"- Request errors: {len(errors)}",
+        f"- Silent-empty turns (HTTP 200 + 0 completion tokens): {len(silent_empty)} / {len(rows)} ({silent_empty_pct:.1f}%)",
         "",
         "| Metric | Value |",
         "|---|---:|",
@@ -774,6 +808,7 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
     print(f"[soak]   max_vram_mib         {max_vram}")
     print(f"[soak]   max_growth_mib       {growth} / {growth_limit}")
     print(f"[soak]   errors               {len(errors)}")
+    print(f"[soak]   silent_empty         {len(silent_empty)} / {len(rows)} ({silent_empty_pct:.1f}%)")
     print(f"[soak]   p50_decode_tps       {percentile(tps, 0.50):.2f}")
     print(f"[soak]   p95_ttft_ms          {percentile(ttft, 0.95):.0f}")
     print(f"[soak]   tps_retention        {tps_retention * 100:.1f}%")
