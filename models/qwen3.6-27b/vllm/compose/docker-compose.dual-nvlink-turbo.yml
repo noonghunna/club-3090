@@ -1,0 +1,243 @@
+# ===========================================================================
+# Dual-card Turbo with NVLink — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3
+# + Genesis v7.72.2 + NVLink P2P.
+#
+# Mirrors docker-compose.dual-turbo.yml but enables NCCL P2P over NVLink for
+# faster allreduce, re-enables vLLM's custom all-reduce kernel, and drops
+# expandable_segments (which JusefPol reports crashes with NVLink wired).
+#
+# Status: COMMUNITY-CONTRIBUTED, EXPERIMENTAL.
+#   If you run this, please drop numbers in discussion #19 — paste-ready report
+#   via `bash scripts/report.sh`.
+#
+# The 4-stream concurrent-serving NVLink variant. NVLink lifts the per-token
+# allreduce-latency ceiling that caps PCIe-TP=2 decode; same TQ3 KV path so
+# the 4-stream concurrency budget (lower KV-pool pressure) carries through.
+#
+# Measured (2× RTX 3090 w/ NVLink, Genesis v7.69, TQ3 KV — danbedford bench, 2026-05-04):
+#   101.49 narr (CV 2.0%) / 133.20 code (CV 2.3%) wall TPS, VRAM 20.4 GB/card.
+#   NVLink gain over own PCIe-only dual-turbo.yml baseline (~90 / ~120, A/B
+#   tested on same rig): +12.6% narr, +10.7% code. Smaller delta than fp8's
+#   NVLink gain (compare dual-nvlink.yml vs dual.yml, +58% / +56%) because
+#   TQ3 already reduces per-token allreduce volume on PCIe.
+#
+# Genesis v7.69 P65 (cudagraph downgrade for spec-decode) makes MTP × TurboQuant
+# work on dual-card TP=2 with vision + tools + 262K. Other relevant patches:
+#   - P4 hybrid turboquant support (replaces standalone PR #39931 patches)
+#   - P5 KV page-size unification for hybrid models
+#   - P64 streaming MTP tool-call edge case
+#   - P66 cudagraph_capture_sizes divisibility filter
+# v7.72.2 native: PN34 (workspace_lock), P78 (tolist guard), PN35 (inputs_embeds).
+#
+# What this gives you (vs the PCIe-only `dual-turbo.yml`):
+#   - NCCL P2P over NVLink (NCCL_P2P_LEVEL=NVL) — faster allreduce on TP=2
+#   - Custom all-reduce ENABLED (--disable-custom-all-reduce removed) — NVLink
+#     makes vLLM's custom kernel a win where PCIe makes it a loss
+#   - PYTORCH_CUDA_ALLOC_CONF without `expandable_segments:True` — JusefPol
+#     reports it crashes on startup with NVLink wired up
+#
+# Dependencies:
+#   - 2× RTX 3090 (Ampere SM 8.6) WITH NVLink bridge installed and `nvidia-smi
+#     topo -m` showing `NV*` between GPU0 and GPU1
+#   - vLLM PR #40361 (Marlin pad-sub-tile-n) — patched files vendored in-repo
+#     at ../patches/vllm-marlin-pad/. PR is open upstream; drop the mount when
+#     it lands. See ../patches/vllm-marlin-pad/README.md.
+#
+# KV cache: turboquant_3bit_nc — 3-bit symmetric K and V (~3 bits average per
+# token). Aligned with the single-card v714 default config we test extensively.
+#
+# To run:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.dual-nvlink-turbo.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-dual-nvlink-turbo:
+    image: vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada
+    container_name: vllm-qwen36-27b-dual-nvlink-turbo
+    restart: "no"
+    ports:
+      - "${PORT:-8017}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
+      # Closes club-3090 #22.
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
+      # Marlin pad-sub-tile-n (vLLM PR #40361) — vendored in this repo at
+      # ../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
+      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # Genesis modular package (auto-checked-out at pin in scripts/setup.sh).
+      # As of v7.72.2: PN35 supersedes patch_inputs_embeds_optional.py,
+      # P78 supersedes patch_tolist_cudagraph.py, PN34 supersedes
+      # patch_workspace_lock_disable.py — those local sidecars dropped
+      # from this compose 2026-05-05.
+      - ../patches/genesis/vllm/_genesis:/usr/local/lib/python3.12/dist-packages/vllm/_genesis:ro
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      # NVLink bridge present — let NCCL use P2P (don't disable it the way
+      # dual-turbo.yml does for PCIe-only stacks) and pin the P2P level to
+      # NVLink so NCCL doesn't fall back to PCIe paths if topology query is fuzzy.
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_LEVEL=NVL
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      # JusefPol report (PR #31): expandable_segments=True crashes on startup
+      # with NVLink wired in. Keep max_split_size_mb cap, drop the rest.
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_MARLIN_USE_ATOMIC_ADD=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - VLLM_FLOAT32_MATMUL_PRECISION=high
+      # VLLM_SSM_CONV_STATE_LAYOUT=DS — RE-ENABLED with our local PN30
+      # dst-shaped temp fix (patch_pn30_dst_shaped_temp_fix.py, applied at
+      # setup time). Without our fix, Sander's PN30 a9977d8 corrupts DS row
+      # strides on spec-decode AL>1. With our fix, PN30 builds destination-
+      # shaped temp via collect_mamba_copy_meta. +6% TPS retained.
+      - VLLM_SSM_CONV_STATE_LAYOUT=DS
+      - VLLM_USE_FUSED_MOE_GROUPED_TOPK=1
+      - CUDA_DEVICE_MAX_CONNECTIONS=8
+      # FULL Genesis v7.69 PROD env-var set per Sandermage's
+      # bare_metal_27b_int4_TQ_k8v4.sh. Validated 2026-05-01 PM dual-3090:
+      # 116.59 code wall_TPS / 92.12 narrative wall_TPS (vs Sander's A5000
+      # 89.23 reference — +30.7% over).
+      - GENESIS_ENABLE_P4=1
+      - GENESIS_ENABLE_P58_ASYNC_PLACEHOLDER_FIX=1
+      - GENESIS_ENABLE_P60_GDN_NGRAM_FIX=1
+      - GENESIS_ENABLE_P60B_TRITON_KERNEL=1
+      - GENESIS_ENABLE_P61_QWEN3_MULTI_TOOL=1
+      - GENESIS_ENABLE_P61B_STREAMING_OVERLAP=1
+      - GENESIS_ENABLE_P62_STRUCT_OUT_SPEC_TIMING=1
+      - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1
+      # P65 dropped 2026-05-03 (mutually exclusive with P67/P67b in v7.69)
+      - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1
+      - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1
+      - GENESIS_ENABLE_P68_AUTO_FORCE_TOOL=1
+      - GENESIS_ENABLE_P69_LONG_CTX_TOOL_REMINDER=1
+      - GENESIS_P68_P69_LONG_CTX_THRESHOLD_CHARS=50000
+      - GENESIS_ENABLE_P72_PROFILE_RUN_CAP=1
+      - GENESIS_PROFILE_RUN_CAP_M=4128
+      - GENESIS_ENABLE_P74_CHUNK_CLAMP=1
+      - GENESIS_ENABLE_P83=1
+      # P85 dropped 2026-05-03 (requires P84 which we don't enable in v7.69)
+      # P87 (marlin pad-sub-tile-n text-patch) disabled because the same fix is
+      # already vendored at ../patches/vllm-marlin-pad/marlin.py and RO-mounted
+      # over the target file (lines 53-54). Letting Genesis re-do the patch fails
+      # with [Errno 30] read-only filesystem and `set -e` propagates exit-1 from
+      # `apply_all` before `vllm serve` runs (club-3090 #49).
+      - GENESIS_ENABLE_P87=0
+      - GENESIS_ENABLE_P91=1
+      - GENESIS_ENABLE_P94=1
+      - GENESIS_ENABLE_P98=1
+      - GENESIS_ENABLE_P99=1
+      - GENESIS_ENABLE_P100=1
+      - GENESIS_ENABLE_P101=1
+      - GENESIS_ENABLE_P103=1
+      - GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1
+      - GENESIS_ENABLE_PN9_INDEPENDENT_DRAFTER_ATTN=1
+      - GENESIS_ENABLE_PN11_GDN_AB_CONTIGUOUS=1
+      - GENESIS_ENABLE_PN12_FFN_INTERMEDIATE_POOL=1
+      - GENESIS_ENABLE_PN13_CUDA_GRAPH_LAMBDA_ARITY=1
+      - GENESIS_ENABLE_PN14_TQ_DECODE_OOB_CLAMP=1
+      - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
+      - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
+      - GENESIS_ENABLE_PN22_LOCAL_ARGMAX_TP=1
+      - GENESIS_ENABLE_PN26_SPARSE_V=1
+      - GENESIS_ENABLE_PN59_STREAMING_GDN=1
+      - GENESIS_PN26_SPARSE_V_BLOCK_KV=8
+      - GENESIS_PN26_SPARSE_V_NUM_WARPS=4
+      - GENESIS_PN26_SPARSE_V_THRESHOLD=0.01
+      - GENESIS_ENABLE_P38B_COMPILE_SAFE=1
+      - GENESIS_ENABLE_P15B_FA_VARLEN_CLAMP=1
+      - GENESIS_ENABLE_PN25_SILU_INDUCTOR_SAFE=1
+      # PN30 — RE-ENABLED with our local dst-shaped temp fix
+      # (patch_pn30_dst_shaped_temp_fix.py, applied during setup.sh).
+      - GENESIS_ENABLE_PN30_DS_LAYOUT_SPEC_DECODE=1
+      - GENESIS_PREALLOC_TOKEN_BUDGET=4128
+      - GENESIS_BUFFER_MODE=shared
+      # Explicit OFFs to match Sandermage's PROD env-var set verbatim:
+      # P78 (P78_TOLIST_CAPTURE_GUARD) — superseded by our patch_tolist_cudagraph.py
+      # P81 (FP8 block-scaled M<=8) — FP8-specific, no-op on our TQ3 path
+      # P82 — biased on small-batch single-stream Lorbus INT4 + MTP K=3 (Sander PROD)
+      - GENESIS_ENABLE_P78_TOLIST_CAPTURE_GUARD=0
+      - GENESIS_ENABLE_P81_FP8_BLOCK_SCALED_M_LE_8=0
+      - GENESIS_ENABLE_P82=0
+      - GENESIS_P82_THRESHOLD_SINGLE=0.3
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        pip install xxhash pandas scipy -q
+        # Pre-flight: Genesis patches must be populated. Empty volume mount
+        # = silent no-op apply_all = boot fails later with cryptic upstream
+        # error (e.g. "TurboQuant KV not supported for hybrid models", #13).
+        if [ ! -f /usr/local/lib/python3.12/dist-packages/vllm/_genesis/patches/apply_all.py ]; then
+          echo "ERROR: Genesis patches missing — host volume models/qwen3.6-27b/vllm/patches/genesis/ is empty." >&2
+          echo "       Run from repo root before 'docker compose up':" >&2
+          echo "         bash scripts/setup.sh qwen3.6-27b" >&2
+          exit 1
+        fi
+        python3 -m vllm._genesis.patches.apply_all
+        # NOTE: patch_workspace_lock_disable.py + patch_tolist_cudagraph.py
+        # were previously invoked here; superseded by Genesis natives in
+        # v7.72.2 (P78 + PN34). Mounts and invocations dropped 2026-05-05.
+        exec vllm serve "$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "2"
+      # Custom all-reduce ENABLED (no --disable-custom-all-reduce) — NVLink
+      # makes vLLM's custom kernel a win. dual-turbo.yml disables it because
+      # PCIe P2P bandwidth makes the NCCL fallback faster there.
+      - --max-model-len
+      - "262144"
+      - --gpu-memory-utilization
+      - "0.85"
+      - --max-num-seqs
+      - "4"
+      - --max-num-batched-tokens
+      - "4128"
+      # TQ3 is the right pick on 24 GB / 3090 (smaller KV pool → more concurrency).
+      # On 20 GB Ampere (modded 3080 / cap'd 3090) override to fp8_e5m2 — TQ3's
+      # activation peak during DeltaNet GDN forward exceeds the per-card budget
+      # after TP=2 split and Cliff 2 fires at 90K. fp8_e5m2 trades KV-pool
+      # capacity for activation headroom on the smaller-VRAM sub-class. See
+      # docs/HARDWARE.md "Note for sub-24 GB cards" + #47 for cross-rig data.
+      - --kv-cache-dtype
+      - turboquant_3bit_nc
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

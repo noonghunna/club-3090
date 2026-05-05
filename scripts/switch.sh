@@ -31,6 +31,7 @@
 #     vllm/dual-dflash      185K + FP16 + DFlash N=5 + vision (peak code TPS)
 #     vllm/dual-dflash-noviz 200K + FP16 + DFlash N=5 + no vision (peak code, max ctx)
 #     vllm/dual-nvlink      262K + fp8 + 2 streams + vision (REQUIRES NVLink bridge — community/experimental)
+#     vllm/dual-nvlink-turbo 262K + TQ3 + 4 streams + vision (REQUIRES NVLink bridge — community/experimental)
 #
 #   Single-card llama.cpp:
 #     llamacpp/default      Q3_K_XL + 262K + q4_0 KV + vision (max ctx, no cliffs)
@@ -73,6 +74,7 @@ declare -A VARIANT_DEFAULT_PORT=(
   [vllm/dual-dflash]=8012
   [vllm/dual-dflash-noviz]=8013
   [vllm/dual-nvlink]=8014
+  [vllm/dual-nvlink-turbo]=8017
   [llamacpp/default]=8020
   [llamacpp/concurrent]=8020
 )
@@ -93,6 +95,7 @@ declare -A VARIANTS=(
   [vllm/dual-dflash]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-dflash.yml"
   [vllm/dual-dflash-noviz]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-dflash-noviz.yml"
   [vllm/dual-nvlink]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink.yml"
+  [vllm/dual-nvlink-turbo]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink-turbo.yml"
   [llamacpp/default]="llamacpp|models/qwen3.6-27b/llama-cpp/compose|docker-compose.yml"
   [llamacpp/concurrent]="llamacpp|models/qwen3.6-27b/llama-cpp/compose|docker-compose.concurrent.yml"
 )
