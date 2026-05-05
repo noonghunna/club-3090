@@ -20,7 +20,7 @@
 #
 # What's intentionally NOT enabled:
 #   - TurboQuant KV — same rationale as dual.yml: fp8_e5m2 is plenty for 262K.
-#     For 4-stream concurrency at 262K, switch to docker-compose.dual-turbo.yml.
+#     For 4-stream concurrency at 262K with NVLink, switch to docker-compose.dual-nvlink-turbo.yml.
 #
 # Dependencies:
 #   - 2× RTX 3090 (Ampere SM 8.6) WITH NVLink bridge installed and `nvidia-smi
@@ -36,6 +36,7 @@
 #   docker-compose.dual4.yml            262K   4         63 / 76          fp8      ✅      not used (4× PCIe)
 #   docker-compose.dual4-dflash.yml     262K   2         64 / 104         FP16     ✅      not used (4× PCIe)
 #   docker-compose.dual-nvlink.yml      262K   2         (community)      fp8      ✅      required
+#   docker-compose.dual-nvlink-turbo.yml 262K   4        101 / 133         TQ3      ✅      required
 #   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      not used
 #   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅      not used
 #   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌      not used
