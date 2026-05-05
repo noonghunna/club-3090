@@ -50,16 +50,7 @@
         {{- tool | tojson }}
     {%- endfor %}
     {{- "\n</tools>" }}
-    {{- '\n\nYou have access to the following functions. Use them if required:
-
-<tool_call>{\"name\": \"function_name\", \"arguments\": {\"arg_name\": \"arg_value\"}}</tool_call>
-
-Reminder:
-- If you choose to call a function ONLY reply in the following JSON format with NO suffix:
-  <tool_call>{\"name\": \"function_name\", \"arguments\": {\"arg1\": \"value1\"}}</tool_call>
-- Required parameters MUST be specified
-- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
-- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls' }}
+    {{- '\n\nIf you choose to call a function ONLY reply in the following JSON format with NO suffix:\n\n<tool_call>{\"name\": \"function_name\", \"arguments\": {\"arg1\": \"value1\"}}</tool_call>\n\nIMPORTANT:\nReminder:\n- Function calls MUST follow the JSON format inside <tool_call></tool_call> tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls' }}
     {%- if messages[0].role == 'system' %}
         {%- set content = render_content(messages[0].content, false, true)|trim %}
         {%- if content %}
@@ -155,4 +146,5 @@ Reminder:
 {%- endfor %}
 {%- if add_generation_prompt %}
     {{- '<|im_start|>assistant\n' }}
+{{- '<think>\n\n</think>\n\n' }}
 {%- endif %}
