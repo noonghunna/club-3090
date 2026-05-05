@@ -49,6 +49,14 @@ for arg in "$@"; do
   esac
 done
 
+# Auto-detect running container + port (URL/CONTAINER env vars still win).
+# See scripts/preflight.sh::preflight_autodetect_endpoint.
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
+  # shellcheck source=preflight.sh
+  source "${ROOT_DIR}/scripts/preflight.sh"
+  preflight_autodetect_endpoint
+fi
 URL="${URL:-http://localhost:8020}"
 MODEL="${MODEL:-qwen3.6-27b-autoround}"
 CONTAINER="${CONTAINER:-vllm-qwen36-27b}"

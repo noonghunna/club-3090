@@ -437,3 +437,72 @@ preflight_kv_format_hint() {
   echo "[preflight]       Predict your config:  bash tools/kv-calc.py --compose <name> --vram ${vram_gb} --kv-format <fp8_e5m2|turboquant_3bit_nc>" >&2
   return 0
 }
+
+# autodetect_endpoint — discover the running club-3090 container + its host port.
+#
+# Caller-controlled: the bench / verify scripts default URL=http://localhost:8020
+# and CONTAINER=vllm-qwen36-27b. That assumption breaks when the user is running
+# a different variant (e.g. dual-turbo on 8011, dual-dflash on 8012, etc.) and
+# silently makes verify-full / bench / verify-stress emit false negatives because
+# they're hitting an empty port. Reported by sudepo on club-3090#52.
+#
+# Behaviour:
+#   - If $URL or $CONTAINER is already set in the environment, it WINS — never
+#     overwritten. This preserves explicit override behaviour.
+#   - Otherwise, scan `docker ps` for a club-3090-pattern container and extract
+#     its host port from the port-mapping. Print one [autodetect] line so the
+#     user knows what we picked.
+#   - If nothing is detected (no container running, docker unavailable), the
+#     hardcoded defaults stand — same behaviour as before this helper existed.
+#
+# Outputs (mutates env in caller's scope when sourced):
+#   URL          — http://localhost:<port> if detected
+#   CONTAINER    — running container name if detected
+#
+# Skip via: PREFLIGHT_NO_AUTODETECT=1
+preflight_autodetect_endpoint() {
+  if [[ "${PREFLIGHT_NO_AUTODETECT:-0}" == "1" ]]; then
+    return 0
+  fi
+  command -v docker >/dev/null 2>&1 || return 0
+
+  local explicit_url="${URL:-}"
+  local explicit_container="${CONTAINER:-}"
+  if [[ -n "$explicit_url" && -n "$explicit_container" ]]; then
+    return 0   # both already set — caller knows what they're doing
+  fi
+
+  # Scan for one of our containers + its `0.0.0.0:<host>->8000/tcp` mapping.
+  local found_line
+  found_line=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
+    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b)' | head -1)
+  if [[ -z "$found_line" ]]; then
+    return 0   # nothing running; defaults stand
+  fi
+
+  local detected_name detected_port
+  detected_name="${found_line%%|*}"
+  # Extract host port from "0.0.0.0:8011->8000/tcp" or "[::]:8011->8000/tcp" forms.
+  # llama-cpp container maps to internal 8080, vllm to 8000 — match both.
+  detected_port=$(echo "${found_line#*|}" \
+    | grep -oE '0\.0\.0\.0:[0-9]+->(8000|8080)/tcp' \
+    | head -1 \
+    | sed -E 's|^0\.0\.0\.0:([0-9]+)->.*|\1|')
+
+  # Apply, but only fields the user didn't already set explicitly.
+  if [[ -z "$explicit_container" && -n "$detected_name" ]]; then
+    CONTAINER="$detected_name"
+  fi
+  if [[ -z "$explicit_url" && -n "$detected_port" ]]; then
+    URL="http://localhost:${detected_port}"
+  fi
+
+  # One-line surface so the user sees what we chose.
+  if [[ -z "$explicit_url" || -z "$explicit_container" ]]; then
+    local note=""
+    [[ -z "$explicit_container" ]] && note="container=${CONTAINER}"
+    [[ -z "$explicit_url" ]] && note="${note:+$note }url=${URL}"
+    echo "[autodetect] using running ${note}  (skip: PREFLIGHT_NO_AUTODETECT=1)" >&2
+  fi
+  return 0
+}
