@@ -187,3 +187,14 @@ Tested via `URL=http://localhost:8004 MODEL=luce-dflash bash scripts/verify-stre
 - [docs/STRUCTURED_COT.md](docs/STRUCTURED_COT.md) — bounded-thinking benchmark on HumanEval+ + LiveCodeBench v6
 - [docs/CLIFFS.md](docs/CLIFFS.md) — known failure modes and which variants escape them
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to add a row
+
+---
+
+## Gemma 4 31B (community-experimental)
+
+Cross-rig data on Google's official Gemma 4 MTP "assistant" drafter (released 2026-05-05). vLLM PR [#41745](https://github.com/vllm-project/vllm/pull/41745) is unmerged; compose at [`models/gemma-4-31b/vllm/compose/docker-compose.gemma-mtp.yml`](models/gemma-4-31b/vllm/compose/docker-compose.gemma-mtp.yml) vendors the 7 modified Python files as an RO-mount overlay until the PR lands. See announcement [discussion #67](https://github.com/noonghunna/club-3090/discussions/67) for the full setup story.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | AL | Per-pos accept (code) | Peak VRAM | Date | Notes |
+|---|---|---|---:|---:|---:|---|---:|---|---|
+| `gemma-mtp.yml` (TP=2) | @noonghunna (2× 3090 PCIe, no NVLink, 230W cap) | bf16 | 32K | **108.87 / 142.25** | **3.94-4.04** | 92 / 79 / 68 / 59 % | 22.5 GB/card | 2026-05-05 | First Ampere consumer cross-rig data on Google MTP drafters. **+1.79× narr / +2.31× code** over baseline (61 TPS no-spec-decode same TP). **PASSES continuous soak** (100 turns, 0 errors / 0 silent-empty / 0 MiB growth, 98.3% TPS retention). bf16 KV (fp8 blocked on Ampere — see TP=1 row). PR [#41745](https://github.com/vllm-project/vllm/pull/41745) overlay + transformers 5.8.0 entrypoint. |
+| `gemma-mtp-tp1.yml` (TP=1) | @noonghunna (1× 3090) | bf16 / fp8 | — | **boot OOM** | — | — | — | 2026-05-05 | **Upstream-blocked on Ampere consumer.** bf16 KV: weights+drafter+profiling at 8K ctx + mem-util 0.95 leaves zero KV pool ("No available memory for the cache blocks"). fp8 KV: Triton `fp8e4nv not supported in this architecture` on sm_86 (Ampere supports `fp8e4b15`/`fp8e5` only); but `fp8_e5m2` is rejected by `gemma4_mm.py:1336` allowlist. Compose preserved for re-test when (a) vLLM adds Ampere-aware fp8 dispatch OR (b) PR #41745 relaxes the assert. Gemma 4 26B-A4B MoE single-card is the obvious follow-up. |

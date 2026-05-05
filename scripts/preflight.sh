@@ -121,7 +121,7 @@ preflight_gpu_idle() {
 preflight_running() {
   command -v docker >/dev/null 2>&1 || return 0
   local running
-  running=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b)' || true)
+  running=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-gemma-4-31b)' || true)
   if [[ -n "$running" ]]; then
     echo "[preflight] note:    a club-3090 container is already running:"
     echo "$running" | sed 's/^/[preflight]            /'
@@ -475,7 +475,7 @@ preflight_autodetect_endpoint() {
   # Scan for one of our containers + its `0.0.0.0:<host>->8000/tcp` mapping.
   local found_line
   found_line=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
-    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b)' | head -1)
+    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-gemma-4-31b)' | head -1)
   if [[ -z "$found_line" ]]; then
     return 0   # nothing running; defaults stand
   fi
