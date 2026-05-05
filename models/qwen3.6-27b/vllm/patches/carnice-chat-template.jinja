@@ -50,7 +50,16 @@
         {{- tool | tojson }}
     {%- endfor %}
     {{- "\n</tools>" }}
-    {{- '\n\nIf you choose to call a function ONLY reply in the following JSON format with NO suffix:\n\n<tool_call>{"name": "function_name", "arguments": {"arg1": "value1"}}</tool_call>\n\nIMPORTANT:\nReminder:\n- Function calls MUST follow the specified JSON format inside <tool_call></tool_call> tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls' }}
+    {{- '\n\nYou have access to the following functions. Use them if required:
+
+<tool_call>{\"name\": \"function_name\", \"arguments\": {\"arg_name\": \"arg_value\"}}</tool_call>
+
+Reminder:
+- If you choose to call a function ONLY reply in the following JSON format with NO suffix:
+  <tool_call>{\"name\": \"function_name\", \"arguments\": {\"arg1\": \"value1\"}}</tool_call>
+- Required parameters MUST be specified
+- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls' }}
     {%- if messages[0].role == 'system' %}
         {%- set content = render_content(messages[0].content, false, true)|trim %}
         {%- if content %}
@@ -109,7 +118,7 @@
                 {%- endif %}
                 {%- if loop.first %}
                     {%- if content|trim %}
-                        {{- '\n\n<tool_call>{"name": "' + tool_call.name + '", "arguments": {' }}
+                        {{- '\n\n<tool_call>\n<function=' + tool_call.name + '>\n' }}
                     {%- else %}
                         {{- '<tool_call>\n<function=' + tool_call.name + '>\n' }}
                     {%- endif %}
@@ -118,14 +127,13 @@
                 {%- endif %}
                 {%- if tool_call.arguments is defined %}
                     {%- for args_name, args_value in tool_call.arguments|items %}
-                        {{- '\"' + args_name + '\": ' }}
+                        {{- '<parameter=' + args_name + '>\n' }}
                         {%- set args_value = args_value | string if args_value is string else args_value | tojson | safe %}
                         {{- args_value }}
-                        {{- '\n' }}
+                        {{- '\n</parameter>\n' }}
                     {%- endfor %}
                 {%- endif %}
-                {{- '}}' }}
-                {{- '\n</tool_call>' }}
+                {{- '</function>\n</tool_call>' }}
             {%- endfor %}
         {%- endif %}
         {{- '<|im_end|>\n' }}
@@ -147,9 +155,4 @@
 {%- endfor %}
 {%- if add_generation_prompt %}
     {{- '<|im_start|>assistant\n' }}
-    {%- if enable_thinking is defined and enable_thinking is false %}
-        {{- '<think>\n\n</think>\n\n' }}
-    {%- else %}
-        {{- '<think>\n' }}
-    {%- endif %}
 {%- endif %}
