@@ -105,7 +105,7 @@ services:
       - qwen3
       - --enable-auto-tool-choice
       - --tool-call-parser
-      - hermes
+      - qwen3_xml
       - --enable-prefix-caching
       - --enable-chunked-prefill
       - --speculative-config
