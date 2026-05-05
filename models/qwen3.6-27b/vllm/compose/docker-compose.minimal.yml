@@ -21,7 +21,7 @@
 # ===========================================================================
 services:
   vllm-qwen36-27b-minimal:
-    image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
+    image: vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada
     container_name: vllm-qwen36-27b-minimal
     restart: "no"
     ports:

@@ -4,6 +4,8 @@ Comprehensive deep-dive into Cliff 1 and Cliff 2: what they are, why they fire, 
 
 This document supersedes earlier characterizations in CHANGELOG and FAQ where they conflict — those have been corrected to match what's documented here.
 
+> ⚠️ **2026-05-05 update — PN59 doesn't close single-card Cliff 2b on consumer Ampere.** Genesis v7.72.2 advertised PN59 streaming-GDN as the structural Cliff 2b fix, but its eligibility check rejects calls with `chunk_indices`/`chunk_offsets` populated — which vLLM's mandatory `--max-num-batched-tokens 4128` always sets when prompts exceed that. PN59 falls back to `_vanilla_path`, which OOMs at the same `chunk_o.py:161 torch.empty_like(v)` site. Affects `long-text.yml`, `long-text-no-mtp.yml`, `long-vision.yml` on single 24 GB cards with prompts >~50K. **Workarounds**: use `dual.yml`, `dual-turbo.yml` (TP=2 — escapes the cliff per the section below), or `llamacpp/default` (different engine). Filed as [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22) with reproducer + 4 fix proposals; pending Sander's review.
+
 > **Cross-reference:** Sandermage's Genesis tree maintains a broader catalog of [8 cliffs](https://github.com/Sandermage/genesis-vllm-patches/blob/main/docs/CLIFFS.md) covering patch behavior across configs and pin versions: Cliff 1 (FA2 lse), Cliff 2 (GDN fwd_h), Cliff 3 (TQ + spec-verify K+1 + FULL cudagraph), Cliff 4 (non-pow-2 GQA + P67), Cliff 5 (ngram strict prompt_lookup_min), Cliff 6 (MoE v0.20+ for non-FP8, [vllm#41306](https://github.com/vllm-project/vllm/pull/41306)), Cliff 7 (DFlash 24 GB OOM at >80K), Cliff 8 (anchor drift on vLLM pin bumps). Our doc here focuses on Cliff 1 + Cliff 2 with the Qwen3.6-27B / RTX 3090 forensics that motivated those Genesis cliffs.
 
 ---
@@ -19,11 +21,11 @@ This document supersedes earlier characterizations in CHANGELOG and FAQ where th
 | Root cause | `softmax_lse` padded to max_seqlen | GDN forward live-tensor cascade (~500 MiB at T=4128) | Same cascade; multi-turn KV accumulation eats activation headroom |
 | Allocation requested at OOM | varies | 50 MiB | 38-50 MiB (per chunk, not scaled by ctx) |
 | Affects | TQ3 paths at large prompts | All single-card vLLM at long single prompts | **All single-card vLLM under accumulating-context agentic traffic** |
-| Closed status | **CLOSED** ✅ — PN25 + PN30 in v7.69, PN17 (FA clamp) in v7.64 | **MOSTLY CLOSED** ✅ — v7.69 + vllm#35975 + 0.93 mem-util passes 60K | **NOT CLOSED** ❌ — fires in 4-5 turns of agentic traffic regardless of config |
-| Our mitigation | Genesis PN17/PN25 (default-on) | mem-util 0.93, max-model-len ≤180K | **`vllm/dual` (TP=2)** OR **`llamacpp/default`** — see "Why those escape" below |
-| Real fix | Already shipped | Already shipped | **Streaming refactor of `chunk_gated_delta_rule_fwd`** — being filed with Sandermage |
+| Closed status | **CLOSED** ✅ — PN25 + PN30 in v7.69, PN17 (FA clamp) in v7.64 | ⚠️ **REGRESSED 2026-05-05** — v7.72.2 PN59 doesn't engage on chunked-prefill, OOMs at `chunk_o.py:161` ([genesis#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22)) | **NOT CLOSED** ❌ — fires in 4-5 turns of agentic traffic regardless of config |
+| Our mitigation | Genesis PN17/PN25 (default-on) | **`vllm/dual` or `dual-turbo` (TP=2)** OR **`llamacpp/default`** — single-card no longer reliable above ~50K | **`vllm/dual` (TP=2)** OR **`llamacpp/default`** — see "Why those escape" below |
+| Real fix | Already shipped | **Pending Sander review** of [genesis#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22) — PN59 eligibility-gate adjustment | **Streaming refactor of `chunk_gated_delta_rule_fwd`** — partial via PN59 but eligibility-gate excludes the path that needs it |
 
-**Practical impact today:** Cliff 1 is closed. Cliff 2a is closed for typical workloads (single prompts up to ~60K). **Cliff 2b is open and bites every user running an agentic coding client on single-card vLLM** — see [#41](https://github.com/noonghunna/club-3090/issues/41) for the full validation matrix.
+**Practical impact today:** Cliff 1 is closed. **Cliff 2a regressed under v7.72.2** on single-card 24 GB long-context — PN59 was supposed to be the structural fix but doesn't engage on the chunked-prefill path that 24 GB single-card configs are forced into. **Cliff 2b is open and bites every user running an agentic coding client on single-card vLLM** — see [#41](https://github.com/noonghunna/club-3090/issues/41) for the full validation matrix and [genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22) for the v7.72.2 cross-rig finding.
 
 ---
 

@@ -142,7 +142,7 @@ echo "Model dir:    ${MODEL_DIR}"
 # our retest validation; if clean, Sander will tag stable.
 # Bumping GENESIS_PIN requires re-running verify-stress.sh against your composes
 # to confirm the new commit works on your config.
-GENESIS_PIN="${GENESIS_PIN:-2db18df}"
+GENESIS_PIN="${GENESIS_PIN:-7b9fd319}"
 
 if [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
   if [[ -d "${GENESIS_DIR}/.git" ]]; then

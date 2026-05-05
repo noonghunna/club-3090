@@ -20,6 +20,8 @@ If you have one or two RTX 3090s and want to run modern LLMs at home, in a homel
 **Hardware questions** (does this work on a 4090, do I need NVLink)? → [docs/HARDWARE.md](docs/HARDWARE.md)
 **Don't know what TPS / KV / MTP mean?** → [docs/GLOSSARY.md](docs/GLOSSARY.md)
 
+> ⚠️ **Known issue (2026-05-05)**: Single-card 24 GB long-context (>~50K tokens) on `long-text.yml` / `long-text-no-mtp.yml` / `long-vision.yml` can OOM despite Genesis v7.72.2's PN59 fix. PN59's runtime eligibility check rejects the chunked-prefill path that 24 GB single-card configs are forced to take. Filed at [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22), pending Sander review. **If you hit it**: switch to `dual.yml` / `dual-turbo.yml` (TP=2 escapes the cliff) or `llamacpp/default` (different engine, no Cliff 2). See [docs/CLIFFS.md](docs/CLIFFS.md) for the full diagnosis.
+
 ---
 
 ## Pick your path
