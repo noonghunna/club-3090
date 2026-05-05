@@ -2,6 +2,30 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-05 — v7.72.2-uplift: Genesis pin bump + sidecar consolidation ⭐
+
+Aligns Qwen3.6-27B configs with Genesis [v7.72.2](https://github.com/Sandermage/genesis-vllm-patches/blob/main/CHANGELOG.md) (pin SHA `7b9fd319`) and Sander's PROD-validated vLLM pin (`nightly-01d4d1ad375...`, allowlist entry #2).
+
+**Pin bumps:**
+- `scripts/setup.sh` `GENESIS_PIN`: `2db18df` (v7.69) → `7b9fd319` (v7.72.2)
+- All 16 composes' vLLM image: `nightly-7a1eb8ac2ec...` → `nightly-01d4d1ad375...`
+
+**Sidecars retired** — 6 local `.py` patches deleted from `vllm/patches/`, all confirmed redundant on v7.72.2: `patch_inputs_embeds_optional.py` (PN35 supersedes), `patch_pn30_dst_shaped_temp_fix.py` (PN30 v7.68), `patch_pn25_genesis_register_fix.py` (PN25), `patch_tolist_cudagraph.py` (P78), `patch_workspace_lock_disable.py` (PN34), `patch_pr40798_workspace.py` (research artifact).
+
+**PN59 added to 7 Genesis-loaded composes** (`docker-compose.yml`, `dual-turbo.yml`, `long-text.yml`, `long-text-no-mtp.yml`, `long-vision.yml`, `bounded-thinking.yml`, `tools-text.yml`) for consistency.
+
+`docker-compose.dual.yml` left intentionally Genesis-free as a debugging fallback for cross-engine bisect.
+
+**dual-turbo bench (2× 3090, single-stream)**: 81.21 narr / 108.20 code wall TPS (5 measured runs each, CV 2.3%/0.9%), AL 3.46. **VRAM dropped from 22.1 GB/card → 20.0 GB/card** (PN35 native fold + Sander's audit-pass cleanups).
+
+**Cross-rig PN59 finding**: single-card 24 GB Cliff 2b unchanged on `long-text.yml` despite v7.72.2's PN59 streaming-GDN orchestrator. Filed [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22) with reproducer + 4 fix proposals.
+
+**v7.72.1 closes [#57](https://github.com/noonghunna/club-3090/issues/57)** (lex's xgrammar-patternProperties fire on long-prompt agentic IDE traffic).
+
+See cross-cutting [CHANGELOG.md](../../CHANGELOG.md) entry for the full narrative + bench delta table; [vllm/patches/README.md](vllm/patches/README.md) for what's load-bearing now.
+
+---
+
 ## 2026-05-04 — Carnice-V2-27B + BF16 MTP overlay — new compose variant ⭐
 
 Adds `docker-compose.carnice-bf16mtp.yml`: [kai-os/Carnice-V2-27b](https://huggingface.co/kai-os/Carnice-V2-27b) (Hermes-style agentic fine-tune of Qwen3.6-27B) quantized to INT4 via delta-merge of Lorbus's AutoRound grid, with a BF16 MTP overlay for clean spec-decode acceptance.

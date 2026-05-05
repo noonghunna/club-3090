@@ -44,6 +44,8 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 
 ### Single-card (1× RTX 3090) — vLLM
 
+> ⚠️ **Cliff 2b open on `long-text*` / `long-vision` (2026-05-05)** — Genesis v7.72.2's PN59 streaming-GDN orchestrator doesn't engage on the chunked-prefill path 24 GB single-card configs are forced to take. Single-prompt prefill at >~50K may OOM. Filed at [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22). **Safe single-card paths**: `llamacpp/default` (no Cliff 2b) or single-prompt context capped at <50K. **TP=2 paths escape the cliff** entirely (see Dual-card section).
+
 | Compose | Rig | KV | Max ctx | Narr / Code TPS | Peak VRAM | Date | Notes |
 |---|---|---|---:|---:|---:|---|---|
 | `minimal.yml` (`mem-util 0.95 max-model-len 65536`) | @noonghunna (1× 3090, x16, 350 W) | TQ3 | 64K | ~32 / ~33 | ~22.4 GB | 2026-05-03 | no MTP. [stiggy2k16](https://github.com/noonghunna/club-3090/issues/43) cross-rig data point — short-prompt vLLM-safe path when llama.cpp is too slow. |
@@ -66,6 +68,7 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 |---|---|---|---:|---:|---:|---|---|
 | `dual.yml` ⭐ | @noonghunna (2× 3090 PCIe, no NVLink) | fp8 | 262K (237K single-prompt verified) | 69 / 89 | ~23.6 GB | 2026-04-29 | tested 2-card baseline. fp8 KV, 2 streams, full feature set. **PASSES v2 continuous soak** (Cliff 2b clean). |
 | `dual-turbo.yml` | @noonghunna (2× 3090 PCIe) | TQ3 | 262K | 58 / 76 per-stream (**269 TPS aggregate at 4 streams**) | ~19.8 GB | 2026-04-29 | TQ3 KV — 4.67× concurrency for multi-tenant agent workloads. |
+| `dual-turbo.yml` ⭐ | @noonghunna (2× 3090 PCIe) | TQ3 | 262K | **81.21 / 108.20** single-stream | **20.0 GB** | 2026-05-05 | **v7.72.2 uplift**: Genesis pin `7b9fd319` + vLLM `01d4d1ad3` (Sander's PROD pin). 6 redundant local sidecars dropped (PN35/PN30/PN25/P78/PN34 supersede). 5 measured runs each, CV 2.3%/0.9%. AL 3.46. **VRAM −2.1 GB/card vs v7.69 baseline** (PN35 native + PN59 fold value). All 8/8 verify-full checks pass. |
 | `dual-dflash.yml` | @noonghunna (2× 3090 PCIe) | fp8 | 185K | 82 / **125** | ~23.6 GB | 2026-04-29 | DFlash N=5 + 1.75 GB draft / card. AL ~4.4. Fastest 2-card short-prompt code path. |
 | `dual-dflash-noviz.yml` | @noonghunna (2× 3090 PCIe) | fp8 | 200K | 78 / **127** | ~23.8 GB | 2026-04-29 | DFlash + no vision tower. +15K ctx vs `dual-dflash`. |
 | `dual-dflash-noviz.yml` | @snoby (2× **4090** PCIe — 5-GPU rig, GPUs 2,3, no NVLink, [#46](https://github.com/noonghunna/club-3090/issues/46)) | fp8 | **180K** | 92.55 / **148.99** | ~21.8 GB | 2026-05-04 | First non-3090 cross-rig data. **Required `max-model-len` drop from 200K→180K** vs 3090 baseline (boot OOM at 200K) — 4090 ctx-ceiling gotcha pending investigation. +17% TPS lift vs same compose on 3090 (78→92.55 narr / 127→148.99 code). |

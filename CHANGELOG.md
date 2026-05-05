@@ -2,6 +2,53 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-05 — v7.72.2-uplift: Genesis pin bump + sidecar consolidation + cross-rig PN59 finding ⭐
+
+Sander shipped Genesis [v7.72.2](https://github.com/Sandermage/genesis-vllm-patches/blob/main/CHANGELOG.md) on 2026-05-05 with 7 new patches (PN59-PN67), the v7.72.1 P68 xgrammar-incompat fix (closes [#57](https://github.com/noonghunna/club-3090/issues/57)), and v7.72.2 PN70 schema-subset filter. Branch `v7.72.2-uplift` aligns club-3090 with the new release.
+
+**Pin bumps:**
+- `scripts/setup.sh` `GENESIS_PIN`: `2db18df` (v7.69) → `7b9fd319` (v7.72.2)
+- All 16 composes' vLLM image: `nightly-7a1eb8ac2ec...` → `nightly-01d4d1ad375...` (Sander's PROD-validated pin, allowlist entry #2)
+
+**Sidecar consolidation** — 6 local sidecars deleted from `models/qwen3.6-27b/vllm/patches/`, all confirmed redundant on v7.72.2:
+
+| Retired sidecar | Genesis native that supersedes |
+|---|---|
+| `patch_inputs_embeds_optional.py` | PN35 (vllm#35975 backport, default-on since v7.69) |
+| `patch_pn30_dst_shaped_temp_fix.py` | PN30 v7.68 dst-shaped temp |
+| `patch_pn25_genesis_register_fix.py` | PN25 opaque-op pool |
+| `patch_tolist_cudagraph.py` | P78 TQ tolist capture-guard (Sander's v7.72 CHANGELOG retires this) |
+| `patch_workspace_lock_disable.py` | PN34 workspace-lock relax |
+| `patch_pr40798_workspace.py` | (research artifact, no compose ever mounted it) |
+
+The 7 Genesis-loaded composes (`docker-compose.yml`, `dual-turbo.yml`, `long-text.yml`, `long-text-no-mtp.yml`, `long-vision.yml`, `bounded-thinking.yml`, `tools-text.yml`) had their volume mounts and entrypoint shell invocations cleaned up; `GENESIS_ENABLE_PN59_STREAMING_GDN=1` was added to all 7 for consistency.
+
+`docker-compose.dual.yml` is intentionally left **Genesis-free** as a debugging fallback for cross-engine bisect — useful when isolating "is this a Genesis bug or upstream vLLM bug" during silent-empty / OOM triage.
+
+**Bench results** (dual-turbo, 2× 3090):
+
+| Metric | v7.69 baseline | v7.72.2 + new vLLM pin | Δ |
+|---|---:|---:|---:|
+| Narrative wall TPS | 81.57 | 81.21 | flat (within CV) |
+| Code wall TPS | 108.77 | 108.20 | flat (within CV) |
+| MTP AL | 3.47 | 3.46 | flat |
+| **VRAM/card** | **22.1 GB** | **20.0 GB** | **−2.1 GB** ⭐ |
+| Code CV | 2.1% | **0.9%** | tighter |
+| All verify-full checks | pass | **pass (8/8)** | ✓ |
+
+The 2 GB VRAM headroom recovery is the headline — PN35 (~64 MiB GPU + ~64 MiB pinned CPU per site × 2 sites) plus the cumulative effect of Sander's audit-pass cleanups. On 24 GB cards this is a real ~9% headroom gain.
+
+**Phase C cross-rig PN59 finding** — single-card 24 GB Cliff 2b is **unchanged** despite v7.72.2's PN59 streaming-GDN orchestrator. Diagnosis showed PN59's eligibility check rejects calls with non-None `chunk_indices`/`chunk_offsets`, which vLLM's mandatory `--max-num-batched-tokens 4128` always populates on 24 GB single-card configs. PN59 falls back to `_vanilla_path` which OOMs at the exact `chunk_o.py:161 torch.empty_like(v)` site PN59 was advertised to eliminate. Filed as [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22) with concrete reproducer + 4 fix proposals; cross-link from [club-3090 disc #19](https://github.com/noonghunna/club-3090/discussions/19#discussioncomment-16815715).
+
+**v7.72.1 closes [#57](https://github.com/noonghunna/club-3090/issues/57)** (lex's xgrammar-patternProperties fire on long-prompt agentic IDE traffic). P68 now auto-skips `tool_choice` upgrade on dirty catalogs; PN70 (opt-in via `GENESIS_ENABLE_PN70_TOOL_SCHEMA_FILTER=1`) is the companion option-3 path. Issue closed 2026-05-05.
+
+**Reading order on this branch:**
+1. `models/qwen3.6-27b/vllm/patches/README.md` — what's still load-bearing vs superseded
+2. BENCHMARKS.md `dual-turbo.yml` 2026-05-05 row — measured uplift numbers
+3. [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22) — open Genesis issue with the PN59 finding
+
+---
+
 ## 2026-05-04 PM — KV format choice is per-VRAM-class, not just per-engine-config (#47) ⭐
 
 Cross-rig validation by [@efschu](https://github.com/noonghunna/club-3090/issues/47) on 2× modded 3080 (20 GB / card) surfaced that **`dual-turbo.yml`'s shipped `turboquant_3bit_nc` KV trips Cliff 2 at 90K on 20 GB Ampere even though the same compose works at 262K on 2× 3090 (24 GB)**. Override to `--kv-cache-dtype fp8_e5m2` and the full window opens — verify-stress 7/7 PASS including the 91K needle, full 257,851-token auto-discovery needle test PASS at 90% depth, bench 82.4 narr / 107.9 code TPS.

@@ -85,7 +85,7 @@
 # ===========================================================================
 services:
   vllm-qwen36-27b:
-    image: vllm/vllm-openai:nightly-7a1eb8ac2ec4ea69338c51dc7afd4b15010abfa8
+    image: vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada
     container_name: vllm-qwen36-27b
     restart: "no"
     ports:
@@ -103,10 +103,8 @@ services:
       # Standalone .tolist() cudagraph capture fix — separate bug from P65.
       # Different bug class: P65 fixes cu_seqlens_k=cu_seqlens_q misclassification;
       # this fix guards .tolist() syscalls during capture.
-      - ../patches/patch_tolist_cudagraph.py:/patches/patch_tolist_cudagraph.py:ro
       # workspace_lock_disable — relaxes vllm#39226 strict assertion until
       # Sandermage's P98 marker fix lands. v0.20-only requirement.
-      - ../patches/patch_workspace_lock_disable.py:/patches/patch_workspace_lock_disable.py:ro
     environment:
       # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
       # - CUDA_VISIBLE_DEVICES=0
@@ -134,6 +132,7 @@ services:
       - GENESIS_ENABLE_P67_TQ_MULTI_QUERY_KERNEL=1            # core fix for #40880 (proper Triton kernel)
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1            # capture-size divisibility
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1        # streaming tool-call edge case
+      - GENESIS_ENABLE_PN59_STREAMING_GDN=1
       # P68/P69 deliberately DISABLED (2026-04-29) — same reasoning as
       # tools-text.yml: 8000-char threshold breaks IDE-agent flows with
       # silent finish_reason=stop. Bisected on club-3090 issue #2.
@@ -167,8 +166,6 @@ services:
           exit 1
         fi
         python3 -m vllm._genesis.patches.apply_all
-        python3 /patches/patch_workspace_lock_disable.py
-        python3 /patches/patch_tolist_cudagraph.py
         exec vllm serve "$@"
       - --
     command:

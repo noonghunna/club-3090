@@ -21,6 +21,8 @@ Neither acceptable? Two single-card vLLM mitigations: (a) cap session context at
 
 A Genesis sidecar fix (streaming refactor) is being filed with Sandermage. ETA 2-4 weeks if accepted. This section will be updated when it ships.
 
+> ⚠️ **2026-05-05 update — Genesis v7.72.2's PN59 streaming-GDN doesn't close it.** Sander shipped PN59 advertising it as the structural Cliff 2b fix, but the eligibility check rejects calls with `chunk_indices`/`chunk_offsets` populated — which vLLM's mandatory `--max-num-batched-tokens 4128` always sets on 24 GB single-card configs. PN59 falls through to vanilla code which OOMs at the same site. Filed at [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22) with reproducer + 4 fix proposals; pending Sander review. **The two safe paths above remain the recommendation.**
+
 For workloads that **don't** accumulate context across turns (single-shot RAG, simple chat, batch processing), single-card vLLM is fine — see the table below.
 
 ---
