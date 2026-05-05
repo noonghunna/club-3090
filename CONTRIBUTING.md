@@ -28,6 +28,22 @@ Thanks for being here. This repo collects working recipes for serving big LLMs o
 
 ---
 
+## Issues vs Discussions — where to file what
+
+Two GitHub channels, two different shapes of conversation. Picking the right one keeps the right people seeing the right thing:
+
+| You have | File as | Why |
+|---|---|---|
+| **A reproducible failure** (boot OOM, 500, silent-empty, stuck engine) — anything with a stack trace, error log, or `report.sh` dump | **[Issue](https://github.com/noonghunna/club-3090/issues/new/choose)** | Bug-tracking lives in issues — open/closed state, labels, assignees, searchable when others hit the same symptom. The [bug report template](https://github.com/noonghunna/club-3090/issues/new?template=bug-report.yml) leads with `bash scripts/report.sh > my-rig.md` so the rig context is in the issue, not split across replies |
+| **A measured rig + bench** (cross-rig data, BENCHMARKS row request) | **[Numbers from your rig issue](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml)** | Same reasoning — structured one-shot data point lands cleanly as a closeable issue, ends up in BENCHMARKS with attribution |
+| **A design question** ("should the launch wizard ask X?", "why does dual-turbo use TQ3 not k8v4?") | **[Discussion](https://github.com/noonghunna/club-3090/discussions)** | Open-ended, branchy, no single resolution state |
+| **A welcome / first-impression / sharing your rig** | **[Discussion](https://github.com/noonghunna/club-3090/discussions)** | Tree-of-comments shape fits casual interaction; doesn't pollute the issue tracker |
+| **Asking for help and not sure if it's a bug** | **Discussion**, until clarity emerges; then **fork the bug-shaped piece into an issue** with a cross-link | Avoid prematurely treating an unclear question as a bug; but once the bug is clear, move it to issues so the resolution state is trackable |
+
+**Please don't post log dumps / `report.sh` output / stack traces inside discussions.** It buries the bug under non-bug content (and the reverse: a bug-shaped problem buried inside a "great success!" thread doesn't reach maintainers' issue queue). If a discussion thread accumulates a log dump or a reproducer, the maintainers may ask you to fork the bug-shaped piece into an issue with a cross-link back — not banishment, just keeping each channel doing what it's good at.
+
+---
+
 ## Process for non-trivial changes
 
 1. **Open an issue first** for anything bigger than a typo fix or a one-line measurement contribution. We'll either align on shape or explain why we'd land it differently — saves you a wasted afternoon.
