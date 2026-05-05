@@ -32,6 +32,7 @@
 #     vllm/dual-dflash-noviz 200K + FP16 + DFlash N=5 + no vision (peak code, max ctx)
 #     vllm/dual-nvlink      262K + fp8 + 2 streams + vision (REQUIRES NVLink bridge — community/experimental)
 #     vllm/dual-nvlink-turbo 262K + TQ3 + 4 streams + vision (REQUIRES NVLink bridge — community/experimental)
+#     vllm/gemma-mtp        Gemma-4-31B + Google MTP drafter (32K, bf16 KV, vision — community/experimental, pre-merge)
 #
 #   Single-card llama.cpp:
 #     llamacpp/default      Q3_K_XL + 262K + q4_0 KV + vision (max ctx, no cliffs)
@@ -75,6 +76,8 @@ declare -A VARIANT_DEFAULT_PORT=(
   [vllm/dual-dflash-noviz]=8013
   [vllm/dual-nvlink]=8014
   [vllm/dual-nvlink-turbo]=8017
+  [vllm/gemma-mtp]=8030
+  [vllm/gemma-mtp-tp1]=8031
   [llamacpp/default]=8020
   [llamacpp/concurrent]=8020
 )
@@ -96,12 +99,14 @@ declare -A VARIANTS=(
   [vllm/dual-dflash-noviz]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-dflash-noviz.yml"
   [vllm/dual-nvlink]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink.yml"
   [vllm/dual-nvlink-turbo]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink-turbo.yml"
+  [vllm/gemma-mtp]="vllm|models/gemma-4-31b/vllm/compose|docker-compose.gemma-mtp.yml"
+  [vllm/gemma-mtp-tp1]="vllm|models/gemma-4-31b/vllm/compose|docker-compose.gemma-mtp-tp1.yml"
   [llamacpp/default]="llamacpp|models/qwen3.6-27b/llama-cpp/compose|docker-compose.yml"
   [llamacpp/concurrent]="llamacpp|models/qwen3.6-27b/llama-cpp/compose|docker-compose.concurrent.yml"
 )
 
 # Container name patterns we'll bring down — covers all current composes.
-RUNNING_PATTERN="^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-qwen36-27b-bounded-thinking|vllm-qwen36-27b-long-text-no-mtp)"
+RUNNING_PATTERN="^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-qwen36-27b-bounded-thinking|vllm-qwen36-27b-long-text-no-mtp|vllm-gemma-4-31b)"
 
 usage() {
   sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
@@ -188,7 +193,7 @@ wait_ready() {
   # AND surface stage progress markers from its logs while we wait.
   local container
   container=$(docker ps --format '{{.Names}}' 2>/dev/null \
-    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b)' | head -1)
+    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-gemma-4-31b)' | head -1)
 
   if [[ -z "$container" ]]; then
     # Compose started but no container is up — almost always a syntax error

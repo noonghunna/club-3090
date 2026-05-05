@@ -218,6 +218,8 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [vllm/dual-dflash-noviz]=8013
   [vllm/dual-nvlink]=8014
   [vllm/dual-nvlink-turbo]=8017
+  [vllm/gemma-mtp]=8030
+  [vllm/gemma-mtp-tp1]=8031
   [llamacpp/default]=8020
   [llamacpp/concurrent]=8020
 )
@@ -235,6 +237,8 @@ declare -A LAUNCH_DEFAULT_CONTAINER=(
   [vllm/dual-dflash-noviz]=vllm-qwen36-27b-dual-dflash-noviz
   [vllm/dual-nvlink]=vllm-qwen36-27b-dual-nvlink
   [vllm/dual-nvlink-turbo]=vllm-qwen36-27b-dual-nvlink-turbo
+  [vllm/gemma-mtp]=vllm-gemma-4-31b-mtp
+  [vllm/gemma-mtp-tp1]=vllm-gemma-4-31b-mtp-tp1
   [llamacpp/default]=llama-cpp-qwen36-27b
   [llamacpp/concurrent]=llama-cpp-qwen36-27b-concurrent
 )

@@ -1,0 +1,134 @@
+# ===========================================================================
+# Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter
+# 2× RTX 3090 TP=2 + bfloat16 KV + 32K ctx + 4 streams.
+#
+# Status: COMMUNITY-CONTRIBUTED, EXPERIMENTAL.
+#   First Ampere consumer cross-rig data on Google's Gemma 4 MTP drafters
+#   (released 2026-05-05). Google benched on RTX PRO 6000 Blackwell;
+#   this compose tests the same path on 2× RTX 3090 (Ampere sm_86, PCIe-only).
+#
+# Bench (2× 3090 PCIe, no NVLink, 230W cap, 2026-05-05 evening):
+#   narrative (canonical 800-word essay): 109.16 wall TPS (CV 3.0%)
+#   code (canonical quicksort):           140.59 wall TPS (CV 1.7%)
+#   AL: 3.05 narr / 3.99 code (n=4 max — code essentially saturating)
+#   Per-position accept narr: 79/57/41/29 %
+#   Per-position accept code: 92/77/66/56 %
+#   VRAM: 21.5 GB/card
+#   Speedup vs no-spec-decode baseline (~61 TPS): 1.79× narr / 2.31× code.
+#
+# Models:
+#   target: Intel/gemma-4-31B-it-int4-AutoRound  (21.2 GB, vision preserved)
+#   draft : google/gemma-4-31B-it-assistant       (0.5B / 927 MB BF16)
+#
+# Pre-merge dependencies (drop when both land in nightly):
+#   1. vLLM PR #41745 — gemma4_assistant model class + Gemma4Proposer.
+#      Vendored at ../patches/vllm-gemma4-mtp/.
+#   2. transformers ≥ 5.8.0 — released 2026-05-05 with native gemma4_assistant
+#      support. Image ships 5.7.0; entrypoint upgrades at boot.
+# See ../patches/vllm-gemma4-mtp/README.md for upgrade triggers.
+#
+# KV format pinned in a corner on Ampere:
+#   - fp8_e5m2 → assert fail in gemma4_mm.py:1336 (vLLM allowlist excludes it)
+#   - fp8_e4m3 → Triton "fp8e4nv not supported in this architecture" on sm_86
+#     (Ampere supports only fp8e4b15 / fp8e5; not fp8e4nv)
+#   - default (auto = bfloat16) → sidesteps all fp8 kernel paths
+# Smaller KV pool than fp8 but at 32K test ctx that's not the bottleneck.
+# ===========================================================================
+services:
+  vllm-gemma-4-31b-mtp-tp1:
+    image: vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada
+    container_name: vllm-gemma-4-31b-mtp-tp1
+    restart: "no"
+    ports:
+      - "${PORT:-8031}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~5-7 min);
+      # subsequent boots reuse cached graphs (~3 min). Pattern from dual-turbo.yml.
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
+      # ---- vLLM PR #41745 overlay (lucianommartins/gemma4-mtp branch) ----
+      # 6 modified files + 1 new file. RO-mount each over installed vllm paths.
+      # Drop this whole block when PR merges + propagates. Source: ../patches/vllm-gemma4-mtp/
+      - ../patches/vllm-gemma4-mtp/config/speculative.py:/usr/local/lib/python3.12/dist-packages/vllm/config/speculative.py:ro
+      - ../patches/vllm-gemma4-mtp/model_executor/models/gemma4_mtp.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/gemma4_mtp.py:ro
+      - ../patches/vllm-gemma4-mtp/model_executor/models/registry.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/registry.py:ro
+      - ../patches/vllm-gemma4-mtp/transformers_utils/model_arch_config_convertor.py:/usr/local/lib/python3.12/dist-packages/vllm/transformers_utils/model_arch_config_convertor.py:ro
+      - ../patches/vllm-gemma4-mtp/v1/spec_decode/gemma4.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/spec_decode/gemma4.py:ro
+      - ../patches/vllm-gemma4-mtp/v1/spec_decode/llm_base_proposer.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/spec_decode/llm_base_proposer.py:ro
+      - ../patches/vllm-gemma4-mtp/v1/worker/gpu_model_runner.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py:ro
+      # --------------------------------------------------------------------
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # transformers 5.8.0 (released 2026-05-05) is the first version with native
+    # gemma4_assistant support. Image ships 5.7.0; bump in entrypoint until
+    # vLLM nightly rebuilds against ≥5.8.0.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        pip install --quiet --upgrade transformers==5.8.0
+        exec vllm serve "$@"
+      - --
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/gemma-4-31b-autoround-int4
+      - --served-model-name
+      - gemma-4-31b-autoround
+      - --tensor-parallel-size
+      - "1"
+      # Single-card: weights ~16 GB + drafter ~1 GB + bf16 KV at 16K + vision +
+      # activations needs to fit in 24 GB. Drop vision via limit-mm-per-prompt
+      # to reclaim ~1.5 GB and skip the mm-token-budget assertion.
+      # Drop max-model-len 32K → 16K for headroom.
+      - --max-model-len
+      - "8192"
+      - --gpu-memory-utilization
+      - "0.95"
+      - --max-num-seqs
+      - "256"
+      # max_tokens_per_mm_item=2496 must fit in batched tokens — even with
+      # --limit-mm-per-prompt image=0, the encoder-budget computation still
+      # asserts. 4096 (above 2496 floor) leaves more profiling room than 8192.
+      - --max-num-batched-tokens
+      - "4096"
+      - --limit-mm-per-prompt
+      - '{"image":0,"audio":0}'
+      # fp8 KV per vLLM recipe — halves KV pool footprint vs bf16 default.
+      # Risk on Ampere: explicit fp8_e4m3 hits Triton "fp8e4nv not supported"
+      # on sm_86 in earlier tests. Unsuffixed `fp8` may dispatch differently.
+      - --kv-cache-dtype
+      - fp8
+      - --trust-remote-code
+      # Tool-call support per vLLM Gemma 4 recipe — required for any soak /
+      # agent traffic that includes a `tools: [...]` array. Without these,
+      # vLLM rejects tool-bearing requests with HTTP 400.
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - gemma4
+      - --chat-template
+      - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
+      - --speculative-config
+      - '{"model":"/root/.cache/huggingface/gemma-4-31b-it-assistant","num_speculative_tokens":4}'

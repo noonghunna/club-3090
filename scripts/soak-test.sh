@@ -90,7 +90,7 @@ need python3
 
 auto_container() {
   docker ps --format '{{.Names}}' 2>/dev/null \
-    | grep -E '^vllm-qwen36-27b' \
+    | grep -E '^(vllm-qwen36-27b|vllm-gemma-4-31b)' \
     | head -1 || true
 }
 

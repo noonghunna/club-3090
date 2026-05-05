@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import csv
 import json
+import os
 import pathlib
 import statistics
 import sys
@@ -57,8 +58,12 @@ def base_req(model, messages, max_tokens, temp=0.4, thinking=False, tools=False)
         "temperature": temp,
         "stream": True,
         "stream_options": {"include_usage": True},
-        "chat_template_kwargs": {"enable_thinking": thinking},
     }
+    # `chat_template_kwargs.enable_thinking` is a Qwen3-family feature.
+    # Other model families (Gemma 4, etc.) reject it with 400. Skip via:
+    #   SOAK_NO_CHAT_TEMPLATE_KWARGS=1
+    if os.environ.get("SOAK_NO_CHAT_TEMPLATE_KWARGS") != "1":
+        req["chat_template_kwargs"] = {"enable_thinking": thinking}
     if tools:
         req["tools"] = TOOLS
         req["tool_choice"] = "auto"
