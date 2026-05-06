@@ -78,13 +78,25 @@ Past 330W: diminishing returns (SM clocks saturate near 1.9 GHz on 3090s); 388W 
 
 For dual-card: combined power at 330W cap each = ~660W under heavy load — verify your PSU has at least 850W single rail. 230W cap each = ~460W combined for thermally-constrained builds.
 
-Cross-rig power-cap data (anchor points):
+### Cross-rig power-cap data (anchor points)
 
-| Engine | Model | Cap | Narr TPS | Code TPS | Source |
-|---|---|---:|---:|---:|---|
-| llama.cpp default | Qwen3.6 27B Q3_K_XL | 230W | 25.15 | 24.86 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
-| llama.cpp default | Qwen3.6 27B Q3_K_XL | 330W | 36.35 | 36.26 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
-| llama.cpp default | Qwen3.6 27B Q3_K_XL | 388W (stock, **water-cooled**) | 38.23 | 37.97 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
+Run `sudo bash scripts/power-cap-sweep.sh --cooling air|water|aio` on a new rig to add a row. The script auto-detects the running container/model/URL, sweeps a configurable cap range, and emits a paste-ready markdown summary at `/tmp/power-cap-summary.md`. See [`scripts/power-cap-sweep.sh`](../scripts/power-cap-sweep.sh).
+
+| GPU | Cooling | Engine | Model | Cap | Narr TPS | Code TPS | TPS/W | Source |
+|---|---|---|---|---:|---:|---:|---:|---|
+| 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | 230W | 25.15 | 24.86 | 0.109 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
+| 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | **330W** ⭐ | 36.35 | 36.26 | 0.110 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
+| 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | 388W (stock) | 38.23 | 37.97 | 0.098 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
+| 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | **260W** ⭐ | 48.41 | 48.43 | 0.186 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
+| 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 280W | 49.54 | 49.10 | 0.177 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
+| 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 300W | 50.26 | 50.02 | 0.168 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
+| 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 450W (stock) | 52.28 | 52.22 | 0.116 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
+
+⭐ = peak TPS/W efficiency on that rig.
+
+**Cross-rig pattern**: efficiency knee falls at **~60-85% of stock TDP** across consumer Ampere/Ada — start there for a new card class and zoom in. Ada (4090) is proportionally more aggressive than Ampere (3090) — 4090 cuts 33% of stock TDP for ~7% TPS loss; 3090 cuts 15% of stock for ~5% loss.
+
+5090 (Blackwell consumer) anchor pending — cross-rig ask out to [@efschu](https://github.com/efschu) / [@apnar](https://github.com/apnar) on [disc #62](https://github.com/noonghunna/club-3090/discussions/62).
 
 ---
 
