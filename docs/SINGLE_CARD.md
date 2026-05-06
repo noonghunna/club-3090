@@ -179,6 +179,23 @@ What still keeps it off the recommended list:
 
 vLLM ships this off by default. Our composes set `--tool-call-parser qwen3_coder` + `--enable-auto-tool-choice`. If you're rolling your own compose, both are required.
 
+### Running alongside a desktop / sub-24 GB usable VRAM
+
+The compose defaults are calibrated for **headless** 3090 (no display server, no other GPU consumers). If you're running on a workstation where the same GPU also drives a desktop session — or your card has slightly less effective VRAM (e.g., some 4090s land at ~23.5 GB usable with X server overhead) — the default `max-model-len` may exceed your KV-cache budget at default `gpu-memory-utilization`.
+
+Two env-override knobs available on every vLLM compose (defaults preserved if unset):
+
+```bash
+MAX_MODEL_LEN=32768 \
+GPU_MEMORY_UTILIZATION=0.80 \
+  bash scripts/switch.sh vllm/long-text
+```
+
+- `MAX_MODEL_LEN` — shrink the KV-cache budget; trades long-context for fit. `90000` is a safe value for `long-text.yml` on rigs with ~1 GB of overhead (4090 with display, etc.). Validated on @laurimyllari's 4090 ([disc #62](../../../noonghunna/club-3090/discussions/62)).
+- `GPU_MEMORY_UTILIZATION` — reserve a percentage of VRAM for non-vLLM GPU consumers. **Stay in `0.85-0.92` range** for TQ3 KV paths on 24 GB Ampere. `0.80` is generally too aggressive — vLLM's profiling phase eats more than the saved 0.05 budget and reports `No available memory for the cache blocks` at engine init. fp8 KV paths (`tools-text.yml`, `dual.yml`) tolerate `0.80` better.
+
+Generally prefer **dropping `MAX_MODEL_LEN` first** (clean KV budget reduction, predictable behavior) over `GPU_MEMORY_UTILIZATION` (interacts with profiling overhead in non-obvious ways). Drop both if your envelope is really tight.
+
 ---
 
 ## Quick start
