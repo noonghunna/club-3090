@@ -78,6 +78,7 @@ declare -A VARIANT_DEFAULT_PORT=(
   [vllm/dual-nvlink-turbo]=8017
   [vllm/gemma-mtp]=8030
   [vllm/gemma-mtp-tp1]=8031
+  [vllm/gemma-dflash]=8032
   [llamacpp/default]=8020
   [llamacpp/concurrent]=8020
 )
@@ -101,6 +102,7 @@ declare -A VARIANTS=(
   [vllm/dual-nvlink-turbo]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink-turbo.yml"
   [vllm/gemma-mtp]="vllm|models/gemma-4-31b/vllm/compose|docker-compose.gemma-mtp.yml"
   [vllm/gemma-mtp-tp1]="vllm|models/gemma-4-31b/vllm/compose|docker-compose.gemma-mtp-tp1.yml"
+  [vllm/gemma-dflash]="vllm|models/gemma-4-31b/vllm/compose|docker-compose.gemma-dflash.yml"
   [llamacpp/default]="llamacpp|models/qwen3.6-27b/llama-cpp/compose|docker-compose.yml"
   [llamacpp/concurrent]="llamacpp|models/qwen3.6-27b/llama-cpp/compose|docker-compose.concurrent.yml"
 )
