@@ -257,9 +257,9 @@ services:
       # on 2026-05-02 to give activation headroom for the PN12+PN25 FFN pool
       # residence + DeltaNet GDN buffer. See long-text.yml for full rationale.
       - --max-model-len
-      - "180000"
+      - "${MAX_MODEL_LEN:-180000}"
       - --gpu-memory-utilization
-      - "0.95"
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

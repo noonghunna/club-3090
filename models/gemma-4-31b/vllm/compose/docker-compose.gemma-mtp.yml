@@ -101,9 +101,9 @@ services:
       - "2"
       - --disable-custom-all-reduce
       - --max-model-len
-      - "32768"
+      - "${MAX_MODEL_LEN:-32768}"
       - --gpu-memory-utilization
-      - "0.92"
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
       - "4"
       # Vision tower: max_tokens_per_mm_item=2496 must fit in batched tokens.

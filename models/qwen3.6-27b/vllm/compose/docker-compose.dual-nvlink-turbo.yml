@@ -212,9 +212,9 @@ services:
       # makes vLLM's custom kernel a win. dual-turbo.yml disables it because
       # PCIe P2P bandwidth makes the NCCL fallback faster there.
       - --max-model-len
-      - "262144"
+      - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
-      - "0.85"
+      - "${GPU_MEMORY_UTILIZATION:-0.85}"
       - --max-num-seqs
       - "4"
       - --max-num-batched-tokens

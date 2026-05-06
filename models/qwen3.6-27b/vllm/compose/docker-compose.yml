@@ -194,9 +194,9 @@ services:
       #   - long-vision.yml   → 198K + vision + sidecars (Cliff 1 closed; Cliff 2 caveat)
       #   - long-text.yml     → 218K text-only + sidecars (same Cliff 2 caveat)
       - --max-model-len
-      - "48000"
+      - "${MAX_MODEL_LEN:-48000}"
       - --gpu-memory-utilization
-      - "0.92"
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

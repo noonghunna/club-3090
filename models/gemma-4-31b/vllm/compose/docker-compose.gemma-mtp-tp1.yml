@@ -104,9 +104,9 @@ services:
       # to reclaim ~1.5 GB and skip the mm-token-budget assertion.
       # Drop max-model-len 32K → 16K for headroom.
       - --max-model-len
-      - "8192"
+      - "${MAX_MODEL_LEN:-8192}"
       - --gpu-memory-utilization
-      - "0.95"
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
       - --max-num-seqs
       - "256"
       # max_tokens_per_mm_item=2496 must fit in batched tokens — even with

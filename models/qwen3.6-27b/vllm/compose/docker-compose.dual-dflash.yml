@@ -103,9 +103,9 @@ services:
       - "2"
       - --disable-custom-all-reduce
       - --max-model-len
-      - "185000"
+      - "${MAX_MODEL_LEN:-185000}"
       - --gpu-memory-utilization
-      - "0.95"
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

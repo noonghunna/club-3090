@@ -104,9 +104,9 @@ services:
       # makes vLLM's custom kernel a win. dual.yml disables it because PCIe
       # P2P bandwidth makes the NCCL fallback faster there.
       - --max-model-len
-      - "262144"
+      - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
-      - "0.92"
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
       - "2"
       - --max-num-batched-tokens

@@ -231,9 +231,9 @@ services:
       # Engine pre-check at 175K + 0.95 returned `estimated maximum model length
       # is 148608` — falls back to 145K for safety margin.
       - --max-model-len
-      - "145000"
+      - "${MAX_MODEL_LEN:-145000}"
       - --gpu-memory-utilization
-      - "0.95"
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens

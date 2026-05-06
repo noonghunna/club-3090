@@ -102,9 +102,9 @@ services:
       - "4"
       - --disable-custom-all-reduce
       - --max-model-len
-      - "262144"
+      - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
-      - "0.92"
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
       - "4"
       - --max-num-batched-tokens

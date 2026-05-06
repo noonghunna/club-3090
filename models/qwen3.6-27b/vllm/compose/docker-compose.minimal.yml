@@ -64,9 +64,9 @@ services:
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "32768"
+      - "${MAX_MODEL_LEN:-32768}"
       - --gpu-memory-utilization
-      - "0.92"
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
       - "1"
       - --kv-cache-dtype

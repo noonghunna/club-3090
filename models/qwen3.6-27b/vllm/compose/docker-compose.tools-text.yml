@@ -114,9 +114,9 @@ services:
       - --tensor-parallel-size
       - "1"
       - --max-model-len
-      - "75000"
+      - "${MAX_MODEL_LEN:-75000}"
       - --gpu-memory-utilization
-      - "0.97"
+      - "${GPU_MEMORY_UTILIZATION:-0.97}"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
