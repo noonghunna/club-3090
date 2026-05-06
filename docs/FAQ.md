@@ -24,6 +24,8 @@ vLLM: NVIDIA-only (CUDA). llama.cpp: yes — pick the right Docker image (`ghcr.
 
 WSL2: yes, both engines. Make sure GPU passthrough is set up (`nvidia-smi` works inside WSL). Native Windows: vLLM doesn't support it; llama.cpp does — but use a native llama.cpp build, not Docker.
 
+Two gotchas to know about up front, both documented in HARDWARE.md alongside the WSL2 section: (1) Windows' default 2-second TDR can kill long kernels mid-flight (WSL2-specific) — see ["extend the TDR delay"](HARDWARE.md#fix--extend-the-tdr-delay-on-the-windows-host); (2) PyTorch's `expandable_segments:True` allocator can crash boot at `gptq_marlin_repack` on some setups (a WSL2 single-card 3090 Ti hit it; JusefPol previously hit it on NVLink dual-3090) — override available via `.env`, see ["disable PyTorch expandable_segments"](HARDWARE.md#fix--disable-pytorch-expandable_segments-if-boot-crashes-at-weight-repack).
+
 ---
 
 ## Engine choice

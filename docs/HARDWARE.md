@@ -161,6 +161,40 @@ Three TDR options in increasing aggression:
 - **`TdrLevel=0`** (more permissive): disable TDR entirely — appropriate for dedicated AI rigs where the GPU isn't your display adapter
 - **Dual-boot Linux** (no TDR at all): sidesteps the whole class
 
+### Fix — disable PyTorch `expandable_segments` if boot crashes at weight repack
+
+A separate boot-time failure mode, distinct from TDR, surfaces with the same `device not ready` text:
+
+```
+File "/usr/local/lib/python3.12/dist-packages/vllm/_custom_ops.py", line 1279, in gptq_marlin_repack
+    return torch.ops._C.gptq_marlin_repack(...)
+RuntimeError: CUDA driver error: device not ready
+```
+
+The engine logs `Loading weights took N seconds` cleanly, then dies ~1 second later inside `process_weights_after_loading` → `gptq_marlin_repack`. `CUDA_LAUNCH_BLOCKING=1` does not move the failure site, which rules out async-residual error from a prior kernel.
+
+Setting `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` resolves the crash. We haven't isolated the specific failing call — the suspicion is the `cuMemMap` virtual-memory API used internally by PyTorch's `expandable_segments:True` allocator, since (a) disabling that path fixes the crash and (b) JusefPol's NVLink boot-crash report (PR #31) responded to the same workaround. We list this section under WSL2 because that's where this PR's diagnostic rig hit it, but the failure mode itself is not strictly WSL2-only.
+
+Known occurrences:
+
+- JusefPol — NVLink-wired dual-3090 setups (PR #31). The `dual-nvlink*.yml` composes already hardcode `expandable_segments` off for that case.
+- club-3090 issue (this PR, 2026-05-06) — single-card RTX 3090 Ti on WSL2, driver 596.36, vLLM nightly `01d4d1ad` (the v7.72.2-uplift pin).
+
+#### Override
+
+All single-card and PCIe dual-card composes now expose `PYTORCH_CUDA_ALLOC_CONF` as a `${...}` override knob. Drop a `.env` next to the compose file (or export the var in your shell):
+
+```sh
+# models/qwen3.6-27b/vllm/compose/.env
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+```
+
+Then `docker compose up -d` as usual. No edits to tracked files needed.
+
+#### Possible secondary effect on weight-load time
+
+On the WSL2 rig where this was diagnosed, weight-load time on a fresh boot (caches cleared) was 32 sec with `expandable_segments:True` and 13 sec with `expandable_segments:False`. This is a single observation, not a controlled A/B (cache state, FS warmth and other factors weren't held constant), so treat it as suggestive rather than measured. If you're chasing boot-time latency on WSL2 and not crashing, the override is harmless to try.
+
 ### Additional WSL2 considerations
 
 - vLLM auto-detects WSL2 and disables `pin_memory` (`Using 'pin_memory=False' as WSL is detected. This may slow down the performance.` in boot log) — expected behavior, can't be overridden cleanly.

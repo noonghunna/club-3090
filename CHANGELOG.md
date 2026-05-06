@@ -2,6 +2,21 @@
 
 Changes that span the entire stack — engine version pins, script behavior, repo structure. Per-model dated history lives in `models/<name>/CHANGELOG.md`.
 
+## 2026-05-06 — `PYTORCH_CUDA_ALLOC_CONF` exposed as override knob (boot-crash workaround)
+
+A single-card RTX 3090 Ti rig on WSL2 (driver 596.36) hit `RuntimeError: CUDA driver error: device not ready` from `gptq_marlin_repack` immediately after weight load on the v7.72.2-uplift nightly pin. Bisect (default → minimal-no-Genesis → minimal + `CUDA_LAUNCH_BLOCKING=1`) ruled out Genesis, spec-decode, TQ3 KV, async-residual error, and TDR (registry already extended + Windows rebooted). Setting `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` resolves the crash. Same env-var workaround as JusefPol's NVLink boot-crash report (PR #31), already hardcoded in the `dual-nvlink*.yml` composes.
+
+**Changes:**
+- All 14 single-card and PCIe dual-card composes: `PYTORCH_CUDA_ALLOC_CONF=...` → `${PYTORCH_CUDA_ALLOC_CONF:-...}` env-override knob (defaults preserved). Pattern matches existing `MAX_MODEL_LEN` / `GPU_MEMORY_UTILIZATION` overrides from #79.
+- `dual-nvlink.yml` / `dual-nvlink-turbo.yml`: untouched (their existing JusefPol-driven default already has `expandable_segments` off).
+- `.env.example`: documented the override under "vLLM tuning knobs".
+- `docs/HARDWARE.md`: new `### Fix — disable PyTorch expandable_segments` subsection with stack trace, what we ruled out, the override recipe, and a single observation about weight-load time (32 sec → 13 sec on this rig — uncontrolled, not a measured benchmark).
+- `docs/FAQ.md`: WSL2 question now cross-links to both the TDR and `expandable_segments` fix subsections.
+
+The exact failing call hasn't been isolated; the `cuMemMap` virtual-memory API used by `expandable_segments:True` is the suspected culprit since both known occurrences respond to the same workaround, but we haven't proven which call returns `cudaErrorNotReady`.
+
+**Override:** drop `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` into a `.env` next to the compose, then `docker compose up -d` as usual.
+
 ## 2026-05-05 — v7.72.2-uplift: Genesis pin bump + sidecar consolidation + cross-rig PN59 finding ⭐
 
 Sander shipped Genesis [v7.72.2](https://github.com/Sandermage/genesis-vllm-patches/blob/main/CHANGELOG.md) on 2026-05-05 with 7 new patches (PN59-PN67), the v7.72.1 P68 xgrammar-incompat fix (closes [#57](https://github.com/noonghunna/club-3090/issues/57)), and v7.72.2 PN70 schema-subset filter. Branch `v7.72.2-uplift` aligns club-3090 with the new release.

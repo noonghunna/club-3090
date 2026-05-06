@@ -2,6 +2,18 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-06 — `PYTORCH_CUDA_ALLOC_CONF` override knob added to 14 composes
+
+Follow-up to the v7.72.2-uplift pin bump: a single-card RTX 3090 Ti rig on WSL2 (driver 596.36) hit `gptq_marlin_repack` boot crashes (`CUDA driver error: device not ready`) on the new nightly. The minimal compose (no Genesis, no spec-decode, no TQ3 KV) reproduced cleanly with just `--quantization auto_round`, and `CUDA_LAUNCH_BLOCKING=1` did not move the failure site (rules out async-residual error from a prior kernel).
+
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` resolves the crash. This is the same workaround that already addresses JusefPol's NVLink boot-crash report (PR #31, hardcoded in the `dual-nvlink*.yml` composes). The exact failing call hasn't been isolated.
+
+All 14 single-card and PCIe dual-card composes now expose `PYTORCH_CUDA_ALLOC_CONF` as a `${...}:-` override knob (defaults preserved); affected users drop `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` into a `.env`. The two `dual-nvlink*.yml` composes are unchanged.
+
+Single-observation note: weight-load on a fresh boot (caches cleared) was 32 sec with `expandable_segments:True` and 13 sec with `expandable_segments:False` on this rig. Not a controlled benchmark — cache state and other factors weren't held constant. Suggestive only.
+
+See [docs/HARDWARE.md](../../docs/HARDWARE.md#fix--disable-pytorch-expandable_segments-if-boot-crashes-at-weight-repack) for the full failure signature and override recipe.
+
 ## 2026-05-05 — v7.72.2-uplift: Genesis pin bump + sidecar consolidation ⭐
 
 Aligns Qwen3.6-27B configs with Genesis [v7.72.2](https://github.com/Sandermage/genesis-vllm-patches/blob/main/CHANGELOG.md) (pin SHA `7b9fd319`) and Sander's PROD-validated vLLM pin (`nightly-01d4d1ad375...`, allowlist entry #2).
