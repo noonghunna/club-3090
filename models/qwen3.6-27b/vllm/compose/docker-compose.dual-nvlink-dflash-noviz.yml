@@ -1,0 +1,148 @@
+# ===========================================================================
+# Dual RTX 3090 with NVLink + DFlash text-only — TP=2 + DFlash N=5 + 200K ctx
+# + NO vision + NVLink P2P for faster allreduce.
+#
+# Mirrors docker-compose.dual-dflash-noviz.yml but enables NCCL P2P over NVLink
+# and re-enables vLLM's custom all-reduce kernel (which dual-dflash-noviz.yml
+# disables for PCIe-only stacks). Combines DFlash N=5 draft model with NVLink
+# bridge for maximum single-stream code throughput on 2x 3090 without vision.
+#
+# Status: COMMUNITY-CONTRIBUTED, EXPERIMENTAL.
+#   If you run this, please drop numbers in discussion #19 — paste-ready report
+#   via `bash scripts/report.sh`.
+#
+# What this gives you (vs the PCIe-only `dual-dflash-noviz.yml`):
+#   - NCCL P2P over NVLink (NCCL_P2P_LEVEL=NVL) — much faster allreduce on TP=2
+#   - Custom all-reduce ENABLED (--disable-custom-all-reduce removed) — NVLink
+#     makes vLLM's custom kernel a win where PCIe makes it a loss
+#   - PYTORCH_CUDA_ALLOC_CONF without `expandable_segments:True` — JusefPol
+#     reports it crashes on startup with NVLink wired up
+#
+# vs `docker-compose.dual-nvlink-dflash.yml` (the with-vision variant): drops
+# MoonViT to free ~0.78 GiB per card → bumps max_model_len 185K → 200K
+# (close to the absolute DFlash ceiling on dual-3090 with FP16 KV).
+#
+# Best for: long single-prompt text workloads (RAG / summarization / code
+# review across very long codebases) where you don't need image input.
+#
+# KV cache: FP16 (default — DFlash needs head_size=256 + non-causal attention,
+# and no Ampere backend supports that triple with fp8/turbo KV).
+#
+# ─── Prerequisite: download the DFlash draft model ──────────────────────
+# Same as dual-dflash-noviz.yml — needs `z-lab/Qwen3.6-27B-DFlash` at
+# `<MODEL_DIR>/qwen3.6-27b-dflash/`. Get it via:
+#
+#   WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
+#
+# OR manually `hf download z-lab/Qwen3.6-27B-DFlash --local-dir <MODEL_DIR>/qwen3.6-27b-dflash`.
+# If missing, vLLM falls back silently to baseline bf16 decode (~25 TPS
+# instead of 125 TPS — reported by @lolren in club-3090#18). See
+# `dual-dflash.yml` header for the under-training caveat.
+#
+# Dependencies:
+#   - 2x RTX 3090 (Ampere SM 8.6) WITH NVLink bridge installed and `nvidia-smi
+#     topo -m` showing `NV*` between GPU0 and GPU1
+#   - vLLM PR #40361 (Marlin pad-sub-tile-n) — patched files vendored in-repo
+#     at ../patches/vllm-marlin-pad/. PR is open upstream; drop the mount when
+#     it lands. See ../patches/vllm-marlin-pad/README.md.
+#
+# All dual-card variants in this dir:
+#
+#   File                                    Ctx    Streams   Narr/Code TPS   KV       Vision  NVLink
+#   docker-compose.dual.yml (DEFAULT)       262K   2         69 / 89          fp8      ✓      not used
+#   docker-compose.dual4.yml                262K   4         63 / 76          fp8      ✓      not used (4x PCIe)
+#   docker-compose.dual4-dflash.yml         262K   2         64 / 104         FP16     ✓      not used (4x PCIe)
+#   docker-compose.dual-nvlink.yml          262K   2         (community)      fp8      ✓      required
+#   docker-compose.dual-nvlink-turbo.yml    262K   4         101 / 133        TQ3      ✓      required
+#   docker-compose.dual-turbo.yml           262K   4         54 / 73          TQ3      ✓      not used
+#   docker-compose.dual-dflash.yml          185K   1         82 / 125         FP16     ✓      not used
+#   docker-compose.dual-dflash-noviz.yml    200K   1         78 / 127         FP16     ✗      not used
+#   docker-compose.dual-nvlink-dflash.yml   185K   1         (community)      FP16     ✓      required
+#   docker-compose.dual-nvlink-dflash-noviz.yml 200K   1         (community)      FP16     ✗      required
+#
+# To run:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f docker-compose.dual-nvlink-dflash-noviz.yml up -d
+# ===========================================================================
+services:
+  vllm-qwen36-27b-dual-nvlink-dflash-noviz:
+    image: vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada
+    container_name: vllm-qwen36-27b-dual-nvlink-dflash-noviz
+    restart: "no"
+    ports:
+      - "${PORT:-8019}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
+      # Closes club-3090 #22.
+      - ../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../cache/triton:/root/.triton/cache
+      # Marlin pad-sub-tile-n (vLLM PR #40361) — vendored in this repo at
+      # ../patches/vllm-marlin-pad/. Drops out when vllm#40361 lands upstream.
+      - ../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      # NVLink bridge present — let NCCL use P2P (don't disable it the way
+      # dual-dflash-noviz.yml does for PCIe-only stacks) and pin the P2P level
+      # to NVLink so NCCL doesn't fall back to PCIe paths if topology query is fuzzy.
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_LEVEL=NVL
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      # JusefPol report (PR #31): expandable_segments=True crashes on startup
+      # with NVLink wired in. Keep max_split_size_mb cap, drop the rest.
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
+      - --served-model-name
+      - qwen3.6-27b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "2"
+      # Custom all-reduce ENABLED (no --disable-custom-all-reduce) — NVLink
+      # makes vLLM's custom kernel a win. dual-dflash-noviz.yml disables it
+      # because PCIe P2P bandwidth makes the NCCL fallback faster there.
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-200000}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "8192"
+      # No --kv-cache-dtype: DFlash needs head_size=256 + non-causal attention,
+      # and no Ampere backend supports that triple with fp8/turbo KV. FP16 default
+      # is the only working choice (matches Qwen3.5-27B + DFlash row 4 = 89.7 TPS).
+      # --language-model-only frees ~0.78 GiB of MoonViT weights → 15K more KV ctx.
+      - --language-model-only
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"dflash","model":"/root/.cache/huggingface/qwen3.6-27b-dflash","num_speculative_tokens":5}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

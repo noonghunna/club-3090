@@ -39,7 +39,8 @@
 #   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      not used
 #   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅      not used
 #   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌      not used
-#   docker-compose.dual-nvlink-dflash.. 185K   1         (community)      FP16     ✅      required
+#   docker-compose.dual-nvlink-dflash...... 185K   1         (community)      FP16     ✅      required
+#   docker-compose.dual-nvlink-dflash-noviz.. 188K   1         (community)      FP16     ❌      required
 #
 # Run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose

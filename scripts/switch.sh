@@ -33,6 +33,7 @@
 #     vllm/dual-nvlink          262K + fp8 + 2 streams + vision (REQUIRES NVLink bridge — community/experimental)
 #     vllm/dual-nvlink-turbo    262K + TQ3 + 4 streams + vision (REQUIRES NVLink bridge — community/experimental)
 #     vllm/dual-nvlink-dflash   185K + FP16 + DFlash N=5 + vision (REQUIRES NVLink bridge — community/experimental)
+#     vllm/dual-nvlink-dflash-noviz 188K + FP16 + DFlash N=5 + no vision (REQUIRES NVLink bridge — community/experimental)
 #     vllm/gemma-mtp        Gemma-4-31B + Google MTP drafter (32K, bf16 KV, vision — community/experimental, pre-merge)
 #
 #   Single-card llama.cpp:
@@ -78,6 +79,7 @@ declare -A VARIANT_DEFAULT_PORT=(
   [vllm/dual-nvlink]=8014
   [vllm/dual-nvlink-turbo]=8017
   [vllm/dual-nvlink-dflash]=8018
+  [vllm/dual-nvlink-dflash-noviz]=8019
   [vllm/gemma-mtp]=8030
   [vllm/gemma-mtp-tp1]=8031
   [vllm/gemma-dflash]=8032
@@ -103,6 +105,7 @@ declare -A VARIANTS=(
   [vllm/dual-nvlink]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink.yml"
   [vllm/dual-nvlink-turbo]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink-turbo.yml"
   [vllm/dual-nvlink-dflash]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink-dflash.yml"
+  [vllm/dual-nvlink-dflash-noviz]="vllm|models/qwen3.6-27b/vllm/compose|docker-compose.dual-nvlink-dflash-noviz.yml"
   [vllm/gemma-mtp]="vllm|models/gemma-4-31b/vllm/compose|docker-compose.gemma-mtp.yml"
   [vllm/gemma-mtp-tp1]="vllm|models/gemma-4-31b/vllm/compose|docker-compose.gemma-mtp-tp1.yml"
   [vllm/gemma-dflash]="vllm|models/gemma-4-31b/vllm/compose|docker-compose.gemma-dflash.yml"

@@ -29,7 +29,8 @@
 #   docker-compose.dual-turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
 #   docker-compose.dual-dflash.yml      185K   1         82 / 125         FP16     ✅
 #   docker-compose.dual-dflash-noviz... 200K   1         78 / 127         FP16     ❌      2× PCIe
-#   docker-compose.dual-nvlink-dflash.yml 185K   1         (community)      FP16     ✅      2× NVLink
+#   docker-compose.dual-nvlink-dflash.yml   185K   1         (community)      FP16     ✅      2× NVLink
+#   docker-compose.dual-nvlink-dflash-noviz.yml 188K   1         (community)      FP16     ❌      2× NVLink
 #
 # Run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
