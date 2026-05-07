@@ -106,6 +106,9 @@ Three flags matter for anchor data:
 | 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | 230W | 25.15 | 24.86 | 0.109 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
 | 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | **330W** ⭐ | 36.35 | 36.26 | 0.110 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
 | 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | 388W (stock) | 38.23 | 37.97 | 0.098 | [@syangsao #58](https://github.com/noonghunna/club-3090/issues/58#issuecomment-4388766174) |
+| 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | **290W** ⭐ | 32.08 | 31.74 | **0.111** | @noonghunna (this rig, 18-cap 10W sweep) |
+| 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | 370W (stock) | 34.46 | 34.20 | 0.103 | same |
+| 3090 | water | llama.cpp default | Qwen3.6 27B Q3_K_XL | 390W (max) | 35.84 | 35.66 | 0.092 | same |
 | 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | **260W** ⭐ | 48.41 | 48.43 | 0.186 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
 | 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 280W | 49.54 | 49.10 | 0.177 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
 | 4090 | air | llama.cpp default | Qwen3.6 27B Q3_K_XL | 300W | 50.26 | 50.02 | 0.168 | [@laurimyllari #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) |
@@ -118,6 +121,10 @@ Three flags matter for anchor data:
 
 ⭐ = peak TPS/W efficiency on that rig.
 
+#### Efficiency curves (10W resolution)
+
+For rigs where we have full 10W-resolution sweeps, the curves below show TPS + TPS/W efficiency across the power envelope. These are the cross-rig anchor charts; sources + raw data are linked in each caption. To add your card class, run [`scripts/power-cap-sweep.sh`](../scripts/power-cap-sweep.sh) (canonical command above) and paste the output to [disc #86](https://github.com/noonghunna/club-3090/discussions/86).
+
 ![5090 + Gemma 4 + MTP power-cap efficiency curve (apnar)](img/power-cap-5090-gemma4.png)
 
 *5090 air-cooled + Gemma 4 31B + MTP, 21-cap sweep at 10W resolution. Yellow callout: 400W sweet spot (1.43 TPS/W). Red-shaded: 530-600W = workload-limited, ~547W max actual draw regardless of cap. Source data: [disc #86](https://github.com/noonghunna/club-3090/discussions/86#discussioncomment-16840610) (@apnar). Source script: [`img/power-cap-5090-gemma4.py`](img/power-cap-5090-gemma4.py).*
@@ -125,6 +132,10 @@ Three flags matter for anchor data:
 ![4090 + Qwen3.6-27B + llama.cpp power-cap efficiency curve (laurimyllari)](img/power-cap-4090-qwen36.png)
 
 *4090 air-cooled + Qwen3.6-27B Q3_K_XL + llama.cpp default, 15-cap sweep at 10W resolution (260-400W). Yellow callout: 260W sweet spot (0.186 TPS/W) at 33% below the 4090's 450W stock TDP. **+8% TPS for +54% wattage** going from 260W to 400W — the 4090 is heavily workload-saturated on this single-stream decode path. Source data: [disc #62](https://github.com/noonghunna/club-3090/discussions/62#discussioncomment-16832066) (@laurimyllari). Source script: [`img/power-cap-4090-qwen36.py`](img/power-cap-4090-qwen36.py).*
+
+![3090 + Qwen3.6-27B + llama.cpp power-cap efficiency curve (noonghunna)](img/power-cap-3090-qwen36.png)
+
+*3090 water-cooled + Qwen3.6-27B Q3_K_XL + mainline llama.cpp, 18-cap sweep 200-390W (mixed bench shapes). Yellow callout: 290W sweet spot (0.111 TPS/W) at **78% of stock 370W TDP**. Orange-shaded zone 340-370W: firmware boost-state plateau where caps 340/350/360/370W all draw identical ~334W actual. At 380W cap, draw escapes to 361W; at 390W cap, draw reaches 388W — so the apparent "ceiling" at 334W isn't a hardware limit, it's a discrete boost-state behavior. Source script: [`img/power-cap-3090-qwen36.py`](img/power-cap-3090-qwen36.py).*
 
 **Cross-rig pattern**: efficiency knee falls at **~60-85% of stock TDP** across consumer Ampere/Ada — start there for a new card class and zoom in. Ada (4090) is proportionally more aggressive than Ampere (3090) — 4090 cuts 33% of stock TDP for ~7% TPS loss; 3090 cuts 15% of stock for ~5% loss.
 
