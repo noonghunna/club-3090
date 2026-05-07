@@ -137,7 +137,6 @@ services:
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1            # capture-size divisibility
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1        # streaming tool-call edge case
       - GENESIS_ENABLE_PN59_STREAMING_GDN=1
-      - GENESIS_ENABLE_PN54_GDN_CONTIGUOUS_DEDUP=1
       # PN34 (env-opt-in): runtime workspace-lock relaxation. Without this,
       # first decode call crashes with AssertionError: Workspace is locked at
       # turboquant_attn.py:_decode_attention. Surfaced 2026-05-06 in #82.
