@@ -198,6 +198,7 @@ services:
       - GENESIS_ENABLE_PN22_LOCAL_ARGMAX_TP=1
       - GENESIS_ENABLE_PN26_SPARSE_V=1
       - GENESIS_ENABLE_PN59_STREAMING_GDN=1
+      - GENESIS_ENABLE_PN54_GDN_CONTIGUOUS_DEDUP=1
       - GENESIS_PN26_SPARSE_V_BLOCK_KV=8
       - GENESIS_PN26_SPARSE_V_NUM_WARPS=4
       - GENESIS_PN26_SPARSE_V_THRESHOLD=0.01
@@ -252,7 +253,9 @@ services:
         # Tool-parser deferred-commit fix for qwen3coder SSE-silence bug (issue #72).
         # Drops out when vllm-project/vllm lands the upstream fix.
         python3 /patches/qwen3coder_tool_parser_deferred_commit.py
-        exec vllm serve "$@"
+        # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — use on
+        # hardware where Cliff 2 GDN activation spikes occur at runtime.
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
       - --
     command:
       - --model
@@ -268,6 +271,10 @@ services:
       # 180K + 0.95 — parity with long-text.yml. Backed off from 214K + 0.985
       # on 2026-05-02 to give activation headroom for the PN12+PN25 FFN pool
       # residence + DeltaNet GDN buffer. See long-text.yml for full rationale.
+      # WSL2 / laptop users: override via compose/.env (gitignored):
+      #   GPU_MEMORY_UTILIZATION=0.94   # RTX 5090 Laptop: ~1.31 GiB boot overhead
+      #   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False,max_split_size_mb:512
+      #   VLLM_ENFORCE_EAGER=1          # Cliff 2 GDN spike workaround; ~20-30% TPS
       - --max-model-len
       - "${MAX_MODEL_LEN:-180000}"
       - --gpu-memory-utilization
