@@ -136,6 +136,7 @@ services:
       - GENESIS_ENABLE_PN22_LOCAL_ARGMAX_TP=1
       - GENESIS_ENABLE_PN26_SPARSE_V=1
       - GENESIS_ENABLE_PN59_STREAMING_GDN=1
+      - GENESIS_ENABLE_PN54_GDN_CONTIGUOUS_DEDUP=1
       - GENESIS_PN26_SPARSE_V_BLOCK_KV=8
       - GENESIS_PN26_SPARSE_V_NUM_WARPS=4
       - GENESIS_PN26_SPARSE_V_THRESHOLD=0.01
@@ -186,7 +187,9 @@ services:
         # NOTE: patch_workspace_lock_disable.py + patch_tolist_cudagraph.py
         # were previously invoked here; superseded by Genesis natives in
         # v7.72.2 (P78 + PN34). Mounts and invocations dropped 2026-05-05.
-        exec vllm serve "$@"
+        # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — use on
+        # hardware where Cliff 2 GDN activation spikes occur at runtime.
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
       - --
     command:
       - --model

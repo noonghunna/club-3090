@@ -137,6 +137,7 @@ services:
       - GENESIS_ENABLE_P66_CUDAGRAPH_SIZE_FILTER=1            # capture-size divisibility
       - GENESIS_ENABLE_P64_QWEN3CODER_MTP_STREAMING=1        # streaming tool-call edge case
       - GENESIS_ENABLE_PN59_STREAMING_GDN=1
+      - GENESIS_ENABLE_PN54_GDN_CONTIGUOUS_DEDUP=1
       # PN34 (env-opt-in): runtime workspace-lock relaxation. Without this,
       # first decode call crashes with AssertionError: Workspace is locked at
       # turboquant_attn.py:_decode_attention. Surfaced 2026-05-06 in #82.
@@ -184,7 +185,9 @@ services:
         # Tool-parser deferred-commit fix for qwen3coder SSE-silence bug (issue #72).
         # Drops out when vllm-project/vllm lands the upstream fix.
         python3 /patches/qwen3coder_tool_parser_deferred_commit.py
-        exec vllm serve "$@"
+        # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — use on
+        # hardware where Cliff 2 GDN activation spikes occur at runtime.
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
       - --
     command:
       - --model

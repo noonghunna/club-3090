@@ -165,6 +165,7 @@ services:
       - GENESIS_ENABLE_PN22_LOCAL_ARGMAX_TP=1
       - GENESIS_ENABLE_PN26_SPARSE_V=1
       - GENESIS_ENABLE_PN59_STREAMING_GDN=1
+      - GENESIS_ENABLE_PN54_GDN_CONTIGUOUS_DEDUP=1
       - GENESIS_PN26_SPARSE_V_BLOCK_KV=8
       - GENESIS_PN26_SPARSE_V_NUM_WARPS=4
       - GENESIS_PN26_SPARSE_V_THRESHOLD=0.01
@@ -219,7 +220,9 @@ services:
         # Tool-parser deferred-commit fix for qwen3coder SSE-silence bug (issue #72).
         # Drops out when vllm-project/vllm lands the upstream fix.
         python3 /patches/qwen3coder_tool_parser_deferred_commit.py
-        exec vllm serve "$@"
+        # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — use on
+        # hardware where Cliff 2 GDN activation spikes occur at runtime.
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
       - --
     command:
       - --model
