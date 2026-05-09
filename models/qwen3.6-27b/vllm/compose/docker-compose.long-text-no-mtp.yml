@@ -8,6 +8,18 @@
 #     escapes the cliff) or llamacpp recipes (different engine, no
 #     Cliff 2b). See docs/CLIFFS.md for the full diagnosis.
 # ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   none (MTP disabled — frees ~1 GB activation budget for ctx)
+#   KV:        turboquant_3bit_nc (TQ3)
+#   Vision:    no (text-only)
+#   Max ctx:   200K (max-context single-card path)
+#   Genesis:   v7.72.2
+#   Status:    ⚠️ Cliff 2b applies at >50K single-prompt — see warning above
+#   Best for:  Max single-card context window for one-shot summarization /
+#              long-document Q&A; slower decode (no spec-decode) is the trade
+# ---------------------------------------------------------------------------
 # Long-text NO-MTP variant — max-context safety path (200K, MTP-off, no vision).
 #
 # This variant TRADES decode TPS for prefill stability. MTP K=3 spec-decode

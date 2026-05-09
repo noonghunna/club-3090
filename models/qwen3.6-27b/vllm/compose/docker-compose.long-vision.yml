@@ -8,6 +8,17 @@
 #     escapes the cliff) or llamacpp recipes (different engine, no
 #     Cliff 2b). See docs/CLIFFS.md for the full diagnosis.
 # ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=3 (built-in)
+#   KV:        turboquant_3bit_nc (TQ3)
+#   Vision:    yes (vision tower active)
+#   Max ctx:   145K (vision tower costs ~500 MiB activation budget vs long-text)
+#   Genesis:   v7.72.2
+#   Status:    ⚠️ Cliff 2b applies at >50K single-prompt — see warning above
+#   Best for:  Single-card vision workloads (image Q&A, multimodal RAG)
+# ---------------------------------------------------------------------------
 # Long-vision variant — 198K context with vision on a single 3090.
 #
 # ⚠️ NOT SAFE FOR IDE-AGENT WORKLOADS WITH TOOL SCHEMAS. Use `tools-text.yml`

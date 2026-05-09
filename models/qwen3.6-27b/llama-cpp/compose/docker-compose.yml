@@ -1,3 +1,15 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Unsloth Q5_K_XL GGUF)
+#   Engine:    llama.cpp (NOT vLLM — different engine, different memory model)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   none (vanilla llama.cpp; MTP via PR #22673 not adopted yet)
+#   KV:        q4_0 (4-bit packed)
+#   Vision:    yes (mmproj F16)
+#   Max ctx:   262K (full model native — no Cliff 1 / Cliff 2)
+#   Best for:  Bulletproof single-card path — slow decode (~21 TPS) but
+#              cliff-immune; recommended fallback when vLLM hits OOM at long ctx
+# ---------------------------------------------------------------------------
 # Qwen3.6-27B on llama.cpp — single 3090, full 262K context, vision on.
 #
 # The "easy mode" path. No Genesis patches, no AutoRound, no patched vLLM

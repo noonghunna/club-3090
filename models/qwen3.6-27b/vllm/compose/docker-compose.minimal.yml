@@ -1,4 +1,15 @@
 # ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   none (no spec-decode — simplest path)
+#   KV:        fp8_e5m2 (no TQ3 to avoid cudagraph cascade bugs)
+#   Vision:    no
+#   Max ctx:   65K (mem-util 0.95)
+#   Genesis:   none — bare vLLM, isolation control
+#   Best for:  Debugging baseline / 20 GB Ampere fallback when TQ3 paths
+#              don't fit / first-time setup verification
+# ---------------------------------------------------------------------------
 # Minimal — no spec-decode, no Genesis patches, no .tolist() patcher.
 #
 # When to pick this variant:

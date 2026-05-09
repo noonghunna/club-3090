@@ -1,3 +1,15 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Unsloth Q5_K_XL GGUF)
+#   Engine:    llama.cpp (NOT vLLM)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   none
+#   KV:        q4_0 (4-bit packed)
+#   Vision:    yes (mmproj F16)
+#   Max ctx:   192K pool / 4 parallel slots
+#   Best for:  Single-card multi-tenant llama.cpp — 4 concurrent agents
+#              at smaller per-stream ctx; trade max-ctx for parallelism
+# ---------------------------------------------------------------------------
 # Qwen3.6-27B on llama.cpp — single 3090, max concurrency (4 slots), vision on.
 #
 # Trade max context for parallelism. Multi-tenant or batched-agent path:

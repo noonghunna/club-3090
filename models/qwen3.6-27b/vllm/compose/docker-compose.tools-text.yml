@@ -1,4 +1,15 @@
 # ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=3 (built-in)
+#   KV:        fp8_e5m2 (avoids the inductor compile-path leak that affects TQ3)
+#   Vision:    no
+#   Max ctx:   75K (Cliff 1 mech B safe via Genesis P8 + fp8 KV path)
+#   Genesis:   v7.72.2 (P8 active for IDE-agent prefill safety)
+#   Best for:  IDE-agent workloads (Cline / OpenCode / Roo / Claude Code /
+#              Cursor) — fp8 KV escape valve from the long-text TQ3 leak (see #16)
+# ---------------------------------------------------------------------------
 # Tools-text variant — long single prompts (RAG, summarization, large doc Q&A)
 # without vision. Best for workloads that don't need image input but DO need
 # more context than the 48K default's prefill envelope.
