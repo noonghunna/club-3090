@@ -160,6 +160,11 @@ services:
       # actually firing today; P98 will engage once the marker fix lands.
       # Belt+suspenders pattern matches long-text.yml + long-text-no-mtp.yml.
       - GENESIS_ENABLE_P98=1
+      # P40 — TQ k8v4 GQA grouping kernel (+15-30% on compute-regime GPUs, L2>=24MB).
+      # Default off (RTX 3090: 6MB L2 = no gain). Enable on RTX 5090/A100/H100.
+      - GENESIS_ENABLE_P40=${GENESIS_ENABLE_P40:-0}
+      # PN54 — GDN contiguous-call deduplication (Cliff 2b OOM mitigation).
+      - GENESIS_ENABLE_PN54=${GENESIS_ENABLE_PN54:-0}
       # P68/P69 deliberately DISABLED (2026-04-29) — same reasoning as
       # tools-text.yml: 8000-char threshold breaks IDE-agent flows with
       # silent finish_reason=stop. Bisected on club-3090 issue #2.
@@ -234,7 +239,7 @@ services:
       - --max-num-batched-tokens
       - "4128"
       - --kv-cache-dtype
-      - turboquant_3bit_nc
+      - "${KV_CACHE_DTYPE:-turboquant_3bit_nc}"
       # For maximum context, switch to single/long-text.yml (218K, no
       # vision) or single/long-vision.yml (198K + vision). Both carry
       # the PN12 anchor sidecar that closes Cliff 1 on TQ3 paths.

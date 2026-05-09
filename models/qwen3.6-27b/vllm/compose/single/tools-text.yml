@@ -91,6 +91,12 @@ services:
       - GENESIS_ENABLE_PN17_FA2_LSE_CLAMP=1
       - GENESIS_ENABLE_PN19_SCOPED_MAX_SPLIT=1
       - GENESIS_ENABLE_PN59_STREAMING_GDN=1
+
+      # P40 — TQ k8v4 GQA grouping kernel (+15-30% on compute-regime GPUs, L2>=24MB).
+      # Default off (RTX 3090: 6MB L2 = no gain). Enable on RTX 5090/A100/H100.
+      - GENESIS_ENABLE_P40=${GENESIS_ENABLE_P40:-0}
+      # PN54 — GDN contiguous-call deduplication (Cliff 2b OOM mitigation).
+      - GENESIS_ENABLE_PN54=${GENESIS_ENABLE_PN54:-0}
     shm_size: "16gb"
     ipc: host
     deploy:
@@ -144,7 +150,7 @@ services:
       - "2048"
       # fp8_e5m2 (not turboquant) — required for tool calls to work with MTP.
       - --kv-cache-dtype
-      - fp8_e5m2
+      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
       # Dropping the MoonViT vision tower frees ~0.86 GB for KV cache,
       # pushing max_model_len from 20K → 75K vs docker-compose.tools.yml.
       - --language-model-only

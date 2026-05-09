@@ -135,7 +135,7 @@ services:
       - --max-num-batched-tokens
       - "8192"
       - --kv-cache-dtype
-      - fp8_e5m2
+      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
       - --trust-remote-code
       - --reasoning-parser
       - qwen3

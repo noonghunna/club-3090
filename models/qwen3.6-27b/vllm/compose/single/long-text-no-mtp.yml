@@ -244,13 +244,18 @@ services:
       - GENESIS_ENABLE_P15B_FA_VARLEN_CLAMP=1
       - GENESIS_PREALLOC_TOKEN_BUDGET=4128
       - GENESIS_BUFFER_MODE=shared
+      # P40 — TQ k8v4 GQA grouping kernel (+15-30% on compute-regime GPUs, L2>=24MB).
+      # Default off (RTX 3090: 6MB L2 = no gain). Enable on RTX 5090/A100/H100.
+      - GENESIS_ENABLE_P40=${GENESIS_ENABLE_P40:-0}
+      # PN54 — GDN contiguous-call deduplication (Cliff 2b OOM mitigation).
+      - GENESIS_ENABLE_PN54=${GENESIS_ENABLE_PN54:-0}
       # Explicit OFFs to match Sandermage's PROD env-var set verbatim:
       # P78 (P78_TOLIST_CAPTURE_GUARD) — superseded by our patch_tolist_cudagraph.py
       # P81 (FP8 block-scaled M<=8) — FP8-specific, no-op on our TQ3 path
       # P82 — biased on small-batch single-stream Lorbus INT4 + MTP K=3 (Sander PROD)
       - GENESIS_ENABLE_P78_TOLIST_CAPTURE_GUARD=0
       - GENESIS_ENABLE_P81_FP8_BLOCK_SCALED_M_LE_8=0
-      - GENESIS_ENABLE_P82=0
+      - GENESIS_ENABLE_P82=${GENESIS_ENABLE_P82:-0}
       - GENESIS_P82_THRESHOLD_SINGLE=0.3
       # P82 stays OFF — biased on small-batch single-stream Lorbus INT4 + MTP K=3
       # per Sandermage's PROD memory feedback_p82_*. P78 stays OFF (deprecated).
@@ -345,7 +350,7 @@ services:
       - --max-num-batched-tokens
       - "4128"
       - --kv-cache-dtype
-      - turboquant_3bit_nc
+      - "${KV_CACHE_DTYPE:-turboquant_3bit_nc}"
       # Drops the vision tower → frees ~1 GB VRAM → lifts engine ceiling from
       # 198K (long-vision at 0.98) to 218K (this variant at 0.985). This is the only difference vs long-vision.
       - --language-model-only

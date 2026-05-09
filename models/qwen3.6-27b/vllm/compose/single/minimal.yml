@@ -67,6 +67,14 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # VLLM_ENFORCE_EAGER=1 in .env disables CUDA graphs — use on
+        # hardware where graph capture causes OOM or instability (e.g. WSL2).
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+      - --
     command:
       - --model
       - /root/.cache/huggingface/qwen3.6-27b-autoround-int4
@@ -85,7 +93,7 @@ services:
       - --max-num-seqs
       - "1"
       - --kv-cache-dtype
-      - fp8_e5m2
+      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
