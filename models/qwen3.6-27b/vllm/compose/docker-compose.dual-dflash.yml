@@ -62,7 +62,7 @@
 #   - docker-compose.dual-dflash-noviz.yml:     2× PCIe, 200K, 1 stream, 78/127 TPS
 #   - docker-compose.dual-nvlink-dflash.yml:    2× NVLink, 185K, 1 stream, (community) TPS
 #   - docker-compose.dual-nvlink-dflash-noviz.yml: 2× NVLink, 188K, 1 stream, (community) TPS
-#   - docker-compose.dual4-dflash.yml:          4× PCIe, 262K, 2 streams, 64/104 TPS
+#   - docker-compose.multi4-dflash.yml:          4× PCIe, 262K, 2 streams, 64/104 TPS
 #
 #   docker compose -f docker-compose.dual-dflash.yml up -d
 # ===========================================================================

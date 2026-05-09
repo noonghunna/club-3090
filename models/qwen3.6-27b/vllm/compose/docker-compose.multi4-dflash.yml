@@ -36,7 +36,7 @@
 #   - Peak VRAM during bench: 21,960 MiB/card
 #
 # Trade-offs:
-#   - vs docker-compose.dual4.yml: similar narrative TPS but much faster code
+#   - vs docker-compose.multi4.yml: similar narrative TPS but much faster code
 #     (104 vs 76 TPS) at lower stream count (2 vs 4) and FP16 KV.
 #   - vs docker-compose.dual-dflash.yml: slower raw single-stream TPS on
 #     PCIe TP=4 allreduce, but full 262K context and two admitted streams
@@ -57,12 +57,12 @@
 #
 # Run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f docker-compose.dual4-dflash.yml up -d
+#   docker compose -f docker-compose.multi4-dflash.yml up -d
 # ===========================================================================
 services:
-  vllm-qwen36-27b-dual4-dflash:
+  vllm-qwen36-27b-multi4-dflash:
     image: vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada
-    container_name: vllm-qwen36-27b-dual4-dflash
+    container_name: vllm-qwen36-27b-multi4-dflash
     restart: "no"
     ports:
       - "${PORT:-8016}:8000"

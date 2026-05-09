@@ -25,7 +25,7 @@
 # bfloat16` for vllm#40334 workaround. If you have NVLink bridge, switch to
 # docker-compose.dual-nvlink-dflash-noviz.yml for faster allreduce. If you
 # have 4x 3090 and need full 262K context + 2 streams, use
-# docker-compose.dual4-dflash.yml.
+# docker-compose.multi4-dflash.yml.
 #
 # ─── Prerequisite: download the DFlash draft model ──────────────────────
 # Same as dual-dflash.yml — needs `z-lab/Qwen3.6-27B-DFlash` at

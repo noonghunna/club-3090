@@ -55,11 +55,11 @@ If you're considering enabling a new Genesis env var by default in a shipped com
 
 The model is implied by the parent directory (`models/<model>/vllm/compose/`); don't repeat it in the filename. Topology is the first segment, feature suffixes follow.
 
-| Position | Examples |
-|---|---|
-| Topology prefix | `single` · `dual` · `dual-nvlink` · `dual4` · `quad` |
-| Feature suffix(es) | `-mtp` · `-dflash` · `-turbo` (TQ3 KV) · `-int8` (INT8 PTH) · `-awq` · `-noviz` |
-| Default-recommended | Drop the implicit suffix — Qwen's `dual.yml` *is* MTP+fp8. Only add explicit suffix when there's another drafter/KV variant in the same directory (e.g. Gemma has `dual.yml` + `dual-dflash.yml`, so the default doesn't need `-mtp`) |
+| Position | Examples | Notes |
+|---|---|---|
+| Topology prefix | `single` · `dual` · `multi3` · `multi4` · `multi8` | `single` and `dual` have no count ambiguity (always 1 / always 2 GPUs). `multi<N>` requires the count because N varies (3 / 4 / 5 / 6 / 8). Aligns with `docs/SINGLE_CARD.md` / `DUAL_CARD.md` / `MULTI_CARD.md` framing. |
+| Feature suffix(es) | `-nvlink` · `-mtp` · `-dflash` · `-turbo` (TQ3 KV) · `-int8` (INT8 PTH) · `-awq` · `-noviz` | Stacked in conventional order: interconnect → drafter → KV → vision modifier. Example: `dual-nvlink-dflash-noviz.yml` reads as "TP=2, NVLink, DFlash drafter, no vision." |
+| Default-recommended | Drop implicit suffix | Qwen's `dual.yml` *is* MTP+fp8. Only add explicit suffix when there's another drafter/KV variant in the same directory (e.g. Gemma has `dual.yml` + `dual-dflash.yml`, so the default doesn't need `-mtp`). |
 
 Examples (post-2026-05-09):
 - `models/qwen3.6-27b/vllm/compose/dual.yml` (Qwen dual default — fp8 + MTP)

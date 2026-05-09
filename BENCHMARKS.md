@@ -99,8 +99,8 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 
 | Compose | Rig | KV | Max ctx | Narr / Code TPS | Peak VRAM | Date | Notes |
 |---|---|---|---:|---:|---:|---|---|
-| `dual4.yml` | @whamp (4× 3090 PCIe x4/x16/x8/x16, 300 W cap, no NVLink) | fp8 | 262K | 63 / 76 | ~23.5 GB | 2026-05-03 | TP=4 capacity king. **6.77× concurrency at 262K**. PASSES v2 continuous soak (20 sessions, 0 MiB growth, 90.8% TPS retention). PR [#44](https://github.com/noonghunna/club-3090/pull/44). |
-| `dual4-dflash.yml` | @whamp (4× 3090 PCIe x4/x16/x8/x16, 300 W cap) | fp8 | 262K | 64 / **104** | ~22.0 GB | 2026-05-03 | TP=4 + DFlash. 2.27× concurrency at 262K. PASSES v2 continuous soak (5 sessions, 0 MiB growth, 100% TPS retention). **Bench-vs-soak inversion**: bench shows DFlash wins by 37% on short-prompt code, soak shows DFlash *loses* by 47% on multi-turn agent — DFlash AL likely collapses on mixed prompts. PR [#44](https://github.com/noonghunna/club-3090/pull/44). |
+| `multi4.yml` | @whamp (4× 3090 PCIe x4/x16/x8/x16, 300 W cap, no NVLink) | fp8 | 262K | 63 / 76 | ~23.5 GB | 2026-05-03 | TP=4 capacity king. **6.77× concurrency at 262K**. PASSES v2 continuous soak (20 sessions, 0 MiB growth, 90.8% TPS retention). PR [#44](https://github.com/noonghunna/club-3090/pull/44). |
+| `multi4-dflash.yml` | @whamp (4× 3090 PCIe x4/x16/x8/x16, 300 W cap) | fp8 | 262K | 64 / **104** | ~22.0 GB | 2026-05-03 | TP=4 + DFlash. 2.27× concurrency at 262K. PASSES v2 continuous soak (5 sessions, 0 MiB growth, 100% TPS retention). **Bench-vs-soak inversion**: bench shows DFlash wins by 37% on short-prompt code, soak shows DFlash *loses* by 47% on multi-turn agent — DFlash AL likely collapses on mixed prompts. PR [#44](https://github.com/noonghunna/club-3090/pull/44). |
 
 ### Verify-stress + soak-continuous matrix
 
@@ -122,8 +122,8 @@ Not TPS, but load-bearing. Every shipped variant is validated against:
 | `dual-turbo.yml` (TP=2) | @noonghunna | PASS | PASS at 262K | **PASS** (assumed by activation-split argument; not yet measured cross-rig) | 2026-04-29 |
 | `dual-dflash.yml` (TP=2) | @noonghunna | PASS | PASS at 185K | TBD | — |
 | `dual-dflash-noviz.yml` (TP=2) | @noonghunna | PASS | PASS at 200K | TBD | — |
-| `dual4.yml` (TP=4) | @whamp | PASS | PASS at 262K (incl. 58K + 91K needles) | **PASS** (20 sessions, 0 MiB growth, 90.8% retention) | 2026-05-03 |
-| `dual4-dflash.yml` (TP=4) | @whamp | PASS | PASS at 262K (incl. 58K + 91K needles) | **PASS** (5 sessions, 0 MiB growth, 100% retention; ⚠ 4 turns >30s; n=5 small) | 2026-05-03 |
+| `multi4.yml` (TP=4) | @whamp | PASS | PASS at 262K (incl. 58K + 91K needles) | **PASS** (20 sessions, 0 MiB growth, 90.8% retention) | 2026-05-03 |
+| `multi4-dflash.yml` (TP=4) | @whamp | PASS | PASS at 262K (incl. 58K + 91K needles) | **PASS** (5 sessions, 0 MiB growth, 100% retention; ⚠ 4 turns >30s; n=5 small) | 2026-05-03 |
 
 The single-card vLLM Cliff 2b status is canonicalized in [#41](https://github.com/noonghunna/club-3090/issues/41) — fix is gated on upstream [Sandermage genesis-vllm-patches#19](https://github.com/Sandermage/genesis-vllm-patches/issues/19). See [docs/CLIFFS.md](docs/CLIFFS.md) for the byte-level explanation.
 

@@ -4,7 +4,7 @@ You have **3 or more GPUs** and want to know if club-3090 applies. Short
 answer: yes. We ship one community-validated 4×3090 baseline and keep
 other 3+ GPU configs as derivation recipes until someone measures them.
 This page explains what scales (and what doesn't) when going beyond TP=2,
-the constraints to know, and how to derive your own compose when `dual4.yml`
+the constraints to know, and how to derive your own compose when `multi4.yml`
 isn't your topology.
 
 > **Validation note:** the maintainer rig is **2× RTX 3090 PCIe**, but
@@ -120,7 +120,7 @@ For 4× RTX 3090 PCIe, start with the measured fp8/MTP compose:
 bash scripts/switch.sh vllm/dual4
 ```
 
-`docker-compose.dual4.yml` keeps the `dual.yml` fp8/MTP feature set and
+`docker-compose.multi4.yml` keeps the `dual.yml` fp8/MTP feature set and
 changes TP/streams from 2 → 4. Validation on Whamp's 4× 3090 PCIe rig:
 
 - boots at `max_model_len=262144`, `max_num_seqs=4`
@@ -137,7 +137,7 @@ WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
 bash scripts/switch.sh vllm/dual4-dflash
 ```
 
-`docker-compose.dual4-dflash.yml` keeps full 262K context but uses FP16 KV
+`docker-compose.multi4-dflash.yml` keeps full 262K context but uses FP16 KV
 and admits two full-context streams:
 
 - boots at `max_model_len=262144`, `max_num_seqs=2`
@@ -153,7 +153,7 @@ streams — not as a replacement for the fastest 2-card short-prompt DFlash path
 
 ## Recipe — derive your own config from `dual.yml`
 
-`dual.yml` is the tested 2-card baseline and `dual4.yml` is the measured
+`dual.yml` is the tested 2-card baseline and `multi4.yml` is the measured
 4-card baseline. To scale to another TP=N, copy one of those and change
 **three lines**:
 
@@ -181,7 +181,7 @@ Everything else stays the same:
   needed, not less
 
 Container name + port: pick something distinct so it doesn't collide
-with your other variants. `dual4.yml` uses `vllm-qwen36-27b-dual4` and
+with your other variants. `multi4.yml` uses `vllm-qwen36-27b-multi4` and
 port `8015`; reserve a different name/port for further experiments:
 
 ```yaml
@@ -271,7 +271,7 @@ Specifically interested in:
 
 ## Why we ship only one pre-baked 4-card config
 
-We now ship `dual4.yml` because a community rig validated that exact
+We now ship `multi4.yml` because a community rig validated that exact
 4× RTX 3090 PCIe topology with `verify-full.sh`, `verify-stress.sh`, and
 `bench.sh`. We still avoid a broad matrix of untested 4+ GPU composes:
 
