@@ -49,7 +49,7 @@ services:
     container_name: vllm-qwen36-27b-dual-dflash-noviz
     restart: "no"
     ports:
-      - "${PORT:-8013}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8013}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);

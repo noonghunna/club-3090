@@ -54,7 +54,7 @@ services:
     container_name: vllm-carnice-bf16mtp
     restart: "no"
     ports:
-      - "${PORT:-8070}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8070}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # Patched chat template: tells Carnice to output JSON tool calls

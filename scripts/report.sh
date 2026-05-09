@@ -651,6 +651,7 @@ if [[ $DO_SOAK -eq 1 ]]; then
   if [[ -f scripts/soak-test.sh ]]; then
     soak_run_dir="results/report-soak-$(date +%Y%m%d-%H%M%S)"
     SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 SOAK_OUTPUT="$soak_run_dir" \
+      SOAK_TIMEOUT_S="${SOAK_TIMEOUT_S:-1800}" \
       bash scripts/soak-test.sh 2>&1 | redact | details "soak-test stdout (5-session × 5-turn ramping conversation, ~25 min)"
     if [[ -f "$soak_run_dir/summary.md" ]]; then
       echo

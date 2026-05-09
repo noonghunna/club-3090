@@ -482,12 +482,13 @@ preflight_autodetect_endpoint() {
 
   local detected_name detected_port
   detected_name="${found_line%%|*}"
-  # Extract host port from "0.0.0.0:8011->8000/tcp" or "[::]:8011->8000/tcp" forms.
+  # Extract host port from "0.0.0.0:8011->8000/tcp", "[::]:8011->8000/tcp",
+  # or "127.0.0.1:8011->8000/tcp" forms (BIND_HOST=127.0.0.1 produces the last).
   # llama-cpp container maps to internal 8080, vllm to 8000 — match both.
   detected_port=$(echo "${found_line#*|}" \
-    | grep -oE '0\.0\.0\.0:[0-9]+->(8000|8080)/tcp' \
+    | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080)/tcp' \
     | head -1 \
-    | sed -E 's|^0\.0\.0\.0:([0-9]+)->.*|\1|')
+    | sed -E 's|^[^:]+:([0-9]+)->.*|\1|')
 
   # Apply, but only fields the user didn't already set explicitly.
   if [[ -z "$explicit_container" && -n "$detected_name" ]]; then

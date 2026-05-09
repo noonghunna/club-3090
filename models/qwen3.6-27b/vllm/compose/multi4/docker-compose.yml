@@ -67,7 +67,7 @@ services:
     container_name: vllm-qwen36-27b-multi4
     restart: "no"
     ports:
-      - "${PORT:-8015}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8015}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
