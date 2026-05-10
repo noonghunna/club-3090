@@ -265,3 +265,97 @@ Run via [`benchlocal-cli`](https://github.com/noonghunna/benchlocal-cli) `aider-
 - Qwen with thinking ON is unusable for this kind of bench on club-3090 hardware: hits the 1500s subprocess timeout cap (now bumped to 2700s) before completing any exercises — the hidden CoT eats the per-exercise token budget. **Set `enable_thinking=false` for any agentic / multi-turn workload.**
 
 **To re-run cross-rig**: `bash scripts/quality-test.sh --pack aider-polyglot-30 --enable-sandboxed-packs` against your endpoint. See [docs/QUALITY_TEST.md](docs/QUALITY_TEST.md) for the harness setup.
+
+---
+
+## Head-to-head — Qwen 3.6 27B vs Gemma 4 31B on dual 3090 (TP=2, MTP)
+
+Single-rig comparison run 2026-05-10 on @noonghunna's 2× 3090 PCIe rig (230 W cap each). Both models served via `dual.yml` compose with MTP speculative decode and `enable_thinking=false`. Aim: agentic-workload pick guidance.
+
+### Config & pin delta — what differs between the two runs
+
+| | Qwen 3.6 27B | Gemma 4 31B |
+|---|---|---|
+| Weights quant | Lorbus AutoRound INT4 (mtp.fc preserved BF16) | Intel AutoRound INT4 |
+| MTP type | Built-in head, `method: mtp` n=3 | External 0.5B BF16 drafter (`gemma-4-31b-it-assistant`) via [vllm#41745](https://github.com/vllm-project/vllm/pull/41745), n=4 |
+| KV cache | `fp8_e5m2` | BF16 |
+| Max ctx | 262144 (262K) | 32768 (32K — BF16 KV ceiling on 2× 24 GB; use `gemma-int8` for 262K) |
+| `--gpu-memory-utilization` | 0.92 | 0.92 |
+| TP | 2 | 2 |
+| vLLM nightly | `01d4d1ad` (2026-05-04) | `1acd67a7` (2026-05-08) — newer, post Gemma 4 MTP merge |
+| Genesis pin | v7.64 (loaded via setup.sh) | n/a (Gemma 4 doesn't use Genesis patches) |
+| thinking | OFF (server-side `--default-chat-template-kwargs`) | OFF (Gemma 4 default; needs explicit `enable_thinking=true` to enable) |
+
+### TPS (canonical `bench.sh`: 800-word essay narrative + quicksort C++ code)
+
+| Bench | Qwen 3.6 27B | Gemma 4 31B | Gemma vs Qwen |
+|---|---:|---:|---:|
+| Narrative decode TPS | 68.83 | **108.46** | **+57%** |
+| Code decode TPS | 87.54 | **139.88** | **+60%** |
+| TTFT narrative | 151 ms | **70 ms** | ~2× faster |
+| TTFT code | 125 ms | **62 ms** | ~2× faster |
+| VRAM/card | 23.7 GiB | **22.5 GiB** | −0.8 GiB |
+| MTP mean accept length | 3.30–3.56 | 3.05–3.96 (warming) | similar |
+| MTP avg accept rate | 76.5–85.2% | 51.2–73.9% (warming) | Qwen slightly higher when warm |
+| CV (narr / code) | 3.9% / 4.1% | 1.4% / 1.0% | Gemma noticeably more stable |
+| GPU power (per card) | 308 W / 263 W | 351 W / 296 W | Gemma uses ~13% more power |
+
+### Quality — 8-pack `quality-test.sh --full` (150 scenarios)
+
+Same endpoint, same thinking-off default. **Note** — `BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1` env var required for hermesagent-20 to reach host vLLM from the sandbox container (auto-set by `scripts/quality-test.sh` for localhost URLs since [83bf73d](https://github.com/noonghunna/club-3090/commit/83bf73d)).
+
+| Pack | Qwen 3.6 27B | Gemma 4 31B | Δ (Gemma − Qwen) | Workload type |
+|---|---:|---:|---:|---|
+| toolcall-15 | 10/15 (67%) | 9/15 (60%) | **−7 pp** | Multi-tool call sequencing |
+| instructfollow-15 | 13/15 (87%) | 13/15 (87%) | tied | Format-constraint following |
+| structoutput-15 | 13/15 (87%) | 13/15 (87%) | tied | JSON / CSV schema emission |
+| dataextract-15 | 15/15 (**100%**) | 15/15 (**100%**) | tied | Information extraction |
+| reasonmath-15 | 6/15 (40%) | 6/15 (40%) | tied | Math (thinking-off cost = identical) |
+| bugfind-15 | 12/15 (80%) | **14/15 (93%)** | **+13 pp** | Code debugging |
+| hermesagent-20 | 10/20 (50%) | **12/20 (60%)** | **+10 pp** | Multi-turn agentic (Hermes harness, v0.7.4 grader) |
+| cli-40 | 21/40 (52%) | 20/40 (50%) | −2 pp | CLI task completion |
+| **TOTAL** | **100/150 (67%)** | **102/150 (68%)** | **+1 pp** | |
+
+### Quality — Aider Polyglot 30 (per-language breakdown)
+
+Cross-reference [Quality benches — Aider Polyglot 30](#quality-benches--aider-polyglot-30) above. Same `dual.yml` configs, same compose, single-shot.
+
+| Language | Qwen 3.6 27B | Gemma 4 31B | Δ |
+|---|---:|---:|---:|
+| C++ | 3/5 (60%) | 2/5 (40%) | −1 |
+| Go | 4/5 (80%) | 4/5 (80%) | tied |
+| Java | **4/5 (80%)** | 1/5 (20%) | **−3** (Gemma fell apart on `affine-cipher`) |
+| JavaScript | 4/5 (80%) | 4/5 (80%) | tied |
+| Python | 2/5 (40%) | **3/5 (60%)** | **+1** |
+| Rust | 3/5 (60%) | 3/5 (60%) | tied |
+| **Total** | **20/30 (66.7%)** | 17/30 (56.7%) | **−10 pp** |
+
+### Headline takeaways
+
+- **TPS:** Gemma 4 31B is **~60% faster** across both narrative and code, plus ~2× faster TTFT and 0.8 GiB less VRAM per card. For throughput-bound workloads at ≤32K ctx, Gemma 4 wins decisively at this config. For long-context (>32K), Qwen 3.6 27B's 262K ceiling + fp8 KV is the only option in this matchup (use `gemma-int8` for Gemma at 262K — separate compose, not benched here).
+- **Quality aggregate:** Effectively tied — **180-scenario combined total: Qwen 120/180 (66.7%), Gemma 119/180 (66.1%)**. Within noise. Neither model is generically "better"; the choice is workload-shaped.
+- **Quality by workload:** Gemma wins agentic + bug-fix (`bugfind +13 pp`, `hermesagent +10 pp`). Qwen wins polyglot code editing (`aider-polyglot +10 pp`, driven mostly by Java). Tool-call ordering favors Qwen (`toolcall +7 pp`). Five packs are dead-even.
+- **reasonmath 6/15 (40%) on BOTH** — the thinking-off cost is identical and model-independent. Math problems with strict-format expectations need thinking-on (and the `aider-polyglot-30` row above shows what Qwen-with-thinking does to wall time — 0/30 hit the 1500s subprocess cap, now 2700s).
+- **Pin/config delta:** Gemma's vLLM nightly is 4 days newer (post Gemma 4 MTP merge), KV is BF16 vs Qwen's fp8_e5m2, and Gemma uses an external 0.5B drafter vs Qwen's built-in MTP head. Same `dual.yml` topology, same `--gpu-memory-utilization 0.92`, same TP=2.
+
+### How to reproduce on your rig
+
+```bash
+# Qwen leg
+gpu-mode 27b                                                    # bring up at :8010
+RUNS=3 WARMUPS=1 bash scripts/bench.sh                          # TPS
+bash scripts/quality-test.sh --full                             # 8-pack quality
+benchlocal-cli run --pack aider-polyglot-30 \
+  --endpoint http://localhost:8010 --model qwen3.6-27b-autoround
+
+# Gemma leg (cycle GPU)
+gpu-mode gemma                                                  # bring up at :8030
+URL=http://localhost:8030 MODEL=gemma-4-31b-autoround \
+  RUNS=3 WARMUPS=1 bash scripts/bench.sh
+URL=http://localhost:8030 MODEL=gemma-4-31b-autoround \
+  bash scripts/quality-test.sh --full
+benchlocal-cli run --pack aider-polyglot-30 \
+  --endpoint http://localhost:8030 --model gemma-4-31b-autoround
+```
+
+End-to-end takes ~3 hours on dual 3090. quality-test.sh auto-detects the endpoint and served-model-id, so `URL`/`MODEL` overrides are only needed when running against non-default ports.
