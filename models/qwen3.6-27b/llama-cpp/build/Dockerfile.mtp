@@ -1,0 +1,59 @@
+# llama.cpp with MTP speculative decoding for Qwen3.6-27B
+#
+# Builds from am17an/llama.cpp:mtp-clean (PR #22673) which adds
+# --spec-type mtp support for Qwen3-Next MTP-GGUF models.
+#
+# Stock ghcr.io/ggml-org/llama.cpp:server-cuda only supports ngram-based
+# spec-decode; this build adds the real MTP draft-head path (~2× TPS).
+#
+# Usage:
+#   cd models/qwen3.6-27b/llama-cpp/build
+#   docker build -f Dockerfile.mtp -t llama-cpp-mtp:latest .
+#   docker compose -f ../compose/docker-compose.mtp.yml up -d
+
+ARG CUDA_VERSION=12.8.1
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS builder
+
+# sm_89  = Ada (RTX 4090)
+# sm_120 = Blackwell GB202 (RTX 5090 Laptop)
+ARG CUDA_ARCHITECTURES="89-real;120-real"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git libcurl4-openssl-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 -b mtp-clean https://github.com/am17an/llama.cpp.git /src
+
+WORKDIR /src
+# CUDA VMM (cuMemCreate etc.) lives in libcuda.so which is the host driver,
+# not in the devel image. Two-pronged fix:
+# 1. Symlink the stub so the linker resolves references at build time.
+# 2. -DGGML_CUDA_NO_VMM=ON disables the VMM allocation path entirely,
+#    which also eliminates the dependency.
+RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/lib/libcuda.so.1 \
+    && ldconfig
+RUN cmake -B build \
+    -DGGML_CUDA=ON \
+    "-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
+    -DLLAMA_CURL=ON \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DGGML_CUDA_NO_VMM=ON \
+    && cmake --build build --config Release -j$(nproc) --target llama-server
+
+# Gather binary + all shared libs into /staging for easy COPY
+RUN mkdir /staging \
+    && cp /src/build/bin/llama-server /staging/ \
+    && find /src/build -name "*.so*" -exec cp -P {} /staging/ \;
+
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcurl4 ca-certificates libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /staging/ /app/
+ENV LD_LIBRARY_PATH=/app
+
+# Expose same port as stock image
+EXPOSE 8080
+ENTRYPOINT ["/app/llama-server"]

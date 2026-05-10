@@ -1,0 +1,95 @@
+# Qwen3.6-27B on llama.cpp — MTP speculative decoding (PR #22673).
+#
+# Requires a custom image built from am17an/llama.cpp:mtp-clean:
+#   cd models/qwen3.6-27b/llama-cpp/build
+#   docker build -f Dockerfile.mtp -t llama-cpp-mtp:latest .
+#
+# Requires MTP-capable GGUFs from havenoammo/Qwen3.6-27B-MTP-UD-GGUF:
+#   hf download havenoammo/Qwen3.6-27B-MTP-UD-GGUF \
+#     --include "Qwen3.6-27B-MTP-UD-Q3_K_XL.gguf" "27B_MTP.gguf" \
+#     --local-dir models-cache/qwen3.6-27b/havenoammo-mtp-q3kxl
+#
+# MTP heads are EMBEDDED in the main havenoammo UD-Q3_K_XL.gguf — the
+# separate 27B_MTP.gguf is a head-only file that cannot be used as
+# --model-draft (lacks full model hyperparameters). Do not pass --model-draft.
+#
+# VRAM budget (24 GB, Q3_K_XL main + MTP head + q4_0 KV @ 262K):
+#   main weights (Q3_K_XL):   ~14.9 GB
+#   MTP draft head (Q8_0):    ~0.46 GB
+#   mmproj (F16):             ~0.80 GB
+#   KV at 262K (q4_0 K+V):   ~4.50 GB
+#   total:                   ~20.7 GB  — ~3.3 GB headroom
+#
+# KV variant — q8_0 K + q4_0 V (set CTX_SIZE lower to fit):
+#   KV at 196K (q8_0 K + q4_0 V): ~5.0 GB  → total ~21.2 GB, fits
+#   KV at 262K (q8_0 K + q4_0 V): ~6.75 GB → total ~22.9 GB, very tight
+#
+# Env overrides (.env or shell):
+#   GGUF_FILE         main model path under /models (default: havenoammo Q3_K_XL)
+#   MMPROJ_FILE       vision projector path under /models
+#   CTX_SIZE          KV pool size (default: 262144)
+#   CACHE_TYPE_K      K cache quant type (default: q4_0; try q8_0 for better quality)
+#   CACHE_TYPE_V      V cache quant type (default: q4_0)
+#   SPEC_N_MAX        max draft tokens (default: 3; range 1-5)
+#   MODEL_DIR         host path mounted as /models
+#   PORT              host port (default: 8020)
+#   DISABLE_THINKING  set to 1 to force empty <think></think>
+
+services:
+  llama-cpp-mtp-qwen36-27b:
+    image: llama-cpp-mtp:latest
+    container_name: llama-cpp-mtp-qwen36-27b
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8020}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../models-cache}:/models:ro"
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        EXTRA_ARGS=()
+        if [ "$${DISABLE_THINKING:-0}" = "1" ]; then
+          EXTRA_ARGS+=("--chat-template-kwargs" '{"enable_thinking":false}')
+          echo "[entrypoint] DISABLE_THINKING=1"
+        fi
+        exec /app/llama-server "$$@" "$${EXTRA_ARGS[@]}"
+      - --
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - -m
+      - /models/${GGUF_FILE:-qwen3.6-27b/havenoammo-mtp-q3kxl/Qwen3.6-27B-MTP-UD-Q3_K_XL.gguf}
+      - --mmproj
+      - /models/${MMPROJ_FILE:-qwen3.6-27b/mmproj-F16.gguf}
+      - -c
+      - "${CTX_SIZE:-262144}"
+      - -ngl
+      - "99"
+      - -fa
+      - "on"
+      - --cache-type-k
+      - "${CACHE_TYPE_K:-q4_0}"
+      - --cache-type-v
+      - "${CACHE_TYPE_V:-q4_0}"
+      - -np
+      - "1"
+      - --jinja
+      - --reasoning-format
+      - "${REASONING_FORMAT:-none}"
+      - --spec-type
+      - mtp
+      - --spec-draft-n-max
+      - "${SPEC_N_MAX:-3}"
+      - --spec-draft-ngl
+      - "99"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${CUDA_VISIBLE_DEVICES:-0}"]
+              capabilities: [compute, utility]

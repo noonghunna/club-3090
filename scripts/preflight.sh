@@ -475,7 +475,7 @@ preflight_autodetect_endpoint() {
   # Scan for one of our containers + its `0.0.0.0:<host>->8000/tcp` mapping.
   local found_line
   found_line=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
-    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-gemma-4-31b)' | head -1)
+    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|llama-cpp-mtp-qwen36-27b|vllm-gemma-4-31b)' | head -1 || true)
   if [[ -z "$found_line" ]]; then
     return 0   # nothing running; defaults stand
   fi

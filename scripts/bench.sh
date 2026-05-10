@@ -79,6 +79,7 @@ python3 - "$URL" "$MODEL" "$WARMUPS" "$RUNS" "$QUIET" "$ONLY" \
             "$PROMPT_NARR" "$MAX_TOKENS_NARR" \
             "$PROMPT_CODE" "$MAX_TOKENS_CODE" << 'PYEOF'
 import json, sys, time, urllib.request, statistics as s
+sys.stdout.reconfigure(line_buffering=True)
 
 (URL, MODEL, WARMUPS, RUNS, QUIET, ONLY,
  PROMPT_NARR, MAX_NARR, PROMPT_CODE, MAX_CODE) = sys.argv[1:]
