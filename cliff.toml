@@ -8,15 +8,41 @@
 # → release published.
 
 [changelog]
-# Header rendered once at top of every release body.
+# Header rendered once at top of CHANGELOG.md (preserved across full regens).
+# Use `--strip header` on `--latest` for GitHub Release bodies so they don't
+# duplicate this intro on every release page.
 header = """
+# Changelog
+
+Auto-generated from commit messages by [git-cliff](https://git-cliff.org/).
+Update flow: write rich commit message bodies → tag → CI regenerates this file
+and the GitHub Release notes from the same source. Don't hand-edit below the
+header — your changes will be overwritten on the next tag.
+
+**Versioning:** SemVer in `0.x` — treat any minor bump as potentially breaking
+until `1.0`. Past CalVer tags (`v2026.05.09`, `v2026.05.10`) are preserved for
+history; SemVer takes over from `v0.3.0` onward.
+
+| CalVer tag | SemVer equivalent | Date |
+|---|---|---|
+| `v2026.05.09` | (≈ v0.1.0) | 2026-05-09 — first tagged release |
+| `v2026.05.10` | (≈ v0.2.0) | 2026-05-10 — stack reorg + Gemma 4 INT8 PTH unblock |
+
+---
+
 """
 
-# Body template — rendered per release (we use --latest so only one).
-# Tera templating syntax. Each commit shows as a bullet with PR link if present.
+# Body template — rendered per release. For `--latest` (GitHub Release) only
+# the most recent block renders; for full regen of CHANGELOG.md, every tagged
+# block renders in reverse-chronological order.
+#
+# Commit message body (everything after subject + blank line) renders below
+# the subject bullet so rich narrative (tables, validation data, before/after
+# numbers) ends up in both CHANGELOG.md and the GitHub Release page from the
+# same source. Tera templating; see https://keats.github.io/tera/docs/.
 body = """
 {% if version %}\
-## What's in {{ version }}
+## {{ version }}{% if timestamp %} — {{ timestamp | date(format="%Y-%m-%d") }}{% endif %}
 
 {% else %}\
 ## Unreleased
@@ -26,25 +52,21 @@ body = """
 ### {{ group }}
 
 {% for commit in commits %}\
-- {{ commit.message | split(pat="\\n") | first | trim }}{% if commit.github.pr_number %} ([#{{ commit.github.pr_number }}](https://github.com/noonghunna/club-3090/pull/{{ commit.github.pr_number }}) by @{{ commit.github.username }}){% else %} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/noonghunna/club-3090/commit/{{ commit.id }})){% endif %}
-{% endfor %}
-{% endfor %}
+- **{{ commit.message | split(pat="\\n") | first | trim }}**{% if commit.github.pr_number %} ([#{{ commit.github.pr_number }}](https://github.com/noonghunna/club-3090/pull/{{ commit.github.pr_number }}) by @{{ commit.github.username }}){% else %} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/noonghunna/club-3090/commit/{{ commit.id }})){% endif %}
+{% set body_lines = commit.message | split(pat="\\n") %}\
+{% if body_lines | length > 1 %}\
+{% set body = body_lines | slice(start=1) | join(sep="\\n") | trim %}\
+{% if body %}
 
----
+  {{ body | replace(from="\\n", to="\\n  ") }}
 
-## Pinning to this release
-
-**Versioning:** SemVer in `0.x` — treat any minor bump as potentially breaking until `1.0`. Past CalVer tags (`v2026.05.09`, `v2026.05.10`) are preserved for history; SemVer takes over from `v0.3.0` onward.
-
-```bash
-git checkout {{ version }}
-```
-
-When posting cross-rig benchmark numbers ([disc #86](https://github.com/noonghunna/club-3090/discussions/86)), please include this version tag (or commit SHA) so others can reproduce against the same script revision.
-
-{% if previous.version %}\
-**Full diff:** [{{ previous.version }}...{{ version }}](https://github.com/noonghunna/club-3090/compare/{{ previous.version }}...{{ version }})
 {% endif %}\
+{% endif %}\
+{% endfor %}
+{% endfor %}
+
+{% if version %}[Pin: `git checkout {{ version }}`]{% if previous.version %} · [Full diff](https://github.com/noonghunna/club-3090/compare/{{ previous.version }}...{{ version }}){% endif %}
+{% endif %}
 """
 
 footer = ""

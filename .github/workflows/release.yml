@@ -16,17 +16,54 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # full history needed for git-cliff
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate release notes
-        id: cliff
+      # ---- (1) Generate the GitHub Release body (latest only, no header) ----
+      # `--strip header` drops the static SemVer preamble so the release page
+      # shows just the per-version section, while CHANGELOG.md (below) keeps
+      # the header at the top of the file.
+      - name: Generate release notes (latest only)
+        id: cliff-release
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          args: --latest --github-repo noonghunna/club-3090
+          args: --latest --strip header --github-repo noonghunna/club-3090
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OUTPUT: RELEASE_NOTES.md
 
+      # ---- (2) Regenerate full CHANGELOG.md (all tags, with header) ----
+      - name: Regenerate CHANGELOG.md
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --github-repo noonghunna/club-3090
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTPUT: CHANGELOG.md
+
+      # ---- (3) Commit the regenerated CHANGELOG.md back to master ----
+      # The tag's commit doesn't include this auto-regen — but the GitHub
+      # Release page is correct (step 1), and master's CHANGELOG.md catches
+      # up ~1 min after tag push. Skipped if nothing changed.
+      - name: Commit CHANGELOG.md back to master
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin master
+          git checkout -B master origin/master
+          # Re-run cliff against master HEAD so the regen reflects what master
+          # actually contains (the tag may not yet be on master if pushed from
+          # a feature branch; uncommon but handled).
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "CHANGELOG.md unchanged — skipping commit."
+          else
+            git commit -m "chore(changelog): regenerate for ${{ github.ref_name }} [skip ci]"
+            git push origin master
+          fi
+
+      # ---- (4) Publish GitHub Release ----
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
