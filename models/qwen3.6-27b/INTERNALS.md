@@ -66,7 +66,7 @@ Without this patch, the documented workaround is `--compilation-config.cudagraph
 
 P65 downgrades `_cudagraph_support` from `UNIFORM_BATCH` to `UNIFORM_SINGLE_TOKEN_DECODE`. vLLM's compilation auto-detects and forces `cudagraph_mode=PIECEWISE` for spec-decode → eager continuation runs the correct branch. 1-token decode batches still get piecewise capture; only K+1 spec-verify batches go eager.
 
-This is a workaround. The proper fix is a custom multi-query Triton kernel (P67) that handles K+1 query against compressed cached KV under cudagraph capture — designed-but-not-implemented as of v7.14.
+This is a workaround. The proper fix is a custom multi-query Triton kernel (P67/P67b) that handles K+1 query against compressed cached KV. Genesis later shipped and generalized that path; direct upstream vLLM still does not have an equivalent that passes our Qwen3.6-27B TQ+MTP verify-stress matrix.
 
 ---
 
@@ -198,12 +198,12 @@ For Sandermage's documented numbers on his A5000 setup, see his [MODELS.md](http
 | [vllm#40361](https://github.com/vllm-project/vllm/pull/40361) | **OPEN, MERGEABLE** | Our Marlin pad-sub-tile-n patch (dual-card dependency). Drops out as a dependency when this lands. |
 | [vllm#40334](https://github.com/vllm-project/vllm/pull/40334) | **OPEN, NOT MERGED** | DFlash `combine_hidden_states` dtype mismatch fix. Workaround in our DFlash composes: `--dtype bfloat16`. |
 | [vllm#40807](https://github.com/vllm-project/vllm/issues/40807) | Worked around locally | CUDA graph `.tolist()` crash (single-card). Our `patch_tolist_cudagraph.py` ships the fix. |
-| [vllm#40831](https://github.com/vllm-project/vllm/issues/40831) | Closed (ngram + MTP) | TurboQuant × spec-decode corruption. Ngram via [#40875](https://github.com/vllm-project/vllm/issues/40875) `prompt_lookup_min=8`; MTP via Genesis v7.14 P65. |
-| [vllm#40880](https://github.com/vllm-project/vllm/issues/40880) | Worked around (Genesis v7.14) | MTP × TurboQuant × cudagraph (single-card). P65 PIECEWISE downgrade. Proper P67 multi-query Triton kernel TBD. |
-| [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) | **OPEN** | Sandermage's upstream synthetic-args trick for spec-decode K+1 verify. Would close P67 design gap. |
+| [vllm#40831](https://github.com/vllm-project/vllm/issues/40831) | Closed issue, direct-upstream gap remains | TurboQuant × spec-decode corruption. Round-4 2026-05-11 matrix shows TQ3/TQ4/k8v4 + MTP all fail long-context needles, while TQ3 no-MTP passes 7/7. |
+| [vllm#40880](https://github.com/vllm-project/vllm/issues/40880) | Worked around by Genesis | MTP × TurboQuant × cudagraph was the first visible failure mode. `--enforce-eager` no longer closes the full problem; Genesis P67/P67b is the working K+1 multi-query path. |
+| [vllm#40914](https://github.com/vllm-project/vllm/pull/40914) | **OPEN, negative locally** | Synthetic-args K+1 route. Local rebase stabilized acceptance but corrupted output (`!` flood) and broke tool/multi-turn; dropping it improved to 5/7 but did not close needles. Not a P67-equivalent for this stack. |
 | [PR #40798](https://github.com/vllm-project/vllm/pull/40798) | Hypothesized fix that didn't pan out | Workspace-manager refactor. Probe 8 backported it; bug persisted. Useful negative result documented on the PR thread. |
 
-When PR #40361 lands, we drop the `/opt/ai/engines/vllm/primary/` mount from dual composes. When PR #40914 lands, the dual-Turbo variant's TPS regression vs fp8 narrows substantially.
+When PR #40361 lands, we drop the `/opt/ai/engines/vllm/primary/` mount from dual composes. Do not assume PR #40914 alone makes Genesis-free TQ+MTP shippable; re-test only when upstream has a P67-equivalent multi-query correctness fix.
 
 ---
 

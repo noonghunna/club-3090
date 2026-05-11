@@ -6,46 +6,43 @@
 #   KV:        turboquant_3bit_nc (TQ3) — 3-bit per element
 #   Max ctx:   262144 (262K)
 #   Status:    ⛔ TOMBSTONED 2026-05-11 — NOT shipping. See gap below.
-#   Best for:  Reference / re-test surface once the missing 4 of 5 Genesis
-#              equivalent upstream PRs land.
+#   Best for:  Reference / re-test surface once an upstream P67-equivalent
+#              multi-query TurboQuant spec-decode kernel lands.
 # ---------------------------------------------------------------------------
 # 2026-05-11 UPSTREAM-FIX GAP (no Genesis):
 #
-#   TQ3 + MTP on Qwen3-Next requires 5 distinct fixes to work correctly.
-#   Sandermage root-caused all 5 on 2026-04-25 and shipped them as
-#   Genesis v7.14 patches P64 / P65 / P66 / P68 / P69, closing the issue
-#   I filed at vllm-issue#40880 (now closed).
+#   TQ3 + MTP on Qwen3-Next requires Genesis-side handling that upstream
+#   vLLM does not yet have. Sander initially closed vllm-issue#40880 with
+#   the v7.14 P64/P65/P66/P68/P69 stack, then later generalized the real
+#   fix as P67/P67b: a K+1-aware multi-query TurboQuant path against the
+#   compressed cache.
 #
-#   Today's upstream-PR landscape covers only 1 of those 5:
-#     - PR #40914 (OPEN) — K+1 spec-verify routing (analog of one piece)
+#   Today's upstream-PR landscape still does not cover that P67 behavior:
+#     - PR #40914 (OPEN) — synthetic seq_lens K+1 routing. Local rebases
+#       on this Qwen3.6-27B nightly stack were negative: with the overlay
+#       active, MTP acceptance reached 100% but long-context recall collapsed
+#       into `!` floods and tool/multi-turn paths timed out. Dropping it
+#       improved verify-stress from 3/7 to 5/7, but needles still failed.
 #     - PR #40798 (OPEN) — TQ decode workspace pre-allocation (separate
 #       workspace-lock bug; partially required for boot)
 #     - PR #42215 (OPEN) — TQ decode kernel warmup (overlapping with #40798)
+#     - PR #40792 (OPEN) — k8v4 GQA decode optimization; faster, but not a
+#       K+1 spec-verify multi-query correctness fix.
 #
-#   The other 4 Genesis patches do not have upstream PR analogs we can
-#   find:
-#     - chunked-prefill `cu_seqlens_k = cu_seqlens_q` first-chunk assumption
-#     - decode-kernel warmup coverage (broader than #42215)
-#     - multi-tool / streaming overlap
-#     - long-context tool reminders / force-tool
-#
-#   Tracking issue vllm#40069 lists "Speculative decoding / Eagle" as
-#   "currently disabled or unverified" for the TurboQuant backend —
-#   upstream acknowledges this is incomplete work.
+#   Tracking issue vllm#40069 still lists "Speculative decoding / Eagle" as
+#   disabled or unverified for TurboQuant, which matches our local matrix.
 #
 #   We attempted a partial stack on 2026-05-11:
 #     - marlin-pad (vllm#40361)
 #     - PR #40798 `gpu_model_runner.py` ONLY (workspace pre-allocation)
 #     - PR #40914 K+1 dispatch block manually rebased onto post-#41434 main
 #
-#   Result: MTP acceptance fully stabilized (100% sustained, AL=4.0,
-#   per-position [1.000, 1.000, 1.000]). But the other 4 missing fixes
-#   surface as: `'crimson axolotl 36'` → `'cr!!!!!!!!!!!!!!!!!!!!!! '`
-#   on long-context needle recall + tool-prefill / multi-turn timeouts +
-#   bench prompts hanging on non-terminating corrupted output. Combined
-#   with 100% drafter-target agreement, this means the K+1 dispatch
-#   path is computing the same wrong attention output on both — i.e.
-#   one fix doesn't compensate for the missing four.
+#   Result: PR #40914 was not just insufficient here, it was worse than
+#   stock nightly. Enforce-eager and the output-buffer epilogue fix did not
+#   change the `!`-flood. With #40914 removed, tool-prefill and multi-turn
+#   recovered, but TQ3/TQ4/k8v4 + MTP all still failed long-context needles
+#   with first-word repetition. TQ3 with MTP disabled passes all checks, so
+#   this is an MTP x TurboQuant multi-query bug, not TQ precision.
 #
 # Deployable alternatives without Genesis:
 #   - dual/tq3-nomtp.yml  ← validated: 1.73M KV pool, 6.59× concurrency,
@@ -56,8 +53,8 @@
 #   - dual/tq3-mtp-genesis.yml  ← uses the full P64/P65/P66/P68/P69 stack
 #                                  via Genesis modular package
 #
-# Drop the tombstone when the 4 missing upstream PRs land OR PR #40914
-# is rebased + fully extended to cover the gap.
+# Drop the tombstone only when an upstream P67-equivalent fix lands and
+# passes our verify-stress matrix across TQ3/TQ4/k8v4 + MTP.
 # ===========================================================================
 # Run (only when all 5 upstream fixes are available):
 #   docker compose -f dual/tq3-mtp.yml up -d
@@ -85,14 +82,16 @@ services:
       # TP=2 on AutoRound W4A16 (drops out when upstream merges).
       - ../../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
       - ../../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
-      # TOMBSTONED: PR #40798 partial + PR #40914 K+1 dispatch + MTP-skip
-      # layer-filter all validated 2026-05-11. None close the gap — MTP-skip
-      # filter (round 3) didn't fix the `!`-flood corruption; the target's
-      # full-attention layers' K+1 dispatch is also producing wrong output
-      # on this nightly + Qwen3-Next layout, not just the drafter's. Genesis
-      # P64/P65/P66/P68/P69 is what's needed; we don't have all 5 as upstream
-      # PRs. Patches retained for re-test once upstream landscape extends.
+      # ⚠️ DEBUG ROUND-5 (2026-05-11): test Sander's P65 mechanism cleanly.
+      # PR #40914 K+1 dispatch DROPPED — that overlay intercepts spec-verify
+      # batches with a synthetic-seq_lens path that's broken even in eager.
+      # P65's real mechanism: let K+1 batches fall through to the stock
+      # _prefill_attention per-request continuation branch (which we get
+      # by default in nightly). Plus VLLM_ENFORCE_EAGER=1 to take the
+      # cudagraph path off the table entirely.
+      - ../../patches/vllm-pr40798-rebased/v1/worker/gpu_model_runner.py:/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_model_runner.py:ro
     environment:
+      - VLLM_ENFORCE_EAGER=1
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       - NCCL_CUMEM_ENABLE=0

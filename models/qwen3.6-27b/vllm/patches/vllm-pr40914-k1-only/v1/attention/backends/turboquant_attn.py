@@ -547,7 +547,14 @@ class TurboQuantAttentionImpl(AttentionImpl["TurboQuantMetadata"]):
                     buf_holder=layer,
                     max_num_kv_splits=self.max_num_kv_splits,
                 )
-                return attn_out
+                # Keep this shortcut shape-compatible with the normal epilogue
+                # below. The backend accepts an output buffer, and callers may
+                # pass either flattened [N, H*D] or structured [N, H, D] output.
+                if output.ndim == 3:
+                    output[:N] = attn_out.to(output.dtype)
+                else:
+                    output[:N] = attn_out.reshape(N, -1).to(output.dtype)
+                return output
 
         if not attn_metadata.is_prefill:
             # Pure decode batch — fast path

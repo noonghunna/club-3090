@@ -1,7 +1,20 @@
 # vLLM PR #40914 K+1-only overlay — manually rebased onto post-#41434 main
 
-Vendored 2026-05-11 to unblock TQ3 + MTP on Qwen 3.6 27B (`dual/int8-tq3.yml`)
-with proper spec-verify routing.
+## Status: negative result on Qwen3.6-27B
+
+Vendored 2026-05-11 to test whether PR #40914 could unblock TQ3 + MTP on
+Qwen 3.6 27B without Genesis. It does **not** close the stack:
+
+- With this overlay active, MTP acceptance stabilizes at AL=4.0 / ~100%,
+  but outputs collapse into `!` floods and tool/multi-turn paths time out.
+- Skipping `mtp.*` drafter layers does not fix the corruption.
+- `--enforce-eager` plus the output-buffer epilogue fix does not fix it.
+- Dropping this overlay improves verify-stress from 3/7 to 5/7, but
+  TQ3/TQ4/k8v4 + MTP still fail long-context needles.
+
+Keep this only as a re-test artifact. Do not mount it in shipping composes
+unless upstream changes the PR into a true P67-equivalent multi-query
+TurboQuant spec-decode fix.
 
 ## Source
 
@@ -35,7 +48,7 @@ Result:
 - `buf_holder=layer` call site: matches nightly's `triton_turboquant_decode.py`
   signature (which post-#41434 accepts that kwarg)
 
-## What this fixes
+## What this was expected to fix
 
 Bimodal MTP acceptance + "first word right then breaks" needle failure
 on TQ3 + MTP. Symptom on the previous stack (PR #40798 partial only):
@@ -52,7 +65,8 @@ attention diverged because the verify pass was attending only to
 current-chunk K/V instead of prior cached compressed K/V.
 
 This dispatch routes uniform K+1 spec-verify batches through the decode
-kernel (which natively reads prior cached K/V), restoring correctness.
+kernel (which natively reads prior cached K/V). On our Qwen3.6-27B stack
+this expectation did not hold; see the status note above.
 
 ## Drop trigger
 
@@ -70,7 +84,7 @@ rebased before merge so it doesn't revert #41434).
 - Qwen 3.6 27B AutoRound INT4, TQ3 KV, MTP n=3, 262K × 2 streams
 - 2026-05-11
 
-## Round-2 local experiment: skip MTP drafter layers
+## Round-2/3 local experiment: skip MTP drafter layers
 
 Instrumentation captured the K+1 dispatch firing first on:
 
@@ -90,5 +104,5 @@ leaving the target verify path eligible. A/B escape hatch:
 CLUB3090_TQ_K1_SKIP_MTP=0
 ```
 
-Use this next to test whether PR #40914's K+1 route is target-verify-only
-and the drafter should stay on the original continuation/decode path.
+Round 3 result: this did not fix the corruption. The target-side path is
+also wrong for this stack.
