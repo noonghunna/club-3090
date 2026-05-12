@@ -194,7 +194,14 @@ services:
       # PN54 — GDN contiguous-call deduplication (Cliff 2b OOM mitigation).
       - GENESIS_ENABLE_PN54=${GENESIS_ENABLE_PN54:-0}
       # Explicit OFFs to match Sandermage's PROD env-var set verbatim:
-      # P78 (P78_TOLIST_CAPTURE_GUARD) — superseded by our patch_tolist_cudagraph.py
+      # P78 (P78_TOLIST_CAPTURE_GUARD) — vllm#40807 `.tolist()` cudagraph guard.
+      #   Was OFF here because we previously shipped our own patch_tolist_cudagraph.py
+      #   sidecar covering the same bug; that sidecar was retired 2026-05-05 (Genesis
+      #   v7.72.2 bump). We keep P78=0 because rebench-full leg 6 (2026-05-11) passed
+      #   clean with it off — 7/7 verify-stress, 0/100 silent-empty soak, 18/30 aider.
+      #   PN34 (workspace-lock relax) + post-#41434 attention rework appear to cover
+      #   the symptom on this Genesis-pinned nightly. Flip to 1 if a future bench
+      #   surfaces .tolist() cudagraph corruption.
       # P81 (FP8 block-scaled M<=8) — FP8-specific, no-op on our TQ3 path
       # P82 — biased on small-batch single-stream Lorbus INT4 + MTP K=3 (Sander PROD)
       - GENESIS_ENABLE_P78_TOLIST_CAPTURE_GUARD=0
