@@ -16,6 +16,18 @@ Should work for vLLM (Blackwell adds new kernels but back-compat). The Marlin pa
 
 No. Our dual-card configs use PCIe-only, no NVLink. Custom all-reduce is disabled in the composes. NVLink would help dual-card TPS but it's not required, and the user has explicitly declined NVLink bridges as a default — adding the dependency would exclude most consumer rigs.
 
+### What dtype/quant should I pick for my GPU?
+
+Depends on the arch. The short version:
+
+- **Ampere (3090/A100, sm_80/86)** → AutoRound INT4 weights + TQ3 / INT8 PTH / fp8 KV (fp8 KV works but is software-emulated). The primary target of this stack.
+- **Ada (4090/L40, sm_89)** → same as Ampere + you get a real FP8 hardware path for KV.
+- **Hopper (H100, sm_90)** → FP8 weights + FP8 KV on the transformer engine.
+- **Blackwell consumer (5090, sm_120)** → AutoRound INT4 today; NVFP4 / MXFP* when the kernels mature.
+- **Pre-Turing (V100, 10x0)** → llama.cpp only — vLLM needs sm_75+.
+
+Full hardware-acceleration matrix (which dtypes/quants run on Tensor Cores natively vs in software, per GPU class) at [DTYPE_MATRIX.md](DTYPE_MATRIX.md), including the weight-only vs weight+activation axis and the NVFP4 / MXFP4 / FP6 Blackwell additions.
+
 ### Does this work on AMD / Intel / Apple Silicon?
 
 vLLM: NVIDIA-only (CUDA). llama.cpp: yes — pick the right Docker image (`ghcr.io/ggml-org/llama.cpp:server-rocm` for AMD, `:server` for CPU-only, or build from source for Apple Silicon). Update the `image:` line in the compose. The flags (`--ngl`, `-fa on`, `--cache-type-k q4_0`) work identically across backends.

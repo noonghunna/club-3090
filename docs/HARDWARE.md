@@ -29,6 +29,8 @@ The recipes are written against 3090 specifically but should work on:
 | RTX A6000 | 48 GB | sm_86 | Should work; double VRAM lets you skip the cliff workarounds (use Sandermage's reference defaults) |
 | H100 SXM | 80 GB | sm_90 | Different beast; flash-attn 3 paths available; not what these recipes target |
 
+> See [DTYPE_MATRIX.md](DTYPE_MATRIX.md) for the per-arch hardware-accelerator matrix — which dtypes (BF16, FP8, NVFP4, INT4) and quant schemes (AutoRound, AWQ, GPTQ, FP8 weights, SmoothQuant, NVFP4) run on which GPU classes natively vs in software. Useful when targeting a non-3090 rig.
+
 **Won't work:** anything with <20 GB VRAM (3060, 3070, stock 3080, 3080 Ti). The 27B model in INT4 is ~18 GB — KV pool + activations push past 24 GB on smaller cards even with aggressive quantization. **Modded 20 GB 3080s do work** (see row above) — the mod gives them enough headroom for the 27B + TQ K8V4 KV path on TP=2, with `mem-util=0.82` to absorb cudagraph profiling overhead.
 
 ### Note for sub-24 GB cards

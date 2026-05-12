@@ -33,6 +33,8 @@ Plain-language definitions for terms used throughout the docs. Roughly grouped b
 
 ## Quantization
 
+> For the full per-GPU-arch hardware-acceleration matrix — which dtypes / quant schemes run on Tensor Cores natively vs in software emulation — see [DTYPE_MATRIX.md](DTYPE_MATRIX.md).
+
 | Term | What it means |
 |---|---|
 | **Quantization** | Compressing model weights from 16-bit floats to 4-bit or 8-bit ints. Lets a 27B model fit in 18 GB instead of 54 GB, with small quality loss. |
