@@ -341,9 +341,13 @@ section "Container runtime"
 section "Stack version"
 {
   if [[ -d .git ]]; then
+    # Prefer `git describe` for a human-readable version (e.g. v0.6.2-3-ge299e70,
+    # "3 commits past v0.6.2 at SHA e299e70"). Falls back to raw SHA if no tags
+    # are reachable (shallow clone, fresh repo).
+    version=$(git describe --tags --always --dirty 2>/dev/null)
     commit=$(git rev-parse --short HEAD 2>/dev/null)
     branch=$(git branch --show-current 2>/dev/null)
-    echo "- **club-3090:** \`${commit:-unknown}\` (branch: \`${branch:-detached}\`)"
+    echo "- **club-3090:** \`${version:-${commit:-unknown}}\` (branch: \`${branch:-detached}\`, SHA \`${commit:-unknown}\`)"
     if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
       echo "- **Working tree:** ⚠ has uncommitted changes (run \`git status\` to inspect)"
     fi
