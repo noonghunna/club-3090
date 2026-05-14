@@ -3,7 +3,7 @@
 #   Model:     Qwen3.6-27B (Unsloth Q3_K_XL GGUF)
 #   Engine:    llama.cpp (NOT vLLM — different engine, different memory model)
 #   Topology:  Single 3090 (TP=1)
-#   Drafter:   none (vanilla llama.cpp; MTP via PR #22673 not adopted yet)
+#   Drafter:   none (stock image; for MTP speculative decode see mtp/docker-compose.yml)
 #   KV:        q4_0 (4-bit packed)
 #   Vision:    yes (mmproj F16)
 #   Max ctx:   262K (full model native — no Cliff 1 / Cliff 2)
@@ -56,7 +56,10 @@
 #   GGUF_FILE              path under /models  (default: qwen3.6-27b-gguf/unsloth-q3kxl/Qwen3.6-27B-UD-Q3_K_XL.gguf)
 #   MMPROJ_FILE            path under /models  (default: qwen3.6-27b-gguf/mmproj-F16.gguf)
 #   CTX_SIZE               total KV pool       (default: 262144)
-#   KV_TYPE                K and V quant type  (default: q4_0)
+#   CACHE_TYPE_K           K cache quant type  (default: q4_0; try q8_0 for better quality)
+#   CACHE_TYPE_V           V cache quant type  (default: q4_0)
+#   KV_TYPE                legacy: sets both K and V if CACHE_TYPE_K/V not set
+#   SPEC_TYPE              speculative decode type (default: none; ngram-mod gives +20-25% code TPS)
 #   REASONING_FORMAT       reasoning channel routing (default: none — for opencode/IDE-agent compat)
 #                          Override to `auto` to get separate `reasoning_content` field
 #                          (Qwen3.6 thinking trace) — useful for clients that render
@@ -123,14 +126,16 @@ services:
       - -fa
       - "on"
       - --cache-type-k
-      - ${KV_TYPE:-q4_0}
+      - ${CACHE_TYPE_K:-${KV_TYPE:-q4_0}}
       - --cache-type-v
-      - ${KV_TYPE:-q4_0}
+      - ${CACHE_TYPE_V:-${KV_TYPE:-q4_0}}
       - -np
       - "1"
       - --jinja
       - --reasoning-format
       - ${REASONING_FORMAT:-none}
+      - --spec-type
+      - ${SPEC_TYPE:-none}
     deploy:
       resources:
         reservations:
