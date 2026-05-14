@@ -67,13 +67,13 @@ Same `MAX_MODEL_LEN` / `GPU_MEMORY_UTILIZATION` env overrides apply for any setu
 
 ## NVLink
 
-**Not required.** We've explicitly designed for PCIe-only consumer setups.
+**Not required.** Dual-card composes auto-detect NVLink and configure themselves accordingly.
 
 - 3090s have an NVLink connector but a **bridge has to be physically installed**. Most consumer setups don't have one. (Cost: ~$70-150 for a working 3-slot bridge if you wanted to add one.)
-- Our composes set `NCCL_P2P_DISABLE=1` and avoid NVLink-dependent allreduce paths.
-- **If you have NVLink installed and working**, single-stream TPS on dual-card will be ~1.6-1.8× single-card (vs ~1.05× without). Concurrent throughput scales similarly. Not a huge deal unless you really care about per-stream speed.
-
-The user explicitly chose to operate without NVLink. Don't suggest adding one.
+- **Auto-detection**: each dual compose sources `scripts/detect_nvlink.sh` in its entrypoint at boot. The script checks `nvidia-smi topo -m` and sets the correct NCCL env vars + vLLM flags.
+- **Override**: set `NVLINK_MODE=force_on|force_off` in your `.env` to bypass auto-detection.
+- Without NVLink (PCIe), `--disable-custom-all-reduce` is passed to vLLM and `NCCL_P2P_DISABLE=1` is set. With NVLink, custom all-reduce is enabled and NCCL uses the NVLink path.
+- **If you have NVLink installed and working**, single-stream TPS on dual-card will be ~1.6-1.8× single-card (vs ~1.05× without). Measured NVLink lift is ~10-15% over PCIe on the same rig. See [BENCHMARKS.md](../BENCHMARKS.md) for cross-rig data.
 
 ---
 

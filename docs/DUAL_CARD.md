@@ -1,6 +1,8 @@
 # Dual 3090 — what changes when you add the second card
 
-You have **2× RTX 3090s, PCIe-only (no NVLink)**. This page is the front door for picking a config and knowing what dual-card unlocks vs single. Model-specific deep dives (quants, Genesis, engine internals) live in the model directory — links at the bottom.
+You have **2× RTX 3090s**. This page is the front door for picking a config and knowing what dual-card unlocks vs single. Model-specific deep dives (quants, Genesis, engine internals) live in the model directory — links at the bottom.
+
+**NVLink auto-detection** (since 2026-05-14): the dual-card composes now auto-detect whether an NVLink bridge is present. If you have one, you get the NVLink-optimized path automatically. If not, PCIe mode is used. Override with `NVLINK_MODE=force_on|force_off` in your `.env`. See the "NVLink auto-detection" section below.
 
 > **Have 3+ GPUs?** See [`MULTI_CARD.md`](MULTI_CARD.md) — derivation of TP=4 / TP=8 configs from `dual.yml`, valid TP values for Qwen3.6-27B (1, 2, 4, 5, 8, 10), and what scales vs what doesn't.
 
@@ -134,9 +136,18 @@ git clone https://github.com/vllm-project/vllm.git /opt/ai/engines/vllm/primary
 cd /opt/ai/engines/vllm/primary && git checkout main
 ```
 
-### PCIe allreduce overhead (no NVLink)
+### NVLink auto-detection
 
-`--disable-custom-all-reduce` is set in all dual composes. Without it, vLLM tries to use a custom CUDA path that assumes NVLink topology and crashes. The trade is some allreduce latency on every layer, hence the per-stream TPS being lower than you'd see on an A100/A5000 dual setup with NVLink. Don't bother with NVLink bridges; this stack is intentionally PCIe-tested.
+The dual-card composes automatically detect whether an NVLink bridge is installed and configure themselves accordingly. No separate compose files needed — `dual.yml`, `dual-turbo.yml`, `dual-dflash.yml`, and `dual-dflash-noviz.yml` all adapt to your hardware.
+
+**How it works:** Each dual compose mounts `scripts/detect_nvlink.sh` and sources it in the entrypoint at container boot. The script checks `nvidia-smi topo -m` for NVLink links between GPUs, sets the correct NCCL env vars, and the entrypoint conditionally passes `--disable-custom-all-reduce` to vLLM.
+
+**Override:** Set `NVLINK_MODE` in your `.env` (passed through to the container):
+- `auto` (default) — detect via `nvidia-smi topo -m`
+- `force_on` — assume NVLink bridge present, enable NVLink mode
+- `force_off` — force PCIe-only path even if NVLink detected
+
+Without NVLink, `--disable-custom-all-reduce` is passed to vLLM and `NCCL_P2P_DISABLE=1` is set. With NVLink, custom all-reduce is enabled and NCCL uses the NVLink path. The per-stream TPS difference is ~10-15% on dual 3090 (see cross-rig data in [BENCHMARKS.md](../BENCHMARKS.md)).
 
 ### `dual.yml` is Genesis-less by design
 

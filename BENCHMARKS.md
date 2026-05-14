@@ -81,6 +81,8 @@ Primary serving model. Hybrid Qwen3-Next architecture (DeltaNet GDN + standard a
 
 ### Dual-card (2× RTX 3090, TP=2)
 
+> NVLink auto-detection: dual-card composes now detect NVLink presence automatically. The `dual-nvlink*.yml` files are deprecated stubs that extend the unified compose with `NVLINK_MODE=force_on`. All NVLink bench rows below were measured with NVLink enabled (either via auto-detection or the deprecated stub). PCIe rows used `NCCL_P2P_DISABLE=1`.
+
 | Compose | Rig | KV | Max ctx | Narr / Code TPS | Peak VRAM | Date | Notes |
 |---|---|---|---:|---:|---:|---|---|
 | `dual.yml` ⭐ | @noonghunna (2× 3090 PCIe, no NVLink) | fp8 | 262K (237K single-prompt verified) | 69 / 89 | ~23.6 GB | 2026-04-29 | tested 2-card baseline. fp8 KV, 2 streams, full feature set. **PASSES v2 continuous soak** (Cliff 2b clean). |

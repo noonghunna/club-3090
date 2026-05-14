@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Gemma 4 31B (Intel AutoRound INT4)
-#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
+#   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (Google's official `gemma-4-31B-it-assistant`, BF16 0.5B)
 #   KV:        auto (1 byte/token, via vendored PR #40391 overlay)
 #   Vision:    yes
@@ -121,11 +121,14 @@ services:
       # ---- Gemma 4 tool-parser stacked fixes (PR #42006 + PR #41991) ----
       # 1 file: MTP streaming multi-tool + parser bounds. Drop when both PRs merge.
       - ../../patches/vllm-gemma4-tool-parser-fixes/tool_parsers/gemma4_tool_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/tool_parsers/gemma4_tool_parser.py:ro
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # --------------------------------------------------------------------
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
       - VLLM_NO_USAGE_STATS=1
@@ -142,6 +145,18 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$@"
+        else
+          exec vllm serve --disable-custom-all-reduce "$@"
+        fi
+      - --
     command:
       - --host
       - 0.0.0.0
@@ -155,7 +170,6 @@ services:
       - "${TP:-2}"
       - --pipeline-parallel-size
       - "${PP:-1}"
-      - --disable-custom-all-reduce
       # ---- KV format ----
       # Default `auto` runs on every consumer GPU including
       # sm_86 Ampere (uses standard PyTorch torch.int8 ops, not the Triton

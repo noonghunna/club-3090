@@ -23,6 +23,12 @@
 #   bash scripts/launch.sh --variant vllm/default
 #   bash scripts/launch.sh --variant llamacpp/default
 #   bash scripts/launch.sh --variant vllm/dual
+#
+# Env vars:
+#   NVLINK_MODE=auto|force_on|force_off — NVLink auto-detection for dual-card composes
+#   auto (default): detects NVLink via nvidia-smi topo -m
+#   force_on: assume NVLink bridge present, set NVLink env vars
+#   force_off: force PCIe-only path even if NVLink detected
 
 set -euo pipefail
 

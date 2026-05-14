@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Gemma 4 31B (Intel AutoRound INT4)
-#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
+#   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=4 (Google's official `gemma-4-31B-it-assistant`, BF16 0.5B)
 #   KV:        turboquant_3bit_nc
 #   Status:    ⛔ HARDWARE-BLOCKED on Ampere — see 2026-05-11 walkthrough below.
@@ -217,11 +217,14 @@ services:
       # ---- Gemma 4 tool-parser stacked fixes (PR #42006 + PR #41991) ----
       # 1 file: MTP streaming multi-tool + parser bounds. Drop when both PRs merge.
       - ../../patches/vllm-gemma4-tool-parser-fixes/tool_parsers/gemma4_tool_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/tool_parsers/gemma4_tool_parser.py:ro
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # --------------------------------------------------------------------
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
       - VLLM_NO_USAGE_STATS=1
@@ -248,7 +251,13 @@ services:
         echo "[club3090-tq3] Gate 3: dropping turboquant-vllm plugin..." >&2
         pip uninstall -y turboquant-vllm 2>&1 | tail -1 >&2 || true
         echo "[club3090-tq3] Launching vllm serve..." >&2
-        exec vllm serve "$@"
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$@"
+        else
+          exec vllm serve --disable-custom-all-reduce "$@"
+        fi
       - --
     shm_size: "16gb"
     ipc: host
@@ -272,7 +281,6 @@ services:
       - "${TP:-2}"
       - --pipeline-parallel-size
       - "${PP:-1}"
-      - --disable-custom-all-reduce
       # ---- 2026-05-11 workaround flags ----
       # Force TURBOQUANT backend — required because vLLM has no per-layer
       # backend routing (Gate 2). Without force, vLLM picks TRITON_ATTN

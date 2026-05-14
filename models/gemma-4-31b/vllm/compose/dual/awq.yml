@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Gemma 4 31B (cyankiwi AWQ-4bit weights — different quant from AutoRound INT4)
-#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
+#   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=4 default (n=8 single-stream code variant via MTP_N=8)
 #   KV:        bfloat16 (AWQ doesn't use FP8 KV — bypasses PR #40391 entirely)
 #   Vision:    yes
@@ -76,10 +76,13 @@ services:
       - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
       - ../../cache/torch_compile_awq:/root/.cache/vllm/torch_compile_cache
       - ../../cache/triton_awq:/root/.triton/cache
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
       - VLLM_NO_USAGE_STATS=1
@@ -107,7 +110,13 @@ services:
       - |
         set -e
         pip install --quiet --upgrade transformers==5.8.0
-        exec vllm serve "$@"
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$@"
+        else
+          exec vllm serve --disable-custom-all-reduce "$@"
+        fi
       - --
     command:
       - --host
@@ -124,7 +133,6 @@ services:
       - "${PP:-1}"
       - --dtype
       - "${DTYPE:-bfloat16}"
-      - --disable-custom-all-reduce
       - --trust-remote-code
       - --enable-chunked-prefill
       # ---- max-model-len ----

@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
-#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
+#   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   z-lab DFlash N=5 (block-diffusion drafter)
 #   KV:        fp8_e5m2 (forced bf16 for drafter via --dtype bfloat16)
 #   Vision:    no (vision tower dropped — frees ~0.5 GB/card for ctx)
@@ -81,10 +81,13 @@ services:
       # See docs/UPSTREAM.md "Community templates / model assets" + the row at
       # https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates
       - ../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
       - VLLM_NO_USAGE_STATS=1
@@ -111,7 +114,13 @@ services:
         # hardware where graph capture causes OOM or instability (e.g. WSL2).
         # Install PR #35936 overlay before vllm imports (drop when upstream lands).
         bash /etc/club3090/install-pr35936.sh
-        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+        else
+          exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$@"
+        fi
       - --
     command:
       - --model
@@ -126,7 +135,6 @@ services:
       - "${TP:-2}"
       - --pipeline-parallel-size
       - "${PP:-1}"
-      - --disable-custom-all-reduce
       - --max-model-len
       - "${MAX_MODEL_LEN:-200000}"
       - --gpu-memory-utilization
