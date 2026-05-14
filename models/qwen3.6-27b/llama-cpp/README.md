@@ -39,6 +39,19 @@ Memory budget: 14.5 GB (Q3_K_XL) + 4.5 GB KV @ 262K + 0.8 GB mmproj ≈ 20 GB / 
 
 Trade max context for parallelism. Same image, `--parallel 4` + smaller ctx pool.
 
+### Tuning knobs
+
+Both Docker composes expose llama.cpp's batch-size controls without editing YAML:
+
+| Env var | llama.cpp flag | Default | Sensible range on 24 GB | Notes |
+|---|---|---:|---:|---|
+| `BATCH_SIZE` | `-b` | `4096` | `2048`-`8192` | Logical prompt-processing batch. Higher can improve prefill throughput if VRAM headroom allows. |
+| `UBATCH_SIZE` | `-ub` | `2048` | `1024`-`4096` | Physical microbatch. Lower this first if long prompts OOM during prefill. |
+
+These are throughput-tuning knobs inside llama.cpp. They are orthogonal to
+`ESTATE_GPUS` and `ESTATE_PORT`, which only isolate GPU assignment and host port
+when `scripts/launch.sh --estate` boots multiple instances.
+
 ---
 
 ## Recipes (host-binary alternative)

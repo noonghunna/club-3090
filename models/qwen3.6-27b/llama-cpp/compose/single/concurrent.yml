@@ -59,6 +59,8 @@ services:
       -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-q3kxl/Qwen3.6-27B-UD-Q3_K_XL.gguf}
       --mmproj /models/${MMPROJ_FILE:-qwen3.6-27b-gguf/mmproj-F16.gguf}
       -c ${CTX_SIZE:-192000}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-2048}
       -ngl 99
       -fa on
       --cache-type-k ${KV_TYPE:-q4_0}
