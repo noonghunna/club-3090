@@ -243,14 +243,14 @@ COMPOSE_REGISTRY = {
     # Gemma 4 31B, vLLM.
     "vllm/gemma-mtp-tp1": _entry(
         model="gemma-4-31b", weights_variant="autoround_int4", workload="fast-chat",
-        engine="vllm-nightly-mtp", drafter="gemma-it-assistant", kv_format="fp8_e4m3",
+        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="fp8_e4m3",
         tp=1, max_ctx=8192, max_num_seqs=256, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/single/docker-compose.yml",
         default_port=8031, required_sm=9.0,
     ),
     "vllm/gemma-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround_int4", workload="fast-chat",
-        engine="vllm-nightly-mtp", drafter="gemma-it-assistant", kv_format="bf16",
+        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="bf16",
         tp=2, max_ctx=32768, max_num_seqs=4, mem_util=0.92,
         compose_path="models/gemma-4-31b/vllm/compose/dual/docker-compose.yml",
         default_port=8030,
@@ -292,7 +292,7 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/gemma-bf16": _entry(
         model="gemma-4-31b", weights_variant="autoround_int4", workload="long-ctx-single",
-        engine="vllm-nightly-mtp", drafter="gemma-it-assistant", kv_format="bf16",
+        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="bf16",
         tp=2, max_ctx=200000, max_num_seqs=1, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/bf16.yml",
         default_port=8033,

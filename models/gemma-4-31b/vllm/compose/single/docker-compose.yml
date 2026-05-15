@@ -50,7 +50,7 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 32
-# Engine-profile: vllm-nightly-mtp
+# Engine-profile: vllm-nightly-clean
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 # Requires-sm: 9.0+
