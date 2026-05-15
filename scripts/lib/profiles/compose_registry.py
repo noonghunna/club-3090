@@ -331,6 +331,13 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-26b-a4b/vllm/compose/dual/awq.yml",
         default_port=8042,
     ),
+    "vllm/gemma-a4b-awq-mtp": _entry(
+        model="gemma-4-26b-a4b", weights_variant="awq_compressed_tensors", workload="fast-chat",
+        engine="vllm-nightly-clean", drafter="gemma-26b-it-assistant", kv_format="bf16",
+        tp=2, max_ctx=32768, max_num_seqs=256, mem_util=0.92,
+        compose_path="models/gemma-4-26b-a4b/vllm/compose/dual/awq-mtp.yml",
+        default_port=8043,
+    ),
     "vllm/qwen-a3b-preview-single": _entry(
         model="qwen3.6-35b-a3b", weights_variant="autoround_int4", workload="fast-chat",
         engine="vllm-nightly-clean", drafter=None, kv_format="fp8_e5m2",

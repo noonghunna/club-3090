@@ -1,0 +1,110 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Gemma 4 26B-A4B MoE (cyankiwi AWQ-4bit, compressed-tensors)
+#   Topology:  Dual 3090 (TP=2)
+#   Drafter:   MTP n=4 — google/gemma-4-26B-A4B-it-assistant (external)
+#   KV:        bfloat16 (sidesteps Ampere fp8 dispatch issues)
+#   Vision:    off (limit-mm-per-prompt image=0 audio=0)
+#   Max ctx:   32K (matches awq.yml for direct A/B)
+#   Genesis:   none (Gemma 4 family doesn't need Genesis)
+#   Status:    🔵 v0.7.3 PRIMARY — AWQ + MTP, ships alongside awq.yml
+# ---------------------------------------------------------------------------
+# Same shape as awq.yml plus the external MTP assistant drafter wired via
+# `--speculative-config`. n=4 per the gemma-26b-it-assistant DrafterProfile.
+#
+# Direct A/B target: awq.yml gives 138.88 / 138.67 wall TPS (2026-05-15, no
+# spec-decode). This compose measures MTP's contribution. Per the Qwen
+# 35B-A3B preview-MTP finding (slower despite high acceptance), it's worth
+# being skeptical — measure both before declaring a default.
+#
+# Why a separate drafter path (not built-in MTP head):
+#   Gemma 4 26B-A4B doesn't ship a built-in MTP head — `mtp_num_hidden_layers`
+#   is null in the model YAML. Google released an external assistant model
+#   (`google/gemma-4-26B-A4B-it-assistant`, ~0.97 GB BF16) for this purpose.
+#   Same family pattern as the 31B assistant we already use for `gemma-mtp`.
+#
+# PR #40886 overlay still applied (compressed-tensors AWQ MoE key remap).
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-clean
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+# Requires-sm: 7.5+
+services:
+  vllm-gemma-4-26b-a4b-awq-mtp-tp2:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
+    container_name: "${ESTATE_CONTAINER:-vllm-gemma-4-26b-a4b-awq-mtp-tp2}"
+    restart: "no"
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8043}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
+      # vLLM PR #40886 overlay — AWQ compressed-tensors MoE key remapping.
+      # See ../../patches/vllm-pr40886-awq-moe-keys/README.md.
+      - ../../patches/vllm-pr40886-awq-moe-keys/install.sh:/etc/club3090/install-pr40886.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        bash /etc/club3090/install-pr40886.sh
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+      - --
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/gemma-4-26b-a4b-awq-4bit
+      - --served-model-name
+      - gemma-4-26b-a4b-awq
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-32768}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "256"
+      - --max-num-batched-tokens
+      - "4096"
+      - --limit-mm-per-prompt
+      - '{"image":0,"audio":0}'
+      - --kv-cache-dtype
+      - auto
+      - --trust-remote-code
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - gemma4
+      - --chat-template
+      - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # External MTP assistant drafter — n=4 per gemma-26b-it-assistant DrafterProfile.
+      - --speculative-config
+      - '{"model":"/root/.cache/huggingface/gemma-4-26b-a4b-it-assistant","num_speculative_tokens":4}'
