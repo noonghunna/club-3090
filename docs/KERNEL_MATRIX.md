@@ -18,6 +18,19 @@ This matrix helps decide which inference engine + kernel combination to route co
 | **TensorRT-LLM Kernels**     | Deep fusion + hardware-specific       | NVIDIA (best on Ada+)     | Highest raw speed on supported hardware   | High |
 | **MLA / FlashMLA**           | Multi-head Latent Attention (DeepSeek/Qwen) | All                  | Optimized for compressed KV               | High |
 
+## KV Cache Impact
+
+Different kernels affect KV cache size/efficiency differently. Some only speed up attention computation (no KV size change); others fundamentally change how the cache is laid out, paged, or shared across requests.
+
+| Kernel / System                   | Impacts KV Cache Size? | Main Impact on KV Cache                                                                                                                          | Best For                              | Notes for 3090 / Consumer                |
+|-----------------------------------|------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------|------------------------------------------|
+| **FlashAttention-2 / -3**        | No                    | Reduces HBM traffic during attention computation (IO-aware tiling). Makes attention faster without materializing full attention matrix.         | Speed (especially prefill)           | FA2 is excellent on Ampere. FA3 falls back. |
+| **FlashInfer**                   | No                    | Highly optimized paged + custom attention kernels. Excellent at handling non-contiguous KV blocks with minimal overhead.                        | Flexibility + speed on all NVIDIA    | Often the fastest backend on 3090.       |
+| **PagedAttention** (vLLM)        | Yes (effective)       | Breaks KV cache into small pages/blocks. Dramatically reduces fragmentation → much higher real-world memory utilization.                        | High concurrency + long context      | Core reason vLLM can serve many users.   |
+| **RadixAttention** (SGLang)      | Yes (very strong)     | Stores KV cache in a prefix tree (radix trie). Shares common prefixes across requests → massive memory savings in chat/RAG/agent workloads.    | Prefix-heavy workloads               | Biggest win for multi-turn / agents.     |
+| **TensorRT-LLM kernels**         | No                    | Highly fused, hardware-specific kernels. Excellent with FP8/TQ3 but same base KV size.                                                          | Raw speed on new NVIDIA cards        | Less flexible on 3090.                   |
+| **Block Diffusion** (DFlash/Zaya) | Indirect but big      | Generates multiple tokens per forward pass → fewer total KV updates per output token. KV cache grows slower in practice.                       | Throughput on bandwidth-limited cards| Very promising for 3090.                 |
+
 ## Engine Support Matrix
 
 | Feature / Kernel                  | **vLLM**                          | **SGLang**                          | **TensorRT-LLM**                   | **llama.cpp**                  | Notes for 3090 / Consumer |
