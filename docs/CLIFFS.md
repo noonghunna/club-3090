@@ -45,6 +45,8 @@ Plus per-card model weights drop from ~14 GB to ~7 GB (sharded), KV cache from f
 
 Cost paid for this: NCCL allreduce per layer between cards (~30-50µs/token on PCIe), ~10-20% TPS overhead vs single-card if single-card actually worked.
 
+> **Reading soak-test results for TP=2 / llama.cpp configs.** A clean `verdict PASS` on `dual.yml` / `dual-turbo.yml` / `llamacpp/default` does NOT mean the Cliff 2 mitigation patches in the compose's overlay set (PN-* sidecars, FLA chunked-prefill stabilizers, etc.) are doing the work — the topology alone takes that failure mode off the table. PASS on TP=2 reflects "the configuration is stable end-to-end at this depth," not "patches X/Y are load-bearing here." For per-patch attribution, run the same soak with overlays stripped and compare. See `scripts/soak-test.sh --help` ("PASS VERDICT" block) and [#140](https://github.com/noonghunna/club-3090/issues/140).
+
 ## Why llama.cpp escapes Cliff 2b on a single card
 
 llama.cpp uses **different kernels and a different memory allocator** than vLLM. Three concrete differences:

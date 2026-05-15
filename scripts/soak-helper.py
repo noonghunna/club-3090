@@ -828,6 +828,11 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
             print(f"[soak] {label}:")
             for item in items:
                 print(f"[soak]   - {item}")
+    if verdict == "PASS":
+        print("[soak]   note                 PASS = no failure signal on this sample;")
+        print("[soak]                        not patch validation (topology alone can")
+        print("[soak]                        sidestep what overlays target). See")
+        print("[soak]                        scripts/soak-test.sh --help and docs/CLIFFS.md.")
     sys.exit(exit_code)
 
 

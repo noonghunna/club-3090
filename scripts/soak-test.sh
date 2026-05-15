@@ -12,6 +12,27 @@
 #     retention across sessions.
 #   - Read-only against the running deployment.
 #
+# PASS verdict semantics:
+#   PASS = no failure signal fired on the test sample. Specifically:
+#     - silent_empty turns: 0 (no HTTP 200 + 0 completion tokens)
+#     - max VRAM growth: under SOAK_MAX_GROWTH_MIB (default 200 MiB)
+#     - TPS retention: first-5 vs last-5 median >= 98%
+#     - request errors / stream interruptions: 0
+#   PASS does NOT mean:
+#     - "Patches in this compose's overlay set are doing useful work."
+#       PASS-on-patched is consistent with patches working OR with patches
+#       not being load-bearing for this workload + topology. Cliff 2 / 2b
+#       mitigations target single-card 24 GB pressure; TP=2 (dual.yml)
+#       structurally escapes Cliff 2 regardless of which patches load.
+#     - "Deeper-context workloads will also pass." Continuous mode ramps
+#       to ~22-25K accumulated tokens by turn 5; it does not push to
+#       model max_ctx. Longer-context regimes can still fail.
+#     - "The configuration is optimally tuned." Soak detects failures,
+#       not whether perf is on the table.
+#   For patch attribution, run the same soak on the same compose with
+#   the overlay bind-mounts stripped (or on a baseline image) and compare
+#   metrics. See https://github.com/noonghunna/club-3090/issues/140.
+#
 # Time budget:
 #   Default SOAK_SESSIONS=20 x SOAK_TURNS=5, capped by SOAK_TIMEOUT_S=1800.
 #   Expect 10-30 minutes depending on config.
@@ -101,9 +122,20 @@ EXAMPLES
   CONTAINER=none ENDPOINT=http://localhost:8030 bash scripts/soak-test.sh
 
 NOTES
-  Soak-continuous is the only test that catches Cliff 2b. If you're filing a
-  bench contribution, run with --continuous and paste the [soak] summary
-  alongside your bench numbers. See docs/CLIFFS.md for context.
+  Soak-continuous is the only test that surfaces Cliff 2b under
+  multi-turn accumulating-context traffic on single-card configs.
+  If you're filing a bench contribution, run with --continuous and
+  paste the [soak] summary alongside your bench numbers.
+  See docs/CLIFFS.md for context.
+
+PASS VERDICT — WHAT IT DOES AND DOES NOT MEAN
+  PASS = no failure signal on the test sample (silent_empty=0, VRAM
+  growth under threshold, TPS retention >= 98%, zero errors).
+  PASS does NOT validate that patches in the compose's overlay set
+  are load-bearing for the workload — topology alone (e.g. TP=2)
+  can sidestep the failure mode patches target. For patch attribution,
+  re-run the same soak with overlays stripped and compare.
+  Full discussion: docs/CLIFFS.md and issue #140.
 
 EOF
 }
