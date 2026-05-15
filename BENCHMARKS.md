@@ -258,6 +258,18 @@ None close the **-13% narr / -11% code gap to 3dluvr's anchor**. Remaining gap l
 
 ---
 
+## MoE models (v0.7.3 — preview track)
+
+First-pass numbers for the two MoE models onboarded in v0.7.3. **Preview** track = `vllm-nightly-clean` engine (no Genesis patches, no TQ3 KV, no MTP yet) — exercises the upstream MoE loader [PR #42521](https://github.com/vllm-project/vllm/pull/42521) (qwen3_5_moe weight loading, merged 2026-05-14) without other overlays. Production track (Genesis-anchored, MTP, longer context) lands in v0.7.4 after Genesis v7.73.x re-anchors on a post-#42521 nightly.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | AL | Per-pos accept | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- | --- |
+| **`qwen3.6-35b-a3b/dual/preview.yml` (TP=2)** ⭐ | @noonghunna (2× 3090 PCIe, 230 W cap) | fp8_e5m2 | 16K | **182.68 / 177.45** (decode 186.98 / 186.90) | — | n/a (no drafter) | n/a | **21.94 GB/card** | 2026-05-15 | **First v0.7.3 MoE preview row on the matrix.** Engine `vllm-nightly-clean` (nightly `bf610c2f`, post-#42521). No Genesis, no MTP — exercises the upstream qwen3_5_moe loader cleanly. CV **0.3% / 0.9%** (very stable). TTFT 126 ms. GPU 0 at 99% util / 292 W, GPU 1 at 85% / 244 W. Decode TPS basically identical narr vs code (187 / 187) — characteristic of MoE memory-bandwidth-bound decode (3 B active params per forward, weights fit cache). **~2× the Qwen 3.6 27B dense `dual.yml` baseline** (89/118 wall) on the same hardware — MoE's active-params advantage on Ampere. Next steps: TQ3 KV + MTP (built-in head) after Genesis v7.73.x lands; longer ctx after upstream MoE expert dispatch overhead is measured. Compose: `models/qwen3.6-35b-a3b/vllm/compose/dual/preview.yml`. |
+| `gemma-4-26b-a4b/dual/docker-compose.yml` (TP=2) | @noonghunna (2× 3090 PCIe) | — | — | **boot fail** | — | — | — | — | 2026-05-15 | **Ampere-blocked on Intel AutoRound INT4.** `moe_intermediate_size=704` is not a multiple of `group_size=128` (5.5×); Marlin K-dim alignment fails. SM86 has no WNA16 kernel for unaligned K-dim — only SM90+ Cutlass W4A8 / Machete handle arbitrary shapes. Same failure on TP=1 (no split) and TP=2 (split to 352 per rank). Both Intel quant variants (`int4-mixed-AutoRound` and `int4-AutoRound`) hit the same error. **Workaround**: route Gemma 4 26B-A4B through `cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit` (compressed-tensors path) + vendor [vLLM PR #40886](https://github.com/vllm-project/vllm/pull/40886) (`fix(gemma4): remap compressed-tensors AWQ MoE keys` — author tested on RTX 3090 24 GB). AWQ compose is the v0.7.3 production target; AutoRound compose preserved here as a documented-blocker for SM90+ rigs (RTX 5090 / Pro 6000 should boot it). |
+
+
+---
+
 ## Quality benches — Aider Polyglot 30
 
 Pass rate on a curated 30-exercise subset of [aider-polyglot-benchmark](https://github.com/Aider-AI/polyglot-benchmark) (5 per language across cpp/go/java/javascript/python/rust, mix of easy/medium/hard). Tests **edit-format reliability** AND **algorithmic correctness** — does the model emit diffs aider can apply, AND do the resulting tests pass.
