@@ -78,6 +78,10 @@ services:
       - ../../cache/triton_awq:/root/.triton/cache
       # NVLink auto-detection — runs inside container at boot.
       - ../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # vLLM PR #41800 (truncate_prompt_tokens kwarg) overlay — fixes opencode-style
+      # HTTP 400 on get_max_tokens(). No-op on post-fix nightlies.
+      # See ../../patches/vllm-pr41800-truncate-prompt-tokens/README.md.
+      - ../../patches/vllm-pr41800-truncate-prompt-tokens/install.sh:/etc/club3090/install-pr41800.sh:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -112,6 +116,7 @@ services:
         pip install --quiet --upgrade transformers==5.8.0
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
+        bash /etc/club3090/install-pr41800.sh
         if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then
           exec vllm serve "$@"
         else

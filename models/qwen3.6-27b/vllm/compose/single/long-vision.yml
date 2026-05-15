@@ -127,6 +127,10 @@ services:
       - ../../patches/vllm-pr35936-required-fallback/vllm/entrypoints/openai/chat_completion/serving.py:/etc/club3090/pr35936-chat-completion-serving.py:ro
       - ../../patches/vllm-pr35936-required-fallback/vllm/entrypoints/openai/engine/serving.py:/etc/club3090/pr35936-engine-serving.py:ro
       - ../../patches/vllm-pr35936-required-fallback/install.sh:/etc/club3090/install-pr35936.sh:ro
+      # vLLM PR #41800 (truncate_prompt_tokens kwarg) overlay — fixes opencode-style
+      # HTTP 400 on get_max_tokens(). No-op on post-fix nightlies.
+      # See ../../patches/vllm-pr41800-truncate-prompt-tokens/README.md.
+      - ../../patches/vllm-pr41800-truncate-prompt-tokens/install.sh:/etc/club3090/install-pr41800.sh:ro
       # froggeric/Qwen-Fixed-Chat-Templates qwen3.6 — fixes 7 default-template
       # bugs (empty <think></think> spam, </thinking> hallucination, unclosed
       # think before tool call, no-user-query crash, developer role, etc.).
@@ -256,6 +260,7 @@ services:
         # Install PR #35936 overlay BEFORE Genesis runs so Genesis can write hooks
         # to chat_completion/serving.py without hitting RO-mount errors.
         bash /etc/club3090/install-pr35936.sh
+        bash /etc/club3090/install-pr41800.sh
         python3 -m vllm._genesis.patches.apply_all
         # Tool-parser deferred-commit fix for qwen3coder SSE-silence bug (issue #72).
         # Drops out when vllm-project/vllm lands the upstream fix.

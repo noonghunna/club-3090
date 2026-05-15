@@ -105,6 +105,10 @@ services:
       # See docs/UPSTREAM.md "Community templates / model assets" + the row at
       # https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates
       - ../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # vLLM PR #41800 (truncate_prompt_tokens kwarg) overlay — fixes opencode-style
+      # HTTP 400 on get_max_tokens(). No-op on post-fix nightlies.
+      # See ../../patches/vllm-pr41800-truncate-prompt-tokens/README.md.
+      - ../../patches/vllm-pr41800-truncate-prompt-tokens/install.sh:/etc/club3090/install-pr41800.sh:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -246,6 +250,7 @@ services:
         # v7.72.2 (P78 + PN34). Mounts and invocations dropped 2026-05-05.
         # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — use on
         # hardware where Cliff 2 GDN activation spikes occur at runtime.
+        bash /etc/club3090/install-pr41800.sh
         exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
       - --
     command:
