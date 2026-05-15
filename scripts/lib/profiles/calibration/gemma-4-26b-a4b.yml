@@ -1,0 +1,22 @@
+schema_version: 1
+model: gemma-4-26b-a4b
+# Low-anchor calibration: both rows use the same bf16 / 32K / seqs=256 / TP=2
+# envelope and only vary the external MTP assistant. Add lower-concurrency and
+# longer-context rows before tightening the MoE activation coefficient.
+rows:
+  - compose: vllm/gemma-a4b-awq
+    vram_gb: 24
+    measured_peak_gb: 23.45
+    ctx_override: null
+    status: low-anchor-calibration
+    engine_pin: vllm-nightly-bf610c2f
+    genesis_pin: null
+    source: "BENCHMARKS.md#MoE models gemma-4-26b-a4b/dual/awq.yml @noonghunna 2026-05-15"
+  - compose: vllm/gemma-a4b-awq-mtp
+    vram_gb: 24
+    measured_peak_gb: 23.50
+    ctx_override: null
+    status: low-anchor-calibration
+    engine_pin: vllm-nightly-bf610c2f
+    genesis_pin: null
+    source: "BENCHMARKS.md#MoE models gemma-4-26b-a4b/dual/awq-mtp.yml @noonghunna 2026-05-15"

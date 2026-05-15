@@ -28,7 +28,7 @@ assert len(p.models) == 4
 assert len(p.workloads) == 5
 assert len(p.engines) == 7
 assert len(p.drafters) == 6
-assert len(p.calibration) == 2
+assert len(p.calibration) == 4
 PY
 
 run_test "fits() happy path: Qwen dual on 2x3090" <<'PY'

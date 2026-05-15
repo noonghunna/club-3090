@@ -47,9 +47,8 @@ valid_tp:
   - 1
   - 2
 requires_genesis: false               # Gemma 4 family doesn't need Genesis (no DeltaNet quirks)
-# kv-calc.py only models qwen3.6-27b and gemma-4-31b architectures today.
-# MoE + asymmetric KV heads (8 sliding / 2 global) for gemma-4-26b-a4b
-# requires extending MODEL_SPECS, activation coefficients, and KV-pool
-# formulas — queued as Codex follow-up. Until then, fits() skips C12 for
-# this model.
-kv_calc_supported: false
+# kv-calc.py models MoE + asymmetric KV heads (8 sliding / 2 global) as of
+# v0.7.3. Calibration is low-anchor (AWQ no-MTP + AWQ-MTP rows only); add
+# longer context / lower max_num_seqs rows before treating projections as
+# production-grade.
+kv_calc_supported: true

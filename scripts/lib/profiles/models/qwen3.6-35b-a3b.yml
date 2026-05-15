@@ -67,8 +67,7 @@ valid_tp:
 # Preview/smoke composes target vllm-nightly-clean (no Genesis); production
 # composes (TBD — gated on Genesis v7.73.x re-anchor) target vllm-nightly-mtp.
 requires_genesis: false
-# kv-calc.py only models qwen3.6-27b and gemma-4-31b architectures today.
-# MoE + DeltaNet+attention hybrid for qwen3.6-35b-a3b requires extending
-# MODEL_SPECS, activation coefficients, and KV-pool formulas — queued as
-# Codex follow-up. Until then, fits() skips C12 for this model.
-kv_calc_supported: false
+# kv-calc.py models the MoE + DeltaNet+attention hybrid as of v0.7.3.
+# Calibration is low-anchor (preview + preview-MTP rows only); add longer
+# context / max_num_seqs rows before treating projections as production-grade.
+kv_calc_supported: true
