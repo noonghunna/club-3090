@@ -88,14 +88,14 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/tools-text": _entry(
         model="qwen3.6-27b", weights_variant="autoround_int4", workload="tool-heavy",
-        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
         tp=1, max_ctx=75000, max_num_seqs=1, mem_util=0.97,
         compose_path="models/qwen3.6-27b/vllm/compose/single/tools-text.yml",
         default_port=8020,
     ),
     "vllm/minimal": _entry(
         model="qwen3.6-27b", weights_variant="autoround_int4", workload="fast-chat",
-        engine="vllm-nightly-mtp", drafter=None, kv_format="fp8_e5m2",
+        engine="vllm-nightly-clean", drafter=None, kv_format="fp8_e5m2",
         tp=1, max_ctx=32768, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/single/minimal.yml",
         default_port=8020,
@@ -104,7 +104,7 @@ COMPOSE_REGISTRY = {
     # Qwen 3.6 27B, vLLM dual/multi-card.
     "vllm/dual": _entry(
         model="qwen3.6-27b", weights_variant="autoround_int4", workload="long-ctx-single",
-        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/docker-compose.yml",
         default_port=8010, recommended_engine_features=["marlin_pad_sub_tile_n"],
@@ -133,7 +133,7 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/dual-bf16": _entry(
         model="qwen3.6-27b", weights_variant="autoround_int4", workload="long-ctx-single",
-        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="bf16",
+        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="bf16",
         tp=2, max_ctx=200000, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/bf16.yml",
         default_port=8012,
@@ -168,21 +168,21 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/dual-carnice-bf16mtp": _entry(
         model="qwen3.6-27b", weights_variant="carnice_bf16mtp", workload="long-ctx-single",
-        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/carnice-bf16mtp.yml",
         default_port=8070,
     ),
     "vllm/dual-qwopus-bf16mtp": _entry(
         model="qwen3.6-27b", weights_variant="qwopus_bf16mtp", workload="long-ctx-single",
-        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/qwopus-bf16mtp.yml",
         default_port=8071,
     ),
     "vllm/dual-nvlink": _entry(
         model="qwen3.6-27b", weights_variant="autoround_int4", workload="long-ctx-single",
-        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/nvlink.yml",
         default_port=8014, requires_nvlink=True, recommended_engine_features=["marlin_pad_sub_tile_n"],
@@ -211,7 +211,7 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/dual4": _entry(
         model="qwen3.6-27b", weights_variant="autoround_int4", workload="multi-stream-tenant",
-        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
         tp=4, max_ctx=262144, max_num_seqs=4, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/multi4/docker-compose.yml",
         default_port=8015,

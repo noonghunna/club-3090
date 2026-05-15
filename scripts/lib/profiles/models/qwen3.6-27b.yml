@@ -51,5 +51,12 @@ valid_tp:
   - 1
   - 2
   - 4
-requires_genesis: true
+# Strictly bootable on any vLLM nightly that supports the qwen3-next-hybrid
+# family. Genesis is REQUIRED for TQ3 KV (turboquant_3bit_nc — Genesis-only
+# feature). For non-TQ3 KV formats (fp8, bf16, q4_0, k8v4) Genesis is
+# recommended but not strictly needed: it adds Cliff 2 mitigations
+# (PN12/PN25/PN34) for long-context stability past ~21-26K. Composes encode
+# the engine choice via their `Engine-profile:` header — non-TQ3 composes
+# route to vllm-nightly-clean, TQ3 composes route to vllm-nightly-mtp.
+requires_genesis: false
 

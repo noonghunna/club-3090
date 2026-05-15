@@ -11,6 +11,7 @@ supported_model_families:
   - dense
   - gemma4-swa-dense
   - gemma4-swa-moe
+  - qwen3-next-hybrid
   - qwen3-next-moe
 features:
   int8_per_token_head: false
@@ -37,4 +38,4 @@ supported_weight_formats:
 required_overlays: []
 vendored_overlays: []
 required_genesis: false
-notes: "Unconstrained-nightly path: free to bump to whatever's current on Docker Hub, since no Genesis patches are anchored here. Primary use: families that don't need DeltaNet stabilization (dense, gemma4-swa-dense, gemma4-swa-moe). Also accepts qwen3-next-moe as a *preview/smoke* route — model loads + runs but Cliff 2 mitigations and TQ3 KV are unavailable; production Qwen MoE should target vllm-nightly-mtp once Genesis v7.73.x re-anchors on a post-#42521 SHA. Excludes qwen3-next-hybrid (dense Qwen3-Next: prod 27B path is Genesis-locked, no preview value here). Excludes turboquant_3bit_nc KV (Genesis-only feature). Launch exports VLLM_NIGHTLY_SHA from this spec; VLLM_IMAGE override still works."
+notes: "Unconstrained-nightly path: free to bump to whatever's current on Docker Hub, since no Genesis patches are anchored here. Per the TQ3-only Genesis policy (Genesis is strictly required only for turboquant_3bit_nc KV), this engine accepts every supported model family — non-TQ3 composes for Qwen 3.6-27B (qwen3-next-hybrid) and Gemma 4-31B (gemma4-swa-dense) route here, alongside the new MoE additions (qwen3-next-moe, gemma4-swa-moe). For Qwen3-Next workloads at long context (>21-26K), Genesis-anchored vllm-nightly-mtp is *recommended* for Cliff 2 mitigations but not strictly required to boot. Excludes turboquant_3bit_nc KV (Genesis-only feature) — TQ3 composes must route to vllm-nightly-mtp. Launch exports VLLM_NIGHTLY_SHA from this spec; VLLM_IMAGE override still works."

@@ -163,12 +163,22 @@ assert not r.valid
 assert any(reason.startswith("C5:") for reason in r.reasons), r.reasons
 PY
 
-run_test "C6 Genesis one-way implication: Qwen on non-Genesis vLLM rejected" <<'PY'
+run_test "C6 Genesis one-way: TQ3 KV on non-Genesis engine rejected (via C15)" <<'PY'
+# Under the TQ3-only Genesis policy, no model declares requires_genesis=true
+# (so C6 has no current model-level trigger). Genesis is enforced at the
+# *feature* level via C15: requesting turboquant_3bit_nc on an engine that
+# doesn't expose it (e.g. vllm-stable-next) fails C15. The previous
+# C6 assertion (Qwen on non-Genesis vLLM rejected) no longer holds —
+# Qwen 27B with fp8 is valid on non-Genesis engines.
 from scripts.lib.profiles.compat import load_profiles, fits
 p = load_profiles()
+# Positive: Qwen 27B + fp8 on non-Genesis engine is now valid.
 r = fits([p.hardware["rtx-3090"]], p.models["qwen3.6-27b"], p.workloads["long-ctx-single"], p.engines["vllm-stable-next"], kv_format="fp8_e5m2", tp=1, project_vram=False)
+assert r.valid, r.reasons
+# Negative: Qwen 27B + TQ3 on non-Genesis engine fails C15.
+r = fits([p.hardware["rtx-3090"]], p.models["qwen3.6-27b"], p.workloads["long-ctx-single"], p.engines["vllm-stable-next"], kv_format="turboquant_3bit_nc", tp=1, project_vram=False, required_engine_features=["turboquant_3bit_nc"])
 assert not r.valid
-assert any(reason.startswith("C6:") for reason in r.reasons), r.reasons
+assert any(reason.startswith("C15:") for reason in r.reasons), r.reasons
 PY
 
 run_test "C7 drafter method: DFlash on MTP-only engine rejected" <<'PY'
@@ -289,7 +299,7 @@ from scripts.lib.profiles.compat import load_profiles, to_compose_name
 p = load_profiles()
 name = to_compose_name(
     p.models["qwen3.6-27b"],
-    p.engines["vllm-nightly-mtp"],
+    p.engines["vllm-nightly-clean"],
     p.drafters["qwen-mtp-builtin"],
     "fp8_e5m2",
     2,
