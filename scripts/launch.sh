@@ -11,6 +11,7 @@
 #   bash scripts/launch.sh --variant <name>             # skip wizard, boot directly
 #   bash scripts/launch.sh --estate                     # multi-model estate wizard
 #   bash scripts/launch.sh --estate-file <path>          # boot an existing estate plan
+#   bash scripts/launch.sh --estate-file <path> --parallel --parallel-jobs 3 --parallel-stagger 30
 #   bash scripts/launch.sh --validate-estate <path>      # validate estate.yml, no boot
 #   bash scripts/launch.sh --down-estate <path>          # stop estate instances
 #   bash scripts/launch.sh --topology                    # print GPU topology advisory, no boot
@@ -68,6 +69,9 @@ VALIDATE_ESTATE=""
 DOWN_ESTATE=""
 ONLY_NAMES=""
 TOPOLOGY_ONLY=0
+PARALLEL_BOOT=0
+PARALLEL_JOBS=""
+PARALLEL_STAGGER=""
 CARDS=""
 VARIANT=""
 MODEL_NAME=""
@@ -90,6 +94,9 @@ while [[ $# -gt 0 ]]; do
     --down-estate) DOWN_ESTATE="$2"; shift 2 ;;
     --only) ONLY_NAMES="$2"; shift 2 ;;
     --topology) TOPOLOGY_ONLY=1; SKIP_PREFLIGHT=1; shift ;;
+    --parallel) PARALLEL_BOOT=1; shift ;;
+    --parallel-jobs) PARALLEL_BOOT=1; PARALLEL_JOBS="$2"; shift 2 ;;
+    --parallel-stagger) PARALLEL_BOOT=1; PARALLEL_STAGGER="$2"; shift 2 ;;
     --engine)  ENGINE="$2"; shift 2 ;;
     --workload) WORKLOAD_ID="$2"; shift 2 ;;
     --drafter) DRAFTER_ID="$2"; shift 2 ;;
@@ -1001,6 +1008,9 @@ if [[ "$ESTATE_MODE" -eq 1 || -n "$ESTATE_FILE" ]]; then
   else
     _estate_cmd=(python3 "$ESTATE_HELPER" boot --file "$ESTATE_FILE")
     [[ -n "$ONLY_NAMES" ]] && _estate_cmd+=(--only "$ONLY_NAMES")
+    [[ "$PARALLEL_BOOT" -eq 1 ]] && _estate_cmd+=(--parallel)
+    [[ -n "$PARALLEL_JOBS" ]] && _estate_cmd+=(--parallel-jobs "$PARALLEL_JOBS")
+    [[ -n "$PARALLEL_STAGGER" ]] && _estate_cmd+=(--parallel-stagger "$PARALLEL_STAGGER")
   fi
   "${_estate_cmd[@]}"
   exit $?

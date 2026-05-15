@@ -8,6 +8,7 @@ existing compose registry and validate_estate() profile checks.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import os
 import re
 import shlex
@@ -43,6 +44,8 @@ from scripts.lib.profiles.launch_compat import _hardware_id_from_gpu, resolve_en
 
 SUPPORTED_ESTATE_SCHEMA_VERSIONS = {1}
 DEFAULT_ESTATE_PATH = Path("~/.club3090/estate.yml").expanduser()
+DEFAULT_BOOT_LOG_DIR = Path("/tmp/club3090-estate-boot")
+BOOT_LOG_KEEP = 5
 
 
 class EstateCliError(Exception):
@@ -56,6 +59,17 @@ class GpuInfo:
     mem_mib: int
     sm: float
     hardware_id: str
+
+
+@dataclass(frozen=True)
+class BootOutcome:
+    index: int
+    total: int
+    inst: InstanceSpec
+    ok: bool
+    elapsed_s: int
+    log_path: Path
+    error: str = ""
 
 
 def utc_now() -> str:
@@ -353,11 +367,54 @@ def compose_cmd() -> list[str]:
     return shlex.split(os.environ.get("COMPOSE_BIN", "docker compose"))
 
 
-def run_compose(inst: InstanceSpec, action: str) -> None:
+def boot_log_dir() -> Path:
+    return Path(os.environ.get("CLUB3090_ESTATE_BOOT_LOG_DIR", str(DEFAULT_BOOT_LOG_DIR))).expanduser()
+
+
+def instance_log_path(inst: InstanceSpec) -> Path:
+    return boot_log_dir() / f"{safe_name(inst.name)}.log"
+
+
+def rotate_log(path: Path, keep: int = BOOT_LOG_KEEP) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for i in range(keep - 1, 0, -1):
+        src = path.with_name(f"{path.name}.{i}")
+        dst = path.with_name(f"{path.name}.{i + 1}")
+        if src.exists():
+            src.replace(dst)
+    if path.exists():
+        path.replace(path.with_name(f"{path.name}.1"))
+
+
+def prepare_instance_log(inst: InstanceSpec) -> Path:
+    path = instance_log_path(inst)
+    rotate_log(path)
+    path.touch(mode=0o600, exist_ok=True)
+    return path
+
+
+def summarize_error(error: str, limit: int = 220) -> str:
+    line = " ".join(part.strip() for part in str(error).splitlines() if part.strip())
+    if not line:
+        line = "unknown error"
+    return line if len(line) <= limit else line[: limit - 1] + "…"
+
+
+def append_log(path: Path, message: str) -> None:
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(message.rstrip() + "\n")
+
+
+def run_compose(inst: InstanceSpec, action: str, log_path: Path | None = None) -> None:
     cmd = compose_cmd() + ["-p", project_name(inst.name), "-f", str(compose_abs_path(inst.compose_name)), action]
     if action == "up":
         cmd.append("-d")
-    proc = subprocess.run(cmd, cwd=REPO_ROOT, env=compose_env(inst), text=True)
+    if log_path is not None:
+        append_log(log_path, f"$ {' '.join(cmd)}")
+        with log_path.open("a", encoding="utf-8") as fh:
+            proc = subprocess.run(cmd, cwd=REPO_ROOT, env=compose_env(inst), text=True, stdout=fh, stderr=subprocess.STDOUT)
+    else:
+        proc = subprocess.run(cmd, cwd=REPO_ROOT, env=compose_env(inst), text=True)
     if proc.returncode != 0:
         raise EstateCliError(f"`{' '.join(cmd)}` failed with exit {proc.returncode}")
 
@@ -406,6 +463,21 @@ def wait_ready(inst: InstanceSpec, timeout: int) -> None:
         time.sleep(4)
 
 
+def wait_ready_quiet(inst: InstanceSpec, timeout: int) -> int:
+    start = time.monotonic()
+    poll_interval = max(float(os.environ.get("CLUB3090_ESTATE_POLL_INTERVAL", "4")), 0.1)
+    while True:
+        if endpoint_ready(inst.port):
+            return int(time.monotonic() - start)
+        if not container_running(inst.name):
+            logs = docker_logs_tail(inst.name)
+            raise EstateCliError(f"container {container_name(inst.name)} stopped during boot\n{logs}")
+        elapsed = time.monotonic() - start
+        if elapsed >= timeout:
+            raise EstateCliError(f"timeout waiting for {inst.name} after {timeout}s; logs: docker logs {container_name(inst.name)}")
+        time.sleep(min(poll_interval, max(timeout - elapsed, 0.1)))
+
+
 def select_instances(instances: list[InstanceSpec], only: set[str] | None) -> list[InstanceSpec]:
     if not only:
         return instances
@@ -430,6 +502,67 @@ def command_validate(args: argparse.Namespace) -> int:
     return 0 if result.valid else 1
 
 
+def effective_parallel_jobs(requested: int | None, total: int) -> int:
+    if requested is None:
+        return min(total, 4)
+    if requested < 1:
+        raise EstateCliError("--parallel-jobs must be >= 1")
+    return min(requested, total, 4)
+
+
+def boot_instance_parallel(index: int, total: int, inst: InstanceSpec, timeout: int, log_path: Path) -> BootOutcome:
+    start = time.monotonic()
+    try:
+        append_log(log_path, f"[estate] booting {inst.name}: {inst.compose_name} GPUs={list(inst.gpu_indices)} port={inst.port}")
+        run_compose(inst, "up", log_path=log_path)
+        elapsed_s = wait_ready_quiet(inst, timeout)
+        append_log(log_path, f"[estate] healthy after {elapsed_s}s")
+        return BootOutcome(index=index, total=total, inst=inst, ok=True, elapsed_s=elapsed_s, log_path=log_path)
+    except Exception as exc:
+        elapsed_s = int(time.monotonic() - start)
+        summary = summarize_error(str(exc))
+        append_log(log_path, f"[estate] ERROR after {elapsed_s}s: {summary}")
+        return BootOutcome(index=index, total=total, inst=inst, ok=False, elapsed_s=elapsed_s, log_path=log_path, error=summary)
+
+
+def boot_instances_parallel(selected: list[InstanceSpec], timeout: int, requested_jobs: int | None, stagger_s: float) -> int:
+    if stagger_s < 0:
+        raise EstateCliError("--parallel-stagger must be >= 0")
+    total = len(selected)
+    jobs = effective_parallel_jobs(requested_jobs, total)
+    print(f"[estate] parallel boot: {total} instance(s), jobs={jobs}, stagger={stagger_s:g}s")
+
+    futures: dict[concurrent.futures.Future[BootOutcome], tuple[int, InstanceSpec, Path]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        for i, inst in enumerate(selected, start=1):
+            log_path = prepare_instance_log(inst)
+            print(f"[estate] [{i}/{total}] booting {inst.name} on GPUs {','.join(str(g) for g in inst.gpu_indices)} port {inst.port}... (started)")
+            future = pool.submit(boot_instance_parallel, i, total, inst, timeout, log_path)
+            futures[future] = (i, inst, log_path)
+            if i < total and stagger_s > 0:
+                time.sleep(stagger_s)
+
+        outcomes = [future.result() for future in concurrent.futures.as_completed(futures)]
+
+    outcomes.sort(key=lambda outcome: outcome.index)
+    healthy = 0
+    failed: list[BootOutcome] = []
+    for outcome in outcomes:
+        if outcome.ok:
+            healthy += 1
+            print(f"[estate] [{outcome.index}/{outcome.total}] {outcome.inst.name} ✓ healthy after {outcome.elapsed_s}s")
+        else:
+            failed.append(outcome)
+            print(
+                f"[estate] [{outcome.index}/{outcome.total}] {outcome.inst.name} ✗ failed after {outcome.elapsed_s}s: {outcome.error}"
+            )
+
+    print(f"[estate] Summary: {healthy}/{total} healthy, {len(failed)} failed.")
+    for outcome in failed:
+        print(f"[estate] Failed instance: {outcome.inst.name}. See {outcome.log_path}")
+    return 0 if not failed else 1
+
+
 def command_boot(args: argparse.Namespace) -> int:
     path = estate_path(args.file)
     try:
@@ -439,6 +572,13 @@ def command_boot(args: argparse.Namespace) -> int:
             return 1
         selected = select_instances(instances, parse_only(args.only))
         persist_default_estate_source(path, data, instances, gpus, nvlink_active)
+        if getattr(args, "parallel", False) and len(selected) > 1:
+            return boot_instances_parallel(
+                selected,
+                args.timeout,
+                getattr(args, "parallel_jobs", None),
+                getattr(args, "parallel_stagger", 15.0),
+            )
         total = len(selected)
         for i, inst in enumerate(selected, start=1):
             print(f"[estate] [{i}/{total}] booting {inst.name}: {inst.compose_name} GPUs={list(inst.gpu_indices)} port={inst.port}")
@@ -699,6 +839,9 @@ def build_parser() -> argparse.ArgumentParser:
     boot.add_argument("--file", default=str(DEFAULT_ESTATE_PATH))
     boot.add_argument("--only", default="")
     boot.add_argument("--timeout", type=int, default=int(os.environ.get("READY_TIMEOUT", "600")))
+    boot.add_argument("--parallel", action="store_true")
+    boot.add_argument("--parallel-jobs", type=int, default=None)
+    boot.add_argument("--parallel-stagger", type=float, default=15.0)
     boot.set_defaults(func=command_boot)
 
     down = sub.add_parser("down")
