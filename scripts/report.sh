@@ -385,6 +385,40 @@ if [[ -x scripts/lib/profiles/estate_cli.py || -f scripts/lib/profiles/estate_cl
 fi
 
 # ---------------------------------------------------------------------------
+# KV math calibration
+# ---------------------------------------------------------------------------
+# When a user files a VRAM-OOM or context-ceiling bug, the maintainer's first
+# question is "does kv-calc still agree with measured reality?" — a calibration
+# failure means the projection model has drifted from the actual VRAM cost of a
+# compose, so any "predicted PASS" verdict can't be trusted. Surface the
+# verdict line + any FAIL rows here so a triage reply can immediately see
+# whether to trust kv-calc projections for this user's config.
+
+if have python3 && [[ -f tools/kv-calc.py ]]; then
+  section "KV math calibration"
+  calib_output=$(python3 tools/kv-calc.py --calibration 2>&1 || true)
+  overall=$(echo "$calib_output" | grep -E '^Overall:' | head -1)
+  fail_rows=$(echo "$calib_output" | grep -E '\bFAIL\b' || true)
+  {
+    if [[ -n "$overall" ]]; then
+      echo "- ${overall}"
+    else
+      echo "- _kv-calc --calibration produced no Overall line; see output below._"
+    fi
+    if [[ -n "$fail_rows" ]]; then
+      echo "- ⚠ Failing rows:"
+      echo '```'
+      echo "$fail_rows"
+      echo '```'
+      echo "- Math model is mis-calibrated against measured reality for the rows above. Any kv-calc projection on this checkout should be treated as suspect until the calibration anchors / formulas are reconciled."
+    else
+      echo "- No FAIL rows. kv-calc projections should agree with measured VRAM within the ±1.5 GB error band."
+    fi
+  } | redact
+  echo "$calib_output" | redact | details "Full kv-calc --calibration output"
+fi
+
+# ---------------------------------------------------------------------------
 # Active container
 # ---------------------------------------------------------------------------
 
