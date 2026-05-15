@@ -1,0 +1,39 @@
+schema_version: 1
+id: vllm-nightly-clean
+display_name: vLLM nightly (no Genesis)
+type: vllm
+stability: nightly
+install:
+  method: docker_image
+  spec: vllm/vllm-openai:nightly-bf610c2f56764e1b30bc6065f4ceace3d6e59036
+min_sm: 7.5
+supported_model_families:
+  - dense
+  - gemma4-swa-dense
+  - gemma4-swa-moe
+features:
+  int8_per_token_head: false
+  turboquant_3bit_nc: false
+  marlin_pad_sub_tile_n: false
+  qwen3_coder_tool_parser: false
+supported_kv_formats:
+  - bf16
+  - fp16
+  - fp8_e5m2
+  - fp8_e4m3
+  - q4_0
+  - k8v4
+supported_drafters:
+  - eagle3
+  - mtp
+  - mtp_assistant
+supported_weight_formats:
+  - bf16
+  - fp16
+  - autoround
+  - awq
+  - gptq
+required_overlays: []
+vendored_overlays: []
+required_genesis: false
+notes: "Unconstrained-nightly path: free to bump to whatever's current on Docker Hub, since no Genesis patches are anchored here. Use for model families that don't need DeltaNet stabilization (dense, gemma4-swa-dense, gemma4-swa-moe). Excludes qwen3-next-* families — those route through vllm-nightly-mtp (Genesis-anchored). Excludes turboquant_3bit_nc KV (Genesis-only feature). Launch exports VLLM_NIGHTLY_SHA from this spec; VLLM_IMAGE override still works."

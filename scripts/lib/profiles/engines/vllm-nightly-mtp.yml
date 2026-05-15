@@ -10,7 +10,9 @@ min_sm: 7.5
 supported_model_families:
   - dense
   - qwen3-next-hybrid
+  - qwen3-next-moe
   - gemma4-swa-dense
+  - gemma4-swa-moe
 features:
   int8_per_token_head: false
   turboquant_3bit_nc: true
@@ -40,4 +42,4 @@ required_overlays: []
 vendored_overlays: []
 required_genesis: true
 genesis_pin: v7.72.2
-notes: "Production nightly path for Qwen MTP and Gemma MTP without DFlash or INT8 PTH overlays. Launch exports this SHA as VLLM_NIGHTLY_SHA; VLLM_IMAGE can override the full image ref."
+notes: "Production nightly path for Qwen MTP and Gemma MTP. Pin held at nightly-1acd67a7 (2026-05-08) because Genesis v7.72.2 patches are anchored to this SHA — bumping requires re-anchoring patches against the new vLLM internals and a full Qwen 27B + Gemma 31B rebench gate. supported_model_families lists qwen3-next-moe + gemma4-swa-moe so the schema is ready; the actual MoE boot needs either (a) a Genesis re-anchor at a newer SHA that includes PR #42521 qwen3_5_moe weight-loading, or (b) a non-Genesis engine path for Gemma MoE which doesn't need Genesis. Launch exports this SHA as VLLM_NIGHTLY_SHA; VLLM_IMAGE can override the full image ref."
