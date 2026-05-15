@@ -61,4 +61,14 @@ compatible_drafters:
 valid_tp:
   - 1
   - 2
-requires_genesis: true
+# Strictly bootable on upstream vLLM (PR #42521 onwards). Genesis is
+# RECOMMENDED for production: it provides TQ3 KV (Genesis-only) plus the
+# Cliff 2 / DeltaNet stabilization patches that matter past ~21-26K ctx.
+# Preview/smoke composes target vllm-nightly-clean (no Genesis); production
+# composes (TBD — gated on Genesis v7.73.x re-anchor) target vllm-nightly-mtp.
+requires_genesis: false
+# kv-calc.py only models qwen3.6-27b and gemma-4-31b architectures today.
+# MoE + DeltaNet+attention hybrid for qwen3.6-35b-a3b requires extending
+# MODEL_SPECS, activation coefficients, and KV-pool formulas — queued as
+# Codex follow-up. Until then, fits() skips C12 for this model.
+kv_calc_supported: false

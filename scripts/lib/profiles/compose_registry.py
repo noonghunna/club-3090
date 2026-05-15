@@ -304,5 +304,25 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/vllm/compose/dual/awq.yml",
         default_port=8033,
     ),
+
+    # v0.7.3 MoE onboarding — Gemma 4 26B-A4B + Qwen 3.6 35B-A3B.
+    # Both target the unconstrained-nightly engine (vllm-nightly-clean) which
+    # rides nightly-bf610c2f (2026-05-15, post-PR-#42521). Gemma is the
+    # shippable path; Qwen 35B-A3B is preview-only until Genesis v7.73.x
+    # re-anchors on a post-#42521 nightly.
+    "vllm/gemma-a4b": _entry(
+        model="gemma-4-26b-a4b", weights_variant="autoround_int4_mixed", workload="fast-chat",
+        engine="vllm-nightly-clean", drafter=None, kv_format="bf16",
+        tp=1, max_ctx=8192, max_num_seqs=256, mem_util=0.92,
+        compose_path="models/gemma-4-26b-a4b/vllm/compose/single/docker-compose.yml",
+        default_port=8040,
+    ),
+    "vllm/qwen-a3b-preview": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="autoround_int4", workload="fast-chat",
+        engine="vllm-nightly-clean", drafter=None, kv_format="fp8_e5m2",
+        tp=1, max_ctx=8192, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen3.6-35b-a3b/vllm/compose/single/preview.yml",
+        default_port=8050,
+    ),
 }
 

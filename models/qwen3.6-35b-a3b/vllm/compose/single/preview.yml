@@ -1,0 +1,118 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen 3.6 35B-A3B MoE (AutoRound INT4, ~20 GB weights)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   none (smoke compose — built-in MTP head added in a follow-up
+#              once base boot is validated)
+#   KV:        fp8_e5m2 (no TQ3 — Genesis-only, not available here)
+#   Vision:    off (limit-mm-per-prompt image=0 audio=0) for first boot
+#   Max ctx:   8K (conservative — KV pool tight after 20 GB weights on 24 GB card)
+#   Genesis:   none — preview path on vllm-nightly-clean
+#   Status:    🔵 PREVIEW — v0.7.3 MoE onboarding smoke
+#   Caveats:   Cliff 2 mitigations UNAVAILABLE without Genesis. Do NOT use
+#              past ~21-26K accumulated context — risk of OOM / instability.
+#              Production path (Genesis-anchored, TQ3 KV, MTP, higher ctx)
+#              is parked until Genesis v7.73.x re-anchors on a post-#42521
+#              nightly. This compose exists to exercise PR #42521 (qwen3_5_moe
+#              weight loading) and produce a first benchmark row.
+# ---------------------------------------------------------------------------
+# Qwen 3.6 35B-A3B (AutoRound INT4) — first MoE model from the Qwen3-Next
+# family on club-3090, alongside Gemma 4 26B-A4B.
+#
+# Why vllm-nightly-clean (not vllm-nightly-mtp):
+#   vllm-nightly-clean rides nightly-bf610c2f (2026-05-15), which INCLUDES
+#   PR #42521 (qwen3_5_moe weight loading, merged 2026-05-14). The Genesis-
+#   anchored vllm-nightly-mtp is pinned to nightly-1acd67a7 (2026-05-08),
+#   which PRE-DATES that fix. Trade-off: no Genesis patches → Cliff 2
+#   stabilization missing, no TQ3 KV. Acceptable for low-ctx smoke + first
+#   bench row; not acceptable for production long-ctx workloads.
+#
+# Re-test trigger to graduate this compose to production-anchored variant:
+#   Genesis v7.73.x is released → bump vllm-nightly-mtp.spec to a post-#42521
+#   nightly SHA → port this compose to engine vllm-nightly-mtp → drop the
+#   "preview" naming → add a Cliff-2-mitigated dual.yml.
+#
+# Models:
+#   target: Qwen/Qwen3-MoE-A3B-Instruct-AutoRound-Int4-mixed (path:
+#           qwen3.6-35b-a3b-autoround-int4, arch:
+#           Qwen3_5MoeForConditionalGeneration, ~20 GB on disk)
+#   draft : none on this compose
+#
+# KV format:
+#   - fp8_e5m2 chosen over fp8_e4m3 (Triton fp8e4nv unsupported on sm_86).
+#   - TQ3 not available without Genesis.
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-clean
+# Requires-min-gpu-count: 1
+# Tensor-parallel: 1
+# Requires-sm: 7.5+
+services:
+  vllm-qwen36-35b-a3b-preview:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-preview}"
+    restart: "no"
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8050}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - OMP_NUM_THREADS=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/qwen3.6-35b-a3b-autoround-int4
+      - --served-model-name
+      - qwen3.6-35b-a3b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "${TP:-1}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-8192}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "4096"
+      - --limit-mm-per-prompt
+      - '{"image":0,"audio":0}'
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill

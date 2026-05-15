@@ -193,6 +193,11 @@ class ModelProfile:
     mtp_num_hidden_layers: Optional[int] = None
     attn_output_gate: Optional[bool] = None
     vision_capable: Optional[bool] = None
+    # C12 (KV projection via tools/kv-calc.py) only supports models whose
+    # architecture has been added to MODEL_SPECS in kv-calc.py. New MoE /
+    # hybrid models can set kv_calc_supported=false to skip C12 until
+    # kv-calc gains MoE-aware activation/KV formulas.
+    kv_calc_supported: bool = True
 
 
 @dataclass(frozen=True)
@@ -393,6 +398,7 @@ def _model(data: dict[str, Any]) -> ModelProfile:
         compatible_drafters=_tuple(data.get("compatible_drafters")),
         valid_tp=tuple(int(x) for x in _tuple(data.get("valid_tp"))),
         requires_genesis=bool(data.get("requires_genesis", False)),
+        kv_calc_supported=bool(data.get("kv_calc_supported", True)),
     )
 
 
@@ -874,6 +880,9 @@ def fits(
     elif engine.type != "vllm":
         skipped.append("C12")
         notes.append("KV projection not available for non-vLLM engines")
+    elif not model.kv_calc_supported:
+        skipped.append("C12")
+        notes.append(f"KV projection skipped: {model.id} not yet wired into tools/kv-calc.py")
     else:
         kv_calc_invoked = True
         if effective_mem_util is None or bottleneck is None:

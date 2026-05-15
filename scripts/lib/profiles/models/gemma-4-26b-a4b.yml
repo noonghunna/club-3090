@@ -32,8 +32,7 @@ weights:
     status: production
 default_weight_variant: autoround_int4_mixed
 compatible_drafters:
-  - gemma-it-assistant                # TODO Codex: existing DrafterProfile is sized for 31B;
-                                       # either extend its model_compat or split into gemma-26b-it-assistant
+  - gemma-26b-it-assistant            # dedicated 26B-A4B MTP assistant (separate weights from 31B)
 # Sliding layers cap TP at num_kv_heads=8 → [1,2,4,8]
 # Global layers cap TP at num_global_kv_heads=2 → [1,2]
 # Effective valid_tp = intersection = [1, 2]
@@ -41,3 +40,9 @@ valid_tp:
   - 1
   - 2
 requires_genesis: false               # Gemma 4 family doesn't need Genesis (no DeltaNet quirks)
+# kv-calc.py only models qwen3.6-27b and gemma-4-31b architectures today.
+# MoE + asymmetric KV heads (8 sliding / 2 global) for gemma-4-26b-a4b
+# requires extending MODEL_SPECS, activation coefficients, and KV-pool
+# formulas — queued as Codex follow-up. Until then, fits() skips C12 for
+# this model.
+kv_calc_supported: false
