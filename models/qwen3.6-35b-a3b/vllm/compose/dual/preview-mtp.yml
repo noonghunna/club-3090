@@ -1,0 +1,103 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen 3.6 35B-A3B MoE (AutoRound INT4, ~20 GB weights)
+#   Topology:  Dual 3090 (TP=2)
+#   Drafter:   MTP n=3 (built-in head — qwen-mtp-builtin DrafterProfile)
+#   KV:        fp8_e5m2 (no TQ3 — Genesis-only, not available here)
+#   Vision:    off (limit-mm-per-prompt image=0 audio=0)
+#   Max ctx:   16K (conservative — matches preview.yml for direct A/B)
+#   Genesis:   none — preview-MTP path on vllm-nightly-clean
+#   Status:    🔵 PREVIEW — measures MTP n=3 uplift on the Qwen MoE
+# ---------------------------------------------------------------------------
+# Same shape as preview.yml plus the built-in MTP head wired via
+# `--speculative-config`. Qwen 3.6 35B-A3B's `mtp_num_hidden_layers: 1`
+# (per the model config) provides the head natively — no separate drafter
+# download needed. n=3 mirrors the production Qwen 27B convention.
+#
+# Direct A/B target: preview.yml gives 182.68 / 177.45 wall TPS (2026-05-15,
+# no spec-decode). This compose measures MTP's contribution on the same
+# rig + config so calibration data has a tight baseline pair.
+#
+# Cliff 2 mitigations still UNAVAILABLE without Genesis — keep max_ctx
+# below ~21K accumulated until Genesis v7.73.x re-anchors on a post-#42521
+# nightly. Same caveat as preview.yml.
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-clean
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+# Requires-sm: 7.5+
+services:
+  vllm-qwen36-35b-a3b-preview-mtp-tp2:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-preview-mtp-tp2}"
+    restart: "no"
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8052}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../models-cache}:/root/.cache/huggingface
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - OMP_NUM_THREADS=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/qwen3.6-35b-a3b-autoround-int4
+      - --served-model-name
+      - qwen3.6-35b-a3b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-16384}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "1"
+      - --max-num-batched-tokens
+      - "4096"
+      - --limit-mm-per-prompt
+      - '{"image":0,"audio":0}'
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # Built-in MTP head — n=3 matches the production Qwen 27B convention.
+      # `model` points at the same model dir; vLLM extracts the MTP head
+      # from `mtp_num_hidden_layers: 1` in the model config.
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'

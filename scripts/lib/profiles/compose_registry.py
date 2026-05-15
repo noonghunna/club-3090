@@ -345,5 +345,12 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/preview.yml",
         default_port=8051,
     ),
+    "vllm/qwen-a3b-preview-mtp": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="autoround_int4", workload="fast-chat",
+        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        tp=2, max_ctx=16384, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/preview-mtp.yml",
+        default_port=8052,
+    ),
 }
 
