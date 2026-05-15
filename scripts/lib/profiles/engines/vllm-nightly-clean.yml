@@ -35,6 +35,7 @@ supported_weight_formats:
   - autoround
   - awq
   - gptq
+  - compressed-tensors
 required_overlays: []
 vendored_overlays: []
 required_genesis: false

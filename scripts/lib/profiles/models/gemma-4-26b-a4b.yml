@@ -27,10 +27,17 @@ vision_capable: true                  # multimodal — vision_config + audio_con
 weights:
   autoround_int4_mixed:
     path: gemma-4-26b-a4b-autoround-int4-mixed
-    size_gb: 14.0                      # estimate; update post-download
+    size_gb: 16.0                      # measured post-download 2026-05-15
     format: autoround
-    status: production
-default_weight_variant: autoround_int4_mixed
+    status: ampere-blocked             # moe_intermediate_size=704 % group_size=128 = 5.5
+                                       # → Marlin K-dim alignment fails on SM86.
+                                       # Boots fine on SM90+ (Cutlass W4A8 / Machete).
+  awq_compressed_tensors:
+    path: gemma-4-26b-a4b-awq-4bit
+    size_gb: 17.0                      # measured post-download 2026-05-15
+    format: compressed-tensors         # AWQ pack-quantized via vLLM compressed-tensors loader
+    status: production                 # via vLLM PR #40886 overlay (Ampere-bootable)
+default_weight_variant: awq_compressed_tensors
 compatible_drafters:
   - gemma-26b-it-assistant            # dedicated 26B-A4B MTP assistant (separate weights from 31B)
 # Sliding layers cap TP at num_kv_heads=8 → [1,2,4,8]
