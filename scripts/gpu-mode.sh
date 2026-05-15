@@ -12,6 +12,13 @@ COMPOSE_BASE="$CLUB3090_DIR/services"
 DUAL_27B_DIR="$CLUB3090_DIR/models/qwen3.6-27b/vllm/compose/dual"
 GEMMA_DUAL_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual"
 
+# Estate planner state file (v0.7.0+). Instances booted via launch.sh --estate
+# or --estate-file are tracked here and persist via Docker `restart:
+# unless-stopped`, so they DO survive a plain mode-switch unless explicitly
+# torn down via launch.sh --down-estate. mode_off uses this path to clean
+# them up alongside the older vLLM/Gemma/ComfyUI services.
+ESTATE_YAML="${HOME}/.club3090/estate.yml"
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -559,11 +566,33 @@ mode_bigmodel() {
     echo -e "    --n-gpu-layers 99 --ctx-size 32768 --host 0.0.0.0 --port 8001"
 }
 
+stop_estate() {
+    # Tear down any estate-managed instances (launch.sh --estate-file or --estate
+    # bookings persist via Docker `restart: unless-stopped`). No-op if no estate
+    # plan exists or launch.sh is unavailable.
+    if [[ ! -f "$ESTATE_YAML" ]]; then
+        return 0
+    fi
+    if ! command -v bash >/dev/null 2>&1 || [[ ! -x "$CLUB3090_DIR/scripts/launch.sh" ]]; then
+        return 0
+    fi
+    if ! python3 -c "import yaml; d=yaml.safe_load(open('$ESTATE_YAML')); raise SystemExit(0 if d and d.get('estate') else 1)" 2>/dev/null; then
+        return 0  # empty/missing estate list
+    fi
+    printf "  ${RED}▼${NC} Stopping estate-managed instances..."
+    if bash "$CLUB3090_DIR/scripts/launch.sh" --down-estate "$ESTATE_YAML" >/dev/null 2>&1; then
+        echo "done"
+    else
+        echo "skipped (no instances or already down)"
+    fi
+}
+
 mode_off() {
     echo -e "${CYAN}═══ Stopping ALL services ═══${NC}"
     stop_all_27b
     stop_all_gemma
     stop_comfyui
+    stop_estate
     for svc in "${SERVICES[@]}"; do
         stop_service "$svc"
     done
