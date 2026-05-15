@@ -390,6 +390,25 @@ If you're on **SM89+ hardware (RTX 4090 / 5090, A6000 Ada / Blackwell)**, the pe
 
 ---
 
+## Note for older host platforms (PCIe Gen 3 + older CPUs)
+
+If your rig is on **PCIe Gen 3** (rather than Gen 4) **and/or paired with a pre-Zen3 / pre-2018 CPU** (e.g. Xeon Gold 61xx Skylake, Xeon E5 v4 Broadwell), TP=2 paths take a 30-40% throughput hit vs the Gen 4 / Ryzen 5950X / EPYC rigs in `BENCHMARKS.md`. Two compounding causes:
+
+1. **PCIe Gen 3 x16 ≈ 15.75 GB/s** per direction vs Gen 4 x16 ≈ 31.5 GB/s. TP=2 all-reduce on the residual stream every layer is GB/s-class traffic — halving interconnect bandwidth roughly halves the all-reduce wall time, and decode-TPS is sensitive to that.
+2. **Older Xeon / Broadwell CPUs** have lower per-core clock and IPC than current Ryzen / EPYC parts. Affects prefill throughput, TTFT, and host-side coordination between the two GPUs.
+
+**Symptom**: GPU utilization asymmetry during decode (e.g. `GPU 0: 28% util / 174W` vs `GPU 1: 85% util / 254W`) — communication-starved TP=2, where one card finishes its half-step and stalls waiting on all-reduce.
+
+**Mitigation on Gen 3 rigs**:
+
+- **Enable persistence mode** (`sudo nvidia-smi -pm 1`) — common to find this off on KVM/VM hosts; with it disabled the driver tears down between idle periods and adds per-request init latency.
+- **Prefer single-card paths**: with interconnect being the bottleneck, `vllm/minimal` (single-card fp8 KV, no MTP) or `vllm/long-text-no-mtp` (single-card TQ3 KV) often beats `dual.yml` on these rigs. You give up max context ceiling but get back the decode TPS the interconnect was eating.
+- **More host RAM** if VM-passthrough: 32+ GB recommended; vLLM uses host RAM for tokenizer staging, paged weight loading, and IPC buffers — VMs with 15 GB total tend to thrash.
+
+See [issue #137](https://github.com/noonghunna/club-3090/issues/137) for a worked example: Xeon Gold 6138 + PCIe Gen 3 x16 + 2× 3090 (KVM passthrough) → 32 / 41 TPS on `dual.yml`, vs Ryzen 5950X + Gen 4 + same KV config → 89 / 117 TPS ([@lolren disc #18](https://github.com/noonghunna/club-3090/discussions/18#discussioncomment-16820303)).
+
+---
+
 ## Note for WSL2 / Windows users
 
 ### GPU memory budget on WSL2
