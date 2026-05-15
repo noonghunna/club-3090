@@ -44,6 +44,7 @@
 #   dual/dflash-noviz.yml 200K   1         78 / 127         FP16     ❌      2× PCIe
 #   dual/nvlink-dflash.yml   185K   1         (community)      FP16     ✅      2× NVLink
 #   dual/nvlink-dflash-noviz.yml 188K   1         (community)      FP16     ❌      2× NVLink
+#   dual/bf16-int4.yml       190K total 4         (community)          FP16     ✅      2× PCIe/NVLink
 #
 # Run:
 #   cd <repo>/models/qwen3.6-27b/vllm/compose

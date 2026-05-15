@@ -6,9 +6,10 @@
 #   bash scripts/setup.sh <model-name>   # scripted/CI positional form
 #
 # Currently supported:
-#   qwen3.6-27b   →  Lorbus/Qwen3.6-27B-int4-AutoRound + Genesis patches
-#   gemma-4-31b   →  Intel/gemma-4-31B-it-int4-AutoRound + Google MTP "assistant"
-#                    drafter (no Genesis — not yet integrated upstream as of v7.72.2)
+#   qwen3.6-27b             →  Lorbus/Qwen3.6-27B-int4-AutoRound + Genesis patches
+#   qwen3.6-27b-bf16-int4   →  cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4 (compressed-tensors, dual-card)
+#   gemma-4-31b             →  Intel/gemma-4-31B-it-int4-AutoRound + Google MTP "assistant"
+#                              drafter (no Genesis — not yet integrated upstream as of v7.72.2)
 #
 # What it does (per supported model):
 #   - clones Sandermage/genesis-vllm-patches into models/<model>/vllm/patches/genesis
@@ -49,12 +50,14 @@ usage() {
   echo ""
   echo "Supported model names:"
   echo "  qwen3.6-27b"
+  echo "  qwen3.6-27b-bf16-int4"
   echo "  gemma-4-31b"
 }
 
 model_label() {
   case "$1" in
     qwen3.6-27b) echo "Qwen 3.6 27B" ;;
+    qwen3.6-27b-bf16-int4) echo "Qwen 3.6 27B (AWQ BF16+INT4)" ;;
     gemma-4-31b) echo "Gemma 4 31B" ;;
     *) echo "$1" ;;
   esac
@@ -79,17 +82,21 @@ pick_model_interactive() {
   echo "[setup] Which model to download?" >&2
   echo "" >&2
   model_picker_line "1" "qwen3.6-27b" "~14 GB AutoRound INT4" >&2
-  model_picker_line "2" "gemma-4-31b" "~21 GB AutoRound INT4 + drafter" >&2
-  echo "  3. Both           (~30 GB total)  downloads both model families" >&2
+  model_picker_line "2" "qwen3.6-27b-bf16-int4" "~27 GB AWQ BF16+INT4" >&2
+  model_picker_line "3" "gemma-4-31b" "~21 GB AutoRound INT4 + drafter" >&2
+  echo "  4. Both Qwen3.6  (~41 GB total)  downloads both Qwen3.6 quant variants" >&2
+  echo "  5. All            (~62 GB total)  downloads all model families" >&2
   echo "" >&2
   while true; do
     local pick
-    read -rp "Choice [1-3]: " pick
+    read -rp "Choice [1-5]: " pick
     case "$pick" in
       1) echo "qwen3.6-27b"; return ;;
-      2) echo "gemma-4-31b"; return ;;
-      3) echo "both"; return ;;
-      *) echo "  ! invalid — pick 1, 2, or 3" >&2 ;;
+      2) echo "qwen3.6-27b-bf16-int4"; return ;;
+      3) echo "gemma-4-31b"; return ;;
+      4) echo "both-qwen"; return ;;
+      5) echo "all"; return ;;
+      *) echo "  ! invalid — pick 1, 2, 3, 4, or 5" >&2 ;;
     esac
   done
 }
@@ -118,6 +125,15 @@ if [[ "${MODEL_NAME}" == "both" ]]; then
   # Resolve MODEL_DIR once in the parent by reusing the normal prompt below,
   # then recurse through the positional form for each model.
   SETUP_BOTH_MODE=1
+  SETUP_BOTH_PICK="both"
+  MODEL_NAME="qwen3.6-27b"
+elif [[ "${MODEL_NAME}" == "both-qwen" ]]; then
+  SETUP_BOTH_MODE=1
+  SETUP_BOTH_PICK="both-qwen"
+  MODEL_NAME="qwen3.6-27b"
+elif [[ "${MODEL_NAME}" == "all" ]]; then
+  SETUP_BOTH_MODE=1
+  SETUP_BOTH_PICK="all"
   MODEL_NAME="qwen3.6-27b"
 else
   SETUP_BOTH_MODE=0
@@ -140,6 +156,11 @@ case "${MODEL_NAME}" in
     MODEL_SUBDIR="qwen3.6-27b-autoround-int4"
     NEEDS_GENESIS=1
     ;;
+  qwen3.6-27b-bf16-int4)
+    MODEL_REPO="cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4"
+    MODEL_SUBDIR="qwen3.6-27b-awq-bf16-int4"
+    NEEDS_GENESIS=0
+    ;;
   gemma-4-31b)
     MODEL_REPO="Intel/gemma-4-31B-it-int4-AutoRound"
     MODEL_SUBDIR="gemma-4-31b-autoround-int4"
@@ -158,7 +179,7 @@ case "${MODEL_NAME}" in
     ;;
   *)
     echo "ERROR: unsupported model '${MODEL_NAME}'."
-    echo "Supported: qwen3.6-27b, gemma-4-31b"
+    echo "Supported: qwen3.6-27b, qwen3.6-27b-bf16-int4, gemma-4-31b"
     echo "(To add a new model, extend the case dispatch in scripts/setup.sh)"
     exit 1
     ;;
@@ -233,13 +254,37 @@ fi
 MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models-cache}"
 if [[ "${SETUP_BOTH_MODE:-0}" == "1" ]]; then
   export MODEL_DIR
-  echo "[setup] downloading both supported models into ${MODEL_DIR}"
-  echo ""
-  bash "$0" qwen3.6-27b
-  echo ""
-  bash "$0" gemma-4-31b
-  echo ""
-  echo "[setup] ✓ Both models downloaded."
+  case "${SETUP_BOTH_PICK:-both}" in
+    both)
+      echo "[setup] downloading both supported models into ${MODEL_DIR}"
+      echo ""
+      bash "$0" qwen3.6-27b
+      echo ""
+      bash "$0" gemma-4-31b
+      echo ""
+      echo "[setup] ✓ Both models downloaded."
+      ;;
+    both-qwen)
+      echo "[setup] downloading both Qwen3.6 variants into ${MODEL_DIR}"
+      echo ""
+      bash "$0" qwen3.6-27b
+      echo ""
+      bash "$0" qwen3.6-27b-bf16-int4
+      echo ""
+      echo "[setup] ✓ Both Qwen3.6 variants downloaded."
+      ;;
+    all)
+      echo "[setup] downloading all models into ${MODEL_DIR}"
+      echo ""
+      bash "$0" qwen3.6-27b
+      echo ""
+      bash "$0" qwen3.6-27b-bf16-int4
+      echo ""
+      bash "$0" gemma-4-31b
+      echo ""
+      echo "[setup] ✓ All models downloaded."
+      ;;
+  esac
   echo "[setup] Next: bash scripts/launch.sh"
   exit 0
 fi
@@ -255,10 +300,13 @@ cd "${ROOT_DIR}"
 source "${ROOT_DIR}/scripts/preflight.sh"
 
 # Required disk: model is ~14 GB on disk; 25 GB gives buffer for download
-# temp files + safetensors + tokenizer/config. Add ~3 GB if also pulling
-# the DFlash draft (~1.75 GB packed + buffer for download tempfiles).
+# temp files + safetensors + tokenizer/config. The AWQ BF16-INT4 variant is
+# ~27 GB, needs 35 GB. Add ~3 GB if also pulling the DFlash draft
+# (~1.75 GB packed + buffer for download tempfiles).
 if [[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]]; then
   PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-28}"
+elif [[ "${MODEL_NAME}" == "qwen3.6-27b-bf16-int4" ]]; then
+  PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-35}"
 else
   PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-25}"
 fi
@@ -539,6 +587,14 @@ case "${MODEL_NAME}" in
     SAMPLE_MODEL_NAME="qwen3.6-27b-autoround"
     NEXT_STEPS_NOTE="Or dual-card vLLM (Marlin patched files already vendored in-repo):
   cd models/${MODEL_NAME}/vllm/compose && docker compose -f dual/docker-compose.yml up -d"
+    ;;
+  qwen3.6-27b-bf16-int4)
+    SAMPLE_CONTAINER="vllm-qwen36-27b-bf16-int4"
+    SAMPLE_COMPOSE_FLAGS_DUAL=" -f dual/bf16-int4.yml"
+    SAMPLE_PORT="5000"
+    SAMPLE_MODEL_NAME="qwen3.6-27b"
+    NEXT_STEPS_NOTE="Dual-card vLLM (AWQ BF16+INT4, 6 streams):
+  cd models/qwen3.6-27b/vllm/compose && docker compose -f dual/bf16-int4.yml up -d"
     ;;
   gemma-4-31b)
     SAMPLE_CONTAINER="vllm-gemma-4-31b-mtp"

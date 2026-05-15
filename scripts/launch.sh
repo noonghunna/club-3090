@@ -229,6 +229,7 @@ declare -A LAUNCH_VARIANT_MODEL=(
   [vllm/dual4-dflash]="qwen3.6-27b" [vllm/dual-turbo]="qwen3.6-27b" [vllm/dual-dflash]="qwen3.6-27b"
   [vllm/dual-dflash-noviz]="qwen3.6-27b" [vllm/dual-nvlink]="qwen3.6-27b" [vllm/dual-nvlink-turbo]="qwen3.6-27b"
   [vllm/dual-nvlink-dflash]="qwen3.6-27b" [vllm/dual-nvlink-dflash-noviz]="qwen3.6-27b"
+  [vllm/dual-bf16-int4]="qwen3.6-27b"
   [vllm/gemma-mtp]="gemma-4-31b" [vllm/gemma-mtp-tp1]="gemma-4-31b" [vllm/gemma-dflash]="gemma-4-31b"
   [llamacpp/default]="qwen3.6-27b" [llamacpp/concurrent]="qwen3.6-27b"
 )
@@ -238,6 +239,7 @@ declare -A LAUNCH_VARIANT_ENGINE=(
   [vllm/dual4]="vllm" [vllm/dual4-dflash]="vllm" [vllm/dual-turbo]="vllm" [vllm/dual-dflash]="vllm"
   [vllm/dual-dflash-noviz]="vllm" [vllm/dual-nvlink]="vllm" [vllm/dual-nvlink-turbo]="vllm"
   [vllm/dual-nvlink-dflash]="vllm" [vllm/dual-nvlink-dflash-noviz]="vllm"
+  [vllm/dual-bf16-int4]="vllm"
   [vllm/gemma-mtp]="vllm" [vllm/gemma-mtp-tp1]="vllm" [vllm/gemma-dflash]="vllm"
   [llamacpp/default]="llamacpp" [llamacpp/concurrent]="llamacpp"
 )
@@ -259,6 +261,7 @@ declare -A LAUNCH_VARIANT_KVCALC=(
   [vllm/dual-nvlink-turbo]="qwen3.6-27b:dual-turbo"
   [vllm/dual-nvlink-dflash]="qwen3.6-27b:dual-dflash"
   [vllm/dual-nvlink-dflash-noviz]="qwen3.6-27b:dual-dflash-noviz"
+  [vllm/dual-bf16-int4]="SKIP"
   [vllm/gemma-mtp]="gemma-4-31b:gemma-dual"
   [vllm/gemma-mtp-tp1]="gemma-4-31b:gemma-single"
   [vllm/gemma-dflash]="gemma-4-31b:gemma-dual-dflash"
@@ -268,7 +271,7 @@ declare -A LAUNCH_VARIANT_KVCALC=(
 LAUNCH_VARIANT_ORDER=(
   vllm/long-vision vllm/long-text vllm/long-text-no-mtp vllm/bounded-thinking
   vllm/default vllm/tools-text vllm/minimal
-  vllm/dual vllm/dual-turbo vllm/dual-dflash vllm/dual-dflash-noviz
+  vllm/dual vllm/dual-turbo vllm/dual-dflash vllm/dual-dflash-noviz vllm/dual-bf16-int4
   vllm/dual4 vllm/dual4-dflash
   vllm/gemma-mtp vllm/gemma-mtp-tp1 vllm/gemma-dflash
   llamacpp/default llamacpp/concurrent
@@ -369,6 +372,7 @@ choose_variant() {
 model_label() {
   case "$1" in
     qwen3.6-27b) echo "Qwen 3.6 27B" ;;
+    qwen3.6-27b-bf16-int4) echo "Qwen 3.6 27B (AWQ BF16+INT4)" ;;
     gemma-4-31b) echo "Gemma 4 31B" ;;
     *) echo "$1" ;;
   esac
@@ -376,7 +380,7 @@ model_label() {
 
 normalize_model_name() {
   case "$1" in
-    qwen3.6-27b|qwen3.6-27b-gguf) echo "qwen3.6-27b" ;;
+    qwen3.6-27b|qwen3.6-27b-gguf|qwen3.6-27b-bf16-int4) echo "qwen3.6-27b" ;;
     gemma-4-31b|gemma-4-31b-awq|gemma-4-31b-gguf) echo "gemma-4-31b" ;;
     *) echo "$1" ;;
   esac
@@ -400,6 +404,7 @@ detect_installed_models() {
   MODEL_ENGINES=()
   [[ -d "${MODEL_DIR}/qwen3.6-27b-autoround-int4" ]] && add_installed_model_engine "qwen3.6-27b" "vllm"
   [[ -d "${MODEL_DIR}/qwen3.6-27b-gguf" ]] && add_installed_model_engine "qwen3.6-27b" "llamacpp"
+  [[ -d "${MODEL_DIR}/qwen3.6-27b-awq-bf16-int4" ]] && add_installed_model_engine "qwen3.6-27b" "vllm"
   [[ -d "${MODEL_DIR}/gemma-4-31b-autoround-int4" ]] && add_installed_model_engine "gemma-4-31b" "vllm"
   [[ -d "${MODEL_DIR}/gemma-4-31b-it-AWQ-4bit" ]] && add_installed_model_engine "gemma-4-31b" "vllm"
   [[ -d "${MODEL_DIR}/gemma-4-31b-gguf" ]] && add_installed_model_engine "gemma-4-31b" "llamacpp"
@@ -1026,6 +1031,7 @@ if [[ -z "$VARIANT" ]]; then
   echo "club-3090 launcher — pick model, GPU set, and serving variant." >&2
   echo "(Use --variant <name> next time to skip the wizard.)" >&2
   choose_model
+  choose_variant
   choose_gpus
   print_topology_advisory
   pick_parallelism

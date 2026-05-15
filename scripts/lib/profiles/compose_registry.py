@@ -180,6 +180,13 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/qwopus-bf16mtp.yml",
         default_port=8071,
     ),
+    "vllm/dual-bf16-int4": _entry(
+        model="qwen3.6-27b", weights_variant="awq_bf16_int4", workload="multi-stream-tenant",
+        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="bf16",
+        tp=2, max_ctx=190000, max_num_seqs=4, mem_util=0.94,
+        compose_path="models/qwen3.6-27b/vllm/compose/dual/bf16-int4.yml",
+        default_port=5000,
+    ),
     "vllm/dual-nvlink": _entry(
         model="qwen3.6-27b", weights_variant="autoround_int4", workload="long-ctx-single",
         engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
