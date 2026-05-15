@@ -179,6 +179,10 @@ class ModelProfile:
     head_dim_sliding: Optional[int] = None
     global_head_dim: Optional[int] = None
     sliding_window: Optional[int] = None
+    # Asymmetric KV head counts for SWA-hybrid models where global layers
+    # have a different KV head count than sliding layers (e.g. Gemma 4
+    # 26B-A4B: 8 sliding, 2 global). Leave None for symmetric models.
+    num_global_kv_heads: Optional[int] = None
     # MoE fields (None for dense models; set for MoE variants)
     num_experts: Optional[int] = None
     num_experts_per_tok: Optional[int] = None
@@ -373,6 +377,7 @@ def _model(data: dict[str, Any]) -> ModelProfile:
         head_dim_sliding=data.get("head_dim_sliding"),
         global_head_dim=data.get("global_head_dim"),
         sliding_window=data.get("sliding_window"),
+        num_global_kv_heads=data.get("num_global_kv_heads"),
         num_experts=data.get("num_experts"),
         num_experts_per_tok=data.get("num_experts_per_tok"),
         moe_intermediate_size=data.get("moe_intermediate_size"),
