@@ -1,0 +1,64 @@
+schema_version: 1
+id: qwen3.6-35b-a3b
+display_name: Qwen 3.6 35B-A3B (MoE)
+family: qwen3-next-moe
+hidden_size: 2048
+num_hidden_layers: 40
+# Hybrid: 10 full_attention layers at indices 3,7,11,15,19,23,27,31,35,39
+# (one per 4-layer block, matching full_attention_interval=4 in config.json)
+num_gdn_layers: 30
+num_attn_layers: 10
+num_attn_heads: 16
+num_kv_heads: 2
+head_dim_attn: 256
+linear_num_v_heads: 32
+linear_num_k_heads: 16
+linear_v_head_dim: 128
+linear_k_head_dim: 128
+linear_conv_kernel_dim: 4
+max_ctx_supported: 262144
+attention_k_eq_v: false
+# MoE (from config.json text_config)
+num_experts: 256
+num_experts_per_tok: 8
+moe_intermediate_size: 512
+shared_expert_intermediate_size: 512
+active_params_b: 3.0
+# Built-in MTP drafter (1 dedicated MTP head)
+mtp_num_hidden_layers: 1
+attn_output_gate: true
+vision_capable: true
+weights:
+  autoround_int4:
+    path: qwen3.6-35b-a3b-autoround-int4
+    size_gb: 20.0
+    format: autoround
+    status: production
+  gptq_int4:
+    path: qwen3.6-35b-a3b-gptq-int4
+    size_gb: 22.0
+    format: gptq
+    status: experimental
+  gguf:
+    path: qwen3.6-35b-a3b-gguf
+    size_gb: 90.0
+    format: gguf
+    status: production
+  dflash:
+    path: qwen3.6-35b-a3b-dflash
+    size_gb: variable
+    format: autoround
+    status: experimental
+  dflash_gguf:
+    path: qwen3.6-35b-a3b-dflash-gguf
+    size_gb: variable
+    format: gguf
+    status: experimental
+default_weight_variant: autoround_int4
+compatible_drafters:
+  - qwen-mtp-builtin
+# num_kv_heads=2 caps TP at 2 (each rank needs at least 1 KV head)
+valid_tp:
+  - 1
+  - 2
+requires_genesis: true

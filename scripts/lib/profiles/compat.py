@@ -179,6 +179,16 @@ class ModelProfile:
     head_dim_sliding: Optional[int] = None
     global_head_dim: Optional[int] = None
     sliding_window: Optional[int] = None
+    # MoE fields (None for dense models; set for MoE variants)
+    num_experts: Optional[int] = None
+    num_experts_per_tok: Optional[int] = None
+    moe_intermediate_size: Optional[int] = None
+    shared_expert_intermediate_size: Optional[int] = None
+    active_params_b: Optional[float] = None
+    # Optional architectural metadata
+    mtp_num_hidden_layers: Optional[int] = None
+    attn_output_gate: Optional[bool] = None
+    vision_capable: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -363,6 +373,14 @@ def _model(data: dict[str, Any]) -> ModelProfile:
         head_dim_sliding=data.get("head_dim_sliding"),
         global_head_dim=data.get("global_head_dim"),
         sliding_window=data.get("sliding_window"),
+        num_experts=data.get("num_experts"),
+        num_experts_per_tok=data.get("num_experts_per_tok"),
+        moe_intermediate_size=data.get("moe_intermediate_size"),
+        shared_expert_intermediate_size=data.get("shared_expert_intermediate_size"),
+        active_params_b=data.get("active_params_b"),
+        mtp_num_hidden_layers=data.get("mtp_num_hidden_layers"),
+        attn_output_gate=data.get("attn_output_gate"),
+        vision_capable=data.get("vision_capable"),
         max_ctx_supported=int(data["max_ctx_supported"]),
         attention_k_eq_v=bool(data["attention_k_eq_v"]),
         weights=_dict(data.get("weights")),
