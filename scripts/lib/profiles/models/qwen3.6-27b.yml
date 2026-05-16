@@ -42,6 +42,11 @@ weights:
     size_gb: 17.5
     format: autoround
     status: experimental
+  awq_bf16_int4:
+    path: qwen3.6-27b-awq-bf16-int4
+    size_gb: 27.0
+    format: awq_compressed_tensors
+    status: experimental
 default_weight_variant: autoround_int4
 compatible_drafters:
   - qwen-mtp-builtin

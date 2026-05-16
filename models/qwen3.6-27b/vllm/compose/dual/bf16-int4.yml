@@ -1,0 +1,152 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (cyankiwi AWQ BF16-INT4, compressed-tensors)
+#   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
+#   Drafter:   MTP n=5 (built-in)
+#   KV:        fp16 (AWQ BF16+INT4 mixed quant, compressed-tensors format)
+#   Vision:    yes
+#   Max ctx:   190K total (across all 4 streams)
+#   Genesis:   none
+#   Status:    Experimental
+#   Best for:  Multi-stream interactivity (4 seqs, 190K total ctx across all streams)
+# ---------------------------------------------------------------------------
+# Dual RTX 3090 — AWQ BF16+INT4 mixed quant variant with MTP n=5 speculative
+# decoding and 4-stream concurrency. Uses compressed-tensors format from
+# cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4 (~27 GB, 6 safetensors shards).
+#
+# What this gives you (vs the dual/docker-compose.yml default):
+#   - AWQ mixed BF16+INT4 quantization (compressed-tensors) instead of AutoRound
+#   - MTP n=5 speculative decoding (vs n=3 in the default compose)
+#   - max_num_seqs=4 for multi-stream interactivity
+#   - 190K total context across all streams (not per-stream)
+#   - FP16 KV cache (default for compressed-tensors AWQ)
+#   - performance-mode=interactivity for low-latency decoding
+#
+# Dependencies:
+#   - 2x RTX 3090 (Ampere SM 8.6), PCIe or NVLink (auto-detected)
+#   - cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4 model weights (~27 GB)
+#   - vLLM PR #40361 (Marlin pad-sub-tile-n) — patched files volume-mounted
+#
+# All dual-card variants in this dir:
+#
+#   File                                    Ctx       Streams   KV       Quant              Topology
+#   dual/docker-compose.yml                 262K      2         fp8      AutoRound INT4     2x PCIe/NVLink
+#   dual/turbo.yml                          262K      4         TQ3      AutoRound INT4     2x PCIe
+#   dual/dflash.yml                         185K      1         FP16     AutoRound INT4     2x PCIe
+#   dual/dflash-noviz.yml                   200K      1         FP16     AutoRound INT4     2x PCIe
+#   dual/bf16-int4.yml (this)              190K total 6         FP16     AWQ BF16+INT4      2x PCIe/NVLink
+#   dual/nvlink-dflash.yml                  185K      1         FP16     AutoRound INT4     2x NVLink
+#   dual/nvlink-dflash-noviz.yml            188K      1         FP16     AutoRound INT4     2x NVLink
+#
+# Run:
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f dual/bf16-int4.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-mtp
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+services:
+  vllm-qwen36-27b-bf16-int4:
+    # Tracking latest nightly intentionally — this stack uses fp16 KV (not
+    # TurboQuant), so it doesn't accumulate the same anchor-drift exposure
+    # the single-card project does. Pin if you hit a regression; otherwise
+    # ride the wave.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-bf16-int4}"
+    restart: "no"
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-5000}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../models-cache}/qwen3.6-27b-awq-bf16-int4:/root/models/Qwen3.6-27B-AWQ-BF16-INT4:ro
+      - ../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../cache/triton:/root/.triton/cache
+      # Marlin pad-sub-tile-n patch (vLLM PR #40361) — required for TP=2
+      # on W4A16 models where out-dim shards fall below 64.
+      - ../../patches/vllm-marlin-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py:ro
+      - ../../patches/vllm-marlin-pad/MPLinearKernel.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py:ro
+      # vLLM PR #35936 required-tool fallback (drop when upstream lands).
+      - ../../patches/vllm-pr35936-required-fallback/vllm/entrypoints/openai/chat_completion/serving.py:/etc/club3090/pr35936-chat-completion-serving.py:ro
+      - ../../patches/vllm-pr35936-required-fallback/vllm/entrypoints/openai/engine/serving.py:/etc/club3090/pr35936-engine-serving.py:ro
+      - ../../patches/vllm-pr35936-required-fallback/install.sh:/etc/club3090/install-pr35936.sh:ro
+      # vLLM PR #41800 (truncate_prompt_tokens kwarg) overlay.
+      - ../../patches/vllm-pr41800-truncate-prompt-tokens/install.sh:/etc/club3090/install-pr41800.sh:ro
+      # froggeric/Qwen-Fixed-Chat-Templates qwen3.6 — fixes 7 default-template bugs.
+      - ../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # Install PR #35936 overlay before vllm imports (drop when upstream lands).
+        bash /etc/club3090/install-pr35936.sh
+        bash /etc/club3090/install-pr41800.sh
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+        else
+          exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/models/Qwen3.6-27B-AWQ-BF16-INT4
+      - --served-model-name
+      - qwen3.6-27b
+      - --quantization
+      - compressed-tensors
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-190000}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.93}"
+      - --max-num-seqs
+      - "4"
+      - --max-num-batched-tokens
+      - "8192"
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":5}'
+      - --performance-mode
+      - interactivity
+      - --chat-template
+      - /etc/qwen-froggeric-chat-template.jinja
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

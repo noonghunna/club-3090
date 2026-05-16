@@ -326,6 +326,12 @@ compose_hw_model_status() {
       )
       friendly_need="needs 20 GB+ VRAM (24 GB recommended)"
       ;;
+    qwen3.6-27b-bf16-int4)
+      candidates=(
+        "${repo_root}/models/qwen3.6-27b/vllm/compose/dual/bf16-int4.yml"
+      )
+      friendly_need="needs 48 GB VRAM across two cards"
+      ;;
     gemma-4-31b)
       candidates=(
         "${repo_root}/models/gemma-4-31b/vllm/compose/dual/docker-compose.yml"
