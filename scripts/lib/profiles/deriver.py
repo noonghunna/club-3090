@@ -704,6 +704,15 @@ def derive(
     arch = str(arch_list[0]) if arch_list else None
     has_auto_map = bool((config or {}).get("auto_map"))
 
+    # v0.8.0 [E] CONTRACT-2 — scoped ADDITIVE surface: expose config.json's
+    # raw `torch_dtype` (or its `dtype` alias) so [E]'s derived-vllm template
+    # can resolve `--dtype` for quantized rows (resolve_quant_dtype()
+    # short-circuits at quantization_config and never records it). Additive
+    # field ONLY — every existing field is byte-unchanged; no behaviour
+    # depends on it inside the deriver. None when config.json omits it.
+    _raw_td = (config or {}).get("torch_dtype") or (config or {}).get("dtype")
+    config_torch_dtype = _raw_td.strip() if isinstance(_raw_td, str) and _raw_td.strip() else None
+
     res.profile = {
         "model_id": slug,
         "weights_variant": None,
@@ -711,6 +720,7 @@ def derive(
         "family": "generic-dense" if eligible else None,
         "auto_map": has_auto_map,
         "weight_format": weight_format,
+        "torch_dtype": config_torch_dtype,
         "effective_bpw": bpw,
         "weights_total_gb": weight_gb,
         "footprint_gb": footprint_gb,

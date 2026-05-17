@@ -566,6 +566,394 @@ def generate(
     return out_text, meta
 
 
+# ===========================================================================
+# v0.8.0 [E] STEP E1 — derived (non-curated) emission.
+#
+# ADDITIVE ONLY. Everything ABOVE this banner — incl. generate() and its
+# helpers — is byte-unchanged from the pre-E1 [D] registry-key generator
+# (test-generate-compose.sh proves the registry path is byte-identical, P3
+# precedent). generate_from_profile() / derived_emittable() are a SEPARATE
+# entry point with a SEPARATE template; they NEVER call generate() and
+# generate() never calls them, so the two paths are structurally isolated.
+#
+# CONTRACT-2 derived-vllm per-arg policy (docstring-as-spec, DeepSeek L1):
+#
+#   image                 -> resolved engine install.spec (NOT a bare
+#                            ${VLLM_NIGHTLY_SHA}); recorded in meta.
+#   --model               -> CONTAINER path /models/club3090/pulls/<slug-san>
+#                            (+ a `<HF_HOME>/club3090/pulls/<slug-san>:
+#                            <container>:ro` volume; host path from
+#                            einput.hf_home — E1 emits the mount only, does
+#                            not create/download it).
+#   --served-model-name   -> slug sanitized (lower; non-[a-z0-9._-]->'-';
+#                            collapse repeats; trim to vLLM 256 cap).
+#   --quantization/--dtype-> CONTRACT-2 quant/dtype dispatch table (below).
+#   --tensor-parallel-size/--max-model-len/--gpu-memory-utilization/
+#     --max-num-seqs/port -> einput.runtime (the --profile-like shape).
+#   --kv-cache-dtype      -> kv_arg() EMISSION-ONLY on the already-CONTRACT-5-
+#                            eligible kv_format (bf16/fp16 -> flag omitted;
+#                            fp8_e4m3 -> 'fp8'; fp8_e5m2 -> 'fp8_e5m2').
+#   NVIDIA_VISIBLE_DEVICES-> exactly einput.selected_gpu_indices.
+#   --trust-remote-code   -> ONLY if einput indicates the [C0] trc gate
+#                            already resolved permitted.
+#   NOT emitted           -> --chat-template / --reasoning-parser /
+#                            --default-chat-template-kwargs /
+#                            --enable-auto-tool-choice / --tool-call-parser
+#                            (derived = vLLM defaults; deferred).
+#   patches               -> PATCHLESS (no volumes/entrypoint patch insert;
+#                            CONTRACT-5 guarantees none are needed).
+#
+# Every CONTRACT-5 / dispatch-table reject raises Refuse (mirrors [D]'s
+# structured-refusal style) — NEVER a broken / default-guessed compose.
+# ===========================================================================
+
+# CONTRACT-5 explicit derived-safe KV set (NOT "kv_arg() is defined": kv_arg
+# is ALSO defined for int8_per_token_head / turboquant_3bit_nc, the values
+# CONTRACT-5 rejects, so that predicate is self-contradictory).
+DERIVED_SAFE_KV = frozenset({"bf16", "fp16", "fp8_e5m2", "fp8_e4m3"})
+
+# CONTRACT-2 quant/dtype dispatch table. weight_format -> (--quantization
+# value | None=omit | "REJECT", needs_dtype). autoround is an explicit
+# CONTRACT-5 reject (curated AutoRound composes pass --quantization
+# auto_round; "omit" is NOT demonstrably safe for an arbitrary derived
+# AutoRound repo — deferred, honesty-over-confidently-wrong).
+_QUANT_DISPATCH = {
+    "awq": ("awq", True),
+    "gptq": ("gptq", True),
+    "compressed-tensors": ("compressed-tensors", True),
+    "fp8": ("fp8", True),
+    "autoround": ("REJECT:autoround", True),
+    # pure dtype, no quant: --quantization omitted, --dtype = the weight_format
+    "float16": (None, False),
+    "bfloat16": (None, False),
+}
+
+# torch_dtype-string -> vLLM --dtype compute value. CONTRACT-2 v8: accept
+# ONLY a real compute dtype. Any int/storage dtype (I8/U8/I4/...) from the
+# header probe is NOT a usable --dtype → fail-closed.
+_COMPUTE_DTYPE = {
+    "FLOAT16": "float16",
+    "HALF": "float16",
+    "F16": "float16",
+    "FP16": "float16",
+    "BFLOAT16": "bfloat16",
+    "BF16": "bfloat16",
+    "FLOAT32": "float32",
+    "F32": "float32",
+    "FP32": "float32",
+}
+
+
+def _sanitize_slug(slug: str, cap: int = 256) -> str:
+    """slug -> vLLM-safe name: lowercase, every non-[a-z0-9._-] -> '-',
+    collapse runs of '-', strip leading/trailing '-', trim to `cap`
+    (vLLM served-model-name cap; DeepSeek-r2 L2)."""
+    out = []
+    for ch in slug.strip().lower():
+        out.append(ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "-")
+    s = "".join(out)
+    while "--" in s:
+        s = s.replace("--", "-")
+    s = s.strip("-")
+    return s[:cap]
+
+
+def _engine_install(engine: dict) -> dict:
+    return engine.get("install") or {}
+
+
+def _resolve_compute_dtype(einput) -> tuple[str, str | None]:
+    """CONTRACT-2 v8 --dtype resolution order for a quantized derived repo.
+
+    Returns (dtype | "", reject_token | None). dtype == "" with a token means
+    fail-closed `unsupported-quant-for-derived:<token>`.
+
+    (1) der.profile["torch_dtype"] (the additive E1 deriver surface) — if a
+        recognized compute dtype.
+    (2) the deriver's EXISTING bounded safetensors header probe THEN
+        normalize: accept ONLY {float16/half, bfloat16, float32}; any
+        int/storage dtype (I8/U8/I4/...) is NOT a usable --dtype.
+    (3) fail-closed `missing-torch-dtype`.
+
+    Header-probe wiring: E1 calls the deriver's existing
+    `probe_safetensors_dtype()` (never reimplemented) ONLY when it is cleanly
+    callable — i.e. einput.der carries `slug` + `profile["selected_weight_files"]`
+    and a usable fetcher in `einput.diagnostics["fetcher"]`. If those inputs
+    are not present on the EInput, step (2) is skipped and resolution
+    fail-closes at step (3); full live header-probe wiring is an E2 follow
+    (E2 owns the download/fetcher plumbing). This is the brief's explicitly
+    permitted "torch_dtype-or-fail + note header-probe wiring as an E2 follow".
+    """
+    der = einput.der
+    prof = getattr(der, "profile", None) or {}
+
+    # (1) config.json torch_dtype (additive E1 deriver surface).
+    td = prof.get("torch_dtype")
+    if isinstance(td, str) and td.strip():
+        norm = _COMPUTE_DTYPE.get(td.strip().upper())
+        if norm is not None:
+            return norm, None
+
+    # (2) bounded header probe via the deriver's EXISTING fn (not reimplemented).
+    fetcher = (einput.diagnostics or {}).get("fetcher")
+    sel = prof.get("selected_weight_files") or []
+    slug = getattr(der, "slug", None)
+    if fetcher is not None and sel and slug:
+        from scripts.lib.profiles import deriver as _D  # noqa: E402
+
+        probed = _D.probe_safetensors_dtype(
+            slug, sorted(sel)[0], fetcher,
+            (einput.diagnostics or {}).get("hf_token"),
+        )
+        if isinstance(probed, str) and probed.strip():
+            norm = _COMPUTE_DTYPE.get(probed.strip().upper())
+            if norm is not None:
+                return norm, None
+        # any int/storage dtype (or unprobeable) -> NOT a usable --dtype.
+
+    # (3) fail-closed.
+    return "", "missing-torch-dtype"
+
+
+def _trc_permitted(einput) -> bool:
+    """--trust-remote-code is emitted ONLY if einput indicates the [C0] trc
+    gate already resolved permitted. The signal is carried on
+    einput.diagnostics["trc_permitted"] is True (E4 wires it from the [C0]
+    resolution); absent / not-True -> NEVER emitted."""
+    return (einput.diagnostics or {}).get("trc_permitted") is True
+
+
+def derived_emittable(einput) -> tuple[bool, str | None]:
+    """CONTRACT-5 derived-emission runtime-shape eligibility gate.
+
+    Returns (True, None) iff ALL hold; else (False,
+    "derived-runtime-unsupported:<reason>"). Pure: data in, verdict out — no
+    download / no emit. The order below short-circuits on the FIRST failing
+    clause (the brief's negative-matrix reason tokens):
+
+      engine-install-method  required_genesis!=false OR vendored_overlays!=[]
+                             OR install.method!="docker_image"
+      overlay-feature        runtime["required_engine_features"] != []
+      kv                     kv_format ∉ {bf16,fp16,fp8_e5m2,fp8_e4m3}
+      drafter                runtime["drafter"] is not None
+      gpu-count              visible_gpu_count < tp OR
+                             len(selected_gpu_indices) != tp
+      unsupported-quant-for-derived[:autoround|:missing-torch-dtype]
+                             weight_format not resolvable by the CONTRACT-2
+                             quant/dtype dispatch table
+    """
+    root = einput.diagnostics.get("_root") if einput.diagnostics else None
+    rt = einput.runtime or {}
+    engine_id = rt.get("engine")
+
+    # --- engine + runtime clean, correct objects, AND docker_image install --
+    engine = None
+    if root is not None and engine_id:
+        try:
+            engine = load_engine(Path(root), engine_id)
+        except Refuse:
+            engine = None
+    if engine is None:
+        # cannot resolve the engine YAML -> cannot prove it is clean.
+        return False, "derived-runtime-unsupported:engine-install-method"
+    install = _engine_install(engine)
+    if (
+        engine.get("required_genesis") is not False
+        or (engine.get("vendored_overlays") or []) != []
+        or install.get("method") != "docker_image"
+    ):
+        return False, "derived-runtime-unsupported:engine-install-method"
+    if (rt.get("required_engine_features") or []) != []:
+        return False, "derived-runtime-unsupported:overlay-feature"
+
+    # --- kv_format in the EXPLICIT derived-safe set -----------------------
+    if rt.get("kv_format") not in DERIVED_SAFE_KV:
+        return False, "derived-runtime-unsupported:kv"
+
+    # --- no drafter / DFlash / MTP / speculative --------------------------
+    if rt.get("drafter") is not None:
+        return False, "derived-runtime-unsupported:drafter"
+
+    # --- local GPU topology can actually run this tp ----------------------
+    tp = int(rt.get("tp") or 1)
+    if int(einput.visible_gpu_count) < tp or len(einput.selected_gpu_indices) != tp:
+        return False, "derived-runtime-unsupported:gpu-count"
+
+    # --- weight_format resolvable by the CONTRACT-2 dispatch table --------
+    wf = (getattr(einput.der, "profile", None) or {}).get("weight_format")
+    disp = _QUANT_DISPATCH.get(str(wf).lower()) if wf is not None else None
+    if disp is None:
+        return False, "derived-runtime-unsupported:unsupported-quant-for-derived"
+    quant_val, needs_dtype = disp
+    if isinstance(quant_val, str) and quant_val.startswith("REJECT:"):
+        # autoround (the only current REJECT row).
+        return (
+            False,
+            f"derived-runtime-unsupported:unsupported-quant-for-derived:"
+            f"{quant_val.split(':', 1)[1]}",
+        )
+    if needs_dtype:
+        dtype, reject = _resolve_compute_dtype(einput)
+        if not dtype:
+            return (
+                False,
+                f"derived-runtime-unsupported:unsupported-quant-for-derived:{reject}",
+            )
+
+    return True, None
+
+
+def generate_from_profile(root: Path, einput) -> tuple[str, dict]:
+    """ADDITIVE [E] entry point — emit the SEPARATE patchless `derived-vllm`
+    base template per CONTRACT-2's per-arg policy. NEVER touches generate()
+    or the curated compose_service_template (CONTRACT-2: a Llama model
+    through the Qwen-constant curated template = broken boot).
+
+    Runs CONTRACT-5 `derived_emittable()` FIRST; on any reject (or any
+    dispatch-table reject) raises Refuse (mirrors [D] style/code) — never an
+    emit. Returns (compose_text, meta) on success.
+    """
+    ok, reason = derived_emittable(einput)
+    if not ok:
+        raise Refuse(reason or "derived-runtime-unsupported:unknown")
+
+    rt = einput.runtime or {}
+    engine_id = rt["engine"]
+    engine = load_engine(root, engine_id)
+    install = _engine_install(engine)
+
+    # image = resolved engine install.spec (NOT a bare ${VLLM_NIGHTLY_SHA}).
+    image = install.get("spec")
+    if not image:
+        raise Refuse(
+            "derived-runtime-unsupported:engine-install-method "
+            f"(engine {engine_id} install.spec missing)"
+        )
+
+    san = _sanitize_slug(einput.slug)
+    if not san:
+        raise Refuse(
+            "derived-runtime-unsupported:unsupported-quant-for-derived "
+            f"(slug {einput.slug!r} sanitizes to empty served-model-name)"
+        )
+    container_model_dir = f"/models/club3090/pulls/{san}"
+    host_model_dir = f"{Path(einput.hf_home)}/club3090/pulls/{san}"
+
+    # --quantization / --dtype via the CONTRACT-2 dispatch table.
+    wf = (getattr(einput.der, "profile", None) or {}).get("weight_format")
+    quant_val, needs_dtype = _QUANT_DISPATCH[str(wf).lower()]
+    if needs_dtype:
+        dtype, reject = _resolve_compute_dtype(einput)
+        if not dtype:  # pragma: no cover — derived_emittable already rejected
+            raise Refuse(
+                f"derived-runtime-unsupported:unsupported-quant-for-derived:{reject}"
+            )
+    else:
+        # pure float16/bfloat16 rows: --dtype IS the weight_format.
+        dtype = "float16" if str(wf).lower() == "float16" else "bfloat16"
+
+    tp = int(rt.get("tp") or 1)
+    max_ctx = int(rt.get("max_ctx") or 131072)
+    mem_util = float(rt.get("mem_util") or 0.90)
+    max_num_seqs = int(rt.get("max_num_seqs") or 1)
+    port = int(rt.get("default_port") or rt.get("port") or 8000)
+
+    # --kv-cache-dtype: kv_arg() EMISSION-ONLY on the already-eligible value.
+    kv_cli = kv_arg(rt["kv_format"])  # bf16/fp16 -> None (flag omitted)
+
+    gpu_idx = ",".join(str(i) for i in einput.selected_gpu_indices)
+
+    svc = f"vllm-derived-{san}"[:63]
+
+    cmd: list[str] = ["      - --model", f"      - {container_model_dir}"]
+    cmd += ["      - --served-model-name", f"      - {san}"]
+    if quant_val is not None:
+        cmd += ["      - --quantization", f"      - {quant_val}"]
+    cmd += ["      - --dtype", f"      - {dtype}"]
+    cmd += ["      - --tensor-parallel-size", f'      - "{tp}"']
+    cmd += ["      - --max-model-len", f'      - "{max_ctx}"']
+    cmd += ["      - --gpu-memory-utilization", f'      - "{mem_util}"']
+    cmd += ["      - --max-num-seqs", f'      - "{max_num_seqs}"']
+    if kv_cli is not None:
+        cmd += ["      - --kv-cache-dtype", f"      - {kv_cli}"]
+    if _trc_permitted(einput):
+        cmd += ["      - --trust-remote-code"]
+    cmd += ["      - --host", '      - "0.0.0.0"', "      - --port", '      - "8000"']
+
+    header = (
+        "# ===========================================================================\n"
+        "# GENERATED by scripts/pull.sh — club-3090 [E] derived-vllm "
+        "(v0.8.0 #147).\n"
+        f"#   derived (non-curated) slug: {einput.slug}\n"
+        f"#   --profile-like runtime shape: engine={engine_id} kv="
+        f"{rt.get('kv_format')} tp={tp}\n"
+        f"#   resolved image (engine install.spec, NOT rewritten): {image}\n"
+        "#   PATCHLESS default-vLLM: no Genesis / curated patches "
+        "(CONTRACT-5 guarantees none needed).\n"
+        "#   NOT emitted: --chat-template / --reasoning-parser / "
+        "--tool-call-parser (vLLM defaults).\n"
+        "# ===========================================================================\n"
+    )
+    body_lines = [
+        "services:",
+        f"  {svc}:",
+        f"    image: {image}",
+        f'    container_name: "${{ESTATE_CONTAINER:-{svc}}}"',
+        '    restart: "no"',
+        "    ports:",
+        f'      - "${{BIND_HOST:-0.0.0.0}}:${{ESTATE_PORT:-${{PORT:-{port}}}}}:8000"',
+        "    volumes:",
+        f"      - {host_model_dir}:{container_model_dir}:ro",
+        "    environment:",
+        f"      - NVIDIA_VISIBLE_DEVICES={gpu_idx}",
+        "      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}",
+        "      - VLLM_WORKER_MULTIPROC_METHOD=spawn",
+        "      - NCCL_CUMEM_ENABLE=0",
+        "      - NCCL_P2P_DISABLE=1",
+        "      - VLLM_NO_USAGE_STATS=1",
+        "    shm_size: \"16gb\"",
+        "    ipc: host",
+        "    deploy:",
+        "      resources:",
+        "        reservations:",
+        "          devices:",
+        "            - driver: nvidia",
+        "              count: all",
+        "              capabilities: [gpu]",
+        "    entrypoint:",
+        "      - /bin/bash",
+        "      - -c",
+        "      - |",
+        "        exec vllm serve \"$@\"",
+        "      - --",
+        "    command:",
+    ]
+    body = header + "\n".join(body_lines + cmd) + "\n"
+
+    meta = {
+        "derived": True,
+        "slug": einput.slug,
+        "served_model_name": san,
+        "resolved_image": image,
+        "engine": engine_id,
+        "container_model_dir": container_model_dir,
+        "host_model_dir": host_model_dir,
+        "quantization": quant_val,
+        "dtype": dtype,
+        "kv_format": rt.get("kv_format"),
+        "kv_cache_dtype_arg": kv_cli,
+        "tp": tp,
+        "max_model_len": max_ctx,
+        "max_num_seqs": max_num_seqs,
+        "gpu_memory_utilization": mem_util,
+        "port": port,
+        "nvidia_visible_devices": gpu_idx,
+        "trc_emitted": _trc_permitted(einput),
+        "patchless": True,
+    }
+    return body, meta
+
+
 def _strip_trc(body: str) -> str:
     """Remove the --trust-remote-code governed token (and only it) from the
     captured body. vLLM `command:` lists render it as its own list element
