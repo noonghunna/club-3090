@@ -1143,7 +1143,74 @@ def _run_derived_e_stage(
 # kv-calc has no version constant; this is the stable label E4 stamps into
 # the §6.2 capture manifest's `kv_calc_version` (a [F] consensus-key input).
 # Kept here (pull.py, the orchestrator) — NOT a frozen-module edit.
-_KV_CALC_VERSION = "kvcalc-v0.8.0"
+#
+# CONTRACT-5 (ii) — G2: a calibration-affecting kv-calc math/corpus edit
+# that does NOT change this string lets materially-different runs collide on
+# the §6.2 consensus key / §6.3 dedup key / submission_fingerprint. Removing
+# that defect by *deriving* the version from the actual content surface
+# instead of a hand-bumped literal: `kvcalc-v0.8.0+<sha256(content)[:12]>`
+# where <content> = the bytes of `tools/kv-calc.py` (the kv-calc math) + the
+# sorted concatenation of `scripts/lib/profiles/calibration/*.yml` (the
+# calibration corpus). A math OR corpus edit now changes the hash
+# automatically — no manual bump discipline needed (closes G2; satisfies the
+# (iii) regression). This is purely how the version STRING is computed: zero
+# decision-logic touch (gate states / terminals / [B] / [C1] / verdicts /
+# is_override_accepted / the §4.1 table are all untouched).
+#
+# Hashing convention is parity with `[E]`/§6.2's `submission_fingerprint`
+# (`capture.py` `_fingerprint`): sha256 over `\x1f`-joined parts, utf-8.
+# Computed ONCE at import and cached in the module-level constant (never
+# recomputed per call). If the content files are unreadable for ANY reason
+# the producer degrades to the bare `"kvcalc-v0.8.0"` and NEVER raises —
+# `[E]`/pull must not crash over a provenance-label refinement.
+_KV_CALC_VERSION_BASE = "kvcalc-v0.8.0"
+
+
+def _kv_calc_content_hash(repo_root: Path) -> Optional[str]:
+    """sha256[:12] over the kv-calc math + sorted calibration corpus.
+
+    <content> parts, in this fixed order:
+      1. raw bytes of `tools/kv-calc.py`
+      2. for each `scripts/lib/profiles/calibration/*.yml` sorted by name:
+         the file NAME then its raw bytes (name included so a rename / add /
+         remove of a corpus file also moves the hash).
+    Parts joined with the `\\x1f` unit-separator (same convention as
+    `capture.py`'s `submission_fingerprint`), sha256, first 12 hex.
+    Returns None (caller degrades to the bare base) if anything is
+    unreadable — robust, never raises."""
+    import hashlib
+
+    try:
+        kv_calc = (repo_root / "tools" / "kv-calc.py").read_bytes()
+        calib_dir = repo_root / "scripts" / "lib" / "profiles" / "calibration"
+        calib_files = sorted(
+            calib_dir.glob("*.yml"), key=lambda p: p.name
+        )
+        parts: list[bytes] = [kv_calc]
+        for cf in calib_files:
+            parts.append(cf.name.encode("utf-8"))
+            parts.append(cf.read_bytes())
+        h = hashlib.sha256()
+        h.update(b"\x1f".join(parts))
+        return h.hexdigest()[:12]
+    except Exception:  # pragma: no cover - robust degrade, never crash [E]
+        return None
+
+
+def _derive_kv_calc_version(repo_root: Path) -> str:
+    """CONTRACT-5 (ii): `kvcalc-v0.8.0+<12hex>` from content, or the bare
+    base when the content surface is unreadable (honest degrade)."""
+    digest = _kv_calc_content_hash(repo_root)
+    if digest is None:
+        return _KV_CALC_VERSION_BASE
+    return f"{_KV_CALC_VERSION_BASE}+{digest}"
+
+
+# Computed once at import from the REAL repo content surface; cached here so
+# every [E] emit stamps the identical derived label (the per-call site at
+# the `capture_fn(... kv_calc_version=_KV_CALC_VERSION ...)` call is byte-
+# unchanged — it still reads this module-level name).
+_KV_CALC_VERSION = _derive_kv_calc_version(REPO_ROOT)
 
 
 def _short_refuse(msg: str) -> str:

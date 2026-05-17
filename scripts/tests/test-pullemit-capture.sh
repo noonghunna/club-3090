@@ -94,7 +94,12 @@ def mk_einput(slug, *, der, terminal="proceed"):
         selected_files=[], hf_home=Path("/data/hf"), c2a=None,
         hardware_sm=8.6, visible_gpu_count=1, per_gpu_vram_mib=[24576],
         selected_gpu_indices=[0], selected_gpu_vram_mib=[24576],
-        topology_summary="[(RTX 3090, 24576)]", club3090_commit="deadbeef",
+        # Kimi-r1 L2 / F6: synced to the LIVE detect_gpu_topology format —
+        # `nvidia-smi --query-gpu=...,name` returns the FULL GPU name, so
+        # _topology_summary_canonical serializes `(NVIDIA GeForce RTX 3090,
+        # 24576)`. The real on-disk E5 captures carry this exact string.
+        topology_summary="[(NVIDIA GeForce RTX 3090, 24576)]",
+        club3090_commit="deadbeef",
         diagnostics={},
     )
 
@@ -467,7 +472,8 @@ with tempfile.TemporaryDirectory() as td:
           and man["selected_ctx"] == 131072
           and man["kv_format"] == "bf16"
           and man["smoke_capability_set"] == ["plain-chat", "streaming"]
-          and man["topology_summary_canonical"] == "[(RTX 3090, 24576)]",
+          and man["topology_summary_canonical"]
+              == "[(NVIDIA GeForce RTX 3090, 24576)]",
           "manifest: consensus-key values populated from einput/compose_meta")
     check(man["failure_class"] is None,
           "manifest: failure_class is NULL — E3 must NOT classify "
@@ -764,10 +770,69 @@ for _m in (m1, m2, m3, m3b, m4):
           "E-outcome-fix: outcome still feeds the 64-hex §6.2 "
           "submission_fingerprint (composition unchanged, value honest)")
 
+# ---------------------------------------------------------------------------
+# CONTRACT-5 G1 — live-topology verify gate (F6).
+#
+# `topology_summary_canonical` live wiring
+# (einput.topology_summary <- pull._topology_summary_canonical <-
+# detect_gpu_topology) was fixture-asserted ONLY. This gate confirms the
+# REAL on-disk `.pull-captures/<slug>/<utc-ts>/manifest.json` corpus carries
+# a correctly-serialized `topology_summary_canonical`: a `[(name, vram), …]`
+# list that is byte-identical to a DETERMINISTIC re-serialization of its own
+# sorted `(gpu_name, vram_mib)` tuples (the §6.2 stability property). This
+# is a VERIFICATION ASSERTION over the real corpus — NOT new production
+# code. The real captures are the corpus; there are >=2.
+import re as _re_g1
+
+REPO = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+_cap_root = REPO / ".pull-captures"
+_manifests = sorted(_cap_root.glob("*/*/manifest.json")) if \
+    _cap_root.is_dir() else []
+check(len(_manifests) >= 2,
+      f"G1: real on-disk capture corpus has >=2 manifests "
+      f"(found {len(_manifests)} under {_cap_root})")
+
+# Parse "[(NAME, VRAM), (NAME, VRAM), ...]" -> [(name:str, vram:int), ...]
+_TUP = _re_g1.compile(r"\(([^,]+),\s*(\d+)\)")
+
+
+def _parse_topo(s):
+    if not (isinstance(s, str) and s.startswith("[") and s.endswith("]")):
+        return None
+    return [(m.group(1).strip(), int(m.group(2)))
+            for m in _TUP.finditer(s)]
+
+
+def _reserialize(tuples):
+    t = sorted((str(n), int(v)) for n, v in tuples)
+    return "[" + ", ".join(f"({n}, {v})" for n, v in t) + "]"
+
+
+for _mf in _manifests:
+    _man = json.loads(_mf.read_text())
+    _raw = _man.get("topology_summary_canonical")
+    _tuples = _parse_topo(_raw)
+    check(_tuples is not None and len(_tuples) >= 1,
+          f"G1: {_mf.parent.name} topology_summary_canonical parses to a "
+          f"non-empty (name, vram) list (got {_raw!r})")
+    if _tuples:
+        # Deterministic-sorted-serialization property: the on-disk string
+        # equals a re-serialization of its OWN sorted tuples (stable across
+        # runs/rigs for the consensus key — §6.2 verbatim).
+        check(_raw == _reserialize(_tuples),
+              f"G1: {_mf.parent.name} topology_summary_canonical is the "
+              f"deterministic sorted (gpu_name, vram_mib) serialization "
+              f"(got {_raw!r}, expected {_reserialize(_tuples)!r})")
+        check(all(isinstance(n, str) and n and isinstance(v, int) and v > 0
+                  for n, v in _tuples),
+              f"G1: {_mf.parent.name} each tuple is (non-empty gpu_name, "
+              f"positive vram_mib)")
+
 if failures:
     print(f"\n{len(failures)} assertion(s) failed.", file=sys.stderr)
     sys.exit(1)
-print("\nAll E3 boot + smoke + capture (CONTRACT-4) assertions passed.")
+print("\nAll E3 boot + smoke + capture (CONTRACT-4) + G1 live-topology "
+      "verify assertions passed.")
 PY
 
 echo "test-pullemit-capture.sh OK"
