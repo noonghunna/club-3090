@@ -537,6 +537,17 @@ def run_pull(
     # Injectable so test-pull.sh stays mock-only; None -> the real shipped
     # capture.emit_gate_capture.
     gate_capture_fn: Optional[Callable] = None,
+    # v0.8.2 CONTRACT-3 — OPTIONAL non-NVIDIA hardware-enumeration augment.
+    # Consulted ONLY when `nvidia-smi` already returned nothing (so the
+    # NVIDIA majority NEVER enters this seam — that path is byte-identical
+    # with this absent OR present-but-degrading). hw-detect-ONLY: it yields
+    # an SM-equivalent for the [C0] SM gate; it NEVER feeds kv-calc. None
+    # -> the real shipped hwdetect.detect_non_nvidia_sm (optional bounded
+    # `whichllm` subprocess; absent/failed -> graceful degrade to today's
+    # exact `hardware-sm-undetermined` behaviour). Injectable so
+    # test-pull.sh / test-hwdetect.sh stay hermetic (no `whichllm`, no
+    # non-NVIDIA GPU in CI).
+    hwdetect_fn: Optional[Callable] = None,
 ) -> PullResult:
     """Execute the 6-stratum Pull-Gate state machine.
 
@@ -621,6 +632,41 @@ def run_pull(
     # ----- stratum-3: [C0] engine-support / runtime / SM (P3, frozen) -----
     if hardware_sm is None:
         hardware_sm = detect_hardware_sm()
+    if hardware_sm is None:
+        # v0.8.2 CONTRACT-3 (hw-detect-ONLY) — OPTIONAL non-NVIDIA augment.
+        # Reached ONLY when `nvidia-smi` gave nothing, so the NVIDIA
+        # majority never executes this and that path is byte-identical
+        # whether this augment is absent or present-but-degrading. An
+        # absent/failed/non-applicable `whichllm` returns None and we fall
+        # straight through to the unchanged `hardware-sm-undetermined`
+        # terminal below (safety half). A recognised non-NVIDIA device
+        # (AMD ROCm / Apple) yields an SM-equivalent so the eval path can
+        # run the [C0] SM gate instead of refusing blind (delivery half).
+        # This SM-equivalent feeds ONLY the [C0] gate — NEVER kv-calc
+        # (kv-calc stays the sole fit authority; CONTRACT-3 is
+        # enumeration-only). Any exception is swallowed by hwdetect itself
+        # (leaf module never raises out).
+        if hwdetect_fn is None:
+            from scripts.lib.profiles.hwdetect import detect_non_nvidia_sm
+
+            hwdetect_fn = detect_non_nvidia_sm
+        _aug_sm = hwdetect_fn()
+        if _aug_sm is not None:
+            # Additive-only: mutate the existing `res` (created above;
+            # stratum-2 already passed). NO decision field is touched —
+            # only `hardware_sm` (so the EXISTING [C0] gate now runs
+            # instead of the unchanged blind-refuse terminal) + an
+            # additive notice/diagnostic. kv-calc is NOT consulted.
+            hardware_sm = float(_aug_sm)
+            res.notices.append(
+                "[hw] nvidia-smi absent; non-NVIDIA accelerator "
+                "enumerated via the optional hardware-detect subprocess "
+                "(enumeration only — kv-calc remains the sole fit "
+                "authority; validate with soak-continuous)"
+            )
+            res.diagnostics["hwdetect"] = {
+                "augmented": True, "sm_equiv": float(_aug_sm),
+            }
     if hardware_sm is None:
         # No GPU detected and none injected: cannot honestly run the SM
         # gate. Fail closed (never fabricate a fit per §1).
