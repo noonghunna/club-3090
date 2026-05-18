@@ -1464,6 +1464,108 @@ def _curated_spec(profiles, der) -> dict:
 
 
 # ===========================================================================
+# v0.8.2 CONTRACT-4 — the `recommend` UX (success-path counterpart to the
+# CONTRACT-1 failure on-ramp).
+#
+# This is PURE PRESENTATION / AGGREGATION over the SHIPPED `run_pull`
+# verdict. It introduces NO decision logic: every field it renders is read
+# straight off the real `PullResult` (`ok` / `confidence` / `raw_verdict` /
+# `terminal` / `stratum` / `abort_reason` / `notices` / `emitted`) that the
+# locked 6-stratum + §4.1 machinery produced for THIS run. The recommendation
+# therefore tracks the real verdict by construction — a model that fits, one
+# that hard-blocks, and one that is `confirm→proceed` each yield a different
+# block because each carries a different real `res`. It is NOT a static or
+# templated summary: remove the gate and the recommendation changes with it.
+#
+# Honesty invariants (CONTRACT-4):
+#   * vLLM-only by construction (the shipped gate is vLLM-only; we add
+#     nothing — we only echo what the gate decided).
+#   * Carries the §7 boot-fit≠runtime caveat verbatim (CAVEAT_S7) + the
+#     soak-continuous pointer, on any verdict the gate itself marked
+#     boot-fit-satisfied (detected via CAVEAT_S7 ∈ res.notices — the SAME
+#     signal the gate already emits; we do not re-derive it).
+#   * States WHICH gate decided (`res.stratum`) — never silently summarised.
+#   * Honest about the confidence tier (echoes res.confidence; an
+#     estimated-lower-bound floor is stated, never hidden).
+#   * NEVER implies a non-emitted artifact: a compose line is printed ONLY
+#     when `res.emitted` is true (Path A actually emitted one).
+# ===========================================================================
+def _render_recommendation(res: "PullResult") -> list[str]:
+    """Aggregate the SHIPPED `run_pull` verdict into an honest, human
+    recommendation. Pure presentation: derives every line from `res`;
+    introduces no decision logic. Returns the lines to print (so the
+    test can assert the recommendation tracks a *real* differing verdict
+    without driving a tty)."""
+    out: list[str] = ["[recommend] ----- recommendation -----"]
+    out.append(
+        f"[recommend] model={res.slug} profile-like={res.profile_like} "
+        f"engine=vLLM (the pull gate is vLLM-only by construction)"
+    )
+
+    if res.ok:
+        # The gate said download-eligible / clean. Echo the real terminal +
+        # confidence; never upgrade the gate's honesty.
+        verdict = res.terminal or "proceed"
+        out.append(
+            f"[recommend] verdict: FITS → {verdict} "
+            f"(confidence={res.confidence or 'n/a'}, "
+            f"raw_verdict={res.raw_verdict or 'n/a'})"
+        )
+        if res.confidence == "estimated-lower-bound":
+            out.append(
+                "[recommend] note: this is an ESTIMATED LOWER BOUND — the "
+                "modelled VRAM is a floor and is likely under-modelled; "
+                "treat the fit as the optimistic edge, not a guarantee."
+            )
+        if res.emitted:
+            out.append(
+                "[recommend] a ready compose was emitted for this config "
+                "(see the --out path / stdout above)."
+            )
+        else:
+            # Honesty: do NOT imply a compose that was not produced.
+            out.append(
+                "[recommend] no compose was emitted this run (Path B "
+                "evaluate / --dry-run / not download-eligible) — this is a "
+                "verdict only, not a launchable artifact."
+            )
+    else:
+        # The gate hard-blocked / needs-a-flag. Carry the precise reason and
+        # WHICH gate decided; point at the failure on-ramp (CONTRACT-1).
+        reason = res.abort_reason or "see the gate output above"
+        out.append(
+            f"[recommend] verdict: DOES NOT FIT / BLOCKED — {reason}"
+        )
+        out.append(
+            "[recommend] this is an honest stop, not a stack failure. The "
+            "diagnostics (if a redacted bundle was captured) can be sent "
+            "back with `scripts/pull.sh --submit-last` — see the failure "
+            "on-ramp section of docs/PULL.md."
+        )
+
+    # WHICH gate decided — always stated (CONTRACT-4: never silently
+    # summarised). Read straight off the real result.
+    out.append(
+        f"[recommend] decided at: stratum={res.stratum.name}"
+    )
+
+    # §7 boot-fit ≠ runtime caveat + soak-continuous pointer — carried
+    # verbatim ONLY when the gate itself marked this run boot-fit-satisfied
+    # (CAVEAT_S7 ∈ res.notices is the gate's own signal; we echo, not
+    # re-derive). A blocked verdict that never reached [B] has no such
+    # notice and (correctly) gets no false soak pointer.
+    if CAVEAT_S7 in res.notices:
+        out.append(f"[recommend] §7 caveat: {CAVEAT_S7}")
+        out.append(
+            "[recommend] before relying on this in production run: "
+            "scripts/soak.sh SOAK_MODE=continuous (the only test that "
+            "catches Cliff 2b)."
+        )
+    out.append("[recommend] -------------------------------")
+    return out
+
+
+# ===========================================================================
 # CLI (thin; pull.sh execs this). Renders PullResult to stdout + exit code.
 # ===========================================================================
 _EXIT_OK = 0
@@ -1568,6 +1670,14 @@ def main(argv: list[str]) -> int:
         "[E] stage as 'VRAM_MIB:NAME,VRAM_MIB:NAME' (e.g. "
         "'24576:RTX 3090,24576:RTX 3090'); default = nvidia-smi detection",
     )
+    ap.add_argument(
+        "--recommend", action="store_true",
+        help="v0.8.2 CONTRACT-4: after the gate runs, print an honest "
+        "aggregated recommendation (fits? which quant/variant; the §7 "
+        "boot-fit≠runtime caveat; which gate decided). Presentation only "
+        "— derives entirely from the real gate verdict, changes no "
+        "decision; vLLM-only by construction",
+    )
     args = ap.parse_args(argv)
 
     gpu_topology = None
@@ -1639,6 +1749,14 @@ def main(argv: list[str]) -> int:
             "[pull] Help improve the fit math — submit with: "
             "scripts/pull.sh --submit-last"
         )
+
+    # v0.8.2 CONTRACT-4 — the `recommend` UX. Pure presentation/aggregation
+    # over the SHIPPED verdict (`res`); changes NO decision and NOT the exit
+    # code (the recommendation only RENDERS what the gate already decided).
+    # Emitted last so it summarises the full verdict the user just saw.
+    if args.recommend:
+        for ln in _render_recommendation(res):
+            print(ln)
 
     if res.ok:
         return _EXIT_OK

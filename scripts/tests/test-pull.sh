@@ -1456,6 +1456,157 @@ if _gdir:
           "(centralized: gate-only updates .last too — --submit-last works)")
 _purge_captures()
 
+# ===========================================================================
+# v0.8.2 CONTRACT-4 — the `recommend` UX (STEP V5).
+#
+# RED-LINE / outcome-not-addition: the recommendation MUST reflect the REAL
+# shipped verdict and CHANGE WITH IT. We drive THREE genuinely-different
+# real `run_pull` outcomes through `_render_recommendation` and assert the
+# rendered block differs and matches the underlying `res` each time:
+#   (1) FITS + emitted   — a curated Path-A proceed (r.ok, r.emitted)
+#   (2) confirm→proceed  — an estimated-lower-bound non-pass (not r.ok)
+#   (3) hard-block       — a C0 no-arch-row terminal (not r.ok, no [B])
+# A static/templated summary that did not consume the real verdict would
+# render identically for all three (or carry a §7 caveat on the blocked
+# leg that never reached [B]); that is the explicit FAIL the brief names.
+# Pure presentation: the SAME `res` objects the frozen gate produced are
+# fed in; no decision field is read, mutated, or re-derived.
+# ===========================================================================
+print("\n--- v0.8.2 CONTRACT-4: recommend UX tracks the REAL verdict ---")
+
+# (1) FITS + emitted — curated Path-A vllm/dual + --yes (the g2 shape).
+_rec_fit = P.run_pull(CURATED_SLUG, "vllm/dual", path="A",
+                       out="/tmp/_v5_rec.yml", hardware_sm=SM_86,
+                       fetcher=NoNet(), profiles=profiles,
+                       statvfs=BIG_DISK, yes=True)
+if os.path.exists("/tmp/_v5_rec.yml"):
+    os.unlink("/tmp/_v5_rec.yml")
+_blk_fit = "\n".join(P._render_recommendation(_rec_fit))
+check(_rec_fit.ok and _rec_fit.emitted,
+      "rec(1): the FITS leg is a REAL ok+emitted curated verdict "
+      f"(ok={_rec_fit.ok}, emitted={_rec_fit.emitted})")
+check("verdict: FITS" in _blk_fit
+      and "DOES NOT FIT" not in _blk_fit
+      and "a ready compose was emitted" in _blk_fit
+      and f"stratum={_rec_fit.stratum.name}" in _blk_fit,
+      "rec(1): FITS+emitted -> 'FITS' + the emitted-compose line + the "
+      "REAL deciding stratum (tracks res.ok/res.emitted/res.stratum)")
+
+# (2a) confirm→proceed, NOT satisfied — estimated-lower-bound non-pass
+# (the g4 shape: Llama + --trust-remote-code, NO --yes -> [C1]
+# confirm→proceed:needs --yes). This is `not ok` and — per the shipped
+# gate — the §7 caveat is appended ONLY on a download-eligible/accepted
+# verdict, NOT on a not-yet-satisfied confirm→proceed; so this leg carries
+# NO CAVEAT_S7 (verified against the live shipped run, not assumed). The
+# recommendation MUST therefore omit the soak pointer here too.
+_s_cp = "fixtures/v5-llama-cp"
+_cp_kw = dict(slug=_s_cp, profile_like="vllm/minimal", path="B",
+              hardware_sm=SM_86,
+              fetcher=ff_derived(_s_cp, dense_cfg("LlamaForCausalLM"),
+                                 weight_gb=8.0),
+              profiles=profiles, statvfs=BIG_DISK, trust_remote_code=True)
+_rec_cp = P.run_pull(**_cp_kw)
+_blk_cp = "\n".join(P._render_recommendation(_rec_cp))
+check(not _rec_cp.ok and _rec_cp.stratum is P.Stratum.DECIDED
+      and _rec_cp.confidence == "estimated-lower-bound"
+      and _rec_cp.abort_reason
+      and _rec_cp.abort_reason.startswith("confirm→proceed"),
+      "rec(2a): the confirm→proceed leg is a REAL estimated-lower-bound "
+      f"non-pass (ok={_rec_cp.ok}, reason={_rec_cp.abort_reason!r})")
+check("DOES NOT FIT / BLOCKED" in _blk_cp
+      and _rec_cp.abort_reason in _blk_cp
+      and "--submit-last" in _blk_cp
+      and f"stratum={_rec_cp.stratum.name}" in _blk_cp,
+      "rec(2a): confirm→proceed (not ok) -> the BLOCKED branch carries the "
+      "REAL abort_reason + the failure on-ramp pointer + the REAL stratum")
+check(P.CAVEAT_S7 not in _rec_cp.notices
+      and "SOAK_MODE=continuous" not in _blk_cp,
+      "rec(2a): a not-yet-satisfied confirm→proceed carries NO §7 caveat "
+      "(the shipped gate appends it only on an accepted verdict) -> the "
+      "recommendation correctly omits the soak pointer (tracks the REAL "
+      "res.notices, NOT a static template)")
+
+# (2b) the SAME model + --yes -> a download-eligible estimated-lower-bound
+# verdict (r.ok, Path B so NOT emitted). The shipped gate DOES append the
+# §7 caveat here; the recommendation MUST carry it verbatim AND honestly
+# state "no compose emitted" (Path B). This proves the §7-caveat + the
+# no-fabricated-artifact behavior both track the REAL res.
+_rec_cy = P.run_pull(**_cp_kw, yes=True)
+_blk_cy = "\n".join(P._render_recommendation(_rec_cy))
+check(_rec_cy.ok and not _rec_cy.emitted
+      and _rec_cy.confidence == "estimated-lower-bound"
+      and P.CAVEAT_S7 in _rec_cy.notices,
+      "rec(2b): --yes -> a REAL download-eligible estimated-lower-bound "
+      f"verdict carrying CAVEAT_S7 (ok={_rec_cy.ok}, "
+      f"emitted={_rec_cy.emitted})")
+check("verdict: FITS" in _blk_cy
+      and "ESTIMATED LOWER BOUND" in _blk_cy
+      and "no compose was emitted this run" in _blk_cy
+      and P.CAVEAT_S7 in _blk_cy
+      and "SOAK_MODE=continuous" in _blk_cy,
+      "rec(2b): FITS(estimated-lower-bound, Path B) -> floor stated, NO "
+      "fabricated compose artifact, §7 caveat + soak pointer carried "
+      "verbatim BECAUSE the real res carries CAVEAT_S7 (echoed from "
+      "res.notices, not re-derived)")
+
+# (3) hard-block — C0 no-arch-row (the gate-C0 shape; never reaches [B]).
+_s_hb = "fixtures/v5-exotic"
+_rec_hb = P.run_pull(_s_hb, "vllm/minimal", path="B", hardware_sm=SM_86,
+                     fetcher=ff_derived(_s_hb,
+                                        dense_cfg("V5ExoticForCausalLM")),
+                     profiles=profiles, statvfs=BIG_DISK)
+_blk_hb = "\n".join(P._render_recommendation(_rec_hb))
+check(not _rec_hb.ok
+      and _rec_hb.abort_reason == "engine-support-unknown/no-arch-row"
+      and _rec_hb.stratum is P.Stratum.C0,
+      "rec(3): the hard-block leg is a REAL C0 no-arch-row terminal "
+      f"(reason={_rec_hb.abort_reason!r}, stratum={_rec_hb.stratum.name})")
+check("DOES NOT FIT / BLOCKED" in _blk_hb
+      and "engine-support-unknown/no-arch-row" in _blk_hb
+      and f"stratum={_rec_hb.stratum.name}" in _blk_hb,
+      "rec(3): hard-block -> the REAL abort_reason + the REAL deciding "
+      "stratum are rendered (tracks res.abort_reason/res.stratum)")
+# This leg NEVER reached [B], so the gate produced NO §7 caveat — the
+# recommendation MUST NOT fabricate a soak pointer (the static-template
+# FAIL the brief calls out: a templated block would carry it anyway).
+check(P.CAVEAT_S7 not in _rec_hb.notices
+      and "SOAK_MODE=continuous" not in _blk_hb
+      and "§7 caveat" not in _blk_hb,
+      "rec(3): a pre-[B] hard-block carries NO §7 caveat -> the "
+      "recommendation correctly omits the soak pointer (tracks the REAL "
+      "res.notices; a static template would falsely include it)")
+
+# Outcome-not-addition: the rendered blocks are PAIRWISE DIFFERENT (a
+# static/templated summary would be identical) AND each matches its own
+# real res — the recommendation provably TRACKS the verdict, not merely
+# "exists". Four genuinely-different real outcomes (fit+emitted /
+# confirm→proceed-blocked / estimated-lower-bound-fit / hard-block).
+_blocks = (_blk_fit, _blk_cp, _blk_cy, _blk_hb)
+check(len(set(_blocks)) == len(_blocks),
+      "rec: the four recommendation blocks are pairwise DIFFERENT "
+      "(it tracks the real verdict; NOT a static template)")
+
+# Leak-clean (rig-independent assertion convention — assert the absolute
+# repo root is absent, NOT a /opt|/home substring allowlist): no recommend
+# block leaks an absolute filesystem path.
+for _name, _blk in (("fit", _blk_fit), ("cp", _blk_cp),
+                    ("cy", _blk_cy), ("hb", _blk_hb)):
+    check(str(root) not in _blk,
+          f"rec({_name}): the recommendation block contains NO absolute "
+          f"repo path (rig-independent leak assertion: str(root) absent)")
+
+# vLLM-only by construction + honest-confidence echo (CONTRACT-4 invariants,
+# read straight off the real res — not re-asserted policy).
+check("engine=vLLM" in _blk_fit and "engine=vLLM" in _blk_hb,
+      "rec: vLLM-only is stated on every leg (the gate is vLLM-only by "
+      "construction; recommend only echoes it)")
+check(_rec_cy.confidence == "estimated-lower-bound"
+      and "ESTIMATED LOWER BOUND" in _blk_cy,
+      "rec: an estimated-lower-bound FIT states the floor honestly "
+      "(echoes res.confidence; never hides the lower-bound)")
+
+_purge_captures()
+
 # Purge ALL mocked-[E] capture residue (leave NO repo artifact).
 _purge_captures()
 

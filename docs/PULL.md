@@ -8,6 +8,18 @@ anything, and is honest about how much it trusts the answer.
 > **v0.8.0 headline:** *"Evaluate any safetensors HF repo; pull only
 > vLLM-loadable supported ones, and only when the gates pass (or an explicit
 > override is accepted)."*
+>
+> **v0.8.2 adds** (additive only — no v0.8.0 decision logic changed): a
+> failure on-ramp (a redacted-diagnostics submit path when a pull fails),
+> arch-registry expansion (materially more safetensors models reach
+> `engine-supported`), an optional hardware-detect slice for non-NVIDIA
+> enumeration, and the `--recommend` UX (an honest aggregated
+> recommendation over the same verdict). **GGUF is deferred** — it is not
+> a v0.8.2 item: cross-engine generation (GGUF / llama.cpp serving via
+> `pull`) is a separate **§9 cross-engine design-unlock proposal**, not
+> this release. Pointing `pull` at a GGUF-only repo is a known scope
+> boundary, not a stack failure (see [the readiness
+> ledger](#release-readiness-ledger--honest-deferrals) below).
 
 This is the **user front door**. For the contributor/maintainer internals
 of the same pipeline (gate strata, classifier, trust pipeline) start at
@@ -226,13 +238,152 @@ depth behind a passing run:
 
 ---
 
-## v0.8.1 — not yet (honest deferrals)
+## `--recommend` — the honest one-line answer
 
-This release evaluates **safetensors only**. Deferred to a later release:
+Add `--recommend` to any `pull` invocation and, after the gate runs, you
+get an aggregated plain-language recommendation: does it fit, on which
+profile/variant, at what confidence, and **which gate decided** — plus the
+boot-fit≠runtime caveat verbatim when the verdict reached the fit math.
 
-- **GGUF** repos (footer-first metadata derivation, multi-quant auto-pick).
-- **`.bin`** / non-safetensors weight layouts.
-- A whichllm-based hardware-detect slice and the full `recommend` UX.
+```bash
+scripts/pull.sh <org/Model> --profile-like vllm/minimal --dry-run --recommend
+```
 
-If you point `pull` at a GGUF-only or `.bin`-only repo today, that is a
-known gap, not a stack failure.
+It is **presentation only**: every line is read straight off the same
+verdict the gate already produced — `--recommend` never changes the
+decision, the exit code, or what gets downloaded/emitted. It is honest by
+construction:
+
+- It echoes the real confidence tier; an `estimated-lower-bound` fit is
+  stated as a floor, never dressed up as a guarantee.
+- It is **vLLM-only** (the gate is vLLM-only; `--recommend` only echoes
+  that).
+- It **never implies an artifact that was not produced** — the
+  "compose emitted" line appears only when a compose was actually emitted
+  (Path A); a Path B / `--dry-run` recommendation says so explicitly.
+- A `FITS` verdict carries the §7 caveat and the
+  `scripts/soak.sh SOAK_MODE=continuous` pointer; a pre-fit-math
+  hard-block does **not** (it never reached the fit math, so it makes no
+  soak claim).
+
+When the verdict is *blocked*, `--recommend` points you at the failure
+on-ramp below.
+
+---
+
+## Report a failed pull
+
+When a `pull` fails (a gate hard-block, or a `fits-clean` that then
+fails to boot), the run leaves a **redacted diagnostics bundle** on disk
+and prints exactly where it is and the one command to send it back:
+
+```
+[pull] Diagnostics captured (redacted, no paths/tokens): .pull-captures/<slug>/<ts>
+[pull] Help improve the fit math — submit with: scripts/pull.sh --submit-last
+```
+
+This is the success-path's mirror image: `--recommend` tells you what to
+run; this tells you "that failed — help us fix the fit math." It is
+entirely opt-in and the `pull` run itself does **no** network — capture is
+a local file write only.
+
+### The on-ramp, step by step
+
+1. **Capture is automatic and redacted.** On any failure terminal `pull`
+   writes a bundle under `.pull-captures/<slug>/<ts>` and records it as
+   the most-recent capture. The bundle is already scrubbed of paths and
+   tokens — you never paste terminal scrollback (your console output is
+   *not* a safe source; the artifact is).
+
+2. **You submit it deliberately, in a separate command.** Submission is a
+   distinct, explicit, consented step — never automatic, never a phone
+   home:
+
+   ```bash
+   # Submit the most-recent capture:
+   scripts/pull.sh --submit-last
+
+   # Or submit a specific bundle by directory:
+   scripts/pull.sh --submit .pull-captures/<slug>/<ts>
+   ```
+
+   `--submit-last` and `--submit <dir>` need **neither a slug nor
+   `--profile-like`** — they are a different verb from a gate run.
+
+3. **You see the exact payload, then consent.** Before anything leaves
+   your machine the command prints the resolved bundle identity and the
+   **exact already-redacted payload that would be sent**, then asks:
+
+   ```
+   [submit] resolved bundle: <abs dir>
+   [submit] identity: slug='<org/Model>' utc_ts='<ts>' outcome='hard-block' schema=2 ...
+   [submit] this is the EXACT already-redacted payload that will be sent (no terminal scrollback, no paths/tokens):
+   ------------------------------------------------------------------------
+   ... the redacted report ...
+   ------------------------------------------------------------------------
+   [submit] §6.1 class=<class> should_file=<bool>
+   [submit] submit this redacted report? [y/N]
+   ```
+
+   Anything other than a leading `y`/`Y` (including just Enter, or EOF in
+   a non-interactive shell) is a decline:
+
+   ```
+   [submit] declined — nothing sent (no network performed).
+   ```
+
+   Network happens **only** after an explicit `y`.
+
+4. **With `gh` (the GitHub CLI) installed and authenticated**, a
+   consented submit reuses the deduped contribution path: equivalent
+   reports are coalesced (a duplicate adds a `+1` rather than opening a
+   new issue), and a correct-refusal class is spooled to the maintainer
+   triage queue instead of opening a public issue. You'll see a line like
+   `[submit] F5 action=... dedup_hash=... issue=...` (and a
+   `[submit] spool: ...` line when it was queued, not filed).
+
+5. **Without `gh`**, the same consented submit degrades cleanly: for a
+   solicited (actionable) class it prints a prefilled GitHub issue URL you
+   can paste into a browser; for a correct-refusal / unactionable class it
+   prints the **local** triage-spool path and a "captured for maintainer
+   triage; not a public issue" line — and **no** public-issue URL. Either
+   way, the only thing you are ever asked to share is the already-redacted
+   artifact, never a filesystem path or terminal output.
+
+If `--submit-last` finds no recent capture it tells you plainly and points
+at the explicit-directory form:
+
+```
+[submit] no recent capture; use `scripts/pull.sh --submit <dir>`
+```
+
+---
+
+## Release readiness ledger — honest deferrals
+
+`pull` evaluates and serves **safetensors via vLLM only**. This is a
+deliberate scope boundary, stated up front so a §9 reader is not
+surprised:
+
+| Item | Status in v0.8.2 |
+|---|---|
+| Safetensors evaluate + (Path A) emit + boot | shipped (v0.8.0) |
+| Failure on-ramp (capture + consented `--submit*`) | shipped (v0.8.2) |
+| Arch-registry expansion (more models reach `engine-supported`) | shipped (v0.8.2) |
+| Optional non-NVIDIA hardware-detect slice | shipped (v0.8.2, optional) |
+| `--recommend` UX | shipped (v0.8.2) |
+| **GGUF** repos (evaluate **and** serve) | **deferred — see below** |
+| **`.bin`** / non-safetensors weight layouts | deferred |
+| Cross-engine generation (llama.cpp serving via `pull`) | deferred — see below |
+
+**GGUF is deferred to a §9 cross-engine design-unlock proposal**, not a
+later patch release of this line. The reason is structural, not a backlog
+slip: `pull` emits and serves vLLM by design, so a GGUF path would be
+either a thin evaluate-only calculator (no launcher) or full llama.cpp
+serving — and **cross-engine generation is §9 "deferred indefinitely"**,
+i.e. it requires its own design-unlock and review round before any
+implementation. If GGUF matters to you, the next artifact is that
+design-unlock proposal, not a GGUF feature in this line.
+
+If you point `pull` at a GGUF-only or `.bin`-only repo today, that is this
+documented scope boundary, **not** a stack failure.
