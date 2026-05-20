@@ -312,8 +312,10 @@ if command -v nvidia-smi >/dev/null 2>&1; then
              --format=csv,noheader
 fi
 
-# MTP / spec-decode stats
-if command -v docker >/dev/null 2>&1 && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+# MTP / spec-decode stats — only when running against a Docker container we own.
+# Skipped silently in endpoint-first mode (CONTAINER=none).
+if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 \
+   && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
   echo ""
   echo "=== Last 3 SpecDecoding metrics ==="
   docker logs "${CONTAINER}" 2>&1 | grep "SpecDecoding metrics" | tail -3 || true

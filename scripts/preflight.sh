@@ -786,9 +786,19 @@ preflight_autodetect_endpoint() {
   fi
 
   # Scan for one of our containers + its `0.0.0.0:<host>->8000/tcp` mapping.
+  # Recognises the canonical club-3090 prefixes (vllm-qwen36-27b,
+  # llama-cpp-qwen36-27b, vllm-gemma-4-31b) plus the sglang experimental tree.
+  # Users running endpoint-first via `--url` to rebench-full.sh bypass this
+  # entirely (PREFLIGHT_NO_AUTODETECT=1 set there).
+  #
+  # The `|| true` is load-bearing: grep -E returns 1 when no container
+  # matches, which under `set -euo pipefail` in the caller silently aborts
+  # rebench-full.sh before it reaches its own "endpoint not responding"
+  # error path. Empty `found_line` is what we want for the no-container case.
   local found_line
   found_line=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
-    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-gemma-4-31b)' | head -1)
+    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-gemma-4-31b|sglang-qwen36-27b)' \
+    | head -1 || true)
   if [[ -z "$found_line" ]]; then
     return 0   # nothing running; defaults stand
   fi
@@ -797,9 +807,9 @@ preflight_autodetect_endpoint() {
   detected_name="${found_line%%|*}"
   # Extract host port from "0.0.0.0:8011->8000/tcp", "[::]:8011->8000/tcp",
   # or "127.0.0.1:8011->8000/tcp" forms (BIND_HOST=127.0.0.1 produces the last).
-  # llama-cpp container maps to internal 8080, vllm to 8000 — match both.
+  # llama-cpp container maps to internal 8080, vllm to 8000, sglang to 30000.
   detected_port=$(echo "${found_line#*|}" \
-    | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080)/tcp' \
+    | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080|30000)/tcp' \
     | head -1 \
     | sed -E 's|^[^:]+:([0-9]+)->.*|\1|')
 

@@ -131,6 +131,17 @@ So pick by workload: INT8 PTH if you want max single-stream TPS and don't need m
 
 If your numbers on the same compose look different from ours by >15%, the most likely sources of the gap are: power cap (370W vs 290W = ~10-15%), vLLM nightly (pre-#41434 was ~15% slower on Qwen3-Next due to GPU↔CPU syncs in attention), Genesis patches loaded vs not (~10-15% via P67 + PN12 + PN25 on Qwen3-Next), MTP `n` value, or the prompt shape. Run `bash scripts/rebench-full.sh` to capture the canonical 5-phase numbers and we can compare apples-to-apples — see the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template to share them back.
 
+If you're running an OpenAI-compatible endpoint that **isn't** one of our pre-baked Docker composes — `llama-swap`, `ramalama`, a host-build `llama-server`, `ik_llama.cpp`, raw vLLM, etc. — pass it explicitly:
+
+```bash
+bash scripts/rebench-full.sh \
+  --url http://HOST:PORT \
+  --model 'served-model-name' \
+  --engine vllm|llama-cpp|sglang|other
+```
+
+The chained scripts run in host-only mode (no `docker logs` / `docker inspect` scrapes) when `--url` is set, so the entire suite works against any OpenAI-API endpoint.
+
 ---
 
 ## Community
