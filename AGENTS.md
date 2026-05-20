@@ -43,6 +43,19 @@ If you're considering enabling a new Genesis env var by default in a shipped com
 2. If yes (behavioral): run a streaming repro with prompt > the patch's threshold + a casual user message ("hi") + `tool_choice: auto`. If `finish_reason=stop` with empty content, don't ship default-on.
 3. Pure bugfixes (no behavioral override) are fine to ship default-on once they pass `verify-full.sh`.
 
+### Engine image pinning
+Pin engine images only when we vendor patches into the running container. Otherwise track upstream's rolling tag and accept that the compose YAML may need maintenance when upstream changes flags.
+
+**Why:** patches hook into specific upstream code paths — a silent upstream change drifts those hooks and breaks the patched container in production. Pinning ensures the bytes we tested against are the bytes users get. Unpatched engines have no such hook, so upstream changes are upstream's problem to fix (or the YAML's, which is cheap to maintain).
+
+| Engine | Patches we vendor | Tag policy |
+|---|---|---|
+| `llama.cpp` | none | rolling `ghcr.io/ggml-org/llama.cpp:server-cuda` |
+| `vLLM` | Genesis sidecars, Marlin pad, INT8 PTH, DFlash overlays | pinned to a specific nightly digest |
+| `SGLang` | per-compose decision (pin if we vendor a patch, rolling otherwise) | per-compose |
+
+When adding the first vendored patch to a previously-rolling engine: pin in the same commit. When dropping the last patch: unpin in the same commit. Bump pins via PR with a `verify-full.sh` + `bench.sh` re-run, never silently.
+
 ### CHANGELOG
 - `CHANGELOG.md` (cross-cutting) and `models/<name>/CHANGELOG.md` (per-model) are **append-only history**. Don't rewrite past entries even when a finding is superseded — add a new entry. The historical trail is load-bearing for "why did we do X."
 - Old entries can reference files / patches that no longer exist. That's fine — leave them.
