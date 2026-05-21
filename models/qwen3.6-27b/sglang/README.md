@@ -1,10 +1,20 @@
-# Qwen3.6-27B on SGLang — experimental, dual 3090 validated to boot
+# Qwen3.6-27B on SGLang — PARKED, kept for archival only
 
-SGLang on this model unlocks **EAGLE-3 external-drafter spec-decode**, which neither vLLM (blocked by DeltaNet KV rollback) nor llama.cpp (no EAGLE-3 support) provides for Qwen3-Next family. The validation path is dual 3090 with two vendored patches.
-
-**Status (2026-05-20):** boot + small-completion validated on 2× RTX 3090 (TP=2). Performance numbers (TPS, accept rate, quality 8-pack) **not yet measured** — pending prolonged testing session. Single 3090 EAGLE-3 still blocked by SGLang OffloaderV1 + Qwen3-Next tied-weights bug.
+> **⚠ PARKED 2026-05-21 — not a recommended path on this stack.** SGLang + EAGLE-3 on Qwen3-Next was investigated as a way to unlock external-drafter spec-decode (which neither vLLM nor mainline llama.cpp provides for this model family). The investigation reached boot + coherent output on dual 3090 with two vendored patches, but **MTP wins on every axis** (TPS, complexity, hardware coverage). The compose files + patches stay in the tree for archival reference; production paths remain `vllm/dual/turbo.yml` (TP=2 + MTP + Genesis TQ3) and `llamacpp/mtp.yml` (single-card + MTP).
 
 For engine-level pros/cons, KV cache options, Ampere quirks, see [`../../../docs/engines/SGLANG.md`](../../../docs/engines/SGLANG.md).
+
+## Why parked
+
+Three independent findings, each sufficient on its own:
+
+1. **EAGLE-3 is sub-MTP for Qwen3-Next, even on the architecture where it works.** Ex0bit (the drafter author) publishes their own numbers on the [PRISM-PRO-DQ model card](https://huggingface.co/Ex0bit/Qwen3.6-27B-PRISM-PRO-DQ): native MTP = **121 TPS (1.51×)** vs EAGLE-3 chain = **111 TPS (1.39×)** on Blackwell. Qwen3-Next has a strong built-in MTP head; routing through an external drafter is structurally slower for this model family.
+2. **CUTE_DSL capture-hang on Ampere.** SGLang v0.5.12's CUTE_DSL `get_version()` calls `pkgutil.walk_packages` during cuda-graph capture. The walk hits `cutlass.cute.experimental` (which raises `NotImplementedError` on CUDA toolkit < 13.1) and deadlocks against the locked capture stream. Workaround `--disable-cuda-graph` boots but caps decode at ~15-18 TPS (vs vLLM-MTP-dual ~85 TPS). Three patch iterations (pre-import, `sys.modules` stub at engine init, per-process `sys.modules` stub at `sglang/__init__.py`) all failed — the walk re-fires during capture regardless of cache state.
+3. **vLLM-MTP-dual already beats SGLang+EAGLE3+cuda-graph-off on the same rig.** Even if we ignored point 2 and accepted the cuda-graph penalty, `vllm/dual/turbo.yml` (TP=2 + MTP + Genesis TQ3) gives ~85 TPS on this dual-3090 setup. This SGLang path tops out around 15-18 TPS with the workaround.
+
+The artifacts in this tree document the SGLang state for the next person who comes to this question. If/when upstream lands a CUTE_DSL Ampere fallback OR an SGLang-specific MTP path materializes for Qwen3-Next, the [Re-test triggers](#re-test-triggers) section below tells you what to verify.
+
+**One-line summary:** SGLang AutoRound on Qwen3-Next is a working *engineering* path but an unattractive *production* path. MTP (vLLM or llama.cpp) is strictly better for this model.
 
 ---
 
@@ -12,9 +22,9 @@ For engine-level pros/cons, KV cache options, Ampere quirks, see [`../../../docs
 
 | Variant | Path | Status |
 |---|---|---|
-| Dual 3090 (TP=2) EAGLE-3 + AutoRound INT4 | [`compose/dual/eagle3-experimental.yml`](compose/dual/eagle3-experimental.yml) | ✅ Boots, serves coherent output. TPS/accept-rate pending. |
-| Single 3090 EAGLE-3 + AutoRound INT4 | [`compose/single/eagle3-experimental.yml`](compose/single/eagle3-experimental.yml) | ❌ Blocked on SGLang OffloaderV1 tied-weights bug; kept as reference |
-| Other quants (FenomAI AWQ-INT4, INT8 PTH) | TARGET_DIR override in dual YAML | ⚠️ Untested but YAML-ready |
+| Dual 3090 (TP=2) EAGLE-3 + AutoRound INT4 | [`compose/dual/eagle3-experimental.yml`](compose/dual/eagle3-experimental.yml) | ⚠ PARKED — boots + coherent output validated, but ~15-18 TPS with `--disable-cuda-graph` workaround vs ~85 TPS on `vllm/dual/turbo.yml` |
+| Single 3090 EAGLE-3 + AutoRound INT4 | [`compose/single/eagle3-experimental.yml`](compose/single/eagle3-experimental.yml) | ❌ PARKED — blocked on SGLang OffloaderV1 tied-weights bug; never reached first forward pass |
+| Other quants (FenomAI AWQ-INT4, INT8 PTH) | TARGET_DIR override in dual YAML | ⚠ PARKED — untested, would inherit the same EAGLE-3 < MTP structural disadvantage |
 
 ---
 
@@ -153,14 +163,17 @@ TARGET_DIR=qwen3.6-27b-int8 QUANTIZATION=compressed-tensors
 
 ---
 
-## Watch list
+## Re-test triggers (post-parking watch list)
+
+The path is parked because EAGLE-3 < MTP for Qwen3-Next (point 1 above) is a structural finding, not a fixable bug. The other two points are addressable upstream. Triggers to revisit:
 
 | Trigger | What it unblocks |
 |---|---|
-| [`sgl-project/sglang#20370`](https://github.com/sgl-project/sglang/pulls/20370) merges OR upstream lands an equivalent | We can drop `patch_sglang_autoround_fused_bf16.py` and follow rolling upstream tags |
-| SGLang `OffloaderV1` handles tied weights | Single 3090 EAGLE-3 becomes viable |
-| SGLang adds asymmetric K/V or sub-FP8 INT KV | Closes the KV-density gap vs vLLM TurboQuant; potentially ~262K context at TP=2 |
-| TPS/accept-rate bench completes | We can compare against `vllm/dual/dflash.yml` (vLLM-DFlash) and `vllm/dual/turbo.yml` (vLLM-MTP) directly |
+| **SGLang ships an MTP path for Qwen3-Next** (i.e. uses the model's built-in head, like vLLM Genesis P67 does) | The structural reason for parking disappears — SGLang then competes with vLLM on engine merits, not spec-decode shape |
+| **SGLang upstream lands a CUTE_DSL Ampere fallback** (gates the `cutlass.cute.experimental` walk on `SM >= 10.0`, or registers a stub before capture, or refactors `get_version()` not to walk during capture) | cuda-graph re-enables, recovers the ~80% decode TPS we lose to `--disable-cuda-graph` — moves the comparison from "vLLM 85 TPS vs SGLang 15-18 TPS" to something closer |
+| **SGLang `OffloaderV1` handles tied weights** | Single 3090 EAGLE-3 becomes a viable VRAM-tight target — but still pinned by point 1 above |
+| **SGLang adds asymmetric K/V or sub-FP8 INT KV** | Closes the KV-density gap vs vLLM TurboQuant; potentially ~262K context at TP=2 — independently useful regardless of the EAGLE-3 question |
+| [`sgl-project/sglang#20370`](https://github.com/sgl-project/sglang/pulls/20370) merges OR upstream lands an equivalent | We can drop `patch_sglang_autoround_fused_bf16.py` and follow rolling upstream tags (this fix is broadly useful — anyone running SGLang AutoRound on Qwen3-Next hits the same crash) |
 
 ---
 

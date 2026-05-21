@@ -1,4 +1,16 @@
 # ===========================================================================
+# ⚠ PARKED 2026-05-21 — KEPT FOR ARCHIVAL ONLY, NOT A PRODUCTION PATH
+#
+# This compose boots and serves coherent output on dual 3090, but it sits at
+# ~15-18 TPS (with the mandatory --disable-cuda-graph workaround for the CUTE_DSL
+# capture-hang on Ampere). Production paths for Qwen3-Next are:
+#   - vllm/dual/turbo.yml (TP=2 + MTP + Genesis TQ3 → ~85 TPS)
+#   - llamacpp/mtp.yml (single 3090 + MTP → ~50 TPS)
+# Both use the model's built-in MTP head, which (per Ex0bit's own benches)
+# beats EAGLE-3 chain even on Blackwell where EAGLE-3 actually works.
+#
+# See README.md in this subtree for the full parking rationale + re-test triggers.
+# ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 by default; INT8/AWQ via TARGET_DIR override)
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink → custom all-reduce disabled)
@@ -7,15 +19,15 @@
 #   Vision:    no (mmproj path untested with EAGLE3; disabled for first boot)
 #   Max ctx:   32768 (4× the single-card variant — TP=2 doubles KV budget)
 #   Genesis:   N/A — Genesis is vLLM-specific
-#   Status:    ⚠️ EXPERIMENTAL — gated on vendor fix for the Marlin alignment crash
-#              (currently blocks AutoRound INT4 single + dual; see /tmp/sglang-eagle3-failure.log).
-#              YAML is ready; live boot test runs once the fix lands.
-#   Caveats:   Same vendor patches as the single-card sibling (EAGLE-3 hook +
-#              AutoRound fused-BF16 mapper). Pinned to v0.5.12 per
-#              engine-image-pinning policy (AGENTS.md).
-#   Best for:  TP=2 EAGLE-3 spec-decode on quantized Qwen3-Next; sibling of
-#              vllm/dual/int8.yml for the SGLang track. Designed to also serve
-#              INT8 / W8A16 targets by overriding TARGET_DIR (see To run below).
+#   Status:    ⚠ PARKED 2026-05-21 — boots + coherent output validated, but sub-MTP
+#              throughput on consumer Ampere makes it a non-shipping path. The
+#              compose stays for archival reference; production path is
+#              vllm/dual/turbo.yml. See README.md "Why parked" for the 3 reasons.
+#   Caveats:   Two vendor patches required (EAGLE-3 hook + AutoRound fused-BF16
+#              mapper). cuda-graph MUST be disabled on Ampere (CUTE_DSL hang).
+#              Pinned to v0.5.12 per engine-image-pinning policy (AGENTS.md).
+#   Best for:  Archival / future re-test when SGLang ships MTP for Qwen3-Next OR
+#              upstream lands a CUTE_DSL Ampere fallback.
 # ---------------------------------------------------------------------------
 # Why this exists (separate from single-card eagle3-experimental.yml):
 #

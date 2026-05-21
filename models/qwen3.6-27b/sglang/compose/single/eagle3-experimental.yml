@@ -1,4 +1,16 @@
 # ===========================================================================
+# ⚠ PARKED 2026-05-21 — KEPT FOR ARCHIVAL ONLY, NEVER REACHED FIRST FORWARD PASS
+#
+# This single-card compose progresses through every boot phase but crashes at
+# the first forward pass with SGLang OffloaderV1's tied-weights bug on
+# Qwen3-Next (linear_attn.attn.dt_bias / linear_attn.dt_bias are tied params).
+# The dual-card sibling sidesteps this by avoiding CPU offload entirely, but
+# the dual-card path is itself parked (see ../dual/eagle3-experimental.yml).
+#
+# Production single-3090 path for Qwen3.6-27B is llamacpp/mtp.yml (~50 TPS,
+# 131K ctx, vision-capable). EAGLE-3 wouldn't beat MTP even if the OffloaderV1
+# bug were fixed — see ../../README.md "Why parked" for the structural reason.
+# ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 — lm_head + mtp.fc + vision BF16)
 #   Topology:  Single 3090 (no TP, all on device 0)
@@ -7,14 +19,17 @@
 #   Vision:    no (mmproj path untested with EAGLE3; disabled for first boot)
 #   Max ctx:   8192 (initial conservative; push up after boot validates)
 #   Genesis:   N/A — Genesis is vLLM-specific
-#   Status:    ⚠️ EXPERIMENTAL — single-card EAGLE3 path unvalidated on Ampere
+#   Status:    ⚠ PARKED — never reached first forward pass (SGLang OffloaderV1
+#              tied-weights bug on Qwen3-Next DeltaNet). Kept as reference for
+#              the offloader path; dual-card sibling is the boot-validated
+#              variant (also parked, see ../dual/eagle3-experimental.yml).
 #   Caveats:   Vendored startup patches wire EAGLE-3 capture into
 #              Qwen3_5ForConditionalGeneration and keep AutoRound's BF16
 #              split-shard overrides intact for fused DeltaNet `in_proj_ba`.
 #              Pinned to v0.5.12 per engine-image-pinning policy (AGENTS.md).
-#              First exploration of the Ex0bit EAGLE3 path on this stack — see #171.
-#   Best for:  Probe whether SGLang's SPEC_V2 scheduler unblocks DeltaNet-family
-#              spec-decode on a quantized target (the gap MTP fills on llama.cpp/vLLM).
+#   Best for:  Archival reference. Future re-test when SGLang OffloaderV1
+#              ships tied-weights support — and ALSO when SGLang ships an
+#              MTP path for Qwen3-Next (the structural reason for parking).
 # ---------------------------------------------------------------------------
 # Single-card SGLang + EAGLE-3 spec-decode for Qwen3.6-27B AutoRound INT4.
 #

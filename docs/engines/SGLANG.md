@@ -1,8 +1,16 @@
-# SGLang — experimental, dual-GPU EAGLE-3 path validated
+# SGLang — Qwen3-Next EAGLE-3 path PARKED; no shipped variant on this stack
 
-SGLang is a strong alternative to vLLM for high-throughput multi-tenant serving — RadixAttention prefix sharing, structured-output-aware scheduling. As of v0.5.12 it also has the **only working external-drafter spec-decode path for Qwen3-Next family on consumer Ampere** (EAGLE-3 via the Ex0bit `compressed/` drafter), where vLLM is blocked by DeltaNet KV rollback.
+SGLang is a strong alternative to vLLM for high-throughput multi-tenant serving — RadixAttention prefix sharing, structured-output-aware scheduling. We investigated it as a way to unlock **EAGLE-3 external-drafter spec-decode** for Qwen3-Next family (which vLLM doesn't support — blocked by DeltaNet KV rollback). The path reached boot + coherent output on dual 3090 with two vendored patches.
 
-**Status (2026-05-20):** lifted from "currently blocked" to "experimental, dual-GPU EAGLE-3 path validated to boot and serve coherent output." Single-3090 EAGLE-3 still blocked (separate VRAM-tight + SGLang OffloaderV1 bug). Performance numbers (TPS, accept rate, quality 8-pack) **not yet measured** — a prolonged testing session will fill those in.
+**Status (2026-05-21): PARKED.** Not currently a shipped variant on this stack for Qwen3-Next. Three independent findings drove the decision:
+
+1. **EAGLE-3 is sub-MTP for Qwen3-Next, even on Blackwell where it works.** Ex0bit's own published numbers on the [PRISM-PRO-DQ model card](https://huggingface.co/Ex0bit/Qwen3.6-27B-PRISM-PRO-DQ) report native MTP = **121 TPS (1.51×)** vs EAGLE-3 chain = **111 TPS (1.39×)**. The model family has a strong built-in MTP head; routing through an external drafter is structurally slower.
+2. **CUTE_DSL capture-hang on Ampere.** SGLang v0.5.12's CUTE_DSL `get_version()` does `pkgutil.walk_packages` during cuda-graph capture, hits `cutlass.cute.experimental` which raises `NotImplementedError` on CUDA toolkit < 13.1, and deadlocks against the locked capture stream. Workaround `--disable-cuda-graph` caps decode at ~15-18 TPS. Three patch iterations (pre-import; sys.modules stub at engine init; per-process sys.modules stub at `sglang/__init__.py`) all failed — the walk re-fires during capture regardless of cache state.
+3. **vLLM-MTP-dual already beats this path on the same rig.** `vllm/dual/turbo.yml` (TP=2 + MTP + Genesis TQ3) delivers ~85 TPS on this dual-3090 setup vs ~15-18 TPS for SGLang+EAGLE3 with the cuda-graph workaround.
+
+The artifacts under [`models/qwen3.6-27b/sglang/`](../../models/qwen3.6-27b/sglang/) stay in the tree for archival reference; the README in that subtree has the full re-test triggers.
+
+**Verdict:** for Qwen3-Next on consumer Ampere, use vLLM MTP (`vllm/dual/turbo.yml`) or llama.cpp MTP (`llamacpp/mtp.yml`). SGLang may still be worth revisiting for OTHER model families where its RadixAttention or structured-output features are the headline — that's a per-model decision.
 
 ---
 
