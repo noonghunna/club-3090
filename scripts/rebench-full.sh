@@ -51,6 +51,11 @@
 #                       canonical stability matrix when validating new
 #                       compose paths.)
 #   SOAK_TURNS          passed through to soak-test.sh (default: 5)
+#   AIDER_TIMEOUT_PER_CASE
+#                       Per-case timeout (seconds) for aider-polyglot-30
+#                       (default: 3600 — bumped from benchlocal-cli's
+#                       default to avoid mid-batch kills on slower /
+#                       power-capped / single-card rigs).
 #
 
 set -euo pipefail
@@ -277,9 +282,15 @@ URL="$URL" MODEL="$MODEL" \
     bash "$ROOT_DIR/scripts/soak-test.sh"
 
 # --- step 5: aider-polyglot-30 ----------------------------------------------
+# Default to 3600s per-case for aider on slower/single-card rigs. The 30
+# multi-turn coding exercises can run > 45 min on power-capped or single-card
+# setups; benchlocal-cli will kill mid-batch if its internal default fires.
+# Override via env: AIDER_TIMEOUT_PER_CASE=7200 bash scripts/rebench-full.sh
+AIDER_TIMEOUT_PER_CASE="${AIDER_TIMEOUT_PER_CASE:-3600}"
 URL="$URL" MODEL="$MODEL" \
   run_step aider-polyglot "$OUT_DIR/aider-polyglot.log" \
-    bash "$ROOT_DIR/scripts/quality-test.sh" --pack aider-polyglot-30
+    bash "$ROOT_DIR/scripts/quality-test.sh" --pack aider-polyglot-30 \
+      --timeout-per-case "$AIDER_TIMEOUT_PER_CASE"
 snapshot_quality_json "$OUT_DIR/aider-polyglot.json"
 
 # --- final GPU state snapshot ----------------------------------------------

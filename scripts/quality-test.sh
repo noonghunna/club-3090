@@ -53,18 +53,26 @@ OPTIONS
                    Skips the deterministic packs — useful when iterating on
                    sandbox verifiers without paying the deterministic-pack cost.
 
+OPTIONS (extra)
+  --timeout-per-case N
+                   Pass through to benchlocal-cli as --timeout-per-case N
+                   (seconds). Default: 60. For aider-polyglot-30 on low-power
+                   single-card rigs, bump to 3600+ to avoid mid-batch kills.
+
 ENV VARS
   URL              Endpoint base URL (default: auto-detected via preflight,
                    falls back to http://localhost:8020)
   MODEL            Served model name (default: auto-detected from /v1/models;
                    override only if you have a non-standard served-model-name)
-  TIMEOUT_PER_CASE Per-scenario HTTP timeout in seconds (default: 60)
+  TIMEOUT_PER_CASE Per-scenario HTTP timeout in seconds (default: 60).
+                   --timeout-per-case overrides this when both are set.
 
 EXAMPLES
   bash scripts/quality-test.sh                          # --medium against running compose
   bash scripts/quality-test.sh --quick                  # quicker, 2 packs only
   bash scripts/quality-test.sh --full                   # everything, needs Docker
   bash scripts/quality-test.sh --pack toolcall-15       # just the tool-call pack
+  bash scripts/quality-test.sh --pack aider-polyglot-30 --timeout-per-case 3600
   URL=http://localhost:8030 bash scripts/quality-test.sh # against a different port
 
 INSTALL benchlocal-cli (one-time)
@@ -127,6 +135,14 @@ while [[ $# -gt 0 ]]; do
     --list-packs)
       LIST_PACKS=1
       shift
+      ;;
+    --timeout-per-case)
+      TIMEOUT_PER_CASE="${2:-}"
+      if [[ -z "$TIMEOUT_PER_CASE" ]] || ! [[ "$TIMEOUT_PER_CASE" =~ ^[0-9]+$ ]]; then
+        echo "✗ --timeout-per-case requires a positive integer (seconds)" >&2
+        exit 2
+      fi
+      shift 2
       ;;
     -h|--help)
       usage
