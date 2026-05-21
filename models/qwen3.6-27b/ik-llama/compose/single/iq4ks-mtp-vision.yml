@@ -1,0 +1,140 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (ubergarm MTP-IQ4_KS GGUF) + mmproj-F16
+#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu13-server)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=2, p-min 0.0 (built-in MTP head)
+#   KV:        q4_0 K + q4_0 V
+#   Template:  froggeric v19 (--chat-template-file)
+#   Vision:    YES (mmproj-F16 mounted — multimodal input enabled)
+#   Default ctx: 163840 (160K) — full-res-vision default on ONE 3090, chosen for
+#              HEADROOM: 172K served single images but OOM-crashed under heavy
+#              back-to-back prefill stress (verify-stress); 160K leaves ~0.9 GB
+#              margin. REQUIRES -b 1024 (see below): a full 2048²/4M-pixel image
+#              encodes at ~23.65 GB. mmproj + encode buffers eat the VRAM the
+#              text profile spends on KV, so the vision ceiling (~180K) sits well
+#              below the text profile's 262K. Push higher only if you don't need
+#              prefill headroom — see VRAM RESIZING below.
+#   Status:    🧪 EVAL ONLY — task #402. NOT shipped. Sibling of iq4ks-mtp.yml
+#              with vision added (ampersandru's #152 config also loaded mmproj).
+#   Best for:  Multimodal chat / screenshot-debugging on ik_llama IQ4_KS.
+# ---------------------------------------------------------------------------
+# This is the VISION sibling of iq4ks-mtp.yml. Everything matches that file
+# (config source, justified deviations, froggeric validation) EXCEPT:
+#   + --mmproj + --image-{min,max}-tokens (vision projector mounted)
+#   + default ctx 160K + -b 1024 (vs the text profile's 262K + -b 4096)
+#
+# Why -b 1024 (NOT the text profile's 4096): on this ik_llama build the image-
+# encode graph makes the compute buffer scale hard with logical batch -b — at
+# -b 4096 it's ~4 GB (OOMs even at boot with vision); at -b 1024 it's ~1 GB,
+# which is what lets a full 4M-pixel image encode within 24 GB at 172K.
+# NOTE: -ub (UBATCH) is cosmetic here — the engine forces n_ubatch = n_batch,
+# so only -b moves the compute buffer. Validated 2026-05-21: 160K/-b1024 serves
+# a 2048² image at ~23.65 GB peak (~0.9 GB headroom).
+#
+# ⭐ VRAM RESIZING — trade context ↔ image resolution (single 3090, q4_0 KV).
+#   The 24 GB budget is split between KV (grows with CTX_SIZE) and the image-
+#   encode buffer (grows with IMAGE_MAX_TOKENS). The default 160K + 4096 (=4M-px
+#   /2048² images) peaks ~23.65 GB on a full-res image — ~0.9 GB headroom.
+#
+#   ► WANT HIGHER-RES IMAGES (sharp 4K UIs, fine-print docs)? Raise the image
+#     cap and pay for it by LOWERING context. Starting points (UNMEASURED —
+#     validate, see below):
+#       IMAGE_MAX_TOKENS=8192 CTX_SIZE=131072    # ~8M-px (2896²) images, 128K ctx
+#       IMAGE_MAX_TOKENS=6144 CTX_SIZE=147456    # ~6M-px images, 144K ctx
+#   ► WANT MORE CONTEXT (smaller images OK)? LOWER the image cap:
+#       IMAGE_MAX_TOKENS=1024 CTX_SIZE=200000    # ~1M-px (1024²) images, 200K ctx
+#
+#   Measured full-res (4M-px) ctx ladder on THIS rig (2026-05-21, -b 1024):
+#       160K → ~0.9 GB free (default) | 172K → ~0.7 GB | 175K → ~0.6 GB | 192K → OOM
+#   ⚠ Headroom at the top is THIN. 172K+ served single images but OOM-crashed
+#     under sustained heavy prefill (verify-stress battery) — the 160K default
+#     trades ~12K ctx for that margin. Go above 160K only if your workload is
+#     image + light text, not prefill-heavy agentic (large tool messages).
+#   ⚠ ALWAYS re-validate after resizing: boot, then run BOTH a real full-size
+#     image request AND `scripts/verify-stress.sh` (encode + prefill peaks are
+#     spiky; a tight config that serves one image can still OOM under load).
+#
+# Thinking-off: native lever is --reasoning off; validated to work WITH the
+# froggeric v19 template on ik_llama (2026-05-21) — clean suppression + tool
+# calls render. See ../../patches/froggeric-chat-template/PROVENANCE.md.
+#
+# Quick start:
+#   1. GGUF + vision projector:
+#        hf download ubergarm/Qwen3.6-27B-GGUF Qwen3.6-27B-MTP-IQ4_KS.gguf \
+#          --local-dir $MODEL_DIR/qwen3.6-27b-gguf/ubergarm-mtp-iq4ks
+#        hf download unsloth/Qwen3.6-27B-GGUF mmproj-F16.gguf \
+#          --local-dir $MODEL_DIR/qwen3.6-27b-gguf
+#   2. MODEL_DIR=/your/models/dir docker compose -f iq4ks-mtp-vision.yml up -d
+#   3. curl http://localhost:8020/v1/models  → should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR             host dir to mount as /models
+#   GGUF_FILE            path under /models (default: …ubergarm-mtp-iq4ks/Qwen3.6-27B-MTP-IQ4_KS.gguf)
+#   MMPROJ_FILE          path under /models (default: qwen3.6-27b-gguf/mmproj-F16.gguf)
+#   CTX_SIZE             KV pool size (default 163840 = 160K).
+#                        ⛔ DON'T RAISE past 160K for general use. 160K PASSED
+#                        verify-stress; 172K served single images but OOM-CRASHED
+#                        under heavy back-to-back prefill (big tool messages /
+#                        agentic loops). 160K is the stability-validated ceiling.
+#                        Raise ONLY for image + LIGHT-text workloads, and only
+#                        after re-running verify-stress — see VRAM RESIZING below.
+#   BATCH_SIZE           llama.cpp -b       (default: 1024 — REQUIRED for vision; -b 4096 OOMs at boot)
+#   UBATCH_SIZE          llama.cpp -ub      (cosmetic — engine forces n_ubatch=n_batch; only -b matters)
+#   NP                   parallel slots     (default: 1)
+#   KV_TYPE              K and V quant type (default: q4_0; q8_0 = higher KV quality)
+#   MTP_DRAFT_N_MAX      MTP draft tokens   (default: 2)
+#   DRAFT_P_MIN          draft accept floor (default: 0.0)
+#   REASONING            thinking gate      (default: off)
+#   CHAT_TEMPLATE_FILE   chat template path (default: /etc/qwen-froggeric-chat-template.jinja = v19)
+#   PORT                 host port          (default: 8020)
+#   CUDA_VISIBLE_DEVICES which GPU to use   (default: 0)
+
+services:
+  ik-llama-qwen36-27b-iq4ks-mtp-vision:
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp:cu13-server}
+    container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-27b}"
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8020}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../models-cache}:/models:ro"
+      # froggeric v19 chat template (validated on ik_llama 2026-05-21 — see
+      # ../../patches/froggeric-chat-template/PROVENANCE.md).
+      - "../../patches/froggeric-chat-template/chat_template_v19.jinja:/etc/qwen-froggeric-chat-template.jinja:ro"
+    # server target ENTRYPOINT is /app/llama-server — args only below.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      --model /models/${GGUF_FILE:-qwen3.6-27b-gguf/ubergarm-mtp-iq4ks/Qwen3.6-27B-MTP-IQ4_KS.gguf}
+      --mmproj /models/${MMPROJ_FILE:-qwen3.6-27b-gguf/mmproj-F16.gguf}
+      --image-min-tokens ${IMAGE_MIN_TOKENS:-1024}
+      --image-max-tokens ${IMAGE_MAX_TOKENS:-4096}
+      -ngl 99
+      --ctx-size ${CTX_SIZE:-163840}
+      -b ${BATCH_SIZE:-1024}
+      -ub ${UBATCH_SIZE:-1024}
+      -np ${NP:-1}
+      -ctk ${KV_TYPE:-q4_0}
+      -ctv ${KV_TYPE:-q4_0}
+      -khad
+      -ngld 99
+      --multi-token-prediction
+      --draft-max ${MTP_DRAFT_N_MAX:-2}
+      --draft-p-min ${DRAFT_P_MIN:-0.0}
+      --merge-qkv
+      -fa on
+      --jinja
+      --chat-template-file ${CHAT_TEMPLATE_FILE:-/etc/qwen-froggeric-chat-template.jinja}
+      --parallel-tool-calls
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --chat-template-kwargs '{"preserve_thinking":true}'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]
