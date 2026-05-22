@@ -250,6 +250,25 @@ COMPOSE_REGISTRY = {
         default_port=8020,
     ),
 
+    # ik_llama.cpp — IQ4_KS (ubergarm). Same engine family as llamacpp, but the
+    # IQK quant is ~0.5-0.8 GB leaner on weights → best fit for VRAM-tight
+    # single-card (sub-24 GB, shared GPU, WSL display overhead). Its own image
+    # (ikawrakow/ik-llama-cpp), so unaffected by mainline llama.cpp drift.
+    "ik-llama/iq4ks-mtp": _entry(
+        model="qwen3.6-27b", weights_variant="gguf", workload="fast-chat",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-mtp.yml",
+        default_port=8020,
+    ),
+    "ik-llama/iq4ks-mtp-vision": _entry(
+        model="qwen3.6-27b", weights_variant="gguf", workload="vision-coding",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=163840, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-mtp-vision.yml",
+        default_port=8020,
+    ),
+
     # Gemma 4 31B, vLLM.
     "vllm/gemma-mtp-tp1": _entry(
         model="gemma-4-31b", weights_variant="autoround_int4", workload="fast-chat",

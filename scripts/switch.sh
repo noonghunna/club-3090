@@ -43,6 +43,9 @@
 #     llamacpp/default      alias for llamacpp/mtp (Q4_K_M MTP, no vision)
 #     llamacpp/mtp          Q4_K_M MTP + 131K (full 262K via -ub 512) + q4_0 KV (fast ~60 TPS code; no vision; cliff-immune)
 #     llamacpp/mtp-vision   Q4_K_M MTP + 49K + q4_0 KV + mmproj (fast + multimodal)
+#   Single-card ik_llama (IQ4_KS — ~0.5-0.8 GB leaner; best for VRAM-tight / WSL):
+#     ik-llama/iq4ks-mtp         IQ4_KS MTP + 262K + q4_0 KV (own image: ikawrakow/ik-llama-cpp)
+#     ik-llama/iq4ks-mtp-vision  IQ4_KS MTP + 160K + q4_0 KV + mmproj (multimodal)
 #
 # Env overrides (rarely needed):
 #   COMPOSE_BIN     Default: "docker compose" (set to e.g. "podman compose" if needed)

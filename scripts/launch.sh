@@ -230,6 +230,8 @@ declare -A LAUNCH_VARIANT_COMPOSE=(
   [llamacpp/default]="models/qwen3.6-27b/llama-cpp/compose/single/mtp.yml"
   [llamacpp/mtp]="models/qwen3.6-27b/llama-cpp/compose/single/mtp.yml"
   [llamacpp/mtp-vision]="models/qwen3.6-27b/llama-cpp/compose/single/mtp-vision.yml"
+  [ik-llama/iq4ks-mtp]="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-mtp.yml"
+  [ik-llama/iq4ks-mtp-vision]="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-mtp-vision.yml"
 )
 declare -A LAUNCH_VARIANT_MODEL=(
   [vllm/default]="qwen3.6-27b" [vllm/long-vision]="qwen3.6-27b" [vllm/long-text]="qwen3.6-27b"
@@ -240,6 +242,7 @@ declare -A LAUNCH_VARIANT_MODEL=(
   [vllm/dual-nvlink-dflash]="qwen3.6-27b" [vllm/dual-nvlink-dflash-noviz]="qwen3.6-27b"
   [vllm/gemma-mtp]="gemma-4-31b" [vllm/gemma-mtp-tp1]="gemma-4-31b" [vllm/gemma-dflash]="gemma-4-31b"
   [llamacpp/default]="qwen3.6-27b" [llamacpp/mtp]="qwen3.6-27b" [llamacpp/mtp-vision]="qwen3.6-27b"
+  [ik-llama/iq4ks-mtp]="qwen3.6-27b" [ik-llama/iq4ks-mtp-vision]="qwen3.6-27b"
 )
 declare -A LAUNCH_VARIANT_ENGINE=(
   [vllm/default]="vllm" [vllm/long-vision]="vllm" [vllm/long-text]="vllm" [vllm/long-text-no-mtp]="vllm"
@@ -249,6 +252,7 @@ declare -A LAUNCH_VARIANT_ENGINE=(
   [vllm/dual-nvlink-dflash]="vllm" [vllm/dual-nvlink-dflash-noviz]="vllm"
   [vllm/gemma-mtp]="vllm" [vllm/gemma-mtp-tp1]="vllm" [vllm/gemma-dflash]="vllm"
   [llamacpp/default]="llamacpp" [llamacpp/mtp]="llamacpp" [llamacpp/mtp-vision]="llamacpp"
+  [ik-llama/iq4ks-mtp]="llamacpp" [ik-llama/iq4ks-mtp-vision]="llamacpp"
 )
 declare -A LAUNCH_VARIANT_KVCALC=(
   [vllm/default]="qwen3.6-27b:long-vision"
@@ -274,6 +278,8 @@ declare -A LAUNCH_VARIANT_KVCALC=(
   [llamacpp/default]="SKIP"
   [llamacpp/mtp]="SKIP"
   [llamacpp/mtp-vision]="SKIP"
+  [ik-llama/iq4ks-mtp]="SKIP"
+  [ik-llama/iq4ks-mtp-vision]="SKIP"
 )
 LAUNCH_VARIANT_ORDER=(
   vllm/long-vision vllm/long-text vllm/long-text-no-mtp vllm/bounded-thinking
@@ -282,6 +288,7 @@ LAUNCH_VARIANT_ORDER=(
   vllm/dual4 vllm/dual4-dflash
   vllm/gemma-mtp vllm/gemma-mtp-tp1 vllm/gemma-dflash
   llamacpp/default llamacpp/mtp llamacpp/mtp-vision
+  ik-llama/iq4ks-mtp ik-llama/iq4ks-mtp-vision
 )
 
 variant_hw_status() {
@@ -1132,6 +1139,8 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [llamacpp/default]=8020
   [llamacpp/mtp]=8020
   [llamacpp/mtp-vision]=8020
+  [ik-llama/iq4ks-mtp]=8020
+  [ik-llama/iq4ks-mtp-vision]=8020
 )
 declare -A LAUNCH_DEFAULT_CONTAINER=(
   [vllm/default]=vllm-qwen36-27b
@@ -1157,6 +1166,8 @@ declare -A LAUNCH_DEFAULT_CONTAINER=(
   [llamacpp/default]=llama-cpp-qwen36-27b
   [llamacpp/mtp]=llama-cpp-qwen36-27b
   [llamacpp/mtp-vision]=llama-cpp-qwen36-27b
+  [ik-llama/iq4ks-mtp]=ik-llama-qwen36-27b
+  [ik-llama/iq4ks-mtp-vision]=ik-llama-qwen36-27b
 )
 ENDPOINT_PORT="${PORT:-${LAUNCH_DEFAULT_PORT[$VARIANT]:-8020}}"
 ENDPOINT_URL="http://localhost:${ENDPOINT_PORT}"
