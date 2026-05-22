@@ -60,12 +60,23 @@ done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Pick up a saved MODEL_DIR (and other config) from the repo .env — same as
+# launch.sh / switch.sh, and what setup.sh writes there. An explicit exported
+# MODEL_DIR still wins. This makes the Disk section report the user's real
+# models path instead of falling back to the hardcoded mount below.
+if [[ -z "${MODEL_DIR:-}" && -f "${REPO_ROOT}/.env" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/.env"
+fi
+
 HOST_SHORT="$(hostname -s 2>/dev/null || echo unknown)"
 USER_NAME="${USER:-$(whoami 2>/dev/null || echo unknown)}"
 
 redact() {
   if [[ $REDACT -eq 1 ]]; then
-    sed \
+    # Mask the literal MODEL_DIR value first (if exported) so an arbitrary models
+    # path — /data/..., /srv/... — is caught before the prefix rules below.
+    { if [[ -n "${MODEL_DIR:-}" ]]; then sed -e "s|${MODEL_DIR}|<MODEL_DIR>|g"; else cat; fi; } | sed \
       -e "s|/home/${USER_NAME}|~|g" \
       -e "s|/root|~|g" \
       -e "s|${HOST_SHORT}|<HOST>|g" \
@@ -75,7 +86,8 @@ redact() {
       -e 's|api_key=[^ "]*|api_key=<REDACTED>|gi' \
       -e 's|hf_[A-Za-z0-9]\{30,\}|hf_<REDACTED>|g' \
       -e 's|/opt/ai|<STACK_ROOT>|g' \
-      -e 's|/mnt/[a-z]/Users/[^ /]*|/mnt/<DRIVE>/Users/<REDACTED>|g'
+      -e 's|/mnt/[a-z]/Users/[^ /]*|/mnt/<DRIVE>/Users/<REDACTED>|g' \
+      -e 's|/mnt/models|<MODELS>|g'
   else
     cat
   fi
@@ -362,7 +374,8 @@ section "Display / desktop state"
 
   if have nvidia-smi; then
     # Check if a club-3090 container is running (lightweight — full detection is later)
-    local our_container=""
+    # NB: top-level (not in a function) — plain assignment, not `local`.
+    our_container=""
     if have docker && docker info >/dev/null 2>&1; then
       our_container=$(docker ps --format '{{.Names}}' --filter 'name=vllm-' --filter 'name=llama-cpp-' --filter 'name=club3090-' --filter 'name=ik-llama-' 2>/dev/null | head -1)
     fi
