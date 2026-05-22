@@ -21,6 +21,11 @@
 #
 # Env vars (optional):
 #   MODEL_DIR           Where to place model weights. Default: <repo>/models-cache
+#   WEIGHTS             'autoround' (default, vLLM INT4) or 'gguf' (llama.cpp /
+#                       ik_llama). gguf fetches the Q4_K_M MTP GGUF + mmproj for
+#                       the llamacpp/* + ik-llama/* composes (qwen3.6-27b only),
+#                       and skips Genesis. Use this if you're serving via
+#                       llama.cpp/ik_llama rather than vLLM.
 #   HF_TOKEN            HF token (public models, usually unnecessary)
 #   SKIP_MODEL          Set to 1 to skip the model download step
 #   SKIP_GENESIS        Set to 1 to skip cloning Genesis patches
@@ -163,6 +168,31 @@ case "${MODEL_NAME}" in
     exit 1
     ;;
 esac
+
+# ---------- Weights format (autoround vLLM default, or gguf for llama.cpp/ik_llama) ----------
+# WEIGHTS=gguf swaps the AutoRound vLLM repo above for the llama.cpp GGUF and
+# downloads just the file(s) it needs (a GGUF repo holds many quants). The
+# GGUF/llama.cpp path doesn't use Genesis. Default is unchanged (autoround).
+WEIGHTS="${WEIGHTS:-autoround}"
+GGUF_FILES=""   # empty → download whole repo dir (autoround); non-empty → specific files
+if [[ "${WEIGHTS}" == "gguf" ]]; then
+  case "${MODEL_NAME}" in
+    qwen3.6-27b)
+      MODEL_REPO="unsloth/Qwen3.6-27B-GGUF"
+      MODEL_SUBDIR="qwen3.6-27b-gguf/unsloth-mtp-q4km"
+      GGUF_FILES="Qwen3.6-27B-Q4_K_M.gguf mmproj-F16.gguf"  # Q4_K_M MTP + vision mmproj
+      NEEDS_GENESIS=0
+      ;;
+    *)
+      echo "ERROR: WEIGHTS=gguf is only wired for qwen3.6-27b right now." >&2
+      echo "       Use WEIGHTS=autoround (default), or download the GGUF manually." >&2
+      exit 1 ;;
+  esac
+  echo "[model]   WEIGHTS=gguf → ${MODEL_REPO} (${GGUF_FILES}) → ${MODEL_SUBDIR}"
+elif [[ "${WEIGHTS}" != "autoround" ]]; then
+  echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized (use 'autoround' or 'gguf')." >&2
+  exit 1
+fi
 
 # ---------- MODEL_DIR resolution ----------
 # Order of precedence:
@@ -404,8 +434,10 @@ mkdir -p "${MODEL_DIR}/${MODEL_SUBDIR}"
 # Prefer `hf` CLI if available (faster with hf_transfer); fall back to curl.
 download_via_hf() {
   echo "[model]   Using 'hf download' (hf_transfer if available) ..."
+  # ${GGUF_FILES} is intentionally unquoted: empty (autoround) → whole-repo
+  # download as before; set (gguf) → just those file(s) word-split as args.
   HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1 \
-    hf download "${MODEL_REPO}" --local-dir "${MODEL_DIR}/${MODEL_SUBDIR}"
+    hf download "${MODEL_REPO}" ${GGUF_FILES} --local-dir "${MODEL_DIR}/${MODEL_SUBDIR}"
 }
 
 if command -v hf >/dev/null 2>&1; then
@@ -413,7 +445,7 @@ if command -v hf >/dev/null 2>&1; then
 elif command -v huggingface-cli >/dev/null 2>&1; then
   echo "[model]   Using 'huggingface-cli download' ..."
   HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1 \
-    huggingface-cli download "${MODEL_REPO}" --local-dir "${MODEL_DIR}/${MODEL_SUBDIR}"
+    huggingface-cli download "${MODEL_REPO}" ${GGUF_FILES} --local-dir "${MODEL_DIR}/${MODEL_SUBDIR}"
 else
   echo "ERROR: neither 'hf' nor 'huggingface-cli' found. Install with:" >&2
   echo "  pip install 'huggingface-hub[hf_transfer]'" >&2
@@ -423,12 +455,13 @@ else
 fi
 
 # ---------- SHA verification ----------
-echo "[verify]  Checking SHA256 of every *.safetensors against HF x-linked-etag ..."
+VERIFY_GLOB="*.safetensors"; [[ "${WEIGHTS}" == "gguf" ]] && VERIFY_GLOB="*.gguf"
+echo "[verify]  Checking SHA256 of every ${VERIFY_GLOB} against HF x-linked-etag ..."
 cd "${MODEL_DIR}/${MODEL_SUBDIR}"
 
 fail=0
 count=0
-for f in *.safetensors; do
+for f in ${VERIFY_GLOB}; do
   [[ -f "$f" ]] || continue
   count=$((count + 1))
   expected="$(curl -sfI "https://huggingface.co/${MODEL_REPO}/resolve/main/$f" \
@@ -452,12 +485,12 @@ if [[ "$fail" != "0" ]]; then
 fi
 
 if [[ "$count" == "0" ]]; then
-  echo "[verify]  No .safetensors found in ${MODEL_DIR}/${MODEL_SUBDIR} — download may have failed." >&2
+  echo "[verify]  No ${VERIFY_GLOB} found in ${MODEL_DIR}/${MODEL_SUBDIR} — download may have failed." >&2
   exit 1
 fi
 
 echo ""
-echo "[done]    ${count} shards SHA-verified."
+echo "[done]    ${count} file(s) SHA-verified."
 [[ -d "${GENESIS_DIR}/.git" ]] && echo "          Genesis pinned at ${GENESIS_PIN} ($(cd "${GENESIS_DIR}" && git rev-parse --short HEAD))."
 echo ""
 
