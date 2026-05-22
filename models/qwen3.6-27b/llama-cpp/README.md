@@ -22,30 +22,19 @@ For full pros/cons + general llama.cpp tuning, see [`/docs/engines/LLAMA_CPP.md`
 
 ## Docker compose (recommended)
 
-Three compose variants in [`compose/single/`](compose/single/) — all use the official rolling `ghcr.io/ggml-org/llama.cpp:server-cuda` image, **no custom build needed**, **no club-3090 patches** (unlike our vLLM track). MTP PR #22673 has merged upstream so the rolling tag has it natively. Pin to a specific build via `LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX` env if you want to lock against upstream drift; otherwise `docker compose pull` picks up upstream's latest. Bench numbers were measured on build `b9246` (2026-05-20); expect ±5% drift on newer builds.
+Two compose variants in [`compose/single/`](compose/single/) — both use the official rolling `ghcr.io/ggml-org/llama.cpp:server-cuda` image, **no custom build needed**, **no club-3090 patches** (unlike our vLLM track). MTP PR #22673 has merged upstream so the rolling tag has it natively. Pin to a specific build via `LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX` env if you want to lock against upstream drift; otherwise `docker compose pull` picks up upstream's latest. Bench numbers were measured on build `b9246` (2026-05-20); expect ±5% drift on newer builds.
 
-### `docker-compose.yml` — max context, single slot, vision
+### `single/mtp.yml` — MTP n=2, 262K ctx, no vision
 
-Showcase: full **262K context** on one 3090 with vision + q4_0 KV.
+The single-card speed + context workhorse: ~51/60 TPS (narr/code), 262K ctx (full native @ `-ub 512`; 131K @ `-ub 1024` for faster prefill), 7/7 verify-stress boundary checks (incl. 60K + 91K needle recall), 102/150 (68%) on the 8-pack quality matrix. Best for IDE agents, opencode, Hermes, long-multi-turn agentic. Q4_K_M MTP GGUF (`unsloth/Qwen3.6-27B-MTP-GGUF` Q4_K_M).
 
-```bash
-cd models/qwen3.6-27b/llama-cpp/compose
-MODEL_DIR=/your/models/dir docker compose up -d
-```
+### `single/mtp-vision.yml` — MTP n=2, 160K ctx, vision on
 
-Memory budget: 14.5 GB (Q3_K_XL) + 4.5 GB KV @ 262K + 0.8 GB mmproj ≈ 20 GB / 24 GB.
-
-### `single/mtp.yml` — MTP n=2, 131K ctx, no vision
-
-The single-card speed + context workhorse: ~51/60 TPS (narr/code), 131K ctx (sweep-verified safe-headroom max), 7/7 verify-stress boundary checks (incl. 60K + 91K needle recall), 102/150 (68%) on the 8-pack quality matrix. Best for IDE agents, opencode, Hermes, long-multi-turn agentic. Q4_K_M MTP GGUF (`unsloth/Qwen3.6-27B-MTP-GGUF` Q4_K_M).
-
-### `single/mtp-vision.yml` — MTP n=2, 49K ctx, vision on
-
-Multimodal speed profile — the first stack config combining MTP + vision (the older "strip mmproj when MTP" rule was obsolete on build 9235, sweep-verified 2026-05-19). 49K safe-headroom ceiling on 24 GB with mmproj F16 mounted.
+Multimodal profile — combines MTP + vision (validated on build 9235, 2026-05-19). 160K default context on 24 GB with mmproj F16 mounted. Supports up to 192K with `UBATCH_SIZE=512`.
 
 ### Tuning knobs
 
-All three Docker composes expose llama.cpp's batch-size + KV controls without editing YAML:
+Both composes expose llama.cpp's batch-size + KV controls without editing YAML:
 
 | Env var | llama.cpp flag | Default | Sensible range on 24 GB | Notes |
 |---|---|---:|---:|---|
@@ -83,22 +72,12 @@ So ~10% TPS hit (56.5 → 50.9 narr) buys ~4× more context (49K → 192K). For 
 
 ---
 
-## Recipes (host-binary alternative)
-
-[`recipes/`](recipes/) contains shell scripts that launch a host-built `llama-server` with the same flags. Use these if you've built llama.cpp natively (e.g. for AMD/Intel/Apple Silicon) and don't want Docker.
-
-- **`single-card-default.sh`** — 65K ctx, Q4_K_M
-- **`single-card-max-ctx.sh`** — 262K ctx, Q4_K_M + q4_0 KV
-- `dual-card.sh` — TBD; llama.cpp supports multi-GPU but we haven't validated configs for this model
-
----
-
 ## Measured TPS (2026-04-28, club-3090 substrate)
 
 | Config | Quant | KV | Ctx | Vision | Narr TPS | Code TPS | Notes |
 |---|---|---|---|---|---|---|---|
 | docker-compose.yml | UD-Q3_K_XL | q4_0 | 262K | ✅ | 21 | 21 | Flat across context depth — same TPS at 65K and 262K |
-| `+ --spec-type ngram-mod` (recipe) | Q4_K_M | q8_0 | 32K | ❌ | 22 | **26** | +25% on code via draftless n-gram spec-decode |
+| `+ --spec-type ngram-mod` | Q4_K_M | q8_0 | 32K | ❌ | 22 | **26** | +25% on code via draftless n-gram spec-decode |
 
 The Q3_K_XL number at 262K is **lower than community-reported 35-45 tok/s** ([Reddit](https://www.reddit.com/r/LocalLLaMA/comments/1sx8uok/) + earlier 2026-04-23 measurements showing 28.5 TPS on Q4_K_M). We're investigating whether mainline llama.cpp regressed between commits `9ab47e7d8` (2026-04-23) and `0d0764dfd` (current). For absolute speed today, **vLLM patched is ~2.5× faster** on the same hardware (51-55 narr / 67-70 code) — see [BENCHMARKS](../../../BENCHMARKS.md). llama.cpp's value proposition here is **simplicity + max context + multi-platform**, not throughput.
 
@@ -107,17 +86,20 @@ The Q3_K_XL number at 262K is **lower than community-reported 35-45 tok/s** ([Re
 ## Quick start
 
 ```bash
-# 1. Get a GGUF quant (recommended: Unsloth's Q4_K_M)
-hf download unsloth/Qwen3.6-27B-GGUF Qwen3.6-27B-Q4_K_M.gguf --local-dir $MODEL_DIR/qwen3.6-27b-gguf/
+# 1. Get the MTP-enabled GGUF
+hf download unsloth/Qwen3.6-27B-MTP-GGUF Qwen3.6-27B-Q4_K_M.gguf \
+  --local-dir $MODEL_DIR/qwen3.6-27b-gguf/unsloth-mtp-q4km
 
-# 2. Build llama.cpp with CUDA support
-git clone https://github.com/ggerganov/llama.cpp /opt/llama.cpp
-cd /opt/llama.cpp && cmake -B build -DGGML_CUDA=ON && cmake --build build --config Release -j
-
-# 3. Run a recipe
-cd <repo>/models/qwen3.6-27b/llama-cpp/recipes
-bash single-card-max-ctx.sh
+# 2. Launch via Docker compose (recommended)
+cd <repo>/models/qwen3.6-27b/llama-cpp/compose
+MODEL_DIR=$MODEL_DIR docker compose -f single/mtp.yml up -d
+curl http://localhost:8020/v1/models
 ```
+
+For host-built llama.cpp (AMD/Intel/Apple Silicon without Docker), use the
+same flags from `compose/single/mtp.yml` adapted to your binary. Key flags:
+`-ngl 99 -fa on -c 262144 -ub 512 --cache-type-k q4_0 --cache-type-v q4_0
+--spec-type draft-mtp --spec-draft-n-max 2 --jinja --reasoning off`.
 
 ---
 

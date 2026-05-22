@@ -1,0 +1,116 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (ubergarm MTP-IQ4_KS GGUF — imatrix IQK quant)
+#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu13-server)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   TWO-STAGE: ngram-mod (self-spec, context-matching) + MTP fallback
+#              Stage 1: ngram-mod n_max=64, n_min=2, ngram-size-n=16
+#              Stage 2: MTP n_max=3, p_min=0.0
+#              PR #1789 (merged 2026-05-15). ngram catches repeated patterns
+#              (zero VRAM, instant), MTP fills novel tokens. Best for code.
+#   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard (same as iq4ks-mtp.yml)
+#   Template:  native (GGUF-embedded) — see iq4ks-mtp.yml for A/B rationale
+#   Vision:    NO (text-only; mmproj is a separate axis → iq4ks-mtp-vision.yml)
+#   Default ctx: 131072 — lower than iq4ks-mtp.yml's 262K because two-stage
+#              needs ngram context history to match against. 131K gives plenty
+#              of pattern surface while leaving headroom for the ngram index.
+#   Status:    🧪 EXPERIMENTAL — PR #1789 is 7 days old (2026-05-15). Boots +
+#              two-stage spec-dec engages on the cu13-server image (ngram_mod +
+#              MTP both init; validated 2026-05-22). Perf/quality bench pending.
+#              Expected: better code quality on repetitive workloads
+#              (refactoring, boilerplate, imports) vs MTP-only; same or
+#              slightly worse on highly novel generation.
+#   Best for:  Code-heavy agentic workloads where context has repeated patterns
+#              (refactoring, test generation, boilerplate, import blocks).
+# ---------------------------------------------------------------------------
+# Qwen3.6-27B on ik_llama.cpp — single 3090, IQ4_KS + TWO-STAGE spec-dec.
+#
+# TWO-STAGE SPECULATIVE DECODING (PR #1789):
+#   Instead of MTP alone, this chains two speculators:
+#     1. ngram-mod (self-speculator) — looks up n-gram matches in the existing
+#        context. Zero VRAM cost, instant. Great at repeated patterns (code
+#        boilerplate, imports, test scaffolding, refactor targets).
+#     2. MTP (built-in head) — fallback for tokens ngram can't match. Slower
+#        but handles novel generation.
+#
+#   The engine always tries ngram first (faster, free). If ngram can't produce
+#   enough tokens (below n_min or no match), MTP takes over. Net: best of both
+#   worlds for code workloads where context is rich with repeated patterns.
+#
+#   Source: ik_llama.cpp PR #1789 (merged 2026-05-15). Author's benchmarks on
+#   code refactor tasks showed two-stage outperforming MTP-only. Parameters
+#   below are adapted from the PR's recommended config:
+#     --spec-stage ngram-mod:n_max=64,n_min=2,spec-ngram-size-n=16
+#     --spec-stage mtp:n_max=3,draft-p-min=0.0
+#
+# RECURRENT CHECKPOINT MODE:
+#   --recurrent-ckpt-mode auto (PR #1774) pre-allocates VRAM buffers for
+#   Qwen3.6's DeltaNet SSM state during speculative decoding. On draft
+#   rejection, restores SSM state instead of recomputing — cheaper rejections
+#   on hybrid models. 'auto' tries per-step, falls back if OOM.
+#
+# Quick start:
+#   1. Get the MTP-IQ4_KS GGUF (same as iq4ks-mtp.yml):
+#        hf download ubergarm/Qwen3.6-27B-GGUF Qwen3.6-27B-MTP-IQ4_KS.gguf \
+#          --local-dir $MODEL_DIR/qwen3.6-27b-gguf/ubergarm-mtp-iq4ks
+#   2. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f iq4ks-two-stage.yml up -d
+#   3. curl http://localhost:8020/v1/models  → should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models
+#   GGUF_FILE             path under /models
+#   CTX_SIZE              KV pool size       (default: 131072)
+#   BATCH_SIZE            llama.cpp -b       (default: 4096)
+#   UBATCH_SIZE           llama.cpp -ub      (default: 1024)
+#   NP                    parallel slots     (default: 1)
+#   KV_TYPE               K and V quant type (default: q4_0)
+#   NGRAM_N_MAX           ngram max draft    (default: 64)
+#   NGRAM_N_MIN           ngram min accept   (default: 2)
+#   NGRAM_SIZE_N          ngram lookup size  (default: 16)
+#   MTP_N_MAX             MTP max draft      (default: 3)
+#   MTP_P_MIN             MTP accept floor   (default: 0.0)
+#   REASONING             thinking gate      (default: off)
+#   REASONING_FORMAT      reasoning routing  (default: deepseek)
+#   PORT                  host port          (default: 8020)
+#   CUDA_VISIBLE_DEVICES  which GPU          (default: 0)
+
+services:
+  ik-llama-qwen36-27b-two-stage:
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp:cu13-server}
+    container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-27b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8020}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../models-cache}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      --model /models/${GGUF_FILE:-qwen3.6-27b-gguf/ubergarm-mtp-iq4ks/Qwen3.6-27B-MTP-IQ4_KS.gguf}
+      -ngl 99
+      --ctx-size ${CTX_SIZE:-131072}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-1024}
+      -np ${NP:-1}
+      -ctk ${KV_TYPE:-q4_0}
+      -ctv ${KV_TYPE:-q4_0}
+      -khad
+      -vhad
+      -ngld 99
+      --spec-stage ngram-mod:n_max=${NGRAM_N_MAX:-64},n_min=${NGRAM_N_MIN:-2},spec-ngram-size-n=${NGRAM_SIZE_N:-16}
+      --spec-stage mtp:n_max=${MTP_N_MAX:-3},draft-p-min=${MTP_P_MIN:-0.0}
+      --recurrent-ckpt-mode auto
+      --merge-qkv
+      -fa on
+      --jinja
+      --parallel-tool-calls
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]

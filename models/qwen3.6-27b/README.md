@@ -14,7 +14,7 @@
 - **27B parameter dense LLM** with vision support (Qwen3-Next family — hybrid DeltaNet + standard attention)
 - **Quant on this stack:** [`Lorbus/Qwen3.6-27B-int4-AutoRound`](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound) — INT4 weights with BF16 `mtp.fc` head preserved (lets vLLM use MTP spec-decode)
 - **GGUF alternative:** [`unsloth/Qwen3.6-27B-GGUF`](https://huggingface.co/unsloth/Qwen3.6-27B-GGUF) — Q3_K_XL ⭐ (validated by [Marie's Kaitchup eval](https://kaitchup.substack.com/p/summary-of-qwen36-gguf-evals-updating)), Q4_K_M, Q5_K_S
-- **Engines:** vLLM (full features) · llama.cpp (max context, lighter footprint) · SGLang (currently blocked, watch list)
+- **Engines:** vLLM (full features) · llama.cpp (max context, lighter footprint) · ik_llama (best quality-per-bit GGUF) · SGLang (currently blocked, watch list)
 
 ---
 
@@ -155,6 +155,7 @@ Forensic chain + per-patch attribution → [INTERNALS.md](INTERNALS.md).
 - **[/docs/EXAMPLES.md](../../docs/EXAMPLES.md)** — Python / TS / curl client snippets + Open WebUI / Cline / Cursor connection settings.
 - **[vllm/](vllm/)** — vLLM-specific recipes (compose YAMLs are documented in their own headers).
 - **[llama-cpp/](llama-cpp/)** — llama.cpp recipes (max context on single card, no prefill cliffs).
+- **[ik-llama/](../ik-llama/)** — ik_llama.cpp recipes (IQK imatrix quants, best quality-per-bit).
 - **[sglang/](sglang/)** — SGLang status (currently blocked).
 - **[/docs/engines/](../../docs/engines/)** — cross-model engine comparison + per-engine deep dives.
 - **[/docs/HARDWARE.md](../../docs/HARDWARE.md)** — hardware notes (Ampere, NVLink, power).

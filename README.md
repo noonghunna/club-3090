@@ -1,6 +1,6 @@
 # club-3090
 
-**Recipes for serving LLMs locally on RTX 3090s.** Multi-engine (vLLM, llama.cpp, SGLang), multi-model, model-agnostic by design.
+**Recipes for serving LLMs locally on RTX 3090s.** Multi-engine (vLLM, llama.cpp, ik_llama, SGLang), multi-model, model-agnostic by design.
 
 If you have one or two RTX 3090s and want to run modern LLMs at home, in a homelab, or as a dev backend — this repo collects the working configs, patches, and benchmarks.
 
@@ -66,7 +66,7 @@ bash scripts/update.sh
   - 🏎 **vLLM dual** = max throughput. Up to **127 TPS code** (DFlash) or **4 concurrent streams @ 262K** (turbo). Full feature stack (vision · tools · MTP · streaming).
   - 🛡 **llama.cpp single** = max robustness. Full **262K context** on one 3090. Stress-tested clean: no prefill cliffs, 25K-token tool returns work, 90K needle ladder passes. Slower (~21 TPS) but doesn't crash on real-world tool-using agents.
 - **Validated docker compose configs** for both routes — drop-in OpenAI-compatible API on `localhost:8020`
-- **Multi-engine**: vLLM (full features), llama.cpp (max ctx + robustness), SGLang (currently blocked, watch list)
+- **Multi-engine**: vLLM (full features), llama.cpp (max ctx + robustness), ik_llama (best GGUF quants), SGLang (currently blocked, watch list)
 - **Model-agnostic**: today ships curated configs for Qwen3.6-27B and friends; structure scales as we add models
 - **Universal `pull`** (v0.8.0; extended in v0.8.2) — evaluate any safetensors HF repo, get an honest one-line fit verdict (`--recommend`), and when a pull hard-blocks, send the redacted diagnostic back in one consented step (`--submit-last`). Broader arch coverage each release. See [`docs/PULL.md`](docs/PULL.md)
 
@@ -98,7 +98,7 @@ Each hardware page lists every supported model with the working composes for tha
 
 | Model | Status | Card counts | Engines | Highlights |
 |---|---|---|---|---|
-| **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready ⭐ | 1× / 2× 3090 | vLLM ✅ · llama.cpp ✅ · SGLang ❌ blocked | Vision · tools · MTP n=3 · up to 262K ctx · vLLM dual = 89/127 TPS · llama.cpp single = full 262K, no prefill cliffs |
+| **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready ⭐ | 1× / 2× 3090 | vLLM ✅ · llama.cpp ✅ · ik_llama ✅ · SGLang ❌ blocked | Vision · tools · MTP n=3 · up to 262K ctx · vLLM dual = 89/127 TPS · llama.cpp single = full 262K, no prefill cliffs · ik_llama IQ4_KS = ~62/69 TPS |
 | **[Gemma 4 31B](models/gemma-4-31b/)** | Production-ready (dual-card only on Ampere 24 GB) | 2× 3090 only ¹ | vLLM ✅ · llama.cpp ❌ · SGLang ❌ | Vision · tools · MTP n=3 (Google official drafter) **OR** DFlash n=7 (z-lab drafter) · up to 262K ctx via INT8 PTH KV (PR [#40391](https://github.com/vllm-project/vllm/pull/40391) vendored) · MTP dual = 106/141 TPS at 32K, 95/126 at 262K · DFlash dual = 105/177 TPS at 32K (code-optimal) |
 | **[Qwen3.6 35B-A3B](models/qwen3.6-35b-a3b/)** ⭐ NEW v0.7.3 | Preview (production-track blocked on Genesis v7.73.x) | 2× 3090 | vLLM ✅ (preview) · SGLang ❌ · llama.cpp ❌ | **MoE (256 experts × 8 active, ~3 B active params)** · vision · tools · upstream native loader via [vLLM PR #42521](https://github.com/vllm-project/vllm/pull/42521) · preview dual = **182/177 TPS at 16K** (no MTP, no TQ3, no Genesis) |
 | **[Gemma 4 26B-A4B](models/gemma-4-26b-a4b/)** ⭐ NEW v0.7.3 | Production via AWQ (Intel AutoRound INT4 blocked on Ampere) | 2× 3090 | vLLM ✅ (AWQ overlay) · SGLang ❌ · llama.cpp ❌ | **MoE (128 experts × 8 active, ~4 B active params)** · vision · tools · AWQ dual = **139/139 TPS at 32K**, CV 0.2% / 0.0% |
@@ -136,20 +136,22 @@ club-3090/
 │       ├── README.md                      decision tree, pros/cons matrix
 │       ├── VLLM.md                        vLLM general docs + tuning
 │       ├── LLAMA_CPP.md                   llama.cpp general docs + 262K recipe
+│       ├── IK_LLAMA.md                    advanced-quant engine (IQK quants, two-stage spec-dec)
 │       └── SGLANG.md                      blocked status + watch list
 ├── models/
 │   └── qwen3.6-27b/                       all Qwen3.6-27B-specific stuff
 │       ├── README.md                      model overview + variants + recommendations
-│       ├── INTERNALS.md                   model-specific bugs (DeltaNet cliffs, Genesis patches, MTP head, Marlin pad)
-│       └── INTERNALS.md                   engineering rationale (Genesis, Marlin pad, DFlash)
+│       ├── INTERNALS.md                   engineering rationale (Genesis, Marlin pad, DFlash, upstream tracker)
 │       ├── CHANGELOG.md                   model-specific dated history
 │       ├── vllm/
 │       │   ├── README.md                  "vLLM recipes for Qwen3.6-27B"
 │       │   ├── compose/                   docker-compose files (single-card + dual-card variants)
 │       │   └── patches/                   tolist_cudagraph + Marlin pad README + Genesis pointer
 │       ├── llama-cpp/
-│       │   ├── README.md                  "llama.cpp recipes for Qwen3.6-27B"
-│       │   └── recipes/                   single-card 65K + 262K-max-ctx + dual-card recipes
+│       │   ├── README.md                  "llama.cpp composes for Qwen3.6-27B"
+│       │   └── compose/single/            mtp.yml + mtp-vision.yml (single-card MTP)
+│       ├── ik-llama/
+│       │   └── compose/single/            iq4ks-mtp.yml + iq4ks-mtp-vision.yml + iq4ks-two-stage.yml (IQK quant)
 │       └── sglang/
 │           └── README.md                  blocked status — what would unblock it on this model
 ├── scripts/                               shared, model-aware

@@ -11,7 +11,7 @@ This repo's main path is **vLLM** because it has the deepest support for Qwen3-N
 | Engine | Status on this stack | Per-stream TPS (1× 3090) | Max ctx (1× 3090) | Vision | Tool calls | Spec-decode | OpenAI API parity |
 |---|---|---|---|---|---|---|---|
 | **[vLLM](VLLM.md)** ⭐ | **Validated, production-grade** (this repo) | 50-53 narr / 66-70 code | 48K default · 75K IDE-agent · **198K vision · 214K text-only** | ✅ | ✅ | ✅ MTP n=3 | ✅ Full |
-| **[llama.cpp](LLAMA_CPP.md)** | Works mainline + [Luce DFlash fork](https://github.com/Luce-Org/lucebox-hub) for spec-decode | 35-60 (varies by quant + KV type) | **262K** (Q4_K_M + q4_0 KV) | ✅ (via mmproj) | ⚠️ Limited (no auto-tool-choice in server) | ✅ DFlash N=5 in fork | ⚠️ Partial |
+| **[llama.cpp](LLAMA_CPP.md)** | Works mainline (MTP merged [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673), 2026-05-16) | 35-60 (varies by quant + KV type) | **262K** (Q4_K_M + q4_0 KV) | ✅ (via mmproj) | ⚠️ Limited (no auto-tool-choice in server) | ✅ MTP on mainline + DFlash N=5 in [Luce fork](https://github.com/Luce-Org/lucebox-hub) | ⚠️ Partial |
 | **[ik_llama.cpp](IK_LLAMA.md)** ⭐ *advanced quants* | **Shipped — advanced-quant track** | ~62 narr / ~69 code (IQ4_KS+MTP) | **262K** (IQ4_KS + q4_0 KV) | ✅ (mmproj) | ✅ (template + parser) | ✅ MTP n=2 | ⚠️ Partial (llama.cpp-class) |
 | **[SGLang](../../models/qwen3.6-27b/sglang/README.md)** | **Re-test pending** (May 2026). Historical block partially out-of-date — DFlash + MTP have landed natively on SGLang mainline; Marlin pad-sub-tile-n fix status unknown. See sglang README for re-test plan. | n/a (untested) | n/a | ✅ | ✅ | ✅ DFlash + MTP native upstream (untested here) | ✅ Full |
 
@@ -92,6 +92,7 @@ Full plan in [models/qwen3.6-27b/sglang/README.md](../../models/qwen3.6-27b/sgla
 |---|---|---|
 | **Full feature set, MTP spec-decode, OpenAI API parity** | vLLM + Lorbus AutoRound | This repo's path. 51-70 TPS depending on workload, all features, prefill-safe at 48K default. |
 | **Maximum context (262K) on one 3090** | llama.cpp + UD-Q3_K_XL or Q4_K_M + q4_0 KV | Smaller quants leave 8-10 GB headroom for KV at 262K. ~35-45 TPS sustained. |
+| **Best quality-per-bit GGUF on one 3090** | ik_llama + IQ4_KS + MTP | Fork-exclusive IQK imatrix quant, 262K ctx, ~62/69 TPS. Two-stage ngram+MTP for code workloads. See [IK_LLAMA.md](IK_LLAMA.md). |
 | **Best concurrent throughput on dual 3090** | vLLM TP=2 + Turbo (TQ3) | 4 streams at full 262K, ~200 TPS aggregate. See [`dual-turbo.yml`](../models/qwen3.6-27b/vllm/compose/dual/turbo.yml) in this repo. |
 | **Non-NVIDIA hardware (AMD / Intel / Apple)** | llama.cpp | Only engine with cross-platform support. |
 | **Lightest setup, fastest cold start** | llama.cpp | Single binary, ~30s cold start. Good for embedded use, quick experiments. |
@@ -138,7 +139,7 @@ If MTP isn't a priority for your workload, GPTQ or AWQ are equally valid.
 - **[VLLM.md](VLLM.md)** — current setup (what this repo ships). Brief recap + tuning levers.
 - **[LLAMA_CPP.md](LLAMA_CPP.md)** — quick GGUF recipe, vision via mmproj, Luce DFlash fork pointer for spec-decode, gotchas around server feature parity.
 - **[SGLANG.md](SGLANG.md)** — current blocked state, what would unblock, when to revisit. TBD recipe placeholder until either Marlin pad lands upstream or DeltaNet rollback lands.
-- **[IK_LLAMA.md](IK_LLAMA.md)** ⭐ — the advanced-quant engine: fork-exclusive IQK imatrix quants (`IQ4_KS`), 262K single-card, MTP, `-khad` / `--merge-qkv`. Pairs with [QUANTIZATION.md](../QUANTIZATION.md).
+- **[IK_LLAMA.md](IK_LLAMA.md)** ⭐ — the advanced-quant engine: fork-exclusive IQK imatrix quants (`IQ4_KS`), 262K single-card, MTP + two-stage ngram+MTP, `-khad` / `-vhad` / `--merge-qkv`, `--parallel-tool-calls`. Pairs with [QUANTIZATION.md](../QUANTIZATION.md).
 
 ---
 

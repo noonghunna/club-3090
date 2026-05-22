@@ -96,10 +96,10 @@ All five are actively developed. ktransformers is positioned as research but pro
 
 | Method | vLLM | llama.cpp | SGLang | ktransformers | ik_llama.cpp |
 |---|---|---|---|---|---|
-| **MTP (Multi-Token Prediction)** | ✅ broad model coverage (Qwen3.x, Gemma4, MiniMax-M2, DeepSeek) | ✅ via [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673) (am17an) — community-built | ✅ Spec V2 default (overlap scheduling) | ⚠️ via SGLang front-end | ✅ **Merged on main** (GLM-4.x + Qwen MTP, no PR-branch needed) |
+| **MTP (Multi-Token Prediction)** | ✅ broad model coverage (Qwen3.x, Gemma4, MiniMax-M2, DeepSeek) | ✅ **Merged on main** ([PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673), am17an, merged 2026-05-16) | ✅ Spec V2 default (overlap scheduling) | ⚠️ via SGLang front-end | ✅ **Merged on main** (GLM-4.x + Qwen MTP) + **two-stage ngram+MTP** ([PR #1789](https://github.com/ikawrakow/ik_llama.cpp/pull/1789)) |
 | **EAGLE / EAGLE-3** | ✅ Eagle3 (Qwen3.5, Gemma4, MiniMax-M2) | ❌ | ✅ Day-0 for newest models | ❌ | ❌ |
 | **DFlash (block-diffusion)** | ✅ ([PR #41703](https://github.com/vllm-project/vllm/pull/41703) Codex-rebased; Luce z-lab) | ⚠️ Luce fork (server-only) | ✅ DFLASH cross-backend incl. ROCm (v0.5.11) | ❌ | ❌ |
-| **N-gram prompt-lookup** | ✅ GPU impl + async scheduler ([PR #29184](https://github.com/vllm-project/vllm/pull/29184)) | ✅ | ✅ | ❌ | ✅ (inherits llama.cpp) |
+| **N-gram prompt-lookup** | ✅ GPU impl + async scheduler ([PR #29184](https://github.com/vllm-project/vllm/pull/29184)) | ✅ | ✅ | ❌ | ✅ + **ngram-mod** (enhanced self-spec, chainable with MTP via `--spec-stage`) |
 | **Draft model (separate small)** | ✅ | ✅ | ✅ | ❌ | ✅ |
 | **PFlash (prompt-compression)** | ❌ | ⚠️ Luce experimental | ❌ | ❌ | ❌ |
 | **Async / overlap scheduling** | ✅ Zero-bubble ([PR #32951](https://github.com/vllm-project/vllm/pull/32951)) | ❌ | ✅ Spec V2 with overlap (default v0.5.11) | ⚠️ via SGLang | ❌ |
@@ -217,7 +217,7 @@ All five are actively developed. ktransformers is positioned as research but pro
 | **Native Python SDK** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **gRPC** | ✅ ([PR #36169](https://github.com/vllm-project/vllm/pull/36169)) | ❌ | ⚠️ | ❌ | ❌ |
 | **Responses API streaming** | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ |
-| **Docker images (official)** | ✅ `vllm/vllm-openai` | ✅ `ghcr.io/ggml-org/llama.cpp` | ✅ `lmsysorg/sglang` | ❌ **No official Docker image** | ❌ **No official Docker image** |
+| **Docker images (official)** | ✅ `vllm/vllm-openai` | ✅ `ghcr.io/ggml-org/llama.cpp` | ✅ `lmsysorg/sglang` | ❌ **No official Docker image** | ✅ `ghcr.io/ikawrakow/ik-llama-cpp` (cu12/cu13 tags) |
 | **Pluggable backends** | ✅ | ✅ | ✅ kt-kernel pluggable | ✅ kt-kernel as backend | ✅ + runtime quant repacking |
 
 **Note on ktransformers Docker absence**: this is a real friction point for our compose-based stack. The pip install path works in a conda env but breaks the "every service is a compose dir" convention.
@@ -274,7 +274,7 @@ Q1: Does the model fit your VRAM at desired quant?
 ### llama.cpp
 - **Single-stream-only on dense models** (parallel slots exist but TP/EP are limited).
 - **No FP8 weight quants** — stuck with GGUF Q* / K* / IQ*.
-- **MTP only via community PR** ([#22673](https://github.com/ggml-org/llama.cpp/pull/22673)) — not yet merged after months.
+- **MTP merged on main** ([PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673), 2026-05-16) — no longer needs PR-branch building.
 - **Layer-uniform `--n-cpu-moe`** — no router-aware caching upstream yet ([feature request #20757](https://github.com/ggml-org/llama.cpp/issues/20757)).
 
 ### SGLang
@@ -292,9 +292,9 @@ Q1: Does the model fit your VRAM at desired quant?
 ### ik_llama.cpp
 - **Smaller community than mainline llama.cpp** — bugs take longer to surface, fewer cross-rig data points.
 - **No tagged releases** — rolls on main; no version pinning story for production users.
-- ~~No official Docker image~~ — **corrected 2026-05-21:** an official image ships (`ghcr.io/ikawrakow/ik-llama-cpp:cu13-server`) and this stack now uses it for the **[advanced-quant track](engines/IK_LLAMA.md)** — fork-exclusive **IQK imatrix quants** (`IQ4_KS`), the best quality-per-bit in the GGUF world. See [QUANTIZATION.md](QUANTIZATION.md).
+- **Official Docker image** ships (`ghcr.io/ikawrakow/ik-llama-cpp:cu13-server`). This stack uses it for the **[advanced-quant track](engines/IK_LLAMA.md)** — fork-exclusive **IQK imatrix quants** (`IQ4_KS`), the best quality-per-bit in the GGUF world. See [QUANTIZATION.md](QUANTIZATION.md).
 - **Diverging quant naming from mainline** — IQ_K series flags differ; cross-engine GGUF compatibility caveats.
-- **Spec-decode coverage narrow** — MTP merged but no EAGLE3 / DFlash; lags mainline on those research paths.
+- **Spec-decode coverage** — MTP merged + two-stage ngram+MTP ([PR #1789](https://github.com/ikawrakow/ik_llama.cpp/pull/1789)) + hybrid-aware recurrent checkpoints ([PR #1774](https://github.com/ikawrakow/ik_llama.cpp/pull/1774)). No EAGLE3 / DFlash; lags mainline on those research paths.
 - **Smaller maintainer surface** — primarily Iwan Kawrakow + a handful of contributors. Not the right pick for production where you need >1 person to debug a kernel issue.
 
 ---
@@ -311,7 +311,7 @@ Q1: Does the model fit your VRAM at desired quant?
 | **Per-token-head KV on hybrid pages** | 🟡 [PR #40391](https://github.com/vllm-project/vllm/pull/40391) | N/A | 🟡 | N/A | N/A |
 | **Workspace lock strictness (vLLM 0.20)** | 🟢 [PR #39226](https://github.com/vllm-project/vllm/pull/39226) merged | N/A | N/A | N/A | N/A |
 | **TurboQuant CPU + CUDA** | 🟢 ✅ via Genesis | 🟡 [PR #21089](https://github.com/ggml-org/llama.cpp/pull/21089) (CPU first; CUDA no PR) | 🟡 ⚠️ Same kernel bug as PR #40361 | ❌ | 🟡 [Issue #1509](https://github.com/ikawrakow/ik_llama.cpp/issues/1509) — CPU complete + CUDA written, awaiting validation/merge |
-| **MTP merged-not-PR-branch on llama.cpp family** | N/A | 🟡 [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673) open 3d | N/A | N/A | 🟢 ✅ **Merged on main** (Qwen + GLM-4.x) |
+| **MTP merged on llama.cpp family** | N/A | 🟢 ✅ [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673) merged 2026-05-16 | N/A | N/A | 🟢 ✅ **Merged on main** (Qwen + GLM-4.x) + two-stage ngram+MTP |
 
 🟢 Landed / 🟡 Open / 🔴 Blocked / ⚫ Local workaround
 
