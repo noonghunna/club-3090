@@ -73,7 +73,9 @@ redact() {
       -e 's|HF_TOKEN=[^ "]*|HF_TOKEN=<REDACTED>|g' \
       -e 's|HUGGING_FACE_HUB_TOKEN=[^ "]*|HUGGING_FACE_HUB_TOKEN=<REDACTED>|g' \
       -e 's|api_key=[^ "]*|api_key=<REDACTED>|gi' \
-      -e 's|hf_[A-Za-z0-9]\{30,\}|hf_<REDACTED>|g'
+      -e 's|hf_[A-Za-z0-9]\{30,\}|hf_<REDACTED>|g' \
+      -e 's|/opt/ai|<STACK_ROOT>|g' \
+      -e 's|/mnt/[a-z]/Users/[^ /]*|/mnt/<DRIVE>/Users/<REDACTED>|g'
   else
     cat
   fi
@@ -264,7 +266,14 @@ else
   # actually decide whether GPU↔GPU P2P engages (see issues #137, #351).
   subsection "PCIe / P2P detail (lspci)"
   if ! have lspci; then
-    echo "_lspci not available (pciutils not installed) — skipping PCIe/P2P detail._"
+    # Fallback: nvidia-smi topo -p2p doesn't need pciutils and shows P2P capability
+    if have nvidia-smi && nvidia-smi topo -p2p rw >/dev/null 2>&1; then
+      echo "_lspci not available (pciutils not installed) — showing P2P capability matrix instead._"
+      echo
+      nvidia-smi topo -p2p rw | redact
+    else
+      echo "_lspci not available (pciutils not installed) — skipping PCIe/P2P detail._"
+    fi
   else
     # sudo lspci -vvv is needed for full capability blocks (ACS lives in the
     # extended config space, root-only). Degrade gracefully if sudo is
@@ -352,11 +361,20 @@ section "Display / desktop state"
   fi
 
   if have nvidia-smi; then
+    # Check if a club-3090 container is running (lightweight — full detection is later)
+    local our_container=""
+    if have docker && docker info >/dev/null 2>&1; then
+      our_container=$(docker ps --format '{{.Names}}' --filter 'name=vllm-' --filter 'name=llama-cpp-' --filter 'name=club3090-' --filter 'name=ik-llama-' 2>/dev/null | head -1)
+    fi
     nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits 2>/dev/null \
       | while IFS=, read -r idx used; do
           idx="${idx# }"; used="${used# }"
           if [[ "$used" =~ ^[0-9]+$ ]] && [[ "$used" -gt 100 ]]; then
-            echo "- **GPU $idx idle VRAM:** ${used} MiB ⚠ something is using this GPU (display, browser, container)"
+            if [[ -n "$our_container" ]]; then
+              echo "- **GPU $idx idle VRAM:** ${used} MiB (held by running \`${our_container}\`)"
+            else
+              echo "- **GPU $idx idle VRAM:** ${used} MiB ⚠ something is using this GPU (display, browser, container)"
+            fi
           else
             echo "- **GPU $idx idle VRAM:** ${used} MiB ✓"
           fi
@@ -458,28 +476,49 @@ fi
 # verdict line + any FAIL rows here so a triage reply can immediately see
 # whether to trust kv-calc projections for this user's config.
 
+# Lightweight engine detection for kv-calc scoping (full detection is later in "Active container")
+CALIB_ENGINE_KIND="${ENGINE_KIND:-}"
+if [[ -z "$CALIB_ENGINE_KIND" ]]; then
+  if [[ -z "${CONTAINER:-}" ]] && have docker && docker info >/dev/null 2>&1; then
+    _calib_container=$(docker ps --format '{{.Names}}' --filter 'name=vllm-' --filter 'name=llama-cpp-' --filter 'name=club3090-' --filter 'name=ik-llama-' 2>/dev/null | head -1)
+    case "$_calib_container" in
+      vllm-*)      CALIB_ENGINE_KIND="vllm" ;;
+      llama-cpp-*) CALIB_ENGINE_KIND="llamacpp" ;;
+      *)           CALIB_ENGINE_KIND="unknown" ;;
+    esac
+  fi
+fi
+
 if have python3 && [[ -f tools/kv-calc.py ]]; then
   section "KV math calibration"
-  calib_output=$(python3 tools/kv-calc.py --calibration 2>&1 || true)
-  overall=$(echo "$calib_output" | grep -E '^Overall:' | head -1)
-  fail_rows=$(echo "$calib_output" | grep -E '\bFAIL\b' || true)
-  {
-    if [[ -n "$overall" ]]; then
-      echo "- ${overall}"
-    else
-      echo "- _kv-calc --calibration produced no Overall line; see output below._"
-    fi
-    if [[ -n "$fail_rows" ]]; then
-      echo "- ⚠ Failing rows:"
-      echo '```'
-      echo "$fail_rows"
-      echo '```'
-      echo "- Math model is mis-calibrated against measured reality for the rows above. Any kv-calc projection on this checkout should be treated as suspect until the calibration anchors / formulas are reconciled."
-    else
-      echo "- No FAIL rows. kv-calc projections should agree with measured VRAM within the ±1.5 GB error band."
-    fi
-  } | redact
-  echo "$calib_output" | redact | details "Full kv-calc --calibration output"
+  # Item 5: kv-calc calibration is vLLM-specific; skip on llama.cpp/ik_llama
+  if [[ "$CALIB_ENGINE_KIND" == "llamacpp" ]]; then
+    echo "- _kv-calc calibration is vLLM-specific — skipped on the llama.cpp engine._"
+  elif ! python3 -c 'import yaml' 2>/dev/null; then
+    # Item 1: graceful-degrade when PyYAML is missing
+    echo "- _kv-calc calibration skipped — PyYAML not installed (\`pip install pyyaml\`)._"
+  else
+    calib_output=$(python3 tools/kv-calc.py --calibration 2>&1 || true)
+    overall=$(echo "$calib_output" | grep -E '^Overall:' | head -1)
+    fail_rows=$(echo "$calib_output" | grep -E '\bFAIL\b' || true)
+    {
+      if [[ -n "$overall" ]]; then
+        echo "- ${overall}"
+      else
+        echo "- _kv-calc --calibration produced no Overall line; see output below._"
+      fi
+      if [[ -n "$fail_rows" ]]; then
+        echo "- ⚠ Failing rows:"
+        echo '```'
+        echo "$fail_rows"
+        echo '```'
+        echo "- Math model is mis-calibrated against measured reality for the rows above. Any kv-calc projection on this checkout should be treated as suspect until the calibration anchors / formulas are reconciled."
+      else
+        echo "- No FAIL rows. kv-calc projections should agree with measured VRAM within the ±1.5 GB error band."
+      fi
+    } | redact
+    echo "$calib_output" | redact | details "Full kv-calc --calibration output"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
