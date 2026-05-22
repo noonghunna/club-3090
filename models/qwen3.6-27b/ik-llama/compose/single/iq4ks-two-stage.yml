@@ -92,6 +92,13 @@ services:
       --ctx-size ${CTX_SIZE:-131072}
       -b ${BATCH_SIZE:-4096}
       -ub ${UBATCH_SIZE:-1024}
+      # ⚠ -np 1 is intentional on a single 24 GB card — do NOT raise it to
+      #   "parallelize." One GPU is compute-bound: extra slots divide its
+      #   throughput, they don't multiply it. At -np 4 each slot fell to
+      #   ~14 tok/s here — slow enough to trip agentic clients' per-request
+      #   timeouts (aider ran 1/30) — and -np>1 also auto-disables MTP and
+      #   can OOM the spec-context buffer. On a higher-throughput card (e.g.
+      #   5090) or multi-GPU the trade may flip — re-validate before raising.
       -np ${NP:-1}
       -ctk ${KV_TYPE:-q4_0}
       -ctv ${KV_TYPE:-q4_0}

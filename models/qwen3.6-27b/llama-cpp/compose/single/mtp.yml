@@ -67,6 +67,7 @@
 #   BATCH_SIZE             llama.cpp -b        (default: 4096 — on mainline -b does NOT drive VRAM)
 #   UBATCH_SIZE            llama.cpp -ub       (default: 512 — funds the 262K default; raise to 1024 at 131K)
 #   KV_TYPE                K and V quant type  (default: q4_0)
+#   NP                     parallel slots      (default: 1 — see ⚠ below)
 #   MTP_DRAFT_N_MAX        MTP draft tokens    (default: 2 — sweet spot per BENCHMARKS.md)
 #   REASONING              thinking gate       (default: off — stack-wide policy)
 #   REASONING_FORMAT       reasoning routing   (default: deepseek — hygiene)
@@ -93,7 +94,14 @@ services:
       -fa on
       --cache-type-k ${KV_TYPE:-q4_0}
       --cache-type-v ${KV_TYPE:-q4_0}
-      -np 1
+      # ⚠ -np 1 is intentional on a single 24 GB card — do NOT raise it to
+      #   "parallelize." One GPU is compute-bound: extra slots divide its
+      #   throughput, they don't multiply it. At -np 4 each slot fell to
+      #   ~14 tok/s here — slow enough to trip agentic clients' per-request
+      #   timeouts (aider ran 1/30) — and -np>1 also auto-disables MTP and
+      #   can OOM the spec-context buffer. On a higher-throughput card (e.g.
+      #   5090) or multi-GPU the trade may flip — re-validate before raising.
+      -np ${NP:-1}
       --spec-type draft-mtp
       --spec-draft-n-max ${MTP_DRAFT_N_MAX:-2}
       --jinja
