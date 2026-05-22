@@ -22,5 +22,5 @@ supported_weight_formats:
 required_overlays: []
 vendored_overlays: []
 required_genesis: false
-notes: "Cliff-immune single-card fallback for Qwen GGUF serving. Uses upstream `ghcr.io/ggml-org/llama.cpp:server-cuda` (rolling tag — auto-bumps to latest upstream build). MTP PR #22673 merged upstream + draft-eagle3 + draft-mtp spec types available natively. Pin to a specific build via env: `LLAMACPP_IMAGE=ghcr.io/.../server-cuda-bXXXX` (e.g. if upstream regresses). No club-3090 patches on llama.cpp; we follow upstream as-is."
+notes: "Cliff-immune single-card fallback for Qwen GGUF serving. Uses upstream `ghcr.io/ggml-org/llama.cpp`, pinned to build `server-cuda-b9246` (NOT the rolling `:server-cuda` tag — it regressed at b9282 with a broken-lib crash loop, #187). MTP PR #22673 merged upstream + draft-eagle3 + draft-mtp spec types available natively. Bump via env once a newer build is validated: `LLAMACPP_IMAGE=ghcr.io/.../server-cuda-bXXXX`. No club-3090 patches on llama.cpp; we follow upstream as-is."
 
