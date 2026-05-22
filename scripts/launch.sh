@@ -444,6 +444,8 @@ choose_model() {
     if [[ -z "${MODEL_ENGINES[$MODEL_NAME]:-}" ]]; then
       echo "[launch] ERROR: ${MODEL_NAME} is not installed under ${MODEL_DIR}." >&2
       echo "[launch]        Run: bash scripts/setup.sh ${MODEL_NAME}" >&2
+      echo "[launch]        Already have weights elsewhere? Point MODEL_DIR at them, e.g.:" >&2
+      echo "[launch]          echo 'MODEL_DIR=/path/to/your/models' >> .env   # launch.sh, switch.sh + docker compose all read it" >&2
       exit 1
     fi
     return
@@ -451,6 +453,8 @@ choose_model() {
   if [[ "${#MODEL_ORDER[@]}" -eq 0 ]]; then
     echo "[launch] ERROR: no supported model weights found under ${MODEL_DIR}." >&2
     echo "[launch]        Run: bash scripts/setup.sh" >&2
+    echo "[launch]        Already have weights elsewhere? Point MODEL_DIR at them, e.g.:" >&2
+    echo "[launch]          echo 'MODEL_DIR=/path/to/your/models' >> .env   # launch.sh, switch.sh + docker compose all read it" >&2
     exit 1
   fi
   if [[ "${#MODEL_ORDER[@]}" -eq 1 ]]; then
