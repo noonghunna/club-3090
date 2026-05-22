@@ -87,6 +87,8 @@ The Q3_K_XL number at 262K is **lower than community-reported 35-45 tok/s** ([Re
 
 ```bash
 # 1. Get the MTP-enabled GGUF
+#    Easiest: WEIGHTS=gguf bash scripts/setup.sh qwen3.6-27b   (downloads Q4_K_M + mmproj,
+#    SHA-verified, into the path below; skips Genesis). Or download it directly:
 hf download unsloth/Qwen3.6-27B-MTP-GGUF Qwen3.6-27B-Q4_K_M.gguf \
   --local-dir $MODEL_DIR/qwen3.6-27b-gguf/unsloth-mtp-q4km
 

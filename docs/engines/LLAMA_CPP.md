@@ -90,6 +90,8 @@ This is exactly why our launch frame is **two routes, not one** ([README](../../
 hf download unsloth/Qwen3.6-27B-GGUF Qwen3.6-27B-Q4_K_M.gguf --local-dir $MODEL_DIR/qwen3.6-27b-gguf/
 ```
 
+> **Easier:** `WEIGHTS=gguf bash scripts/setup.sh qwen3.6-27b` does this download for you — Q4_K_M + mmproj, SHA-verified, into the path the composes expect — and skips Genesis (llama.cpp doesn't need it).
+
 Confirm size matches the HuggingFace listing. If a `sha256` is published, verify it.
 
 ### 2. Build llama.cpp

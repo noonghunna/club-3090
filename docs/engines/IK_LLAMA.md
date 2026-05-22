@@ -74,7 +74,15 @@ hf download ubergarm/Qwen3.6-27B-GGUF Qwen3.6-27B-MTP-IQ4_KS.gguf \
 # Always SHA256-verify multi-GB GGUFs after download.
 ```
 
-### 3. Launch (via our compose)
+### 3. Launch
+
+Easiest — via the variant wizard / `switch.sh` (these two are registered):
+```bash
+bash scripts/switch.sh ik-llama/iq4ks-mtp          # text, 262K
+bash scripts/switch.sh ik-llama/iq4ks-mtp-vision   # + mmproj (vision), 160K
+```
+
+Or directly via compose:
 ```bash
 # MTP-only (default):
 MODEL_DIR=$MODEL_DIR docker compose \
