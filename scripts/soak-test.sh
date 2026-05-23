@@ -213,19 +213,25 @@ else
 fi
 
 auto_container() {
+  # Canonical club-3090 container prefixes across engines (mirror of
+  # preflight.sh::preflight_autodetect_endpoint). llama-cpp / ik-llama were
+  # previously missing here → rc=2 on llama.cpp/ik rebench-full soak step (#403).
   docker ps --format '{{.Names}}' 2>/dev/null \
-    | grep -E '^(vllm-qwen36-27b|vllm-gemma-4-31b)' \
+    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|ik-llama-qwen36-27b|vllm-gemma-4-31b|sglang-qwen36-27b)' \
     | head -1 || true
 }
 
 endpoint_from_container() {
   local container="$1"
-  local mapped port
-  mapped="$(docker port "$container" 8000/tcp 2>/dev/null | head -1 || true)"
-  if [[ -n "$mapped" ]]; then
-    port="${mapped##*:}"
-    [[ "$port" =~ ^[0-9]+$ ]] && { printf 'http://localhost:%s\n' "$port"; return 0; }
-  fi
+  local mapped port internal
+  # vllm maps internal 8000, llama.cpp / ik_llama map 8080, sglang maps 30000.
+  for internal in 8000 8080 30000; do
+    mapped="$(docker port "$container" "${internal}/tcp" 2>/dev/null | head -1 || true)"
+    if [[ -n "$mapped" ]]; then
+      port="${mapped##*:}"
+      [[ "$port" =~ ^[0-9]+$ ]] && { printf 'http://localhost:%s\n' "$port"; return 0; }
+    fi
+  done
   printf 'http://localhost:8020\n'
 }
 
@@ -268,7 +274,7 @@ if [[ "$HOST_MODE" == "1" ]]; then
   CONTAINER="none"
 else
   CONTAINER="${CONTAINER:-$(auto_container)}"
-  [[ -n "$CONTAINER" ]] || die "no running vllm-qwen36-27b*/vllm-gemma-4-31b* container found; set CONTAINER=... or CONTAINER=none for host engines"
+  [[ -n "$CONTAINER" ]] || die "no running club-3090 container found (vllm-/llama-cpp-/ik-llama-/sglang- × qwen36-27b/gemma-4-31b); set CONTAINER=... or CONTAINER=none for host engines"
   docker inspect "$CONTAINER" >/dev/null 2>&1 || die "container '$CONTAINER' not found (use CONTAINER=none for host engine builds)"
   [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)" == "true" ]] \
     || die "container '$CONTAINER' is not running"
