@@ -17,7 +17,7 @@
 # Qwen3.6-27B on llama.cpp — single 3090, MTP, 160K ctx, VISION ON.
 #
 # This is one of two named single-card profiles for this model:
-#   - mtp.yml             → MTP n=2 + 262K + no vision (fast + max ctx)
+#   - mtp.yml             → MTP n=2 + 200K + no vision (fast + max ctx)
 #   - mtp-vision.yml      → MTP n=2 + 160K + vision (THIS file — multimodal)
 #
 # Historical note: the older single compose stripped --mmproj when MTP was
@@ -39,7 +39,7 @@
 #   headroom:                       ~1.7 GB for prompt + activation peaks +
 #                                   image-encode tile buffer
 #
-# Why 160K ctx (vs mtp.yml's 262K): the mmproj F16 plus image-encode tile
+# Why 160K ctx (vs mtp.yml's 200K): the mmproj F16 plus image-encode tile
 # buffers consume the headroom that the no-vision profile spends on KV.
 # 160K is the DEFAULT — verified on this rig (2026-05-22). Up to 192K with
 # UBATCH_SIZE=512. Conservative rigs can lower to 131K for more headroom.

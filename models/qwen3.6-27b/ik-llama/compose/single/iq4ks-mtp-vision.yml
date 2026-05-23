@@ -14,7 +14,7 @@
 #              margin. REQUIRES -b 1024 (see below): a full 2048²/4M-pixel image
 #              encodes at ~23.65 GB. mmproj + encode buffers eat the VRAM the
 #              text profile spends on KV, so the vision ceiling (~180K) sits well
-#              below the text profile's 262K. Push higher only if you don't need
+#              below the text profile's 200K. Push higher only if you don't need
 #              prefill headroom — see VRAM RESIZING below.
 #   Status:    🧪 EVAL ONLY — task #402. NOT shipped. Sibling of iq4ks-mtp.yml
 #              with vision added (ampersandru's #152 config also loaded mmproj).
@@ -23,7 +23,7 @@
 # This is the VISION sibling of iq4ks-mtp.yml. Everything matches that file
 # (config source, justified deviations, native-template A/B result) EXCEPT:
 #   + --mmproj + --image-{min,max}-tokens (vision projector mounted)
-#   + default ctx 160K + -b 1024 (vs the text profile's 262K + -b 4096)
+#   + default ctx 160K + -b 1024 (vs the text profile's 200K + -b 4096)
 #
 # Why -b 1024 (NOT the text profile's 4096): on this ik_llama build the image-
 # encode graph makes the compute buffer scale hard with logical batch -b — at

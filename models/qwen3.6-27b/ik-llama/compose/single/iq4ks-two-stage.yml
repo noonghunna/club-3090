@@ -11,7 +11,7 @@
 #   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard (same as iq4ks-mtp.yml)
 #   Template:  native (GGUF-embedded) — see iq4ks-mtp.yml for A/B rationale
 #   Vision:    NO (text-only; mmproj is a separate axis → iq4ks-mtp-vision.yml)
-#   Default ctx: 131072 — lower than iq4ks-mtp.yml's 262K because two-stage
+#   Default ctx: 131072 — lower than iq4ks-mtp.yml's 200K because two-stage
 #              needs ngram context history to match against. 131K gives plenty
 #              of pattern surface while leaving headroom for the ngram index.
 #   Status:    🧪 EXPERIMENTAL — PR #1789 is 7 days old (2026-05-15). Boots +
