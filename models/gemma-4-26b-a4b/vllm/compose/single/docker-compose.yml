@@ -76,6 +76,8 @@ services:
               count: all
               capabilities: [gpu]
     command:
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-1.0}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:--1},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
       - --host
       - 0.0.0.0
       - --port

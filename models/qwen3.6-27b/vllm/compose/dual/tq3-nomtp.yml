@@ -171,6 +171,8 @@ services:
       # at time of writing). Higher n re-uses the same MTP layer for the
       # extra draft steps and emits a vLLM warning about reduced acceptance
       # rate. Use SPEC_N_MAX=4 to A/B against Gemma's n=4.
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
       - --host
       - 0.0.0.0
       - --port

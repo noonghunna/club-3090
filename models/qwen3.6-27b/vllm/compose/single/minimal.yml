@@ -133,6 +133,8 @@ services:
       - --enable-prefix-caching
       - --enable-chunked-prefill
       # No --speculative-config (this is the minimal variant — no spec-decode)
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
       - --host
       - 0.0.0.0
       - --port

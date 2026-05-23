@@ -295,6 +295,8 @@ services:
       # FULL_AND_PIECEWISE → PIECEWISE for spec-decode K+1 verify; 1-token
       # decode batches still get cudagraph capture. Forcing FULL_AND_PIECEWISE
       # explicitly produces no measurable benefit (verified 2026-04-27).
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
       - --host
       - 0.0.0.0
       - --port

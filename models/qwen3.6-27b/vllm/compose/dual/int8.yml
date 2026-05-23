@@ -142,6 +142,8 @@ services:
       # rate. Use SPEC_N_MAX=4 to A/B against Gemma's n=4.
       - --speculative-config
       - '{"method":"mtp","num_speculative_tokens":${SPEC_N_MAX:-3}}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
       - --host
       - 0.0.0.0
       - --port
