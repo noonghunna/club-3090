@@ -74,6 +74,14 @@ OPTIONS (extra)
                    --temp, vLLM --override-generation-config). Reads back via
                    GET /props and records the values. Tags the run as
                    non-canonical. Also settable via SAMPLING_FROM_SERVER=1 env.
+  --enable-thinking
+                   Forward to benchlocal-cli --enable-thinking so reasoning
+                   models are evaluated with request-level thinking enabled.
+                   Also settable via ENABLE_THINKING=1 env.
+  --thinking-max-tokens N
+                   Forward to benchlocal-cli --thinking-max-tokens N when
+                   --enable-thinking / ENABLE_THINKING=1 is active. Also
+                   settable via THINKING_MAX_TOKENS env.
 
 ENV VARS
   URL              Endpoint base URL (default: auto-detected via preflight,
@@ -84,6 +92,11 @@ ENV VARS
                    single-model composes). --model and MODEL are equivalent.
   TIMEOUT_PER_CASE Per-scenario HTTP timeout in seconds (default: 60).
                    --timeout-per-case overrides this when both are set.
+  ENABLE_THINKING Set to 1 to send request-level enable_thinking=true via
+                   benchlocal-cli --enable-thinking. Default: 0.
+  THINKING_MAX_TOKENS
+                   Optional thinking budget passed through to benchlocal-cli
+                   --thinking-max-tokens when thinking is enabled.
 
 EXAMPLES
   bash scripts/quality-test.sh                          # --medium against running compose
@@ -136,6 +149,8 @@ SANDBOXED_ONLY=0
 LIST_PACKS=0
 SANDBOX_LOG_DIR="${SANDBOX_LOG_DIR:-}"
 SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}"
+ENABLE_THINKING="${ENABLE_THINKING:-0}"
+THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -191,6 +206,18 @@ while [[ $# -gt 0 ]]; do
     --sampling-from-server)
       SAMPLING_FROM_SERVER=1
       shift
+      ;;
+    --enable-thinking)
+      ENABLE_THINKING=1
+      shift
+      ;;
+    --thinking-max-tokens)
+      THINKING_MAX_TOKENS="${2:-}"
+      if [[ -z "$THINKING_MAX_TOKENS" ]] || ! [[ "$THINKING_MAX_TOKENS" =~ ^[0-9]+$ ]]; then
+        echo "✗ --thinking-max-tokens requires a positive integer" >&2
+        exit 2
+      fi
+      shift 2
       ;;
     -h|--help)
       usage
@@ -267,6 +294,43 @@ if [[ -z "${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-}" ]] \
   echo "[quality-test] localhost URL detected — auto-set BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1 for hermes sandbox endpoint rewrite" >&2
 fi
 
+server_reasoning_on() {
+  if curl -sf -m 3 "${URL}/props" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    obj = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+
+def walk(x):
+    if isinstance(x, dict):
+        for k, v in x.items():
+            lk = str(k).lower()
+            if lk in {"reasoning", "enable_reasoning"}:
+                if v is True or str(v).lower() in {"1", "true", "on", "yes"}:
+                    return True
+            if walk(v):
+                return True
+    elif isinstance(x, list):
+        return any(walk(v) for v in x)
+    return False
+sys.exit(0 if walk(obj) else 1)
+' >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -n "${CONTAINER:-}" && "${CONTAINER:-}" != "none" ]] \
+     && command -v docker >/dev/null 2>&1 \
+     && docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    docker inspect "$CONTAINER" 2>/dev/null \
+      | grep -Eq -- '(--reasoning[= ]+on|"--reasoning"[[:space:]]*,[[:space:]]*"on")' && return 0
+  fi
+  return 1
+}
+
+if [[ "$ENABLE_THINKING" != "1" ]] && server_reasoning_on; then
+  echo "[quality-test] WARN: server appears to have reasoning enabled, but requests will send enable_thinking=false. Use --enable-thinking or ENABLE_THINKING=1 for reasoning-on evals." >&2
+fi
+
 # ---- run benchlocal-cli ------------------------------------------------------
 
 RESULTS_DIR="${ROOT_DIR}/results/quality"
@@ -310,6 +374,16 @@ fi
 if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then
   CLI_ARGS+=(--sampling-from-server)
   echo "[quality-test] sampling: inherited from server (non-canonical)"
+fi
+if [[ "$ENABLE_THINKING" == "1" ]]; then
+  CLI_ARGS+=(--enable-thinking)
+  echo "[quality-test] thinking: enabled (non-canonical)"
+  if [[ -n "$THINKING_MAX_TOKENS" ]]; then
+    CLI_ARGS+=(--thinking-max-tokens "$THINKING_MAX_TOKENS")
+    echo "[quality-test] thinking max tokens: $THINKING_MAX_TOKENS"
+  fi
+elif [[ -n "$THINKING_MAX_TOKENS" ]]; then
+  echo "[quality-test] NOTE: THINKING_MAX_TOKENS is set but thinking is off; ignoring it. Set ENABLE_THINKING=1 or --enable-thinking." >&2
 fi
 
 # Run; capture exit code so we can also try to emit the compact one-liner

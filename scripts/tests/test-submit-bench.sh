@@ -58,6 +58,9 @@ done
 
 out="$(BENCH_MOCK=1 RUNS=1 WARMUPS=0 bash scripts/bench.sh)"
 assert_contains "$out" "PP tok/s"
+out="$(ENABLE_THINKING=1 BENCH_MOCK=1 RUNS=1 WARMUPS=0 bash scripts/bench.sh 2>&1)"
+assert_contains "$out" "[bench] thinking: enabled"
+assert_contains "$out" "PP tok/s"
 out="$(BENCH_MOCK=1 PP=1 RUNS=1 WARMUPS=0 bash scripts/bench.sh)"
 assert_contains "$out" "summary [prompt-processing]"
 assert_contains "$out" "PP tok/s"

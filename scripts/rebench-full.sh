@@ -62,6 +62,13 @@
 #                       to quality-test.sh --sampling-from-server. Useful when
 #                       the compose encodes the model's recommended sampling
 #                       (e.g. Qwopus temp=0.8). Tags runs as non-canonical.
+#   ENABLE_THINKING
+#                       Set to 1 to pass request-level enable_thinking=true
+#                       through bench.sh and both quality-test.sh invocations.
+#                       Required to measure reasoning-on models honestly.
+#   THINKING_MAX_TOKENS
+#                       Optional thinking budget forwarded to quality-test.sh
+#                       when ENABLE_THINKING=1.
 #
 
 set -euo pipefail
@@ -176,6 +183,7 @@ echo "  out dir:     $OUT_DIR"
 echo "  resume:      $RESUME"
 echo "  skips:       ${SKIP_CSV:-(none)}"
 echo "  hermes env:  BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-0}"
+echo "  thinking:    ${ENABLE_THINKING:-0}${THINKING_MAX_TOKENS:+ (max_tokens=$THINKING_MAX_TOKENS)}"
 echo "==============================================================="
 date +"  started:     %Y-%m-%dT%H:%M:%SZ" -u
 echo
@@ -264,6 +272,7 @@ snapshot_quality_json() {
 
 # --- step 1: bench ----------------------------------------------------------
 URL="$URL" MODEL="$MODEL" RUNS="${RUNS:-3}" WARMUPS="${WARMUPS:-1}" \
+  ENABLE_THINKING="${ENABLE_THINKING:-0}" \
   run_step bench "$OUT_DIR/bench.log" \
     bash "$ROOT_DIR/scripts/bench.sh" || true
 
@@ -275,6 +284,8 @@ URL="$URL" MODEL="$MODEL" \
 # --- step 3: quality-test --full --------------------------------------------
 URL="$URL" MODEL="$MODEL" \
   SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
+  ENABLE_THINKING="${ENABLE_THINKING:-0}" \
+  THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
   run_step quality-full "$OUT_DIR/quality-full.log" \
     bash "$ROOT_DIR/scripts/quality-test.sh" --full --sandbox-log-dir "$OUT_DIR"
 snapshot_quality_json "$OUT_DIR/quality-full.json"
@@ -296,6 +307,8 @@ URL="$URL" MODEL="$MODEL" \
 AIDER_TIMEOUT_PER_CASE="${AIDER_TIMEOUT_PER_CASE:-3600}"
 URL="$URL" MODEL="$MODEL" \
   SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
+  ENABLE_THINKING="${ENABLE_THINKING:-0}" \
+  THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
   run_step aider-polyglot "$OUT_DIR/aider-polyglot.log" \
     bash "$ROOT_DIR/scripts/quality-test.sh" --pack aider-polyglot-30 \
       --timeout-per-case "$AIDER_TIMEOUT_PER_CASE" --sandbox-log-dir "$OUT_DIR"

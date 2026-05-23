@@ -40,6 +40,8 @@
 #                      llama.cpp containers enable this automatically.
 #   PP_FALLBACK_TOKENS Approximate filler-token target for PP=1. Default: 10000
 #   PP_MAX_TOKENS      Completion cap for the PP fallback request. Default: 16
+#   ENABLE_THINKING    Set to 1 to send chat_template_kwargs.enable_thinking=true
+#                      in bench requests. Default: 0.
 #
 # Usage:
 #   bash scripts/bench.sh
@@ -71,6 +73,7 @@ QUIET="${QUIET:-0}"
 PP="${PP:-0}"
 PP_FALLBACK_TOKENS="${PP_FALLBACK_TOKENS:-10000}"
 PP_MAX_TOKENS="${PP_MAX_TOKENS:-16}"
+ENABLE_THINKING="${ENABLE_THINKING:-0}"
 
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not in PATH." >&2; exit 1; }
@@ -92,6 +95,10 @@ fi
 PP_MODE="log"
 if [[ "$PP" == "1" || "$ENGINE_KIND" == "llamacpp" ]]; then
   PP_MODE="fallback"
+fi
+
+if [[ "$ENABLE_THINKING" == "1" ]]; then
+  echo "[bench] thinking: enabled (request chat_template_kwargs.enable_thinking=true)" >&2
 fi
 
 if [[ "${BENCH_MOCK:-0}" == "1" ]]; then
@@ -129,18 +136,57 @@ if ! curl -sf "${URL}/v1/models" >/dev/null; then
   exit 1
 fi
 
+server_reasoning_on() {
+  if curl -sf -m 3 "${URL}/props" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    obj = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+
+def walk(x):
+    if isinstance(x, dict):
+        for k, v in x.items():
+            lk = str(k).lower()
+            if lk in {"reasoning", "enable_reasoning"}:
+                if v is True or str(v).lower() in {"1", "true", "on", "yes"}:
+                    return True
+            if walk(v):
+                return True
+    elif isinstance(x, list):
+        return any(walk(v) for v in x)
+    return False
+sys.exit(0 if walk(obj) else 1)
+' >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -n "${CONTAINER:-}" && "${CONTAINER:-}" != "none" ]] \
+     && command -v docker >/dev/null 2>&1 \
+     && docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    docker inspect "$CONTAINER" 2>/dev/null \
+      | grep -Eq -- '(--reasoning[= ]+on|"--reasoning"[[:space:]]*,[[:space:]]*"on")' && return 0
+  fi
+  return 1
+}
+
+if [[ "$ENABLE_THINKING" != "1" ]] && server_reasoning_on; then
+  echo "[bench] WARN: server appears to have reasoning enabled, but bench requests send enable_thinking=false. Use ENABLE_THINKING=1 for reasoning-on TPS." >&2
+fi
+
 python3 - "$URL" "$MODEL" "$WARMUPS" "$RUNS" "$QUIET" "$ONLY" \
             "$CONTAINER" "$PP_MODE" "$PP_FALLBACK_TOKENS" "$PP_MAX_TOKENS" \
+            "$ENABLE_THINKING" \
             "$PROMPT_NARR" "$MAX_TOKENS_NARR" \
             "$PROMPT_CODE" "$MAX_TOKENS_CODE" << 'PYEOF'
 import json, re, shutil, subprocess, sys, time, urllib.request, statistics as s
 
 (URL, MODEL, WARMUPS, RUNS, QUIET, ONLY,
  CONTAINER, PP_MODE, PP_FALLBACK_TOKENS, PP_MAX_TOKENS,
- PROMPT_NARR, MAX_NARR, PROMPT_CODE, MAX_CODE) = sys.argv[1:]
+ ENABLE_THINKING, PROMPT_NARR, MAX_NARR, PROMPT_CODE, MAX_CODE) = sys.argv[1:]
 WARMUPS = int(WARMUPS); RUNS = int(RUNS); QUIET = int(QUIET) == 1
 MAX_NARR = int(MAX_NARR); MAX_CODE = int(MAX_CODE)
 PP_FALLBACK_TOKENS = int(PP_FALLBACK_TOKENS); PP_MAX_TOKENS = int(PP_MAX_TOKENS)
+ENABLE_THINKING = ENABLE_THINKING == "1"
 
 def run_once(prompt, max_tokens):
     body = json.dumps({
@@ -151,7 +197,7 @@ def run_once(prompt, max_tokens):
         "top_p": 0.95,
         "stream": True,
         "stream_options": {"include_usage": True},
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": ENABLE_THINKING},
     }).encode()
     req = urllib.request.Request(f"{URL}/v1/chat/completions", data=body,
                                  headers={"Content-Type": "application/json"})

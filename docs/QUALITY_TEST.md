@@ -143,7 +143,24 @@ SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh
 benchlocal-cli run --full --endpoint http://localhost:8020 --model <name> --temperature 0.8
 ```
 
-**Why it matters:** a reasoning / exploratory fine-tune (e.g. Qwopus3.6, whose author recommends temp 0.75–1) is *under-represented* at temp 0 — greedy decoding collapses the path-exploration the fine-tune was trained for. But high temp also *hurts* the deterministic packs (DataExtract / StructOutput want exact, repeatable output), so read **per-pack deltas**, not just the total — and keep canonical temp-0 as the bar for any apples-to-apples ranking.
+### Reasoning-on evals
+
+Serving with `--reasoning on` is necessary but not sufficient: the request also has to send `chat_template_kwargs.enable_thinking=true`. The wrappers default to thinking off for canonical, reproducible runs. Enable it explicitly when measuring a reasoning fine-tune:
+
+```bash
+# quality only
+bash scripts/quality-test.sh --full --enable-thinking --thinking-max-tokens 4096
+
+# full rebench: bench.sh + both quality-test.sh legs inherit it
+ENABLE_THINKING=1 THINKING_MAX_TOKENS=4096 SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh
+
+# TPS bench only
+ENABLE_THINKING=1 bash scripts/bench.sh
+```
+
+If `/props` or the running container suggests reasoning is enabled but the wrapper is still sending `enable_thinking=false`, `quality-test.sh` / `bench.sh` print a warning rather than silently measuring the thinking-off path.
+
+**Why it matters:** a reasoning / exploratory fine-tune (e.g. Qwopus3.6, whose author recommends temp 0.75–1) is *under-represented* at temp 0 or with thinking disabled — greedy, thinking-off decoding collapses the path-exploration the fine-tune was trained for. But high temp and reasoning also *hurt* deterministic packs (DataExtract / StructOutput want exact, repeatable output), so read **per-pack deltas**, not just the total — and keep canonical temp-0 thinking-off as the bar for any apples-to-apples ranking.
 
 ## Compose `Quality:` schema field
 
