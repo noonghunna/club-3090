@@ -338,7 +338,7 @@ Grammar mask compute adds ~10% per-token TPS (~61 → 53 TPS in our bench). Per-
 
 ## What's saved on disk
 
-The full bench outputs (results.jsonl, summary.json, per-problem narrative with FREE/FSM/PT think bodies) are at `/home/wasif/structured-cot/runs/full-humaneval-2026-04-30/` and `/home/wasif/structured-cot/runs/full-lcb-v6-gpu1-2026-04-30/`. Internal diagnostics writeup with full setup details, vLLM CLI args, and port surprises is at [`models/qwen3.6-27b/vllm/diagnostics/structured-cot-bench.md`](../models/qwen3.6-27b/vllm/diagnostics/structured-cot-bench.md).
+The full bench outputs (results.jsonl, summary.json, per-problem narrative with FREE/FSM/PT think bodies) are kept in the local `structured-cot/runs/full-humaneval-2026-04-30/` and `full-lcb-v6-gpu1-2026-04-30/` run dirs (host-local, not committed). The diagnostics writeup with full setup details, vLLM CLI args, and port notes is at [`models/qwen3.6-27b/vllm/diagnostics/structured-cot-bench.md`](../models/qwen3.6-27b/vllm/diagnostics/structured-cot-bench.md).
 
 ## Credit
 
