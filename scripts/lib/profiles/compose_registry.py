@@ -243,6 +243,13 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/mtp.yml",
         default_port=8020,
     ),
+    "llamacpp/bounded-thinking": _entry(
+        model="qwen3.6-27b", weights_variant="gguf", workload="tool-heavy",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/llama-cpp/compose/single/bounded-thinking.yml",
+        default_port=8020,
+    ),
     "llamacpp/mtp-vision": _entry(
         model="qwen3.6-27b", weights_variant="gguf", workload="vision-coding",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",

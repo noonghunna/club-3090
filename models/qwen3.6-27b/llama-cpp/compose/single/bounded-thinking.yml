@@ -1,0 +1,98 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Unsloth MTP-enabled Q4_K_M GGUF)
+#   Engine:    llama.cpp mainline (server-cuda-b9246 pin, same as mtp.yml)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=2 (--spec-type draft-mtp, inherited from mtp.yml)
+#   KV:        q4_0 K + q4_0 V
+#   Vision:    no
+#   Template:  native GGUF + --jinja + --reasoning on --reasoning-format deepseek
+#   Max ctx:   200000 default (@ -ub 512, same max-safe fill profile as mtp.yml)
+#   Status:    New structured-CoT port; live grammar+MTP validation pending
+#   Engine-profile: llama-cpp-local
+#   Best for:  bounded-thinking coding/reasoning workloads on the llama.cpp
+#              engine that boots today. Client sends a per-request GBNF grammar.
+# ---------------------------------------------------------------------------
+# llama.cpp bounded-thinking variant. This is intentionally almost identical
+# to mtp.yml: same image pin, Q4_K_M GGUF, MTP n=2, 200K ctx, q4_0 KV, and
+# no vision. The only serving-policy difference is REASONING defaults to on.
+#
+# Why no server grammar flag here: llama.cpp accepts GBNF through the OpenAI
+# request body's `grammar` field. Unlike vLLM, there is no separate
+# reasoning-scoped switch in this compose. The recommended grammar at
+# tools/grammar-eval/deepseek-scratchpad.gbnf is whole-response shaped for
+# Qwen's generated stream after the chat template auto-prefixes `<think>\n`:
+# PLAN / NOTE* / VERDICT / `</think>\n\n` / free answer.
+#
+# Recommended request shape:
+#   - temperature: 0 for bench parity
+#   - max_tokens: 4096
+#   - grammar: contents of tools/grammar-eval/deepseek-scratchpad.gbnf
+#
+# Optional alternates stay client-selectable: the original andthattoo G/A/E
+# grammar and tools/grammar-eval/holiday-tagline.gbnf. See
+# docs/STRUCTURED_COT.md for the accuracy/compression table and curl/Python
+# examples.
+#
+# Open validation gates for on-rig testing:
+#   1. Per-request grammar loads under llama.cpp GBNF as-is.
+#   2. FREE vs FSM think-token counts differ, proving the mask fires in the
+#      generated think block.
+#   3. Grammar-masked decode coexists with --spec-type draft-mtp; if not, run
+#      the same compose with MTP disabled for structured-CoT bench only and
+#      document the trade.
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: llama-cpp-local
+# Requires-min-gpu-count: 1
+# Tensor-parallel: 1
+services:
+  llama-cpp-qwen36-27b-bounded-thinking:
+    # Pinned to b9246 (validated 2026-05-20). The rolling `:server-cuda` tag
+    # regressed at b9282 (broken lib packaging: `libllama-common.so.0: cannot
+    # open shared object file` → crash loop) — see #187. Bump via env when a
+    # newer build is validated:  LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9246}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen36-27b-bounded-thinking}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8020}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../models-cache}:/models:ro"
+    # ⚠ -np 1 is intentional on a single 24 GB card — do NOT raise it to
+    #   "parallelize." One GPU is compute-bound: extra slots divide its
+    #   throughput, they don't multiply it. At -np 4 each slot fell to
+    #   ~14 tok/s here — slow enough to trip agentic clients' per-request
+    #   timeouts (aider ran 1/30) — and -np>1 also auto-disables MTP and
+    #   can OOM the spec-context buffer. On a higher-throughput card (e.g.
+    #   5090) or multi-GPU the trade may flip — re-validate before raising.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-mtp-q4km/Qwen3.6-27B-Q4_K_M.gguf}
+      -c ${CTX_SIZE:-200000}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-512}
+      -ngl 99
+      -fa on
+      --cache-type-k ${KV_TYPE:-q4_0}
+      --cache-type-v ${KV_TYPE:-q4_0}
+      -np ${NP:-1}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${MTP_DRAFT_N_MAX:-2}
+      --jinja
+      --reasoning ${REASONING:-on}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [compute, utility]

@@ -42,6 +42,7 @@
 #   Single-card llama.cpp:
 #     llamacpp/default      alias for llamacpp/mtp (Q4_K_M MTP, no vision)
 #     llamacpp/mtp          Q4_K_M MTP + 200K (max-safe @ -ub 512; 131K @ -ub 1024 faster prefill) + q4_0 KV (fast ~60 TPS code; no vision; cliff-immune)
+#     llamacpp/bounded-thinking Q4_K_M MTP + 200K + reasoning on + per-request GBNF grammar
 #     llamacpp/mtp-vision   Q4_K_M MTP + 49K + q4_0 KV + mmproj (fast + multimodal)
 #   Single-card ik_llama (IQ4_KS — ~0.5-0.8 GB leaner; best for VRAM-tight / WSL):
 #     ik-llama/iq4ks-mtp         IQ4_KS MTP + 262K + q4_0 KV (own image: ikawrakow/ik-llama-cpp)

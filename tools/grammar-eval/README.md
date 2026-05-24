@@ -1,6 +1,6 @@
 # Grammar evaluation harness
 
-Tools to A/B-test alternative bounded-thinking grammars against the currently-shipped `andthattoo/structured-cot` GOAL/APPROACH/EDGE grammar (in [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md)). Specifically targeting [Holiday_Purpose_3166's tagline grammar](https://www.reddit.com/r/LocalLLaMA/comments/1sx7w55/) from r/LocalLLaMA.
+Tools to A/B-test alternative bounded-thinking grammars against the originally-shipped `andthattoo/structured-cot` GOAL/APPROACH/EDGE grammar (in [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md)). Specifically targeting [Holiday_Purpose_3166's tagline grammar](https://www.reddit.com/r/LocalLLaMA/comments/1sx7w55/) from r/LocalLLaMA.
 
 **The hypothesis:** the K (keywords, 1-5 free tokens) and R (result-keywords, 1-5 free tokens) fields in Holiday's grammar give the model a pressure-relief valve that GOAL/APPROACH/EDGE's rigid 3-line shape lacks. We have 6 documented HE+ regression cases (HE/97, 101, 108, 129, 137, 151) where FSM under-thinks and FREE wins; if Holiday's grammar rescues even some of those without losing too much compression, it's a Pareto improvement worth shipping.
 
@@ -8,10 +8,15 @@ Tools to A/B-test alternative bounded-thinking grammars against the currently-sh
 
 | File | Purpose |
 |---|---|
+| `deepseek-scratchpad.gbnf` | Recommended default grammar for bounded-thinking variants; xgrammar-compatible and used for the llama.cpp port request examples |
 | `holiday-tagline.gbnf` | Translated grammar, xgrammar-compatible |
 | [`TRANSLATION.md`](TRANSLATION.md) | Translation decisions + Phase-1 smoke results |
 | `smoke-test.py` | Phase-1 — verify the grammar parses + applies on vLLM |
 | `subset-bench.py` | Phase-2 — 30-prompt HE+ A/B vs current grammar + FREE + PROMPT_TERSE |
+
+## Serving notes
+
+The recommended production/default grammar is [`deepseek-scratchpad.gbnf`](deepseek-scratchpad.gbnf). vLLM receives it as `extra_body={"structured_outputs": {"grammar": ...}}`; llama.cpp receives the same GBNF as the request body `grammar` field. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md) for engine-specific request examples.
 
 ## How to run
 

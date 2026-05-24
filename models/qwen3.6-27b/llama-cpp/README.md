@@ -22,11 +22,15 @@ For full pros/cons + general llama.cpp tuning, see [`/docs/engines/LLAMA_CPP.md`
 
 ## Docker compose (recommended)
 
-Two compose variants in [`compose/single/`](compose/single/) — both use the official `ghcr.io/ggml-org/llama.cpp` image (CUDA), **no custom build needed**, **no club-3090 patches** (unlike our vLLM track). MTP PR #22673 has merged upstream so this image has it natively. The composes are **pinned to build `server-cuda-b9246`** (validated 2026-05-20) — *not* the rolling `:server-cuda` tag, because that tag regressed at `b9282` (broken lib packaging → crash loop, [#187](https://github.com/noonghunna/club-3090/issues/187)). To follow a newer build, override `LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX` (validate it first). Bench numbers were measured on `b9246`; expect ±5% drift on newer builds.
+Three compose variants in [`compose/single/`](compose/single/) — all use the official `ghcr.io/ggml-org/llama.cpp` image (CUDA), **no custom build needed**, **no club-3090 patches** (unlike our vLLM track). MTP PR #22673 has merged upstream so this image has it natively. The composes are **pinned to build `server-cuda-b9246`** (validated 2026-05-20) — *not* the rolling `:server-cuda` tag, because that tag regressed at `b9282` (broken lib packaging → crash loop, [#187](https://github.com/noonghunna/club-3090/issues/187)). To follow a newer build, override `LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX` (validate it first). Bench numbers were measured on `b9246`; expect ±5% drift on newer builds.
 
 ### `single/mtp.yml` — MTP n=2, 200K ctx, no vision
 
 The single-card speed + context workhorse: ~51/60 TPS (narr/code), **200K ctx** (max-safe default @ `-ub 512` — fills cleanly with ~1.1 GB margin; 131K @ `-ub 1024` for faster prefill; 262K is the native max but *boots-not-fills*, see [`docs/CLIFFS.md`](../../../docs/CLIFFS.md)), 7/7 verify-stress boundary checks (incl. 60K + 91K needle recall), 102/150 (68%) on the 8-pack quality matrix. Best for IDE agents, opencode, Hermes, long-multi-turn agentic. Q4_K_M MTP GGUF (`unsloth/Qwen3.6-27B-MTP-GGUF` Q4_K_M).
+
+### `single/bounded-thinking.yml` — MTP n=2, 200K ctx, reasoning on, grammar per request
+
+Structured-CoT variant for llama.cpp. It is intentionally the same runtime envelope as `single/mtp.yml` — Q4_K_M MTP GGUF, q4_0 KV, `-ub 512`, 200K context, no vision — with `REASONING=on` as the default. The grammar is not baked into the server; clients pass GBNF in the OpenAI-compatible request body `grammar` field. Use [`tools/grammar-eval/deepseek-scratchpad.gbnf`](../../../tools/grammar-eval/deepseek-scratchpad.gbnf) as the recommended default, or pass the original andthattoo / Holiday alternates client-side. See [`docs/STRUCTURED_COT.md`](../../../docs/STRUCTURED_COT.md) for request examples and validation status.
 
 ### `single/mtp-vision.yml` — MTP n=2, 160K ctx, vision on
 

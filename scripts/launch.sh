@@ -229,6 +229,7 @@ declare -A LAUNCH_VARIANT_COMPOSE=(
   [vllm/gemma-dflash]="models/gemma-4-31b/vllm/compose/dual/dflash.yml"
   [llamacpp/default]="models/qwen3.6-27b/llama-cpp/compose/single/mtp.yml"
   [llamacpp/mtp]="models/qwen3.6-27b/llama-cpp/compose/single/mtp.yml"
+  [llamacpp/bounded-thinking]="models/qwen3.6-27b/llama-cpp/compose/single/bounded-thinking.yml"
   [llamacpp/mtp-vision]="models/qwen3.6-27b/llama-cpp/compose/single/mtp-vision.yml"
   [ik-llama/iq4ks-mtp]="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-mtp.yml"
   [ik-llama/iq4ks-mtp-vision]="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-mtp-vision.yml"
@@ -241,7 +242,7 @@ declare -A LAUNCH_VARIANT_MODEL=(
   [vllm/dual-dflash-noviz]="qwen3.6-27b" [vllm/dual-nvlink]="qwen3.6-27b" [vllm/dual-nvlink-turbo]="qwen3.6-27b"
   [vllm/dual-nvlink-dflash]="qwen3.6-27b" [vllm/dual-nvlink-dflash-noviz]="qwen3.6-27b"
   [vllm/gemma-mtp]="gemma-4-31b" [vllm/gemma-mtp-tp1]="gemma-4-31b" [vllm/gemma-dflash]="gemma-4-31b"
-  [llamacpp/default]="qwen3.6-27b" [llamacpp/mtp]="qwen3.6-27b" [llamacpp/mtp-vision]="qwen3.6-27b"
+  [llamacpp/default]="qwen3.6-27b" [llamacpp/mtp]="qwen3.6-27b" [llamacpp/bounded-thinking]="qwen3.6-27b" [llamacpp/mtp-vision]="qwen3.6-27b"
   [ik-llama/iq4ks-mtp]="qwen3.6-27b" [ik-llama/iq4ks-mtp-vision]="qwen3.6-27b"
 )
 declare -A LAUNCH_VARIANT_ENGINE=(
@@ -251,7 +252,7 @@ declare -A LAUNCH_VARIANT_ENGINE=(
   [vllm/dual-dflash-noviz]="vllm" [vllm/dual-nvlink]="vllm" [vllm/dual-nvlink-turbo]="vllm"
   [vllm/dual-nvlink-dflash]="vllm" [vllm/dual-nvlink-dflash-noviz]="vllm"
   [vllm/gemma-mtp]="vllm" [vllm/gemma-mtp-tp1]="vllm" [vllm/gemma-dflash]="vllm"
-  [llamacpp/default]="llamacpp" [llamacpp/mtp]="llamacpp" [llamacpp/mtp-vision]="llamacpp"
+  [llamacpp/default]="llamacpp" [llamacpp/mtp]="llamacpp" [llamacpp/bounded-thinking]="llamacpp" [llamacpp/mtp-vision]="llamacpp"
   [ik-llama/iq4ks-mtp]="llamacpp" [ik-llama/iq4ks-mtp-vision]="llamacpp"
 )
 declare -A LAUNCH_VARIANT_KVCALC=(
@@ -277,6 +278,7 @@ declare -A LAUNCH_VARIANT_KVCALC=(
   [vllm/gemma-dflash]="gemma-4-31b:gemma-dual-dflash"
   [llamacpp/default]="SKIP"
   [llamacpp/mtp]="SKIP"
+  [llamacpp/bounded-thinking]="SKIP"
   [llamacpp/mtp-vision]="SKIP"
   [ik-llama/iq4ks-mtp]="SKIP"
   [ik-llama/iq4ks-mtp-vision]="SKIP"
@@ -287,7 +289,7 @@ LAUNCH_VARIANT_ORDER=(
   vllm/dual vllm/dual-turbo vllm/dual-dflash vllm/dual-dflash-noviz
   vllm/dual4 vllm/dual4-dflash
   vllm/gemma-mtp vllm/gemma-mtp-tp1 vllm/gemma-dflash
-  llamacpp/default llamacpp/mtp llamacpp/mtp-vision
+  llamacpp/default llamacpp/mtp llamacpp/bounded-thinking llamacpp/mtp-vision
   ik-llama/iq4ks-mtp ik-llama/iq4ks-mtp-vision
 )
 
@@ -1142,6 +1144,7 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [vllm/gemma-dflash]=8032
   [llamacpp/default]=8020
   [llamacpp/mtp]=8020
+  [llamacpp/bounded-thinking]=8020
   [llamacpp/mtp-vision]=8020
   [ik-llama/iq4ks-mtp]=8020
   [ik-llama/iq4ks-mtp-vision]=8020
@@ -1169,6 +1172,7 @@ declare -A LAUNCH_DEFAULT_CONTAINER=(
   [vllm/gemma-dflash]=vllm-gemma-4-31b-dflash
   [llamacpp/default]=llama-cpp-qwen36-27b
   [llamacpp/mtp]=llama-cpp-qwen36-27b
+  [llamacpp/bounded-thinking]=llama-cpp-qwen36-27b-bounded-thinking
   [llamacpp/mtp-vision]=llama-cpp-qwen36-27b-vision
   [ik-llama/iq4ks-mtp]=ik-llama-qwen36-27b
   [ik-llama/iq4ks-mtp-vision]=ik-llama-qwen36-27b-vision
