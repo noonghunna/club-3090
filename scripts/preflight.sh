@@ -582,6 +582,46 @@ preflight_hf_token() {
 #
 # Hard error (returns 1) — refuses to proceed if a required model dir is missing.
 # Skip via: PREFLIGHT_NO_COMPOSE_DEPS=1
+_preflight_compose_model_dir() {
+  local compose_file="$1"
+  local model_dir="${MODEL_DIR:-../../../../models-cache}"
+
+  # Resolve relative paths against the compose location. Do not require the
+  # directory to already exist; this function is often called before download.
+  if [[ "$model_dir" == ../* ]] || [[ "$model_dir" == ./* ]]; then
+    local compose_dir
+    compose_dir="$(cd -- "$(dirname -- "$compose_file")" && pwd)"
+    model_dir="${compose_dir}/${model_dir}"
+  fi
+  printf '%s' "$model_dir"
+}
+
+_preflight_compose_path_default() {
+  local value="$1"
+  value="$(_preflight_trim "$value")"
+  value="${value#\"}"
+  value="${value%\"}"
+  value="${value#\'}"
+  value="${value%\'}"
+  value="${value%,}"
+
+  # Compose files commonly use ${VAR:-default/path}. Presence checks should use
+  # the path the compose will use by default; explicit env overrides are handled
+  # by callers for user-facing knobs such as GGUF_FILE.
+  value="$(printf '%s' "$value" | sed -E 's#\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}#\1#g')"
+  value="$(printf '%s' "$value" | sed -E 's#\$\{MODEL_DIR[^}]*\}/?##g')"
+  value="${value#/models/}"
+  value="${value#/root/.cache/huggingface/}"
+  printf '%s' "$value"
+}
+
+_preflight_compose_vllm_subdir() {
+  local value
+  value="$(_preflight_compose_path_default "$1")"
+  value="${value%%/*}"
+  printf '%s' "$value"
+}
+
 preflight_compose_deps() {
   local compose_file="$1"
   if [[ "${PREFLIGHT_NO_COMPOSE_DEPS:-0}" == "1" ]]; then
@@ -592,76 +632,96 @@ preflight_compose_deps() {
     return 1
   fi
 
-  local model_dir="${MODEL_DIR:-../../../../models-cache}"
-  # Resolve relative to repo root (compose mounts use ${MODEL_DIR:-../../../../models-cache})
-  if [[ "$model_dir" == ../* ]] || [[ "$model_dir" == ./* ]]; then
-    model_dir="$(cd "${ROOT_DIR:-$(dirname "$0")/..}" && cd "$(dirname "$compose_file")" && cd "$model_dir" 2>/dev/null && pwd)"
-  fi
+  local model_dir
+  model_dir="$(_preflight_compose_model_dir "$compose_file")"
+
+  local compose_files=("$compose_file")
+  local compose_dir extends_file
+  compose_dir="$(cd -- "$(dirname -- "$compose_file")" && pwd)"
+  while IFS= read -r extends_file; do
+    extends_file="$(_preflight_trim "$extends_file")"
+    extends_file="${extends_file#\"}"
+    extends_file="${extends_file%\"}"
+    extends_file="${extends_file#'}"
+    extends_file="${extends_file%'}"
+    [[ -n "$extends_file" ]] || continue
+    [[ "$extends_file" == /* ]] || extends_file="${compose_dir}/${extends_file}"
+    [[ -f "$extends_file" ]] && compose_files+=("$extends_file")
+  done < <(grep -hE '^[[:space:]]*file:[[:space:]]*[^#[:space:]]+' "$compose_file" \
+    | sed -E 's/^[[:space:]]*file:[[:space:]]*//' || true)
 
   local missing=()
-  local hint_dflash=0
-  local hint_mtp=0
-  local hint_gguf=0
 
   # Engine detection: llama.cpp composes mount ${MODEL_DIR}:/models and pass
-  # `-m /models/<path>`; vLLM composes mount ${MODEL_DIR}:/root/.cache/huggingface
-  # and pass `--model /root/.cache/huggingface/<subdir>`.
+  # `-m /models/<path>` or `--model /models/<path>`; vLLM composes mount
+  # ${MODEL_DIR}:/root/.cache/huggingface and pass
+  # `/root/.cache/huggingface/<subdir>`.
   local is_llamacpp=0
-  if grep -qE 'image:.*ggml-org/llama\.cpp' "$compose_file"; then
+  if grep -qhE 'image:.*(ggml-org/llama\.cpp|ikawrakow/ik-llama)' "${compose_files[@]}"; then
     is_llamacpp=1
   fi
 
   if [[ $is_llamacpp -eq 1 ]]; then
-    # Scan for `-m /models/<path>` and `--mmproj /models/<path>` to learn what
-    # the compose actually expects. Falls back to the canonical defaults from
-    # docker-compose.yml if the variable expansion isn't grep-resolvable.
-    local gguf_in_container mmproj_in_container
-    gguf_in_container=$(grep -oE '\-m[[:space:]]+/models/[^[:space:]]+' "$compose_file" \
-      | head -1 | awk '{print $2}' | sed 's|^/models/||')
-    mmproj_in_container=$(grep -oE -- '--mmproj[[:space:]]+/models/[^[:space:]]+' "$compose_file" \
-      | head -1 | awk '{print $2}' | sed 's|^/models/||')
+    local gguf_paths=()
+    local mmproj_paths=()
+    local token path
 
-    # Strip ${VAR:-default} expansion: take the default after `:-` if present.
-    gguf_in_container="${gguf_in_container//\$\{GGUF_FILE:-/}"
-    gguf_in_container="${gguf_in_container%\}}"
-    mmproj_in_container="${mmproj_in_container//\$\{MMPROJ_FILE:-/}"
-    mmproj_in_container="${mmproj_in_container%\}}"
+    while IFS= read -r token; do
+      path="$(_preflight_compose_path_default "$token")"
+      [[ -n "$path" ]] && gguf_paths+=("$path")
+    done < <(grep -hoE -- '(^|[[:space:]])(-m|--model)[[:space:]]+/models/[^[:space:]]+' "${compose_files[@]}" \
+      | awk '{print $NF}' || true)
 
-    [[ -z "$gguf_in_container" ]]   && gguf_in_container="qwen3.6-27b-gguf/unsloth-q3kxl/Qwen3.6-27B-UD-Q3_K_XL.gguf"
-    [[ -z "$mmproj_in_container" ]] && mmproj_in_container="qwen3.6-27b-gguf/mmproj-F16.gguf"
+    while IFS= read -r token; do
+      path="$(_preflight_compose_path_default "$token")"
+      [[ -n "$path" ]] && mmproj_paths+=("$path")
+    done < <(grep -hoE -- '(^|[[:space:]])--mmproj[[:space:]]+/models/[^[:space:]]+' "${compose_files[@]}" \
+      | awk '{print $NF}' || true)
 
-    if [[ -n "${GGUF_FILE:-}" ]];   then gguf_in_container="$GGUF_FILE";     fi
-    if [[ -n "${MMPROJ_FILE:-}" ]]; then mmproj_in_container="$MMPROJ_FILE"; fi
-
-    if [[ ! -f "${model_dir}/${gguf_in_container}" ]]; then
-      missing+=("${gguf_in_container} (llama.cpp GGUF weights)")
-      hint_gguf=1
+    if [[ -n "${GGUF_FILE:-}" ]]; then
+      gguf_paths=("$GGUF_FILE")
     fi
-    if [[ ! -f "${model_dir}/${mmproj_in_container}" ]]; then
-      missing+=("${mmproj_in_container} (vision projector)")
-      hint_gguf=1
+    if [[ -n "${MMPROJ_FILE:-}" && ${#mmproj_paths[@]} -gt 0 ]]; then
+      mmproj_paths=("$MMPROJ_FILE")
     fi
+
+    for path in "${gguf_paths[@]}"; do
+      if [[ ! -f "${model_dir}/${path}" ]]; then
+        missing+=("${model_dir}/${path} (llama.cpp GGUF weights)")
+      fi
+    done
+    for path in "${mmproj_paths[@]}"; do
+      if [[ ! -f "${model_dir}/${path}" ]]; then
+        missing+=("${model_dir}/${path} (vision projector)")
+      fi
+    done
   else
-    # vLLM path — scan for --speculative-config blocks (DFlash draft, MTP head).
-    # The compose paths reference the in-container path /root/.cache/huggingface/<subdir>;
-    # the host path is ${MODEL_DIR}/<subdir> (set via the volumes: block).
-    if grep -qE '"model":[[:space:]]*"/root/.cache/huggingface/qwen3.6-27b-dflash"' "$compose_file"; then
-      if [[ ! -f "${model_dir}/qwen3.6-27b-dflash/config.json" ]]; then
-        missing+=("qwen3.6-27b-dflash (DFlash draft model)")
-        hint_dflash=1
-      fi
-    fi
-    if grep -qE '"model":[[:space:]]*"/root/.cache/huggingface/qwen3.6-27b-mtp-head"' "$compose_file"; then
-      if [[ ! -f "${model_dir}/qwen3.6-27b-mtp-head/config.json" ]]; then
-        missing+=("qwen3.6-27b-mtp-head (MTP draft head)")
-        hint_mtp=1
-      fi
-    fi
+    local seen_subdirs=" "
+    local subdir
 
-    # vLLM main model — every vLLM compose on this stack mounts AutoRound INT4.
-    if [[ ! -f "${model_dir}/qwen3.6-27b-autoround-int4/config.json" ]]; then
-      missing+=("qwen3.6-27b-autoround-int4 (main model)")
-    fi
+    # vLLM path — collect every in-container HF model path the compose names:
+    # main `--model` entries and JSON `--speculative-config` draft models.
+    while IFS= read -r token; do
+      subdir="$(_preflight_compose_vllm_subdir "$token")"
+      [[ -n "$subdir" ]] || continue
+      if [[ "$seen_subdirs" != *" ${subdir} "* ]]; then
+        seen_subdirs+="${subdir} "
+        if [[ ! -f "${model_dir}/${subdir}/config.json" ]]; then
+          missing+=("${model_dir}/${subdir}/config.json (HF model)")
+        fi
+      fi
+    done < <(grep -hoE '/root/\.cache/huggingface/[^"'\''[:space:],}:]+' "${compose_files[@]}" || true)
+
+    # Experimental SGLang composes mount individual MODEL_DIR subdirectories to
+    # /models/target and /models/drafter instead of using the HF cache mount.
+    while IFS= read -r token; do
+      path="$(_preflight_compose_path_default "$token")"
+      path="${path%%:*}"
+      [[ -n "$path" ]] || continue
+      if [[ ! -e "${model_dir}/${path}" ]]; then
+        missing+=("${model_dir}/${path} (MODEL_DIR volume path)")
+      fi
+    done < <(grep -hoE '\$\{MODEL_DIR[^}]*\}/[^"[:space:]]+' "${compose_files[@]}" || true)
   fi
 
   if [[ ${#missing[@]} -eq 0 ]]; then
@@ -670,30 +730,12 @@ preflight_compose_deps() {
 
   echo "[preflight] ERROR: compose '$compose_file' expects model files that aren't on host." >&2
   for item in "${missing[@]}"; do
-    echo "[preflight]   missing: ${model_dir}/${item}" >&2
+    echo "[preflight]   missing: ${item}" >&2
   done
   echo "[preflight]" >&2
   echo "[preflight] Fix:" >&2
-  if [[ $hint_gguf -eq 1 ]]; then
-    echo "[preflight]   hf download unsloth/Qwen3.6-27B-GGUF \\" >&2
-    echo "[preflight]     Qwen3.6-27B-UD-Q3_K_XL.gguf mmproj-F16.gguf \\" >&2
-    echo "[preflight]     --local-dir \${MODEL_DIR}/qwen3.6-27b-gguf/unsloth-q3kxl" >&2
-    echo "[preflight]   # (set MODEL_DIR first: export MODEL_DIR=\${MODEL_DIR:-/path/to/your/models})" >&2
-    echo "[preflight]   # mmproj lands at unsloth-q3kxl/ — move it up so the default --mmproj path resolves:" >&2
-    echo "[preflight]   #   mv \${MODEL_DIR}/qwen3.6-27b-gguf/unsloth-q3kxl/mmproj-F16.gguf \${MODEL_DIR}/qwen3.6-27b-gguf/" >&2
-    echo "[preflight]   (~16 GB total. setup.sh today only fetches the vLLM AutoRound weights;" >&2
-    echo "[preflight]    GGUF must be fetched separately for any llamacpp/* variant.)" >&2
-  fi
-  if [[ $hint_dflash -eq 1 ]]; then
-    echo "[preflight]   WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b" >&2
-    echo "[preflight]   (downloads z-lab/Qwen3.6-27B-DFlash, ~1.75 GB; required for dual-dflash* composes)" >&2
-  fi
-  if [[ $hint_mtp -eq 1 ]]; then
-    echo "[preflight]   bash scripts/setup.sh qwen3.6-27b  (re-run with the right flags for MTP head)" >&2
-  fi
-  if [[ $hint_dflash -eq 0 ]] && [[ $hint_mtp -eq 0 ]] && [[ $hint_gguf -eq 0 ]]; then
-    echo "[preflight]   bash scripts/setup.sh qwen3.6-27b" >&2
-  fi
+  echo "[preflight]   Check the compose header for its model-specific hf download command." >&2
+  echo "[preflight]   If weights are already elsewhere, export MODEL_DIR=/path/to/models and retry." >&2
   echo "[preflight] Skip this check:  PREFLIGHT_NO_COMPOSE_DEPS=1 bash scripts/switch.sh ..." >&2
   return 1
 }
