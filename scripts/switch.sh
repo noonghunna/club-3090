@@ -64,11 +64,35 @@ LAUNCH_PROFILE="${LAUNCH_PROFILE:-${ROOT_DIR}/scripts/lib/profiles/launch_compat
 
 # Load .env if present, so PORT / MODEL_DIR / etc. flow through to docker
 # compose AND to the ready-URL probe below.
+#
+# Precedence matches docker compose (and launch.sh): a variable already set in
+# the shell environment WINS over the .env file — so `export MODEL_DIR=…` is no
+# longer clobbered by a stale .env entry (#425). We parse line-by-line instead
+# of `source` (a) to honour that precedence per-variable and (b) to tolerate
+# CRLF line endings from Windows editors (#187). Values are taken literally
+# (no shell expansion), matching docker compose's own .env semantics.
 if [[ -f "${ROOT_DIR}/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${ROOT_DIR}/.env"
-  set +a
+  while IFS= read -r _env_line || [[ -n "$_env_line" ]]; do
+    _env_line="${_env_line#"${_env_line%%[![:space:]]*}"}"   # strip leading whitespace
+    _env_line="${_env_line%$'\r'}"                           # strip trailing CR (CRLF .env)
+    [[ -z "$_env_line" || "$_env_line" == '#'* ]] && continue
+    _env_line="${_env_line#export }"
+    _env_key="${_env_line%%=*}"
+    [[ "$_env_key" == "$_env_line" || -z "$_env_key" ]] && continue   # no '=' on the line
+    [[ -n "${!_env_key+x}" ]] && continue                    # already set in env → shell wins
+    _env_val="${_env_line#*=}"
+    _env_val="${_env_val#\"}"; _env_val="${_env_val%\"}"     # strip surrounding double quotes
+    _env_val="${_env_val#\'}"; _env_val="${_env_val%\'}"     # strip surrounding single quotes
+    export "${_env_key}=${_env_val}"
+  done < "${ROOT_DIR}/.env"
+  unset _env_line _env_key _env_val
+fi
+
+# Surface the resolved MODEL_DIR + its source so the precedence is unambiguous
+# (the exact confusion behind #425 / #187). Unset → the compose's built-in
+# default applies; preflight_compose_deps notes that case.
+if [[ -n "${MODEL_DIR:-}" ]]; then
+  echo "[switch] MODEL_DIR=${MODEL_DIR}"
 fi
 
 # Variant tables are DERIVED from the single source of truth
