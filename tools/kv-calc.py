@@ -135,6 +135,16 @@ KV_FORMAT_BYTES = {
     "turboquant_3bit_nc":    0.375 + 0.05, # 3 bits + small QJL overhead
 }
 
+INDEXER_FORMAT_BYTES = {
+    "fp16": 2.0,
+    "bf16": 2.0,
+    "fp8_e5m2": 1.0,
+    "fp8_e4m3": 1.0,
+    "int8": 1.0,
+    "fp4": 0.5,
+    "int4": 0.5,
+}
+
 
 # =============================================================================
 # Per-model activation coefficients
@@ -301,6 +311,22 @@ class Prediction:
     notes: list[str]
 
 
+@dataclass
+class CacheBreakdown:
+    layout: str
+    sequences: int
+    gpus: int
+    tp: int
+    attention_kv_growing_gb: float
+    attention_kv_sliding_fixed_gb: float
+    recurrent_state_gb: float
+    compressed_kv_gb: float
+    indexer_cache_gb: float
+    draft_kv_gb: float
+    total_cache_gb: float
+    notes: list[str]
+
+
 def _weights_per_card_gb(spec, tp, weights_variant="default"):
     """Return per-card weights footprint in GB after TP split."""
     if spec["model_family"] == "qwen3-next-hybrid":
@@ -454,6 +480,190 @@ def kv_pool_per_card_bytes(spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=0):
         return growing, 0.0
 
     raise ValueError(f"Unknown model_family: {spec['model_family']}")
+
+
+
+def _auto_kv_layout(spec) -> str:
+    family = spec["model_family"]
+    if family in {"qwen3-next-hybrid", "qwen3-next-moe"}:
+        return "hybrid_mamba"
+    if family in {"gemma4-swa-dense", "gemma4-swa-moe"}:
+        return "sliding_window"
+    return "dense_gqa"
+
+
+def _recurrent_state_per_card_bytes(spec, max_num_seqs, tp):
+    """Non-attention recurrent/SSM state, reported separately from KV.
+
+    Qwen3-Next GDN/DeltaNet state is not attention KV. It is replicated per
+    running sequence and should be visible in planning output because it
+    competes for the same per-card VRAM budget as the attention KV pool.
+    """
+    if spec["model_family"] not in {"qwen3-next-hybrid", "qwen3-next-moe"}:
+        return 0.0
+    required = (
+        "num_gdn_layers", "linear_num_v_heads", "linear_v_head_dim",
+        "linear_num_k_heads", "linear_k_head_dim", "linear_conv_kernel_dim",
+        "hidden_size",
+    )
+    if any(spec.get(k) is None for k in required):
+        return 0.0
+    bytes_per_elem = spec.get("mamba_state_bytes", 2)
+    recurrent_per_stream = (
+        spec["num_gdn_layers"]
+        * (
+            spec["linear_num_v_heads"] * spec["linear_v_head_dim"]
+            + spec["linear_num_k_heads"] * spec["linear_k_head_dim"]
+            + spec["linear_conv_kernel_dim"] * spec["hidden_size"]
+        )
+        * bytes_per_elem
+    )
+    # Runtime state is per rank, not sharded like dense weights.
+    return recurrent_per_stream * max_num_seqs
+
+
+def _indexer_cache_per_card_bytes(
+    *,
+    max_ctx,
+    max_num_seqs,
+    tp,
+    indexer_ratio_layers=0,
+    indexer_compress_ratio=4,
+    indexer_head_dim=None,
+    indexer_format="fp4",
+):
+    if not indexer_ratio_layers:
+        return 0.0
+    if indexer_head_dim is None or indexer_head_dim <= 0:
+        raise ValueError("--indexer-ratio-layers requires --indexer-head-dim")
+    if indexer_compress_ratio <= 0:
+        raise ValueError("--indexer-compress-ratio must be positive")
+    bpe = INDEXER_FORMAT_BYTES[indexer_format]
+    indexed_tokens = max_ctx // indexer_compress_ratio
+    return (
+        indexer_ratio_layers
+        * indexed_tokens
+        * indexer_head_dim
+        * bpe
+        * max_num_seqs
+        / tp
+    )
+
+
+def _compressed_kv_per_card_bytes(
+    *,
+    max_ctx,
+    max_num_seqs,
+    tp,
+    compressed_layers=0,
+    compression_ratio=128,
+    compressed_head_dim=None,
+    kv_format="fp8_e5m2",
+):
+    if not compressed_layers:
+        return 0.0
+    if compressed_head_dim is None or compressed_head_dim <= 0:
+        raise ValueError("--compressed-layers requires --compressed-head-dim")
+    if compression_ratio <= 0:
+        raise ValueError("--compression-ratio must be positive")
+    bpe = KV_FORMAT_BYTES[kv_format]
+    compressed_tokens = max_ctx // compression_ratio
+    return (
+        compressed_layers
+        * compressed_tokens
+        * compressed_head_dim
+        * bpe
+        * max_num_seqs
+        / tp
+    )
+
+
+def architecture_cache_breakdown(
+    spec,
+    kv_format,
+    max_ctx,
+    max_num_seqs,
+    tp,
+    *,
+    gpus=1,
+    layout="auto",
+    mtp=False,
+    include_draft_kv=False,
+    draft_kv_gb=0.0,
+    compressed_layers=0,
+    compression_ratio=128,
+    compressed_head_dim=None,
+    indexer_ratio_layers=0,
+    indexer_compress_ratio=4,
+    indexer_head_dim=None,
+    indexer_format="fp4",
+) -> CacheBreakdown:
+    """Raw per-card cache/state breakdown for home-rig planning.
+
+    This is intentionally reporting-only. predict() remains the calibrated
+    fit authority used by existing scripts; this function exposes the extra
+    architecture buckets that generic KV calculators show explicitly.
+    """
+    _validate_tp_for_spec(spec, tp)
+    if gpus < 1 or gpus > 8:
+        raise ValueError("--gpus must be between 1 and 8 for single-node home/workstation planning")
+    if max_num_seqs < 1:
+        raise ValueError("sequences/max_num_seqs must be positive")
+
+    mtp_n = int(spec.get("mtp_n_default", 3)) if mtp else 0
+    growing_b, fixed_b = kv_pool_per_card_bytes(
+        spec, kv_format, max_ctx, max_num_seqs, tp, mtp_n=mtp_n,
+    )
+
+    family = spec["model_family"]
+    sliding_fixed_b = fixed_b if family in {"gemma4-swa-dense", "gemma4-swa-moe"} else 0.0
+    recurrent_b = fixed_b if family == "qwen3-next-moe" else _recurrent_state_per_card_bytes(spec, max_num_seqs, tp)
+
+    compressed_b = _compressed_kv_per_card_bytes(
+        max_ctx=max_ctx,
+        max_num_seqs=max_num_seqs,
+        tp=tp,
+        compressed_layers=compressed_layers,
+        compression_ratio=compression_ratio,
+        compressed_head_dim=compressed_head_dim,
+        kv_format=kv_format,
+    )
+    indexer_b = _indexer_cache_per_card_bytes(
+        max_ctx=max_ctx,
+        max_num_seqs=max_num_seqs,
+        tp=tp,
+        indexer_ratio_layers=indexer_ratio_layers,
+        indexer_compress_ratio=indexer_compress_ratio,
+        indexer_head_dim=indexer_head_dim,
+        indexer_format=indexer_format,
+    )
+
+    draft_kv_b = draft_kv_gb * 1e9 if include_draft_kv else 0.0
+    layout = _auto_kv_layout(spec) if layout == "auto" else layout
+    total_b = growing_b + sliding_fixed_b + recurrent_b + compressed_b + indexer_b + draft_kv_b
+
+    notes = []
+    if include_draft_kv and draft_kv_gb <= 0:
+        notes.append("draft KV requested, but no --draft-kv-gb override was provided; built-in MTP token bump is already included when --mtp is set")
+    if compressed_layers or indexer_ratio_layers:
+        notes.append("compressed/indexer buckets are architecture-level estimates; calibrated fit verdict still comes from the main prediction path")
+    if gpus != tp:
+        notes.append(f"planning {gpus} GPU(s) with TP={tp}; per-card memory is sharded by TP, not by idle estate cards")
+
+    return CacheBreakdown(
+        layout=layout,
+        sequences=max_num_seqs,
+        gpus=gpus,
+        tp=tp,
+        attention_kv_growing_gb=growing_b / 1e9,
+        attention_kv_sliding_fixed_gb=sliding_fixed_b / 1e9,
+        recurrent_state_gb=recurrent_b / 1e9,
+        compressed_kv_gb=compressed_b / 1e9,
+        indexer_cache_gb=indexer_b / 1e9,
+        draft_kv_gb=draft_kv_b / 1e9,
+        total_cache_gb=total_b / 1e9,
+        notes=notes,
+    )
 
 
 def activation_peak_per_card_bytes(spec, kv_format, max_ctx, tp):
@@ -815,6 +1025,30 @@ def raw_verdict(
     }
 
 
+
+def fmt_cache_breakdown(b: CacheBreakdown) -> str:
+    lines = []
+    lines.append("Cache architecture breakdown")
+    lines.append("----------------------------")
+    lines.append(f"  Layout:                   {b.layout}")
+    lines.append(f"  Scope:                    {b.gpus} GPU(s), TP={b.tp}, sequences={b.sequences}")
+    lines.append(f"  Attention KV — growing:   {b.attention_kv_growing_gb:>6.2f} GB / card")
+    if b.attention_kv_sliding_fixed_gb > 0.001:
+        lines.append(f"  Attention KV — sliding:   {b.attention_kv_sliding_fixed_gb:>6.2f} GB / card")
+    if b.recurrent_state_gb > 0.001:
+        lines.append(f"  Recurrent / SSM state:    {b.recurrent_state_gb:>6.2f} GB / card")
+    if b.compressed_kv_gb > 0.001:
+        lines.append(f"  Compressed KV estimate:   {b.compressed_kv_gb:>6.2f} GB / card")
+    if b.indexer_cache_gb > 0.001:
+        lines.append(f"  Indexer cache estimate:   {b.indexer_cache_gb:>6.2f} GB / card")
+    if b.draft_kv_gb > 0.001:
+        lines.append(f"  Draft KV override:        {b.draft_kv_gb:>6.2f} GB / card")
+    lines.append(f"  Cache/state subtotal:     {b.total_cache_gb:>6.2f} GB / card")
+    for note in b.notes:
+        lines.append(f"  Note: {note}")
+    return "\n".join(lines)
+
+
 def fmt_prediction(p: Prediction, header: str = "") -> str:
     lines = []
     if header:
@@ -991,7 +1225,9 @@ def main():
                    help="KV cache format. Default: from --compose, or fp8_e5m2.")
     p.add_argument("--max-ctx", type=int, help="max_model_len. Default: from --compose, or 180000.")
     p.add_argument("--max-num-seqs", type=int, help="max_num_seqs. Default: from --compose, or 1.")
+    p.add_argument("--sequences", type=int, help="Alias for --max-num-seqs, for KV planning calculators.")
     p.add_argument("--tp", type=int, choices=[1, 2, 4, 8, 16], help="tensor_parallel_size. Default: from --compose, or 1.")
+    p.add_argument("--gpus", type=int, default=None, help="Physical GPUs in the local single-node rig (1-8). Informational; TP controls sharding. Default: TP.")
     p.add_argument("--mem-util", type=float, help="gpu_memory_utilization. Default: from --compose, or 0.95.")
     p.add_argument("--vram", type=float, default=24, help="VRAM per card in GB. Default 24.")
     p.add_argument("--mtp", action="store_true", default=None, help="MTP enabled (Qwen: n=3 built-in; Gemma: external drafter).")
@@ -1005,7 +1241,35 @@ def main():
     p.add_argument("--calibration", action="store_true", help="Print predicted vs measured for all calibrated models.")
     p.add_argument("--solve-max-ctx", action="store_true", help="Binary-search for the largest max_ctx that fits.")
     p.add_argument("--json", action="store_true", help="Output prediction as JSON.")
+    p.add_argument("--kv-breakdown", action="store_true",
+                   help="Also print/report raw architecture cache buckets (attention KV, SSM state, optional indexer/draft estimates).")
+    p.add_argument("--kv-layout", choices=["auto", "dense_gqa", "hybrid_mamba", "sliding_window", "compressed_sparse"],
+                   default="auto", help="Reporting label for --kv-breakdown. Default: infer from model family.")
+    p.add_argument("--include-draft-kv", action="store_true",
+                   help="Include --draft-kv-gb in --kv-breakdown. Built-in MTP token bump still comes from --mtp.")
+    p.add_argument("--draft-kv-gb", type=float, default=0.0,
+                   help="Per-card draft KV estimate to include with --include-draft-kv. Default 0.")
+    p.add_argument("--compressed-layers", type=int, default=0,
+                   help="Optional compressed/sparse KV layer count for --kv-breakdown reporting. Default 0.")
+    p.add_argument("--compression-ratio", type=int, default=128,
+                   help="Token compression ratio for --compressed-layers. Default 128.")
+    p.add_argument("--compressed-head-dim", type=int,
+                   help="Effective compressed KV head dimension for --compressed-layers.")
+    p.add_argument("--indexer-ratio-layers", type=int, default=0,
+                   help="Optional indexer-cache layer count for --kv-breakdown reporting. Default 0.")
+    p.add_argument("--indexer-compress-ratio", type=int, default=4,
+                   help="Token compression ratio for indexer cache. Default 4.")
+    p.add_argument("--indexer-head-dim", type=int,
+                   help="Effective indexer head dimension for --indexer-ratio-layers.")
+    p.add_argument("--indexer-format", choices=sorted(INDEXER_FORMAT_BYTES.keys()), default="fp4",
+                   help="Indexer precision for --kv-breakdown. Default fp4.")
     args = p.parse_args()
+
+    if args.sequences is not None and args.max_num_seqs is not None and args.sequences != args.max_num_seqs:
+        print("ERROR: --sequences and --max-num-seqs disagree; pass only one value.", file=sys.stderr)
+        return 2
+    if args.sequences is not None:
+        args.max_num_seqs = args.sequences
 
     if args.calibration:
         run_calibration()
@@ -1051,6 +1315,11 @@ def main():
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
+    gpus = args.gpus if args.gpus is not None else tp
+    if gpus < 1 or gpus > 8:
+        print("ERROR: --gpus must be between 1 and 8 for single-node home/workstation planning.", file=sys.stderr)
+        return 2
+
     if args.solve_max_ctx:
         best = solve_max_ctx(
             spec, kv_format=kv_format, max_num_seqs=max_num_seqs,
@@ -1090,10 +1359,42 @@ def main():
         weights_variant=weights_variant,
     )
 
+    breakdown = None
+    if args.kv_breakdown:
+        try:
+            breakdown = architecture_cache_breakdown(
+                spec=spec,
+                kv_format=kv_format,
+                max_ctx=max_ctx,
+                max_num_seqs=max_num_seqs,
+                tp=tp,
+                gpus=gpus,
+                layout=args.kv_layout,
+                mtp=mtp,
+                include_draft_kv=args.include_draft_kv,
+                draft_kv_gb=args.draft_kv_gb,
+                compressed_layers=args.compressed_layers,
+                compression_ratio=args.compression_ratio,
+                compressed_head_dim=args.compressed_head_dim,
+                indexer_ratio_layers=args.indexer_ratio_layers,
+                indexer_compress_ratio=args.indexer_compress_ratio,
+                indexer_head_dim=args.indexer_head_dim,
+                indexer_format=args.indexer_format,
+            )
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
     if args.json:
-        print(json.dumps(pred.__dict__, indent=2))
+        out = pred.__dict__.copy()
+        if breakdown is not None:
+            out["cache_breakdown"] = breakdown.__dict__
+        print(json.dumps(out, indent=2))
     else:
         print(fmt_prediction(pred, header=header))
+        if breakdown is not None:
+            print()
+            print(fmt_cache_breakdown(breakdown))
         print()
         print("Run `tools/kv-calc.py --calibration` to see predicted-vs-measured for all anchors.")
         print("Run `tools/kv-calc.py --solve-max-ctx ...` to find the largest max_ctx that fits.")

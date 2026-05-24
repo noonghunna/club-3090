@@ -24,11 +24,48 @@ bash tools/kv-calc.py --model gemma-4-31b --solve-max-ctx --tp 2 --kv-format int
 
 # How accurate is the model? Show predicted vs measured for our shipped composes (both models):
 bash tools/kv-calc.py --calibration
+
+# Optional architecture-level cache breakdown for home/workstation rig planning:
+bash tools/kv-calc.py --compose dual --vram 24 --gpus 2 --kv-breakdown
+
+# Same fit path, but use calculator-style wording for concurrency:
+bash tools/kv-calc.py --model qwen3.6-27b --max-ctx 32768 --sequences 2 --tp 2 --vram 24 --kv-breakdown
 ```
 
 `--model` defaults to `qwen3.6-27b` for backward compatibility with earlier invocations.
 
 The predictor is a directional estimator, not a precise allocator. The vLLM engine's `gpu_worker.py` boot-log report is authoritative — the calculator is for *before* boot.
+
+## Home/workstation planning mode
+
+`tools/kv-calc.py` is still a deployment-fit calculator first. Existing scripts and compose checks should keep using the calibrated prediction path (`predict()`, `raw_verdict()`, `--calibration`, `--json`) as the source of truth. The optional `--kv-breakdown` mode adds architecture-level cache buckets inspired by public KV calculators, but it is reporting-only unless a future profile explicitly opts into those fields.
+
+Useful flags:
+
+| Flag | Purpose | Default behavior |
+|---|---|---|
+| `--gpus N` | Physical GPUs in a single-node home/workstation rig. Informational; TP still controls memory sharding. | Defaults to `TP` |
+| `--sequences N` | Calculator-style alias for `--max-num-seqs`. | Existing `--max-num-seqs` behavior |
+| `--kv-breakdown` | Prints raw cache/state buckets in addition to the calibrated fit verdict. | Off |
+| `--include-draft-kv --draft-kv-gb X` | Adds a per-card draft-KV estimate to the breakdown. Drafter weights remain modelled by `--drafter-gb`. | Off / 0 GB |
+| `--compressed-layers`, `--compression-ratio`, `--compressed-head-dim` | Optional compressed/sparse KV estimate for future sparse-cache model families. | 0 layers |
+| `--indexer-ratio-layers`, `--indexer-compress-ratio`, `--indexer-head-dim`, `--indexer-format` | Optional indexer-cache estimate for models with separate sparse-cache indexers. | 0 layers, `fp4` |
+
+The intended envelope is local single-node rigs: 1-8 consumer/prosumer/workstation GPUs. This includes serious home workstations such as 4× RTX 6000-class rigs, but deliberately does not try to model datacenter scheduling, multi-node cache offload, or SLA/eviction policy.
+
+Example output buckets:
+
+```text
+Cache architecture breakdown
+----------------------------
+  Layout:                   hybrid_mamba
+  Scope:                    2 GPU(s), TP=2, sequences=2
+  Attention KV — growing:     8.59 GB / card
+  Recurrent / SSM state:      0.01 GB / card
+  Cache/state subtotal:       8.60 GB / card
+```
+
+Important distinction: if `--compressed-*` or `--indexer-*` fields are used manually, they are architecture math estimates. The calibrated fit verdict remains the Club-3090 estimate that includes weights, activation peak, vLLM workspace/cudagraph overhead, drafter residency, and vLLM KV-pool capping behavior.
 
 ## General KV cache formula
 

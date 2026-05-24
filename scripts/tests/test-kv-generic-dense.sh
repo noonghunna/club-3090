@@ -212,6 +212,46 @@ check(
     "is_generic_dense_eligible(DeltaNet hybrid Qwen3-Next) -> False",
 )
 
+# ---- optional home/workstation KV breakdown mode ---------------------------
+breakdown = kv.architecture_cache_breakdown(
+    spec=kv.QWEN36_27B,
+    kv_format="fp8_e5m2",
+    max_ctx=32768,
+    max_num_seqs=2,
+    tp=2,
+    gpus=4,
+    layout="auto",
+)
+check(
+    breakdown.layout == "hybrid_mamba" and breakdown.gpus == 4 and breakdown.sequences == 2,
+    "architecture_cache_breakdown reports inferred layout + explicit rig/sequences metadata",
+)
+check(
+    breakdown.attention_kv_growing_gb > 0 and breakdown.total_cache_gb >= breakdown.attention_kv_growing_gb,
+    "architecture_cache_breakdown reports positive attention KV subtotal without changing fit prediction",
+)
+
+sparse = kv.architecture_cache_breakdown(
+    spec=kv.QWEN36_27B,
+    kv_format="fp8_e5m2",
+    max_ctx=32768,
+    max_num_seqs=1,
+    tp=2,
+    gpus=2,
+    layout="compressed_sparse",
+    compressed_layers=31,
+    compression_ratio=128,
+    compressed_head_dim=131072,
+    indexer_ratio_layers=30,
+    indexer_compress_ratio=4,
+    indexer_head_dim=65536,
+    indexer_format="fp4",
+)
+check(
+    sparse.compressed_kv_gb > 0 and sparse.indexer_cache_gb > 0,
+    "architecture_cache_breakdown can report optional compressed-KV and indexer-cache buckets",
+)
+
 if failures:
     print(f"\n{len(failures)} assertion(s) failed.", file=sys.stderr)
     sys.exit(1)
