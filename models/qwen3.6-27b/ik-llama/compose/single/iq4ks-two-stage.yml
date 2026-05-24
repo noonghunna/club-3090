@@ -14,19 +14,23 @@
 #   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard (same as iq4ks-mtp.yml)
 #   Template:  native (GGUF-embedded) — see iq4ks-mtp.yml for A/B rationale
 #   Vision:    NO (text-only; mmproj is a separate axis → iq4ks-mtp-vision.yml)
-#   Default ctx: 131072 (validated). At the tuned ngram n_max=4 the per-step
-#              checkpoint is only ~0.6 GB, so 200K (iq4ks-mtp.yml's default)
-#              likely fits too — but that isn't boot+stress-validated here yet,
-#              so we ship the tested 131K. Bump CTX_SIZE to A/B it yourself.
-#   Status:    🧪 EXPERIMENTAL (community-test) — PR #1789, tuned + validated on
-#              1× 3090 (2026-05-24). ngram n_max swept {2,3,4,5,8,16}: code
-#              decode is an inverted-U peaking at n_max=4. At (ngram 4, MTP 3):
-#              code 97.8 TPS vs 72.4 for MTP-only (iq4ks-mtp.yml) = +35%;
-#              narrative ~tie (59 vs 60). Spec-dec is lossless — 8-pack quality
-#              98/150 == MTP-only's 100/150 within noise; verify-full all green.
-#              aider-polyglot leg re-running (first pass was a harness misconfig,
-#              not the model). Shipped 🧪 so others can A/B; BENCHMARKS row +
-#              SINGLE_CARD promotion follow once aider confirms.
+#   Default ctx: 200000 (verify-stress validated — fills to 183K with correct
+#              needle recall at every rung, matching iq4ks-mtp.yml). Ceiling VRAM
+#              margin is ~833 MB at 183K — just under the script's 1024 MB
+#              sustained-agent-load guard, but recall still passes and there's
+#              ~540 MB real headroom after the ~292 MB agent overhead. For heavy
+#              agentic use right at the ceiling, set CTX_SIZE=180224 (~1.4 GB
+#              margin) or 163840 (~1.9 GB). The ngram stage's 0.6 GB per-step
+#              checkpoint is what costs the top slice vs MTP-only's clean 200K.
+#   Status:    ⭐ Code-optimized single-card pick (sits alongside iq4ks-mtp.yml,
+#              the balanced/long-ctx ⭐). Tuned + validated on 1× 3090 @ 370 W
+#              (2026-05-24). ngram n_max swept {2,3,4,5,8,16}: code decode is an
+#              inverted-U peaking at n_max=4. At (ngram 4, MTP 3): code 97.8 TPS
+#              vs 72.4 for MTP-only (iq4ks-mtp.yml) = +35%; narrative ~tie
+#              (59 vs 60). Spec-dec is lossless: 8-pack 98/150 == MTP-only's
+#              100/150 and aider-polyglot 16/30 == MTP-only's 19/30, both within
+#              noise; verify-full all green. Same 200K ctx as iq4ks-mtp, ~0.8 GB
+#              leaner at idle. Use this for code; iq4ks-mtp for balanced/prose.
 #   Best for:  Code-heavy agentic workloads where context has repeated patterns
 #              (refactoring, test generation, boilerplate, import blocks).
 # ---------------------------------------------------------------------------
@@ -74,7 +78,7 @@
 # Override defaults via .env or shell:
 #   MODEL_DIR              host dir to mount as /models
 #   GGUF_FILE             path under /models
-#   CTX_SIZE              KV pool size       (default: 131072)
+#   CTX_SIZE              KV pool size       (default: 200000 — see Default ctx)
 #   BATCH_SIZE            llama.cpp -b       (default: 4096)
 #   UBATCH_SIZE           llama.cpp -ub      (default: 1024)
 #   NP                    parallel slots     (default: 1)
@@ -110,7 +114,7 @@ services:
       --port 8080
       --model /models/${GGUF_FILE:-qwen3.6-27b-gguf/ubergarm-mtp-iq4ks/Qwen3.6-27B-MTP-IQ4_KS.gguf}
       -ngl 99
-      --ctx-size ${CTX_SIZE:-131072}
+      --ctx-size ${CTX_SIZE:-200000}
       -b ${BATCH_SIZE:-4096}
       -ub ${UBATCH_SIZE:-1024}
       -np ${NP:-1}
