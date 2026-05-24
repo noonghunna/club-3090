@@ -8,7 +8,8 @@ Tools to A/B-test alternative bounded-thinking grammars against the originally-s
 
 | File | Purpose |
 |---|---|
-| `deepseek-scratchpad.gbnf` | Recommended default grammar for bounded-thinking variants; xgrammar-compatible and used for the llama.cpp port request examples |
+| `deepseek-scratchpad.gbnf` | Recommended default grammar for bounded-thinking; **vLLM/xgrammar** (uses underscored rule names — does NOT parse on llama.cpp) |
+| `deepseek-scratchpad.llamacpp.gbnf` | **llama.cpp variant** of the above — identical language, rule names with no underscores (llama.cpp GBNF is `[a-zA-Z0-9-]` only). Use this for the llama.cpp bounded-thinking compose. Validated on-rig 2026-05-24. |
 | `holiday-tagline.gbnf` | Translated grammar, xgrammar-compatible |
 | [`TRANSLATION.md`](TRANSLATION.md) | Translation decisions + Phase-1 smoke results |
 | `smoke-test.py` | Phase-1 — verify the grammar parses + applies on vLLM |
@@ -16,7 +17,7 @@ Tools to A/B-test alternative bounded-thinking grammars against the originally-s
 
 ## Serving notes
 
-The recommended production/default grammar is [`deepseek-scratchpad.gbnf`](deepseek-scratchpad.gbnf). vLLM receives it as `extra_body={"structured_outputs": {"grammar": ...}}`; llama.cpp receives the same GBNF as the request body `grammar` field. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md) for engine-specific request examples.
+The recommended production/default grammar is the DeepSeek scratchpad. **The two engines need different files** (same language, different rule-name dialect): vLLM uses [`deepseek-scratchpad.gbnf`](deepseek-scratchpad.gbnf) as `extra_body={"structured_outputs": {"grammar": ...}}`; **llama.cpp uses [`deepseek-scratchpad.llamacpp.gbnf`](deepseek-scratchpad.llamacpp.gbnf)** (no underscores in rule names) as the request body `grammar` field — the underscored vLLM version silently fails to parse on llama.cpp and falls back to unconstrained generation. See [`docs/STRUCTURED_COT.md`](../../docs/STRUCTURED_COT.md) for engine-specific request examples + validation status.
 
 ## How to run
 

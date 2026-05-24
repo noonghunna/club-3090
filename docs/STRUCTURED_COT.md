@@ -156,7 +156,7 @@ Curl example:
 
 ```bash
 MODEL_ID="$(curl -s http://localhost:8020/v1/models | jq -r '.data[0].id')"
-GRAMMAR_JSON="$(jq -Rs . < tools/grammar-eval/deepseek-scratchpad.gbnf)"
+GRAMMAR_JSON="$(jq -Rs . < tools/grammar-eval/deepseek-scratchpad.llamacpp.gbnf)"   # llama.cpp variant (no underscores)
 
 curl -s http://localhost:8020/v1/chat/completions \
   -H 'Content-Type: application/json' \
@@ -180,7 +180,7 @@ Python client:
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:8020/v1", api_key="dummy")
-grammar = open("tools/grammar-eval/deepseek-scratchpad.gbnf", encoding="utf-8").read()
+grammar = open("tools/grammar-eval/deepseek-scratchpad.llamacpp.gbnf", encoding="utf-8").read()  # llama.cpp variant
 model_id = client.models.list().data[0].id
 
 r = client.chat.completions.create(
@@ -201,7 +201,7 @@ print("think:", reasoning)
 print("code :", m.content)
 ```
 
-Current validation status: compose/config wiring is in-tree; live grammar+MTP validation is still pending on the dev rig. The on-rig check should prove three things before BENCHMARKS gets a row: `deepseek-scratchpad.gbnf` parses under llama.cpp GBNF as-is, FREE vs FSM think-token counts differ, and grammar-masked decode still coexists with `--spec-type draft-mtp`. If grammar and MTP conflict, rerun this compose with MTP disabled and document the speed trade before treating the llama.cpp port as validated.
+**Validation status (on-rig, 2026-05-24): PASS — but the grammar needed a llama.cpp variant.** The xgrammar `deepseek-scratchpad.gbnf` does **not** parse under llama.cpp's GBNF — its underscored rule names (`line_char`, `line_chars`) trip `parse: error parsing grammar: expecting newline or end at _char`, and the server silently falls back to *unconstrained* generation (FREE == FSM token counts — the silent no-fire trap). The fix is [`deepseek-scratchpad.llamacpp.gbnf`](../tools/grammar-eval/deepseek-scratchpad.llamacpp.gbnf) — identical language, no underscores (llama.cpp rule names are `[a-zA-Z0-9-]` only). With that variant, all three gates pass: (1) **parses** (no error), (2) **fires** — `reasoning_content` is the `PLAN:/NOTE:/VERDICT:` structure, and (3) **coexists with `--spec-type draft-mtp`** (draft acceptance 0.66–0.88). Measured FREE→FSM: 2113→1009 tok (2.1×, hash-vs-BST prompt) and 934→331 tok (2.8×, bat-and-ball), temp 0.6. Full HE+/LCB bench + a BENCHMARKS row still pending.
 
 ### 4. (Optional) Reproduce the bench
 

@@ -20,14 +20,14 @@
 # Why no server grammar flag here: llama.cpp accepts GBNF through the OpenAI
 # request body's `grammar` field. Unlike vLLM, there is no separate
 # reasoning-scoped switch in this compose. The recommended grammar at
-# tools/grammar-eval/deepseek-scratchpad.gbnf is whole-response shaped for
+# tools/grammar-eval/deepseek-scratchpad.llamacpp.gbnf is whole-response shaped for
 # Qwen's generated stream after the chat template auto-prefixes `<think>\n`:
 # PLAN / NOTE* / VERDICT / `</think>\n\n` / free answer.
 #
 # Recommended request shape:
 #   - temperature: 0 for bench parity
 #   - max_tokens: 4096
-#   - grammar: contents of tools/grammar-eval/deepseek-scratchpad.gbnf
+#   - grammar: contents of tools/grammar-eval/deepseek-scratchpad.llamacpp.gbnf
 #
 # Optional alternates stay client-selectable: the original andthattoo G/A/E
 # grammar and tools/grammar-eval/holiday-tagline.gbnf. See

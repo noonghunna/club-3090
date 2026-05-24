@@ -30,7 +30,7 @@ The single-card speed + context workhorse: ~51/60 TPS (narr/code), **200K ctx** 
 
 ### `single/bounded-thinking.yml` — MTP n=2, 200K ctx, reasoning on, grammar per request
 
-Structured-CoT variant for llama.cpp. It is intentionally the same runtime envelope as `single/mtp.yml` — Q4_K_M MTP GGUF, q4_0 KV, `-ub 512`, 200K context, no vision — with `REASONING=on` as the default. The grammar is not baked into the server; clients pass GBNF in the OpenAI-compatible request body `grammar` field. Use [`tools/grammar-eval/deepseek-scratchpad.gbnf`](../../../tools/grammar-eval/deepseek-scratchpad.gbnf) as the recommended default, or pass the original andthattoo / Holiday alternates client-side. See [`docs/STRUCTURED_COT.md`](../../../docs/STRUCTURED_COT.md) for request examples and validation status.
+Structured-CoT variant for llama.cpp. It is intentionally the same runtime envelope as `single/mtp.yml` — Q4_K_M MTP GGUF, q4_0 KV, `-ub 512`, 200K context, no vision — with `REASONING=on` as the default. The grammar is not baked into the server; clients pass GBNF in the OpenAI-compatible request body `grammar` field. Use [`tools/grammar-eval/deepseek-scratchpad.llamacpp.gbnf`](../../../tools/grammar-eval/deepseek-scratchpad.llamacpp.gbnf) as the recommended default, or pass the original andthattoo / Holiday alternates client-side. See [`docs/STRUCTURED_COT.md`](../../../docs/STRUCTURED_COT.md) for request examples and validation status.
 
 ### `single/mtp-vision.yml` — MTP n=2, 160K ctx, vision on
 
