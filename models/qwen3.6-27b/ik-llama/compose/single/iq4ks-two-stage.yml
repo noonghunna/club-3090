@@ -4,22 +4,29 @@
 #   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu13-server)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   TWO-STAGE: ngram-mod (self-spec, context-matching) + MTP fallback
-#              Stage 1: ngram-mod n_max=64, n_min=2, ngram-size-n=16
+#              Stage 1: ngram-mod n_max=4, n_min=2, ngram-size-n=16
 #              Stage 2: MTP n_max=3, p_min=0.0
-#              PR #1789 (merged 2026-05-15). ngram catches repeated patterns
-#              (zero VRAM, instant), MTP fills novel tokens. Best for code.
+#              PR #1789 (merged 2026-05-15). ngram catches repeated patterns,
+#              MTP fills novel tokens. Best for code.
+#              (ngram n_max TUNED to 4 on this rig — the PR's default of 64
+#               OOMs the per-step checkpoint on a 24 GB card. See Status + the
+#               RECURRENT CHECKPOINT MODE note below.)
 #   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard (same as iq4ks-mtp.yml)
 #   Template:  native (GGUF-embedded) — see iq4ks-mtp.yml for A/B rationale
 #   Vision:    NO (text-only; mmproj is a separate axis → iq4ks-mtp-vision.yml)
-#   Default ctx: 131072 — lower than iq4ks-mtp.yml's 200K because two-stage
-#              needs ngram context history to match against. 131K gives plenty
-#              of pattern surface while leaving headroom for the ngram index.
-#   Status:    🧪 EXPERIMENTAL — PR #1789 is 7 days old (2026-05-15). Boots +
-#              two-stage spec-dec engages on the cu13-server image (ngram_mod +
-#              MTP both init; validated 2026-05-22). Perf/quality bench pending.
-#              Expected: better code quality on repetitive workloads
-#              (refactoring, boilerplate, imports) vs MTP-only; same or
-#              slightly worse on highly novel generation.
+#   Default ctx: 131072 (validated). At the tuned ngram n_max=4 the per-step
+#              checkpoint is only ~0.6 GB, so 200K (iq4ks-mtp.yml's default)
+#              likely fits too — but that isn't boot+stress-validated here yet,
+#              so we ship the tested 131K. Bump CTX_SIZE to A/B it yourself.
+#   Status:    🧪 EXPERIMENTAL (community-test) — PR #1789, tuned + validated on
+#              1× 3090 (2026-05-24). ngram n_max swept {2,3,4,5,8,16}: code
+#              decode is an inverted-U peaking at n_max=4. At (ngram 4, MTP 3):
+#              code 97.8 TPS vs 72.4 for MTP-only (iq4ks-mtp.yml) = +35%;
+#              narrative ~tie (59 vs 60). Spec-dec is lossless — 8-pack quality
+#              98/150 == MTP-only's 100/150 within noise; verify-full all green.
+#              aider-polyglot leg re-running (first pass was a harness misconfig,
+#              not the model). Shipped 🧪 so others can A/B; BENCHMARKS row +
+#              SINGLE_CARD promotion follow once aider confirms.
 #   Best for:  Code-heavy agentic workloads where context has repeated patterns
 #              (refactoring, test generation, boilerplate, import blocks).
 # ---------------------------------------------------------------------------
@@ -37,17 +44,24 @@
 #   enough tokens (below n_min or no match), MTP takes over. Net: best of both
 #   worlds for code workloads where context is rich with repeated patterns.
 #
-#   Source: ik_llama.cpp PR #1789 (merged 2026-05-15). Author's benchmarks on
-#   code refactor tasks showed two-stage outperforming MTP-only. Parameters
-#   below are adapted from the PR's recommended config:
-#     --spec-stage ngram-mod:n_max=64,n_min=2,spec-ngram-size-n=16
+#   Source: ik_llama.cpp PR #1789 (merged 2026-05-15). The PR's recommended
+#   ngram n_max=64 is WRONG for a 24 GB card — see RECURRENT CHECKPOINT MODE.
+#   We swept n_max on this rig; 4 is the code-decode optimum. Tuned config:
+#     --spec-stage ngram-mod:n_max=4,n_min=2,spec-ngram-size-n=16
 #     --spec-stage mtp:n_max=3,draft-p-min=0.0
 #
 # RECURRENT CHECKPOINT MODE:
 #   --recurrent-ckpt-mode auto (PR #1774) pre-allocates VRAM buffers for
 #   Qwen3.6's DeltaNet SSM state during speculative decoding. On draft
 #   rejection, restores SSM state instead of recomputing — cheaper rejections
-#   on hybrid models. 'auto' tries per-step, falls back if OOM.
+#   on hybrid models. 'auto' tries per-step, falls back to gpu-fallback if OOM.
+#   ⚠ The per-step buffer scales ~148 MB × (max(ngram_n_max, mtp_n_max) + 1).
+#   At the tuned (4, 3) defaults that's ~0.6 GB → per-step engages (fast). The
+#   PR's n_max=64 needs ~9.5 GB → OOMs → gpu-fallback re-decodes on every reject,
+#   which is SLOWER than no spec-dec at all (we measured narrative −31% there).
+#   Keep NGRAM_N_MAX small: it's the code-speed optimum AND frees KV headroom
+#   for longer contexts. Sweep on 1× 3090: code decode 81.5 (n=16) → 90.4 (n=8)
+#   → 97.8 (n=4) → 78.8 (n=2); narrative flat ~59 throughout.
 #
 # Quick start:
 #   1. Get the MTP-IQ4_KS GGUF (same as iq4ks-mtp.yml):
@@ -65,7 +79,7 @@
 #   UBATCH_SIZE           llama.cpp -ub      (default: 1024)
 #   NP                    parallel slots     (default: 1)
 #   KV_TYPE               K and V quant type (default: q4_0)
-#   NGRAM_N_MAX           ngram max draft    (default: 64)
+#   NGRAM_N_MAX           ngram max draft    (default: 4 — tuned; see above)
 #   NGRAM_N_MIN           ngram min accept   (default: 2)
 #   NGRAM_SIZE_N          ngram lookup size  (default: 16)
 #   MTP_N_MAX             MTP max draft      (default: 3)
@@ -105,7 +119,7 @@ services:
       -khad
       -vhad
       -ngld 99
-      --spec-stage ngram-mod:n_max=${NGRAM_N_MAX:-64},n_min=${NGRAM_N_MIN:-2},spec-ngram-size-n=${NGRAM_SIZE_N:-16}
+      --spec-stage ngram-mod:n_max=${NGRAM_N_MAX:-4},n_min=${NGRAM_N_MIN:-2},spec-ngram-size-n=${NGRAM_SIZE_N:-16}
       --spec-stage mtp:n_max=${MTP_N_MAX:-3},draft-p-min=${MTP_P_MIN:-0.0}
       --recurrent-ckpt-mode auto
       --merge-qkv
