@@ -253,7 +253,9 @@ COMPOSE_REGISTRY = {
     "llamacpp/mtp-vision": _entry(
         model="qwen3.6-27b", weights_variant="gguf", workload="vision-coding",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
-        tp=1, max_ctx=49152, max_num_seqs=1, mem_util=None,
+        # 150K @ 1M-px (IMAGE_MAX_TOKENS=1024) — re-tuned 2026-05-25 (PR #227); was a
+        # stale 49152. Full-res 4M-px OOMs at fill, so 1M-px is the safe default.
+        tp=1, max_ctx=150000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/mtp-vision.yml",
         default_port=8020,
     ),
