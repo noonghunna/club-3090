@@ -277,11 +277,67 @@ COMPOSE_REGISTRY = {
         default_port=8020,
     ),
     "ik-llama/iq4ks-two-stage": _entry(
-        model="qwen3.6-27b", weights_variant="gguf", workload="fast-chat",
+        model="qwen3.6-27b", weights_variant="gguf", workload="tool-heavy",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-two-stage.yml",
         default_port=8020,
+    ),
+    "ik-llama/prism-pro-dq-mtp": _entry(
+        model="qwen3.6-27b", weights_variant="gguf", workload="fast-chat",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=122880, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/ik-llama/compose/single/prism-pro-dq-mtp.yml",
+        default_port=8020,
+    ),
+    "ik-llama/prism-pro-dq-long": _entry(
+        model="qwen3.6-27b", weights_variant="gguf", workload="long-ctx-single",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=180000, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/ik-llama/compose/single/prism-pro-dq-long.yml",
+        default_port=8052,
+    ),
+    "ik-llama/prism-pro-dq-two-stage": _entry(
+        model="qwen3.6-27b", weights_variant="gguf", workload="tool-heavy",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/ik-llama/compose/single/prism-pro-dq-two-stage.yml",
+        default_port=8020,
+    ),
+    "ik-llama/prism-pro-dq-dual": _entry(
+        model="qwen3.6-27b", weights_variant="gguf", workload="tool-heavy",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=2, max_ctx=196608, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/ik-llama/compose/dual/prism-pro-dq-mtp.yml",
+        default_port=8053,
+    ),
+    "ik-llama/prism-pro-dq-dual-vision": _entry(
+        model="qwen3.6-27b", weights_variant="gguf", workload="vision-coding",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/ik-llama/compose/dual/prism-pro-dq-mtp-vision.yml",
+        default_port=8010,
+    ),
+    "ik-llama/apex-mtp-compact": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="gguf", workload="fast-chat",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=163840, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/apex-mtp-compact.yml",
+        default_port=8054,
+    ),
+    "ik-llama/apex-mtp-compact-long": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="gguf", workload="long-ctx-single",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
+        tp=1, max_ctx=196608, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/apex-mtp-compact-long.yml",
+        default_port=8056,
+    ),
+    "ik-llama/apex-mtp-quality-dual": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="gguf", workload="long-ctx-single",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
+        tp=2, max_ctx=196608, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/dual/apex-mtp-quality.yml",
+        default_port=8055,
     ),
 
     # Gemma 4 31B, vLLM.
@@ -404,4 +460,3 @@ COMPOSE_REGISTRY = {
         default_port=8052,
     ),
 }
-

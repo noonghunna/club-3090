@@ -233,6 +233,15 @@ declare -A LAUNCH_VARIANT_COMPOSE=(
   [llamacpp/mtp-vision]="models/qwen3.6-27b/llama-cpp/compose/single/mtp-vision.yml"
   [ik-llama/iq4ks-mtp]="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-mtp.yml"
   [ik-llama/iq4ks-mtp-vision]="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-mtp-vision.yml"
+  [ik-llama/iq4ks-two-stage]="models/qwen3.6-27b/ik-llama/compose/single/iq4ks-two-stage.yml"
+  [ik-llama/prism-pro-dq-mtp]="models/qwen3.6-27b/ik-llama/compose/single/prism-pro-dq-mtp.yml"
+  [ik-llama/prism-pro-dq-long]="models/qwen3.6-27b/ik-llama/compose/single/prism-pro-dq-long.yml"
+  [ik-llama/prism-pro-dq-two-stage]="models/qwen3.6-27b/ik-llama/compose/single/prism-pro-dq-two-stage.yml"
+  [ik-llama/prism-pro-dq-dual]="models/qwen3.6-27b/ik-llama/compose/dual/prism-pro-dq-mtp.yml"
+  [ik-llama/prism-pro-dq-dual-vision]="models/qwen3.6-27b/ik-llama/compose/dual/prism-pro-dq-mtp-vision.yml"
+  [ik-llama/apex-mtp-compact]="models/qwen3.6-35b-a3b/ik-llama/compose/single/apex-mtp-compact.yml"
+  [ik-llama/apex-mtp-compact-long]="models/qwen3.6-35b-a3b/ik-llama/compose/single/apex-mtp-compact-long.yml"
+  [ik-llama/apex-mtp-quality-dual]="models/qwen3.6-35b-a3b/ik-llama/compose/dual/apex-mtp-quality.yml"
 )
 declare -A LAUNCH_VARIANT_MODEL=(
   [vllm/default]="qwen3.6-27b" [vllm/long-vision]="qwen3.6-27b" [vllm/long-text]="qwen3.6-27b"
@@ -243,7 +252,10 @@ declare -A LAUNCH_VARIANT_MODEL=(
   [vllm/dual-nvlink-dflash]="qwen3.6-27b" [vllm/dual-nvlink-dflash-noviz]="qwen3.6-27b"
   [vllm/gemma-mtp]="gemma-4-31b" [vllm/gemma-mtp-tp1]="gemma-4-31b" [vllm/gemma-dflash]="gemma-4-31b"
   [llamacpp/default]="qwen3.6-27b" [llamacpp/mtp]="qwen3.6-27b" [llamacpp/bounded-thinking]="qwen3.6-27b" [llamacpp/mtp-vision]="qwen3.6-27b"
-  [ik-llama/iq4ks-mtp]="qwen3.6-27b" [ik-llama/iq4ks-mtp-vision]="qwen3.6-27b"
+  [ik-llama/iq4ks-mtp]="qwen3.6-27b" [ik-llama/iq4ks-mtp-vision]="qwen3.6-27b" [ik-llama/iq4ks-two-stage]="qwen3.6-27b"
+  [ik-llama/prism-pro-dq-mtp]="qwen3.6-27b" [ik-llama/prism-pro-dq-long]="qwen3.6-27b" [ik-llama/prism-pro-dq-two-stage]="qwen3.6-27b"
+  [ik-llama/prism-pro-dq-dual]="qwen3.6-27b" [ik-llama/prism-pro-dq-dual-vision]="qwen3.6-27b"
+  [ik-llama/apex-mtp-compact]="qwen3.6-35b-a3b" [ik-llama/apex-mtp-compact-long]="qwen3.6-35b-a3b" [ik-llama/apex-mtp-quality-dual]="qwen3.6-35b-a3b"
 )
 declare -A LAUNCH_VARIANT_ENGINE=(
   [vllm/default]="vllm" [vllm/long-vision]="vllm" [vllm/long-text]="vllm" [vllm/long-text-no-mtp]="vllm"
@@ -253,7 +265,10 @@ declare -A LAUNCH_VARIANT_ENGINE=(
   [vllm/dual-nvlink-dflash]="vllm" [vllm/dual-nvlink-dflash-noviz]="vllm"
   [vllm/gemma-mtp]="vllm" [vllm/gemma-mtp-tp1]="vllm" [vllm/gemma-dflash]="vllm"
   [llamacpp/default]="llamacpp" [llamacpp/mtp]="llamacpp" [llamacpp/bounded-thinking]="llamacpp" [llamacpp/mtp-vision]="llamacpp"
-  [ik-llama/iq4ks-mtp]="llamacpp" [ik-llama/iq4ks-mtp-vision]="llamacpp"
+  [ik-llama/iq4ks-mtp]="llamacpp" [ik-llama/iq4ks-mtp-vision]="llamacpp" [ik-llama/iq4ks-two-stage]="llamacpp"
+  [ik-llama/prism-pro-dq-mtp]="llamacpp" [ik-llama/prism-pro-dq-long]="llamacpp" [ik-llama/prism-pro-dq-two-stage]="llamacpp"
+  [ik-llama/prism-pro-dq-dual]="llamacpp" [ik-llama/prism-pro-dq-dual-vision]="llamacpp"
+  [ik-llama/apex-mtp-compact]="llamacpp" [ik-llama/apex-mtp-compact-long]="llamacpp" [ik-llama/apex-mtp-quality-dual]="llamacpp"
 )
 declare -A LAUNCH_VARIANT_KVCALC=(
   [vllm/default]="qwen3.6-27b:long-vision"
@@ -282,6 +297,15 @@ declare -A LAUNCH_VARIANT_KVCALC=(
   [llamacpp/mtp-vision]="SKIP"
   [ik-llama/iq4ks-mtp]="SKIP"
   [ik-llama/iq4ks-mtp-vision]="SKIP"
+  [ik-llama/iq4ks-two-stage]="SKIP"
+  [ik-llama/prism-pro-dq-mtp]="SKIP"
+  [ik-llama/prism-pro-dq-long]="SKIP"
+  [ik-llama/prism-pro-dq-two-stage]="SKIP"
+  [ik-llama/prism-pro-dq-dual]="SKIP"
+  [ik-llama/prism-pro-dq-dual-vision]="SKIP"
+  [ik-llama/apex-mtp-compact]="SKIP"
+  [ik-llama/apex-mtp-compact-long]="SKIP"
+  [ik-llama/apex-mtp-quality-dual]="SKIP"
 )
 LAUNCH_VARIANT_ORDER=(
   vllm/long-vision vllm/long-text vllm/long-text-no-mtp vllm/bounded-thinking
@@ -290,7 +314,9 @@ LAUNCH_VARIANT_ORDER=(
   vllm/dual4 vllm/dual4-dflash
   vllm/gemma-mtp vllm/gemma-mtp-tp1 vllm/gemma-dflash
   llamacpp/default llamacpp/mtp llamacpp/bounded-thinking llamacpp/mtp-vision
-  ik-llama/iq4ks-mtp ik-llama/iq4ks-mtp-vision
+  ik-llama/iq4ks-mtp ik-llama/iq4ks-mtp-vision ik-llama/iq4ks-two-stage
+  ik-llama/prism-pro-dq-mtp ik-llama/prism-pro-dq-long ik-llama/prism-pro-dq-two-stage ik-llama/prism-pro-dq-dual ik-llama/prism-pro-dq-dual-vision
+  ik-llama/apex-mtp-compact ik-llama/apex-mtp-compact-long ik-llama/apex-mtp-quality-dual
 )
 
 variant_hw_status() {
@@ -1148,6 +1174,15 @@ declare -A LAUNCH_DEFAULT_PORT=(
   [llamacpp/mtp-vision]=8020
   [ik-llama/iq4ks-mtp]=8020
   [ik-llama/iq4ks-mtp-vision]=8020
+  [ik-llama/iq4ks-two-stage]=8020
+  [ik-llama/prism-pro-dq-mtp]=8020
+  [ik-llama/prism-pro-dq-long]=8052
+  [ik-llama/prism-pro-dq-two-stage]=8020
+  [ik-llama/prism-pro-dq-dual]=8053
+  [ik-llama/prism-pro-dq-dual-vision]=8010
+  [ik-llama/apex-mtp-compact]=8054
+  [ik-llama/apex-mtp-compact-long]=8056
+  [ik-llama/apex-mtp-quality-dual]=8055
 )
 declare -A LAUNCH_DEFAULT_CONTAINER=(
   [vllm/default]=vllm-qwen36-27b
@@ -1177,6 +1212,14 @@ declare -A LAUNCH_DEFAULT_CONTAINER=(
   [ik-llama/iq4ks-mtp]=ik-llama-qwen36-27b
   [ik-llama/iq4ks-mtp-vision]=ik-llama-qwen36-27b-vision
   [ik-llama/iq4ks-two-stage]=ik-llama-qwen36-27b-two-stage
+  [ik-llama/prism-pro-dq-mtp]=ik-llama-qwen36-27b-prism-pro-dq
+  [ik-llama/prism-pro-dq-long]=ik-llama-qwen36-27b-prism-pro-dq-long
+  [ik-llama/prism-pro-dq-two-stage]=ik-llama-qwen36-27b-prism-pro-dq-two-stage
+  [ik-llama/prism-pro-dq-dual]=ik-llama-qwen36-27b-prism-pro-dq-dual
+  [ik-llama/prism-pro-dq-dual-vision]=ik-llama-qwen36-27b-prism-pro-dq-dual
+  [ik-llama/apex-mtp-compact]=ik-llama-qwen36-35b-a3b-apex-compact
+  [ik-llama/apex-mtp-compact-long]=ik-llama-qwen36-35b-a3b-apex-compact-long
+  [ik-llama/apex-mtp-quality-dual]=ik-llama-qwen36-35b-a3b-apex-quality-dual
 )
 ENDPOINT_PORT="${PORT:-${LAUNCH_DEFAULT_PORT[$VARIANT]:-8020}}"
 ENDPOINT_URL="http://localhost:${ENDPOINT_PORT}"
