@@ -39,6 +39,7 @@ services:
       - "${ESTATE_PORT:-${PORT:-8056}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../models-cache}:/models:ro"
+      - ../../patches/apex-qwen-chat-template.jinja:/etc/apex-qwen-chat-template.jinja:ro
     command: >-
       --host 0.0.0.0
       --port 8080
@@ -62,6 +63,7 @@ services:
       --merge-qkv
       -fa on
       --jinja
+      --chat-template-file /etc/apex-qwen-chat-template.jinja
       --parallel-tool-calls
       --reasoning ${REASONING:-off}
       --reasoning-format ${REASONING_FORMAT:-deepseek}

@@ -6,6 +6,7 @@ This branch ports the live `/opt/ai/club-3090` custom ik-llama work onto the cur
 
 - Adds the PRISM-PRO-DQ preset family for `qwen3.6-27b` on the ik-llama path.
 - Adds the APEX-MTP preset family for `qwen3.6-35b-a3b` on the ik-llama path.
+- Adds an APEX-only local Qwen chat-template override for ik-llama so reasoning-disabled launches stop emitting empty `<think></think>` stubs.
 - Wires every new preset into `scripts/launch.sh` so `launch.sh` can discover, select, port-map, and name the containers correctly.
 - Extends `scripts/lib/profiles/compose_registry.py` so the upstream profile catalog exposes the new presets with the right topology, workload, context, and KV metadata.
 - Fixes the `ik-llama/apex-mtp-compact` registry metadata to report `kv_format="q4_0"` so the catalog matches the compose header and the actual single-card compact lane.
@@ -84,6 +85,16 @@ This branch ports the live `/opt/ai/club-3090` custom ik-llama work onto the cur
   - Default context: `196608`
   - Positioning: long-context dual-card APEX Quality lane that keeps full-context `q8` KV on the paired rig
 
+### APEX template fix
+
+- Added `models/qwen3.6-35b-a3b/ik-llama/patches/apex-qwen-chat-template.jinja`.
+- This is a local APEX-only Qwen 35B-A3B template override for ik-llama, not the froggeric vLLM template path.
+- It patches the assistant reasoning guard from:
+  - `loop.index0 > ns.last_query_index`
+- to:
+  - `loop.index0 > ns.last_query_index and reasoning_content`
+- The three APEX composes now mount that template and pass it through `--chat-template-file`, which prevents empty reasoning stubs from being emitted when reasoning is disabled.
+
 ## Launcher and Registry Integration
 
 - `scripts/launch.sh`
@@ -110,3 +121,4 @@ This branch ports the live `/opt/ai/club-3090` custom ik-llama work onto the cur
 - `models/qwen3.6-35b-a3b/ik-llama/compose/single/apex-mtp-compact.yml`
 - `models/qwen3.6-35b-a3b/ik-llama/compose/single/apex-mtp-compact-long.yml`
 - `models/qwen3.6-35b-a3b/ik-llama/compose/dual/apex-mtp-quality.yml`
+- `models/qwen3.6-35b-a3b/ik-llama/patches/apex-qwen-chat-template.jinja`
