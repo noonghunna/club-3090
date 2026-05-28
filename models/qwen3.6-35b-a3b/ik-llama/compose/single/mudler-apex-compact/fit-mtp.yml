@@ -42,15 +42,21 @@
 #   free VRAM for context. Beats both q4_0/q4_0 (fast lane) on quality
 #   and q8_0/q8_0 (long lane) on VRAM headroom at matched context.
 #
-# Why --fit (no explicit -ngl pin):
-#   ik_llama --fit smart-offloads layers + KV to keep the model
-#   within VRAM. -ngl 99 / -ngld 99 are kept as belt-and-suspenders
-#   ceilings and are no-ops when --fit succeeds.
+# Why --fit + --no-mmap (kept default even though I-Compact fits in VRAM):
+#   On the I-Compact GGUF (~17 GB) both flags are largely inert — the
+#   model fits in 24 GB without smart-offload. They're kept default so
+#   swapping GGUF_FILE for a bigger quant (UD-Q8_K_XL, APEX Quality,
+#   etc.) "just works" with reasonable partial-offload performance,
+#   per @laurimyllari's note on PR #243. -ngl 99 / -ngld 99 are kept
+#   as belt-and-suspenders ceilings; no-ops when --fit succeeds.
+#   --no-mmap additionally avoids first-request prefill stalls on
+#   cold-cache boots regardless of offload mode.
 #
-# Why --no-mmap + --cache-ram 4096:
-#   Both per @laurimyllari's --fit-mtp config. --no-mmap forces full
-#   weight load into VRAM/host RAM up front (avoids first-request
-#   prefill stalls); --cache-ram budgets host-side cache pages.
+# Why --cache-ram 4096:
+#   Matches @laurimyllari's --fit-mtp compose (ik-llama's default is
+#   8192). Likely the same forward-compat rationale — lower host-RAM
+#   reservation leaves more headroom for partial-offload weights when
+#   the GGUF is swapped to a bigger quant. Confirmation TBD on #243.
 #
 # Override defaults via .env or shell:
 #   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
