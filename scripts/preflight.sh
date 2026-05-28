@@ -70,6 +70,16 @@ preflight_gpu() {
   fi
   echo "[preflight] gpu:     ${gpu_count}× detected"
   echo "$gpu_lines" | sed 's/^/[preflight]            /'
+  # Cross-rig friendliness: surface a hint when 4090 / 5090 cards are
+  # detected. Composes run cross-rig but per-class gotchas (ctx derate,
+  # VRAM envelope, SM-gated kernels) live in the FAQ — easier to catch
+  # the hint here than for a user to discover it after a confusing run.
+  if echo "$gpu_lines" | grep -qE "RTX 4090"; then
+    echo "[preflight] note:    4090 detected → docs/FAQ.md#can-i-use-a-4090-instead-of-a-3090 (ctx ceiling ~15–20% lower than headless 3090)"
+  fi
+  if echo "$gpu_lines" | grep -qE "RTX 5090"; then
+    echo "[preflight] note:    5090 detected → docs/FAQ.md#can-i-use-a-5090 (32 GB envelope unlocks single-card configs)"
+  fi
   # nvidia-container-toolkit check — needed for docker GPU access.
   if ! docker info 2>/dev/null | grep -qi 'Runtimes:.*nvidia'; then
     echo "[preflight] WARN:  Docker doesn't list the 'nvidia' runtime. If 'docker compose up' fails" >&2
