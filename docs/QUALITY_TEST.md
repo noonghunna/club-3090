@@ -73,6 +73,13 @@ pip install -e /path/to/benchlocal-cli
 
 ## Run
 
+> **Live progress is on by default.** The wrapper forwards `--progress` to
+> benchlocal-cli, so per-scenario `[N/M] <pack> <id> …` lines stream to stderr
+> as the run advances. Long modes (`--full` ~30–40 min, `--reasoning`
+> similar, `--pack aider-polyglot-30` ~25–30 min) otherwise go dark for the
+> whole duration with no signal whether anything is wrong mid-run. Pass
+> `--no-progress` (or `PROGRESS=0`) for CI / log-volume-sensitive contexts.
+
 ```bash
 # default --medium against the auto-detected running compose
 bash scripts/quality-test.sh
@@ -88,6 +95,9 @@ bash scripts/quality-test.sh --reasoning
 
 # explicit endpoint override
 URL=http://localhost:8011 bash scripts/quality-test.sh --quick
+
+# suppress live [N/M] progress for CI / log-volume contexts
+bash scripts/quality-test.sh --full --no-progress
 
 # --full includes the 3 Docker-sandboxed packs by default (BugFind/HermesAgent/CLI) — needs Docker
 bash scripts/quality-test.sh --full

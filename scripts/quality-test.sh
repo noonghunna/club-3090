@@ -75,6 +75,13 @@ OPTIONS (extra)
                    DIR/sandbox-<pack_id>.log before teardown (forwarded to
                    benchlocal-cli). Without it, sandbox logs are lost on
                    container cleanup. Also settable via SANDBOX_LOG_DIR env.
+  --progress / --no-progress
+                   Toggle benchlocal-cli's per-scenario `[N/M]` live progress
+                   to stderr. **Default ON** — long quality runs (--full,
+                   --reasoning, --pack aider-polyglot-30, --pack cli-40) go
+                   dark for 10-60 min without it, with no signal whether
+                   anything is wrong mid-run. Pass --no-progress for CI / when
+                   stderr volume matters. Also settable via PROGRESS=0/1 env.
   --sampling-from-server
                    Inherit sampling from the serving config instead of using
                    the pack's default temp=0. Omits sampling params from
@@ -158,6 +165,12 @@ MODEL="${MODEL:-qwen3.6-27b-autoround}"
 # 60s deterministic, 300s cli-40/hermes, 1800s aider). Passing 60 by default
 # would have defeated those pack-aware budgets — the wrapper would override
 # every agentic pack back to 60s.
+# --progress is default-on so long quality runs surface per-scenario `[N/M]`
+# lines to stderr instead of going dark for 30+ minutes. The buffered-stderr
+# trap was painful enough to warrant making it default. Use --no-progress
+# (or PROGRESS=0) to suppress for CI / log-volume-sensitive contexts.
+PROGRESS="${PROGRESS:-1}"
+
 TIMEOUT_PER_CASE_SET=0
 if [[ -n "${TIMEOUT_PER_CASE:-}" ]]; then
   TIMEOUT_PER_CASE_SET=1
@@ -242,6 +255,14 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       shift 2
+      ;;
+    --progress)
+      PROGRESS=1
+      shift
+      ;;
+    --no-progress)
+      PROGRESS=0
+      shift
       ;;
     -h|--help)
       usage
@@ -385,6 +406,9 @@ CLI_ARGS=(
 )
 if [[ "$TIMEOUT_PER_CASE_SET" == "1" ]]; then
   CLI_ARGS+=(--timeout-per-case "${TIMEOUT_PER_CASE}")
+fi
+if [[ "$PROGRESS" == "1" ]]; then
+  CLI_ARGS+=(--progress)
 fi
 if [[ "$SANDBOXED_ONLY" == "1" ]]; then
   CLI_ARGS+=(--sandboxed-only)
