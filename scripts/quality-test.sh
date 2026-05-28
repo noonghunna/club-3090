@@ -66,8 +66,10 @@ OPTIONS (extra)
                    /v1/models returns the first (often wrong) registered model.
   --timeout-per-case N
                    Pass through to benchlocal-cli as --timeout-per-case N
-                   (seconds). Default: 60. For aider-polyglot-30 on low-power
-                   single-card rigs, bump to 3600+ to avoid mid-batch kills.
+                   (seconds). When NOT set, benchlocal-cli uses per-pack
+                   metadata defaults (60s for the deterministic packs, 300s
+                   for cli-40 / hermesagent-20, 1800s for aider-polyglot-30;
+                   see benchlocal-cli #41). Set this only to override.
   --sandbox-log-dir DIR
                    Capture each sandboxed pack's container log to
                    DIR/sandbox-<pack_id>.log before teardown (forwarded to
@@ -97,8 +99,11 @@ ENV VARS
                    verbatim — no /v1/models override. If UNSET, auto-detected
                    from /v1/models (fixes the wrong-name → HTTP 404 footgun on
                    single-model composes). --model and MODEL are equivalent.
-  TIMEOUT_PER_CASE Per-scenario HTTP timeout in seconds (default: 60).
-                   --timeout-per-case overrides this when both are set.
+  TIMEOUT_PER_CASE Per-scenario HTTP timeout override in seconds. UNSET means
+                   benchlocal-cli's per-pack metadata default applies (60s for
+                   the deterministic packs, 300s for cli-40 / hermesagent-20,
+                   1800s for aider-polyglot-30; see benchlocal-cli #41).
+                   --timeout-per-case is equivalent.
   ENABLE_THINKING Set to 1 to send request-level enable_thinking=true via
                    benchlocal-cli --enable-thinking. Default: 0.
   THINKING_MAX_TOKENS
@@ -146,7 +151,17 @@ URL="${URL:-http://localhost:8020}"
 MODEL_EXPLICIT=0
 [[ -n "${MODEL:-}" ]] && MODEL_EXPLICIT=1
 MODEL="${MODEL:-qwen3.6-27b-autoround}"
-TIMEOUT_PER_CASE="${TIMEOUT_PER_CASE:-60}"
+
+# Track whether the user explicitly set TIMEOUT_PER_CASE (via env or
+# --timeout-per-case flag). When unset, we DON'T pass --timeout-per-case to
+# benchlocal-cli, so it uses per-pack metadata defaults (benchlocal-cli #41:
+# 60s deterministic, 300s cli-40/hermes, 1800s aider). Passing 60 by default
+# would have defeated those pack-aware budgets — the wrapper would override
+# every agentic pack back to 60s.
+TIMEOUT_PER_CASE_SET=0
+if [[ -n "${TIMEOUT_PER_CASE:-}" ]]; then
+  TIMEOUT_PER_CASE_SET=1
+fi
 
 # ---- arg parsing -------------------------------------------------------------
 
@@ -209,6 +224,7 @@ while [[ $# -gt 0 ]]; do
         echo "✗ --timeout-per-case requires a positive integer (seconds)" >&2
         exit 2
       fi
+      TIMEOUT_PER_CASE_SET=1
       shift 2
       ;;
     --sampling-from-server)
@@ -346,10 +362,15 @@ mkdir -p "$RESULTS_DIR"
 TS=$(date +%Y-%m-%dT%H-%M-%S)
 JSON_OUT="${RESULTS_DIR}/quality-${TS}.json"
 
-if [[ -n "$PACK" ]]; then
-  echo "[quality-test] pack=${PACK}  endpoint=${URL}  model=${MODEL}  timeout=${TIMEOUT_PER_CASE}s"
+if [[ "$TIMEOUT_PER_CASE_SET" == "1" ]]; then
+  TIMEOUT_DISPLAY="${TIMEOUT_PER_CASE}s"
 else
-  echo "[quality-test] mode=${MODE}  endpoint=${URL}  model=${MODEL}  timeout=${TIMEOUT_PER_CASE}s"
+  TIMEOUT_DISPLAY="pack-default (60s deterministic / 300s cli-40+hermes / 1800s aider)"
+fi
+if [[ -n "$PACK" ]]; then
+  echo "[quality-test] pack=${PACK}  endpoint=${URL}  model=${MODEL}  timeout=${TIMEOUT_DISPLAY}"
+else
+  echo "[quality-test] mode=${MODE}  endpoint=${URL}  model=${MODEL}  timeout=${TIMEOUT_DISPLAY}"
 fi
 echo "[quality-test] results JSON → ${JSON_OUT}"
 echo
@@ -359,10 +380,12 @@ CLI_ARGS=(
   run
   --endpoint "${URL}"
   --model "${MODEL}"
-  --timeout-per-case "${TIMEOUT_PER_CASE}"
   --output markdown
   --save-json "${JSON_OUT}"
 )
+if [[ "$TIMEOUT_PER_CASE_SET" == "1" ]]; then
+  CLI_ARGS+=(--timeout-per-case "${TIMEOUT_PER_CASE}")
+fi
 if [[ "$SANDBOXED_ONLY" == "1" ]]; then
   CLI_ARGS+=(--sandboxed-only)
 elif [[ -n "$PACK" ]]; then
