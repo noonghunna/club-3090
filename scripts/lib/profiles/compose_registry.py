@@ -377,6 +377,18 @@ COMPOSE_REGISTRY = {
         default_port=8056,
         kvcalc_key="SKIP",
     ),
+    # @laurimyllari's --fit + asymmetric q8_0(K)/q5_0(V) KV config from
+    # discussion #241, retuned + measured on 1× 3090. +7% narr / +4% code
+    # over the q4/q4 mtp.yml sibling on the same APEX I-Compact GGUF.
+    # kv_format "q8_0" reflects K-side precision; V is q5_0 (see compose).
+    "ik-llama/apex-fit-q8q5": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="mudler-apex-compact", workload="fast-chat",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
+        tp=1, max_ctx=196608, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/mudler-apex-compact/fit-mtp.yml",
+        default_port=8057,
+        kvcalc_key="SKIP",
+    ),
     "ik-llama/apex-mtp-quality-dual": _entry(
         model="qwen3.6-35b-a3b", weights_variant="mudler-apex-quality", workload="long-ctx-single",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
