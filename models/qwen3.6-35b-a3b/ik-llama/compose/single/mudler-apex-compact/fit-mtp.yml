@@ -7,23 +7,19 @@
 #   KV:        q8_0 K + q5_0 V (asymmetric, K-high/V-low) + -khad/-vhad
 #   Vision:    NO
 #   Default ctx: 196608
-#   Status:    ⚠️ Production w/ caveats — captures @laurimyllari's --fit +
-#              asymmetric-KV config (discussion #241) on top of the APEX I-Compact GGUF;
-#              bench + verify-stress + deterministic quality clean, sandbox-pack
-#              quality pending (separate benchlocal-cli issue, not this compose).
-#   Caveats:   - Sandbox quality packs (hermesagent-20, aider-polyglot-30, cli-40
-#                timeouts) hit benchlocal-cli sandbox infrastructure issues 2026-05-28
-#                — hermes: agent runs but tool_events=0 (suspect PR #38 thinking-on
-#                sampler interaction); aider: git checkout fails before any LLM call
-#                (`fatal: path 'aider/__init__.py' does not exist in 'f46766c'`).
-#                Tracking separately. NOT a model or compose fault — deterministic
-#                packs (6 of 8) score 76/90 = 84% on PR #38-fixed verifiers.
-#              - 3090 power-sensitive: numbers below at 370 W; expect lower at 230 W.
+#   Status:    ✅ Production — captures @laurimyllari's --fit + asymmetric-KV
+#              config (discussion #241) on top of the APEX I-Compact GGUF.
+#              All gates clean: verify-full 8/8, verify-stress 8/8 (incl. 180K
+#              NIAH), bench n=5 (CV 1.5-3.0%), soak-continuous PASS (0 errors,
+#              0 silent_empty, 0 VRAM growth, 100% retention), full quality
+#              measured post-fix.
+#   Caveats:   3090 power-sensitive: numbers below at 370 W; expect lower at 230 W.
 #   Quality:   toolcall-15 14/15 (93%) · instructfollow-15 15/15 (100%) ·
 #              structoutput-15 14/15 (93%) · dataextract-15 11/15 (73%) ·
 #              reasonmath-15 12/15 (80%) · bugfind-15 10/15 (67%) ·
-#              hermesagent-20 0/20 ⚠ sandbox · cli-40 11/40 ⚠ timeouts ·
-#              aider-polyglot-30 0/30 ⚠ sandbox (--full, 2026-05-28, post-PR #38)
+#              hermesagent-20 11/20 (55%) · cli-40 12/40 (30%) ·
+#              aider-polyglot-30 12/30 (40%) (--full + --pack runs, 2026-05-28,
+#              post benchlocal-cli #42/#43/#44 + club-3090 #245)
 #   Best for:  Single-card 35B-A3B sweet spot — captures the q8/q5 K-high/V-low
 #              KV configuration @laurimyllari measured (~205/254 TPS on his 4090,
 #              ~103/149 TPS on this 3090, 8-pack tied at ~84% deterministic).
