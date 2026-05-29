@@ -61,9 +61,9 @@
 # Sibling DFlash variants:
 #   - dual/dflash.yml:           2× PCIe, 185K, 1 stream, 82/125 TPS
 #   - dual/dflash-noviz.yml:     2× PCIe, 200K, 1 stream, 78/127 TPS
-#   - dual/nvlink-dflash.yml:    2× NVLink, 185K, 1 stream, (community) TPS
-#   - dual/nvlink-dflash-noviz.yml: 2× NVLink, 188K, 1 stream, (community) TPS
 #   - multi4/dflash.yml:          4× PCIe, 262K, 2 streams, 64/104 TPS
+#   (NVLink is auto-detected at boot by every dual compose — NVLINK_MODE=force_on
+#    to force it; there is no separate nvlink-* variant.)
 #
 #   docker compose -f dual/dflash.yml up -d
 # ===========================================================================

@@ -33,10 +33,8 @@
 #     vllm/dual-turbo       262K + TQ3 + 4 streams + vision (multi-tenant)
 #     vllm/dual-dflash      185K + FP16 + DFlash N=5 + vision (peak code TPS)
 #     vllm/dual-dflash-noviz 200K + FP16 + DFlash N=5 + no vision (peak code, max ctx)
-#     vllm/dual-nvlink          262K + fp8 + 2 streams + vision (NVLink stub — auto-detected via dual/)
-#     vllm/dual-nvlink-turbo    262K + TQ3 + 4 streams + vision (NVLink stub — auto-detected via dual/)
-#     vllm/dual-nvlink-dflash   185K + FP16 + DFlash N=5 + vision (NVLink stub — auto-detected via dual/)
-#     vllm/dual-nvlink-dflash-noviz 188K + FP16 + DFlash N=5 + no vision (NVLink stub — auto-detected via dual/)
+#     (NVLink is auto-detected at boot by every dual compose — no separate
+#      nvlink-* variant. Force it with NVLINK_MODE=force_on if auto-detect misses.)
 #     vllm/gemma-mtp        Gemma-4-31B + Google MTP drafter (32K, bf16 KV, vision — community/experimental, pre-merge)
 #
 #   Single-card llama.cpp:

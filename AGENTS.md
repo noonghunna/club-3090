@@ -79,7 +79,7 @@ The directory hierarchy encodes model, engine, topology, and the weights artifac
 | `models/<model>/<engine>/` | Inference engine | `vllm` · `llama-cpp` · `sglang` |
 | `compose/<topology>/` | Hardware topology | `single` · `dual` · `multi3` · `multi4` · `multi8` |
 | `<quant>/` | Weights artifact / `weights_variant` slug | `autoround-int4` · `ubergarm-iq4ks` · `awq` |
-| `<serving>.yml` (filename) | Serving stack | `fp8-mtp.yml` · `turbo.yml` · `dflash.yml` · `nvlink-dflash-noviz.yml` |
+| `<serving>.yml` (filename) | Serving stack | `fp8-mtp.yml` · `turbo.yml` · `dflash.yml` · `int8.yml` |
 
 **Topology rule**: `single` (TP=1) and `dual` (TP=2) have no count ambiguity. `multi<N>` requires the count because N varies (3 / 4 / 5 / 6 / 8). Aligns with `docs/SINGLE_CARD.md` / `DUAL_CARD.md` / `MULTI_CARD.md` doc framing.
 
@@ -88,7 +88,7 @@ The directory hierarchy encodes model, engine, topology, and the weights artifac
 **Feature suffix order** (when stacking): interconnect → drafter → KV → vision modifier. Examples:
 - `dual/autoround-int4/turbo.yml` — TP=2 + AutoRound INT4 weights + TurboQuant KV
 - `dual/autoround-int4/dflash.yml` — TP=2 + AutoRound INT4 weights + DFlash drafter
-- `dual/autoround-int4/nvlink-dflash-noviz.yml` — TP=2 + NVLink + DFlash + no vision
+- _(the `nvlink-` interconnect prefix is reserved but currently unused — NVLink is auto-detected at boot via `NVLINK_MODE`, not encoded in the filename)_
 - `dual/autoround-int4/int8.yml` — TP=2 + AutoRound INT4 weights + INT8 PTH KV
 - `dual/awq/bf16-mtp.yml` — TP=2 + AWQ weights + BF16 KV + MTP
 - `multi4/autoround-int4/dflash.yml` — TP=4 + DFlash

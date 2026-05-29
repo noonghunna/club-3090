@@ -2,6 +2,10 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-29 — vLLM `nvlink-*` dual composes removed (NVLink auto-detected)
+
+The four `dual/autoround-int4/nvlink-*.yml` composes (`nvlink-fp8-mtp`, `nvlink-turbo`, `nvlink-dflash`, `nvlink-dflash-noviz`) are removed, along with their `vllm/dual-nvlink*` launch slugs. They were thin `extends:` stubs whose only override was `NVLINK_MODE=force_on` — redundant since every dual compose now auto-detects NVLink at boot via `detect_nvlink.sh` (`NVLINK_MODE=auto` → flips on `NCCL_P2P_LEVEL=NVL` + custom-all-reduce when a bridge is present, else `NCCL_P2P_DISABLE=1` + `--disable-custom-all-reduce`). NVLink rigs now get the same path from the base dual compose with no separate slug; force it explicitly with `NVLINK_MODE=force_on scripts/switch.sh vllm/dual` if auto-detect misses. The historical NVLink bench rows (JusefPol PR #31, danbedford #74/#92/#96) are preserved in `BENCHMARKS.md`. The earlier dated entries below that describe adding these composes are kept as append-only history.
+
 ## 2026-05-07 — `llamacpp/default` adds `--reasoning-format none` (opencode unblock)
 
 @syangsao reported opencode hangs indefinitely against `llamacpp/default` despite the server returning 200 with content tokens generated successfully ([#97](https://github.com/noonghunna/club-3090/issues/97)). Diagnosis via curl SSE capture: every delta was in the `reasoning_content` field, never `content` — Qwen3.6's thinking mode emits `<think>` blocks that llama.cpp's peg-native parser routes to `reasoning_content` by default. opencode (and most simple OpenAI-compat clients) ignore `reasoning_content` and wait indefinitely for `content` deltas that never arrive.

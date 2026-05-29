@@ -13,20 +13,19 @@ This directory contains the model + engine-specific patches that compose variant
 
 ## Composes that load Genesis
 
-8 composes currently bootstrap the Genesis tree + apply_all entrypoint:
+7 composes currently bootstrap the Genesis tree + apply_all entrypoint:
 
 - `single/autoround-int4/tq3-mtp.yml` (single-card default, 48K ctx)
-- `dual/autoround-int4/turbo.yml` (TP=2, TQ3 KV, MTP — daily-driver)
-- `dual/autoround-int4/nvlink-turbo.yml` (TP=2, NVLink, TQ3 KV, MTP)
+- `dual/autoround-int4/turbo.yml` (TP=2, TQ3 KV, MTP — daily-driver; NVLink auto-detected at boot)
 - `single/autoround-int4/long-text.yml` (TP=1, 180K ctx, MTP)
 - `single/autoround-int4/long-text-no-mtp.yml` (TP=1, 200K ctx, no MTP)
 - `single/autoround-int4/long-vision.yml` (TP=1 with vision tower)
 - `single/autoround-int4/bounded-thinking.yml` (TP=1, FSM bounded-thinking)
 - `single/autoround-int4/tools-text.yml` (TP=1, 75K ctx, no MTP)
 
-These same 8 composes also receive the `qwen3coder_tool_parser_deferred_commit.py` sidecar (see Active patches table above) since they all share the same entrypoint pattern.
+These same 7 composes also receive the `qwen3coder_tool_parser_deferred_commit.py` sidecar (see Active patches table above) since they all share the same entrypoint pattern.
 
-Composes that do **not** mount Genesis (intentionally — Genesis-free fallback / different attention path / minimal config): `dual/autoround-int4/fp8-mtp.yml` (fp8 KV TP=2 — kept Genesis-free as a debugging fallback for cross-engine bisect), `multi4.yml`, `multi4-dflash.yml`, `dual-dflash.yml`, `dual-dflash-noviz.yml`, `dual-nvlink.yml`, `minimal.yml`, `carnice-bf16mtp.yml`, `qwopus-bf16mtp.yml`. **These composes do NOT currently receive the qwen3coder tool-parser sidecar** — they have no entrypoint script to run it from. If you hit the `<tool_call>`-in-prose silent-drop bug on one of these composes, you can either (a) set `--tool-call-parser hermes` instead of `qwen3_coder` if your model template tolerates it, (b) add an entrypoint script following the dual-turbo.yml pattern, or (c) wait for the upstream vLLM fix to land. See [issue #72](https://github.com/noonghunna/club-3090/issues/72) for context.
+Composes that do **not** mount Genesis (intentionally — Genesis-free fallback / different attention path / minimal config): `dual/autoround-int4/fp8-mtp.yml` (fp8 KV TP=2 — kept Genesis-free as a debugging fallback for cross-engine bisect), `multi4.yml`, `multi4-dflash.yml`, `dual-dflash.yml`, `dual-dflash-noviz.yml`, `minimal.yml`, `carnice-bf16mtp.yml`, `qwopus-bf16mtp.yml`. **These composes do NOT currently receive the qwen3coder tool-parser sidecar** — they have no entrypoint script to run it from. If you hit the `<tool_call>`-in-prose silent-drop bug on one of these composes, you can either (a) set `--tool-call-parser hermes` instead of `qwen3_coder` if your model template tolerates it, (b) add an entrypoint script following the dual-turbo.yml pattern, or (c) wait for the upstream vLLM fix to land. See [issue #72](https://github.com/noonghunna/club-3090/issues/72) for context.
 
 ## What was retired in v7.72.2-uplift (2026-05-05)
 

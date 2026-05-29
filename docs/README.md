@@ -69,6 +69,7 @@ These are cross-cutting references both tracks reach for.
 
 | Doc | What it is |
 |---|---|
+| **`scripts/switch.sh --list`** *(runtime command, not a doc)* | **The authoritative compose × slug matrix.** Registry-derived from `scripts/lib/profiles/compose_registry.py`, so it's always current — every launchable slug with its topology, model, engine, KV format, and max ctx. Run this rather than trusting any hand-maintained table; the static lists in the per-topology docs are illustrative, this is the source of truth. |
 | [`engines/`](engines/) | Per-engine deep dives — [vLLM](engines/VLLM.md), [llama.cpp](engines/LLAMA_CPP.md), [SGLang](engines/SGLANG.md). |
 | [`INFERENCE_ENGINES.md`](INFERENCE_ENGINES.md) | Engine picker — which engine for which workload, and structural gaps. |
 | [`CLIFFS.md`](CLIFFS.md) | The accumulated-context / prefill failure modes (Cliff 2, Cliff 2b) and how to detect them. |
