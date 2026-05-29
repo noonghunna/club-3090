@@ -34,6 +34,15 @@
 #   and requests timed out around ~74K. Treat those as informational
 #   per-arch_class observations, not universal thresholds.
 #
+# Ramp-depth caveat:
+#   The context ramp is driven by tool_choice='required' turns. If the model
+#   fails to emit a parseable tool call at depth (intermittent on some
+#   parsers/configs), the ramp stops there — so the reachable depth, and thus
+#   whether the ~35K degrade zone is observed, is bounded by tool-call
+#   reliability at depth on the target config, not by this script. A follow-up
+#   enhancement to decouple the ramp from tool-call success is tracked
+#   separately.
+#
 # Output:
 #   Per-turn table (turn, prompt_tokens, ttft_ms, decode_tps)
 #   TTFT growth analysis: flat = low incremental prefill; linear = O(n)
@@ -300,13 +309,26 @@ print(f"{'='*72}")
 print(f"  {'Turn':<5} {'Prompt tok':>10} {'TTFT ms':>9} {'σ ms':>6} {'Decode TPS':>11}  Notes")
 print(f"  {'-'*5} {'-'*10} {'-'*9} {'-'*6} {'-'*11}  {'─'*35}")
 
-turn1_ttft = None
-active_turns = 0
+# Warm baseline: turn 1's TTFT includes cold-start (engine compile / cudagraph
+# capture / first-token warmup) and is NOT a steady-state datapoint, so the
+# growth analysis anchors to the first WARM turn (turn 2) when >=3 turns ran —
+# matching the repo's warm-up-then-measure bench protocol. With <3 turns we
+# cannot exclude warm-up and fall back to turn 1.
+contiguous = []
 for turn_idx in range(TURNS):
-    ms_list = per_turn_metrics[turn_idx]
-    if not ms_list:
+    if per_turn_metrics[turn_idx]:
+        contiguous.append(turn_idx)
+    else:
         break
-    active_turns += 1
+active_turns = len(contiguous)
+anchor_pos = 1 if active_turns >= 3 else 0
+baseline_idx = contiguous[anchor_pos] if contiguous else None
+baseline_ttft = (s.mean([m["ttft_ms"] for m in per_turn_metrics[baseline_idx]])
+                 if baseline_idx is not None else None)
+cold_idx = contiguous[0] if (contiguous and anchor_pos > 0) else None
+
+for turn_idx in contiguous:
+    ms_list = per_turn_metrics[turn_idx]
     ttfts = [m["ttft_ms"] for m in ms_list]
     tpss  = [m["decode_tps"] for m in ms_list if m["decode_tps"] > 0]
     ptoks = [m["prompt_tokens"] for m in ms_list]
@@ -315,43 +337,48 @@ for turn_idx in range(TURNS):
     mean_tps  = s.mean(tpss) if tpss else 0
     mean_ptok = s.mean(ptoks)
 
-    if turn_idx == 0:
-        turn1_ttft = mean_ttft
-
     note = ""
-    if turn1_ttft and turn_idx > 0 and mean_ttft > 0:
-        ratio = mean_ttft / turn1_ttft
+    if turn_idx == cold_idx:
+        note = "cold-start (compile/warmup — excluded from growth)"
+    elif turn_idx == baseline_idx:
+        note = "warm baseline"
+    elif baseline_idx is not None and turn_idx > baseline_idx and baseline_ttft and mean_ttft > 0:
+        ratio = mean_ttft / baseline_ttft
         if ratio > 4.0:
-            note = f"⚠  TTFT {ratio:.1f}× turn-1 (O(n)-like growth for this arch_class)"
+            note = f"⚠  TTFT {ratio:.1f}× warm-baseline (O(n)-like growth for this arch_class)"
         elif ratio > 2.0:
-            note = f"↑  TTFT {ratio:.1f}× turn-1"
+            note = f"↑  TTFT {ratio:.1f}× warm-baseline"
         elif ratio > 1.4:
-            note = f"~  TTFT {ratio:.1f}× turn-1"
+            note = f"~  TTFT {ratio:.1f}× warm-baseline"
 
     print(f"  {turn_idx+1:<5} {mean_ptok:>10,.0f} {mean_ttft:>9.0f} {std_ttft:>6.0f} {mean_tps:>11.1f}  {note}")
 
-# TTFT growth analysis
-filled = [per_turn_metrics[i] for i in range(active_turns) if per_turn_metrics[i]]
-if len(filled) >= 2:
-    first_ttft = s.mean([m["ttft_ms"] for m in filled[0]])
-    last_ttft  = s.mean([m["ttft_ms"] for m in filled[-1]])
-    first_ptok = s.mean([m["prompt_tokens"] for m in filled[0]])
-    last_ptok  = s.mean([m["prompt_tokens"] for m in filled[-1]])
+# TTFT growth analysis — anchored to the first warm turn (cold-start excluded)
+if baseline_idx is not None and contiguous[-1] != baseline_idx:
+    last_idx   = contiguous[-1]
+    first_ttft = baseline_ttft
+    last_ttft  = s.mean([m["ttft_ms"] for m in per_turn_metrics[last_idx]])
+    first_ptok = s.mean([m["prompt_tokens"] for m in per_turn_metrics[baseline_idx]])
+    last_ptok  = s.mean([m["prompt_tokens"] for m in per_turn_metrics[last_idx]])
+    cold_ttft  = (s.mean([m["ttft_ms"] for m in per_turn_metrics[cold_idx]])
+                  if cold_idx is not None else None)
 
     ttft_growth  = last_ttft / first_ttft if first_ttft > 0 else 0
     token_growth = last_ptok / first_ptok if first_ptok > 0 else 0
 
     print(f"\n{'─'*72}")
     print(f"  TTFT growth by accumulated context ({active_turns} turns, {SESSIONS} sessions):")
-    print(f"    Turn 1:  {first_ttft:.0f} ms TTFT @ {first_ptok:,.0f} prompt tokens")
-    print(f"    Turn {active_turns}: {last_ttft:.0f} ms TTFT @ {last_ptok:,.0f} prompt tokens")
-    print(f"    Context grew {token_growth:.1f}×,  TTFT grew {ttft_growth:.1f}×")
+    if cold_ttft is not None:
+        print(f"    Turn 1 (cold):       {cold_ttft:>8.0f} ms TTFT  — compile/warmup, excluded from growth")
+    print(f"    Turn {baseline_idx+1} (warm base): {first_ttft:>8.0f} ms TTFT @ {first_ptok:,.0f} prompt tokens")
+    print(f"    Turn {last_idx+1}:             {last_ttft:>8.0f} ms TTFT @ {last_ptok:,.0f} prompt tokens")
+    print(f"    Context grew {token_growth:.1f}×,  TTFT grew {ttft_growth:.1f}× (warm baseline → last turn)")
     if ttft_growth <= 1.5:
-        print("    ✓  TTFT stable for this engine/arch/config cell.")
-    elif ttft_growth <= 2.5:
-        print(f"    ~  TTFT grew modestly ({ttft_growth:.1f}× vs {token_growth:.1f}× context).")
+        print("    ✓  TTFT stable across the measured range for this engine/arch/config cell.")
     elif ttft_growth <= token_growth * 0.5:
         print(f"    ~  TTFT sub-linear for this cell ({ttft_growth:.1f}× vs {token_growth:.1f}× context).")
+    elif ttft_growth <= 2.5:
+        print(f"    ↑  TTFT grew {ttft_growth:.1f}× (vs {token_growth:.1f}× context) for this cell.")
     else:
         print(f"    ⚠  TTFT grew near-linearly — O(n)-like accumulated-context cost for this cell.")
     print(f"    (Full-context O(n) growth would approach {token_growth:.1f}× with context)")
