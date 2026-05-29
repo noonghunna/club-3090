@@ -54,7 +54,8 @@ vendored_overlays:
     upstream_status: filed
     upstream_merged_in_version: null
     local_status: vendored
-    purpose: "DFlash and quantized target KV coexistence."
+    image_baked: true   # int8-PTH/DFlash coexistence is in the pinned nightly image; not a mountable file overlay
+    purpose: "DFlash and quantized target KV coexistence (provided by the pinned nightly image; no on-disk overlay to mount)."
   - id: vllm-pr35936-qwen3coder-tool-parser
     pr_url: https://github.com/vllm-project/vllm/pull/35936
     upstream_status: filed

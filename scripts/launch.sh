@@ -991,6 +991,7 @@ export_variant_engine_pin() {
     [[ -n "$key" ]] || continue
     case "$key" in
       VLLM_NIGHTLY_SHA) export VLLM_NIGHTLY_SHA="$value" ;;
+      VLLM_IMAGE) export VLLM_IMAGE="$value" ;;
       *) echo "[launch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac
   done <<< "$output"

@@ -267,13 +267,18 @@ export_variant_engine_pin() {
     [[ -n "$key" ]] || continue
     case "$key" in
       VLLM_NIGHTLY_SHA) export VLLM_NIGHTLY_SHA="$value" ;;
+      VLLM_IMAGE) export VLLM_IMAGE="$value" ;;
       *) echo "[switch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac
   done <<< "$output"
   if [[ -n "${VLLM_IMAGE:-}" ]]; then
-    echo "[switch] vLLM image override: ${VLLM_IMAGE} (profile nightly SHA ${VLLM_NIGHTLY_SHA})"
+    if [[ -n "${VLLM_NIGHTLY_SHA:-}" ]]; then
+      echo "[switch] vLLM image override: ${VLLM_IMAGE} (profile nightly SHA ${VLLM_NIGHTLY_SHA})"
+    else
+      echo "[switch] vLLM image: ${VLLM_IMAGE}"
+    fi
   else
-    echo "[switch] vLLM nightly SHA: ${VLLM_NIGHTLY_SHA}"
+    echo "[switch] vLLM nightly SHA: ${VLLM_NIGHTLY_SHA:-unset}"
   fi
 }
 

@@ -136,8 +136,8 @@ FAKE_8X3090='0:RTX_3090:24576:8.6,1:RTX_3090:24576:8.6,2:RTX_3090:24576:8.6,3:RT
 out="$(MODEL_DIR="${TMP_DIR}/models" CLUB3090_FAKE_GPUS='0:RTX_3090:24576:8.6' \
   SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" \
   --no-preflight --no-verify --model qwen3.6-27b --gpus 0 --no-projection 2>&1)"
-assert_contains "$out" "[launch] selected variant: vllm/long-text"
-assert_contains "$out" "SWITCHED vllm/long-text CUDA=0 NVD=0 TP=1 PP=1"
+assert_contains "$out" "[launch] selected variant: vllm/default"
+assert_contains "$out" "SWITCHED vllm/default CUDA=0 NVD=0 TP=1 PP=1"
 
 out="$(MODEL_DIR="${TMP_DIR}/models" CLUB3090_FAKE_GPUS='0:RTX_3090:24576:8.6,1:RTX_3090:24576:8.6' \
   SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" \

@@ -5,7 +5,7 @@
 #   Drafter:   MTP n=3 (Google's official `gemma-4-31B-it-assistant`, BF16 0.5B)
 #   KV:        int8_per_token_head (1 byte/token, via vendored PR #40391 overlay)
 #   Vision:    yes
-#   Max ctx:   262K (8.2× over bf16 ceiling) — override MAX_NUM_SEQS=4 for 98K + 3.6× concurrency
+#   Max ctx:   98K validated default; override CTX=262144 MAX_NUM_SEQS=1 for single-stream native context
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    ✅ Production
 #   Best for:  Gemma 4 long-context default — full 262K ctx ⭐
@@ -91,12 +91,12 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
-# Engine-profile: vllm-nightly-full
+# Engine-profile: vllm-gemma-stable
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
 services:
   vllm-gemma-4-31b-mtp-int8:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.21.0}
     container_name: "${ESTATE_CONTAINER:-vllm-gemma-4-31b-mtp-int8}"
     restart: "no"
     ports:
@@ -194,7 +194,7 @@ services:
       # ~half size with fp8). Conservative initial test: 96K with mem-util 0.95.
       # Bump to 120K once 96K validates clean.
       - --max-model-len
-      - "${MAX_MODEL_LEN:-98304}"
+      - "${MAX_MODEL_LEN:-${CTX:-98304}}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.95}"
       # max-num-seqs governs concurrency. Trade vs context: KV pool is shared

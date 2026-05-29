@@ -8,6 +8,7 @@ export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 python3 - <<'PY'
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -63,9 +64,11 @@ for compose in compose_files:
                 continue
             if source is None:
                 continue
-            resolved = (base / source).resolve()
+            raw_path = base / source
+            lexical = Path(os.path.abspath(raw_path))
+            resolved = raw_path.resolve()
             label = f"{compose}:{service_name}:{target or raw_source}"
-            check(str(resolved).startswith(str(root)), f"{label}: resolves inside repo")
+            check(str(lexical).startswith(str(root)), f"{label}: resolves inside repo")
             if "models-cache" in resolved.parts:
                 check(resolved == root / "models-cache" or root / "models-cache" in resolved.parents, f"{label}: models-cache points at repo root")
             elif "cache" in resolved.parts:

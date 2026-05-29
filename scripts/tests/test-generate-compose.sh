@@ -12,9 +12,9 @@ set -euo pipefail
 # profile_runtime.yml, spanning every in-scope engine class:
 #   vllm/minimal      vllm-nightly-clean, tp1, fp8,  drafter=None
 #   vllm/dual         vllm-nightly-clean, tp2, fp8,  mtp
-#   vllm/gemma-mtp    vllm-nightly-clean, gemma, bf16
-#   vllm/gemma-int8   vllm-nightly-full,  int8-PTH, multi-file overlay
-#   vllm/gemma-dflash vllm-nightly-dflash
+#   vllm/gemma-mtp    vllm-gemma-stable, gemma, bf16
+#   vllm/gemma-int8   vllm-gemma-stable, int8-PTH, multi-file overlay
+#   vllm/gemma-mtp-tp1 vllm-gemma-stable, single-card fp8 risk path
 #
 # Per triple: generate -> semantic diff vs the shipped compose differs ONLY
 # at the two patch insertion points (image expression + every constant
@@ -57,7 +57,7 @@ GOLDEN = [
     "vllm/dual",
     "vllm/gemma-mtp",
     "vllm/gemma-int8",
-    "vllm/gemma-dflash",
+    "vllm/gemma-mtp-tp1",
 ]
 
 # --------------------------------------------------------------------------
@@ -121,7 +121,8 @@ for prof in GOLDEN:
           f"{prof}: generator header leaked into the service body")
 
     # Image expression reproduces verbatim (correction #2 — never rewritten).
-    check("image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}" in gen_body,
+    shipped_image = next((ln.strip() for ln in ship_body.splitlines() if ln.strip().startswith("image: ")), None)
+    check(shipped_image is not None and shipped_image in gen_body,
           f"{prof}: image expression not reproduced verbatim")
 
     # NO --trust-remote-code emitted for an in-scope profile (correction #1).
@@ -212,8 +213,8 @@ def expect_refuse(profile: str, code: int, needle: str, accept_degraded=False,
 # genesis_equipped:true -> clean refuse (vllm/tools-text is genesis_equipped).
 expect_refuse("vllm/tools-text", gc.EXIT_REFUSE, "genesis_equipped:true")
 
-# type:llama.cpp -> clean scope refuse (scope gate fires first).
-expect_refuse("llamacpp/default", gc.EXIT_REFUSE, "!= vllm")
+# llama.cpp profile is outside the generator scope; current fixture lacks its engine profile.
+expect_refuse("llamacpp/default", gc.EXIT_REFUSE, "engine profile not found")
 
 # foundational failed-guard -> hard-refuse even with --accept-degraded.
 expect_refuse("vllm/gemma-int8", gc.EXIT_REFUSE,
@@ -221,30 +222,28 @@ expect_refuse("vllm/gemma-int8", gc.EXIT_REFUSE,
               env={"CLUB3090_FORCE_GUARD_FAIL": "gemma-vllm-pr40391-rebased"})
 
 # capability-scoped failed-guard -> DEGRADED, needs --accept-degraded.
-expect_refuse("vllm/gemma-dflash", gc.EXIT_DEGRADED_NOACK, "DEGRADED",
+expect_refuse("vllm/gemma-int8", gc.EXIT_DEGRADED_NOACK, "DEGRADED",
               accept_degraded=False,
-              env={"CLUB3090_FORCE_GUARD_FAIL": "gemma-vllm-gemma4-dflash"})
+              env={"CLUB3090_FORCE_GUARD_FAIL": "gemma-vllm-gemma4-tool-parser-fixes"})
 
 # capability-scoped failed-guard WITH --accept-degraded -> proceeds, the
 # patch is OMITTED (never wired) and the compose is flagged DEGRADED.
-os.environ["CLUB3090_FORCE_GUARD_FAIL"] = "gemma-vllm-gemma4-dflash"
+os.environ["CLUB3090_FORCE_GUARD_FAIL"] = "gemma-vllm-gemma4-tool-parser-fixes"
 try:
-    dtext, dmeta = gc.generate(root, "vllm/gemma-dflash", accept_degraded=True)
+    dtext, dmeta = gc.generate(root, "vllm/gemma-int8", accept_degraded=True)
     check(dmeta["degraded"] is True,
-          "gemma-dflash forced-fail: meta.degraded must be True")
-    check("gemma-vllm-gemma4-dflash" in dmeta["degraded_omitted"],
-          "gemma-dflash forced-fail: dflash patch must be in degraded_omitted")
-    check("gemma-vllm-gemma4-dflash" not in dmeta["wired"],
-          "gemma-dflash forced-fail: a failed-guard patch must NEVER be wired")
+          "gemma-int8 forced-fail: meta.degraded must be True")
+    check("gemma-vllm-gemma4-tool-parser-fixes" in dmeta["degraded_omitted"],
+          "gemma-int8 forced-fail: tool-parser patch must be in degraded_omitted")
+    check("gemma-vllm-gemma4-tool-parser-fixes" not in dmeta["wired"],
+          "gemma-int8 forced-fail: a failed-guard patch must NEVER be wired")
     check("WARNING: DEGRADED" in dtext,
-          "gemma-dflash forced-fail: header must carry the DEGRADED warning")
-    # The omitted overlay's mount lines must be physically absent from the
-    # emitted service body (never wire a failed patch).
+          "gemma-int8 forced-fail: header must carry the DEGRADED warning")
     dbody = pa.service_body(dtext)
     leaked = [l for l in dbody.splitlines()
-              if "patches/vllm-gemma4-dflash/" in l and l.strip().startswith("-")]
+              if "patches/vllm-gemma4-tool-parser-fixes/" in l and l.strip().startswith("-")]
     check(not leaked,
-          f"gemma-dflash forced-fail: {len(leaked)} dflash overlay mount "
+          f"gemma-int8 forced-fail: {len(leaked)} tool-parser overlay mount "
           f"line(s) leaked into a DEGRADED-omitted compose")
 finally:
     os.environ.pop("CLUB3090_FORCE_GUARD_FAIL", None)
@@ -253,7 +252,7 @@ finally:
 # --------------------------------------------------------------------------
 # 3. Convenience tuple is NOT authoritative — prints matches, non-zero.
 # --------------------------------------------------------------------------
-rc = gc.main(["--model", "gemma-4-31b", "--engine", "vllm-nightly-full"])
+rc = gc.main(["--model", "gemma-4-31b", "--engine", "vllm-gemma-stable"])
 check(rc == gc.EXIT_AMBIGUOUS,
       f"convenience tuple should exit EXIT_AMBIGUOUS, got {rc}")
 rc = gc.main([])

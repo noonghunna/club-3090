@@ -626,7 +626,6 @@ case "${MODEL_NAME}" in
     NEXT_STEPS_NOTE="Available variants:
   bash scripts/switch.sh vllm/gemma-mtp        # MTP drafter, TP=2, port 8030 (recommended)
   bash scripts/switch.sh vllm/gemma-mtp-tp1    # MTP drafter, TP=1 (single-card; upstream-blocked on Ampere fp8)
-  bash scripts/switch.sh vllm/gemma-dflash     # DFlash drafter, TP=2, port 8032 (requires WITH_DFLASH_DRAFT=1)"
     ;;
   gemma-4-26b-a4b)
     SAMPLE_CONTAINER="vllm-gemma-4-26b-a4b"

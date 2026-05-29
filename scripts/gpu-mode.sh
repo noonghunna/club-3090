@@ -138,15 +138,6 @@ stop_gemma_mtp() {
     compose_at "$GEMMA_DUAL_DIR" "down" bf16-mtp.yml && echo "done" || echo "skipped"
 }
 
-start_gemma_dflash() {
-    printf "  ${GREEN}▲${NC} Starting gemma-dflash..."
-    compose_at "$GEMMA_DUAL_DIR" "up -d" dflash.yml && echo "done" || echo "failed"
-}
-stop_gemma_dflash() {
-    printf "  ${RED}▼${NC} Stopping gemma-dflash..."
-    compose_at "$GEMMA_DUAL_DIR" "down" dflash.yml && echo "done" || echo "skipped"
-}
-
 start_gemma_int8() {
     printf "  ${GREEN}▲${NC} Starting gemma-int8..."
     compose_at "$GEMMA_DUAL_DIR" "up -d" int8.yml && echo "done" || echo "failed"
@@ -156,31 +147,10 @@ stop_gemma_int8() {
     compose_at "$GEMMA_DUAL_DIR" "down" int8.yml && echo "done" || echo "skipped"
 }
 
-start_gemma_dflash_int8() {
-    printf "  ${GREEN}▲${NC} Starting gemma-dflash-int8..."
-    compose_at "$GEMMA_DUAL_DIR" "up -d" dflash-int8.yml && echo "done" || echo "failed"
-}
-stop_gemma_dflash_int8() {
-    printf "  ${RED}▼${NC} Stopping gemma-dflash-int8..."
-    compose_at "$GEMMA_DUAL_DIR" "down" dflash-int8.yml && echo "done" || echo "skipped"
-}
-
-start_gemma_awq() {
-    printf "  ${GREEN}▲${NC} Starting gemma-awq..."
-    compose_at "$GEMMA_DUAL_AWQ_DIR" "up -d" bf16-mtp.yml && echo "done" || echo "failed"
-}
-stop_gemma_awq() {
-    printf "  ${RED}▼${NC} Stopping gemma-awq..."
-    compose_at "$GEMMA_DUAL_AWQ_DIR" "down" bf16-mtp.yml && echo "done" || echo "skipped"
-}
-
 # Stop every Gemma serving variant before starting a new one
 stop_all_gemma() {
     stop_gemma_mtp
-    stop_gemma_dflash
     stop_gemma_int8
-    stop_gemma_dflash_int8
-    stop_gemma_awq
 }
 
 show_status() {
@@ -235,12 +205,7 @@ show_status() {
     if curl -sf -m 2 http://localhost:8032/v1/models >/dev/null 2>&1; then
         local m
         m=$(curl -sf -m 2 http://localhost:8032/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} gemma-{dflash|int8} @ :8032 → ${m:-unknown}"
-    fi
-    if curl -sf -m 2 http://localhost:8033/v1/models >/dev/null 2>&1; then
-        local m
-        m=$(curl -sf -m 2 http://localhost:8033/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} gemma-awq @ :8033        → ${m:-unknown} (AWQ-4bit)"
+        echo -e "  ${GREEN}▶${NC} gemma-int8 @ :8032        → ${m:-unknown} (INT8 PTH KV)"
     fi
     if curl -sf -m 2 http://localhost:8188/ >/dev/null 2>&1; then
         echo -e "  ${GREEN}▶${NC} ComfyUI @ :8188          → image/video generation (GPU-bound, mutex with LLM)"
@@ -448,10 +413,7 @@ mode_gemma() {
     echo ""
     stop_service ollama
     stop_all_27b
-    stop_gemma_dflash
     stop_gemma_int8
-    stop_gemma_dflash_int8
-    stop_gemma_awq
     start_gemma_mtp
     start_service litellm
     start_service qdrant
@@ -638,10 +600,7 @@ usage() {
     echo ""
     echo "  Gemma 4 31B (dual 3090, TP=2):"
     echo "  gemma              Gemma 4 31B + MTP n=3 + bf16 KV + 32K + vision (:8030)"
-    echo "  gemma-dflash       Gemma 4 31B + DFlash drafter (:8032)"
-    echo "  gemma-int8         Gemma 4 31B + INT8 PTH KV + 262K ctx (:8032)"
-    echo "  gemma-dflash-int8  Gemma 4 31B + DFlash + INT8 PTH KV (:8032, requires vllm#42102)"
-    echo "  gemma-awq          Gemma 4 31B AWQ-4bit (:8033)"
+    echo "  gemma-int8         Gemma 4 31B + INT8 PTH KV + 98K ctx default (:8032; CTX=262144 MAX_NUM_SEQS=1 for native ctx)"
     echo ""
     echo "  Image / Video Gen (mutex with all LLM modes — GPU-bound):"
     echo "  comfyui            ComfyUI :8188 (FLUX, HunyuanVideo, Wan2.2-Animate)"
@@ -663,10 +622,7 @@ case "${1:-}" in
     27b-dflash)         mode_27b_dflash ;;
     27b-dflash-noviz)   mode_27b_dflash_noviz ;;
     gemma)              mode_gemma ;;
-    gemma-dflash)       mode_gemma_dflash ;;
     gemma-int8)         mode_gemma_int8 ;;
-    gemma-dflash-int8)  mode_gemma_dflash_int8 ;;
-    gemma-awq)          mode_gemma_awq ;;
     comfyui)            mode_comfyui ;;
     bigmodel)           mode_bigmodel ;;
     off)                mode_off ;;

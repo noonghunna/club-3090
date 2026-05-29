@@ -1294,10 +1294,10 @@ if os.path.exists(_o21):
     os.unlink(_o21)
 
 # --- g22: derived but CONTRACT-5 reject -> structured refuse, NO dl/boot -
-# Point --profile-like at an overlay/TQ3 shape so derived_emittable refuses
-# BEFORE any download/boot. vllm/gemma-int8-tq3 = TQ3 KV + required feats.
+# Point --profile-like at the single-card fp8 Gemma shape so derived_emittable
+# refuses BEFORE any download/boot on the Ampere hardware gate.
 c = _Calls()
-r = P.run_pull(DSLUG, "vllm/gemma-int8-tq3", path="B", hardware_sm=SM_90,
+r = P.run_pull(DSLUG, "vllm/gemma-mtp-tp1", path="B", hardware_sm=SM_86,
                 fetcher=ff_derived(DSLUG, dense_cfg("Qwen2ForCausalLM"),
                                    weight_gb=4.0),
                 profiles=profiles, statvfs=BIG_DISK, trust_remote_code=True,

@@ -398,10 +398,10 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
     ),
 
-    # Gemma 4 31B, vLLM.
+    # Gemma 4 31B, vLLM. Lean v0.21.0 set: bf16 default, int8 long-context, single-card fp8 risk path.
     "vllm/gemma-mtp-tp1": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="fp8_e4m3",
+        engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="fp8_e4m3",
         tp=1, max_ctx=8192, max_num_seqs=256, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/single/autoround-int4/fp8-mtp.yml",
         default_port=8031, required_sm=9.0,
@@ -409,7 +409,7 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/gemma-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="bf16",
+        engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="bf16",
         tp=2, max_ctx=32768, max_num_seqs=4, mem_util=0.92,
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml",
         default_port=8030,
@@ -417,59 +417,11 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/gemma-int8": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
-        engine="vllm-nightly-full", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
+        engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
         tp=2, max_ctx=98304, max_num_seqs=4, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml",
         default_port=8032, required_engine_features=["int8_per_token_head"],
         kvcalc_key="gemma-4-31b:gemma-dual-int8",
-    ),
-    "vllm/gemma-int8-262k": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-nightly-full", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
-        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.95,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml",
-        default_port=8032, required_engine_features=["int8_per_token_head"],
-        kvcalc_key="gemma-4-31b:gemma-dual-int8-262k",
-    ),
-    "vllm/gemma-dflash": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-nightly-dflash", drafter="gemma-dflash", kv_format="bf16",
-        tp=2, max_ctx=32768, max_num_seqs=4, mem_util=0.92,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash.yml",
-        default_port=8032,
-        kvcalc_key="gemma-4-31b:gemma-dual-dflash",
-    ),
-    "vllm/gemma-dflash-int8": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
-        engine="vllm-nightly-full", drafter="gemma-dflash", kv_format="int8_per_token_head",
-        tp=2, max_ctx=65536, max_num_seqs=2, mem_util=0.95,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash-int8.yml",
-        default_port=8032, required_engine_features=["int8_per_token_head"],
-        kvcalc_key="gemma-4-31b:gemma-dual-dflash-int8",
-    ),
-    "vllm/gemma-int8-tq3": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
-        engine="vllm-nightly-full", drafter="gemma-it-assistant", kv_format="turboquant_3bit_nc",
-        tp=2, max_ctx=98304, max_num_seqs=4, mem_util=0.95,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8-tq3.yml",
-        default_port=8034, required_engine_features=["turboquant_3bit_nc"], required_sm=9.0,
-        kvcalc_key="gemma-4-31b:gemma-dual-int8-tq3",
-    ),
-    "vllm/gemma-bf16": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="bf16",
-        tp=2, max_ctx=200000, max_num_seqs=1, mem_util=0.95,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16.yml",
-        default_port=8033,
-        kvcalc_key="gemma-4-31b:gemma-dual-bf16",
-    ),
-    "vllm/gemma-awq": _entry(
-        model="gemma-4-31b", weights_variant="awq", workload="multi-stream-tenant",
-        engine="vllm-nightly-full", drafter="gemma-it-assistant", kv_format="bf16",
-        tp=2, max_ctx=65536, max_num_seqs=4, mem_util=0.85,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/awq/bf16-mtp.yml",
-        default_port=8033,
-        kvcalc_key="gemma-4-31b:gemma-dual-awq",
     ),
 
     # v0.7.3 MoE onboarding — Gemma 4 26B-A4B + Qwen 3.6 35B-A3B.

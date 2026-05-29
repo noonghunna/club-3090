@@ -36,7 +36,7 @@ set -euo pipefail
 #   * gate path stays I/O-free: run_pull performs NO network / NO prompt /
 #     NO auto-send (the surfacing is a single stdout line, post-return).
 #   * import-time safety: importing submit_pull then kv-calc --calibration
-#     stays Overall: 22/22.
+#     stays Overall: 18/18.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -438,15 +438,15 @@ for ln in fb["lines"]:
 
 # ===========================================================================
 # 10. import-time safety: importing submit_pull then kv-calc --calibration
-#     stays Overall: 22/22 (no import side effects on the calibrator).
+#     stays Overall: 18/18 (no import side effects on the calibrator).
 # ===========================================================================
 import subprocess  # noqa: E402
 _cp = subprocess.run(
     [sys.executable, str(root / "tools" / "kv-calc.py"), "--calibration"],
     capture_output=True, text=True, cwd=str(root))
-check("Overall: 22/22 (100%)" in _cp.stdout,
+check("Overall: 18/18 (100%)" in _cp.stdout,
       "import-time safety: submit_pull import does not perturb "
-      "kv-calc --calibration (still Overall: 22/22)")
+      "kv-calc --calibration (still Overall: 18/18)")
 
 # ===========================================================================
 if failures:

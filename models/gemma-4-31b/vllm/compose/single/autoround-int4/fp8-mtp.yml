@@ -50,13 +50,13 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 32
-# Engine-profile: vllm-nightly-clean
+# Engine-profile: vllm-gemma-stable
 # Requires-min-gpu-count: 1
 # Tensor-parallel: 1
 # Requires-sm: 9.0+
 services:
   vllm-gemma-4-31b-mtp-tp1:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.21.0}
     container_name: "${ESTATE_CONTAINER:-vllm-gemma-4-31b-mtp-tp1}"
     restart: "no"
     ports:

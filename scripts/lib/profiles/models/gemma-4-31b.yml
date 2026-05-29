@@ -73,7 +73,6 @@ weights:
 default_weight_variant: autoround-int4
 compatible_drafters:
   - gemma-it-assistant
-  - gemma-dflash
 valid_tp:
   - 1
   - 2

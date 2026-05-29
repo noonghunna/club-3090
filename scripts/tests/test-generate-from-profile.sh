@@ -17,7 +17,7 @@ set -euo pipefail
 #   e1-neg  CONTRACT-5 negative matrix, each: NO compose emitted (Refuse) +
 #           the EXACT structured reason token:
 #             vllm/gemma-int8       -> overlay-feature
-#             vllm/gemma-int8-tq3   -> kv
+#             synthesized runtime   -> kv
 #             vllm/tools-text       -> drafter
 #             clean tp2 on 1 GPU    -> gpu-count
 #             a pip-install engine  -> engine-install-method
@@ -207,10 +207,7 @@ expect_refuse(ei_of,
               "derived-runtime-unsupported:overlay-feature",
               "e1-neg/overlay-feature")
 
-# kv: vllm/gemma-int8-tq3 uses turboquant_3bit_nc KV. It ALSO has
-# required_engine_features + a Genesis engine; the gate short-circuits on
-# the FIRST failing clause (engine-install-method), so to isolate the kv
-# token we synthesize a runtime that is engine-clean but TQ3-KV.
+# kv: synthesize a runtime that is engine-clean but TQ3-KV.
 ei_kv = mk_einput("vllm/gemma-a4b", der=mk_der(weight_format="bfloat16",
                                                torch_dtype="bfloat16"))
 ei_kv.runtime["kv_format"] = "turboquant_3bit_nc"

@@ -697,7 +697,7 @@ profiles:
           policy: governed   # locked design v6 §88 security model
           emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
       constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
+        image: '${VLLM_IMAGE:-vllm/vllm-openai:v0.21.0}'   # captured constant; Gemma 31B vLLM survivors pin immutable v0.21.0
         verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
       insertion_points:
         volumes: present    # overlay/sidecar mount anchor
@@ -724,7 +724,7 @@ profiles:
           policy: governed   # locked design v6 §88 security model
           emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
       constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
+        image: '${VLLM_IMAGE:-vllm/vllm-openai:v0.21.0}'   # captured constant; Gemma 31B vLLM survivors pin immutable v0.21.0
         verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
       insertion_points:
         volumes: present    # overlay/sidecar mount anchor
@@ -738,7 +738,7 @@ profiles:
       param_slots:
         ports: { source: E.default_port, value: 8032 }
         tensor_parallel_size: { token: '${TP}', source: E.tp, value: 2 }
-        max_model_len: { token: '${MAX_MODEL_LEN}', source: E.max_ctx, value: 98304 }
+        max_model_len: { token: '${MAX_MODEL_LEN:-${CTX}}', source: E.max_ctx, value: 98304 }
         gpu_memory_utilization: { token: '${GPU_MEMORY_UTILIZATION}', source: E.mem_util, value: 0.95 }
         kv_cache_dtype: { token: '${KV_CACHE_DTYPE}', source: 'kv_arg(E.kv_format)', kv_format: int8_per_token_head, value: 'auto+PTH' }
         max_num_seqs: { token: '--max-num-seqs', source: E.max_num_seqs, value: 4 }
@@ -751,169 +751,7 @@ profiles:
           policy: governed   # locked design v6 §88 security model
           emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
       constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
-        verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
-      insertion_points:
-        volumes: present    # overlay/sidecar mount anchor
-        entrypoint: present  # sidecar invoke anchor
-  vllm/gemma-int8-262k:
-    compose_path: models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml
-    genesis_equipped: false
-    genesis_equipped_evidence: no GENESIS_* token in compose and kv_format is not turboquant*
-    compose_service_template:
-      source: models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml  # whole service definition captured verbatim from this file
-      param_slots:
-        ports: { source: E.default_port, value: 8032 }
-        tensor_parallel_size: { token: '${TP}', source: E.tp, value: 2 }
-        max_model_len: { token: '${MAX_MODEL_LEN}', source: E.max_ctx, value: 262144 }
-        gpu_memory_utilization: { token: '${GPU_MEMORY_UTILIZATION}', source: E.mem_util, value: 0.95 }
-        kv_cache_dtype: { token: '${KV_CACHE_DTYPE}', source: 'kv_arg(E.kv_format)', kv_format: int8_per_token_head, value: 'auto+PTH' }
-        max_num_seqs: { token: '--max-num-seqs', source: E.max_num_seqs, value: 1 }
-        speculative_config: { token: '--speculative-config', source: 'drafter[gemma-it-assistant].speculative_config_template' }
-        nvlink_env: { source: E.requires_nvlink, value: false }
-      governed_slots:
-        trust_remote_code:
-          token: '--trust-remote-code'
-          present_in_shipped_compose: true
-          policy: governed   # locked design v6 §88 security model
-          emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
-      constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
-        verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
-      insertion_points:
-        volumes: present    # overlay/sidecar mount anchor
-        entrypoint: present  # sidecar invoke anchor
-  vllm/gemma-dflash:
-    compose_path: models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash.yml
-    genesis_equipped: false
-    genesis_equipped_evidence: no GENESIS_* token in compose and kv_format is not turboquant*
-    compose_service_template:
-      source: models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash.yml  # whole service definition captured verbatim from this file
-      param_slots:
-        ports: { source: E.default_port, value: 8032 }
-        tensor_parallel_size: { token: '${TP}', source: E.tp, value: 2 }
-        max_model_len: { token: '${MAX_MODEL_LEN}', source: E.max_ctx, value: 32768 }
-        gpu_memory_utilization: { token: '${GPU_MEMORY_UTILIZATION}', source: E.mem_util, value: 0.92 }
-        kv_cache_dtype: { token: '${KV_CACHE_DTYPE}', source: 'kv_arg(E.kv_format)', kv_format: bf16, value: null }
-        max_num_seqs: { token: '--max-num-seqs', source: E.max_num_seqs, value: 4 }
-        speculative_config: { token: '--speculative-config', source: 'drafter[gemma-dflash].speculative_config_template' }
-        nvlink_env: { source: E.requires_nvlink, value: false }
-      governed_slots:
-        trust_remote_code:
-          token: '--trust-remote-code'
-          present_in_shipped_compose: true
-          policy: governed   # locked design v6 §88 security model
-          emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
-      constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
-        verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
-      insertion_points:
-        volumes: present    # overlay/sidecar mount anchor
-        entrypoint: present  # sidecar invoke anchor
-  vllm/gemma-dflash-int8:
-    compose_path: models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash-int8.yml
-    genesis_equipped: false
-    genesis_equipped_evidence: no GENESIS_* token in compose and kv_format is not turboquant*
-    compose_service_template:
-      source: models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash-int8.yml  # whole service definition captured verbatim from this file
-      param_slots:
-        ports: { source: E.default_port, value: 8032 }
-        tensor_parallel_size: { token: '${TP}', source: E.tp, value: 2 }
-        max_model_len: { token: '${MAX_MODEL_LEN}', source: E.max_ctx, value: 65536 }
-        gpu_memory_utilization: { token: '${GPU_MEMORY_UTILIZATION}', source: E.mem_util, value: 0.95 }
-        kv_cache_dtype: { token: '${KV_CACHE_DTYPE}', source: 'kv_arg(E.kv_format)', kv_format: int8_per_token_head, value: 'auto+PTH' }
-        max_num_seqs: { token: '--max-num-seqs', source: E.max_num_seqs, value: 2 }
-        speculative_config: { token: '--speculative-config', source: 'drafter[gemma-dflash].speculative_config_template' }
-        nvlink_env: { source: E.requires_nvlink, value: false }
-      governed_slots:
-        trust_remote_code:
-          token: '--trust-remote-code'
-          present_in_shipped_compose: true
-          policy: governed   # locked design v6 §88 security model
-          emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
-      constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
-        verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
-      insertion_points:
-        volumes: present    # overlay/sidecar mount anchor
-        entrypoint: present  # sidecar invoke anchor
-  vllm/gemma-int8-tq3:
-    compose_path: models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8-tq3.yml
-    genesis_equipped: true
-    genesis_equipped_evidence: kv_format 'turboquant_3bit_nc' starts with 'turboquant'
-    compose_service_template:
-      source: models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8-tq3.yml  # whole service definition captured verbatim from this file
-      param_slots:
-        ports: { source: E.default_port, value: 8034 }
-        tensor_parallel_size: { token: '${TP}', source: E.tp, value: 2 }
-        max_model_len: { token: '${MAX_MODEL_LEN}', source: E.max_ctx, value: 98304 }
-        gpu_memory_utilization: { token: '${GPU_MEMORY_UTILIZATION}', source: E.mem_util, value: 0.95 }
-        kv_cache_dtype: { token: '${KV_CACHE_DTYPE}', source: 'kv_arg(E.kv_format)', kv_format: turboquant_3bit_nc, value: 'turboquant_3bit_nc' }
-        max_num_seqs: { token: '--max-num-seqs', source: E.max_num_seqs, value: 4 }
-        speculative_config: { token: '--speculative-config', source: 'drafter[gemma-it-assistant].speculative_config_template' }
-        nvlink_env: { source: E.requires_nvlink, value: false }
-      governed_slots:
-        trust_remote_code:
-          token: '--trust-remote-code'
-          present_in_shipped_compose: true
-          policy: governed   # locked design v6 §88 security model
-          emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
-      constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
-        verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
-      insertion_points:
-        volumes: present    # overlay/sidecar mount anchor
-        entrypoint: present  # sidecar invoke anchor
-  vllm/gemma-bf16:
-    compose_path: models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16.yml
-    genesis_equipped: false
-    genesis_equipped_evidence: no GENESIS_* token in compose and kv_format is not turboquant*
-    compose_service_template:
-      source: models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16.yml  # whole service definition captured verbatim from this file
-      param_slots:
-        ports: { source: E.default_port, value: 8033 }
-        tensor_parallel_size: { token: '${TP}', source: E.tp, value: 2 }
-        max_model_len: { token: '${MAX_MODEL_LEN}', source: E.max_ctx, value: 200000 }
-        gpu_memory_utilization: { token: '${GPU_MEMORY_UTILIZATION}', source: E.mem_util, value: 0.95 }
-        kv_cache_dtype: { token: '${KV_CACHE_DTYPE}', source: 'kv_arg(E.kv_format)', kv_format: bf16, value: null }
-        max_num_seqs: { token: '--max-num-seqs', source: E.max_num_seqs, value: 1 }
-        speculative_config: { token: '--speculative-config', source: 'drafter[gemma-it-assistant].speculative_config_template' }
-        nvlink_env: { source: E.requires_nvlink, value: false }
-      governed_slots:
-        trust_remote_code:
-          token: '--trust-remote-code'
-          present_in_shipped_compose: true
-          policy: governed   # locked design v6 §88 security model
-          emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
-      constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
-        verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
-      insertion_points:
-        volumes: present    # overlay/sidecar mount anchor
-        entrypoint: present  # sidecar invoke anchor
-  vllm/gemma-awq:
-    compose_path: models/gemma-4-31b/vllm/compose/dual/awq/bf16-mtp.yml
-    genesis_equipped: false
-    genesis_equipped_evidence: no GENESIS_* token in compose and kv_format is not turboquant*
-    compose_service_template:
-      source: models/gemma-4-31b/vllm/compose/dual/awq/bf16-mtp.yml  # whole service definition captured verbatim from this file
-      param_slots:
-        ports: { source: E.default_port, value: 8033 }
-        tensor_parallel_size: { token: '${TP}', source: E.tp, value: 2 }
-        max_model_len: { token: '${MAX_MODEL_LEN}', source: E.max_ctx, value: 65536 }
-        gpu_memory_utilization: { token: '${GPU_MEMORY_UTILIZATION}', source: E.mem_util, value: 0.85 }
-        kv_cache_dtype: { token: '${KV_CACHE_DTYPE}', source: 'kv_arg(E.kv_format)', kv_format: bf16, value: null }
-        max_num_seqs: { token: '--max-num-seqs', source: E.max_num_seqs, value: 4 }
-        speculative_config: { token: '--speculative-config', source: 'drafter[gemma-it-assistant].speculative_config_template' }
-        nvlink_env: { source: E.requires_nvlink, value: false }
-      governed_slots:
-        trust_remote_code:
-          token: '--trust-remote-code'
-          present_in_shipped_compose: true
-          policy: governed   # locked design v6 §88 security model
-          emit_rule: 'only if arch trc gate resolves evidence-cited false-permitted; never blind-passthrough'
-      constants:
-        image: '${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}'   # captured constant; engine pin flows via env, NOT rewritten
+        image: '${VLLM_IMAGE:-vllm/vllm-openai:v0.21.0}'   # captured constant; Gemma 31B vLLM survivors pin immutable v0.21.0
         verbatim_from_compose: [shm_size, ipc, deploy.resources, model_cache_volume, base_environment, base_entrypoint, '--model', '--served-model-name', '--quantization', '--dtype', '--tool-call-parser', '--chat-template', '--reasoning-parser', '--default-chat-template-kwargs', '--enable-prefix-caching', '--enable-chunked-prefill', '--enforce-eager']
       insertion_points:
         volumes: present    # overlay/sidecar mount anchor
@@ -1131,7 +969,7 @@ arch_model_xref:
     model_slugs: [gemma-4-31b]
     trust_remote_code: false
     trust_remote_code_evidence: "gemma-4-31b weights config.json (gemma-4-31b-autoround-int4) has architectures=[Gemma4ForConditionalGeneration], auto_map absent, no *modeling*.py shipped -> built-in class"
-    golden_triple_profiles: [vllm/gemma-mtp, vllm/gemma-int8, vllm/gemma-dflash]
+    golden_triple_profiles: [vllm/gemma-mtp, vllm/gemma-int8, vllm/gemma-mtp-tp1]
   Gemma4ForCausalLM:
     family: gemma4-swa-dense
     model_slugs: []

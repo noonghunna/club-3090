@@ -26,7 +26,7 @@ p = load_profiles()
 assert len(p.hardware) == 9
 assert len(p.models) == 4
 assert len(p.workloads) == 5
-assert len(p.engines) == 7
+assert len(p.engines) == 8
 assert len(p.drafters) == 6
 assert len(p.calibration) == 4
 PY
@@ -433,7 +433,7 @@ from scripts.lib.profiles.compat import load_profiles, InstanceSpec, validate_es
 p = load_profiles()
 instances = [
     InstanceSpec("qwen", "vllm/dual-turbo", (0, 1), 8011),
-    InstanceSpec("gemma", "vllm/gemma-awq", (2, 3), 8033),
+    InstanceSpec("gemma", "vllm/gemma-int8", (2, 3), 8032),
 ]
 r = validate_estate(instances, [p.hardware["rtx-3090"]] * 4, p, nvlink_active=False)
 assert r.valid, (r.cross_instance_failures, {k: v.reasons for k, v in r.per_instance.items()})
