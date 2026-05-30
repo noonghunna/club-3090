@@ -47,15 +47,12 @@ assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b dual 2>/dev/null)" \
   "vllm/gemma-mtp" "gemma dual curated"
 
 # --- (NA) skip + graceful degradation ---------------------------------------
-# gemma-4-31b single: only candidate (vllm/gemma-mtp-tp1) is upstream-gated →
-# (NA) → no functional default; single is the lowest topology → clear message,
-# non-zero exit, NO crash.
-if out="$(model_default_target "$ROOT_DIR" gemma-4-31b single 2>&1)"; then
-  note "gemma single unexpectedly resolved to '${out}'"
-else
-  assert_contains "$out" "no default for 'gemma-4-31b'" "gemma single degradation message"
-  assert_contains "$out" "pick a config explicitly" "gemma single degradation hint"
-fi
+# gemma-4-31b single → beellama/gemma-dflash. vllm/gemma-mtp-tp1 is upstream-gated/(NA),
+# so the resolver SKIPS it and picks the next functional engine — beellama, #1 in
+# ENGINE_PREFERENCE[single] (promoted to the single-card default 2026-05-30). This
+# exercises the (NA)-skip-then-fall-through path with a real fallback present.
+assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b single 2>/dev/null)" \
+  "beellama/gemma-dflash" "gemma single curated (vllm NA → beellama)"
 # qwen3.6-35b-a3b single: preview-only → (NA) → no functional default at single.
 if model_default_target "$ROOT_DIR" qwen3.6-35b-a3b single >/dev/null 2>&1; then
   note "qwen-35b-a3b single unexpectedly resolved (all candidates are (NA))"

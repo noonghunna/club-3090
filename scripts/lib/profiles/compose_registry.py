@@ -522,11 +522,14 @@ COMPOSE_REGISTRY = {
         kvcalc_key="gemma-4-31b:gemma-dual-int8",
     ),
 
-    # Gemma-4-31B beellama.cpp DFlash — single-card, Q4_K_S target + Anbeeld
-    # DFlash-IQ4_XS draft, q5_0(K)/q4_1(V) KV. The ONLY single-card engine that
-    # does Gemma-4 SWA windowed KV (big ctx) AND Gemma-4 spec-dec (ik-llama walls
-    # ~24K; mainline llama.cpp ~10 TPS). llama.cpp-family → kvcalc SKIP.
-    # Experimental: requires the locally built `beellama-cpp:local` image.
+    # Gemma-4-31B beellama.cpp DFlash — single-card DEFAULT (Q4_K_S target +
+    # Anbeeld DFlash-IQ4_XS draft, q5_0(K)/q4_1(V) KV). The ONLY viable fast
+    # single-card Gemma-4 path: does SWA windowed KV (big ctx) AND Gemma-4
+    # spec-dec, where vLLM is FA-walled (head_dim=512), ik-llama walls ~24K, and
+    # stock llama.cpp is ~12 TPS (no FA_ALL_QUANTS). Promoted to single-GPU
+    # default 2026-05-30 (no functional default existed before). llama.cpp-family
+    # → kvcalc SKIP. Re-point to the no-fork mainline path when llama.cpp#23398
+    # (Gemma-4 MTP) merges — see docs/UPSTREAM.md.
     "beellama/gemma-dflash": _entry(
         model="gemma-4-31b", weights_variant="beellama-q4ks-dflash", workload="fast-chat",
         engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
@@ -534,8 +537,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/beellama/compose/single/beellama-q4ks-dflash/dflash.yml",
         default_port=8061,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="Requires locally-built beellama-cpp:local image (unpublished upstream — build via beellama.cpp .devops/cuda.Dockerfile + FA_ALL_QUANTS).",
+        status="caveats",
+        status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
     ),
 
     # v0.7.3 MoE onboarding — Gemma 4 26B-A4B + Qwen 3.6 35B-A3B.
@@ -613,6 +616,7 @@ DEFAULTS = {
     ("qwen3.6-27b", "ik-llama", "single"): "ik-llama/iq4ks-mtp",
     ("qwen3.6-27b", "beellama", "single"): "beellama/dflash",
     ("gemma-4-31b", "vllm", "single"): "vllm/gemma-mtp-tp1",
+    ("gemma-4-31b", "beellama", "single"): "beellama/gemma-dflash",
     ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-mtp",
     ("gemma-4-26b-a4b", "vllm", "single"): "vllm/gemma-a4b-single",
     ("gemma-4-26b-a4b", "vllm", "dual"): "vllm/gemma-a4b",
