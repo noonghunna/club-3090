@@ -23,8 +23,8 @@
 #
 # Same DFlash caveats as dual-dflash.yml apply: single-stream only on the
 # 2-card variants, FP16 KV (no fp8/turbo on DFlash + Ampere), `--dtype
-# bfloat16` for vllm#40334 workaround. If you have NVLink bridge, switch to
-# dual/nvlink-dflash-noviz.yml for faster allreduce. If you
+# bfloat16` for vllm#40334 workaround. NVLink, if present, is auto-detected at
+# boot (NVLINK_MODE=force_on to force it) — no separate nvlink-* variant. If you
 # have 4x 3090 and need full 262K context + 2 streams, use
 # multi4/dflash.yml.
 #
