@@ -141,6 +141,21 @@ case "${1:-}" in
     ;;
 esac
 
+# setup.sh takes a SINGLE positional (the model). It DOWNLOADS WEIGHTS — it does
+# NOT select or boot a serving config. A stray second arg (commonly a launch slug
+# like `vllm/int8`) used to be silently ignored, which let users believe it did
+# something — see issue #250, where the slug was dropped and the real failure
+# (a purged-nightly compose pin) got mis-attributed to it. Reject it loudly and
+# point at the launch path. (`both` recurses with a single arg, so it's unaffected.)
+if [[ $# -gt 1 ]]; then
+  echo "ERROR: setup.sh takes a single model name; got extra argument(s): ${*:2}" >&2
+  echo "       setup.sh only DOWNLOADS WEIGHTS for a model — e.g. bash scripts/setup.sh ${1}" >&2
+  echo "       To LAUNCH a serving config (a slug such as 'vllm/gemma-int8'), use:" >&2
+  echo "         bash scripts/launch.sh --variant <slug>      # or: bash scripts/switch.sh <slug>" >&2
+  echo "       See the slugs available for a model:  bash scripts/switch.sh --list" >&2
+  exit 64
+fi
+
 MODEL_NAME="${1:-}"
 if [[ -z "${MODEL_NAME}" ]]; then
   if [[ -t 0 && -t 1 ]]; then
