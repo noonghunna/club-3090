@@ -380,11 +380,14 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
     ),
 
-    # Qwen3.6-27B beellama.cpp DFlash — single-card, Q5_K_S target + Anbeeld
-    # DFlash-IQ4_XS draft, q5_0(K)/q4_1(V) KV. beellama is a llama.cpp-family
-    # engine (kvcalc SKIP, like ik-llama). Experimental: requires the locally
-    # built `beellama-cpp:local` image (unpublished upstream — see Caveats in the
-    # compose + engine profile). kv_format reflects K-side precision (V is q4_1).
+    # Qwen3.6-27B beellama.cpp DFlash — single-card DEFAULT (DFlash spec-dec,
+    # Q5_K_S target + Anbeeld DFlash-IQ4_XS draft, q5_0(K)/q4_1(V) KV). beellama
+    # is a llama.cpp-family engine (kvcalc SKIP, like ik-llama). Promoted to the
+    # single-GPU default 2026-05-30: code-throughput leader (~100 TPS) + slight
+    # 8-pack quality edge (107 vs ik 99, think-off) + output-lossless spec-dec.
+    # Served via our UNOFFICIAL multi-arch image (sm_86/89/120 = 3090/4090/5090);
+    # sm_89/sm_120 are compiled but unvalidated on our 3090-only rig — see Caveats
+    # in the compose. kv_format reflects K-side precision (V is q4_1).
     "beellama/dflash": _entry(
         model="qwen3.6-27b", weights_variant="beellama-q5ks-dflash", workload="fast-chat",
         engine="beellama-local", drafter="anbeeld-qwen-dflash", kv_format="q5_0",
@@ -392,8 +395,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/beellama/compose/single/beellama-q5ks-dflash/dflash.yml",
         default_port=8060,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="Requires locally-built beellama-cpp:local image (unpublished upstream — build via beellama.cpp .devops/cuda.Dockerfile + FA_ALL_QUANTS).",
+        status="caveats",
+        status_note="Single-GPU default. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP — docs/UPSTREAM.md).",
     ),
 
     # Qwen3.6-27B PRISM-PRO-DQ (Ex0bit dynamic-quant GGUF) — community-experimental, ik-llama.
@@ -608,6 +611,7 @@ DEFAULTS = {
     ("qwen3.6-27b", "vllm", "multi4"): "vllm/dual4",
     ("qwen3.6-27b", "llamacpp", "single"): "llamacpp/default",
     ("qwen3.6-27b", "ik-llama", "single"): "ik-llama/iq4ks-mtp",
+    ("qwen3.6-27b", "beellama", "single"): "beellama/dflash",
     ("gemma-4-31b", "vllm", "single"): "vllm/gemma-mtp-tp1",
     ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-mtp",
     ("gemma-4-26b-a4b", "vllm", "single"): "vllm/gemma-a4b-single",

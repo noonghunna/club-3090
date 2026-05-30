@@ -44,9 +44,10 @@ out="$(NVIDIA_VISIBLE_DEVICES=0 FORCE=1 PREFLIGHT_NO_COMPOSE_DEPS=1 COMPOSE_BIN=
 assert_contains "$out" "bringing up: vllm/dual"
 
 # PR-B: `<model>/default` token dispatch through launch.sh (engine-vs-model).
-# Single rig: qwen3.6-27b/default → curated ik-llama; dual → vllm/dual.
+# Single rig: qwen3.6-27b/default → curated beellama (ENGINE_PREFERENCE #1, caveats);
+# dual → vllm/dual.
 out="$(CLUB3090_FAKE_GPUS="$fake_one" SWITCH=/bin/echo bash scripts/launch.sh --no-preflight --no-verify --no-projection --variant qwen3.6-27b/default 2>&1)"
-assert_contains "$out" "selected variant: ik-llama/iq4ks-mtp"
+assert_contains "$out" "selected variant: beellama/dflash"
 out="$(CLUB3090_FAKE_GPUS="$fake_two" SWITCH=/bin/echo bash scripts/launch.sh --no-preflight --no-verify --no-projection --variant qwen3.6-27b/default 2>&1)"
 assert_contains "$out" "selected variant: vllm/dual"
 # gemma-4-31b/default dual → vllm/gemma-mtp (model token overrides PRIMARY_MODEL).

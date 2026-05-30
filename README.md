@@ -33,7 +33,8 @@ bash scripts/launch.sh
 #    Or let the resolver pick for your model + hardware (.env pin ‖ curated default):
 #      bash scripts/launch.sh --variant qwen3.6-27b/default # YOUR default for this model
 #    Or skip the wizard with an explicit config:
-#      bash scripts/launch.sh --variant ik-llama/iq4ks-mtp  # single-card FASTEST blessed default — ~60/69 TPS, leanest VRAM (ik_llama IQK quant)
+#      bash scripts/launch.sh --variant beellama/dflash     # single-card BLESSED default — code-fast (~100 code / 50 narr TPS), DFlash spec-dec (⚠️ unofficial multi-arch image; sm_89/120 unvalidated — see docs/INFERENCE_ENGINES.md)
+#      bash scripts/launch.sh --variant ik-llama/iq4ks-mtp  # single-card BALANCED alt — ~63/69 TPS, 200K ctx + vision, leanest VRAM (ik_llama IQK quant)
 #      bash scripts/launch.sh --variant llamacpp/default    # single-card cliff-immune ALT — 200K @ -ub 512, ~51/60 TPS
 #      bash scripts/launch.sh --variant llamacpp/mtp-vision # single-card 49K + MTP + vision
 #      bash scripts/launch.sh --variant vllm/dual           # dual-card 262K + vision (vLLM single-card paths blocked on #167)
@@ -45,7 +46,7 @@ bash scripts/launch.sh
 #      bash scripts/switch.sh --list          # runnable here
 #      bash scripts/switch.sh --list --all    # everything
 #    Pin your own default so bare `launch.sh` goes straight there:
-#      bash scripts/switch.sh --set-default ik-llama/iq4ks-mtp   # clear: --clear-default qwen3.6-27b
+#      bash scripts/switch.sh --set-default ik-llama/iq4ks-mtp   # e.g. prefer the balanced ik-llama path over the beellama default; clear: --clear-default qwen3.6-27b
 
 # 4. Sanity test (launcher already printed this curl)
 curl -sf http://localhost:8020/v1/chat/completions \

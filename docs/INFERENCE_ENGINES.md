@@ -307,13 +307,13 @@ Q1: Does the model fit your VRAM at desired quant?
 
 Honest gaps:
 
-- **No *official* Docker image (upstream ships Windows binaries + source only); we publish an unofficial sm_86 build.** The shipped beellama composes (`beellama/dflash`, `beellama/gemma-dflash`) are 🧪 **Experimental** and default to **`ghcr.io/noonghunna/beellama-cpp:sm86-b9459-07ac3ce`** — an unofficial club-3090 build of `Anbeeld/beellama.cpp` (MIT), **sm_86 / RTX 3090 only**. So 3090 users can **pull and run**:
+- **No *official* upstream Docker image yet (upstream ships Windows binaries + source only); we publish an unofficial *multi-arch* build.** We compile `Anbeeld/beellama.cpp` (MIT) for **sm_86 / sm_89 / sm_120 (RTX 3090 / 4090 / 5090)** and publish it as **`ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce`**. Users on any of those cards can **pull and run**:
 
   ```bash
-  docker pull ghcr.io/noonghunna/beellama-cpp:sm86-b9459-07ac3ce
+  docker pull ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce
   ```
 
-  The model-default resolver still skips them (`(NA)` experimental status) until they're cross-rig validated — `ik-llama` stays the single-card default. **Other GPU arches must build the image themselves** (the published one is sm_86-only). From a clone of the fork (Linux GCC + CUDA):
+  `beellama/dflash` (Qwen3.6-27B) is now the **single-card default** (⚠️ caveats); `beellama/gemma-dflash` stays 🧪 **Experimental**. **Caveat: sm_89 / sm_120 are compiled but UNVALIDATED** — only sm_86 / RTX 3090 is verified on club-3090's rig, so 4090 / 5090 users should treat it as unverified and report back via the *numbers-from-your-rig* issue template. Anbeeld's official v0.3.0 (CI + Docker) is in progress ([discussion #239](https://github.com/noonghunna/club-3090/discussions/239)); when it lands we drop our unofficial image. **To build your own image** (a different arch, or to self-host), from a clone of the fork (Linux GCC + CUDA):
 
   ```bash
   cmake -B build -DGGML_CUDA=ON -DGGML_NATIVE=ON \
@@ -322,7 +322,7 @@ Honest gaps:
   cmake --build build -j
   ```
 
-  Use `-DCMAKE_CUDA_ARCHITECTURES=89` for an RTX 4090, `120` for a 5090, etc. To produce a Docker image for your arch, bake the fork's `.devops/cuda.Dockerfile` with `CUDA_DOCKER_ARCH=<arch>` and the `-DGGML_CUDA_FA_ALL_QUANTS=ON` flag added — the stock Dockerfile omits it, and **`FA_ALL_QUANTS` is required for the TurboQuant / TCQ cache types** (and for the `q5_0`/`q4_1` KV the composes default to). Point the composes at it per-launch with `BEELLAMA_IMAGE=...`.
+  Use `-DCMAKE_CUDA_ARCHITECTURES=89` for an RTX 4090, `120` for a 5090, etc. To produce a Docker image for your arch, bake the fork's `.devops/cuda.Dockerfile` with `CUDA_DOCKER_ARCH=<arch>` (a **semicolon list** like `"86;89;120"` builds one multi-arch image — that is exactly how our published image is built) and the `-DGGML_CUDA_FA_ALL_QUANTS=ON` flag — the stock Dockerfile omits it, and **`FA_ALL_QUANTS` is required for the TurboQuant / TCQ cache types** (and for the `q5_0`/`q4_1` KV the composes default to). Point the composes at it per-launch with `BEELLAMA_IMAGE=...`.
 - **Server target ENTRYPOINT is `/app/llama-server`** — compose `command:` is server flags only (same shape as the ik-llama / llama-cpp composes).
 - **Single-stream / `-np 1`** — DFlash is single-slot by default; same compute-bound single-card caveat as the other llama.cpp-family composes.
 
