@@ -33,10 +33,11 @@ assert_contains() {
 source "$ROOT_DIR/scripts/lib/registry-emit.sh"
 
 # --- curated walk (no pin) ---------------------------------------------------
-# qwen3.6-27b: single → ik-llama (beellama ranked #1 but has no entry → skipped);
-# dual → vllm; multi4 → vllm.
+# qwen3.6-27b: single → beellama (ranked #1 in ENGINE_PREFERENCE; promoted to a
+# functional `caveats` DEFAULTS entry 2026-05-30, so the resolver now picks it
+# ahead of ik-llama); dual → vllm; multi4 → vllm.
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 2>/dev/null)" \
-  "ik-llama/iq4ks-mtp" "qwen single curated"
+  "beellama/dflash" "qwen single curated"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>/dev/null)" \
   "vllm/dual" "qwen dual curated"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b multi4 2>/dev/null)" \
@@ -73,7 +74,7 @@ assert_eq "$(x_default_dispatch "$ROOT_DIR" ik-llama/default single qwen3.6-27b 
   "ik-llama/iq4ks-mtp" "ik-llama/default engine dispatch"
 # model-id → model default (model token overrides the passed model).
 assert_eq "$(x_default_dispatch "$ROOT_DIR" qwen3.6-27b/default single qwen3.6-27b 2>/dev/null)" \
-  "ik-llama/iq4ks-mtp" "qwen3.6-27b/default model dispatch"
+  "beellama/dflash" "qwen3.6-27b/default model dispatch"
 # unknown → error, lists both sets.
 if out="$(x_default_dispatch "$ROOT_DIR" bogus/default single qwen3.6-27b 2>&1)"; then
   note "bogus/default unexpectedly resolved to '${out}'"
@@ -107,7 +108,7 @@ PIN=CLUB3090_DEFAULT_QWEN3_6_27B
   out="$(model_default_target "$ROOT_DIR" qwen3.6-27b single 2>&1 1>/dev/null)"
   slug="$(model_default_target "$ROOT_DIR" qwen3.6-27b single 2>/dev/null)"
   assert_contains "$out" "this rig is single" "topology-mismatch pin warns"
-  assert_eq "$slug" "ik-llama/iq4ks-mtp" "topology-mismatch pin falls back to single curated" )
+  assert_eq "$slug" "beellama/dflash" "topology-mismatch pin falls back to single curated" )
 # unknown-slug pin → warn + fall back.
 ( export "$PIN=vllm/nope"
   out="$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>&1 1>/dev/null)"
