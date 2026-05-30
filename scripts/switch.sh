@@ -179,6 +179,19 @@ list_variants() {
   # The trailing column is the health marker derived from the registry status.
   echo "Available variants — grouped by model · topology (right column: <quant>/<serving>.yml):"
   echo "  Health: unmarked = production · (caveats) = works w/ documented limits · (NA: …) = needs --force"
+  # Counts: supported models · total variants · health split.
+  local _prod=0 _cav=0 _na=0
+  declare -A _seen_models=()
+  for v in "${!VARIANTS[@]}"; do
+    IFS='|' read -r _e _d _f <<< "${VARIANTS[$v]}"
+    IFS=/ read -ra _ds <<< "$_d"; _seen_models["${_ds[1]:-?}"]=1
+    case "${VARIANT_STATUS[$v]:-production}" in
+      production) _prod=$((_prod + 1)) ;;
+      caveats)    _cav=$((_cav + 1)) ;;
+      *)          _na=$((_na + 1)) ;;
+    esac
+  done
+  echo "  Models: ${#_seen_models[@]} · variants: ${#VARIANTS[@]} (${_prod} production · ${_cav} caveats · ${_na} NA)"
   {
     for v in "${!VARIANTS[@]}"; do
       IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
@@ -196,9 +209,15 @@ list_variants() {
         "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker"
     done
   } | sort -t$'\t' -k1,1 -k2,2n -k4,4 | awk -F'\t' '
-    $1 != m { printf "\n%s\n", $1; m=$1; t="" }
-    { tl = ($3 == t ? "" : $3); t = $3
-      printf "  %-8s %-34s %-28s %s\n", tl, $4, $5, $6 }
+    { rows[NR] = $0; cnt[$1]++ }
+    END {
+      for (i = 1; i <= NR; i++) {
+        split(rows[i], f, "\t")
+        if (f[1] != m) { printf "\n%s  (%d variants)\n", f[1], cnt[f[1]]; m = f[1]; t = "" }
+        tl = (f[3] == t ? "" : f[3]); t = f[3]
+        printf "  %-8s %-34s %-36s %s\n", tl, f[4], f[5], f[6]
+      }
+    }
   '
   echo
   echo "Switch to one:  bash scripts/switch.sh <variant>"
