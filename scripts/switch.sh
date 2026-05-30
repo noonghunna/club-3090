@@ -10,7 +10,9 @@
 #   bash scripts/switch.sh <variant>            # switch + tail until ready
 #   bash scripts/switch.sh <variant> --no-wait  # switch and return immediately
 #   bash scripts/switch.sh --force <variant>    # skip hardware/free-VRAM preflight
-#   bash scripts/switch.sh --list               # show all variants + the defaults view
+#   bash scripts/switch.sh --list               # variants runnable on THIS machine + defaults
+#   bash scripts/switch.sh --list --all         # every variant regardless of GPU count
+#   bash scripts/switch.sh --list-all           # alias for --list --all
 #   bash scripts/switch.sh --defaults           # just the per-model defaults view
 #   bash scripts/switch.sh --down               # just bring down whatever's up
 #   bash scripts/switch.sh --set-default <slug>  # pin <slug> as YOUR default for its model (.env)
@@ -275,6 +277,49 @@ status_marker() {
   esac
 }
 
+# Map a topology word (as `switch_topology_from_gpus` emits it, or as a
+# compose file's first path segment carries it) to a numeric rank, so we can
+# compare "can this machine run that slug?". single=1, dual=2, multi*=3+.
+# Unknown → 9 (sorts last; never filtered out by accident). Echoes the rank.
+topology_rank() {
+  case "$1" in
+    single)  printf '1' ;;
+    dual)    printf '2' ;;
+    multi*)  printf '3' ;;
+    *)       printf '9' ;;
+  esac
+}
+
+# Is GPU detection RELIABLE for the hardware filter? True iff we have a
+# concrete signal: an explicit selector (CUDA/NVIDIA_VISIBLE_DEVICES naming
+# specific GPUs) OR nvidia-smi present AND reporting ≥1 GPU. Without either we
+# can't trust the count — switch_topology_from_gpus falls back to "single" in
+# that case, but for the --list filter we must FAIL OPEN (show all) rather than
+# hide dual/multi based on a guess. Returns 0 (reliable) / 1 (unknown).
+list_gpu_detect_reliable() {
+  local selector="${NVIDIA_VISIBLE_DEVICES:-${CUDA_VISIBLE_DEVICES:-}}"
+  if [[ -n "$selector" && "$selector" != "all" && "$selector" != "void" ]]; then
+    return 0
+  fi
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    local n
+    n="$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | sed '/^$/d' | wc -l | tr -d ' ')"
+    [[ "${n:-0}" -ge 1 ]] && return 0
+  fi
+  return 1
+}
+
+# Human GPU-count label for a detected topology word, for the filter note
+# (e.g. "single" → "1", "dual" → "2", "multi4" → "4", "multi6" → "6").
+topology_gpu_label() {
+  case "$1" in
+    single)  printf '1' ;;
+    dual)    printf '2' ;;
+    multi*)  printf '%s' "${1#multi}" ;;
+    *)       printf '?' ;;
+  esac
+}
+
 list_variants() {
   # Grouped by model · topology so each slug's binding is visible at a glance.
   # VARIANTS stores "<engine>|<dir>|<file>" where
@@ -283,33 +328,82 @@ list_variants() {
   # (the registry emitter splits compose_path on "/compose/", so dir stops at
   #  /compose and the topology+quant live in file). Engine is the slug prefix.
   # The trailing column is the health marker derived from the registry status.
+  #
+  # Hardware filter (PR-C): a dual/multi slug can't run on a 1-GPU box, so by
+  # default we hide slugs whose topology rank exceeds what this machine can run
+  # (detected via switch_topology_from_gpus, which reads CUDA/NVIDIA_VISIBLE_-
+  # DEVICES then nvidia-smi). `--list --all` (LIST_ALL=1) shows everything for
+  # discoverability. Fail-open: if detection is unavailable we show ALL rather
+  # than hide based on a failed probe.
+  local show_all="${LIST_ALL:-0}" detected_topo max_rank
+  detected_topo="$(switch_topology_from_gpus 2>/dev/null || true)"
+  if [[ -z "$detected_topo" ]] || ! list_gpu_detect_reliable; then
+    # Detection unavailable / count unknown → fail-open, show everything. We do
+    # NOT hide dual/multi off the back of switch_topology_from_gpus's "single"
+    # fallback when there's no real signal (no selector, no nvidia-smi).
+    show_all=1
+    max_rank=9
+  else
+    max_rank="$(topology_rank "$detected_topo")"
+  fi
+
   echo "Available variants — grouped by model · topology (right column: <quant>/<serving>.yml):"
   echo "  Health: unmarked = production · (caveats) = works w/ documented limits · (NA: …) = needs --force"
-  # Counts: supported models · total variants · health split.
-  local _prod=0 _cav=0 _na=0
-  declare -A _seen_models=()
+
+  # Counts: split into VISIBLE vs HIDDEN by the hardware filter, so the header
+  # reflects what's actually shown (+ how many were hidden). Health split is
+  # over the VISIBLE set; the by-topology hidden tally drives the note.
+  local _prod=0 _cav=0 _na=0 _hidden=0
+  declare -A _seen_models=() _hidden_by_topo=()
   for v in "${!VARIANTS[@]}"; do
     IFS='|' read -r _e _d _f <<< "${VARIANTS[$v]}"
-    IFS=/ read -ra _ds <<< "$_d"; _seen_models["${_ds[1]:-?}"]=1
+    IFS=/ read -ra _ds <<< "$_d"
+    IFS=/ read -ra _fs <<< "$_f"
+    local _vtopo="${_fs[0]:-unknown}" _vrank
+    _vrank="$(topology_rank "$_vtopo")"
+    if [[ "$show_all" != "1" && "$_vrank" -gt "$max_rank" ]]; then
+      _hidden=$((_hidden + 1))
+      _hidden_by_topo["$_vtopo"]=$(( ${_hidden_by_topo["$_vtopo"]:-0} + 1 ))
+      continue
+    fi
+    _seen_models["${_ds[1]:-?}"]=1
     case "${VARIANT_STATUS[$v]:-production}" in
       production) _prod=$((_prod + 1)) ;;
       caveats)    _cav=$((_cav + 1)) ;;
       *)          _na=$((_na + 1)) ;;
     esac
   done
-  echo "  Models: ${#_seen_models[@]} · variants: ${#VARIANTS[@]} (${_prod} production · ${_cav} caveats · ${_na} NA)"
+  local _visible=$(( _prod + _cav + _na ))
+  # List the hidden topologies in rank order so both the header tally and the
+  # filter note name exactly what's missing (e.g. "dual/multi4"). Pure bash —
+  # no external grep/sort dependency.
+  local _topo_list="" _t
+  local _hidden_topos
+  _hidden_topos="$(
+    for _t in "${!_hidden_by_topo[@]}"; do
+      printf '%s\t%s\n' "$(topology_rank "$_t")" "$_t"
+    done | sort -k1,1n -k2,2 | cut -f2
+  )"
+  while IFS= read -r _t; do
+    [[ -n "$_t" ]] || continue
+    _topo_list="${_topo_list:+$_topo_list/}$_t"
+  done <<< "$_hidden_topos"
+  local _hidden_note=""
+  if [[ "$_hidden" -gt 0 ]]; then
+    _hidden_note="  (+${_hidden} ${_topo_list} hidden — --all)"
+  fi
+  echo "  Models: ${#_seen_models[@]} · variants: ${_visible} (${_prod} production · ${_cav} caveats · ${_na} NA)${_hidden_note}"
+
   {
     for v in "${!VARIANTS[@]}"; do
       IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
       IFS=/ read -ra dseg <<< "$dir"    # dseg[1] = model
       IFS=/ read -ra fseg <<< "$file"   # fseg[0]=topology fseg[1]=quant fseg[2]=serving
       topo="${fseg[0]:-unknown}"
-      case "$topo" in
-        single) rank=1 ;;
-        dual)   rank=2 ;;
-        multi*) rank=3 ;;
-        *)      rank=9 ;;
-      esac
+      rank="$(topology_rank "$topo")"
+      if [[ "$show_all" != "1" && "$rank" -gt "$max_rank" ]]; then
+        continue
+      fi
       marker="$(status_marker "${VARIANT_STATUS[$v]:-production}")"
       printf '%s\t%d\t%s\t%s\t%s/%s\t%s\n' \
         "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker"
@@ -325,6 +419,14 @@ list_variants() {
       }
     }
   '
+  # Don't silently hide: one-line note when (and only when) the filter dropped
+  # something. No note under --all or when nothing was hidden.
+  if [[ "$_hidden" -gt 0 ]]; then
+    local _gpu_label
+    _gpu_label="$(topology_gpu_label "$detected_topo")"
+    echo
+    echo "(showing ${detected_topo}-GPU configs for this ${_gpu_label}-GPU machine — use --list --all for ${_topo_list})"
+  fi
   echo
   show_defaults_view
   echo
@@ -626,10 +728,16 @@ wait_ready() {
 WAIT=1
 FORCE="${FORCE:-0}"
 VARIANT=""
+LIST_REQUESTED=0
+LIST_ALL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage ;;
-    --list) list_variants ;;
+    # --list is deferred (not run inline) so `--list --all` works in either
+    # order; --all toggles the hardware filter off. --list-all is the sibling.
+    --list) LIST_REQUESTED=1 ;;
+    --all) LIST_ALL=1 ;;
+    --list-all) LIST_REQUESTED=1; LIST_ALL=1 ;;
     --defaults) defaults_view_standalone ;;
     --set-default)
       [[ -n "${2:-}" ]] || { echo "ERROR: --set-default needs a <slug> (e.g. vllm/dual)." >&2; exit 1; }
@@ -653,6 +761,17 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# --list (possibly with --all) is a terminal action — run it once, after the
+# whole arg vector is parsed, so order doesn't matter.
+if [[ "$LIST_REQUESTED" -eq 1 ]]; then
+  list_variants   # exits
+fi
+# --all only makes sense alongside --list / --list-all.
+if [[ "$LIST_ALL" -eq 1 ]]; then
+  echo "ERROR: --all only applies to --list (try: bash scripts/switch.sh --list --all)." >&2
+  exit 1
+fi
 
 [[ -n "$VARIANT" ]] || usage
 VARIANT="$(resolve_default_variant "$VARIANT")"

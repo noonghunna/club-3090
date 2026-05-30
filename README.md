@@ -40,8 +40,10 @@ bash scripts/launch.sh
 #    Or partial flags (wizard fills the rest):
 #      bash scripts/launch.sh --model qwen3.6-27b --gpus 0,1
 #      bash scripts/launch.sh --tp 2 --pp 1               # override vLLM parallelism
-#    See all variants + the per-model defaults view:
-#      bash scripts/switch.sh --list
+#    See the variants this machine can run + the per-model defaults view
+#    (hardware-filtered by GPU count; add --all to see every variant):
+#      bash scripts/switch.sh --list          # runnable here
+#      bash scripts/switch.sh --list --all    # everything
 #    Pin your own default so bare `launch.sh` goes straight there:
 #      bash scripts/switch.sh --set-default ik-llama/iq4ks-mtp   # clear: --clear-default qwen3.6-27b
 
@@ -217,7 +219,7 @@ curl -s http://localhost:8020/v1/models | jq .
 docker compose -f <the-same-compose-file> down
 ```
 
-`MODEL_DIR` is the only env var you must set — it's mounted as `/models`, and defaults to the in-repo `models-cache/` if your weights live there. Everything else has a sane default baked in; each compose **header** documents its own overrides (`GGUF_FILE`, `CTX_SIZE`, `UBATCH_SIZE`, …) and the exact `docker compose` line. `bash scripts/switch.sh --list` lists every variant, and a successful `switch.sh` run prints the compose path it used — so you can always recover the `-f` target.
+`MODEL_DIR` is the only env var you must set — it's mounted as `/models`, and defaults to the in-repo `models-cache/` if your weights live there. Everything else has a sane default baked in; each compose **header** documents its own overrides (`GGUF_FILE`, `CTX_SIZE`, `UBATCH_SIZE`, …) and the exact `docker compose` line. `bash scripts/switch.sh --list` lists the variants runnable on this machine (hardware-filtered by GPU count; `--all` shows every variant), and a successful `switch.sh` run prints the compose path it used — so you can always recover the `-f` target.
 
 > ⚠ Launching directly skips the preflight that catches under-VRAM / wrong-GPU-count mistakes. If the container exits, check `docker logs <container> 2>&1 | tail -50`.
 
