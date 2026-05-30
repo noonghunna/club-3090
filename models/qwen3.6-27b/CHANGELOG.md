@@ -2,6 +2,20 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-30 — Model-default resolver + user-pinnable defaults (`<model>/default`, `--set-default`)
+
+Adds a two-layer default scheme on top of the existing `<engine>/default` map. `<engine>/default` stays the maintainer's recommendation (read-only to users); the new `<model>/default` is the *user's* preference — their `.env` pin if set, else a curated pick for the detected topology.
+
+**What changed:**
+- `compose_registry.py`: two maintainer knobs next to `DEFAULTS` — `RECOMMENDED_DEFAULT_MODELS` (a short opt-in shortlist, **not** an exhaustive ranking; new models are not auto-added) and `ENGINE_PREFERENCE` (per-topology engine order: single = `[beellama, ik-llama, llamacpp, vllm]`, dual/multi = `[vllm, ik-llama, llamacpp, beellama]`). Plus resolver helpers (`curated_default_target`, `community_default_target` stub, `model_default_pin_key`, `engine_set`/`model_set`, etc.).
+- `registry-emit.sh`: shared resolver `model_default_target(root, model, topology)` — the single injection point for both launchers. Precedence ladder: `--variant` (caller) → `.env` pin → community seam (returns `None` today) → curated `ENGINE_PREFERENCE` walk (skips non-functional `(NA)` slugs) → degradation (notice + nearest-lower topology, else a clear "pick explicitly" message — never crashes). Plus `x_default_dispatch`: `X/default` with `X ∈ engine-set` → engine rec; `X ∈ model-set` → model default; else error (engines and model-ids are disjoint).
+- `switch.sh`: `<model>/default` token; `--set-default <slug>` / `--clear-default <model>` (round-trip the `.env` pin `CLUB3090_DEFAULT_<MODELID>`); a "Defaults" view appended to `--list` (also standalone via `--defaults`) showing each model's resolved default + whether it's a user pin or curated.
+- `launch.sh`: bare invocation → first installed shortlist model → its `<model>/default` (no full wizard); a pinned fast-path (*"Launch your default `<slug>`? [Y/n]"*); a post-boot offer (*"Make `<slug>` your default for `<model>`? [y/N]"*). Any narrowing flag keeps the explicit wizard path.
+- Pin validation is **warn + fall back, never blocking**: unknown slug / wrong model / topology-mismatch / `(NA)` status → notice + curated default.
+- Docs: README single-card realign (`ik-llama` = fastest blessed single default, `llama.cpp` = cliff-immune alternative) + "pin your default" in Quick start; FAQ (extended switch-model entry + new "set my own default" Q); SINGLE_CARD / DUAL_CARD / GETTING_STARTED / ADDING_MODELS resolver notes; UPSTREAM beellama Docker-image row (gates beellama onboarding; auto-promotes to single default on catalog). New test `scripts/tests/test-model-default-resolver.sh`.
+
+Builds on the slug health flag below (the resolver skips non-functional defaults). Verified: 45 entries unchanged, kv-calc calibration 17/17, full suite green (only the pre-existing `test-submit-bench.sh` fixture failure remains).
+
 ## 2026-05-30 — Slug health/availability flag (registry `status` + `--list` markers + launch gate)
 
 Added a lifecycle/health flag to every registry slug so `switch.sh --list` and the launch/switch path are no longer blind to a compose's lifecycle stage. Previously status lived only in compose-header comments, which drifted — `dual/autoround-int4/tq3-mtp-genesis.yml` declared `✅ Working (with Genesis)` even though the Genesis pin is parked/drifted and the compose won't boot clean.

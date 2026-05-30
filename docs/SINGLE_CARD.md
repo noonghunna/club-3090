@@ -34,6 +34,8 @@ For workloads that **don't** accumulate context across turns (single-shot RAG, s
 > ⛔ **The four vLLM rows below are struck through — they're pinned to a purged vLLM nightly ([#167](https://github.com/noonghunna/club-3090/issues/167)) and won't boot until the next Genesis-compatible pin lands.** Until then, use the **llama.cpp / ik_llama** rows — they work today and are cliff-immune. (`minimal.yml` is Genesis-free and *can* still run on a current image via `VLLM_IMAGE=vllm/vllm-openai:latest`.)
 
 > 💡 **Simplest vs fastest (single-card):** `llamacpp/default` (mainline Q4_K_M, clean upstream image) is the no-friction pick; **`ik-llama/iq4ks-mtp` is ~18–20% faster + leanest VRAM** (separate fork + IQK quant) for max single-card speed. Both are cliff-immune — see [#184](https://github.com/noonghunna/club-3090/discussions/184).
+>
+> 🎯 **Don't want to choose?** `bash scripts/switch.sh qwen3.6-27b/default` (or a bare `bash scripts/launch.sh`) resolves the **blessed single-card default automatically** — on one 3090 that's **`ik-llama/iq4ks-mtp` (fastest + leanest)**, with **`llamacpp/default` as the cliff-immune alternative** (this is the `single` order in `ENGINE_PREFERENCE`: `ik-llama > llama.cpp > vllm`; `beellama` ranks first but isn't onboarded yet — see [docs/UPSTREAM.md](UPSTREAM.md)). Pin your own with `--set-default <slug>`; see the [FAQ](FAQ.md#how-do-i-set-my-own-default-config).
 
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
 |---|---|---|---|---|

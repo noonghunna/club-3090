@@ -12,8 +12,9 @@ cd club-3090
 # 2. Download the model (Qwen3.6-27B, ~18 GB)
 bash scripts/setup.sh qwen3.6-27b
 
-# 3. Boot the default config (single-card chat, 48K context)
-bash scripts/launch.sh --variant vllm/default
+# 3. Boot the default config for this model on your hardware
+#    (auto-picks: single-card → ik-llama/iq4ks-mtp; dual → vllm/dual)
+bash scripts/launch.sh --variant qwen3.6-27b/default
 
 # 4. Test it
 curl -sf http://localhost:8020/v1/chat/completions \
@@ -22,6 +23,8 @@ curl -sf http://localhost:8020/v1/chat/completions \
 ```
 
 If you see `Paris` in the response, you're up and running.
+
+> After the boot finishes, `launch.sh` asks **"Make `<slug>` your default for `qwen3.6-27b`? [y/N]"**. Say `y` and a bare `bash scripts/launch.sh` next time goes straight to that exact config — no flags, one keypress to launch. (Change or clear it anytime: `bash scripts/switch.sh --set-default <slug>` / `--clear-default qwen3.6-27b`.)
 
 ---
 

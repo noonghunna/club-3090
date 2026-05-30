@@ -85,6 +85,12 @@ The directory hierarchy encodes model, engine, topology, and the weights artifac
 
 **Default rule**: there is no filesystem default and no `default.yml`. Defaults live in `scripts/lib/profiles/compose_registry.py` (`DEFAULTS`) and are selected by registry tag (`scripts/launch.sh`, `scripts/switch.sh`, estate planner). Direct Docker use must pass `-f <path>`.
 
+**Default-resolver knobs** (maintainer-owned, next to `DEFAULTS` in `compose_registry.py`):
+- `DEFAULTS[(model, engine, topology)] → slug` — the `<engine>/default` map (club-3090's recommended config per engine; reason can evolve, edited by PR).
+- `ENGINE_PREFERENCE[topology] → [engine, …]` — the curated `<model>/default` policy. The resolver walks this list and picks the first engine with a **functional** (`status ∉ {experimental, preview, upstream-gated, deprecated}`) `DEFAULTS` entry. **Reorder a row to change a recommendation — no code change, any topology.** single = `[beellama, ik-llama, llamacpp, vllm]`; dual/multi = `[vllm, ik-llama, llamacpp, beellama]`. `beellama` is ranked but has no entries yet (blocked on upstream image → `docs/UPSTREAM.md`); the resolver skips it and it auto-promotes to single-default on catalog.
+- `RECOMMENDED_DEFAULT_MODELS` — a **short opt-in shortlist** (`["qwen3.6-27b", "gemma-4-31b"]`) of models eligible to be the *bare-`launch.sh`* default (first installed → its `<model>/default`). **NOT** an exhaustive ranking; absent models are runnable by name but never auto-default; **new models are NOT auto-added** — promote one explicitly.
+- The shared resolver `model_default_target(root, model, topology)` (in `registry-emit.sh`) is the single injection point for both launchers. Precedence: `--variant` → user `.env` pin (`CLUB3090_DEFAULT_<MODELID, non-alnum→_>`) → community seam (`community_default_target` → `None` today) → curated walk → degradation (nearest-lower topology, else "pick explicitly"). `X/default` dispatch: `X ∈ engine-set` → engine rec; `X ∈ model-set` → model default; else error. Users pin/clear via `switch.sh --set-default <slug>` / `--clear-default <model>`.
+
 **Feature suffix order** (when stacking): interconnect → drafter → KV → vision modifier. Examples:
 - `dual/autoround-int4/turbo.yml` — TP=2 + AutoRound INT4 weights + TurboQuant KV
 - `dual/autoround-int4/dflash.yml` — TP=2 + AutoRound INT4 weights + DFlash drafter

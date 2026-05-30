@@ -262,6 +262,15 @@ bash scripts/switch.sh vllm/long-vision          # stateless: down the old, up t
 
 `launch.sh` wraps `switch.sh` and then `verify-full.sh`; `switch.sh` is the bare down-old/up-new if you just want the swap.
 
+**Don't want to remember a slug? Use `<model>/default`.** It auto-resolves to a config for *that model* on *your* hardware — your `.env` pin if you've set one (see the next Q), else the curated pick for the detected topology:
+
+```bash
+bash scripts/launch.sh --variant qwen3.6-27b/default   # this model, picked for your rig
+bash scripts/switch.sh qwen3.6-27b/default
+```
+
+(`<engine>/default` — e.g. `vllm/default` — still means "the maintainer's recommended config for that engine"; that's a *different* token, owned by the repo, not by you.)
+
 **If the weights aren't downloaded, it does NOT auto-pull — by design.** Pointing `launch.sh` / `switch.sh` at a model you don't have stops with a hint instead of silently fetching 20+ GB:
 
 ```
@@ -279,6 +288,28 @@ Downloading is a deliberate, separate step:
 > - **Unsupported architectures / quants** (safetensors but outside the patch matrix) stop at a derive/eligibility gate with a structured reason — they are evaluated, never silently run.
 
 See also [How do I pick the right model + variant?](#how-do-i-pick-the-right-model--variant) for the first-install wizard, and [The model I want isn't in the supported list](#the-model-i-want-isnt-in-the-supported-list--can-i-still-run-it) for the pull-gate in depth.
+
+### How do I set my own default config?
+
+There are **two layers of "default"**, with different owners:
+
+| Token | Means | Who owns it |
+|---|---|---|
+| `<engine>/default` (e.g. `vllm/default`) | the repo's recommended config for that engine, on the detected topology | club-3090 (changes by PR) |
+| `<model>/default` (e.g. `qwen3.6-27b/default`) | **your** preferred way to run that model | **you** (`--set-default`) |
+
+By default `<model>/default` resolves to the *curated* pick — the first engine in `ENGINE_PREFERENCE` for your topology that has a healthy config (single-card Qwen → `ik-llama/iq4ks-mtp`; dual → `vllm/dual`). To make it resolve to **your** choice instead, pin a slug:
+
+```bash
+bash scripts/switch.sh --set-default vllm/dual-turbo   # pin (writes .env)
+bash scripts/switch.sh --clear-default qwen3.6-27b      # remove the pin
+bash scripts/switch.sh --defaults                       # show what each model resolves to + pin vs curated
+```
+
+- A pin is a **full slug**, so it captures engine + topology + config in one pick. It's stored in `.env` as `CLUB3090_DEFAULT_<MODELID>` (e.g. `CLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual-turbo`) — one key per model.
+- After any successful `bash scripts/launch.sh` boot, it offers: *"Make `<slug>` your default for `<model>`? [y/N]"* — one keypress to pin it.
+- A **bare** `bash scripts/launch.sh` with a pin set asks *"Launch your default `<slug>`? [Y/n]"* — one keypress to go.
+- Pins are **validated, never blocking**: if a pin names an unknown slug, the wrong model, a config for a different topology than your rig, or a known-unhealthy config, the resolver warns and falls back to the curated default — it never stops a launch.
 
 ### `bash scripts/setup.sh qwen3.6-27b` is downloading 20+ GB. Where does it go? / Can I put models on a different drive?
 

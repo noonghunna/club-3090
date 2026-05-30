@@ -67,6 +67,8 @@ For the single-card picture, see [`SINGLE_CARD.md`](SINGLE_CARD.md).
 
 **Workload:** anything. Chat, tool agents, vision, mixed-modal. The recommended default for 2× 3090.
 
+> 🎯 **Don't want to name a slug?** `bash scripts/switch.sh qwen3.6-27b/default` (or a bare `bash scripts/launch.sh`) resolves the blessed dual-card default automatically — on 2× 3090 that's **`vllm/dual`** (the `dual` order in `ENGINE_PREFERENCE` is `vllm > ik-llama > llama.cpp`). Prefer a different config (e.g. `vllm/dual-turbo` for multi-tenant)? Pin it once with `bash scripts/switch.sh --set-default vllm/dual-turbo` and bare launches go straight there — see the [FAQ](FAQ.md#how-do-i-set-my-own-default-config).
+
 262K context, fp8 KV, MTP n=3, 2 streams, vision tower active. **Genesis-less by design** — fp8 KV doesn't trigger the cudagraph bug (#40880) that drove Genesis's existence on single-card. Pure vLLM nightly path. Tool calls work via `--tool-call-parser qwen3_coder` + `--enable-auto-tool-choice`. All `verify-stress.sh` checks pass clean.
 
 **When to pick:** the obvious starting point. Unless one of the specialized variants below names your exact workload, this is right. **Strongly recommended for IDE coding agents** (Cline / OpenCode / Roo / Claude Code / Cursor) — fp8 KV avoids the inductor compile-path leak that affects all 4 TQ3-KV variants. See [club-3090#16](https://github.com/noonghunna/club-3090/issues/16).

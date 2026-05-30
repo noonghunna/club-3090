@@ -30,16 +30,20 @@ bash scripts/setup.sh
 
 # 3. Pick a config + boot it (interactive wizard: asks model → GPUs → projects VRAM budget)
 bash scripts/launch.sh
-#    Or skip the wizard:
-#      bash scripts/launch.sh --variant llamacpp/default    # single-card chat (recommended) — cliff-immune, 200K @ -ub 512, ~51/60 TPS
-#      bash scripts/launch.sh --variant ik-llama/iq4ks-mtp  # single-card FASTEST — ~60/69 TPS, leanest VRAM (ik_llama IQK quant)
+#    Or let the resolver pick for your model + hardware (.env pin ‖ curated default):
+#      bash scripts/launch.sh --variant qwen3.6-27b/default # YOUR default for this model
+#    Or skip the wizard with an explicit config:
+#      bash scripts/launch.sh --variant ik-llama/iq4ks-mtp  # single-card FASTEST blessed default — ~60/69 TPS, leanest VRAM (ik_llama IQK quant)
+#      bash scripts/launch.sh --variant llamacpp/default    # single-card cliff-immune ALT — 200K @ -ub 512, ~51/60 TPS
 #      bash scripts/launch.sh --variant llamacpp/mtp-vision # single-card 49K + MTP + vision
 #      bash scripts/launch.sh --variant vllm/dual           # dual-card 262K + vision (vLLM single-card paths blocked on #167)
 #    Or partial flags (wizard fills the rest):
 #      bash scripts/launch.sh --model qwen3.6-27b --gpus 0,1
 #      bash scripts/launch.sh --tp 2 --pp 1               # override vLLM parallelism
-#    See all variants:
+#    See all variants + the per-model defaults view:
 #      bash scripts/switch.sh --list
+#    Pin your own default so bare `launch.sh` goes straight there:
+#      bash scripts/switch.sh --set-default ik-llama/iq4ks-mtp   # clear: --clear-default qwen3.6-27b
 
 # 4. Sanity test (launcher already printed this curl)
 curl -sf http://localhost:8020/v1/chat/completions \
@@ -196,7 +200,7 @@ bash scripts/switch.sh --force llamacpp/default
 #    Set MODEL_DIR to wherever your weights live; -f points at the compose.
 #    Layout: models/<model>/<engine>/compose/<topology>/<quant>/<serving>.yml
 
-# single-card llama.cpp (recommended default) — serves on :8020
+# single-card llama.cpp (cliff-immune fallback; no nightly/Genesis dependency) — serves on :8020
 MODEL_DIR=/path/to/models docker compose \
   -f models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp.yml up -d
 
