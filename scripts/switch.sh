@@ -159,11 +159,36 @@ usage() {
 }
 
 list_variants() {
-  echo "Available variants:"
-  for v in "${!VARIANTS[@]}"; do
-    IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
-    echo "  ${v}  →  ${dir}/${file}"
-  done | sort
+  # Grouped by model · topology so each slug's binding is visible at a glance.
+  # VARIANTS stores "<engine>|<dir>|<file>" where
+  #   dir  = models/<model>/<engine>/compose      → model is dir field 2
+  #   file = <topology>/<quant>/<serving>.yml      → topology/quant/serving
+  # (the registry emitter splits compose_path on "/compose/", so dir stops at
+  #  /compose and the topology+quant live in file). Engine is the slug prefix.
+  echo "Available variants — grouped by model · topology (right column: <quant>/<serving>.yml):"
+  {
+    for v in "${!VARIANTS[@]}"; do
+      IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
+      IFS=/ read -ra dseg <<< "$dir"    # dseg[1] = model
+      IFS=/ read -ra fseg <<< "$file"   # fseg[0]=topology fseg[1]=quant fseg[2]=serving
+      topo="${fseg[0]:-unknown}"
+      case "$topo" in
+        single) rank=1 ;;
+        dual)   rank=2 ;;
+        multi*) rank=3 ;;
+        *)      rank=9 ;;
+      esac
+      printf '%s\t%d\t%s\t%s\t%s/%s\n' \
+        "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}"
+    done
+  } | sort -t$'\t' -k1,1 -k2,2n -k4,4 | awk -F'\t' '
+    $1 != m { printf "\n%s\n", $1; m=$1; t="" }
+    { tl = ($3 == t ? "" : $3); t = $3
+      printf "  %-8s %-34s %s\n", tl, $4, $5 }
+  '
+  echo
+  echo "Switch to one:  bash scripts/switch.sh <variant>"
+  echo "Or via wizard:  bash scripts/launch.sh   (or: launch.sh --variant <variant>)"
   exit 0
 }
 
