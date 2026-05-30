@@ -219,6 +219,8 @@ declare -A LAUNCH_VARIANT_PROFILE_ENGINE=()
 declare -A LAUNCH_VARIANT_KVCALC=()
 declare -A LAUNCH_DEFAULT_PORT=()
 declare -A LAUNCH_DEFAULT_CONTAINER=()
+declare -A LAUNCH_VARIANT_STATUS=()
+declare -A LAUNCH_VARIANT_STATUS_NOTE=()
 LAUNCH_VARIANT_ORDER=()
 PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3.6-27b}"
 # shellcheck source=lib/registry-emit.sh
@@ -1078,6 +1080,21 @@ fi
 # --- launch + verify ---
 echo ""
 echo "[launch] selected variant: ${VARIANT}"
+# Surface the lifecycle health flag (PR-A) before handing off. The actual gate
+# (caveats notice / (NA) → require --force) lives in switch.sh up_variant, which
+# this script delegates to; this is just a heads-up so the user isn't surprised.
+_launch_status="${LAUNCH_VARIANT_STATUS[$VARIANT]:-production}"
+_launch_status_note="${LAUNCH_VARIANT_STATUS_NOTE[$VARIANT]:-}"
+case "$_launch_status" in
+  production) ;;
+  caveats)
+    echo "[launch] NOTE: this is a ⚠️ production-with-caveats config.${_launch_status_note:+  ${_launch_status_note}}"
+    ;;
+  *)
+    echo "[launch] WARNING: this is a (NA: ${_launch_status}) config — not a reliable path.${_launch_status_note:+  ${_launch_status_note}}"
+    echo "[launch]          switch.sh will require --force (FORCE=1) to bring it up."
+    ;;
+esac
 echo ""
 if [[ -n "$SELECTED_GPU_CSV" ]]; then
   export CUDA_VISIBLE_DEVICES="$SELECTED_GPU_CSV"

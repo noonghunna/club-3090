@@ -9,7 +9,7 @@
 #   Vision:    off (limit-mm-per-prompt image=0 audio=0) for first boot
 #   Max ctx:   32K (first-boot smoke; can extend after validation)
 #   Genesis:   none (Gemma 4 family doesn't need Genesis)
-#   Status:    🔵 v0.7.3 PRIMARY — AWQ path with PR #40886 overlay
+#   Status:    🧪 Experimental — v0.7.3 MoE onboarding, AWQ path with PR #40886 overlay (validation pending)
 #   Active params: ~4B (128 experts × 8 active = ~4B routed)
 # ---------------------------------------------------------------------------
 # Gemma 4 26B-A4B-it (cyankiwi AWQ-4bit, compressed-tensors format) — the

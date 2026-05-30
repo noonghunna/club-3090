@@ -7,7 +7,7 @@
 #   Max ctx:   262144 (262K)
 #   Streams:   max-num-seqs=2 (matched-config sibling of dual/int8.yml)
 #   Genesis:   none — pure upstream nightly + only the unavoidable marlin-pad overlay
-#   Status:    ✅ Working — validated 2026-05-11
+#   Status:    ✅ Production
 #   Best for:  Long-context multi-tenant agentic workloads where TQ3's KV-pool
 #              expansion matters more than MTP-driven TPS acceleration.
 # ---------------------------------------------------------------------------

@@ -97,6 +97,8 @@ fi
 # (scripts/lib/profiles/compose_registry.py COMPOSE_REGISTRY).
 declare -A VARIANT_DEFAULT_PORT=()
 declare -A VARIANTS=()
+declare -A VARIANT_STATUS=()
+declare -A VARIANT_STATUS_NOTE=()
 # shellcheck source=lib/registry-emit.sh
 source "${ROOT_DIR}/scripts/lib/registry-emit.sh"
 derive_switch_variant_tables "${ROOT_DIR}"
@@ -156,6 +158,17 @@ usage() {
   exit 0
 }
 
+# Map a registry status word to the marker shown in --list and to launch
+# gating. `production` → unmarked; `caveats` → "(caveats)"; the (NA) set
+# (experimental/preview/upstream-gated/deprecated) → "(NA: <word>)".
+status_marker() {
+  case "$1" in
+    production|"") printf '' ;;
+    caveats)       printf '(caveats)' ;;
+    *)             printf '(NA: %s)' "$1" ;;
+  esac
+}
+
 list_variants() {
   # Grouped by model · topology so each slug's binding is visible at a glance.
   # VARIANTS stores "<engine>|<dir>|<file>" where
@@ -163,7 +176,9 @@ list_variants() {
   #   file = <topology>/<quant>/<serving>.yml      → topology/quant/serving
   # (the registry emitter splits compose_path on "/compose/", so dir stops at
   #  /compose and the topology+quant live in file). Engine is the slug prefix.
+  # The trailing column is the health marker derived from the registry status.
   echo "Available variants — grouped by model · topology (right column: <quant>/<serving>.yml):"
+  echo "  Health: unmarked = production · (caveats) = works w/ documented limits · (NA: …) = needs --force"
   {
     for v in "${!VARIANTS[@]}"; do
       IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
@@ -176,13 +191,14 @@ list_variants() {
         multi*) rank=3 ;;
         *)      rank=9 ;;
       esac
-      printf '%s\t%d\t%s\t%s\t%s/%s\n' \
-        "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}"
+      marker="$(status_marker "${VARIANT_STATUS[$v]:-production}")"
+      printf '%s\t%d\t%s\t%s\t%s/%s\t%s\n' \
+        "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker"
     done
   } | sort -t$'\t' -k1,1 -k2,2n -k4,4 | awk -F'\t' '
     $1 != m { printf "\n%s\n", $1; m=$1; t="" }
     { tl = ($3 == t ? "" : $3); t = $3
-      printf "  %-8s %-34s %s\n", tl, $4, $5 }
+      printf "  %-8s %-34s %-28s %s\n", tl, $4, $5, $6 }
   '
   echo
   echo "Switch to one:  bash scripts/switch.sh <variant>"
@@ -305,6 +321,32 @@ export_variant_engine_pin() {
   fi
 }
 
+status_gate() {
+  # Lifecycle gate (PR-A health flag). production → launch silently;
+  # caveats → launch with a one-line notice; the (NA) set
+  # (experimental/preview/upstream-gated/deprecated) → warn + require --force.
+  local v="$1" status note
+  status="${VARIANT_STATUS[$v]:-production}"
+  note="${VARIANT_STATUS_NOTE[$v]:-}"
+  case "$status" in
+    production)
+      ;;
+    caveats)
+      echo "[switch] NOTE: '${v}' is ⚠️ production-with-caveats.${note:+  ${note}}"
+      ;;
+    *)
+      if [[ "${FORCE:-0}" != "1" ]]; then
+        echo "[switch] ERROR: '${v}' is (NA: ${status}) — not a reliable config.${note:+  ${note}}" >&2
+        echo "[switch]        It is surfaced for visibility, but won't launch without an explicit override." >&2
+        echo "[switch]        Re-run with --force if you know what you're doing:" >&2
+        echo "[switch]          bash scripts/switch.sh --force ${v}" >&2
+        exit 1
+      fi
+      echo "[switch] WARNING: forcing (NA: ${status}) variant '${v}'.${note:+  ${note}}"
+      ;;
+  esac
+}
+
 up_variant() {
   local v="$1"
   if [[ -z "${VARIANTS[$v]:-}" ]]; then
@@ -312,6 +354,7 @@ up_variant() {
     echo "Run: bash scripts/switch.sh --list" >&2
     exit 1
   fi
+  status_gate "$v"
   IFS='|' read -r eng dir file <<< "${VARIANTS[$v]}"
   local full_dir="${ROOT_DIR}/${dir}"
   if [[ ! -f "${full_dir}/${file}" ]]; then

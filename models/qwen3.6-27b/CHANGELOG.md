@@ -2,6 +2,21 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-05-30 — Slug health/availability flag (registry `status` + `--list` markers + launch gate)
+
+Added a lifecycle/health flag to every registry slug so `switch.sh --list` and the launch/switch path are no longer blind to a compose's lifecycle stage. Previously status lived only in compose-header comments, which drifted — `dual/autoround-int4/tq3-mtp-genesis.yml` declared `✅ Working (with Genesis)` even though the Genesis pin is parked/drifted and the compose won't boot clean.
+
+**What changed:**
+- `compose_registry.py`: `_entry()` gains a keyword-only `status` (default `production`) + `status_note`, validated against the canonical enum (`production · caveats · experimental · preview · upstream-gated · deprecated`). Added a `compose_header_status()` helper that maps a compose's profile-schema `Status:` emoji to the enum.
+- Swept **every** compose `Status:` header to a canonical enum value (decision §12.5/§13): non-conforming strings normalized — e.g. genesis `✅ Working (with Genesis)` → `⏸️ Upstream-gated`, `⛔ TOMBSTONED` → `🗑️ Deprecated`, `🔵 v0.7.3 ONBOARDING` → `🧪 Experimental`, `🔵 PREVIEW` → `👁️ Preview`, `⭐ Code-optimized` → `✅ Production`.
+- Re-flagged the non-functional slugs: all `*genesis*` + gemma-4-31b single fp8 → `upstream-gated`; carnice → `caveats`; qwopus + qwen-a3b-preview → `preview`; the bf16/int8 A/B composes, llamacpp bounded-thinking, all PRISM/APEX eval lanes, and the gemma-4-26b-a4b onboarding composes → `experimental`; `tq3-mtp` → `deprecated`.
+- `registry-emit.sh` now emits `status` + `status_note` on the VARIANT row (last two fields); both loaders + the parity tests read the extended field list.
+- `switch.sh --list` shows a health marker: `production` unmarked · `caveats` → `(caveats)` · the (NA) set → `(NA: <word>)`. Model·topology grouping (#264) preserved.
+- Launch/switch gate: `production` launches silently, `caveats` launches with a one-line notice, the (NA) set warns + requires `--force`. `launch.sh` surfaces the same flag before delegating to `switch.sh`.
+- New drift-guard test `scripts/tests/test-compose-status-drift.sh`: asserts every registry status ∈ enum, every compose header maps to the enum, and the two agree.
+
+Foundational for the upcoming model-default resolver (it must skip non-functional slugs when picking a curated default) and a safety fix on its own — users could previously boot the pin-drifted Genesis composes blind. Verified: 45 entries unchanged, kv-calc calibration 17/17, full test suite green (only the pre-existing `test-submit-bench.sh` fixture failure remains).
+
 ## 2026-05-29 — vLLM `nvlink-*` dual composes removed (NVLink auto-detected)
 
 The four `dual/autoround-int4/nvlink-*.yml` composes (`nvlink-fp8-mtp`, `nvlink-turbo`, `nvlink-dflash`, `nvlink-dflash-noviz`) are removed, along with their `vllm/dual-nvlink*` launch slugs. They were thin `extends:` stubs whose only override was `NVLINK_MODE=force_on` — redundant since every dual compose now auto-detects NVLink at boot via `detect_nvlink.sh` (`NVLINK_MODE=auto` → flips on `NCCL_P2P_LEVEL=NVL` + custom-all-reduce when a bridge is present, else `NCCL_P2P_DISABLE=1` + `--disable-custom-all-reduce`). NVLink rigs now get the same path from the base dual compose with no separate slug; force it explicitly with `NVLINK_MODE=force_on scripts/switch.sh vllm/dual` if auto-detect misses. The historical NVLink bench rows (JusefPol PR #31, danbedford #74/#92/#96) are preserved in `BENCHMARKS.md`. The earlier dated entries below that describe adding these composes are kept as append-only history.

@@ -27,7 +27,7 @@
 #              the ceiling; 210K fills 193K leaving 863 MB — both under the 1024 MB
 #              agent-safety margin. 200000 (≈1131 MB at ceiling) is the safe default. -ub 512 @ 262144
 #              → 21.5 GB if you need the extra ~1 GB back.
-#   Status:    ✅ Shipped (advanced-quant track, #180). In the wizard +
+#   Status:    ✅ Production (advanced-quant track, #180). In the wizard +
 #              `bash scripts/switch.sh ik-llama/iq4ks-mtp`.
 #   Perf:      ~18-20% FASTER decode TPS than shipped llamacpp/mtp Q4_K_M
 #              (~60 narr / ~69 code vs ~50/58, at set-and-readback matched 370 W

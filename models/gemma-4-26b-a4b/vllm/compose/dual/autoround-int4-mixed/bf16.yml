@@ -10,7 +10,7 @@
 #   Max ctx:   32K (first-boot smoke; can extend after validation)
 #   Genesis:   none (Gemma 4 family doesn't need Genesis — engine
 #              vllm-nightly-clean rides latest nightly)
-#   Status:    🔵 v0.7.3 ONBOARDING — primary bench target
+#   Status:    🧪 Experimental — v0.7.3 MoE onboarding, primary bench target (validation pending)
 #   Active params: ~4B (128 experts × 8 active = ~4B routed)
 # ---------------------------------------------------------------------------
 # Gemma 4 26B-A4B-it (Intel AutoRound INT4 mixed) — dual-card production

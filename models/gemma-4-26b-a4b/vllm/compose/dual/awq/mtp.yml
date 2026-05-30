@@ -7,7 +7,7 @@
 #   Vision:    off (limit-mm-per-prompt image=0 audio=0)
 #   Max ctx:   32K (matches awq.yml for direct A/B)
 #   Genesis:   none (Gemma 4 family doesn't need Genesis)
-#   Status:    🔵 v0.7.3 PRIMARY — AWQ + MTP, ships alongside awq.yml
+#   Status:    🧪 Experimental — v0.7.3 MoE onboarding, AWQ + MTP (validation pending; ships alongside awq.yml)
 # ---------------------------------------------------------------------------
 # Same shape as awq.yml plus the external MTP assistant drafter wired via
 # `--speculative-config`. n=4 per the gemma-26b-it-assistant DrafterProfile.

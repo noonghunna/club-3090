@@ -8,7 +8,10 @@
 #   Max ctx:   262K
 #   Streams:   max-num-seqs=2 (matched-config sibling of dual/int8.yml)
 #   Genesis:   v7.72.2 (full P64/P65/P66/P68/P69 fix for TQ3+MTP — see vllm-issue#40880)
-#   Status:    ✅ Working (with Genesis)
+#   Status:    ⏸️ Upstream-gated
+#   Caveats:   Genesis pin is parked/drifted — this compose will NOT boot clean until the
+#              pin re-validates (tracked in docs/UPSTREAM.md, Genesis row). Was previously
+#              annotated "✅ Working (with Genesis)" — that was false while the pin is parked.
 #   Best for:  Apples-to-apples 2-stream comparison against dual/int8.yml at the
 #              same vLLM pin + matched ctx/seqs settings. For 4-stream serving
 #              throughput, use dual/turbo.yml (which this file is derived from).

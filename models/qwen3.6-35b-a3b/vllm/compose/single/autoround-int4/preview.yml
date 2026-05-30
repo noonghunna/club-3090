@@ -8,7 +8,7 @@
 #   Vision:    off (limit-mm-per-prompt image=0 audio=0) for first boot
 #   Max ctx:   8K (conservative — KV pool tight after 20 GB weights on 24 GB card)
 #   Genesis:   none — preview path on vllm-nightly-clean
-#   Status:    🔵 PREVIEW — v0.7.3 MoE onboarding smoke
+#   Status:    👁️ Preview — v0.7.3 MoE onboarding smoke
 #   Caveats:   Cliff 2 mitigations UNAVAILABLE without Genesis. Do NOT use
 #              past ~21-26K accumulated context — risk of OOM / instability.
 #              Production path (Genesis-anchored, TQ3 KV, MTP, higher ctx)

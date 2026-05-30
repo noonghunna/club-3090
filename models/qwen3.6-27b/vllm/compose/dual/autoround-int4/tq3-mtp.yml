@@ -5,7 +5,11 @@
 #   Drafter:   MTP n=3 (built-in)
 #   KV:        turboquant_3bit_nc (TQ3) — 3-bit per element
 #   Max ctx:   262144 (262K)
-#   Status:    ⛔ TOMBSTONED 2026-05-11 — NOT shipping. See gap below.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Tombstoned 2026-05-11 — NOT shipping. Genesis-free TQ3+MTP needs an
+#              upstream P67-equivalent multi-query TurboQuant kernel that doesn't exist
+#              yet (see gap below). Kept as a reference / re-test surface. Use
+#              dual/tq3-mtp-genesis.yml (upstream-gated) or dual/turbo.yml instead.
 #   Best for:  Reference / re-test surface once an upstream P67-equivalent
 #              multi-query TurboQuant spec-decode kernel lands.
 # ---------------------------------------------------------------------------

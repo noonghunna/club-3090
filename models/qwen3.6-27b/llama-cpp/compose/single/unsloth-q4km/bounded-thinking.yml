@@ -8,7 +8,7 @@
 #   Vision:    no
 #   Template:  native GGUF + --jinja + --reasoning on --reasoning-format deepseek
 #   Max ctx:   200000 default (@ -ub 512, same max-safe fill profile as mtp.yml)
-#   Status:    New structured-CoT port; live grammar+MTP validation pending
+#   Status:    🧪 Experimental — new structured-CoT port; live grammar + MTP validation pending
 #   Engine-profile: llama-cpp-local
 #   Best for:  bounded-thinking coding/reasoning workloads on the llama.cpp
 #              engine that boots today. Client sends a per-request GBNF grammar.
