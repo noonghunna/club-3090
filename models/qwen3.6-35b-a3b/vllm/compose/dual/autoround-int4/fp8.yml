@@ -61,7 +61,7 @@ services:
     # tracked in club-3090 #254.) Override with VLLM_IMAGE=... for a specific build.
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-dual}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8051}}:8000"
     volumes:

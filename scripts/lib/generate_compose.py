@@ -911,7 +911,7 @@ def generate_from_profile(root: Path, einput) -> tuple[str, dict]:
         f"  {svc}:",
         f"    image: {image}",
         f'    container_name: "${{ESTATE_CONTAINER:-{svc}}}"',
-        '    restart: "no"',
+        "    restart: ${CLUB3090_RESTART:-unless-stopped}",
         "    ports:",
         f'      - "${{BIND_HOST:-0.0.0.0}}:${{ESTATE_PORT:-${{PORT:-{port}}}}}:8000"',
         "    volumes:",

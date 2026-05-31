@@ -127,15 +127,16 @@ PY_EMIT
 }
 
 derive_switch_variant_tables() {
-  local root="$1" emit key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc _container _compose_path status max_ctx status_note
-  # Self-declare so every caller (switch.sh + test-switch-registry-parity) gets a
-  # proper assoc array without each having to declare it.
-  declare -gA VARIANT_CTX
+  local root="$1" emit key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc container _compose_path status max_ctx status_note
+  # Self-declare so every caller (switch.sh + test-switch-registry-parity) gets
+  # proper assoc arrays without each having to declare them. VARIANT_CONTAINER
+  # (slug -> container name) drives switch.sh's registry-derived orphan teardown.
+  declare -gA VARIANT_CTX VARIANT_CONTAINER
   if ! emit="$(registry_variant_rows "$root" 2>/dev/null)"; then
     echo "[switch] ERROR: could not derive variant tables from compose_registry.py" >&2
     exit 2
   fi
-  while IFS=$'\t' read -r kind key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc _container _compose_path status max_ctx status_note; do
+  while IFS=$'\t' read -r kind key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc container _compose_path status max_ctx status_note; do
     [[ -n "${kind:-}" ]] || continue
     case "$kind" in
       VARIANT)
@@ -148,6 +149,7 @@ derive_switch_variant_tables() {
         VARIANT_STATUS["$key"]="${status:-production}"
         VARIANT_STATUS_NOTE["$key"]="${status_note:-}"
         VARIANT_CTX["$key"]="${max_ctx:-}"
+        VARIANT_CONTAINER["$key"]="${container:-}"
         ;;
     esac
   done <<< "$emit"

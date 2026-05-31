@@ -64,7 +64,7 @@ services:
     # Override with VLLM_IMAGE=... if you need a specific build.
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8010}}:8000"
     volumes:

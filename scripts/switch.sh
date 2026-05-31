@@ -112,15 +112,14 @@ declare -A VARIANT_DEFAULT_PORT=()
 declare -A VARIANTS=()
 declare -A VARIANT_STATUS=()
 declare -A VARIANT_STATUS_NOTE=()
+declare -A VARIANT_CONTAINER=()
 # shellcheck source=lib/registry-emit.sh
 source "${ROOT_DIR}/scripts/lib/registry-emit.sh"
 derive_switch_variant_tables "${ROOT_DIR}"
 
-# Container name patterns we'll bring down — covers all current composes
-# AND any vllm/llama-cpp container we don't formally know about (catches
-# locally-built variants and one-off `docker run` instances that would
-# otherwise pin GPU memory invisibly to switch.sh).
-RUNNING_PATTERN="^(vllm-|llama-cpp-)"
+# Teardown is registry-derived from VARIANT_CONTAINER (see down_running()). This
+# replaced a fixed `^(vllm-|llama-cpp-)` regex that missed beellama-/ik-llama-/
+# sglang- containers and leaked their VRAM across switches (#281).
 
 
 PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3.6-27b}"
@@ -500,24 +499,37 @@ defaults_view_standalone() {
 }
 
 down_running() {
-  local running
-  running=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "$RUNNING_PATTERN" || true)
-  if [[ -z "$running" ]]; then
-    echo "[switch] no club-3090 container running"
-    return
-  fi
+  # Closed-world teardown: bring down ONLY containers switch.sh manages — those
+  # whose name is in the registry-derived VARIANT_CONTAINER set — each via its
+  # own compose file (+ --remove-orphans). Containers we don't manage (the
+  # auxiliary services stack, estate instances with a distinct ESTATE_CONTAINER
+  # name, unrelated user containers) are left untouched; gpu_preflight() is the
+  # safety net for any non-managed process still pinning the GPU. This catches
+  # beellama-/ik-llama-/sglang- containers the old prefix regex missed (#281).
+  local running c
+  running=$(docker ps --format '{{.Names}}' 2>/dev/null || true)
+  # Set of container names we manage (deduped, non-empty values of the map).
+  local -A managed=()
+  local slug
+  for slug in "${!VARIANT_CONTAINER[@]}"; do
+    [[ -n "${VARIANT_CONTAINER[$slug]}" ]] && managed["${VARIANT_CONTAINER[$slug]}"]=1
+  done
+  local brought_down=0
   for c in $running; do
+    [[ -n "${managed[$c]:-}" ]] || continue   # not ours — leave it alone
+    brought_down=1
     echo "[switch] bringing down: ${c}"
-    # find the compose dir from the container's labels — fallback to direct stop
+    # derive the compose dir/file from the container's labels — stop fallback
     local lbl_dir lbl_file
     lbl_dir=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir"}}' "$c" 2>/dev/null || true)
     lbl_file=$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.config_files"}}' "$c" 2>/dev/null || true)
     if [[ -n "$lbl_dir" && -n "$lbl_file" ]]; then
-      (cd "$lbl_dir" && ${COMPOSE_BIN} -f "$lbl_file" down) || docker stop "$c" >/dev/null
+      (cd "$lbl_dir" && ${COMPOSE_BIN} -f "$lbl_file" down --remove-orphans) || docker stop "$c" >/dev/null
     else
       docker stop "$c" >/dev/null
     fi
   done
+  [[ "$brought_down" -eq 1 ]] || echo "[switch] no club-3090 container running"
 }
 
 gpu_preflight() {
@@ -677,7 +689,7 @@ up_variant() {
 
   echo "[switch] bringing up: ${v}  (${dir}/${file})"
   export_variant_engine_pin "$v"
-  (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d)
+  (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d --remove-orphans)
 }
 
 resolve_ready_url() {
@@ -695,10 +707,8 @@ wait_ready() {
   # Find the container we just brought up so we can detect crashes mid-boot
   # AND surface stage progress markers from its logs while we wait.
   local container
-  container=$(docker ps --format '{{.Names}}' 2>/dev/null \
-    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|vllm-gemma-4-31b)' | head -1)
-
-  if [[ -z "$container" ]]; then
+  container="${VARIANT_CONTAINER[$VARIANT]:-}"
+  if [[ -z "$container" ]] || ! docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq -- "$container"; then
     # Compose started but no container is up — almost always a syntax error
     # or env-var issue caught before vLLM even started.
     echo "[switch] ERROR: no container running after 'compose up' — boot failed before vLLM started." >&2
