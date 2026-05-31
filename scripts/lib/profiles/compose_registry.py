@@ -522,7 +522,7 @@ COMPOSE_REGISTRY = {
     "vllm/gemma-bf16-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
         engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="bf16",
-        tp=2, max_ctx=32768, max_num_seqs=4, mem_util=0.92,
+        tp=2, max_ctx=131072, max_num_seqs=4, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml",
         default_port=8030,
         kvcalc_key="gemma-4-31b:gemma-dual",

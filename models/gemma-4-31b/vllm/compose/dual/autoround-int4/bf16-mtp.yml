@@ -2,17 +2,18 @@
 # Profile (at-a-glance):
 #   Model:     Gemma 4 31B (Intel AutoRound INT4)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE) — single-card boot-OOMs on 24 GB
-#   Drafter:   MTP n=3 (Google's official `gemma-4-31B-it-assistant`, BF16 0.5B)
+#   Drafter:   MTP n=4 (Google's official `gemma-4-31B-it-assistant`, BF16 0.5B)
 #   KV:        bfloat16 (2 bytes/token)
 #   Vision:    yes
-#   Max ctx:   32K (BF16 ceiling — for 262K use dual-int8.yml)
+#   Max ctx:   131K default @ 4 streams (NIAH-validated to 120K) — BF16 KV pool
+#              196,527 tok @ mem-util 0.95. For native 262K use vllm/gemma-int8-mtp.
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    ✅ Production
 #   Quality:   126/150 (84%) — det 56/75 (75%) · sandbox 70/75 (93%, v0.4 shape-check) (--full, 2026-05-09)
 #                TC 60% · IF 87% · SO 87% · DE 100% · RM 40% · BF 100% · HA 100% · CLI 88%
-#   Best for:  Gemma 4 dual-card STABLE fallback (stock v0.22.0, no overlay, 32K) — vision + tools.
-#              The dual default is vllm/gemma-int8-mtp (full 262K); use this when you want
-#              to stay on stable with no vendored overlay and 32K ctx is enough.
+#   Best for:  Gemma 4 dual-card STABLE long-ctx (stock v0.22.0, no overlay, 131K) — vision + tools.
+#              The dual default is vllm/gemma-int8-mtp (native 262K); use this when you want
+#              to stay on stable with NO vendored overlay and 131K ctx is enough.
 # ---------------------------------------------------------------------------
 # Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter
 # 2× RTX 3090 TP=2 + bfloat16 KV + 32K ctx + 4 streams.
@@ -122,19 +123,31 @@ services:
       - "${TP:-2}"
       - --pipeline-parallel-size
       - "${PP:-1}"
-      # max-model-len ceiling (TP=2, BF16 KV):
-      #   32K ctx @ 0.92 → KV pool ~38K tokens (shipped default — matches bench above)
-      #   48K ctx @ 0.95 → KV pool ~50K tokens (safe — MTP drafter is 0.5B vs DFlash's 2.9B,
-      #                                          slightly more headroom than dual-dflash.yml)
-      #   65K ctx @ 0.95 → KV pool ~60K tokens (max practical; 65K request partially overflows)
-      # fp8 KV blocked on Ampere — see header comment.
-      # Override: MAX_MODEL_LEN=49152 GPU_MEMORY_UTILIZATION=0.95 bash scripts/switch.sh vllm/gemma-bf16-mtp
+      # max-model-len (TP=2, BF16 KV) — DUAL-CARD RULE: prioritize max context over
+      # concurrency (see docs/DUAL_CARD.md). max-num-seqs is a CAP, not a reservation,
+      # and the KV pool is fixed by VRAM, NOT by max-model-len — so raising the ceiling
+      # is ~free for short-request concurrency; it only lets a single request go bigger.
+      #
+      # MEASURED (vLLM boot log, 2026-05-31, 2× 3090 @ 0.95): BF16 KV pool = 196,527 tok.
+      # Concurrency is opportunistic against that shared pool:
+      #   max-model-len 131072 @ max-num-seqs=4  → DEFAULT. 4-wide for short/medium
+      #                          requests; a single request fillable to ~120K (NIAH-
+      #                          validated: verify-stress ceiling ladder 94K + 120K clean).
+      #   max-num-seqs=2         → guarantees 2 concurrent long-ctx agents un-preempted.
+      #   max-num-seqs=1         → guarantees one long request never preempted.
+      # The pool caps a SINGLE request at ~196K; we default the ceiling to 131072 (clean,
+      # NIAH-validated, leaves ~65K pool headroom). fp8 KV blocked on Ampere (see header).
+      #
+      # ⚠️ Vision + near-max ctx: at ~120K single-stream only ~1.4 GB/card is free, so a
+      #    large image AT high ctx can OOM. For vision-heavy long-ctx, drop max-num-seqs
+      #    to 1-2 or GPU_MEMORY_UTILIZATION to 0.92. Vision at typical ctx is unaffected.
+      # Override: MAX_MODEL_LEN=49152 MAX_NUM_SEQS=4 bash scripts/switch.sh vllm/gemma-bf16-mtp
       - --max-model-len
-      - "${MAX_MODEL_LEN:-32768}"
+      - "${MAX_MODEL_LEN:-131072}"
       - --gpu-memory-utilization
-      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
       - --max-num-seqs
-      - "4"
+      - "${MAX_NUM_SEQS:-4}"
       # Vision tower: max_tokens_per_mm_item=2496 must fit in batched tokens.
       - --max-num-batched-tokens
       - "4096"

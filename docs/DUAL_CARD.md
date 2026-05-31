@@ -26,7 +26,7 @@ You have **2× RTX 3090s**. This page is the front door for picking a config and
 
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM per card | Why |
 |---|---|---|---|---|---|
-| General-purpose default (vision + tools + 32K ctx) | [`dual.yml`](../models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml) ⭐ | 32K | **106 / 141** | ~22 / 24 GB | bf16 KV, MTP n=3 (Google's official `gemma-4-31B-it-assistant` drafter). PR [#41745](https://github.com/vllm-project/vllm/pull/41745) merged upstream. |
+| General-purpose default (vision + tools + long ctx) | [`gemma-bf16-mtp`](../models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml) ⭐ | **131K** | **119 / 154** | ~22.2 / 24 GB | bf16 KV, MTP n=4 (Google's official `gemma-4-31B-it-assistant` drafter), stock v0.22.0 **no overlay**. KV pool 196,527 tok @ 0.95; `max-num-seqs=4` cap. NIAH-validated to 120K. PR [#41745](https://github.com/vllm-project/vllm/pull/41745) merged upstream. |
 | Long-context default (262K ctx, balanced TPS) | [`dual-int8.yml`](../models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml) | **262K** | **95 / 126** | ~22.1 / 24 GB | INT8 PTH KV via vendored PR [#40391](https://github.com/vllm-project/vllm/pull/40391) overlay. **8.2× context lift** for ~10% TPS cost. NIAH PASS at 137K. |
 | Multi-stream long-context (3.6× concurrency at 98K) | [`dual-int8.yml`](../models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml) (override `MAX_NUM_SEQS=4`) | 98K | **96 / 127** per-stream | ~22.2 / 24 GB | INT8 PTH KV pool 354K tokens → 3.6× concurrency. |
 | Peak code TPS with vision | [`dual-dflash.yml`](../models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash.yml) | 32K | **105 / 177** | ~22.3 / 24 GB | z-lab Gemma 4 DFlash drafter, n=7. **+18% code TPS over MTP** (177 vs 141). bf16 KV. |
@@ -36,6 +36,20 @@ You have **2× RTX 3090s**. This page is the front door for picking a config and
 > **VRAM column is per-card** under TP=2 (each card holds half the weights + half the KV; both cards' totals are nearly identical). For a 2× 20 GB rig (e.g. 2× 3080-20GB / 40 GB combined), `dual.yml` and `dual-turbo` should fit; `dual-dflash*` won't (FP16 KV + DFlash draft pushes per-card past 20 GB). Component breakdown in [`tools/charts/gen-vram.py`](../tools/charts/gen-vram.py).
 
 Run any of these via `bash scripts/launch.sh` (interactive) or `bash scripts/switch.sh <variant>`.
+
+---
+
+## Rule of thumb: on dual cards, prioritize context over concurrency
+
+The dual-card composes default to **the largest context the KV pool allows**, with `--max-num-seqs` left as a modest cap (typically 4) — not the other way round. The reasoning:
+
+- **`--max-num-seqs` is a cap, not a reservation.** Setting it to 4 doesn't reserve 4× the context; it caps how many requests run at once. Short/medium requests still pack into the shared KV pool and run concurrently.
+- **The KV pool size is fixed by VRAM, not by `--max-model-len`.** Raising the context ceiling does **not** shrink the pool (e.g. `gemma-bf16-mtp`'s pool is 196,527 tokens whether `--max-model-len` is 32K or 131K). So a higher ceiling is *nearly free* for typical traffic — it only lets a single request go bigger; it doesn't cost short-request concurrency.
+- **Dual cards exist to unlock what single can't.** A 2× 3090 rig's realistic workload is one or two long-context agents, not high-QPS multitenancy. If you want pure concurrency-at-low-ctx, a single-card compose or a replica is the better fit.
+
+**So the default ceiling is set high; lower `--max-num-seqs` (to 2 or 1) only when you need a guarantee** — e.g. two concurrent long-context agents that must never preempt each other, or a single long request that must never be queued. The composes document the per-slug ladder (`gemma-int8-mtp`: 98K/4 → 170K/2 → 262K/1; `gemma-bf16-mtp`: 131K default, drop seqs for guaranteed-long).
+
+> ⚠️ **The one exception is vision.** A large image *at* near-max context can OOM on thin headroom (e.g. `gemma-bf16-mtp` leaves only ~1.4 GB/card free at 120K single-stream). For vision-heavy long-context, lower `--max-num-seqs` or `--gpu-memory-utilization`. Vision at typical context is unaffected.
 
 ---
 
