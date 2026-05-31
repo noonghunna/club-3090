@@ -58,13 +58,18 @@ arches:
   - arch: Gemma4ForConditionalGeneration
     family: gemma4-swa-dense
     engine_pin:
+      - pin: vllm-gemma-stable@v0.22.0
+        loads: true
+        enables: [mtp, int8-per-token-head]
       - pin: vllm-gemma-stable@v0.21.0
         loads: true
         enables: [mtp, int8-per-token-head]
     required_patches:
+      # v0.22.0 ships only the #40391 per-head-KV overlay (live-validated boot
+      # 2026-05-31). The tool-parser (#42006) + truncate (#41800) overlays were
+      # dropped: #41800/#41991 are in stock v0.22.0; #42006 dropped by maintainer
+      # call (bf16-mtp runs prod without it) — see docs/UPSTREAM.md.
       - gemma-vllm-pr40391-rebased
-      - gemma-vllm-gemma4-tool-parser-fixes
-      - gemma-vllm-pr41800-truncate-prompt-tokens
     valid_tp:
       tp_divisors: [1, 2, 4, 8, 16]
       marlin_alignment_required: false
@@ -81,12 +86,15 @@ arches:
   - arch: Gemma4ForCausalLM
     family: gemma4-swa-dense
     engine_pin:
+      - pin: vllm-gemma-stable@v0.22.0
+        loads: true
+        enables: [mtp, int8-per-token-head]
       - pin: vllm-gemma-stable@v0.21.0
         loads: true
         enables: [mtp, int8-per-token-head]
     required_patches:
+      # See Gemma4ForConditionalGeneration above — v0.22.0 ships only #40391.
       - gemma-vllm-pr40391-rebased
-      - gemma-vllm-gemma4-tool-parser-fixes
     valid_tp:
       tp_divisors: [1, 2, 4, 8, 16]
       marlin_alignment_required: false

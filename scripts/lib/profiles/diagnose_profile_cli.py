@@ -45,7 +45,7 @@ OVERLAY_PATH_HINTS = {
         "models/qwen3.6-27b/vllm/patches/vllm-pr35936-required-fallback"
     ],
     "vllm-pr40391-rebased": [
-        "models/gemma-4-31b/vllm/patches/vllm-pr40391-rebased"
+        "models/gemma-4-31b/vllm/patches/vllm-pr40391-v0.22.0"
     ],
     "vllm-gemma4-tool-parser-fixes": [
         "models/gemma-4-31b/vllm/patches/vllm-gemma4-tool-parser-fixes"

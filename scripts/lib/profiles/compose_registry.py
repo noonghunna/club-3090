@@ -530,7 +530,7 @@ COMPOSE_REGISTRY = {
     "vllm/gemma-int8-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
         engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
-        tp=2, max_ctx=98304, max_num_seqs=4, mem_util=0.95,
+        tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml",
         default_port=8032, required_engine_features=["int8_per_token_head"],
         kvcalc_key="gemma-4-31b:gemma-dual-int8",

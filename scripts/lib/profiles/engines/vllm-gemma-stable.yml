@@ -1,11 +1,11 @@
 schema_version: 1
 id: vllm-gemma-stable
-display_name: vLLM Gemma stable v0.21.0
+display_name: vLLM Gemma stable v0.22.0
 type: vllm
 stability: stable
 install:
   method: docker_image
-  spec: vllm/vllm-openai:v0.21.0
+  spec: vllm/vllm-openai:v0.22.0
 min_sm: 7.5
 supported_model_families:
   - gemma4-swa-dense
@@ -35,18 +35,19 @@ vendored_overlays:
     upstream_status: filed
     upstream_merged_in_version: null
     local_status: vendored
-    purpose: "Gemma 4 per-token-head KV cache page-size support."
+    delivery: install_script   # diff-apply at boot (dir models/gemma-4-31b/vllm/patches/vllm-pr40391-v0.22.0)
+    purpose: "Gemma 4 per-token-head KV cache page-size support — the ONLY overlay still vendored. REBASED onto stock v0.22.0 (the v0.21.0-era full-module copies ImportError'd on v0.22.0: they lacked v0.22.0's get_kv_cache_spec_kind) and re-delivered as a ~240-line diff applied at boot, not 7 full-module mounts. Live-validated 2026-05-31 (int8_per_token_head KV inits, KV pool 447K @ 262K, coherent generation). Mounted by the int8 compose only."
   - id: vllm-gemma4-tool-parser-fixes
     pr_url: https://github.com/vllm-project/vllm/pull/42006
     upstream_status: filed
     upstream_merged_in_version: null
-    local_status: vendored
-    purpose: "Gemma 4 tool parser fixes for MTP streaming multi-tool output."
+    local_status: dropped
+    purpose: "Gemma 4 MTP streaming multi-tool output. DROPPED 2026-05-31 (maintainer call): bf16-mtp ships prod on v0.22.0 without it, so both gemma duals carry an identical minimal overlay surface. Re-test trigger tracked in docs/UPSTREAM.md."
   - id: vllm-pr41800-truncate-prompt-tokens
     pr_url: https://github.com/vllm-project/vllm/pull/41800
-    upstream_status: filed
-    upstream_merged_in_version: null
-    local_status: vendored
-    purpose: "truncate_prompt_tokens compatibility for OpenAI-compatible requests."
+    upstream_status: merged
+    upstream_merged_in_version: v0.22.0
+    local_status: dropped
+    purpose: "truncate_prompt_tokens compatibility. DROPPED 2026-05-31 — merged upstream 2026-05-06, present in stock v0.22.0 (and v0.21.0)."
 required_genesis: false
-notes: "Gemma 4 31B vLLM path pinned to immutable v0.21.0. Shared nightly profiles remain Qwen-owned; Gemma overlays are mounted by the int8 compose only. Single-card fp8 remains a maintainer live-check risk on Ampere."
+notes: "Gemma 4 31B vLLM path on immutable v0.22.0 (both gemma-bf16-mtp + gemma-int8-mtp). gemma-bf16-mtp rides stock (no overlays); gemma-int8-mtp mounts ONLY the #40391 per-head-KV overlay. fp8 KV is hardware-dead on Ampere sm_86 — int8_per_token_head is the only quantized-KV path (use bf16 otherwise)."

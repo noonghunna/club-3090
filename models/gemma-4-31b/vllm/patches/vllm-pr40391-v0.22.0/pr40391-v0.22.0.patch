@@ -1,0 +1,237 @@
+--- a/vllm/model_executor/layers/attention/attention.py
++++ b/vllm/model_executor/layers/attention/attention.py
+@@ -203,6 +203,7 @@
+         kv_sharing_target_layer_name: str | None = None,
+         attn_backend: type[AttentionBackend] | None = None,
+         head_size_v: int | None = None,
++        kv_cache_page_size_padded: int | None = None,
+         **extra_impl_args,
+     ) -> None:
+         """
+@@ -405,6 +406,7 @@
+                 compilation_config.static_forward_context,
+             )
+         self.kv_sharing_target_layer_name = kv_sharing_target_layer_name
++        self.kv_cache_page_size_padded = kv_cache_page_size_padded
+ 
+         # use a placeholder kv cache tensor during init, which will be replaced
+         # by bind_kv_cache
+@@ -581,6 +583,7 @@
+                 dtype=self.kv_cache_torch_dtype,
+                 kv_quant_mode=quant_mode,
+                 sliding_window=self.sliding_window,
++                page_size_padded=self.kv_cache_page_size_padded,
+             )
+         elif self.kv_cache_dtype.startswith("turboquant_"):
+             from vllm.model_executor.layers.quantization.turboquant.config import (
+@@ -598,6 +601,7 @@
+                 head_size_v=self.head_size,
+                 dtype=self.kv_cache_torch_dtype,
+                 tq_slot_size=tq_config.slot_size_aligned,
++                page_size_padded=self.kv_cache_page_size_padded,
+             )
+         else:
+             return FullAttentionSpec(
+@@ -607,6 +611,7 @@
+                 head_size_v=self.head_size_v,
+                 dtype=self.kv_cache_torch_dtype,
+                 kv_quant_mode=quant_mode,
++                page_size_padded=self.kv_cache_page_size_padded,
+             )
+ 
+ 
+--- a/vllm/model_executor/models/gemma4.py
++++ b/vllm/model_executor/models/gemma4.py
+@@ -436,6 +436,28 @@
+         self.is_sliding = layer_type == "sliding_attention"
+         sliding_window = config.sliding_window if self.is_sliding else None
+ 
++        # Gemma4 has hybrid attention with global (512) and local (256) layers.
++        # With per-token-head KV quantization, each head stores quantized data
++        # plus per-token scale metadata carved from the same raw KV allocation,
++        # so per-block page-size contributions differ between local/global
++        # layers.
++        #  - Local: (256*1)*2 + 8 = 520 bytes
++        #  - Global: (512*1)*2 + 8 = 1032 bytes
++        # We pad global to 1040 so hybrid page-size unification can use an
++        # integer ratio. Keep this constant to preserve current Gemma4 behavior.
++        kv_cache_page_size_padded = None
++        if (
++            cache_config is not None
++            and cache_config.cache_dtype
++            in ("int8_per_token_head", "fp8_per_token_head")
++            and self.head_dim == 512
++        ):
++            tp_size = get_tensor_model_parallel_world_size()
++            num_kv_heads_per_gpu = max(1, num_kv_heads // tp_size)
++            kv_cache_page_size_padded = (
++                cache_config.block_size * num_kv_heads_per_gpu * 1040
++            )
++
+         # Initialize RoPE based on layer type.
+         # Gemma4 uses different RoPE parameters for sliding vs full attention.
+         if layer_type in config.rope_parameters:
+@@ -499,6 +521,7 @@
+             logits_soft_cap=attn_logits_soft_cap,
+             per_layer_sliding_window=sliding_window,
+             kv_sharing_target_layer_name=kv_sharing_target_layer_name,
++            kv_cache_page_size_padded=kv_cache_page_size_padded,
+             prefix=f"{prefix}.attn",
+         )
+ 
+--- a/vllm/v1/core/kv_cache_utils.py
++++ b/vllm/v1/core/kv_cache_utils.py
+@@ -1043,7 +1043,7 @@
+                 )
+             ratio = max_page_size // layer_page_size
+             new_block_size = layer_spec.block_size * ratio
+-            new_spec = replace(layer_spec, block_size=new_block_size)
++            new_spec = layer_spec.copy_with_new_block_size(new_block_size)
+             assert new_spec.page_size_bytes == max_page_size
+             new_kv_cache_spec[layer_name] = new_spec
+     return new_kv_cache_spec
+--- a/vllm/v1/kv_cache_interface.py
++++ b/vllm/v1/kv_cache_interface.py
+@@ -148,6 +148,23 @@
+     kv_quant_mode: KVQuantMode = KVQuantMode.NONE
+     page_size_padded: int | None = None
+ 
++    def copy_with_new_block_size(self, block_size: int) -> Self:
++        """
++        Create a new KVCacheSpec from self but replacing the block size.
++        """
++        if self.page_size_padded is not None:
++            scaled_padded = self.page_size_padded * block_size
++            if scaled_padded % self.block_size != 0:
++                raise ValueError(
++                    "page_size_padded scaling must be divisible by original "
++                    f"block_size: page_size_padded={self.page_size_padded}, "
++                    f"old_block_size={self.block_size}, "
++                    f"new_block_size={block_size}"
++                )
++            new_padded = scaled_padded // self.block_size
++            return replace(self, block_size=block_size, page_size_padded=new_padded)
++        return super().copy_with_new_block_size(block_size)
++
+     @property
+     def page_size_bytes(self) -> int:
+         real_page_size = self.real_page_size_bytes
+--- a/vllm/v1/worker/gpu/attn_utils.py
++++ b/vllm/v1/worker/gpu/attn_utils.py
+@@ -22,6 +22,7 @@
+     MambaSpec,
+     UniformTypeKVCacheSpecs,
+ )
++from vllm.v1.worker.kv_cache_shape_utils import get_padded_attention_kv_cache_shape
+ from vllm.v1.worker.gpu.model_states.interface import ModelSpecificAttnMetadata
+ from vllm.v1.worker.utils import (
+     AttentionGroup,
+@@ -243,23 +244,29 @@
+                 dtype = kv_cache_spec.dtype
+                 kv_tensor = kv_raw_tensor.view(dtype)
+                 if kv_cache_spec.page_size_padded is not None:
+-                    # Use strided view to handle page_size_bytes that
+-                    # include padding. This follows the same pattern as
+-                    # MambaSpec handling in gpu_model_runner.py.
+-                    # NOTE: This assumes kv_cache_shape[0] == num_blocks
+-                    # (i.e. the first physical dimension is the block
+-                    # index), which holds for MLA backends but NOT for
+-                    # standard attention backends whose shape starts with
+-                    # a K/V dimension of size 2.
+-                    dtype_size = get_dtype_size(dtype)
+-                    page_stride = kv_cache_spec.page_size_bytes // dtype_size
+-                    strides = list(torch.empty(kv_cache_shape).stride())
+-                    strides[inv_order[0]] = page_stride
+-                    kv_cache = torch.as_strided(
+-                        kv_tensor,
+-                        size=kv_cache_shape,
+-                        stride=tuple(strides),
+-                    )
++                    # vLLM PR #40391: the strided view assumes kv_cache_shape[0]
++                    # == num_blocks, which holds for MLA backends but NOT for
++                    # standard attention backends (shape starts with a K/V dim
++                    # of size 2). Branch: MLA keeps the strided view; non-MLA
++                    # (e.g. Gemma4 TRITON_ATTN) restores the logical padded shape.
++                    if attn_backend.is_mla():
++                        dtype_size = get_dtype_size(dtype)
++                        page_stride = kv_cache_spec.page_size_bytes // dtype_size
++                        strides = list(torch.empty(kv_cache_shape).stride())
++                        strides[inv_order[0]] = page_stride
++                        kv_cache = torch.as_strided(
++                            kv_tensor,
++                            size=kv_cache_shape,
++                            stride=tuple(strides),
++                        )
++                    else:
++                        kv_cache_shape = get_padded_attention_kv_cache_shape(
++                            kv_cache_shape,
++                            num_blocks=num_blocks,
++                            padded_page_size_bytes=kv_cache_spec.page_size_padded,
++                            dtype=dtype,
++                        )
++                        kv_cache = kv_tensor.view(kv_cache_shape)
+                 else:
+                     # No padding — safe to use a contiguous view.
+                     kv_cache = kv_tensor.view(kv_cache_shape)
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -200,6 +200,10 @@
+ from vllm.v1.worker.gpu.pool.late_interaction_runner import LateInteractionRunner
+ from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
+ from vllm.v1.worker.gpu_ubatch_wrapper import UBatchWrapper
++from vllm.v1.worker.kv_cache_shape_utils import (
++    get_padded_attention_kv_cache_shape,
++    scale_padded_page_size,
++)
+ from vllm.v1.worker.kv_connector_model_runner_mixin import KVConnectorModelRunnerMixin
+ from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
+ from vllm.v1.worker.ubatch_utils import (
+@@ -6961,25 +6965,30 @@
+ 
+                     raw_tensor = kv_cache_raw_tensors[layer_name].view(dtype)
+                     if kv_cache_spec.page_size_padded is not None:
+-                        # Use strided view to handle page_size_bytes that
+-                        # include padding. This follows
+-                        # the same pattern as MambaSpec handling below.
+-                        # NOTE: This assumes kv_cache_shape[0] == num_blocks
+-                        # (i.e. the first physical dimension is the block
+-                        # index), which holds for MLA backends but NOT for
+-                        # standard attention backends whose shape starts with
+-                        # a K/V dimension of size 2.
+-                        dtype_size = get_dtype_size(dtype)
+-                        page_stride = kv_cache_spec.page_size_bytes // dtype_size
+-                        strides = list(torch.empty(kv_cache_shape).stride())
+-                        strides[inv_order[0]] = page_stride
+-                        kv_cache = torch.as_strided(
+-                            raw_tensor,
+-                            size=kv_cache_shape,
+-                            stride=tuple(strides),
+-                        )
++                        if attn_backend.is_mla():
++                            dtype_size = get_dtype_size(dtype)
++                            page_stride = kv_cache_spec.page_size_bytes // dtype_size
++                            strides = list(torch.empty(kv_cache_shape).stride())
++                            strides[inv_order[0]] = page_stride
++                            kv_cache = torch.as_strided(
++                                raw_tensor,
++                                size=kv_cache_shape,
++                                stride=tuple(strides),
++                            )
++                        else:
++                            padded_page_size = scale_padded_page_size(
++                                kv_cache_spec.page_size_padded,
++                                block_size=kv_cache_spec.block_size,
++                                target_block_size=kernel_block_size,
++                            )
++                            kv_cache_shape = get_padded_attention_kv_cache_shape(
++                                kv_cache_shape,
++                                num_blocks=kernel_num_blocks,
++                                padded_page_size_bytes=padded_page_size,
++                                dtype=dtype,
++                            )
++                            kv_cache = raw_tensor.view(kv_cache_shape)
+                     else:
+-                        # No padding — safe to use a contiguous view.
+                         kv_cache = raw_tensor.view(kv_cache_shape)
+                     kv_caches[layer_name] = kv_cache.permute(*inv_order)
+ 

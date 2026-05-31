@@ -557,35 +557,38 @@ patches:
   - id: gemma-vllm-pr40391-rebased
     model: [gemma-4-31b]
     files:
-      - models/gemma-4-31b/vllm/patches/vllm-pr40391-rebased
+      - models/gemma-4-31b/vllm/patches/vllm-pr40391-v0.22.0
     load_bearing_when:
       - composes:
           - vllm/gemma-int8-mtp
         reason: "Pads hybrid Gemma 4 per-token-head KV cache layout so INT8/PTH long context can boot."
-        evidence: "models/gemma-4-31b/vllm/patches/vllm-pr40391-rebased/README.md; BENCHMARKS.md#gemma-4-31b-community-experimental dual-int8.yml rows"
+        evidence: "models/gemma-4-31b/vllm/patches/vllm-pr40391-v0.22.0/README.md; BENCHMARKS.md#gemma-4-31b-community-experimental int8.yml rows"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
       dockerfile_bake: false
       entrypoint_invoke: true
       genesis: false
     delivery_gaps: []
-    delivery_mechanism: site_package_overlay
+    # 2026-05-31: re-delivered as a boot-time DIFF-APPLY (install_script) for the
+    # v0.21.0 → v0.22.0 pin bump, replacing the 7-file site_package_overlay (which
+    # vendored ~13K lines of v0.21.0-era vLLM source — it ImportError'd on v0.22.0
+    # because the stale full-module copies lacked v0.22.0's get_kv_cache_spec_kind).
+    # The lean form carries ONLY the ~240-line #40391 delta + the new helper file.
+    delivery_mechanism: install_script
     delivery_spec:
-      overlay_dir: models/gemma-4-31b/vllm/patches/vllm-pr40391-rebased
-      dest_root: /usr/local/lib/python3.12/dist-packages/vllm
-      file_count: 7
-      mount_mode: ro
-      wired_at: volumes
-      note: "pads hybrid Gemma 4 per-token-head KV layout; without it INT8/PTH long-context cannot boot"
+      script: models/gemma-4-31b/vllm/patches/vllm-pr40391-v0.22.0/install.sh
+      invoke: "boot-time: copies kv_cache_shape_utils.py + applies the ~240-line #40391 diff onto stock v0.22.0 (idempotent; fail-loud if the diff does not apply cleanly)"
+      invoked_before: vllm-import
+      wired_at: [volumes, entrypoint]
     drift_guard:
       kind: import-and-boot
-      check: "Gemma 4 INT8 per-token-head KV cache pages unify (get_padded_attention_kv_cache_shape present) on selected nightly"
+      check: "Gemma 4 INT8 per-token-head KV cache pages unify (get_padded_attention_kv_cache_shape present) on the pinned v0.22.0 image"
       on_fail: hard-refuse   # foundational: INT8/PTH composes will not boot without it
     capability: gemma4-int8-pth-kv
     foundational: true
     upstream:
       ref: vllm-project/vllm#40391
       status: open-rebased-local
-      drop_when: "merged into selected nightly and verified on Gemma 4 long-context stress"
+      drop_when: "merged into the pinned release and verified on Gemma 4 long-context stress"
     status: verified
 
   - id: gemma-a4b-vllm-pr40886-awq-moe-keys
