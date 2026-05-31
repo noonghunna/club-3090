@@ -42,7 +42,7 @@ services:
   vllm-gemma-4-26b-a4b-awq-tp2:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-gemma-4-26b-a4b-awq-tp2}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${ESTATE_PORT:-${PORT:-8042}}:8000"
     volumes:

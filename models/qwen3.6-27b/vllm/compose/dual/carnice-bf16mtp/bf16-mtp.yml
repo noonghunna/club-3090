@@ -57,7 +57,7 @@ services:
   vllm-carnice-bf16mtp:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-carnice-bf16mtp}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8070}}:8000"
     volumes:
