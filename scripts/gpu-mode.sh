@@ -330,83 +330,8 @@ mode_27b() {
     echo -e "${YELLOW}Tail: sudo docker logs -f vllm-qwen36-27b-dual${NC}"
 }
 
-mode_27b_dflash() {
-    echo -e "${CYAN}═══ Switching to 27B DFlash mode (with vision) ═══${NC}"
-    echo "Starting: Qwen3.6-27B DFlash N=5 + 185K + vision (TP=2, single stream)"
-    echo "Port: 8012 | Container: vllm-qwen36-27b-dual-dflash"
-    echo "Stopping: Ollama, other 27B variants"
-    echo ""
-    stop_service ollama
-    stop_all_gemma
-    stop_comfyui
-    stop_27b_dual_mtp
-    stop_27b_dual_dflash_noviz
-    stop_27b_dual_turbo
-    start_27b_dual_dflash
-    start_service litellm
-    start_service qdrant
-    start_service openwebui
-    start_service searxng
-    echo ""
-    echo -e "${GREEN}27B DFlash mode active.${NC} API: http://192.168.86.33:8012"
-    echo -e "${YELLOW}78 narr / 128 code TPS single-stream — fastest single-user with vision.${NC}"
-    echo -e "${YELLOW}185K ctx + vision + tools. Single concurrent stream (KV pool 66,912 tokens).${NC}"
-    echo -e "${YELLOW}Requires --dtype bfloat16 (vLLM PR #40334 workaround). Boot ~5-6 min.${NC}"
-    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-qwen36-27b-dual-dflash${NC}"
-}
-
-mode_27b_dflash_noviz() {
-    echo -e "${CYAN}═══ Switching to 27B DFlash mode (text-only, max ctx) ═══${NC}"
-    echo "Starting: Qwen3.6-27B DFlash N=5 + 200K, no vision (TP=2, single stream)"
-    echo "Port: 8013 | Container: vllm-qwen36-27b-dual-dflash-noviz"
-    echo "Stopping: Ollama, other 27B variants"
-    echo ""
-    stop_service ollama
-    stop_all_gemma
-    stop_comfyui
-    stop_27b_dual_mtp
-    stop_27b_dual_dflash
-    stop_27b_dual_turbo
-    start_27b_dual_dflash_noviz
-    start_service litellm
-    start_service qdrant
-    start_service openwebui
-    start_service searxng
-    echo ""
-    echo -e "${GREEN}27B DFlash text-only mode active.${NC} API: http://192.168.86.33:8013"
-    echo -e "${YELLOW}77 narr / 124 code TPS single-stream. 200K ctx (no vision tower → +15K vs vision variant).${NC}"
-    echo -e "${YELLOW}Use when ctx > vision: long codebases, large RAG. Boot ~5-6 min.${NC}"
-    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-qwen36-27b-dual-dflash-noviz${NC}"
-}
-
-mode_27b_turbo() {
-    echo -e "${CYAN}═══ Switching to 27B TurboQuant mode (MTP + 4-stream + 262K) ═══${NC}"
-    echo "Starting: Qwen3.6-27B TurboQuant_3bit_nc + MTP n=3 + Genesis v7.14 (TP=2)"
-    echo "Port: 8011 | Container: vllm-qwen36-27b-dual-turbo"
-    echo "Stopping: Ollama, other 27B variants"
-    echo ""
-    stop_service ollama
-    stop_all_gemma
-    stop_comfyui
-    stop_27b_dual_mtp
-    stop_27b_dual_dflash
-    stop_27b_dual_dflash_noviz
-    start_27b_dual_turbo
-    start_service litellm
-    start_service qdrant
-    start_service openwebui
-    start_service searxng
-    echo ""
-    echo -e "${GREEN}27B TurboQuant mode active.${NC} API: http://192.168.86.33:8011"
-    echo -e "${YELLOW}58 narr / 69 code TPS per-stream. 262K ctx + 4-stream concurrency (KV pool 1.5M tokens, 9× fp8).${NC}"
-    echo -e "${YELLOW}Use for multi-agent serving at long ctx. Vision + tools + thinking + recall all working.${NC}"
-    echo -e "${YELLOW}Per-stream slower than fp8 default (P65 cudagraph downgrade); aggregate higher at ≥3 streams.${NC}"
-    echo -e "${YELLOW}Boot ~6-8 min (Genesis apply + compile + cudagraph capture).${NC}"
-    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-qwen36-27b-dual-turbo${NC}"
-}
-
 mode_gemma() {
-    echo -e "${CYAN}═══ Switching to Gemma 4 31B MTP mode (default) ═══${NC}"
+    echo -e "${CYAN}═══ Switching to Gemma 4 31B MTP mode (bf16 fallback) ═══${NC}"
     echo "Starting: Gemma 4 31B (Intel AutoRound INT4) + MTP n=3 + bf16 KV + 32K + vision (TP=2)"
     echo "Port: 8030 | Container: vllm-gemma-4-31b-mtp"
     echo "Stopping: Ollama, all 27B Qwen variants, other Gemma variants"
@@ -422,7 +347,7 @@ mode_gemma() {
     echo ""
     echo -e "${GREEN}Gemma 4 31B MTP mode active.${NC} API: http://192.168.86.33:8030"
     echo -e "${YELLOW}109 narr / 141 code TPS (AL 3.05 / 3.99). 32K ctx (BF16 ceiling).${NC}"
-    echo -e "${YELLOW}For 262K ctx use 'gemma-int8' (INT8 PTH KV). Boot ~2-3 min.${NC}"
+    echo -e "${YELLOW}For 262K ctx use 'gemma' (the default — INT8 PTH KV). Boot ~2-3 min.${NC}"
     echo -e "${YELLOW}Tail: sudo docker logs -f vllm-gemma-4-31b-mtp${NC}"
 }
 
@@ -447,7 +372,7 @@ mode_gemma_dflash() {
 }
 
 mode_gemma_int8() {
-    echo -e "${CYAN}═══ Switching to Gemma 4 31B INT8-PTH mode (long ctx) ═══${NC}"
+    echo -e "${CYAN}═══ Switching to Gemma 4 31B INT8-PTH mode (dual default, long ctx) ═══${NC}"
     echo "Starting: Gemma 4 31B + INT8 PTH KV + 262K ctx (TP=2, :8032)"
     echo ""
     stop_service ollama
@@ -594,13 +519,11 @@ usage() {
     echo ""
     echo "  Qwen 3.6 27B (dual 3090, TP=2):"
     echo "  27b                ⭐ DEFAULT — Qwen3.6-27B MTP + fp8 + 262K + vision + 2 streams (:8010)"
-    echo "  27b-turbo          Qwen3.6-27B TurboQuant_3bit_nc + MTP + v7.14 + 262K + 4-stream concurrency (:8011)"
-    echo "  27b-dflash         Qwen3.6-27B DFlash + 185K + vision (:8012, 1 stream — fastest with vision)"
-    echo "  27b-dflash-noviz   Qwen3.6-27B DFlash + 200K, no vision (:8013, 1 stream — fastest max ctx)"
     echo ""
     echo "  Gemma 4 31B (dual 3090, TP=2):"
-    echo "  gemma              Gemma 4 31B + MTP n=3 + bf16 KV + 32K + vision (:8030)"
-    echo "  gemma-int8         Gemma 4 31B + INT8 PTH KV + 98K ctx default (:8032; CTX=262144 MAX_NUM_SEQS=1 for native ctx)"
+    echo "  gemma              ⭐ DEFAULT — Gemma 4 31B INT8 PTH KV + 262K + vision (:8032)"
+    echo "  gemma-int8         alias for 'gemma' (INT8 PTH KV; 98K default, CTX=262144 MAX_NUM_SEQS=1 for native 262K)"
+    echo "  gemma-mtp          bf16 KV fallback — 32K, stock vLLM v0.22.0, no overlay (:8030)"
     echo ""
     echo "  Image / Video Gen (mutex with all LLM modes — GPU-bound):"
     echo "  comfyui            ComfyUI :8188 (FLUX, HunyuanVideo, Wan2.2-Animate)"
@@ -618,11 +541,9 @@ usage() {
 case "${1:-}" in
     chat)               mode_chat ;;
     27b)                mode_27b ;;
-    27b-turbo)          mode_27b_turbo ;;
-    27b-dflash)         mode_27b_dflash ;;
-    27b-dflash-noviz)   mode_27b_dflash_noviz ;;
-    gemma)              mode_gemma ;;
+    gemma)              mode_gemma_int8 ;;
     gemma-int8)         mode_gemma_int8 ;;
+    gemma-mtp)          mode_gemma ;;
     comfyui)            mode_comfyui ;;
     bigmodel)           mode_bigmodel ;;
     off)                mode_off ;;
