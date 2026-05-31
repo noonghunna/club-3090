@@ -547,12 +547,27 @@ COMPOSE_REGISTRY = {
     "beellama/gemma-dflash": _entry(
         model="gemma-4-31b", weights_variant="beellama-q4ks-dflash", workload="fast-chat",
         engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
-        tp=1, max_ctx=102400, max_num_seqs=1, mem_util=None,
+        tp=1, max_ctx=128000, max_num_seqs=1, mem_util=None,
         compose_path="models/gemma-4-31b/beellama/compose/single/beellama-q4ks-dflash/dflash.yml",
         default_port=8061,
         kvcalc_key="SKIP",
         status="caveats",
         status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
+    ),
+    # Dual-card beellama Gemma-4 (layer-split, 262K) — PARKED upstream-gated 2026-05-31.
+    # Boots + recalls 262K fine, but DFlash spec-dec is broken on multi-GPU in our pinned
+    # build (07ac3ce): drafter decode fails, accept 0.357, ~24/38 TPS; --device-draft crashes.
+    # Fixes live on Anbeeld's v0.3.0 dev branch (414 commits ahead) but no tagged release yet.
+    # Re-test (DFlash-fix AND --spec-type mtp) when a beellama release lands. docs/UPSTREAM.md.
+    "beellama/gemma-dflash-dual": _entry(
+        model="gemma-4-31b", weights_variant="beellama-q4ks-dflash", workload="fast-chat",
+        engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/gemma-4-31b/beellama/compose/dual/beellama-q4ks-dflash/dflash.yml",
+        default_port=8062,
+        kvcalc_key="SKIP",
+        status="upstream-gated",
+        status_note="Dual-card beellama Gemma-4 (layer-split, 262K). PARKED: works (262K recall, verify-full 8/8, ~7.5 GB free/card) but DFlash degrades on multi-GPU (Anbeeld #39/#28/#38) — accept 0.357, ~24/38 TPS, --device-draft crashes — in our pinned build 07ac3ce. Dominated by vllm/gemma-int8 (~96/127 @ 262K) regardless. Re-test trigger: beellama tags a release with the v0.3.0 multi-GPU DFlash fixes; then also try --spec-type mtp (runtime, no compile flag) + the radamanthys-assistant GGUF. See compose Caveats + docs/UPSTREAM.md.",
     ),
 
     # v0.7.3 MoE onboarding — Gemma 4 26B-A4B + Qwen 3.6 35B-A3B.

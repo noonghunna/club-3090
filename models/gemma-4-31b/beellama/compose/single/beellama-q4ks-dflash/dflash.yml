@@ -7,22 +7,34 @@
 #   KV:        q5_0 K + q4_1 V (Anbeeld's long-ctx precision default)
 #   Vision:    no (mmproj NOT mounted; for vision pass MMPROJ_FILE + --mmproj — CPU-offloaded)
 #   Template:  native (GGUF-embedded) via --jinja
-#   Max ctx:   102400 default (Anbeeld's 24 GB-safe value; ~131K comfy / ~140-200K
-#              on a pressure-free single 3090 — see beellama.cpp/docs/quickstart-gemma-4-31b-dflash.md
-#              and learnings/gemma-4-31b.md "beellama DFlash" — 131K @ 21.8 GB / 200K @ 23.65 GB redline).
+#   Max ctx:   128000 default. NOTE: beellama's own docs advise ~140-200K on a
+#              "pressure-free" single 3090 — but on this 24 GB card under realistic load
+#              that FAILS: verify-stress's ceiling ladder OOMs 140K at ~125K fill (engine
+#              crash; real wall ~95K with the 140K KV pool). 128K is the highest ctx that
+#              PASSES NIAH — recalls cleanly to 117K (91% fill) — but with a KNOWN CAVEAT:
+#              VRAM margin at the ceiling is VERY THIN (~177 MB free, under the 1 GB
+#              agent-safety bar — see Caveats). For full agent/long-session headroom set
+#              CTX_SIZE=102400 (~1.1 GB margin, gate-clean). (validated 2026-05-31; see
+#              learnings/gemma-4-31b.md "beellama DFlash".)
 #              beellama is the only single-card engine that does Gemma-4 SWA windowed KV
 #              (big ctx) AND Gemma-4 spec-dec — ik-llama walls ~24K, mainline is ~10 TPS.
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
 #   Status:    ⚠️ Production w/ caveats
 #   Caveats:   single-GPU DEFAULT for Gemma-4-31B — the ONLY viable fast single-card
 #              Gemma-4 path (vLLM FA-walled at head_dim=512, ik-llama walls ~24K, stock
-#              llama.cpp ~12 TPS). Validated #441 (131-200K ctx, 47/88 TPS). Caveats:
-#              (1) Defaults to our UNOFFICIAL multi-arch image
+#              llama.cpp ~12 TPS). Validated #441 + verify-full 8/8. Caveats:
+#              (1) THIN VRAM MARGIN at the 128K default — NIAH recalls to 117K but only
+#              ~177 MB free at the ceiling, so verify-stress fails its 1 GB margin check
+#              (this is why the config is ⚠️ caveats, not ✅). Agents / long sessions carry
+#              ~+292 MB cache+checkpoint overhead and CAN OOM at high fill — set
+#              CTX_SIZE=102400 for full headroom (~1.1 GB margin, gate-clean). 140K
+#              (beellama-advised) is rejected: OOMs at ~125K under load (real wall ~95K).
+#              (2) Defaults to our UNOFFICIAL multi-arch image
 #              ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120 =
 #              3090/4090/5090; MIT build of Anbeeld/beellama.cpp). sm_89/sm_120 are
 #              compiled but UNVALIDATED — only sm_86/3090 verified on club-3090's rig;
 #              4090/5090 users please report via numbers-from-your-rig.
-#              (2) Community fork chain, no official upstream Docker yet; re-point to
+#              (3) Community fork chain, no official upstream Docker yet; re-point to
 #              mainline llama.cpp#23398 (Gemma-4 MTP) when it merges — docs/UPSTREAM.md.
 #              Override BEELLAMA_IMAGE= to pin another build.
 #   Quality:   toolcall-15 12/15 · instructfollow-15 14/15 · structoutput-15 13/15 ·
@@ -69,7 +81,7 @@
 #   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
 #   GGUF_FILE             target GGUF under /models   (default: …unsloth-q4ks/gemma-4-31B-it-Q4_K_S.gguf)
 #   DRAFT_FILE            DFlash draft GGUF under /models (default: …anbeeld-dflash-iq4xs/gemma4-31b-it-dflash-IQ4_XS.gguf)
-#   CTX_SIZE              KV pool size                (default: 102400 — 24 GB-safe; ~131K comfy if VRAM is free)
+#   CTX_SIZE              KV pool size                (default: 128000 — recalls to 117K but THIN VRAM margin; set 102400 for agent headroom)
 #   BATCH_SIZE            llama.cpp -b                (default: 2048)
 #   UBATCH_SIZE           llama.cpp -ub               (default: 512 — prefill speed)
 #   KV_TYPE_K             K cache quant               (default: q5_0)
@@ -102,7 +114,7 @@ services:
       --spec-dflash-cross-ctx ${CROSS_CTX:-1024}
       -ngl all
       --spec-draft-ngl all
-      --ctx-size ${CTX_SIZE:-102400}
+      --ctx-size ${CTX_SIZE:-128000}
       -b ${BATCH_SIZE:-2048}
       -ub ${UBATCH_SIZE:-512}
       -np ${NP:-1}
