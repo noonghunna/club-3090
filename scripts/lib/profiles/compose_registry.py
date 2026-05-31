@@ -510,8 +510,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/vllm/compose/single/autoround-int4/fp8-mtp.yml",
         default_port=8031, required_sm=9.0,
         kvcalc_key="gemma-4-31b:gemma-single",
-        status="upstream-gated",
-        status_note="Boot-OOMs on Ampere 24 GB; needs 32 GB+ GPU or Ampere-aware fp8 dispatch. See compose Caveats.",
+        status="deprecated",
+        status_note="Dead on Ampere: no fp8 KV path for Gemma 4 on sm_86 (attention asserts kv ∈ {fp8,fp8_e4m3,nvfp4} — rejects fp8_e5m2; fp8/fp8_e4m3 need the fp8e4nv kernel sm_86 lacks; nvfp4 Blackwell-only). Live-confirmed stock v0.22.0 2026-05-31. Single-card → beellama/gemma-dflash; dual → vllm/gemma-mtp. See compose Caveats.",
     ),
     "vllm/gemma-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
@@ -623,7 +623,9 @@ DEFAULTS = {
     ("qwen3.6-27b", "llamacpp", "single"): "llamacpp/default",
     ("qwen3.6-27b", "ik-llama", "single"): "ik-llama/iq4ks-mtp",
     ("qwen3.6-27b", "beellama", "single"): "beellama/dflash",
-    ("gemma-4-31b", "vllm", "single"): "vllm/gemma-mtp-tp1",
+    # No vLLM single-card Gemma default: fp8 KV is hardware-impossible on Ampere
+    # sm_86 (vllm/gemma-mtp-tp1 deprecated 2026-05-31) and no bf16 single compose
+    # ships. Single-card Gemma → beellama/gemma-dflash (the curated walk picks it).
     ("gemma-4-31b", "beellama", "single"): "beellama/gemma-dflash",
     ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-mtp",
     ("gemma-4-26b-a4b", "vllm", "single"): "vllm/gemma-a4b-single",

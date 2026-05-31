@@ -1,16 +1,24 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Gemma 4 31B (Intel AutoRound INT4)
-#   Topology:  Single 3090 (TP=1) — ⚠️ BOOT-OOMs on 24 GB Ampere; for 32 GB+ only
+#   Topology:  Single 3090 (TP=1)
 #   Drafter:   MTP n=3 (Google's official `gemma-4-31B-it-assistant`)
-#   KV:        bfloat16 (fp8 dispatch blocked on Ampere — Triton fp8e4nv unsupported on sm_86)
-#   Vision:    yes
-#   Max ctx:   ~16K (theoretical) — boot fails before serving on 24 GB
+#   KV:        fp8_e4m3 (intended) — no fp8 KV path exists for Gemma 4 on Ampere
+#   Vision:    no (image=0)
+#   Max ctx:   8K (config) — never reaches serving on sm_86
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    ⏸️ Upstream-gated
-#   Caveats:   Boot-OOMs on Ampere 24 GB regardless of KV format (weights+drafter+profiling at 8K ctx leaves no KV pool). Compose preserved for 32 GB+ GPUs (RTX 5090 32 GB validated by @apnar disc #67 — 160/215 TPS at 32K MTP). Re-evaluate when (a) vLLM adds Ampere-aware fp8 dispatch OR (b) PR #41745-style relaxation lands.
-#   Best for:  Single-card 32 GB+ GPUs (RTX 5090 32 GB validated by @apnar disc #67)
-#              For 24 GB Ampere, use dual.yml (dual-card) instead.
+#   Status:    🗑️ Deprecated
+#   Caveats:   DEAD ON AMPERE — there is no fp8 KV path for Gemma 4 on sm_86, so this
+#              single-card vLLM config cannot boot on this rig (live-confirmed on stock
+#              v0.22.0, 2026-05-31): gemma4 attention asserts kv_cache_dtype ∈ {fp8,
+#              fp8_e4m3, nvfp4} (attention.py:439 — rejects fp8_e5m2), while fp8/fp8_e4m3
+#              dispatch to the fp8e4nv Triton kernel sm_86 doesn't implement, and nvfp4
+#              is Blackwell-only. bf16 KV would boot but is strictly dominated by the
+#              single-card default beellama/gemma-dflash (200K vs ~8–32K). For long-ctx
+#              Gemma on vLLM use the int8_per_token_head path in vllm/gemma-int8 (dual).
+#              Kept for history; recover from git for a 32 GB+ non-Ampere single-card.
+#   Best for:  nothing on this rig — use beellama/gemma-dflash (single) or
+#              vllm/gemma-mtp (dual).
 # ---------------------------------------------------------------------------
 # Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter
 # Single-card TP=1 + bfloat16 KV — preserved for 32 GB+ GPUs (5090, A6000).

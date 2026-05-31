@@ -862,7 +862,14 @@ suggest_default_variant() {
       echo "llamacpp/default"
     fi
   else
-    if (( cards >= 2 )); then echo "vllm/gemma-mtp"; else echo "vllm/gemma-mtp-tp1"; fi
+    if (( cards >= 2 )); then
+      echo "vllm/gemma-mtp"
+    else
+      # Single card: beellama/gemma-dflash is the recommended Gemma-4 path — the
+      # only viable fast single-card config on Ampere. vLLM single-card is dead
+      # here (no fp8 KV path on sm_86; the old vllm/gemma-mtp-tp1 was deprecated).
+      echo "beellama/gemma-dflash"
+    fi
   fi
 }
 

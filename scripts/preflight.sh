@@ -190,6 +190,8 @@ _preflight_hardware_suggestions() {
   echo "[preflight] Suggested next steps:" >&2
   echo "[preflight]   - Pick a compose that matches the detected GPU VRAM/topology." >&2
   if [[ "$variant" == vllm/gemma-mtp-tp1 ]]; then
+    echo "[preflight]   - vllm/gemma-mtp-tp1 is DEPRECATED (no fp8 KV path for Gemma 4 on Ampere sm_86)." >&2
+    echo "[preflight]   - Single 24 GB card, use:  bash scripts/switch.sh beellama/gemma-dflash" >&2
     echo "[preflight]   - On 2x 24 GB cards, use:  bash scripts/switch.sh vllm/gemma-mtp" >&2
   fi
   echo "[preflight]   - On a single 24 GB card, start with:  bash scripts/switch.sh vllm/default" >&2
