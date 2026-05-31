@@ -8,6 +8,12 @@
 #   Max ctx:   262K native default (dual-card max-ctx rule) @ 4-stream cap; INT8 PTH pool ~2× BF16
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    ✅ Production
+#   Quality:   105/150 (70%) thinking-OFF default — det 59/75 · sandbox 46/75
+#                TC 13/15 · IF 8/15 · SO 14/15 · DE 10/15 · RM 14/15 · BF 13/15 · HA 14/20 · CLI 19/40
+#                (--full, v0.22.0, 2026-05-31). Reasoning-ON A/B (with --reasoning-parser gemma4) = 107/150
+#                — a WASH (+2, within ±5-7 8-pack noise: IF+6/BF+2 offset by RM-2/HA-2/DE-1/CLI-1) at higher
+#                latency, so thinking-off stays the default; reasoning-on is a clean opt-in. Soak (continuous)
+#                PASS: 0 errors, 0 VRAM growth, 100% TPS retention, p50 87.96 TPS.
 #   Best for:  Gemma 4 dual-card default — full 262K ctx + vision + 4 streams ⭐
 #              (stable-but-131K alternative without the overlay: vllm/gemma-bf16-mtp)
 # ---------------------------------------------------------------------------
