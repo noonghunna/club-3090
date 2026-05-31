@@ -11,9 +11,11 @@
 #   Status:    ✅ Production
 #   Quality:   126/150 (84%) — det 56/75 (75%) · sandbox 70/75 (93%, v0.4 shape-check) (--full, 2026-05-09)
 #                TC 60% · IF 87% · SO 87% · DE 100% · RM 40% · BF 100% · HA 100% · CLI 88%
-#   Best for:  Gemma 4 dual-card STABLE long-ctx (stock v0.22.0, no overlay, 131K) — vision + tools.
+#   Best for:  Gemma 4 dual-card STABLE long-ctx (stock v0.22.0 KV, 131K) — vision + tools.
 #              The dual default is vllm/gemma-int8-mtp (native 262K); use this when you want
-#              to stay on stable with NO vendored overlay and 131K ctx is enough.
+#              the stable bf16 KV path (no #40391 per-head-KV overlay) and 131K ctx is enough.
+#              Carries ONE small overlay: the #42006 streaming multi-tool-call fix (both duals
+#              share it — stock v0.22.0 drops non-last tool-call args when streaming).
 # ---------------------------------------------------------------------------
 # Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter
 # 2× RTX 3090 TP=2 + bfloat16 KV + 32K ctx + 4 streams.
@@ -70,6 +72,11 @@ services:
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
       # PR #41745 overlay dropped 2026-05-08: merged upstream + nightly contains it.
+      # vLLM PR #42006 — Gemma 4 MTP streaming multi-tool-call fix (lean diff-apply).
+      # Stock v0.22.0 drops the args of all-but-the-last tool call in a STREAMED
+      # multi-tool response (live-confirmed 2026-05-31). The ONLY overlay this
+      # compose carries. Drop when #42006 merges. See the dir's README.
+      - ../../../patches/vllm-pr42006-v0.22.0:/etc/club3090/pr42006:ro
       # NVLink auto-detection — runs inside container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
     environment:
@@ -100,6 +107,8 @@ services:
       - /bin/bash
       - -c
       - |
+        # vLLM PR #42006 (Gemma 4 streaming multi-tool-call fix) — apply before import.
+        bash /etc/club3090/pr42006/install.sh
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
         if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then

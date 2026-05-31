@@ -41,8 +41,9 @@ vendored_overlays:
     pr_url: https://github.com/vllm-project/vllm/pull/42006
     upstream_status: filed
     upstream_merged_in_version: null
-    local_status: dropped
-    purpose: "Gemma 4 MTP streaming multi-tool output. DROPPED 2026-05-31 (maintainer call): bf16-mtp ships prod on v0.22.0 without it, so both gemma duals carry an identical minimal overlay surface. Re-test trigger tracked in docs/UPSTREAM.md."
+    local_status: vendored
+    delivery: install_script   # single-file diff-apply at boot (dir vllm-pr42006-v0.22.0); carried by BOTH duals
+    purpose: "Gemma 4 MTP streaming multi-tool-call fix. Briefly dropped 2026-05-31 on a 'minimal surface' call, then RE-INSTATED on BOTH duals the same day once the bug was reproduced live on stock v0.22.0 (a streamed 2+ tool-call response drops the args of every call except the last; non-streaming is fine). Rebased to a ~210-line single-file diff (the formerly-stacked #41991 is now in stock v0.22.0 → dropped)."
   - id: vllm-pr41800-truncate-prompt-tokens
     pr_url: https://github.com/vllm-project/vllm/pull/41800
     upstream_status: merged
@@ -50,4 +51,4 @@ vendored_overlays:
     local_status: dropped
     purpose: "truncate_prompt_tokens compatibility. DROPPED 2026-05-31 — merged upstream 2026-05-06, present in stock v0.22.0 (and v0.21.0)."
 required_genesis: false
-notes: "Gemma 4 31B vLLM path on immutable v0.22.0 (both gemma-bf16-mtp + gemma-int8-mtp). gemma-bf16-mtp rides stock (no overlays); gemma-int8-mtp mounts ONLY the #40391 per-head-KV overlay. fp8 KV is hardware-dead on Ampere sm_86 — int8_per_token_head is the only quantized-KV path (use bf16 otherwise)."
+notes: "Gemma 4 31B vLLM path on immutable v0.22.0 (both gemma-bf16-mtp + gemma-int8-mtp). Both carry the #42006 streaming-multi-tool-call fix (lean diff-apply); gemma-int8-mtp ALSO carries the #40391 per-head-KV overlay (its 262K KV path). fp8 KV is hardware-dead on Ampere sm_86 — int8_per_token_head is the only quantized-KV path (use bf16 otherwise)."

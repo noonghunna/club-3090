@@ -122,6 +122,9 @@ services:
       # vllm-pr40391-rebased/ approach). Drop the whole dir when #40391 merges.
       # See ../../../patches/vllm-pr40391-v0.22.0/README.md.
       - ../../../patches/vllm-pr40391-v0.22.0:/etc/club3090/pr40391:ro
+      # vLLM PR #42006 — Gemma 4 MTP streaming multi-tool-call fix (both duals
+      # carry it; stock v0.22.0 drops non-last tool-call args when streaming).
+      - ../../../patches/vllm-pr42006-v0.22.0:/etc/club3090/pr42006:ro
       # NVLink auto-detection — runs inside container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # --------------------------------------------------------------------
@@ -163,6 +166,8 @@ services:
         # stock v0.22.0 BEFORE vllm imports. Fail-loud: a non-zero exit aborts
         # boot rather than serving a half-patched engine.
         bash /etc/club3090/pr40391/install.sh
+        # vLLM PR #42006 (Gemma 4 streaming multi-tool-call fix).
+        bash /etc/club3090/pr42006/install.sh
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
         if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then
