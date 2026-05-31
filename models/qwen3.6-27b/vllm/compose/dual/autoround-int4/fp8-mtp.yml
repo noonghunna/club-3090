@@ -61,7 +61,7 @@ services:
     # means no patch overlays are anchored here, so we ride stable releases.
     # Bump the tag to a newer stable after a verify-stress + soak gate.
     # Override with VLLM_IMAGE=... if you need a specific build.
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.21.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual}"
     restart: "no"
     ports:

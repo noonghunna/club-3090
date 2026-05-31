@@ -38,7 +38,7 @@
 # Tensor-parallel: 1
 services:
   vllm-qwen36-27b-minimal:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-minimal}"
     restart: "no"
     ports:
@@ -50,15 +50,10 @@ services:
       # Closes club-3090 #22.
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
-      # vLLM PR #35936 required-tool fallback (drop when upstream lands).
-      # vLLM PR #35936 required-tool fallback — sidecar pattern (drop when upstream lands).
-      # Bind-mounted at side paths so install.sh can copy into vLLM's site-packages
-      # BEFORE Genesis runs — avoids the RO-mount conflict with Genesis P64/P68/P69
-      # which write to chat_completion/serving.py at vllm-import time. See
-      # patches/vllm-pr35936-required-fallback/install.sh + README.md.
-      - ../../../patches/vllm-pr35936-required-fallback/vllm/entrypoints/openai/chat_completion/serving.py:/etc/club3090/pr35936-chat-completion-serving.py:ro
-      - ../../../patches/vllm-pr35936-required-fallback/vllm/entrypoints/openai/engine/serving.py:/etc/club3090/pr35936-engine-serving.py:ro
-      - ../../../patches/vllm-pr35936-required-fallback/install.sh:/etc/club3090/install-pr35936.sh:ro
+      # (vLLM PR #35936 required-tool-fallback overlay dropped 2026-05-31 with the
+      # move to stable v0.22.0 — its serving.py did `import vllm.beam_search`, removed
+      # in newer vLLM, so it crashes on v0.22.0; the bug it patched doesn't trip on
+      # current stable. See docs/UPSTREAM.md #35936.)
       # froggeric/Qwen-Fixed-Chat-Templates qwen3.6 — fixes 7 default-template
       # bugs (empty <think></think> spam, </thinking> hallucination, unclosed
       # think before tool call, no-user-query crash, developer role, etc.).
@@ -94,8 +89,6 @@ services:
       - |
         # VLLM_ENFORCE_EAGER=1 in .env disables CUDA graphs — use on
         # hardware where graph capture causes OOM or instability (e.g. WSL2).
-        # Install PR #35936 overlay before vllm imports (drop when upstream lands).
-        bash /etc/club3090/install-pr35936.sh
         exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
       - --
     command:
