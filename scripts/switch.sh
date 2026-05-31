@@ -40,15 +40,15 @@
 #     vllm/minimal            32K + fp8 (no Genesis, no spec-decode, simplest)
 #
 #   Dual-card vLLM (TP=2):
-#     vllm/dual             262K + fp8 + 2 streams + vision (recommended dual)
+#     vllm/dual             262K + fp8 + 2 streams + vision (Qwen dual default)
 #     vllm/dual4            262K + fp8 + 4 streams + vision (4× 3090 PCIe baseline)
 #     vllm/dual4-dflash     262K + FP16 + DFlash N=5 + 2 streams + vision (4× 3090 code)
-#     vllm/dual-turbo       262K + TQ3 + 4 streams + vision (multi-tenant)
-#     vllm/dual-dflash      185K + FP16 + DFlash N=5 + vision (peak code TPS)
-#     vllm/dual-dflash-noviz 200K + FP16 + DFlash N=5 + no vision (peak code, max ctx)
 #     (NVLink is auto-detected at boot by every dual compose — no separate
 #      nvlink-* variant. Force it with NVLINK_MODE=force_on if auto-detect misses.)
-#     vllm/gemma-mtp        Gemma-4-31B + Google MTP drafter (32K, bf16 KV, vision — community/experimental, pre-merge)
+#     vllm/gemma-int8       Gemma-4-31B dual default — 262K + INT8 KV + vision (v0.21.0 + #40391 overlay)
+#     vllm/gemma-mtp        Gemma-4-31B stable fallback — 32K + bf16 KV + vision (stock v0.22.0, no overlay)
+#     (other Qwen dual variants — dflash / tq3 / bf16 / int8 — were deprecated
+#      2026-05-31; see `switch.sh --list --all`.)
 #
 #   Single-card llama.cpp:
 #     llamacpp/default      alias for llamacpp/mtp (Q4_K_M MTP, no vision)

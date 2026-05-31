@@ -7,8 +7,9 @@
 #   Vision:    yes
 #   Max ctx:   185K
 #   Genesis:   none — DFlash drafter handles spec-decode independently
-#   Status:    ✅ Production
-#   Best for:  Peak code TPS with vision (AL ~4.4 vs MTP's 3.4) ⭐
+#   Status:    🗑️ Deprecated
+#   Caveats:   Pruned 2026-05-31 — superseded by vllm/dual (fp8 262K + vision + MTP, stock v0.22.0). DFlash traded ctx/concurrency (185K, 1 stream) for code TPS; recover from git if a clear demand returns.
+#   Best for:  (deprecated — was: peak code TPS with vision, AL ~4.4)
 # ---------------------------------------------------------------------------
 # Dual-card DFlash — TP=2 + DFlash N=5 spec-decode + 185K ctx + vision.
 #

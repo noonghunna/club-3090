@@ -33,15 +33,16 @@
 #     required (validated 2026-05-25: marlin-pad / PR-35936 / PR-41800 all
 #     unnecessary on a current vLLM; AutoRound INT4 TP=2 + MTP + vision boot clean).
 #
-# All dual-card variants in this dir:
+# Qwen3.6-27b vLLM dual/multi configs (post-2026-05-31 prune — settled on one
+# dual config; the A/B variants were deprecated):
 #
-#   File                                Ctx    Streams   Narr/Code TPS   KV       Vision  Topology
-#   dual/docker-compose.yml (this)      262K   2         69 / 89          fp8      ✅      2× PCIe
-#   multi4/docker-compose.yml            262K   4         63 / 76          fp8      ✅      4× PCIe
-#   multi4/dflash.yml     262K   2         64 / 104         FP16     ✅      4× PCIe
-#   dual/turbo.yml       262K   4         54 / 73          TQ3      ✅      2× PCIe
-#   dual/dflash.yml      185K   1         82 / 125         FP16     ✅
-#   dual/dflash-noviz.yml 200K   1         78 / 127         FP16     ❌      2× PCIe
+#   Slug               Ctx    Streams  KV    Vision  Topology   Notes
+#   vllm/dual (this)   262K   2        fp8   ✅      2× PCIe    THE dual default ⭐
+#   vllm/dual4         262K   4        fp8   ✅      4× PCIe    4-card
+#   vllm/dual4-dflash  262K   2        FP16  ✅      4× PCIe    4-card, peak code TPS
+#   (deprecated 2026-05-31, recover from git if needed: dual-dflash, dual-dflash-noviz,
+#    dual-tq3-nomtp, dual-bf16, dual-int8 — A/B leftovers superseded by vllm/dual.
+#    dual-turbo / dual-tq3-mtp* were already deprecated.)
 #   (NVLink rigs: any dual compose auto-detects NVLink at boot — no separate
 #    nvlink-* variant. NVLINK_MODE=force_on forces it if auto-detect misses.)
 #

@@ -10,7 +10,9 @@
 #   Status:    ✅ Production
 #   Quality:   126/150 (84%) — det 56/75 (75%) · sandbox 70/75 (93%, v0.4 shape-check) (--full, 2026-05-09)
 #                TC 60% · IF 87% · SO 87% · DE 100% · RM 40% · BF 100% · HA 100% · CLI 88%
-#   Best for:  Gemma 4 dual-card default — vision + tools + balanced TPS ⭐
+#   Best for:  Gemma 4 dual-card STABLE fallback (stock v0.22.0, no overlay, 32K) — vision + tools.
+#              The dual default is vllm/gemma-int8 (full 262K); use this when you want
+#              to stay on stable with no vendored overlay and 32K ctx is enough.
 # ---------------------------------------------------------------------------
 # Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter
 # 2× RTX 3090 TP=2 + bfloat16 KV + 32K ctx + 4 streams.

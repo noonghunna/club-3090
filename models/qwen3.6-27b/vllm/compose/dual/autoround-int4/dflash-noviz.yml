@@ -7,8 +7,9 @@
 #   Vision:    no (vision tower dropped — frees ~0.5 GB/card for ctx)
 #   Max ctx:   200K (+15K vs dual-dflash.yml)
 #   Genesis:   none — DFlash drafter handles spec-decode independently
-#   Status:    ✅ Production
-#   Best for:  Peak code TPS, no-vision, with extra context headroom ⭐
+#   Status:    🗑️ Deprecated
+#   Caveats:   Pruned 2026-05-31 — the lone no-vision dual A/B; dropped per the single-vision-config policy (vllm/dual covers vision + 262K + 2 streams). Recover from git if a text-only path is needed.
+#   Best for:  (deprecated — was: peak code TPS, no-vision, extra ctx headroom)
 # ---------------------------------------------------------------------------
 # Dual-card DFlash text-only — TP=2 + DFlash N=5 + 200K ctx + NO vision.
 #

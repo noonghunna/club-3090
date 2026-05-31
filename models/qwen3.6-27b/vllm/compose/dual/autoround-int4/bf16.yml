@@ -11,11 +11,11 @@
 #   Vision:    yes
 #   Max ctx:   262144 (262K — same as fp8 dual.yml)
 #   Genesis:   none (matches dual.yml — intentionally Genesis-free)
-#   Status:    🧪 Experimental — BF16 KV compatibility on Qwen3-Next DeltaNet
-#              hybrid not previously validated on this stack. Boot test + verify-
-#              full + bench before treating as a shipping path.
-#   Best for:  Apples-to-apples comparison with Gemma 4 31B bf16.yml on the
-#              same vLLM nightly + KV class.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Pruned 2026-05-31 — was a matched-config A/B vs Gemma 4 31B bf16.yml,
+#              never validated on Qwen3-Next DeltaNet. Superseded by vllm/dual (fp8,
+#              262K). Recover from git to resume the experiment.
+#   Best for:  (deprecated — was: apples-to-apples vs Gemma bf16.yml)
 # ---------------------------------------------------------------------------
 # Run:
 #   docker compose -f dual/bf16.yml up -d

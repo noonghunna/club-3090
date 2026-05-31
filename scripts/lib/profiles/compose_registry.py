@@ -223,6 +223,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/dflash.yml",
         default_port=8012, required_engine_features=["marlin_pad_sub_tile_n"],
         kvcalc_key="qwen3.6-27b:dual-dflash",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: superseded by vllm/dual (fp8, 262K, vision, MTP, stock v0.22.0). DFlash traded ctx/concurrency (185K, 1 stream) for code TPS; recover from git if demand returns.",
     ),
     "vllm/dual-dflash-noviz": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -231,6 +233,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/dflash-noviz.yml",
         default_port=8013, required_engine_features=["marlin_pad_sub_tile_n"],
         kvcalc_key="qwen3.6-27b:dual-dflash-noviz",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: the lone no-vision dual A/B; dropped per the single-vision-config policy (vllm/dual covers vision + 262K + 2 streams). Recover from git if a text-only path is needed.",
     ),
     "vllm/dual-bf16": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -239,8 +243,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/bf16.yml",
         default_port=8012,
         kvcalc_key="qwen3.6-27b:dual-bf16",
-        status="experimental",
-        status_note="BF16 KV on Qwen3-Next DeltaNet not validated on this stack; matched-config A/B vs Gemma bf16.",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: was a matched-config A/B vs Gemma bf16.yml, never validated on Qwen3-Next DeltaNet. Superseded by vllm/dual (fp8, 262K).",
     ),
     "vllm/dual-int8": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -249,8 +253,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/int8.yml",
         default_port=8011, required_engine_features=["int8_per_token_head"],
         kvcalc_key="qwen3.6-27b:dual-int8",
-        status="experimental",
-        status_note="INT8 PTH KV on Qwen3-Next DeltaNet not validated on this stack; matched-config A/B vs Gemma int8.",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: was a matched-config A/B vs Gemma int8.yml; never validated on Qwen DeltaNet, and fp8 is native on Qwen so int8 PTH buys nothing. Superseded by vllm/dual.",
     ),
     "vllm/dual-tq3-mtp": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="multi-stream-tenant",
@@ -279,6 +283,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/tq3-nomtp.yml",
         default_port=8014, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:dual-tq3-nomtp",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: superseded by vllm/dual (fp8, same 262K/2-stream, faster + MTP). TQ3 KV density not worth the decode cost here; recover from git if needed.",
     ),
     "vllm/dual-carnice-bf16mtp": _entry(
         model="qwen3.6-27b", weights_variant="carnice-bf16mtp", workload="long-ctx-single",
@@ -627,7 +633,11 @@ DEFAULTS = {
     # sm_86 (vllm/gemma-mtp-tp1 deprecated 2026-05-31) and no bf16 single compose
     # ships. Single-card Gemma → beellama/gemma-dflash (the curated walk picks it).
     ("gemma-4-31b", "beellama", "single"): "beellama/gemma-dflash",
-    ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-mtp",
+    # Dual default is gemma-int8: full 262K + vision + 4 streams (the full-context
+    # priority). It rides v0.21.0 + the vendored #40391 per-head-KV overlay (the one
+    # gemma config that can't follow stable). gemma-mtp stays as the stable v0.22.0
+    # no-overlay 32K fallback — kept, not deprecated, just no longer the default.
+    ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-int8",
     ("gemma-4-26b-a4b", "vllm", "single"): "vllm/gemma-a4b-single",
     ("gemma-4-26b-a4b", "vllm", "dual"): "vllm/gemma-a4b",
     ("qwen3.6-35b-a3b", "vllm", "single"): "vllm/qwen-a3b-preview-single",
