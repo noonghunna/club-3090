@@ -347,8 +347,8 @@ list_variants() {
     max_rank="$(topology_rank "$detected_topo")"
   fi
 
-  echo "Available variants — grouped by model · topology (right column: <quant>/<serving>.yml):"
-  echo "  Health: unmarked = production · (caveats) = works w/ documented limits · (NA: …) = needs --force"
+  echo "Available variants — grouped by model · topology (right cols: <quant>/<serving>.yml · max-ctx + health):"
+  echo "  Health: bare max-ctx = production · (caveats, <ctx>) = works w/ documented limits · (NA: …, <ctx>) = needs --force"
 
   # Counts: split into VISIBLE vs HIDDEN by the hardware filter, so the header
   # reflects what's actually shown (+ how many were hidden). Health split is
@@ -417,8 +417,8 @@ list_variants() {
         continue
       fi
       marker="$(status_marker "${VARIANT_STATUS[$v]:-production}")"
-      printf '%s\t%d\t%s\t%s\t%s/%s\t%s\n' \
-        "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker"
+      printf '%s\t%d\t%s\t%s\t%s/%s\t%s\t%s\n' \
+        "${dseg[1]:-?}" "$rank" "$topo" "$v" "${fseg[1]:-?}" "${fseg[2]:-${file}}" "$marker" "${VARIANT_CTX[$v]:-}"
     done
   } | sort -t$'\t' -k1,1 -k2,2n -k4,4 | awk -F'\t' '
     { rows[NR] = $0; cnt[$1]++ }
@@ -427,7 +427,12 @@ list_variants() {
         split(rows[i], f, "\t")
         if (f[1] != m) { printf "\n%s  (%d variants)\n", f[1], cnt[f[1]]; m = f[1]; t = "" }
         tl = (f[3] == t ? "" : f[3]); t = f[3]
-        printf "  %-8s %-34s %-36s %s\n", tl, f[4], f[5], f[6]
+        ann = f[6]; ctx = f[7]
+        if (ctx != "") {
+          if (ann == "") ann = ctx                  # production: bare max-ctx (stays "unmarked")
+          else sub(/\)$/, ", " ctx ")", ann)         # caveats / NA: fold ctx into the paren
+        }
+        printf "  %-8s %-34s %-36s %s\n", tl, f[4], f[5], ann
       }
     }
   '

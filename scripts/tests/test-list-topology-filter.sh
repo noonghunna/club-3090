@@ -58,8 +58,8 @@ assert_contains     "$out" "1-GPU machine" "1-GPU prints the filter note"
 assert_contains     "$out" "--list --all" "1-GPU note points at --all"
 assert_contains     "$out" "hidden — --all" "1-GPU header tallies hidden count"
 # PR-A / PR-B intact: health markers + grouping + Defaults view still render.
-assert_contains "$out" "Health: unmarked = production" "PR-A health legend present (1-GPU)"
-assert_contains "$out" "(caveats)" "PR-A caveats marker present (1-GPU)"
+assert_contains "$out" "Health: bare max-ctx = production" "PR-A health legend present (1-GPU)"
+assert_contains "$out" "(caveats," "PR-A caveats marker present (1-GPU)"
 assert_contains "$out" "(NA:" "PR-A NA marker present (1-GPU)"
 assert_contains "$out" "Defaults — what" "PR-B Defaults view present (1-GPU)"
 

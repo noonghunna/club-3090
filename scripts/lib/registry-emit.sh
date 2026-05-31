@@ -80,6 +80,9 @@ for key, entry in COMPOSE_REGISTRY.items():
                 cname,
                 cp,
                 str(entry.get("status") or "production"),
+                # max_ctx as a compact label (262144 -> "262K"); empty if unset.
+                # Placed BEFORE status_note so status_note stays the LAST field.
+                (f"{int(entry['max_ctx']) // 1000}K" if entry.get("max_ctx") else ""),
                 # status_note is free text (may contain anything but a tab) — keep
                 # it as the LAST field so each reader's catch-all final var can
                 # absorb it without further splitting on its internal spaces.
@@ -94,12 +97,15 @@ PY_EMIT
 }
 
 derive_switch_variant_tables() {
-  local root="$1" emit key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc _container _compose_path status status_note
+  local root="$1" emit key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc _container _compose_path status max_ctx status_note
+  # Self-declare so every caller (switch.sh + test-switch-registry-parity) gets a
+  # proper assoc array without each having to declare it.
+  declare -gA VARIANT_CTX
   if ! emit="$(registry_variant_rows "$root" 2>/dev/null)"; then
     echo "[switch] ERROR: could not derive variant tables from compose_registry.py" >&2
     exit 2
   fi
-  while IFS=$'\t' read -r kind key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc _container _compose_path status status_note; do
+  while IFS=$'\t' read -r kind key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc _container _compose_path status max_ctx status_note; do
     [[ -n "${kind:-}" ]] || continue
     case "$kind" in
       VARIANT)
@@ -111,6 +117,7 @@ derive_switch_variant_tables() {
         VARIANT_DEFAULT_PORT["$key"]="$port"
         VARIANT_STATUS["$key"]="${status:-production}"
         VARIANT_STATUS_NOTE["$key"]="${status_note:-}"
+        VARIANT_CTX["$key"]="${max_ctx:-}"
         ;;
     esac
   done <<< "$emit"
@@ -121,12 +128,12 @@ derive_switch_variant_tables() {
 }
 
 derive_launch_variant_tables() {
-  local root="$1" emit key _switch_engine launch_engine cdir cfile port model profile_engine kvcalc container _compose_path status status_note
+  local root="$1" emit key _switch_engine launch_engine cdir cfile port model profile_engine kvcalc container _compose_path status _max_ctx status_note
   if ! emit="$(registry_variant_rows "$root" 2>/dev/null)"; then
     echo "[launch] ERROR: could not derive variant tables from compose_registry.py" >&2
     exit 2
   fi
-  while IFS=$'\t' read -r kind key _switch_engine launch_engine cdir cfile port model profile_engine kvcalc container _compose_path status status_note; do
+  while IFS=$'\t' read -r kind key _switch_engine launch_engine cdir cfile port model profile_engine kvcalc container _compose_path status _max_ctx status_note; do
     [[ -n "${kind:-}" ]] || continue
     case "$kind" in
       VARIANT)
