@@ -328,9 +328,9 @@ compose_hw_model_status() {
       ;;
     gemma-4-31b)
       candidates=(
-        "${repo_root}/models/gemma-4-31b/vllm/compose/dual/autoround-int4/fp8-mtp.yml"
+        "${repo_root}/models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml"
         "${repo_root}/models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml"
-        "${repo_root}/models/gemma-4-31b/vllm/compose/single/autoround-int4/tq3-mtp.yml"
+        "${repo_root}/models/gemma-4-31b/vllm/compose/single/autoround-int4/fp8-mtp.yml"
       )
       friendly_need="needs 32 GB+ on single card OR 2× 24 GB"
       ;;

@@ -1,0 +1,28 @@
+schema_version: 1
+id: beellama-local
+display_name: beellama.cpp local CUDA server (DFlash + windowed KV)
+type: llama.cpp
+stability: experimental
+install:
+  method: docker_image
+  spec: beellama-cpp:local
+min_sm: 6.0
+supported_model_families:
+  - qwen3-next-hybrid
+  - qwen3-next-moe
+  - gemma4-swa-dense
+features: {}
+supported_kv_formats:
+  - q4_0
+  - q4_1
+  - q5_0
+  - q8_0
+supported_drafters:
+  - dflash
+  - mtp
+supported_weight_formats:
+  - gguf
+required_overlays: []
+vendored_overlays: []
+required_genesis: false
+notes: "Anbeeld's llama.cpp fork (https://github.com/Anbeeld/beellama.cpp) — adds DFlash cross-attention speculative decoding (`--spec-type dflash` + a DFlash draft GGUF) and TurboQuant/TCQ KV cache types on top of mainline-lineage windowed KV (SWA-aware allocation for Gemma-4). Single-card answer for Gemma-4 long-context + spec-dec (only engine with both; ik-llama walls ~24K, mainline ~10 TPS) and a tool-grammar-neutral spec-dec path for Qwen3.6 (DFlash does not amplify the CodeAct attractor the built-in MTP head does, club-3090#237). NO published/pullable Docker image upstream (Windows binaries + source only) — composes ship referencing the locally-built `beellama-cpp:local` (build `beellama.cpp/.devops/cuda.Dockerfile` with CUDA_DOCKER_ARCH=86 + -DGGML_CUDA_FA_ALL_QUANTS=ON; the FA_ALL_QUANTS flag is required for turbo KV types). Until an image is published, beellama composes are 🧪 Experimental and the model-default resolver skips them. Built/validated on this stack's sm_86 (CUDA 12.8.1 base, runs under the 13.2 host driver)."

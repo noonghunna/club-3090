@@ -1,12 +1,21 @@
 model_list:
-  # === Current dual-card primary models ===
+  # === Current serving primaries (one GPU service runs at a time per gpu-mode;
+  #     routes to the inactive backends fail until that mode is brought up) ===
 
   # Qwen 3.6 27B (Lorbus AutoRound INT4) + MTP n=3 + fp8 KV + 262K + vision.
-  # Started by `gpu-mode 27b` → vllm-qwen36-27b-dual at :8010.
+  # Started by `gpu-mode 27b` → vllm-qwen36-27b-dual at :8010. Stack default.
   - model_name: qwen3.6-27b-autoround
     litellm_params:
       model: openai/qwen3.6-27b-autoround
       api_base: http://host.docker.internal:8010/v1
+      api_key: EMPTY
+
+  # Qwen 3.6 35B-A3B (Intel AutoRound INT4 MoE) — 262K + vision, no MTP.
+  # Launched via `launch.sh vllm/qwen-35b-a3b-dual` → vllm-qwen36-35b-a3b-dual at :8051.
+  - model_name: qwen3.6-35b-a3b-autoround
+    litellm_params:
+      model: openai/qwen3.6-35b-a3b-autoround
+      api_base: http://host.docker.internal:8051/v1
       api_key: EMPTY
 
   # Gemma 4 31B (Intel AutoRound INT4) + Google MTP "assistant" drafter.
@@ -17,69 +26,8 @@ model_list:
       api_base: http://host.docker.internal:8030/v1
       api_key: EMPTY
 
-  # === Legacy 35B-A3B routes (kept for backward compat — services not
-  #     currently brought up by gpu-mode; spin manually if needed) ===
-
-  # Canonical name points to SGLang (stable primary — 137 TPS, 262K ctx)
-  - model_name: qwen3.6-35b-a3b-gptq-int4
-    litellm_params:
-      model: openai/qwen3.6-35b-a3b-gptq-int4
-      api_base: http://host.docker.internal:8001/v1
-      api_key: EMPTY
-
-  # Patched-vLLM AutoRound TP=2 (170.5 TPS, served by `gpu-mode vllm`).
-  # Requires pad-Marlin patch (vllm-project/vllm#40361) — runs on nightly.
-  - model_name: qwen3.6-35b-a3b-autoround
-    litellm_params:
-      model: openai/qwen3.6-autoround
-      api_base: http://host.docker.internal:8000/v1
-      api_key: EMPTY
-
-  # Explicit alias for vLLM fallback (130 TPS, legacy GPTQ-Int4).
-  # Served by `gpu-mode vllm-legacy`. Kept for stability / 262K context.
-  - model_name: qwen3.6-35b-a3b-gptq-int4-vllm
-    litellm_params:
-      model: openai/qwen3.6-35b-a3b-gptq-int4
-      api_base: http://host.docker.internal:8000/v1
-      api_key: EMPTY
-
-  # Explicit alias for SGLang (same as canonical, for clarity)
-  - model_name: qwen3.6-35b-a3b-gptq-int4-sglang
-    litellm_params:
-      model: openai/qwen3.6-35b-a3b-gptq-int4
-      api_base: http://host.docker.internal:8001/v1
-      api_key: EMPTY
-
-  # SGLang TP=1 on GPU 0 (single-card testing)
-  - model_name: qwen3.6-35b-a3b-gptq-int4-tp1
-    litellm_params:
-      model: openai/qwen3.6-35b-a3b-gptq-int4-tp1
-      api_base: http://host.docker.internal:8002/v1
-      api_key: EMPTY
-
-  # Long-context mode: llama-cpp-turboquant, UD-Q4_K_XL default + q4_0 KV + preserve_thinking
-  - model_name: qwen3.6-35b-a3b-longctx
-    litellm_params:
-      model: openai/qwen3.6-35b-a3b-longctx
-      api_base: http://host.docker.internal:8003/v1
-      api_key: EMPTY
-
-  # ngram-mod spec-dec on mainline llama.cpp (post PR #19493).
-  # Same port 8003 as longctx — only one of them runs at a time per gpu-mode.
-  # Single-GPU: 116 narrative / 195 code TPS. Started by `gpu-mode dual-code`.
-  - model_name: qwen3.6-35b-a3b-ngram
-    litellm_params:
-      model: openai/qwen3.6-35b-a3b-ngram
-      api_base: http://host.docker.internal:8003/v1
-      api_key: EMPTY
-
-  # Luce DFlash Qwen3.5-27B (Lucebox-hub, PR 22105-style native binary).
-  # NOTE: server.py currently forks test_dflash per request → ~10-15s TTFT
-  # and ~11-20 TPS effective on short outputs. Full 106 tok/s only shows
-  # on n_gen ≥ 256. Good for offline batched evals; sluggish in chat UI.
-  - model_name: qwen3.5-27b-luce-dflash
-    litellm_params:
-      model: openai/qwen3.5-27b
-      api_base: http://host.docker.internal:8004/v1
-      api_key: EMPTY
-      timeout: 600
+  # NOTE: Gemma 4 26B-A4B is intentionally NOT routed — the registry default
+  # (vllm/gemma-a4b, :8041) is the autoround-int4-mixed compose, which is
+  # SM86-blocked (Marlin K-dim 704/128). The working AWQ variant
+  # (vllm/gemma-a4b-awq, :8042) is not a gpu-mode primary; add a route here if
+  # it gets promoted.

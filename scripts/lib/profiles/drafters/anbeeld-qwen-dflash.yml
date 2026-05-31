@@ -1,0 +1,22 @@
+schema_version: 1
+id: anbeeld-qwen-dflash
+display_name: Anbeeld Qwen 3.6 DFlash GGUF (beellama)
+spec_method: dflash
+model_compat:
+  - qwen3.6-27b
+n_default: 8
+n_max: 16
+download:
+  hf_repo: Anbeeld/Qwen3.6-27B-DFlash-GGUF
+  size_gb: 0.93
+  format: gguf
+vram_footprint_gb: 0.93
+status: experimental
+# beellama.cpp DFlash GGUF drafter (NOT the vLLM z-lab safetensors drafter
+# `zlab-qwen-dflash`). The draft GGUF only carries the DFlash-specific weights —
+# it shares the target's token embedding + LM head at runtime. Loaded via
+# `--spec-draft-model <draft.gguf>` + `--spec-type dflash` on beellama; depth is
+# adaptive (the `profit` controller raises/lowers active draft depth up to
+# n_max). Grounded against the on-disk file used by
+# models/qwen3.6-27b/beellama/compose/single/beellama-q5ks-dflash/dflash.yml
+# (qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf, 0.93 GB).

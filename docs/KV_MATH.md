@@ -770,7 +770,7 @@ Run `bash tools/kv-calc.py --calibration` to see predicted vs measured for all s
 | Qwen 3.6 35B-A3B | not on stack | Pending download + first calibration |
 | Gemma 4 26B-A4B | not on stack | Pending download + first calibration |
 
-Overall on calibrated models: **18/18 (100%)** as of 2026-05-14.
+Overall on calibrated models: **17/17 (100%)** as of 2026-05-30.
 
 ## When to trust the calculator vs vLLM's boot log
 

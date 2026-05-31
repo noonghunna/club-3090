@@ -70,10 +70,34 @@ weights:
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"
+  beellama-q4ks-dflash:
+    path: gemma-4-31b-gguf/unsloth-q4ks
+    local_subdir: gemma-4-31b-gguf/unsloth-q4ks
+    size_gb: 16.2
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/gemma-4-31B-it-GGUF
+    files:
+      - gemma-4-31B-it-Q4_K_S.gguf
+    engine: beellama
+    kind: gguf
+    verify_glob: "*.gguf"
+  anbeeld-dflash-iq4xs:
+    path: gemma-4-31b-gguf/anbeeld-dflash-iq4xs
+    local_subdir: gemma-4-31b-gguf/anbeeld-dflash-iq4xs
+    size_gb: 0.84
+    format: gguf
+    status: experimental
+    hf_repo: Anbeeld/gemma-4-31B-it-DFlash-GGUF
+    files:
+      - gemma4-31b-it-dflash-IQ4_XS.gguf
+    engine: beellama
+    kind: draft
+    verify_glob: "*.gguf"
 default_weight_variant: autoround-int4
 compatible_drafters:
   - gemma-it-assistant
-  - gemma-dflash
+  - anbeeld-gemma-dflash
 valid_tp:
   - 1
   - 2

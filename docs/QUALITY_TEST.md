@@ -73,6 +73,13 @@ pip install -e /path/to/benchlocal-cli
 
 ## Run
 
+> **Live progress is on by default.** The wrapper forwards `--progress` to
+> benchlocal-cli, so per-scenario `[N/M] <pack> <id> …` lines stream to stderr
+> as the run advances. Long modes (`--full` ~30–40 min, `--reasoning`
+> similar, `--pack aider-polyglot-30` ~25–30 min) otherwise go dark for the
+> whole duration with no signal whether anything is wrong mid-run. Pass
+> `--no-progress` (or `PROGRESS=0`) for CI / log-volume-sensitive contexts.
+
 ```bash
 # default --medium against the auto-detected running compose
 bash scripts/quality-test.sh
@@ -88,6 +95,9 @@ bash scripts/quality-test.sh --reasoning
 
 # explicit endpoint override
 URL=http://localhost:8011 bash scripts/quality-test.sh --quick
+
+# suppress live [N/M] progress for CI / log-volume contexts
+bash scripts/quality-test.sh --full --no-progress
 
 # --full includes the 3 Docker-sandboxed packs by default (BugFind/HermesAgent/CLI) — needs Docker
 bash scripts/quality-test.sh --full
@@ -126,16 +136,43 @@ ReasonMath-15 (v1.0.0)     |   11 / 15    |  73%  |    14.2s    |     22.6s   | 
 TOTAL                      |   65 / 75    |  87%  |             |             |
 
 Failure breakdown:
-  ToolCall-15           1 verifier_fail  (TC-07: wrong arg value for "filename")
-  InstructFollow-15     2 verifier_fail  (IF-03 word-count, IF-09 citation-format)
-  DataExtract-15        2 missing_field, 1 wrong_value
-  ReasonMath-15         4 wrong_answer   (RM-03, RM-07, RM-09, RM-12)
+- toolcall-15 TC-07: verifier_fail (wrong arg value for "filename": expected report.pdf, got output.pdf)
+- instructfollow-15 IF-03: verifier_fail (word count 247, target 250 ±5)
+- dataextract-15 DE-05: verifier_fail (7/14 atomic fields correct (50%). product_name: mismatch | product_price_paid: expected number)
+- reasonmath-15 RM-09: verifier_fail (expected 42, got 45)
 
 ==========================================================================
 Quality: line for compose schema field (paste into compose YAML header):
 ==========================================================================
 Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%) · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%) · ReasonMath-15 11/15 (73%) (--medium, packs v1.0.x, 2026-05-09)
 ```
+
+## Diagnosing failures
+
+Failure reasons are surfaced in three places, cheapest first:
+
+| Need | Where |
+|---|---|
+| Why a scenario failed (reason + detail), run just finished | The **`Failure breakdown:`** block at the end of every run — `pack scenario: failure_mode (detail)`, full detail string. No extra command. |
+| Same, but the run scrolled away / an older run | `results/quality/quality-<ts>.json` (raw), or `benchlocal-cli inspect <json> --failed` |
+| The full prompt / response / verifier trace behind a failure | `benchlocal-cli inspect <json> --scenario <ID> --full` |
+| Filter by failure type · compare two runs · per-scenario tokens + latency | `benchlocal-cli inspect <json> --mode timeout` · `--diff prev.json` |
+
+`failure_mode` is one of: `verifier_fail` (answer wrong / below threshold) · `timeout` · `agent_runner_timeout` / `agent_runner_crashed` (sandboxed agentic packs) · `server_error` / `http_error` / `model_endpoint_unreachable` (serving problem, not a quality signal) · `result_json_malformed` · `wrong_answer` · `verifier_not_implemented` (stub, excluded from scoring).
+
+The breakdown is **terminal-only** — `quality-test.sh` does not tee it to a log file, but the same data persists in the saved JSON.
+
+## Per-scenario timeouts
+
+`quality-test.sh` forwards to `benchlocal-cli`, which sizes each scenario's timeout automatically — you rarely need to set one. Precedence (highest wins):
+
+1. **Manual** — `--timeout-per-case N` (or `TIMEOUT_PER_CASE=N`): used verbatim.
+2. **Auto-scaling (default)** — the budget scales by the endpoint's measured decode speed and, for thinking-on runs, by the thinking-token budget. A one-shot startup probe measures the rig's decode TPS (and fails fast if the endpoint is unreachable, rather than hanging). The scaling deliberately **over-budgets** — a timeout is a safety ceiling, not a target — which is what keeps thinking-on packs from spuriously timing out. Exact formula + flags (`--measured-tps` / `--reference-tps` / `--retry-on-timeout`): [benchlocal-cli README → Per-case timeouts](https://github.com/noonghunna/benchlocal-cli#per-case-timeouts).
+3. **Static default** — the pack's built-in `default_max_seconds`.
+
+**Don't hand-set `--timeout-per-case` to "fix" a slow run** unless you've confirmed the auto-probe measured wrong — the over-budget is intentional.
+
+> **Planned (not yet built):** an *opt-in* tier that sizes timeouts from a **soak-derived per-context-depth TPS curve** — a real "how fast at depth X" measurement for your exact rig/config, captured into the runtime measurement-record — instead of the single empty-context startup probe. It would be strictly opt-in and fall back to the auto-probe/default when no curve exists; measured data is never required. Tracked at [#114](https://github.com/noonghunna/club-3090/pull/114).
 
 ## Sampling & temperature
 

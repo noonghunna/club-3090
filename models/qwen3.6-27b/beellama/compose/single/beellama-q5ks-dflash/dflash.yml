@@ -1,0 +1,129 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Unsloth Q5_K_S GGUF target + Anbeeld DFlash drafter)
+#   Engine:    beellama.cpp (Anbeeld llama.cpp fork — DFlash spec-dec + windowed KV)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   DFlash (--spec-type dflash, Anbeeld DFlash-IQ4_XS GGUF, adaptive draft-max)
+#   KV:        q5_0 K + q4_1 V (Anbeeld's long-ctx precision default — better
+#              quality/size than turbo KV per his KV-quant benchmarks)
+#   Vision:    no (mmproj NOT mounted; for vision pass MMPROJ_FILE + --mmproj — CPU-offloaded)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   102400 default (24 GB-safe). Measured single-3090 ceiling 2026-05-30:
+#              160K usable (115K-token prefill OK, ~0.8 GB headroom); 200K boots but
+#              OOMs on prefill. Raise via CTX_SIZE up to 160K.
+#   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   single-GPU DEFAULT for Qwen3.6-27B (code-throughput leader ~100 TPS +
+#              slight 8-pack quality edge over ik-llama, think-off). Three caveats:
+#              (1) Defaults to our UNOFFICIAL multi-arch image
+#              ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120 =
+#              RTX 3090/4090/5090; MIT build of Anbeeld/beellama.cpp). sm_89/sm_120 are
+#              COMPILED but UNVALIDATED — only sm_86/3090 is verified on club-3090's rig;
+#              4090/5090 users please report via the numbers-from-your-rig template.
+#              (2) Usable ctx ceiling 160K (200K OOMs on prefill) — ships 102K.
+#              (3) Community fork chain, no official upstream Docker yet (Anbeeld v0.3.0
+#              WIP — docs/UPSTREAM.md). Override BEELLAMA_IMAGE= to pin another build.
+#   Quality:   toolcall-15 13/15 · instructfollow-15 14/15 · structoutput-15 14/15 ·
+#              dataextract-15 8/15 · reasonmath-15 12/15 · bugfind-15 14/15 ·
+#              hermesagent-20 14/20 · cli-40 18/40 = 107/150 (71%) think-off; 113/150
+#              (75%) think-on. (--full, beellama multiarch-b9459-07ac3ce, 2026-05-30)
+#   Engine-profile: beellama-local
+#   Best for:  ⭐ single-card default — coding / agentic serving with DFlash spec-dec
+#              that is tool-grammar-neutral (does NOT amplify the CodeAct attractor the
+#              built-in MTP head does — club-3090#237) on a llama.cpp-family stack.
+# ---------------------------------------------------------------------------
+# Qwen3.6-27B on beellama.cpp — single 3090, Q5_K_S + DFlash (Anbeeld IQ4_XS draft),
+# q5_0/q4_1 KV, 102K ctx, no vision.
+#
+# CONFIG SOURCE: beellama.cpp/docs/quickstart-qwen36-dflash.md "Precision combo"
+# (Q5_K_S target, IQ4_XS/Q4_K_M/Q5_K_M drafter, q5_0 K + q4_1 V cache). We ship
+# the IQ4_XS drafter (smallest, on-disk) — the doc lists it as a valid precision
+# drafter and notes heavier drafters were net-negative for tok/s.
+#
+# JUSTIFIED DEVIATIONS from the doc's verbatim Linux launch line:
+#   1. --reasoning OFF (doc default is `on`). Stack-wide thinking-off-by-default
+#      policy (matches llama-cpp mtp.yml / ik-llama iq4ks-mtp.yml). Flip to
+#      REASONING=on for thinking — the doc recommends `--reasoning on` +
+#      preserve_thinking for DFlash because thinking tokens give the drafter
+#      richer context. The chat_template_kwargs preserve_thinking lever is
+#      gated on REASONING below.
+#   2. No --no-mmproj-offload / --mmproj by default (text-only profile). Vision
+#      is a separate axis; set MMPROJ_FILE to mount it (CPU-offloaded, ~0 VRAM).
+#   3. No --mlock / --no-mmap by default — the host RAM-locking flags from the
+#      doc are a Windows-tuning choice; left as opt-in env (MLOCK / NO_MMAP).
+#
+# beellama is a llama.cpp fork; server target ENTRYPOINT is /app/llama-server,
+# so `command:` below is just the server flags (same shape as ik-llama / llama-cpp composes).
+#
+# Quick start:
+#   1. Pull the image: docker pull ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce
+#      (multi-arch sm_86/89/120 = 3090/4090/5090; sm_89/120 unvalidated — see Caveats).
+#   2. Get the GGUFs (target + DFlash draft):
+#        hf download unsloth/Qwen3.6-27B-GGUF Qwen3.6-27B-Q5_K_S.gguf \
+#          --local-dir $MODEL_DIR/qwen3.6-27b-gguf/unsloth-q5ks
+#        hf download Anbeeld/Qwen3.6-27B-DFlash-GGUF Qwen3.6-27B-DFlash-IQ4_XS.gguf \
+#          --local-dir $MODEL_DIR/qwen3.6-27b-gguf/anbeeld-dflash-iq4xs
+#   3. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f dflash.yml up -d
+#   4. curl http://localhost:8060/v1/models  → should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE             target GGUF under /models   (default: …unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf)
+#   DRAFT_FILE            DFlash draft GGUF under /models (default: …anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf)
+#   CTX_SIZE              KV pool size                (default: 102400 — 24 GB-safe; up to 160K validated, 200K OOMs)
+#   BATCH_SIZE            llama.cpp -b                (default: 2048)
+#   UBATCH_SIZE           llama.cpp -ub               (default: 512 — prefill speed)
+#   KV_TYPE_K             K cache quant               (default: q5_0)
+#   KV_TYPE_V             V cache quant               (default: q4_1)
+#   CROSS_CTX             --spec-dflash-cross-ctx     (default: 1024 — drafter cross-attn window)
+#   NP                    parallel slots              (default: 1 — DFlash is single-slot by default)
+#   REASONING             thinking gate               (default: off; set 'on' to enable + preserve thinking)
+#   PORT                  host port                   (default: 8060)
+#   CUDA_VISIBLE_DEVICES  which GPU to use            (default: 0)
+#   MMPROJ_FILE           mmproj GGUF for vision      (unset = text-only; e.g. qwen3.6-27b-gguf/mmproj-F16.gguf)
+
+services:
+  beellama-qwen36-27b-dflash:
+    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce}
+    container_name: "${ESTATE_CONTAINER:-beellama-qwen36-27b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8060}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    # server target ENTRYPOINT is /app/llama-server — args only below.
+    # ⚠ -np 1 is intentional on a single 24 GB card — DFlash is single-slot by
+    #   default and extra slots divide a compute-bound GPU's throughput.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf}
+      --spec-draft-model /models/${DRAFT_FILE:-qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf}
+      --spec-type dflash
+      --spec-dflash-cross-ctx ${CROSS_CTX:-1024}
+      -ngl all
+      --spec-draft-ngl all
+      --ctx-size ${CTX_SIZE:-102400}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --cache-type-k ${KV_TYPE_K:-q5_0}
+      --cache-type-v ${KV_TYPE_V:-q4_1}
+      --flash-attn on
+      --cache-ram 0
+      --no-host
+      --jinja
+      --reasoning ${REASONING:-off}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-k ${TOP_K:-20}
+      --top-p ${TOP_P:-1.0}
+      --min-p ${MIN_P:-0.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]

@@ -1,0 +1,139 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Gemma-4-31B-it (Unsloth Q4_K_S GGUF target + Anbeeld DFlash drafter)
+#   Engine:    beellama.cpp (Anbeeld llama.cpp fork — DFlash spec-dec + SWA windowed KV)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   DFlash (--spec-type dflash, Anbeeld DFlash-IQ4_XS GGUF, adaptive draft-max)
+#   KV:        q5_0 K + q4_1 V (Anbeeld's long-ctx precision default)
+#   Vision:    no (mmproj NOT mounted; for vision pass MMPROJ_FILE + --mmproj — CPU-offloaded)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   128000 default. NOTE: beellama's own docs advise ~140-200K on a
+#              "pressure-free" single 3090 — but on this 24 GB card under realistic load
+#              that FAILS: verify-stress's ceiling ladder OOMs 140K at ~125K fill (engine
+#              crash; real wall ~95K with the 140K KV pool). 128K is the highest ctx that
+#              PASSES NIAH — recalls cleanly to 117K (91% fill) — but with a KNOWN CAVEAT:
+#              VRAM margin at the ceiling is VERY THIN (~177 MB free, under the 1 GB
+#              agent-safety bar — see Caveats). For full agent/long-session headroom set
+#              CTX_SIZE=102400 (~1.1 GB margin, gate-clean). (validated 2026-05-31; see
+#              learnings/gemma-4-31b.md "beellama DFlash".)
+#              beellama is the only single-card engine that does Gemma-4 SWA windowed KV
+#              (big ctx) AND Gemma-4 spec-dec — ik-llama walls ~24K, mainline is ~10 TPS.
+#   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   single-GPU DEFAULT for Gemma-4-31B — the ONLY viable fast single-card
+#              Gemma-4 path (vLLM FA-walled at head_dim=512, ik-llama walls ~24K, stock
+#              llama.cpp ~12 TPS). Validated #441 + verify-full 8/8. Caveats:
+#              (1) THIN VRAM MARGIN at the 128K default — NIAH recalls to 117K but only
+#              ~177 MB free at the ceiling, so verify-stress fails its 1 GB margin check
+#              (this is why the config is ⚠️ caveats, not ✅). Agents / long sessions carry
+#              ~+292 MB cache+checkpoint overhead and CAN OOM at high fill — set
+#              CTX_SIZE=102400 for full headroom (~1.1 GB margin, gate-clean). 140K
+#              (beellama-advised) is rejected: OOMs at ~125K under load (real wall ~95K).
+#              (2) Defaults to our UNOFFICIAL multi-arch image
+#              ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120 =
+#              3090/4090/5090; MIT build of Anbeeld/beellama.cpp). sm_89/sm_120 are
+#              compiled but UNVALIDATED — only sm_86/3090 verified on club-3090's rig;
+#              4090/5090 users please report via numbers-from-your-rig.
+#              (3) Community fork chain, no official upstream Docker yet; re-point to
+#              mainline llama.cpp#23398 (Gemma-4 MTP) when it merges — docs/UPSTREAM.md.
+#              Override BEELLAMA_IMAGE= to pin another build.
+#   Quality:   toolcall-15 12/15 · instructfollow-15 14/15 · structoutput-15 13/15 ·
+#              dataextract-15 11/15 · reasonmath-15 13/15 · bugfind-15 14/15 ·
+#              hermesagent-20 13/20 · cli-40 19/40 = 109/150 (73%) think-off; 114/150
+#              (76%) think-on — reasoning is net-positive on Gemma-4. (--full, 2026-05-27, #239)
+#   Engine-profile: beellama-local
+#   Best for:  ⭐ single-card Gemma-4-31B default — long-context + spec-dec in a single
+#              GGUF on one 3090 (54-193 TPS DFlash, workload-dependent; reasoning-on is
+#              token-efficient on Gemma-4, unlike Qwen).
+# ---------------------------------------------------------------------------
+# Gemma-4-31B on beellama.cpp — single 3090, Q4_K_S + DFlash (Anbeeld IQ4_XS draft),
+# q5_0/q4_1 KV, 102K ctx, no vision.
+#
+# CONFIG SOURCE: beellama.cpp/docs/quickstart-gemma-4-31b-dflash.md "Balanced combo"
+# (the live launcher default: Q4_K_S target, IQ4_XS drafter, q5_0 K + q4_1 V cache).
+#
+# JUSTIFIED DEVIATIONS from the doc's verbatim Linux launch line:
+#   1. --reasoning OFF (doc default is `on`). Stack-wide thinking-off-by-default
+#      policy. Note: reasoning-on is token-EFFICIENT on Gemma-4 (no runaway/timeout
+#      tax, unlike Qwen3.6) — REASONING=on is a perfectly viable default here.
+#      The Gemma launcher does NOT set preserve_thinking, so we don't either.
+#   2. No --no-mmproj-offload / --mmproj by default (text-only profile). Vision
+#      is a separate axis; set MMPROJ_FILE to mount it (CPU-offloaded, ~0 VRAM).
+#   3. No --mlock / --no-mmap by default — Windows host-tuning flags from the doc;
+#      left as opt-in env (MLOCK / NO_MMAP).
+#
+# beellama is a llama.cpp fork; server target ENTRYPOINT is /app/llama-server,
+# so `command:` below is just the server flags (same shape as ik-llama / llama-cpp composes).
+#
+# Quick start:
+#   1. Pull the image: docker pull ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce
+#      (other GPU arches: build the fork — see Caveats / docs/INFERENCE_ENGINES.md).
+#   2. Get the GGUFs (target + DFlash draft):
+#        hf download unsloth/gemma-4-31B-it-GGUF gemma-4-31B-it-Q4_K_S.gguf \
+#          --local-dir $MODEL_DIR/gemma-4-31b-gguf/unsloth-q4ks
+#        hf download Anbeeld/gemma-4-31B-it-DFlash-GGUF gemma4-31b-it-dflash-IQ4_XS.gguf \
+#          --local-dir $MODEL_DIR/gemma-4-31b-gguf/anbeeld-dflash-iq4xs
+#   3. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f dflash.yml up -d
+#   4. curl http://localhost:8061/v1/models  → should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE             target GGUF under /models   (default: …unsloth-q4ks/gemma-4-31B-it-Q4_K_S.gguf)
+#   DRAFT_FILE            DFlash draft GGUF under /models (default: …anbeeld-dflash-iq4xs/gemma4-31b-it-dflash-IQ4_XS.gguf)
+#   CTX_SIZE              KV pool size                (default: 128000 — recalls to 117K but THIN VRAM margin; set 102400 for agent headroom)
+#   BATCH_SIZE            llama.cpp -b                (default: 2048)
+#   UBATCH_SIZE           llama.cpp -ub               (default: 512 — prefill speed)
+#   KV_TYPE_K             K cache quant               (default: q5_0)
+#   KV_TYPE_V             V cache quant               (default: q4_1)
+#   CROSS_CTX             --spec-dflash-cross-ctx     (default: 1024 — drafter cross-attn window)
+#   NP                    parallel slots              (default: 1 — DFlash is single-slot by default)
+#   REASONING             thinking gate               (default: off; set 'on' — token-efficient on Gemma-4)
+#   PORT                  host port                   (default: 8061)
+#   CUDA_VISIBLE_DEVICES  which GPU to use            (default: 0)
+#   MMPROJ_FILE           mmproj GGUF for vision      (unset = text-only; e.g. gemma-4-31b-gguf/unsloth-q4kxl/mmproj-BF16.gguf)
+
+services:
+  beellama-gemma4-31b-dflash:
+    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce}
+    container_name: "${ESTATE_CONTAINER:-beellama-gemma4-31b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8061}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    # server target ENTRYPOINT is /app/llama-server — args only below.
+    # ⚠ -np 1 is intentional on a single 24 GB card — DFlash is single-slot by
+    #   default and extra slots divide a compute-bound GPU's throughput.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-gemma-4-31b-gguf/unsloth-q4ks/gemma-4-31B-it-Q4_K_S.gguf}
+      --spec-draft-model /models/${DRAFT_FILE:-gemma-4-31b-gguf/anbeeld-dflash-iq4xs/gemma4-31b-it-dflash-IQ4_XS.gguf}
+      --spec-type dflash
+      --spec-dflash-cross-ctx ${CROSS_CTX:-1024}
+      -ngl all
+      --spec-draft-ngl all
+      --ctx-size ${CTX_SIZE:-128000}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --cache-type-k ${KV_TYPE_K:-q5_0}
+      --cache-type-v ${KV_TYPE_V:-q4_1}
+      --flash-attn on
+      --cache-ram 0
+      --no-host
+      --jinja
+      --reasoning ${REASONING:-off}
+      --temp ${TEMP:-${TEMPERATURE:-1.0}}
+      --top-k ${TOP_K:-64}
+      --top-p ${TOP_P:-0.95}
+      --min-p ${MIN_P:-0.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]

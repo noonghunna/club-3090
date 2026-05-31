@@ -6,8 +6,8 @@
 #   Vision:    yes (vision tower active)
 #   Max ctx:   145K (vision tower costs ~500 MiB activation budget vs long-text)
 #   Genesis:   v7.72.5
-#   Status:    🧪 Experimental
-#   Caveats:   Cliff 2b fix landed in v7.72.5 (PN59 Level 1+2, Sandermage/genesis-vllm-patches#22). Pin bumped 2026-05-31. Needs verify-stress.sh + soak-continuous before promoting to Production.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Cliff 2b at >50K single-prompt context. Sandermage/genesis-vllm-patches#22. Workaround: dual.yml or llamacpp/default.
 #   Best for:  Single-card vision workloads (image Q&A, multimodal RAG)
 # ---------------------------------------------------------------------------
 # Long-vision variant — 198K context with vision on a single 3090.
@@ -94,7 +94,7 @@ services:
   vllm-qwen36-27b-long-vision:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-long-vision}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8020}}:8000"
     volumes:

@@ -32,6 +32,18 @@
 #   bash scripts/launch.sh --variant llamacpp/default
 #   bash scripts/launch.sh --variant vllm/dual
 #
+# Defaults & pins (design §3/§13):
+#   bash scripts/launch.sh                       # bare → your pinned default (or
+#                                                #   the recommended default for the
+#                                                #   first installed shortlist model),
+#                                                #   else the interactive wizard
+#   bash scripts/launch.sh --variant qwen3.6-27b/default  # YOUR default for that model
+#                                                #   (.env pin ‖ curated pick for the rig)
+#   bash scripts/launch.sh --variant vllm/default # the maintainer's recommended vLLM
+#                                                #   config on the detected topology
+#   After a successful boot, launch.sh offers to pin the config as your default.
+#   Pin/clear directly:  scripts/switch.sh --set-default <slug> | --clear-default <model>
+#
 # Env vars:
 #   NVLINK_MODE=auto|force_on|force_off — NVLink auto-detection for dual-card composes
 #   auto (default): detects NVLink via nvidia-smi topo -m
@@ -58,6 +70,27 @@ if [[ -z "${MODEL_DIR:-}" && -f "${ROOT_DIR}/.env" ]]; then
   # shellcheck source=/dev/null
   source "${ROOT_DIR}/.env"
   set +a
+fi
+# PR-B: the above only sources .env when MODEL_DIR is unset, so a user with
+# `export MODEL_DIR=…` in their shell would never see their `.env` model-default
+# pins (CLUB3090_DEFAULT_*). Load just those keys here, regardless — with
+# shell-env-wins precedence (matching switch.sh's loader / #425). Values are
+# taken literally (no shell expansion), CRLF-tolerant.
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  while IFS= read -r _env_line || [[ -n "$_env_line" ]]; do
+    _env_line="${_env_line#"${_env_line%%[![:space:]]*}"}"   # strip leading whitespace
+    _env_line="${_env_line%$'\r'}"                           # strip trailing CR
+    [[ "$_env_line" == "export "* ]] && _env_line="${_env_line#export }"
+    [[ "$_env_line" == CLUB3090_DEFAULT_* ]] || continue
+    _env_key="${_env_line%%=*}"
+    [[ "$_env_key" == "$_env_line" || -z "$_env_key" ]] && continue
+    [[ -n "${!_env_key+x}" ]] && continue                    # already set in env → shell wins
+    _env_val="${_env_line#*=}"
+    _env_val="${_env_val#\"}"; _env_val="${_env_val%\"}"
+    _env_val="${_env_val#\'}"; _env_val="${_env_val%\'}"
+    export "${_env_key}=${_env_val}"
+  done < "${ROOT_DIR}/.env"
+  unset _env_line _env_key _env_val
 fi
 MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models-cache}"
 # shellcheck source=preflight.sh
@@ -219,6 +252,8 @@ declare -A LAUNCH_VARIANT_PROFILE_ENGINE=()
 declare -A LAUNCH_VARIANT_KVCALC=()
 declare -A LAUNCH_DEFAULT_PORT=()
 declare -A LAUNCH_DEFAULT_CONTAINER=()
+declare -A LAUNCH_VARIANT_STATUS=()
+declare -A LAUNCH_VARIANT_STATUS_NOTE=()
 LAUNCH_VARIANT_ORDER=()
 PRIMARY_MODEL="${PRIMARY_MODEL:-qwen3.6-27b}"
 # shellcheck source=lib/registry-emit.sh
@@ -827,7 +862,14 @@ suggest_default_variant() {
       echo "llamacpp/default"
     fi
   else
-    if (( cards >= 2 )); then echo "vllm/gemma-mtp"; else echo "vllm/gemma-mtp-tp1"; fi
+    if (( cards >= 2 )); then
+      echo "vllm/gemma-mtp"
+    else
+      # Single card: beellama/gemma-dflash is the recommended Gemma-4 path — the
+      # only viable fast single-card config on Ampere. vLLM single-card is dead
+      # here (no fp8 KV path on sm_86; the old vllm/gemma-mtp-tp1 was deprecated).
+      echo "beellama/gemma-dflash"
+    fi
   fi
 }
 
@@ -843,12 +885,24 @@ launch_topology_from_selected() {
 }
 
 resolve_launch_default_variant() {
+  # Resolves a `<…>/default` token (design §13.1) — mirrors switch.sh:
+  #   <engine>/<topology>/default → engine-recommendation, explicit topology
+  #   <X>/default                 → dispatch: engine name → engine rec; model-id
+  #                                 → that model's default (.env pin ‖ curated)
+  #   anything else               → passthrough (already a concrete slug)
   local variant="$1" engine topology target
   if [[ "$variant" =~ ^([^/]+)/(single|dual|multi[0-9]+)/default$ ]]; then
     engine="${BASH_REMATCH[1]}"
     topology="${BASH_REMATCH[2]}"
+    MODEL_NAME="${MODEL_NAME:-$PRIMARY_MODEL}"
+    MODEL_NAME="$(normalize_model_name "$MODEL_NAME")"
+    if ! target="$(registry_default_target "$ROOT_DIR" "$MODEL_NAME" "$engine" "$topology")"; then
+      echo "[launch] ERROR: cannot resolve default variant '${variant}' for model ${MODEL_NAME}." >&2
+      exit 1
+    fi
+    printf '%s' "$target"
+    return 0
   elif [[ "$variant" =~ ^([^/]+)/default$ ]]; then
-    engine="${BASH_REMATCH[1]}"
     if [[ "${#CARD_INDICES[@]}" -eq 0 ]]; then
       select_topology_gpus || {
         echo "[launch] ERROR: cannot autodetect topology for '${variant}' because no GPUs were detected." >&2
@@ -856,17 +910,135 @@ resolve_launch_default_variant() {
       }
     fi
     topology="$(launch_topology_from_selected)"
-  else
-    printf '%s' "$variant"
+    MODEL_NAME="${MODEL_NAME:-$PRIMARY_MODEL}"
+    MODEL_NAME="$(normalize_model_name "$MODEL_NAME")"
+    if ! target="$(x_default_dispatch "$ROOT_DIR" "$variant" "$topology" "$MODEL_NAME")"; then
+      echo "[launch] ERROR: cannot resolve default variant '${variant}'." >&2
+      exit 1
+    fi
+    printf '%s' "$target"
     return 0
   fi
-  MODEL_NAME="${MODEL_NAME:-$PRIMARY_MODEL}"
-  MODEL_NAME="$(normalize_model_name "$MODEL_NAME")"
-  if ! target="$(registry_default_target "$ROOT_DIR" "$MODEL_NAME" "$engine" "$topology")"; then
-    echo "[launch] ERROR: cannot resolve default variant '${variant}' for model ${MODEL_NAME}." >&2
-    exit 1
+  printf '%s' "$variant"
+}
+
+# --- PR-B: bare-launch default + user pin (design §13.3, §13.6) -------------
+
+# Echo RECOMMENDED_DEFAULT_MODELS (one per line, in shortlist order).
+recommended_default_models() {
+  python3 -c "import sys; sys.path.insert(0,'$ROOT_DIR'); from scripts.lib.profiles.compose_registry import RECOMMENDED_DEFAULT_MODELS; print('\n'.join(RECOMMENDED_DEFAULT_MODELS))"
+}
+
+# Echo the .env pin key for a model.
+model_pin_key() {
+  python3 -c "import sys; sys.path.insert(0,'$ROOT_DIR'); from scripts.lib.profiles.compose_registry import model_default_pin_key; print(model_default_pin_key('$1'))"
+}
+
+# First INSTALLED model on the shortlist (uses detect_installed_models →
+# MODEL_ENGINES). Echoes the model-id or nothing.
+first_installed_shortlist_model() {
+  local model
+  while IFS= read -r model; do
+    [[ -n "$model" ]] || continue
+    [[ -n "${MODEL_ENGINES[$model]:-}" ]] && { printf '%s' "$model"; return 0; }
+  done < <(recommended_default_models)
+  return 1
+}
+
+# Bare-launch default (no --variant, no --model, no GPU/TP override): pick the
+# first installed shortlist model, then its `<model>/default` (.env pin ‖
+# curated walk) on the detected topology. Sets VARIANT + MODEL_NAME on success.
+# Returns 1 (caller falls through to the interactive wizard) when no shortlist
+# model is installed OR no functional default resolves.
+try_bare_launch_default() {
+  detect_installed_models
+  local model
+  if ! model="$(first_installed_shortlist_model)"; then
+    return 1
   fi
-  printf '%s' "$target"
+  if [[ "${#CARD_INDICES[@]}" -eq 0 ]]; then
+    select_topology_gpus || return 1
+  fi
+  local topology target
+  topology="$(launch_topology_from_selected)"
+  local pin_key pin_value
+  pin_key="$(model_pin_key "$model")"
+  pin_value="${!pin_key:-}"
+  if ! target="$(model_default_target "$ROOT_DIR" "$model" "$topology")"; then
+    return 1
+  fi
+  MODEL_NAME="$model"
+  VARIANT="$target"
+  if [[ -n "$pin_value" && "$target" == "$pin_value" ]]; then
+    echo "[launch] using your pinned default for $(model_label "$model"): ${VARIANT}" >&2
+  else
+    echo "[launch] using the recommended default for $(model_label "$model") (${topology}): ${VARIANT}" >&2
+    echo "[launch] (pin your own with: bash scripts/switch.sh --set-default <slug>)" >&2
+  fi
+  return 0
+}
+
+# Fast-path (design §13.6): bare launch.sh with a pin set for the first
+# installed shortlist model → "Launch your default <slug>? [Y/n]". `n` drops
+# into the full wizard (returns 1). On accept, sets VARIANT + MODEL_NAME and
+# returns 0. Skipped on a non-interactive stdin (returns 1 → wizard handles it).
+try_pinned_fast_path() {
+  detect_installed_models
+  local model
+  if ! model="$(first_installed_shortlist_model)"; then
+    return 1
+  fi
+  local pin_key pin_value
+  pin_key="$(model_pin_key "$model")"
+  pin_value="${!pin_key:-}"
+  [[ -n "$pin_value" ]] || return 1
+  if [[ "${#CARD_INDICES[@]}" -eq 0 ]]; then
+    select_topology_gpus || return 1
+  fi
+  local topology target
+  topology="$(launch_topology_from_selected)"
+  if ! target="$(model_default_target "$ROOT_DIR" "$model" "$topology")"; then
+    return 1
+  fi
+  if [[ ! -t 0 ]]; then
+    # Non-interactive: honour the resolved default without prompting.
+    MODEL_NAME="$model"; VARIANT="$target"
+    echo "[launch] using your default for $(model_label "$model"): ${VARIANT}" >&2
+    return 0
+  fi
+  local reply
+  read -rp "Launch your default ${target} for $(model_label "$model")? [Y/n]: " reply
+  case "${reply:-Y}" in
+    n|N|no|NO)
+      return 1
+      ;;
+    *)
+      MODEL_NAME="$model"; VARIANT="$target"
+      return 0
+      ;;
+  esac
+}
+
+# Post-successful-boot prompt (design §5): offer to pin the just-launched slug
+# as the user's default for its model. Skipped when it is already the pin or on
+# a non-interactive stdin.
+maybe_offer_set_default() {
+  local slug="$1"
+  [[ -n "$slug" ]] || return 0
+  [[ -t 0 ]] || return 0
+  local model pin_key pin_value
+  model="$(python3 -c "import sys; sys.path.insert(0,'$ROOT_DIR'); from scripts.lib.profiles.compose_registry import model_of_slug; print(model_of_slug('$slug') or '')")"
+  [[ -n "$model" ]] || return 0
+  pin_key="$(model_pin_key "$model")"
+  pin_value="${!pin_key:-}"
+  [[ "$pin_value" == "$slug" ]] && return 0   # already pinned
+  local reply
+  read -rp "[launch] Make ${slug} your default for ${model}? [y/N]: " reply
+  case "${reply:-N}" in
+    y|Y|yes|YES)
+      bash "$SWITCH" --set-default "$slug" || true
+      ;;
+  esac
 }
 
 no_fit_guidance() {
@@ -991,6 +1163,7 @@ export_variant_engine_pin() {
     [[ -n "$key" ]] || continue
     case "$key" in
       VLLM_NIGHTLY_SHA) export VLLM_NIGHTLY_SHA="$value" ;;
+      VLLM_IMAGE) export VLLM_IMAGE="$value" ;;
       *) echo "[launch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac
   done <<< "$output"
@@ -1021,6 +1194,27 @@ fi
 if [[ -n "$VARIANT" ]]; then
   VARIANT="$(resolve_launch_default_variant "$VARIANT")"
 fi
+
+# PR-B: bare `launch.sh` (no variant + no narrowing flags) → resolve a default
+# without the full wizard. Fast-path a pin if one is set (§13.6), else the
+# recommended-shortlist default (§13.3). Either may decline / not fire, in which
+# case we fall through to the interactive wizard below. Any narrowing flag
+# (--model/--engine/--workload/--gpus/--cards/--tp/--pp/--weights-variant/
+# --stable/--drafter) keeps the explicit wizard path so it isn't surprising.
+LAUNCH_BARE_INVOCATION=0
+if [[ -z "$VARIANT" && -z "$MODEL_NAME" && -z "$ENGINE" && -z "$WORKLOAD_ID" \
+      && -z "$GPU_ARG" && -z "$CARDS" && -z "$TP_OVERRIDE" && -z "$PP_OVERRIDE" \
+      && -z "$WEIGHTS_VARIANT" && "$STABLE_ONLY" -eq 0 && "$DRAFTER_ID" == "__unset__" ]]; then
+  LAUNCH_BARE_INVOCATION=1
+fi
+if [[ -z "$VARIANT" && "$LAUNCH_BARE_INVOCATION" -eq 1 ]]; then
+  if try_pinned_fast_path; then
+    :
+  else
+    try_bare_launch_default || true
+  fi
+fi
+
 if [[ -z "$VARIANT" ]]; then
   echo "" >&2
   echo "club-3090 launcher — pick model, GPU set, and serving variant." >&2
@@ -1077,6 +1271,21 @@ fi
 # --- launch + verify ---
 echo ""
 echo "[launch] selected variant: ${VARIANT}"
+# Surface the lifecycle health flag (PR-A) before handing off. The actual gate
+# (caveats notice / (NA) → require --force) lives in switch.sh up_variant, which
+# this script delegates to; this is just a heads-up so the user isn't surprised.
+_launch_status="${LAUNCH_VARIANT_STATUS[$VARIANT]:-production}"
+_launch_status_note="${LAUNCH_VARIANT_STATUS_NOTE[$VARIANT]:-}"
+case "$_launch_status" in
+  production) ;;
+  caveats)
+    echo "[launch] NOTE: this is a ⚠️ production-with-caveats config.${_launch_status_note:+  ${_launch_status_note}}"
+    ;;
+  *)
+    echo "[launch] WARNING: this is a (NA: ${_launch_status}) config — not a reliable path.${_launch_status_note:+  ${_launch_status_note}}"
+    echo "[launch]          switch.sh will require --force (FORCE=1) to bring it up."
+    ;;
+esac
 echo ""
 if [[ -n "$SELECTED_GPU_CSV" ]]; then
   export CUDA_VISIBLE_DEVICES="$SELECTED_GPU_CSV"
@@ -1112,6 +1321,12 @@ fi
 
 echo ""
 echo "[launch] done. Endpoint: ${ENDPOINT_URL}"
+
+# PR-B (design §5): offer to pin this config as the user's default for its
+# model, so a future bare `launch.sh` goes straight here. Interactive-only;
+# skipped when it's already the pin.
+maybe_offer_set_default "$VARIANT"
+
 echo "[launch] sample request:"
 echo "  curl -sf ${ENDPOINT_URL}/v1/chat/completions \\"
 echo "    -H 'Content-Type: application/json' \\"
@@ -1119,3 +1334,4 @@ echo "    -d '{\"model\":\"qwen3.6-27b-autoround\",\"messages\":[{\"role\":\"use
 echo ""
 echo "[launch] switch later with:  bash scripts/switch.sh <variant>"
 echo "[launch] list variants:      bash scripts/switch.sh --list"
+echo "[launch] pin your default:   bash scripts/switch.sh --set-default <variant>"

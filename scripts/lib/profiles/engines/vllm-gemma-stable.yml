@@ -1,0 +1,52 @@
+schema_version: 1
+id: vllm-gemma-stable
+display_name: vLLM Gemma stable v0.21.0
+type: vllm
+stability: stable
+install:
+  method: docker_image
+  spec: vllm/vllm-openai:v0.21.0
+min_sm: 7.5
+supported_model_families:
+  - gemma4-swa-dense
+features:
+  int8_per_token_head: true
+  turboquant_3bit_nc: false
+  marlin_pad_sub_tile_n: false
+  qwen3_coder_tool_parser: false
+feature_provenance:
+  int8_per_token_head: vllm-pr40391-rebased
+supported_kv_formats:
+  - bf16
+  - fp16
+  - fp8_e4m3
+  - int8_per_token_head
+supported_drafters:
+  - mtp
+  - mtp_assistant
+supported_weight_formats:
+  - bf16
+  - fp16
+  - autoround
+required_overlays: []
+vendored_overlays:
+  - id: vllm-pr40391-rebased
+    pr_url: https://github.com/vllm-project/vllm/pull/40391
+    upstream_status: filed
+    upstream_merged_in_version: null
+    local_status: vendored
+    purpose: "Gemma 4 per-token-head KV cache page-size support."
+  - id: vllm-gemma4-tool-parser-fixes
+    pr_url: https://github.com/vllm-project/vllm/pull/42006
+    upstream_status: filed
+    upstream_merged_in_version: null
+    local_status: vendored
+    purpose: "Gemma 4 tool parser fixes for MTP streaming multi-tool output."
+  - id: vllm-pr41800-truncate-prompt-tokens
+    pr_url: https://github.com/vllm-project/vllm/pull/41800
+    upstream_status: filed
+    upstream_merged_in_version: null
+    local_status: vendored
+    purpose: "truncate_prompt_tokens compatibility for OpenAI-compatible requests."
+required_genesis: false
+notes: "Gemma 4 31B vLLM path pinned to immutable v0.21.0. Shared nightly profiles remain Qwen-owned; Gemma overlays are mounted by the int8 compose only. Single-card fp8 remains a maintainer live-check risk on Ampere."

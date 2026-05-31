@@ -7,8 +7,9 @@
 #   Vision:    yes
 #   Max ctx:   185K
 #   Genesis:   none — DFlash drafter handles spec-decode independently
-#   Status:    ✅ Production
-#   Best for:  Peak code TPS with vision (AL ~4.4 vs MTP's 3.4) ⭐
+#   Status:    🗑️ Deprecated
+#   Caveats:   Pruned 2026-05-31 — superseded by vllm/dual (fp8 262K + vision + MTP, stock v0.22.0). DFlash traded ctx/concurrency (185K, 1 stream) for code TPS; recover from git if a clear demand returns.
+#   Best for:  (deprecated — was: peak code TPS with vision, AL ~4.4)
 # ---------------------------------------------------------------------------
 # Dual-card DFlash — TP=2 + DFlash N=5 spec-decode + 185K ctx + vision.
 #
@@ -61,9 +62,9 @@
 # Sibling DFlash variants:
 #   - dual/dflash.yml:           2× PCIe, 185K, 1 stream, 82/125 TPS
 #   - dual/dflash-noviz.yml:     2× PCIe, 200K, 1 stream, 78/127 TPS
-#   - dual/nvlink-dflash.yml:    2× NVLink, 185K, 1 stream, (community) TPS
-#   - dual/nvlink-dflash-noviz.yml: 2× NVLink, 188K, 1 stream, (community) TPS
 #   - multi4/dflash.yml:          4× PCIe, 262K, 2 streams, 64/104 TPS
+#   (NVLink is auto-detected at boot by every dual compose — NVLINK_MODE=force_on
+#    to force it; there is no separate nvlink-* variant.)
 #
 #   docker compose -f dual/dflash.yml up -d
 # ===========================================================================
@@ -76,7 +77,7 @@ services:
   vllm-qwen36-27b-dual-dflash:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual-dflash}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8012}}:8000"
     volumes:

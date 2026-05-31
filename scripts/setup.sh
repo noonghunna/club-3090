@@ -141,6 +141,21 @@ case "${1:-}" in
     ;;
 esac
 
+# setup.sh takes a SINGLE positional (the model). It DOWNLOADS WEIGHTS — it does
+# NOT select or boot a serving config. A stray second arg (commonly a launch slug
+# like `vllm/int8`) used to be silently ignored, which let users believe it did
+# something — see issue #250, where the slug was dropped and the real failure
+# (a purged-nightly compose pin) got mis-attributed to it. Reject it loudly and
+# point at the launch path. (`both` recurses with a single arg, so it's unaffected.)
+if [[ $# -gt 1 ]]; then
+  echo "ERROR: setup.sh takes a single model name; got extra argument(s): ${*:2}" >&2
+  echo "       setup.sh only DOWNLOADS WEIGHTS for a model — e.g. bash scripts/setup.sh ${1}" >&2
+  echo "       To LAUNCH a serving config (a slug such as 'vllm/gemma-int8'), use:" >&2
+  echo "         bash scripts/launch.sh --variant <slug>      # or: bash scripts/switch.sh <slug>" >&2
+  echo "       See the slugs available for a model:  bash scripts/switch.sh --list" >&2
+  exit 64
+fi
+
 MODEL_NAME="${1:-}"
 if [[ -z "${MODEL_NAME}" ]]; then
   if [[ -t 0 && -t 1 ]]; then
@@ -624,9 +639,8 @@ case "${MODEL_NAME}" in
     SAMPLE_PORT="8030"
     SAMPLE_MODEL_NAME="gemma-4-31b-autoround"
     NEXT_STEPS_NOTE="Available variants:
-  bash scripts/switch.sh vllm/gemma-mtp        # MTP drafter, TP=2, port 8030 (recommended)
-  bash scripts/switch.sh vllm/gemma-mtp-tp1    # MTP drafter, TP=1 (single-card; upstream-blocked on Ampere fp8)
-  bash scripts/switch.sh vllm/gemma-dflash     # DFlash drafter, TP=2, port 8032 (requires WITH_DFLASH_DRAFT=1)"
+  bash scripts/switch.sh vllm/gemma-mtp        # MTP drafter, TP=2, port 8030 (dual-card)
+  bash scripts/switch.sh beellama/gemma-dflash # DFlash, single-card default, port 8061"
     ;;
   gemma-4-26b-a4b)
     SAMPLE_CONTAINER="vllm-gemma-4-26b-a4b"

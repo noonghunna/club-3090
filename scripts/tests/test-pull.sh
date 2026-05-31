@@ -649,11 +649,11 @@ moe2 = {
     "num_local_experts": 128, "torch_dtype": "bfloat16",
 }
 c0 = G.c0_engine_support(
-    "vllm/qwen-a3b-preview", P.D.DeriveResult(
+    "vllm/qwen-35b-a3b-dual", P.D.DeriveResult(
         slug=s, profile={"arch": "Qwen3_5MoeForConditionalGeneration",
                          "auto_map": False}),
     path="B", hardware_sm=SM_86, root=root)
-r = P.run_pull(s, "vllm/qwen-a3b-preview", path="B", hardware_sm=SM_86,
+r = P.run_pull(s, "vllm/qwen-35b-a3b-dual", path="B", hardware_sm=SM_86,
                 fetcher=ff_derived(s, moe2), profiles=profiles,
                 statvfs=BIG_DISK, experimental_arch=True)
 check(c0.state is G.C0State.ENGINE_SUPPORTED
@@ -906,7 +906,7 @@ moec = {
     "num_attention_heads": 32, "num_key_value_heads": 8,
     "num_local_experts": 128, "torch_dtype": "bfloat16",
 }
-r = P.run_pull(s, "vllm/qwen-a3b-preview", path="B", hardware_sm=SM_86,
+r = P.run_pull(s, "vllm/qwen-35b-a3b-dual", path="B", hardware_sm=SM_86,
                 fetcher=ff_derived(s, moec, weight_gb=300.0),
                 profiles=profiles, statvfs=TINY_DISK,
                 experimental_arch=True)
@@ -916,7 +916,7 @@ check(r.stratum is P.Stratum.C2A_DISK,
 
 # stratum-5 BEFORE [B]/[C1]: ineligible model never reaches a verdict.
 s = "fixtures/order-s5"
-r = P.run_pull(s, "vllm/qwen-a3b-preview", path="B", hardware_sm=SM_86,
+r = P.run_pull(s, "vllm/qwen-35b-a3b-dual", path="B", hardware_sm=SM_86,
                 fetcher=ff_derived(s, moec, weight_gb=4.0),
                 profiles=profiles, statvfs=BIG_DISK,
                 experimental_arch=True)
@@ -1294,10 +1294,10 @@ if os.path.exists(_o21):
     os.unlink(_o21)
 
 # --- g22: derived but CONTRACT-5 reject -> structured refuse, NO dl/boot -
-# Point --profile-like at an overlay/TQ3 shape so derived_emittable refuses
-# BEFORE any download/boot. vllm/gemma-int8-tq3 = TQ3 KV + required feats.
+# Point --profile-like at the single-card fp8 Gemma shape so derived_emittable
+# refuses BEFORE any download/boot on the Ampere hardware gate.
 c = _Calls()
-r = P.run_pull(DSLUG, "vllm/gemma-int8-tq3", path="B", hardware_sm=SM_90,
+r = P.run_pull(DSLUG, "vllm/gemma-mtp-tp1", path="B", hardware_sm=SM_86,
                 fetcher=ff_derived(DSLUG, dense_cfg("Qwen2ForCausalLM"),
                                    weight_gb=4.0),
                 profiles=profiles, statvfs=BIG_DISK, trust_remote_code=True,

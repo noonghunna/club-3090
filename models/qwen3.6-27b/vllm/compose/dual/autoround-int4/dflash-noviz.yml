@@ -7,8 +7,9 @@
 #   Vision:    no (vision tower dropped — frees ~0.5 GB/card for ctx)
 #   Max ctx:   200K (+15K vs dual-dflash.yml)
 #   Genesis:   none — DFlash drafter handles spec-decode independently
-#   Status:    ✅ Production
-#   Best for:  Peak code TPS, no-vision, with extra context headroom ⭐
+#   Status:    🗑️ Deprecated
+#   Caveats:   Pruned 2026-05-31 — the lone no-vision dual A/B; dropped per the single-vision-config policy (vllm/dual covers vision + 262K + 2 streams). Recover from git if a text-only path is needed.
+#   Best for:  (deprecated — was: peak code TPS, no-vision, extra ctx headroom)
 # ---------------------------------------------------------------------------
 # Dual-card DFlash text-only — TP=2 + DFlash N=5 + 200K ctx + NO vision.
 #
@@ -23,8 +24,8 @@
 #
 # Same DFlash caveats as dual-dflash.yml apply: single-stream only on the
 # 2-card variants, FP16 KV (no fp8/turbo on DFlash + Ampere), `--dtype
-# bfloat16` for vllm#40334 workaround. If you have NVLink bridge, switch to
-# dual/nvlink-dflash-noviz.yml for faster allreduce. If you
+# bfloat16` for vllm#40334 workaround. NVLink, if present, is auto-detected at
+# boot (NVLINK_MODE=force_on to force it) — no separate nvlink-* variant. If you
 # have 4x 3090 and need full 262K context + 2 streams, use
 # multi4/dflash.yml.
 #
@@ -52,7 +53,7 @@ services:
   vllm-qwen36-27b-dual-dflash:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual-dflash-noviz}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8013}}:8000"
     volumes:

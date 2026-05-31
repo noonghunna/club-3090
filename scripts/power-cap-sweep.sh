@@ -137,6 +137,8 @@ set -euo pipefail
 
 # Defaults — override via flags
 GPU_INDEX=0
+GPU_INDEX_SET=0      # set to 1 once --gpu is explicitly passed (distinguishes from the default 0)
+GPUS=""              # explicit --gpus a,b list; empty → auto-detect the workload's GPUs
 CAPS=""              # empty → auto-derive from card's min/max power limits at STEP_SIZE granularity
 RESET=1              # 1 = reset to stock at end; 0 = leave at last cap
 COOLING="unspecified" # air|water|aio|unspecified — affects how to read the data
@@ -165,7 +167,8 @@ INCLUDE_COMMIT=0      # --include-commit stamps the club-3090 git short SHA in
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --gpu)         GPU_INDEX="$2"; shift 2 ;;
+    --gpu)         GPU_INDEX="$2"; GPU_INDEX_SET=1; shift 2 ;;
+    --gpus)        GPUS="$2"; shift 2 ;;
     --caps)        CAPS="$2"; shift 2 ;;
     --cooling)     COOLING="$2"; shift 2 ;;
     --step-size)   STEP_SIZE="$2"; shift 2 ;;
@@ -252,6 +255,94 @@ if [ "$COOLING" = "unspecified" ]; then
   echo
 fi
 
+# --- Multi-GPU helpers -------------------------------------------------------
+# A TP=N serving workload spans several cards, so the sweep operates on a SET of
+# GPUs, not a single index. These helpers resolve that set, capture each card's
+# envelope, aggregate per-tick power across cards, and restore caps on exit.
+
+gpu_indices_from_container() {
+  # Echo the comma-separated GPU indices a container is pinned to, or "" if it
+  # uses all GPUs / can't be determined (caller then falls back to all GPUs).
+  local c="$1" nvd
+  nvd="$(docker inspect "$c" 2>/dev/null \
+    | grep -o 'NVIDIA_VISIBLE_DEVICES=[^"]*' | head -1 | cut -d= -f2)"
+  case "${nvd:-}" in
+    ""|all|void|none) echo "" ;;
+    *) echo "$nvd" | tr -d ' ' ;;
+  esac
+}
+
+resolve_gpu_indices() {
+  # Echo the comma-separated set of GPUs to sweep. Precedence:
+  #   --gpus a,b  >  --gpu N  >  container-detected  >  all GPUs (warn).
+  local csv=""
+  if [ -n "${GPUS:-}" ]; then
+    csv="$GPUS"
+  elif [ "${GPU_INDEX_SET:-0}" -eq 1 ]; then
+    csv="$GPU_INDEX"
+  elif [ -n "${CONTAINER:-}" ] && [ "${CONTAINER}" != "none" ]; then
+    csv="$(gpu_indices_from_container "$CONTAINER")"
+  fi
+  if [ -z "$csv" ]; then
+    csv="$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | tr -d ' ' | paste -sd, -)"
+    [ -n "$csv" ] && echo "[warn] could not scope the workload's GPUs — sweeping ALL GPUs (${csv}). Pass --gpus a,b to scope." >&2
+  fi
+  echo "$csv" | tr -d ' '
+}
+
+aggregate_gpu_sample() {
+  # Collapse N per-GPU nvidia-smi CSV lines (one sampler tick) into ONE synthetic
+  # line: power.draw SUMMED, utilization/temp MAX, throttle reasons OR'd,
+  # clocks/pstate from the first card. Keeps the same 9-field schema the
+  # downstream median/throttle post-processing expects — so multi-GPU needs no
+  # change there. For a single GPU it is a pass-through (sum == that GPU).
+  awk -F',' '
+    { for (i = 1; i <= NF; i++) gsub(/^[ \t]+|[ \t]+$/, "", $i)
+      sumP += $3 + 0
+      if (($2 + 0) > maxU) maxU = $2 + 0
+      if (($4 + 0) > maxT) maxT = $4 + 0
+      if (NR == 1) { sm = $5; mem = $6; ps = $7 }
+      if ($8 == "Active") pwr = "Active"
+      if ($9 == "Active") therm = "Active"
+      n++ }
+    END { if (n > 0) printf "agg, %d, %.2f, %d, %s, %s, %s, %s, %s\n",
+            maxU, sumP, maxT, sm, mem, ps,
+            (pwr == "Active" ? "Active" : "Not Active"),
+            (therm == "Active" ? "Active" : "Not Active") }'
+}
+
+capture_envelopes() {
+  # Populate INIT_ARR[idx] (current power.limit — for --no-reset restore) and
+  # STOCK_ARR[idx] (factory default_limit — for the default reset) for every GPU
+  # in GPU_INDICES, and derive the SYMMETRIC sweep range as the intersection of
+  # all cards' envelopes: floor = max of per-card mins, ceiling = min of per-card
+  # maxes, so a single cap value is valid on every card. STOCK_TDP (used only for
+  # the 50%-of-stock floor) takes the lowest card's default.
+  local idx mn mx df lim
+  MIN_LIMIT=""; MAX_LIMIT=""; STOCK_TDP=""
+  for idx in "${GPU_INDICES[@]}"; do
+    df=$(nvidia-smi --query-gpu=power.default_limit --format=csv,noheader,nounits -i "$idx" | head -1 | tr -d ' ')
+    mn=$(nvidia-smi --query-gpu=power.min_limit     --format=csv,noheader,nounits -i "$idx" | head -1 | tr -d ' ')
+    mx=$(nvidia-smi --query-gpu=power.max_limit     --format=csv,noheader,nounits -i "$idx" | head -1 | tr -d ' ')
+    lim=$(nvidia-smi --query-gpu=power.limit        --format=csv,noheader,nounits -i "$idx" | head -1 | tr -d ' ')
+    INIT_ARR[$idx]="$lim"
+    STOCK_ARR[$idx]="$df"
+    if [ -z "$MIN_LIMIT" ] || awk "BEGIN{exit !($mn > $MIN_LIMIT)}"; then MIN_LIMIT="$mn"; fi
+    if [ -z "$MAX_LIMIT" ] || awk "BEGIN{exit !($mx < $MAX_LIMIT)}"; then MAX_LIMIT="$mx"; fi
+    if [ -z "$STOCK_TDP" ] || awk "BEGIN{exit !($df < $STOCK_TDP)}"; then STOCK_TDP="$df"; fi
+  done
+}
+
+restore_gpus() {
+  # On end/exit: RESET=1 (default) → set each GPU to its factory stock; --no-reset
+  # (RESET=0) → restore each GPU to the limit it had when the sweep started.
+  local idx target
+  for idx in "${GPU_INDICES[@]}"; do
+    if [ "${RESET:-1}" -eq 1 ]; then target="${STOCK_ARR[$idx]:-}"; else target="${INIT_ARR[$idx]:-}"; fi
+    [ -n "$target" ] && nvidia-smi -pl "$target" -i "$idx" >/dev/null 2>&1 || true
+  done
+}
+
 # Sanity checks
 if [ "$EUID" -ne 0 ]; then
   echo "[error] must run as root (nvidia-smi -pl requires sudo)" >&2
@@ -308,12 +399,22 @@ fi
 export URL CONTAINER MODEL
 echo "[setup] target:   container=$CONTAINER url=$URL model=$MODEL"
 
-# Capture card's power envelope (so we can reset cleanly + auto-derive sweep range)
-STOCK_TDP=$(nvidia-smi --query-gpu=power.default_limit --format=csv,noheader,nounits -i "$GPU_INDEX" | head -1 | tr -d ' ')
-MIN_LIMIT=$(nvidia-smi --query-gpu=power.min_limit     --format=csv,noheader,nounits -i "$GPU_INDEX" | head -1 | tr -d ' ')
-MAX_LIMIT=$(nvidia-smi --query-gpu=power.max_limit     --format=csv,noheader,nounits -i "$GPU_INDEX" | head -1 | tr -d ' ')
-GPU_NAME=$(nvidia-smi --query-gpu=name                  --format=csv,noheader            -i "$GPU_INDEX" | head -1)
-GPU_VRAM=$(nvidia-smi --query-gpu=memory.total          --format=csv,noheader,nounits     -i "$GPU_INDEX" | head -1 | tr -d ' ')
+# Resolve the set of GPUs to sweep (a TP=N workload spans several cards).
+GPU_LIST_CSV="$(resolve_gpu_indices)"
+IFS=',' read -ra GPU_INDICES <<< "$GPU_LIST_CSV"
+if [ "${#GPU_INDICES[@]}" -eq 0 ] || [ -z "${GPU_INDICES[0]:-}" ]; then
+  echo "[error] could not determine which GPU(s) to sweep — pass --gpus 0,1 (or --gpu N)." >&2
+  exit 1
+fi
+PRIMARY_GPU="${GPU_INDICES[0]}"
+declare -A INIT_ARR=() STOCK_ARR=()
+echo "[setup] GPUs:     ${GPU_LIST_CSV}"
+
+# Capture each card's power envelope: per-GPU INIT/STOCK arrays + the intersected
+# symmetric sweep range (MIN_LIMIT/MAX_LIMIT/STOCK_TDP). See capture_envelopes().
+capture_envelopes
+GPU_NAME=$(nvidia-smi --query-gpu=name         --format=csv,noheader        -i "$PRIMARY_GPU" | head -1)
+GPU_VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits -i "$PRIMARY_GPU" | head -1 | tr -d ' ')
 
 SAMPLER_PID=""
 cleanup() {
@@ -332,8 +433,8 @@ cleanup() {
   # (SIGKILL bypasses this trap entirely — that's a kernel-level guarantee.)
   pkill -TERM -P $$ 2>/dev/null || true
 
-  if [ "${RESET:-1}" -eq 1 ] && [ -n "${STOCK_TDP:-}" ]; then
-    nvidia-smi -pl "$STOCK_TDP" -i "$GPU_INDEX" >/dev/null 2>&1 || true
+  if [ -n "${GPU_LIST_CSV:-}" ]; then
+    restore_gpus
   fi
 }
 trap cleanup EXIT INT TERM
@@ -673,7 +774,7 @@ run_concurrency_probe() {
   (
     while true; do
       nvidia-smi --query-gpu=index,utilization.gpu,power.draw,temperature.gpu \
-        --format=csv,noheader,nounits -i "$GPU_INDEX" 2>/dev/null | head -1
+        --format=csv,noheader,nounits -i "$PRIMARY_GPU" 2>/dev/null | head -1
       sleep 0.25
     done
   ) > "$sample_file" &
@@ -834,7 +935,7 @@ PY
 
 # Persistence mode (one-time; idempotent). Do this before optional
 # auto-calibration so clocks/caps behave consistently during probes.
-nvidia-smi -pm 1 -i "$GPU_INDEX" >/dev/null 2>&1 || true
+for _gi in "${GPU_INDICES[@]}"; do nvidia-smi -pm 1 -i "$_gi" >/dev/null 2>&1 || true; done
 
 if [ "$LOAD_MODE" = "decode-concurrent" ] && [ "$CONCURRENCY_AUTO" -eq 1 ]; then
   echo "[calibrate] --concurrency auto: probing stream count at ${HIGHEST_CAP}W cap"
@@ -843,7 +944,7 @@ import sys
 print(f"{float(sys.argv[1]) * 100:.0f}%")
 PY
 ) of cap; max probe concurrency: ${MAX_CONCURRENCY_PROBE}"
-  nvidia-smi -pl "$HIGHEST_CAP" -i "$GPU_INDEX" >/dev/null
+  for _gi in "${GPU_INDICES[@]}"; do nvidia-smi -pl "$HIGHEST_CAP" -i "$_gi" >/dev/null; done
   sleep 2
 
   CAL_DIR=$(mktemp -d /tmp/power-cap-autoload.XXXXXX)
@@ -980,7 +1081,7 @@ if [ "$LOAD_MODE" = "prefill-heavy" ]; then
       echo "[calibrate] could not detect model context — proceeding without clamp (set MODEL_MAX_CTX env if needed)"
     fi
     echo "[calibrate] prefill-heavy: sizing prompt at ${HIGHEST_CAP}W cap for ~${TARGET_PREFILL_SECONDS}s at the fastest cap"
-    nvidia-smi -pl "$HIGHEST_CAP" -i "$GPU_INDEX" >/dev/null
+    for _gi in "${GPU_INDICES[@]}"; do nvidia-smi -pl "$HIGHEST_CAP" -i "$_gi" >/dev/null; done
     sleep 2
     CAL_LOG="/tmp/power-cap-prefill-calibration.log"
     : > "$CAL_LOG"
@@ -1026,7 +1127,7 @@ PY
   fi
 fi
 
-echo "[setup] GPU $GPU_INDEX: $GPU_NAME ($GPU_VRAM MiB)"
+echo "[setup] GPUs ${GPU_LIST_CSV}: $GPU_NAME ($GPU_VRAM MiB)"
 echo "[setup] power envelope: ${MIN_LIMIT}W (min) → ${STOCK_TDP}W (default) → ${MAX_LIMIT}W (max)"
 echo "[setup] cooling:   $COOLING"
 if [ "$AUTO_DERIVED" -eq 1 ]; then
@@ -1120,7 +1221,7 @@ fi
 # Sweep
 RESULTS_FILE=/tmp/power-cap-summary.md
 {
-  echo "# Power-cap sweep — $GPU_NAME (GPU $GPU_INDEX)"
+  echo "# Power-cap sweep — $GPU_NAME (GPUs $GPU_LIST_CSV)"
   echo ""
   echo "**GPU:** $GPU_NAME &nbsp; **VRAM:** ${GPU_VRAM} MiB &nbsp; **Stock TDP:** ${STOCK_TDP}W &nbsp; **Cooling:** ${COOLING}"
   echo "**Model:** \`${MODEL}\` &nbsp; **Engine:** \`${CONTAINER}\` &nbsp; **Endpoint:** ${URL}"
@@ -1160,17 +1261,21 @@ for CAP in "${CAP_ARRAY[@]}"; do
   CAP_START_NS=$(date +%s%N)
   CAP_START_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   echo "================================================"
-  echo "=== Cap: ${CAP}W (GPU $GPU_INDEX) @ ${CAP_START_UTC} ==="
+  echo "=== Cap: ${CAP}W (GPUs $GPU_LIST_CSV) @ ${CAP_START_UTC} ==="
   echo "================================================"
 
-  # Apply cap
-  if ! nvidia-smi -pl "$CAP" -i "$GPU_INDEX" 2>&1 | tail -1; then
-    echo "[warn] failed to set ${CAP}W — skipping"
+  # Apply cap to every participating GPU (symmetric sweep)
+  _cap_ok=1
+  for _gi in "${GPU_INDICES[@]}"; do
+    nvidia-smi -pl "$CAP" -i "$_gi" >/dev/null 2>&1 || _cap_ok=0
+  done
+  if [ "$_cap_ok" -ne 1 ]; then
+    echo "[warn] failed to set ${CAP}W on one or more GPUs — skipping"
     continue
   fi
 
   # Verify cap applied
-  ACTUAL_LIMIT=$(nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits -i "$GPU_INDEX" | head -1 | tr -d ' ')
+  ACTUAL_LIMIT=$(nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits -i "$PRIMARY_GPU" | head -1 | tr -d ' ')
   echo "[verify] limit set to: ${ACTUAL_LIMIT}W"
   echo
 
@@ -1187,7 +1292,7 @@ for CAP in "${CAP_ARRAY[@]}"; do
   (
     while true; do
       nvidia-smi --query-gpu=index,utilization.gpu,power.draw,temperature.gpu,clocks.current.sm,clocks.current.memory,pstate,clocks_throttle_reasons.sw_power_cap,clocks_throttle_reasons.hw_thermal_slowdown \
-        --format=csv,noheader,nounits -i "$GPU_INDEX" 2>/dev/null | head -1
+        --format=csv,noheader,nounits -i "$GPU_LIST_CSV" 2>/dev/null | aggregate_gpu_sample
       sleep 0.5
     done
   ) > "$SAMPLE_FILE" &
@@ -1377,7 +1482,7 @@ else:
 
   # Fallback to bench.sh GPU-state line if sampler returned ?
   if [ "$ACTUAL_POWER" = "?" ]; then
-    GPU_STATE_LINE=$(grep -A2 "GPU state" "$LOG_FILE" | grep ",$GPU_INDEX," | head -1 || grep -A2 "GPU state" "$LOG_FILE" | grep "^${GPU_INDEX}," | head -1 || echo "")
+    GPU_STATE_LINE=$(grep -A2 "GPU state" "$LOG_FILE" | grep ",$PRIMARY_GPU," | head -1 || grep -A2 "GPU state" "$LOG_FILE" | grep "^${PRIMARY_GPU}," | head -1 || echo "")
     ACTUAL_POWER=$(echo "$GPU_STATE_LINE" | awk -F', ' '{print $5}' | grep -oE '[0-9]+\.?[0-9]*' | head -1 || echo "?")
     GPU_TEMP=$(echo "$GPU_STATE_LINE"     | awk -F', ' '{print $6}' | tr -d ' ' || echo "?")
   fi
@@ -1495,11 +1600,11 @@ fi
 
 # Reset
 if [ "$RESET" -eq 1 ]; then
-  echo "[reset] restoring GPU $GPU_INDEX to stock TDP (${STOCK_TDP}W)"
-  nvidia-smi -pl "$STOCK_TDP" -i "$GPU_INDEX" 2>&1 | tail -1
+  echo "[reset] restoring GPUs ${GPU_LIST_CSV} to stock TDP"
 else
-  echo "[reset] --no-reset specified; GPU $GPU_INDEX left at last cap"
+  echo "[reset] --no-reset: restoring GPUs ${GPU_LIST_CSV} to their pre-sweep limits"
 fi
+restore_gpus
 
 # Append context to results file
 {
@@ -1514,7 +1619,7 @@ fi
     done <<< "$PLATEAU_LINES"
     echo ""
   fi
-  echo "**Reset:** $([ $RESET -eq 1 ] && echo "auto-reset to ${STOCK_TDP}W stock" || echo "left at last cap (--no-reset)")"
+  echo "**Reset:** $([ $RESET -eq 1 ] && echo "auto-reset to per-GPU stock" || echo "restored to pre-sweep limits (--no-reset)")"
   echo ""
   echo "**Notes:**"
   case "$LOAD_MODE" in

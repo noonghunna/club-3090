@@ -6,8 +6,8 @@
 #   Vision:    no (text-only — frees VRAM for ctx)
 #   Max ctx:   180K (was 214K pre-Cliff-2b; reduced for safety)
 #   Genesis:   v7.72.5
-#   Status:    🧪 Experimental
-#   Caveats:   Cliff 2b partially mitigated in v7.72.5 (GDN alloc 1.37 GiB → 365 MiB) but verify-stress 1/8 on 3fd9d2d+fbecee31 (2026-05-31): 25K tool-prefill still OOM. Level 3 needed. NOT agent-safe.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Cliff 2b at >50K single-prompt context (Genesis PN59 doesn't engage on chunked-prefill). NOT IDE-agent safe. Filed at Sandermage/genesis-vllm-patches#22. Workaround: dual.yml or llamacpp/default.
 #   Best for:  RAG / single-shot summarization at <25K accumulated ctx;
 #              for IDE agents use tools-text.yml or dual.yml instead
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ services:
   vllm-qwen36-27b-long-text:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-long-text}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8020}}:8000"
     volumes:

@@ -7,9 +7,10 @@
 #   Max ctx:   262144 (262K)
 #   Streams:   max-num-seqs=2 (matched-config sibling of dual/int8.yml)
 #   Genesis:   none — pure upstream nightly + only the unavoidable marlin-pad overlay
-#   Status:    ✅ Working — validated 2026-05-11
-#   Best for:  Long-context multi-tenant agentic workloads where TQ3's KV-pool
-#              expansion matters more than MTP-driven TPS acceleration.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Pruned 2026-05-31 — superseded by vllm/dual (fp8, same 262K/2-stream, faster + MTP). TQ3 KV density wasn't worth the decode cost here; recover from git if needed.
+#   Best for:  (deprecated — was: long-context multi-tenant where TQ3 KV-pool
+#              expansion mattered more than MTP TPS)
 # ---------------------------------------------------------------------------
 # Why this compose exists:
 #
@@ -48,7 +49,7 @@ services:
     # drift between Qwen and Gemma legs.
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual-int8-tq3-nomtp}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8014}}:8000"
     volumes:

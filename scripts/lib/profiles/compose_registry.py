@@ -4,6 +4,40 @@ The registry intentionally mirrors the shipped compose files. It is not a
 generator and it does not attempt to normalize away historical variants.
 """
 
+# Slug lifecycle / availability statuses — the canonical health flag.
+#
+# These are the registry-side equivalent of the compose `Status:` header enum
+# (see the repo CLAUDE.md "Status enum" table). The compose-header emoji maps
+# to one of these words; the drift-guard test asserts the two never diverge.
+#
+#   functional → launches normally (production) or with a one-line notice
+#                (caveats).
+#   (NA)       → surfaced in --list but not reliable: launch warns and requires
+#                --force so a user can't *unknowingly* boot a broken slug.
+STATUS_VALUES = (
+    "production",      # ✅ Production — recommended, fully validated.
+    "caveats",         # ⚠️ Production w/ caveats — works under documented limits.
+    "experimental",    # 🧪 Experimental — under active validation; may not boot.
+    "preview",         # 👁️ Preview — known quality issues; tracked, not for prod.
+    "upstream-gated",  # ⏸️ Upstream-gated — blocked by external action (pin/PR/HW).
+    "deprecated",      # 🗑️ Deprecated — kept for reference; flagged for removal.
+)
+
+# Statuses that launch without --force. Everything else is "(NA)".
+FUNCTIONAL_STATUSES = frozenset({"production", "caveats"})
+
+# Compose `Status:` header emoji → registry status word. The header may carry
+# trailing prose after the canonical token (e.g. "✅ Production (NEW — ...)");
+# matching is by the leading emoji, so prose is tolerated.
+COMPOSE_STATUS_EMOJI = {
+    "✅": "production",
+    "⚠️": "caveats",
+    "🧪": "experimental",
+    "👁️": "preview",
+    "⏸️": "upstream-gated",
+    "🗑️": "deprecated",
+}
+
 
 def _entry(
     *,
@@ -24,7 +58,13 @@ def _entry(
     required_engine_features=None,
     recommended_engine_features=None,
     required_sm=None,
+    status="production",
+    status_note=None,
 ):
+    if status not in STATUS_VALUES:
+        raise ValueError(
+            f"{compose_path}: status={status!r} not in {STATUS_VALUES}"
+        )
     entry = {
         "model": model,
         "weights_variant": weights_variant,
@@ -43,12 +83,46 @@ def _entry(
         "default_port": default_port,
         "gpu_assignment_mode": "contiguous",
         "kvcalc_key": kvcalc_key,
+        "status": status,
+        "status_note": status_note,
     }
     if recommended_engine_features:
         entry["recommended_engine_features"] = list(recommended_engine_features)
     if required_sm is not None:
         entry["required_sm"] = required_sm
     return entry
+
+
+def compose_header_status(text):
+    """Map a compose file's profile-schema `Status:` header to a status word.
+
+    Reads ONLY the `Status:` line inside the leading `# Profile (at-a-glance):`
+    comment block (the structured schema), stopping at the `# ---` separator so
+    a free-form `# Status: ...` prose line further down can't be mistaken for it.
+    Returns the status word (one of STATUS_VALUES) or None if no canonical
+    emoji is found. Matching is by the leading enum emoji, so trailing prose
+    after the canonical token (e.g. "✅ Production (NEW — ...)") is tolerated.
+    """
+    in_schema = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# Profile (at-a-glance):"):
+            in_schema = True
+            continue
+        if not in_schema:
+            continue
+        # The schema block ends at the dashed separator line.
+        if stripped.startswith("# --") or stripped.startswith("#--"):
+            break
+        # Match "#   Status:    <emoji> ..." within the schema block.
+        body = stripped.lstrip("#").strip()
+        if body.startswith("Status:"):
+            value = body[len("Status:"):].strip()
+            for emoji, word in COMPOSE_STATUS_EMOJI.items():
+                if value.startswith(emoji):
+                    return word
+            return None
+    return None
 
 
 COMPOSE_REGISTRY = {
@@ -60,6 +134,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/tq3-mtp.yml",
         default_port=8020, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:long-vision",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage); stack moving to stable vLLM. The vLLM single-card default repointed to vllm/minimal (v0.22.0). Use vllm/minimal or beellama single-card.",
     ),
     "vllm/long-text": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -68,6 +144,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/long-text.yml",
         default_port=8020, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:long-text",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage) + Cliff 2b >50K; stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/long-text-no-mtp": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -76,6 +154,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/long-text-no-mtp.yml",
         default_port=8021, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:long-text-no-mtp",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage) + Cliff 2b >50K; stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/long-vision": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="vision-coding",
@@ -84,6 +164,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/long-vision.yml",
         default_port=8020, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:long-vision",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage) + Cliff 2b >50K; stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/bounded-thinking": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="tool-heavy",
@@ -92,6 +174,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/bounded-thinking.yml",
         default_port=8020, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:bounded-thinking",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage); stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/tools-text": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="tool-heavy",
@@ -100,6 +184,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/tools-text.yml",
         default_port=8020,
         kvcalc_key="qwen3.6-27b:tools-text",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage); stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/minimal": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="fast-chat",
@@ -127,6 +213,8 @@ COMPOSE_REGISTRY = {
         default_port=8011, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:dual-turbo",
         recommended_engine_features=["marlin_pad_sub_tile_n"],
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage); stack moving to stable vLLM. Use vllm/dual (v0.22.0) for dual-card.",
     ),
     "vllm/dual-dflash": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="vision-coding",
@@ -135,6 +223,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/dflash.yml",
         default_port=8012, required_engine_features=["marlin_pad_sub_tile_n"],
         kvcalc_key="qwen3.6-27b:dual-dflash",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: superseded by vllm/dual (fp8, 262K, vision, MTP, stock v0.22.0). DFlash traded ctx/concurrency (185K, 1 stream) for code TPS; recover from git if demand returns.",
     ),
     "vllm/dual-dflash-noviz": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -143,6 +233,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/dflash-noviz.yml",
         default_port=8013, required_engine_features=["marlin_pad_sub_tile_n"],
         kvcalc_key="qwen3.6-27b:dual-dflash-noviz",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: the lone no-vision dual A/B; dropped per the single-vision-config policy (vllm/dual covers vision + 262K + 2 streams). Recover from git if a text-only path is needed.",
     ),
     "vllm/dual-bf16": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -151,6 +243,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/bf16.yml",
         default_port=8012,
         kvcalc_key="qwen3.6-27b:dual-bf16",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: was a matched-config A/B vs Gemma bf16.yml, never validated on Qwen3-Next DeltaNet. Superseded by vllm/dual (fp8, 262K).",
     ),
     "vllm/dual-int8": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -159,6 +253,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/int8.yml",
         default_port=8011, required_engine_features=["int8_per_token_head"],
         kvcalc_key="qwen3.6-27b:dual-int8",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: was a matched-config A/B vs Gemma int8.yml; never validated on Qwen DeltaNet, and fp8 is native on Qwen so int8 PTH buys nothing. Superseded by vllm/dual.",
     ),
     "vllm/dual-tq3-mtp": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="multi-stream-tenant",
@@ -167,6 +263,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/tq3-mtp.yml",
         default_port=8013, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:dual-tq3-mtp",
+        status="deprecated",
+        status_note="Tombstoned 2026-05-11 — Genesis-free TQ3+MTP needs 4 of 5 upstream fixes not yet landed. Use dual-tq3-mtp-genesis (gated) or dual-turbo.",
     ),
     "vllm/dual-tq3-mtp-genesis": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="multi-stream-tenant",
@@ -175,6 +273,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/tq3-mtp-genesis.yml",
         default_port=8015, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:dual-tq3-mtp-genesis",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis on hold pending Sandermage; stack moving to stable vLLM. Use vllm/dual (v0.22.0). (Was upstream-gated on the parked/drifted Genesis pin — see docs/UPSTREAM.md.)",
     ),
     "vllm/dual-tq3-nomtp": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -183,6 +283,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/tq3-nomtp.yml",
         default_port=8014, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:dual-tq3-nomtp",
+        status="deprecated",
+        status_note="Pruned 2026-05-31: superseded by vllm/dual (fp8, same 262K/2-stream, faster + MTP). TQ3 KV density not worth the decode cost here; recover from git if needed.",
     ),
     "vllm/dual-carnice-bf16mtp": _entry(
         model="qwen3.6-27b", weights_variant="carnice-bf16mtp", workload="long-ctx-single",
@@ -191,6 +293,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/carnice-bf16mtp/bf16-mtp.yml",
         default_port=8070,
         kvcalc_key="SKIP",
+        status="caveats",
+        status_note="Carnice fine-tune MTP AL=2.0 vs Lorbus 3.4-3.8 (working but suboptimal TPS).",
     ),
     "vllm/dual-qwopus-bf16mtp": _entry(
         model="qwen3.6-27b", weights_variant="qwopus-bf16mtp", workload="long-ctx-single",
@@ -199,39 +303,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/qwopus-bf16mtp/bf16-mtp.yml",
         default_port=8071,
         kvcalc_key="SKIP",
-    ),
-    "vllm/dual-nvlink": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
-        tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
-        compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/nvlink-fp8-mtp.yml",
-        default_port=8014, requires_nvlink=True, recommended_engine_features=["marlin_pad_sub_tile_n"],
-        kvcalc_key="qwen3.6-27b:dual",
-    ),
-    "vllm/dual-nvlink-turbo": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="multi-stream-tenant",
-        engine="vllm-nightly-mtp", drafter="qwen-mtp-builtin", kv_format="turboquant_3bit_nc",
-        tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.85,
-        compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/nvlink-turbo.yml",
-        default_port=8017, requires_nvlink=True, required_engine_features=["turboquant_3bit_nc"],
-        kvcalc_key="qwen3.6-27b:dual-turbo",
-        recommended_engine_features=["marlin_pad_sub_tile_n"],
-    ),
-    "vllm/dual-nvlink-dflash": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="vision-coding",
-        engine="vllm-nightly-dflash", drafter="zlab-qwen-dflash", kv_format="fp16",
-        tp=2, max_ctx=185000, max_num_seqs=1, mem_util=0.95,
-        compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/nvlink-dflash.yml",
-        default_port=8018, requires_nvlink=True, required_engine_features=["marlin_pad_sub_tile_n"],
-        kvcalc_key="qwen3.6-27b:dual-dflash",
-    ),
-    "vllm/dual-nvlink-dflash-noviz": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-nightly-dflash", drafter="zlab-qwen-dflash", kv_format="fp16",
-        tp=2, max_ctx=200000, max_num_seqs=1, mem_util=0.95,
-        compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/nvlink-dflash-noviz.yml",
-        default_port=8019, requires_nvlink=True, required_engine_features=["marlin_pad_sub_tile_n"],
-        kvcalc_key="qwen3.6-27b:dual-dflash-noviz",
+        status="preview",
+        status_note="Qwopus fine-tune preview: line repetition + NIAH drop + silent-empty turn-5 in soak.",
     ),
     "vllm/dual4": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="multi-stream-tenant",
@@ -278,6 +351,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/bounded-thinking.yml",
         default_port=8020,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="New structured-CoT port; live grammar + MTP validation pending.",
     ),
     "llamacpp/mtp-vision": _entry(
         model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="vision-coding",
@@ -319,6 +394,25 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
     ),
 
+    # Qwen3.6-27B beellama.cpp DFlash — single-card DEFAULT (DFlash spec-dec,
+    # Q5_K_S target + Anbeeld DFlash-IQ4_XS draft, q5_0(K)/q4_1(V) KV). beellama
+    # is a llama.cpp-family engine (kvcalc SKIP, like ik-llama). Promoted to the
+    # single-GPU default 2026-05-30: code-throughput leader (~100 TPS) + slight
+    # 8-pack quality edge (107 vs ik 99, think-off) + output-lossless spec-dec.
+    # Served via our UNOFFICIAL multi-arch image (sm_86/89/120 = 3090/4090/5090);
+    # sm_89/sm_120 are compiled but unvalidated on our 3090-only rig — see Caveats
+    # in the compose. kv_format reflects K-side precision (V is q4_1).
+    "beellama/dflash": _entry(
+        model="qwen3.6-27b", weights_variant="beellama-q5ks-dflash", workload="fast-chat",
+        engine="beellama-local", drafter="anbeeld-qwen-dflash", kv_format="q5_0",
+        tp=1, max_ctx=102400, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/beellama/compose/single/beellama-q5ks-dflash/dflash.yml",
+        default_port=8060,
+        kvcalc_key="SKIP",
+        status="caveats",
+        status_note="Single-GPU default. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP — docs/UPSTREAM.md).",
+    ),
+
     # Qwen3.6-27B PRISM-PRO-DQ (Ex0bit dynamic-quant GGUF) — community-experimental, ik-llama.
     "ik-llama/prism-pro-dq-mtp": _entry(
         model="qwen3.6-27b", weights_variant="ex0bit-prism-pro-dq", workload="fast-chat",
@@ -327,6 +421,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ex0bit-prism-pro-dq/mtp.yml",
         default_port=8020,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     "ik-llama/prism-pro-dq-long": _entry(
         model="qwen3.6-27b", weights_variant="ex0bit-prism-pro-dq", workload="long-ctx-single",
@@ -335,6 +431,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ex0bit-prism-pro-dq/long.yml",
         default_port=8052,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     "ik-llama/prism-pro-dq-two-stage": _entry(
         model="qwen3.6-27b", weights_variant="ex0bit-prism-pro-dq", workload="tool-heavy",
@@ -343,6 +441,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ex0bit-prism-pro-dq/two-stage.yml",
         default_port=8020,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     "ik-llama/prism-pro-dq-dual": _entry(
         model="qwen3.6-27b", weights_variant="ex0bit-prism-pro-dq", workload="tool-heavy",
@@ -351,6 +451,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/dual/ex0bit-prism-pro-dq/mtp.yml",
         default_port=8053,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     "ik-llama/prism-pro-dq-dual-vision": _entry(
         model="qwen3.6-27b", weights_variant="ex0bit-prism-pro-dq", workload="vision-coding",
@@ -359,6 +461,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/dual/ex0bit-prism-pro-dq/mtp-vision.yml",
         default_port=8010,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     # Qwen3.6-35B-A3B APEX-MTP (mudler MoE GGUF — Compact + Quality) — community-experimental, ik-llama.
     "ik-llama/apex-mtp-compact": _entry(
@@ -368,6 +472,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/mudler-apex-compact/mtp.yml",
         default_port=8054,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="APEX-MTP community MoE GGUF — eval-only bring-up lane, not yet validated.",
     ),
     "ik-llama/apex-mtp-compact-long": _entry(
         model="qwen3.6-35b-a3b", weights_variant="mudler-apex-compact", workload="long-ctx-single",
@@ -376,6 +482,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/mudler-apex-compact/long.yml",
         default_port=8056,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="APEX-MTP community MoE GGUF — eval-only bring-up lane, not yet validated.",
     ),
     # @laurimyllari's --fit + asymmetric q8_0(K)/q5_0(V) KV config from
     # discussion #241, retuned + measured on 1× 3090. +7% narr / +4% code
@@ -396,20 +504,24 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/dual/mudler-apex-quality/mtp.yml",
         default_port=8055,
         kvcalc_key="SKIP",
+        status="experimental",
+        status_note="APEX-MTP community MoE GGUF — eval-only bring-up lane, not yet validated.",
     ),
 
-    # Gemma 4 31B, vLLM.
+    # Gemma 4 31B, vLLM. Lean v0.21.0 set: bf16 default, int8 long-context, single-card fp8 risk path.
     "vllm/gemma-mtp-tp1": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="fp8_e4m3",
+        engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="fp8_e4m3",
         tp=1, max_ctx=8192, max_num_seqs=256, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/single/autoround-int4/fp8-mtp.yml",
         default_port=8031, required_sm=9.0,
         kvcalc_key="gemma-4-31b:gemma-single",
+        status="deprecated",
+        status_note="Dead on Ampere: no fp8 KV path for Gemma 4 on sm_86 (attention asserts kv ∈ {fp8,fp8_e4m3,nvfp4} — rejects fp8_e5m2; fp8/fp8_e4m3 need the fp8e4nv kernel sm_86 lacks; nvfp4 Blackwell-only). Live-confirmed stock v0.22.0 2026-05-31. Single-card → beellama/gemma-dflash; dual → vllm/gemma-mtp. See compose Caveats.",
     ),
     "vllm/gemma-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="bf16",
+        engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="bf16",
         tp=2, max_ctx=32768, max_num_seqs=4, mem_util=0.92,
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml",
         default_port=8030,
@@ -417,59 +529,45 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/gemma-int8": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
-        engine="vllm-nightly-full", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
+        engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
         tp=2, max_ctx=98304, max_num_seqs=4, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml",
         default_port=8032, required_engine_features=["int8_per_token_head"],
         kvcalc_key="gemma-4-31b:gemma-dual-int8",
     ),
-    "vllm/gemma-int8-262k": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-nightly-full", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
-        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.95,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml",
-        default_port=8032, required_engine_features=["int8_per_token_head"],
-        kvcalc_key="gemma-4-31b:gemma-dual-int8-262k",
+
+    # Gemma-4-31B beellama.cpp DFlash — single-card DEFAULT (Q4_K_S target +
+    # Anbeeld DFlash-IQ4_XS draft, q5_0(K)/q4_1(V) KV). The ONLY viable fast
+    # single-card Gemma-4 path: does SWA windowed KV (big ctx) AND Gemma-4
+    # spec-dec, where vLLM is FA-walled (head_dim=512), ik-llama walls ~24K, and
+    # stock llama.cpp is ~12 TPS (no FA_ALL_QUANTS). Promoted to single-GPU
+    # default 2026-05-30 (no functional default existed before). llama.cpp-family
+    # → kvcalc SKIP. Re-point to the no-fork mainline path when llama.cpp#23398
+    # (Gemma-4 MTP) merges — see docs/UPSTREAM.md.
+    "beellama/gemma-dflash": _entry(
+        model="gemma-4-31b", weights_variant="beellama-q4ks-dflash", workload="fast-chat",
+        engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
+        tp=1, max_ctx=128000, max_num_seqs=1, mem_util=None,
+        compose_path="models/gemma-4-31b/beellama/compose/single/beellama-q4ks-dflash/dflash.yml",
+        default_port=8061,
+        kvcalc_key="SKIP",
+        status="caveats",
+        status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
     ),
-    "vllm/gemma-dflash": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-nightly-dflash", drafter="gemma-dflash", kv_format="bf16",
-        tp=2, max_ctx=32768, max_num_seqs=4, mem_util=0.92,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash.yml",
-        default_port=8032,
-        kvcalc_key="gemma-4-31b:gemma-dual-dflash",
-    ),
-    "vllm/gemma-dflash-int8": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
-        engine="vllm-nightly-full", drafter="gemma-dflash", kv_format="int8_per_token_head",
-        tp=2, max_ctx=65536, max_num_seqs=2, mem_util=0.95,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/dflash-int8.yml",
-        default_port=8032, required_engine_features=["int8_per_token_head"],
-        kvcalc_key="gemma-4-31b:gemma-dual-dflash-int8",
-    ),
-    "vllm/gemma-int8-tq3": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
-        engine="vllm-nightly-full", drafter="gemma-it-assistant", kv_format="turboquant_3bit_nc",
-        tp=2, max_ctx=98304, max_num_seqs=4, mem_util=0.95,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8-tq3.yml",
-        default_port=8034, required_engine_features=["turboquant_3bit_nc"], required_sm=9.0,
-        kvcalc_key="gemma-4-31b:gemma-dual-int8-tq3",
-    ),
-    "vllm/gemma-bf16": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-nightly-clean", drafter="gemma-it-assistant", kv_format="bf16",
-        tp=2, max_ctx=200000, max_num_seqs=1, mem_util=0.95,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16.yml",
-        default_port=8033,
-        kvcalc_key="gemma-4-31b:gemma-dual-bf16",
-    ),
-    "vllm/gemma-awq": _entry(
-        model="gemma-4-31b", weights_variant="awq", workload="multi-stream-tenant",
-        engine="vllm-nightly-full", drafter="gemma-it-assistant", kv_format="bf16",
-        tp=2, max_ctx=65536, max_num_seqs=4, mem_util=0.85,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/awq/bf16-mtp.yml",
-        default_port=8033,
-        kvcalc_key="gemma-4-31b:gemma-dual-awq",
+    # Dual-card beellama Gemma-4 (layer-split, 262K) — PARKED upstream-gated 2026-05-31.
+    # Boots + recalls 262K fine, but DFlash spec-dec is broken on multi-GPU in our pinned
+    # build (07ac3ce): drafter decode fails, accept 0.357, ~24/38 TPS; --device-draft crashes.
+    # Fixes live on Anbeeld's v0.3.0 dev branch (414 commits ahead) but no tagged release yet.
+    # Re-test (DFlash-fix AND --spec-type mtp) when a beellama release lands. docs/UPSTREAM.md.
+    "beellama/gemma-dflash-dual": _entry(
+        model="gemma-4-31b", weights_variant="beellama-q4ks-dflash", workload="fast-chat",
+        engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/gemma-4-31b/beellama/compose/dual/beellama-q4ks-dflash/dflash.yml",
+        default_port=8062,
+        kvcalc_key="SKIP",
+        status="upstream-gated",
+        status_note="Dual-card beellama Gemma-4 (layer-split, 262K). PARKED: works (262K recall, verify-full 8/8, ~7.5 GB free/card) but DFlash degrades on multi-GPU (Anbeeld #39/#28/#38) — accept 0.357, ~24/38 TPS, --device-draft crashes — in our pinned build 07ac3ce. Dominated by vllm/gemma-int8 (~96/127 @ 262K) regardless. Re-test trigger: beellama tags a release with the v0.3.0 multi-GPU DFlash fixes; then also try --spec-type mtp (runtime, no compile flag) + the radamanthys-assistant GGUF. See compose Caveats + docs/UPSTREAM.md.",
     ),
 
     # v0.7.3 MoE onboarding — Gemma 4 26B-A4B + Qwen 3.6 35B-A3B.
@@ -484,6 +582,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-26b-a4b/vllm/compose/single/autoround-int4-mixed/bf16.yml",
         default_port=8040,
         kvcalc_key="gemma-4-26b-a4b:gemma-a4b-single",
+        status="experimental",
+        status_note="v0.7.3 MoE onboarding — first-boot smoke, validation pending.",
     ),
     "vllm/gemma-a4b": _entry(
         model="gemma-4-26b-a4b", weights_variant="autoround-int4-mixed", workload="fast-chat",
@@ -492,6 +592,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-26b-a4b/vllm/compose/dual/autoround-int4-mixed/bf16.yml",
         default_port=8041,
         kvcalc_key="gemma-4-26b-a4b:gemma-a4b",
+        status="experimental",
+        status_note="v0.7.3 MoE onboarding — primary bench target, validation pending.",
     ),
     "vllm/gemma-a4b-awq": _entry(
         model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat",
@@ -500,6 +602,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-26b-a4b/vllm/compose/dual/awq/bf16.yml",
         default_port=8042,
         kvcalc_key="gemma-4-26b-a4b:gemma-a4b-awq",
+        status="experimental",
+        status_note="v0.7.3 MoE onboarding — AWQ path with PR #40886 overlay, validation pending.",
     ),
     "vllm/gemma-a4b-awq-mtp": _entry(
         model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat",
@@ -508,6 +612,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-26b-a4b/vllm/compose/dual/awq/mtp.yml",
         default_port=8043,
         kvcalc_key="gemma-4-26b-a4b:gemma-a4b-awq-mtp",
+        status="experimental",
+        status_note="v0.7.3 MoE onboarding — AWQ + MTP, validation pending.",
     ),
     "vllm/qwen-a3b-preview-single": _entry(
         model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat",
@@ -516,37 +622,200 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/single/autoround-int4/preview.yml",
         default_port=8050,
         kvcalc_key="qwen3.6-35b-a3b:qwen-a3b-preview-single",
+        status="preview",
+        status_note="MoE onboarding smoke — Cliff 2 mitigations unavailable without Genesis. Do NOT use for long-ctx.",
     ),
-    "vllm/qwen-a3b-preview": _entry(
+    "vllm/qwen-35b-a3b-dual": _entry(
         model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat",
         engine="vllm-nightly-clean", drafter=None, kv_format="fp8_e5m2",
-        tp=2, max_ctx=16384, max_num_seqs=1, mem_util=0.92,
-        compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4/preview.yml",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4/fp8.yml",
         default_port=8051,
-        kvcalc_key="qwen3.6-35b-a3b:qwen-a3b-preview",
-    ),
-    "vllm/qwen-a3b-preview-mtp": _entry(
-        model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-nightly-clean", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
-        tp=2, max_ctx=16384, max_num_seqs=1, mem_util=0.92,
-        compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4/preview-mtp.yml",
-        default_port=8052,
-        kvcalc_key="qwen3.6-35b-a3b:qwen-a3b-preview-mtp",
+        kvcalc_key="qwen3.6-35b-a3b:qwen-35b-a3b-dual",
     ),
 }
 
 
 
 DEFAULTS = {
-    ("qwen3.6-27b", "vllm", "single"): "vllm/default",
+    ("qwen3.6-27b", "vllm", "single"): "vllm/minimal",
     ("qwen3.6-27b", "vllm", "dual"): "vllm/dual",
     ("qwen3.6-27b", "vllm", "multi4"): "vllm/dual4",
     ("qwen3.6-27b", "llamacpp", "single"): "llamacpp/default",
     ("qwen3.6-27b", "ik-llama", "single"): "ik-llama/iq4ks-mtp",
-    ("gemma-4-31b", "vllm", "single"): "vllm/gemma-mtp-tp1",
-    ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-mtp",
+    ("qwen3.6-27b", "beellama", "single"): "beellama/dflash",
+    # No vLLM single-card Gemma default: fp8 KV is hardware-impossible on Ampere
+    # sm_86 (vllm/gemma-mtp-tp1 deprecated 2026-05-31) and no bf16 single compose
+    # ships. Single-card Gemma → beellama/gemma-dflash (the curated walk picks it).
+    ("gemma-4-31b", "beellama", "single"): "beellama/gemma-dflash",
+    # Dual default is gemma-int8: full 262K + vision + 4 streams (the full-context
+    # priority). It rides v0.21.0 + the vendored #40391 per-head-KV overlay (the one
+    # gemma config that can't follow stable). gemma-mtp stays as the stable v0.22.0
+    # no-overlay 32K fallback — kept, not deprecated, just no longer the default.
+    ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-int8",
     ("gemma-4-26b-a4b", "vllm", "single"): "vllm/gemma-a4b-single",
     ("gemma-4-26b-a4b", "vllm", "dual"): "vllm/gemma-a4b",
     ("qwen3.6-35b-a3b", "vllm", "single"): "vllm/qwen-a3b-preview-single",
-    ("qwen3.6-35b-a3b", "vllm", "dual"): "vllm/qwen-a3b-preview",
+    ("qwen3.6-35b-a3b", "vllm", "dual"): "vllm/qwen-35b-a3b-dual",
 }
+
+
+# --- PR-B: model-default resolver knobs (maintainer-owned, design §13.3) ----
+#
+# Two curated tables drive the `<model>/default` resolver. They are maintainer
+# knobs — edited by PR, never auto-grown. See docs/model-default-resolver
+# design + the repo CLAUDE.md "Default rule" note.
+
+# A SHORT opt-in shortlist of models eligible to be the *bare-launch* default
+# (`launch.sh` with no model + no pin → first INSTALLED model on this list →
+# its `<model>/default`). This is NOT an exhaustive ranking of the catalog:
+#   - Models absent from it are fully runnable by name (`--model X` /
+#     `X/default`); they are simply never the auto-default.
+#   - New models are NOT auto-added. Adding a model touches nothing here;
+#     promote one explicitly only when desired.
+#   - Order within the (short) list = the tiebreak for "first installed".
+RECOMMENDED_DEFAULT_MODELS = ["qwen3.6-27b", "gemma-4-31b"]
+
+# Which engine wins, per detected topology, when resolving `<model>/default`
+# with no user pin. The resolver walks this list in order and picks the FIRST
+# engine that has a functional DEFAULTS[(model, engine, topology)] entry (i.e.
+# whose status is NOT in the (NA) set). This is the whole recommendation
+# policy expressed as data — reorder a row to change a recommendation, no code
+# change, any topology.
+#
+# Engine identifiers are the slug-prefix form used in DEFAULTS keys:
+#   vllm · ik-llama · llamacpp   (+ beellama, aspirational — see below).
+# `beellama` is ranked but has ZERO registry entries today (blocked on an
+# upstream Docker image — see docs/UPSTREAM.md). The resolver skips it
+# naturally (no DEFAULTS hit) → no behavior change until it is onboarded, at
+# which point it AUTO-PROMOTES to the single-GPU default with no resolver edit.
+ENGINE_PREFERENCE = {
+    "single": ["beellama", "ik-llama", "llamacpp", "vllm"],
+    "dual": ["vllm", "ik-llama", "llamacpp", "beellama"],
+    "multi": ["vllm", "ik-llama", "llamacpp", "beellama"],
+}
+
+
+def _topology_family(topology):
+    """Map a concrete topology to its ENGINE_PREFERENCE family.
+
+    Concrete topologies are `single` · `dual` · `multi4` · `multiN`; the
+    preference table keys on the family `single` · `dual` · `multi`.
+    """
+    if topology == "single":
+        return "single"
+    if topology == "dual":
+        return "dual"
+    if topology.startswith("multi"):
+        return "multi"
+    return topology
+
+
+def _nearest_lower_topology(topology):
+    """Degradation order (design §6): notice + nearest-lower topology.
+
+    multiN → dual → single → None. Returns the next topology to try, or None
+    when there is nowhere lower to fall.
+    """
+    if topology.startswith("multi"):
+        return "dual"
+    if topology == "dual":
+        return "single"
+    return None
+
+
+def engine_set():
+    """The closed set of engine namespace-prefixes (DEFAULTS keys + ranked).
+
+    `X/default` dispatch (design §13.1): `X ∈ engine_set` → engine
+    recommendation; else `X ∈ model_set` → model default; else error.
+    Engines and model-ids are disjoint by construction.
+    """
+    engines = set()
+    for _model, engine, _topology in DEFAULTS:
+        engines.add(engine)
+    for ranked in ENGINE_PREFERENCE.values():
+        engines.update(ranked)
+    return engines
+
+
+def model_set():
+    """The set of model-ids that appear in DEFAULTS (the runnable catalog)."""
+    return {model for (model, _engine, _topology) in DEFAULTS}
+
+
+def _functional_default(model, engine, topology):
+    """A DEFAULTS slug for (model, engine, topology) whose status is functional.
+
+    Returns the slug only when an entry exists AND its registry status is NOT
+    in the (NA) set (experimental/preview/upstream-gated/deprecated) — a
+    broken/preview config must never become someone's auto-default (§12.5).
+    Returns None otherwise.
+    """
+    slug = DEFAULTS.get((model, engine, topology))
+    if not slug:
+        return None
+    entry = COMPOSE_REGISTRY.get(slug)
+    if entry is None:
+        return None
+    if entry.get("status", "production") not in FUNCTIONAL_STATUSES:
+        return None
+    return slug
+
+
+def curated_default_target(model, topology):
+    """Curated fallback (§4): walk ENGINE_PREFERENCE[family], first functional
+    DEFAULTS slug wins. Returns the slug, or None if no functional curated
+    default exists for (model, topology).
+    """
+    family = _topology_family(topology)
+    for engine in ENGINE_PREFERENCE.get(family, []):
+        slug = _functional_default(model, engine, topology)
+        if slug:
+            return slug
+    return None
+
+
+def community_default_target(model, topology, hw_class=None):  # noqa: ARG001
+    """Community-ranked best config — the FUTURE middle precedence rung (§13.4).
+
+    Contract: returns a ranked slug when the submissions/ranking app exists;
+    returns None today (always skipped). The resolver inserts a non-None result
+    BETWEEN the user pin and the curated fallback. v1 ships this stub returning
+    None so the ladder rung is real, not aspirational; a test asserts it is
+    skipped.
+    """
+    return None
+
+
+def model_default_pin_key(model):
+    """The .env key for a per-model user pin (design §13.2).
+
+    `CLUB3090_DEFAULT_<MODELID uppercased, non-alnum→_>`, e.g.
+    qwen3.6-27b → CLUB3090_DEFAULT_QWEN3_6_27B.
+    """
+    suffix = "".join(c if c.isalnum() else "_" for c in model).upper()
+    return f"CLUB3090_DEFAULT_{suffix}"
+
+
+def model_of_slug(slug):
+    """The model-id a slug belongs to, or None if the slug is unknown."""
+    entry = COMPOSE_REGISTRY.get(slug)
+    return entry.get("model") if entry else None
+
+
+def slug_topology(slug):
+    """The topology family a slug serves, derived from its compose_path.
+
+    compose_path is `models/<model>/<engine>/compose/<topology>/<quant>/...`.
+    Returns `single`/`dual`/`multi` (the ENGINE_PREFERENCE family) or None.
+    """
+    entry = COMPOSE_REGISTRY.get(slug)
+    if not entry:
+        return None
+    cp = entry.get("compose_path", "")
+    if "/compose/" not in cp:
+        return None
+    after = cp.split("/compose/", 1)[1]
+    topo = after.split("/", 1)[0]
+    return _topology_family(topo)

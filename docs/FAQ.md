@@ -15,11 +15,30 @@ Common questions about club-3090. If your question isn't here, open a [GitHub Di
 
 ### Can I use a 4090 instead of a 3090?
 
-Yes — 4090 (Ada, sm_89) is strictly better than 3090 (Ampere, sm_86) for everything we ship. Slightly different kernel paths but no patches needed. Caveats: vLLM Genesis patches are tested on Ampere; tools should still work but TPS scaling is untested. Open an issue with numbers if you bench it.
+Yes. The 4090 (Ada, sm_89) is strictly better than 3090 (Ampere, sm_86) for everything we ship — same 24 GB VRAM envelope but better silicon. Cross-rig measurements:
+
+- @laurimyllari Qwen3.6-35B-A3B ik `--fit` (Mudler APEX I-Compact): **205 / 256 TPS** ([discussion #241](https://github.com/noonghunna/club-3090/discussions/241))
+- @laurimyllari Qwen3.6-27B `ik-llama/iq4ks-two-stage`: **82.5 / 120.9 TPS** (+39% narr / +24% code over 3090)
+
+vLLM Genesis patches work cleanly on Ada.
+
+**Watch out for the context derate.** A 24 GB 4090 carries more idle desktop + driver VRAM than a headless 3090, so single-card context ceilings land **~15–20% lower**. Observed: `long-text.yml` 180K → 90K, ik two-stage 200K → 160K, `dual-dflash-noviz` 200K → 180K. Start below the 3090 number and verify with `verify-stress.sh` (watch its ceiling VRAM-margin line).
+
+The composes don't currently inject Ada-specific FP8-native-compute defaults — vLLM auto-detects most of it, but the explicit-flag path is tracked in [#246](https://github.com/noonghunna/club-3090/issues/246).
 
 ### Can I use a 5090?
 
-Should work for vLLM (Blackwell adds new kernels but back-compat). The Marlin pad-sub-tile-n fork we mount targets Ampere edge cases — on Blackwell you can probably drop the `/opt/ai/engines/vllm/primary/` mount. Not validated yet. We'd love numbers from a 5090 rig — use the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template.
+Yes — and the 32 GB envelope unlocks single-card configs the 3090 can't fit. Cross-rig measurements:
+
+- @apnar Gemma 4 31B `dual.yml`-shape forced TP=1: **159.67 / 215.10 TPS** (+46% narr / +51% code over 2× 3090 TP=2 on the same model)
+- @apnar Gemma 4 31B `dual-dflash.yml` forced TP=1: **150.40 / 261.06 TPS**
+- @efschu Qwen3.6-27B `dual-dflash.yml`-shape forced TP=1: **126.53 / 200.11 TPS** (highest single-card code TPS on the matrix)
+
+The 32 GB headroom clears Ampere boot OOMs — e.g. Gemma 4 single-card configs that don't fit on 24 GB. Vendored Marlin patches we ship for sm_86 edge cases are no-ops on Blackwell (vLLM auto-selects CUTLASS Machete on SM 9.0+); you can ignore them.
+
+`models/gemma-4-26b-a4b/vllm/compose/dual/docker-compose.yml` (Intel AutoRound INT4) currently `boot fail (SM86)` because Marlin can't handle the `moe_intermediate_size=704` K-dim alignment — SM 9.0+ has CUTLASS Machete which can. A 5090 / Pro 6000 should boot it cleanly; please report numbers if you try.
+
+The composes don't currently use Blackwell-specific paths (FP4 quant, FP8 native attention compute) — tracked in [#246](https://github.com/noonghunna/club-3090/issues/246). Numbers from your rig are valuable: use the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template.
 
 ### Do I need NVLink?
 
@@ -227,6 +246,70 @@ On vLLM, `turboquant_3bit_nc` is the long-context default; where context allows,
 For a first install, run `bash scripts/setup.sh` with no model argument in a normal terminal. It opens a hardware-aware model picker, marks Qwen / Gemma / Both as eligible or not for your detected GPUs, then continues into the existing download flow.
 
 After setup, run `bash scripts/launch.sh`. The wizard asks which model (filtered to what you've downloaded), then which GPU(s) to use, auto-picks TP for homogeneous sets (PP for heterogeneous), filters variants by hardware fit, shows a per-card VRAM projection from `tools/kv-calc.py` for the suggested default, then boots and runs `verify-full.sh`. Power-user forms still work: `bash scripts/setup.sh qwen3.6-27b`, `bash scripts/launch.sh --variant vllm/dual`, partial flags like `bash scripts/launch.sh --model qwen3.6-27b --gpus 0,1` (skips prompts), `--tp 4 --pp 2` to override parallelism, plus `setup.sh --help` / `launch.sh --help` for the full flag list. This wizard covers the **curated catalog**; for a model *not* in the catalog (any safetensors HF repo), use `scripts/pull.sh` instead — see [docs/PULL.md](PULL.md).
+
+### How do I switch to / try a different model?
+
+Two parts: *what's available* and *what happens if I don't have it yet.*
+
+**List what your machine can run.** `bash scripts/switch.sh --list` prints the variants runnable on *this* box — generated live from the compose registry (the single source of truth), then filtered to the topologies your GPU count supports (1 GPU → single-card configs only; 2 → single + dual; 4+ → everything). It prints a one-line note when it hides anything; add `--all` (`bash scripts/switch.sh --list --all`, or `--list-all`) to see every variant regardless of GPU count. Detection fails open — if it can't tell how many GPUs you have, it shows everything.
+
+**Switch to one you've already downloaded.** Either re-run the wizard (`bash scripts/launch.sh`, which filters the menu to models present in `MODEL_DIR` and verifies the boot), or go direct by slug:
+
+```bash
+bash scripts/launch.sh --variant vllm/dual      # boots + runs verify-full.sh
+bash scripts/switch.sh vllm/long-vision          # stateless: down the old, up the new
+```
+
+`launch.sh` wraps `switch.sh` and then `verify-full.sh`; `switch.sh` is the bare down-old/up-new if you just want the swap.
+
+**Don't want to remember a slug? Use `<model>/default`.** It auto-resolves to a config for *that model* on *your* hardware — your `.env` pin if you've set one (see the next Q), else the curated pick for the detected topology:
+
+```bash
+bash scripts/launch.sh --variant qwen3.6-27b/default   # this model, picked for your rig
+bash scripts/switch.sh qwen3.6-27b/default
+```
+
+(`<engine>/default` — e.g. `vllm/default` — still means "the maintainer's recommended config for that engine"; that's a *different* token, owned by the repo, not by you.)
+
+**If the weights aren't downloaded, it does NOT auto-pull — by design.** Pointing `launch.sh` / `switch.sh` at a model you don't have stops with a hint instead of silently fetching 20+ GB:
+
+```
+[launch] ERROR: <model> is not installed under <MODEL_DIR>.
+[launch]        Run: bash scripts/setup.sh <model>
+```
+
+Downloading is a deliberate, separate step:
+
+- **Curated catalog model** → `bash scripts/setup.sh <model>` (grabs the right weights + patches, then verifies).
+- **A safetensors HF repo our generator can handle** → `bash scripts/pull.sh <org/Model> --profile-like <a-registry-key>`. It evaluates *any* safetensors repo against our arch support + KV math (add `--dry-run` for evaluate-only, no download) and — **only if it clears every gate** (architecture supported → compose-emittable → fits your GPUs) — downloads and boots it. Anything that doesn't clear them stops with a precise reason, not a crash. Full guide: [docs/PULL.md](PULL.md).
+
+**Scope — this is not a "run any weights/quant" runner.** These scripts serve the stack's **supported models**: the curated catalog (`setup` / `switch` / `launch`), plus — via `pull` — **safetensors** repos whose **architecture our generator supports** (vLLM only). Outside that, they won't boot the model; they tell you honestly instead of half-running it:
+> - **GGUF / `.bin` repos** are not served by these scripts — use llama.cpp manually (see [The model I want isn't in the supported list](#the-model-i-want-isnt-in-the-supported-list--can-i-still-run-it)). `pull` aborts such repos at the deriver as `unsupported-format`.
+> - **Unsupported architectures / quants** (safetensors but outside the patch matrix) stop at a derive/eligibility gate with a structured reason — they are evaluated, never silently run.
+
+See also [How do I pick the right model + variant?](#how-do-i-pick-the-right-model--variant) for the first-install wizard, and [The model I want isn't in the supported list](#the-model-i-want-isnt-in-the-supported-list--can-i-still-run-it) for the pull-gate in depth.
+
+### How do I set my own default config?
+
+There are **two layers of "default"**, with different owners:
+
+| Token | Means | Who owns it |
+|---|---|---|
+| `<engine>/default` (e.g. `vllm/default`) | the repo's recommended config for that engine, on the detected topology | club-3090 (changes by PR) |
+| `<model>/default` (e.g. `qwen3.6-27b/default`) | **your** preferred way to run that model | **you** (`--set-default`) |
+
+By default `<model>/default` resolves to the *curated* pick — the first engine in `ENGINE_PREFERENCE` for your topology that has a healthy config (single-card Qwen → `ik-llama/iq4ks-mtp`; dual → `vllm/dual`). To make it resolve to **your** choice instead, pin a slug:
+
+```bash
+bash scripts/switch.sh --set-default vllm/dual-turbo   # pin (writes .env)
+bash scripts/switch.sh --clear-default qwen3.6-27b      # remove the pin
+bash scripts/switch.sh --defaults                       # show what each model resolves to + pin vs curated
+```
+
+- A pin is a **full slug**, so it captures engine + topology + config in one pick. It's stored in `.env` as `CLUB3090_DEFAULT_<MODELID>` (e.g. `CLUB3090_DEFAULT_QWEN3_6_27B=vllm/dual-turbo`) — one key per model.
+- After any successful `bash scripts/launch.sh` boot, it offers: *"Make `<slug>` your default for `<model>`? [y/N]"* — one keypress to pin it.
+- A **bare** `bash scripts/launch.sh` with a pin set asks *"Launch your default `<slug>`? [Y/n]"* — one keypress to go.
+- Pins are **validated, never blocking**: if a pin names an unknown slug, the wrong model, a config for a different topology than your rig, or a known-unhealthy config, the resolver warns and falls back to the curated default — it never stops a launch.
 
 ### `bash scripts/setup.sh qwen3.6-27b` is downloading 20+ GB. Where does it go? / Can I put models on a different drive?
 

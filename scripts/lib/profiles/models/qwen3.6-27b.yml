@@ -119,6 +119,30 @@ weights:
     kind: gguf
     verify_glob: "*.gguf"
     setup_weights_key: iq4ks
+  beellama-q5ks-dflash:
+    path: qwen3.6-27b-gguf/unsloth-q5ks
+    local_subdir: qwen3.6-27b-gguf/unsloth-q5ks
+    size_gb: 17.7
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/Qwen3.6-27B-GGUF
+    files:
+      - Qwen3.6-27B-Q5_K_S.gguf
+    engine: beellama
+    kind: gguf
+    verify_glob: "*.gguf"
+  anbeeld-dflash-iq4xs:
+    path: qwen3.6-27b-gguf/anbeeld-dflash-iq4xs
+    local_subdir: qwen3.6-27b-gguf/anbeeld-dflash-iq4xs
+    size_gb: 0.93
+    format: gguf
+    status: experimental
+    hf_repo: Anbeeld/Qwen3.6-27B-DFlash-GGUF
+    files:
+      - Qwen3.6-27B-DFlash-IQ4_XS.gguf
+    engine: beellama
+    kind: draft
+    verify_glob: "*.gguf"
   ex0bit-prism-pro-dq:
     path: qwen3.6-27b-gguf/ex0bit-prism-pro-dq
     local_subdir: qwen3.6-27b-gguf/ex0bit-prism-pro-dq
@@ -160,6 +184,7 @@ compatible_drafters:
   - qwen-mtp-builtin
   - zlab-qwen-dflash
   - unsloth-mtp-gguf
+  - anbeeld-qwen-dflash
 valid_tp:
   - 1
   - 2

@@ -7,7 +7,7 @@
 #   Vision:    yes
 #   Max ctx:   262K
 #   Genesis:   v7.72.2 (PN59 streaming-GDN + PN34 workspace-lock-relax + PN12)
-#   Status:    ✅ Production
+#   Status:    🗑️ Deprecated
 #   Best for:  Multi-tenant agent fleet — 4 streams at full ctx (4.67× concurrency vs dual.yml) ⭐
 # ---------------------------------------------------------------------------
 # Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.69 dev.
@@ -54,7 +54,7 @@ services:
   vllm-qwen36-27b-dual-turbo:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual-turbo}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8011}}:8000"
     volumes:

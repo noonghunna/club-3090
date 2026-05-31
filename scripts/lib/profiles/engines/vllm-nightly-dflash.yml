@@ -49,7 +49,8 @@ vendored_overlays:
     upstream_status: filed
     upstream_merged_in_version: null
     local_status: vendored
-    purpose: "DFlash serving support for local experimental composes."
+    image_baked: true   # DFlash ships inside the pinned nightly image; not a mountable file overlay
+    purpose: "DFlash serving support for local experimental composes (provided by the pinned nightly image; no on-disk overlay to mount)."
 required_genesis: true
 genesis_pin: v7.72.2
 notes: "Experimental DFlash path. Does not claim INT8 PTH support. Launch exports this SHA as VLLM_NIGHTLY_SHA; VLLM_IMAGE can override the full image ref."

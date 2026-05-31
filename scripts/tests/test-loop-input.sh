@@ -457,20 +457,36 @@ if not real_dirs:
 else:
     for rd in real_dirs:
         try:
-            rfi = read_capture_bundle(rd)
-            ok = (
-                isinstance(rfi, FInput)
-                and rfi.manifest["schema"] == 1
-                and rfi.failure_class is None
-                and len(rfi.consensus_key()) == 9
-                and len(rfi.dedup_tuple()) == 7
-                and len(rfi.dedup_hash()) == 12
-                # CONTRACT-5 G1: live topology serialized (full GPU name).
-                and isinstance(
-                    rfi.manifest["topology_summary_canonical"], str)
-            )
-            check(ok, f"REAL [E] capture parses + keys build: {rd.name} "
-                      f"(model={rfi.model_id!r})")
+            manifest = json.loads((rd / "manifest.json").read_text())
+            schema = manifest.get("schema")
+            if schema == 1:
+                rfi = read_capture_bundle(rd)
+                ok = (
+                    isinstance(rfi, FInput)
+                    and rfi.manifest["schema"] == 1
+                    and rfi.failure_class is None
+                    and len(rfi.consensus_key()) == 9
+                    and len(rfi.dedup_tuple()) == 7
+                    and len(rfi.dedup_hash()) == 12
+                    # CONTRACT-5 G1: live topology serialized (full GPU name).
+                    and isinstance(
+                        rfi.manifest["topology_summary_canonical"], str)
+                )
+                check(ok, f"REAL [E] capture parses + keys build: {rd.name} "
+                          f"(model={rfi.model_id!r})")
+            elif schema == 2:
+                gfi = read_gate_bundle(rd)
+                ok = (
+                    isinstance(gfi, FInputGate)
+                    and gfi.manifest["schema"] == 2
+                    and gfi.failure_class is None
+                    and gfi.is_gate_only is True
+                )
+                check(ok, f"REAL gate capture parses: {rd.name} "
+                          f"(model={gfi.model_id!r})")
+            else:
+                check(False, f"REAL capture {rd} has unsupported schema "
+                             f"{schema!r}")
         except Exception as exc:
             check(False, f"REAL capture {rd} failed to parse: {exc!r}")
 

@@ -168,9 +168,12 @@ QWEN_GDN_ACTIVATION_COEF = {
 # ---- Qwen MoE activation + built-in MTP workspace ----
 # Path-B low-anchor fit from the two v0.7.3 preview rows. The per-token GDN
 # coefficient follows the dense-Qwen shape; the small constant captures MoE
-# expert dispatch/router buffers. Current vLLM TP preview effectively keeps
-# the quantized MoE weights resident per card, so weights are not divided by TP
-# for qwen3-next-moe in _weights_per_card_gb().
+# expert dispatch/router buffers. NOTE: vLLM shards both attention and MoE
+# expert weights across TP ranks, so weights ARE divided by TP for
+# qwen3-next-moe in _weights_per_card_gb() (fixed in #260). The ≈budget peak
+# on the live rows is the elastic KV pool filling spare VRAM, not resident
+# full-quant weights — the old no-/tp assumption over-predicted long-ctx
+# configs (e.g. 262K) into a false FAIL.
 QWEN_MOE_ACTIVATION_COEF = {
     "fp16":               110,
     "bf16":               110,
@@ -225,8 +228,8 @@ GENERIC_DENSE_ACTIVATION_FLOOR_GB = 1.5         # ≥ Gemma dense constant activ
 # =============================================================================
 COMPOSE_ALIAS_TEXT = {
     "qwen3.6-27b": "minimal=vllm/minimal long-text=vllm/long-text long-text-no-mtp=vllm/long-text-no-mtp long-vision=vllm/long-vision bounded-thinking=vllm/bounded-thinking tools-text=vllm/tools-text dual=vllm/dual dual-turbo=vllm/dual-turbo dual-dflash=vllm/dual-dflash dual-dflash-noviz=vllm/dual-dflash-noviz dual-bf16=vllm/dual-bf16 dual-int8=vllm/dual-int8 dual-tq3-mtp=vllm/dual-tq3-mtp dual-tq3-mtp-genesis=vllm/dual-tq3-mtp-genesis dual-tq3-nomtp=vllm/dual-tq3-nomtp dual4=vllm/dual4 dual4-dflash=vllm/dual4-dflash",
-    "qwen3.6-35b-a3b": "qwen-a3b-preview-single=vllm/qwen-a3b-preview-single qwen-a3b-preview=vllm/qwen-a3b-preview qwen-a3b-preview-mtp=vllm/qwen-a3b-preview-mtp",
-    "gemma-4-31b": "gemma-dual=vllm/gemma-mtp gemma-dual-int8=vllm/gemma-int8 gemma-dual-int8-262k=vllm/gemma-int8-262k gemma-dual-bf16=vllm/gemma-bf16 gemma-dual-int8-tq3=vllm/gemma-int8-tq3 gemma-dual-dflash=vllm/gemma-dflash gemma-dual-dflash-int8=vllm/gemma-dflash-int8 gemma-dual-awq=vllm/gemma-awq gemma-single=vllm/gemma-mtp-tp1",
+    "qwen3.6-35b-a3b": "qwen-a3b-preview-single=vllm/qwen-a3b-preview-single qwen-35b-a3b-dual=vllm/qwen-35b-a3b-dual",
+    "gemma-4-31b": "gemma-dual=vllm/gemma-mtp gemma-dual-int8=vllm/gemma-int8 gemma-single=vllm/gemma-mtp-tp1",
     "gemma-4-26b-a4b": "gemma-a4b-single=vllm/gemma-a4b-single gemma-a4b=vllm/gemma-a4b gemma-a4b-awq=vllm/gemma-a4b-awq gemma-a4b-awq-mtp=vllm/gemma-a4b-awq-mtp",
 }
 COMPOSE_ALIASES = {model: tuple(part.split("=", 1) for part in text.split()) for model, text in COMPOSE_ALIAS_TEXT.items()}
@@ -332,11 +335,16 @@ def _weights_per_card_gb(spec, tp, weights_variant="default"):
     if spec["model_family"] == "qwen3-next-hybrid":
         return spec["weights_total_gb"] / tp
     elif spec["model_family"] == "qwen3-next-moe":
-        # Current vLLM MoE preview keeps expert weights effectively resident
-        # per TP rank; live 16K rows calibrate to full quant weight per card.
+        # vLLM shards attention + MoE expert weights across TP ranks, so
+        # per-card weights are /tp (#260). The old no-/tp assumption was
+        # mis-inferred from the live ≈budget peak — but that peak is the
+        # elastic KV pool filling spare VRAM (vLLM allocates all available
+        # KV memory as blocks), not resident full-quant weights. Not dividing
+        # over-predicted the fixed footprint and turned long-ctx configs
+        # (e.g. 262K dual, which fits) into a false FAIL.
         if weights_variant == "gptq":
-            return spec["weights_gptq_gb"]
-        return spec["weights_total_gb"]
+            return spec["weights_gptq_gb"] / tp
+        return spec["weights_total_gb"] / tp
     elif spec["model_family"] == "gemma4-swa-dense":
         if weights_variant == "awq":
             return spec["weights_awq_gb"] / tp
@@ -345,8 +353,13 @@ def _weights_per_card_gb(spec, tp, weights_variant="default"):
         else:  # int4 default
             return spec["weights_int4_gb"] / tp
     elif spec["model_family"] == "gemma4-swa-moe":
-        # Same MoE-residency assumption as Qwen A3B; validated by the
-        # v0.7.3 AWQ rows where TP=2 still peaks near a full AWQ shard/card.
+        # NOT /tp'd (unlike qwen3-next-moe, fixed in #260) — deliberately left
+        # pending its own re-calibration. The v0.7.3 AWQ rows peak at 23.45–
+        # 23.50 GB/card (TP=2, ~0.95 GB above the 22.08 budget), so the current
+        # no-/tp footprint produces a *protective* TIGHT verdict there. Dividing
+        # by TP without a measured fixed-footprint anchor would relax that to
+        # PASS for a config that genuinely runs at 23.5/24. Re-do with a proper
+        # boot-log anchor (KV-pool tokens → fixed = peak − pool) before /tp'ing.
         if weights_variant == "int4":
             return spec["weights_int4_gb"]
         return spec["weights_awq_gb"]
@@ -827,6 +840,17 @@ def predict(
         notes.append("⚠ Gemma 4 31B TP=1 needs ≥32 GB VRAM; 24 GB Ampere boot-OOMs (model weights + drafter + min KV)")
     if spec["model_family"] in {"qwen3-next-moe", "gemma4-swa-moe"}:
         notes.append("MoE projection uses low-anchor calibration; add max_ctx/max_num_seqs A/B rows before treating this as production-grade.")
+    if (
+        spec["model_family"] == "qwen3-next-moe"
+        and kv_pool_requested_gb > 0
+        and available_for_kv > kv_pool_requested_gb * 1.5
+    ):
+        notes.append(
+            f"DeltaNet-hybrid KV is cheap — one max_ctx={max_ctx:,} seq needs only "
+            f"{kv_pool_requested_gb:.2f} GB, but vLLM fills the ~{available_for_kv:.1f} GB available pool "
+            f"to budget (≈{available_for_kv / kv_pool_requested_gb:.1f}× concurrency headroom). The sub-budget "
+            f"'predicted total' is the single-seq floor, not spare VRAM you can repurpose."
+        )
     if tp > 4:
         notes.append("TP > 4 predictions are extrapolated; report deltas via scripts/report.sh --bench")
 

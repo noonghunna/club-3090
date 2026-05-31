@@ -23,7 +23,7 @@ for key, entry in COMPOSE_REGISTRY.items():
 PY
 )"
 
-declare -A REG_MAP REG_PORT SW_MAP SW_PORT VARIANTS VARIANT_DEFAULT_PORT
+declare -A REG_MAP REG_PORT SW_MAP SW_PORT VARIANTS VARIANT_DEFAULT_PORT VARIANT_STATUS VARIANT_STATUS_NOTE
 while IFS=$'\t' read -r key spec port; do
   [[ -n "$key" ]] || continue
   REG_MAP["$key"]="$spec"

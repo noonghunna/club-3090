@@ -49,10 +49,13 @@
 #   cold-cache boots regardless of offload mode.
 #
 # Why --cache-ram 4096:
-#   Matches @laurimyllari's --fit-mtp compose (ik-llama's default is
-#   8192). Likely the same forward-compat rationale — lower host-RAM
-#   reservation leaves more headroom for partial-offload weights when
-#   the GGUF is swapped to a bigger quant. Confirmation TBD on #243.
+#   Partial-offload host-RAM headroom for the q8 weights (NOT I-Compact-
+#   specific) — lower than ik-llama's 8192 default leaves more host RAM for
+#   the partially-offloaded weights. Confirmed by @laurimyllari (#243).
+#   WARNING — RAM-constrained (<=32 GB) systems: MTP n=4's draft working set
+#   + this 4 GB prompt-cache reservation + the partial-offloaded q8 weights
+#   can OOM (reported by @laurimyllari on 32 GB, #243). On tight-RAM boxes,
+#   lower CACHE_RAM_MB to 2048 or 0 (env override below) to free host RAM.
 #
 # Override defaults via .env or shell:
 #   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)

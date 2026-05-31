@@ -155,14 +155,15 @@ def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
 
     spec = str(engine.install.get("spec", ""))
     if engine.install.get("method") != "docker_image" or engine.type != "vllm":
-        raise ProfileError(f"engine {engine_id!r} install.spec is not a docker nightly image: {spec!r}")
-    if ":nightly-" not in spec:
-        raise ProfileError(f"engine {engine_id!r} install.spec is not a docker nightly image: {spec!r}")
-
-    sha = spec.rsplit(":nightly-", 1)[1].strip()
-    if not sha or any(char.isspace() for char in sha):
-        raise ProfileError(f"engine {engine_id!r} has an invalid nightly SHA in install.spec: {spec!r}")
-    return {"VLLM_NIGHTLY_SHA": sha}
+        raise ProfileError(f"engine {engine_id!r} install.spec is not a docker image: {spec!r}")
+    if ":nightly-" in spec:
+        sha = spec.rsplit(":nightly-", 1)[1].strip()
+        if not sha or any(char.isspace() for char in sha):
+            raise ProfileError(f"engine {engine_id!r} has an invalid nightly SHA in install.spec: {spec!r}")
+        return {"VLLM_NIGHTLY_SHA": sha}
+    if not spec or any(char.isspace() for char in spec):
+        raise ProfileError(f"engine {engine_id!r} has an invalid docker image in install.spec: {spec!r}")
+    return {"VLLM_IMAGE": spec}
 
 
 def resolve_variant_pin(profiles, variant: str) -> dict[str, str]:
@@ -174,7 +175,7 @@ def resolve_variant_pin(profiles, variant: str) -> dict[str, str]:
 
 def _print_env(exports: dict[str, str], fmt: str) -> None:
     if fmt == "value":
-        print(exports["VLLM_NIGHTLY_SHA"])
+        print(next(iter(exports.values())))
     elif fmt == "json":
         import json
 

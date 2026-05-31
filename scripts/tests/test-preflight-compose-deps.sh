@@ -93,7 +93,7 @@ vllm_compose="${TMP_DIR}/gemma.yml"
 cat > "$vllm_compose" <<'YAML'
 services:
   vllm:
-    image: ghcr.io/noonghunna/vllm-club3090:latest
+    image: vllm/vllm-openai:v0.21.0
     command:
       - --model
       - /root/.cache/huggingface/gemma-4-31b-autoround-int4
@@ -118,7 +118,7 @@ extends_stub="${TMP_DIR}/stub.yml"
 cat > "$extends_base" <<'YAML'
 services:
   vllm-base:
-    image: ghcr.io/noonghunna/vllm-club3090:latest
+    image: vllm/vllm-openai:v0.21.0
     command:
       - --model
       - /root/.cache/huggingface/qwen3.6-27b-autoround-int4

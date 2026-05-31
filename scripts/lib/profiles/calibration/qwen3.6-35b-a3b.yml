@@ -1,22 +1,17 @@
 schema_version: 1
 model: qwen3.6-35b-a3b
-# Low-anchor calibration: both rows use the same fp8_e5m2 / 16K / seqs=1 /
-# TP=2 envelope and only vary built-in MTP. Add max_ctx / max_num_seqs A/B
-# rows before tightening the MoE activation coefficient.
+# Production 262K+vision peak on vLLM v0.22.0 stable (fp8_e5m2 / seqs=1 / TP=2).
+# DeltaNet-hybrid KV is cheap, so the per-card peak (22.1) is the elastic KV
+# pool filling spare VRAM, not the fixed footprint — see #260 / kv-calc.py
+# qwen3-next-moe (/tp). Predicted is sub-budget; verdict ✓ is direction-only.
+# (The built-in-MTP A/B row was retired — MTP is net-negative on this MoE at
+#  vLLM TP=2; finding lives in BENCHMARKS.md + learnings/qwen3.6-35b-a3b.md.)
 rows:
-  - compose: vllm/qwen-a3b-preview
+  - compose: vllm/qwen-35b-a3b-dual
     vram_gb: 24
-    measured_peak_gb: 21.94
+    measured_peak_gb: 22.1
     ctx_override: null
-    status: low-anchor-calibration
-    engine_pin: vllm-nightly-bf610c2f
+    status: active
+    engine_pin: vllm-v0.22.0
     genesis_pin: null
-    source: "BENCHMARKS.md#MoE models qwen3.6-35b-a3b/dual/preview.yml @noonghunna 2026-05-15"
-  - compose: vllm/qwen-a3b-preview-mtp
-    vram_gb: 24
-    measured_peak_gb: 22.72
-    ctx_override: null
-    status: low-anchor-calibration
-    engine_pin: vllm-nightly-bf610c2f
-    genesis_pin: null
-    source: "BENCHMARKS.md#MoE models qwen3.6-35b-a3b/dual/preview-mtp.yml @noonghunna 2026-05-15"
+    source: "BENCHMARKS.md#MoE models qwen3.6-35b-a3b/dual fp8.yml @noonghunna 2026-05-30 (262K+vision production; 178/174 TPS, 2.05M-token KV pool, NIAH-240K, soak PASS)"

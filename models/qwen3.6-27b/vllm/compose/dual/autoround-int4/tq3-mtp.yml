@@ -5,7 +5,11 @@
 #   Drafter:   MTP n=3 (built-in)
 #   KV:        turboquant_3bit_nc (TQ3) — 3-bit per element
 #   Max ctx:   262144 (262K)
-#   Status:    ⛔ TOMBSTONED 2026-05-11 — NOT shipping. See gap below.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Tombstoned 2026-05-11 — NOT shipping. Genesis-free TQ3+MTP needs an
+#              upstream P67-equivalent multi-query TurboQuant kernel that doesn't exist
+#              yet (see gap below). Kept as a reference / re-test surface. Use
+#              dual/tq3-mtp-genesis.yml (upstream-gated) or dual/turbo.yml instead.
 #   Best for:  Reference / re-test surface once an upstream P67-equivalent
 #              multi-query TurboQuant spec-decode kernel lands.
 # ---------------------------------------------------------------------------
@@ -72,7 +76,7 @@ services:
     # drift between Qwen and Gemma legs.
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-${VLLM_NIGHTLY_SHA}}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual-int8-tq3}"
-    restart: "no"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8013}}:8000"
     volumes:

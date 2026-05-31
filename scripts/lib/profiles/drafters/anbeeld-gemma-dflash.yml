@@ -1,0 +1,21 @@
+schema_version: 1
+id: anbeeld-gemma-dflash
+display_name: Anbeeld Gemma 4 31B DFlash GGUF (beellama)
+spec_method: dflash
+model_compat:
+  - gemma-4-31b
+n_default: 8
+n_max: 16
+download:
+  hf_repo: Anbeeld/gemma-4-31B-it-DFlash-GGUF
+  size_gb: 0.84
+  format: gguf
+vram_footprint_gb: 0.84
+status: experimental
+# beellama.cpp DFlash GGUF drafter (NOT the vLLM z-lab safetensors drafter
+# `gemma-dflash`). The draft GGUF only carries the DFlash-specific weights — it
+# shares the target's token embedding + LM head at runtime. Loaded via
+# `--spec-draft-model <draft.gguf>` + `--spec-type dflash` on beellama; depth is
+# adaptive (the `profit` controller). Grounded against the on-disk file used by
+# models/gemma-4-31b/beellama/compose/single/beellama-q4ks-dflash/dflash.yml
+# (gemma-4-31b-gguf/anbeeld-dflash-iq4xs/gemma4-31b-it-dflash-IQ4_XS.gguf, 0.84 GB).

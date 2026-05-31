@@ -58,19 +58,12 @@ arches:
   - arch: Gemma4ForConditionalGeneration
     family: gemma4-swa-dense
     engine_pin:
-      - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
+      - pin: vllm-gemma-stable@v0.21.0
         loads: true
-      - pin: vllm-nightly-full@e47c98ef7a38792996e452ef53914e21e41928e9
-        loads: true
-        enables: [int8-per-token-head, dflash-int8]
-      - pin: vllm-nightly-dflash@e47c98ef7a38792996e452ef53914e21e41928e9
-        loads: true
-        enables: [dflash]
+        enables: [mtp, int8-per-token-head]
     required_patches:
       - gemma-vllm-pr40391-rebased
       - gemma-vllm-gemma4-tool-parser-fixes
-      - gemma-vllm-gemma4-dflash
-      - gemma-vllm-gemma4-dflash-int8
       - gemma-vllm-pr41800-truncate-prompt-tokens
     valid_tp:
       tp_divisors: [1, 2, 4, 8, 16]
@@ -88,11 +81,9 @@ arches:
   - arch: Gemma4ForCausalLM
     family: gemma4-swa-dense
     engine_pin:
-      - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
+      - pin: vllm-gemma-stable@v0.21.0
         loads: true
-      - pin: vllm-nightly-full@e47c98ef7a38792996e452ef53914e21e41928e9
-        loads: true
-        enables: [int8-per-token-head, dflash-int8]
+        enables: [mtp, int8-per-token-head]
     required_patches:
       - gemma-vllm-pr40391-rebased
       - gemma-vllm-gemma4-tool-parser-fixes

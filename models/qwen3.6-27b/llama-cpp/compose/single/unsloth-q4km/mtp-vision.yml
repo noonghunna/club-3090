@@ -8,7 +8,7 @@
 #   Vision:    YES (mmproj-F16 mounted — multimodal input enabled)
 #   Max ctx:   150000 (150K) default @ 1M-px images. Higher OOMs at fill — see below.
 #   Genesis:   N/A — llama.cpp engine
-#   Status:    ✅ Production (NEW — first stack profile combining MTP + vision)
+#   Status:    ✅ Production
 #   Engine-profile: llama-cpp-local
 #   Best for:  Multimodal chat, screenshot-debugging, vision-aware code review.
 #              ~51/60 TPS text + vision overhead paid once at image-encode.

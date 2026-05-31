@@ -1,0 +1,131 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen 3.6 35B-A3B MoE (AutoRound INT4 experts + BF16 routers, ~20 GB weights)
+#   Topology:  Dual 3090 (TP=2, PCIe — no NVLink)
+#   Drafter:   none — built-in MTP REJECTED (n=2 AND n=3 both ≈ −45/−51% TPS on
+#              this MoE under vLLM TP=2: the draft forward incurs inter-GPU sync
+#              the acceptance gain can't amortize). MTP head is present in the
+#              weights but intentionally unused. See dual-mtp variant / BENCHMARKS.
+#   KV:        fp8_e5m2 (1 B/tok; vLLM's only viable KV quant on sm_86 —
+#              q5_0/q4_1/asymmetric K-V are llama.cpp-only and unnecessary here)
+#   Vision:    yes (limit-mm-per-prompt image=2) — vision tower retained + validated
+#   Max ctx:   262K (model's full max — NIAH-clean to 240K, 7.81× concurrency,
+#              2.05M-token KV pool: DeltaNet-hybrid KV is cheap so 262K fits easily)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific; not used on this MoE path
+#   Status:    ✅ Production
+#   Quality:   deterministic 79/90 (88%) · hermesagent-20 11/20 (55%) · cli-40 14/40 (35%)
+#                · aider-polyglot-30 13/30 (43%)  (--full + aider, 2026-05-30) — ≥ ik-llama ref
+#   Best for:  Long-context + vision MoE on dual cards; ~3-4× dense decode ("speed king") ⭐
+# ---------------------------------------------------------------------------
+# Qwen 3.6 35B-A3B (AutoRound INT4 experts + BF16 routers) — dual-card production
+# default. Promoted from the v0.7.3 preview after full validation (2026-05-30):
+# max-ctx probe + bench + verify-stress (NIAH to 240K) + soak-continuous (0 growth /
+# 0 err / 100% retention) + quality (--full 8-pack + aider) + live vision smoke.
+#
+# Why TP=2 (not TP=1): weights ~20 GB. Single-card 24 GB leaves too little for
+# the KV pool + vision tower + cudagraph capture. TP=2 splits weights to ~10 GB/
+# card, leaving ~12 GB/card — enough for the full 262K KV pool (2.05M tokens,
+# 7.81× concurrency) AND the vision tower. num_kv_heads=2 caps valid_tp at [1,2].
+#
+# Why 262K (not the old 16K preview cap): this is a DeltaNet hybrid MoE — most
+# layers are recurrent (fixed state), only periodic full-attention layers cache,
+# so 262K of fp8 KV is cheap (~a few GB/card). The 16K preview cap was purely
+# conservative; the model serves its full architectural max with huge headroom.
+#
+# Why no MTP: the built-in MTP head exists in the weights, but on vLLM TP=2 it
+# is net-NEGATIVE on this MoE at every depth tested (n=2 ≈ −45%, n=3 ≈ −51%)
+# despite healthy acceptance (AL 2.4-2.8) — the per-draft-step inter-GPU sync on
+# the MoE forward outweighs the gain. (ik-llama avoids this by running single-
+# card.) Served drafter-less; the dual-mtp variant is kept only as an A/B ref.
+#
+# Models:
+#   target: qwen3.6-35b-a3b-autoround-int4 (arch Qwen3_5MoeForConditionalGeneration,
+#           ~20 GB on disk; INT4 experts + BF16 routers + retained vision tower)
+#   draft : none
+#
+# KV format:
+#   - fp8_e5m2 chosen over fp8_e4m3 (Triton fp8e4nv unsupported on sm_86).
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-nightly-clean
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+# Requires-sm: 7.5+
+services:
+  vllm-qwen36-35b-a3b-dual:
+    # Pinned to vLLM STABLE v0.22.0 (immutable — validated 2026-05-30; never
+    # purged from Docker Hub, unlike nightlies). No source overlays. Bump the tag
+    # after a verify-stress + soak gate. (Engine-profile metadata still reads
+    # vllm-nightly-clean for compat; aligning the profile to a stable engine is
+    # tracked in club-3090 #254.) Override with VLLM_IMAGE=... for a specific build.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-dual}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8051}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - OMP_NUM_THREADS=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/qwen3.6-35b-a3b-autoround-int4
+      - --served-model-name
+      - qwen3.6-35b-a3b-autoround
+      - --quantization
+      - auto_round
+      - --dtype
+      - float16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
+      - --max-num-batched-tokens
+      - "8192"
+      # Vision ON: image tower retained + validated (read a test image correctly
+      # at 262K). max-num-batched-tokens ≥ per-image token budget.
+      - --limit-mm-per-prompt
+      - '{"image":2,"audio":0}'
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill

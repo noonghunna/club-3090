@@ -22,7 +22,7 @@
 #              agentic use right at the ceiling, set CTX_SIZE=180224 (~1.4 GB
 #              margin) or 163840 (~1.9 GB). The ngram stage's 0.6 GB per-step
 #              checkpoint is what costs the top slice vs MTP-only's clean 200K.
-#   Status:    ⭐ Code-optimized single-card pick (sits alongside iq4ks-mtp.yml,
+#   Status:    ✅ Production — code-optimized single-card pick (sits alongside iq4ks-mtp.yml,
 #              the balanced/long-ctx ⭐). Tuned + validated on 1× 3090 @ 370 W
 #              (2026-05-24). ngram n_max swept {2,3,4,5,8,16}: code decode is an
 #              inverted-U peaking at n_max=4. At (ngram 4, MTP 3): code 97.8 TPS

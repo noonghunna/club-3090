@@ -26,8 +26,8 @@ p = load_profiles()
 assert len(p.hardware) == 9
 assert len(p.models) == 4
 assert len(p.workloads) == 5
-assert len(p.engines) == 7
-assert len(p.drafters) == 6
+assert len(p.engines) == 9
+assert len(p.drafters) == 8
 assert len(p.calibration) == 4
 PY
 
@@ -250,13 +250,10 @@ assert "C12" in r.diagnostics["constraints_skipped"]
 assert r.diagnostics["kv_calc_invoked"] is False
 PY
 
-run_test "C13 NVLink-required compose rejected without active NVLink" <<'PY'
-from scripts.lib.profiles.compat import load_profiles, from_compose_name
-p = load_profiles()
-r = from_compose_name("vllm/dual-nvlink-turbo", [p.hardware["rtx-3090"], p.hardware["rtx-3090"]], nvlink_active=False, profiles=p, project_vram=False)
-assert not r.valid
-assert any(reason.startswith("C13:") for reason in r.reasons), r.reasons
-PY
+# NOTE: the C13 "NVLink-required compose rejected" scenario was removed with the
+# nvlink-* composes (vllm dual-nvlink prune, 2026-05-29). They were the only
+# composes with requires_nvlink=True, so the C13/E3 estate-NVLink-gating code is
+# now dormant (no compose users) — retained, cleanup tracked as a follow-up.
 
 run_test "C14 explicit unsupported weight variant rejected" <<'PY'
 from scripts.lib.profiles.compat import load_profiles, fits
@@ -381,22 +378,8 @@ assert not r.valid
 assert any(msg.startswith("E4:") for msg in r.cross_instance_failures), r.cross_instance_failures
 PY
 
-run_test "E3 estate NVLink pair mismatch rejected" <<'PY'
-from scripts.lib.profiles.compat import load_profiles, InstanceSpec, validate_estate
-p = load_profiles()
-instances = [InstanceSpec("nv", "vllm/dual-nvlink-turbo", (0, 2), 8017)]
-r = validate_estate(instances, [p.hardware["rtx-3090"]] * 3, p, nvlink_active=True, nvlink_pairs=[(0, 1)])
-assert not r.valid
-assert any(msg.startswith("E3:") for msg in r.cross_instance_failures), r.cross_instance_failures
-PY
-
-run_test "E3 estate NVLink pair accepted" <<'PY'
-from scripts.lib.profiles.compat import load_profiles, InstanceSpec, validate_estate
-p = load_profiles()
-instances = [InstanceSpec("nv", "vllm/dual-nvlink-turbo", (0, 1), 8017)]
-r = validate_estate(instances, [p.hardware["rtx-3090"], p.hardware["rtx-3090"]], p, nvlink_active=True, nvlink_pairs=[(0, 1)])
-assert r.valid, (r.cross_instance_failures, r.per_instance["nv"].reasons)
-PY
+# (E3 estate NVLink-pairing scenarios removed with the nvlink-* composes —
+#  see the C13 note above; the estate-NVLink machinery is dormant, follow-up tracked.)
 
 run_test "estate per-instance failure bubbles up" <<'PY'
 from scripts.lib.profiles.compat import load_profiles, InstanceSpec, validate_estate
@@ -433,7 +416,7 @@ from scripts.lib.profiles.compat import load_profiles, InstanceSpec, validate_es
 p = load_profiles()
 instances = [
     InstanceSpec("qwen", "vllm/dual-turbo", (0, 1), 8011),
-    InstanceSpec("gemma", "vllm/gemma-awq", (2, 3), 8033),
+    InstanceSpec("gemma", "vllm/gemma-int8", (2, 3), 8032),
 ]
 r = validate_estate(instances, [p.hardware["rtx-3090"]] * 4, p, nvlink_active=False)
 assert r.valid, (r.cross_instance_failures, {k: v.reasons for k, v in r.per_instance.items()})

@@ -1,0 +1,104 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Gemma-4-31B-it (Unsloth Q4_K_S GGUF target + Anbeeld DFlash drafter)
+#   Engine:    beellama.cpp (Anbeeld llama.cpp fork — DFlash spec-dec + SWA windowed KV)
+#   Topology:  Dual 3090 (layer-split across both cards, PCIe — no NVLink needed)
+#   Drafter:   DFlash (--spec-type dflash, Anbeeld DFlash-IQ4_XS GGUF)
+#   KV:        q5_0 K + q4_1 V (Anbeeld's long-ctx precision default)
+#   Vision:    no (mmproj NOT mounted; set MMPROJ_FILE + --mmproj for vision)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   262144 default (the model's native n_ctx_train — ~48 GB combined VRAM
+#              across 2 cards removes the single-card KV ceiling). UNVALIDATED at this
+#              ctx on dual; see Status. Lower CTX_SIZE if a rung OOMs.
+#   Genesis:   N/A — beellama is a llama.cpp-family engine
+#   Status:    ⏸️ Upstream-gated — PARKED pending a beellama release that fixes multi-GPU
+#              DFlash. Evaluated 2026-05-31 on our pinned build (b9459-07ac3ce, = main HEAD):
+#              functionally fine, but DFlash spec-dec is broken on multi-GPU in THIS build.
+#   Caveats:   External dep: Anbeeld/beellama.cpp multi-GPU DFlash bug — issue #39 (OPEN,
+#              "low DFlash tps/AR for multi-GPU"), also #28/#38 (our Gemma-31b-dual case).
+#              Our image is the exact buggy commit (07ac3cec6); the fixes live on the
+#              `v0.3.0` dev branch (414 commits ahead — "Fix DFlash tensor-split draft
+#              placement", "Pin DFlash target output for explicit draft device", "harden
+#              tensor-split/meta capture") but are NOT in a tagged release yet.
+#              Eval findings on the current (buggy) build:
+#                ✅ Boots 262K across both cards (layer-split 8.2+8.4 GB model, KV 3.7 GB/card,
+#                   ~9 GB free/card; verify-full 8/8; NIAH recalls at 207K).
+#                ⚠️ DFlash degrades on the split: "disabling GPU cross ring", split drafter
+#                   "decode failed -1", accept 0.357 → only ~24 narr / 38 code TPS.
+#                ❌ `--device-draft CUDA0` CRASHES (ggml_abort token_embd.weight buffer) —
+#                   the very thing v0.3.0's "Pin DFlash ... explicit draft device" fixes.
+#              RE-TEST TRIGGER: Anbeeld tags a release with the v0.3.0 multi-GPU DFlash fixes
+#              → rebuild the multi-arch image, then use the maintainer-confirmed recipe:
+#              set SPLIT_MODE=tensor (NOT the current `layer`) and add
+#              `--spec-draft-device cuda0,cuda1` to the command. Note even fixed, multi-GPU DFlash ≈ tensor-
+#              split speed (~37 t/s per #39) — still below vllm/gemma-int8's ~96/127, so this
+#              stays an overlay-free *fallback*, not a speed contender. ALSO re-test MTP then:
+#              it's a RUNTIME `--spec-type mtp` (no compile flag — confirmed in v0.3.0 source,
+#              no CMake option / no #ifdef) paired with the radamanthys-assistant Q8_0 GGUF;
+#              beellama MTP is a v0.3.0 addition, currently buggy (Anbeeld #36). Tracked: docs/UPSTREAM.md.
+#   Best for:  (gated) overlay-free 262K dual *fallback* once the upstream DFlash fix ships —
+#              until then, dual-262K = vllm/gemma-int8.
+# ---------------------------------------------------------------------------
+# Gemma-4-31B on beellama.cpp — DUAL 3090, Q4_K_S + DFlash (Anbeeld IQ4_XS draft),
+# q5_0/q4_1 KV, layer-split across both cards, 262K ctx.
+#
+# This is the single-card dflash.yml (../../single/beellama-q4ks-dflash/dflash.yml)
+# scaled to two GPUs: `count: all` exposes both 3090s, `--split-mode layer` pipelines
+# the 60 layers across them (layer-split, NOT tensor/row-split — avoids the heavy
+# cross-GPU all-reduce traffic that row-split needs on a PCIe-only, NVLink-less rig).
+# The bigger combined VRAM pool is what unlocks the model's native 262K ctx.
+#
+# Override defaults via .env or shell (same as the single-card compose, plus):
+#   CTX_SIZE              KV pool size                (default: 262144 — native max; lower if OOM)
+#   SPLIT_MODE            llama.cpp --split-mode       (default: layer — best for PCIe no-NVLink)
+#   MAIN_GPU              --main-gpu (draft + small tensors land here)  (default: 0)
+#   TENSOR_SPLIT          --tensor-split proportions   (default: unset = auto-even across equal cards)
+#   CTX_SIZE / KV_TYPE_K / KV_TYPE_V / BATCH_SIZE / UBATCH_SIZE / CROSS_CTX / NP /
+#   REASONING / TEMP / TOP_K / TOP_P / MIN_P / MMPROJ_FILE / PORT — see the single compose.
+#
+# Quick start (both GPUs must be free):
+#   MODEL_DIR=/your/models/dir docker compose -f dflash.yml up -d
+#   curl http://localhost:8062/v1/models
+services:
+  beellama-gemma4-31b-dual:
+    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce}
+    container_name: "${ESTATE_CONTAINER:-beellama-gemma4-31b-dual}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8062}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-gemma-4-31b-gguf/unsloth-q4ks/gemma-4-31B-it-Q4_K_S.gguf}
+      --spec-draft-model /models/${DRAFT_FILE:-gemma-4-31b-gguf/anbeeld-dflash-iq4xs/gemma4-31b-it-dflash-IQ4_XS.gguf}
+      --spec-type dflash
+      --spec-dflash-cross-ctx ${CROSS_CTX:-1024}
+      -ngl all
+      --spec-draft-ngl all
+      --split-mode ${SPLIT_MODE:-layer}
+      --main-gpu ${MAIN_GPU:-0}
+      --ctx-size ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --cache-type-k ${KV_TYPE_K:-q5_0}
+      --cache-type-v ${KV_TYPE_V:-q4_1}
+      --flash-attn on
+      --cache-ram 0
+      --no-host
+      --jinja
+      --reasoning ${REASONING:-off}
+      --temp ${TEMP:-${TEMPERATURE:-1.0}}
+      --top-k ${TOP_K:-64}
+      --top-p ${TOP_P:-0.95}
+      --min-p ${MIN_P:-0.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
