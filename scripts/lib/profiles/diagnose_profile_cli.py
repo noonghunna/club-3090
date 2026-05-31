@@ -34,9 +34,9 @@ class DiagnoseProfileError(Exception):
 
 
 COMPOSE_ALIASES = {
-    "gemma-dual-int8": "vllm/gemma-int8",
-    "gemma-dual-int8-262k": "vllm/gemma-int8",
-    "gemma-dual": "vllm/gemma-mtp",
+    "gemma-dual-int8": "vllm/gemma-int8-mtp",
+    "gemma-dual-int8-262k": "vllm/gemma-int8-mtp",
+    "gemma-dual": "vllm/gemma-bf16-mtp",
 }
 
 OVERLAY_PATH_HINTS = {

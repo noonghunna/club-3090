@@ -50,9 +50,9 @@ out="$(CLUB3090_FAKE_GPUS="$fake_one" SWITCH=/bin/echo bash scripts/launch.sh --
 assert_contains "$out" "selected variant: beellama/dflash"
 out="$(CLUB3090_FAKE_GPUS="$fake_two" SWITCH=/bin/echo bash scripts/launch.sh --no-preflight --no-verify --no-projection --variant qwen3.6-27b/default 2>&1)"
 assert_contains "$out" "selected variant: vllm/dual"
-# gemma-4-31b/default dual → vllm/gemma-int8 (model token overrides PRIMARY_MODEL).
+# gemma-4-31b/default dual → vllm/gemma-int8-mtp (model token overrides PRIMARY_MODEL).
 out="$(CLUB3090_FAKE_GPUS="$fake_two" SWITCH=/bin/echo bash scripts/launch.sh --no-preflight --no-verify --no-projection --variant gemma-4-31b/default 2>&1)"
-assert_contains "$out" "selected variant: vllm/gemma-int8"
+assert_contains "$out" "selected variant: vllm/gemma-int8-mtp"
 # Unknown X/default → clear error (neither engine nor model).
 if out="$(CLUB3090_FAKE_GPUS="$fake_one" SWITCH=/bin/echo bash scripts/launch.sh --no-preflight --no-verify --no-projection --variant bogus/default 2>&1)"; then
   echo "ASSERTION FAILED: bogus/default unexpectedly resolved" >&2

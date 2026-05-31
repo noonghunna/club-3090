@@ -349,7 +349,7 @@ Single-rig comparison run 2026-05-10 on @noonghunna's 2× 3090 PCIe rig (230 W c
 | Weights quant | Lorbus AutoRound INT4 (mtp.fc preserved BF16) | Intel AutoRound INT4 |
 | MTP type | Built-in head, `method: mtp` n=3 | External 0.5B BF16 drafter (`gemma-4-31b-it-assistant`) via [vllm#41745](https://github.com/vllm-project/vllm/pull/41745), n=4 |
 | KV cache | `fp8_e5m2` | BF16 |
-| Max ctx | 262144 (262K) | 32768 (32K — BF16 KV ceiling on 2× 24 GB; use `gemma-int8` for 262K) |
+| Max ctx | 262144 (262K) | 32768 (32K — BF16 KV ceiling on 2× 24 GB; use `gemma-int8-mtp` for 262K) |
 | `--gpu-memory-utilization` | 0.92 | 0.92 |
 | TP | 2 | 2 |
 | vLLM nightly | `01d4d1ad` (2026-05-04) | `1acd67a7` (2026-05-08) — newer, post Gemma 4 MTP merge |
@@ -439,7 +439,7 @@ After the first run, the two legs differed on (a) vLLM nightly, (b) KV dtype, (c
 
 ### Headline takeaways (original mismatched-config bench, kept for reference)
 
-- **TPS:** Gemma 4 31B is **~60% faster** across both narrative and code, plus ~2× faster TTFT and 0.8 GiB less VRAM per card. For throughput-bound workloads at ≤32K ctx, Gemma 4 wins decisively at this config. For long-context (>32K), Qwen 3.6 27B's 262K ceiling + fp8 KV is the only option in this matchup (use `gemma-int8` for Gemma at 262K — separate compose, not benched here).
+- **TPS:** Gemma 4 31B is **~60% faster** across both narrative and code, plus ~2× faster TTFT and 0.8 GiB less VRAM per card. For throughput-bound workloads at ≤32K ctx, Gemma 4 wins decisively at this config. For long-context (>32K), Qwen 3.6 27B's 262K ceiling + fp8 KV is the only option in this matchup (use `gemma-int8-mtp` for Gemma at 262K — separate compose, not benched here).
 - **Quality aggregate:** Effectively tied — **180-scenario combined total: Qwen 120/180 (66.7%), Gemma 119/180 (66.1%)**. Within noise. Neither model is generically "better"; the choice is workload-shaped.
 - **Quality by workload:** Gemma wins agentic + bug-fix (`bugfind +13 pp`, `hermesagent +10 pp`). Qwen wins polyglot code editing (`aider-polyglot +10 pp`, driven mostly by Java). Tool-call ordering favors Qwen (`toolcall +7 pp`). Five packs are dead-even.
 - **reasonmath 6/15 (40%) on BOTH** — the thinking-off cost is identical and model-independent. Math problems with strict-format expectations need thinking-on (and the `aider-polyglot-30` row above shows what Qwen-with-thinking does to wall time — 0/30 hit the 1500s subprocess cap, now 2700s).

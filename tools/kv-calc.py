@@ -229,7 +229,7 @@ GENERIC_DENSE_ACTIVATION_FLOOR_GB = 1.5         # ≥ Gemma dense constant activ
 COMPOSE_ALIAS_TEXT = {
     "qwen3.6-27b": "minimal=vllm/minimal long-text=vllm/long-text long-text-no-mtp=vllm/long-text-no-mtp long-vision=vllm/long-vision bounded-thinking=vllm/bounded-thinking tools-text=vllm/tools-text dual=vllm/dual dual-turbo=vllm/dual-turbo dual-dflash=vllm/dual-dflash dual-dflash-noviz=vllm/dual-dflash-noviz dual-bf16=vllm/dual-bf16 dual-int8=vllm/dual-int8 dual-tq3-mtp=vllm/dual-tq3-mtp dual-tq3-mtp-genesis=vllm/dual-tq3-mtp-genesis dual-tq3-nomtp=vllm/dual-tq3-nomtp dual4=vllm/dual4 dual4-dflash=vllm/dual4-dflash",
     "qwen3.6-35b-a3b": "qwen-a3b-preview-single=vllm/qwen-a3b-preview-single qwen-35b-a3b-dual=vllm/qwen-35b-a3b-dual",
-    "gemma-4-31b": "gemma-dual=vllm/gemma-mtp gemma-dual-int8=vllm/gemma-int8 gemma-single=vllm/gemma-mtp-tp1",
+    "gemma-4-31b": "gemma-dual=vllm/gemma-bf16-mtp gemma-dual-int8=vllm/gemma-int8-mtp gemma-single=vllm/gemma-mtp-tp1",
     "gemma-4-26b-a4b": "gemma-a4b-single=vllm/gemma-a4b-single gemma-a4b=vllm/gemma-a4b gemma-a4b-awq=vllm/gemma-a4b-awq gemma-a4b-awq-mtp=vllm/gemma-a4b-awq-mtp",
 }
 COMPOSE_ALIASES = {model: tuple(part.split("=", 1) for part in text.split()) for model, text in COMPOSE_ALIAS_TEXT.items()}

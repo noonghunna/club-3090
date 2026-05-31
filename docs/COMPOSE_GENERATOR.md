@@ -121,8 +121,8 @@ name:
 ```text
 $ scripts/generate-compose.sh --model gemma-4-31b --engine vllm-gemma-stable
 convenience tuple matched these profiles (re-run with an authoritative --profile):
-  --profile vllm/gemma-int8
-  --profile vllm/gemma-mtp
+  --profile vllm/gemma-int8-mtp
+  --profile vllm/gemma-bf16-mtp
   --profile vllm/gemma-mtp-tp1
                                                                   # exit 4
 ```
@@ -284,7 +284,7 @@ For each selected patch the generator classifies it, in this order:
 Observed degraded path (forced fail, no ack):
 
 ```text
-$ scripts/generate-compose.sh --profile vllm/gemma-int8    # CLUB3090_FORCE_GUARD_FAIL=gemma-vllm-gemma4-tool-parser-fixes
+$ scripts/generate-compose.sh --profile vllm/gemma-int8-mtp    # CLUB3090_FORCE_GUARD_FAIL=gemma-vllm-gemma4-tool-parser-fixes
 [generate-compose] REFUSE: DEGRADED: capability-scoped patch(es)
 [gemma-vllm-gemma4-tool-parser-fixes] omitted after a failed drift-guard; re-run with
 --accept-degraded to proceed                                  # exit 3
@@ -358,8 +358,8 @@ in-scope engine class:
 |---|---|---|
 | `vllm/minimal` | `vllm-nightly-clean` | tp1, fp8, drafter=None; surfaces the qwen3coder delivery-gap as undelivered |
 | `vllm/dual` | `vllm-nightly-clean` | tp2, fp8, MTP drafter |
-| `vllm/gemma-mtp` | `vllm-gemma-stable` | gemma, bf16 |
-| `vllm/gemma-int8` | `vllm-gemma-stable` | int8-PTH, multi-file overlay |
+| `vllm/gemma-bf16-mtp` | `vllm-gemma-stable` | gemma, bf16 |
+| `vllm/gemma-int8-mtp` | `vllm-gemma-stable` | int8-PTH, multi-file overlay |
 | `vllm/gemma-mtp-tp1` | `vllm-gemma-stable` | single-card fp8 risk path |
 
 Per triple the test asserts: the semantic diff vs the shipped compose is

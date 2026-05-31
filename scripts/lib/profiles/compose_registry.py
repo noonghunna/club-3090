@@ -517,9 +517,9 @@ COMPOSE_REGISTRY = {
         default_port=8031, required_sm=9.0,
         kvcalc_key="gemma-4-31b:gemma-single",
         status="deprecated",
-        status_note="Dead on Ampere: no fp8 KV path for Gemma 4 on sm_86 (attention asserts kv ∈ {fp8,fp8_e4m3,nvfp4} — rejects fp8_e5m2; fp8/fp8_e4m3 need the fp8e4nv kernel sm_86 lacks; nvfp4 Blackwell-only). Live-confirmed stock v0.22.0 2026-05-31. Single-card → beellama/gemma-dflash; dual → vllm/gemma-mtp. See compose Caveats.",
+        status_note="Dead on Ampere: no fp8 KV path for Gemma 4 on sm_86 (attention asserts kv ∈ {fp8,fp8_e4m3,nvfp4} — rejects fp8_e5m2; fp8/fp8_e4m3 need the fp8e4nv kernel sm_86 lacks; nvfp4 Blackwell-only). Live-confirmed stock v0.22.0 2026-05-31. Single-card → beellama/gemma-dflash; dual → vllm/gemma-bf16-mtp. See compose Caveats.",
     ),
-    "vllm/gemma-mtp": _entry(
+    "vllm/gemma-bf16-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
         engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="bf16",
         tp=2, max_ctx=32768, max_num_seqs=4, mem_util=0.92,
@@ -527,7 +527,7 @@ COMPOSE_REGISTRY = {
         default_port=8030,
         kvcalc_key="gemma-4-31b:gemma-dual",
     ),
-    "vllm/gemma-int8": _entry(
+    "vllm/gemma-int8-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
         engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
         tp=2, max_ctx=98304, max_num_seqs=4, mem_util=0.95,
@@ -567,7 +567,7 @@ COMPOSE_REGISTRY = {
         default_port=8062,
         kvcalc_key="SKIP",
         status="upstream-gated",
-        status_note="Dual-card beellama Gemma-4 (layer-split, 262K). PARKED: works (262K recall, verify-full 8/8, ~7.5 GB free/card) but DFlash degrades on multi-GPU (Anbeeld #39/#28/#38) — accept 0.357, ~24/38 TPS, --device-draft crashes — in our pinned build 07ac3ce. Dominated by vllm/gemma-int8 (~96/127 @ 262K) regardless. Re-test trigger: beellama tags a release with the v0.3.0 multi-GPU DFlash fixes; then also try --spec-type mtp (runtime, no compile flag) + the radamanthys-assistant GGUF. See compose Caveats + docs/UPSTREAM.md.",
+        status_note="Dual-card beellama Gemma-4 (layer-split, 262K). PARKED: works (262K recall, verify-full 8/8, ~7.5 GB free/card) but DFlash degrades on multi-GPU (Anbeeld #39/#28/#38) — accept 0.357, ~24/38 TPS, --device-draft crashes — in our pinned build 07ac3ce. Dominated by vllm/gemma-int8-mtp (~96/127 @ 262K) regardless. Re-test trigger: beellama tags a release with the v0.3.0 multi-GPU DFlash fixes; then also try --spec-type mtp (runtime, no compile flag) + the radamanthys-assistant GGUF. See compose Caveats + docs/UPSTREAM.md.",
     ),
 
     # v0.7.3 MoE onboarding — Gemma 4 26B-A4B + Qwen 3.6 35B-A3B.
@@ -648,11 +648,11 @@ DEFAULTS = {
     # sm_86 (vllm/gemma-mtp-tp1 deprecated 2026-05-31) and no bf16 single compose
     # ships. Single-card Gemma → beellama/gemma-dflash (the curated walk picks it).
     ("gemma-4-31b", "beellama", "single"): "beellama/gemma-dflash",
-    # Dual default is gemma-int8: full 262K + vision + 4 streams (the full-context
+    # Dual default is gemma-int8-mtp: full 262K + vision + 4 streams (the full-context
     # priority). It rides v0.21.0 + the vendored #40391 per-head-KV overlay (the one
-    # gemma config that can't follow stable). gemma-mtp stays as the stable v0.22.0
+    # gemma config that can't follow stable). gemma-bf16-mtp stays as the stable v0.22.0
     # no-overlay 32K fallback — kept, not deprecated, just no longer the default.
-    ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-int8",
+    ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-int8-mtp",
     ("gemma-4-26b-a4b", "vllm", "single"): "vllm/gemma-a4b-single",
     ("gemma-4-26b-a4b", "vllm", "dual"): "vllm/gemma-a4b",
     ("qwen3.6-35b-a3b", "vllm", "single"): "vllm/qwen-a3b-preview-single",

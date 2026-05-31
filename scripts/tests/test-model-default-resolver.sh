@@ -42,9 +42,9 @@ assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>/dev/null)" \
   "vllm/dual" "qwen dual curated"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b multi4 2>/dev/null)" \
   "vllm/dual4" "qwen multi4 curated"
-# gemma-4-31b dual → vllm/gemma-int8 (full-ctx default; gemma-mtp is the stable fallback).
+# gemma-4-31b dual → vllm/gemma-int8-mtp (full-ctx default; gemma-mtp is the stable fallback).
 assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b dual 2>/dev/null)" \
-  "vllm/gemma-int8" "gemma dual curated"
+  "vllm/gemma-int8-mtp" "gemma dual curated"
 
 # --- (NA) skip + graceful degradation ---------------------------------------
 # gemma-4-31b single → beellama/gemma-dflash. vllm/gemma-mtp-tp1 is upstream-gated/(NA),
@@ -61,7 +61,7 @@ fi
 out="$(model_default_target "$ROOT_DIR" gemma-4-31b multi4 2>&1)"
 assert_contains "$out" "falling back to the dual default" "gemma multi4 degradation notice"
 assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b multi4 2>/dev/null)" \
-  "vllm/gemma-int8" "gemma multi4 degrades to dual slug"
+  "vllm/gemma-int8-mtp" "gemma multi4 degrades to dual slug"
 
 # --- X/default dispatch ------------------------------------------------------
 # engine name → engine recommendation (back-compat).
@@ -95,7 +95,7 @@ PIN=CLUB3090_DEFAULT_QWEN3_6_27B
   assert_contains "$out" "(NA: experimental)" "(NA) pin warns"
   assert_eq "$slug" "vllm/dual" "(NA) pin falls back to curated" )
 # wrong-model pin → warn + fall back.
-( export "$PIN=vllm/gemma-mtp"
+( export "$PIN=vllm/gemma-bf16-mtp"
   out="$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>&1 1>/dev/null)"
   slug="$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>/dev/null)"
   assert_contains "$out" "belongs to model 'gemma-4-31b'" "wrong-model pin warns"

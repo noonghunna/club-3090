@@ -91,7 +91,7 @@ assert_contains "$out" "VLLM_NIGHTLY_SHA=${CLEAN_SHA}"
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual-tq3-mtp --format shell)"
 assert_contains "$out" "VLLM_NIGHTLY_SHA=${MTP_SHA}"
 
-out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/gemma-int8 --format shell)"
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/gemma-int8-mtp --format shell)"
 assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.21.0"
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
@@ -108,7 +108,7 @@ from scripts.lib.profiles.estate_cli import compose_env
 
 clean = compose_env(InstanceSpec(name="qwen", compose_name="vllm/dual", gpu_indices=(0, 1), port=8010))
 tq3 = compose_env(InstanceSpec(name="qwen-tq3", compose_name="vllm/dual-tq3-mtp", gpu_indices=(0, 1), port=8010))
-gemma = compose_env(InstanceSpec(name="gemma", compose_name="vllm/gemma-int8", gpu_indices=(0, 1), port=8032))
+gemma = compose_env(InstanceSpec(name="gemma", compose_name="vllm/gemma-int8-mtp", gpu_indices=(0, 1), port=8032))
 print(clean["VLLM_NIGHTLY_SHA"])
 print(tq3["VLLM_NIGHTLY_SHA"])
 print(gemma["VLLM_IMAGE"])

@@ -150,7 +150,7 @@ esac
 if [[ $# -gt 1 ]]; then
   echo "ERROR: setup.sh takes a single model name; got extra argument(s): ${*:2}" >&2
   echo "       setup.sh only DOWNLOADS WEIGHTS for a model — e.g. bash scripts/setup.sh ${1}" >&2
-  echo "       To LAUNCH a serving config (a slug such as 'vllm/gemma-int8'), use:" >&2
+  echo "       To LAUNCH a serving config (a slug such as 'vllm/gemma-int8-mtp'), use:" >&2
   echo "         bash scripts/launch.sh --variant <slug>      # or: bash scripts/switch.sh <slug>" >&2
   echo "       See the slugs available for a model:  bash scripts/switch.sh --list" >&2
   exit 64
@@ -639,7 +639,7 @@ case "${MODEL_NAME}" in
     SAMPLE_PORT="8030"
     SAMPLE_MODEL_NAME="gemma-4-31b-autoround"
     NEXT_STEPS_NOTE="Available variants:
-  bash scripts/switch.sh vllm/gemma-mtp        # MTP drafter, TP=2, port 8030 (dual-card)
+  bash scripts/switch.sh vllm/gemma-bf16-mtp        # MTP drafter, TP=2, port 8030 (dual-card)
   bash scripts/switch.sh beellama/gemma-dflash # DFlash, single-card default, port 8061"
     ;;
   gemma-4-26b-a4b)
@@ -666,7 +666,7 @@ echo "[setup] Next: bash scripts/launch.sh"
 echo ""
 echo "Next — single-card vLLM (default):"
 if [[ "${MODEL_NAME}" == "gemma-4-31b" ]]; then
-  echo "  bash scripts/switch.sh vllm/gemma-mtp"
+  echo "  bash scripts/switch.sh vllm/gemma-bf16-mtp"
   echo "  docker logs -f ${SAMPLE_CONTAINER}"
 else
   echo "  cd models/${MODEL_NAME}/vllm/compose && docker compose up -d"

@@ -21,7 +21,7 @@
 #   Gemma 4 26B-A4B doesn't ship a built-in MTP head — `mtp_num_hidden_layers`
 #   is null in the model YAML. Google released an external assistant model
 #   (`google/gemma-4-26B-A4B-it-assistant`, ~0.97 GB BF16) for this purpose.
-#   Same family pattern as the 31B assistant we already use for `gemma-mtp`.
+#   Same family pattern as the 31B assistant we already use for `gemma-bf16-mtp`.
 #
 # PR #40886 overlay still applied (compressed-tensors AWQ MoE key remap).
 # ===========================================================================

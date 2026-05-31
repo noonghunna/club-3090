@@ -31,13 +31,13 @@
 #              → rebuild the multi-arch image, then use the maintainer-confirmed recipe:
 #              set SPLIT_MODE=tensor (NOT the current `layer`) and add
 #              `--spec-draft-device cuda0,cuda1` to the command. Note even fixed, multi-GPU DFlash ≈ tensor-
-#              split speed (~37 t/s per #39) — still below vllm/gemma-int8's ~96/127, so this
+#              split speed (~37 t/s per #39) — still below vllm/gemma-int8-mtp's ~96/127, so this
 #              stays an overlay-free *fallback*, not a speed contender. ALSO re-test MTP then:
 #              it's a RUNTIME `--spec-type mtp` (no compile flag — confirmed in v0.3.0 source,
 #              no CMake option / no #ifdef) paired with the radamanthys-assistant Q8_0 GGUF;
 #              beellama MTP is a v0.3.0 addition, currently buggy (Anbeeld #36). Tracked: docs/UPSTREAM.md.
 #   Best for:  (gated) overlay-free 262K dual *fallback* once the upstream DFlash fix ships —
-#              until then, dual-262K = vllm/gemma-int8.
+#              until then, dual-262K = vllm/gemma-int8-mtp.
 # ---------------------------------------------------------------------------
 # Gemma-4-31B on beellama.cpp — DUAL 3090, Q4_K_S + DFlash (Anbeeld IQ4_XS draft),
 # q5_0/q4_1 KV, layer-split across both cards, 262K ctx.

@@ -12,8 +12,8 @@ set -euo pipefail
 # profile_runtime.yml, spanning every in-scope engine class:
 #   vllm/minimal      vllm-nightly-clean, tp1, fp8,  drafter=None
 #   vllm/dual         vllm-nightly-clean, tp2, fp8,  mtp
-#   vllm/gemma-mtp    vllm-gemma-stable, gemma, bf16
-#   vllm/gemma-int8   vllm-gemma-stable, int8-PTH, multi-file overlay
+#   vllm/gemma-bf16-mtp    vllm-gemma-stable, gemma, bf16
+#   vllm/gemma-int8-mtp   vllm-gemma-stable, int8-PTH, multi-file overlay
 #   vllm/gemma-mtp-tp1 vllm-gemma-stable, single-card fp8 risk path
 #
 # Per triple: generate -> semantic diff vs the shipped compose differs ONLY
@@ -55,8 +55,8 @@ runtime = gc.load_runtime(root)
 GOLDEN = [
     "vllm/minimal",
     "vllm/dual",
-    "vllm/gemma-mtp",
-    "vllm/gemma-int8",
+    "vllm/gemma-bf16-mtp",
+    "vllm/gemma-int8-mtp",
     "vllm/gemma-mtp-tp1",
 ]
 
@@ -217,12 +217,12 @@ expect_refuse("vllm/tools-text", gc.EXIT_REFUSE, "genesis_equipped:true")
 expect_refuse("llamacpp/default", gc.EXIT_REFUSE, "engine profile not found")
 
 # foundational failed-guard -> hard-refuse even with --accept-degraded.
-expect_refuse("vllm/gemma-int8", gc.EXIT_REFUSE,
+expect_refuse("vllm/gemma-int8-mtp", gc.EXIT_REFUSE,
               "foundational drift-guard failed", accept_degraded=True,
               env={"CLUB3090_FORCE_GUARD_FAIL": "gemma-vllm-pr40391-rebased"})
 
 # capability-scoped failed-guard -> DEGRADED, needs --accept-degraded.
-expect_refuse("vllm/gemma-int8", gc.EXIT_DEGRADED_NOACK, "DEGRADED",
+expect_refuse("vllm/gemma-int8-mtp", gc.EXIT_DEGRADED_NOACK, "DEGRADED",
               accept_degraded=False,
               env={"CLUB3090_FORCE_GUARD_FAIL": "gemma-vllm-gemma4-tool-parser-fixes"})
 
@@ -230,7 +230,7 @@ expect_refuse("vllm/gemma-int8", gc.EXIT_DEGRADED_NOACK, "DEGRADED",
 # patch is OMITTED (never wired) and the compose is flagged DEGRADED.
 os.environ["CLUB3090_FORCE_GUARD_FAIL"] = "gemma-vllm-gemma4-tool-parser-fixes"
 try:
-    dtext, dmeta = gc.generate(root, "vllm/gemma-int8", accept_degraded=True)
+    dtext, dmeta = gc.generate(root, "vllm/gemma-int8-mtp", accept_degraded=True)
     check(dmeta["degraded"] is True,
           "gemma-int8 forced-fail: meta.degraded must be True")
     check("gemma-vllm-gemma4-tool-parser-fixes" in dmeta["degraded_omitted"],

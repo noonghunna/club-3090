@@ -290,7 +290,7 @@ asserted there:
 | g1 | A | curated + emittable, gate-passing, clean `[D]` dry-run → compose emitted (integration analogue of the satisfied g2) |
 | g2 | A | curated effective-capped → `exact × fits-constrained` → `confirm→proceed`; `--yes` → "known effective-cap warning" (no rewrite) → `[D]` emit; without `--yes` → honest non-pass, no file |
 | g3 | A | curated too big → `exact × wont-fit` → `hard-block`; no `[D]` even with `--yes --force-download` |
-| g3b | A | model/variant mismatch (`vllm/gemma-mtp` vs curated Qwen) → stratum-2 `profile-mismatch` |
+| g3b | A | model/variant mismatch (`vllm/gemma-bf16-mtp` vs curated Qwen) → stratum-2 `profile-mismatch` |
 | g4 | B | Llama, `trc:unverified` → `needs-trust-remote-code-ack`; `--trust-remote-code` → `[C1]` `confirm→proceed` (still needs `--yes`); `+ --yes` → Path-B caveat verdict, no `[D]` |
 | g5 | B | `no-arch-row` → stratum-3; `--experimental-arch` (+ `--yes`, eligible) → Path-B verdict + bypass notice |
 | g6a | B | known arch + `auto_map` → `needs-trc-ack`, `bypassable_by == ['--trust-remote-code']` only; `--experimental-arch` alone does not clear it |

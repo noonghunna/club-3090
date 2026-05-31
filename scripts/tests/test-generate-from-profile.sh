@@ -16,7 +16,7 @@ set -euo pipefail
 #           NO qwen parser / chat-template / reasoning-parser.
 #   e1-neg  CONTRACT-5 negative matrix, each: NO compose emitted (Refuse) +
 #           the EXACT structured reason token:
-#             vllm/gemma-int8       -> overlay-feature
+#             vllm/gemma-int8-mtp       -> overlay-feature
 #             synthesized runtime   -> kv
 #             vllm/tools-text       -> drafter
 #             clean tp2 on 1 GPU    -> gpu-count
@@ -193,13 +193,13 @@ def expect_refuse(ei, token: str, label: str) -> None:
           f"{label}: derived_emittable token {reason!r} != {token!r}")
 
 
-# overlay-feature: vllm/gemma-int8 carries required_engine_features
+# overlay-feature: vllm/gemma-int8-mtp carries required_engine_features
 # (compose_registry.py:258). It ALSO rides a Genesis engine with vendored
 # overlays, so the property-driven gate short-circuits on the FIRST failing
 # clause (engine-install-method). To isolate the overlay-feature token we
 # point at a clean engine but keep gemma-int8's required_engine_features —
 # proving the COMPOSE_REGISTRY runtime-entry clause fires independently.
-ei_of = mk_einput("vllm/gemma-int8", der=mk_der(weight_format="bfloat16",
+ei_of = mk_einput("vllm/gemma-int8-mtp", der=mk_der(weight_format="bfloat16",
                                                 torch_dtype="bfloat16"))
 ei_of.runtime["engine"] = "vllm-nightly-clean"
 ei_of.runtime["kv_format"] = "bf16"

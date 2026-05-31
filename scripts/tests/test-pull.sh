@@ -408,8 +408,8 @@ check(r.stratum is P.Stratum.PROFILE_LIKE
       f"(got {r.stratum.name}/{r.abort_reason})")
 
 # g3b: Path-A model/variant mismatch -> stratum-2 profile-mismatch.
-# vllm/gemma-mtp is vLLM + emittable but model=gemma-4-31b != curated qwen.
-r = P.run_pull(CURATED_SLUG, "vllm/gemma-mtp", path="A",
+# vllm/gemma-bf16-mtp is vLLM + emittable but model=gemma-4-31b != curated qwen.
+r = P.run_pull(CURATED_SLUG, "vllm/gemma-bf16-mtp", path="A",
                 hardware_sm=SM_86, fetcher=NoNet(), profiles=profiles,
                 statvfs=BIG_DISK)
 check(r.stratum is P.Stratum.PROFILE_LIKE

@@ -66,7 +66,7 @@ assert_contains "$out" "Profile triage: free-form combo"
 assert_contains "$out" "Triage summary: GREEN"
 
 out="$(bash "${ROOT_DIR}/scripts/diagnose-profile.sh" gemma-dual-int8 2>&1)"
-assert_contains "$out" "Profile triage: vllm/gemma-int8"
+assert_contains "$out" "Profile triage: vllm/gemma-int8-mtp"
 assert_contains "$out" "vllm-pr40391-rebased"
 assert_contains "$out" "VLLM_IMAGE resolves: vllm/vllm-openai:v0.21.0"
 assert_contains "$out" "Triage summary: GREEN"

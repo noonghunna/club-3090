@@ -15,10 +15,10 @@
 #              dispatch to the fp8e4nv Triton kernel sm_86 doesn't implement, and nvfp4
 #              is Blackwell-only. bf16 KV would boot but is strictly dominated by the
 #              single-card default beellama/gemma-dflash (200K vs ~8–32K). For long-ctx
-#              Gemma on vLLM use the int8_per_token_head path in vllm/gemma-int8 (dual).
+#              Gemma on vLLM use the int8_per_token_head path in vllm/gemma-int8-mtp (dual).
 #              Kept for history; recover from git for a 32 GB+ non-Ampere single-card.
 #   Best for:  nothing on this rig — use beellama/gemma-dflash (single) or
-#              vllm/gemma-mtp (dual).
+#              vllm/gemma-bf16-mtp (dual).
 # ---------------------------------------------------------------------------
 # Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter
 # Single-card TP=1 + bfloat16 KV — preserved for 32 GB+ GPUs (5090, A6000).

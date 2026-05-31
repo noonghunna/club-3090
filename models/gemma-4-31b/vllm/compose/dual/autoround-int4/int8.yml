@@ -9,7 +9,7 @@
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    ✅ Production
 #   Best for:  Gemma 4 dual-card default — full 262K ctx + vision + 4 streams ⭐
-#              (stable-but-32K alternative without the overlay: vllm/gemma-mtp)
+#              (stable-but-32K alternative without the overlay: vllm/gemma-bf16-mtp)
 # ---------------------------------------------------------------------------
 # Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter
 # 2× RTX 3090 TP=2 + per-token-head INT8 KV + ~120K ctx target.

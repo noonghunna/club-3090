@@ -45,8 +45,8 @@
 #     vllm/dual4-dflash     262K + FP16 + DFlash N=5 + 2 streams + vision (4× 3090 code)
 #     (NVLink is auto-detected at boot by every dual compose — no separate
 #      nvlink-* variant. Force it with NVLINK_MODE=force_on if auto-detect misses.)
-#     vllm/gemma-int8       Gemma-4-31B dual default — 262K + INT8 KV + vision (v0.21.0 + #40391 overlay)
-#     vllm/gemma-mtp        Gemma-4-31B stable fallback — 32K + bf16 KV + vision (stock v0.22.0, no overlay)
+#     vllm/gemma-int8-mtp       Gemma-4-31B dual default — 262K + INT8 KV + vision (v0.21.0 + #40391 overlay)
+#     vllm/gemma-bf16-mtp        Gemma-4-31B stable fallback — 32K + bf16 KV + vision (stock v0.22.0, no overlay)
 #     (other Qwen dual variants — dflash / tq3 / bf16 / int8 — were deprecated
 #      2026-05-31; see `switch.sh --list --all`.)
 #

@@ -10,7 +10,7 @@
 #
 # Usage:
 #   scripts/generate-compose.sh --profile vllm/minimal [--out FILE]
-#   scripts/generate-compose.sh --profile vllm/gemma-int8 --accept-degraded
+#   scripts/generate-compose.sh --profile vllm/gemma-int8-mtp --accept-degraded
 #   scripts/generate-compose.sh --model gemma-4-31b --engine vllm-nightly-full
 #       # convenience tuple: prints candidate --profile values, exits non-zero
 #

@@ -137,10 +137,10 @@ check(
     f"(got {s2_turbo.refusal})",
 )
 
-# Path-A model/variant mismatch -> refuse. vllm/gemma-mtp is a vLLM,
+# Path-A model/variant mismatch -> refuse. vllm/gemma-bf16-mtp is a vLLM,
 # [D]-emittable profile but model=gemma-4-31b != curated qwen3.6-27b.
 s2_mismatch = G.stratum2_profile_like(
-    "vllm/gemma-mtp", path="A", derive_result=CURATED
+    "vllm/gemma-bf16-mtp", path="A", derive_result=CURATED
 )
 check(
     not s2_mismatch.ok

@@ -348,7 +348,7 @@ from scripts.lib.profiles.compat import load_profiles, InstanceSpec, validate_es
 p = load_profiles()
 instances = [
     InstanceSpec("qwen", "vllm/dual", (0, 1), 8010),
-    InstanceSpec("gemma", "vllm/gemma-mtp", (2, 3), 8030),
+    InstanceSpec("gemma", "vllm/gemma-bf16-mtp", (2, 3), 8030),
 ]
 r = validate_estate(instances, [p.hardware["rtx-3090"]] * 4, p, nvlink_active=False)
 assert r.valid, (r.cross_instance_failures, {k: v.reasons for k, v in r.per_instance.items()})
@@ -416,7 +416,7 @@ from scripts.lib.profiles.compat import load_profiles, InstanceSpec, validate_es
 p = load_profiles()
 instances = [
     InstanceSpec("qwen", "vllm/dual-turbo", (0, 1), 8011),
-    InstanceSpec("gemma", "vllm/gemma-int8", (2, 3), 8032),
+    InstanceSpec("gemma", "vllm/gemma-int8-mtp", (2, 3), 8032),
 ]
 r = validate_estate(instances, [p.hardware["rtx-3090"]] * 4, p, nvlink_active=False)
 assert r.valid, (r.cross_instance_failures, {k: v.reasons for k, v in r.per_instance.items()})
@@ -427,7 +427,7 @@ from scripts.lib.profiles.compat import load_profiles, InstanceSpec, validate_es
 p = load_profiles()
 instances = [
     InstanceSpec("qwen", "vllm/dual", (0, 1), 8010),
-    InstanceSpec("gemma", "vllm/gemma-mtp", (2, 3), 8030),
+    InstanceSpec("gemma", "vllm/gemma-bf16-mtp", (2, 3), 8030),
     InstanceSpec("llama", "llamacpp/default", (4,), 8020),
 ]
 r = validate_estate(instances, [p.hardware["rtx-3090"]] * 6, p, nvlink_active=False)

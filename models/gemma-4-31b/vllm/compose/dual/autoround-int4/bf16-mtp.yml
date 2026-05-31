@@ -11,7 +11,7 @@
 #   Quality:   126/150 (84%) — det 56/75 (75%) · sandbox 70/75 (93%, v0.4 shape-check) (--full, 2026-05-09)
 #                TC 60% · IF 87% · SO 87% · DE 100% · RM 40% · BF 100% · HA 100% · CLI 88%
 #   Best for:  Gemma 4 dual-card STABLE fallback (stock v0.22.0, no overlay, 32K) — vision + tools.
-#              The dual default is vllm/gemma-int8 (full 262K); use this when you want
+#              The dual default is vllm/gemma-int8-mtp (full 262K); use this when you want
 #              to stay on stable with no vendored overlay and 32K ctx is enough.
 # ---------------------------------------------------------------------------
 # Gemma-4-31B-it (Intel AutoRound INT4) + Google MTP "assistant" drafter
@@ -128,7 +128,7 @@ services:
       #                                          slightly more headroom than dual-dflash.yml)
       #   65K ctx @ 0.95 → KV pool ~60K tokens (max practical; 65K request partially overflows)
       # fp8 KV blocked on Ampere — see header comment.
-      # Override: MAX_MODEL_LEN=49152 GPU_MEMORY_UTILIZATION=0.95 bash scripts/switch.sh vllm/gemma-mtp
+      # Override: MAX_MODEL_LEN=49152 GPU_MEMORY_UTILIZATION=0.95 bash scripts/switch.sh vllm/gemma-bf16-mtp
       - --max-model-len
       - "${MAX_MODEL_LEN:-32768}"
       - --gpu-memory-utilization

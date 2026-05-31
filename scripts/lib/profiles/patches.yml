@@ -430,7 +430,7 @@ patches:
       - models/gemma-4-31b/vllm/patches/vllm-pr41800-truncate-prompt-tokens
     load_bearing_when:
       - composes:
-          - vllm/gemma-int8
+          - vllm/gemma-int8-mtp
         reason: "Pre-d5b31c95 engine pins reject agent clients that send truncate_prompt_tokens."
         evidence: "docs/UPSTREAM.md#41800 row; models/gemma-4-31b/vllm/patches/vllm-pr41800-truncate-prompt-tokens/README.md"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -484,7 +484,7 @@ patches:
       - models/gemma-4-31b/vllm/patches/vllm-gemma4-tool-parser-fixes
     load_bearing_when:
       - composes:
-          - vllm/gemma-int8
+          - vllm/gemma-int8-mtp
         reason: "Stacks Gemma 4 tool-parser fixes for MTP streaming multi-tool calls and parser bounds."
         evidence: "models/gemma-4-31b/vllm/patches/vllm-gemma4-tool-parser-fixes/README.md"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -560,7 +560,7 @@ patches:
       - models/gemma-4-31b/vllm/patches/vllm-pr40391-rebased
     load_bearing_when:
       - composes:
-          - vllm/gemma-int8
+          - vllm/gemma-int8-mtp
         reason: "Pads hybrid Gemma 4 per-token-head KV cache layout so INT8/PTH long context can boot."
         evidence: "models/gemma-4-31b/vllm/patches/vllm-pr40391-rebased/README.md; BENCHMARKS.md#gemma-4-31b-community-experimental dual-int8.yml rows"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header

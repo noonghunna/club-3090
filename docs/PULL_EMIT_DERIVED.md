@@ -127,7 +127,7 @@ called past a reject. The patchless `--kv-cache-dtype` / no-patch rows of
 the derived template are therefore *safe by construction*.
 
 `scripts/tests/test-generate-from-profile.sh` carries the negative matrix:
-`vllm/gemma-int8` → `overlay-feature`; a TQ3-KV shape → `kv`; a drafter/MTP
+`vllm/gemma-int8-mtp` → `overlay-feature`; a TQ3-KV shape → `kv`; a drafter/MTP
 shape → `drafter`; a clean TP=2 shape on a simulated 1-GPU `einput` →
 `gpu-count` — each asserting **no** download and **no** emit, plus one
 positive clean/no-drafter shape that proceeds.

@@ -12,14 +12,14 @@ See [`docs/DUAL_CARD.md`](../../docs/DUAL_CARD.md) for workload-driven config pi
 
 | Config | Max ctx | Narr / Code TPS | Best for |
 |--------|---------|----------------|----------|
-| `vllm/gemma-mtp` (default) | 32K | 106 / 141 | General-purpose, vision + tools |
-| `vllm/gemma-int8` | 98K default, 262K via `CTX=262144 MAX_NUM_SEQS=1` | 95 / 126 | Long-context via INT8 PTH KV (PR #40391) |
+| `vllm/gemma-bf16-mtp` (default) | 32K | 106 / 141 | General-purpose, vision + tools |
+| `vllm/gemma-int8-mtp` | 98K default, 262K via `CTX=262144 MAX_NUM_SEQS=1` | 95 / 126 | Long-context via INT8 PTH KV (PR #40391) |
 | `vllm/gemma-mtp-tp1` | 8K | community-provided 32 GB+ path | Single-card fp8 risk path; maintainer live check required on v0.21.0 |
 
 Run via:
 ```bash
-bash scripts/launch.sh --variant vllm/gemma-mtp     # MTP default
-bash scripts/launch.sh --variant vllm/gemma-int8    # long-context
+bash scripts/launch.sh --variant vllm/gemma-bf16-mtp     # MTP default
+bash scripts/launch.sh --variant vllm/gemma-int8-mtp    # long-context
 ```
 
 ---
@@ -43,5 +43,5 @@ bash scripts/launch.sh --variant vllm/gemma-int8    # long-context
 ## Upstream tracker
 
 - [vLLM PR #41745](https://github.com/vllm-project/vllm/pull/41745) — Gemma 4 MTP support (merged)
-- [vLLM PR #40391](https://github.com/vllm-project/vllm/pull/40391) — INT8 PTH KV; vendored for `vllm/gemma-int8`
+- [vLLM PR #40391](https://github.com/vllm-project/vllm/pull/40391) — INT8 PTH KV; vendored for `vllm/gemma-int8-mtp`
 - [Discussion #67](https://github.com/noonghunna/club-3090/discussions/67) — first Ampere consumer cross-rig data
