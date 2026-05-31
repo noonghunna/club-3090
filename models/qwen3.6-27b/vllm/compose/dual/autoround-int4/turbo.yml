@@ -7,7 +7,7 @@
 #   Vision:    yes
 #   Max ctx:   262K
 #   Genesis:   v7.72.2 (PN59 streaming-GDN + PN34 workspace-lock-relax + PN12)
-#   Status:    ✅ Production
+#   Status:    🗑️ Deprecated
 #   Best for:  Multi-tenant agent fleet — 4 streams at full ctx (4.67× concurrency vs dual.yml) ⭐
 # ---------------------------------------------------------------------------
 # Dual-card Turbo — TP=2 + TurboQuant KV (turboquant_3bit_nc) + MTP n=3 + Genesis v7.69 dev.

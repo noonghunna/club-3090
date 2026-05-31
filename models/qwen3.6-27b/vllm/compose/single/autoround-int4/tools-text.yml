@@ -7,7 +7,7 @@
 #   Vision:    no
 #   Max ctx:   75K (Cliff 1 mech B safe via Genesis P8 + fp8 KV path)
 #   Genesis:   v7.72.2 (P8 active for IDE-agent prefill safety)
-#   Status:    ✅ Production
+#   Status:    🗑️ Deprecated
 #   Best for:  IDE-agent workloads (Cline / OpenCode / Roo / Claude Code /
 #              Cursor) — fp8 KV escape valve from the long-text TQ3 leak (see #16)
 # ---------------------------------------------------------------------------

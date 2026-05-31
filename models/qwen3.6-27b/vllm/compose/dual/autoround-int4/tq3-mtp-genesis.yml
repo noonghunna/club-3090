@@ -8,7 +8,7 @@
 #   Max ctx:   262K
 #   Streams:   max-num-seqs=2 (matched-config sibling of dual/int8.yml)
 #   Genesis:   v7.72.2 (full P64/P65/P66/P68/P69 fix for TQ3+MTP — see vllm-issue#40880)
-#   Status:    ⏸️ Upstream-gated
+#   Status:    🗑️ Deprecated
 #   Caveats:   Genesis pin is parked/drifted — this compose will NOT boot clean until the
 #              pin re-validates (tracked in docs/UPSTREAM.md, Genesis row). Was previously
 #              annotated "✅ Working (with Genesis)" — that was false while the pin is parked.

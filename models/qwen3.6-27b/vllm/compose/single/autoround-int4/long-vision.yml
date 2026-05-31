@@ -16,7 +16,7 @@
 #   Vision:    yes (vision tower active)
 #   Max ctx:   145K (vision tower costs ~500 MiB activation budget vs long-text)
 #   Genesis:   v7.72.2
-#   Status:    ⚠️ Production w/ caveats
+#   Status:    🗑️ Deprecated
 #   Caveats:   Cliff 2b at >50K single-prompt context. Sandermage/genesis-vllm-patches#22. Workaround: dual.yml or llamacpp/default.
 #   Best for:  Single-card vision workloads (image Q&A, multimodal RAG)
 # ---------------------------------------------------------------------------

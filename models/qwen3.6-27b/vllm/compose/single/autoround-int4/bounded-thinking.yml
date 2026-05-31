@@ -7,7 +7,7 @@
 #   Vision:    yes
 #   Max ctx:   180K
 #   Genesis:   v7.72.2 (full PROD env stack)
-#   Status:    ✅ Production
+#   Status:    🗑️ Deprecated
 #   Best for:  Reasoning/coding workloads with bounded thinking budget
 #              via FSM-constrained scratchpad grammar — caps think budget,
 #              improves HE+/LCB scores, +24pp accuracy on max_tokens=4096

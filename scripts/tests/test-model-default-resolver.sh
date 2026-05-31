@@ -66,7 +66,7 @@ assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b multi4 2>/dev/null)" \
 # --- X/default dispatch ------------------------------------------------------
 # engine name → engine recommendation (back-compat).
 assert_eq "$(x_default_dispatch "$ROOT_DIR" vllm/default single qwen3.6-27b 2>/dev/null)" \
-  "vllm/default" "vllm/default engine dispatch (back-compat)"
+  "vllm/minimal" "vllm/default single → vllm/minimal (Genesis tq3-mtp deprecated 2026-05-31)"
 assert_eq "$(x_default_dispatch "$ROOT_DIR" ik-llama/default single qwen3.6-27b 2>/dev/null)" \
   "ik-llama/iq4ks-mtp" "ik-llama/default engine dispatch"
 # model-id → model default (model token overrides the passed model).

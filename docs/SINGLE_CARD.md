@@ -242,7 +242,7 @@ Two env-override knobs available on every vLLM compose (defaults preserved if un
 ```bash
 MAX_MODEL_LEN=32768 \
 GPU_MEMORY_UTILIZATION=0.80 \
-  bash scripts/switch.sh vllm/long-text
+  bash scripts/switch.sh vllm/minimal
 ```
 
 - `MAX_MODEL_LEN` — shrink the KV-cache budget; trades long-context for fit. `90000` is a safe value for `long-text.yml` on rigs with ~1 GB of overhead (4090 with display, etc.). Validated on @laurimyllari's 4090 ([disc #62](../../../noonghunna/club-3090/discussions/62)).
@@ -274,7 +274,7 @@ bash scripts/setup.sh qwen3.6-27b
 bash scripts/launch.sh
 
 # 3. Or skip the wizard:
-bash scripts/launch.sh --variant vllm/tools-text   # IDE agent path
+bash scripts/launch.sh --variant beellama/dflash   # single-card default (DFlash, code-fast)
 bash scripts/launch.sh --variant llamacpp/default  # easy mode
 
 # 4. Sanity test

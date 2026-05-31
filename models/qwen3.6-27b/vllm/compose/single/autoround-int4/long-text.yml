@@ -16,7 +16,7 @@
 #   Vision:    no (text-only — frees VRAM for ctx)
 #   Max ctx:   180K (was 214K pre-Cliff-2b; reduced for safety)
 #   Genesis:   v7.72.2
-#   Status:    ⚠️ Production w/ caveats
+#   Status:    🗑️ Deprecated
 #   Caveats:   Cliff 2b at >50K single-prompt context (Genesis PN59 doesn't engage on chunked-prefill). NOT IDE-agent safe. Filed at Sandermage/genesis-vllm-patches#22. Workaround: dual.yml or llamacpp/default.
 #   Best for:  RAG / single-shot summarization at <25K accumulated ctx;
 #              for IDE agents use tools-text.yml or dual.yml instead

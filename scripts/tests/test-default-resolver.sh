@@ -19,8 +19,8 @@ fake_one='0:RTX_3090:24576:8.6'
 fake_two='0:RTX_3090:24576:8.6,1:RTX_3090:24576:8.6'
 
 out="$(CLUB3090_FAKE_GPUS="$fake_one" SWITCH=/bin/echo bash scripts/launch.sh --no-preflight --no-verify --no-projection vllm/default 2>&1)"
-assert_contains "$out" "selected variant: vllm/default"
-assert_contains "$out" "vllm/default"
+assert_contains "$out" "selected variant: vllm/minimal"
+assert_contains "$out" "vllm/minimal"
 
 out="$(CLUB3090_FAKE_GPUS="$fake_two" SWITCH=/bin/echo bash scripts/launch.sh --no-preflight --no-verify --no-projection vllm/default 2>&1)"
 assert_contains "$out" "selected variant: vllm/dual"

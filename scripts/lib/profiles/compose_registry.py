@@ -134,6 +134,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/tq3-mtp.yml",
         default_port=8020, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:long-vision",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage); stack moving to stable vLLM. The vLLM single-card default repointed to vllm/minimal (v0.22.0). Use vllm/minimal or beellama single-card.",
     ),
     "vllm/long-text": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -142,8 +144,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/long-text.yml",
         default_port=8020, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:long-text",
-        status="caveats",
-        status_note="Cliff 2b at >50K single-prompt context (not IDE-agent safe).",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage) + Cliff 2b >50K; stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/long-text-no-mtp": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -152,8 +154,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/long-text-no-mtp.yml",
         default_port=8021, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:long-text-no-mtp",
-        status="caveats",
-        status_note="Cliff 2b at >50K single-prompt context (not IDE-agent safe).",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage) + Cliff 2b >50K; stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/long-vision": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="vision-coding",
@@ -162,8 +164,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/long-vision.yml",
         default_port=8020, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:long-vision",
-        status="caveats",
-        status_note="Cliff 2b at >50K single-prompt context (not IDE-agent safe).",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage) + Cliff 2b >50K; stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/bounded-thinking": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="tool-heavy",
@@ -172,6 +174,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/bounded-thinking.yml",
         default_port=8020, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:bounded-thinking",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage); stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/tools-text": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="tool-heavy",
@@ -180,6 +184,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/tools-text.yml",
         default_port=8020,
         kvcalc_key="qwen3.6-27b:tools-text",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage); stack moving to stable vLLM. Use vllm/minimal (single) or beellama single-card.",
     ),
     "vllm/minimal": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="fast-chat",
@@ -207,6 +213,8 @@ COMPOSE_REGISTRY = {
         default_port=8011, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:dual-turbo",
         recommended_engine_features=["marlin_pad_sub_tile_n"],
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis/nightly path on hold (Sandermage); stack moving to stable vLLM. Use vllm/dual (v0.22.0) for dual-card.",
     ),
     "vllm/dual-dflash": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="vision-coding",
@@ -261,8 +269,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/tq3-mtp-genesis.yml",
         default_port=8015, required_engine_features=["turboquant_3bit_nc"],
         kvcalc_key="qwen3.6-27b:dual-tq3-mtp-genesis",
-        status="upstream-gated",
-        status_note="Genesis pin parked/drifted — won't boot clean until the pin re-validates. See docs/UPSTREAM.md (Genesis row).",
+        status="deprecated",
+        status_note="DEPRECATED 2026-05-31 — Genesis on hold pending Sandermage; stack moving to stable vLLM. Use vllm/dual (v0.22.0). (Was upstream-gated on the parked/drifted Genesis pin — see docs/UPSTREAM.md.)",
     ),
     "vllm/dual-tq3-nomtp": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
@@ -609,7 +617,7 @@ COMPOSE_REGISTRY = {
 
 
 DEFAULTS = {
-    ("qwen3.6-27b", "vllm", "single"): "vllm/default",
+    ("qwen3.6-27b", "vllm", "single"): "vllm/minimal",
     ("qwen3.6-27b", "vllm", "dual"): "vllm/dual",
     ("qwen3.6-27b", "vllm", "multi4"): "vllm/dual4",
     ("qwen3.6-27b", "llamacpp", "single"): "llamacpp/default",
