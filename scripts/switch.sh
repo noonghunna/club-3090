@@ -10,8 +10,8 @@
 #   bash scripts/switch.sh <variant>            # switch + tail until ready
 #   bash scripts/switch.sh <variant> --no-wait  # switch and return immediately
 #   bash scripts/switch.sh --force <variant>    # skip hardware/free-VRAM preflight
-#   bash scripts/switch.sh --list               # variants runnable on THIS machine + defaults
-#   bash scripts/switch.sh --list --all         # every variant regardless of GPU count
+#   bash scripts/switch.sh --list               # actionable variants on THIS machine (deprecated hidden) + defaults
+#   bash scripts/switch.sh --list --all         # every variant — all GPU counts + deprecated
 #   bash scripts/switch.sh --list-all           # alias for --list --all
 #   bash scripts/switch.sh --defaults           # just the per-model defaults view
 #   bash scripts/switch.sh --down               # just bring down whatever's up
@@ -353,7 +353,7 @@ list_variants() {
   # Counts: split into VISIBLE vs HIDDEN by the hardware filter, so the header
   # reflects what's actually shown (+ how many were hidden). Health split is
   # over the VISIBLE set; the by-topology hidden tally drives the note.
-  local _prod=0 _cav=0 _na=0 _hidden=0
+  local _prod=0 _cav=0 _na=0 _hidden=0 _dep_hidden=0
   declare -A _seen_models=() _hidden_by_topo=()
   for v in "${!VARIANTS[@]}"; do
     IFS='|' read -r _e _d _f <<< "${VARIANTS[$v]}"
@@ -361,6 +361,11 @@ list_variants() {
     IFS=/ read -ra _fs <<< "$_f"
     local _vtopo="${_fs[0]:-unknown}" _vrank
     _vrank="$(topology_rank "$_vtopo")"
+    # Hide deprecated by default (tombstoned / flagged for removal); --all reveals.
+    if [[ "$show_all" != "1" && "${VARIANT_STATUS[$v]:-production}" == "deprecated" ]]; then
+      _dep_hidden=$((_dep_hidden + 1))
+      continue
+    fi
     if [[ "$show_all" != "1" && "$_vrank" -gt "$max_rank" ]]; then
       _hidden=$((_hidden + 1))
       _hidden_by_topo["$_vtopo"]=$(( ${_hidden_by_topo["$_vtopo"]:-0} + 1 ))
@@ -392,7 +397,11 @@ list_variants() {
   if [[ "$_hidden" -gt 0 ]]; then
     _hidden_note="  (+${_hidden} ${_topo_list} hidden — --all)"
   fi
-  echo "  Models: ${#_seen_models[@]} · variants: ${_visible} (${_prod} production · ${_cav} caveats · ${_na} NA)${_hidden_note}"
+  local _dep_note=""
+  if [[ "$_dep_hidden" -gt 0 ]]; then
+    _dep_note="  (+${_dep_hidden} deprecated hidden — --all)"
+  fi
+  echo "  Models: ${#_seen_models[@]} · variants: ${_visible} (${_prod} production · ${_cav} caveats · ${_na} NA)${_hidden_note}${_dep_note}"
 
   {
     for v in "${!VARIANTS[@]}"; do
@@ -401,6 +410,9 @@ list_variants() {
       IFS=/ read -ra fseg <<< "$file"   # fseg[0]=topology fseg[1]=quant fseg[2]=serving
       topo="${fseg[0]:-unknown}"
       rank="$(topology_rank "$topo")"
+      if [[ "$show_all" != "1" && "${VARIANT_STATUS[$v]:-production}" == "deprecated" ]]; then
+        continue
+      fi
       if [[ "$show_all" != "1" && "$rank" -gt "$max_rank" ]]; then
         continue
       fi
