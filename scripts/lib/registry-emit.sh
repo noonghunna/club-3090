@@ -52,6 +52,35 @@ def container_name(compose_path: str) -> str:
     return ""
 
 
+_CTX_ENV = re.compile(r"\$\{(?:MAX_MODEL_LEN|CTX_SIZE|CTX|MAX_CTX|N_CTX|MODEL_LEN)\s*:-\s*(\d+)\s*\}")
+_CTX_FLAG = re.compile(r"(?:--max-model-len|--ctx-size|--n-ctx|(?<!\w)-c)\s*\n?\s*\"?(\d{3,})")
+
+
+def compose_default_ctx(compose_path: str):
+    """The ctx the compose serves by DEFAULT (its ${VAR:-N} fallback or flag literal)."""
+    try:
+        txt = (root / compose_path).read_text()
+    except Exception:
+        return None
+    m = _CTX_ENV.search(txt) or _CTX_FLAG.search(txt)
+    return int(m.group(1)) if m else None
+
+
+def ctx_label(entry) -> str:
+    """Compact ctx label rounded to K. Single 'NK' when the registry max_ctx matches
+    the compose's default ctx; 'NK/MK' (validated registry / compose default) when
+    they drift — so the list surfaces registry<->compose context mismatches."""
+    reg = entry.get("max_ctx")
+    if not reg:
+        return ""
+    reg = int(reg)
+    comp = compose_default_ctx(entry["compose_path"])
+    label = f"{round(reg / 1000)}K"
+    if comp is not None and comp != reg:
+        label += f"/{round(comp / 1000)}K"
+    return label
+
+
 for key, entry in COMPOSE_REGISTRY.items():
     cp = entry["compose_path"]
     if "/compose/" not in cp:
@@ -80,9 +109,10 @@ for key, entry in COMPOSE_REGISTRY.items():
                 cname,
                 cp,
                 str(entry.get("status") or "production"),
-                # max_ctx as a compact label (262144 -> "262K"); empty if unset.
-                # Placed BEFORE status_note so status_note stays the LAST field.
-                (f"{int(entry['max_ctx']) // 1000}K" if entry.get("max_ctx") else ""),
+                # ctx label: 'NK' when registry max_ctx == compose default; 'NK/MK'
+                # (validated / compose) on drift. BEFORE status_note so the free-text
+                # note stays the LAST catch-all field.
+                ctx_label(entry),
                 # status_note is free text (may contain anything but a tab) — keep
                 # it as the LAST field so each reader's catch-all final var can
                 # absorb it without further splitting on its internal spaces.

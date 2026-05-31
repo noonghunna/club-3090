@@ -349,6 +349,7 @@ list_variants() {
 
   echo "Available variants — grouped by model · topology (right cols: <quant>/<serving>.yml · max-ctx + health):"
   echo "  Health: bare max-ctx = production · (caveats, <ctx>) = works w/ documented limits · (NA: …, <ctx>) = needs --force"
+  echo "  Context: a single value = registry matches the compose default · 'A/B' = validated(registry)/compose-default mismatch"
 
   # Counts: split into VISIBLE vs HIDDEN by the hardware filter, so the header
   # reflects what's actually shown (+ how many were hidden). Health split is
