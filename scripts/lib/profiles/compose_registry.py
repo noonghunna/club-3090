@@ -566,8 +566,46 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/beellama/compose/dual/beellama-q4ks-dflash/dflash.yml",
         default_port=8062,
         kvcalc_key="SKIP",
-        status="upstream-gated",
-        status_note="Dual-card beellama Gemma-4 (layer-split, 262K). PARKED: works (262K recall, verify-full 8/8, ~7.5 GB free/card) but DFlash degrades on multi-GPU (Anbeeld #39/#28/#38) — accept 0.357, ~24/38 TPS, --device-draft crashes — in our pinned build 07ac3ce. Dominated by vllm/gemma-int8-mtp (~96/127 @ 262K) regardless. Re-test trigger: beellama tags a release with the v0.3.0 multi-GPU DFlash fixes; then also try --spec-type mtp (runtime, no compile flag) + the radamanthys-assistant GGUF. See compose Caveats + docs/UPSTREAM.md.",
+        status="experimental",
+        status_note="Dual-card beellama Gemma-4 (layer-split, 262K) on v0.3.0 — RELEASED experimental for community v0.3.0 testing (Anbeeld's request, club-3090#288). Multi-GPU DFlash FIXED on v0.3.0 (GPU cross-ring; validated sm_86 2026-06-01, FA_ALL_QUANTS=1; image injected from beellama-local install.spec = Anbeeld's official server-cuda-v0.3.0 commit tag). ⚠️ v0.3.0-wide DFlash-on-PROSE regression (accept ~0.08, net-negative; CODE unaffected ~157 TPS) — Anbeeld fixing upstream. Prose-dominated by vllm/gemma-int8-mtp (~96/127 @ 262K). Promote experimental→caveats when Anbeeld tags a STABLE release AND prose accept recovers. docs/UPSTREAM.md.",
+    ),
+
+    # ------------------------------------------------------------------
+    # beellama v0.3.0 Q8_K_XL dual-card composes — RELEASED experimental for
+    # community v0.3.0 testing (Anbeeld's request, club-3090#288). Image
+    # injected centrally from engines/beellama-local.yml install.spec
+    # (Anbeeld's official server-cuda-v0.3.0 commit tag). Validated 2× 3090
+    # sm_86 2026-06-01. kvcalc_key=SKIP (llama.cpp family — no vLLM kv-calc).
+    # ------------------------------------------------------------------
+    "beellama/qwen-mtp-dual": _entry(
+        model="qwen3.6-27b", weights_variant="beellama-q8kxl-mtp", workload="fast-chat",
+        engine="beellama-local", drafter="unsloth-mtp-gguf", kv_format="q5_0",
+        tp=2, max_ctx=65536, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/beellama/compose/dual/beellama-q8kxl-mtp/mtp.yml",
+        default_port=8064,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Dual-card beellama Qwen3.6-27B Q8_K_XL + embedded MTP head (--spec-type draft-mtp, unsloth-mtp-gguf drafter). v0.3.0 sm_86 2026-06-01: boots + coherent, MTP active (code accept ~0.90, ~58 TPS decode). Ships 65536 safe first-boot ctx; validated robust to ~160K (262K impossible — DeltaNet recurrent draft state hard-pins to one card). High-fidelity Q8 sibling of vllm/dual fp8-mtp. Promote experimental→caveats on a STABLE Anbeeld tag.",
+    ),
+    "beellama/qwen-dflash-dual": _entry(
+        model="qwen3.6-27b", weights_variant="beellama-q8kxl-dflash", workload="fast-chat",
+        engine="beellama-local", drafter="anbeeld-qwen-dflash", kv_format="q5_0",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/beellama/compose/dual/beellama-q8kxl-dflash/dflash.yml",
+        default_port=8065,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Dual-card beellama Qwen3.6-27B Q8_K_XL + DFlash (Anbeeld DFlash-IQ4_XS draft, --spec-type dflash). v0.3.0 sm_86 2026-06-01: boots + coherent at full 262K (fixed draft footprint; tensor-split 0.575,0.425 → ~21.2 GB/card). ⚠️ v0.3.0-wide DFlash-on-PROSE regression (accept ~0.08, net-negative; CODE ~0.5 accept). Tool-grammar-neutral spec-dec for Qwen agents (club-3090#237). Promote on a STABLE tag + prose-accept recovery.",
+    ),
+    "beellama/gemma-q8-dflash-dual": _entry(
+        model="gemma-4-31b", weights_variant="beellama-q8kxl-dflash", workload="fast-chat",
+        engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
+        tp=2, max_ctx=196608, max_num_seqs=1, mem_util=None,
+        compose_path="models/gemma-4-31b/beellama/compose/dual/beellama-q8kxl-dflash/dflash.yml",
+        default_port=8066,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Dual-card beellama Gemma-4-31B Q8_K_XL + DFlash (Anbeeld DFlash-IQ4_XS draft). v0.3.0 sm_86 2026-06-01: 192K balanced ceiling (tensor-split 0.55,0.45 → ~21.4/21.9 GB; 262K OOMs — Gemma full-attn layers grow KV). High-fidelity Q8 sibling of beellama/gemma-dflash-dual (q4ks). ⚠️ v0.3.0-wide DFlash-on-PROSE regression (net-negative on prose; CODE ~157 TPS). Prose-dominated by vllm/gemma-int8-mtp. Promote on a STABLE tag + prose recovery.",
     ),
 
     # v0.7.3 MoE onboarding — Gemma 4 26B-A4B + Qwen 3.6 35B-A3B.

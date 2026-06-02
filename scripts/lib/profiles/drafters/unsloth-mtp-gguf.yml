@@ -5,7 +5,7 @@ spec_method: mtp_gguf
 model_compat:
   - qwen3.6-27b
 engine_compat:
-  engine_type: llama-cpp
+  engine_type: llama.cpp
 n_default: 2
 n_max: 3
 download:
@@ -13,10 +13,12 @@ download:
   size_gb: variable
 vram_footprint_gb: variable
 status: experimental
-# Phase A-prime fold-in (v0.8.0 #359). engine_compat.engine_type is llama-cpp
+# Phase A-prime fold-in (v0.8.0 #359). engine_compat.engine_type is llama.cpp
+# (matches engines/*.yml `type:` — was a stale `llama-cpp` hyphen that matched no
+# engine until beellama/qwen-mtp-dual became its first consumer, 2026-06-01).
 # => OUT of the #141 vLLM-only generator scope. No vLLM `--speculative-config`
-# form exists for this GGUF MTP drafter (llama.cpp uses a different draft-model
-# flag set). Captured null so the schema stays uniform; the generator must
-# never select this drafter (engine scope gate refuses non-vLLM).
+# form exists for this GGUF MTP drafter (llama.cpp `--spec-type draft-mtp` uses a
+# different draft-model flag set). Captured null so the schema stays uniform; the
+# generator must never select this drafter (engine scope gate refuses non-vLLM).
 speculative_config_template: null   # N/A — llama.cpp engine, not vLLM
 local_model_path: null

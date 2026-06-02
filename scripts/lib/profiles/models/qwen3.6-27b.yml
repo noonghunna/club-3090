@@ -131,6 +131,30 @@ weights:
     engine: beellama
     kind: gguf
     verify_glob: "*.gguf"
+  beellama-q8kxl-mtp:
+    path: qwen3.6-27b-gguf/unsloth-mtp-q8kxl
+    local_subdir: qwen3.6-27b-gguf/unsloth-mtp-q8kxl
+    size_gb: 35.8
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/Qwen3.6-27B-MTP-GGUF
+    files:
+      - Qwen3.6-27B-UD-Q8_K_XL.gguf
+    engine: beellama
+    kind: gguf
+    verify_glob: "*.gguf"
+  beellama-q8kxl-dflash:
+    path: qwen3.6-27b-gguf/unsloth-mtp-q8kxl
+    local_subdir: qwen3.6-27b-gguf/unsloth-mtp-q8kxl
+    size_gb: 35.8
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/Qwen3.6-27B-MTP-GGUF
+    files:
+      - Qwen3.6-27B-UD-Q8_K_XL.gguf
+    engine: beellama
+    kind: gguf
+    verify_glob: "*.gguf"
   anbeeld-dflash-iq4xs:
     path: qwen3.6-27b-gguf/anbeeld-dflash-iq4xs
     local_subdir: qwen3.6-27b-gguf/anbeeld-dflash-iq4xs

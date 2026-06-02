@@ -11,9 +11,10 @@
 #              across 2 cards removes the single-card KV ceiling). UNVALIDATED at this
 #              ctx on dual; see Status. Lower CTX_SIZE if a rung OOMs.
 #   Genesis:   N/A — beellama is a llama.cpp-family engine
-#   Status:    ⏸️ Upstream-gated — PARKED. The multi-GPU DFlash fix landed + was VALIDATED on
-#              the v0.3.0 dev branch (efe856397) 2026-06-01 (2× 3090). Still parked pending a
-#              TAGGED release AND a fix for the v0.3.0 prose-acceptance regression (below).
+#   Status:    🧪 EXPERIMENTAL — RELEASED for community v0.3.0 testing (Anbeeld's request, #288).
+#              Multi-GPU DFlash fix VALIDATED on Anbeeld's official v0.3.0 image (sm_86, FA_ALL_QUANTS=1,
+#              single + dual cross-ring, 2026-06-01); image injected centrally from beellama-local
+#              install.spec. Promote 🧪→⚠️ when Anbeeld tags a STABLE release AND prose accept recovers.
 #   Caveats:   External dep: Anbeeld/beellama.cpp issue #39 (multi-GPU DFlash). Our shipped image
 #              default (b9459-07ac3ce) STILL has the bug; the fixes are on the v0.3.0 dev branch,
 #              which we built + validated on 2× 3090 (efe856397, 2026-06-01):

@@ -1,0 +1,110 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Unsloth UD-Q8_K_XL target + Anbeeld DFlash IQ4_XS drafter)
+#   Engine:    beellama.cpp v0.3.0 (Anbeeld llama.cpp fork — DFlash spec-dec)
+#   Topology:  Dual 3090 (layer-split across both cards, PCIe — no NVLink needed)
+#   Drafter:   DFlash (--spec-type dflash, Anbeeld DFlash-IQ4_XS — separate draft model, ~4.4 GB
+#              in VRAM incl. its 1024-token K/V projection cache; pinned to ONE card, drafter=1
+#              device + GPU cross ring — NOT split across cards. Footprint is CTX-INDEPENDENT.)
+#   KV:        q5_0 K + q4_1 V
+#   Vision:    no (mmproj NOT mounted; set MMPROJ_FILE + --mmproj for vision)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   262144 default — the model's native n_ctx_train, VALIDATED robust on dual
+#              (2026-06-01: boot 23.5 GB busiest, 10K-prefill peak 23.8 GB, 0 OOM). Reaches
+#              FULL ctx where the MTP sibling capped at 160K because DFlash's draft footprint
+#              is FIXED/ctx-independent (~4.4 GB on one card), whereas MTP's recurrent draft
+#              context SCALES with main ctx and its recurrent-state expansion OOMs at 262K.
+#              NOTE: the draft pins to ONE card (drafter=1 device, ~4.4 GB; NOT split —
+#              inherent to v0.3.0's multi-GPU DFlash fix). Auto-split lands that card at
+#              23.8 GB (0.3 GB free) at 262K. The default --tensor-split 0.575,0.425 shifts
+#              main-model layers to card0 to compensate → BALANCED ~21.2/21.2 GB, ~2.8 GB
+#              free per card (validated 2026-06-01). Re-tune via TENSOR_SPLIT if VRAM shifts.
+#   Genesis:   N/A — beellama is a llama.cpp-family engine
+#   Status:    🧪 EXPERIMENTAL — boots + serves coherently at full 262K (confirmed 2026-06-01:
+#              code accept 0.58, prose accept 0.085/regressed, 10K-prefill clean @262K, 0 OOM).
+#              Counterpart to the dual MTP compose; same dev-branch image gate. Full
+#              verify/soak/bench (#455) pending, so NOT git-tracked yet.
+#   Caveats:   Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
+#              not a tagged release — same upstream gate as the gemma dual (Anbeeld #39 / #48).
+#              ⚠️ KNOWN: on v0.3.0, Qwen DFlash is excellent for CODE (~145 TPS) but its
+#              PROSE acceptance regressed to ~0.07 (net-negative vs no-spec) — a v0.3.0-wide
+#              DFlash-on-prose regression (NOT multi-GPU, NOT SWA; MTP holds prose at ~0.44).
+#              For prose-heavy use, prefer the MTP sibling (../beellama-q8kxl-mtp/mtp.yml).
+#              UN-PARK when Anbeeld tags a stable release AND prose acceptance recovers.
+#   Quality:   thinking-OFF (default mode), 2026-06-01, beellama v0.3.0, 262K:
+#              toolcall 13/15 · instructfollow 15/15 · structoutput 14/15 · dataextract 8/15 ·
+#              reasonmath 13/15 · bugfind 14/15 · hermesagent 13/20 · cli-40 18/40 ·
+#              humaneval+ 24/30 · lcb-v6 18/30  (150/210). thinking-ON ≈ tie (154/210) → no
+#              edge (n=1, within noise). Weak: dataextract (JSON numeric-typing) + cli-40 (agentic).
+#   Best for:  (validation) high-ctx + code-heavy Qwen on dual 3090 where DFlash's lossless
+#              big-context wins; prose → use the MTP sibling.
+# ---------------------------------------------------------------------------
+# Qwen3.6-27B on beellama.cpp v0.3.0 — DUAL 3090, Q8_K_XL + DFlash (Anbeeld IQ4_XS draft),
+# q5_0/q4_1 KV, layer-split across both cards.
+#
+# DFlash vs MTP: DFlash uses a SEPARATE lightweight draft GGUF (--spec-draft-model) +
+# --spec-dflash-cross-ctx, instead of MTP's embedded recurrent head. That separate draft
+# is small (~0.9 GB) and doesn't pin a heavy recurrent state to one card, so DFlash fits
+# more context than MTP on the same 2×24 GB. `--split-mode layer` pipelines layers across
+# both cards (layer-split, not row-split — avoids cross-GPU all-reduce on PCIe-no-NVLink).
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR             host dir mounted as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE             target GGUF under /models
+#                         (default: …unsloth-mtp-q8kxl/Qwen3.6-27B-UD-Q8_K_XL.gguf)
+#   DRAFT_FILE            DFlash draft GGUF under /models
+#                         (default: …anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf)
+#   CTX_SIZE              KV pool size                 (default: 262144 — native max, validated)
+#   CROSS_CTX             --spec-dflash-cross-ctx      (default: 1024 — drafter cross-attn window)
+#   TENSOR_SPLIT          --tensor-split proportions   (default: 0.575,0.425 — card0,card1; balances
+#                         the ~4.4 GB draft that pins to card1. ~even ratio if draft moves cards.)
+#   SPLIT_MODE / MAIN_GPU / KV_TYPE_K / KV_TYPE_V / BATCH_SIZE / UBATCH_SIZE / NP /
+#   REASONING / TEMP / TOP_K / TOP_P / MIN_P / PORT
+#
+# Quick start (both GPUs must be free):
+#   MODEL_DIR=/mnt/models/huggingface docker compose -f dflash.yml up -d
+#   curl http://localhost:8065/v1/models
+services:
+  beellama-qwen36-27b-dual-dflash:
+    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397}
+    container_name: "${ESTATE_CONTAINER:-beellama-qwen36-27b-dual-dflash}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8065}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-mtp-q8kxl/Qwen3.6-27B-UD-Q8_K_XL.gguf}
+      --spec-draft-model /models/${DRAFT_FILE:-qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf}
+      --spec-type dflash
+      --spec-dflash-cross-ctx ${CROSS_CTX:-1024}
+      -ngl all
+      --spec-draft-ngl all
+      --split-mode ${SPLIT_MODE:-layer}
+      --main-gpu ${MAIN_GPU:-0}
+      --tensor-split ${TENSOR_SPLIT:-0.575,0.425}
+      --ctx-size ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --cache-type-k ${KV_TYPE_K:-q5_0}
+      --cache-type-v ${KV_TYPE_V:-q4_1}
+      --flash-attn on
+      --cache-ram 0
+      --no-host
+      --jinja
+      --reasoning ${REASONING:-off}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-k ${TOP_K:-20}
+      --top-p ${TOP_P:-1.0}
+      --min-p ${MIN_P:-0.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

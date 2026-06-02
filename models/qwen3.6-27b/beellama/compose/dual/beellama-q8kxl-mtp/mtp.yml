@@ -1,0 +1,90 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B (Unsloth UD-Q8_K_XL MTP GGUF — full model + embedded MTP head)
+#   Engine:    beellama.cpp v0.3.0 (Anbeeld llama.cpp fork — MTP spec-dec)
+#   Topology:  Dual 3090 (layer-split across both cards, PCIe — no NVLink needed)
+#   Drafter:   MTP (--spec-type draft-mtp, embedded head — NO separate draft model)
+#   KV:        q5_0 K + q4_1 V
+#   Vision:    no (mmproj NOT mounted; set MMPROJ_FILE + --mmproj for vision)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   65536 default (safe first-boot on dual; Q8 weights ~17 GB/card leave room
+#              to ladder up — raise CTX_SIZE and watch for OOM).
+#   Genesis:   N/A — beellama is a llama.cpp-family engine
+#   Status:    🧪 EXPERIMENTAL — boots + serves coherently + MTP active on Q8 (confirmed
+#              2026-06-01: prose+code coherent, draft acceptance 0.90 on code, ~58 TPS decode,
+#              ~16/21 GB across the 2 cards). Full verify/soak/bench gate (#455) + tagged-
+#              release un-park still pending, so NOT git-tracked yet.
+#   Caveats:   Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
+#              not a tagged release — same upstream gate as the gemma dual (Anbeeld #39 / #48).
+#              MTP is the ROBUST Qwen spec path on v0.3.0: prior run held prose acceptance ~0.44
+#              where DFlash collapsed to ~0.07. This compose pairs that with Q8 weights for the
+#              #455 controlled Q8 dual rebench. UN-PARK when Anbeeld tags a stable release.
+#   Best for:  (validation) high-fidelity Q8 Qwen on dual 3090 with working MTP spec-dec.
+# ---------------------------------------------------------------------------
+# Qwen3.6-27B on beellama.cpp v0.3.0 — DUAL 3090, Q8_K_XL + MTP (embedded head),
+# q5_0/q4_1 KV, layer-split across both cards.
+#
+# Q8_K_XL is ~34 GB — it CANNOT fit one 24 GB card, so this is dual-only (the
+# single-card beellama Qwen compose uses the smaller Q5_K_S). `count: all` exposes
+# both 3090s; `--split-mode layer` pipelines the layers across them (layer-split,
+# NOT row-split — avoids cross-GPU all-reduce on a PCIe-only, NVLink-less rig).
+#
+# MTP vs DFlash: the MTP head is baked into the -m GGUF, so there is NO
+# --spec-draft-model / --spec-dflash-cross-ctx here; `--spec-type draft-mtp`
+# activates the embedded head, `--spec-draft-n-max` sets draft depth.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR             host dir mounted as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE             MTP target GGUF under /models
+#                         (default: …unsloth-mtp-q8kxl/Qwen3.6-27B-UD-Q8_K_XL.gguf)
+#   CTX_SIZE              KV pool size                 (default: 65536 — ladder up on dual)
+#   DRAFT_N_MAX           --spec-draft-n-max           (default: 3)
+#   SPLIT_MODE            --split-mode                 (default: layer — best for PCIe no-NVLink)
+#   MAIN_GPU              --main-gpu                   (default: 0)
+#   KV_TYPE_K / KV_TYPE_V K / V cache quant            (default: q5_0 / q4_1)
+#   BATCH_SIZE / UBATCH_SIZE / NP / REASONING / TEMP / TOP_K / TOP_P / MIN_P / PORT
+#
+# Quick start (both GPUs must be free):
+#   MODEL_DIR=/mnt/models/huggingface docker compose -f mtp.yml up -d
+#   curl http://localhost:8064/v1/models
+services:
+  beellama-qwen36-27b-dual:
+    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397}
+    container_name: "${ESTATE_CONTAINER:-beellama-qwen36-27b-dual}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8064}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-mtp-q8kxl/Qwen3.6-27B-UD-Q8_K_XL.gguf}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${DRAFT_N_MAX:-3}
+      -ngl all
+      --split-mode ${SPLIT_MODE:-layer}
+      --main-gpu ${MAIN_GPU:-0}
+      --ctx-size ${CTX_SIZE:-65536}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --cache-type-k ${KV_TYPE_K:-q5_0}
+      --cache-type-v ${KV_TYPE_V:-q4_1}
+      --flash-attn on
+      --cache-ram 0
+      --no-host
+      --jinja
+      --reasoning ${REASONING:-off}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-k ${TOP_K:-20}
+      --top-p ${TOP_P:-1.0}
+      --min-p ${MIN_P:-0.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

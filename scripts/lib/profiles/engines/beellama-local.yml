@@ -23,6 +23,7 @@ supported_kv_formats:
 supported_drafters:
   - dflash
   - mtp
+  - mtp_gguf   # GGUF embedded MTP head via `--spec-type draft-mtp` (unsloth-mtp-gguf drafter; beellama/qwen-mtp-dual)
 supported_weight_formats:
   - gguf
 required_overlays: []

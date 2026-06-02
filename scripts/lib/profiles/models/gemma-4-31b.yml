@@ -82,6 +82,18 @@ weights:
     engine: beellama
     kind: gguf
     verify_glob: "*.gguf"
+  beellama-q8kxl-dflash:
+    path: gemma-4-31b-gguf/unsloth-q8kxl
+    local_subdir: gemma-4-31b-gguf/unsloth-q8kxl
+    size_gb: 35.0
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/gemma-4-31B-it-GGUF
+    files:
+      - gemma-4-31B-it-UD-Q8_K_XL.gguf
+    engine: beellama
+    kind: gguf
+    verify_glob: "*.gguf"
   anbeeld-dflash-iq4xs:
     path: gemma-4-31b-gguf/anbeeld-dflash-iq4xs
     local_subdir: gemma-4-31b-gguf/anbeeld-dflash-iq4xs

@@ -1,0 +1,103 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Gemma-4-31B-it (Unsloth UD-Q8_K_XL target + Anbeeld DFlash IQ4_XS drafter)
+#   Engine:    beellama.cpp v0.3.0 (Anbeeld llama.cpp fork — DFlash spec-dec)
+#   Topology:  Dual 3090 (layer-split across both cards, PCIe — no NVLink needed)
+#   Drafter:   DFlash (--spec-type dflash, Anbeeld DFlash-IQ4_XS — separate draft model; pinned
+#              to ONE card, drafter=1 device + GPU cross ring — NOT split across cards.)
+#   KV:        q5_0 K + q4_1 V
+#   Vision:    no (mmproj NOT mounted; set MMPROJ_FILE + --mmproj for vision)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   196608 (192K) default — the robust balanced ceiling on dual Q8 (validated
+#              2026-06-01: card0 21.4 / card1 21.9 GB, ~2 GB free each, via --tensor-split
+#              0.55,0.45). 262K OOMs even balanced (Gemma Q8 = 33 GB + more full-attn KV than
+#              Qwen, which reaches 262K). Lower CTX_SIZE for more headroom; 128K @ 0.55,0.45
+#              leaves ~3.5 GB/card.
+#   Genesis:   N/A — beellama is a llama.cpp-family engine
+#   Status:    🧪 EXPERIMENTAL — under active validation (Q8_K_XL, 2026-06-01). The Q8 counterpart
+#              to beellama/gemma-dflash-dual (Q4_K_S). Same dev-branch image gate.
+#   Caveats:   Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
+#              not a tagged release — same upstream gate as gemma-dflash-dual (Anbeeld #39 / #48).
+#              ⚠️ On v0.3.0, Gemma DFlash is excellent for CODE (~157 TPS) but PROSE acceptance
+#              regressed to ~0.07 (a v0.3.0-wide DFlash-on-prose regression — NOT SWA-specific;
+#              Qwen3.6-27B DeltaNet shows the identical collapse). ❌ MTP won't load on this build
+#              (`unknown model architecture: gemma4_mtp`) — DFlash is the only beellama spec path.
+#              Draft pins to one card → asymmetric VRAM; --tensor-split rebalances (tune below).
+#              UN-PARK when Anbeeld tags a stable release AND prose acceptance recovers.
+#   Quality:   thinking-OFF, 2026-06-01, beellama v0.3.0, 192K (--full 8-pack):
+#              toolcall 13/15 · instructfollow 14/15 · structoutput 14/15 · dataextract 11/15 ·
+#              reasonmath 14/15 · bugfind 15/15 · hermesagent 13/20 · cli-40 19/40  (113/150, 75%).
+#              Edges Qwen Q8 (72%); dataextract 73% >> Qwen's 53% (no JSON-number-as-string bug).
+#              Weak: cli-40 agentic (48%). Bench (n=5): narr 36.0 / code 65.4 TPS (Q8 bw-bound).
+#   Best for:  (validation) high-ctx + code-heavy Gemma on dual 3090; prose spec is net-negative
+#              on v0.3.0.
+# ---------------------------------------------------------------------------
+# Gemma-4-31B on beellama.cpp v0.3.0 — DUAL 3090, Q8_K_XL + DFlash (Anbeeld IQ4_XS draft),
+# q5_0/q4_1 KV, layer-split across both cards.
+#
+# Q8_K_XL is ~33 GB — dual-only (won't fit one 24 GB card; the Q4_K_S sibling does).
+# `count: all` exposes both 3090s; `--split-mode layer` pipelines layers across them
+# (layer-split, not row-split — avoids cross-GPU all-reduce on PCIe-no-NVLink). DFlash's
+# draft pins to ONE card (drafter=1 device); --tensor-split shifts main-model layers to the
+# other card to keep VRAM balanced (see TENSOR_SPLIT below — tune after first boot).
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR             host dir mounted as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE             target GGUF under /models
+#                         (default: …unsloth-q8kxl/gemma-4-31B-it-UD-Q8_K_XL.gguf)
+#   DRAFT_FILE            DFlash draft GGUF under /models
+#                         (default: …anbeeld-dflash-iq4xs/gemma4-31b-it-dflash-IQ4_XS.gguf)
+#   CTX_SIZE              KV pool size                 (default: 262144 — native max; lower if OOM)
+#   CROSS_CTX             --spec-dflash-cross-ctx      (default: 1024 — drafter cross-attn window)
+#   TENSOR_SPLIT          --tensor-split (card0,card1) (default: 0.55,0.45 — balances the DFlash
+#                         draft that pins to card1; validated to ~21.4/21.9 GB at 192K)
+#   SPLIT_MODE / MAIN_GPU / KV_TYPE_K / KV_TYPE_V / BATCH_SIZE / UBATCH_SIZE / NP /
+#   REASONING / TEMP / TOP_K / TOP_P / MIN_P / PORT
+#
+# Quick start (both GPUs must be free):
+#   MODEL_DIR=/mnt/models/huggingface docker compose -f dflash.yml up -d
+#   curl http://localhost:8066/v1/models
+services:
+  beellama-gemma4-31b-dual-dflash:
+    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397}
+    container_name: "${ESTATE_CONTAINER:-beellama-gemma4-31b-dual-dflash}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8066}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-gemma-4-31b-gguf/unsloth-q8kxl/gemma-4-31B-it-UD-Q8_K_XL.gguf}
+      --spec-draft-model /models/${DRAFT_FILE:-gemma-4-31b-gguf/anbeeld-dflash-iq4xs/gemma4-31b-it-dflash-IQ4_XS.gguf}
+      --spec-type dflash
+      --spec-dflash-cross-ctx ${CROSS_CTX:-1024}
+      -ngl all
+      --spec-draft-ngl all
+      --split-mode ${SPLIT_MODE:-layer}
+      --main-gpu ${MAIN_GPU:-0}
+      --tensor-split ${TENSOR_SPLIT:-0.55,0.45}
+      --ctx-size ${CTX_SIZE:-196608}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --cache-type-k ${KV_TYPE_K:-q5_0}
+      --cache-type-v ${KV_TYPE_V:-q4_1}
+      --flash-attn on
+      --cache-ram 0
+      --no-host
+      --jinja
+      --reasoning ${REASONING:-off}
+      --temp ${TEMP:-${TEMPERATURE:-1.0}}
+      --top-k ${TOP_K:-64}
+      --top-p ${TOP_P:-0.95}
+      --min-p ${MIN_P:-0.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
