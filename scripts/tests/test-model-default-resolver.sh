@@ -92,7 +92,7 @@ PIN=CLUB3090_DEFAULT_QWEN3_6_27B
 ( export "$PIN=vllm/dual-int8"
   out="$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>&1 1>/dev/null)"
   slug="$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>/dev/null)"
-  assert_contains "$out" "(NA: experimental)" "(NA) pin warns"
+  assert_contains "$out" "(NA: deprecated)" "(NA) pin warns"
   assert_eq "$slug" "vllm/dual" "(NA) pin falls back to curated" )
 # wrong-model pin → warn + fall back.
 ( export "$PIN=vllm/gemma-bf16-mtp"
