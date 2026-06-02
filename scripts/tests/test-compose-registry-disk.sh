@@ -15,6 +15,12 @@ root = Path.cwd()
 profiles = load_profiles()
 registry_paths = {Path(entry["compose_path"]) for entry in COMPOSE_REGISTRY.values()}
 disk_paths = set(Path("models").glob("*/*/compose/*/*/*.yml"))
+allowed_disk_only = {
+    Path("models/gemma-4-31b/beellama/compose/dual/beellama-q4ks-dflash/dflash.yml"),
+    Path("models/qwen3.6-27b/sglang/compose/dual/autoround-int4/eagle3-experimental.yml"),
+    Path("models/qwen3.6-27b/sglang/compose/single/autoround-int4/eagle3-experimental.yml"),
+}
+expected_disk_paths = registry_paths | {path for path in allowed_disk_only if path.exists()}
 
 failures = []
 
@@ -25,16 +31,22 @@ def check(cond, msg):
         print(f"FAIL: {msg}")
         failures.append(msg)
 
-check(len(COMPOSE_REGISTRY) == 48, f"registry has 48 entries (got {len(COMPOSE_REGISTRY)})")
-check(len(disk_paths) == 49, f"disk has 49 compose files (got {len(disk_paths)})")
+check(len(COMPOSE_REGISTRY) == 52, f"registry has 52 entries (got {len(COMPOSE_REGISTRY)})")
+check(
+    disk_paths == expected_disk_paths,
+    f"disk has only registry plus known parked compose files (got {len(disk_paths)})",
+)
 check(registry_paths <= disk_paths, "all registry compose_path values exist on disk")
 parked_disk_only = disk_paths - registry_paths
+unexpected_disk_only = parked_disk_only - allowed_disk_only
 check(
-    all("/sglang/compose/" in f"/{path.as_posix()}" for path in parked_disk_only),
-    "only parked SGLang archive composes are disk-only",
+    not unexpected_disk_only,
+    "only known parked archive composes are disk-only",
 )
 if parked_disk_only:
     print("INFO: disk-only parked composes: " + ", ".join(str(p) for p in sorted(parked_disk_only)))
+if unexpected_disk_only:
+    print("INFO: unexpected disk-only composes: " + ", ".join(str(p) for p in sorted(unexpected_disk_only)))
 
 for name, entry in sorted(COMPOSE_REGISTRY.items()):
     path = Path(entry["compose_path"])

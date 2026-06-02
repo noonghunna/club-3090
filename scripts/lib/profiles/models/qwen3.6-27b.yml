@@ -155,6 +155,19 @@ weights:
     engine: ik-llama
     kind: gguf
     verify_glob: "*.gguf"
+  hauhaucs-q4kp-mtp:
+    path: qwen3.6-27b-gguf/hauhaucs-q4kp-mtp
+    local_subdir: qwen3.6-27b-gguf/hauhaucs-q4kp-mtp
+    size_gb: variable
+    format: gguf
+    status: community-experimental
+    hf_repo: SummonGovernance/Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-MTP
+    files:
+      - Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-MTP-Q4_K_P.gguf
+    force_direct_download: true
+    engine: ik-llama
+    kind: gguf
+    verify_glob: "*.gguf"
   carnice-bf16mtp:
     path: carnice-v2-27b-int4-recipe-d-bf16mtp
     local_subdir: carnice-v2-27b-int4-recipe-d-bf16mtp
@@ -197,4 +210,3 @@ valid_tp:
 # the engine choice via their `Engine-profile:` header — non-TQ3 composes
 # route to vllm-nightly-clean, TQ3 composes route to vllm-nightly-mtp.
 requires_genesis: false
-

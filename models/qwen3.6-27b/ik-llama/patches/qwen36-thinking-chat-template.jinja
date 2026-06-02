@@ -1,0 +1,422 @@
+{#- ===== HELPER: raise_exception macro =====
+     Jinja2 doesn't have a built-in raise_exception.
+     This macro outputs an error marker in the rendered output.
+     Callers should check output for "ERROR:" pattern to detect validation failures.
+-#}
+{%- macro raise_exception(message) -%}
+  {{- '\n[ERROR: ' ~ message ~ ']' -}}
+{%- endmacro -%}
+
+{#- ===== SECTION 1A: MACRO render_content =====
+     Handles string, list (image/video/text items), or None/undefined.
+     count_vision=true: increments ns.image_count / ns.video_count.
+     is_system_content=false: Set true when rendering system/developer content
+                            to enable media validation (raises exception).
+     count_vision=true: increments vision counters.
+-#}
+{%- macro render_content(content, count_vision=false, is_system_content=false) -%}
+  {#- VALIDATION: System messages cannot contain images or videos (from v18) -#}
+  {#- FIX: also exclude strings and handle None - llama.cpp treats strings as non-iterable in for loops -#}
+  {%- if is_system_content and content is iterable and content is not mapping and content is not string and content is not none -%}
+    {%- for item in content -%}
+      {%- if item.type == 'image' or 'image' in item or 'image_url' in item -%}
+        {{- raise_exception('System message cannot contain images.') -}}
+      {%- endif -%}
+      {%- if item.type == 'video' or 'video' in item -%}
+        {{- raise_exception('System message cannot contain videos.') -}}
+      {%- endif -%}
+    {%- endfor -%}
+  {%- endif -%}
+
+  {#- Main content rendering -#}
+  {#- Handle None/undefined content -#}
+  {%- if content is none or content is defined == false -%}
+    {{- '' -}}
+  {%- elif content is string -%}
+    {{- content -}}
+  {#- FIX: also exclude strings - llama.cpp treats strings as non-iterable in for loops -#}
+  {%- elif content is iterable and content is not mapping and content is not string -%}
+    {%- for item in content -%}
+      {#- Handle different item types -#}
+      {%- if item.type == 'image' or 'image' in item or 'image_url' in item -%}
+        {%- if count_vision -%}{%- set ns.image_count = ns.image_count + 1 -%}{%- endif -%}
+        {%- if add_vision_id is defined and add_vision_id -%}
+          {{- 'Picture ' ~ ns.image_count ~ ': ' -}}
+        {%- endif -%}
+        {{- '<|vision_start|><|image_pad|><|vision_end|>' -}}
+      {%- elif item.type == 'video' or 'video' in item -%}
+        {%- if count_vision -%}{%- set ns.video_count = ns.video_count + 1 -%}{%- endif -%}
+        {%- if add_vision_id is defined and add_vision_id -%}
+          {{- 'Video ' ~ ns.video_count ~ ': ' -}}
+        {%- endif -%}
+        {{- '<|vision_start|><|video_pad|><|vision_end|>' -}}
+      {%- elif item.type == 'text' or 'text' in item -%}
+        {{- item.text -}}
+      {#- ERROR: Unknown content type - raise explicit exception (from v18) -#}
+      {%- else -%}
+        {{- raise_exception('Unexpected content type in message content.') -}}
+      {%- endif -%}
+    {%- endfor -%}
+  {#- ERROR: Unknown content type - raise explicit exception (from v18) -#}
+  {%- elif content is not none and content is defined -%}
+    {{- raise_exception('Unexpected content type.') -}}
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- ===== SECTION 1B: MACRO detect_tool_error (NEW in v0.7) =====
+     Detects if a tool response contains error indicators.
+     Uses heuristics from v18:
+     - Checks for error keywords (error, exception, traceback, failed to)
+     - Ignores responses with '$ ' (shell output prefix) or 'took ' (timing info)
+     - Ignores responses > 500 chars (likely valid output, not error)
+
+     Returns: ns.last_tool_failed (true/false)
+     Side effect: Updates ns.consecutive_failures counter
+-#}
+{%- macro detect_tool_error(content) -%}
+  {#- Type guard: ensure content is string (llama.cpp compatibility) -#}
+  {%- set content = content if content is string else '' -%}
+  {%- set content_lower = content | lower -%}
+  {%- set content_length = content | length -%}
+
+  {#- Error detection heuristics: short response + no shell prefix + has error keywords -#}
+  {%- if content_length < 500
+      and '$ ' not in content
+      and 'took ' not in content_lower
+      and ('"error":' in content_lower or 'error:' in content_lower
+           or 'exception:' in content_lower or 'traceback' in content_lower
+           or 'command not found' in content_lower or 'invalid syntax' in content_lower
+           or 'failed to' in content_lower or 'permission denied' in content_lower) -%}
+    {#- Error detected - update failure tracking -#}
+    {%- set ns.last_tool_failed = true -%}
+    {%- set ns.consecutive_failures = ns.consecutive_failures + 1 -%}
+  {%- else -%}
+    {#- No error - reset failure tracking -#}
+    {%- set ns.last_tool_failed = false -%}
+    {%- set ns.consecutive_failures = 0 -%}
+  {%- endif -%}
+{%- endmacro -%}
+
+{#- ===== SECTION 2: NAMESPACE INITIALISATION =====
+     Single ns object for all mutable state.
+
+     enable_thinking:  default=true (controls think-block in generation prompt)
+     preserve_thinking: default=true (controls think-block display in conversation history)
+     image_count:      Vision counter for images
+     video_count:      Vision counter for videos
+
+     NEW in v0.7:
+     - consecutive_failures: Tracks consecutive tool call failures (from v18)
+     - last_tool_failed: Boolean flag for current tool response (from v18)
+-#}
+{%- set ns = namespace(
+    enable_thinking=true,
+    preserve_thinking=true,
+    image_count=0,
+    video_count=0,
+    consecutive_failures=0,
+    last_tool_failed=false
+) -%}
+
+{#- Resolve enable_thinking kwarg -#}
+{%- if enable_thinking is defined -%}
+  {%- if enable_thinking -%}
+    {%- set ns.enable_thinking = true -%}
+  {%- else -%}
+    {%- set ns.enable_thinking = false -%}
+  {%- endif -%}
+{%- endif -%}
+
+{#- Resolve preserve_thinking kwarg (FIXED in v0.7: now also affects conversation history, not just generation prompt).
+    preserve_thinking=false  => force non-thinking mode (same as enable_thinking=false).
+    preserve_thinking=true   => default, no override (thinking controlled by enable_thinking).
+    When not defined         => default, no override.
+-#}
+{%- if preserve_thinking is defined -%}
+  {%- if not preserve_thinking -%}
+    {%- set ns.enable_thinking = false -%}
+    {%- set ns.preserve_thinking = false -%}
+  {%- else -%}
+    {%- set ns.preserve_thinking = true -%}
+  {%- endif -%}
+{%- endif -%}
+
+{#- ===== SECTION 3: PRE-SCAN =====
+     Track last /no_think or /think flag in user messages.
+     Also scan system messages for <|think_off|> / <|think_on|> markers
+     (allows apps to control thinking mode via system prompt injection).
+     The model follows the last flag encountered in multi-turn conversations.
+-#}
+{%- for i in range(messages | length) -%}
+  {%- set _msg = messages[i] -%}
+  {%- if _msg.role == 'user' -%}
+    {%- set _u = _msg.content if _msg.content is string else '' -%}
+    {%- if _u.rstrip().endswith('/no_think') -%}
+      {%- set ns.enable_thinking = false -%}
+    {%- elif _u.rstrip().endswith('/think') -%}
+      {%- set ns.enable_thinking = true -%}
+    {%- endif -%}
+  {%- elif _msg.role == 'system' or _msg.role == 'developer' -%}
+    {%- set _s = _msg.content if _msg.content is string else '' -%}
+    {%- if '<|think_off|>' in _s -%}
+      {%- set ns.enable_thinking = false -%}
+    {%- elif '<|think_on|>' in _s -%}
+      {%- set ns.enable_thinking = true -%}
+    {%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+
+{#- ===== SECTION 4: VALIDATE MESSAGES (NEW in v0.7) =====
+     Validate that messages is provided and not empty.
+     From v18: raises exception if no messages provided.
+-#}
+{%- if not messages -%}
+  {{- raise_exception('No messages provided.') -}}
+{%- endif -%}
+
+{#- ===== SECTION 5: COLLECT SYSTEM CONTENT =====
+     Merge all system/developer messages with \n\n separator.
+     <|think_off|> / <|think_on|> markers are stripped from output.
+
+     FIXED in v0.7: Pass is_system_content=true to render_content to trigger
+     media validation (raises exception if system contains images/videos).
+-#}
+{%- set ns_sys = namespace(content='') -%}
+{%- for msg in messages -%}
+  {%- if msg.role == 'system' or msg.role == 'developer' -%}
+    {#- Pass is_system_content=true for media validation -#}
+    {%- set _c = render_content(msg.content | default(''), false, true) | trim -%}
+    {%- set _c = _c | replace('<|think_off|>', '') | replace('<|think_on|>', '') | trim -%}
+    {%- if _c -%}
+      {%- if ns_sys.content == '' -%}
+        {%- set ns_sys.content = _c -%}
+      {%- else -%}
+        {%- set ns_sys.content = ns_sys.content + '\n\n' + _c -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+
+{#- ===== SECTION 6: BUILD TOOLS LIST =====
+     Normalise each tool to {"type":"function","function":{...}} format.
+     Serialisation happens later at output time (avoids Markup + str escaping bugs).
+-#}
+{%- set _has_tools = tools is defined and tools -%}
+{%- if _has_tools -%}
+  {%- set ns_tb = namespace(list=[]) -%}
+  {%- for tool in tools -%}
+    {%- if tool.function is defined -%}
+      {%- set ns_tb.list = ns_tb.list + [tool] -%}
+    {%- else -%}
+      {%- set ns_tb.list = ns_tb.list + [{"type": "function", "function": tool}] -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endif -%}
+
+{#- ===== SECTION 7: OUTPUT SYSTEM TURN =====
+     Each fragment output via its own {{ }} block so tojson Markup objects are
+     never Python-concatenated with plain strings (would trigger HTML-escaping).
+     User system content appears BEFORE the tools block (correct ordering).
+     No default system prompt injected.
+-#}
+{%- if ns_sys.content or _has_tools -%}
+  {{- '<|im_start|>system\n' -}}
+  {%- if ns_sys.content -%}
+    {{- ns_sys.content -}}
+    {%- if _has_tools -%}{{- '\n\n' -}}{%- endif -%}
+  {%- endif -%}
+  {%- if _has_tools -%}
+    {{- '# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n' -}}
+    {%- for tool in ns_tb.list -%}
+      {{- tool | tojson -}}
+      {%- if not loop.last -%}{{- '\n' -}}{%- endif -%}
+    {%- endfor -%}
+    {{- '\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tool_call>' -}}
+  {%- endif -%}
+  {{- '<|im_end|>\n' -}}
+{%- endif -%}
+
+{#- ===== SECTION 8: MAIN MESSAGE LOOP =====
+     FIXED in v0.7:
+     - Tool responses now have error detection via detect_tool_error macro
+     - Warning messages injected for failed tool calls
+     - consecutive_failures tracking for escalating warnings
+-#}
+{%- for message in messages -%}
+
+  {#- 8a: System / Developer — already rendered above, skip -#}
+  {%- if message.role == 'system' or message.role == 'developer' -%}
+
+  {#- 8b: User messages -#}
+  {%- elif message.role == 'user' -%}
+    {%- set _uc = render_content(message.content | default(''), true, false) -%}
+    {{- '<|im_start|>user\n' + _uc + '<|im_end|>\n' -}}
+
+  {#- 8c: Assistant messages -#}
+  {%- elif message.role == 'assistant' -%}
+    {#- Safely extract content as string — guard against absent key.
+        Also support message.reasoning_content as an explicit think-block source
+        (used by some frameworks that store thinking separately from content). -#}
+    {%- if message.content is defined and message.content is string -%}
+      {%- set _ac = message.content -%}
+    {#- FIX: also exclude strings - llama.cpp treats strings as non-iterable in for loops -#}
+    {%- elif message.content is defined and message.content is iterable and message.content is not mapping and message.content is not string -%}
+      {%- set _ac = render_content(message.content, false, false) -%}
+    {%- else -%}
+      {%- set _ac = '' -%}
+    {%- endif -%}
+
+    {#- Reconstruct content from reasoning_content + content when the framework
+        stores thinking separately (e.g. OpenAI-style reasoning_content field).
+        Only apply when no think-block already present in _ac. -#}
+    {%- if message.reasoning_content is defined and message.reasoning_content is string
+        and message.reasoning_content | trim
+        and '<think>' not in _ac -%}
+      {%- set _ac = '<think>\n' + message.reasoning_content | trim + '\n</think>\n\n' + _ac -%}
+    {%- endif -%}
+
+    {#- Collect tool_calls if present -#}
+    {#- Type check: ensure tool_calls is a list, not string (llama.cpp compatibility) -#}
+    {%- set _tc = message.tool_calls if message.tool_calls is defined and message.tool_calls is iterable and message.tool_calls is not string else [] -%}
+
+    {#- Strip <tool_call> prefix from content when tool_calls also present
+        (some frameworks duplicate the data in both fields) -#}
+    {%- if _tc and '<tool_call>' in _ac -%}
+      {%- set _ac = _ac.split('<tool_call>')[0] | trim -%}
+    {%- endif -%}
+
+    {#- FIXED in v0.7: Think-block handling with preserve_thinking support
+
+       New logic (from v18): preserve_thinking controls think-block display on ALL
+       assistant messages, not just generation prompt:
+
+       - Tool-call turns   : never strip (think block is part of the tool-call format)
+       - preserve_thinking : if true, show think blocks on ALL messages
+       - Last-history turn : if preserve_thinking false, apply last-turn handling
+       - Historical turns  : if preserve_thinking false, strip think blocks
+
+       The old behavior (strip unless add_generation_prompt) is now controlled
+       by preserve_thinking parameter.
+    -#}
+    {%- set _show_think = false -%}
+    {%- if _tc -%}
+      {#- Tool calls: always show think block -#}
+      {%- set _show_think = true -%}
+    {%- elif ns.preserve_thinking -%}
+      {#- preserve_thinking=true: show think blocks on all messages -#}
+      {%- set _show_think = true -%}
+    {%- elif loop.last -%}
+      {#- Last message without preserve_thinking: show if thinking enabled -#}
+      {%- set _show_think = ns.enable_thinking -%}
+    {%- endif -%}
+
+    {#- Apply think-block stripping based on _show_think flag -#}
+    {%- if not _show_think -%}
+      {#- Fuzzy end-tag detection for stripping -#}
+      {%- set _think_end = '' -%}
+      {%- if '</think>' in _ac -%}
+        {%- set _think_end = '</think>' -%}
+      {%- elif '</thinking>' in _ac -%}
+        {%- set _think_end = '</thinking>' -%}
+      {%- elif '</ think>' in _ac -%}
+        {%- set _think_end = '</ think>' -%}
+      {%- elif '</think >' in _ac -%}
+        {%- set _think_end = '</think >' -%}
+      {%- endif -%}
+      {%- if _think_end -%}
+        {%- set _ac = _ac.split(_think_end)[-1].lstrip('\n') -%}
+      {%- endif -%}
+    {%- elif not _tc and loop.last and '<think>' not in _ac and not ns.enable_thinking -%}
+      {#- Last turn, non-thinking: inject empty think block if missing -#}
+      {%- set _ac = '<think>\n\n</think>\n\n' + _ac -%}
+    {%- endif -%}
+
+    {#- Emit the assistant turn -#}
+    {{- '<|im_start|>assistant\n' -}}
+    {%- if _ac -%}
+      {{- _ac -}}
+      {%- if _tc -%}{{- '\n' -}}{%- endif -%}
+    {%- endif -%}
+
+    {#- Render tool calls in Hermes format.
+        Each value output via its own {{ }} block — never concatenated with plain strings
+        in Python, which would trigger Markup HTML-escaping. -#}
+    {%- if _tc -%}
+      {%- for tc in _tc -%}
+        {{- '<tool_call>\n' -}}
+        {{- '{"name": ' -}}{{- tc.function.name | tojson -}}
+        {%- if tc.function.arguments is string -%}
+          {{- ', "arguments": ' + tc.function.arguments -}}
+        {%- else -%}
+          {{- ', "arguments": ' -}}{{- tc.function.arguments | tojson -}}
+        {%- endif -%}
+        {{- '}' -}}
+        {%- if not loop.last -%}
+          {{- '\n</tool_call>\n' -}}
+        {%- else -%}
+          {{- '\n</tool_call>' -}}
+        {%- endif -%}
+      {%- endfor -%}
+    {%- endif -%}
+    {{- '<|im_end|>\n' -}}
+
+  {#- 8d: Tool results — with error detection (NEW in v0.7) -#}
+  {%- elif message.role == 'tool' -%}
+    {%- set _prev_role = messages[loop.index0 - 1].role if loop.index0 > 0 else '' -%}
+    {%- set _next_role = messages[loop.index0 + 1].role if not loop.last else '' -%}
+
+    {#- NEW in v0.7: Detect errors in tool response -#}
+    {%- set _tool_content = message.content | default('') -%}
+    {{- detect_tool_error(_tool_content) -}}
+
+    {%- if _prev_role != 'tool' -%}
+      {{- '<|im_start|>user\n' -}}
+    {%- endif -%}
+    {{- '<tool_response>\n' -}}
+    {{- _tool_content -}}
+
+    {#- NEW in v0.7: Inject warning if tool error detected -#}
+    {#- v0.8: Replaced emoji with text-only for tokenization safety -#}
+    {%- if ns.last_tool_failed -%}
+      {%- if ns.consecutive_failures >= 2 -%}
+        {{- '\n\n[SYSTEM WARNING: ' ~ ns.consecutive_failures ~ ' consecutive tool errors detected. Your previous approach is incorrect.]' -}}
+      {%- else -%}
+        {{- '\n\n[SYSTEM WARNING: The previous tool call returned an error. Diagnose the failure and retry with corrected arguments.]' -}}
+      {%- endif -%}
+    {%- endif -%}
+
+    {%- if _next_role == 'tool' -%}
+      {{- '\n</tool_response>\n' -}}
+    {%- else -%}
+      {{- '\n</tool_response>' -}}
+      {{- '<|im_end|>\n' -}}
+    {%- endif -%}
+
+  {#- 8e: Unknown role - explicit error (from v18) -#}
+  {%- else -%}
+    {{- raise_exception('Unexpected message role: ' + message.role) -}}
+  {%- endif -%}
+
+{%- endfor -%}
+
+{#- ===== SECTION 9: GENERATION PROMPT =====
+     FIXED in v0.7: preserve_thinking now affects conversation history (Section 8),
+     so generation prompt logic is simplified.
+
+     enable_thinking=True  → open <think>\n prefill so llama.cpp reasoning-budget
+                             and other inference engines can hook into the think-stream.
+                             The model continues generating inside the open block.
+     enable_thinking=False → exact non-thinking prefill: </think>\n\n
+
+     NOTE: The <think>\n opener is EPHEMERAL — it lives only in the generation
+     prompt, never in chat history. Historical think-block stripping is handled
+     in Section 8 based on preserve_thinking setting.
+-#}
+{%- if add_generation_prompt -%}
+  {{- '<|im_start|>assistant\n' -}}
+  {%- if ns.enable_thinking -%}
+    {{- '<think>\n' -}}
+  {%- else -%}
+    {{- '<think>\n\n</think>\n\n' -}}
+  {%- endif -%}
+{%- endif -%}

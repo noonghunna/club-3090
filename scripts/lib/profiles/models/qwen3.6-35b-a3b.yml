@@ -89,6 +89,45 @@ weights:
     engine: ik-llama
     kind: gguf
     verify_glob: "*.gguf"
+  luffy-genesis-apex-compact:
+    path: qwen3.6-35b-a3b-gguf/luffy-genesis-apex-mtp
+    local_subdir: qwen3.6-35b-a3b-gguf/luffy-genesis-apex-mtp
+    size_gb: variable
+    format: gguf
+    status: community-experimental
+    hf_repo: LuffyTheFox/Qwen3.6-35B-A3B-Uncensored-Genesis-V2-APEX-MTP-GGUF
+    files:
+      - Qwen3.6-35B-A3B-Uncensored-Genesis-MTP-APEX-Compact.gguf
+    force_direct_download: true
+    engine: ik-llama
+    kind: gguf
+    verify_glob: "*.gguf"
+  carnice-apex-compact:
+    path: qwen3.6-35b-a3b-gguf/carnice-apex-mtp
+    local_subdir: qwen3.6-35b-a3b-gguf/carnice-apex-mtp
+    size_gb: variable
+    format: gguf
+    status: community-experimental
+    hf_repo: mudler/Carnice-Qwen3.6-MoE-35B-A3B-APEX-MTP-GGUF
+    files:
+      - Carnice-Qwen3.6-MoE-35B-A3B-APEX-MTP-I-Compact.gguf
+    force_direct_download: true
+    engine: ik-llama
+    kind: gguf
+    verify_glob: "*.gguf"
+  qwopus-apex-compact:
+    path: qwen3.6-35b-a3b-gguf/qwopus-apex-mtp
+    local_subdir: qwen3.6-35b-a3b-gguf/qwopus-apex-mtp
+    size_gb: variable
+    format: gguf
+    status: community-experimental
+    hf_repo: mudler/Qwopus3.6-35B-A3B-v1-APEX-MTP-GGUF
+    files:
+      - Qwopus3.6-35B-A3B-v1-APEX-MTP-I-Compact.gguf
+    force_direct_download: true
+    engine: ik-llama
+    kind: gguf
+    verify_glob: "*.gguf"
   mudler-apex-quality:
     path: qwen3.6-35b-a3b-gguf/mudler-apex-mtp
     local_subdir: qwen3.6-35b-a3b-gguf/mudler-apex-mtp

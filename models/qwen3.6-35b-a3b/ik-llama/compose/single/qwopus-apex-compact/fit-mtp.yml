@@ -1,0 +1,71 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwopus3.6 35B-A3B v1 APEX-MTP (I-Compact GGUF)
+#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu13-server)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=4, p-min 0.0
+#   KV:        q8_0 K + q4_0 V (asymmetric, K-high/V-low) + -khad/-vhad
+#   Vision:    NO
+#   Default ctx: 196608
+#   Status:    🧪 EVAL ONLY — Qwopus APEX compact bring-up lane
+#   Best for:  Claude Opus trace-distilled reasoning on one 3090, packaged as
+#              a compact APEX-MTP MoE fit with q8_0/q4_0 long-context KV.
+# ---------------------------------------------------------------------------
+# target: mudler/Qwopus3.6-35B-A3B-v1-APEX-MTP-GGUF
+#
+# Quick start:
+#   hf download mudler/Qwopus3.6-35B-A3B-v1-APEX-MTP-GGUF \
+#     Qwopus3.6-35B-A3B-v1-APEX-MTP-I-Compact.gguf \
+#     --local-dir $MODEL_DIR/qwen3.6-35b-a3b-gguf/qwopus-apex-mtp
+
+services:
+  ik-llama-qwen36-35b-a3b-qwopus-apex-fit:
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp:cu13-server}
+    container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-35b-a3b-qwopus-apex-fit}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8063}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+      - ../../../patches/qwen36-thinking-chat-template.jinja:/etc/qwen36-thinking-chat-template.jinja:ro
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      --model /models/${GGUF_FILE:-qwen3.6-35b-a3b-gguf/qwopus-apex-mtp/Qwopus3.6-35B-A3B-v1-APEX-MTP-I-Compact.gguf}
+      --fit
+      --fit-margin 256
+      -ngl 99
+      --ctx-size ${CTX_SIZE:-196608}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-1024}
+      -np ${NP:-1}
+      -ctk ${KV_TYPE_K:-q8_0}
+      -ctv ${KV_TYPE_V:-q4_0}
+      -khad
+      -vhad
+      -ngld 99
+      --multi-token-prediction
+      --draft-max ${MTP_DRAFT_N_MAX:-4}
+      --draft-p-min ${DRAFT_P_MIN:-0.0}
+      --recurrent-ckpt-mode auto
+      --merge-qkv
+      -fa on
+      --no-mmap
+      --cache-ram ${CACHE_RAM_MB:-4096}
+      --jinja
+      --chat-template-file /etc/qwen36-thinking-chat-template.jinja
+      --parallel-tool-calls
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]

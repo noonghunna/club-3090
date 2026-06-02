@@ -569,7 +569,7 @@ download_weight_key() {
   _verify_downloaded_files "$WEIGHT_REPO" "$WEIGHT_SUBDIR" "$WEIGHT_VERIFY_GLOB"
 }
 
-VERIFY_GLOB="${VERIFY_GLOB_OVERRIDE:-*.safetensors}"
+VERIFY_GLOB="${VERIFY_GLOB_OVERRIDE:-${VERIFY_GLOB:-*.safetensors}}"
 _hf_download_repo "${MODEL_REPO}" "${MODEL_SUBDIR}" "${GGUF_FILES}"
 _verify_downloaded_files "${MODEL_REPO}" "${MODEL_SUBDIR}" "${VERIFY_GLOB}"
 

@@ -1,0 +1,82 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B Uncensored HauhauCS Aggressive MTP (Q4_K_P GGUF)
+#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu13-server)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=4, p-min 0.0
+#   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard
+#   Vision:    NO
+#   Default ctx: 160000
+#   Status:    🧪 EVAL ONLY — HauhauCS aggressive Q4_K_P bring-up lane
+#   Best for:  Uncensored Qwen3.6-27B chat on a single 3090 with native MTP
+#              and long-context ik_llama throughput; K/V remain live-tunable.
+# ---------------------------------------------------------------------------
+# target: SummonGovernance/Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-MTP
+#
+# Quick start:
+#   hf download SummonGovernance/Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-MTP \
+#     Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-MTP-Q4_K_P.gguf \
+#     --local-dir $MODEL_DIR/qwen3.6-27b-gguf/hauhaucs-q4kp-mtp
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE              path under /models
+#   CTX_SIZE               KV pool size        (default: 160000)
+#   BATCH_SIZE             llama.cpp -b        (default: 4096)
+#   UBATCH_SIZE            llama.cpp -ub       (default: 1024)
+#   NP                     parallel slots      (default: 1)
+#   KV_TYPE_K              K quant type        (default: q4_0; try q8_0 for higher-fidelity K)
+#   KV_TYPE_V              V quant type        (default: q4_0; try q4_1/q5_0 for hybrid testing)
+#   MTP_DRAFT_N_MAX        MTP draft tokens    (default: 4)
+#   DRAFT_P_MIN            draft accept floor  (default: 0.0)
+#   REASONING              thinking gate       (default: off)
+#   PORT                   host port           (default: 8062)
+#   CUDA_VISIBLE_DEVICES   which GPU to use    (default: 0)
+
+services:
+  ik-llama-qwen36-27b-hauhaucs-q4kp-mtp:
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp:cu13-server}
+    container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-27b-hauhaucs-q4kp-mtp}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8062}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+      - ../../../patches/qwen36-thinking-chat-template.jinja:/etc/qwen36-thinking-chat-template.jinja:ro
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      --model /models/${GGUF_FILE:-qwen3.6-27b-gguf/hauhaucs-q4kp-mtp/Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-MTP-Q4_K_P.gguf}
+      -ngl 99
+      --ctx-size ${CTX_SIZE:-160000}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-1024}
+      -np ${NP:-1}
+      -ctk ${KV_TYPE_K:-q4_0}
+      -ctv ${KV_TYPE_V:-q4_0}
+      -khad
+      -vhad
+      -ngld 99
+      --multi-token-prediction
+      --draft-max ${MTP_DRAFT_N_MAX:-4}
+      --draft-p-min ${DRAFT_P_MIN:-0.0}
+      --recurrent-ckpt-mode auto
+      --merge-qkv
+      -fa on
+      --jinja
+      --chat-template-file /etc/qwen36-thinking-chat-template.jinja
+      --parallel-tool-calls
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]

@@ -424,6 +424,76 @@ patches:
       drop_when: "the APEX GGUF ships a corrected default chat template, OR the override is re-vendored (the same drift_guard must clear the next re-vendor)"
     status: unverified
 
+  - id: qwen35-ikllama-thinking-chat-template
+    model: [qwen3.6-35b-a3b]
+    files:
+      - models/qwen3.6-35b-a3b/ik-llama/patches/qwen36-thinking-chat-template.jinja
+    load_bearing_when:
+      - composes:
+          - ik-llama/luffy-genesis-apex-fit
+          - ik-llama/carnice-apex-fit
+          - ik-llama/qwopus-apex-fit
+        reason: "The new community APEX-MTP GGUF lanes are pinned to LuffyTheFox's thinking-aware Qwen 3.6 Jinja template so reasoning-on/off and tool-call formatting stay explicit instead of relying on each GGUF's embedded template."
+        evidence: "models/qwen3.6-35b-a3b/ik-llama/compose/single/*-apex-compact/fit-mtp.yml command (--chat-template-file) + volumes block; LuffyTheFox/Qwen3.6-35B-A3B-Uncensored-Genesis-V2-APEX-MTP-GGUF chat_template_thinking.jinja"
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: false
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: chat_template
+    delivery_spec:
+      jinja: models/qwen3.6-35b-a3b/ik-llama/patches/qwen36-thinking-chat-template.jinja
+      mounted_at: /etc/qwen36-thinking-chat-template.jinja
+      mount_mode: ro
+      invoke: "--chat-template-file /etc/qwen36-thinking-chat-template.jinja"
+      wired_at: [volumes, command]
+      note: "vendored thinking-aware Qwen 3.6 template for the new ik-llama APEX compact community presets."
+    drift_guard:
+      kind: behavioral
+      check: "Reasoning-disabled and reasoning-enabled launches keep coherent tool/chat formatting on the pinned ik-llama image with the thinking template mounted. Any behavioral/TPS comparison MUST use the self-contained symmetric restart+settle protocol: identical `docker restart <container>` on BOTH arms -> wait for /health healthy -> fixed 60s settle -> >=3 bench.sh runs/arm -> compare the GRAND MEAN of the SAME canonical bench segment."
+      on_fail: capability-degraded
+    capability: chat-template-override
+    foundational: false
+    upstream:
+      ref: LuffyTheFox/Qwen3.6-35B-A3B-Uncensored-Genesis-V2-APEX-MTP-GGUF chat_template_thinking.jinja
+      status: local-vendored
+      drop_when: "the target GGUFs ship corrected embedded templates or this template is re-vendored and the same drift_guard clears"
+    status: unverified
+
+  - id: qwen27-ikllama-thinking-chat-template
+    model: [qwen3.6-27b]
+    files:
+      - models/qwen3.6-27b/ik-llama/patches/qwen36-thinking-chat-template.jinja
+    load_bearing_when:
+      - composes:
+          - ik-llama/hauhaucs-q4kp-mtp
+        reason: "The HauhauCS Q4_K_P MTP GGUF lane uses the same thinking-aware Qwen 3.6 Jinja template as the new APEX lanes so reasoning-on/off and tool-call formatting are explicit."
+        evidence: "models/qwen3.6-27b/ik-llama/compose/single/hauhaucs-q4kp-mtp/mtp.yml command (--chat-template-file) + volumes block; LuffyTheFox/Qwen3.6-35B-A3B-Uncensored-Genesis-V2-APEX-MTP-GGUF chat_template_thinking.jinja"
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: false
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: chat_template
+    delivery_spec:
+      jinja: models/qwen3.6-27b/ik-llama/patches/qwen36-thinking-chat-template.jinja
+      mounted_at: /etc/qwen36-thinking-chat-template.jinja
+      mount_mode: ro
+      invoke: "--chat-template-file /etc/qwen36-thinking-chat-template.jinja"
+      wired_at: [volumes, command]
+      note: "vendored thinking-aware Qwen 3.6 template for the HauhauCS ik-llama community preset."
+    drift_guard:
+      kind: behavioral
+      check: "Reasoning-disabled and reasoning-enabled launches keep coherent tool/chat formatting on the pinned ik-llama image with the thinking template mounted. Any behavioral/TPS comparison MUST use the self-contained symmetric restart+settle protocol: identical `docker restart <container>` on BOTH arms -> wait for /health healthy -> fixed 60s settle -> >=3 bench.sh runs/arm -> compare the GRAND MEAN of the SAME canonical bench segment."
+      on_fail: capability-degraded
+    capability: chat-template-override
+    foundational: false
+    upstream:
+      ref: LuffyTheFox/Qwen3.6-35B-A3B-Uncensored-Genesis-V2-APEX-MTP-GGUF chat_template_thinking.jinja
+      status: local-vendored
+      drop_when: "the target GGUF ships a corrected embedded template or this template is re-vendored and the same drift_guard clears"
+    status: unverified
+
   - id: gemma-vllm-pr41800-truncate-prompt-tokens
     model: [gemma-4-31b]
     files:
