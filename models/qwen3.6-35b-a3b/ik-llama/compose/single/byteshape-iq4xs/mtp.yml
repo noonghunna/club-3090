@@ -8,14 +8,16 @@
 #   Vision:    NO (mmproj-bf16.gguf exists upstream — vision not wired here yet)
 #   Default ctx: --fit (auto; author observed 262K full n_ctx_train)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific; 35B-A3B is MoE
-#   Status:    🧪 EXPERIMENTAL — community intake from PR #293 (@Rhonstin). Author validated
-#              verify-full 8/8 + verify-stress 8/8 (NIAH→240K) + 8-pack 111/150 (best-on-rig)
-#              on 1× 3090. PENDING our own bench.sh + soak-continuous reproduction before any
-#              promotion to ⚠️/✅.
-#   Caveats:   Numbers below are @Rhonstin's single run; bench.sh + soak-continuous not yet
-#              re-run on this rig. hermesagent-20 60% (12/20) trails beellama DFlash (70%).
-#              Intake fixes vs PR #293: image cu12→cu13-server, port 8020→8058.
-#   Quality:   toolcall-15 15/15 (100%) · instructfollow-15 15/15 (100%) · structoutput-15 14/15 (93%) · dataextract-15 13/15 (87%) · reasonmath-15 12/15 (80%) · bugfind-15 13/15 (87%) · hermesagent-20 12/20 (60%) · cli-40 17/40 (42%) (--full, @Rhonstin 2026-06-01 — pending our reproduction)
+#   Status:    ⚠️ Production w/ caveats — first-party validated on 1× 3090 (2026-06-02):
+#              verify-full all-pass, verify-stress 8/8 (NIAH→240K, no Cliff), bench n=5
+#              (narrative 113/116 · code 129/137 wall/decode TPS, CV <2.3%), 8-pack 110/150,
+#              soak-continuous PASS (0 err, 0 VRAM growth, 0/25 silent-empty, 100% retention).
+#              Community intake from PR #293 (@Rhonstin).
+#   Caveats:   Single-rig validation (1× 3090, 370 W) — cross-rig numbers welcome. Agent-pack
+#              scores (hermesagent-20 11/20 = 55%, cli-40 17/40 = 42%) are typical for the
+#              35B-A3B class (the apex sibling scores similarly). Intake fixes vs PR #293:
+#              image cu12→cu13-server, port 8020→8058.
+#   Quality:   toolcall-15 15/15 (100%) · instructfollow-15 14/15 (93%) · structoutput-15 14/15 (93%) · dataextract-15 13/15 (87%) · reasonmath-15 13/15 (87%) · bugfind-15 13/15 (87%) · hermesagent-20 11/20 (55%) · cli-40 17/40 (42%) (--full, our 1× 3090, 2026-06-02 — 110/150 total)
 #   Best for:  Single-card Qwen3.6-35B-A3B — author's best overall 8-pack on the rig (111/150, 74%)
 # ---------------------------------------------------------------------------
 # Qwen3.6-35B-A3B on ik_llama.cpp — single 3090, byteshape IQ4_XS + q4_0 KV + MTP.

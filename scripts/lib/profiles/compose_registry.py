@@ -482,8 +482,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/byteshape-iq4xs/mtp.yml",
         default_port=8058,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="byteshape IQ4_XS 4.19bpw MoE GGUF (embedded MTP head) — community intake from PR #293 (@Rhonstin). Single-card 35B-A3B, q4_0 KV + --fit (author: 262K auto, 8-pack 111/150 best-on-rig, verify-full/stress 8/8). PENDING our own bench.sh + soak-continuous reproduction before promotion; 🧪 until then. Intake fixes vs #293: image cu13, port 8058.",
+        status="caveats",
+        status_note="byteshape IQ4_XS 4.19bpw MoE GGUF (embedded MTP head) — community intake from PR #293 (@Rhonstin). Single-card 35B-A3B, q4_0 KV + --fit → 262K. First-party validated 2026-06-02 on 1× 3090: verify-full all-pass, verify-stress 8/8 (NIAH→240K, no Cliff), bench n=5 (narrative 113/116 · code 129/137 wall/decode TPS, CV<2.3%), 8-pack 110/150 (≈ author's 111/150), soak-continuous PASS (0 err, 0 VRAM growth, 0/25 silent-empty). Caveat: single-rig; agent packs modest (hermes 55%, cli 42%) as typical for the class. Intake fixes vs #293: image cu13, port 8058.",
     ),
     "ik-llama/apex-mtp-compact-long": _entry(
         model="qwen3.6-35b-a3b", weights_variant="mudler-apex-compact", workload="long-ctx-single",
