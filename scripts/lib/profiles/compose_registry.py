@@ -410,7 +410,7 @@ COMPOSE_REGISTRY = {
         default_port=8060,
         kvcalc_key="SKIP",
         status="caveats",
-        status_note="Single-GPU default. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP — docs/UPSTREAM.md).",
+        status_note="Single-GPU default. Launchers inject Anbeeld's official beellama.cpp server-cuda-v0.3.0 image (sm_86/89 = 3090/4090); sm_89 compiled-not-validated on club-3090's 3090-only rig. 5090/sm_120: prefix BEELLAMA_IMAGE=ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397 (sm_120 compiled-not-validated). Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. v0.3.0 has a known prose-DFlash acceptance regression (code unaffected — docs/UPSTREAM.md).",
     ),
 
     # Qwen3.6-27B PRISM-PRO-DQ (Ex0bit dynamic-quant GGUF) — community-experimental, ik-llama.
@@ -562,7 +562,7 @@ COMPOSE_REGISTRY = {
         default_port=8061,
         kvcalc_key="SKIP",
         status="caveats",
-        status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
+        status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Launchers inject Anbeeld's official beellama.cpp server-cuda-v0.3.0 image (sm_86/89 = 3090/4090); sm_89 compiled-not-validated on club-3090's 3090-only rig. 5090/sm_120: prefix BEELLAMA_IMAGE=ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397 (sm_120 compiled-not-validated). v0.3.0 has a known prose-DFlash acceptance regression (code unaffected); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
     ),
     # Dual-card beellama Gemma-4 (layer-split, 262K) — PARKED upstream-gated 2026-05-31.
     # Boots + recalls 262K fine, but DFlash spec-dec is broken on multi-GPU in our pinned
