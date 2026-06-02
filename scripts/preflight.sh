@@ -841,19 +841,34 @@ preflight_compose_deps() {
   # ${MODEL_DIR}:/root/.cache/huggingface and pass
   # `/root/.cache/huggingface/<subdir>`.
   local is_llamacpp=0
-  if grep -qhE 'image:.*(ggml-org/llama\.cpp|ikawrakow/ik-llama)' "${compose_files[@]}"; then
+  # beellama.cpp (ghcr.io/{anbeeld/beellama.cpp,noonghunna/beellama-cpp}) is a
+  # llama.cpp-family server: it mounts ${MODEL_DIR}:/models and passes
+  # `-m /models/<path>` (+ `--spec-draft-model /models/<path>` for DFlash/MTP),
+  # so it belongs on the GGUF presence path, NOT the vLLM HF-cache path.
+  if grep -qhE 'image:.*(ggml-org/llama\.cpp|ikawrakow/ik-llama|beellama)' "${compose_files[@]}"; then
     is_llamacpp=1
   fi
 
   if [[ $is_llamacpp -eq 1 ]]; then
     local gguf_paths=()
+    local draft_paths=()
     local mmproj_paths=()
     local token path
 
+    # Target weights: -m / --model
     while IFS= read -r token; do
       path="$(_preflight_compose_path_default "$token")"
       [[ -n "$path" ]] && gguf_paths+=("$path")
     done < <(grep -hoE -- '(^|[[:space:]])(-m|--model)[[:space:]]+/models/[^[:space:]]+' "${compose_files[@]}" \
+      | awk '{print $NF}' || true)
+
+    # Speculative drafter: beellama --spec-draft-model, llama.cpp -md/--model-draft.
+    # A missing drafter GGUF otherwise surfaces only as a cryptic in-container
+    # "failed to open GGUF file" crash (see #288 beellama onboarding reports).
+    while IFS= read -r token; do
+      path="$(_preflight_compose_path_default "$token")"
+      [[ -n "$path" ]] && draft_paths+=("$path")
+    done < <(grep -hoE -- '(^|[[:space:]])(--spec-draft-model|--model-draft|-md)[[:space:]]+/models/[^[:space:]]+' "${compose_files[@]}" \
       | awk '{print $NF}' || true)
 
     while IFS= read -r token; do
@@ -862,8 +877,13 @@ preflight_compose_deps() {
     done < <(grep -hoE -- '(^|[[:space:]])--mmproj[[:space:]]+/models/[^[:space:]]+' "${compose_files[@]}" \
       | awk '{print $NF}' || true)
 
+    # Env overrides mirror the compose knobs (GGUF_FILE / DRAFT_FILE / MMPROJ_FILE),
+    # each replacing only its own path class.
     if [[ -n "${GGUF_FILE:-}" ]]; then
       gguf_paths=("$GGUF_FILE")
+    fi
+    if [[ -n "${DRAFT_FILE:-}" && ${#draft_paths[@]} -gt 0 ]]; then
+      draft_paths=("$DRAFT_FILE")
     fi
     if [[ -n "${MMPROJ_FILE:-}" && ${#mmproj_paths[@]} -gt 0 ]]; then
       mmproj_paths=("$MMPROJ_FILE")
@@ -872,6 +892,11 @@ preflight_compose_deps() {
     for path in "${gguf_paths[@]}"; do
       if [[ ! -f "${model_dir}/${path}" ]]; then
         missing+=("${model_dir}/${path} (llama.cpp GGUF weights)")
+      fi
+    done
+    for path in "${draft_paths[@]}"; do
+      if [[ ! -f "${model_dir}/${path}" ]]; then
+        missing+=("${model_dir}/${path} (speculative drafter GGUF)")
       fi
     done
     for path in "${mmproj_paths[@]}"; do
