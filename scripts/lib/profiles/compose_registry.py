@@ -475,6 +475,16 @@ COMPOSE_REGISTRY = {
         status="experimental",
         status_note="APEX-MTP community MoE GGUF — eval-only bring-up lane, not yet validated.",
     ),
+    "ik-llama/byteshape-iq4xs-mtp": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="byteshape-iq4xs", workload="fast-chat",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/byteshape-iq4xs/mtp.yml",
+        default_port=8058,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="byteshape IQ4_XS 4.19bpw MoE GGUF (embedded MTP head) — community intake from PR #293 (@Rhonstin). Single-card 35B-A3B, q4_0 KV + --fit (author: 262K auto, 8-pack 111/150 best-on-rig, verify-full/stress 8/8). PENDING our own bench.sh + soak-continuous reproduction before promotion; 🧪 until then. Intake fixes vs #293: image cu13, port 8058.",
+    ),
     "ik-llama/apex-mtp-compact-long": _entry(
         model="qwen3.6-35b-a3b", weights_variant="mudler-apex-compact", workload="long-ctx-single",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
