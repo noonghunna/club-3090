@@ -146,6 +146,11 @@ def _entry_objects(entry: dict, profiles):
     )
 
 
+# Non-vLLM docker-image engines → the compose env var their image is injected as.
+# (vLLM is special-cased above: VLLM_IMAGE / VLLM_NIGHTLY_SHA.)
+_ENGINE_IMAGE_ENV = {"beellama-local": "BEELLAMA_IMAGE"}
+
+
 def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
     """Resolve EngineProfile.install into compose environment exports."""
     try:
@@ -154,16 +159,26 @@ def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
         raise ProfileError(f"unknown engine profile `{engine_id}`") from exc
 
     spec = str(engine.install.get("spec", ""))
-    if engine.install.get("method") != "docker_image" or engine.type != "vllm":
+    if engine.install.get("method") != "docker_image":
         raise ProfileError(f"engine {engine_id!r} install.spec is not a docker image: {spec!r}")
-    if ":nightly-" in spec:
-        sha = spec.rsplit(":nightly-", 1)[1].strip()
-        if not sha or any(char.isspace() for char in sha):
-            raise ProfileError(f"engine {engine_id!r} has an invalid nightly SHA in install.spec: {spec!r}")
-        return {"VLLM_NIGHTLY_SHA": sha}
+    if engine.type == "vllm":
+        if ":nightly-" in spec:
+            sha = spec.rsplit(":nightly-", 1)[1].strip()
+            if not sha or any(char.isspace() for char in sha):
+                raise ProfileError(f"engine {engine_id!r} has an invalid nightly SHA in install.spec: {spec!r}")
+            return {"VLLM_NIGHTLY_SHA": sha}
+        if not spec or any(char.isspace() for char in spec):
+            raise ProfileError(f"engine {engine_id!r} has an invalid docker image in install.spec: {spec!r}")
+        return {"VLLM_IMAGE": spec}
+    # Non-vLLM docker-image engines (e.g. beellama-local): inject a plain
+    # <ENGINE>_IMAGE override, mirroring VLLM_IMAGE. The per-compose
+    # ${<ENGINE>_IMAGE:-…} literal is then just a fallback for direct `docker compose`.
+    env_key = _ENGINE_IMAGE_ENV.get(engine_id)
+    if not env_key:
+        raise ProfileError(f"engine {engine_id!r} install.spec is not a docker image: {spec!r}")
     if not spec or any(char.isspace() for char in spec):
         raise ProfileError(f"engine {engine_id!r} has an invalid docker image in install.spec: {spec!r}")
-    return {"VLLM_IMAGE": spec}
+    return {env_key: spec}
 
 
 def resolve_variant_pin(profiles, variant: str) -> dict[str, str]:

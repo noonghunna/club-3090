@@ -602,7 +602,7 @@ gpu_preflight() {
 
 export_variant_engine_pin() {
   local variant="$1" output line key value
-  [[ "$variant" == vllm/* ]] || return 0
+  [[ "$variant" == vllm/* || "$variant" == beellama/* ]] || return 0
   if ! output="$(python3 "$LAUNCH_PROFILE" resolve-variant-pin --variant "$variant" --format shell 2>&1)"; then
     echo "$output" >&2
     exit 2
@@ -612,10 +612,13 @@ export_variant_engine_pin() {
     case "$key" in
       VLLM_NIGHTLY_SHA) export VLLM_NIGHTLY_SHA="$value" ;;
       VLLM_IMAGE) export VLLM_IMAGE="$value" ;;
+      BEELLAMA_IMAGE) export BEELLAMA_IMAGE="$value" ;;
       *) echo "[switch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac
   done <<< "$output"
-  if [[ -n "${VLLM_IMAGE:-}" ]]; then
+  if [[ -n "${BEELLAMA_IMAGE:-}" ]]; then
+    echo "[switch] beellama image: ${BEELLAMA_IMAGE}"
+  elif [[ -n "${VLLM_IMAGE:-}" ]]; then
     if [[ -n "${VLLM_NIGHTLY_SHA:-}" ]]; then
       echo "[switch] vLLM image override: ${VLLM_IMAGE} (profile nightly SHA ${VLLM_NIGHTLY_SHA})"
     else
