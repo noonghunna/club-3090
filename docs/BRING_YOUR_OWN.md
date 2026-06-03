@@ -9,12 +9,25 @@ with the fast loops, then run the full gate once it's settled.
 
 Which path depends on what weights you have.
 
+> **BYO models live outside the curated registry**, so the registry-driven
+> wizards (`launch.sh`, `switch.sh`) can't list or boot them — those only resolve
+> cataloged slugs. You boot a BYO compose **directly** with `docker compose -f
+> <path> up -d` + env vars, and you drive the eval scripts by **endpoint**
+> (`--url` / `MODEL=` / `URL=`), never by a registry slug. (The `switch.sh --list`
+> below is only for *finding* a shipped compose to copy as a template.) Getting
+> the wizards to recognise your model is the separate, heavier catalog path —
+> [`ADDING_MODELS.md`](ADDING_MODELS.md).
+
 ### A — An HF safetensors repo  →  `scripts/pull.sh`
 
 ```bash
-scripts/pull.sh <org/Model> --profile-like <registry-key> --dry-run   # evaluate
-scripts/pull.sh <org/Model> --profile-like <registry-key> --yes       # then fetch
+scripts/pull.sh <org/Model> --profile-like <registry-key> --dry-run             # evaluate
+scripts/pull.sh <org/Model> --profile-like <registry-key> --out byo.yml --yes   # fetch + emit compose
+docker compose -f byo.yml up -d                                                 # boot it directly
 ```
+
+`pull.sh` writes a standalone compose (`--out`) and **does not** register the
+model — you boot the emitted file directly, same as path B.
 
 `--profile-like` is **required** — it borrows a curated config's *runtime shape*
 (engine, KV format, tensor-parallel degree) to evaluate your model against our KV
