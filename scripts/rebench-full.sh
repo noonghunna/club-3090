@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# rebench-full.sh — canonical 5-step rebench against the currently-running
-# model. Built to eliminate the recurring mistakes from manual runs:
+# rebench-full.sh — canonical rebench against the currently-running model
+# (a fail-fast verify-full preflight + 5 measured steps). Built to eliminate
+# the recurring mistakes from manual runs:
 #
 #   - Wrong cwd (`scripts/X.sh: No such file or directory`)
 #   - Forgot `--save-json` on benchlocal-cli direct invocations
@@ -11,12 +12,16 @@
 #   - No idempotent resume — every interrupt redoes the whole matrix
 #
 # Order matches docs/QUALITY_TEST.md "test pipeline":
+#   0. verify-full.sh          — functional preflight, FAIL-FAST (~2 min)
 #   1. bench.sh                — TPS narrative + code (~5 min)
 #   2. verify-stress.sh        — long-context + boundary (~10-15 min)
 #   3. quality-test.sh --full  — 8 packs /150, think-OFF (~45-60 min)
 #   4. quality-test.sh --full --enable-thinking — 8 packs /150, think-ON (~60-90 min)
 #   5. soak-test.sh fresh-mode — stability over 50 turns (~15-20 min)
 #
+# verify-full is a HARD GATE: if the endpoint isn't functional we abort before
+# the multi-hour run rather than benching a broken server. Bypass with
+# --skip verify-full (e.g. you just ran it while tuning); --resume skips it too.
 # Total per leg: ~2.5-3.5 hr. (think-ON 8-pack replaced the old aider-polyglot
 # step 2026-06-03; aider available standalone via quality-test.sh --pack aider-polyglot-30.)
 # NOTE: the think-ON leg only scores correctly if the server PARSES reasoning —
@@ -269,6 +274,19 @@ snapshot_quality_json() {
     cp "$src" "$target"
   fi
 }
+
+# --- step 0: verify-full (fail-fast functional preflight) -------------------
+# ~2 min smoke (boots / serves / tool-calls / streams / coherent output). If the
+# endpoint isn't functional there's no point spending hours on bench → soak, so
+# we ABORT here. Skipped cleanly by --skip verify-full or --resume (run_step
+# returns 0 in both cases → no abort); only a real run-and-fail aborts.
+if ! URL="$URL" MODEL="$MODEL" \
+     run_step verify-full "$OUT_DIR/verify-full.log" \
+       bash "$ROOT_DIR/scripts/verify-full.sh"; then
+  echo "[rebench] ✗ verify-full failed — endpoint not functional; aborting before the multi-hour run." >&2
+  echo "          Fix the server, or re-run with --skip verify-full to bypass the preflight." >&2
+  exit 1
+fi
 
 # --- step 1: bench ----------------------------------------------------------
 URL="$URL" MODEL="$MODEL" RUNS="${RUNS:-3}" WARMUPS="${WARMUPS:-1}" \

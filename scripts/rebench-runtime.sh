@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# rebench-runtime.sh — the "runtime" tier of rebench: bench + verify-stress
-# + soak, skipping the two generation-quality legs (quality-full + aider).
+# rebench-runtime.sh — the "runtime" tier of rebench: verify-full (preflight)
+# + bench + verify-stress + soak, skipping the two generation-quality legs
+# (quality-full think-OFF + quality-thinking think-ON).
 #
 # WHEN TO USE THIS instead of rebench-full.sh:
 #   When you changed a serving-config knob that affects throughput / VRAM /
 #   stability but NOT per-token generation quality, so re-scoring the 8-pack
-#   + aider would be ~1.5 hr of wasted cycles that can only reproduce the
-#   prior scores. Examples:
+#   twice (think-OFF + think-ON) would be ~1.5-2.5 hr of wasted cycles that can
+#   only reproduce the prior scores. Examples:
 #     - context-size ceiling bump (KV *type* unchanged)
 #     - --ubatch-size / --batch-size tuning
 #     - --gpu-memory-utilization / --mem-fraction-static
@@ -16,7 +17,11 @@
 #   If the change DOES touch generation (quant swap, KV-cache *type* change,
 #   chat-template change, model swap) → run full rebench-full.sh instead.
 #
-# Three legs (≈30-40 min on single-card, vs ~1.75-2 hr for the full matrix):
+# Preflight + three legs (≈30-40 min on single-card, vs ~2.5-3.5 hr for the
+# full matrix):
+#   0. verify-full.sh     — functional preflight, FAIL-FAST (inherited from
+#                           rebench-full; NOT skipped — a runtime knob can break
+#                           serving, so we still gate on it)
 #   1. bench.sh           — TPS narrative + code
 #   2. verify-stress.sh   — long-context needle ladder + prefill-OOM boundary
 #   3. soak-test.sh       — accumulating-context endurance (Cliff 2b)
@@ -33,13 +38,14 @@
 #     bash scripts/rebench-runtime.sh --engine llama-cpp
 #
 # This is a thin preset over rebench-full.sh: it injects
-# `--skip quality-full,aider-polyglot` and merges any --skip you pass.
+# `--skip quality-full,quality-thinking` and merges any --skip you pass.
+# (verify-full is intentionally NOT skipped — it's the fail-fast preflight.)
 
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-BASE_SKIP="quality-full,aider-polyglot"
+BASE_SKIP="quality-full,quality-thinking"
 USER_SKIP=""
 PASS_ARGS=()
 while [[ $# -gt 0 ]]; do
@@ -51,5 +57,5 @@ done
 
 SKIP="$BASE_SKIP${USER_SKIP:+,$USER_SKIP}"
 
-echo "[rebench-runtime] runtime tier (bench + verify-stress + soak); --skip=$SKIP"
+echo "[rebench-runtime] runtime tier (verify-full + bench + verify-stress + soak); --skip=$SKIP"
 exec bash "$ROOT_DIR/scripts/rebench-full.sh" --skip "$SKIP" "${PASS_ARGS[@]}"
