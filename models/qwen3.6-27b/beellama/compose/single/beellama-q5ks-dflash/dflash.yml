@@ -15,14 +15,19 @@
 #   Status:    ⚠️ Production w/ caveats
 #   Caveats:   single-GPU DEFAULT for Qwen3.6-27B (code-throughput leader ~100 TPS +
 #              slight 8-pack quality edge over ik-llama, think-off). Three caveats:
-#              (1) Defaults to our UNOFFICIAL multi-arch image
-#              ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120 =
-#              RTX 3090/4090/5090; MIT build of Anbeeld/beellama.cpp). sm_89/sm_120 are
-#              COMPILED but UNVALIDATED — only sm_86/3090 is verified on club-3090's rig;
-#              4090/5090 users please report via the numbers-from-your-rig template.
+#              (1) Launchers inject Anbeeld's OFFICIAL image
+#              ghcr.io/anbeeld/beellama.cpp:server-cuda-v0.3.0 (sm_86/89 = RTX 3090/4090);
+#              only sm_86/3090 is verified on club-3090's rig — 4090 (sm_89) users please
+#              report via the numbers-from-your-rig template. 5090/sm_120 is NOT in the
+#              official build: prefix
+#              BEELLAMA_IMAGE=ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397
+#              (our multi-arch sm_86/89/120 build; sm_120 compiled-not-validated). That
+#              same multi-arch build is the compose `image:` fallback for a direct
+#              `docker compose up` (no launcher) so any supported card boots.
 #              (2) Usable ctx ceiling 160K (200K OOMs on prefill) — ships 102K.
-#              (3) Community fork chain, no official upstream Docker yet (Anbeeld v0.3.0
-#              WIP — docs/UPSTREAM.md). Override BEELLAMA_IMAGE= to pin another build.
+#              (3) DFlash prose is net-positive on tok/s (+27% vs no-spec, re-tested
+#              2026-06-03; the earlier 'prose regression' is RETRACTED — AR over-read +
+#              wrong baseline, docs/UPSTREAM.md). Override BEELLAMA_IMAGE= to pin another build.
 #   Quality:   toolcall-15 13/15 · instructfollow-15 14/15 · structoutput-15 14/15 ·
 #              dataextract-15 8/15 · reasonmath-15 12/15 · bugfind-15 14/15 ·
 #              hermesagent-20 14/20 · cli-40 18/40 = 107/150 (71%) think-off; 113/150
@@ -56,8 +61,9 @@
 # so `command:` below is just the server flags (same shape as ik-llama / llama-cpp composes).
 #
 # Quick start:
-#   1. Pull the image: docker pull ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce
-#      (multi-arch sm_86/89/120 = 3090/4090/5090; sm_89/120 unvalidated — see Caveats).
+#   1. Pull the image: docker pull ghcr.io/anbeeld/beellama.cpp:server-cuda-v0.3.0-e0663be2713c
+#      (Anbeeld's official sm_86/89 = 3090/4090. 5090/sm_120: use
+#       ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397 — see Caveats.)
 #   2. Get the GGUFs (target + DFlash draft):
 #        hf download unsloth/Qwen3.6-27B-GGUF Qwen3.6-27B-Q5_K_S.gguf \
 #          --local-dir $MODEL_DIR/qwen3.6-27b-gguf/unsloth-q5ks
@@ -85,7 +91,7 @@
 
 services:
   beellama-qwen36-27b-dflash:
-    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce}
+    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397}
     container_name: "${ESTATE_CONTAINER:-beellama-qwen36-27b}"
     restart: unless-stopped
     ports:

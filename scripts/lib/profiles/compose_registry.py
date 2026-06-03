@@ -410,7 +410,7 @@ COMPOSE_REGISTRY = {
         default_port=8060,
         kvcalc_key="SKIP",
         status="caveats",
-        status_note="Single-GPU default. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP — docs/UPSTREAM.md).",
+        status_note="Single-GPU default. Launchers inject Anbeeld's official beellama.cpp server-cuda-v0.3.0 image (sm_86/89 = 3090/4090); sm_89 compiled-not-validated on club-3090's 3090-only rig. 5090/sm_120: prefix BEELLAMA_IMAGE=ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397 (sm_120 compiled-not-validated). Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. DFlash prose is net-positive on tok/s (+27% vs no-spec, re-tested 2026-06-03); the earlier 'prose-DFlash regression' is RETRACTED — it was an AR over-read + wrong baseline (docs/UPSTREAM.md).",
     ),
 
     # Qwen3.6-27B PRISM-PRO-DQ (Ex0bit dynamic-quant GGUF) — community-experimental, ik-llama.
@@ -562,7 +562,7 @@ COMPOSE_REGISTRY = {
         default_port=8061,
         kvcalc_key="SKIP",
         status="caveats",
-        status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Unofficial multi-arch image beellama-cpp:multiarch-b9459-07ac3ce (sm_86/89/120); sm_89/sm_120 compiled-not-validated on club-3090's 3090-only rig. Community fork chain, no official Docker yet (Anbeeld v0.3.0 WIP); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
+        status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Launchers inject Anbeeld's official beellama.cpp server-cuda-v0.3.0 image (sm_86/89 = 3090/4090); sm_89 compiled-not-validated on club-3090's 3090-only rig. 5090/sm_120: prefix BEELLAMA_IMAGE=ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397 (sm_120 compiled-not-validated). DFlash prose is net-positive on tok/s (+28–31% vs no-spec, re-tested 2026-06-03; earlier 'prose regression' RETRACTED — AR over-read + wrong baseline); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
     ),
     # Dual-card beellama Gemma-4 (layer-split, 262K) — PARKED upstream-gated 2026-05-31.
     # Boots + recalls 262K fine, but DFlash spec-dec is broken on multi-GPU in our pinned
@@ -577,7 +577,7 @@ COMPOSE_REGISTRY = {
         default_port=8062,
         kvcalc_key="SKIP",
         status="experimental",
-        status_note="Dual-card beellama Gemma-4 (layer-split, 262K) on v0.3.0 — RELEASED experimental for community v0.3.0 testing (Anbeeld's request, club-3090#288). Multi-GPU DFlash FIXED on v0.3.0 (GPU cross-ring; validated sm_86 2026-06-01, FA_ALL_QUANTS=1; image injected from beellama-local install.spec = Anbeeld's official server-cuda-v0.3.0 commit tag). ⚠️ v0.3.0-wide DFlash-on-PROSE regression (accept ~0.08, net-negative; CODE unaffected ~157 TPS) — Anbeeld fixing upstream. Prose-dominated by vllm/gemma-int8-mtp (~96/127 @ 262K). Promote experimental→caveats when Anbeeld tags a STABLE release AND prose accept recovers. docs/UPSTREAM.md.",
+        status_note="Dual-card beellama Gemma-4 (layer-split, 262K) on v0.3.0 — RELEASED experimental for community v0.3.0 testing (Anbeeld's request, club-3090#288). Multi-GPU DFlash FIXED on v0.3.0 (GPU cross-ring; validated sm_86 2026-06-01, FA_ALL_QUANTS=1; image injected from beellama-local install.spec = Anbeeld's official server-cuda-v0.3.0 commit tag). Earlier 'v0.3.0-wide DFlash-on-PROSE regression' RETRACTED (2026-06-03) — did NOT reproduce on qwen single+dual or gemma single (DFlash prose net-positive +27–58% vs no-spec); was an AR over-read + wrong baseline. This gemma-dual not separately re-benched. Promote experimental→caveats when Anbeeld tags a STABLE release. docs/UPSTREAM.md.",
     ),
 
     # ------------------------------------------------------------------
@@ -605,7 +605,7 @@ COMPOSE_REGISTRY = {
         default_port=8065,
         kvcalc_key="SKIP",
         status="experimental",
-        status_note="Dual-card beellama Qwen3.6-27B Q8_K_XL + DFlash (Anbeeld DFlash-IQ4_XS draft, --spec-type dflash). v0.3.0 sm_86 2026-06-01: boots + coherent at full 262K (fixed draft footprint; tensor-split 0.575,0.425 → ~21.2 GB/card). ⚠️ v0.3.0-wide DFlash-on-PROSE regression (accept ~0.08, net-negative; CODE ~0.5 accept). Tool-grammar-neutral spec-dec for Qwen agents (club-3090#237). Promote on a STABLE tag + prose-accept recovery.",
+        status_note="Dual-card beellama Qwen3.6-27B Q8_K_XL + DFlash (Anbeeld DFlash-IQ4_XS draft, --spec-type dflash). v0.3.0 sm_86 2026-06-01: boots + coherent at full 262K (fixed draft footprint; tensor-split 0.575,0.425 → ~21.2 GB/card). DFlash prose net-positive on tok/s (+52% vs no-spec @262K, re-tested 2026-06-03; earlier 'prose regression' RETRACTED — AR over-read + wrong baseline). Tool-grammar-neutral spec-dec for Qwen agents (club-3090#237). Promote on a STABLE tag.",
     ),
     "beellama/gemma-q8-dflash-dual": _entry(
         model="gemma-4-31b", weights_variant="beellama-q8kxl-dflash", workload="fast-chat",
@@ -615,7 +615,7 @@ COMPOSE_REGISTRY = {
         default_port=8066,
         kvcalc_key="SKIP",
         status="experimental",
-        status_note="Dual-card beellama Gemma-4-31B Q8_K_XL + DFlash (Anbeeld DFlash-IQ4_XS draft). v0.3.0 sm_86 2026-06-01: 192K balanced ceiling (tensor-split 0.55,0.45 → ~21.4/21.9 GB; 262K OOMs — Gemma full-attn layers grow KV). High-fidelity Q8 sibling of beellama/gemma-dflash-dual (q4ks). ⚠️ v0.3.0-wide DFlash-on-PROSE regression (net-negative on prose; CODE ~157 TPS). Prose-dominated by vllm/gemma-int8-mtp. Promote on a STABLE tag + prose recovery.",
+        status_note="Dual-card beellama Gemma-4-31B Q8_K_XL + DFlash (Anbeeld DFlash-IQ4_XS draft). v0.3.0 sm_86 2026-06-01: 192K balanced ceiling (tensor-split 0.55,0.45 → ~21.4/21.9 GB; 262K OOMs — Gemma full-attn layers grow KV). High-fidelity Q8 sibling of beellama/gemma-dflash-dual (q4ks). Earlier 'v0.3.0-wide DFlash-on-PROSE regression' RETRACTED (2026-06-03) — didn't reproduce on qwen single+dual or gemma single; was an AR over-read + wrong baseline. This gemma-Q8-dual not separately re-benched. Promote on a STABLE tag.",
     ),
 
     # v0.7.3 MoE onboarding — Gemma 4 26B-A4B + Qwen 3.6 35B-A3B.

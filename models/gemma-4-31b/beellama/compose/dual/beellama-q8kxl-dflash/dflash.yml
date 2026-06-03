@@ -18,9 +18,11 @@
 #              to beellama/gemma-dflash-dual (Q4_K_S). Same dev-branch image gate.
 #   Caveats:   Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
 #              not a tagged release — same upstream gate as gemma-dflash-dual (Anbeeld #39 / #48).
-#              ⚠️ On v0.3.0, Gemma DFlash is excellent for CODE (~157 TPS) but PROSE acceptance
-#              regressed to ~0.07 (a v0.3.0-wide DFlash-on-prose regression — NOT SWA-specific;
-#              Qwen3.6-27B DeltaNet shows the identical collapse). ❌ MTP won't load on this build
+#              ↩️ Gemma DFlash code ~157 TPS. The earlier "PROSE acceptance regressed to ~0.07
+#              (v0.3.0-wide)" claim is RETRACTED 2026-06-03 — it did NOT reproduce; re-test on
+#              tok/s shows DFlash prose net-positive on qwen single+dual + gemma single (it was
+#              an AR over-read + wrong baseline, beellama #288). This gemma-Q8-dual not separately
+#              re-benched. ❌ MTP won't load on this build
 #              (`unknown model architecture: gemma4_mtp`) — DFlash is the only beellama spec path.
 #              Draft pins to one card → asymmetric VRAM; --tensor-split rebalances (tune below).
 #              UN-PARK when Anbeeld tags a stable release AND prose acceptance recovers.

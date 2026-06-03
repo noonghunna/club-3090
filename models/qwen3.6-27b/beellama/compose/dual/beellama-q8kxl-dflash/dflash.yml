@@ -21,16 +21,17 @@
 #              free per card (validated 2026-06-01). Re-tune via TENSOR_SPLIT if VRAM shifts.
 #   Genesis:   N/A — beellama is a llama.cpp-family engine
 #   Status:    🧪 EXPERIMENTAL — boots + serves coherently at full 262K (confirmed 2026-06-01:
-#              code accept 0.58, prose accept 0.085/regressed, 10K-prefill clean @262K, 0 OOM).
+#              code accept 0.58, prose accept ~0.41 net-positive (re-tested 2026-06-03), 10K-prefill clean @262K, 0 OOM).
 #              Counterpart to the dual MTP compose; same dev-branch image gate. Full
 #              verify/soak/bench (#455) pending, so NOT git-tracked yet.
 #   Caveats:   Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
 #              not a tagged release — same upstream gate as the gemma dual (Anbeeld #39 / #48).
-#              ⚠️ KNOWN: on v0.3.0, Qwen DFlash is excellent for CODE (~145 TPS) but its
-#              PROSE acceptance regressed to ~0.07 (net-negative vs no-spec) — a v0.3.0-wide
-#              DFlash-on-prose regression (NOT multi-GPU, NOT SWA; MTP holds prose at ~0.44).
-#              For prose-heavy use, prefer the MTP sibling (../beellama-q8kxl-mtp/mtp.yml).
-#              UN-PARK when Anbeeld tags a stable release AND prose acceptance recovers.
+#              ✅ Qwen DFlash is net-positive on BOTH code (~145 TPS) AND prose: 35.6 t/s
+#              @262K = +52% over the 23.4 no-spec baseline (AR ~0.41, re-tested 2026-06-03).
+#              The earlier "~0.07 net-negative prose regression" is RETRACTED — it was an AR
+#              over-read + a wrong no-spec baseline (beellama #288; learnings 2026-06-03).
+#              MTP sibling (../beellama-q8kxl-mtp/mtp.yml) remains a prose alternative.
+#              UN-PARK when Anbeeld tags a stable release.
 #   Quality:   thinking-OFF (default mode), 2026-06-01, beellama v0.3.0, 262K:
 #              toolcall 13/15 · instructfollow 15/15 · structoutput 14/15 · dataextract 8/15 ·
 #              reasonmath 13/15 · bugfind 14/15 · hermesagent 13/20 · cli-40 18/40 ·

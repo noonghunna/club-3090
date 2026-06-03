@@ -381,17 +381,29 @@ Yes. Add a connection in Open WebUI's Settings → Connections → OpenAI: base 
 
 ### Will this work with VS Code GitHub Copilot LLM Gateway?
 
-Yes, but you need a compose with **≥48K context** — Copilot's LLM Gateway sends ~20K tokens of tool-schema preamble (50+ VS Code tools enumerated in a structured-outputs JSON schema) on every request, which alone consumes most of a small context budget. Use `tools-text.yml` (75K + fp8 + PN8 enabled — Cliff 1 closed):
+Yes — mind three things: context size, streaming tool-calls, and client-side `max_tokens`.
 
-```bash
-bash scripts/switch.sh vllm/tools-text
-```
+**Context ≥48K.** Copilot's LLM Gateway sends ~20K tokens of tool-schema preamble (50+ VS Code tools enumerated in a structured-outputs JSON schema) on *every* request, so a small context budget is eaten before any real work. The old `vllm/tools-text` compose was **retired (deprecated 2026-05-31)**; use a current functional vLLM compose (both stable v0.22.0, tools + structured outputs):
 
-There's a second wrinkle: Copilot's LLM Gateway sometimes sends very low `max_tokens` (e.g. 64) on probe-style requests. With `tool_choice: required` (which Copilot enforces via `minItems: 1` on its structured-outputs schema), the model must emit a tool-call JSON that wraps a real argument like a file path — and 64 tokens isn't enough to fit `{"name": "read_file", "parameters": {"filePath": "/long/abs/path"}}`. The truncated JSON arrives at the gateway as "empty response." If you see this pattern, it's a client-side limit, not the server. Other OpenAI-compat clients (Cline / Continue.dev / Cursor) tend to send realistic max_tokens by default and don't hit this.
+- **2× 3090 → `vllm/dual`** (262K — the comfortable fit): `bash scripts/switch.sh vllm/dual`
+- **1× 3090** — there's no longer a dedicated ≥48K single-card vLLM tools compose; `vllm/minimal` ships 32K. You can raise it (fp8 KV is compact), but a single 24 GB card has tight KV headroom — *cf.* the 180K boot-OOM in [#35](https://github.com/noonghunna/club-3090/issues/35) — so increase cautiously and lower if boot refuses with a KV-cache message: `MAX_MODEL_LEN=49152 bash scripts/switch.sh vllm/minimal`
 
-**Server-side fix landed 2026-04-29:** the Genesis P68/P69 long-context tool-adherence patches were silently overriding `tool_choice: auto → required` and injecting "must use a tool" reminders whenever prompt > 8000 chars. That made greetings + clarifying questions stall on every IDE-agent setup (Cline, Cursor, OpenCode, and Copilot Gateway combined). We disabled both in `tools-text.yml`. Behavior now: greeting → plain-text reply ("Hello! How can I help you today?"); tool request → clean `read_file({"path": "..."})` call. P64 and PN8 stay enabled (real targeted bugfixes, no user-intent override).
+⚠️ **Streaming tool-calls.** These composes default to `--tool-call-parser qwen3_coder`, which has an **open streaming-tool-call bug** ([#145](https://github.com/noonghunna/club-3090/issues/145)) on reasoning-enabled composes — tool-calls can be silently dropped over a *streaming* connection, and Copilot streams. If tool-calls vanish, edit the compose's `command:` block (`--tool-call-parser qwen3_coder` → `qwen3_xml`) and relaunch. Non-streaming clients are unaffected.
 
-Background + bisection: [club-3090 #2](https://github.com/noonghunna/club-3090/issues/2#issuecomment-4346345554).
+**Low `max_tokens` (client-side).** Copilot's gateway sometimes sends very low `max_tokens` (e.g. 64) on probe-style requests. With `tool_choice: required` (which Copilot enforces via `minItems: 1` on its structured-outputs schema), the model must emit a tool-call JSON that wraps a real argument like a file path — and 64 tokens isn't enough to fit `{"name": "read_file", "parameters": {"filePath": "<a long absolute path>"}}`. The truncated JSON arrives at the gateway as "empty response." That's a client-side limit, not the server — Cline / Continue.dev / Cursor send realistic `max_tokens` by default and don't hit it.
+
+(The old Genesis P68/P69 tool-adherence patches — which used to silently flip `tool_choice: auto → required` and stall greetings past ~8000 chars — are **not** in the current stable v0.22.0 composes, so that class of stall no longer applies.) Also keep temperature ~0.6 (see the agent-stops-mid-task entry above). Background + bisection: [club-3090 #2](https://github.com/noonghunna/club-3090/issues/2#issuecomment-4346345554).
+
+### My agent (Hermes / Cline / OpenHands) stops mid-task with a one-character or empty reply (`finish_reason: stop`)
+
+Almost always **sampling temperature**. Qwen3.6's model card sets `temperature: 1.0`, and at 1.0 the model intermittently emits a stray `<think>` block or a one-character "answer" (e.g. just `.`) and stops — *before* finishing a multi-step tool task. Lower it to **~0.6** (top_p 0.95, top_k 20).
+
+Our composes already default temperature to 0.6 server-side (`--override-generation-config` on vLLM; `--temp 0.6` on llama.cpp / ik_llama / beellama) — **but a `temperature` sent in the request wins over the server default**, and most agent harnesses send their own (often inheriting the model card's 1.0). So set it in your **client/agent config**:
+
+- Hermes-WebUI / OpenHands / Cline / Continue / Cursor → set the model's `temperature` to `0.6` in its provider/model settings.
+- Raw API → pass `"temperature": 0.6` in the request body.
+
+Keep thinking **off** for agentic/tool work too (our composes default `enable_thinking: false`; if your client re-enables it, that compounds the stray-`<think>` behavior). Background: [#232](https://github.com/noonghunna/club-3090/issues/232).
 
 ---
 

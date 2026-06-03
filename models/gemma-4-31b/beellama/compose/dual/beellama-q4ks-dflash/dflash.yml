@@ -15,27 +15,30 @@
 #              Multi-GPU DFlash fix VALIDATED on Anbeeld's official v0.3.0 image (sm_86, FA_ALL_QUANTS=1,
 #              single + dual cross-ring, 2026-06-01); image injected centrally from beellama-local
 #              install.spec. Promote 🧪→⚠️ when Anbeeld tags a STABLE release AND prose accept recovers.
-#   Caveats:   External dep: Anbeeld/beellama.cpp issue #39 (multi-GPU DFlash). Our shipped image
-#              default (b9459-07ac3ce) STILL has the bug; the fixes are on the v0.3.0 dev branch,
-#              which we built + validated on 2× 3090 (efe856397, 2026-06-01):
+#   Caveats:   External dep: Anbeeld/beellama.cpp issue #39 (multi-GPU DFlash). The fix shipped in
+#              v0.3.0 — launchers inject Anbeeld's OFFICIAL server-cuda-v0.3.0 and the compose
+#              `image:` default is now our multi-arch v0.3.0 build (efe856397); both carry the fix,
+#              validated on 2× 3090 (2026-06-01):
 #                ✅ Multi-GPU crash FIXED — no "decode failed -1"; boot now logs "drafter=1
 #                   devices; enabling GPU cross ring". --spec-draft-device CUDA0 no longer
 #                   ggml_aborts (Anbeeld's "explicit draft device" fix).
 #                ✅ CODE DFlash: up to ~157 TPS dual (≈4.2× the ~37 no-spec baseline), accept 0.33–0.64.
-#                ⚠️ PROSE acceptance REGRESSED to ~0.07 → ~35 TPS (net-negative vs no-spec).
-#                   IDENTICAL single + dual → NOT multi-GPU; a v0.3.0-wide DFlash-on-prose
-#                   regression (old b9459 was ~0.20 prose, net-positive). Qwen3.6-27B (DeltaNet,
-#                   NOT SWA-windowed) shows the identical collapse → NOT the SWA mismatch; a
-#                   cross-model v0.3.0 DFlash regression. Code unaffected.
+#                ↩️ PROSE "regression" RETRACTED 2026-06-03: the ~0.07 AR / net-negative
+#                   claim did NOT reproduce. Re-test on tok/s vs a measured no-spec baseline
+#                   shows DFlash prose net-POSITIVE — qwen single +27% / dual +52%, gemma
+#                   single +28–31%. It was a noisy AR over-read (the adaptive-DM AR varies
+#                   per prompt/draft-state — beellama #288) compounded by a wrong no-spec
+#                   baseline (~37; real dual-Q8 = 23.4). This gemma-q4ks dual was not
+#                   separately re-benched. See learnings/gemma-4-31b.md 2026-06-03.
 #                ❌ MTP (--spec-type mtp + radamanthys-assistant Q8_0): "unknown model
 #                   architecture: gemma4_mtp" — unsupported on this build (distinct from the
 #                   CLOSED Anbeeld #36, which was garbage MTP *output* on Qwen, not arch-load).
-#              TRY IT NOW (gated): the v0.3.0 fix is now in Anbeeld's OFFICIAL image — validated on
-#              Ampere sm_86 (FA_ALL_QUANTS=1, single + dual cross-ring, 2026-06-01). Preferred:
-#                BEELLAMA_IMAGE=ghcr.io/anbeeld/beellama.cpp:server-cuda-v0.3.0-e0663be2713c \
+#              RUN IT: the launcher injects the OFFICIAL v0.3.0 image automatically (no prefix needed),
+#              validated on Ampere sm_86 (FA_ALL_QUANTS=1, single + dual cross-ring, 2026-06-01):
 #                bash scripts/switch.sh --force beellama/gemma-dflash-dual
-#              (fallback: our self-hosted ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397.
-#              Pin the commit tag — NOT -dev, which moves. Repoint default → Anbeeld's STABLE tag when it ships.)
+#              5090/sm_120 (not in the official sm_86/89 build): prefix
+#                BEELLAMA_IMAGE=ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397
+#              Pin the commit tag — NOT -dev, which moves. Repoint default → Anbeeld's STABLE tag when it ships.
 #              Filed PR Anbeeld#48 (FA_ALL_QUANTS Dockerfile fix + CUDA→GHCR nightly workflow).
 #              Findings: club-3090 disc #288 + beellama #39. Tracked: docs/UPSTREAM.md.
 #              UN-PARK TRIGGER: Anbeeld tags a STABLE release (not the dev branch) carrying these
@@ -65,7 +68,7 @@
 #   curl http://localhost:8062/v1/models
 services:
   beellama-gemma4-31b-dual:
-    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce}
+    image: ${BEELLAMA_IMAGE:-ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397}
     container_name: "${ESTATE_CONTAINER:-beellama-gemma4-31b-dual}"
     restart: unless-stopped
     ports:

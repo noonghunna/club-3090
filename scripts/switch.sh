@@ -30,14 +30,13 @@
 # truth); `bash scripts/switch.sh --list` is authoritative. A representative
 # subset (engine/file, file is the docker-compose.<file>.yml stem):
 #
-#   Single-card vLLM:
-#     vllm/default            48K + TQ3 + MTP + vision + tools (recommended)
-#     vllm/long-vision        198K + TQ3 + vision (cliff-safe; Cliff 2 single-prompt >50K still applies)
-#     vllm/long-text          180K + TQ3 + MTP + text-only (Balanced MTP — 60K single-prompt closed via v7.69 + #35975)
-#     vllm/long-text-no-mtp   200K + TQ3 + no MTP + text-only (Max-context — same Cliff 2 closure, more KV pool, slower decode)
-#     vllm/bounded-thinking   180K + TQ3 + structured-CoT FSM in reasoning (recommended grammar: DeepSeek scratchpad — 87.4% combined HE+/LCB v6)
-#     vllm/tools-text         75K + fp8 + MTP + text-only (IDE agents — Cline / Cursor)
-#     vllm/minimal            32K + fp8 (no Genesis, no spec-decode, simplest)
+#   Single-card (⭐ default = beellama/dflash):
+#     beellama/dflash         102K + DFlash spec-dec — single-card DEFAULT (code-fast ~100 TPS)
+#     vllm/minimal            32K + fp8, stable v0.22.0 — the supported vLLM single-card path
+#                             (`vllm/default` resolves here)
+#     (the Genesis/nightly single-card vLLM composes — vllm/default · long-text · long-vision ·
+#      long-text-no-mtp · bounded-thinking · tools-text — were DEPRECATED 2026-05-31, hidden
+#      from --list; see `switch.sh --list --all`. llama.cpp + ik_llama single-card below.)
 #
 #   Dual-card vLLM (TP=2):
 #     vllm/dual             262K + fp8 + 2 streams + vision (Qwen dual default)
