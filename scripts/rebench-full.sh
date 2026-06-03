@@ -13,11 +13,15 @@
 # Order matches docs/QUALITY_TEST.md "test pipeline":
 #   1. bench.sh                — TPS narrative + code (~5 min)
 #   2. verify-stress.sh        — long-context + boundary (~10-15 min)
-#   3. quality-test.sh --full  — 8 packs, 150 scenarios (~45-60 min)
-#   4. soak-test.sh fresh-mode — stability over 50 turns (~15-20 min)
-#   5. quality-test.sh --pack aider-polyglot-30  (~20-45 min)
+#   3. quality-test.sh --full  — 8 packs /150, think-OFF (~45-60 min)
+#   4. quality-test.sh --full --enable-thinking — 8 packs /150, think-ON (~60-90 min)
+#   5. soak-test.sh fresh-mode — stability over 50 turns (~15-20 min)
 #
-# Total per leg: ~1.75-2 hr.
+# Total per leg: ~2.5-3.5 hr. (think-ON 8-pack replaced the old aider-polyglot
+# step 2026-06-03; aider available standalone via quality-test.sh --pack aider-polyglot-30.)
+# NOTE: the think-ON leg only scores correctly if the server PARSES reasoning —
+# boot the compose with --reasoning on (REASONING=on) so <think> goes to
+# reasoning_content, not the graded answer.
 #
 # All artifacts land in results/rebench/<tag>/. Run twice on different models
 # (e.g. one Qwen leg, one Gemma leg) to assemble a matched-config head-to-head.
@@ -25,7 +29,7 @@
 # Usage:
 #   bash scripts/rebench-full.sh                      # auto-tag from MODEL
 #   bash scripts/rebench-full.sh --tag qwen-int8      # explicit tag
-#   bash scripts/rebench-full.sh --skip soak,aider    # skip phases (CSV)
+#   bash scripts/rebench-full.sh --skip soak,quality-thinking  # skip phases (CSV)
 #   bash scripts/rebench-full.sh --resume             # skip steps that have
 #                                                       artifacts already
 #
@@ -51,11 +55,6 @@
 #                       canonical stability matrix when validating new
 #                       compose paths.)
 #   SOAK_TURNS          passed through to soak-test.sh (default: 5)
-#   AIDER_TIMEOUT_PER_CASE
-#                       Per-case timeout (seconds) for aider-polyglot-30
-#                       (default: 3600 — bumped from benchlocal-cli's
-#                       default to avoid mid-batch kills on slower /
-#                       power-capped / single-card rigs).
 #   SAMPLING_FROM_SERVER
 #                       Set to 1 to inherit sampling from the serving config
 #                       instead of the pack's default temp=0. Passed through
@@ -247,13 +246,14 @@ run_step() {
   fi
   echo "[$name] running…"
   local t0=$(date +%s)
-  if "$@" > "$OUT_DIR/$name.log" 2>&1; then
-    local dt=$(( $(date +%s) - t0 ))
-    record_timing "$name" "$dt"
+  # tee: stream live to console (so benchlocal-cli [N/M] progress is visible)
+  # AND capture to the per-step log. rc from PIPESTATUS[0], not tee's exit.
+  "$@" 2>&1 | tee "$OUT_DIR/$name.log"
+  local rc=${PIPESTATUS[0]} dt=$(( $(date +%s) - t0 ))
+  record_timing "$name" "$dt"
+  if [[ $rc -eq 0 ]]; then
     echo "[$name] ✓ ${dt}s — log: $OUT_DIR/$name.log"
   else
-    local rc=$? dt=$(( $(date +%s) - t0 ))
-    record_timing "$name" "$dt"
     echo "[$name] ✗ ${dt}s — failed (rc=$rc) — log: $OUT_DIR/$name.log" >&2
     return $rc
   fi
@@ -290,7 +290,19 @@ URL="$URL" MODEL="$MODEL" \
     bash "$ROOT_DIR/scripts/quality-test.sh" --full --sandbox-log-dir "$OUT_DIR"
 snapshot_quality_json "$OUT_DIR/quality-full.json"
 
-# --- step 4: soak-test ------------------------------------------------------
+# --- step 4: quality-test --full --enable-thinking (8-pack WITH reasoning) --
+# enable_thinking is sent per-request via benchlocal --enable-thinking. Scores
+# correctly only if the server PARSES reasoning (boot --reasoning on), else
+# <think> leaks into the graded answer.
+URL="$URL" MODEL="$MODEL" \
+  SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
+  THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
+  ENABLE_THINKING=1 \
+  run_step quality-thinking "$OUT_DIR/quality-full-thinking.log" \
+    bash "$ROOT_DIR/scripts/quality-test.sh" --full --enable-thinking --sandbox-log-dir "$OUT_DIR"
+snapshot_quality_json "$OUT_DIR/quality-full-thinking.json"
+
+# --- step 5: soak-test ------------------------------------------------------
 URL="$URL" MODEL="$MODEL" \
   SOAK_MODE="${SOAK_MODE:-fresh}" \
   SOAK_OUTPUT="$OUT_DIR/soak-artifacts" \
@@ -298,27 +310,6 @@ URL="$URL" MODEL="$MODEL" \
   TURNS="${SOAK_TURNS:-5}" \
   run_step soak "$OUT_DIR/soak.log" \
     bash "$ROOT_DIR/scripts/soak-test.sh"
-
-# --- step 5: aider-polyglot-30 ----------------------------------------------
-# Default to 3600s per-case for aider on slower/single-card rigs. The 30
-# multi-turn coding exercises can run > 45 min on power-capped or single-card
-# setups; benchlocal-cli will kill mid-batch if its internal default fires.
-# Override via env: AIDER_TIMEOUT_PER_CASE=7200 bash scripts/rebench-full.sh
-AIDER_TIMEOUT_PER_CASE="${AIDER_TIMEOUT_PER_CASE:-3600}"
-# ik_llama reports its model id as the full GGUF path (leading + embedded
-# slashes); litellm inside the aider sandbox can't route a slash-laden model
-# id (#15/#16 family) → every exercise errors before the model → 0/30.
-# Mainline llama.cpp already reports a basename. Strip to basename for the
-# aider/litellm path — the server accepts any id (serves the one loaded model).
-AIDER_MODEL="${MODEL##*/}"
-URL="$URL" MODEL="$AIDER_MODEL" \
-  SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
-  ENABLE_THINKING="${ENABLE_THINKING:-0}" \
-  THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
-  run_step aider-polyglot "$OUT_DIR/aider-polyglot.log" \
-    bash "$ROOT_DIR/scripts/quality-test.sh" --pack aider-polyglot-30 \
-      --timeout-per-case "$AIDER_TIMEOUT_PER_CASE" --sandbox-log-dir "$OUT_DIR"
-snapshot_quality_json "$OUT_DIR/aider-polyglot.json"
 
 # --- final GPU state snapshot ----------------------------------------------
 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu \
@@ -348,9 +339,9 @@ echo
 echo "Headline pulls (grep through the logs):"
 echo "  TPS:           grep -E 'mean=|decode_TPS' $OUT_DIR/bench.log"
 echo "  verify-stress: tail -5 $OUT_DIR/verify-stress.log"
-echo "  quality:       grep '^Quality:' $OUT_DIR/quality-full.log"
+echo "  quality(off):  grep 'TOTAL' $OUT_DIR/quality-full.log"
+echo "  quality(on):   grep 'TOTAL' $OUT_DIR/quality-full-thinking.log"
 echo "  soak:          grep -E 'verdict|silent_empty|p50_decode' $OUT_DIR/soak.log"
-echo "  aider:         grep 'aider-polyglot-30' $OUT_DIR/aider-polyglot.log"
 echo
 echo "To submit your numbers (review then PR):"
 echo "  bash scripts/submit-bench.sh --tag $TAG"
