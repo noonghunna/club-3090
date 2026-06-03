@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-35B-A3B (byteshape IQ4_XS 4.19bpw GGUF)
-#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu13-server)
+#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu12-server)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   MTP n=2, p-min 0.0 (built-in MTP head — byteshape/Qwen3.6-35B-A3B-MTP-GGUF)
 #   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard
@@ -16,7 +16,7 @@
 #   Caveats:   Single-rig validation (1× 3090, 370 W) — cross-rig numbers welcome. Agent-pack
 #              scores (hermesagent-20 11/20 = 55%, cli-40 17/40 = 42%) are typical for the
 #              35B-A3B class (the apex sibling scores similarly). Intake fixes vs PR #293:
-#              image cu12→cu13-server, port 8020→8058.
+#              image cu13→cu12-server (cu13 silent CPU fallback on sm_86), port 8020→8058.
 #   Quality:   toolcall-15 15/15 (100%) · instructfollow-15 14/15 (93%) · structoutput-15 14/15 (93%) · dataextract-15 13/15 (87%) · reasonmath-15 13/15 (87%) · bugfind-15 13/15 (87%) · hermesagent-20 11/20 (55%) · cli-40 17/40 (42%) (--full, our 1× 3090, 2026-06-02 — 110/150 total)
 #   Best for:  Single-card Qwen3.6-35B-A3B — author's best overall 8-pack on the rig (111/150, 74%)
 # ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@
 
 services:
   ik-llama-qwen36-35b-a3b-byteshape-iq4xs:
-    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp:cu13-server}
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp:cu12-server}
     container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-35b-a3b-byteshape}"
     restart: unless-stopped
     ports:
