@@ -393,6 +393,17 @@ There's a second wrinkle: Copilot's LLM Gateway sometimes sends very low `max_to
 
 Background + bisection: [club-3090 #2](https://github.com/noonghunna/club-3090/issues/2#issuecomment-4346345554).
 
+### My agent (Hermes / Cline / OpenHands) stops mid-task with a one-character or empty reply (`finish_reason: stop`)
+
+Almost always **sampling temperature**. Qwen3.6's model card sets `temperature: 1.0`, and at 1.0 the model intermittently emits a stray `<think>` block or a one-character "answer" (e.g. just `.`) and stops — *before* finishing a multi-step tool task. Lower it to **~0.6** (top_p 0.95, top_k 20).
+
+Our composes already default temperature to 0.6 server-side (`--override-generation-config` on vLLM; `--temp 0.6` on llama.cpp / ik_llama / beellama) — **but a `temperature` sent in the request wins over the server default**, and most agent harnesses send their own (often inheriting the model card's 1.0). So set it in your **client/agent config**:
+
+- Hermes-WebUI / OpenHands / Cline / Continue / Cursor → set the model's `temperature` to `0.6` in its provider/model settings.
+- Raw API → pass `"temperature": 0.6` in the request body.
+
+Keep thinking **off** for agentic/tool work too (our composes default `enable_thinking: false`; if your client re-enables it, that compounds the stray-`<think>` behavior). Background: [#232](https://github.com/noonghunna/club-3090/issues/232).
+
 ---
 
 ## Community / contribution
