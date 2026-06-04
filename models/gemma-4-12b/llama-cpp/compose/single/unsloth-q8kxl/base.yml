@@ -13,7 +13,9 @@
 #              was llama.cpp's conservative n_ctx_train cap → lifted by
 #              `--override-kv gemma4.context_length=int:262144` (NOT YaRN — gemma4 ignores it).
 #   Genesis:   N/A — llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    🧪 Experimental
+#   Status:    🧪 Experimental — stability soak PASS 2026-06-04 (fresh 20×5: 0/100 silent-empty,
+#              0 MiB growth, 100% TPS retention). Held 🧪 pending MTP — no Gemma-4 spec-dec on
+#              llama.cpp yet (llama.cpp#23398); promote when it lands (stability gate already met).
 #   Engine-profile: llama-cpp (rolling)
 #   Best for:  ⭐ FASTEST single-card Gemma-4-12B at full 256K — ~51 TPS (vs beellama ~47),
 #              one 3090, frees the 2nd card. (beellama's sibling uses q5_0/q4_1 turbo KV.)
