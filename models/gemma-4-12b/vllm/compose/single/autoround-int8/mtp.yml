@@ -15,6 +15,8 @@
 #              (accept_len 2.62/3.33/3.67/4.06) vs ~50 base. n=4 = robust default (near-
 #              peak, matches dual); SPEC_N=5 squeezes ~5% more on code. 🧪 while the
 #              gemma4-unified image is an ephemeral arch-preview tag.
+#   Quality:   8-pack 105/150 (70%) thinking-OFF — identical to base.yml (MTP is lossless);
+#              on par with the bf16 dual's 94/150 (no INT8 degradation). 2026-06-04.
 #   Best for:  one 3090, Gemma-4-12B INT8 + spec-decode speedup. Output is identical
 #              to base.yml (MTP is lossless); pick this for TPS, base.yml for max ctx.
 # ---------------------------------------------------------------------------

@@ -16,6 +16,8 @@
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🧪 Experimental — validated single 3090 sm_86 2026-06-04 (boot + coherent
 #              + 256K NIAH). 🧪 while the gemma4-unified image is an ephemeral arch-preview tag.
+#   Quality:   8-pack 105/150 (70%) thinking-OFF — on par with the bf16 dual's 94/150
+#              (no INT8 degradation; spread is agentic-pack variance). 2026-06-04.
 #   Best for:  one 3090, Gemma-4-12B at INT8 quality with the FULL 256K context — the
 #              high-fidelity single-card vLLM option. (INT4 would free VRAM for more
 #              concurrency; GGUF on beellama/llama.cpp is the single-card spec-dec path.)
