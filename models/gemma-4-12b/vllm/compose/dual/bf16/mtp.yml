@@ -23,10 +23,10 @@
 #
 # Validate base.yml first (the sm_86-kernel bring-up test). The draft model
 # `gemma-4-12B-it-assistant` is UNGATED (unlike the base) — fetch it ungated:
-#   bash /opt/ai/hf-download.sh google/gemma-4-12B-it-assistant $MODEL_DIR/gemma-4-12b-it-assistant
+#   hf download google/gemma-4-12B-it-assistant --local-dir $MODEL_DIR/gemma-4-12b-it-assistant
 # Default SPEC_MODEL below expects it at /root/.cache/huggingface/gemma-4-12b-it-assistant.
 #
-# Weights (base): bash /opt/ai/hf-download.sh unsloth/gemma-4-12b-it $MODEL_DIR/gemma-4-12b-it
+# Weights (base): hf download unsloth/gemma-4-12b-it --local-dir $MODEL_DIR/gemma-4-12b-it
 # The arch-preview image tag may be ephemeral — pin a digest before shipping.
 
 services:

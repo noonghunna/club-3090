@@ -29,7 +29,7 @@
 # today's vLLM main, which already carries those Gemma-4 fixes.
 #
 # Weights (google/gemma-4-12B-it is gated=manual — use the ungated mirror):
-#   bash /opt/ai/hf-download.sh unsloth/gemma-4-12b-it  $MODEL_DIR/gemma-4-12b-it
+#   hf download unsloth/gemma-4-12b-it --local-dir $MODEL_DIR/gemma-4-12b-it
 # The arch-preview image tag may be ephemeral — pin a digest before shipping.
 
 services:

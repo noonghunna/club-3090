@@ -37,8 +37,8 @@
 # Quick start:
 #   1. docker pull ghcr.io/anbeeld/beellama.cpp:server-cuda-v0.3.0      (sm_86/89 = 3090/4090)
 #   2. GGUF already on disk: gemma-4-12b-gguf/unsloth-ud-q8kxl/gemma-4-12b-it-UD-Q8_K_XL.gguf
-#      (else: bash /opt/ai/hf-download.sh unsloth/gemma-4-12b-it-GGUF \
-#         $MODEL_DIR/gemma-4-12b-gguf/unsloth-ud-q8kxl gemma-4-12b-it-UD-Q8_K_XL.gguf)
+#      (else: hf download unsloth/gemma-4-12b-it-GGUF gemma-4-12b-it-UD-Q8_K_XL.gguf \
+#         --local-dir $MODEL_DIR/gemma-4-12b-gguf/unsloth-ud-q8kxl)
 #   3. MODEL_DIR=/your/models/dir docker compose -f base.yml up -d
 #   4. curl http://localhost:8067/v1/models  → should list the model.
 #
