@@ -306,6 +306,23 @@ Two single-3090 llama.cpp paths, measured 2026-05-27 (`bench.sh`, n=5; full writ
 | **beellama.cpp + DFlash** ⭐ (single-card default) | @noonghunna (1× 3090) | q5_0/q4_1 | 100K | **47 / 88** | ~855 | ~20–80% (workload) | 109/150 / **114/150** | 21.8 GB | 2026-05-27 | **Single-card Gemma-4 default (⚠️ caveats)** — the only viable fast single-card path (vLLM FA-walled at head_dim=512, ik walls ~24K, stock llama.cpp ~12 TPS). DFlash external drafter — **1.28× narr / 2.40× code** over mainline; TTFT ~0.1 s. TPS thinking-neutral (47/88 both modes). Thinking-ON nets **+5** on the 8-pack (agentic gains; reasonmath −1 noise). Served via unofficial multi-arch image `beellama-cpp:multiarch-b9459-07ac3ce` (sm_86/89/120; **sm_89/120 compiled-not-validated**). CV 3–6%. |
 
 
+## Gemma 4 12B (gemma4_unified — experimental)
+
+New `gemma4_unified` arch (vLLM PR #44429 / llama.cpp #24077, merged 2026-06-03). Card advertises 256K; HF config trains to 131072 but the global layers' **Proportional RoPE extrapolates cleanly past it** — reachable on all three engines once the engine stops sizing the RoPE cache to `max_position_embeddings`. All rows 2026-06-04, @noonghunna, NIAH = needle-in-haystack exact recall. Quality 8-pack pending.
+
+### Single-card (1× RTX 3090) — 256K via `--override-kv`
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+|---|---|---|---|---|---|---|---|---|
+| `llamacpp/gemma-12b` ⭐ | 1× 3090 | q8_0 | **256K** | **51.3 / 51.4** | ~1000 | ~16 GB | 2026-06-04 | Mainline `ggml-org/llama.cpp:server-cuda` + Unsloth Q8_K_XL. 256K via `--override-kv gemma4.context_length=int:262144` (lifts llama.cpp's `n_ctx_train` cap; native p-RoPE extrapolates — **NOT** YaRN, gemma4 ignores rope-scaling). **NIAH clean at 150K + 200K + ~246K.** No spec-dec (gemma4-assistant MTP arch unmerged, llama.cpp #23398). Fastest single-card 256K path. |
+| `beellama/gemma-12b` | 1× 3090 | q5_0/q4_1 | **256K** | 47.0 / 46.9 | ~990 | ~15 GB | 2026-06-04 | beellama v0.3.0 stable + Q8_K_XL turbo KV, same override-kv 256K (NIAH 200K + 246K ✓). KV-quant is **TPS-neutral** (q8_0 = 47.7 ≈ q5_0/q4_1); the ~9% gap vs mainline is engine, not KV. No spec-dec; no DFlash drafter for the 12B. |
+
+### Dual-card (2× RTX 3090, TP=2) — vLLM `gemma4-unified` + vendored p-RoPE overlay
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | Concurrency @256K | Peak VRAM | Date | Notes |
+|---|---|---|---|---|---|---|---|---|
+| `vllm/gemma-12b` | 2× 3090 PCIe | bf16 | **256K** | 47.5 / 47.5 | KV 495,924 tok · 1.89× | ~22 GB/card | 2026-06-04 | `vllm/vllm-openai:gemma4-unified` + the vendored **gemma4 p-RoPE long-ctx overlay** (sizes the RoPE cos/sin cache from runtime `max_model_len` + purges the stale 131072 TorchInductor graph) → 256K prefill no longer OOB-crashes (vllm#39914). NIAH 150K + 200K exact recall, **clean-cache re-validated**. TRITON_ATTN (heterogeneous head dims 256/512). TTFT ~55 ms. |
+| `vllm/gemma-12b-mtp` ⭐ | 2× 3090 PCIe | bf16 | **256K** | **76.4 / 120.9** | KV 426,382 tok · 1.63× | ~22 GB/card | 2026-06-04 | Same + assistant MTP drafter (`gemma-4-12B-it-assistant`, n=4): **+61% narr / +154% code** vs no-MTP. AL 2.4 narr / 3.7–4.0 code; accept ~36% / ~70%. **The only 256K + MTP path** — llama.cpp single-card has no MTP, and MTP survives positions >131K under the same overlay. |
+
+
 ---
 
 <a id="moe-models"></a>
