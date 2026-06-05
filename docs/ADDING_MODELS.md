@@ -53,6 +53,17 @@ Use these rules when you touch anything that changes version, branch, overlay se
 4. **A new model should not mutate engine semantics unless the model forces it.** Add the compose and registry rows first. Only change engine YAML when the image pin itself genuinely needs new compatibility/provenance declarations.
 5. **When bumping an engine pin, review the whole chain.** For every compose on that engine, check the new image, the compose file, the patch wiring, `patches.yml`, `arch_patches.yml`, defaults, and the live tests. If a patch can no longer be shared cleanly across families, keep the engine split rather than forcing a union.
 6. **When deprecating an engine or compose, update the whole surface.** Registry status, compose header, defaults / suggestions, docs, and tests all need to agree. Never leave a dead path behind a live default.
+7. **Label every patch by its role — don't make readers guess.** Each `patches.yml` / `vendored_overlays` entry is exactly one of: `compose-local-runtime` (a mount affecting this boot only), `engine-provenance-only` (records what an image contains; inert to resolvers), `load-bearing-gate` (a consumer reads it as an active constraint — e.g. `vendored_overlays` gating `derived_emittable`/CONTRACT-5 and `diagnose-profile`), or `deprecated-history` (kept for the trail, no longer applied). The confusion this section exists to prevent was a `load-bearing-gate` field being treated as `engine-provenance-only`.
+8. **Engine identity is stable; the version lives in `install.spec`.** The engine *name* (`vllm-stable`) never changes — you bump the pin in `install.spec` and every compose on that engine moves together (the launcher force-injects it; the compose `${VLLM_IMAGE:-…}` literal is only a fallback for direct `docker compose`). Model channels (stable / rc / nightly) as **separate engine profiles**, not per-compose version knobs. To move **one** compose to an RC, point its registry `engine=` at a channel profile (e.g. `vllm-stable-next`) — don't edit the shared profile (that moves everyone). A throwaway experiment can override with raw `docker compose -f <path>` + `VLLM_IMAGE=…` (the override only bites off the managed path, since the launcher force-injects). When an RC graduates, fold it back into `vllm-stable` and retire the channel.
+
+**Change type → the tests that prove it's coherent** (always run the full gate — `for t in scripts/tests/*.sh; do bash "$t"; done` — before any commit; this maps the ones most likely to catch the specific change):
+
+| You changed… | Tests that catch incoherence |
+|---|---|
+| Engine pin (`install.spec`) | `test-launch-compat` · `test-compose-image-drift` · `test-diagnose-profile` |
+| Deprecated an engine / compose | `test-compose-status-drift` · `test-switch-registry-parity` · `test-launch-registry-parity` |
+| Added / changed a patch or overlay | `test-patch-attribution` · `test-compose-image-drift` |
+| Added a model / new `(model, engine, KV)` combo | `test-profiles-compat` · `test-patch-attribution` · `test-compose-registry-disk` |
 
 ## Workflow at a glance
 
