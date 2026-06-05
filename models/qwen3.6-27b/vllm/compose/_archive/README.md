@@ -32,3 +32,15 @@ the registry, hidden from the launchers.
 | `vllm/long-text-no-mtp` | `models/qwen3.6-27b/vllm/compose/single/autoround-int4/long-text-no-mtp.yml` | vllm-nightly-mtp | - | turboquant_3bit_nc | 1 | deprecated |
 | `vllm/long-vision` | `models/qwen3.6-27b/vllm/compose/single/autoround-int4/long-vision.yml` | vllm-nightly-mtp | qwen-mtp-builtin | turboquant_3bit_nc | 1 | deprecated |
 | `vllm/tools-text` | `models/qwen3.6-27b/vllm/compose/single/autoround-int4/tools-text.yml` | vllm-nightly-clean | qwen-mtp-builtin | fp8_e5m2 | 1 | deprecated |
+
+## DFlash path — archived 2026-06-05 (#327)
+
+`vllm-nightly-dflash` rode the same purged `nightly-e47c98ef` SHA as the deprecated
+`vllm-nightly-full` (404 on Docker Hub). DFlash spec-decode is also blocked on Qwen3-Next
+(DeltaNet rollback) per the repo hardware truths. Revive only if both lift.
+
+| Slug | Orig compose path | Engine | Drafter | KV | TP | Status |
+|---|---|---|---|---|---|---|
+| `vllm/dual-dflash` | `models/qwen3.6-27b/vllm/compose/dual/autoround-int4/dflash.yml` | vllm-nightly-dflash | zlab-qwen-dflash | fp16 | 2 | deprecated |
+| `vllm/dual-dflash-noviz` | `models/qwen3.6-27b/vllm/compose/dual/autoround-int4/dflash-noviz.yml` | vllm-nightly-dflash | zlab-qwen-dflash | fp16 | 2 | deprecated |
+| `vllm/dual4-dflash` | `models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/dflash.yml` | vllm-nightly-dflash | zlab-qwen-dflash | fp16 | 4 | production |

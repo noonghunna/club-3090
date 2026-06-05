@@ -40,8 +40,10 @@ assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 2>/dev/null)" \
   "beellama/dflash" "qwen single curated"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>/dev/null)" \
   "vllm/dual" "qwen dual curated"
+out="$(model_default_target "$ROOT_DIR" qwen3.6-27b multi4 2>&1)"
+assert_contains "$out" "falling back to the dual default" "qwen multi4 degradation notice (no multi4 vLLM slug post-#327)"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b multi4 2>/dev/null)" \
-  "vllm/dual4-dflash" "qwen multi4 curated"
+  "vllm/dual" "qwen multi4 degrades to dual slug"
 # gemma-4-31b dual → vllm/gemma-int8-mtp (full-ctx default; gemma-mtp is the stable fallback).
 assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b dual 2>/dev/null)" \
   "vllm/gemma-int8-mtp" "gemma dual curated"
@@ -89,10 +91,10 @@ PIN=CLUB3090_DEFAULT_QWEN3_6_27B
 # Valid pin on matching topology → honoured.
 ( export "$PIN=vllm/dual"; assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>/dev/null)" "vllm/dual" "valid pin honoured" )
 # (NA) pin → warn + fall back to curated.
-( export "$PIN=vllm/dual-dflash"
+( export "$PIN=ik-llama/prism-pro-dq-dual"
   out="$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>&1 1>/dev/null)"
   slug="$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>/dev/null)"
-  assert_contains "$out" "(NA: deprecated)" "(NA) pin warns"
+  assert_contains "$out" "(NA: experimental)" "(NA) pin warns"
   assert_eq "$slug" "vllm/dual" "(NA) pin falls back to curated" )
 # wrong-model pin → warn + fall back.
 ( export "$PIN=vllm/gemma-bf16-mtp"

@@ -37,7 +37,7 @@ assert_not_contains() {
 # slugs we know are bound to each topology in the shipped registry.
 SINGLE_SLUG="ik-llama/iq4ks-mtp"      # single
 DUAL_SLUG="vllm/dual"                 # dual
-MULTI_SLUG="vllm/dual4"              # multi4
+# NOTE: multi4 vLLM tier is empty post-#327 (dual4 + dual4-dflash archived); no MULTI_SLUG to assert.
 
 run_list() {
   # $1 = CUDA_VISIBLE_DEVICES value (empty string → unset); rest = extra args.
@@ -53,7 +53,6 @@ run_list() {
 out="$(run_list 0 --list)"
 assert_contains     "$out" "$SINGLE_SLUG" "1-GPU shows single slugs"
 assert_not_contains "$out" "$DUAL_SLUG"   "1-GPU hides dual slugs"
-assert_not_contains "$out" "$MULTI_SLUG"  "1-GPU hides multi4 slugs"
 assert_contains     "$out" "1-GPU machine" "1-GPU prints the filter note"
 assert_contains     "$out" "--list --all" "1-GPU note points at --all"
 assert_contains     "$out" "hidden — --all" "1-GPU header tallies hidden count"
@@ -67,27 +66,22 @@ assert_contains "$out" "Defaults — what" "PR-B Defaults view present (1-GPU)"
 out="$(run_list 0,1 --list)"
 assert_contains     "$out" "$SINGLE_SLUG" "2-GPU shows single slugs"
 assert_contains     "$out" "$DUAL_SLUG"   "2-GPU shows dual slugs"
-assert_not_contains "$out" "$MULTI_SLUG"  "2-GPU hides multi4 slugs"
-assert_contains     "$out" "2-GPU machine" "2-GPU prints the filter note"
-assert_contains     "$out" "multi4 hidden" "2-GPU note names multi4 as hidden"
 
 # --- --all on a 1-GPU box: everything, NO note ------------------------------
 out="$(run_list 0 --list --all)"
 assert_contains     "$out" "$SINGLE_SLUG" "--all shows single slugs"
 assert_contains     "$out" "$DUAL_SLUG"   "--all shows dual slugs"
-assert_contains     "$out" "$MULTI_SLUG"  "--all shows multi4 slugs"
 assert_not_contains "$out" "hidden — --all" "--all suppresses the hidden tally"
 assert_not_contains "$out" "GPU machine — use" "--all suppresses the filter note"
 
 # --- --list-all alias behaves identically to --list --all -------------------
 alias_out="$(run_list 0 --list-all)"
 assert_contains     "$alias_out" "$DUAL_SLUG"  "--list-all shows dual slugs"
-assert_contains     "$alias_out" "$MULTI_SLUG" "--list-all shows multi4 slugs"
 assert_not_contains "$alias_out" "GPU machine — use" "--list-all suppresses note"
 
 # --- order independence: --all --list == --list --all -----------------------
 reorder_out="$(run_list 0 --all --list)"
-assert_contains "$reorder_out" "$MULTI_SLUG" "--all --list (reordered) shows multi4"
+assert_contains "$reorder_out" "$DUAL_SLUG" "--all --list (reordered) shows multicard (dual)"
 
 # --- --all without --list is rejected (not silently swallowed) --------------
 if guard_out="$(bash "$SWITCH" --all 2>&1)"; then
@@ -106,7 +100,6 @@ done
 failopen_out="$(PATH="$TMPBIN" CUDA_VISIBLE_DEVICES="" NVIDIA_VISIBLE_DEVICES="" "$TMPBIN/bash" "$SWITCH" --list 2>&1)"
 rm -rf "$TMPBIN"
 assert_contains     "$failopen_out" "$DUAL_SLUG"  "fail-open shows dual slugs"
-assert_contains     "$failopen_out" "$MULTI_SLUG" "fail-open shows multi4 slugs"
 assert_not_contains "$failopen_out" "GPU machine — use" "fail-open prints no filter note"
 
 if [[ "$fail" -ne 0 ]]; then

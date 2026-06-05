@@ -64,9 +64,6 @@ patches:
     load_bearing_when:
       - composes:
           - vllm/dual
-          - vllm/dual-dflash
-          - vllm/dual-dflash-noviz
-          - vllm/dual4-dflash
         reason: "AutoRound INT4 TP shards can fall below Marlin's output-feature tile floor."
         evidence: "models/qwen3.6-27b/vllm/patches/vllm-marlin-pad/README.md; models/qwen3.6-27b/INTERNALS.md#dual-card-the-marlin-pad-sub-tile-n-patch-vllm40361"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -103,9 +100,6 @@ patches:
       - composes:
           - vllm/minimal
           - vllm/dual
-          - vllm/dual-dflash
-          - vllm/dual-dflash-noviz
-          - vllm/dual4-dflash
         reason: "Qwen3-Coder tool_choice=required returns empty tool_calls[] unless the configured parser fallback is honored."
         evidence: "docs/UPSTREAM.md#35936 row; models/qwen3.6-27b/vllm/patches/vllm-pr35936-required-fallback/README.md"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -186,9 +180,6 @@ patches:
       - composes:
           - vllm/minimal
           - vllm/dual
-          - vllm/dual-dflash
-          - vllm/dual-dflash-noviz
-          - vllm/dual4-dflash
         reason: "Qwen3-Coder streaming parser can silence SSE when prose mentions literal <tool_call>."
         evidence: "docs/UPSTREAM.md#qwen3coder-tool-parser-sse-silence-on-prose-tool_call"
     delivery:
@@ -199,9 +190,6 @@ patches:
       - composes:
           - vllm/minimal
           - vllm/dual
-          - vllm/dual-dflash
-          - vllm/dual-dflash-noviz
-          - vllm/dual4-dflash
         issue: "Known current coverage boundary from club-3090#72/#145 class: these composes do not invoke the local sidecar today."
     delivery_mechanism: python_sidecar
     delivery_spec:
@@ -227,9 +215,6 @@ patches:
       - models/qwen3.6-27b/vllm/patches/vllm-pr41800-truncate-prompt-tokens
     load_bearing_when:
       - composes:
-          - vllm/dual-dflash
-          - vllm/dual-dflash-noviz
-          - vllm/dual4-dflash
         reason: "Pre-d5b31c95 engine pins reject agent clients that send truncate_prompt_tokens."
         evidence: "docs/UPSTREAM.md#41800 row; models/qwen3.6-27b/vllm/patches/vllm-pr41800-truncate-prompt-tokens/README.md"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -264,9 +249,6 @@ patches:
       - composes:
           - vllm/minimal
           - vllm/dual
-          - vllm/dual-dflash
-          - vllm/dual-dflash-noviz
-          - vllm/dual4-dflash
         reason: "Default Qwen3.6 chat template mis-handles tool-call XML / reasoning delimiters / streaming (the #145 silent-break class); the froggeric override fixes 7 default-template defects and is behavior-critical for every tool/agent compose. Carnice/Qwopus are intentional excludes (they ship their own carnice template)."
         evidence: "models/qwen3.6-27b/vllm/patches/froggeric-chat-template/PROVENANCE.md; docs/UPSTREAM.md (froggeric template re-eval #150 / v19 adopted PR #157)"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header

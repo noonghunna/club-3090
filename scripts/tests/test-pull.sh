@@ -535,14 +535,14 @@ moe = {
     "num_attention_heads": 32, "num_key_value_heads": 8,
     "num_local_experts": 128, "torch_dtype": "bfloat16",
 }
-r = P.run_pull(s, "vllm/dual-dflash", path="B", hardware_sm=SM_90,
+r = P.run_pull(s, "vllm/gemma-int8-mtp", path="B", hardware_sm=SM_90,
                 fetcher=ff_derived(s, moe), profiles=profiles,
                 statvfs=BIG_DISK)
 check(r.stratum is P.Stratum.C0
       and r.abort_reason == "engine-support-unknown/runtime-incompatible",
       f"g10: missing loads:true pin -> stratum-3 runtime-incompatible "
       f"(got {r.stratum.name}/{r.abort_reason})")
-r = P.run_pull(s, "vllm/dual-dflash", path="B", hardware_sm=SM_90,
+r = P.run_pull(s, "vllm/gemma-int8-mtp", path="B", hardware_sm=SM_90,
                 fetcher=ff_derived(s, moe), profiles=profiles,
                 statvfs=BIG_DISK, experimental_arch=True)
 check(r.stratum is P.Stratum.C0
@@ -939,7 +939,7 @@ r_norow = P.run_pull(s, "vllm/minimal", path="B", hardware_sm=SM_86,
 check(r_norow.ok or r_norow.stratum is not P.Stratum.C0,
       "scope: --experimental-arch BYPASSES no-arch-row")
 check(
-    P.run_pull("fixtures/qwen35-moe2", "vllm/dual-dflash", path="B",
+    P.run_pull("fixtures/qwen35-moe2", "vllm/gemma-int8-mtp", path="B",
                hardware_sm=SM_90,
                fetcher=ff_derived("fixtures/qwen35-moe2", {
                    "model_type": "qwen3_5_moe",

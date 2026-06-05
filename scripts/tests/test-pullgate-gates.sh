@@ -203,8 +203,9 @@ check(
 
 # Missing loads:true arch row -> runtime-incompatible (non-bypassable). The MoE
 # arch Qwen3_5MoeForConditionalGeneration has no loads:true row for the
-# vllm-nightly-dflash pin. Path-B: arch comes from config; vllm/dual-dflash's
-# engine is vllm-nightly-dflash -> the [D] engine-pin resolver refuses.
+# vllm-gemma-stable engine (gemma4-swa-dense only). Path-B: arch comes from
+# config; vllm/gemma-int8-mtp's engine has no pin for the qwen MoE arch ->
+# the [D] engine-pin resolver refuses.
 
 MOE_DERIVED = mk_result(
     "fixtures/qwen-35b-a3b-moe",
@@ -215,7 +216,7 @@ MOE_DERIVED = mk_result(
     },
 )
 c0_loadsfalse = G.c0_engine_support(
-    "vllm/dual-dflash", MOE_DERIVED, path="B", hardware_sm=SM_90
+    "vllm/gemma-int8-mtp", MOE_DERIVED, path="B", hardware_sm=SM_90
 )
 check(
     c0_loadsfalse.state == G.C0State.ENGINE_SUPPORT_UNKNOWN

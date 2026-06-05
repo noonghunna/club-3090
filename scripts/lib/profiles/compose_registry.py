@@ -145,34 +145,6 @@ COMPOSE_REGISTRY = {
         default_port=8010,
         kvcalc_key="qwen3.6-27b:dual",
     ),
-    "vllm/dual-dflash": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="vision-coding",
-        engine="vllm-nightly-dflash", drafter="zlab-qwen-dflash", kv_format="fp16",
-        tp=2, max_ctx=185000, max_num_seqs=1, mem_util=0.95,
-        compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/dflash.yml",
-        default_port=8012, required_engine_features=["marlin_pad_sub_tile_n"],
-        kvcalc_key="qwen3.6-27b:dual-dflash",
-        status="deprecated",
-        status_note="Pruned 2026-05-31: superseded by vllm/dual (fp8, 262K, vision, MTP, stock v0.22.0). DFlash traded ctx/concurrency (185K, 1 stream) for code TPS; recover from git if demand returns.",
-    ),
-    "vllm/dual-dflash-noviz": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-nightly-dflash", drafter="zlab-qwen-dflash", kv_format="fp16",
-        tp=2, max_ctx=200000, max_num_seqs=1, mem_util=0.95,
-        compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/dflash-noviz.yml",
-        default_port=8013, required_engine_features=["marlin_pad_sub_tile_n"],
-        kvcalc_key="qwen3.6-27b:dual-dflash-noviz",
-        status="deprecated",
-        status_note="Pruned 2026-05-31: the lone no-vision dual A/B; dropped per the single-vision-config policy (vllm/dual covers vision + 262K + 2 streams). Recover from git if a text-only path is needed.",
-    ),
-    "vllm/dual4-dflash": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-nightly-dflash", drafter="zlab-qwen-dflash", kv_format="fp16",
-        tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.95,
-        compose_path="models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/dflash.yml",
-        default_port=8016, required_engine_features=["marlin_pad_sub_tile_n"],
-        kvcalc_key="qwen3.6-27b:dual4-dflash",
-    ),
 
     # Qwen 3.6 27B, llama.cpp single-card.
     # `llamacpp/default` is an alias for `llamacpp/mtp` (collapsed 2026-05-22):
@@ -599,7 +571,6 @@ COMPOSE_REGISTRY = {
 DEFAULTS = {
     ("qwen3.6-27b", "vllm", "single"): "vllm/minimal",
     ("qwen3.6-27b", "vllm", "dual"): "vllm/dual",
-    ("qwen3.6-27b", "vllm", "multi4"): "vllm/dual4-dflash",
     ("qwen3.6-27b", "llamacpp", "single"): "llamacpp/default",
     ("qwen3.6-27b", "ik-llama", "single"): "ik-llama/iq4ks-mtp",
     ("qwen3.6-27b", "beellama", "single"): "beellama/dflash",

@@ -2,7 +2,7 @@ schema_version: 1
 id: vllm-nightly-dflash
 display_name: vLLM nightly plus DFlash
 type: vllm
-stability: experimental
+stability: deprecated
 install:
   method: docker_image
   spec: vllm/vllm-openai:nightly-e47c98ef7a38792996e452ef53914e21e41928e9
@@ -53,4 +53,4 @@ vendored_overlays:
     purpose: "DFlash serving support for local experimental composes (provided by the pinned nightly image; no on-disk overlay to mount)."
 required_genesis: true
 genesis_pin: v7.72.2
-notes: "Experimental DFlash path. Does not claim INT8 PTH support. Launch exports this SHA as VLLM_NIGHTLY_SHA; VLLM_IMAGE can override the full image ref."
+notes: "DEPRECATED 2026-06-05 (#327): purged nightly — e47c98ef is 404 on Docker Hub (same SHA as the deprecated vllm-nightly-full); its 3 DFlash slugs (dual-dflash, dual-dflash-noviz, dual4-dflash) were archived to compose/_archive/ + deregistered (zero registry users). DFlash spec-decode is also blocked on Qwen3-Next (DeltaNet rollback) per the repo hardware truths. Retained (not deleted) for revival if both the image and the DeltaNet block lift. ORIGINAL: Experimental DFlash path. Does not claim INT8 PTH support. Launch exports this SHA as VLLM_NIGHTLY_SHA; VLLM_IMAGE can override the full image ref."

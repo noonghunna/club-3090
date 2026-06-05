@@ -9,38 +9,6 @@ rows:
     engine_pin: vllm-nightly-01d4d1ad
     genesis_pin: v7.72.2
     source: "BENCHMARKS.md#qwen36-27b dual.yml @noonghunna 2026-04-29"
-  - compose: vllm/dual-dflash
-    vram_gb: 24
-    measured_peak_gb: 23.6
-    ctx_override: null
-    status: active
-    engine_pin: vllm-nightly-01d4d1ad
-    genesis_pin: v7.72.2
-    source: "BENCHMARKS.md#qwen36-27b dual-dflash.yml @noonghunna 2026-04-29"
-  - compose: vllm/dual-dflash-noviz
-    vram_gb: 24
-    measured_peak_gb: 23.8
-    ctx_override: null
-    status: active
-    engine_pin: vllm-nightly-01d4d1ad
-    genesis_pin: v7.72.2
-    source: "BENCHMARKS.md#qwen36-27b dual-dflash-noviz.yml @noonghunna 2026-04-29"
-  - compose: vllm/dual4-dflash
-    vram_gb: 24
-    measured_peak_gb: 22.0
-    ctx_override: null
-    status: active
-    engine_pin: vllm-nightly-01d4d1ad
-    genesis_pin: v7.72.2
-    source: "BENCHMARKS.md#qwen36-27b dual4-dflash.yml @whamp 2026-05-03"
-  - compose: vllm/dual-dflash-noviz
-    vram_gb: 24
-    measured_peak_gb: 21.8
-    ctx_override: 180000
-    status: active
-    engine_pin: vllm-nightly-01d4d1ad
-    genesis_pin: v7.72.2
-    source: "BENCHMARKS.md#qwen36-27b dual-dflash-noviz.yml @snoby 2026-05-04"
   - compose: vllm/minimal
     vram_gb: 24
     measured_peak_gb: 22.4

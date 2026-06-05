@@ -2,7 +2,7 @@
 # v0.8.0 Pull-Gate P1 — generic-dense family + eligibility predicate + raw_verdict adapter.
 #
 # Asserts:
-#   1. tools/kv-calc.py --calibration still reports the exact line "Overall: 13/13 (100%)"
+#   1. tools/kv-calc.py --calibration still reports the exact line "Overall: 9/9 (100%)"
 #      (curated branches byte-unchanged — the regression contract).
 #   2. generic-dense on a standard-dense reference fixture (Llama-class 7B) is a
 #      conservative LOWER BOUND on fit:
@@ -19,13 +19,13 @@ cd "$ROOT_DIR"
 
 # --- 1. calibration regression contract: exact 17/17 line --------------------
 CALIB_OUT="$(tools/kv-calc.py --calibration 2>&1)"
-if ! grep -qxF "Overall: 13/13 (100%)" <<<"$CALIB_OUT"; then
-  echo "FAIL: --calibration did not report the exact line 'Overall: 13/13 (100%)'" >&2
+if ! grep -qxF "Overall: 9/9 (100%)" <<<"$CALIB_OUT"; then
+  echo "FAIL: --calibration did not report the exact line 'Overall: 9/9 (100%)'" >&2
   echo "----- last 6 lines of --calibration output -----" >&2
   tail -6 <<<"$CALIB_OUT" >&2
   exit 1
 fi
-echo "PASS: --calibration reports 'Overall: 13/13 (100%)' (curated branches unchanged)"
+echo "PASS: --calibration reports 'Overall: 9/9 (100%)' (curated branches unchanged)"
 
 # --- 2 + 3. generic-dense pricing + eligibility predicate --------------------
 python3 - "$ROOT_DIR" <<'PY'

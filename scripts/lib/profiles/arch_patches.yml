@@ -11,8 +11,8 @@ arches:
         loads: false
         reason: "Engine DEPRECATED 2026-06-05 (#254): purged nightly + Genesis path on hold; zero registry users, not offered for derive."
       - pin: vllm-nightly-dflash@e47c98ef7a38792996e452ef53914e21e41928e9
-        loads: true
-        enables: [dflash]
+        loads: false
+        reason: "Engine DEPRECATED 2026-06-05 (#327): purged nightly + DFlash blocked on Qwen3-Next (DeltaNet rollback); zero registry users, not offered for derive."
       - pin: genesis@v7.72.2
         loads: true
         enables: [tq3-kv, mtp, cliff2-mitigations]
