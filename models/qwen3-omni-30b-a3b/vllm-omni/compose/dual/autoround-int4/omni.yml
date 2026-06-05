@@ -1,0 +1,72 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3-Omni-30B-A3B-Instruct (Intel int4-AutoRound) — omni-modal:
+#              text/image/audio/video IN, text + speech OUT (NO image/video generation)
+#   Engine:    vLLM-Omni (vllm/vllm-omni:v0.20.0 — the STABLE image; rc tags are skew-broken)
+#   Topology:  Dual 3090 PCIe — STAGE-parallel (NOT TP=2): thinker -> GPU0, talker+code2wav -> GPU1
+#   Drafter:   none
+#   KV:        fp8 (default — full 65K ctx on the single-card thinker). ⚠️ fp8 breaks the Code2Wav
+#              vocoder → for SPEECH output set KV_CACHE_DTYPE=auto (bf16, lower ctx).
+#   Vision:    input only (sees image/audio/video); does NOT generate images/video
+#   Max ctx:   262144? NO — 65536 (the model's native max). Validated single-card via fp8 KV
+#              (NIAH recall PASS @ 60K, depth 50% & 90%).
+#   Genesis:   N/A — this is the omni multi-stage pipeline, not the Qwen3-Next text engine
+#   Status:    🧪 Experimental — TEXT path validated (full 65K, NIAH @60K, coherent). Audio/speech
+#              output is architecturally present but UNVALIDATED. NOT in the central registry
+#              (compose_registry.py) — launch via direct `docker compose`, not switch.sh/launch.sh.
+#   Caveats:
+#     • Pin the image to vllm/vllm-omni:v0.20.0. `latest` / `v0.21.0rc1` / `v0.22.0rc1` are
+#       version-skew-broken (ImportError: split_routed_experts / _resolve_module_name).
+#     • TEXT requests MUST send  "modalities": ["text"]  in the chat body. Without it the prompt
+#       routes through the Talker (audio) stage, which has a prefill shape bug and kills the engine.
+#     • fp8 KV (default) → full ctx for TEXT, but breaks Code2Wav (audio). Speech out → KV_CACHE_DTYPE=auto.
+#     • Uses BOTH cards (stage-parallel). Don't co-run another GPU-heavy service.
+#   Best for:  Qwen3-Omni text + multimodal *understanding* on 2x 3090 (RAG/long-doc, vision/audio in).
+# ---------------------------------------------------------------------------
+# See ../../../README.md (engine folder) for the full setup walk-through (weights download,
+# launch, text-request format, audio mode, troubleshooting).
+#
+# Quick start (both GPUs free):
+#   1. Weights on disk under $MODEL_DIR as  qwen3-omni-30b-a3b-instruct-int4-autoround/
+#      (hf download Intel/Qwen3-Omni-30B-A3B-Instruct-int4-AutoRound --local-dir ...)
+#   2. MODEL_DIR=/your/models docker compose -f omni.yml up -d
+#   3. curl http://localhost:8042/v1/models
+#   4. Text request — REMEMBER "modalities":["text"]:
+#      curl localhost:8042/v1/chat/completions -H 'Content-Type: application/json' -d '{
+#        "model":"/models/qwen3-omni-30b-a3b-instruct-int4-autoround",
+#        "modalities":["text"],
+#        "messages":[{"role":"user","content":"Hello"}],"max_tokens":128}'
+#
+# Override via .env / shell: VLLM_OMNI_IMAGE, MODEL_DIR, MODEL_SUBDIR, PORT, KV_CACHE_DTYPE.
+
+services:
+  vllm-omni-qwen3-omni-30b:
+    image: ${VLLM_OMNI_IMAGE:-vllm/vllm-omni:v0.20.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-omni-qwen3-omni-30b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8042}}:8091"
+    ipc: host
+    shm_size: "16gb"
+    environment:
+      # PCIe-no-NVLink: disable NVLink-assumed paths (stage connector uses host shared memory)
+      NCCL_P2P_DISABLE: "1"
+      NCCL_CUMEM_ENABLE: "0"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+      - "./qwen3_omni_3090.yaml:/cfg/qwen3_omni_3090.yaml:ro"
+    # vLLM-Omni image has no ENTRYPOINT — the command is the full `vllm serve ...` invocation.
+    command: >-
+      vllm serve /models/${MODEL_SUBDIR:-qwen3-omni-30b-a3b-instruct-int4-autoround}
+      --omni
+      --deploy-config /cfg/qwen3_omni_3090.yaml
+      --port 8091
+      --trust-remote-code
+      --kv-cache-dtype ${KV_CACHE_DTYPE:-fp8}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

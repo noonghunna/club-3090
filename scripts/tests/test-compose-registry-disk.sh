@@ -26,12 +26,20 @@ def check(cond, msg):
         failures.append(msg)
 
 check(len(COMPOSE_REGISTRY) == 56, f"registry has 56 entries (got {len(COMPOSE_REGISTRY)})")
-check(len(disk_paths) == 57, f"disk has 57 compose files (got {len(disk_paths)})")
+check(len(disk_paths) == 58, f"disk has 58 compose files (got {len(disk_paths)})")
 check(registry_paths <= disk_paths, "all registry compose_path values exist on disk")
 parked_disk_only = disk_paths - registry_paths
+# Disk-only (non-registry) composes allowed: parked SGLang archives, plus the experimental
+# vLLM-Omni Qwen3-Omni compose (intentionally NOT registry-wired — custom-engine, direct
+# `docker compose`-only deploy; see models/qwen3-omni-30b-a3b/vllm-omni/README.md).
+def _allowed_disk_only(path):
+    return (
+        "/sglang/compose/" in f"/{path.as_posix()}"
+        or path == Path("models/qwen3-omni-30b-a3b/vllm-omni/compose/dual/autoround-int4/omni.yml")
+    )
 check(
-    all("/sglang/compose/" in f"/{path.as_posix()}" for path in parked_disk_only),
-    "only parked SGLang archive composes are disk-only",
+    all(_allowed_disk_only(path) for path in parked_disk_only),
+    "only parked SGLang archives + the non-registry vLLM-Omni compose are disk-only",
 )
 if parked_disk_only:
     print("INFO: disk-only parked composes: " + ", ".join(str(p) for p in sorted(parked_disk_only)))

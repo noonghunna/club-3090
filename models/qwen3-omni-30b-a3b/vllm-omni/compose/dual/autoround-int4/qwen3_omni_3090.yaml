@@ -1,0 +1,64 @@
+# Qwen3-Omni-MoE — 2x RTX 3090 (24 GB each) tuned deploy-config.
+# Mounted into the container by the sibling `omni.yml` compose at /cfg/qwen3_omni_3090.yaml.
+#
+# Default upstream qwen3_omni_moe.yaml targets 2x H100 80GB; the thinker's max_seq_len=65536
+# leaves no KV room on a 24 GB card after int4 weights + the vision/audio encoders. This
+# config shrinks per-stage budgets to fit 2x 3090:
+#   Stage 0 (thinker, the text/understanding LLM) -> GPU0
+#   Stage 1 (talker, audio codec tokens) + Stage 2 (code2wav, vocoder) -> GPU1
+# Full 65K context on the thinker is reached via fp8 KV (set on the compose command line).
+async_chunk: true
+
+connectors:
+  connector_of_shared_memory:
+    name: SharedMemoryConnector
+    extra:
+      codec_chunk_frames: 25
+      codec_left_context_frames: 25
+
+stages:
+  - stage_id: 0          # Thinker — multimodal understanding + text generation
+    max_model_len: 65536
+    max_num_batched_tokens: 2048
+    max_num_seqs: 8
+    gpu_memory_utilization: 0.92
+    trust_remote_code: true
+    enable_prefix_caching: false
+    devices: "0"
+    default_sampling_params:
+      temperature: 0.7
+      top_p: 0.9
+      max_tokens: 1024
+      seed: 42
+
+  - stage_id: 1          # Talker — text+hidden -> audio codec tokens (must match thinker max_model_len:
+    max_model_len: 65536 #          the prompt flows through every stage, so a short value broadcast-crashes it)
+    max_num_batched_tokens: 2048
+    max_num_seqs: 8
+    gpu_memory_utilization: 0.55
+    trust_remote_code: true
+    enable_prefix_caching: false
+    devices: "1"
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 2048
+      seed: 42
+
+  - stage_id: 2          # Code2Wav — codec tokens -> speech waveform (vocoder; cudagraph-incompatible)
+    max_num_batched_tokens: 8192
+    max_num_seqs: 8
+    gpu_memory_utilization: 0.18
+    enforce_eager: true
+    trust_remote_code: true
+    enable_prefix_caching: false
+    async_scheduling: false
+    devices: "1"
+    input_connectors:
+      from_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.0
+      max_tokens: 8192
+      seed: 42
