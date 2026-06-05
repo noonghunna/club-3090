@@ -363,7 +363,7 @@ For visualization of how VRAM splits across single + dual configs, see [vram-bud
 
 - **Per model**: ~20 GB for weights + Docker layers + scratch.
 - **Per engine**: vLLM Docker image is ~9 GB. llama.cpp binary is ~50 MB.
-- **For dual-card vLLM**: add ~2 GB for the patched vLLM source clone (`/opt/ai/engines/vllm/primary/`).
+- **For dual-card vLLM**: nothing extra — the marlin-pad patch is two small files vendored in-repo, mounted into the stock image (no vLLM source clone).
 
 If you'll run multiple models, plan ~20 GB each.
 

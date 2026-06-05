@@ -147,17 +147,9 @@ Without it, vLLM falls back silently to baseline bf16 decode (~25 TPS, not 125).
 
 ## Common pitfalls (dual-card specifics)
 
-### Marlin pad-sub-tile-n mount dependency
+### Marlin pad-sub-tile-n patch (vendored, auto-applied)
 
-The dual variants currently mount `/opt/ai/engines/vllm/primary/vllm/model_executor/kernels/linear/mixed_precision/marlin.py` (and one neighbor) read-only into the container. This is our patched fork of [vllm#40361](https://github.com/vllm-project/vllm/pull/40361) — required for AutoRound W4A16 at TP=2 where output-dim shards fall below 64. **You need to clone vLLM source to `/opt/ai/engines/vllm/primary/`** for these composes to boot. When the upstream PR lands, we'll drop the mount.
-
-If you don't have `/opt/ai/engines/vllm/primary/`:
-
-```bash
-sudo mkdir -p /opt/ai && sudo chown $USER /opt/ai
-git clone https://github.com/vllm-project/vllm.git /opt/ai/engines/vllm/primary
-cd /opt/ai/engines/vllm/primary && git checkout main
-```
+The dual variants need a one-file patch — our fork of [vllm#40361](https://github.com/vllm-project/vllm/pull/40361) — for AutoRound W4A16 at TP=2, where output-dim shards fall below 64. **It's vendored in the repo and mounted automatically:** `models/qwen3.6-27b/vllm/patches/vllm-marlin-pad/{marlin.py,MPLinearKernel.py}` is overlaid read-only into the stock vLLM image by each dual compose. **No vLLM source clone, no extra setup** — it's in place the moment you launch a dual variant. When the upstream PR lands we'll drop the overlay.
 
 ### NVLink auto-detection
 
@@ -193,9 +185,9 @@ If you're solo-using on dual, you're paying for hardware that mostly sits idle o
 ## Quick start
 
 ```bash
-# 1. Setup (downloads model, clones Genesis + vllm-src, ~20 min cold)
+# 1. Setup (downloads model + Genesis patches, ~20 min cold). The dual marlin-pad
+#    overlay is vendored in-repo and auto-mounted by the compose — no vLLM clone needed.
 bash scripts/setup.sh qwen3.6-27b
-git clone https://github.com/vllm-project/vllm.git /opt/ai/engines/vllm/primary    # required for dual variants
 
 # 2. Pick + boot via wizard (asks model + GPUs, projects VRAM budget, auto-picks TP=2 for matched 2× 3090)
 bash scripts/launch.sh
