@@ -514,8 +514,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-26b-a4b/vllm/compose/single/awq/int8.yml",
         default_port=8040,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="AWQ MoE + external MTP (gemma-26b-it-assistant n=4) + INT8-PTH KV via vendored PR #40391 on vLLM v0.22.0 (vllm-gemma-stable). Boot+coherence+tool-call validated 2026-06-06 (1x 3090, Marlin WNA16 MoE); INT8-PTH KV NIAH-clean to 240K on the no-drafter 262K boot. INT8-PTH (1 byte/tok) lifts single-card ctx from the prior bf16/16K to a 176K default — mem_util 0.94 (0.96 OOM'd in the drafter's cudagraph-capture tail), KV pool est. max-len 185,504 with the drafter loaded; 176K leaves headroom. Promote after rebench-full + soak (#464).",
+        status="caveats",
+        status_note="AWQ MoE + external MTP (n=4) + INT8-PTH KV via vendored PR #40391 on vLLM v0.22.0 (vllm-gemma-stable). Gate PASS 2026-06-06 (rebench gemma-26ba4b-int8r): verify-full ✓, bench 168 narr / 217 code TPS @370W (MTP AL 3.0-3.8), verify-stress NIAH→161K ✓, soak 20x5 PASS 0-growth, quality 109/150 think-ON (~ gemma-4-31B 107/150) / 98/150 think-OFF. Caveats: needs the #40391 overlay (not in stock v0.22.0); 176K @ mem_util 0.94 (262K only WITHOUT the MTP drafter — 0.96 OOMs the cudagraph-capture tail); think-OFF agentic/extraction softer (cli-40 30%, DataExtract 60% — recover to 52%/73% with thinking). INT8-PTH lifted single-card ctx from the prior bf16/16K.",
     ),
     "vllm/gemma-26ba4b-dual": _entry(
         model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat",

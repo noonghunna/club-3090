@@ -9,13 +9,20 @@
 #              drafter loaded at mem_util 0.94; INT8-PTH KV NIAH-clean to 240K on
 #              the no-drafter pool — the ceiling here is VRAM budget, not recall)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 Experimental
-#   Caveats:   NIAH-validated to 240K on 1x RTX 3090 (2026-06-06); INT8-PTH KV via
-#              vendored PR #40391 (the third KV option on Ampere — see below).
-#              Default max-model-len 176K @ mem_util 0.94 (0.96 OOM'd in the
-#              drafter's cudagraph-capture tail; 0.94 KV pool est. max-len 185,504
-#              with the drafter loaded). Full rebench-full / soak / quality pending
-#              (#464) before any promote.
+#   Status:    ⚠️ Production w/ caveats
+#   Quality:   8-pack 109/150 (73%, --full --enable-thinking) · 98/150 (65%, think-OFF)
+#                — ToolCall 13/15 · InstructFollow 14/15 · StructOutput 14/15
+#                · DataExtract 9→11/15 · ReasonMath 13→14/15 · BugFind 13/15
+#                · HermesAgent 10/20 · cli-40 12→21/40 (rebench gemma-26ba4b-int8r, 2026-06-06).
+#                On par with gemma-4-31B's think-ON 107/150.
+#   Caveats:   (1) Requires the vendored PR #40391 per-token-head-KV overlay (not in
+#              stock v0.22.0; engine vllm-gemma-stable). (2) max-model-len 176K @
+#              mem_util 0.94 — the 262K ceiling is reachable only WITHOUT the MTP
+#              drafter (its weights + cudagraph capture cost ~86K tok; 0.96 OOMs the
+#              capture tail). (3) think-OFF agentic/extraction is softer (cli-40 30%,
+#              DataExtract 60%) — recovers with thinking (52% / 73%); keep thinking
+#              OFF for tool/agent traffic per docs/FAQ. Gate PASS 2026-06-06:
+#              verify-full ✓ · verify-stress ✓ (NIAH→161K) · soak 20×5 PASS 0-growth.
 # ---------------------------------------------------------------------------
 # Gemma 4 26B-A4B-it (cyankiwi AWQ-4bit) — long-context single-card MoE.
 #
