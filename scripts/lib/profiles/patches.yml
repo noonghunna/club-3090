@@ -592,7 +592,7 @@ patches:
     load_bearing_when:
       - composes:
           - vllm/gemma-12b-qat-w4a16-single
-        reason: "gemma4_unified builds the vision embedder's patch_dense as ColumnParallelLinear(quant_config=...) with NO prefix=, so compressed-tensors can't match the checkpoint `ignore` list and force-quantizes the BF16 vision embedder → the QAT-W4A16 checkpoint fails to load. The sitecustomize forces the embedder unquantized."
+        reason: "gemma4_unified trips two #44494 bugs on the QAT-W4A16 checkpoint: (B) the vision embedder's patch_dense is built with quant_config but no prefix=, so compressed-tensors force-quantizes the BF16 embedder → fails to load; (A) the QAT config omits vision_config.num_soft_tokens, read unconditionally by Gemma4UnifiedProcessingInfo → AttributeError. The sitecustomize fixes BOTH (unquantizes the embedder + defaults num_soft_tokens=280), so the compose boots with no checkpoint edit."
         evidence: "vLLM #44494; models/gemma-4-12b/vllm/patches/gemma4-unified-vision-unquant/sitecustomize.py"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
       dockerfile_bake: false
@@ -608,7 +608,7 @@ patches:
       note: "experimental — bind-mounted to /etc/club3090/g4patch + on PYTHONPATH in the qat-w4a16 single compose; not for production"
     drift_guard:
       kind: import-and-boot
-      check: "Gemma4UnifiedVisionEmbedder loads with the vision embedder unquantized; the W4A16 checkpoint serves on the gemma4-unified image"
+      check: "Gemma4UnifiedVisionEmbedder loads unquantized AND vision_config.num_soft_tokens defaults to 280; the W4A16 checkpoint boots + serves on the gemma4-unified image with no checkpoint edit"
       on_fail: hard-refuse
     capability: gemma4-unified-w4a16-load
     foundational: true
