@@ -23,6 +23,12 @@ supported_kv_formats:
   - fp16
   - fp8_e4m3
   - fp8_e5m2
+  - int8_per_token_head   # NATIVE on stock v0.22.0 for uniform-head-dim models (qwen3-next):
+                          # no overlay needed (live-validated 2026-06-07, qwen fp8 dual-max @262K,
+                          # KV pool 295K tok). Distinct from the gemma path, where hetero head dims
+                          # require the #40391 overlay — hence features.int8_per_token_head stays
+                          # false here (no provenance-backed feature) and the overlay-carrying
+                          # vllm-gemma-stable owns Gemma's int8-PTH.
 supported_drafters:
   - mtp
   - mtp_assistant
@@ -33,6 +39,8 @@ supported_weight_formats:
   - awq
   - gptq
   - compressed-tensors
+  - fp8                   # qwen3.6-27b-fp8 (official e4m3 release) — Marlin W8A16 on Ampere sm_86
+                          # (memory win, no FP8 compute speedup). Drives the qwen "max accuracy" tier.
 required_overlays: []
 # OVERLAY-FREE BY DESIGN. This is the load-bearing distinction (#254, 2026-06-05):
 # `derived_emittable` (CONTRACT-5) refuses any engine with vendored_overlays != []

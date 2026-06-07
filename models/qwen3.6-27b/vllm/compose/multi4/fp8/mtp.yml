@@ -1,0 +1,167 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B FP8 (near-lossless 8-bit; embedded mtp.fc head)
+#   Topology:  Quad 3090 (TP=4, NVLink auto-detected via NVLINK_MODE)
+#   Drafter:   MTP n=3 (built-in — the fp8 checkpoint embeds the mtp.* head)
+#   KV:        int8_per_token_head (1 byte/token, 8-bit near-lossless — higher KV fidelity than
+#              the fast tier's fp8_e5m2, and keeps the full 262K at TP=2 unlike bf16 KV)
+#   Vision:    yes
+#   Max ctx:   262K — int8-PTH KV keeps the full ctx at TP=4. Validated on the 2-card
+#              proxy (vllm/qwen-27b-dual-max, TP=2): KV pool 295K tok, 1.13× concurrency —
+#              tight on 2 cards, comfortable on 4.
+#   Genesis:   none — intentionally Genesis-free
+#   Status:    🧪 Experimental (TP=4 cross-rig — config = vllm/qwen-27b-dual-max validated @TP=2)
+#   Quality:   not yet benched — the 4-card "max accuracy" tier. FP8 weights (8-bit,
+#                near-lossless per our KLD findings) + int8-PTH KV (8-bit, higher fidelity
+#                than the fast tier's fp8_e5m2), vs the AutoRound-int4 "fast" tier
+#                (vllm/qwen-27b-multi-fast / vllm/dual, 129/150). The dual-max proxy
+#                boots/serves @262K + MTP active (validated 2026-06-07, TP=2).
+#   Best for:  max-accuracy 4-card Qwen (vllm/qwen-27b-multi-max) — FP8 + int8-PTH KV @ 262K, TP=4 ⭐
+# ---------------------------------------------------------------------------
+# Quad RTX 3090 — Qwen3.6-27B FP8 "max accuracy" tier at TP=4 (vllm/qwen-27b-multi-max).
+# FP8 weights + MTP n=3 + int8-PTH KV + vision. The serving config is identical to the
+# 2-card vllm/qwen-27b-dual-max (dual/fp8/mtp.yml) — only the tensor-parallel size and
+# the required gpu-count bump to 4. The dual-max at TP=2 is the on-rig validation proxy
+# (boots/serves @262K, KV pool 295K tok, 1.13× concurrency — tight on 2 cards,
+# comfortable on 4); this 4-card variant is 🧪 Experimental until a real ≥4× 3090 host
+# validates it (this dev rig has 2 cards).
+#
+# Why "max accuracy": FP8 weights (8-bit, near-lossless per our KLD findings) + int8-PTH
+# KV (8-bit, higher fidelity than the fast tier's fp8_e5m2), vs the AutoRound-INT4 fast
+# tier (vllm/qwen-27b-multi-fast / vllm/dual). The quality A/B vs the fast tier is not
+# yet run (no ≥4-card host); the dual-max proxy validated the config boots, serves, and
+# spec-decodes coherently @262K.
+#
+# Dependencies:
+#   - 4× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine; NVLink
+#     auto-detected at boot via NVLINK_MODE if present)
+#   - vLLM STABLE v0.22.0 image (Docker Hub, immutable) — no source overlays. FP8
+#     weights run via the Marlin W8A16 kernel on Ampere sm_86 (a memory win; there is
+#     no native FP8 compute speedup on Ampere).
+#
+# Run (direct docker; or `launch.sh vllm/qwen-27b-multi-max`):
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f multi4/fp8/mtp.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 4
+# Tensor-parallel: 4
+services:
+  vllm-qwen36-27b-dual:
+    # Pinned to a vLLM STABLE release (immutable — never purged from Docker Hub,
+    # unlike nightlies; this is the #407 pin-drift fix). Genesis-free + fp8 KV
+    # means no patch overlays are anchored here, so we ride stable releases.
+    # Bump the tag to a newer stable after a verify-stress + soak gate.
+    # Override with VLLM_IMAGE=... if you need a specific build.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-multi4-max}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8015}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs. Pattern from Sander's PROD launch.
+      # Closes club-3090 #22.
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      # NOTE: vLLM source overlays (marlin-pad #40361, PR-35936 required-tool
+      # fallback, PR-41800 truncate_prompt_tokens) were dropped 2026-05-25 — all
+      # confirmed unnecessary on stable v0.21.0 (PR-41800 merged upstream; the
+      # other two don't trip on a current vLLM). Keeping zero source mounts is
+      # what makes this path pin-drift-immune. See docs/UPSTREAM.md.
+      # froggeric/Qwen-Fixed-Chat-Templates qwen3.6 — fixes 7 default-template
+      # bugs (empty <think></think> spam, </thinking> hallucination, unclosed
+      # think before tool call, no-user-query crash, developer role, etc.).
+      # See docs/UPSTREAM.md "Community templates / model assets" + the row at
+      # https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates
+      - ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      # expandable_segments:True crashes boot on some setups (likely cuMemMap path).
+      # Known: JusefPol on NVLink (PR #31), WSL2 single-card 3090 Ti.
+      # Override via .env: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — use on
+        # hardware where Cliff 2 GDN activation spikes occur at runtime
+        # (~50-65K active context tokens). Costs ~20-30% TPS in exchange for
+        # stability. See docs/HARDWARE.md "Note for WSL2 / Windows users".
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+        else
+          exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-fp8
+      - --served-model-name
+      - qwen3.6-27b-fp8
+      - --quantization
+      - fp8
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-4}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "2"
+      - --max-num-batched-tokens
+      - "8192"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-int8_per_token_head}"
+      - --trust-remote-code
+      # froggeric chat-template override (see volumes block + docs/UPSTREAM.md)
+      - --chat-template
+      - /etc/qwen-froggeric-chat-template.jinja
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

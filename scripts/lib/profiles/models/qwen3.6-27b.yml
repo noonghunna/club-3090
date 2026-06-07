@@ -39,6 +39,16 @@ weights:
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"
+  fp8:
+    path: qwen3.6-27b-fp8
+    local_subdir: qwen3.6-27b-fp8
+    size_gb: 29
+    format: fp8
+    status: experimental
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "Official Qwen3.6-27B FP8 release (e4m3, dynamic act-scale): layer-split safetensors (layers-N.safetensors + outside.safetensors) with an embedded MTP head (mtp.safetensors) and the multimodal vision tower. Drives the 'max accuracy' tier (vllm/qwen-27b-dual-max + vllm/qwen-27b-multi-max). On Ampere sm_86 FP8 weights run via the Marlin W8A16 kernel (memory win, no FP8 compute speedup). No direct pull recipe wired here — fetch via hf-download.sh from the official repo."
   dflash:
     path: qwen3.6-27b-dflash
     local_subdir: qwen3.6-27b-dflash

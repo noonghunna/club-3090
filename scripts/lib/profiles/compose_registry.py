@@ -146,6 +146,58 @@ COMPOSE_REGISTRY = {
         kvcalc_key="qwen3.6-27b:dual",
     ),
 
+    # --- Qwen "fast" / "max accuracy" tiers (2026-06-07) -----------------------
+    # A symmetric 4-slug family across dual (2-card) and multi4 (4-card):
+    #   *-fast = AutoRound INT4 weights + fp8_e5m2 KV  (peak TPS, the proven path)
+    #   *-max  = official FP8 weights   + int8-PTH KV  (higher fidelity @ 262K)
+    # The 2-card duals are the on-rig validation proxies for the 4-card multi4s
+    # (this dev rig has 2× 3090); the multi4 configs are byte-identical to their
+    # dual sibling apart from TP and the gpu-count, so they ship 🧪 Experimental
+    # until a real ≥4-card host validates them.
+    #
+    # `vllm/qwen-27b-dual-fast` is an explicit alias of `vllm/dual` (same compose,
+    # same port) — it just names the fast tier in the symmetric family. The
+    # (qwen,vllm,dual) DEFAULT stays "vllm/dual" (the long-established slug).
+    "vllm/qwen-27b-dual-fast": _entry(
+        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
+        compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
+        default_port=8010,
+        kvcalc_key="qwen3.6-27b:dual",
+        status_note="Alias of vllm/dual — names the 'fast' tier in the fast/max family (AutoRound INT4 + fp8_e5m2 KV + MTP n=3, TP=2 @262K). Same compose + port as vllm/dual; production-validated there (129/150). Pair with vllm/qwen-27b-dual-max for higher fidelity.",
+    ),
+    "vllm/qwen-27b-dual-max": _entry(
+        model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="int8_per_token_head",
+        tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
+        compose_path="models/qwen3.6-27b/vllm/compose/dual/fp8/mtp.yml",
+        default_port=8013,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Qwen3.6-27B 'max accuracy' tier, 2-card: official FP8 weights (e4m3, embedded MTP head) + int8-PTH KV + MTP n=3, TP=2 @262K. 🧪 Experimental — live-validated 2026-06-07 (boots + serves @262K, KV pool 295K tok / 1.13x concurrency via int8-PTH, MarlinFP8 W8A16 on Ampere, coherent + MTP active). FP8 (8-bit, near-lossless per KLD) + int8-PTH KV (higher fidelity than the fast tier's fp8_e5m2). Quality A/B vs the fast tier not yet benched. Also the validation proxy for vllm/qwen-27b-multi-max (same config @ TP=4). KV pool is tight on 2 cards (1.13x) — comfortable on 4.",
+    ),
+    "vllm/qwen-27b-multi-fast": _entry(
+        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
+        compose_path="models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/mtp.yml",
+        default_port=8014,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Qwen3.6-27B 'fast' tier, 4-card (TP=4): AutoRound INT4 + fp8_e5m2 KV + MTP n=3 @262K. 🧪 Experimental (cross-rig) — byte-identical to vllm/dual (≡ vllm/qwen-27b-dual-fast) apart from TP=4 + gpu-count; vllm/dual @TP=2 is the on-rig validation proxy (this dev rig has 2× 3090). The extra cards buy ~2x aggregate KV headroom at 262K. Validate on a real ≥4× 3090 host before promotion.",
+    ),
+    "vllm/qwen-27b-multi-max": _entry(
+        model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="int8_per_token_head",
+        tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
+        compose_path="models/qwen3.6-27b/vllm/compose/multi4/fp8/mtp.yml",
+        default_port=8015,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Qwen3.6-27B 'max accuracy' tier, 4-card (TP=4): official FP8 weights + int8-PTH KV + MTP n=3 @262K. 🧪 Experimental (cross-rig) — byte-identical to vllm/qwen-27b-dual-max apart from TP=4 + gpu-count; the dual-max @TP=2 is the on-rig validation proxy. FP8 + int8-PTH = the highest-fidelity Qwen path at full 262K, with TP=4 relieving the dual-max's tight (1.13x) KV pool. Validate on a real ≥4× 3090 host before promotion.",
+    ),
+
     # Qwen 3.6 27B, llama.cpp single-card.
     # `llamacpp/default` is an alias for `llamacpp/mtp` (collapsed 2026-05-22):
     # the old Q3_K_XL vanilla compose was retired and `default` now points at
