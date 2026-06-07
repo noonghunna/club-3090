@@ -11,11 +11,11 @@
 #              tight on 2 cards, comfortable on 4.
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    🧪 Experimental (TP=4 cross-rig — config = vllm/qwen-27b-dual-max validated @TP=2)
-#   Quality:   not yet benched — the 4-card "max accuracy" tier. FP8 weights (8-bit,
-#                near-lossless per our KLD findings) + int8-PTH KV (8-bit, higher fidelity
-#                than the fast tier's fp8_e5m2), vs the AutoRound-int4 "fast" tier
-#                (vllm/qwen-27b-multi-fast / vllm/dual, 129/150). The dual-max proxy
-#                boots/serves @262K + MTP active (validated 2026-06-07, TP=2).
+#   Quality:   = the dual-max proxy (vllm/qwen-27b-dual-max): 8-pack 110/150 (--full, current
+#                harness 2026-06-07); 3-way A/B fast 109 · balanced 105 · max 110 = TIE — FP8 +
+#                int8-PTH is NOT an 8-pack quality win over the fast tier (the differentiation is
+#                KV fidelity, a long-ctx NIAH A/B is the open follow-up). No 4-card bench on this
+#                layout; the dual-max @TP=2 boots/serves @262K + MTP (validated 2026-06-07).
 #   Best for:  max-accuracy 4-card Qwen (vllm/qwen-27b-multi-max) — FP8 + int8-PTH KV @ 262K, TP=4 ⭐
 # ---------------------------------------------------------------------------
 # Quad RTX 3090 — Qwen3.6-27B FP8 "max accuracy" tier at TP=4 (vllm/qwen-27b-multi-max).

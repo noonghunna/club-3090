@@ -1,65 +1,47 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.6-27B FP8 (near-lossless 8-bit; embedded mtp.fc head)
+#   Model:     Qwen3.6-27B AWQ-BF16-INT4 (cyankiwi — int4 AWQ body + BF16 mtp head;
+#              compressed-tensors pack-quantized)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
-#   Drafter:   MTP n=3 (built-in — the fp8 checkpoint embeds the mtp.* head)
-#   KV:        int8_per_token_head (1 byte/token, 8-bit near-lossless — higher KV fidelity than
-#              the fast tier's fp8_e5m2, and keeps the full 262K at TP=2 unlike bf16 KV)
+#   Drafter:   MTP n=3 (built-in — the checkpoint embeds the mtp.* head, BF16)
+#   KV:        int8_per_token_head (1 byte/token, 8-bit — higher KV fidelity than the
+#              fast tier's fp8_e5m2; keeps the full 262K at TP=2)
 #   Vision:    yes
-#   Max ctx:   262K — int8-PTH KV keeps the full ctx at TP=2 (KV pool 295K tok, 1.13× concurrency:
-#              constrained on 2 cards, comfortable on the 4-card multi-max). Validation proxy for
-#              the TP=4 multi-max (vllm/qwen-27b-multi-max, same config).
+#   Max ctx:   262K (text_config max_position_embeddings; head_dim 256 uniform → int8-PTH native)
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    🧪 Experimental
-#   Quality:   110/150 (det 65/75 · sandbox 45/75) (--full, same harness 2026-06-07). 8-pack A/B
-#                same day: fast 109 · balanced 105 · max 110 — a TIE (det 64/64/65; within ±5-7
-#                noise). FP8 (8-bit) + int8-PTH KV are NOT a behavioral-quality win over the
-#                AutoRound-int4 fast tier on the short-ctx 8-pack — the differentiation is KV
-#                fidelity (long-ctx NIAH A/B is the open follow-up). Slowest of the three
-#                (~56 TPS decode vs fast ~89) with the smallest KV pool (1.13×).
-#   Best for:  max-accuracy Qwen on 2 cards, and the validation proxy for the 4-card
-#                vllm/qwen-27b-multi-max — FP8 + int8-PTH KV at full 262K ⭐
+#   Quality:   105/150 (det 64/75 · sandbox 41/75) (--full, same harness 2026-06-07). 8-pack A/B
+#                same day: fast 109 · balanced 105 · max 110 — a TIE (det 64/64/65; spread within
+#                ±5-7 noise; balanced nominally lowest). NOT a quality middle — the short-ctx
+#                8-pack can't separate the quants. Balanced's real edge is SERVING-side: the
+#                largest KV pool of the dual family (370K tok / 1.41× @262K — int4 weights free
+#                more VRAM than fp8's 8-bit) + higher-fidelity int8-PTH KV, at fast-class speed
+#                (~67 TPS decode vs max's ~56). The long-ctx NIAH A/B (where int8-PTH should
+#                actually show) is the open follow-up.
+#   Best for:  most KV-pool headroom of the dual family (1.41× @262K) + int8-PTH fidelity at
+#                fast-class speed — concurrency / long-ctx serving (vllm/qwen-27b-dual-balanced) ⭐
 # ---------------------------------------------------------------------------
-# Dual RTX 3090 — Qwen3.6-27B FP8 "max accuracy" tier (vllm/qwen-27b-dual-max).
-# FP8 weights + MTP n=3 + int8-PTH KV + vision. The validation proxy for the 4-card
-# vllm/qwen-27b-multi-max (same config @ TP=4). NOTE: some prose below is inherited from the
-# AutoRound "fast" template — the at-a-glance block above is authoritative for this variant.
+# Dual RTX 3090 — Qwen3.6-27B "balanced" tier (vllm/qwen-27b-dual-balanced).
+# cyankiwi AWQ-BF16-INT4 weights + MTP n=3 + int8-PTH KV + vision. The middle option:
+# 4-bit weights (Marlin int4 — fast-class compute, like the AutoRound fast tier) combined
+# with the max tier's 8-bit int8-per-token-head KV (higher fidelity than the fast tier's
+# fp8_e5m2). The BF16 MTP head is kept full-precision for spec-decode accept quality.
 #
-# What this gives you (vs the single-card default):
-#   - TP=2 across both 3090s
-#   - max_num_seqs=2 → 2 concurrent agents at full 262K context (KV pool 2.36×)
-#   - max_model_len=262144 → model's natural max, no rope_scaling needed
-#   - vision + tools + MTP n=3 + recall — everything on, no compromises
-#   - Measured (re-bench 2026-04-28 on club-3090 substrate, dev205 + Genesis v7.51-stable):
-#     69.05 narr (CV 2.3%) / 88.58 code (CV 3.4%) TPS single-stream, AL 3.4, VRAM 23.6 GB/card
-#
-# What's intentionally NOT enabled:
-#   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e5m2 is plenty for
-#     262K across two cards. For 4-stream concurrency at 262K, switch to
-#     dual/turbo.yml (which uses TurboQuant KV + Genesis P65).
+# Where it sits in the dual family:
+#   vllm/dual (≡ qwen-27b-dual-fast)   AutoRound int4 + fp8_e5m2 KV   peak TPS, proven default
+#   vllm/qwen-27b-dual-balanced (this) AWQ int4      + int8-PTH  KV   fast-class + better KV
+#   vllm/qwen-27b-dual-max             FP8 (8-bit)   + int8-PTH  KV   highest fidelity, ~37% slower
 #
 # Dependencies:
-#   - 2× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine)
-#   - vLLM STABLE v0.21.0 image (pulled from Docker Hub) — no source overlays
-#     required (validated 2026-05-25: marlin-pad / PR-35936 / PR-41800 all
-#     unnecessary on a current vLLM; AutoRound INT4 TP=2 + MTP + vision boot clean).
+#   - 2× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine; NVLink
+#     auto-detected at boot via NVLINK_MODE if present)
+#   - vLLM STABLE v0.22.0 image (Docker Hub, immutable) — no source overlays.
+#     AWQ pack-quantized loads via the compressed-tensors path (Marlin int4 on Ampere);
+#     int8_per_token_head KV is native on stock v0.22.0 for this uniform-head-dim model.
 #
-# Qwen3.6-27b vLLM dual/multi configs (post-2026-05-31 prune — settled on one
-# dual config; the A/B variants were deprecated):
-#
-#   Slug               Ctx    Streams  KV    Vision  Topology   Notes
-#   vllm/dual (this)   262K   2        fp8   ✅      2× PCIe    THE dual default ⭐
-#   vllm/dual4         262K   4        fp8   ✅      4× PCIe    4-card
-#   vllm/dual4-dflash  262K   2        FP16  ✅      4× PCIe    4-card, peak code TPS
-#   (deprecated 2026-05-31, recover from git if needed: dual-dflash, dual-dflash-noviz,
-#    dual-tq3-nomtp, dual-bf16, dual-int8 — A/B leftovers superseded by vllm/dual.
-#    dual-turbo / dual-tq3-mtp* were already deprecated.)
-#   (NVLink rigs: any dual compose auto-detects NVLink at boot — no separate
-#    nvlink-* variant. NVLINK_MODE=force_on forces it if auto-detect misses.)
-#
-# Run:
+# Run (direct docker; or `launch.sh vllm/qwen-27b-dual-balanced`):
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
-#   docker compose -f dual/docker-compose.yml up -d
+#   docker compose -f dual/awq-bf16-int4/int8.yml up -d
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
@@ -74,10 +56,10 @@ services:
     # Bump the tag to a newer stable after a verify-stress + soak gate.
     # Override with VLLM_IMAGE=... if you need a specific build.
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
-    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual-max}"
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual-balanced}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8013}}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8016}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
@@ -141,11 +123,11 @@ services:
       - --
     command:
       - --model
-      - /root/.cache/huggingface/qwen3.6-27b-fp8
+      - /root/.cache/huggingface/qwen3.6-27b-awq-bf16-int4
       - --served-model-name
-      - qwen3.6-27b-fp8
+      - qwen3.6-27b-awq-bf16-int4
       - --quantization
-      - fp8
+      - compressed-tensors
       - --dtype
       - bfloat16
       - --tensor-parallel-size

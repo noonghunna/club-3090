@@ -8,8 +8,11 @@
 #   Max ctx:   262K (237K single-prompt verified)
 #   Genesis:   none — intentionally Genesis-free (isolation control + fallback)
 #   Status:    ✅ Production
-#   Quality:   129/150 (86%) — det 56/75 (75%) · sandbox 73/75 (97%, v0.4 shape-check) (--full, 2026-05-09)
-#                TC 67% · IF 87% · SO 87% · DE 100% · RM 33% · BF 93% · HA 100% · CLI 98%
+#   Quality:   109/150 (det 64/75 · sandbox 45/75) (--full, current harness 2026-06-07).
+#                In the 3-way fast/balanced/max A/B (same harness, same day): fast 109 ·
+#                balanced 105 · max 110 — a TIE (the 8-pack doesn't separate the quants).
+#                ⚠️ Earlier 129/150 (--full, 2026-05-09 harness) is NOT comparable — benchlocal-cli
+#                verifier fixes since then tightened scoring (mostly the agentic HA/CLI packs).
 #   Best for:  General-purpose dual-card vision + tools + long-ctx default ⭐
 # ---------------------------------------------------------------------------
 # Dual RTX 3090 — DEFAULT for 2× cards. Qwen3.6-27B + MTP n=3 + fp8 KV + vision.

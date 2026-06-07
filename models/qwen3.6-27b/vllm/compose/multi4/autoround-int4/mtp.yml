@@ -8,8 +8,9 @@
 #   Max ctx:   262K (237K single-prompt verified)
 #   Genesis:   none — intentionally Genesis-free (isolation control + fallback)
 #   Status:    🧪 Experimental (TP=4 cross-rig — config = vllm/dual validated @TP=2)
-#   Quality:   129/150 (86%) — det 56/75 (75%) · sandbox 73/75 (97%, v0.4 shape-check) (--full, 2026-05-09)
-#                TC 67% · IF 87% · SO 87% · DE 100% · RM 33% · BF 93% · HA 100% · CLI 98%
+#   Quality:   = the dual fast proxy (vllm/dual): 109/150 (--full, current harness 2026-06-07);
+#                3-way A/B fast 109 · balanced 105 · max 110 = TIE. (Earlier 129/150 on the
+#                2026-05-09 harness is not comparable — verifier fixes since.) No 4-card bench.
 #   Best for:  4-card Qwen "fast" tier (vllm/qwen-27b-multi-fast) — AutoRound int4 + fp8 KV + MTP, TP=4 ⭐
 # ---------------------------------------------------------------------------
 # Quad RTX 3090 — Qwen3.6-27B "fast" tier at TP=4 (vllm/qwen-27b-multi-fast).

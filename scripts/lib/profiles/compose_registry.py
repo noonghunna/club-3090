@@ -175,7 +175,17 @@ COMPOSE_REGISTRY = {
         default_port=8013,
         kvcalc_key="SKIP",
         status="experimental",
-        status_note="Qwen3.6-27B 'max accuracy' tier, 2-card: official FP8 weights (e4m3, embedded MTP head) + int8-PTH KV + MTP n=3, TP=2 @262K. 🧪 Experimental — live-validated 2026-06-07 (boots + serves @262K, KV pool 295K tok / 1.13x concurrency via int8-PTH, MarlinFP8 W8A16 on Ampere, coherent + MTP active). FP8 (8-bit, near-lossless per KLD) + int8-PTH KV (higher fidelity than the fast tier's fp8_e5m2). Quality A/B vs the fast tier not yet benched. Also the validation proxy for vllm/qwen-27b-multi-max (same config @ TP=4). KV pool is tight on 2 cards (1.13x) — comfortable on 4.",
+        status_note="Qwen3.6-27B 'max accuracy' tier, 2-card: official FP8 weights (e4m3, embedded MTP head) + int8-PTH KV + MTP n=3, TP=2 @262K. 🧪 Experimental — live-validated 2026-06-07 (boots + serves @262K, KV pool 295K tok / 1.13x concurrency via int8-PTH, MarlinFP8 W8A16 on Ampere, coherent + MTP active; ~56 TPS decode). 8-pack A/B (--full, same harness 2026-06-07): 110/150 vs fast 109 vs balanced 105 — a TIE (det 65/64/64; spread within noise). The 8-pack (short-ctx) does NOT separate the quants; FP8 + int8-PTH differentiate on KV fidelity, not behavioral quality — a long-ctx NIAH A/B (where int8-PTH should matter) is the open follow-up. Slowest of the three (~56 vs fast ~89 code) with the smallest KV pool (1.13x). Also the validation proxy for vllm/qwen-27b-multi-max (same config @ TP=4).",
+    ),
+    "vllm/qwen-27b-dual-balanced": _entry(
+        model="qwen3.6-27b", weights_variant="awq-bf16-int4", workload="long-ctx-single",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="int8_per_token_head",
+        tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
+        compose_path="models/qwen3.6-27b/vllm/compose/dual/awq-bf16-int4/int8.yml",
+        default_port=8016,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Qwen3.6-27B 'balanced' tier, 2-card: cyankiwi AWQ-BF16-INT4 (int4 group-32 body + BF16 mtp head, compressed-tensors) + int8-PTH KV + MTP n=3, TP=2 @262K. 🧪 Experimental — live-validated 2026-06-07 (Marlin WNA16, KV pool 370K tok / 1.41x — the LARGEST of the dual family: int4 weights free more VRAM than fp8's 8-bit, paired with the higher-fidelity int8-PTH KV; ~67 TPS decode, fast-class). 8-pack A/B (--full, same harness): 105/150 vs fast 109 vs max 110 — a TIE, balanced nominally lowest. NOT a quality middle — the 8-pack can't separate the quants; balanced's real edge is serving-side (largest KV pool / int8-PTH fidelity at fast-class speed), to be validated by a long-ctx NIAH A/B (open follow-up).",
     ),
     "vllm/qwen-27b-multi-fast": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",

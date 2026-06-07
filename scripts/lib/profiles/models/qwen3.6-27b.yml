@@ -49,6 +49,17 @@ weights:
     kind: main
     verify_glob: "*.safetensors"
     manual_note: "Official Qwen3.6-27B FP8 release (e4m3, dynamic act-scale): layer-split safetensors (layers-N.safetensors + outside.safetensors) with an embedded MTP head (mtp.safetensors) and the multimodal vision tower. Drives the 'max accuracy' tier (vllm/qwen-27b-dual-max + vllm/qwen-27b-multi-max). On Ampere sm_86 FP8 weights run via the Marlin W8A16 kernel (memory win, no FP8 compute speedup). No direct pull recipe wired here — fetch via hf-download.sh from the official repo."
+  awq-bf16-int4:
+    path: qwen3.6-27b-awq-bf16-int4
+    local_subdir: qwen3.6-27b-awq-bf16-int4
+    size_gb: 27
+    format: compressed-tensors
+    status: experimental
+    hf_repo: cyankiwi/Qwen3.6-27B-AWQ-BF16-INT4
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "cyankiwi AWQ-BF16-INT4 (compressed-tensors pack-quantized, int4 group-32 asym body + BF16 mtp head + multimodal vision; embedded MTP head loads via method:mtp). Drives the 'balanced' tier (vllm/qwen-27b-dual-balanced): int4 weights (Marlin WNA16, fast-class speed) + int8-PTH KV. Loads on stock vLLM v0.22.0 via --quantization compressed-tensors."
   dflash:
     path: qwen3.6-27b-dflash
     local_subdir: qwen3.6-27b-dflash
