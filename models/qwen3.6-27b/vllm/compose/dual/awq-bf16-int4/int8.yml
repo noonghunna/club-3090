@@ -11,26 +11,31 @@
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    🧪 Experimental
 #   Quality:   105/150 (det 64/75 · sandbox 41/75) (--full, same harness 2026-06-07). 8-pack A/B
-#                same day: fast 109 · balanced 105 · max 110 — a TIE (det 64/64/65; spread within
-#                ±5-7 noise; balanced nominally lowest). NOT a quality middle — the short-ctx
-#                8-pack can't separate the quants. Balanced's real edge is SERVING-side: the
-#                largest KV pool of the dual family (370K tok / 1.41× @262K — int4 weights free
-#                more VRAM than fp8's 8-bit) + higher-fidelity int8-PTH KV, at fast-class speed
-#                (~67 TPS decode vs max's ~56). The long-ctx NIAH A/B (where int8-PTH should
-#                actually show) is the open follow-up.
-#   Best for:  most KV-pool headroom of the dual family (1.41× @262K) + int8-PTH fidelity at
-#                fast-class speed — concurrency / long-ctx serving (vllm/qwen-27b-dual-balanced) ⭐
+#                same day: fast 109 · balanced 105 · max 110 — a TIE (det 64/64/65; within ±5-7
+#                noise; balanced nominally lowest). The short-ctx 8-pack can't separate the quants.
+#   ⚠️ Honest standing: balanced is DOMINATED by the fast tier (vllm/dual) — slower (~67 vs ~89
+#                code TPS), SMALLER KV pool (370K/1.41× vs fast's measured 622K/2.37× @262K: the
+#                heavier 27 GB AWQ weights leave less KV room than fast's 17.5 GB autoround), AND
+#                tied/below on the 8-pack. Its ONLY possible edge is int8-PTH KV fidelity > fast's
+#                fp8_e5m2 — UNPROVEN (the short-ctx 8-pack is blind to it). Note int8-PTH and fp8
+#                are the SAME size, so this is a fidelity bet, not a memory one. Survives only if
+#                the long-ctx NIAH A/B (#470) shows int8-PTH materially better high-ctx recall;
+#                otherwise deprecate — fast wins on speed AND pool.
+#   Best for:  EXPERIMENTAL int8-PTH-KV-fidelity bet, pending the long-ctx NIAH A/B (#470). NOT a
+#                recommended tier today — fast (vllm/dual) dominates it on speed + KV pool.
 # ---------------------------------------------------------------------------
 # Dual RTX 3090 — Qwen3.6-27B "balanced" tier (vllm/qwen-27b-dual-balanced).
-# cyankiwi AWQ-BF16-INT4 weights + MTP n=3 + int8-PTH KV + vision. The middle option:
-# 4-bit weights (Marlin int4 — fast-class compute, like the AutoRound fast tier) combined
-# with the max tier's 8-bit int8-per-token-head KV (higher fidelity than the fast tier's
-# fp8_e5m2). The BF16 MTP head is kept full-precision for spec-decode accept quality.
+# cyankiwi AWQ-BF16-INT4 weights + MTP n=3 + int8-PTH KV + vision. 4-bit weights (Marlin
+# WNA16) + the max tier's 8-bit int8-per-token-head KV (higher fidelity than the fast tier's
+# fp8_e5m2). The BF16 MTP head is kept full-precision for spec-decode accept quality. NOTE:
+# the heavier 27 GB AWQ weights make this SLOWER and SMALLER-KV-pool than the fast tier — it
+# is NOT a free middle; see the Quality block. Its reason-to-exist is the int8-PTH fidelity
+# bet, pending #470.
 #
-# Where it sits in the dual family:
-#   vllm/dual (≡ qwen-27b-dual-fast)   AutoRound int4 + fp8_e5m2 KV   peak TPS, proven default
-#   vllm/qwen-27b-dual-balanced (this) AWQ int4      + int8-PTH  KV   fast-class + better KV
-#   vllm/qwen-27b-dual-max             FP8 (8-bit)   + int8-PTH  KV   highest fidelity, ~37% slower
+# Where it sits in the dual family (measured v0.22.0 @262K, TP=2):
+#   vllm/dual (≡ qwen-27b-dual-fast)   autoround int4 + fp8_e5m2 KV   ~89 code · pool 622K/2.37×  ← default: fastest + biggest pool
+#   vllm/qwen-27b-dual-balanced (this) AWQ int4      + int8-PTH  KV   ~67      · pool 370K/1.41×  ← int8-PTH fidelity bet (unproven)
+#   vllm/qwen-27b-dual-max             FP8 (8-bit)   + int8-PTH  KV   ~56      · pool 295K/1.13×  ← highest weight-fidelity, slowest
 #
 # Dependencies:
 #   - 2× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine; NVLink
