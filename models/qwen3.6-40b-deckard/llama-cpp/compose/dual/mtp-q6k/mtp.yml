@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-40B-Deckard (uncensored dense merge, Q6_K MTP GGUF)
-#   Engine:    llama.cpp (mainline server-cuda, rolling tag, draft-mtp)
+#   Engine:    llama.cpp (mainline server-cuda-b9570, draft-mtp)
 #   Topology:  Dual 3090 (layer-split -ts 1,1)
 #   Drafter:   MTP n=2 (--spec-type draft-mtp, sweet-spot — see BENCHMARKS.md)
 #   KV:        q8_0 K + q8_0 V
@@ -9,7 +9,7 @@
 #   Template:  native (GGUF-embedded)
 #   Max ctx:   131072 (q8_0 KV; 192K OOMs on the dual split)
 #   Genesis:   N/A — llama.cpp engine
-#   Status:    🧪 Unverified
+#   Status:    🧪 Experimental
 #   Caveats:   Dual-only (31 GB > 24 GB, no single-card); both-cards → mutually
 #              exclusive with the image-studio. Quality /150 + soak still pending.
 #   Engine-profile: llama-cpp-local
@@ -35,12 +35,14 @@
 # tok/s); **192K OOMs → max stable = 131072**. q4_0 KV would go higher but has
 # not been tested yet.
 #
-# Engine pin: validated on the rolling `ghcr.io/ggml-org/llama.cpp:server-cuda`
-# tag as of 2026-06-09 (digest sha256:1c4ff61a…). The MTP flag `--spec-type
-# draft-mtp` has been available since PR #22673 (mainline b9240+). The catalog's
-# existing llama.cpp engine profile pins b9246 via compose-level defaults; this
-# compose uses the rolling tag since the validated build is newer. Bump to a
-# specific build tag once the maintainer validates a stable pin.
+# Engine pin: validated on `ghcr.io/ggml-org/llama.cpp:server-cuda-b9570`
+# (the IMMUTABLE tag for the 2026-06-09 build, digest sha256:1c4ff61a…). MTP
+# `--spec-type draft-mtp` (PR #22673, mainline) works on it. We pin the immutable
+# bXXXX — NOT the rolling `:server-cuda` (it regressed at b9282 with a crash loop,
+# #187). The shared `llama-cpp-local` engine pins the older b9246 (for the 27B —
+# too old for Deckard-40B), so we pin the newer b9570 at the compose level via
+# LLAMACPP_IMAGE rather than bumping the shared engine pin. Bump via .env once a
+# newer build is validated:  LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX
 #
 # Override defaults via .env or shell:
 #   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
@@ -68,7 +70,7 @@
 
 services:
   llama-cpp-deckard-40b:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9570}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-deckard-40b}"
     restart: unless-stopped
     ports:
