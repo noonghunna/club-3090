@@ -36,7 +36,36 @@ warn() { echo -e "\033[1;33m$*\033[0m"; }
 ok()   { echo -e "\033[0;32m$*\033[0m"; }
 
 # --- 0. Preflight + plan ----------------------------------------------------
-command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found." >&2; exit 1; }
+# Reuse the repo's preflight library (docker / gpu / disk), then add image-studio
+# specifics. Hard-fail before the long build/download if something's missing.
+# shellcheck disable=SC1091
+. "$REPO_DIR/scripts/preflight.sh" 2>/dev/null || true
+MODEL_DIR_RESOLVED="$(grep -E '^MODEL_DIR=' "$REPO_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+MODEL_DIR_RESOLVED="${MODEL_DIR_RESOLVED:-/mnt/models/huggingface}"
+if declare -f preflight_docker >/dev/null 2>&1; then
+    preflight_docker || exit 1                                   # docker + compose v2 + daemon
+    preflight_gpu 1  || exit 1                                   # >=1 GPU (coexist needs 2 — warned below)
+    [ -z "${SKIP_BUILD:-}" ]    && { preflight_disk / 32 || exit 1; }                      # comfyui-local image (~27 GB) + base pull
+    [ -z "${SKIP_DOWNLOAD:-}" ] && { preflight_disk /mnt/models/comfyui 30 || exit 1; }    # Ideogram-4 set (~27 GB)
+    preflight_gpu_idle || true                                   # soft warn if VRAM already in use
+else
+    command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found." >&2; exit 1; }
+fi
+# Image-studio specifics (not in preflight.sh):
+if [ -z "${SKIP_DOWNLOAD:-}" ] && ! command -v hf >/dev/null 2>&1; then
+    echo "[preflight] ERROR: 'hf' (huggingface_hub CLI) not found — needed for the weight download." >&2
+    echo "            Fix: pip install -U huggingface_hub   (or SKIP_DOWNLOAD=1 if weights are present)." >&2
+    exit 1
+fi
+GEMMA_GGUF="$MODEL_DIR_RESOLVED/gemma-4-12b-gguf/unsloth-ud-q8kxl/gemma-4-12b-it-UD-Q8_K_XL.gguf"
+GEMMA_MISSING=""
+if [ ! -f "$GEMMA_GGUF" ]; then
+    GEMMA_MISSING=1
+    echo "[preflight] WARN:  gemma-4-12b GGUF not found at $GEMMA_GGUF" >&2
+    echo "            The chat model won't start until it's present (image gen still works). Fetch it:" >&2
+    echo "              hf download unsloth/gemma-4-12b-it-GGUF gemma-4-12b-it-UD-Q8_K_XL.gguf \\" >&2
+    echo "                --local-dir \"$(dirname "$GEMMA_GGUF")\"" >&2
+fi
 NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
 
 say "═══ club-3090 image-studio setup ═══"
