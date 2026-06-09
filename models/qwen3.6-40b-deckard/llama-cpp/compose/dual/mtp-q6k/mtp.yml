@@ -11,7 +11,8 @@
 #   Genesis:   N/A — llama.cpp engine
 #   Status:    🧪 Experimental
 #   Caveats:   Dual-only (31 GB > 24 GB, no single-card); both-cards → mutually
-#              exclusive with the image-studio. Quality /150 + soak still pending.
+#              exclusive with the image-studio. 8-pack 105/150 (MTP lossless) +
+#              soak PASS; 🧪 pending profile config.json arch confirm before ✅.
 #   Engine-profile: llama-cpp-local
 #   Best for:  Uncensored dual-card chat/agentic; ~41 tok/s (MTP n=2), 128K ctx.
 # ---------------------------------------------------------------------------

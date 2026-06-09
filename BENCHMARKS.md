@@ -258,7 +258,7 @@ Dense 40B uncensored community merge of Qwen3.6. Q6_K GGUF with BF16 MTP head in
 
 | Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `mtp.yml` (MTP n=2) | @noonghunna (2× 3090, PCIe) | q8_0/q8_0 | 131072 | 36 / 46 (MTP on) | — | ~16.4+17.8 GB @16K | 2026-06-09 | 🧪 Unverified. MTP n=2 sweet spot (41.60 tok/s aggregate, 0.81 accept). MTP off: 22.7 narr (+59%/+104% with MTP). 128K ceiling @q8_0 KV (192K OOMs). Deterministic 8-pack (think-off, MTP-off): **62/75** (toolcall 15 · instructfollow 14 · structoutput 13 · dataextract 10 · reasonmath 10). Full /150 + MTP-on A/B pending. Soak: —. |
+| `mtp.yml` (MTP n=2) | @noonghunna (2× 3090, PCIe) | q8_0/q8_0 | 131072 | 36 / 46 (MTP on) | — | ~16.4+17.8 GB @16K | 2026-06-09 | 🧪 Experimental. MTP n=2 sweet spot (41.60 tok/s aggregate, 0.81 accept). MTP off: 22.7 narr (+59%/+104% with MTP). 128K ceiling @q8_0 KV (192K OOMs). 8-pack (think-off): **105/150** — MTP-off == MTP-on (spec-dec lossless); det 62/75 (toolcall 15·instructfollow 14·structoutput 13·dataextract 10·reasonmath 10) + sandbox 43/75 (bugfind 13·hermesagent 15/20·cli-40 15/40). **verify-full 8/8**, **soak-continuous PASS** (0 MiB growth, 0/25 silent-empty, 25 turns). ≈ Qwen3.6-27B band. Profile arch fields TBD (config.json) before ✅. |
 
 ---
 

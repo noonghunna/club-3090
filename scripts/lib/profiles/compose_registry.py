@@ -650,7 +650,7 @@ COMPOSE_REGISTRY = {
         default_port=8199,
         kvcalc_key="SKIP",
         status="experimental",
-        status_note="Dense 40B uncensored Qwen3.6 merge (Q6_K MTP GGUF, 31 GB) on dual 3090 llama.cpp. MTP n=2 sweet spot (~41.6 tok/s, 0.81 accept). 128K ctx ceiling @q8_0 KV (192K OOMs). Dual-only. Quality /150 + soak pending — NOT promoted past 🧪.",
+        status_note="Dense 40B uncensored Qwen3.6 merge (Q6_K MTP GGUF, 31 GB) on dual 3090 llama.cpp. MTP n=2 sweet spot (~41.6 tok/s, 0.81 accept). 128K ctx ceiling @q8_0 KV (192K OOMs). Dual-only. verify-full 8/8, 8-pack 105/150 (MTP off==on, spec-dec lossless), soak-continuous PASS (0 MiB growth, 0/25 silent-empty). 🧪 pending profile config.json arch confirm before ✅.",
         category="uncensored",
     ),
 }
