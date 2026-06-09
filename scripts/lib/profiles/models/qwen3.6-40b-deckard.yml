@@ -37,12 +37,14 @@ weights:
     size_gb: 31
     format: gguf
     status: experimental
-    # HF source: the MTP-injected GGUF was created by injecting a BF16 MTP head
-    # into DavidAU's Q6_K GGUF from:
-    #   DavidAU/Qwen3.6-40B-Claude-4.6-Opus-Deckard-Heretic-Uncensored-Thinking-NEO-CODE-Di-IMatrix-MAX-GGUF
-    # The MTP-injected variant is a separate community artifact. The exact HF
-    # repo hosting the MTP-injected GGUF is not yet confirmed — using mtp-q6k
-    # as the weights_variant to match the on-disk layout.
+    verify_glob: "*.gguf"
+    # MTP-injected GGUF published by PiehSoft — a BF16 MTP head on DavidAU's Q6_K
+    # Opus-Deckard base (DavidAU/Qwen3.6-40B-Claude-4.6-Opus-Deckard-Heretic-
+    # Uncensored-Thinking-NEO-CODE-Di-IMatrix-MAX-GGUF). setup.sh/launch.sh
+    # auto-fetch it from hf_repo below.
+    hf_repo: PiehSoft/Qwen3.6-40B-Deckard-MTP-Q6_K
+    files:
+      - Qwen3.6-40B-Deckard-MTP-Q6_K.gguf
     hf_repo: DavidAU/Qwen3.6-40B-Claude-4.6-Opus-Deckard-Heretic-Uncensored-Thinking-NEO-CODE-Di-IMatrix-MAX-GGUF
     files:
       - Qwen3.6-40B-Deckard-MTP-Q6_K.gguf

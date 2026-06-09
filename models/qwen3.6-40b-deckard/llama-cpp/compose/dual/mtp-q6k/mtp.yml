@@ -19,9 +19,9 @@
 # Qwen3.6-40B-Deckard on llama.cpp — dual 3090, MTP n=2, 128K ctx, no vision.
 #
 # Deckard is a **dense 40B uncensored** community merge of the Qwen3.6 family
-# (thinking model; emits <think>). Built from DavidAU's Qwen3.6-40B Opus-Deckard
-# Q6_K GGUF with a BF16-precision MTP head injected from the base Qwen3.6-27B
-# architecture (community MTP injection — see the model README on disk).
+# (thinking model; emits <think>). The GGUF is PiehSoft's MTP-injected build —
+# a BF16-precision MTP head on DavidAU's Qwen3.6-40B Opus-Deckard Q6_K base
+# (hf: PiehSoft/Qwen3.6-40B-Deckard-MTP-Q6_K).
 #
 # Why dual-only: the Q6_K GGUF is 31 GB — it cannot fit a single 24 GB card.
 # Layer-split across both 3090s via `-ts 1,1` (tensor-split), which pipelines
@@ -62,9 +62,9 @@
 #   CUDA_VISIBLE_DEVICES   which GPUs to use   (default: 0,1)
 #
 # Quick start:
-#   1. Get the MTP-enabled GGUF (community MTP injection from DavidAU's Q6_K):
-#        # The MTP GGUF was injected locally — see the model README on disk.
-#        # Base GGUF: DavidAU/Qwen3.6-40B-Claude-4.6-Opus-Deckard-...-GGUF
+#   1. Get the MTP-enabled GGUF (setup.sh/launch.sh auto-fetch it, or manually):
+#        hf download PiehSoft/Qwen3.6-40B-Deckard-MTP-Q6_K \
+#          Qwen3.6-40B-Deckard-MTP-Q6_K.gguf --local-dir <MODEL_DIR>/qwen3.6-40b-deckard-gguf/mtp-q6k
 #   2. From this directory:
 #        MODEL_DIR=/your/models/dir docker compose -f mtp.yml up -d
 #   3. curl http://localhost:8199/v1/models  → should list deckard-40b.
