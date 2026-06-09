@@ -26,6 +26,18 @@ model_list:
       api_base: http://host.docker.internal:8030/v1
       api_key: EMPTY
 
+  # Gemma 4 12B (Unsloth UD-Q8_K_XL GGUF, llama.cpp) — the IMAGE-STUDIO chat brain.
+  # Small enough to coexist with ComfyUI image gen (runs on the spare GPU). Started by
+  # `gpu-mode image-studio` → llama-cpp-gemma4-12b at :8069. This is the one route that's
+  # LIVE in image-studio mode (the big-model routes above are GPU-mutex with ComfyUI).
+  # The bundle's Open WebUI points DIRECT to :8069 by default (clean picker); this route
+  # makes gemma-4-12b reachable through the gateway too (e.g. for benchlocal / API clients).
+  - model_name: gemma-4-12b
+    litellm_params:
+      model: openai/gemma-4-12b
+      api_base: http://host.docker.internal:8069/v1
+      api_key: EMPTY
+
   # NOTE: Gemma 4 26B-A4B is intentionally NOT routed — the registry default
   # (vllm/gemma-a4b, :8041) is the autoround-int4-mixed compose, which is
   # SM86-blocked (Marlin K-dim 704/128). The working AWQ variant

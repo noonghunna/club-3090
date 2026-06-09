@@ -12,6 +12,45 @@ they're mutually exclusive (see [Single-GPU](#single-gpu)).
 
 ---
 
+## Architecture
+
+```
+                          Browser
+                             │
+                             ▼
+              ┌──────────────────────────────────────────┐
+              │  Open WebUI   :8080   (the front-end)     │
+              │    • chat            • 🖼️  image button    │
+              └───────┬──────────────────────┬────────────┘
+            chat      │                       │   image gen
+        (OpenAI API)  │                       │  (ComfyUI API)
+                      ▼                       ▼
+        ┌─────────────────────────┐   ┌───────────────────────────┐
+        │ gemma-4-12b   :8069     │   │ ComfyUI        :8188       │
+        │ llama.cpp               │   │ Ideogram-4 fp8 workflow    │
+        │ GPU 1  ·  ~14 GB        │   │ GPU 0  ·  ~18.5 GB @1024²  │
+        └────────────┬────────────┘   └─────────────┬─────────────┘
+                     │  (also routed via            │  loads from
+              LiteLLM :4000 gateway —               ▼
+              + the rest of the LLM      models/{diffusion_models,
+              catalog when their gpu-      text_encoders, vae}
+              mode is up)                  (Ideogram-4 fp8 set, ~27 GB)
+```
+
+- **Two GPUs, concurrent.** Validated live: image gen ~18–22 GB on **GPU 0** *and* the chat
+  model ~14 GB on **GPU 1** at the same time — sampled during a real generation.
+- **Open WebUI** owns the UX: chat goes to a text model; the 🖼️ button POSTs the prompt to
+  ComfyUI's API and pulls back the image.
+- **Chat routing.** By default Open WebUI talks **directly** to gemma-4-12b (`:8069`) — a clean
+  picker that only shows the model that's actually live in image-studio mode. gemma-4-12b is
+  **also** registered on the **LiteLLM gateway** (`:4000`) alongside the full LLM catalog, so
+  API clients / `benchlocal` can reach it the same way as every other model (the catalog's big
+  models only respond when their own `gpu-mode` is up — they're GPU-mutex with ComfyUI).
+- **ComfyUI** is a **fixed Docker service** (`services/comfyui`), pinned to a known-good ComfyUI
+  commit; it lazy-loads the Ideogram-4 weights into VRAM only *during* a generation.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -24,10 +63,23 @@ stack up via `gpu-mode image-studio`. Then open:
 - **Open WebUI** → `http://<your-host>:8080` — start here (chat + 🖼️ image button)
 - **ComfyUI** → `http://<your-host>:8188` — full node-graph control
 
+### First run
+
+1. **Create your account.** Open the Open WebUI URL and **sign up** — the *first* account
+   created becomes the **admin**. (The setup script doesn't pre-set credentials; you choose
+   them here. There's no hardcoded secret — Open WebUI generates its own per deployment.)
+2. **Chat.** Pick **`gemma-4-12b…`** in the model selector (top of the chat) and talk to it.
+3. **Generate an image.** Send a prompt, then click the **🖼️ image icon** on the assistant's
+   reply — it renders via Ideogram-4 on ComfyUI and appears inline. Image generation is
+   **already enabled and wired** (the setup sets `ENABLE_IMAGE_GENERATION` + the ComfyUI
+   backend); you can inspect/tweak it under **Admin → Settings → Images** (steps, size, CFG).
+
 > First image after a cold ComfyUI takes ~2 min (it loads ~20 GB of weights). Warm
 > generations are ~70 s at 1024².
 
-Skip flags: `SKIP_DOWNLOAD=1` (weights already present), `SKIP_BUILD=1` (image already built).
+The script asks for confirmation before the heavy build/download; pass `--yes` (or `CI=1`)
+to skip the prompt. Skip flags: `SKIP_DOWNLOAD=1` (weights already present),
+`SKIP_BUILD=1` (image already built).
 
 ---
 
@@ -79,9 +131,16 @@ than native 2048²).
 ## Chat model
 
 Default is **gemma-4-12b** on the spare GPU (`:8069`), so chat and image gen run at the
-same time. To use your full LLM catalog instead, point Open WebUI at LiteLLM — see the
-commented `OPENAI_API_BASE_URL` block in `services/openwebui/docker-compose.yml`. (LiteLLM's
-larger models are GPU-mutex with ComfyUI, so you'd lose simultaneous image gen.)
+same time. Open WebUI points **directly** at it — a clean picker showing only the model
+that's actually live in image-studio mode.
+
+It's **also** registered on the **LiteLLM gateway** (`:4000`, `model_name: gemma-4-12b`) next
+to the rest of the catalog, so API clients reach it the same way as every other model. To
+make Open WebUI itself route through LiteLLM (and see the whole catalog), swap to the
+commented `OPENAI_API_BASE_URL` block in `services/openwebui/docker-compose.yml` — but note
+LiteLLM's *larger* models are GPU-mutex with ComfyUI, so they only respond when their own
+`gpu-mode` is up (you'd see them in the picker but they'd error in image-studio mode). That's
+exactly why the bundle defaults to gemma-direct.
 
 ### Single-GPU
 
@@ -114,9 +173,13 @@ installs requirements on first run. Tail it: `sudo docker logs -f comfyui`.
 
 - Image model: Ideogram-4 fp8 (`services/comfyui/download_ideogram4.sh`) — two transformers
   + Qwen3-VL-8B text encoder + flux2 VAE, in the ComfyUI models tree.
-- ComfyUI HEAD (native Ideogram-4 support) built via `services/comfyui/Dockerfile`.
-- Open WebUI pinned to a tested release, image-gen wired via `services/openwebui/imagegen.env`.
-- Chat: `models/gemma-4-12b/llama-cpp/compose/single/unsloth-q8kxl/base.yml` on the spare GPU.
+- ComfyUI built via `services/comfyui/Dockerfile`, **pinned to a known-good commit** (native
+  Ideogram-4 support; `COMFYUI_REF=HEAD` to float). Entrypoint is mounted so the pin applies
+  on `up` without a rebuild.
+- Open WebUI pinned to `v0.9.6`; image-gen wired via `services/openwebui/imagegen.env`; secret
+  key auto-generated per deployment.
+- Chat: `models/gemma-4-12b/llama-cpp/compose/single/unsloth-q8kxl/base.yml` on the spare GPU,
+  also routed on LiteLLM (`services/litellm/config.yaml`).
 
 > **Video & audio generation** are planned follow-ons (this page will gain `video-studio` /
 > `audio-studio` sections as they land).
