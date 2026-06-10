@@ -10,6 +10,7 @@
 #   bash scripts/switch.sh <variant>            # switch + tail until ready
 #   bash scripts/switch.sh <variant> --no-wait  # switch and return immediately
 #   bash scripts/switch.sh --force <variant>    # skip hardware/free-VRAM preflight
+#   bash scripts/switch.sh --owui <variant>     # after ready, also register it in Open WebUI (no-op if OWUI down)
 #   bash scripts/switch.sh --list               # actionable variants on THIS machine (deprecated hidden) + defaults
 #   bash scripts/switch.sh --list --all         # every variant — all GPU counts + deprecated
 #   bash scripts/switch.sh --list-all           # alias for --list --all
@@ -767,6 +768,7 @@ FORCE="${FORCE:-0}"
 VARIANT=""
 LIST_REQUESTED=0
 LIST_ALL=0
+OWUI_REGISTER=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage ;;
@@ -787,6 +789,7 @@ while [[ $# -gt 0 ]]; do
     --down) down_running; exit 0 ;;
     --no-wait) WAIT=0 ;;
     --force) FORCE=1 ;;
+    --owui) OWUI_REGISTER=1 ;;
     --*) echo "Unknown flag: $1"; exit 1 ;;
     *)
       if [[ -n "$VARIANT" ]]; then
@@ -817,4 +820,10 @@ resolve_ready_url "${VARIANT}"
 down_running
 up_variant "${VARIANT}"
 [[ $WAIT -eq 1 ]] && wait_ready
+# --owui: optionally surface the just-launched endpoint in Open WebUI's model
+# picker (no-op if OWUI isn't running). Only meaningful once the server is ready.
+if [[ "$OWUI_REGISTER" -eq 1 && "$WAIT" -eq 1 ]]; then
+  _owui_port="${READY_URL##*:}"; _owui_port="${_owui_port%%/*}"
+  bash "$(dirname "$0")/lib/owui-register.sh" "$_owui_port" || true
+fi
 echo "[switch] done. Try:  curl -s ${READY_URL%/v1/models}/v1/models | jq ."
