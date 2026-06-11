@@ -2,7 +2,7 @@
 # never touches the GPUs) generates a voiceover; a layer-aware ffmpeg mixdown ducks the clip's
 # native LTX/Sulphur ambient under the voice and loudness-normalizes. The pipe POSTs /narrate
 # after the video render. No GPU → safe always-on alongside the gallery/orchestrator.
-# See docs/VIDEO_STUDIO.md "Integrated audio".
+# See docs/ai-studio/video.md "Integrated audio".
 services:
   studio-tts:
     build: .

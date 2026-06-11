@@ -7,7 +7,7 @@
 # the user's intent before it reaches the diffusion model. The uncensored capability is
 # a property of the model weights, not this infra — point `chat_model`/`chat_url` at a
 # stock model (e.g. gemma-4-12b) if you'd rather craft through an aligned model; the
-# Sulphur DiT still renders uncensored. See docs/VIDEO_STUDIO.md.
+# Sulphur DiT still renders uncensored. See docs/ai-studio/video.md.
 #
 # Pinned to one GPU (default 0) so it coexists with the video model on the other card.
 services:

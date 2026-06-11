@@ -155,7 +155,7 @@ stop_comfyui() {
 }
 
 # Video-studio sidecars: the always-on media gallery (:8189) and the prompt
-# "director" LLM (:8090, GPU0). See services/studio/ + docs/VIDEO_STUDIO.md.
+# "director" LLM (:8090, GPU0). See services/studio/ + docs/ai-studio/video.md.
 start_studio_gallery() {
     printf "  ${GREEN}▲${NC} Starting studio-gallery (:8189)..."
     compose_at "$COMPOSE_BASE/studio/gallery" "up -d" && echo "done" || echo "failed"
@@ -643,7 +643,7 @@ mode_video_studio() {
     echo -e "  Gallery:     http://192.168.86.33:8189   (all generated media; survives ComfyUI down)"
     echo -e "  ComfyUI:     http://192.168.86.33:8188   (full node graph / control)"
     echo -e "${YELLOW}First ComfyUI boot can take a few min (clones + node deps). The 22B DiT splits across both 3090s (DisTorch).${NC}"
-    echo -e "${YELLOW}GPU-mutex with the dual-card LLMs. Clips default ~10s, cap ~15s — see docs/VIDEO_STUDIO.md.${NC}"
+    echo -e "${YELLOW}GPU-mutex with the dual-card LLMs. Clips default ~10s, cap ~15s — see docs/ai-studio/video.md.${NC}"
     echo -e "${YELLOW}Tail: sudo docker logs -f comfyui${NC}"
 }
 
@@ -667,7 +667,7 @@ mode_image_studio() {
         start_comfyui_gpu0
         start_gemma_12b_chat
         start_studio_director       # qwen director on GPU0 (~4.6GB) — crafts Ideogram JSON for the image shim
-        start_studio_image_shim     # native 🖼️ button -> clean Ideogram images (see docs/VIDEO_STUDIO.md)
+        start_studio_image_shim     # native 🖼️ button -> clean Ideogram images (see docs/ai-studio/video.md)
     fi
     start_service openwebui
     start_service litellm

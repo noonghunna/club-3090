@@ -5,7 +5,7 @@ Both lanes are SINGLE-STAGE (8-step cfg=1) built from the proven clean LTX-disti
 Sulphur is a dev-based fine-tune, so the distill LoRA is spliced onto its base sampler to give
 the same single-stage behaviour. The old 2-stage spatial-upscaler/refine path was DROPPED — on
 2x 3090 it injected a diamond-lattice mesh artifact over every Sulphur frame (the single-stage
-distilled path is clean; the 2-stage dev path is the bug). See docs/VIDEO_STUDIO.md.
+distilled path is clean; the 2-stage dev path is the bug). See docs/ai-studio/video.md.
 
 Run `python3 build_studio_pipe.py` → writes studio_pipe.py next to it; install that as an
 Open WebUI Function (Admin → Functions → +). See services/studio/README.md.

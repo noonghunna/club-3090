@@ -1,7 +1,7 @@
 # Studio orchestrator — the in-chat "60 s+" engine. The OWUI Studio pipe POSTs a long
 # request here; this renders the segment chain via ComfyUI, ffmpeg-concatenates into one
 # clip in the output dir (gallery-served), and reports progress. No GPU (ComfyUI does the
-# work) → safe to leave always-on alongside the gallery. See docs/VIDEO_STUDIO.md.
+# work) → safe to leave always-on alongside the gallery. See docs/ai-studio/video.md.
 services:
   studio-orchestrator:
     build: .

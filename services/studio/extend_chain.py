@@ -5,7 +5,7 @@ seg1 = text->video; seg2..N = image->video conditioned on the PREVIOUS segment's
 frame; then ffmpeg-concat into one video. Requires host ffmpeg + read access to ComfyUI's
 output dir, so it runs on the host (not inside the OWUI pipe). Validated on 2x 3090: joins
 are seamless for slow/ambient scenes (fast action may show a slight velocity reset at a
-cut — native LTX temporal-extend would smooth that; future work). See docs/VIDEO_STUDIO.md.
+cut — native LTX temporal-extend would smooth that; future work). See docs/ai-studio/video.md.
 
 Env: COMFYUI_URL (default http://localhost:8188) · COMFYUI_OUTPUT_DIR (default
 /mnt/models/comfyui/output). Reads the workflows from the sibling studio_pipe.py.
