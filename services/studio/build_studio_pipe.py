@@ -17,6 +17,7 @@ TEMPLATE = os.path.join(_HERE, 'workflows', 'ltx_distilled_distorch.json')   # v
 IMAGE_TEMPLATE = os.path.join(_HERE, 'workflows', 'ideogram4.json')          # validated Ideogram-4 fp8 graph (image, GPU0 single-device)
 CHROMA_TEMPLATE = os.path.join(_HERE, 'workflows', 'chroma1_hd.json')         # Chroma1-HD fp8 graph (uncensored image, GPU0 single-device, natural-language prompt)
 MUSIC_TEMPLATE = os.path.join(_HERE, 'workflows', 'ace_step_music.json')      # ACE-Step v1 3.5B graph (music/song, GPU0 ~8GB; tags + lyrics, seconds-duration)
+SFX_TEMPLATE = os.path.join(_HERE, 'workflows', 'stable_audio_sfx.json')      # Stable Audio Open 1.0 graph (SFX/ambient/sound, GPU0; natural-language, <=47s)
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
 def build(dit, audio_vae, video_vae, connectors, width, height, frames=121, lora=None):
@@ -71,6 +72,8 @@ WF = {
     # Music lane: ACE-Step v1 3.5B (text->music/song). Tags (style) + lyrics or [instrumental],
     # seconds-duration. Single-device GPU0 (~8GB) — a lane, not a separate mode (it's light enough).
     "music": json.load(open(MUSIC_TEMPLATE)),
+    # SFX lane: Stable Audio Open 1.0 (text->sound/SFX/ambient). Natural-language, <=47s. GPU0.
+    "sfx": json.load(open(SFX_TEMPLATE)),
 }
 WF_JSON = json.dumps(WF)
 
@@ -78,9 +81,9 @@ PIPE = r'''
 """
 title: Studio (text/image -> video · image · music)
 author: club-3090
-description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: Ideogram-4 (design/logo/photo) or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). Refine anytime by just saying what to change.
+description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: Ideogram-4 (design/logo/photo) or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.10.0
+version: 0.11.0
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
 #  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
@@ -97,6 +100,7 @@ version: 0.10.0
 #    Both capped at image_max_edge (1024) so they coexist with the director on GPU0 (2048^2 = OOM).
 #  Music lane: ace-step = ACE-Step v1 3.5B (text->music/song). Tags + lyrics/[instrumental],
 #    seconds-duration; single-device GPU0 (~8GB), 50-step euler, cfg 5 — a lane, not a mode.
+#  SFX lane: sfx = Stable Audio Open 1.0 (text->sound/SFX/ambient, <=47s). GPU0, natural-language.
 #  Director: qwen3.5-4b-uncensored @ :8090 (GPU0); falls back to raw prompt if down.
 # ────────────────────────────────────────────────────────────────────────────────
 import json, time, base64, re, math, urllib.request, urllib.parse, asyncio
@@ -127,6 +131,8 @@ class Pipe:
         music_seconds: float = Field(default=60.0, description="Music lane (ACE-Step) default length in seconds when no duration is asked. Override per request ('a 30-second …').")
         music_steps: int = Field(default=50, description="ACE-Step sampler steps.")
         music_cfg: float = Field(default=5.0, description="ACE-Step CFG scale.")
+        sfx_seconds: float = Field(default=10.0, description="SFX lane (Stable Audio) default length in seconds (hard-capped at 47 — the model's max).")
+        sfx_steps: int = Field(default=50, description="Stable Audio sampler steps.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -138,6 +144,7 @@ class Pipe:
             {"id": "image", "name": "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / art)"},
             {"id": "chroma", "name": "\U0001F513 Studio · Image (Chroma · uncensored)"},
             {"id": "music", "name": "\U0001F3B5 Studio · Music (ACE-Step · songs + instrumentals)"},
+            {"id": "sfx", "name": "\U0001F50A Studio · SFX (Stable Audio · sound effects + ambient)"},
         ]
 
     def _extract_image(self, body):
@@ -237,6 +244,16 @@ class Pipe:
         "Keep tags concrete and production-oriented. Output ONLY the JSON object."
     )
 
+    # Stable Audio Open takes a natural-language SOUND description (SFX / ambient / foley / texture).
+    DIRECTOR_SFX_SYS = (
+        "You are a sound designer writing prompts for the Stable Audio model, which generates sound "
+        "effects, ambiences, and textures from a natural-language description. Turn the user's idea "
+        "into ONE concise, concrete sound description — name the source, its materials/character, the "
+        "acoustic space (close/distant, indoor/outdoor, reverb), and any motion or layering. Keep it a "
+        "single line of comma-led descriptors (this is sound, not music or speech). "
+        "Output ONLY the final sound prompt — no preamble, no quotes."
+    )
+
     def _min_caption(self, text):
         # Last-resort fallback when the director's JSON is unusable. Ideogram-4 blocks SPARSE
         # captions: empty color_palette / empty elements -> "Image blocked by safety filter"
@@ -305,11 +322,11 @@ class Pipe:
     def _enhance(self, user_prompt, i2v, prior_spec=None, kind="video"):
         # kind: "video" (LTX/Sulphur) · "image" (Ideogram JSON) · "chroma" (prose) · "music" (ACE-Step JSON)
         sys = {"image": self.DIRECTOR_IMG_SYS, "chroma": self.DIRECTOR_IMG_PROSE_SYS,
-               "music": self.DIRECTOR_MUSIC_SYS}.get(kind, self.DIRECTOR_SYS)
+               "music": self.DIRECTOR_MUSIC_SYS, "sfx": self.DIRECTOR_SFX_SYS}.get(kind, self.DIRECTOR_SYS)
         if i2v and kind == "video":
             sys += (" The user attached an image to animate — describe how it should MOVE "
                     "(motion, camera, ambient sound); do not re-describe the still image.")
-        noun = {"video": "video", "music": "music"}.get(kind, "image")
+        noun = {"video": "video", "music": "music", "sfx": "sound"}.get(kind, "image")
         msgs = [{"role": "system", "content": sys}]
         if prior_spec:
             msgs.append({"role": "user", "content":
@@ -446,6 +463,14 @@ class Pipe:
         wf["ksampler"]["inputs"]["seed"] = seed
         return self._await_output(self._submit(wf), "audio")
 
+    def _comfy_sfx(self, prompt_text, seconds, steps, seed):
+        wf = json.loads(json.dumps(WORKFLOWS["sfx"]))
+        wf["pos"]["inputs"]["text"] = prompt_text
+        wf["latent"]["inputs"]["seconds"] = float(seconds)
+        wf["ksampler"]["inputs"]["steps"] = steps
+        wf["ksampler"]["inputs"]["seed"] = seed
+        return self._await_output(self._submit(wf), "audio")
+
     async def pipe(self, body, __event_emitter__=None):
         async def status(msg, done=False):
             if __event_emitter__:
@@ -453,6 +478,8 @@ class Pipe:
         model = str(body.get("model", ""))
         if "music" in model:
             lane = "music"
+        elif "sfx" in model:
+            lane = "sfx"
         elif "chroma" in model:
             lane = "chroma"
         elif "image" in model:
@@ -462,8 +489,50 @@ class Pipe:
         else:
             lane = "ltx"
         label = {"image": "Image (Ideogram-4)", "chroma": "Image · Chroma (uncensored)",
-                 "music": "Music (ACE-Step)", "sulphur": "Sulphur (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
+                 "music": "Music (ACE-Step)", "sfx": "SFX (Stable Audio)",
+                 "sulphur": "Sulphur (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
         loop = asyncio.get_event_loop()
+
+        # ── SFX LANE (Stable Audio · natural-language sound · <=47s) ──────────────────────────────
+        if lane == "sfx":
+            up = ""
+            for m in reversed(body.get("messages", [])):
+                if m.get("role") == "user":
+                    c = m.get("content")
+                    up = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
+                          if isinstance(c, list) else (c or "").strip())
+                    break
+            if not up:
+                return "Describe a sound — e.g. “rain on a tin roof”, “sci-fi door whoosh”, “forest ambience with birds”."
+            prior_spec = self._prior_spec(body)
+            secs = min(47.0, float(self._target_seconds(up) or self.valves.sfx_seconds))
+            crafted = up
+            if self.valves.enhance:
+                await status("\U0001F39B️ Sound designer crafting…")
+                try:
+                    crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, "sfx")
+                except Exception:
+                    crafted = up
+            prompt_used = crafted if crafted.strip() else up
+            seed = int(time.time() * 1000) % 2147483647
+            await status("\U0001F50A Generating ~" + str(int(secs)) + "s on Stable Audio…")
+            try:
+                fn, sub = await loop.run_in_executor(None, self._comfy_sfx, prompt_used, secs, int(self.valves.sfx_steps), seed)
+            except Exception as e:
+                await status("Failed", True)
+                return "⚠️ Sound generation failed: " + str(e)
+            await status("Done", True)
+            if not fn:
+                return "Generation finished but no audio output was found."
+            base = self.valves.browser_base.rstrip("/")
+            url = base + "/" + ((sub + "/") if sub else "") + fn
+            marker = "<!--SPEC:" + base64.b64encode(prompt_used.encode()).decode() + "-->"
+            return ("**\U0001F50A " + label + " · ~" + str(int(secs)) + "s**\n\n"
+                    "**Prompt used:** " + prompt_used + "\n\n"
+                    "\U0001F3A7 **[Open / download the sound](" + url + ")**\n\n"
+                    "_Want changes? Just say what to tweak — e.g. “more distant”, “add reverb”, "
+                    "“heavier rain” — and I’ll re-craft and regenerate._ "
+                    "_(Browse all media: " + base + "/ )_" + marker)
 
         # ── MUSIC LANE (ACE-Step · tags + lyrics/[instrumental] · seconds-duration) ───────────────
         if lane == "music":
@@ -679,4 +748,4 @@ class Pipe:
 '''.replace('__WF_JSON__', WF_JSON)
 
 open(OUT_PATH, 'w').write(PIPE)
-print("wrote %s (%d bytes; 7 workflows (video x2 + image x2 + music) + narration)" % (OUT_PATH, len(PIPE)))
+print("wrote %s (%d bytes; 8 workflows (video x2 + image x2 + music + sfx) + narration)" % (OUT_PATH, len(PIPE)))

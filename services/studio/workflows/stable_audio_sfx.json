@@ -1,0 +1,10 @@
+{
+  "ckpt":     {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "stable-audio-open-1.0.safetensors"}},
+  "clip":     {"class_type": "CLIPLoader",             "inputs": {"clip_name": "t5-base.safetensors", "type": "stable_audio", "device": "default"}},
+  "pos":      {"class_type": "CLIPTextEncode",         "inputs": {"text": "placeholder", "clip": ["clip", 0]}},
+  "neg":      {"class_type": "CLIPTextEncode",         "inputs": {"text": "", "clip": ["clip", 0]}},
+  "latent":   {"class_type": "EmptyLatentAudio",       "inputs": {"seconds": 10.0, "batch_size": 1}},
+  "ksampler": {"class_type": "KSampler",               "inputs": {"model": ["ckpt", 0], "positive": ["pos", 0], "negative": ["neg", 0], "latent_image": ["latent", 0], "seed": 0, "steps": 50, "cfg": 4.98, "sampler_name": "dpmpp_3m_sde_gpu", "scheduler": "exponential", "denoise": 1.0}},
+  "decode":   {"class_type": "VAEDecodeAudio",         "inputs": {"samples": ["ksampler", 0], "vae": ["ckpt", 2]}},
+  "save":     {"class_type": "SaveAudioMP3",           "inputs": {"audio": ["decode", 0], "filename_prefix": "studio_sfx", "quality": "V0"}}
+}

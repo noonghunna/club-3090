@@ -156,7 +156,7 @@ moment; use a longer duration (more segments) for a scene that needs to evolve.
 | **Audio** | yes — LTX-2.3 generates synced ambient audio |
 | **Resolution** | Sulphur 1280×720 · LTX 768×512 (set in the workflow) |
 | **Length** | default ~10 s; see the ceiling below |
-| **Lanes** | `🎬 LTX-2.3` (video+audio) · `🔓 Sulphur` (uncensored video) · `🖼️ Image` (Ideogram-4) · `🔓 Image` (Chroma, uncensored) · `🎵 Music` (ACE-Step, songs+instrumentals) — see *Image lanes* / *Music lane* |
+| **Lanes** | `🎬 LTX-2.3` · `🔓 Sulphur` (video) · `🖼️ Image` (Ideogram-4) · `🔓 Image` (Chroma) · `🎵 Music` (ACE-Step) · `🔊 SFX` (Stable Audio) — see *Image lanes* / *Music lane* / *SFX lane* |
 
 ### Length ceiling (measured on 2× 3090, 1280×720, frames = 24·seconds + 1)
 
@@ -250,8 +250,23 @@ path above).
   with the director on GPU0), not a separate mutex mode. ~6–16 s for a short clip on this rig.
   Output is an `.mp3` in the gallery. Uses the bundled ACE-Step ComfyUI nodes.
 
-> First piece of the broader audio-studio (music now; long-form TTS / SFX / a full multi-layer mix
-> reusing the integrated-voices mixdown are the planned extensions).
+> First pieces of the broader audio-studio (music + SFX now; long-form TTS / a full multi-layer
+> mix reusing the integrated-voices mixdown are the planned extensions).
+
+## SFX lane (Stable Audio)
+
+The **🔊 Studio · SFX** lane generates **sound effects, ambiences, and textures** from a text
+description on **Stable Audio Open 1.0** — distinct from the Music lane (which is for
+songs/instrumentals).
+
+- **Ask for it:** pick the 🔊 lane and describe a sound — *"rain on a tin roof"*, *"sci-fi door
+  whoosh"*, *"forest ambience with distant birds"*. Add a length (*"a 5-second…"*) or it defaults
+  to ~10 s. **Capped at 47 s** (the model's max).
+- **Director → sound prompt:** the director turns your idea into a concrete sound description
+  (source, materials, acoustic space, motion). Refine like the rest (*"more distant"*, *"add
+  reverb"*, *"heavier rain"*).
+- **Single-device GPU0** — a lane like music. Output is an `.mp3` in the gallery. Reuses the
+  bundled Stable Audio ComfyUI nodes (Stable Audio Open 1.0 + a T5-base encoder).
 
 ## Image lanes (Ideogram-4 design · Chroma uncensored)
 
@@ -357,6 +372,8 @@ Director GGUF (`Qwen3.5-4B-Uncensored-…`) → `/mnt/models/huggingface/qwen3.5
 Narration TTS (CPU): `kokoro-v1.0.onnx` + `voices-v1.0.bin` (kokoro-onnx GitHub release / [onnx-community/Kokoro-82M-v1.0-ONNX](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX)) → `/mnt/models/comfyui/models/tts/kokoro/`.
 
 Music: `ace_step_v1_3.5b.safetensors` (ACE-Step v1 3.5B) → `models/checkpoints/ace-step-1.5/all_in_one/`.
+
+SFX: `stable-audio-open-1.0.safetensors` (Comfy-Org repackaged) → `models/checkpoints/`; `t5-base.safetensors` → `models/text_encoders/`.
 
 ## On the uncensored models
 
