@@ -1,11 +1,13 @@
-# Video Studio — chat-driven text/image → video on 2× 3090
+# Video Studio — chat-driven text/image → video (+ image) on 2× 3090
 
-Type a rough idea in Open WebUI; a "director" LLM crafts it into a professional cinematic
-prompt; ComfyUI renders it to video (with audio) on **LTX-2.3**. A second lane uses
-**Sulphur** (an uncensored LTX-2.3 fine-tune). Runs on the same 2× RTX 3090 box as the
-rest of the stack — it's GPU-mutually-exclusive with the dual-card LLMs.
+Type a rough idea in Open WebUI; a "director" LLM crafts it into a professional prompt;
+ComfyUI renders it. Three lanes share one pipe and one director: **LTX-2.3** (video+audio),
+**Sulphur** (an uncensored LTX-2.3 fine-tune), and **Ideogram-4** (image: graphic design /
+logo / photo / art). Runs on the same 2× RTX 3090 box as the rest of the stack — video is
+GPU-mutually-exclusive with the dual-card LLMs; the image lane runs on GPU0 in either mode.
 
-This is the **P2 / video** sibling of [IMAGE_STUDIO.md](IMAGE_STUDIO.md) (Ideogram-4 stills).
+This is the **P2 / video** sibling of [IMAGE_STUDIO.md](IMAGE_STUDIO.md); the **Image lane**
+section below folds Ideogram-4 stills into the same chat-driven, director-crafted flow.
 
 ---
 
@@ -17,7 +19,7 @@ This is the **P2 / video** sibling of [IMAGE_STUDIO.md](IMAGE_STUDIO.md) (Ideogr
                              ▼
               ┌──────────────────────────────────────────────┐
               │  Open WebUI   :8080   (the front-end)         │
-              │    lanes:   🎬 Studio · LTX   ·   🔓 Sulphur   │
+              │  lanes: 🎬 LTX · 🔓 Sulphur · 🖼️ Image (Ideogram)│
               └───────┬────────────────────────────┬──────────┘
                   (1) │ craft the prompt        (2) │ render
                       ▼                             ▼
@@ -45,8 +47,9 @@ This is the **P2 / video** sibling of [IMAGE_STUDIO.md](IMAGE_STUDIO.md) (Ideogr
 ```
 
 - **Studio pipe** (`services/studio/build_studio_pipe.py` → `studio_pipe.py`): the OWUI
-  Function. Two lanes (LTX, Sulphur) × two modes (text→video, image→video, auto-detected
-  from whether you attach an image).
+  Function. Video lanes (LTX, Sulphur) × two modes (text→video, image→video, auto-detected
+  from whether you attach an image), plus an **Image lane** (Ideogram-4 stills) — see the
+  *Image lane* section. One director, one gallery across all lanes.
 - **Director** (`services/studio/enhancer/`): a small uncensored LLM that turns a casual
   line into a cinematic spec. Optional — falls back to your raw prompt if it's down.
 - **ComfyUI** (`services/comfyui/`): the renderer. The 22B DiT is split across both cards
@@ -151,7 +154,7 @@ moment; use a longer duration (more segments) for a scene that needs to evolve.
 | **Audio** | yes — LTX-2.3 generates synced ambient audio |
 | **Resolution** | Sulphur 1280×720 · LTX 768×512 (set in the workflow) |
 | **Length** | default ~10 s; see the ceiling below |
-| **Lanes** | `🎬 LTX-2.3` (stock, video+audio) · `🔓 Sulphur` (uncensored) |
+| **Lanes** | `🎬 LTX-2.3` (stock, video+audio) · `🔓 Sulphur` (uncensored video) · `🖼️ Image` (Ideogram-4 stills — see *Image lane*) |
 
 ### Length ceiling (measured on 2× 3090, 1280×720, frames = 24·seconds + 1)
 
@@ -206,13 +209,45 @@ mesh** over every frame. The fix — and what the pipe ships — is **single-sta
 the distilled LoRA onto the base sampler, 8 steps, cfg 1, no upscaler. Clean output. The
 workflow (`workflows/ltx_distilled_distorch.json`) already encodes this.
 
+## Image lane (Ideogram-4 · graphic design / logo / photo / art)
+
+The **🖼️ Studio · Image** lane shares the pipe and the director, but renders a **still** on
+**Ideogram-4 fp8** instead of a video. It's single-device on **GPU0** (~18.5 GB @1024²), so
+it runs in **either** gpu-mode — including alongside a video render in `video-studio` (the
+DiT's weights sit on GPU1, GPU0 has room for the image + director). **No mode switch is
+needed to make an image.**
+
+**The director crafts a JSON caption, not prose.** Ideogram-4 is trained on **structured
+JSON captions** (a `high_level_description`, a `style_description` block, and a
+`compositional_deconstruction` with background + per-object elements). Hand it off-schema
+plain text and it denoises to a gray **"Image blocked by safety filter"** placeholder — its
+built-in fallback, *not* a real safety judgement (it fires on a plain "a red apple"). So the
+image director outputs the JSON caption; the pipe validates it and falls back to wrapping
+your text in a minimal caption if needed. Measured on this rig: plain text → 100% blocked;
+the same prompt as a JSON caption → clean render (~80 s warm @1024²).
+
+> ⚠️ **Open WebUI's native 🖼️ image button has the same trap.** It templates your plain text
+> straight into the Ideogram-4 workflow (`services/openwebui/imagegen.env`), so it hits the
+> "blocked by safety filter" placeholder. Use the **Studio · Image lane** (which crafts the
+> JSON) instead; fixing the native button needs a JSON-wrapping step — tracked in *Follow-ups*.
+
+The lane is **category-aware**: the director infers logo / poster / UI-mockup / photo /
+illustration and fills the JSON with the levers that matter (logos → vector/flat/negative
+space/1–2 colours; photos → camera + lens, depth of field; etc.). Want visible text/lettering?
+Ask for it in quotes. Refine the same way as video — *"monochrome"*, *"tighter crop"*, *"flat
+vector style"* — it evolves the prior caption. Defaults 1024×1024, 20 steps; the long edge is
+capped at `image_max_edge` (1024) so the image gen coexists with the director on GPU0 (2048²
++ director = OOM; raise the cap and stop the director for 2K stills).
+
 ## VRAM / GPU split
 
 Video and the dual-card LLMs are **mutually exclusive** (both want the GPUs). In video
 mode: GPU1 holds the 22B DiT weights (~22 GB, DisTorch donor); GPU0 does compute (~7–14 GB)
-**and** hosts the ~4 GB director — they coexist comfortably on one card. The 🖼️ Ideogram
-image button (see IMAGE_STUDIO.md) also uses this ComfyUI but will swap the video model out
-of VRAM, so alternating image/video costs a model reload each switch.
+**and** hosts the ~4 GB director — they coexist comfortably on one card. The **image lane**
+also renders on GPU0 (~18.5 GB @1024² + the ~4 GB director ≈ 23 GB — fits; 2048² would OOM
+with the director resident). Because ComfyUI holds both cards in `video-studio`, you can do
+**video and ≤1024² image in the same mode with no switch** — only `image-studio`'s
+gemma-12b chat or a 2048² still needs a `gpu-mode` change.
 
 ## Models (obtain separately → `/mnt/models/comfyui/models/...`)
 
@@ -241,6 +276,12 @@ abliterated.)
 - **Native temporal-extend** for smoother joins on fast-motion scenes (vs last-frame I2V).
 - **Image→video long clips**: chaining currently starts from text (seg 1 = t2v); extend an
   attached image past 15 s is future.
-- **Uncensored stills**: a `frames=1` "image" intent on the Studio lane (the 🖼️ button uses
-  Ideogram-4, which is aligned).
+- **Fix Open WebUI's native 🖼️ image button**: it sends plain text to Ideogram-4 → the
+  "blocked by safety filter" placeholder (see *Image lane*). Needs a JSON-caption wrapping
+  step (a fixed wrapper in `imagegen.env`'s workflow, or routing the button through the
+  director). Until then, point users at the **Studio · Image** lane.
+- **Uncensored stills**: Ideogram-4 is safety-trained (and the lane crafts to its schema), so
+  the image lane is *aligned*. Uncensored *motion* is covered by the Sulphur video lane;
+  uncensored *stills* would need a different image model (e.g. a `frames=1` render on an
+  uncensored DiT) — not wired.
 - Audio cross-fade at segment joins; a richer gallery (thumbnail grid vs file listing).

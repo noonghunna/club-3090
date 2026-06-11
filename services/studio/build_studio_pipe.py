@@ -13,7 +13,8 @@ Open WebUI Function (Admin → Functions → +). See services/studio/README.md.
 import json, os
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE = os.path.join(_HERE, 'workflows', 'ltx_distilled_distorch.json')   # validated clean single-stage graph
+TEMPLATE = os.path.join(_HERE, 'workflows', 'ltx_distilled_distorch.json')   # validated clean single-stage graph (video)
+IMAGE_TEMPLATE = os.path.join(_HERE, 'workflows', 'ideogram4.json')          # validated Ideogram-4 fp8 graph (image, GPU0 single-device)
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
 def build(dit, audio_vae, video_vae, connectors, width, height, frames=121, lora=None):
@@ -59,25 +60,31 @@ WF = {
     "ltx-i2v": i2v_insert(ltx_t2v, 768),
     "sulphur-t2v": sul_t2v,
     "sulphur-i2v": i2v_insert(sul_t2v, 1280),
+    # Image lane: Ideogram-4 fp8 (DualModelGuider, native nodes). Single-device GPU0,
+    # coexists with the director on GPU0 at <=1024^2 (2048^2 would OOM — capped in pipe).
+    "image": json.load(open(IMAGE_TEMPLATE)),
 }
 WF_JSON = json.dumps(WF)
 
 PIPE = r'''
 """
-title: Studio (text/image -> video)
+title: Studio (text/image -> video · image)
 author: club-3090
-description: Type a rough idea — the studio director (qwen) crafts it into a professional, artistic cinematic prompt and generates. LTX (video+audio) or Sulphur (uncensored) lane; text->video or attach an image. Refine anytime by just saying what to change.
+description: Type a rough idea — the studio director (qwen) crafts it into a professional, artistic prompt and generates. Video lanes: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image. Image lane: Ideogram-4 (graphic design / logo / photo / art). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.6.0
+version: 0.7.0
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
-#  Lanes:   ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
-#  Render:  SINGLE-STAGE, 8-step, cfg=1 (no 2-stage upscaler — it injects mesh)
-#  Res:     sulphur 1280x720 · ltx 768x512
-#  Frames:  default 241 (=10s @24fps, crisp). Valve range to 361 (=15s, coherent).
-#           HARD-CAPPED at 361 in _comfy — ~481/20s collapses to corrupted output.
-#  Enhancer: qwen3.5-4b-uncensored @ :8090 (GPU0); falls back to raw prompt if down.
-#  VRAM:    weights on GPU1 (DisTorch donor ~21.9GB), compute on GPU0 (~14GB peak).
+#  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
+#    Render:  SINGLE-STAGE, 8-step, cfg=1 (no 2-stage upscaler — it injects mesh)
+#    Res:     sulphur 1280x720 · ltx 768x512
+#    Frames:  default 241 (=10s @24fps, crisp). Valve range to 361 (=15s, coherent).
+#             HARD-CAPPED at 361 in _comfy — ~481/20s collapses to corrupted output.
+#    VRAM:    weights on GPU1 (DisTorch donor ~21.9GB), compute on GPU0 (~14GB peak).
+#  Image lane: image = Ideogram-4 fp8 (DualModelGuider). Single-device GPU0, ~18.5GB @1024^2.
+#    Default 1024x1024, 20 steps; capped at image_max_edge (1024) so it coexists with the
+#    director on GPU0 (2048^2 + director = OOM). Runs in EITHER gpu-mode (ComfyUI has GPU0).
+#  Director: qwen3.5-4b-uncensored @ :8090 (GPU0); falls back to raw prompt if down.
 # ────────────────────────────────────────────────────────────────────────────────
 import json, time, base64, re, math, urllib.request, urllib.parse, asyncio
 from pydantic import BaseModel, Field
@@ -95,6 +102,10 @@ class Pipe:
         frames: int = Field(default=241, description="frames @24fps. 121=5s, 241=10s (default, crisp), 361=15s (max, coherent but softer). HARD-CAPPED at 361: ~481/20s collapses to corrupted output on this rig (measured 2026-06-11).")
         orchestrator_url: str = Field(default="http://host.docker.internal:8190", description="Studio orchestrator for long clips (>15s). Asked to chain ~10s segments into one combined video. If unreachable, long requests fall back to a single capped clip.")
         max_seconds: int = Field(default=120, description="Cap on requested long-clip length (segments = ceil(seconds/10), each ~2.5 min to render).")
+        image_width: int = Field(default=1024, description="Image lane default width (Ideogram-4).")
+        image_height: int = Field(default=1024, description="Image lane default height (Ideogram-4).")
+        image_steps: int = Field(default=20, description="Image lane sampler steps (Ideogram-4).")
+        image_max_edge: int = Field(default=1024, description="Cap on the image long edge. 1024 lets the image gen coexist with the director on GPU0 (~23GB); 2048 would OOM unless the director is stopped first.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -103,6 +114,7 @@ class Pipe:
         return [
             {"id": "ltx", "name": "\U0001F3AC Studio · LTX-2.3 (video+audio · text or image)"},
             {"id": "sulphur", "name": "\U0001F513 Studio · Sulphur (uncensored · text or image)"},
+            {"id": "image", "name": "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / art)"},
         ]
 
     def _extract_image(self, body):
@@ -150,6 +162,58 @@ class Pipe:
         "clip. Output ONLY the final prompt — no preamble, no lists, no quotes."
     )
 
+    # Ideogram-4 is trained on STRUCTURED JSON captions and emits an "Image blocked by
+    # safety filter" placeholder for off-schema (plain-text) input — so the director MUST
+    # output the JSON caption. The art-director job is to translate a casual idea into it.
+    DIRECTOR_IMG_SYS = (
+        "You are an award-winning art director writing prompts for Ideogram-4, which is trained on "
+        "STRUCTURED JSON captions. First silently infer the KIND of image the user wants — "
+        "logo/brandmark, graphic design/poster, UI or product mockup, photograph, or "
+        "illustration/concept art — then output ONE JSON object and NOTHING ELSE (no markdown, no "
+        "code fences, no commentary), with EXACTLY these keys:\n"
+        '{"high_level_description": "<one vivid sentence describing the whole image>", '
+        '"style_description": {"aesthetics": "<style/genre cues for the inferred kind>", '
+        '"lighting": "<lighting>", "photo": "<capture or render detail>", '
+        '"medium": "<e.g. photograph, vector, 3D, gouache>", "color_palette": ["#RRGGBB", "#RRGGBB"]}, '
+        '"compositional_deconstruction": {"background": "<background>", "elements": '
+        '[{"type": "obj", "bbox": [x0, y0, x1, y1], "desc": "<object>", "color_palette": ["#RRGGBB"]}]}}\n'
+        "bbox coordinates are integers in a 0-1024 canvas (top-left origin). Use the levers that matter "
+        "for the inferred kind: logos -> vector/flat/bold negative space/scalable/1-2 colours; posters -> "
+        "layout hierarchy, typographic feel, print palette; product/UI -> realistic materials, studio "
+        "light, neutral background; photos -> camera and lens (e.g. 85mm f/1.4), lighting, depth of field; "
+        "illustration -> medium, line weight, palette, rendering style. If the user wants visible "
+        "text/lettering, put the EXACT words in quotes inside high_level_description and the relevant "
+        "element desc. Add tasteful professional detail the user didn't mention while honouring intent. "
+        "Output ONLY the JSON object."
+    )
+
+    def _min_caption(self, text):
+        # Wrap any plain text in a schema-valid Ideogram-4 caption (so off-schema text never
+        # trips the model's "blocked by safety filter" fallback).
+        return json.dumps({
+            "high_level_description": text,
+            "style_description": {"aesthetics": "clean, professional, high quality",
+                                  "lighting": "balanced natural lighting", "photo": "sharp, high resolution",
+                                  "medium": "digital", "color_palette": []},
+            "compositional_deconstruction": {"background": "simple complementary background", "elements": []},
+        })
+
+    def _coerce_caption(self, s, fallback_text):
+        # Return a valid JSON caption string. Accept the director's JSON (stripping ``` fences);
+        # if it isn't valid schema, wrap the fallback text in a minimal caption.
+        t = (s or "").strip()
+        if t.startswith("```"):
+            t = t.strip("`")
+            t = t[4:] if t[:4].lower() == "json" else t
+            t = t.strip()
+        try:
+            obj = json.loads(t)
+            if isinstance(obj, dict) and obj.get("high_level_description"):
+                return json.dumps(obj), obj.get("high_level_description")
+        except Exception:
+            pass
+        return self._min_caption(fallback_text), fallback_text
+
     def _prior_spec(self, body):
         # Read the crafted prompt the pipe embedded in its most recent reply, so a
         # follow-up message can refine that spec instead of starting from scratch.
@@ -167,24 +231,25 @@ class Pipe:
                     return None
         return None
 
-    def _enhance(self, user_prompt, i2v, prior_spec=None):
-        sys = self.DIRECTOR_SYS
-        if i2v:
+    def _enhance(self, user_prompt, i2v, prior_spec=None, kind="video"):
+        sys = self.DIRECTOR_IMG_SYS if kind == "image" else self.DIRECTOR_SYS
+        if i2v and kind != "image":
             sys += (" The user attached an image to animate — describe how it should MOVE "
                     "(motion, camera, ambient sound); do not re-describe the still image.")
+        noun = "image" if kind == "image" else "video"
         msgs = [{"role": "system", "content": sys}]
         if prior_spec:
             msgs.append({"role": "user", "content":
-                "PREVIOUS video prompt (for context):\n" + prior_spec + "\n\n"
+                "PREVIOUS " + noun + " prompt (for context):\n" + prior_spec + "\n\n"
                 "USER'S NEW MESSAGE: " + user_prompt + "\n\n"
-                "If the new message refines/adjusts the previous video, output an updated full "
+                "If the new message refines/adjusts the previous " + noun + ", output an updated full "
                 "prompt that keeps the previous prompt and applies ONLY the requested change. "
                 "If it is a brand-new idea, ignore the previous prompt and write a fresh one. "
                 "Output ONLY the final prompt."})
         else:
             msgs.append({"role": "user", "content": user_prompt})
         body = json.dumps({"model": self.valves.chat_model, "messages": msgs,
-                           "max_tokens": 320, "temperature": 0.8,
+                           "max_tokens": 700 if kind == "image" else 320, "temperature": 0.7 if kind == "image" else 0.8,
                            "chat_template_kwargs": {"enable_thinking": False}}).encode()
         req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
                                      headers={"Content-Type": "application/json"})
@@ -211,19 +276,18 @@ class Pipe:
         return json.load(urllib.request.urlopen(
             self.valves.orchestrator_url.rstrip("/") + "/job/" + jid, timeout=30))
 
-    def _comfy(self, lane, mode, prompt_text, image_name, frames):
-        wf = json.loads(json.dumps(WORKFLOWS[lane + "-" + mode]))
-        wf["5"]["inputs"]["text"] = prompt_text
-        wf["10"]["inputs"]["value"] = frames
-        if mode == "i2v":
-            wf["100"]["inputs"]["image"] = image_name
+    def _submit(self, wf):
         req = urllib.request.Request(self.valves.comfyui_url + "/prompt",
                                      data=json.dumps({"prompt": wf, "client_id": "owui-studio"}).encode(),
                                      headers={"Content-Type": "application/json"})
         r = json.load(urllib.request.urlopen(req, timeout=60))
         if r.get("node_errors"):
             raise RuntimeError("ComfyUI node_errors: " + json.dumps(r["node_errors"])[:400])
-        pid = r["prompt_id"]; t0 = time.time()
+        return r["prompt_id"]
+
+    def _await_output(self, pid, want):
+        # want="video" -> mp4 ; want="image" -> png/jpg/webp. Returns (filename, subfolder).
+        t0 = time.time()
         while time.time() - t0 < self.valves.timeout_s:
             time.sleep(2)
             h = json.load(urllib.request.urlopen(self.valves.comfyui_url + "/history/" + pid, timeout=30))
@@ -231,21 +295,91 @@ class Pipe:
                 st = h[pid].get("status", {})
                 if st.get("completed"):
                     for node in h[pid].get("outputs", {}).values():
-                        for v in (node.get("gifs") or node.get("videos") or node.get("images") or []):
-                            if str(v.get("filename", "")).endswith(".mp4") or str(v.get("format", "")).startswith("video"):
-                                return v.get("filename"), v.get("subfolder", "")
+                        if want == "video":
+                            for v in (node.get("gifs") or node.get("videos") or node.get("images") or []):
+                                if str(v.get("filename", "")).endswith(".mp4") or str(v.get("format", "")).startswith("video"):
+                                    return v.get("filename"), v.get("subfolder", "")
+                        else:
+                            for v in (node.get("images") or []):
+                                if str(v.get("filename", "")).lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                                    return v.get("filename"), v.get("subfolder", "")
                     return None, None
                 if st.get("status_str") == "error":
                     raise RuntimeError("ComfyUI generation error")
         raise TimeoutError("ComfyUI timed out")
 
+    def _comfy(self, lane, mode, prompt_text, image_name, frames):
+        wf = json.loads(json.dumps(WORKFLOWS[lane + "-" + mode]))
+        wf["5"]["inputs"]["text"] = prompt_text
+        wf["10"]["inputs"]["value"] = frames
+        if mode == "i2v":
+            wf["100"]["inputs"]["image"] = image_name
+        return self._await_output(self._submit(wf), "video")
+
+    def _comfy_image(self, prompt_text, width, height, steps, seed):
+        wf = json.loads(json.dumps(WORKFLOWS["image"]))
+        wf["pos"]["inputs"]["text"] = prompt_text
+        wf["sigmas"]["inputs"]["steps"] = steps
+        wf["sigmas"]["inputs"]["width"] = width
+        wf["sigmas"]["inputs"]["height"] = height
+        wf["latent"]["inputs"]["width"] = width
+        wf["latent"]["inputs"]["height"] = height
+        wf["noise"]["inputs"]["noise_seed"] = seed
+        return self._await_output(self._submit(wf), "image")
+
     async def pipe(self, body, __event_emitter__=None):
         async def status(msg, done=False):
             if __event_emitter__:
                 await __event_emitter__({"type": "status", "data": {"description": msg, "done": done}})
-        lane = "sulphur" if "sulphur" in str(body.get("model", "")) else "ltx"
-        label = "Sulphur (uncensored)" if lane == "sulphur" else "LTX-2.3 (video+audio)"
+        model = str(body.get("model", ""))
+        lane = "image" if "image" in model else ("sulphur" if "sulphur" in model else "ltx")
+        label = {"image": "Image (Ideogram-4)", "sulphur": "Sulphur (uncensored)",
+                 "ltx": "LTX-2.3 (video+audio)"}[lane]
         loop = asyncio.get_event_loop()
+
+        # ── IMAGE LANE (Ideogram-4 · single still · no i2v/duration) ──────────────
+        if lane == "image":
+            up = ""
+            for m in reversed(body.get("messages", [])):
+                if m.get("role") == "user":
+                    c = m.get("content")
+                    up = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
+                          if isinstance(c, list) else (c or "").strip())
+                    break
+            if not up:
+                return "Describe an image to generate — a logo, poster, product shot, photo, or illustration."
+            prior_spec = self._prior_spec(body)
+            crafted = up
+            if self.valves.enhance:
+                await status("\U0001F3A8 Art director crafting the image…")
+                try:
+                    crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, "image")
+                except Exception:
+                    crafted = up
+            # Ideogram-4 needs a JSON caption — coerce the director's output (or wrap plain text).
+            caption_json, human = self._coerce_caption(crafted, up)
+            cap = max(256, int(self.valves.image_max_edge))
+            w = min(int(self.valves.image_width), cap); h = min(int(self.valves.image_height), cap)
+            seed = int(time.time() * 1000) % 2147483647
+            await status("\U0001F5BC️ Rendering image on Ideogram-4… (~1-2 min)")
+            try:
+                fn, sub = await loop.run_in_executor(None, self._comfy_image, caption_json, w, h, int(self.valves.image_steps), seed)
+            except Exception as e:
+                await status("Failed", True)
+                return "⚠️ Image generation failed: " + str(e)
+            await status("Done", True)
+            if not fn:
+                return "Generation finished but no image output was found."
+            base = self.valves.browser_base.rstrip("/")
+            url = base + "/" + ((sub + "/") if sub else "") + fn
+            marker = "<!--SPEC:" + base64.b64encode(caption_json.encode()).decode() + "-->"
+            return ("**\U0001F5BC️ " + label + " · " + str(w) + "x" + str(h) + "**\n\n"
+                    "**Prompt used:** " + human + "\n\n"
+                    "\U0001F5BC️ **[Open / download the image](" + url + ")**\n\n"
+                    "_Want changes? Just say what to tweak — e.g. “monochrome”, “tighter crop”, "
+                    "“flat vector style” — and I’ll re-craft from this and regenerate._ "
+                    "_(Browse all media: " + base + "/ )_" + marker)
+
         data_uri = self._extract_image(body)
         user_prompt = ""
         for m in reversed(body.get("messages", [])):
@@ -343,4 +477,4 @@ class Pipe:
 '''.replace('__WF_JSON__', WF_JSON)
 
 open(OUT_PATH, 'w').write(PIPE)
-print("wrote %s (%d bytes; 4 workflows: ltx/sulphur x t2v/i2v)" % (OUT_PATH, len(PIPE)))
+print("wrote %s (%d bytes; 5 workflows: ltx/sulphur x t2v/i2v + ideogram-4 image)" % (OUT_PATH, len(PIPE)))
