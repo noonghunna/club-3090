@@ -1,0 +1,165 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     DiffusionGemma 26B-A4B — discrete-diffusion LM / dLLM (RedHatAI
+#              FP8-dynamic, compressed-tensors float-quantized)
+#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
+#   Drafter:   none — diffusion LM (block-parallel denoising; AR spec-dec N/A)
+#   KV:        bf16 (pool ~408K tok @ util 0.82, 262K-len)
+#   Vision:    no (text diffusion)
+#   Max ctx:   262144 (NIAH retrieval validated to ~250K)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🧪 Experimental — WORKS on Ampere, but draft-PR + local image + eager-only
+#   Caveats:   Engine is a LOCAL image built from UNMERGED PRs + vendored patches:
+#              base = `vllm-dgemma:pr45163` (nightly + vllm#45163 dgemma overlay;
+#              build via ../../../patches/dgemma-pr45163/Dockerfile) THEN this
+#              compose mounts 3 fix-overlays from ../../../patches/marlin-k-pad/:
+#                • marlin.py + marlin_utils_fp8.py = Codex's Marlin sub-tile-K pad
+#                  (lets fp8 Marlin W8A16 tile DiffusionGemma's K=352/1056 dims
+#                  within Ampere's 99 KB shared mem — the original "fp8 dead on
+#                  Ampere" blocker, now SOLVED).
+#                • diffusion_gemma.py = Codex's TP-vocab soft-embedding fix
+#                  (slice probs to the rank's vocab shard → local-embed matmul →
+#                  TP all-reduce) + Claude's :656 dtype cast (.to(sc_embeds.dtype)).
+#              Runs EAGER-ONLY (TORCHDYNAMO/COMPILE disabled): `_compiled_sample_step`
+#              threw a Dynamo fake-tensor error; torch.compile headroom is unexplored.
+#              NOT pinnable/reproducible for other rigs until vllm#45163 merges into
+#              a nightly. Do NOT promote past 🧪 until then.
+#   Quality:   8-pack 100/150 (67%) — toolcall 13/15 · instructfollow 13-15/15 ·
+#              structoutput 14/15 · dataextract 10/15 · reasonmath 11/15 ·
+#              bugfind 11/15 · hermesagent-20 14/20 (agentic tool-use works) ·
+#              cli-40 14/40. Deterministic 5-pack 63/75 (84%). (--full, 2026-06-11,
+#              gemma4 tool+reasoning parsers; 57%→84% on the 5-pack WITH parsers.)
+#   Best for:  experimental dLLM serving / agentic tool-use on Ampere (research)
+# ---------------------------------------------------------------------------
+# DiffusionGemma is Google's 26B-A4B (3.8B active) MoE discrete-diffusion LM on the
+# Gemma4 backbone — vLLM's first dLLM (blog 2026-06-10). It denoises a whole block
+# ("canvas", 256 tok) in parallel via bidirectional attention, through vLLM's
+# model-runner-v2 (`VLLM_USE_V2_MODEL_RUNNER=1`). Throughput is content-dependent
+# (entropy-bound sampler): ~150–200 tok/s typical, up to ~450–490 on low-entropy text.
+#
+# gemma4 tool + reasoning parsers WORK (it's gemma4-based) — mirrored from the
+# gemma-4-26b-a4b compose. Tool requests would http_error WITHOUT
+# --enable-auto-tool-choice; with the gemma4 parsers, tool-calling + reasoning-field
+# routing both function (the 5-pack jumped 57%→84%).
+#
+# Thinking: NO separate budget — thinking + answer SHARE max_tokens. The model's
+# generation_config defaults max_new_tokens=256, which vLLM applies as the default
+# max_tokens cap → truncated answers + next-turn echo for clients (OWUI) that omit
+# max_tokens. We lift it to 16384 via --override-generation-config (see the command
+# section); the diffusion denoising params in generation_config are preserved because
+# we keep --generation-config auto rather than the nuclear --generation-config vllm.
+#
+# Build the engine image first:
+#   docker build -t vllm-dgemma:pr45163 ../../../patches/dgemma-pr45163/
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-diffusion-gemma
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+# Requires-sm: 8.0+
+services:
+  vllm-diffusiongemma-26b-a4b-fp8-tp2:
+    image: ${VLLM_IMAGE:-vllm-dgemma:pr45163}
+    container_name: "${ESTATE_CONTAINER:-vllm-diffusiongemma-26b-a4b-fp8-tp2}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8042}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # Codex's fix-overlays (Marlin sub-tile-K pad + TP-vocab soft-embed + dtype cast):
+      - ../../../patches/marlin-k-pad/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/scaled_mm/marlin.py:ro
+      - ../../../patches/marlin-k-pad/marlin_utils_fp8.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/marlin_utils_fp8.py:ro
+      - ../../../patches/marlin-k-pad/diffusion_gemma.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/diffusion_gemma.py:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_USE_V2_MODEL_RUNNER=1
+      - TORCHDYNAMO_DISABLE=1
+      - TORCH_COMPILE_DISABLE=1
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_DISABLE_CUSTOM_ALL_REDUCE=1
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+      - VLLM_ATTENTION_BACKEND=TRITON_ATTN
+      - TRITON_CACHE_DIR=/root/.triton/cache
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - /root/.cache/huggingface/diffusiongemma-26b-a4b-it-fp8-dynamic
+      - --served-model-name
+      - diffusiongemma-26b-a4b
+      - --trust-remote-code
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.82}"      # 0.90 OOMs the warmup (KV pool over-provisions); 0.82 leaves activation headroom
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-2048}"
+      - --enforce-eager
+      - --kv-cache-dtype
+      - auto
+      - --attention-backend
+      - TRITON_ATTN
+      - --hf-overrides
+      - '{"diffusion_sampler":"entropy_bound","diffusion_entropy_bound":0.1}'
+      # Lift the model's default-answer-length cap. generation_config.json ships
+      # max_new_tokens=256; vLLM applies that as the DEFAULT max_tokens for any
+      # request that omits one (OWUI does) → answers truncate at 256 with
+      # finish_reason=length, mid-sentence. Worse, a truncated (no-EOS) assistant
+      # turn left in the history makes the NEXT turn continue/echo it instead of
+      # answering ("say 'hi' → model re-emits the previous answer"). Both symptoms,
+      # one cause. We override ONLY max_new_tokens via --override-generation-config
+      # (NOT --generation-config vllm, which would also strip the diffusion denoising
+      # params max_denoising_steps/t_max/t_min/confidence_threshold the model needs).
+      # 16384 = generous default ceiling (~12K words); clients may still pass a
+      # larger/smaller max_tokens. NOTE: this is only a CAP — the model self-
+      # terminates (emits EOS) well before it on most prompts (e.g. a "write 10,000
+      # words" ask stops ~1.2K words, finish_reason=stop), so raising the cap does
+      # not force longer output; use min_tokens/ignore_eos or a continuation loop for
+      # genuinely long generations.
+      - --generation-config
+      - auto
+      - --override-generation-config
+      - '{"max_new_tokens":16384}'
+      # gemma4 tool + reasoning parsers (DiffusionGemma is gemma4-based) — mirrors gemma-4-26b-a4b:
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - gemma4
+      - --reasoning-parser
+      - gemma4
+      - --chat-template
+      - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
+      # Thinking: left at the model/template natural default (NOT force-disabled).
+      # The earlier "OWUI stuck in thinking / empty answer" symptom was the 256-tok
+      # cap above (thinking ate the whole budget), NOT thinking itself — once the
+      # budget is lifted, thinking + answer both fit. The reasoning parser routes any
+      # thinking into the `reasoning` field; clients can still pass
+      # enable_thinking via chat_template_kwargs per request.
+      # NOTE: torch.compile (drop the TORCHDYNAMO/COMPILE-disable envs + --enforce-eager)
+      # WORKS (Codex+Claude validated 2026-06-11) but gave NO throughput gain (~164 vs
+      # ~172 tok/s eager — diffusion is denoising-step-bound) + 28s boot cost → eager stays default.
