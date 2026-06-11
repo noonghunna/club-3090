@@ -91,8 +91,16 @@ OPTIONS (extra)
                    non-canonical. Also settable via SAMPLING_FROM_SERVER=1 env.
   --enable-thinking
                    Forward to benchlocal-cli --enable-thinking so reasoning
-                   models are evaluated with request-level thinking enabled.
+                   models are evaluated with request-level thinking enabled
+                   for every pack (overrides each pack's default_thinking).
                    Also settable via ENABLE_THINKING=1 env.
+  --no-thinking
+                   Forward to benchlocal-cli --no-thinking — force thinking
+                   OFF for every pack, ignoring per-pack default_thinking
+                   (the two packs that default thinking-on: instructfollow-15,
+                   reasonmath-15). Mutually exclusive with --enable-thinking.
+                   Use for a clean all-off arm of a reasoning A/B. Also
+                   settable via NO_THINKING=1 env.
   --thinking-max-tokens N
                    Forward to benchlocal-cli --thinking-max-tokens N. The
                    budget applies only to packs whose thinking gate resolves on
@@ -113,6 +121,9 @@ ENV VARS
                    --timeout-per-case is equivalent.
   ENABLE_THINKING Set to 1 to send request-level enable_thinking=true via
                    benchlocal-cli --enable-thinking. Default: 0.
+  NO_THINKING     Set to 1 to force thinking off for every pack via
+                   benchlocal-cli --no-thinking. Mutually exclusive with
+                   ENABLE_THINKING. Default: 0.
   THINKING_MAX_TOKENS
                    Optional thinking budget passed through to benchlocal-cli.
                    Applies only to packs whose thinking gate resolves on.
@@ -186,6 +197,7 @@ LIST_PACKS=0
 SANDBOX_LOG_DIR="${SANDBOX_LOG_DIR:-}"
 SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}"
 ENABLE_THINKING="${ENABLE_THINKING:-0}"
+NO_THINKING="${NO_THINKING:-0}"
 THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -248,6 +260,10 @@ while [[ $# -gt 0 ]]; do
       ENABLE_THINKING=1
       shift
       ;;
+    --no-thinking)
+      NO_THINKING=1
+      shift
+      ;;
     --thinking-max-tokens)
       THINKING_MAX_TOKENS="${2:-}"
       if [[ -z "$THINKING_MAX_TOKENS" ]] || ! [[ "$THINKING_MAX_TOKENS" =~ ^[0-9]+$ ]]; then
@@ -277,6 +293,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- prerequisite checks -----------------------------------------------------
+
+if [[ "$ENABLE_THINKING" == "1" && "$NO_THINKING" == "1" ]]; then
+  echo "✗ --enable-thinking and --no-thinking are mutually exclusive (force thinking on OR off, not both)" >&2
+  exit 2
+fi
 
 if ! command -v benchlocal-cli >/dev/null 2>&1; then
   cat >&2 <<EOF
@@ -372,8 +393,8 @@ sys.exit(0 if walk(obj) else 1)
   return 1
 }
 
-if [[ "$ENABLE_THINKING" != "1" ]] && server_reasoning_on; then
-  echo "[quality-test] WARN: server appears to have reasoning enabled, but --enable-thinking is not forced. Pack defaults still apply; use --enable-thinking or ENABLE_THINKING=1 to force thinking on for every pack." >&2
+if [[ "$ENABLE_THINKING" != "1" && "$NO_THINKING" != "1" ]] && server_reasoning_on; then
+  echo "[quality-test] WARN: server appears to have reasoning enabled, but --enable-thinking is not forced. Pack defaults still apply; use --enable-thinking or ENABLE_THINKING=1 to force thinking on for every pack (or --no-thinking / NO_THINKING=1 to force it off)." >&2
 fi
 
 # ---- run benchlocal-cli ------------------------------------------------------
@@ -432,7 +453,11 @@ if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then
 fi
 if [[ "$ENABLE_THINKING" == "1" ]]; then
   CLI_ARGS+=(--enable-thinking)
-  echo "[quality-test] thinking: enabled (non-canonical)"
+  echo "[quality-test] thinking: enabled for every pack (non-canonical)"
+fi
+if [[ "$NO_THINKING" == "1" ]]; then
+  CLI_ARGS+=(--no-thinking)
+  echo "[quality-test] thinking: disabled for every pack, ignoring per-pack defaults (non-canonical)"
 fi
 if [[ -n "$THINKING_MAX_TOKENS" ]]; then
   CLI_ARGS+=(--thinking-max-tokens "$THINKING_MAX_TOKENS")
