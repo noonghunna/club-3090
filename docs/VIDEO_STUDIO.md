@@ -226,10 +226,10 @@ image director outputs the JSON caption; the pipe validates it and falls back to
 your text in a minimal caption if needed. Measured on this rig: plain text → 100% blocked;
 the same prompt as a JSON caption → clean render (~80 s warm @1024²).
 
-> ⚠️ **Open WebUI's native 🖼️ image button has the same trap.** It templates your plain text
-> straight into the Ideogram-4 workflow (`services/openwebui/imagegen.env`), so it hits the
-> "blocked by safety filter" placeholder. Use the **Studio · Image lane** (which crafts the
-> JSON) instead; fixing the native button needs a JSON-wrapping step — tracked in *Follow-ups*.
+> **Open WebUI's native 🖼️ image button works too — via the image shim.** It used to hit the
+> same trap (plain text → "blocked" placeholder). Now OWUI's `COMFYUI_BASE_URL` points at the
+> **studio-image-shim** (`:8191`), a transparent ComfyUI reverse-proxy that asks the director
+> to craft the JSON caption on `POST /prompt` before forwarding. See *Native image button* below.
 
 The lane is **category-aware**: the director infers logo / poster / UI-mockup / photo /
 illustration and fills the JSON with the levers that matter (logos → vector/flat/negative
@@ -238,6 +238,27 @@ Ask for it in quotes. Refine the same way as video — *"monochrome"*, *"tighter
 vector style"* — it evolves the prior caption. Defaults 1024×1024, 20 steps; the long edge is
 capped at `image_max_edge` (1024) so the image gen coexists with the director on GPU0 (2048²
 + director = OOM; raise the cap and stop the director for 2K stills).
+
+### Native image button (via the image shim)
+
+OWUI's built-in 🖼️ image button (on a chat message) also renders Ideogram-4 stills — but it
+sends **plain text** to the image engine, which trips the same "blocked by safety filter"
+placeholder, and OWUI's own image-prompt-generation can't help (it returns `{"prompt":"<string>"}`
+and nesting the Ideogram JSON inside that string defeats the task models — escaping fails).
+
+The fix is **`services/studio/image-shim/`** (`:8191`): a transparent **ComfyUI reverse-proxy**.
+OWUI's `COMFYUI_BASE_URL` points at it (`imagegen.env`), with OWUI's image-prompt-generation
+turned **off**. The shim proxies every ComfyUI call (incl. the `/ws` progress socket) straight
+through — *except* `POST /prompt`, where it reads the plain-text prompt node, asks the director
+(qwen `:8090`) for a rich Ideogram-4 JSON caption, and rewrites the node before forwarding. The
+escaping is done in **Python** (reliable), so the model never has to produce nested JSON. Blast
+radius = image generation only — title/tag/etc. task-generation is untouched (that's why it's a
+ComfyUI proxy, not an OWUI task-model override).
+
+`gpu-mode video-studio` and `image-studio` start the shim (and, in image-studio, the director it
+needs). Validated on the rig: plain "a mountain landscape at sunrise" / "a serene lake" / a logo
+all render clean through the shim. If the shim is down, point `COMFYUI_BASE_URL` back at `:8188`
+(plain text will then hit the placeholder) or use the **Studio · Image lane**.
 
 ## VRAM / GPU split
 
@@ -276,10 +297,8 @@ abliterated.)
 - **Native temporal-extend** for smoother joins on fast-motion scenes (vs last-frame I2V).
 - **Image→video long clips**: chaining currently starts from text (seg 1 = t2v); extend an
   attached image past 15 s is future.
-- **Fix Open WebUI's native 🖼️ image button**: it sends plain text to Ideogram-4 → the
-  "blocked by safety filter" placeholder (see *Image lane*). Needs a JSON-caption wrapping
-  step (a fixed wrapper in `imagegen.env`'s workflow, or routing the button through the
-  director). Until then, point users at the **Studio · Image** lane.
+- ~~**Fix Open WebUI's native 🖼️ image button**~~ ✅ done — the **image shim** (`:8191`) crafts
+  the Ideogram JSON via the director on `POST /prompt` (see *Native image button*).
 - **Uncensored stills**: Ideogram-4 is safety-trained (and the lane crafts to its schema), so
   the image lane is *aligned*. Uncensored *motion* is covered by the Sulphur video lane;
   uncensored *stills* would need a different image model (e.g. a `frames=1` render on an

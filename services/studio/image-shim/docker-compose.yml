@@ -1,0 +1,18 @@
+# Studio image shim — a transparent ComfyUI reverse-proxy that makes Open WebUI's NATIVE
+# 🖼️ image button work with Ideogram-4. It proxies everything to ComfyUI untouched EXCEPT
+# POST /prompt, where it asks the director (qwen :8090) to craft a rich Ideogram-4 JSON
+# caption (escaping done in Python) and rewrites the prompt node. Point OWUI's
+# COMFYUI_BASE_URL at this (:8191) and turn OWUI image-prompt-generation OFF.
+# No GPU (ComfyUI + director do the work). See docs/VIDEO_STUDIO.md "Native image button".
+services:
+  studio-image-shim:
+    build: .
+    image: studio-image-shim:latest
+    container_name: studio-image-shim
+    restart: unless-stopped
+    network_mode: host          # reach ComfyUI :8188 + director :8090 on localhost; serve :8191
+    environment:
+      - COMFYUI_UPSTREAM=${COMFYUI_UPSTREAM:-http://127.0.0.1:8188}
+      - DIRECTOR_URL=${STUDIO_DIRECTOR_URL:-http://127.0.0.1:8090/v1}
+      - DIRECTOR_MODEL=${STUDIO_DIRECTOR_MODEL:-qwen3.5-4b-uncensored}
+      - SHIM_PORT=${STUDIO_SHIM_PORT:-8191}

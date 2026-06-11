@@ -17,6 +17,7 @@ and the measured length limits live in **[../../docs/VIDEO_STUDIO.md](../../docs
 | `gallery/` | `docker compose` for an always-on nginx media gallery (`:8189`) over ComfyUI's output dir — keeps generated media browsable + links alive even when ComfyUI is down. |
 | `enhancer/` | `docker compose` for the "director" LLM (`:8090`, OpenAI-compatible). |
 | `orchestrator/` | `docker compose` + Dockerfile for the long-clip engine (`:8190`): chains ~10 s segments into one combined video for requests >15 s. The pipe POSTs here when you ask for a length. |
+| `image-shim/` | `docker compose` + Dockerfile for the native-button image shim (`:8191`): a transparent ComfyUI reverse-proxy that crafts an Ideogram-4 JSON caption (via the director) on `POST /prompt`, so OWUI's built-in 🖼️ image button renders instead of the "blocked by safety filter" placeholder. Point OWUI's `COMFYUI_BASE_URL` at it. See VIDEO_STUDIO.md "Native image button". |
 | `extend_chain.py` | The same chaining as a standalone host CLI (handy for scripted long renders). |
 
 ## Install the pipe into Open WebUI

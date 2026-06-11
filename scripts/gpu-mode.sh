@@ -168,6 +168,13 @@ start_studio_orchestrator() {
     printf "  ${GREEN}▲${NC} Starting studio-orchestrator (:8190, long-clip chaining)..."
     compose_at "$COMPOSE_BASE/studio/orchestrator" "up -d --build" && echo "done" || echo "failed"
 }
+# Native-button image shim (:8191): ComfyUI reverse-proxy that crafts Ideogram-4 JSON
+# captions (via the director) so OWUI's native 🖼️ image button renders instead of hitting
+# the "blocked by safety filter" placeholder. Needs the director (:8090) up.
+start_studio_image_shim() {
+    printf "  ${GREEN}▲${NC} Starting studio-image-shim (:8191, native-button Ideogram captions)..."
+    compose_at "$COMPOSE_BASE/studio/image-shim" "up -d --build" && echo "done" || echo "failed"
+}
 
 # ComfyUI pinned to GPU 0 (image-studio split — leaves the other card for the chat LLM).
 start_comfyui_gpu0() {
@@ -619,6 +626,7 @@ mode_video_studio() {
     start_studio_director
     start_studio_gallery
     start_studio_orchestrator
+    start_studio_image_shim
     start_service openwebui
     start_service litellm
     start_service searxng
@@ -651,6 +659,8 @@ mode_image_studio() {
     else
         start_comfyui_gpu0
         start_gemma_12b_chat
+        start_studio_director       # qwen director on GPU0 (~4.6GB) — crafts Ideogram JSON for the image shim
+        start_studio_image_shim     # native 🖼️ button -> clean Ideogram images (see docs/VIDEO_STUDIO.md)
     fi
     start_service openwebui
     start_service litellm
