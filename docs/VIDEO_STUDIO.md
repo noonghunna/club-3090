@@ -128,6 +128,8 @@ just name it and the director keeps it — e.g. *"…top-down drone shot, golden
 - **Lane** — pick the model: **🎬 LTX-2.3** (video + audio) or **🔓 Sulphur** (uncensored).
 - **Image → video** — attach an image (optionally with a motion note like *"slow zoom in,
   leaves drifting"*); it animates your still.
+- **Voiceover** — add *"voiceover: …"* / *"narration: '…'"* / *"say: …"* and a Kokoro voice is
+  mixed over the clip (ducked under the ambient, normalized). See *Integrated audio*.
 - **Refine** — just reply with the change: *"more moody"*, *"make it night"*, *"slower
   camera"*, *"add rain"*. It evolves the last prompt; a brand-new idea starts fresh.
 
@@ -208,6 +210,28 @@ upscaler + a refine pass). On this hardware that 2-stage path renders a **diamon
 mesh** over every frame. The fix — and what the pipe ships — is **single-stage**: splice
 the distilled LoRA onto the base sampler, 8 steps, cfg 1, no upscaler. Clean output. The
 workflow (`workflows/ltx_distilled_distorch.json`) already encodes this.
+
+## Integrated audio (voices for video)
+
+The video lanes already render a clip *with* native ambient audio. The Studio can add a
+**voiceover/narration** on top: include a directive in your message and the pipe generates a
+voice and mixes it over the clip.
+
+- **Ask for it:** *"a fox padding through a neon alley at night, **voiceover: the city never
+  sleeps, and neither do we**"* — or `narration: "..."`, or `say: ...`. The pipe pulls the
+  spoken line out (so it doesn't pollute the video prompt), renders the clip, then narrates.
+- **Engine:** **`studio-tts`** (`:8192`) — **Kokoro-82M** on **CPU** (never touches the GPUs),
+  so it adds no VRAM pressure and runs after the render (voice ≈ 1–2 s of compute).
+- **Layer-aware mixdown** (ffmpeg): the Kokoro voice is mixed over the clip's native audio, the
+  **bed is ducked** under the voice (`sidechaincompress`), and the master is **loudness-normalized**
+  (`loudnorm`, −16 LUFS); output audio is capped to the clip length. The mix stage is structured
+  to accept more layers (generated music / SFX) later without a rewrite — only the voice layer is
+  populated today (that's the planned audio-studio's job). Pick a voice with the `narrate_voice`
+  valve (`af_heart`, `am_adam`, `bf_emma`, …); if `studio-tts` is unreachable the clip is returned
+  silent (un-narrated).
+
+> Lightweight "voices for video." A dedicated audio-studio (long-form TTS, ACE-Step music, SFX,
+> full multi-layer mix) is the planned next phase.
 
 ## Image lanes (Ideogram-4 design · Chroma uncensored)
 
@@ -309,6 +333,8 @@ gemma-12b chat or a 2048² still needs a `gpu-mode` change.
 | `t5xxl_fp16.safetensors` + Flux `ae.safetensors` | `text_encoders/`, `vae/flux/` | Chroma (shared with Flux ecosystem) |
 
 Director GGUF (`Qwen3.5-4B-Uncensored-…`) → `/mnt/models/huggingface/qwen3.5-4b-gguf/…`.
+
+Narration TTS (CPU): `kokoro-v1.0.onnx` + `voices-v1.0.bin` (kokoro-onnx GitHub release / [onnx-community/Kokoro-82M-v1.0-ONNX](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX)) → `/mnt/models/comfyui/models/tts/kokoro/`.
 
 ## On the uncensored models
 

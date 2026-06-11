@@ -19,6 +19,7 @@ architecture, capabilities and the measured length limits live in **[../../docs/
 | `enhancer/` | `docker compose` for the "director" LLM (`:8090`, OpenAI-compatible). |
 | `orchestrator/` | `docker compose` + Dockerfile for the long-clip engine (`:8190`): chains ~10 s segments into one combined video for requests >15 s. The pipe POSTs here when you ask for a length. |
 | `image-shim/` | `docker compose` + Dockerfile for the native-button image shim (`:8191`): a transparent ComfyUI reverse-proxy that crafts an Ideogram-4 JSON caption (via the director) on `POST /prompt`, so OWUI's built-in 🖼️ image button renders instead of the "blocked by safety filter" placeholder. Point OWUI's `COMFYUI_BASE_URL` at it. See VIDEO_STUDIO.md "Native image button". |
+| `tts/` | `docker compose` + Dockerfile for integrated voices (`:8192`): **Kokoro-82M** (ONNX, CPU) generates a voiceover and a **layer-aware ffmpeg mixdown** ducks it over the clip's native audio + loudness-normalizes. The pipe POSTs `/narrate` when the message has a `voiceover:`/`narration:` directive. No GPU. See VIDEO_STUDIO.md "Integrated audio". |
 | `extend_chain.py` | The same chaining as a standalone host CLI (handy for scripted long renders). |
 
 ## Install the pipe into Open WebUI

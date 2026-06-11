@@ -76,7 +76,7 @@ title: Studio (text/image -> video · image)
 author: club-3090
 description: Type a rough idea — the studio director (qwen) crafts it into a professional, artistic prompt and generates. Video lanes: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image. Image lanes: Ideogram-4 (graphic design / logo / photo / art) or Chroma (uncensored). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.8.0
+version: 0.9.0
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
 #  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
@@ -115,6 +115,9 @@ class Pipe:
         image_max_edge: int = Field(default=1024, description="Cap on the image long edge. 1024 lets the image gen coexist with the director on GPU0 (~23GB); 2048 would OOM unless the director is stopped first.")
         chroma_steps: int = Field(default=26, description="Chroma (uncensored image lane) sampler steps.")
         chroma_cfg: float = Field(default=3.5, description="Chroma CFG scale (Chroma is de-distilled — real CFG + negative prompt, unlike Ideogram).")
+        enable_narration: bool = Field(default=True, description="Video lanes only: if the message includes a voiceover (e.g. 'voiceover: ...' or 'narration: \"...\"'), generate a Kokoro voice and mix it over the clip's audio (ducked + normalized).")
+        tts_url: str = Field(default="http://host.docker.internal:8192", description="Studio TTS + mixdown service (Kokoro, CPU). Generates the voiceover and ducks it over the clip's native audio. If unreachable, the clip is returned without narration.")
+        narrate_voice: str = Field(default="af_heart", description="Kokoro voice id for narration (e.g. af_heart, af_bella, am_adam, bf_emma, bm_george).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -306,6 +309,28 @@ class Pipe:
         return json.load(urllib.request.urlopen(
             self.valves.orchestrator_url.rstrip("/") + "/job/" + jid, timeout=30))
 
+    # ── integrated narration (video lanes): parse a voiceover directive, synth + mix via the TTS svc ──
+    def _narration(self, text):
+        """Returns (spoken_text, scene_text). spoken='' if no voiceover was asked. The directive
+        is stripped from scene_text so it doesn't pollute the video prompt / duration parse."""
+        for p in (r'(?:voice[\s-]?over|narrat(?:e|ion|or)?|say(?:ing)?)\s*(?:that\s+)?[:=\-]?\s*["“‘\'](.+?)["”’\']',
+                  r'(?:voice[\s-]?over|narration|narrate|say(?:ing)?)\s*[:=\-]\s*([^\n]+)'):
+            m = re.search(p, text, re.I)
+            if m:
+                spoken = m.group(1).strip().strip('"“”‘’\'')
+                scene = (text[:m.start()] + " " + text[m.end():]).strip(" ,.\n-")
+                return spoken, (scene or text)
+        return "", text
+
+    def _narrate(self, fn, sub, text, voice):
+        body = json.dumps({"video": fn, "subfolder": sub or "", "text": text, "voice": voice}).encode()
+        req = urllib.request.Request(self.valves.tts_url.rstrip("/") + "/narrate", data=body,
+                                     headers={"Content-Type": "application/json"})
+        r = json.load(urllib.request.urlopen(req, timeout=self.valves.timeout_s))
+        if r.get("filename"):
+            return r["filename"], r.get("subfolder", "")
+        raise RuntimeError(r.get("error", "narration failed"))
+
     def _submit(self, wf):
         req = urllib.request.Request(self.valves.comfyui_url + "/prompt",
                                      data=json.dumps({"prompt": wf, "client_id": "owui-studio"}).encode(),
@@ -457,20 +482,24 @@ class Pipe:
                 user_prompt = "subtle natural motion, gentle camera movement"
             else:
                 return "Type a scene to generate (or attach an image to animate)."
+        # Voiceover? (video lanes) — pull the spoken line out so it doesn't pollute the video prompt.
+        narration, scene_prompt = ("", user_prompt)
+        if self.valves.enable_narration:
+            narration, scene_prompt = self._narration(user_prompt)
         fr = ((min(int(self.valves.frames), 361) - 1) // 8) * 8 + 1   # capped + LTX-valid 8k+1
         prior_spec = self._prior_spec(body)
-        final_prompt = user_prompt
-        if self.valves.enhance and user_prompt:
+        final_prompt = scene_prompt
+        if self.valves.enhance and scene_prompt:
             await status("\U0001F3A8 Director crafting the shot…")
             try:
-                final_prompt = await loop.run_in_executor(None, self._enhance, user_prompt, mode == "i2v", prior_spec)
+                final_prompt = await loop.run_in_executor(None, self._enhance, scene_prompt, mode == "i2v", prior_spec)
             except Exception:
-                final_prompt = user_prompt
+                final_prompt = scene_prompt
 
         # Long clip? If the user asked for >15s (text→video), chain ~10s segments via the
         # orchestrator into one combined video. Falls through to a single capped clip if
         # the orchestrator is unreachable.
-        target = self._target_seconds(user_prompt) if mode == "t2v" else 0
+        target = self._target_seconds(scene_prompt) if mode == "t2v" else 0
         if target > 15:
             segments = min(self.valves.max_seconds // 10, max(2, math.ceil(target / 10)))
             jid = None
@@ -492,14 +521,23 @@ class Pipe:
                         last = p
                         await status("\U0001F3AC rendering segment " + p + " (~" + str(segments * 10) + "s total, a few min each)…")
                     if j.get("status") == "done":
-                        await status("Done", True)
                         base = self.valves.browser_base.rstrip("/")
                         fn = j.get("filename"); sub = j.get("subfolder", "video")
+                        nlabel = ""
+                        if narration:
+                            await status("\U0001F5E3️ Adding narration…")
+                            try:
+                                fn, sub = await loop.run_in_executor(None, self._narrate, fn, sub, narration, self.valves.narrate_voice)
+                                nlabel = " · \U0001F5E3️ narration"
+                            except Exception:
+                                pass
+                        await status("Done", True)
                         url = base + "/" + ((sub + "/") if sub else "") + fn
                         marker = "<!--SPEC:" + base64.b64encode(final_prompt.encode()).decode() + "-->"
-                        return ("**" + label + " · text→video · " + str(segments) + " segments (~" + str(segments * 10) + "s)**\n\n"
+                        return ("**" + label + " · text→video · " + str(segments) + " segments (~" + str(segments * 10) + "s)" + nlabel + "**\n\n"
                                 "**Prompt used:** " + final_prompt + "\n\n"
-                                "▶️ **[Open / download the video](" + url + ")**\n\n"
+                                + (("**Narration:** “" + narration + "”\n\n") if (narration and nlabel) else "")
+                                + "▶️ **[Open / download the video](" + url + ")**\n\n"
                                 "_Want changes? Just say what to tweak and I’ll re-craft and regenerate._ "
                                 "_(Browse all media: " + base + "/ )_" + marker)
                     if j.get("status") == "error":
@@ -515,20 +553,30 @@ class Pipe:
         except Exception as e:
             await status("Failed", True)
             return "⚠️ Generation failed: " + str(e)
-        await status("Done", True)
         if not fn:
+            await status("Failed", True)
             return "Generation finished but no video output was found."
+        nlabel = ""
+        if narration:
+            await status("\U0001F5E3️ Adding narration…")
+            try:
+                fn, sub = await loop.run_in_executor(None, self._narrate, fn, sub, narration, self.valves.narrate_voice)
+                nlabel = " · \U0001F5E3️ narration"
+            except Exception:
+                pass
+        await status("Done", True)
         base = self.valves.browser_base.rstrip("/")
         url = base + "/" + ((sub + "/") if sub else "") + fn
         marker = "<!--SPEC:" + base64.b64encode(final_prompt.encode()).decode() + "-->"
         secs = int(round(fr / 24))
-        return ("**" + label + " · " + kind + " · " + str(fr) + " frames (~" + str(secs) + "s)**\n\n"
+        return ("**" + label + " · " + kind + " · " + str(fr) + " frames (~" + str(secs) + "s)" + nlabel + "**\n\n"
                 "**Prompt used:** " + final_prompt + "\n\n"
-                "▶️ **[Open / download the video](" + url + ")**\n\n"
+                + (("**Narration:** “" + narration + "”\n\n") if (narration and nlabel) else "")
+                + "▶️ **[Open / download the video](" + url + ")**\n\n"
                 "_Want changes? Just say what to tweak — e.g. “more moody”, “make it night”, "
-                "“slower camera” — and I’ll re-craft from this and regenerate._ "
+                "“slower camera”, or “voiceover: …” — and I’ll re-craft from this and regenerate._ "
                 "_(Browse all media: " + base + "/ )_" + marker)
 '''.replace('__WF_JSON__', WF_JSON)
 
 open(OUT_PATH, 'w').write(PIPE)
-print("wrote %s (%d bytes; 6 workflows: ltx/sulphur x t2v/i2v + ideogram-4 + chroma image)" % (OUT_PATH, len(PIPE)))
+print("wrote %s (%d bytes; 6 workflows + integrated narration (Kokoro TTS))" % (OUT_PATH, len(PIPE)))

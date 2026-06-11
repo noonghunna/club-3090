@@ -175,6 +175,12 @@ start_studio_image_shim() {
     printf "  ${GREEN}▲${NC} Starting studio-image-shim (:8191, native-button Ideogram captions)..."
     compose_at "$COMPOSE_BASE/studio/image-shim" "up -d --build" && echo "done" || echo "failed"
 }
+# Integrated-voices TTS + audio mixdown (:8192, Kokoro on CPU). The pipe POSTs /narrate after a
+# video render to mix a voiceover over the clip's native audio (ducked + normalized). No GPU.
+start_studio_tts() {
+    printf "  ${GREEN}▲${NC} Starting studio-tts (:8192, Kokoro voices + mixdown, CPU)..."
+    compose_at "$COMPOSE_BASE/studio/tts" "up -d --build" && echo "done" || echo "failed"
+}
 
 # ComfyUI pinned to GPU 0 (image-studio split — leaves the other card for the chat LLM).
 start_comfyui_gpu0() {
@@ -627,6 +633,7 @@ mode_video_studio() {
     start_studio_gallery
     start_studio_orchestrator
     start_studio_image_shim
+    start_studio_tts
     start_service openwebui
     start_service litellm
     start_service searxng
