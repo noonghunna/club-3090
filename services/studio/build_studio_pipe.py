@@ -87,7 +87,7 @@ title: Studio (text/image -> video · image · music)
 author: club-3090
 description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: HiDream-O1 (top quality), Ideogram-4 (design/logo/photo/text), or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Voice: Step-Audio-EditX (premium cloned voice + emotion/style). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.13.0
+version: 0.13.1
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
 #  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
@@ -357,6 +357,10 @@ class Pipe:
             sys += (" The user attached an image to animate — describe how it should MOVE "
                     "(motion, camera, ambient sound); do not re-describe the still image.")
         noun = {"video": "video", "music": "music", "sfx": "sound"}.get(kind, "image")
+        sys += (" CRITICAL: if the user's message is NOT a real " + noun + " request — a greeting, "
+                "small talk, a question, or too vague/short to generate from — reply with exactly "
+                "`CHAT: ` then ONE short friendly sentence inviting them to describe the " + noun +
+                " to create, and NOTHING else (no prompt, no JSON).")
         msgs = [{"role": "system", "content": sys}]
         if prior_spec:
             msgs.append({"role": "user", "content":
@@ -374,6 +378,15 @@ class Pipe:
         req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
                                      headers={"Content-Type": "application/json"})
         return json.load(urllib.request.urlopen(req, timeout=120))["choices"][0]["message"]["content"].strip()
+
+    def _chat_gate(self, crafted):
+        # The director returns "CHAT: ..." when the message isn't a real generation request (a
+        # greeting / small talk / too vague). Return the friendly reply so the caller skips the
+        # renderer (no GPU spend on "hi"); return None for a real request (proceed to render).
+        t = (crafted or "").strip()
+        if t[:5].upper() == "CHAT:":
+            return t[5:].strip() or "Tell me what you'd like to create and I'll generate it."
+        return None
 
     # ── long-clip (>15s) via the orchestrator: chain ~10s segments → one combined video ──
     def _target_seconds(self, text):
@@ -569,6 +582,9 @@ class Pipe:
                     crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, "sfx")
                 except Exception:
                     crafted = up
+            reply = self._chat_gate(crafted)
+            if reply is not None:
+                await status("", True); return reply
             prompt_used = crafted if crafted.strip() else up
             seed = int(time.time() * 1000) % 2147483647
             await status("\U0001F50A Generating ~" + str(int(secs)) + "s on Stable Audio…")
@@ -638,6 +654,9 @@ class Pipe:
                     crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, "music")
                 except Exception:
                     crafted = up
+            reply = self._chat_gate(crafted)
+            if reply is not None:
+                await status("", True); return reply
             tags, lyrics = self._coerce_music(crafted, up)
             seed = int(time.time() * 1000) % 2147483647
             await status("\U0001F3B5 Composing ~" + str(int(secs)) + "s on ACE-Step… (a minute or so)")
@@ -681,6 +700,9 @@ class Pipe:
                     crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, lane)
                 except Exception:
                     crafted = up
+            reply = self._chat_gate(crafted)
+            if reply is not None:
+                await status("", True); return reply
             cap = max(256, int(self.valves.image_max_edge))
             if lane == "hidream":
                 w = int(self.valves.hidream_width); h = int(self.valves.hidream_height)   # HiDream-O1 fixed at native 2048^2 (node snaps up); not subject to image_max_edge
@@ -757,6 +779,9 @@ class Pipe:
                 final_prompt = await loop.run_in_executor(None, self._enhance, scene_prompt, mode == "i2v", prior_spec)
             except Exception:
                 final_prompt = scene_prompt
+        reply = self._chat_gate(final_prompt)
+        if reply is not None:
+            await status("", True); return reply
 
         # Long clip? If the user asked for >15s (text→video), chain ~10s segments via the
         # orchestrator into one combined video. Falls through to a single capped clip if
