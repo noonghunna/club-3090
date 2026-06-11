@@ -25,6 +25,11 @@ This is the **P2 / video** sibling of [IMAGE_STUDIO.md](IMAGE_STUDIO.md) (Ideogr
       ▼
   ComfyUI  :8188   LTX-2.3 / Sulphur 22B GGUF, DisTorch across BOTH 3090s
       │  renders .mp4 (video + audio) → /output/video/
+      │
+      │  (long clip >15s? the pipe instead POSTs to…)
+      ▼
+  Orchestrator :8190   chains ~10s segments (seg1 t2v → segN i2v from prev last frame),
+      │                ffmpeg-concats → one clip; reports "segment k/N" (host-side, no GPU)
       ▼
   Gallery  :8189   always-on nginx over the output dir (survives ComfyUI down)
       │  ◀── the pipe returns a link here
@@ -90,24 +95,27 @@ headroom). The wall is model coherence, not memory. Wall time scales ~linearly
 
 ## Longer videos (60 s+)
 
-`services/studio/extend_chain.py` chains segments to break the single-pass ceiling:
-segment 1 is text→video; each later segment is image→video conditioned on the **previous
-segment's last frame**, then all are ffmpeg-concatenated into one clip.
+Past the ~15 s single-pass ceiling, the studio **chains segments**: segment 1 is
+text→video; each later segment is image→video conditioned on the **previous segment's last
+frame**; all are ffmpeg-concatenated into one clip. Validated on 2× 3090 — the joins are
+**visually seamless** (the last-frame conditioning carries the scene across each cut; a
+slow camera move continues unbroken). Caveat: a single frame has no *velocity*, so **fast
+action** can show a brief motion reset at a cut; slow/ambient scenes are clean (native LTX
+temporal-extend would smooth fast cuts — future).
 
-```bash
-python3 services/studio/extend_chain.py "<prompt>" <n_segments> <frames_per_seg>
-# e.g. 6 × 241 ≈ a 60 s clip; each segment renders ~2.5 min
-```
+**In chat (default):** just ask for a length — *"a 40-second drone shot over a coastline"*.
+The pipe parses the duration, the director crafts the prompt, and the **orchestrator**
+(`services/studio/orchestrator/`, `:8190`) chains `ceil(seconds/10)` ~10 s segments and
+returns **one combined video** (with live "segment k/N" progress). Capped at
+`max_seconds` (default 120 s = 12 segments; each segment ~2.5 min to render). If the
+orchestrator is down, the request falls back to a single capped clip.
 
-Validated on 2× 3090 (3×10 s → 30 s): the joins are **visually seamless** — the
-last-frame conditioning carries the scene across each cut, and a slow camera move
-continues unbroken. Caveat: a single frame has no *velocity*, so **fast action** can show
-a brief motion reset at a cut; slow/ambient scenes are clean. Native LTX temporal-extend
-(conditioning on the last *K latent* frames) would smooth that — future work.
+**CLI (host):** the same chain is also a standalone tool —
+`python3 services/studio/extend_chain.py "<prompt>" <n_segments> <frames_per_seg>`.
 
-It runs **host-side** (needs ffmpeg + read access to the output dir), so it's a CLI tool
-today; wiring it into the in-chat pipe (ask for ">30 s" → auto-chain → one combined video
-in the reply) is the next step.
+> Why a separate orchestrator: the OWUI pipe can't run ffmpeg or read the output dir, so
+> the segment chaining + concat live in a tiny host-side service (ffmpeg + output access,
+> no GPU). The pipe just submits a job and polls.
 
 ### The single-stage rule
 
@@ -160,9 +168,9 @@ abliterated.)
 
 ## Follow-ups (not yet built)
 
-- **In-chat 60 s+**: auto-trigger `extend_chain` from the pipe when you ask for a long
-  clip → one combined video in the reply (the chaining itself is proven, above).
 - **Native temporal-extend** for smoother joins on fast-motion scenes (vs last-frame I2V).
+- **Image→video long clips**: chaining currently starts from text (seg 1 = t2v); extend an
+  attached image past 15 s is future.
 - **Uncensored stills**: a `frames=1` "image" intent on the Studio lane (the 🖼️ button uses
   Ideogram-4, which is aligned).
 - Audio cross-fade at segment joins; a richer gallery (thumbnail grid vs file listing).

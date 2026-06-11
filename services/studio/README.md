@@ -14,6 +14,8 @@ capabilities and the measured length limits live in **[../../docs/VIDEO_STUDIO.m
 | `studio_pipe.py` | Built artifact (committed for convenience; regenerate with the builder). |
 | `gallery/` | `docker compose` for an always-on nginx media gallery (`:8189`) over ComfyUI's output dir — keeps generated media browsable + links alive even when ComfyUI is down. |
 | `enhancer/` | `docker compose` for the "director" LLM (`:8090`, OpenAI-compatible). |
+| `orchestrator/` | `docker compose` + Dockerfile for the long-clip engine (`:8190`): chains ~10 s segments into one combined video for requests >15 s. The pipe POSTs here when you ask for a length. |
+| `extend_chain.py` | The same chaining as a standalone host CLI (handy for scripted long renders). |
 
 ## Install the pipe into Open WebUI
 

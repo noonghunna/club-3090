@@ -1,0 +1,18 @@
+# Studio orchestrator — the in-chat "60 s+" engine. The OWUI Studio pipe POSTs a long
+# request here; this renders the segment chain via ComfyUI, ffmpeg-concatenates into one
+# clip in the output dir (gallery-served), and reports progress. No GPU (ComfyUI does the
+# work) → safe to leave always-on alongside the gallery. See docs/VIDEO_STUDIO.md.
+services:
+  studio-orchestrator:
+    build: .
+    image: studio-orchestrator:latest
+    container_name: studio-orchestrator
+    restart: unless-stopped
+    network_mode: host          # reach ComfyUI on localhost:8188; serve :8190
+    environment:
+      - COMFYUI_URL=${COMFYUI_URL:-http://localhost:8188}
+      - PORT=${STUDIO_ORCH_PORT:-8190}
+      - MAX_SEGMENTS=${STUDIO_ORCH_MAX_SEGMENTS:-12}
+    volumes:
+      - ${COMFYUI_OUTPUT_DIR:-/mnt/models/comfyui/output}:/output
+      - ../studio_pipe.py:/studio/studio_pipe.py:ro    # lane workflows (read-only)

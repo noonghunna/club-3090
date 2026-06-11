@@ -164,6 +164,10 @@ start_studio_director() {
     printf "  ${GREEN}▲${NC} Starting studio-director (:8090, GPU0)..."
     compose_at "$COMPOSE_BASE/studio/enhancer" "up -d" && echo "done" || echo "failed"
 }
+start_studio_orchestrator() {
+    printf "  ${GREEN}▲${NC} Starting studio-orchestrator (:8190, long-clip chaining)..."
+    compose_at "$COMPOSE_BASE/studio/orchestrator" "up -d --build" && echo "done" || echo "failed"
+}
 
 # ComfyUI pinned to GPU 0 (image-studio split — leaves the other card for the chat LLM).
 start_comfyui_gpu0() {
@@ -612,6 +616,7 @@ mode_video_studio() {
     start_comfyui
     start_studio_director
     start_studio_gallery
+    start_studio_orchestrator
     start_service openwebui
     start_service litellm
     start_service searxng

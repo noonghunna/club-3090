@@ -79,7 +79,7 @@ version: 0.6.0
 #  Enhancer: qwen3.5-4b-uncensored @ :8090 (GPU0); falls back to raw prompt if down.
 #  VRAM:    weights on GPU1 (DisTorch donor ~21.9GB), compute on GPU0 (~14GB peak).
 # ────────────────────────────────────────────────────────────────────────────────
-import json, time, base64, re, urllib.request, urllib.parse, asyncio
+import json, time, base64, re, math, urllib.request, urllib.parse, asyncio
 from pydantic import BaseModel, Field
 
 WORKFLOWS = json.loads(r"""__WF_JSON__""")
@@ -93,6 +93,8 @@ class Pipe:
         enhance: bool = Field(default=True)
         timeout_s: int = Field(default=600)
         frames: int = Field(default=241, description="frames @24fps. 121=5s, 241=10s (default, crisp), 361=15s (max, coherent but softer). HARD-CAPPED at 361: ~481/20s collapses to corrupted output on this rig (measured 2026-06-11).")
+        orchestrator_url: str = Field(default="http://host.docker.internal:8190", description="Studio orchestrator for long clips (>15s). Asked to chain ~10s segments into one combined video. If unreachable, long requests fall back to a single capped clip.")
+        max_seconds: int = Field(default=120, description="Cap on requested long-clip length (segments = ceil(seconds/10), each ~2.5 min to render).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -188,6 +190,27 @@ class Pipe:
                                      headers={"Content-Type": "application/json"})
         return json.load(urllib.request.urlopen(req, timeout=120))["choices"][0]["message"]["content"].strip()
 
+    # ── long-clip (>15s) via the orchestrator: chain ~10s segments → one combined video ──
+    def _target_seconds(self, text):
+        """Parse a requested duration from the user's text. 0 = none (single clip)."""
+        m = re.search(r"(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m)\b", text, re.I)
+        if m:
+            return min(self.valves.max_seconds, max(1, round(float(m.group(1)) * 60)))
+        m = re.search(r"(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", text, re.I)
+        if m:
+            return min(self.valves.max_seconds, max(1, round(float(m.group(1)))))
+        return 0
+
+    def _orch_submit(self, lane, prompt, segments):
+        req = urllib.request.Request(self.valves.orchestrator_url.rstrip("/") + "/extend",
+            data=json.dumps({"prompt": prompt, "lane": lane, "segments": segments, "frames": 241}).encode(),
+            headers={"Content-Type": "application/json"})
+        return json.load(urllib.request.urlopen(req, timeout=60))["job_id"]
+
+    def _orch_poll(self, jid):
+        return json.load(urllib.request.urlopen(
+            self.valves.orchestrator_url.rstrip("/") + "/job/" + jid, timeout=30))
+
     def _comfy(self, lane, mode, prompt_text, image_name, frames):
         wf = json.loads(json.dumps(WORKFLOWS[lane + "-" + mode]))
         wf["5"]["inputs"]["text"] = prompt_text
@@ -255,6 +278,48 @@ class Pipe:
                 final_prompt = await loop.run_in_executor(None, self._enhance, user_prompt, mode == "i2v", prior_spec)
             except Exception:
                 final_prompt = user_prompt
+
+        # Long clip? If the user asked for >15s (text→video), chain ~10s segments via the
+        # orchestrator into one combined video. Falls through to a single capped clip if
+        # the orchestrator is unreachable.
+        target = self._target_seconds(user_prompt) if mode == "t2v" else 0
+        if target > 15:
+            segments = min(self.valves.max_seconds // 10, max(2, math.ceil(target / 10)))
+            jid = None
+            try:
+                jid = await loop.run_in_executor(None, self._orch_submit, lane, final_prompt, segments)
+            except Exception:
+                await status("Long-clip engine unreachable — making a single clip instead.")
+            if jid:
+                last = ""; t0 = time.time()
+                await status("\U0001F3AC Long clip (~" + str(segments * 10) + "s): chaining " + str(segments) + " segments on " + label + "…")
+                while time.time() - t0 < 3 * self.valves.timeout_s * (segments + 1):
+                    await asyncio.sleep(8)
+                    try:
+                        j = await loop.run_in_executor(None, self._orch_poll, jid)
+                    except Exception:
+                        continue
+                    p = j.get("progress")
+                    if p and p != last:
+                        last = p
+                        await status("\U0001F3AC rendering segment " + p + " (~" + str(segments * 10) + "s total, a few min each)…")
+                    if j.get("status") == "done":
+                        await status("Done", True)
+                        base = self.valves.browser_base.rstrip("/")
+                        fn = j.get("filename"); sub = j.get("subfolder", "video")
+                        url = base + "/" + ((sub + "/") if sub else "") + fn
+                        marker = "<!--SPEC:" + base64.b64encode(final_prompt.encode()).decode() + "-->"
+                        return ("**" + label + " · text→video · " + str(segments) + " segments (~" + str(segments * 10) + "s)**\n\n"
+                                "**Prompt used:** " + final_prompt + "\n\n"
+                                "▶️ **[Open / download the video](" + url + ")**\n\n"
+                                "_Want changes? Just say what to tweak and I’ll re-craft and regenerate._ "
+                                "_(Browse all media: " + base + "/ )_" + marker)
+                    if j.get("status") == "error":
+                        await status("Failed", True)
+                        return "⚠️ Long-clip generation failed: " + str(j.get("error"))
+                await status("Failed", True)
+                return "⚠️ Long-clip generation timed out."
+
         kind = "image→video" if mode == "i2v" else "text→video"
         await status("\U0001F3AC Rendering " + kind + " on " + label + "… (a few minutes)")
         try:
