@@ -49,7 +49,7 @@
 # Env (advanced — flags above cover the common cases):
 #   CONTAINER              Running container. Default: first vllm-qwen36-27b*
 #                          / vllm-qwen36-35b-a3b* / vllm-gemma-4-31b* (or the
-#                          matching llama-cpp-/ik-llama-/sglang- variants)
+#                          matching llama-cpp-/ik-llama-/beellama-/sglang- variants)
 #                          from `docker ps`.
 #   ENDPOINT / URL         OpenAI endpoint. Default: mapped container port for
 #                          8000/tcp, falling back to http://localhost:8020.
@@ -108,7 +108,7 @@ OPTIONS
 ENV (advanced — auto-detected by default)
   CONTAINER         Running container. Default: first vllm-qwen36-27b* /
                     vllm-qwen36-35b-a3b* / vllm-gemma-4-31b* (or the
-                    matching llama-cpp-/ik-llama-/sglang- variants) from
+                    matching llama-cpp-/ik-llama-/beellama-/sglang- variants) from
                     docker ps. Use CONTAINER=none for
                     host-mode engines (e.g. llama.cpp host build).
   ENDPOINT / URL    OpenAI endpoint. Default: mapped container port → fallback
@@ -221,8 +221,10 @@ auto_container() {
   # preflight.sh::preflight_autodetect_endpoint). llama-cpp / ik-llama were
   # previously missing here → rc=2 on llama.cpp/ik rebench-full soak step (#403).
   # 35b-a3b added 2026-05-28: ik-llama-qwen36-35b-a3b-apex-* + future siblings.
+  # beellama added 2026-06-11 (#362): beellama-qwen36-27b* / beellama-gemma4-*
+  # (note beellama names gemma as `gemma4-31b`, not `gemma-4-31b`).
   docker ps --format '{{.Names}}' 2>/dev/null \
-    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|ik-llama-qwen36-27b|vllm-qwen36-35b-a3b|llama-cpp-qwen36-35b-a3b|ik-llama-qwen36-35b-a3b|vllm-gemma-4-31b|sglang-qwen36-27b)' \
+    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|ik-llama-qwen36-27b|beellama-qwen36-27b|vllm-qwen36-35b-a3b|llama-cpp-qwen36-35b-a3b|ik-llama-qwen36-35b-a3b|beellama-qwen36-35b-a3b|vllm-gemma-4-31b|beellama-gemma4-31b|beellama-gemma4-12b|sglang-qwen36-27b)' \
     | head -1 || true
 }
 
@@ -279,7 +281,7 @@ if [[ "$HOST_MODE" == "1" ]]; then
   CONTAINER="none"
 else
   CONTAINER="${CONTAINER:-$(auto_container)}"
-  [[ -n "$CONTAINER" ]] || die "no running club-3090 container found (vllm-/llama-cpp-/ik-llama-/sglang- × qwen36-27b/qwen36-35b-a3b/gemma-4-31b); set CONTAINER=... or CONTAINER=none for host engines"
+  [[ -n "$CONTAINER" ]] || die "no running club-3090 container found (vllm-/llama-cpp-/ik-llama-/beellama-/sglang- × qwen36-27b/qwen36-35b-a3b/gemma-4-31b); set CONTAINER=... or CONTAINER=none for host engines"
   docker inspect "$CONTAINER" >/dev/null 2>&1 || die "container '$CONTAINER' not found (use CONTAINER=none for host engine builds)"
   [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)" == "true" ]] \
     || die "container '$CONTAINER' is not running"
