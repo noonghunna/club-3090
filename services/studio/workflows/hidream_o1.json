@@ -1,0 +1,12 @@
+{
+  "loader":  {"class_type": "HiDreamO1ModelLoader", "inputs": {"model_name": "HiDream-O1-Image-Dev-2604-FP8", "precision": "auto", "attention": "auto", "download_if_missing": false}},
+  "cond":    {"class_type": "HiDreamO1Conditioning", "inputs": {"prompt": "placeholder", "negative_prompt": ""}},
+  "sampler": {"class_type": "HiDreamO1Sampler", "inputs": {
+                "model": ["loader", 0], "conditioning": ["cond", 0],
+                "model_type": "auto", "width": 2048, "height": 2048, "steps": 0, "seed": 42,
+                "guidance_scale": 5.0, "shift": -1.0,
+                "noise_scale_start": 7.5, "noise_scale_end": 7.5, "noise_clip_std": 2.5,
+                "dev_editing_scheduler": "flow_match", "layout_bboxes": "", "preview_every": 0,
+                "keep_image1_aspect": false, "force_offload": false, "image": "0"}},
+  "save":    {"class_type": "SaveImage", "inputs": {"images": ["sampler", 0], "filename_prefix": "studio_hidream"}}
+}

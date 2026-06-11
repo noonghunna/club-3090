@@ -14,6 +14,7 @@ architecture, capabilities and the measured length limits live in **[../../docs/
 | `workflows/ltx_distilled_distorch.json` | The validated **single-stage** ComfyUI graph (8-step, cfg 1) the pipe submits for video. DisTorch splits the 22B DiT across 2 GPUs. |
 | `workflows/ideogram4.json` | The validated **Ideogram-4 fp8** image graph (DualModelGuider). Single-device GPU0 (~18.5 GB @1024²) — runs in either gpu-mode (no switch needed for image). |
 | `workflows/chroma1_hd.json` | The **Chroma1-HD fp8** image graph (Flux-based, de-distilled, *uncensored*). Natural-language prompt + negative + real CFG. Single-device GPU0 (~9 GB); reuses `t5xxl_fp16` + Flux `ae.safetensors`. |
+| `workflows/hidream_o1.json` | The **HiDream-O1-Image-Dev-2604 fp8** image graph (pixel-level unified transformer; AA #1 single-model open-weight T2I). Natural-language prompt, 28-step CFG-off, native **2048²** (~15 GB GPU0, ~3–4 min/image). **Needs the `HiDream_O1-ComfyUI` custom node** (no native ComfyUI support) — cloned by `services/comfyui/entrypoint.sh` (+ a transformers-5 compat patch); weights via `download_hidream_o1.sh`. |
 | `workflows/ace_step_music.json` | The **ACE-Step v1 3.5B** music graph (tags + lyrics/`[instrumental]`, seconds-duration). Single-device GPU0 (~8 GB) — songs + instrumentals to `.mp3`. |
 | `workflows/stable_audio_sfx.json` | The **Stable Audio Open 1.0** sound graph (natural-language, ≤47 s). Single-device GPU0 — SFX / ambience / textures to `.mp3`. |
 | `studio_pipe.py` | Built artifact (committed for convenience; regenerate with the builder). |
@@ -31,11 +32,12 @@ python3 build_studio_pipe.py            # writes studio_pipe.py
 ```
 
 Then in Open WebUI: **Admin → Functions → +**, paste the contents of `studio_pipe.py`,
-save, enable. Six models appear in the picker:
+save, enable. Seven models appear in the picker:
 
 - `🎬 Studio · LTX-2.3` — video + audio (stock model)
 - `🔓 Studio · Sulphur` — uncensored video lane
-- `🖼️ Studio · Image` — Ideogram-4 (graphic design / logo / photo / art)
+- `✨ Studio · Image (HiDream-O1)` — top-quality / photoreal stills (natural-language prompt)
+- `🖼️ Studio · Image` — Ideogram-4 (graphic design / logo / photo / text)
 - `🔓 Studio · Image (Chroma)` — uncensored stills (natural-language prompt)
 - `🎵 Studio · Music` — ACE-Step (songs + instrumentals)
 - `🔊 Studio · SFX` — Stable Audio (sound effects + ambient)

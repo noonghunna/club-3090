@@ -156,7 +156,7 @@ moment; use a longer duration (more segments) for a scene that needs to evolve.
 | **Audio** | yes — LTX-2.3 generates synced ambient audio |
 | **Resolution** | Sulphur 1280×720 · LTX 768×512 (set in the workflow) |
 | **Length** | default ~10 s; see the ceiling below |
-| **Lanes** | `🎬 LTX-2.3` · `🔓 Sulphur` (video) · `🖼️ Image` (Ideogram-4) · `🔓 Image` (Chroma) · `🎵 Music` (ACE-Step) · `🔊 SFX` (Stable Audio) — see *Image lanes* / *Music lane* / *SFX lane* |
+| **Lanes** | `🎬 LTX-2.3` · `🔓 Sulphur` (video) · `✨ Image` (HiDream-O1) · `🖼️ Image` (Ideogram-4) · `🔓 Image` (Chroma) · `🎵 Music` (ACE-Step) · `🔊 SFX` (Stable Audio) — see *Image lanes* / *Music lane* / *SFX lane* |
 
 ### Length ceiling (measured on 2× 3090, 1280×720, frames = 24·seconds + 1)
 
@@ -268,12 +268,32 @@ songs/instrumentals).
 - **Single-device GPU0** — a lane like music. Output is an `.mp3` in the gallery. Reuses the
   bundled Stable Audio ComfyUI nodes (Stable Audio Open 1.0 + a T5-base encoder).
 
-## Image lanes (Ideogram-4 design · Chroma uncensored)
+## Image lanes (HiDream-O1 quality · Ideogram-4 design · Chroma uncensored)
 
-Two still-image lanes share the pipe and the director: **Ideogram-4** (design / logo / text)
-and **Chroma** (uncensored). Both are single-device GPU0 and run in either gpu-mode. Pick by
-intent — Ideogram is best at typography/logos but **safety-trained**; Chroma is **uncensored**
-(the "Sulphur for stills") but weaker at crisp text.
+Three still-image lanes share the pipe and the director: **HiDream-O1** (top-quality general /
+photoreal), **Ideogram-4** (design / logo / text), and **Chroma** (uncensored). All are
+single-device GPU0 and run in either gpu-mode. Pick by intent — HiDream is the quality leader
+for general images/photos; Ideogram is best at typography/logos but **safety-trained**; Chroma
+is **uncensored** (the "Sulphur for stills") but weaker at crisp text.
+
+### ✨ HiDream-O1 (top-quality / photoreal)
+
+The **✨ Studio · Image (HiDream-O1)** lane renders on **HiDream-O1-Image-Dev-2604 fp8** — a 9B
+**pixel-level unified transformer** (no separate VAE / text encoder; the model works directly in
+a pixel-and-token space). On [Artificial Analysis](https://artificialanalysis.ai/image/leaderboard/text-to-image/open-weights)
+it's the **#1 single-model open-weight** text-to-image (Elo 1189). It takes a **rich
+natural-language prompt** (Qwen3-VL text understanding), so the director crafts a vivid
+descriptive paragraph. The Dev-2604 build is **distilled**: 28-step, **CFG-off** (no negative
+prompt — everything lives in the positive description). It renders at its **native 2048×2048**
+(the node snaps smaller requests up), single-device on **GPU0 ~15 GB**, ~**3–4 min/image** on a
+3090 (sdpa attention — flash-attn isn't built for sm_86). That's the heaviest + slowest of the
+image lanes — the trade for top quality. It coexists with the director (~15 + 4.6 ≈ 20 GB), but
+not with a concurrent video render; not subject to `image_max_edge` (it's fixed at 2048²).
+
+> **HiDream-O1 has no native ComfyUI support** — unlike Ideogram-4. Its nodes (HiDream O1 Model
+> Loader / Conditioning / Sampler) come from the third-party **`Saganaki22/HiDream_O1-ComfyUI`**
+> custom node, cloned by `services/comfyui/entrypoint.sh`; weights via `download_hidream_o1.sh`.
+> The node needs PyTorch ≤ 2.8.x (our ComfyUI runs 2.7.0 — fine).
 
 ### 🖼️ Ideogram-4 (design / logo / photo / art)
 
@@ -365,6 +385,7 @@ gemma-12b chat or a 2048² still needs a `gpu-mode` change.
 | `ltx-2.3-22b-{distilled,dev}_embeddings_connectors.safetensors` | `text_encoders/` | LTX / Sulphur |
 | `ideogram4_fp8_scaled.safetensors` (+ `_unconditional_`), `qwen3vl_8b_fp8_scaled`, `flux2-vae` | `diffusion_models/`, `text_encoders/`, `vae/` | Ideogram-4 image |
 | `Chroma1-HD-fp8mixed.safetensors` (Comfy-Org/Chroma1-HD_repackaged) | `diffusion_models/` | Chroma image (uncensored) |
+| `HiDream-O1-Image-Dev-2604-FP8/` (drbaph; complete folder) | `diffusion_models/` | HiDream-O1 image (top-quality) — needs `HiDream_O1-ComfyUI` node |
 | `t5xxl_fp16.safetensors` + Flux `ae.safetensors` | `text_encoders/`, `vae/flux/` | Chroma (shared with Flux ecosystem) |
 
 Director GGUF (`Qwen3.5-4B-Uncensored-…`) → `/mnt/models/huggingface/qwen3.5-4b-gguf/…`.

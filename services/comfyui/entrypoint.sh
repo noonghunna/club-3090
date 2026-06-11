@@ -99,6 +99,33 @@ clone_or_update https://github.com/kijai/ComfyUI-HunyuanVideoWrapper.git "$NODES
 clone_or_update https://github.com/kijai/ComfyUI-KJNodes.git         "$NODES/ComfyUI-KJNodes"
 clone_or_update https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git "$NODES/ComfyUI-VideoHelperSuite"
 clone_or_update https://github.com/pollockjj/ComfyUI-MultiGPU.git "$NODES/ComfyUI-MultiGPU"
+# HiDream-O1 image lane: HiDream-O1 has NO native ComfyUI support, so its nodes come from this
+# third-party repo (HiDream O1 Model Loader / Conditioning / Sampler). Reviewed source: no
+# subprocess/eval/network beyond an opt-in HF model downloader (unused — weights are pre-fetched
+# by download_hidream_o1.sh). Its requirements (torch/transformers/diffusers/...) are floor-pins
+# already satisfied by the base image, so the loop below is a no-op and does NOT touch torch 2.7.0.
+clone_or_update https://github.com/Saganaki22/HiDream_O1-ComfyUI.git "$NODES/HiDream_O1-ComfyUI"
+# transformers 5.x compat: the HiDream node calls create_causal_mask(input_embeds=, cache_position=),
+# but transformers 5.x renamed input_embeds->inputs_embeds and dropped cache_position from that
+# signature. Idempotently fix the one call site so the model runs on our image's transformers.
+# (No-op once upstream fixes it or if the file changes.) Drift_guard: matched-block replace.
+HIDREAM_CCM="$NODES/HiDream_O1-ComfyUI/hidream_o1/models/qwen3_vl_transformers.py"
+if [ -f "$HIDREAM_CCM" ]; then
+    python3 - "$HIDREAM_CCM" <<'PYEOF' || echo "[bootstrap] WARN: HiDream create_causal_mask patch failed"
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = ("            input_embeds=inputs_embeds,\n"
+       "            attention_mask=attention_mask,\n"
+       "            cache_position=cache_position,\n")
+new = ("            inputs_embeds=inputs_embeds,\n"
+       "            attention_mask=attention_mask,\n")
+if old in s:
+    open(p, "w").write(s.replace(old, new))
+    print("[bootstrap] patched HiDream create_causal_mask for transformers 5.x")
+else:
+    print("[bootstrap] HiDream create_causal_mask patch: no-op (already patched / upstream-fixed)")
+PYEOF
+fi
 
 for d in "$NODES"/*/; do
     if [ -f "$d/requirements.txt" ]; then

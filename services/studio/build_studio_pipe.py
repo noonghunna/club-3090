@@ -18,6 +18,7 @@ IMAGE_TEMPLATE = os.path.join(_HERE, 'workflows', 'ideogram4.json')          # v
 CHROMA_TEMPLATE = os.path.join(_HERE, 'workflows', 'chroma1_hd.json')         # Chroma1-HD fp8 graph (uncensored image, GPU0 single-device, natural-language prompt)
 MUSIC_TEMPLATE = os.path.join(_HERE, 'workflows', 'ace_step_music.json')      # ACE-Step v1 3.5B graph (music/song, GPU0 ~8GB; tags + lyrics, seconds-duration)
 SFX_TEMPLATE = os.path.join(_HERE, 'workflows', 'stable_audio_sfx.json')      # Stable Audio Open 1.0 graph (SFX/ambient/sound, GPU0; natural-language, <=47s)
+HIDREAM_TEMPLATE = os.path.join(_HERE, 'workflows', 'hidream_o1.json')         # HiDream-O1-Image-Dev-2604 fp8 graph (top-quality image, GPU0 ~10GB; natural-language, 28-step CFG-off; custom node)
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
 def build(dit, audio_vae, video_vae, connectors, width, height, frames=121, lora=None):
@@ -69,6 +70,9 @@ WF = {
     # Uncensored image lane: Chroma1-HD fp8 (Flux-based, de-distilled, trained uncensored).
     # Natural-language prompt + negative + real CFG (unlike Ideogram's JSON). Single-device GPU0.
     "chroma": json.load(open(CHROMA_TEMPLATE)),
+    # Top-quality image lane: HiDream-O1-Image-Dev-2604 fp8 (pixel-level unified transformer,
+    # AA #1 single-model open-weight T2I). Natural-language prompt, 28-step CFG-off. GPU0 (~10GB).
+    "hidream": json.load(open(HIDREAM_TEMPLATE)),
     # Music lane: ACE-Step v1 3.5B (text->music/song). Tags (style) + lyrics or [instrumental],
     # seconds-duration. Single-device GPU0 (~8GB) — a lane, not a separate mode (it's light enough).
     "music": json.load(open(MUSIC_TEMPLATE)),
@@ -81,9 +85,9 @@ PIPE = r'''
 """
 title: Studio (text/image -> video · image · music)
 author: club-3090
-description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: Ideogram-4 (design/logo/photo) or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Refine anytime by just saying what to change.
+description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: HiDream-O1 (top quality), Ideogram-4 (design/logo/photo/text), or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.11.0
+version: 0.12.0
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
 #  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
@@ -92,12 +96,16 @@ version: 0.11.0
 #    Frames:  default 241 (=10s @24fps, crisp). Valve range to 361 (=15s, coherent).
 #             HARD-CAPPED at 361 in _comfy — ~481/20s collapses to corrupted output.
 #    VRAM:    weights on GPU1 (DisTorch donor ~21.9GB), compute on GPU0 (~14GB peak).
-#  Image lanes (both single-device GPU0, run in EITHER gpu-mode; coexist w/ director ~4.6GB):
+#  Image lanes (all single-device GPU0, run in EITHER gpu-mode; coexist w/ director ~4.6GB):
+#    hidream= HiDream-O1-Image-Dev-2604 fp8 (pixel-level unified transformer) — top-quality
+#             general/photoreal (AA #1 single-model open-weight). NATURAL-LANGUAGE prompt; 28-step
+#             CFG-off (Dev). Needs the HiDream_O1-ComfyUI custom node. NATIVE 2048x2048 (~15GB GPU0,
+#             ~3-4 min/image, sdpa attn) — heavier+slower than the other image lanes, top quality.
 #    image  = Ideogram-4 fp8 (DualModelGuider, ~18.5GB) — STRUCTURED JSON caption; great at
 #             text/logos/graphic design. SAFETY-TRAINED (blocks some content). 1024x1024, 20 steps.
 #    chroma = Chroma1-HD fp8 (Flux-based, de-distilled, ~9GB) — NATURAL-LANGUAGE prompt + negative
 #             + real CFG; trained UNCENSORED. The "Sulphur for stills." 1024x1024, 26 steps, cfg 3.5.
-#    Both capped at image_max_edge (1024) so they coexist with the director on GPU0 (2048^2 = OOM).
+#    All capped at image_max_edge (1024) so they coexist with the director on GPU0 (2048^2 = OOM).
 #  Music lane: ace-step = ACE-Step v1 3.5B (text->music/song). Tags + lyrics/[instrumental],
 #    seconds-duration; single-device GPU0 (~8GB), 50-step euler, cfg 5 — a lane, not a mode.
 #  SFX lane: sfx = Stable Audio Open 1.0 (text->sound/SFX/ambient, <=47s). GPU0, natural-language.
@@ -122,7 +130,10 @@ class Pipe:
         image_width: int = Field(default=1024, description="Image lane default width (Ideogram-4).")
         image_height: int = Field(default=1024, description="Image lane default height (Ideogram-4).")
         image_steps: int = Field(default=20, description="Image lane sampler steps (Ideogram-4).")
-        image_max_edge: int = Field(default=1024, description="Cap on the image long edge. 1024 lets the image gen coexist with the director on GPU0 (~23GB); 2048 would OOM unless the director is stopped first.")
+        image_max_edge: int = Field(default=1024, description="Cap on the image long edge (applies to all image lanes). 1024 lets the image gen coexist with the director on GPU0 (~23GB); 2048 would OOM unless the director is stopped first.")
+        hidream_width: int = Field(default=2048, description="HiDream image lane width. HiDream-O1 renders at its NATIVE 2048^2 and snaps smaller requests up — so this is effectively fixed at 2048 (~15GB GPU0, ~3-4 min/image on a 3090). Not subject to image_max_edge.")
+        hidream_height: int = Field(default=2048, description="HiDream image lane height (see hidream_width — native 2048^2).")
+        hidream_steps: int = Field(default=0, description="HiDream sampler steps. 0 = auto (the Dev-2604 build uses its native 28-step, CFG-off schedule).")
         chroma_steps: int = Field(default=26, description="Chroma (uncensored image lane) sampler steps.")
         chroma_cfg: float = Field(default=3.5, description="Chroma CFG scale (Chroma is de-distilled — real CFG + negative prompt, unlike Ideogram).")
         enable_narration: bool = Field(default=True, description="Video lanes only: if the message includes a voiceover (e.g. 'voiceover: ...' or 'narration: \"...\"'), generate a Kokoro voice and mix it over the clip's audio (ducked + normalized).")
@@ -141,7 +152,8 @@ class Pipe:
         return [
             {"id": "ltx", "name": "\U0001F3AC Studio · LTX-2.3 (video+audio · text or image)"},
             {"id": "sulphur", "name": "\U0001F513 Studio · Sulphur (uncensored · text or image)"},
-            {"id": "image", "name": "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / art)"},
+            {"id": "hidream", "name": "\U00002728 Studio · Image (HiDream-O1 · top-quality / photoreal)"},
+            {"id": "image", "name": "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / text)"},
             {"id": "chroma", "name": "\U0001F513 Studio · Image (Chroma · uncensored)"},
             {"id": "music", "name": "\U0001F3B5 Studio · Music (ACE-Step · songs + instrumentals)"},
             {"id": "sfx", "name": "\U0001F50A Studio · SFX (Stable Audio · sound effects + ambient)"},
@@ -254,6 +266,20 @@ class Pipe:
         "Output ONLY the final sound prompt — no preamble, no quotes."
     )
 
+    # HiDream-O1 takes rich NATURAL-LANGUAGE prompts (Qwen3-VL text understanding). The Dev-2604
+    # build runs CFG-off (no negative prompt), so everything must live in the positive description.
+    DIRECTOR_HIDREAM_SYS = (
+        "You are an award-winning art director writing prompts for HiDream-O1, a top-tier image model "
+        "that takes rich NATURAL-LANGUAGE prompts. First silently infer the KIND of image the user wants "
+        "— photograph, illustration/concept art, poster/graphic with text, product render, or portrait — "
+        "then write ONE single-paragraph, richly detailed prompt with professional, artistic taste. "
+        "Specify the subject and its details; composition and framing; lighting; colour and mood; "
+        "medium/style; and rendering quality. Use the levers for the kind (photos -> camera and lens, "
+        "depth of field, film stock; illustration -> medium, line weight, palette; text/poster -> put the "
+        "EXACT wording in quotes). Add tasteful detail the user didn't mention while honouring their "
+        "intent. Output ONLY the final prompt — no preamble, no lists, no quotes around the whole thing."
+    )
+
     def _min_caption(self, text):
         # Last-resort fallback when the director's JSON is unusable. Ideogram-4 blocks SPARSE
         # captions: empty color_palette / empty elements -> "Image blocked by safety filter"
@@ -322,6 +348,7 @@ class Pipe:
     def _enhance(self, user_prompt, i2v, prior_spec=None, kind="video"):
         # kind: "video" (LTX/Sulphur) · "image" (Ideogram JSON) · "chroma" (prose) · "music" (ACE-Step JSON)
         sys = {"image": self.DIRECTOR_IMG_SYS, "chroma": self.DIRECTOR_IMG_PROSE_SYS,
+               "hidream": self.DIRECTOR_HIDREAM_SYS,
                "music": self.DIRECTOR_MUSIC_SYS, "sfx": self.DIRECTOR_SFX_SYS}.get(kind, self.DIRECTOR_SYS)
         if i2v and kind == "video":
             sys += (" The user attached an image to animate — describe how it should MOVE "
@@ -339,7 +366,7 @@ class Pipe:
         else:
             msgs.append({"role": "user", "content": user_prompt})
         body = json.dumps({"model": self.valves.chat_model, "messages": msgs,
-                           "max_tokens": 700 if kind in ("image", "music") else 320, "temperature": 0.7 if kind in ("image", "chroma", "music") else 0.8,
+                           "max_tokens": 700 if kind in ("image", "music") else 320, "temperature": 0.7 if kind in ("image", "chroma", "hidream", "music") else 0.8,
                            "chat_template_kwargs": {"enable_thinking": False}}).encode()
         req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
                                      headers={"Content-Type": "application/json"})
@@ -417,6 +444,8 @@ class Pipe:
                                     return v.get("filename"), v.get("subfolder", "")
                         else:
                             for v in (node.get("images") or []):
+                                if v.get("type") == "temp":   # skip in-sampler preview (HiDream emits one); want the saved output
+                                    continue
                                 if str(v.get("filename", "")).lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
                                     return v.get("filename"), v.get("subfolder", "")
                     return None, None
@@ -471,6 +500,15 @@ class Pipe:
         wf["ksampler"]["inputs"]["seed"] = seed
         return self._await_output(self._submit(wf), "audio")
 
+    def _comfy_hidream(self, prompt_text, width, height, steps, seed):
+        wf = json.loads(json.dumps(WORKFLOWS["hidream"]))
+        wf["cond"]["inputs"]["prompt"] = prompt_text
+        wf["sampler"]["inputs"]["width"] = width
+        wf["sampler"]["inputs"]["height"] = height
+        wf["sampler"]["inputs"]["steps"] = steps     # 0 = auto (Dev-2604 native 28-step CFG-off)
+        wf["sampler"]["inputs"]["seed"] = seed
+        return self._await_output(self._submit(wf), "image")
+
     async def pipe(self, body, __event_emitter__=None):
         async def status(msg, done=False):
             if __event_emitter__:
@@ -480,6 +518,8 @@ class Pipe:
             lane = "music"
         elif "sfx" in model:
             lane = "sfx"
+        elif "hidream" in model:
+            lane = "hidream"
         elif "chroma" in model:
             lane = "chroma"
         elif "image" in model:
@@ -489,6 +529,7 @@ class Pipe:
         else:
             lane = "ltx"
         label = {"image": "Image (Ideogram-4)", "chroma": "Image · Chroma (uncensored)",
+                 "hidream": "Image (HiDream-O1)",
                  "music": "Music (ACE-Step)", "sfx": "SFX (Stable Audio)",
                  "sulphur": "Sulphur (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
         loop = asyncio.get_event_loop()
@@ -578,8 +619,8 @@ class Pipe:
                     "“make it instrumental” — and I’ll re-craft and regenerate._ "
                     "_(Browse all media: " + base + "/ )_" + marker)
 
-        # ── STILL-IMAGE LANES (Ideogram-4 JSON caption · or Chroma prose · single still) ──────────
-        if lane in ("image", "chroma"):
+        # ── STILL-IMAGE LANES (HiDream-O1 prose · Ideogram-4 JSON caption · Chroma prose · single still) ──
+        if lane in ("image", "chroma", "hidream"):
             up = ""
             for m in reversed(body.get("messages", [])):
                 if m.get("role") == "user":
@@ -598,10 +639,19 @@ class Pipe:
                 except Exception:
                     crafted = up
             cap = max(256, int(self.valves.image_max_edge))
-            w = min(int(self.valves.image_width), cap); h = min(int(self.valves.image_height), cap)
+            if lane == "hidream":
+                w = int(self.valves.hidream_width); h = int(self.valves.hidream_height)   # HiDream-O1 fixed at native 2048^2 (node snaps up); not subject to image_max_edge
+            else:
+                w = min(int(self.valves.image_width), cap); h = min(int(self.valves.image_height), cap)
             seed = int(time.time() * 1000) % 2147483647
             try:
-                if lane == "chroma":
+                if lane == "hidream":
+                    human = crafted if crafted.strip() else up
+                    spec_text = human
+                    await status("\U00002728 Rendering on HiDream-O1… (~1-2 min)")
+                    fn, sub = await loop.run_in_executor(None, self._comfy_hidream, human, w, h,
+                                                         int(self.valves.hidream_steps), seed)
+                elif lane == "chroma":
                     human = crafted if crafted.strip() else up
                     spec_text = human
                     await status("\U0001F513 Rendering on Chroma (uncensored)… (~1-2 min)")
@@ -621,7 +671,7 @@ class Pipe:
             base = self.valves.browser_base.rstrip("/")
             url = base + "/" + ((sub + "/") if sub else "") + fn
             marker = "<!--SPEC:" + base64.b64encode(spec_text.encode()).decode() + "-->"
-            tweaks = "“more dramatic”, “at night”, “close-up”" if lane == "chroma" else "“monochrome”, “tighter crop”, “flat vector style”"
+            tweaks = "“more dramatic”, “at night”, “close-up”" if lane in ("chroma", "hidream") else "“monochrome”, “tighter crop”, “flat vector style”"
             return ("**\U0001F5BC️ " + label + " · " + str(w) + "x" + str(h) + "**\n\n"
                     "**Prompt used:** " + human + "\n\n"
                     "\U0001F5BC️ **[Open / download the image](" + url + ")**\n\n"
@@ -748,4 +798,4 @@ class Pipe:
 '''.replace('__WF_JSON__', WF_JSON)
 
 open(OUT_PATH, 'w').write(PIPE)
-print("wrote %s (%d bytes; 8 workflows (video x2 + image x2 + music + sfx) + narration)" % (OUT_PATH, len(PIPE)))
+print("wrote %s (%d bytes; 9 workflows (video x2 + image x3 + music + sfx) + narration)" % (OUT_PATH, len(PIPE)))
