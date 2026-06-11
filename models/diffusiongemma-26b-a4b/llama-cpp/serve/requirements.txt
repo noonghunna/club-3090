@@ -1,0 +1,4 @@
+# DiffusionGemma OpenAI shim deps (serve.sh installs these into serve/.venv automatically).
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2

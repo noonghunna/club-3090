@@ -1,0 +1,76 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     DiffusionGemma-26B-A4B-it (unsloth Q4_K_M GGUF — block-diffusion MoE)
+#   Topology:  Single 3090 (24 GB)
+#   Drafter:   none (diffusion canvas denoiser, not autoregressive spec-decode)
+#   KV:        f32 prefix-KV-cache (entropy-bound denoiser, auto-on single-GPU)
+#   Vision:    no (text only via this shim)
+#   Max ctx:   3072 (DG_CTX) — prompt+canvas must fit one non-causal ubatch; NOT the 256K model max
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    ⏸️ Upstream-gated
+#   Caveats:
+#     - Depends on llama.cpp DRAFT PR #24423 (no diffusion HTTP server upstream) — see
+#       docs/UPSTREAM.md. NO stock image carries `llama-diffusion-cli`, so DELIVERY is a
+#       custom image BUILT from the existing draft-PR branch + our DG_NDJSON patch baked in
+#       (../../../Dockerfile). `docker compose build` first; there is no image to pull.
+#     - Build/run not exercised in the authoring WSL distro (no Docker daemon); the binary +
+#       shim were validated via the host launcher `../../../serve/serve.sh` on the same rig.
+#       The image path mirrors that exactly (same binary, same shim, same env).
+#     - VRAM knife's-edge: ~22-23 GB peak at DG_CTX=3072 on a 24 GB card. Larger prompts OOM
+#       (the non-causal forward holds the whole [prompt|canvas] on-GPU); the shim returns HTTP 413.
+#     - Trivial/ultra-short prompts can return empty content (entropy-bound sampler quirk).
+#     - Not faster than our autoregressive MoEs on Ampere (~75 tok/s effective, thinking-off);
+#       the diffusion FP8 speedups need Hopper/Blackwell (see the vLLM #45163 row).
+#   Quality:   not run (quality-test.sh targets stock OpenAI servers; this is a draft-PR shim)
+#   Best for:  the ONLY single-3090 DiffusionGemma path — experiment with a block-diffusion LM
+#              behind an OpenAI endpoint (the vLLM/fp8 path is dual-card only)
+# ---------------------------------------------------------------------------
+# DiffusionGemma-26B-A4B on llama.cpp (draft PR #24423) — single 3090, OpenAI shim.
+#
+# DELIVERY (custom image, relies on the existing draft-PR branch):
+#   The diffusion arch + `llama-diffusion-cli` only exist in danielhanchen's draft PR #24423,
+#   and there is NO HTTP server upstream. So ../../../Dockerfile clones that branch at the
+#   pinned sha, applies ../../../patches/diffusion-ndjson-server.patch, builds the CLI, and
+#   bundles the FastAPI shim. Build then run:
+#
+#     docker compose -f openai-shim.yml build      # ~2 GB CUDA build of the PR branch
+#     docker compose -f openai-shim.yml up -d
+#     curl http://localhost:8060/v1/models
+#
+# NO-DOCKER FALLBACK (what was validated on the authoring rig): build the CLI per
+# ../../../patches/README.md and run the shim on the host —
+#     DG_CLI_BIN=/path/to/llama-diffusion-cli bash ../../../serve/serve.sh
+#
+# This is the GGUF single-card route; for 2× 3090 see the vLLM/fp8 dual path
+# (models/diffusiongemma-26b-a4b/vllm/, registry slug `vllm/diffusiongemma-dual`).
+# ===========================================================================
+services:
+  diffusiongemma-shim:
+    # No image to pull — built locally from the PR branch. Tag is cosmetic.
+    image: ${DG_IMAGE:-club3090/diffusiongemma-shim:pr24423-c84e85a}
+    build:
+      context: ../../..            # the llama-cpp/ dir (Dockerfile COPYs patches/ + serve/)
+      dockerfile: Dockerfile
+      args:
+        CUDA_ARCH: "${CUDA_ARCH:-86}"   # 86=3090, 89=4090, 120=5090
+    container_name: "${ESTATE_CONTAINER:-diffusiongemma-26b-a4b-shim}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${DG_PORT:-8060}}:8060"
+    environment:
+      - DG_GGUF=/models/${GGUF_FILE:-diffusiongemma-26b-a4b-gguf/diffusiongemma-26B-A4B-it-Q4_K_M.gguf}
+      - DG_CLI_BIN=/app/llama-diffusion-cli
+      - DG_PORT=8060
+      - DG_NGL=${NGL:-99}
+      - DG_CTX=${DG_CTX:-3072}
+      - DG_MAXGEN=${DG_MAXGEN:-1024}
+      - DG_MODEL_ID=${DG_MODEL_ID:-diffusiongemma-26b-a4b}
+    volumes:
+      - "${MODEL_DIR:-../../../../../models-cache}:/models:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]

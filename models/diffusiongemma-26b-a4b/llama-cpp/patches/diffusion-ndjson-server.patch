@@ -1,0 +1,187 @@
+diff --git a/examples/diffusion/diffusion-cli.cpp b/examples/diffusion/diffusion-cli.cpp
+index 36c3706..c60c18a 100644
+--- a/examples/diffusion/diffusion-cli.cpp
++++ b/examples/diffusion/diffusion-cli.cpp
+@@ -21,11 +21,14 @@
+ #include <algorithm>
+ #include <clocale>
+ #include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+ #include <iostream>
+ #include <string>
+ #include <vector>
+ 
++#include <nlohmann/json.hpp>
++
+ struct callback_data {
+     diffusion_params *  diff_params;
+     const llama_vocab * vocab;
+@@ -34,6 +37,7 @@ struct callback_data {
+     int32_t             visual_interval;   // visual mode: redraw every Nth step
+     int32_t             steps_seen;        // per-turn step count (callback invocations)
+     int32_t             blocks_seen;       // per-turn block count (callbacks with step == 0)
++    bool                server_mode;       // DG_NDJSON: count steps only, never print to stdout
+     int32_t             term_rows;         // visual mode: terminal size (the canvas viewport is clamped to it)
+     int32_t             term_cols;
+     int32_t             vis_prev_rows;     // visual mode: rows the previous frame advanced (for cursor-up)
+@@ -72,6 +76,12 @@ static bool diffusion_step_callback(int32_t             step,
+         data->blocks_seen++;  // each block's denoise restarts the step counter at 0
+     }
+ 
++    // NDJSON server mode: keep the step/block counters (used for timing stats) but emit nothing —
++    // stdout is reserved for one line of response JSON per request.
++    if (data->server_mode) {
++        return true;
++    }
++
+     auto print_progress_bar = [](int32_t step, int32_t total_steps) {
+         int progress_percent = (step * 100) / total_steps;
+         int progress_bars    = (step * 50) / total_steps;
+@@ -153,6 +163,10 @@ int main(int argc, char ** argv) {
+         return 1;
+     }
+ 
++    // DG_NDJSON=1 turns the binary into a resident OpenAI-shim backend: read one JSON request per line
++    // of stdin, write one JSON response per line of stdout (see the request loop near the end of main).
++    const bool ndjson_server = getenv("DG_NDJSON") && atoi(getenv("DG_NDJSON")) != 0;
++
+     llama_backend_init();
+ 
+     llama_model_params model_params = llama_model_default_params();
+@@ -279,7 +293,8 @@ int main(int argc, char ** argv) {
+     diff_params.add_gumbel_noise = params.diffusion.add_gumbel_noise;
+ 
+     callback_data cb_data               = { &diff_params, vocab, 0, params.diffusion.visual_progress,
+-                                            std::max(1, params.diffusion.visual_interval), 0, 0, 24, 80, 0 };
++                                            std::max(1, params.diffusion.visual_interval), 0, 0,
++                                            ndjson_server, 24, 80, 0 };
+     diff_params.step_callback           = diffusion_step_callback;
+     diff_params.step_callback_user_data = &cb_data;
+ 
+@@ -451,10 +466,15 @@ int main(int argc, char ** argv) {
+         return m;
+     };
+ 
+-    auto apply_template = [&](const std::vector<common_chat_msg> & messages) -> std::string {
++    auto apply_template = [&](const std::vector<common_chat_msg> & messages,
++                              bool enable_thinking = true) -> std::string {
+         common_chat_templates_inputs inputs;
+         inputs.messages              = messages;
+         inputs.add_generation_prompt = true;
++        // DiffusionGemma's template prefills an empty `<|channel>thought<channel|>` (no-think) when
++        // enable_thinking is false, which keeps the canvas budget for the actual answer instead of
++        // verbose reasoning. The interactive CLI keeps the upstream default (true).
++        inputs.enable_thinking       = enable_thinking;
+         return common_chat_templates_apply(chat_templates.get(), inputs).prompt;
+     };
+ 
+@@ -497,6 +517,108 @@ int main(int argc, char ** argv) {
+         return response;
+     };
+ 
++    // NDJSON server mode (DG_NDJSON=1): a resident backend for the OpenAI shim. One JSON request per
++    // stdin line -> one JSON response per stdout line. The model/context stay loaded; per-request we
++    // vary temperature/seed and the block budget (bounded by the launch-time ctx/ubatch — ctx cannot
++    // grow after creation). All diagnostics go to stderr; stdout carries only response JSON.
++    if (ndjson_server) {
++        using json = nlohmann::json;
++
++        const int   launch_max_blocks = std::max(1, params.diffusion.blocks);  // ceiling from launch -n/-ub
++        const float def_temp          = diff_params.temperature;
++        const int   def_seed          = eb_params.seed;
++
++        LOG_INF("diffusion-ndjson: ready (canvas=%d, max_blocks=%d, n_ctx=%d, n_ubatch=%d)\n",
++                (int) canvas_length, launch_max_blocks, (int) llama_n_ctx(ctx), params.n_ubatch);
++        common_log_flush(common_log_main());
++        printf("{\"ready\":true,\"canvas_length\":%d,\"max_blocks\":%d}\n",
++               (int) canvas_length, launch_max_blocks);
++        fflush(stdout);
++
++        std::string line;
++        while (std::getline(std::cin, line)) {
++            if (line.empty()) {
++                continue;
++            }
++
++            json req;
++            try {
++                req = json::parse(line);
++            } catch (const std::exception & e) {
++                json err = { { "error", std::string("bad json: ") + e.what() } };
++                printf("%s\n", err.dump().c_str());
++                fflush(stdout);
++                continue;
++            }
++
++            std::vector<common_chat_msg> messages;
++            try {
++                for (const auto & m : req.at("messages")) {
++                    messages.push_back(make_msg(m.at("role").get<std::string>(),
++                                                m.at("content").get<std::string>()));
++                }
++            } catch (const std::exception & e) {
++                json err = { { "error", std::string("bad messages: ") + e.what() } };
++                printf("%s\n", err.dump().c_str());
++                fflush(stdout);
++                continue;
++            }
++
++            // per-request knobs (default to the launch-time values when omitted)
++            const float temp = req.contains("temperature") && !req["temperature"].is_null()
++                                   ? req["temperature"].get<float>() : def_temp;
++            const int   seed = req.contains("seed") && !req["seed"].is_null()
++                                   ? req["seed"].get<int>() : def_seed;
++            diff_params.temperature = temp;
++            diff_params.seed        = seed;
++            eb_params.seed          = seed;
++
++            // thinking is OFF by default for the shim (clean, compact answers for coding harnesses);
++            // a request may opt back in with "enable_thinking": true.
++            const bool enable_thinking = req.contains("enable_thinking") && !req["enable_thinking"].is_null()
++                                             ? req["enable_thinking"].get<bool>() : false;
++
++            int blocks = launch_max_blocks;
++            if (canvas_length > 0 && req.contains("n_predict") && !req["n_predict"].is_null()) {
++                const int np = req["n_predict"].get<int>();
++                if (np > 0) {
++                    const int cl = (int) canvas_length;
++                    blocks = std::min((np + cl - 1) / cl, launch_max_blocks);
++                }
++            }
++            params.diffusion.blocks = std::max(1, blocks);
++
++            cb_data.steps_seen  = 0;
++            cb_data.blocks_seen = 0;
++            const int64_t t0 = ggml_time_us();
++            std::string content;
++            try {
++                content = run_turn(apply_template(messages, enable_thinking));
++            } catch (const std::exception & e) {
++                json err = { { "error", std::string("generation failed: ") + e.what() } };
++                printf("%s\n", err.dump().c_str());
++                fflush(stdout);
++                continue;
++            }
++            const double time_ms = (ggml_time_us() - t0) / 1000.0;
++
++            json resp = {
++                { "content",  content },
++                { "steps",    cb_data.steps_seen },
++                { "blocks",   cb_data.blocks_seen },
++                { "time_ms",  time_ms },
++            };
++            common_log_flush(common_log_main());  // drain async stderr logs before the response line
++            printf("%s\n", resp.dump().c_str());
++            fflush(stdout);
++        }
++
++        llama_free(ctx);
++        llama_model_free(model);
++        llama_backend_free();
++        return 0;
++    }
++
+     if (params.conversation_mode == COMMON_CONVERSATION_MODE_ENABLED) {
+         if (!params.enable_chat_template) {
+             LOG_ERR("error: conversation mode requires a chat template\n");

@@ -1,0 +1,4 @@
+# Shim runtime venv (created by serve.sh) — not tracked.
+.venv/
+__pycache__/
+*.pyc
