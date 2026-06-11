@@ -6,7 +6,7 @@ If you have one or two RTX 3090s and want to run modern LLMs at home, in a homel
 
 > 🎯 **4090 or 5090 owner?** The composes run cross-rig — contributors have benched both with measured numbers: **[Can I use a 4090? →](docs/FAQ.md#can-i-use-a-4090-instead-of-a-3090)** · **[Can I use a 5090? →](docs/FAQ.md#can-i-use-a-5090)**. The tooling is calibrated for 3090s but the configs are class-aware; per-class gotchas (4090's tighter idle VRAM, 5090's 32 GB envelope) + cross-rig benchmark rows live in the FAQ.
 
-> 🎨 **Want image generation too?** The **[Image Studio bundle](docs/IMAGE_STUDIO.md)** runs Ideogram-4 image gen + a chat model + Open WebUI together on two GPUs — one command: `bash scripts/setup-image-studio.sh`.
+> 🎨 **Want image generation too?** The **[Image Studio bundle](docs/ai-studio/image.md)** runs Ideogram-4 image gen + a chat model + Open WebUI together on two GPUs — one command: `bash scripts/setup-image-studio.sh`.
 
 ---
 

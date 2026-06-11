@@ -163,7 +163,7 @@ Yes — but **not through the LLM stack.** The text models (Qwen3.6 / Gemma) and
 
 Open-weight models that fit one 3090 (run in ComfyUI): **FLUX.1-dev** (Q8 — aesthetic benchmark), **Qwen-Image** (best text-in-image), **FLUX.2-klein-4B** / **Z-Image-Turbo** (lighter/faster), **HiDream-I1**, **Ideogram-4** (top open quality, ~whole card). Video: **Cosmos3-Nano** / **LTX-2** are feasible on one card; **Wan2.2** / **HunyuanVideo-1.5** are tight. Worked-out shortlist + VRAM sizes: [`models/qwen3-omni-30b-a3b/vllm-omni/README.md`](../models/qwen3-omni-30b-a3b/vllm-omni/README.md).
 
-**Turnkey path:** the **[Image Studio bundle](IMAGE_STUDIO.md)** wires this up for you — `bash scripts/setup-image-studio.sh` (or `gpu-mode image-studio`) brings up Ideogram-4 image gen on one card + a gemma-4-12b chat model on the other + Open WebUI as the front end, so chat and image gen coexist on a 2-GPU box. See [`IMAGE_STUDIO.md`](IMAGE_STUDIO.md).
+**Turnkey path:** the **[Image Studio bundle](ai-studio/image.md)** wires this up for you — `bash scripts/setup-image-studio.sh` (or `gpu-mode image-studio`) brings up Ideogram-4 image gen on one card + a gemma-4-12b chat model on the other + Open WebUI as the front end, so chat and image gen coexist on a 2-GPU box. See [`ai-studio/image.md`](ai-studio/image.md).
 
 ### Why does my image model OOM even though the transformer quant is small?
 

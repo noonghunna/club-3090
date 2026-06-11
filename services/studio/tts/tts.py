@@ -8,7 +8,7 @@ audio under the voice (sidechain compression) and loudness-normalizes the master
 
 The mixdown is structured around an ordered layer list (bed → … → voice) so that future
 layers (generated music / SFX from a dedicated audio-studio) slot in without a rewrite —
-only the voice layer is populated today. See docs/VIDEO_STUDIO.md "Integrated audio".
+only the voice layer is populated today. See docs/ai-studio/video.md "Integrated audio".
 
 Endpoints:
   GET  /tts/health

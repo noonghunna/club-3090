@@ -27,8 +27,10 @@ Start here if you want to run a model.
 | [`FAQ.md`](FAQ.md) | Common setup and operational questions. |
 | [`COMPARISONS.md`](COMPARISONS.md) | Self-host vs cloud APIs — cost crossover and when each wins. |
 | [`EXAMPLES.md`](EXAMPLES.md) | Worked end-to-end usage examples. |
-| [`IMAGE_STUDIO.md`](IMAGE_STUDIO.md) | **Local image generation** (Ideogram-4 via ComfyUI) + chat in one UI (Open WebUI), coexisting on 2 GPUs. |
-| [`VIDEO_STUDIO.md`](VIDEO_STUDIO.md) | **Local text/image → video** (LTX-2.3 + Sulphur via ComfyUI) driven from Open WebUI chat — a "director" LLM crafts the prompt, renders ~10–15 s clips with audio across 2 GPUs. |
+| [`ai-studio/`](ai-studio/README.md) | **Club 3090 AI Studio** — chat-driven, all-modality creative studio (text · image · video · audio) on 2× 3090. **Start here** for the architecture + the full 8-lane matrix. |
+| [`ai-studio/image.md`](ai-studio/image.md) | **Image** lanes — HiDream-O1 (top-quality/photoreal) · Ideogram-4 (design/logo/text) · Chroma (uncensored). |
+| [`ai-studio/video.md`](ai-studio/video.md) | **Video** — LTX-2.3 (video+audio) + Sulphur (uncensored), text/image→video, 60 s+ chaining. |
+| [`ai-studio/audio.md`](ai-studio/audio.md) | **Audio** — Step-Audio-EditX (voice clone+edit) · Kokoro (narration) · ACE-Step (music) · Stable Audio (SFX). |
 
 ---
 

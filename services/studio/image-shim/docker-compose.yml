@@ -3,7 +3,7 @@
 # POST /prompt, where it asks the director (qwen :8090) to craft a rich Ideogram-4 JSON
 # caption (escaping done in Python) and rewrites the prompt node. Point OWUI's
 # COMFYUI_BASE_URL at this (:8191) and turn OWUI image-prompt-generation OFF.
-# No GPU (ComfyUI + director do the work). See docs/VIDEO_STUDIO.md "Native image button".
+# No GPU (ComfyUI + director do the work). See docs/ai-studio/video.md "Native image button".
 services:
   studio-image-shim:
     build: .
