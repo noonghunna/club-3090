@@ -595,6 +595,7 @@ mode_comfyui() {
     stop_all_27b
     stop_deckard
     stop_all_gemma
+    stop_gemma_12b_chat
     start_comfyui
     echo ""
     echo -e "${GREEN}ComfyUI mode active.${NC} UI: http://192.168.86.33:8188"
@@ -612,6 +613,7 @@ mode_video_studio() {
     stop_all_27b
     stop_deckard
     stop_all_gemma
+    stop_gemma_12b_chat
     stop_diffusiongemma
     start_comfyui
     start_studio_director
