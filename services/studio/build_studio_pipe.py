@@ -188,14 +188,19 @@ class Pipe:
     )
 
     def _min_caption(self, text):
-        # Wrap any plain text in a schema-valid Ideogram-4 caption (so off-schema text never
-        # trips the model's "blocked by safety filter" fallback).
+        # Last-resort fallback when the director's JSON is unusable. Ideogram-4 blocks SPARSE
+        # captions: empty color_palette / empty elements -> "Image blocked by safety filter"
+        # (measured 2026-06-11). So every field is POPULATED — a non-empty palette + one
+        # full-subject element. Lower quality / object-framed vs a director caption, but it
+        # renders instead of hard-blocking.
         return json.dumps({
             "high_level_description": text,
-            "style_description": {"aesthetics": "clean, professional, high quality",
-                                  "lighting": "balanced natural lighting", "photo": "sharp, high resolution",
-                                  "medium": "digital", "color_palette": []},
-            "compositional_deconstruction": {"background": "simple complementary background", "elements": []},
+            "style_description": {"aesthetics": "clean, professional, photorealistic, high detail",
+                                  "lighting": "soft natural lighting", "photo": "sharp focus, high resolution, detailed",
+                                  "medium": "photograph", "color_palette": ["#3A3A3A", "#C8C8C8", "#7A7A7A", "#E8E8E8"]},
+            "compositional_deconstruction": {"background": "softly blurred complementary background",
+                                             "elements": [{"type": "obj", "bbox": [256, 256, 768, 768],
+                                                           "desc": text, "color_palette": ["#888888"]}]},
         })
 
     def _coerce_caption(self, s, fallback_text):
