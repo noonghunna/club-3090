@@ -686,7 +686,12 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
     expected_sessions = int(expected_sessions)
     rows = []
     with open(turn_log) as f:
-        for row in csv.DictReader(f):
+        reader = csv.DictReader(f)
+        # completion_tokens column added 2026-05-04. Its presence selects the
+        # silent-empty discriminator below: genuine completion_tokens==0 when
+        # available, else the legacy decode_tps==0 proxy for older CSVs.
+        has_completion_tokens = "completion_tokens" in (reader.fieldnames or [])
+        for row in reader:
             for key in ("session_id", "turn_id", "t_ms", "vram_mib", "ttft_ms", "status"):
                 row[key] = int(float(row[key] or 0))
             row["decode_tps"] = float(row["decode_tps"] or 0)
@@ -713,21 +718,28 @@ def cmd_summary(turn_log, summary_path, boot_vram, growth_limit, timed_out, expe
     max_vram = max([r["vram_mib"] for r in rows] + [boot_vram])
     growth = max_vram - boot_vram
     errors = [r for r in rows if r["status"] != 200 or r["error"]]
-    # Silent-empty turns: HTTP 200 + no transport error + decode_tps == 0
-    # despite t_ms ≥ 1s. These slip past errors[] — the engine ACK'd the
-    # request and the stream closed cleanly, but the model emitted nothing
-    # observable. cmd_run sets decode_tps=0 when completion_tokens <= 0 OR
-    # decode_s < 100ms (both = workload-broken on a 27B model). Common
-    # causes: xgrammar mask rejecting every candidate (club-3090 #43, #47),
+    # Silent-empty turns: HTTP 200 + no transport error + the model produced
+    # NO observable output despite t_ms ≥ 1s. These slip past errors[] — the
+    # engine ACK'd the request and the stream closed cleanly, but nothing came
+    # back. The discriminator is completion_tokens == 0 (genuine empty) when
+    # that column is present — NOT decode_tps == 0. cmd_run zeroes decode_tps
+    # when decode_s < 0.1s OR completion_tokens <= 0, so the old decode_tps==0
+    # proxy ALSO fired on turns that DID produce output but decoded it in a
+    # sub-100ms burst: a tool-call turn (small tool_calls payload, empty
+    # `content`) or a block-diffusion canvas emitted all at once. That
+    # false-flagged real output as silent-empty (DiffusionGemma re-soak
+    # 2026-06-11: 4/25 tool-call turns mislabelled). Genuine causes:
+    # xgrammar mask rejecting every candidate (club-3090 #43, #47),
     # client-side max_tokens exhausted by the <think> block, or spec-decode
-    # returning an empty draft batch. Using decode_tps==0 instead of
-    # completion_tokens==0 keeps this back-compat with pre-2026-05-04 CSVs
-    # that lack the completion_tokens column.
-    silent_empty = [
-        r for r in rows
-        if r["status"] == 200 and not r["error"]
-        and r["decode_tps"] == 0 and r["t_ms"] >= 1000
-    ]
+    # returning an empty draft batch. Pre-2026-05-04 CSVs lack the
+    # completion_tokens column → fall back to the decode_tps==0 heuristic.
+    def _is_silent_empty(r):
+        if r["status"] != 200 or r["error"] or r["t_ms"] < 1000:
+            return False
+        if has_completion_tokens:
+            return r["completion_tokens"] == 0
+        return r["decode_tps"] == 0
+    silent_empty = [r for r in rows if _is_silent_empty(r)]
     silent_empty_pct = (100.0 * len(silent_empty) / len(rows)) if rows else 0.0
     first_med = med(first_tps)
     last_med = med(last_tps)
