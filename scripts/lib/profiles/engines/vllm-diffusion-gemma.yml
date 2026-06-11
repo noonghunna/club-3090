@@ -1,15 +1,15 @@
 schema_version: 1
 id: vllm-diffusion-gemma
-display_name: vLLM DiffusionGemma (dLLM arch-preview, vllm#45163 sideload)
+display_name: vLLM DiffusionGemma (official :gemma image + Ampere/TP fix-mounts)
 type: vllm
 stability: experimental
 install:
   method: docker_image
-  # STOCK, pullable nightly — NOT a baked custom image. The DiffusionGemma arch
-  # exists in no released/nightly vLLM; it is sideloaded at boot from the vendored
-  # overlay (see vendored_overlays). Re-pin when this nightly is purged + regenerate
-  # the overlay (models/diffusiongemma-26b-a4b/vllm/patches/dgemma-overlay/README.md).
-  spec: vllm/vllm-openai:nightly-2c9c07c85e56c799afffd5a671a8a0bace377a39
+  # OFFICIAL vLLM image with DiffusionGemma baked in (a stock vLLM build of the dgemma
+  # branch commit 74b5964f; DiffusionGemmaForBlockDiffusion registers natively). Pinned
+  # BY DIGEST (the :gemma tag is purge-resistant but mutable). Re-pin + rebase the 3
+  # fix-mounts if vLLM re-pushes :gemma (see the fix dir README).
+  spec: vllm/vllm-openai:gemma@sha256:9c719fc0c869092c7d0533f8357d6985a38d5ff03b20ffb6a4620c2b4806dd4b
 min_sm: 8.0
 supported_model_families:
   - diffusion-gemma
@@ -26,32 +26,31 @@ supported_weight_formats:
   - compressed-tensors                # RedHatAI fp8-dynamic pack → Marlin W8A16 on sm_86
 required_overlays: []
 vendored_overlays:
-  - id: dgemma-vllm45163-sideload
+  - id: dgemma-gemma-image-fixes
     pr_url: https://github.com/vllm-project/vllm/pull/45163
     upstream_status: open
     upstream_merged_in_version: null
     local_status: vendored
-    delivery: install_script           # boot-time cp of the vendored overlay onto the stock nightly
+    delivery: site_package_overlay      # 3 files bind-mounted over the image's vllm pkg (wired_at: volumes)
     purpose: >-
-      DiffusionGemma (vllm#45163, UNMERGED draft) sideloaded onto a stock pullable
-      nightly. The overlay (models/diffusiongemma-26b-a4b/vllm/patches/dgemma-overlay/)
-      is the FULL stock-nightly-vs-dgemma-branch delta (123 vllm/*.py files), NOT the
-      PR's formal 41-file set: load-bearing dgemma changes (e.g. build_attn_metadata's
-      `causal` kwarg in v1/worker/gpu/attn_utils.py) live outside the PR diff, so a
-      lean PR-only overlay version-skews. install.sh cp's it over the installed vllm
-      pkg at boot (fail-loud arch assert). Layered on top: Codex's marlin-k-pad fixes
-      (marlin.py + marlin_utils_fp8.py = Marlin sub-tile-K pad so fp8 Marlin W8A16
-      tiles K=352/1056 within Ampere's 99 KB shared mem; diffusion_gemma.py = TP-vocab
-      soft-embed fix + :656 dtype cast). Eager-only (torch.compile works, no gain).
-      transformers: stock nightly's bundled version suffices (the overlay vendors its
-      own diffusion_gemma config). REBASE on a nightly re-pin: regenerate the overlay
-      (diff the dgemma branch's vllm/ tree vs the new stock nightly). Drop the whole
-      sideload when #45163 merges into a pinnable engine.
+      The official `vllm/vllm-openai:gemma` image has the DiffusionGemma arch baked in
+      (stock build of dgemma branch 74b5964f), so we no longer sideload the model code.
+      But 3 fixes are NOT upstream (not in PR #45163) and so not in :gemma — vLLM
+      builds/tests on H100/B200 and their recipe is TP=1, so neither our Ampere fp8 path
+      nor our TP=2 path is exercised. The compose bind-mounts them from
+      models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/:
+      marlin.py + marlin_utils_fp8.py = sm_86 fp8 Marlin sub-tile-K pad (:gemma clean
+      dies in warmup with "Invalid thread config … num_bits=8 … max_shared_mem=101376"
+      for K=352/1056); diffusion_gemma.py = TP-vocab soft-embed + :656 dtype fix (:gemma's
+      copy is the pristine branch file → TP=2 vocab bug). Eager-only (torch.compile works,
+      no gain). Validated live 2026-06-11: :gemma + these 3 mounts boots, serves, 262K,
+      ~177/180 TPS typical / ~1100 peak. Supersedes the former 123-file sideload overlay
+      on a stock nightly (same perf, 120 fewer files). REBASE on a :gemma re-pin (diff the
+      new image's marlin/diffusion_gemma vs these, re-apply the K-pad + TP-vocab deltas).
 required_genesis: false
 notes: >-
   vLLM's first discrete-diffusion LM (DiffusionGemma 26B-A4B) on the V2 model runner
-  (VLLM_USE_V2_MODEL_RUNNER=1). Boots+serves on 2x RTX 3090 (Ampere sm_86) via the
-  sideloaded overlay above — no baked image. gemma4 tool+reasoning parsers work.
-  Eager-only. NOT pinnable-stable for other rigs until #45163 merges (the base nightly
-  may be purged — re-pin + regenerate the overlay then). See the model's learnings +
-  models/diffusiongemma-26b-a4b/REGISTRY_PREP.md.
+  (VLLM_USE_V2_MODEL_RUNNER=1), on the OFFICIAL vllm/vllm-openai:gemma image (digest-pinned)
+  + 3 vendored Ampere/TP fix-mounts. Boots+serves on 2x RTX 3090 (Ampere sm_86). gemma4
+  tool+reasoning parsers work. Eager-only. Experimental: still 3 vendored fixes + a
+  branch-not-main image + no soak. See the model's learnings + the fix dir README.

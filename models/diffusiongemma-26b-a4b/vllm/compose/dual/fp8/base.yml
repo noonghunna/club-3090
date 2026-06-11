@@ -8,25 +8,9 @@
 #   Vision:    no (text diffusion)
 #   Max ctx:   262144 (NIAH retrieval validated to ~250K)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    ⏸️ Upstream-gated — works on Ampere, but boots only via the vendored
-#              overlay until vllm#45163 merges into a pinnable engine.
-#   Caveats:   The DiffusionGemma arch exists in NO released/nightly vLLM — only in
-#              the UNMERGED PR vllm#45163 (https://github.com/vllm-project/vllm/pull/45163).
-#              Delivery = stock PULLABLE nightly + a SIDELOADED overlay applied at
-#              boot (install_script), NOT a baked custom image:
-#                • image = stock `vllm/vllm-openai:nightly-2c9c07c8…` (everyone can pull it)
-#                • ../../../patches/dgemma-overlay/ = the vendored payload: the full
-#                  stock-nightly-vs-dgemma-branch delta (123 vllm/*.py files — the
-#                  PR's formal 41-file set version-skews, since load-bearing dgemma
-#                  changes like build_attn_metadata's `causal` kwarg live outside the
-#                  PR diff) + Codex's 3 fixes (marlin.py + marlin_utils_fp8.py K-pad
-#                  for fp8 Marlin W8A16 on sm_86's 99 KB shared mem; diffusion_gemma.py
-#                  TP-vocab soft-embed + :656 dtype cast). install.sh cp's it over the
-#                  installed vllm pkg before the server starts (fail-loud arch assert).
-#              REBASE when the nightly moves/is purged: re-pin the image + regenerate
-#              the overlay (see ../../../patches/dgemma-overlay/README.md). Not
-#              pinnable-stable until #45163 merges — then this collapses to one pin.
-#              Runs EAGER-ONLY (torch.compile works but gives no throughput gain).
+#   Status:    🧪 Experimental — runs on the OFFICIAL vllm/vllm-openai:gemma image +
+#              3 vendored Ampere/TP fix-mounts; under active validation, eager-only.
+#              Launch needs --force (non-functional status).
 #   Quality:   8-pack 100/150 (67%) — toolcall 13/15 · instructfollow 13-15/15 ·
 #              structoutput 14/15 · dataextract 10/15 · reasonmath 11/15 ·
 #              bugfind 11/15 · hermesagent-20 14/20 (agentic tool-use works) ·
@@ -38,22 +22,33 @@
 # Gemma4 backbone — vLLM's first dLLM (blog 2026-06-10). It denoises a whole block
 # ("canvas", 256 tok) in parallel via bidirectional attention, through vLLM's
 # model-runner-v2 (`VLLM_USE_V2_MODEL_RUNNER=1`). Throughput is content-dependent
-# (entropy-bound sampler): ~150–200 tok/s typical, up to ~450–490 on low-entropy text.
+# (entropy-bound sampler): ~150–200 tok/s typical, up to ~1100 on low-entropy text.
+#
+# DELIVERY: the OFFICIAL `vllm/vllm-openai:gemma` image (pushed 2026-06-10) has the
+# dLLM arch baked in (a stock vLLM build of the dgemma branch commit 74b5964f). We pin
+# it BY DIGEST (purge-resistant), then bind-mount 3 fix files that are NOT upstream:
+#   • marlin.py + marlin_utils_fp8.py — sm_86 fp8 Marlin sub-tile-K pad. Without them
+#     :gemma dies in warmup (Invalid thread config, K=352/1056, 99 KB shared mem).
+#   • diffusion_gemma.py — TP-vocab soft-embed + dtype fix (their recipe is TP=1, so
+#     the TP=2 vocab bug is unfixed upstream).
+# See ../../../patches/gemma-image-fixes/README.md (provenance + rebase). This replaces
+# the former 123-file sideload overlay on a stock nightly — same perf, 120 fewer files.
 #
 # gemma4 tool + reasoning parsers WORK (it's gemma4-based) — mirrored from the
-# gemma-4-26b-a4b compose. Tool requests would http_error WITHOUT
-# --enable-auto-tool-choice; with the gemma4 parsers, tool-calling + reasoning-field
-# routing both function (the 5-pack jumped 57%→84%).
+# gemma-4-26b-a4b compose. Tool requests http_error WITHOUT --enable-auto-tool-choice;
+# with the gemma4 parsers, tool-calling + reasoning-field routing both function.
 #
-# Output length: the model's generation_config caps max_new_tokens at 256, which vLLM
-# applies as the default max_tokens → truncated answers + next-turn echo for clients
-# (OWUI) that omit max_tokens. We lift it to 16384 via --override-generation-config
-# (NOT --generation-config vllm, which would strip the diffusion denoising params).
-# Note 16384 is a CAP only — the instruct model self-terminates ~1.2–1.8K words; it
-# will not one-shot 10K words (use multi-turn).
+# Output length: generation_config caps max_new_tokens at 256, which vLLM applies as the
+# default max_tokens → truncated answers + next-turn echo for clients (OWUI) that omit
+# max_tokens. We lift it to 16384 via --override-generation-config (NOT --generation-config
+# vllm, which would strip the diffusion denoising params). 16384 is a CAP only — the
+# instruct model self-terminates ~1.2–1.8K words; it will not one-shot 10K (use multi-turn).
 #
-# Engine: NO build step. The overlay is applied at container start by install.sh
-# (entrypoint). Just `docker compose up` (or switch.sh / launch.sh).
+# Streaming note: SSE delivers a whole 256-tok canvas as ~1 chunk (block-parallel decode),
+# not token-by-token — verify-full's per-token streaming check flags this; it's expected.
+#
+# Engine: NO build step, NO sideload script. Pinned official image + 3 mounts. Just
+# `docker compose up` (or switch.sh --force / launch.sh).
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
@@ -63,18 +58,19 @@
 # Requires-sm: 8.0+
 services:
   vllm-diffusiongemma-26b-a4b-fp8-tp2:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly-2c9c07c85e56c799afffd5a671a8a0bace377a39}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:gemma@sha256:9c719fc0c869092c7d0533f8357d6985a38d5ff03b20ffb6a4620c2b4806dd4b}
     container_name: "${ESTATE_CONTAINER:-vllm-diffusiongemma-26b-a4b-fp8-tp2}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${ESTATE_PORT:-${PORT:-8042}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
-      # ---- vllm#45163 DiffusionGemma overlay — SIDELOADED (install_script) ----
-      # The vendored payload (the dgemma-branch vllm/ delta + Codex's marlin-k-pad +
-      # TP-vocab/dtype fixes). install.sh cp's it over the stock-nightly vllm pkg at
-      # boot — no baked image. Regenerate on a nightly re-pin (see the dir README).
-      - ../../../patches/dgemma-overlay:/etc/club3090/dgemma-overlay:ro
+      # 3 Ampere/TP fix-mounts over the official :gemma image's vllm pkg (NOT upstream —
+      # see ../../../patches/gemma-image-fixes/README.md). marlin.py + marlin_utils_fp8.py
+      # = sm_86 fp8 Marlin K-pad; diffusion_gemma.py = TP-vocab soft-embed + dtype fix.
+      - ../../../patches/gemma-image-fixes/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/scaled_mm/marlin.py:ro
+      - ../../../patches/gemma-image-fixes/marlin_utils_fp8.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/marlin_utils_fp8.py:ro
+      - ../../../patches/gemma-image-fixes/diffusion_gemma.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/diffusion_gemma.py:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -93,7 +89,6 @@ services:
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
       - VLLM_ATTENTION_BACKEND=TRITON_ATTN
       - TRITON_CACHE_DIR=/root/.triton/cache
-      - DGEMMA_OVERLAY_DIR=/etc/club3090/dgemma-overlay
     shm_size: "16gb"
     ipc: host
     deploy:
@@ -103,22 +98,8 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    entrypoint:
-      - /bin/bash
-      - -c
-      - |
-        # Apply the vllm#45163 DiffusionGemma overlay to the stock nightly BEFORE
-        # vllm imports. Fail-loud: a non-zero exit (arch didn't register) aborts boot
-        # rather than serving a half-patched engine.
-        bash /etc/club3090/dgemma-overlay/install.sh
-        exec python3 -m vllm.entrypoints.openai.api_server "$@"
-      - --
+    # The :gemma image ENTRYPOINT is ["vllm","serve"]; command supplies the model + flags.
     command:
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --model
       - /root/.cache/huggingface/diffusiongemma-26b-a4b-it-fp8-dynamic
       - --served-model-name
       - diffusiongemma-26b-a4b

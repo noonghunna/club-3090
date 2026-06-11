@@ -54,8 +54,8 @@ OVERLAY_PATH_HINTS = {
         "models/gemma-4-31b/vllm/patches/vllm-pr41800-truncate-prompt-tokens",
         "models/qwen3.6-27b/vllm/patches/vllm-pr41800-truncate-prompt-tokens",
     ],
-    "dgemma-vllm45163-sideload": [
-        "models/diffusiongemma-26b-a4b/vllm/patches/dgemma-overlay"
+    "dgemma-gemma-image-fixes": [
+        "models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes"
     ],
 }
 

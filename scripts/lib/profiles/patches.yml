@@ -585,36 +585,41 @@ patches:
       drop_when: "merged into selected nightly and Gemma A4B AWQ composes boot without the sidecar"
     status: verified
 
-  - id: dgemma-vllm45163-sideload
+  - id: dgemma-gemma-image-fixes
     model: [diffusiongemma-26b-a4b]
     files:
-      - models/diffusiongemma-26b-a4b/vllm/patches/dgemma-overlay
+      - models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes
     load_bearing_when:
       - composes:
           - vllm/diffusiongemma-dual
-        reason: "DiffusionGemma's arch exists in no released/nightly vLLM — it lives only in the UNMERGED PR vllm#45163. The vendored overlay (the full stock-nightly-vs-dgemma-branch vllm/ delta + Codex's marlin-k-pad K-pad / TP-vocab soft-embed / dtype fixes) IS the engine: without it the stock nightly cannot register or load DiffusionGemmaForBlockDiffusion. install.sh cp's it over the installed vllm pkg at boot."
-        evidence: "models/diffusiongemma-26b-a4b/vllm/patches/dgemma-overlay/README.md"
+        reason: "The official vllm/vllm-openai:gemma image has the DiffusionGemma arch baked in, but 3 fixes are NOT upstream (vLLM tests H100/B200 + TP=1): marlin.py + marlin_utils_fp8.py = sm_86 fp8 Marlin sub-tile-K pad (without them :gemma dies in warmup, K=352/1056 can't tile in 99 KB shared mem); diffusion_gemma.py = TP-vocab soft-embed + dtype fix (TP=2 path). Bind-mounted over the image's vllm pkg."
+        evidence: "models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/README.md"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
       dockerfile_bake: false
-      entrypoint_invoke: true
+      entrypoint_invoke: false
       genesis: false
     delivery_gaps: []
-    delivery_mechanism: install_script
+    delivery_mechanism: site_package_overlay
     delivery_spec:
-      script: models/diffusiongemma-26b-a4b/vllm/patches/dgemma-overlay/install.sh
-      invoke: "boot-time: cp's the vendored overlay (123-file branch delta + 3 Codex fixes) over the stock-nightly vllm pkg, drops stale bytecode, fail-loud arch assert (idempotent)"
-      invoked_before: vllm-import
-      wired_at: [volumes, entrypoint]
+      overlay_files:
+        - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/marlin.py
+          dest: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/scaled_mm/marlin.py
+        - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/marlin_utils_fp8.py
+          dest: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/marlin_utils_fp8.py
+        - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/diffusion_gemma.py
+          dest: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/diffusion_gemma.py
+      mount_mode: ro
+      wired_at: volumes
     drift_guard:
-      kind: behavioral
-      check: "DiffusionGemmaForBlockDiffusion registers AND the model serves coherent output on the pinned stock nightly after install.sh applies the overlay"
-      on_fail: capability-degraded
-    capability: diffusion-gemma-arch
+      kind: import-and-boot
+      check: "On the pinned :gemma image, fp8 Marlin GEMM tiles K=352/1056 on sm_86 (no Invalid-thread-config) AND DiffusionGemma serves coherent output at TP=2 (no vocab/dtype mismatch)"
+      on_fail: hard-refuse   # foundational: :gemma clean dies in warmup on the Marlin wall without these
+    capability: diffusion-gemma-ampere-serve
     foundational: true
     upstream:
       ref: vllm-project/vllm#45163
       status: open
-      drop_when: "merged into a pinnable vLLM nightly/release that natively registers DiffusionGemmaForBlockDiffusion"
+      drop_when: "the K-pad lands upstream (our #40361 / an Ampere Marlin fix) AND the TP-vocab fix merges into :gemma — then mount nothing"
     status: verified
 
   - id: gemma4-unified-vision-unquant
