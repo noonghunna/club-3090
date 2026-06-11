@@ -45,6 +45,7 @@ weights:
     size_gb: 29
     format: fp8
     status: experimental
+    hf_repo: Qwen/Qwen3.6-27B-FP8
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"

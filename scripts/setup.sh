@@ -255,6 +255,16 @@ elif [[ "${WEIGHTS}" == "awq" ]]; then
       echo "ERROR: WEIGHTS=awq is only wired for gemma-4-31b and gemma-4-26b-a4b." >&2
       exit 1 ;;
   esac
+elif [[ "${WEIGHTS}" == "fp8" ]]; then
+  case "${MODEL_NAME}" in
+    qwen3.6-27b)
+      PRIMARY_WEIGHT_KEY="qwen3.6-27b:fp8"
+      NEEDS_GENESIS=0
+      ;;
+    *)
+      echo "ERROR: WEIGHTS=ft8 is only wired for qwen3.6-27b." >&2
+      exit 1 ;;
+  esac
 elif [[ "${WEIGHTS}" != "autoround" ]]; then
   echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized (use 'autoround', 'awq', 'gguf', or 'iq4ks')." >&2
   exit 1
