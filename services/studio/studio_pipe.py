@@ -1,0 +1,213 @@
+
+"""
+title: Studio (text/image -> video)
+author: club-3090
+description: Type a rough idea — the studio director (qwen) crafts it into a professional, artistic cinematic prompt and generates. LTX (video+audio) or Sulphur (uncensored) lane; text->video or attach an image. Refine anytime by just saying what to change.
+required_open_webui_version: 0.5.0
+version: 0.6.0
+"""
+# ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
+#  Lanes:   ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
+#  Render:  SINGLE-STAGE, 8-step, cfg=1 (no 2-stage upscaler — it injects mesh)
+#  Res:     sulphur 1280x720 · ltx 768x512
+#  Frames:  default 241 (=10s @24fps, crisp). Valve range to 361 (=15s, coherent).
+#           HARD-CAPPED at 361 in _comfy — ~481/20s collapses to corrupted output.
+#  Enhancer: qwen3.5-4b-uncensored @ :8090 (GPU0); falls back to raw prompt if down.
+#  VRAM:    weights on GPU1 (DisTorch donor ~21.9GB), compute on GPU0 (~14GB peak).
+# ────────────────────────────────────────────────────────────────────────────────
+import json, time, base64, re, urllib.request, urllib.parse, asyncio
+from pydantic import BaseModel, Field
+
+WORKFLOWS = json.loads(r"""{"ltx-t2v": {"1": {"inputs": {"vae_name": "ltx-2.3-22b-distilled_audio_vae.safetensors", "device": "main_device", "weight_dtype": "bf16"}, "class_type": "VAELoaderKJ", "_meta": {"title": "VAELoader KJ"}}, "2": {"inputs": {"vae_name": "ltx-2.3-22b-distilled_video_vae.safetensors", "device": "main_device", "weight_dtype": "bf16"}, "class_type": "VAELoaderKJ", "_meta": {"title": "VAELoader KJ"}}, "3": {"inputs": {"unet_name": "ltx2.3/distilled-1.1/ltx-2.3-22b-distilled-1.1-Q8_0.gguf", "compute_device": "cuda:0", "donor_device": "cuda:1", "virtual_vram_gb": 24.0, "eject_models": true}, "class_type": "UnetLoaderGGUFDisTorch2MultiGPU", "_meta": {"title": "Unet Loader (GGUF)"}}, "5": {"inputs": {"text": "A close-up of rain falling on a window at night, water droplets sliding down the glass, warm light glowing behind, ambient sound of steady rain and distant thunder.", "clip": ["47", 0]}, "class_type": "CLIPTextEncode", "_meta": {"title": "CLIP Text Encode (Prompt)"}}, "6": {"inputs": {"text": "blurry, low quality, still frame, frames, watermark, overlay, titles, has blurbox, has subtitles", "clip": ["47", 0]}, "class_type": "CLIPTextEncode", "_meta": {"title": "CLIP Text Encode (Prompt)"}}, "7": {"inputs": {"width": 768, "height": 512, "batch_size": 1, "color": 0}, "class_type": "EmptyImage", "_meta": {"title": "EmptyImage"}}, "8": {"inputs": {"upscale_method": "lanczos", "scale_by": 1.0, "image": ["7", 0]}, "class_type": "ImageScaleBy", "_meta": {"title": "Upscale Image By"}}, "9": {"inputs": {"image": ["8", 0]}, "class_type": "GetImageSize", "_meta": {"title": "Get Image Size"}}, "10": {"inputs": {"value": 121}, "class_type": "PrimitiveInt", "_meta": {"title": "Length"}}, "11": {"inputs": {"value": 24}, "class_type": "PrimitiveInt", "_meta": {"title": "Frame Rate(int)"}}, "12": {"inputs": {"value": 24.0}, "class_type": "PrimitiveFloat", "_meta": {"title": "Frame Rate(float)"}}, "13": {"inputs": {"frames_number": ["10", 0], "frame_rate": ["11", 0], "batch_size": 1, "audio_vae": ["1", 0]}, "class_type": "LTXVEmptyLatentAudio", "_meta": {"title": "LTXV Empty Latent Audio"}}, "14": {"inputs": {"width": ["9", 0], "height": ["9", 1], "length": ["10", 0], "batch_size": 1}, "class_type": "EmptyLTXVLatentVideo", "_meta": {"title": "EmptyLTXVLatentVideo"}}, "15": {"inputs": {"video_latent": ["14", 0], "audio_latent": ["13", 0]}, "class_type": "LTXVConcatAVLatent", "_meta": {"title": "LTXVConcatAVLatent"}}, "16": {"inputs": {"noise_seed": 845334242002042}, "class_type": "RandomNoise", "_meta": {"title": "RandomNoise"}}, "17": {"inputs": {"noise": ["16", 0], "guider": ["18", 0], "sampler": ["20", 0], "sigmas": ["22", 0], "latent_image": ["15", 0]}, "class_type": "SamplerCustomAdvanced", "_meta": {"title": "SamplerCustomAdvanced"}}, "18": {"inputs": {"cfg": 1.0, "model": ["3", 0], "positive": ["23", 0], "negative": ["23", 1]}, "class_type": "CFGGuider", "_meta": {"title": "CFGGuider"}}, "19": {"inputs": {"av_latent": ["17", 0]}, "class_type": "LTXVSeparateAVLatent", "_meta": {"title": "LTXVSeparateAVLatent"}}, "20": {"inputs": {"sampler_name": "euler_ancestral"}, "class_type": "KSamplerSelect", "_meta": {"title": "KSamplerSelect"}}, "21": {"inputs": {"positive": ["23", 0], "negative": ["23", 1], "latent": ["19", 0]}, "class_type": "LTXVCropGuides", "_meta": {"title": "LTXVCropGuides"}}, "22": {"inputs": {"steps": 8, "max_shift": 2.05, "base_shift": 0.95, "stretch": true, "terminal": 0.1, "latent": ["15", 0]}, "class_type": "LTXVScheduler", "_meta": {"title": "LTXVScheduler"}}, "23": {"inputs": {"frame_rate": ["12", 0], "positive": ["5", 0], "negative": ["6", 0]}, "class_type": "LTXVConditioning", "_meta": {"title": "LTXVConditioning"}}, "35": {"inputs": {"samples": ["19", 1], "audio_vae": ["1", 0]}, "class_type": "LTXVAudioVAEDecode", "_meta": {"title": "LTXV Audio VAE Decode"}}, "36": {"inputs": {"fps": ["12", 0], "images": ["37", 0], "audio": ["35", 0]}, "class_type": "CreateVideo", "_meta": {"title": "Create Video"}}, "37": {"inputs": {"tile_size": 512, "overlap": 64, "temporal_size": 4096, "temporal_overlap": 8, "samples": ["21", 2], "vae": ["2", 0]}, "class_type": "VAEDecodeTiled", "_meta": {"title": "VAE Decode (Tiled)"}}, "38": {"inputs": {"filename_prefix": "video/ComfyUI", "format": "mp4", "codec": "auto", "video-preview": "", "video": ["36", 0]}, "class_type": "SaveVideo", "_meta": {"title": "Save Video"}}, "47": {"inputs": {"clip_name1": "gemma_3_12B_it_fp8_scaled.safetensors", "clip_name2": "ltx-2.3-22b-distilled_embeddings_connectors.safetensors", "type": "ltxv"}, "class_type": "DualCLIPLoaderGGUF", "_meta": {"title": "DualCLIPLoader (GGUF)"}}}, "ltx-i2v": {"1": {"inputs": {"vae_name": "ltx-2.3-22b-distilled_audio_vae.safetensors", "device": "main_device", "weight_dtype": "bf16"}, "class_type": "VAELoaderKJ", "_meta": {"title": "VAELoader KJ"}}, "2": {"inputs": {"vae_name": "ltx-2.3-22b-distilled_video_vae.safetensors", "device": "main_device", "weight_dtype": "bf16"}, "class_type": "VAELoaderKJ", "_meta": {"title": "VAELoader KJ"}}, "3": {"inputs": {"unet_name": "ltx2.3/distilled-1.1/ltx-2.3-22b-distilled-1.1-Q8_0.gguf", "compute_device": "cuda:0", "donor_device": "cuda:1", "virtual_vram_gb": 24.0, "eject_models": true}, "class_type": "UnetLoaderGGUFDisTorch2MultiGPU", "_meta": {"title": "Unet Loader (GGUF)"}}, "5": {"inputs": {"text": "A close-up of rain falling on a window at night, water droplets sliding down the glass, warm light glowing behind, ambient sound of steady rain and distant thunder.", "clip": ["47", 0]}, "class_type": "CLIPTextEncode", "_meta": {"title": "CLIP Text Encode (Prompt)"}}, "6": {"inputs": {"text": "blurry, low quality, still frame, frames, watermark, overlay, titles, has blurbox, has subtitles", "clip": ["47", 0]}, "class_type": "CLIPTextEncode", "_meta": {"title": "CLIP Text Encode (Prompt)"}}, "7": {"inputs": {"width": 768, "height": 512, "batch_size": 1, "color": 0}, "class_type": "EmptyImage", "_meta": {"title": "EmptyImage"}}, "8": {"inputs": {"upscale_method": "lanczos", "scale_by": 1.0, "image": ["7", 0]}, "class_type": "ImageScaleBy", "_meta": {"title": "Upscale Image By"}}, "9": {"inputs": {"image": ["8", 0]}, "class_type": "GetImageSize", "_meta": {"title": "Get Image Size"}}, "10": {"inputs": {"value": 121}, "class_type": "PrimitiveInt", "_meta": {"title": "Length"}}, "11": {"inputs": {"value": 24}, "class_type": "PrimitiveInt", "_meta": {"title": "Frame Rate(int)"}}, "12": {"inputs": {"value": 24.0}, "class_type": "PrimitiveFloat", "_meta": {"title": "Frame Rate(float)"}}, "13": {"inputs": {"frames_number": ["10", 0], "frame_rate": ["11", 0], "batch_size": 1, "audio_vae": ["1", 0]}, "class_type": "LTXVEmptyLatentAudio", "_meta": {"title": "LTXV Empty Latent Audio"}}, "14": {"inputs": {"width": ["9", 0], "height": ["9", 1], "length": ["10", 0], "batch_size": 1}, "class_type": "EmptyLTXVLatentVideo", "_meta": {"title": "EmptyLTXVLatentVideo"}}, "15": {"inputs": {"video_latent": ["103", 0], "audio_latent": ["13", 0]}, "class_type": "LTXVConcatAVLatent", "_meta": {"title": "LTXVConcatAVLatent"}}, "16": {"inputs": {"noise_seed": 845334242002042}, "class_type": "RandomNoise", "_meta": {"title": "RandomNoise"}}, "17": {"inputs": {"noise": ["16", 0], "guider": ["18", 0], "sampler": ["20", 0], "sigmas": ["22", 0], "latent_image": ["15", 0]}, "class_type": "SamplerCustomAdvanced", "_meta": {"title": "SamplerCustomAdvanced"}}, "18": {"inputs": {"cfg": 1.0, "model": ["3", 0], "positive": ["23", 0], "negative": ["23", 1]}, "class_type": "CFGGuider", "_meta": {"title": "CFGGuider"}}, "19": {"inputs": {"av_latent": ["17", 0]}, "class_type": "LTXVSeparateAVLatent", "_meta": {"title": "LTXVSeparateAVLatent"}}, "20": {"inputs": {"sampler_name": "euler_ancestral"}, "class_type": "KSamplerSelect", "_meta": {"title": "KSamplerSelect"}}, "21": {"inputs": {"positive": ["23", 0], "negative": ["23", 1], "latent": ["19", 0]}, "class_type": "LTXVCropGuides", "_meta": {"title": "LTXVCropGuides"}}, "22": {"inputs": {"steps": 8, "max_shift": 2.05, "base_shift": 0.95, "stretch": true, "terminal": 0.1, "latent": ["15", 0]}, "class_type": "LTXVScheduler", "_meta": {"title": "LTXVScheduler"}}, "23": {"inputs": {"frame_rate": ["12", 0], "positive": ["5", 0], "negative": ["6", 0]}, "class_type": "LTXVConditioning", "_meta": {"title": "LTXVConditioning"}}, "35": {"inputs": {"samples": ["19", 1], "audio_vae": ["1", 0]}, "class_type": "LTXVAudioVAEDecode", "_meta": {"title": "LTXV Audio VAE Decode"}}, "36": {"inputs": {"fps": ["12", 0], "images": ["37", 0], "audio": ["35", 0]}, "class_type": "CreateVideo", "_meta": {"title": "Create Video"}}, "37": {"inputs": {"tile_size": 512, "overlap": 64, "temporal_size": 4096, "temporal_overlap": 8, "samples": ["21", 2], "vae": ["2", 0]}, "class_type": "VAEDecodeTiled", "_meta": {"title": "VAE Decode (Tiled)"}}, "38": {"inputs": {"filename_prefix": "video/ComfyUI", "format": "mp4", "codec": "auto", "video-preview": "", "video": ["36", 0]}, "class_type": "SaveVideo", "_meta": {"title": "Save Video"}}, "47": {"inputs": {"clip_name1": "gemma_3_12B_it_fp8_scaled.safetensors", "clip_name2": "ltx-2.3-22b-distilled_embeddings_connectors.safetensors", "type": "ltxv"}, "class_type": "DualCLIPLoaderGGUF", "_meta": {"title": "DualCLIPLoader (GGUF)"}}, "100": {"class_type": "LoadImage", "inputs": {"image": "__STUDIO_IMAGE__"}}, "101": {"class_type": "ResizeImagesByLongerEdge", "inputs": {"images": ["100", 0], "longer_edge": 768}}, "102": {"class_type": "LTXVPreprocess", "inputs": {"image": ["101", 0], "img_compression": 35}}, "103": {"class_type": "LTXVImgToVideoInplace", "inputs": {"vae": ["2", 0], "image": ["102", 0], "latent": ["14", 0], "strength": 1.0, "bypass": false}}}, "sulphur-t2v": {"1": {"inputs": {"vae_name": "ltx-2.3-22b-dev_audio_vae.safetensors", "device": "main_device", "weight_dtype": "bf16"}, "class_type": "VAELoaderKJ", "_meta": {"title": "VAELoader KJ"}}, "2": {"inputs": {"vae_name": "ltx-2.3-22b-dev_video_vae.safetensors", "device": "main_device", "weight_dtype": "bf16"}, "class_type": "VAELoaderKJ", "_meta": {"title": "VAELoader KJ"}}, "3": {"inputs": {"unet_name": "sulphur-2/sulphur_dev-Q8_0.gguf", "compute_device": "cuda:0", "donor_device": "cuda:1", "virtual_vram_gb": 24.0, "eject_models": true}, "class_type": "UnetLoaderGGUFDisTorch2MultiGPU", "_meta": {"title": "Unet Loader (GGUF)"}}, "5": {"inputs": {"text": "A close-up of rain falling on a window at night, water droplets sliding down the glass, warm light glowing behind, ambient sound of steady rain and distant thunder.", "clip": ["47", 0]}, "class_type": "CLIPTextEncode", "_meta": {"title": "CLIP Text Encode (Prompt)"}}, "6": {"inputs": {"text": "blurry, low quality, still frame, frames, watermark, overlay, titles, has blurbox, has subtitles", "clip": ["47", 0]}, "class_type": "CLIPTextEncode", "_meta": {"title": "CLIP Text Encode (Prompt)"}}, "7": {"inputs": {"width": 1280, "height": 720, "batch_size": 1, "color": 0}, "class_type": "EmptyImage", "_meta": {"title": "EmptyImage"}}, "8": {"inputs": {"upscale_method": "lanczos", "scale_by": 1.0, "image": ["7", 0]}, "class_type": "ImageScaleBy", "_meta": {"title": "Upscale Image By"}}, "9": {"inputs": {"image": ["8", 0]}, "class_type": "GetImageSize", "_meta": {"title": "Get Image Size"}}, "10": {"inputs": {"value": 121}, "class_type": "PrimitiveInt", "_meta": {"title": "Length"}}, "11": {"inputs": {"value": 24}, "class_type": "PrimitiveInt", "_meta": {"title": "Frame Rate(int)"}}, "12": {"inputs": {"value": 24.0}, "class_type": "PrimitiveFloat", "_meta": {"title": "Frame Rate(float)"}}, "13": {"inputs": {"frames_number": ["10", 0], "frame_rate": ["11", 0], "batch_size": 1, "audio_vae": ["1", 0]}, "class_type": "LTXVEmptyLatentAudio", "_meta": {"title": "LTXV Empty Latent Audio"}}, "14": {"inputs": {"width": ["9", 0], "height": ["9", 1], "length": ["10", 0], "batch_size": 1}, "class_type": "EmptyLTXVLatentVideo", "_meta": {"title": "EmptyLTXVLatentVideo"}}, "15": {"inputs": {"video_latent": ["14", 0], "audio_latent": ["13", 0]}, "class_type": "LTXVConcatAVLatent", "_meta": {"title": "LTXVConcatAVLatent"}}, "16": {"inputs": {"noise_seed": 845334242002042}, "class_type": "RandomNoise", "_meta": {"title": "RandomNoise"}}, "17": {"inputs": {"noise": ["16", 0], "guider": ["18", 0], "sampler": ["20", 0], "sigmas": ["22", 0], "latent_image": ["15", 0]}, "class_type": "SamplerCustomAdvanced", "_meta": {"title": "SamplerCustomAdvanced"}}, "18": {"inputs": {"cfg": 1.0, "model": ["50", 0], "positive": ["23", 0], "negative": ["23", 1]}, "class_type": "CFGGuider", "_meta": {"title": "CFGGuider"}}, "19": {"inputs": {"av_latent": ["17", 0]}, "class_type": "LTXVSeparateAVLatent", "_meta": {"title": "LTXVSeparateAVLatent"}}, "20": {"inputs": {"sampler_name": "euler_ancestral"}, "class_type": "KSamplerSelect", "_meta": {"title": "KSamplerSelect"}}, "21": {"inputs": {"positive": ["23", 0], "negative": ["23", 1], "latent": ["19", 0]}, "class_type": "LTXVCropGuides", "_meta": {"title": "LTXVCropGuides"}}, "22": {"inputs": {"steps": 8, "max_shift": 2.05, "base_shift": 0.95, "stretch": true, "terminal": 0.1, "latent": ["15", 0]}, "class_type": "LTXVScheduler", "_meta": {"title": "LTXVScheduler"}}, "23": {"inputs": {"frame_rate": ["12", 0], "positive": ["5", 0], "negative": ["6", 0]}, "class_type": "LTXVConditioning", "_meta": {"title": "LTXVConditioning"}}, "35": {"inputs": {"samples": ["19", 1], "audio_vae": ["1", 0]}, "class_type": "LTXVAudioVAEDecode", "_meta": {"title": "LTXV Audio VAE Decode"}}, "36": {"inputs": {"fps": ["12", 0], "images": ["37", 0], "audio": ["35", 0]}, "class_type": "CreateVideo", "_meta": {"title": "Create Video"}}, "37": {"inputs": {"tile_size": 512, "overlap": 64, "temporal_size": 4096, "temporal_overlap": 8, "samples": ["21", 2], "vae": ["2", 0]}, "class_type": "VAEDecodeTiled", "_meta": {"title": "VAE Decode (Tiled)"}}, "38": {"inputs": {"filename_prefix": "video/ComfyUI", "format": "mp4", "codec": "auto", "video-preview": "", "video": ["36", 0]}, "class_type": "SaveVideo", "_meta": {"title": "Save Video"}}, "47": {"inputs": {"clip_name1": "gemma_3_12B_it_fp8_scaled.safetensors", "clip_name2": "ltx-2.3-22b-dev_embeddings_connectors.safetensors", "type": "ltxv"}, "class_type": "DualCLIPLoaderGGUF", "_meta": {"title": "DualCLIPLoader (GGUF)"}}, "50": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["3", 0], "lora_name": "ltx-2.3-22b-distilled-lora-384.safetensors", "strength_model": 1.0}}}, "sulphur-i2v": {"1": {"inputs": {"vae_name": "ltx-2.3-22b-dev_audio_vae.safetensors", "device": "main_device", "weight_dtype": "bf16"}, "class_type": "VAELoaderKJ", "_meta": {"title": "VAELoader KJ"}}, "2": {"inputs": {"vae_name": "ltx-2.3-22b-dev_video_vae.safetensors", "device": "main_device", "weight_dtype": "bf16"}, "class_type": "VAELoaderKJ", "_meta": {"title": "VAELoader KJ"}}, "3": {"inputs": {"unet_name": "sulphur-2/sulphur_dev-Q8_0.gguf", "compute_device": "cuda:0", "donor_device": "cuda:1", "virtual_vram_gb": 24.0, "eject_models": true}, "class_type": "UnetLoaderGGUFDisTorch2MultiGPU", "_meta": {"title": "Unet Loader (GGUF)"}}, "5": {"inputs": {"text": "A close-up of rain falling on a window at night, water droplets sliding down the glass, warm light glowing behind, ambient sound of steady rain and distant thunder.", "clip": ["47", 0]}, "class_type": "CLIPTextEncode", "_meta": {"title": "CLIP Text Encode (Prompt)"}}, "6": {"inputs": {"text": "blurry, low quality, still frame, frames, watermark, overlay, titles, has blurbox, has subtitles", "clip": ["47", 0]}, "class_type": "CLIPTextEncode", "_meta": {"title": "CLIP Text Encode (Prompt)"}}, "7": {"inputs": {"width": 1280, "height": 720, "batch_size": 1, "color": 0}, "class_type": "EmptyImage", "_meta": {"title": "EmptyImage"}}, "8": {"inputs": {"upscale_method": "lanczos", "scale_by": 1.0, "image": ["7", 0]}, "class_type": "ImageScaleBy", "_meta": {"title": "Upscale Image By"}}, "9": {"inputs": {"image": ["8", 0]}, "class_type": "GetImageSize", "_meta": {"title": "Get Image Size"}}, "10": {"inputs": {"value": 121}, "class_type": "PrimitiveInt", "_meta": {"title": "Length"}}, "11": {"inputs": {"value": 24}, "class_type": "PrimitiveInt", "_meta": {"title": "Frame Rate(int)"}}, "12": {"inputs": {"value": 24.0}, "class_type": "PrimitiveFloat", "_meta": {"title": "Frame Rate(float)"}}, "13": {"inputs": {"frames_number": ["10", 0], "frame_rate": ["11", 0], "batch_size": 1, "audio_vae": ["1", 0]}, "class_type": "LTXVEmptyLatentAudio", "_meta": {"title": "LTXV Empty Latent Audio"}}, "14": {"inputs": {"width": ["9", 0], "height": ["9", 1], "length": ["10", 0], "batch_size": 1}, "class_type": "EmptyLTXVLatentVideo", "_meta": {"title": "EmptyLTXVLatentVideo"}}, "15": {"inputs": {"video_latent": ["103", 0], "audio_latent": ["13", 0]}, "class_type": "LTXVConcatAVLatent", "_meta": {"title": "LTXVConcatAVLatent"}}, "16": {"inputs": {"noise_seed": 845334242002042}, "class_type": "RandomNoise", "_meta": {"title": "RandomNoise"}}, "17": {"inputs": {"noise": ["16", 0], "guider": ["18", 0], "sampler": ["20", 0], "sigmas": ["22", 0], "latent_image": ["15", 0]}, "class_type": "SamplerCustomAdvanced", "_meta": {"title": "SamplerCustomAdvanced"}}, "18": {"inputs": {"cfg": 1.0, "model": ["50", 0], "positive": ["23", 0], "negative": ["23", 1]}, "class_type": "CFGGuider", "_meta": {"title": "CFGGuider"}}, "19": {"inputs": {"av_latent": ["17", 0]}, "class_type": "LTXVSeparateAVLatent", "_meta": {"title": "LTXVSeparateAVLatent"}}, "20": {"inputs": {"sampler_name": "euler_ancestral"}, "class_type": "KSamplerSelect", "_meta": {"title": "KSamplerSelect"}}, "21": {"inputs": {"positive": ["23", 0], "negative": ["23", 1], "latent": ["19", 0]}, "class_type": "LTXVCropGuides", "_meta": {"title": "LTXVCropGuides"}}, "22": {"inputs": {"steps": 8, "max_shift": 2.05, "base_shift": 0.95, "stretch": true, "terminal": 0.1, "latent": ["15", 0]}, "class_type": "LTXVScheduler", "_meta": {"title": "LTXVScheduler"}}, "23": {"inputs": {"frame_rate": ["12", 0], "positive": ["5", 0], "negative": ["6", 0]}, "class_type": "LTXVConditioning", "_meta": {"title": "LTXVConditioning"}}, "35": {"inputs": {"samples": ["19", 1], "audio_vae": ["1", 0]}, "class_type": "LTXVAudioVAEDecode", "_meta": {"title": "LTXV Audio VAE Decode"}}, "36": {"inputs": {"fps": ["12", 0], "images": ["37", 0], "audio": ["35", 0]}, "class_type": "CreateVideo", "_meta": {"title": "Create Video"}}, "37": {"inputs": {"tile_size": 512, "overlap": 64, "temporal_size": 4096, "temporal_overlap": 8, "samples": ["21", 2], "vae": ["2", 0]}, "class_type": "VAEDecodeTiled", "_meta": {"title": "VAE Decode (Tiled)"}}, "38": {"inputs": {"filename_prefix": "video/ComfyUI", "format": "mp4", "codec": "auto", "video-preview": "", "video": ["36", 0]}, "class_type": "SaveVideo", "_meta": {"title": "Save Video"}}, "47": {"inputs": {"clip_name1": "gemma_3_12B_it_fp8_scaled.safetensors", "clip_name2": "ltx-2.3-22b-dev_embeddings_connectors.safetensors", "type": "ltxv"}, "class_type": "DualCLIPLoaderGGUF", "_meta": {"title": "DualCLIPLoader (GGUF)"}}, "50": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["3", 0], "lora_name": "ltx-2.3-22b-distilled-lora-384.safetensors", "strength_model": 1.0}}, "100": {"class_type": "LoadImage", "inputs": {"image": "__STUDIO_IMAGE__"}}, "101": {"class_type": "ResizeImagesByLongerEdge", "inputs": {"images": ["100", 0], "longer_edge": 1280}}, "102": {"class_type": "LTXVPreprocess", "inputs": {"image": ["101", 0], "img_compression": 35}}, "103": {"class_type": "LTXVImgToVideoInplace", "inputs": {"vae": ["2", 0], "image": ["102", 0], "latent": ["14", 0], "strength": 1.0, "bypass": false}}}}""")
+
+class Pipe:
+    class Valves(BaseModel):
+        comfyui_url: str = Field(default="http://host.docker.internal:8188")
+        chat_url: str = Field(default="http://host.docker.internal:8090/v1")
+        chat_model: str = Field(default="qwen3.5-4b-uncensored")
+        browser_base: str = Field(default="http://localhost:8189", description="Always-on media gallery (survives ComfyUI being down). Set to your host's LAN IP (e.g. http://192.168.x.x:8189) so the returned video links open from your browser.")
+        enhance: bool = Field(default=True)
+        timeout_s: int = Field(default=600)
+        frames: int = Field(default=241, description="frames @24fps. 121=5s, 241=10s (default, crisp), 361=15s (max, coherent but softer). HARD-CAPPED at 361: ~481/20s collapses to corrupted output on this rig (measured 2026-06-11).")
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    def pipes(self):
+        return [
+            {"id": "ltx", "name": "\U0001F3AC Studio · LTX-2.3 (video+audio · text or image)"},
+            {"id": "sulphur", "name": "\U0001F513 Studio · Sulphur (uncensored · text or image)"},
+        ]
+
+    def _extract_image(self, body):
+        for m in reversed(body.get("messages", [])):
+            if m.get("role") != "user":
+                continue
+            c = m.get("content")
+            if isinstance(c, list):
+                for part in c:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        u = (part.get("image_url") or {}).get("url", "")
+                        if u.startswith("data:"):
+                            return u
+            for u in (m.get("images") or []):
+                if isinstance(u, str) and u.startswith("data:"):
+                    return u
+            return None
+        return None
+
+    def _upload_image(self, data_uri):
+        head, b64 = data_uri.split(",", 1)
+        ext = "png"
+        if "image/" in head:
+            ext = head.split("image/")[1].split(";")[0].split("+")[0] or "png"
+        raw = base64.b64decode(b64)
+        fname = "studio_input." + ext
+        bnd = "----studioboundary7e3"
+        body = (b"--" + bnd.encode() + b"\r\n"
+                b'Content-Disposition: form-data; name="image"; filename="' + fname.encode() + b'"\r\n'
+                b"Content-Type: image/" + ext.encode() + b"\r\n\r\n" + raw + b"\r\n"
+                b"--" + bnd.encode() + b"\r\n"
+                b'Content-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n'
+                b"--" + bnd.encode() + b"--\r\n")
+        req = urllib.request.Request(self.valves.comfyui_url + "/upload/image", data=body,
+                                     headers={"Content-Type": "multipart/form-data; boundary=" + bnd})
+        return json.load(urllib.request.urlopen(req, timeout=60)).get("name", fname)
+
+    DIRECTOR_SYS = (
+        "You are an award-winning cinematographer writing prompts for a text-to-video model "
+        "(LTX-2). Turn the user's brief, casual idea into ONE single-paragraph, richly detailed "
+        "cinematic prompt with professional, artistic taste. Always specify: the subject and its "
+        "action; camera angle, movement and lens feel; lighting and time of day; colour palette "
+        "and mood; setting detail; and the ambient sound. Add tasteful cinematic detail the user "
+        "didn't mention while honouring their intent. Keep it to one coherent shot for a short "
+        "clip. Output ONLY the final prompt — no preamble, no lists, no quotes."
+    )
+
+    def _prior_spec(self, body):
+        # Read the crafted prompt the pipe embedded in its most recent reply, so a
+        # follow-up message can refine that spec instead of starting from scratch.
+        for m in reversed(body.get("messages", [])):
+            if m.get("role") != "assistant":
+                continue
+            c = m.get("content") or ""
+            if isinstance(c, list):
+                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+            mt = re.search(r"<!--SPEC:([A-Za-z0-9+/=]+)-->", c)
+            if mt:
+                try:
+                    return base64.b64decode(mt.group(1)).decode("utf-8", "replace")
+                except Exception:
+                    return None
+        return None
+
+    def _enhance(self, user_prompt, i2v, prior_spec=None):
+        sys = self.DIRECTOR_SYS
+        if i2v:
+            sys += (" The user attached an image to animate — describe how it should MOVE "
+                    "(motion, camera, ambient sound); do not re-describe the still image.")
+        msgs = [{"role": "system", "content": sys}]
+        if prior_spec:
+            msgs.append({"role": "user", "content":
+                "PREVIOUS video prompt (for context):\n" + prior_spec + "\n\n"
+                "USER'S NEW MESSAGE: " + user_prompt + "\n\n"
+                "If the new message refines/adjusts the previous video, output an updated full "
+                "prompt that keeps the previous prompt and applies ONLY the requested change. "
+                "If it is a brand-new idea, ignore the previous prompt and write a fresh one. "
+                "Output ONLY the final prompt."})
+        else:
+            msgs.append({"role": "user", "content": user_prompt})
+        body = json.dumps({"model": self.valves.chat_model, "messages": msgs,
+                           "max_tokens": 320, "temperature": 0.8,
+                           "chat_template_kwargs": {"enable_thinking": False}}).encode()
+        req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
+                                     headers={"Content-Type": "application/json"})
+        return json.load(urllib.request.urlopen(req, timeout=120))["choices"][0]["message"]["content"].strip()
+
+    def _comfy(self, lane, mode, prompt_text, image_name, frames):
+        wf = json.loads(json.dumps(WORKFLOWS[lane + "-" + mode]))
+        wf["5"]["inputs"]["text"] = prompt_text
+        wf["10"]["inputs"]["value"] = frames
+        if mode == "i2v":
+            wf["100"]["inputs"]["image"] = image_name
+        req = urllib.request.Request(self.valves.comfyui_url + "/prompt",
+                                     data=json.dumps({"prompt": wf, "client_id": "owui-studio"}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        r = json.load(urllib.request.urlopen(req, timeout=60))
+        if r.get("node_errors"):
+            raise RuntimeError("ComfyUI node_errors: " + json.dumps(r["node_errors"])[:400])
+        pid = r["prompt_id"]; t0 = time.time()
+        while time.time() - t0 < self.valves.timeout_s:
+            time.sleep(2)
+            h = json.load(urllib.request.urlopen(self.valves.comfyui_url + "/history/" + pid, timeout=30))
+            if pid in h:
+                st = h[pid].get("status", {})
+                if st.get("completed"):
+                    for node in h[pid].get("outputs", {}).values():
+                        for v in (node.get("gifs") or node.get("videos") or node.get("images") or []):
+                            if str(v.get("filename", "")).endswith(".mp4") or str(v.get("format", "")).startswith("video"):
+                                return v.get("filename"), v.get("subfolder", "")
+                    return None, None
+                if st.get("status_str") == "error":
+                    raise RuntimeError("ComfyUI generation error")
+        raise TimeoutError("ComfyUI timed out")
+
+    async def pipe(self, body, __event_emitter__=None):
+        async def status(msg, done=False):
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": msg, "done": done}})
+        lane = "sulphur" if "sulphur" in str(body.get("model", "")) else "ltx"
+        label = "Sulphur (uncensored)" if lane == "sulphur" else "LTX-2.3 (video+audio)"
+        loop = asyncio.get_event_loop()
+        data_uri = self._extract_image(body)
+        user_prompt = ""
+        for m in reversed(body.get("messages", [])):
+            if m.get("role") == "user":
+                c = m.get("content")
+                if isinstance(c, list):
+                    user_prompt = " ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
+                else:
+                    user_prompt = (c or "").strip()
+                break
+        mode = "t2v"; image_name = None
+        if data_uri:
+            await status("\U0001F5BC️ Uploading your image…")
+            try:
+                image_name = await loop.run_in_executor(None, self._upload_image, data_uri)
+                mode = "i2v"
+            except Exception as e:
+                return "⚠️ Couldn't upload the attached image: " + str(e)
+        if not user_prompt:
+            if mode == "i2v":
+                user_prompt = "subtle natural motion, gentle camera movement"
+            else:
+                return "Type a scene to generate (or attach an image to animate)."
+        fr = ((min(int(self.valves.frames), 361) - 1) // 8) * 8 + 1   # capped + LTX-valid 8k+1
+        prior_spec = self._prior_spec(body)
+        final_prompt = user_prompt
+        if self.valves.enhance and user_prompt:
+            await status("\U0001F3A8 Director crafting the shot…")
+            try:
+                final_prompt = await loop.run_in_executor(None, self._enhance, user_prompt, mode == "i2v", prior_spec)
+            except Exception:
+                final_prompt = user_prompt
+        kind = "image→video" if mode == "i2v" else "text→video"
+        await status("\U0001F3AC Rendering " + kind + " on " + label + "… (a few minutes)")
+        try:
+            fn, sub = await loop.run_in_executor(None, self._comfy, lane, mode, final_prompt, image_name, fr)
+        except Exception as e:
+            await status("Failed", True)
+            return "⚠️ Generation failed: " + str(e)
+        await status("Done", True)
+        if not fn:
+            return "Generation finished but no video output was found."
+        base = self.valves.browser_base.rstrip("/")
+        url = base + "/" + ((sub + "/") if sub else "") + fn
+        marker = "<!--SPEC:" + base64.b64encode(final_prompt.encode()).decode() + "-->"
+        secs = int(round(fr / 24))
+        return ("**" + label + " · " + kind + " · " + str(fr) + " frames (~" + str(secs) + "s)**\n\n"
+                "**Prompt used:** " + final_prompt + "\n\n"
+                "▶️ **[Open / download the video](" + url + ")**\n\n"
+                "_Want changes? Just say what to tweak — e.g. “more moody”, “make it night”, "
+                "“slower camera” — and I’ll re-craft from this and regenerate._ "
+                "_(Browse all media: " + base + "/ )_" + marker)

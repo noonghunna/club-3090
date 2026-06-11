@@ -28,6 +28,7 @@ Start here if you want to run a model.
 | [`COMPARISONS.md`](COMPARISONS.md) | Self-host vs cloud APIs — cost crossover and when each wins. |
 | [`EXAMPLES.md`](EXAMPLES.md) | Worked end-to-end usage examples. |
 | [`IMAGE_STUDIO.md`](IMAGE_STUDIO.md) | **Local image generation** (Ideogram-4 via ComfyUI) + chat in one UI (Open WebUI), coexisting on 2 GPUs. |
+| [`VIDEO_STUDIO.md`](VIDEO_STUDIO.md) | **Local text/image → video** (LTX-2.3 + Sulphur via ComfyUI) driven from Open WebUI chat — a "director" LLM crafts the prompt, renders ~10–15 s clips with audio across 2 GPUs. |
 
 ---
 

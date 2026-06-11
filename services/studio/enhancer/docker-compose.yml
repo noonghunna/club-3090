@@ -1,0 +1,32 @@
+# The Studio "director" — a small LLM that turns a casual, throwaway prompt into a
+# rich, professional cinematic spec for the video lanes (camera, lighting, palette,
+# motion, ambient sound). Served OpenAI-compatible on :8090; the Studio pipe calls it
+# as its `chat_model`.
+#
+# It is an *uncensored* fine-tune on purpose: for the Sulphur lane it must not sanitize
+# the user's intent before it reaches the diffusion model. The uncensored capability is
+# a property of the model weights, not this infra — point `chat_model`/`chat_url` at a
+# stock model (e.g. gemma-4-12b) if you'd rather craft through an aligned model; the
+# Sulphur DiT still renders uncensored. See docs/VIDEO_STUDIO.md.
+#
+# Pinned to one GPU (default 0) so it coexists with the video model on the other card.
+services:
+  studio-director:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: studio-director
+    restart: unless-stopped
+    network_mode: host           # binds :8090 directly on the host
+    volumes:
+      - ${MODEL_DIR:-/mnt/models/huggingface}:/models:ro
+    command: >-
+      -m /models/${DIRECTOR_GGUF:-qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf}
+      --mmproj /models/${DIRECTOR_MMPROJ:-qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf}
+      -ngl 99 -c 16384 --host 0.0.0.0 --port ${STUDIO_DIRECTOR_PORT:-8090}
+      --alias qwen3.5-4b-uncensored
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${STUDIO_DIRECTOR_GPU:-0}"]
+              capabilities: [gpu]

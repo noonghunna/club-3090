@@ -154,6 +154,17 @@ stop_comfyui() {
     compose_at "$COMPOSE_BASE/comfyui" "down" && echo "done" || echo "skipped"
 }
 
+# Video-studio sidecars: the always-on media gallery (:8189) and the prompt
+# "director" LLM (:8090, GPU0). See services/studio/ + docs/VIDEO_STUDIO.md.
+start_studio_gallery() {
+    printf "  ${GREEN}▲${NC} Starting studio-gallery (:8189)..."
+    compose_at "$COMPOSE_BASE/studio/gallery" "up -d" && echo "done" || echo "failed"
+}
+start_studio_director() {
+    printf "  ${GREEN}▲${NC} Starting studio-director (:8090, GPU0)..."
+    compose_at "$COMPOSE_BASE/studio/enhancer" "up -d" && echo "done" || echo "failed"
+}
+
 # ComfyUI pinned to GPU 0 (image-studio split — leaves the other card for the chat LLM).
 start_comfyui_gpu0() {
     printf "  ${GREEN}▲${NC} Starting comfyui (GPU0)..."
@@ -588,6 +599,32 @@ mode_comfyui() {
     echo -e "${YELLOW}Tail: sudo docker logs -f comfyui${NC}"
 }
 
+mode_video_studio() {
+    echo -e "${CYAN}═══ Switching to VIDEO-STUDIO mode (text/image → video) ═══${NC}"
+    echo "Starting: ComfyUI :8188 (both GPUs) + director :8090 + gallery :8189 + Open WebUI"
+    echo "Stopping: all GPU-bound LLM serving (Qwen + Gemma + DiffusionGemma)"
+    echo ""
+    stop_service ollama
+    stop_all_27b
+    stop_deckard
+    stop_all_gemma
+    stop_diffusiongemma
+    start_comfyui
+    start_studio_director
+    start_studio_gallery
+    start_service openwebui
+    start_service litellm
+    start_service searxng
+    echo ""
+    echo -e "${GREEN}Video-studio mode active.${NC}"
+    echo -e "  Open WebUI:  http://192.168.86.33:8080   (pick 🎬 Studio · LTX or 🔓 Studio · Sulphur)"
+    echo -e "  Gallery:     http://192.168.86.33:8189   (all generated media; survives ComfyUI down)"
+    echo -e "  ComfyUI:     http://192.168.86.33:8188   (full node graph / control)"
+    echo -e "${YELLOW}First ComfyUI boot can take a few min (clones + node deps). The 22B DiT splits across both 3090s (DisTorch).${NC}"
+    echo -e "${YELLOW}GPU-mutex with the dual-card LLMs. Clips default ~10s, cap ~15s — see docs/VIDEO_STUDIO.md.${NC}"
+    echo -e "${YELLOW}Tail: sudo docker logs -f comfyui${NC}"
+}
+
 mode_image_studio() {
     echo -e "${CYAN}═══ Switching to IMAGE-STUDIO mode (image gen + chat, 2-card split) ═══${NC}"
     echo "Starting: ComfyUI/Ideogram-4 on GPU0 + gemma-4-12b chat on GPU1 + Open WebUI"
@@ -815,6 +852,8 @@ usage() {
     echo "  image-studio       ⭐ Ideogram-4 image gen (GPU0) + gemma-4-12b chat (GPU1) + Open WebUI"
     echo "                     — chat + image coexist on 2 cards (alias: imagestudio)"
     echo "  comfyui            ComfyUI :8188 only, all GPUs (FLUX/Hunyuan/Wan; mutex with LLM)"
+    echo "  video-studio       text/image→video (LTX-2.3 / Sulphur) — ComfyUI both GPUs +"
+    echo "                     director (:8090) + gallery (:8189) + Open WebUI (alias: videostudio)"
     echo ""
     echo "  bigmodel           Stop everything, max RAM+VRAM for one-off llama-server / custom workloads"
     echo "  off                Stop all services"
@@ -843,6 +882,7 @@ case "${1:-}" in
     diffusiongemma|dgemma) mode_diffusiongemma ;;
     comfyui)            mode_comfyui ;;
     image-studio|imagestudio) mode_image_studio ;;
+    video-studio|videostudio) mode_video_studio ;;
     bigmodel)           mode_bigmodel ;;
     off)                mode_off ;;
     status)             show_status ;;

@@ -1,0 +1,16 @@
+# Always-on media gallery — serves ComfyUI's output directory over HTTP, completely
+# independent of ComfyUI itself. Generated videos/images persist on disk regardless
+# (ComfyUI's output is a bind mount); this just keeps them *browsable*, and keeps the
+# Studio pipe's video links working, even when ComfyUI is stopped (e.g. you switched
+# gpu-mode to an LLM). nginx serves static files with HTTP Range support, so video
+# scrubbing works. Lightweight + no GPU → safe to leave running always.
+services:
+  studio-gallery:
+    image: nginx:alpine
+    container_name: studio-gallery
+    restart: unless-stopped
+    ports:
+      - "${STUDIO_GALLERY_PORT:-8189}:80"
+    volumes:
+      - ${COMFYUI_OUTPUT_DIR:-/mnt/models/comfyui/output}:/srv/media:ro
+      - ./default.conf:/etc/nginx/conf.d/default.conf:ro
