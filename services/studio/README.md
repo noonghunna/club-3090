@@ -23,6 +23,7 @@ architecture, capabilities and the measured length limits live in **[../../docs/
 | `orchestrator/` | `docker compose` + Dockerfile for the long-clip engine (`:8190`): chains ~10 s segments into one combined video for requests >15 s. The pipe POSTs here when you ask for a length. |
 | `image-shim/` | `docker compose` + Dockerfile for the native-button image shim (`:8191`): a transparent ComfyUI reverse-proxy that crafts an Ideogram-4 JSON caption (via the director) on `POST /prompt`, so OWUI's built-in 🖼️ image button renders instead of the "blocked by safety filter" placeholder. Point OWUI's `COMFYUI_BASE_URL` at it. See VIDEO_STUDIO.md "Native image button". |
 | `tts/` | `docker compose` + Dockerfile for integrated voices (`:8192`): **Kokoro-82M** (ONNX, CPU) generates a voiceover and a **layer-aware ffmpeg mixdown** ducks it over the clip's native audio + loudness-normalizes. The pipe POSTs `/narrate` when the message has a `voiceover:`/`narration:` directive. No GPU. See VIDEO_STUDIO.md "Integrated audio". |
+| `step-voice/` | `docker compose` + Dockerfile for the **premium voice** service (`:8193`): **Step-Audio-EditX** (3B, Apache) — zero-shot voice cloning + emotion/style/paralinguistic **editing**. **ISOLATED container** pinned to `transformers==4.53.3` (the version the model needs; conflicts with ComfyUI's 5.x), GPU (~14 GB bf16, pinned to a free card). The pipe POSTs `/clone`. On-demand (not always-on). Weights: `Step-Audio-EditX` + `Step-Audio-Tokenizer` under `models/Step-Audio/`. |
 | `extend_chain.py` | The same chaining as a standalone host CLI (handy for scripted long renders). |
 
 ## Install the pipe into Open WebUI
@@ -32,7 +33,7 @@ python3 build_studio_pipe.py            # writes studio_pipe.py
 ```
 
 Then in Open WebUI: **Admin → Functions → +**, paste the contents of `studio_pipe.py`,
-save, enable. Seven models appear in the picker:
+save, enable. Eight models appear in the picker:
 
 - `🎬 Studio · LTX-2.3` — video + audio (stock model)
 - `🔓 Studio · Sulphur` — uncensored video lane
@@ -41,6 +42,7 @@ save, enable. Seven models appear in the picker:
 - `🔓 Studio · Image (Chroma)` — uncensored stills (natural-language prompt)
 - `🎵 Studio · Music` — ACE-Step (songs + instrumentals)
 - `🔊 Studio · SFX` — Stable Audio (sound effects + ambient)
+- `🎙️ Studio · Voice` — Step-Audio-EditX premium voice (zero-shot clone + emotion/style)
 
 Set the pipe's **Valves** (gear icon on the function):
 - `comfyui_url` → your ComfyUI (`http://host.docker.internal:8188` from the OWUI container)

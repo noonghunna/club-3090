@@ -2,9 +2,9 @@
 """
 title: Studio (text/image -> video · image · music)
 author: club-3090
-description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: HiDream-O1 (top quality), Ideogram-4 (design/logo/photo/text), or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Refine anytime by just saying what to change.
+description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: HiDream-O1 (top quality), Ideogram-4 (design/logo/photo/text), or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Voice: Step-Audio-EditX (premium cloned voice + emotion/style). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.12.0
+version: 0.13.0
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
 #  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
@@ -61,6 +61,8 @@ class Pipe:
         music_cfg: float = Field(default=5.0, description="ACE-Step CFG scale.")
         sfx_seconds: float = Field(default=10.0, description="SFX lane (Stable Audio) default length in seconds (hard-capped at 47 — the model's max).")
         sfx_steps: int = Field(default=50, description="Stable Audio sampler steps.")
+        voice_url: str = Field(default="http://host.docker.internal:8193", description="Studio premium-voice service (Step-Audio-EditX, isolated container, transformers 4.53.3). Zero-shot clone + emotion/style editing. GPU — bring up on demand (docker compose -f services/studio/step-voice/docker-compose.yml up -d). If unreachable, the voice lane errors.")
+        voice_reference: str = Field(default="Narrator.wav", description="Default reference voice the lane clones — a bundled sample name (Narrator.wav / Narrator-UK.wav / Pirates.wav) or an absolute path inside the service. Replace with your own 10–30 s clean clip to clone your voice.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -74,6 +76,7 @@ class Pipe:
             {"id": "chroma", "name": "\U0001F513 Studio · Image (Chroma · uncensored)"},
             {"id": "music", "name": "\U0001F3B5 Studio · Music (ACE-Step · songs + instrumentals)"},
             {"id": "sfx", "name": "\U0001F50A Studio · SFX (Stable Audio · sound effects + ambient)"},
+            {"id": "voice", "name": "\U0001F399️ Studio · Voice (Step-Audio-EditX · premium clone)"},
         ]
 
     def _extract_image(self, body):
@@ -332,6 +335,16 @@ class Pipe:
             return r["filename"], r.get("subfolder", "")
         raise RuntimeError(r.get("error", "narration failed"))
 
+    def _voice(self, text, reference):
+        # Premium voice via the isolated Step-Audio-EditX service (zero-shot clone). Returns (filename, subfolder).
+        body = json.dumps({"text": text, "reference": reference}).encode()
+        req = urllib.request.Request(self.valves.voice_url.rstrip("/") + "/clone", data=body,
+                                     headers={"Content-Type": "application/json"})
+        r = json.load(urllib.request.urlopen(req, timeout=self.valves.timeout_s))
+        if r.get("filename"):
+            return r["filename"], r.get("subfolder", "")
+        raise RuntimeError(r.get("error", "voice generation failed"))
+
     def _submit(self, wf):
         req = urllib.request.Request(self.valves.comfyui_url + "/prompt",
                                      data=json.dumps({"prompt": wf, "client_id": "owui-studio"}).encode(),
@@ -435,6 +448,8 @@ class Pipe:
             lane = "music"
         elif "sfx" in model:
             lane = "sfx"
+        elif "voice" in model:
+            lane = "voice"
         elif "hidream" in model:
             lane = "hidream"
         elif "chroma" in model:
@@ -447,7 +462,7 @@ class Pipe:
             lane = "ltx"
         label = {"image": "Image (Ideogram-4)", "chroma": "Image · Chroma (uncensored)",
                  "hidream": "Image (HiDream-O1)",
-                 "music": "Music (ACE-Step)", "sfx": "SFX (Stable Audio)",
+                 "music": "Music (ACE-Step)", "sfx": "SFX (Stable Audio)", "voice": "Voice (Step-Audio-EditX)",
                  "sulphur": "Sulphur (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
         loop = asyncio.get_event_loop()
 
@@ -491,6 +506,34 @@ class Pipe:
                     "_Want changes? Just say what to tweak — e.g. “more distant”, “add reverb”, "
                     "“heavier rain” — and I’ll re-craft and regenerate._ "
                     "_(Browse all media: " + base + "/ )_" + marker)
+
+        # ── VOICE LANE (Step-Audio-EditX premium clone, via the isolated step-voice service :8193) ──
+        if lane == "voice":
+            up = ""
+            for m in reversed(body.get("messages", [])):
+                if m.get("role") == "user":
+                    c = m.get("content")
+                    up = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
+                          if isinstance(c, list) else (c or "").strip())
+                    break
+            if not up:
+                return "Type what you want spoken — e.g. “Welcome to the show.” It's cloned in the **" + self.valves.voice_reference + "** voice (set `voice_reference` to your own clip to clone your voice)."
+            await status("\U0001F399️ Speaking on Step-Audio-EditX (premium voice)…")
+            try:
+                fn, sub = await loop.run_in_executor(None, self._voice, up, self.valves.voice_reference)
+            except Exception as e:
+                await status("Failed", True)
+                return ("⚠️ Voice generation failed — is the step-voice service up? "
+                        "`docker compose -f services/studio/step-voice/docker-compose.yml up -d`\n\n" + str(e))
+            await status("Done", True)
+            if not fn:
+                return "Generation finished but no audio output was found."
+            base = self.valves.browser_base.rstrip("/")
+            url = base + "/" + ((sub + "/") if sub else "") + fn
+            return ("**\U0001F399️ " + label + "**\n\n"
+                    "**Spoken:** " + up + "\n\n"
+                    "\U0001F3A7 **[Open / download the voice clip](" + url + ")**\n\n"
+                    "_Cloned from **" + self.valves.voice_reference + "**. (Browse all media: " + base + "/ )_")
 
         # ── MUSIC LANE (ACE-Step · tags + lyrics/[instrumental] · seconds-duration) ───────────────
         if lane == "music":
