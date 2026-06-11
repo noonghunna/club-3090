@@ -31,6 +31,17 @@ clone_or_update() {
 #    so host-side hf download / file moves work after container has touched them as root.
 chmod -R a+rwX /workspace/ComfyUI/models /workspace/ComfyUI/input /workspace/ComfyUI/output /workspace/ComfyUI/user 2>/dev/null || true
 
+# 0b. Claim the pip cache for the container user. The cache is a bind mount (so it
+#     persists across recreates), but it's host-owned (uid 1000) while this container
+#     runs as root — and pip DISABLES a cache dir it doesn't own, even a world-writable
+#     one (the "sudo without -H" safety check). A disabled cache means every recreate
+#     re-downloads all node deps (~10 min: matplotlib/opencv/insightface/nunchaku-149MB).
+#     chown it to the running uid so pip actually persists wheels; 0777 mode is preserved
+#     so the host user can still read/clear it.
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/root/.cache/pip}"
+mkdir -p "$PIP_CACHE_DIR"
+chown -R "$(id -u):$(id -g)" "$PIP_CACHE_DIR" 2>/dev/null || true
+
 # 1. ComfyUI core — PINNED to a known-good commit (reproducible; this commit has
 #    native Ideogram-4 support and is validated on this stack). Floating on HEAD would
 #    let an upstream change silently break users. Set COMFYUI_REF=HEAD (or 'latest') to
