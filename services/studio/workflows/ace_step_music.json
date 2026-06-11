@@ -1,0 +1,12 @@
+{
+  "ckpt":          {"class_type": "CheckpointLoaderSimple",      "inputs": {"ckpt_name": "ace-step-1.5/all_in_one/ace_step_v1_3.5b.safetensors"}},
+  "modelsampling": {"class_type": "ModelSamplingSD3",            "inputs": {"model": ["ckpt", 0], "shift": 5.0}},
+  "tonemap":       {"class_type": "LatentOperationTonemapReinhard", "inputs": {"multiplier": 1.0}},
+  "cfgop":         {"class_type": "LatentApplyOperationCFG",     "inputs": {"model": ["modelsampling", 0], "operation": ["tonemap", 0]}},
+  "pos":           {"class_type": "TextEncodeAceStepAudio",      "inputs": {"clip": ["ckpt", 1], "tags": "placeholder", "lyrics": "[instrumental]", "lyrics_strength": 0.99}},
+  "neg":           {"class_type": "ConditioningZeroOut",         "inputs": {"conditioning": ["pos", 0]}},
+  "latent":        {"class_type": "EmptyAceStepLatentAudio",     "inputs": {"seconds": 120.0, "batch_size": 1}},
+  "ksampler":      {"class_type": "KSampler",                    "inputs": {"model": ["cfgop", 0], "positive": ["pos", 0], "negative": ["neg", 0], "latent_image": ["latent", 0], "seed": 0, "steps": 50, "cfg": 5.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+  "decode":        {"class_type": "VAEDecodeAudio",              "inputs": {"samples": ["ksampler", 0], "vae": ["ckpt", 2]}},
+  "save":          {"class_type": "SaveAudioMP3",                "inputs": {"audio": ["decode", 0], "filename_prefix": "studio_music", "quality": "V0"}}
+}

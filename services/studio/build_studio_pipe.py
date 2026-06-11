@@ -16,6 +16,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(_HERE, 'workflows', 'ltx_distilled_distorch.json')   # validated clean single-stage graph (video)
 IMAGE_TEMPLATE = os.path.join(_HERE, 'workflows', 'ideogram4.json')          # validated Ideogram-4 fp8 graph (image, GPU0 single-device)
 CHROMA_TEMPLATE = os.path.join(_HERE, 'workflows', 'chroma1_hd.json')         # Chroma1-HD fp8 graph (uncensored image, GPU0 single-device, natural-language prompt)
+MUSIC_TEMPLATE = os.path.join(_HERE, 'workflows', 'ace_step_music.json')      # ACE-Step v1 3.5B graph (music/song, GPU0 ~8GB; tags + lyrics, seconds-duration)
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
 def build(dit, audio_vae, video_vae, connectors, width, height, frames=121, lora=None):
@@ -67,16 +68,19 @@ WF = {
     # Uncensored image lane: Chroma1-HD fp8 (Flux-based, de-distilled, trained uncensored).
     # Natural-language prompt + negative + real CFG (unlike Ideogram's JSON). Single-device GPU0.
     "chroma": json.load(open(CHROMA_TEMPLATE)),
+    # Music lane: ACE-Step v1 3.5B (text->music/song). Tags (style) + lyrics or [instrumental],
+    # seconds-duration. Single-device GPU0 (~8GB) — a lane, not a separate mode (it's light enough).
+    "music": json.load(open(MUSIC_TEMPLATE)),
 }
 WF_JSON = json.dumps(WF)
 
 PIPE = r'''
 """
-title: Studio (text/image -> video · image)
+title: Studio (text/image -> video · image · music)
 author: club-3090
-description: Type a rough idea — the studio director (qwen) crafts it into a professional, artistic prompt and generates. Video lanes: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image. Image lanes: Ideogram-4 (graphic design / logo / photo / art) or Chroma (uncensored). Refine anytime by just saying what to change.
+description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: Ideogram-4 (design/logo/photo) or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.9.0
+version: 0.10.0
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
 #  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
@@ -91,6 +95,8 @@ version: 0.9.0
 #    chroma = Chroma1-HD fp8 (Flux-based, de-distilled, ~9GB) — NATURAL-LANGUAGE prompt + negative
 #             + real CFG; trained UNCENSORED. The "Sulphur for stills." 1024x1024, 26 steps, cfg 3.5.
 #    Both capped at image_max_edge (1024) so they coexist with the director on GPU0 (2048^2 = OOM).
+#  Music lane: ace-step = ACE-Step v1 3.5B (text->music/song). Tags + lyrics/[instrumental],
+#    seconds-duration; single-device GPU0 (~8GB), 50-step euler, cfg 5 — a lane, not a mode.
 #  Director: qwen3.5-4b-uncensored @ :8090 (GPU0); falls back to raw prompt if down.
 # ────────────────────────────────────────────────────────────────────────────────
 import json, time, base64, re, math, urllib.request, urllib.parse, asyncio
@@ -118,6 +124,9 @@ class Pipe:
         enable_narration: bool = Field(default=True, description="Video lanes only: if the message includes a voiceover (e.g. 'voiceover: ...' or 'narration: \"...\"'), generate a Kokoro voice and mix it over the clip's audio (ducked + normalized).")
         tts_url: str = Field(default="http://host.docker.internal:8192", description="Studio TTS + mixdown service (Kokoro, CPU). Generates the voiceover and ducks it over the clip's native audio. If unreachable, the clip is returned without narration.")
         narrate_voice: str = Field(default="af_heart", description="Kokoro voice id for narration (e.g. af_heart, af_bella, am_adam, bf_emma, bm_george).")
+        music_seconds: float = Field(default=60.0, description="Music lane (ACE-Step) default length in seconds when no duration is asked. Override per request ('a 30-second …').")
+        music_steps: int = Field(default=50, description="ACE-Step sampler steps.")
+        music_cfg: float = Field(default=5.0, description="ACE-Step CFG scale.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -128,6 +137,7 @@ class Pipe:
             {"id": "sulphur", "name": "\U0001F513 Studio · Sulphur (uncensored · text or image)"},
             {"id": "image", "name": "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / art)"},
             {"id": "chroma", "name": "\U0001F513 Studio · Image (Chroma · uncensored)"},
+            {"id": "music", "name": "\U0001F3B5 Studio · Music (ACE-Step · songs + instrumentals)"},
         ]
 
     def _extract_image(self, body):
@@ -214,6 +224,19 @@ class Pipe:
         "Output ONLY the final prompt — no preamble, no lists, no quotes around the whole thing."
     )
 
+    # ACE-Step wants TAGS (comma-separated style: genre, mood, instruments, tempo, vocal type)
+    # plus LYRICS (with [verse]/[chorus] structure) or "[instrumental]". The director emits both.
+    DIRECTOR_MUSIC_SYS = (
+        "You are a music producer writing prompts for the ACE-Step music model. Turn the user's idea "
+        "into ONE JSON object and NOTHING ELSE (no markdown, no commentary):\n"
+        '{"tags": "<comma-separated style: genre, sub-genre, mood, key instruments, tempo/BPM feel, '
+        'vocal type or \'instrumental\'>", "lyrics": "<song lyrics with [verse]/[chorus]/[bridge] '
+        'structure tags — or exactly [instrumental] if no vocals>"}\n'
+        "If the user asks for a song or gives a theme, write real, singable lyrics with structure tags. "
+        "If they ask for a beat/background/score or don't mention vocals, set lyrics to \"[instrumental]\". "
+        "Keep tags concrete and production-oriented. Output ONLY the JSON object."
+    )
+
     def _min_caption(self, text):
         # Last-resort fallback when the director's JSON is unusable. Ideogram-4 blocks SPARSE
         # captions: empty color_palette / empty elements -> "Image blocked by safety filter"
@@ -246,6 +269,22 @@ class Pipe:
             pass
         return self._min_caption(fallback_text), fallback_text
 
+    def _coerce_music(self, s, fallback_text):
+        # Return (tags, lyrics) from the director's {"tags","lyrics"} JSON; if unusable, use the
+        # raw text as tags + an instrumental.
+        t = (s or "").strip()
+        if t.startswith("```"):
+            t = t.strip("`")
+            t = t[4:] if t[:4].lower() == "json" else t
+            t = t.strip()
+        try:
+            obj = json.loads(t)
+            if isinstance(obj, dict) and obj.get("tags"):
+                return obj.get("tags"), (obj.get("lyrics") or "[instrumental]")
+        except Exception:
+            pass
+        return fallback_text, "[instrumental]"
+
     def _prior_spec(self, body):
         # Read the crafted prompt the pipe embedded in its most recent reply, so a
         # follow-up message can refine that spec instead of starting from scratch.
@@ -264,12 +303,13 @@ class Pipe:
         return None
 
     def _enhance(self, user_prompt, i2v, prior_spec=None, kind="video"):
-        # kind: "video" (LTX/Sulphur cinematic) · "image" (Ideogram-4 JSON caption) · "chroma" (Chroma prose)
-        sys = {"image": self.DIRECTOR_IMG_SYS, "chroma": self.DIRECTOR_IMG_PROSE_SYS}.get(kind, self.DIRECTOR_SYS)
+        # kind: "video" (LTX/Sulphur) · "image" (Ideogram JSON) · "chroma" (prose) · "music" (ACE-Step JSON)
+        sys = {"image": self.DIRECTOR_IMG_SYS, "chroma": self.DIRECTOR_IMG_PROSE_SYS,
+               "music": self.DIRECTOR_MUSIC_SYS}.get(kind, self.DIRECTOR_SYS)
         if i2v and kind == "video":
             sys += (" The user attached an image to animate — describe how it should MOVE "
                     "(motion, camera, ambient sound); do not re-describe the still image.")
-        noun = "video" if kind == "video" else "image"
+        noun = {"video": "video", "music": "music"}.get(kind, "image")
         msgs = [{"role": "system", "content": sys}]
         if prior_spec:
             msgs.append({"role": "user", "content":
@@ -282,7 +322,7 @@ class Pipe:
         else:
             msgs.append({"role": "user", "content": user_prompt})
         body = json.dumps({"model": self.valves.chat_model, "messages": msgs,
-                           "max_tokens": 700 if kind == "image" else 320, "temperature": 0.7 if kind in ("image", "chroma") else 0.8,
+                           "max_tokens": 700 if kind in ("image", "music") else 320, "temperature": 0.7 if kind in ("image", "chroma", "music") else 0.8,
                            "chat_template_kwargs": {"enable_thinking": False}}).encode()
         req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
                                      headers={"Content-Type": "application/json"})
@@ -341,7 +381,7 @@ class Pipe:
         return r["prompt_id"]
 
     def _await_output(self, pid, want):
-        # want="video" -> mp4 ; want="image" -> png/jpg/webp. Returns (filename, subfolder).
+        # want="video" -> mp4 ; "image" -> png/jpg/webp ; "audio" -> mp3/flac/wav/opus. Returns (filename, subfolder).
         t0 = time.time()
         while time.time() - t0 < self.valves.timeout_s:
             time.sleep(2)
@@ -353,6 +393,10 @@ class Pipe:
                         if want == "video":
                             for v in (node.get("gifs") or node.get("videos") or node.get("images") or []):
                                 if str(v.get("filename", "")).endswith(".mp4") or str(v.get("format", "")).startswith("video"):
+                                    return v.get("filename"), v.get("subfolder", "")
+                        elif want == "audio":
+                            for v in (node.get("audio") or []):
+                                if str(v.get("filename", "")).lower().endswith((".mp3", ".flac", ".wav", ".opus", ".m4a")):
                                     return v.get("filename"), v.get("subfolder", "")
                         else:
                             for v in (node.get("images") or []):
@@ -392,12 +436,24 @@ class Pipe:
         wf["noise"]["inputs"]["noise_seed"] = seed
         return self._await_output(self._submit(wf), "image")
 
+    def _comfy_music(self, tags, lyrics, seconds, steps, cfg, seed):
+        wf = json.loads(json.dumps(WORKFLOWS["music"]))
+        wf["pos"]["inputs"]["tags"] = tags
+        wf["pos"]["inputs"]["lyrics"] = lyrics or "[instrumental]"
+        wf["latent"]["inputs"]["seconds"] = float(seconds)
+        wf["ksampler"]["inputs"]["steps"] = steps
+        wf["ksampler"]["inputs"]["cfg"] = cfg
+        wf["ksampler"]["inputs"]["seed"] = seed
+        return self._await_output(self._submit(wf), "audio")
+
     async def pipe(self, body, __event_emitter__=None):
         async def status(msg, done=False):
             if __event_emitter__:
                 await __event_emitter__({"type": "status", "data": {"description": msg, "done": done}})
         model = str(body.get("model", ""))
-        if "chroma" in model:
+        if "music" in model:
+            lane = "music"
+        elif "chroma" in model:
             lane = "chroma"
         elif "image" in model:
             lane = "image"
@@ -406,8 +462,52 @@ class Pipe:
         else:
             lane = "ltx"
         label = {"image": "Image (Ideogram-4)", "chroma": "Image · Chroma (uncensored)",
-                 "sulphur": "Sulphur (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
+                 "music": "Music (ACE-Step)", "sulphur": "Sulphur (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
         loop = asyncio.get_event_loop()
+
+        # ── MUSIC LANE (ACE-Step · tags + lyrics/[instrumental] · seconds-duration) ───────────────
+        if lane == "music":
+            up = ""
+            for m in reversed(body.get("messages", [])):
+                if m.get("role") == "user":
+                    c = m.get("content")
+                    up = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
+                          if isinstance(c, list) else (c or "").strip())
+                    break
+            if not up:
+                return "Describe the music — e.g. “upbeat synthwave instrumental” or “a melancholic piano ballad about the sea”."
+            prior_spec = self._prior_spec(body)
+            secs = self._target_seconds(up) or int(self.valves.music_seconds)
+            crafted = up
+            if self.valves.enhance:
+                await status("\U0001F3B6 Producer writing the track…")
+                try:
+                    crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, "music")
+                except Exception:
+                    crafted = up
+            tags, lyrics = self._coerce_music(crafted, up)
+            seed = int(time.time() * 1000) % 2147483647
+            await status("\U0001F3B5 Composing ~" + str(int(secs)) + "s on ACE-Step… (a minute or so)")
+            try:
+                fn, sub = await loop.run_in_executor(None, self._comfy_music, tags, lyrics, secs,
+                                                     int(self.valves.music_steps), float(self.valves.music_cfg), seed)
+            except Exception as e:
+                await status("Failed", True)
+                return "⚠️ Music generation failed: " + str(e)
+            await status("Done", True)
+            if not fn:
+                return "Generation finished but no audio output was found."
+            base = self.valves.browser_base.rstrip("/")
+            url = base + "/" + ((sub + "/") if sub else "") + fn
+            marker = "<!--SPEC:" + base64.b64encode(json.dumps({"tags": tags, "lyrics": lyrics}).encode()).decode() + "-->"
+            inst = lyrics.strip().lower().startswith("[instrumental")
+            return ("**\U0001F3B5 " + label + " · ~" + str(int(secs)) + "s · " + ("instrumental" if inst else "with vocals") + "**\n\n"
+                    "**Style:** " + tags + "\n\n"
+                    + (("**Lyrics:**\n" + lyrics + "\n\n") if not inst else "")
+                    + "\U0001F3A7 **[Open / download the track](" + url + ")**\n\n"
+                    "_Want changes? Just say what to tweak — e.g. “more upbeat”, “add a sax solo”, "
+                    "“make it instrumental” — and I’ll re-craft and regenerate._ "
+                    "_(Browse all media: " + base + "/ )_" + marker)
 
         # ── STILL-IMAGE LANES (Ideogram-4 JSON caption · or Chroma prose · single still) ──────────
         if lane in ("image", "chroma"):
@@ -579,4 +679,4 @@ class Pipe:
 '''.replace('__WF_JSON__', WF_JSON)
 
 open(OUT_PATH, 'w').write(PIPE)
-print("wrote %s (%d bytes; 6 workflows + integrated narration (Kokoro TTS))" % (OUT_PATH, len(PIPE)))
+print("wrote %s (%d bytes; 7 workflows (video x2 + image x2 + music) + narration)" % (OUT_PATH, len(PIPE)))

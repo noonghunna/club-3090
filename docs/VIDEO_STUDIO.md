@@ -156,7 +156,7 @@ moment; use a longer duration (more segments) for a scene that needs to evolve.
 | **Audio** | yes — LTX-2.3 generates synced ambient audio |
 | **Resolution** | Sulphur 1280×720 · LTX 768×512 (set in the workflow) |
 | **Length** | default ~10 s; see the ceiling below |
-| **Lanes** | `🎬 LTX-2.3` (stock, video+audio) · `🔓 Sulphur` (uncensored video) · `🖼️ Image` (Ideogram-4 stills) · `🔓 Image` (Chroma, uncensored stills) — see *Image lanes* |
+| **Lanes** | `🎬 LTX-2.3` (video+audio) · `🔓 Sulphur` (uncensored video) · `🖼️ Image` (Ideogram-4) · `🔓 Image` (Chroma, uncensored) · `🎵 Music` (ACE-Step, songs+instrumentals) — see *Image lanes* / *Music lane* |
 
 ### Length ceiling (measured on 2× 3090, 1280×720, frames = 24·seconds + 1)
 
@@ -232,6 +232,26 @@ voice and mixes it over the clip.
 
 > Lightweight "voices for video." A dedicated audio-studio (long-form TTS, ACE-Step music, SFX,
 > full multi-layer mix) is the planned next phase.
+
+## Music lane (ACE-Step)
+
+The **🎵 Studio · Music** lane generates **songs + instrumentals** from a text idea on
+**ACE-Step v1 (3.5B)** — a standalone audio track (not muxed onto video; that's the voiceover
+path above).
+
+- **Ask for it:** pick the 🎵 lane and describe the music — *"upbeat synthwave instrumental"*,
+  *"a melancholic piano ballad about the sea"*, *"a lofi hip-hop beat to study to"*. Add a length
+  (*"a 30-second…"*) or it defaults to ~60 s.
+- **Director → tags + lyrics:** ACE-Step takes **tags** (genre / mood / instruments / tempo /
+  vocal type) plus **lyrics** (`[verse]`/`[chorus]` structure) or `[instrumental]`. The director
+  turns your idea into both — real singable lyrics for a song, or `[instrumental]` for a
+  beat/score. Refine like everything else (*"more upbeat"*, *"add a sax solo"*, *"make it instrumental"*).
+- **Single-device GPU0** (~8 GB, 50-step euler, cfg 5) — light enough to be a **lane** (coexists
+  with the director on GPU0), not a separate mutex mode. ~6–16 s for a short clip on this rig.
+  Output is an `.mp3` in the gallery. Uses the bundled ACE-Step ComfyUI nodes.
+
+> First piece of the broader audio-studio (music now; long-form TTS / SFX / a full multi-layer mix
+> reusing the integrated-voices mixdown are the planned extensions).
 
 ## Image lanes (Ideogram-4 design · Chroma uncensored)
 
@@ -335,6 +355,8 @@ gemma-12b chat or a 2048² still needs a `gpu-mode` change.
 Director GGUF (`Qwen3.5-4B-Uncensored-…`) → `/mnt/models/huggingface/qwen3.5-4b-gguf/…`.
 
 Narration TTS (CPU): `kokoro-v1.0.onnx` + `voices-v1.0.bin` (kokoro-onnx GitHub release / [onnx-community/Kokoro-82M-v1.0-ONNX](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX)) → `/mnt/models/comfyui/models/tts/kokoro/`.
+
+Music: `ace_step_v1_3.5b.safetensors` (ACE-Step v1 3.5B) → `models/checkpoints/ace-step-1.5/all_in_one/`.
 
 ## On the uncensored models
 

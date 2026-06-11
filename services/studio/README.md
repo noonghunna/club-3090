@@ -14,6 +14,7 @@ architecture, capabilities and the measured length limits live in **[../../docs/
 | `workflows/ltx_distilled_distorch.json` | The validated **single-stage** ComfyUI graph (8-step, cfg 1) the pipe submits for video. DisTorch splits the 22B DiT across 2 GPUs. |
 | `workflows/ideogram4.json` | The validated **Ideogram-4 fp8** image graph (DualModelGuider). Single-device GPU0 (~18.5 GB @1024²) — runs in either gpu-mode (no switch needed for image). |
 | `workflows/chroma1_hd.json` | The **Chroma1-HD fp8** image graph (Flux-based, de-distilled, *uncensored*). Natural-language prompt + negative + real CFG. Single-device GPU0 (~9 GB); reuses `t5xxl_fp16` + Flux `ae.safetensors`. |
+| `workflows/ace_step_music.json` | The **ACE-Step v1 3.5B** music graph (tags + lyrics/`[instrumental]`, seconds-duration). Single-device GPU0 (~8 GB) — songs + instrumentals to `.mp3`. |
 | `studio_pipe.py` | Built artifact (committed for convenience; regenerate with the builder). |
 | `gallery/` | `docker compose` for an always-on nginx media gallery (`:8189`) over ComfyUI's output dir — keeps generated media browsable + links alive even when ComfyUI is down. |
 | `enhancer/` | `docker compose` for the "director" LLM (`:8090`, OpenAI-compatible). |
@@ -29,12 +30,13 @@ python3 build_studio_pipe.py            # writes studio_pipe.py
 ```
 
 Then in Open WebUI: **Admin → Functions → +**, paste the contents of `studio_pipe.py`,
-save, enable. Four models appear in the picker:
+save, enable. Five models appear in the picker:
 
 - `🎬 Studio · LTX-2.3` — video + audio (stock model)
 - `🔓 Studio · Sulphur` — uncensored video lane
 - `🖼️ Studio · Image` — Ideogram-4 (graphic design / logo / photo / art)
 - `🔓 Studio · Image (Chroma)` — uncensored stills (natural-language prompt)
+- `🎵 Studio · Music` — ACE-Step (songs + instrumentals)
 
 Set the pipe's **Valves** (gear icon on the function):
 - `comfyui_url` → your ComfyUI (`http://host.docker.internal:8188` from the OWUI container)
