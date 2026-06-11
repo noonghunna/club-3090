@@ -156,7 +156,7 @@ moment; use a longer duration (more segments) for a scene that needs to evolve.
 | **Audio** | yes — LTX-2.3 generates synced ambient audio |
 | **Resolution** | Sulphur 1280×720 · LTX 768×512 (set in the workflow) |
 | **Length** | default ~10 s; see the ceiling below |
-| **Lanes** | `🎬 LTX-2.3` · `🔓 Sulphur` (video) · `✨ Image` (HiDream-O1) · `🖼️ Image` (Ideogram-4) · `🔓 Image` (Chroma) · `🎵 Music` (ACE-Step) · `🔊 SFX` (Stable Audio) — see *Image lanes* / *Music lane* / *SFX lane* |
+| **Lanes** | `🎬 LTX-2.3` · `🔓 Sulphur` (video) · `✨ Image` (HiDream-O1) · `🖼️ Image` (Ideogram-4) · `🔓 Image` (Chroma) · `🎵 Music` (ACE-Step) · `🔊 SFX` (Stable Audio) · `🎙️ Voice` (Step-Audio-EditX — premium clone) — see *Image lanes* / *Music lane* / *SFX lane* |
 
 ### Length ceiling (measured on 2× 3090, 1280×720, frames = 24·seconds + 1)
 
