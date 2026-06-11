@@ -1,12 +1,18 @@
 # Club 3090 AI Studio
 
-A **chat-driven, all-modality, open-weight creative studio** that runs on a 2× RTX 3090
-workstation — **text, image, video, and audio**, all behind one consistent flow in Open WebUI:
+A **chat-driven, open-weight creative studio** for **image, video, and audio** generation, running
+on a 2× RTX 3090 workstation — all behind one consistent flow in Open WebUI:
 
 > **casual prompt → a "director" LLM crafts it → ComfyUI / a service renders → gallery link → reply to refine.**
 
 Fully self-hosted, no cloud APIs. Uncensored lanes where the model allows. One director, one
-gallery, one refine-by-reply UX across every modality.
+gallery, one refine-by-reply UX across the creative modalities.
+
+> **Scope.** AI Studio is the *creative-generation* umbrella — **image · video · audio**. **Text**
+> (chat / agentic LLM serving — the model catalog, engines, composes, KV, topology) is the **core
+> rig stack**, documented separately in the global architecture, **not** a Studio modality. The
+> qwen "**director**" used here is a small prompt-crafting *helper service*, not a chat lane — Open
+> WebUI is just the shared front-end for both.
 
 | Deep-dive | Covers |
 |---|---|
@@ -31,8 +37,9 @@ Pick a lane in the OWUI model picker; the director crafts the right prompt shape
 | 🔊 `Studio · SFX` | Stable Audio Open 1.0 | sound effects / ambience | open |
 | 🎙️ `Studio · Voice` | Step-Audio-EditX 3B | premium voice — clone + emotion/style edit | **Apache** |
 
-Plus **text** (chat / agentic) — the always-on qwen director itself. Video lanes can also mix a
-**Kokoro voiceover** onto the clip (a directive in the message; see [audio.md](audio.md)).
+Video lanes can also mix a **Kokoro voiceover** onto the clip (a directive in the message; see
+[audio.md](audio.md)). _(Text chat / agentic serving is the core rig stack, not a Studio lane — the
+Studio only borrows a small qwen "director" to craft prompts.)_
 
 ## Architecture: lanes vs. modes
 
@@ -72,7 +79,7 @@ to the right backend and returns a gallery link. Install it once: **Admin → Fu
 - **Fully open-weight + self-hosted** — no API, no cloud, no per-call cost; your data stays local.
 - **Uncensored lanes where the model allows** — Sulphur (video), Chroma (image), the uncensored
   director — capability lives in the *weights*; the infrastructure is content-neutral.
-- **One consistent director-driven UX** across text / image / video / audio.
+- **One consistent director-driven UX** across image / video / audio.
 - **Honest constraint as a feature:** heavy modalities are mode-switched, not simultaneous —
   lightweight combos (chat + a ≤1024² image + a voice) coexist.
 
