@@ -1,0 +1,16 @@
+{
+  "unet":          {"class_type": "UNETLoader",            "inputs": {"unet_name": "Chroma1-HD-fp8mixed.safetensors", "weight_dtype": "default"}},
+  "modelsampling": {"class_type": "ModelSamplingAuraFlow",  "inputs": {"model": ["unet", 0], "shift": 1.0}},
+  "clip":          {"class_type": "CLIPLoader",             "inputs": {"clip_name": "t5xxl_fp16.safetensors", "type": "chroma", "device": "default"}},
+  "vae":           {"class_type": "VAELoader",              "inputs": {"vae_name": "flux/ae.safetensors"}},
+  "pos":           {"class_type": "CLIPTextEncode",         "inputs": {"text": "placeholder", "clip": ["clip", 0]}},
+  "neg":           {"class_type": "CLIPTextEncode",         "inputs": {"text": "low quality, blurry, distorted, deformed, watermark, signature, text artifacts, jpeg artifacts", "clip": ["clip", 0]}},
+  "guider":        {"class_type": "CFGGuider",              "inputs": {"model": ["modelsampling", 0], "positive": ["pos", 0], "negative": ["neg", 0], "cfg": 3.5}},
+  "sampler":       {"class_type": "KSamplerSelect",         "inputs": {"sampler_name": "euler"}},
+  "sigmas":        {"class_type": "BasicScheduler",         "inputs": {"model": ["modelsampling", 0], "scheduler": "beta", "steps": 26, "denoise": 1.0}},
+  "noise":         {"class_type": "RandomNoise",            "inputs": {"noise_seed": 42}},
+  "latent":        {"class_type": "EmptySD3LatentImage",    "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
+  "samp":          {"class_type": "SamplerCustomAdvanced",  "inputs": {"noise": ["noise", 0], "guider": ["guider", 0], "sampler": ["sampler", 0], "sigmas": ["sigmas", 0], "latent_image": ["latent", 0]}},
+  "decode":        {"class_type": "VAEDecode",              "inputs": {"samples": ["samp", 0], "vae": ["vae", 0]}},
+  "save":          {"class_type": "SaveImage",              "inputs": {"images": ["decode", 0], "filename_prefix": "studio_chroma"}}
+}

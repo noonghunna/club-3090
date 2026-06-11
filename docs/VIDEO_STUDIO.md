@@ -154,7 +154,7 @@ moment; use a longer duration (more segments) for a scene that needs to evolve.
 | **Audio** | yes — LTX-2.3 generates synced ambient audio |
 | **Resolution** | Sulphur 1280×720 · LTX 768×512 (set in the workflow) |
 | **Length** | default ~10 s; see the ceiling below |
-| **Lanes** | `🎬 LTX-2.3` (stock, video+audio) · `🔓 Sulphur` (uncensored video) · `🖼️ Image` (Ideogram-4 stills — see *Image lane*) |
+| **Lanes** | `🎬 LTX-2.3` (stock, video+audio) · `🔓 Sulphur` (uncensored video) · `🖼️ Image` (Ideogram-4 stills) · `🔓 Image` (Chroma, uncensored stills) — see *Image lanes* |
 
 ### Length ceiling (measured on 2× 3090, 1280×720, frames = 24·seconds + 1)
 
@@ -209,7 +209,14 @@ mesh** over every frame. The fix — and what the pipe ships — is **single-sta
 the distilled LoRA onto the base sampler, 8 steps, cfg 1, no upscaler. Clean output. The
 workflow (`workflows/ltx_distilled_distorch.json`) already encodes this.
 
-## Image lane (Ideogram-4 · graphic design / logo / photo / art)
+## Image lanes (Ideogram-4 design · Chroma uncensored)
+
+Two still-image lanes share the pipe and the director: **Ideogram-4** (design / logo / text)
+and **Chroma** (uncensored). Both are single-device GPU0 and run in either gpu-mode. Pick by
+intent — Ideogram is best at typography/logos but **safety-trained**; Chroma is **uncensored**
+(the "Sulphur for stills") but weaker at crisp text.
+
+### 🖼️ Ideogram-4 (design / logo / photo / art)
 
 The **🖼️ Studio · Image** lane shares the pipe and the director, but renders a **still** on
 **Ideogram-4 fp8** instead of a video. It's single-device on **GPU0** (~18.5 GB @1024²), so
@@ -238,6 +245,24 @@ Ask for it in quotes. Refine the same way as video — *"monochrome"*, *"tighter
 vector style"* — it evolves the prior caption. Defaults 1024×1024, 20 steps; the long edge is
 capped at `image_max_edge` (1024) so the image gen coexists with the director on GPU0 (2048²
 + director = OOM; raise the cap and stop the director for 2K stills).
+
+### 🔓 Chroma (uncensored)
+
+The **🔓 Studio · Image (Chroma)** lane renders on **Chroma1-HD fp8** — a Flux-based,
+de-distilled, *trained-uncensored* model (~9 GB, single-device GPU0). Unlike Ideogram, Chroma
+takes a **rich natural-language prompt** (no JSON), supports a **negative prompt**, and uses
+**real CFG** — so the director crafts a vivid descriptive paragraph (the uncensored qwen
+honours intent without sanitising) rather than a JSON caption. The encoder (`t5xxl_fp16`) and
+VAE (Flux `ae.safetensors`) are shared with the Flux ecosystem (already on disk), so only the
+Chroma DiT is model-specific. Defaults 1024×1024, 26 steps, cfg 3.5; same `image_max_edge`
+cap. This is the **uncensored stills lane** — Ideogram remains the choice for text/logos;
+Chroma for unrestricted photoreal/illustration. Validated clean on this rig (~72–80 s warm).
+
+> **Why two lanes instead of "un-censoring Ideogram":** Ideogram-4's safety is trained into
+> the weights (no abliterated variant; diffusion abliteration isn't a drop-in). The image shim
+> only removes Ideogram's *false-positive* blocking of neutral prompts — genuine moderation
+> stays. So uncensored stills get their own model (Chroma), exactly as Sulphur is the
+> uncensored video lane. Capability is in the weights; the infra is content-neutral.
 
 ### Native image button (via the image shim)
 
@@ -279,6 +304,9 @@ gemma-12b chat or a 2048² still needs a `gpu-mode` change.
 | `ltx-2.3-22b-distilled-lora-384.safetensors` | `loras/` | both (single-stage splice) |
 | `ltx-2.3-22b-{distilled,dev}_{audio,video}_vae.safetensors` | `vae/` | LTX / Sulphur |
 | `ltx-2.3-22b-{distilled,dev}_embeddings_connectors.safetensors` | `text_encoders/` | LTX / Sulphur |
+| `ideogram4_fp8_scaled.safetensors` (+ `_unconditional_`), `qwen3vl_8b_fp8_scaled`, `flux2-vae` | `diffusion_models/`, `text_encoders/`, `vae/` | Ideogram-4 image |
+| `Chroma1-HD-fp8mixed.safetensors` (Comfy-Org/Chroma1-HD_repackaged) | `diffusion_models/` | Chroma image (uncensored) |
+| `t5xxl_fp16.safetensors` + Flux `ae.safetensors` | `text_encoders/`, `vae/flux/` | Chroma (shared with Flux ecosystem) |
 
 Director GGUF (`Qwen3.5-4B-Uncensored-…`) → `/mnt/models/huggingface/qwen3.5-4b-gguf/…`.
 

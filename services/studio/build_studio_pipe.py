@@ -15,6 +15,7 @@ import json, os
 _HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(_HERE, 'workflows', 'ltx_distilled_distorch.json')   # validated clean single-stage graph (video)
 IMAGE_TEMPLATE = os.path.join(_HERE, 'workflows', 'ideogram4.json')          # validated Ideogram-4 fp8 graph (image, GPU0 single-device)
+CHROMA_TEMPLATE = os.path.join(_HERE, 'workflows', 'chroma1_hd.json')         # Chroma1-HD fp8 graph (uncensored image, GPU0 single-device, natural-language prompt)
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
 def build(dit, audio_vae, video_vae, connectors, width, height, frames=121, lora=None):
@@ -63,6 +64,9 @@ WF = {
     # Image lane: Ideogram-4 fp8 (DualModelGuider, native nodes). Single-device GPU0,
     # coexists with the director on GPU0 at <=1024^2 (2048^2 would OOM — capped in pipe).
     "image": json.load(open(IMAGE_TEMPLATE)),
+    # Uncensored image lane: Chroma1-HD fp8 (Flux-based, de-distilled, trained uncensored).
+    # Natural-language prompt + negative + real CFG (unlike Ideogram's JSON). Single-device GPU0.
+    "chroma": json.load(open(CHROMA_TEMPLATE)),
 }
 WF_JSON = json.dumps(WF)
 
@@ -70,9 +74,9 @@ PIPE = r'''
 """
 title: Studio (text/image -> video · image)
 author: club-3090
-description: Type a rough idea — the studio director (qwen) crafts it into a professional, artistic prompt and generates. Video lanes: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image. Image lane: Ideogram-4 (graphic design / logo / photo / art). Refine anytime by just saying what to change.
+description: Type a rough idea — the studio director (qwen) crafts it into a professional, artistic prompt and generates. Video lanes: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image. Image lanes: Ideogram-4 (graphic design / logo / photo / art) or Chroma (uncensored). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.7.0
+version: 0.8.0
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
 #  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
@@ -81,9 +85,12 @@ version: 0.7.0
 #    Frames:  default 241 (=10s @24fps, crisp). Valve range to 361 (=15s, coherent).
 #             HARD-CAPPED at 361 in _comfy — ~481/20s collapses to corrupted output.
 #    VRAM:    weights on GPU1 (DisTorch donor ~21.9GB), compute on GPU0 (~14GB peak).
-#  Image lane: image = Ideogram-4 fp8 (DualModelGuider). Single-device GPU0, ~18.5GB @1024^2.
-#    Default 1024x1024, 20 steps; capped at image_max_edge (1024) so it coexists with the
-#    director on GPU0 (2048^2 + director = OOM). Runs in EITHER gpu-mode (ComfyUI has GPU0).
+#  Image lanes (both single-device GPU0, run in EITHER gpu-mode; coexist w/ director ~4.6GB):
+#    image  = Ideogram-4 fp8 (DualModelGuider, ~18.5GB) — STRUCTURED JSON caption; great at
+#             text/logos/graphic design. SAFETY-TRAINED (blocks some content). 1024x1024, 20 steps.
+#    chroma = Chroma1-HD fp8 (Flux-based, de-distilled, ~9GB) — NATURAL-LANGUAGE prompt + negative
+#             + real CFG; trained UNCENSORED. The "Sulphur for stills." 1024x1024, 26 steps, cfg 3.5.
+#    Both capped at image_max_edge (1024) so they coexist with the director on GPU0 (2048^2 = OOM).
 #  Director: qwen3.5-4b-uncensored @ :8090 (GPU0); falls back to raw prompt if down.
 # ────────────────────────────────────────────────────────────────────────────────
 import json, time, base64, re, math, urllib.request, urllib.parse, asyncio
@@ -106,6 +113,8 @@ class Pipe:
         image_height: int = Field(default=1024, description="Image lane default height (Ideogram-4).")
         image_steps: int = Field(default=20, description="Image lane sampler steps (Ideogram-4).")
         image_max_edge: int = Field(default=1024, description="Cap on the image long edge. 1024 lets the image gen coexist with the director on GPU0 (~23GB); 2048 would OOM unless the director is stopped first.")
+        chroma_steps: int = Field(default=26, description="Chroma (uncensored image lane) sampler steps.")
+        chroma_cfg: float = Field(default=3.5, description="Chroma CFG scale (Chroma is de-distilled — real CFG + negative prompt, unlike Ideogram).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -115,6 +124,7 @@ class Pipe:
             {"id": "ltx", "name": "\U0001F3AC Studio · LTX-2.3 (video+audio · text or image)"},
             {"id": "sulphur", "name": "\U0001F513 Studio · Sulphur (uncensored · text or image)"},
             {"id": "image", "name": "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / art)"},
+            {"id": "chroma", "name": "\U0001F513 Studio · Image (Chroma · uncensored)"},
         ]
 
     def _extract_image(self, body):
@@ -187,6 +197,20 @@ class Pipe:
         "Output ONLY the JSON object."
     )
 
+    # Chroma takes NATURAL-LANGUAGE prompts (T5) — no JSON. It is trained uncensored, and the
+    # director is uncensored, so it honours the user's intent without sanitising.
+    DIRECTOR_IMG_PROSE_SYS = (
+        "You are an award-winning art director writing prompts for the Chroma image model, which takes "
+        "rich NATURAL-LANGUAGE prompts. First silently infer the KIND of image the user wants — "
+        "photograph, illustration/concept art, poster/graphic, product render, or portrait — then write "
+        "ONE single-paragraph, richly detailed prompt with professional, artistic taste. Specify the "
+        "subject and its details; composition and framing; lighting; colour and mood; medium/style; and "
+        "rendering quality. Use the levers for the kind (photos -> camera and lens, depth of field, film "
+        "stock; illustration -> medium, line weight, palette; portrait -> pose, expression, lighting). Add "
+        "tasteful detail the user didn't mention while honouring their intent — do not refuse or sanitise. "
+        "Output ONLY the final prompt — no preamble, no lists, no quotes around the whole thing."
+    )
+
     def _min_caption(self, text):
         # Last-resort fallback when the director's JSON is unusable. Ideogram-4 blocks SPARSE
         # captions: empty color_palette / empty elements -> "Image blocked by safety filter"
@@ -237,11 +261,12 @@ class Pipe:
         return None
 
     def _enhance(self, user_prompt, i2v, prior_spec=None, kind="video"):
-        sys = self.DIRECTOR_IMG_SYS if kind == "image" else self.DIRECTOR_SYS
-        if i2v and kind != "image":
+        # kind: "video" (LTX/Sulphur cinematic) · "image" (Ideogram-4 JSON caption) · "chroma" (Chroma prose)
+        sys = {"image": self.DIRECTOR_IMG_SYS, "chroma": self.DIRECTOR_IMG_PROSE_SYS}.get(kind, self.DIRECTOR_SYS)
+        if i2v and kind == "video":
             sys += (" The user attached an image to animate — describe how it should MOVE "
                     "(motion, camera, ambient sound); do not re-describe the still image.")
-        noun = "image" if kind == "image" else "video"
+        noun = "video" if kind == "video" else "image"
         msgs = [{"role": "system", "content": sys}]
         if prior_spec:
             msgs.append({"role": "user", "content":
@@ -254,7 +279,7 @@ class Pipe:
         else:
             msgs.append({"role": "user", "content": user_prompt})
         body = json.dumps({"model": self.valves.chat_model, "messages": msgs,
-                           "max_tokens": 700 if kind == "image" else 320, "temperature": 0.7 if kind == "image" else 0.8,
+                           "max_tokens": 700 if kind == "image" else 320, "temperature": 0.7 if kind in ("image", "chroma") else 0.8,
                            "chat_template_kwargs": {"enable_thinking": False}}).encode()
         req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
                                      headers={"Content-Type": "application/json"})
@@ -332,18 +357,35 @@ class Pipe:
         wf["noise"]["inputs"]["noise_seed"] = seed
         return self._await_output(self._submit(wf), "image")
 
+    def _comfy_chroma(self, prompt_text, width, height, steps, cfg, seed):
+        wf = json.loads(json.dumps(WORKFLOWS["chroma"]))
+        wf["pos"]["inputs"]["text"] = prompt_text
+        wf["latent"]["inputs"]["width"] = width
+        wf["latent"]["inputs"]["height"] = height
+        wf["sigmas"]["inputs"]["steps"] = steps
+        wf["guider"]["inputs"]["cfg"] = cfg
+        wf["noise"]["inputs"]["noise_seed"] = seed
+        return self._await_output(self._submit(wf), "image")
+
     async def pipe(self, body, __event_emitter__=None):
         async def status(msg, done=False):
             if __event_emitter__:
                 await __event_emitter__({"type": "status", "data": {"description": msg, "done": done}})
         model = str(body.get("model", ""))
-        lane = "image" if "image" in model else ("sulphur" if "sulphur" in model else "ltx")
-        label = {"image": "Image (Ideogram-4)", "sulphur": "Sulphur (uncensored)",
-                 "ltx": "LTX-2.3 (video+audio)"}[lane]
+        if "chroma" in model:
+            lane = "chroma"
+        elif "image" in model:
+            lane = "image"
+        elif "sulphur" in model:
+            lane = "sulphur"
+        else:
+            lane = "ltx"
+        label = {"image": "Image (Ideogram-4)", "chroma": "Image · Chroma (uncensored)",
+                 "sulphur": "Sulphur (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
         loop = asyncio.get_event_loop()
 
-        # ── IMAGE LANE (Ideogram-4 · single still · no i2v/duration) ──────────────
-        if lane == "image":
+        # ── STILL-IMAGE LANES (Ideogram-4 JSON caption · or Chroma prose · single still) ──────────
+        if lane in ("image", "chroma"):
             up = ""
             for m in reversed(body.get("messages", [])):
                 if m.get("role") == "user":
@@ -358,17 +400,24 @@ class Pipe:
             if self.valves.enhance:
                 await status("\U0001F3A8 Art director crafting the image…")
                 try:
-                    crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, "image")
+                    crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, lane)
                 except Exception:
                     crafted = up
-            # Ideogram-4 needs a JSON caption — coerce the director's output (or wrap plain text).
-            caption_json, human = self._coerce_caption(crafted, up)
             cap = max(256, int(self.valves.image_max_edge))
             w = min(int(self.valves.image_width), cap); h = min(int(self.valves.image_height), cap)
             seed = int(time.time() * 1000) % 2147483647
-            await status("\U0001F5BC️ Rendering image on Ideogram-4… (~1-2 min)")
             try:
-                fn, sub = await loop.run_in_executor(None, self._comfy_image, caption_json, w, h, int(self.valves.image_steps), seed)
+                if lane == "chroma":
+                    human = crafted if crafted.strip() else up
+                    spec_text = human
+                    await status("\U0001F513 Rendering on Chroma (uncensored)… (~1-2 min)")
+                    fn, sub = await loop.run_in_executor(None, self._comfy_chroma, human, w, h,
+                                                         int(self.valves.chroma_steps), float(self.valves.chroma_cfg), seed)
+                else:
+                    spec_text, human = self._coerce_caption(crafted, up)   # Ideogram-4 needs a JSON caption
+                    await status("\U0001F5BC️ Rendering on Ideogram-4… (~1-2 min)")
+                    fn, sub = await loop.run_in_executor(None, self._comfy_image, spec_text, w, h,
+                                                         int(self.valves.image_steps), seed)
             except Exception as e:
                 await status("Failed", True)
                 return "⚠️ Image generation failed: " + str(e)
@@ -377,12 +426,12 @@ class Pipe:
                 return "Generation finished but no image output was found."
             base = self.valves.browser_base.rstrip("/")
             url = base + "/" + ((sub + "/") if sub else "") + fn
-            marker = "<!--SPEC:" + base64.b64encode(caption_json.encode()).decode() + "-->"
+            marker = "<!--SPEC:" + base64.b64encode(spec_text.encode()).decode() + "-->"
+            tweaks = "“more dramatic”, “at night”, “close-up”" if lane == "chroma" else "“monochrome”, “tighter crop”, “flat vector style”"
             return ("**\U0001F5BC️ " + label + " · " + str(w) + "x" + str(h) + "**\n\n"
                     "**Prompt used:** " + human + "\n\n"
                     "\U0001F5BC️ **[Open / download the image](" + url + ")**\n\n"
-                    "_Want changes? Just say what to tweak — e.g. “monochrome”, “tighter crop”, "
-                    "“flat vector style” — and I’ll re-craft from this and regenerate._ "
+                    "_Want changes? Just say what to tweak — e.g. " + tweaks + " — and I’ll re-craft from this and regenerate._ "
                     "_(Browse all media: " + base + "/ )_" + marker)
 
         data_uri = self._extract_image(body)
@@ -482,4 +531,4 @@ class Pipe:
 '''.replace('__WF_JSON__', WF_JSON)
 
 open(OUT_PATH, 'w').write(PIPE)
-print("wrote %s (%d bytes; 5 workflows: ltx/sulphur x t2v/i2v + ideogram-4 image)" % (OUT_PATH, len(PIPE)))
+print("wrote %s (%d bytes; 6 workflows: ltx/sulphur x t2v/i2v + ideogram-4 + chroma image)" % (OUT_PATH, len(PIPE)))

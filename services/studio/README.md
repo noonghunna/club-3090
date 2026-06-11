@@ -2,9 +2,9 @@
 
 A small layer that turns Open WebUI into a **text/image → video** and **text → image**
 studio. You type a rough idea in chat; a "director" LLM crafts it into a professional
-prompt; ComfyUI renders it on LTX-2.3 (video+audio), Sulphur (uncensored video), or
-Ideogram-4 (image: graphic design / logo / photo / art). Full architecture, capabilities
-and the measured length limits live in **[../../docs/VIDEO_STUDIO.md](../../docs/VIDEO_STUDIO.md)**.
+prompt; ComfyUI renders it on LTX-2.3 (video+audio), Sulphur (uncensored video),
+Ideogram-4 (image: graphic design / logo / photo / art), or Chroma (uncensored image). Full
+architecture, capabilities and the measured length limits live in **[../../docs/VIDEO_STUDIO.md](../../docs/VIDEO_STUDIO.md)**.
 
 ## Pieces
 
@@ -13,6 +13,7 @@ and the measured length limits live in **[../../docs/VIDEO_STUDIO.md](../../docs
 | `build_studio_pipe.py` | Generates `studio_pipe.py` — the Open WebUI **Function (pipe)** that drives ComfyUI. Run it, then install the output as a Function. |
 | `workflows/ltx_distilled_distorch.json` | The validated **single-stage** ComfyUI graph (8-step, cfg 1) the pipe submits for video. DisTorch splits the 22B DiT across 2 GPUs. |
 | `workflows/ideogram4.json` | The validated **Ideogram-4 fp8** image graph (DualModelGuider). Single-device GPU0 (~18.5 GB @1024²) — runs in either gpu-mode (no switch needed for image). |
+| `workflows/chroma1_hd.json` | The **Chroma1-HD fp8** image graph (Flux-based, de-distilled, *uncensored*). Natural-language prompt + negative + real CFG. Single-device GPU0 (~9 GB); reuses `t5xxl_fp16` + Flux `ae.safetensors`. |
 | `studio_pipe.py` | Built artifact (committed for convenience; regenerate with the builder). |
 | `gallery/` | `docker compose` for an always-on nginx media gallery (`:8189`) over ComfyUI's output dir — keeps generated media browsable + links alive even when ComfyUI is down. |
 | `enhancer/` | `docker compose` for the "director" LLM (`:8090`, OpenAI-compatible). |
@@ -27,11 +28,12 @@ python3 build_studio_pipe.py            # writes studio_pipe.py
 ```
 
 Then in Open WebUI: **Admin → Functions → +**, paste the contents of `studio_pipe.py`,
-save, enable. Three models appear in the picker:
+save, enable. Four models appear in the picker:
 
 - `🎬 Studio · LTX-2.3` — video + audio (stock model)
 - `🔓 Studio · Sulphur` — uncensored video lane
 - `🖼️ Studio · Image` — Ideogram-4 (graphic design / logo / photo / art)
+- `🔓 Studio · Image (Chroma)` — uncensored stills (natural-language prompt)
 
 Set the pipe's **Valves** (gear icon on the function):
 - `comfyui_url` → your ComfyUI (`http://host.docker.internal:8188` from the OWUI container)
