@@ -85,8 +85,29 @@ on GPU1 (~22 GB, fixed); longer clips only grow GPU0's latent (peaks ~14 GB, lot
 headroom). The wall is model coherence, not memory. Wall time scales ~linearly
 (~2.5 min at 10 s, ~6.5 min at 15 s).
 
-> Past ~15 s you need **extension/chunking** (render segments, continue from the last
-> frames, concatenate into one clip). That's not wired yet — see *Follow-ups*.
+> Past ~15 s you **extend/chunk**: render segments ≤15 s, condition each on the previous
+> segment's last frame, concatenate into one clip — see *Longer videos* below.
+
+## Longer videos (60 s+)
+
+`services/studio/extend_chain.py` chains segments to break the single-pass ceiling:
+segment 1 is text→video; each later segment is image→video conditioned on the **previous
+segment's last frame**, then all are ffmpeg-concatenated into one clip.
+
+```bash
+python3 services/studio/extend_chain.py "<prompt>" <n_segments> <frames_per_seg>
+# e.g. 6 × 241 ≈ a 60 s clip; each segment renders ~2.5 min
+```
+
+Validated on 2× 3090 (3×10 s → 30 s): the joins are **visually seamless** — the
+last-frame conditioning carries the scene across each cut, and a slow camera move
+continues unbroken. Caveat: a single frame has no *velocity*, so **fast action** can show
+a brief motion reset at a cut; slow/ambient scenes are clean. Native LTX temporal-extend
+(conditioning on the last *K latent* frames) would smooth that — future work.
+
+It runs **host-side** (needs ffmpeg + read access to the output dir), so it's a CLI tool
+today; wiring it into the in-chat pipe (ask for ">30 s" → auto-chain → one combined video
+in the reply) is the next step.
 
 ### The single-stage rule
 
@@ -139,8 +160,9 @@ abliterated.)
 
 ## Follow-ups (not yet built)
 
-- **60 s+ videos** via extend-from-last-frame: render segments ≤15 s, condition each on the
-  previous clip's tail, concatenate server-side → one combined video returned to chat.
+- **In-chat 60 s+**: auto-trigger `extend_chain` from the pipe when you ask for a long
+  clip → one combined video in the reply (the chaining itself is proven, above).
+- **Native temporal-extend** for smoother joins on fast-motion scenes (vs last-frame I2V).
 - **Uncensored stills**: a `frames=1` "image" intent on the Studio lane (the 🖼️ button uses
   Ideogram-4, which is aligned).
-- Smoothing audio at segment joins; a richer gallery (thumbnail grid vs file listing).
+- Audio cross-fade at segment joins; a richer gallery (thumbnail grid vs file listing).
