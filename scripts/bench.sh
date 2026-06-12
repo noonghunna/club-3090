@@ -26,7 +26,8 @@
 #
 # Env vars:
 #   URL                Endpoint. Default: http://localhost:8020
-#   MODEL              Served model name. Default: qwen3.6-27b-autoround
+#   MODEL              Served model name. Default: auto-detected from
+#                      /v1/models, else qwen3.6-27b-autoround
 #   CONTAINER          Container for log scraping. Default: vllm-qwen36-27b
 #   RUNS               Measured runs per prompt. Default: 5
 #   WARMUPS            Warm-up runs (shared across both). Default: 3
@@ -69,6 +70,9 @@ if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   preflight_autodetect_endpoint || true
 fi
 URL="${URL:-http://localhost:8020}"
+# Resolve the served model from /v1/models when MODEL is unset (#372). The qwen
+# literal below is only a last resort if detection no-ops (endpoint unreachable).
+declare -F preflight_autodetect_model >/dev/null && preflight_autodetect_model
 MODEL="${MODEL:-qwen3.6-27b-autoround}"
 CONTAINER="${CONTAINER:-vllm-qwen36-27b}"
 RUNS="${RUNS:-5}"

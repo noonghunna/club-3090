@@ -1102,3 +1102,43 @@ preflight_autodetect_endpoint() {
   fi
   return 0
 }
+
+# ---------------------------------------------------------------------------
+# Resolve the SERVED model name from the running endpoint's /v1/models when the
+# caller hasn't set MODEL explicitly. Mirrors what soak-test.sh / bench-agentic.sh
+# / quality-test.sh already do — so verify-full / verify-stress / bench / verify
+# send the model the server actually serves instead of a hardcoded qwen default.
+#
+# Why this exists (#372): report.sh autodetects container + URL + engine but NOT
+# the served model, so the verify/bench scripts fell back to MODEL=qwen3.6-27b-
+# autoround. Against a non-qwen vLLM endpoint (e.g. gemma-4-26b-a4b-awq) every
+# request 404'd ("The model `qwen3.6-27b-autoround` does not exist"). llama.cpp
+# ignores the request's model field, so the same wrong default silently "worked"
+# there (#371) — which is exactly what masked the bug.
+#
+# Sets MODEL in the caller's scope. No-op when MODEL is already set (an explicit
+# env/flag value always wins — critical for llama-swap / multi-model endpoints
+# where /v1/models returns the first, often wrong, registered model), when there
+# is no URL to query, or when the endpoint isn't reachable (the caller's own
+# reachability check then surfaces the real outage). Callers keep their own
+# last-resort literal after this, so behaviour is unchanged when detection no-ops.
+preflight_autodetect_model() {
+  [[ -n "${MODEL:-}" ]] && return 0
+  local url="${1:-${URL:-}}"
+  [[ -n "$url" ]] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local detected
+  detected="$(curl -sf -m 5 "${url%/}/v1/models" 2>/dev/null \
+    | python3 -c "import json,sys
+try:
+    d = json.load(sys.stdin).get('data', [])
+    print(d[0]['id'] if d else '')
+except Exception:
+    print('')" 2>/dev/null || true)"
+  if [[ -n "$detected" ]]; then
+    MODEL="$detected"
+    echo "[autodetect] served model='${MODEL}' (from ${url%/}/v1/models; set MODEL= to override)" >&2
+  fi
+  return 0
+}
