@@ -262,11 +262,11 @@ elif [[ "${WEIGHTS}" == "fp8" ]]; then
       NEEDS_GENESIS=0
       ;;
     *)
-      echo "ERROR: WEIGHTS=ft8 is only wired for qwen3.6-27b." >&2
+      echo "ERROR: WEIGHTS=fp8 is only wired for qwen3.6-27b." >&2
       exit 1 ;;
   esac
 elif [[ "${WEIGHTS}" != "autoround" ]]; then
-  echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized (use 'autoround', 'awq', 'gguf', or 'iq4ks')." >&2
+  echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized (use 'autoround', 'awq', 'fp8', 'gguf', or 'iq4ks')." >&2
   exit 1
 fi
 

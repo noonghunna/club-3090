@@ -49,7 +49,7 @@ weights:
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"
-    manual_note: "Official Qwen3.6-27B FP8 release (e4m3, dynamic act-scale): layer-split safetensors (layers-N.safetensors + outside.safetensors) with an embedded MTP head (mtp.safetensors) and the multimodal vision tower. Drives the 'max accuracy' tier (vllm/qwen-27b-dual-max + vllm/qwen-27b-multi-max). On Ampere sm_86 FP8 weights run via the Marlin W8A16 kernel (memory win, no FP8 compute speedup). No direct pull recipe wired here — fetch via hf-download.sh from the official repo."
+    manual_note: "Official Qwen3.6-27B FP8 release (e4m3, dynamic act-scale): layer-split safetensors (layers-N.safetensors + outside.safetensors) with an embedded MTP head (mtp.safetensors) and the multimodal vision tower. Drives the 'max accuracy' tier (vllm/qwen-27b-dual-max + vllm/qwen-27b-multi-max). On Ampere sm_86 FP8 weights run via the Marlin W8A16 kernel (memory win, no FP8 compute speedup). Pull recipe wired (hf_repo above): WEIGHTS=fp8 bash scripts/setup.sh qwen3.6-27b (whole-repo fetch + per-file SHA verify). For a stall-resistant manual pull of this 29 GB layer-split repo, hf-download.sh also works."
   awq-bf16-int4:
     path: qwen3.6-27b-awq-bf16-int4
     local_subdir: qwen3.6-27b-awq-bf16-int4
