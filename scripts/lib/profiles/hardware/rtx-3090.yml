@@ -16,6 +16,7 @@ supported_kv_formats:
   - q5_0
   - q8_0
   - k8v4
+  - kvarn4   # KVarN KV-compression (beellama v0.3.2 preview) — software KV, runs wherever beellama does
 kv_format_default:
   long_context: turboquant_3bit_nc
   multi_stream: int8_per_token_head

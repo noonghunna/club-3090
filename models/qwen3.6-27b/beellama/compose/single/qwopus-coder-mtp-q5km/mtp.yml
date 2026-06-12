@@ -1,0 +1,128 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwopus3.6-27B-Coder (Jackrong Q5_K_M MTP GGUF — coder fine-tune of
+#              Qwen3.6-27B, full model + embedded MTP head)
+#   Engine:    beellama.cpp v0.3.2-preview (Anbeeld fork — MTP spec-dec + KVarN KV-compression)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP (--spec-type draft-mtp, embedded head — NO separate draft model)
+#   KV:        kvarn4 K + kvarn4 V (KVarN — q5-class quality at ~28% bf16 memory; disc #329)
+#   Vision:    no (mmproj NOT mounted; repo ships mmproj-F32.gguf — set MMPROJ_FILE
+#              + it's CPU-offloaded — but it's not downloaded by default)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   163840 (160K) default — the MTP-safe ceiling MEASURED 2026-06-12 on one
+#              24 GB card (kvarn4 + MTP: 192K OOMs by 260 MB; 160K serves @ 23.3 GB / 1.3 GB
+#              free). For a BIGGER window, drop MTP — kvarn4 no-MTP serves ~230K (235520 @
+#              23.5 GB). See "Big-context mode" below. Native model max is 262144 (needs
+#              kvarn2 single-card — too low-fidelity for code — or dual-card).
+#   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
+#   Status:    🧪 EXPERIMENTAL — validated 2026-06-12 on the v0.3.2-preview KVarN digest build
+#              (sha256:858e7c…): embedded MTP head LOADS, verify-full all-pass (Paris/tools/
+#              streaming/thinking), NIAH needle recalled at ~72K depth (= q5_0/q4_1 control),
+#              bench ~46/58 TPS narr/code @ kvarn4+MTP (≈ q5_0/q4_1 — KVarN is decode-speed-
+#              neutral). Untracked pending verify-stress + soak (8-pack quality A/B PASS).
+#   Quality:   8-pack /150 (plain no-MTP, single run/arm): kvarn4 104 think-off / 103 think-on
+#              vs q5_0/q4_1 102 / 107 — within ±5 (noise); KVarN-4 is quality-NEUTRAL (= the
+#              q5-class its KLD predicts). Per-pack: toolcall 14·instructfollow 13-14·
+#              structoutput 14·dataextract 9-10·reasonmath 11-12·bugfind 12-14·hermes 10·
+#              cli 17-19. (--full, kvarn4/kvarn4, 2026-06-12; disc #329). dataextract sits
+#              8-10 across ALL configs incl. q5_0/q4_1 = model number-formatting trait, not KV.
+#   Caveats:   (1) Needs the KVarN build (v0.3.2 preview, digest-pinned) — the older
+#              -317c65 tag has no kvarn* cache types; engines/beellama-local.yml install.spec
+#              carries the right digest (PR #389).
+#              (2) 160K is the MTP-on ceiling; 230K requires MTP off (~35 TPS, ~40% slower).
+#              (3) beellama v0.3.2 is a rolling PRE-RELEASE, not a tagged stable — same
+#              upstream gate as the other beellama composes (Anbeeld #39/#48; un-park on a
+#              stable v0.3.1+ tag).
+#   Best for:  single-card coder — fast interactive coding/agentic (thinking-off) with a
+#              large 160K KVarN-compressed window + embedded-MTP spec-dec.
+# ---------------------------------------------------------------------------
+# Qwopus3.6-27B-Coder on beellama.cpp v0.3.0 — SINGLE 3090, Q5_K_M + MTP (embedded
+# head), q5_0/q4_1 KV. Weights: Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF (Q5_K_M, ~18.2 GB).
+#
+# MTP (embedded) vs DFlash (external draft): the MTP head is baked into the -m GGUF, so
+# there is NO --spec-draft-model / --spec-dflash-cross-ctx here; `--spec-type draft-mtp`
+# activates the embedded head and `--spec-draft-n-max` sets draft depth. (Contrast the
+# sibling single-card beellama-q5ks-dflash/dflash.yml, which loads a separate DFlash draft.)
+#
+# beellama is a llama.cpp fork; server target ENTRYPOINT is /app/llama-server, so
+# `command:` below is just the server flags (same shape as ik-llama / llama-cpp composes).
+#
+# Quick start:
+#   1. Pull the image (Anbeeld official sm_86/89 = 3090/4090):
+#        docker pull ghcr.io/anbeeld/beellama.cpp:server-cuda-v0.3.0-e0663be2713c
+#   2. Get the GGUF (Q5_K_M, embedded MTP head):
+#        /opt/ai/hf-download.sh Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF \
+#          $MODEL_DIR/qwopus3.6-27b-coder-gguf/jackrong-mtp-q5km \
+#          Qwopus3.6-27B-Coder-MTP-Q5_K_M.gguf
+#   3. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f mtp.yml up -d
+#   4. curl http://localhost:8067/v1/models  → should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR             host dir mounted as /models (default: ../../../../../../models-cache)
+#   GGUF_FILE            MTP target GGUF under /models
+#                        (default: qwopus3.6-27b-coder-gguf/jackrong-mtp-q5km/Qwopus3.6-27B-Coder-MTP-Q5_K_M.gguf)
+#   CTX_SIZE             KV pool size                (default: 163840 / 160K — MTP-safe ceiling)
+#   DRAFT_N_MAX          --spec-draft-n-max          (default: 3)
+#   BATCH_SIZE           llama.cpp -b                (default: 2048)
+#   UBATCH_SIZE          llama.cpp -ub               (default: 512)
+#   KV_TYPE_K / KV_TYPE_V K / V cache quant          (default: kvarn4 / kvarn4 — q5-class, leaner)
+#   NP                   parallel slots              (default: 1 — single-slot on one card)
+#   REASONING            thinking gate               (default: off; set 'on' to enable)
+#   PORT                 host port                   (default: 8067)
+#   CUDA_VISIBLE_DEVICES which GPU to use            (default: 0)
+#   MMPROJ_FILE          mmproj GGUF for vision       (unset = text-only)
+#
+# Big-context mode (~230K, MTP OFF): MTP costs ~1.5 GB, capping the MTP-on window at 160K.
+# For a bigger window, drop MTP and raise ctx — this serves ~230K on one 24 GB card at the
+# cost of spec-dec (~35 vs ~57 TPS code). Run plain instead of this compose:
+#   docker run --rm --gpus '"device=0"' -p 8067:8080 -v $MODEL_DIR:/models:ro \
+#     ghcr.io/anbeeld/beellama.cpp:server-cuda-preview-v0.3.2 \
+#     --host 0.0.0.0 --port 8080 \
+#     -m /models/qwopus3.6-27b-coder-gguf/jackrong-mtp-q5km/Qwopus3.6-27B-Coder-MTP-Q5_K_M.gguf \
+#     -ngl all --ctx-size 235520 -np 1 --kv-unified --flash-attn on \
+#     --cache-type-k kvarn4 --cache-type-v kvarn4 --jinja --reasoning off
+services:
+  beellama-qwopus-coder:
+    # Fallback for direct `docker compose up` MUST be a KVarN build (the v0.3.0 multiarch
+    # image other beellama composes fall back to has no kvarn* cache types). Launchers
+    # inject BEELLAMA_IMAGE from engines/beellama-local.yml install.spec (same digest).
+    image: ${BEELLAMA_IMAGE:-ghcr.io/anbeeld/beellama.cpp@sha256:858e7cfbfb0d5d3d605723a82ace1474698de368b81bc310f4df4dadc6c1b7d2}
+    container_name: "${ESTATE_CONTAINER:-beellama-qwopus-coder}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8067}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    # server target ENTRYPOINT is /app/llama-server — args only below.
+    # -np 1 is intentional on a single 24 GB card (extra slots divide a compute-bound GPU).
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwopus3.6-27b-coder-gguf/jackrong-mtp-q5km/Qwopus3.6-27B-Coder-MTP-Q5_K_M.gguf}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${DRAFT_N_MAX:-3}
+      -ngl all
+      --ctx-size ${CTX_SIZE:-163840}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --cache-type-k ${KV_TYPE_K:-kvarn4}
+      --cache-type-v ${KV_TYPE_V:-kvarn4}
+      --flash-attn on
+      --cache-ram 0
+      --no-host
+      --jinja
+      --reasoning ${REASONING:-off}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-k ${TOP_K:-20}
+      --top-p ${TOP_P:-1.0}
+      --min-p ${MIN_P:-0.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]

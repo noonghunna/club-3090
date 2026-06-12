@@ -301,6 +301,20 @@ COMPOSE_REGISTRY = {
         status_note="Single-GPU default. Launchers inject Anbeeld's official beellama.cpp server-cuda-v0.3.0 image (sm_86/89 = 3090/4090); sm_89 compiled-not-validated on club-3090's 3090-only rig. 5090/sm_120: prefix BEELLAMA_IMAGE=ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397 (sm_120 compiled-not-validated). Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. DFlash prose is net-positive on tok/s (+27% vs no-spec, re-tested 2026-06-03); the earlier 'prose-DFlash regression' is RETRACTED — it was an AR over-read + wrong baseline (docs/UPSTREAM.md).",
     ),
 
+    # Qwopus3.6-27B-Coder (Jackrong coder fine-tune of Qwen3.6-27B) — single 3090, Q5_K_M
+    # GGUF + embedded MTP head + KVarN-4 KV. The first KVarN compose; needs the v0.3.2
+    # preview KVarN engine build (digest-pinned in engines/beellama-local.yml).
+    "beellama/qwopus-coder": _entry(
+        model="qwen3.6-27b", weights_variant="qwopus-coder-mtp-q5km", workload="fast-chat",
+        engine="beellama-local", drafter="qwopus-mtp-gguf", kv_format="kvarn4",
+        tp=1, max_ctx=163840, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/beellama/compose/single/qwopus-coder-mtp-q5km/mtp.yml",
+        default_port=8067,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Qwopus3.6-27B-Coder (Jackrong) Q5_K_M GGUF + EMBEDDED MTP head (--spec-type draft-mtp) + KVarN-4 KV, single 3090. Launch with --force (experimental). REQUIRES the KVarN engine build (beellama v0.3.2 PREVIEW, digest-pinned) — the v0.3.0/earlier images reject --cache-type-k kvarn4. 2026-06-12 on sm_86: embedded MTP head loads, verify-full all-pass, NIAH needle @72K (= q5_0/q4_1 control), bench ~46/58 TPS narr/code (≈ q5_0/q4_1 — KVarN decode-neutral), 8-pack quality 104/103 think-off/on ≈ q5_0/q4_1 102/107 (quality-neutral; disc #329). Ships 160K (MTP-on ceiling; 230K via the no-MTP env opt-in in the compose). beellama v0.3.2 is a rolling PRE-RELEASE → stays experimental (un-park on a stable Anbeeld tag). pending verify-stress ladder + soak.",
+    ),
+
     # Qwen3.6-27B PRISM-PRO-DQ (Ex0bit dynamic-quant GGUF) — community-experimental, ik-llama.
     "ik-llama/prism-pro-dq-mtp": _entry(
         model="qwen3.6-27b", weights_variant="ex0bit-prism-pro-dq", workload="fast-chat",

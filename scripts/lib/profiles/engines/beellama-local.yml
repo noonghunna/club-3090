@@ -27,6 +27,7 @@ supported_kv_formats:
   - q4_1
   - q5_0
   - q8_0
+  - kvarn4   # KVarN KV-compression (v0.3.2 preview) — q5-class quality at ~28% bf16; quality- + decode-neutral on sm_86 (disc #329)
 supported_drafters:
   - dflash
   - mtp

@@ -165,6 +165,19 @@ weights:
     engine: beellama
     kind: gguf
     verify_glob: "*.gguf"
+  qwopus-coder-mtp-q5km:
+    path: qwopus3.6-27b-coder-gguf/jackrong-mtp-q5km
+    local_subdir: qwopus3.6-27b-coder-gguf/jackrong-mtp-q5km
+    size_gb: 18.2
+    format: gguf
+    status: experimental
+    hf_repo: Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF
+    files:
+      - Qwopus3.6-27B-Coder-MTP-Q5_K_M.gguf
+    engine: beellama
+    kind: gguf
+    verify_glob: "*.gguf"
+    manual_note: "Jackrong coder fine-tune of Qwen3.6-27B — Q5_K_M GGUF with EMBEDDED MTP head (beellama --spec-type draft-mtp; no separate draft download). Drives beellama/qwopus-coder (single 3090, kvarn4 KV @ 160K + MTP; 230K no-MTP opt-in). disc #329."
   beellama-q8kxl-dflash:
     path: qwen3.6-27b-gguf/unsloth-mtp-q8kxl
     local_subdir: qwen3.6-27b-gguf/unsloth-mtp-q8kxl

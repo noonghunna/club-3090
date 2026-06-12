@@ -1,0 +1,20 @@
+schema_version: 1
+id: qwopus-mtp-gguf
+display_name: Qwopus3.6-27B-Coder embedded MTP GGUF (Jackrong)
+spec_method: mtp_gguf
+model_compat:
+  - qwen3.6-27b
+engine_compat:
+  engine_type: llama.cpp
+n_default: 3
+n_max: 3
+download:
+  hf_repo: Jackrong/Qwopus3.6-27B-Coder-MTP-GGUF
+  size_gb: variable
+vram_footprint_gb: variable
+status: experimental
+# Embedded MTP head — baked into the model GGUF (Qwopus3.6-27B-Coder-MTP-Q5_K_M.gguf),
+# activated via beellama `--spec-type draft-mtp` (no separate draft download — the
+# `download.hf_repo` here is the same file as the model weights). Sibling of
+# unsloth-mtp-gguf; the Jackrong coder fine-tune ships its own MTP head. llama.cpp-family
+# (beellama) only — no vLLM --speculative-config form for a GGUF MTP head.

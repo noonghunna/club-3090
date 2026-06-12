@@ -265,8 +265,19 @@ elif [[ "${WEIGHTS}" == "fp8" ]]; then
       echo "ERROR: WEIGHTS=fp8 is only wired for qwen3.6-27b." >&2
       exit 1 ;;
   esac
+elif [[ "${WEIGHTS}" == "qwopus-coder" ]]; then
+  # Qwopus3.6-27B-Coder Q5_K_M GGUF (embedded MTP head) for beellama/qwopus-coder.
+  case "${MODEL_NAME}" in
+    qwen3.6-27b)
+      PRIMARY_WEIGHT_KEY="qwen3.6-27b:qwopus-coder-mtp-q5km"
+      NEEDS_GENESIS=0
+      ;;
+    *)
+      echo "ERROR: WEIGHTS=qwopus-coder is only wired for qwen3.6-27b." >&2
+      exit 1 ;;
+  esac
 elif [[ "${WEIGHTS}" != "autoround" ]]; then
-  echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized (use 'autoround', 'awq', 'fp8', 'gguf', or 'iq4ks')." >&2
+  echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized (use 'autoround', 'awq', 'fp8', 'qwopus-coder', 'gguf', or 'iq4ks')." >&2
   exit 1
 fi
 
