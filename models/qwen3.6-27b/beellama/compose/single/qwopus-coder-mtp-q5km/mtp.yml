@@ -19,7 +19,10 @@
 #              (sha256:858e7c…): embedded MTP head LOADS, verify-full all-pass (Paris/tools/
 #              streaming/thinking), NIAH needle recalled at ~72K depth (= q5_0/q4_1 control),
 #              bench ~46/58 TPS narr/code @ kvarn4+MTP (≈ q5_0/q4_1 — KVarN is decode-speed-
-#              neutral). Untracked pending verify-stress + soak (8-pack quality A/B PASS).
+#              neutral), 8-pack quality A/B PASS (104/103 ≈ q5_0/q4_1 102/107). Launcher
+#              path (switch.sh --force) PASS + soak-continuous PASS (0-growth, 0/25 silent-
+#              empty, 100% retention, p50 36 TPS multi-turn). Pending only the full verify-
+#              stress NIAH ladder for a ⚠️ promotion; stays 🧪 on the pre-release engine.
 #   Quality:   8-pack /150 (plain no-MTP, single run/arm): kvarn4 104 think-off / 103 think-on
 #              vs q5_0/q4_1 102 / 107 — within ±5 (noise); KVarN-4 is quality-NEUTRAL (= the
 #              q5-class its KLD predicts). Per-pack: toolcall 14·instructfollow 13-14·
