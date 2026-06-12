@@ -1,0 +1,159 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-35B-A3B (deucebucket Cerebellum v3 mixed-precision GGUF,
+#              Q3_K_M-class, 11.96 GB — ablation-informed per-tensor precision map)
+#   Engine:    llama.cpp (mainline ggml-org server-cuda)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   none — no MTP head in this GGUF; mainline, no spec-dec
+#   KV:        q8_0 K + q8_0 V
+#   Vision:    no (mmproj not mounted)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   131072 default (~15.1 GB peak — ~9 GB free on a 24 GB card);
+#              196608 boots at ~15.9 GB peak and fill-probed to ~119K prompt
+#              tokens, but the NIAH depth ladder has NOT been run there yet —
+#              treat 196K as boot+fill, not a verified ceiling (boots ≠ fills).
+#   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
+#   Status:    🧪 Experimental — author-rig validated (verify-full PASS,
+#              soak-continuous PASS, bench n=5 CV<1%); club-side validation,
+#              sandboxed packs, port + registry slug pending (#390)
+#   Engine-profile: llama-cpp-local
+#   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 15/15 (100%) ·
+#              structoutput-15 14/15 (93%) · dataextract-15 9/15 (60%) ·
+#              reasonmath-15 12/15 (80%) — 63/75 on the 5 deterministic packs
+#              (benchlocal --medium, thinking=pack-defaults, author 1× 3090,
+#              2026-06-12). Sandboxed packs (bugfind / hermesagent-20 / cli-40)
+#              not run — no docker on the bench host; /150 to be completed
+#              club-side per #390.
+#   Best for:  lean-VRAM single card — a coherent 35B-A3B in ~15 GB on stock
+#              mainline llama.cpp, leaving ~9 GB free for a vision tower,
+#              fatter KV, a second model, or a 16 GB card where the other
+#              single-card quants of this model don't fit at all.
+# ---------------------------------------------------------------------------
+# Qwen3.6-35B-A3B on mainline llama.cpp — single 3090, Cerebellum v3 mixed-
+# precision GGUF, q8_0/q8_0 KV, 131K ctx, no drafter, no vision.
+#
+# What this quant is: an ablation-informed mixed-precision build — each tensor's
+# Q2_K sensitivity is measured individually, then per-tensor precision is
+# allocated under a size budget (fragile tensors stay high, robust ones go low).
+# Net: 11.96 GB weights vs ~17.3-18.6 GB for the ik-llama single-card siblings,
+# on a stock ggml-org image. Recipe + per-question benchmark evidence:
+# https://huggingface.co/deucebucket/Qwen3.6-35B-A3B-Cerebellum-GGUF
+#
+# Single-card 35B-A3B siblings (this engine lane vs the two ik-llama composes;
+# sibling numbers from their compose headers / BENCHMARKS.md, canonical rig
+# 1× 3090 @ 370 W):
+#
+#   config                        engine            weights    peak VRAM        narr/code TPS   det-5 /75
+#   THIS (deucebucket-cerebellum) llama.cpp, no SD  11.96 GB   ~15.1 GB @ 131K  147.9 / 146.2*  63
+#   apex-fit-q8q5 (fit-mtp.yml)   ik_llama, MTP n=4 ~17.3 GB   ~21.1 GB @ 196K  103.3 / 149.1   66
+#   byteshape-iq4xs (mtp.yml)     ik_llama, MTP n=2 ~18.6 GB   ~22.5 GB @ 262K  112.9 / 128.6   69
+#
+# * Provenance of THIS row's numbers: author rig, 2026-06-12 — 1× 3090 at the
+#   stock 420 W limit (drew ~300-316 W, desktop compositor on the same GPU),
+#   server at -np 4 (the pre-correction config; the q8/q8 KV + flags otherwise
+#   match this file). bench.sh n=5: narrative 147.93 wall / 150.50 decode TPS,
+#   code 146.23 wall / 149.93 decode (CV <1%); a report.sh --full re-run
+#   measured 141.8/141.2 wall. -np 1 numbers for this exact compose come from
+#   club-side validation (#390). The 370 W canonical cap will also shave a few
+#   percent. Reading the table: this lane trades ~3-6 points of deterministic
+#   5-pack quality for ~5.3-6.6 GB of weights and ~6-7.4 GB of peak VRAM, and
+#   holds 140+ TPS on narrative without a drafter (no-spec-dec MoE signature:
+#   narr ≈ code; the ik siblings' narrative numbers are MTP-acceptance-bound).
+#
+# Validation state (author rig, 2026-06-12, full logs on the #390 report):
+#   verify-full PASS (8/8; Genesis + MTP checks engine-N/A skipped) ·
+#   soak-continuous PASS (5×5, 0 errors, 0/25 silent-empty, 7 MiB growth,
+#   100% TPS retention) · verify-stress small rungs + 25K tool-prefill PASS
+#   (large rungs were skipped against a small-ctx server — re-run club-side
+#   at the deployed 131K) · dataextract 9/15 is the visible soft spot (JSON
+#   numeric-typing, the known family weakness — matrix range is 8-13/15).
+#
+# Thinking/hygiene levers (stack-wide policy): native GGUF-embedded template
+# via --jinja + `--reasoning off` + `--reasoning-format deepseek` — without
+# the format lever, llama.cpp routes <think> into reasoning_content and
+# clients hang on it (#97). Sampling is Qwen3.6 canonical (temp 0.6,
+# top-p 0.95, top-k 20).
+#
+# VRAM budget on 24 GB (Cerebellum v3, 131K ctx):
+#   weights (mixed-precision, Q3_K_M-class):  ~12.0 GB
+#   KV at 131K (q8_0 K+V, MoE — cheap):        ~1.8 GB
+#   activation + overhead:                     ~1.3 GB
+#   total:                                    ~15.1 GB (measured peak 15,115 MiB)
+#   headroom:                                  ~9 GB free
+#
+# Quick start:
+#   1. Get the GGUF (single 11.96 GB file — SHA-verifiable on the HF repo):
+#        hf download deucebucket/Qwen3.6-35B-A3B-Cerebellum-GGUF \
+#          Qwen3.6-35B-A3B-Cerebellum-v3-Q3_K_M.gguf \
+#          --local-dir $MODEL_DIR/qwen3.6-35b-a3b-gguf/deucebucket-cerebellum
+#   2. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f base.yml up -d
+#   3. curl http://localhost:<port>/v1/models  → should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE              path under /models  (default: qwen3.6-35b-a3b-gguf/deucebucket-cerebellum/Qwen3.6-35B-A3B-Cerebellum-v3-Q3_K_M.gguf)
+#   CTX_SIZE               KV pool size        (default: 131072 — ~15.1 GB peak; 196608 boots
+#                          at ~15.9 GB peak and filled to ~119K on the author rig, but the
+#                          NIAH ladder hasn't been run there — re-ladder before relying on it)
+#   BATCH_SIZE             llama.cpp -b        (default: 4096)
+#   UBATCH_SIZE            llama.cpp -ub       (default: 512)
+#   NGL                    GPU layers          (default: 99 — full offload, weights are small)
+#   FLASH_ATTN             llama.cpp -fa       (default: on)
+#   KV_TYPE                K and V quant type  (default: q8_0 — KV is cheap on this MoE;
+#                          headroom permits q8 fidelity where denser models need q4_0)
+#   NP                     parallel slots      (default: 1 — see ⚠ below)
+#   REASONING              thinking gate       (default: off — stack-wide policy)
+#   REASONING_FORMAT       reasoning routing   (default: deepseek — hygiene, closes #97)
+#   PORT                   host port           (default: XXXXX — assigned on merge)
+#   CUDA_VISIBLE_DEVICES   which GPU to use    (default: 0)
+
+services:
+  llama-cpp-qwen36-35b-a3b-cerebellum:
+    # Pinned to b9246 per stack policy — the rolling `:server-cuda` tag
+    # regressed at b9282 (broken lib packaging → crash loop, #187). The
+    # author's validation ran bare-metal at b9603; the pin bump is being
+    # co-validated club-side alongside this compose (#390). Bump via env:
+    # LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9246}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen36-35b-a3b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-XXXXX}}:8080"     # port we'll assign on merge
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    # ⚠ -np 1 is intentional on a single 24 GB card — do NOT raise it to
+    #   "parallelize." One GPU is compute-bound: extra slots divide its
+    #   throughput, they don't multiply it (~14 tok/s/slot measured at -np 4
+    #   on this class — slow enough to trip agentic clients' timeouts). And
+    #   -c splits across slots: at -np 4 this file's 131072 becomes 4 × 32768,
+    #   so one long conversation walls at ~32K — exactly the HTTP 400 the
+    #   author's bench-agentic hit at turn 12 (~29K prompt) before this
+    #   correction. Single-card convention is -np 1.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-35b-a3b-gguf/deucebucket-cerebellum/Qwen3.6-35B-A3B-Cerebellum-v3-Q3_K_M.gguf}
+      -c ${CTX_SIZE:-131072}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-512}
+      -ngl ${NGL:-99}
+      -fa ${FLASH_ATTN:-on}
+      --cache-type-k ${KV_TYPE:-q8_0}
+      --cache-type-v ${KV_TYPE:-q8_0}
+      -np ${NP:-1}
+      --jinja
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [compute, utility]
