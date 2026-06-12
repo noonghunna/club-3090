@@ -1,6 +1,6 @@
 schema_version: 1
 id: beellama-local
-display_name: beellama.cpp local CUDA server (DFlash + windowed KV)
+display_name: beellama.cpp v0.3.2-preview local CUDA server (DFlash + windowed KV + KVarN)
 type: llama.cpp
 stability: experimental
 install:
@@ -8,7 +8,7 @@ install:
   # Single source of truth for the beellama image — switch.sh/launch.sh inject this as
   # BEELLAMA_IMAGE across all beellama composes (the per-compose ${BEELLAMA_IMAGE:-…} literal
   # is only a fallback for direct `docker compose`). Bump this ONE line to update (beellama-pin-bump).
-  spec: ghcr.io/anbeeld/beellama.cpp:server-cuda-v0.3.0-e0663be2713c
+  spec: ghcr.io/anbeeld/beellama.cpp:server-cuda-preview-v0.3.2-317c65e27e1e
 min_sm: 6.0
 supported_model_families:
   - qwen3-next-hybrid
@@ -30,4 +30,4 @@ supported_weight_formats:
 required_overlays: []
 vendored_overlays: []
 required_genesis: false
-notes: "Anbeeld's llama.cpp fork (https://github.com/Anbeeld/beellama.cpp) — adds DFlash cross-attention speculative decoding (`--spec-type dflash` + a DFlash draft GGUF) and TurboQuant/TCQ KV cache types on top of mainline-lineage windowed KV (SWA-aware allocation for Gemma-4). Single-card answer for Gemma-4 long-context + spec-dec (only engine with both; ik-llama walls ~24K, mainline ~10 TPS) and a tool-grammar-neutral spec-dec path for Qwen3.6 (DFlash does not amplify the CodeAct attractor the built-in MTP head does, club-3090#237). Anbeeld now publishes OFFICIAL multi-arch CI images on his GHCR (server-cuda-* / server-cuda12-* / cpu / rocm / sycl / vulkan). install.spec pins a v0.3.0 CUDA commit tag VALIDATED on this stack's sm_86 (FA_ALL_QUANTS=1, q5_0/q4_1 KV + DFlash + GPU cross-ring, single + dual, 2026-06-01); switch.sh/launch.sh inject it as BEELLAMA_IMAGE. The per-compose ${BEELLAMA_IMAGE:-…} literal (our self-hosted multiarch-v0.3.0-efe856397, multi-arch incl sm_120) is the direct-`docker compose` fallback. FA_ALL_QUANTS=ON is required for the q5_0/q4_1 turbo KV types — Anbeeld's CI image has it; if self-building, build `.devops/cuda.Dockerfile` with CUDA_DOCKER_ARCH=86 + -DGGML_CUDA_FA_ALL_QUANTS=ON. Composes stay 🧪 Experimental while v0.3.0 is a DEV branch (no stable release tag + the v0.3.0 DFlash-on-prose regression); the model-default resolver skips experimental. Repoint install.spec → Anbeeld's STABLE tag when it ships (one-line bump; see beellama-pin-bump)."
+notes: "Anbeeld's llama.cpp fork (https://github.com/Anbeeld/beellama.cpp) — adds DFlash cross-attention speculative decoding (`--spec-type dflash` + a DFlash draft GGUF) and TurboQuant/TCQ KV cache types on top of mainline-lineage windowed KV (SWA-aware allocation for Gemma-4). Single-card answer for Gemma-4 long-context + spec-dec (only engine with both; ik-llama walls ~24K, mainline ~10 TPS) and a tool-grammar-neutral spec-dec path for Qwen3.6 (DFlash does not amplify the CodeAct attractor the built-in MTP head does, club-3090#237). Anbeeld now publishes OFFICIAL multi-arch CI images on his GHCR (server-cuda-* / server-cuda12-* / cpu / rocm / sycl / vulkan). install.spec pins the v0.3.2 PREVIEW CUDA tag (server-cuda-preview-v0.3.2-317c65e27e1e — COMMIT-suffixed for immutability; v0.3.2 adds experimental KVarN KV-compression on top of DFlash/TCQ) VALIDATED on this stack's sm_86 (FA_ALL_QUANTS=1, q5_0/q4_1 KV + DFlash, 2026-06-12); switch.sh/launch.sh inject it as BEELLAMA_IMAGE. The per-compose ${BEELLAMA_IMAGE:-…} literal (our self-hosted multiarch-v0.3.0-efe856397, multi-arch incl sm_120) is the direct-`docker compose` fallback. FA_ALL_QUANTS=ON is required for the q5_0/q4_1 turbo KV types — Anbeeld's CI image has it; if self-building, build `.devops/cuda.Dockerfile` with CUDA_DOCKER_ARCH=86 + -DGGML_CUDA_FA_ALL_QUANTS=ON. Composes stay 🧪 Experimental: v0.3.2 is a ROLLING PRE-RELEASE (Anbeeld replaces its moving Docker tags with newer branch builds — we pin the COMMIT-suffixed tag so OUR pin is immutable), not a stable release; the model-default resolver skips experimental. The first STABLE tag is v0.3.1 (server-cuda-v0.3.1, non-prerelease, brings Qwen3 MTP post-norm + CUDA KV-quant fixes) — repoint install.spec there to UN-PARK the composes (#455) once it passes the full gate (one-line bump; see beellama-pin-bump)."
