@@ -115,7 +115,7 @@ echo ""
 # 1. Server reachable
 # --------------------------------------------------------------------
 check_server() {
-  echo "[1/8] Server reachable on /v1/models ..."
+  echo "[1/9] Server reachable on /v1/models ..."
   if curl -sf -m 5 "${URL}/v1/models" >/dev/null 2>&1; then
     pass "server is serving"
   else
@@ -129,7 +129,7 @@ run_check "server" check_server
 # 2. Genesis patches applied
 # --------------------------------------------------------------------
 check_patches() {
-  echo "[2/8] Genesis patches applied ..."
+  echo "[2/9] Genesis patches applied ..."
   # Genesis is a vLLM-only patcher. Skip cleanly on other engines instead of
   # leaving the user wondering whether "no Genesis marker" means a real
   # problem or a category error.
@@ -178,11 +178,11 @@ run_check "patches" check_patches
 # Cold-start warmup (not a scored check)
 # --------------------------------------------------------------------
 # The first real inference after a multi-minute boot pays cudagraph/JIT
-# compile for that shape. Without this, [3/8] (a 30s-capped request) is the
+# compile for that shape. Without this, [3/9] (a 30s-capped request) is the
 # one that eats the cold start and false-fails while every later check passes
 # on the now-warm engine. Fire one discard-result request with a generous cap
 # so all *scored* checks reflect warm-engine behavior. Failure here is
-# non-fatal (a real outage still surfaces on [3/8]).
+# non-fatal (a real outage still surfaces on [3/9]).
 echo "[warmup] priming engine (cold cudagraph/JIT, up to 180s, not scored) ..."
 curl -sf -m 180 "${URL}/v1/chat/completions" \
   -H "Content-Type: application/json" \
@@ -192,13 +192,13 @@ curl -sf -m 180 "${URL}/v1/chat/completions" \
     \"max_tokens\": 1,
     \"temperature\": 0.0,
     \"chat_template_kwargs\": {\"enable_thinking\": false}
-  }" >/dev/null 2>&1 && echo "[warmup] engine warm" || echo "[warmup] warmup request did not return in 180s — [3/8] will surface a real outage if present"
+  }" >/dev/null 2>&1 && echo "[warmup] engine warm" || echo "[warmup] warmup request did not return in 180s — [3/9] will surface a real outage if present"
 
 # --------------------------------------------------------------------
 # 3. Basic completion — Paris sanity
 # --------------------------------------------------------------------
 check_basic() {
-  echo "[3/8] Basic completion — capital of France ..."
+  echo "[3/9] Basic completion — capital of France ..."
   local resp
   resp="$(curl -sf -m 30 "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
@@ -224,7 +224,7 @@ run_check "basic" check_basic
 # 4. Tool calling
 # --------------------------------------------------------------------
 check_tools() {
-  echo "[4/8] Tool calling ..."
+  echo "[4/9] Tool calling ..."
   if [[ "${SKIP_TOOLS:-0}" == "1" ]]; then
     skip "SKIP_TOOLS=1 (expected for default config — see README Known issue)"
     return 0
@@ -271,7 +271,7 @@ run_check "tools" check_tools
 # 5. Streaming — SSE chunks add up to coherent text
 # --------------------------------------------------------------------
 check_streaming() {
-  echo "[5/8] Streaming (SSE) ..."
+  echo "[5/9] Streaming (SSE) ..."
   # Collect streamed chunks for 15 seconds max
   local stream_out
   stream_out="$(curl -sf -m 45 --no-buffer "${URL}/v1/chat/completions" \
@@ -325,10 +325,71 @@ print(f'{chunks}||{text}')
 run_check "streaming" check_streaming
 
 # --------------------------------------------------------------------
+# 6. Streaming tool-calls (thinking-on) — the intersection [4]+[5] cover
+#    separately. club-3090#145 / vLLM#39056 live here: with reasoning on,
+#    the tool call can drop at the </think>->tool_call boundary over SSE
+#    (no delta.tool_calls; <tool_call> XML leaks into delta.content;
+#    finish_reason=stop). Uses tool_choice=auto (the clean path on v0.22.0);
+#    tool_choice=required + MTP is a known-open drop — vLLM#39598, see UPSTREAM.md.
+# --------------------------------------------------------------------
+check_streaming_tools() {
+  echo "[6/9] Streaming tool-calls (thinking-on) ..."
+  if [[ "${SKIP_TOOLS:-0}" == "1" ]]; then
+    skip "SKIP_TOOLS=1 (expected for default config — see README Known issue)"
+    return 0
+  fi
+  local stream_out
+  stream_out="$(curl -sf -m 60 --no-buffer "${URL}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"model\": \"${MODEL}\",
+      \"messages\": [{\"role\": \"user\", \"content\": \"What is the weather in San Francisco? Use the get_weather tool.\"}],
+      \"tools\": [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather for a city.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}}}],
+      \"tool_choice\": \"auto\", \"max_tokens\": 256, \"temperature\": 0.3,
+      \"stream\": true,
+      \"chat_template_kwargs\": {\"enable_thinking\": true}
+    }" 2>/dev/null)" || { fail "streaming tool-call request failed" "Check docker logs"; return 1; }
+  local verdict
+  verdict="$(echo "$stream_out" | python3 -c "
+import sys, json
+content=''; tool_name=''; finish=None
+for line in sys.stdin:
+    line=line.strip()
+    if not line.startswith('data: '): continue
+    p=line[6:]
+    if p=='[DONE]': break
+    try: d=json.loads(p)
+    except Exception: continue
+    for ch in d.get('choices', []):
+        delta=ch.get('delta') or {}
+        if delta.get('content'): content+=delta['content']
+        for tc in delta.get('tool_calls') or []:
+            fn=tc.get('function') or {}
+            if fn.get('name'): tool_name+=fn['name']
+        if ch.get('finish_reason'): finish=ch['finish_reason']
+if tool_name and finish=='tool_calls' and '<tool_call>' not in content:
+    print('OK:'+tool_name)
+elif '<tool_call>' in content:
+    print('INLINED')
+else:
+    print('NONE:finish='+str(finish))
+" 2>&1)"
+  if [[ "$verdict" == OK:*get_weather* ]]; then
+    pass "streamed delta.tool_calls (get_weather) + finish_reason=tool_calls, no <tool_call> leak"
+  elif [[ "$verdict" == "INLINED" ]]; then
+    fail "tool-call DROPPED over streaming — <tool_call> leaked into delta.content" \
+         "club-3090#145 / vLLM#39056 streaming class. (tool_choice=required+MTP is a separate known drop — #39598.)"
+  else
+    fail "no streamed tool-call ($verdict)" "Raw head: $(echo "$stream_out" | head -c 200)"
+  fi
+}
+run_check "streaming_tools" check_streaming_tools
+
+# --------------------------------------------------------------------
 # 6. Thinking mode — reasoning + content both populated
 # --------------------------------------------------------------------
 check_thinking() {
-  echo "[6/8] Thinking / reasoning mode ..."
+  echo "[7/9] Thinking / reasoning mode ..."
   local resp
   # enable_thinking: true (Qwen3 default). Math problem that needs visible reasoning.
   resp="$(curl -sf -m 120 "${URL}/v1/chat/completions" \
@@ -379,7 +440,7 @@ run_check "thinking" check_thinking
 #    and for repetitive degeneracy (stale-draft / sampling collapse).
 # --------------------------------------------------------------------
 check_output_quality() {
-  echo "[7/8] Output quality / cascade detection (2K-token completion) ..."
+  echo "[8/9] Output quality / cascade detection (2K-token completion) ..."
   local resp
   resp="$(curl -sf -m 180 "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
@@ -444,7 +505,7 @@ run_check "output_quality" check_output_quality
 #     (target_only baseline = 1.0). Production sees AL 3.4-3.8 with n=3.
 # --------------------------------------------------------------------
 check_mtp_acceptance() {
-  echo "[8/8] MTP acceptance length threshold ..."
+  echo "[9/9] MTP acceptance length threshold ..."
   # Spec-decode metrics extraction is engine-specific:
   #   vLLM emits "SpecDecoding metrics: Mean acceptance length: N.NN" to stdout
   #   llama.cpp llama-server doesn't emit a "Mean acceptance length" line; spec
