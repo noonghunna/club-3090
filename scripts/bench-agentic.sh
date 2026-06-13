@@ -34,14 +34,16 @@
 #   and requests timed out around ~74K. Treat those as informational
 #   per-arch_class observations, not universal thresholds.
 #
-# Ramp-depth caveat:
-#   The context ramp is driven by tool_choice='required' turns. If the model
-#   fails to emit a parseable tool call at depth (intermittent on some
-#   parsers/configs), the ramp stops there — so the reachable depth, and thus
-#   whether the ~35K degrade zone is observed, is bounded by tool-call
-#   reliability at depth on the target config, not by this script. A follow-up
-#   enhancement to decouple the ramp from tool-call success is tracked
-#   separately.
+# Ramp robustness (#255):
+#   The context ramp is driven by tool_choice='required' turns but does NOT
+#   depend on tool-call success. If the model fails to emit a parseable tool
+#   call at depth (intermittent on some parsers/configs), the turn synthesizes a
+#   tool call so the prompt keeps growing by the same fixed ~chars (the fixture
+#   tool_result is injected regardless) — the miss is logged + counted, but the
+#   ramp reaches the configured TURNS so the ~35K degrade zone is observed
+#   regardless of tool-call reliability. Only genuine transport errors
+#   (HTTP / timeout) stop the ramp. See the per-turn `tool_call_missed` flag and
+#   the "tool-call misses" summary line.
 #
 # Output:
 #   Per-turn table (turn, prompt_tokens, ttft_ms, decode_tps)
@@ -230,11 +232,22 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
          "function": {"name": s["name"], "arguments": s["args"] or "{}"}}
         for i, s in sorted(tool_calls_acc.items()) if s["name"]
     ]
-    if not tool_calls_response:
-        raise RuntimeError(
-            f"server returned no tool calls despite tool_choice=required "
-            f"(turn {turn_idx+1}). Check that the endpoint supports tool_choice=required."
-        )
+    # #255: decouple the context ramp from tool-call success. A turn that fails
+    # to emit a parseable tool call (intermittent parser flakiness at depth) used
+    # to abort the whole ramp via RuntimeError — capping reachable depth below
+    # the ~35K zone this producer exists to characterize. Instead, synthesize a
+    # tool call so the prompt keeps growing by the same fixed ~chars (the fixture
+    # tool_result below is injected regardless and is what dominates the growth),
+    # log + count the miss, and keep going. Genuine transport errors (HTTP /
+    # timeout) still propagate from urlopen and stop the ramp — you can't grow
+    # context off a dead request.
+    tool_call_missed = not tool_calls_response
+    if tool_call_missed:
+        tool_calls_response = [{
+            "id": f"call_t{turn_idx}_s{session_id}_synthetic",
+            "type": "function",
+            "function": {"name": TOOLS[0]["function"]["name"], "arguments": "{}"},
+        }]
     # Sanitize: strip lone surrogates that json.dumps would emit as
     # invalid \uD800-\uDFFF sequences, causing server-side 400s.
     def _clean(s):
@@ -270,6 +283,7 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
         "prompt_tokens": prompt_tokens,
         "tool_calls": len(tool_calls_response),
         "result_chars": len(tool_result_content),
+        "tool_call_missed": tool_call_missed,
     }
 
 
@@ -277,6 +291,7 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
 # Run sessions and collect per-turn metrics
 # ---------------------------------------------------------------------------
 per_turn_metrics = [[] for _ in range(TURNS)]
+tool_call_misses = 0  # #255: turns where the model emitted no parseable tool call
 
 for session in range(1, SESSIONS + 1):
     print(f"\n{'='*72}")
@@ -292,9 +307,12 @@ for session in range(1, SESSIONS + 1):
         try:
             m = run_turn(messages, fixture_turn, session, turn_idx)
             per_turn_metrics[turn_idx].append(m)
+            if m.get("tool_call_missed"):
+                tool_call_misses += 1
             if not QUIET:
+                miss = "  ⚠ tool-call miss (synthetic result injected)" if m.get("tool_call_missed") else ""
                 print(f"  {turn_idx+1:<5} {m['prompt_tokens']:>10,} {m['ttft_ms']:>9.0f} "
-                      f"{m['decode_tps']:>11.1f} {m['result_chars']:>13,}", flush=True)
+                      f"{m['decode_tps']:>11.1f} {m['result_chars']:>13,}{miss}", flush=True)
         except Exception as e:
             print(f"  turn {turn_idx+1}: FAIL — {e}", flush=True)
             break
@@ -306,6 +324,11 @@ for session in range(1, SESSIONS + 1):
 print(f"\n\n{'='*72}")
 print(f"SUMMARY — multi-turn prefill stress ({SESSIONS} session(s) × {TURNS} turns)")
 print(f"{'='*72}")
+if tool_call_misses:
+    turns_run = sum(len(x) for x in per_turn_metrics)
+    print(f"  tool-call misses: {tool_call_misses}/{turns_run} turns — ramp continued via "
+          f"synthetic results (#255); depth/curve unaffected, but tool-call reliability is "
+          f"degraded at depth on this config.")
 print(f"  {'Turn':<5} {'Prompt tok':>10} {'TTFT ms':>9} {'σ ms':>6} {'Decode TPS':>11}  Notes")
 print(f"  {'-'*5} {'-'*10} {'-'*9} {'-'*6} {'-'*11}  {'─'*35}")
 
