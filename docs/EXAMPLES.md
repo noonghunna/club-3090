@@ -86,7 +86,7 @@ print()
 
 ### Tool calling
 
-Works on both engines (vLLM with `--tool-call-parser qwen3_coder` and llama.cpp with `--jinja` — both ship enabled in the default composes):
+Works on both engines (vLLM with `--tool-call-parser qwen3_xml` and llama.cpp with `--jinja` — both ship enabled in the default composes):
 
 ```python
 tools = [

@@ -154,7 +154,9 @@ services:
       - '{"enable_thinking": false}'
       - --enable-auto-tool-choice
       - --tool-call-parser
-      - qwen3_coder
+      # qwen3_xml (not qwen3_coder): coder streaming tool-calls drop at the
+      # </think>→<tool_call> boundary (#145, vLLM #39056). Revisit on vLLM #45413.
+      - qwen3_xml
       - --enable-prefix-caching
       - --enable-chunked-prefill
       - --speculative-config

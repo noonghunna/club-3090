@@ -231,7 +231,7 @@ Track in [`docs/UPSTREAM.md`](UPSTREAM.md#luce-dflash-luce-orglucebox-hub).
 
 ### Tool-call extraction needs `--enable-auto-tool-choice`
 
-vLLM ships this off by default. Our composes set `--tool-call-parser qwen3_coder` + `--enable-auto-tool-choice`. If you're rolling your own compose, both are required.
+vLLM ships this off by default. Our composes set `--tool-call-parser qwen3_xml` + `--enable-auto-tool-choice` (`qwen3_xml` over `qwen3_coder` to dodge the streaming tool-call bug [#145](https://github.com/noonghunna/club-3090/issues/145)). If you're rolling your own compose, both are required.
 
 ### Running alongside a desktop / sub-24 GB usable VRAM
 

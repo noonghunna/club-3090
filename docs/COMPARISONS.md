@@ -16,7 +16,7 @@ Honest read on when this repo is the right answer and when it isn't. We have a r
 | Configurability | limited — can't expose `--cache-type-k q4_0`, `--mmproj`, `--spec-type ngram-mod`, `--parallel`, custom KV quants | full engine flag access via Docker compose |
 | Reproducibility | model versions move with Ollama's registry | pinned image SHA + Genesis commit + GGUF SHA |
 | GUI / system integration | system tray, desktop app | none — CLI / Docker / OpenAI-compat API only |
-| Tool calling on Qwen3.6-27B | works (Ollama parses `<tool_call>` blocks) | works (vLLM `--tool-call-parser qwen3_coder`, llama.cpp `--jinja`) |
+| Tool calling on Qwen3.6-27B | works (Ollama parses `<tool_call>` blocks) | works (vLLM `--tool-call-parser qwen3_xml`, llama.cpp `--jinja`) |
 
 **Pick Ollama if:** chat-only use, you want a system-tray GUI, you don't care which exact GGUF quant runs, you're switching between many models often.
 
