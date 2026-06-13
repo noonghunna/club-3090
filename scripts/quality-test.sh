@@ -199,6 +199,12 @@ SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}"
 ENABLE_THINKING="${ENABLE_THINKING:-0}"
 NO_THINKING="${NO_THINKING:-0}"
 THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}"
+# #252: passthroughs to benchlocal-cli for the quality-baseline corpus —
+# --repeat (n>=3 aggregate), --previous-result (diff vs a baseline), and a
+# --save-json override (write the run to an explicit path, e.g. a baseline file).
+REPEAT=""
+PREVIOUS_RESULT=""
+SAVE_JSON_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -268,6 +274,30 @@ while [[ $# -gt 0 ]]; do
       THINKING_MAX_TOKENS="${2:-}"
       if [[ -z "$THINKING_MAX_TOKENS" ]] || ! [[ "$THINKING_MAX_TOKENS" =~ ^[0-9]+$ ]]; then
         echo "✗ --thinking-max-tokens requires a positive integer" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --repeat)
+      REPEAT="${2:-}"
+      if [[ -z "$REPEAT" ]] || ! [[ "$REPEAT" =~ ^[0-9]+$ ]]; then
+        echo "✗ --repeat requires a positive integer" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --previous-result)
+      PREVIOUS_RESULT="${2:-}"
+      if [[ -z "$PREVIOUS_RESULT" ]]; then
+        echo "✗ --previous-result requires a path to a saved RunResult JSON" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --save-json)
+      SAVE_JSON_OVERRIDE="${2:-}"
+      if [[ -z "$SAVE_JSON_OVERRIDE" ]]; then
+        echo "✗ --save-json requires a path" >&2
         exit 2
       fi
       shift 2
@@ -403,6 +433,11 @@ RESULTS_DIR="${ROOT_DIR}/results/quality"
 mkdir -p "$RESULTS_DIR"
 TS=$(date +%Y-%m-%dT%H-%M-%S)
 JSON_OUT="${RESULTS_DIR}/quality-${TS}.json"
+# #252: --save-json overrides the default per-run path (e.g. write to a baseline file).
+if [[ -n "$SAVE_JSON_OVERRIDE" ]]; then
+  JSON_OUT="$SAVE_JSON_OVERRIDE"
+  mkdir -p "$(dirname "$JSON_OUT")"
+fi
 
 if [[ "$TIMEOUT_PER_CASE_SET" == "1" ]]; then
   TIMEOUT_DISPLAY="${TIMEOUT_PER_CASE}s"
@@ -427,6 +462,12 @@ CLI_ARGS=(
 )
 if [[ "$TIMEOUT_PER_CASE_SET" == "1" ]]; then
   CLI_ARGS+=(--timeout-per-case "${TIMEOUT_PER_CASE}")
+fi
+if [[ -n "$REPEAT" ]]; then
+  CLI_ARGS+=(--repeat "$REPEAT")
+fi
+if [[ -n "$PREVIOUS_RESULT" ]]; then
+  CLI_ARGS+=(--previous-result "$PREVIOUS_RESULT")
 fi
 if [[ "$PROGRESS" == "1" ]]; then
   CLI_ARGS+=(--progress)

@@ -56,3 +56,6 @@ results/*
 !results/grammar-full-*/
 !results/lucebox-*/
 !results/v0.20-migration/
+# #252: curated quality-baseline corpus (committed; the trusted n>=3 aggregates
+# `quality-baseline.sh` diffs fresh runs against). Run output elsewhere stays ignored.
+!results/baselines/

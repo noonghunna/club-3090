@@ -263,6 +263,27 @@ Suggested gates (informal, not enforced):
 
 For comparing a new pin / quant / config A/B against the previous version: a >10pp drop on any pack vs the previous baseline is a signal worth investigating before promoting `Status: ✅ Production`.
 
+### Regression baselines (the curated corpus)
+
+Rather than hunt down "the previous baseline" by hand each time, the curated corpus in
+[`results/baselines/`](../results/baselines/README.md) holds committed `n≥3` aggregates per
+`(registry-slug, thinking-mode)`. [`scripts/quality-baseline.sh`](../scripts/quality-baseline.sh)
+captures and diffs against them:
+
+```bash
+# capture / refresh a baseline (n=3 aggregate; needs a live endpoint)
+bash scripts/quality-baseline.sh --slug vllm/qwen-35b-a3b-dual --capture
+# diff a fresh run vs the committed baseline — the regression check
+bash scripts/quality-baseline.sh --slug vllm/qwen-35b-a3b-dual
+# thinking-on companion baseline
+bash scripts/quality-baseline.sh --slug vllm/qwen-35b-a3b-dual --mode enable-thinking
+```
+
+`no-thinking` is canonical (temp-0, reproducible — diff against this for a CI-style gate);
+`enable-thinking` is the reasoning-on companion. It's a thin wrapper over `quality-test.sh --full`
+(`--repeat` → `--save-json`/`--previous-result`); extra args pass through (e.g.
+`--exit-on-regression` for a hard CI gate). `--dry-run` prints the resolved command.
+
 ## What it doesn't replace
 
 - **`bench.sh`** measures throughput, not quality. They're complementary.
