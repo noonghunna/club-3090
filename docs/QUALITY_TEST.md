@@ -193,7 +193,7 @@ bash scripts/quality-test.sh --full
 
 # evaluate at the model's served / recommended temperature (inherits the compose default)
 bash scripts/quality-test.sh --full --sampling-from-server
-SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh
+SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh --with-8pack-thinking=both
 
 # or an explicit temperature, via benchlocal-cli directly.
 # NB: invoking benchlocal-cli directly BYPASSES the wrapper's localhost guard. With a
@@ -216,8 +216,10 @@ bash scripts/quality-test.sh --reasoning --thinking-max-tokens 16384
 # force thinking on for every full-suite pack
 bash scripts/quality-test.sh --full --enable-thinking --thinking-max-tokens 16384
 
-# full rebench: bench.sh + both quality-test.sh legs inherit it
-ENABLE_THINKING=1 THINKING_MAX_TOKENS=16384 SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh
+# full rebench incl. the 8-pack in both reasoning modes (off + on — the promotion gate).
+# The 8-pack thinking is driven by --with-8pack-thinking (=off forces --no-thinking,
+# =on forces --enable-thinking), NOT ENABLE_THINKING (which now only affects bench.sh). #338
+THINKING_MAX_TOKENS=16384 SAMPLING_FROM_SERVER=1 bash scripts/rebench-full.sh --with-8pack-thinking=both
 
 # TPS bench only
 ENABLE_THINKING=1 bash scripts/bench.sh

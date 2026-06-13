@@ -468,10 +468,10 @@ The catalog-relevant gates and what each guards:
 ## Step 8 — Run rebench-full + update BENCHMARKS.md
 
 ```bash
-bash scripts/rebench-full.sh
+bash scripts/rebench-full.sh --with-8pack-thinking=both
 ```
 
-This runs the canonical 5-step bench matrix (bench, verify-stress, quality, soak, aider). Result goes into BENCHMARKS.md per the existing per-model section pattern.
+This runs the structural gates (verify-full → bench → verify-stress → soak) **plus** the full 8-pack quality eval in both reasoning modes (think-OFF + think-ON). **`--with-8pack-thinking=both` is required for a production-promotion gate** — the 8-pack is opt-in and skipped without the flag (#338). Result goes into BENCHMARKS.md per the existing per-model section pattern.
 
 Required BENCHMARKS.md columns per row: TPS (narrative + code), context, VRAM peak per card, KV format, drafter, AL (if spec-decode), engine pin, Genesis pin, date.
 

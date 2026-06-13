@@ -140,8 +140,9 @@ bash scripts/setup.sh
 MODEL_DIR=/path/to/huggingface docker compose \
   -f models/qwen3.6-27b/vllm/compose/dual/autoround-int4/tq3-mtp-genesis.yml up -d
 
-# 3. Run the full 5-phase rebench (~1.75-2 hr)
-URL=http://localhost:8015 TAG=my-tq3-mtp-genesis bash scripts/rebench-full.sh
+# 3. Run the full rebench incl. the 8-pack in both reasoning modes (~1.75-2 hr;
+#    omit --with-8pack-thinking for the fast structural-gates-only run, #338)
+URL=http://localhost:8015 TAG=my-tq3-mtp-genesis bash scripts/rebench-full.sh --with-8pack-thinking=both
 ```
 
 Full results land in `results/rebench/<tag>/REPORT.md`. Cross-reference with our `results/rebench/qwen-tq3-mtp-genesis-2026-05-11/REPORT.md`.

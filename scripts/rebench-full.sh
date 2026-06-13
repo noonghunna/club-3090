@@ -15,26 +15,37 @@
 #   0. verify-full.sh          — functional preflight, FAIL-FAST (~2 min)
 #   1. bench.sh                — TPS narrative + code (~5 min)
 #   2. verify-stress.sh        — long-context + boundary (~10-15 min)
-#   3. quality-test.sh --full  — 8 packs /150, think-OFF (~45-60 min)
-#   4. quality-test.sh --full --enable-thinking — 8 packs /150, think-ON (~60-90 min)
-#   5. soak-test.sh fresh-mode — stability over 50 turns (~15-20 min)
+#   3. 8-pack quality          — OPT-IN, skipped by default (#338). Enable with
+#      --with-8pack-thinking[=off|on|both]:
+#        =off  → quality-test.sh --full --no-thinking      (8 packs /150, reasoning OFF, ~45-60 min)
+#        =on   → quality-test.sh --full --enable-thinking   (8 packs /150, reasoning ON,  ~60-90 min)
+#        =both → both passes (the production-promotion gate)
+#   4. soak-test.sh fresh-mode — stability over 50 turns (~15-20 min)
+#
+# DEFAULT (no --with-8pack-thinking) = fast structural gates only (verify +
+# bench + stress + soak, ~35-45 min). The long 8-pack is opt-in: new-model
+# promotion passes --with-8pack-thinking=both; a quick "does it boot / serve /
+# recall / soak" re-check needs no flag.
 #
 # verify-full is a HARD GATE: if the endpoint isn't functional we abort before
-# the multi-hour run rather than benching a broken server. Bypass with
-# --skip verify-full (e.g. you just ran it while tuning); --resume skips it too.
-# Total per leg: ~2.5-3.5 hr. (think-ON 8-pack replaced the old aider-polyglot
-# step 2026-06-03; aider available standalone via quality-test.sh --pack aider-polyglot-30.)
-# NOTE: the think-ON leg only scores correctly if the server PARSES reasoning —
-# boot the compose with --reasoning on (REASONING=on) so <think> goes to
-# reasoning_content, not the graded answer.
+# the run rather than benching a broken server. Bypass with --skip verify-full
+# (e.g. you just ran it while tuning); --resume skips it too.
+# NOTE: =off forces --no-thinking (all 8 packs think-OFF) for a clean
+# with/without-reasoning A/B — not the pack-default mixed mode. The =on / =both
+# leg only scores correctly if the server PARSES reasoning — boot the compose
+# with --reasoning on (REASONING=on) so <think> goes to reasoning_content, not
+# the graded answer.
 #
 # All artifacts land in results/rebench/<tag>/. Run twice on different models
 # (e.g. one Qwen leg, one Gemma leg) to assemble a matched-config head-to-head.
 #
 # Usage:
-#   bash scripts/rebench-full.sh                      # auto-tag from MODEL
+#   bash scripts/rebench-full.sh                      # fast structural gates only (no 8-pack)
+#   bash scripts/rebench-full.sh --with-8pack-thinking=both  # + full 8-pack off+on (promotion gate)
+#   bash scripts/rebench-full.sh --with-8pack-thinking=off   # + 8-pack, reasoning OFF only
+#   bash scripts/rebench-full.sh --with-8pack-thinking=on    # + 8-pack, reasoning ON only
 #   bash scripts/rebench-full.sh --tag qwen-int8      # explicit tag
-#   bash scripts/rebench-full.sh --skip soak,quality-thinking  # skip phases (CSV)
+#   bash scripts/rebench-full.sh --skip soak          # skip phases (CSV)
 #   bash scripts/rebench-full.sh --resume             # skip steps that have
 #                                                       artifacts already
 #
@@ -68,11 +79,13 @@
 #                       (e.g. Qwopus temp=0.8). Tags runs as non-canonical.
 #   ENABLE_THINKING
 #                       Set to 1 to pass request-level enable_thinking=true
-#                       through bench.sh and both quality-test.sh invocations.
-#                       Required to measure reasoning-on models honestly.
+#                       through bench.sh. (The 8-pack quality passes are now
+#                       controlled by --with-8pack-thinking — =off forces
+#                       --no-thinking, =on forces --enable-thinking — not by
+#                       this env var. #338.)
 #   THINKING_MAX_TOKENS
-#                       Optional thinking budget forwarded to quality-test.sh
-#                       when ENABLE_THINKING=1.
+#                       Optional thinking budget forwarded to the 8-pack
+#                       reasoning-ON pass (--with-8pack-thinking=on|both).
 #
 
 set -euo pipefail
@@ -91,6 +104,7 @@ TAG_OVERRIDE=""
 URL_FLAG=""
 MODEL_FLAG=""
 ENGINE_FLAG=""
+WITH_8PACK=""   # #338: 8-pack quality opt-in — "" (omit)=skip | off | on | both
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip)     SKIP_CSV="$2"; shift 2 ;;
@@ -99,6 +113,8 @@ while [[ $# -gt 0 ]]; do
     --url)      URL_FLAG="$2"; shift 2 ;;
     --model)    MODEL_FLAG="$2"; shift 2 ;;
     --engine)   ENGINE_FLAG="$2"; shift 2 ;;
+    --with-8pack-thinking)    WITH_8PACK="off"; shift ;;
+    --with-8pack-thinking=*)  WITH_8PACK="${1#*=}"; shift ;;
     -h|--help)
       sed -n '2,55p' "$0"
       exit 0
@@ -128,6 +144,18 @@ skip_step() {
   for s in "${SKIPS[@]}"; do [[ "$s" == "$1" ]] && return 0; done
   return 1
 }
+
+# --- #338: 8-pack quality is opt-in via --with-8pack-thinking[=off|on|both] -
+# Default (flag omitted) = skip both quality passes (fast structural gates only).
+RUN_8PACK_OFF=0
+RUN_8PACK_ON=0
+case "${WITH_8PACK}" in
+  "")    ;;                                  # omitted → skip the 8-pack entirely
+  off)   RUN_8PACK_OFF=1 ;;
+  on)    RUN_8PACK_ON=1 ;;
+  both)  RUN_8PACK_OFF=1; RUN_8PACK_ON=1 ;;
+  *) echo "✗ --with-8pack-thinking must be off|on|both (got: '${WITH_8PACK}')" >&2; exit 2 ;;
+esac
 
 # --- endpoint + model auto-detect ------------------------------------------
 # Source preflight if available; it sets URL + CONTAINER from running compose.
@@ -186,6 +214,7 @@ echo "  model:       $MODEL"
 echo "  out dir:     $OUT_DIR"
 echo "  resume:      $RESUME"
 echo "  skips:       ${SKIP_CSV:-(none)}"
+echo "  8-pack:      ${WITH_8PACK:-(skipped — opt-in via --with-8pack-thinking=off|on|both)}"
 echo "  hermes env:  BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-0}"
 echo "  thinking:    ${ENABLE_THINKING:-0}${THINKING_MAX_TOKENS:+ (max_tokens=$THINKING_MAX_TOKENS)}"
 echo "==============================================================="
@@ -299,26 +328,35 @@ URL="$URL" MODEL="$MODEL" \
   run_step verify-stress "$OUT_DIR/verify-stress.log" \
     bash "$ROOT_DIR/scripts/verify-stress.sh" || true
 
-# --- step 3: quality-test --full --------------------------------------------
-URL="$URL" MODEL="$MODEL" \
-  SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
-  ENABLE_THINKING="${ENABLE_THINKING:-0}" \
-  THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
-  run_step quality-full "$OUT_DIR/quality-full.log" \
-    bash "$ROOT_DIR/scripts/quality-test.sh" --full --sandbox-log-dir "$OUT_DIR"
-snapshot_quality_json "$OUT_DIR/quality-full.json"
+# --- step 3: 8-pack quality, reasoning OFF (opt-in: --with-8pack-thinking=off|both) --
+# Forces --no-thinking (all 8 packs think-OFF) for a clean with/without-reasoning
+# A/B against step 4 — NOT the pack-default mixed mode. Skipped unless opted in. #338.
+if [[ "$RUN_8PACK_OFF" == "1" ]]; then
+  URL="$URL" MODEL="$MODEL" \
+    SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
+    NO_THINKING=1 \
+    run_step quality-full "$OUT_DIR/quality-full.log" \
+      bash "$ROOT_DIR/scripts/quality-test.sh" --full --no-thinking --sandbox-log-dir "$OUT_DIR"
+  snapshot_quality_json "$OUT_DIR/quality-full.json"
+else
+  echo "[quality-full] skipped — 8-pack is opt-in (pass --with-8pack-thinking=off|both)"
+fi
 
-# --- step 4: quality-test --full --enable-thinking (8-pack WITH reasoning) --
+# --- step 4: 8-pack quality, reasoning ON (opt-in: --with-8pack-thinking=on|both) --
 # enable_thinking is sent per-request via benchlocal --enable-thinking. Scores
 # correctly only if the server PARSES reasoning (boot --reasoning on), else
-# <think> leaks into the graded answer.
-URL="$URL" MODEL="$MODEL" \
-  SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
-  THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
-  ENABLE_THINKING=1 \
-  run_step quality-thinking "$OUT_DIR/quality-full-thinking.log" \
-    bash "$ROOT_DIR/scripts/quality-test.sh" --full --enable-thinking --sandbox-log-dir "$OUT_DIR"
-snapshot_quality_json "$OUT_DIR/quality-full-thinking.json"
+# <think> leaks into the graded answer. Skipped unless opted in. #338.
+if [[ "$RUN_8PACK_ON" == "1" ]]; then
+  URL="$URL" MODEL="$MODEL" \
+    SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
+    THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
+    ENABLE_THINKING=1 \
+    run_step quality-thinking "$OUT_DIR/quality-full-thinking.log" \
+      bash "$ROOT_DIR/scripts/quality-test.sh" --full --enable-thinking --sandbox-log-dir "$OUT_DIR"
+  snapshot_quality_json "$OUT_DIR/quality-full-thinking.json"
+else
+  echo "[quality-thinking] skipped — 8-pack is opt-in (pass --with-8pack-thinking=on|both)"
+fi
 
 # --- step 5: soak-test ------------------------------------------------------
 URL="$URL" MODEL="$MODEL" \
@@ -357,8 +395,12 @@ echo
 echo "Headline pulls (grep through the logs):"
 echo "  TPS:           grep -E 'mean=|decode_TPS' $OUT_DIR/bench.log"
 echo "  verify-stress: tail -5 $OUT_DIR/verify-stress.log"
-echo "  quality(off):  grep 'TOTAL' $OUT_DIR/quality-full.log"
-echo "  quality(on):   grep 'TOTAL' $OUT_DIR/quality-full-thinking.log"
+[[ -f "$OUT_DIR/quality-full.log" ]] && \
+  echo "  quality(off):  grep 'TOTAL' $OUT_DIR/quality-full.log"
+[[ -f "$OUT_DIR/quality-full-thinking.log" ]] && \
+  echo "  quality(on):   grep 'TOTAL' $OUT_DIR/quality-full-thinking.log"
+[[ "$RUN_8PACK_OFF$RUN_8PACK_ON" == "00" ]] && \
+  echo "  8-pack:        skipped (opt-in: re-run with --with-8pack-thinking=off|on|both)"
 echo "  soak:          grep -E 'verdict|silent_empty|p50_decode' $OUT_DIR/soak.log"
 echo
 echo "To submit your numbers (review then PR):"
