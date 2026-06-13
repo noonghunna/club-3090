@@ -184,13 +184,18 @@ ALWAYS_DRAFT_KEY=""
 DFLASH_KEY=""
 PRIMARY_WEIGHT_KEY=""
 EXTRA_WEIGHT_KEYS=()
-NEEDS_GENESIS=0
+# Genesis is opt-in: nothing in the shipped catalog requires it anymore (its last
+# unique feature on this stack — turboquant_3bit_nc KV — is now provided by beellama
+# KVarN; #182). The clone only fires if a user explicitly sets NEEDS_GENESIS=1 (e.g.
+# to revive an archived TQ3 compose). The per-model dispatch below no longer flips it on.
+NEEDS_GENESIS="${NEEDS_GENESIS:-0}"
 
 case "${MODEL_NAME}" in
   qwen3.6-27b)
     PRIMARY_WEIGHT_KEY="qwen3.6-27b:autoround-int4"
     DFLASH_KEY="qwen3.6-27b:dflash"
-    NEEDS_GENESIS=1
+    # Genesis no longer auto-requested: qwen3.6-27b.yml declares requires_genesis:false
+    # and the live autoround composes run overlay-free on vllm-stable v0.22.0 (#182).
     ;;
   qwen3.6-35b-a3b)
     PRIMARY_WEIGHT_KEY="qwen3.6-35b-a3b:autoround-int4"
@@ -453,43 +458,19 @@ need sha256sum
 echo "Setup root:   ${ROOT_DIR}"
 echo "Model dir:    ${MODEL_DIR}"
 
-# ---------- Genesis patches ----------
-# We track Sandermage's tree at HEAD and rely on tagged commits / SHA pinning
-# in the compose files for reproducibility. The repo layout changed substantially
-# between v7.13 (monolithic patch_genesis_unified.py shim) and v7.14 (modular
-# vllm/_genesis package + per-patch env opts). Newer composes mount the package;
-# the legacy compose still references the v7.13 shim.
-# Pin Genesis to the exact commit our published numbers were measured against.
-# Currently pointing at v7.69 dev tip (commit 2db18df, 2026-05-02 PM). Bumped
-# from v7.66 (fc89395) for the v7.69 patch set, which addresses the 3
-# regressions the v7.68 cross-rig retest found ([club-3090#19] and our
-# v7.68-cliff2-test branch summary):
-#   - F1 (PN30 part3 drift-marker bug) — fixed via specific marker
-#     `[Genesis PN30 v7.68 dst-shaped]` so part3 idempotency check no longer
-#     collides with part1+2 markers in the same file.
-#   - F2 (P103 setattr lost on `exec vllm serve`) — fixed via self-install
-#     hook text-patched into chunk.py end-of-file. Survives any startup
-#     mechanism (workers, fork, spawn, exec). The "rebound at 0 caller sites"
-#     log message in v7.68 was misleading — internal callers DID get the
-#     setattr in the entrypoint shell process, but `exec` replaced the image
-#     and lost it. v7.69 hook fires every time chunk.py imports.
-#   - F3 (PN32 v1 chunked at wrong level) — rewritten as PN32 v2 to patch
-#     `_forward_core` directly + thread initial_state via prior chunk's
-#     last_recurrent_state. Composes with P103: v2 chunks the OUTER FLA
-#     call, P103 chunks INSIDE the FLA inner h tensor.
-# Recommended Cliff 2 closure env bundle for single-24GB-GPU:
-#   GENESIS_ENABLE_P103=1                          (close inner FLA h tensor)
-#   GENESIS_ENABLE_PN32_GDN_CHUNKED_PREFILL=1      (close outer FLA call buffer)
-#   GENESIS_PN32_GDN_CHUNK_SIZE=8192               (default)
-#   GENESIS_PN32_GDN_CHUNK_THRESHOLD=16384         (default)
-#   GENESIS_FLA_FWD_H_MAX_T=16384                  (P103 default)
-# v7.69 also retains v7.68's accept-and-fold of our 3 cross-rig sidecars:
-# PN25 v7.68 (TP=1 worker-spawn registration), PN30 v7.68 (DS conv-state
-# layout dst-shaped temp), PN34 (vllm#39226 runtime workspace_lock).
-# Pinned to dev SHA 2db18df because v7.69 is feature-complete on dev pending
-# our retest validation; if clean, Sander will tag stable.
-# Bumping GENESIS_PIN requires re-running verify-stress.sh against your composes
-# to confirm the new commit works on your config.
+# ---------- Genesis patches (opt-in only) ----------
+# Genesis is no longer fetched by default. No shipped compose requires it: its one
+# unique feature on this stack — turboquant_3bit_nc KV — is now covered by beellama
+# KVarN, and the Genesis-anchored vLLM engines were deprecated when the catalog moved
+# to stock vllm/vllm-openai:v0.22.0 (their TQ3/Genesis composes live in compose/_archive/).
+# We are not reviving Genesis in the near term (#182).
+#
+# The pin below is retained ONLY for an explicit revival: running
+#   NEEDS_GENESIS=1 bash scripts/setup.sh qwen3.6-27b
+# clones Sandermage's tree at this commit so an archived TQ3 compose can be brought back.
+# Bumping it is parked on Sander's next *stable* Genesis tag (the in-flight memory-rework
+# WIP supersedes the 7b9fd319 skeleton); any bump requires re-running verify-stress.sh
+# against the revived compose. Override with GENESIS_PIN=<ref> if reviving against another.
 GENESIS_PIN="${GENESIS_PIN:-7b9fd319}"
 
 if [[ "${NEEDS_GENESIS:-1}" != "1" ]]; then
