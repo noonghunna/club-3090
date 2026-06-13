@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-27B (ubergarm MTP-IQ4_KS GGUF — imatrix IQK quant)
-#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu13-server)
+#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   MTP n=2, p-min 0.0 (built-in MTP head)
 #   KV:        q4_0 K + q4_0 V (default — max-context-first; -khad/-vhad
@@ -64,7 +64,7 @@
 #      too. (vLLM keeps its own froggeric copy under vllm/patches/.)
 #
 # Engine pinned by digest (engine policy):
-#   ghcr.io/ikawrakow/ik-llama-cpp:cu13-server
+#   ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143
 #     @sha256:c13e0798e4117649962833adc932362b64cb7080cfc9dbb1235161f43f8d5c49
 #   cu13 = matches our CUDA 13.2 host driver.
 #
@@ -101,7 +101,7 @@
 
 services:
   ik-llama-qwen36-27b-iq4ks-mtp:
-    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp:cu13-server}
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143}
     container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-27b}"
     restart: unless-stopped
     ports:
@@ -130,9 +130,7 @@ services:
       -khad
       -vhad
       -ngld 99
-      --multi-token-prediction
-      --draft-max ${MTP_DRAFT_N_MAX:-2}
-      --draft-p-min ${DRAFT_P_MIN:-0.0}
+      --spec-type mtp:n_max=${MTP_DRAFT_N_MAX:-2},p_min=${DRAFT_P_MIN:-0.0}
       --recurrent-ckpt-mode auto
       --merge-qkv
       -fa on

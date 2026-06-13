@@ -1,7 +1,7 @@
 # ===========================================================================
 # Profile (at-a-glance):
 #   Model:     Qwen3.6-27B (ubergarm MTP-IQ4_KS GGUF — imatrix IQK quant)
-#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp:cu13-server)
+#   Engine:    ik_llama.cpp (ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   TWO-STAGE: ngram-mod (self-spec, context-matching) + MTP fallback
 #              Stage 1: ngram-mod n_max=4, n_min=2, ngram-size-n=16
@@ -51,8 +51,8 @@
 #   Source: ik_llama.cpp PR #1789 (merged 2026-05-15). The PR's recommended
 #   ngram n_max=64 is WRONG for a 24 GB card — see RECURRENT CHECKPOINT MODE.
 #   We swept n_max on this rig; 4 is the code-decode optimum. Tuned config:
-#     --spec-stage ngram-mod:n_max=4,n_min=2,spec-ngram-size-n=16
-#     --spec-stage mtp:n_max=3,draft-p-min=0.0
+#     --spec-type ngram-mod:n_max=4,n_min=2,ngram_size_n=16
+#     --spec-type mtp:n_max=3,p_min=0.0
 #
 # RECURRENT CHECKPOINT MODE:
 #   --recurrent-ckpt-mode auto (PR #1774) pre-allocates VRAM buffers for
@@ -95,7 +95,7 @@
 
 services:
   ik-llama-qwen36-27b-two-stage:
-    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp:cu13-server}
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143}
     container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-27b-two-stage}"
     restart: unless-stopped
     ports:
@@ -123,8 +123,8 @@ services:
       -khad
       -vhad
       -ngld 99
-      --spec-stage ngram-mod:n_max=${NGRAM_N_MAX:-4},n_min=${NGRAM_N_MIN:-2},spec-ngram-size-n=${NGRAM_SIZE_N:-16}
-      --spec-stage mtp:n_max=${MTP_N_MAX:-3},draft-p-min=${MTP_P_MIN:-0.0}
+      --spec-type ngram-mod:n_max=${NGRAM_N_MAX:-4},n_min=${NGRAM_N_MIN:-2},ngram_size_n=${NGRAM_SIZE_N:-16}
+      --spec-type mtp:n_max=${MTP_N_MAX:-3},p_min=${MTP_P_MIN:-0.0}
       --recurrent-ckpt-mode auto
       --merge-qkv
       -fa on
