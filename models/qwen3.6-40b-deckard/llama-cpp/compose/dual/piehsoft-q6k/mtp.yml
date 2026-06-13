@@ -61,6 +61,12 @@
 #   SERVED_NAME            --alias value       (default: deckard-40b)
 #   REASONING              thinking gate       (default: off — stack-wide policy)
 #   REASONING_FORMAT       reasoning routing   (default: deepseek — hygiene)
+#   REPEAT_PENALTY         repetition penalty  (default: 1.1 — anti-loop; was 1.0)
+#   REPEAT_LAST_N          repeat window       (default: 256 — anti-loop; llama.cpp default 64)
+#   DRY_MULTIPLIER         DRY sampler strength (default: 0.0 = OFF). For severe long-ctx
+#                          loops (e.g. ~262K), set 0.8 — strongest loop-breaker, but it can
+#                          over-suppress legitimate repetition in CODE, so it's opt-in (#517).
+#   DRY_BASE / DRY_ALLOWED_LENGTH  DRY tuning   (defaults: 1.75 / 2; only active when DRY_MULTIPLIER>0)
 #   PORT                   host port           (default: 8199)
 #   CUDA_VISIBLE_DEVICES   which GPUs to use   (default: 0,1)
 #
@@ -106,7 +112,11 @@ services:
       --top-p ${TOP_P:-0.95}
       --top-k ${TOP_K:-20}
       --min-p ${MIN_P:-0.0}
-      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.1}
+      --repeat-last-n ${REPEAT_LAST_N:-256}
+      --dry-multiplier ${DRY_MULTIPLIER:-0.0}
+      --dry-base ${DRY_BASE:-1.75}
+      --dry-allowed-length ${DRY_ALLOWED_LENGTH:-2}
     deploy:
       resources:
         reservations:
