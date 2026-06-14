@@ -281,8 +281,19 @@ elif [[ "${WEIGHTS}" == "qwopus-coder" ]]; then
       echo "ERROR: WEIGHTS=qwopus-coder is only wired for qwen3.6-27b." >&2
       exit 1 ;;
   esac
+elif [[ "${WEIGHTS}" == "carnice-v2" ]]; then
+  # Carnice-V2-27B Q5_K_M GGUF (embedded MTP head) for beellama/carnice-v2-single-q5km-mtp.
+  case "${MODEL_NAME}" in
+    qwen3.6-27b)
+      PRIMARY_WEIGHT_KEY="qwen3.6-27b:carnice-v2-q5km"
+      NEEDS_GENESIS=0
+      ;;
+    *)
+      echo "ERROR: WEIGHTS=carnice-v2 is only wired for qwen3.6-27b." >&2
+      exit 1 ;;
+  esac
 elif [[ "${WEIGHTS}" != "autoround" ]]; then
-  echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized (use 'autoround', 'awq', 'fp8', 'qwopus-coder', 'gguf', or 'iq4ks')." >&2
+  echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized (use 'autoround', 'awq', 'fp8', 'qwopus-coder', 'carnice-v2', 'gguf', or 'iq4ks')." >&2
   exit 1
 fi
 
