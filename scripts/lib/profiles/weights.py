@@ -118,6 +118,7 @@ def _recipe(model_id: str, variant: str) -> dict[str, str]:
         "WEIGHT_ENGINE": str(meta.get("engine") or ""),
         "WEIGHT_KIND": str(meta.get("kind") or ""),
         "WEIGHT_REPO": str(meta.get("hf_repo") or ""),
+        "WEIGHT_REVISION": str(meta.get("revision") or ""),
         "WEIGHT_SUBDIR": str(meta.get("local_subdir") or meta.get("path") or ""),
         "WEIGHT_FILES": " ".join(str(f) for f in files),
         "WEIGHT_VERIFY_GLOB": str(meta.get("verify_glob") or "*.safetensors"),
