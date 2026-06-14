@@ -27,7 +27,7 @@ assert len(p.hardware) == 9
 assert len(p.models) == 7
 assert len(p.workloads) == 5
 assert len(p.engines) == 12
-assert len(p.drafters) == 10
+assert len(p.drafters) == 11
 assert len(p.calibration) == 5
 PY
 

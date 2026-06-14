@@ -1,0 +1,23 @@
+schema_version: 1
+id: carnice-mtp-gguf
+display_name: Carnice-V2-27B embedded MTP GGUF (stuchapin)
+spec_method: mtp_gguf
+model_compat:
+  - qwen3.6-27b
+engine_compat:
+  engine_type: llama.cpp
+n_default: 1
+n_max: 1
+download:
+  hf_repo: stuchapin/Carnice-V2-27B-MTP-GGUF
+  size_gb: variable
+vram_footprint_gb: variable
+status: experimental
+# Embedded MTP head — baked into the model GGUF (Carnice-V2-27B-Q5_K_M-mtp.gguf), activated
+# via beellama `--spec-type draft-mtp` (no separate draft download — the download.hf_repo is
+# the same file as the model weights). UNLIKE the qwopus/unsloth siblings, this head is
+# mtp_num_hidden_layers=1 → n_default/n_max=1: the author warns n=3 is "wrong by a wide
+# margin" (errors cascade off a single-layer head) and reports n=2 CRASHED on his 2×3090.
+# On club-3090's single-card kvarn4 n=2 does NOT crash and is ~12% faster (lossless), but
+# n=1 stays the shipped default (DRAFT_N_MAX=2 is the documented opt-in). Sibling of
+# qwopus-mtp-gguf / unsloth-mtp-gguf. llama.cpp-family (beellama) only — no vLLM form.

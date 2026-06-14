@@ -178,6 +178,19 @@ weights:
     kind: gguf
     verify_glob: "*.gguf"
     manual_note: "Jackrong coder fine-tune of Qwen3.6-27B — Q5_K_M GGUF with EMBEDDED MTP head (beellama --spec-type draft-mtp; no separate draft download). Drives beellama/qwopus-coder (single 3090, kvarn4 KV @ 160K + MTP; 230K no-MTP opt-in). disc #329."
+  carnice-v2-q5km:
+    path: carnice-v2-27b-gguf/stuchapin-q5km
+    local_subdir: carnice-v2-27b-gguf/stuchapin-q5km
+    size_gb: 18.7
+    format: gguf
+    status: experimental
+    hf_repo: stuchapin/Carnice-V2-27B-MTP-GGUF
+    files:
+      - Carnice-V2-27B-Q5_K_M-mtp.gguf
+    engine: beellama
+    kind: gguf
+    verify_glob: "*.gguf"
+    manual_note: "stuchapin Carnice-V2-27B (kai-os/Carnice-V2-27b — Hermes-style agentic SFT of Qwen3.6-27B) — Q5_K_M GGUF with EMBEDDED MTP head (beellama --spec-type draft-mtp; no separate draft download). mtp_num_hidden_layers=1 → DRAFT_N_MAX=1 (author: n=3 'wrong by a wide margin'). Drives beellama/carnice-v2-single-q5km-mtp (single 3090, kvarn4 KV @ 160K + MTP; 176K ceiling). 8-pack reasoning-on 110/150 (beats qwopus-coder 103). 2026-06-14."
   beellama-q8kxl-dflash:
     path: qwen3.6-27b-gguf/unsloth-mtp-q8kxl
     local_subdir: qwen3.6-27b-gguf/unsloth-mtp-q8kxl

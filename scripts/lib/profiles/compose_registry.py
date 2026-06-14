@@ -315,6 +315,20 @@ COMPOSE_REGISTRY = {
         status_note="Qwopus3.6-27B-Coder (Jackrong) Q5_K_M GGUF + EMBEDDED MTP head (--spec-type draft-mtp) + KVarN-4 KV, single 3090. Launch with --force (experimental). REQUIRES the KVarN engine build (beellama v0.3.2 PREVIEW, digest-pinned) — the v0.3.0/earlier images reject --cache-type-k kvarn4. 2026-06-12 on sm_86: embedded MTP head loads, verify-full all-pass, NIAH needle @72K (= q5_0/q4_1 control), bench ~46/58 TPS narr/code (≈ q5_0/q4_1 — KVarN decode-neutral), 8-pack quality 104/103 think-off/on ≈ q5_0/q4_1 102/107 (quality-neutral; disc #329). Ships 160K (MTP-on ceiling; 230K via the no-MTP env opt-in in the compose). Launcher path (switch.sh --force) + soak-continuous PASS (0-growth, 0/25 silent-empty, 100% retention). beellama v0.3.2 is a rolling PRE-RELEASE → stays experimental (un-park on a stable Anbeeld tag; full verify-stress NIAH ladder pending for ⚠️ promotion).",
     ),
 
+    # Carnice-V2-27B (stuchapin — Hermes-style agentic SFT of Qwen3.6-27B) — single 3090,
+    # Q5_K_M GGUF + embedded MTP head + KVarN-4 KV. Sibling of beellama/qwopus-coder; the
+    # embedded head is mtp_num_hidden_layers=1 so DRAFT_N_MAX=1 (author warns n=3 is wrong).
+    "beellama/carnice-v2-single-q5km-mtp": _entry(
+        model="qwen3.6-27b", weights_variant="carnice-v2-q5km", workload="fast-chat",
+        engine="beellama-local", drafter="carnice-mtp-gguf", kv_format="kvarn4",
+        tp=1, max_ctx=163840, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/beellama/compose/single/carnice-v2-q5km/mtp-kvarn4.yml",
+        default_port=8068,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Carnice-V2-27B (stuchapin — kai-os/Carnice-V2-27b, Hermes-style agentic SFT of Qwen3.6-27B) Q5_K_M GGUF + EMBEDDED MTP head (--spec-type draft-mtp, n=1) + KVarN-4 KV, single 3090. Launch with --force (experimental). REQUIRES the KVarN engine build (beellama v0.3.2 PREVIEW, digest-pinned) — v0.3.0/earlier reject --cache-type-k kvarn4. FULLY VALIDATED 2026-06-14 (rebench-full, reasoning-on): engine-compat PASS (beellama LOADS the PR#22673-fused GGUF — the card's 'mainline fails to load' does NOT apply), verify-full all-pass, verify-stress 8/8 (NIAH clean to 150K), soak PASS (0-growth, 0/100 silent-empty, 100.5% retention, p50 49.5 TPS), bench 46.8/50.5 TPS narr/code, MTP accept ~94%. 8-pack reasoning-on 110/150 — BEATS sibling beellama/qwopus-coder 103/150 (edge is agentic/instruct: hermes 13 vs 10, instructfollow 15, reasonmath 13; dataextract 10 = Qwen-family number-format floor). Ships 160K (MTP-on default; 176K measured ceiling, 192K OOMs; 230K via the no-MTP env opt-in). n=1 default; n=2 is a +12%-TPS opt-in (DRAFT_N_MAX=2, doesn't crash on our single-card kvarn4 unlike the author's 2×3090) pending a dedicated soak. beellama v0.3.2 is a rolling PRE-RELEASE → stays experimental (un-park on a stable Anbeeld tag, #455).",
+    ),
+
     # Qwen3.6-27B PRISM-PRO-DQ (Ex0bit dynamic-quant GGUF) — community-experimental, ik-llama.
     "ik-llama/prism-pro-dq-mtp": _entry(
         model="qwen3.6-27b", weights_variant="ex0bit-prism-pro-dq", workload="fast-chat",

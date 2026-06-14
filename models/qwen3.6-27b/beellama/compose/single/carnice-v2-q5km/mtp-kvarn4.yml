@@ -1,0 +1,164 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Carnice-V2-27B (stuchapin Q5_K_M MTP GGUF — kai-os/Carnice-V2-27b,
+#              a Hermes-style agentic SFT of Qwen3.6-27B; full model + embedded MTP head)
+#   Engine:    beellama.cpp v0.3.2-preview (Anbeeld fork — MTP spec-dec + KVarN KV-compression)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP (--spec-type draft-mtp, embedded head — NO separate draft model).
+#              n_max=1 (NOT 3 — see Caveats: this head is mtp_num_hidden_layers=1).
+#   KV:        kvarn4 K + kvarn4 V (KVarN — q5-class quality at ~28% bf16 memory; disc #329).
+#              Author's card ships q4_0/q4_0; we use kvarn4 (better quality, similar memory →
+#              bigger window) per the qwopus-coder KVarN result.
+#   Vision:    no (text-only fine-tune; no mmproj)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   163840 (160K) default, MEASURED ceiling 176K (2026-06-14, single 3090, kvarn4+MTP
+#              n=1): 160K @ 23.49GB (1.09GB free), 176K @ 23.93GB (0.65GB free) = runtime ceiling,
+#              192K OOMs (compute-pp buffer). 160K is the safe default (~1GB margin); set
+#              CTX_SIZE=180224 for the tight 176K. This beats qwopus-coder's 160K ceiling exactly
+#              as predicted (n_max=1 frees draft VRAM vs its n_max=3). Card itself ran q4_0 KV @ 64K
+#              (CTX_SIZE=65536 = card-conservative fallback). Native max 262144 (MTP off — see "Big-context").
+#   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
+#   Status:    🧪 EXPERIMENTAL — authored + boot-validated 2026-06-14 (single 3090, KVarN digest
+#              858e7c…). Engine-compat PASS: beellama LOADS the PR#22673-fused GGUF (MTP head
+#              registers, "speculative decoding context initialized") — the card's "mainline
+#              fails to load" does NOT apply to beellama. Basic gen + tool-call clean; reasoning
+#              genuinely on (reasoning_content populated). MTP acceptance ~94% @ n=1 (card 81-84%).
+#              Measured single-card kvarn4+MTP ceilings: 160K @ 23.49GB (1.09GB free, default),
+#              176K @ 23.93GB (0.65GB free, RUNTIME CEILING), 192K OOMs (compute-pp buffer).
+#              FULLY VALIDATED 2026-06-14 (rebench-full, reasoning-on): bench 46.8/50.5 TPS, verify-
+#              stress 8/8 (NIAH clean to 150K), soak PASS (0 growth, 0/100 silent-empty, 100.5%
+#              retention, p50 49.54 TPS). Stays 🧪 ONLY because beellama v0.3.2 is a rolling pre-
+#              release (#455 gate), not for any quality reason. n_max=1 default (n=2 = +12% opt-in).
+#   Quality:   8-pack /150 reasoning-ON: 110/150 (73%) — beats qwopus-coder 103/150. Per-pack:
+#              toolcall 14 · instructfollow 15 · structoutput 14 · dataextract 10 · reasonmath 13 ·
+#              bugfind 12 · hermes 13 · cli 19 (rebench-full --with-8pack-thinking=on, kvarn4/kvarn4,
+#              n=1, 2026-06-14). Edge vs qwopus is agentic/instruct (hermes 13 vs 10, instructfollow
+#              15, reasonmath 13). dataextract 10 = Qwen-family number-format floor (string-vs-number,
+#              same as qwopus), not a KV artifact.
+#   Caveats:   (1) MTP n_max=1 is the card-faithful default — the author warns n=3 is "wrong by a
+#              wide margin" (mtp_num_hidden_layers=1) and reports n=2 CRASHED on his 2×3090.
+#              n_max FINDING (2026-06-14, our single-card kvarn4): n=2 does NOT crash here and is
+#              ~12% FASTER (55.6 vs 49.6 TPS) — spec-dec is lossless so the lower acceptance
+#              (82% vs 90%) costs speed only, NOT quality. n=2 is a measured opt-in (DRAFT_N_MAX=2)
+#              pending a soak; n=1 stays default until n=2 stability is confirmed. n≥3 not worth it.
+#              (2) Default ctx 160K is MEASURED safe (1GB free); 176K is the measured ceiling
+#              (CTX_SIZE=180224, 0.65GB free); 192K OOMs. Card-conservative fallback CTX_SIZE=65536.
+#              230K+ needs MTP off (see "Big-context").
+#              (3) Needs the KVarN build (v0.3.2 preview, digest-pinned). The older -317c65 tag
+#              has no kvarn* cache types; engines/beellama-local.yml install.spec carries the
+#              right digest (sha256:858e7c…).
+#              (4) beellama v0.3.2 is a rolling PRE-RELEASE, not a tagged stable — same upstream
+#              gate as the other beellama composes (Anbeeld #39/#48; un-park on a stable tag, #455).
+#   Best for:  single-card agentic reasoning + tool-use (reasoning ON by default) over a large
+#              KVarN-compressed window with embedded-MTP spec-dec. ⭐ Carnice's niche. Flip
+#              REASONING=off for fast no-think interactive use.
+# ---------------------------------------------------------------------------
+# Carnice-V2-27B on beellama.cpp v0.3.2-preview — SINGLE 3090, Q5_K_M + MTP (embedded
+# head), kvarn4/kvarn4 KV. Weights: stuchapin/Carnice-V2-27B-MTP-GGUF (Q5_K_M-mtp, ~19 GB).
+#
+# WHY n_max=1 (the one config that surprises people): the model card states the embedded
+# head is mtp_num_hidden_layers=1 and that the common --spec-draft-n-max 3 recommendation is
+# "wrong by a wide margin" here — each extra draft step compounds error off a single-layer
+# head, tanking acceptance. n_max=1 is the author's tested value (acceptance 81-84%). This
+# differs from the sibling qwopus-coder compose (n_max=3) — different MTP head depth.
+#
+# MTP (embedded) vs DFlash (external draft): the MTP head is baked into the -m GGUF, so there
+# is NO --spec-draft-model here; `--spec-type draft-mtp` activates the embedded head and
+# `--spec-draft-n-max` sets draft depth.
+#
+# beellama is a llama.cpp fork; server target ENTRYPOINT is /app/llama-server, so `command:`
+# below is just the server flags (same shape as ik-llama / llama-cpp / qwopus-coder composes).
+#
+# Quick start:
+#   1. Pull the KVarN image (Anbeeld official sm_86/89 = 3090/4090):
+#        docker pull ghcr.io/anbeeld/beellama.cpp@sha256:858e7cfbfb0d5d3d605723a82ace1474698de368b81bc310f4df4dadc6c1b7d2
+#   2. Get the GGUF (Q5_K_M, embedded MTP head):
+#        hf download stuchapin/Carnice-V2-27B-MTP-GGUF Carnice-V2-27B-Q5_K_M-mtp.gguf \
+#          --local-dir "$MODEL_DIR/carnice-v2-27b-gguf/stuchapin-q5km"
+#   3. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f mtp-kvarn4.yml up -d
+#   4. curl http://localhost:8068/v1/models  → should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR             host dir mounted as /models (default: ../../../../../../models-cache)
+#   GGUF_FILE            MTP target GGUF under /models
+#                        (default: carnice-v2-27b-gguf/stuchapin-q5km/Carnice-V2-27B-Q5_K_M-mtp.gguf)
+#   CTX_SIZE             KV pool size                (default: 163840 / 160K — expected kvarn4+MTP ceiling, qwopus analog; 65536 = card-conservative fallback)
+#   DRAFT_N_MAX          --spec-draft-n-max          (default: 1 — model-mandated; do NOT raise blindly)
+#   BATCH_SIZE           llama.cpp -b                (default: 2048)
+#   UBATCH_SIZE          llama.cpp -ub               (default: 512 — qwopus 160K-safe; card uses 1024 @ 64K)
+#   KV_TYPE_K / KV_TYPE_V K / V cache quant          (default: kvarn4 / kvarn4 — q5-class, leaner)
+#   NP                   parallel slots              (default: 1 — single-slot on one card)
+#   REASONING            thinking gate               (default: ON — per model card; set 'off' for fast no-think)
+#   REASONING_FORMAT     thought-tag extraction      (default: deepseek — thoughts → message.reasoning_content)
+#   REASONING_BUDGET     thinking-token cap          (default: 4096 — card value; -1 unrestricted, 0 immediate end)
+#   TEMP TOP_K TOP_P MIN_P  sampling                 (defaults: 0.6 / 20 / 0.95 / 0.0 — author card)
+#   PORT                 host port                   (default: 8068)
+#   CUDA_VISIBLE_DEVICES which GPU to use            (default: 0)
+#
+# Thinking: we ship --reasoning ON by default (Carnice-V2 is a reasoning/agentic SFT; the card's
+# example invocation runs reasoning on). Set REASONING=off for a fast no-think pass. The card's
+# `--reasoning-format deepseek --reasoning-budget 4096` are BAKED IN — verified accepted on this
+# beellama tag (2026-06-14 `--help`): deepseek puts thoughts in message.reasoning_content, and
+# the 4096-token budget caps runaway thinking. The cap matters: at max_tokens=400 the model spent
+# ALL 400 on reasoning with zero visible answer (validation step 2) — the qwopus-v2 over-think
+# class. beellama also exposes --reasoning-loop-guard (off by default) if loops appear.
+#
+# Big-context mode (~230K-262K, MTP OFF): MTP costs VRAM that caps the MTP-on window. For a
+# bigger window drop MTP and raise ctx (kvarn4 fits the full 262K no-MTP on one 24 GB card per
+# engines/beellama-local.yml). Run plain instead of this compose:
+#   docker run --rm --gpus '"device=0"' -p 8068:8080 -v $MODEL_DIR:/models:ro \
+#     ghcr.io/anbeeld/beellama.cpp@sha256:858e7cfbfb0d5d3d605723a82ace1474698de368b81bc310f4df4dadc6c1b7d2 \
+#     --host 0.0.0.0 --port 8080 \
+#     -m /models/carnice-v2-27b-gguf/stuchapin-q5km/Carnice-V2-27B-Q5_K_M-mtp.gguf \
+#     -ngl all --ctx-size 262144 -np 1 --kv-unified --flash-attn on --no-context-shift \
+#     --cache-type-k kvarn4 --cache-type-v kvarn4 --jinja --reasoning off
+services:
+  beellama-carnice-v2:
+    # Fallback for direct `docker compose up` MUST be a KVarN build (the v0.3.0 multiarch
+    # image other beellama composes fall back to has no kvarn* cache types). Launchers
+    # inject BEELLAMA_IMAGE from engines/beellama-local.yml install.spec (same digest).
+    image: ${BEELLAMA_IMAGE:-ghcr.io/anbeeld/beellama.cpp@sha256:858e7cfbfb0d5d3d605723a82ace1474698de368b81bc310f4df4dadc6c1b7d2}
+    container_name: "${ESTATE_CONTAINER:-beellama-carnice-v2}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8068}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    # server target ENTRYPOINT is /app/llama-server — args only below.
+    # -np 1 is intentional on a single 24 GB card (extra slots divide a compute-bound GPU).
+    # --no-context-shift: author-recommended — errors instead of silently shifting when the
+    # window fills (context-shift can corrupt MTP draft alignment at long ctx).
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-carnice-v2-27b-gguf/stuchapin-q5km/Carnice-V2-27B-Q5_K_M-mtp.gguf}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${DRAFT_N_MAX:-1}
+      -ngl all
+      --ctx-size ${CTX_SIZE:-163840}
+      -b ${BATCH_SIZE:-2048}
+      -ub ${UBATCH_SIZE:-512}
+      -np ${NP:-1}
+      --kv-unified
+      --no-context-shift
+      --cache-type-k ${KV_TYPE_K:-kvarn4}
+      --cache-type-v ${KV_TYPE_V:-kvarn4}
+      --flash-attn on
+      --cache-ram 0
+      --no-host
+      --jinja
+      --reasoning ${REASONING:-on}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --reasoning-budget ${REASONING_BUDGET:-4096}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-k ${TOP_K:-20}
+      --top-p ${TOP_P:-0.95}
+      --min-p ${MIN_P:-0.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]
