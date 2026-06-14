@@ -94,6 +94,7 @@ load_weight_recipe() {
     exit 1
   fi
   MODEL_REPO="${WEIGHT_REPO}"
+  MODEL_REVISION="${WEIGHT_REVISION:-}"
   MODEL_SUBDIR="${WEIGHT_SUBDIR}"
   GGUF_FILES="${WEIGHT_FILES}"
   VERIFY_GLOB="${WEIGHT_VERIFY_GLOB:-*.safetensors}"
@@ -524,16 +525,20 @@ _hf_download_repo() {
   local repo="$1"
   local subdir="$2"
   local files="${3:-}"
+  local revision="${4:-}"
+  # Optional commit-SHA / tag pin (#319). Empty -> track HEAD (today's behavior).
+  local rev_args=()
+  [[ -n "$revision" ]] && rev_args=(--revision "$revision")
   mkdir -p "${MODEL_DIR}/${subdir}"
   if command -v hf >/dev/null 2>&1; then
     echo "[model]   Using 'hf download' (hf_transfer if available) ..."
     # files is intentionally word-split: empty -> whole repo; non-empty -> selected files.
     HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1 \
-      hf download "$repo" ${files} --local-dir "${MODEL_DIR}/${subdir}"
+      hf download "$repo" ${files} "${rev_args[@]}" --local-dir "${MODEL_DIR}/${subdir}"
   elif command -v huggingface-cli >/dev/null 2>&1; then
     echo "[model]   Using 'huggingface-cli download' ..."
     HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1 \
-      huggingface-cli download "$repo" ${files} --local-dir "${MODEL_DIR}/${subdir}"
+      huggingface-cli download "$repo" ${files} "${rev_args[@]}" --local-dir "${MODEL_DIR}/${subdir}"
   else
     echo "ERROR: neither 'hf' nor 'huggingface-cli' found. Install with:" >&2
     echo "  pip install 'huggingface-hub[hf_transfer]'" >&2
@@ -547,14 +552,17 @@ _verify_downloaded_files() {
   local repo="$1"
   local subdir="$2"
   local verify_glob="$3"
+  # Pin the etag lookup to the same revision we downloaded (#319). Empty -> main
+  # HEAD; a stale pin would otherwise etag-check against a newer HEAD and FAIL.
+  local revision="${4:-main}"
   local fail=0 count=0 f expected actual
 
-  echo "[verify]  Checking SHA256 of every ${verify_glob} against HF x-linked-etag ..."
+  echo "[verify]  Checking SHA256 of every ${verify_glob} against HF x-linked-etag (rev: ${revision}) ..."
   cd "${MODEL_DIR}/${subdir}"
   for f in ${verify_glob}; do
     [[ -f "$f" ]] || continue
     count=$((count + 1))
-    expected="$(curl -sfI "https://huggingface.co/${repo}/resolve/main/$f" \
+    expected="$(curl -sfI "https://huggingface.co/${repo}/resolve/${revision}/$f" \
       | grep -i '^x-linked-etag:' | tr -d '"\r' | awk '{print $NF}' || true)"
     actual="$(sha256sum "$f" | awk '{print $1}')"
     if [[ -z "$expected" ]]; then
@@ -584,13 +592,13 @@ download_weight_key() {
   local key="$1"
   load_weight_recipe "$key"
   echo "[model]   Downloading ${WEIGHT_LABEL:-$key} ..."
-  _hf_download_repo "$WEIGHT_REPO" "$WEIGHT_SUBDIR" "$WEIGHT_FILES"
-  _verify_downloaded_files "$WEIGHT_REPO" "$WEIGHT_SUBDIR" "$WEIGHT_VERIFY_GLOB"
+  _hf_download_repo "$WEIGHT_REPO" "$WEIGHT_SUBDIR" "$WEIGHT_FILES" "${WEIGHT_REVISION:-}"
+  _verify_downloaded_files "$WEIGHT_REPO" "$WEIGHT_SUBDIR" "$WEIGHT_VERIFY_GLOB" "${WEIGHT_REVISION:-main}"
 }
 
 VERIFY_GLOB="${VERIFY_GLOB_OVERRIDE:-*.safetensors}"
-_hf_download_repo "${MODEL_REPO}" "${MODEL_SUBDIR}" "${GGUF_FILES}"
-_verify_downloaded_files "${MODEL_REPO}" "${MODEL_SUBDIR}" "${VERIFY_GLOB}"
+_hf_download_repo "${MODEL_REPO}" "${MODEL_SUBDIR}" "${GGUF_FILES}" "${MODEL_REVISION:-}"
+_verify_downloaded_files "${MODEL_REPO}" "${MODEL_SUBDIR}" "${VERIFY_GLOB}" "${MODEL_REVISION:-main}"
 
 for extra_key in "${EXTRA_WEIGHT_KEYS[@]}"; do
   download_weight_key "$extra_key"

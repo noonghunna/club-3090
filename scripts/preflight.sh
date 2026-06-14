@@ -708,12 +708,16 @@ _preflight_weight_recipe_for_key() {
 _preflight_weight_hf_command() {
   local model_dir_expr="${1:-\$MODEL_DIR}"
   [[ -n "${WEIGHT_REPO:-}" ]] || return 1
+  # Mirror an optional revision pin (#319) so the manual fallback fetches the
+  # same bytes setup.sh would. Unset -> no flag (track HEAD).
+  local rev=""
+  [[ -n "${WEIGHT_REVISION:-}" ]] && rev=" --revision ${WEIGHT_REVISION}"
   if [[ -n "${WEIGHT_FILES:-}" ]]; then
-    printf 'hf download %s %s --local-dir %s/%s' \
-      "$WEIGHT_REPO" "$WEIGHT_FILES" "$model_dir_expr" "$WEIGHT_SUBDIR"
+    printf 'hf download %s %s%s --local-dir %s/%s' \
+      "$WEIGHT_REPO" "$WEIGHT_FILES" "$rev" "$model_dir_expr" "$WEIGHT_SUBDIR"
   else
-    printf 'hf download %s --local-dir %s/%s' \
-      "$WEIGHT_REPO" "$model_dir_expr" "$WEIGHT_SUBDIR"
+    printf 'hf download %s%s --local-dir %s/%s' \
+      "$WEIGHT_REPO" "$rev" "$model_dir_expr" "$WEIGHT_SUBDIR"
   fi
 }
 

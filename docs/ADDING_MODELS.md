@@ -195,6 +195,10 @@ weights:
     format: autoround                      # autoround | awq | gguf | …
     status: production                     # production | experimental | community-experimental
     hf_repo: <Org/Repo>
+    revision: <sha-or-tag>                 # OPTIONAL (#319): pin the fetch to an exact
+                                           #   commit/tag. Unset = track HEAD (default).
+                                           #   Set it to reproduce the bytes a BENCHMARKS
+                                           #   row was measured against (guards re-quants).
     files: ["*.safetensors"]               # or explicit GGUF filenames
     engine: vllm                           # vllm | ik-llama | llama-cpp | beellama (filesystem dir name)
     kind: main                             # main | draft | mmproj | gguf
