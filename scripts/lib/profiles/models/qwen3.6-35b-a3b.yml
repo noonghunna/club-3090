@@ -128,6 +128,10 @@ weights:
     format: gguf
     status: community-experimental
     hf_repo: morikomorizz/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP
+    # Pin the exact commit our BENCHMARKS row + #411 were measured against (#319).
+    # Repo last-modified 2026-06-10 (predates our 2026-06-14 download); etag at this
+    # sha == our local file's sha256 (verified). Guards a silent upstream re-quant.
+    revision: 49a080db7406cd98f94f0f2a18539bbcc1520444
     files:
       - Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q6_K_P.gguf
     engine: llama-cpp
