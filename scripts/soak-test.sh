@@ -47,10 +47,9 @@
 # the running endpoint's /v1/models. Override via env vars if needed.
 #
 # Env (advanced — flags above cover the common cases):
-#   CONTAINER              Running container. Default: first vllm-qwen36-27b*
-#                          / vllm-qwen36-35b-a3b* / vllm-gemma-4-31b* (or the
-#                          matching llama-cpp-/ik-llama-/beellama-/sglang- variants)
-#                          from `docker ps`.
+#   CONTAINER              Running container. Default: the first vllm-/llama-cpp-/
+#                          ik-llama-/beellama-/sglang- container with an engine-port
+#                          mapping (8000/8080/30000) from `docker ps` — model-agnostic.
 #   ENDPOINT / URL         OpenAI endpoint. Default: mapped container port for
 #                          8000/tcp, falling back to http://localhost:8020.
 #   MODEL                  Served model. Default: first id from /v1/models.
@@ -106,11 +105,11 @@ OPTIONS
   -h, --help        Show this help
 
 ENV (advanced — auto-detected by default)
-  CONTAINER         Running container. Default: first vllm-qwen36-27b* /
-                    vllm-qwen36-35b-a3b* / vllm-gemma-4-31b* (or the
-                    matching llama-cpp-/ik-llama-/beellama-/sglang- variants) from
-                    docker ps. Use CONTAINER=none for
-                    host-mode engines (e.g. llama.cpp host build).
+  CONTAINER         Running container. Default: the first vllm-/llama-cpp-/
+                    ik-llama-/beellama-/sglang- container with an engine-port
+                    mapping (8000/8080/30000) from docker ps — model-agnostic.
+                    Use CONTAINER=none for host-mode engines (e.g. llama.cpp
+                    host build).
   ENDPOINT / URL    OpenAI endpoint. Default: mapped container port → fallback
                     http://localhost:8020.
   MODEL             Served model. Default: first id from /v1/models.
@@ -217,15 +216,24 @@ else
 fi
 
 auto_container() {
-  # Canonical club-3090 container prefixes across engines (mirror of
-  # preflight.sh::preflight_autodetect_endpoint). llama-cpp / ik-llama were
-  # previously missing here → rc=2 on llama.cpp/ik rebench-full soak step (#403).
-  # 35b-a3b added 2026-05-28: ik-llama-qwen36-35b-a3b-apex-* + future siblings.
-  # beellama added 2026-06-11 (#362): beellama-qwen36-27b* / beellama-gemma4-*
-  # (note beellama names gemma as `gemma4-31b`, not `gemma-4-31b`).
-  docker ps --format '{{.Names}}' 2>/dev/null \
-    | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b|ik-llama-qwen36-27b|beellama-qwen36-27b|vllm-qwen36-35b-a3b|llama-cpp-qwen36-35b-a3b|ik-llama-qwen36-35b-a3b|beellama-qwen36-35b-a3b|vllm-gemma-4-31b|beellama-gemma4-31b|beellama-gemma4-12b|sglang-qwen36-27b)' \
-    | head -1 || true
+  # Detect a running inference container by its ENGINE-INTERNAL port mapping
+  # (vLLM 8000 / llama.cpp 8080 / sglang 30000), NOT a hardcoded model-name
+  # allowlist — so ANY shipped compose is found regardless of model
+  # (diffusiongemma-26b-a4b, gemma-4-26b-a4b, gemma-4-12b, a BYO container, …).
+  # Re-syncs with the canonical preflight.sh::preflight_autodetect_endpoint, which
+  # this function is meant to mirror: the model allowlist had drifted and silently
+  # failed soak auto-detect for every model not in the list (#405: a shipped
+  # diffusiongemma-26b-a4b compose — same bug class as the #310 preflight fix).
+  # Among port matches, prefer a recognised club-3090 engine-family prefix;
+  # otherwise take the first. The `|| true` is load-bearing under set -euo pipefail.
+  local lines name
+  lines=$(docker ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null \
+    | grep -E '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+->(8000|8080|30000)/tcp' || true)
+  [[ -z "$lines" ]] && return 0
+  name=$(printf '%s\n' "$lines" \
+    | grep -E '^(vllm-|llama-cpp-|ik-llama-|sglang-|beellama-)' | head -1 || true)
+  [[ -z "$name" ]] && name=$(printf '%s\n' "$lines" | head -1)
+  printf '%s\n' "${name%%|*}"
 }
 
 endpoint_from_container() {
@@ -281,7 +289,7 @@ if [[ "$HOST_MODE" == "1" ]]; then
   CONTAINER="none"
 else
   CONTAINER="${CONTAINER:-$(auto_container)}"
-  [[ -n "$CONTAINER" ]] || die "no running club-3090 container found (vllm-/llama-cpp-/ik-llama-/beellama-/sglang- × qwen36-27b/qwen36-35b-a3b/gemma-4-31b); set CONTAINER=... or CONTAINER=none for host engines"
+  [[ -n "$CONTAINER" ]] || die "no running club-3090 inference container found (looked for an engine-port mapping 8000/8080/30000 on a vllm-/llama-cpp-/ik-llama-/beellama-/sglang- container); set CONTAINER=... or CONTAINER=none for host engines"
   docker inspect "$CONTAINER" >/dev/null 2>&1 || die "container '$CONTAINER' not found (use CONTAINER=none for host engine builds)"
   [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)" == "true" ]] \
     || die "container '$CONTAINER' is not running"
