@@ -1,0 +1,131 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-35B-A3B-Uncensored-HauhauCS (morikomorizz Q6_K_P MTP GGUF)
+#   Engine:    llama.cpp (mainline server-cuda-b9570, draft-mtp)
+#   Topology:  Dual 3090 (layer-split -ts 0.55,0.45 — rebalances the MTP draft card)
+#   Drafter:   MTP n=3 (--spec-type draft-mtp; embedded nextn head, 1 layer)
+#   KV:        q8_0 K + q8_0 V
+#   Vision:    no (mmproj not fetched)
+#   Template:  native (GGUF-embedded, qwen3 im_start)
+#   Max ctx:   262144 (native; q8_0 KV fits ~91% fill at ~20.7 GB on the draft card)
+#   Genesis:   N/A — llama.cpp engine
+#   Status:    🧪 Experimental
+#   Engine-profile: llama-cpp-local
+#   Caveats:
+#     - Community GGUF (morikomorizz), digest-UNPINNED — pin a digest before any ✅.
+#     - Uncensored "HauhauCS-Aggressive" fine-tune — complies with content a base
+#       model refuses; not for unfiltered/shared endpoints.
+#     - NON-DEFAULT serving knobs by maintainer request, both with a measured cost:
+#         • MTP n=3 — code-max (+27% code decode) but −4% on PROSE vs n=1 (draft
+#           acceptance decays to ~50% on narrative; n=1 is the prose-safe sweet
+#           spot, n=2 the balanced one). Override: MTP_DRAFT_N_MAX=1.
+#         • REASONING=on by default — the 8-pack A/B is a wash (think-off 103/150
+#           vs think-on 105/150, inside ±5-7 noise) and reasoning costs heavy
+#           latency (StructOutput 57s/case, HermesAgent hit the 300s ceiling). The
+#           stack-wide default is thinking-off; this compose opts ON by request.
+#           Override: REASONING=off (or =auto for request-driven).
+#   Quality:   core 8-pack — think-OFF 103/150 (69%) · think-ON 105/150 (70%)
+#              (benchlocal-cli --full, temp 0, 2026-06-14). Per-pack (off/on):
+#              toolcall 14/14 · instructfollow 12/14 · structoutput 14/14 ·
+#              dataextract 11/8 · reasonmath 11/12 · bugfind 13/13 ·
+#              hermesagent 11/11 (of 20) · cli 17/19 (of 40).
+#   Best for:  Uncensored dual-card 35B-A3B chat at full 262K with working MTP. ⭐
+# ---------------------------------------------------------------------------
+# morikomorizz/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP — the MTP-headed build of
+# the HauhauCS-Aggressive uncensored fine-tune of Qwen3.6-35B-A3B (the qwen3-next
+# MoE hybrid: 40 blocks = 30 DeltaNet SSM + 10 full-attn, 256 experts). Unlike the
+# LuffyTheFox Q6_K_P of the same fine-tune, THIS build ships the embedded nextn
+# MTP head (qwen35moe.nextn_predict_layers=1), so spec-decode works on mainline.
+#
+# Why dual-only: the Q6_K_P GGUF is ~30 GB — cannot fit a single 24 GB card.
+# Layer-split across both 3090s via `-ts 0.55,0.45` (PCIe, no NVLink needed —
+# layer-split is a pipeline, no cross-GPU all-reduce). The 0.55/0.45 weighting
+# (vs even 1,1) offsets the MTP draft context + its KV, which pin to one card and
+# grow with ctx (~3 GB skew at 262K with 1,1) — 0.55,0.45 pulls the cards back to
+# ~19.7/18.3 GB at 262K at no measurable TPS cost.
+#
+# MTP loads clean here: boot log shows "speculative decoding context initialized"
+# — the prior HauhauCS-MTP `ret=-3` failure was an ik-llama / older-build issue,
+# NOT mainline b9570.
+#
+# n-sweep shape (quick A/B @ 32K, decode TPS narr/code): n=1 150.8/163.5
+# (acc 76/93%) → n=2 147.5/175.2 → n=3 136.3/179.5 (acc 50/79%) → n=4 120.7/177.3.
+# At the SHIPPED 262K config (canonical bench.sh, same fresh container, 2026-06-14):
+# n=3 = narr 113.4 / code ~150 decode TPS (CV<1%); n=1 = narr 125.2 / code 136.4.
+# So n=3 vs n=1 @262K = −9% prose / +10% code — a code-leaning tradeoff (the
+# maintainer-chosen default). NOTE: an earlier rebench read 147/162 @ n=1 that
+# did NOT reproduce on a fresh boot (125 reproducible) — GPU-state TPS variance;
+# do not propagate the 147 number.
+#
+# Validation (2026-06-14, 1× run): verify-stress 8/8 (NIAH ceiling ladder clean
+# to 240634 tok = 91% of 262K), bench.sh n=3 @262K (narr 113.4 / code ~150 decode
+# TPS, CV<1%), soak fresh 20×5 PASS (0 MiB growth, 0/100 silent-empty, p50
+# 162.4 TPS, 99.6% retention). spec-dec is lossless (8-pack off==on shape holds).
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir mounted as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE              path under /models  (default: qwen3.6-35b-a3b-uncensored-mtp-gguf/morikomorizz-q6kp/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q6_K_P.gguf)
+#   CTX_SIZE               KV pool size        (default: 262144 — native)
+#   BATCH_SIZE / UBATCH_SIZE  llama.cpp -b / -ub  (default: 4096 / 512)
+#   KV_TYPE                K and V quant type  (default: q8_0)
+#   NP                     parallel slots      (default: 1 — do NOT raise on dual)
+#   MTP_DRAFT_N_MAX        MTP draft tokens    (default: 3 — code-max; =1 prose-safe, =2 balanced)
+#   TENSOR_SPLIT           manual tensor split (default: 0.55,0.45)
+#   SERVED_NAME            --alias value       (default: hauhaucs-35ba3b-dual)
+#   REASONING              thinking gate       (default: on; =off stack-default, =auto request-driven)
+#   REASONING_FORMAT       reasoning routing   (default: deepseek — extracts <think> to reasoning_content)
+#   REPEAT_PENALTY / REPEAT_LAST_N  anti-loop  (defaults: 1.1 / 256)
+#   PORT                   host port           (default: 8073)
+#   LLAMACPP_IMAGE         engine image        (default: pinned b9570)
+#
+# Quick start:
+#   1. Fetch the GGUF (setup.sh/launch.sh auto-fetch it, or manually):
+#        hf download morikomorizz/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP \
+#          Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q6_K_P.gguf \
+#          --local-dir <MODEL_DIR>/qwen3.6-35b-a3b-uncensored-mtp-gguf/morikomorizz-q6kp
+#   2. From this directory:  MODEL_DIR=/your/models/dir docker compose -f mtp.yml up -d
+#   3. curl http://localhost:8073/v1/models  → should list hauhaucs-35ba3b-dual.
+
+services:
+  llama-cpp-hauhaucs-35ba3b:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9570}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-hauhaucs-35ba3b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8073}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    # ⚠ -np 1 is intentional — one decode stream per dual-card config; extra
+    #   slots divide throughput and can OOM the spec-context buffer at 262K.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-35b-a3b-uncensored-mtp-gguf/morikomorizz-q6kp/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q6_K_P.gguf}
+      --alias ${SERVED_NAME:-hauhaucs-35ba3b-dual}
+      -c ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-512}
+      -ngl 99
+      -ts ${TENSOR_SPLIT:-0.55,0.45}
+      -fa on
+      --cache-type-k ${KV_TYPE:-q8_0}
+      --cache-type-v ${KV_TYPE:-q8_0}
+      -np ${NP:-1}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${MTP_DRAFT_N_MAX:-3}
+      --jinja
+      --reasoning ${REASONING:-on}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.1}
+      --repeat-last-n ${REPEAT_LAST_N:-256}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

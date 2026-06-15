@@ -119,6 +119,20 @@ weights:
     engine: ik-llama
     kind: gguf
     verify_glob: "*.gguf"
+  morikomorizz-q6kp:
+    # Uncensored "HauhauCS-Aggressive" fine-tune of Qwen3.6-35B-A3B, Q6_K_P GGUF
+    # WITH embedded nextn MTP head (loads on mainline llama.cpp b9570). Dual-card.
+    path: qwen3.6-35b-a3b-uncensored-mtp-gguf/morikomorizz-q6kp
+    local_subdir: qwen3.6-35b-a3b-uncensored-mtp-gguf/morikomorizz-q6kp
+    size_gb: 30.0
+    format: gguf
+    status: community-experimental
+    hf_repo: morikomorizz/Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP
+    files:
+      - Qwen3.6-35B-A3B-Uncensored-HauhauCS-MTP-Q6_K_P.gguf
+    engine: llama-cpp
+    kind: gguf
+    verify_glob: "*.gguf"
 default_weight_variant: autoround-int4
 compatible_drafters:
   - qwen-mtp-builtin

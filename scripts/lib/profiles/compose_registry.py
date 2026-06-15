@@ -433,6 +433,16 @@ COMPOSE_REGISTRY = {
         status="experimental",
         status_note="APEX-MTP community MoE GGUF — eval-only bring-up lane, not yet validated.",
     ),
+    "llamacpp/hauhaucs-35ba3b-dual": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="morikomorizz-q6kp", workload="fast-chat",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-35b-a3b/llama-cpp/compose/dual/morikomorizz-q6kp/mtp.yml",
+        default_port=8073,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Uncensored HauhauCS-Aggressive 35B-A3B (morikomorizz Q6_K_P, embedded MTP head) on mainline llama.cpp b9570, dual-card -ts 0.55,0.45 q8_0 KV @ 262K. MTP loads clean (the prior HauhauCS-MTP ret=-3 was ik-llama/older-build, not mainline). Validated 2026-06-14: verify-stress 8/8 (NIAH→240K), bench.sh n=3 @262K (narr 113.4 / code ~150 decode TPS, CV<1%; n=3 vs n=1 = -9% prose/+10% code), soak 20x5 PASS (0 growth, 0/100 silent-empty, p50 162.4, 99.6% retention). 8-pack think-OFF 103/150, think-ON 105/150 (wash). Maintainer-set non-default knobs: MTP n=3 (code-max, -4% prose vs n=1) + REASONING=on (vs stack thinking-off default). Community GGUF, digest-UNPINNED + uncensored → experimental. No DEFAULTS row (opt-in only).",
+    ),
 
     # Gemma 4 31B, vLLM. Lean v0.21.0 set: bf16 default, int8 long-context, single-card fp8 risk path.
     "vllm/gemma-mtp-tp1": _entry(
