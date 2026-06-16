@@ -261,7 +261,9 @@ Place at `models/<model-id>/<engine>/compose/<topology>/<quant-slug>/<serving>.y
 
 ### Profile header (mandatory)
 
-Every compose opens with the `# Profile (at-a-glance):` block — `Model` / `Topology` / `Drafter` / `KV` / `Vision` / `Max ctx` / `Genesis` / **`Status`** / `Best for` — plus a sibling-comparison table. **`Status:` is required**: exactly one of `✅ Production` · `⚠️ Production w/ caveats` · `🧪 Experimental` · `👁️ Preview` · `⏸️ Upstream-gated` · `🗑️ Deprecated`, with a `Caveats:` line whenever it's `⚠️`/`👁️`/`⏸️`/`🗑️`. `test-compose-status-drift` asserts the header status matches the registry entry, so a missing/mismatched `Status` **fails CI**. Full schema: [`CLAUDE.md`](../CLAUDE.md) → "Profile schema header." For a non-Qwen3-Next model write `Genesis: N/A — Genesis is Qwen3-Next-specific`.
+Every compose opens with the `# Profile (at-a-glance):` block — `Model` / `Topology` / `Drafter` / `KV` / `Vision` / `Max ctx` / `Genesis` / **`Status`** / `Best for` — plus a sibling-comparison table. **`Status:` is required**: exactly one of `✅ Production` · `⚠️ Production w/ caveats` · `🧪 Experimental` · `🐣 Incubating` · `👁️ Preview` · `⏸️ Upstream-gated` · `🗑️ Deprecated`, with a `Caveats:` line whenever it's `⚠️`/`🐣`/`👁️`/`⏸️`/`🗑️`. `test-compose-status-drift` asserts the header status matches the registry entry, so a missing/mismatched `Status` **fails CI**. Full schema: [`CLAUDE.md`](../CLAUDE.md) → "Profile schema header." For a non-Qwen3-Next model write `Genesis: N/A — Genesis is Qwen3-Next-specific`.
+
+> **New models START at `🐣 Incubating`.** When you first add a model, ship its compose **and** registry entry at `status="incubating"` (header `🐣 Incubating` + a `Caveats:` line stating what's unvalidated). Incubating is **hidden from `switch.sh --list`** (revealed by `--list --all`) and launch-gated behind `--force`, so a half-validated model is catalogued and discoverable without cluttering the actionable list or being mistaken for a recommended config. **Promote up the enum as it earns it**: `🐣 Incubating` → `🧪 Experimental` (boots + serves cleanly, under active validation) → `⚠️`/`✅` once it clears the full gate (verify-full 8/8, verify-stress, bench row, soak, quality). Don't open a new model directly at `🧪`/`✅` — start incubating, then graduate.
 
 ### Required env-var hooks (post-v0.7.0)
 
@@ -312,8 +314,9 @@ COMPOSE_REGISTRY = {
         default_port=8040,                           # MUST equal the compose's ${PORT:-NNNN} fallback (parity test)
         kvcalc_key="<model-id>:dual",                # vLLM: "<model>:<kvcalc-profile>"; llama.cpp/ik-llama/beellama: "SKIP"
         required_engine_features=["turboquant_3bit_nc"],
-        status="production",                         # production|caveats|experimental|preview|upstream-gated|deprecated
-                                                     #   maps to the compose header ✅/⚠️/🧪/👁️/⏸️/🗑️ (test-compose-status-drift checks both match)
+        status="incubating",                         # NEW MODELS START HERE. production|caveats|experimental|incubating|preview|upstream-gated|deprecated
+                                                     #   maps to the compose header ✅/⚠️/🧪/🐣/👁️/⏸️/🗑️ (test-compose-status-drift checks both match)
+                                                     #   incubating = hidden from `switch.sh --list` (see --all), --force to launch; promote as it validates
         status_note=None,                            # REQUIRED non-None string when status is caveats/preview/upstream-gated/deprecated
     ),
 }

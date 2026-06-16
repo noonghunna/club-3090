@@ -353,7 +353,7 @@ list_variants() {
   # Counts: split into VISIBLE vs HIDDEN by the hardware filter, so the header
   # reflects what's actually shown (+ how many were hidden). Health split is
   # over the VISIBLE set; the by-topology hidden tally drives the note.
-  local _prod=0 _cav=0 _na=0 _hidden=0 _dep_hidden=0 _gated_hidden=0
+  local _prod=0 _cav=0 _na=0 _hidden=0 _dep_hidden=0 _gated_hidden=0 _inc_hidden=0
   declare -A _seen_models=() _hidden_by_topo=()
   for v in "${!VARIANTS[@]}"; do
     IFS='|' read -r _e _d _f <<< "${VARIANTS[$v]}"
@@ -361,12 +361,15 @@ list_variants() {
     IFS=/ read -ra _fs <<< "$_f"
     local _vtopo="${_fs[0]:-unknown}" _vrank
     _vrank="$(topology_rank "$_vtopo")"
-    # Hide non-active statuses by default: deprecated (tombstoned / going away) and
-    # upstream-gated (PARKED — blocked on an external fix, not abandoned). --all reveals both.
+    # Hide non-active statuses by default: deprecated (tombstoned / going away),
+    # upstream-gated (PARKED — blocked on an external fix, not abandoned), and
+    # incubating (pre-experimental — works but not ready for the actionable list).
+    # --all reveals all three.
     if [[ "$show_all" != "1" ]]; then
       case "${VARIANT_STATUS[$v]:-production}" in
         deprecated)     _dep_hidden=$((_dep_hidden + 1)); continue ;;
         upstream-gated) _gated_hidden=$((_gated_hidden + 1)); continue ;;
+        incubating)     _inc_hidden=$((_inc_hidden + 1)); continue ;;
       esac
     fi
     if [[ "$show_all" != "1" && "$_vrank" -gt "$max_rank" ]]; then
@@ -408,7 +411,11 @@ list_variants() {
   if [[ "$_gated_hidden" -gt 0 ]]; then
     _gated_note="  (+${_gated_hidden} parked/upstream-gated hidden — --all)"
   fi
-  echo "  Models: ${#_seen_models[@]} · variants: ${_visible} (${_prod} production · ${_cav} caveats · ${_na} NA)${_hidden_note}${_dep_note}${_gated_note}"
+  local _inc_note=""
+  if [[ "$_inc_hidden" -gt 0 ]]; then
+    _inc_note="  (+${_inc_hidden} incubating hidden — --all)"
+  fi
+  echo "  Models: ${#_seen_models[@]} · variants: ${_visible} (${_prod} production · ${_cav} caveats · ${_na} NA)${_hidden_note}${_dep_note}${_gated_note}${_inc_note}"
 
   {
     for v in "${!VARIANTS[@]}"; do
@@ -418,7 +425,7 @@ list_variants() {
       topo="${fseg[0]:-unknown}"
       rank="$(topology_rank "$topo")"
       if [[ "$show_all" != "1" ]]; then
-        case "${VARIANT_STATUS[$v]:-production}" in deprecated|upstream-gated) continue ;; esac
+        case "${VARIANT_STATUS[$v]:-production}" in deprecated|upstream-gated|incubating) continue ;; esac
       fi
       if [[ "$show_all" != "1" && "$rank" -gt "$max_rank" ]]; then
         continue

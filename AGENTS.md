@@ -143,7 +143,7 @@ Every compose starts with a `Profile (at-a-glance)` block declaring the (Model, 
 #   Max ctx:   <e.g. 262K>
 #   Genesis:   <none | v7.72.2 | N/A — Genesis is Qwen3-Next-specific>
 #   Status:    <REQUIRED — exactly one of the enum values below>
-#   Caveats:   <REQUIRED if Status is ⚠️ / 👁️ / ⏸️ / 🗑️; otherwise omit>
+#   Caveats:   <REQUIRED if Status is ⚠️ / 🐣 / 👁️ / ⏸️ / 🗑️; otherwise omit>
 #   Quality:   <OPTIONAL — populated by `bash scripts/quality-test.sh --medium`>
 #                e.g. "ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%)
 #                      · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%)
@@ -160,13 +160,14 @@ Every compose starts with a `Profile (at-a-glance)` block declaring the (Model, 
 | `✅ Production` | Recommended for users. | verify-full 8/8 + verify-stress 7/7 + bench (BENCHMARKS row) + soak-continuous PASS + `quality-test.sh --quick` PASS (no ≥10pp regression on ToolCall / InstructFollow vs the pre-change baseline). Quality numbers on the compose's `Quality:` schema field when `--medium` has been run. |
 | `⚠️ Production w/ caveats` | Works under documented constraints; not the same as broken. | Same gates as Production, but a known-and-disclosed limitation exists (e.g., Cliff 2b at >50K, or a >10pp drop on a specific quality pack). Caveats line MUST list the constraint. |
 | `🧪 Experimental` | Under active validation; may not boot or pass all tests. | Typically untracked in git. No production guarantee. |
+| `🐣 Incubating` | Pre-experimental: works, but not ready for the actionable list — a niche specialist or one that fails the standard gate by design (e.g. an always-reasoning model with no tool-calling). | **HIDDEN from `switch.sh --list` by default** (revealed by `--list --all`), and launch requires `--force` (non-functional). Caveats line MUST state why it's not gate-passing. Promote to 🧪/✅ when it earns the actionable list. |
 | `👁️ Preview` | Known quality issues; tracked but not for production. | E.g., quality regressions in soak / NIAH. Caveats line MUST list specific issues. |
 | `⏸️ Upstream-gated` | Exists but blocked by external action (PR merge, driver fix, hardware ceiling). | Boots only with vendored override OR doesn't boot until external dep lands. Caveats line MUST point at the external dep. |
 | `🗑️ Deprecated` | Kept for historical reference; will be removed. | N/A — flagged for cleanup. |
 
 **Why this enum exists**: the previous "Status optional, only when not production" convention left readers guessing whether absence-of-status meant "validated production" or "author forgot to fill it in." Making Status required + enumerated removes that ambiguity. Users picking a config can scan to one field and know the lifecycle stage instantly; new contributors must consciously declare it when authoring.
 
-The `Caveats:` line is REQUIRED whenever Status is ⚠️ / 👁️ / ⏸️ / 🗑️, OMITTED for ✅ / 🧪. Format: a single-line summary or a short bullet list, with links to issues / discussions / upstream PRs where relevant.
+The `Caveats:` line is REQUIRED whenever Status is ⚠️ / 🐣 / 👁️ / ⏸️ / 🗑️, OMITTED for ✅ / 🧪. Format: a single-line summary or a short bullet list, with links to issues / discussions / upstream PRs where relevant.
 
 This rule applies to **shipped composes AND local-only test composes** — apply the convention even before deciding whether to ship; it avoids a rename later if the experiment graduates.
 

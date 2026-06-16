@@ -18,6 +18,9 @@ STATUS_VALUES = (
     "production",      # ✅ Production — recommended, fully validated.
     "caveats",         # ⚠️ Production w/ caveats — works under documented limits.
     "experimental",    # 🧪 Experimental — under active validation; may not boot.
+    "incubating",      # 🐣 Incubating — pre-experimental: works but not ready for the
+                       #    actionable list (niche / fails the standard gate by design).
+                       #    HIDDEN from `switch.sh --list` by default; revealed by `--all`.
     "preview",         # 👁️ Preview — known quality issues; tracked, not for prod.
     "upstream-gated",  # ⏸️ Upstream-gated — blocked by external action (pin/PR/HW).
     "deprecated",      # 🗑️ Deprecated — kept for reference; flagged for removal.
@@ -33,6 +36,7 @@ COMPOSE_STATUS_EMOJI = {
     "✅": "production",
     "⚠️": "caveats",
     "🧪": "experimental",
+    "🐣": "incubating",
     "👁️": "preview",
     "⏸️": "upstream-gated",
     "🗑️": "deprecated",
@@ -713,6 +717,19 @@ COMPOSE_REGISTRY = {
         status="production",
         status_note="Dense 40B uncensored Qwen3.6 merge (Q6_K MTP GGUF, 31 GB) on dual 3090 llama.cpp. Arch CONFIRMED qwen35-dense (standard GQA, 97 layers) from the GGUF header. MTP n=2 sweet spot (~41.6 tok/s, 0.81 accept). 128K ctx ceiling @q8_0 KV (192K OOMs). Dual-only. verify-full 8/8, verify-stress 8/8, 8-pack 105/150 (MTP off==on, spec-dec lossless), soak-continuous PASS (0 MiB growth, 0/25 silent-empty). First uncensored + first dual-llama.cpp compose in the catalog.",
         category="uncensored",
+    ),
+
+    # VibeThinker-3B — WeiboAI verifiable-reasoning fine-tune of Qwen2.5-Coder-3B
+    # (Qwen2 dense). First dense-family + first sub-4B model in the catalog.
+    "vllm/vibethinker-3b-single": _entry(
+        model="vibethinker-3b", weights_variant="bf16", workload="long-ctx-single",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e5m2",
+        tp=1, max_ctx=131072, max_num_seqs=1, mem_util=0.40,
+        compose_path="models/vibethinker-3b/vllm/compose/single/bf16/fp8.yml",
+        default_port=8074,
+        kvcalc_key="SKIP",
+        status="incubating",
+        status_note="VibeThinker-3B (WeiboAI) — bf16 Qwen2 dense verifiable-reasoning model (SFT+RL fine-tune of Qwen2.5-Coder-3B) on a single 3090, vLLM v0.22.0 (vllm-stable). bf16 weights (~5.8 GB) + fp8_e5m2 KV (storage-only A/B'd 2026-06-16 — math/code answers identical to bf16 KV; halves cache, quality-neutral). full 131072 ctx, ~110 TPS. Single-concurrency sized: max_num_seqs=1 + mem_util 0.40 → ~9.8 GB total (174K-token / 1.33x KV pool, full 131K kept), freeing ~14 GB to co-reside with a 27B; ~9.8 GB is near the floor (5.8 GB bf16 weights immovable). Output quality is temp-governed not mem-governed: temp 0.6 coherent, the card's temp 1.0 is unstable on short prompts (degenerate loops) — overridable via TEMP. fp8 WEIGHTS rejected (break this quant-sensitive 3B: non-terminating empty output). Sampling per the tech report: temp 1.0 / top_p 0.95 / top_k -1. Live-validated 2026-06-16: serves clean, correct reasoning + code (verify-full output-quality + thinking-mode PASS); --reasoning-parser qwen3 splits <think> blocks correctly. ⚠️ ALWAYS-REASONING: it emits a <think> trace before every answer with NO way to disable it (system prompt / /no_think ignored; authors document no controls). Omit max_tokens (vLLM's large default → reasons briefly then answers) or set generously (8K-40K; authors use up to 40960); a small explicit max_tokens truncates mid-reason with no answer. NO tool-calling (emits bare JSON not <tool_call>; authors don't support it — intentionally unwired). Consequence: FAILS verify-full's fixed-small-budget checks (basic 30 / streaming 120 / tool 200-256 tok) → 5/9 — a harness-vs-always-reasoning mismatch, NOT a serving defect. Stays 🧪: does not pass the standard functional gate; math/code/STEM reasoning only, not general/agentic.",
     ),
 }
 

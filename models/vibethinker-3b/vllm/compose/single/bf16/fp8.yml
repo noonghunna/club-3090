@@ -1,0 +1,157 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     VibeThinker-3B (WeiboAI — bf16 safetensors; a verifiable-reasoning
+#              SFT+RL fine-tune of Qwen2.5-Coder-3B. Qwen2 dense, GQA 16h/2kv.)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   none (no spec-decode — no MTP head, no matched draft model)
+#   KV:        fp8_e5m2 (storage-only — bf16 weights untouched, so NO quality hit; halves the
+#              cache. At the default single-concurrency mem_util 0.40 → 174K-token / 1.33x pool,
+#              ~9.8 GB total, frees ~14 GB to co-reside w/ a 27B — full 131K retained)
+#   Vision:    no (text-only)
+#   Max ctx:   131072 (full native; RL-trained at a 64K window) — fits a 24 GB card with room
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific; VibeThinker is Qwen2 dense
+#   Status:    🐣 Incubating  (pre-experimental — hidden from `switch.sh --list`; see `--list --all`)
+#   Caveats:   Does NOT pass the standard functional gate (verify-full 5/9): an always-reasoning
+#              model (emits <think> before every answer, no way to disable) that FAILS fixed-small-
+#              budget checks + has NO tool-calling. Niche math/code/STEM reasoning specialist, not a
+#              general/agentic serve. temp 1.0 (card default) is unstable on short prompts — TEMP=0.6
+#              is steadier. Kept in the catalog for the co-resident-reasoner experiment (#403-adjacent).
+#   Best for:  single-card verifiable reasoning — competition math / coding / STEM
+#              (AIME, LiveCodeBench, LeetCode). NOT an open-domain-knowledge or
+#              prose model (the authors say so) — pick a larger general model for that.
+# ---------------------------------------------------------------------------
+# VibeThinker-3B on vLLM — single 3090, bf16 weights + fp8_e5m2 KV.
+# A 3B reasoning model: ~5.8 GB of bf16 weights leave the bulk of a 24 GB card free.
+# KV is quantized to fp8_e5m2 (storage-only — weights stay bf16, so quality is intact;
+# A/B'd 2026-06-16: math/code answers identical to bf16 KV). Combined with single concurrency
+# (max_num_seqs=1) the default GPU_MEMORY_UTILIZATION is 0.40 — sized for ONE full-131K stream,
+# not a fat multi-seq pool: ~9.8 GB total (5.8 GB weights + a 174K-token / 1.33x fp8-KV pool),
+# which FREES ~14 GB on the card to co-reside VibeThinker with a 27B — full 131K context kept.
+# ~9.8 GB is near the floor: the bf16 weights (5.8 GB) can't shrink, and one 131K fp8-KV stream
+# needs ~2.4 GB + ~1 GB overhead (mem-util ~0.37 = the 1.0x floor; 0.40 keeps a prefill margin).
+# fp8 *weights* were REJECTED (see --dtype block): they break this quant-sensitive 3B.
+#
+# Reasoning behaviour (important for clients):
+#   VibeThinker emits Qwen-style <think>...</think> reasoning blocks (the chat template
+#   doesn't INJECT the tags, but the model GENERATES them — verified live 2026-06-16),
+#   so --reasoning-parser qwen3 splits the trace into reasoning_content and leaves the
+#   final answer in content. For math/code/STEM give it a GENEROUS max_tokens (8K–32K) —
+#   the model's own generation_config defaults to max_new_tokens=2048, which truncates
+#   real reasoning traces. That's a client-side sampling concern, not a serve flag.
+#
+# Sampling: the technical report's vLLM eval uses temperature=1.0, top_p=0.95,
+#   top_k=-1 (disabled) — set as the override defaults below (all env-overridable).
+#
+# Tool calling: NOT supported. The chat template is Qwen2.5 hermes-style, but the RL
+#   fine-tune does not emit the <tool_call> wrapper (it dumps bare JSON, and only after a
+#   long reasoning trace), so no vLLM tool parser extracts it. The authors document no
+#   function-calling. Tool support is intentionally NOT wired (verified 2026-06-16).
+#
+# ⚠️ Always-reasoning model — DO NOT pin a small max_tokens. It emits a <think> block
+#   before every answer; with a tiny budget (e.g. 30-256 tokens) it truncates mid-reason
+#   with NO answer. Omit max_tokens (vLLM defaults to a large budget → it reasons briefly
+#   and answers) or set it generously (8K-40K; the authors use max_new_tokens up to 40960
+#   for hard math/code). This is intrinsic — no system prompt or /no_think suppresses it.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR        host HF cache mounted at /root/.cache/huggingface
+#   MAX_MODEL_LEN    context window           (default: 131072 — full native)
+#   GPU_MEMORY_UTILIZATION                     (default: 0.40 — single-concurrency sized: weights +
+#                                               a 1.33x 131K fp8-KV pool in ~9.8 GB, freeing ~14 GB.
+#                                               ~0.37 is the 1.0x floor for full 131K; raise for
+#                                               more concurrency; lower needs a smaller MAX_MODEL_LEN.)
+#   MAX_NUM_SEQS     concurrent sequences      (default: 1 — single concurrency)
+#   KV_CACHE_DTYPE   K/V cache dtype           (default: fp8_e5m2; set 'auto' for bf16 KV)
+#   TEMP / TOP_P / TOP_K / MIN_P               (defaults: 1.0 / 0.95 / -1 / 0.0)
+#   PORT             host port                 (default: 8074)
+#   VLLM_IMAGE       engine image              (default: vllm/vllm-openai:v0.22.0)
+# ---------------------------------------------------------------------------
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 10
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 1
+# Tensor-parallel: 1
+services:
+  vllm-vibethinker-3b:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-vibethinker-3b}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8074}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs.
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      # Uncomment the next line to pin to a specific GPU (e.g. GPU 0):
+      # - CUDA_VISIBLE_DEVICES=0
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - OMP_NUM_THREADS=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # VLLM_ENFORCE_EAGER=1 in .env disables CUDA graphs — use on
+        # hardware where graph capture causes OOM or instability (e.g. WSL2).
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/vibethinker-3b
+      - --served-model-name
+      - vibethinker-3b
+      - --dtype
+      - "${DTYPE:-bfloat16}"
+      # bf16 weights ONLY. fp8 weight-only quant (Marlin W8A16) was A/B'd 2026-06-16 and
+      # BREAKS this 3B: it boots + halves VRAM (6.2->3.2 GB) + is faster (~164 vs ~110 TPS),
+      # but the model loses its stop/format behavior — non-terminating, empty responses even
+      # on "capital of France" (2048 tok empty vs bf16's clean 149). A 3B reasoning model is
+      # too quant-sensitive for fp8 here. Do NOT re-enable without re-validating output.
+      - --tensor-parallel-size
+      - "${TP:-1}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-131072}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.40}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - --trust-remote-code
+      # NO tool-calling: VibeThinker is a math/code/STEM reasoning model — the authors
+      # don't support function-calling, and it emits bare JSON (not <tool_call>) so no
+      # vLLM parser extracts it. Advertising tools would be misleading. (verified 2026-06-16)
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # No --speculative-config (no MTP head / no matched drafter for this model)
+      # VibeThinker emits Qwen-style <think>...</think> reasoning blocks (verified
+      # live 2026-06-16) → qwen3 parser splits reasoning_content from the answer.
+      - --reasoning-parser
+      - qwen3
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-1.0}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:--1},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

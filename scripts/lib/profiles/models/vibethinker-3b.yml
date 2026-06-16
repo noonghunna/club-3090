@@ -1,0 +1,40 @@
+schema_version: 1
+id: vibethinker-3b
+display_name: VibeThinker-3B
+# WeiboAI verifiable-reasoning fine-tune (SFT+RL) of Qwen2.5-Coder-3B.
+# Standard Qwen2 dense decoder, GQA (16 attn heads / 2 KV heads), SWA disabled.
+# Emits Qwen-style <think>...</think> reasoning blocks → served with --reasoning-parser qwen3.
+family: dense
+hidden_size: 2048
+intermediate_size: 11008
+num_hidden_layers: 36
+num_attn_heads: 16
+num_kv_heads: 2
+head_dim_attn: 128
+max_ctx_supported: 131072
+attention_k_eq_v: true
+# kv-calc has no branch for the generic `dense` family (curated models get
+# family-specific branches; `generic-dense` is reserved for auto-derived pulls).
+# A 3B trivially fits a 24 GB card at full ctx, so KV-fit gating is moot here →
+# kv_calc_supported: false and the registry entry uses kvcalc_key="SKIP".
+kv_calc_supported: false
+vision_capable: false
+weights:
+  bf16:
+    path: vibethinker-3b
+    local_subdir: vibethinker-3b
+    size_gb: 6.2
+    format: bf16
+    status: experimental
+    hf_repo: WeiboAI/VibeThinker-3B
+    engine: vllm
+    manual_note: >-
+      Original WeiboAI bf16 release (~6.2 GB, 2 safetensors shards). A 3B reasoning
+      model — runs the full 131072 native context single-stream on one 24 GB card
+      with headroom; no KV quant needed. Sampling per the technical report:
+      temperature=1.0, top_p=0.95, top_k=-1. Give clients a generous max_tokens
+      (8K-32K) — the model reasons inline and its own generation_config caps at 2048.
+default_weight_variant: bf16
+valid_tp:
+  - 1
+requires_genesis: false
