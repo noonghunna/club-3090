@@ -82,5 +82,6 @@ These are cross-cutting references both tracks reach for.
 | [`KERNEL_MATRIX.md`](KERNEL_MATRIX.md) | Quant-kernel availability and alignment constraints. |
 | [`QUALITY_TEST.md`](QUALITY_TEST.md) | The quality-test harness and what it measures. |
 | [`RESULTS_CARD.md`](RESULTS_CARD.md) | The standard 3-panel format (Serving · Quality · Takeaways) for sharing a config's measured results. |
+| [`ANNOUNCEMENT_TEMPLATE.md`](ANNOUNCEMENT_TEMPLATE.md) | The "we shipped X" Announcements-post skeleton that wraps a Results Card (intro+credits · Results Card · getting it · run it · credits). |
 | [`STRUCTURED_COT.md`](STRUCTURED_COT.md) | The bounded-thinking / structured-CoT compose path. |
 | [`TQ3_MTP_GENESIS.md`](TQ3_MTP_GENESIS.md) | TQ3 KV × MTP × Genesis-patch results and config. |
