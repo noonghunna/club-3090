@@ -13,13 +13,12 @@
 #   Status:    🐣 Incubating  (pre-experimental — hidden from `switch.sh --list`; see `--list --all`)
 #   Engine-profile: llama-cpp-local
 #   Quality:   tool-free packs (benchlocal, temp 0.6, 2026-06-16, thinking-ON = the model's only
-#              real mode): gsm-symbolic-30 30/30 (100%) · instructfollow-15 15/15 (100%) ·
-#              reasonmath-15 12/15 (80%) · structoutput-15 12/15 (80%) · dataextract-15 6/15 (40%).
-#              Note: the packs' thinking-OFF defaults zeroed dataextract (0/15) + capped structoutput
-#              (9/15) via token_limit truncation (always-reasoning model vs bounded budget) —
-#              --enable-thinking restores them. dataextract's residual 40% is GENUINE (valid JSON,
-#              field-level extraction errors — a reasoning specialist, not an extractor, per the
-#              authors). toolcall/hermes/cli N/A (no tool-calling).
+#              real mode). Reasoning/math: gsm-symbolic-30 30/30 (100%) · reasonmath-15 12/15 (80%).
+#              One-shot coding (sandbox executes the code, no tool-calls): humaneval-plus-30 29/30
+#              (97%) · lcb-v6-30 25/30 (83%, 2 losses = token_limit on hardest). Instruction/format:
+#              instructfollow-15 15/15 (100%) · structoutput-15 12/15 (80%) · dataextract-15 6/15
+#              (40%, genuine extraction ceiling — sweep {temp 0/0.6/1.0}=27/40/27%, value mismatches,
+#              not config). toolcall/hermes/cli/aider N/A (no tool-calling) → verify-full 5/9 by design.
 #   Caveats:   Does NOT pass the standard functional gate (verify-full 5/9, same as the vLLM
 #              sibling): an always-reasoning model (emits <think> before every answer, no way to
 #              disable) that FAILS fixed-small-budget checks + has NO tool-calling. Niche math/code/
