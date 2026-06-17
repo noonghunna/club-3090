@@ -211,9 +211,19 @@ The L1 cache lives in CPU RAM (in shared memory; `shm_size` must be ≥ `l1-size
 ### Disk (the optional L2 tier — `LMCACHE_L2_ADAPTER`, off by default)
 Set `LMCACHE_L2_ADAPTER` to a JSON adapter spec to spill evicted (older) sessions from RAM to disk instead of dropping them, and to **survive container restarts**:
 ```
-LMCACHE_L2_ADAPTER='{"type":"nixl_store","backend":"POSIX","backend_params":{"file_path":"/mnt/ssd/lmcache-kv"}}'
+LMCACHE_L2_ADAPTER='{"type":"fs","base_path":"/mnt/ssd/lmcache-kv"}'
 ```
-Disk-sized (≈4.72 GB per full 262K session), so effectively unbounded; LRU auto-evicts within the configured cap. Point `file_path` at an SSD dir — **not `/tmp`** (tmpfs, wiped on reboot, competes for RAM). Rehydrating a 262K session from NVMe is ~1–2 s vs ~40 s to re-prefill. L2 spill/rehydrate latency is not yet measured on-rig (the open follow-up before promotion).
+Use the **`fs`** adapter (`base_path`), **not `nixl_store`** — this image's NIXL backend is broken (`libcudart.so.13` ImportError); `fs` is a plain filesystem store with no NIXL dependency. Disk footprint is **~125 KB/token measured** (4.6 GB for a 37K session → ~33 GB per full 262K session — LMCache's L2 stores ~7× lower-density than the int8-PTH GPU cache, so size disk accordingly), still effectively unbounded; LRU auto-evicts within the cap. Point `base_path` at an SSD dir — **not `/tmp`** (tmpfs, wiped on reboot, competes for RAM).
+
+**Measured on-rig (2026-06-17, 36,807-token session, ~1.9 GB/s disk):**
+
+| | TTFT | vs cold |
+|---|--:|--:|
+| Cold (re-prefill) | 43.3 s | 1× |
+| **L2 rehydrate** (from disk, after container restart) | **4.8 s** | **~9× faster** |
+| L1 hit (warm RAM) | 1.4 s | ~31× faster |
+
+**Cross-restart persistence confirmed**: after a full container restart (L1 RAM cleared), the log shows `46/46 retained keys (0 L1, 46 L2)` — the session rehydrated entirely from L2 disk.
 
 ### Why incubating, not production
 Runs LMCache's third-party image (`lmcache/vllm-openai`, **DIGEST-pinned** — the tag is mutable and bundles a newer vLLM 0.23.1-dev than our v0.22.0 pin); the L2 path is unmeasured on-rig; the 38 GB image is pulled on-demand. Promotion to ✅ wants LMCache installed into our own vLLM image. The earlier "LMCache halves decode" conclusion was an uncontrolled-measurement error, retracted — see [#133](https://github.com/noonghunna/club-3090/issues/133).

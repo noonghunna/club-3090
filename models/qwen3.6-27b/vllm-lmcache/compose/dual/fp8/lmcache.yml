@@ -50,7 +50,10 @@
 #
 # Run (direct docker — launchers inject VLLM_IMAGE from the engine profile):
 #   docker compose -f dual/fp8/lmcache.yml up -d
-#   # opt into disk L2:  LMCACHE_L2_ADAPTER='{"type":"nixl_store","backend":"POSIX","backend_params":{"file_path":"/mnt/ssd/lmcache-kv"}}' docker compose ...
+#   # opt into disk L2:  LMCACHE_L2_ADAPTER='{"type":"fs","base_path":"/mnt/ssd/lmcache-kv"}' docker compose ...
+#   #   (use the `fs` adapter, not `nixl_store` — this image's NIXL backend is broken.
+#   #    L2 disk ~125 KB/token measured (~33 GB per 262K session); rehydrate ~4.8 s vs
+#   #    ~43 s cold re-prefill for a 37K session, and it survives container restarts.)
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
