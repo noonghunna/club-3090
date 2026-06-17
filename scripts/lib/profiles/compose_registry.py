@@ -352,6 +352,20 @@ COMPOSE_REGISTRY = {
         status="experimental",
         status_note="Carnice-V2-27B Q8_0 + EMBEDDED MTP head (--spec-type draft-mtp, n=1) + q8_0/q8_0 KV, DUAL 3090 (layer-split -ts 0.55,0.45). The dual / higher-quant follow-through requested in #403 (Q5_K_M single = beellama/carnice-v2-single-q5km-mtp). FULLY VALIDATED 2026-06-16 (rebench-full): verify-full ALL-PASS, bench n=5 narr 40.7/code 44.0 decode TPS, verify-stress 8/8 (NIAH->240K), soak fresh 20x5 PASS (0 growth, 0/100 silent-empty, p50 42.2, 100% retention), 8-pack think-OFF 103/150 / think-ON 105/150 (in-band, q8_0 KV held quality). MTP accept ~81%, full 262K fits @ -ts 0.55,0.45 (21.9/21.2 GB/card, ~2.5GB free). KV A/B: chose q8_0 over the originally-spec'd kvarn6 — q8_0 prefills +17% (1003 vs 860 t/s; kvarn6's software-compression compute throttled prefill), higher-fidelity (q8 > q6-class), reference path (kvarn6 = Anbeeld 'experimental'), fits 262K on dual. -b/-ub/--no-mmap A/B'd FLAT; n=2 = +13% validated-stable opt-in (DRAFT_N_MAX=2). DFlash A/B RULED OUT (base-27B drafter ~10% accept on the fine-tune; no Carnice-matched drafter exists) → MTP-only. Launch --force. beellama v0.3.2 rolling pre-release → experimental (#455).",
     ),
+    # Qwen3.6-27B-MTP-pi-reasoning (bytkim) — reasoning fine-tune, Q4_K_M GGUF + embedded
+    # MTP head + q4_0/q4_0 KV, single 3090, reasoning-ON, mainline llama.cpp. Chosen over a
+    # beellama/q4_0-q4_1 path: mainline decodes ~25% faster on identical weights (~41 vs ~33
+    # t/s), trading beellama's 262K unified-KV ceiling for speed at a ~200K mainline ceiling.
+    "llamacpp/qwen27b-pi-reasoning-single": _entry(
+        model="qwen3.6-27b", weights_variant="pi-reasoning-q4km", workload="fast-chat",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.6-27b/llama-cpp/compose/single/pi-reasoning-q4km/mtp.yml",
+        default_port=8063,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Qwen3.6-27B-MTP-pi-reasoning (bytkim — 'Pi-style' reasoning-supervised CODING/terminal-agent fine-tune of Qwen3.6-27B) Q4_K_M GGUF + EMBEDDED MTP head (--spec-type draft-mtp, n=2) + q4_0/q4_0 KV, single 3090, reasoning-ON, on MAINLINE llama.cpp (server-cuda-b9246, PR #22673). Launch with --force (experimental). CONFIG FOLLOWS THE MODEL CARD: temp 1.0 / top-p 0.95 / top-k 0 / min-p 0 (NOT the stack's 0.6/20), reasoning ON, q4_0/q4_0 KV. Card recommends MTP n=3; on-rig A/B found n=2 marginally faster (within noise) — kept n=2, MTP_DRAFT_N_MAX=3 matches the card. Card notes presence-penalty 1.5 for DIRECT/instruct (REASONING=off) mode. CONTEXT (measured 2026-06-17): 200K-alloc fills ~188K usable with correct needle recall (22.7 GB / ~1.8 GB free); decode ~23 t/s at ~188K depth. Do NOT alloc 262K — FA scratch grows with alloc, so 262K OOMs at ~176K (LESS usable than 200K); full 262K usable is beellama-only. Author TESTED only 128K, so 128-188K is engine-proven but past the card's validated window (CTX_SIZE=131072 for strict compliance). BENCH VALIDATED (canonical bench.sh n=3, thinking-off, short-prompt): NARRATIVE 28.5 wall / 28.7 decode TPS, CODE 32.9 / 33.4, PP 743 tok/s — ~45% BELOW base llamacpp/default (50.3/58.9) on the SAME engine/KV/MTP (this fine-tune's embedded MTP head is weaker, not the engine). PENDING before promotion: verify-stress/soak/quality ladder + a call on whether the (un-benched) coding quality justifies being ~45% slower than the base model. Mainline llama.cpp = no patches, follows upstream.",
+    ),
 
     # Qwen3.6-27B PRISM-PRO-DQ (Ex0bit dynamic-quant GGUF) — community-experimental, ik-llama.
     "ik-llama/prism-pro-dq-mtp": _entry(
