@@ -191,6 +191,35 @@ For Sandermage's documented numbers on his A5000 setup, see his [MODELS.md](http
 
 ---
 
+## LMCache KV-offload (opt-in, 🐣 incubating) — RAM & disk sizing
+
+`vllm/qwen-27b-dual-lmcache` (compose `vllm-lmcache/compose/dual/fp8/lmcache.yml`, club-3090 #133) layers an LMCache tiered persistent prefix-KV cache onto the dual-max fidelity profile (FP8 + int8-PTH KV + MTP n=3). It caches each session's prefix KV so long multi-turn / multi-session workloads reuse context instead of re-prefilling (cold→warm TTFT ~7–8×). **Zero decode penalty** — controlled A/B (toggle only the connector): 74 narr / 94 code TPS == without LMCache, MTP intact (~83% accept). The offload is async/overlapped.
+
+**KV size: ~18.9 KB/token (measured)** for int8-PTH on this model → a full 262K-token session ≈ **4.72 GB** of KV.
+
+### RAM (the L1 tier — `--l1-size-gb`, env `LMCACHE_L1_GB`)
+The L1 cache lives in CPU RAM (in shared memory; `shm_size` must be ≥ `l1-size-gb` or LMCache silently falls back to slow pickle).
+
+| `--l1-size-gb` | full 262K sessions | realistic 50K sessions | host RAM needed (l1 + ~28 GB vLLM+OS) |
+|--:|--:|--:|--:|
+| **30** (default) | ~6 | ~33 | ~58 GB |
+| 50 (max on 94 GB rig) | ~10 | ~55 | ~78 GB |
+| 100 | ~21 | ~110 | ~128 GB → **rejected** (> 94 GB → OOM) |
+
+⚠️ **Sizing is preflight-gated.** `scripts/preflight.sh::preflight_lmcache_ram` hard-fails launch if available RAM < `l1-size-gb` + 28 GB reserve — and it runs **even under `--force`** (incubating slugs launch with `--force`, but over-sizing the cache can OOM the host: a 100 GB cache on this 94 GB rig once forced a reboot, the incident that motivated this guard). Cap L1 at ~50 GB here; raise `shm_size` in the compose to match if you raise `LMCACHE_L1_GB`.
+
+### Disk (the optional L2 tier — `LMCACHE_L2_ADAPTER`, off by default)
+Set `LMCACHE_L2_ADAPTER` to a JSON adapter spec to spill evicted (older) sessions from RAM to disk instead of dropping them, and to **survive container restarts**:
+```
+LMCACHE_L2_ADAPTER='{"type":"nixl_store","backend":"POSIX","backend_params":{"file_path":"/mnt/ssd/lmcache-kv"}}'
+```
+Disk-sized (≈4.72 GB per full 262K session), so effectively unbounded; LRU auto-evicts within the configured cap. Point `file_path` at an SSD dir — **not `/tmp`** (tmpfs, wiped on reboot, competes for RAM). Rehydrating a 262K session from NVMe is ~1–2 s vs ~40 s to re-prefill. L2 spill/rehydrate latency is not yet measured on-rig (the open follow-up before promotion).
+
+### Why incubating, not production
+Runs LMCache's third-party image (`lmcache/vllm-openai`, **DIGEST-pinned** — the tag is mutable and bundles a newer vLLM 0.23.1-dev than our v0.22.0 pin); the L2 path is unmeasured on-rig; the 38 GB image is pulled on-demand. Promotion to ✅ wants LMCache installed into our own vLLM image. The earlier "LMCache halves decode" conclusion was an uncontrolled-measurement error, retracted — see [#133](https://github.com/noonghunna/club-3090/issues/133).
+
+---
+
 ## Upstream status
 
 | Issue | Status | Notes |

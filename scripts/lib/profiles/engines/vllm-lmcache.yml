@@ -1,0 +1,72 @@
+schema_version: 1
+id: vllm-lmcache
+display_name: vLLM + LMCache (KV offload, MP/HMA) — lmcache/vllm-openai pinned by digest
+type: vllm
+stability: experimental
+install:
+  method: docker_image
+  # PINNED BY DIGEST, not tag — the `lmcache/vllm-openai:v0.4.7-cu129` TAG IS MUTABLE:
+  # it bundled vLLM 0.22.1-dev on the first pull (2026-06-13) and 0.23.1-dev on a
+  # re-pull (2026-06-17) under the same tag. Freezing the digest is the only way to
+  # pin the bundled vLLM version (see club-3090 #133; tags drift → freeze the
+  # digest). Re-resolve the digest with:
+  #   docker buildx imagetools inspect lmcache/vllm-openai:v0.4.7-cu129
+  # This digest = vLLM 0.23.1rc1.dev88 + LMCache 0.4.7, the build the compose was
+  # live-validated against (262K @ util 0.92, MTP n=3 active, decode 74/94 TPS).
+  spec: lmcache/vllm-openai@sha256:663f9b2f7528e34105c9b0428880b811616f9bc85133b6e2a577b2e7282be8de
+min_sm: 8.0
+supported_model_families:
+  - dense
+  - qwen3-next-hybrid     # the validated target — Qwen3.6-27B GDN hybrid via LMCache's
+                          # HMA (Hybrid Memory Allocator), new in LMCache 0.4.7. The simple
+                          # LMCacheConnectorV1 crashes hybrids ("failed to convert KV cache
+                          # specs"); only LMCacheMPConnector (lmcache server sidecar + HMA)
+                          # handles GDN. Requires --mamba-cache-mode align (mandatory).
+features:
+  int8_per_token_head: true     # native on this vLLM 0.23.1 build (as on stock v0.22.0)
+  lmcache_kv_offload: true      # tiered GPU→L1(CPU RAM)→L2(disk) prefix-KV cache
+  turboquant_3bit_nc: false
+  marlin_pad_sub_tile_n: false
+  qwen3_coder_tool_parser: true
+supported_kv_formats:
+  - bf16
+  - fp8_e4m3              # works with LMCache HMA (fp8_e5m2 is REJECTED with fp8 weights)
+  - int8_per_token_head   # the dual-max KV — validated with LMCache HMA 2026-06-17
+                          # (block aligns to 1584 tokens; chunk-size + max-num-batched-tokens
+                          # must be >= 1584). NOTE: fp8_e5m2 is unsupported with fp8 checkpoints.
+supported_drafters:
+  - mtp                  # MTP n=3 survives the connector — acceptance ~83%, no TPS loss
+                          # (controlled A/B 2026-06-17: 74/94 TPS with LMCache == without)
+supported_weight_formats:
+  - bf16
+  - fp16
+  - fp8
+  - autoround
+  - awq
+  - gptq
+  - compressed-tensors
+required_overlays: []
+vendored_overlays: []
+required_genesis: false
+notes: >-
+  vLLM + LMCache engine for the OPT-IN, hidden (🐣 incubating) KV-offload compose
+  (slug vllm/qwen-27b-dual-lmcache, club-3090 #133). Third-party image
+  lmcache/vllm-openai (bundles vLLM + LMCache), DIGEST-pinned (the tag is mutable —
+  see install.spec comment). LMCache adds a tiered persistent prefix-KV cache:
+  GPU → L1 (CPU RAM, --l1-size-gb) → optional L2 (disk, --l2-adapter), so long
+  sessions reuse cached context instead of re-prefilling (cold→warm TTFT ~7-8x).
+  Live-validated 2026-06-17 on the dual-max fidelity profile (FP8 weights + int8-PTH
+  KV + MTP n=3, TP=2 @262K): boots, serves, MTP intact, ZERO decode penalty
+  (74 narr / 94 code TPS, == the same config without LMCache). KV ~18.9 KB/token
+  (measured) → a full 262K session ≈ 4.72 GB; --l1-size-gb 30 holds ~6 such sessions
+  (or ~33 realistic 50K ones). The KV offload is async/overlapped — it does NOT cost
+  decode (an earlier "halves decode" claim was an uncontrolled-measurement error,
+  retracted; see club-3090 #133). Boot requirements baked into the
+  compose recipe: --mamba-cache-mode align + --max-num-batched-tokens >= block (1584
+  for int8-PTH) + LMCache --chunk-size a multiple of the block + NO
+  expandable_segments (incompatible with the MP connector) + shm_size >= l1-size-gb.
+  Preflight (scripts/preflight.sh) gates launch on available RAM >= l1-size-gb + a
+  vLLM reserve — the guard that would have prevented the l1=100-on-94GB choke.
+  This engine is overlay-free but runs a DIFFERENT, newer vLLM than the stack's
+  v0.22.0 pin; promotion to ✅ would want LMCache installed into our own image. The
+  38 GB image is pulled on-demand (only when a user opts into the slug).

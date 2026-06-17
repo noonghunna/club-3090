@@ -386,6 +386,60 @@ preflight_compose_hardware() {
   return 0
 }
 
+# preflight_lmcache_ram <compose_file>
+# Guards LMCache composes against over-allocating CPU RAM for the L1 KV cache.
+# Runs REGARDLESS of --force — host-choke prevention is NOT optional: an over-sized
+# --l1-size-gb (100 GB on a 94 GB rig) once exhausted RAM and forced a server reboot
+# (club-3090 #133). No-op for composes without an
+# `LMCache-l1-gb` metadata header, so it's safe to call on every launch.
+preflight_lmcache_ram() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 0
+  declare -F compose_meta_get >/dev/null 2>&1 || return 0
+
+  local l1_hdr
+  l1_hdr="$(compose_meta_get "$compose_file" lmcache-l1-gb || true)"
+  [[ -z "$l1_hdr" ]] && return 0   # not an LMCache compose
+
+  # Env override (LMCACHE_L1_GB) wins over the header default — the guard must track
+  # what the container will actually request.
+  local l1="${LMCACHE_L1_GB:-$l1_hdr}"
+  if ! [[ "$l1" =~ ^[0-9]+$ ]]; then
+    echo "[preflight] WARN:  LMCACHE_L1_GB='${l1}' is not an integer; skipping LMCache RAM check." >&2
+    return 0
+  fi
+
+  local reserve=28   # GB headroom for the vLLM process (27B @262K TP=2) + OS
+  local need=$(( l1 + reserve ))
+
+  if [[ ! -r /proc/meminfo ]]; then
+    echo "[preflight] WARN:  cannot read /proc/meminfo; skipping LMCache RAM check." >&2
+    return 0
+  fi
+  local kb avail_gb
+  kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
+  avail_gb=$(( kb / 1024 / 1024 ))
+
+  if (( avail_gb < need )); then
+    local suggest=$(( avail_gb > reserve ? avail_gb - reserve : 8 ))
+    echo "[preflight] ERROR: LMCache --l1-size-gb=${l1} needs ~${need} GB RAM (l1 ${l1} + ~${reserve} GB vLLM+OS), but only ${avail_gb} GB is available." >&2
+    echo "            (Guard against the l1-too-large host-OOM: a 100 GB cache on this 94 GB rig forced a reboot.)" >&2
+    echo "            Fix: lower the cache — LMCACHE_L1_GB=${suggest} bash scripts/switch.sh ... — or free RAM." >&2
+    return 1
+  fi
+
+  # Soft: SHM must be >= l1 or LMCache silently falls back to slow pickle serialization.
+  local shm_gb
+  shm_gb="$(grep -oE 'shm_size:[[:space:]]*"?[0-9]+' "$compose_file" | grep -oE '[0-9]+' | head -1 || true)"
+  if [[ -n "$shm_gb" ]] && (( shm_gb < l1 )); then
+    echo "[preflight] WARN:  shm_size (${shm_gb}g) < LMCACHE_L1_GB (${l1}) — LMCache SHM will fall back to slow pickle." >&2
+    echo "            Fix: raise shm_size in the compose to >= ${l1}g." >&2
+  fi
+
+  echo "[preflight] lmcache: RAM ok — l1=${l1} GB needs ~${need} GB, ${avail_gb} GB available"
+  return 0
+}
+
 preflight_disk() {
   local path="$1"
   local need_gb="$2"
