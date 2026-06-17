@@ -79,6 +79,52 @@ engines you copy a `single/` or `dual/` compose (dual splits layers / `-ts` acro
 cards). Custom all-reduce stays disabled on PCIe (no NVLink). See
 [`SINGLE_CARD.md`](SINGLE_CARD.md) / [`DUAL_CARD.md`](DUAL_CARD.md).
 
+### C — Swap a curated model for a fine-tune / abliterated variant  →  reuse its compose
+
+If your model is the **same architecture** as one we already ship (e.g. an
+abliterated or fine-tuned Qwen3.6-27B — config arch `Qwen3_5ForConditionalGeneration`),
+`pull.sh --profile-like` will **refuse** it:
+
+> `not generic-dense eligible (arch 'Qwen3_5ForConditionalGeneration') … NOTE: this arch is the curated 'qwen3.6-27b' …`
+
+That's expected, not a bug — the generic deriver only fit-prices **generic-dense**
+transformers, and Qwen3-Next / Gemma-4 are **hybrid / MoE** that need the curated
+hand-tuned flags (mamba-cache-mode, MTP spec-config, the quant kernel). So **don't
+derive — reuse the curated compose and swap the weights.** Three things to get right:
+
+- **Artifact ↔ engine:** match the weights *format* to the engine. **GGUF goes to a
+  `llama-cpp` / `ik-llama` / `beellama` compose, never a vLLM one** (vLLM serves
+  safetensors — AutoRound / AWQ / GPTQ / fp8 — not GGUF). Pointing a vLLM compose at a
+  `.gguf` is rejected at the `pull.sh` gate (`weight_format 'gguf' not loadable by
+  engine … — serve GGUF with a llama.cpp/ik-llama/beellama compose`); the rows below
+  already pair them correctly.
+- **Quant:** the curated composes load a *quantized* checkpoint (AutoRound-int4 / AWQ
+  / fp8). A **bf16 full-weight** repo won't fit 2×24 GB (~54 GB) — grab a pre-quantized
+  variant whose format matches a compose's `--quantization`.
+- **MTP:** the dual / "max" configs use a built-in MTP head for spec-dec. Use a
+  **`-MTP` variant** (the head is embedded in the checkpoint), or drop
+  `--speculative-config`.
+
+Example — abliterated Qwen3.6-27B:
+
+| You have | Reuse this curated compose | Notes |
+|---|---|---|
+| an **AWQ + MTP** variant (vLLM) | `models/qwen3.6-27b/vllm/compose/dual/awq-bf16-int4/int8.yml` | match `--quantization` (`awq` / `compressed-tensors`) to the repo |
+| a **GGUF + MTP** variant (llama.cpp) | a `llama-cpp` compose (path **B** above) | self-contained — simplest |
+
+```bash
+# 1. download the quantized + MTP variant
+hf download <org/Model-AWQ-MTP> --local-dir /mnt/models/huggingface/<your-name>
+# 2. copy the matching curated compose; change --model to your weights path
+#    (+ match --quantization; drop --speculative-config if there's no MTP head)
+# 3. boot directly:
+docker compose -f models/qwen3.6-27b/vllm/compose/dual/awq-bf16-int4/int8.yml up -d
+```
+
+It inherits everything from the curated config — TP, KV dtype, chat template, tool
+parser, MTP, context — you only swap the weights. (Claude/Codex on the repo can do
+the swap + quant-flag match for you.)
+
 ## 2. Tune it
 
 Bring-up rarely lands on the best config first. Tune with the **fast loops** and

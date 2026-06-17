@@ -40,6 +40,7 @@ sys.path.insert(0, str(root))
 
 from scripts.lib.profiles import gates as G  # noqa: E402
 from scripts.lib.profiles import deriver as D  # noqa: E402
+from scripts.lib.profiles import pull as P  # noqa: E402
 from scripts.lib.profiles.compat import load_profiles  # noqa: E402
 from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY  # noqa: E402
 
@@ -242,6 +243,99 @@ check(
     and c0_norow.bypassable_by == (G.BYPASS_EXPERIMENTAL_ARCH,),
     f"[C0]: no arch row -> no-arch-row, bypassable by --experimental-arch "
     f"(got {c0_norow.state}/{c0_norow.sub_reason}/{c0_norow.bypassable_by})",
+)
+
+# config OUTER wrapper arch (Qwen3_5ForConditionalGeneration) resolves via the
+# arch_model_xref config_architectures alias to the canonical inner row
+# (Qwen3NextForCausalLM, qwen3-next-hybrid) -> NOT a false no-arch-row. The
+# abliterated / fine-tune same-arch case (the pull-gate arch-alias fix).
+ALIAS = mk_result(
+    "huihui-ai/Huihui-Qwen3.6-27B-abliterated",
+    profile={"arch": "Qwen3_5ForConditionalGeneration", "auto_map": False},
+)
+c0_alias = G.c0_engine_support(
+    "vllm/minimal", ALIAS, path="B", hardware_sm=SM_86
+)
+check(
+    c0_alias.sub_reason != G.C0SubReason.NO_ARCH_ROW,
+    f"[C0]: config wrapper arch Qwen3_5ForConditionalGeneration resolves via "
+    f"xref alias (not a false no-arch-row) "
+    f"(got state={c0_alias.state}/sub={c0_alias.sub_reason})",
+)
+
+# resolver unit: the config-arch alias maps to the canonical row; a genuinely
+# unknown arch still maps to nothing.
+import scripts.lib.generate_compose as _gcmod  # noqa: E402
+_rt_x = _gcmod._load_yaml(root, "scripts/lib/profiles/profile_runtime.yml")
+_arches_x = _gcmod.load_arches(root)
+_canon_x, _row_x = _gcmod.resolve_arch_from_config(
+    _rt_x, _arches_x, "Qwen3_5ForConditionalGeneration"
+)
+check(
+    _canon_x == "Qwen3NextForCausalLM"
+    and (_row_x or {}).get("family") == "qwen3-next-hybrid",
+    f"resolve_arch_from_config: wrapper arch -> canonical hybrid row "
+    f"(got {_canon_x})",
+)
+_un_c, _un_r = _gcmod.resolve_arch_from_config(_rt_x, _arches_x, "NopeForCausalLM")
+check(
+    _un_c is None and _un_r is None,
+    "resolve_arch_from_config: genuinely-unknown arch -> (None, None)",
+)
+
+# 3c-bis: a GGUF weight artifact aligned to a vLLM (safetensors-only) engine ->
+# runtime-incompatible. vLLM engines don't list `gguf` in
+# supported_weight_formats. The deriver blocks GGUF on the --profile-like derive
+# path, but a curated entry / the curated-swap path could still mispair one, so
+# the [C0] gate enforces the GGUF axis off supported_weight_formats.
+GGUF_MISPAIR = mk_result(
+    "fixtures/qwen-gguf-on-vllm",
+    tier1=D.Tier1Match(
+        model_id="qwen3.6-27b",
+        weights_variant="autoround-int4",
+        slug="fixtures/qwen-gguf-on-vllm",
+    ),
+    profile={
+        "model_id": "qwen3.6-27b",
+        "weights_variant": "autoround-int4",
+        "weight_format": "gguf",
+        "weights_variant_size_gb": 17.5,
+    },
+)
+c0_gguf = G.c0_engine_support(
+    "vllm/minimal", GGUF_MISPAIR, path="A", hardware_sm=SM_86
+)
+check(
+    c0_gguf.state == G.C0State.ENGINE_SUPPORT_UNKNOWN
+    and c0_gguf.sub_reason == G.C0SubReason.RUNTIME_INCOMPATIBLE
+    and "gguf" in (c0_gguf.detail or "").lower(),
+    f"[C0]: GGUF weight on a vLLM (safetensors-only) engine -> "
+    f"runtime-incompatible (got {c0_gguf.state}/{c0_gguf.sub_reason})",
+)
+# no false-positive: the curated autoround (safetensors) weight on the SAME
+# engine stays ENGINE_SUPPORTED — the 3c-bis guard matches the `gguf` token
+# only, never the raw dtype/quant spelling.
+check(
+    c0_ok.state == G.C0State.ENGINE_SUPPORTED,
+    f"[C0]: non-GGUF (autoround) weight on vLLM still supported — gguf guard "
+    f"is not over-broad (got {c0_ok.state})",
+)
+
+# Eligibility no-fit-model SIZE advisory: raw weights > total VRAM -> a concrete
+# won't-fit line (the huihui abliterated bf16 ~54GB vs 2×24GB case). Pure helper,
+# total: fits / unknown-size / headless-topology -> empty, never raises.
+_TOPO_DUAL = (2, [24576, 24576], ["NVIDIA GeForce RTX 3090", "NVIDIA GeForce RTX 3090"])
+_adv_big = P._weights_oversize_advisory(54.0, _TOPO_DUAL)
+check(
+    "won't fit" in _adv_big and "~54 GB" in _adv_big and "~48 GB" in _adv_big,
+    f"no-fit SIZE advisory: bf16 ~54GB > 2×24GB -> won't-fit line (got {_adv_big!r})",
+)
+check(
+    P._weights_oversize_advisory(17.0, _TOPO_DUAL) == ""
+    and P._weights_oversize_advisory(54.0, None) == ""
+    and P._weights_oversize_advisory(None, _TOPO_DUAL) == ""
+    and P._weights_oversize_advisory(54.0, ("malformed",)) == "",
+    "no-fit SIZE advisory: fits / headless / unknown-size / malformed -> empty (total)",
 )
 
 # tp ∉ valid-TP -> runtime-incompatible. The MoE arch valid_tp.tp_divisors
