@@ -423,6 +423,37 @@ def _topology_summary_canonical(names: list[str], vram_mib: list[int]) -> str:
     return "[" + ", ".join(f"({n}, {v})" for n, v in tuples) + "]"
 
 
+def _weights_oversize_advisory(weights_total_gb, gpu_topology) -> str:
+    """If the raw weights ALONE exceed the detected topology's total VRAM,
+    return a one-line advisory explaining the won't-fit. Used to enrich the
+    eligibility `no-fit-model` abort for an uncurated derive — e.g. a bf16
+    full-weight abliterated repo of a model we serve only quantized — so the
+    user sees WHY their specific repo can't run, not just a generic stop.
+
+    Pure / total: empty string when it fits, when size or topology is unknown
+    (headless / injected None), or on any malformed input — never raises."""
+    try:
+        wgb = float(weights_total_gb)
+    except (TypeError, ValueError):
+        return ""
+    if wgb <= 0 or not gpu_topology:
+        return ""
+    try:
+        gcount, vram_mib, gnames = gpu_topology
+        total_vram_gb = sum(float(v) for v in vram_mib) / 1024.0
+    except (TypeError, ValueError):
+        return ""
+    if total_vram_gb <= 0 or wgb <= total_vram_gb:
+        return ""
+    gpu_label = gnames[0] if gnames else "GPU"
+    return (
+        f" SIZE: the weights are ~{wgb:.0f} GB but the detected topology has "
+        f"~{total_vram_gb:.0f} GB total VRAM ({gcount}× {gpu_label}) — they "
+        f"won't fit even before KV cache. A bf16 full-weight repo is too large "
+        f"for this rig; use an int4 (AWQ / AutoRound, ~1/4 the size) or GGUF variant."
+    )
+
+
 # ===========================================================================
 # v0.8.2 CONTRACT-1.1 — capture-on-hard-block PASS-THROUGH.
 #
@@ -755,11 +786,53 @@ def run_pull(
             res.ok = False
             res.stratum = Stratum.ELIGIBILITY
             res.abort_reason = "no-fit-model"
+            _arch = (der.profile or {}).get("arch")
+            # If the (uncurated) arch resolves via the xref alias to a family we
+            # serve CURATED (hybrid/MoE — not generic-dense, so unfit-priceable
+            # here), point at the curated-swap path instead of dead-ending. The
+            # generic derive genuinely can't fit these; the curated compose can.
+            _hint = ""
+            try:
+                # `gc` (the generate_compose module) is already loaded above via
+                # `gc = _gc()`; reuse it — do NOT re-import as a local (that
+                # shadows the module-level `_gc` loader -> UnboundLocalError).
+                _rt = gc._load_yaml(
+                    root, "scripts/lib/profiles/profile_runtime.yml"
+                )
+                _canon, _row = gc.resolve_arch_from_config(
+                    _rt, gc.load_arches(root), _arch
+                )
+                if _row is not None:
+                    _slugs = (
+                        ((_rt.get("arch_model_xref") or {}).get(_canon) or {})
+                        .get("model_slugs") or []
+                    )
+                    if _slugs:
+                        _hint = (
+                            f" NOTE: this arch is the curated '{_slugs[0]}' "
+                            f"({_row.get('family')}) — generic derive can't fit it, "
+                            f"but the curated path can: clone that model's compose and "
+                            f"point --model at your weights (use a quantized + MTP "
+                            f"variant; the bf16 base won't fit and lacks the MTP head). "
+                            f"See docs/BRING_YOUR_OWN.md → 'Swap a curated model for a "
+                            f"fine-tune / abliterated variant'."
+                        )
+            except Exception:
+                _hint = ""
+            # Coarse weights-only VRAM verdict: even when we can't kv-calc-price
+            # a hybrid/MoE, if the raw weights exceed total VRAM it won't fit at
+            # ANY KV — surface that concretely (the huihui abliterated bf16 ~54GB
+            # vs 2×24GB case). Empty when it fits / size unknown / headless.
+            _size_hint = _weights_oversize_advisory(
+                (der.profile or {}).get("weights_total_gb"), gpu_topology
+            )
             res.detail = (
                 f"{slug}: not Tier-1 curated and not generic-dense eligible "
-                f"(arch {(der.profile or {}).get('arch')!r}); no fit model "
+                f"(arch {_arch!r}); no fit model "
                 f"to price — pre-[B] hard-stop (non-bypassable; "
-                f"--experimental-arch does NOT apply — there is no model)"
+                f"--experimental-arch does NOT apply — there is no model)."
+                + _size_hint
+                + _hint
             )
             return _gate_capture_passthrough(
                 res, slug=slug, profile_like=profile_like, der=der,

@@ -762,6 +762,14 @@ arch_model_xref:
   Qwen3NextForCausalLM:
     family: qwen3-next-hybrid
     model_slugs: [qwen3.6-27b]
+    # config.json architectures[] strings that map to this canonical (inner) arch.
+    # The Qwen3-Next weights report the OUTER multimodal wrapper class
+    # `Qwen3_5ForConditionalGeneration`; the patch matrix is keyed on the inner
+    # `Qwen3NextForCausalLM`. An uncurated derive (e.g. an abliterated/fine-tune
+    # repo) only knows the wrapper string, so without this alias the pull gate
+    # false-aborts with "no arch_patches matrix row" on a model we fully support.
+    # (arch_patches.yml is a closed key-set; the alias lives here, the editable xref.)
+    config_architectures: [Qwen3_5ForConditionalGeneration]
     trust_remote_code: false
     trust_remote_code_evidence: "qwen3.6-27b weights config.json (qwen3.6-27b-autoround-int4) has architectures=[Qwen3_5ForConditionalGeneration], auto_map absent, no *modeling*.py modeling file shipped with weights -> loads built-in transformers/vLLM class, no remote code execution"
     golden_triple_profiles: [vllm/minimal, vllm/dual]

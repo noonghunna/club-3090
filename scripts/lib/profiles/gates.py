@@ -382,7 +382,19 @@ def c0_engine_support(
         arch_row = next(
             (r for r in arches if r.get("arch") == arch_from_config), None
         )
-        arch_name = arch_from_config if arch_row is not None else arch_name
+        if arch_row is not None:
+            arch_name = arch_from_config
+        else:
+            # Resolve the config-reported OUTER wrapper arch to its canonical
+            # matrix arch via arch_model_xref config_architectures (e.g.
+            # Qwen3_5ForConditionalGeneration -> Qwen3NextForCausalLM), so an
+            # uncurated derive (abliterated / fine-tune) of an already-supported
+            # arch is not false-aborted with NO_ARCH_ROW.
+            canon, arch_row = gc.resolve_arch_from_config(
+                runtime, arches, arch_from_config
+            )
+            if arch_row is not None:
+                arch_name = canon
 
     has_auto_map = bool(profile.get("auto_map"))
 
@@ -457,6 +469,28 @@ def c0_engine_support(
         return _incompat(
             f"kv_format {kv_format!r} not in engine {engine_id} "
             f"supported_kv_formats {engine.get('supported_kv_formats')}"
+        )
+
+    # 3c-bis. weight ARTIFACT vs engine — the GGUF axis (structural & mutually
+    # exclusive). GGUF-serving engines (llama.cpp / ik-llama / beellama) and
+    # safetensors-serving engines (vLLM / SGLang) cannot load each other's
+    # artifact. The deriver already rejects GGUF on the --profile-like *derive*
+    # path (safetensors-only header probe), but the curated registry / the
+    # curated-swap path (clone a vLLM compose, point --model at your weights)
+    # have no such probe — so enforce it here too, off the engine's declared
+    # `supported_weight_formats`. Match the unambiguous `gguf` token only (NOT
+    # full membership: the dtype-derived weight_format is raw-spelled
+    # "bfloat16"/"float16", which a naive `in` test would false-reject).
+    weight_format = str(profile.get("weight_format") or "").lower()
+    _eng_wfmts = [
+        str(f).lower() for f in (engine.get("supported_weight_formats") or [])
+    ]
+    if weight_format == "gguf" and "gguf" not in _eng_wfmts:
+        return _incompat(
+            f"weight_format 'gguf' not loadable by engine {engine_id} "
+            f"(safetensors-only; supported_weight_formats="
+            f"{engine.get('supported_weight_formats')}) — serve GGUF with a "
+            f"llama.cpp / ik-llama / beellama compose, not a vLLM one"
         )
 
     # 3d. hardware SM ≥ max(engine.min_sm, registry required_sm, arch-kernel)
