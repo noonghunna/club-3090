@@ -239,8 +239,10 @@ Use the **`fs`** adapter (`base_path`), **not `nixl_store`** — this image's NI
 
 **Cross-restart persistence confirmed**: after a full container restart (L1 RAM cleared), the log shows `46/46 retained keys (0 L1, 46 L2)` — the session rehydrated entirely from L2 disk.
 
+**No reduced-size L2 on this model (measured 2026-06-17).** LMCache's only built-in MP-mode compressor — the **fp8 serde** (`"serde":{"type":"fp8","fp8_dtype":"float8_e4m3fn"}` on the adapter) — **shape-errors on this model's KV**: `RuntimeError: shape '[2, 16, 1584, 260]' is invalid for input of size 53539200` (the serializer assumes a layout that doesn't match the hybrid GDN / head_dim-256 / int8-PTH source). Result: **60 serialize fails / 30 store fails, L2 stays empty (0 files)** — serving is unaffected (L1 works), but nothing reaches disk. **CacheGen** (the larger ~3–4× compressor) is "not implemented for MP mode yet — coming soon." So **don't add an fp8 serde** here; L2 is uncompressed (~131 KB/token) until one of those is fixed (re-test trigger). The plain `fs` adapter (no serde) is the working path.
+
 ### Why incubating, not production
-Runs LMCache's third-party image (`lmcache/vllm-openai`, **DIGEST-pinned** — the tag is mutable and bundles a newer vLLM 0.23.1-dev than our v0.22.0 pin); the L2 path is unmeasured on-rig; the 38 GB image is pulled on-demand. Promotion to ✅ wants LMCache installed into our own vLLM image. The earlier "LMCache halves decode" conclusion was an uncontrolled-measurement error, retracted — see [#133](https://github.com/noonghunna/club-3090/issues/133).
+Runs LMCache's third-party image (`lmcache/vllm-openai`, **DIGEST-pinned** — the tag is mutable and bundles a newer vLLM 0.23.1-dev than our v0.22.0 pin); L2 has no working compression yet (fp8 serde shape-errors on this model, CacheGen-MP pending); the 38 GB image is pulled on-demand. Promotion to ✅ wants LMCache installed into our own vLLM image. The earlier "LMCache halves decode" conclusion was an uncontrolled-measurement error, retracted — see [#133](https://github.com/noonghunna/club-3090/issues/133).
 
 ---
 
