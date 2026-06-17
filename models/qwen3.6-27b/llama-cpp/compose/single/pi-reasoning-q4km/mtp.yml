@@ -1,0 +1,127 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B-MTP-pi-reasoning (bytkim Q4_K_M GGUF — "Pi-style" reasoning-supervised
+#              CODING / terminal-agent fine-tune of Qwen3.6-27B, full model + embedded MTP head)
+#   Engine:    llama.cpp (mainline ggml-org build, server-cuda-b9246, PR #22673 MTP)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=2 (--spec-type draft-mtp; our on-rig A/B peak. Card recommends n=3 — within
+#              noise of 2 here; MTP_DRAFT_N_MAX=3 matches the card exactly)
+#   KV:        q4_0 K + q4_0 V (per card; densest mainline, Ampere-fast)
+#   Vision:    no (text-only; repo ships no mmproj)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Sampling:  temp 1.0 · top-p 0.95 · top-k 0 · min-p 0 (PER MODEL CARD — NOT the stack's 0.6/20)
+#   Max ctx:   200000-alloc default → ~188K USABLE (MEASURED 2026-06-17: 200K-alloc fills a
+#              ~188K prefill with correct needle recall, 22.7 GB / ~1.8 GB free). Do NOT raise
+#              to 262K-alloc — counterproductive: the FA scratch grows with the allocation, so
+#              262K OOMs at ~176K (LESS usable than 200K). The author only TESTED 128K, so
+#              128-188K is engine-proven but past the card's validated window. Full 262K usable
+#              needs beellama's unified KV (slower). CTX_SIZE=131072 for strict card-compliance.
+#   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
+#   Status:    🧪 EXPERIMENTAL — boot + bench validated 2026-06-17 on mainline b9246: loads the
+#              fine-tune's EMBEDDED MTP head clean (draft-mtp, n_max=2, spec context initialized),
+#              q4_0/q4_0 KV, serves coherent output. Canonical bench.sh (n=3, thinking-off):
+#              NARRATIVE 28.5 wall / 28.7 decode TPS · CODE 32.9 wall / 33.4 decode · PP 743 tok/s.
+#              ~45% BELOW the base-model llamacpp/default (50.3/58.9 narr/code, same engine/KV/MTP)
+#              — identical setup, so the gap is this fine-tune's WEAKER embedded MTP head (lower
+#              draft acceptance on prose), not the engine. Still ~25% faster than the beellama
+#              q4_0/q4_1 path on identical weights → mainline chosen. verify-stress / soak ladder
+#              PENDING before promotion.
+#   Caveats:   (1) ~45% slower than the base llamacpp/default — the fine-tune's MTP head is weak;
+#                  pays off only if its reasoning quality (NOT yet benched) justifies the speed cost.
+#                  verify-stress / soak / quality ladder pending. Launch requires --force.
+#              (2) ships 200K-alloc → ~188K usable (MEASURED, needle-recalled), but that is past
+#                  the author's 128K tested window — retrieval works to ~188K, full generative
+#                  quality >128K is unverified (CTX_SIZE=131072 for the strict card window). The
+#                  full 262K usable is beellama-only (unified KV, ~25% slower); mainline OOMs
+#                  at ~176K if you alloc 262K — keep CTX_SIZE<=200000.
+#              (3) Defaults to reasoning ON (this is a reasoning fine-tune); flip REASONING=off
+#                  for plain/agentic use. Decode is ~identical thinking on vs off.
+#   Engine-profile: llama-cpp-local
+#   Best for:  single-card Pi-style coding / terminal agents (repo work, debugging, tool-heavy) —
+#              ~29 prose / ~33 code decode TPS (short-prompt) + MTP, ~188K usable context
+#              (~23 t/s decode at ~188K depth — slows with context, as expected for llama.cpp).
+# ---------------------------------------------------------------------------
+# Qwen3.6-27B-MTP-pi-reasoning on mainline llama.cpp — single 3090, MTP, 200K-alloc (~188K usable), no vision.
+# Weights: bytkim/Qwen3.6-27B-MTP-pi-reasoning-GGUF (Q4_K_M, ~15.7 GiB, embedded MTP head).
+#
+# Near-clone of the base-model llamacpp/default (unsloth-q4km/mtp.yml) — same engine pin, KV,
+# spec flags and Cliff-survival -ub — pointed at the pi-reasoning weights, reasoning-ON, and
+# MTP n=2 (A/B'd 2026-06-17: n=2 peak on draft acceptance > n=1/3/4). Chosen over a
+# beellama/q4_0/q4_1 path because mainline decodes ~25%
+# faster on identical weights; the trade is the context ceiling (200K here vs beellama's 262K).
+#
+# Quick start:
+#   1. Get the GGUF (Q4_K_M, embedded MTP head):
+#        hf download bytkim/Qwen3.6-27B-MTP-pi-reasoning-GGUF Qwen3.6-27B-MTP-pi-reasoning-Q4_K_M.gguf \
+#          --local-dir $MODEL_DIR/qwen3.6-27b-mtp-pi-reasoning-gguf/q4km
+#   2. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f mtp.yml up -d
+#   3. curl http://localhost:8063/v1/models  → should list the model.
+#
+# Defaults follow the MODEL CARD (huggingface.co/bytkim/Qwen3.6-27B-MTP-pi-reasoning-GGUF):
+# temp 1.0, top-p 0.95, top-k 0, min-p 0, reasoning ON, q4_0/q4_0 KV, --jinja -ngl 99 -fa.
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE              path under /models
+#                          (default: qwen3.6-27b-mtp-pi-reasoning-gguf/q4km/Qwen3.6-27B-MTP-pi-reasoning-Q4_K_M.gguf)
+#   CTX_SIZE              KV pool size        (default: 200000-alloc → ~188K usable, MEASURED.
+#                          Keep <=200000: 262K-alloc OOMs at ~176K (bigger FA scratch = LESS usable).
+#                          131072 = the author's strict 128K tested window)
+#   BATCH_SIZE            llama.cpp -b        (default: 4096 — on mainline -b does NOT drive VRAM)
+#   UBATCH_SIZE          llama.cpp -ub       (default: 512)
+#   KV_TYPE              K and V quant type  (default: q4_0 — per card)
+#   NP                   parallel slots      (default: 1 — single card is compute-bound; -np>1 disables MTP)
+#   MTP_DRAFT_N_MAX      MTP draft tokens    (default: 2 — our on-rig A/B peak; the card recommends
+#                          3, within noise of 2 here — set =3 to match the card exactly)
+#   TEMP / TOP_K         sampling            (default: temp 1.0, top-k 0 — per card; NOT the stack's 0.6/20)
+#   PRESENCE_PENALTY     presence penalty    (default: 0; the card recommends 1.5 for DIRECT/instruct
+#                          mode i.e. REASONING=off — set it there, leave 0 for the thinking default)
+#   REASONING            thinking gate       (default: on — per card; pi-reasoning plans before acting)
+#   REASONING_FORMAT     reasoning routing   (default: deepseek — hygiene)
+#   PORT                 host port           (default: 8063)
+#   CUDA_VISIBLE_DEVICES which GPU to use    (default: 0)
+
+services:
+  llama-cpp-pi-reasoning:
+    # Pinned to b9246 (the validated mainline MTP build; rolling :server-cuda regressed at
+    # b9282, #187). Bump via env once a newer build is validated:
+    #   LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9246}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-pi-reasoning}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8063}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    # -np 1 is intentional on a single 24 GB card — extra slots divide a compute-bound GPU
+    # and -np>1 auto-disables MTP + can OOM the spec-context buffer.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.6-27b-mtp-pi-reasoning-gguf/q4km/Qwen3.6-27B-MTP-pi-reasoning-Q4_K_M.gguf}
+      -c ${CTX_SIZE:-200000}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-512}
+      -ngl 99
+      -fa on
+      --cache-type-k ${KV_TYPE:-q4_0}
+      --cache-type-v ${KV_TYPE:-q4_0}
+      -np ${NP:-1}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${MTP_DRAFT_N_MAX:-2}
+      --jinja
+      --reasoning ${REASONING:-on}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-1.0}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-0}
+      --min-p ${MIN_P:-0.0}
+      --presence-penalty ${PRESENCE_PENALTY:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [compute, utility]

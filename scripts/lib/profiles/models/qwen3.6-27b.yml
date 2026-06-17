@@ -204,6 +204,19 @@ weights:
     kind: gguf
     verify_glob: "*.gguf"
     manual_note: "Carnice-V2-27B Q8_0 GGUF (embedded MTP head) — the higher-quant DUAL-card variant (#403). Drives beellama/carnice-v2-dual-q8-mtp (embedded MTP, q8_0/q8_0 KV, full 262K). KV A/B chose q8_0 over the originally-spec'd kvarn6 (q8_0 +17% prefill, higher fidelity, reference path, fits 262K on dual — kvarn's compression only pays off on a tight single card). DFlash A/B ruled out (base-27B drafter ~10% accept on the fine-tune; no Carnice-matched drafter exists) → MTP-only. 2026-06-15."
+  pi-reasoning-q4km:
+    path: qwen3.6-27b-mtp-pi-reasoning-gguf/q4km
+    local_subdir: qwen3.6-27b-mtp-pi-reasoning-gguf/q4km
+    size_gb: 15.7
+    format: gguf
+    status: experimental
+    hf_repo: bytkim/Qwen3.6-27B-MTP-pi-reasoning-GGUF
+    files:
+      - Qwen3.6-27B-MTP-pi-reasoning-Q4_K_M.gguf
+    engine: beellama
+    kind: gguf
+    verify_glob: "*.gguf"
+    manual_note: "bytkim 'Pi-style' reasoning-supervised CODING/terminal-agent fine-tune of Qwen3.6-27B — Q4_K_M GGUF (~15.7 GiB) with EMBEDDED MTP head (--spec-type draft-mtp; no separate draft download). Drives llamacpp/qwen27b-pi-reasoning-single (MAINLINE llama.cpp b9246, single 3090, q4_0/q4_0 KV @ 200K-alloc/~188K usable + MTP n=2, reasoning-ON). CONFIG PER MODEL CARD: temp 1.0/top-p 0.95/top-k 0/min-p 0 (not the stack 0.6/20), card recommends n=3 (we kept on-rig-faster n=2, within noise). Context measured 2026-06-17: 200K-alloc fills ~188K with needle recall (~1.8GB free, ~23 t/s @188K); 262K-alloc OOMs ~176K (don't); author tested only 128K so >128K is engine-proven but card-unvalidated. Boot+bench-validated 2026-06-17: mainline loads the embedded MTP head clean. Canonical bench.sh (n=3, thinking-off): narrative 28.5/28.7 wall/decode, code 32.9/33.4, PP 743 tok/s — ~45% BELOW base llamacpp/default (50/59) on identical engine/KV/MTP, i.e. this fine-tune's MTP head is weak. Engine A/B: mainline ~25% faster than a beellama q4_0/q4_1 path → chose mainline. verify-stress/soak/quality ladder pending. 2026-06-17."
   beellama-q8kxl-dflash:
     path: qwen3.6-27b-gguf/unsloth-mtp-q8kxl
     local_subdir: qwen3.6-27b-gguf/unsloth-mtp-q8kxl
