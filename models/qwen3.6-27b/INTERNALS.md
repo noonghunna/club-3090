@@ -195,18 +195,32 @@ For Sandermage's documented numbers on his A5000 setup, see his [MODELS.md](http
 
 `vllm/qwen-27b-dual-lmcache` (compose `vllm-lmcache/compose/dual/fp8/lmcache.yml`, club-3090 #133) layers an LMCache tiered persistent prefix-KV cache onto the dual-max fidelity profile (FP8 + int8-PTH KV + MTP n=3). It caches each session's prefix KV so long multi-turn / multi-session workloads reuse context instead of re-prefilling (cold→warm TTFT ~7–8×). **Zero decode penalty** — controlled A/B (toggle only the connector): 74 narr / 94 code TPS == without LMCache, MTP intact (~83% accept). The offload is async/overlapped.
 
-**KV size: ~18.9 KB/token (measured)** for int8-PTH on this model → a full 262K-token session ≈ **4.72 GB** of KV.
+### Two KV rates — do not conflate them
+- **On-GPU live KV: ~18.9 KB/token** (int8-PTH) — this only sets the *max servable context* (a single 262K request needs ~4.72 GB of GPU KV pool). It is **NOT** the cache footprint.
+- **LMCache offload cache: ~131 KB/token, MEASURED** (L1 RAM 134, L2 disk 125 — from `lmcache_mp_l1_memory_usage_bytes` = 4.93 GB and 4.6 GB on disk, for a 36,808-token session). ~7× the GPU rate (LMCache stores a fuller representation). **Use this rate to size RAM and disk** — an earlier draft wrongly used the 18.9 GPU rate and overstated capacity ~7×.
 
-### RAM (the L1 tier — `--l1-size-gb`, env `LMCACHE_L1_GB`)
-The L1 cache lives in CPU RAM (in shared memory; `shm_size` must be ≥ `l1-size-gb` or LMCache silently falls back to slow pickle).
+### Cache sizing — RAM (L1) & disk (L2) vs context cached
+Per warm session (~131 KB/token):
 
-| `--l1-size-gb` | full 262K sessions | realistic 50K sessions | host RAM needed (l1 + ~28 GB vLLM+OS) |
-|--:|--:|--:|--:|
-| **30** (default) | ~6 | ~33 | ~58 GB |
-| 50 (max on 94 GB rig) | ~10 | ~55 | ~78 GB |
-| 100 | ~21 | ~110 | ~128 GB → **rejected** (> 94 GB → OOM) |
+| Context cached | cache size (RAM *or* disk) |
+|--:|--:|
+| 50K | ~6.5 GB |
+| 128K | ~17 GB |
+| 262K (full) | ~33 GB |
 
-⚠️ **Sizing is preflight-gated.** `scripts/preflight.sh::preflight_lmcache_ram` hard-fails launch if available RAM < `l1-size-gb` + 28 GB reserve — and it runs **even under `--force`** (incubating slugs launch with `--force`, but over-sizing the cache can OOM the host: a 100 GB cache on this 94 GB rig once forced a reboot, the incident that motivated this guard). Cap L1 at ~50 GB here; raise `shm_size` in the compose to match if you raise `LMCACHE_L1_GB`.
+How many sessions fit per tier:
+
+| Tier | ~50K sessions | ~262K sessions |
+|---|--:|--:|
+| **L1 RAM** `--l1-size-gb 30` (default; needs ~58 GB host RAM) | ~4 | <1 |
+| **L1 RAM** `--l1-size-gb 50` (cap on a 94 GB rig; ~78 GB host RAM) | ~7 | ~1.4 |
+| **L2 disk** 100 GB | ~15 | ~3 |
+| **L2 disk** 500 GB | ~76 | ~15 |
+| **L2 disk** 1 TB | ~155 | ~30 |
+
+**Rule of thumb:** a few *hot* sessions in L1 RAM, the long tail on L2 disk (rehydrate ~5 s vs ~43 s re-prefill — table below). L1 lives in shared memory, so `shm_size` must be ≥ `--l1-size-gb`.
+
+⚠️ **RAM sizing is preflight-gated.** `scripts/preflight.sh::preflight_lmcache_ram` hard-fails launch if available RAM < `l1-size-gb` + 28 GB reserve, **even under `--force`** (a 100 GB cache on this 94 GB rig once OOM'd the host and forced a reboot — the incident that motivated the guard); it also soft-warns on low L2 disk space. Cap L1 at ~50 GB here.
 
 ### Disk (the optional L2 tier — `LMCACHE_L2_ADAPTER`, off by default)
 Set `LMCACHE_L2_ADAPTER` to a JSON adapter spec to spill evicted (older) sessions from RAM to disk instead of dropping them, and to **survive container restarts**:

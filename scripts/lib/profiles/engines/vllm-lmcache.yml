@@ -57,9 +57,9 @@ notes: >-
   sessions reuse cached context instead of re-prefilling (cold→warm TTFT ~7-8x).
   Live-validated 2026-06-17 on the dual-max fidelity profile (FP8 weights + int8-PTH
   KV + MTP n=3, TP=2 @262K): boots, serves, MTP intact, ZERO decode penalty
-  (74 narr / 94 code TPS, == the same config without LMCache). KV ~18.9 KB/token
-  (measured) → a full 262K session ≈ 4.72 GB; --l1-size-gb 30 holds ~6 such sessions
-  (or ~33 realistic 50K ones). The KV offload is async/overlapped — it does NOT cost
+  (74 narr / 94 code TPS, == the same config without LMCache). LMCache cache footprint
+  ~131 KB/token MEASURED (~7x the GPU's 18.9 int8-PTH rate) → --l1-size-gb 30 holds ~4
+  realistic 50K sessions (or <1 full 262K). The KV offload is async/overlapped — it does NOT cost
   decode (an earlier "halves decode" claim was an uncontrolled-measurement error,
   retracted; see club-3090 #133). Boot requirements baked into the
   compose recipe: --mamba-cache-mode align + --max-num-batched-tokens >= block (1584

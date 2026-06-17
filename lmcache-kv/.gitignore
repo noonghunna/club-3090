@@ -1,0 +1,5 @@
+# LMCache L2 disk tier (gitignored runtime cache — KV chunks, multi-GB).
+# Default base_path for the vllm/qwen-27b-dual-lmcache compose when LMCACHE_L2=1.
+# Override to a faster/larger SSD via LMCACHE_L2_ADAPTER. See models/qwen3.6-27b/INTERNALS.md.
+*
+!.gitignore

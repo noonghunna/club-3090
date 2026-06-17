@@ -43,8 +43,10 @@
 #   - NO PYTORCH_CUDA_ALLOC_CONF=expandable_segments (INCOMPATIBLE with the MP connector)
 #   - shm_size >= --l1-size-gb (else SHM silently falls back to slow pickle)
 #
-# Capacity (int8-PTH ≈ 18.9 KB/token, measured → full 262K session ≈ 4.72 GB):
-#   --l1-size-gb 30 (default) → ~6 full 262K sessions, or ~33 realistic 50K sessions, in CPU RAM.
+# Capacity (LMCache cache ≈ 131 KB/token MEASURED — ~7x the GPU's 18.9 int8-PTH rate, which only
+# governs max servable context, NOT cache size):
+#   --l1-size-gb 30 (default) → ~4 realistic 50K sessions (or <1 full 262K) in CPU RAM.
+#   L2 disk same ~131 KB/token (~33 GB per 262K session). See INTERNALS.md for the full sizing table.
 #   Cap ~50 GB on a 94 GB rig (vLLM needs ~25 GB). Raising LMCACHE_L1_GB above ~34 also needs a
 #   bigger shm_size below. Add an L2 disk tier (LMCACHE_L2_ADAPTER) for unbounded + restart-survival.
 #
@@ -82,6 +84,10 @@ services:
       # froggeric chat template is shared from the vllm engine dir (model-scoped) —
       # one extra `../` vs dual-max because this compose lives under vllm-lmcache/.
       - ../../../../vllm/patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # L2 disk tier host dir — defaults to the gitignored repo-root lmcache-kv/ so LMCACHE_L2=1
+      # works with zero setup. Override the host path with LMCACHE_KV_DIR, or bypass entirely with
+      # LMCACHE_L2_ADAPTER (point at a faster/larger SSD). Mount is harmless when L2 is off.
+      - ${LMCACHE_KV_DIR:-../../../../../../lmcache-kv}:/lmcache-kv
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -99,13 +105,17 @@ services:
       - bash
       - -c
       - |
-        # LMCache MP server (L1 CPU-RAM cache; optional L2 disk via LMCACHE_L2_ADAPTER).
+        # LMCache MP server. L1 = CPU RAM (--l1-size-gb). L2 = optional disk, OFF by default:
+        #   LMCACHE_L2=1                -> enable L2 at the in-repo default /lmcache-kv (fs adapter)
+        #   LMCACHE_L2_ADAPTER='{...}'  -> full override (custom path/backend); wins over LMCACHE_L2
         # chunk-size MUST be a multiple of vLLM's unified block (1584 for int8-PTH KV).
-        lmcache server \
-          --chunk-size "${LMCACHE_CHUNK_SIZE:-1584}" \
-          --l1-size-gb "${LMCACHE_L1_GB:-30}" \
-          --eviction-policy LRU \
-          ${LMCACHE_L2_ADAPTER:+--l2-adapter "${LMCACHE_L2_ADAPTER}"} &
+        LM_ARGS=(--chunk-size "${LMCACHE_CHUNK_SIZE:-1584}" --l1-size-gb "${LMCACHE_L1_GB:-30}" --eviction-policy LRU)
+        if [ -n "${LMCACHE_L2_ADAPTER:-}" ]; then
+          LM_ARGS+=(--l2-adapter "${LMCACHE_L2_ADAPTER}")
+        elif [ "${LMCACHE_L2:-0}" = "1" ]; then
+          LM_ARGS+=(--l2-adapter '{"type":"fs","base_path":"/lmcache-kv"}')
+        fi
+        lmcache server "${LM_ARGS[@]}" &
         sleep 6
         exec vllm serve --disable-custom-all-reduce "$@"
       - --

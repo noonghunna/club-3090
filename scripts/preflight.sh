@@ -437,6 +437,26 @@ preflight_lmcache_ram() {
   fi
 
   echo "[preflight] lmcache: RAM ok — l1=${l1} GB needs ~${need} GB, ${avail_gb} GB available"
+
+  # L2 disk tier (optional) — soft-warn on low free space at the L2 host dir. L2 is OFF unless
+  # LMCACHE_L2=1 or LMCACHE_L2_ADAPTER is set; it grows ~33 GB per full 262K session (~131 KB/token,
+  # measured) and is unbounded, so a small disk can fill. Warn, don't fail — the user opted in.
+  if [[ -n "${LMCACHE_L2_ADAPTER:-}" || "${LMCACHE_L2:-0}" == "1" ]]; then
+    local l2dir="${LMCACHE_KV_DIR:-}"
+    if [[ -z "$l2dir" ]]; then
+      # default host dir = repo-root lmcache-kv/ (this compose sits 6 levels below the repo root)
+      l2dir="$(cd "$(dirname "$compose_file")/../../../../../.." 2>/dev/null && pwd)/lmcache-kv"
+    fi
+    local chkdir="$l2dir"; [[ -d "$chkdir" ]] || chkdir="$(dirname "$l2dir")"
+    local l2_avail_gb
+    l2_avail_gb="$(df -BG "$chkdir" 2>/dev/null | awk 'NR==2{gsub(/G/,"",$4); print $4}')"
+    if [[ -n "$l2_avail_gb" ]] && (( l2_avail_gb < 50 )); then
+      echo "[preflight] WARN:  LMCache L2 enabled, only ${l2_avail_gb} GB free at ${l2dir}." >&2
+      echo "            L2 is unbounded and grows ~33 GB per full 262K session — free space or point LMCACHE_L2_ADAPTER at a larger SSD." >&2
+    elif [[ -n "$l2_avail_gb" ]]; then
+      echo "[preflight] lmcache: L2 disk ok — ${l2_avail_gb} GB free at ${l2dir}"
+    fi
+  fi
   return 0
 }
 
