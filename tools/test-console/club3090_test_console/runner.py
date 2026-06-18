@@ -1,17 +1,26 @@
-"""Test runner — spawns and manages test subprocesses."""
+"""Test runner — c3t's test-specific wrapper over the shared streaming core.
+
+The generic subprocess-streaming engine (spawn + stdbuf + env-inject +
+set_callbacks + parse loop + cancel) now lives in
+``club3090_tui_core.runner.SubprocessRunner``.  This module keeps only the
+test-specific pieces: ``TestType``/``TestConfig``/``_build_command`` and the
+``RunState`` shape c3t's app + history records expect (which carries the
+``test_type``/``config``/``target`` triple the core's generic ``CoreRunState``
+deliberately does not).
+"""
 
 from __future__ import annotations
 
 import asyncio
 import os
-import signal
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from .detect import ServingTarget
 from .parsers import ParseEvent, TestType, get_parser
+from club3090_tui_core.runner import SubprocessRunner, CoreRunState
 
 
 @dataclass
@@ -55,7 +64,11 @@ class TestConfig:
 
 @dataclass
 class RunState:
-    """State of an active test run."""
+    """State of an active test run.
+
+    Carries the test-specific ``test_type``/``config``/``target`` triple plus
+    the generic run fields the core mirrors into it via callbacks.
+    """
     test_type: TestType
     config: TestConfig
     target: ServingTarget
@@ -84,17 +97,22 @@ class RunState:
 
 
 class TestRunner:
-    """Manages spawning and tracking of test subprocesses."""
+    """Manages spawning + tracking of test subprocesses.
+
+    A thin test-specific wrapper: it builds the command/env, delegates the
+    actual spawn + stream + parse to a shared :class:`SubprocessRunner`, and
+    mirrors the core's run-state back into c3t's richer :class:`RunState`.
+    """
 
     def __init__(self, repo_root: Path):
         self.repo_root = repo_root
         self.current_run: Optional[RunState] = None
-        self._process: Optional[asyncio.subprocess.Process] = None
-        self._cancel_event = asyncio.Event()
+        self.history: list[RunState] = []
         self._on_event: Optional[Callable[[ParseEvent], None]] = None
         self._on_line: Optional[Callable[[str], None]] = None
         self._on_complete: Optional[Callable[[RunState], None]] = None
-        self.history: list[RunState] = []
+        # Shared streaming engine.
+        self._core = SubprocessRunner(repo_root)
 
     def set_callbacks(
         self,
@@ -230,8 +248,20 @@ class TestRunner:
         full_cmd = ["stdbuf", "-oL", "-eL"] + args
         return full_cmd, env
 
+    def _mirror(self, state: RunState, core_state: CoreRunState) -> None:
+        """Copy the generic fields the core owns back into c3t's RunState."""
+        state.started = core_state.started
+        state.finished = core_state.finished
+        state.exit_code = core_state.exit_code
+        state.verdict = core_state.verdict
+        state.events = core_state.events
+        state.log_lines = core_state.log_lines
+        state.error = core_state.error
+        state.artifact_dir = core_state.artifact_dir
+        state.report_path = core_state.report_path
+
     async def start(self, config: TestConfig, target: ServingTarget) -> RunState:
-        """Start a test run."""
+        """Start a test run via the shared streaming engine."""
         state = RunState(
             test_type=config.test_type,
             config=config,
@@ -239,153 +269,55 @@ class TestRunner:
             started=time.time(),
         )
         self.current_run = state
-        self._cancel_event.clear()
 
         cmd, env = self._build_command(config)
+        parser = get_parser(config.test_type)
 
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=str(self.repo_root),
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,  # Merge stderr into stdout
-                start_new_session=True,  # Own process group for signal delivery
-            )
-        except Exception as e:
-            state.error = str(e)
-            state.finished = time.time()
-            state.exit_code = -1
-            state.verdict = "failed"
+        # Wire the core's callbacks to c3t's, mirroring core state into our
+        # RunState as it progresses so the app sees a single object.  The live
+        # core state is reachable via self._core.current_run (set synchronously
+        # inside start_raw, before the reader task runs).
+        def _on_event(event: ParseEvent) -> None:
+            if self._core.current_run is not None:
+                self._mirror(state, self._core.current_run)
+            if self._on_event:
+                self._on_event(event)
+
+        def _on_line(line: str) -> None:
+            if self._on_line:
+                self._on_line(line)
+
+        def _on_complete(core_state: CoreRunState) -> None:
+            self._mirror(state, core_state)
+            self.history.append(state)
+            self.current_run = None
             if self._on_complete:
                 self._on_complete(state)
-            return state
 
-        # Start the reader task
-        asyncio.create_task(self._read_output(state))
+        self._core.set_callbacks(
+            on_event=_on_event, on_line=_on_line, on_complete=_on_complete
+        )
+
+        core_state = await self._core.start_raw(
+            cmd, env, config.test_type.value, parser
+        )
+        # Mirror the initial spawn result (covers the immediate-failure path,
+        # where start_raw fires on_complete before returning).
+        self._mirror(state, core_state)
         return state
 
-    async def _read_output(self, state: RunState):
-        """Read subprocess output and parse it."""
-        parser = get_parser(state.test_type)
-        proc = self._process
-
-        try:
-            while True:
-                if self._cancel_event.is_set():
-                    break
-
-                try:
-                    line_bytes = await asyncio.wait_for(
-                        proc.stdout.readline(),
-                        timeout=1.0,
-                    )
-                except asyncio.TimeoutError:
-                    # Normal — retry
-                    continue
-
-                if not line_bytes:
-                    # EOF
-                    break
-
-                line = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
-                state.log_lines.append(line)
-
-                # Notify line callback
-                if self._on_line:
-                    self._on_line(line)
-
-                # Parse for structured events
-                event = parser.parse_line(line)
-                if event:
-                    state.events.append(event)
-
-                    # Extract artifacts/report from rebench
-                    if event.event_type == "rebench_report":
-                        state.report_path = event.data.get("path", "")
-                    elif event.event_type == "rebench_artifacts":
-                        state.artifact_dir = event.data.get("dir", "")
-                    elif event.event_type == "verdict":
-                        state.verdict = "passed" if event.data.get("status") == "passed" else "failed"
-
-                    if self._on_event:
-                        self._on_event(event)
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            state.error = str(e)
-
-        # Wait for process exit
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=10)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-
-        state.exit_code = proc.returncode
-        state.finished = time.time()
-
-        # Determine verdict from exit code if not set by parser
-        if not state.verdict:
-            if state.exit_code == 0:
-                state.verdict = "passed"
-            else:
-                state.verdict = "failed"
-
-        self.history.append(state)
-        self.current_run = None
-        self._process = None
-
-        if self._on_complete:
-            self._on_complete(state)
-
     async def cancel(self) -> list[str]:
-        """Cancel the current run. Returns list of orphaned container names if any."""
-        if not self._process:
-            return []
+        """Cancel the current run. Returns orphaned benchlocal containers if any."""
+        was_quality = (
+            self.current_run is not None
+            and self.current_run.test_type == TestType.QUALITY
+        )
 
-        was_quality = (self.current_run and 
-                       self.current_run.test_type == TestType.QUALITY)
+        await self._core.cancel()
 
-        self._cancel_event.set()
-        proc = self._process
-
-        # SIGINT first (graceful)
-        try:
-            pgid = os.getpgid(proc.pid)
-            os.killpg(pgid, signal.SIGINT)
-        except (ProcessLookupError, OSError):
-            pass
-
-        # Wait up to 5s
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except asyncio.TimeoutError:
-            # SIGTERM
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGTERM)
-            except (ProcessLookupError, OSError):
-                pass
-
-            # Wait up to 5s more
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                # SIGKILL
-                try:
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, OSError):
-                    pass
-                await proc.wait()
-
-        # Check for orphaned benchlocal containers (known issue with quality tests)
-        orphans = []
+        orphans: list[str] = []
         if was_quality:
             orphans = await self._check_benchlocal_orphans()
-        
         return orphans
 
     async def _check_benchlocal_orphans(self) -> list[str]:

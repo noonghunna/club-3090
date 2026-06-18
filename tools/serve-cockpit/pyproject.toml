@@ -9,6 +9,7 @@ description = "club-3090 serve cockpit — lazydocker-style TUI for the AI infer
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "club3090-tui-core>=0.1.0",
     "textual>=0.60",
     "rich>=13.0",
 ]
