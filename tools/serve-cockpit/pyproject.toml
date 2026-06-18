@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "club3090-cockpit"
+version = "0.1.0"
+description = "club-3090 serve cockpit — lazydocker-style TUI for the AI inference stack"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.60",
+    "rich>=13.0",
+]
+
+[project.scripts]
+c3 = "club3090_cockpit.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["club3090_cockpit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::pytest.PytestCollectionWarning",
+    "ignore::DeprecationWarning",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
+]
