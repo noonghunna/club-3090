@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "club3090-test-console"
+version = "0.1.0"
+description = "A lazydocker-style TUI for the club-3090 AI inference stack test suite"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.60",
+    "rich>=13.0",
+    "httpx>=0.25",
+]
+
+[project.scripts]
+c3t = "club3090_test_console.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["club3090_test_console"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::pytest.PytestCollectionWarning",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+    "pytest-asyncio>=1.4.0",
+]

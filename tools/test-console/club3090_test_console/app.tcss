@@ -1,0 +1,34 @@
+/* club3090 test console — Textual CSS */
+
+/* Dark theme by default */
+Screen {
+    background: $surface;
+}
+
+#main-layout {
+    height: 1fr;
+}
+
+#left-rail {
+    width: 38;
+    height: 1fr;
+    min-width: 32;
+    max-width: 42;
+}
+
+#live-pane {
+    width: 1fr;
+    height: 1fr;
+}
+
+/* Pane borders — accent on focus */
+TargetPane:focus-within,
+TestMenuPane:focus-within,
+LivePane:focus-within {
+    border: solid $accent;
+}
+
+/* Footer customization */
+Footer {
+    dock: bottom;
+}
