@@ -105,4 +105,26 @@ if [[ "$args" == *"--enable-thinking"* ]]; then
   exit 1
 fi
 
+# --- --max-tokens / MAX_TOKENS passthrough (overrides per-pack budget for BOTH arms) ---
+# Lets a verbose model that self-truncates the deterministic packs be benched at a
+# higher completion budget (benchlocal-cli already supports --max-tokens; this wires
+# the club-3090 wrapper to forward it).
+: > "$tmp_log"
+out="$(PATH="${tmp_bin}:$PATH" BENCHLOCAL_MOCK_LOG="$tmp_log" PREFLIGHT_NO_AUTODETECT=1 URL=http://mock MODEL=mock-model MAX_TOKENS=4096 bash scripts/quality-test.sh --quick 2>&1)"
+assert_contains "$out" "[quality-test] max tokens: 4096 (overrides the per-pack completion budget for both arms)"
+args="$(cat "$tmp_log")"
+assert_contains "$args" "--max-tokens 4096"
+
+# the --max-tokens flag form is equivalent to the MAX_TOKENS env var
+: > "$tmp_log"
+out="$(PATH="${tmp_bin}:$PATH" BENCHLOCAL_MOCK_LOG="$tmp_log" PREFLIGHT_NO_AUTODETECT=1 URL=http://mock MODEL=mock-model bash scripts/quality-test.sh --quick --max-tokens 2048 2>&1)"
+args="$(cat "$tmp_log")"
+assert_contains "$args" "--max-tokens 2048"
+
+# a non-integer --max-tokens is rejected (exit 2), like --thinking-max-tokens
+if PATH="${tmp_bin}:$PATH" PREFLIGHT_NO_AUTODETECT=1 URL=http://mock MODEL=mock-model bash scripts/quality-test.sh --quick --max-tokens abc >/dev/null 2>&1; then
+  echo "ASSERTION FAILED: --max-tokens accepted a non-integer" >&2
+  exit 1
+fi
+
 echo "test-quality-thinking: ok"

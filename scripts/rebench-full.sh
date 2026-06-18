@@ -86,6 +86,11 @@
 #   THINKING_MAX_TOKENS
 #                       Optional thinking budget forwarded to the 8-pack
 #                       reasoning-ON pass (--with-8pack-thinking=on|both).
+#   MAX_TOKENS          Optional completion budget forwarded to BOTH 8-pack
+#                       passes (off + on) as quality-test.sh --max-tokens —
+#                       overrides the per-pack ~1024 default. Raise for verbose
+#                       models that self-truncate the deterministic packs
+#                       (finish_reason=length before the final answer).
 #
 
 set -euo pipefail
@@ -334,6 +339,7 @@ URL="$URL" MODEL="$MODEL" \
 if [[ "$RUN_8PACK_OFF" == "1" ]]; then
   URL="$URL" MODEL="$MODEL" \
     SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
+    MAX_TOKENS="${MAX_TOKENS:-}" \
     NO_THINKING=1 \
     run_step quality-full "$OUT_DIR/quality-full.log" \
       bash "$ROOT_DIR/scripts/quality-test.sh" --full --no-thinking --sandbox-log-dir "$OUT_DIR"
@@ -350,6 +356,7 @@ if [[ "$RUN_8PACK_ON" == "1" ]]; then
   URL="$URL" MODEL="$MODEL" \
     SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}" \
     THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}" \
+    MAX_TOKENS="${MAX_TOKENS:-}" \
     ENABLE_THINKING=1 \
     run_step quality-thinking "$OUT_DIR/quality-full-thinking.log" \
       bash "$ROOT_DIR/scripts/quality-test.sh" --full --enable-thinking --sandbox-log-dir "$OUT_DIR"

@@ -106,6 +106,12 @@ OPTIONS (extra)
                    budget applies only to packs whose thinking gate resolves on
                    (pack default or --enable-thinking). Also settable via
                    THINKING_MAX_TOKENS env.
+  --max-tokens N   Forward to benchlocal-cli --max-tokens N — overrides the
+                   per-pack completion budget (~1024 default) for BOTH arms.
+                   Use when a verbose model truncates the deterministic packs
+                   (finish_reason=length) before emitting its final answer; the
+                   thinking arm still uses --thinking-max-tokens if that is set.
+                   Also settable via MAX_TOKENS env.
 
 ENV VARS
   URL              Endpoint base URL (default: auto-detected via preflight,
@@ -127,6 +133,10 @@ ENV VARS
   THINKING_MAX_TOKENS
                    Optional thinking budget passed through to benchlocal-cli.
                    Applies only to packs whose thinking gate resolves on.
+  MAX_TOKENS       Optional completion budget passed through to benchlocal-cli
+                   (--max-tokens) for BOTH arms — overrides the per-pack ~1024
+                   default. Raise for verbose models that self-truncate the
+                   deterministic packs. --max-tokens is equivalent.
 
 EXAMPLES
   bash scripts/quality-test.sh                          # --medium against running compose
@@ -199,6 +209,7 @@ SAMPLING_FROM_SERVER="${SAMPLING_FROM_SERVER:-0}"
 ENABLE_THINKING="${ENABLE_THINKING:-0}"
 NO_THINKING="${NO_THINKING:-0}"
 THINKING_MAX_TOKENS="${THINKING_MAX_TOKENS:-}"
+MAX_TOKENS="${MAX_TOKENS:-}"
 # #252: passthroughs to benchlocal-cli for the quality-baseline corpus —
 # --repeat (n>=3 aggregate), --previous-result (diff vs a baseline), and a
 # --save-json override (write the run to an explicit path, e.g. a baseline file).
@@ -274,6 +285,14 @@ while [[ $# -gt 0 ]]; do
       THINKING_MAX_TOKENS="${2:-}"
       if [[ -z "$THINKING_MAX_TOKENS" ]] || ! [[ "$THINKING_MAX_TOKENS" =~ ^[0-9]+$ ]]; then
         echo "✗ --thinking-max-tokens requires a positive integer" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --max-tokens)
+      MAX_TOKENS="${2:-}"
+      if [[ -z "$MAX_TOKENS" ]] || ! [[ "$MAX_TOKENS" =~ ^[0-9]+$ ]]; then
+        echo "✗ --max-tokens requires a positive integer" >&2
         exit 2
       fi
       shift 2
@@ -503,6 +522,10 @@ fi
 if [[ -n "$THINKING_MAX_TOKENS" ]]; then
   CLI_ARGS+=(--thinking-max-tokens "$THINKING_MAX_TOKENS")
   echo "[quality-test] thinking max tokens: $THINKING_MAX_TOKENS (applies to thinking-enabled packs)"
+fi
+if [[ -n "$MAX_TOKENS" ]]; then
+  CLI_ARGS+=(--max-tokens "$MAX_TOKENS")
+  echo "[quality-test] max tokens: $MAX_TOKENS (overrides the per-pack completion budget for both arms)"
 fi
 
 # Run; capture exit code so we can also try to emit the compact one-liner
