@@ -1,16 +1,17 @@
 """club3090 serve cockpit — main Textual application.
 
-All four modes are wired to the real data layer (``services.CockpitData`` +
-``data.py`` shapes), reusing the shared core (``club3090_tui_core``) for detect /
-streaming / widgets.
+The three modes (Run · Estate · Validate) are wired to the real data layer
+(``services.CockpitData`` + ``data.py`` shapes), reusing the shared core
+(``club3090_tui_core``) for detect / streaming / widgets.  (R1 folded the former
+Discover + Serve + Benchmarks modes into a single Run mode.)
 
-  - Discover / Catalog  : real enriched rows from ``CockpitData.load_catalog``;
-                          ``e`` opens ``explain``, ``/`` filters, ``⏎`` → Serve.
-  - Discover / BYO       : ``CockpitData.byo_check`` → fit verdict + swap_path.
-  - Serve               : plan-confirm modal (§7 #8) — the tears-down line comes
-                          from ``reconcile_before_write``; ``⏎`` commits the GATED
-                          ``serve(slug)`` (NOT --force) streamed via the core
-                          SubprocessRunner; ``F`` surfaces the force override.
+  - Run / Catalog        : real enriched rows from ``CockpitData.load_catalog``;
+                          ``e`` opens ``explain`` (incl. the folded-in cross-rig
+                          benchmark rows), ``/`` filters, ``⏎`` builds the GATED
+                          ``serve(slug)`` plan and opens the reconcile-gated
+                          ConfirmActionScreen — on confirm the boot streams into
+                          the transient Run LivePane (#serve-live).
+  - Run / BYO            : ``CockpitData.byo_check`` → fit verdict + swap_path.
   - Estate / Orch        : ``estate_state`` live (GPU cards, Doctor, scenes,
                           services, power-cap); scene-switch → confirm modal that
                           FIRST calls ``reconcile_before_write`` then ``scene_switch``;
@@ -22,7 +23,6 @@ streaming / widgets.
                           gotchas inline.
   - Validate / Doctor    : real cards from ``doctor()`` (health + diagnose-estate
                           + diagnose-profile).
-  - Validate / Benchmarks: the real ``benchmarks_explorer()`` (filter + sort).
   - Validate / Evidence  : ``evidence_list()`` run tags; ``⏎`` opens the
                           ``evidence_report()`` modal; ``s`` stages the gated
                           submit-to-localmaxxing (outward NETWORK write, never auto).
@@ -98,6 +98,50 @@ def _status_glyph(status: str) -> str:
     return _STATUS_GLYPH.get(status.lower(), status)
 
 
+def _canon_engine_family(label: str) -> str:
+    """Collapse an engine label to a coarse FAMILY key so the registry's
+    slug-engine space and the BENCHMARKS.md scrape space compare equal.
+
+    The registry emits e.g. ``llama-cpp-local`` (for BOTH llamacpp/* and
+    ik-llama/* slugs), ``vllm-stable``, ``vllm-gemma-stable``, ``beellama-local``;
+    the BENCHMARKS.md scrape derives ``llamacpp`` / ``ik-llama`` / ``vllm`` /
+    ``beellama`` from the compose-cell prefix.  A raw substring test misses the
+    llama.cpp family entirely (``"llama-cpp-local" in "llamacpp"`` is False in
+    both directions), silently dropping every llama.cpp cross-rig row — so reduce
+    both sides to a shared family token instead.  Returns "" for blank/unknown."""
+    norm = (label or "").strip().lower().replace("_", "").replace("-", "")
+    if not norm:
+        return ""
+    if "ikllama" in norm or "llamacpp" in norm:
+        return "llama-cpp"
+    if norm.startswith("vllm"):
+        return "vllm"
+    if norm.startswith("beellama"):
+        return "beellama"
+    if norm.startswith("sglang"):
+        return "sglang"
+    return norm
+
+
+def _bench_row_matches(row: BenchRow, model: str, engine: str) -> bool:
+    """Whether a cross-rig BenchRow belongs to a slug's (model, engine).
+
+    Model must match exactly (the catalog slug and the BENCHMARKS.md scrape use
+    the same model id).  Engine is matched by FAMILY (see _canon_engine_family):
+    the registry label (``llama-cpp-local`` / ``vllm-stable``) and the scrape
+    engine (``llamacpp`` / ``ik-llama`` / ``vllm``) live in different label
+    spaces, so both are reduced to a coarse family key before comparing.  A blank
+    engine on either side (e.g. a bare ``*.yml`` scrape cell with no prefix)
+    matches on model alone — the row is still that model's data, shown in the
+    clearly-labelled cross-rig section."""
+    if model and row.model != model:
+        return False
+    rf, sf = _canon_engine_family(row.engine), _canon_engine_family(engine)
+    if not rf or not sf:
+        return True
+    return rf == sf
+
+
 # ── Help modal ────────────────────────────────────────────────────────────────
 
 
@@ -131,24 +175,25 @@ class HelpScreen(ModalScreen):
     HELP_TEXT = """\
 [bold]Keybindings[/bold]
 
-  [cyan]1[/cyan]  Discover    [cyan]2[/cyan]  Serve    [cyan]3[/cyan]  Estate    [cyan]4[/cyan]  Validate
+  [cyan]1[/cyan]  Run    [cyan]2[/cyan]  Estate    [cyan]3[/cyan]  Validate
   [cyan]r[/cyan]  Refresh (re-reads the live data layer for the active mode)
-  [cyan]/[/cyan]  Filter (Discover · Catalog · or Validate · Benchmarks)
-  [cyan]e[/cyan]  Explain selected slug (Discover · Catalog)
-  [cyan]⏎[/cyan]  Primary action (serve / launch / switch scene / run step / open report)
-  [cyan]F[/cyan]  Force override (Serve — surfaced, requires a reason)
+  [cyan]/[/cyan]  Filter (Run · Catalog)
+  [cyan]e[/cyan]  Explain selected slug (Run · Catalog — incl. cross-rig benchmarks)
+  [cyan]⏎[/cyan]  Primary action (serve / switch scene / run step / open report)
   [cyan]?[/cyan]  This help        [cyan]q[/cyan]  Quit
 
+[bold]Run · Catalog[/bold]
+  [cyan]⏎[/cyan] serve selected slug (reconcile-gated confirm; F to Force the teardown)
+  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default
+  [cyan]P[/cyan] ▸ Promote a fit-checked BYO model to the catalog (scaffold + gated write)
+  [cyan]O[/cyan] ▸ Optimize for my card (v0.10.0 seam — not available yet)
 [bold]Estate · Orchestration[/bold]
   [cyan]o[/cyan] stop all   [cyan]c[/cyan] power-cap on/off   [cyan]w[/cyan] cap sweep   [cyan]p[/cyan] prune images   (all gated)
   [cyan]v[/cyan] ▸ Evaluate the running target via c3t (confirm-gated · mock-only this phase)
 [bold]Estate · Containers[/bold]
   [cyan]l[/cyan] logs   [cyan]t[/cyan] top (read)   [cyan]s[/cyan] restart   [cyan]x[/cyan] stop   [cyan]X[/cyan] rm   (writes gated)
-[bold]Discover[/bold]
-  [cyan]P[/cyan] ▸ Promote a fit-checked BYO model to the catalog (scaffold + gated write)
-  [cyan]O[/cyan] ▸ Optimize for my card (v0.10.0 seam — not available yet)
 [bold]Validate[/bold]
-  Run: [cyan]⏎[/cyan] launch step (gated)   Benchmarks: [cyan]/[/cyan] filter [cyan]t[/cyan] sort
+  Run: [cyan]⏎[/cyan] launch step (gated)
   Evidence: [cyan]⏎[/cyan] open report   [cyan]s[/cyan] submit to localmaxxing (gated · never auto)
 
 [bold]Safety — the reconcile gate[/bold]
@@ -180,7 +225,7 @@ class HelpScreen(ModalScreen):
         self.app.pop_screen()
 
 
-# ── Discover · Catalog ─────────────────────────────────────────────────────────
+# ── Run · Catalog ─────────────────────────────────────────────────────────
 
 
 class CatalogPane(Container):
@@ -227,7 +272,10 @@ class CatalogPane(Container):
 
     def on_mount(self) -> None:
         table = self.query_one("#catalog-table", DataTable)
-        table.add_columns("slug", "engine", "fit", "ctx", "TPS", "8pk", "status", "source")
+        # Fold 3: the TPS / 8-pack columns are OUR-RIG measurements (cross-rig
+        # rows live in the explain drill-down) — label them so cross-rig ambiguity
+        # is gone now that the standalone Benchmarks tab is retired.
+        table.add_columns("slug", "engine", "fit", "ctx", "TPS (our rig)", "8pk (our rig)", "status", "source")
         # Full enriched catalog, and the current filter substring.
         self._entries: list[CatalogEntry] = []
         self._filter: str = ""
@@ -375,17 +423,50 @@ class ExplainScreen(ModalScreen):
         Binding("e", "dismiss", "Close"),
     ]
 
-    def __init__(self, slug: str, **kwargs):
+    def __init__(self, slug: str, *, model: str = "", engine: str = "", **kwargs):
         super().__init__(**kwargs)
         self._slug = slug
+        # (model, engine) drive the cross-rig benchmark fold (Fold 3).
+        self._model = model
+        self._engine = engine
+        # Cached detail (our-rig story) so the cross-rig benchmark rows folded in
+        # from the retired Benchmarks tab can be appended once they arrive.
+        self._detail: Optional[dict] = None
+        self._detail_error: Optional[str] = None
+        self._cross_rig: list[BenchRow] = []
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(f"Explain · {self._slug}", classes="explain-title")
             yield Static("Loading detail…", id="explain-body")
 
+    def on_mount(self) -> None:
+        # Load detail + cross-rig AFTER mount (so the body query resolves) —
+        # mirrors ConfirmActionScreen / EvidenceReportScreen.  Avoids the race
+        # where a worker's set_detail runs before compose() mounts #explain-body.
+        self.app.run_explain(self, self._slug)  # type: ignore[attr-defined]
+        self.app.load_cross_rig_for_explain(  # type: ignore[attr-defined]
+            self, self._model, self._engine
+        )
+
     def set_detail(self, detail: Optional[dict], error: Optional[str]) -> None:
+        self._detail = detail
+        self._detail_error = error
+        self._rerender()
+
+    def set_cross_rig(self, rows: list[BenchRow]) -> None:
+        """Fold the cross-rig benchmark rows (from the retired Validate ·
+        Benchmarks tab / ``benchmarks_explorer``) for this slug's (model, engine)
+        into the drill-down so that cross-rig data is never silently dropped."""
+        self._cross_rig = list(rows)
+        # Only re-render once detail has loaded (set_detail drives the body); if
+        # cross-rig arrives first this is a no-op until set_detail fires.
+        if self._detail is not None or self._detail_error is not None:
+            self._rerender()
+
+    def _rerender(self) -> None:
         body = self.query_one("#explain-body", Static)
+        detail, error = self._detail, self._detail_error
         if error or detail is None:
             body.update(f"[red]explain failed:[/red] {error or 'no data'}")
             return
@@ -412,7 +493,7 @@ class ExplainScreen(ModalScreen):
             lines.append(f"  [bold]Max ctx[/bold] {fit.get('max_ctx')}")
         if benches:
             lines.append("")
-            lines.append("  [bold]Measured[/bold]")
+            lines.append("  [bold]Measured (our rig)[/bold]")
             # Fix 3: the REAL shape is [{"row","columns"}]; TPS lives in
             # columns[4] — NOT invented {"narr_tps":…} keys.  Parse each
             # record via measurement_from_explain_columns so the modal shows
@@ -429,6 +510,23 @@ class ExplainScreen(ModalScreen):
         else:
             lines.append("")
             lines.append("  [dim]no structured benchmarks for this slug[/dim]")
+        # Cross-rig benchmark rows folded in from the retired Benchmarks tab — the
+        # explorer corpus + BENCHMARKS.md scrapes for this (model, engine).  These
+        # are NOT our-rig numbers; label them so cross-rig data isn't mistaken for
+        # the local measurement.
+        if self._cross_rig:
+            lines.append("")
+            lines.append("  [bold]Cross-rig benchmarks[/bold] [dim](other rigs / scrapes)[/dim]")
+            for r in self._cross_rig[:6]:
+                topo = r.topology or "—"
+                ctx = r.max_ctx or "—"
+                q = r.quality_label
+                src = "md" if r.source == "benchmarks.md" else (r.source or "—")
+                d = r.date or ""
+                lines.append(
+                    f"    {topo}: {r.tps_label} TPS · {ctx} · 8pk {q}  "
+                    f"[dim]{src} {d}[/dim]"
+                )
         lines.append("")
         lines.append("  [dim]Esc / e to close[/dim]")
         body.update("\n".join(lines))
@@ -437,7 +535,7 @@ class ExplainScreen(ModalScreen):
         self.app.pop_screen()
 
 
-# ── Discover · Bring-your-own ────────────────────────────────────────────────────
+# ── Run · Bring-your-own ────────────────────────────────────────────────────
 
 
 class ByoPane(Container):
@@ -543,100 +641,6 @@ class ByoPane(Container):
             lines.append("")
             lines.append(f"  [dim]{res.note}[/dim]")
         card.update("\n".join(lines))
-
-
-# ── Serve pane ───────────────────────────────────────────────────────────────────
-
-
-class ServePane(Container):
-    """Serve mode: the live plan-confirm box (§7 #8) + boot LivePane."""
-
-    DEFAULT_CSS = """
-    ServePane {
-        height: 1fr;
-        padding: 1 1;
-    }
-    ServePane #serve-heading {
-        text-style: bold;
-        margin: 0 1 1 1;
-    }
-    ServePane #serve-plan-box {
-        border: solid $primary;
-        padding: 1 2;
-        height: auto;
-        margin: 0 1 1 1;
-    }
-    ServePane #serve-plan-title {
-        text-style: bold;
-        color: $accent;
-        margin-bottom: 1;
-    }
-    ServePane #serve-btn-row {
-        height: 3;
-        margin: 0 1 1 1;
-    }
-    ServePane #serve-launch-btn {
-        width: 14;
-    }
-    ServePane #serve-force-btn {
-        width: 12;
-        margin-left: 1;
-    }
-    ServePane #serve-cancel-btn {
-        width: 12;
-        margin-left: 1;
-    }
-    ServePane LivePane {
-        height: 1fr;
-        margin: 0 1;
-    }
-    """
-
-    def compose(self) -> ComposeResult:
-        yield Label("Serve", id="serve-heading")
-        with Container(id="serve-plan-box"):
-            yield Label("Launch plan", id="serve-plan-title")
-            yield Static(
-                "[dim]No slug selected.  Pick a row in Discover · Catalog and press "
-                "⏎ to stage a launch plan here.[/dim]",
-                id="serve-plan-detail",
-            )
-        with Horizontal(id="serve-btn-row"):
-            yield Button("⏎ Launch", id="serve-launch-btn", variant="success")
-            yield Button("F Force", id="serve-force-btn", variant="warning")
-            yield Button("Esc Cancel", id="serve-cancel-btn")
-        yield LivePane(id="serve-live")
-
-    def show_plan(self, entry: CatalogEntry) -> None:
-        """Render the staged launch plan for a selected catalog entry (pre-gate)."""
-        fit = entry.fit
-        fit_glyphs = {
-            "fits-clean": "[green]● fits-clean[/green]",
-            "fits-constrained": "[yellow]◐ fits-constrained[/yellow]",
-            "wont-fit": "[red]○ won't-fit[/red]",
-            "skip": "[dim]· (ik/llama — kv-calc skipped)[/dim]",
-            "unknown": "[dim]· unknown[/dim]",
-        }
-        fit_line = fit_glyphs.get(fit.verdict, fit.verdict)
-        if fit.vram_est_gb is not None:
-            fit_line += f"  ~{fit.vram_est_gb:.1f} GiB"
-        detail = [
-            f"  [bold]Slug[/bold]      {entry.slug}",
-            f"  [bold]Engine[/bold]    {entry.engine}",
-            f"  [bold]Status[/bold]    {_status_glyph(entry.status)} {entry.status}",
-            f"  [bold]Fit[/bold]       {fit_line}",
-            f"  [bold]Max ctx[/bold]   {entry.ctx_label or '—'}",
-        ]
-        if entry.status_note:
-            detail.append(f"  [bold]Caveat[/bold]    [yellow]{entry.status_note}[/yellow]")
-        detail.append("  [dim]⏎ Launch (gated) · F Force (surfaced override) · Esc Cancel[/dim]")
-        self.query_one("#serve-plan-detail", Static).update("\n".join(detail))
-
-    def clear_plan(self) -> None:
-        self.query_one("#serve-plan-detail", Static).update(
-            "[dim]No slug selected.  Pick a row in Discover · Catalog and press "
-            "⏎ to stage a launch plan here.[/dim]"
-        )
 
 
 # ── Confirm modal (used for serve + scene + container writes) ────────────────────
@@ -1335,7 +1339,7 @@ class ValidateDoctorPane(Container):
     def _render_profile(self, tri) -> None:
         body = self.query_one("#doctor-profile-body", Static)
         if tri is None:
-            body.update("[dim]no target slug — serve a model or pick one in Discover to triage[/dim]")
+            body.update("[dim]no target slug — serve a model or pick one in Run to triage[/dim]")
             return
         if tri.error and not tri.steps:
             body.update(f"[red]✗[/red]  {tri.error}")
@@ -1353,166 +1357,6 @@ class ValidateDoctorPane(Container):
             g = step_glyph.get(s.status, "·")
             lines.append(f"    {g} [{s.num}/{s.total}] {s.name}")
         body.update("\n".join(lines))
-
-
-class ValidateBenchmarksPane(Container):
-    """Validate / Benchmarks tab: the real explorer from ``benchmarks_explorer``.
-
-    Rows come from the #249 measurement-record corpus (authoritative TPS/ctx)
-    with a BENCHMARKS.md scrape fallback (carries the 8-pack).  ``/`` filters on
-    (model / engine / topology); ``t`` cycles the sort key (TPS / 8pk / model).
-    A coarse markdown-scraped row is flagged ``md`` in the source column so it's
-    never mistaken for a structured record."""
-
-    DEFAULT_CSS = """
-    ValidateBenchmarksPane {
-        height: 1fr;
-    }
-    ValidateBenchmarksPane #bmk-heading {
-        text-style: bold;
-        padding: 0 1;
-        margin: 0 1 0 1;
-    }
-    ValidateBenchmarksPane #bmk-status {
-        height: 1;
-        color: $text-muted;
-        padding: 0 1;
-        margin: 0 1;
-    }
-    ValidateBenchmarksPane Input#bmk-filter {
-        height: 3;
-        margin: 0 1;
-    }
-    ValidateBenchmarksPane #bmk-table {
-        height: 1fr;
-        margin: 0 1 0 1;
-    }
-    ValidateBenchmarksPane #bmk-hint {
-        padding: 0 1;
-        margin: 0 1;
-        color: $text-muted;
-    }
-    """
-
-    # Sort keys cycled by [t].  (label, key-fn) — None TPS sorts last.
-    _SORT_KEYS = ("tps", "8pk", "model")
-
-    def compose(self) -> ComposeResult:
-        yield Label("Benchmarks", id="bmk-heading")
-        yield Label("Loading benchmarks…", id="bmk-status")
-        # Filter Input is mounted lazily on first toggle (toggle_filter) rather
-        # than shipped display:none — keeps the inactive-tab tree minimal.
-        bt: DataTable = DataTable(id="bmk-table", zebra_stripes=True, show_cursor=True)
-        bt.cursor_type = "row"
-        yield bt
-        yield Label(
-            "[dim]\\[/] filter   \\[t] sort (TPS / 8pk / model)   "
-            "* = BENCHMARKS.md scrape[/dim]",
-            id="bmk-hint",
-        )
-
-    def on_mount(self) -> None:
-        t = self.query_one("#bmk-table", DataTable)
-        t.add_columns("Model", "Engine", "Topo", "TPS (n/c)", "ctx", "8pk", "src")
-        self._rows: list[BenchRow] = []
-        self._filter: str = ""
-        self._sort: str = "tps"
-
-    def populate(self, rows: list[BenchRow], error: Optional[str]) -> None:
-        status = self.query_one("#bmk-status", Label)
-        if error and not rows:
-            self._rows = []
-            self.query_one("#bmk-table", DataTable).clear()
-            status.update(f"[yellow]{error}[/yellow]")
-            return
-        self._rows = list(rows)
-        self._render_table()
-
-    def _render_table(self) -> None:
-        # NB: named ``_render_table`` (NOT ``_render``) — ``Widget._render`` is a
-        # Textual internal that must return a Visual; shadowing it with a
-        # table-rebuild that returns None makes the pane render a None visual and
-        # crashes the whole app when the tab is shown.
-        status = self.query_one("#bmk-status", Label)
-        t = self.query_one("#bmk-table", DataTable)
-        t.clear()
-        rows = self._sorted(self._filtered())
-        for r in rows:
-            tps = r.tps_label
-            src = "md" if r.source == "benchmarks.md" else r.source or "—"
-            if r.source == "benchmarks.md" and tps != "—":
-                tps = f"{tps}*"
-            t.add_row(
-                r.model or "—",
-                r.engine or "—",
-                r.topology or "—",
-                tps,
-                r.max_ctx or "—",
-                r.quality_label,
-                src,
-            )
-        sort_label = {"tps": "TPS", "8pk": "8pk", "model": "model"}[self._sort]
-        if self._filter:
-            status.update(
-                f"{len(rows)} / {len(self._rows)} rows  ·  filter {self._filter!r}  ·  sort {sort_label}"
-            )
-        else:
-            status.update(f"{len(self._rows)} benchmark rows  ·  sort {sort_label}")
-
-    def _filtered(self) -> list[BenchRow]:
-        if not self._filter:
-            return self._rows
-        f = self._filter.lower()
-        return [
-            r for r in self._rows
-            if f in f"{r.model} {r.engine} {r.topology}".lower()
-        ]
-
-    def _sorted(self, rows: list[BenchRow]) -> list[BenchRow]:
-        if self._sort == "model":
-            return sorted(rows, key=lambda r: (r.model, r.engine, r.topology))
-        if self._sort == "8pk":
-            # "109/150" → 109; missing sorts last.
-            def q(r: BenchRow) -> int:
-                if not r.quality_8pk:
-                    return -1
-                head = r.quality_8pk.split("/")[0].strip()
-                return int(head) if head.isdigit() else -1
-            return sorted(rows, key=q, reverse=True)
-        # default: code TPS desc, None last.
-        return sorted(rows, key=lambda r: (r.code_tps if r.code_tps is not None else -1.0), reverse=True)
-
-    def set_filter(self, text: str) -> None:
-        self._filter = (text or "").strip()
-        self._render_table()
-
-    def cycle_sort(self) -> None:
-        i = self._SORT_KEYS.index(self._sort)
-        self._sort = self._SORT_KEYS[(i + 1) % len(self._SORT_KEYS)]
-        self._render_table()
-
-    def toggle_filter(self) -> None:
-        """Mount/unmount the filter Input on toggle — it only exists while the
-        filter is open (keeps the pane tree minimal otherwise)."""
-        existing = self.query("#bmk-filter")
-        if existing:
-            existing.first(Input).remove()
-            self.query_one("#bmk-table", DataTable).focus()
-            return
-        inp = Input(placeholder="filter model / engine / topology…", id="bmk-filter")
-        self.mount(inp, before=self.query_one("#bmk-table", DataTable))
-        inp.focus()
-
-    def close_filter_if_open(self) -> bool:
-        """Esc/cancel: unmount + clear the filter and refocus the table. Returns
-        True if a filter was actually open (so the app can swallow the Esc)."""
-        existing = self.query("#bmk-filter")
-        if existing:
-            existing.first(Input).remove()
-            self.set_filter("")
-            self.query_one("#bmk-table", DataTable).focus()
-            return True
-        return False
 
 
 class ValidateEvidencePane(Container):
@@ -1867,14 +1711,13 @@ class OptimizeScreen(ModalScreen):
 
 
 MODES = [
-    ("Discover", "1"),
-    ("Serve", "2"),
-    ("Estate", "3"),
-    ("Validate", "4"),
+    ("Run", "1"),
+    ("Estate", "2"),
+    ("Validate", "3"),
 ]
 
 # Per-mode primary action (what ⏎ does), by mode index.
-PRIMARY_ACTIONS = ["Serve", "Launch", "Switch scene", "Run"]
+PRIMARY_ACTIONS = ["Serve", "Switch scene", "Run"]
 
 
 class RailStatus(Static):
@@ -1888,7 +1731,7 @@ class RailStatus(Static):
         "\n"
         "[dim]detecting…[/dim]\n"
         "\n"
-        "[dim]press 3 (Estate) to poll[/dim]"
+        "[dim]press 2 (Estate) to poll[/dim]"
     )
 
     def __init__(self, **kwargs):
@@ -1923,7 +1766,7 @@ class RailStatus(Static):
 
 class ModeSwitcher(Static):
     """Left-rail mode selector — navigation is driven by CockpitApp via the
-    1–4 digit bindings; this is the visual highlight."""
+    1–3 digit bindings; this is the visual highlight."""
 
     DEFAULT_CSS = """
     ModeSwitcher {
@@ -1990,7 +1833,7 @@ class ModeSwitcher(Static):
 
 
 class CockpitApp(App):
-    """club3090 serve cockpit — all four modes wired to the live data layer."""
+    """club3090 serve cockpit — all three modes (Run · Estate · Validate) wired to the live data layer."""
 
     TITLE = "club3090 cockpit"
     SUB_TITLE = "wired"
@@ -2005,12 +1848,11 @@ class CockpitApp(App):
         # Context-sensitive — check_action enables/shows them only in the right mode.
         Binding("slash", "filter_catalog", "Filter", show=False),
         Binding("e", "explain", "Explain", show=False),
-        Binding("1", "mode_discover", "Discover", show=True),
-        Binding("2", "mode_serve", "Serve", show=True),
-        Binding("3", "mode_estate", "Estate", show=True),
-        Binding("4", "mode_validate", "Validate", show=True),
+        Binding("1", "mode_run", "Run", show=True),
+        Binding("2", "mode_estate", "Estate", show=True),
+        Binding("3", "mode_validate", "Validate", show=True),
         Binding("enter", "primary_action", "Select", show=True),
-        # Catalog (Discover) — default pin management (.env write, gated=no GPU).
+        # Catalog (Run) — default pin management (.env write, gated=no GPU).
         Binding("d", "set_default", "Set default", show=False),
         Binding("D", "clear_default", "Clear default", show=False),
         # Estate · Containers — logs (read) + restart/stop (gated writes).
@@ -2030,8 +1872,8 @@ class CockpitApp(App):
         Binding("t", "context_t", "Top / Sort", show=False),
         # Phase 5 — the three v2 hooks:
         #   [v] Estate · evaluate the running target via c3t (confirm-gated, mock-only)
-        #   [P] Discover · promote the BYO model to the catalog (scaffold + gated write)
-        #   [O] Discover/Serve · optimize for my card (dormant v0.10.0 seam)
+        #   [P] Run · promote the BYO model to the catalog (scaffold + gated write)
+        #   [O] Run · optimize for my card (dormant v0.10.0 seam)
         Binding("v", "evaluate_target", "Evaluate", show=False),
         Binding("P", "promote_catalog", "Promote", show=False),
         Binding("O", "optimize_card", "Optimize", show=False),
@@ -2066,6 +1908,16 @@ class CockpitApp(App):
     .mode-panel.active {
         display: block;
     }
+    /* Transient Run boot-output pane — hidden until a serve commits, then
+       revealed (and given height) so the boot log streams below the catalog. */
+    #panel-run > #serve-live {
+        display: none;
+    }
+    #panel-run > #serve-live.serving {
+        display: block;
+        height: 12;
+        margin: 0 1 1 1;
+    }
     """
 
     # ── Dynamic binding visibility ─────────────────────────────────────────────────
@@ -2073,7 +1925,7 @@ class CockpitApp(App):
     # Actions that are always active regardless of mode or focused widget.
     _ALWAYS_ON: frozenset[str] = frozenset({
         "quit", "help", "refresh",
-        "mode_discover", "mode_serve", "mode_estate", "mode_validate",
+        "mode_run", "mode_estate", "mode_validate",
         "primary_action",
     })
 
@@ -2082,27 +1934,29 @@ class CockpitApp(App):
     # None meaning "any sub-tab in those modes" (used for whole-mode keys).
     # The sub-tab cycle keys are handled separately below.
     _CONTEXT_KEYS: dict[str, tuple[set[int], Optional[set[str]]]] = {
-        # Discover / Catalog only
-        "filter_catalog":   ({0, 3}, {"tab-catalog", "tab-benchmarks"}),  # Discover·Catalog or Validate·Benchmarks
-        "explain":          ({0}, None),          # Discover (any sub-tab — no-ops on BYO, harmless)
-        "set_default":      ({0}, None),          # Discover · Catalog (guards inside action)
-        "clear_default":    ({0}, None),          # Discover · Catalog
-        "promote_catalog":  ({0}, None),          # Discover
-        "optimize_card":    ({0, 1}, None),       # Discover + Serve
+        # Run / Catalog only
+        "filter_catalog":   ({0}, {"tab-catalog"}),  # Run · Catalog
+        "explain":          ({0}, None),          # Run (any sub-tab — no-ops on BYO, harmless)
+        "set_default":      ({0}, None),          # Run · Catalog (guards inside action)
+        "clear_default":    ({0}, None),          # Run · Catalog
+        "promote_catalog":  ({0}, None),          # Run
+        "optimize_card":    ({0}, None),          # Run
         # Estate · Orchestration
-        "estate_off":       ({2}, {"tab-orchestration"}),
-        "power_cap_toggle": ({2}, {"tab-orchestration"}),
-        "power_cap_sweep":  ({2}, {"tab-orchestration"}),
-        "prune_images":     ({2}, {"tab-orchestration"}),
-        "evaluate_target":  ({2}, None),          # Estate (either tab)
+        "estate_off":       ({1}, {"tab-orchestration"}),
+        "power_cap_toggle": ({1}, {"tab-orchestration"}),
+        "power_cap_sweep":  ({1}, {"tab-orchestration"}),
+        "prune_images":     ({1}, {"tab-orchestration"}),
+        "evaluate_target":  ({1}, None),          # Estate (either tab)
         # Estate · Containers
-        "container_logs":   ({2}, {"tab-containers"}),
+        "container_logs":   ({1}, {"tab-containers"}),
         # [s] restart only on Estate (any tab, action guards internally) +
         # [s] submit on Validate·Evidence; no sub-tab constraint at this level.
-        "s_key":            ({2, 3}, None),  # Containers (restart) + Evidence (submit)
-        "container_stop":   ({2}, {"tab-containers"}),
-        "container_rm":     ({2}, {"tab-containers"}),
-        "context_t":        ({2, 3}, {"tab-containers", "tab-benchmarks"}),
+        "s_key":            ({1, 2}, None),  # Containers (restart) + Evidence (submit)
+        "container_stop":   ({1}, {"tab-containers"}),
+        "container_rm":     ({1}, {"tab-containers"}),
+        # [t] only has the Containers (docker top) role now — the Benchmarks tab
+        # and its sort-cycle are gone (folded into Run); not wired on Run rows.
+        "context_t":        ({1}, {"tab-containers"}),
     }
 
     # Producer-only actions — hidden on the consumer surface (R0 surface scaffold).
@@ -2154,9 +2008,9 @@ class CockpitApp(App):
             if action in ("prev_subtab", "next_subtab"):
                 return False
 
-        # Sub-tab cycle keys: only meaningful in modes with sub-tabs (0, 2, 3).
+        # Sub-tab cycle keys: only meaningful in modes with sub-tabs (0, 1, 2).
         if action in ("prev_subtab", "next_subtab"):
-            return self._active_mode in (0, 2, 3)
+            return self._active_mode in (0, 1, 2)
 
         # Context keys.
         if action in self._CONTEXT_KEYS:
@@ -2174,9 +2028,9 @@ class CockpitApp(App):
     def _current_subtab(self) -> str:
         """Return the active tab ID for the current mode's TabbedContent, or ''."""
         tab_ids = {
-            0: "#discover-tabs",
-            2: "#estate-tabs",
-            3: "#validate-tabs",
+            0: "#run-tabs",
+            1: "#estate-tabs",
+            2: "#validate-tabs",
         }
         tc_id = tab_ids.get(self._active_mode, "")
         if not tc_id:
@@ -2198,7 +2052,7 @@ class CockpitApp(App):
             self.sub_title = f"{self.SUB_TITLE} · ⚒ CONTRIBUTE"
         # Injectable service layer — defaults to the real (live-read) impl.
         self._data: CockpitData = data or CockpitData(repo_root)
-        self._active_mode = 0  # 0=Discover 1=Serve 2=Estate 3=Validate
+        self._active_mode = 0  # 0=Run 1=Estate 2=Validate
         # Cache the last-loaded variants so detect/match + containers can match
         # running engines back to registry slugs.
         self._variants: list[VariantRow] = []
@@ -2214,7 +2068,7 @@ class CockpitApp(App):
         # held by identity so the c3t Evaluate hand-off passes the SAME dataclass
         # instance c3t speaks (design §4/§6.6), not a reconstructed copy.
         self._target_obj = None
-        # Phase 5: the last BYO fit-check result (Discover · BYO) — the arch facts
+        # Phase 5: the last BYO fit-check result (Run · BYO) — the arch facts
         # the Promote-to-catalog scaffold computes from.
         self._last_byo: Optional[ByoResult] = None
 
@@ -2225,19 +2079,19 @@ class CockpitApp(App):
                 yield ModeSwitcher(id="mode-switcher")
                 yield RailStatus(id="rail-status")
             with Container(id="content-area"):
-                # Mode 0 — Discover
-                with Container(id="panel-discover", classes="mode-panel active"):
-                    with TabbedContent(id="discover-tabs"):
+                # Mode 0 — Run (Discover + Serve + Benchmarks folded in)
+                with Container(id="panel-run", classes="mode-panel active"):
+                    with TabbedContent(id="run-tabs"):
                         with TabPane("Catalog", id="tab-catalog"):
                             yield CatalogPane(id="catalog-pane")
                         with TabPane("Bring-your-own", id="tab-byo"):
                             yield ByoPane(id="byo-panel")
+                    # Transient boot-output pane — re-homed from the retired Serve
+                    # mode.  Hidden until ⏎ on a Catalog row stages a serve and the
+                    # reconcile-gated confirm commits; then the boot log streams here.
+                    yield LivePane(id="serve-live")
 
-                # Mode 1 — Serve
-                with Container(id="panel-serve", classes="mode-panel"):
-                    yield ServePane(id="serve-panel")
-
-                # Mode 2 — Estate
+                # Mode 1 — Estate
                 with Container(id="panel-estate", classes="mode-panel"):
                     with TabbedContent(id="estate-tabs"):
                         with TabPane("Orchestration", id="tab-orchestration"):
@@ -2245,15 +2099,13 @@ class CockpitApp(App):
                         with TabPane("Containers", id="tab-containers"):
                             yield EstateContainersPane(id="estate-containers-pane")
 
-                # Mode 3 — Validate
+                # Mode 2 — Validate (Benchmarks folded into Run · Catalog + explain)
                 with Container(id="panel-validate", classes="mode-panel"):
                     with TabbedContent(id="validate-tabs"):
                         with TabPane("Run", id="tab-run"):
                             yield ValidateRunPane(id="validate-run-pane")
                         with TabPane("Doctor", id="tab-doctor"):
                             yield ValidateDoctorPane(id="validate-doctor-pane")
-                        with TabPane("Benchmarks", id="tab-benchmarks"):
-                            yield ValidateBenchmarksPane(id="validate-benchmarks-pane")
                         with TabPane("Evidence", id="tab-evidence"):
                             yield ValidateEvidencePane(id="validate-evidence-pane")
         yield Footer()
@@ -2346,12 +2198,18 @@ class CockpitApp(App):
         except Exception:
             pass
 
-    @work(exclusive=True, group="benchmarks")
-    async def load_benchmarks(self) -> None:
-        """Load the benchmarks explorer rows (corpus → BENCHMARKS.md fallback)."""
-        rows, error = await self._data.benchmarks_explorer()
+    @work(group="benchmarks")
+    async def load_cross_rig_for_explain(
+        self, screen: ExplainScreen, model: str, engine: str
+    ) -> None:
+        """Load cross-rig benchmark rows (corpus → BENCHMARKS.md fallback) and
+        fold the ones matching this slug's (model, engine) into the open Explain
+        modal.  This is the home of the data the retired Validate · Benchmarks tab
+        used to show (Fold 3) — surfaced per-slug in the explain drill-down."""
+        rows, _error = await self._data.benchmarks_explorer()
+        matched = [r for r in rows if _bench_row_matches(r, model, engine)]
         try:
-            self.query_one("#validate-benchmarks-pane", ValidateBenchmarksPane).populate(rows, error)
+            screen.set_cross_rig(matched)
         except Exception:
             pass
 
@@ -2452,7 +2310,8 @@ class CockpitApp(App):
                 severity="warning",
                 timeout=6,
             )
-            if live is not None:
+            if live is not None and plan.kind == "serve":
+                self._reveal_serve_live()
                 live.append_line(f"[red]✗ refused[/red] — {plan.description} (gate unsafe: {summary})")
             return
         self.notify(
@@ -2462,6 +2321,9 @@ class CockpitApp(App):
             timeout=4,
         )
         if live is not None and plan.kind == "serve":
+            # Reveal the transient Run boot pane (Fold 2) and stream the boot log.
+            self._reveal_serve_live()
+            live.clear_log()
             live.append_line(f"[green]▶ launching[/green] {plan.description}")
             live.append_line("[dim](boot log streams here)[/dim]")
 
@@ -2471,10 +2333,17 @@ class CockpitApp(App):
         except Exception:
             return None
 
+    def _reveal_serve_live(self) -> None:
+        """Show the transient Run boot-output LivePane (hidden until a serve)."""
+        try:
+            self.query_one("#serve-live", LivePane).add_class("serving")
+        except Exception:
+            pass
+
     # ── Mode switching ───────────────────────────────────────────────────────────────
 
     def _switch_mode(self, index: int) -> None:
-        panel_ids = ["panel-discover", "panel-serve", "panel-estate", "panel-validate"]
+        panel_ids = ["panel-run", "panel-estate", "panel-validate"]
         for i, pid in enumerate(panel_ids):
             try:
                 panel = self.query_one(f"#{pid}")
@@ -2495,10 +2364,10 @@ class CockpitApp(App):
         # keys and ⏎ act on the right thing immediately.
         self._focus_mode_primary(index)
         # Estate is live — poll on entry.
-        if index == 2:
+        if index == 1:
             self.load_estate()
-        # Validate is live too — load the doctor/benchmarks/evidence reads.
-        elif index == 3:
+        # Validate is live too — load the doctor/evidence reads.
+        elif index == 2:
             self._load_validate()
 
     def _focus_mode_primary(self, index: int) -> None:
@@ -2509,14 +2378,9 @@ class CockpitApp(App):
         are enqueued during mount) — ensuring mode-switch focus wins."""
         def _do() -> None:
             try:
-                if index == 0:  # Discover — catalog table
+                if index == 0:  # Run — catalog table
                     self.query_one("#catalog-table", DataTable).focus()
-                elif index == 1:  # Serve — launch button (or serve-plan if present)
-                    try:
-                        self.query_one("#serve-launch-btn", Button).focus()
-                    except Exception:
-                        pass
-                elif index == 2:  # Estate — scene table (Orchestration) or containers table
+                elif index == 1:  # Estate — scene table (Orchestration) or containers table
                     try:
                         tc = self.query_one("#estate-tabs", TabbedContent)
                         if tc.active == "tab-containers":
@@ -2525,13 +2389,11 @@ class CockpitApp(App):
                             self.query_one("#scene-table", DataTable).focus()
                     except Exception:
                         pass
-                elif index == 3:  # Validate — run ladder table
+                elif index == 2:  # Validate — run ladder table
                     try:
                         tc = self.query_one("#validate-tabs", TabbedContent)
                         if tc.active == "tab-run":
                             self.query_one("#run-ladder-table", DataTable).focus()
-                        elif tc.active == "tab-benchmarks":
-                            self.query_one("#bmk-table", DataTable).focus()
                         elif tc.active == "tab-evidence":
                             self.query_one("#evidence-table", DataTable).focus()
                     except Exception:
@@ -2541,32 +2403,28 @@ class CockpitApp(App):
         self.call_after_refresh(_do)
 
     def _load_validate(self) -> None:
-        """Kick the three Validate read workers (doctor / benchmarks / evidence).
+        """Kick the Validate read workers (doctor / evidence).
         Each is best-effort and independent — a failing leg doesn't block the
         others.  The Run pane is launch-driven (no background read)."""
         self.load_doctor()
-        self.load_benchmarks()
         self.load_evidence()
 
     # ── Actions ──────────────────────────────────────────────────────────────────────
 
-    def action_mode_discover(self) -> None:
+    def action_mode_run(self) -> None:
         self._switch_mode(0)
 
-    def action_mode_serve(self) -> None:
+    def action_mode_estate(self) -> None:
         self._switch_mode(1)
 
-    def action_mode_estate(self) -> None:
-        self._switch_mode(2)
-
     def action_mode_validate(self) -> None:
-        self._switch_mode(3)
+        self._switch_mode(2)
 
     def action_refresh(self) -> None:
         """Re-read the live data layer for the active mode."""
-        if self._active_mode == 2:
+        if self._active_mode == 1:
             self.load_estate()
-        elif self._active_mode == 3:
+        elif self._active_mode == 2:
             self._load_validate()
         else:
             try:
@@ -2578,18 +2436,11 @@ class CockpitApp(App):
             self.load_catalog()
 
     def action_filter_catalog(self) -> None:
-        """[/] filters the catalog (Discover) or the benchmarks explorer
-        (Validate · Benchmarks), depending on the active mode/tab."""
+        """[/] filters the Run catalog (the Benchmarks tab — and its own filter —
+        was folded into Run · Catalog / explain)."""
         if self._active_mode == 0:
             try:
                 self.query_one("#catalog-pane", CatalogPane).toggle_filter()
-            except Exception:
-                pass
-        elif self._active_mode == 3 and self._active_validate_tab() == "tab-benchmarks":
-            try:
-                self.query_one(
-                    "#validate-benchmarks-pane", ValidateBenchmarksPane
-                ).toggle_filter()
             except Exception:
                 pass
 
@@ -2615,17 +2466,15 @@ class CockpitApp(App):
             entry = None
         if entry is None:
             return
-        screen = ExplainScreen(entry.slug)
-        self.push_screen(screen)
-        self.run_explain(screen, entry.slug)
+        # The screen loads its own detail + cross-rig on mount (so the body query
+        # resolves against a fully-mounted modal — Fold 3 cross-rig fold included).
+        self.push_screen(ExplainScreen(entry.slug, model=entry.model, engine=entry.engine))
 
     def action_primary_action(self) -> None:
         """⏎ — context-specific per mode."""
         if self._active_mode == 0:
-            self._discover_primary()
+            self._run_primary()
         elif self._active_mode == 1:
-            self._serve_primary()
-        elif self._active_mode == 2:
             self._estate_primary()
         else:
             self._validate_primary()
@@ -2634,7 +2483,7 @@ class CockpitApp(App):
         """⏎ in Validate — context-specific per tab:
           - Run        : launch the selected ladder/extra step (confirm-gated).
           - Evidence   : open the paste-ready report for the selected tag.
-          - Doctor / Benchmarks have no primary action (read-only views)."""
+          - Doctor has no primary action (read-only view)."""
         tab = self._active_validate_tab()
         if tab == "tab-run":
             self._run_validation_selected()
@@ -2671,8 +2520,15 @@ class CockpitApp(App):
         # set_report query resolves against a fully-mounted modal.
         self.push_screen(EvidenceReportScreen(tag.tag))
 
-    def _discover_primary(self) -> None:
-        """⏎ in Discover · Catalog: stage the selected slug and jump to Serve."""
+    def _run_primary(self) -> None:
+        """⏎ in Run · Catalog (Fold 2): stage the selected slug and open the
+        reconcile-gated serve confirm directly — no Serve-mode hop.  The serve
+        ActionPlan goes through the SAME ConfirmActionScreen → run_reconcile_for_modal
+        → dispatch_action gate as every other GPU-mutating write; on confirm the
+        boot streams into the transient Run LivePane (#serve-live).  ⏎ on the BYO
+        tab no-ops (BYO has its own Fit-check button)."""
+        if self._active_run_tab() != "tab-catalog":
+            return
         try:
             entry = self.query_one("#catalog-pane", CatalogPane).selected_entry()
         except Exception:
@@ -2680,24 +2536,14 @@ class CockpitApp(App):
         if entry is None:
             return
         self._staged_entry = entry
-        try:
-            self.query_one("#serve-panel", ServePane).show_plan(entry)
-        except Exception:
-            pass
-        self._switch_mode(1)
-
-    def _serve_primary(self) -> None:
-        """⏎ in Serve: open the reconcile-gated confirm modal for the staged slug."""
-        if self._staged_entry is None:
-            self.notify(
-                "No slug staged — pick one in Discover · Catalog (⏎).",
-                title="Serve",
-                severity="warning",
-                timeout=4,
-            )
-            return
-        plan = self._data.serve(self._staged_entry.slug)  # gated, NOT --force
+        plan = self._data.serve(entry.slug)  # gated, NOT --force
         self.push_screen(ConfirmActionScreen(plan))
+
+    def _active_run_tab(self) -> str:
+        try:
+            return self.query_one("#run-tabs", TabbedContent).active
+        except Exception:
+            return ""
 
     def _estate_primary(self) -> None:
         """⏎ in Estate · Orchestration: confirm-gated scene switch."""
@@ -2713,10 +2559,10 @@ class CockpitApp(App):
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
-    # ── Default-pin management (Discover · Catalog) ──────────────────────────────────
+    # ── Default-pin management (Run · Catalog) ──────────────────────────────────
 
     def action_set_default(self) -> None:
-        """[d] in Discover · Catalog: pin the selected slug as its model default.
+        """[d] in Run · Catalog: pin the selected slug as its model default.
 
         A ``.env`` write — no GPU contention — but still routed through the same
         ConfirmActionScreen → dispatch_action → execute_action gate so every
@@ -2731,7 +2577,7 @@ class CockpitApp(App):
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_clear_default(self) -> None:
-        """[D] in Discover · Catalog: clear the model default pin for the
+        """[D] in Run · Catalog: clear the model default pin for the
         selected slug's model (gated path, .env write)."""
         if self._active_mode != 0:
             return
@@ -2753,7 +2599,7 @@ class CockpitApp(App):
         """[l] in Estate · Containers: stream `docker logs` for the selected
         container into the drill Logs LivePane.  This is a READ — safe to run
         live (the conftest blocks an accidental write, not this read)."""
-        if self._active_mode != 2:
+        if self._active_mode != 1:
             return
         con = self._selected_container()
         if con is None:
@@ -2771,7 +2617,7 @@ class CockpitApp(App):
           - Estate · Containers : gated `docker restart <name>`.
           - Validate · Evidence : gated submit-to-localmaxxing for the tag.
         Other contexts ignore it."""
-        if self._active_mode == 3 and self._active_validate_tab() == "tab-evidence":
+        if self._active_mode == 2 and self._active_validate_tab() == "tab-evidence":
             self.action_evidence_submit()
             return
         self.action_container_restart()
@@ -2785,7 +2631,7 @@ class CockpitApp(App):
         self._container_write("stop")
 
     def _container_write(self, op: str) -> None:
-        if self._active_mode != 2:
+        if self._active_mode != 1:
             return
         con = self._selected_container()
         if con is None:
@@ -2831,7 +2677,7 @@ class CockpitApp(App):
         Removing a container frees a GPU it held → the plan requires_reconcile,
         so it routes through the SAME ConfirmActionScreen → dispatch_action gate
         as stop.  rm of a live container needs Force (which adds -f)."""
-        if self._active_mode != 2:
+        if self._active_mode != 1:
             return
         con = self._selected_container()
         if con is None:
@@ -2841,17 +2687,10 @@ class CockpitApp(App):
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_context_t(self) -> None:
-        """[t] is context-sensitive:
-          - Estate · Containers : read `docker top` for the selected container.
-          - Validate · Benchmarks: cycle the explorer sort key.
-        Other contexts ignore it."""
-        if self._active_mode == 2 and self._active_estate_tab() == "tab-containers":
+        """[t] reads `docker top` for the selected container (Estate · Containers).
+        The Benchmarks sort-cycle role was retired with the Benchmarks tab (Fold 3)."""
+        if self._active_mode == 1 and self._active_estate_tab() == "tab-containers":
             self._container_top()
-        elif self._active_mode == 3 and self._active_validate_tab() == "tab-benchmarks":
-            try:
-                self.query_one("#validate-benchmarks-pane", ValidateBenchmarksPane).cycle_sort()
-            except Exception:
-                pass
 
     def _container_top(self) -> None:
         con = self._selected_container()
@@ -2929,7 +2768,7 @@ class CockpitApp(App):
         """[s] in Validate · Evidence: stage the gated submit-to-localmaxxing for
         the selected run tag.  OUTWARD-FACING NETWORK WRITE — confirm-gated,
         NEVER auto-fired; the network is mocked in tests."""
-        if self._active_mode != 3 or self._active_validate_tab() != "tab-evidence":
+        if self._active_mode != 2 or self._active_validate_tab() != "tab-evidence":
             return
         try:
             tag = self.query_one("#validate-evidence-pane", ValidateEvidencePane).selected_tag()
@@ -2949,7 +2788,7 @@ class CockpitApp(App):
         Reads the current cap state to decide the toggle direction (on→off /
         off→on), then routes the WRITE through the standard confirm gate.  A
         cap write is a rig mutation — NEVER auto-fired."""
-        if self._active_mode != 2 or self._active_estate_tab() != "tab-orchestration":
+        if self._active_mode != 1 or self._active_estate_tab() != "tab-orchestration":
             return
         self._toggle_power_cap()
 
@@ -2968,7 +2807,7 @@ class CockpitApp(App):
     def action_power_cap_sweep(self) -> None:
         """[w] in Estate · Orchestration: confirm-gated power-cap sweep (heavy +
         mutating — runs benches at each cap).  NEVER auto-fired."""
-        if self._active_mode != 2 or self._active_estate_tab() != "tab-orchestration":
+        if self._active_mode != 1 or self._active_estate_tab() != "tab-orchestration":
             return
         plan = self._data.power_cap_sweep()
         self.push_screen(ConfirmActionScreen(plan))
@@ -2976,7 +2815,7 @@ class CockpitApp(App):
     def action_prune_images(self) -> None:
         """[p] in Estate · Orchestration: confirm-gated image prune (DESTRUCTIVE —
         deletes unreferenced images).  NEVER auto-fired."""
-        if self._active_mode != 2 or self._active_estate_tab() != "tab-orchestration":
+        if self._active_mode != 1 or self._active_estate_tab() != "tab-orchestration":
             return
         plan = self._data.prune()
         self.push_screen(ConfirmActionScreen(plan))
@@ -2985,7 +2824,7 @@ class CockpitApp(App):
 
     def action_estate_off(self) -> None:
         """[o] in Estate · Orchestration: gated estate-down (stop all)."""
-        if self._active_mode != 2:
+        if self._active_mode != 1:
             return
         plan = self._data.estate_down()
         self.push_screen(ConfirmActionScreen(plan))
@@ -3000,7 +2839,7 @@ class CockpitApp(App):
         ``ServingTarget`` object the Estate poll detected (design §4/§6.6); the
         launch streams via ``launch_evaluate`` (write runner, NEVER live this
         phase — conftest blocks the spawn, tests fake it)."""
-        if self._active_mode != 2:
+        if self._active_mode != 1:
             return
         handoff = self._data.evaluate_handoff(self._target_obj)
         if not handoff.available:
@@ -3044,7 +2883,7 @@ class CockpitApp(App):
     # ── Phase 5 · Hook 2: Promote the BYO model to the catalog (design §3.5b) ──────────
 
     def action_promote_catalog(self) -> None:
-        """[P] in Discover: compute + preview the catalog-promotion scaffold.
+        """[P] in Run: compute + preview the catalog-promotion scaffold.
 
         Design §3.5b — a SCAFFOLD + GATE, not a YAML IDE.  Computes a ModelProfile
         YAML skeleton + a compose_registry row from the last BYO fit-check arch
@@ -3055,7 +2894,7 @@ class CockpitApp(App):
             return
         if self._last_byo is None:
             self.notify(
-                "No BYO model to promote — run a fit-check in Discover · BYO first.",
+                "No BYO model to promote — run a fit-check in Run · Bring-your-own first.",
                 title="Promote",
                 severity="warning",
                 timeout=4,
@@ -3099,19 +2938,15 @@ class CockpitApp(App):
     # ── Phase 5 · Hook 3: Optimize for my card (DORMANT v0.10.0 seam) ──────────────────
 
     def action_optimize_card(self) -> None:
-        """[O] in Discover/Serve: open the (dormant) per-card optimizer seam.
+        """[O] in Run: open the (dormant) per-card optimizer seam.
 
         The v0.10.0 optimizer does not exist yet — the modal shows 'optimizer not
-        available (v0.10.0)'.  Available from Discover · Catalog (selected slug)
-        and Serve (staged slug)."""
-        if self._active_mode not in (0, 1):
+        available (v0.10.0)'.  Available from Run · Catalog (selected slug); falls
+        back to the last staged serve slug if no catalog row is selected."""
+        if self._active_mode != 0:
             return
-        slug = ""
-        if self._active_mode == 0:
-            entry = self._selected_catalog_entry()
-            slug = entry.slug if entry else ""
-        elif self._staged_entry is not None:
-            slug = self._staged_entry.slug
+        entry = self._selected_catalog_entry()
+        slug = entry.slug if entry else (self._staged_entry.slug if self._staged_entry else "")
         self.push_screen(OptimizeScreen(slug))
 
     @work(group="optimize")
@@ -3138,9 +2973,9 @@ class CockpitApp(App):
     def _cycle_subtab(self, direction: int) -> None:
         """Cycle the TabbedContent for the current mode by direction (+1 / -1)."""
         tab_widget_ids = {
-            0: "#discover-tabs",
-            2: "#estate-tabs",
-            3: "#validate-tabs",
+            0: "#run-tabs",
+            1: "#estate-tabs",
+            2: "#validate-tabs",
         }
         tc_id = tab_widget_ids.get(self._active_mode, "")
         if not tc_id:
@@ -3162,8 +2997,8 @@ class CockpitApp(App):
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """Refresh footer bindings whenever a sub-tab changes so context keys
-        show/hide correctly (e.g. [/] appears only on Discover·Catalog or
-        Validate·Benchmarks).  Also move focus to the new tab's primary widget.
+        show/hide correctly (e.g. [/] appears only on Run·Catalog).  Also move
+        focus to the new tab's primary widget.
 
         Focus is deferred via call_after_refresh because the new TabPane's content
         is not yet visible at the point the event fires, so an immediate .focus()
@@ -3195,8 +3030,8 @@ class CockpitApp(App):
         # Only respond to tabs that belong to the current mode's active panel.
         _mode_tabs: dict[int, set[str]] = {
             0: {"tab-catalog", "tab-byo"},
-            2: {"tab-orchestration", "tab-containers"},
-            3: {"tab-run", "tab-doctor", "tab-benchmarks", "tab-evidence"},
+            1: {"tab-orchestration", "tab-containers"},
+            2: {"tab-run", "tab-doctor", "tab-evidence"},
         }
         allowed_tabs = _mode_tabs.get(self._active_mode, set())
         if tab_id not in allowed_tabs:
@@ -3204,7 +3039,6 @@ class CockpitApp(App):
         _focus_map: dict[str, str] = {
             "tab-catalog":        "#catalog-table",
             "tab-run":            "#run-ladder-table",
-            "tab-benchmarks":     "#bmk-table",
             "tab-evidence":       "#evidence-table",
             "tab-orchestration":  "#scene-table",
             "tab-containers":     "#containers-table",
@@ -3244,7 +3078,7 @@ class CockpitApp(App):
                 return
         except Exception:
             return
-        if self._active_mode != 2 or self._active_estate_tab() != "tab-containers":
+        if self._active_mode != 1 or self._active_estate_tab() != "tab-containers":
             return
         self._refresh_container_config()
         timer = getattr(self, "_drill_timer", None)
@@ -3287,10 +3121,10 @@ class CockpitApp(App):
             self.read_container_top(con.name)
 
     def on_key(self, event) -> None:
-        """App-level Esc: close an open filter (Discover·Catalog / Validate·
-        Benchmarks) and refocus the table. Modal screens capture their own Esc
-        (they have escape→dismiss bindings), so this only runs on the main
-        screen — Esc otherwise no-ops and NEVER quits."""
+        """App-level Esc: close an open filter (Run·Catalog) and refocus the
+        table. Modal screens capture their own Esc (they have escape→dismiss
+        bindings), so this only runs on the main screen — Esc otherwise no-ops
+        and NEVER quits."""
         if event.key != "escape":
             return
         if isinstance(self.screen, ModalScreen):
@@ -3302,8 +3136,6 @@ class CockpitApp(App):
     def _close_open_filter(self) -> bool:
         if self._active_mode == 0:
             pane_id, cls = "#catalog-pane", CatalogPane
-        elif self._active_mode == 3:
-            pane_id, cls = "#validate-benchmarks-pane", ValidateBenchmarksPane
         else:
             return False
         try:
@@ -3315,30 +3147,6 @@ class CockpitApp(App):
         bid = event.button.id
         if bid == "byo-fit-btn":
             self._trigger_byo()
-        elif bid == "serve-launch-btn":
-            self._serve_primary()
-        elif bid == "serve-force-btn":
-            self._serve_force()
-        elif bid == "serve-cancel-btn":
-            self._staged_entry = None
-            try:
-                self.query_one("#serve-panel", ServePane).clear_plan()
-            except Exception:
-                pass
-
-    def _serve_force(self) -> None:
-        """Surfaced force override — opens the confirm modal with a forced plan
-        (reason surfaced).  Still goes through the gate; the gate reports unsafe
-        but a forced plan is permitted to proceed."""
-        if self._staged_entry is None:
-            self.notify("No slug staged.", title="Serve", severity="warning", timeout=3)
-            return
-        plan = self._data.serve(
-            self._staged_entry.slug,
-            force=True,
-            force_reason="user override from Serve pane (F)",
-        )
-        self.push_screen(ConfirmActionScreen(plan))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "catalog-filter":
@@ -3349,13 +3157,6 @@ class CockpitApp(App):
                 ).focus()
             except Exception:
                 pass
-        elif event.input.id == "bmk-filter":
-            try:
-                pane = self.query_one("#validate-benchmarks-pane", ValidateBenchmarksPane)
-                pane.set_filter(event.value)
-                pane.query_one("#bmk-table", DataTable).focus()
-            except Exception:
-                pass
         elif event.input.id in ("byo-url-input", "byo-profile-input"):
             self._trigger_byo()
 
@@ -3363,13 +3164,6 @@ class CockpitApp(App):
         if event.input.id == "catalog-filter":
             try:
                 self.query_one("#catalog-pane", CatalogPane).set_filter(event.value)
-            except Exception:
-                pass
-        elif event.input.id == "bmk-filter":
-            try:
-                self.query_one(
-                    "#validate-benchmarks-pane", ValidateBenchmarksPane
-                ).set_filter(event.value)
             except Exception:
                 pass
 

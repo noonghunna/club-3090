@@ -4,11 +4,13 @@ Verifies:
   1. The app mounts without error (no TTY, no GPU, no Docker, no live script).
      The data layer is a CockpitData backed by a FakeRunner + fake detect +
      a FakeWriteRunner, so NO subprocess is ever spawned.
-  2. All four modes are reachable via digit-key bindings; nav nodes exist.
-  3. Discover · Catalog populates from real enriched entries (fit glyph, TPS,
+  2. All three modes (Run · Estate · Validate) are reachable via digit-key
+     bindings 1/2/3; nav nodes exist.  (R1 folded Discover + Serve + Benchmarks
+     into a single Run mode.)
+  3. Run · Catalog populates from real enriched entries (fit glyph, TPS,
      8pk, source) and filters live.
   4. BYO renders the swap_path route from byo_check.
-  5. Serve stages a plan and ⏎ opens the reconcile-gated confirm modal.
+  5. ⏎ on a Run · Catalog row opens the reconcile-gated confirm modal directly.
   6. Estate · Orchestration + Containers populate from estate_state.
   7. EVERY write path goes through the reconcile gate, and NO test ever
      executes a live write — the FakeWriteRunner records start_raw calls and
@@ -38,12 +40,10 @@ from club3090_cockpit.app import (
     HelpScreen,
     ModeSwitcher,
     ByoPane,
-    ServePane,
     EstateOrchPane,
     EstateContainersPane,
     ValidateRunPane,
     ValidateDoctorPane,
-    ValidateBenchmarksPane,
     ValidateEvidencePane,
     EvidenceReportScreen,
     RailStatus,
@@ -347,6 +347,20 @@ BENCHMARKS_MD = (
     "| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP | VRAM | Date | Notes |\n"
     "|---|---|---|---|---|---|---|---|---|\n"
     "| `vllm/dual` | @noonghunna | fp8 | 262K | **174.0 / 42.0** | — | 23.6 GB | 2026-05-30 | 8-pack 109/150 |\n"
+    "\n"
+    "### Single-card (1× RTX 3090)\n"
+    "\n"
+    "| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP | VRAM | Date | Notes |\n"
+    "|---|---|---|---|---|---|---|---|---|\n"
+    "| `llamacpp/mtp` | @somerig | q8 | 262K | **53.0 / 30.0** | — | 15.0 GB | 2026-06-03 | 8-pack 99/150 |\n"
+    "\n"
+    "## Gemma-4-31B\n"
+    "\n"
+    "### Dual-card (2× RTX 3090, TP=2)\n"
+    "\n"
+    "| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP | VRAM | Date | Notes |\n"
+    "|---|---|---|---|---|---|---|---|---|\n"
+    "| `vllm/dual` | @anotherrig | int8 | 192K | **36.8 / 20.0** | — | 22.0 GB | 2026-05-31 | 8-pack 118/150 |\n"
 )
 
 # Minimal rebench REPORT.md for the evidence-report read.
@@ -435,7 +449,7 @@ async def _settle(pilot) -> None:
     await pilot.pause()
 
 
-PANEL_IDS = ["panel-discover", "panel-serve", "panel-estate", "panel-validate"]
+PANEL_IDS = ["panel-run", "panel-estate", "panel-validate"]
 
 
 # ===========================================================================
@@ -459,16 +473,16 @@ class TestAppMounts:
             assert app.query_one("#rail-status", RailStatus) is not None
 
     @pytest.mark.asyncio
-    async def test_discover_panel_visible_on_start(self):
+    async def test_run_panel_visible_on_start(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            assert "active" in app.query_one("#panel-discover").classes
+            assert "active" in app.query_one("#panel-run").classes
 
     @pytest.mark.asyncio
     async def test_other_panels_hidden_on_start(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            for pid in ["panel-serve", "panel-estate", "panel-validate"]:
+            for pid in ["panel-estate", "panel-validate"]:
                 assert "active" not in app.query_one(f"#{pid}").classes
 
     @pytest.mark.asyncio
@@ -483,18 +497,19 @@ class TestAppMounts:
 
 class TestModeNavigation:
     @pytest.mark.asyncio
-    async def test_switch_to_serve_mode(self):
+    async def test_key_1_switches_to_run_mode(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            assert "active" in app.query_one("#panel-serve").classes
-            assert "active" not in app.query_one("#panel-discover").classes
+            await pilot.press("2")  # leave Run first
+            await pilot.press("1")
+            assert "active" in app.query_one("#panel-run").classes
+            assert "active" not in app.query_one("#panel-estate").classes
 
     @pytest.mark.asyncio
     async def test_switch_to_estate_mode(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             assert "active" in app.query_one("#panel-estate").classes
 
@@ -502,23 +517,39 @@ class TestModeNavigation:
     async def test_switch_to_validate_mode(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             assert "active" in app.query_one("#panel-validate").classes
 
     @pytest.mark.asyncio
-    async def test_switch_back_to_discover(self):
+    async def test_switch_back_to_run(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("2")
             await pilot.press("1")
-            assert "active" in app.query_one("#panel-discover").classes
-            assert "active" not in app.query_one("#panel-serve").classes
+            assert "active" in app.query_one("#panel-run").classes
+            assert "active" not in app.query_one("#panel-estate").classes
 
     @pytest.mark.asyncio
-    async def test_all_four_modes_cycle(self):
+    async def test_old_serve_mode_no_longer_exists(self):
+        """R1 retired the standalone Serve mode + its panel/action/binding."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            for key, expected_active in [("1", 0), ("2", 1), ("3", 2), ("4", 3), ("1", 0)]:
+            # No serve panel.
+            assert not app.query("#panel-serve")
+            # No serve mode action.
+            assert not hasattr(app, "action_mode_serve")
+            # Pressing 1/2/3 only ever yields Run/Estate/Validate (never Serve);
+            # there is no 4th mode key.
+            await pilot.press("4")  # unbound now — should not switch anything
+            await pilot.pause()
+            active = [pid for pid in PANEL_IDS if "active" in app.query_one(f"#{pid}").classes]
+            assert active == ["panel-run"]
+
+    @pytest.mark.asyncio
+    async def test_all_three_modes_cycle(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            for key, expected_active in [("1", 0), ("2", 1), ("3", 2), ("1", 0)]:
                 await pilot.press(key)
                 await pilot.pause()
                 active = [pid for pid in PANEL_IDS if "active" in app.query_one(f"#{pid}").classes]
@@ -528,10 +559,10 @@ class TestModeNavigation:
 
 class TestNavNodesExist:
     @pytest.mark.asyncio
-    async def test_discover_tabs_exist(self):
+    async def test_run_tabs_exist(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            app.query_one("#discover-tabs", TabbedContent)
+            app.query_one("#run-tabs", TabbedContent)
             app.query_one("#tab-catalog", TabPane)
             app.query_one("#tab-byo", TabPane)
 
@@ -550,8 +581,16 @@ class TestNavNodesExist:
             app.query_one("#validate-tabs", TabbedContent)
             app.query_one("#tab-run", TabPane)
             app.query_one("#tab-doctor", TabPane)
-            app.query_one("#tab-benchmarks", TabPane)
             app.query_one("#tab-evidence", TabPane)
+
+    @pytest.mark.asyncio
+    async def test_benchmarks_tab_is_gone(self):
+        """Fold 3 removed the standalone Validate · Benchmarks tab + its pane."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert not app.query("#tab-benchmarks")
+            assert not app.query("#validate-benchmarks-pane")
+            assert not app.query("#bmk-table")
 
     @pytest.mark.asyncio
     async def test_catalog_datatable_has_columns(self):
@@ -559,7 +598,11 @@ class TestNavNodesExist:
         async with app.run_test(size=(120, 40)) as pilot:
             table = app.query_one("#catalog-table", DataTable)
             col_labels = [str(c.label) for c in table.columns.values()]
-            for expected in ("slug", "engine", "fit", "ctx", "TPS", "8pk", "status", "source"):
+            # Fold 3: TPS / 8pk columns are explicitly labelled as our-rig.
+            for expected in (
+                "slug", "engine", "fit", "ctx",
+                "TPS (our rig)", "8pk (our rig)", "status", "source",
+            ):
                 assert expected in col_labels, f"missing {expected!r}: {col_labels}"
 
     @pytest.mark.asyncio
@@ -582,7 +625,7 @@ class TestNavNodesExist:
 
 
 # ===========================================================================
-# Discover · Catalog (now wired to real enriched entries)
+# Run · Catalog (now wired to real enriched entries)
 # ===========================================================================
 
 
@@ -653,7 +696,7 @@ class TestCatalogWired:
 
 
 # ===========================================================================
-# Discover · BYO (wired to byo_check)
+# Run · BYO (wired to byo_check)
 # ===========================================================================
 
 
@@ -685,56 +728,86 @@ class TestByoWired:
 
 
 # ===========================================================================
-# Serve (plan staging + reconcile-gated confirm modal)
+# Serve folded into Run (⏎ on a catalog row → reconcile-gated confirm modal)
 # ===========================================================================
 
 
-class TestServeWired:
+class TestServeFoldedIntoRun:
     @pytest.mark.asyncio
-    async def test_serve_pane_nodes(self):
+    async def test_run_has_transient_boot_pane_hidden_on_start(self):
+        """The Serve mode's boot LivePane is re-homed into the Run panel and
+        starts hidden (no .serving class) until a serve commits."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            app.query_one("#serve-panel", ServePane)
-            app.query_one("#serve-plan-box")
-            app.query_one("#serve-launch-btn", Button)
-            app.query_one("#serve-cancel-btn", Button)
-            app.query_one("#serve-live")  # core LivePane for the boot stream
+            live = app.query_one("#serve-live")  # re-homed core LivePane
+            # parented under the Run panel, not a defunct serve panel.
+            assert app.query_one("#panel-run") in live.ancestors
+            assert "serving" not in live.classes
 
     @pytest.mark.asyncio
-    async def test_enter_in_catalog_stages_plan_and_jumps_to_serve(self):
+    async def test_enter_on_catalog_row_opens_confirm_directly(self):
+        """Fold 2: ⏎ on a Run · Catalog row stages the slug AND opens the
+        reconcile-gated ConfirmActionScreen directly — no Serve-mode hop."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             app.query_one("#catalog-table", DataTable).move_cursor(row=0)
             await pilot.press("enter")
             await pilot.pause()
-            assert "active" in app.query_one("#panel-serve").classes
+            assert isinstance(app.screen, ConfirmActionScreen)
             assert app._staged_entry is not None
             assert app._staged_entry.slug == "vllm/dual"
-            detail = str(app.query_one("#serve-plan-detail", Static).render())
-            assert "vllm/dual" in detail
+            # Still on the Run panel (no separate Serve panel exists).
+            assert "active" in app.query_one("#panel-run").classes
 
     @pytest.mark.asyncio
-    async def test_serve_enter_opens_confirm_modal(self):
+    async def test_enter_serve_plan_is_gated_not_force(self):
+        """The serve plan ⏎ builds is the GATED switch.sh <slug> (NOT --force),
+        and it is the reconcile-gated plan inside the confirm modal."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             app.query_one("#catalog-table", DataTable).move_cursor(row=0)
-            await pilot.press("enter")       # stage + jump to Serve
-            await pilot.pause()
-            await pilot.press("enter")       # commit → confirm modal
+            await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
+            plan = app.screen._plan
+            assert plan.kind == "serve"
+            assert "--force" not in plan.cmd
+            assert plan.requires_reconcile is True
 
     @pytest.mark.asyncio
-    async def test_serve_plan_is_not_force(self):
-        """The serve plan built by ⏎ is the GATED switch.sh <slug> — NOT --force."""
+    async def test_enter_on_byo_tab_does_not_serve(self):
+        """⏎ only serves from the Catalog tab; on BYO it no-ops (no confirm)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            plan = app._data.serve("vllm/dual")
-            assert "--force" not in plan.cmd
-            assert plan.requires_reconcile is True
+            app.query_one("#run-tabs", TabbedContent).active = "tab-byo"
+            await pilot.pause()
+            app.action_primary_action()
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmActionScreen)
+
+    @pytest.mark.asyncio
+    async def test_serve_dispatch_reveals_boot_pane(self):
+        """On a safe gate, confirming the serve dispatches through the gated
+        executor and reveals the transient Run boot pane (Fold 2)."""
+        app, _, wr = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
+            await pilot.press("enter")            # → confirm modal
+            await pilot.pause()
+            await app.workers.wait_for_complete()  # reconcile resolves (safe)
+            await pilot.pause()
+            await pilot.press("enter")            # confirm → dispatch
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            live = app.query_one("#serve-live")
+            assert "serving" in live.classes
+            # Gated executor ran (mocked write runner), never a live spawn.
+            assert len(wr.started) == 1
+            assert wr.started[0]["cmd"] == ["bash", "scripts/switch.sh", "vllm/dual"]
 
 
 # ===========================================================================
@@ -747,7 +820,7 @@ class TestEstateWired:
     async def test_estate_orch_pane_nodes(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-orch-pane", EstateOrchPane)
             app.query_one("#gpu0-card")
@@ -760,7 +833,7 @@ class TestEstateWired:
     async def test_estate_scene_table_populates_from_gpu_mode(self):
         app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             t = app.query_one("#scene-table", DataTable)
             assert t.row_count == 2  # 27b + off (from SCENES_JSON)
@@ -774,7 +847,7 @@ class TestEstateWired:
         ]
         app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             bar = str(app.query_one("#gpu0-bar", Static).render())
             assert "18.0 / 24.0 GiB" in bar
@@ -784,7 +857,7 @@ class TestEstateWired:
     async def test_estate_doctor_line_serving(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             line = str(app.query_one("#doctor-line", Static).render())
             assert "serving" in line.lower()
@@ -793,7 +866,7 @@ class TestEstateWired:
     async def test_estate_containers_pane_nodes(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-containers-pane", EstateContainersPane)
             app.query_one("#containers-table", DataTable)
@@ -807,7 +880,7 @@ class TestEstateWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             pane = app.query_one("#estate-containers-pane", EstateContainersPane)
             names = [c.name for c in pane._containers]
@@ -818,7 +891,7 @@ class TestEstateWired:
     async def test_estate_scene_switch_opens_confirm_modal(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#scene-table", DataTable).move_cursor(row=0)
             await pilot.press("enter")
@@ -959,7 +1032,7 @@ class TestAllPanesWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-containers-pane", EstateContainersPane).query_one(
                 "#containers-table", DataTable
@@ -975,7 +1048,7 @@ class TestAllPanesWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_EMPTY)})
         app, _, _ = make_app(responses=responses, write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             plan = app._data.container_action("vllm-x", "stop")
             assert plan.requires_reconcile is True
@@ -991,7 +1064,7 @@ class TestAllPanesWired:
         )
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-containers-pane", EstateContainersPane).query_one(
                 "#containers-table", DataTable
@@ -1005,7 +1078,7 @@ class TestAllPanesWired:
     async def test_estate_off_opens_confirm_modal(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             await pilot.press("o")  # stop all
             await pilot.pause()
@@ -1071,14 +1144,13 @@ class TestNoLiveWriteEverExecuted:
         app, runner, _ = make_app(write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # stage → confirm → commit
+            # ⏎ on a Run · Catalog row → reconcile-gated confirm modal directly.
             app.query_one("#catalog-table", DataTable).move_cursor(row=0)
-            await pilot.press("enter")
-            await pilot.pause()
             await pilot.press("enter")
             await _settle(pilot)
             screen = app.screen
             assert isinstance(screen, ConfirmActionScreen)
+            # commit through the (mocked) gated executor.
             screen.query_one("#confirm-ok-btn", Button).press()
             await _settle(pilot)
             # The only write went to the fake; no switch.sh appears in READ calls.
@@ -1116,19 +1188,20 @@ class TestValidatePanes:
     async def test_validate_doctor_health_line_goes_live_on_estate_poll(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")  # estate poll feeds the doctor pane too
+            await pilot.press("2")  # estate poll feeds the doctor pane too
             await _settle(pilot)
             body = str(app.query_one("#doctor-health-body", Static).render())
             assert "serving" in body.lower()
 
     @pytest.mark.asyncio
-    async def test_validate_benchmarks_pane_nodes(self):
+    async def test_benchmarks_pane_and_table_are_gone(self):
+        """Fold 3: the standalone Validate · Benchmarks pane/table no longer
+        exist anywhere in the widget tree."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            app.query_one("#validate-benchmarks-pane", ValidateBenchmarksPane)
-            t = app.query_one("#bmk-table", DataTable)
-            # Real explorer — empty until the Validate poll fills it (no mock rows).
-            assert t.row_count == 0
+            assert not app.query("#validate-benchmarks-pane")
+            assert not app.query("#bmk-table")
+            assert not app.query("#tab-benchmarks")
 
     @pytest.mark.asyncio
     async def test_validate_evidence_pane_nodes(self):
@@ -1156,7 +1229,7 @@ class TestPrimaryActionSafe:
     async def test_enter_in_validate_is_safe(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await pilot.press("enter")
 
 
@@ -1172,7 +1245,7 @@ class TestValidateDoctorWired:
         fill from diagnose-estate.sh --json + diagnose-profile.sh (text)."""
         app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             estate = str(app.query_one("#doctor-estate-body", Static).render())
             assert "GREEN" in estate and "2/2" in estate  # 2/2 instances fit
@@ -1189,10 +1262,10 @@ class TestValidateDoctorWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses, gpus=gpus, target=target)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")            # estate poll → captures target slug
+            await pilot.press("2")            # estate poll → captures target slug
             await _settle(pilot)
             assert app._target_slug == "vllm/dual"
-            await pilot.press("4")            # validate → doctor read uses the slug
+            await pilot.press("3")            # validate → doctor read uses the slug
             await _settle(pilot)
             profile = str(app.query_one("#doctor-profile-body", Static).render())
             assert "GREEN" in profile
@@ -1200,58 +1273,111 @@ class TestValidateDoctorWired:
 
 
 # ===========================================================================
-# Validate · Benchmarks (wired to benchmarks_explorer — filter + sort)
+# Cross-rig benchmarks folded into the explain drill-down (Fold 3)
 # ===========================================================================
 
 
-class TestValidateBenchmarksWired:
-    @pytest.mark.asyncio
-    async def test_benchmarks_populate_from_explorer(self, tmp_path):
-        app, _, _ = make_app(repo_root=tmp_path)
-        seed_repo(tmp_path)
-        async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
-            await _settle(pilot)
-            t = app.query_one("#bmk-table", DataTable)
-            assert t.row_count == 1  # the one BENCHMARKS.md scrape row
-            pane = app.query_one("#validate-benchmarks-pane", ValidateBenchmarksPane)
-            assert pane._rows[0].model == "qwen3.6-27b"
-            assert pane._rows[0].quality_8pk == "109/150"
+class TestCrossRigBenchmarksViaExplain:
+    """Fold 3: the cross-rig benchmark rows the retired Validate · Benchmarks
+    tab used to show are now reachable per-slug via the explain (e) drill-down."""
 
     @pytest.mark.asyncio
-    async def test_benchmarks_filter_narrows(self, tmp_path):
+    async def test_explain_surfaces_cross_rig_rows(self, tmp_path):
+        seed_repo(tmp_path)  # writes a BENCHMARKS.md (cross-rig scrape) row
         app, _, _ = make_app(repo_root=tmp_path)
-        seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
             await _settle(pilot)
-            pane = app.query_one("#validate-benchmarks-pane", ValidateBenchmarksPane)
-            pane.set_filter("gemma")             # no gemma rows
-            assert app.query_one("#bmk-table", DataTable).row_count == 0
-            pane.set_filter("qwen")
-            assert app.query_one("#bmk-table", DataTable).row_count == 1
+            # vllm/dual is the qwen3.6-27b row the BENCHMARKS.md scrape covers.
+            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
+            await pilot.press("e")
+            await _settle(pilot)
+            assert isinstance(app.screen, ExplainScreen)
+            body = str(app.screen.query_one("#explain-body", Static).render())
+            # The cross-rig section is present and labelled (not our-rig).
+            assert "Cross-rig benchmarks" in body
+            assert "109/150" in body  # the 8-pack from the BENCHMARKS.md scrape
 
     @pytest.mark.asyncio
-    async def test_benchmarks_sort_cycles(self, tmp_path):
+    async def test_explain_cross_rig_only_matches_this_slug_model(self, tmp_path):
+        """The folded-in rows are scoped to the slug's model — with BOTH qwen and
+        gemma rows seeded, explaining the gemma slug surfaces ONLY gemma rows; the
+        qwen rows must not leak in (data not silently mixed across models)."""
+        seed_repo(tmp_path)  # BENCHMARKS_MD has both qwen3.6-27b AND gemma-4-31b rows
         app, _, _ = make_app(repo_root=tmp_path)
-        seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
             await _settle(pilot)
-            pane = app.query_one("#validate-benchmarks-pane", ValidateBenchmarksPane)
-            assert pane._sort == "tps"
-            pane.cycle_sort()
-            assert pane._sort == "8pk"
+            app.push_screen(
+                ExplainScreen("vllm/dual", model="gemma-4-31b", engine="vllm-stable")
+            )
+            await _settle(pilot)
+            screen = app.screen
+            # Assert on the FILTERED cross-rig list, not the rendered body — the
+            # body also carries the our-rig detail for the slug. There IS a gemma
+            # row in the scrape, so this is not vacuous; the qwen rows (also in
+            # the scrape) must be filtered out → exactly the gemma row remains.
+            assert [r.model for r in screen._cross_rig] == ["gemma-4-31b"]  # no qwen leak
 
     @pytest.mark.asyncio
-    async def test_benchmarks_explorer_empty_root_surfaces_message(self):
-        """No corpus + no BENCHMARKS.md → an honest 'no data' status, not a crash."""
-        app, _, _ = make_app()  # FAKE_REPO_ROOT has neither
+    async def test_explain_llama_cpp_family_surfaces_cross_rig(self, tmp_path):
+        """Regression (verify-cockpit-r1 HIGH): the registry emits engine
+        'llama-cpp-local' for EVERY llamacpp/* and ik-llama/* slug, while the
+        BENCHMARKS.md scrape labels those rows 'llamacpp'/'ik-llama'.  The old
+        loose-substring matcher matched NEITHER direction, silently dropping the
+        whole llama.cpp family's cross-rig data (green-but-broken — the fixture
+        had used 'ik-llama').  The family-canon matcher must surface it."""
+        seed_repo(tmp_path)  # BENCHMARKS_MD includes a `llamacpp/mtp` qwen row
+        app, _, _ = make_app(repo_root=tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
             await _settle(pilot)
-            status = str(app.query_one("#bmk-status", Label).render()).lower()
-            assert "no benchmark data" in status or "no benchmark" in status
+            # The slug is only used for the our-rig detail; the cross-rig fold
+            # filters on the passed (model, engine) — here the real registry
+            # engine label for a llama.cpp slug.
+            app.push_screen(
+                ExplainScreen("vllm/dual", model="qwen3.6-27b", engine="llama-cpp-local")
+            )
+            await _settle(pilot)
+            screen = app.screen
+            assert screen._cross_rig, "llama.cpp-family cross-rig rows were dropped"
+            assert all(r.model == "qwen3.6-27b" for r in screen._cross_rig)
+            # The `llamacpp/mtp` row IS surfaced; the vllm/dual qwen row (a
+            # DIFFERENT engine family) is NOT — proving family scoping, not just
+            # model. (Asserted on the filtered list, not the body, which also
+            # carries the slug's own our-rig detail.)
+            assert any(r.engine == "llamacpp" for r in screen._cross_rig)
+            assert all(r.engine != "vllm" for r in screen._cross_rig)
+
+    def test_bench_row_matcher_engine_family(self):
+        """The (model, engine) matcher: model exact, engine by FAMILY.
+
+        Registry labels ('vllm-stable', 'llama-cpp-local', 'beellama-local') and
+        BENCHMARKS.md scrape labels ('vllm', 'llamacpp', 'ik-llama', 'beellama')
+        live in different spaces; both reduce to a coarse family before
+        comparing.  The old loose-substring test silently dropped the entire
+        llama.cpp family ('llama-cpp-local' substring-matches neither 'llamacpp'
+        nor 'ik-llama')."""
+        from club3090_cockpit.app import _bench_row_matches
+        from club3090_cockpit.data import BenchRow
+
+        m = "qwen3.6-27b"
+        def row(engine):
+            return BenchRow(model=m, engine=engine, topology="single")
+
+        # vLLM family (registry 'vllm-stable' ↔ scrape 'vllm').
+        assert _bench_row_matches(row("vllm"), m, "vllm-stable") is True
+        # llama.cpp family — BOTH scrape labels vs the single registry label
+        # (the exact regression the family-canon fix addresses).
+        assert _bench_row_matches(row("llamacpp"), m, "llama-cpp-local") is True
+        assert _bench_row_matches(row("ik-llama"), m, "llama-cpp-local") is True
+        # beellama family.
+        assert _bench_row_matches(row("beellama"), m, "beellama-local") is True
+        # cross-family must NOT match.
+        assert _bench_row_matches(row("vllm"), m, "llama-cpp-local") is False
+        assert _bench_row_matches(row("llamacpp"), m, "vllm-stable") is False
+        # wrong model → no match regardless of engine.
+        assert _bench_row_matches(row("vllm"), "gemma-4-31b", "vllm-stable") is False
+        # blank engine on either side matches on model alone (bare *.yml cell).
+        assert _bench_row_matches(row(""), m, "vllm-stable") is True
+        assert _bench_row_matches(row("vllm"), m, "") is True
 
 
 # ===========================================================================
@@ -1265,7 +1391,7 @@ class TestValidateEvidenceWired:
         app, _, _ = make_app(repo_root=tmp_path)
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             t = app.query_one("#evidence-table", DataTable)
             assert t.row_count == 1
@@ -1278,7 +1404,7 @@ class TestValidateEvidenceWired:
         app, _, _ = make_app(repo_root=tmp_path)
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
             await pilot.pause()
@@ -1297,7 +1423,7 @@ class TestValidateEvidenceWired:
         app, _, _ = make_app(repo_root=tmp_path, write_runner=wr)
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
             await pilot.pause()
@@ -1335,7 +1461,7 @@ class TestValidateRunWired:
     async def test_run_enter_opens_confirm_modal(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             app.query_one("#run-ladder-table", DataTable).move_cursor(row=0)  # verify-full
             await pilot.press("enter")
@@ -1352,7 +1478,7 @@ class TestValidateRunWired:
         wr = FakeWriteRunner()
         app, _, _ = make_app(write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             app.query_one("#run-ladder-table", DataTable).move_cursor(row=2)  # bench
             await pilot.press("enter")
@@ -1378,7 +1504,7 @@ class TestValidateRunWired:
         # Swap the detect to one that screams if the reconcile gate runs on confirm.
         app._data._detect_endpoint = detect_should_not_be_called
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             # The confirm modal DOES run reconcile-on-mount for display; but the
             # commit must not re-enter execute_action.  Drive the kind directly.
@@ -1398,7 +1524,7 @@ class TestEstateExtrasWired:
     async def test_power_cap_strip_populates(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             strip = str(app.query_one("#powercap-strip", Static).render())
             assert "GPU0" in strip and "230W" in strip
@@ -1409,7 +1535,7 @@ class TestEstateExtrasWired:
         """GPU0 is capped → [c] stages a 'power-cap off' (uncap) confirm."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             await pilot.press("c")
             await _settle(pilot)
@@ -1422,7 +1548,7 @@ class TestEstateExtrasWired:
     async def test_power_cap_sweep_opens_confirm(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             await pilot.press("w")
             await pilot.pause()
@@ -1433,7 +1559,7 @@ class TestEstateExtrasWired:
     async def test_prune_opens_confirm_modal(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             await pilot.press("p")
             await pilot.pause()
@@ -1456,7 +1582,7 @@ class TestEstateExtrasWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
             await pilot.pause()
@@ -1476,7 +1602,7 @@ class TestEstateExtrasWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
             await pilot.pause()
@@ -1516,12 +1642,12 @@ class TestValidateNoLiveWriteOrNetwork:
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
             # Browse every Validate tab + Estate extras — pure reads, no writes.
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
-            for tab in ("tab-doctor", "tab-benchmarks", "tab-evidence", "tab-run"):
+            for tab in ("tab-doctor", "tab-evidence", "tab-run"):
                 app.query_one("#validate-tabs", TabbedContent).active = tab
                 await pilot.pause()
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             # Nothing was written; submit-bench / prune / power-cap never auto-fired.
             assert wr.started == []
@@ -1555,7 +1681,7 @@ class TestEvaluateHookWired:
         app, _, _ = make_app(target=SERVING_TARGET,
                              gpus=list(SERVING_TARGET.gpus))
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")          # Estate — poll captures the target
+            await pilot.press("2")          # Estate — poll captures the target
             await _settle(pilot)
             await pilot.press("v")          # ▸ Evaluate
             await pilot.pause()
@@ -1571,7 +1697,7 @@ class TestEvaluateHookWired:
         and the hand-off carries that exact object (design §4/§6.6)."""
         app, _, _ = make_app(target=SERVING_TARGET, gpus=list(SERVING_TARGET.gpus))
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             assert app._target_obj is SERVING_TARGET
             handoff = app._data.evaluate_handoff(app._target_obj)
@@ -1586,7 +1712,7 @@ class TestEvaluateHookWired:
         app, _, _ = make_app(target=SERVING_TARGET, gpus=list(SERVING_TARGET.gpus),
                              write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             await pilot.press("v")
             await _settle(pilot)
@@ -1605,7 +1731,7 @@ class TestEvaluateHookWired:
         # No serving target (empty url) → nothing to evaluate.
         app, _, _ = make_app(target=ServingTarget(), write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             await pilot.press("v")
             await pilot.pause()
@@ -1614,7 +1740,7 @@ class TestEvaluateHookWired:
 
 
 class TestPromoteHookWired:
-    """Hook 2 — Discover → ▸ Promote to catalog (scaffold preview + gated write)."""
+    """Hook 2 — Run → ▸ Promote to catalog (scaffold preview + gated write)."""
 
     @pytest.mark.asyncio
     async def test_promote_without_byo_notifies(self):
@@ -1631,7 +1757,7 @@ class TestPromoteHookWired:
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # Run a BYO fit-check (Discover · BYO) — fills the arch facts.
+            # Run a BYO fit-check (Run · BYO) — fills the arch facts.
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
             assert app._last_byo is not None
@@ -1691,7 +1817,7 @@ class TestOptimizeHookWired:
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # From Discover · Catalog with a selected slug.
+            # From Run · Catalog with a selected slug.
             app.query_one("#catalog-table", DataTable).move_cursor(row=0)
             await pilot.press("O")          # ▸ Optimize for my card
             await _settle(pilot)
@@ -1713,15 +1839,20 @@ class TestOptimizeHookWired:
             assert wr.started == []
 
     @pytest.mark.asyncio
-    async def test_optimize_available_from_serve_staged_slug(self):
+    async def test_optimize_available_from_run_staged_slug_fallback(self):
+        """Optimize is reachable from Run; when no catalog row resolves it falls
+        back to the last staged serve slug (Serve folded into Run, R1)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # Stage a slug into Serve, then open the optimizer from there.
+            # Stage a slug via the serve confirm flow, then dismiss the modal.
             app.query_one("#catalog-table", DataTable).move_cursor(row=0)
-            await pilot.press("enter")      # → stages + jumps to Serve
+            await pilot.press("enter")      # → stages + opens confirm modal
             await pilot.pause()
-            await pilot.press("O")
+            assert app._staged_entry is not None
+            await pilot.press("escape")     # cancel the confirm modal
+            await pilot.pause()
+            await pilot.press("O")          # ▸ Optimize from Run
             await _settle(pilot)
             assert isinstance(app.screen, OptimizeScreen)
             body = str(app.screen.query_one("#optimize-body", Static).render())
@@ -1738,19 +1869,19 @@ class TestPhase5NoLiveEffect:
                                   write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # Optimize (Discover) — dormant no-op.
+            # Optimize (Run) — dormant no-op.
             app.query_one("#catalog-table", DataTable).move_cursor(row=0)
             await pilot.press("O")
             await pilot.pause()
             await pilot.press("escape")
-            # Promote (Discover) after a BYO check — preview only.
+            # Promote (Run) after a BYO check — preview only.
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
             await pilot.press("P")
             await pilot.pause()
             await pilot.press("escape")
             # Evaluate (Estate) — confirm modal staged, not committed.
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             await pilot.press("v")
             await pilot.pause()
@@ -1829,7 +1960,7 @@ class TestFilterInputSafety:
             await pilot.pause()
             assert app.is_running, "app must not have quit after typing 'q'"
             assert inp.value == "qwen36"
-            # No mode switch must have happened (still in Discover = mode 0).
+            # No mode switch must have happened (still in Run = mode 0).
             assert app._active_mode == 0
 
     @pytest.mark.asyncio
@@ -1851,7 +1982,7 @@ class TestFilterInputSafety:
                     f"got {result!r}"
                 )
             # Always-on keys must still be enabled.
-            for action in ("quit", "help", "refresh", "mode_discover", "mode_serve"):
+            for action in ("quit", "help", "refresh", "mode_run", "mode_estate"):
                 result = app.check_action(action, ())
                 assert result is True, (
                     f"check_action({action!r}) should return True (always-on), got {result!r}"
@@ -1862,7 +1993,7 @@ class TestCheckActionPerModeSubtab:
     """(b) check_action enables the right bindings per mode/sub-tab."""
 
     @pytest.mark.asyncio
-    async def test_discover_catalog_enables_explain_and_filter(self):
+    async def test_run_catalog_enables_explain_and_filter(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
@@ -1872,7 +2003,7 @@ class TestCheckActionPerModeSubtab:
             assert app.check_action("promote_catalog", ()) is True
 
     @pytest.mark.asyncio
-    async def test_discover_catalog_disables_estate_keys(self):
+    async def test_run_catalog_disables_estate_keys(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
@@ -1881,16 +2012,16 @@ class TestCheckActionPerModeSubtab:
                            "prune_images", "evaluate_target", "context_t"):
                 result = app.check_action(action, ())
                 assert result is False, (
-                    f"Discover must not enable estate action {action!r}, got {result!r}"
+                    f"Run must not enable estate action {action!r}, got {result!r}"
                 )
 
     @pytest.mark.asyncio
     async def test_estate_orchestration_enables_orch_keys(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
-            assert app._active_mode == 2
+            assert app._active_mode == 1
             # On orchestration tab (default first tab)
             tc = app.query_one("#estate-tabs", TabbedContent)
             tc.active = "tab-orchestration"
@@ -1906,7 +2037,7 @@ class TestCheckActionPerModeSubtab:
         """On the Orchestration sub-tab, container-specific keys are disabled."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#estate-tabs", TabbedContent)
             tc.active = "tab-orchestration"
@@ -1923,7 +2054,7 @@ class TestCheckActionPerModeSubtab:
         """On the Containers sub-tab, container-specific keys are enabled."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#estate-tabs", TabbedContent)
             tc.active = "tab-containers"
@@ -1935,22 +2066,28 @@ class TestCheckActionPerModeSubtab:
                 )
 
     @pytest.mark.asyncio
-    async def test_validate_benchmarks_enables_filter_and_sort(self):
+    async def test_run_catalog_enables_filter_and_validate_drops_old_bmk_keys(self):
+        """Fold 3: [/] filter lives on Run · Catalog; the old Benchmarks sort
+        ([t]) is gone, so context_t is disabled in Validate mode."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
             await _settle(pilot)
-            tc = app.query_one("#validate-tabs", TabbedContent)
-            tc.active = "tab-benchmarks"
-            await pilot.pause()
+            # Run · Catalog (default mode/tab): filter enabled.
+            assert app._active_mode == 0
             assert app.check_action("filter_catalog", ()) is True
-            assert app.check_action("context_t", ()) is True
+            # Validate mode: no benchmarks tab → context_t (sort) disabled,
+            # and filter_catalog is off (not a Run · Catalog context).
+            await pilot.press("3")
+            await _settle(pilot)
+            assert app._active_mode == 2
+            assert app.check_action("context_t", ()) is False
+            assert app.check_action("filter_catalog", ()) is False
 
     @pytest.mark.asyncio
     async def test_validate_evidence_enables_s_key(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             tc = app.query_one("#validate-tabs", TabbedContent)
             tc.active = "tab-evidence"
@@ -1959,11 +2096,12 @@ class TestCheckActionPerModeSubtab:
             assert app.check_action("s_key", ()) is True
 
     @pytest.mark.asyncio
-    async def test_serve_mode_disables_explain_and_filter(self):
-        """In Serve mode there is no catalog — explain and filter must be off."""
+    async def test_estate_mode_disables_explain_and_filter(self):
+        """Outside Run · Catalog there is no catalog — explain and filter must be
+        off (e.g. in Estate mode)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
+            await pilot.press("2")  # Estate
             await pilot.pause()
             assert app._active_mode == 1
             assert app.check_action("explain", ()) is False
@@ -1974,11 +2112,11 @@ class TestCheckActionPerModeSubtab:
         """quit/help/refresh/mode-switch must be True in every mode."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            for mode_key in ("1", "2", "3", "4"):
+            for mode_key in ("1", "2", "3"):
                 await pilot.press(mode_key)
                 await pilot.pause()
                 for action in ("quit", "help", "refresh",
-                               "mode_discover", "mode_serve", "mode_estate", "mode_validate"):
+                               "mode_run", "mode_estate", "mode_validate"):
                     result = app.check_action(action, ())
                     assert result is True, (
                         f"Always-on {action!r} must be True in mode {mode_key}, got {result!r}"
@@ -2103,7 +2241,7 @@ class TestModalKeyCapture:
             seed_repo(root)
             app, _, _ = make_app(repo_root=root)
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.press("4")
+                await pilot.press("3")
                 await _settle(pilot)
                 app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
                 await pilot.pause()
@@ -2133,12 +2271,12 @@ class TestSubtabCycling:
     """(d) Sub-tab cycle key switches tabs in modes that have sub-tabs."""
 
     @pytest.mark.asyncio
-    async def test_right_bracket_cycles_discover_subtab(self):
+    async def test_right_bracket_cycles_run_subtab(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert app._active_mode == 0  # Discover
-            tc = app.query_one("#discover-tabs", TabbedContent)
+            assert app._active_mode == 0  # Run
+            tc = app.query_one("#run-tabs", TabbedContent)
             assert tc.active == "tab-catalog"  # default first tab
             await pilot.press("right_square_bracket")
             await pilot.pause()
@@ -2149,7 +2287,7 @@ class TestSubtabCycling:
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            tc = app.query_one("#discover-tabs", TabbedContent)
+            tc = app.query_one("#run-tabs", TabbedContent)
             # Go to last tab first, then cycle forward → should wrap to first.
             tc.active = "tab-byo"
             await pilot.pause()
@@ -2162,7 +2300,7 @@ class TestSubtabCycling:
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            tc = app.query_one("#discover-tabs", TabbedContent)
+            tc = app.query_one("#run-tabs", TabbedContent)
             tc.active = "tab-byo"
             await pilot.pause()
             await pilot.press("left_square_bracket")
@@ -2173,7 +2311,7 @@ class TestSubtabCycling:
     async def test_subtab_key_cycles_estate_tabs(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#estate-tabs", TabbedContent)
             first = tc.active
@@ -2185,7 +2323,7 @@ class TestSubtabCycling:
     async def test_subtab_key_cycles_validate_tabs(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             tc = app.query_one("#validate-tabs", TabbedContent)
             first = tc.active
@@ -2194,27 +2332,28 @@ class TestSubtabCycling:
             assert tc.active != first
 
     @pytest.mark.asyncio
-    async def test_subtab_key_inactive_in_serve_mode(self):
-        """Serve mode has no sub-tabs — cycle key must be disabled (check_action
-        returns False) so it doesn't appear in the footer or do anything."""
+    async def test_subtab_key_active_in_all_three_modes(self):
+        """After R1 all three modes (Run · Estate · Validate) have sub-tabs, so
+        the cycle keys are active (check_action True) in each."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await pilot.pause()
-            assert app._active_mode == 1  # Serve
-            assert app.check_action("next_subtab", ()) is False
-            assert app.check_action("prev_subtab", ()) is False
+            for key, mode in (("1", 0), ("2", 1), ("3", 2)):
+                await pilot.press(key)
+                await pilot.pause()
+                assert app._active_mode == mode
+                assert app.check_action("next_subtab", ()) is True
+                assert app.check_action("prev_subtab", ()) is True
 
 
 class TestModeSwitchFocus:
     """(e) Mode switch moves focus to the mode's primary interactive widget."""
 
     @pytest.mark.asyncio
-    async def test_switch_to_discover_focuses_catalog_table(self):
+    async def test_switch_to_run_focuses_catalog_table(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # Start at Discover (mode 0) already — go away and come back.
+            # Start at Run (mode 0) already — go away and come back.
             await pilot.press("2")
             await pilot.pause()
             await pilot.press("1")
@@ -2226,7 +2365,7 @@ class TestModeSwitchFocus:
     async def test_switch_to_estate_focuses_scene_table(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             # Estate/Orchestration tab is default → scene-table should be focused.
             assert isinstance(app.focused, DataTable)
@@ -2236,7 +2375,7 @@ class TestModeSwitchFocus:
     async def test_switch_to_validate_focuses_run_ladder(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             # Validate/Run tab is default → run-ladder-table should be focused.
             assert isinstance(app.focused, DataTable)
@@ -2248,7 +2387,7 @@ class TestModeSwitchFocus:
         relevant DataTable for the newly active tab."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
+            await pilot.press("3")
             await _settle(pilot)
             # Default tab is Run → run-ladder-table.
             assert isinstance(app.focused, DataTable)
@@ -2259,13 +2398,13 @@ class TestModeSwitchFocus:
             await pilot.pause()  # extra cycle for call_after_refresh
             tc = app.query_one("#validate-tabs", TabbedContent)
             assert tc.active == "tab-doctor"
-            # Cycle forward again → Benchmarks tab → bmk-table.
+            # Cycle forward again → Evidence tab → evidence-table (Benchmarks gone).
             await pilot.press("right_square_bracket")
             await pilot.pause()
             await pilot.pause()  # extra cycle for call_after_refresh
-            assert tc.active == "tab-benchmarks"
+            assert tc.active == "tab-evidence"
             assert isinstance(app.focused, DataTable)
-            assert app.focused.id == "bmk-table"
+            assert app.focused.id == "evidence-table"
 
 
 class TestContainerAutoLoad:
@@ -2279,7 +2418,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
@@ -2293,7 +2432,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
@@ -2306,7 +2445,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
@@ -2322,7 +2461,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_TWO)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
@@ -2355,20 +2494,20 @@ class TestEscClosesFilter:
             assert app.focused is app.query_one("#catalog-table", DataTable)
 
     @pytest.mark.asyncio
-    async def test_esc_closes_bmk_filter(self):
+    async def test_no_bmk_filter_in_validate_after_fold(self):
+        """Fold 3: the Benchmarks filter is gone — `/` in Validate opens no
+        filter Input and Esc remains a harmless no-op (the app stays running)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("4")
-            await _settle(pilot)
-            app.query_one("#validate-tabs", TabbedContent).active = "tab-benchmarks"
+            await pilot.press("3")  # Validate
             await _settle(pilot)
             await pilot.press("slash")
             await pilot.pause()
-            assert app.query("#bmk-filter")
+            assert not app.query("#bmk-filter")
+            assert not app.query("#bmk-table")
             await pilot.press("escape")
             await pilot.pause()
-            assert not app.query("#bmk-filter")
-            assert app.focused is app.query_one("#bmk-table", DataTable)
+            assert app.is_running
 
     @pytest.mark.asyncio
     async def test_esc_on_main_screen_does_not_quit(self):
@@ -2427,7 +2566,7 @@ class TestSurfaceScaffold:
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             assert app._PRODUCER_ONLY == frozenset()
-            # a normal Discover/mode-0 context key is unaffected by the surface gate
+            # a normal Run/mode-0 context key is unaffected by the surface gate
             assert app.check_action("explain", ()) is True
 
     @pytest.mark.asyncio
@@ -2447,7 +2586,7 @@ class TestSurfaceScaffold:
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             # producer is not surface-gated → falls through to the normal context
-            # check (explain is a mode-0 Discover key; default mode is 0 → True)
+            # check (explain is a mode-0 Run key; default mode is 0 → True)
             assert app.check_action("explain", ()) is True
 
     @pytest.mark.asyncio
