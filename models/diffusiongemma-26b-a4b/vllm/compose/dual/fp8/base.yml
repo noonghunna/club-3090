@@ -9,8 +9,21 @@
 #   Max ctx:   262144 (NIAH retrieval validated to ~250K)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
 #   Status:    🧪 Experimental — runs on the OFFICIAL vllm/vllm-openai:gemma image +
-#              3 vendored Ampere/TP fix-mounts; under active validation, eager-only.
-#              Launch needs --force (non-functional status).
+#              5 vendored fix-mounts (3 Ampere/TP + 2 gemma4 parser);
+#              under active validation, eager-only. Launch needs --force.
+#   Caveats:   Streaming reasoning leaked the literal <|channel>thought sentinel into
+#              the reasoning stream under the model's block-canvas SSE chunking (the
+#              "thoughts in chat" symptom on agent clients) — fixed by the vendored
+#              gemma4_reasoning_parser.py overlay (see UPSTREAM.md). Empty assistant turns
+#              after tool calls in long agentic loops: under degraded deep context the model
+#              emits a malformed paren-form tool call `call:fn(...)` that the brace-only
+#              gemma4 tool parser silently dropped to an empty turn; and it writes brace-body
+#              values with plain quotes `{domain: "media_player"}` (vs the `<|"|>` delimiter)
+#              that the stock parser passed through WITH the literal quotes -> "not valid JSON"
+#              / Invalid-domain errors. Both fixed by the vendored gemma4_tool_parser.py overlay
+#              (paren recovery + no-swallow fallback + quote-aware value strip; see UPSTREAM.md).
+#              At-depth tool-call misses + token garbling/hallucinated ids (~11K-38K ctx, #255)
+#              are a separate model/quant quality axis, not the parser.
 #   Quality:   8-pack 100/150 (67%) — toolcall 13/15 · instructfollow 13-15/15 ·
 #              structoutput 14/15 · dataextract 10/15 · reasonmath 11/15 ·
 #              bugfind 11/15 · hermesagent-20 14/20 (agentic tool-use works) ·
@@ -26,11 +39,26 @@
 #
 # DELIVERY: the OFFICIAL `vllm/vllm-openai:gemma` image (pushed 2026-06-10) has the
 # dLLM arch baked in (a stock vLLM build of the dgemma branch commit 74b5964f). We pin
-# it BY DIGEST (purge-resistant), then bind-mount 3 fix files that are NOT upstream:
+# it BY DIGEST (purge-resistant), then bind-mount 5 fix files that are NOT upstream:
 #   • marlin.py + marlin_utils_fp8.py — sm_86 fp8 Marlin sub-tile-K pad. Without them
 #     :gemma dies in warmup (Invalid thread config, K=352/1056, 99 KB shared mem).
 #   • diffusion_gemma.py — TP-vocab soft-embed + dtype fix (their recipe is TP=1, so
 #     the TP=2 vocab bug is unfixed upstream).
+#   • gemma4_reasoning_parser.py — streaming reasoning-parser fix: strips the leaked
+#     <|channel> start token that the base parser leaves in the first reasoning delta
+#     when a whole diffusion canvas (start token + thought, no end token yet) arrives
+#     in one SSE chunk. Without it, agent/chat clients see raw "<|channel>thought…" in
+#     the reasoning stream. Non-streaming was already clean. See UPSTREAM.md.
+#   • gemma4_tool_parser.py — malformed tool-call recovery + no-swallow fallback + quote-aware
+#     value strip. In long agentic loops the model degrades two ways: (a) emits paren-form
+#     `call:fn(domain='x')` instead of the canonical brace form → the stock brace-only parser
+#     matched nothing and silently dropped the whole <|tool_call>…<tool_call|> block → an EMPTY
+#     assistant turn; (b) keeps braces but writes values with plain quotes `{domain: "x"}`
+#     instead of the `<|"|>` delimiter → the stock bare-value path kept the quotes, emitting
+#     `"\"x\""` (literal quotes in the JSON arg) → "not valid JSON" / Invalid-domain errors.
+#     The overlay recovers the paren form (else surfaces raw text as content, never a silent
+#     empty) and parses plain-quoted values quote-aware (strip the quotes + any leaked <|"|>).
+#     The canonical <|"|> path is matched first, so well-formed calls are unchanged. See UPSTREAM.md.
 # See ../../../patches/gemma-image-fixes/README.md (provenance + rebase). This replaces
 # the former 123-file sideload overlay on a stock nightly — same perf, 120 fewer files.
 #
@@ -65,12 +93,19 @@ services:
       - "${ESTATE_PORT:-${PORT:-8042}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
-      # 3 Ampere/TP fix-mounts over the official :gemma image's vllm pkg (NOT upstream —
+      # 5 fix-mounts over the official :gemma image's vllm pkg (NOT upstream —
       # see ../../../patches/gemma-image-fixes/README.md). marlin.py + marlin_utils_fp8.py
-      # = sm_86 fp8 Marlin K-pad; diffusion_gemma.py = TP-vocab soft-embed + dtype fix.
+      # = sm_86 fp8 Marlin K-pad; diffusion_gemma.py = TP-vocab soft-embed + dtype fix;
+      # gemma4_reasoning_parser.py = streaming reasoning-parser fix (strips the leaked
+      # <|channel> start token under diffusion block-canvas chunking — see UPSTREAM.md);
+      # gemma4_tool_parser.py = malformed tool-call recovery + no-swallow fallback + quote-aware value strip (the
+      # degraded paren-form `call:fn(...)` that the brace-only parser silently dropped to
+      # an empty turn after tool calls — see UPSTREAM.md).
       - ../../../patches/gemma-image-fixes/marlin.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/scaled_mm/marlin.py:ro
       - ../../../patches/gemma-image-fixes/marlin_utils_fp8.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/marlin_utils_fp8.py:ro
       - ../../../patches/gemma-image-fixes/diffusion_gemma.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/diffusion_gemma.py:ro
+      - ../../../patches/gemma-image-fixes/gemma4_reasoning_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/reasoning/gemma4_reasoning_parser.py:ro
+      - ../../../patches/gemma-image-fixes/gemma4_tool_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/tool_parsers/gemma4_tool_parser.py:ro
       # NVLink auto-detection — runs inside container at boot (same path as dual-max).
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
     environment:
