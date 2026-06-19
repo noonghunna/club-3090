@@ -368,6 +368,46 @@ def compose_cmd() -> list[str]:
     return shlex.split(os.environ.get("COMPOSE_BIN", "docker compose"))
 
 
+def compose_service_names(compose_name: str) -> list[str]:
+    """Return service names from a registry compose file."""
+    path = compose_abs_path(compose_name)
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    services = data.get("services")
+    if not isinstance(services, dict) or not services:
+        raise EstateCliError(f"compose file for `{compose_name}` has no services: {path}")
+    return [str(name) for name in services.keys()]
+
+
+def compose_override_doc(inst: InstanceSpec) -> dict[str, Any]:
+    """Per-estate compose override.
+
+    Some vLLM compose files expose all NVIDIA devices via the Docker device
+    reservation and only interpolate ESTATE_GPUS into NVIDIA_VISIBLE_DEVICES.
+    In that setup, CUDA may still enumerate physical GPU 0 first. Pass
+    CUDA_VISIBLE_DEVICES inside the container so each estate instance uses the
+    GPUs it claimed.
+    """
+    joined = ",".join(str(gpu) for gpu in inst.gpu_indices)
+    return {
+        "services": {
+            service: {
+                "environment": {
+                    "CUDA_VISIBLE_DEVICES": joined,
+                    "NVIDIA_VISIBLE_DEVICES": joined,
+                }
+            }
+            for service in compose_service_names(inst.compose_name)
+        }
+    }
+
+
+def write_compose_override(inst: InstanceSpec) -> Path:
+    boot_log_dir().mkdir(parents=True, exist_ok=True)
+    path = boot_log_dir() / f"{safe_name(inst.name)}.override.yml"
+    path.write_text(yaml.safe_dump(compose_override_doc(inst), sort_keys=False), encoding="utf-8")
+    return path
+
+
 def boot_log_dir() -> Path:
     return Path(os.environ.get("CLUB3090_ESTATE_BOOT_LOG_DIR", str(DEFAULT_BOOT_LOG_DIR))).expanduser()
 
@@ -407,7 +447,10 @@ def append_log(path: Path, message: str) -> None:
 
 
 def run_compose(inst: InstanceSpec, action: str, log_path: Path | None = None) -> None:
-    cmd = compose_cmd() + ["-p", project_name(inst.name), "-f", str(compose_abs_path(inst.compose_name)), action]
+    cmd = compose_cmd() + ["-p", project_name(inst.name), "-f", str(compose_abs_path(inst.compose_name))]
+    if action == "up":
+        cmd += ["-f", str(write_compose_override(inst))]
+    cmd.append(action)
     if action == "up":
         cmd.append("-d")
     if log_path is not None:

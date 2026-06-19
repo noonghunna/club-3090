@@ -91,6 +91,52 @@ assert_contains "$out" "default estate persisted"
 assert_contains "$out" "qwen-left"
 assert_contains "$out" "up:qwen-left,ready:qwen-left"
 
+out="$(
+  cd "$ROOT_DIR"
+  CLUB3090_ESTATE_BOOT_LOG_DIR="${TMP_DIR}/boot-logs" python3 - <<'PY'
+import yaml
+
+from scripts.lib.profiles import estate_cli as ec
+from scripts.lib.profiles.compat import InstanceSpec
+
+inst = InstanceSpec(name="gemma-dual", compose_name="vllm/gemma-int8-mtp", gpu_indices=(2, 3), port=8032)
+override_path = ec.write_compose_override(inst)
+data = yaml.safe_load(override_path.read_text(encoding="utf-8"))
+service = data["services"]["vllm-gemma-4-31b-mtp-int8"]
+print(override_path)
+print(service["environment"]["CUDA_VISIBLE_DEVICES"])
+print(service["environment"]["NVIDIA_VISIBLE_DEVICES"])
+PY
+)"
+assert_contains "$out" "gemma-dual.override.yml"
+assert_contains "$out" "2,3"
+
+out="$(
+  cd "$ROOT_DIR"
+  CLUB3090_ESTATE_BOOT_LOG_DIR="${TMP_DIR}/boot-logs" python3 - <<'PY'
+from scripts.lib.profiles import estate_cli as ec
+from scripts.lib.profiles.compat import InstanceSpec
+
+calls = []
+
+class Proc:
+    returncode = 0
+
+def fake_run(cmd, **kwargs):
+    calls.append(cmd)
+    return Proc()
+
+ec.subprocess.run = fake_run
+inst = InstanceSpec(name="gemma-dual", compose_name="vllm/gemma-int8-mtp", gpu_indices=(2, 3), port=8032)
+ec.run_compose(inst, "up")
+cmd = calls[0]
+print(" ".join(cmd))
+print(f"f_count={sum(1 for part in cmd if part == '-f')}")
+PY
+)"
+assert_contains "$out" "gemma-dual.override.yml"
+assert_contains "$out" "f_count=2"
+
 FAKE_BIN="${TMP_DIR}/fakebin"
 mkdir -p "$FAKE_BIN"
 cat > "${FAKE_BIN}/docker" <<'SH'
