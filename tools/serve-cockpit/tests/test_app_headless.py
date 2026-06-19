@@ -2008,6 +2008,24 @@ class TestEvaluateHookWired:
             assert app.screen._plan.requires_confirm is True
 
     @pytest.mark.asyncio
+    async def test_evaluate_works_lane_native_without_visiting_operate(self):
+        """R3b-1 HIGH fix: the lane-NATIVE path — enter the lane via key 3 WITHOUT
+        first visiting Operate (key 2) — must still find the live target, because
+        lane entry now primes load_estate() itself.  Before the fix _target_obj was
+        set ONLY by the Operate poll, so this path hit the 'nothing to evaluate'
+        notify even with a model serving."""
+        app, _, _ = make_app(target=SERVING_TARGET,
+                             gpus=list(SERVING_TARGET.gpus),
+                             surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")          # straight to the lane — NO Operate visit
+            await _settle(pilot)
+            await pilot.press("v")          # ▸ Evaluate
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)  # target was primed
+            assert app.screen._plan.kind == "evaluate"
+
+    @pytest.mark.asyncio
     async def test_evaluate_hands_off_the_shared_serving_target_by_identity(self):
         """The app's stored target IS the SAME ServingTarget the poll detected,
         and the hand-off carries that exact object (design §4/§6.6)."""

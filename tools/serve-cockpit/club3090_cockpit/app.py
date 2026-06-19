@@ -1892,12 +1892,28 @@ class UntestedComposePreviewScreen(ModalScreen):
 
     def _serve(self) -> None:
         """Hand the serve_generated plan to the app's reconcile gate.  Routes
-        through the standard ConfirmActionScreen — NEVER auto-fired, NEVER live."""
+        through the standard ConfirmActionScreen — NEVER auto-fired, NEVER live.
+        Does NOT unlink the temp compose: a served plan's `docker compose -f
+        <path>` references it, so it must persist (it's gitignored)."""
         self.app.pop_screen()
         if self._on_serve is not None and self._compose_path:
             self._on_serve(self._compose_path)
 
+    def _cleanup_temp(self) -> None:
+        """Unlink the generated temp compose — DECLINE path only (Esc / Close).
+        A serve keeps the file (see _serve)."""
+        import os
+        if self._compose_path:
+            try:
+                os.unlink(self._compose_path)
+            except OSError:
+                pass
+
     def action_dismiss(self) -> None:
+        # Declined without serving → remove the stray c3-genc temp compose so it
+        # doesn't accumulate on disk (git-pollution is already handled by
+        # .gitignore; this is the disk-cleanup tail of the temp-file fix).
+        self._cleanup_temp()
         self.app.pop_screen()
 
 
