@@ -29,7 +29,15 @@ def main() -> None:
 
     from .app import CockpitApp
 
-    app = CockpitApp(repo_root=repo_root)
+    # Surface (R0): consumer (default) vs producer. `c3 --contribute` (or
+    # C3_SURFACE=producer for persistence) opts into the producer surface, which
+    # adds the Bring & Validate lane (R3). Default keeps the consumer UI clean.
+    surface = (
+        "producer"
+        if "--contribute" in sys.argv or os.environ.get("C3_SURFACE") == "producer"
+        else "consumer"
+    )
+    app = CockpitApp(repo_root=repo_root, surface=surface)
     app.run()
 
 

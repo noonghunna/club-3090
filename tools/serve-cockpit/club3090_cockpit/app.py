@@ -2105,6 +2105,11 @@ class CockpitApp(App):
         "context_t":        ({2, 3}, {"tab-containers", "tab-benchmarks"}),
     }
 
+    # Producer-only actions — hidden on the consumer surface (R0 surface scaffold).
+    # Empty until R3 adds the Bring & Validate lane, so the surface gate in
+    # check_action is a no-op today (no behavior change) — just the wired predicate.
+    _PRODUCER_ONLY: frozenset[str] = frozenset()
+
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Return True (enabled + shown in footer), False (disabled + hidden in footer).
 
@@ -2125,6 +2130,12 @@ class CockpitApp(App):
 
         if action in self._ALWAYS_ON:
             return True
+
+        # Surface gate (R0): producer-only actions are hidden on the consumer
+        # surface. Permissive today — _PRODUCER_ONLY is empty until R3 wires the
+        # Bring & Validate lane.
+        if self._surface != "producer" and action in self._PRODUCER_ONLY:
+            return False
 
         # When a filter Input is focused, hide all context-key bindings from the
         # footer.  The Input's own _on_key stops printable characters before they
@@ -2168,9 +2179,16 @@ class CockpitApp(App):
         except Exception:
             return ""
 
-    def __init__(self, repo_root: Path, *, data: Optional[CockpitData] = None, **kwargs):
+    def __init__(self, repo_root: Path, *, data: Optional[CockpitData] = None,
+                 surface: str = "consumer", **kwargs):
         super().__init__(**kwargs)
         self._repo_root = repo_root
+        # Audience surface (R0): "consumer" (default — Run + Operate) or "producer"
+        # (+ Bring & Validate, R3). Gates producer-only actions/modes via
+        # _PRODUCER_ONLY in check_action, and surfaces a CONTRIBUTE indicator.
+        self._surface = surface if surface in ("consumer", "producer") else "consumer"
+        if self._surface == "producer":
+            self.sub_title = "wired · ⚒ CONTRIBUTE"
         # Injectable service layer — defaults to the real (live-read) impl.
         self._data: CockpitData = data or CockpitData(repo_root)
         self._active_mode = 0  # 0=Discover 1=Serve 2=Estate 3=Validate

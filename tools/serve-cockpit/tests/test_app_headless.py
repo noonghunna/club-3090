@@ -394,6 +394,7 @@ def make_app(
     target: Optional[ServingTarget] = None,
     write_runner: Optional[FakeWriteRunner] = None,
     repo_root: Optional[Path] = None,
+    surface: str = "consumer",
 ) -> tuple[CockpitApp, FakeRunner, FakeWriteRunner]:
     """Build a CockpitApp wired to a fully-faked CockpitData.
 
@@ -414,7 +415,7 @@ def make_app(
         get_gpu_info_fn=make_gpu_info(gpus),
         write_runner=write_runner,
     )
-    app = CockpitApp(repo_root=root, data=data)
+    app = CockpitApp(repo_root=root, data=data, surface=surface)
     return app, runner, write_runner
 
 
@@ -2377,3 +2378,66 @@ class TestEscClosesFilter:
             await pilot.press("escape")
             await pilot.pause()
             assert app.is_running
+
+
+class TestSurfaceScaffold:
+    """R0 — the surface flag + `--contribute` indicator + the (permissive) producer gate.
+
+    No behavior change ships in R0: _PRODUCER_ONLY is empty, so the surface gate
+    is a no-op. These tests prove (a) the flag defaults to consumer, (b) producer
+    surfaces the CONTRIBUTE indicator, and (c) the gate LOGIC hides a producer-only
+    action on consumer / shows it on producer — so R3 can populate _PRODUCER_ONLY
+    and have it take effect.
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_surface_is_consumer_no_indicator(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app._surface == "consumer"
+            assert "CONTRIBUTE" not in str(app.sub_title)
+
+    @pytest.mark.asyncio
+    async def test_producer_surface_shows_contribute_indicator(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app._surface == "producer"
+            assert "CONTRIBUTE" in str(app.sub_title)
+
+    @pytest.mark.asyncio
+    async def test_invalid_surface_falls_back_to_consumer(self):
+        app, _, _ = make_app(surface="bogus")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app._surface == "consumer"
+
+    @pytest.mark.asyncio
+    async def test_shipped_producer_set_is_empty_noop(self):
+        # The shipped _PRODUCER_ONLY is empty → no existing action is surface-gated.
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app._PRODUCER_ONLY == frozenset()
+            # a normal Discover/mode-0 context key is unaffected by the surface gate
+            assert app.check_action("explain", ()) is True
+
+    @pytest.mark.asyncio
+    async def test_producer_gate_hides_on_consumer(self):
+        # Inject a producer-only action to prove the gate fires on the consumer surface.
+        app, _, _ = make_app(surface="consumer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app._PRODUCER_ONLY = frozenset({"explain"})  # instance override for the test
+            assert app.check_action("explain", ()) is False  # surface-gated off
+
+    @pytest.mark.asyncio
+    async def test_producer_gate_passes_on_producer(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app._PRODUCER_ONLY = frozenset({"explain"})
+            # producer is not surface-gated → falls through to the normal context
+            # check (explain is a mode-0 Discover key; default mode is 0 → True)
+            assert app.check_action("explain", ()) is True
