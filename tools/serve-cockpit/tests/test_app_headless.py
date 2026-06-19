@@ -1027,6 +1027,233 @@ class TestEstateWired:
 
 
 # ===========================================================================
+# Batch 1 — Operate / BYO UX (bugs + polish from real-rig feedback)
+# ===========================================================================
+
+
+def _seed_services(root: Path, names: list[str]) -> None:
+    """Seed services/<name>/docker-compose.yml so _known_service_dirs finds them."""
+    for n in names:
+        d = root / "services" / n
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+
+
+class TestBatch1OperateServingPanel:
+    """#1 — Operate · Orchestration surfaces WHAT'S SERVING."""
+
+    @pytest.mark.asyncio
+    async def test_serving_panel_shows_matched_target(self):
+        # A target on port 8010 matches the vllm/dual registry row → matched_slug.
+        tgt = ServingTarget(
+            url="http://localhost:8010", model="qwen3.6-27b", host_port=8010,
+            gpus=[GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)],
+        )
+        app, _, _ = make_app(target=tgt)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            line = str(app.query_one("#serving-line", Static).render())
+            assert "Serving" in line
+            assert "qwen3.6-27b" in line
+            assert "vllm/dual" in line
+            assert ":8010" in line
+
+    @pytest.mark.asyncio
+    async def test_serving_panel_no_model(self):
+        # Default target has no model / no matching port → "no model serving".
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            line = str(app.query_one("#serving-line", Static).render())
+            assert "no model serving" in line.lower()
+
+
+class TestBatch1KnownServices:
+    """#2 — the Containers view shows known-but-stopped supporting services."""
+
+    @pytest.mark.asyncio
+    async def test_stopped_service_appears_greyed(self, tmp_path):
+        _seed_services(tmp_path, ["comfyui", "litellm"])
+        seed_repo(tmp_path)
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, _, _ = make_app(responses=responses, repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            names = [c.name for c in pane._containers]
+            # The running engine container is still present...
+            assert "vllm-qwen36-27b-dual" in names
+            # ...alongside the known-but-stopped supporting services.
+            assert "comfyui" in names
+            assert "litellm" in names
+            stopped = [c for c in pane._containers if c.name == "litellm"]
+            assert stopped and stopped[0].status == "stopped"
+            # Rendered greyed/"stopped" in the table.
+            tbl = app.query_one("#containers-table", DataTable)
+            blob = " ".join(str(tbl.get_row_at(r)) for r in range(tbl.row_count))
+            assert "stopped" in blob
+
+    @pytest.mark.asyncio
+    async def test_running_service_not_duplicated_as_stopped(self, tmp_path):
+        # A running comfyui-* container should NOT also show a stopped "comfyui".
+        _seed_services(tmp_path, ["comfyui"])
+        seed_repo(tmp_path)
+        responses = fake_responses(
+            **{"docker ps": ok("comfyui-server|0.0.0.0:8188->8188/tcp\n")}
+        )
+        app, _, _ = make_app(responses=responses, repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            stopped = [c for c in pane._containers if c.status == "stopped"]
+            assert not any(c.name == "comfyui" for c in stopped)
+
+    @pytest.mark.asyncio
+    async def test_running_non_gpu_service_not_stopped_actions_live(self, tmp_path):
+        """MUST-FIX #2 (a): a RUNNING non-GPU supporting service (litellm — NOT
+        in _GPU_SERVICE_NAMES, so dropped from the GPU stack-container list) must
+        NOT be rendered "stopped" and its container actions must NOT be
+        suppressed.  Before the fix, the de-dup keyed off the GPU-filtered list →
+        litellm never appeared as running → it was appended as a greyed,
+        read-only "stopped" row even while live."""
+        _seed_services(tmp_path, ["litellm"])
+        seed_repo(tmp_path)
+        # docker ps reports litellm RUNNING (its container_name == "litellm").
+        responses = fake_responses(
+            **{"docker ps": ok("litellm|0.0.0.0:4000->4000/tcp\n")}
+        )
+        app, _, _ = make_app(responses=responses, repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            litellm = next((c for c in pane._containers if c.name == "litellm"), None)
+            assert litellm is not None, "litellm service not surfaced at all"
+            # NOT stopped (it's live) and NOT in the stopped set.
+            assert litellm.status != "stopped"
+            assert litellm not in [c for c in pane._containers if c.status == "stopped"]
+            # Actions are NOT suppressed — the stopped-service guard is False.
+            assert app._is_stopped_service(litellm) is False
+            # A write op (restart) routes to the confirm gate, not the
+            # "<name> is not running" warning short-circuit.
+            tbl = pane.query_one("#containers-table", DataTable)
+            idx = pane._containers.index(litellm)
+            tbl.move_cursor(row=idx)
+            await pilot.press("s")  # restart
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert app.screen._plan.cmd == ["docker", "restart", "litellm"]
+
+    @pytest.mark.asyncio
+    async def test_separator_mismatch_service_matched_as_running(self, tmp_path):
+        """MUST-FIX #2 (b): a service dir ``open-webui`` whose running container
+        is named ``openwebui`` (separator mismatch) must NORMALIZE-match → shown
+        running, not stopped.  A bare substring match would miss this."""
+        _seed_services(tmp_path, ["open-webui"])
+        seed_repo(tmp_path)
+        responses = fake_responses(
+            **{"docker ps": ok("openwebui|0.0.0.0:3000->8080/tcp\n")}
+        )
+        app, _, _ = make_app(responses=responses, repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            stopped = [c for c in pane._containers if c.status == "stopped"]
+            assert not any(c.name == "open-webui" for c in stopped), (
+                "open-webui dir wrongly marked stopped despite running 'openwebui'"
+            )
+            owui = next((c for c in pane._containers if c.name == "open-webui"), None)
+            assert owui is not None and owui.status != "stopped"
+            assert app._is_stopped_service(owui) is False
+
+
+class TestBatch1PowerCapCard:
+    """#10 — GPU cards show power+cap; a cap write re-polls the estate."""
+
+    @pytest.mark.asyncio
+    async def test_gpu_card_shows_power_and_cap(self):
+        gpus = [
+            GpuInfo(index=0, mem_used_mib=18 * 1024, mem_total_mib=24 * 1024,
+                    utilization=71, power_draw_w=312, power_limit_w=370, temp_c=64),
+            GpuInfo(index=1, mem_used_mib=12 * 1024, mem_total_mib=24 * 1024, utilization=45),
+        ]
+        # POWER_CAP_STATUS has GPU0 capped at 230 (default 370).
+        app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            bar = str(app.query_one("#gpu0-bar", Static).render())
+            assert "power:" in bar
+            assert "312 / 370 W" in bar
+            assert "cap 230W" in bar  # capped card annotates the active cap
+
+    @pytest.mark.asyncio
+    async def test_cap_write_repolls_estate(self, monkeypatch):
+        wr = FakeWriteRunner()
+        app, runner, _ = make_app(write_runner=wr)
+        # Count load_estate invocations directly (it's a @work worker — wrap the
+        # underlying coroutine so the re-poll is observable).
+        calls = {"n": 0}
+        import club3090_cockpit.app as appmod
+        orig = appmod.CockpitApp.load_estate
+
+        def counting(self):
+            calls["n"] += 1
+            return orig(self)
+
+        monkeypatch.setattr(appmod.CockpitApp, "load_estate", counting)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")  # entering Operate triggers a load_estate
+            await _settle(pilot)
+            before = calls["n"]
+            plan = app._data.power_cap_set("off")
+            assert plan.kind == "power_cap"
+            app.dispatch_action(plan)
+            await _settle(pilot)
+            # The cap WRITE re-polled the estate (load_estate fired again).
+            assert calls["n"] > before
+            # The write still went through the (mocked) write runner — gate intact.
+            assert len(wr.started) == 1
+
+    @pytest.mark.asyncio
+    async def test_cap_toggle_is_confirm_gated(self):
+        # [c] toggle routes through the confirm modal (gate NOT bypassed).
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
+            await _settle(pilot)
+            app.action_power_cap_toggle()
+            await _settle(pilot)
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert app.screen._plan.kind == "power_cap"
+
+
+class TestBatch1ByoPlaceholder:
+    """#7 — BYO placeholder names a HuggingFace model slug."""
+
+    @pytest.mark.asyncio
+    async def test_byo_placeholder_says_huggingface_slug(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # BYO is a Run sub-tab (consumer surface).
+            app.query_one("#run-tabs", TabbedContent).active = "tab-byo"
+            await _settle(pilot)
+            ph = app.query_one("#byo-url-input", Input).placeholder
+            assert "HuggingFace model slug" in ph
+            assert "unsloth/Qwen3-27B-abliterated-GGUF" in ph
+
+
+# ===========================================================================
 # THE RECONCILE GATE — every write path goes through it
 # ===========================================================================
 
@@ -3496,13 +3723,14 @@ class TestModeSwitchFocus:
 
 
 class TestContainerAutoLoad:
-    """Operate·Containers drill detail auto-loads on selection (lazydocker-style)
-    — no [l]/[t] keypress needed."""
+    """Operate·Containers drill detail loads on USER navigation (cursor move) or
+    an explicit [l]/[t] — but the tab is CALM on entry (#3, Batch 1): NO forced
+    selection / auto-load of the first row's detail."""
 
     @pytest.mark.asyncio
-    async def test_entering_containers_autoloads_config(self):
-        """Switching to the Containers tab auto-fills the Config drill tab for the
-        highlighted container — no keypress."""
+    async def test_entering_containers_does_not_autoload_config(self):
+        """#3: switching to the Containers tab must NOT auto-fill Config — the
+        tab is calm on entry (no forced selection / auto-load)."""
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
@@ -3511,18 +3739,37 @@ class TestContainerAutoLoad:
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
             cfg = str(app.query_one("#drill-config", Static).render())
-            assert "vllm-qwen36-27b-dual" in cfg  # config loaded with no [t]
+            assert "vllm-qwen36-27b-dual" not in cfg  # NOT auto-loaded on entry
 
     @pytest.mark.asyncio
-    async def test_entering_containers_autoloads_logs(self):
-        """Default drill tab is Logs — entering Containers auto-reads docker logs
-        for the selected container (no [l])."""
+    async def test_entering_containers_does_not_autoload_logs(self):
+        """#3: entering Containers must NOT auto-read docker logs/top — no
+        subprocess read fires until the user navigates or presses [l]/[t]."""
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("2")
             await _settle(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            assert not any("docker logs" in " ".join(c) for c in runner.calls)
+            assert not any("docker top" in " ".join(c) for c in runner.calls)
+
+    @pytest.mark.asyncio
+    async def test_explicit_logs_key_loads_after_calm_entry(self):
+        """#3: the user CAN still load logs explicitly with [l] after the calm
+        entry — the read fires on the explicit key."""
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            assert not any("docker logs" in " ".join(c) for c in runner.calls)
+            app.query_one("#containers-table", DataTable).move_cursor(row=0)
+            await pilot.pause()
+            app.action_container_logs()
             await _settle(pilot)
             assert any("docker logs" in " ".join(c) for c in runner.calls)
 
@@ -3561,6 +3808,47 @@ class TestContainerAutoLoad:
             assert tbl.cursor_row == 1, f"cursor did not move (row={tbl.cursor_row})"
             cfg = str(app.query_one("#drill-config", Static).render())
             assert "vllm-gemma-4-31b-dual" in cfg
+
+    @pytest.mark.asyncio
+    async def test_r_refresh_on_containers_does_not_rejump_load(self):
+        """NH1: pressing [r] (refresh) WHILE on the Containers tab repopulates
+        the table → cursor resets to row 0.  That programmatic row-0 highlight
+        must NOT auto-load the drill (no docker logs/top off the user's prior
+        selection — the [r]-re-jump footgun); a SUBSEQUENT real user move DOES."""
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_TWO)})
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            tbl = app.query_one("#containers-table", DataTable)
+            tbl.focus()
+            await pilot.pause()
+            # User moves to row 1 (gemma) — a genuine highlight → loads config.
+            await pilot.press("down")
+            await pilot.pause()
+            assert "vllm-gemma-4-31b-dual" in str(
+                app.query_one("#drill-config", Static).render()
+            )
+            # [r]-refresh on the tab: cursor snaps to row 0, but the programmatic
+            # echo must NOT spawn a drill read.
+            runner.calls.clear()
+            await pilot.press("r")
+            await _settle(pilot)
+            assert not any("docker logs" in " ".join(c) for c in runner.calls), (
+                "[r]-refresh auto-loaded docker logs (re-jump footgun)"
+            )
+            assert not any("docker top" in " ".join(c) for c in runner.calls), (
+                "[r]-refresh auto-loaded docker top (re-jump footgun)"
+            )
+            # A subsequent real user move STILL loads the drill detail.
+            runner.calls.clear()
+            await pilot.press("down")
+            await pilot.pause()
+            assert "vllm-gemma-4-31b-dual" in str(
+                app.query_one("#drill-config", Static).render()
+            )
 
 
 class TestEscClosesFilter:

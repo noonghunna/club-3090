@@ -428,6 +428,110 @@ class CockpitData:
             )
         return infos
 
+    def _known_service_dirs(self) -> list[str]:
+        """Enumerate the KNOWN supporting services from the repo's
+        ``services/<name>/docker-compose.yml`` tree (READ — a filesystem scan).
+
+        These are the rig's full supporting estate (ComfyUI / LiteLLM / Ollama /
+        OpenWebUI / Qdrant / SearXNG / Studio …); a service is "known" if its
+        directory carries a ``docker-compose.yml``.  Returns the sorted service
+        names; empty when the tree is absent (e.g. the test fake root)."""
+        base = self.repo_root / "services"
+        names: list[str] = []
+        try:
+            for child in sorted(base.iterdir()):
+                if not child.is_dir():
+                    continue
+                if (child / "docker-compose.yml").is_file() or (
+                    child / "docker-compose.yaml"
+                ).is_file():
+                    names.append(child.name)
+        except (OSError, FileNotFoundError):
+            return []
+        return names
+
+    async def _running_container_names(self) -> list[str]:
+        """READ — the FULL set of running container names, via ``docker ps``,
+        INDEPENDENT of ``_classify_container_kind``.
+
+        ``_docker_ps_stack_containers`` only surfaces the GPU-holders the
+        reconcile gate gates on (engine prefixes, ``club3090-`` estate, the
+        ``_GPU_SERVICE_NAMES`` GPU services), so its names CANNOT be the de-dup
+        source for ``_merge_known_services`` — a running non-GPU supporting
+        service (``litellm`` / ``ollama`` / ``qdrant`` / ``searxng`` /
+        ``open-webui``) never appears there and would be falsely rendered as
+        "stopped".  This is the unfiltered list of every container name docker
+        knows is running.  Goes through the injected runner so tests stay
+        mockable; failures degrade to an empty list (callers bias toward
+        running)."""
+        res = await self._runner.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            cwd=str(self.repo_root),
+            timeout=10.0,
+        )
+        if not res.ok:
+            return []
+        names: list[str] = []
+        for line in res.stdout.splitlines():
+            # The shared "docker ps" canned-response source in tests carries a
+            # ``name|ports`` shape; tolerate it by keeping only the name field.
+            name = line.split("|", 1)[0].strip()
+            if name:
+                names.append(name)
+        return names
+
+    async def _merge_known_services(
+        self, running: list[ContainerInfo]
+    ) -> list[ContainerInfo]:
+        """Union the running stack containers with the KNOWN ``services/`` estate.
+
+        The set = {running stack containers} ∪ {known ``services/`` entries}.
+        Each known service dir resolves to one of three outcomes:
+
+        - **already a stack row** (a GPU service surfaced by
+          ``_docker_ps_stack_containers`` — ComfyUI / Step-Audio): omitted here,
+          it's already represented (running) in ``running``;
+        - **running, but NOT a stack row** (a non-GPU supporting service —
+          ``litellm`` / ``ollama`` / ``qdrant`` / ``searxng`` / ``open-webui``):
+          appended as a **running** ``status="running"`` ContainerInfo so it
+          shows live with working actions (logs / top / restart / stop / rm);
+        - **not running at all**: appended as a greyed, read-only
+          ``status="stopped"`` ContainerInfo.
+
+        The running/stopped decision keys off the FULL ``docker ps`` name set
+        (``_running_container_names``), NOT ``_docker_ps_stack_containers`` —
+        the latter drops every non-GPU supporting service via
+        ``_classify_container_kind``, so a RUNNING ``litellm`` would otherwise be
+        falsely rendered "stopped" and its actions wrongly suppressed.  Matching
+        NORMALIZES both sides (lowercase, strip ``-``/``_``) so a service dir
+        ``open-webui`` matches a running container named ``openwebui``.  Bias is
+        toward running: the running-set read failing degrades to an EMPTY set, so
+        on a transient read miss only genuinely-known services fall through to
+        "stopped" — a possibly-live service is never action-suppressed on a stale
+        read of the un-classified set (the classified stack rows still count)."""
+        out = list(running)
+        running_names = await self._running_container_names()
+        running_norm = {_normalize_service_name(n) for n in running_names}
+        running_norm.discard("")
+        # Names already present as stack rows (GPU services + engines/estate) —
+        # those service dirs are de-duped (omitted) since they're already a row.
+        stack_norm = {_normalize_service_name(c.name) for c in running}
+        stack_norm.discard("")
+        for svc in self._known_service_dirs():
+            if any(_service_dir_matches_running(svc, sn) for sn in stack_norm):
+                continue  # already a (running) stack row — don't duplicate
+            is_running = any(
+                _service_dir_matches_running(svc, rn) for rn in running_norm
+            )
+            out.append(
+                ContainerInfo(
+                    name=svc,
+                    kind="service",
+                    status="running" if is_running else "stopped",
+                )
+            )
+        return out
+
     async def _docker_ps_stack_containers(
         self,
     ) -> list[tuple[str, int, int, str, str]]:
@@ -549,8 +653,11 @@ class CockpitData:
             except Exception:
                 state.gpus = []
 
-        # containers
-        state.containers = await self.containers(variants=variants)
+        # containers — running stack containers, plus the KNOWN supporting
+        # services (services/<name>/docker-compose.yml) that are NOT currently
+        # running, rendered as stopped so the user sees the full estate.
+        running = await self.containers(variants=variants)
+        state.containers = await self._merge_known_services(running)
 
         # scenes (gpu-mode --list-modes --json)
         state.scenes = await self.scenes()
@@ -2145,6 +2252,27 @@ class _NullParser:
 # Rig services that hold a GPU but share no naming prefix with the engines /
 # estate containers — matched by name so the reconcile gate sees them.
 _GPU_SERVICE_NAMES = ("comfyui", "step-audio", "step-audio-editx")
+
+
+def _normalize_service_name(name: str) -> str:
+    """Normalize a service-dir / container name for cross-matching: lowercase
+    and strip ``-`` / ``_`` separators.  So ``open-webui`` (the services/ dir)
+    and ``openwebui`` (the running container_name) collapse to the same key."""
+    return name.lower().replace("-", "").replace("_", "")
+
+
+def _service_dir_matches_running(svc_dir: str, running_norm: str) -> bool:
+    """True when a ``services/<svc_dir>`` entry is represented by a running
+    container whose ALREADY-NORMALIZED name is ``running_norm``.
+
+    Containers commonly carry a suffix/prefix off the service name
+    (``comfyui-server`` covers ``comfyui``), so this is a normalized substring
+    match in either direction — but only on non-empty keys (an empty service
+    slug must not match everything)."""
+    svc_norm = _normalize_service_name(svc_dir)
+    if not svc_norm or not running_norm:
+        return False
+    return svc_norm in running_norm or running_norm in svc_norm
 
 
 def _classify_container_kind(name: str) -> Optional[str]:

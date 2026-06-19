@@ -585,7 +585,7 @@ class ByoPane(Container):
         yield Label("Bring-your-own HF model", id="byo-heading")
         with Horizontal(id="byo-input-row"):
             yield Input(
-                placeholder="org/Model  (e.g. unsloth/Qwen3-27B-abliterated-GGUF)",
+                placeholder="HuggingFace model slug — e.g. unsloth/Qwen3-27B-abliterated-GGUF",
                 id="byo-url-input",
             )
             yield Input(
@@ -595,7 +595,7 @@ class ByoPane(Container):
             )
             yield Button("Fit-check", id="byo-fit-btn", variant="primary")
         yield Static(
-            "[dim]Enter an HF repo + a profile-like slug, then Fit-check.\n"
+            "[dim]Enter a HuggingFace model slug (org/Model) + a profile-like slug, then Fit-check.\n"
             "Runs pull.sh --dry-run (Path B — evaluates only, never downloads).[/dim]",
             id="byo-result-card",
         )
@@ -817,6 +817,11 @@ class OperateOrchPane(Container):
         text-style: bold;
         color: $accent;
     }
+    OperateOrchPane #serving-line {
+        padding: 0 1;
+        margin: 0 1 0 1;
+        text-style: bold;
+    }
     OperateOrchPane #doctor-line {
         padding: 0 1;
         margin: 0 1 1 1;
@@ -865,6 +870,7 @@ class OperateOrchPane(Container):
             with Container(classes="gpu-card", id="gpu1-card"):
                 yield Label("GPU1", classes="gpu-card-title")
                 yield Static("[dim]querying nvidia-smi…[/dim]", id="gpu1-bar")
+            yield Static("[dim]reading estate…[/dim]", id="serving-line")
             yield Static("[dim]reading health.sh…[/dim]", id="doctor-line")
             yield Label("Scenes  [dim](⏎ to switch — gated)[/dim]", id="scene-heading")
             scene_table: DataTable = DataTable(
@@ -887,20 +893,61 @@ class OperateOrchPane(Container):
         t = self.query_one("#scene-table", DataTable)
         t.add_columns("Scene", "Group", "GPUs", "Services")
         self._scenes: list[Scene] = []
+        # #10: GPU-index → active cap (W) so the GPU cards can show "(cap NNNW)".
+        # Populated from the power-cap READ; only set when a card is below its
+        # default (genuinely capped) so an uncapped card shows no spurious cap.
+        self._gpu_cap: dict[int, float] = {}
+        # Cache the last estate state so a later power-cap read can re-render the
+        # GPU cards with the cap note (power-cap is read AFTER the estate poll).
+        self._last_state: Optional[EstateState] = None
 
     # ── data ────────────────────────────────────────────────────────────────────
 
     def populate(self, state: EstateState) -> None:
+        self._last_state = state
         self._populate_gpus(state)
+        self._populate_serving(state)
         self._populate_doctor(state)
         self._populate_scenes(state.scenes)
         self._populate_services(state)
+
+    def _populate_serving(self, state: EstateState) -> None:
+        """#1 (Batch 1): surface WHAT'S SERVING — the captured serving target
+        (matched slug + model + port).  When nothing is matched, say so plainly.
+
+        This reads from the estate snapshot the pane is populated with (the same
+        ``matched_slug`` / ``target`` the app captures into ``_target_*``); it
+        does NOT fabricate — a non-LLM GPU user (ComfyUI / studio) is correctly
+        NOT a served model and surfaces only as the container holding the VRAM."""
+        line = self.query_one("#serving-line", Static)
+        slug = (state.matched_slug or "").strip()
+        tgt = state.target
+        model = (getattr(tgt, "model", "") or "").strip()
+        url = (getattr(tgt, "url", "") or "").strip()
+        port = getattr(tgt, "host_port", 0) or 0
+        if not (slug or model):
+            line.update("[dim]○ no model serving[/dim]")
+            return
+        parts: list[str] = []
+        if model:
+            parts.append(f"[green]{model}[/green]")
+        if slug:
+            parts.append(f"[dim]{slug}[/dim]")
+        if port:
+            parts.append(f"[dim]:{port}[/dim]")
+        elif url:
+            parts.append(f"[dim]{url}[/dim]")
+        line.update("[green]▶[/green] Serving: " + "  ·  ".join(parts))
 
     def populate_power_cap(self, st: PowerCapState) -> None:
         strip = self.query_one("#powercap-strip", Static)
         if st.error and not st.gpus:
             strip.update(f"[dim]{st.error}[/dim]")
             return
+        # #10(a): cache the active cap per GPU so the GPU cards can annotate it.
+        # Only a card BELOW its default counts as capped (an uncapped card has no
+        # cap to show).
+        cap_map: dict[int, float] = {}
         bits: list[str] = []
         for g in st.gpus:
             lim = f"{g.limit_w:.0f}W" if g.limit_w is not None else "—"
@@ -908,9 +955,19 @@ class OperateOrchPane(Container):
             capped = (
                 g.limit_w is not None and g.default_w is not None and g.limit_w < g.default_w
             )
+            if capped:
+                cap_map[g.index] = g.limit_w  # type: ignore[assignment]
             tag = "[yellow]capped[/yellow]" if capped else "[green]uncapped[/green]"
             bits.append(f"GPU{g.index} {lim}/{dflt} {tag}")
         strip.update("  " + "   ·   ".join(bits) if bits else "[dim]no GPUs[/dim]")
+        self._gpu_cap = cap_map
+        # Re-render the GPU cards now that the cap is known (power-cap is read
+        # AFTER the estate poll, so the first card paint had no cap note).
+        if getattr(self, "_last_state", None) is not None:
+            try:
+                self._populate_gpus(self._last_state)
+            except Exception:
+                pass
 
     def _populate_gpus(self, state: EstateState) -> None:
         for i, bar_id, title_id in ((0, "#gpu0-bar", "#gpu0-card"), (1, "#gpu1-bar", "#gpu1-card")):
@@ -929,9 +986,20 @@ class OperateOrchPane(Container):
             filled = max(0, min(20, round(pct / 5)))
             color = "green" if pct < 80 else "yellow" if pct < 95 else "red"
             bar_str = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * (20 - filled)}[/dim]"
+            # GPU-VRAM → owning-container attribution is intentionally NOT shown:
+            # docker ps doesn't expose a container's device list and nothing on
+            # this rig populates ContainerInfo.gpus, so any owner string would be
+            # fabricated.  The Serving panel (Operate · Orchestration) is the
+            # reliable "what's running" surface; real per-card attribution is a
+            # deferred follow-up (nvidia-smi --query-compute-apps + pid→cgroup).
+            # #10(a): show power draw + the cap on the card.
+            cap_note = ""
+            cap_w = self._gpu_cap.get(i) if getattr(self, "_gpu_cap", None) else None
+            if cap_w is not None:
+                cap_note = f" (cap {cap_w:.0f}W)"
             bar.update(
                 f"  {bar_str}  {used / 1024:.1f} / {total / 1024:.1f} GiB · {pct}%\n"
-                f"  {pwr:.0f} / {pwr_lim:.0f} W · {temp}°C · util {util}%"
+                f"  power: {pwr:.0f} / {pwr_lim:.0f} W{cap_note} · {temp}°C · util {util}%"
             )
 
     def _populate_doctor(self, state: EstateState) -> None:
@@ -1036,11 +1104,11 @@ class OperateContainersPane(Container):
             with TabPane("Logs", id="drill-tab-logs"):
                 yield LivePane(id="drill-logs")
             with TabPane("Top", id="drill-tab-stats"):
-                yield Static("[dim]select a container — docker top loads automatically[/dim]", id="drill-stats")
+                yield Static("[dim]highlight a container (move cursor) or press [t] — docker top loads[/dim]", id="drill-stats")
             with TabPane("Config", id="drill-tab-config"):
-                yield Static("[dim]select a container — config loads automatically[/dim]", id="drill-config")
+                yield Static("[dim]highlight a container (move cursor) to load its config[/dim]", id="drill-config")
         yield Label(
-            "[dim]detail auto-loads on select · \\[l] logs   \\[t] top   \\[s] restart (gated)   "
+            "[dim]move cursor or \\[l]/\\[t] to load detail · \\[l] logs   \\[t] top   \\[s] restart (gated)   "
             "\\[x] stop (gated)   \\[X] rm (reconcile-gated)[/dim]",
             id="containers-hint",
         )
@@ -1058,13 +1126,25 @@ class OperateContainersPane(Container):
             t.add_row("[dim]no stack containers[/dim]", "—", "—", "—", "—")
             return
         for c in containers:
-            t.add_row(
-                c.name,
-                c.kind,
-                c.engine or "—",
-                str(c.host_port) if c.host_port else "—",
-                c.slug or "—",
-            )
+            stopped = getattr(c, "status", "running") == "stopped"
+            if stopped:
+                # Known-but-not-running supporting service — greyed, no live
+                # container to act on.
+                t.add_row(
+                    f"[dim]{c.name}[/dim]",
+                    f"[dim]{c.kind}[/dim]",
+                    "[dim]—[/dim]",
+                    "[dim]—[/dim]",
+                    "[dim]stopped[/dim]",
+                )
+            else:
+                t.add_row(
+                    c.name,
+                    c.kind,
+                    c.engine or "—",
+                    str(c.host_port) if c.host_port else "—",
+                    c.slug or "—",
+                )
 
     def populate_top(self, top) -> None:
         """Render a ContainerTop into the Top drill tab (READ)."""
@@ -2723,6 +2803,18 @@ class CockpitApp(App):
         # held by identity so the c3t Evaluate hand-off passes the SAME dataclass
         # instance c3t speaks (design §4/§6.6), not a reconstructed copy.
         self._target_obj = None
+        # #3/NH1: the Containers tab must be CALM on entry AND on [r]-refresh —
+        # no forced selection / auto-load of the first row's drill detail.  This
+        # flag is load-bearing: True means "settled — a RowHighlighted that
+        # reaches the handler is a genuine USER cursor move → load the drill".
+        # It is re-armed to False by the populate path ONLY when an [r]-refresh
+        # repopulates WHILE the Containers tab is active (the one case where the
+        # programmatic row-0 echo reaches the handler past its tab guard); that
+        # one echo is then consumed (flag→True, no load) and subsequent real user
+        # moves load again.  On tab-ENTRY the row-0 echo fires while Orchestration
+        # is active and is guarded out, so no arming is needed there — the tab is
+        # calm without a flag flip.  See on_data_table_row_highlighted.
+        self._containers_user_navigated: bool = True
         # Phase 5: the last BYO fit-check result (Run · BYO) — the arch facts
         # the Promote-to-catalog scaffold computes from.
         self._last_byo: Optional[ByoResult] = None
@@ -2843,6 +2935,28 @@ class CockpitApp(App):
             self.query_one("#operate-containers-pane", OperateContainersPane).populate(
                 state.containers
             )
+            # #3/NH1: a (re)populate clears the table and resets the cursor to
+            # row 0, firing a PROGRAMMATIC RowHighlighted.  That echo only REACHES
+            # on_data_table_row_highlighted (past its tab guard) when the populate
+            # ran while the Containers tab was already active — i.e. an [r]-refresh
+            # ON the tab.  Re-arm the suppression in exactly that case so the echo
+            # does NOT auto-load row 0 (the [r]-re-jump footgun); a later real user
+            # arrow-move re-sets the flag and DOES load.  (On tab-ENTRY the echo
+            # fires while Orchestration is active → guarded out → no arming needed,
+            # and the tab-focus handler re-arms separately for the calm-entry case.)
+            if self._active_operate_tab() == "tab-containers":
+                self._containers_user_navigated = False
+                # Cancel any in-flight drill debounce from a prior user move: a
+                # repopulate reset the cursor to row 0, and letting a stale timer
+                # fire would load row 0's drill off the user's old selection (the
+                # second half of the [r]-re-jump footgun).
+                timer = getattr(self, "_drill_timer", None)
+                if timer is not None:
+                    try:
+                        timer.stop()
+                    except Exception:
+                        pass
+                    self._drill_timer = None
         except Exception:
             pass
         try:
@@ -3028,6 +3142,11 @@ class CockpitApp(App):
             # [!] reports THIS state, not a PRIOR failure (R2b verify fix).
             self._problem_slug = ""
             self._problem_boot_log = ""
+        if plan.kind == "power_cap":
+            # #10(b): a power-cap WRITE changed the rig — RE-POLL the estate so
+            # the GPU cards + the power-cap strip reflect the new cap (else it
+            # looks like the write didn't apply).
+            self.load_estate()
         if live is not None and plan.kind == "serve":
             # Reveal the transient Run boot pane (Fold 2) and stream the boot log.
             self._reveal_serve_live()
@@ -3420,6 +3539,9 @@ class CockpitApp(App):
         if con is None:
             self.notify("No container selected.", title="Logs", severity="warning", timeout=3)
             return
+        if self._is_stopped_service(con):
+            self.notify(f"{con.name} is not running.", title="Logs", severity="warning", timeout=3)
+            return
         try:
             tabs = self.query_one("#drill-tabs", TabbedContent)
             tabs.active = "drill-tab-logs"
@@ -3458,6 +3580,12 @@ class CockpitApp(App):
                 f"No container selected to {op}.", title="Containers", severity="warning", timeout=3
             )
             return
+        if self._is_stopped_service(con):
+            self.notify(
+                f"{con.name} is not running — nothing to {op}.",
+                title="Containers", severity="warning", timeout=3,
+            )
+            return
         plan = self._data.container_action(con.name, op)
         self.push_screen(ConfirmActionScreen(plan))
 
@@ -3468,6 +3596,11 @@ class CockpitApp(App):
             ).selected_container()
         except Exception:
             return None
+
+    def _is_stopped_service(self, con: Optional[ContainerInfo]) -> bool:
+        """A known-but-not-running supporting service (#2) — there is no live
+        container, so logs / top / restart / stop / rm have nothing to act on."""
+        return con is not None and getattr(con, "status", "running") == "stopped"
 
     @work(group="container-logs", exclusive=True)
     async def stream_container_logs(self, name: str) -> None:
@@ -3502,6 +3635,9 @@ class CockpitApp(App):
         if con is None:
             self.notify("No container selected to remove.", title="Containers", severity="warning", timeout=3)
             return
+        if self._is_stopped_service(con):
+            self.notify(f"{con.name} is not running.", title="Containers", severity="warning", timeout=3)
+            return
         plan = self._data.container_rm(con.name)
         self.push_screen(ConfirmActionScreen(plan))
 
@@ -3515,6 +3651,9 @@ class CockpitApp(App):
         con = self._selected_container()
         if con is None:
             self.notify("No container selected.", title="Top", severity="warning", timeout=3)
+            return
+        if self._is_stopped_service(con):
+            self.notify(f"{con.name} is not running.", title="Top", severity="warning", timeout=3)
             return
         try:
             self.query_one("#drill-tabs", TabbedContent).active = "drill-tab-stats"
@@ -4157,13 +4296,13 @@ class CockpitApp(App):
                     self.query_one(widget_id, DataTable).focus()
                 except Exception:
                     pass
-                # Entering Operate·Containers auto-loads the detail for the
-                # already-highlighted container — switching tabs doesn't re-fire
-                # RowHighlighted (the cursor was set when the table populated),
-                # so trigger the load here.
-                if tab_id == "tab-containers":
-                    self._refresh_container_config()
-                    self._load_active_drill_tab()
+                # #3/NH1: the Containers tab is CALM on entry — focus the table
+                # but do NOT auto-load the highlighted row's drill detail.  No
+                # arming is needed here: the row-0 echo from the entry populate
+                # fired while Orchestration was active (guarded out of the
+                # highlight handler), and focusing the table does not re-fire a
+                # reaching RowHighlighted.  The flag is managed entirely by the
+                # populate path ([r]-refresh) + the highlight handler.
             self.call_after_refresh(_do_focus)
 
     # ── Widget event handlers ─────────────────────────────────────────────────────────
@@ -4186,6 +4325,16 @@ class CockpitApp(App):
         except Exception:
             return
         if self._active_mode != 1 or self._active_operate_tab() != "tab-containers":
+            return
+        # #3/NH1: consult the load-bearing flag.  When an [r]-refresh repopulates
+        # WHILE on this tab, the populate path re-arms the flag to False; the
+        # immediately-following PROGRAMMATIC row-0 echo reaches here, is consumed
+        # (flag→True) and is NOT auto-loaded — this kills the [r]-re-jump footgun
+        # (spawning docker logs/top on row 0 off the user's prior selection).  A
+        # genuine user arrow-move arrives with the flag already True → it loads,
+        # and re-affirms the flag so further moves keep loading.
+        if not self._containers_user_navigated:
+            self._containers_user_navigated = True
             return
         self._refresh_container_config()
         timer = getattr(self, "_drill_timer", None)
@@ -4220,6 +4369,10 @@ class CockpitApp(App):
         refreshed on highlight)."""
         con = self._selected_container()
         if con is None:
+            return
+        if self._is_stopped_service(con):
+            # No live container — don't spawn a docker logs/top read for a
+            # known-but-stopped service (#2).
             return
         tab = self._active_drill_tab()
         if tab == "drill-tab-logs":
