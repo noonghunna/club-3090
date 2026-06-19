@@ -69,7 +69,6 @@ from .data import (
     ContainerInfo,
     DoctorReport,
     EstateState,
-    EvaluateHandoff,
     EvidenceReport,
     EvidenceTag,
     Measurement,
@@ -2333,6 +2332,9 @@ class ModeSwitcher(Static):
         color: $text-muted;
         margin-top: 1;
     }
+    ModeSwitcher .mode-hidden {
+        display: none;
+    }
     """
 
     def __init__(self, *, surface: str = "consumer", **kwargs):
@@ -2342,18 +2344,27 @@ class ModeSwitcher(Static):
         # PRODUCER additionally renders Validate (the Bring & Validate lane, key
         # 3).  Keys 1/2 = Run/Operate on both; key 3 is only meaningful on
         # producer (gated by check_action's surface gate on consumer).
+        #
+        # R4: all THREE mode Labels are always composed; the consumer surface just
+        # HIDES the third (.mode-hidden) so the runtime Contribute toggle can show
+        # it again without an async re-mount (set_surface flips the class only).
         self._surface = surface if surface in ("consumer", "producer") else "consumer"
 
     @property
     def _modes(self) -> list[tuple[str, str]]:
-        """The modes to render for this surface — all three on producer, the
-        first two (Run + Operate) on consumer."""
+        """The modes VISIBLE for this surface — all three on producer, the first
+        two (Run + Operate) on consumer.  (All three Labels are always mounted;
+        this is the visible slice — see set_surface.)"""
         return list(MODES) if self._surface == "producer" else list(MODES[:2])
 
     def compose(self) -> ComposeResult:
         yield Label("Modes", classes="mode-title")
-        for i, (name, digit) in enumerate(self._modes):
+        # Always compose all three mode Labels; hide the producer-only third on
+        # the consumer surface so the runtime toggle can reveal it class-only.
+        for i, (name, digit) in enumerate(MODES):
             classes = "mode-item-active" if i == 0 else "mode-item"
+            if i >= len(self._modes):
+                classes += " mode-hidden"
             yield Label(f"▸ {name} [{digit}]" if i == 0 else f"  {name} [{digit}]",
                         id=f"mode-{i}", classes=classes)
         yield Label(f"⏎ {PRIMARY_ACTIONS[0]}", id="mode-action-hint",
@@ -2361,7 +2372,7 @@ class ModeSwitcher(Static):
 
     def set_active(self, index: int) -> None:
         self._active = index
-        for i, (name, digit) in enumerate(self._modes):
+        for i, (name, digit) in enumerate(MODES):
             try:
                 lbl = self.query_one(f"#mode-{i}", Label)
                 lbl.remove_class("mode-item-active")
@@ -2380,6 +2391,28 @@ class ModeSwitcher(Static):
             )
         except Exception:
             pass
+
+    def set_surface(self, surface: str) -> None:
+        """Re-render the rail for a runtime surface change (R4 Contribute door).
+
+        Consumer shows Run + Operate (2 items); producer additionally shows Bring
+        & Validate (3 items).  All three mode Labels are always mounted, so this
+        is a pure class flip — show/hide the producer-only third Label via
+        ``.mode-hidden`` (no async re-mount, which raced the pilot under the
+        headless harness)."""
+        new = surface if surface in ("consumer", "producer") else "consumer"
+        if new == self._surface:
+            return
+        self._surface = new
+        for i in range(len(MODES)):
+            try:
+                lbl = self.query_one(f"#mode-{i}", Label)
+                if i >= len(self._modes):
+                    lbl.add_class("mode-hidden")
+                else:
+                    lbl.remove_class("mode-hidden")
+            except Exception:
+                pass
 
 
 # ── Main application ──────────────────────────────────────────────────────────────
@@ -2447,6 +2480,10 @@ class CockpitApp(App):
         Binding("R", "rig_report", "Rig report", show=False),
         Binding("B", "submit_bench", "Submit bench", show=False),
         Binding("exclamation_mark", "report_problem", "Report problem", show=False),
+        # Phase R / R4 — the in-app "Contribute" DOOR: toggle consumer ↔ producer
+        # at runtime + persist the choice for next launch.  Always available (it
+        # is the consumer's opt-in into producer mode) — NOT in _PRODUCER_ONLY.
+        Binding("C", "toggle_contribute", "Contribute mode", show=False),
     ]
 
     CSS = """
@@ -2497,6 +2534,10 @@ class CockpitApp(App):
         "quit", "help", "refresh",
         "mode_run", "mode_operate", "mode_validate",
         "primary_action",
+        # The Contribute door (R4) is the consumer's opt-in INTO producer mode,
+        # so it must stay reachable on the consumer surface — always-on, NOT in
+        # _PRODUCER_ONLY (a consumer that can't toggle could never contribute).
+        "toggle_contribute",
     })
 
     # Context key → (modes, subtabs) where it should be enabled.
@@ -2601,18 +2642,22 @@ class CockpitApp(App):
         if action in self._ALWAYS_ON:
             return True
 
-        # When the catalog FILTER Input is focused, hide all context-key bindings
-        # from the footer.  The Input's own _on_key stops printable characters
-        # before they reach app bindings, but we hide them for footer accuracy
-        # (the filter shares letters with hotkeys q/e/s/w/c/p/o).
+        # When ANY text Input is focused, hide the context-key bindings from the
+        # footer.  The Input's own _on_key stops printable characters before they
+        # reach app bindings, but we hide them for footer accuracy (the filter +
+        # the BYO / lane repo inputs share letters with hotkeys q/e/s/w/c/p/o, so
+        # a stale `e Explain` hint while typing a query is misleading).
         #
-        # R3b-1: scope this to the catalog-filter id ONLY.  The producer lane's
-        # ① Bring stage auto-focuses its HF-repo Input on entry, and the lane's
-        # own context keys ([P] promote / [v] evaluate / ② serve_untested) MUST
-        # stay enabled there — a blanket "any Input focused" gate would wrongly
-        # hide the entire lane's affordances the moment the stage is opened.
+        # R4 (folds R3b-1 LOW item b): reverted to the blanket "any Input focused"
+        # gate.  The R3b-1-era scoping to catalog-filter ONLY guarded against the
+        # producer lane's ① Bring auto-focusing its HF-repo Input — but the lane
+        # was deliberately built to land on the tab bar (NOT its input — see
+        # _focus_mode_primary / test_switch_to_validate_lands_on_bring_stage), so
+        # the lane's own context keys ([P]/[v]/② serve_untested) are only hidden
+        # if the user explicitly TABs into the input, which is the correct
+        # footer-accuracy behaviour (the digit/bracket keys still route fine).
         focused = self.focused
-        if isinstance(focused, _Input) and getattr(focused, "id", "") == "catalog-filter":
+        if isinstance(focused, _Input):
             if action in self._CONTEXT_KEYS:
                 return False
             if action in ("prev_subtab", "next_subtab"):
@@ -3125,6 +3170,55 @@ class CockpitApp(App):
         if self._surface != "producer":
             return
         self._switch_mode(2)
+
+    def action_toggle_contribute(self) -> None:
+        """The in-app Contribute DOOR (R4): toggle consumer ↔ producer at runtime
+        and persist the choice for next launch.
+
+        On toggle we (1) flip self._surface, (2) re-render the ModeSwitcher so it
+        shows 2↔3 modes (set_surface), (3) refresh_bindings() so the
+        _PRODUCER_ONLY actions gate/ungate immediately, (4) persist via
+        save_surface_setting so resolve_surface picks it up next launch, and (5)
+        notify the new mode.  The Bring & Validate lane panel is always mounted
+        (gated by check_action, not conditionally composed), so there is nothing
+        to mount/unmount — only the gating + the rail change.
+
+        EDGE: toggling producer → consumer while the user is IN the producer lane
+        (mode 2, now hidden) would strand them, so we first switch them back to a
+        consumer-visible mode (Run).  Toggling consumer → producer from Run/Operate
+        just unlocks mode 2 — no forced switch."""
+        new_surface = "consumer" if self._surface == "producer" else "producer"
+        # EDGE: leaving producer while stranded in the now-hidden lane → Run.
+        if new_surface == "consumer" and self._active_mode == 2:
+            self._switch_mode(0)
+        self._surface = new_surface
+        # Keep the CONTRIBUTE sub-title indicator in sync with the live surface.
+        if new_surface == "producer":
+            self.sub_title = f"{self.SUB_TITLE} · ⚒ CONTRIBUTE"
+        else:
+            self.sub_title = self.SUB_TITLE
+        # Re-render the rail (show/hide mode 2 — a pure .mode-hidden class flip),
+        # then re-assert the active highlight on the still-valid current mode
+        # (defensive/idempotent — set_surface doesn't touch the active index).
+        try:
+            ms = self.query_one("#mode-switcher", ModeSwitcher)
+            ms.set_surface(new_surface)
+            ms.set_active(self._active_mode)
+        except Exception:
+            pass
+        # Re-gate the producer-only actions/modes for the new surface.
+        self.refresh_bindings()
+        # Persist for next launch (test-injectable via C3_CONFIG_DIR).
+        from .__main__ import save_surface_setting
+        save_surface_setting(new_surface)
+        if new_surface == "producer":
+            self.notify(
+                "⚒ Contributor mode — Bring & Validate unlocked",
+                title="Contribute",
+                timeout=4,
+            )
+        else:
+            self.notify("Consumer mode", title="Contribute", timeout=3)
 
     def action_refresh(self) -> None:
         """Re-read the live data layer for the active mode."""

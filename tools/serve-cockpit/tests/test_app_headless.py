@@ -52,7 +52,12 @@ from club3090_cockpit.app import (
     RailStatus,
 )
 from club3090_cockpit.services import CockpitData, RunResult
-from club3090_cockpit.__main__ import resolve_surface
+from club3090_cockpit.__main__ import (
+    resolve_surface,
+    config_path,
+    load_surface_setting,
+    save_surface_setting,
+)
 
 
 FAKE_REPO_ROOT = Path("/tmp/fake-club-3090-test-root")
@@ -2717,6 +2722,29 @@ class TestLaneServeR3b1:
             assert "vllm/vllm-openai:v0.22.0" in body
 
     @pytest.mark.asyncio
+    async def test_serve_untested_via_g_key_opens_preview(self, tmp_path):
+        """R4 (folds R3b-1 LOW item e): the [g] binding (serve_untested) on the
+        producer ② Serve stage, after a ① Bring fit-check, opens the untested
+        compose preview — the same path action_serve_untested takes, exercised
+        through the actual keypress (the Binding is 'g')."""
+        runner = FakeGenComposeRunner(GENERATED_COMPOSE_YAML)
+        app, _, _ = make_app(repo_root=tmp_path, surface="producer", runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # ① Bring fit-check first (mocked — fills _last_byo).
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("3")          # enter the Bring & Validate lane
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-serve"
+            await pilot.pause()
+            # [g] = serve_untested — must be enabled here (producer · ② Serve).
+            assert app.check_action("serve_untested", ()) is True
+            await pilot.press("g")
+            await _settle(pilot)
+            assert isinstance(app.screen, UntestedComposePreviewScreen)
+
+    @pytest.mark.asyncio
     async def test_serve_untested_serve_goes_through_reconcile_gate(self, tmp_path):
         """The preview's Serve hands serve_generated to the reconcile-gated
         ConfirmActionScreen — it is NOT auto-fired, and the plan claims the GPU."""
@@ -2756,6 +2784,11 @@ class TestLaneServeR3b1:
             assert plan.kind == "serve"
             assert plan.requires_reconcile is True
             assert plan.requires_confirm is True
+            # The exact argv: `docker compose -f <path> up -d` (how serve_generated
+            # builds it — a verbatim generated-compose launch, not a switch.sh slug).
+            assert plan.cmd == [
+                "docker", "compose", "-f", "/tmp/some-generated.yml", "up", "-d",
+            ]
 
 
 class TestLaneRelocationR3b1:
@@ -2813,8 +2846,9 @@ class TestLaneHelpSurfaceThreadedR3b1:
             assert "Bring & Validate" not in text
             assert "Promote" not in text
             assert "Evaluate" not in text
-            # The consumer mode line stops at Operate (no [3]).
-            assert "[3]" not in text
+            # The consumer mode line stops at Operate — the real rendered mode-3
+            # token (NOT the trivially-absent literal "[3]") is absent on consumer.
+            assert "3[/cyan]  Bring & Validate" not in text
 
     @pytest.mark.asyncio
     async def test_producer_help_includes_lane(self):
@@ -2828,6 +2862,8 @@ class TestLaneHelpSurfaceThreadedR3b1:
             assert "Bring & Validate" in text
             assert "Promote" in text
             assert "Evaluate" in text
+            # The producer mode line carries the real rendered mode-3 token.
+            assert "3[/cyan]  Bring & Validate" in text
 
     @pytest.mark.asyncio
     async def test_help_screen_threads_surface(self):
@@ -3690,14 +3726,18 @@ class TestSurfaceScaffold:
 
 
 def _mode_switcher_item_count(app) -> int:
-    """How many mode rows the ModeSwitcher actually rendered (its mode-N Labels).
+    """How many mode rows the ModeSwitcher VISIBLY renders (its mode-N Labels).
 
     Match only the numbered ``mode-<N>`` row ids — NOT the ``mode-action-hint``
-    Label (which also starts with ``mode-``)."""
+    Label (which also starts with ``mode-``).  R4: all three mode Labels are
+    always mounted; the consumer surface HIDES the producer-only third via the
+    ``mode-hidden`` class (so the runtime Contribute toggle can reveal it without
+    an async re-mount), so count only the rows NOT carrying that class."""
     ms = app.query_one("#mode-switcher", ModeSwitcher)
     return len([
         lbl for lbl in ms.query(Label)
         if (lbl.id or "").startswith("mode-") and (lbl.id or "")[len("mode-"):].isdigit()
+        and not lbl.has_class("mode-hidden")
     ])
 
 
@@ -3803,7 +3843,15 @@ class TestProducerLaneGatedR3a:
 
 
 class TestResolveSurface:
-    """R0 — resolve_surface(argv, env): CLI/env opt-in, pure (no event loop)."""
+    """R0/R4 — resolve_surface(argv, env): CLI/env opt-in + persisted fallback.
+
+    Each test points C3_CONFIG_DIR at a fresh tmp dir so the resolver's R4
+    persisted-setting fallback NEVER reads the real ~/.config (and there is no
+    persisted file in an empty tmp dir → the pre-R4 behaviour is preserved)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
 
     def test_default_is_consumer(self):
         assert resolve_surface(["c3"], {}) == "consumer"
@@ -3820,3 +3868,150 @@ class TestResolveSurface:
     def test_env_other_value_is_consumer(self):
         assert resolve_surface(["c3"], {"C3_SURFACE": "1"}) == "consumer"
         assert resolve_surface(["c3"], {"C3_SURFACE": ""}) == "consumer"
+
+
+class TestSurfacePersistence:
+    """R4 — config_path / load_surface_setting / save_surface_setting + the
+    resolve_surface precedence (explicit flag/env > persisted > default).
+
+    All tests inject C3_CONFIG_DIR=tmp_path so NOTHING touches the real
+    ~/.config (the persistence MUST be test-injectable)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        self._cfg_dir = tmp_path
+
+    def test_config_path_honors_env_override(self):
+        p = config_path()
+        assert p == self._cfg_dir / "c3-surface.json"
+
+    def test_load_missing_file_returns_none(self):
+        assert load_surface_setting() is None
+
+    def test_save_then_load_roundtrips(self):
+        save_surface_setting("producer")
+        assert load_surface_setting() == "producer"
+        save_surface_setting("consumer")
+        assert load_surface_setting() == "consumer"
+
+    def test_save_ignores_invalid_surface(self):
+        save_surface_setting("bogus")
+        assert load_surface_setting() is None
+
+    def test_load_corrupt_file_returns_none(self):
+        config_path().write_text("{not json", encoding="utf-8")
+        assert load_surface_setting() is None
+
+    def test_load_unrecognised_surface_returns_none(self):
+        config_path().write_text('{"surface": "wat"}', encoding="utf-8")
+        assert load_surface_setting() is None
+
+    def test_resolve_reads_persisted_when_no_explicit(self):
+        save_surface_setting("producer")
+        # No flag / env → the persisted producer setting wins (precedence 2).
+        assert resolve_surface(["c3"], {}) == "producer"
+
+    def test_explicit_flag_beats_persisted(self):
+        save_surface_setting("consumer")
+        # Persisted is consumer, but the explicit --contribute flag wins.
+        assert resolve_surface(["c3", "--contribute"], {}) == "producer"
+
+    def test_explicit_env_beats_persisted(self):
+        save_surface_setting("consumer")
+        assert resolve_surface(["c3"], {"C3_SURFACE": "producer"}) == "producer"
+
+    def test_no_persisted_falls_to_consumer(self):
+        # No flag, no env, no persisted file → consumer default.
+        assert resolve_surface(["c3"], {}) == "consumer"
+
+
+class TestContributeDoor:
+    """R4 — the in-app Contribute DOOR: [C] toggles consumer ↔ producer at runtime
+    (ModeSwitcher 2 ↔ 3 modes, producer gating un/gates, the in-lane edge handled)
+    AND persists the choice (test-injectable config dir)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_toggle_is_always_on(self):
+        # The door is the consumer's opt-in — it must NOT be producer-gated.
+        assert "toggle_contribute" in CockpitApp._ALWAYS_ON
+        assert "toggle_contribute" not in CockpitApp._PRODUCER_ONLY
+        app, _, _ = make_app(surface="consumer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app.check_action("toggle_contribute", ()) is True
+
+    @pytest.mark.asyncio
+    async def test_toggle_consumer_to_producer_unlocks_lane(self):
+        app, _, _ = make_app(surface="consumer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app._surface == "consumer"
+            assert _mode_switcher_item_count(app) == 2
+            assert app.check_action("mode_validate", ()) is False
+            await pilot.press("C")
+            await _settle(pilot)
+            assert app._surface == "producer"
+            assert _mode_switcher_item_count(app) == 3
+            assert app.check_action("mode_validate", ()) is True
+            assert "CONTRIBUTE" in str(app.sub_title)
+            # No forced switch — still in Run (mode 0).
+            assert app._active_mode == 0
+
+    @pytest.mark.asyncio
+    async def test_toggle_persists_for_next_launch(self):
+        app, _, _ = make_app(surface="consumer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("C")
+            await _settle(pilot)
+            assert load_surface_setting() == "producer"
+            # resolve_surface (next launch, no flag/env) reads the persisted value.
+            assert resolve_surface(["c3"], {}) == "producer"
+
+    @pytest.mark.asyncio
+    async def test_toggle_back_to_consumer_regates_and_persists(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("C")          # producer → consumer (from Run)
+            await _settle(pilot)
+            assert app._surface == "consumer"
+            assert _mode_switcher_item_count(app) == 2
+            assert app.check_action("mode_validate", ()) is False
+            assert "CONTRIBUTE" not in str(app.sub_title)
+            assert load_surface_setting() == "consumer"
+
+    @pytest.mark.asyncio
+    async def test_toggle_off_while_in_lane_switches_to_run(self):
+        # EDGE: toggling producer → consumer while IN the producer lane (mode 2,
+        # now hidden) must move the user back to a consumer-visible mode (Run).
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("3")          # enter the lane (mode 2)
+            await _settle(pilot)
+            assert app._active_mode == 2
+            await pilot.press("C")          # toggle OFF while stranded in the lane
+            await _settle(pilot)
+            assert app._surface == "consumer"
+            assert app._active_mode == 0    # rescued to Run
+            assert "active" in app.query_one("#panel-run").classes
+            assert "active" not in app.query_one("#panel-validate").classes
+
+    @pytest.mark.asyncio
+    async def test_toggle_round_trip_back_to_consumer(self):
+        app, _, _ = make_app(surface="consumer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("C")          # → producer
+            await _settle(pilot)
+            await pilot.press("C")          # → consumer
+            await _settle(pilot)
+            assert app._surface == "consumer"
+            assert _mode_switcher_item_count(app) == 2
+            assert app.check_action("mode_validate", ()) is False
