@@ -263,6 +263,12 @@ DOCKER_PS_ENGINE = (
     "vllm-qwen36-27b-dual|0.0.0.0:8010->8000/tcp, [::]:8010->8000/tcp\n"
     "open-webui|0.0.0.0:3000->8080/tcp\n"
 )
+# Two recognized engine containers → a 2-row containers table (open-webui above
+# is filtered out as an unrecognized service, so it can't test a row CHANGE).
+DOCKER_PS_TWO = (
+    "vllm-qwen36-27b-dual|0.0.0.0:8010->8000/tcp\n"
+    "vllm-gemma-4-31b-dual|0.0.0.0:8011->8000/tcp\n"
+)
 DOCKER_PS_EMPTY = ""
 
 # REAL diagnose-estate.sh --json shape (verified live 2026-06-18).
@@ -323,6 +329,12 @@ DOCKER_TOP = (
     "root   1234   1200   9   10:01   ?     00:12:30   python3 -m vllm.entrypoints.openai.api_server\n"
 )
 
+# docker logs --tail N <name> (READ).
+DOCKER_LOGS = (
+    "INFO 06-18 boot: starting vLLM engine\n"
+    "INFO 06-18 ready: serving on :8000\n"
+)
+
 # Minimal BENCHMARKS.md the explorer can scrape (model + topo headers + a row).
 BENCHMARKS_MD = (
     "# BENCHMARKS\n"
@@ -369,6 +381,7 @@ def fake_responses(**overrides) -> dict[str, RunResult]:
         "diagnose-profile.sh": ok(DIAGNOSE_PROFILE_TEXT),
         "power-cap status": ok(POWER_CAP_STATUS),
         "docker top": ok(DOCKER_TOP),
+        "docker logs": ok(DOCKER_LOGS),
     }
     responses.update(overrides)
     return responses
@@ -2251,3 +2264,116 @@ class TestModeSwitchFocus:
             assert tc.active == "tab-benchmarks"
             assert isinstance(app.focused, DataTable)
             assert app.focused.id == "bmk-table"
+
+
+class TestContainerAutoLoad:
+    """Estate·Containers drill detail auto-loads on selection (lazydocker-style)
+    — no [l]/[t] keypress needed."""
+
+    @pytest.mark.asyncio
+    async def test_entering_containers_autoloads_config(self):
+        """Switching to the Containers tab auto-fills the Config drill tab for the
+        highlighted container — no keypress."""
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            cfg = str(app.query_one("#drill-config", Static).render())
+            assert "vllm-qwen36-27b-dual" in cfg  # config loaded with no [t]
+
+    @pytest.mark.asyncio
+    async def test_entering_containers_autoloads_logs(self):
+        """Default drill tab is Logs — entering Containers auto-reads docker logs
+        for the selected container (no [l])."""
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            assert any("docker logs" in " ".join(c) for c in runner.calls)
+
+    @pytest.mark.asyncio
+    async def test_drill_tab_switch_to_top_reads_top(self):
+        """Switching the drill tab Logs→Top reads docker top for the selected
+        container (no [t])."""
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            app.query_one("#drill-tabs", TabbedContent).active = "drill-tab-stats"
+            await _settle(pilot)
+            assert any("docker top" in " ".join(c) for c in runner.calls)
+            assert "PID" in str(app.query_one("#drill-stats", Static).render())
+
+    @pytest.mark.asyncio
+    async def test_highlight_change_updates_config(self):
+        """Highlighting a different container updates Config immediately (the
+        local read is not debounced)."""
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_TWO)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.query_one("#estate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            tbl = app.query_one("#containers-table", DataTable)
+            tbl.focus()
+            await pilot.pause()
+            await pilot.press("down")  # row 0 (qwen) → row 1 (gemma) — fires RowHighlighted
+            await pilot.pause()
+            assert tbl.cursor_row == 1, f"cursor did not move (row={tbl.cursor_row})"
+            cfg = str(app.query_one("#drill-config", Static).render())
+            assert "vllm-gemma-4-31b-dual" in cfg
+
+
+class TestEscClosesFilter:
+    """Esc closes an open filter Input + refocuses the table (it was a dead key
+    inside the filter before) — and never quits the app."""
+
+    @pytest.mark.asyncio
+    async def test_esc_closes_catalog_filter(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("slash")
+            await pilot.pause()
+            inp = app.query_one("#catalog-filter", Input)
+            assert "visible" in inp.classes and app.focused is inp
+            await pilot.press("escape")
+            await pilot.pause()
+            assert "visible" not in inp.classes
+            assert app.focused is app.query_one("#catalog-table", DataTable)
+
+    @pytest.mark.asyncio
+    async def test_esc_closes_bmk_filter(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("4")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-benchmarks"
+            await _settle(pilot)
+            await pilot.press("slash")
+            await pilot.pause()
+            assert app.query("#bmk-filter")
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not app.query("#bmk-filter")
+            assert app.focused is app.query_one("#bmk-table", DataTable)
+
+    @pytest.mark.asyncio
+    async def test_esc_on_main_screen_does_not_quit(self):
+        """Esc with no filter + no modal is a harmless no-op (never quits)."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.is_running

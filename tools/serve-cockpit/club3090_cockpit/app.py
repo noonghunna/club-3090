@@ -329,6 +329,18 @@ class CatalogPane(Container):
             inp.add_class("visible")
             inp.focus()
 
+    def close_filter_if_open(self) -> bool:
+        """Esc/cancel: hide + clear the filter and refocus the table. Returns
+        True if a filter was actually open (so the app can swallow the Esc)."""
+        inp = self.query_one("#catalog-filter", Input)
+        if "visible" in inp.classes:
+            inp.remove_class("visible")
+            inp.value = ""
+            self.set_filter("")
+            self.query_one("#catalog-table", DataTable).focus()
+            return True
+        return False
+
 
 # ── Explain detail modal ────────────────────────────────────────────────────────
 
@@ -1045,11 +1057,11 @@ class EstateContainersPane(Container):
             with TabPane("Logs", id="drill-tab-logs"):
                 yield LivePane(id="drill-logs")
             with TabPane("Top", id="drill-tab-stats"):
-                yield Static("[dim]select a container and press \\[t] to read docker top[/dim]", id="drill-stats")
+                yield Static("[dim]select a container — docker top loads automatically[/dim]", id="drill-stats")
             with TabPane("Config", id="drill-tab-config"):
-                yield Static("[dim]select a container and press \\[t] to read its config[/dim]", id="drill-config")
+                yield Static("[dim]select a container — config loads automatically[/dim]", id="drill-config")
         yield Label(
-            "[dim]\\[l] logs   \\[t] top (read)   \\[s] restart (gated)   "
+            "[dim]detail auto-loads on select · \\[l] logs   \\[t] top   \\[s] restart (gated)   "
             "\\[x] stop (gated)   \\[X] rm (reconcile-gated)[/dim]",
             id="containers-hint",
         )
@@ -1490,6 +1502,17 @@ class ValidateBenchmarksPane(Container):
         inp = Input(placeholder="filter model / engine / topology…", id="bmk-filter")
         self.mount(inp, before=self.query_one("#bmk-table", DataTable))
         inp.focus()
+
+    def close_filter_if_open(self) -> bool:
+        """Esc/cancel: unmount + clear the filter and refocus the table. Returns
+        True if a filter was actually open (so the app can swallow the Esc)."""
+        existing = self.query("#bmk-filter")
+        if existing:
+            existing.first(Input).remove()
+            self.set_filter("")
+            self.query_one("#bmk-table", DataTable).focus()
+            return True
+        return False
 
 
 class ValidateEvidencePane(Container):
@@ -2756,7 +2779,7 @@ class CockpitApp(App):
         except Exception:
             return None
 
-    @work(group="container-logs")
+    @work(group="container-logs", exclusive=True)
     async def stream_container_logs(self, name: str) -> None:
         """Read `docker logs --tail <N> <name>` and push lines into the drill
         Logs LivePane.  READ-only; goes through the injected read runner so
@@ -2816,7 +2839,7 @@ class CockpitApp(App):
             pass
         self.read_container_top(con.name)
 
-    @work(group="container-top")
+    @work(group="container-top", exclusive=True)
     async def read_container_top(self, name: str) -> None:
         """docker top <name> (READ) → the Top drill tab.  Also fills the Config
         tab from the cached registry row matched to the selected container."""
@@ -3131,6 +3154,15 @@ class CockpitApp(App):
         panel.  Events from mode panels that are currently hidden (display:none) are
         ignored so startup/background activations don't steal focus."""
         self.refresh_bindings()
+        # Nested Estate·Containers drill-tabs (Logs/Top/Config): load the newly
+        # active tab's content for the selected container, then stop — these are
+        # NOT mode-level tabs and must not run the mode focus logic below.
+        try:
+            if event.tabbed_content.id == "drill-tabs":
+                self._load_active_drill_tab()
+                return
+        except Exception:
+            pass
         raw_tab_id = event.tab.id if event.tab else ""
         # Strip the Textual internal prefix if present.
         _PREFIX = "--content-tab-"
@@ -3159,6 +3191,13 @@ class CockpitApp(App):
                     self.query_one(widget_id, DataTable).focus()
                 except Exception:
                     pass
+                # Entering Estate·Containers auto-loads the detail for the
+                # already-highlighted container — switching tabs doesn't re-fire
+                # RowHighlighted (the cursor was set when the table populated),
+                # so trigger the load here.
+                if tab_id == "tab-containers":
+                    self._refresh_container_config()
+                    self._load_active_drill_tab()
             self.call_after_refresh(_do_focus)
 
     # ── Widget event handlers ─────────────────────────────────────────────────────────
@@ -3169,6 +3208,83 @@ class CockpitApp(App):
         the ⏎ → primary_action contract that the tests (and help text) document."""
         event.stop()
         self.action_primary_action()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Estate · Containers: auto-load the drill detail for the highlighted
+        container (lazydocker-style). Config is a local read → immediate; the
+        active live tab (Logs / Top) is a docker read → debounced ~250ms so
+        arrowing through the list doesn't spawn a subprocess per row."""
+        try:
+            if event.data_table.id != "containers-table":
+                return
+        except Exception:
+            return
+        if self._active_mode != 2 or self._active_estate_tab() != "tab-containers":
+            return
+        self._refresh_container_config()
+        timer = getattr(self, "_drill_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:
+                pass
+        self._drill_timer = self.set_timer(0.25, self._load_active_drill_tab)
+
+    def _active_drill_tab(self) -> str:
+        try:
+            return self.query_one("#drill-tabs", TabbedContent).active
+        except Exception:
+            return ""
+
+    def _refresh_container_config(self) -> None:
+        """Render the selected container's config tab from the cached registry
+        (a local read — safe to run on every highlight)."""
+        con = self._selected_container()
+        variant = None
+        if con is not None and con.slug:
+            variant = next((v for v in self._variants if getattr(v, "slug", "") == con.slug), None)
+        try:
+            self.query_one("#estate-containers-pane", EstateContainersPane).populate_config(con, variant)
+        except Exception:
+            pass
+
+    def _load_active_drill_tab(self) -> None:
+        """Load the live content for whichever drill tab is active + the selected
+        container. Logs/Top are docker reads (workers); Config is local (already
+        refreshed on highlight)."""
+        con = self._selected_container()
+        if con is None:
+            return
+        tab = self._active_drill_tab()
+        if tab == "drill-tab-logs":
+            self.stream_container_logs(con.name)
+        elif tab == "drill-tab-stats":
+            self.read_container_top(con.name)
+
+    def on_key(self, event) -> None:
+        """App-level Esc: close an open filter (Discover·Catalog / Validate·
+        Benchmarks) and refocus the table. Modal screens capture their own Esc
+        (they have escape→dismiss bindings), so this only runs on the main
+        screen — Esc otherwise no-ops and NEVER quits."""
+        if event.key != "escape":
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        if self._close_open_filter():
+            event.stop()
+            event.prevent_default()
+
+    def _close_open_filter(self) -> bool:
+        if self._active_mode == 0:
+            pane_id, cls = "#catalog-pane", CatalogPane
+        elif self._active_mode == 3:
+            pane_id, cls = "#validate-benchmarks-pane", ValidateBenchmarksPane
+        else:
+            return False
+        try:
+            return self.query_one(pane_id, cls).close_filter_if_open()
+        except Exception:
+            return False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
