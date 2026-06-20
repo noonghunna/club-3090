@@ -29,7 +29,7 @@ returns ``None``, so the ENTIRE ``<|tool_call>...<tool_call|>`` block is
 silently swallowed — the assistant turn ends with no content AND no tool call
 (Hermes records it as ``"(empty)"`` and has to nudge/retry). Reproduced live
 2026-06-19 from real Hermes ``state.db`` sessions; see
-``diffusionGemma_empty_after_tools.md`` (this directory) + ``docs/UPSTREAM.md``.
+``patch_docs/diffusionGemma_empty_after_tools.md`` + ``docs/UPSTREAM.md``.
 
 This overlay adds, WITHOUT touching the well-formed brace path:
   1. ``_recover_tool_calls`` — a lenient, delimiter-anchored recovery that

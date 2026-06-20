@@ -8,9 +8,9 @@
 #   Vision:    no (text diffusion)
 #   Max ctx:   262144 (NIAH retrieval validated to ~250K)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 Experimental — runs on the OFFICIAL vllm/vllm-openai:gemma image +
-#              6 vendored fix-mounts (3 Ampere/TP + 2 gemma4 parsers + chat template);
-#              under active validation, eager-only. Launch needs --force.
+#   Status:    🧪 Experimental — 6 vendored fix-mounts on pinned :gemma (reverted from
+#              #45588 ParserEngine migration 2026-06-20 — streaming tool_calls break;
+#              see patch_docs/diffusionGemma_streaming_tool_regression.md). Launch --force.
 #   Caveats:   Streaming reasoning leaked the literal <|channel>thought sentinel into
 #              the reasoning stream under the model's block-canvas SSE chunking (the
 #              "thoughts in chat" symptom on agent clients) — fixed by the vendored
@@ -83,7 +83,7 @@
 # Streaming note: SSE delivers a whole 256-tok canvas as ~1 chunk (block-parallel decode),
 # not token-by-token — verify-full's per-token streaming check flags this; it's expected.
 #
-# Engine: NO build step, NO sideload script. Pinned official image + 3 mounts. Just
+# Engine: pinned official image + 6 bind-mounts (no boot-time ParserEngine install).
 # `docker compose up` (or switch.sh --force / launch.sh).
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):

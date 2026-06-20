@@ -703,7 +703,7 @@ COMPOSE_REGISTRY = {
         default_port=8042,
         kvcalc_key="SKIP",
         status="experimental",
-        status_note="DiffusionGemma dLLM (vLLM's first) on Ampere via the OFFICIAL vllm/vllm-openai:gemma image (digest-pinned; dgemma arch baked in) + 3 bind-mounted Ampere/TP fixes (marlin-K-pad x2 + diffusion_gemma TP-vocab/dtype) — NOT in :gemma since vLLM tests H100/TP=1. Eager-only, gemma4 tool+reasoning parsers. 262K (NIAH->250K), 8-pack 100/150 (5-pack 84%), ~177/180 TPS typical (peak ~1100 low-entropy). max_new_tokens lifted 256->16384 (the model self-terminates ~1.2-1.8K words; no one-shot 10K). Experimental: visible in --list (NA), launch needs --force. Supersedes the 123-file sideload (PR #358); re-pin+rebase the 3 fixes if :gemma is re-pushed. 2026-06-11.",
+        status_note="DiffusionGemma dLLM (vLLM's first) on Ampere via the OFFICIAL vllm/vllm-openai:gemma image (digest-pinned; dgemma arch baked in) + 6 bind-mounted fixes (marlin-K-pad x2 + diffusion_gemma TP-vocab/dtype + gemma4 reasoning/tool parsers + chat template) — NOT in :gemma since vLLM tests H100/TP=1. No #45588 ParserEngine (streaming tool regression). Eager-only. 262K (NIAH->250K), 8-pack 100/150 (5-pack 84%), ~177/180 TPS typical (peak ~1100 low-entropy). max_new_tokens lifted 256->16384. Experimental: visible in --list (NA), launch needs --force. Supersedes the 123-file sideload (PR #358); re-pin+rebase the 6 fixes if :gemma is re-pushed. 2026-06-11.",
     ),
     # DEFAULTS: intentionally NOT added — 'experimental' is non-functional, so it
     # degrades out of the curated <model>/default walk; reachable only by explicit

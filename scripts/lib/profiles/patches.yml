@@ -592,7 +592,7 @@ patches:
     load_bearing_when:
       - composes:
           - vllm/diffusiongemma-dual
-        reason: "The official vllm/vllm-openai:gemma image has the DiffusionGemma arch baked in, but 3 fixes are NOT upstream (vLLM tests H100/B200 + TP=1): marlin.py + marlin_utils_fp8.py = sm_86 fp8 Marlin sub-tile-K pad (without them :gemma dies in warmup, K=352/1056 can't tile in 99 KB shared mem); diffusion_gemma.py = TP-vocab soft-embed + dtype fix (TP=2 path). Bind-mounted over the image's vllm pkg."
+        reason: "The official vllm/vllm-openai:gemma image has the DiffusionGemma arch baked in, but six fixes are NOT upstream (vLLM tests H100/B200 + TP=1): marlin.py + marlin_utils_fp8.py = sm_86 fp8 Marlin sub-tile-K pad; diffusion_gemma.py = TP-vocab soft-embed + dtype fix; gemma4_reasoning_parser.py + gemma4_tool_parser.py = block-diffusion streaming parser fixes for agentic tool loops; tool_chat_template_gemma4.jinja = history CoT replay strip. Bind-mounted over the image's vllm pkg / examples path."
         evidence: "models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/README.md"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
       dockerfile_bake: false
@@ -608,6 +608,12 @@ patches:
           dest: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/marlin_utils_fp8.py
         - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/diffusion_gemma.py
           dest: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/diffusion_gemma.py
+        - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/gemma4_reasoning_parser.py
+          dest: /usr/local/lib/python3.12/dist-packages/vllm/reasoning/gemma4_reasoning_parser.py
+        - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/gemma4_tool_parser.py
+          dest: /usr/local/lib/python3.12/dist-packages/vllm/tool_parsers/gemma4_tool_parser.py
+        - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/tool_chat_template_gemma4.jinja
+          dest: /vllm-workspace/examples/tool_chat_template_gemma4.jinja
       mount_mode: ro
       wired_at: volumes
     drift_guard:
