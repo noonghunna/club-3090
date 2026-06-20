@@ -57,7 +57,21 @@ from club3090_cockpit.app import (
     _PALETTE_COMMANDS,
     _PALETTE_PRODUCER_ONLY,
 )
-from club3090_cockpit.data import ContainerInfo, EstateState, ServedProbe
+from club3090_cockpit.data import (
+    ContainerInfo,
+    DiskUsage,
+    EstateState,
+    EstateTelemetry,
+    GpuCompApp,
+    RamUsage,
+    ServedProbe,
+    attribute_gpu_apps,
+    parse_cgroup_container_id,
+    parse_compute_apps,
+    parse_df_output,
+    parse_docker_ps_id_names,
+    parse_meminfo,
+)
 from club3090_cockpit.services import CockpitData, RunResult
 from club3090_cockpit.__main__ import (
     resolve_surface,
@@ -389,6 +403,66 @@ DOCKER_LOGS = (
     "INFO 06-18 ready: serving on :8000\n"
 )
 
+# ── UX Batch 5 fixtures (verified-live recon 2026-06-20) ──────────────────────────
+# df -P -B1 <repo> /mnt/models — REAL recon shape (repo on the LVM root, /mnt/models
+# on a SEPARATE /dev/sdb1 — DIFFERENT devices, so NO de-dup).  -B1 → byte fields;
+# -P (POSIX) → one line per fs + the header renames Use% → Capacity (position
+# unchanged; the parser reads use-% by field index, not header name).
+DF_TWO_DEVICES = (
+    "Filesystem                             1-blocks          Used     Available Capacity Mounted on\n"
+    "/dev/mapper/ubuntu--vg-ubuntu--lv 1793150255104  435407220736 1284330176512      26% /\n"
+    "/dev/sdb1                         1901246259200 1615138213888  189454557184      90% /mnt/models\n"
+)
+# Both paths resolve to the SAME device → ONE de-duped "repo + models" bar.
+DF_SAME_DEVICE = (
+    "Filesystem 1-blocks          Used     Available Capacity Mounted on\n"
+    "/dev/sda1  580000000000 412000000000 168000000000      71% /\n"
+    "/dev/sda1  580000000000 412000000000 168000000000      71% /mnt/models\n"
+)
+# A long LVM/mapper device name + a zero-size special-fs row (tmpfs): -P keeps
+# them on ONE line each (no wrap); the parser must read use-% by position AND
+# skip the zero-size row so it never draws a false "0% 0G/0G" bar.
+DF_LONG_DEVICE_AND_ZERO = (
+    "Filesystem                                          1-blocks          Used     Available Capacity Mounted on\n"
+    "/dev/mapper/vg--very--long--name-ubuntu--lv--root 1793150255104  435407220736 1284330176512      26% /\n"
+    "tmpfs                                                         0             0             0        - /sys/fs/cgroup\n"
+)
+# /proc/meminfo — REAL recon (98854288 kB total, 84219884 kB available).
+MEMINFO = (
+    "MemTotal:       98854288 kB\n"
+    "MemFree:         1475616 kB\n"
+    "MemAvailable:   84219884 kB\n"
+    "Buffers:         1054728 kB\n"
+    "Cached:         82171824 kB\n"
+)
+# nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory — REAL recon: one app
+# (pid 588408, 22686 MiB) on GPU0's uuid.
+COMPUTE_APPS = "GPU-ed5070b5-c35f-7b25-7696-2b767e563cc4, 588408, 22686\n"
+# nvidia-smi --query-gpu=uuid,index — maps the GPU0 uuid → index 0.
+GPU_UUID_INDEX = (
+    "GPU-ed5070b5-c35f-7b25-7696-2b767e563cc4, 0\n"
+    "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee, 1\n"
+)
+# /proc/<pid>/cgroup — REAL recon (cgroup v2: docker-<64hex>.scope).
+CGROUP_PID = (
+    "0::/system.slice/"
+    "docker-e8eb8d4cdd19861ddc94d582b2d583b898baf9c3931b26407f1b43ebb896c3d4.scope\n"
+)
+# docker ps --no-trunc --format '{{.ID}} {{.Names}}' — REAL recon id→name map.
+DOCKER_PS_IDNAMES = (
+    "e8eb8d4cdd19861ddc94d582b2d583b898baf9c3931b26407f1b43ebb896c3d4 llama-cpp-pi-reasoning\n"
+    "82364280908afeb42a643822f479c2ef07f5c92ed054d7e3683a33e78fee747a studio-tts\n"
+    "b9c7d8853c6aecf526933957eb7ecdefa3167d4ab24b178af5bcc7f32efb92ce studio-image-shim\n"
+)
+# docker ps --format '{{.Names}}|{{.Ports}}' — REAL recon: studio-* + an engine.
+DOCKER_PS_STUDIO = (
+    "llama-cpp-pi-reasoning|0.0.0.0:8053->8080/tcp\n"
+    "studio-tts|0.0.0.0:8193->8000/tcp\n"
+    "studio-image-shim|\n"
+    "studio-orchestrator|\n"
+    "studio-gallery|0.0.0.0:8188->8188/tcp\n"
+)
+
 # Minimal BENCHMARKS.md the explorer can scrape (model + topo headers + a row).
 BENCHMARKS_MD = (
     "# BENCHMARKS\n"
@@ -500,6 +574,40 @@ def fake_responses(**overrides) -> dict[str, RunResult]:
     }
     responses.update(overrides)
     return responses
+
+
+def batch5_responses(
+    *,
+    df: str = DF_TWO_DEVICES,
+    meminfo: str = MEMINFO,
+    compute_apps: str = COMPUTE_APPS,
+    uuid_index: str = GPU_UUID_INDEX,
+    cgroup: str = CGROUP_PID,
+    idnames: str = DOCKER_PS_IDNAMES,
+    docker_ps: str = DOCKER_PS_STUDIO,
+    **extra,
+) -> dict[str, RunResult]:
+    """Canned responses for the Batch-5 telemetry reads, ORDERED so the more
+    specific keys win over the base ``docker ps`` / ``cat`` substrings.
+
+    FakeRunner returns the FIRST inserted key whose token is a substring of the
+    command, so the ``docker ps --no-trunc`` and ``/proc/.../cgroup`` keys MUST
+    precede the base ``docker ps`` / ``/proc/meminfo`` entries (the same
+    first-match-wins ordering the catalog uses for --fit-all vs --fit)."""
+    ordered: dict[str, RunResult] = {}
+    # More-specific keys first (substring disambiguation).
+    ordered["df -P -B1"] = ok(df)
+    ordered["/proc/meminfo"] = ok(meminfo)
+    ordered["--query-compute-apps"] = ok(compute_apps)
+    ordered["--query-gpu=uuid,index"] = ok(uuid_index)
+    ordered["/cgroup"] = ok(cgroup)            # cat /proc/<pid>/cgroup
+    ordered["docker ps --no-trunc"] = ok(idnames)
+    ordered["docker ps"] = ok(docker_ps)       # the |ports| stack-container read
+    # Then the rest of the standard read set (already insertion-ordered with its
+    # own --fit-all-before---fit care).  extra overrides win (added last).
+    for k, v in fake_responses(**extra).items():
+        ordered.setdefault(k, v)
+    return ordered
 
 
 def make_app(
@@ -6440,3 +6548,440 @@ class TestProducerLaneHandoff:
             ).render())
             assert "armed from ① Bring" not in body   # stale arm cleared
             assert "Run ① Bring first" in body        # placeholder restored
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# UX Batch 5 — data-completeness: disk bars (#12) · system RAM (N5) ·
+# studio-* service-set broadening · GPU-VRAM → container attribution.
+# ════════════════════════════════════════════════════════════════════════════════
+
+
+class TestBatch5DiskParse:
+    """#12 — df -B1 parse, byte math, df-Use% fidelity, same-device de-dup."""
+
+    def test_two_devices_exact_numbers(self):
+        # REAL recon df shape: repo on LVM root, /mnt/models on /dev/sdb1.
+        disks = parse_df_output(
+            DF_TWO_DEVICES, {str(FAKE_REPO_ROOT): "repo", "/mnt/models": "models"}
+        )
+        assert len(disks) == 2  # different devices → NOT de-duped
+        repo, models = disks[0], disks[1]
+        assert repo.mount_label == "repo"
+        assert repo.device == "/dev/mapper/ubuntu--vg-ubuntu--lv"
+        # -B1 → bytes already; assert the EXACT byte fields (no 1K-block ×1024 trap).
+        assert repo.total == 1793150255104
+        assert repo.used == 435407220736
+        assert repo.free == 1284330176512
+        # df's OWN Use% is authoritative (used/(used+avail), not used/total).
+        assert repo.use_pct == 26
+        assert repo.pct == 26
+        assert models.mount_label == "models"
+        assert models.device == "/dev/sdb1"
+        assert models.free == 189454557184
+        assert models.pct == 90
+
+    def test_pct_prefers_df_use_column_not_used_over_total(self):
+        # used/total would be ~24% (reserved blocks); df reports 26% — we mirror df.
+        disks = parse_df_output(
+            DF_TWO_DEVICES, {"/r": "repo", "/mnt/models": "models"}
+        )
+        repo = disks[0]
+        naive = round(repo.used / repo.total * 100)
+        assert naive == 24          # the naive math
+        assert repo.pct == 26       # but we report df's Use% (matches df -h)
+
+    def test_same_device_dedups_to_one_row(self):
+        # Repo + /mnt/models on the SAME filesystem device → ONE bar, joined label.
+        disks = parse_df_output(
+            DF_SAME_DEVICE, {"/repo": "repo", "/mnt/models": "models"}
+        )
+        assert len(disks) == 1
+        assert disks[0].mount_label == "repo + models"
+        assert disks[0].pct == 71
+        assert disks[0].free == 168000000000
+
+    def test_human_gb_binary_units(self):
+        from club3090_cockpit.data import _human_gb
+        assert _human_gb(189454557184) == "176G"      # /mnt/models free
+        assert _human_gb(1793150255104) == "1.6T"     # repo total (1.63 TiB)
+        assert _human_gb(0) == "0G"
+
+    def test_long_device_name_no_wrap_under_posix(self):
+        # MUST-FIX 2: a long LVM/mapper device name stays on ONE line under -P,
+        # so the parser reads use-% by POSITION and never swaps labels/device.
+        disks = parse_df_output(
+            DF_LONG_DEVICE_AND_ZERO, {str(FAKE_REPO_ROOT): "repo"}
+        )
+        assert len(disks) == 1                # the tmpfs zero-row dropped (NH-A)
+        repo = disks[0]
+        assert repo.mount_label == "repo"
+        assert repo.device == "/dev/mapper/vg--very--long--name-ubuntu--lv--root"
+        assert repo.total == 1793150255104
+        assert repo.use_pct == 26
+        assert repo.pct == 26
+
+    def test_zero_size_special_fs_dropped_no_false_zero_bar(self):
+        # NH-A: a zero-size special fs (tmpfs/cgroup) must NEVER become a "0% 0G/0G"
+        # bar — the parser skips it so the honest-error branch can fire if nothing
+        # else parsed.
+        only_zero = (
+            "Filesystem 1-blocks Used Available Capacity Mounted on\n"
+            "tmpfs              0    0         0        - /sys/fs/cgroup\n"
+        )
+        disks = parse_df_output(only_zero, {"/x": "repo"})
+        assert disks == []
+
+
+class TestBatch5RamParse:
+    """N5 — /proc/meminfo parse: kB→bytes, used = total − MemAvailable."""
+
+    def test_meminfo_exact_numbers(self):
+        r = parse_meminfo(MEMINFO)
+        # kB ×1024 → bytes.
+        assert r.total == 98854288 * 1024
+        assert r.available == 84219884 * 1024
+        # used = total − available (matches `free -b`'s used column).
+        assert r.used == (98854288 - 84219884) * 1024
+        assert r.used == 14985629696            # the exact `free -b` recon used
+        assert r.pct == 15                      # round(14634404/98854288 * 100)
+        assert r.error == ""
+
+    def test_meminfo_missing_available_degrades_no_false_zero(self):
+        r = parse_meminfo("MemTotal: 1000 kB\nMemFree: 100 kB\n")
+        assert r.total == 1000 * 1024
+        assert r.available == 0
+        assert "MemAvailable missing" in r.error  # honest cue, not a false 100%
+        # WHY the renderer MUST gate on ram.error: with available=0, used=total →
+        # pct computes to a MISLEADING 100%.  The error flag is the only thing
+        # stopping a false "RAM 100%" bar (see the _populate_disk_rail render test).
+        assert r.pct == 100
+
+    def test_meminfo_missing_total_is_error(self):
+        r = parse_meminfo("MemFree: 100 kB\n")
+        assert r.total == 0
+        assert r.error
+
+
+class TestBatch5GpuAttributionParse:
+    """GPU-VRAM → container attribution: compute-apps + cgroup + ps map, incl.
+    the DEGRADED (cgroup unreadable) path."""
+
+    def test_compute_apps_parse(self):
+        apps = parse_compute_apps("588408, 22686")
+        assert len(apps) == 1
+        assert apps[0].pid == 588408
+        assert apps[0].used_mib == 22686
+        assert apps[0].container == ""  # not yet attributed
+
+    def test_cgroup_v2_scope_id(self):
+        cid = parse_cgroup_container_id(CGROUP_PID)
+        assert cid == "e8eb8d4cdd19861ddc94d582b2d583b898baf9c3931b26407f1b43ebb896c3d4"
+
+    def test_cgroup_v1_layout(self):
+        cid = parse_cgroup_container_id(
+            "1:cpu:/docker/" + "a" * 64 + "\n11:devices:/docker/" + "a" * 64
+        )
+        assert cid == "a" * 64
+
+    def test_cgroup_non_docker_returns_empty(self):
+        assert parse_cgroup_container_id("0::/user.slice/session-3.scope") == ""
+        assert parse_cgroup_container_id("") == ""
+
+    def test_attribution_happy_path(self):
+        apps = parse_compute_apps("588408, 22686")
+        idmap = parse_docker_ps_id_names(DOCKER_PS_IDNAMES)
+        out, degraded = attribute_gpu_apps(apps, {588408: CGROUP_PID}, idmap)
+        assert out[0].container == "llama-cpp-pi-reasoning"
+        assert degraded is False
+
+    def test_attribution_degraded_cgroup_unreadable(self):
+        # Permission/format failure → empty cgroup body → no name, no crash, flag.
+        apps = parse_compute_apps("588408, 22686")
+        out, degraded = attribute_gpu_apps(apps, {588408: ""}, {})
+        assert out[0].container == ""        # NO fabricated owner
+        assert out[0].pid == 588408          # still shown by pid
+        assert out[0].used_mib == 22686      # VRAM total still honest
+        assert degraded is True
+
+    def test_attribution_non_docker_pid_degraded(self):
+        apps = parse_compute_apps("999, 4096")
+        out, degraded = attribute_gpu_apps(
+            apps, {999: "0::/user.slice/session.scope"}, {}
+        )
+        assert out[0].container == ""
+        assert degraded is True
+
+
+@pytest.mark.asyncio
+class TestBatch5TelemetryDataLayer:
+    """End-to-end CockpitData.estate_telemetry against canned recon stdout."""
+
+    async def test_telemetry_full_attribution(self):
+        runner = FakeRunner(batch5_responses())
+        data = CockpitData(FAKE_REPO_ROOT, runner=runner)
+        tel = await data.estate_telemetry()
+        # Disk (#12) — two distinct mounts.
+        labels = [d.mount_label for d in tel.disks]
+        assert labels == ["repo", "models"]
+        assert tel.disks[1].pct == 90
+        # RAM (N5).
+        assert tel.ram.pct == 15
+        assert tel.ram.used == 14985629696
+        # GPU attribution — pid 588408 → llama-cpp-pi-reasoning on GPU0.
+        apps0 = tel.gpu_apps.get(0, [])
+        assert len(apps0) == 1
+        assert apps0[0].container == "llama-cpp-pi-reasoning"
+        assert apps0[0].used_mib == 22686
+        assert apps0[0].gpu_index == 0           # pinned to the resolved card
+        # NH-B: the holder must NOT also land in the None bucket (no double-pin).
+        assert tel.gpu_apps.get(None) is None
+        assert tel.attribution_degraded is False
+        assert tel.error == ""
+
+    async def test_telemetry_buckets_holder_on_resolved_nonzero_card(self):
+        # NH-B: a holder on GPU1's uuid must bucket under index 1 — NOT fall back
+        # to 0.  Distinguishes "bucketed correctly" from "defaulted to 0" (the old
+        # .get(uuid, 0) bug rendered every holder under GPU0).
+        gpu1_apps = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee, 588408, 22686\n"
+        runner = FakeRunner(batch5_responses(compute_apps=gpu1_apps))
+        data = CockpitData(FAKE_REPO_ROOT, runner=runner)
+        tel = await data.estate_telemetry()
+        assert tel.gpu_apps.get(0) is None       # NOT mis-pinned to GPU0
+        apps1 = tel.gpu_apps.get(1, [])
+        assert len(apps1) == 1
+        assert apps1[0].gpu_index == 1
+        assert apps1[0].used_mib == 22686
+
+    async def test_telemetry_unresolved_uuid_buckets_under_none_not_zero(self):
+        # NH-B: when the uuid→index read fails (empty map) the holder must bucket
+        # under the None key, NEVER mis-pinned to GPU0 (VRAM stays honest, card
+        # attribution simply isn't claimed).
+        runner = FakeRunner(batch5_responses(uuid_index=""))
+        data = CockpitData(FAKE_REPO_ROOT, runner=runner)
+        tel = await data.estate_telemetry()
+        assert tel.gpu_apps.get(0) is None       # NOT defaulted to GPU0
+        unpinned = tel.gpu_apps.get(None, [])
+        assert len(unpinned) == 1
+        assert unpinned[0].gpu_index is None
+        assert unpinned[0].used_mib == 22686
+
+    async def test_telemetry_degraded_attribution_no_crash(self):
+        runner = FakeRunner(batch5_responses(cgroup="", idnames=""))
+        data = CockpitData(FAKE_REPO_ROOT, runner=runner)
+        tel = await data.estate_telemetry()
+        apps0 = tel.gpu_apps.get(0, [])
+        assert apps0[0].container == ""          # nameless, not fabricated
+        assert apps0[0].used_mib == 22686        # VRAM still surfaced
+        assert tel.attribution_degraded is True
+
+    async def test_telemetry_df_failure_records_error(self):
+        # df returns EMPTY stdout → honest error cue, no false-zero disks.
+        runner = FakeRunner(batch5_responses(df=""))
+        data = CockpitData(FAKE_REPO_ROOT, runner=runner)
+        tel = await data.estate_telemetry()
+        assert tel.disks == []
+        assert "disk read failed" in tel.error
+        # RAM + GPU still read fine despite the disk failure.
+        assert tel.ram.pct == 15
+
+    async def test_telemetry_df_rc1_with_valid_stdout_keeps_repo_bar(self):
+        # MUST-FIX 1: df exits rc=1 when /mnt/models is missing/unmounted but STILL
+        # prints the valid repo (/) row to stdout (the error goes to stderr).  We
+        # parse stdout REGARDLESS of returncode, so the repo bar survives — the
+        # rc-gate would have discarded it and shown only "disk read failed".
+        df_rc1 = (
+            "Filesystem                             1-blocks          Used"
+            "     Available Capacity Mounted on\n"
+            "/dev/mapper/ubuntu--vg-ubuntu--lv 1793150255104  435407220736"
+            " 1284330176512      26% /\n"
+        )
+        responses = batch5_responses()
+        responses["df -P -B1"] = RunResult(
+            returncode=1,
+            stdout=df_rc1,
+            stderr="df: /mnt/models: No such file or directory",
+        )
+        runner = FakeRunner(responses)
+        data = CockpitData(FAKE_REPO_ROOT, runner=runner)
+        tel = await data.estate_telemetry()
+        assert len(tel.disks) == 1               # the valid repo row, NOT dropped
+        assert tel.disks[0].mount_label == "repo"
+        assert tel.disks[0].pct == 26
+        assert "disk read failed" not in (tel.error or "")
+
+    async def test_telemetry_same_device_dedup(self):
+        runner = FakeRunner(batch5_responses(df=DF_SAME_DEVICE))
+        data = CockpitData(Path("/repo"), runner=runner)
+        tel = await data.estate_telemetry()
+        assert len(tel.disks) == 1
+        assert tel.disks[0].mount_label == "repo + models"
+
+
+@pytest.mark.asyncio
+class TestBatch5OperateRendering:
+    """The Operate pane renders the disk rail / RAM line and the GPU "held by:"
+    attribution from the telemetry read on the existing tick."""
+
+    async def test_disk_rail_renders_bars_and_ram(self):
+        gpus = [
+            GpuInfo(index=0, mem_used_mib=22 * 1024, mem_total_mib=24 * 1024, utilization=10),
+            GpuInfo(index=1, mem_used_mib=1, mem_total_mib=24 * 1024),
+        ]
+        app, _, _ = make_app(
+            responses=batch5_responses(), gpus=gpus, target=ServingTarget(gpus=gpus)
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            rail = str(app.query_one("#disk-rail", Static).render())
+            assert "repo" in rail
+            assert "models" in rail
+            assert "26%" in rail      # repo Use%
+            assert "90%" in rail      # models Use%
+            assert "RAM" in rail
+            assert "15%" in rail      # system RAM %
+
+    async def test_gpu_card_shows_held_by_container(self):
+        gpus = [
+            GpuInfo(index=0, mem_used_mib=22 * 1024, mem_total_mib=24 * 1024, utilization=10),
+            GpuInfo(index=1, mem_used_mib=1, mem_total_mib=24 * 1024),
+        ]
+        app, _, _ = make_app(
+            responses=batch5_responses(), gpus=gpus, target=ServingTarget(gpus=gpus)
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            bar0 = str(app.query_one("#gpu0-bar", Static).render())
+            assert "held by:" in bar0
+            assert "llama-cpp-pi-reasoning" in bar0
+            assert "22.2G" in bar0    # 22686 MiB / 1024
+
+    async def test_gpu_card_degraded_shows_pid_not_fabricated(self):
+        gpus = [
+            GpuInfo(index=0, mem_used_mib=22 * 1024, mem_total_mib=24 * 1024),
+            GpuInfo(index=1, mem_used_mib=1, mem_total_mib=24 * 1024),
+        ]
+        app, _, _ = make_app(
+            responses=batch5_responses(cgroup="", idnames=""),
+            gpus=gpus,
+            target=ServingTarget(gpus=gpus),
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            bar0 = str(app.query_one("#gpu0-bar", Static).render())
+            assert "held by:" in bar0
+            assert "pid 588408" in bar0           # named-by-pid fallback
+            assert "names unavailable" in bar0    # honest degraded cue
+
+    async def test_disk_rail_all_empty_df_shows_honest_cue_no_zero_bar(self):
+        # MUST-FIX 1 / A2 (render): df all-empty → honest cue, NEVER a fabricated
+        # "0% 0G/0G" bar.  RAM still renders; the disk-read-failed cue surfaces.
+        gpus = [GpuInfo(index=0, mem_used_mib=1, mem_total_mib=24 * 1024)]
+        app, _, _ = make_app(
+            responses=batch5_responses(df=""), gpus=gpus, target=ServingTarget(gpus=gpus)
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            rail = str(app.query_one("#disk-rail", Static).render())
+            assert "disk read failed" in rail     # honest cue
+            assert "0%" not in rail               # NO fabricated zero bar
+            assert "0G/0G" not in rail
+
+    async def test_disk_rail_meminfo_no_available_shows_cue_not_full_bar(self):
+        # TEST-HARDENING: meminfo WITHOUT MemAvailable → honest "MemAvailable
+        # missing" cue, NOT a misleading 100% RAM bar (the renderer gates on
+        # ram.error; pct would otherwise compute to 100% — see the parse test).
+        gpus = [GpuInfo(index=0, mem_used_mib=1, mem_total_mib=24 * 1024)]
+        app, _, _ = make_app(
+            responses=batch5_responses(meminfo="MemTotal: 1000 kB\nMemFree: 100 kB\n"),
+            gpus=gpus,
+            target=ServingTarget(gpus=gpus),
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            rail = str(app.query_one("#disk-rail", Static).render())
+            assert "MemAvailable missing" in rail  # honest cue
+            assert "100%" not in rail              # NOT a misleading full bar
+
+    async def test_gpu_card_unresolved_uuid_renders_neutral_heading(self):
+        # NH-B (render): a holder whose card couldn't be resolved renders under a
+        # NEUTRAL "card unknown" heading on GPU0's card, NOT mis-pinned to "held by:".
+        gpus = [
+            GpuInfo(index=0, mem_used_mib=1, mem_total_mib=24 * 1024),
+            GpuInfo(index=1, mem_used_mib=1, mem_total_mib=24 * 1024),
+        ]
+        app, _, _ = make_app(
+            responses=batch5_responses(uuid_index=""),
+            gpus=gpus,
+            target=ServingTarget(gpus=gpus),
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            bar0 = str(app.query_one("#gpu0-bar", Static).render())
+            assert "card unknown" in bar0          # neutral heading
+            assert "llama-cpp-pi-reasoning" in bar0  # holder still surfaced
+            assert "held by:" not in bar0          # NOT mis-pinned to a card
+
+
+@pytest.mark.asyncio
+class TestBatch5StudioServiceSet:
+    """studio-* / #2-ext — running studio stack containers are surfaced (kind
+    'stack'), labeled-not-stopped, and visible in the Operate service list."""
+
+    async def test_studio_classified_stack_not_none(self):
+        from club3090_cockpit.services import _classify_container_kind
+        assert _classify_container_kind("studio-tts") == "stack"
+        assert _classify_container_kind("studio-image-shim") == "stack"
+        # comfyui keeps its first-class GPU 'service' kind (precedence).
+        assert _classify_container_kind("comfyui") == "service"
+        # a non-GPU supporting service is still NOT surfaced as a stack holder.
+        assert _classify_container_kind("open-webui") is None
+
+    async def test_studio_containers_appear_running_in_table(self):
+        app, _, _ = make_app(responses=batch5_responses())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            by_name = {c.name: c for c in pane._containers}
+            assert "studio-tts" in by_name
+            # Labeled as a running 'stack' holder — NOT mislabeled stopped.
+            assert by_name["studio-tts"].kind == "stack"
+            assert by_name["studio-tts"].status == "running"
+            assert by_name["studio-tts"].is_running is True
+
+    async def test_studio_visible_in_services_strip(self):
+        app, _, _ = make_app(responses=batch5_responses())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            strip = str(app.query_one("#services-strip", Static).render())
+            # GPU0's studio holder is visible in the service list (the Batch-1 gap).
+            assert "studio-tts" in strip
+
+    async def test_studio_dir_not_duplicated_as_stopped(self, tmp_path):
+        # A KNOWN services/studio dir must NOT also appear greyed once the
+        # studio-* containers are surfaced as running 'stack' rows — the de-dup
+        # must collapse the dir into the running containers (a stale stopped
+        # "studio" row would falsely suppress its live actions).
+        _seed_services(tmp_path, ["studio"])
+        seed_repo(tmp_path)
+        app, _, _ = make_app(responses=batch5_responses(), repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            studio_rows = [c for c in pane._containers if "studio" in c.name.lower()]
+            # The running studio-* stack rows are present...
+            assert any(c.name == "studio-tts" for c in studio_rows)
+            # ...and NONE of them (nor a bare "studio" dir row) is greyed stopped.
+            stopped = [
+                c for c in studio_rows
+                if getattr(c, "status", "running") == "stopped"
+            ]
+            assert stopped == []

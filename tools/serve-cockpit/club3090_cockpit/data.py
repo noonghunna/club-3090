@@ -736,6 +736,106 @@ class ContainerTop:
     error: str = ""
 
 
+# ── UX Batch 5: estate telemetry (disk / RAM / GPU-VRAM attribution — READ) ───────
+
+
+@dataclass
+class DiskUsage:
+    """One mount's disk-usage row (#12), from ``df -B1``.
+
+    ``total`` / ``used`` / ``free`` are BYTES (df ``-B1`` 1-byte blocks).
+    ``mount_label`` is the human label the rail shows ("repo" / "models"); a
+    de-duped same-device row carries a combined label ("repo + models").
+    ``device`` is the filesystem device so the rail can collapse two labels that
+    resolve to the SAME mount (repo + /mnt/models on one drive) into one bar."""
+
+    mount_label: str
+    path: str
+    total: int = 0
+    used: int = 0
+    free: int = 0
+    device: str = ""
+    use_pct: Optional[int] = None        # df's OWN reported Use% (authoritative)
+
+    @property
+    def pct(self) -> int:
+        """Used percent, clamped 0–100.
+
+        PREFER df's OWN ``Use%`` column when parsed — df computes it as
+        ``used / (used + available)`` rounded UP and excludes filesystem-reserved
+        blocks, so it does NOT equal ``used / size``.  Mirroring df's reported
+        figure means the bar matches exactly what ``df -h`` prints (the number a
+        user cross-checks against).  Fall back to ``used / total`` only when the
+        Use% column wasn't captured."""
+        if self.use_pct is not None:
+            return max(0, min(100, self.use_pct))
+        if self.total <= 0:
+            return 0
+        return max(0, min(100, round(self.used / self.total * 100)))
+
+
+@dataclass
+class RamUsage:
+    """System-RAM row (N5), from ``/proc/meminfo`` (MemTotal / MemAvailable).
+
+    ``total`` / ``used`` / ``available`` are BYTES (meminfo reports kB → ×1024).
+    ``used`` = total − available (the "really in use" figure, NOT total − free —
+    MemAvailable already discounts reclaimable cache, matching ``free -b``'s
+    available column)."""
+
+    total: int = 0
+    available: int = 0
+    error: str = ""
+
+    @property
+    def used(self) -> int:
+        return max(0, self.total - self.available)
+
+    @property
+    def pct(self) -> int:
+        if self.total <= 0:
+            return 0
+        return max(0, min(100, round(self.used / self.total * 100)))
+
+
+@dataclass
+class GpuCompApp:
+    """One CUDA compute process holding GPU VRAM (from ``nvidia-smi
+    --query-compute-apps=pid,used_memory``), best-effort mapped to its owning
+    container via ``/proc/<pid>/cgroup``.
+
+    ``used_mib`` is the process's VRAM (MiB).  ``container`` is the resolved
+    docker container NAME, or "" when the pid→container map degraded (cgroup
+    unreadable / not a docker process / docker unreachable) — in which case the
+    pane shows the pid + VRAM WITHOUT a name (graceful degradation, never a
+    crash, never a fabricated owner)."""
+
+    pid: int
+    used_mib: int = 0
+    container: str = ""           # resolved docker container name, or "" if unknown
+    gpu_index: Optional[int] = None
+
+
+@dataclass
+class EstateTelemetry:
+    """The Batch-5 telemetry bundle: disk bars (#12), system RAM (N5), and the
+    GPU-VRAM → container attribution map.  Produced once per Operate tick by
+    ``CockpitData.estate_telemetry`` (batched reads) and rendered by the Operate
+    pane (disk rail + GPU-card "held by:" line).
+
+    ``gpu_apps`` is keyed by GPU index → the compute-apps holding that card; a
+    holder whose physical card couldn't be resolved (uuid→index read skewed)
+    buckets under the ``None`` key (card-agnostic, never mis-pinned to GPU0).
+    ``error`` carries a read-failure cue (df / meminfo / nvidia-smi unreachable)
+    so the rail surfaces an honest strip instead of a silent false-zero."""
+
+    disks: list[DiskUsage] = field(default_factory=list)
+    ram: RamUsage = field(default_factory=RamUsage)
+    gpu_apps: dict[Optional[int], list[GpuCompApp]] = field(default_factory=dict)
+    attribution_degraded: bool = False     # pid→container map could not resolve names
+    error: str = ""
+
+
 # ════════════════════════════════════════════════════════════════════════════════
 # PHASE 5 — the three v2 hooks (Evaluate · Promote-to-catalog · Optimize)
 # ════════════════════════════════════════════════════════════════════════════════
@@ -1837,3 +1937,239 @@ def compute_promote_scaffold(
         guard_suite_cmd=["bash", "-c", 'for t in scripts/tests/*.sh; do bash "$t"; done'],
         notes=notes,
     )
+
+
+# ── UX Batch 5: estate-telemetry parse helpers (pure — fed canned stdout) ─────────
+
+
+def _human_gb(num_bytes: int) -> str:
+    """Bytes → a compact GiB/TiB string ("412G" / "1.8T").  Binary units (÷1024)
+    to match df -h / the GPU cards' GiB.  No decimals under 1T, one decimal at T
+    scale so a 1.8T drive doesn't read a flat "2T"."""
+    gib = num_bytes / (1024 ** 3)
+    if gib >= 1024:
+        return f"{gib / 1024:.1f}T"
+    return f"{gib:.0f}G"
+
+
+def parse_df_output(text: str, label_for_path: dict[str, str]) -> list[DiskUsage]:
+    """Parse ``df -P -B1 <path1> <path2>`` stdout into DiskUsage rows (#12).
+
+    df ``-B1`` prints 1-BYTE blocks, so ``1B-blocks`` / ``Used`` / ``Available``
+    are already bytes — no 1K-block ×1024 fixup (the classic df trap).  ``-P``
+    (POSIX mode) guarantees ONE line per filesystem (no long-device-name wrap),
+    so we read the numeric fields by POSITION from the right.  Layout::
+
+        Filesystem  1-blocks   Used   Available Capacity Mounted on
+        /dev/...    <total>    <used> <avail>   26%      /
+        /dev/sdb1   <total>    <used> <avail>   90%      /mnt/models
+
+    (POSIX renames the ``Use%`` header to ``Capacity`` and the ``1B-blocks``
+    header to ``1-blocks``, but the column POSITIONS are unchanged — we never
+    match on the literal header name, only the field index.)
+
+    ``label_for_path`` maps a requested path → its rail label ("repo"/"models");
+    df echoes the path we asked for in the trailing 'Mounted on' field only when
+    it's the actual mountpoint, so we key the label off the PATH we requested in
+    request order, not the mountpoint column.
+
+    SAME-DEVICE DE-DUP: two paths on the same filesystem device collapse to ONE
+    row whose label joins both ("repo + models") — repo + /mnt/models on a single
+    drive must not draw two identical bars."""
+    rows: list[DiskUsage] = []
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    # Drop the header line (POSIX: starts with "Filesystem").
+    body = [ln for ln in lines if not ln.lower().startswith("filesystem")]
+    requested = list(label_for_path.items())
+    by_device: dict[str, DiskUsage] = {}
+    order: list[str] = []
+    for i, ln in enumerate(body):
+        parts = ln.split()
+        # POSIX -P guarantees 6 fields on one line: device total used avail use% mount.
+        # Read the numeric fields from the RIGHT so a multi-word mountpoint can't shift them.
+        if len(parts) < 6:
+            continue
+        device = parts[0]
+        # Numeric fields from the RIGHT: ... <total> <used> <avail> <use%> <mount>
+        try:
+            total = int(parts[-5])
+            used = int(parts[-4])
+            free = int(parts[-3])
+        except (ValueError, IndexError):
+            continue
+        # Skip a zero-size special filesystem (tmpfs / cgroup pseudo-fs report
+        # total=0) — it must never become a false "0% 0G/0G" bar.
+        if total <= 0:
+            continue
+        use_pct: Optional[int] = None
+        pct_tok = parts[-2].rstrip("%")
+        if pct_tok.isdigit():
+            use_pct = int(pct_tok)
+        # The label/path is matched by REQUEST ORDER (df preserves the order of
+        # the paths we passed), so row i ↔ requested[i].
+        if i < len(requested):
+            path, label = requested[i]
+        else:
+            path, label = (parts[-1], parts[-1])
+        existing = by_device.get(device)
+        if existing is not None:
+            # Same physical device → de-dup, join the labels (once).
+            if label and label not in existing.mount_label.split(" + "):
+                existing.mount_label = f"{existing.mount_label} + {label}"
+            continue
+        du = DiskUsage(
+            mount_label=label,
+            path=path,
+            total=total,
+            used=used,
+            free=free,
+            device=device,
+            use_pct=use_pct,
+        )
+        by_device[device] = du
+        order.append(device)
+    for dev in order:
+        rows.append(by_device[dev])
+    return rows
+
+
+def parse_meminfo(text: str) -> RamUsage:
+    """Parse ``/proc/meminfo`` (or ``cat /proc/meminfo``) into a RamUsage (N5).
+
+    Reads ``MemTotal`` + ``MemAvailable`` (both reported in kB → ×1024 bytes).
+    MemAvailable (not MemFree) is the right "free" figure — it accounts for
+    reclaimable page cache, matching ``free -b``'s available column.  A meminfo
+    that lacks MemAvailable (very old kernels) degrades to error, never a
+    false-zero/false-full bar."""
+    total_kb: Optional[int] = None
+    avail_kb: Optional[int] = None
+    for line in (text or "").splitlines():
+        if ":" not in line:
+            continue
+        key, _, rest = line.partition(":")
+        key = key.strip()
+        num = rest.strip().split()
+        if not num:
+            continue
+        try:
+            val = int(num[0])
+        except ValueError:
+            continue
+        if key == "MemTotal":
+            total_kb = val
+        elif key == "MemAvailable":
+            avail_kb = val
+        if total_kb is not None and avail_kb is not None:
+            break
+    if total_kb is None:
+        return RamUsage(error="meminfo: MemTotal missing")
+    if avail_kb is None:
+        return RamUsage(total=total_kb * 1024, error="meminfo: MemAvailable missing")
+    return RamUsage(total=total_kb * 1024, available=avail_kb * 1024)
+
+
+def parse_compute_apps(text: str) -> list[GpuCompApp]:
+    """Parse ``nvidia-smi --query-compute-apps=pid,used_memory
+    --format=csv,noheader,nounits`` into GpuCompApp rows (no container yet).
+
+    Each line is ``<pid>, <used_mib>``.  nvidia-smi prints "[N/A]" for a process
+    whose memory it can't read — treated as 0 MiB (still a known holder).  A line
+    that doesn't parse a pid is skipped (never crashes the card)."""
+    apps: list[GpuCompApp] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if not parts or not parts[0].isdigit():
+            continue
+        pid = int(parts[0])
+        used = 0
+        if len(parts) > 1:
+            tok = parts[1]
+            if tok.isdigit():
+                used = int(tok)
+        apps.append(GpuCompApp(pid=pid, used_mib=used))
+    return apps
+
+
+def parse_cgroup_container_id(text: str) -> str:
+    """Extract the 64-hex docker container id from a ``/proc/<pid>/cgroup`` body.
+
+    Tolerates BOTH cgroup layouts this rig and CI may show:
+      - cgroup v2: ``0::/system.slice/docker-<64hex>.scope``
+      - cgroup v1: ``…/docker/<64hex>`` (one id per controller line)
+      - systemd-nested: ``…/docker-<64hex>.scope/…``
+
+    Returns the 64-hex id (full, un-truncated) or "" when no docker id is present
+    (a NON-docker process, or an unreadable/odd cgroup) → caller degrades to a
+    name-less attribution, never a fabricated owner."""
+    if not text:
+        return ""
+    # docker-<64hex>.scope (systemd / cgroup v2)
+    m = re.search(r"docker-([0-9a-f]{64})\.scope", text)
+    if m:
+        return m.group(1)
+    # .../docker/<64hex> (cgroup v1)
+    m = re.search(r"/docker[/-]([0-9a-f]{64})", text)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def parse_docker_ps_id_names(text: str) -> dict[str, str]:
+    """Parse ``docker ps --no-trunc --format '{{.ID}} {{.Names}}'`` into a
+    {full-64hex-id → name} map for pid→container resolution.
+
+    The cockpit's shared ``docker ps`` canned source elsewhere uses a
+    ``name|ports`` shape; this is a DISTINCT id-name format, so we parse the
+    ``<id> <name>`` two-field layout and tolerate extra whitespace."""
+    out: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        cid, name = parts[0], parts[1]
+        if re.fullmatch(r"[0-9a-f]{12,64}", cid):
+            out[cid] = name
+    return out
+
+
+def attribute_gpu_apps(
+    apps: list[GpuCompApp],
+    cgroup_by_pid: dict[int, str],
+    id_to_name: dict[str, str],
+) -> tuple[list[GpuCompApp], bool]:
+    """Best-effort pid→container attribution (graceful degradation).
+
+    For each compute-app: read its cgroup body (``cgroup_by_pid[pid]``), pull the
+    docker id, and look up the container name in ``id_to_name``.  Any pid whose
+    cgroup is missing/unreadable, isn't a docker process, or whose id isn't in the
+    running-ps map keeps ``container=""`` — the pane then shows ``pid <N>
+    (<vram>)`` with NO fabricated name.
+
+    Returns ``(apps, degraded)`` where ``degraded`` is True when at least one app
+    holding VRAM could not be named — the card appends a "(names unavailable)"
+    cue so the user knows the *holder total* is honest even if a name is missing.
+    The id map matches on the 64-hex id by prefix tolerance (docker ps --no-trunc
+    yields the full id; a short id still prefix-matches)."""
+    degraded = False
+    for app in apps:
+        body = cgroup_by_pid.get(app.pid, "")
+        cid = parse_cgroup_container_id(body)
+        name = ""
+        if cid:
+            name = id_to_name.get(cid, "")
+            if not name:
+                # Tolerate a short-id ps map (prefix match against the full id).
+                for k, v in id_to_name.items():
+                    if cid.startswith(k) or k.startswith(cid):
+                        name = v
+                        break
+        app.container = name
+        if not name and app.used_mib > 0:
+            degraded = True
+    return apps, degraded

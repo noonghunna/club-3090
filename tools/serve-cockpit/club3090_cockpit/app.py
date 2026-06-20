@@ -72,6 +72,7 @@ from .data import (
     ContainerInfo,
     DoctorReport,
     EstateState,
+    EstateTelemetry,
     EvidenceReport,
     EvidenceTag,
     Measurement,
@@ -84,6 +85,7 @@ from .data import (
     _bench_row_matches,
     _canon_engine_family,
     _ctx_label,
+    _human_gb,
     downgrade_fit_glyph,
     measurement_from_explain_columns,
     parse_ctx_label,
@@ -1277,6 +1279,16 @@ class OperateOrchPane(Container):
         margin: 0 1;
         color: $text-muted;
     }
+    OperateOrchPane #disk-heading {
+        text-style: bold;
+        padding: 0 1;
+        margin: 0 1 0 1;
+    }
+    OperateOrchPane #disk-rail {
+        padding: 0 1;
+        margin: 0 1 1 1;
+        color: $text;
+    }
     """
 
     def compose(self) -> ComposeResult:
@@ -1319,6 +1331,11 @@ class OperateOrchPane(Container):
                 "\\[p] prune images (gated)[/dim]",
                 id="orch-hint",
             )
+            # #12 / N5 — disk-usage bars (repo + /mnt/models) and the system-RAM
+            # line, at the RAIL BOTTOM.  Populated from the Batch-5 telemetry read
+            # piggybacked on the Operate tick (NOT a new timer).
+            yield Label("Host", id="disk-heading")
+            yield Static("[dim]reading disk / RAM…[/dim]", id="disk-rail")
 
     def on_mount(self) -> None:
         t = self.query_one("#scene-table", DataTable)
@@ -1331,6 +1348,10 @@ class OperateOrchPane(Container):
         # Cache the last estate state so a later power-cap read can re-render the
         # GPU cards with the cap note (power-cap is read AFTER the estate poll).
         self._last_state: Optional[EstateState] = None
+        # #12/N5 + attribution: the last Batch-5 telemetry (disk / RAM / GPU-VRAM
+        # owners).  Cached so a re-render (e.g. after the power-cap read) keeps the
+        # GPU-card "held by:" line, which is derived from this not the estate poll.
+        self._last_telemetry: Optional[EstateTelemetry] = None
         # A7: matched catalog slug's claimed ctx (set by populate()).
         self._catalog_ctx_label: str = ""
         self._catalog_ctx: Optional[int] = None
@@ -1483,6 +1504,63 @@ class OperateOrchPane(Container):
             except Exception:
                 pass
 
+    def populate_telemetry(self, tel: EstateTelemetry) -> None:
+        """#12 / N5 + attribution: render the host disk bars + system-RAM line at
+        the rail bottom, and re-render the GPU cards with the VRAM-owner line.
+
+        The telemetry is read by ``load_estate`` piggybacked on the Operate tick
+        (no new timer).  Cached so a later GPU-card re-render (e.g. after the
+        power-cap read) keeps the "held by:" attribution."""
+        self._last_telemetry = tel
+        self._populate_disk_rail(tel)
+        # Re-render the GPU cards now that the attribution map is known (telemetry
+        # is read AFTER the estate poll, so the first card paint had no owner line).
+        if getattr(self, "_last_state", None) is not None:
+            try:
+                self._populate_gpus(self._last_state)
+            except Exception:
+                pass
+
+    def _populate_disk_rail(self, tel: EstateTelemetry) -> None:
+        """Render the disk bars (repo + /mnt/models) and the RAM line (#12 / N5).
+
+        Bars are compact "label ▕███░░▏ pct%  used/total"; the RAM line reuses the
+        same bar.  A read failure surfaces an honest cue (the B2 "A2" rule) rather
+        than a silent false-zero."""
+        try:
+            rail = self.query_one("#disk-rail", Static)
+        except Exception:
+            return
+        lines: list[str] = []
+
+        def _bar_markup(pct: int) -> str:
+            color = "green" if pct < 80 else "yellow" if pct < 95 else "red"
+            full = max(0, min(10, round(pct / 100 * 10)))
+            return f"▕[{color}]{'█' * full}[/{color}][dim]{'░' * (10 - full)}[/dim]▏"
+
+        for d in tel.disks or []:
+            lines.append(
+                f"  [bold]{d.mount_label:<13}[/bold] {_bar_markup(d.pct)} "
+                f"{d.pct:>3}%  {_human_gb(d.used)}/{_human_gb(d.total)} "
+                f"[dim](free {_human_gb(d.free)})[/dim]"
+            )
+        ram = tel.ram
+        if ram and ram.total > 0 and not ram.error:
+            lines.append(
+                f"  [bold]{'RAM':<13}[/bold] {_bar_markup(ram.pct)} "
+                f"{ram.pct:>3}%  {_human_gb(ram.used)}/{_human_gb(ram.total)}"
+            )
+        elif ram and ram.error:
+            lines.append(f"  [dim]RAM: {ram.error}[/dim]")
+        if not tel.disks and not (ram and ram.total > 0):
+            # Honest failure cue — never a silent blank/false-zero (A2 rule).
+            err = (tel.error or "host telemetry unavailable").strip()
+            rail.update(f"[dim]{err}[/dim]")
+            return
+        if tel.error and (not tel.disks or (ram and ram.error)):
+            lines.append(f"  [dim]⚠ {tel.error}[/dim]")
+        rail.update("\n".join(lines))
+
     def _populate_gpus(self, state: EstateState) -> None:
         # N2: when nvidia-smi returned NOTHING at all (no cards in the snapshot),
         # say so honestly on the first card rather than a calm "not present" per
@@ -1509,21 +1587,66 @@ class OperateOrchPane(Container):
             filled = max(0, min(20, round(pct / 5)))
             color = "green" if pct < 80 else "yellow" if pct < 95 else "red"
             bar_str = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * (20 - filled)}[/dim]"
-            # GPU-VRAM → owning-container attribution is intentionally NOT shown:
-            # docker ps doesn't expose a container's device list and nothing on
-            # this rig populates ContainerInfo.gpus, so any owner string would be
-            # fabricated.  The Serving panel (Operate · Orchestration) is the
-            # reliable "what's running" surface; real per-card attribution is a
-            # deferred follow-up (nvidia-smi --query-compute-apps + pid→cgroup).
             # #10(a): show power draw + the cap on the card.
             cap_note = ""
             cap_w = self._gpu_cap.get(i) if getattr(self, "_gpu_cap", None) else None
             if cap_w is not None:
                 cap_note = f" (cap {cap_w:.0f}W)"
-            bar.update(
-                f"  {bar_str}  {used / 1024:.1f} / {total / 1024:.1f} GiB · {pct}%\n"
-                f"  power: {pwr:.0f} / {pwr_lim:.0f} W{cap_note} · {temp}°C · util {util}%"
-            )
+            lines = [
+                f"  {bar_str}  {used / 1024:.1f} / {total / 1024:.1f} GiB · {pct}%",
+                f"  power: {pwr:.0f} / {pwr_lim:.0f} W{cap_note} · {temp}°C · util {util}%",
+            ]
+            # Batch 5 (GPU-VRAM → container attribution): WHO holds this card's
+            # VRAM — closes the Batch-1 "GPU0's 22GB owner is invisible" loop.
+            # Derived from the cached telemetry (nvidia-smi --query-compute-apps +
+            # pid→cgroup→docker), NOT the estate poll.  Best-effort: a holder whose
+            # container couldn't be resolved shows "pid <N>" (never a fabricated
+            # owner); an empty card shows nothing extra.
+            attrib = self._gpu_attribution_line(i)
+            if attrib:
+                lines.append(attrib)
+            # Holders whose physical card couldn't be resolved (uuid→index read
+            # skewed) bucket under the None key — render them on GPU0's card under
+            # a NEUTRAL heading (NOT pinned to a specific card), never mis-pinned.
+            if i == 0:
+                unpinned = self._gpu_attribution_line(None)
+                if unpinned:
+                    lines.append(unpinned)
+            bar.update("\n".join(lines))
+
+    def _gpu_attribution_line(self, index: Optional[int]) -> str:
+        """Batch 5: the "held by: <container> (<vram>)" line for GPU ``index``.
+
+        ``index`` is a physical GPU index, or ``None`` for holders whose card the
+        uuid→index read couldn't resolve — those render under a neutral "VRAM held
+        (card unknown)" heading rather than being mis-pinned to GPU0.
+
+        Reads the cached telemetry's per-card compute-apps.  Honest degradation:
+        a holder whose pid→container map failed renders as ``pid <N>`` (no
+        fabricated name), and if ANY holder on the card is nameless the line
+        appends ``(names unavailable)`` so the user knows the *VRAM total* is
+        honest even when a name is missing.  Returns '' when no holder is known
+        (an idle card shows no spurious owner line)."""
+        tel = getattr(self, "_last_telemetry", None)
+        if tel is None:
+            return ""
+        apps = (tel.gpu_apps or {}).get(index, [])
+        if not apps:
+            return ""
+        bits: list[str] = []
+        any_nameless = False
+        for app in apps:
+            vram = f"{app.used_mib / 1024:.1f}G" if app.used_mib else "—"
+            if app.container:
+                bits.append(f"{app.container} ({vram})")
+            else:
+                bits.append(f"pid {app.pid} ({vram})")
+                any_nameless = True
+        heading = "held by:" if index is not None else "VRAM held (card unknown):"
+        line = f"  [dim]{heading}[/dim] " + ", ".join(bits)
+        if any_nameless:
+            line += " [dim](names unavailable)[/dim]"
+        return line
 
     def _populate_doctor(self, state: EstateState) -> None:
         dr = state.doctor
@@ -1550,10 +1673,17 @@ class OperateOrchPane(Container):
     def _populate_services(self, state: EstateState) -> None:
         strip = self.query_one("#services-strip", Static)
         # Services come from the running-container view + scene catalog.
+        # Batch 5 (studio-* / #2-ext): include the "stack" kind (the studio-* /
+        # AI-studio GPU0 occupants) alongside the named GPU "service" containers,
+        # so the "what about all the OTHER services" gap closes and GPU0's holder
+        # is visible in this list.  A "stack" container carries a [dim]studio[/dim]
+        # tag so it's distinguishable from a first-class service (ComfyUI).
         svc_names: list[str] = []
         for c in state.containers:
             if c.kind == "service":
                 svc_names.append(c.name)
+            elif c.kind == "stack" and c.is_running:
+                svc_names.append(f"{c.name} [dim]studio[/dim]")
         if not svc_names:
             ae = (state.estate_report or {}).get("active_estate") or {}
             insts = ae.get("instances") or []
@@ -4301,6 +4431,21 @@ class CockpitApp(App):
             self.query_one("#operate-orch-pane", OperateOrchPane).populate_power_cap(st)
         except Exception:
             pass
+        # Batch 5 (#12 / N5 / attribution): host telemetry (disk bars + RAM line +
+        # GPU-VRAM → container owners).  Read AFTER the power-cap read so the final
+        # GPU-card paint carries BOTH the cap note and the "held by:" line (both
+        # re-render the cards; telemetry runs last so it has the cap map too).  All
+        # reads are batched in ONE estate_telemetry() call — no per-tick storm.
+        # Confined to Operate (mode 1, same guard as the adjacent load_doctor read):
+        # the full host-telemetry battery (df, meminfo, 2× nvidia-smi, docker ps,
+        # per-pid cgroup cats) renders to the #operate-orch-pane, which is hidden in
+        # mode-2 (Bring & Validate) — no point firing it there.
+        if self._active_mode == 1:
+            try:
+                tel = await self._data.estate_telemetry()
+                self.query_one("#operate-orch-pane", OperateOrchPane).populate_telemetry(tel)
+            except Exception:
+                pass
         # Doctor lives in Operate (R2a) and its profile-triage consumes the
         # _target_slug/_target_url THIS poll just captured — so chain the doctor
         # read here rather than racing it as a sibling worker off the mode switch

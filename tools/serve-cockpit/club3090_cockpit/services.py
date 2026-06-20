@@ -51,14 +51,17 @@ from .data import (
     CatalogEntry,
     ContainerInfo,
     ContainerTop,
+    DiskUsage,
     DoctorRead,
     DoctorReport,
     EstateDiagnose,
     EstateState,
+    EstateTelemetry,
     EvaluateHandoff,
     EvidenceReport,
     EvidenceTag,
     FitVerdict,
+    GpuCompApp,
     GpuConflict,
     Measurement,
     MeasuredNumbers,
@@ -67,6 +70,7 @@ from .data import (
     PowerCapState,
     ProfileTriage,
     PromoteScaffold,
+    RamUsage,
     ReconcileResult,
     Scene,
     ServedProbe,
@@ -74,6 +78,7 @@ from .data import (
     _canon_engine_family,
     _canon_model_key,
     _measure_verdict,
+    attribute_gpu_apps,
     bench_row_from_corpus_record,
     bench_rows_from_benchmarks_md,
     compute_promote_scaffold,
@@ -81,8 +86,12 @@ from .data import (
     measured_from_report_md,
     measurement_from_explain_benchmarks,
     parse_benchmarks_md_for_slug,
+    parse_compute_apps,
+    parse_df_output,
+    parse_docker_ps_id_names,
     parse_docker_top,
     parse_health_text,
+    parse_meminfo,
     parse_power_cap_status,
     parse_profile_triage,
 )
@@ -93,6 +102,13 @@ from .data import (
 # default; ``CockpitData(card=...)`` overrides it.  Detection from nvidia-smi is
 # done lazily in ``detect_local_card`` so headless tests never shell out.
 DEFAULT_CARD = "rtx-3090"
+
+# UX Batch 5 (#12 / N5): the model-weights mount on this rig.  ``/mnt/models`` is
+# the back-compat symlink target (``/mnt/models/gguf`` → ``huggingface``); the
+# disk rail shows free space here so a user knows whether a pull will fit.  This
+# path is SAFE to surface (it's the model dir, not a secret) — distinct from the
+# repo / home / user-config paths the UI must never show.
+MODEL_DIR = "/mnt/models"
 
 
 # ── Subprocess runner protocol (dependency injection seam) ───────────────────────
@@ -718,6 +734,193 @@ class CockpitData:
         state.estate_report = report or {}
 
         return state
+
+    # ── UX Batch 5: estate telemetry (disk / RAM / GPU-VRAM attribution) ──────────
+
+    async def estate_telemetry(self) -> EstateTelemetry:
+        """READ the Batch-5 host telemetry in ONE batched pass (piggybacks the
+        Operate 4 s tick — no new timer, no per-keystroke storm).
+
+        Three read groups, each best-effort + caught (a single failure records a
+        cue string and degrades that group, never crashes the pane, never shows a
+        silent false-zero — the B2 "A2" honesty rule):
+
+          1. **Disk (#12)** — ``df -B1 <repo> /mnt/models`` (ONE call, both
+             mounts).  Same-device de-dup happens in ``parse_df_output``.
+          2. **RAM (N5)**  — ``cat /proc/meminfo`` → MemTotal / MemAvailable.
+          3. **GPU attribution** — ``nvidia-smi --query-compute-apps`` for the
+             per-card VRAM holders, then a per-pid ``cat /proc/<pid>/cgroup`` +
+             ``docker ps --no-trunc`` id→name map to attribute each holder to its
+             container.  Graceful degradation: if the cgroup/ps map fails the
+             holder still shows (pid + VRAM, no name).
+
+        All I/O goes through the injected runner so tests feed canned df /
+        meminfo / nvidia-smi / cgroup stdout — no stdlib disk/file read that a
+        test can't intercept."""
+        tel = EstateTelemetry()
+        errors: list[str] = []
+
+        # ── (1) disk (#12) ────────────────────────────────────────────────────
+        try:
+            repo_path = str(self.repo_root)
+            label_for_path = {repo_path: "repo", MODEL_DIR: "models"}
+            # ``-P`` forces POSIX one-line-per-filesystem output (no device-name
+            # wrap → the parser keys off field POSITION, never breaks).  We parse
+            # stdout whenever it is non-empty REGARDLESS of returncode: df exits
+            # rc=1 when one of the paths (e.g. /mnt/models, a separate drive) is
+            # missing/unmounted, but STILL prints the valid rows for the paths it
+            # COULD stat to stdout (the error goes to stderr).  Gating on rc would
+            # discard a perfectly-good repo bar.
+            res = await self._runner.run(
+                ["df", "-P", "-B1", repo_path, MODEL_DIR],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+            if res.stdout.strip():
+                tel.disks = parse_df_output(res.stdout, label_for_path)
+            if not tel.disks:
+                errors.append("disk read failed (df)")
+        except Exception as exc:  # pragma: no cover - defensive
+            errors.append(f"disk read failed ({str(exc).strip()[:60]})")
+
+        # ── (2) RAM (N5) ──────────────────────────────────────────────────────
+        try:
+            res = await self._runner.run(
+                ["cat", "/proc/meminfo"],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+            if res.ok and res.stdout.strip():
+                tel.ram = parse_meminfo(res.stdout)
+            else:
+                tel.ram = RamUsage(error="meminfo read failed")
+            if tel.ram.error:
+                errors.append(tel.ram.error)
+        except Exception as exc:  # pragma: no cover - defensive
+            tel.ram = RamUsage(error=f"meminfo read failed ({str(exc).strip()[:60]})")
+            errors.append(tel.ram.error)
+
+        # ── (3) GPU-VRAM → container attribution ──────────────────────────────
+        try:
+            tel.gpu_apps, tel.attribution_degraded = await self._gpu_attribution()
+        except Exception as exc:  # pragma: no cover - defensive
+            tel.gpu_apps = {}
+            tel.attribution_degraded = True
+            errors.append(f"gpu attribution failed ({str(exc).strip()[:60]})")
+
+        tel.error = " · ".join(errors)
+        return tel
+
+    async def _gpu_attribution(self) -> tuple[dict[Optional[int], list[GpuCompApp]], bool]:
+        """Map the live CUDA compute-apps → owning containers (best-effort).
+
+        Reads ``nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory`` (the
+        gpu_uuid leg lets us bucket a holder onto its physical card; absent that
+        the holder lands under the ``None`` bucket — still attributed by VRAM,
+        just not pinned to a specific card, rather than mis-pinned to GPU0),
+        then resolves each pid → container via ``/proc/<pid>/cgroup`` (docker id)
+        ⨯ a ``docker ps --no-trunc`` id→name map.
+
+        GRACEFUL DEGRADATION: a failed nvidia-smi → empty map (no crash); a pid
+        whose cgroup is unreadable / non-docker / not in the ps map → the holder
+        keeps an empty container name (the card shows pid + VRAM, no fabricated
+        owner)."""
+        # The compute-apps query — gpu_uuid lets us bucket by physical card.
+        res = await self._runner.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=gpu_uuid,pid,used_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            cwd=str(self.repo_root),
+            timeout=10.0,
+        )
+        if not res.ok or not res.stdout.strip():
+            return {}, False
+        # Build (gpu_uuid, app) pairs.  parse_compute_apps wants pid,used cols, so
+        # we strip the uuid prefix per line but keep it for bucketing.
+        uuid_for_app: dict[int, str] = {}
+        app_lines: list[str] = []
+        for line in res.stdout.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 3 and parts[1].isdigit():
+                uuid_for_app[int(parts[1])] = parts[0]
+                app_lines.append(f"{parts[1]}, {parts[2]}")
+            elif len(parts) == 2 and parts[0].isdigit():
+                # No uuid column (older nvidia-smi) — pid,used only.
+                app_lines.append(line)
+        apps = parse_compute_apps("\n".join(app_lines))
+        if not apps:
+            return {}, False
+
+        # Map gpu_uuid → index via a separate query (cheap; one extra read).
+        uuid_to_index = await self._gpu_uuid_index_map()
+
+        # Resolve each pid → cgroup body, and read the docker ps id→name map ONCE.
+        cgroup_by_pid: dict[int, str] = {}
+        for app in apps:
+            try:
+                cg = await self._runner.run(
+                    ["cat", f"/proc/{app.pid}/cgroup"],
+                    cwd=str(self.repo_root),
+                    timeout=5.0,
+                )
+                cgroup_by_pid[app.pid] = cg.stdout if cg.ok else ""
+            except Exception:  # pragma: no cover - defensive
+                cgroup_by_pid[app.pid] = ""
+        id_to_name = await self._docker_ps_id_names()
+
+        apps, degraded = attribute_gpu_apps(apps, cgroup_by_pid, id_to_name)
+
+        # Bucket the attributed apps onto their physical card.  When the uuid→index
+        # map failed (secondary nvidia-smi read skewed/empty) we DON'T default to
+        # index 0 — that would mis-pin a GPU1 holder under GPU0's "held by:" line.
+        # Instead the holder buckets under ``None`` (a neutral, card-agnostic
+        # heading); VRAM totals stay honest, the card attribution just isn't claimed.
+        by_index: dict[Optional[int], list[GpuCompApp]] = {}
+        for app in apps:
+            uuid = uuid_for_app.get(app.pid, "")
+            idx = uuid_to_index.get(uuid)  # None when unresolved → not pinned to a card
+            app.gpu_index = idx
+            by_index.setdefault(idx, []).append(app)
+        return by_index, degraded
+
+    async def _gpu_uuid_index_map(self) -> dict[str, int]:
+        """``nvidia-smi --query-gpu=uuid,index`` → {uuid: index} (best-effort, {}
+        on failure → holders bucket under ``None``, still attributed by VRAM but
+        not pinned to a specific card)."""
+        try:
+            res = await self._runner.run(
+                ["nvidia-smi", "--query-gpu=uuid,index", "--format=csv,noheader,nounits"],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+        except Exception:  # pragma: no cover - defensive
+            return {}
+        if not res.ok:
+            return {}
+        out: dict[str, int] = {}
+        for line in res.stdout.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2 and parts[1].isdigit():
+                out[parts[0]] = int(parts[1])
+        return out
+
+    async def _docker_ps_id_names(self) -> dict[str, str]:
+        """``docker ps --no-trunc --format '{{.ID}} {{.Names}}'`` → {id: name}
+        for pid→container resolution.  Degrades to {} on failure (holders show
+        nameless — graceful, never a crash)."""
+        try:
+            res = await self._runner.run(
+                ["docker", "ps", "--no-trunc", "--format", "{{.ID}} {{.Names}}"],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+        except Exception:  # pragma: no cover - defensive
+            return {}
+        if not res.ok:
+            return {}
+        return parse_docker_ps_id_names(res.stdout)
 
     async def _real_probe_served(self, target: Any) -> ServedProbe:
         """A7: probe the live engine for its ACTUAL running config (READ-only).
@@ -2347,6 +2550,17 @@ class _NullParser:
 # estate containers — matched by name so the reconcile gate sees them.
 _GPU_SERVICE_NAMES = ("comfyui", "step-audio", "step-audio-editx")
 
+# UX Batch 5 (studio-* / #2-ext): the rig's AI-studio stack containers occupy
+# GPU0 but match no engine/estate prefix and no _GPU_SERVICE_NAMES entry, so they
+# were INVISIBLE in the Operate service list (GPU0's holder unattributed — the
+# "what about all the OTHER services" gap from Batch 1).  These name-fragments
+# classify a RUNNING studio/comfy/ai-studio container as kind ``"stack"`` so each
+# shows as its own row (NOT collapsed into one greyed ``services/studio`` entry)
+# and the reconcile gate sees it as the GPU holder it is.  Scope stays HONEST:
+# this only matches containers docker ps reports RUNNING — it is NOT a
+# ``docker ps -a`` of every dead container.
+_STACK_CONTAINER_FRAGMENTS = ("studio", "comfy")
+
 
 def _normalize_service_name(name: str) -> str:
     """Normalize a service-dir / container name for cross-matching: lowercase
@@ -2373,9 +2587,16 @@ def _classify_container_kind(name: str) -> Optional[str]:
     """Classify a docker-ps container name into a GPU-holder kind.
 
     Returns ``"engine"`` for the core engine prefixes, ``"estate"`` for the
-    estate planner's ``club3090-`` containers, ``"service"`` for known
-    GPU-holding rig services, else ``None`` (not a GPU holder we gate on — e.g.
-    open-webui, redis)."""
+    estate planner's ``club3090-`` containers, ``"service"`` for the named
+    GPU-holding rig services (ComfyUI / Step-Audio), ``"stack"`` for a RUNNING
+    studio/AI-studio stack container (Batch 5: the studio-* GPU0 occupants that
+    matched no prefix and were previously invisible), else ``None`` (not a GPU
+    holder we surface — open-webui / redis / qdrant …).
+
+    Order matters: the named ``service`` check precedes the ``stack`` fragment
+    check so ``comfyui`` keeps its ``service`` kind (it's a first-class GPU
+    service), and only the genuinely-unclassified studio-* fall through to
+    ``stack``."""
     from club3090_tui_core.detect import ENGINE_PREFIXES
 
     if ENGINE_PREFIXES.match(name):
@@ -2385,6 +2606,8 @@ def _classify_container_kind(name: str) -> Optional[str]:
     lname = name.lower()
     if any(svc in lname for svc in _GPU_SERVICE_NAMES):
         return "service"
+    if any(frag in lname for frag in _STACK_CONTAINER_FRAGMENTS):
+        return "stack"
     return None
 
 
