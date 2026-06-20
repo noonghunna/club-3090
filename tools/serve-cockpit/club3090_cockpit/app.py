@@ -39,7 +39,7 @@ NEVER executed live — tests inject fakes and conftest blocks the real spawn.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -53,6 +53,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -115,6 +116,142 @@ def _error_headline(err: str) -> str:
 
 def _status_glyph(status: str) -> str:
     return _STATUS_GLYPH.get(status.lower(), status)
+
+
+# ── Profile-template derivation (#6 / A12) ──────────────────────────────────────
+#
+# The BYO / ① Bring profile-like inputs are a SELECT of (engine, topology)
+# "template" slugs derived from the loaded registry variants (one representative
+# latest compose per (engine, topology)) so the user PICKS rather than free-types
+# a profile-like.  The selected value is the SAME profile-like string byo_check
+# consumes — the dropdown is a typo-proof front door, not a behaviour change.
+
+_TOPO_ORDER = {"single": 0, "dual": 1, "multi3": 2, "multi4": 3, "multi8": 4}
+
+
+def _variant_topology(row: "VariantRow") -> str:
+    """Extract the topology token (single/dual/multiN) from a variant's compose
+    path — the path encodes it as ``…/compose/<topology>/<quant>/<file>``."""
+    path = (getattr(row, "compose_path", "") or getattr(row, "compose_dir", "") or "")
+    for part in path.replace("\\", "/").split("/"):
+        if part in _TOPO_ORDER:
+            return part
+    return ""
+
+
+class ProfileOption(NamedTuple):
+    """One profile-template dropdown option.
+
+    A 3-field NamedTuple so it still unpacks as ``(label, value)``-compatible
+    in 2-element contexts is NOT assumed; callers that need the Select's
+    ``(label, value)`` pairs use :func:`profile_select_options`.  ``topology``
+    is carried THROUGH from the registry variant (NOT re-derived by splitting
+    the label) so the default picker can filter by topology directly."""
+
+    label: str
+    slug: str
+    topology: str
+
+
+def profile_select_options(
+    options: list["ProfileOption"],
+) -> list[tuple[str, str]]:
+    """Project ``ProfileOption``s down to the ``(label, value)`` pairs a Textual
+    ``Select`` consumes.  Pure."""
+    return [(o.label, o.slug) for o in options]
+
+
+def profile_templates(variants: list["VariantRow"]) -> list["ProfileOption"]:
+    """#6 — derive the profile-template dropdown options from the loaded variants.
+
+    ONE option per registry SLUG — every catalog variant is selectable (the
+    earlier (engine, topology) collapse made 40/53 slugs unreachable).  Returns
+    a list of :class:`ProfileOption` (``label``, ``slug``, ``topology``) sorted
+    by ``(topology, engine, slug)``, where ``slug`` is the profile-like string
+    ``byo_check`` accepts and ``topology`` is carried THROUGH from the variant's
+    compose path (NOT re-derived from the label later).  Pure — no I/O."""
+    seen: set[str] = set()
+    rows: list[tuple[str, str, str]] = []  # (engine, slug, topology)
+    for row in variants:
+        engine = (getattr(row, "engine", "") or "").strip()
+        slug = (getattr(row, "slug", "") or "").strip()
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        topo = _variant_topology(row) or "—"
+        rows.append((engine, slug, topo))
+    rows.sort(key=lambda t: (_TOPO_ORDER.get(t[2], 99), t[0], t[1]))
+    out: list[ProfileOption] = []
+    for engine, slug, topo in rows:
+        eng_label = engine or "—"
+        label = f"{slug}  ·  {eng_label} / {topo}"
+        out.append(ProfileOption(label=label, slug=slug, topology=topo))
+    return out
+
+
+def default_profile_template(
+    options: list["ProfileOption"], num_gpus: int
+) -> Optional[str]:
+    """A12 — pick the dropdown's default value for the rig's own topology.
+
+    Rule (deterministic, meaningful): prefer the registry's CANONICAL slug for
+    the rig topology — a slug literally named ``<engine>/<topo>`` (``vllm/dual``
+    for ≥2 cards, ``vllm/single`` for 1 card), preferring a ``vllm/``-prefixed
+    slug; then any literal ``<engine>/<topo>`` slug; then any slug whose
+    topology matches; finally the first option.  NEVER an arbitrary alphabetical
+    (e.g. Gemma/beellama) slug.  Topology comes from the carried-through
+    ``ProfileOption.topology`` — never re-derived from the label."""
+    if not options:
+        return None
+    want = "single" if num_gpus <= 1 else "dual"
+    same_topo = [o for o in options if o.topology == want]
+    # 1. the canonical vllm slug literally named "vllm/<topo>".
+    canonical_vllm = f"vllm/{want}"
+    for o in same_topo:
+        if o.slug == canonical_vllm:
+            return o.slug
+    # 2. any slug literally named "<engine>/<topo>", vllm-prefixed first.
+    literal = [o for o in same_topo if o.slug.endswith(f"/{want}")]
+    for o in literal:
+        if o.slug.startswith("vllm/"):
+            return o.slug
+    if literal:
+        return literal[0].slug
+    # 3. any slug of the right topology, vllm-prefixed first.
+    for o in same_topo:
+        if o.slug.startswith("vllm/"):
+            return o.slug
+    if same_topo:
+        return same_topo[0].slug
+    # 4. nothing matches the rig topology — first option (stable, sorted).
+    return options[0].slug
+
+
+def _set_select_options(
+    select: "Select", options: list[tuple[str, str]], default: Optional[str]
+) -> None:
+    """Replace a Select's options and select ``default`` (or the first option).
+    A pure widget update — no I/O.  Shared by Run · BYO and the producer ① Bring
+    stage so both pick from the SAME registry-derived templates."""
+    if not options:
+        return
+    values = {v for (_l, v) in options}
+    chosen = default if (default in values) else options[0][1]
+    # NICE-TO-HAVE 2 — suppress Select.Changed for this PROGRAMMATIC update so the
+    # app-level on_select_changed only ever sees GENUINE user picks (set_options
+    # momentarily selects the first option, which would otherwise false-flag the
+    # "user touched the profile" guard and block the rig-default reapply).
+    try:
+        with select.prevent(Select.Changed):
+            select.set_options(options)
+            select.value = chosen
+    except Exception:
+        # Fallback (no prevent available): best-effort update without the guard.
+        try:
+            select.set_options(options)
+            select.value = chosen
+        except Exception:
+            pass
 
 
 # NOTE (R3b-2): _canon_engine_family / _bench_row_matches moved to data.py (pure)
@@ -285,6 +422,14 @@ class CatalogPane(Container):
     CatalogPane DataTable {
         height: 1fr;
     }
+    CatalogPane #catalog-preview {
+        height: auto;
+        max-height: 6;
+        border: solid $primary;
+        padding: 0 1;
+        margin: 0 1;
+        color: $text;
+    }
     CatalogPane #catalog-hint {
         height: 1;
         color: $text-muted;
@@ -298,6 +443,15 @@ class CatalogPane(Container):
         table: DataTable = DataTable(id="catalog-table", zebra_stripes=True)
         table.cursor_type = "row"
         yield table
+        # #9/A8 — a compact preview strip for the highlighted row.  All LOCAL
+        # reads off the CatalogEntry (status_note caveat + fit + ctx + measured
+        # row) — the pick-decision input, updated on every cursor move (mirrors
+        # the Operate·Containers·Config highlight pattern).  The full cross-rig
+        # fold stays behind Explain ([e]).
+        yield Static(
+            "[dim]highlight a variant (move cursor) to preview it[/dim]",
+            id="catalog-preview",
+        )
         yield Label(
             "[dim]\\[/] filter   \\[⏎] serve   \\[e] explain   "
             "\\[d] set-default   \\[D] clear-default[/dim]",
@@ -407,6 +561,13 @@ class CatalogPane(Container):
             star = "  ([dim]*[/dim] = BENCHMARKS.md scrape)" if self._has_md_scrape() else ""
             status_label.update(f"{len(self._entries)} variants loaded from registry{star}{fit_basis}")
 
+        # #9/A8 — keep the preview strip in sync with the cursor after a (re-)render
+        # (enrichment mutates fit/measurement in place; the preview must reflect it).
+        try:
+            self.render_preview(self.selected_entry())
+        except Exception:
+            pass
+
     def refresh_enriched(self) -> None:
         """Re-render after background enrichment mutated the shared entries in
         place (fit / measurement), preserving the cursor row + active filter."""
@@ -477,6 +638,59 @@ class CatalogPane(Container):
         if 0 <= idx < len(rows):
             return rows[idx]
         return None
+
+    def render_preview(self, entry: Optional[CatalogEntry]) -> None:
+        """#9/A8 — render the compact preview strip for the highlighted entry.
+
+        A pure LOCAL read off the CatalogEntry (no I/O — no kv-calc / explain
+        re-run): the caveat ``status_note``, the fit (~VRAM/band/glyph) folded
+        with the live-vs-empty-card note from B3, the max-ctx, and the last
+        measured row.  Updated on every cursor move — the pick-decision input."""
+        try:
+            body = self.query_one("#catalog-preview", Static)
+        except Exception:
+            return
+        if entry is None:
+            body.update("[dim]highlight a variant (move cursor) to preview it[/dim]")
+            return
+        # Fit line — reuse the same B3 live-downgrade the table column applies, so
+        # the preview never reads "fits-clean" for a row that would OOM right now.
+        serving = (self._serving_slug or "").strip()
+        is_serving_row = bool(serving and entry.slug == serving)
+        if is_serving_row:
+            fit_glyph, fit_note = entry.fit.glyph, ""
+        else:
+            fit_glyph, fit_note = downgrade_fit_glyph(
+                entry.fit, entry.row, self._free_gb_by_index
+            )
+        fit_line = f"{fit_glyph} {entry.fit.verdict}"
+        vram = entry.fit.vram_est_gb
+        if vram is not None:
+            fit_line += f"  ~{float(vram):.1f} GiB"
+            band = entry.fit.band_gb
+            if band is not None:
+                fit_line += f" / {float(band):.1f} GiB band"
+        # N3 — only append the inline fit_note on a GENUINE live downgrade
+        # (⚠/✗).  The "vs empty card" basis note is already shown by the trailing
+        # "({fit_basis})" below, so appending it here too doubled it ("… vs empty
+        # card (vs empty card)") when live free-VRAM is unknown.
+        if fit_note and fit_glyph in ("⚠", "✗"):
+            color = "yellow" if fit_glyph == "⚠" else "red"
+            fit_line += f"  [{color}]{fit_note}[/{color}]"
+        # B3 basis label so the glyph is never silently read as a live verdict.
+        fit_basis = "vs live free-VRAM" if self._free_gb_by_index else "vs empty card"
+        lines = [
+            f"  [bold]{entry.slug}[/bold]  [dim]·[/dim]  {entry.engine}"
+            f"  [dim]·[/dim]  {_status_glyph(entry.status)} {entry.status or '—'}",
+            f"  [bold]fit[/bold]  {fit_line}  [dim]({fit_basis})[/dim]",
+            f"  [bold]ctx[/bold]  {entry.ctx_label or '—'}"
+            f"   [bold]measured[/bold]  {entry.measurement.tps_label} TPS"
+            f"  ·  8pk {entry.measurement.quality_label}",
+        ]
+        note = (entry.status_note or "").strip()
+        if note:
+            lines.append(f"  [bold]caveat[/bold]  [yellow]{note}[/yellow]")
+        body.update("\n".join(lines))
 
     def toggle_filter(self) -> None:
         inp = self.query_one("#catalog-filter", Input)
@@ -668,7 +882,7 @@ class ByoPane(Container):
         width: 1fr;
     }
     ByoPane #byo-profile-input {
-        width: 28;
+        width: 40;
         margin-left: 1;
     }
     ByoPane #byo-fit-btn {
@@ -694,9 +908,14 @@ class ByoPane(Container):
                 placeholder="HuggingFace model slug — e.g. unsloth/Qwen3-27B-abliterated-GGUF",
                 id="byo-url-input",
             )
-            yield Input(
-                placeholder="profile-like (vllm/dual)",
+            # #6/A12 — a SELECT of (engine, topology) templates derived from the
+            # loaded registry variants (populated by set_profile_options after the
+            # catalog loads), defaulting to the rig's own topology.  The selected
+            # value is the SAME profile-like string byo_check consumes.
+            yield Select(
+                [("vllm/dual  ·  loading templates…", "vllm/dual")],
                 value="vllm/dual",
+                allow_blank=False,
                 id="byo-profile-input",
             )
             yield Button("Fit-check", id="byo-fit-btn", variant="primary")
@@ -718,6 +937,14 @@ class ByoPane(Container):
         self.query_one("#byo-result-card", Static).update(
             f"[dim]Checking[/dim] [cyan]{repo}[/cyan] [dim](pull.sh --dry-run --json)…[/dim]"
         )
+
+    def set_profile_options(
+        self, options: list[tuple[str, str]], default: Optional[str]
+    ) -> None:
+        """#6/A12 — fill the profile-template Select from the registry-derived
+        options + select the rig-topology default.  Cheap: a pure widget update
+        (no I/O)."""
+        _set_select_options(self.query_one("#byo-profile-input", Select), options, default)
 
     def populate(self, res: ByoResult) -> None:
         # The verdict-card render is shared with the producer lane's ① Bring stage
@@ -1037,6 +1264,14 @@ class OperateOrchPane(Container):
         margin: 0 1 1 1;
         color: $text;
     }
+    OperateOrchPane #scene-preview {
+        height: auto;
+        max-height: 6;
+        border: solid $primary;
+        padding: 0 1;
+        margin: 0 1 1 1;
+        color: $text;
+    }
     OperateOrchPane #orch-hint {
         padding: 0 1;
         margin: 0 1;
@@ -1065,6 +1300,14 @@ class OperateOrchPane(Container):
             )
             scene_table.cursor_type = "row"
             yield scene_table
+            # #11 — a compact preview of the highlighted scene (what switching to
+            # it brings up): its description + services + ports + GPUs.  A pure
+            # LOCAL read off the Scene the gpu-mode --list-modes poll carried —
+            # mirrors the catalog/containers highlight-preview pattern.
+            yield Static(
+                "[dim]highlight a scene (move cursor) to preview what it brings up[/dim]",
+                id="scene-preview",
+            )
             yield Label("Services", id="services-heading")
             yield Static("[dim]reading estate…[/dim]", id="services-strip")
             yield Label("Power cap", id="powercap-heading")
@@ -1298,6 +1541,11 @@ class OperateOrchPane(Container):
         for s in scenes:
             svc = ", ".join(s.services[:3]) + ("…" if len(s.services) > 3 else "")
             t.add_row(s.name, s.group, s.gpus or "—", svc or "—")
+        # #11 — keep the preview in sync with the cursor after a (re-)populate.
+        try:
+            self.render_scene_preview(self.selected_scene())
+        except Exception:
+            pass
 
     def _populate_services(self, state: EstateState) -> None:
         strip = self.query_one("#services-strip", Static)
@@ -1328,6 +1576,32 @@ class OperateOrchPane(Container):
         if 0 <= idx < len(self._scenes):
             return self._scenes[idx]
         return None
+
+    def render_scene_preview(self, scene: Optional[Scene]) -> None:
+        """#11 — render the compact preview for the highlighted scene: what
+        switching to it brings up (description + services + ports + GPUs).  A
+        pure LOCAL read off the Scene the gpu-mode poll carried — no I/O."""
+        try:
+            body = self.query_one("#scene-preview", Static)
+        except Exception:
+            return
+        if scene is None:
+            body.update("[dim]highlight a scene (move cursor) to preview what it brings up[/dim]")
+            return
+        from rich.markup import escape
+
+        lines = [
+            f"  [bold]{escape(scene.name)}[/bold]"
+            + (f"  [dim]·[/dim]  {escape(scene.group)}" if scene.group else "")
+            + f"  [dim]·[/dim]  GPUs {escape(scene.gpus or '—')}",
+        ]
+        if scene.description:
+            lines.append(f"  [dim]{escape(scene.description)}[/dim]")
+        svcs = ", ".join(escape(s) for s in scene.services) if scene.services else "—"
+        lines.append(f"  [bold]starts[/bold]  {svcs}")
+        if scene.ports:
+            lines.append(f"  [bold]ports[/bold]  {', '.join(escape(p) for p in scene.ports)}")
+        body.update("\n".join(lines))
 
 
 # ── Operate · Containers ──────────────────────────────────────────────────────────
@@ -1537,6 +1811,14 @@ class ValidateRunPane(Container):
         max-height: 14;
         margin: 0 1 1 1;
     }
+    ValidateRunPane #run-step-preview {
+        height: auto;
+        max-height: 5;
+        border: solid $primary;
+        padding: 0 1;
+        margin: 0 1 1 1;
+        color: $text;
+    }
     ValidateRunPane #run-gotchas {
         border: solid $warning;
         padding: 0 1;
@@ -1560,6 +1842,13 @@ class ValidateRunPane(Container):
         t: DataTable = DataTable(id="run-ladder-table", zebra_stripes=True, show_cursor=True)
         t.cursor_type = "row"
         yield t
+        # N8 — a compact preview of the highlighted validation step: what it runs
+        # + its blurb (not only on ⏎-launch).  A pure LOCAL read off the ladder
+        # row — mirrors the catalog / scene / evidence highlight-preview pattern.
+        yield Static(
+            "[dim]highlight a step (move cursor) to preview what it runs[/dim]",
+            id="run-step-preview",
+        )
         yield Static(_TUNE_GOTCHAS, id="run-gotchas")
         yield LivePane(id="run-output")
         yield Label(
@@ -1609,6 +1898,12 @@ class ValidateRunPane(Container):
                 t.move_cursor(row=max(0, min(saved, t.row_count - 1)))
             except Exception:
                 pass
+        # N8 — keep the step preview in sync with the cursor after a (re-)render
+        # (outcome updates re-render the ladder; the preview must reflect them).
+        try:
+            self.render_step_preview(self.selected_kind())
+        except Exception:
+            pass
 
     def _outcome_glyph(self, kind: str) -> str:
         return self._OUTCOME_GLYPH.get(self._outcomes.get(kind, "unrun"), self._OUTCOME_GLYPH["unrun"])
@@ -1633,6 +1928,33 @@ class ValidateRunPane(Container):
         if 0 <= idx < len(self._kinds):
             return self._kinds[idx]
         return None
+
+    def render_step_preview(self, kind: Optional[str]) -> None:
+        """N8 — render the compact preview for the highlighted validation step:
+        what it runs (label + ladder/extra classification) + its blurb + the
+        last-run outcome.  A pure LOCAL read off the ladder rows — no I/O."""
+        try:
+            body = self.query_one("#run-step-preview", Static)
+        except Exception:
+            return
+        if kind is None:
+            body.update("[dim]highlight a step (move cursor) to preview what it runs[/dim]")
+            return
+        meta = {
+            k: (l, b, "ladder") for (k, l, b) in _RUN_LADDER
+        }
+        meta.update({k: (l, b, "extra") for (k, l, b) in _RUN_EXTRAS})
+        if kind not in meta:
+            body.update("[dim]—[/dim]")
+            return
+        label, blurb, cls = meta[kind]
+        outcome = self._outcomes.get(kind, "unrun")
+        lines = [
+            f"  [bold]{label}[/bold]  [dim]·[/dim]  {cls}"
+            f"  [dim]·[/dim]  last: {self._OUTCOME_GLYPH.get(outcome, self._OUTCOME_GLYPH['unrun'])} {outcome}",
+            f"  [dim]{blurb}[/dim]",
+        ]
+        body.update("\n".join(lines))
 
 
 class DoctorPane(Container):
@@ -1803,6 +2125,14 @@ class ValidateEvidencePane(Container):
         height: 1fr;
         margin: 0 1 0 1;
     }
+    ValidateEvidencePane #evidence-preview {
+        height: auto;
+        max-height: 6;
+        border: solid $primary;
+        padding: 0 1;
+        margin: 0 1;
+        color: $text;
+    }
     ValidateEvidencePane #evidence-hint {
         padding: 0 1;
         margin: 0 1;
@@ -1816,6 +2146,14 @@ class ValidateEvidencePane(Container):
         et: DataTable = DataTable(id="evidence-table", zebra_stripes=True, show_cursor=True)
         et.cursor_type = "row"
         yield et
+        # N8 — a compact preview of the highlighted run tag (its numbers/summary
+        # on highlight, not only on ⏎-open): the artifacts present + the scraped
+        # TL;DR.  A pure LOCAL read off the EvidenceTag — mirrors the catalog /
+        # scene highlight-preview pattern.  The full report stays behind ⏎.
+        yield Static(
+            "[dim]highlight a run tag (move cursor) to preview its artifacts + TL;DR[/dim]",
+            id="evidence-preview",
+        )
         yield Label(
             "[dim]\\[⏎] open report   \\[m] vs catalog bar   \\[s] submit to localmaxxing (gated · never auto)[/dim]",
             id="evidence-hint",
@@ -1840,6 +2178,11 @@ class ValidateEvidencePane(Container):
             tldr = (et.tldr[:48] + "…") if len(et.tldr) > 49 else (et.tldr or "—")
             t.add_row(et.tag, et.date or "—", yn(et.has_report), yn(et.has_internal), yn(et.has_soak), tldr)
         status.update(f"{len(tags)} run tag(s) under results/rebench/")
+        # N8 — keep the preview in sync with the cursor after a (re-)populate.
+        try:
+            self.render_preview(self.selected_tag())
+        except Exception:
+            pass
 
     def selected_tag(self) -> Optional[EvidenceTag]:
         t = self.query_one("#evidence-table", DataTable)
@@ -1847,6 +2190,32 @@ class ValidateEvidencePane(Container):
         if 0 <= idx < len(self._tags):
             return self._tags[idx]
         return None
+
+    def render_preview(self, tag: Optional[EvidenceTag]) -> None:
+        """N8 — render the compact preview for the highlighted run tag: which
+        artifacts are present + the scraped TL;DR.  A pure LOCAL read off the
+        EvidenceTag — no I/O (the full report generation stays behind ⏎)."""
+        try:
+            body = self.query_one("#evidence-preview", Static)
+        except Exception:
+            return
+        if tag is None:
+            body.update("[dim]highlight a run tag (move cursor) to preview its artifacts + TL;DR[/dim]")
+            return
+        from rich.markup import escape
+
+        yn = lambda b: "[green]✓[/green]" if b else "[dim]·[/dim]"
+        lines = [
+            f"  [bold]{escape(tag.tag)}[/bold]"
+            + (f"  [dim]·[/dim]  {escape(tag.date)}" if tag.date else ""),
+            f"  [bold]artifacts[/bold]  REPORT.md {yn(tag.has_report)}"
+            f"   _internal.json {yn(tag.has_internal)}   soak {yn(tag.has_soak)}",
+        ]
+        tldr = (tag.tldr or "").strip()
+        lines.append(
+            f"  [bold]TL;DR[/bold]  {escape(tldr)}" if tldr else "  [bold]TL;DR[/bold]  [dim]—[/dim]"
+        )
+        body.update("\n".join(lines))
 
 
 # ── Evidence report modal (reuses the history_view read pattern) ─────────────────
@@ -2484,7 +2853,7 @@ class LaneBringPane(Container):
         width: 1fr;
     }
     LaneBringPane #lane-bring-profile-input {
-        width: 28;
+        width: 40;
         margin-left: 1;
     }
     LaneBringPane #lane-bring-fit-btn {
@@ -2510,9 +2879,12 @@ class LaneBringPane(Container):
                 placeholder="org/Model  (e.g. unsloth/Qwen3-27B-abliterated-GGUF)",
                 id="lane-bring-url-input",
             )
-            yield Input(
-                placeholder="profile-like (vllm/dual)",
+            # #6/A12 — same registry-derived (engine, topology) template Select as
+            # Run · BYO (populated by set_profile_options after the catalog loads).
+            yield Select(
+                [("vllm/dual  ·  loading templates…", "vllm/dual")],
                 value="vllm/dual",
+                allow_blank=False,
                 id="lane-bring-profile-input",
             )
             yield Button("Fit-check", id="lane-bring-fit-btn", variant="primary")
@@ -2534,6 +2906,15 @@ class LaneBringPane(Container):
     def set_checking(self, repo: str) -> None:
         self.query_one("#lane-bring-result-card", Static).update(
             f"[dim]Checking[/dim] [cyan]{repo}[/cyan] [dim](pull.sh --dry-run --json)…[/dim]"
+        )
+
+    def set_profile_options(
+        self, options: list[tuple[str, str]], default: Optional[str]
+    ) -> None:
+        """#6/A12 — fill the ① Bring profile-template Select (same registry-derived
+        templates + rig-topology default as Run · BYO)."""
+        _set_select_options(
+            self.query_one("#lane-bring-profile-input", Select), options, default
         )
 
     def populate(self, res: ByoResult) -> None:
@@ -2573,6 +2954,15 @@ def _byo_result_text(res: ByoResult) -> str:
     if res.note:
         lines.append("")
         lines.append(f"  [dim]{res.note}[/dim]")
+    # N9 — point the producer forward: a successful fit-check that resolved a
+    # servable catalog target hands straight off to ② Serve (now pre-armed).
+    if not res.error and (res.sibling_slug or res.profile_like):
+        target = res.sibling_slug or res.profile_like
+        lines.append("")
+        lines.append(
+            f"  [green]→ ② Serve[/green] is armed with [green]{target}[/green] "
+            "[dim](no re-entry needed)[/dim]"
+        )
     return "\n".join(lines)
 
 
@@ -2640,6 +3030,45 @@ class LaneServePane(Container):
 
     def set_status(self, text: str) -> None:
         self.query_one("#lane-serve-body", Static).update(text)
+
+    def set_armed(self, byo: "Optional[ByoResult]") -> None:
+        """N9 — pre-arm ② Serve from the cached ① Bring fit-check: show the
+        resolved servable catalog target so ⏎ here serves it WITHOUT re-entering
+        ① Bring.  Pure render off the cached ByoResult (no I/O).  When there's no
+        usable fit-check yet, restore the calm "run ① Bring first" placeholder."""
+        body = self.query_one("#lane-serve-body", Static)
+        if byo is None or getattr(byo, "error", ""):
+            body.update(
+                "[dim]Stage ② of the Bring & Validate pipeline.\n"
+                "\n"
+                "Run ① Bring first to fit-check a model.  Then ⏎ here generates +\n"
+                "previews + serves the resolved catalog compose (reconcile-gated,\n"
+                "untested).[/dim]"
+            )
+            return
+        slug = (
+            getattr(byo, "sibling_slug", "")
+            or getattr(byo, "profile_like", "")
+        )
+        repo = getattr(byo, "repo", "") or "—"
+        lines = [
+            "[green]● armed from ① Bring[/green] — ⏎ serves the resolved catalog compose (untested):",
+            "",
+            f"  [bold]brought[/bold]   [cyan]{repo}[/cyan]",
+        ]
+        if slug:
+            lines.append(f"  [bold]serves[/bold]    [green]{slug}[/green]  [dim](resolved catalog profile)[/dim]")
+        else:
+            lines.append(
+                "  [yellow]no servable catalog target resolved[/yellow] — the fit-check found "
+                "no sibling/profile slug (the bring-your-own weight-swap is a deferred follow-up)."
+            )
+        lines.append("")
+        lines.append(
+            "[yellow]Note: serves an UNTESTED reproduction of the catalog profile's "
+            "compose — NOT your brought model's weights.[/yellow]"
+        )
+        body.update("\n".join(lines))
 
 
 class LanePromotePane(Container):
@@ -3468,6 +3897,16 @@ class CockpitApp(App):
         # A3: the last estate snapshot, cached so the periodic as-of re-render can
         # re-stamp the rail's freshness WITHOUT a fresh subprocess poll.
         self._last_estate_state: Optional[EstateState] = None
+        # #6/A12: the registry-derived profile-template options + whether the
+        # rig-topology default has already been applied (so a later estate poll
+        # re-defaults the dropdown only ONCE — never clobbering a user's pick).
+        self._profile_options: list["ProfileOption"] = []
+        self._profile_default_applied: bool = False
+        self._profile_topology_defaulted: bool = False
+        # NICE-TO-HAVE 2: once the user manually picks a profile in either Select,
+        # the estate-poll rig-default reapply must not silently clobber it.
+        self._profile_user_touched: bool = False
+        self._last_applied_profile_default: Optional[str] = None
 
     # A1/A10 deferred-serve re-poll knobs.
     _SERVE_REPOLL_SECS = 3.0
@@ -3614,6 +4053,11 @@ class CockpitApp(App):
             error = "No variants returned — registry may be empty"
         # Cache variants for detect/match + container slug-matching.
         self._variants = [e.row for e in rows]
+        # #6/A12 — derive the profile-template dropdown options from the variants
+        # now that the registry has loaded (default applied with whatever GPU count
+        # is known so far; the first estate poll re-defaults to the rig topology).
+        if self._variants:
+            self._refresh_profile_templates()
         try:
             pane = self.query_one("#catalog-pane", CatalogPane)
         except Exception:
@@ -3628,6 +4072,68 @@ class CockpitApp(App):
         pane.refresh_enriched()
         await self._data.enrich_measurements(rows)
         pane.refresh_enriched()
+
+    # ── #6/A12 · profile-template dropdown ───────────────────────────────────────────
+
+    def _known_profile_likes(self) -> list[str]:
+        """A12 — the known profile-like slugs (every loaded registry variant slug),
+        for the unknown-profile guard + its "known: …" hint.  Pure (cached
+        variants); empty before the registry loads."""
+        out: list[str] = []
+        seen: set[str] = set()
+        for row in (self._variants or []):
+            slug = (getattr(row, "slug", "") or "").strip()
+            if slug and slug not in seen:
+                seen.add(slug)
+                out.append(slug)
+        return out
+
+    def _known_gpu_count(self) -> Optional[int]:
+        """Best-known live GPU count (from the last estate poll), or None when the
+        estate hasn't been polled yet (the dropdown default then degrades to the
+        first matching/`dual` template)."""
+        st = self._last_estate_state
+        if st is not None and getattr(st, "gpus", None):
+            return len(st.gpus)
+        return None
+
+    def _refresh_profile_templates(self, *, reapply_default: bool = False) -> None:
+        """#6/A12 — (re)derive the profile-template options from the loaded variants
+        and push them into both profile-template Selects (Run · BYO + ① Bring),
+        defaulting to the rig's own topology.
+
+        The default is applied ONCE (first time options become available, or when
+        ``reapply_default`` forces a re-default after the estate poll first learns
+        the GPU count) so a later poll never clobbers a user's manual pick.  Pure —
+        no I/O (reads cached variants + cached estate gpu-count)."""
+        options = profile_templates(self._variants or [])
+        if not options:
+            return
+        self._profile_options = options
+        # NICE-TO-HAVE 2 — once a user manually picks a profile (Run/BYO or ①
+        # Bring), the rig-default reapply (estate-poll re-default) must NOT
+        # clobber it.  Skip the re-default when the user has touched the Select.
+        apply_default = reapply_default or not self._profile_default_applied
+        if apply_default and reapply_default and getattr(self, "_profile_user_touched", False):
+            apply_default = False
+        select_opts = profile_select_options(options)
+        default = (
+            default_profile_template(options, self._known_gpu_count() or 2)
+            if apply_default
+            else None
+        )
+        if apply_default:
+            self._last_applied_profile_default = default
+        for pane_id, cls, setter in (
+            ("#byo-panel", ByoPane, "set_profile_options"),
+            ("#lane-bring-pane", LaneBringPane, "set_profile_options"),
+        ):
+            try:
+                getattr(self.query_one(pane_id, cls), setter)(select_opts, default)
+            except Exception:
+                pass
+        if apply_default:
+            self._profile_default_applied = True
 
     # ── Estate polling ───────────────────────────────────────────────────────────────
 
@@ -3677,6 +4183,16 @@ class CockpitApp(App):
         # rail's freshness from CACHED state (a pure read, no subprocess).  Also
         # feeds the generated-serve container-appearance baseline (MUST-FIX 1).
         self._last_estate_state = state
+        # #6/A12 — the first estate poll that learns the real GPU count re-defaults
+        # the profile-template dropdown to the rig topology (1 card → single, ≥2 →
+        # dual).  reapply_default=True forces the re-default exactly once; a later
+        # poll won't fire it again (the flag below), so a user's manual pick stands.
+        if not getattr(self, "_profile_topology_defaulted", False) and getattr(state, "gpus", None):
+            self._profile_topology_defaulted = True
+            try:
+                self._refresh_profile_templates(reapply_default=True)
+            except Exception:
+                pass
         # Capture the live target for profile-triage / validation launches.
         self._target_slug = state.matched_slug or ""
         tgt = state.target
@@ -3849,6 +4365,32 @@ class CockpitApp(App):
             lane_pane.set_checking(repo)
         except Exception:
             lane_pane = None
+        # A12 — a free-text / legacy profile-like that isn't a known registry slug
+        # gets a precise "unknown profile <X> — known: <list>" instead of a generic
+        # pull.sh dry-run error.  Only enforced once we have a non-empty known set
+        # (the registry loaded); an empty catalog falls through to the live check.
+        known = self._known_profile_likes()
+        if known and profile_like and profile_like not in known:
+            shown = ", ".join(known[:12]) + ("…" if len(known) > 12 else "")
+            res = ByoResult(
+                repo=repo,
+                profile_like=profile_like,
+                error=f"unknown profile {profile_like} — known: {shown}",
+            )
+            self._last_byo = res
+            if run_pane is not None:
+                run_pane.populate(res)
+            if lane_pane is not None:
+                lane_pane.populate(res)
+            # N9 — a failed re-Bring must clear any STALE "● armed …" left by a
+            # prior valid ① Bring: mirror the success path's set_armed so ② Serve
+            # restores the "run ① Bring first" placeholder, consistent with the
+            # error _last_byo (the serve ACTION is already gate-safe).
+            try:
+                self.query_one("#lane-serve-pane", LaneServePane).set_armed(None)
+            except Exception:
+                pass
+            return
         res = await self._data.byo_check(repo, profile_like)
         # Cache the arch facts for the lane ② Serve + the Promote scaffold (Phase 5).
         self._last_byo = res
@@ -3856,6 +4398,14 @@ class CockpitApp(App):
             run_pane.populate(res)
         if lane_pane is not None:
             lane_pane.populate(res)
+        # N9 — carry the fit-check result forward: pre-arm ② Serve with the
+        # resolved target so the producer pipeline flows ① → ② without re-entry.
+        try:
+            self.query_one("#lane-serve-pane", LaneServePane).set_armed(
+                res if not getattr(res, "error", "") else None
+            )
+        except Exception:
+            pass
 
     # ── Explain ──────────────────────────────────────────────────────────────────────
 
@@ -5219,12 +5769,9 @@ class CockpitApp(App):
         (reuses byo_check) from the lane's own inputs."""
         try:
             repo = self.query_one("#lane-bring-url-input", Input).value.strip()
-            profile = (
-                self.query_one("#lane-bring-profile-input", Input).value.strip()
-                or "vllm/dual"
-            )
         except Exception:
             return
+        profile = self._selected_profile_like("#lane-bring-profile-input")
         if not repo:
             self.notify("Enter an HF repo (org/Model).", title="① Bring", severity="warning", timeout=3)
             return
@@ -5482,6 +6029,13 @@ class CockpitApp(App):
         # Strip the Textual internal prefix if present.
         _PREFIX = "--content-tab-"
         tab_id = raw_tab_id[len(_PREFIX):] if raw_tab_id.startswith(_PREFIX) else raw_tab_id
+        # N9 — entering ② Serve re-arms it from the cached ① Bring fit-check so the
+        # resolved target is shown WITHOUT re-entering ① Bring (the pipeline flows).
+        if tab_id == "tab-serve":
+            try:
+                self.query_one("#lane-serve-pane", LaneServePane).set_armed(self._last_byo)
+            except Exception:
+                pass
         # Only respond to tabs that belong to the current mode's active panel.
         _mode_tabs: dict[int, set[str]] = {
             0: {"tab-catalog", "tab-byo"},
@@ -5522,6 +6076,31 @@ class CockpitApp(App):
 
     # ── Widget event handlers ─────────────────────────────────────────────────────────
 
+    def on_select_changed(self, event: "Select.Changed") -> None:
+        """NICE-TO-HAVE 2 — flag a GENUINE user pick of a profile template so the
+        estate-poll rig-default reapply never clobbers it.
+
+        Programmatic default-apply (``_set_select_options`` setting ``.value``)
+        also fires ``Select.Changed``; we treat a change as user-driven ONLY when
+        the new value differs from the last default we applied — so seeding the
+        dropdown with the rig default doesn't count as a touch."""
+        try:
+            sel_id = event.select.id
+        except Exception:
+            return
+        if sel_id not in ("byo-profile-input", "lane-bring-profile-input"):
+            return
+        # Before the registry-derived default has been applied, any Changed is the
+        # initial-mount/placeholder seeding — not a user pick.
+        if not getattr(self, "_profile_default_applied", False):
+            return
+        new_val = event.value
+        # Blank / no-selection sentinel isn't a meaningful pick.
+        if new_val is None or new_val is Select.BLANK:
+            return
+        if new_val != getattr(self, "_last_applied_profile_default", None):
+            self._profile_user_touched = True
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """DataTable emits RowSelected when the user presses Enter (select_cursor).
         Route it to the app's primary action so focusing a DataTable doesn't break
@@ -5530,14 +6109,56 @@ class CockpitApp(App):
         self.action_primary_action()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        """Operate · Containers: auto-load the drill detail for the highlighted
-        container (lazydocker-style). Config is a local read → immediate; the
-        active live tab (Logs / Top) is a docker read → debounced ~250ms so
-        arrowing through the list doesn't spawn a subprocess per row."""
+        """Select → inline preview, consistently across the tables (#9/#11/N8).
+
+        Each preview is a pure LOCAL read (CatalogEntry / Scene / EvidenceTag /
+        ladder-step blurb) rendered into a compact strip under its table — the
+        same lazydocker-style highlight pattern Operate·Containers·Config uses.
+        No I/O is done here (no subprocess per keystroke).  The container drill
+        (Logs / Top) below is the ONE exception that does a debounced docker read;
+        it stays gated to ``containers-table``."""
         try:
-            if event.data_table.id != "containers-table":
-                return
+            tid = event.data_table.id
         except Exception:
+            return
+
+        # #9/A8 — Run · Catalog preview (consumer surface, READ).
+        if tid == "catalog-table":
+            try:
+                pane = self.query_one("#catalog-pane", CatalogPane)
+                pane.render_preview(pane.selected_entry())
+            except Exception:
+                pass
+            return
+
+        # #11 — Operate · Orchestration scene preview (READ).
+        if tid == "scene-table":
+            try:
+                pane = self.query_one("#operate-orch-pane", OperateOrchPane)
+                pane.render_scene_preview(pane.selected_scene())
+            except Exception:
+                pass
+            return
+
+        # N8 — Validate · ④ Measure evidence-tag preview (READ).
+        if tid == "evidence-table":
+            try:
+                pane = self.query_one("#validate-evidence-pane", ValidateEvidencePane)
+                pane.render_preview(pane.selected_tag())
+            except Exception:
+                pass
+            return
+
+        # N8 — Validate · ③ Gate validation-step preview (READ).
+        if tid == "run-ladder-table":
+            try:
+                pane = self.query_one("#validate-run-pane", ValidateRunPane)
+                pane.render_step_preview(pane.selected_kind())
+            except Exception:
+                pass
+            return
+
+        if tid != "containers-table":
             return
         if self._active_mode != 1 or self._active_operate_tab() != "tab-containers":
             return
@@ -5634,9 +6255,9 @@ class CockpitApp(App):
                 ).focus()
             except Exception:
                 pass
-        elif event.input.id in ("byo-url-input", "byo-profile-input"):
+        elif event.input.id == "byo-url-input":
             self._trigger_byo()
-        elif event.input.id in ("lane-bring-url-input", "lane-bring-profile-input"):
+        elif event.input.id == "lane-bring-url-input":
             self._trigger_lane_bring()
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -5646,12 +6267,24 @@ class CockpitApp(App):
             except Exception:
                 pass
 
+    def _selected_profile_like(self, select_id: str) -> str:
+        """#6 — the profile-like string from a profile-template Select.  Reads the
+        Select's value (a registry-derived slug); falls back to "vllm/dual" if the
+        widget is blank/unresolved."""
+        try:
+            val = self.query_one(select_id, Select).value
+        except Exception:
+            return "vllm/dual"
+        if val is None or val is Select.BLANK:
+            return "vllm/dual"
+        return str(val).strip() or "vllm/dual"
+
     def _trigger_byo(self) -> None:
         try:
             repo = self.query_one("#byo-url-input", Input).value.strip()
-            profile = self.query_one("#byo-profile-input", Input).value.strip() or "vllm/dual"
         except Exception:
             return
+        profile = self._selected_profile_like("#byo-profile-input")
         if not repo:
             self.notify("Enter an HF repo (org/Model).", title="BYO", severity="warning", timeout=3)
             return

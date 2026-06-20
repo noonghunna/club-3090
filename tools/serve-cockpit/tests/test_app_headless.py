@@ -30,7 +30,7 @@ from typing import Any, Optional
 
 import pytest
 
-from textual.widgets import Button, DataTable, Input, Static, TabbedContent, TabPane, Label
+from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent, TabPane, Label
 from textual.widgets._footer import FooterKey
 
 from club3090_tui_core.detect import GpuInfo, ServingTarget
@@ -863,7 +863,8 @@ class TestByoWired:
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one("#byo-panel", ByoPane)
             app.query_one("#byo-url-input", Input)
-            app.query_one("#byo-profile-input", Input)
+            # #6 — the profile-like input is now a registry-derived template Select.
+            app.query_one("#byo-profile-input", Select)
             app.query_one("#byo-fit-btn", Button)
             app.query_one("#byo-result-card", Static)
 
@@ -5991,3 +5992,451 @@ class TestA11ConfirmModalDiscoverableBindings:
             await _settle(pilot)
             assert len(wr.started) == 1
             assert "--force" in wr.started[0]["cmd"]
+
+
+# ===========================================================================
+# UX Batch 4b — preview & input ergonomics
+#   #9/A8 Catalog preview · #11 Scene preview · N8 evidence/gate preview ·
+#   #6/A12 profile-template Select + rig default + unknown-profile ·
+#   N9 producer ①→② hand-off.  All previews are LOCAL reads (no I/O).
+# ===========================================================================
+
+from club3090_cockpit.app import (  # noqa: E402
+    profile_templates,
+    default_profile_template,
+)
+from club3090_tui_core import VariantRow  # noqa: E402
+
+# A registry variant carrying a status_note caveat (⚠️ Production w/ caveats) so
+# the Catalog preview can be asserted to surface the caveat text inline.
+REGISTRY_JSON_CAVEAT = json.dumps(
+    {
+        "defaults": [],
+        "profiles": {},
+        "variants": [
+            {
+                "slug": "vllm/dual",
+                "switch_engine": "vllm",
+                "launch_engine": "vllm",
+                "compose_dir": "models/qwen3.6-27b/vllm/compose/dual/autoround-int4",
+                "file": "fp8-mtp.yml",
+                "port": 8010,
+                "model": "qwen3.6-27b",
+                "engine": "vllm-stable",
+                "kvcalc_key": "qwen3.6-27b:dual",
+                "container": "vllm_qwen36_27b",
+                "compose_path": "models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
+                "status": "caveats",
+                "ctx_label": "262K",
+                "configured_ctx": 262144,
+                "status_note": "Cliff-2b at >50K accumulated ctx",
+                "source": "curated",
+            },
+            {
+                "slug": "vllm/single",
+                "switch_engine": "vllm",
+                "launch_engine": "vllm",
+                "compose_dir": "models/qwen3.6-27b/vllm/compose/single/autoround-int4",
+                "file": "base.yml",
+                "port": 8011,
+                "model": "qwen3.6-27b",
+                "engine": "vllm-stable",
+                "kvcalc_key": "qwen3.6-27b:single",
+                "container": "vllm_qwen36_27b_single",
+                "compose_path": "models/qwen3.6-27b/vllm/compose/single/autoround-int4/base.yml",
+                "status": "production",
+                "ctx_label": "120K",
+                "configured_ctx": 120000,
+                "status_note": "",
+                "source": "curated",
+            },
+        ],
+    }
+)
+
+
+class TestProfileTemplateDerivation:
+    """#6/A12 — the pure profile-template derivation + rig-topology default."""
+
+    def _mk(self, slug, engine, path):
+        return VariantRow(
+            slug=slug, switch_engine=engine, launch_engine=engine,
+            compose_dir=path.rsplit("/", 1)[0], file=path.rsplit("/", 1)[1],
+            port=8000, model="q", engine=engine, kvcalc_key="k", container="c",
+            compose_path=path, status="production", ctx_label="262K", status_note="",
+        )
+
+    def test_every_slug_is_selectable_none_collapsed(self):
+        # BLOCKER: the dropdown must emit ONE option per registry SLUG — the old
+        # (engine, topology) collapse made siblings unreachable.  THREE vllm dual
+        # slugs sharing (vllm-stable, dual) must ALL survive (real-registry shape).
+        rows = [
+            self._mk("vllm/dual", "vllm-stable", "models/q/vllm/compose/dual/aq/fp8-mtp.yml"),
+            self._mk("vllm/qwen-27b-dual-max", "vllm-stable", "models/q/vllm/compose/dual/aq/int8.yml"),
+            self._mk("vllm/qwen-27b-dual-fast", "vllm-stable", "models/q/vllm/compose/dual/aq/fast.yml"),
+            self._mk("vllm/minimal", "vllm-stable", "models/q/vllm/compose/single/aq/base.yml"),
+            self._mk("ik-llama/iq4ks-mtp", "ik-llama", "models/q/ik-llama/compose/single/u/mtp.yml"),
+            self._mk("llamacpp/default", "llama-cpp-local", "models/q/llama-cpp/compose/single/u/default.yml"),
+        ]
+        opts = profile_templates(rows)
+        values = [o.slug for o in opts]
+        # NONE collapsed away — every distinct slug is a selectable option.
+        for slug in (
+            "vllm/dual", "vllm/qwen-27b-dual-max", "vllm/qwen-27b-dual-fast",
+            "vllm/minimal", "ik-llama/iq4ks-mtp", "llamacpp/default",
+        ):
+            assert slug in values, slug
+        assert len(values) == len(set(values)) == 6  # one option per slug, deduped
+        # labels carry the engine/topology so a user can read what they pick.
+        assert any("vllm-stable / dual" in o.label for o in opts)
+        # topology is carried THROUGH on the option (not re-derived from the label).
+        by_slug = {o.slug: o for o in opts}
+        assert by_slug["vllm/dual"].topology == "dual"
+        assert by_slug["vllm/minimal"].topology == "single"
+
+    def test_rig_default_is_canonical_not_alphabetical_gemma(self):
+        # BLOCKER: the rig-topology default must be the CANONICAL vllm slug for the
+        # topology — NOT the alphabetically-first survivor (a Gemma/beellama slug).
+        rows = [
+            # alphabetically-first dual slug is a beellama/gemma one — the OLD
+            # default_profile_template would have picked it.
+            self._mk("beellama/gemma-q8-dflash-dual", "beellama-local", "models/q/beellama/compose/dual/q8/dflash.yml"),
+            self._mk("vllm/qwen-27b-dual-max", "vllm-stable", "models/q/vllm/compose/dual/aq/int8.yml"),
+            self._mk("vllm/dual", "vllm-stable", "models/q/vllm/compose/dual/aq/fp8-mtp.yml"),
+            # alphabetically-first single slug is a beellama one.
+            self._mk("beellama/dflash", "beellama-local", "models/q/beellama/compose/single/u/dflash.yml"),
+            self._mk("vllm/single", "vllm-stable", "models/q/vllm/compose/single/aq/base.yml"),
+        ]
+        opts = profile_templates(rows)
+        # 2 cards → the canonical vllm/dual, NOT beellama/gemma-q8-dflash-dual.
+        assert default_profile_template(opts, 2) == "vllm/dual"
+        # 1 card → the canonical vllm/single, NOT beellama/dflash.
+        assert default_profile_template(opts, 1) == "vllm/single"
+
+    def test_rig_default_falls_back_when_no_canonical_vllm_slug(self):
+        # When no literal vllm/<topo> exists (the real registry has vllm/minimal,
+        # not vllm/single, for single-card), prefer any vllm-prefixed slug of that
+        # topology before falling back — never an arbitrary beellama/gemma slug.
+        rows = [
+            self._mk("beellama/dflash", "beellama-local", "models/q/beellama/compose/single/u/dflash.yml"),
+            self._mk("vllm/minimal", "vllm-stable", "models/q/vllm/compose/single/aq/base.yml"),
+        ]
+        opts = profile_templates(rows)
+        assert default_profile_template(opts, 1) == "vllm/minimal"
+
+    def test_rig_topology_default_single_vs_dual(self):
+        rows = [
+            self._mk("vllm/single", "vllm-stable", "models/q/vllm/compose/single/aq/base.yml"),
+            self._mk("vllm/dual", "vllm-stable", "models/q/vllm/compose/dual/aq/fp8-mtp.yml"),
+        ]
+        opts = profile_templates(rows)
+        assert default_profile_template(opts, 1) == "vllm/single"
+        assert default_profile_template(opts, 2) == "vllm/dual"
+
+
+class TestCatalogPreview:
+    """#9/A8 — Run · Catalog row-highlight renders an inline preview strip."""
+
+    @pytest.mark.asyncio
+    async def test_highlight_renders_status_note_fit_ctx(self):
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            t = app.query_one("#catalog-table", DataTable)
+            t.move_cursor(row=0)  # vllm/dual (the caveat row)
+            await pilot.pause()
+            prev = str(app.query_one("#catalog-preview", Static).render())
+            # The caveat status_note appears inline (no longer Explain-only).
+            assert "Cliff-2b at >50K" in prev
+            # fit verdict + ctx are in the preview too.
+            assert "fits-clean" in prev
+            assert "262K" in prev
+            assert "vllm/dual" in prev
+
+    @pytest.mark.asyncio
+    async def test_preview_updates_on_cursor_move(self):
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            t = app.query_one("#catalog-table", DataTable)
+            t.move_cursor(row=0)
+            await pilot.pause()
+            first = str(app.query_one("#catalog-preview", Static).render())
+            assert "vllm/dual" in first
+            t.move_cursor(row=1)  # vllm/single — different slug, no caveat
+            await pilot.pause()
+            second = str(app.query_one("#catalog-preview", Static).render())
+            assert "vllm/single" in second
+            assert "Cliff-2b" not in second  # the caveat is row-0's, not row-1's
+
+    @pytest.mark.asyncio
+    async def test_vs_empty_card_not_doubled_when_free_unknown(self):
+        # N3 — with live free-VRAM UNKNOWN, the fit line must show "vs empty card"
+        # exactly ONCE (the trailing "({fit_basis})"), not doubled by also
+        # appending the downgrade note ("… vs empty card (vs empty card)").
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses, gpus=[], target=ServingTarget(gpus=[]))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app.query_one("#catalog-pane", CatalogPane)._free_gb_by_index is None
+            t = app.query_one("#catalog-table", DataTable)
+            t.move_cursor(row=0)  # vllm/dual — fits-clean (no live downgrade)
+            await pilot.pause()
+            prev = str(app.query_one("#catalog-preview", Static).render())
+            assert "fits-clean" in prev
+            assert prev.count("vs empty card") == 1  # basis only, not doubled
+
+
+class TestScenePreview:
+    """#11 — Operate · Orchestration scene-row highlight renders a preview."""
+
+    @pytest.mark.asyncio
+    async def test_scene_highlight_shows_description_and_services(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            t = app.query_one("#scene-table", DataTable)
+            t.move_cursor(row=0)  # "27b" scene
+            await pilot.pause()
+            prev = str(app.query_one("#scene-preview", Static).render())
+            assert "27b" in prev
+            assert "Qwen" in prev                       # description
+            assert "vllm-qwen36-27b-dual" in prev       # service it starts
+            assert "8010" in prev                       # port
+
+    @pytest.mark.asyncio
+    async def test_scene_preview_updates_on_cursor_move(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            t = app.query_one("#scene-table", DataTable)
+            t.move_cursor(row=1)  # "off" scene
+            await pilot.pause()
+            prev = str(app.query_one("#scene-preview", Static).render())
+            assert "off" in prev
+            assert "Stop all" in prev
+
+
+class TestEvidenceAndGatePreview:
+    """N8 — ④ Measure evidence-tag + ③ Gate validation-step highlight previews."""
+
+    @pytest.mark.asyncio
+    async def test_evidence_highlight_shows_artifacts(self, tmp_path):
+        app, _, _ = make_app(repo_root=tmp_path, surface="producer")
+        seed_repo(tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
+            await pilot.pause()
+            app.query_one("#evidence-table", DataTable).move_cursor(row=0)
+            await pilot.pause()
+            prev = str(app.query_one("#evidence-preview", Static).render())
+            assert "vllm-dual-test" in prev      # the tag
+            assert "REPORT.md" in prev           # artifact labels
+            assert "_internal.json" in prev
+
+    @pytest.mark.asyncio
+    async def test_gate_step_highlight_shows_blurb(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
+            await pilot.pause()
+            app.query_one("#run-ladder-table", DataTable).move_cursor(row=0)
+            await pilot.pause()
+            prev = str(app.query_one("#run-step-preview", Static).render())
+            assert "verify-full" in prev                   # the step label
+            assert "functional smoke" in prev              # its blurb (what it checks)
+
+    @pytest.mark.asyncio
+    async def test_gate_step_preview_updates_on_cursor_move(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
+            await pilot.pause()
+            tbl = app.query_one("#run-ladder-table", DataTable)
+            tbl.move_cursor(row=1)  # verify-stress
+            await pilot.pause()
+            prev = str(app.query_one("#run-step-preview", Static).render())
+            assert "verify-stress" in prev
+            assert "boundary matrix" in prev
+
+
+class TestProfileSelectInputErgonomics:
+    """#6/A12 — the BYO/① Bring profile input is a registry-derived Select that
+    defaults to the rig topology + reports unknown profiles precisely."""
+
+    @pytest.mark.asyncio
+    async def test_byo_profile_is_select_with_registry_templates(self):
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            sel = app.query_one("#byo-profile-input", Select)
+            # The dropdown is fed from the SAME registry-derived templates.
+            template_values = {o.slug for o in profile_templates(app._variants)}
+            assert template_values == {"vllm/dual", "vllm/single"}
+            # The selected value is a known registry slug, not free text.
+            assert sel.value in template_values
+
+    @pytest.mark.asyncio
+    async def test_byo_defaults_to_single_on_one_card(self):
+        gpus = [GpuInfo(index=0, mem_used_mib=1)]
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses, gpus=gpus,
+                             target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # Enter Operate so an estate poll learns the (1-card) GPU count, then
+            # the dropdown re-defaults to a single-card template.
+            await pilot.press("2")
+            await _settle(pilot)
+            sel = app.query_one("#byo-profile-input", Select)
+            assert sel.value == "vllm/single"
+
+    @pytest.mark.asyncio
+    async def test_byo_defaults_to_dual_on_two_cards(self):
+        gpus = [GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)]
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses, gpus=gpus,
+                             target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            sel = app.query_one("#byo-profile-input", Select)
+            assert sel.value == "vllm/dual"
+
+    @pytest.mark.asyncio
+    async def test_manual_pick_survives_rig_default_reapply(self):
+        # NICE-TO-HAVE 2 — a profile the user picked BEFORE the first estate poll
+        # must NOT be clobbered by the rig-default reapply (estate-poll re-default).
+        gpus = [GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)]
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses, gpus=gpus,
+                             target=ServingTarget(gpus=gpus), surface="consumer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            sel = app.query_one("#byo-profile-input", Select)
+            # User manually picks the non-default (single) template.
+            sel.value = "vllm/single"
+            await pilot.pause()
+            assert app._profile_user_touched is True
+            # Enter Operate → first estate poll fires reapply_default=True.
+            await pilot.press("2")
+            await _settle(pilot)
+            # The manual pick STANDS — the reapply did NOT clobber it back to dual.
+            assert app.query_one("#byo-profile-input", Select).value == "vllm/single"
+
+    @pytest.mark.asyncio
+    async def test_unknown_profile_reports_known_list(self):
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # A legacy / free-text profile-like that isn't a known registry slug.
+            app.run_byo_check("org/Model", "vllm/legacy-gone")
+            await _settle(pilot)
+            card = str(app.query_one("#byo-result-card", Static).render())
+            assert "unknown profile vllm/legacy-gone" in card
+            assert "known:" in card
+            assert "vllm/dual" in card  # a real slug is listed
+
+    @pytest.mark.asyncio
+    async def test_known_selected_value_still_runs_byo_check(self):
+        app, runner, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # The selected (known) value flows straight to pull.sh --dry-run.
+            app.run_byo_check("org/Model", "vllm/dual")
+            await _settle(pilot)
+            pull = next(c for c in runner.calls if "pull.sh" in " ".join(c))
+            assert "--dry-run" in pull
+            assert "vllm/dual" in pull
+
+
+class TestProducerLaneHandoff:
+    """N9 — a successful ① Bring fit-check pre-arms ② Serve (no re-entry)."""
+
+    @pytest.mark.asyncio
+    async def test_serve_prearmed_after_fit_check(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            # Run ① Bring's fit-check (PULL_JSON resolves Route C → sibling vllm/dual).
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            # ② Serve is pre-armed with the resolved target WITHOUT re-navigating.
+            body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
+                "#lane-serve-body", Static
+            ).render())
+            assert "armed from ① Bring" in body
+            assert "vllm/dual" in body                       # resolved catalog target
+            assert "unsloth/Qwen3-27B-abliterated" in body   # the brought repo
+
+    @pytest.mark.asyncio
+    async def test_bring_result_points_forward_to_serve(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            card = str(app.query_one("#lane-bring-pane", LaneBringPane).query_one(
+                "#lane-bring-result-card", Static
+            ).render())
+            assert "→ ② Serve" in card
+            assert "vllm/dual" in card
+
+    @pytest.mark.asyncio
+    async def test_serve_tab_rearms_from_cached_byo(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            # Navigate AWAY then back to ② Serve — it re-arms from the cached result.
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-bring"
+            await pilot.pause()
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-serve"
+            await pilot.pause()
+            body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
+                "#lane-serve-body", Static
+            ).render())
+            assert "armed from ① Bring" in body
+            assert "vllm/dual" in body
+
+    @pytest.mark.asyncio
+    async def test_failed_rebring_clears_stale_armed(self):
+        # N9 — after a valid ① Bring arms ② Serve with vllm/dual, a FAILED re-Bring
+        # (unknown profile) must clear the stale "● armed …" so ② Serve restores the
+        # "run ① Bring first" placeholder, consistent with the error _last_byo.
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("3")
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
+                "#lane-serve-body", Static
+            ).render())
+            assert "armed from ① Bring" in body  # armed by the valid Bring
+            # Re-Bring with a typo'd / unknown profile → early-return error path.
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/typo-gone")
+            await _settle(pilot)
+            body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
+                "#lane-serve-body", Static
+            ).render())
+            assert "armed from ① Bring" not in body   # stale arm cleared
+            assert "Run ① Bring first" in body        # placeholder restored
