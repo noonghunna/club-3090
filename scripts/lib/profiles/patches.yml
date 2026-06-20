@@ -588,11 +588,15 @@ patches:
   - id: dgemma-gemma-image-fixes
     model: [diffusiongemma-26b-a4b]
     files:
-      - models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes
+      - models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/marlin.py
+      - models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/marlin_utils_fp8.py
+      - models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/diffusion_gemma.py
+      - models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/gemma4_reasoning_parser.py
+      - models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/gemma4_tool_parser.py
     load_bearing_when:
       - composes:
           - vllm/diffusiongemma-dual
-        reason: "The official vllm/vllm-openai:gemma image has the DiffusionGemma arch baked in, but six fixes are NOT upstream (vLLM tests H100/B200 + TP=1): marlin.py + marlin_utils_fp8.py = sm_86 fp8 Marlin sub-tile-K pad; diffusion_gemma.py = TP-vocab soft-embed + dtype fix; gemma4_reasoning_parser.py + gemma4_tool_parser.py = block-diffusion streaming parser fixes for agentic tool loops; tool_chat_template_gemma4.jinja = history CoT replay strip. Bind-mounted over the image's vllm pkg / examples path."
+        reason: "The official vllm/vllm-openai:gemma image has the DiffusionGemma arch baked in, but five fixes are NOT upstream (vLLM tests H100/B200 + TP=1): marlin.py + marlin_utils_fp8.py = sm_86 fp8 Marlin sub-tile-K pad; diffusion_gemma.py = TP-vocab soft-embed + dtype fix; gemma4_reasoning_parser.py + gemma4_tool_parser.py = block-diffusion streaming parser fixes for agentic tool loops. Bind-mounted over the image's vllm pkg."
         evidence: "models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/README.md"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
       dockerfile_bake: false
@@ -612,8 +616,6 @@ patches:
           dest: /usr/local/lib/python3.12/dist-packages/vllm/reasoning/gemma4_reasoning_parser.py
         - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/gemma4_tool_parser.py
           dest: /usr/local/lib/python3.12/dist-packages/vllm/tool_parsers/gemma4_tool_parser.py
-        - src: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/tool_chat_template_gemma4.jinja
-          dest: /vllm-workspace/examples/tool_chat_template_gemma4.jinja
       mount_mode: ro
       wired_at: volumes
     drift_guard:
@@ -626,6 +628,40 @@ patches:
       ref: vllm-project/vllm#45163
       status: open
       drop_when: "the K-pad lands upstream (our #40361 / an Ampere Marlin fix) AND the TP-vocab fix merges into :gemma — then mount nothing"
+    status: verified
+
+  - id: dgemma-gemma4-chat-template
+    model: [diffusiongemma-26b-a4b]
+    files:
+      - models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/tool_chat_template_gemma4.jinja
+    load_bearing_when:
+      - composes:
+          - vllm/diffusiongemma-dual
+        reason: "Agent clients (Hermes, Cline) resend assistant reasoning_content each turn; the stock tool_chat_template_gemma4.jinja re-templates it as <|channel>thought blocks (off-distribution, can stall tool loops). Vendored overlay strips history CoT replay. Bind-mounted over /vllm-workspace/examples/."
+        evidence: "models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/patch_docs/diffusionGemma_history_cot_replay.md"
+    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
+      dockerfile_bake: false
+      entrypoint_invoke: false
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: chat_template
+    delivery_spec:
+      jinja: models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/tool_chat_template_gemma4.jinja
+      mounted_at: /vllm-workspace/examples/tool_chat_template_gemma4.jinja
+      mount_mode: ro
+      invoke: "mount-only: bind-mounted over /vllm-workspace/examples/; vLLM auto-loads it"
+      wired_at: [volumes]
+      note: "mount-only chat-template override; effective coverage is computed from the REAL merged compose graph so a child that !reset/removes the mount is caught as a coverage loss."
+    drift_guard:
+      kind: behavioral
+      check: "Streaming tool-call + reasoning-delimiter smoke stays green on the pinned :gemma image with the vendored tool_chat_template_gemma4.jinja mounted. Any behavioral/TPS comparison the guard performs MUST use the SELF-CONTAINED symmetric restart+settle protocol: identical `docker restart <container>` on BOTH arms -> wait for /v1/models healthy -> fixed 60s settle -> >=3 bench.sh runs/arm -> compare the GRAND MEAN of the SAME canonical bench segment (NARRATIVE 800-word essay + CODE; never mix segments, never a single run); flag ONLY a deterministic regression reproduced across ALL 3 runs."
+      on_fail: capability-degraded
+    capability: chat-template-override
+    foundational: false
+    upstream:
+      ref: club-3090 PR #443 (DiffusionGemma gemma4 chat template CoT replay fix)
+      status: local-vendored
+      drop_when: "upstream tool_chat_template_gemma4.jinja stops replaying history CoT"
     status: verified
 
   - id: gemma4-unified-vision-unquant
