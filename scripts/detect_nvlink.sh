@@ -70,8 +70,12 @@ esac
 if [ "$_NVLINK_ENABLED" -eq 1 ]; then
   export NCCL_P2P_LEVEL="${_P2P_LEVEL:-NVL}"
   unset NCCL_P2P_DISABLE 2>/dev/null || true
-  export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-max_split_size_mb:512}"
-  echo "[nvlink] P2P ENABLED — NCCL_P2P_LEVEL=$NCCL_P2P_LEVEL, custom all-reduce ON, expandable_segments OFF"
+  # expandable_segments breaks vLLM custom all-reduce IPC (vllm#42609). Dual
+  # composes inject PYTORCH_CUDA_ALLOC_CONF with expandable_segments:True for
+  # the PCIe path — assign unconditionally; ${VAR:-default} preserves the compose
+  # default and crashes custom AR at cuda graph profiling.
+  export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512"
+  echo "[nvlink] P2P ENABLED — NCCL_P2P_LEVEL=$NCCL_P2P_LEVEL, custom all-reduce ON, expandable_segments OFF (PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF)"
 else
   export NCCL_P2P_DISABLE=1
   unset NCCL_P2P_LEVEL 2>/dev/null || true
