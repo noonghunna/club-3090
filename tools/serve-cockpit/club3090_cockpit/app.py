@@ -19,8 +19,9 @@ Estate mode to Operate and moved the Doctor surface into it.)
                           ``c`` cap on/off, ``w`` cap sweep, ``p`` prune (all gated).
   - Operate / Containers : ``containers`` real list; drill into Logs/Top/Config;
                           restart/stop/rm behind the reconcile-gated confirm.
-  - Operate / Doctor     : real cards from ``doctor()`` (health + diagnose-estate
-                          + diagnose-profile) — live-state, READ-only.
+  - Operate / Doctor     : "is it serving correctly?" — health.sh (live) + verify
+                          ([v] verify.sh test query) + verify-full ([V]) cards, all
+                          READ-only; [R] basic report, [F] full battery (warned).
   - Validate / Run       : launchable ladder + extra tools (``run_validation``,
                           confirm-gated, streamed into a LivePane) + §3.5 *tune*
                           gotchas inline.
@@ -77,7 +78,6 @@ from .data import (
     ByoResult,
     CatalogEntry,
     ContainerInfo,
-    DoctorReport,
     EstateState,
     EstateTelemetry,
     EvidenceReport,
@@ -2484,15 +2484,20 @@ class ValidateRunPane(Container):
 
 
 class DoctorPane(Container):
-    """Operate / Doctor tab: real health / diagnose-estate / diagnose-profile
-    cards from ``CockpitData.doctor()``.  Mode-agnostic Doctor surface — R2a
-    moved it out of Validate into Operate (it reports live state, not a
-    validation artifact).
+    """Operate / Doctor tab: "is the running model serving correctly?".
 
-    The health line also updates live from the Operate estate poll
-    (``populate``); the estate + profile cards fill from the dedicated
-    ``doctor()`` read (``r`` / on entering Operate) since diagnose-estate /
-    diagnose-profile are heavier reads than the per-poll health probe."""
+    Three cards, all READ-only:
+      - **health.sh** — live reachable/serving line (updates from the Operate
+        estate poll via ``populate``, and on the [y] re-run via ``populate_health``);
+      - **verify** ([v]) — verify.sh sends a real test query to the serving model
+        (reachable → Genesis patch → completion → tool-call, ~15s);
+      - **verify-full** ([V]) — verify-full.sh, the ~1-2 min functional battery.
+
+    Report generation lives on the footer hint: [R] basic system report
+    (report.sh snapshot, paste-ready modal) and [F] the ~43-min full battery
+    (report.sh --full, warned).  diagnose-estate / diagnose-profile moved to the
+    producer Bring & Validate lane (they triage a validation target, not the
+    live consumer rig)."""
 
     DEFAULT_CSS = """
     DoctorPane {
@@ -2525,20 +2530,38 @@ class DoctorPane(Container):
 
     def compose(self) -> ComposeResult:
         with ScrollableContainer(id="doctor-scroll"):
-            yield Label("Doctor  [dim](y / r re-runs the three diagnose reads)[/dim]", id="doctor-heading")
-            with Container(classes="doctor-card", id="doctor-card-health"):
-                yield Label("health.sh", classes="doctor-card-title")
-                yield Static("[dim]reading health.sh…[/dim]", id="doctor-health-body")
-            with Container(classes="doctor-card", id="doctor-card-estate"):
-                yield Label("diagnose-estate", classes="doctor-card-title")
-                yield Static("[dim]reading diagnose-estate…[/dim]", id="doctor-estate-body")
-            with Container(classes="doctor-card", id="doctor-card-profile"):
-                yield Label("diagnose-profile", classes="doctor-card-title")
-                yield Static("[dim]reading diagnose-profile…[/dim]", id="doctor-profile-body")
             yield Label(
-                "[dim]all three legs are READ-only (safe to run live)   ·   "
-                "[cyan]y[/cyan] re-run   ·   for a full validation battery use "
-                "[cyan]F[/cyan] (report.sh --full) in the producer Bring & Validate lane[/dim]",
+                "Doctor  [dim]— is the running model serving correctly?[/dim]",
+                id="doctor-heading",
+            )
+            with Container(classes="doctor-card", id="doctor-card-health"):
+                yield Label("health.sh  [dim](live)[/dim]", classes="doctor-card-title")
+                yield Static("[dim]reading health.sh…[/dim]", id="doctor-health-body")
+            with Container(classes="doctor-card", id="doctor-card-verify"):
+                yield Label(
+                    "verify  [dim]— send a test query to the serving model[/dim]",
+                    classes="doctor-card-title",
+                )
+                yield Static(
+                    "[dim]press [cyan]v[/cyan] — verify.sh (~15s): reachable → Genesis "
+                    "patch → completion → tool-call[/dim]",
+                    id="doctor-verify-body",
+                )
+            with Container(classes="doctor-card", id="doctor-card-verifyfull"):
+                yield Label(
+                    "verify-full  [dim]— functional battery[/dim]",
+                    classes="doctor-card-title",
+                )
+                yield Static(
+                    "[dim]press [cyan]V[/cyan] — verify-full.sh (~1-2 min): 9 steps "
+                    "(streaming / thinking / cascade / MTP)[/dim]",
+                    id="doctor-verifyfull-body",
+                )
+            yield Label(
+                "[dim][cyan]v[/cyan] verify   ·   [cyan]V[/cyan] verify-full   ·   "
+                "[cyan]y[/cyan] re-run health   ·   [cyan]R[/cyan] basic system report "
+                "(report.sh · paste-ready)   ·   [cyan]F[/cyan] full battery report.sh "
+                "--full ([yellow]~43 min · uses the serving GPUs[/yellow])[/dim]",
                 id="doctor-hint",
             )
 
@@ -2567,62 +2590,68 @@ class DoctorPane(Container):
             )
         body.update(line)
 
-    def populate_report(self, report: DoctorReport) -> None:
-        """Full Doctor read — health + diagnose-estate + diagnose-profile cards."""
-        self._render_health(report.health)
-        self._render_estate(report.estate)
-        self._render_profile(report.profile)
+    def populate_health(self, dr) -> None:
+        """Refresh the live health card from a dedicated health.sh read (the
+        on-demand [y] re-run + the per-poll Operate refresh both land here)."""
+        self._render_health(dr)
 
-    def _render_estate(self, est) -> None:
-        body = self.query_one("#doctor-estate-body", Static)
-        if est.error:
-            body.update(f"[red]✗[/red]  {est.error}")
-            return
-        verdict_color = {"GREEN": "green", "AMBER": "yellow", "YELLOW": "yellow", "RED": "red"}.get(
-            est.summary.upper(), "dim"
+    # ── verify (the "is it serving correctly?" smoke) ─────────────────────────────
+
+    def set_verify_running(self) -> None:
+        self.query_one("#doctor-verify-body", Static).update(
+            "[dim]running verify.sh — sending a test query to the model (~15s)…[/dim]"
         )
-        lines = [
-            f"  {est.summary_glyph} [{verdict_color}]{est.summary or '—'}[/{verdict_color}]"
-            f"  ([{'green' if est.valid else 'red'}]{'valid' if est.valid else 'invalid'}[/])",
-            f"  instances   {est.instances_valid}/{est.instance_count} fit"
-            f"   ·   cross-checks {'[green]ok[/green]' if est.cross_checks_ok else '[red]fail[/red]'}",
-            f"  estate file [dim]{est.estate_file or '—'}[/dim]"
-            f"   ·   live {'yes' if est.live else 'no'}",
-        ]
+
+    def populate_verify(self, vs) -> None:
+        body = self.query_one("#doctor-verify-body", Static)
+        if vs.error:
+            body.update(
+                f"[red]✗[/red]  {vs.error}\n"
+                "   [dim]→ fix: serve a model — Run · Catalog ([cyan]1[/cyan]) "
+                "[cyan]⏎[/cyan] (reconcile-gated)[/dim]"
+            )
+            return
+        glyph = "[green]✓[/green]" if vs.ok else "[red]✗[/red]"
+        color = "green" if vs.ok else "red"
+        verdict = "serving correctly" if vs.ok else "NOT serving correctly"
+        lines = [f"  {glyph} [{color}]{verdict}[/{color}]  ({vs.passed}/{vs.total} checks)"]
+        step_glyph = {"passed": "[green]✓[/green]", "failed": "[red]✗[/red]"}
+        for c in vs.checks:
+            lines.append(f"    {step_glyph.get(c.status, '·')} {c.name}")
+            if c.status == "failed" and c.hint:
+                lines.append(f"        [dim]→ {c.hint}[/dim]")
+        if not vs.reachable:
+            lines.append(
+                "   [dim]→ fix: serve a model — Run · Catalog ([cyan]1[/cyan]) "
+                "[cyan]⏎[/cyan][/dim]"
+            )
         body.update("\n".join(lines))
 
-    def _render_profile(self, tri) -> None:
-        body = self.query_one("#doctor-profile-body", Static)
-        if tri is None:
-            body.update("[dim]no target slug — serve a model or pick one in Run to triage[/dim]")
-            return
-        if tri.error and not tri.steps:
-            body.update(f"[red]✗[/red]  {tri.error}")
-            return
-        verdict_color = {"GREEN": "green", "AMBER": "yellow", "YELLOW": "yellow", "RED": "red"}.get(
-            tri.summary.upper(), "dim"
+    # ── verify-full (the ~1-2 min functional battery) ─────────────────────────────
+
+    def set_verify_full_running(self) -> None:
+        self.query_one("#doctor-verifyfull-body", Static).update(
+            "[dim]running verify-full.sh — functional battery (~1-2 min)…[/dim]"
         )
-        lines = [
-            f"  [bold]{tri.slug}[/bold]   {tri.summary_glyph} "
-            f"[{verdict_color}]{tri.summary or '—'}[/{verdict_color}]"
-            f"   ({tri.passed}/{len(tri.steps)} steps)",
-        ]
-        step_glyph = {"passed": "[green]✓[/green]", "failed": "[red]✗[/red]", "warn": "[yellow]⚠[/yellow]"}
-        failed_any = False
-        for s in tri.steps:
-            g = step_glyph.get(s.status, "·")
-            lines.append(f"    {g} [{s.num}/{s.total}] {s.name}")
-            if s.status == "failed":
-                failed_any = True
-        # N7: a failed triage step has an obvious next action — re-run the read
-        # after the fix, and (for deeper triage) the full battery in the lane.
-        # FLAG: a per-step issue→fix automation is deferred (the step names are
-        # free-text from diagnose-profile.sh); we offer the generic next action.
-        if failed_any:
-            lines.append(
-                "   [dim]→ fix: address the ✗ step above, then [cyan]y[/cyan] re-run; "
-                "for a full battery use [cyan]F[/cyan] in the Bring & Validate lane[/dim]"
-            )
+
+    def populate_verify_full(self, vf) -> None:
+        body = self.query_one("#doctor-verifyfull-body", Static)
+        if vf.error:
+            body.update(f"[red]✗[/red]  {vf.error}")
+            return
+        glyph = {"●": "[green]✓[/green]", "◐": "[yellow]◐[/yellow]", "○": "[red]✗[/red]"}.get(
+            vf.verdict_glyph, "·"
+        )
+        color = "green" if vf.ok else "yellow"
+        head = f"  {glyph} [{color}]{vf.passed}/{vf.total} checks passed[/{color}]"
+        if not vf.ok and any(c.status == "failed" for c in vf.checks):
+            head += "  [dim](step 4 tool-calling fails on the default compose — expected)[/dim]"
+        lines = [head]
+        step_glyph = {"passed": "[green]✓[/green]", "failed": "[red]✗[/red]"}
+        for c in vf.checks:
+            lines.append(f"    {step_glyph.get(c.status, '·')} {c.name}")
+            if c.status == "failed" and c.hint:
+                lines.append(f"        [dim]→ {c.hint}[/dim]")
         body.update("\n".join(lines))
 
 
@@ -4106,14 +4135,16 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("power_cap_sweep", "Power cap sweep", "Orchestration — sweep power caps (gated)"),
     ("prune_images", "Prune images", "Orchestration — docker image prune (gated)"),
     ("container_logs", "Container logs", "Containers — stream the selected container's logs"),
-    ("doctor_rerun", "Re-run Doctor", "Doctor — re-run the diagnose reads (read-only)"),
+    ("doctor_rerun", "Re-run Doctor health", "Doctor — re-run the live health read (read-only)"),
+    ("doctor_verify", "Verify serving", "Doctor — send a test query to the model (verify.sh · read)"),
+    ("doctor_verify_full", "Verify-full battery", "Doctor — functional battery (verify-full.sh · ~1-2 min · read)"),
+    ("full_report", "Full system report (report.sh --full)", "Doctor / ③ Gate — ~43-min battery (uses the serving GPUs · gated)"),
     # Share-back (consumer-resident — NOT producer-gated).
     ("rig_report", "Rig report", "Paste-ready rig/bench snapshot (read · no network)"),
     ("submit_bench", "Submit bench", "Submit the latest benched result (gated · never auto)"),
     ("report_problem", "Report a problem", "Paste-ready issue from the failure context (read)"),
     # Producer lane (Bring & Validate) — filtered out on the lean surface.
     ("serve_untested", "Serve untested (② Serve)", "Producer lane — generate a compose + serve it untested"),
-    ("full_report", "Full validation battery (③ Gate)", "Producer lane — report.sh --full (~43-min · gated)"),
     ("measure_vs_bar", "Compare vs catalog bar (④ Measure)", "Producer lane — read · flags protocol"),
     ("evaluate_target", "Evaluate running target", "Producer lane — c3t evaluate (confirm-gated)"),
     ("promote_catalog", "Promote to catalog (⑤ Promote)", "Producer lane — scaffold + gated write"),
@@ -4123,7 +4154,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
 # guard test asserts the two agree).  Used to FILTER the palette on consumer.
 _PALETTE_PRODUCER_ONLY: frozenset[str] = frozenset({
     "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-    "measure_vs_bar", "full_report",
+    "measure_vs_bar",
 })
 
 # Single source of truth: each mode-level tab → the CSS id of its PRIMARY content
@@ -4292,14 +4323,22 @@ class CockpitApp(App):
         Binding("k", "serving_stop", "Stop this model", show=False),
         Binding("b", "serving_restart", "Restart serving", show=False),
         Binding("n", "serving_switch", "Switch model", show=False),
-        # #4 — Operate · Doctor: RE-RUN the three diagnose reads on demand (all
-        # READ-only).  [r] also refreshes Doctor (via load_estate→load_doctor),
-        # but [y] is the discoverable, Doctor-resident re-run verb.
+        # #4 — Operate · Doctor: RE-RUN the live health read on demand (READ-only).
+        # [r] also refreshes Doctor (via load_estate→load_doctor), but [y] is the
+        # discoverable, Doctor-resident re-run verb.
         # FIX 2 — show=True so the real Doctor verb surfaces in the footer (the
         # OLD ⏎ "Select" no-op on Doctor is now hidden by check_action).  It is
         # context-gated to mode 0 · Doctor in _CONTEXT_KEYS, so it only renders
         # there.
-        Binding("y", "doctor_rerun", "Re-run Doctor", show=True),
+        Binding("y", "doctor_rerun", "Re-run health", show=True),
+        # Batch 3 — Operate · Doctor: "is the model serving correctly?".  [v] sends
+        # a test query (verify.sh), [V] runs the ~1-2 min functional battery
+        # (verify-full.sh).  Both READ-only.  [v] DELIBERATELY shares its key with
+        # the producer-lane [v] evaluate_target — the contexts are disjoint (mode 0
+        # Doctor vs mode 1 ② Serve), so check_action activates exactly one (the
+        # same proven pattern as the confirm modal's dual ``enter`` bindings).
+        Binding("v", "doctor_verify", "Verify serving", show=True),
+        Binding("V", "doctor_verify_full", "Verify-full", show=False),
     ]
 
     CSS = """
@@ -4405,10 +4444,11 @@ class CockpitApp(App):
         "promote_catalog":  ({1}, None),          # Bring & Validate lane (⑤ Promote)
         "evaluate_target":  ({1}, None),          # Bring & Validate lane (the c3t hook)
         "serve_untested":   ({1}, {"tab-serve"}), # Bring & Validate lane (② Serve)
-        # [m] vs-bar on ④ Measure (tab-evidence); [F] full battery on ③ Gate
-        # (tab-run — the lane's gate stage hosts the heavy validation).
+        # [m] vs-bar on ④ Measure (tab-evidence); [F] full battery on the lane's
+        # ③ Gate (tab-run) AND on Operate · Doctor (Batch 3 — a consumer can run
+        # the full system battery from Doctor; it's warned + confirm-gated).
         "measure_vs_bar":   ({1}, {"tab-evidence"}),
-        "full_report":      ({1}, {"tab-run"}),
+        "full_report":      ({0, 1}, {"tab-doctor", "tab-run"}),
         # Merged mode 0 · Orchestration tab
         "estate_off":       ({0}, {"tab-orchestration"}),
         "power_cap_toggle": ({0}, {"tab-orchestration"}),
@@ -4418,8 +4458,11 @@ class CockpitApp(App):
         "serving_stop":     ({0}, {"tab-orchestration"}),
         "serving_restart":  ({0}, {"tab-orchestration"}),
         "serving_switch":   ({0}, {"tab-orchestration"}),
-        # Merged mode 0 · Doctor tab (#4 — re-run the READ-only diagnose reads)
+        # Merged mode 0 · Doctor tab (#4 — re-run the READ-only health read;
+        # Batch 3 — [v] verify / [V] verify-full test queries to the serving model)
         "doctor_rerun":     ({0}, {"tab-doctor"}),
+        "doctor_verify":    ({0}, {"tab-doctor"}),
+        "doctor_verify_full": ({0}, {"tab-doctor"}),
         # Merged mode 0 · Containers tab
         "container_logs":   ({0}, {"tab-containers"}),
         # [s] is handled by a DEDICATED branch in check_action (FIX 2) — Containers
@@ -4455,10 +4498,13 @@ class CockpitApp(App):
     #   surface too.
     #   Lane-resident producer verbs: [v] evaluate_target + [serve_untested]
     #   (② Serve) + [P] promote_catalog (⑤ Promote) + [m] measure_vs_bar
-    #   (④ Measure) + [F] full_report (③ Gate, the ~43-min battery).
+    #   (④ Measure).
+    #   NOT producer-only: [F] full_report — Batch 3 surfaced the ~43-min battery
+    #   on the consumer Operate · Doctor too (context-gated to tab-doctor + the
+    #   lane's ③ Gate tab-run), so it must stay reachable on the lean surface.
     _PRODUCER_ONLY: frozenset[str] = frozenset({
         "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-        "measure_vs_bar", "full_report",
+        "measure_vs_bar",
     })
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -5276,12 +5322,59 @@ class CockpitApp(App):
 
     @work(exclusive=True, group="doctor")
     async def load_doctor(self) -> None:
-        """Run the full Doctor read (health + diagnose-estate + diagnose-profile)
-        and push it into the Doctor pane.  ALL three legs are READ-only."""
-        slug = self._target_slug or (self._staged_entry.slug if self._staged_entry else None)
-        report = await self._data.doctor(url=self._target_url or None, slug=slug)
+        """Refresh the live Doctor health card (health.sh — READ-only).  The
+        heavier verify / verify-full reads are on-demand ([v] / [V]); the
+        estate + profile triage moved to the producer Bring & Validate lane."""
+        dr = await self._data.doctor_read(url=self._target_url or None)
         try:
-            self.query_one("#doctor-pane", DoctorPane).populate_report(report)
+            self.query_one("#doctor-pane", DoctorPane).populate_health(dr)
+        except Exception:
+            pass
+
+    def action_doctor_verify(self) -> None:
+        """[v] on Operate · Doctor: send a test query to the serving model
+        (verify.sh) and render the per-check verdict.  READ-only (no GPU claim);
+        no confirm gate — like [y] doctor_rerun, it only reads."""
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-doctor":
+            return
+        try:
+            self.query_one("#doctor-pane", DoctorPane).set_verify_running()
+        except Exception:
+            pass
+        self.run_doctor_verify()
+        self.notify(
+            "Sending a test query to the serving model (verify.sh)…",
+            title="Verify", severity="information", timeout=3,
+        )
+
+    @work(exclusive=True, group="doctor-verify")
+    async def run_doctor_verify(self) -> None:
+        vs = await self._data.verify_smoke()
+        try:
+            self.query_one("#doctor-pane", DoctorPane).populate_verify(vs)
+        except Exception:
+            pass
+
+    def action_doctor_verify_full(self) -> None:
+        """[V] on Operate · Doctor: run the ~1-2 min functional battery
+        (verify-full.sh) and render the per-step verdict.  READ-only."""
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-doctor":
+            return
+        try:
+            self.query_one("#doctor-pane", DoctorPane).set_verify_full_running()
+        except Exception:
+            pass
+        self.run_doctor_verify_full()
+        self.notify(
+            "Running the functional battery (verify-full.sh · ~1-2 min)…",
+            title="Verify-full", severity="information", timeout=4,
+        )
+
+    @work(exclusive=True, group="doctor-verify-full")
+    async def run_doctor_verify_full(self) -> None:
+        vf = await self._data.verify_full()
+        try:
+            self.query_one("#doctor-pane", DoctorPane).populate_verify_full(vf)
         except Exception:
             pass
 
@@ -6545,12 +6638,17 @@ class CockpitApp(App):
     # ── Phase R / R3b-2 · Full validation battery (report.sh --full — producer) ────
 
     def action_full_report(self) -> None:
-        """[F] in the lane's ③ Gate tab: launch the ~43-min FULL validation battery
-        (report.sh --full).  PRODUCER-only (gated in check_action).  CONFIRM-gated
-        (heavy + long-running, and it needs a model serving), then bg-streamed into
-        the ③ Gate LivePane.  It uses the SERVING model and does NOT claim a GPU
-        (requires_confirm=True, requires_reconcile=False) → NEVER auto-fired."""
-        if self._active_mode != 1 or self._active_validate_tab() != "tab-run":
+        """[F] — launch the ~43-min FULL validation battery (report.sh --full).
+        Reachable from the lane's ③ Gate tab AND (Batch 3) Operate · Doctor.
+        CONFIRM-gated (heavy + long-running, and it needs a model serving), then
+        bg-streamed into the ③ Gate LivePane when that pane exists (off-lane —
+        e.g. from Doctor on the lean surface — it runs in the background and the
+        artifact lands in results/, viewable in Evidence).  It uses the SERVING
+        model and does NOT claim a GPU (requires_confirm=True,
+        requires_reconcile=False) → NEVER auto-fired."""
+        on_gate = self._active_mode == 1 and self._active_validate_tab() == "tab-run"
+        on_doctor = self._active_mode == 0 and self._active_operate_tab() == "tab-doctor"
+        if not (on_gate or on_doctor):
             return
         # Guard on a resolved serving target — the ~43-min battery hits the
         # SERVING model; with nothing serving it would run against an empty
@@ -6799,15 +6897,15 @@ class CockpitApp(App):
         self._serving_write("restart")
 
     def action_doctor_rerun(self) -> None:
-        """[y] on the merged mode's Doctor tab (#4): re-run the three diagnose reads
-        on demand (health + diagnose-estate + diagnose-profile).  ALL READ-only — no
-        gate (nothing is mutated).  Distinct from the global [r] refresh in that it
-        is the Doctor-resident, discoverable re-run verb."""
+        """[y] on the merged mode's Doctor tab (#4): re-run the live health read on
+        demand (health.sh).  READ-only — no gate (nothing is mutated).  Distinct
+        from the global [r] refresh in that it is the Doctor-resident, discoverable
+        re-run verb.  (verify / verify-full are the deeper on-demand reads, [v]/[V].)"""
         if self._active_mode != 0 or self._active_operate_tab() != "tab-doctor":
             return
         self.load_doctor()
         self.notify(
-            "Re-running Doctor (health + diagnose-estate + diagnose-profile)…",
+            "Re-running Doctor health read (health.sh)…",
             title="Doctor",
             severity="information",
             timeout=3,

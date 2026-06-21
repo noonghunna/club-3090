@@ -593,6 +593,61 @@ class DoctorReport:
     profile: Optional[ProfileTriage] = None   # None when no target slug to triage
 
 
+@dataclass
+class VerifyCheck:
+    """One ``✓``/``✗`` check line from verify.sh / verify-full.sh."""
+
+    status: str            # passed | failed
+    name: str
+    hint: str = ""         # the ``→`` fix hint (fail) or the glyph message detail
+
+
+@dataclass
+class VerifySmoke:
+    """Parsed ``scripts/verify.sh`` — the ~15s "is the model serving correctly?"
+    smoke (4 checks: server reachable → Genesis patch → basic completion →
+    tool-calling).  verify.sh short-circuits (``exit 1``) on the FIRST failure,
+    so ``total`` is the number of checks that actually ran, not always 4 —
+    ``passed/total`` is honest about the short-circuit."""
+
+    reachable: bool = False
+    checks: list[VerifyCheck] = field(default_factory=list)
+    passed: int = 0
+    total: int = 0
+    ok: bool = False
+    error: str = ""
+    raw: str = ""
+
+    @property
+    def verdict_glyph(self) -> str:
+        return "●" if (self.ok and not self.error) else "○"
+
+
+@dataclass
+class VerifyFull:
+    """Parsed ``scripts/verify-full.sh`` — the ~1-2 min functional battery
+    (``[N/9]`` steps + a final ``All checks passed.`` / ``N check(s) failed.``).
+
+    NOTE step ``[4/9]`` tool-calling is KNOWN to fail on the default (non-tools)
+    compose, so a single failure here is often expected, not a regression — the
+    card surfaces the per-step glyphs so the user can tell which step failed."""
+
+    checks: list[VerifyCheck] = field(default_factory=list)
+    passed: int = 0
+    total: int = 0
+    failed: int = 0
+    ok: bool = False
+    summary: str = ""      # the final summary line, verbatim
+    error: str = ""
+    raw: str = ""
+
+    @property
+    def verdict_glyph(self) -> str:
+        if self.error:
+            return "○"
+        return "●" if self.ok else "◐"
+
+
 # ── Phase 4: Benchmarks explorer ──────────────────────────────────────────────────
 
 
@@ -1256,6 +1311,106 @@ def parse_profile_triage(text: str, slug: str = "") -> ProfileTriage:
         if m:
             tri.summary = m.group(1).upper()
     return tri
+
+
+# verify.sh / verify-full.sh check glyph line:  "  ✓ Server is reachable"
+# (pass()/fail() print "  <glyph> <msg>"; fail() then prints "    → <hint>").
+_VERIFY_CHECK_RE = re.compile(r"^\s+([✓✗])\s+(.+?)\s*$")
+_VERIFY_HINT_RE = re.compile(r"^\s+→\s+(.+?)\s*$")
+# verify-full step header:  "[3/9] Basic completion — capital of France ..."
+_VERIFY_FULL_STEP_RE = re.compile(r"^\[(\d+)/(\d+)\]\s+(.+?)\s*$")
+_VERIFY_FULL_PASS_RE = re.compile(r"All checks passed", re.IGNORECASE)
+_VERIFY_FULL_FAIL_RE = re.compile(r"(\d+)\s+check\(s\)\s+failed", re.IGNORECASE)
+
+
+def parse_verify_smoke(text: str, rc: Optional[int] = None) -> VerifySmoke:
+    """Parse verify.sh output → VerifySmoke.
+
+    Each ``✓``/``✗`` line is one check; a ``→`` line after a ``✗`` is its fix
+    hint.  Check 1 is the reachability probe, so ``reachable`` is True iff the
+    first check ran and passed.  ``ok`` prefers the process exit code (``rc==0``)
+    when available, else "every check that ran passed" (verify.sh short-circuits
+    on the first failure)."""
+    clean = strip_ansi(text or "")
+    vs = VerifySmoke(raw=text or "")
+    last: Optional[VerifyCheck] = None
+    for line in clean.splitlines():
+        m = _VERIFY_CHECK_RE.match(line)
+        if m:
+            last = VerifyCheck(
+                status="passed" if m.group(1) == "✓" else "failed",
+                name=m.group(2).strip(),
+            )
+            vs.checks.append(last)
+            continue
+        h = _VERIFY_HINT_RE.match(line)
+        if h and last is not None and last.status == "failed":
+            last.hint = h.group(1).strip()
+    vs.total = len(vs.checks)
+    vs.passed = sum(1 for c in vs.checks if c.status == "passed")
+    vs.reachable = bool(vs.checks and vs.checks[0].status == "passed")
+    # In-band failures are AUTHORITATIVE: a ✗ in the output means not-ok even if
+    # the process rc claimed success (a wrapping runner may not propagate rc).
+    all_passed = vs.total > 0 and vs.passed == vs.total
+    vs.ok = all_passed and (rc is None or rc == 0)
+    if vs.total == 0:
+        vs.error = "no checks parsed (verify.sh produced no output)"
+    return vs
+
+
+def parse_verify_full(text: str, rc: Optional[int] = None) -> VerifyFull:
+    """Parse verify-full.sh output → VerifyFull.
+
+    Scan ``[N/9]`` step headers (the step name labels the following ``✓``/``✗``),
+    and read the authoritative final ``All checks passed.`` / ``N check(s)
+    failed.`` summary for the pass/fail counts (falling back to glyph-counting
+    when the summary is absent — e.g. a timeout truncated the run)."""
+    clean = strip_ansi(text or "")
+    vf = VerifyFull(raw=text or "")
+    last: Optional[VerifyCheck] = None
+    cur_step = ""
+    max_total = 0
+    for line in clean.splitlines():
+        sm = _VERIFY_FULL_STEP_RE.match(line)
+        if sm:
+            cur_step = sm.group(3).strip().rstrip(".").strip()
+            max_total = max(max_total, int(sm.group(2)))
+            last = None
+            continue
+        m = _VERIFY_CHECK_RE.match(line)
+        if m:
+            msg = m.group(2).strip()
+            last = VerifyCheck(
+                status="passed" if m.group(1) == "✓" else "failed",
+                name=cur_step or msg,
+                hint=msg if cur_step else "",
+            )
+            vf.checks.append(last)
+            continue
+        h = _VERIFY_HINT_RE.match(line)
+        if h and last is not None and last.status == "failed":
+            last.hint = h.group(1).strip()
+        if _VERIFY_FULL_PASS_RE.search(line):
+            vf.summary = line.strip()
+            vf.failed = 0
+        else:
+            fm = _VERIFY_FULL_FAIL_RE.search(line)
+            if fm:
+                vf.summary = line.strip()
+                vf.failed = int(fm.group(1))
+    vf.total = max_total or len(vf.checks)
+    # The final 'All checks passed.' / 'N check(s) failed.' summary is the
+    # authoritative count; fall back to glyph-counting when it's absent (e.g. a
+    # timeout truncated the run before the summary printed).
+    if not vf.summary:
+        vf.failed = sum(1 for c in vf.checks if c.status == "failed")
+    vf.passed = max(0, vf.total - vf.failed)
+    # In-band failures win over rc (a wrapping runner may not propagate rc).
+    no_fail = vf.failed == 0 and vf.total > 0
+    vf.ok = no_fail and (rc is None or rc == 0)
+    if vf.total == 0 and not vf.checks:
+        vf.error = "no checks parsed (verify-full.sh produced no output)"
+    return vf
 
 
 # gpu-mode power-cap status row:

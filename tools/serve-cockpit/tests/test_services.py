@@ -1681,6 +1681,50 @@ class TestPhase4Parsers:
         tri = parse_profile_triage("")
         assert tri.steps == [] and tri.summary == ""
 
+    def test_verify_smoke_parser_all_pass(self):
+        from club3090_cockpit.data import parse_verify_smoke
+
+        vs = parse_verify_smoke(
+            "  \x1b[32m✓\x1b[0m a\n  \x1b[32m✓\x1b[0m b\n  \x1b[32m✓\x1b[0m c\n  \x1b[32m✓\x1b[0m d\n",
+            rc=0,
+        )
+        assert (vs.passed, vs.total, vs.reachable, vs.ok) == (4, 4, True, True)
+        assert vs.verdict_glyph == "●"
+
+    def test_verify_smoke_parser_inband_failure_beats_rc(self):
+        """A ✗ in the output means NOT ok even if rc claims success."""
+        from club3090_cockpit.data import parse_verify_smoke
+
+        vs = parse_verify_smoke("  \x1b[31m✗\x1b[0m unreachable\n    \x1b[33m→\x1b[0m serve one\n", rc=0)
+        assert vs.ok is False and vs.reachable is False
+        assert vs.checks[0].hint == "serve one"
+
+    def test_verify_smoke_parser_no_output(self):
+        from club3090_cockpit.data import parse_verify_smoke
+
+        vs = parse_verify_smoke("", rc=0)
+        assert vs.total == 0 and vs.ok is False and vs.error
+
+    def test_verify_full_parser_summary_authoritative(self):
+        from club3090_cockpit.data import parse_verify_full
+
+        vf = parse_verify_full(
+            "[1/9] x\n  \x1b[32m✓\x1b[0m ok\n[4/9] tool\n  \x1b[31m✗\x1b[0m no calls\n"
+            "[9/9] mtp\n  \x1b[32m✓\x1b[0m al\n1 check(s) failed.\n",
+            rc=0,
+        )
+        assert (vf.passed, vf.total, vf.failed, vf.ok) == (8, 9, 1, False)
+        assert vf.verdict_glyph == "◐"
+
+    def test_verify_full_parser_all_pass(self):
+        from club3090_cockpit.data import parse_verify_full
+
+        vf = parse_verify_full(
+            "[1/9] x\n  \x1b[32m✓\x1b[0m ok\n[9/9] y\n  \x1b[32m✓\x1b[0m ok\nAll checks passed.\n",
+            rc=0,
+        )
+        assert vf.ok is True and vf.failed == 0 and vf.verdict_glyph == "●"
+
     def test_power_cap_status_parse(self):
         from club3090_cockpit.data import parse_power_cap_status
 
@@ -1822,6 +1866,65 @@ class TestPhase4Doctor:
         assert rep.profile is None  # no slug → no profile triage
         # diagnose-profile must NOT have been called.
         assert not any("diagnose-profile.sh" in " ".join(c) for c in runner.calls)
+
+    # ── Batch 3: verify / verify-full (Doctor "serving correctly?" reads) ──────────
+
+    _VERIFY_OK = (
+        "Running smoke test against http://localhost:8020\n\n"
+        "  \x1b[32m✓\x1b[0m Server is reachable\n"
+        "  \x1b[32m✓\x1b[0m Genesis patches applied cleanly\n"
+        "  \x1b[32m✓\x1b[0m Basic completion works (Paris)\n"
+        "  \x1b[32m✓\x1b[0m Tool calling works end-to-end\n"
+    )
+    _VERIFY_DOWN = (
+        "Running smoke test against http://localhost:8020\n\n"
+        "  \x1b[31m✗\x1b[0m no response from http://localhost:8020/v1/models\n"
+        "    \x1b[33m→\x1b[0m start a model first\n"
+    )
+
+    @pytest.mark.asyncio
+    async def test_verify_smoke_read(self):
+        runner = full_runner(**{"scripts/verify.sh": ok(self._VERIFY_OK)})
+        cd = CockpitData(ROOT, runner=runner)
+        vs = await cd.verify_smoke()
+        assert vs.ok is True and vs.reachable is True
+        assert (vs.passed, vs.total) == (4, 4)
+        call = next(c for c in runner.calls if "verify.sh" in " ".join(c))
+        assert call == ["bash", "scripts/verify.sh"]   # a READ — verify.sh, no args
+
+    @pytest.mark.asyncio
+    async def test_verify_smoke_unreachable(self):
+        # ok() reports rc=0, but the in-band ✗ must still make it NOT ok.
+        runner = full_runner(**{"scripts/verify.sh": ok(self._VERIFY_DOWN)})
+        cd = CockpitData(ROOT, runner=runner)
+        vs = await cd.verify_smoke()
+        assert vs.ok is False and vs.reachable is False
+        assert vs.checks and vs.checks[0].hint.startswith("start a model")
+
+    @pytest.mark.asyncio
+    async def test_verify_smoke_timeout(self):
+        runner = full_runner(
+            **{"scripts/verify.sh": RunResult(-1, "", "timeout", timed_out=True)}
+        )
+        cd = CockpitData(ROOT, runner=runner)
+        vs = await cd.verify_smoke()
+        assert vs.error and "timed out" in vs.error and vs.ok is False
+
+    @pytest.mark.asyncio
+    async def test_verify_full_read(self):
+        VF = (
+            "[1/9] Server reachable ...\n  \x1b[32m✓\x1b[0m reachable\n"
+            "[4/9] Tool calling ...\n  \x1b[31m✗\x1b[0m no tool_calls[]\n"
+            "[9/9] MTP acceptance ...\n  \x1b[32m✓\x1b[0m AL>=2.0\n"
+            "\x1b[31m1 check(s) failed.\x1b[0m See hints above.\n"
+        )
+        runner = full_runner(**{"scripts/verify-full.sh": ok(VF)})
+        cd = CockpitData(ROOT, runner=runner)
+        vf = await cd.verify_full()
+        # in-band summary is authoritative even though ok() reports rc=0.
+        assert (vf.passed, vf.total, vf.failed, vf.ok) == (8, 9, 1, False)
+        call = next(c for c in runner.calls if "verify-full.sh" in " ".join(c))
+        assert call == ["bash", "scripts/verify-full.sh"]
 
 
 # ===========================================================================

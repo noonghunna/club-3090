@@ -74,6 +74,8 @@ from .data import (
     ReconcileResult,
     Scene,
     ServedProbe,
+    VerifyFull,
+    VerifySmoke,
     _bench_row_matches,
     _canon_engine_family,
     _canon_model_key,
@@ -94,6 +96,8 @@ from .data import (
     parse_meminfo,
     parse_power_cap_status,
     parse_profile_triage,
+    parse_verify_full,
+    parse_verify_smoke,
 )
 
 # ── Local card name (this rig) ──────────────────────────────────────────────────
@@ -1673,6 +1677,40 @@ class CockpitData:
         if not tri.steps and not tri.summary:
             tri.error = (res.stderr.strip()[:200] or f"no triage output (rc={res.returncode})")
         return tri
+
+    async def verify_smoke(self) -> VerifySmoke:
+        """Run ``scripts/verify.sh`` (the ~15s "is the model serving correctly?"
+        smoke: server reachable → Genesis patch → basic completion → tool-call)
+        and parse its ✓/✗ checks.  READ-only — it sends a couple of test queries
+        to the LIVE model but claims/frees no GPU.
+
+        verify.sh auto-detects the running container/port/served-model via
+        preflight (it is designed to run post-setup with no args), so no env
+        injection is needed — when nothing is serving, check 1 fails and the
+        result reports unreachable, which is the correct 'not serving' signal."""
+        res = await self._runner.run(
+            ["bash", "scripts/verify.sh"], cwd=str(self.repo_root), timeout=90.0
+        )
+        if res.timed_out:
+            vs = VerifySmoke(raw=res.stdout or "")
+            vs.error = "verify.sh timed out (model unreachable or very slow)"
+            return vs
+        return parse_verify_smoke(res.stdout or res.stderr, rc=res.returncode)
+
+    async def verify_full(self) -> VerifyFull:
+        """Run ``scripts/verify-full.sh`` (the ~1-2 min functional battery:
+        9 steps incl. streaming / thinking / cascade / MTP-acceptance) and parse
+        its ``[N/9]`` steps + final summary.  READ-only (queries the live model;
+        no GPU claim).  Heavier than verify_smoke but still a read — step
+        ``[4/9]`` tool-calling is expected to fail on the default compose."""
+        res = await self._runner.run(
+            ["bash", "scripts/verify-full.sh"], cwd=str(self.repo_root), timeout=240.0
+        )
+        if res.timed_out:
+            vf = VerifyFull(raw=res.stdout or "")
+            vf.error = "verify-full.sh timed out (>4 min — model unreachable or stalled)"
+            return vf
+        return parse_verify_full(res.stdout or res.stderr, rc=res.returncode)
 
     # ── Validate / Benchmarks: explorer (corpus → BENCHMARKS.md fallback) (READ) ──
 

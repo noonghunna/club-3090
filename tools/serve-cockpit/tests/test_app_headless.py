@@ -2120,8 +2120,11 @@ class TestValidatePanes:
         async with app.run_test(size=(120, 40)) as pilot:
             app.query_one("#doctor-pane", DoctorPane)
             app.query_one("#doctor-card-health")
-            app.query_one("#doctor-card-estate")
-            app.query_one("#doctor-card-profile")
+            # Batch 3 — verify / verify-full cards replaced estate / profile.
+            app.query_one("#doctor-card-verify")
+            app.query_one("#doctor-card-verifyfull")
+            assert not app.query("#doctor-card-estate")
+            assert not app.query("#doctor-card-profile")
 
     @pytest.mark.asyncio
     async def test_operate_doctor_health_line_goes_live_on_estate_poll(self):
@@ -2173,41 +2176,71 @@ class TestPrimaryActionSafe:
 
 
 # ===========================================================================
-# Operate · Doctor (wired to doctor() — health + estate + profile cards)
-# R2a moved Doctor from Validate into Operate (mode 1); load_doctor fires on
-# Operate entry, alongside the estate poll.
+# Operate · Doctor (Batch 3 — "is the model serving correctly?")
+# load_doctor refreshes the live health card (health.sh) on Operate entry; the
+# heavier verify ([v]) / verify-full ([V]) are on-demand test queries to the
+# serving model.  diagnose-estate / diagnose-profile moved to the producer lane.
 # ===========================================================================
 
 
 class TestOperateDoctorWired:
     @pytest.mark.asyncio
-    async def test_doctor_cards_populate_from_doctor_read(self):
-        """Entering Operate runs the full Doctor read → estate + profile cards
-        fill from diagnose-estate.sh --json + diagnose-profile.sh (text)."""
+    async def test_doctor_health_populates_on_operate_entry(self):
+        """Entering Operate refreshes the live health card from health.sh — and
+        does NOT run the heavy diagnose-estate / diagnose-profile reads (those
+        moved to the producer Bring & Validate lane)."""
         app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot)
-            estate = str(app.query_one("#doctor-estate-body", Static).render())
-            assert "GREEN" in estate and "2/2" in estate  # 2/2 instances fit
-            assert any("diagnose-estate.sh --json" in " ".join(c) for c in runner.calls)
+            health = str(app.query_one("#doctor-health-body", Static).render())
+            assert "serving" in health.lower()
+            assert not any("diagnose-estate.sh" in " ".join(c) for c in runner.calls)
+            assert not any("diagnose-profile.sh" in " ".join(c) for c in runner.calls)
 
     @pytest.mark.asyncio
-    async def test_doctor_profile_triage_after_estate_target(self):
-        """When a running engine is detected (matched slug), Doctor triages it
-        via diagnose-profile.sh and renders the 6 steps + verdict."""
-        # A detect target on port 8010 matches vllm/dual in the registry → the
-        # Operate estate poll captures the slug, and load_doctor (also fired on
-        # Operate entry) triages it — both happen in the SAME mode now (R2a).
-        gpus = [GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)]
-        target = ServingTarget(container="vllm_qwen36_27b", host_port=8010, gpus=gpus)
-        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
-        app, runner, _ = make_app(responses=responses, gpus=gpus, target=target)
+    async def test_doctor_verify_sends_test_query(self):
+        """[v] on Doctor runs verify.sh and renders the serving-correctly verdict."""
+        VERIFY_OK = (
+            "Running smoke test against http://localhost:8020\n\n"
+            "  \x1b[32m✓\x1b[0m Server is reachable\n"
+            "  \x1b[32m✓\x1b[0m Genesis patches applied cleanly\n"
+            "  \x1b[32m✓\x1b[0m Basic completion works (Paris)\n"
+            "  \x1b[32m✓\x1b[0m Tool calling works end-to-end\n"
+        )
+        responses = fake_responses(**{"scripts/verify.sh": ok(VERIFY_OK)})
+        app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot)
-            assert app._target_slug == "vllm/dual"
-            profile = str(app.query_one("#doctor-profile-body", Static).render())
-            assert "GREEN" in profile
-            assert any("diagnose-profile.sh" in " ".join(c) for c in runner.calls)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-doctor"
+            await pilot.pause()
+            await pilot.press("v")
+            await _settle(pilot)
+            body = str(app.query_one("#doctor-verify-body", Static).render())
+            assert "serving correctly" in body and "4/4" in body
+            assert any("scripts/verify.sh" in " ".join(c) for c in runner.calls)
+
+    @pytest.mark.asyncio
+    async def test_doctor_verify_full_runs_battery(self):
+        """[V] on Doctor runs verify-full.sh; a tool-call-only failure is shown as
+        the expected ◐ partial (8/9), not a hard error."""
+        VF = (
+            "[1/9] Server reachable ...\n  \x1b[32m✓\x1b[0m reachable\n"
+            "[4/9] Tool calling ...\n  \x1b[31m✗\x1b[0m no tool_calls[] in response\n"
+            "    \x1b[33m→\x1b[0m expected on the default compose\n"
+            "[9/9] MTP acceptance ...\n  \x1b[32m✓\x1b[0m AL>=2.0\n"
+            "\x1b[31m1 check(s) failed.\x1b[0m See hints above.\n"
+        )
+        responses = fake_responses(**{"scripts/verify-full.sh": ok(VF)})
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-doctor"
+            await pilot.pause()
+            await pilot.press("V")
+            await _settle(pilot)
+            body = str(app.query_one("#doctor-verifyfull-body", Static).render())
+            assert "8/9 checks passed" in body
+            assert any("scripts/verify-full.sh" in " ".join(c) for c in runner.calls)
 
     @pytest.mark.asyncio
     async def test_s_key_on_doctor_tab_does_not_restart(self):
@@ -2682,13 +2715,22 @@ class TestFullValidationReport:
             assert "--full" in plan.description
 
     @pytest.mark.asyncio
-    async def test_full_report_action_is_producer_only(self):
-        """[F] full_report is gated off on the consumer surface."""
+    async def test_full_report_reachable_on_consumer_doctor(self):
+        """Batch 3: [F] full_report is NO LONGER producer-only — a consumer can run
+        the ~43-min battery from Operate · Doctor (context-gated to tab-doctor); it
+        stays hidden on the other consumer tabs."""
         app, _, _ = make_app(surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await _settle(pilot)
-            assert "full_report" in app._PRODUCER_ONLY
+            await _enter_operate(pilot)
+            assert "full_report" not in app._PRODUCER_ONLY
+            # On Catalog (mode 0, not Doctor) it's hidden …
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-catalog"
+            await pilot.pause()
             assert app.check_action("full_report", ()) is False
+            # … and shows on Doctor.
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-doctor"
+            await pilot.pause()
+            assert app.check_action("full_report", ()) is True
 
     @pytest.mark.asyncio
     async def test_full_report_enabled_on_producer_gate_tab(self):
@@ -4849,10 +4891,12 @@ class TestSurfaceScaffold:
     async def test_shipped_producer_set_is_mode_validate_and_promote(self):
         # R3b-1: the shipped _PRODUCER_ONLY gates the producer lane (mode_validate)
         # + the relocated-into-the-lane [P] promote + [v] evaluate + ② serve_untested.
-        # R3b-2: + [m] measure_vs_bar (④ Measure) + [F] full_report (③ Gate battery).
+        # R3b-2: + [m] measure_vs_bar (④ Measure).
+        # Batch 3: [F] full_report is NO LONGER producer-only — it's reachable on
+        # the consumer Operate · Doctor (a consumer can run the full battery).
         assert CockpitApp._PRODUCER_ONLY == frozenset({
             "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-            "measure_vs_bar", "full_report",
+            "measure_vs_bar",
         })
 
     @pytest.mark.asyncio
@@ -6225,8 +6269,8 @@ class TestA4TargetedServingVerbs:
 
 
 class TestDoctorRerunAndRemediation:
-    """#4: a Doctor-resident key re-runs the three READ-only diagnose reads on
-    demand.  N7: a surfaced issue OFFERS the obvious remediation pointer."""
+    """#4: a Doctor-resident key re-runs the READ-only health read on demand.
+    N7: a surfaced issue OFFERS the obvious remediation pointer."""
 
     @pytest.mark.asyncio
     async def test_doctor_rerun_triggers_doctor_read(self):
@@ -6236,11 +6280,11 @@ class TestDoctorRerunAndRemediation:
             await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-doctor"
             await pilot.pause()
-            # Clear the call log, then press [y] — it must re-run the diagnose reads.
+            # Clear the call log, then press [y] — it must re-run the health read.
             runner.calls.clear()
             await pilot.press("y")
             await _settle(pilot)
-            assert any("diagnose-estate.sh --json" in " ".join(c) for c in runner.calls)
+            assert any("health.sh" in " ".join(c) for c in runner.calls)
 
     @pytest.mark.asyncio
     async def test_doctor_health_offers_remediation_when_unreachable(self):
@@ -7132,6 +7176,18 @@ class TestN6CommandPalette:
             # …but every producer-only palette action IS a real _PRODUCER_ONLY
             # action (the two sets agree — no drift).
             assert _PALETTE_PRODUCER_ONLY <= set(CockpitApp._PRODUCER_ONLY)
+
+    @pytest.mark.asyncio
+    async def test_palette_offers_doctor_verbs_on_consumer(self):
+        """Batch 3: the Doctor reads ([v] verify / [V] verify-full) and the full
+        system report ([F], no longer producer-only) ARE offered on the consumer
+        palette."""
+        app, _, _ = make_app(surface="consumer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            names = [a for a, _, _ in CockpitCommands(app.screen)._available()]
+            for action in ("doctor_verify", "doctor_verify_full", "full_report"):
+                assert action in names, action
 
     @pytest.mark.asyncio
     async def test_palette_exposes_producer_actions_on_producer(self):
