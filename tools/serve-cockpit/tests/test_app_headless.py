@@ -30,8 +30,9 @@ from typing import Any, Optional
 
 import pytest
 
-from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent, TabPane, Label
+from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent, TabPane, Label, Tabs
 from textual.widgets._footer import FooterKey
+from textual.widgets._tabbed_content import ContentTabs
 
 from club3090_tui_core.detect import GpuInfo, ServingTarget
 
@@ -6064,149 +6065,339 @@ class TestA5HelpTeachesHiddenKeys:
             assert action in bound_actions, action
 
 
-class TestHashFiveFooterTabFocus:
-    """#5 — the footer's action keys are reachable via the Tab focus chain."""
+class TestFooterOutOfTabChain:
+    """FIX A — the footer is a HINT BAR, deliberately OUT of the Tab focus chain.
+
+    An earlier batch (#5) made every FooterKey Tab-focusable; footer keys render
+    NO visible focus ring, so Tab-stepping through ~10 of them was an invisible-
+    focus black hole.  The footer's actions stay reachable via HOTKEYS (app/screen
+    BINDINGS) + mouse click — Tab now cycles only the VISIBLE stops (tab bar +
+    list)."""
 
     @pytest.mark.asyncio
-    async def test_footer_keys_are_focusable_and_in_chain(self):
+    async def test_footer_keys_are_not_focusable(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             ff = app.query_one(FocusableFooter)
             keys = list(ff.query(FooterKey))
-            assert keys, "footer has key items"
-            assert all(k.can_focus for k in keys)
-            chain = app.screen.focus_chain
-            assert any(isinstance(w, FooterKey) for w in chain), \
-                "at least one FooterKey participates in the Tab focus chain"
+            assert keys, "footer still renders key items (mouse-clickable)"
+            assert all(not k.can_focus for k in keys), \
+                "no FooterKey is Tab-focusable"
+            # can_focus_children reverts to the stock Footer default.
+            assert ff.can_focus_children is False
 
     @pytest.mark.asyncio
-    async def test_focus_next_lands_on_a_footer_key(self):
-        """Walking the focus chain (what Tab does) reaches a footer key."""
+    async def test_no_footer_key_in_focus_chain(self):
+        """No FooterKey participates in the Tab focus chain."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # focus_next is exactly the action Screen binds to Tab.
-            landed = app.screen.focus_next()
-            # If the first focusable wasn't a footer key, keep walking until we
-            # either hit one or exhaust the chain (no intervening pause → no
-            # recompose churn).
-            seen = []
-            for _ in range(len(app.screen.focus_chain) + 1):
-                cur = app.screen.focused
-                seen.append(cur)
-                if isinstance(cur, FooterKey):
-                    break
-                landed = app.screen.focus_next()
-            assert any(isinstance(w, FooterKey) for w in seen), \
-                "Tab traversal reaches a focusable footer key"
+            chain = app.screen.focus_chain
+            assert not any(isinstance(w, FooterKey) for w in chain), \
+                "the footer is OUT of the Tab focus chain"
 
     @pytest.mark.asyncio
-    async def test_enter_on_focused_footer_key_activates_it(self):
-        """A focused footer key activates on Enter (keyboard analogue of the
-        stock mouse-down activation) — the footer's on_key routes through
-        simulate_key, firing the SAME action the binding would.  Asserts the
-        EFFECT: 'r' = refresh, which re-reads the catalog, so the data layer's
-        load_catalog_rows is called exactly once more (mirrors TestA11's
-        one-start fidelity — a broken on_key would no longer pass).
-
-        Drives the production FocusableFooter.on_key handler directly with a
-        synthesized Enter event: a nested ``simulate_key`` posted from *inside*
-        Textual's own key-event processing (what ``pilot.press('enter')`` would
-        trigger) is swallowed by the focused FooterKey in the headless harness,
-        so we invoke the handler from the test coroutine to exercise the same
-        code path without the harness's re-entrancy quirk."""
-        from textual import events
+    async def test_tab_from_catalog_never_lands_on_a_footer_key(self):
+        """From #catalog-table, Tab / Shift+Tab cycle only the VISIBLE, meaningful
+        stops — the tab bar (ContentTabs) and the active list (DataTable) — never
+        a FooterKey (FIX A's core regression lock)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            ff = app.query_one(FocusableFooter)
-            # Spy the data layer's catalog read so we can count refresh re-reads.
-            calls = {"n": 0}
-            orig = app._data.load_catalog_rows
-
-            async def counting_load_catalog_rows():
-                calls["n"] += 1
-                return await orig()
-
-            app._data.load_catalog_rows = counting_load_catalog_rows
-            # Focus the 'r' (refresh) footer key — the Tab-reachable affordance.
-            chain = app.screen.focus_chain
-            rkey = next(k for k in chain
-                        if isinstance(k, FooterKey) and k.key == "r")
-            rkey.focus()
+            app.query_one("#catalog-table", DataTable).focus()
             await pilot.pause()
-            assert app.focused is rkey
-            before = calls["n"]
-            # Enter on the focused key → footer on_key → simulate_key('r') →
-            # action_refresh → exactly one catalog read.
-            ff.on_key(events.Key("enter", None))
-            await _settle(pilot)
-            assert calls["n"] == before + 1, (
-                "Enter on the focused 'r' footer key fires refresh, re-reading "
-                "the catalog exactly once"
-            )
+            for direction in ("tab", "shift+tab"):
+                app.query_one("#catalog-table", DataTable).focus()
+                await pilot.pause()
+                for _ in range(len(app.screen.focus_chain) + 2):
+                    await pilot.press(direction)
+                    await pilot.pause()
+                    cur = app.focused
+                    assert not isinstance(cur, FooterKey), \
+                        f"{direction} landed on a FooterKey ({cur!r})"
+                    # Every stop is a VISIBLE-focus widget: the tab bar or a list.
+                    assert isinstance(cur, (Tabs, DataTable)), \
+                        f"{direction} landed on an unexpected widget ({cur!r})"
 
     @pytest.mark.asyncio
     async def test_tab_does_not_break_table_focus(self):
-        """The catalog DataTable stays focusable + in the chain — #5 only ADDS
-        footer keys to the chain, it doesn't strip the existing widgets."""
+        """The catalog DataTable + the tab bar stay focusable + in the chain —
+        FIX A only REMOVES the footer keys, it doesn't strip the real stops."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             chain = app.screen.focus_chain
             assert any(isinstance(w, DataTable) for w in chain)
+            assert any(isinstance(w, Tabs) for w in chain)
 
     @pytest.mark.asyncio
-    async def test_focused_footer_key_survives_a_real_binding_change(self):
-        """The bindings_changed focus-held early-return: while a FooterKey holds
-        focus, a GENUINE displayed-binding change (a surface flip, which adds the
-        [2] Bring & Validate mode key to the footer) must NOT recompose the
-        footer — the focused key keeps its identity + focus, and the footer
-        recomposes only once focus leaves it."""
+    async def test_footer_recomposes_on_a_real_binding_change(self):
+        """The retained recompose-suppression skips ONLY no-op rebuilds: a GENUINE
+        displayed-binding change (a surface flip that un-gates the [2] Bring &
+        Validate mode key) flips the signature and DOES recompose the footer, so
+        the new key renders.  No footer focus is involved any more."""
         app, _, _ = make_app(surface="consumer")  # lean: only [1] shown
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             ff = app.query_one(FocusableFooter)
-            # Focus the '1' mode key (present on BOTH surfaces, so its identity is
-            # a clean witness for "did the footer get rebuilt?").
-            onekey = next(k for k in ff.query(FooterKey) if k.key == "1")
-            onekey.focus()
-            await pilot.pause()
-            assert app.focused is onekey
             sig_before = ff._last_binding_sig
-            id_before = id(onekey)
             # Sanity: '2' (Bring & Validate) is NOT shown on the lean surface.
             assert "2" not in {k.key for k in ff.query(FooterKey)}
-            # Trigger a REAL displayed-binding change without re-homing focus:
-            # flipping to the full surface UN-gates [2] (mode_validate), which IS
-            # show=True, so the footer signature genuinely changes.  Fires
-            # bindings_changed while the '1' FooterKey still holds focus.
+            # Flip to the full surface → [2] (mode_validate) un-gates (show=True),
+            # so the footer signature genuinely changes and the footer recomposes.
             app._surface = "producer"
             app.refresh_bindings()
-            await pilot.pause()
-            # Focus-held branch took the early return: footer NOT rebuilt — same
-            # FooterKey object, focus retained, snapshot signature untouched, and
-            # the new [2] key has NOT been composed in yet (recompose suppressed).
-            assert app.focused is onekey
-            assert id(app.focused) == id_before
-            assert ff._last_binding_sig == sig_before
-            assert app.query_one(FocusableFooter) is ff   # no crash / re-creation
-            assert "2" not in {k.key for k in ff.query(FooterKey)}
-            # Move focus off the footer onto the table, then a binding change DOES
-            # recompose (the suppression only holds while a FooterKey is focused).
-            table = next(w for w in app.screen.focus_chain
-                         if isinstance(w, DataTable))
-            table.focus()
-            await pilot.pause()
-            assert not isinstance(app.focused, FooterKey)
-            app.refresh_bindings()
             await _settle(pilot)
-            # Footer recomposed for the new (full) signature — the stale snapshot
-            # was replaced + [2] is now composed in, now that no footer key pinned
-            # it.
             assert ff._last_binding_sig != sig_before
             assert "2" in {k.key for k in ff.query(FooterKey)}
+
+
+class TestFixBTabBarFocusStays:
+    """FIX B — switching tabs WHILE focus is on the tab bar keeps focus ON the tab
+    bar (the user browses Catalog→Orchestration→Containers→Doctor freely);
+    switching from a LIST (via [/]) still moves focus to the next list."""
+
+    @pytest.mark.asyncio
+    async def test_switching_tab_from_tab_bar_keeps_focus_on_tab_bar(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-catalog"
+            await _settle(pilot)
+            # Put focus on the tab bar (the ContentTabs widget — what holds focus
+            # while arrow/[ ] cycle tabs; the individual Tab children aren't
+            # focusable).
+            cts = tc.query_one(ContentTabs)
+            cts.focus()
+            await pilot.pause()
+            assert isinstance(app.focused, Tabs)
+            # Activate a different tab (simulates arrow / click / [ ]).
+            tc.active = "tab-orchestration"
+            await _settle(pilot)
+            # Focus STAYS on the tab bar — not yanked down into #scene-table.
+            assert isinstance(app.focused, Tabs), \
+                "focus must stay on the tab bar, not be pulled into the list"
+
+    @pytest.mark.asyncio
+    async def test_cycling_tab_from_a_list_moves_focus_to_next_list(self):
+        """[/] while focus is on a LIST still moves focus to the next tab's list —
+        list-operators keep operating lists (focus wasn't on the tab bar)."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-catalog"
+            await _settle(pilot)
+            app.query_one("#catalog-table", DataTable).focus()
+            await pilot.pause()
+            assert app.focused.id == "catalog-table"
+            # ] cycles to the next sub-tab; focus follows into its list.
+            await pilot.press("]")
+            await _settle(pilot)
+            assert isinstance(app.focused, DataTable)
+            assert app.focused.id == "scene-table", \
+                "focus moves to the next tab's list when cycling from a list"
+
+    @pytest.mark.asyncio
+    async def test_mode_switch_still_focuses_primary_list(self):
+        """A 1/2 MODE switch is a deliberate descent into the mode — it SHOULD land
+        the user on the primary list (FIX B leaves _focus_mode_primary as-is)."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # Move focus OFF the catalog table (onto the tab bar) so the assertion
+            # isn't trivially satisfied by the boot/entry focus (which, post
+            # MUST-FIX 1, lands ON #catalog-table).  Explicitly focus the tab bar so
+            # the precondition matches the comment.
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-catalog"
+            tc.query_one(ContentTabs).focus()
+            await _settle(pilot)
+            assert isinstance(app.focused, Tabs), "precondition: focus on the tab bar"
+            await pilot.press("2")   # into Bring & Validate
+            await _settle(pilot)
+            await pilot.press("1")   # back to the merged Run & Operate mode
+            await _settle(pilot)
+            assert app._active_mode == 0
+            assert isinstance(app.focused, DataTable)
+            assert app.focused.id == "catalog-table", \
+                "mode switch lands the user on the primary list"
+
+
+class TestBareBootFocusOnCatalog:
+    """MUST-FIX 1 — the app must BOOT with focus on mode 0's primary list
+    (#catalog-table), NOT the tab bar.
+
+    Textual auto-focuses the ContentTabs (a Tabs subclass) at startup BEFORE the
+    startup tab-catalog TabActivated fires; FIX B's ``isinstance(self.focused,
+    Tabs)`` guard then short-circuits the auto focus-into-the-list.  on_mount now
+    explicitly ``_focus_mode_primary(0)`` (which focuses the table directly,
+    bypassing the guarded handler) so the boot focus lands on the catalog list."""
+
+    @pytest.mark.asyncio
+    async def test_bare_boot_focus_is_catalog_table(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # NO mode switch, NO tab activation — just boot + settle.
+            assert isinstance(app.focused, DataTable), \
+                f"bare boot must focus a list, not {app.focused!r}"
+            assert app.focused.id == "catalog-table", \
+                f"bare boot must focus #catalog-table, got {app.focused!r}"
+
+
+class TestSubtabCycleScopedToDirectPanes:
+    """MUST-FIX 2 — the [/] sub-tab cycle (and _current_subtab) must read only the
+    TabbedContent's DIRECT panes, never the NESTED Containers drill (Logs/Top/
+    Config) sub-tabs that the recursive ``tc.query(TabPane)`` would leak."""
+
+    @pytest.mark.asyncio
+    async def test_cycle_next_from_containers_reaches_doctor_no_drill(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-containers"
+            await _settle(pilot)
+            # ] from Containers lands on Doctor — NOT a phantom drill-tab-* pane.
+            await pilot.press("]")
+            await _settle(pilot)
+            assert tc.active == "tab-doctor", \
+                f"] from Containers must reach Doctor, not {tc.active!r}"
+            assert not tc.active.startswith("drill-tab-"), tc.active
+
+    @pytest.mark.asyncio
+    async def test_operate_cycle_visits_only_the_four_real_tabs(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-catalog"
+            await _settle(pilot)
+            seen = [tc.active]
+            for _ in range(4):
+                await pilot.press("]")
+                await _settle(pilot)
+                seen.append(tc.active)
+            assert seen == [
+                "tab-catalog", "tab-orchestration", "tab-containers",
+                "tab-doctor", "tab-catalog",
+            ], seen
+            assert not any(t.startswith("drill-tab-") for t in seen), seen
+
+    @pytest.mark.asyncio
+    async def test_current_subtab_never_returns_a_drill_id(self):
+        """_current_subtab must report a DIRECT pane id (the gates evaluate against
+        it) — never a nested drill-tab-* even if the drill TabbedContent is active."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            op = app.query_one("#operate-tabs", TabbedContent)
+            op.active = "tab-containers"
+            await _settle(pilot)
+            # The nested drill defaults to drill-tab-logs; _current_subtab must still
+            # report the OUTER active pane (tab-containers), not the drill id.
+            assert app._current_subtab() == "tab-containers", app._current_subtab()
+            direct = app._direct_pane_ids(op)
+            assert "drill-tab-logs" not in direct, direct
+            assert direct == [
+                "tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor",
+            ], direct
+
+    @pytest.mark.asyncio
+    async def test_validate_lane_cycles_its_five_stages_only(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("2")  # into Bring & Validate
+            await _settle(pilot)
+            vtc = app.query_one("#validate-tabs", TabbedContent)
+            vtc.active = "tab-bring"
+            await _settle(pilot)
+            seen = [vtc.active]
+            for _ in range(5):
+                await pilot.press("]")
+                await _settle(pilot)
+                seen.append(vtc.active)
+            assert seen == [
+                "tab-bring", "tab-serve", "tab-run", "tab-evidence",
+                "tab-promote", "tab-bring",
+            ], seen
+
+
+class TestOrchScrollNotATabStop:
+    """FOLD 3 — #orch-scroll is can_focus=False, so a SINGLE Tab from the tab bar
+    reaches #scene-table on the Orchestration tab (no dead scroll-container stop)."""
+
+    @pytest.mark.asyncio
+    async def test_orch_scroll_is_not_focusable(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app.query_one("#orch-scroll").can_focus is False
+
+    @pytest.mark.asyncio
+    async def test_one_tab_from_tab_bar_reaches_scene_table(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-orchestration"
+            await _settle(pilot)
+            tc.query_one(ContentTabs).focus()
+            await pilot.pause()
+            assert isinstance(app.focused, Tabs)
+            await pilot.press("tab")
+            await pilot.pause()
+            assert isinstance(app.focused, DataTable), \
+                f"one Tab must reach a list, not {app.focused!r}"
+            assert app.focused.id == "scene-table", \
+                f"one Tab from the tab bar must reach #scene-table, got {app.focused!r}"
+
+
+class TestLaneTablelessStageFocusesTabBar:
+    """FOLD 4 — entering mode 1 on a TABLE-LESS lane stage (① Bring / ② Serve /
+    ⑤ Promote) focuses the lane tab bar (validate-tabs ContentTabs) so focus is
+    never None (a black hole now the footer is out of the chain); ③ Gate / ④
+    Measure still focus their table."""
+
+    @pytest.mark.asyncio
+    async def test_entering_bring_focuses_validate_tab_bar(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            vtc = app.query_one("#validate-tabs", TabbedContent)
+            vtc.active = "tab-bring"
+            await _settle(pilot)
+            await pilot.press("2")  # into Bring & Validate, on ① Bring
+            await _settle(pilot)
+            assert app._active_mode == 1
+            assert app.focused is not None, "① Bring must not leave focus None"
+            assert isinstance(app.focused, ContentTabs), \
+                f"① Bring focuses the lane tab bar, not {app.focused!r}"
+            # The tab bar is a Tabs (not an Input) → 1/2/[ ] still route to the app.
+            before = vtc.active
+            await pilot.press("]")
+            await _settle(pilot)
+            assert vtc.active == "tab-serve", \
+                f"] still cycles the lane stages from ① Bring, got {vtc.active!r}"
+
+    @pytest.mark.asyncio
+    async def test_entering_gate_focuses_the_table(self):
+        """③ Gate keeps focusing its data table (the table-bearing stages are
+        unchanged by FOLD 4)."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
+            await _settle(pilot)
+            await pilot.press("2")  # into Bring & Validate, on ③ Gate
+            await _settle(pilot)
+            assert isinstance(app.focused, DataTable), \
+                f"③ Gate focuses its table, not {app.focused!r}"
+            assert app.focused.id == "run-ladder-table", app.focused.id
 
 
 class TestHashEightRailToggle:

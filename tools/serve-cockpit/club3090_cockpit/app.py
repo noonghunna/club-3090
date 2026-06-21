@@ -58,9 +58,14 @@ from textual.widgets import (
     Static,
     TabbedContent,
     TabPane,
+    Tabs,
 )
+# ContentSwitcher is the inner pane host of a TabbedContent.  Reading a
+# TabbedContent's DIRECT ContentSwitcher children gives ONLY its own TabPanes —
+# unlike the recursive ``tc.query(TabPane)``, which also returns the panes of a
+# NESTED TabbedContent (e.g. the Containers drill Logs/Top/Config sub-tabs).
+from textual.widgets._tabbed_content import ContentSwitcher, ContentTabs
 from textual import work
-from textual.widgets._footer import FooterKey
 
 from club3090_tui_core.registry import VariantRow
 from club3090_tui_core.widgets.live_pane import LivePane
@@ -1308,7 +1313,15 @@ class OperateOrchPane(Container):
     """
 
     def compose(self) -> ComposeResult:
-        with ScrollableContainer(id="orch-scroll"):
+        # FOLD 3 — the scroll wrapper must NOT be a Tab stop: with can_focus left at
+        # its ScrollableContainer default (True), descending into Orchestration via
+        # Tab lands on the scroll container first (a dead stop needing a 2nd Tab to
+        # reach #scene-table).  can_focus=False removes it from the Tab chain so a
+        # single Tab from the tab bar reaches the scene list; it still scrolls via
+        # its inner content / the mouse wheel.
+        orch_scroll = ScrollableContainer(id="orch-scroll")
+        orch_scroll.can_focus = False
+        with orch_scroll:
             # A2/N2: a one-line red strip that only shows when the estate READ
             # hit a docker / nvidia-smi failure (state.error).  DISTINCT from the
             # calm "○ no model serving" idle line below — a read failure is not an
@@ -3648,32 +3661,28 @@ class ModeSwitcher(Static):
 # ── Keyboard-traversable footer (#5) ───────────────────────────────────────────────
 
 
-class FocusableFooter(Footer, can_focus_children=True):
-    """#5 — a Footer whose key items participate in the Tab focus chain.
+class FocusableFooter(Footer):
+    """The main-screen footer — a HINT BAR, deliberately OUT of the Tab focus chain.
 
-    Textual's stock ``Footer`` is ``can_focus_children=False`` and its
-    ``FooterKey`` items are mouse-only (``on_mouse_down`` → ``simulate_key``), so
-    a keyboard user can never Tab onto a footer affordance.  This subclass:
+    Stock ``Footer`` is ``can_focus_children=False`` and its ``FooterKey`` items
+    are mouse-only (``on_mouse_down`` → ``simulate_key``).  An earlier batch made
+    every footer key Tab-focusable so a keyboard user could Tab onto a footer
+    affordance — but footer keys render NO visible focus ring, so Tab-stepping
+    through ~10 of them created an invisible-focus black hole between the tab bar
+    and the lists.  The footer's actions are already reachable via their
+    advertised HOTKEYS (app/screen BINDINGS, independent of footer focus) and via
+    mouse click (stock ``Footer`` behaviour), so footer keys add no value to the
+    Tab chain.  We therefore keep the stock ``can_focus_children=False`` and do
+    NOT mark any ``FooterKey`` focusable — Tab cycles only the VISIBLE, meaningful
+    stops (the tab bar + the active list).
 
-      1. opts into ``can_focus_children=True`` so the focus chain can include the
-         footer's children, and
-      2. marks each ``FooterKey`` ``can_focus=True`` as it is composed, and
-      3. activates the focused key on Enter (``simulate_key``) — the keyboard
-         analogue of the existing mouse-down activation.
-
-    This does NOT change the existing Tab behaviour for tables / inputs / the
-    sub-tab cycle — it only ADDS the footer keys to the END of the focus chain
-    (Textual orders the chain by DOM position, and the Footer is docked last).
-    Pressing the highlighted footer key's binding still routes through the app's
-    normal action dispatch (so gating is unchanged).
-
-    Recompose guard: the stock Footer recomposes on EVERY ``bindings_changed``
-    signal — and moving focus ONTO a footer key re-fires that signal (the focused
-    widget changed), which rebuilds the FooterKey objects and strands the focus
-    we just placed (focus → DataTable → signal → recompose → … a churn loop).  We
-    suppress the recompose when the DISPLAYED binding signature (the ordered
-    (key, action, enabled) tuples) is UNCHANGED, so a pure focus move no longer
-    rebuilds the footer and Tab focus is stable."""
+    Recompose guard (retained): the stock Footer recomposes on EVERY
+    ``bindings_changed`` signal, even when the DISPLAYED key set is unchanged
+    (e.g. a pure focus move between tables re-fires the signal).  We suppress the
+    redundant rebuild when the displayed binding signature (the ordered
+    (key, action, enabled) tuples) is UNCHANGED — a real mode/context change
+    flips the signature and DOES recompose, so the footer re-renders correctly;
+    only no-op rebuilds are skipped."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -3692,53 +3701,19 @@ class FocusableFooter(Footer, can_focus_children=True):
 
     def compose(self) -> ComposeResult:
         # Snapshot the signature we are composing for, so bindings_changed can
-        # skip a redundant recompose that would only strand footer focus.
+        # skip a redundant recompose that wouldn't change the rendered key set.
         self._last_binding_sig = self._binding_signature()
-        for widget in super().compose():
-            # super().compose() yields FooterKey items and KeyGroup containers
-            # (which hold nested FooterKeys).  Mark the directly-yielded keys
-            # focusable here; nested ones are handled in _make_keys_focusable on
-            # mount/recompose (a KeyGroup's children aren't built yet at yield).
-            if isinstance(widget, FooterKey):
-                widget.can_focus = True
-            yield widget
-
-    def _make_keys_focusable(self) -> None:
-        for key in self.query(FooterKey):
-            key.can_focus = True
-
-    def on_mount(self) -> None:
-        super().on_mount()
-        self._make_keys_focusable()
+        yield from super().compose()
 
     def bindings_changed(self, screen) -> None:
-        # Break the focus-churn loop: moving focus ONTO a footer key re-fires this
-        # signal, and the stock recompose would rebuild the FooterKey objects and
-        # strand the focus.  While one of our own footer keys holds focus, skip
-        # the recompose entirely (the key set is what the user is navigating — it
-        # must not be rebuilt under them).  Otherwise, only recompose when the
-        # DISPLAYED key signature actually changed.
+        # Only recompose when the DISPLAYED key signature actually changed; a pure
+        # focus move (which also fires this signal) leaves the signature identical
+        # and must not trigger a rebuild.  A genuine mode/context change flips the
+        # signature → super().bindings_changed runs → footer re-renders correctly.
         self._bindings_ready = True
-        try:
-            if isinstance(self.app.focused, FooterKey):
-                return
-        except Exception:
-            pass
         if self._binding_signature() == self._last_binding_sig:
             return
         super().bindings_changed(screen)
-
-    def on_key(self, event) -> None:
-        # Enter activates the focused FooterKey (keyboard analogue of the stock
-        # mouse-down activation).  Only acts when a FooterKey actually has focus,
-        # so it never swallows Enter elsewhere.
-        if event.key != "enter":
-            return
-        focused = self.app.focused
-        if isinstance(focused, FooterKey) and not getattr(focused, "_disabled", False):
-            event.stop()
-            event.prevent_default()
-            self.app.simulate_key(focused.key)
 
 
 # ── Command palette (N6) ──────────────────────────────────────────────────────────
@@ -4196,6 +4171,24 @@ class CockpitApp(App):
 
         return True
 
+    @staticmethod
+    def _direct_pane_ids(tc: TabbedContent) -> list[str]:
+        """The DIRECT TabPane ids of a TabbedContent, in display order.
+
+        MUST-FIX 2 — the recursive ``tc.query(TabPane)`` also returns the panes of
+        any NESTED TabbedContent (the Containers drill Logs/Top/Config sub-tabs),
+        which leaks ``drill-tab-*`` ids into the mode-level ``[`` / ``]`` cycle and
+        into ``_current_subtab``.  Reading the TabbedContent's OWN ContentSwitcher
+        child returns only its direct panes, so the cycle / current-subtab stay
+        scoped to the 4 real Operate tabs (or the 5 lane stages)."""
+        try:
+            switcher = tc.get_child_by_type(ContentSwitcher)
+        except Exception:
+            # Fallback: recursive query (pre-fix behaviour) if the switcher can't be
+            # located — better a leaky cycle than a crash.
+            return [p.id for p in tc.query(TabPane) if p.id]
+        return [c.id for c in switcher.children if isinstance(c, TabPane) and c.id]
+
     def _current_subtab(self) -> str:
         """Return the active tab ID for the current mode's TabbedContent, or ''."""
         tab_ids = {
@@ -4206,9 +4199,17 @@ class CockpitApp(App):
         if not tc_id:
             return ""
         try:
-            return self.query_one(tc_id, TabbedContent).active
+            tc = self.query_one(tc_id, TabbedContent)
         except Exception:
             return ""
+        active = tc.active
+        # MUST-FIX 2 — never report a NESTED drill pane (drill-tab-*) as the mode's
+        # current sub-tab: if the active pane isn't one of the TabbedContent's DIRECT
+        # panes (a transient mid-activation read), fall back to '' rather than a
+        # garbage id the context-key / primary-action gates would mis-evaluate.
+        if active and active not in self._direct_pane_ids(tc):
+            return ""
+        return active
 
     # FIX 2 — the (mode, tab) surfaces where ⏎ (action_primary_action) does real
     # work.  Kept in lock-step with action_primary_action / _validate_primary:
@@ -4417,6 +4418,15 @@ class CockpitApp(App):
         # FIX 1 — sync the base-footer suppression to the initial (modal-free)
         # stack so it starts visible.
         self._sync_base_footer_visibility()
+        # MUST-FIX 1 — boot with focus on mode 0's primary list (#catalog-table),
+        # NOT the tab bar.  Textual auto-focuses the ContentTabs (a Tabs subclass)
+        # at startup BEFORE the startup tab-catalog TabActivated fires, and FIX B's
+        # ``isinstance(self.focused, Tabs)`` guard then short-circuits the auto
+        # focus-into-the-list — so without this the app would boot focused on the
+        # tab bar.  ``_focus_mode_primary`` focuses the table DIRECTLY (it doesn't
+        # route through on_tabbed_content_tab_activated), so the guard never sees it;
+        # call_after_refresh ensures it lands AFTER the startup TabActivated.
+        self._focus_mode_primary(0)
 
     # ── FIX 1 · base-footer suppression under a modal ────────────────────────────
     #
@@ -5373,15 +5383,19 @@ class CockpitApp(App):
                     # primary DATA TABLE (③ Gate ladder / ④ Measure list).  ① Bring /
                     # ② Serve / ⑤ Promote have no focusable table (① Bring's only
                     # focusable is an Input, which would swallow the global digit /
-                    # bracket keys), so leave focus on the tab bar there — matching
-                    # how Doctor (read-only) leaves focus unset — so 1/2 + [ ]
-                    # still route to the app.
+                    # bracket keys), so FOCUS THE LANE TAB BAR (validate-tabs
+                    # ContentTabs) there instead of leaving focus None — a focus
+                    # black hole now that the footer is out of the Tab chain.  The
+                    # ContentTabs is a Tabs (not an Input), so 1/2 + [ ] still route
+                    # to the app, and there is always a VISIBLE focus.
                     try:
                         tc = self.query_one("#validate-tabs", TabbedContent)
                         if tc.active == "tab-run":
                             self.query_one("#run-ladder-table", DataTable).focus()
                         elif tc.active == "tab-evidence":
                             self.query_one("#evidence-table", DataTable).focus()
+                        else:  # ① Bring / ② Serve / ⑤ Promote — no table; focus bar.
+                            tc.get_child_by_type(ContentTabs).focus()
                     except Exception:
                         pass
             except Exception:
@@ -6535,7 +6549,10 @@ class CockpitApp(App):
             return
         try:
             tc = self.query_one(tc_id, TabbedContent)
-            panes = [p.id for p in tc.query(TabPane)]
+            # MUST-FIX 2 — DIRECT panes only, so the cycle visits the 4 real Operate
+            # tabs (catalog→orchestration→containers→doctor) / 5 lane stages and never
+            # the nested Containers drill (drill-tab-logs/stats/config) sub-tabs.
+            panes = self._direct_pane_ids(tc)
             if not panes:
                 return
             current = tc.active
@@ -6609,6 +6626,25 @@ class CockpitApp(App):
             "tab-orchestration":  "#scene-table",
             "tab-containers":     "#containers-table",
         }
+        # FIX B — don't yank focus DOWN into the list when the user is browsing
+        # the TAB BAR.  When focus is on the tab bar (a Tabs/ContentTabs widget —
+        # that is what holds focus while arrow/[ ] cycle tabs; the individual Tab
+        # children are not focusable), switching tabs must leave focus ON the tab
+        # bar so the user can step Catalog→Orchestration→Containers→Doctor freely.
+        # Only when focus is NOT on the tab bar (e.g. on a list, where [/] cycles
+        # sub-tabs) do we move focus to the newly active tab's primary list — so
+        # the list-operators keep operating lists.
+        #
+        # SCOPED to mode 0 (the merged Run & Operate surface — where free tab-bar
+        # browsing across Catalog/Orch/Containers/Doctor is the point).  In the mode 1
+        # lane the table-bearing stages (③ Gate / ④ Measure) must ALWAYS grab their
+        # table — FOLD 4 deliberately parks focus on the lane tab bar at the
+        # table-LESS stages (① Bring / ② Serve / ⑤ Promote), so without this scope
+        # a [/]-cycle from one of those into ③ Gate would trip the guard and strand
+        # focus on the bar instead of the Gate ladder.  Table-less lane stages aren't
+        # in _focus_map, so the cycle there is a no-op below (focus stays on the bar).
+        if self._active_mode == 0 and isinstance(self.focused, Tabs):
+            return
         widget_id = _focus_map.get(tab_id, "")
         if widget_id:
             def _do_focus() -> None:
