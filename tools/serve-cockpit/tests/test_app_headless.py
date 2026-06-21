@@ -44,7 +44,7 @@ from club3090_cockpit.app import (
     FocusableFooter,
     HelpScreen,
     ModeSwitcher,
-    ByoPane,
+    LaneBringPane,
     OperateOrchPane,
     OperateContainersPane,
     ValidateRunPane,
@@ -618,7 +618,7 @@ def make_app(
     target: Optional[ServingTarget] = None,
     write_runner: Optional[FakeWriteRunner] = None,
     repo_root: Optional[Path] = None,
-    surface: str = "consumer",
+    surface: str = "producer",
     runner: Optional[FakeRunner] = None,
     probe_served: Optional[Any] = None,
 ) -> tuple[CockpitApp, FakeRunner, FakeWriteRunner]:
@@ -669,7 +669,27 @@ async def _settle(pilot) -> None:
     await pilot.pause()
 
 
-PANEL_IDS = ["panel-run", "panel-operate", "panel-validate"]
+async def _enter_operate(pilot, tab: str = "tab-orchestration") -> None:
+    """2-mode merge helper: enter the MERGED Run & Operate mode (mode 0) and
+    activate one of its Operate tabs (Orchestration / Containers / Doctor).
+
+    Pressing [1] re-enters mode 0 (the default) which triggers the estate poll
+    (load_estate populates the orch / containers / doctor panes + GPU cards), then
+    we flip to the requested tab and settle.  Replaces the old `pilot.press("2")`
+    that used to reach the standalone Operate mode."""
+    app = pilot.app
+    await pilot.press("1")
+    try:
+        app.query_one("#operate-tabs", TabbedContent).active = tab
+    except Exception:
+        pass
+    await _settle(pilot)
+
+
+# 2-mode merge: mode 0 = merged Run & Operate (#panel-run, hosting #operate-tabs
+# with Catalog · Orchestration · Containers · Doctor); mode 1 = Bring & Validate
+# (#panel-validate).  #panel-operate is gone (folded into #panel-run).
+PANEL_IDS = ["panel-run", "panel-validate"]
 
 
 # ===========================================================================
@@ -700,10 +720,11 @@ class TestAppMounts:
 
     @pytest.mark.asyncio
     async def test_other_panels_hidden_on_start(self):
+        # 2-mode merge: only #panel-validate is the "other" panel now.
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            for pid in ["panel-operate", "panel-validate"]:
-                assert "active" not in app.query_one(f"#{pid}").classes
+            assert not app.query("#panel-operate")
+            assert "active" not in app.query_one("#panel-validate").classes
 
     @pytest.mark.asyncio
     async def test_no_live_write_runner_constructed(self):
@@ -717,62 +738,66 @@ class TestAppMounts:
 
 class TestModeNavigation:
     @pytest.mark.asyncio
-    async def test_key_1_switches_to_run_mode(self):
+    async def test_key_1_switches_to_merged_mode(self):
+        # 2-mode merge: [1] = merged Run & Operate (#panel-run).
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")  # leave Run first
+            await pilot.press("2")  # leave to the lane first
             await pilot.press("1")
             assert "active" in app.query_one("#panel-run").classes
-            assert "active" not in app.query_one("#panel-operate").classes
+            assert "active" not in app.query_one("#panel-validate").classes
 
     @pytest.mark.asyncio
-    async def test_switch_to_estate_mode(self):
+    async def test_operate_panes_live_in_merged_mode(self):
+        # Operate folded into the merged mode 0 — the Orchestration tab + its panes
+        # live under #panel-run now (no standalone #panel-operate).
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert not app.query("#panel-operate")
+            await _enter_operate(pilot)
+            assert "active" in app.query_one("#panel-run").classes
+            assert app.query_one("#operate-tabs", TabbedContent).active == "tab-orchestration"
+
+    @pytest.mark.asyncio
+    async def test_key_2_switches_to_validate_mode(self):
+        # 2-mode merge: [2] = the producer Bring & Validate lane (#panel-validate),
+        # visible by default (the full surface).
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("2")
-            await _settle(pilot)
-            assert "active" in app.query_one("#panel-operate").classes
-
-    @pytest.mark.asyncio
-    async def test_switch_to_validate_mode(self):
-        # Validate is the producer Bring & Validate lane (R3a) — reachable only
-        # on the producer surface.
-        app, _, _ = make_app(surface="producer")
-        async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
             assert "active" in app.query_one("#panel-validate").classes
+            assert "active" not in app.query_one("#panel-run").classes
 
     @pytest.mark.asyncio
-    async def test_switch_back_to_run(self):
+    async def test_switch_back_to_merged(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("2")
             await pilot.press("1")
             assert "active" in app.query_one("#panel-run").classes
-            assert "active" not in app.query_one("#panel-operate").classes
+            assert "active" not in app.query_one("#panel-validate").classes
 
     @pytest.mark.asyncio
-    async def test_old_serve_mode_no_longer_exists(self):
-        """R1 retired the standalone Serve mode + its panel/action/binding."""
+    async def test_old_serve_and_operate_panels_gone(self):
+        """The standalone Serve mode (R1) AND the standalone Operate panel
+        (2-mode merge) are gone — only #panel-run + #panel-validate remain."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            # No serve panel.
             assert not app.query("#panel-serve")
-            # No serve mode action.
+            assert not app.query("#panel-operate")
             assert not hasattr(app, "action_mode_serve")
-            # Pressing 1/2/3 only ever yields Run/Operate/Validate (never Serve);
-            # there is no 4th mode key.
-            await pilot.press("4")  # unbound now — should not switch anything
+            # There are only two modes; [3] is unbound now.
+            await pilot.press("3")  # unbound — should not switch anything
             await pilot.pause()
             active = [pid for pid in PANEL_IDS if "active" in app.query_one(f"#{pid}").classes]
             assert active == ["panel-run"]
 
     @pytest.mark.asyncio
-    async def test_all_three_modes_cycle(self):
-        # All three modes (incl. the producer Validate lane) on the producer surface.
-        app, _, _ = make_app(surface="producer")
+    async def test_both_modes_cycle(self):
+        # Both modes cycle on the default (full) surface; [3] is unbound.
+        app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            for key, expected_active in [("1", 0), ("2", 1), ("3", 2), ("1", 0)]:
+            for key, expected_active in [("1", 0), ("2", 1), ("1", 0), ("2", 1)]:
                 await pilot.press(key)
                 await pilot.pause()
                 active = [pid for pid in PANEL_IDS if "active" in app.query_one(f"#{pid}").classes]
@@ -782,29 +807,33 @@ class TestModeNavigation:
 
 class TestNavNodesExist:
     @pytest.mark.asyncio
-    async def test_run_tabs_exist(self):
+    async def test_merged_mode_tabs_exist(self):
+        # 2-mode merge: the merged Run & Operate TabbedContent (#operate-tabs) hosts
+        # Catalog FIRST, then Orchestration · Containers · Doctor.  The old #run-tabs
+        # TabbedContent and the #tab-byo tab are GONE.
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            app.query_one("#run-tabs", TabbedContent)
+            assert not app.query("#run-tabs")
+            assert not app.query("#tab-byo")
+            app.query_one("#operate-tabs", TabbedContent)
             app.query_one("#tab-catalog", TabPane)
-            app.query_one("#tab-byo", TabPane)
+            app.query_one("#tab-orchestration", TabPane)
+            app.query_one("#tab-containers", TabPane)
+            app.query_one("#tab-doctor", TabPane)
 
     @pytest.mark.asyncio
-    async def test_operate_tabs_exist(self):
+    async def test_operate_tabs_order(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             tc = app.query_one("#operate-tabs", TabbedContent)
-            app.query_one("#tab-orchestration", TabPane)
-            app.query_one("#tab-containers", TabPane)
-            # R2a moved Doctor into Operate (Orchestration · Containers · Doctor).
-            app.query_one("#tab-doctor", TabPane)
-            # Only the operate-tabs' OWN tab panes (the Containers pane nests a
-            # drill TabbedContent of its own, so filter to the mode-level ids).
-            mode_tab_ids = [
-                p.id for p in tc.query(TabPane)
-                if p.id in {"tab-orchestration", "tab-containers", "tab-doctor"}
-            ]
-            assert mode_tab_ids == ["tab-orchestration", "tab-containers", "tab-doctor"], mode_tab_ids
+            # Catalog · Orchestration · Containers · Doctor, in that order.  (The
+            # Containers pane nests a drill TabbedContent of its own, so filter to
+            # the mode-level ids.)
+            wanted = {"tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"}
+            mode_tab_ids = [p.id for p in tc.query(TabPane) if p.id in wanted]
+            assert mode_tab_ids == [
+                "tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"
+            ], mode_tab_ids
 
     @pytest.mark.asyncio
     async def test_validate_tabs_exist(self):
@@ -825,9 +854,10 @@ class TestNavNodesExist:
             ], pane_ids
 
     @pytest.mark.asyncio
-    async def test_doctor_renders_under_operate_not_validate(self):
-        """R2a structural: the Doctor surface lives under Operate (mode 1,
-        tab-doctor) and is GONE from Validate (mode 2)."""
+    async def test_doctor_renders_in_merged_mode_not_validate(self):
+        """2-mode merge: the Doctor surface is a tab of the merged Run & Operate
+        mode (#operate-tabs · tab-doctor under #panel-run) and is GONE from the
+        Bring & Validate lane (#validate-tabs)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             # tab-doctor is a child of operate-tabs, NOT validate-tabs.
@@ -837,15 +867,12 @@ class TestNavNodesExist:
             validate_panes = [p.id for p in validate.query(TabPane)]
             assert "tab-doctor" in operate_panes, operate_panes
             assert "tab-doctor" not in validate_panes, validate_panes
-            # The Doctor pane itself renders under the Operate panel subtree.
+            # The Doctor pane itself renders under the merged panel subtree.
             doctor = app.query_one("#doctor-pane", DoctorPane)
-            panel_operate = app.query_one("#panel-operate")
-            assert doctor in panel_operate.query("#doctor-pane")
-            # Activate the Doctor tab in Operate and confirm it switches cleanly.
-            await pilot.press("2")
-            await _settle(pilot)
-            operate.active = "tab-doctor"
-            await pilot.pause()
+            panel_run = app.query_one("#panel-run")
+            assert doctor in panel_run.query("#doctor-pane")
+            # Activate the Doctor tab in the merged mode and confirm it switches.
+            await _enter_operate(pilot, tab="tab-doctor")
             assert operate.active == "tab-doctor"
 
     @pytest.mark.asyncio
@@ -961,52 +988,74 @@ class TestCatalogWired:
 
 
 # ===========================================================================
-# Run · BYO (wired to byo_check)
+# Bring-an-arbitrary-repo fit-check — 2-mode merge removed the standalone Run · BYO
+# tab; the producer lane's ① Bring (LaneBringPane) is now the SINGLE entry point.
+# These pin that ① Bring still fit-checks via byo_check + the curated dropdown +
+# escape hatch all still work on the lane (and that the BYO tab is GONE).
 # ===========================================================================
+
+
+async def _enter_bring(pilot) -> None:
+    """Enter the Bring & Validate lane (mode 1) and land on its ① Bring stage."""
+    await pilot.press("2")
+    try:
+        pilot.app.query_one("#validate-tabs", TabbedContent).active = "tab-bring"
+    except Exception:
+        pass
+    await _settle(pilot)
 
 
 class TestByoWired:
     @pytest.mark.asyncio
-    async def test_byo_pane_nodes(self):
+    async def test_byo_tab_and_pane_are_gone(self):
+        # The standalone Run · BYO tab + its ByoPane were removed in the merge.
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            app.query_one("#byo-panel", ByoPane)
-            app.query_one("#byo-url-input", Input)
-            # #6 — the profile-like input is now a registry-derived template Select.
-            app.query_one("#byo-profile-input", Select)
-            app.query_one("#byo-fit-btn", Button)
-            app.query_one("#byo-result-card", Static)
+            assert not app.query("#byo-panel")
+            assert not app.query("#tab-byo")
+            assert not app.query("#byo-url-input")
+            assert not app.query("#byo-fit-btn")
 
     @pytest.mark.asyncio
-    async def test_byo_fit_check_renders_route(self):
+    async def test_lane_bring_nodes(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one("#lane-bring-pane", LaneBringPane)
+            app.query_one("#lane-bring-url-input", Input)
+            # #6 — the profile-like input is a registry-derived template Select.
+            app.query_one("#lane-bring-profile-input", Select)
+            app.query_one("#lane-bring-fit-btn", Button)
+            app.query_one("#lane-bring-result-card", Static)
+
+    @pytest.mark.asyncio
+    async def test_lane_bring_fit_check_renders_route(self):
         app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_bring(pilot)
+            app.query_one("#lane-bring-url-input", Input).value = "org/Model"
+            app.query_one("#lane-bring-fit-btn", Button).press()
             await _settle(pilot)
-            app.query_one("#byo-url-input", Input).value = "org/Model"
-            app.query_one("#byo-fit-btn", Button).press()
-            await _settle(pilot)
-            card = app.query_one("#byo-result-card", Static)
+            card = app.query_one("#lane-bring-result-card", Static)
             text = str(card.render())
             assert "Route C" in text or "vllm/dual" in text
-            # pull.sh was invoked with --dry-run (never downloads).
+            # pull.sh was invoked with --dry-run (never downloads) via byo_check.
             pull = next(c for c in runner.calls if "pull.sh" in " ".join(c))
             assert "--dry-run" in pull
 
     @pytest.mark.asyncio
     async def test_escape_hatch_custom_slug_reaches_byo_check(self):
         # FIX 2 (escape hatch) — the curated dropdown lists only ~7 reps, so a
-        # NON-curated registry slug must stay reachable: selecting the "✎ custom
-        # slug…" sentinel reveals the companion Input, and the TYPED slug (not the
-        # sentinel marker, not the rig default) is what byo_check dry-runs.  Pins
-        # the reveal → resolve → byo_check chain end-to-end.
+        # NON-curated registry slug must stay reachable on the lane: selecting the
+        # "✎ custom slug…" sentinel reveals the companion Input, and the TYPED slug
+        # (not the sentinel marker, not the rig default) is what byo_check dry-runs.
         from club3090_cockpit.app import PROFILE_CUSTOM_SENTINEL
 
         app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await _settle(pilot)
-            app.query_one("#byo-url-input", Input).value = "org/Model"
-            sel = app.query_one("#byo-profile-input", Select)
-            custom = app.query_one("#byo-profile-custom", Input)
+            await _enter_bring(pilot)
+            app.query_one("#lane-bring-url-input", Input).value = "org/Model"
+            sel = app.query_one("#lane-bring-profile-input", Select)
+            custom = app.query_one("#lane-bring-profile-custom", Input)
             # Reveal the companion Input by selecting the sentinel.
             sel.value = PROFILE_CUSTOM_SENTINEL
             await pilot.pause()
@@ -1015,9 +1064,9 @@ class TestByoWired:
             custom.value = "ik-llama/iq4ks-mtp"
             await pilot.pause()
             # _selected_profile_like resolves to the TYPED slug, not the sentinel.
-            assert app._selected_profile_like("#byo-profile-input") == "ik-llama/iq4ks-mtp"
+            assert app._selected_profile_like("#lane-bring-profile-input") == "ik-llama/iq4ks-mtp"
             runner.calls.clear()
-            app.query_one("#byo-fit-btn", Button).press()
+            app.query_one("#lane-bring-fit-btn", Button).press()
             await _settle(pilot)
             pull = next(c for c in runner.calls if "pull.sh" in " ".join(c))
             joined = " ".join(pull)
@@ -1075,13 +1124,12 @@ class TestServeFoldedIntoRun:
             assert plan.requires_reconcile is True
 
     @pytest.mark.asyncio
-    async def test_enter_on_byo_tab_does_not_serve(self):
-        """⏎ only serves from the Catalog tab; on BYO it no-ops (no confirm)."""
+    async def test_enter_on_doctor_tab_does_not_serve(self):
+        """⏎ serves only from the Catalog tab of the merged mode; on the Doctor tab
+        (read-only, no primary) it no-ops (no confirm)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await _settle(pilot)
-            app.query_one("#run-tabs", TabbedContent).active = "tab-byo"
-            await pilot.pause()
+            await _enter_operate(pilot, tab="tab-doctor")
             app.action_primary_action()
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmActionScreen)
@@ -1109,6 +1157,87 @@ class TestServeFoldedIntoRun:
 
 
 # ===========================================================================
+# 2-mode merge invariants — the merged Run & Operate mode ties Catalog +
+# Orchestration + Containers + Doctor + the re-homed LivePane into ONE mode.
+# ===========================================================================
+
+
+class TestMergedRunOperateMode:
+    @pytest.mark.asyncio
+    async def test_merged_mode_has_four_tabs_with_catalog_first(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            wanted = {"tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"}
+            ids = [p.id for p in tc.query(TabPane) if p.id in wanted]
+            assert ids == ["tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"]
+            # Catalog is the default first tab when the merged mode is active.
+            assert app._active_mode == 0
+            assert tc.active == "tab-catalog"
+
+    @pytest.mark.asyncio
+    async def test_livepane_is_rehomed_into_merged_panel(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            live = app.query_one("#serve-live")
+            # Re-homed below the tabs of the merged panel (#panel-run), so a serve
+            # from the Catalog tab streams here while the user can flip to the
+            # Orchestration tab in the SAME mode.
+            assert app.query_one("#panel-run") in live.ancestors
+            assert app.query_one("#operate-tabs", TabbedContent) not in live.ancestors
+
+    @pytest.mark.asyncio
+    async def test_serve_from_catalog_streams_then_flip_to_orchestration(self):
+        """Serving from the Catalog tab hits the reconcile gate, streams into the
+        re-homed LivePane, and the user can flip to the Orchestration tab in the
+        SAME merged mode to watch the live estate."""
+        app, _, wr = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app.query_one("#operate-tabs", TabbedContent).active == "tab-catalog"
+            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
+            await pilot.press("enter")            # → reconcile-gated confirm modal
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert app.screen._plan.requires_reconcile is True
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("enter")            # confirm → dispatch (mocked)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # Boot streams into the re-homed LivePane (revealed).
+            assert "serving" in app.query_one("#serve-live").classes
+            assert len(wr.started) == 1           # gated executor, never a live spawn
+            # Flip to Orchestration IN THE SAME MODE — still mode 0, lane untouched.
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
+            await _settle(pilot)
+            assert app._active_mode == 0
+            assert app.query_one("#scene-table", DataTable)  # live estate is here
+
+    @pytest.mark.asyncio
+    async def test_periodic_refresh_updates_rail_and_gpu_cards_in_merged_mode(self):
+        gpus = [
+            GpuInfo(index=0, mem_used_mib=18 * 1024, mem_total_mib=24 * 1024, utilization=70),
+            GpuInfo(index=1, mem_used_mib=2 * 1024, mem_total_mib=24 * 1024),
+        ]
+        app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            assert app._active_mode == 0
+            # The 4s tick fires in the merged mode → estate + telemetry + rail.
+            app._periodic_estate_refresh()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # GPU cards + rail rendered from the live read (not a false-zero).
+            bar0 = str(app.query_one("#gpu0-bar", Static).render())
+            assert "18.0 / 24.0 GiB" in bar0
+            rail = str(app.query_one("#rail-status", RailStatus).render())
+            assert "as of" in rail
+
+
+# ===========================================================================
 # Operate · Orchestration + Containers (wired to estate_state)
 # ===========================================================================
 
@@ -1118,8 +1247,7 @@ class TestEstateWired:
     async def test_estate_orch_pane_nodes(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-orch-pane", OperateOrchPane)
             app.query_one("#gpu0-card")
             app.query_one("#gpu1-card")
@@ -1131,8 +1259,7 @@ class TestEstateWired:
     async def test_estate_scene_table_populates_from_gpu_mode(self):
         app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             t = app.query_one("#scene-table", DataTable)
             assert t.row_count == 2  # 27b + off (from SCENES_JSON)
             assert any("gpu-mode.sh --list-modes" in " ".join(c) for c in runner.calls)
@@ -1145,8 +1272,7 @@ class TestEstateWired:
         ]
         app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             bar = str(app.query_one("#gpu0-bar", Static).render())
             assert "18.0 / 24.0 GiB" in bar
             assert "71%" in bar
@@ -1155,8 +1281,7 @@ class TestEstateWired:
     async def test_estate_doctor_line_serving(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             line = str(app.query_one("#doctor-line", Static).render())
             assert "serving" in line.lower()
 
@@ -1164,8 +1289,7 @@ class TestEstateWired:
     async def test_estate_containers_pane_nodes(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-containers-pane", OperateContainersPane)
             app.query_one("#containers-table", DataTable)
             app.query_one("#drill-tabs", TabbedContent)
@@ -1178,8 +1302,7 @@ class TestEstateWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             names = [c.name for c in pane._containers]
             assert "vllm-qwen36-27b-dual" in names
@@ -1189,8 +1312,7 @@ class TestEstateWired:
     async def test_estate_scene_switch_opens_confirm_modal(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#scene-table", DataTable).move_cursor(row=0)
             await pilot.press("enter")
             await pilot.pause()
@@ -1226,8 +1348,7 @@ class TestFix1CursorPreserveAcrossPoll:
     async def test_scene_cursor_held_across_identical_poll(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             orch = app.query_one("#operate-orch-pane", OperateOrchPane)
             orch._populate_scenes(self.SCENES)
             t = app.query_one("#scene-table", DataTable)
@@ -1244,8 +1365,7 @@ class TestFix1CursorPreserveAcrossPoll:
     async def test_scene_cursor_follows_key_when_row_set_changes(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             orch = app.query_one("#operate-orch-pane", OperateOrchPane)
             orch._populate_scenes(self.SCENES)
             t = app.query_one("#scene-table", DataTable)
@@ -1263,8 +1383,7 @@ class TestFix1CursorPreserveAcrossPoll:
     async def test_scene_cursor_clamps_when_selected_disappears(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             orch = app.query_one("#operate-orch-pane", OperateOrchPane)
             orch._populate_scenes(self.SCENES)
             t = app.query_one("#scene-table", DataTable)
@@ -1281,8 +1400,7 @@ class TestFix1CursorPreserveAcrossPoll:
     async def test_container_cursor_held_across_identical_poll(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             pane.populate(self.CONTAINERS)
             t = app.query_one("#containers-table", DataTable)
@@ -1299,8 +1417,7 @@ class TestFix1CursorPreserveAcrossPoll:
     async def test_container_cursor_clamps_when_selected_disappears(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             pane.populate(self.CONTAINERS)
             t = app.query_one("#containers-table", DataTable)
@@ -1317,8 +1434,7 @@ class TestFix1CursorPreserveAcrossPoll:
     async def test_container_cursor_follows_key_when_one_starts(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             pane.populate(self.CONTAINERS)
             t = app.query_one("#containers-table", DataTable)
@@ -1338,8 +1454,7 @@ class TestFix1CursorPreserveAcrossPoll:
         # spuriously re-arm the row-0 suppression / cancel a pending drill.
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             assert pane.populate(self.CONTAINERS) is True       # first render
             assert pane.populate(self.CONTAINERS) is False      # unchanged → skipped
@@ -1371,8 +1486,7 @@ class TestBatch1OperateServingPanel:
         )
         app, _, _ = make_app(target=tgt)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             line = str(app.query_one("#serving-line", Static).render())
             assert "Serving" in line
             assert "qwen3.6-27b" in line
@@ -1384,8 +1498,7 @@ class TestBatch1OperateServingPanel:
         # Default target has no model / no matching port → "no model serving".
         app, _, _ = make_app(target=ServingTarget())
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             line = str(app.query_one("#serving-line", Static).render())
             assert "no model serving" in line.lower()
 
@@ -1400,8 +1513,7 @@ class TestBatch1KnownServices:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses, repo_root=tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             names = [c.name for c in pane._containers]
             # The running engine container is still present...
@@ -1426,8 +1538,7 @@ class TestBatch1KnownServices:
         )
         app, _, _ = make_app(responses=responses, repo_root=tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             stopped = [c for c in pane._containers if c.status == "stopped"]
             assert not any(c.name == "comfyui" for c in stopped)
@@ -1448,8 +1559,7 @@ class TestBatch1KnownServices:
         )
         app, _, _ = make_app(responses=responses, repo_root=tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
@@ -1482,8 +1592,7 @@ class TestBatch1KnownServices:
         )
         app, _, _ = make_app(responses=responses, repo_root=tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             stopped = [c for c in pane._containers if c.status == "stopped"]
             assert not any(c.name == "open-webui" for c in stopped), (
@@ -1507,8 +1616,7 @@ class TestBatch1PowerCapCard:
         # POWER_CAP_STATUS has GPU0 capped at 230 (default 370).
         app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             bar = str(app.query_one("#gpu0-bar", Static).render())
             assert "power:" in bar
             assert "312 / 370 W" in bar
@@ -1530,8 +1638,7 @@ class TestBatch1PowerCapCard:
 
         monkeypatch.setattr(appmod.CockpitApp, "load_estate", counting)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")  # entering Operate triggers a load_estate
-            await _settle(pilot)
+            await _enter_operate(pilot)
             before = calls["n"]
             plan = app._data.power_cap_set("off")
             assert plan.kind == "power_cap"
@@ -1547,8 +1654,7 @@ class TestBatch1PowerCapCard:
         # [c] toggle routes through the confirm modal (gate NOT bypassed).
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
             await _settle(pilot)
             app.action_power_cap_toggle()
@@ -1558,18 +1664,15 @@ class TestBatch1PowerCapCard:
 
 
 class TestBatch1ByoPlaceholder:
-    """#7 — BYO placeholder names a HuggingFace model slug."""
+    """#7 — the ① Bring repo input placeholder names a HuggingFace model slug."""
 
     @pytest.mark.asyncio
-    async def test_byo_placeholder_says_huggingface_slug(self):
+    async def test_lane_bring_placeholder_says_huggingface_slug(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await _settle(pilot)
-            # BYO is a Run sub-tab (consumer surface).
-            app.query_one("#run-tabs", TabbedContent).active = "tab-byo"
-            await _settle(pilot)
-            ph = app.query_one("#byo-url-input", Input).placeholder
-            assert "HuggingFace model slug" in ph
+            await _enter_bring(pilot)
+            ph = app.query_one("#lane-bring-url-input", Input).placeholder
+            assert "org/Model" in ph
             assert "unsloth/Qwen3-27B-abliterated-GGUF" in ph
 
 
@@ -1706,8 +1809,7 @@ class TestAllPanesWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # Restart is a Containers-tab action — activate it. (R2a gates the
             # container write to tab-containers so [s] can't restart from the
             # read-only Doctor tab or from Orchestration.)
@@ -1727,8 +1829,7 @@ class TestAllPanesWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_EMPTY)})
         app, _, _ = make_app(responses=responses, write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             plan = app._data.container_action("vllm-x", "stop")
             assert plan.requires_reconcile is True
             app.dispatch_action(plan)
@@ -1743,8 +1844,7 @@ class TestAllPanesWired:
         )
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
                 "#containers-table", DataTable
             ).move_cursor(row=0)
@@ -1757,8 +1857,7 @@ class TestAllPanesWired:
     async def test_estate_off_opens_confirm_modal(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             await pilot.press("o")  # stop all
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
@@ -1867,8 +1966,7 @@ class TestValidatePanes:
     async def test_operate_doctor_health_line_goes_live_on_estate_poll(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")  # Operate estate poll feeds the doctor pane too
-            await _settle(pilot)
+            await _enter_operate(pilot)
             body = str(app.query_one("#doctor-health-body", Static).render())
             assert "serving" in body.lower()
 
@@ -1909,7 +2007,7 @@ class TestPrimaryActionSafe:
         # Validate (mode 2) is the producer lane (R3a).
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await pilot.press("enter")
 
 
@@ -1927,8 +2025,7 @@ class TestOperateDoctorWired:
         fill from diagnose-estate.sh --json + diagnose-profile.sh (text)."""
         app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             estate = str(app.query_one("#doctor-estate-body", Static).render())
             assert "GREEN" in estate and "2/2" in estate  # 2/2 instances fit
             assert any("diagnose-estate.sh --json" in " ".join(c) for c in runner.calls)
@@ -1945,8 +2042,7 @@ class TestOperateDoctorWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses, gpus=gpus, target=target)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")            # Operate: estate poll captures slug + doctor read
-            await _settle(pilot)
+            await _enter_operate(pilot)
             assert app._target_slug == "vllm/dual"
             profile = str(app.query_one("#doctor-profile-body", Static).render())
             assert "GREEN" in profile
@@ -1961,8 +2057,7 @@ class TestOperateDoctorWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")            # Operate
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # Select a container, so the ONLY thing preventing a restart is the
             # sub-tab guard (not an empty selection)…
             app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
@@ -2096,7 +2191,7 @@ class TestValidateEvidenceWired:
         app, _, _ = make_app(repo_root=tmp_path, surface="producer")
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             t = app.query_one("#evidence-table", DataTable)
             assert t.row_count == 1
@@ -2109,7 +2204,7 @@ class TestValidateEvidenceWired:
         app, _, _ = make_app(repo_root=tmp_path, surface="producer")
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
             await pilot.pause()
@@ -2128,7 +2223,7 @@ class TestValidateEvidenceWired:
         app, _, _ = make_app(repo_root=tmp_path, write_runner=wr, surface="producer")
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
             await pilot.pause()
@@ -2358,7 +2453,7 @@ class TestMeasureVsBarUI:
     async def test_measure_vs_bar_enabled_on_producer_measure_tab(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
             await pilot.pause()
@@ -2371,7 +2466,7 @@ class TestMeasureVsBarUI:
         app, _, _ = make_app(repo_root=tmp_path, surface="producer")
         seed_measure_tag(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
             await pilot.pause()
@@ -2392,7 +2487,7 @@ class TestMeasureVsBarUI:
         app, _, _ = make_app(repo_root=tmp_path, surface="producer")
         (tmp_path / "BENCHMARKS.md").write_text(BENCHMARKS_MD)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
             await pilot.pause()
@@ -2438,7 +2533,7 @@ class TestFullValidationReport:
     async def test_full_report_enabled_on_producer_gate_tab(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -2453,7 +2548,7 @@ class TestFullValidationReport:
         # no-target guard is covered by test_full_report_no_serving_model_notifies.
         app, _, _ = make_app(write_runner=wr, surface="producer", target=SERVING_TARGET)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -2476,7 +2571,7 @@ class TestFullValidationReport:
         )
         notes: list[str] = []
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -2496,7 +2591,7 @@ class TestFullValidationReport:
         wr = FakeWriteRunner()
         app, _, _ = make_app(write_runner=wr, surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -2588,8 +2683,7 @@ class TestShareBackR2b:
         app, _, _ = make_app(repo_root=tmp_path, write_runner=wr)
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")  # Operate
-            await _settle(pilot)
+            await _enter_operate(pilot)
             await pilot.press("B")
             await _settle(pilot)
             assert isinstance(app.screen, ConfirmActionScreen)
@@ -2607,8 +2701,7 @@ class TestShareBackR2b:
         wr = FakeWriteRunner()
         app, _, _ = make_app(repo_root=tmp_path, write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")  # Operate
-            await _settle(pilot)
+            await _enter_operate(pilot)
             await pilot.press("B")
             await _settle(pilot)
             assert not isinstance(app.screen, ConfirmActionScreen)
@@ -2679,9 +2772,9 @@ class TestShareBackR2b:
             assert "Boot / failure log" in body
 
     @pytest.mark.asyncio
-    async def test_share_back_actions_enabled_on_consumer_surface(self):
-        """The 3 share-back actions are CONSUMER actions — check_action returns
-        True on the default consumer surface in their modes (NOT producer-gated)."""
+    async def test_share_back_actions_enabled_on_lean_surface(self):
+        """The 3 share-back actions are CONSUMER-resident — check_action returns
+        True in the merged mode 0 even on the LEAN surface (NOT producer-gated)."""
         app, _, _ = make_app(surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
@@ -2690,20 +2783,16 @@ class TestShareBackR2b:
             assert "rig_report" not in app._PRODUCER_ONLY
             assert "submit_bench" not in app._PRODUCER_ONLY
             assert "report_problem" not in app._PRODUCER_ONLY
-            # Run (mode 0): rig_report + report_problem enabled.
+            # Merged mode 0: all three enabled (consumer-resident, any tab).
             assert app._active_mode == 0
-            assert app.check_action("rig_report", ()) is True
-            assert app.check_action("report_problem", ()) is True
-            # Operate (mode 1): all three enabled.
-            await pilot.press("2")
-            await _settle(pilot)
             assert app.check_action("rig_report", ()) is True
             assert app.check_action("submit_bench", ()) is True
             assert app.check_action("report_problem", ()) is True
-            # submit_bench is Operate-only — hidden in Run.
-            await pilot.press("1")
-            await _settle(pilot)
-            assert app.check_action("submit_bench", ()) is False
+            # Still enabled after flipping to the Orchestration tab (same mode).
+            await _enter_operate(pilot)
+            assert app.check_action("rig_report", ()) is True
+            assert app.check_action("submit_bench", ()) is True
+            assert app.check_action("report_problem", ()) is True
 
 
 # ===========================================================================
@@ -2717,7 +2806,7 @@ class TestValidateRunWired:
         # Validate · Run is the producer lane (R3a) — enter on producer.
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             # R3b-1: ③ Gate (the ladder) is no longer the lane's default tab (① Bring
             # is) — activate it explicitly.
@@ -2738,7 +2827,7 @@ class TestValidateRunWired:
         wr = FakeWriteRunner()
         app, _, _ = make_app(write_runner=wr, surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             # R3b-1: activate ③ Gate (no longer the lane default tab).
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
@@ -2767,7 +2856,7 @@ class TestValidateRunWired:
         # Swap the detect to one that screams if the reconcile gate runs on confirm.
         app._data._detect_endpoint = detect_should_not_be_called
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             # The confirm modal DOES run reconcile-on-mount for display; but the
             # commit must not re-enter execute_action.  Drive the kind directly.
@@ -2787,8 +2876,7 @@ class TestEstateExtrasWired:
     async def test_power_cap_strip_populates(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             strip = str(app.query_one("#powercap-strip", Static).render())
             assert "GPU0" in strip and "230W" in strip
             assert "capped" in strip  # GPU0 limit 230 < default 370
@@ -2798,8 +2886,7 @@ class TestEstateExtrasWired:
         """GPU0 is capped → [c] stages a 'power-cap off' (uncap) confirm."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             await pilot.press("c")
             await _settle(pilot)
             assert isinstance(app.screen, ConfirmActionScreen)
@@ -2811,8 +2898,7 @@ class TestEstateExtrasWired:
     async def test_power_cap_sweep_opens_confirm(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             await pilot.press("w")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
@@ -2822,8 +2908,7 @@ class TestEstateExtrasWired:
     async def test_prune_opens_confirm_modal(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             await pilot.press("p")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
@@ -2845,8 +2930,7 @@ class TestEstateExtrasWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await pilot.pause()
             app.query_one("#containers-table", DataTable).move_cursor(row=0)
@@ -2865,8 +2949,7 @@ class TestEstateExtrasWired:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await pilot.pause()
             app.query_one("#containers-table", DataTable).move_cursor(row=0)
@@ -2907,14 +2990,13 @@ class TestValidateNoLiveWriteOrNetwork:
         async with app.run_test(size=(120, 40)) as pilot:
             # Browse every Validate tab + Operate (incl. Doctor) — pure reads,
             # no writes.  R2a: Doctor lives under Operate now (tab-doctor).
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             # R3b-1: browse every lane stage ①→⑤ — all pure reads, no writes.
             for tab in ("tab-bring", "tab-serve", "tab-run", "tab-evidence", "tab-promote"):
                 app.query_one("#validate-tabs", TabbedContent).active = tab
                 await pilot.pause()
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             for tab in ("tab-orchestration", "tab-containers", "tab-doctor"):
                 app.query_one("#operate-tabs", TabbedContent).active = tab
                 await pilot.pause()
@@ -2961,9 +3043,8 @@ class TestEvaluateHookWired:
                              gpus=list(SERVING_TARGET.gpus),
                              surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")          # Operate — poll captures the target
-            await _settle(pilot)
-            await pilot.press("3")          # Bring & Validate lane (where [v] lives)
+            await _enter_operate(pilot)
+            await pilot.press("2")          # Bring & Validate lane (where [v] lives)
             await _settle(pilot)
             await pilot.press("v")          # ▸ Evaluate
             await pilot.pause()
@@ -2984,7 +3065,7 @@ class TestEvaluateHookWired:
                              gpus=list(SERVING_TARGET.gpus),
                              surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")          # straight to the lane — NO Operate visit
+            await pilot.press("2")          # straight to the lane — NO Operate visit
             await _settle(pilot)
             await pilot.press("v")          # ▸ Evaluate
             await pilot.pause()
@@ -2997,8 +3078,7 @@ class TestEvaluateHookWired:
         and the hand-off carries that exact object (design §4/§6.6)."""
         app, _, _ = make_app(target=SERVING_TARGET, gpus=list(SERVING_TARGET.gpus))
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             assert app._target_obj is SERVING_TARGET
             handoff = app._data.evaluate_handoff(app._target_obj)
             assert handoff.target is SERVING_TARGET     # same dataclass instance
@@ -3012,9 +3092,8 @@ class TestEvaluateHookWired:
         app, _, _ = make_app(target=SERVING_TARGET, gpus=list(SERVING_TARGET.gpus),
                              write_runner=wr, surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")          # Operate — capture the live target
-            await _settle(pilot)
-            await pilot.press("3")          # lane — [v] Evaluate lives here (R3b-1)
+            await _enter_operate(pilot)
+            await pilot.press("2")          # lane — [v] Evaluate lives here (R3b-1)
             await _settle(pilot)
             await pilot.press("v")
             await _settle(pilot)
@@ -3035,9 +3114,8 @@ class TestEvaluateHookWired:
         app, _, _ = make_app(target=ServingTarget(), write_runner=wr,
                              surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
             await pilot.press("2")
-            await _settle(pilot)
-            await pilot.press("3")
             await _settle(pilot)
             await pilot.press("v")
             await pilot.pause()
@@ -3055,7 +3133,7 @@ class TestPromoteHookWired:
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("3")          # enter the lane (where [P] lives)
+            await pilot.press("2")          # enter the lane (where [P] lives)
             await _settle(pilot)
             # No BYO fit-check yet → nothing to promote.
             await pilot.press("P")
@@ -3072,7 +3150,7 @@ class TestPromoteHookWired:
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
             assert app._last_byo is not None
-            await pilot.press("3")          # enter the lane
+            await pilot.press("2")          # enter the lane
             await _settle(pilot)
             await pilot.press("P")          # ⑤ Promote to catalog
             await pilot.pause()
@@ -3094,7 +3172,7 @@ class TestPromoteHookWired:
             await _settle(pilot)
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
-            await pilot.press("3")          # enter the lane (R3b-1)
+            await pilot.press("2")          # enter the lane (R3b-1)
             await _settle(pilot)
             await pilot.press("P")
             await pilot.pause()
@@ -3165,8 +3243,10 @@ class TestLaneStructureR3b1:
     @pytest.mark.asyncio
     async def test_lane_label_is_bring_and_validate(self):
         from club3090_cockpit.app import MODES
-        assert MODES[2][0] == "Bring & Validate"
-        assert MODES[2][1] == "3"        # key 3, no renumber (still index 2)
+        # 2-mode merge: the lane is mode index 1, key 2.
+        assert len(MODES) == 2
+        assert MODES[1][0] == "Bring & Validate"
+        assert MODES[1][1] == "2"
 
     @pytest.mark.asyncio
     async def test_bring_stage_reuses_byo_check(self):
@@ -3174,7 +3254,7 @@ class TestLaneStructureR3b1:
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
@@ -3236,7 +3316,7 @@ class TestLaneServeR3b1:
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-serve"
             await pilot.pause()
@@ -3254,7 +3334,7 @@ class TestLaneServeR3b1:
             # ① Bring first (fills _last_byo).
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-serve"
             await pilot.pause()
@@ -3281,7 +3361,7 @@ class TestLaneServeR3b1:
             # ① Bring fit-check first (mocked — fills _last_byo).
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
-            await pilot.press("3")          # enter the Bring & Validate lane
+            await pilot.press("2")          # enter the Bring & Validate lane
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-serve"
             await pilot.pause()
@@ -3303,7 +3383,7 @@ class TestLaneServeR3b1:
             await _settle(pilot)
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-serve"
             await pilot.pause()
@@ -3350,7 +3430,7 @@ class TestLaneRelocationR3b1:
             assert app._active_mode == 0
             assert app.check_action("promote_catalog", ()) is False
             # In the lane (mode 2): [P] is enabled.
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             assert app.check_action("promote_catalog", ()) is True
 
@@ -3359,12 +3439,11 @@ class TestLaneRelocationR3b1:
         app, _, _ = make_app(surface="producer", target=SERVING_TARGET,
                              gpus=list(SERVING_TARGET.gpus))
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")          # Operate
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # In Operate (mode 1): [v] is disabled (relocated out).
             assert app.check_action("evaluate_target", ()) is False
             # In the lane (mode 2): [v] is enabled.
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             assert app.check_action("evaluate_target", ()) is True
 
@@ -3390,12 +3469,16 @@ class TestLaneHelpSurfaceThreadedR3b1:
             await pilot.pause()
             assert isinstance(app.screen, HelpScreen)
             text = app.screen.help_text
-            assert "Bring & Validate" not in text
-            assert "Promote" not in text
-            assert "Evaluate" not in text
-            # The consumer mode line stops at Operate — the real rendered mode-3
-            # token (NOT the trivially-absent literal "[3]") is absent on consumer.
-            assert "3[/cyan]  Bring & Validate" not in text
+            # The producer LANE SECTION + its verbs are omitted on the lean help.
+            # ("Bring & Validate" still appears once — in the [C] toggle line that
+            # NAMES the mode it hides — so assert the section/verbs, not that bare
+            # phrase.)
+            assert "producer lane — the ① → ⑤ pipeline" not in text
+            assert "Promote a fit-checked model" not in text
+            assert "Evaluate the running target" not in text
+            # The lean help mode line stops at Run & Operate — the real rendered
+            # mode-2 lane token is absent on the lean surface.
+            assert "2[/cyan]  Bring & Validate" not in text
 
     @pytest.mark.asyncio
     async def test_producer_help_includes_lane(self):
@@ -3409,8 +3492,8 @@ class TestLaneHelpSurfaceThreadedR3b1:
             assert "Bring & Validate" in text
             assert "Promote" in text
             assert "Evaluate" in text
-            # The producer mode line carries the real rendered mode-3 token.
-            assert "3[/cyan]  Bring & Validate" in text
+            # The full-surface mode line carries the real rendered mode-2 lane token.
+            assert "2[/cyan]  Bring & Validate" in text
 
     @pytest.mark.asyncio
     async def test_help_screen_threads_surface(self):
@@ -3495,8 +3578,7 @@ class TestPhase5NoLiveEffect:
             await pilot.pause()
             await pilot.press("escape")
             # Evaluate (Operate) — confirm modal staged, not committed.
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             await pilot.press("v")
             await pilot.pause()
             await pilot.press("escape")
@@ -3636,10 +3718,9 @@ class TestCheckActionPerModeSubtab:
     async def test_estate_orchestration_enables_orch_keys(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
-            assert app._active_mode == 1
-            # On orchestration tab (default first tab)
+            await _enter_operate(pilot)
+            assert app._active_mode == 0  # merged Run & Operate
+            # On orchestration tab
             tc = app.query_one("#operate-tabs", TabbedContent)
             tc.active = "tab-orchestration"
             await pilot.pause()
@@ -3654,8 +3735,7 @@ class TestCheckActionPerModeSubtab:
         """On the Orchestration sub-tab, container-specific keys are disabled."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             tc = app.query_one("#operate-tabs", TabbedContent)
             tc.active = "tab-orchestration"
             await pilot.pause()
@@ -3671,8 +3751,7 @@ class TestCheckActionPerModeSubtab:
         """On the Containers sub-tab, container-specific keys are enabled."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             tc = app.query_one("#operate-tabs", TabbedContent)
             tc.active = "tab-containers"
             await pilot.pause()
@@ -3683,59 +3762,55 @@ class TestCheckActionPerModeSubtab:
                 )
 
     @pytest.mark.asyncio
-    async def test_run_catalog_enables_filter_and_validate_drops_old_bmk_keys(self):
-        """Fold 3: [/] filter lives on Run · Catalog; the old Benchmarks sort
-        ([t]) is gone, so context_t is disabled in Validate mode."""
-        # Validate (mode 2) is the producer lane (R3a).
-        app, _, _ = make_app(surface="producer")
+    async def test_catalog_tab_enables_filter_and_lane_drops_old_bmk_keys(self):
+        """[/] filter lives on the merged mode's Catalog tab; the old Benchmarks
+        sort ([t]) is gone, so context_t is disabled in the lane (mode 1)."""
+        app, _, _ = make_app()  # default full
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # Run · Catalog (default mode/tab): filter enabled.
+            # Catalog (default mode/tab): filter enabled.
             assert app._active_mode == 0
             assert app.check_action("filter_catalog", ()) is True
-            # Validate mode: no benchmarks tab → context_t (sort) disabled,
-            # and filter_catalog is off (not a Run · Catalog context).
-            await pilot.press("3")
+            # Lane mode: no benchmarks tab → context_t (sort) disabled, and
+            # filter_catalog is off (not a Catalog context).
+            await pilot.press("2")
             await _settle(pilot)
-            assert app._active_mode == 2
+            assert app._active_mode == 1
             assert app.check_action("context_t", ()) is False
             assert app.check_action("filter_catalog", ()) is False
 
     @pytest.mark.asyncio
     async def test_validate_evidence_enables_s_key(self):
-        # Validate (mode 2) is the producer lane (R3a).
-        app, _, _ = make_app(surface="producer")
+        # The lane is mode 1, visible by default (full surface).
+        app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#validate-tabs", TabbedContent)
             tc.active = "tab-evidence"
             await pilot.pause()
-            # s_key (submit) is enabled in Validate mode regardless of subtab.
+            # s_key (submit) is enabled in the lane regardless of subtab.
             assert app.check_action("s_key", ()) is True
 
     @pytest.mark.asyncio
-    async def test_estate_mode_disables_explain_and_filter(self):
-        """Outside Run · Catalog there is no catalog — explain and filter must be
-        off (e.g. in Operate mode)."""
+    async def test_doctor_tab_disables_explain_and_filter(self):
+        """The Catalog-only keys [e]/[/] are off on the merged mode's non-Catalog
+        tabs (e.g. the Doctor tab)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")  # Operate
-            await pilot.pause()
-            assert app._active_mode == 1
+            await _enter_operate(pilot, tab="tab-doctor")
+            assert app._active_mode == 0
             assert app.check_action("explain", ()) is False
             assert app.check_action("filter_catalog", ()) is False
 
     @pytest.mark.asyncio
     async def test_always_on_keys_active_in_every_mode(self):
-        """quit/help/refresh/mode-switch must be True in every mode.
-
-        Run on the producer surface so all three mode switches (incl.
-        mode_validate, which the R3a surface gate hides on consumer) are
-        genuinely always-on across every mode."""
-        app, _, _ = make_app(surface="producer")
+        """quit/help/refresh/mode-switch must be True in every mode.  Run on the
+        default full surface so mode_validate (hidden on lean) is genuinely
+        always-on across both modes."""
+        app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            for mode_key in ("1", "2", "3"):
+            for mode_key in ("1", "2"):
                 await pilot.press(mode_key)
                 await pilot.pause()
                 for action in ("quit", "help", "refresh",
@@ -3801,7 +3876,7 @@ class TestModalKeyCapture:
             await _settle(pilot)
             assert isinstance(app.screen, ConfirmActionScreen)
             mode_before = app._active_mode
-            await pilot.press("2")
+            await _enter_operate(pilot)
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen), \
                 "confirm modal must still be on screen after pressing '2'"
@@ -3865,7 +3940,7 @@ class TestModalKeyCapture:
             # Validate (mode 2) is the producer lane (R3a).
             app, _, _ = make_app(repo_root=root, surface="producer")
             async with app.run_test(size=(120, 40)) as pilot:
-                await pilot.press("3")
+                await pilot.press("2")
                 await _settle(pilot)
                 app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
                 await pilot.pause()
@@ -3895,25 +3970,27 @@ class TestSubtabCycling:
     """(d) Sub-tab cycle key switches tabs in modes that have sub-tabs."""
 
     @pytest.mark.asyncio
-    async def test_right_bracket_cycles_run_subtab(self):
+    async def test_right_bracket_cycles_merged_subtab(self):
+        # 2-mode merge: the merged mode's tabs are Catalog → Orchestration → … in
+        # the single #operate-tabs TabbedContent.
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert app._active_mode == 0  # Run
-            tc = app.query_one("#run-tabs", TabbedContent)
+            assert app._active_mode == 0
+            tc = app.query_one("#operate-tabs", TabbedContent)
             assert tc.active == "tab-catalog"  # default first tab
             await pilot.press("right_square_bracket")
             await pilot.pause()
-            assert tc.active == "tab-byo"
+            assert tc.active == "tab-orchestration"
 
     @pytest.mark.asyncio
     async def test_right_bracket_wraps_around_on_last_tab(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            tc = app.query_one("#run-tabs", TabbedContent)
-            # Go to last tab first, then cycle forward → should wrap to first.
-            tc.active = "tab-byo"
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            # Go to the last tab (Doctor) first, then cycle forward → wrap to first.
+            tc.active = "tab-doctor"
             await pilot.pause()
             await pilot.press("right_square_bracket")
             await pilot.pause()
@@ -3924,19 +4001,19 @@ class TestSubtabCycling:
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            tc = app.query_one("#run-tabs", TabbedContent)
-            tc.active = "tab-byo"
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-catalog"
             await pilot.pause()
             await pilot.press("left_square_bracket")
             await pilot.pause()
-            assert tc.active == "tab-catalog"
+            # Backwards from the first tab wraps to the last (Doctor).
+            assert tc.active == "tab-doctor"
 
     @pytest.mark.asyncio
     async def test_subtab_key_cycles_estate_tabs(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             tc = app.query_one("#operate-tabs", TabbedContent)
             first = tc.active
             await pilot.press("right_square_bracket")
@@ -3945,10 +4022,10 @@ class TestSubtabCycling:
 
     @pytest.mark.asyncio
     async def test_subtab_key_cycles_validate_tabs(self):
-        # Validate (mode 2) is the producer lane (R3a).
-        app, _, _ = make_app(surface="producer")
+        # The lane is mode 1, visible by default (full surface).
+        app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#validate-tabs", TabbedContent)
             first = tc.active
@@ -3957,15 +4034,12 @@ class TestSubtabCycling:
             assert tc.active != first
 
     @pytest.mark.asyncio
-    async def test_subtab_key_active_in_all_three_modes(self):
-        """After R1 all three modes (Run · Operate · Validate) have sub-tabs, so
-        the cycle keys are active (check_action True) in each.
-
-        Run on the producer surface so the Validate (mode 2) lane is reachable
-        (R3a gates it on consumer)."""
-        app, _, _ = make_app(surface="producer")
+    async def test_subtab_key_active_in_both_modes(self):
+        """2-mode merge: both modes (merged Run & Operate · Bring & Validate) have
+        sub-tabs, so the cycle keys are active (check_action True) in each."""
+        app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            for key, mode in (("1", 0), ("2", 1), ("3", 2)):
+            for key, mode in (("1", 0), ("2", 1)):
                 await pilot.press(key)
                 await pilot.pause()
                 assert app._active_mode == mode
@@ -3977,12 +4051,16 @@ class TestModeSwitchFocus:
     """(e) Mode switch moves focus to the mode's primary interactive widget."""
 
     @pytest.mark.asyncio
-    async def test_switch_to_run_focuses_catalog_table(self):
+    async def test_switch_to_merged_with_catalog_tab_focuses_catalog_table(self):
+        # 2-mode merge: returning to mode 0 focuses the ACTIVE tab's table.  With
+        # the Catalog tab active, that's #catalog-table.
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # Start at Run (mode 0) already — go away and come back.
+            # Go to the lane and back; ensure the Catalog tab is the active one.
             await pilot.press("2")
+            await _settle(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-catalog"
             await pilot.pause()
             await pilot.press("1")
             await pilot.pause()
@@ -3993,23 +4071,22 @@ class TestModeSwitchFocus:
     async def test_switch_to_estate_focuses_scene_table(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # Operate/Orchestration tab is default → scene-table should be focused.
             assert isinstance(app.focused, DataTable)
             assert app.focused.id == "scene-table"
 
     @pytest.mark.asyncio
     async def test_switch_to_validate_lands_on_bring_stage(self):
-        # R3b-1: the producer lane's first stage is ① Bring.  Focus is deliberately
-        # NOT forced into its HF-repo Input (an Input would swallow the global
-        # 1/2/3 + [ ] keys); the lane lands on ① Bring with focus on the tab bar so
-        # those keys keep routing to the app.
-        app, _, _ = make_app(surface="producer")
+        # The producer lane's first stage is ① Bring.  Focus is deliberately NOT
+        # forced into its HF-repo Input (an Input would swallow the global 1/2 + [ ]
+        # keys); the lane lands on ① Bring with focus on the tab bar so those keys
+        # keep routing to the app.  The lane is mode 1, visible by default.
+        app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
-            assert app._active_mode == 2
+            assert app._active_mode == 1
             assert app.query_one("#validate-tabs", TabbedContent).active == "tab-bring"
             # The bring input is NOT auto-focused (so digit/bracket keys work).
             assert not (isinstance(app.focused, Input)
@@ -4021,7 +4098,7 @@ class TestModeSwitchFocus:
         newly active stage (R3b-1 — ① Bring → ② Serve → ③ Gate → ④ Measure → ⑤)."""
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#validate-tabs", TabbedContent)
             # Default stage is ① Bring (no DataTable focus — its input is not
@@ -4054,8 +4131,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
             cfg = str(app.query_one("#drill-config", Static).render())
@@ -4068,8 +4144,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
             assert not any("docker logs" in " ".join(c) for c in runner.calls)
@@ -4082,8 +4157,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
             assert not any("docker logs" in " ".join(c) for c in runner.calls)
@@ -4100,8 +4174,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
             app.query_one("#drill-tabs", TabbedContent).active = "drill-tab-stats"
@@ -4116,8 +4189,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_TWO)})
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
             tbl = app.query_one("#containers-table", DataTable)
@@ -4138,8 +4210,7 @@ class TestContainerAutoLoad:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_TWO)})
         app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
             await _settle(pilot)
             tbl = app.query_one("#containers-table", DataTable)
@@ -4209,8 +4280,7 @@ class TestContainerClampDoesNotAutoloadDrill:
         app._data.estate_state = _estate_state
 
     async def _enter_containers_on_logs(self, app, pilot, holder):
-        await pilot.press("2")                                  # Operate
-        await _settle(pilot)
+        await _enter_operate(pilot)
         app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
         await _settle(pilot)
         # First poll paints the full table.
@@ -4312,7 +4382,7 @@ class TestEscClosesFilter:
         # Validate (mode 2) is the producer lane (R3a).
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")  # Validate
+            await pilot.press("2")  # Validate
             await _settle(pilot)
             await pilot.press("slash")
             await pilot.pause()
@@ -4338,9 +4408,10 @@ class TestSurfaceScaffold:
 
     R0 wired the surface flag with an EMPTY _PRODUCER_ONLY (no-op gate); R3a
     POPULATES it ({"mode_validate", "promote_catalog"}) so the consumer/producer
-    split is real. These tests prove (a) the flag defaults to consumer, (b)
-    producer surfaces the CONTRIBUTE indicator, and (c) the gate LOGIC hides a
-    producer-only action on consumer / shows it on producer — including for
+    split is real. These tests prove (a) the surface defaults to FULL (BOTH
+    modes shown — the post-merge inversion), (b) the LEAN view carries the
+    indicator and hides the producer mode, and (c) the gate LOGIC hides a
+    producer-only action on lean / shows it on full — including for
     _ALWAYS_ON actions (the gate is checked BEFORE _ALWAYS_ON, so it can hide the
     producer Bring & Validate MODE switch).
 
@@ -4351,27 +4422,28 @@ class TestSurfaceScaffold:
     """
 
     @pytest.mark.asyncio
-    async def test_default_surface_is_consumer_no_indicator(self):
+    async def test_default_surface_is_full_no_indicator(self):
+        # Surface inversion: the default is FULL ("producer"), unmarked sub-title.
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert app._surface == "consumer"
-            assert "CONTRIBUTE" not in str(app.sub_title)
+            assert app._surface == "producer"
+            assert "LEAN" not in str(app.sub_title)
 
     @pytest.mark.asyncio
-    async def test_producer_surface_shows_contribute_indicator(self):
-        app, _, _ = make_app(surface="producer")
+    async def test_lean_surface_shows_lean_indicator(self):
+        app, _, _ = make_app(surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert app._surface == "producer"
-            assert "CONTRIBUTE" in str(app.sub_title)
+            assert app._surface == "consumer"
+            assert "LEAN" in str(app.sub_title)
 
     @pytest.mark.asyncio
-    async def test_invalid_surface_falls_back_to_consumer(self):
+    async def test_invalid_surface_falls_back_to_full(self):
         app, _, _ = make_app(surface="bogus")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert app._surface == "consumer"
+            assert app._surface == "producer"
 
     @pytest.mark.asyncio
     async def test_shipped_producer_set_is_mode_validate_and_promote(self):
@@ -4403,7 +4475,7 @@ class TestSurfaceScaffold:
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             assert app.check_action("mode_validate", ()) is True
-            await pilot.press("3")          # enter the lane (mode 2)
+            await pilot.press("2")          # enter the lane (mode 2)
             await _settle(pilot)
             assert app.check_action("promote_catalog", ()) is True
 
@@ -4453,10 +4525,10 @@ def _mode_switcher_item_count(app) -> int:
     """How many mode rows the ModeSwitcher VISIBLY renders (its mode-N Labels).
 
     Match only the numbered ``mode-<N>`` row ids — NOT the ``mode-action-hint``
-    Label (which also starts with ``mode-``).  R4: all three mode Labels are
-    always mounted; the consumer surface HIDES the producer-only third via the
-    ``mode-hidden`` class (so the runtime Contribute toggle can reveal it without
-    an async re-mount), so count only the rows NOT carrying that class."""
+    Label (which also starts with ``mode-``).  2-mode merge: both mode Labels are
+    always mounted; the LEAN (consumer) surface HIDES the producer-only second via
+    the ``mode-hidden`` class (so the runtime [C] toggle can reveal it without an
+    async re-mount), so count only the rows NOT carrying that class."""
     ms = app.query_one("#mode-switcher", ModeSwitcher)
     return len([
         lbl for lbl in ms.query(Label)
@@ -4466,20 +4538,21 @@ def _mode_switcher_item_count(app) -> int:
 
 
 class TestProducerLaneGatedR3a:
-    """R3a — the producer Bring & Validate lane (mode 2 / key 3) + [P] promote are
-    PRODUCER-only: hidden + unreachable on the consumer surface, reachable on
-    producer. The ModeSwitcher is surface-aware (2 rows consumer, 3 producer)."""
+    """Surface inversion: the producer Bring & Validate lane (mode 1 / key 2) +
+    [P] promote are PRODUCER-only: visible by DEFAULT (full surface), HIDDEN +
+    unreachable on the LEAN surface.  The ModeSwitcher is surface-aware (1 row
+    lean, 2 full)."""
 
     @pytest.mark.asyncio
-    async def test_consumer_cannot_reach_validate_via_key_3(self):
-        """On consumer: mode_validate is gated off and pressing 3 does NOT switch
-        to the producer lane (stays in Run, mode 0)."""
+    async def test_lean_cannot_reach_validate_via_key_2(self):
+        """On the lean surface: mode_validate is gated off and pressing 2 does NOT
+        switch to the producer lane (stays in the merged mode 0)."""
         app, _, _ = make_app(surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             assert app._active_mode == 0
             assert app.check_action("mode_validate", ()) is False
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             # Did NOT enter the producer Validate lane.
             assert app._active_mode == 0
@@ -4487,9 +4560,9 @@ class TestProducerLaneGatedR3a:
             assert "active" in app.query_one("#panel-run").classes
 
     @pytest.mark.asyncio
-    async def test_consumer_action_mode_validate_guard_is_noop(self):
+    async def test_lean_action_mode_validate_guard_is_noop(self):
         """Belt-and-suspenders: even a direct programmatic call to
-        action_mode_validate does not switch a consumer into the producer lane."""
+        action_mode_validate does not switch a lean user into the producer lane."""
         app, _, _ = make_app(surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
@@ -4499,52 +4572,52 @@ class TestProducerLaneGatedR3a:
             assert "active" not in app.query_one("#panel-validate").classes
 
     @pytest.mark.asyncio
-    async def test_consumer_promote_is_gated_off(self):
-        """On consumer: [P] promote_catalog is gated off (producer activity)."""
+    async def test_lean_promote_is_gated_off(self):
+        """On the lean surface: [P] promote_catalog is gated off (producer verb)."""
         app, _, _ = make_app(surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert app._active_mode == 0  # Run, where [P] would otherwise be live
+            assert app._active_mode == 0
             assert app.check_action("promote_catalog", ()) is False
 
     @pytest.mark.asyncio
-    async def test_consumer_mode_switcher_shows_two_modes(self):
-        """The consumer ModeSwitcher renders Run + Operate only (no Validate row)."""
+    async def test_lean_mode_switcher_shows_one_mode(self):
+        """The lean ModeSwitcher renders only the merged Run & Operate row."""
         app, _, _ = make_app(surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert _mode_switcher_item_count(app) == 2
+            assert _mode_switcher_item_count(app) == 1
 
     @pytest.mark.asyncio
-    async def test_producer_can_reach_validate_via_key_3(self):
-        """On producer: pressing 3 enters the Validate lane (mode 2)."""
-        app, _, _ = make_app(surface="producer")
+    async def test_full_can_reach_validate_via_key_2(self):
+        """On the default full surface: pressing 2 enters the Validate lane (mode 1)."""
+        app, _, _ = make_app()  # default full
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             assert app.check_action("mode_validate", ()) is True
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
-            assert app._active_mode == 2
+            assert app._active_mode == 1
             assert "active" in app.query_one("#panel-validate").classes
 
     @pytest.mark.asyncio
-    async def test_producer_promote_is_reachable(self):
-        """On producer: [P] promote_catalog is reachable in the lane (R3b-1 mode 2)."""
-        app, _, _ = make_app(surface="producer")
+    async def test_full_promote_is_reachable(self):
+        """On the full surface: [P] promote_catalog is reachable in the lane (mode 1)."""
+        app, _, _ = make_app()  # default full
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("3")          # enter the lane (mode 2)
+            await pilot.press("2")          # enter the lane (mode 1)
             await _settle(pilot)
-            assert app._active_mode == 2
+            assert app._active_mode == 1
             assert app.check_action("promote_catalog", ()) is True
 
     @pytest.mark.asyncio
-    async def test_producer_mode_switcher_shows_three_modes(self):
-        """The producer ModeSwitcher renders all three modes (incl. Validate)."""
-        app, _, _ = make_app(surface="producer")
+    async def test_full_mode_switcher_shows_two_modes(self):
+        """The full ModeSwitcher renders both modes (incl. Bring & Validate)."""
+        app, _, _ = make_app()  # default full
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert _mode_switcher_item_count(app) == 3
+            assert _mode_switcher_item_count(app) == 2
 
     @pytest.mark.asyncio
     async def test_consumer_share_back_not_over_gated(self):
@@ -4558,9 +4631,8 @@ class TestProducerLaneGatedR3a:
             # Run (mode 0): rig_report + report_problem live.
             assert app.check_action("rig_report", ()) is True
             assert app.check_action("report_problem", ()) is True
-            # Operate (mode 1): all three live (submit_bench is Operate-only).
-            await pilot.press("2")
-            await _settle(pilot)
+            # merged Run & Operate (mode 0): all three live (submit_bench gates to mode 0).
+            await _enter_operate(pilot)
             assert app.check_action("rig_report", ()) is True
             assert app.check_action("submit_bench", ()) is True
             assert app.check_action("report_problem", ()) is True
@@ -4577,21 +4649,31 @@ class TestResolveSurface:
     def _isolate_config(self, tmp_path, monkeypatch):
         monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
 
-    def test_default_is_consumer(self):
-        assert resolve_surface(["c3"], {}) == "consumer"
+    def test_default_is_full_producer(self):
+        # Surface inversion: the default is FULL ("producer" = both modes visible).
+        assert resolve_surface(["c3"], {}) == "producer"
 
-    def test_contribute_flag_opts_in(self):
-        assert resolve_surface(["c3", "--contribute"], {}) == "producer"
+    def test_lean_flag_opts_into_lean(self):
+        assert resolve_surface(["c3", "--lean"], {}) == "consumer"
 
-    def test_env_producer_opts_in(self):
-        assert resolve_surface(["c3"], {"C3_SURFACE": "producer"}) == "producer"
+    def test_env_consumer_opts_into_lean(self):
+        assert resolve_surface(["c3"], {"C3_SURFACE": "consumer"}) == "consumer"
 
     def test_env_is_case_and_space_insensitive(self):
-        assert resolve_surface(["c3"], {"C3_SURFACE": "  Producer "}) == "producer"
+        assert resolve_surface(["c3"], {"C3_SURFACE": "  Consumer "}) == "consumer"
 
-    def test_env_other_value_is_consumer(self):
-        assert resolve_surface(["c3"], {"C3_SURFACE": "1"}) == "consumer"
-        assert resolve_surface(["c3"], {"C3_SURFACE": ""}) == "consumer"
+    def test_contribute_alias_is_harmless_and_stays_full(self):
+        # --contribute is kept as a harmless alias — it's already the default.
+        assert resolve_surface(["c3", "--contribute"], {}) == "producer"
+        assert resolve_surface(["c3"], {"C3_SURFACE": "producer"}) == "producer"
+
+    def test_lean_beats_redundant_contribute_alias(self):
+        # An explicit lean opt-out wins over the redundant contribute alias.
+        assert resolve_surface(["c3", "--lean", "--contribute"], {}) == "consumer"
+
+    def test_env_other_value_is_full(self):
+        assert resolve_surface(["c3"], {"C3_SURFACE": "1"}) == "producer"
+        assert resolve_surface(["c3"], {"C3_SURFACE": ""}) == "producer"
 
 
 class TestSurfacePersistence:
@@ -4632,28 +4714,34 @@ class TestSurfacePersistence:
         assert load_surface_setting() is None
 
     def test_resolve_reads_persisted_when_no_explicit(self):
-        save_surface_setting("producer")
-        # No flag / env → the persisted producer setting wins (precedence 2).
-        assert resolve_surface(["c3"], {}) == "producer"
+        save_surface_setting("consumer")
+        # No flag / env → the persisted lean (consumer) setting wins (precedence 2).
+        assert resolve_surface(["c3"], {}) == "consumer"
 
     def test_explicit_flag_beats_persisted(self):
         save_surface_setting("consumer")
-        # Persisted is consumer, but the explicit --contribute flag wins.
+        # Persisted is lean, but the explicit --contribute flag forces full.
         assert resolve_surface(["c3", "--contribute"], {}) == "producer"
 
-    def test_explicit_env_beats_persisted(self):
-        save_surface_setting("consumer")
-        assert resolve_surface(["c3"], {"C3_SURFACE": "producer"}) == "producer"
+    def test_explicit_lean_flag_beats_persisted(self):
+        save_surface_setting("producer")
+        # Persisted is full, but the explicit --lean flag forces lean.
+        assert resolve_surface(["c3", "--lean"], {}) == "consumer"
 
-    def test_no_persisted_falls_to_consumer(self):
-        # No flag, no env, no persisted file → consumer default.
-        assert resolve_surface(["c3"], {}) == "consumer"
+    def test_explicit_env_beats_persisted(self):
+        save_surface_setting("producer")
+        assert resolve_surface(["c3"], {"C3_SURFACE": "consumer"}) == "consumer"
+
+    def test_no_persisted_falls_to_full(self):
+        # No flag, no env, no persisted file → full (producer) default.
+        assert resolve_surface(["c3"], {}) == "producer"
 
 
 class TestContributeDoor:
-    """R4 — the in-app Contribute DOOR: [C] toggles consumer ↔ producer at runtime
-    (ModeSwitcher 2 ↔ 3 modes, producer gating un/gates, the in-lane edge handled)
-    AND persists the choice (test-injectable config dir)."""
+    """The [C] LEAN-view toggle (surface inversion): both modes show by default;
+    [C] hides the Bring & Validate mode (ModeSwitcher 2 → 1 items, producer gating
+    re-gates, the in-lane edge handled) and back, persisting the choice
+    (test-injectable config dir)."""
 
     @pytest.fixture(autouse=True)
     def _isolate_config(self, tmp_path, monkeypatch):
@@ -4661,7 +4749,7 @@ class TestContributeDoor:
 
     @pytest.mark.asyncio
     async def test_toggle_is_always_on(self):
-        # The door is the consumer's opt-in — it must NOT be producer-gated.
+        # The toggle must NOT be producer-gated (a lean user needs it to restore).
         assert "toggle_contribute" in CockpitApp._ALWAYS_ON
         assert "toggle_contribute" not in CockpitApp._PRODUCER_ONLY
         app, _, _ = make_app(surface="consumer")
@@ -4670,74 +4758,98 @@ class TestContributeDoor:
             assert app.check_action("toggle_contribute", ()) is True
 
     @pytest.mark.asyncio
-    async def test_toggle_consumer_to_producer_unlocks_lane(self):
-        app, _, _ = make_app(surface="consumer")
+    async def test_default_shows_both_modes(self):
+        # Default (full) surface shows BOTH modes — no flag needed.
+        app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            assert app._surface == "consumer"
+            assert app._surface == "producer"
             assert _mode_switcher_item_count(app) == 2
-            assert app.check_action("mode_validate", ()) is False
+            assert app.check_action("mode_validate", ()) is True
+
+    @pytest.mark.asyncio
+    async def test_toggle_full_to_lean_hides_lane(self):
+        app, _, _ = make_app()  # default full
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert _mode_switcher_item_count(app) == 2
+            assert app.check_action("mode_validate", ()) is True
             await pilot.press("C")
             await _settle(pilot)
-            assert app._surface == "producer"
-            assert _mode_switcher_item_count(app) == 3
-            assert app.check_action("mode_validate", ()) is True
-            assert "CONTRIBUTE" in str(app.sub_title)
-            # No forced switch — still in Run (mode 0).
+            assert app._surface == "consumer"
+            assert _mode_switcher_item_count(app) == 1
+            assert app.check_action("mode_validate", ()) is False
+            assert "LEAN" in str(app.sub_title)
+            # No forced switch when toggling from the merged mode (mode 0).
             assert app._active_mode == 0
 
     @pytest.mark.asyncio
-    async def test_toggle_persists_for_next_launch(self):
-        app, _, _ = make_app(surface="consumer")
+    async def test_toggle_lean_persists_for_next_launch(self):
+        app, _, _ = make_app()  # default full
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             await pilot.press("C")
             await _settle(pilot)
-            assert load_surface_setting() == "producer"
-            # resolve_surface (next launch, no flag/env) reads the persisted value.
-            assert resolve_surface(["c3"], {}) == "producer"
-
-    @pytest.mark.asyncio
-    async def test_toggle_back_to_consumer_regates_and_persists(self):
-        app, _, _ = make_app(surface="producer")
-        async with app.run_test(size=(120, 40)) as pilot:
-            await _settle(pilot)
-            await pilot.press("C")          # producer → consumer (from Run)
-            await _settle(pilot)
-            assert app._surface == "consumer"
-            assert _mode_switcher_item_count(app) == 2
-            assert app.check_action("mode_validate", ()) is False
-            assert "CONTRIBUTE" not in str(app.sub_title)
             assert load_surface_setting() == "consumer"
+            # resolve_surface (next launch, no flag/env) reads the persisted value.
+            assert resolve_surface(["c3"], {}) == "consumer"
 
     @pytest.mark.asyncio
-    async def test_toggle_off_while_in_lane_switches_to_run(self):
-        # EDGE: toggling producer → consumer while IN the producer lane (mode 2,
-        # now hidden) must move the user back to a consumer-visible mode (Run).
-        app, _, _ = make_app(surface="producer")
+    async def test_toggle_back_to_full_regates_and_persists(self):
+        app, _, _ = make_app(surface="consumer")  # start lean
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("3")          # enter the lane (mode 2)
+            await pilot.press("C")          # lean → full (from merged mode)
             await _settle(pilot)
-            assert app._active_mode == 2
-            await pilot.press("C")          # toggle OFF while stranded in the lane
+            assert app._surface == "producer"
+            assert _mode_switcher_item_count(app) == 2
+            assert app.check_action("mode_validate", ()) is True
+            assert "LEAN" not in str(app.sub_title)
+            assert load_surface_setting() == "producer"
+
+    @pytest.mark.asyncio
+    async def test_toggle_lean_while_in_lane_switches_to_merged(self):
+        # EDGE: going lean while IN the now-hidden Bring & Validate mode (mode 1)
+        # must not strand the user — switch them to the merged mode 0.
+        app, _, _ = make_app()  # default full
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")          # into the lane (mode 1)
+            await _settle(pilot)
+            assert app._active_mode == 1
+            await pilot.press("C")          # go lean
             await _settle(pilot)
             assert app._surface == "consumer"
-            assert app._active_mode == 0    # rescued to Run
+            assert app._active_mode == 0    # switched out of the hidden lane
+            assert "active" in app.query_one("#panel-run").classes
+
+    @pytest.mark.asyncio
+    async def test_toggle_lean_while_in_lane_rescues_to_merged(self):
+        # EDGE: going lean while IN the producer lane (mode 1, now hidden) must
+        # move the user back to the merged mode 0.
+        app, _, _ = make_app()  # default full
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("2")          # enter the lane (mode 1)
+            await _settle(pilot)
+            assert app._active_mode == 1
+            await pilot.press("C")          # go lean while stranded in the lane
+            await _settle(pilot)
+            assert app._surface == "consumer"
+            assert app._active_mode == 0    # rescued to the merged mode
             assert "active" in app.query_one("#panel-run").classes
             assert "active" not in app.query_one("#panel-validate").classes
 
     @pytest.mark.asyncio
-    async def test_toggle_round_trip_back_to_consumer(self):
-        app, _, _ = make_app(surface="consumer")
+    async def test_toggle_round_trip_back_to_lean(self):
+        app, _, _ = make_app(surface="consumer")  # start lean
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("C")          # → producer
+            await pilot.press("C")          # → full
             await _settle(pilot)
-            await pilot.press("C")          # → consumer
+            await pilot.press("C")          # → lean
             await _settle(pilot)
             assert app._surface == "consumer"
-            assert _mode_switcher_item_count(app) == 2
+            assert _mode_switcher_item_count(app) == 1
             assert app.check_action("mode_validate", ()) is False
 
 
@@ -4772,8 +4884,7 @@ class TestBatch2A1RepollAfterEveryWrite:
         app, _, _ = make_app(write_runner=wr)
         calls = _count_load_estate(monkeypatch)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")          # Operate entry → 1 poll
-            await _settle(pilot)
+            await _enter_operate(pilot)
             before = calls["n"]
             plan = app._data.scene_switch("dual-qwen")
             assert plan.kind == "scene"
@@ -4788,8 +4899,7 @@ class TestBatch2A1RepollAfterEveryWrite:
         app, _, _ = make_app(write_runner=wr)
         calls = _count_load_estate(monkeypatch)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             before = calls["n"]
             plan = app._data.estate_down()
             assert plan.kind == "estate_down"
@@ -4804,8 +4914,7 @@ class TestBatch2A1RepollAfterEveryWrite:
         app, _, _ = make_app(write_runner=wr)
         calls = _count_load_estate(monkeypatch)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             before = calls["n"]
             plan = app._data.container_rm("vllm-qwen36-27b-dual")
             assert plan.kind == "container_rm"
@@ -4841,8 +4950,7 @@ class TestBatch2A1RepollAfterEveryWrite:
         )
         calls = _count_load_estate(monkeypatch)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             before = calls["n"]
             plan = app._data.serve("vllm/dual")  # not forced → refused
             app.dispatch_action(plan)
@@ -4852,53 +4960,55 @@ class TestBatch2A1RepollAfterEveryWrite:
 
 
 class TestBatch2A3PeriodicRefresh:
-    """A3 — the periodic refresh interval polls ONLY in Operate (mode 1), never
-    in Run / Validate."""
+    """A3 — the periodic refresh interval polls in the MERGED Run & Operate mode
+    (mode 0 — the live estate tabs + rail live here now), never in the Bring &
+    Validate lane (mode 1) or behind a modal."""
 
     @pytest.mark.asyncio
-    async def test_interval_polls_in_operate(self):
+    async def test_interval_polls_in_merged_mode(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")           # Operate
+            await _enter_operate(pilot)
+            assert app._active_mode == 0
+            calls = {"n": 0}
+            orig = app.load_estate
+            app.load_estate = lambda _o=orig, _c=calls: (_c.__setitem__("n", _c["n"] + 1), _o())[1]
+            app._periodic_estate_refresh()   # fire the gated tick directly
+            assert calls["n"] == 1           # polled in the merged mode
+
+    @pytest.mark.asyncio
+    async def test_interval_does_not_poll_behind_modal(self):
+        # The poll never fires behind a modal even in the merged mode.
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            assert app._active_mode == 0
+            await pilot.press("question_mark")   # open the help modal
+            await pilot.pause()
+            calls = {"n": 0}
+            orig = app.load_estate
+            app.load_estate = lambda _o=orig, _c=calls: (_c.__setitem__("n", _c["n"] + 1), _o())[1]
+            app._periodic_estate_refresh()
+            assert calls["n"] == 0           # NOT polled behind a modal
+
+    @pytest.mark.asyncio
+    async def test_interval_does_not_poll_in_validate(self):
+        app, _, _ = make_app()  # default full
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")           # Bring & Validate lane (mode 1)
             await _settle(pilot)
             assert app._active_mode == 1
             calls = {"n": 0}
             orig = app.load_estate
             app.load_estate = lambda _o=orig, _c=calls: (_c.__setitem__("n", _c["n"] + 1), _o())[1]
-            app._periodic_estate_refresh()   # fire the gated tick directly
-            assert calls["n"] == 1           # polled in Operate
-
-    @pytest.mark.asyncio
-    async def test_interval_does_not_poll_in_run(self):
-        app, _, _ = make_app()
-        async with app.run_test(size=(120, 40)) as pilot:
-            await _settle(pilot)
-            assert app._active_mode == 0     # Run
-            calls = {"n": 0}
-            orig = app.load_estate
-            app.load_estate = lambda _o=orig, _c=calls: (_c.__setitem__("n", _c["n"] + 1), _o())[1]
             app._periodic_estate_refresh()
-            assert calls["n"] == 0           # NOT polled in Run
-
-    @pytest.mark.asyncio
-    async def test_interval_does_not_poll_in_validate(self):
-        app, _, _ = make_app(surface="producer")
-        async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")           # Validate (producer lane)
-            await _settle(pilot)
-            assert app._active_mode == 2
-            calls = {"n": 0}
-            orig = app.load_estate
-            app.load_estate = lambda _o=orig, _c=calls: (_c.__setitem__("n", _c["n"] + 1), _o())[1]
-            app._periodic_estate_refresh()
-            assert calls["n"] == 0           # NOT polled in Validate
+            assert calls["n"] == 0           # NOT polled in the lane
 
     @pytest.mark.asyncio
     async def test_rail_shows_as_of_stamp(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             rail = str(app.query_one("#rail-status", RailStatus).render())
             assert "as of" in rail           # freshness stamp rendered
 
@@ -4916,8 +5026,7 @@ class TestBatch2A2DockerFailureRenders:
         )
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             state = await app._data.estate_state(variants=app._variants or None)
             assert state.error                       # error recorded
             assert "docker unreachable" in state.error
@@ -4930,8 +5039,7 @@ class TestBatch2A2DockerFailureRenders:
         )
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # The orch pane shows the distinct docker-unreachable strip.
             strip = app.query_one("#estate-error-strip", Static)
             assert "visible" in strip.classes
@@ -4953,8 +5061,7 @@ class TestBatch2A2DockerFailureRenders:
             gpus=[], target=ServingTarget(gpus=[]),
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             bar = str(app.query_one("#gpu0-bar", Static).render())
             assert "nvidia-smi returned nothing" in bar
 
@@ -4963,8 +5070,7 @@ class TestBatch2A2DockerFailureRenders:
         """No false positives: a healthy estate keeps the error strip hidden."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             strip = app.query_one("#estate-error-strip", Static)
             assert "visible" not in strip.classes
 
@@ -5078,8 +5184,7 @@ class TestBatch2N3CatalogServingMarker:
         app, _, _ = make_app(target=tgt)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)            # catalog loads
-            await pilot.press("2")          # Operate poll → sets serving slug
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#catalog-pane", CatalogPane)
             assert pane._serving_slug == "vllm/dual"
             tbl = app.query_one("#catalog-table", DataTable)
@@ -5095,8 +5200,7 @@ class TestBatch2N3CatalogServingMarker:
             # Force-set a stale marker, then a poll with no match must clear it.
             pane.set_serving_slug("vllm/dual")
             assert pane._serving_slug == "vllm/dual"
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             assert pane._serving_slug == ""
 
 
@@ -5236,8 +5340,7 @@ class TestBatch2MustFix2RailAsOf:
     async def test_as_of_shows_seconds_when_clock_advances(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             assert app._last_estate_state is not None      # cached for re-render
             # Pretend the last poll was 40s ago, then run the lightweight re-stamp.
             import time as _time
@@ -5251,8 +5354,7 @@ class TestBatch2MustFix2RailAsOf:
     async def test_as_of_shows_minutes_when_clock_advances_far(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             import time as _time
             app._last_estate_poll_mono = _time.monotonic() - 200
             app._refresh_rail_as_of()
@@ -5287,8 +5389,7 @@ class TestBatch2MustFix3ErrorLabel:
         # Swap the detect seam to raise → estate_state sets 'detect failed: …'.
         app._data._detect_endpoint = _boom
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             state = await app._data.estate_state(variants=app._variants or None)
             assert state.error.startswith("detect failed:")
             assert "docker unreachable" not in state.error
@@ -5314,8 +5415,7 @@ class TestBatch2MustFix3ErrorLabel:
         )
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             rail = str(app.query_one("#rail-status", RailStatus).render())
             assert "docker unreachable" in rail
 
@@ -5405,8 +5505,7 @@ class TestA6CatalogLiveFreeVram:
         app, _, _ = make_app(gpus=gpus, target=target)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("2")  # Operate poll feeds the live free-VRAM to Run
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#catalog-pane", CatalogPane)
             # The fit verdict itself is still fits-clean (kv-calc unchanged)…
             entry = next(e for e in pane._entries if e.slug == "vllm/dual")
@@ -5441,8 +5540,7 @@ class TestA6CatalogLiveFreeVram:
         app, _, _ = make_app(gpus=gpus, target=ServingTarget(gpus=gpus))
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#catalog-pane", CatalogPane)
             entry = next(e for e in pane._entries if e.slug == "vllm/dual")
             from club3090_cockpit.data import downgrade_fit_glyph
@@ -5468,8 +5566,7 @@ class TestA6CatalogLiveFreeVram:
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("2")            # Operate poll → sets serving slug + free-VRAM
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#catalog-pane", CatalogPane)
             assert pane._serving_slug == "vllm/dual"   # it IS the serving row
             assert pane._free_gb_by_index is not None   # live free-VRAM is low
@@ -5500,8 +5597,7 @@ class TestA6CatalogLiveFreeVram:
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#catalog-pane", CatalogPane)
             # The serving exemption holds, but a non-serving fits-clean sibling that
             # genuinely can't fit the residual free IS downgraded.  (vllm/dual is the
@@ -5527,8 +5623,7 @@ class TestA7ServingPanelProbedConfig:
         probe = ServedProbe(max_model_len=262144, image="vllm/vllm-openai:v0.22.0")
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target, probe_served=probe)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             line = str(app.query_one("#serving-line", Static).render())
             assert "running" in line               # probed ctx is labelled running
             assert "262K" in line                   # 262144 → "262K" (÷1000, matches catalog)
@@ -5544,8 +5639,7 @@ class TestA7ServingPanelProbedConfig:
         probe = ServedProbe(max_model_len=131072, image="vllm/vllm-openai:v0.22.0")
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target, probe_served=probe)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             assert app._target_slug == "vllm/dual"
             line = str(app.query_one("#serving-line", Static).render())
             assert "131K" in line                          # 131072 → "131K" (÷1000)
@@ -5562,8 +5656,7 @@ class TestA7ServingPanelProbedConfig:
         probe = ServedProbe(max_model_len=None, image="ghcr.io/ggml-org/llama.cpp:server-cuda")
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target, probe_served=probe)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             line = str(app.query_one("#serving-line", Static).render())
             assert "per catalog slug" in line
             assert "ghcr.io/ggml-org/llama.cpp:server-cuda" in line
@@ -5594,8 +5687,7 @@ class TestA7ServingPanelProbedConfig:
         probe = ServedProbe(max_model_len=262144, image="vllm/vllm-openai:v0.22.0")
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target, probe_served=probe)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # Confirm the fit ceiling really is the 295K (the value the OLD code
             # wrongly compared against — proving the fix is load-bearing).
             entry = app._catalog_entry_for("vllm/dual")
@@ -5647,8 +5739,7 @@ class TestA7ServingPanelProbedConfig:
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target, probe_served=probe)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # Serving panel running-ctx label.
             serving_line = str(app.query_one("#serving-line", Static).render())
             assert "262K (running)" in serving_line.replace("[dim]", "").replace("[/dim]", "")
@@ -5673,8 +5764,7 @@ class TestA4TargetedServingVerbs:
         wr = FakeWriteRunner()
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target, write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
             await pilot.pause()
             await pilot.press("k")     # stop THIS model
@@ -5693,8 +5783,7 @@ class TestA4TargetedServingVerbs:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
             await pilot.pause()
             await pilot.press("b")     # restart serving
@@ -5707,8 +5796,7 @@ class TestA4TargetedServingVerbs:
         # Nothing serving (empty docker ps, no target) → [k] must NOT open the gate.
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
             await pilot.pause()
             await pilot.press("k")
@@ -5722,14 +5810,13 @@ class TestA4TargetedServingVerbs:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, _, _ = make_app(responses=responses, gpus=gpus, target=target)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
             await pilot.pause()
-            await pilot.press("n")     # switch → Run · Catalog (navigation, no write)
+            await pilot.press("n")     # switch → flip to the Catalog tab (same mode)
             await pilot.pause()
             assert "active" in app.query_one("#panel-run").classes
-            assert app.query_one("#run-tabs", TabbedContent).active == "tab-catalog"
+            assert app.query_one("#operate-tabs", TabbedContent).active == "tab-catalog"
             assert not isinstance(app.screen, ConfirmActionScreen)  # no write here
 
 
@@ -5742,8 +5829,7 @@ class TestDoctorRerunAndRemediation:
         responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
         app, runner, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             app.query_one("#operate-tabs", TabbedContent).active = "tab-doctor"
             await pilot.pause()
             # Clear the call log, then press [y] — it must re-run the diagnose reads.
@@ -5775,7 +5861,7 @@ class TestA9GateLadderOutcome:
     async def test_ladder_row_shows_passed_glyph_from_last_run(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")           # Bring & Validate lane
+            await pilot.press("2")           # Bring & Validate lane
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -5796,7 +5882,7 @@ class TestA9GateLadderOutcome:
     async def test_ladder_default_outcome_is_unrun(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -5836,7 +5922,7 @@ class TestA9GateLadderOutcome:
         wr = _AsyncWriteRunner()
         app, _, _ = make_app(write_runner=wr, surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -5884,7 +5970,7 @@ class TestA9GateLadderOutcome:
         wr = _AsyncWriteRunner()
         app, _, _ = make_app(write_runner=wr, surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -5946,15 +6032,15 @@ class TestA5HelpTeachesHiddenKeys:
             assert "Navigation" in text
 
     @pytest.mark.asyncio
-    async def test_consumer_help_lists_contribute_key(self):
+    async def test_lean_help_lists_lean_toggle_key(self):
         app, _, _ = make_app(surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             await pilot.press("question_mark")
             await pilot.pause()
             text = app.screen.help_text
-            # The [C] Contribute door is taught on CONSUMER (it is the opt-in).
-            assert "toggle Contribute" in text
+            # The [C] lean-view toggle is taught on LEAN (it restores the full view).
+            assert "toggle lean view" in text
             assert "[cyan]C[/cyan]" in text
 
     @pytest.mark.asyncio
@@ -6075,10 +6161,10 @@ class TestHashFiveFooterTabFocus:
     async def test_focused_footer_key_survives_a_real_binding_change(self):
         """The bindings_changed focus-held early-return: while a FooterKey holds
         focus, a GENUINE displayed-binding change (a surface flip, which adds the
-        [3] Bring & Validate mode key to the footer) must NOT recompose the
+        [2] Bring & Validate mode key to the footer) must NOT recompose the
         footer — the focused key keeps its identity + focus, and the footer
         recomposes only once focus leaves it."""
-        app, _, _ = make_app(surface="consumer")
+        app, _, _ = make_app(surface="consumer")  # lean: only [1] shown
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             ff = app.query_one(FocusableFooter)
@@ -6090,23 +6176,23 @@ class TestHashFiveFooterTabFocus:
             assert app.focused is onekey
             sig_before = ff._last_binding_sig
             id_before = id(onekey)
-            # Sanity: '3' (Bring & Validate) is NOT shown on the consumer surface.
-            assert "3" not in {k.key for k in ff.query(FooterKey)}
+            # Sanity: '2' (Bring & Validate) is NOT shown on the lean surface.
+            assert "2" not in {k.key for k in ff.query(FooterKey)}
             # Trigger a REAL displayed-binding change without re-homing focus:
-            # flipping to the producer surface UN-gates [3] (mode_validate), which
-            # IS show=True, so the footer signature genuinely changes.  Fires
+            # flipping to the full surface UN-gates [2] (mode_validate), which IS
+            # show=True, so the footer signature genuinely changes.  Fires
             # bindings_changed while the '1' FooterKey still holds focus.
             app._surface = "producer"
             app.refresh_bindings()
             await pilot.pause()
             # Focus-held branch took the early return: footer NOT rebuilt — same
             # FooterKey object, focus retained, snapshot signature untouched, and
-            # the new [3] key has NOT been composed in yet (recompose suppressed).
+            # the new [2] key has NOT been composed in yet (recompose suppressed).
             assert app.focused is onekey
             assert id(app.focused) == id_before
             assert ff._last_binding_sig == sig_before
             assert app.query_one(FocusableFooter) is ff   # no crash / re-creation
-            assert "3" not in {k.key for k in ff.query(FooterKey)}
+            assert "2" not in {k.key for k in ff.query(FooterKey)}
             # Move focus off the footer onto the table, then a binding change DOES
             # recompose (the suppression only holds while a FooterKey is focused).
             table = next(w for w in app.screen.focus_chain
@@ -6116,11 +6202,11 @@ class TestHashFiveFooterTabFocus:
             assert not isinstance(app.focused, FooterKey)
             app.refresh_bindings()
             await _settle(pilot)
-            # Footer recomposed for the new (producer) signature — the stale
-            # snapshot was replaced + [3] is now composed in, now that no footer
-            # key pinned it.
+            # Footer recomposed for the new (full) signature — the stale snapshot
+            # was replaced + [2] is now composed in, now that no footer key pinned
+            # it.
             assert ff._last_binding_sig != sig_before
-            assert "3" in {k.key for k in ff.query(FooterKey)}
+            assert "2" in {k.key for k in ff.query(FooterKey)}
 
 
 class TestHashEightRailToggle:
@@ -6147,10 +6233,10 @@ class TestHashEightRailToggle:
             await _settle(pilot)
             await pilot.press("full_stop")   # hide rail
             await pilot.pause()
-            await pilot.press("2")           # Operate
+            await pilot.press("2")           # into the Bring & Validate lane
             await _settle(pilot)
             assert app._active_mode == 1
-            await pilot.press("1")           # back to Run
+            await pilot.press("1")           # back to the merged mode
             await _settle(pilot)
             assert app._active_mode == 0
             # Rail is still hidden — the toggle is independent of mode switching.
@@ -6233,13 +6319,13 @@ class TestN6CommandPalette:
     @pytest.mark.asyncio
     async def test_palette_search_runs_a_core_action(self):
         """Selecting a palette hit invokes the SAME action method the binding
-        would — fuzzy-search 'Operate mode' then run it → mode 1."""
-        app, _, _ = make_app()
+        would — fuzzy-search 'Bring & Validate mode' then run it → mode 1."""
+        app, _, _ = make_app()  # default full
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             prov = CockpitCommands(app.screen)
             cb = None
-            async for hit in prov.search("Operate mode"):
+            async for hit in prov.search("Bring & Validate mode"):
                 cb = hit.command
                 break
             assert cb is not None
@@ -6808,8 +6894,7 @@ class TestScenePreview:
     async def test_scene_highlight_shows_description_and_services(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             t = app.query_one("#scene-table", DataTable)
             t.move_cursor(row=0)  # "27b" scene
             await pilot.pause()
@@ -6823,8 +6908,7 @@ class TestScenePreview:
     async def test_scene_preview_updates_on_cursor_move(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             t = app.query_one("#scene-table", DataTable)
             t.move_cursor(row=1)  # "off" scene
             await pilot.pause()
@@ -6841,7 +6925,7 @@ class TestEvidenceAndGatePreview:
         app, _, _ = make_app(repo_root=tmp_path, surface="producer")
         seed_repo(tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
             await pilot.pause()
@@ -6856,7 +6940,7 @@ class TestEvidenceAndGatePreview:
     async def test_gate_step_highlight_shows_blurb(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -6870,7 +6954,7 @@ class TestEvidenceAndGatePreview:
     async def test_gate_step_preview_updates_on_cursor_move(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
@@ -6883,8 +6967,10 @@ class TestEvidenceAndGatePreview:
 
 
 class TestProfileSelectInputErgonomics:
-    """#6/A12 — the BYO/① Bring profile input is a registry-derived Select that
-    defaults to the rig topology + reports unknown profiles precisely."""
+    """#6/A12 — the ① Bring profile input is a registry-derived Select that
+    defaults to the rig topology + reports unknown profiles precisely.  (The
+    standalone Run · BYO Select was removed in the 2-mode merge — ① Bring is the
+    single profile-template entry now.)"""
 
     @pytest.mark.asyncio
     async def test_byo_profile_is_select_with_registry_templates(self):
@@ -6892,7 +6978,7 @@ class TestProfileSelectInputErgonomics:
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            sel = app.query_one("#byo-profile-input", Select)
+            sel = app.query_one("#lane-bring-profile-input", Select)
             # The dropdown is fed from the SAME registry-derived templates.
             template_values = {o.slug for o in profile_templates(app._variants)}
             assert template_values == {"vllm/dual", "vllm/single"}
@@ -6909,9 +6995,8 @@ class TestProfileSelectInputErgonomics:
             await _settle(pilot)
             # Enter Operate so an estate poll learns the (1-card) GPU count, then
             # the dropdown re-defaults to a single-card template.
-            await pilot.press("2")
-            await _settle(pilot)
-            sel = app.query_one("#byo-profile-input", Select)
+            await _enter_operate(pilot)
+            sel = app.query_one("#lane-bring-profile-input", Select)
             assert sel.value == "vllm/single"
 
     @pytest.mark.asyncio
@@ -6922,9 +7007,8 @@ class TestProfileSelectInputErgonomics:
                              target=ServingTarget(gpus=gpus))
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            await pilot.press("2")
-            await _settle(pilot)
-            sel = app.query_one("#byo-profile-input", Select)
+            await _enter_operate(pilot)
+            sel = app.query_one("#lane-bring-profile-input", Select)
             assert sel.value == "vllm/dual"
 
     @pytest.mark.asyncio
@@ -6937,16 +7021,15 @@ class TestProfileSelectInputErgonomics:
                              target=ServingTarget(gpus=gpus), surface="consumer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            sel = app.query_one("#byo-profile-input", Select)
+            sel = app.query_one("#lane-bring-profile-input", Select)
             # User manually picks the non-default (single) template.
             sel.value = "vllm/single"
             await pilot.pause()
             assert app._profile_user_touched is True
             # Enter Operate → first estate poll fires reapply_default=True.
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # The manual pick STANDS — the reapply did NOT clobber it back to dual.
-            assert app.query_one("#byo-profile-input", Select).value == "vllm/single"
+            assert app.query_one("#lane-bring-profile-input", Select).value == "vllm/single"
 
     @pytest.mark.asyncio
     async def test_unknown_profile_reports_known_list(self):
@@ -6957,7 +7040,7 @@ class TestProfileSelectInputErgonomics:
             # A legacy / free-text profile-like that isn't a known registry slug.
             app.run_byo_check("org/Model", "vllm/legacy-gone")
             await _settle(pilot)
-            card = str(app.query_one("#byo-result-card", Static).render())
+            card = str(app.query_one("#lane-bring-result-card", Static).render())
             assert "unknown profile vllm/legacy-gone" in card
             assert "known:" in card
             assert "vllm/dual" in card  # a real slug is listed
@@ -6983,10 +7066,10 @@ class TestProfileSelectInputErgonomics:
         app, _, _ = make_app(responses=responses)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            custom = app.query_one("#byo-profile-custom", Input)
+            custom = app.query_one("#lane-bring-profile-custom", Input)
             # Hidden until the sentinel is chosen.
             assert custom.has_class("profile-custom-hidden")
-            sel = app.query_one("#byo-profile-input", Select)
+            sel = app.query_one("#lane-bring-profile-input", Select)
             sel.value = PROFILE_CUSTOM_SENTINEL
             await pilot.pause()
             # Revealed by the sentinel pick.
@@ -6994,7 +7077,7 @@ class TestProfileSelectInputErgonomics:
             # A custom slug NOT in the curated list is what _selected_profile_like
             # returns (so it reaches byo_check's unknown-profile validation path).
             custom.value = "ik-llama/iq4ks-mtp"
-            assert app._selected_profile_like("#byo-profile-input") == "ik-llama/iq4ks-mtp"
+            assert app._selected_profile_like("#lane-bring-profile-input") == "ik-llama/iq4ks-mtp"
 
     @pytest.mark.asyncio
     async def test_custom_slug_not_in_curated_list_still_validates(self):
@@ -7017,7 +7100,7 @@ class TestProducerLaneHandoff:
     async def test_serve_prearmed_after_fit_check(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             # Run ① Bring's fit-check (PULL_JSON resolves Route C → sibling vllm/dual).
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
@@ -7034,7 +7117,7 @@ class TestProducerLaneHandoff:
     async def test_bring_result_points_forward_to_serve(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
@@ -7048,7 +7131,7 @@ class TestProducerLaneHandoff:
     async def test_serve_tab_rearms_from_cached_byo(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
@@ -7071,7 +7154,7 @@ class TestProducerLaneHandoff:
         responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
         app, _, _ = make_app(responses=responses, surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("3")
+            await pilot.press("2")
             await _settle(pilot)
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
@@ -7371,8 +7454,7 @@ class TestBatch5OperateRendering:
             responses=batch5_responses(), gpus=gpus, target=ServingTarget(gpus=gpus)
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             rail = str(app.query_one("#host-stats-rail", Static).render())
             assert "repo" in rail
             assert "models" in rail
@@ -7390,8 +7472,7 @@ class TestBatch5OperateRendering:
             responses=batch5_responses(), gpus=gpus, target=ServingTarget(gpus=gpus)
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             bar0 = str(app.query_one("#gpu0-bar", Static).render())
             assert "held by:" in bar0
             assert "llama-cpp-pi-reasoning" in bar0
@@ -7408,8 +7489,7 @@ class TestBatch5OperateRendering:
             target=ServingTarget(gpus=gpus),
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             bar0 = str(app.query_one("#gpu0-bar", Static).render())
             assert "held by:" in bar0
             assert "pid 588408" in bar0           # named-by-pid fallback
@@ -7423,8 +7503,7 @@ class TestBatch5OperateRendering:
             responses=batch5_responses(df=""), gpus=gpus, target=ServingTarget(gpus=gpus)
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             rail = str(app.query_one("#host-stats-rail", Static).render())
             assert "disk read failed" in rail     # honest cue
             assert "0%" not in rail               # NO fabricated zero bar
@@ -7441,8 +7520,7 @@ class TestBatch5OperateRendering:
             target=ServingTarget(gpus=gpus),
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             rail = str(app.query_one("#host-stats-rail", Static).render())
             assert "MemAvailable missing" in rail  # honest cue
             assert "100%" not in rail              # NOT a misleading full bar
@@ -7460,8 +7538,7 @@ class TestBatch5OperateRendering:
             target=ServingTarget(gpus=gpus),
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             bar0 = str(app.query_one("#gpu0-bar", Static).render())
             assert "card unknown" in bar0          # neutral heading
             assert "llama-cpp-pi-reasoning" in bar0  # holder still surfaced
@@ -7483,8 +7560,7 @@ class TestFix3HostStatsPlacement:
             responses=batch5_responses(), gpus=gpus, target=ServingTarget(gpus=gpus)
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             # The disk/RAM card lives in the GLOBAL left rail, below RailStatus.
             rail_widget = app.query_one("#host-stats-rail", HostStatsRail)
             assert rail_widget in app.query_one("#left-rail").children
@@ -7505,8 +7581,7 @@ class TestFix3HostStatsPlacement:
             responses=batch5_responses(), gpus=gpus, target=ServingTarget(gpus=gpus)
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             bar0 = str(app.query_one("#gpu0-bar", Static).render())
             assert "held by:" in bar0                  # attribution unchanged
             assert "llama-cpp-pi-reasoning" in bar0
@@ -7532,8 +7607,7 @@ class TestBatch5StudioServiceSet:
     async def test_studio_containers_appear_running_in_table(self):
         app, _, _ = make_app(responses=batch5_responses())
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             by_name = {c.name: c for c in pane._containers}
             assert "studio-tts" in by_name
@@ -7545,8 +7619,7 @@ class TestBatch5StudioServiceSet:
     async def test_studio_visible_in_services_strip(self):
         app, _, _ = make_app(responses=batch5_responses())
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             strip = str(app.query_one("#services-strip", Static).render())
             # GPU0's studio holder is visible in the service list (the Batch-1 gap).
             assert "studio-tts" in strip
@@ -7560,8 +7633,7 @@ class TestBatch5StudioServiceSet:
         seed_repo(tmp_path)
         app, _, _ = make_app(responses=batch5_responses(), repo_root=tmp_path)
         async with app.run_test(size=(120, 40)) as pilot:
-            await pilot.press("2")
-            await _settle(pilot)
+            await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             studio_rows = [c for c in pane._containers if "studio" in c.name.lower()]
             # The running studio-* stack rows are present...

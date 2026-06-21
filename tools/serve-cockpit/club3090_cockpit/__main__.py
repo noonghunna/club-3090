@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def config_path() -> Path:
-    """The file the in-app Contribute door persists the chosen surface to.
+    """The file the in-app [C] lean toggle persists the chosen surface to.
 
     Honors the C3_CONFIG_DIR env override (tests point it at a tmp_path so they
     never touch the real ``~/.config``); otherwise falls back to
@@ -25,7 +25,7 @@ def load_surface_setting() -> "str | None":
 
     Tolerant by design — a missing file, unreadable file, malformed JSON, or an
     unrecognised surface value all return None (the caller degrades to the
-    default consumer surface) rather than crashing the launch.
+    default FULL surface) rather than crashing the launch.
     """
     path = config_path()
     try:
@@ -40,11 +40,12 @@ def load_surface_setting() -> "str | None":
 
 
 def save_surface_setting(surface: str) -> None:
-    """Persist the chosen surface ("consumer"/"producer") for next launch.
+    """Persist the chosen surface for next launch.
 
-    Best-effort — creates the config dir if needed; a write failure is swallowed
-    (the toggle still takes effect for the current session, it just won't be
-    remembered).  Invalid surfaces are ignored.
+    Values: ``"consumer"`` = LEAN, ``"producer"`` = FULL (see resolve_surface for
+    the inversion).  Best-effort — creates the config dir if needed; a write
+    failure is swallowed (the toggle still takes effect for the current session, it
+    just won't be remembered).  Invalid surfaces are ignored.
     """
     if surface not in ("consumer", "producer"):
         return
@@ -58,28 +59,39 @@ def save_surface_setting(surface: str) -> None:
 
 
 def resolve_surface(argv: list[str], environ: "os._Environ[str] | dict[str, str]") -> str:
-    """Resolve the audience surface (R0/R4) from CLI args + env + persisted setting.
+    """Resolve the audience surface from CLI args + env + persisted setting.
+
+    2-mode merge — surface INVERSION.  The app serves BOTH consumers and
+    producers, and every producer is a consumer, so BOTH modes show by DEFAULT.
+    Internal values are kept ("producer"/"consumer") to reuse the gate machinery,
+    but the meaning is inverted:
+      * ``"producer"`` = FULL  (default — Run & Operate + Bring & Validate)
+      * ``"consumer"`` = LEAN  (the minimal rig view — hides Bring & Validate)
 
     Precedence (highest first):
-      1. ``c3 --contribute`` (bare flag) or ``C3_SURFACE=producer`` (env) — an
-         explicit per-launch opt-in into the producer surface.
-      2. The PERSISTED setting (R4) — the surface the in-app Contribute door last
-         saved via ``save_surface_setting`` (``c3-surface.json``).
-      3. ``consumer`` (default — the clean Run + Operate UI).
+      1. An explicit per-launch flag/env:
+         * ``c3 --lean`` (bare flag) or ``C3_SURFACE=consumer`` (env) → LEAN.
+         * ``c3 --contribute`` (kept as a harmless alias — already the default) or
+           ``C3_SURFACE=producer`` (env) → FULL.
+         An explicit lean opt-out wins over a redundant contribute alias.
+      2. The PERSISTED setting — the surface the in-app [C] lean toggle last saved
+         via ``save_surface_setting`` (``c3-surface.json``).
+      3. ``producer`` (FULL — the default, both modes visible).
 
     C3_SURFACE is normalised case- and whitespace-insensitively so
-    ``Producer``/`` producer `` also work.  As of R4 the in-app Contribute door
-    persists the chosen surface, and this resolver reads it (precedence 2) — an
-    explicit flag/env on a given launch still wins over the persisted value.
+    ``Consumer``/`` consumer `` also work.  An explicit flag/env on a given launch
+    wins over the persisted value.
     """
-    if "--contribute" in argv:
-        return "producer"
-    if environ.get("C3_SURFACE", "").strip().lower() == "producer":
+    # Explicit per-launch flags/env first (lean opt-out beats the redundant alias).
+    env_surface = environ.get("C3_SURFACE", "").strip().lower()
+    if "--lean" in argv or env_surface == "consumer":
+        return "consumer"
+    if "--contribute" in argv or env_surface == "producer":
         return "producer"
     persisted = load_surface_setting()
     if persisted in ("consumer", "producer"):
         return persisted
-    return "consumer"
+    return "producer"
 
 
 def main() -> None:
@@ -104,10 +116,12 @@ def main() -> None:
 
     from .app import CockpitApp
 
-    # Surface (R0/R4): consumer (default — Run + Operate) vs producer (+ Bring &
-    # Validate).  resolve_surface() precedence: explicit `c3 --contribute` /
-    # C3_SURFACE=producer FIRST, else the surface the in-app Contribute door last
-    # PERSISTED (R4 — c3-surface.json), else the clean consumer default.
+    # Surface (2-mode merge — inverted default): FULL ("producer", default — both
+    # Run & Operate AND Bring & Validate) vs LEAN ("consumer" — the minimal rig
+    # view, opt-in via `c3 --lean` / C3_SURFACE=consumer / the in-app [C] toggle).
+    # resolve_surface() precedence: explicit per-launch flag/env FIRST, else the
+    # surface the in-app [C] lean toggle last PERSISTED (c3-surface.json), else the
+    # full default.
     surface = resolve_surface(sys.argv, os.environ)
     app = CockpitApp(repo_root=repo_root, surface=surface)
     app.run()

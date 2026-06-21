@@ -1,6 +1,6 @@
 """club3090 serve cockpit — main Textual application.
 
-The three modes (Run · Operate · Validate) are wired to the real data layer
+The two modes (Run & Operate · Bring & Validate) are wired to the real data layer
 (``services.CockpitData`` + ``data.py`` shapes), reusing the shared core
 (``club3090_tui_core``) for detect / streaming / widgets.  (R1 folded the former
 Discover + Serve + Benchmarks modes into a single Run mode; R2a renamed the
@@ -405,16 +405,16 @@ class HelpScreen(ModalScreen):
         Binding("question_mark", "dismiss", "Close"),
     ]
 
-    # Surface-threaded (R3b-1): the consumer help OMITS every producer-lane token
-    # (the [3] Bring & Validate mode, [P] Promote, [v] Evaluate, the lane section)
-    # so it shows only the consumer affordances (Run + Operate + share-back).  The
-    # producer help INCLUDES the lane section.
+    # Surface-threaded: the LEAN help OMITS every producer-lane token (the [2]
+    # Bring & Validate mode, [P] Promote, [v] Evaluate, the lane section) so it
+    # shows only the consumer affordances (Run & Operate + share-back).  The FULL
+    # (default) help INCLUDES the lane section.
 
-    # The mode line: consumer sees Run + Operate; producer additionally sees [3].
-    _MODE_LINE_CONSUMER = "  [cyan]1[/cyan]  Run    [cyan]2[/cyan]  Operate"
+    # The mode line: lean sees only the merged mode; full additionally sees [2].
+    _MODE_LINE_CONSUMER = "  [cyan]1[/cyan]  Run & Operate"
     _MODE_LINE_PRODUCER = (
-        "  [cyan]1[/cyan]  Run    [cyan]2[/cyan]  Operate    "
-        "[cyan]3[/cyan]  Bring & Validate"
+        "  [cyan]1[/cyan]  Run & Operate    "
+        "[cyan]2[/cyan]  Bring & Validate"
     )
 
     # The producer Bring & Validate lane section — rendered ONLY on producer.
@@ -441,44 +441,43 @@ class HelpScreen(ModalScreen):
             "",
             mode_line,
             "  [cyan]r[/cyan]  Refresh (re-reads the live data layer for the active mode)",
-            "  [cyan]/[/cyan]  Filter (Run · Catalog)",
-            "  [cyan]e[/cyan]  Explain selected slug (Run · Catalog — incl. cross-rig benchmarks)",
+            "  [cyan]/[/cyan]  Filter (Catalog tab)",
+            "  [cyan]e[/cyan]  Explain selected slug (Catalog tab — incl. cross-rig benchmarks)",
             "  [cyan]⏎[/cyan]  Primary action (serve / switch scene / run step / open report)",
             "  [cyan]?[/cyan]  This help        [cyan]q[/cyan]  Quit",
             "",
             # A5: the navigation keys that are otherwise undiscoverable — the
             # sub-tab cycle has show=False bindings (so it never reaches the
-            # footer) and [C] (the Contribute door) is show=False too.  This help
-            # is their ONLY teaching surface; surface BOTH on consumer AND producer
-            # ([C] is always-on — a consumer needs it to opt IN to the producer
-            # Bring & Validate lane).
+            # footer) and [C] (the lean toggle) is show=False too.  This help is
+            # their ONLY teaching surface; surface BOTH on lean AND full ([C] is
+            # always-on — a lean-view user needs it to restore the full view).
             "[bold]Navigation[/bold]",
             "  [cyan]\\[[/cyan] / [cyan]][/cyan]  previous / next sub-tab (the only no-mouse tab move)",
             "  [cyan]Tab[/cyan]      cycle focus (tables · inputs · the footer keys)",
             "  [cyan].[/cyan]        toggle the left rail (Modes + Estate) — full-width content",
-            "  [cyan]C[/cyan]        toggle Contribute (reveals the producer contributor surface)",
+            "  [cyan]C[/cyan]        toggle lean view (hide / restore the Bring & Validate mode)",
             "  [cyan]Ctrl+p[/cyan]   command palette — fuzzy-search + run any action",
             "",
-            "[bold]Run · Catalog[/bold]",
+            "[bold]Run & Operate · Catalog[/bold]",
             "  [cyan]⏎[/cyan] serve selected slug (reconcile-gated confirm; F to Force the teardown)",
             "  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default",
             "  [cyan]O[/cyan] ▸ Optimize for my card (v0.10.0 seam — not available yet)",
-            "[bold]Operate · Orchestration[/bold]",
-            "  [cyan]k[/cyan] stop THIS model   [cyan]b[/cyan] restart serving   [cyan]n[/cyan] switch model (→ Run · Catalog)   (writes gated)",
+            "[bold]Run & Operate · Orchestration[/bold]",
+            "  [cyan]⏎[/cyan] switch scene   [cyan]k[/cyan] stop THIS model   [cyan]b[/cyan] restart serving   [cyan]n[/cyan] switch model (→ Catalog tab)   (writes gated)",
             "  [cyan]o[/cyan] stop ALL (tears down the whole estate)   [cyan]c[/cyan] power-cap on/off   [cyan]w[/cyan] cap sweep   [cyan]p[/cyan] prune images   (all gated)",
-            "[bold]Operate · Containers[/bold]",
+            "[bold]Run & Operate · Containers[/bold]",
             "  [cyan]l[/cyan] logs   [cyan]t[/cyan] top (read)   [cyan]s[/cyan] restart   [cyan]x[/cyan] stop   [cyan]X[/cyan] rm   (writes gated)",
-            "[bold]Operate · Doctor[/bold]",
+            "[bold]Run & Operate · Doctor[/bold]",
             "  read-only — health + diagnose-estate + diagnose-profile cards ([cyan]r[/cyan] refreshes)",
         ]
-        # Producer-only lane section — OMITTED on consumer (clean consumer help).
+        # Producer-only lane section — OMITTED on the lean surface (clean help).
         if producer:
             parts.append(self._LANE_SECTION.rstrip("\n"))
         parts.extend([
             "",
-            "[bold]Share back[/bold] (Run + Operate — lightweight, no surface switch)",
+            "[bold]Share back[/bold] (Run & Operate — lightweight, no surface switch)",
             "  [cyan]R[/cyan] rig report — paste-ready rig/bench snapshot (read · no network)",
-            "  [cyan]B[/cyan] submit bench — submit the latest benched result (Operate · gated · never auto)",
+            "  [cyan]B[/cyan] submit bench — submit the latest benched result (gated · never auto)",
             "  [cyan]![/cyan] report a problem — paste-ready issue from the failure context (read · surfaced at a failed serve)",
             "",
             "[bold]Safety — the reconcile gate[/bold]",
@@ -974,112 +973,11 @@ class ExplainScreen(ModalScreen):
         self.app.pop_screen()
 
 
-# ── Run · Bring-your-own ────────────────────────────────────────────────────
-
-
-class ByoPane(Container):
-    """Bring-your-own tab: real HF fit-check via pull.sh --dry-run --json."""
-
-    DEFAULT_CSS = """
-    ByoPane {
-        height: 1fr;
-        padding: 1 2;
-    }
-    ByoPane #byo-heading {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    ByoPane #byo-input-row {
-        height: 3;
-        margin-bottom: 1;
-    }
-    ByoPane #byo-url-input {
-        width: 1fr;
-    }
-    ByoPane #byo-profile-input {
-        width: 40;
-        margin-left: 1;
-    }
-    ByoPane #byo-profile-custom {
-        width: 40;
-        margin-left: 1;
-    }
-    ByoPane .profile-custom-hidden {
-        display: none;
-    }
-    ByoPane #byo-fit-btn {
-        width: 14;
-        margin-left: 1;
-    }
-    ByoPane #byo-result-card {
-        border: solid $primary;
-        padding: 1 2;
-        margin-top: 1;
-        height: auto;
-    }
-    ByoPane #byo-hint {
-        color: $text-muted;
-        margin-top: 1;
-    }
-    """
-
-    def compose(self) -> ComposeResult:
-        yield Label("Bring-your-own HF model", id="byo-heading")
-        with Horizontal(id="byo-input-row"):
-            yield Input(
-                placeholder="HuggingFace model slug — e.g. unsloth/Qwen3-27B-abliterated-GGUF",
-                id="byo-url-input",
-            )
-            # #6/A12 — a SELECT of (engine, topology) templates derived from the
-            # loaded registry variants (populated by set_profile_options after the
-            # catalog loads), defaulting to the rig's own topology.  The selected
-            # value is the SAME profile-like string byo_check consumes.
-            yield Select(
-                [("vllm/dual  ·  loading templates…", "vllm/dual")],
-                value="vllm/dual",
-                allow_blank=False,
-                id="byo-profile-input",
-            )
-            # FIX 2 (escape hatch) — a companion free-text override, hidden until
-            # the "✎ custom slug…" sentinel is chosen, so any non-curated registry
-            # slug is reachable (validated by byo_check's unknown-profile path).
-            yield Input(
-                placeholder="profile-like slug — e.g. ik-llama/iq4ks-mtp",
-                id="byo-profile-custom",
-                classes="profile-custom-hidden",
-            )
-            yield Button("Fit-check", id="byo-fit-btn", variant="primary")
-        yield Static(
-            "[dim]Enter a HuggingFace model slug (org/Model) + a profile-like slug, then Fit-check.\n"
-            "Runs pull.sh --dry-run (Path B — evaluates only, never downloads).[/dim]",
-            id="byo-result-card",
-        )
-        yield Label(
-            "[dim]Routes:  A = new curated profile   ·   B = serve-locally   ·   "
-            "C = reuse a sibling compose + swap weights\n"
-            "\\[O] ▸ Optimize for my card (v0.10.0 seam)\n"
-            "[dim](Promote to the catalog lives in the producer Bring & Validate "
-            "lane — c3 --contribute)[/dim][/dim]",
-            id="byo-hint",
-        )
-
-    def set_checking(self, repo: str) -> None:
-        self.query_one("#byo-result-card", Static).update(
-            f"[dim]Checking[/dim] [cyan]{repo}[/cyan] [dim](pull.sh --dry-run --json)…[/dim]"
-        )
-
-    def set_profile_options(
-        self, options: list[tuple[str, str]], default: Optional[str]
-    ) -> None:
-        """#6/A12 — fill the profile-template Select from the registry-derived
-        options + select the rig-topology default.  Cheap: a pure widget update
-        (no I/O)."""
-        _set_select_options(self.query_one("#byo-profile-input", Select), options, default)
-
-    def populate(self, res: ByoResult) -> None:
-        # The verdict-card render is shared with the producer lane's ① Bring stage
-        # (LaneBringPane) — see _byo_result_text (defined below near the lane panes).
-        self.query_one("#byo-result-card", Static).update(_byo_result_text(res))
+# Phase R-realign: the standalone Run · Bring-your-own tab (ByoPane) is REMOVED.
+# The producer lane's ① Bring (LaneBringPane, defined below) is now the SINGLE
+# bring-an-arbitrary-repo entry point.  The underlying ``byo_check`` data method +
+# the shared verdict renderer (_byo_result_text) + the curated profile dropdown
+# stay — ① Bring reuses them.
 
 
 # ── Confirm modal (used for serve + scene + container writes) ────────────────────
@@ -3160,7 +3058,7 @@ class UntestedComposePreviewScreen(ModalScreen):
 
 # ── Producer "Bring & Validate" lane stage panes (R3b-1) ──────────────────────────
 #
-# The producer lane (mode 2) presents the ADDING_MODELS stage machine as an
+# The producer lane (mode 1) presents the ADDING_MODELS stage machine as an
 # ORDERED, numbered pipeline: ① Bring → ② Serve → ③ Gate → ④ Measure → ⑤ Promote.
 # It reuses the existing TabbedContent pattern (lighter than a full wizard widget)
 # with numbered tab labels so it reads as an ordered pipeline.  ① Bring REUSES the
@@ -3169,14 +3067,15 @@ class UntestedComposePreviewScreen(ModalScreen):
 
 
 class LaneBringPane(Container):
-    """① Bring — the producer lane's own fit-check entry.
+    """① Bring — the producer lane's fit-check entry, and (since the 2-mode merge)
+    the SINGLE bring-an-arbitrary-repo entry point in the app.
 
     REUSES ``byo_check`` (pull.sh --dry-run --json → ByoResult: supported? fits?
-    the swap_path route) exactly like Run · BYO, but as the lane's first stage:
-    paste an HF repo / slug, Fit-check, read the route + sibling_slug + quant_match.
-    Distinct widget IDs from Run · ByoPane so both can coexist (the consumer
-    Run · BYO 'run-another' stays as-is; this is the producer lane's Bring entry).
-    The cached ``_last_byo`` it produces feeds ② Serve and ⑤ Promote."""
+    the swap_path route) as the lane's first stage: paste an HF repo / slug,
+    Fit-check, read the route + sibling_slug + quant_match.  (The standalone
+    Run · Bring-your-own tab + its ByoPane were removed in the merge — this pane's
+    widget IDs are the only fit-check widgets now.)  The cached ``_last_byo`` it
+    produces feeds ② Serve and ⑤ Promote."""
 
     DEFAULT_CSS = """
     LaneBringPane {
@@ -3476,16 +3375,23 @@ class LanePromotePane(Container):
 # ── Mode switcher (left rail) ─────────────────────────────────────────────────────
 
 
+# Phase R-realign (2-mode merge): the app serves BOTH consumers and producers,
+# and every producer is a consumer.  Mode 0 MERGES the old Run + Operate (Catalog
+# · Orchestration · Containers · Doctor in one TabbedContent); mode 1 is the
+# producer "Bring & Validate" lane.  BOTH modes are visible by DEFAULT (the "full"
+# surface); the LEAN surface hides mode 1 for a consumer who wants the minimal
+# rig view (the C toggle).
 MODES = [
-    ("Run", "1"),
-    ("Operate", "2"),
-    # R3b-1: mode 2 is the producer "Bring & Validate" lane (key 3, producer-only).
-    # The mode index stays 2 (NO renumber) — only the LABEL changed from "Validate".
-    ("Bring & Validate", "3"),
+    ("Run & Operate", "1"),
+    # Mode 1 is the producer "Bring & Validate" lane (key 2, producer-gated so the
+    # lean surface hides it).  Renumbered 2→1 in the 2-mode merge.
+    ("Bring & Validate", "2"),
 ]
 
-# Per-mode primary action (what ⏎ does), by mode index.
-PRIMARY_ACTIONS = ["Serve", "Switch scene", "Run stage"]
+# Per-mode primary action (what ⏎ does), by mode index.  Mode 0's ⏎ is
+# context-specific PER TAB (serve on Catalog, switch-scene on Orchestration, …);
+# "Serve" is the headline hint.
+PRIMARY_ACTIONS = ["Serve", "Run stage"]
 
 
 class RailStatus(Static):
@@ -3499,7 +3405,7 @@ class RailStatus(Static):
         "\n"
         "[dim]detecting…[/dim]\n"
         "\n"
-        "[dim]press 2 (Operate) to poll[/dim]"
+        "[dim]open the Orchestration tab to poll[/dim]"
     )
 
     def __init__(self, **kwargs):
@@ -3637,30 +3543,28 @@ class ModeSwitcher(Static):
     }
     """
 
-    def __init__(self, *, surface: str = "consumer", **kwargs):
+    def __init__(self, *, surface: str = "producer", **kwargs):
         super().__init__("", **kwargs)
         self._active = 0
-        # Surface-aware (R3a): the CONSUMER surface renders Run + Operate only;
-        # PRODUCER additionally renders Validate (the Bring & Validate lane, key
-        # 3).  Keys 1/2 = Run/Operate on both; key 3 is only meaningful on
-        # producer (gated by check_action's surface gate on consumer).
-        #
-        # R4: all THREE mode Labels are always composed; the consumer surface just
-        # HIDES the third (.mode-hidden) so the runtime Contribute toggle can show
-        # it again without an async re-mount (set_surface flips the class only).
-        self._surface = surface if surface in ("consumer", "producer") else "consumer"
+        # Surface-aware (2-mode merge — inverted default): the FULL/default
+        # ("producer") surface renders BOTH modes (Run & Operate + Bring &
+        # Validate); the LEAN ("consumer") surface renders only mode 0.  Both mode
+        # Labels are always composed; the lean surface just HIDES the producer-only
+        # second (.mode-hidden) so the runtime [C] lean toggle can show it again
+        # without an async re-mount (set_surface flips the class only).
+        self._surface = surface if surface in ("consumer", "producer") else "producer"
 
     @property
     def _modes(self) -> list[tuple[str, str]]:
-        """The modes VISIBLE for this surface — all three on producer, the first
-        two (Run + Operate) on consumer.  (All three Labels are always mounted;
-        this is the visible slice — see set_surface.)"""
-        return list(MODES) if self._surface == "producer" else list(MODES[:2])
+        """The modes VISIBLE for this surface — BOTH on the full/default surface,
+        only the merged Run & Operate on the lean surface.  (Both Labels are always
+        mounted; this is the visible slice — see set_surface.)"""
+        return list(MODES) if self._surface == "producer" else list(MODES[:1])
 
     def compose(self) -> ComposeResult:
         yield Label("Modes", classes="mode-title")
-        # Always compose all three mode Labels; hide the producer-only third on
-        # the consumer surface so the runtime toggle can reveal it class-only.
+        # Always compose BOTH mode Labels; hide the producer-only second on the
+        # lean surface so the runtime [C] toggle can reveal it class-only.
         for i, (name, digit) in enumerate(MODES):
             classes = "mode-item-active" if i == 0 else "mode-item"
             if i >= len(self._modes):
@@ -3693,14 +3597,14 @@ class ModeSwitcher(Static):
             pass
 
     def set_surface(self, surface: str) -> None:
-        """Re-render the rail for a runtime surface change (R4 Contribute door).
+        """Re-render the rail for a runtime surface change (the [C] lean toggle).
 
-        Consumer shows Run + Operate (2 items); producer additionally shows Bring
-        & Validate (3 items).  All three mode Labels are always mounted, so this
-        is a pure class flip — show/hide the producer-only third Label via
-        ``.mode-hidden`` (no async re-mount, which raced the pilot under the
-        headless harness)."""
-        new = surface if surface in ("consumer", "producer") else "consumer"
+        The full/default ("producer") surface shows BOTH modes; the lean
+        ("consumer") surface shows only the merged Run & Operate.  Both mode Labels
+        are always mounted, so this is a pure class flip — show/hide the
+        producer-only second Label via ``.mode-hidden`` (no async re-mount, which
+        raced the pilot under the headless harness)."""
+        new = surface if surface in ("consumer", "producer") else "producer"
         if new == self._surface:
             return
         self._surface = new
@@ -3826,35 +3730,35 @@ class FocusableFooter(Footer, can_focus_children=True):
 # the palette behaviour is consistent with the keyboard.
 _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     # Always-on navigation / global verbs.
-    ("mode_run", "Run mode", "Discover + serve models (Catalog · BYO)"),
-    ("mode_operate", "Operate mode", "Live estate · containers · Doctor"),
+    ("mode_run", "Run & Operate mode", "Catalog · Orchestration · Containers · Doctor"),
+    ("mode_operate", "Operate (Orchestration tab)", "Jump to the live estate in the merged mode"),
     ("mode_validate", "Bring & Validate mode", "Producer lane ① Bring → ⑤ Promote"),
-    ("toggle_contribute", "Toggle Contribute mode", "Consumer ↔ producer surface"),
+    ("toggle_contribute", "Toggle lean view", "Hide / restore the Bring & Validate mode"),
     ("toggle_rail", "Toggle left rail", "Collapse / restore Modes + Estate rail"),
     ("refresh", "Refresh", "Re-read the live data layer for the active mode"),
     ("help", "Help", "Show the keybindings + phase help overlay"),
-    # Run · Catalog.
+    # Run & Operate · Catalog tab.
     ("primary_action", "Serve selected / primary action", "⏎ — serve the selected slug (reconcile-gated)"),
-    ("explain", "Explain selected slug", "Run · Catalog — detail + cross-rig benchmarks"),
-    ("filter_catalog", "Filter catalog", "Run · Catalog — filter by slug / engine / status"),
-    ("set_default", "Set default", "Run · Catalog — pin the selected slug as model default"),
-    ("clear_default", "Clear default", "Run · Catalog — clear the model default pin"),
-    ("optimize_card", "Optimize for my card", "Run — v0.10.0 seam (not available yet)"),
-    # Operate · Orchestration / Containers / Doctor.
-    ("serving_stop", "Stop this model", "Operate — stop JUST the serving container (gated)"),
-    ("serving_restart", "Restart serving", "Operate — restart the serving container (gated)"),
-    ("serving_switch", "Switch model", "Operate — jump to Run · Catalog to pick another"),
-    ("estate_off", "Stop ALL (estate down)", "Operate — tear down the whole estate (gated)"),
-    ("power_cap_toggle", "Power cap on/off", "Operate — toggle the power cap (gated)"),
-    ("power_cap_sweep", "Power cap sweep", "Operate — sweep power caps (gated)"),
-    ("prune_images", "Prune images", "Operate — docker image prune (gated)"),
-    ("container_logs", "Container logs", "Operate · Containers — stream the selected container's logs"),
-    ("doctor_rerun", "Re-run Doctor", "Operate · Doctor — re-run the diagnose reads (read-only)"),
+    ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
+    ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
+    ("set_default", "Set default", "Catalog — pin the selected slug as model default"),
+    ("clear_default", "Clear default", "Catalog — clear the model default pin"),
+    ("optimize_card", "Optimize for my card", "Catalog — v0.10.0 seam (not available yet)"),
+    # Run & Operate · Orchestration / Containers / Doctor tabs.
+    ("serving_stop", "Stop this model", "Orchestration — stop JUST the serving container (gated)"),
+    ("serving_restart", "Restart serving", "Orchestration — restart the serving container (gated)"),
+    ("serving_switch", "Switch model", "Orchestration — flip to the Catalog tab to pick another"),
+    ("estate_off", "Stop ALL (estate down)", "Orchestration — tear down the whole estate (gated)"),
+    ("power_cap_toggle", "Power cap on/off", "Orchestration — toggle the power cap (gated)"),
+    ("power_cap_sweep", "Power cap sweep", "Orchestration — sweep power caps (gated)"),
+    ("prune_images", "Prune images", "Orchestration — docker image prune (gated)"),
+    ("container_logs", "Container logs", "Containers — stream the selected container's logs"),
+    ("doctor_rerun", "Re-run Doctor", "Doctor — re-run the diagnose reads (read-only)"),
     # Share-back (consumer-resident — NOT producer-gated).
     ("rig_report", "Rig report", "Paste-ready rig/bench snapshot (read · no network)"),
-    ("submit_bench", "Submit bench", "Operate — submit the latest benched result (gated · never auto)"),
+    ("submit_bench", "Submit bench", "Submit the latest benched result (gated · never auto)"),
     ("report_problem", "Report a problem", "Paste-ready issue from the failure context (read)"),
-    # Producer lane (Bring & Validate) — filtered out on the consumer surface.
+    # Producer lane (Bring & Validate) — filtered out on the lean surface.
     ("serve_untested", "Serve untested (② Serve)", "Producer lane — generate a compose + serve it untested"),
     ("full_report", "Full validation battery (③ Gate)", "Producer lane — report.sh --full (~43-min · gated)"),
     ("measure_vs_bar", "Compare vs catalog bar (④ Measure)", "Producer lane — read · flags protocol"),
@@ -3921,7 +3825,7 @@ class CockpitCommands(Provider):
 
 
 class CockpitApp(App):
-    """club3090 serve cockpit — all three modes (Run · Operate · Validate) wired to the live data layer."""
+    """club3090 serve cockpit — both modes (Run & Operate · Bring & Validate) wired to the live data layer."""
 
     TITLE = "club3090 cockpit"
     SUB_TITLE = "wired"
@@ -3943,9 +3847,9 @@ class CockpitApp(App):
         # Context-sensitive — check_action enables/shows them only in the right mode.
         Binding("slash", "filter_catalog", "Filter", show=False),
         Binding("e", "explain", "Explain", show=False),
-        Binding("1", "mode_run", "Run", show=True),
-        Binding("2", "mode_operate", "Operate", show=True),
-        Binding("3", "mode_validate", "Validate", show=True),
+        # 2-mode merge: [1] = merged Run & Operate, [2] = Bring & Validate lane.
+        Binding("1", "mode_run", "Run & Operate", show=True),
+        Binding("2", "mode_validate", "Bring & Validate", show=True),
         Binding("enter", "primary_action", "Select", show=True),
         # Catalog (Run) — default pin management (.env write, gated=no GPU).
         Binding("d", "set_default", "Set default", show=False),
@@ -3989,10 +3893,11 @@ class CockpitApp(App):
         Binding("R", "rig_report", "Rig report", show=False),
         Binding("B", "submit_bench", "Submit bench", show=False),
         Binding("exclamation_mark", "report_problem", "Report problem", show=False),
-        # Phase R / R4 — the in-app "Contribute" DOOR: toggle consumer ↔ producer
-        # at runtime + persist the choice for next launch.  Always available (it
-        # is the consumer's opt-in into producer mode) — NOT in _PRODUCER_ONLY.
-        Binding("C", "toggle_contribute", "Contribute mode", show=False),
+        # 2-mode merge: [C] = the LEAN-view toggle.  Both modes show by default;
+        # [C] hides the Bring & Validate mode (the minimal rig view) + back.
+        # Persists the choice for next launch.  Always available — NOT in
+        # _PRODUCER_ONLY (it's how a lean-view user restores the full view).
+        Binding("C", "toggle_contribute", "Lean view", show=False),
         # A4 — TARGETED serving verbs on Operate · Orchestration's #serving-line
         # (the most-looked-at panel).  Unlike [o] stop-ALL (which tears the whole
         # estate down, killing co-resident ComfyUI / studio), these act on JUST
@@ -4074,9 +3979,9 @@ class CockpitApp(App):
         # #8 — the left-rail toggle is a pure view control (no write, no mode
         # dependency), reachable everywhere.
         "toggle_rail",
-        # The Contribute door (R4) is the consumer's opt-in INTO producer mode,
-        # so it must stay reachable on the consumer surface — always-on, NOT in
-        # _PRODUCER_ONLY (a consumer that can't toggle could never contribute).
+        # The lean-view toggle [C] must stay reachable on BOTH surfaces — always-on,
+        # NOT in _PRODUCER_ONLY (a lean-view user that can't toggle could never
+        # restore the full view).
         "toggle_contribute",
     })
 
@@ -4084,71 +3989,73 @@ class CockpitApp(App):
     # modes: set of _active_mode integers.  subtabs: set of active tab IDs, or
     # None meaning "any sub-tab in those modes" (used for whole-mode keys).
     # The sub-tab cycle keys are handled separately below.
+    # Phase R-realign (2-mode merge): the OLD Operate mode (was 1) folded into the
+    # merged mode 0.  So every context key that used to gate to mode 1 now gates to
+    # mode 0 + its (still-present) Operate sub-tab; the Catalog keys gate to mode 0
+    # + tab-catalog so they don't leak into the Orchestration/Containers/Doctor
+    # tabs that now share the merged mode.  The producer lane (was 2) is now 1.
     _CONTEXT_KEYS: dict[str, tuple[set[int], Optional[set[str]]]] = {
-        # Run / Catalog only
-        "filter_catalog":   ({0}, {"tab-catalog"}),  # Run · Catalog
-        "explain":          ({0}, None),          # Run (any sub-tab — no-ops on BYO, harmless)
-        "set_default":      ({0}, None),          # Run · Catalog (guards inside action)
-        "clear_default":    ({0}, None),          # Run · Catalog
-        # R3b-1: [P] promote + [v] evaluate relocated OUT of consumer modes INTO
-        # the producer Bring & Validate lane (mode 2).  Both producer-gated.
-        "promote_catalog":  ({2}, None),          # Bring & Validate lane (⑤ Promote)
-        "evaluate_target":  ({2}, None),          # Bring & Validate lane (the c3t hook)
-        "serve_untested":   ({2}, {"tab-serve"}), # Bring & Validate lane (② Serve)
-        # R3b-2: [m] vs-bar on ④ Measure (tab-evidence); [F] full battery on
-        # ③ Gate (tab-run — the lane's gate stage hosts the heavy validation).
-        "measure_vs_bar":   ({2}, {"tab-evidence"}),
-        "full_report":      ({2}, {"tab-run"}),
-        "optimize_card":    ({0}, None),          # Run
-        # Operate · Orchestration
-        "estate_off":       ({1}, {"tab-orchestration"}),
-        "power_cap_toggle": ({1}, {"tab-orchestration"}),
-        "power_cap_sweep":  ({1}, {"tab-orchestration"}),
-        "prune_images":     ({1}, {"tab-orchestration"}),
-        # A4 — targeted serving verbs on the #serving-line (Operate · Orch).
-        "serving_stop":     ({1}, {"tab-orchestration"}),
-        "serving_restart":  ({1}, {"tab-orchestration"}),
-        "serving_switch":   ({1}, {"tab-orchestration"}),
-        # Operate · Doctor (#4 — re-run the READ-only diagnose reads on demand)
-        "doctor_rerun":     ({1}, {"tab-doctor"}),
-        # Operate · Containers
-        "container_logs":   ({1}, {"tab-containers"}),
-        # [s] restart only on Operate (any tab, action guards internally) +
-        # [s] submit on Validate·Evidence; no sub-tab constraint at this level.
-        "s_key":            ({1, 2}, None),  # Containers (restart) + Evidence (submit)
-        "container_stop":   ({1}, {"tab-containers"}),
-        "container_rm":     ({1}, {"tab-containers"}),
-        # [t] only has the Containers (docker top) role now — the Benchmarks tab
-        # and its sort-cycle are gone (folded into Run); not wired on Run rows.
-        "context_t":        ({1}, {"tab-containers"}),
+        # Merged mode 0 · Catalog tab
+        "filter_catalog":   ({0}, {"tab-catalog"}),  # Catalog
+        "explain":          ({0}, {"tab-catalog"}),  # Catalog (guards inside action)
+        "set_default":      ({0}, {"tab-catalog"}),  # Catalog
+        "clear_default":    ({0}, {"tab-catalog"}),  # Catalog
+        "optimize_card":    ({0}, {"tab-catalog"}),  # Catalog
+        # Producer Bring & Validate lane (mode 1 in the 2-mode merge).  Both
+        # producer-gated (hidden on the lean surface).
+        "promote_catalog":  ({1}, None),          # Bring & Validate lane (⑤ Promote)
+        "evaluate_target":  ({1}, None),          # Bring & Validate lane (the c3t hook)
+        "serve_untested":   ({1}, {"tab-serve"}), # Bring & Validate lane (② Serve)
+        # [m] vs-bar on ④ Measure (tab-evidence); [F] full battery on ③ Gate
+        # (tab-run — the lane's gate stage hosts the heavy validation).
+        "measure_vs_bar":   ({1}, {"tab-evidence"}),
+        "full_report":      ({1}, {"tab-run"}),
+        # Merged mode 0 · Orchestration tab
+        "estate_off":       ({0}, {"tab-orchestration"}),
+        "power_cap_toggle": ({0}, {"tab-orchestration"}),
+        "power_cap_sweep":  ({0}, {"tab-orchestration"}),
+        "prune_images":     ({0}, {"tab-orchestration"}),
+        # A4 — targeted serving verbs on the #serving-line (Orchestration).
+        "serving_stop":     ({0}, {"tab-orchestration"}),
+        "serving_restart":  ({0}, {"tab-orchestration"}),
+        "serving_switch":   ({0}, {"tab-orchestration"}),
+        # Merged mode 0 · Doctor tab (#4 — re-run the READ-only diagnose reads)
+        "doctor_rerun":     ({0}, {"tab-doctor"}),
+        # Merged mode 0 · Containers tab
+        "container_logs":   ({0}, {"tab-containers"}),
+        # [s] restart on Containers (mode 0, action guards internally on the tab) +
+        # [s] submit on the lane's ④ Measure (mode 1); no sub-tab constraint here.
+        "s_key":            ({0, 1}, None),  # Containers (restart) + Evidence (submit)
+        "container_stop":   ({0}, {"tab-containers"}),
+        "container_rm":     ({0}, {"tab-containers"}),
+        # [t] = docker top on the Containers tab.
+        "context_t":        ({0}, {"tab-containers"}),
         # Phase R / R2b — consumer share-back (CONSUMER-resident — NOT producer-
-        # gated; absent from _PRODUCER_ONLY so they work on the default surface):
-        #   rig_report   — Run + Operate (a rig/bench snapshot is meaningful from
-        #                  either the catalog or the live estate, any sub-tab).
-        #   submit_bench — Operate only (you submit measured results once a bench
-        #                  exists; Operate is where the live estate / evidence is).
-        #   report_problem — Run + Operate (surfaced AT a failed serve in Run, and
-        #                  reachable while operating; any sub-tab).
-        "rig_report":       ({0, 1}, None),
-        "submit_bench":     ({1}, None),
-        "report_problem":   ({0, 1}, None),
+        # gated; absent from _PRODUCER_ONLY so they work on the lean surface too).
+        # All three live in the merged mode 0 (the whole consumer rig surface):
+        #   rig_report     — any merged-mode tab (catalog OR the live estate).
+        #   submit_bench   — merged mode (you submit measured results once a bench
+        #                    exists; the live estate / evidence is here).
+        #   report_problem — any merged-mode tab (surfaced AT a failed serve in
+        #                    Catalog, and reachable while operating).
+        "rig_report":       ({0}, None),
+        "submit_bench":     ({0}, None),
+        "report_problem":   ({0}, None),
     }
 
-    # Producer-only actions — hidden on the consumer surface (R3a makes the
-    # consumer/producer split REAL).  The gate fires in check_action BEFORE
-    # _ALWAYS_ON, so listing ``mode_validate`` here hides the ENTIRE producer
-    # "Bring & Validate" lane (its mode switch + ladder + evidence) on the
-    # consumer surface; the producer surface (``c3 --contribute``) falls through
-    # to the normal context result.  ``promote_catalog`` ([P]) is a producer
-    # activity still surfaced in Run · Catalog today — hidden on consumer, still
-    # reachable on producer (it relocates into the lane in R3b).
+    # Producer-only actions — hidden on the LEAN surface (the 2-mode merge keeps
+    # the gate machinery, just inverts the default: the FULL/default surface shows
+    # everything, the lean surface hides the producer "Bring & Validate" lane).
+    # The gate fires in check_action BEFORE _ALWAYS_ON, so listing ``mode_validate``
+    # here hides the ENTIRE producer lane (its mode switch + ladder + evidence) on
+    # the lean surface; the default/full surface falls through to the normal
+    # context result.
     #   NOT gated: the consumer share-back (rig_report / submit_bench /
-    #   report_problem) is CONSUMER-resident and stays reachable; evaluate_target
-    #   stays in Operate for now (R3b relocates it).
-    #   R3b-1: [v] evaluate_target + [serve_untested] (② Serve) joined the lane,
-    #   so they are producer-only too ([P] promote was already here).
-    #   R3b-2: [m] measure_vs_bar (④ Measure, a READ) + [F] full_report (③ Gate,
-    #   the ~43-min battery) are producer-lane actions too.
+    #   report_problem) is consumer-resident and stays reachable on the lean
+    #   surface too.
+    #   Lane-resident producer verbs: [v] evaluate_target + [serve_untested]
+    #   (② Serve) + [P] promote_catalog (⑤ Promote) + [m] measure_vs_bar
+    #   (④ Measure) + [F] full_report (③ Gate, the ~43-min battery).
     _PRODUCER_ONLY: frozenset[str] = frozenset({
         "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
         "measure_vs_bar", "full_report",
@@ -4191,7 +4098,7 @@ class CockpitApp(App):
         # When ANY text Input is focused, hide the context-key bindings from the
         # footer.  The Input's own _on_key stops printable characters before they
         # reach app bindings, but we hide them for footer accuracy (the filter +
-        # the BYO / lane repo inputs share letters with hotkeys q/e/s/w/c/p/o, so
+        # the lane repo inputs share letters with hotkeys q/e/s/w/c/p/o, so
         # a stale `e Explain` hint while typing a query is misleading).
         #
         # R4 (folds R3b-1 LOW item b): reverted to the blanket "any Input focused"
@@ -4209,9 +4116,10 @@ class CockpitApp(App):
             if action in ("prev_subtab", "next_subtab"):
                 return False
 
-        # Sub-tab cycle keys: only meaningful in modes with sub-tabs (0, 1, 2).
+        # Sub-tab cycle keys: both modes have sub-tabs (merged 0 = 4 tabs; lane 1
+        # = the ①→⑤ stages).
         if action in ("prev_subtab", "next_subtab"):
-            return self._active_mode in (0, 1, 2)
+            return self._active_mode in (0, 1)
 
         # Context keys.
         if action in self._CONTEXT_KEYS:
@@ -4229,9 +4137,8 @@ class CockpitApp(App):
     def _current_subtab(self) -> str:
         """Return the active tab ID for the current mode's TabbedContent, or ''."""
         tab_ids = {
-            0: "#run-tabs",
-            1: "#operate-tabs",
-            2: "#validate-tabs",
+            0: "#operate-tabs",   # merged Run & Operate (Catalog · Orch · … · Doctor)
+            1: "#validate-tabs",  # Bring & Validate lane
         }
         tc_id = tab_ids.get(self._active_mode, "")
         if not tc_id:
@@ -4242,18 +4149,23 @@ class CockpitApp(App):
             return ""
 
     def __init__(self, repo_root: Path, *, data: Optional[CockpitData] = None,
-                 surface: str = "consumer", **kwargs):
+                 surface: str = "producer", **kwargs):
         super().__init__(**kwargs)
         self._repo_root = repo_root
-        # Audience surface (R0): "consumer" (default — Run + Operate) or "producer"
-        # (+ Bring & Validate, R3). Gates producer-only actions/modes via
-        # _PRODUCER_ONLY in check_action, and surfaces a CONTRIBUTE indicator.
-        self._surface = surface if surface in ("consumer", "producer") else "consumer"
-        if self._surface == "producer":
-            self.sub_title = f"{self.SUB_TITLE} · ⚒ CONTRIBUTE"
+        # Audience surface (2-mode merge — surface INVERSION).  The app serves BOTH
+        # consumers and producers; every producer is a consumer; so BOTH modes show
+        # by DEFAULT.  Internal values are kept ("producer"/"consumer") to reuse the
+        # existing _PRODUCER_ONLY gate machinery, but the MEANING is inverted:
+        #   "producer" = FULL  (default — Run & Operate + Bring & Validate, all verbs)
+        #   "consumer" = LEAN  (the minimal rig view — hides Bring & Validate + the
+        #                       producer-only verbs; opt-in via the [C] lean toggle)
+        # The lean surface carries a sub-title indicator; full is the unmarked norm.
+        self._surface = surface if surface in ("consumer", "producer") else "producer"
+        if self._surface == "consumer":
+            self.sub_title = f"{self.SUB_TITLE} · ▸ LEAN"
         # Injectable service layer — defaults to the real (live-read) impl.
         self._data: CockpitData = data or CockpitData(repo_root)
-        self._active_mode = 0  # 0=Run 1=Operate 2=Validate
+        self._active_mode = 0  # 0=Run & Operate (merged) · 1=Bring & Validate
         # Cache the last-loaded variants so detect/match + containers can match
         # running engines back to registry slugs.
         self._variants: list[VariantRow] = []
@@ -4350,32 +4262,40 @@ class CockpitApp(App):
                 # column"), BELOW RailStatus — not inside the Orchestration sub-tab.
                 yield HostStatsRail(id="host-stats-rail")
             with Container(id="content-area"):
-                # Mode 0 — Run (Discover + Serve + Benchmarks folded in)
+                # Mode 0 — Run & Operate (MERGED).  ONE TabbedContent (#operate-tabs)
+                # hosts the consumer's whole rig surface in four tabs, in order:
+                #   Catalog       — discover + serve (was Run · Catalog)
+                #   Orchestration — live estate / scene switch (was Operate)
+                #   Containers    — docker drill (was Operate)
+                #   Doctor        — health + diagnose reads (was Operate)
+                # Serving from Catalog streams into the re-homed LivePane below the
+                # tabs, and the user flips to the Orchestration tab IN THE SAME MODE
+                # to watch the estate.  (The panel keeps the id #panel-run — it is
+                # already the first + active panel and already hosts #serve-live —
+                # and the TabbedContent keeps the id #operate-tabs so the ~30
+                # Operate write-gates / focus-map entries keep resolving.)
                 with Container(id="panel-run", classes="mode-panel active"):
-                    with TabbedContent(id="run-tabs"):
+                    with TabbedContent(id="operate-tabs"):
                         with TabPane("Catalog", id="tab-catalog"):
                             yield CatalogPane(id="catalog-pane")
-                        with TabPane("Bring-your-own", id="tab-byo"):
-                            yield ByoPane(id="byo-panel")
-                    # Transient boot-output pane — re-homed from the retired Serve
-                    # mode.  Hidden until ⏎ on a Catalog row stages a serve and the
-                    # reconcile-gated confirm commits; then the boot log streams here.
-                    yield LivePane(id="serve-live")
-
-                # Mode 1 — Operate (Orchestration + Containers + Doctor)
-                with Container(id="panel-operate", classes="mode-panel"):
-                    with TabbedContent(id="operate-tabs"):
                         with TabPane("Orchestration", id="tab-orchestration"):
                             yield OperateOrchPane(id="operate-orch-pane")
                         with TabPane("Containers", id="tab-containers"):
                             yield OperateContainersPane(id="operate-containers-pane")
                         with TabPane("Doctor", id="tab-doctor"):
                             yield DoctorPane(id="doctor-pane")
+                    # Transient boot-output pane — re-homed here so a serve staged
+                    # from the Catalog tab streams its boot log below the tabs, and
+                    # the user can flip to Orchestration (SAME mode) to watch.
+                    # Hidden until ⏎ on a Catalog row stages a serve and the
+                    # reconcile-gated confirm commits.
+                    yield LivePane(id="serve-live")
 
-                # Mode 2 — Bring & Validate (producer lane, R3b-1).  Presented as
-                # an ORDERED, numbered pipeline reusing the TabbedContent pattern:
+                # Mode 1 — Bring & Validate (producer lane).  Renumbered 2→1 in the
+                # 2-mode merge.  An ORDERED, numbered pipeline reusing the
+                # TabbedContent pattern:
                 #   ① Bring  → LaneBringPane (reuses byo_check fit-check)
-                #   ② Serve  → LaneServePane (NEW — generate compose + serve untested)
+                #   ② Serve  → LaneServePane (generate compose + serve untested)
                 #   ③ Gate   → ValidateRunPane (the existing 9-step ladder)
                 #   ④ Measure→ ValidateEvidencePane (the existing evidence list)
                 #   ⑤ Promote→ LanePromotePane (hosts the [P] promote action)
@@ -4402,9 +4322,11 @@ class CockpitApp(App):
     def on_mount(self) -> None:
         self.load_catalog()
         # A3: ONE periodic refresh interval, created once.  It is GATED at fire
-        # time (_periodic_estate_refresh) to Operate (_active_mode == 1) AND the
-        # main screen (no modal) — so it never churns subprocesses in Run /
-        # Validate or behind a confirm modal.  set_interval is the only timer.
+        # time (_periodic_estate_refresh) to the MERGED Run & Operate mode
+        # (_active_mode == 0 — the live estate tabs + host-stats rail + catalog
+        # live-VRAM all live here now) AND the main screen (no modal) — so it never
+        # churns subprocesses behind the Bring & Validate lane or a confirm modal.
+        # set_interval is the only timer.
         self._estate_interval = self.set_interval(
             4.0, self._periodic_estate_refresh, pause=False
         )
@@ -4413,7 +4335,7 @@ class CockpitApp(App):
         # This SEPARATE, more-frequent timer re-renders ONLY the rail's as-of line
         # from the CACHED last EstateState (a pure read — NO subprocess), so the
         # "Ns/Nm ago" branches actually surface between/behind polls (e.g. when a
-        # poll is skipped behind a modal).  Same Operate-only gating as the poll.
+        # poll is skipped behind a modal).  Same merged-mode gating as the poll.
         self._asof_interval = self.set_interval(
             1.0, self._refresh_rail_as_of, pause=False
         )
@@ -4421,12 +4343,13 @@ class CockpitApp(App):
     def _refresh_rail_as_of(self) -> None:
         """A3: re-stamp the rail's freshness line from CACHED state — no poll.
 
-        Gated to Operate + the main screen (same as the periodic poll) and a PURE
-        read of self._last_estate_state, so it never spawns a subprocess and never
-        runs outside the live panel.  This is what makes _estate_as_of()'s
-        "Ns/Nm ago" branches reachable (the full poll resets the clock every tick,
-        so on its own the rail would read 'just now' forever)."""
-        if self._active_mode != 1:
+        Gated to the merged Run & Operate mode + the main screen (same as the
+        periodic poll) and a PURE read of self._last_estate_state, so it never
+        spawns a subprocess and never runs outside the live panel.  This is what
+        makes _estate_as_of()'s "Ns/Nm ago" branches reachable (the full poll
+        resets the clock every tick, so on its own the rail would read 'just now'
+        forever)."""
+        if self._active_mode != 0:
             return
         try:
             if len(self.screen_stack) > 1:
@@ -4444,10 +4367,12 @@ class CockpitApp(App):
             pass
 
     def _periodic_estate_refresh(self) -> None:
-        """A3: the gated periodic poll.  Fires ONLY while the user is in Operate
-        and looking at the main screen — otherwise it's a no-op (no read churn
-        when the live panel isn't shown)."""
-        if self._active_mode != 1:
+        """A3: the gated periodic poll.  Fires ONLY while the user is in the merged
+        Run & Operate mode and looking at the main screen — otherwise it's a no-op
+        (no read churn behind the Bring & Validate lane or a modal).  The live
+        estate tabs + host-stats rail + catalog live-VRAM all live in this mode now,
+        so firing across the whole merged mode keeps them all fresh."""
+        if self._active_mode != 0:
             return
         # Don't poll behind a modal (confirm gate / help / explain) — the live
         # panel isn't visible and a re-poll could race the gate's own reads.
@@ -4530,8 +4455,9 @@ class CockpitApp(App):
 
     def _refresh_profile_templates(self, *, reapply_default: bool = False) -> None:
         """#6/A12 — (re)derive the profile-template options from the loaded variants
-        and push them into both profile-template Selects (Run · BYO + ① Bring),
-        defaulting to the rig's own topology.
+        and push them into the producer lane's ① Bring profile-template Select,
+        defaulting to the rig's own topology.  (The standalone Run · BYO pane was
+        removed in the 2-mode merge — ① Bring is the single bring-a-repo entry.)
 
         The default is applied ONCE (first time options become available, or when
         ``reapply_default`` forces a re-default after the estate poll first learns
@@ -4561,14 +4487,12 @@ class CockpitApp(App):
         )
         if apply_default:
             self._last_applied_profile_default = default
-        for pane_id, cls, setter in (
-            ("#byo-panel", ByoPane, "set_profile_options"),
-            ("#lane-bring-pane", LaneBringPane, "set_profile_options"),
-        ):
-            try:
-                getattr(self.query_one(pane_id, cls), setter)(select_opts, default)
-            except Exception:
-                pass
+        try:
+            self.query_one("#lane-bring-pane", LaneBringPane).set_profile_options(
+                select_opts, default
+            )
+        except Exception:
+            pass
         if apply_default:
             self._profile_default_applied = True
 
@@ -4775,11 +4699,12 @@ class CockpitApp(App):
         # GPU-card paint carries BOTH the cap note and the "held by:" line (both
         # re-render the cards; telemetry runs last so it has the cap map too).  All
         # reads are batched in ONE estate_telemetry() call — no per-tick storm.
-        # Confined to Operate (mode 1, same guard as the adjacent load_doctor read):
-        # the full host-telemetry battery (df, meminfo, 2× nvidia-smi, docker ps,
-        # per-pid cgroup cats) renders to the #operate-orch-pane, which is hidden in
-        # mode-2 (Bring & Validate) — no point firing it there.
-        if self._active_mode == 1:
+        # Confined to the merged Run & Operate mode (mode 0, same guard as the
+        # adjacent load_doctor read): the full host-telemetry battery (df, meminfo,
+        # 2× nvidia-smi, docker ps, per-pid cgroup cats) renders to the
+        # #operate-orch-pane + #host-stats-rail, both of which are hidden behind the
+        # Bring & Validate lane (mode 1) — no point firing it there.
+        if self._active_mode == 0:
             try:
                 tel = await self._data.estate_telemetry()
                 # FIX 3 — disk + RAM bars render into the LEFT RAIL (estate column),
@@ -4789,13 +4714,14 @@ class CockpitApp(App):
                 self.query_one("#operate-orch-pane", OperateOrchPane).populate_telemetry(tel)
             except Exception:
                 pass
-        # Doctor lives in Operate (R2a) and its profile-triage consumes the
-        # _target_slug/_target_url THIS poll just captured — so chain the doctor
-        # read here rather than racing it as a sibling worker off the mode switch
-        # (which read _target_slug before this wrote it → empty profile card on
-        # first entry). Guarded to Operate; this also means action_refresh ([r],
-        # which re-runs load_estate) now refreshes the Doctor cards too.
-        if self._active_mode == 1:
+        # Doctor lives in the merged Run & Operate mode (the Doctor tab) and its
+        # profile-triage consumes the _target_slug/_target_url THIS poll just
+        # captured — so chain the doctor read here rather than racing it as a
+        # sibling worker off the mode switch (which read _target_slug before this
+        # wrote it → empty profile card on first entry). Guarded to mode 0; this
+        # also means action_refresh ([r], which re-runs load_estate) refreshes the
+        # Doctor cards too.
+        if self._active_mode == 0:
             self.load_doctor()
 
     # ── Validate-mode loaders ──────────────────────────────────────────────────────
@@ -4839,15 +4765,10 @@ class CockpitApp(App):
 
     @work(exclusive=True, group="byo")
     async def run_byo_check(self, repo: str, profile_like: str) -> None:
-        # The fit-check can be triggered from EITHER Run · BYO (consumer) OR the
-        # producer lane's ① Bring stage; render the verdict into whichever panes
-        # exist (both share byo_check + the verdict text).  R3b-1.
-        run_pane = lane_pane = None
-        try:
-            run_pane = self.query_one("#byo-panel", ByoPane)
-            run_pane.set_checking(repo)
-        except Exception:
-            run_pane = None
+        # The fit-check is the producer lane's ① Bring stage (the standalone Run ·
+        # BYO tab was removed in the 2-mode merge).  Render the verdict into the
+        # lane pane via the shared byo_check + verdict text.
+        lane_pane = None
         try:
             lane_pane = self.query_one("#lane-bring-pane", LaneBringPane)
             lane_pane.set_checking(repo)
@@ -4866,8 +4787,6 @@ class CockpitApp(App):
                 error=f"unknown profile {profile_like} — known: {shown}",
             )
             self._last_byo = res
-            if run_pane is not None:
-                run_pane.populate(res)
             if lane_pane is not None:
                 lane_pane.populate(res)
             # N9 — a failed re-Bring must clear any STALE "● armed …" left by a
@@ -4882,8 +4801,6 @@ class CockpitApp(App):
         res = await self._data.byo_check(repo, profile_like)
         # Cache the arch facts for the lane ② Serve + the Promote scaffold (Phase 5).
         self._last_byo = res
-        if run_pane is not None:
-            run_pane.populate(res)
         if lane_pane is not None:
             lane_pane.populate(res)
         # N9 — carry the fit-check result forward: pre-arm ② Serve with the
@@ -5274,7 +5191,10 @@ class CockpitApp(App):
     # ── Mode switching ───────────────────────────────────────────────────────────────
 
     def _switch_mode(self, index: int) -> None:
-        panel_ids = ["panel-run", "panel-operate", "panel-validate"]
+        # 2-mode merge: mode 0 = merged Run & Operate (#panel-run), mode 1 = the
+        # Bring & Validate lane (#panel-validate).  #panel-operate is gone (its
+        # tabs folded into #panel-run).
+        panel_ids = ["panel-run", "panel-validate"]
         for i, pid in enumerate(panel_ids):
             try:
                 panel = self.query_one(f"#{pid}")
@@ -5294,19 +5214,19 @@ class CockpitApp(App):
         # Move focus to the mode's primary interactive widget so context
         # keys and ⏎ act on the right thing immediately.
         self._focus_mode_primary(index)
-        # Operate is live — poll the estate on entry.  load_estate chains the
-        # Doctor read at its END (Doctor lives in Operate as of R2a, and its
-        # profile-triage consumes the target the poll captures — so it must run
-        # AFTER the poll, not race it as a sibling worker).
-        if index == 1:
+        # The merged Run & Operate mode hosts the live estate (Orchestration /
+        # Containers / Doctor tabs) — poll the estate on entry.  load_estate chains
+        # the Doctor read at its END (its profile-triage consumes the target the
+        # poll captures, so it must run AFTER the poll, not race it).
+        if index == 0:
             self.load_estate()
         # Bring & Validate lane is live too — load the evidence read AND prime the
-        # live target (R3b-1 fix): [v] Evaluate consumes _target_obj, which only
-        # load_estate writes.  Without this, entering the lane directly (key 3,
-        # never visiting Operate) leaves _target_obj=None → "nothing to evaluate"
-        # even with a model live.  load_estate best-effort-guards every Operate
-        # pane query_one, so it is safe to call when those panes aren't mounted.
-        elif index == 2:
+        # live target: [v] Evaluate consumes _target_obj, which only load_estate
+        # writes.  Without this, entering the lane directly (key 2) leaves
+        # _target_obj=None → "nothing to evaluate" even with a model live.
+        # load_estate best-effort-guards every merged-mode pane query_one, so it is
+        # safe to call when those panes aren't shown.
+        elif index == 1:
             self._load_validate()
             self.load_estate()
 
@@ -5318,25 +5238,26 @@ class CockpitApp(App):
         are enqueued during mount) — ensuring mode-switch focus wins."""
         def _do() -> None:
             try:
-                if index == 0:  # Run — catalog table
-                    self.query_one("#catalog-table", DataTable).focus()
-                elif index == 1:  # Operate — focus the active tab's table; Doctor
+                if index == 0:  # merged Run & Operate — focus the ACTIVE tab's
+                    # primary table (Catalog / Orchestration / Containers).  Doctor
                     # is read-only with no focusable table, so leave focus unset
-                    # there rather than grabbing the hidden Orchestration table.
+                    # there rather than grabbing a hidden table.
                     try:
                         tc = self.query_one("#operate-tabs", TabbedContent)
-                        if tc.active == "tab-containers":
+                        if tc.active == "tab-catalog":
+                            self.query_one("#catalog-table", DataTable).focus()
+                        elif tc.active == "tab-containers":
                             self.query_one("#containers-table", DataTable).focus()
                         elif tc.active == "tab-orchestration":
                             self.query_one("#scene-table", DataTable).focus()
                     except Exception:
                         pass
-                elif index == 2:  # Bring & Validate lane — focus the active stage's
+                elif index == 1:  # Bring & Validate lane — focus the active stage's
                     # primary DATA TABLE (③ Gate ladder / ④ Measure list).  ① Bring /
                     # ② Serve / ⑤ Promote have no focusable table (① Bring's only
                     # focusable is an Input, which would swallow the global digit /
                     # bracket keys), so leave focus on the tab bar there — matching
-                    # how Doctor (read-only) leaves focus unset — so 1/2/3 + [ ]
+                    # how Doctor (read-only) leaves focus unset — so 1/2 + [ ]
                     # still route to the app.
                     try:
                         tc = self.query_one("#validate-tabs", TabbedContent)
@@ -5360,47 +5281,63 @@ class CockpitApp(App):
     # ── Actions ──────────────────────────────────────────────────────────────────────
 
     def action_mode_run(self) -> None:
+        # Mode 0 is the MERGED Run & Operate (Catalog · Orchestration · Containers
+        # · Doctor in one TabbedContent).
         self._switch_mode(0)
 
     def action_mode_operate(self) -> None:
-        self._switch_mode(1)
+        # 2-mode merge: Operate folded into the merged mode 0.  Kept as a harmless
+        # alias (the palette "Operate mode" command + any edge reference) — lands on
+        # the merged mode, then jumps to the Orchestration tab so the verb still
+        # means "show me the live estate".
+        self._switch_mode(0)
+        try:
+            self.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
+        except Exception:
+            pass
 
     def action_mode_validate(self) -> None:
-        # Belt-and-suspenders surface guard (R3a): Validate is the producer
-        # Bring & Validate lane.  The binding is already gated by check_action's
-        # surface gate, but guard the action too so no programmatic / edge path
-        # can land a consumer in the producer mode.
+        # Belt-and-suspenders surface guard: Bring & Validate is the producer lane,
+        # hidden on the LEAN surface.  The binding is already gated by check_action's
+        # surface gate, but guard the action too so no programmatic / edge path can
+        # land a lean-surface user in the producer mode.
         if self._surface != "producer":
             return
-        self._switch_mode(2)
+        self._switch_mode(1)
 
     def action_toggle_contribute(self) -> None:
-        """The in-app Contribute DOOR (R4): toggle consumer ↔ producer at runtime
-        and persist the choice for next launch.
+        """[C] — the LEAN-view toggle (surface inversion).
+
+        Both modes show by DEFAULT (the full/"producer" surface).  This toggle
+        flips to a LEAN view ("consumer" surface) that HIDES the Bring & Validate
+        mode + the producer-only verbs, for a consumer who wants the minimal rig
+        view — and back.  The split gates the producer ENGINE, never the consumer
+        share-back (rig report / submit bench / report problem stay reachable lean).
 
         On toggle we (1) flip self._surface, (2) re-render the ModeSwitcher so it
-        shows 2↔3 modes (set_surface), (3) refresh_bindings() so the
-        _PRODUCER_ONLY actions gate/ungate immediately, (4) persist via
-        save_surface_setting so resolve_surface picks it up next launch, and (5)
-        notify the new mode.  The Bring & Validate lane panel is always mounted
-        (gated by check_action, not conditionally composed), so there is nothing
-        to mount/unmount — only the gating + the rail change.
+        shows 1↔2 modes (set_surface), (3) refresh_bindings() so the _PRODUCER_ONLY
+        actions gate/ungate immediately, (4) persist via save_surface_setting so
+        resolve_surface picks it up next launch, and (5) notify the new view.  The
+        Bring & Validate lane panel is always mounted (gated by check_action, not
+        conditionally composed), so there is nothing to mount/unmount — only the
+        gating + the rail change.
 
-        EDGE: toggling producer → consumer while the user is IN the producer lane
-        (mode 2, now hidden) would strand them, so we first switch them back to a
-        consumer-visible mode (Run).  Toggling consumer → producer from Run/Operate
-        just unlocks mode 2 — no forced switch."""
+        EDGE: switching to LEAN while the user is IN the now-hidden Bring & Validate
+        mode (mode 1) would strand them, so we first switch them to the merged mode
+        0.  Going back to full from the merged mode just re-reveals mode 1 — no
+        forced switch."""
         new_surface = "consumer" if self._surface == "producer" else "producer"
-        # EDGE: leaving producer while stranded in the now-hidden lane → Run.
-        if new_surface == "consumer" and self._active_mode == 2:
+        lean = new_surface == "consumer"
+        # EDGE: going lean while stranded in the now-hidden lane → merged mode 0.
+        if lean and self._active_mode == 1:
             self._switch_mode(0)
         self._surface = new_surface
-        # Keep the CONTRIBUTE sub-title indicator in sync with the live surface.
-        if new_surface == "producer":
-            self.sub_title = f"{self.SUB_TITLE} · ⚒ CONTRIBUTE"
+        # The LEAN view carries a sub-title indicator; the full view is unmarked.
+        if lean:
+            self.sub_title = f"{self.SUB_TITLE} · ▸ LEAN"
         else:
             self.sub_title = self.SUB_TITLE
-        # Re-render the rail (show/hide mode 2 — a pure .mode-hidden class flip),
+        # Re-render the rail (show/hide mode 1 — a pure .mode-hidden class flip),
         # then re-assert the active highlight on the still-valid current mode
         # (defensive/idempotent — set_surface doesn't touch the active index).
         try:
@@ -5414,14 +5351,18 @@ class CockpitApp(App):
         # Persist for next launch (test-injectable via C3_CONFIG_DIR).
         from .__main__ import save_surface_setting
         save_surface_setting(new_surface)
-        if new_surface == "producer":
+        if lean:
             self.notify(
-                "⚒ Contributor mode — Bring & Validate unlocked",
-                title="Contribute",
+                "▸ Lean view — Bring & Validate hidden (press C to restore)",
+                title="Lean view",
                 timeout=4,
             )
         else:
-            self.notify("Consumer mode", title="Contribute", timeout=3)
+            self.notify(
+                "Full view — Bring & Validate restored",
+                title="Lean view",
+                timeout=3,
+            )
 
     def action_toggle_rail(self) -> None:
         """[.] — collapse / restore the left rail (Modes + Estate).
@@ -5430,7 +5371,7 @@ class CockpitApp(App):
         shown, the rail returns.  This is a pure view toggle — it never touches
         the active mode, the surface, or any write.  We must NOT strand focus:
         the rail's only focusable child is the ModeSwitcher (a Static — not
-        focusable), and the mode keys 1/2/3 are app-level BINDINGS (not widget
+        focusable), and the mode keys 1/2 are app-level BINDINGS (not widget
         focus dependent), so hiding the rail can't break mode switching.  But if
         focus happened to land inside the rail subtree we move it back to the
         active mode's primary widget so a hidden-but-focused widget can't swallow
@@ -5458,27 +5399,31 @@ class CockpitApp(App):
             rail.remove_class("rail-hidden")
 
     def action_refresh(self) -> None:
-        """Re-read the live data layer for the active mode."""
-        if self._active_mode == 1:
+        """Re-read the live data layer for the active mode.
+
+        Merged mode 0: re-poll the live estate (feeds the rail + the Orchestration
+        / Containers / Doctor tabs + the catalog's live-VRAM column), AND re-read
+        the catalog when the Catalog tab is active.  Mode 1 (lane): re-read the
+        evidence + re-prime the live target so [v] Evaluate stays wired."""
+        if self._active_mode == 0:
             self.load_estate(explicit_refresh=True)
-        elif self._active_mode == 2:
+            if self._current_subtab() == "tab-catalog":
+                try:
+                    self.query_one("#catalog-pane", CatalogPane).query_one(
+                        "#catalog-status", Label
+                    ).update("Refreshing catalog…")
+                except Exception:
+                    pass
+                self.load_catalog()
+        elif self._active_mode == 1:
             self._load_validate()
-            # R3b-1: re-prime the live target so [v] Evaluate stays wired to the
+            # Re-prime the live target so [v] Evaluate stays wired to the
             # currently-serving model on a lane refresh (mirrors _switch_mode).
             self.load_estate(explicit_refresh=True)
-        else:
-            try:
-                self.query_one("#catalog-pane", CatalogPane).query_one(
-                    "#catalog-status", Label
-                ).update("Refreshing catalog…")
-            except Exception:
-                pass
-            self.load_catalog()
 
     def action_filter_catalog(self) -> None:
-        """[/] filters the Run catalog (the Benchmarks tab — and its own filter —
-        was folded into Run · Catalog / explain)."""
-        if self._active_mode == 0:
+        """[/] filters the catalog (merged mode 0 · Catalog tab)."""
+        if self._active_mode == 0 and self._current_subtab() == "tab-catalog":
             try:
                 self.query_one("#catalog-pane", CatalogPane).toggle_filter()
             except Exception:
@@ -5497,8 +5442,9 @@ class CockpitApp(App):
             return ""
 
     def action_explain(self) -> None:
-        """Open the explain detail modal for the selected catalog slug."""
-        if self._active_mode != 0:
+        """Open the explain detail modal for the selected catalog slug (merged
+        mode 0 · Catalog tab)."""
+        if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
             return
         try:
             entry = self.query_one("#catalog-pane", CatalogPane).selected_entry()
@@ -5511,12 +5457,19 @@ class CockpitApp(App):
         self.push_screen(ExplainScreen(entry.slug, model=entry.model, engine=entry.engine))
 
     def action_primary_action(self) -> None:
-        """⏎ — context-specific per mode."""
+        """⏎ — context-specific per mode AND (in the merged mode 0) per tab.
+
+        Merged mode 0:  Catalog → serve the selected slug (reconcile-gated);
+        Orchestration → switch to the selected scene (confirm-gated); Containers /
+        Doctor have no ⏎ primary (their verbs are explicit keys).
+        Mode 1 (lane):  per-stage (① Bring fit-check … ⑤ Promote scaffold)."""
         if self._active_mode == 0:
-            self._run_primary()
+            tab = self._current_subtab()
+            if tab == "tab-catalog":
+                self._run_primary()
+            elif tab == "tab-orchestration":
+                self._operate_primary()
         elif self._active_mode == 1:
-            self._operate_primary()
-        else:
             self._validate_primary()
 
     def _validate_primary(self) -> None:
@@ -5572,13 +5525,12 @@ class CockpitApp(App):
         self.push_screen(EvidenceReportScreen(tag.tag))
 
     def _run_primary(self) -> None:
-        """⏎ in Run · Catalog (Fold 2): stage the selected slug and open the
-        reconcile-gated serve confirm directly — no Serve-mode hop.  The serve
-        ActionPlan goes through the SAME ConfirmActionScreen → run_reconcile_for_modal
-        → dispatch_action gate as every other GPU-mutating write; on confirm the
-        boot streams into the transient Run LivePane (#serve-live).  ⏎ on the BYO
-        tab no-ops (BYO has its own Fit-check button)."""
-        if self._active_run_tab() != "tab-catalog":
+        """⏎ on the merged mode's Catalog tab: stage the selected slug and open the
+        reconcile-gated serve confirm directly.  The serve ActionPlan goes through
+        the SAME ConfirmActionScreen → run_reconcile_for_modal → dispatch_action
+        gate as every other GPU-mutating write; on confirm the boot streams into the
+        re-homed LivePane (#serve-live) below the tabs."""
+        if self._current_subtab() != "tab-catalog":
             return
         try:
             entry = self.query_one("#catalog-pane", CatalogPane).selected_entry()
@@ -5590,14 +5542,8 @@ class CockpitApp(App):
         plan = self._data.serve(entry.slug)  # gated, NOT --force
         self.push_screen(ConfirmActionScreen(plan))
 
-    def _active_run_tab(self) -> str:
-        try:
-            return self.query_one("#run-tabs", TabbedContent).active
-        except Exception:
-            return ""
-
     def _operate_primary(self) -> None:
-        """⏎ in Operate · Orchestration: confirm-gated scene switch."""
+        """⏎ on the merged mode's Orchestration tab: confirm-gated scene switch."""
         try:
             scene = self.query_one("#operate-orch-pane", OperateOrchPane).selected_scene()
         except Exception:
@@ -5620,7 +5566,7 @@ class CockpitApp(App):
         ConfirmActionScreen → dispatch_action → execute_action gate so every
         write has one path.  The plan's ``requires_reconcile=False`` makes the
         gate report clear immediately."""
-        if self._active_mode != 0:
+        if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
             return
         entry = self._selected_catalog_entry()
         if entry is None:
@@ -5629,9 +5575,9 @@ class CockpitApp(App):
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_clear_default(self) -> None:
-        """[D] in Run · Catalog: clear the model default pin for the
-        selected slug's model (gated path, .env write)."""
-        if self._active_mode != 0:
+        """[D] on the merged mode's Catalog tab: clear the model default pin for
+        the selected slug's model (gated path, .env write)."""
+        if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
             return
         entry = self._selected_catalog_entry()
         if entry is None:
@@ -5648,10 +5594,10 @@ class CockpitApp(App):
     # ── Containers (Operate · Containers) ──────────────────────────────────────────────
 
     def action_container_logs(self) -> None:
-        """[l] in Operate · Containers: stream `docker logs` for the selected
-        container into the drill Logs LivePane.  This is a READ — safe to run
-        live (the conftest blocks an accidental write, not this read)."""
-        if self._active_mode != 1:
+        """[l] on the merged mode's Containers tab: stream `docker logs` for the
+        selected container into the drill Logs LivePane.  This is a READ — safe to
+        run live (the conftest blocks an accidental write, not this read)."""
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
             return
         con = self._selected_container()
         if con is None:
@@ -5669,10 +5615,10 @@ class CockpitApp(App):
 
     def action_s_key(self) -> None:
         """[s] is context-sensitive:
-          - Operate · Containers : gated `docker restart <name>`.
-          - Validate · Evidence : gated submit-to-localmaxxing for the tag.
+          - merged mode 0 · Containers : gated `docker restart <name>`.
+          - Bring & Validate · ④ Measure : gated submit-to-localmaxxing for the tag.
         Other contexts ignore it."""
-        if self._active_mode == 2 and self._active_validate_tab() == "tab-evidence":
+        if self._active_mode == 1 and self._active_validate_tab() == "tab-evidence":
             self.action_evidence_submit()
             return
         self.action_container_restart()
@@ -5686,11 +5632,11 @@ class CockpitApp(App):
         self._container_write("stop")
 
     def _container_write(self, op: str) -> None:
-        # Operate · Containers ONLY.  [s] (restart) falls through here from
-        # action_s_key without a sub-tab gate, so guard the WRITE itself — Doctor
-        # (and Orchestration) are not container-write surfaces; Doctor is
-        # read-only, and a stray [s] there must not pop a `docker restart` confirm.
-        if self._active_mode != 1 or self._active_operate_tab() != "tab-containers":
+        # Merged mode 0 · Containers tab ONLY.  [s] (restart) falls through here
+        # from action_s_key without a sub-tab gate, so guard the WRITE itself —
+        # Catalog / Orchestration / Doctor are not container-write surfaces, and a
+        # stray [s] there must not pop a `docker restart` confirm.
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
             return
         con = self._selected_container()
         if con is None:
@@ -5742,12 +5688,13 @@ class CockpitApp(App):
             live.append_line(ln)
 
     def action_container_rm(self) -> None:
-        """[X] in Operate · Containers: reconcile-gated `docker rm <name>`.
+        """[X] on the merged mode's Containers tab: reconcile-gated `docker rm
+        <name>`.
 
         Removing a container frees a GPU it held → the plan requires_reconcile,
         so it routes through the SAME ConfirmActionScreen → dispatch_action gate
         as stop.  rm of a live container needs Force (which adds -f)."""
-        if self._active_mode != 1:
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
             return
         con = self._selected_container()
         if con is None:
@@ -5760,9 +5707,9 @@ class CockpitApp(App):
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_context_t(self) -> None:
-        """[t] reads `docker top` for the selected container (Operate · Containers).
-        The Benchmarks sort-cycle role was retired with the Benchmarks tab (Fold 3)."""
-        if self._active_mode == 1 and self._active_operate_tab() == "tab-containers":
+        """[t] reads `docker top` for the selected container (merged mode 0 ·
+        Containers tab)."""
+        if self._active_mode == 0 and self._active_operate_tab() == "tab-containers":
             self._container_top()
 
     def _container_top(self) -> None:
@@ -5886,7 +5833,7 @@ class CockpitApp(App):
         selected evidence tag.  PRODUCER-only (gated in check_action); READ-only —
         no ConfirmActionScreen, no GPU / network.  Compares the producer's measured
         numbers to the curated catalog bar + flags the protocol it can't verify."""
-        if self._active_mode != 2 or self._active_validate_tab() != "tab-evidence":
+        if self._active_mode != 1 or self._active_validate_tab() != "tab-evidence":
             return
         try:
             tag = self.query_one("#validate-evidence-pane", ValidateEvidencePane).selected_tag()
@@ -5916,7 +5863,7 @@ class CockpitApp(App):
         (heavy + long-running, and it needs a model serving), then bg-streamed into
         the ③ Gate LivePane.  It uses the SERVING model and does NOT claim a GPU
         (requires_confirm=True, requires_reconcile=False) → NEVER auto-fired."""
-        if self._active_mode != 2 or self._active_validate_tab() != "tab-run":
+        if self._active_mode != 1 or self._active_validate_tab() != "tab-run":
             return
         # Guard on a resolved serving target — the ~43-min battery hits the
         # SERVING model; with nothing serving it would run against an empty
@@ -6014,12 +5961,12 @@ class CockpitApp(App):
         self.push_screen(ShareBackReportScreen("Report a problem · paste-ready", "problem"))
 
     def action_submit_bench(self) -> None:
-        """[B] (Operate): stage the OUTWARD submit-to-localmaxxing for the most
-        recent benched run tag.  This is the ONLY outward write of the three
-        share-back affordances — it keeps its confirm + network gate (the
-        existing submit_bench ActionPlan: requires_confirm + network=True).  The
-        network is mocked in tests; NEVER auto-fired."""
-        if self._active_mode != 1:
+        """[B] (merged mode 0): stage the OUTWARD submit-to-localmaxxing for the
+        most recent benched run tag.  This is the ONLY outward write of the three
+        share-back affordances — it keeps its confirm + network gate (the existing
+        submit_bench ActionPlan: requires_confirm + network=True).  The network is
+        mocked in tests; NEVER auto-fired."""
+        if self._active_mode != 0:
             return
         self.resolve_and_submit_bench()
 
@@ -6040,10 +5987,10 @@ class CockpitApp(App):
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_evidence_submit(self) -> None:
-        """[s] in Validate · Evidence: stage the gated submit-to-localmaxxing for
-        the selected run tag.  OUTWARD-FACING NETWORK WRITE — confirm-gated,
-        NEVER auto-fired; the network is mocked in tests."""
-        if self._active_mode != 2 or self._active_validate_tab() != "tab-evidence":
+        """[s] in Bring & Validate · ④ Measure: stage the gated submit-to-
+        localmaxxing for the selected run tag.  OUTWARD-FACING NETWORK WRITE —
+        confirm-gated, NEVER auto-fired; the network is mocked in tests."""
+        if self._active_mode != 1 or self._active_validate_tab() != "tab-evidence":
             return
         try:
             tag = self.query_one("#validate-evidence-pane", ValidateEvidencePane).selected_tag()
@@ -6063,7 +6010,7 @@ class CockpitApp(App):
         Reads the current cap state to decide the toggle direction (on→off /
         off→on), then routes the WRITE through the standard confirm gate.  A
         cap write is a rig mutation — NEVER auto-fired."""
-        if self._active_mode != 1 or self._active_operate_tab() != "tab-orchestration":
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-orchestration":
             return
         self._toggle_power_cap()
 
@@ -6082,7 +6029,7 @@ class CockpitApp(App):
     def action_power_cap_sweep(self) -> None:
         """[w] in Operate · Orchestration: confirm-gated power-cap sweep (heavy +
         mutating — runs benches at each cap).  NEVER auto-fired."""
-        if self._active_mode != 1 or self._active_operate_tab() != "tab-orchestration":
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-orchestration":
             return
         plan = self._data.power_cap_sweep()
         self.push_screen(ConfirmActionScreen(plan))
@@ -6090,7 +6037,7 @@ class CockpitApp(App):
     def action_prune_images(self) -> None:
         """[p] in Operate · Orchestration: confirm-gated image prune (DESTRUCTIVE —
         deletes unreferenced images).  NEVER auto-fired."""
-        if self._active_mode != 1 or self._active_operate_tab() != "tab-orchestration":
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-orchestration":
             return
         plan = self._data.prune()
         self.push_screen(ConfirmActionScreen(plan))
@@ -6098,8 +6045,9 @@ class CockpitApp(App):
     # ── Estate stop-all (Operate · Orchestration) ──────────────────────────────────────
 
     def action_estate_off(self) -> None:
-        """[o] in Operate · Orchestration: gated estate-down (stop all)."""
-        if self._active_mode != 1:
+        """[o] on the merged mode's Orchestration tab: gated estate-down (stop
+        all)."""
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-orchestration":
             return
         plan = self._data.estate_down()
         self.push_screen(ConfirmActionScreen(plan))
@@ -6138,7 +6086,7 @@ class CockpitApp(App):
         Resolves the serving model's container and routes the write through the
         SAME ConfirmActionScreen → reconcile gate as every other GPU-mutating
         write (NEVER auto-fired).  No-ops with a notify when nothing is serving."""
-        if self._active_mode != 1 or self._active_operate_tab() != "tab-orchestration":
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-orchestration":
             return
         con = self._serving_container()
         if con is None:
@@ -6164,11 +6112,11 @@ class CockpitApp(App):
         self._serving_write("restart")
 
     def action_doctor_rerun(self) -> None:
-        """[y] in Operate · Doctor (#4): re-run the three diagnose reads on demand
-        (health + diagnose-estate + diagnose-profile).  ALL READ-only — no gate
-        (nothing is mutated).  Distinct from the global [r] refresh in that it is
-        the Doctor-resident, discoverable re-run verb."""
-        if self._active_mode != 1 or self._active_operate_tab() != "tab-doctor":
+        """[y] on the merged mode's Doctor tab (#4): re-run the three diagnose reads
+        on demand (health + diagnose-estate + diagnose-profile).  ALL READ-only — no
+        gate (nothing is mutated).  Distinct from the global [r] refresh in that it
+        is the Doctor-resident, discoverable re-run verb."""
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-doctor":
             return
         self.load_doctor()
         self.notify(
@@ -6179,14 +6127,13 @@ class CockpitApp(App):
         )
 
     def action_serving_switch(self) -> None:
-        """[n] in Operate · Orchestration: switch model — jump to Run · Catalog to
-        pick another (the serve itself is the existing reconcile-gated ⏎ path).
-        A pure navigation verb; no write here."""
-        if self._active_mode != 1 or self._active_operate_tab() != "tab-orchestration":
+        """[n] on the merged mode's Orchestration tab: switch model — flip to the
+        Catalog tab (SAME mode now) to pick another (the serve itself is the
+        existing reconcile-gated ⏎ path).  A pure navigation verb; no write here."""
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-orchestration":
             return
-        self._switch_mode(0)
         try:
-            self.query_one("#run-tabs", TabbedContent).active = "tab-catalog"
+            self.query_one("#operate-tabs", TabbedContent).active = "tab-catalog"
         except Exception:
             pass
         self.notify(
@@ -6209,7 +6156,7 @@ class CockpitApp(App):
         ``ServingTarget`` object the Estate poll detected (design §4/§6.6); the
         launch streams via ``launch_evaluate`` (write runner, NEVER live this
         phase — conftest blocks the spawn, tests fake it)."""
-        if self._active_mode != 2:
+        if self._active_mode != 1:
             return
         handoff = self._data.evaluate_handoff(self._target_obj)
         if not handoff.available:
@@ -6285,7 +6232,7 @@ class CockpitApp(App):
         config reproduction", and — on confirm — serve it through the SAME
         reconcile-gated path every serve uses (the generated compose claims the
         GPU)."""
-        if self._active_mode != 2:
+        if self._active_mode != 1:
             return
         if self._last_byo is None or getattr(self._last_byo, "error", ""):
             self.notify(
@@ -6380,11 +6327,11 @@ class CockpitApp(App):
         facts + any measured Evidence numbers, and previews them.  The write into
         scripts/ + the guard suite is the GATED write_plan on the scaffold —
         MOCK-ONLY this phase, never auto-fired."""
-        if self._active_mode != 2:
+        if self._active_mode != 1:
             return
         if self._last_byo is None:
             self.notify(
-                "No BYO model to promote — run a fit-check in Run · Bring-your-own first.",
+                "No model to promote — run a ① Bring fit-check first.",
                 title="Promote",
                 severity="warning",
                 timeout=4,
@@ -6463,9 +6410,8 @@ class CockpitApp(App):
     def _cycle_subtab(self, direction: int) -> None:
         """Cycle the TabbedContent for the current mode by direction (+1 / -1)."""
         tab_widget_ids = {
-            0: "#run-tabs",
-            1: "#operate-tabs",
-            2: "#validate-tabs",
+            0: "#operate-tabs",   # merged Run & Operate (4 tabs)
+            1: "#validate-tabs",  # Bring & Validate lane (①→⑤)
         }
         tc_id = tab_widget_ids.get(self._active_mode, "")
         if not tc_id:
@@ -6525,20 +6471,20 @@ class CockpitApp(App):
             except Exception:
                 pass
         # Only respond to tabs that belong to the current mode's active panel.
+        # 2-mode merge: mode 0 is the MERGED Run & Operate (the 4 tabs); mode 1 is
+        # the Bring & Validate lane stages ①→⑤.
         _mode_tabs: dict[int, set[str]] = {
-            0: {"tab-catalog", "tab-byo"},
-            1: {"tab-orchestration", "tab-containers", "tab-doctor"},
-            # R3b-1: the producer lane's ordered stages ①→⑤.
-            2: {"tab-bring", "tab-serve", "tab-run", "tab-evidence", "tab-promote"},
+            0: {"tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"},
+            1: {"tab-bring", "tab-serve", "tab-run", "tab-evidence", "tab-promote"},
         }
         allowed_tabs = _mode_tabs.get(self._active_mode, set())
         if tab_id not in allowed_tabs:
             return
-        # NOTE (R3b-1): the lane's ① Bring / ② Serve / ⑤ Promote stages are NOT in
-        # this map on purpose — ① Bring's only focusable widget is an Input, which
-        # would swallow the global digit (1/2/3) + bracket ([ ]) keys.  Leaving
-        # focus on the tab bar there keeps those keys routed to the app; the user
-        # Tab/clicks into the HF-repo input to type.
+        # NOTE: the lane's ① Bring / ② Serve / ⑤ Promote stages + the merged mode's
+        # Doctor tab are NOT in _focus_map on purpose — ① Bring's only focusable
+        # widget is an Input (which would swallow the global digit (1/2) + bracket
+        # ([ ]) keys), and Doctor is read-only.  Leaving focus on the tab bar there
+        # keeps those keys routed to the app; the user Tab/clicks into the input.
         _focus_map: dict[str, str] = {
             "tab-catalog":        "#catalog-table",
             "tab-run":            "#run-ladder-table",
@@ -6576,18 +6522,14 @@ class CockpitApp(App):
             sel_id = event.select.id
         except Exception:
             return
-        if sel_id not in ("byo-profile-input", "lane-bring-profile-input"):
+        if sel_id != "lane-bring-profile-input":
             return
         new_val = event.value
         # FIX 2 (escape hatch) — the "✎ custom slug…" sentinel reveals + focuses the
         # companion free-text Input so any non-curated registry slug is reachable.
         # Selecting a curated slug again hides it.  (Done BEFORE the default-applied
         # guard so the toggle works on the very first user pick.)
-        custom_id = (
-            "#byo-profile-custom"
-            if sel_id == "byo-profile-input"
-            else "#lane-bring-profile-custom"
-        )
+        custom_id = "#lane-bring-profile-custom"
         try:
             custom = self.query_one(custom_id, Input)
             if new_val == PROFILE_CUSTOM_SENTINEL:
@@ -6666,7 +6608,7 @@ class CockpitApp(App):
 
         if tid != "containers-table":
             return
-        if self._active_mode != 1 or self._active_operate_tab() != "tab-containers":
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
             return
         # #3/NH1: consult the load-bearing flag.  When an [r]-refresh repopulates
         # WHILE on this tab, the populate path re-arms the flag to False; the
@@ -6758,9 +6700,7 @@ class CockpitApp(App):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
-        if bid == "byo-fit-btn":
-            self._trigger_byo()
-        elif bid == "lane-bring-fit-btn":
+        if bid == "lane-bring-fit-btn":
             self._trigger_lane_bring()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -6772,8 +6712,6 @@ class CockpitApp(App):
                 ).focus()
             except Exception:
                 pass
-        elif event.input.id == "byo-url-input":
-            self._trigger_byo()
         elif event.input.id == "lane-bring-url-input":
             self._trigger_lane_bring()
 
@@ -6800,25 +6738,10 @@ class CockpitApp(App):
         if val is None or val is Select.BLANK:
             return "vllm/dual"
         if val == PROFILE_CUSTOM_SENTINEL:
-            custom_id = (
-                "#byo-profile-custom"
-                if select_id == "#byo-profile-input"
-                else "#lane-bring-profile-custom"
-            )
+            custom_id = "#lane-bring-profile-custom"
             try:
                 typed = self.query_one(custom_id, Input).value.strip()
             except Exception:
                 typed = ""
             return typed or "vllm/dual"
         return str(val).strip() or "vllm/dual"
-
-    def _trigger_byo(self) -> None:
-        try:
-            repo = self.query_one("#byo-url-input", Input).value.strip()
-        except Exception:
-            return
-        profile = self._selected_profile_like("#byo-profile-input")
-        if not repo:
-            self.notify("Enter an HF repo (org/Model).", title="BYO", severity="warning", timeout=3)
-            return
-        self.run_byo_check(repo, profile)
