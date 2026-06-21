@@ -1603,6 +1603,83 @@ class TestBatch1KnownServices:
             assert owui is not None and owui.status != "stopped"
             assert app._is_stopped_service(owui) is False
 
+    @pytest.mark.asyncio
+    async def test_stopped_row_highlight_clears_running_logs(self, tmp_path):
+        """BUG 1 — highlighting a STOPPED service after a RUNNING container was
+        selected must NOT leave the running container's logs/stats on screen,
+        mislabeled to the stopped row.  The Logs + Top drill panes are cleared to
+        an explicit 'stopped · no live logs/stats' placeholder; only Config (a
+        local registry read) may still show the stopped service's info."""
+        _seed_services(tmp_path, ["litellm"])
+        seed_repo(tmp_path)
+        responses = fake_responses(**{
+            "docker ps": ok(DOCKER_PS_ENGINE),
+            "docker logs": ok("RUNNING-LOG-LINE-XYZ\n"),
+        })
+        app, _, _ = make_app(responses=responses, repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            run_idx = next(i for i, c in enumerate(pane._containers)
+                           if c.status != "stopped")
+            stop_idx = next(i for i, c in enumerate(pane._containers)
+                            if c.status == "stopped")
+            stop_name = pane._containers[stop_idx].name
+            tbl = app.query_one("#containers-table", DataTable)
+            # 1) Select the RUNNING container + load its logs.
+            tbl.move_cursor(row=run_idx)
+            await pilot.pause()
+            app.action_container_logs()
+            await _settle(pilot)
+            log = app.query_one("#drill-logs").query_one("#live-log")
+            assert any("RUNNING-LOG-LINE-XYZ" in str(l) for l in log.lines)
+            # 2) Highlight the STOPPED row → the drill timer fires → the Logs/Top
+            #    panes clear to the stopped placeholder (NOT the running logs).
+            tbl.move_cursor(row=stop_idx)
+            await pilot.pause()
+            # Wait out the 0.25s drill timer that loads the drill for the row.
+            for _ in range(10):
+                await asyncio.sleep(0.05)
+                await pilot.pause()
+            loglines = [str(l) for l in log.lines]
+            assert not any("RUNNING-LOG-LINE-XYZ" in l for l in loglines), (
+                "stale running-container logs left on a stopped row"
+            )
+            assert any("stopped" in l for l in loglines)
+            assert any(stop_name in l for l in loglines)
+            # Top pane also shows the stopped placeholder.
+            stats = str(app.query_one("#drill-stats", Static).render())
+            assert "stopped" in stats and stop_name in stats
+
+    @pytest.mark.asyncio
+    async def test_stopped_clear_cancels_inflight_drill_workers(self, tmp_path):
+        """BUG 1 (race) — clearing the drill for a STOPPED service must CANCEL any
+        in-flight logs/top worker from the previously-selected RUNNING container,
+        else a slow `docker logs` resolves AFTER the placeholder and appends the
+        FOREIGN container's lines below it."""
+        _seed_services(tmp_path, ["litellm"])
+        seed_repo(tmp_path)
+        app, _, _ = make_app(repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            con = next(c for c in pane._containers if c.status == "stopped")
+            cancelled: list[str] = []
+            orig = app.workers.cancel_group
+
+            def _spy(node, group):
+                cancelled.append(group)
+                return orig(node, group)
+
+            app.workers.cancel_group = _spy
+            app._clear_drill_for_stopped(con)
+            assert "container-logs" in cancelled
+            assert "container-top" in cancelled
+
 
 class TestBatch1PowerCapCard:
     """#10 — GPU cards show power+cap; a cap write re-polls the estate."""
@@ -4094,30 +4171,228 @@ class TestModeSwitchFocus:
                         and app.focused.id == "lane-bring-url-input")
 
     @pytest.mark.asyncio
-    async def test_tab_change_on_validate_refocuses_relevant_table(self):
-        """Cycling the lane's stages moves focus to the relevant widget for the
-        newly active stage (R3b-1 — ① Bring → ② Serve → ③ Gate → ④ Measure → ⑤)."""
+    async def test_validate_tabbar_browse_keeps_focus_on_bar(self):
+        """BUG 3 — browsing the lane TAB BAR keeps focus ON the tab bar; it does
+        NOT yank focus down into the newly-active stage's table.  The Fix-B
+        "don't grab focus while browsing the tab bar" guard now applies in the
+        mode-1 producer lane too (was scoped to mode 0), so activating ③ Gate /
+        ④ Measure via the tab bar is consistent with Run & Operate — focus stays
+        on the bar.  Only a cycle FROM a list moves to the next list (see the
+        companion test below)."""
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#validate-tabs", TabbedContent)
-            # Default stage is ① Bring (no DataTable focus — its input is not
-            # auto-focused so global keys still route to the app).
+            # The lane lands on ① Bring with focus on the lane tab bar (a Tabs —
+            # its only focusable widget is an Input we don't auto-focus).
             assert tc.active == "tab-bring"
-            # Activate ③ Gate directly → run-ladder-table is focused.
+            assert isinstance(app.focused, Tabs)
+            bar = app._active_tab_bar()
+            assert app.focused is bar
+            # Activate ③ Gate WHILE focus is on the lane tab bar → focus STAYS on
+            # the tab bar; the Gate ladder is NOT yanked into focus.
             tc.active = "tab-run"
             await pilot.pause()
-            await pilot.pause()  # extra cycle for call_after_refresh
+            await pilot.pause()  # extra cycle for any call_after_refresh
+            assert app.focused is bar
+            assert not (isinstance(app.focused, DataTable)
+                        and app.focused.id == "run-ladder-table")
+
+    @pytest.mark.asyncio
+    async def test_validate_cycle_from_list_moves_to_next_list(self):
+        """BUG 3 — a [/] cycle FROM a LIST (focus on the list, not the tab bar)
+        still moves to the NEXT stage's list.  Descending into ③ Gate's ladder
+        then cycling forward lands focus on ④ Measure's evidence-table — the
+        list-operators keep operating lists; only tab-bar browsing is exempt."""
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            tc = app.query_one("#validate-tabs", TabbedContent)
+            # Browse to ③ Gate via the tab bar (focus stays on the bar — BUG 3).
+            tc.active = "tab-run"
+            await pilot.pause()
+            await pilot.pause()
+            # Descend INTO the Gate ladder so focus is now on the LIST.
+            app.query_one("#run-ladder-table", DataTable).focus()
+            await pilot.pause()
             assert isinstance(app.focused, DataTable)
             assert app.focused.id == "run-ladder-table"
-            # Cycle forward → ④ Measure (Evidence) → evidence-table.
+            # Cycle forward → ④ Measure (Evidence): focus FROM a list moves to the
+            # next list (the guard only exempts focus-on-the-tab-bar).
             await pilot.press("right_square_bracket")
             await pilot.pause()
             await pilot.pause()
             assert tc.active == "tab-evidence"
             assert isinstance(app.focused, DataTable)
             assert app.focused.id == "evidence-table"
+
+
+class TestModeSwitcherKeyboardNav:
+    """BUG 2 — the Modes rail is keyboard-navigable: a focus stop (first in the
+    Tab chain), its arrows switch the active mode while focused, ↑ from the tab
+    bar ascends to it, and Tab/Enter descend back into the content.  The arrows
+    act ONLY while it is focused — elsewhere the existing arrow model is intact."""
+
+    @pytest.mark.asyncio
+    async def test_modeswitcher_is_focusable(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            ms = app.query_one("#mode-switcher", ModeSwitcher)
+            assert ms.can_focus is True
+            ms.focus()
+            await pilot.pause()
+            assert app.focused is ms
+
+    @pytest.mark.asyncio
+    async def test_shift_tab_from_tabbar_reaches_modeswitcher(self):
+        """The ModeSwitcher is the FIRST stop in the Tab chain (first in the
+        left-rail DOM) — Shift+Tab from the tab bar reaches it; Tab from it goes
+        back to the tab bar."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            ms = app.query_one("#mode-switcher", ModeSwitcher)
+            bar = app._active_tab_bar()
+            bar.focus()
+            await pilot.pause()
+            assert isinstance(app.focused, Tabs)
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            assert app.focused is ms
+            # Tab from the ModeSwitcher descends to the tab bar.
+            await pilot.press("tab")
+            await pilot.pause()
+            assert isinstance(app.focused, Tabs)
+
+    @pytest.mark.asyncio
+    async def test_arrows_switch_mode_and_keep_focus(self):
+        """↓/↑ (and →/←) on the focused ModeSwitcher switch the ACTIVE mode (and
+        the visible panel + _active_mode), and focus STAYS on the ModeSwitcher."""
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            ms = app.query_one("#mode-switcher", ModeSwitcher)
+            ms.focus()
+            await pilot.pause()
+            assert app._active_mode == 0
+            # ↓ → mode 1 (Bring & Validate).
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.pause()
+            assert app._active_mode == 1
+            assert "active" in app.query_one("#panel-validate").classes
+            assert app.focused is ms  # focus stays
+            # ↑ → back to mode 0.
+            await pilot.press("up")
+            await pilot.pause()
+            await pilot.pause()
+            assert app._active_mode == 0
+            assert "active" in app.query_one("#panel-run").classes
+            assert app.focused is ms
+            # → also advances; ← also retreats (forgiving).
+            await pilot.press("right")
+            await pilot.pause()
+            await pilot.pause()
+            assert app._active_mode == 1
+            await pilot.press("left")
+            await pilot.pause()
+            await pilot.pause()
+            assert app._active_mode == 0
+
+    @pytest.mark.asyncio
+    async def test_arrows_clamp_at_ends(self):
+        """↑ at the first mode and ↓ at the last are inert (clamped)."""
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            ms = app.query_one("#mode-switcher", ModeSwitcher)
+            ms.focus()
+            await pilot.pause()
+            # Already at mode 0 — ↑ is a no-op.
+            await pilot.press("up")
+            await pilot.pause()
+            assert app._active_mode == 0
+            # Go to the last mode, then ↓ is a no-op.
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.pause()
+            assert app._active_mode == 1
+            await pilot.press("down")
+            await pilot.pause()
+            assert app._active_mode == 1
+
+    @pytest.mark.asyncio
+    async def test_up_from_tabbar_focuses_modeswitcher(self):
+        """BUG 2 — ↑ from the content tab bar ascends to the ModeSwitcher (the
+        'arrow up to the Modes')."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            ms = app.query_one("#mode-switcher", ModeSwitcher)
+            bar = app._active_tab_bar()
+            bar.focus()
+            await pilot.pause()
+            assert isinstance(app.focused, Tabs)
+            await pilot.press("up")
+            await pilot.pause()
+            assert app.focused is ms
+
+    @pytest.mark.asyncio
+    async def test_enter_from_modeswitcher_descends_to_content(self):
+        """Enter from the focused ModeSwitcher descends into the active tab's
+        primary list (Catalog → #catalog-table)."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            ms = app.query_one("#mode-switcher", ModeSwitcher)
+            ms.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.focused, DataTable)
+            assert app.focused.id == "catalog-table"
+
+    @pytest.mark.asyncio
+    async def test_arrows_on_list_unaffected(self):
+        """INVARIANT — arrows on a LIST move the cursor (do NOT switch mode); the
+        ModeSwitcher arrows act only while IT is focused."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tbl = app.query_one("#catalog-table", DataTable)
+            tbl.focus()
+            tbl.move_cursor(row=0)
+            await pilot.pause()
+            before_mode = app._active_mode
+            await pilot.press("down")
+            await pilot.pause()
+            # Mode unchanged; the list cursor moved instead.
+            assert app._active_mode == before_mode
+            assert app.focused is tbl
+            assert tbl.cursor_row == 1
+
+    @pytest.mark.asyncio
+    async def test_lean_surface_arrows_inert(self):
+        """On the LEAN surface (one visible mode) the ModeSwitcher arrows are
+        inert — there is nothing to switch to."""
+        app, _, _ = make_app(surface="consumer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            ms = app.query_one("#mode-switcher", ModeSwitcher)
+            ms.focus()
+            await pilot.pause()
+            assert app._active_mode == 0
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.pause()
+            assert app._active_mode == 0  # still mode 0 — no second mode to reach
+            await pilot.press("up")
+            await pilot.pause()
+            assert app._active_mode == 0
 
 
 class TestContainerAutoLoad:
@@ -6100,8 +6375,9 @@ class TestFooterOutOfTabChain:
     @pytest.mark.asyncio
     async def test_tab_from_catalog_never_lands_on_a_footer_key(self):
         """From #catalog-table, Tab / Shift+Tab cycle only the VISIBLE, meaningful
-        stops — the tab bar (ContentTabs) and the active list (DataTable) — never
-        a FooterKey (FIX A's core regression lock)."""
+        stops — the Modes rail (ModeSwitcher — BUG 2), the tab bar (ContentTabs)
+        and the active list (DataTable) — never a FooterKey (FIX A's core
+        regression lock)."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
@@ -6116,8 +6392,10 @@ class TestFooterOutOfTabChain:
                     cur = app.focused
                     assert not isinstance(cur, FooterKey), \
                         f"{direction} landed on a FooterKey ({cur!r})"
-                    # Every stop is a VISIBLE-focus widget: the tab bar or a list.
-                    assert isinstance(cur, (Tabs, DataTable)), \
+                    # Every stop is a VISIBLE-focus widget: the Modes rail
+                    # (ModeSwitcher gets a focus ring — BUG 2), the tab bar, or a
+                    # list.
+                    assert isinstance(cur, (ModeSwitcher, Tabs, DataTable)), \
                         f"{direction} landed on an unexpected widget ({cur!r})"
 
     @pytest.mark.asyncio

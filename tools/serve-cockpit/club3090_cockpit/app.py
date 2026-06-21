@@ -3551,8 +3551,26 @@ class HostStatsRail(Static):
 
 
 class ModeSwitcher(Static):
-    """Left-rail mode selector — navigation is driven by CockpitApp via the
-    1–3 digit bindings; this is the visual highlight."""
+    """Left-rail mode selector — the 1/2 digit bindings still jump modes
+    directly, AND (BUG 2) the widget is now keyboard-navigable: it is a focus
+    stop (the FIRST stop in the Tab chain, being first in the left-rail DOM), and
+    when FOCUSED its arrow keys switch the active mode.
+
+    Focus model (vertical: Modes (rail) ↕ tab bar ↕ list):
+      • Focusable with a VISIBLE focus style (the :focus accent border below).
+      • ``↑``/``↓`` (and ``←``/``→``, forgiving) switch the ACTIVE mode, clamped
+        to the modes VISIBLE on the current surface (the lean view has one mode,
+        so arrows are inert there).  Focus STAYS on the ModeSwitcher so the user
+        can keep arrowing.  Switching reuses the app's real mode-switch path so
+        content + highlight + bindings update exactly as 1/2 do.
+      • ``Tab``/``Enter`` DESCEND into the content (handled app-side — Tab via the
+        natural focus chain to the tab bar, Enter routed to descend).  ``↓`` is
+        NOT overloaded to exit downward — it switches mode.
+    The arrows act ONLY while the ModeSwitcher is focused (key events reach the
+    focused widget first), so they never leak to the app from a list/tab bar."""
+
+    # BUG 2 — a focus stop (and the FIRST one: it is first in the left-rail DOM).
+    can_focus = True
 
     DEFAULT_CSS = """
     ModeSwitcher {
@@ -3560,6 +3578,11 @@ class ModeSwitcher(Static):
         height: auto;
         border: solid $primary;
         padding: 0 1;
+    }
+    /* BUG 2 — a VISIBLE focus ring so the Modes rail is an obvious focus stop
+       (focus must never be stranded invisibly). */
+    ModeSwitcher:focus, ModeSwitcher:focus-within {
+        border: solid $accent;
     }
     ModeSwitcher .mode-title {
         text-style: bold;
@@ -3656,6 +3679,51 @@ class ModeSwitcher(Static):
                     lbl.remove_class("mode-hidden")
             except Exception:
                 pass
+
+    # BUG 2 — keyboard navigation while the ModeSwitcher is focused.  Handled in
+    # the widget's OWN on_key so these arrows reach the app ONLY when this widget
+    # holds focus (a focused widget sees key events first); when focus is on a
+    # list / tab bar / Input / Select / modal the app's existing arrow model runs
+    # unchanged.
+    def on_key(self, event) -> None:
+        key = event.key
+        # ↑/↓ + ←/→ (forgiving) switch the ACTIVE mode, clamped to the modes
+        # VISIBLE on this surface.  Focus STAYS here so the user can keep arrowing.
+        if key in ("up", "left", "down", "right"):
+            visible = len(self._modes)
+            # LEAN surface (one visible mode) → arrows are inert (nothing to switch).
+            if visible <= 1:
+                event.stop()
+                event.prevent_default()
+                return
+            delta = -1 if key in ("up", "left") else 1
+            target = self._active + delta
+            if target < 0 or target >= visible:
+                # Clamp: already at the first/last visible mode → no-op.
+                event.stop()
+                event.prevent_default()
+                return
+            event.stop()
+            event.prevent_default()
+            # Reuse the app's REAL mode-switch path so content + highlight +
+            # bindings update exactly as the 1/2 digit keys do, then re-home focus
+            # on the ModeSwitcher (the switch focuses the mode's primary widget).
+            app = self.app
+            switch = getattr(app, "_switch_mode_keep_modes_focus", None)
+            if switch is not None:
+                switch(target)
+            return
+        # Enter DESCENDS into the content (Tab descends via the natural focus
+        # chain — the tab bar is the next focusable).  ↓ is NOT overloaded to exit
+        # downward (it switches mode above).
+        if key == "enter":
+            event.stop()
+            event.prevent_default()
+            app = self.app
+            descend = getattr(app, "_descend_from_modes", None)
+            if descend is not None:
+                descend()
+            return
 
 
 # ── Keyboard-traversable footer (#5) ───────────────────────────────────────────────
@@ -4159,10 +4227,17 @@ class CockpitApp(App):
                 if bar is None or focused is not bar:
                     return False
                 return self._primary_list_for_active_tab() is not None
-            # ascend_to_tabbar: [up] ascends ONLY when focus is the active tab's
-            # PRIMARY DataTable AND its cursor is on row 0.  Above row 0 (or off a
-            # primary list) → False → the priority binding is inert and the focused
-            # DataTable handles [up] (cursor up) normally.
+            # ascend_to_tabbar: [up] ascends in TWO cases (priority binding):
+            #   (a) focus is the active tab's PRIMARY DataTable at cursor row 0 →
+            #       ascend to the tab bar (above row 0 / off a primary list → the
+            #       binding is inert and the DataTable handles [up] = cursor up).
+            #   (b) BUG 2 — focus is the active mode's TAB BAR → ascend UP to the
+            #       ModeSwitcher (the tab bar is a horizontal Tabs that doesn't
+            #       consume [up], so the key bubbles here).  This is the "arrow up
+            #       to the Modes" ascent; action_ascend_to_tabbar routes by focus.
+            bar = self._active_tab_bar()
+            if bar is not None and focused is bar:
+                return True
             table = self._primary_list_for_active_tab()
             if table is None or focused is not table:
                 return False
@@ -5448,6 +5523,39 @@ class CockpitApp(App):
                 pass
         self.call_after_refresh(_do)
 
+    # ── BUG 2: ModeSwitcher keyboard navigation (Modes rail ↕ tab bar ↕ list) ──────
+
+    def _switch_mode_keep_modes_focus(self, index: int) -> None:
+        """Switch the active mode (real path — content + highlight + bindings all
+        update as 1/2 do) but KEEP focus on the ModeSwitcher, so the user can keep
+        arrowing through modes.  _switch_mode → _focus_mode_primary moves focus to
+        the mode's primary widget; we re-home it on the ModeSwitcher afterwards
+        (deferred so it wins over _focus_mode_primary's own call_after_refresh)."""
+        self._switch_mode(index)
+
+        def _refocus_modes() -> None:
+            try:
+                self.query_one("#mode-switcher", ModeSwitcher).focus()
+            except Exception:
+                pass
+        self.call_after_refresh(_refocus_modes)
+
+    def _descend_from_modes(self) -> None:
+        """Tab/Enter from the focused ModeSwitcher → DESCEND into the content:
+        focus the active tab's primary list, or (no list) the tab bar.  Reuses the
+        same resolution the mode-switch / arrow-descent paths use so the target
+        never drifts."""
+        try:
+            tbl = self._primary_list_for_active_tab()
+            if tbl is not None:
+                tbl.focus()
+                return
+            bar = self._active_tab_bar()
+            if bar is not None:
+                bar.focus()
+        except Exception:
+            pass
+
     def _load_validate(self) -> None:
         """Kick the Validate read workers (evidence).
         Best-effort — a failing leg doesn't block the rest.  The Run pane is
@@ -5674,8 +5782,19 @@ class CockpitApp(App):
                 pass
 
     def action_ascend_to_tabbar(self) -> None:
-        """[up] at row 0 of a primary list → move focus back UP to the tab bar."""
+        """[up] ascent — routed by where focus currently is:
+          • focus on the active mode's TAB BAR → ascend UP to the ModeSwitcher
+            (BUG 2 — "arrow up to the Modes").
+          • focus on a primary list (at row 0) → ascend to the tab bar.
+        check_action only lets this priority binding fire in those two cases."""
         bar = self._active_tab_bar()
+        if bar is not None and self.focused is bar:
+            # BUG 2 — already on the tab bar → go up to the Modes rail.
+            try:
+                self.query_one("#mode-switcher", ModeSwitcher).focus()
+            except Exception:
+                pass
+            return
         if bar is not None:
             try:
                 bar.focus()
@@ -6741,15 +6860,18 @@ class CockpitApp(App):
         # sub-tabs) do we move focus to the newly active tab's primary list — so
         # the list-operators keep operating lists.
         #
-        # SCOPED to mode 0 (the merged Run & Operate surface — where free tab-bar
-        # browsing across Catalog/Orch/Containers/Doctor is the point).  In the mode 1
-        # lane the table-bearing stages (③ Gate / ④ Measure) must ALWAYS grab their
-        # table — FOLD 4 deliberately parks focus on the lane tab bar at the
-        # table-LESS stages (① Bring / ② Serve / ⑤ Promote), so without this scope
-        # a [/]-cycle from one of those into ③ Gate would trip the guard and strand
-        # focus on the bar instead of the Gate ladder.  Table-less lane stages aren't
-        # in _focus_map, so the cycle there is a no-op below (focus stays on the bar).
-        if self._active_mode == 0 and isinstance(self.focused, Tabs):
+        # BUG 3 — the "don't yank focus while browsing the tab bar" guard applies
+        # in BOTH modes now (was scoped to mode 0).  In the mode 1 producer lane,
+        # activating ③ Gate / ④ Measure via the tab bar used to auto-focus their
+        # list — the exact yank the user wants gone, now in the lane.  With the
+        # mode-0 scope dropped, browsing the lane tab bar keeps focus on the tab
+        # bar (consistent with Run & Operate).  A [/] cycle FROM a LIST (focus is
+        # the DataTable, NOT a Tabs) still falls through and moves to the next
+        # list — the table-less lane stages (① Bring / ② Serve / ⑤ Promote) aren't
+        # in _focus_map, so a cycle landing there is a no-op below (focus stays
+        # wherever it was), and a cycle landing on ③ Gate / ④ Measure focuses
+        # their table as before.
+        if isinstance(self.focused, Tabs):
             return
         widget_id = _focus_map.get(tab_id, "")
         if widget_id:
@@ -6926,13 +7048,52 @@ class CockpitApp(App):
             return
         if self._is_stopped_service(con):
             # No live container — don't spawn a docker logs/top read for a
-            # known-but-stopped service (#2).
+            # known-but-stopped service (#2).  BUG 1: but DO clear the Logs/Top
+            # drill panes to an explicit stopped placeholder so the previously-
+            # selected RUNNING container's logs/stats don't stay on screen,
+            # mislabeled to this stopped row.  (Config is a local read and is
+            # refreshed correctly on highlight — leave it.)
+            self._clear_drill_for_stopped(con)
             return
         tab = self._active_drill_tab()
         if tab == "drill-tab-logs":
             self.stream_container_logs(con.name)
         elif tab == "drill-tab-stats":
             self.read_container_top(con.name)
+
+    def _clear_drill_for_stopped(self, con: "ContainerInfo") -> None:
+        """BUG 1 — reset the Logs (#drill-logs LivePane) + Top (#drill-stats)
+        drill panes to an explicit "stopped · no live logs/stats" placeholder so
+        the panes always reflect the SELECTED container, never a stale other one.
+
+        Reuses the existing populate methods (the logs pane's clear+write and the
+        Top Static's update) — no new widgets.  Config is untouched: it's a local
+        read refreshed on highlight (_refresh_container_config) and CAN show a
+        stopped service's registry/compose info."""
+        # Cancel any in-flight logs/top read from a PREVIOUSLY-selected running
+        # container first: its exclusive worker isn't re-triggered by a stopped
+        # row, so without this its slow `docker logs`/`top` result would resolve
+        # AFTER the placeholder and append the FOREIGN container's lines below it
+        # — the exact "stopped row shows another container's logs" symptom, via a
+        # race on a slow real read.
+        for grp in ("container-logs", "container-top"):
+            try:
+                self.workers.cancel_group(self, grp)
+            except Exception:
+                pass
+        placeholder = f"▸ {con.name} — stopped · no live logs/stats"
+        try:
+            live = self.query_one("#drill-logs", LivePane)
+            live.clear_log()
+            live.append_line(f"[dim]{placeholder}[/dim]")
+        except Exception:
+            pass
+        try:
+            self.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#drill-stats", Static
+            ).update(f"[dim]{placeholder}[/dim]")
+        except Exception:
+            pass
 
     def on_key(self, event) -> None:
         """App-level Esc: close an open filter (Run·Catalog) and refocus the
