@@ -103,6 +103,13 @@ services:
       - VLLM_NO_USAGE_STATS=1
       - VLLM_USE_FLASHINFER_SAMPLER=1
       - LMCACHE_DISABLE_BANNER=1
+      # Forward host-tunable LMCache knobs into the in-container entrypoint.
+      # Keep empty defaults here so bash's own $${VAR:-fallback} logic below
+      # remains the single source of default values when the host env is unset.
+      - LMCACHE_L1_GB=${LMCACHE_L1_GB:-}
+      - LMCACHE_L2=${LMCACHE_L2:-}
+      - LMCACHE_L2_ADAPTER=${LMCACHE_L2_ADAPTER:-}
+      - LMCACHE_CHUNK_SIZE=${LMCACHE_CHUNK_SIZE:-}
       # NOTE: PYTORCH_CUDA_ALLOC_CONF=expandable_segments is intentionally OMITTED —
       # it is incompatible with the LMCacheMPConnector (raises at engine config validation).
     entrypoint:

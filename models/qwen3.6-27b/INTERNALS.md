@@ -222,12 +222,15 @@ How many sessions fit per tier:
 
 ⚠️ **RAM sizing is preflight-gated.** `scripts/preflight.sh::preflight_lmcache_ram` hard-fails launch if available RAM < `l1-size-gb` + 28 GB reserve, **even under `--force`** (a 100 GB cache on this 94 GB rig once OOM'd the host and forced a reboot — the incident that motivated the guard); it also soft-warns on low L2 disk space. Cap L1 at ~50 GB here.
 
+**Operational gotcha fixed 2026-06-21:** LMCache's tunables are read by the in-container `bash -c` entrypoint (`$${LMCACHE_L1_GB:-30}`, `$${LMCACHE_L2:-0}`, etc.). Docker Compose only forwards host env into that process when the names are declared in `environment:`. The compose now declares `LMCACHE_L1_GB`, `LMCACHE_L2`, `LMCACHE_L2_ADAPTER`, and `LMCACHE_CHUNK_SIZE` with empty defaults, so bash still owns the fallback values. Regression guard: `scripts/tests/test-lmcache-env-passthrough.sh`. Verify a live launch with `docker exec <container> env | grep LMCACHE` and the `lmcache server` command line.
+
 ### Disk (the optional L2 tier — `LMCACHE_L2_ADAPTER`, off by default)
-Set `LMCACHE_L2_ADAPTER` to a JSON adapter spec to spill evicted (older) sessions from RAM to disk instead of dropping them, and to **survive container restarts**:
+Set `LMCACHE_L2=1` to use the gitignored repo-root `lmcache-kv/` mount (`/lmcache-kv` in-container), or set `LMCACHE_L2_ADAPTER` to a JSON adapter spec to spill evicted (older) sessions from RAM to disk instead of dropping them, and to **survive container restarts**:
 ```
+LMCACHE_L2=1
 LMCACHE_L2_ADAPTER='{"type":"fs","base_path":"/mnt/ssd/lmcache-kv"}'
 ```
-Use the **`fs`** adapter (`base_path`), **not `nixl_store`** — this image's NIXL backend is broken (`libcudart.so.13` ImportError); `fs` is a plain filesystem store with no NIXL dependency. Disk footprint is **~125 KB/token measured** (4.6 GB for a 37K session → ~33 GB per full 262K session — LMCache's L2 stores ~7× lower-density than the int8-PTH GPU cache, so size disk accordingly), still effectively unbounded; LRU auto-evicts within the cap. Point `base_path` at an SSD dir — **not `/tmp`** (tmpfs, wiped on reboot, competes for RAM).
+Use the **`fs`** adapter (`base_path`), **not `nixl_store`** — this image's NIXL backend is broken (`libcudart.so.13` ImportError); `fs` is a plain filesystem store with no NIXL dependency. Disk footprint is **~125 KB/token measured** (4.6 GB for a 37K session → ~33 GB per full 262K session — LMCache's L2 stores ~7× lower-density than the int8-PTH GPU cache, so size disk accordingly), still effectively unbounded; LRU auto-evicts within the cap. Point custom `base_path` at an SSD dir — **not `/tmp`** (tmpfs, wiped on reboot, competes for RAM).
 
 **Measured on-rig (2026-06-17, 36,807-token session, ~1.9 GB/s disk):**
 
@@ -237,7 +240,7 @@ Use the **`fs`** adapter (`base_path`), **not `nixl_store`** — this image's NI
 | **L2 rehydrate** (from disk, after container restart) | **4.8 s** | **~9× faster** |
 | L1 hit (warm RAM) | 1.4 s | ~31× faster |
 
-**Cross-restart persistence confirmed**: after a full container restart (L1 RAM cleared), the log shows `46/46 retained keys (0 L1, 46 L2)` — the session rehydrated entirely from L2 disk.
+**Cross-restart persistence confirmed**: after a full container restart (L1 RAM cleared), the log shows `46/46 retained keys (0 L1, 46 L2)` — the session rehydrated entirely from L2 disk. For restart tests, prefer a clean `docker compose down && docker compose up -d`; cross-rig #423 found `docker restart` can race GPU-memory release and crash-loop TP worker init on PCIe 3090 rigs.
 
 **No reduced-size L2 on this model (measured 2026-06-17).** LMCache's only built-in MP-mode compressor — the **fp8 serde** (`"serde":{"type":"fp8","fp8_dtype":"float8_e4m3fn"}` on the adapter) — **shape-errors on this model's KV**: `RuntimeError: shape '[2, 16, 1584, 260]' is invalid for input of size 53539200` (the serializer assumes a layout that doesn't match the hybrid GDN / head_dim-256 / int8-PTH source). Result: **60 serialize fails / 30 store fails, L2 stays empty (0 files)** — serving is unaffected (L1 works), but nothing reaches disk. **CacheGen** (the larger ~3–4× compressor) is "not implemented for MP mode yet — coming soon." So **don't add an fp8 serde** here; L2 is uncompressed (~131 KB/token) until one of those is fixed (re-test trigger). The plain `fs` adapter (no serde) is the working path.
 
