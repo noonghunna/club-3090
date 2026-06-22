@@ -856,13 +856,14 @@ class TestScenesDoctor:
         assert scenes[0].gpus == "both"
 
     @pytest.mark.asyncio
-    async def test_scenes_filters_ops_except_off(self):
-        """The ops group (power-cap / prune / prune-all) is filtered from the scene
-        table — they're not GPU scenes (power-cap has its own menu, prune was
-        removed).  'off' (the stop-all) + serving/studio scenes are kept."""
+    async def test_scenes_filters_command_modes(self):
+        """The COMMAND modes (power-cap / prune / prune-all) are filtered from the
+        scene table — they're not GPU scenes (power-cap has its own menu, prune was
+        removed).  'off' + 'chat' (ops group) and models/studio scenes are kept."""
         listing = json.dumps([
-            {"name": "27b", "group": "serving", "gpus": "both"},
+            {"name": "27b", "group": "models", "gpus": "both"},
             {"name": "comfyui", "group": "studio", "gpus": "both"},
+            {"name": "chat", "group": "ops", "gpus": "none"},
             {"name": "off", "group": "ops", "gpus": "none"},
             {"name": "power-cap", "group": "ops", "gpus": "both"},
             {"name": "prune", "group": "ops", "gpus": "none"},
@@ -871,8 +872,8 @@ class TestScenesDoctor:
         cd = CockpitData(ROOT, runner=full_runner(
             **{"gpu-mode.sh --list-modes --json": ok(listing)}))
         names = [s.name for s in await cd.scenes()]
-        assert names == ["27b", "comfyui", "off"]
-        assert "prune" not in names and "power-cap" not in names
+        assert names == ["27b", "comfyui", "chat", "off"]
+        assert not ({"power-cap", "prune", "prune-all"} & set(names))
 
     @pytest.mark.asyncio
     async def test_doctor_serving(self):

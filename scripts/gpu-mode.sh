@@ -19,7 +19,7 @@ GEMMA_DUAL_AWQ_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/awq"
 # layer-split across both cards (llama.cpp). Dual-only — see `gpu-mode deckard`.
 DECKARD_DIR="$CLUB3090_DIR/models/qwen3.6-40b-deckard/llama-cpp/compose/dual/piehsoft-q6k"
 # DiffusionGemma 26B-A4B — vLLM's first dLLM (TP=2, official :gemma image + 3 fix-mounts).
-# Dual-only (both cards). See `gpu-mode dgemma`. 🧪 experimental.
+# Dual-only (both cards); served via the catalog slug vllm/diffusiongemma-dual (the dgemma scene was removed). 🧪
 DGEMMA_DIR="$CLUB3090_DIR/models/diffusiongemma-26b-a4b/vllm/compose/dual/fp8"
 # Image-studio chat brain: gemma-4-12b single-card (llama.cpp), pinned to the spare GPU
 # so it coexists with ComfyUI image gen (different card). See `gpu-mode image-studio`.
@@ -235,11 +235,10 @@ stop_deckard() {
     printf "  ${RED}▼${NC} Stopping deckard-40b..."
     compose_at "$DECKARD_DIR" "down" mtp.yml && echo "done" || echo "skipped"
 }
-start_diffusiongemma() {
-    printf "  ${GREEN}▲${NC} Starting diffusiongemma-26b-a4b (dLLM)..."
-    # PORT=8199 = the dual-card "active big model" slot (shared with deckard).
-    compose_at_env "$DGEMMA_DIR" "up -d" base.yml PORT=8199 && echo "done" || echo "failed"
-}
+# (start_diffusiongemma + the diffusiongemma SCENE were removed — the model stays
+#  serveable via the catalog slug vllm/diffusiongemma-dual.  stop_diffusiongemma is
+#  KEPT: mode_off + the studio modes call it to defensively clear a stray dgemma
+#  container off the cards.)
 stop_diffusiongemma() {
     printf "  ${RED}▼${NC} Stopping diffusiongemma-26b-a4b..."
     compose_at_env "$DGEMMA_DIR" "down" base.yml PORT=8199 && echo "done" || echo "skipped"
@@ -571,33 +570,9 @@ mode_gemma_awq() {
     echo -e "${YELLOW}Tail: sudo docker logs -f vllm-gemma-4-31b-awq${NC}"
 }
 
-mode_diffusiongemma() {
-    echo -e "${CYAN}═══ Switching to DiffusionGemma 26B-A4B mode (dLLM, dual-card) 🧪 ═══${NC}"
-    echo "Starting: DiffusionGemma 26B-A4B (vLLM's first diffusion LM) — official :gemma image"
-    echo "          + 3 Ampere/TP fix-mounts, fp8, TP=2, 262K (vLLM, :8199)"
-    echo "Stopping: all other GPU models (DiffusionGemma uses both cards, TP=2)"
-    echo ""
-    stop_service ollama
-    stop_all_27b
-    stop_all_gemma
-    stop_gemma_12b_chat
-    stop_comfyui
-    stop_deckard
-    start_diffusiongemma
-    start_service litellm
-    start_service qdrant
-    start_service openwebui
-    start_service searxng
-    # Not in the LiteLLM gateway config → wire into Open WebUI directly (reuses
-    # switch.sh --owui's helper). Best-effort: no-op if OWUI isn't up yet.
-    if [ -x "$CLUB3090_DIR/scripts/lib/owui-register.sh" ]; then
-        bash "$CLUB3090_DIR/scripts/lib/owui-register.sh" 8199 || true
-    fi
-    echo ""
-    echo -e "${GREEN}DiffusionGemma mode active.${NC} API: http://192.168.86.33:8199  (model: diffusiongemma-26b-a4b)"
-    echo -e "${YELLOW}🧪 experimental — block-parallel dLLM; SSE streams a whole canvas per chunk.${NC}"
-    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-diffusiongemma-26b-a4b-fp8-tp2${NC}"
-}
+# (mode_diffusiongemma removed — DiffusionGemma is a niche dLLM; its gpu-mode scene
+#  was redundant with the catalog slug vllm/diffusiongemma-dual, which is the way
+#  to serve it.  'off' still tears down any running dgemma container.)
 
 mode_comfyui() {
     echo -e "${CYAN}═══ Switching to ComfyUI mode (image / video gen) ═══${NC}"
@@ -684,33 +659,10 @@ mode_image_studio() {
     echo -e "${YELLOW}Tail: sudo docker logs -f comfyui | sudo docker logs -f llama-cpp-gemma4-12b${NC}"
 }
 
-mode_bigmodel() {
-    echo -e "${CYAN}═══ Switching to BIG MODEL mode ═══${NC}"
-    echo "Stopping ALL containers to maximize RAM + VRAM..."
-    echo ""
-    stop_all_27b
-    stop_deckard
-    stop_all_gemma
-    stop_comfyui
-    for svc in "${SERVICES[@]}"; do
-        stop_service "$svc"
-    done
-    echo ""
-    echo "Dropping filesystem caches..."
-    sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
-    echo ""
-    echo -e "${CYAN}═══ Available Resources ═══${NC}"
-    echo -e "VRAM:"
-    nvidia-smi --query-gpu=memory.free,memory.total --format=csv,noheader 2>/dev/null
-    echo -e "RAM:"
-    free -h | grep Mem | awk '{print "  Free: "$4" / Total: "$2}'
-    echo ""
-    echo -e "${GREEN}Big model mode active.${NC} All containers stopped, max RAM+VRAM available."
-    echo ""
-    echo -e "Example: run a custom GGUF with llama-server:"
-    echo -e "  llama-server --model /mnt/models/gguf/<file>.gguf \\"
-    echo -e "    --n-gpu-layers 99 --ctx-size 32768 --host 0.0.0.0 --port 8001"
-}
+# ('bigmodel' was removed — it was ~redundant with 'off' (both stop everything).
+#  Its only useful extra, the freed VRAM/RAM readout, is folded into mode_off
+#  below; the cache-drop was marginal (Linux auto-reclaims page cache, and it does
+#  nothing for VRAM) and the llama-server hint lives in the docs.)
 
 stop_estate() {
     # Tear down any estate-managed instances (launch.sh --estate-file or --estate
@@ -883,6 +835,14 @@ mode_off() {
     done
     echo ""
     echo -e "${GREEN}All services stopped.${NC}"
+    # Freed-resource readout (folded in from the removed 'bigmodel' scene) — handy
+    # before a one-off manual workload (a custom llama-server GGUF, an experiment).
+    echo ""
+    echo -e "${CYAN}═══ Free resources ═══${NC}"
+    echo -e "VRAM:"
+    nvidia-smi --query-gpu=memory.free,memory.total --format=csv,noheader 2>/dev/null
+    echo -e "RAM:"
+    free -h | grep Mem | awk '{print "  Free: "$4" / Total: "$2}'
 }
 
 # --- Scene catalog (`--list-modes [--json]`) --------------------------------
@@ -901,17 +861,15 @@ mode_off() {
 list_modes_data() {
     # name<TAB>group<TAB>description<TAB>services<TAB>ports<TAB>gpus
     cat <<'TSV'
-chat	serving	Open WebUI + LiteLLM + Qdrant + SearXNG (browser chat, no GPU model)	openwebui,litellm,qdrant,searxng	8080,4000	none
-27b	serving	Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision (TP=2) — default	vllm-qwen36-27b-dual,litellm,qdrant,openwebui,searxng	8010,8080,4000	both
-gemma	serving	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
-gemma-int8	serving	alias for gemma (Gemma 4 31B INT8 PTH KV, 262K, TP=2)	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
-gemma-mtp	serving	Gemma 4 31B bf16 KV fallback — 32K, stock vLLM, no overlay (TP=2)	vllm-gemma-4-31b-mtp,litellm,qdrant,openwebui,searxng	8030,8080,4000	both
-deckard	serving	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng	8199,8080,4000	both
-bigmodel	serving	Stop everything; max RAM+VRAM for one-off llama-server / custom workloads		none
+chat	ops	Open WebUI + LiteLLM + Qdrant + SearXNG (browser chat, no GPU model)	openwebui,litellm,qdrant,searxng	8080,4000	none
+27b	models	Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision (TP=2) — default	vllm-qwen36-27b-dual,litellm,qdrant,openwebui,searxng	8010,8080,4000	both
+gemma	models	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
+gemma-int8	models	alias for gemma (Gemma 4 31B INT8 PTH KV, 262K, TP=2)	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
+gemma-mtp	models	Gemma 4 31B bf16 KV fallback — 32K, stock vLLM, no overlay (TP=2)	vllm-gemma-4-31b-mtp,litellm,qdrant,openwebui,searxng	8030,8080,4000	both
+deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng	8199,8080,4000	both
 comfyui	studio	ComfyUI image/video gen only, all GPUs (mutex with LLM)	comfyui	8188	both
 image-studio	studio	Ideogram-4 image gen (GPU0) + gemma-4-12b chat (GPU1) + Open WebUI	comfyui,llama-cpp-gemma4-12b,studio-director,studio-image-shim,openwebui,litellm,searxng	8188,8069,8090,8191,8080,4000	split
 video-studio	studio	text/image to video (LTX/Sulphur) — ComfyUI both GPUs + studio sidecars + Open WebUI	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,openwebui,litellm,searxng	8188,8090,8189,8190,8191,8192,8080,4000	both
-diffusiongemma	studio	DiffusionGemma 26B-A4B dLLM (fp8, TP=2, 262K, both cards)	vllm-diffusiongemma-26b-a4b-fp8-tp2,litellm,qdrant,openwebui,searxng	8199,8080,4000	both
 off	ops	Stop all services	all-stopped		none
 power-cap	ops	GPU power-cap controls (on/off/status; both 3090s, 230W default cap)			both
 prune	ops	docker image prune -a (safe — only unreferenced images)			none
@@ -982,7 +940,6 @@ usage() {
     echo ""
     echo "  Qwen 3.6 40B Deckard (uncensored, dual 3090, llama.cpp):"
     echo "  deckard            Q6_K + MTP n=2 + q8_0 KV + 128K ctx (:8199) — text-only, both cards"
-    echo "  dgemma             DiffusionGemma 26B-A4B dLLM 🧪 (:8199) — fp8, 262K, both cards (run 'off' before switching)"
     echo ""
     echo "  Image / Video Gen:"
     echo "  image-studio       ⭐ Ideogram-4 image gen (GPU0) + gemma-4-12b chat (GPU1) + Open WebUI"
@@ -991,7 +948,6 @@ usage() {
     echo "  video-studio       text/image→video (LTX-2.3 / Sulphur) — ComfyUI both GPUs +"
     echo "                     director (:8090) + gallery (:8189) + Open WebUI (alias: videostudio)"
     echo ""
-    echo "  bigmodel           Stop everything, max RAM+VRAM for one-off llama-server / custom workloads"
     echo "  off                Stop all services"
     echo "  status             Show running services, GPU, RAM, disk, Docker disk"
     echo ""
@@ -1017,11 +973,9 @@ case "${1:-}" in
     gemma-int8)         mode_gemma_int8 ;;
     gemma-mtp)          mode_gemma ;;
     deckard)            mode_deckard ;;
-    diffusiongemma|dgemma) mode_diffusiongemma ;;
     comfyui)            mode_comfyui ;;
     image-studio|imagestudio) mode_image_studio ;;
     video-studio|videostudio) mode_video_studio ;;
-    bigmodel)           mode_bigmodel ;;
     off)                mode_off ;;
     status)             show_status ;;
     power-cap|powercap) mode_powercap "${2:-status}" ;;

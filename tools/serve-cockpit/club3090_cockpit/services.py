@@ -1291,22 +1291,18 @@ class CockpitData:
     async def scenes(self) -> list[Scene]:
         """gpu-mode --list-modes --json → Scene list.
 
-        Filters the ``ops`` group down to just ``off`` (the stop-all): ``power-cap``
-        has its own [c] menu and ``prune`` / ``prune-all`` were removed from the
-        cockpit — none are GPU *scenes* you'd ⏎-switch to, so they must not appear
-        in the scene table (they did, since --list-modes mirrors the CLI dispatch)."""
+        Hides the COMMAND modes — ``power-cap`` (its own [c] menu), ``prune`` /
+        ``prune-all`` (removed from the cockpit): they're not GPU *scenes* you'd
+        ⏎-switch to, yet --list-modes lists them (it mirrors the CLI dispatch).
+        Everything else is a real scene, incl. ``off`` and ``chat`` (the ops-group
+        browser-chat stack) and the models / studio scenes."""
         data, _ = await self._run_json(
             ["bash", "scripts/gpu-mode.sh", "--list-modes", "--json"], timeout=30.0
         )
         if not isinstance(data, list):
             return []
-        out: list[Scene] = []
-        for d in data:
-            s = Scene.from_dict(d)
-            if s.group == "ops" and s.name != "off":
-                continue
-            out.append(s)
-        return out
+        hidden = {"power-cap", "prune", "prune-all"}
+        return [s for s in (Scene.from_dict(d) for d in data) if s.name not in hidden]
 
     async def doctor_read(self, url: Optional[str] = None) -> DoctorRead:
         """health.sh (text-only) → parsed DoctorRead."""
