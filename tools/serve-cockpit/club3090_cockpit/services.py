@@ -455,10 +455,17 @@ class CockpitData:
             pass
 
     def weights_model_dir(self) -> str:
-        """The configured model dir (where ``huggingface/<subdir>`` lives).  A
-        method (not the bare ``MODEL_DIR`` constant) so the Settings step can make
-        it user-configurable without touching every call site."""
-        return getattr(self, "_model_dir", None) or MODEL_DIR
+        """The configured model dir (where ``huggingface/<subdir>`` lives).
+
+        Precedence (highest first): an in-app / persisted value (``_model_dir``,
+        set at launch by ``apply_persisted_settings`` from the env var or the
+        saved settings, or live by the Settings screen) > the ``MODEL_DIR`` env
+        var > the bundled default.  The env-var fallback here also covers a bare
+        ``CockpitData`` constructed outside ``__main__`` (tests, embedding).  A
+        method (not the bare ``MODEL_DIR`` constant) so it's user-configurable
+        without touching every call site."""
+        env_dir = (os.environ.get("MODEL_DIR") or "").strip()
+        return getattr(self, "_model_dir", None) or env_dir or MODEL_DIR
 
     def weights_bytes_on_disk(self, meta: WeightsMeta, *, model_dir: Optional[str] = None) -> int:
         """Total bytes currently under ``<model_dir>/huggingface/<subdir>`` — the

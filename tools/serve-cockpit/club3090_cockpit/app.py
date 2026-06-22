@@ -4550,8 +4550,11 @@ class CockpitApp(App):
         Binding("shift+left", "hscroll_left", "Scroll ◀", show=False),
         Binding("shift+right", "hscroll_right", "Scroll ▶", show=False),
         # Download UX — [S] edit the model dir + HF token (where weights are
-        # fetched to / gated-repo auth).  Always-on, persisted.
-        Binding("S", "settings", "Settings", show=False),
+        # fetched to / gated-repo auth).  Always-on, persisted.  show=True: it's a
+        # setup prerequisite for downloads, so it earns a permanent footer slot —
+        # the "press [S]" banner only appears when the model dir is MISSING, which
+        # leaves it invisible on a rig where the dir is already set.
+        Binding("S", "settings", "Settings", show=True),
         # Context-sensitive — check_action enables/shows them only in the right mode.
         Binding("slash", "filter_catalog", "Filter", show=False),
         Binding("e", "explain", "Explain", show=False),

@@ -55,14 +55,21 @@ def save_settings(settings: dict) -> None:
 
 
 def apply_persisted_settings(app, environ) -> None:
-    """Apply the persisted MODEL_DIR / HF_TOKEN to the app + process env before
-    run().  MODEL_DIR points the weights-on-disk check at the user's models
-    volume; HF_TOKEN flows into the download subprocess env.  An explicit env var
-    already set WINS (don't overwrite a shell-provided token)."""
+    """Apply MODEL_DIR / HF_TOKEN to the app + process env before run().
+
+    Precedence (highest first): an explicit shell env var > the persisted
+    setting (``c3-settings.json``) > the bundled default.  An env var is a
+    deliberate per-launch choice, so it WINS over a stale persisted value (the
+    standard 12-factor rule; matches the HF_TOKEN handling that was here first).
+    MODEL_DIR points the weights-on-disk check at the user's models volume;
+    HF_TOKEN flows into the download subprocess env (gated/private repos)."""
     s = load_settings()
-    mdir = str(s.get("model_dir") or "").strip()
+    # MODEL_DIR: shell env wins over persisted; neither set → weights_model_dir
+    # falls back to the env var then the default on its own.
+    mdir = str(environ.get("MODEL_DIR") or "").strip() or str(s.get("model_dir") or "").strip()
     if mdir:
         app._data._model_dir = mdir
+    # HF_TOKEN: a shell-provided token wins; otherwise apply the persisted one.
     tok = str(s.get("hf_token") or "").strip()
     if tok and not environ.get("HF_TOKEN"):
         environ["HF_TOKEN"] = tok

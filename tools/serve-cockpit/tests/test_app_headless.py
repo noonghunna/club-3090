@@ -9489,6 +9489,10 @@ class TestSettings:
     def _isolate_config(self, tmp_path, monkeypatch):
         monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
         monkeypatch.delenv("HF_TOKEN", raising=False)
+        # MODEL_DIR now wins over persisted (12-factor), so a rig-set env var
+        # would make the persisted-settings tests non-deterministic — clear it;
+        # the env-precedence tests below set it explicitly.
+        monkeypatch.delenv("MODEL_DIR", raising=False)
 
     @pytest.mark.asyncio
     async def test_s_opens_settings_modal(self):
@@ -9556,3 +9560,47 @@ class TestSettings:
             await pilot.pause()
             status = str(app.query_one("#catalog-status", Label).render())
             assert "model dir not found" in status
+
+    @pytest.mark.asyncio
+    async def test_env_model_dir_picked_up(self, monkeypatch):
+        """MODEL_DIR env var (no persisted setting) → weights_model_dir reads it."""
+        import os
+        from club3090_cockpit import __main__ as M
+        monkeypatch.setenv("MODEL_DIR", "/env/models")
+        app, _, _ = make_app()
+        M.apply_persisted_settings(app, dict(os.environ))
+        assert app._data.weights_model_dir() == "/env/models"
+
+    @pytest.mark.asyncio
+    async def test_env_model_dir_wins_over_persisted(self, monkeypatch):
+        """Explicit env var beats a stale persisted value (12-factor)."""
+        import os
+        from club3090_cockpit import __main__ as M
+        M.save_settings({"model_dir": "/persisted/models", "hf_token": "hf_p"})
+        monkeypatch.setenv("MODEL_DIR", "/env/models")
+        app, _, _ = make_app()
+        M.apply_persisted_settings(app, dict(os.environ))
+        assert app._data.weights_model_dir() == "/env/models"
+
+    @pytest.mark.asyncio
+    async def test_env_model_dir_fallback_without_apply(self, monkeypatch):
+        """A bare CockpitData (apply_persisted_settings NOT called — tests /
+        embedding) still honours the MODEL_DIR env var via weights_model_dir."""
+        from club3090_cockpit.services import CockpitData, MODEL_DIR
+        monkeypatch.setenv("MODEL_DIR", "/env/models")
+        data = CockpitData(repo_root=Path("/tmp/fake-repo"))
+        assert data.weights_model_dir() == "/env/models"
+        # and with no env + no persisted → the bundled default
+        monkeypatch.delenv("MODEL_DIR", raising=False)
+        assert CockpitData(repo_root=Path("/tmp/fake-repo")).weights_model_dir() == MODEL_DIR
+
+    @pytest.mark.asyncio
+    async def test_env_hf_token_respected_and_wins(self, monkeypatch):
+        """A shell HF_TOKEN is left intact (wins over persisted) so it flows into
+        the download subprocess env."""
+        from club3090_cockpit import __main__ as M
+        M.save_settings({"model_dir": "/m", "hf_token": "hf_persisted"})
+        app, _, _ = make_app()
+        env = {"HF_TOKEN": "hf_shell"}
+        M.apply_persisted_settings(app, env)
+        assert env["HF_TOKEN"] == "hf_shell"
