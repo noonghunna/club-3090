@@ -855,12 +855,10 @@ class CockpitData:
         "stopped" — a possibly-live service is never action-suppressed on a stale
         read of the un-classified set (the classified stack rows still count)."""
         out = list(running)
-        # (normalized name → host port) for every running container, so a matched
-        # supporting service can carry the port it serves on.
-        running_ports: dict[str, int] = {}
-        for n, p in await self._running_container_ports():
-            running_ports.setdefault(_normalize_service_name(n), p)
-        running_ports.pop("", None)
+        # (actual container name, host port) for every running container, so a
+        # matched supporting service carries BOTH the port it serves on AND its
+        # real container name.
+        running_pairs = await self._running_container_ports()
         # Names already present as stack rows (GPU services + engines/estate) —
         # those service dirs are de-duped (omitted) since they're already a row.
         stack_norm = {_normalize_service_name(c.name) for c in running}
@@ -868,12 +866,18 @@ class CockpitData:
         for svc in self._known_service_dirs():
             if any(_service_dir_matches_running(svc, sn) for sn in stack_norm):
                 continue  # already a (running) stack row — don't duplicate
-            match_port: Optional[int] = None
-            for rn, port in running_ports.items():
-                if _service_dir_matches_running(svc, rn):
-                    match_port = port
+            # Find the matching RUNNING container — capture its ACTUAL name + port.
+            # The container name MAY differ from the service dir (services/openwebui/
+            # → container_name "open-webui"), so the row MUST carry the real name or
+            # stop / restart / logs would target a non-existent container.
+            match_name: Optional[str] = None
+            match_port = 0
+            for orig, port in running_pairs:
+                norm = _normalize_service_name(orig)
+                if norm and _service_dir_matches_running(svc, norm):
+                    match_name, match_port = orig, port
                     break
-            is_running = match_port is not None
+            is_running = match_name is not None
             # Non-GPU supporting services (litellm / qdrant / searxng / open-webui)
             # carry an ``engine="web"`` tag + the port they serve on, so the
             # Containers table shows what they are instead of a bare "—".  A
@@ -882,11 +886,13 @@ class CockpitData:
             engine = "" if _classify_container_kind(svc) is not None else "web"
             out.append(
                 ContainerInfo(
-                    name=svc,
+                    # real container name when up (for stop/restart/logs); the dir
+                    # name when down (service_start uses it for the compose path).
+                    name=match_name if is_running else svc,
                     kind="service",
                     status="running" if is_running else "stopped",
                     engine=engine,
-                    host_port=match_port or 0,
+                    host_port=match_port,
                 )
             )
         return out
@@ -1672,10 +1678,21 @@ class CockpitData:
         ``services/<name>/`` dir (the verb for a STOPPED service row in the
         Containers tab; running rows use stop/restart).
 
+        Mirrors gpu-mode's ``compose_at`` so the cockpit and gpu-mode operate on
+        the SAME containers:
+          - ``-p <name>`` pins the compose PROJECT to the service dir name.
+            gpu-mode starts these from inside ``services/<name>/`` (so its project
+            == the dir); the cockpit runs with ``cwd=repo_root``, where the project
+            would otherwise default to the repo dir — and ``up -d`` would try to
+            CREATE a second container with the same ``container_name`` → "name
+            already in use", which is exactly why comfyui/qdrant/searxng wouldn't
+            start.
+          - ``--env-file .env`` (when present) resolves repo vars like
+            ``${MODEL_DIR}`` / ``${HF_TOKEN}`` that some composes (comfyui) need.
+
         Reconcile-gated: a GPU-holding service (ComfyUI / Step-Audio) can't
         silently collide with whatever holds the cards, while a non-GPU web
-        service (litellm / qdrant / …) clears the gate immediately.  Path is
-        repo-relative (executed with ``cwd=repo_root``), tolerating the
+        service (litellm / qdrant / …) clears the gate immediately.  Tolerates the
         ``.yml`` / ``.yaml`` spelling."""
         rel = f"services/{name}/docker-compose.yml"
         if (
@@ -1683,9 +1700,13 @@ class CockpitData:
             and (self.repo_root / f"services/{name}/docker-compose.yaml").is_file()
         ):
             rel = f"services/{name}/docker-compose.yaml"
+        cmd = ["docker", "compose"]
+        if (self.repo_root / ".env").is_file():
+            cmd += ["--env-file", ".env"]
+        cmd += ["-f", rel, "-p", name, "up", "-d"]
         return ActionPlan(
             kind="service-up",
-            cmd=["docker", "compose", "-f", rel, "up", "-d"],
+            cmd=cmd,
             description=f"docker compose up {name}",
             requires_reconcile=True,
         )

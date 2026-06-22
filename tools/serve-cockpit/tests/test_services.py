@@ -1097,23 +1097,33 @@ class TestSupportingServiceEnrichment:
 
 
 class TestServiceStart:
-    """service_start: bring a stopped supporting service up via compose."""
+    """service_start: bring a stopped supporting service up via compose, mirroring
+    gpu-mode's compose_at (project pinned to the dir name; --env-file when present)."""
 
     def test_compose_up_plan(self, tmp_path):
         _seed_service_dirs(tmp_path, ["litellm"])
         plan = CockpitData(tmp_path).service_start("litellm")
+        # -p pins the project to the dir name (match gpu-mode so it operates on the
+        # SAME container, not a duplicate); no .env in tmp_path → --env-file omitted.
         assert plan.cmd == [
             "docker", "compose", "-f",
-            "services/litellm/docker-compose.yml", "up", "-d"]
+            "services/litellm/docker-compose.yml", "-p", "litellm", "up", "-d"]
         assert plan.requires_reconcile is True
         assert plan.kind == "service-up"
+
+    def test_env_file_included_when_present(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["comfyui"])
+        (tmp_path / ".env").write_text("MODEL_DIR=/x\n")
+        plan = CockpitData(tmp_path).service_start("comfyui")
+        assert plan.cmd[:4] == ["docker", "compose", "--env-file", ".env"]
+        assert plan.cmd[-4:] == ["-p", "comfyui", "up", "-d"]
 
     def test_yaml_spelling_fallback(self, tmp_path):
         d = tmp_path / "services" / "x"
         d.mkdir(parents=True)
         (d / "docker-compose.yaml").write_text("services: {}\n")
         plan = CockpitData(tmp_path).service_start("x")
-        assert plan.cmd[3] == "services/x/docker-compose.yaml"
+        assert "services/x/docker-compose.yaml" in plan.cmd
 
 
 # ===========================================================================

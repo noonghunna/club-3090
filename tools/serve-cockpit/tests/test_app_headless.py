@@ -1700,15 +1700,19 @@ class TestBatch1KnownServices:
             await pilot.press("s")  # start (compose up)
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
-            assert app.screen._plan.cmd == [
-                "docker", "compose", "-f",
-                "services/qdrant/docker-compose.yml", "up", "-d"]
+            cmd = app.screen._plan.cmd
+            # compose up, project pinned to the dir (so it operates on the SAME
+            # container gpu-mode would, not a duplicate under the repo project).
+            assert cmd[:2] == ["docker", "compose"]
+            assert "services/qdrant/docker-compose.yml" in cmd
+            assert cmd[-4:] == ["-p", "qdrant", "up", "-d"]
 
     @pytest.mark.asyncio
     async def test_separator_mismatch_service_matched_as_running(self, tmp_path):
         """MUST-FIX #2 (b): a service dir ``open-webui`` whose running container
         is named ``openwebui`` (separator mismatch) must NORMALIZE-match → shown
-        running, not stopped.  A bare substring match would miss this."""
+        running, not stopped.  A bare substring match would miss this.  The row
+        carries the REAL container name (``openwebui``) so its actions target it."""
         _seed_services(tmp_path, ["open-webui"])
         seed_repo(tmp_path)
         responses = fake_responses(
@@ -1719,12 +1723,39 @@ class TestBatch1KnownServices:
             await _enter_operate(pilot)
             pane = app.query_one("#operate-containers-pane", OperateContainersPane)
             stopped = [c for c in pane._containers if c.status == "stopped"]
-            assert not any(c.name == "open-webui" for c in stopped), (
+            assert not any(c.name in ("open-webui", "openwebui") for c in stopped), (
                 "open-webui dir wrongly marked stopped despite running 'openwebui'"
             )
-            owui = next((c for c in pane._containers if c.name == "open-webui"), None)
+            owui = next((c for c in pane._containers if c.name == "openwebui"), None)
             assert owui is not None and owui.status != "stopped"
             assert app._is_stopped_service(owui) is False
+
+    @pytest.mark.asyncio
+    async def test_stop_targets_real_container_name_not_service_dir(self, tmp_path):
+        """REGRESSION: the openwebui service dir maps to container_name
+        'open-webui'.  Stop/restart MUST target the REAL container name, not the
+        dir — `docker stop openwebui` would fail with 'no such container'."""
+        _seed_services(tmp_path, ["openwebui"])
+        seed_repo(tmp_path)
+        responses = fake_responses(
+            **{"docker ps": ok("open-webui|0.0.0.0:8080->8080/tcp\n")})
+        app, _, _ = make_app(responses=responses, repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            owui = next(c for c in pane._containers
+                        if c.name in ("open-webui", "openwebui"))
+            assert owui.name == "open-webui"          # the REAL container name
+            assert owui.status != "stopped"
+            idx = pane._containers.index(owui)
+            tbl = pane.query_one("#containers-table", DataTable)
+            tbl.move_cursor(row=idx)
+            await pilot.press("x")  # stop
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert app.screen._plan.cmd == ["docker", "stop", "open-webui"]
 
     @pytest.mark.asyncio
     async def test_stopped_row_highlight_clears_running_logs(self, tmp_path):
