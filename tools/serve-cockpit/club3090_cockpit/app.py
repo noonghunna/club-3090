@@ -1776,15 +1776,6 @@ class OperateOrchPane(Container):
         height: auto;
         margin: 0 1 1 1;
     }
-    OperateOrchPane #services-heading {
-        text-style: bold;
-        padding: 0 1;
-        margin: 0 1 0 1;
-    }
-    OperateOrchPane #services-strip {
-        padding: 0 1;
-        margin: 0 1 1 1;
-    }
     OperateOrchPane #powercap-heading {
         text-style: bold;
         padding: 0 1;
@@ -1847,8 +1838,6 @@ class OperateOrchPane(Container):
                 "[dim]highlight a scene (move cursor) to preview what it brings up[/dim]",
                 id="scene-preview",
             )
-            yield Label("Services", id="services-heading")
-            yield Static("[dim]reading estate…[/dim]", id="services-strip")
             yield Label("Power cap", id="powercap-heading")
             yield Static("[dim]reading power-cap status…[/dim]", id="powercap-strip")
             yield Label(
@@ -1909,13 +1898,11 @@ class OperateOrchPane(Container):
         self._populate_serving(state)
         self._populate_doctor(state)
         self._populate_scenes(state.scenes)
-        self._populate_services(state)
         # #11-ext — re-render the scene preview every poll (NOT only when the scene
-        # list changes, which _populate_scenes guards): the service status bullets
-        # track live container state, so they must refresh off each estate read.
-        # render_scene_preview self-guards to a no-op when Orchestration isn't the
-        # active sub-tab, so this never touches the (hidden) service table from a
-        # background poll while the user is on another tab.
+        # list changes, which _populate_scenes guards): the per-service status
+        # bullets track live container state, so they must refresh off each estate
+        # read.  (The global Services strip was removed as a duplicate of this
+        # scene-scoped view — the full running list lives in the Containers tab.)
         try:
             self.render_scene_preview(self.selected_scene())
         except Exception:
@@ -2218,44 +2205,6 @@ class OperateOrchPane(Container):
         except Exception:
             pass
 
-    def _populate_services(self, state: EstateState) -> None:
-        strip = self.query_one("#services-strip", Static)
-        # Services come from the running-container view + scene catalog.
-        # Batch 5 (studio-* / #2-ext): include the "stack" kind (the studio-* /
-        # AI-studio GPU0 occupants) alongside the named GPU "service" containers,
-        # so the "what about all the OTHER services" gap closes and GPU0's holder
-        # is visible in this list.  A "stack" container carries a [dim]studio[/dim]
-        # tag so it's distinguishable from a first-class service (ComfyUI).
-        # (label, running) so the bullet reflects ACTUAL state: ● green = running,
-        # ○ red = a known service that's down (e.g. a stopped supporting service).
-        svc_rows: list[tuple[str, bool]] = []
-        for c in state.containers:
-            if c.kind == "service":
-                svc_rows.append((c.name, c.is_running))
-            elif c.kind == "stack" and c.is_running:
-                svc_rows.append((f"{c.name} [dim]studio[/dim]", True))
-        if not svc_rows:
-            ae = (state.estate_report or {}).get("active_estate") or {}
-            insts = ae.get("instances") or []
-            if insts:
-                strip.update(
-                    "  "
-                    + "   ".join(
-                        f"[green]●[/green] {i.get('name', '?')} (GPU {i.get('gpus', [])})"
-                        for i in insts
-                    )
-                )
-                return
-            strip.update("[dim]no stack services detected[/dim]")
-            return
-        strip.update(
-            "  "
-            + "   ".join(
-                (f"[green]●[/green] {n}" if running else f"[red]○[/red] {n}")
-                for n, running in svc_rows
-            )
-        )
-
     def selected_scene(self) -> Optional[Scene]:
         t = self.query_one("#scene-table", DataTable)
         idx = t.cursor_row
@@ -2373,8 +2322,9 @@ class OperateContainersPane(Container):
             with TabPane("Config", id="drill-tab-config"):
                 yield Static("[dim]highlight a container (move cursor) to load its config[/dim]", id="drill-config")
         yield Label(
-            "[dim]move cursor or \\[l]/\\[t] to load detail · \\[l] logs   \\[t] top   \\[s] restart (gated)   "
-            "\\[x] stop (gated)   \\[X] rm (reconcile-gated)[/dim]",
+            "[dim]move cursor or \\[l]/\\[t] to load detail · \\[l] logs   \\[t] top   "
+            "\\[s] restart · start if stopped (gated)   \\[x] stop (gated)   "
+            "\\[X] rm (reconcile-gated)[/dim]",
             id="containers-hint",
         )
 
@@ -2463,18 +2413,21 @@ class OperateContainersPane(Container):
         for c in containers:
             stopped = getattr(c, "status", "running") == "stopped"
             if stopped:
-                # Known-but-not-running supporting service — greyed, no live
-                # container to act on.
+                # Known-but-not-running supporting service — greyed, ○ red status
+                # bullet.  Engine (e.g. "web") is still shown so you can tell what
+                # the down service is; the port is unknown while it's down.
                 t.add_row(
-                    f"[dim]{c.name}[/dim]",
+                    f"[red]○[/red] [dim]{c.name}[/dim]",
                     f"[dim]{c.kind}[/dim]",
-                    "[dim]—[/dim]",
+                    f"[dim]{c.engine or '—'}[/dim]",
                     "[dim]—[/dim]",
                     "[dim]stopped[/dim]",
                 )
             else:
+                # Running — ● green status bullet so a live service reads clearly
+                # as running (the slug column carries the registry match / —).
                 t.add_row(
-                    c.name,
+                    f"[green]●[/green] {c.name}",
                     c.kind,
                     c.engine or "—",
                     str(c.host_port) if c.host_port else "—",
@@ -7244,6 +7197,13 @@ class CockpitApp(App):
             )
             return
         if self._is_stopped_service(con):
+            if op == "restart":
+                # [s] on a STOPPED service = bring it UP (docker compose up), not
+                # restart a live container.  Reconcile-gated (service_start), so a
+                # GPU service can't silently collide; a web service starts freely.
+                plan = self._data.service_start(con.name)
+                self.push_screen(ConfirmActionScreen(plan))
+                return
             self.notify(
                 f"{con.name} is not running — nothing to {op}.",
                 title="Containers", severity="warning", timeout=3,

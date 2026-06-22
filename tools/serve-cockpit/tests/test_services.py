@@ -1028,14 +1028,6 @@ class TestActionBuilders:
         plan = cd.container_action("vllm-x", "stop")
         assert plan.requires_reconcile is True
 
-    def test_container_action_start(self):
-        cd = CockpitData(ROOT, runner=full_runner())
-        plan = cd.container_action("vllm-x", "start")
-        assert plan.cmd == ["docker", "start", "vllm-x"]
-        # start = bring back one container of an ACTIVE scene (sibling already holds
-        # the GPUs) → no new cross-scene contention → no reconcile.
-        assert plan.requires_reconcile is False
-
     def test_container_action_bad_op(self):
         cd = CockpitData(ROOT, runner=full_runner())
         with pytest.raises(ValueError):
@@ -1043,8 +1035,9 @@ class TestActionBuilders:
 
 
 class TestSceneServiceStates:
-    """scene_service_states: per-service running flag for a scene, matched against
-    the live docker-ps set (drives the Orchestration scene-preview status bullets)."""
+    """scene_service_states_sync: per-service running flag for a scene, matched
+    against the live docker-ps set (drives the Orchestration scene-preview status
+    bullets)."""
 
     def test_sync_matches_running_and_marks_absent_stopped(self):
         scene = Scene(name="chat", group="ops",
@@ -1059,24 +1052,68 @@ class TestSceneServiceStates:
         assert CockpitData.scene_service_states_sync(
             Scene(name="off", services=[]), ["anything"]) == []
 
-    @pytest.mark.asyncio
-    async def test_async_reads_docker_ps(self):
-        cd = CockpitData(ROOT, runner=full_runner(
-            **{"docker ps": ok("vllm-qwen36-27b-dual|0.0.0.0:8010->8010/tcp\n")}))
-        states = await cd.scene_service_states(
-            Scene(name="27b", services=["vllm-qwen36-27b-dual"]))
-        assert [(s.name, s.running) for s in states] == [
-            ("vllm-qwen36-27b-dual", True)]
+
+def _seed_service_dirs(root, names):
+    for n in names:
+        d = root / "services" / n
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "docker-compose.yml").write_text("services: {}\n")
+
+
+class TestSupportingServiceEnrichment:
+    """_merge_known_services: non-GPU supporting services carry engine='web' + the
+    port they serve on (running) so the Containers tab shows what they are."""
 
     @pytest.mark.asyncio
-    async def test_async_docker_ps_fail_degrades_all_stopped(self):
-        # A failed running-set read degrades every service to stopped (the scene
-        # then reads inactive — the safe default).
-        cd = CockpitData(ROOT, runner=full_runner(
-            **{"docker ps": RunResult(returncode=1, stdout="", stderr="boom")}))
-        states = await cd.scene_service_states(
-            Scene(name="27b", services=["vllm-qwen36-27b-dual"]))
-        assert states[0].running is False
+    async def test_running_support_service_gets_web_and_port(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["litellm", "comfyui"])
+        cd = CockpitData(tmp_path, runner=full_runner(
+            **{"docker ps": ok("litellm|0.0.0.0:4000->4000/tcp\n")}))
+        by = {c.name: c for c in await cd._merge_known_services([])}
+        assert by["litellm"].engine == "web"
+        assert by["litellm"].host_port == 4000
+        assert by["litellm"].status == "running"
+        # A GPU-holding rig service (comfyui) keeps NO web tag.
+        assert by["comfyui"].engine == ""
+
+    @pytest.mark.asyncio
+    async def test_stopped_support_service_web_no_port(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["qdrant"])
+        cd = CockpitData(tmp_path, runner=full_runner(**{"docker ps": ok("")}))
+        by = {c.name: c for c in await cd._merge_known_services([])}
+        assert by["qdrant"].engine == "web"
+        assert by["qdrant"].host_port == 0
+        assert by["qdrant"].status == "stopped"
+
+    @pytest.mark.asyncio
+    async def test_host_port_general_match_not_engine_only(self, tmp_path):
+        # openwebui maps 3000->8080; the engine-only PORT_MAP_BROAD_RE would miss
+        # the host port — the general matcher must catch it.
+        _seed_service_dirs(tmp_path, ["openwebui"])
+        cd = CockpitData(tmp_path, runner=full_runner(
+            **{"docker ps": ok("openwebui|0.0.0.0:3000->8080/tcp\n")}))
+        by = {c.name: c for c in await cd._merge_known_services([])}
+        assert by["openwebui"].host_port == 3000
+
+
+class TestServiceStart:
+    """service_start: bring a stopped supporting service up via compose."""
+
+    def test_compose_up_plan(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["litellm"])
+        plan = CockpitData(tmp_path).service_start("litellm")
+        assert plan.cmd == [
+            "docker", "compose", "-f",
+            "services/litellm/docker-compose.yml", "up", "-d"]
+        assert plan.requires_reconcile is True
+        assert plan.kind == "service-up"
+
+    def test_yaml_spelling_fallback(self, tmp_path):
+        d = tmp_path / "services" / "x"
+        d.mkdir(parents=True)
+        (d / "docker-compose.yaml").write_text("services: {}\n")
+        plan = CockpitData(tmp_path).service_start("x")
+        assert plan.cmd[3] == "services/x/docker-compose.yaml"
 
 
 # ===========================================================================

@@ -1336,7 +1336,7 @@ class TestEstateWired:
             app.query_one("#gpu1-card")
             app.query_one("#doctor-line")
             app.query_one("#scene-table", DataTable)
-            app.query_one("#services-strip")
+            app.query_one("#scene-preview", Static)
 
     @pytest.mark.asyncio
     async def test_estate_scene_table_populates_from_gpu_mode(self):
@@ -1662,6 +1662,47 @@ class TestBatch1KnownServices:
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
             assert app.screen._plan.cmd == ["docker", "restart", "litellm"]
+
+    @pytest.mark.asyncio
+    async def test_running_support_service_shows_web_engine_and_port(self, tmp_path):
+        """A running non-GPU supporting service carries engine='web' + its port in
+        the Containers table (was a bare '—')."""
+        _seed_services(tmp_path, ["litellm"])
+        seed_repo(tmp_path)
+        responses = fake_responses(
+            **{"docker ps": ok("litellm|0.0.0.0:4000->4000/tcp\n")})
+        app, _, _ = make_app(responses=responses, repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            litellm = next(c for c in pane._containers if c.name == "litellm")
+            assert litellm.engine == "web"
+            assert litellm.host_port == 4000
+
+    @pytest.mark.asyncio
+    async def test_start_stopped_service_from_containers(self, tmp_path):
+        """[s] on a STOPPED service brings it up via `docker compose up` (not a
+        'not running' warning) — the confirm gate gets the compose-up plan."""
+        _seed_services(tmp_path, ["qdrant"])
+        seed_repo(tmp_path)
+        responses = fake_responses(**{"docker ps": ok("")})  # qdrant down
+        app, _, _ = make_app(responses=responses, repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await _settle(pilot)
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            idx = next(i for i, c in enumerate(pane._containers) if c.name == "qdrant")
+            tbl = pane.query_one("#containers-table", DataTable)
+            tbl.move_cursor(row=idx)
+            await pilot.press("s")  # start (compose up)
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert app.screen._plan.cmd == [
+                "docker", "compose", "-f",
+                "services/qdrant/docker-compose.yml", "up", "-d"]
 
     @pytest.mark.asyncio
     async def test_separator_mismatch_service_matched_as_running(self, tmp_path):
@@ -9368,14 +9409,6 @@ class TestBatch5StudioServiceSet:
             assert by_name["studio-tts"].kind == "stack"
             assert by_name["studio-tts"].status == "running"
             assert by_name["studio-tts"].is_running is True
-
-    async def test_studio_visible_in_services_strip(self):
-        app, _, _ = make_app(responses=batch5_responses())
-        async with app.run_test(size=(120, 40)) as pilot:
-            await _enter_operate(pilot)
-            strip = str(app.query_one("#services-strip", Static).render())
-            # GPU0's studio holder is visible in the service list (the Batch-1 gap).
-            assert "studio-tts" in strip
 
     async def test_studio_dir_not_duplicated_as_stopped(self, tmp_path):
         # A KNOWN services/studio dir must NOT also appear greyed once the

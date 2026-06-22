@@ -791,35 +791,39 @@ class CockpitData:
             return []
         return names
 
-    async def _running_container_names(self) -> list[str]:
-        """READ — the FULL set of running container names, via ``docker ps``,
-        INDEPENDENT of ``_classify_container_kind``.
+    async def _running_container_ports(self) -> list[tuple[str, int]]:
+        """READ — every running container as ``(name, first-published-host-port)``
+        via ``docker ps``, INDEPENDENT of ``_classify_container_kind`` (so the
+        non-GPU supporting services ``_docker_ps_stack_containers`` filters out are
+        included).  The de-dup + port source for :meth:`_merge_known_services`.
+        Goes through the injected runner so tests stay mockable; failures degrade
+        to an empty list (callers bias toward running / no-port).
 
-        ``_docker_ps_stack_containers`` only surfaces the GPU-holders the
-        reconcile gate gates on (engine prefixes, ``club3090-`` estate, the
-        ``_GPU_SERVICE_NAMES`` GPU services), so its names CANNOT be the de-dup
-        source for ``_merge_known_services`` — a running non-GPU supporting
-        service (``litellm`` / ``ollama`` / ``qdrant`` / ``searxng`` /
-        ``open-webui``) never appears there and would be falsely rendered as
-        "stopped".  This is the unfiltered list of every container name docker
-        knows is running.  Goes through the injected runner so tests stay
-        mockable; failures degrade to an empty list (callers bias toward
-        running)."""
+        The port is the FIRST published host port (``:(\\d+)->`` in the docker-ps
+        ``Ports`` field — a GENERAL match, not the engine-only ``PORT_MAP_BROAD_RE``
+        whose internal-port allow-list would miss a web service like litellm:4000)."""
         res = await self._runner.run(
-            ["docker", "ps", "--format", "{{.Names}}"],
+            ["docker", "ps", "--format", "{{.Names}}|{{.Ports}}"],
             cwd=str(self.repo_root),
             timeout=10.0,
         )
         if not res.ok:
             return []
-        names: list[str] = []
+        out: list[tuple[str, int]] = []
         for line in res.stdout.splitlines():
-            # The shared "docker ps" canned-response source in tests carries a
-            # ``name|ports`` shape; tolerate it by keeping only the name field.
-            name = line.split("|", 1)[0].strip()
-            if name:
-                names.append(name)
-        return names
+            if "|" not in line:
+                # Tolerate a name-only canned response (tests / `{{.Names}}`).
+                name = line.strip()
+                if name:
+                    out.append((name, 0))
+                continue
+            name, ports_str = line.split("|", 1)
+            name = name.strip()
+            if not name:
+                continue
+            m = _HOST_PORT_RE.search(ports_str)
+            out.append((name, int(m.group(1)) if m else 0))
+        return out
 
     async def _merge_known_services(
         self, running: list[ContainerInfo]
@@ -839,8 +843,8 @@ class CockpitData:
         - **not running at all**: appended as a greyed, read-only
           ``status="stopped"`` ContainerInfo.
 
-        The running/stopped decision keys off the FULL ``docker ps`` name set
-        (``_running_container_names``), NOT ``_docker_ps_stack_containers`` —
+        The running/stopped decision keys off the FULL ``docker ps`` set
+        (``_running_container_ports``), NOT ``_docker_ps_stack_containers`` —
         the latter drops every non-GPU supporting service via
         ``_classify_container_kind``, so a RUNNING ``litellm`` would otherwise be
         falsely rendered "stopped" and its actions wrongly suppressed.  Matching
@@ -851,9 +855,12 @@ class CockpitData:
         "stopped" — a possibly-live service is never action-suppressed on a stale
         read of the un-classified set (the classified stack rows still count)."""
         out = list(running)
-        running_names = await self._running_container_names()
-        running_norm = {_normalize_service_name(n) for n in running_names}
-        running_norm.discard("")
+        # (normalized name → host port) for every running container, so a matched
+        # supporting service can carry the port it serves on.
+        running_ports: dict[str, int] = {}
+        for n, p in await self._running_container_ports():
+            running_ports.setdefault(_normalize_service_name(n), p)
+        running_ports.pop("", None)
         # Names already present as stack rows (GPU services + engines/estate) —
         # those service dirs are de-duped (omitted) since they're already a row.
         stack_norm = {_normalize_service_name(c.name) for c in running}
@@ -861,14 +868,25 @@ class CockpitData:
         for svc in self._known_service_dirs():
             if any(_service_dir_matches_running(svc, sn) for sn in stack_norm):
                 continue  # already a (running) stack row — don't duplicate
-            is_running = any(
-                _service_dir_matches_running(svc, rn) for rn in running_norm
-            )
+            match_port: Optional[int] = None
+            for rn, port in running_ports.items():
+                if _service_dir_matches_running(svc, rn):
+                    match_port = port
+                    break
+            is_running = match_port is not None
+            # Non-GPU supporting services (litellm / qdrant / searxng / open-webui
+            # / ollama) carry an ``engine="web"`` tag + the port they serve on, so
+            # the Containers table shows what they are instead of a bare "—".  A
+            # GPU-holding rig service (ComfyUI / Step-Audio — classifies non-None)
+            # keeps no web tag; it surfaces with its real engine as a stack row.
+            engine = "" if _classify_container_kind(svc) is not None else "web"
             out.append(
                 ContainerInfo(
                     name=svc,
                     kind="service",
                     status="running" if is_running else "stopped",
+                    engine=engine,
+                    host_port=match_port or 0,
                 )
             )
         return out
@@ -1639,20 +1657,37 @@ class CockpitData:
         )
 
     def container_action(self, name: str, op: str) -> ActionPlan:
-        """op ∈ {restart, stop, start}.  Builds a docker write — execution-gated.
-
-        ``start`` is the "bring back one crashed container of the ACTIVE scene"
-        verb (a sibling is already running, so the scene already owns its GPUs →
-        no new cross-scene contention, hence ``requires_reconcile=False``).  To
-        bring up a scene that's fully DOWN, the caller routes to ``scene_switch``
-        (gpu-mode, reconcile-gated) instead — never a bare per-container start."""
-        if op not in ("restart", "stop", "start"):
-            raise ValueError(f"container op must be restart|stop|start, got {op!r}")
+        """op ∈ {restart, stop}.  Builds a docker write — execution-gated."""
+        if op not in ("restart", "stop"):
+            raise ValueError(f"container op must be restart|stop, got {op!r}")
         return ActionPlan(
             kind="container",
             cmd=["docker", op, name],
             description=f"docker {op} {name}",
             requires_reconcile=(op == "stop"),
+        )
+
+    def service_start(self, name: str) -> ActionPlan:
+        """Bring a KNOWN supporting service UP — ``docker compose up -d`` for its
+        ``services/<name>/`` dir (the verb for a STOPPED service row in the
+        Containers tab; running rows use stop/restart).
+
+        Reconcile-gated: a GPU-holding service (ComfyUI / Step-Audio) can't
+        silently collide with whatever holds the cards, while a non-GPU web
+        service (litellm / qdrant / …) clears the gate immediately.  Path is
+        repo-relative (executed with ``cwd=repo_root``), tolerating the
+        ``.yml`` / ``.yaml`` spelling."""
+        rel = f"services/{name}/docker-compose.yml"
+        if (
+            not (self.repo_root / rel).is_file()
+            and (self.repo_root / f"services/{name}/docker-compose.yaml").is_file()
+        ):
+            rel = f"services/{name}/docker-compose.yaml"
+        return ActionPlan(
+            kind="service-up",
+            cmd=["docker", "compose", "-f", rel, "up", "-d"],
+            description=f"docker compose up {name}",
+            requires_reconcile=True,
         )
 
     @staticmethod
@@ -1678,18 +1713,6 @@ class CockpitData:
             )
             for svc in scene.services
         ]
-
-    async def scene_service_states(self, scene: Scene) -> list[SceneServiceState]:
-        """Per-service running state for a scene — does its own ``docker ps``.
-
-        Thin async wrapper over :meth:`scene_service_states_sync` for callers
-        that don't already hold a running-container set (tests, the routing
-        layer).  A failed running-set read degrades every service to stopped (the
-        scene then reads inactive → ⏎ routes to a scene switch, the safe
-        default)."""
-        return self.scene_service_states_sync(
-            scene, await self._running_container_names()
-        )
 
     async def _teardown_conflicts(self, reconcile: "ReconcileResult") -> list[str]:
         """Stop the running containers a FORCED write collides with (the gate's
@@ -3015,6 +3038,11 @@ class _NullParser:
     def parse_line(self, line: str):  # noqa: D401 - protocol shim
         return None
 
+
+# First published HOST port in a docker-ps ``Ports`` field (``0.0.0.0:4000->4000/
+# tcp`` → 4000).  GENERAL match (any internal port), unlike the engine-only
+# ``PORT_MAP_BROAD_RE`` — used to label a supporting service with the port it serves.
+_HOST_PORT_RE = re.compile(r":(\d+)->")
 
 # Rig services that hold a GPU but share no naming prefix with the engines /
 # estate containers — matched by name so the reconcile gate sees them.
