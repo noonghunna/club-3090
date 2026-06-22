@@ -20,6 +20,54 @@ def config_path() -> Path:
     return cfg_dir / "c3-surface.json"
 
 
+def settings_path() -> Path:
+    """The file the in-app Settings ([S]) persists MODEL_DIR / HF_TOKEN to —
+    ``<C3_CONFIG_DIR or ~/.config/club-3090>/c3-settings.json`` (parallel to the
+    surface file so the proven surface logic is untouched)."""
+    base = os.environ.get("C3_CONFIG_DIR")
+    cfg_dir = Path(base) if base else Path.home() / ".config" / "club-3090"
+    return cfg_dir / "c3-settings.json"
+
+
+def load_settings() -> dict:
+    """Persisted user settings (``model_dir`` / ``hf_token``) — ``{}`` on a
+    missing / unreadable / malformed file (tolerant; never crashes the launch)."""
+    try:
+        with settings_path().open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_settings(settings: dict) -> None:
+    """Persist user settings (the WHOLE dict — callers merge first).  Best-effort;
+    a write failure is swallowed (settings still apply for the session)."""
+    if not isinstance(settings, dict):
+        return
+    path = settings_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(settings, fh)
+    except OSError:
+        pass
+
+
+def apply_persisted_settings(app, environ) -> None:
+    """Apply the persisted MODEL_DIR / HF_TOKEN to the app + process env before
+    run().  MODEL_DIR points the weights-on-disk check at the user's models
+    volume; HF_TOKEN flows into the download subprocess env.  An explicit env var
+    already set WINS (don't overwrite a shell-provided token)."""
+    s = load_settings()
+    mdir = str(s.get("model_dir") or "").strip()
+    if mdir:
+        app._data._model_dir = mdir
+    tok = str(s.get("hf_token") or "").strip()
+    if tok and not environ.get("HF_TOKEN"):
+        environ["HF_TOKEN"] = tok
+
+
 def load_surface_setting() -> "str | None":
     """Read the persisted surface setting, or None if absent / corrupt / invalid.
 
@@ -124,6 +172,8 @@ def main() -> None:
     # full default.
     surface = resolve_surface(sys.argv, os.environ)
     app = CockpitApp(repo_root=repo_root, surface=surface)
+    # Apply persisted MODEL_DIR / HF_TOKEN (the in-app [S] Settings) before run.
+    apply_persisted_settings(app, os.environ)
     app.run()
 
 

@@ -485,6 +485,7 @@ class HelpScreen(ModalScreen):
             "  [cyan].[/cyan]        toggle the left rail (Modes + Estate) — full-width content",
             "  [cyan]C[/cyan]        toggle lean view (hide / restore the Bring & Validate mode)",
             "  [cyan]Ctrl+p[/cyan]   command palette — fuzzy-search + run any action",
+            "  [cyan]S[/cyan]        download Settings — model dir (where weights live) + HuggingFace token",
             "  [cyan]Y[/cyan] / right-click  copy the highlighted slug / open report / selection to the clipboard",
             "  [dim]    (for arbitrary on-screen text: Shift-drag — or Option-drag on macOS — to use the[/dim]",
             "  [dim]     terminal's OWN selection, bypassing the app's mouse capture, then your terminal's copy)[/dim]",
@@ -625,6 +626,20 @@ class CatalogPane(Container):
         # GPU0 holding ComfyUI).  None → unknown (the fit column is then labelled
         # "vs empty card" so the glyph is never read as a live verdict).
         self._free_gb_by_index: Optional[dict[int, float]] = None
+        # Download UX banner: a non-empty note (set by the app when the model dir
+        # is unset / missing) is prepended to the status line so the user is
+        # prompted to set it ([S]).
+        self._model_dir_note: str = ""
+
+    def set_model_dir_note(self, note: str) -> None:
+        """Set/clear the model-dir banner (e.g. '⚠ model dir not found — [S]')."""
+        new = (note or "").strip()
+        if new != self._model_dir_note:
+            self._model_dir_note = new
+            try:
+                self.refresh_enriched()
+            except Exception:
+                pass
 
     # ── data ────────────────────────────────────────────────────────────────────
 
@@ -683,13 +698,14 @@ class CatalogPane(Container):
                 _status_glyph(e.status),
             )
 
+        banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
         if self._filter:
             status_label.update(
-                f"{len(rows)} / {len(self._entries)} variants  ·  filter: {self._filter!r}"
+                f"{banner}{len(rows)} / {len(self._entries)} variants  ·  filter: {self._filter!r}"
             )
         else:
             star = "  ([dim]*[/dim] = BENCHMARKS.md scrape)" if self._has_md_scrape() else ""
-            status_label.update(f"{len(self._entries)} variants loaded from registry{star}")
+            status_label.update(f"{banner}{len(self._entries)} variants loaded from registry{star}")
 
         # #9/A8 — keep the preview strip in sync with the cursor after a (re-)render
         # (enrichment mutates fit/measurement in place; the preview must reflect it).
@@ -3224,6 +3240,76 @@ class ShareBackReportScreen(_CopyableModal, ModalScreen):
         self.app.pop_screen()
 
 
+# ── Settings modal (Download UX · MODEL_DIR + HF_TOKEN) ───────────────────────────
+
+
+class SettingsScreen(ModalScreen):
+    """Edit the download settings — the MODEL DIR (weights live under
+    ``<dir>/huggingface/``) and the HF TOKEN (gated/private repos).  Persisted to
+    ``c3-settings.json`` and applied LIVE (re-stats the catalog against the new
+    dir).  HF_HOME is auto-derived under the model dir — not a user field."""
+
+    DEFAULT_CSS = """
+    SettingsScreen {
+        align: center middle;
+    }
+    SettingsScreen > Vertical {
+        width: 84;
+        height: auto;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    SettingsScreen .settings-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    SettingsScreen .settings-field {
+        margin-top: 1;
+    }
+    SettingsScreen Input {
+        margin-bottom: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("ctrl+s", "save", "Save", show=True, priority=True),
+        Binding("escape", "cancel", "Cancel", show=True),
+    ]
+
+    def __init__(self, model_dir: str, hf_token_set: bool, **kwargs):
+        super().__init__(**kwargs)
+        self._model_dir = model_dir or ""
+        self._hf_token_set = hf_token_set
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Settings · weights download", classes="settings-title")
+            yield Label("Model dir  [dim](weights live under <dir>/huggingface/)[/dim]",
+                        classes="settings-field")
+            yield Input(value=self._model_dir, placeholder="/mnt/models", id="set-model-dir")
+            tok_ph = ("hf_…  (leave blank to keep the current token)"
+                      if self._hf_token_set else "hf_…  (for gated / private repos)")
+            yield Label("HuggingFace token", classes="settings-field")
+            yield Input(value="", password=True, placeholder=tok_ph, id="set-hf-token")
+            yield Label(
+                "[dim]Ctrl+S save · Esc cancel · HF_HOME is auto-derived under the "
+                "model dir (off the root disk)[/dim]",
+                classes="settings-field",
+            )
+            yield Footer()
+
+    def action_save(self) -> None:
+        mdir = self.query_one("#set-model-dir", Input).value.strip()
+        tok = self.query_one("#set-hf-token", Input).value.strip()
+        self.app.pop_screen()
+        self.app.apply_settings(model_dir=mdir, hf_token=tok)  # type: ignore[attr-defined]
+
+    def action_cancel(self) -> None:
+        self.app.pop_screen()
+
+
 # ── Phase 5 · Promote-to-catalog scaffold preview modal (design §3.5b) ────────────
 
 
@@ -4314,6 +4400,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("toggle_contribute", "Toggle lean view", "Hide / restore the Bring & Validate mode"),
     ("toggle_rail", "Toggle left rail", "Collapse / restore Modes + Estate rail"),
     ("copy_context", "Copy current view", "Copy the highlighted slug / open report / selection to the clipboard ([Y])"),
+    ("settings", "Settings (model dir · HF token)", "Edit where weights download to + the HuggingFace token ([S])"),
     ("refresh", "Refresh", "Re-read the live data layer for the active mode"),
     ("help", "Help", "Show the keybindings + phase help overlay"),
     # Run & Operate · Catalog tab.
@@ -4462,6 +4549,9 @@ class CockpitApp(App):
         Binding("Y", "copy_context", "Copy", show=False),
         Binding("shift+left", "hscroll_left", "Scroll ◀", show=False),
         Binding("shift+right", "hscroll_right", "Scroll ▶", show=False),
+        # Download UX — [S] edit the model dir + HF token (where weights are
+        # fetched to / gated-repo auth).  Always-on, persisted.
+        Binding("S", "settings", "Settings", show=False),
         # Context-sensitive — check_action enables/shows them only in the right mode.
         Binding("slash", "filter_catalog", "Filter", show=False),
         Binding("e", "explain", "Explain", show=False),
@@ -4639,6 +4729,8 @@ class CockpitApp(App):
         # clipboard (OSC52).  Reachable everywhere; no-ops with a notify when
         # there's nothing copyable.  shift+←/→ page-scroll the active wide table.
         "copy_context", "hscroll_left", "hscroll_right",
+        # [S] download Settings (MODEL_DIR + HF_TOKEN) — reachable everywhere.
+        "settings",
     })
 
     # Context key → (modes, subtabs) where it should be enabled.
@@ -5245,6 +5337,12 @@ class CockpitApp(App):
         # control + the listing's download glyph.
         await self._data.enrich_weights(rows)
         pane.refresh_enriched()
+        # Prompt to set the model dir if it's missing (weights-state can't be
+        # trusted otherwise) — a banner on the catalog status line ([S] to set).
+        from pathlib import Path as _Path
+        mdir = self._data.weights_model_dir()
+        note = "" if _Path(mdir).is_dir() else f"⚠ model dir not found ({mdir}) — press [S] to set it"
+        pane.set_model_dir_note(note)
 
     # ── Download UX · fetch a slug's weights (setup.sh WEIGHT_KEY=…, streamed) ────────
 
@@ -6430,6 +6528,37 @@ class CockpitApp(App):
             f"Copied {what} to clipboard: {preview}",
             title="Copy", severity="information", timeout=3,
         )
+
+    def action_settings(self) -> None:
+        """[S] — open the download Settings (MODEL_DIR + HF_TOKEN)."""
+        import os as _os
+        self.push_screen(
+            SettingsScreen(self._data.weights_model_dir(), bool(_os.environ.get("HF_TOKEN")))
+        )
+
+    def apply_settings(self, *, model_dir: str, hf_token: str) -> None:
+        """Persist + apply Settings.  Empty fields are no-ops (a blank token keeps
+        the current one).  A model-dir change re-loads the catalog so the
+        weights-on-disk state re-stats against the new dir."""
+        import os as _os
+        from .__main__ import load_settings, save_settings
+        s = load_settings()
+        changed = False
+        if model_dir and model_dir != self._data.weights_model_dir():
+            self._data._model_dir = model_dir
+            s["model_dir"] = model_dir
+            changed = True
+        if hf_token:
+            _os.environ["HF_TOKEN"] = hf_token
+            s["hf_token"] = hf_token
+            changed = True
+        if changed:
+            save_settings(s)
+            self.notify("Settings saved.", title="Settings", timeout=3)
+        else:
+            self.notify("No changes.", title="Settings", timeout=2)
+        if model_dir:
+            self.load_catalog()   # re-stat weights against the (possibly new) dir
 
     def on_mouse_down(self, event) -> None:
         """RIGHT-CLICK → copy.  A TUI captures the mouse, so the terminal's native

@@ -9478,3 +9478,81 @@ class TestDownloadUX:
             e_dl = self._entry(WEIGHTS_DOWNLOADING)
             app._active_downloads()[e_dl.slug] = {"entry": e_dl, "meta": e_dl.weights}
             assert app._serve_context_for(e_dl).mode == "downloading"
+
+
+class TestSettings:
+    """Download Settings ([S]) — MODEL_DIR + HF_TOKEN editable + persisted +
+    applied live; the model-dir-missing banner.  C3_CONFIG_DIR is isolated to a
+    tmp dir so nothing touches the real ~/.config."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_config(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+
+    @pytest.mark.asyncio
+    async def test_s_opens_settings_modal(self):
+        from club3090_cockpit.app import SettingsScreen
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app.check_action("settings", ()) is True
+            await pilot.press("S")
+            await _settle(pilot)
+            assert isinstance(app.screen, SettingsScreen)
+
+    @pytest.mark.asyncio
+    async def test_apply_settings_persists_and_applies(self):
+        import os
+        from club3090_cockpit import __main__ as M
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.apply_settings(model_dir="/tmp/my-models", hf_token="hf_secret123")
+            await _settle(pilot)
+            assert app._data.weights_model_dir() == "/tmp/my-models"
+            assert os.environ.get("HF_TOKEN") == "hf_secret123"
+            s = M.load_settings()
+            assert s.get("model_dir") == "/tmp/my-models"
+            assert s.get("hf_token") == "hf_secret123"
+
+    @pytest.mark.asyncio
+    async def test_blank_fields_keep_current(self):
+        import os
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.apply_settings(model_dir="/tmp/m1", hf_token="hf_first")
+            await _settle(pilot)
+            # blank token → keep the existing one; blank dir → keep the dir
+            app.apply_settings(model_dir="", hf_token="")
+            await _settle(pilot)
+            assert app._data.weights_model_dir() == "/tmp/m1"
+            assert os.environ.get("HF_TOKEN") == "hf_first"
+
+    @pytest.mark.asyncio
+    async def test_apply_persisted_settings_on_fresh_app(self):
+        import os
+        from club3090_cockpit import __main__ as M
+        M.save_settings({"model_dir": "/tmp/persisted", "hf_token": "hf_persisted"})
+        app, _, _ = make_app()
+        env = dict()
+        M.apply_persisted_settings(app, env)
+        assert app._data.weights_model_dir() == "/tmp/persisted"
+        assert env.get("HF_TOKEN") == "hf_persisted"
+        # an explicit env token WINS (not overwritten)
+        app2, _, _ = make_app()
+        env2 = {"HF_TOKEN": "hf_shell"}
+        M.apply_persisted_settings(app2, env2)
+        assert env2["HF_TOKEN"] == "hf_shell"
+
+    @pytest.mark.asyncio
+    async def test_model_dir_missing_banner(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.set_model_dir_note("⚠ model dir not found — press [S] to set it")
+            await pilot.pause()
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert "model dir not found" in status
