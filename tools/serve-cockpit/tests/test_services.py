@@ -219,7 +219,7 @@ EXPLAIN_NO_BENCH_JSON = json.dumps(
 
 SCENES_JSON = json.dumps(
     [
-        {"name": "27b", "group": "serving", "description": "Qwen", "services": ["vllm-qwen36-27b-dual"], "ports": ["8010"], "gpus": "both"},
+        {"name": "27b", "group": "models", "description": "Qwen", "services": ["vllm-qwen36-27b-dual"], "ports": ["8010"], "gpus": "both"},
         {"name": "off", "group": "ops", "description": "Stop all", "services": [], "ports": [], "gpus": "none"},
     ]
 )
@@ -874,6 +874,25 @@ class TestScenesDoctor:
         names = [s.name for s in await cd.scenes()]
         assert names == ["27b", "comfyui", "chat", "off"]
         assert not ({"power-cap", "prune", "prune-all"} & set(names))
+
+    @pytest.mark.asyncio
+    async def test_scenes_clustered_by_group(self):
+        """The scene table clusters by group (models -> studio -> ops), stable
+        within a group.  Raw catalog order puts 'chat' (ops) first and 'off' (ops)
+        last, splitting the ops scenes apart; scenes() must regroup them so the two
+        ops scenes sit together at the end."""
+        listing = json.dumps([
+            {"name": "chat", "group": "ops", "gpus": "none"},
+            {"name": "27b", "group": "models", "gpus": "both"},
+            {"name": "comfyui", "group": "studio", "gpus": "both"},
+            {"name": "gemma", "group": "models", "gpus": "both"},
+            {"name": "off", "group": "ops", "gpus": "none"},
+        ])
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"gpu-mode.sh --list-modes --json": ok(listing)}))
+        scenes = await cd.scenes()
+        assert [s.name for s in scenes] == ["27b", "gemma", "comfyui", "chat", "off"]
+        assert [s.group for s in scenes] == ["models", "models", "studio", "ops", "ops"]
 
     @pytest.mark.asyncio
     async def test_doctor_serving(self):

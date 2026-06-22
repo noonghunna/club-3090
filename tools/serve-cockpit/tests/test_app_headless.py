@@ -285,7 +285,7 @@ EXPLAIN_NO_BENCH_JSON = json.dumps(
 
 SCENES_JSON = json.dumps(
     [
-        {"name": "27b", "group": "serving", "description": "Qwen", "services": ["vllm-qwen36-27b-dual"], "ports": ["8010"], "gpus": "both"},
+        {"name": "27b", "group": "models", "description": "Qwen", "services": ["vllm-qwen36-27b-dual"], "ports": ["8010"], "gpus": "both"},
         {"name": "off", "group": "ops", "description": "Stop all", "services": [], "ports": [], "gpus": "none"},
     ]
 )

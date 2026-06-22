@@ -1302,7 +1302,14 @@ class CockpitData:
         if not isinstance(data, list):
             return []
         hidden = {"power-cap", "prune", "prune-all"}
-        return [s for s in (Scene.from_dict(d) for d in data) if s.name not in hidden]
+        kept = [s for s in (Scene.from_dict(d) for d in data) if s.name not in hidden]
+        # Cluster by group (models → studio → ops) for the Orchestration table —
+        # stable within a group (preserves catalog order).  Without this the table
+        # renders raw catalog order, which splits the ops scenes apart (chat at the
+        # top, off near the bottom) and reads as ungrouped.
+        rank = {"models": 0, "studio": 1, "ops": 2}
+        kept.sort(key=lambda s: rank.get(s.group, 3))   # list.sort is stable
+        return kept
 
     async def doctor_read(self, url: Optional[str] = None) -> DoctorRead:
         """health.sh (text-only) → parsed DoctorRead."""
