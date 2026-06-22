@@ -3297,7 +3297,7 @@ class SettingsScreen(ModalScreen):
             yield Label("Settings · weights download", classes="settings-title")
             yield Label("Model dir  [dim](weights live under <dir>/huggingface/)[/dim]",
                         classes="settings-field")
-            yield Input(value=self._model_dir, placeholder="/mnt/models", id="set-model-dir")
+            yield Input(value=self._model_dir, placeholder="/mnt/models/huggingface", id="set-model-dir")
             tok_ph = ("hf_…  (leave blank to keep the current token)"
                       if self._hf_token_set else "hf_…  (for gated / private repos)")
             yield Label("HuggingFace token", classes="settings-field")

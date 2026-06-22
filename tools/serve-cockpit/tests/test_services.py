@@ -520,7 +520,7 @@ class TestLoadCatalog:
         ])
         runner = full_runner(**{"weights.py list --json": ok(listing)})
         cd = CockpitData(ROOT, runner=runner)
-        hf = tmp_path / "huggingface"
+        hf = tmp_path
         (hf / "qwen3.6-27b-autoround-int4").mkdir(parents=True)
         (hf / "qwen3.6-27b-autoround-int4" / "m.safetensors").write_text("x")  # present
 
@@ -552,7 +552,7 @@ class TestLoadCatalog:
         assert plan.requires_reconcile is False and plan.requires_confirm is False
         meta = WeightsMeta(model="qwen3.6-27b", variant="fp8", subdir="qwen3.6-27b-fp8",
                            size_gb=10.0, verify_glob="*.safetensors")
-        base = tmp_path / "huggingface" / "qwen3.6-27b-fp8"
+        base = tmp_path / "qwen3.6-27b-fp8"
         base.mkdir(parents=True)
         with open(base / "a.safetensors", "wb") as fh:
             fh.truncate(5 * 10**9)                            # 5 GB sparse → 50%
@@ -628,7 +628,7 @@ class TestLoadCatalog:
              "size_gb": 1.6, "verify_glob": "*.gguf", "status": "experimental"},
         ])
         cd = CockpitData(ROOT, runner=full_runner(**{"weights.py list --json": ok(listing)}))
-        hf = tmp_path / "huggingface"
+        hf = tmp_path
         core = hf / "qwen3.6-27b-gguf" / "unsloth-mtp-q8kxl"
         core.mkdir(parents=True)
         (core / "m.gguf").write_text("x")  # core present, companion NOT yet
@@ -662,7 +662,7 @@ class TestLoadCatalog:
                            verify_glob="*.gguf")
         comp = WeightsMeta(model="m", variant="comp", subdir="comp", size_gb=2.0,
                            verify_glob="*.gguf")
-        hf = tmp_path / "huggingface"
+        hf = tmp_path
         (hf / "core").mkdir(parents=True)
         with open(hf / "core" / "a.gguf", "wb") as fh:
             fh.truncate(8 * 10**9)                          # core FULL, companion absent
@@ -707,7 +707,7 @@ class TestLoadCatalog:
         cd = CockpitData(ROOT, runner=full_runner())
         meta = WeightsMeta(model="m", variant="v", subdir="v", size_gb=10.0,
                            verify_glob="*.gguf")
-        base = tmp_path / "huggingface" / "v"
+        base = tmp_path / "v"
         base.mkdir(parents=True)
         # Only a leftover full-size backup → ignored → 0 bytes → 0% (the bug was 99).
         with open(base / "model.gguf.bak", "wb") as fh:
@@ -727,6 +727,56 @@ class TestLoadCatalog:
         with open(base / "model.gguf", "wb") as fh:
             fh.truncate(7 * 10**9)
         assert cd.weights_bytes_on_disk(meta, model_dir=str(tmp_path)) == 10 * 10**9
+
+    def test_weights_model_dir_no_append_and_reads_dotenv(self, tmp_path, monkeypatch):
+        """MODEL_DIR unification: the weights root is used DIRECTLY (no 'huggingface'
+        append — that was the cockpit↔setup.sh divergence), and resolves from the
+        repo .env (the shared config) when no Settings/env value is set; an explicit
+        $MODEL_DIR wins over .env."""
+        monkeypatch.delenv("MODEL_DIR", raising=False)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".env").write_text("FOO=bar\nMODEL_DIR=/data/weights\n", encoding="utf-8")
+        cd = CockpitData(repo_root=repo)
+        assert cd.weights_model_dir() == "/data/weights"          # from .env, no append
+        # the weights path is <root>/<subdir>, NOT <root>/huggingface/<subdir>
+        from club3090_cockpit.data import WeightsMeta
+        meta = WeightsMeta(model="m", variant="v", subdir="sub/dir", size_gb=1.0,
+                           verify_glob="*.gguf")
+        (repo / ".env").unlink()                                   # isolate the path check
+        d = repo / "sub" / "dir"
+        d.mkdir(parents=True)
+        (d / "w.gguf").write_text("x")
+        assert cd.weights_bytes_on_disk(meta, model_dir=str(repo)) > 0   # repo/sub/dir, no append
+        # explicit $MODEL_DIR wins over .env
+        (repo / ".env").write_text("MODEL_DIR=/data/weights\n", encoding="utf-8")
+        monkeypatch.setenv("MODEL_DIR", "/env/weights")
+        assert cd.weights_model_dir() == "/env/weights"
+
+    @pytest.mark.asyncio
+    async def test_run_weights_download_pins_model_dir(self):
+        """The download pins setup.sh's MODEL_DIR to the cockpit's resolved weights
+        root, so the pull lands exactly where the cockpit reads (the cockpit↔scripts
+        single-source-of-truth seam)."""
+        import asyncio
+
+        class _Cap:
+            def __init__(self): self.env = None
+            def set_callbacks(self, **k): pass
+            async def start_raw(self, cmd, env=None, run_type=None, parser=None):
+                self.env = env
+                h = type("H", (), {})()
+                h.done = asyncio.Event(); h.done.set(); h.exit_code = 0
+                return h
+
+        cap = _Cap()
+        cd = CockpitData(ROOT, runner=full_runner(), download_runner=cap)
+        cd._model_dir = "/data/weights"
+        await cd.run_weights_download("qwen3.6-27b", "fp8")
+        assert cap.env["MODEL_DIR"] == "/data/weights"
+        assert cap.env["WEIGHT_KEY"] == "qwen3.6-27b:fp8"
+        # HF_HOME is derived UNDER that same root (off the host root disk)
+        assert cap.env["HF_HOME"].startswith("/data/weights/")
 
 
 class TestExplainFit:

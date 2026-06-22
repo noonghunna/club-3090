@@ -114,12 +114,14 @@ from .data import (
 # done lazily in ``detect_local_card`` so headless tests never shell out.
 DEFAULT_CARD = "rtx-3090"
 
-# UX Batch 5 (#12 / N5): the model-weights mount on this rig.  ``/mnt/models`` is
-# the back-compat symlink target (``/mnt/models/gguf`` → ``huggingface``); the
-# disk rail shows free space here so a user knows whether a pull will fit.  This
-# path is SAFE to surface (it's the model dir, not a secret) — distinct from the
-# repo / home / user-config paths the UI must never show.
-MODEL_DIR = "/mnt/models"
+# The default WEIGHTS ROOT — the dir that DIRECTLY holds the model subdirs
+# (``<root>/<subdir>``), the SAME convention setup.sh uses for ``${MODEL_DIR}``
+# (NO extra ``huggingface`` segment appended by us).  On this rig that's
+# ``/mnt/models/huggingface`` (``/mnt/models`` is the volume; ``/mnt/models/gguf``
+# is a back-compat symlink → ``huggingface``).  Resolution prefers the repo .env
+# (the shared config setup.sh reads) over this default — see weights_model_dir.
+# SAFE to surface (it's the model dir, not a secret).
+MODEL_DIR = "/mnt/models/huggingface"
 
 
 # ── Subprocess runner protocol (dependency injection seam) ───────────────────────
@@ -381,7 +383,7 @@ class CockpitData:
         meta = index.get((entry.model, entry.weights_variant))
         if meta is None or not meta.subdir:
             return WEIGHTS_UNKNOWN, meta
-        root = Path(model_dir or self.weights_model_dir()) / "huggingface"
+        root = Path(model_dir or self.weights_model_dir())
         base = root / meta.subdir
         try:
             if not base.is_dir():
@@ -458,10 +460,16 @@ class CockpitData:
         plan = self.weights_download_plan(model, variant)
         env = dict(os.environ)
         env["WEIGHT_KEY"] = f"{model}:{variant}"
+        # Pin setup.sh to the SAME weights root the cockpit reads, so the download
+        # can't land somewhere the cockpit then can't see (setup.sh writes to
+        # ``${MODEL_DIR}/<subdir>``, the same root convention weights_model_dir
+        # now uses).  This is the cockpit↔scripts single-source-of-truth seam.
+        root = self.weights_model_dir()
+        env["MODEL_DIR"] = root
         comp_keys = [c if ":" in c else f"{model}:{c}" for c in (companions or []) if c]
         if comp_keys:
             env["WEIGHT_EXTRA_KEYS"] = " ".join(comp_keys)
-        env.setdefault("HF_HOME", str(Path(self.weights_model_dir()) / ".cache" / "huggingface"))
+        env.setdefault("HF_HOME", str(Path(root) / ".cache" / "huggingface"))
         if on_line is not None:
             self._download_runner.set_callbacks(on_line=on_line)
         return await self._download_runner.start_raw(
@@ -477,18 +485,46 @@ class CockpitData:
         except Exception:
             pass
 
+    def _dotenv_model_dir(self) -> str:
+        """``MODEL_DIR`` from the repo ``.env`` — the SHARED config setup.sh reads.
+
+        Reading it here lets the cockpit resolve the SAME weights root as the
+        scripts (the single-source-of-truth goal) without re-implementing the
+        convention.  ``""`` if the file is absent / unreadable / has no MODEL_DIR."""
+        try:
+            envf = self.repo_root / ".env"
+            if not envf.is_file():
+                return ""
+            for raw in envf.read_text(encoding="utf-8", errors="replace").splitlines():
+                s = raw.strip()
+                if s.startswith("MODEL_DIR=") and not s.startswith("#"):
+                    return s.split("=", 1)[1].strip().strip('"').strip("'")
+        except OSError:
+            return ""
+        return ""
+
     def weights_model_dir(self) -> str:
-        """The configured model dir (where ``huggingface/<subdir>`` lives).
+        """The WEIGHTS ROOT — the dir that DIRECTLY holds the model subdirs
+        (``<root>/<subdir>``), the SAME convention setup.sh uses (no extra
+        ``huggingface`` segment — that double-append was the cockpit↔scripts
+        divergence this resolves).
 
         Precedence (highest first): an in-app / persisted value (``_model_dir``,
-        set at launch by ``apply_persisted_settings`` from the env var or the
-        saved settings, or live by the Settings screen) > the ``MODEL_DIR`` env
-        var > the bundled default.  The env-var fallback here also covers a bare
-        ``CockpitData`` constructed outside ``__main__`` (tests, embedding).  A
-        method (not the bare ``MODEL_DIR`` constant) so it's user-configurable
-        without touching every call site."""
+        set at launch by ``apply_persisted_settings`` from the ``$MODEL_DIR`` env
+        var or the saved settings, or live by the Settings screen) > the
+        ``$MODEL_DIR`` env var (also covers a bare ``CockpitData`` built outside
+        ``__main__`` — tests / embedding) > ``MODEL_DIR`` in the repo ``.env`` (so
+        the cockpit and setup.sh land on the SAME root) > the bundled default."""
+        configured = getattr(self, "_model_dir", None)
+        if configured:
+            return configured
         env_dir = (os.environ.get("MODEL_DIR") or "").strip()
-        return getattr(self, "_model_dir", None) or env_dir or MODEL_DIR
+        if env_dir:
+            return env_dir
+        dotenv = self._dotenv_model_dir()
+        if dotenv:
+            return dotenv
+        return MODEL_DIR
 
     # Backup / cruft a user leaves in the model dir when swapping weights (rename
     # the old GGUF to *.bak, etc.).  EXCLUDED from the byte count — otherwise a
@@ -503,7 +539,7 @@ class CockpitData:
         (``*.bak`` / ``*.old`` / ``*.orig`` / ``foo~`` …) are skipped so a leftover
         old-quant copy can't inflate the count; hf's ``*.incomplete`` staging IS
         counted so live progress tracks the transfer."""
-        base = Path(model_dir or self.weights_model_dir()) / "huggingface" / meta.subdir
+        base = Path(model_dir or self.weights_model_dir()) / meta.subdir
         if not base.is_dir():
             return 0
         total = 0
@@ -1043,7 +1079,8 @@ class CockpitData:
         # ── (1) disk (#12) ────────────────────────────────────────────────────
         try:
             repo_path = str(self.repo_root)
-            label_for_path = {repo_path: "repo", MODEL_DIR: "models"}
+            models_path = self.weights_model_dir()   # the configured weights root
+            label_for_path = {repo_path: "repo", models_path: "models"}
             # ``-P`` forces POSIX one-line-per-filesystem output (no device-name
             # wrap → the parser keys off field POSITION, never breaks).  We parse
             # stdout whenever it is non-empty REGARDLESS of returncode: df exits
@@ -1052,7 +1089,7 @@ class CockpitData:
             # COULD stat to stdout (the error goes to stderr).  Gating on rc would
             # discard a perfectly-good repo bar.
             res = await self._runner.run(
-                ["df", "-P", "-B1", repo_path, MODEL_DIR],
+                ["df", "-P", "-B1", repo_path, models_path],
                 cwd=str(self.repo_root),
                 timeout=10.0,
             )
