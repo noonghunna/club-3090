@@ -856,6 +856,25 @@ class TestScenesDoctor:
         assert scenes[0].gpus == "both"
 
     @pytest.mark.asyncio
+    async def test_scenes_filters_ops_except_off(self):
+        """The ops group (power-cap / prune / prune-all) is filtered from the scene
+        table — they're not GPU scenes (power-cap has its own menu, prune was
+        removed).  'off' (the stop-all) + serving/studio scenes are kept."""
+        listing = json.dumps([
+            {"name": "27b", "group": "serving", "gpus": "both"},
+            {"name": "comfyui", "group": "studio", "gpus": "both"},
+            {"name": "off", "group": "ops", "gpus": "none"},
+            {"name": "power-cap", "group": "ops", "gpus": "both"},
+            {"name": "prune", "group": "ops", "gpus": "none"},
+            {"name": "prune-all", "group": "ops", "gpus": "none"},
+        ])
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"gpu-mode.sh --list-modes --json": ok(listing)}))
+        names = [s.name for s in await cd.scenes()]
+        assert names == ["27b", "comfyui", "off"]
+        assert "prune" not in names and "power-cap" not in names
+
+    @pytest.mark.asyncio
     async def test_doctor_serving(self):
         runner = full_runner(**{"health.sh": ok(HEALTH_SERVING)})
         cd = CockpitData(ROOT, runner=runner)
@@ -962,6 +981,15 @@ class TestActionBuilders:
         plan = cd.scene_switch("27b")
         assert plan.cmd == ["bash", "scripts/gpu-mode.sh", "27b"]
         assert plan.requires_reconcile is True
+
+    def test_stop_all_plan(self):
+        """The 'off' scene routes here — comprehensive stop (gpu-mode off + estate
+        down), reconcile-gated so a forced 'off' also tears down detected stragglers."""
+        cd = CockpitData(ROOT, runner=full_runner())
+        p = cd.stop_all()
+        assert p.kind == "scene" and p.requires_reconcile is True
+        joined = " ".join(p.cmd)
+        assert "gpu-mode.sh off" in joined and "estate_cli.py down" in joined
 
     def test_estate_down(self):
         cd = CockpitData(ROOT, runner=full_runner())
@@ -1104,6 +1132,32 @@ class TestReconcileGate:
         assert rec.safe is False
         assert any(i.get("name") == "llama-gpu0" for i in rec.estate_claims)
         assert "estate:llama-gpu0" in rec.conflict_summary
+
+    @pytest.mark.asyncio
+    async def test_force_tears_down_conflicts_before_write(self):
+        """2A: a FORCED unsafe write STOPS the gate's conflicting containers
+        (docker stop) before running the command — so a forced 'off' clears a
+        cockpit-served slug that gpu-mode off doesn't know.  The command still runs."""
+        import dataclasses
+        wr = FakeWriteRunner()
+        runner = full_runner(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        gpus = [GpuInfo(index=0, mem_used_mib=22000), GpuInfo(index=1, mem_used_mib=1)]
+        cd = CockpitData(
+            ROOT, runner=runner, write_runner=wr,
+            detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
+            get_gpu_info_fn=make_gpu_info(gpus),
+        )
+        rec0 = await cd.reconcile_before_write("scene:off")
+        assert rec0.safe is False and rec0.conflicts        # a named container is in the way
+        names = {c.name for c in rec0.conflicts}
+        plan = dataclasses.replace(cd.stop_all(), force=True, force_reason="stop everything")
+        executed, rec, _ = await cd.execute_action(plan)
+        assert executed is True                             # forced → proceeds
+        # the conflicting container(s) were docker-stopped (via the read runner) ...
+        stopped = {c[2] for c in runner.calls if c[:2] == ["docker", "stop"] and len(c) > 2}
+        assert stopped & names
+        # ... and the comprehensive 'off' command still ran via the write runner.
+        assert len(wr.started) == 1
 
     @pytest.mark.asyncio
     async def test_estate_on_gpu1_does_not_conflict_with_gpu0_only_request(self):

@@ -1240,12 +1240,10 @@ class ConfirmActionScreen(ModalScreen):
         with Vertical():
             yield Label(f"Confirm · {self._plan.description}", classes="confirm-title")
             yield Static("Re-running reconcile gate (fresh detect)…", id="confirm-body")
-            with Horizontal(id="confirm-btn-row"):
-                yield Button("⏎ Confirm", id="confirm-ok-btn", variant="success", disabled=True)
-                yield Button("F Force", id="confirm-force-btn", variant="warning", disabled=True)
-                yield Button("Esc Cancel", id="confirm-cancel-btn")
-            # A11 — the modal footer renders the Enter / f / Esc bindings (show=True),
-            # gated per-state by check_action.  Without it the keys stayed invisible.
+            # Controls live ONLY in the footer (Confirm / the override / Cancel),
+            # gated per-state by check_action — same as the serve modal.  No
+            # duplicate on-screen button row (the old buttons + footer showed the
+            # same keys twice).
             yield Footer()
 
     def on_mount(self) -> None:
@@ -1266,6 +1264,7 @@ class ConfirmActionScreen(ModalScreen):
             self.refresh_bindings()
             return
         # Re-run the gate (fresh detect) before enabling any commit affordance.
+        self._set_force_binding_label(self._force_label())   # footer override label
         self.app.run_reconcile_for_modal(self, self._plan)  # type: ignore[attr-defined]
         self.refresh_bindings()
 
@@ -1488,8 +1487,7 @@ class ConfirmActionScreen(ModalScreen):
             return
 
         body = self.query_one("#confirm-body", Static)
-        ok_btn = self.query_one("#confirm-ok-btn", Button)
-        force_btn = self.query_one("#confirm-force-btn", Button)
+        force_label = self._force_label()
 
         lines: list[str] = [f"  [bold]Command[/bold]  {' '.join(self._plan.cmd)}"]
         wanted = ", ".join(str(g) for g in rec.pending_gpus) if rec.pending_gpus else "—"
@@ -1498,13 +1496,10 @@ class ConfirmActionScreen(ModalScreen):
         if rec.safe:
             lines.append("")
             lines.append("  [green]● gate clear[/green] — nothing live overlaps the requested GPUs.")
-            lines.append("  [dim]⏎ Confirm to launch (streams below) · Esc Cancel[/dim]")
-            ok_btn.disabled = False
-            force_btn.disabled = True
-            ok_btn.focus()
+            lines.append("  [dim]⏎ Confirm (streams below) · Esc Cancel[/dim]")
         else:
             lines.append("")
-            lines.append("  [yellow]⚠ this write would tear down / collide with:[/yellow]")
+            lines.append("  [yellow]⚠ this will tear down / collide with:[/yellow]")
             for c in rec.conflicts:
                 g = f" (GPU {c.gpus})" if c.gpus else ""
                 slug = f"  [{c.slug}]" if c.slug else ""
@@ -1520,35 +1515,45 @@ class ConfirmActionScreen(ModalScreen):
             if rec.note:
                 lines.append(f"  [dim]{rec.note}[/dim]")
             lines.append("")
-            lines.append("  [dim]Confirm is disabled — F to FORCE this teardown (override).[/dim]")
-            ok_btn.disabled = True
-            force_btn.disabled = False
-            # SAFETY: do NOT focus the Force button on an unsafe gate.  Textual's
-            # run_action returns False for the gated enter→confirm binding without
-            # STOPPING the key event, so a stray Enter falls through to whatever is
-            # focused — and the Force button's default enter→press would then fire
-            # _commit(force=True), i.e. Enter would FORCE the very teardown the gate
-            # guards.  Focus the Cancel button instead so a fall-through Enter is
-            # inert; forcing must go through the explicit `f` key (the on_key guard
-            # below also stops a stray enter belt-and-suspenders).
-            cancel_btn = self.query_one("#confirm-cancel-btn", Button)
-            cancel_btn.focus()
+            lines.append(
+                f"  [dim]Confirm is disabled — press [cyan]f[/cyan] to "
+                f"[yellow]{force_label}[/yellow] (stops the above).[/dim]"
+            )
 
         body.update("\n".join(lines))
-        # A11 — now that the safe/unsafe verdict is known, refresh the modal footer
-        # so the Confirm / Force bindings show/hide per check_action's gate.
+        # Footer-only controls (no button row): relabel the override key per plan
+        # ('Switch anyway' / 'Stop everything' / 'Force') + refresh so check_action
+        # shows Confirm/override/Cancel for the resolved safe/unsafe verdict.  A
+        # stray Enter on an unsafe gate is inert (check_action False + the on_key
+        # guard); the override is the explicit `f` key.
+        self._set_force_binding_label(force_label)
         self.refresh_bindings()
 
-    # ── button / key handlers ────────────────────────────────────────────────────
+    # ── key handlers (footer-only — no buttons) ───────────────────────────────────
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        # Only the legacy (non-serve) modal yields buttons.
-        if event.button.id == "confirm-ok-btn":
-            self._commit(force=False)
-        elif event.button.id == "confirm-force-btn":
-            self._commit(force=True)
-        elif event.button.id == "confirm-cancel-btn":
-            self.action_cancel()
+    def _force_label(self) -> str:
+        """Context-appropriate label for the override key (was always 'Force').
+
+        A scene switch tears down what's running, so 'Switch anyway' reads
+        clearer; the comprehensive 'off'/stop_all → 'Stop everything'; estate-down
+        → 'Stop anyway'; anything else keeps 'Force'."""
+        desc = (self._plan.description or "").lower()
+        if "stop all" in desc:
+            return "Stop everything"
+        if self._plan.kind == "scene":
+            return "Switch anyway"
+        if self._plan.kind == "estate_down":
+            return "Stop anyway"
+        return "Force"
+
+    def _set_force_binding_label(self, label: str) -> None:
+        """Relabel THIS modal's footer override key in place (per-instance copy,
+        same mechanism as _set_start_binding_label)."""
+        for bindings in self._bindings.key_to_bindings.values():
+            for i, b in enumerate(bindings):
+                if b.action == "force" and b.description != label:
+                    bindings[i] = dataclasses.replace(b, description=label)
+                    return
 
     def on_key(self, event) -> None:
         """SAFETY belt-and-suspenders: stop a stray ``enter`` whenever the
@@ -7083,14 +7088,18 @@ class CockpitApp(App):
         )
 
     def _operate_primary(self) -> None:
-        """⏎ on the merged mode's Orchestration tab: confirm-gated scene switch."""
+        """⏎ on the merged mode's Orchestration tab: confirm-gated scene switch.
+
+        The 'off' scene routes to the COMPREHENSIVE stop_all (gpu-mode off + estate
+        down; a forced 'off' also tears down any other detected running container),
+        not the bare ``gpu-mode off`` which can't stop a cockpit-served slug."""
         try:
             scene = self.query_one("#operate-orch-pane", OperateOrchPane).selected_scene()
         except Exception:
             scene = None
         if scene is None:
             return
-        plan = self._data.scene_switch(scene.name)
+        plan = self._data.stop_all() if scene.name == "off" else self._data.scene_switch(scene.name)
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_help(self) -> None:

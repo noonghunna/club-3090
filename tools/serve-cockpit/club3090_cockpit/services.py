@@ -1289,13 +1289,24 @@ class CockpitData:
         return probe
 
     async def scenes(self) -> list[Scene]:
-        """gpu-mode --list-modes --json → Scene list."""
+        """gpu-mode --list-modes --json → Scene list.
+
+        Filters the ``ops`` group down to just ``off`` (the stop-all): ``power-cap``
+        has its own [c] menu and ``prune`` / ``prune-all`` were removed from the
+        cockpit — none are GPU *scenes* you'd ⏎-switch to, so they must not appear
+        in the scene table (they did, since --list-modes mirrors the CLI dispatch)."""
         data, _ = await self._run_json(
             ["bash", "scripts/gpu-mode.sh", "--list-modes", "--json"], timeout=30.0
         )
         if not isinstance(data, list):
             return []
-        return [Scene.from_dict(d) for d in data]
+        out: list[Scene] = []
+        for d in data:
+            s = Scene.from_dict(d)
+            if s.group == "ops" and s.name != "off":
+                continue
+            out.append(s)
+        return out
 
     async def doctor_read(self, url: Optional[str] = None) -> DoctorRead:
         """health.sh (text-only) → parsed DoctorRead."""
@@ -1598,6 +1609,23 @@ class CockpitData:
             requires_reconcile=True,
         )
 
+    def stop_all(self) -> ActionPlan:
+        """Comprehensive 'off' — ``gpu-mode off`` (stops the named scene presets)
+        AND ``estate_cli down`` (estate-managed instances), so neither path's blind
+        spot survives.  A FORCED 'off' ALSO tears down any other detected running
+        container via the reconcile gate (execute_action → _teardown_conflicts),
+        covering a cockpit-served catalog slug that is neither a preset nor estate-
+        managed.  requires_reconcile=True so the gate detects + (on force) clears
+        whatever is actually running."""
+        return ActionPlan(
+            kind="scene",
+            cmd=["bash", "-c",
+                 "bash scripts/gpu-mode.sh off; "
+                 "python3 scripts/lib/profiles/estate_cli.py down"],
+            description="stop all (gpu-mode off + estate down)",
+            requires_reconcile=True,
+        )
+
     def estate_down(self) -> ActionPlan:
         return ActionPlan(
             kind="estate_down",
@@ -1616,6 +1644,29 @@ class CockpitData:
             description=f"docker {op} {name}",
             requires_reconcile=(op == "stop"),
         )
+
+    async def _teardown_conflicts(self, reconcile: "ReconcileResult") -> list[str]:
+        """Stop the running containers a FORCED write collides with (the gate's
+        ``conflicts``) so the write clears the way regardless of whether its own
+        command knows them.  Best-effort + idempotent: each ``docker stop`` is
+        awaited (synchronous → the GPU is freed before the command claims it); a
+        failure to stop one doesn't abort the others or the write.  Returns the
+        container names it attempted to stop (for logging/tests).  Routed through
+        the read runner so tests observe/mock it — NEVER stops a real container in
+        the test suite."""
+        names: list[str] = []
+        for c in (getattr(reconcile, "conflicts", None) or []):
+            n = (getattr(c, "name", "") or "").strip()
+            if n and n not in names:
+                names.append(n)
+        for name in names:
+            try:
+                await self._runner.run(
+                    ["docker", "stop", name], cwd=str(self.repo_root), timeout=60.0
+                )
+            except Exception:
+                continue
+        return names
 
     # ── WRITE: execution (gated — NEVER run in tests / this phase) ────────────────
 
@@ -1670,6 +1721,14 @@ class CockpitData:
                         return False, reconcile, None
                     if not plan.force_reason:
                         raise ValueError("force override requires force_reason")
+                    # FORCE override: actually CLEAR the way — stop the materialized
+                    # conflicting containers the gate found, so the write doesn't
+                    # depend on its OWN command knowing them.  This is what makes a
+                    # forced scene switch ('off' → gpu-mode off, which does NOT stop
+                    # a cockpit-served catalog slug) reliably free the cards.  docker
+                    # stop is synchronous, and we're under the write lock, so the
+                    # cards are freed before the command claims them.
+                    await self._teardown_conflicts(reconcile)
 
             # Fix 1 (TOCTOU): register a pending claim for the GPUs this write
             # wants BEFORE calling start_raw and BEFORE releasing the lock.  The

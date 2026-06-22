@@ -1861,8 +1861,9 @@ class TestEveryWriteGoesThroughReconcile:
             assert isinstance(screen, ConfirmActionScreen)
             assert screen._reconcile is not None
             assert screen._reconcile.safe is True
-            ok_btn = screen.query_one("#confirm-ok-btn", Button)
-            assert ok_btn.disabled is False
+            # Footer-only: Confirm is enabled (no button row).
+            assert screen.check_action("confirm", ()) is True
+            assert screen.check_action("force", ()) is False
 
     @pytest.mark.asyncio
     async def test_unsafe_gate_disables_confirm_enables_force(self):
@@ -1878,8 +1879,9 @@ class TestEveryWriteGoesThroughReconcile:
             await _settle(pilot)
             screen = app.screen
             assert screen._reconcile.safe is False
-            assert screen.query_one("#confirm-ok-btn", Button).disabled is True
-            assert screen.query_one("#confirm-force-btn", Button).disabled is False
+            # Footer-only: Confirm hidden, the override (force) shown.
+            assert screen.check_action("confirm", ()) is False
+            assert screen.check_action("force", ()) is True
             body = str(screen.query_one("#confirm-body", Static).render())
             assert "tear down" in body.lower() or "collide" in body.lower()
 
@@ -1895,7 +1897,7 @@ class TestEveryWriteGoesThroughReconcile:
             app.push_screen(ConfirmActionScreen(plan))
             await _settle(pilot)
             screen = app.screen
-            screen.query_one("#confirm-ok-btn", Button).press()
+            await pilot.press("enter")          # footer Confirm
             await _settle(pilot)
             assert len(wr.started) == 1
             assert wr.started[0]["cmd"] == ["bash", "scripts/switch.sh", "vllm/dual"]
@@ -1945,7 +1947,7 @@ class TestEveryWriteGoesThroughReconcile:
             app.push_screen(ConfirmActionScreen(plan))
             await _settle(pilot)
             screen = app.screen
-            screen.query_one("#confirm-force-btn", Button).press()
+            await pilot.press("f")              # footer override (Force / Switch anyway)
             await _settle(pilot)
             assert len(wr.started) == 1
             assert "--force" in wr.started[0]["cmd"]
@@ -3045,7 +3047,7 @@ class TestValidateRunWired:
             await _settle(pilot)
             screen = app.screen
             assert isinstance(screen, ConfirmActionScreen)
-            screen.query_one("#confirm-ok-btn", Button).press()
+            await pilot.press("enter")
             await _settle(pilot)
             assert len(wr.started) == 1
             assert wr.started[0]["cmd"] == ["bash", "scripts/bench.sh"]
@@ -3324,7 +3326,7 @@ class TestEvaluateHookWired:
             await _settle(pilot)
             screen = app.screen
             assert isinstance(screen, ConfirmActionScreen)
-            screen.query_one("#confirm-ok-btn", Button).press()
+            await pilot.press("enter")
             await _settle(pilot)
             # c3t launched via the MOCKED write runner — never live.
             assert len(wr.started) == 1
@@ -7846,9 +7848,10 @@ class TestServeConfirmStateAware:
             assert ev.stopped and ev.prevented                # Enter stopped — inert
             assert wr.started == []                           # no write fired
 
-    # (f) the legacy (non-serve) confirm keeps Confirm/Force/Cancel + its buttons.
+    # (f) the legacy (non-serve) confirm is now FOOTER-ONLY — Confirm / override /
+    #     Cancel via bindings, no duplicate on-screen button row.
     @pytest.mark.asyncio
-    async def test_non_serve_confirm_keeps_legacy_semantics(self):
+    async def test_non_serve_confirm_is_footer_only(self):
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
@@ -7858,14 +7861,16 @@ class TestServeConfirmStateAware:
             app.push_screen(sc)
             await _settle(pilot)
             assert sc._serve_ctx is None
-            # Legacy buttons present (EXACTLY the three — no phantom placeholder).
-            assert {b.id for b in sc.query(Button)} == {
-                "confirm-ok-btn", "confirm-force-btn", "confirm-cancel-btn",
-            }
-            # Confirm/Force gating unchanged; serve verbs never apply here.
+            # NO on-screen button row (footer-only, matching the serve modal — the
+            # old buttons + footer showed the same keys twice).
+            assert list(sc.query(Button)) == []
+            # Confirm/override gating unchanged; serve verbs never apply here.
             assert sc.check_action("confirm", ()) is True     # safe gate
+            assert sc.check_action("force", ()) is True or sc.check_action("confirm", ()) is True
             assert sc.check_action("start", ()) is False
             assert sc.check_action("stop", ()) is False
+            # The override key is relabelled for a scene switch ("Switch anyway").
+            assert sc._force_label() == "Switch anyway"
 
     # (f') scene-switch still dispatches through the gate from the modal.
     @pytest.mark.asyncio
@@ -7878,7 +7883,7 @@ class TestServeConfirmStateAware:
             sc = ConfirmActionScreen(plan)
             app.push_screen(sc)
             await _settle(pilot)
-            sc.query_one("#confirm-ok-btn", Button).press()
+            await pilot.press("enter")          # footer Confirm (no button row)
             await _settle(pilot)
             assert len(wr.started) == 1
             assert wr.started[0]["cmd"] == ["bash", "scripts/gpu-mode.sh", "27b"]
