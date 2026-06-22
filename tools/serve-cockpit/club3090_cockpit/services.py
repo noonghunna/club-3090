@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import shutil
 import subprocess
 import time
 import uuid
@@ -371,7 +373,7 @@ class CockpitData:
         meta = index.get((entry.model, entry.weights_variant))
         if meta is None or not meta.subdir:
             return WEIGHTS_UNKNOWN, meta
-        base = Path(model_dir or MODEL_DIR) / "huggingface" / meta.subdir
+        base = Path(model_dir or self.weights_model_dir()) / "huggingface" / meta.subdir
         try:
             if not base.is_dir():
                 return WEIGHTS_ABSENT, meta
@@ -394,6 +396,99 @@ class CockpitData:
                 )
             except Exception:
                 pass
+
+    # ── Download (Download UX): fetch a slug's weights via setup.sh ───────────────
+
+    def weights_download_plan(self, model: str, variant: str) -> ActionPlan:
+        """The download ActionPlan: ``WEIGHT_KEY=<model>:<variant> bash
+        scripts/setup.sh <model>`` (the user's chosen in-repo fetch: whole-repo
+        HF pull + per-file SHA verify).  setup.sh accepts ``WEIGHT_KEY`` directly
+        for an exact catalog entry.  A DISK write, NOT a GPU write — no reconcile
+        gate; the pop-up's Download button is itself the confirm.  ``WEIGHT_KEY``
+        is injected into the child env at run time (run_weights_download), kept
+        off ``cmd`` so the plan stays inspectable."""
+        return ActionPlan(
+            kind="download",
+            cmd=["bash", "scripts/setup.sh", model],
+            description=f"download {model}:{variant} weights (setup.sh)",
+            requires_reconcile=False,
+            requires_confirm=False,
+        )
+
+    async def run_weights_download(
+        self,
+        model: str,
+        variant: str,
+        *,
+        on_line: Optional[Callable[[str], None]] = None,
+    ) -> Any:
+        """Launch the weights download, streamed via the core runner (no GPU
+        claim).  ``WEIGHT_KEY`` selects the exact variant; ``HF_HOME`` is derived
+        from the model dir so HF's staging cache lands on the big models disk
+        (off root).  WIRED-BUT-MOCK-ONLY in tests (conftest blocks the real
+        spawn); returns the streaming run handle."""
+        plan = self.weights_download_plan(model, variant)
+        env = dict(os.environ)
+        env["WEIGHT_KEY"] = f"{model}:{variant}"
+        env.setdefault("HF_HOME", str(Path(self.weights_model_dir()) / ".cache" / "huggingface"))
+        if on_line is not None:
+            self._write_runner.set_callbacks(on_line=on_line)
+        return await self._write_runner.start_raw(
+            plan.cmd, env=env, run_type=plan.kind, parser=None
+        )
+
+    def weights_model_dir(self) -> str:
+        """The configured model dir (where ``huggingface/<subdir>`` lives).  A
+        method (not the bare ``MODEL_DIR`` constant) so the Settings step can make
+        it user-configurable without touching every call site."""
+        return getattr(self, "_model_dir", None) or MODEL_DIR
+
+    def weights_bytes_on_disk(self, meta: WeightsMeta, *, model_dir: Optional[str] = None) -> int:
+        """Total bytes currently under ``<model_dir>/huggingface/<subdir>`` — the
+        robust download-progress signal (vs parsing hf's tqdm bars).  0 when the
+        dir is absent."""
+        base = Path(model_dir or self.weights_model_dir()) / "huggingface" / meta.subdir
+        if not base.is_dir():
+            return 0
+        total = 0
+        try:
+            for f in base.rglob("*"):
+                try:
+                    if f.is_file():
+                        total += f.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            return 0
+        return total
+
+    def weights_download_progress(
+        self, meta: WeightsMeta, *, model_dir: Optional[str] = None
+    ) -> Optional[int]:
+        """Download progress % from bytes-on-disk vs ``size_gb`` — ``None`` when
+        size is unknown.  Capped at 99 (100 is reserved for verify-confirmed
+        present, set by re-stat on completion)."""
+        if not meta.size_gb or meta.size_gb <= 0:
+            return None
+        got = self.weights_bytes_on_disk(meta, model_dir=model_dir)
+        pct = int(got / (float(meta.size_gb) * 1e9) * 100)
+        return max(0, min(99, pct))
+
+    def weights_fits_disk(
+        self, meta: WeightsMeta, *, model_dir: Optional[str] = None
+    ) -> tuple[bool, float, float]:
+        """Disk pre-check before a download → ``(fits, free_gb, need_gb)``.
+        ``need`` carries a 10% headroom over ``size_gb``.  Fits=True (unknown
+        free / unknown size) when it can't be determined — never block on a
+        read error, just skip the guard."""
+        need = float(meta.size_gb or 0) * 1.10
+        try:
+            free_gb = shutil.disk_usage(model_dir or self.weights_model_dir()).free / 1e9
+        except OSError:
+            return True, 0.0, need
+        if need <= 0:
+            return True, free_gb, need
+        return (free_gb >= need), free_gb, need
 
     # enrich_measurements still fans out one switch --explain per slug; a
     # cap-bounded asyncio.gather keeps that to a few seconds without flooding

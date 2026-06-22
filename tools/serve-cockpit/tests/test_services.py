@@ -540,6 +540,30 @@ class TestLoadCatalog:
         assert e_fp8.weights_state == WEIGHTS_ABSENT          # fp8 subdir not created
         assert e_unk.weights_state == WEIGHTS_UNKNOWN          # no weights entry to join
 
+    @pytest.mark.asyncio
+    async def test_weights_download_plan_and_progress(self, tmp_path):
+        """Download UX (service): the download plan is `WEIGHT_KEY=… setup.sh
+        <model>` (disk write, no reconcile/confirm gate); progress = bytes-on-disk
+        vs size_gb (capped 99); disk pre-check carries 10% headroom."""
+        from club3090_cockpit.data import WeightsMeta
+        cd = CockpitData(ROOT, runner=full_runner())
+        plan = cd.weights_download_plan("qwen3.6-27b", "fp8")
+        assert plan.cmd == ["bash", "scripts/setup.sh", "qwen3.6-27b"]
+        assert plan.requires_reconcile is False and plan.requires_confirm is False
+        meta = WeightsMeta(model="qwen3.6-27b", variant="fp8", subdir="qwen3.6-27b-fp8",
+                           size_gb=10.0, verify_glob="*.safetensors")
+        base = tmp_path / "huggingface" / "qwen3.6-27b-fp8"
+        base.mkdir(parents=True)
+        with open(base / "a.safetensors", "wb") as fh:
+            fh.truncate(5 * 10**9)                            # 5 GB sparse → 50%
+        assert cd.weights_download_progress(meta, model_dir=str(tmp_path)) == 50
+        fits, _free, need = cd.weights_fits_disk(meta, model_dir=str(tmp_path))
+        assert need == 11.0                                   # 10 GB * 1.10 headroom
+        # size unknown → no progress %, never blocks the disk guard
+        m0 = WeightsMeta(model="m", variant="v", subdir="s", size_gb=None)
+        assert cd.weights_download_progress(m0, model_dir=str(tmp_path)) is None
+        assert cd.weights_fits_disk(m0, model_dir=str(tmp_path))[0] is True
+
 
 class TestExplainFit:
     @pytest.mark.asyncio
