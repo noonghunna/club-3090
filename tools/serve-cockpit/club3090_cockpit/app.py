@@ -465,7 +465,9 @@ class HelpScreen(ModalScreen):
             "  [cyan].[/cyan]        toggle the left rail (Modes + Estate) — full-width content",
             "  [cyan]C[/cyan]        toggle lean view (hide / restore the Bring & Validate mode)",
             "  [cyan]Ctrl+p[/cyan]   command palette — fuzzy-search + run any action",
-            "  [cyan]Y[/cyan]        copy the highlighted slug / open report / selection to the clipboard",
+            "  [cyan]Y[/cyan] / right-click  copy the highlighted slug / open report / selection to the clipboard",
+            "  [dim]    (for arbitrary on-screen text: Shift-drag — or Option-drag on macOS — to use the[/dim]",
+            "  [dim]     terminal's OWN selection, bypassing the app's mouse capture, then your terminal's copy)[/dim]",
             "  [cyan]Shift+←/→[/cyan] page-scroll a wide table sideways (faster than the ←/→ column cursor)",
             "",
             "[bold]Run & Operate · Catalog[/bold]",
@@ -1033,6 +1035,13 @@ class ServeContext(NamedTuple):
     entry: Optional[CatalogEntry] = None
     stop_plan: Optional[ActionPlan] = None
     serving_container: str = ""                 # the container Stop tears down
+    # force_required — the staged slug is NON-functional (experimental / preview /
+    # incubating / upstream-gated / deprecated), which ``switch.sh`` REFUSES to
+    # launch without ``--force``.  So a plain Start would just fail; the modal
+    # presents a **Force Start** (passes ``--force``) with an "unvalidated config"
+    # warning instead.  Production / caveats slugs leave this False (plain Start;
+    # ``--force`` folds in only on a GPU conflict, per the warned-Start path).
+    force_required: bool = False
 
 
 # ── Confirm modal (used for serve + scene + container writes) ────────────────────
@@ -1231,6 +1240,15 @@ class ConfirmActionScreen(ModalScreen):
                 lines.append(f"  [bold]caveat[/bold] [yellow]{note}[/yellow]")
         else:
             lines.append(f"  [bold]{self._serve_slug() or self._plan.description}[/bold]")
+        # Non-functional slug → Force Start serves an UNVALIDATED config (switch.sh
+        # refuses it without --force).  Make that explicit, not just implied by the
+        # status badge.
+        ctx = self._serve_ctx
+        if ctx is not None and ctx.force_required and ctx.mode == "start":
+            lines.append(
+                "  [yellow]⚠ experimental — Force Start serves an UNVALIDATED "
+                "config (not gate-passed).[/yellow]"
+            )
         # The reconcile / teardown line — a placeholder until the detect lands.
         lines.append("")
         lines.append(self._reconcile_line())
@@ -1316,11 +1334,16 @@ class ConfirmActionScreen(ModalScreen):
             # the destructive affordance is visible where the user reads controls.
             ctx = self._serve_ctx
             if ctx is not None and ctx.mode == "start":
-                self._set_start_binding_label(
-                    f"Start (stops {self._primary_conflict_name()})"
+                # "Force Start" when the slug is non-functional (experimental →
+                # switch.sh needs --force); "(stops <model>)" appended when a live
+                # model holds the GPU.  Both are the SAME --force re-issue.
+                verb = "Force Start" if ctx.force_required else "Start"
+                label = (
+                    f"{verb} (stops {self._primary_conflict_name()})"
                     if self._has_conflict
-                    else "Start"
+                    else verb
                 )
+                self._set_start_binding_label(label)
             # The destructive Start/Stop is now safe to ENABLE (the fresh detect
             # landed).  Footer reflects it via check_action.
             self.refresh_bindings()
@@ -1461,15 +1484,17 @@ class ConfirmActionScreen(ModalScreen):
 
     def action_start(self) -> None:
         """Enter → START the serve (serve mode).  Only reachable once the
-        dual-writer detect RESOLVES (check_action gates it off until then).  When
-        a conflicting model holds the GPU the gate is unsafe → Start performs
-        teardown-then-serve (the old Force semantics folded into Start, the
-        maintainer's choice): the SAME --force re-issue, presented as the warned
-        Start the card body AND the footer key ("Start (stops <model>)", set in
-        set_reconcile) already announced."""
-        # force when (and only when) a live model holds the GPU — the warned-Start
-        # the card surfaced.  On a clear gate this is a plain serve.
-        self._commit(force=self._has_conflict)
+        dual-writer detect RESOLVES (check_action gates it off until then).
+
+        ``--force`` is added in TWO cases: (1) a conflicting model holds the GPU →
+        teardown-then-serve (the old Force semantics folded into Start), and
+        (2) the slug is NON-functional (experimental/…) → switch.sh refuses it
+        without --force, so a Force Start is the only way to launch it (the card +
+        footer warn it's an unvalidated config).  Both are the SAME --force
+        re-issue; on a clear gate for a functional slug this is a plain serve."""
+        ctx = self._serve_ctx
+        force_required = bool(ctx is not None and ctx.force_required)
+        self._commit(force=self._has_conflict or force_required)
 
     def action_stop(self) -> None:
         """k → STOP the targeted serving model (serve mode, stop-context only).
@@ -4383,6 +4408,15 @@ class CockpitApp(App):
     ]
 
     CSS = """
+    /* Per-pane control/hint lines must stay WITHIN the viewport — a Label is
+       `width: auto` (sizes to its content), so a long control hint runs off the
+       right edge and pushes the page into horizontal scroll, hiding the controls.
+       Constrain every hint to the available width so it WRAPS (all controls stay
+       visible, no h-scroll).  An id selector beats Label's type-level default. */
+    #catalog-hint, #orch-hint, #containers-hint, #run-hint, #doctor-hint,
+    #evidence-hint, #lane-bring-hint, #lane-serve-hint, #lane-promote-hint {
+        width: 1fr;
+    }
     #main-layout {
         height: 1fr;
     }
@@ -6135,6 +6169,20 @@ class CockpitApp(App):
             title="Copy", severity="information", timeout=3,
         )
 
+    def on_mouse_down(self, event) -> None:
+        """RIGHT-CLICK → copy.  A TUI captures the mouse, so the terminal's native
+        select-and-right-click-copy is suppressed (the app receives the events).
+        We restore the expectation: right-click copies the active Textual selection
+        (drag across a card/report/preview — a Static — to select), or, when there
+        is none (e.g. over a DataTable, which can't be drag-selected), the
+        contextual text — the highlighted row's slug.  The hard, cross-terminal
+        path for copying ARBITRARY on-screen text stays the terminal's own
+        selection: hold Shift (or Option on macOS) while dragging to bypass the
+        app's mouse capture, then the terminal's copy."""
+        if getattr(event, "button", 0) != 3:   # 3 = right button
+            return
+        self.action_copy_context()
+
     def _resolve_copy_text(self) -> tuple[str, str]:
         """Return ``(text, label)`` for [Y] — '' text means nothing copyable."""
         # 1. an explicit text selection (any selectable Static the user dragged).
@@ -6467,7 +6515,14 @@ class CockpitApp(App):
                 )
             # Serving slug matched but we couldn't resolve the container — fall
             # back to a Start presentation (no stop target to offer).
-        return ServeContext(mode="start", entry=entry)
+        # A non-functional slug (experimental/preview/incubating/…) needs --force
+        # to launch (switch.sh refuses it otherwise) → the modal presents Force
+        # Start.  Functional (production/caveats) slugs get a plain Start.
+        return ServeContext(
+            mode="start",
+            entry=entry,
+            force_required=not _status_is_functional(entry.status),
+        )
 
     def _operate_primary(self) -> None:
         """⏎ on the merged mode's Orchestration tab: confirm-gated scene switch."""

@@ -179,3 +179,49 @@ class TestRegistryMatchingDictCompat:
         ]
         result = match_target_to_registry(target, variants)
         assert result.slug == "vllm/dual"
+
+
+class TestRegistryMatchExactNotPrefix:
+    """Regression: a slug whose container name is a PREFIX of the actually-running
+    container must NOT shadow the real one — the old substring match mislabelled
+    ``vllm-...-dual-max`` as ``vllm/dual`` and ``...-carnice-v2-dual`` as the single
+    (and then misdirected the targeted stop to a container that wasn't running)."""
+
+    # registry order puts the shorter (prefix) container FIRST — the worst case.
+    VARIANTS = [
+        _make_variant_row(container="vllm-qwen36-27b-dual", port=8010, slug="vllm/dual"),
+        _make_variant_row(container="vllm-qwen36-27b-dual-max", port=8013,
+                          slug="vllm/qwen-27b-dual-max", status="experimental"),
+        _make_variant_row(container="beellama-carnice-v2", port=8068,
+                          slug="beellama/carnice-v2-single-q5km-mtp", status="experimental"),
+        _make_variant_row(container="beellama-carnice-v2-dual", port=8070,
+                          slug="beellama/carnice-v2-dual-q8-mtp", status="experimental"),
+    ]
+
+    def test_dual_max_not_shadowed_by_dual(self):
+        target = ServingTarget(container="vllm-qwen36-27b-dual-max", host_port=8013)
+        assert match_target_to_registry(target, self.VARIANTS).slug == "vllm/qwen-27b-dual-max"
+
+    def test_carnice_dual_not_shadowed_by_single(self):
+        target = ServingTarget(container="beellama-carnice-v2-dual", host_port=8070)
+        assert (
+            match_target_to_registry(target, self.VARIANTS).slug
+            == "beellama/carnice-v2-dual-q8-mtp"
+        )
+
+    def test_prefix_slug_still_matches_its_own_container(self):
+        target = ServingTarget(container="vllm-qwen36-27b-dual", host_port=8010)
+        assert match_target_to_registry(target, self.VARIANTS).slug == "vllm/dual"
+
+    def test_port_only_when_no_container(self):
+        target = ServingTarget(container="", host_port=8013)
+        assert match_target_to_registry(target, self.VARIANTS).slug == "vllm/qwen-27b-dual-max"
+
+    def test_docker_scale_suffix_uses_longest_substring(self):
+        # A docker project/scale suffix (<name>-1) has no exact match → pass 3
+        # picks the LONGEST containing registry container, never a prefix sibling.
+        target = ServingTarget(container="beellama-carnice-v2-dual-1", host_port=0)
+        assert (
+            match_target_to_registry(target, self.VARIANTS).slug
+            == "beellama/carnice-v2-dual-q8-mtp"
+        )

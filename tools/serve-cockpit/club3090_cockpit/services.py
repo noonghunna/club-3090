@@ -1082,11 +1082,27 @@ class CockpitData:
             result.note = f"docker ps read failed: {exc}"
             result.safe = False
             return result
+        # Is a WANTED card actually occupied right now (>512 MiB rules out
+        # driver/compositor noise)?  An unknown-GPU container is only a teardown
+        # CONFLICT when there is real contention — a running-but-idle service
+        # (e.g. the studio stack at 0 GiB on free cards) is nothing a serve onto
+        # free cards needs to stop, so it must NOT be cried-wolf as a conflict.
+        # When a wanted card IS busy we stay conservative (the holder may be
+        # unnamed); the raw-VRAM gpu_conflicts pass below is the fail-closed
+        # backstop in EITHER case, so the `safe` verdict never weakens.
+        wanted_busy = any(
+            getattr(g, "index", -1) in wanted and getattr(g, "mem_used_mib", 0) > 512
+            for g in gpus
+        )
         for c in containers:
             known = _container_gpu_set(c)
-            if known is not None and not (known & wanted):
-                continue  # container provably on other card(s) only
-            result.conflicts.append(c)
+            if known is not None:
+                if known & wanted:
+                    result.conflicts.append(c)  # provably on a wanted card
+                continue  # known set: authoritative (empty/other-card → not a conflict)
+            # Unknown GPU set → conflict only when a wanted card is occupied.
+            if wanted_busy:
+                result.conflicts.append(c)
 
         # 2. Raw GPU occupancy — a card with meaningful VRAM in use is occupied
         #    even if we can't name the container (e.g. a bare llama-server).

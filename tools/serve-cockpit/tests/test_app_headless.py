@@ -7253,6 +7253,28 @@ class TestCopyAndHScroll:
             assert "[" not in copied["text"]
 
     @pytest.mark.asyncio
+    async def test_right_click_copies_context(self):
+        """Right-click (mouse button 3) copies the contextual text — a TUI eats the
+        mouse, so this restores the native 'select + right-click copy' expectation
+        (on a table there's no selection → it copies the highlighted slug)."""
+        class _Btn:
+            def __init__(self, b): self.button = b
+        app, _, _ = make_app()
+        copied: dict = {}
+        async with app.run_test(size=(140, 40)) as pilot:
+            await _settle(pilot)
+            app.copy_to_clipboard = lambda t: copied.__setitem__("text", t)
+            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
+            await pilot.pause()
+            # a LEFT button-down must NOT copy …
+            app.on_mouse_down(_Btn(1))
+            assert "text" not in copied
+            # … a RIGHT button-down copies the contextual slug.
+            app.on_mouse_down(_Btn(3))
+            await _settle(pilot)
+            assert copied.get("text") == "vllm/dual", copied
+
+    @pytest.mark.asyncio
     async def test_copy_yanks_open_report_body(self):
         """[Y] works INSIDE a modal (the modal binds it explicitly — the app-level
         Y can't reach a modal) and copies the raw, markup-free report."""
@@ -7323,6 +7345,25 @@ class TestCopyAndHScroll:
             app.action_hscroll_right()
             await pilot.pause()
             assert isinstance(app.screen, ShareBackReportScreen)
+
+    @pytest.mark.asyncio
+    async def test_pane_hints_stay_within_viewport(self):
+        """The bottom control/hint lines must WRAP to the viewport, not run off the
+        right edge into horizontal scroll (Label is width:auto → a long hint
+        overflows without the width:1fr rule)."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(80, 30)) as pilot:
+            await _enter_operate(pilot)
+            for tab, hint in (
+                ("tab-doctor", "#doctor-hint"),
+                ("tab-catalog", "#catalog-hint"),
+                ("tab-containers", "#containers-hint"),
+                ("tab-orchestration", "#orch-hint"),
+            ):
+                app.query_one("#operate-tabs", TabbedContent).active = tab
+                await pilot.pause()
+                w = app.query_one(hint)
+                assert w.size.width <= 80, f"{hint} overflows: {w.size.width} > 80"
 
 
 class TestA11ConfirmModalDiscoverableBindings:
@@ -7649,6 +7690,65 @@ class TestServeConfirmStateAware:
             # teardown-then-serve == switch.sh --force <slug> (force folded in).
             assert "--force" in wr.started[0]["cmd"]
             assert wr.started[0]["cmd"][-1] == "vllm/dual"
+
+    # (c'''') a NON-functional (experimental) slug → Force Start: switch.sh refuses
+    #         it without --force, so the modal serves it with --force + a warning.
+    @staticmethod
+    def _exp_entry(slug, status):
+        from club3090_cockpit.data import CatalogEntry as _CE
+        from club3090_tui_core import VariantRow as _VR
+        return _CE(row=_VR(
+            slug=slug, switch_engine="vllm", launch_engine="vllm",
+            compose_dir="models/qwen3.6-27b/vllm/compose/dual/fp8",
+            file="mtp.yml", port=8013, model="qwen3.6-27b", engine="vllm-stable",
+            kvcalc_key="SKIP", container="vllm-qwen36-27b-dual-max",
+            compose_path="models/qwen3.6-27b/vllm/compose/dual/fp8/mtp.yml",
+            status=status, ctx_label="262K", status_note="",
+        ))
+
+    @pytest.mark.asyncio
+    async def test_experimental_slug_force_start(self):
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(gpus=_FREE_GPUS, target=ServingTarget(gpus=_FREE_GPUS), write_runner=wr)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([self._exp_entry("vllm/qwen-27b-dual-max", "experimental")], None)
+            await pilot.pause()
+            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
+            await pilot.press("enter")
+            await _settle(pilot)
+            sc = app.screen
+            assert isinstance(sc, ConfirmActionScreen)
+            assert sc._serve_ctx.force_required is True
+            assert _serve_footer_desc(sc, "enter") == "Force Start"     # footer relabel
+            assert "UNVALIDATED" in _serve_card_text(sc)                 # card warning
+            await pilot.press("enter")                                  # Force Start
+            await _settle(pilot)
+            assert len(wr.started) == 1
+            assert "--force" in wr.started[0]["cmd"]                     # the fix
+            assert wr.started[0]["cmd"][-1] == "vllm/qwen-27b-dual-max"
+
+    @pytest.mark.asyncio
+    async def test_production_slug_no_force_required(self):
+        """A functional (production) slug is NOT force_required — plain Start, and
+        on free cards no --force is added."""
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(gpus=_FREE_GPUS, target=ServingTarget(gpus=_FREE_GPUS), write_runner=wr)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([self._exp_entry("vllm/dual", "production")], None)
+            await pilot.pause()
+            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
+            await pilot.press("enter")
+            await _settle(pilot)
+            sc = app.screen
+            assert sc._serve_ctx.force_required is False
+            assert _serve_footer_desc(sc, "enter") == "Start"
+            await pilot.press("enter")
+            await _settle(pilot)
+            assert wr.started and "--force" not in wr.started[0]["cmd"]
 
     # (d) the card shows an explain summary + fit verdict (not unrelated content).
     @pytest.mark.asyncio

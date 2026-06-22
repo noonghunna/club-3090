@@ -735,13 +735,15 @@ class TestReconcileGate:
 
     @pytest.mark.asyncio
     async def test_running_engine_container_is_conflict(self):
+        # A running vLLM engine HOLDS the card it serves on — set GPU0 busy (the
+        # realistic state) so the unknown-GPU container is flagged as a conflict.
         runner = full_runner(
             **{
                 "docker ps": ok(DOCKER_PS_ENGINE),
                 "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
             }
         )
-        gpus = [GpuInfo(index=0, mem_used_mib=3), GpuInfo(index=1, mem_used_mib=1)]
+        gpus = [GpuInfo(index=0, mem_used_mib=22000), GpuInfo(index=1, mem_used_mib=1)]
         cd = CockpitData(
             ROOT, runner=runner,
             detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
@@ -750,6 +752,28 @@ class TestReconcileGate:
         rec = await cd.reconcile_before_write("serve:vllm/dual")
         assert rec.safe is False
         assert any(c.name == "vllm-qwen36-27b-dual" for c in rec.conflicts)
+
+    @pytest.mark.asyncio
+    async def test_running_service_on_idle_cards_is_not_conflict(self):
+        """Regression: a running-but-IDLE service (the studio stack at 0 GiB) is
+        NOT a teardown conflict for a serve onto FREE cards — the gate must not
+        cry wolf ('starting this will stop studio-tts') when nothing holds a card."""
+        runner = full_runner(
+            **{
+                "docker ps": ok("studio-tts|\nstudio-image-shim|\n"),
+                "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
+            }
+        )
+        gpus = [GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)]
+        cd = CockpitData(
+            ROOT, runner=runner,
+            detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
+            get_gpu_info_fn=make_gpu_info(gpus),
+        )
+        rec = await cd.reconcile_before_write("serve:vllm/dual")
+        assert rec.safe is True
+        assert rec.conflicts == []
+        assert rec.gpu_conflicts == []
 
     @pytest.mark.asyncio
     async def test_gpu_in_use_is_conflict(self):
@@ -954,7 +978,8 @@ class TestReconcileGate:
                 "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
             }
         )
-        gpus = [GpuInfo(index=0, mem_used_mib=3), GpuInfo(index=1, mem_used_mib=1)]
+        # The estate container is a live GPU user → GPU0 occupied (realistic).
+        gpus = [GpuInfo(index=0, mem_used_mib=20000), GpuInfo(index=1, mem_used_mib=1)]
         cd = CockpitData(
             ROOT, runner=runner,
             detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
@@ -976,7 +1001,8 @@ class TestReconcileGate:
                 "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
             }
         )
-        gpus = [GpuInfo(index=0, mem_used_mib=3), GpuInfo(index=1, mem_used_mib=1)]
+        # ComfyUI is actively GPU-holding here → GPU0 busy (matches the docstring).
+        gpus = [GpuInfo(index=0, mem_used_mib=18500), GpuInfo(index=1, mem_used_mib=1)]
         cd = CockpitData(
             ROOT, runner=runner,
             detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
