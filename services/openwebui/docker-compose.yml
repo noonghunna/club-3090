@@ -22,7 +22,9 @@ services:
       # ComfyUI). Swap the two lines above for these:
       #   - OPENAI_API_BASE_URL=http://host.docker.internal:4000/v1
       #   - OPENAI_API_KEY=sk-litellm-master-key
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Ollama removed from the stack 2026-06-22 — disable the API so OWUI doesn't
+      # probe a dead :11434 on boot (chat routes through the OpenAI API above).
+      - ENABLE_OLLAMA_API=false
       # Leave empty → Open WebUI generates a strong random key on first boot and persists it
       # in the data volume (.webui_secret_key). NEVER ship a hardcoded shared secret (it would
       # let anyone forge session tokens). Override via the host env only to share sessions

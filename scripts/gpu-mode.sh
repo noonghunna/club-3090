@@ -39,8 +39,8 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Standard supporting services living under $CLUB3090_DIR/services.
-# Ollama dropped 2026-05-10 — we route Qwen/Gemma through LiteLLM directly
-# instead. Compose dir kept at services/ollama/ for manual spin-up if needed.
+# Ollama removed 2026-06-22 (dropped from serving 2026-05-10 — Qwen/Gemma route
+# through LiteLLM directly; the unused services/ollama/ compose dir was deleted).
 SERVICES=(openwebui litellm qdrant searxng)
 
 # Run a docker compose command in any directory, with optional -f override.
@@ -305,11 +305,6 @@ show_status() {
     if curl -sf -m 2 http://localhost:8188/ >/dev/null 2>&1; then
         echo -e "  ${GREEN}▶${NC} ComfyUI @ :8188          → image/video generation (GPU-bound, mutex with LLM)"
     fi
-    if curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
-        local m
-        m=$(curl -sf -m 2 http://localhost:11434/api/tags | python3 -c "import sys,json;d=json.load(sys.stdin);mdls=[x['name'] for x in d.get('models',[])];print(f'{len(mdls)} models available' if mdls else 'none loaded')" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} Ollama @ :11434         → ${m:-unknown}"
-    fi
     if curl -sf -m 2 -H "Authorization: Bearer sk-litellm-master-key" http://localhost:4000/v1/models >/dev/null 2>&1; then
         local m
         m=$(curl -sf -m 2 -H "Authorization: Bearer sk-litellm-master-key" http://localhost:4000/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
@@ -415,9 +410,8 @@ mode_27b() {
     echo -e "${CYAN}═══ Switching to 27B dual-card MTP mode (default) ═══${NC}"
     echo "Starting: Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision + 2 streams (TP=2)"
     echo "Port: 8010 | Container: vllm-qwen36-27b-dual"
-    echo "Stopping: Ollama, other 27B variants"
+    echo "Stopping: other 27B variants"
     echo ""
-    stop_service ollama
     stop_all_gemma
     stop_comfyui
     stop_27b_dual_dflash
@@ -444,7 +438,6 @@ mode_gemma_dflash() {
     echo -e "${CYAN}═══ Switching to Gemma 4 31B DFlash mode ═══${NC}"
     echo "Starting: Gemma 4 31B + z-lab DFlash drafter (TP=2, :8032)"
     echo ""
-    stop_service ollama
     stop_all_27b
     stop_deckard
     stop_gemma_mtp
@@ -465,7 +458,6 @@ mode_gemma_int8() {
     echo -e "${CYAN}═══ Switching to Gemma 4 31B INT8-PTH mode (dual default, long ctx) ═══${NC}"
     echo "Starting: Gemma 4 31B + INT8 PTH KV + 262K ctx (TP=2, :8032)"
     echo ""
-    stop_service ollama
     stop_all_27b
     stop_deckard
     stop_gemma_mtp
@@ -486,7 +478,6 @@ mode_deckard() {
     echo "Starting: Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K ctx (llama.cpp, :8199)"
     echo "Stopping: all other GPU models (Deckard layer-splits across both cards)"
     echo ""
-    stop_service ollama
     stop_all_27b
     stop_all_gemma
     stop_gemma_12b_chat
@@ -513,7 +504,6 @@ mode_gemma_dflash_int8() {
     echo -e "${CYAN}═══ Switching to Gemma 4 31B DFlash + INT8 PTH mode ═══${NC}"
     echo "Starting: Gemma 4 31B + DFlash + INT8 PTH KV (TP=2, :8032). Requires vllm#42102."
     echo ""
-    stop_service ollama
     stop_all_27b
     stop_deckard
     stop_gemma_mtp
@@ -534,7 +524,6 @@ mode_gemma_awq() {
     echo -e "${CYAN}═══ Switching to Gemma 4 31B AWQ-4bit mode ═══${NC}"
     echo "Starting: Gemma 4 31B AWQ-4bit (TP=2, :8033)"
     echo ""
-    stop_service ollama
     stop_all_27b
     stop_deckard
     stop_gemma_mtp
@@ -560,7 +549,6 @@ mode_comfyui() {
     echo "Starting: ComfyUI :8188"
     echo "Stopping: all GPU-bound LLM serving (Qwen + Gemma)"
     echo ""
-    stop_service ollama
     stop_all_27b
     stop_deckard
     stop_all_gemma
@@ -578,7 +566,6 @@ mode_video_studio() {
     echo "Starting: ComfyUI :8188 (both GPUs) + director :8090 + gallery :8189 + Open WebUI"
     echo "Stopping: all GPU-bound LLM serving (Qwen + Gemma + DiffusionGemma)"
     echo ""
-    stop_service ollama
     stop_all_27b
     stop_deckard
     stop_all_gemma
@@ -610,7 +597,6 @@ mode_image_studio() {
     echo ""
     local ngpu
     ngpu=$(nvidia-smi -L 2>/dev/null | wc -l)
-    stop_service ollama
     stop_all_27b
     stop_deckard
     stop_all_gemma
@@ -907,7 +893,7 @@ usage() {
     echo "Usage: gpu-mode <mode>"
     echo ""
     echo "Modes:"
-    echo "  chat               Ollama + Open WebUI + LiteLLM + Qdrant (browser chat, no GPU model)"
+    echo "  chat               Open WebUI + LiteLLM + Qdrant + SearXNG (browser chat, no GPU model)"
     echo ""
     echo "  Qwen 3.6 27B (dual 3090, TP=2):"
     echo "  27b                ⭐ DEFAULT — Qwen3.6-27B MTP + fp8 + 262K + vision + 2 streams (:8010)"

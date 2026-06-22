@@ -773,8 +773,8 @@ class CockpitData:
         """Enumerate the KNOWN supporting services from the repo's
         ``services/<name>/docker-compose.yml`` tree (READ — a filesystem scan).
 
-        These are the rig's full supporting estate (ComfyUI / LiteLLM / Ollama /
-        OpenWebUI / Qdrant / SearXNG / Studio …); a service is "known" if its
+        These are the rig's full supporting estate (ComfyUI / LiteLLM / OpenWebUI
+        / Qdrant / SearXNG / Studio …); a service is "known" if its
         directory carries a ``docker-compose.yml``.  Returns the sorted service
         names; empty when the tree is absent (e.g. the test fake root)."""
         base = self.repo_root / "services"
@@ -837,7 +837,7 @@ class CockpitData:
           ``_docker_ps_stack_containers`` — ComfyUI / Step-Audio): omitted here,
           it's already represented (running) in ``running``;
         - **running, but NOT a stack row** (a non-GPU supporting service —
-          ``litellm`` / ``ollama`` / ``qdrant`` / ``searxng`` / ``open-webui``):
+          ``litellm`` / ``qdrant`` / ``searxng`` / ``open-webui``):
           appended as a **running** ``status="running"`` ContainerInfo so it
           shows live with working actions (logs / top / restart / stop / rm);
         - **not running at all**: appended as a greyed, read-only
@@ -874,9 +874,9 @@ class CockpitData:
                     match_port = port
                     break
             is_running = match_port is not None
-            # Non-GPU supporting services (litellm / qdrant / searxng / open-webui
-            # / ollama) carry an ``engine="web"`` tag + the port they serve on, so
-            # the Containers table shows what they are instead of a bare "—".  A
+            # Non-GPU supporting services (litellm / qdrant / searxng / open-webui)
+            # carry an ``engine="web"`` tag + the port they serve on, so the
+            # Containers table shows what they are instead of a bare "—".  A
             # GPU-holding rig service (ComfyUI / Step-Audio — classifies non-None)
             # keeps no web tag; it surfaces with its real engine as a stack row.
             engine = "" if _classify_container_kind(svc) is not None else "web"
