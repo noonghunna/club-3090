@@ -2307,6 +2307,13 @@ class TestValidatePanes:
             # Batch 3 — verify / verify-full cards replaced estate / profile.
             app.query_one("#doctor-card-verify")
             app.query_one("#doctor-card-verifyfull")
+            # report / full-report / power-cap-sweep now get their own launcher
+            # cards too (previously footer-key-only).
+            app.query_one("#doctor-card-report")
+            app.query_one("#doctor-card-fullreport")
+            app.query_one("#doctor-card-sweep")
+            assert "press" in str(app.query_one("#doctor-report-body", Static).render()).lower()
+            assert "press" in str(app.query_one("#doctor-sweep-body", Static).render()).lower()
             assert not app.query("#doctor-card-estate")
             assert not app.query("#doctor-card-profile")
 

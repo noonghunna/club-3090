@@ -2691,18 +2691,23 @@ class ValidateRunPane(Container):
 class DoctorPane(Container):
     """Operate / Doctor tab: "is the running model serving correctly?".
 
-    Three cards, all READ-only:
+    Six cards.  The first three render a parsed verdict back INTO the pane:
       - **health.sh** — live reachable/serving line (updates from the Operate
         estate poll via ``populate``, and on the [y] re-run via ``populate_health``);
       - **verify** ([v]) — verify.sh sends a real test query to the serving model
         (reachable → Genesis patch → completion → tool-call, ~15s);
       - **verify-full** ([V]) — verify-full.sh, the ~1-2 min functional battery.
 
-    Report generation lives on the footer hint: [R] basic system report
-    (report.sh snapshot, paste-ready modal) and [F] the ~43-min full battery
-    (report.sh --full, warned).  diagnose-estate / diagnose-profile moved to the
-    producer Bring & Validate lane (they triage a validation target, not the
-    live consumer rig)."""
+    The last three are descriptive LAUNCHER cards — same visual treatment, but
+    their output lands elsewhere (not a Doctor-pane verdict):
+      - **report** ([R]) — report.sh ~2s snapshot → paste-ready copy modal;
+      - **report --full** ([F]) — report.sh --full ~43-min battery (confirm-gated,
+        uses the serving GPUs) → streams into ③ Gate / artifact in results/;
+      - **power-cap sweep** ([w]) — power-cap-sweep.sh (gated · mutates the cap +
+        benches each) → finds the TPS-per-watt knee.
+
+    diagnose-estate / diagnose-profile moved to the producer Bring & Validate
+    lane (they triage a validation target, not the live consumer rig)."""
 
     DEFAULT_CSS = """
     DoctorPane {
@@ -2762,12 +2767,44 @@ class DoctorPane(Container):
                     "(streaming / thinking / cascade / MTP)[/dim]",
                     id="doctor-verifyfull-body",
                 )
+            with Container(classes="doctor-card", id="doctor-card-report"):
+                yield Label(
+                    "report  [dim]— paste-ready rig/stack snapshot[/dim]",
+                    classes="doctor-card-title",
+                )
+                yield Static(
+                    "[dim]press [cyan]R[/cyan] — report.sh (~2s): redacted rig + "
+                    "stack snapshot; opens a paste-ready copy modal (no network, "
+                    "no GPU)[/dim]",
+                    id="doctor-report-body",
+                )
+            with Container(classes="doctor-card", id="doctor-card-fullreport"):
+                yield Label(
+                    "report --full  [dim]— full validation battery[/dim]",
+                    classes="doctor-card-title",
+                )
+                yield Static(
+                    "[dim]press [cyan]F[/cyan] — report.sh --full "
+                    "([yellow]~43 min · uses the serving GPUs · confirm-gated[/yellow]): "
+                    "streams into the ③ Gate; the artifact lands in results/ "
+                    "(viewable in Validate · Evidence)[/dim]",
+                    id="doctor-fullreport-body",
+                )
+            with Container(classes="doctor-card", id="doctor-card-sweep"):
+                yield Label(
+                    "power-cap sweep  [dim]— benches at each power cap[/dim]",
+                    classes="doctor-card-title",
+                )
+                yield Static(
+                    "[dim]press [cyan]w[/cyan] — power-cap-sweep.sh "
+                    "([yellow]gated · mutates the GPU cap + benches each[/yellow]): "
+                    "finds the TPS-per-watt knee for this rig[/dim]",
+                    id="doctor-sweep-body",
+                )
             yield Label(
-                "[dim][cyan]v[/cyan] verify   ·   [cyan]V[/cyan] verify-full   ·   "
-                "[cyan]y[/cyan] re-run health   ·   [cyan]R[/cyan] basic system report "
-                "(report.sh · paste-ready)   ·   [cyan]F[/cyan] full battery report.sh "
-                "--full ([yellow]~43 min · uses the serving GPUs[/yellow])   ·   "
-                "[cyan]w[/cyan] power-cap sweep ([yellow]gated · benches each cap[/yellow])[/dim]",
+                "[dim][cyan]y[/cyan] re-run health   ·   [cyan]v[/cyan] verify   ·   "
+                "[cyan]V[/cyan] verify-full   ·   [cyan]R[/cyan] report   ·   "
+                "[cyan]F[/cyan] report --full   ·   [cyan]w[/cyan] power-cap sweep[/dim]",
                 id="doctor-hint",
             )
 
