@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Builds the unified OWUI Studio pipe: LTX/Sulphur lanes x T2V/I2V auto-route -> studio_pipe.py
+"""Builds the unified OWUI Studio pipe: LTX/Sulphur/10Eros lanes x T2V/I2V auto-route -> studio_pipe.py
 
-Both lanes are SINGLE-STAGE (8-step cfg=1) built from the proven clean LTX-distilled graph.
-Sulphur is a dev-based fine-tune, so the distill LoRA is spliced onto its base sampler to give
-the same single-stage behaviour. The old 2-stage spatial-upscaler/refine path was DROPPED — on
-2x 3090 it injected a diamond-lattice mesh artifact over every Sulphur frame (the single-stage
-distilled path is clean; the 2-stage dev path is the bug). See docs/ai-studio/video.md.
+All video lanes are SINGLE-STAGE (8-step cfg=1) built from the proven clean LTX-distilled graph.
+Sulphur and 10Eros are both LTX-2.3-22B-dev fine-tunes (two uncensored lanes, shipped side by side
+so they can be compared), so the shared distill LoRA is spliced onto their base sampler to give the
+same single-stage behaviour. The old 2-stage spatial-upscaler/refine path was DROPPED — on 2x 3090
+it injected a diamond-lattice mesh artifact over every dev-path frame (the single-stage distilled
+path is clean; the 2-stage dev path is the bug). See docs/ai-studio/video.md.
 
 Run `python3 build_studio_pipe.py` → writes studio_pipe.py next to it; install that as an
 Open WebUI Function (Admin → Functions → +). See services/studio/README.md.
@@ -49,21 +50,28 @@ def i2v_insert(wf, base_longer_edge):
 
 LTX_DIT      = 'ltx2.3/distilled-1.1/ltx-2.3-22b-distilled-1.1-Q8_0.gguf'
 SUL_DIT      = 'sulphur-2/sulphur_dev-Q8_0.gguf'
-DISTILL_LORA = 'ltx-2.3-22b-distilled-lora-384.safetensors'
+EROS_DIT     = '10eros/10Eros_v1-Q8_0.gguf'
+DISTILL_LORA = 'ltx-2.3-22b-distilled-lora-384-1.1.safetensors'   # 22B distilled LoRA — shared by both dev lanes
 
 # LTX: pre-distilled checkpoint, distilled VAEs/connectors, no LoRA (already single-stage). 768x512 proven (00016).
 ltx_t2v = build(LTX_DIT,
                 'ltx-2.3-22b-distilled_audio_vae.safetensors', 'ltx-2.3-22b-distilled_video_vae.safetensors',
                 'ltx-2.3-22b-distilled_embeddings_connectors.safetensors', 768, 512)
-# Sulphur: dev-based fine-tune -> dev VAEs/connectors + distill LoRA. 1280x720 single-stage proven (00030).
-sul_t2v = build(SUL_DIT,
-                'ltx-2.3-22b-dev_audio_vae.safetensors', 'ltx-2.3-22b-dev_video_vae.safetensors',
-                'ltx-2.3-22b-dev_embeddings_connectors.safetensors', 1280, 720, lora=DISTILL_LORA)
+# Uncensored dev lanes (both LTX-2.3-22B-dev) -> dev VAEs/connectors + the shared distill LoRA,
+# single-stage 8-step cfg=1, 1280x720. Two lanes so Sulphur and 10Eros can be compared directly.
+sul_t2v  = build(SUL_DIT,
+                 'ltx-2.3-22b-dev_audio_vae.safetensors', 'ltx-2.3-22b-dev_video_vae.safetensors',
+                 'ltx-2.3-22b-dev_embeddings_connectors.safetensors', 1280, 720, lora=DISTILL_LORA)
+eros_t2v = build(EROS_DIT,
+                 'ltx-2.3-22b-dev_audio_vae.safetensors', 'ltx-2.3-22b-dev_video_vae.safetensors',
+                 'ltx-2.3-22b-dev_embeddings_connectors.safetensors', 1280, 720, lora=DISTILL_LORA)
 WF = {
     "ltx-t2v": ltx_t2v,
     "ltx-i2v": i2v_insert(ltx_t2v, 768),
     "sulphur-t2v": sul_t2v,
     "sulphur-i2v": i2v_insert(sul_t2v, 1280),
+    "10eros-t2v": eros_t2v,
+    "10eros-i2v": i2v_insert(eros_t2v, 1280),
     # Image lane: Ideogram-4 fp8 (DualModelGuider, native nodes). Single-device GPU0,
     # coexists with the director on GPU0 at <=1024^2 (2048^2 would OOM — capped in pipe).
     "image": json.load(open(IMAGE_TEMPLATE)),
@@ -85,14 +93,14 @@ PIPE = r'''
 """
 title: Studio (text/image -> video · image · music)
 author: club-3090
-description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur (uncensored), text->video or attach an image, with optional voiceover. Image: HiDream-O1 (top quality), Ideogram-4 (design/logo/photo/text), or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Voice: Step-Audio-EditX (premium cloned voice + emotion/style). Refine anytime by just saying what to change.
+description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur/10Eros (uncensored), text->video or attach an image, with optional voiceover. Image: HiDream-O1 (top quality), Ideogram-4 (design/logo/photo/text), or Chroma (uncensored). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Voice: Step-Audio-EditX (premium cloned voice + emotion/style). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
-version: 0.13.3
+version: 0.13.4
 """
 # ── Pipeline defaults (this rig, 2x 3090, measured 2026-06-11) ──────────────────
-#  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur = uncensored dev fine-tune
+#  Video lanes: ltx = LTX-2.3-distilled (video+audio) · sulphur, 10eros = uncensored LTX-2.3 dev fine-tunes
 #    Render:  SINGLE-STAGE, 8-step, cfg=1 (no 2-stage upscaler — it injects mesh)
-#    Res:     sulphur 1280x720 · ltx 768x512
+#    Res:     sulphur/10eros 1280x720 · ltx 768x512
 #    Frames:  default 241 (=10s @24fps, crisp). Valve range to 361 (=15s, coherent).
 #             HARD-CAPPED at 361 in _comfy — ~481/20s collapses to corrupted output.
 #    VRAM:    weights on GPU1 (DisTorch donor ~21.9GB), compute on GPU0 (~14GB peak).
@@ -104,7 +112,7 @@ version: 0.13.3
 #    image  = Ideogram-4 fp8 (DualModelGuider, ~18.5GB) — STRUCTURED JSON caption; great at
 #             text/logos/graphic design. SAFETY-TRAINED (blocks some content). 1024x1024, 20 steps.
 #    chroma = Chroma1-HD fp8 (Flux-based, de-distilled, ~9GB) — NATURAL-LANGUAGE prompt + negative
-#             + real CFG; trained UNCENSORED. The "Sulphur for stills." 1024x1024, 26 steps, cfg 3.5.
+#             + real CFG; trained UNCENSORED. The "Sulphur/10Eros for stills." 1024x1024, 26 steps, cfg 3.5.
 #    All capped at image_max_edge (1024) so they coexist with the director on GPU0 (2048^2 = OOM).
 #  Music lane: ace-step = ACE-Step v1 3.5B (text->music/song). Tags + lyrics/[instrumental],
 #    seconds-duration; single-device GPU0 (~8GB), 50-step euler, cfg 5 — a lane, not a mode.
@@ -154,6 +162,7 @@ class Pipe:
         return [
             {"id": "ltx", "name": "\U0001F3AC Studio · LTX-2.3 (video+audio · text or image)"},
             {"id": "sulphur", "name": "\U0001F513 Studio · Sulphur (uncensored · text or image)"},
+            {"id": "10eros", "name": "\U0001F513 Studio · 10Eros (uncensored · text or image)"},
             {"id": "hidream", "name": "\U00002728 Studio · Image (HiDream-O1 · top-quality / photoreal)"},
             {"id": "image", "name": "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / text)"},
             {"id": "chroma", "name": "\U0001F513 Studio · Image (Chroma · uncensored)"},
@@ -348,7 +357,7 @@ class Pipe:
         return None
 
     def _enhance(self, user_prompt, i2v, prior_spec=None, kind="video"):
-        # kind: "video" (LTX/Sulphur) · "image" (Ideogram JSON) · "chroma" (prose) · "music" (ACE-Step JSON)
+        # kind: "video" (LTX/Sulphur/10Eros) · "image" (Ideogram JSON) · "chroma" (prose) · "music" (ACE-Step JSON)
         sys = {"image": self.DIRECTOR_IMG_SYS, "chroma": self.DIRECTOR_IMG_PROSE_SYS,
                "hidream": self.DIRECTOR_HIDREAM_SYS,
                "music": self.DIRECTOR_MUSIC_SYS, "sfx": self.DIRECTOR_SFX_SYS}.get(kind, self.DIRECTOR_SYS)
@@ -564,6 +573,8 @@ class Pipe:
             lane = "chroma"
         elif "image" in model:
             lane = "image"
+        elif "10eros" in model:
+            lane = "10eros"
         elif "sulphur" in model:
             lane = "sulphur"
         else:
@@ -571,7 +582,7 @@ class Pipe:
         label = {"image": "Image (Ideogram-4)", "chroma": "Image · Chroma (uncensored)",
                  "hidream": "Image (HiDream-O1)",
                  "music": "Music (ACE-Step)", "sfx": "SFX (Stable Audio)", "voice": "Voice (Step-Audio-EditX)",
-                 "sulphur": "Sulphur (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
+                 "sulphur": "Sulphur (uncensored)", "10eros": "10Eros (uncensored)", "ltx": "LTX-2.3 (video+audio)"}[lane]
         loop = asyncio.get_event_loop()
 
         # ── SFX LANE (Stable Audio · natural-language sound · <=47s) ──────────────────────────────
@@ -873,4 +884,4 @@ class Pipe:
 '''.replace('__WF_JSON__', WF_JSON)
 
 open(OUT_PATH, 'w').write(PIPE)
-print("wrote %s (%d bytes; 9 workflows (video x2 + image x3 + music + sfx) + narration + voice service)" % (OUT_PATH, len(PIPE)))
+print("wrote %s (%d bytes; 11 workflows (video x6: ltx/sulphur/10eros x t2v+i2v + image x3 + music + sfx) + narration + voice service)" % (OUT_PATH, len(PIPE)))
