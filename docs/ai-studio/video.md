@@ -1,13 +1,14 @@
 # Video Studio — chat-driven text/image → video on 2× 3090
 
 The video side of [Club 3090 AI Studio](README.md). Type a rough idea in Open WebUI; a "director"
-LLM crafts it into a professional prompt; ComfyUI renders it. Two video lanes share the pipe + the
-director: **LTX-2.3** (video+audio) and **Sulphur** (an uncensored LTX-2.3 fine-tune). Video is
-GPU-mutually-exclusive with the dual-card LLMs (it wants both 3090s).
+LLM crafts it into a professional prompt; ComfyUI renders it. Four video lanes share the pipe + the
+director: **LTX-2.3** (video+audio) and its uncensored fine-tunes **Sulphur** / **10Eros**, plus
+**Wan2.2-Rapid** (a separate uncensored text→video engine). Video is GPU-mutually-exclusive with
+the dual-card LLMs (it wants both 3090s).
 
-> Sibling docs: **[image.md](image.md)** (HiDream-O1 / Ideogram-4 / Chroma stills) ·
+> Sibling docs: **[image.md](image.md)** (HiDream-O1 / Ideogram-4 / Chroma / Z-Image stills) ·
 > **[audio.md](audio.md)** (voices / music / SFX) · **[README.md](README.md)** (the overview +
-> the full 8-lane matrix + shared services).
+> the full 11-lane matrix + shared services).
 
 ---
 
@@ -66,7 +67,7 @@ manifest below); the director GGUF → `/mnt/models/huggingface/qwen3.5-4b-gguf/
 **2. Bring the stack up:**
 
 ```bash
-bash scripts/gpu-mode.sh video-studio
+bash scripts/gpu-mode.sh ai-studio
 ```
 
 Stops the GPU LLMs and starts ComfyUI (both cards) + director (`:8090`) + gallery (`:8189`) +
@@ -144,11 +145,11 @@ scene-cuts inside one segment; exact object counts.
 
 | | |
 |---|---|
-| **Modes** | text→video, image→video (attach an image) |
-| **Audio** | yes — LTX-2.3 generates synced ambient audio; optional Kokoro voiceover ([audio.md](audio.md)) |
-| **Resolution** | Sulphur 1280×720 · LTX 768×512 (set in the workflow) |
-| **Length** | default ~10 s; see the ceiling below |
-| **Video lanes** | `🎬 LTX-2.3` (video+audio) · `🔓 Sulphur` (uncensored) — image/audio lanes in [image.md](image.md) / [audio.md](audio.md), full matrix in [README.md](README.md) |
+| **Modes** | text→video, image→video (attach an image) — **LTX lanes**; the Wan lane is text→video only |
+| **Audio** | yes — LTX-2.3 generates synced ambient audio; optional Kokoro voiceover ([audio.md](audio.md)). **Wan has no synced audio** (add a Kokoro voiceover if you want sound). |
+| **Resolution** | Sulphur / 10Eros 1280×720 · LTX 768×512 · Wan 832×480 (set in the workflow) |
+| **Length** | default ~10 s (LTX lanes); Wan ~5 s (81 frames @16fps); see the ceiling below |
+| **Video lanes** | `🎬 Studio · Video (LTX-2.3)` (video+audio) · `🔓 Studio · Video (Sulphur)` · `🔓 Studio · Video (10Eros)` · `🔓 Studio · Video (Wan2.2)` (all uncensored except LTX) — image/audio lanes in [image.md](image.md) / [audio.md](audio.md), full matrix in [README.md](README.md) |
 
 ### Length ceiling (measured on 2× 3090, 1280×720, frames = 24·seconds + 1)
 
@@ -200,13 +201,70 @@ over every frame. The fix — and what the pipe ships — is **single-stage**: s
 LoRA onto the base sampler, 8 steps, cfg 1, no upscaler. Clean output. The workflow
 (`workflows/ltx_distilled_distorch.json`) already encodes this.
 
+## Wan2.2 — tuning & limits (the separate uncensored T2V/I2V lane)
+
+`🔓 Studio · Video (Wan2.2)` is a **different engine** from the LTX family — Wan2.2-Rapid-AllInOne
+Mega NSFW v10 (14B, Q8 GGUF, Apache). The "AllInOne" merge bakes a 4-step distill LoRA in, so it's
+**single 4-step cfg=1** (no LoRA-splice, no 2-stage path). It does **not** produce synced audio, and
+it does **not** share LTX's i2v node or orchestrator — it has its own Wan-native i2v + chaining.
+Workflows: `workflows/wan22_rapid.json` (t2v) · `workflows/wan22_rapid_i2v.json` (i2v).
+
+**Sampler recipe (measured).** The model card's recommendation for v10 is **`euler_ancestral` /
+`beta`** — and a same-prompt/same-seed sweep confirmed it: it's visibly sharper than the generic
+`euler` / `simple` (legible signage, defined reflections, more texture) at the **same** ~145 s and
+no extra VRAM. Shift 5 (`ModelSamplingSD3`), cfg 1, 4 steps. Raising steps doesn't help (distilled).
+
+**Resolution — 480p default, 720p valve.** 832×480 is the default (~2.5 min/clip, single card).
+**1280×720 OOMs on the plain GGUF loader** (the 18 GB model + 720p compute overflows one 3090) — so
+the `wan_hi_res` valve swaps in `UnetLoaderGGUFDisTorch2MultiGPU` (compute GPU0 / weights donated
+from GPU1, exactly like the LTX lanes) to fit it, at ~3.5× the time (~9 min/clip). 720p is visibly
+more detailed; it's opt-in because of the cost.
+
+**Length ceiling (measured on 2× 3090, 832×480, single window).** The single-card ceiling is set by
+**how much of GPU0 the diffusion gets** — and the ~4.5 GB **director** sharing GPU0 is the swing
+factor (see "VRAM / GPU split" below). Quality holds at every length that *fits*; the wall is VRAM,
+not coherence:
+
+| Frames | Length | Single-card, director on GPU0 | Single-card, director relocated | DisTorch (both cards) |
+|---|---|---|---|---|
+| **81** | 5.1 s | ✅ 150 s (**default**) | ✅ | ✅ 156 s |
+| 121 | 7.6 s | ✅ 408 s | ✅ | — |
+| 161 | 10.1 s | ❌ **OOM** | ✅ **402 s** | ✅ 402 s |
+| 201 | 12.6 s | ❌ OOM | ❓ (untested) | ✅ 576 s |
+
+Two reads of this: (1) the "161 OOM" is **not a model limit** — freeing the director's 4.5 GB off
+GPU0 lifts the single-card ceiling 121 → 161 frames; with the director resident it's ~121. (2) Render
+cost scales **super-linearly** (81→121 nearly tripled the time — attention is quadratic in sequence
+length). So the pipe **defaults to 81 frames** and never stretches the single window to go long —
+even where VRAM would allow it, it's the wrong cost curve.
+
+**Going long — i2v-seeded chaining (not a bigger window).** Ask for >~5 s and the lane chains
+fixed-cost ~5 s segments: each later segment is **i2v-seeded from the previous segment's last frame**
+(`ImageFromBatch` → `WanImageToVideo` `start_image`), its duplicate seam frame is dropped, and the
+segments are concatenated (`ImageBatch`) into one clip. Cost is **linear** in length (no OOM wall),
+and the seam is continuous (same subject/scene carry through). `segments = ceil(seconds / 5)`, capped
+by `wan_max_seconds` (default 20 s = 4 segments). This is Wan-native and in-graph — it does **not**
+use LTX's host-side orchestrator.
+
+**i2v.** Attach an image and the lane animates it via `WanImageToVideo` (`start_image`); the director
+crafts *motion* (how it moves), not a re-description of the still — same pattern as the LTX i2v mode.
+
 ## VRAM / GPU split
 
 Video and the dual-card LLMs are **mutually exclusive** (both want the GPUs). In video mode: GPU1
 holds the 22B DiT weights (~22 GB, DisTorch donor); GPU0 does compute (~7–14 GB) **and** hosts the
-~4 GB director — they coexist on one card. Because ComfyUI holds both cards in `video-studio`, you
-can also run a ≤1024² **image** lane in the same mode with no switch (it fits on GPU0 beside the
+~4.5 GB director — they coexist on one card. Because ComfyUI holds both cards in `ai-studio`, you
+can also run a ≤1024² **image** lane in the same scene with no switch (it fits on GPU0 beside the
 director). Full per-lane VRAM in [image.md](image.md) / [audio.md](audio.md) / [README.md](README.md).
+
+> **Director placement is a VRAM lever** (default: GPU0; `STUDIO_DIRECTOR_GPU` / `-ngl 0` relocate it
+> — see [requirements.md](requirements.md)). Its 4.5 GB on GPU0 is exactly what caps the single-card
+> Wan window at ~121 frames; freeing it lifts that to 161. **GPU0 is the safe default** — it coexists
+> with every shipped default lane. **GPU1 is *not* a blanket-safe target:** the LTX/Sulphur/10Eros
+> lanes already use GPU1 as their ~22 GB donor, so a director there OOMs them. GPU1 is fine only for
+> the image lanes and the Wan lane (18 GB donor + 4.5 GB = 22.5 GB fits); **CPU** (`-ngl 0`) is the
+> universally-safe relocation, at a craft-latency cost. Use the lever to unlock edge cases (Ideogram
+> 2048², single-window Wan >121 frames), not as a default flip.
 
 ## On the uncensored models
 
@@ -223,9 +281,13 @@ meaningful censorship lever, so it's not abliterated.)
 |---|---|---|
 | `ltx-2.3-22b-distilled-1.1-Q8_0.gguf` | `unet/ltx2.3/distilled-1.1/` | LTX |
 | `sulphur-2/sulphur_dev-Q8_0.gguf` | `unet/` | Sulphur |
-| `ltx-2.3-22b-distilled-lora-384.safetensors` | `loras/` | both (single-stage splice) |
-| `ltx-2.3-22b-{distilled,dev}_{audio,video}_vae.safetensors` | `vae/` | LTX / Sulphur |
-| `ltx-2.3-22b-{distilled,dev}_embeddings_connectors.safetensors` | `text_encoders/` | LTX / Sulphur |
+| `10eros/10Eros_v1-Q8_0.gguf` | `unet/` | 10Eros |
+| `ltx-2.3-22b-distilled-lora-384-1.1.safetensors` | `loras/` | all dev lanes (single-stage splice) |
+| `ltx-2.3-22b-{distilled,dev}_{audio,video}_vae.safetensors` | `vae/` | LTX / Sulphur / 10Eros |
+| `ltx-2.3-22b-{distilled,dev}_embeddings_connectors.safetensors` | `text_encoders/` | LTX / Sulphur / 10Eros |
+| `wan-rapid/Mega-v10/wan2.2-rapid-mega-aio-nsfw-v10-Q8_0.gguf` | `unet/` | Wan2.2 |
+| `umt5_xxl_fp8_e4m3fn_scaled.safetensors` | `text_encoders/` | Wan2.2 (encoder) |
+| `wan_2.1_vae.safetensors` | `vae/` | Wan2.2 (VAE) |
 
 Director GGUF (`Qwen3.5-4B-Uncensored-…`) → `/mnt/models/huggingface/qwen3.5-4b-gguf/…`. Image +
 audio model manifests are in [image.md](image.md) / [audio.md](audio.md).

@@ -24,6 +24,140 @@ from club3090_tui_core.registry import VariantRow
 # ── Fit verdict ───────────────────────────────────────────────────────────────
 
 
+def parse_ctx_label(label: Any) -> Optional[int]:
+    """A7: turn a compact ctx label ("262K" / "131072") into an int.
+
+    Inverse of ``_ctx_label`` — used ONLY as a last-resort fallback (when no exact
+    numeric configured-ctx int is available) to render/compare a catalog slug's
+    colloquial ctx label.  Returns None when nothing numeric parses (so the UI
+    labels the field "(per catalog slug)" rather than fabricating a comparison).
+
+    K-convention is ×1000 — the inverse of ``_ctx_label`` / ``registry-emit.sh``'s
+    ÷1000 (``262K`` → 262000), NOT ×1024.  This is deliberately the SAME convention
+    across the stack so a round-trip label never drifts from the source int by more
+    than the rounding registry-emit already applied.  The divergence badge prefers
+    the EXACT configured int and never round-trips through this label (MUST-FIX 2)."""
+    if label is None:
+        return None
+    s = str(label).strip().upper().replace(",", "")
+    if not s:
+        return None
+    m = re.match(r"^([0-9]+(?:\.[0-9]+)?)\s*([KM]?)", s)
+    if not m:
+        return None
+    try:
+        val = float(m.group(1))
+    except ValueError:
+        return None
+    mult = {"": 1, "K": 1000, "M": 1000 * 1000}.get(m.group(2), 1)
+    return int(round(val * mult))
+
+
+def variant_topology(row: Any) -> str:
+    """The topology TOKEN (``single`` / ``dual`` / ``multiN``) from a variant's
+    compose path — the path encodes it as ``…/compose/<topology>/<quant>/<file>``.
+
+    Pure path parse (no I/O) so :class:`CatalogEntry` can surface the topology
+    column without dragging the app-layer ``_variant_topology`` helper into the
+    data module.  Returns ``""`` when the path carries no recognizable token."""
+    path = (
+        f"{getattr(row, 'compose_path', '') or ''} "
+        f"{getattr(row, 'compose_dir', '') or ''}"
+    ).replace("\\", "/")
+    m = re.search(r"/(multi\d+)/", path)
+    if m:
+        return m.group(1)
+    if "/dual/" in path:
+        return "dual"
+    if "/single/" in path:
+        return "single"
+    return ""
+
+
+def variant_quant(row: Any) -> str:
+    """The weights-variant / quant TOKEN from a variant's compose path — the path
+    encodes it as ``…/compose/<topology>/<quant>/<file>`` and (CLAUDE.md) the
+    ``<quant>/`` dir name IS the ``weights_variant`` key in the model profile.
+    Pure path parse (no I/O); returns ``""`` when the path carries no token.
+
+    Used to join a catalog slug to its weights entry (subdir / hf_repo / glob)
+    for the download-state check."""
+    path = (getattr(row, "compose_path", "") or "").replace("\\", "/")
+    m = re.search(r"/compose/(?:single|dual|multi\d+)/([^/]+)/", path)
+    return m.group(1) if m else ""
+
+
+def topology_cards(row: Any) -> int:
+    """A6: how many cards the row's compose places on (1 / 2 / N).
+
+    Derived from the compose path (``…/single/…`` / ``…/dual/…`` / ``…/multiN/…``)
+    so we know whether the per-card vram_est must fit on ONE free card or on
+    EVERY card the topology spans.  Defaults to 1 when the path gives no signal
+    (the conservative single-card assumption)."""
+    path = f"{getattr(row, 'compose_dir', '') or ''} {getattr(row, 'compose_path', '') or ''}".lower()
+    m = re.search(r"/multi(\d+)/", path)
+    if m:
+        try:
+            return max(1, int(m.group(1)))
+        except ValueError:
+            return 2
+    if "/dual/" in path:
+        return 2
+    return 1
+
+
+def downgrade_fit_glyph(
+    fit: "FitVerdict",
+    row: Any,
+    free_gb_by_index: Optional[dict[int, float]],
+) -> tuple[str, str]:
+    """A6: post-process the DISPLAYED fit glyph against LIVE free-VRAM.
+
+    The catalog fit-gate (kv-calc ``--fit-all``) is computed against the TOTAL
+    card (an empty card).  On a rig where GPU0 already holds ~18.5 GB (ComfyUI),
+    a "● fits-clean" row will OOM at serve.  This DOWNGRADES the displayed glyph
+    using the last estate poll's per-GPU free-VRAM — WITHOUT re-running kv-calc
+    (a pure post-process of the already-computed verdict).
+
+    Returns ``(glyph, note)``:
+      - When live free-VRAM is UNKNOWN (``None``/empty): the original glyph + a
+        "(vs empty card)" note so "● fits-clean" is never read as a live verdict.
+      - When KNOWN and the row's per-card vram_est exceeds the free-VRAM on the
+        card(s) the topology needs: a downgraded glyph ("⚠"/"✗") + a reason.
+      - When KNOWN and it still fits live: the original glyph, no note.
+
+    NEVER fabricates a number — it only downgrades on a REAL free-VRAM figure;
+    the actual serve-time collision is still owned by the reconcile gate."""
+    glyph = fit.glyph
+    # Only the affirmative "fits" verdicts can be downgraded; skip/unknown/wont-fit
+    # carry no live claim to walk back.
+    if fit.verdict not in ("fits-clean", "fits-constrained"):
+        return glyph, ""
+    if not free_gb_by_index:
+        # No live data — label the column so the glyph isn't read as live.
+        return glyph, "vs empty card"
+    est = fit.vram_est_gb
+    if est is None:
+        return glyph, "vs empty card"
+    need = topology_cards(row)
+    frees = sorted(free_gb_by_index.values(), reverse=True)
+    # A dual/multi row needs the TOP-N cards each to hold the per-card estimate;
+    # a single-card row needs ANY one card to hold it.
+    if need <= 1:
+        fits_live = bool(frees) and frees[0] >= est
+    else:
+        fits_live = len(frees) >= need and all(f >= est for f in frees[:need])
+    if fits_live:
+        return glyph, ""
+    # Downgrade.  A card that's close (within ~1 GB) is "tight"; clearly short is
+    # "won't fit now".
+    best = frees[need - 1] if len(frees) >= need else (frees[-1] if frees else 0.0)
+    headroom = best - est
+    if headroom >= -1.0:
+        return "⚠", f"tight — {est:.0f}G est vs {best:.0f}G free now"
+    return "✗", f"won't fit now — {est:.0f}G est vs {best:.0f}G free"
+
+
 @dataclass
 class FitVerdict:
     """Result of kv-calc --fit / switch.sh --explain's fit block for one slug."""
@@ -92,6 +226,73 @@ class Measurement:
         return self.quality_8pk or "—"
 
 
+# ── Weights download state ──────────────────────────────────────────────────────
+
+
+@dataclass
+class WeightsMeta:
+    """Static weights metadata for a ``(model, variant)`` — from
+    ``weights.py list --json``.  Tells the cockpit WHERE a slug's weights live
+    (``subdir`` under ``<model_dir>/huggingface/``) + HOW to fetch them
+    (``hf_repo``, ``size_gb``) + how to confirm presence (``verify_glob``)."""
+
+    model: str = ""
+    variant: str = ""
+    subdir: str = ""
+    hf_repo: str = ""
+    size_gb: Optional[float] = None
+    verify_glob: str = "*.safetensors"
+    status: str = ""
+    kind: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "WeightsMeta":
+        size = d.get("size_gb")
+        try:
+            size = float(size) if size is not None else None
+        except (TypeError, ValueError):
+            size = None
+        return cls(
+            model=str(d.get("model") or ""),
+            variant=str(d.get("variant") or ""),
+            subdir=str(d.get("subdir") or ""),
+            hf_repo=str(d.get("hf_repo") or ""),
+            size_gb=size,
+            verify_glob=str(d.get("verify_glob") or "*.safetensors"),
+            status=str(d.get("status") or ""),
+            kind=str(d.get("kind") or ""),
+        )
+
+
+@dataclass(frozen=True)
+class StudioModel:
+    """One model the unified ``ai-studio`` scene needs — the SoT for first-install
+    missing-detection + the download modal (the preflight, the setup scripts, and
+    the cockpit all key off the same set, so the canaries can't drift).
+
+    ``root`` selects which tree ``rel_path`` is under: ``"weights"`` (the HF weights
+    root — e.g. the director GGUF) or ``"comfy"`` (the ComfyUI models tree — e.g.
+    image/video/audio checkpoints).  ``rel_path`` is the representative ("canary")
+    file whose presence means the model is installed; ``installer`` is the
+    ``services/comfyui/<x>.sh`` script that fetches it."""
+
+    modality: str          # "director" | "image" | "video" | "audio"
+    label: str
+    root: str              # "weights" | "comfy"
+    rel_path: str
+    size_gb: float
+    installer: str
+
+
+# Download-state tokens (CatalogEntry.weights_state).  "downloading" is overlaid
+# by the app from an active download worker, not computed at catalog-build.
+WEIGHTS_PRESENT = "present"     # subdir exists + verify_glob matches ≥1 file
+WEIGHTS_PARTIAL = "partial"     # subdir exists but no verify_glob match (interrupted / wrong)
+WEIGHTS_ABSENT = "absent"       # subdir missing
+WEIGHTS_UNKNOWN = "unknown"     # no weights entry joined (e.g. GGUF self-grabbed, or lookup failed)
+WEIGHTS_DOWNLOADING = "downloading"  # an active download worker — overlaid by the app, not stat'd
+
+
 # ── Enriched catalog entry ──────────────────────────────────────────────────────
 
 
@@ -105,6 +306,13 @@ class CatalogEntry:
     row: VariantRow
     fit: FitVerdict = field(default_factory=FitVerdict)
     measurement: Measurement = field(default_factory=Measurement)
+    # Download state (Download UX): the on-disk presence of this slug's weights +
+    # the joined static meta (hf_repo / size_gb for the download action).  Set by
+    # the app at catalog-build; "downloading" is overlaid live from the worker.
+    # Appended LAST so positional CatalogEntry(row, fit, measurement) is unaffected.
+    weights_state: str = "unknown"
+    weights: Optional["WeightsMeta"] = None
+    download_pct: Optional[int] = None   # 0-99 while weights_state == "downloading"
 
     # Convenience pass-throughs (so panes can read entry.slug, not entry.row.slug)
     @property
@@ -132,8 +340,54 @@ class CatalogEntry:
         return self.row.ctx_label
 
     @property
+    def configured_ctx(self) -> Optional[int]:
+        """A7/MUST-FIX 2: the EXACT numeric CONFIGURED ctx for this slug (the
+        registry max_ctx int behind ``ctx_label`` — e.g. 262144 for "262K").  This
+        is the slug's CONFIGURED serving ctx, NOT the kv-calc CAPACITY ceiling
+        (``fit.max_ctx``, e.g. ~295K) — the divergence badge must compare the probe
+        against THIS, so an honest 262144 serve does not badge against a 295K
+        ceiling.  ``None`` when the registry row didn't carry it."""
+        return getattr(self.row, "configured_ctx", None)
+
+    @property
     def port(self) -> int:
         return self.row.port
+
+    @property
+    def topology(self) -> str:
+        """The hardware-topology token (``single`` / ``dual`` / ``multiN``) for the
+        Catalog 'Topology' column, derived from the variant's compose path (the
+        path encodes it as ``…/compose/<topology>/<quant>/<file>``).  Falls back to
+        ``·`` when the path carries no recognizable token (the tab-form fallback)."""
+        return variant_topology(self.row) or "·"
+
+    @property
+    def weights_variant(self) -> str:
+        """The weights-variant / quant token (the ``<quant>/`` compose dir, which is
+        the model-profile ``weights`` key) — used to join this slug to its weights
+        entry for the download-state check.  ``""`` when the path carries none."""
+        return variant_quant(self.row)
+
+    @property
+    def weights_companions(self) -> list[str]:
+        """Extra weight-variant keys (a DFlash draft / mmproj vision projector) this
+        slug needs at serve time BEYOND its core ``weights_variant`` — straight from
+        the registry (``weights_companions``).  Bare keys, scoped to ``model``; the
+        Download action fetches these alongside the core so the slug actually serves.
+        ``[]`` for the common single-artifact slug."""
+        return list(getattr(self.row, "weights_companions", []) or [])
+
+    @property
+    def drafter(self) -> str:
+        """The slug's spec-dec drafter id from the registry (e.g. ``anbeeld-qwen-dflash``
+        / ``qwen-mtp-builtin`` / ``""``) — for display + companion reasoning."""
+        return str(getattr(self.row, "drafter", "") or "")
+
+    @property
+    def vision(self) -> bool:
+        """Whether this slug serves vision (registry, derived from the vision-coding
+        workload) — drives the mmproj companion + a future catalog badge."""
+        return bool(getattr(self.row, "vision", False))
 
     @property
     def source(self) -> str:
@@ -143,6 +397,19 @@ class CatalogEntry:
 
 
 # ── Estate / Scene / Container / Doctor ─────────────────────────────────────────
+
+
+@dataclass
+class SceneServiceState:
+    """One service of a scene, paired with whether its container is running now.
+
+    Drives the Orchestration scene-preview service list (status bullet +
+    model-safe per-service action).  ``running`` is decided by matching the
+    scene's catalog service name against the live ``docker ps`` set — so a
+    GPU-engine service that's down (absent from docker ps) reads ``False``."""
+
+    name: str
+    running: bool = False
 
 
 @dataclass
@@ -186,6 +453,11 @@ class ContainerInfo:
     engine: str = ""                    # for engine containers
     slug: str = ""                      # registry slug if matched
     gpus: str = ""                      # "0,1" if known, else ""
+    status: str = "running"             # "running" | "stopped" (known-but-down service)
+
+    @property
+    def is_running(self) -> bool:
+        return self.status != "stopped"
 
 
 @dataclass
@@ -208,6 +480,29 @@ class DoctorRead:
 
 
 @dataclass
+class ServedProbe:
+    """A7: the ACTUAL running config probed from the live engine — NOT the
+    catalog slug's claim.
+
+    ``max_model_len`` is read from ``GET <url>/v1/models`` (vLLM exposes it per
+    model id); ``image`` is the engine container image from
+    ``docker inspect <c> --format '{{.Image}}'`` (CLAUDE.md: ``vllm.__version__``
+    lags the docker tag, so the image is ground truth).  Empty/None fields mean
+    "the probe didn't return that field" — the UI must NOT fabricate a value, it
+    falls back to the catalog claim (clearly labelled) when a probe field is
+    missing.  ``ok`` is True when at least one probe leg returned something."""
+
+    max_model_len: Optional[int] = None     # probed running ctx (vLLM /v1/models)
+    image: str = ""                         # engine container image (docker inspect)
+    served_model: str = ""                  # /v1/models data[0].id
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.max_model_len is not None or bool(self.image)
+
+
+@dataclass
 class EstateState:
     """Live estate snapshot: detect + doctor + scene catalog + estate-planner."""
 
@@ -218,6 +513,7 @@ class EstateState:
     doctor: DoctorRead = field(default_factory=DoctorRead)
     estate_report: dict[str, Any] = field(default_factory=dict)   # estate_cli report-state
     matched_slug: str = ""              # slug the running engine matched, if any
+    served: ServedProbe = field(default_factory=ServedProbe)  # A7: probed running config
     error: str = ""
 
 
@@ -425,6 +721,61 @@ class DoctorReport:
     profile: Optional[ProfileTriage] = None   # None when no target slug to triage
 
 
+@dataclass
+class VerifyCheck:
+    """One ``✓``/``✗`` check line from verify.sh / verify-full.sh."""
+
+    status: str            # passed | failed
+    name: str
+    hint: str = ""         # the ``→`` fix hint (fail) or the glyph message detail
+
+
+@dataclass
+class VerifySmoke:
+    """Parsed ``scripts/verify.sh`` — the ~15s "is the model serving correctly?"
+    smoke (4 checks: server reachable → Genesis patch → basic completion →
+    tool-calling).  verify.sh short-circuits (``exit 1``) on the FIRST failure,
+    so ``total`` is the number of checks that actually ran, not always 4 —
+    ``passed/total`` is honest about the short-circuit."""
+
+    reachable: bool = False
+    checks: list[VerifyCheck] = field(default_factory=list)
+    passed: int = 0
+    total: int = 0
+    ok: bool = False
+    error: str = ""
+    raw: str = ""
+
+    @property
+    def verdict_glyph(self) -> str:
+        return "●" if (self.ok and not self.error) else "○"
+
+
+@dataclass
+class VerifyFull:
+    """Parsed ``scripts/verify-full.sh`` — the ~1-2 min functional battery
+    (``[N/9]`` steps + a final ``All checks passed.`` / ``N check(s) failed.``).
+
+    NOTE step ``[4/9]`` tool-calling is KNOWN to fail on the default (non-tools)
+    compose, so a single failure here is often expected, not a regression — the
+    card surfaces the per-step glyphs so the user can tell which step failed."""
+
+    checks: list[VerifyCheck] = field(default_factory=list)
+    passed: int = 0
+    total: int = 0
+    failed: int = 0
+    ok: bool = False
+    summary: str = ""      # the final summary line, verbatim
+    error: str = ""
+    raw: str = ""
+
+    @property
+    def verdict_glyph(self) -> str:
+        if self.error:
+            return "○"
+        return "●" if self.ok else "◐"
+
+
 # ── Phase 4: Benchmarks explorer ──────────────────────────────────────────────────
 
 
@@ -488,6 +839,75 @@ class EvidenceReport:
     error: str = ""
 
 
+# ── Phase R / R3b-2: ④ Measure-vs-curated-bar (READ) ──────────────────────────────
+
+
+@dataclass
+class MeasuredNumbers:
+    """The producer's MEASURED numbers parsed from a rebench tag dir.
+
+    Best-effort: from ``_internal.json`` (authoritative — the rebench sidecar)
+    with a ``REPORT.md`` TL;DR scrape as fallback.  ``narr_tps`` / ``code_tps``
+    are decode TPS (the per-token rate, matching how the catalog bar reports);
+    ``quality_8pk`` is "<passed>/<total>" when a quality battery was run."""
+
+    narr_tps: Optional[float] = None
+    code_tps: Optional[float] = None
+    quality_8pk: str = ""               # e.g. "118/150" or ""
+    model: str = ""                     # resolved from REPORT.md Meta, best-effort
+    engine: str = ""                    # engine-FAMILY of the RUN, from REPORT.md
+                                        # Meta (Container / vLLM-image), best-effort
+    source: str = ""                    # "_internal.json" | "REPORT.md" | ""
+
+    @property
+    def tps_label(self) -> str:
+        if self.narr_tps is None and self.code_tps is None:
+            return "—"
+        n = f"{self.narr_tps:.0f}" if self.narr_tps is not None else "—"
+        c = f"{self.code_tps:.0f}" if self.code_tps is not None else "—"
+        return f"{n}/{c}"
+
+    @property
+    def quality_label(self) -> str:
+        return self.quality_8pk or "—"
+
+    @property
+    def has_any(self) -> bool:
+        return (
+            self.narr_tps is not None
+            or self.code_tps is not None
+            or bool(self.quality_8pk)
+        )
+
+
+@dataclass
+class MeasureVsBar:
+    """Apples-to-apples comparison of the producer's MEASURED numbers against the
+    curated catalog's published bar for the same (model, engine-family) class.
+
+    HONESTY (R3b-2): the cockpit FLAGS the protocol, it does NOT fabricate a
+    "catalog-grade" verdict — ``verdict`` is a simple heuristic over whatever
+    numbers parsed, and ``protocol_caveats`` lists what the cockpit cannot verify
+    (matched power? same harness? same prompts?).  ``bar_source`` discloses where
+    the bar came from (the #249 corpus vs the BENCHMARKS.md scrape)."""
+
+    tag: str
+    measured: MeasuredNumbers = field(default_factory=MeasuredNumbers)
+    bar: Optional[BenchRow] = None      # the matched curated row (None if no match)
+    bar_source: str = ""                # "corpus" | "benchmarks.md" | ""
+    # The engine-family resolved for THIS run (from REPORT.md Meta / variants),
+    # used to discriminate the bar.  "" when it could not be resolved → the bar
+    # was picked deterministically on model alone (surfaced as a caveat).
+    run_engine: str = ""
+    engine_resolved: bool = False       # True when run_engine drove bar selection
+    # Per-metric measured−bar deltas (None when either side is missing).
+    narr_tps_delta: Optional[float] = None
+    code_tps_delta: Optional[float] = None
+    verdict: str = "insufficient data"  # see _measure_verdict for the enum
+    protocol_caveats: list[str] = field(default_factory=list)
+    error: str = ""
+
+
 # ── Phase 4: Power cap ────────────────────────────────────────────────────────────
 
 
@@ -525,6 +945,106 @@ class ContainerTop:
     name: str
     header: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
+    error: str = ""
+
+
+# ── UX Batch 5: estate telemetry (disk / RAM / GPU-VRAM attribution — READ) ───────
+
+
+@dataclass
+class DiskUsage:
+    """One mount's disk-usage row (#12), from ``df -B1``.
+
+    ``total`` / ``used`` / ``free`` are BYTES (df ``-B1`` 1-byte blocks).
+    ``mount_label`` is the human label the rail shows ("repo" / "models"); a
+    de-duped same-device row carries a combined label ("repo + models").
+    ``device`` is the filesystem device so the rail can collapse two labels that
+    resolve to the SAME mount (repo + /mnt/models on one drive) into one bar."""
+
+    mount_label: str
+    path: str
+    total: int = 0
+    used: int = 0
+    free: int = 0
+    device: str = ""
+    use_pct: Optional[int] = None        # df's OWN reported Use% (authoritative)
+
+    @property
+    def pct(self) -> int:
+        """Used percent, clamped 0–100.
+
+        PREFER df's OWN ``Use%`` column when parsed — df computes it as
+        ``used / (used + available)`` rounded UP and excludes filesystem-reserved
+        blocks, so it does NOT equal ``used / size``.  Mirroring df's reported
+        figure means the bar matches exactly what ``df -h`` prints (the number a
+        user cross-checks against).  Fall back to ``used / total`` only when the
+        Use% column wasn't captured."""
+        if self.use_pct is not None:
+            return max(0, min(100, self.use_pct))
+        if self.total <= 0:
+            return 0
+        return max(0, min(100, round(self.used / self.total * 100)))
+
+
+@dataclass
+class RamUsage:
+    """System-RAM row (N5), from ``/proc/meminfo`` (MemTotal / MemAvailable).
+
+    ``total`` / ``used`` / ``available`` are BYTES (meminfo reports kB → ×1024).
+    ``used`` = total − available (the "really in use" figure, NOT total − free —
+    MemAvailable already discounts reclaimable cache, matching ``free -b``'s
+    available column)."""
+
+    total: int = 0
+    available: int = 0
+    error: str = ""
+
+    @property
+    def used(self) -> int:
+        return max(0, self.total - self.available)
+
+    @property
+    def pct(self) -> int:
+        if self.total <= 0:
+            return 0
+        return max(0, min(100, round(self.used / self.total * 100)))
+
+
+@dataclass
+class GpuCompApp:
+    """One CUDA compute process holding GPU VRAM (from ``nvidia-smi
+    --query-compute-apps=pid,used_memory``), best-effort mapped to its owning
+    container via ``/proc/<pid>/cgroup``.
+
+    ``used_mib`` is the process's VRAM (MiB).  ``container`` is the resolved
+    docker container NAME, or "" when the pid→container map degraded (cgroup
+    unreadable / not a docker process / docker unreachable) — in which case the
+    pane shows the pid + VRAM WITHOUT a name (graceful degradation, never a
+    crash, never a fabricated owner)."""
+
+    pid: int
+    used_mib: int = 0
+    container: str = ""           # resolved docker container name, or "" if unknown
+    gpu_index: Optional[int] = None
+
+
+@dataclass
+class EstateTelemetry:
+    """The Batch-5 telemetry bundle: disk bars (#12), system RAM (N5), and the
+    GPU-VRAM → container attribution map.  Produced once per Operate tick by
+    ``CockpitData.estate_telemetry`` (batched reads) and rendered by the Operate
+    pane (disk rail + GPU-card "held by:" line).
+
+    ``gpu_apps`` is keyed by GPU index → the compute-apps holding that card; a
+    holder whose physical card couldn't be resolved (uuid→index read skewed)
+    buckets under the ``None`` key (card-agnostic, never mis-pinned to GPU0).
+    ``error`` carries a read-failure cue (df / meminfo / nvidia-smi unreachable)
+    so the rail surfaces an honest strip instead of a silent false-zero."""
+
+    disks: list[DiskUsage] = field(default_factory=list)
+    ram: RamUsage = field(default_factory=RamUsage)
+    gpu_apps: dict[Optional[int], list[GpuCompApp]] = field(default_factory=dict)
+    attribution_degraded: bool = False     # pid→container map could not resolve names
     error: str = ""
 
 
@@ -921,6 +1441,106 @@ def parse_profile_triage(text: str, slug: str = "") -> ProfileTriage:
     return tri
 
 
+# verify.sh / verify-full.sh check glyph line:  "  ✓ Server is reachable"
+# (pass()/fail() print "  <glyph> <msg>"; fail() then prints "    → <hint>").
+_VERIFY_CHECK_RE = re.compile(r"^\s+([✓✗])\s+(.+?)\s*$")
+_VERIFY_HINT_RE = re.compile(r"^\s+→\s+(.+?)\s*$")
+# verify-full step header:  "[3/9] Basic completion — capital of France ..."
+_VERIFY_FULL_STEP_RE = re.compile(r"^\[(\d+)/(\d+)\]\s+(.+?)\s*$")
+_VERIFY_FULL_PASS_RE = re.compile(r"All checks passed", re.IGNORECASE)
+_VERIFY_FULL_FAIL_RE = re.compile(r"(\d+)\s+check\(s\)\s+failed", re.IGNORECASE)
+
+
+def parse_verify_smoke(text: str, rc: Optional[int] = None) -> VerifySmoke:
+    """Parse verify.sh output → VerifySmoke.
+
+    Each ``✓``/``✗`` line is one check; a ``→`` line after a ``✗`` is its fix
+    hint.  Check 1 is the reachability probe, so ``reachable`` is True iff the
+    first check ran and passed.  ``ok`` prefers the process exit code (``rc==0``)
+    when available, else "every check that ran passed" (verify.sh short-circuits
+    on the first failure)."""
+    clean = strip_ansi(text or "")
+    vs = VerifySmoke(raw=text or "")
+    last: Optional[VerifyCheck] = None
+    for line in clean.splitlines():
+        m = _VERIFY_CHECK_RE.match(line)
+        if m:
+            last = VerifyCheck(
+                status="passed" if m.group(1) == "✓" else "failed",
+                name=m.group(2).strip(),
+            )
+            vs.checks.append(last)
+            continue
+        h = _VERIFY_HINT_RE.match(line)
+        if h and last is not None and last.status == "failed":
+            last.hint = h.group(1).strip()
+    vs.total = len(vs.checks)
+    vs.passed = sum(1 for c in vs.checks if c.status == "passed")
+    vs.reachable = bool(vs.checks and vs.checks[0].status == "passed")
+    # In-band failures are AUTHORITATIVE: a ✗ in the output means not-ok even if
+    # the process rc claimed success (a wrapping runner may not propagate rc).
+    all_passed = vs.total > 0 and vs.passed == vs.total
+    vs.ok = all_passed and (rc is None or rc == 0)
+    if vs.total == 0:
+        vs.error = "no checks parsed (verify.sh produced no output)"
+    return vs
+
+
+def parse_verify_full(text: str, rc: Optional[int] = None) -> VerifyFull:
+    """Parse verify-full.sh output → VerifyFull.
+
+    Scan ``[N/9]`` step headers (the step name labels the following ``✓``/``✗``),
+    and read the authoritative final ``All checks passed.`` / ``N check(s)
+    failed.`` summary for the pass/fail counts (falling back to glyph-counting
+    when the summary is absent — e.g. a timeout truncated the run)."""
+    clean = strip_ansi(text or "")
+    vf = VerifyFull(raw=text or "")
+    last: Optional[VerifyCheck] = None
+    cur_step = ""
+    max_total = 0
+    for line in clean.splitlines():
+        sm = _VERIFY_FULL_STEP_RE.match(line)
+        if sm:
+            cur_step = sm.group(3).strip().rstrip(".").strip()
+            max_total = max(max_total, int(sm.group(2)))
+            last = None
+            continue
+        m = _VERIFY_CHECK_RE.match(line)
+        if m:
+            msg = m.group(2).strip()
+            last = VerifyCheck(
+                status="passed" if m.group(1) == "✓" else "failed",
+                name=cur_step or msg,
+                hint=msg if cur_step else "",
+            )
+            vf.checks.append(last)
+            continue
+        h = _VERIFY_HINT_RE.match(line)
+        if h and last is not None and last.status == "failed":
+            last.hint = h.group(1).strip()
+        if _VERIFY_FULL_PASS_RE.search(line):
+            vf.summary = line.strip()
+            vf.failed = 0
+        else:
+            fm = _VERIFY_FULL_FAIL_RE.search(line)
+            if fm:
+                vf.summary = line.strip()
+                vf.failed = int(fm.group(1))
+    vf.total = max_total or len(vf.checks)
+    # The final 'All checks passed.' / 'N check(s) failed.' summary is the
+    # authoritative count; fall back to glyph-counting when it's absent (e.g. a
+    # timeout truncated the run before the summary printed).
+    if not vf.summary:
+        vf.failed = sum(1 for c in vf.checks if c.status == "failed")
+    vf.passed = max(0, vf.total - vf.failed)
+    # In-band failures win over rc (a wrapping runner may not propagate rc).
+    no_fail = vf.failed == 0 and vf.total > 0
+    vf.ok = no_fail and (rc is None or rc == 0)
+    if vf.total == 0 and not vf.checks:
+        vf.error = "no checks parsed (verify-full.sh produced no output)"
+    return vf
+
+
 # gpu-mode power-cap status row:
 #   0, 370.00 W, 370.00 W, 100.00 W, 390.00 W
 _POWER_CAP_ROW_RE = re.compile(
@@ -1026,14 +1646,270 @@ def bench_row_from_corpus_record(rec: dict[str, Any]) -> Optional[BenchRow]:
 
 
 def _ctx_label(max_model_len: Any) -> str:
-    """Render a max_model_len int as a compact ctx label (262144 → '256K')."""
+    """Render a max_model_len int as a compact ctx label (262144 → '262K').
+
+    K-convention is ÷1000, ROUNDED — the SAME convention ``registry-emit.sh``'s
+    ``ctx_label`` uses (``round(max_ctx / 1000)`` → ``262K``).  Aligning the two
+    means the serving-panel running-ctx label and the catalog row read identically
+    for the same int (MUST-FIX 3); the old ÷1024 form rendered 262144 as ``256K``,
+    visibly mismatching the catalog's ``262K`` for the SAME value.  ``parse_ctx_label``
+    is the inverse (×1000)."""
     n = _as_int(max_model_len)
     if n is None:
         return ""
-    if n >= 1024:
-        k = n / 1024.0
-        return f"{k:.0f}K" if k == int(k) else f"{k:.1f}K"
+    if n >= 1000:
+        # ÷1000 ROUNDED to an integer K — byte-for-byte what registry-emit.sh's
+        # ctx_label emits (round(max_ctx / 1000)), so the same int renders the same
+        # label in the serving panel and the catalog row.
+        return f"{round(n / 1000)}K"
     return str(n)
+
+
+# ── Phase R / R3b-2: ④ Measure — parse a rebench tag's MEASURED numbers ───────────
+
+
+def measured_from_internal_json(blob: Any) -> MeasuredNumbers:
+    """Parse the rebench ``_internal.json`` sidecar into MeasuredNumbers.
+
+    REAL shape (verified against ``scripts/rebench-report.py``'s sidecar write):
+    ``{"bench":{"narrative":{"decode_tps_mean","wall_tps_mean",...},
+    "code":{...}},"quality":{"total_passed","total_total","total_pct"}}``.
+    We surface the DECODE TPS (the per-token rate the catalog bar reports), not
+    wall TPS.  Returns an empty MeasuredNumbers (``has_any`` False) when nothing
+    parses — the honest "insufficient data" signal."""
+    m = MeasuredNumbers(source="_internal.json")
+    if not isinstance(blob, dict):
+        return MeasuredNumbers()
+    bench = blob.get("bench") or {}
+    if isinstance(bench, dict):
+        narr = bench.get("narrative") or {}
+        code = bench.get("code") or {}
+        if isinstance(narr, dict):
+            m.narr_tps = _as_float(narr.get("decode_tps_mean"))
+        if isinstance(code, dict):
+            m.code_tps = _as_float(code.get("decode_tps_mean"))
+    quality = blob.get("quality") or {}
+    if isinstance(quality, dict):
+        passed = _as_int(quality.get("total_passed"))
+        total = _as_int(quality.get("total_total"))
+        if passed is not None and total:
+            m.quality_8pk = f"{passed}/{total}"
+    return m if m.has_any else MeasuredNumbers()
+
+
+# REPORT.md TL;DR / per-section fallbacks (when _internal.json is absent/empty).
+_REPORT_TLDR_TPS_RE = re.compile(
+    r"narrative\s*\*\*([\d.]+)\*\*\s*/\s*code\s*\*\*([\d.]+)\*\*", re.IGNORECASE
+)
+_REPORT_DECODE_ROW_RE = re.compile(
+    r"^\|\s*(narrative|code)\s*\|.*?\|\s*\*\*([\d.]+)\*\*\s*\|", re.IGNORECASE
+)
+_REPORT_QUALITY_RE = re.compile(
+    r"\*\*\s*(\d+)\s*/\s*(\d+)\s*\*\*", re.IGNORECASE
+)
+# REPORT.md Meta line:  - **Served as:** `qwen3.6-27b-autoround` from `…`
+_REPORT_SERVED_RE = re.compile(r"\*\*Served as:\*\*\s*`([^`]+)`")
+# REPORT.md Meta line:  - **Model arch:** qwen3_next (Qwen3NextForCausalLM)
+_REPORT_ARCH_RE = re.compile(r"\*\*Model arch:\*\*\s*([^\s(]+)")
+# REPORT.md Meta line:  - **Container:** `vllm-qwen36-dual`  (the engine prefix
+# is the most reliable run-engine signal: vllm- / llama-cpp- / ik-llama- / …)
+_REPORT_CONTAINER_RE = re.compile(r"\*\*Container:\*\*\s*`([^`]+)`")
+# REPORT.md Meta line:  - **vLLM image:** `vllm/vllm-openai:vX` — its presence is
+# itself a strong vLLM signal even when the Container line is absent.
+_REPORT_VLLM_IMAGE_RE = re.compile(r"\*\*vLLM image:\*\*\s*`([^`]+)`")
+
+
+def measured_from_report_md(text: str) -> MeasuredNumbers:
+    """Parse measured numbers from a rebench ``REPORT.md`` (the fallback).
+
+    Prefers the headline ``## TL;DR`` ``narrative **N** / code **M**`` bullet;
+    falls back to the per-bench ``| narrative | … | **decode** |`` table rows.
+    Quality is the ``## Quality`` TOTAL row (``**P / T**``).  Also resolves the
+    model best-effort from the Meta ``Served as`` / ``Model arch`` lines."""
+    m = MeasuredNumbers(source="REPORT.md")
+    if not text:
+        return MeasuredNumbers()
+    tldr = _REPORT_TLDR_TPS_RE.search(text)
+    if tldr:
+        m.narr_tps = _as_float(tldr.group(1))
+        m.code_tps = _as_float(tldr.group(2))
+    else:
+        for line in text.splitlines():
+            row = _REPORT_DECODE_ROW_RE.match(line.strip())
+            if row:
+                val = _as_float(row.group(2))
+                if row.group(1).lower() == "narrative":
+                    m.narr_tps = val
+                else:
+                    m.code_tps = val
+    # Quality TOTAL row (scoped to the Quality section so a stray bold N/M in
+    # prose doesn't masquerade as the 8-pack).
+    in_quality = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.lower().startswith("## quality"):
+            in_quality = True
+            continue
+        if in_quality:
+            if s.startswith("## "):
+                break
+            if "total" in s.lower():
+                q = _REPORT_QUALITY_RE.search(s)
+                if q:
+                    m.quality_8pk = f"{q.group(1)}/{q.group(2)}"
+                    break
+    served = _REPORT_SERVED_RE.search(text)
+    if served:
+        m.model = served.group(1).strip()
+    else:
+        arch = _REPORT_ARCH_RE.search(text)
+        if arch:
+            m.model = arch.group(1).strip()
+    m.engine = _engine_family_from_report_md(text)
+    return m if (m.has_any or m.model) else MeasuredNumbers()
+
+
+def _engine_family_from_report_md(text: str) -> str:
+    """Resolve the RUN's engine-FAMILY from a rebench REPORT.md Meta block.
+
+    The rebench sidecar (_internal.json) carries NO engine info — it is only in
+    the rendered REPORT.md Meta.  The most reliable signal is the ``Container``
+    name's engine prefix (``vllm-`` / ``llama-cpp-`` / ``ik-llama-`` /
+    ``beellama-`` / ``sglang-``); a present ``vLLM image`` line is itself a vLLM
+    tell.  Returns a coarse family token (``vllm`` / ``llama-cpp`` / …) via
+    ``_canon_engine_family``, or "" when nothing resolves (the caller then picks
+    the bar deterministically and flags that it could not discriminate engine)."""
+    if not text:
+        return ""
+    cm = _REPORT_CONTAINER_RE.search(text)
+    if cm:
+        from club3090_tui_core.detect import _classify_engine_from_container
+
+        fam = _canon_engine_family(_classify_engine_from_container(cm.group(1).strip()))
+        if fam:
+            return fam
+    if _REPORT_VLLM_IMAGE_RE.search(text):
+        return "vllm"
+    return ""
+
+
+def _canon_engine_family(label: str) -> str:
+    """Collapse an engine label to a coarse FAMILY key so the registry's
+    slug-engine space and the BENCHMARKS.md scrape space compare equal.
+
+    The registry emits e.g. ``llama-cpp-local`` (for BOTH llamacpp/* and
+    ik-llama/* slugs), ``vllm-stable``, ``vllm-gemma-stable``, ``beellama-local``;
+    the BENCHMARKS.md scrape derives ``llamacpp`` / ``ik-llama`` / ``vllm`` /
+    ``beellama`` from the compose-cell prefix.  A raw substring test misses the
+    llama.cpp family entirely (``"llama-cpp-local" in "llamacpp"`` is False in
+    both directions), silently dropping every llama.cpp cross-rig row — so reduce
+    both sides to a shared family token instead.  Returns "" for blank/unknown."""
+    norm = (label or "").strip().lower().replace("_", "").replace("-", "")
+    if not norm:
+        return ""
+    if "ikllama" in norm or "llamacpp" in norm:
+        return "llama-cpp"
+    if norm.startswith("vllm"):
+        return "vllm"
+    if norm.startswith("beellama"):
+        return "beellama"
+    if norm.startswith("sglang"):
+        return "sglang"
+    return norm
+
+
+def _bench_row_matches(row: "BenchRow", model: str, engine: str) -> bool:
+    """Whether a cross-rig BenchRow belongs to a slug's (model, engine).
+
+    Model must match exactly (the catalog slug and the BENCHMARKS.md scrape use
+    the same model id).  Engine is matched by FAMILY (see _canon_engine_family):
+    the registry label (``llama-cpp-local`` / ``vllm-stable``) and the scrape
+    engine (``llamacpp`` / ``ik-llama`` / ``vllm``) live in different label
+    spaces, so both are reduced to a coarse family key before comparing.  A blank
+    engine on either side (e.g. a bare ``*.yml`` scrape cell with no prefix)
+    matches on model alone — the row is still that model's data, shown in the
+    clearly-labelled cross-rig section."""
+    if model and row.model != model:
+        return False
+    rf, sf = _canon_engine_family(row.engine), _canon_engine_family(engine)
+    if not rf or not sf:
+        return True
+    return rf == sf
+
+
+def _canon_model_key(model: str) -> str:
+    """Reduce a model id / served-name to a coarse comparable token.
+
+    The curated bar's model is a registry slug (``qwen3.6-27b``); a rebench
+    REPORT.md's ``Served as`` is a served-model-name (``qwen3.6-27b-autoround``).
+    Strip non-alnum + a trailing weights-variant tail so both reduce to the same
+    family token for the loose match."""
+    norm = re.sub(r"[^a-z0-9.]", "", (model or "").lower())
+    # Drop a trailing quant/variant tail (autoround / awq / int4 / fp8 / gguf …).
+    norm = re.sub(
+        r"(autoround|awq|gptq|int4|int8|fp8|fp16|bf16|gguf|mtp|dflash|q\d.*)$",
+        "",
+        norm,
+    )
+    return norm
+
+
+def _measure_verdict(vsbar: "MeasureVsBar") -> str:
+    """A SIMPLE, honest verdict heuristic (never claims 'catalog-grade').
+
+    Enum:
+      - ``"insufficient data"`` — no measured numbers OR no curated bar matched;
+      - ``"under the bar"``     — measured decode TPS materially below the bar
+                                  (>10% lower on a comparable metric);
+      - ``"within tolerance of the bar"`` — measured ≥ ~90% of the bar (incl.
+                                  meeting/beating it).
+    Deliberately coarse — it is a flag, not a grade; protocol_caveats carries the
+    "we can't actually certify this" disclosure."""
+    m = vsbar.measured
+    bar = vsbar.bar
+    if bar is None or not m.has_any:
+        return "insufficient data"
+    # Compare on whichever TPS metric both sides carry.  A CORPUS bar's narr_tps
+    # is WALL (not decode), so it is NOT comparable to the measured narrative
+    # DECODE — drop the narrative pair for a corpus bar (Fix 2) and grade on the
+    # decode pair (corpus code_tps is the canonical-short decode).
+    pairs: list[tuple[Optional[float], Optional[float]]] = [
+        (m.code_tps, bar.code_tps),
+    ]
+    if vsbar.bar_source != "corpus":
+        pairs.insert(0, (m.narr_tps, bar.narr_tps))
+    ratios = [meas / ref for meas, ref in pairs if meas is not None and ref]
+    if not ratios:
+        # No comparable TPS pair — fall back to the 8-pack when BOTH sides carry
+        # one, applying the SAME ~0.90 tolerance gate.  Never return "within
+        # tolerance" without an actual comparison (a 50/150 measured vs 140/150
+        # bar is materially UNDER the bar, not within it).
+        mq = _quality_fraction(m.quality_8pk)
+        bq = _quality_fraction(bar.quality_8pk)
+        if mq is not None and bq:
+            return "under the bar" if (mq / bq) < 0.90 else "within tolerance of the bar"
+        return "insufficient data"
+    worst = min(ratios)
+    if worst < 0.90:
+        return "under the bar"
+    return "within tolerance of the bar"
+
+
+def _quality_fraction(quality_8pk: str) -> Optional[float]:
+    """Parse a ``"<passed>/<total>"`` 8-pack string to a pass-rate fraction.
+
+    Returns ``passed/total`` (0..1), or None when unparseable / total is 0 — so
+    the verdict can compare two 8-packs on the same scale instead of treating
+    "both have a pack" as "within tolerance"."""
+    if not quality_8pk:
+        return None
+    m = re.match(r"\s*(\d+)\s*/\s*(\d+)\s*$", quality_8pk)
+    if not m:
+        return None
+    passed, total = int(m.group(1)), int(m.group(2))
+    if total <= 0:
+        return None
+    return passed / total
 
 
 # Section header → (model, topology) for the BENCHMARKS.md fallback parse.
@@ -1373,3 +2249,239 @@ def compute_promote_scaffold(
         guard_suite_cmd=["bash", "-c", 'for t in scripts/tests/*.sh; do bash "$t"; done'],
         notes=notes,
     )
+
+
+# ── UX Batch 5: estate-telemetry parse helpers (pure — fed canned stdout) ─────────
+
+
+def _human_gb(num_bytes: int) -> str:
+    """Bytes → a compact GiB/TiB string ("412G" / "1.8T").  Binary units (÷1024)
+    to match df -h / the GPU cards' GiB.  No decimals under 1T, one decimal at T
+    scale so a 1.8T drive doesn't read a flat "2T"."""
+    gib = num_bytes / (1024 ** 3)
+    if gib >= 1024:
+        return f"{gib / 1024:.1f}T"
+    return f"{gib:.0f}G"
+
+
+def parse_df_output(text: str, label_for_path: dict[str, str]) -> list[DiskUsage]:
+    """Parse ``df -P -B1 <path1> <path2>`` stdout into DiskUsage rows (#12).
+
+    df ``-B1`` prints 1-BYTE blocks, so ``1B-blocks`` / ``Used`` / ``Available``
+    are already bytes — no 1K-block ×1024 fixup (the classic df trap).  ``-P``
+    (POSIX mode) guarantees ONE line per filesystem (no long-device-name wrap),
+    so we read the numeric fields by POSITION from the right.  Layout::
+
+        Filesystem  1-blocks   Used   Available Capacity Mounted on
+        /dev/...    <total>    <used> <avail>   26%      /
+        /dev/sdb1   <total>    <used> <avail>   90%      /mnt/models
+
+    (POSIX renames the ``Use%`` header to ``Capacity`` and the ``1B-blocks``
+    header to ``1-blocks``, but the column POSITIONS are unchanged — we never
+    match on the literal header name, only the field index.)
+
+    ``label_for_path`` maps a requested path → its rail label ("repo"/"models");
+    df echoes the path we asked for in the trailing 'Mounted on' field only when
+    it's the actual mountpoint, so we key the label off the PATH we requested in
+    request order, not the mountpoint column.
+
+    SAME-DEVICE DE-DUP: two paths on the same filesystem device collapse to ONE
+    row whose label joins both ("repo + models") — repo + /mnt/models on a single
+    drive must not draw two identical bars."""
+    rows: list[DiskUsage] = []
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    # Drop the header line (POSIX: starts with "Filesystem").
+    body = [ln for ln in lines if not ln.lower().startswith("filesystem")]
+    requested = list(label_for_path.items())
+    by_device: dict[str, DiskUsage] = {}
+    order: list[str] = []
+    for i, ln in enumerate(body):
+        parts = ln.split()
+        # POSIX -P guarantees 6 fields on one line: device total used avail use% mount.
+        # Read the numeric fields from the RIGHT so a multi-word mountpoint can't shift them.
+        if len(parts) < 6:
+            continue
+        device = parts[0]
+        # Numeric fields from the RIGHT: ... <total> <used> <avail> <use%> <mount>
+        try:
+            total = int(parts[-5])
+            used = int(parts[-4])
+            free = int(parts[-3])
+        except (ValueError, IndexError):
+            continue
+        # Skip a zero-size special filesystem (tmpfs / cgroup pseudo-fs report
+        # total=0) — it must never become a false "0% 0G/0G" bar.
+        if total <= 0:
+            continue
+        use_pct: Optional[int] = None
+        pct_tok = parts[-2].rstrip("%")
+        if pct_tok.isdigit():
+            use_pct = int(pct_tok)
+        # The label/path is matched by REQUEST ORDER (df preserves the order of
+        # the paths we passed), so row i ↔ requested[i].
+        if i < len(requested):
+            path, label = requested[i]
+        else:
+            path, label = (parts[-1], parts[-1])
+        existing = by_device.get(device)
+        if existing is not None:
+            # Same physical device → de-dup, join the labels (once).
+            if label and label not in existing.mount_label.split(" + "):
+                existing.mount_label = f"{existing.mount_label} + {label}"
+            continue
+        du = DiskUsage(
+            mount_label=label,
+            path=path,
+            total=total,
+            used=used,
+            free=free,
+            device=device,
+            use_pct=use_pct,
+        )
+        by_device[device] = du
+        order.append(device)
+    for dev in order:
+        rows.append(by_device[dev])
+    return rows
+
+
+def parse_meminfo(text: str) -> RamUsage:
+    """Parse ``/proc/meminfo`` (or ``cat /proc/meminfo``) into a RamUsage (N5).
+
+    Reads ``MemTotal`` + ``MemAvailable`` (both reported in kB → ×1024 bytes).
+    MemAvailable (not MemFree) is the right "free" figure — it accounts for
+    reclaimable page cache, matching ``free -b``'s available column.  A meminfo
+    that lacks MemAvailable (very old kernels) degrades to error, never a
+    false-zero/false-full bar."""
+    total_kb: Optional[int] = None
+    avail_kb: Optional[int] = None
+    for line in (text or "").splitlines():
+        if ":" not in line:
+            continue
+        key, _, rest = line.partition(":")
+        key = key.strip()
+        num = rest.strip().split()
+        if not num:
+            continue
+        try:
+            val = int(num[0])
+        except ValueError:
+            continue
+        if key == "MemTotal":
+            total_kb = val
+        elif key == "MemAvailable":
+            avail_kb = val
+        if total_kb is not None and avail_kb is not None:
+            break
+    if total_kb is None:
+        return RamUsage(error="meminfo: MemTotal missing")
+    if avail_kb is None:
+        return RamUsage(total=total_kb * 1024, error="meminfo: MemAvailable missing")
+    return RamUsage(total=total_kb * 1024, available=avail_kb * 1024)
+
+
+def parse_compute_apps(text: str) -> list[GpuCompApp]:
+    """Parse ``nvidia-smi --query-compute-apps=pid,used_memory
+    --format=csv,noheader,nounits`` into GpuCompApp rows (no container yet).
+
+    Each line is ``<pid>, <used_mib>``.  nvidia-smi prints "[N/A]" for a process
+    whose memory it can't read — treated as 0 MiB (still a known holder).  A line
+    that doesn't parse a pid is skipped (never crashes the card)."""
+    apps: list[GpuCompApp] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if not parts or not parts[0].isdigit():
+            continue
+        pid = int(parts[0])
+        used = 0
+        if len(parts) > 1:
+            tok = parts[1]
+            if tok.isdigit():
+                used = int(tok)
+        apps.append(GpuCompApp(pid=pid, used_mib=used))
+    return apps
+
+
+def parse_cgroup_container_id(text: str) -> str:
+    """Extract the 64-hex docker container id from a ``/proc/<pid>/cgroup`` body.
+
+    Tolerates BOTH cgroup layouts this rig and CI may show:
+      - cgroup v2: ``0::/system.slice/docker-<64hex>.scope``
+      - cgroup v1: ``…/docker/<64hex>`` (one id per controller line)
+      - systemd-nested: ``…/docker-<64hex>.scope/…``
+
+    Returns the 64-hex id (full, un-truncated) or "" when no docker id is present
+    (a NON-docker process, or an unreadable/odd cgroup) → caller degrades to a
+    name-less attribution, never a fabricated owner."""
+    if not text:
+        return ""
+    # docker-<64hex>.scope (systemd / cgroup v2)
+    m = re.search(r"docker-([0-9a-f]{64})\.scope", text)
+    if m:
+        return m.group(1)
+    # .../docker/<64hex> (cgroup v1)
+    m = re.search(r"/docker[/-]([0-9a-f]{64})", text)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def parse_docker_ps_id_names(text: str) -> dict[str, str]:
+    """Parse ``docker ps --no-trunc --format '{{.ID}} {{.Names}}'`` into a
+    {full-64hex-id → name} map for pid→container resolution.
+
+    The cockpit's shared ``docker ps`` canned source elsewhere uses a
+    ``name|ports`` shape; this is a DISTINCT id-name format, so we parse the
+    ``<id> <name>`` two-field layout and tolerate extra whitespace."""
+    out: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        cid, name = parts[0], parts[1]
+        if re.fullmatch(r"[0-9a-f]{12,64}", cid):
+            out[cid] = name
+    return out
+
+
+def attribute_gpu_apps(
+    apps: list[GpuCompApp],
+    cgroup_by_pid: dict[int, str],
+    id_to_name: dict[str, str],
+) -> tuple[list[GpuCompApp], bool]:
+    """Best-effort pid→container attribution (graceful degradation).
+
+    For each compute-app: read its cgroup body (``cgroup_by_pid[pid]``), pull the
+    docker id, and look up the container name in ``id_to_name``.  Any pid whose
+    cgroup is missing/unreadable, isn't a docker process, or whose id isn't in the
+    running-ps map keeps ``container=""`` — the pane then shows ``pid <N>
+    (<vram>)`` with NO fabricated name.
+
+    Returns ``(apps, degraded)`` where ``degraded`` is True when at least one app
+    holding VRAM could not be named — the card appends a "(names unavailable)"
+    cue so the user knows the *holder total* is honest even if a name is missing.
+    The id map matches on the 64-hex id by prefix tolerance (docker ps --no-trunc
+    yields the full id; a short id still prefix-matches)."""
+    degraded = False
+    for app in apps:
+        body = cgroup_by_pid.get(app.pid, "")
+        cid = parse_cgroup_container_id(body)
+        name = ""
+        if cid:
+            name = id_to_name.get(cid, "")
+            if not name:
+                # Tolerate a short-id ps map (prefix match against the full id).
+                for k, v in id_to_name.items():
+                    if cid.startswith(k) or k.startswith(cid):
+                        name = v
+                        break
+        app.container = name
+        if not name and app.used_mib > 0:
+            degraded = True
+    return apps, degraded

@@ -215,10 +215,20 @@ case "${MODEL_NAME}" in
     PRIMARY_WEIGHT_KEY="diffusiongemma-26b-a4b:fp8"
     ;;
   *)
-    echo "ERROR: unsupported model '${MODEL_NAME}'."
-    echo "Supported: qwen3.6-27b, qwen3.6-35b-a3b, gemma-4-31b, gemma-4-26b-a4b, diffusiongemma-26b-a4b"
-    echo "(To add a new model, extend the model dispatch in scripts/setup.sh and profiles/models/*.yml)"
-    exit 1
+    # An unknown friendly model name is fatal ONLY when WEIGHT_KEY is NOT set.
+    # WEIGHT_KEY is the authoritative "exact catalog entry" fetch-now flow (used
+    # by preflight + the serve-cockpit Download action): the recipe fully
+    # specifies <model>:<variant>, and load_weight_recipe() validates that the
+    # key's model matches MODEL_NAME — so the hardcoded per-family dispatch isn't
+    # needed for an arbitrary catalog entry. Leave PRIMARY_WEIGHT_KEY empty here;
+    # the WEIGHT_KEY override below sets it.
+    if [[ -z "${WEIGHT_KEY:-}" ]]; then
+      echo "ERROR: unsupported model '${MODEL_NAME}'."
+      echo "Supported: qwen3.6-27b, qwen3.6-35b-a3b, gemma-4-31b, gemma-4-26b-a4b, diffusiongemma-26b-a4b"
+      echo "(To add a new model, extend the model dispatch in scripts/setup.sh and profiles/models/*.yml,"
+      echo " or pass WEIGHT_KEY=<model>:<variant> to fetch an exact catalog entry directly.)"
+      exit 1
+    fi
     ;;
 esac
 
@@ -309,6 +319,22 @@ if [[ "${WITH_ASSISTANT_DRAFT:-0}" == "1" ]]; then
 fi
 
 load_weight_recipe "${PRIMARY_WEIGHT_KEY}"
+
+# ---------- Companion artifacts (cockpit Download) ----------
+# The serve-cockpit Download action reads the slug's `weights_companions` from the
+# registry (a DFlash draft model / mmproj vision projector its compose mounts from
+# a separate subdir) and passes them as a space/comma-separated WEIGHT_EXTRA_KEYS
+# list of fully-qualified <model>:<variant> keys.  Fetch them ALONGSIDE the core
+# so a downloaded slug actually serves — otherwise it reads "present" then fails
+# to boot for the missing companion.  Each is a normal catalog entry pulled by the
+# EXTRA_WEIGHT_KEYS loop below (after the SKIP_MODEL guard), with its own SHA verify.
+if [[ -n "${WEIGHT_EXTRA_KEYS:-}" ]]; then
+  read -ra _COMPANION_KEYS <<< "${WEIGHT_EXTRA_KEYS//,/ }"
+  for _ck in "${_COMPANION_KEYS[@]}"; do
+    [[ -n "${_ck}" ]] && EXTRA_WEIGHT_KEYS+=("${_ck}")
+  done
+  [[ -n "${_COMPANION_KEYS[*]:-}" ]] && echo "[model]   + companion(s): ${_COMPANION_KEYS[*]}"
+fi
 
 # ---------- MODEL_DIR resolution ----------
 # Order of precedence:

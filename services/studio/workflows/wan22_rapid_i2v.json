@@ -1,0 +1,74 @@
+{
+  "unet": {
+    "class_type": "UnetLoaderGGUF",
+    "inputs": { "unet_name": "wan-rapid/Mega-v10/wan2.2-rapid-mega-aio-nsfw-v10-Q8_0.gguf" }
+  },
+  "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": { "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default" }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": { "vae_name": "wan_2.1_vae.safetensors" }
+  },
+  "modelsampling": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": { "model": ["unet", 0], "shift": 5.0 }
+  },
+  "loadimage": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "__STUDIO_IMAGE__" }
+  },
+  "resize": {
+    "class_type": "ImageScale",
+    "inputs": { "image": ["loadimage", 0], "upscale_method": "lanczos", "width": 832, "height": 480, "crop": "center" }
+  },
+  "pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "subtle natural motion, gentle camera movement", "clip": ["clip", 0] }
+  },
+  "neg": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "blurry, distorted, low quality, static, watermark, text, deformed", "clip": ["clip", 0] }
+  },
+  "i2v": {
+    "class_type": "WanImageToVideo",
+    "inputs": {
+      "positive": ["pos", 0],
+      "negative": ["neg", 0],
+      "vae": ["vae", 0],
+      "width": 832,
+      "height": 480,
+      "length": 81,
+      "batch_size": 1,
+      "start_image": ["resize", 0]
+    }
+  },
+  "ksampler": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["modelsampling", 0],
+      "seed": 0,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "beta",
+      "positive": ["i2v", 0],
+      "negative": ["i2v", 1],
+      "latent_image": ["i2v", 2],
+      "denoise": 1.0
+    }
+  },
+  "decode": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["ksampler", 0], "vae": ["vae", 0] }
+  },
+  "video": {
+    "class_type": "CreateVideo",
+    "inputs": { "images": ["decode", 0], "fps": 16.0 }
+  },
+  "save": {
+    "class_type": "SaveVideo",
+    "inputs": { "video": ["video", 0], "filename_prefix": "wan-i2v", "format": "auto", "codec": "auto" }
+  }
+}

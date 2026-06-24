@@ -1,60 +1,71 @@
-# club3090 serve cockpit (`c3`)
+# club-3090 serve cockpit (`c3`)
 
-**Status: 🧪 Experimental**
+A **lazydocker-style terminal UI** for the club-3090 AI inference stack — the front door for
+*discover → serve → operate → validate* on a consumer NVIDIA rig. Wraps the same registry, launchers,
+and scripts you'd run by hand (`switch.sh`, `launch.sh`, `gpu-mode`, `health.sh`, the verify/bench
+suite) behind one keyboard-driven screen.
 
-A lazydocker-style TUI for the club-3090 AI inference stack — the front door for
-discover → serve → manage on a consumer NVIDIA rig.
+> **Status:** working — read paths (catalog, estate, containers, health) are live; write paths
+> (serve / scene-switch / downloads) are guarded by a confirm + a single-writer reconcile lease.
 
-## Phase 1 scope (this package)
+## What's inside
 
-This is the **walking skeleton**: every navigation node is present and renders
-something so layout, density, and keybindings can be signed off before the
-plumbing work begins.  The only real data source wired in Phase 1 is the
-Discover → Catalog tab, which is populated from the live registry via
-`registry_variant_rows` (read-only, no side effects).  Everything else
-(Serve, Estate/Containers, Validate, and all row/scene/container actions)
-is a static placeholder stub — it will be wired in Phase 3.
+Two modes, shown as a tab bar; the producer mode is hidden in the lean view.
+
+- **`1` Run & Operate** *(always shown)*
+  - **Catalog** — the full registry of model variants; filter, inspect, and **serve** one (`⏎`).
+  - **Orchestration** — live GPU cards, the `gpu-mode` scenes (incl. `ai-studio`), and supporting services; switch scene / stop.
+  - **Containers** — running/stopped services with engine + port; drill into **Logs / Top / Config**, start a stopped one.
+  - **Doctor** — "is it serving correctly?" — `health.sh` live + `verify` / `verify-full` reads, basic/full reports, and the power-cap sweep.
+- **`2` Bring & Validate** *(producer lane — hidden in lean view)*
+  - The add-a-model pipeline: **① Bring** (fit-check an HF repo) → **② Serve** (generate a compose + serve untested) → … → **⑤ Promote**.
+
+Launch shows both modes by default; **`c3 --lean`** (or **`[C]`** in-app) gives the consumer view
+(Run & Operate only).
 
 ## How to run
 
-Install into the repo environment (editable):
+The cockpit depends on an in-repo sibling package, **`club3090-tui-core`** (`tools/tui-core/`), which
+is **not on PyPI** — install both from the checkout.
+
+**With [uv](https://docs.astral.sh/uv/) (recommended — one command; the local path is wired in `pyproject.toml`):**
 
 ```bash
-cd tools/serve-cockpit
-pip install -e .
-```
-
-Then launch:
-
-```bash
+uv pip install -e tools/serve-cockpit
 c3
-# or equivalently:
-python -m club3090_cockpit
 ```
 
-The app resolves the repo root automatically from `__file__` location.
-Override with `C3_REPO_ROOT=/path/to/club-3090` if installed elsewhere.
+**With plain pip (install the core first, then the cockpit):**
+
+```bash
+pip install -e tools/tui-core
+pip install -e tools/serve-cockpit
+c3
+```
+
+Either way the launch is `c3` (or `python -m club3090_cockpit`). The app finds the repo root from its
+own location; override with **`C3_REPO_ROOT=/path/to/club-3090`** if you installed it elsewhere.
 
 ## Keybindings
 
 | Key | Action |
 |-----|--------|
-| `1` | Discover mode |
-| `2` | Serve mode |
-| `3` | Estate mode |
-| `4` | Validate mode |
-| `r` | Refresh catalog (re-reads registry only) |
-| `⏎` | Primary action (no-op in Phase 1 — pops notice) |
-| `?` | Help |
-| `q` | Quit |
+| `1` / `2` | Run & Operate · Bring & Validate |
+| `↑ ↓ ← →` | move within / between the tab bar and content |
+| `⏎` | primary action for the focused row (serve / start / download / confirm) |
+| `k` | stop a service / cancel a download |
+| `f` | force-start (experimental — skips the fit gate) |
+| `r` | refresh the catalog (re-reads the registry) |
+| `Y` | copy the focused context to the clipboard |
+| `.` | toggle the left rail (full-width content) |
+| `C` | toggle lean view (hide / restore the Bring & Validate mode) |
+| `?` | help · `q` quit |
 
 ## Running tests
 
-```bash
-cd tools/serve-cockpit
-pip install -e ".[dev]"
-# or: pip install pytest pytest-asyncio
-pytest
-```
+Fully headless — no TTY, GPU, Docker, or script calls (a conftest blocks any real spawn).
 
-Tests are fully headless: no TTY, no GPU, no Docker, no script calls.
+```bash
+uv pip install -e "tools/serve-cockpit[dev]"   # or: pip install pytest pytest-asyncio
+cd tools/serve-cockpit && pytest
+```

@@ -50,6 +50,7 @@ weights:
   gptq_int4:
     path: qwen3.6-35b-a3b-gptq-int4
     local_subdir: qwen3.6-35b-a3b-gptq-int4
+    hf_repo: palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
     size_gb: 22.0
     format: gptq
     status: experimental
@@ -68,6 +69,7 @@ weights:
   dflash:
     path: qwen3.6-35b-a3b-dflash
     local_subdir: qwen3.6-35b-a3b-dflash
+    hf_repo: z-lab/Qwen3.6-35B-A3B-DFlash
     size_gb: variable
     format: autoround
     status: experimental
@@ -77,6 +79,7 @@ weights:
   dflash_gguf:
     path: qwen3.6-35b-a3b-dflash-gguf
     local_subdir: qwen3.6-35b-a3b-dflash-gguf
+    hf_repo: abhinand/Qwen3.6-35B-A3B-DFlash-GGUF
     size_gb: variable
     format: gguf
     status: experimental

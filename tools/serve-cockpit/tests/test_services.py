@@ -58,6 +58,7 @@ class FailedSpawnWriteRunner:
 from club3090_cockpit.data import (
     ActionPlan,
     ByoResult,
+    ContainerInfo,
     DoctorRead,
     FitVerdict,
     Measurement,
@@ -219,7 +220,7 @@ EXPLAIN_NO_BENCH_JSON = json.dumps(
 
 SCENES_JSON = json.dumps(
     [
-        {"name": "27b", "group": "serving", "description": "Qwen", "services": ["vllm-qwen36-27b-dual"], "ports": ["8010"], "gpus": "both"},
+        {"name": "27b", "group": "models", "description": "Qwen", "services": ["vllm-qwen36-27b-dual"], "ports": ["8010"], "gpus": "both"},
         {"name": "off", "group": "ops", "description": "Stop all", "services": [], "ports": [], "gpus": "none"},
     ]
 )
@@ -287,6 +288,7 @@ def full_runner(**overrides) -> FakeRunner:
         "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
         "health.sh": ok(HEALTH_DOWN),
         "docker ps": ok(DOCKER_PS_EMPTY),
+        "docker images -q": ok("sha256:abc123\n"),  # comfyui-local present by default
     }
     responses.update(overrides)
     return FakeRunner(responses)
@@ -500,6 +502,284 @@ class TestLoadCatalog:
         assert entries == []
         assert err is not None
 
+    @pytest.mark.asyncio
+    async def test_enrich_weights_marks_present_absent_unknown(self, tmp_path):
+        """Download UX: enrich_weights joins each slug to weights.py list --json +
+        stats the model dir → present (subdir+glob), absent (no subdir),
+        unknown (no weights entry to join)."""
+        from club3090_cockpit.data import (
+            CatalogEntry, WEIGHTS_PRESENT, WEIGHTS_ABSENT, WEIGHTS_UNKNOWN,
+        )
+        from club3090_tui_core import VariantRow
+
+        listing = json.dumps([
+            {"model": "qwen3.6-27b", "variant": "fp8", "subdir": "qwen3.6-27b-fp8",
+             "hf_repo": "Qwen/Qwen3.6-27B-FP8", "size_gb": 29, "verify_glob": "*.safetensors",
+             "status": "experimental"},
+            {"model": "qwen3.6-27b", "variant": "autoround-int4",
+             "subdir": "qwen3.6-27b-autoround-int4", "hf_repo": "Lorbus/Qwen3.6-27B-int4-AutoRound",
+             "size_gb": 17.5, "verify_glob": "*.safetensors", "status": "production"},
+        ])
+        runner = full_runner(**{"weights.py list --json": ok(listing)})
+        cd = CockpitData(ROOT, runner=runner)
+        hf = tmp_path
+        (hf / "qwen3.6-27b-autoround-int4").mkdir(parents=True)
+        (hf / "qwen3.6-27b-autoround-int4" / "m.safetensors").write_text("x")  # present
+
+        def _e(slug, path):
+            return CatalogEntry(row=VariantRow(
+                slug=slug, switch_engine="vllm", launch_engine="vllm",
+                compose_dir=path.rsplit("/", 1)[0], file=path.rsplit("/", 1)[-1],
+                port=8013, model="qwen3.6-27b", engine="vllm-stable", kvcalc_key="SKIP",
+                container="c", compose_path=path, status="x", ctx_label="", status_note=""))
+
+        e_ar = _e("vllm/dual", "models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml")
+        e_fp8 = _e("vllm/dual-max", "models/qwen3.6-27b/vllm/compose/dual/fp8/mtp.yml")
+        e_unk = _e("vllm/none", "models/qwen3.6-27b/vllm/compose/dual/no-such-quant/base.yml")
+        await cd.enrich_weights([e_ar, e_fp8, e_unk], model_dir=str(tmp_path))
+        assert e_ar.weights_state == WEIGHTS_PRESENT
+        assert e_ar.weights is not None and e_ar.weights.hf_repo.startswith("Lorbus")
+        assert e_fp8.weights_state == WEIGHTS_ABSENT          # fp8 subdir not created
+        assert e_unk.weights_state == WEIGHTS_UNKNOWN          # no weights entry to join
+
+    @pytest.mark.asyncio
+    async def test_weights_download_plan_and_progress(self, tmp_path):
+        """Download UX (service): the download plan is `WEIGHT_KEY=… setup.sh
+        <model>` (disk write, no reconcile/confirm gate); progress = bytes-on-disk
+        vs size_gb (capped 99); disk pre-check carries 10% headroom."""
+        from club3090_cockpit.data import WeightsMeta
+        cd = CockpitData(ROOT, runner=full_runner())
+        plan = cd.weights_download_plan("qwen3.6-27b", "fp8")
+        assert plan.cmd == ["bash", "scripts/setup.sh", "qwen3.6-27b"]
+        assert plan.requires_reconcile is False and plan.requires_confirm is False
+        meta = WeightsMeta(model="qwen3.6-27b", variant="fp8", subdir="qwen3.6-27b-fp8",
+                           size_gb=10.0, verify_glob="*.safetensors")
+        base = tmp_path / "qwen3.6-27b-fp8"
+        base.mkdir(parents=True)
+        with open(base / "a.safetensors", "wb") as fh:
+            fh.truncate(5 * 10**9)                            # 5 GB sparse → 50%
+        assert cd.weights_download_progress(meta, model_dir=str(tmp_path)) == 50
+        fits, _free, need = cd.weights_fits_disk(meta, model_dir=str(tmp_path))
+        assert need == 11.0                                   # 10 GB * 1.10 headroom
+        # size unknown → no progress %, never blocks the disk guard
+        m0 = WeightsMeta(model="m", variant="v", subdir="s", size_gb=None)
+        assert cd.weights_download_progress(m0, model_dir=str(tmp_path)) is None
+        assert cd.weights_fits_disk(m0, model_dir=str(tmp_path))[0] is True
+
+    def test_variant_row_from_dict_attaches_companions(self):
+        """The --json variant carries weights_companions/drafter/vision; they're
+        attached to the row (same pattern as 'source') for the per-slug companion
+        download + display."""
+        row = _variant_row_from_dict({
+            "slug": "beellama/qwen-dflash-dual", "port": 8065, "status": "experimental",
+            "weights_companions": ["anbeeld-dflash-iq4xs"],
+            "drafter": "anbeeld-qwen-dflash", "vision": False,
+        })
+        assert getattr(row, "weights_companions") == ["anbeeld-dflash-iq4xs"]
+        assert getattr(row, "drafter") == "anbeeld-qwen-dflash"
+        assert getattr(row, "vision") is False
+        # absent → safe defaults
+        bare = _variant_row_from_dict({"slug": "x/y", "port": 1})
+        assert getattr(bare, "weights_companions") == []
+        assert getattr(bare, "vision") is False
+
+    @pytest.mark.asyncio
+    async def test_run_weights_download_injects_companion_keys(self):
+        """The download passes the slug's companions as a model-qualified
+        WEIGHT_EXTRA_KEYS list so setup.sh fetches them alongside the core; a slug
+        with no companions sets no WEIGHT_EXTRA_KEYS."""
+        import asyncio
+
+        class _CaptureDL:
+            def __init__(self): self.env = None
+            def set_callbacks(self, **kw): pass
+            async def start_raw(self, cmd, env=None, run_type=None, parser=None):
+                self.env = env
+                h = type("H", (), {})()
+                h.done = asyncio.Event(); h.done.set(); h.exit_code = 0
+                return h
+
+        cap = _CaptureDL()
+        cd = CockpitData(ROOT, runner=full_runner(), download_runner=cap)
+        await cd.run_weights_download(
+            "qwen3.6-27b", "beellama-q8kxl-dflash", companions=["anbeeld-dflash-iq4xs"]
+        )
+        assert cap.env["WEIGHT_KEY"] == "qwen3.6-27b:beellama-q8kxl-dflash"
+        assert cap.env["WEIGHT_EXTRA_KEYS"] == "qwen3.6-27b:anbeeld-dflash-iq4xs"
+
+        cap2 = _CaptureDL()
+        cd2 = CockpitData(ROOT, runner=full_runner(), download_runner=cap2)
+        await cd2.run_weights_download("qwen3.6-27b", "autoround-int4")
+        assert "WEIGHT_EXTRA_KEYS" not in cap2.env
+
+    @pytest.mark.asyncio
+    async def test_weights_state_partial_until_companion_present(self, tmp_path):
+        """A slug with a companion (DFlash draft) is PARTIAL while the core is on
+        disk but the companion subdir is missing, and PRESENT once both exist —
+        so Start stays gated until the whole serve set is fetched."""
+        from club3090_cockpit.data import (
+            CatalogEntry, WEIGHTS_PRESENT, WEIGHTS_PARTIAL,
+        )
+
+        listing = json.dumps([
+            {"model": "qwen3.6-27b", "variant": "beellama-q8kxl-dflash",
+             "subdir": "qwen3.6-27b-gguf/unsloth-mtp-q8kxl", "hf_repo": "unsloth/x",
+             "size_gb": 35.8, "verify_glob": "*.gguf", "status": "experimental"},
+            {"model": "qwen3.6-27b", "variant": "anbeeld-dflash-iq4xs",
+             "subdir": "qwen3.6-27b-gguf/anbeeld-dflash-iq4xs", "hf_repo": "Anbeeld/x",
+             "size_gb": 1.6, "verify_glob": "*.gguf", "status": "experimental"},
+        ])
+        cd = CockpitData(ROOT, runner=full_runner(**{"weights.py list --json": ok(listing)}))
+        hf = tmp_path
+        core = hf / "qwen3.6-27b-gguf" / "unsloth-mtp-q8kxl"
+        core.mkdir(parents=True)
+        (core / "m.gguf").write_text("x")  # core present, companion NOT yet
+
+        e = CatalogEntry(row=_variant_row_from_dict({
+            "slug": "beellama/qwen-dflash-dual", "port": 8065, "model": "qwen3.6-27b",
+            "switch_engine": "beellama", "launch_engine": "beellama", "engine": "beellama-local",
+            "compose_dir": "models/qwen3.6-27b/beellama/compose/dual/beellama-q8kxl-dflash",
+            "file": "dflash.yml",
+            "compose_path": "models/qwen3.6-27b/beellama/compose/dual/beellama-q8kxl-dflash/dflash.yml",
+            "kvcalc_key": "SKIP", "container": "c", "status": "experimental",
+            "ctx_label": "", "status_note": "",
+            "weights_companions": ["anbeeld-dflash-iq4xs"],
+        }))
+        await cd.enrich_weights([e], model_dir=str(tmp_path))
+        assert e.weights_state == WEIGHTS_PARTIAL          # core present, companion missing
+
+        comp = hf / "qwen3.6-27b-gguf" / "anbeeld-dflash-iq4xs"
+        comp.mkdir(parents=True)
+        (comp / "d.gguf").write_text("x")                  # now the companion is here too
+        await cd.enrich_weights([e], model_dir=str(tmp_path))
+        assert e.weights_state == WEIGHTS_PRESENT
+
+    def test_download_progress_aggregates_core_and_companion(self, tmp_path):
+        """Live-progress regression: progress must aggregate bytes across the WHOLE
+        set (core + companions) / total size — so a core-already-present slug shows
+        a MOVING % as the companion lands, not a static 99 off the core subdir."""
+        from club3090_cockpit.data import WeightsMeta
+        cd = CockpitData(ROOT, runner=full_runner())
+        core = WeightsMeta(model="m", variant="core", subdir="core", size_gb=8.0,
+                           verify_glob="*.gguf")
+        comp = WeightsMeta(model="m", variant="comp", subdir="comp", size_gb=2.0,
+                           verify_glob="*.gguf")
+        hf = tmp_path
+        (hf / "core").mkdir(parents=True)
+        with open(hf / "core" / "a.gguf", "wb") as fh:
+            fh.truncate(8 * 10**9)                          # core FULL, companion absent
+        # core-only signal = the static-99 bug; the aggregate = 8/(8+2) = 80%
+        assert cd.weights_download_progress(core, model_dir=str(tmp_path)) == 99
+        assert cd.weights_download_progress_set([core, comp], model_dir=str(tmp_path)) == 80
+        (hf / "comp").mkdir(parents=True)
+        with open(hf / "comp" / "d.gguf", "wb") as fh:
+            fh.truncate(1 * 10**9)                          # half the companion → (8+1)/10 = 90%
+        assert cd.weights_download_progress_set([core, comp], model_dir=str(tmp_path)) == 90
+
+    @pytest.mark.asyncio
+    async def test_download_set_metas_includes_companions(self):
+        """download_set_metas resolves the core variant + each companion via the
+        index (the set the progress aggregates over)."""
+        from club3090_cockpit.data import CatalogEntry, WeightsMeta
+        cd = CockpitData(ROOT, runner=full_runner())
+        index = {
+            ("m", "core"): WeightsMeta(model="m", variant="core", subdir="core", size_gb=8.0),
+            ("m", "comp"): WeightsMeta(model="m", variant="comp", subdir="comp", size_gb=2.0),
+        }
+        e = CatalogEntry(row=_variant_row_from_dict({
+            "slug": "x/y", "port": 1, "model": "m",
+            "compose_path": "models/m/e/compose/dual/core/f.yml",
+            "weights_companions": ["comp"],
+        }))
+        metas = cd.download_set_metas(e, index)
+        assert [m.variant for m in metas] == ["core", "comp"]
+        # a companion absent from the index is skipped, not fatal
+        e2 = CatalogEntry(row=_variant_row_from_dict({
+            "slug": "x/z", "port": 1, "model": "m",
+            "compose_path": "models/m/e/compose/dual/core/f.yml",
+            "weights_companions": ["nope"],
+        }))
+        assert [m.variant for m in cd.download_set_metas(e2, index)] == ["core"]
+
+    def test_weights_bytes_on_disk_ignores_backup_cruft(self, tmp_path):
+        """Swapping weights by renaming the old GGUF to *.bak must NOT pin progress
+        at a false ~99%: backup cruft is excluded from the byte count, while hf's
+        in-progress *.incomplete staging IS counted so live progress moves."""
+        from club3090_cockpit.data import WeightsMeta
+        cd = CockpitData(ROOT, runner=full_runner())
+        meta = WeightsMeta(model="m", variant="v", subdir="v", size_gb=10.0,
+                           verify_glob="*.gguf")
+        base = tmp_path / "v"
+        base.mkdir(parents=True)
+        # Only a leftover full-size backup → ignored → 0 bytes → 0% (the bug was 99).
+        with open(base / "model.gguf.bak", "wb") as fh:
+            fh.truncate(8 * 10**9)
+        with open(base / "model.gguf.old", "wb") as fh:
+            fh.truncate(8 * 10**9)
+        with open(base / "notes.txt~", "wb") as fh:
+            fh.truncate(1 * 10**9)
+        assert cd.weights_bytes_on_disk(meta, model_dir=str(tmp_path)) == 0
+        assert cd.weights_download_progress(meta, model_dir=str(tmp_path)) == 0
+        # hf's in-progress staging IS counted → live progress tracks it (3/10 = 30%).
+        with open(base / "model.gguf.incomplete", "wb") as fh:
+            fh.truncate(3 * 10**9)
+        assert cd.weights_bytes_on_disk(meta, model_dir=str(tmp_path)) == 3 * 10**9
+        assert cd.weights_download_progress(meta, model_dir=str(tmp_path)) == 30
+        # the real completed weight counts too (the .bak/.old/~ stay excluded).
+        with open(base / "model.gguf", "wb") as fh:
+            fh.truncate(7 * 10**9)
+        assert cd.weights_bytes_on_disk(meta, model_dir=str(tmp_path)) == 10 * 10**9
+
+    def test_weights_model_dir_no_append_and_reads_dotenv(self, tmp_path, monkeypatch):
+        """MODEL_DIR unification: the weights root is used DIRECTLY (no 'huggingface'
+        append — that was the cockpit↔setup.sh divergence), and resolves from the
+        repo .env (the shared config) when no Settings/env value is set; an explicit
+        $MODEL_DIR wins over .env."""
+        monkeypatch.delenv("MODEL_DIR", raising=False)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".env").write_text("FOO=bar\nMODEL_DIR=/data/weights\n", encoding="utf-8")
+        cd = CockpitData(repo_root=repo)
+        assert cd.weights_model_dir() == "/data/weights"          # from .env, no append
+        # the weights path is <root>/<subdir>, NOT <root>/huggingface/<subdir>
+        from club3090_cockpit.data import WeightsMeta
+        meta = WeightsMeta(model="m", variant="v", subdir="sub/dir", size_gb=1.0,
+                           verify_glob="*.gguf")
+        (repo / ".env").unlink()                                   # isolate the path check
+        d = repo / "sub" / "dir"
+        d.mkdir(parents=True)
+        (d / "w.gguf").write_text("x")
+        assert cd.weights_bytes_on_disk(meta, model_dir=str(repo)) > 0   # repo/sub/dir, no append
+        # explicit $MODEL_DIR wins over .env
+        (repo / ".env").write_text("MODEL_DIR=/data/weights\n", encoding="utf-8")
+        monkeypatch.setenv("MODEL_DIR", "/env/weights")
+        assert cd.weights_model_dir() == "/env/weights"
+
+    @pytest.mark.asyncio
+    async def test_run_weights_download_pins_model_dir(self):
+        """The download pins setup.sh's MODEL_DIR to the cockpit's resolved weights
+        root, so the pull lands exactly where the cockpit reads (the cockpit↔scripts
+        single-source-of-truth seam)."""
+        import asyncio
+
+        class _Cap:
+            def __init__(self): self.env = None
+            def set_callbacks(self, **k): pass
+            async def start_raw(self, cmd, env=None, run_type=None, parser=None):
+                self.env = env
+                h = type("H", (), {})()
+                h.done = asyncio.Event(); h.done.set(); h.exit_code = 0
+                return h
+
+        cap = _Cap()
+        cd = CockpitData(ROOT, runner=full_runner(), download_runner=cap)
+        cd._model_dir = "/data/weights"
+        await cd.run_weights_download("qwen3.6-27b", "fp8")
+        assert cap.env["MODEL_DIR"] == "/data/weights"
+        assert cap.env["WEIGHT_KEY"] == "qwen3.6-27b:fp8"
+        # HF_HOME is derived UNDER that same root (off the host root disk)
+        assert cap.env["HF_HOME"].startswith("/data/weights/")
+
 
 class TestExplainFit:
     @pytest.mark.asyncio
@@ -576,6 +856,45 @@ class TestScenesDoctor:
         assert len(scenes) == 2
         assert scenes[0].name == "27b"
         assert scenes[0].gpus == "both"
+
+    @pytest.mark.asyncio
+    async def test_scenes_filters_command_modes(self):
+        """The COMMAND modes (power-cap / prune / prune-all) are filtered from the
+        scene table — they're not GPU scenes (power-cap has its own menu, prune was
+        removed).  'off' + 'chat' (ops group) and models/studio scenes are kept."""
+        listing = json.dumps([
+            {"name": "27b", "group": "models", "gpus": "both"},
+            {"name": "comfyui", "group": "studio", "gpus": "both"},
+            {"name": "chat", "group": "ops", "gpus": "none"},
+            {"name": "off", "group": "ops", "gpus": "none"},
+            {"name": "power-cap", "group": "ops", "gpus": "both"},
+            {"name": "prune", "group": "ops", "gpus": "none"},
+            {"name": "prune-all", "group": "ops", "gpus": "none"},
+        ])
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"gpu-mode.sh --list-modes --json": ok(listing)}))
+        names = [s.name for s in await cd.scenes()]
+        assert names == ["27b", "comfyui", "chat", "off"]
+        assert not ({"power-cap", "prune", "prune-all"} & set(names))
+
+    @pytest.mark.asyncio
+    async def test_scenes_clustered_by_group(self):
+        """The scene table clusters by group (models -> studio -> ops), stable
+        within a group.  Raw catalog order puts 'chat' (ops) first and 'off' (ops)
+        last, splitting the ops scenes apart; scenes() must regroup them so the two
+        ops scenes sit together at the end."""
+        listing = json.dumps([
+            {"name": "chat", "group": "ops", "gpus": "none"},
+            {"name": "27b", "group": "models", "gpus": "both"},
+            {"name": "comfyui", "group": "studio", "gpus": "both"},
+            {"name": "gemma", "group": "models", "gpus": "both"},
+            {"name": "off", "group": "ops", "gpus": "none"},
+        ])
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"gpu-mode.sh --list-modes --json": ok(listing)}))
+        scenes = await cd.scenes()
+        assert [s.name for s in scenes] == ["27b", "gemma", "comfyui", "chat", "off"]
+        assert [s.group for s in scenes] == ["models", "models", "studio", "ops", "ops"]
 
     @pytest.mark.asyncio
     async def test_doctor_serving(self):
@@ -685,6 +1004,15 @@ class TestActionBuilders:
         assert plan.cmd == ["bash", "scripts/gpu-mode.sh", "27b"]
         assert plan.requires_reconcile is True
 
+    def test_stop_all_plan(self):
+        """The 'off' scene routes here — comprehensive stop (gpu-mode off + estate
+        down), reconcile-gated so a forced 'off' also tears down detected stragglers."""
+        cd = CockpitData(ROOT, runner=full_runner())
+        p = cd.stop_all()
+        assert p.kind == "scene" and p.requires_reconcile is True
+        joined = " ".join(p.cmd)
+        assert "gpu-mode.sh off" in joined and "estate_cli.py down" in joined
+
     def test_estate_down(self):
         cd = CockpitData(ROOT, runner=full_runner())
         plan = cd.estate_down()
@@ -706,6 +1034,336 @@ class TestActionBuilders:
         cd = CockpitData(ROOT, runner=full_runner())
         with pytest.raises(ValueError):
             cd.container_action("vllm-x", "rm")
+
+
+class TestSceneServiceStates:
+    """scene_service_states_sync: per-service running flag for a scene, matched
+    against the live docker-ps set (drives the Orchestration scene-preview status
+    bullets)."""
+
+    def test_sync_matches_running_and_marks_absent_stopped(self):
+        scene = Scene(name="chat", group="ops",
+                      services=["open-webui", "litellm", "qdrant"])
+        # 'openwebui' (no separator) must normalize-match 'open-webui'; qdrant absent.
+        states = CockpitData.scene_service_states_sync(
+            scene, ["openwebui", "litellm-1"])
+        by = {s.name: s.running for s in states}
+        assert by == {"open-webui": True, "litellm": True, "qdrant": False}
+
+    def test_sync_empty_scene(self):
+        assert CockpitData.scene_service_states_sync(
+            Scene(name="off", services=[]), ["anything"]) == []
+
+
+def _seed_service_dirs(root, names):
+    for n in names:
+        d = root / "services" / n
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "docker-compose.yml").write_text("services: {}\n")
+
+
+class TestSupportingServiceEnrichment:
+    """_merge_known_services: non-GPU supporting services carry engine='web' + the
+    port they serve on (running) so the Containers tab shows what they are."""
+
+    @pytest.mark.asyncio
+    async def test_running_support_service_gets_web_and_port(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["litellm", "comfyui"])
+        cd = CockpitData(tmp_path, runner=full_runner(
+            **{"docker ps": ok("litellm|0.0.0.0:4000->4000/tcp\n")}))
+        by = {c.name: c for c in await cd._merge_known_services([])}
+        assert by["litellm"].engine == "web"
+        assert by["litellm"].host_port == 4000
+        assert by["litellm"].status == "running"
+        # A GPU-holding rig service is NOT "web" — comfyui carries its own name.
+        assert by["comfyui"].engine == "comfyui"
+
+    @pytest.mark.asyncio
+    async def test_stopped_support_service_web_no_port(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["qdrant"])
+        cd = CockpitData(tmp_path, runner=full_runner(**{"docker ps": ok("")}))
+        by = {c.name: c for c in await cd._merge_known_services([])}
+        assert by["qdrant"].engine == "web"
+        assert by["qdrant"].host_port == 0
+        assert by["qdrant"].status == "stopped"
+
+    @pytest.mark.asyncio
+    async def test_host_port_general_match_not_engine_only(self, tmp_path):
+        # openwebui maps 3000->8080; the engine-only PORT_MAP_BROAD_RE would miss
+        # the host port — the general matcher must catch it.
+        _seed_service_dirs(tmp_path, ["openwebui"])
+        cd = CockpitData(tmp_path, runner=full_runner(
+            **{"docker ps": ok("openwebui|0.0.0.0:3000->8080/tcp\n")}))
+        by = {c.name: c for c in await cd._merge_known_services([])}
+        assert by["openwebui"].host_port == 3000
+
+    @pytest.mark.asyncio
+    async def test_published_port_range_uses_first_host_port(self, tmp_path):
+        # qdrant publishes a RANGE (6333-6334->6333-6334) — the host port is 6333.
+        _seed_service_dirs(tmp_path, ["qdrant"])
+        cd = CockpitData(tmp_path, runner=full_runner(
+            **{"docker ps": ok("qdrant|0.0.0.0:6333-6334->6333-6334/tcp\n")}))
+        by = {c.name: c for c in await cd._merge_known_services([])}
+        assert by["qdrant"].host_port == 6333
+
+    @pytest.mark.asyncio
+    async def test_stopped_comfyui_engine_is_comfyui(self, tmp_path):
+        # A stopped GPU service reads the same engine as when running.
+        _seed_service_dirs(tmp_path, ["comfyui"])
+        cd = CockpitData(tmp_path, runner=full_runner(**{"docker ps": ok("")}))
+        by = {c.name: c for c in await cd._merge_known_services([])}
+        assert by["comfyui"].engine == "comfyui"
+        assert by["comfyui"].status == "stopped"
+
+
+class TestStoppedStudioContainers:
+    """_stopped_studio_containers: scene-managed studio/GPU containers that EXIST
+    but are stopped (not in `docker ps`, not a top-level services/ dir)."""
+
+    @pytest.mark.asyncio
+    async def test_surfaces_studio_skips_engines_and_dups(self):
+        cd = CockpitData(ROOT, runner=full_runner(**{
+            "docker container ls": ok(
+                "studio-tts\nstudio-director\nvllm-qwen36-27b-dual\nlitellm\n")}))
+        # litellm already in `existing` (running) → deduped; vllm = engine → skipped.
+        existing = [ContainerInfo(name="litellm", kind="service", status="running")]
+        out = {c.name: c for c in await cd._stopped_studio_containers(existing)}
+        assert set(out) == {"studio-tts", "studio-director"}
+        assert all(c.status == "stopped" and c.engine == "studio" for c in out.values())
+        assert all(c.kind == "stack" for c in out.values())
+
+    @pytest.mark.asyncio
+    async def test_comfyui_carries_its_name(self):
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"docker container ls": ok("comfyui\n")}))
+        out = await cd._stopped_studio_containers([])
+        assert out[0].name == "comfyui" and out[0].engine == "comfyui"
+
+
+class TestServiceStartOrRestart:
+    """service_start_or_restart: compose-up for a real service dir, docker restart
+    for an existing scene-managed container (studio-*) with no such dir."""
+
+    def test_dir_uses_compose_up(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["comfyui"])
+        plan = CockpitData(tmp_path).service_start_or_restart("comfyui")
+        assert plan.kind == "service-up"
+        assert plan.cmd[-4:] == ["-p", "comfyui", "up", "-d"]
+
+    def test_no_dir_uses_docker_restart(self, tmp_path):
+        # studio-director's dir is services/studio/enhancer/ (name mismatch) — no
+        # resolvable compose → restart the scene-created container.
+        plan = CockpitData(tmp_path).service_start_or_restart("studio-director")
+        assert plan.cmd == ["docker", "restart", "studio-director"]
+
+    def test_nested_studio_sidecar_uses_compose_up(self, tmp_path):
+        # step-voice lives at services/studio/step-voice/ (NOT services/<name>/) and
+        # its container is studio-step-voice. c3 must CREATE it from that nested
+        # compose — with the project pinned to the DIR basename (step-voice) to match
+        # gpu-mode's compose_at — not docker restart (which fails on a fresh install).
+        d = tmp_path / "services" / "studio" / "step-voice"
+        d.mkdir(parents=True)
+        (d / "docker-compose.yml").write_text("services: {}\n")
+        plan = CockpitData(tmp_path).service_start_or_restart("studio-step-voice")
+        assert plan.kind == "service-up"
+        assert plan.cmd[-6:] == [
+            "-f", "services/studio/step-voice/docker-compose.yml",
+            "-p", "step-voice", "up", "-d"]
+
+
+class TestGpuServiceDisplay:
+    """GPU rig services / studio stacks (comfyui, studio-*) get engine='studio' +
+    their real port (a non-engine port like :8188 that PORT_MAP_BROAD_RE misses)."""
+
+    @pytest.mark.asyncio
+    async def test_comfyui_engine_and_port(self):
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"docker ps": ok("comfyui|0.0.0.0:8188->8188/tcp\n")}))
+        comfy = next(c for c in await cd.containers() if c.name == "comfyui")
+        assert comfy.kind == "service"
+        assert comfy.engine == "comfyui"   # comfyui carries its own name
+        assert comfy.host_port == 8188
+
+    @pytest.mark.asyncio
+    async def test_studio_stack_engine_studio(self):
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"docker ps": ok("studio-tts|0.0.0.0:8192->8192/tcp\n")}))
+        tts = next(c for c in await cd.containers() if c.name == "studio-tts")
+        assert tts.kind == "stack"
+        assert tts.engine == "studio"
+        assert tts.host_port == 8192
+
+
+class TestServiceStart:
+    """service_start: bring a stopped supporting service up via compose, mirroring
+    gpu-mode's compose_at (project pinned to the dir name; --env-file when present)."""
+
+    def test_compose_up_plan(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["litellm"])
+        plan = CockpitData(tmp_path).service_start("litellm")
+        # -p pins the project to the dir name (match gpu-mode so it operates on the
+        # SAME container, not a duplicate); no .env in tmp_path → --env-file omitted.
+        assert plan.cmd == [
+            "docker", "compose", "-f",
+            "services/litellm/docker-compose.yml", "-p", "litellm", "up", "-d"]
+        assert plan.requires_reconcile is True
+        assert plan.kind == "service-up"
+
+    def test_env_file_included_when_present(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["comfyui"])
+        (tmp_path / ".env").write_text("MODEL_DIR=/x\n")
+        plan = CockpitData(tmp_path).service_start("comfyui")
+        assert plan.cmd[:4] == ["docker", "compose", "--env-file", ".env"]
+        assert plan.cmd[-4:] == ["-p", "comfyui", "up", "-d"]
+
+    def test_yaml_spelling_fallback(self, tmp_path):
+        d = tmp_path / "services" / "x"
+        d.mkdir(parents=True)
+        (d / "docker-compose.yaml").write_text("services: {}\n")
+        plan = CockpitData(tmp_path).service_start("x")
+        assert "services/x/docker-compose.yaml" in plan.cmd
+
+
+class TestComfyuiImagePresent:
+    """comfyui_image_present: the 'studio is set up' signal."""
+
+    @pytest.mark.asyncio
+    async def test_present(self):
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"docker images -q": ok("sha256:abc123\n")}))
+        assert await cd.comfyui_image_present() is True
+
+    @pytest.mark.asyncio
+    async def test_absent_clean_empty(self):
+        cd = CockpitData(ROOT, runner=full_runner(**{"docker images -q": ok("")}))
+        assert await cd.comfyui_image_present() is False
+
+    @pytest.mark.asyncio
+    async def test_docker_error_biases_present(self):
+        # A failed read must NOT false-block — bias toward present.
+        cd = CockpitData(ROOT, runner=full_runner(
+            **{"docker images -q": RunResult(returncode=1, stdout="", stderr="boom")}))
+        assert await cd.comfyui_image_present() is True
+
+
+class TestStudioReady:
+    """studio_ready: comfyui-local image AND the director GGUF on disk."""
+
+    def _seed_director(self, tmp_path):
+        from club3090_cockpit.services import STUDIO_DIRECTOR_REL
+        d = tmp_path / "weights" / STUDIO_DIRECTOR_REL
+        d.parent.mkdir(parents=True, exist_ok=True)
+        d.write_bytes(b"x")
+        return str(tmp_path / "weights")
+
+    @pytest.mark.asyncio
+    async def test_ready_when_image_and_director(self, tmp_path):
+        md = self._seed_director(tmp_path)
+        cd = CockpitData(tmp_path, runner=full_runner(
+            **{"docker images -q": ok("sha256:abc\n")}))
+        cd._model_dir = md
+        assert await cd.studio_ready() is True
+
+    @pytest.mark.asyncio
+    async def test_not_ready_when_director_missing(self, tmp_path):
+        cd = CockpitData(tmp_path, runner=full_runner(
+            **{"docker images -q": ok("sha256:abc\n")}))  # image present
+        cd._model_dir = str(tmp_path / "empty")            # but no director
+        assert await cd.studio_ready() is False
+
+    @pytest.mark.asyncio
+    async def test_not_ready_when_image_missing(self, tmp_path):
+        md = self._seed_director(tmp_path)
+        cd = CockpitData(tmp_path, runner=full_runner(**{"docker images -q": ok("")}))
+        cd._model_dir = md
+        assert await cd.studio_ready() is False
+
+
+class TestStudioMissingModels:
+    """studio_missing_models / studio_models_progress — the ai-studio first-install
+    manifest detection (director under the weights root; image/video/audio canaries
+    under the ComfyUI models tree)."""
+
+    def _cd(self, tmp_path, monkeypatch):
+        cd = CockpitData(tmp_path)
+        cd._model_dir = str(tmp_path / "weights")                 # director root
+        monkeypatch.setenv("COMFYUI_MODELS_DIR", str(tmp_path / "comfy"))  # image/video/audio root
+        return cd
+
+    def _seed(self, cd, m):
+        p = cd._studio_model_path(m)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"x")
+
+    def test_all_missing_when_empty(self, tmp_path, monkeypatch):
+        from club3090_cockpit.services import STUDIO_MODELS
+        cd = self._cd(tmp_path, monkeypatch)
+        assert len(cd.studio_missing_models()) == len(STUDIO_MODELS)
+        assert cd.studio_models_progress() == 0
+
+    def test_present_canaries_drop_from_missing(self, tmp_path, monkeypatch):
+        from club3090_cockpit.services import STUDIO_MODELS
+        cd = self._cd(tmp_path, monkeypatch)
+        director = next(m for m in STUDIO_MODELS if m.modality == "director")  # weights root
+        kokoro = next(m for m in STUDIO_MODELS if "Kokoro" in m.label)         # comfy root
+        for m in (director, kokoro):
+            self._seed(cd, m)
+        missing = cd.studio_missing_models()
+        assert director not in missing and kokoro not in missing
+        assert len(missing) == len(STUDIO_MODELS) - 2
+        assert 0 < cd.studio_models_progress() < 100          # some size present, not all
+
+    def test_all_present_is_complete(self, tmp_path, monkeypatch):
+        from club3090_cockpit.services import STUDIO_MODELS
+        cd = self._cd(tmp_path, monkeypatch)
+        for m in STUDIO_MODELS:
+            self._seed(cd, m)
+        assert cd.studio_missing_models() == []
+        assert cd.studio_models_progress() == 100
+
+    def test_missing_preserves_modality_order(self, tmp_path, monkeypatch):
+        cd = self._cd(tmp_path, monkeypatch)               # nothing seeded → all missing
+        mods = [m.modality for m in cd.studio_missing_models()]
+        assert mods[0] == "director"                       # manifest order kept (director first)
+        assert {"image", "video", "audio"} <= set(mods)
+
+    def test_download_plan_runs_orchestrator(self, tmp_path):
+        plan = CockpitData(tmp_path).studio_download_plan()
+        assert plan.cmd == ["bash", "services/comfyui/download_studio_models.sh"]
+        assert plan.kind == "studio-download"
+        # disk/network fetch, no GPU claim — the modal's Download button is the confirm
+        assert plan.requires_reconcile is False and plan.requires_confirm is False
+
+
+class TestStudioVoiceGuard:
+    """studio_voice_blocked — the GPU1 video⊕voice mutex (premium voice ~14 GB on GPU1
+    vs the 22 B video DiT donor; the two GPU1 tenants are mutually exclusive)."""
+
+    def _tel(self, gpu_apps):
+        from club3090_cockpit.data import EstateTelemetry
+        return EstateTelemetry(gpu_apps=gpu_apps)
+
+    def _holder(self, gpu_index, used_mib, container="comfyui"):
+        from club3090_cockpit.data import GpuCompApp
+        return GpuCompApp(pid=1, used_mib=used_mib, container=container, gpu_index=gpu_index)
+
+    def test_allows_when_gpu1_idle(self, tmp_path):
+        assert CockpitData(tmp_path).studio_voice_blocked(self._tel({1: []})) is None
+
+    def test_blocks_when_video_render_holds_gpu1(self, tmp_path):
+        tel = self._tel({1: [self._holder(1, 22000, "comfyui")]})   # ~22 GB donor on GPU1
+        reason = CockpitData(tmp_path).studio_voice_blocked(tel)
+        assert reason is not None and "GPU1" in reason and "comfyui" in reason
+
+    def test_allows_on_no_telemetry(self, tmp_path):
+        # telemetry-honest: never false-block on a missing read
+        assert CockpitData(tmp_path).studio_voice_blocked(None) is None
+
+    def test_respects_voice_card_override(self, tmp_path):
+        tel = self._tel({0: [self._holder(0, 22000, "comfyui")]})   # busy GPU0, GPU1 free
+        cd = CockpitData(tmp_path)
+        assert cd.studio_voice_blocked(tel, voice_card=1) is None        # voice on GPU1 → fine
+        assert cd.studio_voice_blocked(tel, voice_card=0) is not None    # voice on GPU0 → blocked
 
 
 # ===========================================================================
@@ -735,13 +1393,15 @@ class TestReconcileGate:
 
     @pytest.mark.asyncio
     async def test_running_engine_container_is_conflict(self):
+        # A running vLLM engine HOLDS the card it serves on — set GPU0 busy (the
+        # realistic state) so the unknown-GPU container is flagged as a conflict.
         runner = full_runner(
             **{
                 "docker ps": ok(DOCKER_PS_ENGINE),
                 "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
             }
         )
-        gpus = [GpuInfo(index=0, mem_used_mib=3), GpuInfo(index=1, mem_used_mib=1)]
+        gpus = [GpuInfo(index=0, mem_used_mib=22000), GpuInfo(index=1, mem_used_mib=1)]
         cd = CockpitData(
             ROOT, runner=runner,
             detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
@@ -750,6 +1410,28 @@ class TestReconcileGate:
         rec = await cd.reconcile_before_write("serve:vllm/dual")
         assert rec.safe is False
         assert any(c.name == "vllm-qwen36-27b-dual" for c in rec.conflicts)
+
+    @pytest.mark.asyncio
+    async def test_running_service_on_idle_cards_is_not_conflict(self):
+        """Regression: a running-but-IDLE service (the studio stack at 0 GiB) is
+        NOT a teardown conflict for a serve onto FREE cards — the gate must not
+        cry wolf ('starting this will stop studio-tts') when nothing holds a card."""
+        runner = full_runner(
+            **{
+                "docker ps": ok("studio-tts|\nstudio-image-shim|\n"),
+                "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
+            }
+        )
+        gpus = [GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)]
+        cd = CockpitData(
+            ROOT, runner=runner,
+            detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
+            get_gpu_info_fn=make_gpu_info(gpus),
+        )
+        rec = await cd.reconcile_before_write("serve:vllm/dual")
+        assert rec.safe is True
+        assert rec.conflicts == []
+        assert rec.gpu_conflicts == []
 
     @pytest.mark.asyncio
     async def test_gpu_in_use_is_conflict(self):
@@ -802,6 +1484,32 @@ class TestReconcileGate:
         assert rec.safe is False
         assert any(i.get("name") == "llama-gpu0" for i in rec.estate_claims)
         assert "estate:llama-gpu0" in rec.conflict_summary
+
+    @pytest.mark.asyncio
+    async def test_force_tears_down_conflicts_before_write(self):
+        """2A: a FORCED unsafe write STOPS the gate's conflicting containers
+        (docker stop) before running the command — so a forced 'off' clears a
+        cockpit-served slug that gpu-mode off doesn't know.  The command still runs."""
+        import dataclasses
+        wr = FakeWriteRunner()
+        runner = full_runner(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        gpus = [GpuInfo(index=0, mem_used_mib=22000), GpuInfo(index=1, mem_used_mib=1)]
+        cd = CockpitData(
+            ROOT, runner=runner, write_runner=wr,
+            detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
+            get_gpu_info_fn=make_gpu_info(gpus),
+        )
+        rec0 = await cd.reconcile_before_write("scene:off")
+        assert rec0.safe is False and rec0.conflicts        # a named container is in the way
+        names = {c.name for c in rec0.conflicts}
+        plan = dataclasses.replace(cd.stop_all(), force=True, force_reason="stop everything")
+        executed, rec, _ = await cd.execute_action(plan)
+        assert executed is True                             # forced → proceeds
+        # the conflicting container(s) were docker-stopped (via the read runner) ...
+        stopped = {c[2] for c in runner.calls if c[:2] == ["docker", "stop"] and len(c) > 2}
+        assert stopped & names
+        # ... and the comprehensive 'off' command still ran via the write runner.
+        assert len(wr.started) == 1
 
     @pytest.mark.asyncio
     async def test_estate_on_gpu1_does_not_conflict_with_gpu0_only_request(self):
@@ -954,7 +1662,8 @@ class TestReconcileGate:
                 "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
             }
         )
-        gpus = [GpuInfo(index=0, mem_used_mib=3), GpuInfo(index=1, mem_used_mib=1)]
+        # The estate container is a live GPU user → GPU0 occupied (realistic).
+        gpus = [GpuInfo(index=0, mem_used_mib=20000), GpuInfo(index=1, mem_used_mib=1)]
         cd = CockpitData(
             ROOT, runner=runner,
             detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
@@ -976,7 +1685,8 @@ class TestReconcileGate:
                 "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
             }
         )
-        gpus = [GpuInfo(index=0, mem_used_mib=3), GpuInfo(index=1, mem_used_mib=1)]
+        # ComfyUI is actively GPU-holding here → GPU0 busy (matches the docstring).
+        gpus = [GpuInfo(index=0, mem_used_mib=18500), GpuInfo(index=1, mem_used_mib=1)]
         cd = CockpitData(
             ROOT, runner=runner,
             detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
@@ -1681,6 +2391,50 @@ class TestPhase4Parsers:
         tri = parse_profile_triage("")
         assert tri.steps == [] and tri.summary == ""
 
+    def test_verify_smoke_parser_all_pass(self):
+        from club3090_cockpit.data import parse_verify_smoke
+
+        vs = parse_verify_smoke(
+            "  \x1b[32m✓\x1b[0m a\n  \x1b[32m✓\x1b[0m b\n  \x1b[32m✓\x1b[0m c\n  \x1b[32m✓\x1b[0m d\n",
+            rc=0,
+        )
+        assert (vs.passed, vs.total, vs.reachable, vs.ok) == (4, 4, True, True)
+        assert vs.verdict_glyph == "●"
+
+    def test_verify_smoke_parser_inband_failure_beats_rc(self):
+        """A ✗ in the output means NOT ok even if rc claims success."""
+        from club3090_cockpit.data import parse_verify_smoke
+
+        vs = parse_verify_smoke("  \x1b[31m✗\x1b[0m unreachable\n    \x1b[33m→\x1b[0m serve one\n", rc=0)
+        assert vs.ok is False and vs.reachable is False
+        assert vs.checks[0].hint == "serve one"
+
+    def test_verify_smoke_parser_no_output(self):
+        from club3090_cockpit.data import parse_verify_smoke
+
+        vs = parse_verify_smoke("", rc=0)
+        assert vs.total == 0 and vs.ok is False and vs.error
+
+    def test_verify_full_parser_summary_authoritative(self):
+        from club3090_cockpit.data import parse_verify_full
+
+        vf = parse_verify_full(
+            "[1/9] x\n  \x1b[32m✓\x1b[0m ok\n[4/9] tool\n  \x1b[31m✗\x1b[0m no calls\n"
+            "[9/9] mtp\n  \x1b[32m✓\x1b[0m al\n1 check(s) failed.\n",
+            rc=0,
+        )
+        assert (vf.passed, vf.total, vf.failed, vf.ok) == (8, 9, 1, False)
+        assert vf.verdict_glyph == "◐"
+
+    def test_verify_full_parser_all_pass(self):
+        from club3090_cockpit.data import parse_verify_full
+
+        vf = parse_verify_full(
+            "[1/9] x\n  \x1b[32m✓\x1b[0m ok\n[9/9] y\n  \x1b[32m✓\x1b[0m ok\nAll checks passed.\n",
+            rc=0,
+        )
+        assert vf.ok is True and vf.failed == 0 and vf.verdict_glyph == "●"
+
     def test_power_cap_status_parse(self):
         from club3090_cockpit.data import parse_power_cap_status
 
@@ -1725,7 +2479,7 @@ class TestPhase4Parsers:
         assert row.topology == "dual"
         assert row.code_tps == 44.02       # decode_tps_by_ctx['canonical-short']
         assert row.narr_tps == 43.81       # wall_tps
-        assert row.max_ctx == "256K"       # 262144 → 256K
+        assert row.max_ctx == "262K"       # 262144 → 262K (÷1000, registry-emit convention)
         assert row.quality_8pk == ""       # bench-only record carries no 8pk
         assert row.source == "corpus"
         assert row.tag == "vllm/dual"
@@ -1822,6 +2576,65 @@ class TestPhase4Doctor:
         assert rep.profile is None  # no slug → no profile triage
         # diagnose-profile must NOT have been called.
         assert not any("diagnose-profile.sh" in " ".join(c) for c in runner.calls)
+
+    # ── Batch 3: verify / verify-full (Doctor "serving correctly?" reads) ──────────
+
+    _VERIFY_OK = (
+        "Running smoke test against http://localhost:8020\n\n"
+        "  \x1b[32m✓\x1b[0m Server is reachable\n"
+        "  \x1b[32m✓\x1b[0m Genesis patches applied cleanly\n"
+        "  \x1b[32m✓\x1b[0m Basic completion works (Paris)\n"
+        "  \x1b[32m✓\x1b[0m Tool calling works end-to-end\n"
+    )
+    _VERIFY_DOWN = (
+        "Running smoke test against http://localhost:8020\n\n"
+        "  \x1b[31m✗\x1b[0m no response from http://localhost:8020/v1/models\n"
+        "    \x1b[33m→\x1b[0m start a model first\n"
+    )
+
+    @pytest.mark.asyncio
+    async def test_verify_smoke_read(self):
+        runner = full_runner(**{"scripts/verify.sh": ok(self._VERIFY_OK)})
+        cd = CockpitData(ROOT, runner=runner)
+        vs = await cd.verify_smoke()
+        assert vs.ok is True and vs.reachable is True
+        assert (vs.passed, vs.total) == (4, 4)
+        call = next(c for c in runner.calls if "verify.sh" in " ".join(c))
+        assert call == ["bash", "scripts/verify.sh"]   # a READ — verify.sh, no args
+
+    @pytest.mark.asyncio
+    async def test_verify_smoke_unreachable(self):
+        # ok() reports rc=0, but the in-band ✗ must still make it NOT ok.
+        runner = full_runner(**{"scripts/verify.sh": ok(self._VERIFY_DOWN)})
+        cd = CockpitData(ROOT, runner=runner)
+        vs = await cd.verify_smoke()
+        assert vs.ok is False and vs.reachable is False
+        assert vs.checks and vs.checks[0].hint.startswith("start a model")
+
+    @pytest.mark.asyncio
+    async def test_verify_smoke_timeout(self):
+        runner = full_runner(
+            **{"scripts/verify.sh": RunResult(-1, "", "timeout", timed_out=True)}
+        )
+        cd = CockpitData(ROOT, runner=runner)
+        vs = await cd.verify_smoke()
+        assert vs.error and "timed out" in vs.error and vs.ok is False
+
+    @pytest.mark.asyncio
+    async def test_verify_full_read(self):
+        VF = (
+            "[1/9] Server reachable ...\n  \x1b[32m✓\x1b[0m reachable\n"
+            "[4/9] Tool calling ...\n  \x1b[31m✗\x1b[0m no tool_calls[]\n"
+            "[9/9] MTP acceptance ...\n  \x1b[32m✓\x1b[0m AL>=2.0\n"
+            "\x1b[31m1 check(s) failed.\x1b[0m See hints above.\n"
+        )
+        runner = full_runner(**{"scripts/verify-full.sh": ok(VF)})
+        cd = CockpitData(ROOT, runner=runner)
+        vf = await cd.verify_full()
+        # in-band summary is authoritative even though ok() reports rc=0.
+        assert (vf.passed, vf.total, vf.failed, vf.ok) == (8, 9, 1, False)
+        call = next(c for c in runner.calls if "verify-full.sh" in " ".join(c))
+        assert call == ["bash", "scripts/verify-full.sh"]
 
 
 # ===========================================================================
@@ -2016,11 +2829,21 @@ class TestPhase4PowerCap:
         off = cd.power_cap_set("off")
         assert off.cmd[-1] == "off"
 
-    def test_power_cap_set_rejects_wattage(self):
-        """gpu-mode power-cap takes on/off, NOT a wattage (verified live)."""
+    def test_power_cap_set_custom_wattage(self):
+        """gpu-mode power-cap now ALSO takes a custom wattage (cockpit menu's
+        'custom' option) — gpu-mode.sh validates it against each card's range."""
         cd = CockpitData(ROOT, runner=full_runner())
-        with pytest.raises(ValueError):
-            cd.power_cap_set("330")
+        for w in (280, "330"):
+            plan = cd.power_cap_set(w)
+            assert plan.cmd == ["bash", "scripts/gpu-mode.sh", "power-cap", str(int(w))]
+            assert plan.kind == "power_cap"
+            assert plan.requires_confirm is True and plan.requires_reconcile is False
+
+    def test_power_cap_set_rejects_invalid(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        for bad in ("hi", 0, -5, True):           # non-numeric / non-positive / bool
+            with pytest.raises(ValueError):
+                cd.power_cap_set(bad)
 
     def test_power_cap_sweep_plan(self):
         cd = CockpitData(ROOT, runner=full_runner())
@@ -2028,25 +2851,6 @@ class TestPhase4PowerCap:
         assert plan.kind == "power_cap_sweep"
         assert "--caps" in plan.cmd and "300,330,370" in plan.cmd
         assert plan.requires_confirm is True
-
-
-# ===========================================================================
-# PHASE 4 — prune (WIRED mock-only, destructive → confirm)
-# ===========================================================================
-
-
-class TestPhase4Prune:
-    def test_prune_plan(self):
-        cd = CockpitData(ROOT, runner=full_runner())
-        p = cd.prune()
-        assert p.cmd == ["bash", "scripts/gpu-mode.sh", "prune"]
-        assert p.requires_confirm is True
-        assert p.requires_reconcile is False  # deletes images, not GPU contention
-
-    def test_prune_all_plan(self):
-        cd = CockpitData(ROOT, runner=full_runner())
-        p = cd.prune(all=True)
-        assert p.cmd[-1] == "prune-all"
 
 
 # ===========================================================================
@@ -2208,21 +3012,22 @@ class TestPhase4GatedWriteExecution:
         assert write_runner.started == []  # destructive rm never reached the runner
 
     @pytest.mark.asyncio
-    async def test_prune_skips_reconcile_but_runs_via_mocked_runner(self):
-        """prune has requires_reconcile=False → no detect; reaches mocked runner."""
+    async def test_power_cap_custom_skips_reconcile_but_runs_via_mocked_runner(self):
+        """A custom-wattage power-cap has requires_reconcile=False → no detect;
+        reaches the mocked write runner with the gpu-mode power-cap <W> command."""
         write_runner = FakeWriteRunner()
 
         async def detect_should_not_be_called():
-            raise AssertionError("prune must not reconcile (no GPU contention)")
+            raise AssertionError("power-cap must not reconcile (no GPU contention)")
 
         cd = CockpitData(
             ROOT, runner=full_runner(), write_runner=write_runner,
             detect_endpoint_fn=detect_should_not_be_called,
         )
-        executed, rec, _ = await cd.execute_action(cd.prune())
+        executed, rec, _ = await cd.execute_action(cd.power_cap_set(280))
         assert executed is True and rec is None
         assert len(write_runner.started) == 1
-        assert write_runner.started[0]["cmd"] == ["bash", "scripts/gpu-mode.sh", "prune"]
+        assert write_runner.started[0]["cmd"] == ["bash", "scripts/gpu-mode.sh", "power-cap", "280"]
 
     @pytest.mark.asyncio
     async def test_submit_bench_runs_via_mocked_runner_only(self):

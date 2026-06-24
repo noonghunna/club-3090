@@ -127,6 +127,38 @@ out="$(MODEL_DIR="${TMP_DIR}/models" PREFLIGHT_DISK_GB=0 SKIP_GENESIS=1 SKIP_MOD
 assert_not_contains "$out" "Which model to download?"
 assert_contains "$out" "[model]   SKIP_MODEL=1"
 
+# WEIGHT_KEY fetches an exact catalog entry whose model is NOT in the friendly
+# dispatch (e.g. the serve-cockpit Download action for an incubating model like
+# vibethinker-3b). The unknown-model dispatch MUST be bypassed when WEIGHT_KEY is
+# set — the recipe fully specifies <model>:<variant> and is resolved straight to
+# the download (SKIP_MODEL short-circuits the actual pull). Regression guard for
+# the "download incomplete (partial)" failure the cockpit hit on these models.
+out="$(MODEL_DIR="${TMP_DIR}/models" PREFLIGHT_DISK_GB=0 SKIP_GENESIS=1 SKIP_MODEL=1 \
+  WEIGHT_KEY=vibethinker-3b:prithivmlmods-q8 \
+  bash "${ROOT_DIR}/scripts/setup.sh" vibethinker-3b 2>&1)"
+assert_not_contains "$out" "unsupported model"
+assert_contains "$out" "vibethinker-3b:prithivmlmods-q8 -> prithivMLmods/VibeThinker-3B-GGUF"
+assert_contains "$out" "[model]   SKIP_MODEL=1"
+
+# ...but an unknown model with NO WEIGHT_KEY still fails fast (the friendly guard
+# stays intact for typo'd / unsupported positional names).
+if out="$(MODEL_DIR="${TMP_DIR}/models" SKIP_MODEL=1 \
+  bash "${ROOT_DIR}/scripts/setup.sh" some-unknown-model 2>&1)"; then
+  echo "ASSERTION FAILED: unknown model without WEIGHT_KEY unexpectedly succeeded" >&2
+  echo "$out" >&2
+  exit 1
+fi
+assert_contains "$out" "unsupported model 'some-unknown-model'"
+
+# WEIGHT_EXTRA_KEYS: the serve-cockpit Download action passes a slug's registry
+# `weights_companions` (a DFlash draft / mmproj projector) so setup.sh fetches
+# them alongside the core — otherwise the slug reads "present" then fails to serve.
+out="$(MODEL_DIR="${TMP_DIR}/models" PREFLIGHT_DISK_GB=0 SKIP_GENESIS=1 SKIP_MODEL=1 \
+  WEIGHT_KEY=qwen3.6-27b:beellama-q8kxl-dflash \
+  WEIGHT_EXTRA_KEYS=qwen3.6-27b:anbeeld-dflash-iq4xs \
+  bash "${ROOT_DIR}/scripts/setup.sh" qwen3.6-27b 2>&1)"
+assert_contains "$out" "+ companion(s): qwen3.6-27b:anbeeld-dflash-iq4xs"
+
 # The launch wizard now picks model -> GPU set -> parallelism. Scripted flags
 # skip prompts, select the expected variant, and export GPU / TP / PP envs.
 mkdir -p "${TMP_DIR}/models/qwen3.6-27b-autoround-int4" \

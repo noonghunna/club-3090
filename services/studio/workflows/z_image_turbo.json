@@ -1,0 +1,53 @@
+{
+  "unet": {
+    "class_type": "UNETLoader",
+    "inputs": { "unet_name": "z-image-turbo-fp8-e4m3fn.safetensors", "weight_dtype": "default" }
+  },
+  "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": { "clip_name": "qwen_3_4b_fp8_mixed.safetensors", "type": "lumina2", "device": "default" }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": { "vae_name": "ae.safetensors" }
+  },
+  "modelsampling": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": { "model": ["unet", 0], "shift": 3.0 }
+  },
+  "pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "a photorealistic close-up portrait", "clip": ["clip", 0] }
+  },
+  "neg": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": { "conditioning": ["pos", 0] }
+  },
+  "latent": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": { "width": 1024, "height": 1024, "batch_size": 1 }
+  },
+  "ksampler": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["modelsampling", 0],
+      "seed": 0,
+      "steps": 8,
+      "cfg": 1.0,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "positive": ["pos", 0],
+      "negative": ["neg", 0],
+      "latent_image": ["latent", 0],
+      "denoise": 1.0
+    }
+  },
+  "decode": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["ksampler", 0], "vae": ["vae", 0] }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": { "images": ["decode", 0], "filename_prefix": "z-image" }
+  }
+}

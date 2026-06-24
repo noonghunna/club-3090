@@ -68,6 +68,8 @@ bash scripts/update.sh
 
 `launch.sh` calls `switch.sh` (down old, up new) and then `verify-full.sh` so you know it's serving cleanly before you point a client at it. See [`scripts/`](scripts/) for all helpers.
 
+> 🖥️ **Prefer a TUI?** The **serve cockpit (`c3`)** wraps the same flow — discover → serve → operate → validate — in one lazydocker-style screen (catalog, live GPU/scenes/containers, Doctor health, and the add-a-model pipeline). Install: `uv pip install -e tools/serve-cockpit` then run `c3`. See [`tools/serve-cockpit/`](tools/serve-cockpit/).
+
 > ⚠️ **Single-card long-context note:** Cliff 2 (GDN prefill OOM at >~50K single-prompt) is **open** on 24 GB single-card vLLM. Genesis v7.72.2 PN59 was intended as the fix but doesn't engage on chunked-prefill. **Workarounds:** [`vllm/dual`](docs/DUAL_CARD.md) (TP=2 escapes it) or [`llamacpp/default`](docs/SINGLE_CARD.md#bulletproof-no-cliffs) (different engine, no cliff). Full diagnosis at [`docs/CLIFFS.md`](docs/CLIFFS.md).
 
 ---

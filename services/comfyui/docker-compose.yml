@@ -7,29 +7,37 @@ services:
     ports:
       - "8188:8188"
     volumes:
+      # Host data roots are parameterized so the service is portable across rigs:
+      #   COMFYUI_ROOT — ComfyUI's own tree (source / models / io / caches). Defaults
+      #     to /mnt/models/comfyui (this rig).  It is a SIBLING of the HF cache, not
+      #     under MODEL_DIR, so it gets its own var.
+      #   MODEL_DIR    — the shared HF cache (== the weights root the model composes
+      #     mount).  Defaults to /mnt/models/huggingface.
+      # Override either in the repo .env (passed via `--env-file .env`).
       # ComfyUI source + venv-installed custom-node code persists here
-      - /mnt/models/comfyui/ComfyUI:/workspace/ComfyUI
+      - ${COMFYUI_ROOT:-/mnt/models/comfyui}/ComfyUI:/workspace/ComfyUI
       # Models tree (overrides ComfyUI/models nested mount)
-      - /mnt/models/comfyui/models:/workspace/ComfyUI/models
-      - /mnt/models/comfyui/input:/workspace/ComfyUI/input
-      - /mnt/models/comfyui/output:/workspace/ComfyUI/output
-      - /mnt/models/comfyui/user:/workspace/ComfyUI/user
+      - ${COMFYUI_ROOT:-/mnt/models/comfyui}/models:/workspace/ComfyUI/models
+      - ${COMFYUI_ROOT:-/mnt/models/comfyui}/input:/workspace/ComfyUI/input
+      - ${COMFYUI_ROOT:-/mnt/models/comfyui}/output:/workspace/ComfyUI/output
+      - ${COMFYUI_ROOT:-/mnt/models/comfyui}/user:/workspace/ComfyUI/user
       # Folder-aliasing yaml so loaders find files whether they look in unet/ or diffusion_models/
       - ./extra_model_paths.yaml:/workspace/ComfyUI/extra_model_paths.yaml:ro
       # Mount the entrypoint (overrides the image-baked copy) so bootstrap/pin changes
       # apply on `up` without a full image rebuild.
       - ./entrypoint.sh:/entrypoint.sh:ro
       # Pip cache so re-launches don't re-download every wheel
-      - /mnt/models/comfyui/pip-cache:/root/.cache/pip
+      - ${COMFYUI_ROOT:-/mnt/models/comfyui}/pip-cache:/root/.cache/pip
       # Share existing HF cache (so anything already pulled by vLLM/SGLang is reusable)
-      - /mnt/models/huggingface:/root/.cache/huggingface
+      - ${MODEL_DIR:-/mnt/models/huggingface}:/root/.cache/huggingface
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - HF_HOME=/root/.cache/huggingface
       - PYTHONUNBUFFERED=1
       # GPU pin (opt-in): empty = all reserved GPUs visible (default — image on cuda:0,
-      # video can use both). Set to e.g. "0" to confine ComfyUI to one card so a chat LLM
-      # can run on the other (the `gpu-mode image-studio` 2-card split passes "0").
+      # video splits across both). Set to e.g. "0" to confine ComfyUI to one card so
+      # another GPU job can use the other. No scene sets this now (`ai-studio` gives
+      # ComfyUI both cards); it stays a manual opt-in.
       # Honored in entrypoint.sh (only exported when non-empty — empty CUDA_VISIBLE_DEVICES
       # would hide ALL GPUs).
       - COMFYUI_CUDA_VISIBLE_DEVICES=${COMFYUI_CUDA_VISIBLE_DEVICES:-}

@@ -33,6 +33,7 @@ weights:
   awq:
     path: qwen3.6-27b-awq-int4
     local_subdir: qwen3.6-27b-awq-int4
+    hf_repo: cyankiwi/Qwen3.6-27B-AWQ-INT4
     size_gb: 17.0
     format: awq
     status: experimental

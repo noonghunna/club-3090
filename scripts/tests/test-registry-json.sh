@@ -43,17 +43,31 @@ need(set(d.keys()) == {"variants", "defaults", "profiles"},
 need(isinstance(d["variants"], list) and d["variants"], "variants must be a non-empty list")
 need(isinstance(d["defaults"], list) and d["defaults"], "defaults must be a non-empty list")
 
-# variants — exactly the parse_variant_rows fields (+ source); port is an int.
+# variants — the parse_variant_rows fields (+ source + configured_ctx +
+# weights_companions/drafter/vision); port is an int.  configured_ctx is the EXACT
+# numeric registry max_ctx int behind ctx_label (the cockpit's divergence badge
+# compares the probe against it).  weights_companions = the per-slug extra weight
+# keys (DFlash draft / mmproj) the cockpit Download fetches alongside the core;
+# drafter / vision are the per-slug facets (display + companion derivation).
 VARIANT_KEYS = {
     "slug", "switch_engine", "launch_engine", "compose_dir", "file", "port",
     "model", "engine", "kvcalc_key", "container", "compose_path", "status",
-    "ctx_label", "status_note", "source",
+    "ctx_label", "configured_ctx", "status_note", "source",
+    "weights_companions", "drafter", "vision",
 }
 v0 = d["variants"][0]
 need(set(v0.keys()) == VARIANT_KEYS,
      f"variant keys mismatch (got {sorted(v0.keys())})")
+# weights_companions is a list; drafter a str; vision a bool.
+need(isinstance(v0["weights_companions"], list),
+     f"variant.weights_companions must be list (got {type(v0['weights_companions']).__name__})")
+need(isinstance(v0["vision"], bool),
+     f"variant.vision must be bool (got {type(v0['vision']).__name__})")
 need(isinstance(v0["port"], int), f"variant.port must be int (got {type(v0['port']).__name__})")
 need(v0["source"] == "curated", f"variant.source default must be 'curated' (got {v0['source']!r})")
+# configured_ctx is an int (or None) — the exact registry max_ctx behind ctx_label.
+need(v0["configured_ctx"] is None or isinstance(v0["configured_ctx"], int),
+     f"variant.configured_ctx must be int|None (got {type(v0['configured_ctx']).__name__})")
 
 # defaults
 DEFAULT_KEYS = {"model", "engine", "topology", "slug", "source"}

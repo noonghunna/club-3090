@@ -9,7 +9,8 @@
 # stock model (e.g. gemma-4-12b) if you'd rather craft through an aligned model; the
 # Sulphur DiT still renders uncensored. See docs/ai-studio/video.md.
 #
-# Pinned to one GPU (default 0) so it coexists with the video model on the other card.
+# Pinned to GPU0 (default) — the ~4.6 GB director coexists there with ComfyUI's GPU0
+# compute (a video render donates its 22B DiT to GPU1 via DisTorch; image/music/SFX are GPU0).
 services:
   studio-director:
     image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}

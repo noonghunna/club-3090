@@ -14,15 +14,17 @@ services:
       # FRESH volume; on an existing volume set it in Admin → Settings → Images instead.
       - ./imagegen.env
     environment:
-      # Chat model — DEFAULT: gemma-4-12b on the spare GPU (coexists with ComfyUI image gen).
-      # Bring it up with `gpu-mode image-studio`; it serves an OpenAI API on :8069 (no auth).
-      - OPENAI_API_BASE_URL=http://host.docker.internal:8069/v1
+      # Chat model — the ai-studio qwen director (:8090, uncensored prompt crafter). The
+      # studio lanes call it internally; exposing it here also gives one general chat model.
+      - OPENAI_API_BASE_URL=http://host.docker.internal:8090/v1
       - OPENAI_API_KEY=sk-noauth
       # Alternative — route chat through LiteLLM (the full catalog, but GPU-mutex with
       # ComfyUI). Swap the two lines above for these:
       #   - OPENAI_API_BASE_URL=http://host.docker.internal:4000/v1
       #   - OPENAI_API_KEY=sk-litellm-master-key
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Ollama removed from the stack 2026-06-22 — disable the API so OWUI doesn't
+      # probe a dead :11434 on boot (chat routes through the OpenAI API above).
+      - ENABLE_OLLAMA_API=false
       # Leave empty → Open WebUI generates a strong random key on first boot and persists it
       # in the data volume (.webui_secret_key). NEVER ship a hardcoded shared secret (it would
       # let anyone forge session tokens). Override via the host env only to share sessions

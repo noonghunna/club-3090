@@ -3,9 +3,9 @@
 # pulls latest on subsequent runs, then launches the ComfyUI server on :8188.
 set -euo pipefail
 
-# Optional GPU pin: confine ComfyUI to specific card(s) so a chat LLM can use the rest
-# (the `gpu-mode image-studio` 2-card split passes "0"). Only export when non-empty —
-# CUDA_VISIBLE_DEVICES="" would hide ALL GPUs.
+# Optional GPU pin: confine ComfyUI to specific card(s) so another GPU job can use the
+# rest. No scene sets this now (`ai-studio` gives ComfyUI both cards); manual opt-in only.
+# Only export when non-empty — CUDA_VISIBLE_DEVICES="" would hide ALL GPUs.
 if [ -n "${COMFYUI_CUDA_VISIBLE_DEVICES:-}" ]; then
     export CUDA_VISIBLE_DEVICES="$COMFYUI_CUDA_VISIBLE_DEVICES"
     echo "[bootstrap] CUDA_VISIBLE_DEVICES pinned to $CUDA_VISIBLE_DEVICES"

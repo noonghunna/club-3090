@@ -31,6 +31,14 @@ class VariantRow:
     ctx_label: str
     status_note: str
 
+    # The EXACT numeric configured ctx (the registry's ``max_ctx`` int behind
+    # ``ctx_label`` — e.g. 262144 for a "262K" label).  Used by the cockpit's
+    # serving-panel divergence badge to compare the probed running ctx against the
+    # slug's CONFIGURED ctx as an exact int (never round-tripping through the
+    # colloquial label).  ``None`` when the registry/emit didn't carry it (the
+    # tab-form fallback, which has no numeric ctx column).
+    configured_ctx: Optional[int] = None
+
     # Stub columns for future enrichment
     fit: str = "·"
     tps: str = "—"

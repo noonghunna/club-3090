@@ -234,37 +234,60 @@ async def detect_from_registry(repo_root: str) -> list["VariantRow"]:
 
 
 def match_target_to_registry(target: ServingTarget, variants: list) -> ServingTarget:
-    """Enrich a ServingTarget with registry metadata by matching port/container.
+    """Enrich a ServingTarget with registry metadata by matching container/port.
+
+    Identity precedence — EXACT first.  A loose ``container in target.container``
+    substring match shadows a real slug whose container name has a longer sibling:
+    ``vllm-qwen36-27b-dual`` is a prefix of ``vllm-qwen36-27b-dual-max`` and
+    ``beellama-carnice-v2`` of ``beellama-carnice-v2-dual``, so the shorter prefix
+    would win and MISLABEL the serving model (and misdirect the targeted stop to a
+    container that isn't running).  Resolve in order:
+      1. EXACT container name (normalized ``_``→``-``) — the authoritative identity.
+      2. EXACT host port.
+      3. SUBSTRING container, LONGEST registry container first — last-resort for a
+         docker project/scale suffix (``<name>-1``); longest-first so a prefix
+         sibling can never shadow the real container.
 
     Accepts list[VariantRow] (core) or list[dict] (compat).
     """
-    for v in variants:
-        # Support both VariantRow objects and dicts
-        if hasattr(v, "container"):
-            container = v.container
-            port = v.port
-            slug = v.slug
-            kvcalc_key = v.kvcalc_key
-            status = v.status
-            status_note = v.status_note
-        else:
-            container = v.get("container", "")
-            port = v.get("port", 0)
-            slug = v.get("slug", "")
-            kvcalc_key = v.get("kvcalc_key", "")
-            status = v.get("status", "")
-            status_note = v.get("status_note", "")
 
-        if target.container and container.replace("_", "-") in target.container:
-            target.slug = slug
-            target.kv_format = kvcalc_key
-            target.status = status
-            target.status_note = status_note
-            return target
-        if port == target.host_port:
-            target.slug = slug
-            target.kv_format = kvcalc_key
-            target.status = status
-            target.status_note = status_note
-            return target
+    def _fields(v):
+        if hasattr(v, "container"):
+            return (v.container, v.port, v.slug, v.kvcalc_key, v.status, v.status_note)
+        return (
+            v.get("container", ""), v.get("port", 0), v.get("slug", ""),
+            v.get("kvcalc_key", ""), v.get("status", ""), v.get("status_note", ""),
+        )
+
+    def _norm(c: str) -> str:
+        return (c or "").replace("_", "-")
+
+    def _apply(fields) -> ServingTarget:
+        _container, _port, slug, kvcalc_key, status, status_note = fields
+        target.slug = slug
+        target.kv_format = kvcalc_key
+        target.status = status
+        target.status_note = status_note
+        return target
+
+    rows = [_fields(v) for v in variants]
+    tcont = _norm(target.container)
+
+    # 1. EXACT container (normalized) — the running container IS this slug.
+    if tcont:
+        for f in rows:
+            if _norm(f[0]) == tcont:
+                return _apply(f)
+    # 2. EXACT host port.
+    if target.host_port:
+        for f in rows:
+            if f[1] == target.host_port:
+                return _apply(f)
+    # 3. SUBSTRING container, longest registry container first (never let a prefix
+    #    sibling shadow the real one).
+    if tcont:
+        for f in sorted(rows, key=lambda r: len(_norm(r[0])), reverse=True):
+            c = _norm(f[0])
+            if c and c in tcont:
+                return _apply(f)
     return target

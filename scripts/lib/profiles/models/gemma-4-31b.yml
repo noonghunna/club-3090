@@ -76,6 +76,7 @@ weights:
   bf16:
     path: gemma-4-31b-bf16
     local_subdir: gemma-4-31b-bf16
+    hf_repo: google/gemma-4-31B-it
     size_gb: 58.0
     format: bf16
     status: historical

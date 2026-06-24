@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import shutil
 import subprocess
 import time
 import uuid
@@ -51,31 +53,60 @@ from .data import (
     CatalogEntry,
     ContainerInfo,
     ContainerTop,
+    DiskUsage,
     DoctorRead,
     DoctorReport,
     EstateDiagnose,
     EstateState,
+    EstateTelemetry,
     EvaluateHandoff,
     EvidenceReport,
     EvidenceTag,
     FitVerdict,
+    GpuCompApp,
     GpuConflict,
     Measurement,
+    MeasuredNumbers,
+    MeasureVsBar,
     OptimizerReport,
     PowerCapState,
     ProfileTriage,
     PromoteScaffold,
+    RamUsage,
     ReconcileResult,
     Scene,
+    SceneServiceState,
+    ServedProbe,
+    StudioModel,
+    VerifyFull,
+    VerifySmoke,
+    WEIGHTS_ABSENT,
+    WEIGHTS_PARTIAL,
+    WEIGHTS_PRESENT,
+    WEIGHTS_UNKNOWN,
+    WeightsMeta,
+    _bench_row_matches,
+    _canon_engine_family,
+    _canon_model_key,
+    _measure_verdict,
+    attribute_gpu_apps,
     bench_row_from_corpus_record,
     bench_rows_from_benchmarks_md,
     compute_promote_scaffold,
+    measured_from_internal_json,
+    measured_from_report_md,
     measurement_from_explain_benchmarks,
     parse_benchmarks_md_for_slug,
+    parse_compute_apps,
+    parse_df_output,
+    parse_docker_ps_id_names,
     parse_docker_top,
     parse_health_text,
+    parse_meminfo,
     parse_power_cap_status,
     parse_profile_triage,
+    parse_verify_full,
+    parse_verify_smoke,
 )
 
 # ── Local card name (this rig) ──────────────────────────────────────────────────
@@ -84,6 +115,68 @@ from .data import (
 # default; ``CockpitData(card=...)`` overrides it.  Detection from nvidia-smi is
 # done lazily in ``detect_local_card`` so headless tests never shell out.
 DEFAULT_CARD = "rtx-3090"
+
+# The default WEIGHTS ROOT — the dir that DIRECTLY holds the model subdirs
+# (``<root>/<subdir>``), the SAME convention setup.sh uses for ``${MODEL_DIR}``
+# (NO extra ``huggingface`` segment appended by us).  On this rig that's
+# ``/mnt/models/huggingface`` (``/mnt/models`` is the volume; ``/mnt/models/gguf``
+# is a back-compat symlink → ``huggingface``).  Resolution prefers the repo .env
+# (the shared config setup.sh reads) over this default — see weights_model_dir.
+# SAFE to surface (it's the model dir, not a secret).
+MODEL_DIR = "/mnt/models/huggingface"
+
+# The studio director GGUF, relative to the weights root (weights_model_dir) — its
+# presence (+ the comfyui-local image) is the "studio is set up" signal.  Kept in
+# lock-step with setup-image-studio.sh's download + gpu-mode's preflight_studio_models.
+STUDIO_DIRECTOR_REL = (
+    "qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/"
+    "Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf"
+)
+
+# The ComfyUI models tree — image/video/audio checkpoints live here (alongside the
+# HF weights root that holds the director).  On this rig /mnt/models/comfyui/models.
+# Env COMFYUI_MODELS_DIR overrides (the same var gpu-mode + the download scripts honour).
+COMFYUI_MODELS_DIR = "/mnt/models/comfyui/models"
+
+# ── ai-studio model manifest — loaded from the SHARED SoT ──────────────────────────
+# scripts/lib/studio-models.tsv is read by BOTH c3 (here) AND gpu-mode's
+# preflight_studio_models, so "what ai-studio needs" is defined once (no canary drift).
+# Loaded relative to the repo this code ships in (__file__) — the manifest is code data;
+# only the model ROOTS (weights vs comfy) are per-rig (resolved at call time).  Roster
+# note: the uncensored picks (Krea / Z-Image / Wan) get appended in the TSV after the
+# bake-off — the detection/progress machinery here is roster-independent.
+STUDIO_MANIFEST_REL = "scripts/lib/studio-models.tsv"
+
+
+def _load_studio_models() -> "list[StudioModel]":
+    tsv = Path(__file__).resolve().parents[3] / STUDIO_MANIFEST_REL
+    models: list[StudioModel] = []
+    try:
+        text = tsv.read_text()
+    except OSError:
+        return models  # defensive — manifest absent (e.g. non-editable install)
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        modality, label, root, rel_path, size_s, installer = (p.strip() for p in parts[:6])
+        try:
+            size = float(size_s)
+        except ValueError:
+            size = 0.0
+        models.append(StudioModel(modality, label, root, rel_path, size, installer))
+    return models
+
+
+STUDIO_MODELS = _load_studio_models()
+
+# Premium-voice (Step-Audio-EditX) container + its GPU need — for the GPU1 video⊕voice
+# mutex guard: voice is ~14 GB on GPU1, and the 22B video DiT donor is the OTHER GPU1
+# tenant, so they're mutually exclusive (§ ai-studio-consolidation-design).
+STUDIO_VOICE_CONTAINER = "studio-step-voice"
+STUDIO_VOICE_GPU_NEED_MIB = 14000
 
 
 # ── Subprocess runner protocol (dependency injection seam) ───────────────────────
@@ -142,6 +235,9 @@ class RealRunner:
 # Detect seam: async callables matching the core signatures.
 DetectEndpointFn = Callable[[], Awaitable[ServingTarget]]
 GetGpuInfoFn = Callable[[], Awaitable[list[GpuInfo]]]
+# A7: probe the live engine for its ACTUAL running config (ctx + image).  Takes
+# the detected ServingTarget (for url / container) and returns a ServedProbe.
+ProbeServedFn = Callable[[Any], Awaitable["ServedProbe"]]
 
 
 # ── The service class ───────────────────────────────────────────────────────────
@@ -166,15 +262,34 @@ class CockpitData:
         runner: Optional[Runner] = None,
         detect_endpoint_fn: Optional[DetectEndpointFn] = None,
         get_gpu_info_fn: Optional[GetGpuInfoFn] = None,
+        probe_served_fn: Optional[ProbeServedFn] = None,
         write_runner: Optional[SubprocessRunner] = None,
+        download_runner: Optional[SubprocessRunner] = None,
     ):
         self.repo_root = Path(repo_root)
         self.card = card
+        # FIX 2 — the registry's top-level ``defaults`` array (curated
+        # per-(model,engine,topology) recommendations) from registry-emit --json.
+        # Surfaced here (not on the per-row CatalogEntry) because it's a catalog
+        # property; ``profile_templates`` reads it to pick a FUNCTIONAL,
+        # registry-recommended representative per (family, topology).  Refreshed
+        # on each ``load_catalog_rows``; empty on the raw-tab fallback path.
+        self.catalog_defaults: list[dict] = []
         self._runner: Runner = runner or RealRunner()
         self._detect_endpoint: DetectEndpointFn = detect_endpoint_fn or core_detect_endpoint
         self._get_gpu_info: GetGpuInfoFn = get_gpu_info_fn or core_get_gpu_info
+        # A7: the live-config probe seam.  Defaults to the real httpx + docker
+        # inspect probe; tests inject a fake so no network / docker is touched.
+        self._probe_served: ProbeServedFn = probe_served_fn or self._real_probe_served
         # Write runner is constructed lazily and NEVER invoked in this phase.
         self._write_runner = write_runner or SubprocessRunner(self.repo_root)
+        # SEPARATE runner for weight downloads (Download UX): a download streams
+        # for minutes/hours, so it must NOT occupy the write-runner (which serves
+        # GPU writes) — otherwise a serve couldn't run while a download is going,
+        # and a second start_raw would clobber the download's process handle.
+        # conftest blocks SubprocessRunner.start_raw at the class level, so this
+        # default is test-safe; download tests inject a fake.
+        self._download_runner = download_runner or SubprocessRunner(self.repo_root)
         # Dual-writer serialization (design §3.2): the reconcile→execute window
         # must be ATOMIC.  Without this, two confirmed plans can both reconcile
         # "safe" before either claims VRAM (TOCTOU).  Held across the whole gate
@@ -249,12 +364,20 @@ class CockpitData:
         )
         if err and not data:
             # Fall back to the raw tab emitter (registry_variant_rows) so the
-            # catalog still loads even if the --json wrapper regresses.
+            # catalog still loads even if the --json wrapper regresses.  The raw
+            # emitter has no `defaults` array, so the profile-template picker
+            # degrades to the status floor (still functional-only).
+            self.catalog_defaults = []
             rows, ferr = await self._load_catalog_rows_fallback()
             if ferr:
                 return [], err
         else:
-            rows = [_variant_row_from_dict(d) for d in (data or {}).get("variants", [])]
+            data = data or {}
+            rows = [_variant_row_from_dict(d) for d in data.get("variants", [])]
+            # FIX 2 — surface the curated defaults so profile_templates can pick
+            # the registry's own recommendation per (family, topology).
+            d = data.get("defaults")
+            self.catalog_defaults = list(d) if isinstance(d, list) else []
 
         return [CatalogEntry(row=r) for r in rows], None
 
@@ -270,6 +393,304 @@ class CockpitData:
         if not res.stdout.strip():
             return [], res.stderr.strip()[:200] or "no rows"
         return parse_variant_rows(res.stdout), None
+
+    # ── Download state (Download UX): which slugs' weights are on disk ────────────
+
+    async def weights_index(self) -> dict[tuple[str, str], WeightsMeta]:
+        """Static weights metadata for every ``(model, variant)`` — ONE
+        ``weights.py list --json`` subprocess, cached for the process (the model
+        profiles are static).  ``{}`` on error (download-state degrades to
+        'unknown'; the catalog still renders)."""
+        cache = getattr(self, "_weights_index_cache", None)
+        if cache is not None:
+            return cache
+        index: dict[tuple[str, str], WeightsMeta] = {}
+        try:
+            res = await self._runner.run(
+                ["python3", "scripts/lib/profiles/weights.py", "list", "--json"],
+                cwd=str(self.repo_root),
+                timeout=20.0,
+            )
+            rows = json.loads(res.stdout) if res.ok and res.stdout.strip() else []
+        except Exception:
+            rows = []
+        for d in rows if isinstance(rows, list) else []:
+            try:
+                m = WeightsMeta.from_dict(d)
+            except Exception:
+                continue
+            if m.model and m.variant:
+                index[(m.model, m.variant)] = m
+        self._weights_index_cache = index
+        return index
+
+    def weights_state_for(
+        self,
+        entry: CatalogEntry,
+        index: dict[tuple[str, str], WeightsMeta],
+        *,
+        model_dir: Optional[str] = None,
+    ) -> tuple[str, Optional[WeightsMeta]]:
+        """Join ``entry`` to its weights meta + stat the model dir → ``(state,
+        meta)``.  PRESENT = subdir has ≥1 verify_glob match; PARTIAL = subdir
+        exists but no match (interrupted / wrong); ABSENT = subdir missing;
+        UNKNOWN = no weights entry to join (e.g. a self-grabbed GGUF compose)."""
+        meta = index.get((entry.model, entry.weights_variant))
+        if meta is None or not meta.subdir:
+            return WEIGHTS_UNKNOWN, meta
+        root = Path(model_dir or self.weights_model_dir())
+        base = root / meta.subdir
+        try:
+            if not base.is_dir():
+                return WEIGHTS_ABSENT, meta
+            if not any(base.glob(meta.verify_glob)):
+                return WEIGHTS_PARTIAL, meta
+            # Core is present — but a slug with companions (a DFlash draft / mmproj
+            # projector its compose mounts) is only truly READY when those are on
+            # disk too; otherwise Start would serve-fail.  Treat a present-core but
+            # missing-companion as PARTIAL so the Download action still fires.  A
+            # companion we can't resolve in the index doesn't block (degrade open).
+            for ck in (getattr(entry, "weights_companions", None) or []):
+                cvar = ck.split(":", 1)[1] if ":" in ck else ck
+                cmeta = index.get((entry.model, cvar))
+                if cmeta is None or not cmeta.subdir:
+                    continue
+                cbase = root / cmeta.subdir
+                if not (cbase.is_dir() and any(cbase.glob(cmeta.verify_glob))):
+                    return WEIGHTS_PARTIAL, meta
+            return WEIGHTS_PRESENT, meta
+        except OSError:
+            return WEIGHTS_UNKNOWN, meta
+
+    async def enrich_weights(
+        self, entries: list[CatalogEntry], *, model_dir: Optional[str] = None
+    ) -> None:
+        """Set each entry's ``weights_state`` + ``weights`` from the index (ONE
+        weights.py call + a stat per entry).  Best-effort — an error leaves the
+        entry at its default 'unknown'.  Mirrors enrich_fits/enrich_measurements:
+        a post-first-paint enrichment, NOT part of the fast registry-only paint."""
+        index = await self.weights_index()
+        for e in entries:
+            try:
+                e.weights_state, e.weights = self.weights_state_for(
+                    e, index, model_dir=model_dir
+                )
+            except Exception:
+                pass
+
+    # ── Download (Download UX): fetch a slug's weights via setup.sh ───────────────
+
+    def weights_download_plan(self, model: str, variant: str) -> ActionPlan:
+        """The download ActionPlan: ``WEIGHT_KEY=<model>:<variant> bash
+        scripts/setup.sh <model>`` (the user's chosen in-repo fetch: whole-repo
+        HF pull + per-file SHA verify).  setup.sh accepts ``WEIGHT_KEY`` directly
+        for an exact catalog entry.  A DISK write, NOT a GPU write — no reconcile
+        gate; the pop-up's Download button is itself the confirm.  ``WEIGHT_KEY``
+        is injected into the child env at run time (run_weights_download), kept
+        off ``cmd`` so the plan stays inspectable."""
+        return ActionPlan(
+            kind="download",
+            cmd=["bash", "scripts/setup.sh", model],
+            description=f"download {model}:{variant} weights (setup.sh)",
+            requires_reconcile=False,
+            requires_confirm=False,
+        )
+
+    async def run_weights_download(
+        self,
+        model: str,
+        variant: str,
+        *,
+        companions: Optional[list[str]] = None,
+        on_line: Optional[Callable[[str], None]] = None,
+    ) -> Any:
+        """Launch the weights download, streamed via the core runner (no GPU
+        claim).  ``WEIGHT_KEY`` selects the core variant; ``companions`` (the
+        slug's registry ``weights_companions`` — a DFlash draft / mmproj projector)
+        are passed as ``WEIGHT_EXTRA_KEYS`` so setup.sh fetches them ALONGSIDE the
+        core (otherwise the slug reads "present" then fails to boot).  ``HF_HOME``
+        is derived from the model dir so HF's staging cache lands on the big models
+        disk (off root).  WIRED-BUT-MOCK-ONLY in tests (conftest blocks the real
+        spawn); returns the streaming run handle."""
+        plan = self.weights_download_plan(model, variant)
+        env = dict(os.environ)
+        env["WEIGHT_KEY"] = f"{model}:{variant}"
+        # Pin setup.sh to the SAME weights root the cockpit reads, so the download
+        # can't land somewhere the cockpit then can't see (setup.sh writes to
+        # ``${MODEL_DIR}/<subdir>``, the same root convention weights_model_dir
+        # now uses).  This is the cockpit↔scripts single-source-of-truth seam.
+        root = self.weights_model_dir()
+        env["MODEL_DIR"] = root
+        comp_keys = [c if ":" in c else f"{model}:{c}" for c in (companions or []) if c]
+        if comp_keys:
+            env["WEIGHT_EXTRA_KEYS"] = " ".join(comp_keys)
+        env.setdefault("HF_HOME", str(Path(root) / ".cache" / "huggingface"))
+        if on_line is not None:
+            self._download_runner.set_callbacks(on_line=on_line)
+        return await self._download_runner.start_raw(
+            plan.cmd, env=env, run_type=plan.kind, parser=None
+        )
+
+    async def run_studio_download(self, *, on_line=None):
+        """Launch the "download all missing ai-studio models" orchestrator DETACHED;
+        returns the streaming run handle (poll ``studio_models_progress`` for the bar,
+        like the weights download).  Pins MODEL_DIR + COMFYUI_MODELS_DIR to the SAME
+        roots the cockpit reads, so the fetch lands where the manifest is checked.
+        Shares the single download runner (only one download runs at a time).
+        WIRED-BUT-MOCK-ONLY in tests (conftest blocks the real spawn)."""
+        plan = self.studio_download_plan()
+        env = dict(os.environ)
+        env["MODEL_DIR"] = self.weights_model_dir()
+        env["COMFYUI_MODELS_DIR"] = self.comfyui_models_dir()
+        env.setdefault("HF_HOME", str(Path(self.weights_model_dir()) / ".cache" / "huggingface"))
+        if on_line is not None:
+            self._download_runner.set_callbacks(on_line=on_line)
+        return await self._download_runner.start_raw(
+            plan.cmd, env=env, run_type=plan.kind, parser=None
+        )
+
+    async def cancel_weights_download(self) -> None:
+        """Cancel the in-flight download (kills the setup.sh/hf process group via
+        the download runner's SIGINT→TERM→KILL).  Best-effort; safe to call when
+        nothing is running."""
+        try:
+            await self._download_runner.cancel()
+        except Exception:
+            pass
+
+    def _dotenv_model_dir(self) -> str:
+        """``MODEL_DIR`` from the repo ``.env`` — the SHARED config setup.sh reads.
+
+        Reading it here lets the cockpit resolve the SAME weights root as the
+        scripts (the single-source-of-truth goal) without re-implementing the
+        convention.  ``""`` if the file is absent / unreadable / has no MODEL_DIR."""
+        try:
+            envf = self.repo_root / ".env"
+            if not envf.is_file():
+                return ""
+            for raw in envf.read_text(encoding="utf-8", errors="replace").splitlines():
+                s = raw.strip()
+                if s.startswith("MODEL_DIR=") and not s.startswith("#"):
+                    return s.split("=", 1)[1].strip().strip('"').strip("'")
+        except OSError:
+            return ""
+        return ""
+
+    def weights_model_dir(self) -> str:
+        """The WEIGHTS ROOT — the dir that DIRECTLY holds the model subdirs
+        (``<root>/<subdir>``), the SAME convention setup.sh uses (no extra
+        ``huggingface`` segment — that double-append was the cockpit↔scripts
+        divergence this resolves).
+
+        Precedence (highest first): an in-app / persisted value (``_model_dir``,
+        set at launch by ``apply_persisted_settings`` from the ``$MODEL_DIR`` env
+        var or the saved settings, or live by the Settings screen) > the
+        ``$MODEL_DIR`` env var (also covers a bare ``CockpitData`` built outside
+        ``__main__`` — tests / embedding) > ``MODEL_DIR`` in the repo ``.env`` (so
+        the cockpit and setup.sh land on the SAME root) > the bundled default."""
+        configured = getattr(self, "_model_dir", None)
+        if configured:
+            return configured
+        env_dir = (os.environ.get("MODEL_DIR") or "").strip()
+        if env_dir:
+            return env_dir
+        dotenv = self._dotenv_model_dir()
+        if dotenv:
+            return dotenv
+        return MODEL_DIR
+
+    # Backup / cruft a user leaves in the model dir when swapping weights (rename
+    # the old GGUF to *.bak, etc.).  EXCLUDED from the byte count — otherwise a
+    # leftover ~= full-size .bak pins download progress at a false ~99%.  NOTE:
+    # hf's in-progress ``*.incomplete`` staging files are deliberately NOT excluded
+    # (they ARE the live download — counting them is what makes the % move).
+    _BACKUP_SUFFIXES = (".bak", ".old", ".orig", ".disabled", ".save")
+
+    def weights_bytes_on_disk(self, meta: WeightsMeta, *, model_dir: Optional[str] = None) -> int:
+        """Total bytes currently under ``<model_dir>/huggingface/<subdir>`` — the
+        download-progress signal.  0 when the dir is absent.  Backup/cruft files
+        (``*.bak`` / ``*.old`` / ``*.orig`` / ``foo~`` …) are skipped so a leftover
+        old-quant copy can't inflate the count; hf's ``*.incomplete`` staging IS
+        counted so live progress tracks the transfer."""
+        base = Path(model_dir or self.weights_model_dir()) / meta.subdir
+        if not base.is_dir():
+            return 0
+        total = 0
+        try:
+            for f in base.rglob("*"):
+                try:
+                    if not f.is_file():
+                        continue
+                    name = f.name.lower()
+                    if name.endswith(self._BACKUP_SUFFIXES) or name.endswith("~"):
+                        continue
+                    total += f.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            return 0
+        return total
+
+    def weights_download_progress(
+        self, meta: WeightsMeta, *, model_dir: Optional[str] = None
+    ) -> Optional[int]:
+        """Download progress % from bytes-on-disk vs ``size_gb`` — ``None`` when
+        size is unknown.  Capped at 99 (100 is reserved for verify-confirmed
+        present, set by re-stat on completion)."""
+        if not meta.size_gb or meta.size_gb <= 0:
+            return None
+        got = self.weights_bytes_on_disk(meta, model_dir=model_dir)
+        pct = int(got / (float(meta.size_gb) * 1e9) * 100)
+        return max(0, min(99, pct))
+
+    def download_set_metas(
+        self, entry: CatalogEntry, index: dict[tuple[str, str], WeightsMeta]
+    ) -> list[WeightsMeta]:
+        """The FULL weight-meta set a slug's download fetches: the core
+        ``weights_variant`` PLUS each companion (resolved via the index).  The
+        download-progress signal must aggregate over this whole set — otherwise a
+        slug whose core is already on disk (only a companion is missing) reads a
+        static ~99% off the core subdir while the companion downloads into its own
+        subdir uncounted.  Companions that don't resolve in the index are skipped."""
+        metas: list[WeightsMeta] = []
+        core = index.get((entry.model, entry.weights_variant))
+        if core is not None:
+            metas.append(core)
+        for ck in (entry.weights_companions or []):
+            cvar = ck.split(":", 1)[1] if ":" in ck else ck
+            cm = index.get((entry.model, cvar))
+            if cm is not None:
+                metas.append(cm)
+        return metas
+
+    def weights_download_progress_set(
+        self, metas: list[WeightsMeta], *, model_dir: Optional[str] = None
+    ) -> Optional[int]:
+        """Aggregate download progress across a set (core + companions): total
+        bytes-on-disk / total ``size_gb``, capped at 99.  ``None`` when no size is
+        known.  This is the value the cockpit shows for an in-flight download so
+        the % MOVES as each artifact lands (vs the core-only static-99 trap)."""
+        total_size = sum(float(m.size_gb) for m in metas if m.size_gb)
+        if total_size <= 0:
+            return None
+        got = sum(self.weights_bytes_on_disk(m, model_dir=model_dir) for m in metas)
+        return max(0, min(99, int(got / (total_size * 1e9) * 100)))
+
+    def weights_fits_disk(
+        self, meta: WeightsMeta, *, model_dir: Optional[str] = None
+    ) -> tuple[bool, float, float]:
+        """Disk pre-check before a download → ``(fits, free_gb, need_gb)``.
+        ``need`` carries a 10% headroom over ``size_gb``.  Fits=True (unknown
+        free / unknown size) when it can't be determined — never block on a
+        read error, just skip the guard."""
+        need = float(meta.size_gb or 0) * 1.10
+        try:
+            free_gb = shutil.disk_usage(model_dir or self.weights_model_dir()).free / 1e9
+        except OSError:
+            return True, 0.0, need
+        if need <= 0:
+            return True, free_gb, need
+        return (free_gb >= need), free_gb, need
 
     # enrich_measurements still fans out one switch --explain per slug; a
     # cap-bounded asyncio.gather keeps that to a few seconds without flooding
@@ -420,6 +841,185 @@ class CockpitData:
             )
         return infos
 
+    def _known_service_dirs(self) -> list[str]:
+        """Enumerate the KNOWN supporting services from the repo's
+        ``services/<name>/docker-compose.yml`` tree (READ — a filesystem scan).
+
+        These are the rig's full supporting estate (ComfyUI / LiteLLM / OpenWebUI
+        / Qdrant / SearXNG / Studio …); a service is "known" if its
+        directory carries a ``docker-compose.yml``.  Returns the sorted service
+        names; empty when the tree is absent (e.g. the test fake root)."""
+        base = self.repo_root / "services"
+        names: list[str] = []
+        try:
+            for child in sorted(base.iterdir()):
+                if not child.is_dir():
+                    continue
+                if (child / "docker-compose.yml").is_file() or (
+                    child / "docker-compose.yaml"
+                ).is_file():
+                    names.append(child.name)
+        except (OSError, FileNotFoundError):
+            return []
+        return names
+
+    async def _running_container_ports(self) -> list[tuple[str, int]]:
+        """READ — every running container as ``(name, first-published-host-port)``
+        via ``docker ps``, INDEPENDENT of ``_classify_container_kind`` (so the
+        non-GPU supporting services ``_docker_ps_stack_containers`` filters out are
+        included).  The de-dup + port source for :meth:`_merge_known_services`.
+        Goes through the injected runner so tests stay mockable; failures degrade
+        to an empty list (callers bias toward running / no-port).
+
+        The port is the FIRST published host port (``:(\\d+)->`` in the docker-ps
+        ``Ports`` field — a GENERAL match, not the engine-only ``PORT_MAP_BROAD_RE``
+        whose internal-port allow-list would miss a web service like litellm:4000)."""
+        res = await self._runner.run(
+            ["docker", "ps", "--format", "{{.Names}}|{{.Ports}}"],
+            cwd=str(self.repo_root),
+            timeout=10.0,
+        )
+        if not res.ok:
+            return []
+        out: list[tuple[str, int]] = []
+        for line in res.stdout.splitlines():
+            if "|" not in line:
+                # Tolerate a name-only canned response (tests / `{{.Names}}`).
+                name = line.strip()
+                if name:
+                    out.append((name, 0))
+                continue
+            name, ports_str = line.split("|", 1)
+            name = name.strip()
+            if not name:
+                continue
+            m = _HOST_PORT_RE.search(ports_str)
+            out.append((name, int(m.group(1)) if m else 0))
+        return out
+
+    async def _merge_known_services(
+        self, running: list[ContainerInfo]
+    ) -> list[ContainerInfo]:
+        """Union the running stack containers with the KNOWN ``services/`` estate.
+
+        The set = {running stack containers} ∪ {known ``services/`` entries}.
+        Each known service dir resolves to one of three outcomes:
+
+        - **already a stack row** (a GPU service surfaced by
+          ``_docker_ps_stack_containers`` — ComfyUI / Step-Audio): omitted here,
+          it's already represented (running) in ``running``;
+        - **running, but NOT a stack row** (a non-GPU supporting service —
+          ``litellm`` / ``qdrant`` / ``searxng`` / ``open-webui``):
+          appended as a **running** ``status="running"`` ContainerInfo so it
+          shows live with working actions (logs / top / restart / stop / rm);
+        - **not running at all**: appended as a greyed, read-only
+          ``status="stopped"`` ContainerInfo.
+
+        The running/stopped decision keys off the FULL ``docker ps`` set
+        (``_running_container_ports``), NOT ``_docker_ps_stack_containers`` —
+        the latter drops every non-GPU supporting service via
+        ``_classify_container_kind``, so a RUNNING ``litellm`` would otherwise be
+        falsely rendered "stopped" and its actions wrongly suppressed.  Matching
+        NORMALIZES both sides (lowercase, strip ``-``/``_``) so a service dir
+        ``open-webui`` matches a running container named ``openwebui``.  Bias is
+        toward running: the running-set read failing degrades to an EMPTY set, so
+        on a transient read miss only genuinely-known services fall through to
+        "stopped" — a possibly-live service is never action-suppressed on a stale
+        read of the un-classified set (the classified stack rows still count)."""
+        out = list(running)
+        # (actual container name, host port) for every running container, so a
+        # matched supporting service carries BOTH the port it serves on AND its
+        # real container name.
+        running_pairs = await self._running_container_ports()
+        # Names already present as stack rows (GPU services + engines/estate) —
+        # those service dirs are de-duped (omitted) since they're already a row.
+        stack_norm = {_normalize_service_name(c.name) for c in running}
+        stack_norm.discard("")
+        for svc in self._known_service_dirs():
+            if any(_service_dir_matches_running(svc, sn) for sn in stack_norm):
+                continue  # already a (running) stack row — don't duplicate
+            # Find the matching RUNNING container — capture its ACTUAL name + port.
+            # The container name MAY differ from the service dir (services/openwebui/
+            # → container_name "open-webui"), so the row MUST carry the real name or
+            # stop / restart / logs would target a non-existent container.
+            match_name: Optional[str] = None
+            match_port = 0
+            for orig, port in running_pairs:
+                norm = _normalize_service_name(orig)
+                if norm and _service_dir_matches_running(svc, norm):
+                    match_name, match_port = orig, port
+                    break
+            is_running = match_name is not None
+            # Engine label (mirrors the running path so a service reads the same
+            # stopped or running): non-GPU supporting services (litellm / qdrant /
+            # searxng / open-webui) → "web"; GPU rig services → comfyui carries its
+            # own name, the rest (step-audio / studio-*) → "studio".
+            if _classify_container_kind(svc) is None:
+                engine = "web"
+            elif _normalize_service_name(svc) == "comfyui":
+                engine = "comfyui"
+            else:
+                engine = "studio"
+            out.append(
+                ContainerInfo(
+                    # real container name when up (for stop/restart/logs); the dir
+                    # name when down (service_start uses it for the compose path).
+                    name=match_name if is_running else svc,
+                    kind="service",
+                    status="running" if is_running else "stopped",
+                    engine=engine,
+                    host_port=match_port,
+                )
+            )
+        return out
+
+    async def _stopped_studio_containers(
+        self, existing: list[ContainerInfo]
+    ) -> list[ContainerInfo]:
+        """Stopped-but-EXISTING GPU rig services + AI-studio stacks (comfyui /
+        step-audio / studio-* ) from ``docker container ls -a``.
+
+        These are scene-managed containers (the image-studio / video-studio
+        bundles) that EXIST on disk even when their scene is down — but the running
+        ``docker ps`` view doesn't show them and they aren't top-level
+        ``services/<name>/`` dirs, so they'd otherwise be invisible in the
+        Containers tab.  Surfacing them lets the user see + operate them.
+
+        Only the ``service`` / ``stack`` kinds are surfaced — a stopped ENGINE
+        container (an old vLLM/llama.cpp run) is deliberately excluded so the table
+        isn't buried in stale engine cruft (engines are managed via serve).  Anything
+        already in ``existing`` (running, or a known service dir) is de-duped.
+
+        Uses ``docker container ls -a`` (NOT ``docker ps -a``) so the read can't be
+        confused with the running-only ``docker ps`` probe.  A failed read degrades
+        to an empty list."""
+        res = await self._runner.run(
+            ["docker", "container", "ls", "-a", "--format", "{{.Names}}"],
+            cwd=str(self.repo_root),
+            timeout=10.0,
+        )
+        if not res.ok:
+            return []
+        have = {_normalize_service_name(c.name) for c in existing}
+        have.discard("")
+        out: list[ContainerInfo] = []
+        for line in res.stdout.splitlines():
+            name = line.split("|", 1)[0].strip()  # tolerate name|... test shapes
+            if not name:
+                continue
+            kind = _classify_container_kind(name)
+            if kind not in ("service", "stack"):
+                continue  # only GPU services + studio stacks (skip engines/estate)
+            norm = _normalize_service_name(name)
+            if norm in have:
+                continue  # already surfaced (running, or a known dir)
+            have.add(norm)
+            engine = "comfyui" if norm == "comfyui" else "studio"
+            out.append(
+                ContainerInfo(name=name, kind=kind, status="stopped", engine=engine)
+            )
+        return out
+
     async def _docker_ps_stack_containers(
         self,
     ) -> list[tuple[str, int, int, str, str]]:
@@ -462,6 +1062,11 @@ class CockpitData:
             engine = ""
             if kind == "engine":
                 engine = _classify_engine_from_container(name)
+            elif kind in ("service", "stack"):
+                # GPU rig services + AI-studio stacks aren't LLM engines; label them
+                # so the column isn't a bare "—" (parallels "web" for the supporting
+                # services).  ComfyUI carries its own name; the rest read "studio".
+                engine = "comfyui" if _normalize_service_name(name) == "comfyui" else "studio"
             matched_port = False
             for match in PORT_MAP_BROAD_RE.finditer(ports_str):
                 host_port = int(match.group(1))
@@ -476,12 +1081,18 @@ class CockpitData:
                 out.append((name, host_port, internal_port, eng, kind))
                 matched_port = True
             if not matched_port:
-                # A GPU-holding container with no published port (common for
-                # estate / service containers) is still a conflict.
-                key = (name, 0)
+                # PORT_MAP_BROAD_RE only knows the ENGINE internal ports
+                # (8000/8080/30000), so a service on another port (comfyui :8188,
+                # studio-* :819x) matches nothing above.  Fall back to the GENERAL
+                # host-port matcher so it still surfaces with its real port; a
+                # genuinely port-less GPU container (estate) keeps host_port 0 but
+                # is still recorded (it's a conflict the gate must see).
+                m = _HOST_PORT_RE.search(ports_str)
+                host_port = int(m.group(1)) if m else 0
+                key = (name, host_port)
                 if key not in seen:
                     seen.add(key)
-                    out.append((name, 0, 0, engine, kind))
+                    out.append((name, host_port, 0, engine, kind))
         return out
 
     # ── READ: container logs ──────────────────────────────────────────────────────
@@ -533,16 +1144,57 @@ class CockpitData:
             target = match_target_to_registry(target, variants)
             state.matched_slug = target.slug
         state.target = target
+
+        # A7: PROBE the live engine for its ACTUAL running config (ctx + image),
+        # so the serving panel shows what's REALLY running, not the catalog slug's
+        # claim.  READ-only (httpx GET /v1/models + docker inspect); best-effort —
+        # a failed probe leaves an empty ServedProbe and the panel falls back to
+        # the catalog claim (clearly labelled).  Only probe when something is
+        # actually serving (a url or container was detected).
+        if getattr(target, "url", "") or getattr(target, "container", ""):
+            try:
+                state.served = await self._probe_served(target)
+            except Exception as exc:  # pragma: no cover - defensive
+                state.served = ServedProbe(error=str(exc)[:120])
         state.gpus = list(getattr(target, "gpus", []) or [])
         if not state.gpus:
             # detect may not populate GPUs if no engine running; query directly.
             try:
                 state.gpus = await self._get_gpu_info()
-            except Exception:
+            except Exception as exc:
                 state.gpus = []
+                # NH4: a pure nvidia-smi failure would otherwise leave the rail
+                # silently GPU-less with no cue.  Record a cue (don't clobber a
+                # docker/detect error that's already more specific).
+                if not state.error:
+                    state.error = (
+                        "nvidia-smi unreachable — GPU read failed "
+                        f"({str(exc).strip()[:120]})"
+                    )
 
-        # containers
-        state.containers = await self.containers(variants=variants)
+        # containers — running stack containers, plus the KNOWN supporting
+        # services (services/<name>/docker-compose.yml) that are NOT currently
+        # running, rendered as stopped so the user sees the full estate.
+        #
+        # A2/N2: this is the READ path.  ``containers()`` →
+        # ``_docker_ps_stack_containers`` RAISES on a failed/timed-out docker ps
+        # (fail-closed — load-bearing for the reconcile WRITE gate, which catches
+        # it itself).  Here on the READ side a raise would crash the load_estate
+        # worker and leave the panes blank (or worse, show a calm "no model
+        # serving" false-idle).  CATCH it, record state.error, and return a
+        # PARTIAL snapshot (GPUs/doctor/scenes still rendered) so the UI can show
+        # an honest "docker unreachable" strip instead of crashing or lying.  The
+        # WRITE gate keeps its own raise → writes still fail loudly.
+        try:
+            running = await self.containers(variants=variants)
+            merged = await self._merge_known_services(running)
+            state.containers = merged + await self._stopped_studio_containers(merged)
+        except Exception as exc:
+            state.error = (
+                "docker unreachable — daemon running? in the docker group? "
+                f"({str(exc).strip()[:120]})"
+            )
+            state.containers = []
 
         # scenes (gpu-mode --list-modes --json)
         state.scenes = await self.scenes()
@@ -559,14 +1211,377 @@ class CockpitData:
 
         return state
 
+    # ── UX Batch 5: estate telemetry (disk / RAM / GPU-VRAM attribution) ──────────
+
+    async def estate_telemetry(self) -> EstateTelemetry:
+        """READ the Batch-5 host telemetry in ONE batched pass (piggybacks the
+        Operate 4 s tick — no new timer, no per-keystroke storm).
+
+        Three read groups, each best-effort + caught (a single failure records a
+        cue string and degrades that group, never crashes the pane, never shows a
+        silent false-zero — the B2 "A2" honesty rule):
+
+          1. **Disk (#12)** — ``df -B1 <repo> /mnt/models`` (ONE call, both
+             mounts).  Same-device de-dup happens in ``parse_df_output``.
+          2. **RAM (N5)**  — ``cat /proc/meminfo`` → MemTotal / MemAvailable.
+          3. **GPU attribution** — ``nvidia-smi --query-compute-apps`` for the
+             per-card VRAM holders, then a per-pid ``cat /proc/<pid>/cgroup`` +
+             ``docker ps --no-trunc`` id→name map to attribute each holder to its
+             container.  Graceful degradation: if the cgroup/ps map fails the
+             holder still shows (pid + VRAM, no name).
+
+        All I/O goes through the injected runner so tests feed canned df /
+        meminfo / nvidia-smi / cgroup stdout — no stdlib disk/file read that a
+        test can't intercept."""
+        tel = EstateTelemetry()
+        errors: list[str] = []
+
+        # ── (1) disk (#12) ────────────────────────────────────────────────────
+        try:
+            repo_path = str(self.repo_root)
+            models_path = self.weights_model_dir()   # the configured weights root
+            label_for_path = {repo_path: "repo", models_path: "models"}
+            # ``-P`` forces POSIX one-line-per-filesystem output (no device-name
+            # wrap → the parser keys off field POSITION, never breaks).  We parse
+            # stdout whenever it is non-empty REGARDLESS of returncode: df exits
+            # rc=1 when one of the paths (e.g. /mnt/models, a separate drive) is
+            # missing/unmounted, but STILL prints the valid rows for the paths it
+            # COULD stat to stdout (the error goes to stderr).  Gating on rc would
+            # discard a perfectly-good repo bar.
+            res = await self._runner.run(
+                ["df", "-P", "-B1", repo_path, models_path],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+            if res.stdout.strip():
+                tel.disks = parse_df_output(res.stdout, label_for_path)
+            if not tel.disks:
+                errors.append("disk read failed (df)")
+        except Exception as exc:  # pragma: no cover - defensive
+            errors.append(f"disk read failed ({str(exc).strip()[:60]})")
+
+        # ── (2) RAM (N5) ──────────────────────────────────────────────────────
+        try:
+            res = await self._runner.run(
+                ["cat", "/proc/meminfo"],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+            if res.ok and res.stdout.strip():
+                tel.ram = parse_meminfo(res.stdout)
+            else:
+                tel.ram = RamUsage(error="meminfo read failed")
+            if tel.ram.error:
+                errors.append(tel.ram.error)
+        except Exception as exc:  # pragma: no cover - defensive
+            tel.ram = RamUsage(error=f"meminfo read failed ({str(exc).strip()[:60]})")
+            errors.append(tel.ram.error)
+
+        # ── (3) GPU-VRAM → container attribution ──────────────────────────────
+        try:
+            tel.gpu_apps, tel.attribution_degraded = await self._gpu_attribution()
+        except Exception as exc:  # pragma: no cover - defensive
+            tel.gpu_apps = {}
+            tel.attribution_degraded = True
+            errors.append(f"gpu attribution failed ({str(exc).strip()[:60]})")
+
+        tel.error = " · ".join(errors)
+        return tel
+
+    async def _gpu_attribution(self) -> tuple[dict[Optional[int], list[GpuCompApp]], bool]:
+        """Map the live CUDA compute-apps → owning containers (best-effort).
+
+        Reads ``nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory`` (the
+        gpu_uuid leg lets us bucket a holder onto its physical card; absent that
+        the holder lands under the ``None`` bucket — still attributed by VRAM,
+        just not pinned to a specific card, rather than mis-pinned to GPU0),
+        then resolves each pid → container via ``/proc/<pid>/cgroup`` (docker id)
+        ⨯ a ``docker ps --no-trunc`` id→name map.
+
+        GRACEFUL DEGRADATION: a failed nvidia-smi → empty map (no crash); a pid
+        whose cgroup is unreadable / non-docker / not in the ps map → the holder
+        keeps an empty container name (the card shows pid + VRAM, no fabricated
+        owner)."""
+        # The compute-apps query — gpu_uuid lets us bucket by physical card.
+        res = await self._runner.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=gpu_uuid,pid,used_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            cwd=str(self.repo_root),
+            timeout=10.0,
+        )
+        if not res.ok or not res.stdout.strip():
+            return {}, False
+        # Build (gpu_uuid, app) pairs.  parse_compute_apps wants pid,used cols, so
+        # we strip the uuid prefix per line but keep it for bucketing.
+        uuid_for_app: dict[int, str] = {}
+        app_lines: list[str] = []
+        for line in res.stdout.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 3 and parts[1].isdigit():
+                uuid_for_app[int(parts[1])] = parts[0]
+                app_lines.append(f"{parts[1]}, {parts[2]}")
+            elif len(parts) == 2 and parts[0].isdigit():
+                # No uuid column (older nvidia-smi) — pid,used only.
+                app_lines.append(line)
+        apps = parse_compute_apps("\n".join(app_lines))
+        if not apps:
+            return {}, False
+
+        # Map gpu_uuid → index via a separate query (cheap; one extra read).
+        uuid_to_index = await self._gpu_uuid_index_map()
+
+        # Resolve each pid → cgroup body, and read the docker ps id→name map ONCE.
+        cgroup_by_pid: dict[int, str] = {}
+        for app in apps:
+            try:
+                cg = await self._runner.run(
+                    ["cat", f"/proc/{app.pid}/cgroup"],
+                    cwd=str(self.repo_root),
+                    timeout=5.0,
+                )
+                cgroup_by_pid[app.pid] = cg.stdout if cg.ok else ""
+            except Exception:  # pragma: no cover - defensive
+                cgroup_by_pid[app.pid] = ""
+        id_to_name = await self._docker_ps_id_names()
+
+        apps, degraded = attribute_gpu_apps(apps, cgroup_by_pid, id_to_name)
+
+        # Bucket the attributed apps onto their physical card.  When the uuid→index
+        # map failed (secondary nvidia-smi read skewed/empty) we DON'T default to
+        # index 0 — that would mis-pin a GPU1 holder under GPU0's "held by:" line.
+        # Instead the holder buckets under ``None`` (a neutral, card-agnostic
+        # heading); VRAM totals stay honest, the card attribution just isn't claimed.
+        by_index: dict[Optional[int], list[GpuCompApp]] = {}
+        for app in apps:
+            uuid = uuid_for_app.get(app.pid, "")
+            idx = uuid_to_index.get(uuid)  # None when unresolved → not pinned to a card
+            app.gpu_index = idx
+            by_index.setdefault(idx, []).append(app)
+        return by_index, degraded
+
+    async def _gpu_uuid_index_map(self) -> dict[str, int]:
+        """``nvidia-smi --query-gpu=uuid,index`` → {uuid: index} (best-effort, {}
+        on failure → holders bucket under ``None``, still attributed by VRAM but
+        not pinned to a specific card)."""
+        try:
+            res = await self._runner.run(
+                ["nvidia-smi", "--query-gpu=uuid,index", "--format=csv,noheader,nounits"],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+        except Exception:  # pragma: no cover - defensive
+            return {}
+        if not res.ok:
+            return {}
+        out: dict[str, int] = {}
+        for line in res.stdout.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2 and parts[1].isdigit():
+                out[parts[0]] = int(parts[1])
+        return out
+
+    async def _docker_ps_id_names(self) -> dict[str, str]:
+        """``docker ps --no-trunc --format '{{.ID}} {{.Names}}'`` → {id: name}
+        for pid→container resolution.  Degrades to {} on failure (holders show
+        nameless — graceful, never a crash)."""
+        try:
+            res = await self._runner.run(
+                ["docker", "ps", "--no-trunc", "--format", "{{.ID}} {{.Names}}"],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+        except Exception:  # pragma: no cover - defensive
+            return {}
+        if not res.ok:
+            return {}
+        return parse_docker_ps_id_names(res.stdout)
+
+    async def _real_probe_served(self, target: Any) -> ServedProbe:
+        """A7: probe the live engine for its ACTUAL running config (READ-only).
+
+        Two legs, both best-effort (a failed leg leaves its field empty so the
+        UI falls back to the catalog claim, clearly labelled):
+          - ``GET <url>/v1/models`` → ``max_model_len`` + served model id (vLLM
+            exposes the running context per model id; llama.cpp omits it, so the
+            field stays None and the panel labels ctx "(per catalog slug)").
+          - ``docker inspect <container> --format '{{.Image}}'`` → the engine
+            image (CLAUDE.md: ``vllm.__version__`` lags the docker tag, so the
+            image digest is ground truth).
+
+        NEVER run in tests — the probe seam is injected with a fake (conftest also
+        hard-blocks the real subprocess/httpx path)."""
+        probe = ServedProbe()
+        url = (getattr(target, "url", "") or "").strip()
+        container = (getattr(target, "container", "") or "").strip()
+        # Leg 1: /v1/models (httpx).
+        if url:
+            try:
+                import httpx  # local import — only the real probe needs it
+
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(f"{url}/v1/models")
+                    if resp.status_code == 200:
+                        data = (resp.json() or {}).get("data", []) or []
+                        if data:
+                            first = data[0] or {}
+                            probe.served_model = str(first.get("id", "") or "")
+                            mml = first.get("max_model_len")
+                            if mml is not None:
+                                try:
+                                    probe.max_model_len = int(mml)
+                                except (TypeError, ValueError):
+                                    pass
+            except Exception as exc:
+                probe.error = f"models probe: {str(exc)[:80]}"
+        # Leg 2: docker inspect image (READ).
+        if container:
+            res = await self._runner.run(
+                ["docker", "inspect", container, "--format", "{{.Config.Image}}"],
+                cwd=str(self.repo_root),
+                timeout=10.0,
+            )
+            img = (res.stdout or "").strip()
+            if img and res.returncode == 0:
+                probe.image = img
+        return probe
+
+    async def comfyui_image_present(self) -> bool:
+        """READ — is the locally-built ``comfyui-local:latest`` image present?
+
+        The studio scenes (comfyui / image-studio / video-studio) + the comfyui
+        service all need it, and it isn't a registry pull — so its ABSENCE is the
+        reliable "the user hasn't run ``setup-image-studio.sh`` yet" signal the
+        cockpit uses to guide a setup instead of a doomed start.
+
+        ``docker images -q`` returns the id when present, empty when absent, rc=0
+        in BOTH cases — so only a CLEAN empty result counts as absent.  A failed
+        read (docker unreachable) biases toward PRESENT so a transient hiccup never
+        false-blocks (a real docker outage surfaces via the estate poll anyway).
+        Routed through the injected runner so tests stay mockable."""
+        res = await self._runner.run(
+            ["docker", "images", "-q", "comfyui-local:latest"],
+            cwd=str(self.repo_root),
+            timeout=10.0,
+        )
+        if not res.ok:
+            return True  # read failed — don't false-block
+        return bool((res.stdout or "").strip())
+
+    async def studio_ready(self) -> bool:
+        """Is the studio bundle set up enough to start? — the comfyui-local image
+        is built AND the studio director GGUF is on disk.
+
+        Either missing ⇒ the studio scene / comfyui-start guard points the user at
+        setup-image-studio.sh instead of a bundle that boots broken (no image → no
+        ComfyUI; no director GGUF → the 🖼️ prompt crafter has no model).  Mirrors
+        gpu-mode's preflight_studio_models so the cockpit catches it BEFORE the
+        scene-switch confirm (gpu-mode is the backstop on the switch itself)."""
+        if not await self.comfyui_image_present():
+            return False
+        director = Path(self.weights_model_dir()) / STUDIO_DIRECTOR_REL
+        return director.is_file()
+
+    def comfyui_models_dir(self) -> str:
+        """The ComfyUI models tree root (image/video/audio checkpoints).  Env
+        COMFYUI_MODELS_DIR overrides the on-rig default."""
+        return os.environ.get("COMFYUI_MODELS_DIR") or COMFYUI_MODELS_DIR
+
+    def _studio_model_path(self, m: StudioModel) -> Path:
+        root = self.weights_model_dir() if m.root == "weights" else self.comfyui_models_dir()
+        return Path(root) / m.rel_path
+
+    def studio_missing_models(self) -> list[StudioModel]:
+        """Which ai-studio manifest models are NOT on disk — the first-install gap.
+        READ — a pure filesystem scan (the canary file per model), safe to call
+        before the scene-switch confirm.  Order preserves the manifest (director →
+        image → video → audio) so the modal can group by modality."""
+        missing: list[StudioModel] = []
+        for m in STUDIO_MODELS:
+            try:
+                if not self._studio_model_path(m).exists():
+                    missing.append(m)
+            except OSError:
+                missing.append(m)
+        return missing
+
+    def studio_models_progress(self) -> Optional[int]:
+        """Coarse % of the ai-studio model set on disk, by SIZE (present models'
+        size_gb / total).  None when the manifest has no sizes.  Drives the download
+        modal's progress bar — polled like the catalog-download set progress, so the
+        download can run detached and the modal just reflects what's landed."""
+        total = sum(m.size_gb for m in STUDIO_MODELS)
+        if total <= 0:
+            return None
+        # Completion keys off the MISSING LIST (exact presence), not a float compare —
+        # nothing missing ⇒ 100; otherwise cap at 99 so it never reads "done" while a
+        # model is still absent.
+        missing = self.studio_missing_models()
+        if not missing:
+            return 100
+        present = total - sum(m.size_gb for m in missing)
+        return max(0, min(99, int(present / total * 100)))
+
+    def studio_download_plan(self) -> ActionPlan:
+        """Plan for "download all missing ai-studio models" — runs the orchestrator
+        (services/comfyui/download_studio_models.sh): idempotent, skips what's on disk,
+        fetches what's missing.  A DISK/network write, NOT a GPU write → no reconcile
+        gate; the setup modal's Download button is itself the confirm.  Progress is
+        POLLED (studio_models_progress), not streamed, so it runs detached and the modal
+        just reflects what's landed."""
+        return ActionPlan(
+            kind="studio-download",
+            cmd=["bash", "services/comfyui/download_studio_models.sh"],
+            description="download all missing ai-studio models",
+            requires_reconcile=False,
+            requires_confirm=False,
+        )
+
+    def studio_voice_blocked(self, tel, *, voice_card: Optional[int] = None) -> Optional[str]:
+        """GPU1 video⊕voice mutex: is starting premium voice (Step-Audio-EditX, ~14 GB
+        on GPU1) blocked by a video render already holding that card?  Returns a reason
+        string to refuse, or None to allow.  Reads the polled GPU telemetry's per-card
+        VRAM holders.  Telemetry-honest: None telemetry ⇒ ALLOW (never false-block on a
+        missing read — the gpu-mode/ComfyUI OOM is the backstop)."""
+        if tel is None:
+            return None
+        try:
+            card = int(voice_card if voice_card is not None
+                       else os.environ.get("STEP_VOICE_CUDA", "1"))
+        except (TypeError, ValueError):
+            card = 1
+        holders = (getattr(tel, "gpu_apps", None) or {}).get(card, []) or []
+        used = sum(int(getattr(h, "used_mib", 0) or 0) for h in holders)
+        if (24576 - used) >= STUDIO_VOICE_GPU_NEED_MIB:   # ~24 GB card; ~14 GB needed
+            return None
+        names = ", ".join(sorted({h.container for h in holders if getattr(h, "container", "")})) or "a render"
+        return (f"GPU{card} is busy (~{used // 1024} GB used by {names}) — premium voice needs "
+                f"~14 GB there.  Stop the video render (or wait for it), then start voice.")
+
     async def scenes(self) -> list[Scene]:
-        """gpu-mode --list-modes --json → Scene list."""
+        """gpu-mode --list-modes --json → Scene list.
+
+        Hides the COMMAND modes — ``power-cap`` (its own [c] menu), ``prune`` /
+        ``prune-all`` (removed from the cockpit): they're not GPU *scenes* you'd
+        ⏎-switch to, yet --list-modes lists them (it mirrors the CLI dispatch).
+        Everything else is a real scene, incl. ``off`` and ``chat`` (the ops-group
+        browser-chat stack) and the models / studio scenes."""
         data, _ = await self._run_json(
             ["bash", "scripts/gpu-mode.sh", "--list-modes", "--json"], timeout=30.0
         )
         if not isinstance(data, list):
             return []
-        return [Scene.from_dict(d) for d in data]
+        hidden = {"power-cap", "prune", "prune-all"}
+        kept = [s for s in (Scene.from_dict(d) for d in data) if s.name not in hidden]
+        # Cluster by group (models → studio → ops) for the Orchestration table —
+        # stable within a group (preserves catalog order).  Without this the table
+        # renders raw catalog order, which splits the ops scenes apart (chat at the
+        # top, off near the bottom) and reads as ungrouped.
+        rank = {"models": 0, "studio": 1, "ops": 2}
+        kept.sort(key=lambda s: rank.get(s.group, 3))   # list.sort is stable
+        return kept
 
     async def doctor_read(self, url: Optional[str] = None) -> DoctorRead:
         """health.sh (text-only) → parsed DoctorRead."""
@@ -651,11 +1666,27 @@ class CockpitData:
             result.note = f"docker ps read failed: {exc}"
             result.safe = False
             return result
+        # Is a WANTED card actually occupied right now (>512 MiB rules out
+        # driver/compositor noise)?  An unknown-GPU container is only a teardown
+        # CONFLICT when there is real contention — a running-but-idle service
+        # (e.g. the studio stack at 0 GiB on free cards) is nothing a serve onto
+        # free cards needs to stop, so it must NOT be cried-wolf as a conflict.
+        # When a wanted card IS busy we stay conservative (the holder may be
+        # unnamed); the raw-VRAM gpu_conflicts pass below is the fail-closed
+        # backstop in EITHER case, so the `safe` verdict never weakens.
+        wanted_busy = any(
+            getattr(g, "index", -1) in wanted and getattr(g, "mem_used_mib", 0) > 512
+            for g in gpus
+        )
         for c in containers:
             known = _container_gpu_set(c)
-            if known is not None and not (known & wanted):
-                continue  # container provably on other card(s) only
-            result.conflicts.append(c)
+            if known is not None:
+                if known & wanted:
+                    result.conflicts.append(c)  # provably on a wanted card
+                continue  # known set: authoritative (empty/other-card → not a conflict)
+            # Unknown GPU set → conflict only when a wanted card is occupied.
+            if wanted_busy:
+                result.conflicts.append(c)
 
         # 2. Raw GPU occupancy — a card with meaningful VRAM in use is occupied
         #    even if we can't name the container (e.g. a bare llama-server).
@@ -741,6 +1772,94 @@ class CockpitData:
             requires_reconcile=True,
         )
 
+    # ── Producer lane ② Serve — generate a compose, then serve it untested ─────────
+
+    async def generate_compose(
+        self, slug: str, *, accept_degraded: bool = False
+    ) -> dict[str, Any]:
+        """Generate a minimal compose for the CATALOG profile ``slug`` via
+        scripts/generate-compose.sh.
+
+        Producer-lane ② Serve step.  Shells ``generate-compose.sh --profile <slug>
+        --out <tmpfile> [--accept-degraded]`` (cwd repo_root, via the injected read
+        runner — it is a generation step that writes only a TEMP compose: no GPU, no
+        network), then reads the generated YAML back.
+
+        ⚠️  HONESTY (R3b-1): ``slug`` is a CATALOG profile slug.  generate-compose.sh
+        has no --repo / weight-swap, so the emitted compose is a reproduction of the
+        resolved CATALOG profile's compose — NOT a brought (BYO) model's weights.
+        The brought-model serve (pull-to-disk + a generate-compose.sh --repo
+        extension) is a deferred follow-up.
+
+        Mission (locked decision #2 in generate-compose.sh): reproduce + flag,
+        NEVER repair — the emitted compose is returned VERBATIM; the caller shows
+        it as an untested config reproduction and does NOT fit-adapt it.
+
+        Returns ``{"compose_path", "compose_yaml", "error"}``.  On a failed /
+        drift-guard-flagged generation, ``error`` is set and ``compose_yaml`` is
+        empty (the generator's stderr is surfaced).  The temp compose PERSISTS on
+        success (``serve_generated`` serves it via ``docker compose -f <path>``);
+        it is unlinked on every error path AND when the preview is declined without
+        serving (the app unlinks it on dismiss)."""
+        import os
+        import tempfile
+
+        def _fail(msg: str) -> dict[str, Any]:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            return {"compose_path": "", "compose_yaml": "", "error": msg}
+
+        # A temp file under the repo root so the generator's relative ../ mount
+        # paths (if any are emitted) resolve the same as a real compose would.
+        fd, tmp_path = tempfile.mkstemp(
+            prefix="c3-genc-", suffix=".yml", dir=str(self.repo_root)
+        )
+        os.close(fd)
+        cmd = [
+            "bash",
+            "scripts/generate-compose.sh",
+            "--profile",
+            slug,
+            "--out",
+            tmp_path,
+        ]
+        if accept_degraded:
+            cmd.append("--accept-degraded")
+        res = await self._runner.run(cmd, cwd=str(self.repo_root), timeout=60.0)
+        if res.timed_out:
+            return _fail(f"generate-compose timed out for {slug}")
+        if not res.ok:
+            err = (res.stderr.strip() or res.stdout.strip())[:300]
+            return _fail(err or f"generate-compose failed (rc={res.returncode})")
+        try:
+            yaml_text = Path(tmp_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            return _fail(f"generated compose unreadable: {exc}")
+        if not yaml_text.strip():
+            # Generator returned 0 but emitted nothing to --out: surface its
+            # stdout (a convenience-tuple / candidate list, or a soft refuse).
+            return _fail(res.stdout.strip()[:300] or "generator emitted no compose")
+        return {"compose_path": tmp_path, "compose_yaml": yaml_text, "error": ""}
+
+    def serve_generated(self, compose_path: str) -> ActionPlan:
+        """Serve a GENERATED (producer-lane ②) compose, badged untested.
+
+        Serving a generated compose CLAIMS the GPU exactly like any serve, so the
+        plan is ``requires_reconcile=True`` + ``requires_confirm=True`` and routes
+        through the SAME ConfirmActionScreen → run_reconcile_for_modal →
+        dispatch_action gate (the dual-writer lease MUST hold).  We launch it via
+        ``docker compose -f <path> up`` — the generated compose is a verbatim
+        minimal reproduction, NOT a registry slug switch.sh knows about."""
+        return ActionPlan(
+            kind="serve",
+            cmd=["docker", "compose", "-f", compose_path, "up", "-d"],
+            description=f"serve generated compose {Path(compose_path).name} (untested)",
+            requires_reconcile=True,
+            requires_confirm=True,
+        )
+
     def set_default(self, slug: str) -> ActionPlan:
         return ActionPlan(
             kind="set_default",
@@ -765,6 +1884,23 @@ class CockpitData:
             requires_reconcile=True,
         )
 
+    def stop_all(self) -> ActionPlan:
+        """Comprehensive 'off' — ``gpu-mode off`` (stops the named scene presets)
+        AND ``estate_cli down`` (estate-managed instances), so neither path's blind
+        spot survives.  A FORCED 'off' ALSO tears down any other detected running
+        container via the reconcile gate (execute_action → _teardown_conflicts),
+        covering a cockpit-served catalog slug that is neither a preset nor estate-
+        managed.  requires_reconcile=True so the gate detects + (on force) clears
+        whatever is actually running."""
+        return ActionPlan(
+            kind="scene",
+            cmd=["bash", "-c",
+                 "bash scripts/gpu-mode.sh off; "
+                 "python3 scripts/lib/profiles/estate_cli.py down"],
+            description="stop all (gpu-mode off + estate down)",
+            requires_reconcile=True,
+        )
+
     def estate_down(self) -> ActionPlan:
         return ActionPlan(
             kind="estate_down",
@@ -783,6 +1919,136 @@ class CockpitData:
             description=f"docker {op} {name}",
             requires_reconcile=(op == "stop"),
         )
+
+    def _resolve_service_compose(self, name: str) -> Optional[tuple[str, str]]:
+        """Map a Containers-row service NAME → ``(compose_rel_path, project)``.
+
+        Two shapes:
+          - **top-level** supporting service → ``services/<name>/docker-compose.yml``,
+            project == ``name`` (matches gpu-mode running it from that dir).
+          - **nested studio sidecar** → the row carries the CONTAINER name
+            ``studio-<sub>`` while the compose lives at
+            ``services/studio/<sub>/docker-compose.yml`` (e.g. the on-demand
+            ``studio-step-voice`` → ``services/studio/step-voice/``).  Project ==
+            ``<sub>`` — the dir basename gpu-mode's ``compose_at`` uses, so the
+            cockpit and gpu-mode track the SAME compose project (avoids the
+            duplicate-``container_name`` collision the gallery hit).
+
+        Returns ``None`` when no compose dir backs the name (caller then falls
+        back to ``docker restart`` of an already-created container)."""
+        def _find(dir_rel: str) -> Optional[str]:
+            for ext in ("yml", "yaml"):
+                rel = f"{dir_rel}/docker-compose.{ext}"
+                if (self.repo_root / rel).is_file():
+                    return rel
+            return None
+        top = _find(f"services/{name}")
+        if top:
+            return top, name
+        if name.startswith("studio-"):
+            sub = name[len("studio-"):]
+            nested = _find(f"services/studio/{sub}")
+            if nested:
+                return nested, sub
+        return None
+
+    def service_start(self, name: str) -> ActionPlan:
+        """Bring a KNOWN supporting service UP — ``docker compose up -d`` for its
+        ``services/<name>/`` dir (the verb for a STOPPED service row in the
+        Containers tab; running rows use stop/restart).
+
+        Mirrors gpu-mode's ``compose_at`` so the cockpit and gpu-mode operate on
+        the SAME containers:
+          - ``-p <name>`` pins the compose PROJECT to the service dir name.
+            gpu-mode starts these from inside ``services/<name>/`` (so its project
+            == the dir); the cockpit runs with ``cwd=repo_root``, where the project
+            would otherwise default to the repo dir — and ``up -d`` would try to
+            CREATE a second container with the same ``container_name`` → "name
+            already in use", which is exactly why comfyui/qdrant/searxng wouldn't
+            start.
+          - ``--env-file .env`` (when present) resolves repo vars like
+            ``${MODEL_DIR}`` / ``${HF_TOKEN}`` that some composes (comfyui) need.
+
+        Reconcile-gated: a GPU-holding service (ComfyUI / Step-Audio) can't
+        silently collide with whatever holds the cards, while a non-GPU web
+        service (litellm / qdrant / …) clears the gate immediately.  Tolerates the
+        ``.yml`` / ``.yaml`` spelling."""
+        resolved = self._resolve_service_compose(name)
+        rel, project = resolved if resolved is not None else (
+            f"services/{name}/docker-compose.yml",
+            name,
+        )
+        cmd = ["docker", "compose"]
+        if (self.repo_root / ".env").is_file():
+            cmd += ["--env-file", ".env"]
+        cmd += ["-f", rel, "-p", project, "up", "-d"]
+        return ActionPlan(
+            kind="service-up",
+            cmd=cmd,
+            description=f"docker compose up {name}",
+            requires_reconcile=True,
+        )
+
+    def service_start_or_restart(self, name: str) -> ActionPlan:
+        """Bring a stopped service UP, picking the right mechanism:
+          - a compose dir backs the name (top-level ``services/<name>/`` OR a
+            nested studio sidecar ``services/studio/<sub>/`` for ``studio-<sub>``
+            — e.g. the on-demand ``studio-step-voice``) → ``compose up``
+            (``service_start`` — CREATES the container if it doesn't exist yet, so
+            it works on a fresh install, not just a re-start);
+          - otherwise it's a scene-managed container whose dir name doesn't match
+            (e.g. ``studio-director`` → ``services/studio/enhancer/``) → ``docker
+            restart`` STARTS the stopped-but-created container."""
+        if self._resolve_service_compose(name) is not None:
+            return self.service_start(name)
+        return self.container_action(name, "restart")
+
+    @staticmethod
+    def scene_service_states_sync(
+        scene: Scene, running_names: list[str]
+    ) -> list[SceneServiceState]:
+        """Per-service running state for ``scene`` against an ALREADY-FETCHED set
+        of running container names — a pure, I/O-free match so the scene-preview
+        highlight path can re-render every keystroke without a docker call.
+
+        Matches each ``scene.services`` name with the SAME normalized matcher the
+        Containers tab uses (``_service_dir_matches_running`` — tolerant of the
+        ``-server`` / ``-dual`` suffix a container name carries off the service
+        name).  A service absent from the running set reads ``running=False``."""
+        running_norm = {_normalize_service_name(n) for n in running_names}
+        running_norm.discard("")
+        return [
+            SceneServiceState(
+                name=svc,
+                running=any(
+                    _service_dir_matches_running(svc, rn) for rn in running_norm
+                ),
+            )
+            for svc in scene.services
+        ]
+
+    async def _teardown_conflicts(self, reconcile: "ReconcileResult") -> list[str]:
+        """Stop the running containers a FORCED write collides with (the gate's
+        ``conflicts``) so the write clears the way regardless of whether its own
+        command knows them.  Best-effort + idempotent: each ``docker stop`` is
+        awaited (synchronous → the GPU is freed before the command claims it); a
+        failure to stop one doesn't abort the others or the write.  Returns the
+        container names it attempted to stop (for logging/tests).  Routed through
+        the read runner so tests observe/mock it — NEVER stops a real container in
+        the test suite."""
+        names: list[str] = []
+        for c in (getattr(reconcile, "conflicts", None) or []):
+            n = (getattr(c, "name", "") or "").strip()
+            if n and n not in names:
+                names.append(n)
+        for name in names:
+            try:
+                await self._runner.run(
+                    ["docker", "stop", name], cwd=str(self.repo_root), timeout=60.0
+                )
+            except Exception:
+                continue
+        return names
 
     # ── WRITE: execution (gated — NEVER run in tests / this phase) ────────────────
 
@@ -837,6 +2103,14 @@ class CockpitData:
                         return False, reconcile, None
                     if not plan.force_reason:
                         raise ValueError("force override requires force_reason")
+                    # FORCE override: actually CLEAR the way — stop the materialized
+                    # conflicting containers the gate found, so the write doesn't
+                    # depend on its OWN command knowing them.  This is what makes a
+                    # forced scene switch ('off' → gpu-mode off, which does NOT stop
+                    # a cockpit-served catalog slug) reliably free the cards.  docker
+                    # stop is synchronous, and we're under the write lock, so the
+                    # cards are freed before the command claims them.
+                    await self._teardown_conflicts(reconcile)
 
             # Fix 1 (TOCTOU): register a pending claim for the GPUs this write
             # wants BEFORE calling start_raw and BEFORE releasing the lock.  The
@@ -1048,6 +2322,68 @@ class CockpitData:
             plan.cmd, env=env, run_type=plan.kind, parser=parser
         )
 
+    # ── Producer / ③ Gate: the FULL validation battery (report.sh --full) ─────────
+
+    def full_validation_report_plan(
+        self, *, model: Optional[str] = None, url: Optional[str] = None
+    ) -> ActionPlan:
+        """Build the ActionPlan for ``report.sh --full`` — the ~43-min
+        verify+stress+soak+bench+agentic PRODUCER battery (Q1 maintainer call).
+
+        Distinct from the consumer share-back ``rig_report`` (bare ``report.sh``,
+        a ~2 s redacted snapshot, R2b).  ``--full`` runs the heavy battery against
+        the ALREADY-SERVING model, so it does NOT claim a GPU
+        (``requires_reconcile=False``) but is HEAVY + long-running and MUST be
+        confirm-gated (``requires_confirm=True``).  ``MODEL`` / ``URL`` are
+        injected into the child env at execution time (NOT baked into the cmd) so
+        the plan stays inspectable without leaking the target."""
+        target_bits: list[str] = []
+        if model:
+            target_bits.append(f"MODEL={model}")
+        if url:
+            target_bits.append(f"URL={url}")
+        target = (" → " + " ".join(target_bits)) if target_bits else ""
+        return ActionPlan(
+            kind="full_report",
+            cmd=["bash", "scripts/report.sh", "--full"],
+            description=f"report.sh --full (~43-min full validation battery){target}".strip(),
+            requires_reconcile=False,   # hits the serving model; does not claim a GPU
+            requires_confirm=True,      # heavy + long-running — confirm before launching
+        )
+
+    async def run_full_validation_report(
+        self,
+        *,
+        model: Optional[str] = None,
+        url: Optional[str] = None,
+        on_event: Optional[Callable[[Any], None]] = None,
+        on_line: Optional[Callable[[str], None]] = None,
+    ) -> Any:
+        """Launch ``report.sh --full`` as a BACKGROUND streaming worker.
+
+        ⚠️  WIRED-BUT-MOCK-ONLY.  The ~43-min battery stresses the serving model;
+        the write runner is NEVER executed live this phase — conftest blocks the
+        real spawn and tests inject a FakeWriteRunner.  Streams raw output (no
+        dedicated core parser — it is a multi-stage shell battery) so the UI shows
+        live progress over the long run; it does NOT block the event loop.  Uses
+        the SERVING model (injects ``MODEL`` / ``URL`` into the child env) and does
+        NOT claim a GPU.  Confirmation is the CALLER's job."""
+        import os as _os
+
+        plan = self.full_validation_report_plan(model=model, url=url)
+        env = dict(_os.environ)
+        if model:
+            env["MODEL"] = model
+        if url:
+            env["URL"] = url
+        if on_event is not None or on_line is not None:
+            self._write_runner.set_callbacks(on_event=on_event, on_line=on_line)
+        # No reconcile gate (uses the serving model; claims no GPU); straight to
+        # the streamer.  In tests this is the FakeWriteRunner; live it is blocked.
+        return await self._write_runner.start_raw(
+            plan.cmd, env=env, run_type=plan.kind, parser=_NullParser()
+        )
+
     # ── Validate / Doctor: health + estate-diagnose + profile-triage (READS) ──────
 
     async def doctor(
@@ -1096,6 +2432,40 @@ class CockpitData:
         if not tri.steps and not tri.summary:
             tri.error = (res.stderr.strip()[:200] or f"no triage output (rc={res.returncode})")
         return tri
+
+    async def verify_smoke(self) -> VerifySmoke:
+        """Run ``scripts/verify.sh`` (the ~15s "is the model serving correctly?"
+        smoke: server reachable → Genesis patch → basic completion → tool-call)
+        and parse its ✓/✗ checks.  READ-only — it sends a couple of test queries
+        to the LIVE model but claims/frees no GPU.
+
+        verify.sh auto-detects the running container/port/served-model via
+        preflight (it is designed to run post-setup with no args), so no env
+        injection is needed — when nothing is serving, check 1 fails and the
+        result reports unreachable, which is the correct 'not serving' signal."""
+        res = await self._runner.run(
+            ["bash", "scripts/verify.sh"], cwd=str(self.repo_root), timeout=90.0
+        )
+        if res.timed_out:
+            vs = VerifySmoke(raw=res.stdout or "")
+            vs.error = "verify.sh timed out (model unreachable or very slow)"
+            return vs
+        return parse_verify_smoke(res.stdout or res.stderr, rc=res.returncode)
+
+    async def verify_full(self) -> VerifyFull:
+        """Run ``scripts/verify-full.sh`` (the ~1-2 min functional battery:
+        9 steps incl. streaming / thinking / cascade / MTP-acceptance) and parse
+        its ``[N/9]`` steps + final summary.  READ-only (queries the live model;
+        no GPU claim).  Heavier than verify_smoke but still a read — step
+        ``[4/9]`` tool-calling is expected to fail on the default compose."""
+        res = await self._runner.run(
+            ["bash", "scripts/verify-full.sh"], cwd=str(self.repo_root), timeout=240.0
+        )
+        if res.timed_out:
+            vf = VerifyFull(raw=res.stdout or "")
+            vf.error = "verify-full.sh timed out (>4 min — model unreachable or stalled)"
+            return vf
+        return parse_verify_full(res.stdout or res.stderr, rc=res.returncode)
 
     # ── Validate / Benchmarks: explorer (corpus → BENCHMARKS.md fallback) (READ) ──
 
@@ -1275,6 +2645,235 @@ class CockpitData:
             error=(res.stderr.strip()[:200] or f"report generation failed (rc={res.returncode})"),
         )
 
+    # ── Validate / ④ Measure: producer-measured vs the curated catalog bar (READ) ─
+
+    async def measure_vs_bar(
+        self, tag: str, *, variants: Optional[list[VariantRow]] = None
+    ) -> MeasureVsBar:
+        """Compare a rebench tag's MEASURED numbers against the curated catalog's
+        published bar for the SAME class — "did this config earn catalog-grade?"
+        (design §3.3 ④).  READ-only: pure filesystem reads (the tag dir) + the
+        existing benchmarks explorer; NO GPU / network / write.
+
+        Steps:
+          1. parse the producer's MEASURED numbers from ``results/rebench/<tag>/``
+             — ``_internal.json`` (authoritative) with a ``REPORT.md`` TL;DR
+             scrape fallback (reuses the same artifacts evidence_report reads);
+          2. resolve the tag's MODEL **and engine-FAMILY** (from REPORT.md Meta —
+             Container/vLLM-image — then the served slug → registry-variant
+             engine, best-effort) and fetch the CURATED bar via
+             ``benchmarks_explorer()`` (prefer the #249 corpus rows, BENCHMARKS.md
+             fallback), matched by ``_bench_row_matches`` on (model, engine-family)
+             so a vLLM-dual run is NOT graded against a single-card llama.cpp row.
+             When the engine can't be resolved (or no bar exists for it) the bar is
+             picked DETERMINISTICALLY and the matched row's engine/topology is
+             surfaced in the struct + caveats so the user sees which bar was used;
+          3. return a structured comparison with a SIMPLE, honest ``verdict`` and
+             ``protocol_caveats`` LISTING what the cockpit cannot verify (matched
+             power? same harness? same prompts?).  It FLAGS the protocol — it
+             NEVER fabricates a "catalog-grade" it can't substantiate, and
+             discloses the bar's source (corpus vs BENCHMARKS.md)."""
+        base = self.repo_root / "results" / "rebench" / tag
+        if not base.is_dir():
+            return MeasureVsBar(tag=tag, error=f"no run dir results/rebench/{tag}")
+
+        # (1) MEASURED numbers — _internal.json first, REPORT.md fallback.
+        measured = MeasuredNumbers()
+        report_md_text = ""
+        report_md = base / "REPORT.md"
+        if report_md.is_file():
+            try:
+                report_md_text = report_md.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                report_md_text = ""
+        internal = base / "_internal.json"
+        if internal.is_file():
+            try:
+                blob = json.loads(internal.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, json.JSONDecodeError):
+                blob = None
+            measured = measured_from_internal_json(blob)
+        # If the sidecar gave nothing usable, fall back to REPORT.md numbers.
+        if not measured.has_any and report_md_text:
+            measured = measured_from_report_md(report_md_text)
+        # The model AND engine-family are only carried in REPORT.md Meta (the
+        # _internal.json sidecar has neither) — resolve them from there even when
+        # the numbers came from the sidecar.
+        if report_md_text:
+            from_report = measured_from_report_md(report_md_text)
+            if not measured.model:
+                measured.model = from_report.model
+            if not measured.engine:
+                measured.engine = from_report.engine
+
+        # (2) Resolve the curated bar for this model — ENGINE-AWARE so a vLLM-dual
+        # run is not graded against a single-card llama.cpp row just because they
+        # share a model.  Resolve the RUN's engine-family from the rebench
+        # artifacts (REPORT.md Meta Container/vLLM-image first; then the served
+        # slug → registry-variant engine), and pass THAT as the engine arg to
+        # _bench_row_matches.  When the engine genuinely can't be resolved we pick
+        # deterministically (corpus-then-doc-order) BUT flag it + surface the
+        # matched bar's engine/topology so the user sees which bar was used.
+        run_engine = self._resolve_run_engine(measured, variants)
+        rows, _err = await self.benchmarks_explorer()
+        bar: Optional[BenchRow] = None
+        engine_resolved = False
+        if measured.model and rows:
+            mkey = _canon_model_key(measured.model)
+            # Model-matched candidates first (served-name → slug via canon).
+            model_rows = [r for r in rows if _bench_row_matches(r, measured.model, "")]
+            if not model_rows:
+                model_rows = [r for r in rows if _canon_model_key(r.model) == mkey and mkey]
+            # Engine discrimination: among the model-matched rows, keep only those
+            # of the run's engine-family.  (We compare families directly here, NOT
+            # via _bench_row_matches, because that re-checks the served-name model
+            # which differs from the slug — model-matching was already done above.)
+            # If that empties the set (no published bar for this engine) we fall
+            # back to the model-only set and flag that we could not engine-match.
+            if run_engine:
+                eng_rows = [
+                    r for r in model_rows
+                    if _canon_engine_family(r.engine) == run_engine
+                ]
+                if eng_rows:
+                    model_rows = eng_rows
+                    engine_resolved = True
+            # Prefer a corpus row (authoritative TPS) over a BENCHMARKS.md row.
+            model_rows.sort(key=lambda r: 0 if r.source == "corpus" else 1)
+            bar = model_rows[0] if model_rows else None
+
+        vsbar = MeasureVsBar(
+            tag=tag,
+            measured=measured,
+            bar=bar,
+            bar_source=(bar.source if bar else ""),
+            run_engine=run_engine,
+            engine_resolved=engine_resolved,
+        )
+        if bar is not None:
+            # Fix 2 (corpus metric mismatch): a corpus bar's narr_tps is WALL TPS
+            # (bench_row_from_corpus_record maps wall_tps→narr_tps) while the
+            # measured narr_tps is narrative DECODE — subtracting them shows a
+            # fabricated green delta.  The corpus carries a single canonical-short
+            # bench (no narrative/code split), so SUPPRESS the narrative-TPS delta
+            # for a corpus bar and flag it in protocol_caveats; the code/decode
+            # delta is left (both decode).  A BENCHMARKS.md bar carries the proper
+            # narrative/code decode pair → keep its narrative delta.
+            corpus_bar = vsbar.bar_source == "corpus"
+            if (not corpus_bar) and measured.narr_tps is not None and bar.narr_tps is not None:
+                vsbar.narr_tps_delta = measured.narr_tps - bar.narr_tps
+            if measured.code_tps is not None and bar.code_tps is not None:
+                vsbar.code_tps_delta = measured.code_tps - bar.code_tps
+
+        # (3) honest verdict + protocol caveats (FLAG, never fabricate).
+        vsbar.verdict = _measure_verdict(vsbar)
+        vsbar.protocol_caveats = self._measure_protocol_caveats(vsbar)
+        return vsbar
+
+    @staticmethod
+    def _resolve_run_engine(
+        measured: MeasuredNumbers, variants: Optional[list[VariantRow]]
+    ) -> str:
+        """Resolve the RUN's engine-FAMILY so the curated bar is engine-matched.
+
+        Two signals, best-first:
+          1. REPORT.md Meta carried it (``measured.engine`` — the Container prefix
+             / vLLM-image tell, parsed in ``measured_from_report_md``);
+          2. else map the run's served slug/name to a registry variant and take
+             that variant's engine-family.  The served-name (``qwen3.6-27b-…``)
+             rarely equals a slug, so match by canon-model AND require a UNIQUE
+             engine across that model's variants — if a model has variants on
+             multiple engines (e.g. vllm + ik-llama), the served-name alone can't
+             disambiguate, so return "" (the caller picks deterministically and
+             flags that it could not engine-match).
+        Returns a coarse family token via ``_canon_engine_family``, or ""."""
+        if measured.engine:
+            return _canon_engine_family(measured.engine)
+        if not variants or not measured.model:
+            return ""
+        mkey = _canon_model_key(measured.model)
+        fams: set[str] = set()
+        for v in variants:
+            vmodel = getattr(v, "model", "") or ""
+            if mkey and _canon_model_key(vmodel) == mkey:
+                fam = _canon_engine_family(getattr(v, "engine", "") or "")
+                if fam:
+                    fams.add(fam)
+        # Only confident when the model's variants are all one engine-family.
+        return next(iter(fams)) if len(fams) == 1 else ""
+
+    @staticmethod
+    def _measure_protocol_caveats(vsbar: MeasureVsBar) -> list[str]:
+        """List what the cockpit CANNOT verify about the comparison — so the
+        verdict is read as a flag, not a certification.  Honesty over a fabricated
+        "catalog-grade"."""
+        caveats: list[str] = []
+        if vsbar.bar is None:
+            if not vsbar.measured.model:
+                caveats.append(
+                    "Could not resolve this run's MODEL from REPORT.md — no curated bar matched."
+                )
+            else:
+                caveats.append(
+                    f"No curated catalog bar found for model '{vsbar.measured.model}'."
+                )
+            return caveats
+        # We have a bar — surface WHICH bar was used (engine + topology) so the
+        # comparison is legible, then flag every protocol dimension we can't
+        # confirm.
+        src = "the #249 measurement corpus" if vsbar.bar_source == "corpus" else "BENCHMARKS.md"
+        bar_eng = _canon_engine_family(vsbar.bar.engine) or vsbar.bar.engine or "?"
+        bar_topo = vsbar.bar.topology or "?"
+        caveats.append(
+            f"Bar source: {src} — matched row: engine '{bar_eng}', topology "
+            f"'{bar_topo}', published by another run, not this one."
+        )
+        # Whether the run's engine actually drove the bar selection.
+        if not vsbar.engine_resolved:
+            if vsbar.run_engine:
+                caveats.append(
+                    f"No curated bar matched this run's engine '{vsbar.run_engine}' — "
+                    f"compared against an engine '{bar_eng}' bar instead (deterministic "
+                    "fallback; NOT an engine-matched grade)."
+                )
+            else:
+                caveats.append(
+                    "Could NOT resolve this run's ENGINE from REPORT.md — the bar was "
+                    f"picked deterministically (engine '{bar_eng}', topology '{bar_topo}'); "
+                    "it may be a different engine/topology than this run."
+                )
+        # Corpus bar carries a single canonical-short bench (wall-vs-decode, no
+        # narrative/code split) — the narrative-TPS delta is suppressed (Fix 2).
+        if vsbar.bar_source == "corpus":
+            caveats.append(
+                "Bar is a #249 corpus row: a single canonical-short bench (its "
+                "narr_tps is WALL, not decode, and it carries no narrative/code "
+                "split) — the narrative-TPS delta is SUPPRESSED to avoid a "
+                "wall-vs-decode comparison; only the decode delta is shown."
+            )
+        caveats.append(
+            "Cannot verify MATCHED POWER CAP — the bar may have been measured at a "
+            "different W/card (this rig systemd-caps to 230W; bench scripts record "
+            "but do not enforce power)."
+        )
+        caveats.append(
+            "Cannot verify SAME HARNESS / engine pin — a TPS gap can be an image / "
+            "flag delta, not a config regression."
+        )
+        caveats.append(
+            "Cannot verify SAME PROMPTS / sampling — the 8-pack + bench prompts must "
+            "match for an apples-to-apples grade."
+        )
+        if vsbar.measured.source == "REPORT.md":
+            caveats.append(
+                "Measured numbers scraped from REPORT.md (no _internal.json) — less precise."
+            )
+        caveats.append(
+            "This is a FLAG, not a catalog-grade certification — run the full gate "
+            "(③) + measure (rebench) at matched power before promoting."
+        )
+        return caveats
+
     # ── Validate / Evidence: submit-bench (OUTWARD-FACING WRITE — gated) ───────────
 
     async def submit_bench_preview(self, tag: str) -> dict[str, Any]:
@@ -1327,6 +2926,123 @@ class CockpitData:
             network=True,
         )
 
+    # ── Share-back (R2b): rig report + problem report (READ — paste-ready) ────────
+
+    async def rig_report(self) -> dict[str, Any]:
+        """Generate a paste-ready rig/bench report (READ — no network/GPU write).
+
+        Bare ``scripts/report.sh`` assembles a redacted, paste-ready snapshot
+        (hardware + stack + boot-log highlights, ~2 s) that a consumer can drop
+        into a GitHub ``numbers-from-your-rig`` issue — the lightweight "one
+        keystroke while running" affordance.  We DO NOT pass ``--full``: that is
+        the ~43-min verify+stress+soak+bench+agentic battery, a producer-lane
+        Gate action (R3), NOT a lightweight share-back — it would contend with
+        the user's running model for the GPU.  Nor ``--submit`` / ``--auto`` —
+        generation is a local read; the user copies the text and posts it.
+        Returns ``{"report", "error"}``."""
+        res = await self._runner.run(
+            ["bash", "scripts/report.sh"],
+            cwd=str(self.repo_root),
+            timeout=60.0,
+        )
+        if res.timed_out:
+            return {"report": "", "error": "timed out generating rig report"}
+        body = (res.stdout or "").strip()
+        if not body:
+            return {
+                "report": "",
+                "error": (res.stderr.strip()[:300] or f"report.sh failed (rc={res.returncode})"),
+            }
+        return {"report": body, "error": None}
+
+    async def problem_report(
+        self,
+        slug: str,
+        *,
+        boot_log: str = "",
+        url: Optional[str] = None,
+        variants: Optional[list[VariantRow]] = None,
+    ) -> dict[str, Any]:
+        """Assemble a paste-ready problem/issue report from readily-available
+        failure context (READ — gathers LOCAL context only, no auto-network).
+
+        Pulls together: (a) the recent boot-log lines passed in (from the
+        serve-live LivePane) and, when a container is resolvable, a ``docker
+        logs`` tail of the failed container; (b) the slug's compose path
+        (best-effort from the registry/variants); (c) a rig snapshot (GPU cards
+        + driver from ``estate_state``/detect).  The user copies the text and
+        opens the issue themselves — nothing leaves the rig."""
+        sections: list[str] = []
+        sections.append("## Problem report")
+        sections.append(f"- **Slug:** `{slug or '—'}`")
+
+        # (b) compose path (best-effort, registry/variants).
+        variant = None
+        if variants:
+            variant = next((v for v in variants if getattr(v, "slug", "") == slug), None)
+        compose_path = getattr(variant, "compose_path", "") if variant is not None else ""
+        sections.append(f"- **Compose:** `{compose_path or '—'}`")
+        if variant is not None:
+            eng = getattr(variant, "engine", "") or getattr(variant, "switch_engine", "")
+            sections.append(f"- **Engine:** `{eng or '—'}`")
+
+        # (c) rig snapshot — GPU cards + driver.
+        try:
+            state = await self.estate_state(variants=variants)
+        except Exception:  # pragma: no cover - defensive
+            state = EstateState()
+        gpus = list(getattr(state, "gpus", []) or [])
+        sections.append("")
+        sections.append("### Rig snapshot")
+        driver = self._driver_version_from_gpus(gpus)
+        sections.append(f"- **GPUs:** {len(gpus)} card(s)")
+        if driver:
+            sections.append(f"- **Driver:** {driver}")
+        for g in gpus:
+            idx = getattr(g, "index", "?")
+            tot = getattr(g, "mem_total_mib", None)
+            tot_s = f"{tot} MiB" if tot else "unknown"
+            sections.append(f"  - GPU {idx}: {tot_s} total")
+
+        # (a) boot log — passed-in lines first, then docker logs of the failed
+        # container if one is resolvable (READ, never a write).
+        log_lines: list[str] = []
+        if boot_log.strip():
+            log_lines.extend(boot_log.strip().splitlines())
+        container = getattr(variant, "container", "") if variant is not None else ""
+        if container:
+            try:
+                res = await self.container_logs(container, tail=50)
+            except Exception:  # pragma: no cover - defensive
+                res = {"lines": [], "error": "log read failed"}
+            if res.get("error"):
+                log_lines.append(f"[docker logs unavailable: {res['error']}]")
+            else:
+                log_lines.extend(res.get("lines", [])[-50:])
+        sections.append("")
+        sections.append("### Boot / failure log")
+        if log_lines:
+            sections.append("```")
+            sections.extend(log_lines[-80:])
+            sections.append("```")
+        else:
+            sections.append("(no boot-log context captured)")
+
+        return {"report": "\n".join(sections), "error": None}
+
+    def _driver_version_from_gpus(self, gpus: list[Any]) -> str:
+        """Best-effort NVIDIA driver version from a GpuInfo list.
+
+        GpuInfo carries no driver field today, so we read whatever attribute the
+        core detect may have attached (``driver`` / ``driver_version``) and
+        degrade to '' silently — the report stays useful without it."""
+        for g in gpus:
+            for attr in ("driver_version", "driver"):
+                v = getattr(g, attr, None)
+                if v:
+                    return str(v)
+        return ""
+
     # ── Power cap: read (safe) + write/sweep (WIRED, mock-only, confirm) ──────────
 
     async def power_cap_get(self) -> PowerCapState:
@@ -1344,22 +3060,34 @@ class CockpitData:
             return st
         return parse_power_cap_status(res.stdout or res.stderr)
 
-    def power_cap_set(self, state: str) -> ActionPlan:
+    def power_cap_set(self, state) -> ActionPlan:
         """Build the power-cap WRITE ActionPlan (WIRED, mock-only — rig mutation).
 
-        Verified live: ``gpu-mode power-cap`` takes ``on`` (re-apply the 230W
-        cap) / ``off`` (uncap to hardware default) — NOT an arbitrary wattage.
+        ``gpu-mode power-cap`` takes ``on`` (re-apply the default 230W cap) /
+        ``off`` (uncap to hardware default) / a positive integer **wattage**
+        (a custom cap applied to both cards, validated by gpu-mode against each
+        card's [min,max] — the cockpit power-cap menu's "custom" option).
         Mutating a GPU power limit is a rig change, so this is built but NEVER
         run live this phase; it goes through a confirm modal.  It does not claim
         a GPU → ``requires_reconcile=False``."""
-        if state not in ("on", "off"):
+        if isinstance(state, bool):  # guard: bool is an int subclass
+            raise ValueError(f"power-cap state must be 'on'/'off'/<watts>, got {state!r}")
+        if isinstance(state, int) or (isinstance(state, str) and state.isdigit()):
+            watts = int(state)
+            if watts <= 0:
+                raise ValueError(f"power-cap wattage must be a positive integer, got {watts!r}")
+            arg, desc = str(watts), f"gpu-mode power-cap {watts}W (custom)"
+        elif state in ("on", "off"):
+            arg = state
+            desc = f"gpu-mode power-cap {state} ({'default 230W' if state == 'on' else 'uncap'})"
+        else:
             raise ValueError(
-                f"power-cap state must be 'on' (re-apply 230W) or 'off' (uncap), got {state!r}"
+                f"power-cap state must be 'on' (default 230W) / 'off' (uncap) / <watts>, got {state!r}"
             )
         return ActionPlan(
             kind="power_cap",
-            cmd=["bash", "scripts/gpu-mode.sh", "power-cap", state],
-            description=f"gpu-mode power-cap {state}",
+            cmd=["bash", "scripts/gpu-mode.sh", "power-cap", arg],
+            description=desc,
             requires_reconcile=False,
             requires_confirm=True,
         )
@@ -1385,23 +3113,9 @@ class CockpitData:
             requires_confirm=True,
         )
 
-    # ── Prune: gpu-mode prune / prune-all (WIRED, mock-only, confirm) ─────────────
-
-    def prune(self, *, all: bool = False) -> ActionPlan:
-        """Build the image-prune ActionPlan (WIRED, mock-only — DESTRUCTIVE).
-
-        ``gpu-mode prune`` = ``docker image prune -a`` (unreferenced images);
-        ``gpu-mode prune-all`` ALSO drops build cache + dangling networks.  Both
-        DELETE data, so this is built but NEVER run live this phase and is
-        confirm-gated.  It does not claim a GPU → ``requires_reconcile=False``."""
-        mode = "prune-all" if all else "prune"
-        return ActionPlan(
-            kind="prune",
-            cmd=["bash", "scripts/gpu-mode.sh", mode],
-            description=f"gpu-mode {mode}",
-            requires_reconcile=False,
-            requires_confirm=True,
-        )
+    # (image prune / prune-all removed from the cockpit — it was Orchestration-only
+    # and the maintainer dropped it from the tab; ``gpu-mode prune[-all]`` stays
+    # available on the CLI for manual cleanup.)
 
     # ── Container: top (READ) + rm (WIRED, mock-only, reconcile-gated) ────────────
 
@@ -1638,18 +3352,64 @@ class _NullParser:
         return None
 
 
+# First published HOST port in a docker-ps ``Ports`` field.  GENERAL match (any
+# internal port), unlike the engine-only ``PORT_MAP_BROAD_RE`` — used to label a
+# service with the port it serves.  Handles a single mapping (``0.0.0.0:4000->4000
+# /tcp`` → 4000) AND a published RANGE (``0.0.0.0:6333-6334->6333-6334/tcp`` → 6333,
+# the first host port — qdrant publishes a range).
+_HOST_PORT_RE = re.compile(r":(\d+)(?:-\d+)?->")
+
 # Rig services that hold a GPU but share no naming prefix with the engines /
 # estate containers — matched by name so the reconcile gate sees them.
 _GPU_SERVICE_NAMES = ("comfyui", "step-audio", "step-audio-editx")
+
+# UX Batch 5 (studio-* / #2-ext): the rig's AI-studio stack containers occupy
+# GPU0 but match no engine/estate prefix and no _GPU_SERVICE_NAMES entry, so they
+# were INVISIBLE in the Operate service list (GPU0's holder unattributed — the
+# "what about all the OTHER services" gap from Batch 1).  These name-fragments
+# classify a RUNNING studio/comfy/ai-studio container as kind ``"stack"`` so each
+# shows as its own row (NOT collapsed into one greyed ``services/studio`` entry)
+# and the reconcile gate sees it as the GPU holder it is.  Scope stays HONEST:
+# this only matches containers docker ps reports RUNNING — it is NOT a
+# ``docker ps -a`` of every dead container.
+_STACK_CONTAINER_FRAGMENTS = ("studio", "comfy")
+
+
+def _normalize_service_name(name: str) -> str:
+    """Normalize a service-dir / container name for cross-matching: lowercase
+    and strip ``-`` / ``_`` separators.  So ``open-webui`` (the services/ dir)
+    and ``openwebui`` (the running container_name) collapse to the same key."""
+    return name.lower().replace("-", "").replace("_", "")
+
+
+def _service_dir_matches_running(svc_dir: str, running_norm: str) -> bool:
+    """True when a ``services/<svc_dir>`` entry is represented by a running
+    container whose ALREADY-NORMALIZED name is ``running_norm``.
+
+    Containers commonly carry a suffix/prefix off the service name
+    (``comfyui-server`` covers ``comfyui``), so this is a normalized substring
+    match in either direction — but only on non-empty keys (an empty service
+    slug must not match everything)."""
+    svc_norm = _normalize_service_name(svc_dir)
+    if not svc_norm or not running_norm:
+        return False
+    return svc_norm in running_norm or running_norm in svc_norm
 
 
 def _classify_container_kind(name: str) -> Optional[str]:
     """Classify a docker-ps container name into a GPU-holder kind.
 
     Returns ``"engine"`` for the core engine prefixes, ``"estate"`` for the
-    estate planner's ``club3090-`` containers, ``"service"`` for known
-    GPU-holding rig services, else ``None`` (not a GPU holder we gate on — e.g.
-    open-webui, redis)."""
+    estate planner's ``club3090-`` containers, ``"service"`` for the named
+    GPU-holding rig services (ComfyUI / Step-Audio), ``"stack"`` for a RUNNING
+    studio/AI-studio stack container (Batch 5: the studio-* GPU0 occupants that
+    matched no prefix and were previously invisible), else ``None`` (not a GPU
+    holder we surface — open-webui / redis / qdrant …).
+
+    Order matters: the named ``service`` check precedes the ``stack`` fragment
+    check so ``comfyui`` keeps its ``service`` kind (it's a first-class GPU
+    service), and only the genuinely-unclassified studio-* fall through to
+    ``stack``."""
     from club3090_tui_core.detect import ENGINE_PREFIXES
 
     if ENGINE_PREFIXES.match(name):
@@ -1659,6 +3419,8 @@ def _classify_container_kind(name: str) -> Optional[str]:
     lname = name.lower()
     if any(svc in lname for svc in _GPU_SERVICE_NAMES):
         return "service"
+    if any(frag in lname for frag in _STACK_CONTAINER_FRAGMENTS):
+        return "stack"
     return None
 
 
@@ -1700,6 +3462,15 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         compose_path=str(d.get("compose_path", "")),
         status=str(d.get("status", "")),
         ctx_label=str(d.get("ctx_label", "")),
+        # A7/MUST-FIX 2: the EXACT numeric configured ctx (registry max_ctx int).
+        # None when the contract didn't carry it (older --json / tab fallback) so
+        # the badge degrades to the colloquial-label fallback rather than fabricating.
+        configured_ctx=(
+            int(d["configured_ctx"])
+            if isinstance(d.get("configured_ctx"), (int, float))
+            or (isinstance(d.get("configured_ctx"), str) and str(d.get("configured_ctx")).isdigit())
+            else None
+        ),
         status_note=str(d.get("status_note", "")),
     )
     # 'source' provenance (curated/community/local) — attach without schema change.
@@ -1709,6 +3480,17 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
             object.__setattr__(row, "source", str(src))
         except Exception:
             pass
+    # Per-slug download artifacts + facets, attached without touching the shared
+    # tui-core schema (same pattern as 'source'): weights_companions = the extra
+    # weight-variant keys (DFlash draft / mmproj projector) the slug needs beyond
+    # its core weights_variant; drafter / vision = display + companion derivation.
+    try:
+        comp = d.get("weights_companions") or []
+        object.__setattr__(row, "weights_companions", [str(c) for c in comp])
+        object.__setattr__(row, "drafter", str(d.get("drafter") or ""))
+        object.__setattr__(row, "vision", bool(d.get("vision")))
+    except Exception:
+        pass
     return row
 
 

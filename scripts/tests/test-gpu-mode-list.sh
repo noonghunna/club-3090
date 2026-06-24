@@ -52,15 +52,15 @@ if not isinstance(data, list) or not data:
     sys.exit(0 if ok else 1)
 
 REQUIRED = {"name", "group", "description", "services", "ports", "gpus"}
-GROUPS = {"serving", "studio", "ops"}
+GROUPS = {"models", "studio", "ops"}
 # Every dispatch keyword the catalog must expose, with its contract group.
+# (serving → models; chat → ops — browser-chat infra, no GPU model.  bigmodel +
+#  diffusiongemma scenes were removed — bigmodel ≈ off, dgemma → catalog slug.  The
+#  standalone comfyui scene was removed — comfyui runs via ai-studio.)
 EXPECT = {
-    "chat": "serving", "27b": "serving", "gemma": "serving",
-    "gemma-int8": "serving", "gemma-mtp": "serving", "deckard": "serving",
-    "bigmodel": "serving",
-    "comfyui": "studio", "image-studio": "studio", "video-studio": "studio",
-    "diffusiongemma": "studio",
-    "off": "ops", "power-cap": "ops", "prune": "ops", "prune-all": "ops",
+    "27b": "models", "gemma": "models", "deckard": "models",
+    "ai-studio": "studio",
+    "chat": "ops", "off": "ops", "power-cap": "ops", "prune": "ops", "prune-all": "ops",
 }
 
 seen = {}
@@ -98,10 +98,10 @@ PY
 # --- 2. plain --list-modes renders the grouped catalog ----------------------
 PLAIN_OUT="$(bash "$GPU_MODE" --list-modes 2>&1)"
 assert_contains "$PLAIN_OUT" "Scene Catalog" "plain render has catalog header"
-assert_contains "$PLAIN_OUT" "[serving]"     "plain render groups serving"
+assert_contains "$PLAIN_OUT" "[models]"      "plain render groups models"
 assert_contains "$PLAIN_OUT" "[studio]"      "plain render groups studio"
 assert_contains "$PLAIN_OUT" "[ops]"         "plain render groups ops"
-assert_contains "$PLAIN_OUT" "deckard"       "plain render lists a serving mode"
+assert_contains "$PLAIN_OUT" "deckard"       "plain render lists a models mode"
 
 # --- 3. additive guard: unknown mode still prints usage ---------------------
 USAGE_OUT="$(bash "$GPU_MODE" definitely-not-a-mode 2>&1)"

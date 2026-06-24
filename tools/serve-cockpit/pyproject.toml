@@ -17,6 +17,13 @@ dependencies = [
 [project.scripts]
 c3 = "club3090_cockpit.__main__:main"
 
+# club3090-tui-core is an in-repo sibling package (tools/tui-core), not on PyPI.
+# Wire it as a local editable path so `uv pip install -e .` resolves it from the
+# checkout. Plain `pip` doesn't read this — for pip, install tui-core first
+# (`pip install -e ../tui-core`) then this package. See README "How to run".
+[tool.uv.sources]
+club3090-tui-core = { path = "../tui-core", editable = true }
+
 [tool.hatch.build.targets.wheel]
 packages = ["club3090_cockpit"]
 

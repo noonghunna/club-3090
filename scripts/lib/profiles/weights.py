@@ -189,7 +189,38 @@ def main(argv: list[str] | None = None) -> int:
     p_entry.add_argument("variant", nargs="?")
     p_lookup = sub.add_parser("lookup")
     p_lookup.add_argument("path")
+    # `list --json` — batch static weights metadata for every (model, variant)
+    # with a local_subdir, for the TUI's download-state join (it stats the dirs
+    # itself against its configured model dir).  Pure profile read, no FS check.
+    p_list = sub.add_parser("list")
+    p_list.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.cmd == "list":
+        import json as _json
+
+        rows: list[dict[str, Any]] = []
+        for model_id, model in _load_models().items():
+            for variant, meta in (model.get("weights") or {}).items():
+                if not isinstance(meta, dict):
+                    continue
+                subdir = str(meta.get("local_subdir") or meta.get("path") or "")
+                if not subdir:
+                    continue
+                rows.append(
+                    {
+                        "model": model_id,
+                        "variant": variant,
+                        "subdir": subdir,
+                        "hf_repo": str(meta.get("hf_repo") or ""),
+                        "size_gb": meta.get("size_gb"),
+                        "verify_glob": str(meta.get("verify_glob") or "*.safetensors"),
+                        "status": str(meta.get("status") or ""),
+                        "kind": str(meta.get("kind") or ""),
+                    }
+                )
+        print(_json.dumps(rows))
+        return 0
 
     if args.cmd == "entry":
         if args.variant:

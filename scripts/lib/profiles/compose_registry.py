@@ -65,6 +65,7 @@ def _entry(
     status="production",
     status_note=None,
     category=None,
+    weights_companions=None,
 ):
     if status not in STATUS_VALUES:
         raise ValueError(
@@ -90,6 +91,11 @@ def _entry(
         "kvcalc_key": kvcalc_key,
         "status": status,
         "status_note": status_note,
+        # Extra weight-variant keys (a DFlash draft / mmproj projector) this slug's
+        # compose mounts from a separate subdir, BEYOND the core weights_variant.
+        # The serve-cockpit Download action fetches these alongside the core so the
+        # slug actually serves.  Bare keys, scoped to this entry's model.
+        "weights_companions": list(weights_companions or []),
     }
     if recommended_engine_features:
         entry["recommended_engine_features"] = list(recommended_engine_features)
@@ -263,6 +269,7 @@ COMPOSE_REGISTRY = {
         # stale 49152. Full-res 4M-px OOMs at fill, so 1M-px is the safe default.
         tp=1, max_ctx=150000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp-vision.yml",
+        weights_companions=("gguf_mmproj_f16",),  # mmproj vision projector the compose mounts
         default_port=8020,
         kvcalc_key="SKIP",
     ),
@@ -284,6 +291,7 @@ COMPOSE_REGISTRY = {
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=163840, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ubergarm-iq4ks/mtp-vision.yml",
+        weights_companions=("gguf_mmproj_f16",),  # mmproj vision projector the compose mounts
         default_port=8020,
         kvcalc_key="SKIP",
     ),
@@ -309,6 +317,7 @@ COMPOSE_REGISTRY = {
         engine="beellama-local", drafter="anbeeld-qwen-dflash", kv_format="q5_0",
         tp=1, max_ctx=102400, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/beellama/compose/single/beellama-q5ks-dflash/dflash.yml",
+        weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8060,
         kvcalc_key="SKIP",
         status="caveats",
@@ -413,6 +422,7 @@ COMPOSE_REGISTRY = {
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/ik-llama/compose/dual/ex0bit-prism-pro-dq/mtp-vision.yml",
+        weights_companions=("gguf_mmproj_f16",),  # mmproj vision projector the compose mounts
         default_port=8010,
         kvcalc_key="SKIP",
         status="experimental",
@@ -610,6 +620,7 @@ COMPOSE_REGISTRY = {
         engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
         tp=1, max_ctx=128000, max_num_seqs=1, mem_util=None,
         compose_path="models/gemma-4-31b/beellama/compose/single/beellama-q4ks-dflash/dflash.yml",
+        weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8061,
         kvcalc_key="SKIP",
         status="caveats",
@@ -625,6 +636,7 @@ COMPOSE_REGISTRY = {
         engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
         compose_path="models/gemma-4-31b/beellama/compose/dual/beellama-q4ks-dflash/dflash.yml",
+        weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8062,
         kvcalc_key="SKIP",
         status="experimental",
@@ -653,6 +665,7 @@ COMPOSE_REGISTRY = {
         engine="beellama-local", drafter="anbeeld-qwen-dflash", kv_format="q5_0",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/beellama/compose/dual/beellama-q8kxl-dflash/dflash.yml",
+        weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8065,
         kvcalc_key="SKIP",
         status="experimental",
@@ -663,6 +676,7 @@ COMPOSE_REGISTRY = {
         engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
         tp=2, max_ctx=196608, max_num_seqs=1, mem_util=None,
         compose_path="models/gemma-4-31b/beellama/compose/dual/beellama-q8kxl-dflash/dflash.yml",
+        weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8066,
         kvcalc_key="SKIP",
         status="experimental",

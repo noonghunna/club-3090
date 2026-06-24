@@ -1,7 +1,7 @@
-# Image Studio — chat-driven stills (HiDream-O1 · Ideogram-4 · Chroma)
+# Image Studio — chat-driven stills (HiDream-O1 · Ideogram-4 · Chroma · Z-Image)
 
 The image side of [Club 3090 AI Studio](README.md). Type a rough idea in Open WebUI; the
-"director" LLM crafts it; ComfyUI renders a **still**. Three lanes share one pipe + one director,
+"director" LLM crafts it; ComfyUI renders a **still**. Four lanes share one pipe + one director,
 all **single-device on GPU0** (they run in *either* `gpu-mode` — including alongside a video
 render, since the video DiT's weights sit on GPU1). Pick by intent:
 
@@ -10,6 +10,7 @@ render, since the video DiT's weights sit on GPU1). Pick by intent:
 | `✨ Image (HiDream-O1)` | HiDream-O1-Image-Dev-2604 fp8 | **top-quality general / photoreal** (AA #1 single-model open-weight) | natural language | native 2048², ~15 GB, ~3–4 min |
 | `🖼️ Image` | Ideogram-4 fp8 | **design / logo / text / typography** | structured JSON (director-crafted) | safety-trained; ~18.5 GB @1024² |
 | `🔓 Image (Chroma)` | Chroma1-HD fp8 | **uncensored** photoreal / illustration | natural language + negative + real CFG | ~9 GB; the "Sulphur for stills" |
+| `🔓 Image (Z-Image)` | Z-Image-Turbo fp8 | **uncensored**, **fast** photoreal / general | natural language | ~7 GB, **~25 s** (8-step cfg=1); Lumina2 encoder; the quick uncensored lane |
 
 Refine any of them by replying with the change (*"monochrome"*, *"tighter crop"*, *"at night"*,
 *"flat vector style"*) — the director evolves the previous prompt and regenerates. No approval gate.
@@ -102,6 +103,44 @@ for unrestricted photoreal/illustration. Validated clean (~72–80 s warm).
 > uncensored stills get their own model (Chroma), exactly as Sulphur is the uncensored video lane.
 > Capability is in the weights; the infra is content-neutral.
 
+## 🔓 Z-Image-Turbo (uncensored · fast)
+
+The **`🔓 Studio · Image (Z-Image)`** lane renders on **Z-Image-Turbo fp8** — Alibaba's 6B,
+**Apache-licensed**, permissively-trained text-to-image model (~7 GB, single-device GPU0). It's the
+**fast** uncensored lane: an 8-step cfg=1 turbo schedule renders a coherent 1024² still in **~25 s**
+(vs Chroma's ~75 s and HiDream's ~3–4 min). Native ComfyUI nodes — the text encoder is a Qwen3-4B
+loaded via `CLIPLoader` type `lumina2`; VAE is the shared Flux `ae.safetensors`. Natural-language
+prompt (the director crafts prose, same as Chroma). Use it when you want an uncensored still **now**;
+reach for Chroma when you want real-CFG/negative control, HiDream for top-quality.
+
+> **Krea 2 was evaluated for this slot and dropped.** Its weights are on disk, but its bespoke DiT
+> (`txtfusion`/`tproj` tensors) isn't recognised by ComfyUI's local model detection — the only
+> working path is the **cloud `Krea2ImageNode`**, which violates AI Studio's "fully self-hosted, no
+> cloud APIs" rule. It's also aligned (not uncensored). Re-evaluate if ComfyUI adds local Krea2
+> detection. Z-Image is the uncensored image pick instead.
+
+## Quality ceiling & the optional HQ upgrade path (parked)
+
+The image lanes ship the **fast / distilled** checkpoints (Z-Image-**Turbo**, HiDream-O1-**Dev**). They
+look great, and we're keeping them — but if a no-compromise quality tier is ever wanted, the lever is
+the **model variant, not settings or resolution.** Measured on this rig (2026-06-24):
+
+- **Tuning a distilled model is a dead end.** Z-Image: 8 vs 16 steps, `res_multistep` vs `dpmpp_2m`,
+  shift 3 vs 6 → all visually identical. HiDream-O1-Dev: the `negative_prompt` is a no-op (it's
+  guidance-distilled), and `noise_scale` is a **calibrated constant, not a knob** — dropping it 7.5→5.0
+  produced a **blank image**. So don't chase steps / sampler / shift / negative / noise for these.
+- **The real lever = the non-distilled sibling** (both are separately-released checkpoints):
+
+  | Lane | Ships | HQ variant | Fits our 24 GB card? |
+  |---|---|---|---|
+  | Z-Image | Turbo · 8-step · no CFG | **Z-Image base** · 50-step · real CFG | ✅ **yes** — same 6B arch; ~14–16 GB w/ director, like HiDream-O1. Clean drop-in, ~5–6× slower |
+  | HiDream | O1-Dev · 28-step distilled | **HiDream-I1-Full** · 50-step · real CFG | ⚠️ **not at 2048²** — 17B + 4 encoders (incl. Llama-3.1-8B) + CFG vs only ~9.7 GB headroom (HiDream-O1 peaks at 14.9 GB w/ director). Needs the director off GPU0 + 1024²/DisTorch |
+
+**Status: parked, not wired.** Z-Image base is the clean future win (fits, no layout change); HiDream
+I1-Full needs VRAM gymnastics for an incremental gain over the already-excellent Dev lane. The
+[director-placement lever](requirements.md) (free 4.5 GB off GPU0) is what would make the heavy
+variant feasible — i.e. the same lever that matters for video.
+
 ## Native image button (via the image shim)
 
 OWUI's built-in 🖼️ image button (on a chat message) also renders Ideogram-4 stills — but it sends
@@ -116,16 +155,16 @@ OWUI's `COMFYUI_BASE_URL` points at it (`imagegen.env`), with OWUI's image-promp
 for a rich Ideogram-4 JSON caption, and rewrites the node before forwarding. The escaping is done in
 **Python** (reliable). Blast radius = image generation only — title/tag task-generation is untouched.
 
-`gpu-mode video-studio` and `image-studio` start the shim (and, in image-studio, the director). If
-the shim is down, point `COMFYUI_BASE_URL` back at `:8188` (plain text then hits the placeholder) or
-use the **Studio · Image lane**.
+`gpu-mode ai-studio` starts the shim and the director. If the shim is down, point
+`COMFYUI_BASE_URL` back at `:8188` (plain text then hits the placeholder) or use the
+**Studio · Image lane**.
 
 ## VRAM / GPU split
 
 All three image lanes render on **GPU0** and coexist with the ~4.6 GB director. Ideogram ~18.5 GB
 @1024² + director ≈ 23 GB (fits; 2048² would OOM with the director resident). HiDream is fixed at
-2048² (~15 GB) + director ≈ 20 GB. Because ComfyUI holds both cards in `video-studio`, you can do
-**video and a ≤1024² image in the same mode with no switch**.
+2048² (~15 GB) + director ≈ 20 GB. Because ComfyUI holds both cards in `ai-studio`, you can do
+**video and a ≤1024² image in the same scene with no switch**.
 
 ## Models (obtain separately → `/mnt/models/comfyui/models/...`)
 

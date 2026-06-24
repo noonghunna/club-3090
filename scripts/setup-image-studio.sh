@@ -100,17 +100,30 @@ else
     echo "  (SKIP_BUILD set — skipping image build)"
 fi
 
-# --- 2. Download the Ideogram-4 model set (~27 GB) --------------------------
+# --- 2. Download the model sets (Ideogram-4 + director + audio lanes) --------
 if [ -z "${SKIP_DOWNLOAD:-}" ]; then
-    say "── [2/3] Downloading Ideogram-4 model set (~27 GB; skip with SKIP_DOWNLOAD=1) ──"
+    say "── [2/3] Downloading model sets (~43 GB; skip with SKIP_DOWNLOAD=1) ──"
+    echo "  • Ideogram-4 image model set (~27 GB)"
     bash "$COMFYUI_DIR/download_ideogram4.sh"
+    # The studio DIRECTOR (qwen3.5-4b, GPU0) crafts the prompt behind the 🖼️ image
+    # button — without it studio-director boots but has no model, so the button
+    # fails.  GGUF + vision mmproj (~2.7 GB) → MODEL_DIR/qwen3.5-4b-gguf/… (where the
+    # enhancer compose's -m / --mmproj defaults point).
+    echo "  • Studio director GGUF (Qwen3.5-4B-Uncensored, ~2.7 GB + mmproj)"
+    hf download HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive \
+        Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf \
+        mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf \
+        --local-dir "$MODEL_DIR_RESOLVED/qwen3.5-4b-gguf/hauhaucs-uncensored-q4km"
+    # Audio lanes (🎵 music · 🔊 SFX · 🗣️ narration) — shared across the ai-studio scene.
+    echo "  • Studio audio models (🎵 music · 🔊 SFX · 🗣️ narration; ~13 GB)"
+    bash "$COMFYUI_DIR/download_audio_models.sh"
 else
     echo "  (SKIP_DOWNLOAD set — skipping weight download)"
 fi
 
 # --- 3. Bring the stack up via gpu-mode -------------------------------------
-say "── [3/3] Starting the bundle (gpu-mode image-studio) ──"
-bash "$REPO_DIR/scripts/gpu-mode.sh" image-studio
+say "── [3/3] Starting the bundle (gpu-mode ai-studio) ──"
+bash "$REPO_DIR/scripts/gpu-mode.sh" ai-studio
 
 # --- Done — onboarding -------------------------------------------------------
 echo ""

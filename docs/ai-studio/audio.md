@@ -69,8 +69,13 @@ S2-Pro and Higgs v3 are research/non-commercial).
   correct, zero conflict. The pipe POSTs `/clone`; the service writes a 24 kHz `.wav` to the gallery.
 - **VRAM / serving:** ~14 GB bf16 on a pinned card (GPU1 by default), **on-demand** (not
   always-on — bring it up with `docker compose -f services/studio/step-voice/docker-compose.yml
-  up -d`). An AWQ-4bit build (~3–4 GB) is the future light-deploy option. Validated: ~30 s to
-  load, then a clip in seconds.
+  up -d`, or start it from **c3 → Operate → Containers**). An AWQ-4bit build (~3–4 GB) is the
+  future light-deploy option. Validated: ~30 s to load, then a clip in seconds.
+- **⊕ Mutually exclusive with an active video render.** In `ai-studio`, video uses *both* 3090s
+  (the 22B DiT donates ~22 GB to GPU1 via DisTorch), and premium voice wants ~14 GB on that same
+  GPU1 — they can't both be resident. **c3 guards this**: starting `step-voice` while a video
+  render holds GPU1 is blocked with a "GPU1 busy (video)" notice; let the render finish (or stop
+  ComfyUI's video lane) first. Music/SFX/image lanes are GPU0 and don't conflict with voice.
 
 > Step-Audio-EditX is **generate-only** — it clones + edits speech, it does **not** diarize or
 > separate multi-speaker recordings (that's the Understand pillar).
