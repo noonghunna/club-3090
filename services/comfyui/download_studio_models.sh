@@ -16,6 +16,7 @@ echo "════ ai-studio models — download all (idempotent; skips what's a
 bash "$HERE/download_director.sh"
 bash "$HERE/download_ideogram4.sh"
 bash "$HERE/download_zimage.sh"
+bash "$HERE/download_krea.sh"
 bash "$HERE/download_video_models.sh"
 bash "$HERE/download_wan.sh"
 bash "$HERE/download_audio_models.sh"

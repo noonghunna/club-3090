@@ -41,8 +41,8 @@ services:
       # Honored in entrypoint.sh (only exported when non-empty — empty CUDA_VISIBLE_DEVICES
       # would hide ALL GPUs).
       - COMFYUI_CUDA_VISIBLE_DEVICES=${COMFYUI_CUDA_VISIBLE_DEVICES:-}
-      # ComfyUI version pin: empty → the entrypoint's pinned commit (reproducible, has
-      # Ideogram-4). Set COMFYUI_REF=HEAD to float on upstream master (bleeding edge).
+      # ComfyUI version pin: empty → the entrypoint's pinned release (reproducible; v0.26.0,
+      # has Ideogram-4 + Krea2). Set COMFYUI_REF=HEAD to float on upstream master (bleeding edge).
       - COMFYUI_REF=${COMFYUI_REF:-}
     shm_size: "8gb"
     deploy:

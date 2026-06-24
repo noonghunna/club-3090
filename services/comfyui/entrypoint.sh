@@ -42,12 +42,14 @@ export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/root/.cache/pip}"
 mkdir -p "$PIP_CACHE_DIR"
 chown -R "$(id -u):$(id -g)" "$PIP_CACHE_DIR" 2>/dev/null || true
 
-# 1. ComfyUI core — PINNED to a known-good commit (reproducible; this commit has
-#    native Ideogram-4 support and is validated on this stack). Floating on HEAD would
-#    let an upstream change silently break users. Set COMFYUI_REF=HEAD (or 'latest') to
-#    float on origin/master instead (needed for bleeding-edge models — re-pin after
-#    validating). Bump this default in the same change that re-validates image gen.
-COMFYUI_REF="${COMFYUI_REF:-cb9f6394160808f7d25163f6cc2ea300c6841ef9}"
+# 1. ComfyUI core — PINNED to a known-good release (reproducible). v0.26.0 adds native
+#    Krea2 support (comfyanonymous/ComfyUI #14589) + Qwen3-VL text-encoder generation, on
+#    top of the Ideogram-4 / Z-Image / HiDream-O1 lanes this stack already runs. Floating
+#    on HEAD would let an upstream change silently break users. Set COMFYUI_REF=HEAD (or
+#    'latest') to float on origin/master instead (bleeding-edge models — re-pin after
+#    validating). Bump this default ONLY in the same change that re-validates ALL studio
+#    lanes — the custom HiDream-O1 node + ComfyUI-GGUF + DisTorch multi-GPU ride this pin.
+COMFYUI_REF="${COMFYUI_REF:-f6c162ddcfbd7eefb39c06fe5b8d4c46e8d09f40}"   # v0.26.0
 checkout_comfy_ref() {  # $1 = repo dir
     local r="$1"
     if [ "$COMFYUI_REF" = "HEAD" ] || [ "$COMFYUI_REF" = "latest" ]; then
