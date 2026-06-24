@@ -21,7 +21,8 @@ MUSIC_TEMPLATE = os.path.join(_HERE, 'workflows', 'ace_step_music.json')      # 
 SFX_TEMPLATE = os.path.join(_HERE, 'workflows', 'stable_audio_sfx.json')      # Stable Audio Open 1.0 graph (SFX/ambient/sound, GPU0; natural-language, <=47s)
 HIDREAM_TEMPLATE = os.path.join(_HERE, 'workflows', 'hidream_o1.json')         # HiDream-O1-Image-Dev-2604 fp8 graph (top-quality image, GPU0 ~10GB; natural-language, 28-step CFG-off; custom node)
 ZIMAGE_TEMPLATE = os.path.join(_HERE, 'workflows', 'z_image_turbo.json')        # Z-Image-Turbo fp8 graph (uncensored image, GPU0 ~7GB; natural-language, 8-step cfg=1; Lumina2-encoder native nodes)
-WAN_TEMPLATE = os.path.join(_HERE, 'workflows', 'wan22_rapid.json')             # Wan2.2-Rapid-AllInOne Mega NSFW Q8 GGUF graph (uncensored video, both GPUs; umt5 encoder, 4-step cfg=1 distill-baked)
+WAN_TEMPLATE = os.path.join(_HERE, 'workflows', 'wan22_rapid.json')             # Wan2.2-Rapid-AllInOne Mega NSFW Q8 GGUF graph (uncensored video, t2v; umt5 encoder, euler_ancestral/beta 4-step cfg=1 distill-baked)
+WAN_I2V_TEMPLATE = os.path.join(_HERE, 'workflows', 'wan22_rapid_i2v.json')      # Wan2.2-Rapid i2v graph (WanImageToVideo start_image → animate an attached still)
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
 def build(dit, audio_vae, video_vae, connectors, width, height, frames=121, lora=None):
@@ -87,8 +88,10 @@ WF = {
     # encoder, natural-language prompt, 8-step cfg=1 (~7GB GPU0, ~25s/image — fast + coherent).
     "zimage": json.load(open(ZIMAGE_TEMPLATE)),
     # Uncensored video lane: Wan2.2-Rapid-AllInOne Mega NSFW v10 Q8 GGUF (14B, distill-baked
-    # 4-step). umt5 encoder, both GPUs, 832x480x81 @16fps (~3 min/clip). No synced audio (unlike LTX).
+    # 4-step euler_ancestral/beta). umt5 encoder, 832x480x81 @16fps (~2.5 min/clip, single card;
+    # 720p valve uses the DisTorch split). No synced audio (unlike LTX). t2v + i2v + long-clip chain.
     "wan": json.load(open(WAN_TEMPLATE)),
+    "wan-i2v": json.load(open(WAN_I2V_TEMPLATE)),
     # Music lane: ACE-Step v1 3.5B (text->music/song). Tags (style) + lyrics or [instrumental],
     # seconds-duration. Single-device GPU0 (~8GB) — a lane, not a separate mode (it's light enough).
     "music": json.load(open(MUSIC_TEMPLATE)),
@@ -158,11 +161,13 @@ class Pipe:
         chroma_steps: int = Field(default=26, description="Chroma (uncensored image lane) sampler steps.")
         chroma_cfg: float = Field(default=3.5, description="Chroma CFG scale (Chroma is de-distilled — real CFG + negative prompt, unlike Ideogram).")
         zimage_steps: int = Field(default=8, description="Z-Image-Turbo (uncensored image lane) sampler steps. Turbo schedule is 8-step cfg=1 (distilled); more steps rarely helps.")
-        wan_width: int = Field(default=832, description="Wan2.2 video lane width (480p-class is the 14B model's tuned regime; 832x480 ≈ 3 min/clip on 2x 3090).")
-        wan_height: int = Field(default=480, description="Wan2.2 video lane height.")
-        wan_frames: int = Field(default=81, description="Wan2.2 video length in frames (81 @16fps ≈ 5s — the model's native window).")
+        wan_width: int = Field(default=832, description="Wan2.2 video lane width at the DEFAULT (low-res) tier — 832x480 ≈ 2.5 min/clip single-card. Ignored when wan_hi_res is on (forces 1280x720).")
+        wan_height: int = Field(default=480, description="Wan2.2 default-tier height (see wan_width).")
+        wan_hi_res: bool = Field(default=False, description="Wan2.2 hi-res tier: render at 1280x720 via the DisTorch multi-GPU loader (compute GPU0 / weights donated from GPU1) — more detail, but ~3.5x slower (~9 min/clip) and uses BOTH cards. Off = 832x480 single-card (~2.5 min). 720p OOMs without DisTorch, so the loader is swapped automatically when this is on.")
+        wan_frames: int = Field(default=81, description="Wan2.2 video length in frames (81 @16fps ≈ 5s — the model's native window). See the Wan length ceiling in docs/ai-studio/video.md before raising.")
         wan_steps: int = Field(default=4, description="Wan2.2-Rapid sampler steps. The AllInOne build bakes a 4-step distill LoRA in → 4 steps cfg=1; raising this won't help (it's distilled).")
         wan_fps: int = Field(default=16, description="Wan2.2 output frames-per-second (the model's native 16fps).")
+        wan_max_seconds: int = Field(default=20, description="Wan2.2 long-clip cap. Asking for >~5s chains segments (each ~5s, i2v-seeded from the prior segment's last frame). segments = ceil(seconds/5), capped here. Each segment is a full ~2.5 min render (×3.5 at 720p), so 20s = 4 segments ≈ 10 min.")
         enable_narration: bool = Field(default=True, description="Video lanes only: if the message includes a voiceover (e.g. 'voiceover: ...' or 'narration: \"...\"'), generate a Kokoro voice and mix it over the clip's audio (ducked + normalized).")
         tts_url: str = Field(default="http://host.docker.internal:8192", description="Studio TTS + mixdown service (Kokoro, CPU). Generates the voiceover and ducks it over the clip's native audio. If unreachable, the clip is returned without narration.")
         narrate_voice: str = Field(default="af_heart", description="Kokoro voice id for narration (e.g. af_heart, af_bella, am_adam, bf_emma, bm_george).")
@@ -546,7 +551,7 @@ class Pipe:
         wf["ksampler"]["inputs"]["seed"] = seed
         return self._await_output(self._submit(wf), "image")
 
-    def _comfy_wan(self, prompt_text, width, height, frames, steps, seed):
+    def _comfy_wan(self, prompt_text, width, height, frames, steps, seed, hi_res=False):
         wf = json.loads(json.dumps(WORKFLOWS["wan"]))
         wf["pos"]["inputs"]["text"] = prompt_text
         wf["latent"]["inputs"]["width"] = width
@@ -555,6 +560,80 @@ class Pipe:
         wf["ksampler"]["inputs"]["steps"] = steps
         wf["ksampler"]["inputs"]["seed"] = seed
         wf["video"]["inputs"]["fps"] = float(self.valves.wan_fps)
+        if hi_res:
+            wf["unet"] = self._wan_distorch_loader(wf["unet"]["inputs"]["unet_name"])
+        return self._await_output(self._submit(wf), "video")
+
+    @staticmethod
+    def _wan_distorch_loader(gg):
+        # 720p OOMs on the plain single-card GGUF loader — swap to the DisTorch split
+        # (compute on GPU0, the 18GB GGUF donated from GPU1), exactly like the LTX lanes.
+        return {"class_type": "UnetLoaderGGUFDisTorch2MultiGPU",
+                "inputs": {"unet_name": gg, "compute_device": "cuda:0", "donor_device": "cuda:1",
+                           "virtual_vram_gb": 24.0, "eject_models": True}}
+
+    def _comfy_wan_i2v(self, prompt_text, image_name, width, height, frames, steps, seed, hi_res=False):
+        wf = json.loads(json.dumps(WORKFLOWS["wan-i2v"]))
+        wf["loadimage"]["inputs"]["image"] = image_name
+        wf["resize"]["inputs"]["width"] = width
+        wf["resize"]["inputs"]["height"] = height
+        wf["pos"]["inputs"]["text"] = prompt_text
+        wf["i2v"]["inputs"]["width"] = width
+        wf["i2v"]["inputs"]["height"] = height
+        wf["i2v"]["inputs"]["length"] = frames
+        wf["ksampler"]["inputs"]["steps"] = steps
+        wf["ksampler"]["inputs"]["seed"] = seed
+        wf["video"]["inputs"]["fps"] = float(self.valves.wan_fps)
+        if hi_res:
+            wf["unet"] = self._wan_distorch_loader(wf["unet"]["inputs"]["unet_name"])
+        return self._await_output(self._submit(wf), "video")
+
+    def _comfy_wan_chain(self, prompt_text, image_name, width, height, seg_frames, segments, steps, seed, hi_res=False):
+        # Past the ~5s native window, chain N segments: each later segment is i2v-seeded from the
+        # previous segment's LAST frame (ImageFromBatch) and its duplicate seam-frame is dropped,
+        # then all are concatenated (ImageBatch) into one clip. Wan-native — no LTX orchestrator.
+        base = WORKFLOWS["wan"]
+        gg = base["unet"]["inputs"]["unet_name"]
+        enc = base["clip"]["inputs"]["clip_name"]
+        vae = base["vae"]["inputs"]["vae_name"]
+        neg = base["neg"]["inputs"]["text"]
+        unet = self._wan_distorch_loader(gg) if hi_res else {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": gg}}
+        def ksamp(pos_in, neg_in, lat_in, sd):
+            return {"class_type": "KSampler", "inputs": {"model": ["ms", 0], "seed": sd, "steps": steps,
+                    "cfg": 1.0, "sampler_name": "euler_ancestral", "scheduler": "beta",
+                    "positive": pos_in, "negative": neg_in, "latent_image": lat_in, "denoise": 1.0}}
+        wf = {
+            "unet": unet,
+            "clip": {"class_type": "CLIPLoader", "inputs": {"clip_name": enc, "type": "wan", "device": "default"}},
+            "vae": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+            "ms": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["unet", 0], "shift": 5.0}},
+            "pos": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt_text, "clip": ["clip", 0]}},
+            "neg": {"class_type": "CLIPTextEncode", "inputs": {"text": neg, "clip": ["clip", 0]}},
+        }
+        # segment 1 — i2v if the user attached an image, else t2v
+        if image_name:
+            wf["load"] = {"class_type": "LoadImage", "inputs": {"image": image_name}}
+            wf["rz"] = {"class_type": "ImageScale", "inputs": {"image": ["load", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"}}
+            wf["i2v1"] = {"class_type": "WanImageToVideo", "inputs": {"positive": ["pos", 0], "negative": ["neg", 0], "vae": ["vae", 0], "width": width, "height": height, "length": seg_frames, "batch_size": 1, "start_image": ["rz", 0]}}
+            wf["ks1"] = ksamp(["i2v1", 0], ["i2v1", 1], ["i2v1", 2], seed)
+        else:
+            wf["lat1"] = {"class_type": "EmptyHunyuanLatentVideo", "inputs": {"width": width, "height": height, "length": seg_frames, "batch_size": 1}}
+            wf["ks1"] = ksamp(["pos", 0], ["neg", 0], ["lat1", 0], seed)
+        wf["dec1"] = {"class_type": "VAEDecode", "inputs": {"samples": ["ks1", 0], "vae": ["vae", 0]}}
+        cat = ["dec1", 0]
+        prev = "dec1"
+        for i in range(2, segments + 1):
+            last, i2v, ks, dec, trim, ct = f"last{i}", f"i2v{i}", f"ks{i}", f"dec{i}", f"trim{i}", f"cat{i}"
+            wf[last] = {"class_type": "ImageFromBatch", "inputs": {"image": [prev, 0], "batch_index": seg_frames - 1, "length": 1}}
+            wf[i2v] = {"class_type": "WanImageToVideo", "inputs": {"positive": ["pos", 0], "negative": ["neg", 0], "vae": ["vae", 0], "width": width, "height": height, "length": seg_frames, "batch_size": 1, "start_image": [last, 0]}}
+            wf[ks] = ksamp([i2v, 0], [i2v, 1], [i2v, 2], seed + i)
+            wf[dec] = {"class_type": "VAEDecode", "inputs": {"samples": [ks, 0], "vae": ["vae", 0]}}
+            wf[trim] = {"class_type": "ImageFromBatch", "inputs": {"image": [dec, 0], "batch_index": 1, "length": seg_frames - 1}}
+            wf[ct] = {"class_type": "ImageBatch", "inputs": {"image1": cat, "image2": [trim, 0]}}
+            cat = [ct, 0]
+            prev = dec
+        wf["video"] = {"class_type": "CreateVideo", "inputs": {"images": cat, "fps": float(self.valves.wan_fps)}}
+        wf["save"] = {"class_type": "SaveVideo", "inputs": {"video": ["video", 0], "filename_prefix": "wan-long", "format": "auto", "codec": "auto"}}
         return self._await_output(self._submit(wf), "video")
 
     def _comfy_music(self, tags, lyrics, seconds, steps, cfg, seed):
@@ -815,7 +894,7 @@ class Pipe:
                     "_Want changes? Just say what to tweak — e.g. " + tweaks + " — and I’ll re-craft from this and regenerate._ "
                     "_(Browse all media: " + base + "/ )_")
 
-        # ── WAN VIDEO LANE (Wan2.2-Rapid AllInOne · uncensored T2V · no synced audio, no LTX chaining) ──
+        # ── WAN VIDEO LANE (Wan2.2-Rapid AllInOne · uncensored · t2v + i2v + long-clip chain · no synced audio) ──
         if lane == "wan":
             up = ""
             for m in reversed(body.get("messages", [])):
@@ -824,14 +903,25 @@ class Pipe:
                     up = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
                           if isinstance(c, list) else (c or "").strip())
                     break
-            if not up:
+            # i2v if the user attached an image (Wan-native WanImageToVideo)
+            wan_img = None
+            data_uri = self._extract_image(body)
+            if data_uri:
+                await status("\U0001F5BC️ Uploading your image…")
+                try:
+                    wan_img = await loop.run_in_executor(None, self._upload_image, data_uri)
+                except Exception as e:
+                    return "⚠️ Couldn't upload the attached image: " + str(e)
+            if not up and not wan_img:
                 return "Type a scene to generate a video — e.g. “a red fox trotting through autumn woods, slow motion, cinematic”."
+            if not up:
+                up = "subtle natural motion, gentle camera movement"
             prior_spec = self._prior_spec(body)
             crafted = up
             if self.valves.enhance:
                 await status("\U0001F3AC Director crafting the shot…")
                 try:
-                    crafted = await loop.run_in_executor(None, self._enhance, up, False, prior_spec, "video")
+                    crafted = await loop.run_in_executor(None, self._enhance, up, wan_img is not None, prior_spec, "video")
                 except Exception:
                     crafted = up
             reply = self._chat_gate(crafted)
@@ -839,11 +929,28 @@ class Pipe:
                 await status("", True); return reply
             prompt_used = crafted if crafted.strip() else up
             seed = int(time.time() * 1000) % 2147483647
-            w = int(self.valves.wan_width); h = int(self.valves.wan_height); fr = int(self.valves.wan_frames)
-            await status("\U0001F513 Rendering on Wan2.2 (uncensored)… (~3 min)")
+            hi = bool(self.valves.wan_hi_res)
+            w, h = (1280, 720) if hi else (int(self.valves.wan_width), int(self.valves.wan_height))
+            fr = int(self.valves.wan_frames)
+            fps = max(1, int(self.valves.wan_fps))
+            seg_secs = fr / fps
+            # long clip? requested seconds beyond the native window → chain i2v-seeded segments
+            target = self._target_seconds(prompt_used) or 0
+            segments = 1
+            if target > seg_secs + 0.5:
+                seg_cap = max(1, int(self.valves.wan_max_seconds // seg_secs))
+                segments = min(seg_cap, max(2, math.ceil(target / seg_secs)))
+            per = ("9" if hi else "2.5")
             try:
-                fn, sub = await loop.run_in_executor(None, self._comfy_wan, prompt_used, w, h, fr,
-                                                     int(self.valves.wan_steps), seed)
+                if segments > 1:
+                    await status("\U0001F3AC Wan2.2 long clip (~" + str(round(segments * seg_secs)) + "s): chaining " + str(segments) + " segments… (~" + str(round(segments * (9 if hi else 2.5), 1)) + " min)")
+                    fn, sub = await loop.run_in_executor(None, self._comfy_wan_chain, prompt_used, wan_img, w, h, fr, segments, int(self.valves.wan_steps), seed, hi)
+                elif wan_img:
+                    await status("\U0001F513 Wan2.2 image→video (uncensored · " + str(w) + "x" + str(h) + ")… (~" + per + " min)")
+                    fn, sub = await loop.run_in_executor(None, self._comfy_wan_i2v, prompt_used, wan_img, w, h, fr, int(self.valves.wan_steps), seed, hi)
+                else:
+                    await status("\U0001F513 Rendering on Wan2.2 (uncensored · " + str(w) + "x" + str(h) + ")… (~" + per + " min)")
+                    fn, sub = await loop.run_in_executor(None, self._comfy_wan, prompt_used, w, h, fr, int(self.valves.wan_steps), seed, hi)
             except Exception as e:
                 await status("Failed", True)
                 return "⚠️ Video generation failed: " + str(e)
@@ -852,8 +959,9 @@ class Pipe:
                 return "Generation finished but no video output was found."
             base = self.valves.browser_base.rstrip("/")
             url = base + "/" + ((sub + "/") if sub else "") + fn
-            secs = round(fr / max(1, int(self.valves.wan_fps)), 1)
-            return ("**\U0001F3AC " + label + " · " + str(w) + "x" + str(h) + " · ~" + str(secs) + "s**\n\n"
+            secs = round(segments * fr / fps, 1)
+            kind_tag = ("image→video" if wan_img else "text→video") + ((" · " + str(segments) + " segments") if segments > 1 else "")
+            return ("**\U0001F3AC " + label + " · " + str(w) + "x" + str(h) + " · ~" + str(secs) + "s · " + kind_tag + "**\n\n"
                     "**Prompt used:** " + prompt_used + "\n\n"
                     "\U000025B6️ **[Open / download the video](" + url + ")**\n\n"
                     "_Want changes? Just say what to tweak — e.g. “slower”, “at night”, “wider shot” — "

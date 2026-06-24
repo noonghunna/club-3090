@@ -15,17 +15,34 @@
     "class_type": "ModelSamplingSD3",
     "inputs": { "model": ["unet", 0], "shift": 5.0 }
   },
+  "loadimage": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "__STUDIO_IMAGE__" }
+  },
+  "resize": {
+    "class_type": "ImageScale",
+    "inputs": { "image": ["loadimage", 0], "upscale_method": "lanczos", "width": 832, "height": 480, "crop": "center" }
+  },
   "pos": {
     "class_type": "CLIPTextEncode",
-    "inputs": { "text": "a cinematic shot", "clip": ["clip", 0] }
+    "inputs": { "text": "subtle natural motion, gentle camera movement", "clip": ["clip", 0] }
   },
   "neg": {
     "class_type": "CLIPTextEncode",
-    "inputs": { "text": "blurry, distorted, low quality, static, watermark, text", "clip": ["clip", 0] }
+    "inputs": { "text": "blurry, distorted, low quality, static, watermark, text, deformed", "clip": ["clip", 0] }
   },
-  "latent": {
-    "class_type": "EmptyHunyuanLatentVideo",
-    "inputs": { "width": 832, "height": 480, "length": 81, "batch_size": 1 }
+  "i2v": {
+    "class_type": "WanImageToVideo",
+    "inputs": {
+      "positive": ["pos", 0],
+      "negative": ["neg", 0],
+      "vae": ["vae", 0],
+      "width": 832,
+      "height": 480,
+      "length": 81,
+      "batch_size": 1,
+      "start_image": ["resize", 0]
+    }
   },
   "ksampler": {
     "class_type": "KSampler",
@@ -36,9 +53,9 @@
       "cfg": 1.0,
       "sampler_name": "euler_ancestral",
       "scheduler": "beta",
-      "positive": ["pos", 0],
-      "negative": ["neg", 0],
-      "latent_image": ["latent", 0],
+      "positive": ["i2v", 0],
+      "negative": ["i2v", 1],
+      "latent_image": ["i2v", 2],
       "denoise": 1.0
     }
   },
@@ -52,6 +69,6 @@
   },
   "save": {
     "class_type": "SaveVideo",
-    "inputs": { "video": ["video", 0], "filename_prefix": "wan-rapid", "format": "auto", "codec": "auto" }
+    "inputs": { "video": ["video", 0], "filename_prefix": "wan-i2v", "format": "auto", "codec": "auto" }
   }
 }
