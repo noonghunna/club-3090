@@ -1,13 +1,14 @@
 # Video Studio — chat-driven text/image → video on 2× 3090
 
 The video side of [Club 3090 AI Studio](README.md). Type a rough idea in Open WebUI; a "director"
-LLM crafts it into a professional prompt; ComfyUI renders it. Two video lanes share the pipe + the
-director: **LTX-2.3** (video+audio) and **Sulphur** (an uncensored LTX-2.3 fine-tune). Video is
-GPU-mutually-exclusive with the dual-card LLMs (it wants both 3090s).
+LLM crafts it into a professional prompt; ComfyUI renders it. Four video lanes share the pipe + the
+director: **LTX-2.3** (video+audio) and its uncensored fine-tunes **Sulphur** / **10Eros**, plus
+**Wan2.2-Rapid** (a separate uncensored text→video engine). Video is GPU-mutually-exclusive with
+the dual-card LLMs (it wants both 3090s).
 
-> Sibling docs: **[image.md](image.md)** (HiDream-O1 / Ideogram-4 / Chroma stills) ·
+> Sibling docs: **[image.md](image.md)** (HiDream-O1 / Ideogram-4 / Chroma / Z-Image stills) ·
 > **[audio.md](audio.md)** (voices / music / SFX) · **[README.md](README.md)** (the overview +
-> the full 8-lane matrix + shared services).
+> the full 11-lane matrix + shared services).
 
 ---
 
@@ -144,11 +145,11 @@ scene-cuts inside one segment; exact object counts.
 
 | | |
 |---|---|
-| **Modes** | text→video, image→video (attach an image) |
-| **Audio** | yes — LTX-2.3 generates synced ambient audio; optional Kokoro voiceover ([audio.md](audio.md)) |
-| **Resolution** | Sulphur 1280×720 · LTX 768×512 (set in the workflow) |
-| **Length** | default ~10 s; see the ceiling below |
-| **Video lanes** | `🎬 LTX-2.3` (video+audio) · `🔓 Sulphur` · `🔓 10Eros` (uncensored) — image/audio lanes in [image.md](image.md) / [audio.md](audio.md), full matrix in [README.md](README.md) |
+| **Modes** | text→video, image→video (attach an image) — **LTX lanes**; the Wan lane is text→video only |
+| **Audio** | yes — LTX-2.3 generates synced ambient audio; optional Kokoro voiceover ([audio.md](audio.md)). **Wan has no synced audio** (add a Kokoro voiceover if you want sound). |
+| **Resolution** | Sulphur / 10Eros 1280×720 · LTX 768×512 · Wan 832×480 (set in the workflow) |
+| **Length** | default ~10 s (LTX lanes); Wan ~5 s (81 frames @16fps); see the ceiling below |
+| **Video lanes** | `🎬 Studio · Video (LTX-2.3)` (video+audio) · `🔓 Studio · Video (Sulphur)` · `🔓 Studio · Video (10Eros)` · `🔓 Studio · Video (Wan2.2)` (all uncensored except LTX) — image/audio lanes in [image.md](image.md) / [audio.md](audio.md), full matrix in [README.md](README.md) |
 
 ### Length ceiling (measured on 2× 3090, 1280×720, frames = 24·seconds + 1)
 

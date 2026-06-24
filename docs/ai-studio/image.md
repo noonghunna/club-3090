@@ -1,7 +1,7 @@
-# Image Studio — chat-driven stills (HiDream-O1 · Ideogram-4 · Chroma)
+# Image Studio — chat-driven stills (HiDream-O1 · Ideogram-4 · Chroma · Z-Image)
 
 The image side of [Club 3090 AI Studio](README.md). Type a rough idea in Open WebUI; the
-"director" LLM crafts it; ComfyUI renders a **still**. Three lanes share one pipe + one director,
+"director" LLM crafts it; ComfyUI renders a **still**. Four lanes share one pipe + one director,
 all **single-device on GPU0** (they run in *either* `gpu-mode` — including alongside a video
 render, since the video DiT's weights sit on GPU1). Pick by intent:
 
@@ -10,6 +10,7 @@ render, since the video DiT's weights sit on GPU1). Pick by intent:
 | `✨ Image (HiDream-O1)` | HiDream-O1-Image-Dev-2604 fp8 | **top-quality general / photoreal** (AA #1 single-model open-weight) | natural language | native 2048², ~15 GB, ~3–4 min |
 | `🖼️ Image` | Ideogram-4 fp8 | **design / logo / text / typography** | structured JSON (director-crafted) | safety-trained; ~18.5 GB @1024² |
 | `🔓 Image (Chroma)` | Chroma1-HD fp8 | **uncensored** photoreal / illustration | natural language + negative + real CFG | ~9 GB; the "Sulphur for stills" |
+| `🔓 Image (Z-Image)` | Z-Image-Turbo fp8 | **uncensored**, **fast** photoreal / general | natural language | ~7 GB, **~25 s** (8-step cfg=1); Lumina2 encoder; the quick uncensored lane |
 
 Refine any of them by replying with the change (*"monochrome"*, *"tighter crop"*, *"at night"*,
 *"flat vector style"*) — the director evolves the previous prompt and regenerates. No approval gate.
@@ -101,6 +102,22 @@ for unrestricted photoreal/illustration. Validated clean (~72–80 s warm).
 > removes Ideogram's *false-positive* blocking of neutral prompts — genuine moderation stays. So
 > uncensored stills get their own model (Chroma), exactly as Sulphur is the uncensored video lane.
 > Capability is in the weights; the infra is content-neutral.
+
+## 🔓 Z-Image-Turbo (uncensored · fast)
+
+The **`🔓 Studio · Image (Z-Image)`** lane renders on **Z-Image-Turbo fp8** — Alibaba's 6B,
+**Apache-licensed**, permissively-trained text-to-image model (~7 GB, single-device GPU0). It's the
+**fast** uncensored lane: an 8-step cfg=1 turbo schedule renders a coherent 1024² still in **~25 s**
+(vs Chroma's ~75 s and HiDream's ~3–4 min). Native ComfyUI nodes — the text encoder is a Qwen3-4B
+loaded via `CLIPLoader` type `lumina2`; VAE is the shared Flux `ae.safetensors`. Natural-language
+prompt (the director crafts prose, same as Chroma). Use it when you want an uncensored still **now**;
+reach for Chroma when you want real-CFG/negative control, HiDream for top-quality.
+
+> **Krea 2 was evaluated for this slot and dropped.** Its weights are on disk, but its bespoke DiT
+> (`txtfusion`/`tproj` tensors) isn't recognised by ComfyUI's local model detection — the only
+> working path is the **cloud `Krea2ImageNode`**, which violates AI Studio's "fully self-hosted, no
+> cloud APIs" rule. It's also aligned (not uncensored). Re-evaluate if ComfyUI adds local Krea2
+> detection. Z-Image is the uncensored image pick instead.
 
 ## Native image button (via the image shim)
 

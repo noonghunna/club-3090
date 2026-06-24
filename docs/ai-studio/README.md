@@ -16,13 +16,13 @@ gallery, one refine-by-reply UX across the creative modalities.
 
 | Deep-dive | Covers |
 |---|---|
-| **[image.md](image.md)** | HiDream-O1 (top quality) · Ideogram-4 (design/logo/text) · Chroma (uncensored) · the native-button shim |
-| **[video.md](video.md)** | LTX-2.3 (video+audio) · Sulphur (uncensored) · 60 s+ chaining · the single-stage rule |
+| **[image.md](image.md)** | HiDream-O1 (top quality) · Ideogram-4 (design/logo/text) · Chroma + Z-Image (uncensored) · the native-button shim |
+| **[video.md](video.md)** | LTX-2.3 (video+audio) · Sulphur / 10Eros (uncensored) · Wan2.2 (uncensored T2V) · 60 s+ chaining · the single-stage rule |
 | **[audio.md](audio.md)** | Step-Audio-EditX (premium voice clone+edit) · Kokoro (narration) · ACE-Step (music) · Stable Audio (SFX) |
 
 ---
 
-## The 9 lanes
+## The 11 lanes
 
 Pick a lane in the OWUI model picker; the director crafts the right prompt shape for it.
 They all live in the single **`ai-studio`** scene — `gpu-mode ai-studio` brings the whole
@@ -30,12 +30,14 @@ creative surface up; you switch *lanes* in OWUI, not gpu-mode *modes*.
 
 | Lane | Model | Modality | License |
 |---|---|---|---|
-| 🎬 `Studio · LTX-2.3` | LTX-2.3 distilled 22B | video + synced audio | open |
-| 🔓 `Studio · Sulphur` | Sulphur (LTX-2.3 dev FT) | video (uncensored) | open |
-| 🔓 `Studio · 10Eros` | 10Eros (LTX-2.3 dev FT) | video (uncensored) | open |
+| 🎬 `Studio · Video (LTX-2.3)` | LTX-2.3 distilled 22B | video + synced audio | open |
+| 🔓 `Studio · Video (Sulphur)` | Sulphur (LTX-2.3 dev FT) | video (uncensored) | open |
+| 🔓 `Studio · Video (10Eros)` | 10Eros (LTX-2.3 dev FT) | video (uncensored) | open |
+| 🔓 `Studio · Video (Wan2.2)` | Wan2.2-Rapid-AllInOne Mega v10 | video (uncensored, text→video) | Apache |
 | ✨ `Studio · Image (HiDream-O1)` | HiDream-O1-Image-Dev-2604 | image — **top-quality / photoreal** (AA #1 single-model open-weight) | MIT |
 | 🖼️ `Studio · Image` | Ideogram-4 fp8 | image — design / logo / text | open |
 | 🔓 `Studio · Image (Chroma)` | Chroma1-HD fp8 | image (uncensored) | open |
+| 🔓 `Studio · Image (Z-Image)` | Z-Image-Turbo fp8 | image — uncensored, **fast** (~25 s) | Apache |
 | 🎵 `Studio · Music` | ACE-Step v1 3.5B | music — songs + instrumentals | open |
 | 🔊 `Studio · SFX` | Stable Audio Open 1.0 | sound effects / ambience | open |
 | 🎙️ `Studio · Voice` | Step-Audio-EditX 3B | premium voice — clone + emotion/style edit | **Apache** |

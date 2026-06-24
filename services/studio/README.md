@@ -12,8 +12,10 @@ architecture, capabilities and the measured length limits live in **[../../docs/
 |---|---|
 | `build_studio_pipe.py` | Generates `studio_pipe.py` — the Open WebUI **Function (pipe)** that drives ComfyUI. Run it, then install the output as a Function. |
 | `workflows/ltx_distilled_distorch.json` | The validated **single-stage** ComfyUI graph (8-step, cfg 1) the pipe submits for video. DisTorch splits the 22B DiT across 2 GPUs. |
+| `workflows/wan22_rapid.json` | The **Wan2.2-Rapid-AllInOne** Mega NSFW v10 Q8 GGUF video graph (14B, *uncensored*, text→video). umt5 encoder + Wan 2.1 VAE; the AllInOne merge bakes a 4-step distill in → single 4-step cfg=1 sampler. 832×480×81 @16fps (~3 min/clip). No synced audio (unlike LTX). |
 | `workflows/ideogram4.json` | The validated **Ideogram-4 fp8** image graph (DualModelGuider). Single-device GPU0 (~18.5 GB @1024²) — runs in either gpu-mode (no switch needed for image). |
 | `workflows/chroma1_hd.json` | The **Chroma1-HD fp8** image graph (Flux-based, de-distilled, *uncensored*). Natural-language prompt + negative + real CFG. Single-device GPU0 (~9 GB); reuses `t5xxl_fp16` + Flux `ae.safetensors`. |
+| `workflows/z_image_turbo.json` | The **Z-Image-Turbo fp8** image graph (Alibaba 6B, Apache, *uncensored*). Natural-language prompt, Lumina2 encoder (`qwen_3_4b`), 8-step cfg=1 turbo. Single-device GPU0 (~7 GB, ~25 s) — the **fast** uncensored image lane; reuses Flux `ae.safetensors`. |
 | `workflows/hidream_o1.json` | The **HiDream-O1-Image-Dev-2604 fp8** image graph (pixel-level unified transformer; AA #1 single-model open-weight T2I). Natural-language prompt, 28-step CFG-off, native **2048²** (~15 GB GPU0, ~3–4 min/image). **Needs the `HiDream_O1-ComfyUI` custom node** (no native ComfyUI support) — cloned by `services/comfyui/entrypoint.sh` (+ a transformers-5 compat patch); weights via `download_hidream_o1.sh`. |
 | `workflows/ace_step_music.json` | The **ACE-Step v1 3.5B** music graph (tags + lyrics/`[instrumental]`, seconds-duration). Single-device GPU0 (~8 GB) — songs + instrumentals to `.mp3`. |
 | `workflows/stable_audio_sfx.json` | The **Stable Audio Open 1.0** sound graph (natural-language, ≤47 s). Single-device GPU0 — SFX / ambience / textures to `.mp3`. |
@@ -34,14 +36,16 @@ python3 build_studio_pipe.py            # writes studio_pipe.py
 ```
 
 Then in Open WebUI: **Admin → Functions → +**, paste the contents of `studio_pipe.py`,
-save, enable. Nine models appear in the picker:
+save, enable. Eleven models appear in the picker (naming format: `Studio · <Modality> (<Model> · <descriptor>)`):
 
-- `🎬 Studio · LTX-2.3` — video + audio (stock model)
-- `🔓 Studio · Sulphur` — uncensored video lane (LTX-2.3-22B-dev fine-tune)
-- `🔓 Studio · 10Eros` — uncensored video lane (LTX-2.3-native dev fine-tune; A/B vs Sulphur)
+- `🎬 Studio · Video (LTX-2.3)` — video + synced audio (stock model)
+- `🔓 Studio · Video (Sulphur)` — uncensored video (LTX-2.3-22B-dev fine-tune)
+- `🔓 Studio · Video (10Eros)` — uncensored video (LTX-2.3-native dev fine-tune; A/B vs Sulphur)
+- `🔓 Studio · Video (Wan2.2)` — uncensored video, text→video (Wan2.2-Rapid Mega NSFW; no synced audio)
 - `✨ Studio · Image (HiDream-O1)` — top-quality / photoreal stills (natural-language prompt)
 - `🖼️ Studio · Image` — Ideogram-4 (graphic design / logo / photo / text)
 - `🔓 Studio · Image (Chroma)` — uncensored stills (natural-language prompt)
+- `🔓 Studio · Image (Z-Image)` — uncensored stills, **fast** (~25 s; natural-language prompt)
 - `🎵 Studio · Music` — ACE-Step (songs + instrumentals)
 - `🔊 Studio · SFX` — Stable Audio (sound effects + ambient)
 - `🎙️ Studio · Voice` — Step-Audio-EditX premium voice (zero-shot clone + emotion/style)
