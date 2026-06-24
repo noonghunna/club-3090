@@ -14,7 +14,6 @@ COMPOSE_BASE="$CLUB3090_DIR/services"
 # the same invocation switch.sh uses (project dir = compose-file dir).
 DUAL_27B_DIR="$CLUB3090_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4"
 GEMMA_DUAL_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/autoround-int4"
-GEMMA_DUAL_AWQ_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/awq"
 # Qwen3.6-40B-Deckard: uncensored dense 40B, Q6_K GGUF + embedded MTP head,
 # layer-split across both cards (llama.cpp). Dual-only — see `gpu-mode deckard`.
 DECKARD_DIR="$CLUB3090_DIR/models/qwen3.6-40b-deckard/llama-cpp/compose/dual/piehsoft-q6k"
@@ -414,26 +413,6 @@ mode_27b() {
 #  'gemma' scene (mode_gemma_int8) remains.  The bf16 compose is still serveable
 #  via its catalog slug if needed.)
 
-mode_gemma_dflash() {
-    echo -e "${CYAN}═══ Switching to Gemma 4 31B DFlash mode ═══${NC}"
-    echo "Starting: Gemma 4 31B + z-lab DFlash drafter (TP=2, :8032)"
-    echo ""
-    stop_all_27b
-    stop_deckard
-    stop_gemma_mtp
-    stop_gemma_int8
-    stop_gemma_dflash_int8
-    stop_gemma_awq
-    start_gemma_dflash
-    start_service litellm
-    start_service qdrant
-    start_service openwebui
-    start_service searxng
-    echo ""
-    echo -e "${GREEN}Gemma 4 31B DFlash mode active.${NC} API: http://192.168.86.33:8032"
-    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-gemma-4-31b-dflash${NC}"
-}
-
 mode_gemma_int8() {
     echo -e "${CYAN}═══ Switching to Gemma 4 31B INT8-PTH mode (dual default, long ctx) ═══${NC}"
     echo "Starting: Gemma 4 31B + INT8 PTH KV + 262K ctx (TP=2, :8032)"
@@ -441,9 +420,7 @@ mode_gemma_int8() {
     stop_all_27b
     stop_deckard
     stop_gemma_mtp
-    stop_gemma_dflash
-    stop_gemma_dflash_int8
-    stop_gemma_awq
+    stop_gemma_int8          # clean re-switch; the dflash/awq gemma scenes were pruned
     start_gemma_int8
     start_service litellm
     start_service qdrant
@@ -477,46 +454,6 @@ mode_deckard() {
     echo -e "${YELLOW}MTP n=2: ~36 narr / 46 code TPS · 128K ctx @ q8_0 KV · uncensored, text-only.${NC}"
     echo -e "${YELLOW}First boot ~1-2 min (31 GB GGUF load + 128K KV alloc across both cards).${NC}"
     echo -e "${YELLOW}Tail: sudo docker logs -f llama-cpp-deckard-40b${NC}"
-}
-
-mode_gemma_dflash_int8() {
-    echo -e "${CYAN}═══ Switching to Gemma 4 31B DFlash + INT8 PTH mode ═══${NC}"
-    echo "Starting: Gemma 4 31B + DFlash + INT8 PTH KV (TP=2, :8032). Requires vllm#42102."
-    echo ""
-    stop_all_27b
-    stop_deckard
-    stop_gemma_mtp
-    stop_gemma_dflash
-    stop_gemma_int8
-    stop_gemma_awq
-    start_gemma_dflash_int8
-    start_service litellm
-    start_service qdrant
-    start_service openwebui
-    start_service searxng
-    echo ""
-    echo -e "${GREEN}Gemma 4 31B DFlash + INT8 mode active.${NC} API: http://192.168.86.33:8032"
-    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-gemma-4-31b-dflash-int8${NC}"
-}
-
-mode_gemma_awq() {
-    echo -e "${CYAN}═══ Switching to Gemma 4 31B AWQ-4bit mode ═══${NC}"
-    echo "Starting: Gemma 4 31B AWQ-4bit (TP=2, :8033)"
-    echo ""
-    stop_all_27b
-    stop_deckard
-    stop_gemma_mtp
-    stop_gemma_dflash
-    stop_gemma_int8
-    stop_gemma_dflash_int8
-    start_gemma_awq
-    start_service litellm
-    start_service qdrant
-    start_service openwebui
-    start_service searxng
-    echo ""
-    echo -e "${GREEN}Gemma 4 31B AWQ mode active.${NC} API: http://192.168.86.33:8033"
-    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-gemma-4-31b-awq${NC}"
 }
 
 # (mode_diffusiongemma removed — DiffusionGemma is a niche dLLM; its gpu-mode scene
