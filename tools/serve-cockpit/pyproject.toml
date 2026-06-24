@@ -12,6 +12,13 @@ dependencies = [
     "club3090-tui-core>=0.1.0",
     "textual>=0.60",
     "rich>=13.0",
+    # The cockpit shells out to the repo's profile scripts (estate_cli.py,
+    # weights.py, compat.py, classifier.py, patch_attribution.py) which
+    # `import yaml`. Declaring PyYAML here means a `uv pip install -e` /
+    # `pip install` venv has it — otherwise `c3`'s python3 subprocess (the
+    # venv interpreter) hits `ModuleNotFoundError: No module named 'yaml'`
+    # on Doctor → diagnose-estate (works only if SYSTEM python3 has it).
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]
