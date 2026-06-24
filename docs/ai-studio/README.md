@@ -17,13 +17,13 @@ gallery, one refine-by-reply UX across the creative modalities.
 | Deep-dive | Covers |
 |---|---|
 | **[requirements.md](requirements.md)** | **Can I run this?** — GPU / CPU / RAM / disk / software, single-vs-dual-card, the director-placement VRAM lever |
-| **[image.md](image.md)** | HiDream-O1 (top quality) · Ideogram-4 (design/logo/text) · Chroma + Z-Image (uncensored) · the native-button shim |
+| **[image.md](image.md)** | HiDream-O1 (top quality) · Ideogram-4 (design/logo/text) · Chroma + Z-Image (uncensored) · Krea 2 (aesthetic) · the native-button shim |
 | **[video.md](video.md)** | LTX-2.3 (video+audio) · Sulphur / 10Eros (uncensored) · Wan2.2 (uncensored T2V) · 60 s+ chaining · the single-stage rule |
 | **[audio.md](audio.md)** | Step-Audio-EditX (premium voice clone+edit) · Kokoro (narration) · ACE-Step (music) · Stable Audio (SFX) |
 
 ---
 
-## The 11 lanes
+## The 12 lanes
 
 Pick a lane in the OWUI model picker; the director crafts the right prompt shape for it.
 They all live in the single **`ai-studio`** scene — `gpu-mode ai-studio` brings the whole
@@ -39,6 +39,7 @@ creative surface up; you switch *lanes* in OWUI, not gpu-mode *modes*.
 | 🖼️ `Studio · Image` | Ideogram-4 fp8 | image — design / logo / text | open |
 | 🔓 `Studio · Image (Chroma)` | Chroma1-HD fp8 | image (uncensored) | open |
 | 🔓 `Studio · Image (Z-Image)` | Z-Image-Turbo fp8 | image — uncensored, **fast** (~25 s) | Apache |
+| 🎨 `Studio · Image (Krea 2)` | Krea 2 Turbo fp8 | image — **aesthetic / stylized** (~40 s) | Krea |
 | 🎵 `Studio · Music` | ACE-Step v1 3.5B | music — songs + instrumentals | open |
 | 🔊 `Studio · SFX` | Stable Audio Open 1.0 | sound effects / ambience | open |
 | 🎙️ `Studio · Voice` | Step-Audio-EditX 3B | premium voice — clone + emotion/style edit | **Apache** |
@@ -91,7 +92,7 @@ The qwen **director** crafts the right prompt shape per lane; **ComfyUI** render
 
 ComfyUI runs **one workflow at a time**, so the lanes time-share the cards:
 
-- **GPU0 lanes (coexist with the director):** all 3 image lanes, music, SFX — single-device.
+- **GPU0 lanes (coexist with the director):** all 5 image lanes, music, SFX — single-device.
 - **Both-GPU lane:** **video** (the 22B DiT splits across both 3090s via DisTorch).
 - **GPU1 ⊕ video:** **premium voice** (Step-Audio-EditX, ~14 GB on GPU1) is on-demand and
   **mutually exclusive with an active video render** (both want GPU1) — c3 guards this.

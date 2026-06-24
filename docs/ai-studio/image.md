@@ -113,11 +113,15 @@ loaded via `CLIPLoader` type `lumina2`; VAE is the shared Flux `ae.safetensors`.
 prompt (the director crafts prose, same as Chroma). Use it when you want an uncensored still **now**;
 reach for Chroma when you want real-CFG/negative control, HiDream for top-quality.
 
-> **Krea 2 was evaluated for this slot and dropped.** Its weights are on disk, but its bespoke DiT
-> (`txtfusion`/`tproj` tensors) isn't recognised by ComfyUI's local model detection — the only
-> working path is the **cloud `Krea2ImageNode`**, which violates AI Studio's "fully self-hosted, no
-> cloud APIs" rule. It's also aligned (not uncensored). Re-evaluate if ComfyUI adds local Krea2
-> detection. Z-Image is the uncensored image pick instead.
+The **`🎨 Studio · Image (Krea 2)`** lane renders on **Krea 2 Turbo fp8** — a 12B dense DiT (~18 GB,
+single-device GPU0, coexists with the director like the Ideogram lane). The earlier *"dropped,
+cloud-only"* verdict was **pin-specific**: native **local** Krea2 detection landed in **ComfyUI
+v0.26.0** ([#14589](https://github.com/comfyanonymous/ComfyUI/pull/14589)) — older pins only exposed
+the cloud `Krea2ImageNode`. It now loads via native nodes: `UNETLoader` for the DiT, `CLIPLoader`
+type `krea2` for the **Qwen3-VL-4B** text encoder, and the **Qwen-Image VAE**. Natural-language
+prompt (director prose, like Chroma/Z-Image), 8-step cfg=1 turbo schedule (~40 s/1024²). It's
+**aligned, not uncensored** — its draw is the **aesthetic / stylized** look, so Z-Image stays the
+uncensored fast pick. Requires the v0.26.0 ComfyUI pin.
 
 ## Quality ceiling & the optional HQ upgrade path (parked)
 
