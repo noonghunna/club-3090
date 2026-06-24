@@ -1726,10 +1726,6 @@ def _with_force(plan: ActionPlan) -> list[str]:
 
 # ── Operate · Orchestration ───────────────────────────────────────────────────────
 
-# Max service bullets shown in the scene preview before collapsing to "… +N more".
-# Keeps the busy ai-studio scene (~6-7 services) within the preview's max-height: 6.
-_SCENE_PREVIEW_MAX_SVCS = 4
-
 
 class OperateOrchPane(Container):
     """Operate / Orchestration tab: GPU cards, Doctor, scene table, services."""
@@ -1782,7 +1778,6 @@ class OperateOrchPane(Container):
     }
     OperateOrchPane #scene-preview {
         height: auto;
-        max-height: 6;
         border: solid $primary;
         padding: 0 1;
         margin: 0 1 1 1;
@@ -2234,20 +2229,15 @@ class OperateOrchPane(Container):
         if scene.description:
             lines.append(f"  [dim]{escape(scene.description)}[/dim]")
         if states:
-            # ai-studio brings up ~6-7 services; on one line they wrap past the preview's
-            # max-height (6) and clip. Cap the list + show "+N more" so the box stays tidy
-            # (full per-service state lives in the Containers tab). Running services first
-            # so the active ones are always visible when a scene is partially up.
+            # Show every service (running first so active ones lead). The preview box
+            # auto-grows (no max-height) — a busy scene like ai-studio (~7 services) wraps
+            # across rows without clipping; the pane scrolls if it ever needs to.
             ordered = sorted(states, key=lambda s: not s.running)
-            shown = ordered[:_SCENE_PREVIEW_MAX_SVCS]
             svcs = "   ".join(
                 (f"[green]●[/green] {escape(s.name)}" if s.running
                  else f"[red]○[/red] {escape(s.name)}")
-                for s in shown
+                for s in ordered
             )
-            extra = len(states) - len(shown)
-            if extra:
-                svcs += f"   [dim]… +{extra} more[/dim]"
             lines.append(f"  [bold]services[/bold]  {svcs}")
         else:
             lines.append("  [bold]services[/bold]  [dim]— none (frees GPUs)[/dim]")

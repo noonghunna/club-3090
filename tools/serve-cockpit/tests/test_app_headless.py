@@ -1406,11 +1406,10 @@ class TestEstateWired:
 
 
 @pytest.mark.asyncio
-async def test_scene_preview_caps_services_with_overflow():
-    """A busy scene (ai-studio, ~7 services) caps the preview bullets to
-    _SCENE_PREVIEW_MAX_SVCS and collapses the rest to '+N more', so the services
-    line doesn't wrap past the preview box (max-height 6) and clip."""
-    from club3090_cockpit.app import _SCENE_PREVIEW_MAX_SVCS
+async def test_scene_preview_shows_all_services_no_clip():
+    """A busy scene (ai-studio, ~7 services) renders EVERY service in the preview —
+    no cap, no "+N more". The box has no max-height so it auto-grows to fit instead
+    of clipping (the pane scrolls if needed)."""
     busy = Scene(name="ai-studio", group="studio", description="creative studio",
                  services=["comfyui", "studio-director", "studio-gallery", "studio-tts",
                            "studio-image-shim", "studio-orchestrator", "step-voice"],
@@ -1422,9 +1421,12 @@ async def test_scene_preview_caps_services_with_overflow():
         orch.render_scene_preview(busy)
         await pilot.pause()
         txt = str(app.query_one("#scene-preview", Static).render())
-        svc_line = next(l for l in txt.splitlines() if "services" in l)       # the services row only (header also has a ○ tag)
-        assert svc_line.count("○") == _SCENE_PREVIEW_MAX_SVCS                  # only the cap shown (none running → ○)
-        assert f"+{len(busy.services) - _SCENE_PREVIEW_MAX_SVCS} more" in svc_line  # "+3 more"
+        for svc in busy.services:                       # every service is present, none dropped
+            assert svc in txt
+        assert "more" not in txt                          # no "+N more" collapse
+        # the #scene-preview rule carries no max-height cap (box auto-grows to fit)
+        preview_rule = OperateOrchPane.DEFAULT_CSS.split("#scene-preview")[1].split("}")[0]
+        assert "max-height" not in preview_rule
 
 
 @pytest.mark.asyncio
