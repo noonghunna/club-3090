@@ -6,12 +6,17 @@
 #   root     : weights (HF weights root, MODEL_DIR) | comfy (ComfyUI models tree, COMFYUI_MODELS_DIR)
 #   rel_path : the canary file under <root> whose presence == the model is installed
 #   installer: repo-relative download script (`bash <installer>`) that fetches it
-# Roster note: the uncensored picks (Krea / Z-Image / Wan) get appended after the bake-off.
+# Roster note: bake-off done — Z-Image (image) + Wan2.2 (video) added as the uncensored picks.
+# Krea 2 was evaluated and DROPPED: its bespoke DiT isn't recognised by ComfyUI's local model
+# detection (cloud-only Krea2ImageNode), which violates the "no cloud APIs" rule — weights stay
+# on disk, no lane. See docs/ai-studio/image.md.
 director	Director (Qwen3.5-4B uncensored)	weights	qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf	2.5	services/comfyui/download_director.sh
 image	Ideogram-4 (design / logo / text)	comfy	diffusion_models/ideogram4_fp8_scaled.safetensors	9.0	services/comfyui/download_ideogram4.sh
+image	Z-Image (uncensored / fast)	comfy	diffusion_models/z-image-turbo-fp8-e4m3fn.safetensors	6.15	services/comfyui/download_zimage.sh
 video	LTX-2.3 (video + audio)	comfy	unet/ltx2.3/distilled-1.1/ltx-2.3-22b-distilled-1.1-Q8_0.gguf	22.8	services/comfyui/download_video_models.sh
 video	Sulphur (uncensored video)	comfy	unet/sulphur-2/sulphur_dev-Q8_0.gguf	22.8	services/comfyui/download_video_models.sh
 video	10Eros (uncensored video)	comfy	unet/10eros/10Eros_v1-Q8_0.gguf	22.8	services/comfyui/download_video_models.sh
+video	Wan2.2 (uncensored video)	comfy	unet/wan-rapid/Mega-v10/wan2.2-rapid-mega-aio-nsfw-v10-Q8_0.gguf	18.65	services/comfyui/download_wan.sh
 audio	ACE-Step (music)	comfy	checkpoints/ace-step-1.5/all_in_one/ace_step_v1_3.5b.safetensors	7.7	services/comfyui/download_ace_step.sh
 audio	Stable Audio (SFX)	comfy	checkpoints/stable-audio-open-1.0.safetensors	4.85	services/comfyui/download_stable_audio.sh
 audio	Kokoro (narration)	comfy	tts/kokoro/kokoro-v1.0.onnx	0.3	services/comfyui/download_kokoro.sh
