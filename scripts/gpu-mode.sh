@@ -14,6 +14,8 @@ COMPOSE_BASE="$CLUB3090_DIR/services"
 # the same invocation switch.sh uses (project dir = compose-file dir).
 DUAL_27B_DIR="$CLUB3090_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4"
 GEMMA_DUAL_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/autoround-int4"
+# Qwen3.6-35B-A3B MoE (3B active / 35B total) — AutoRound INT4 + fp8 KV, 262K + vision (TP=2).
+A3B_DUAL_DIR="$CLUB3090_DIR/models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4"
 # Qwen3.6-40B-Deckard: uncensored dense 40B, Q6_K GGUF + embedded MTP head,
 # layer-split across both cards (llama.cpp). Dual-only — see `gpu-mode deckard`.
 DECKARD_DIR="$CLUB3090_DIR/models/qwen3.6-40b-deckard/llama-cpp/compose/dual/piehsoft-q6k"
@@ -141,6 +143,17 @@ stop_all_27b() {
     stop_27b_dual_turbo
 }
 
+# Qwen3.6-35B-A3B (MoE, 3B active / 35B total) dual-card vLLM — production slug
+# vllm/qwen-35b-a3b-dual (AutoRound INT4 + fp8 KV + 262K + vision, :8051).
+start_35b_a3b_dual() {
+    printf "  ${GREEN}▲${NC} Starting 35b-a3b-dual..."
+    compose_at "$A3B_DUAL_DIR" "up -d" fp8.yml && echo "done" || echo "failed"
+}
+stop_35b_a3b_dual() {
+    printf "  ${RED}▼${NC} Stopping 35b-a3b-dual..."
+    compose_at "$A3B_DUAL_DIR" "down" fp8.yml && echo "done" || echo "skipped"
+}
+
 # --- ComfyUI (image / video generation) -------------------------------------
 # GPU-bound — mutex with all vLLM / SGLang / llama-server LLM serving.
 start_comfyui() {
@@ -235,6 +248,11 @@ show_status() {
         local m
         m=$(curl -sf -m 2 http://localhost:8010/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
         echo -e "  ${GREEN}▶${NC} 27b-dual-mtp @ :8010    → ${m:-unknown} (MTP n=3 + fp8 + 262K + vision)"
+    fi
+    if curl -sf -m 2 http://localhost:8051/v1/models >/dev/null 2>&1; then
+        local m
+        m=$(curl -sf -m 2 http://localhost:8051/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} 35b-a3b-dual @ :8051    → ${m:-unknown} (MoE 3B/35B + fp8 + 262K + vision)"
     fi
     if curl -sf -m 2 http://localhost:8012/v1/models >/dev/null 2>&1; then
         local m
@@ -392,6 +410,8 @@ mode_27b() {
     echo "Stopping: other 27B variants"
     echo ""
     stop_all_gemma
+    stop_deckard
+    stop_35b_a3b_dual
     stop_comfyui
     stop_27b_dual_dflash
     stop_27b_dual_dflash_noviz
@@ -409,6 +429,28 @@ mode_27b() {
     echo -e "${YELLOW}Tail: sudo docker logs -f vllm-qwen36-27b-dual${NC}"
 }
 
+mode_35b_a3b() {
+    echo -e "${CYAN}═══ Switching to 35B-A3B dual-card mode (MoE, 262K + vision) ═══${NC}"
+    echo "Starting: Qwen3.6-35B-A3B AutoRound INT4 + fp8 KV + 262K + vision (TP=2)"
+    echo "Port: 8051 | Container: vllm-qwen36-35b-a3b-dual"
+    echo "Stopping: all other GPU models"
+    echo ""
+    stop_all_27b
+    stop_all_gemma
+    stop_deckard
+    stop_comfyui
+    stop_diffusiongemma
+    start_35b_a3b_dual
+    start_service litellm
+    start_service qdrant
+    start_service openwebui
+    start_service searxng
+    echo ""
+    echo -e "${GREEN}35B-A3B dual-card mode active.${NC} API: http://192.168.86.33:8051"
+    echo -e "${YELLOW}MoE: 3B active / 35B total — ~178/174 TPS, 262K ctx, vision. Boot ~3-4 min.${NC}"
+    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-qwen36-35b-a3b-dual${NC}"
+}
+
 # (mode_gemma — the bf16 'gemma-mtp' fallback scene — was removed; only the INT8
 #  'gemma' scene (mode_gemma_int8) remains.  The bf16 compose is still serveable
 #  via its catalog slug if needed.)
@@ -419,6 +461,7 @@ mode_gemma_int8() {
     echo ""
     stop_all_27b
     stop_deckard
+    stop_35b_a3b_dual
     stop_gemma_mtp
     stop_gemma_int8          # clean re-switch; the dflash/awq gemma scenes were pruned
     start_gemma_int8
@@ -437,6 +480,7 @@ mode_deckard() {
     echo ""
     stop_all_27b
     stop_all_gemma
+    stop_35b_a3b_dual
     stop_comfyui
     start_deckard
     start_service litellm
@@ -517,6 +561,7 @@ mode_ai_studio() {
     echo ""
     stop_all_27b
     stop_deckard
+    stop_35b_a3b_dual
     stop_all_gemma
     stop_diffusiongemma
     start_comfyui
@@ -705,6 +750,7 @@ mode_off() {
     echo -e "${CYAN}═══ Stopping ALL services ═══${NC}"
     stop_all_27b
     stop_deckard
+    stop_35b_a3b_dual
     stop_diffusiongemma
     stop_all_gemma
     stop_comfyui
@@ -742,6 +788,7 @@ list_modes_data() {
     cat <<'TSV'
 chat	ops	Open WebUI + LiteLLM + Qdrant + SearXNG (browser chat, no GPU model)	openwebui,litellm,qdrant,searxng	8080,4000	none
 27b	models	Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision (TP=2) — default	vllm-qwen36-27b-dual,litellm,qdrant,openwebui,searxng	8010,8080,4000	both
+35b-a3b	models	Qwen3.6-35B-A3B MoE (3B active / 35B total) AutoRound INT4 + fp8 KV + 262K + vision (TP=2)	vllm-qwen36-35b-a3b-dual,litellm,qdrant,openwebui,searxng	8051,8080,4000	both
 gemma	models	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
 deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng	8199,8080,4000	both
 ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,openwebui,litellm,searxng	8188,8090,8189,8190,8191,8192,8080,4000	both
@@ -808,6 +855,9 @@ usage() {
     echo "  Qwen 3.6 27B (dual 3090, TP=2):"
     echo "  27b                ⭐ DEFAULT — Qwen3.6-27B MTP + fp8 + 262K + vision + 2 streams (:8010)"
     echo ""
+    echo "  Qwen 3.6 35B-A3B MoE (dual 3090, TP=2):"
+    echo "  35b-a3b            AutoRound INT4 + fp8 KV + 262K + vision (:8051) — alias: a3b, 35b"
+    echo ""
     echo "  Gemma 4 31B (dual 3090, TP=2):"
     echo "  gemma              ⭐ DEFAULT — Gemma 4 31B INT8 PTH KV + 262K + vision (:8032)"
     echo ""
@@ -839,6 +889,7 @@ usage() {
 case "${1:-}" in
     chat)               mode_chat ;;
     27b)                mode_27b ;;
+    35b-a3b|a3b|35b)    mode_35b_a3b ;;
     gemma)              mode_gemma_int8 ;;
     deckard)            mode_deckard ;;
     ai-studio|aistudio)       mode_ai_studio ;;
