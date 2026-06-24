@@ -31,12 +31,20 @@ architecture, capabilities and the measured length limits live in **[../../docs/
 
 ## Install the pipe into Open WebUI
 
+**The easy way** (handled for you): `bash scripts/setup-ai-studio.sh` builds + downloads + brings the
+studio up **and installs this pipe automatically**. To install/update it on its own (once you have an
+OWUI admin account):
+
 ```bash
-python3 build_studio_pipe.py            # writes studio_pipe.py
+bash services/studio/push-pipe-to-owui.sh   # builds studio_pipe.py + UPSERTs it into OWUI's DB + reloads
 ```
 
-Then in Open WebUI: **Admin → Functions → +**, paste the contents of `studio_pipe.py`,
-save, enable. Eleven models appear in the picker (naming format: `Studio · <Modality> (<Model> · <descriptor>)`):
+It **installs the function if it's absent** and updates it if it exists — no manual paste needed.
+
+**The manual way** (if you prefer): `python3 build_studio_pipe.py` to write `studio_pipe.py`, then in
+Open WebUI **Admin → Functions → +**, paste its contents, save, enable.
+
+Either way, **eleven models appear in the picker** (naming format: `Studio · <Modality> (<Model> · <descriptor>)`):
 
 - `🎬 Studio · Video (LTX-2.3)` — video + synced audio (stock model)
 - `🔓 Studio · Video (Sulphur)` — uncensored video (LTX-2.3-22B-dev fine-tune)
@@ -50,11 +58,11 @@ save, enable. Eleven models appear in the picker (naming format: `Studio · <Mod
 - `🔊 Studio · SFX` — Stable Audio (sound effects + ambient)
 - `🎙️ Studio · Voice` — Step-Audio-EditX premium voice (zero-shot clone + emotion/style)
 
-> **Updating an already-installed pipe:** OWUI keeps the pipe **code in its DB**, not from the
-> file — so regenerating `studio_pipe.py` alone won't take effect (the classic "stale function"
-> trap). After any change to `build_studio_pipe.py`, run **`bash push-pipe-to-owui.sh`** (rebuilds
-> + writes the new code into the OWUI `studio` function + restarts OWUI to reload it). First-time
-> install is still the paste step above.
+> **Why `push-pipe-to-owui.sh` (not just regenerate the file):** OWUI keeps the pipe **code in its
+> DB**, not from the file — so regenerating `studio_pipe.py` alone won't take effect (the classic
+> "stale function" trap). After any change to `build_studio_pipe.py`, run **`bash push-pipe-to-owui.sh`**
+> — it **installs the function if absent, else updates it**, then restarts OWUI to reload. First-time
+> install needs an OWUI admin account to exist (sign up at the OWUI URL first).
 
 Set the pipe's **Valves** (gear icon on the function):
 - `comfyui_url` → your ComfyUI (`http://host.docker.internal:8188` from the OWUI container)

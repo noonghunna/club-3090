@@ -136,12 +136,23 @@ gemma-4-12b — the uncensored DiTs still render, only the prompt-writing change
 
 ## Bring it up
 
+**One command** (fresh clone → generating) — builds the ComfyUI image, downloads the full roster
+(~120 GB), brings the scene up, and installs the OWUI Studio pipe:
+
+```bash
+bash scripts/setup-ai-studio.sh        # add --yes to skip the confirm; SKIP_BUILD / SKIP_DOWNLOAD / SKIP_PIPE to trim
+```
+
+**Already set up?** Just bring the scene up (or do it from c3 → Operate):
+
 ```bash
 bash scripts/gpu-mode.sh ai-studio   # ComfyUI (both cards) + director + gallery + orchestrator + shim + tts + OWUI
 # premium voice (on demand):  docker compose -f services/studio/step-voice/docker-compose.yml up -d
 ```
 
-Then open Open WebUI at `http://<your-host>:8080`, set the pipe's `browser_base` valve to your
-host's LAN IP (`http://<your-host>:8189`), and pick a lane. Per-modality setup + model manifests
-are in [image.md](image.md) / [video.md](video.md) / [audio.md](audio.md). The service bundle
-itself is documented in [`services/studio/README.md`](../../services/studio/README.md).
+Then open Open WebUI at `http://<your-host>:8080`, **sign up** (first account = admin), set the pipe's
+`browser_base` valve to your host's LAN IP (`http://<your-host>:8189`), and pick a lane. (If you signed
+up *after* `setup-ai-studio.sh` ran, install the pipe with `bash services/studio/push-pipe-to-owui.sh`.)
+Per-modality setup + model manifests are in [image.md](image.md) / [video.md](video.md) /
+[audio.md](audio.md); requirements in [requirements.md](requirements.md). The service bundle itself is
+documented in [`services/studio/README.md`](../../services/studio/README.md).

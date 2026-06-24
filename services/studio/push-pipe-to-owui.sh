@@ -5,17 +5,19 @@
 # the file on disk. So editing build_studio_pipe.py + regenerating studio_pipe.py is NOT enough —
 # the installed function stays on the old code (the "stale function" trap). This script:
 #   1. builds studio_pipe.py
-#   2. copies it into the open-webui container + UPDATEs the function row's `content`
+#   2. copies it into the open-webui container + UPSERTs the function row's `content`
+#      (INSTALLs the function if it doesn't exist yet, else UPDATEs it — no manual paste needed)
 #   3. restarts open-webui so it reloads the function (also refreshes the lane picker)
 #
-# Prereq: the Studio function must already be installed once (Admin → Functions → + → paste
-# studio_pipe.py). After that, use this to push every update.
+# First-time install needs an OWUI admin account to exist (create it at the OWUI URL first); after
+# that this both installs and updates. setup-ai-studio.sh calls this as its pipe-install step.
 #
 # Usage:
-#   bash services/studio/push-pipe-to-owui.sh                 # build → push → reload
-#   bash services/studio/push-pipe-to-owui.sh --no-reload     # build → push, but don't restart OWUI
+#   bash services/studio/push-pipe-to-owui.sh                 # build → install/update → reload
+#   bash services/studio/push-pipe-to-owui.sh --no-reload     # build → install/update, but don't restart OWUI
 #   bash services/studio/push-pipe-to-owui.sh <function_id> <owui_container>   # defaults: studio open-webui
 # Env: OWUI_DB (default /app/backend/data/webui.db) · DOCKER (default "sudo docker") · OWUI_HEALTH_URL
+#      OWUI_FN_NAME (display name for a first-time install, default "🎬 Studio")
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -41,18 +43,30 @@ echo "[push] pipe = $(wc -c < "$PIPE") bytes"
 
 $DOCKER ps --format '{{.Names}}' | grep -qx "$OWUI" || { echo "[push] ERROR: container '$OWUI' is not running"; exit 1; }
 
-echo "[push] copy → $OWUI : updating function '$FN_ID' in $DB …"
+echo "[push] copy → $OWUI : install/update function '$FN_ID' in $DB …"
 $DOCKER cp "$PIPE" "$OWUI:/tmp/_studio_pipe_push.py"
-$DOCKER exec -e FN_ID="$FN_ID" -e DB="$DB" "$OWUI" python -c '
-import os, sqlite3, time, sys
-fn_id, db = os.environ["FN_ID"], os.environ["DB"]
+$DOCKER exec -e FN_ID="$FN_ID" -e DB="$DB" -e FN_NAME="${OWUI_FN_NAME:-🎬 Studio}" "$OWUI" python -c '
+import os, sqlite3, time, json, sys
+fn_id, db, fn_name = os.environ["FN_ID"], os.environ["DB"], os.environ["FN_NAME"]
 new = open("/tmp/_studio_pipe_push.py").read()
+now = int(time.time())
 c = sqlite3.connect(db); cur = c.cursor()
-if not cur.execute("SELECT 1 FROM function WHERE id=?", (fn_id,)).fetchone():
-    sys.exit("[push] ERROR: function id %r not in the DB — install it once via Admin -> Functions." % fn_id)
-cur.execute("UPDATE function SET content=?, updated_at=? WHERE id=?", (new, int(time.time()), fn_id))
+exists = cur.execute("SELECT 1 FROM function WHERE id=?", (fn_id,)).fetchone()
+if exists:
+    cur.execute("UPDATE function SET content=?, updated_at=? WHERE id=?", (new, now, fn_id))
+    action = "updated"
+else:
+    admin = cur.execute("SELECT id FROM user WHERE role=? ORDER BY created_at LIMIT 1", ("admin",)).fetchone()
+    if not admin:
+        sys.exit("[push] OWUI has no admin user yet — create your account at the OWUI URL first, then re-run.")
+    meta = json.dumps({"description": "Studio: a casual idea -> a director LLM crafts it -> image / video / audio."})
+    cur.execute(
+        "INSERT INTO function (id,user_id,name,type,content,meta,created_at,updated_at,valves,is_active,is_global) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (fn_id, admin[0], fn_name, "pipe", new, meta, now, now, None, 1, 1))
+    action = "installed"
 c.commit()
-print("[push] updated row:", cur.execute("SELECT id,name,is_active,length(content) FROM function WHERE id=?", (fn_id,)).fetchone())
+print("[push] %s row:" % action, cur.execute("SELECT id,name,type,is_active,length(content) FROM function WHERE id=?", (fn_id,)).fetchone())
 c.close()
 '
 $DOCKER exec "$OWUI" rm -f /tmp/_studio_pipe_push.py 2>/dev/null || true
