@@ -60,6 +60,7 @@ from club3090_cockpit.data import (
     ByoResult,
     ContainerInfo,
     DoctorRead,
+    EstateState,
     FitVerdict,
     Measurement,
     ReconcileResult,
@@ -3220,3 +3221,36 @@ class TestOptimizeSeam:
         report = await cd.optimize_for_card()
         assert report.available is False
         assert "v0.10.0" in report.message
+
+
+# ── EstateState.api_booting (engine-agnostic mid-boot signal) ─────────────────────
+
+
+def _booting_state(*, reachable, conts):
+    return EstateState(
+        doctor=DoctorRead(reachable=reachable),
+        containers=[ContainerInfo(name=n, kind=k, status=s) for (n, k, s) in conts],
+    )
+
+
+def test_api_booting_engine_up_but_unreachable():
+    # an engine container running + API unreachable → booting (any engine prefix)
+    for cname in ("vllm-qwen36-27b-dual", "llama-cpp-deckard-40b",
+                  "ik-llama-qwen36-27b", "beellama-qwen36-27b"):
+        st = _booting_state(reachable=False, conts=[(cname, "engine", "running")])
+        assert st.api_booting is True, cname
+
+
+def test_api_booting_false_when_reachable():
+    # endpoint up → never "booting" regardless of containers
+    st = _booting_state(reachable=True, conts=[("vllm-x", "engine", "running")])
+    assert st.api_booting is False
+
+
+def test_api_booting_false_when_no_engine_running():
+    # unreachable + only non-engine (service/stack) or a STOPPED engine → not booting
+    st = _booting_state(reachable=False, conts=[("comfyui", "service", "running"),
+                                                ("vllm-x", "engine", "stopped")])
+    assert st.api_booting is False
+    # nothing running at all → not booting (truly down)
+    assert _booting_state(reachable=False, conts=[]).api_booting is False

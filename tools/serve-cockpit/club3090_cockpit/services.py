@@ -1202,6 +1202,11 @@ class CockpitData:
         # doctor (health.sh — text)
         state.doctor = await self.doctor_read(url=target.url or None)
 
+        # Derived "booting" (EstateState.api_booting): an engine container is up but
+        # the API isn't reachable yet → a model is mid-boot. Copy onto doctor.booting
+        # so the dr-only Doctor/rail renderers can show "booting" vs "not reachable".
+        state.doctor.booting = state.api_booting
+
         # estate planner (report-state --json)
         report, _ = await self._run_json(
             ["python3", "scripts/lib/profiles/estate_cli.py", "report-state", "--json"],

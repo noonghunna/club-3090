@@ -471,6 +471,11 @@ class DoctorRead:
 
     reachable: bool = False
     serving: bool = False
+    # Derived (set in estate(), not parsed): an engine container is RUNNING but the
+    # API isn't reachable yet → the model is mid-boot. Every engine loads weights
+    # THEN binds the port, so VRAM is full but /v1 is down for ~10s-3min (longest on
+    # vLLM). Lets Doctor show "⏳ booting" instead of "✗ not reachable".
+    booting: bool = False
     summary: str = ""                   # one-line condensed status
     kv_pool_pct: Optional[int] = None
     spec_dec: str = ""                  # e.g. "MTP n=2, 73% accept" or ""
@@ -515,6 +520,18 @@ class EstateState:
     matched_slug: str = ""              # slug the running engine matched, if any
     served: ServedProbe = field(default_factory=ServedProbe)  # A7: probed running config
     error: str = ""
+
+    @property
+    def api_booting(self) -> bool:
+        """An engine container is RUNNING but the API isn't reachable yet → a model
+        is mid-boot. Engine-agnostic: every engine (vLLM / llama.cpp / ik_llama /
+        beellama / sglang) binds its port only AFTER loading weights, so VRAM is
+        full but /v1 is down for ~10s-3min; the 'engine' container kind is set via
+        ENGINE_PREFIXES for all of them. estate() copies this onto doctor.booting so
+        the dr-only renderers can read it. Pure derivation — no I/O."""
+        if self.doctor.reachable:
+            return False
+        return any(c.kind == "engine" and c.status == "running" for c in self.containers)
 
 
 # ── Reconcile gate ──────────────────────────────────────────────────────────────

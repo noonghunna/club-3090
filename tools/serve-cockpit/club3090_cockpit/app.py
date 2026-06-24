@@ -2119,7 +2119,10 @@ class OperateOrchPane(Container):
         dr = state.doctor
         line = self.query_one("#doctor-line", Static)
         if not dr.reachable:
-            line.update("[red]○[/red] API not reachable")
+            if dr.booting:
+                line.update("[yellow]⏳[/yellow] API booting — model loading")
+            else:
+                line.update("[red]○[/red] API not reachable")
             return
         glyph = "[green]●[/green]" if dr.serving else "[yellow]○[/yellow]"
         line.update(f"{glyph} {dr.summary}")
@@ -2818,6 +2821,16 @@ class DoctorPane(Container):
     def _render_health(self, dr) -> None:
         body = self.query_one("#doctor-health-body", Static)
         if not dr.reachable:
+            if dr.booting:
+                # A model container is up but hasn't bound its port yet — mid-boot,
+                # NOT down. Soft message + a re-check pointer (no remediation needed).
+                body.update(
+                    "[yellow]⏳[/yellow]  API booting — the model is loading\n"
+                    "   [dim]engines bind the port only AFTER loading weights "
+                    "(~10s-3min, longest on vLLM). Give it a moment, then "
+                    "[cyan]y[/cyan] to re-check.[/dim]"
+                )
+                return
             # N7: OFFER the obvious remediation, not just the symptom.  No write
             # here — a navigation pointer to the gated serve path.
             body.update(
@@ -4305,6 +4318,8 @@ class RailStatus(Static):
         if dr.reachable:
             glyph = "[green]●[/green]" if dr.serving else "[yellow]○[/yellow]"
             lines.append(f"{glyph} {dr.summary}")
+        elif dr.booting:
+            lines.append("[yellow]⏳[/yellow] booting…")
         else:
             lines.append("[red]○[/red] not reachable")
         # A3: stamp the freshness so the always-visible card is honest between
