@@ -14,6 +14,9 @@ COMPOSE_BASE="$CLUB3090_DIR/services"
 # the same invocation switch.sh uses (project dir = compose-file dir).
 DUAL_27B_DIR="$CLUB3090_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4"
 GEMMA_DUAL_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/autoround-int4"
+# Gemma 4 12B (gemma4_unified arch) — AutoRound INT8 weights + bf16 KV, single-card vLLM on
+# the EPHEMERAL vllm/vllm-openai:gemma4-unified arch-preview image (:8038, served gemma-4-12b-int8).
+GEMMA_12B_DIR="$CLUB3090_DIR/models/gemma-4-12b/vllm/compose/single/autoround-int8"
 # Qwen3.6-35B-A3B MoE (3B active / 35B total) — AutoRound INT4 + fp8 KV, 262K + vision (TP=2).
 A3B_DUAL_DIR="$CLUB3090_DIR/models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4"
 # Qwen3.6-40B-Deckard: uncensored dense 40B, Q6_K GGUF + embedded MTP head,
@@ -154,6 +157,16 @@ stop_35b_a3b_dual() {
     compose_at "$A3B_DUAL_DIR" "down" fp8.yml && echo "done" || echo "skipped"
 }
 
+# Gemma 4 12B single-card vLLM (gemma4_unified arch-preview image, AutoRound INT8 + MTP n=2).
+start_gemma_12b() {
+    printf "  ${GREEN}▲${NC} Starting gemma-12b..."
+    compose_at "$GEMMA_12B_DIR" "up -d" mtp.yml && echo "done" || echo "failed"
+}
+stop_gemma_12b() {
+    printf "  ${RED}▼${NC} Stopping gemma-12b..."
+    compose_at "$GEMMA_12B_DIR" "down" mtp.yml && echo "done" || echo "skipped"
+}
+
 # --- ComfyUI (image / video generation) -------------------------------------
 # GPU-bound — mutex with all vLLM / SGLang / llama-server LLM serving.
 start_comfyui() {
@@ -218,6 +231,7 @@ stop_gemma_int8() {
 stop_all_gemma() {
     stop_gemma_mtp
     stop_gemma_int8
+    stop_gemma_12b
 }
 
 start_deckard() {
@@ -296,6 +310,11 @@ show_status() {
         m=$(curl -sf -m 2 http://localhost:8032/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
         echo -e "  ${GREEN}▶${NC} gemma-int8 @ :8032        → ${m:-unknown} (INT8 PTH KV)"
     fi
+    if curl -sf -m 2 http://localhost:8038/v1/models >/dev/null 2>&1; then
+        local m
+        m=$(curl -sf -m 2 http://localhost:8038/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} gemma-12b @ :8038        → ${m:-unknown} (gemma4_unified, INT8 + bf16 KV + MTP, single card)"
+    fi
     if curl -sf -m 2 http://localhost:8090/v1/models >/dev/null 2>&1; then
         echo -e "  ${GREEN}▶${NC} studio director @ :8090  → qwen3.5-4b-uncensored (prompt crafter, GPU0, llama.cpp)"
     fi
@@ -314,6 +333,7 @@ show_status() {
       && ! curl -sf -m 2 http://localhost:8030/v1/models >/dev/null 2>&1 \
       && ! curl -sf -m 2 http://localhost:8032/v1/models >/dev/null 2>&1 \
       && ! curl -sf -m 2 http://localhost:8033/v1/models >/dev/null 2>&1 \
+      && ! curl -sf -m 2 http://localhost:8038/v1/models >/dev/null 2>&1 \
       && ! curl -sf -m 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
         echo -e "  ${YELLOW}(no inference endpoint responding)${NC}"
     fi
@@ -451,6 +471,29 @@ mode_35b_a3b() {
     echo -e "${YELLOW}Tail: sudo docker logs -f vllm-qwen36-35b-a3b-dual${NC}"
 }
 
+mode_gemma_12b() {
+    echo -e "${CYAN}═══ Switching to Gemma 4 12B mode (single-card, gemma4_unified) ═══${NC}"
+    echo "Starting: Gemma 4 12B AutoRound INT8 + bf16 KV + MTP n=2 (single card, :8038)"
+    echo "Port: 8038 | Container: vllm-gemma-4-12b-int8-mtp"
+    echo "Stopping: all other GPU models"
+    echo ""
+    stop_all_27b
+    stop_all_gemma
+    stop_deckard
+    stop_35b_a3b_dual
+    stop_comfyui
+    stop_diffusiongemma
+    start_gemma_12b
+    start_service litellm
+    start_service qdrant
+    start_service openwebui
+    start_service searxng
+    echo ""
+    echo -e "${GREEN}Gemma 4 12B mode active.${NC} API: http://192.168.86.33:8038"
+    echo -e "${YELLOW}gemma4_unified arch-preview image (EPHEMERAL tag — pin a digest before prod). Single card; the other GPU is free.${NC}"
+    echo -e "${YELLOW}Tail: sudo docker logs -f vllm-gemma-4-12b-int8-mtp${NC}"
+}
+
 # (mode_gemma — the bf16 'gemma-mtp' fallback scene — was removed; only the INT8
 #  'gemma' scene (mode_gemma_int8) remains.  The bf16 compose is still serveable
 #  via its catalog slug if needed.)
@@ -462,6 +505,7 @@ mode_gemma_int8() {
     stop_all_27b
     stop_deckard
     stop_35b_a3b_dual
+    stop_gemma_12b
     stop_gemma_mtp
     stop_gemma_int8          # clean re-switch; the dflash/awq gemma scenes were pruned
     start_gemma_int8
@@ -790,6 +834,7 @@ chat	ops	Open WebUI + LiteLLM + Qdrant + SearXNG (browser chat, no GPU model)	op
 qwen27b	models	Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision (TP=2) — default	vllm-qwen36-27b-dual,litellm,qdrant,openwebui,searxng	8010,8080,4000	both
 qwen35b-a3b	models	Qwen3.6-35B-A3B MoE (3B active / 35B total) AutoRound INT4 + fp8 KV + 262K + vision (TP=2)	vllm-qwen36-35b-a3b-dual,litellm,qdrant,openwebui,searxng	8051,8080,4000	both
 gemma-31b	models	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
+gemma12b	models	Gemma 4 12B AutoRound INT8 + bf16 KV + MTP n=2 (gemma4_unified arch-preview, single-card)	vllm-gemma-4-12b-int8-mtp,litellm,qdrant,openwebui,searxng	8038,8080,4000	1
 deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng	8199,8080,4000	both
 ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,openwebui,litellm,searxng	8188,8090,8189,8190,8191,8192,8080,4000	both
 off	ops	Stop all services	all-stopped		none
@@ -861,6 +906,9 @@ usage() {
     echo "  Gemma 4 31B (dual 3090, TP=2):"
     echo "  gemma-31b          ⭐ DEFAULT — Gemma 4 31B INT8 PTH KV + 262K + vision (:8032) — alias: gemma"
     echo ""
+    echo "  Gemma 4 12B (single 3090, gemma4_unified arch-preview):"
+    echo "  gemma12b           AutoRound INT8 + bf16 KV + MTP n=2 (:8038, served gemma-4-12b-int8) — alias: gemma-12b"
+    echo ""
     echo "  Qwen 3.6 40B Deckard (uncensored, dual 3090, llama.cpp):"
     echo "  deckard            Q6_K + MTP n=2 + q8_0 KV + 128K ctx (:8199) — text-only, both cards"
     echo ""
@@ -891,6 +939,7 @@ case "${1:-}" in
     qwen27b|27b)        mode_27b ;;
     qwen35b-a3b|35b-a3b|a3b|35b)  mode_35b_a3b ;;
     gemma-31b|gemma)    mode_gemma_int8 ;;
+    gemma12b|gemma-12b) mode_gemma_12b ;;
     deckard)            mode_deckard ;;
     ai-studio|aistudio)       mode_ai_studio ;;
     off)                mode_off ;;

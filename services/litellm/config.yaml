@@ -27,8 +27,17 @@ model_list:
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
 
-  # (gemma-4-12b :8069 route retired 2026-06-23 with the ai-studio consolidation — the
-  #  studio uses the qwen director only. The gemma-4-31b :8032 route above is unaffected.)
+  # (The old gemma-4-12b :8069 llama.cpp "chat brain" route was retired 2026-06-23 with the
+  #  ai-studio consolidation — the studio uses the qwen director only.)
+
+  # Gemma 4 12B (gemma4_unified arch, Intel AutoRound INT8) + bf16 KV + MTP n=2, single card.
+  # Started by `gpu-mode gemma12b` → vllm-gemma-4-12b-int8-mtp at :8038 (served gemma-4-12b-int8).
+  # Single-card scene: GPU-mutex with the dual models and ai-studio.
+  - model_name: gemma-4-12b-int8
+    litellm_params:
+      model: openai/gemma-4-12b-int8
+      api_base: http://host.docker.internal:8038/v1
+      api_key: EMPTY
 
   # NOTE: Gemma 4 26B-A4B is intentionally NOT routed — the registry default
   # (vllm/gemma-a4b, :8041) is the autoround-int4-mixed compose, which is
