@@ -14,16 +14,25 @@ services:
       # FRESH volume; on an existing volume set it in Admin → Settings → Images instead.
       - ./imagegen.env
     environment:
-      # Chat models — bootstrap BOTH connections on a FRESH volume (PersistentConfig):
-      #   :8090 = the ai-studio qwen director (uncensored prompt crafter — the studio lanes
-      #           call it internally; it also doubles as one general chat model).
-      #   :4000 = LiteLLM gateway → the full LLM catalog (qwen3.6-27b / 35b-a3b / gemma-4-31b /
-      #           gemma-4-12b / deckard-40b). Only the ACTIVE gpu-mode scene's upstream responds
-      #           (GPU-mutex); the rest appear in the picker but error until you switch to them.
-      # Plural *_URLS / *_KEYS are ;-separated. On an EXISTING volume the stored config wins —
-      # set connections in Admin → Settings → Connections (or edit webui.db) instead.
-      - OPENAI_API_BASE_URLS=http://host.docker.internal:8090/v1;http://host.docker.internal:4000/v1
-      - OPENAI_API_KEYS=sk-noauth;sk-litellm-master-key
+      # Chat models — bootstrap one connection PER BACKEND on a FRESH volume (PersistentConfig),
+      # pointing OWUI straight at each model's own port rather than at the LiteLLM gateway. OWUI
+      # hides models from an UNREACHABLE connection, so each model appears in the picker only while
+      # its gpu-mode scene is actually serving — scene-accurate, no listing dead routes. (Going via
+      # LiteLLM :4000 instead would always list every catalog model, since the gateway is always up;
+      # that masking is exactly what this avoids. LiteLLM stays running for other clients — it just
+      # leaves OWUI's picker.) Served names match the catalog, so model IDs are unchanged:
+      #   :8090 = ai-studio qwen director (uncensored prompt crafter; studio lanes call it internally,
+      #           and it doubles as a general chat model). Up only in the ai-studio scene.
+      #   :8010 = qwen3.6-27b-autoround     (gpu-mode qwen27b)
+      #   :8051 = qwen3.6-35b-a3b-autoround (gpu-mode qwen35b-a3b)
+      #   :8032 = gemma-4-31b-autoround     (gpu-mode gemma-31b)
+      #   :8038 = gemma-4-12b-int8          (gpu-mode gemma12b)
+      #   :8199 = deckard-40b               (gpu-mode deckard)
+      # Plural *_URLS / *_KEYS are ;-separated. On an EXISTING volume the stored config wins — re-run
+      # scripts/setup-ai-studio.sh (it registers these + drops a stale :4000) or set them in
+      # Admin → Settings → Connections. Backends are no-auth on localhost, so the key is a placeholder.
+      - OPENAI_API_BASE_URLS=http://host.docker.internal:8090/v1;http://host.docker.internal:8010/v1;http://host.docker.internal:8051/v1;http://host.docker.internal:8032/v1;http://host.docker.internal:8038/v1;http://host.docker.internal:8199/v1
+      - OPENAI_API_KEYS=sk-noauth;sk-noauth;sk-noauth;sk-noauth;sk-noauth;sk-noauth
       # Ollama removed from the stack 2026-06-22 — disable the API so OWUI doesn't
       # probe a dead :11434 on boot (chat routes through the OpenAI API above).
       - ENABLE_OLLAMA_API=false

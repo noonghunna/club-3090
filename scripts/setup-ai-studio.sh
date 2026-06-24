@@ -115,6 +115,24 @@ else
     echo "  (SKIP_PIPE set — install later: bash services/studio/push-pipe-to-owui.sh)"
 fi
 
+# --- 4b. Wire the LLM catalog into OWUI as per-backend connections -----------
+# OWUI hides models from an UNREACHABLE connection, so pointing it straight at each
+# model's own port (instead of the always-up LiteLLM :4000 gateway) makes the chat
+# picker scene-accurate: a model shows only while its gpu-mode scene is serving.
+# Both helpers are idempotent + no-op when OWUI is down or the connection already
+# (does not) exist — safe to re-run. Served names match the catalog (model IDs unchanged).
+if [ -z "${SKIP_OWUI_WIRING:-}" ]; then
+    say "── Wiring the LLM catalog into Open WebUI (per-backend, scene-accurate) ──"
+    for port in 8090 8010 8051 8032 8038 8199; do
+        bash "$REPO_DIR/scripts/lib/owui-register.sh" "$port" || true
+    done
+    # Drop the legacy LiteLLM :4000 gateway connection — it lists every catalog model
+    # regardless of which scene is up (the masking this per-backend wiring replaces).
+    bash "$REPO_DIR/scripts/lib/owui-unregister.sh" 4000 || true
+else
+    echo "  (SKIP_OWUI_WIRING set — leaving OWUI connections as-is)"
+fi
+
 # --- Done — onboarding -------------------------------------------------------
 echo ""
 ok "═══ AI Studio ready ═══"
