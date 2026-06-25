@@ -20,6 +20,11 @@
 # CPU thread cap: DIRECTOR_THREADS (default 8 of 16) — bounds CPU use so it doesn't starve OWUI's
 # embedder/reranker. The ~2.6 GB GGUF loads into SYSTEM RAM (mmap'd → resident in page cache after
 # warm-up; the SSD is only the backing store, inference runs from RAM, not the disk).
+# Thinking: DIRECTOR_THINK_ARGS passes extra llama.cpp flags. `gpu-mode` leaves it empty on GPU
+# (thinking ON — fast, richer craft; the trace lands in reasoning_content so `content` stays clean)
+# and sets `--jinja --reasoning off` on CPU, where a full <think> trace would dominate the ~14 tok/s
+# latency. (This 'Aggressive' fine-tune ignores /no_think and --reasoning-budget 0 but honors
+# --reasoning off, which forces the template's enable_thinking=false.)
 services:
   studio-director:
     image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
@@ -36,7 +41,7 @@ services:
       -m /models/${DIRECTOR_GGUF:-qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf}
       --mmproj /models/${DIRECTOR_MMPROJ:-qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf}
       -ngl ${DIRECTOR_NGL:-99} -t ${DIRECTOR_THREADS:-8} -c 16384 --host 0.0.0.0 --port ${STUDIO_DIRECTOR_PORT:-8090}
-      --alias qwen3.5-4b-uncensored
+      --alias qwen3.5-4b-uncensored ${DIRECTOR_THINK_ARGS:-}
     deploy:
       resources:
         reservations:

@@ -198,16 +198,22 @@ _director_device() {
     echo "$d"
 }
 start_studio_director() {
-    local dev ngl cvd gpu label
+    local dev ngl cvd gpu label think_args
     dev=$(_director_device)
+    # think_args empty on GPU: thinking stays ON (fast there, richer craft; the trace lands in
+    # reasoning_content so `content` is still clean). On CPU a full <think> trace dominates the
+    # ~14 tok/s latency, so disable it — '--reasoning off' sets the template's enable_thinking=false
+    # (this 'Aggressive' fine-tune ignores /no_think and --reasoning-budget 0, but honors this).
+    think_args=""
     case "$dev" in
-        cpu)  ngl=0;  cvd="";  gpu=0; label="CPU — frees GPU0, craft ~single-digit tok/s" ;;
+        cpu)  ngl=0;  cvd="";  gpu=0; think_args="--jinja --reasoning off"
+              label="CPU — thinking OFF for latency, ~14 tok/s craft" ;;
         gpu1) ngl=99; cvd=1;   gpu=1; label=":8090, GPU1" ;;
         *)    ngl=99; cvd=0;   gpu=0; label=":8090, GPU0" ;;
     esac
     printf "  ${GREEN}▲${NC} Starting studio-director ($label)..."
     compose_at_env "$COMPOSE_BASE/studio/enhancer" "up -d" docker-compose.yml \
-        "DIRECTOR_NGL=$ngl" "STUDIO_DIRECTOR_CUDA=$cvd" "STUDIO_DIRECTOR_GPU=$gpu" \
+        "DIRECTOR_NGL=$ngl" "STUDIO_DIRECTOR_CUDA=$cvd" "STUDIO_DIRECTOR_GPU=$gpu" "DIRECTOR_THINK_ARGS=$think_args" \
         && echo "done" || echo "failed"
 }
 stop_studio_director() {

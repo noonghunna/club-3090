@@ -42,11 +42,14 @@ each fit one card.
 >   lane (18 GB donor + 4.5 GB = 22.5 GB fits). **NOT** the LTX / Sulphur / 10Eros lanes: they use GPU1
 >   as their ~22 GB DisTorch donor, so a director there OOMs them.
 > - **`cpu`** → universally safe, frees the GPU entirely (model mmaps into ~5 GB system RAM, SSD-backed),
->   at a craft-latency cost (single-digit tok/s for a 4B on CPU vs ~1.4 s on GPU — noticeable before a
->   fast image lane, invisible before a multi-minute video). Cap its cores with `DIRECTOR_THREADS`
->   (default 8). **A CPU director is the always-on path:** it uses no GPU, so it survives scene switches
->   and stays live as the uncensored model in Open WebUI — `gpu-mode` only evicts a *GPU*-placed director
->   when a dual-card LLM scene needs the cards.
+>   at a craft-latency cost (~14 tok/s for a 4B on CPU vs ~1.4 s on GPU — noticeable before a fast image
+>   lane, invisible before a multi-minute video). Cap its cores with `DIRECTOR_THREADS` (default 8).
+>   **Thinking is auto-disabled on CPU only** (`gpu-mode` sets `--reasoning off`): a full `<think>` trace
+>   would dominate the slow decode, so CPU craft is a direct one-pass answer. On GPU thinking stays on
+>   (fast there, and the trace lands in `reasoning_content`, leaving `content` clean either way).
+>   **A CPU director is the always-on path:** it uses no GPU, so it survives scene switches and stays
+>   live as the uncensored model in Open WebUI — `gpu-mode` only evicts a *GPU*-placed director when a
+>   dual-card LLM scene needs the cards.
 >
 > The `chat` scene also starts the director (honoring the same knob) as the **supporting-infra home for
 > Catalog models** — see [the chat scene + Catalog note](#chat-scene--the-catalog-support-layer) below.
