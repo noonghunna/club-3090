@@ -142,7 +142,7 @@ version: 0.14.0
 #  SFX lane: sfx = Stable Audio Open 1.0 (text->sound/SFX/ambient, <=47s). GPU0, natural-language.
 #  Director: qwen3.5-4b-uncensored @ :8090 (GPU0); falls back to raw prompt if down.
 # ────────────────────────────────────────────────────────────────────────────────
-import json, time, base64, re, math, urllib.request, urllib.parse, asyncio
+import json, time, base64, re, math, urllib.request, urllib.parse, urllib.error, asyncio
 from pydantic import BaseModel, Field
 
 WORKFLOWS = json.loads(r"""__WF_JSON__""")
@@ -186,25 +186,64 @@ class Pipe:
         sfx_steps: int = Field(default=50, description="Stable Audio sampler steps.")
         voice_url: str = Field(default="http://host.docker.internal:8193", description="Studio premium-voice service (Step-Audio-EditX, isolated container, transformers 4.53.3). Zero-shot clone + emotion/style editing. GPU — bring up on demand (docker compose -f services/studio/step-voice/docker-compose.yml up -d). If unreachable, the voice lane errors.")
         voice_reference: str = Field(default="Narrator.wav", description="Default reference voice the lane clones — a bundled sample name (Narrator.wav / Narrator-UK.wav / Pirates.wav) or an absolute path inside the service. Replace with your own 10–30 s clean clip to clone your voice.")
+        hide_unavailable_lanes: bool = Field(default=True, description="Only list lanes whose backend is currently reachable — ComfyUI (:8188) for every media lane, the voice service (:8193) for the voice lane. When the ai-studio scene is down, the Studio lanes drop out of the OWUI model picker instead of listing-but-erroring. Set false to always list all lanes regardless of backend state.")
+
+    # Lane catalog — (id, picker label, backend that must be live to serve it).
+    #   "comfy" → ComfyUI (:8188), gates every image/video/music/SFX lane.
+    #   "voice" → Step-Audio-EditX (:8193), an on-demand service, gates the voice lane.
+    _LANES = [
+        ("ltx",     "\U0001F3AC Studio · Video (LTX-2.3 · +synced audio · text or image)",        "comfy"),
+        ("sulphur", "\U0001F513 Studio · Video (Sulphur · uncensored · text or image)",           "comfy"),
+        ("10eros",  "\U0001F513 Studio · Video (10Eros · uncensored · text or image)",            "comfy"),
+        ("wan",     "\U0001F513 Studio · Video (Wan2.2 · uncensored)",                            "comfy"),
+        ("hidream", "\U00002728 Studio · Image (HiDream-O1 · top-quality / photoreal)",           "comfy"),
+        ("image",   "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / text)",     "comfy"),
+        ("chroma",  "\U0001F513 Studio · Image (Chroma · uncensored)",                            "comfy"),
+        ("zimage",  "\U0001F513 Studio · Image (Z-Image · uncensored · fast)",                    "comfy"),
+        ("krea",    "\U0001F3A8 Studio · Image (Krea 2 · aesthetic)",                             "comfy"),
+        ("music",   "\U0001F3B5 Studio · Music (ACE-Step · songs + instrumentals)",               "comfy"),
+        ("sfx",     "\U0001F50A Studio · SFX (Stable Audio · sound effects + ambient)",           "comfy"),
+        ("voice",   "\U0001F399️ Studio · Voice (Step-Audio-EditX · premium clone)",               "voice"),
+    ]
 
     def __init__(self):
         self.valves = self.Valves()
+        self._live_cache = {}
+        self._live_ts = 0.0
+
+    def _alive(self, base, path, timeout=0.6):
+        # True if the backend answers at all. An HTTP error status still means the
+        # server is up (just doesn't like the path); only a connection failure /
+        # timeout counts as down. A closed port refuses fast, so this is cheap.
+        try:
+            urllib.request.urlopen(base.rstrip("/") + path, timeout=timeout)
+            return True
+        except urllib.error.HTTPError:
+            return True
+        except Exception:
+            return False
+
+    def _live_backends(self):
+        # Reachability probe with a short TTL so a picker refresh doesn't hammer the
+        # backends. ComfyUI gates all media lanes; the voice service is gated apart.
+        now = time.time()
+        if self._live_cache and now - self._live_ts < 8.0:
+            return self._live_cache
+        self._live_cache = {
+            "comfy": self._alive(self.valves.comfyui_url, "/system_stats"),
+            "voice": self._alive(self.valves.voice_url, "/"),
+        }
+        self._live_ts = now
+        return self._live_cache
 
     def pipes(self):
-        return [
-            {"id": "ltx", "name": "\U0001F3AC Studio · Video (LTX-2.3 · +synced audio · text or image)"},
-            {"id": "sulphur", "name": "\U0001F513 Studio · Video (Sulphur · uncensored · text or image)"},
-            {"id": "10eros", "name": "\U0001F513 Studio · Video (10Eros · uncensored · text or image)"},
-            {"id": "wan", "name": "\U0001F513 Studio · Video (Wan2.2 · uncensored)"},
-            {"id": "hidream", "name": "\U00002728 Studio · Image (HiDream-O1 · top-quality / photoreal)"},
-            {"id": "image", "name": "\U0001F5BC️ Studio · Image (Ideogram-4 · graphic / logo / photo / text)"},
-            {"id": "chroma", "name": "\U0001F513 Studio · Image (Chroma · uncensored)"},
-            {"id": "zimage", "name": "\U0001F513 Studio · Image (Z-Image · uncensored · fast)"},
-            {"id": "krea", "name": "\U0001F3A8 Studio · Image (Krea 2 · aesthetic)"},
-            {"id": "music", "name": "\U0001F3B5 Studio · Music (ACE-Step · songs + instrumentals)"},
-            {"id": "sfx", "name": "\U0001F50A Studio · SFX (Stable Audio · sound effects + ambient)"},
-            {"id": "voice", "name": "\U0001F399️ Studio · Voice (Step-Audio-EditX · premium clone)"},
-        ]
+        if not self.valves.hide_unavailable_lanes:
+            return [{"id": i, "name": n} for (i, n, _b) in self._LANES]
+        live = self._live_backends()
+        # Only surface lanes whose backend currently answers. When nothing is live
+        # (e.g. a non-ai-studio gpu-mode scene), this returns [] and the whole Studio
+        # group drops out of the OWUI picker rather than listing dead lanes.
+        return [{"id": i, "name": n} for (i, n, b) in self._LANES if live.get(b)]
 
     def _extract_image(self, body):
         for m in reversed(body.get("messages", [])):
