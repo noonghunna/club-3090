@@ -184,9 +184,31 @@ start_studio_gallery() {
     printf "  ${GREEN}▲${NC} Starting studio-gallery (:8189)..."
     compose_at "$COMPOSE_BASE/studio/gallery" "up -d" && echo "done" || echo "failed"
 }
+# Director placement lever — STUDIO_DIRECTOR_DEVICE (gpu0|gpu1|cpu) from the rig .env, set by
+# c3's Settings "Director placement" field (default gpu0). gpu0 = ~4.6 GB on GPU0 (fast craft,
+# coexists with the image lanes); gpu1 = GPU1 (NOT during a video render — GPU1 is the DiT donor);
+# cpu = frees GPU0 for long single-card video, but craft is ~single-digit tok/s. See video.md.
+_director_device() {
+    local d=gpu0
+    if [ -f "$CLUB3090_DIR/.env" ]; then
+        local v
+        v=$(grep -E '^STUDIO_DIRECTOR_DEVICE=' "$CLUB3090_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")
+        [ -n "$v" ] && d="$v"
+    fi
+    echo "$d"
+}
 start_studio_director() {
-    printf "  ${GREEN}▲${NC} Starting studio-director (:8090, GPU0)..."
-    compose_at "$COMPOSE_BASE/studio/enhancer" "up -d" && echo "done" || echo "failed"
+    local dev ngl cvd gpu label
+    dev=$(_director_device)
+    case "$dev" in
+        cpu)  ngl=0;  cvd="";  gpu=0; label="CPU — frees GPU0, craft ~single-digit tok/s" ;;
+        gpu1) ngl=99; cvd=1;   gpu=1; label=":8090, GPU1" ;;
+        *)    ngl=99; cvd=0;   gpu=0; label=":8090, GPU0" ;;
+    esac
+    printf "  ${GREEN}▲${NC} Starting studio-director ($label)..."
+    compose_at_env "$COMPOSE_BASE/studio/enhancer" "up -d" docker-compose.yml \
+        "DIRECTOR_NGL=$ngl" "STUDIO_DIRECTOR_CUDA=$cvd" "STUDIO_DIRECTOR_GPU=$gpu" \
+        && echo "done" || echo "failed"
 }
 start_studio_orchestrator() {
     printf "  ${GREEN}▲${NC} Starting studio-orchestrator (:8190, long-clip chaining)..."
