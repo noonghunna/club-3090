@@ -9,21 +9,39 @@
 # stock model (e.g. gemma-4-12b) if you'd rather craft through an aligned model; the
 # Sulphur DiT still renders uncensored. See docs/ai-studio/video.md.
 #
-# Pinned to GPU0 (default) — the ~4.6 GB director coexists there with ComfyUI's GPU0
-# compute (a video render donates its 22B DiT to GPU1 via DisTorch; image/music/SFX are GPU0).
+# Placement is a lever (default GPU0). `gpu-mode` derives these from STUDIO_DIRECTOR_DEVICE
+# (gpu0 | gpu1 | cpu) — or set them directly in the rig .env:
+#   GPU0 (default): DIRECTOR_NGL=99  STUDIO_DIRECTOR_CUDA=0  STUDIO_DIRECTOR_GPU=0
+#   GPU1:           DIRECTOR_NGL=99  STUDIO_DIRECTOR_CUDA=1  STUDIO_DIRECTOR_GPU=1
+#   CPU:            DIRECTOR_NGL=0   STUDIO_DIRECTOR_CUDA=""  (frees ~4.6 GB off GPU0 for long video;
+#                   craft is ~single-digit tok/s — see docs/ai-studio/video.md director-placement lever)
+# On GPU0 the ~4.6 GB director coexists with ComfyUI's GPU0 compute; GPU1 is the video DiT donor
+# (don't put the director there during video). CPU is the universally-safe relocation.
+# CPU thread cap: DIRECTOR_THREADS (default 8 of 16) — bounds CPU use so it doesn't starve OWUI's
+# embedder/reranker. The ~2.6 GB GGUF loads into SYSTEM RAM (mmap'd → resident in page cache after
+# warm-up; the SSD is only the backing store, inference runs from RAM, not the disk).
+# Thinking: DIRECTOR_THINK_ARGS passes extra llama.cpp flags. `gpu-mode` leaves it empty on GPU
+# (thinking ON — fast, richer craft; the trace lands in reasoning_content so `content` stays clean)
+# and sets `--jinja --reasoning off` on CPU, where a full <think> trace would dominate the ~14 tok/s
+# latency. (This 'Aggressive' fine-tune ignores /no_think and --reasoning-budget 0 but honors
+# --reasoning off, which forces the template's enable_thinking=false.)
 services:
   studio-director:
     image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
     container_name: studio-director
     restart: unless-stopped
     network_mode: host           # binds :8090 directly on the host
+    environment:
+      # "" → CPU-only (CUDA sees no device, llama.cpp falls back to CPU); 0/1 → that GPU.
+      # No-colon ${VAR-0}: an explicit empty value (CPU) is kept; only an UNSET var defaults to 0.
+      - CUDA_VISIBLE_DEVICES=${STUDIO_DIRECTOR_CUDA-0}
     volumes:
       - ${MODEL_DIR:-/mnt/models/huggingface}:/models:ro
     command: >-
       -m /models/${DIRECTOR_GGUF:-qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf}
       --mmproj /models/${DIRECTOR_MMPROJ:-qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf}
-      -ngl 99 -c 16384 --host 0.0.0.0 --port ${STUDIO_DIRECTOR_PORT:-8090}
-      --alias qwen3.5-4b-uncensored
+      -ngl ${DIRECTOR_NGL:-99} -t ${DIRECTOR_THREADS:-8} -c 16384 --host 0.0.0.0 --port ${STUDIO_DIRECTOR_PORT:-8090}
+      --alias qwen3.5-4b-uncensored ${DIRECTOR_THINK_ARGS:-}
     deploy:
       resources:
         reservations:

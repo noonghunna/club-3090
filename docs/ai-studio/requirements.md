@@ -33,16 +33,29 @@ each fit one card.
 > **~1.4 s** to craft a prompt (measured, GPU), then idle. **Default: GPU0**, which coexists with every
 > shipped default lane. It's also the swing factor on the single-card Wan ceiling: its 4.5 GB on GPU0
 > caps the single-card 480p window at ~121 frames; **freeing it lifts that to 161** (measured).
-> Relocate it to reclaim GPU0:
-> - `STUDIO_DIRECTOR_GPU=1` → the second card. **Safe only when GPU1 has room** — the image lanes and
->   the Wan video lane (18 GB donor + 4.5 GB = 22.5 GB fits). **NOT** the LTX / Sulphur / 10Eros lanes:
->   they use GPU1 as their ~22 GB DisTorch donor, so a director there OOMs them.
-> - `-ngl 0` → **CPU**: universally safe, frees the GPU entirely (~5 GB RAM), at a craft-latency cost
->   (tens of seconds for a 4B on CPU vs ~1.4 s on GPU — noticeable before a fast image lane, invisible
->   before a multi-minute video).
 >
-> Keep it on GPU0 for the snappy refine-by-reply UX; move it only to unlock an edge case (Ideogram
-> 2048², single-window Wan >121 frames).
+> One knob drives it: **`STUDIO_DIRECTOR_DEVICE=gpu0|gpu1|cpu`** in the rig `.env` — set it from
+> **c3 → Settings → "Director placement"**, or edit the line directly. `gpu-mode` reads it on every
+> scene launch and translates it to the container's `CUDA_VISIBLE_DEVICES` + `-ngl`:
+> - **`gpu0`** (default) → GPU0, snappy refine-by-reply (~1.4 s craft).
+> - **`gpu1`** → the second card. **Safe only when GPU1 has room** — the image lanes and the Wan video
+>   lane (18 GB donor + 4.5 GB = 22.5 GB fits). **NOT** the LTX / Sulphur / 10Eros lanes: they use GPU1
+>   as their ~22 GB DisTorch donor, so a director there OOMs them.
+> - **`cpu`** → universally safe, frees the GPU entirely (model mmaps into ~5 GB system RAM, SSD-backed),
+>   at a craft-latency cost (~14 tok/s for a 4B on CPU vs ~1.4 s on GPU — noticeable before a fast image
+>   lane, invisible before a multi-minute video). Cap its cores with `DIRECTOR_THREADS` (default 8).
+>   **Thinking is auto-disabled on CPU only** (`gpu-mode` sets `--reasoning off`): a full `<think>` trace
+>   would dominate the slow decode, so CPU craft is a direct one-pass answer. On GPU thinking stays on
+>   (fast there, and the trace lands in `reasoning_content`, leaving `content` clean either way).
+>   **A CPU director is the always-on path:** it uses no GPU, so it survives scene switches and stays
+>   live as the uncensored model in Open WebUI — `gpu-mode` only evicts a *GPU*-placed director when a
+>   dual-card LLM scene needs the cards.
+>
+> The `chat` scene also starts the director (honoring the same knob) as the **supporting-infra home for
+> Catalog models** — see [the chat scene + Catalog note](#chat-scene--the-catalog-support-layer) below.
+>
+> Keep it on GPU0 for the snappy refine-by-reply UX in AI-Studio; choose `cpu` for an always-on chat
+> companion, or `gpu1` to unlock a GPU0 edge case (Ideogram 2048², single-window Wan >121 frames).
 
 **Single-GPU (1× 24 GB):** image + music + SFX + the director run comfortably; **video is the
 constraint** — a 22B DiT won't fit one card at full resolution. Treat **dual-card as recommended**
@@ -94,3 +107,24 @@ gpu-mode ai-studio                                 # ComfyUI (both cards) + dire
 Then open Open WebUI and pick a lane. Full per-lane detail in [image.md](image.md) /
 [video.md](video.md) / [audio.md](audio.md); the service bundle is in
 [`services/studio/README.md`](../../services/studio/README.md).
+
+## Chat scene — the Catalog-support layer
+
+The studio's front-of-house services aren't studio-only. The **`chat` scene** (`gpu-mode chat`) brings
+up the same supporting infra — **Open WebUI** + **LiteLLM** + **Qdrant** (vector DB / document RAG) +
+**SearXNG** (web search) + the **uncensored director** (`:8090`) — *without* a scene GPU model. It's the
+home base for **Catalog models**: anything you launch ad-hoc outside a scene.
+
+```bash
+gpu-mode chat                                  # supporting infra + director, no scene LLM
+bash scripts/switch.sh --owui <variant>        # launch any catalog model AND register it into OWUI
+```
+
+`switch.sh --owui` (also reachable from **c3 → Catalog → Serve**) starts the chosen variant and wires it
+into Open WebUI as a direct connection, so it appears in the model picker alongside the director, with
+**web search and document RAG already attached**. You get a full chat workstation for any model in the
+catalog without authoring a scene for it.
+
+The director's placement here honors the same **`STUDIO_DIRECTOR_DEVICE`** knob (c3 → Settings → Director
+placement). Set it to **`cpu`** to keep the director **always-on**: it uses no GPU, so it persists across
+scene switches and stays available in OWUI even while a dual-card LLM scene owns both cards.

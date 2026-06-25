@@ -3329,14 +3329,15 @@ class SettingsScreen(ModalScreen):
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
-    def __init__(self, model_dir: str, hf_token_set: bool, **kwargs):
+    def __init__(self, model_dir: str, hf_token_set: bool, director_device: str = "gpu0", **kwargs):
         super().__init__(**kwargs)
         self._model_dir = model_dir or ""
         self._hf_token_set = hf_token_set
+        self._director_device = director_device if director_device in ("gpu0", "gpu1", "cpu") else "gpu0"
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("Settings · weights download", classes="settings-title")
+            yield Label("Settings", classes="settings-title")
             yield Label("Model dir  [dim](weights live under <dir>/huggingface/)[/dim]",
                         classes="settings-field")
             yield Input(value=self._model_dir, placeholder="/mnt/models/huggingface", id="set-model-dir")
@@ -3344,9 +3345,17 @@ class SettingsScreen(ModalScreen):
                       if self._hf_token_set else "hf_…  (for gated / private repos)")
             yield Label("HuggingFace token", classes="settings-field")
             yield Input(value="", password=True, placeholder=tok_ph, id="set-hf-token")
+            yield Label("Director placement  [dim](ai-studio prompt-crafter · :8090)[/dim]",
+                        classes="settings-field")
+            yield Select(
+                [("GPU 0 — fast craft, ~4.6 GB (default)", "gpu0"),
+                 ("GPU 1 — only when free, not during video", "gpu1"),
+                 ("CPU — frees GPU0 for long video, slow craft", "cpu")],
+                value=self._director_device, allow_blank=False, id="set-director-device",
+            )
             yield Label(
-                "[dim]Ctrl+S save · Esc cancel · HF_HOME is auto-derived under the "
-                "model dir (off the root disk)[/dim]",
+                "[dim]Ctrl+S save · Esc cancel · HF_HOME auto-derived under the model dir · "
+                "director change applies on next ai-studio start[/dim]",
                 classes="settings-field",
             )
             yield Footer()
@@ -3354,8 +3363,9 @@ class SettingsScreen(ModalScreen):
     def action_save(self) -> None:
         mdir = self.query_one("#set-model-dir", Input).value.strip()
         tok = self.query_one("#set-hf-token", Input).value.strip()
+        dev = str(self.query_one("#set-director-device", Select).value)
         self.app.pop_screen()
-        self.app.apply_settings(model_dir=mdir, hf_token=tok)  # type: ignore[attr-defined]
+        self.app.apply_settings(model_dir=mdir, hf_token=tok, director_device=dev)  # type: ignore[attr-defined]
 
     def action_cancel(self) -> None:
         self.app.pop_screen()
@@ -6853,31 +6863,39 @@ class CockpitApp(App):
         )
 
     def action_settings(self) -> None:
-        """[S] — open the download Settings (MODEL_DIR + HF_TOKEN)."""
+        """[S] — open Settings (MODEL_DIR + HF_TOKEN + director placement)."""
         import os as _os
         self.push_screen(
-            SettingsScreen(self._data.weights_model_dir(), bool(_os.environ.get("HF_TOKEN")))
+            SettingsScreen(self._data.weights_model_dir(), bool(_os.environ.get("HF_TOKEN")),
+                           self._data.director_device())
         )
 
-    def apply_settings(self, *, model_dir: str, hf_token: str) -> None:
-        """Persist + apply Settings.  Empty fields are no-ops (a blank token keeps
-        the current one).  A model-dir change re-loads the catalog so the
-        weights-on-disk state re-stats against the new dir."""
+    def apply_settings(self, *, model_dir: str, hf_token: str, director_device: str = "gpu0") -> None:
+        """Persist + apply Settings.  MODEL_DIR / HF_TOKEN persist to c3-settings.json;
+        the director placement persists to the repo .env (STUDIO_DIRECTOR_DEVICE — what
+        gpu-mode reads, applied on the next ai-studio start).  Empty text fields are
+        no-ops; a model-dir change re-stats the catalog."""
         import os as _os
         from .__main__ import load_settings, save_settings
         s = load_settings()
-        changed = False
+        json_changed = False
         if model_dir and model_dir != self._data.weights_model_dir():
             self._data._model_dir = model_dir
             s["model_dir"] = model_dir
-            changed = True
+            json_changed = True
         if hf_token:
             _os.environ["HF_TOKEN"] = hf_token
             s["hf_token"] = hf_token
-            changed = True
-        if changed:
+            json_changed = True
+        if json_changed:
             save_settings(s)
-            self.notify("Settings saved.", title="Settings", timeout=3)
+        env_changed = False
+        if director_device and director_device != self._data.director_device():
+            env_changed = self._data.set_repo_env_var("STUDIO_DIRECTOR_DEVICE", director_device)
+        if json_changed or env_changed:
+            msg = (f"Saved · director → {director_device} (next ai-studio start)."
+                   if env_changed else "Settings saved.")
+            self.notify(msg, title="Settings", timeout=4)
         else:
             self.notify("No changes.", title="Settings", timeout=2)
         if model_dir:
