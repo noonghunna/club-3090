@@ -2028,6 +2028,20 @@ class OperateOrchPane(Container):
             except Exception:
                 pass
 
+    def refresh_gpu_cards(self, gpus) -> None:
+        """Fast GPU-only repaint: swap a fresh docker-free nvidia-smi read into the cached
+        estate state and re-render just the GPU cards (the App's _refresh_gpu_bars calls
+        this every poll tick). No-op until the first full estate poll has seeded _last_state
+        — and the 'held by: <container>' attribution stays on the slower estate batch."""
+        st = getattr(self, "_last_state", None)
+        if st is None or not gpus:
+            return
+        st.gpus = gpus
+        try:
+            self._populate_gpus(st)
+        except Exception:
+            pass
+
     def _populate_gpus(self, state: EstateState) -> None:
         # N2: when nvidia-smi returned NOTHING at all (no cards in the snapshot),
         # say so honestly on the first card rather than a calm "not present" per
@@ -5336,6 +5350,11 @@ class CockpitApp(App):
         # A3: monotonic timestamp of the last completed estate poll (for the
         # rail "as of <ago>" freshness stamp).  None until the first poll.
         self._last_estate_poll_mono: Optional[float] = None
+        # Adaptive estate-poll state (see _docker_poll_due). _last_activity_mono seeded
+        # "ancient" (0.0); on_mount stamps it to now so a fresh launch starts in steady.
+        self._last_activity_mono: float = 0.0
+        self._estate_tick: int = 0
+        self._docker_burst_until: float = 0.0   # monotonic deadline of the post-action burst
         # A3: the periodic-refresh interval handle (created once on mount, gated
         # at fire time to Operate + the main screen so it never churns elsewhere).
         self._estate_interval = None
@@ -5378,6 +5397,25 @@ class CockpitApp(App):
     # A1/A10 deferred-serve re-poll knobs.
     _SERVE_REPOLL_SECS = 3.0
     _SERVE_REPOLL_MAX_ATTEMPTS = 10               # ~30s before "still booting"
+
+    # Adaptive estate poll (perf: the docker `ps`/`inspect` batch is the daemon-CPU sink;
+    # nvidia-smi GPU reads are cheap + the only thing worth watching live). The timer fires
+    # at _POLL_TICK_SECS; every tick refreshes the GPU bars (docker-free), but the heavy
+    # docker+host batch runs only every Nth tick by REGIME (see _docker_poll_due):
+    #   • burst  — within _DOCKER_BURST_SECS of a docker-affecting action → every tick (live)
+    #   • steady — normal → _DOCKER_STEADY_STRIDE ticks (~20s)
+    #   • idle   — no input for _ESTATE_IDLE_AFTER_SECS → _DOCKER_IDLE_STRIDE ticks (~30s)
+    # Any input snaps idle→steady (_note_activity); a docker-affecting action snaps→burst.
+    _POLL_TICK_SECS = 3.0            # base tick = the live GPU cadence
+    _DOCKER_STEADY_STRIDE = 7       # 3s × 7 ≈ 21s
+    _DOCKER_IDLE_STRIDE = 10        # 3s × 10 = 30s
+    _ESTATE_IDLE_AFTER_SECS = 90.0  # no input this long → idle regime
+    _DOCKER_BURST_SECS = 90.0       # fast-docker window after a docker-affecting action
+    # ActionPlan kinds that change what's running (→ trigger the burst). NOT set_default /
+    # clear_default / download / power_cap (those don't start/stop containers).
+    _DOCKER_BURST_KINDS = frozenset(
+        {"serve", "scene", "estate_down", "container", "container_rm", "service-up"}
+    )
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -5447,6 +5485,9 @@ class CockpitApp(App):
     # ── Mount / startup ────────────────────────────────────────────────────────────
 
     def on_mount(self) -> None:
+        import time as _t
+        self._note_activity()                              # fresh launch = user present
+        self._docker_burst_until = _t.monotonic() + 15.0   # 15s startup burst → immediate + live
         self.load_catalog()
         # A3: ONE periodic refresh interval, created once.  It is GATED at fire
         # time (_periodic_estate_refresh) to the MERGED Run & Operate mode
@@ -5455,7 +5496,7 @@ class CockpitApp(App):
         # churns subprocesses behind the Bring & Validate lane or a confirm modal.
         # set_interval is the only timer.
         self._estate_interval = self.set_interval(
-            4.0, self._periodic_estate_refresh, pause=False
+            self._POLL_TICK_SECS, self._periodic_estate_refresh, pause=False
         )
         # A3: a lightweight as-of re-stamp timer.  The full poll (above) resets
         # the freshness clock every tick → the rail would always read "just now".
@@ -5559,7 +5600,50 @@ class CockpitApp(App):
                 return
         except Exception:
             pass
-        self.load_estate()
+        self._estate_tick += 1
+        # GPU bars refresh EVERY tick (cheap, docker-free) → live at _POLL_TICK_SECS.
+        self._refresh_gpu_bars()
+        # The heavy docker+host batch runs only on a due tick (burst/steady/idle).
+        if self._docker_poll_due():
+            self.load_estate()
+
+    def _note_activity(self) -> None:
+        """Reset the idle clock — any key/mouse/action keeps the docker poll out of the
+        idle regime (snaps idle→steady); it backs off when the cockpit is left idle."""
+        import time as _t
+        self._last_activity_mono = _t.monotonic()
+
+    @work(exclusive=True, group="gpu-rail")
+    async def _refresh_gpu_bars(self) -> None:
+        """Fast, docker-FREE GPU refresh (nvidia-smi only) — runs every tick so the GPU
+        cards stay live between the slower docker+host polls. The docker-dependent
+        'held by: <container>' attribution still rides the slow batch."""
+        try:
+            gpus = await self._data.gpu_info()
+        except Exception:
+            return
+        if not gpus:
+            return
+        try:
+            self.query_one("#operate-orch-pane", OperateOrchPane).refresh_gpu_cards(gpus)
+        except Exception:
+            pass
+
+    def _docker_poll_due(self) -> bool:
+        """Whether THIS tick runs the heavy docker+host batch, by regime: burst (within
+        _DOCKER_BURST_SECS of a docker-affecting action) → every tick; idle (no input for
+        _ESTATE_IDLE_AFTER_SECS) → _DOCKER_IDLE_STRIDE; else steady → _DOCKER_STEADY_STRIDE.
+        Pure (reads _estate_tick, no I/O) → unit-testable."""
+        import time as _t
+        now = _t.monotonic()
+        if now < self._docker_burst_until:
+            return True
+        stride = (
+            self._DOCKER_IDLE_STRIDE
+            if (now - self._last_activity_mono) > self._ESTATE_IDLE_AFTER_SECS
+            else self._DOCKER_STEADY_STRIDE
+        )
+        return (self._estate_tick % stride) == 0
 
     def _estate_as_of(self) -> str:
         """A3: a human "N s/m ago" string for the last estate poll, or "just now".
@@ -6291,6 +6375,10 @@ class CockpitApp(App):
         ``execute_action`` holds ``CockpitData._write_lock`` across the
         gate→write window so even direct concurrent calls can't TOCTOU the gate.
         """
+        self._note_activity()
+        if plan.kind in self._DOCKER_BURST_KINDS:
+            import time as _t
+            self._docker_burst_until = _t.monotonic() + self._DOCKER_BURST_SECS
         live = self._serve_live_pane()
         executed, rec, _state = await self._data.execute_action(
             plan, variants=self._variants or None
@@ -6911,6 +6999,7 @@ class CockpitApp(App):
         path for copying ARBITRARY on-screen text stays the terminal's own
         selection: hold Shift (or Option on macOS) while dragging to bypass the
         app's mouse capture, then the terminal's copy."""
+        self._note_activity()
         if getattr(event, "button", 0) != 3:   # 3 = right button
             return
         self.action_copy_context()
@@ -8550,6 +8639,7 @@ class CockpitApp(App):
         table. Modal screens capture their own Esc (they have escape→dismiss
         bindings), so this only runs on the main screen — Esc otherwise no-ops
         and NEVER quits."""
+        self._note_activity()
         if event.key != "escape":
             return
         if isinstance(self.screen, ModalScreen):
