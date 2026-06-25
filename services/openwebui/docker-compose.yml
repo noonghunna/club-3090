@@ -51,6 +51,12 @@ services:
       - WEB_SEARCH_RESULT_COUNT=5
       - WEB_SEARCH_CONCURRENT_REQUESTS=5
       - SEARXNG_QUERY_URL=http://host.docker.internal:8088/search?q=<query>&format=json
+      # Inject SearXNG results straight into the prompt instead of embed→vector-retrieve. The
+      # retrieve path needs a reranker for hybrid search and was silently returning 0 chunks (web
+      # results never reached the model); bypassing it is the reliable path. web_loader off = use
+      # the search snippets, not full-page fetches → small, fast context. (rag.web.search.bypass_*)
+      - BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true
+      - BYPASS_WEB_SEARCH_WEB_LOADER=true
 
       # --- Vector DB (Qdrant) ---  document / knowledge RAG vectors live in the qdrant service
       # (:6333) instead of the embedded Chroma default. VECTOR_DB is a plain STARTUP env (applies
@@ -72,7 +78,10 @@ services:
       - ENABLE_RAG_LOCAL_WEB_FETCH=true
 
       # --- Image/file upload, document RAG ---
-      - ENABLE_RAG_HYBRID_SEARCH=true
+      # Hybrid (BM25 + vector) search REQUIRES a reranking model in OWUI; with RAG_RERANKING_MODEL
+      # unset, the rerank step returns 0 → retrieval finds nothing. Off = pure vector retrieval
+      # (works without a reranker). Set a RAG_RERANKING_MODEL and flip this true for better recall.
+      - ENABLE_RAG_HYBRID_SEARCH=false
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
