@@ -178,6 +178,24 @@ STUDIO_MODELS = _load_studio_models()
 STUDIO_VOICE_CONTAINER = "studio-step-voice"
 STUDIO_VOICE_GPU_NEED_MIB = 14000
 
+# The director container — placement-aware (STUDIO_DIRECTOR_DEVICE); a Containers-pane
+# start must honor that knob, not the GPU0 compose default. See director_compose_env.
+STUDIO_DIRECTOR_CONTAINER = "studio-director"
+
+# Nested studio sidecars: container-name → services/studio/<subdir> basename. The
+# container suffix usually equals the subdir, EXCEPT the director (container
+# 'studio-director' lives in 'enhancer/'). Single SoT for BOTH resolving the nested
+# compose project AND enumerating a STOPPED sidecar in the Containers tab — gpu-mode
+# runs these from services/studio/<sub>/, so project == <sub> keeps the two in sync.
+STUDIO_SIDECARS = {
+    "studio-director": "enhancer",
+    "studio-gallery": "gallery",
+    "studio-image-shim": "image-shim",
+    "studio-orchestrator": "orchestrator",
+    "studio-step-voice": "step-voice",
+    "studio-tts": "tts",
+}
+
 
 # ── Subprocess runner protocol (dependency injection seam) ───────────────────────
 
@@ -593,6 +611,25 @@ class CockpitData:
             pass
         return "gpu0"
 
+    def director_compose_env(self) -> dict[str, str]:
+        """Translate the director placement (:meth:`director_device`) into the compose
+        env — NGL / CUDA / GPU / THINK_ARGS — EXACTLY as gpu-mode's ``start_studio_director``
+        does, so a Containers-pane start of ``studio-director`` honors STUDIO_DIRECTOR_DEVICE
+        (and disables thinking on CPU) instead of falling back to the GPU0 compose default.
+
+        Keep in lock-step with ``scripts/gpu-mode.sh`` ``start_studio_director``:
+          - cpu  → CPU (-ngl 0, no card), thinking OFF (a <think> trace dominates ~14 tok/s);
+          - gpu1 → second card; gpu0/default → first card; both keep thinking ON."""
+        dev = self.director_device()
+        if dev == "cpu":
+            return {"DIRECTOR_NGL": "0", "STUDIO_DIRECTOR_CUDA": "",
+                    "STUDIO_DIRECTOR_GPU": "0", "DIRECTOR_THINK_ARGS": "--jinja --reasoning off"}
+        if dev == "gpu1":
+            return {"DIRECTOR_NGL": "99", "STUDIO_DIRECTOR_CUDA": "1",
+                    "STUDIO_DIRECTOR_GPU": "1", "DIRECTOR_THINK_ARGS": ""}
+        return {"DIRECTOR_NGL": "99", "STUDIO_DIRECTOR_CUDA": "0",
+                "STUDIO_DIRECTOR_GPU": "0", "DIRECTOR_THINK_ARGS": ""}
+
     def set_repo_env_var(self, key: str, value: str) -> bool:
         """WRITE — upsert ``key=value`` in the repo ``.env`` (the SHARED config gpu-mode
         and the composes read), preserving every other line.  Updates the first
@@ -905,7 +942,14 @@ class CockpitData:
                     names.append(child.name)
         except (OSError, FileNotFoundError):
             return []
-        return names
+        # Nested studio sidecars (services/studio/<sub>/) aren't top-level dirs, so add
+        # them by CONTAINER name — otherwise a STOPPED director/gallery/orchestrator/…
+        # wouldn't enumerate as a startable row (only running ones show via docker-ps).
+        for cn, sub in STUDIO_SIDECARS.items():
+            d = base / "studio" / sub
+            if (d / "docker-compose.yml").is_file() or (d / "docker-compose.yaml").is_file():
+                names.append(cn)
+        return sorted(names)
 
     async def _running_container_ports(self) -> list[tuple[str, int]]:
         """READ — every running container as ``(name, first-published-host-port)``
@@ -1975,13 +2019,13 @@ class CockpitData:
         Two shapes:
           - **top-level** supporting service → ``services/<name>/docker-compose.yml``,
             project == ``name`` (matches gpu-mode running it from that dir).
-          - **nested studio sidecar** → the row carries the CONTAINER name
-            ``studio-<sub>`` while the compose lives at
-            ``services/studio/<sub>/docker-compose.yml`` (e.g. the on-demand
-            ``studio-step-voice`` → ``services/studio/step-voice/``).  Project ==
-            ``<sub>`` — the dir basename gpu-mode's ``compose_at`` uses, so the
-            cockpit and gpu-mode track the SAME compose project (avoids the
-            duplicate-``container_name`` collision the gallery hit).
+          - **nested studio sidecar** → the row carries the CONTAINER name, mapped via
+            ``STUDIO_SIDECARS`` to ``services/studio/<sub>/docker-compose.yml`` (the
+            suffix usually equals ``<sub>``, e.g. ``studio-step-voice`` →
+            ``step-voice/``, but NOT the director: ``studio-director`` →
+            ``enhancer/``).  Project == ``<sub>`` — the dir basename gpu-mode's
+            ``compose_at`` uses, so the cockpit and gpu-mode track the SAME compose
+            project (avoids the duplicate-``container_name`` collision the gallery hit).
 
         Returns ``None`` when no compose dir backs the name (caller then falls
         back to ``docker restart`` of an already-created container)."""
@@ -1994,8 +2038,8 @@ class CockpitData:
         top = _find(f"services/{name}")
         if top:
             return top, name
-        if name.startswith("studio-"):
-            sub = name[len("studio-"):]
+        sub = STUDIO_SIDECARS.get(name)
+        if sub is not None:
             nested = _find(f"services/studio/{sub}")
             if nested:
                 return nested, sub
@@ -2031,6 +2075,12 @@ class CockpitData:
         if (self.repo_root / ".env").is_file():
             cmd += ["--env-file", ".env"]
         cmd += ["-f", rel, "-p", project, "up", "-d"]
+        # The director is placement-aware: prefix the compose with the same env gpu-mode
+        # derives from STUDIO_DIRECTOR_DEVICE (NGL / CUDA / GPU / THINK_ARGS) so a Containers
+        # start honors the c3 Setting (and CPU no-think) instead of the GPU0 compose default.
+        # `env K=V …` (process env) wins over --env-file for compose interpolation.
+        if name == STUDIO_DIRECTOR_CONTAINER:
+            cmd = ["env", *(f"{k}={v}" for k, v in self.director_compose_env().items()), *cmd]
         return ActionPlan(
             kind="service-up",
             cmd=cmd,
@@ -2040,14 +2090,13 @@ class CockpitData:
 
     def service_start_or_restart(self, name: str) -> ActionPlan:
         """Bring a stopped service UP, picking the right mechanism:
-          - a compose dir backs the name (top-level ``services/<name>/`` OR a
-            nested studio sidecar ``services/studio/<sub>/`` for ``studio-<sub>``
-            — e.g. the on-demand ``studio-step-voice``) → ``compose up``
-            (``service_start`` — CREATES the container if it doesn't exist yet, so
-            it works on a fresh install, not just a re-start);
-          - otherwise it's a scene-managed container whose dir name doesn't match
-            (e.g. ``studio-director`` → ``services/studio/enhancer/``) → ``docker
-            restart`` STARTS the stopped-but-created container."""
+          - a compose dir backs the name (top-level ``services/<name>/`` OR a nested
+            studio sidecar via ``STUDIO_SIDECARS`` — incl. ``studio-director`` →
+            ``services/studio/enhancer/``) → ``compose up`` (``service_start`` —
+            CREATES the container if it doesn't exist yet, so it works on a fresh
+            install, and for the director injects the placement env);
+          - otherwise (no backing compose dir) → ``docker restart`` STARTS the
+            stopped-but-created container."""
         if self._resolve_service_compose(name) is not None:
             return self.service_start(name)
         return self.container_action(name, "restart")

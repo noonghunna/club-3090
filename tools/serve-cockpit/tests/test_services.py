@@ -1143,7 +1143,7 @@ class TestStoppedStudioContainers:
 
 class TestServiceStartOrRestart:
     """service_start_or_restart: compose-up for a real service dir, docker restart
-    for an existing scene-managed container (studio-*) with no such dir."""
+    for an existing scene-managed container with no backing compose dir."""
 
     def test_dir_uses_compose_up(self, tmp_path):
         _seed_service_dirs(tmp_path, ["comfyui"])
@@ -1152,10 +1152,29 @@ class TestServiceStartOrRestart:
         assert plan.cmd[-4:] == ["-p", "comfyui", "up", "-d"]
 
     def test_no_dir_uses_docker_restart(self, tmp_path):
-        # studio-director's dir is services/studio/enhancer/ (name mismatch) — no
-        # resolvable compose → restart the scene-created container.
+        # An ad-hoc container with NO backing compose dir (not in STUDIO_SIDECARS,
+        # no services/<name>/) → restart the already-created container.
+        plan = CockpitData(tmp_path).service_start_or_restart("some-orphan-ctr")
+        assert plan.cmd == ["docker", "restart", "some-orphan-ctr"]
+
+    def test_director_resolves_to_enhancer_with_placement_env(self, tmp_path):
+        # studio-director's compose lives at services/studio/enhancer/ (name mismatch,
+        # mapped via STUDIO_SIDECARS) → compose-up, AND it carries the placement env
+        # gpu-mode derives from STUDIO_DIRECTOR_DEVICE (here cpu → -ngl 0 + no-think).
+        d = tmp_path / "services" / "studio" / "enhancer"
+        d.mkdir(parents=True)
+        (d / "docker-compose.yml").write_text("services: {}\n")
+        (tmp_path / ".env").write_text("STUDIO_DIRECTOR_DEVICE=cpu\n")
         plan = CockpitData(tmp_path).service_start_or_restart("studio-director")
-        assert plan.cmd == ["docker", "restart", "studio-director"]
+        assert plan.kind == "service-up"
+        assert plan.cmd[0] == "env"
+        # env prefix carries the cpu translation; compose targets the enhancer dir.
+        assert "DIRECTOR_NGL=0" in plan.cmd
+        assert "STUDIO_DIRECTOR_CUDA=" in plan.cmd
+        assert "DIRECTOR_THINK_ARGS=--jinja --reasoning off" in plan.cmd
+        assert plan.cmd[-6:] == [
+            "-f", "services/studio/enhancer/docker-compose.yml",
+            "-p", "enhancer", "up", "-d"]
 
     def test_nested_studio_sidecar_uses_compose_up(self, tmp_path):
         # step-voice lives at services/studio/step-voice/ (NOT services/<name>/) and
@@ -3293,3 +3312,42 @@ class TestDirectorPlacement:
     def test_commented_line_ignored(self, tmp_path):
         (tmp_path / ".env").write_text("# STUDIO_DIRECTOR_DEVICE=cpu\n")
         assert CockpitData(tmp_path, runner=full_runner()).director_device() == "gpu0"
+
+    def test_compose_env_cpu_disables_thinking(self, tmp_path):
+        (tmp_path / ".env").write_text("STUDIO_DIRECTOR_DEVICE=cpu\n")
+        env = CockpitData(tmp_path, runner=full_runner()).director_compose_env()
+        assert env == {"DIRECTOR_NGL": "0", "STUDIO_DIRECTOR_CUDA": "",
+                       "STUDIO_DIRECTOR_GPU": "0",
+                       "DIRECTOR_THINK_ARGS": "--jinja --reasoning off"}
+
+    def test_compose_env_gpu_keeps_thinking(self, tmp_path):
+        (tmp_path / ".env").write_text("STUDIO_DIRECTOR_DEVICE=gpu1\n")
+        env = CockpitData(tmp_path, runner=full_runner()).director_compose_env()
+        assert env["STUDIO_DIRECTOR_CUDA"] == "1" and env["DIRECTOR_NGL"] == "99"
+        assert env["DIRECTOR_THINK_ARGS"] == ""        # thinking ON on GPU
+
+    def test_compose_env_default_gpu0(self, tmp_path):
+        env = CockpitData(tmp_path, runner=full_runner()).director_compose_env()
+        assert env["STUDIO_DIRECTOR_CUDA"] == "0" and env["DIRECTOR_THINK_ARGS"] == ""
+
+
+class TestStudioSidecarEnumeration:
+    """_known_service_dirs surfaces NESTED studio sidecars by container-name so a
+    STOPPED director/gallery/… is a startable Containers row (not just running ones)."""
+
+    def test_nested_sidecars_enumerated_by_container_name(self, tmp_path):
+        _seed_service_dirs(tmp_path, ["litellm"])           # a top-level service
+        for sub in ("enhancer", "gallery"):                 # two nested sidecars
+            d = tmp_path / "services" / "studio" / sub
+            d.mkdir(parents=True)
+            (d / "docker-compose.yml").write_text("services: {}\n")
+        names = CockpitData(tmp_path, runner=full_runner())._known_service_dirs()
+        assert "litellm" in names                           # top-level still there
+        assert "studio-director" in names                   # enhancer → container name
+        assert "studio-gallery" in names
+        assert names == sorted(names)                       # stable order
+
+    def test_absent_sidecar_dir_not_enumerated(self, tmp_path):
+        # No services/studio/* present → no sidecar rows (only any top-level dirs).
+        names = CockpitData(tmp_path, runner=full_runner())._known_service_dirs()
+        assert not any(n.startswith("studio-") for n in names)
