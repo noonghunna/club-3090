@@ -42,12 +42,23 @@ services:
       # across replicas: WEBUI_SECRET_KEY=<your-secret> docker compose up -d
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-}
 
-      # --- Web search / RAG ---
-      - ENABLE_RAG_WEB_SEARCH=true
-      - RAG_WEB_SEARCH_ENGINE=searxng
-      - RAG_WEB_SEARCH_RESULT_COUNT=5
-      - RAG_WEB_SEARCH_CONCURRENT_REQUESTS=5
+      # --- Web search (SearXNG) ---  v0.9.x env names: the old ENABLE_RAG_WEB_SEARCH /
+      # RAG_WEB_SEARCH_* names were renamed upstream and are now IGNORED (→ web search silently
+      # off). SearXNG runs at :8088 with JSON output enabled; OWUI substitutes <query>.
+      # Config path rag.web.search.* — seeded from these on boot when unset in the DB.
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=searxng
+      - WEB_SEARCH_RESULT_COUNT=5
+      - WEB_SEARCH_CONCURRENT_REQUESTS=5
       - SEARXNG_QUERY_URL=http://host.docker.internal:8088/search?q=<query>&format=json
+
+      # --- Vector DB (Qdrant) ---  document / knowledge RAG vectors live in the qdrant service
+      # (:6333) instead of the embedded Chroma default. VECTOR_DB is a plain STARTUP env (applies
+      # on every boot, not PersistentConfig). QDRANT_ON_DISK persists vectors to qdrant's volume.
+      # Switching backends does NOT migrate existing Chroma embeddings — re-index any knowledge.
+      - VECTOR_DB=qdrant
+      - QDRANT_URI=http://host.docker.internal:6333
+      - QDRANT_ON_DISK=true
 
       # Fallback / additional providers (keys loaded if set in env)
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
