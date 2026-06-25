@@ -9978,3 +9978,77 @@ class TestSettings:
         env = {"HF_TOKEN": "hf_shell"}
         M.apply_persisted_settings(app, env)
         assert env["HF_TOKEN"] == "hf_shell"
+
+
+class TestAdaptiveEstatePoll:
+    """Estate poll fires at _POLL_TICK_SECS; GPU bars refresh every tick (cheap, docker-free)
+    but the heavy docker+host batch runs only on a regime-gated tick — quiet while idle, live
+    during/after a docker-affecting action."""
+
+    @staticmethod
+    def _due(**kw):
+        import types, time
+        from club3090_cockpit.app import CockpitApp
+        s = types.SimpleNamespace(
+            _docker_burst_until=0.0, _last_activity_mono=time.monotonic(), _estate_tick=0,
+            _DOCKER_STEADY_STRIDE=CockpitApp._DOCKER_STEADY_STRIDE,
+            _DOCKER_IDLE_STRIDE=CockpitApp._DOCKER_IDLE_STRIDE,
+            _ESTATE_IDLE_AFTER_SECS=CockpitApp._ESTATE_IDLE_AFTER_SECS,
+        )
+        s.__dict__.update(kw)
+        return CockpitApp._docker_poll_due.__get__(s)()
+
+    def test_burst_polls_every_tick(self):
+        import time
+        for tick in (1, 2, 3, 5, 6):
+            assert self._due(_docker_burst_until=time.monotonic() + 100, _estate_tick=tick) is True
+
+    def test_steady_polls_on_stride(self):
+        from club3090_cockpit.app import CockpitApp
+        n = CockpitApp._DOCKER_STEADY_STRIDE
+        assert self._due(_estate_tick=n) is True
+        assert self._due(_estate_tick=n - 1) is False
+        assert self._due(_estate_tick=n * 2) is True
+
+    def test_idle_widens_stride(self):
+        from club3090_cockpit.app import CockpitApp
+        steady, idle = CockpitApp._DOCKER_STEADY_STRIDE, CockpitApp._DOCKER_IDLE_STRIDE
+        assert idle > steady
+        # ancient activity → idle regime: a steady-due tick is NOT idle-due (wider stride)
+        assert self._due(_last_activity_mono=0.0, _estate_tick=steady) is False
+        assert self._due(_last_activity_mono=0.0, _estate_tick=idle) is True
+
+    def test_burst_kinds_are_docker_affecting_only(self):
+        from club3090_cockpit.app import CockpitApp
+        k = CockpitApp._DOCKER_BURST_KINDS
+        assert {"serve", "scene", "container", "container_rm", "estate_down", "service-up"} <= k
+        for non in ("set_default", "clear_default", "power_cap", "submit_bench", "validation"):
+            assert non not in k
+
+    def test_gpu_info_is_docker_free_and_safe(self, tmp_path):
+        import asyncio
+        from club3090_cockpit.services import CockpitData
+        cd = CockpitData(tmp_path)
+        async def ok():
+            return ["g0", "g1"]
+        cd._get_gpu_info = ok
+        assert asyncio.run(cd.gpu_info()) == ["g0", "g1"]
+        async def boom():
+            raise RuntimeError("nvidia-smi gone")
+        cd._get_gpu_info = boom
+        assert asyncio.run(cd.gpu_info()) == []   # degrades, never raises
+
+    def test_refresh_gpu_cards_swaps_and_repaints(self):
+        import types
+        from club3090_cockpit.app import OperateOrchPane
+        calls = []
+        pane = types.SimpleNamespace(_last_state=None, _populate_gpus=lambda st: calls.append(st))
+        bound = OperateOrchPane.refresh_gpu_cards.__get__(pane)
+        bound(["g0"])                      # no _last_state yet → no-op
+        assert calls == []
+        st = types.SimpleNamespace(gpus=[])
+        pane._last_state = st
+        bound(["g0", "g1"])                # swaps fresh gpus + repaints
+        assert st.gpus == ["g0", "g1"] and calls == [st]
+        bound([])                          # empty read → keep last bars (no-op)
+        assert st.gpus == ["g0", "g1"]

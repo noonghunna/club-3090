@@ -1213,6 +1213,15 @@ class CockpitData:
             return {"lines": [], "error": (res.stderr.strip()[:200] or f"rc={res.returncode}")}
         return {"lines": lines, "error": None}
 
+    async def gpu_info(self) -> "list[GpuInfo]":
+        """Docker-FREE per-card GPU read (nvidia-smi only) — for the cockpit's fast GPU
+        rail refresh, decoupled from the heavy docker+host estate batch (estate_state /
+        estate_telemetry). Returns [] on any read failure (the rail keeps its last bars)."""
+        try:
+            return await self._get_gpu_info()
+        except Exception:
+            return []
+
     # ── READ: estate state ────────────────────────────────────────────────────────
 
     async def estate_state(
