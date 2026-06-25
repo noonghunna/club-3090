@@ -58,7 +58,7 @@ GROUPS = {"models", "studio", "ops"}
 #  diffusiongemma scenes were removed — bigmodel ≈ off, dgemma → catalog slug.  The
 #  standalone comfyui scene was removed — comfyui runs via ai-studio.)
 EXPECT = {
-    "27b": "models", "gemma": "models", "deckard": "models",
+    "qwen27b": "models", "gemma-31b": "models", "deckard": "models",
     "ai-studio": "studio",
     "chat": "ops", "off": "ops", "power-cap": "ops", "prune": "ops", "prune-all": "ops",
 }
