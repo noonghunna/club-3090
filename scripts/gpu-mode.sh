@@ -205,6 +205,19 @@ start_studio_tts() {
     printf "  ${GREEN}▲${NC} Starting studio-tts (:8192, Kokoro voices + mixdown, CPU)..."
     compose_at "$COMPOSE_BASE/studio/tts" "up -d --build" && echo "done" || echo "failed"
 }
+# Premium voice (:8193, Step-Audio-EditX, GPU1, isolated transformers 4.53.3). LAZY: the container
+# comes up cheap (~0 GB) so the OWUI voice lane appears as soon as ai-studio starts it; the ~14 GB
+# model loads on the FIRST /clone and is freed again by idle-unload (300s) + the pipe's POST /unload
+# before a video render. Stopped wherever ComfyUI is (freeing GPU1 for a dual-card LLM scene).
+# `--build` picks up server.py edits (layer-cached → fast when unchanged).
+start_step_voice() {
+    printf "  ${GREEN}▲${NC} Starting step-voice (:8193, lazy — model loads on first use, GPU1)..."
+    compose_at "$COMPOSE_BASE/studio/step-voice" "up -d --build" && echo "done" || echo "failed"
+}
+stop_step_voice() {
+    printf "  ${RED}▼${NC} Stopping step-voice..."
+    compose_at "$COMPOSE_BASE/studio/step-voice" "down" && echo "done" || echo "skipped"
+}
 
 # (start_comfyui_gpu0 + the gemma-4-12b chat brain were retired with the
 #  image-studio→ai-studio consolidation 2026-06-23 — ComfyUI now always spans both GPUs.)
@@ -415,6 +428,7 @@ mode_chat() {
     stop_deckard
     stop_all_gemma
     stop_comfyui
+    stop_step_voice
     start_service openwebui
     start_service litellm
     start_service qdrant
@@ -433,6 +447,7 @@ mode_27b() {
     stop_deckard
     stop_35b_a3b_dual
     stop_comfyui
+    stop_step_voice
     stop_27b_dual_dflash
     stop_27b_dual_dflash_noviz
     stop_27b_dual_turbo
@@ -459,6 +474,7 @@ mode_35b_a3b() {
     stop_all_gemma
     stop_deckard
     stop_comfyui
+    stop_step_voice
     stop_diffusiongemma
     start_35b_a3b_dual
     start_service litellm
@@ -482,6 +498,7 @@ mode_gemma_12b() {
     stop_deckard
     stop_35b_a3b_dual
     stop_comfyui
+    stop_step_voice
     stop_diffusiongemma
     start_gemma_12b
     start_service litellm
@@ -526,6 +543,7 @@ mode_deckard() {
     stop_all_gemma
     stop_35b_a3b_dual
     stop_comfyui
+    stop_step_voice
     start_deckard
     start_service litellm
     start_service qdrant
@@ -614,6 +632,7 @@ mode_ai_studio() {
     start_studio_orchestrator
     start_studio_image_shim
     start_studio_tts
+    start_step_voice
     start_service openwebui
     start_service litellm
     start_service searxng
@@ -798,6 +817,7 @@ mode_off() {
     stop_diffusiongemma
     stop_all_gemma
     stop_comfyui
+    stop_step_voice
     stop_estate
     for svc in "${SERVICES[@]}"; do
         stop_service "$svc"
@@ -836,7 +856,7 @@ qwen35b-a3b	models	Qwen3.6-35B-A3B MoE (3B active / 35B total) AutoRound INT4 + 
 gemma-31b	models	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
 gemma12b	models	Gemma 4 12B AutoRound INT8 + bf16 KV + MTP n=2 (gemma4_unified arch-preview, single-card)	vllm-gemma-4-12b-int8-mtp,litellm,qdrant,openwebui,searxng	8038,8080,4000	1
 deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng	8199,8080,4000	both
-ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,openwebui,litellm,searxng	8188,8090,8189,8190,8191,8192,8080,4000	both
+ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,studio-step-voice,openwebui,litellm,searxng	8188,8090,8189,8190,8191,8192,8193,8080,4000	both
 off	ops	Stop all services	all-stopped		none
 power-cap	ops	GPU power-cap controls (on/off/status; both 3090s, 230W default cap)			both
 prune	ops	docker image prune -a (safe — only unreferenced images)			none

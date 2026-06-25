@@ -523,6 +523,17 @@ class Pipe:
             return r["filename"], r.get("subfolder", "")
         raise RuntimeError(r.get("error", "voice generation failed"))
 
+    def _evict_voice(self):
+        # Free the premium-voice model from GPU before a video render: the LTX/Wan DiT uses GPU1 as its
+        # DisTorch donor (~21.9 GB) and step-voice holds ~14 GB when loaded → co-resident = OOM. Best-effort
+        # + fast (the lazy service idle-unloads anyway; this just makes the voice⊕video mutex deterministic).
+        try:
+            req = urllib.request.Request(self.valves.voice_url.rstrip("/") + "/unload", data=b"",
+                                         headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass
+
     def _submit(self, wf):
         req = urllib.request.Request(self.valves.comfyui_url + "/prompt",
                                      data=json.dumps({"prompt": wf, "client_id": "owui-studio"}).encode(),
@@ -958,6 +969,10 @@ class Pipe:
                     "\U0001F5BC️ **[Open / download the image](" + url + ")**\n\n"
                     "_Want changes? Just say what to tweak — e.g. " + tweaks + " — and I’ll re-craft from this and regenerate._ "
                     "_(Browse all media: " + base + "/ )_")
+
+        # Past here, lane is a VIDEO lane (ltx/sulphur/10eros/wan) — all use GPU1 as the DisTorch
+        # donor. Free the premium-voice model first so the render can't OOM against it.
+        self._evict_voice()
 
         # ── WAN VIDEO LANE (Wan2.2-Rapid AllInOne · uncensored · t2v + i2v + long-clip chain · no synced audio) ──
         if lane == "wan":

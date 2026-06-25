@@ -3,15 +3,18 @@
 # so it never conflicts with ComfyUI's transformers 5.x. HTTP server on :8193; writes WAVs into the
 # shared gallery output dir. The OWUI Studio pipe's premium voice lane POSTs /clone (and /edit).
 #
-# GPU-heavy (~14 GB bf16 / ~3-4 GB if switched to the AWQ-4bit weights) — NOT always-on; bring it up
-# when you want the premium voice (gpu-mode-gated), pinned to a free card via STEP_VOICE_CUDA.
+# LAZY (STEP_VOICE_LAZY=1, default): the ~14 GB model is NOT loaded at boot — the container comes up
+# cheap (~0 GB) so the OWUI voice lane appears as soon as `gpu-mode ai-studio` starts it, and the
+# weights load on the FIRST /clone. GPU1 is reclaimed by an idle-unload timer (STEP_VOICE_IDLE_UNLOAD_S,
+# default 300 s) + a POST /unload the Studio pipe's video lanes call before a render (voice⊕video mutex,
+# both want GPU1). Set STEP_VOICE_LAZY=0 to load eagerly at boot. Pinned to a free card via STEP_VOICE_CUDA.
 #   docker compose -f services/studio/step-voice/docker-compose.yml up -d --build
 services:
   studio-step-voice:
     build: .
     image: studio-step-voice:latest
     container_name: studio-step-voice
-    restart: "no"               # on-demand, not always-on (holds ~14 GB VRAM)
+    restart: "no"               # scene-managed (started/stopped by gpu-mode ai-studio); lazy → ~0 GB idle
     network_mode: host          # reachable at host:8193; writes the mounted gallery output dir
     environment:
       - STEP_MODELS_DIR=/models
@@ -19,6 +22,8 @@ services:
       - STEP_VOICE_PORT=${STEP_VOICE_PORT:-8193}
       - STEP_DEFAULT_VOICE=${STEP_DEFAULT_VOICE:-Narrator.wav}
       - WHISPER_MODEL=${STEP_WHISPER_MODEL:-base}
+      - STEP_VOICE_LAZY=${STEP_VOICE_LAZY:-1}                    # 1 = load model on first /clone (not at boot)
+      - STEP_VOICE_IDLE_UNLOAD_S=${STEP_VOICE_IDLE_UNLOAD_S:-300} # auto-free GPU after N s idle (0 = never)
       - CUDA_VISIBLE_DEVICES=${STEP_VOICE_CUDA:-1}   # pin to a free card (GPU1 by default; GPU0 has ComfyUI+director)
     volumes:
       - ${STEP_AUDIO_DIR:-/mnt/models/comfyui/models/Step-Audio}:/models:ro
