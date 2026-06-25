@@ -257,8 +257,9 @@ holds the 22B DiT weights (~22 GB, DisTorch donor); GPU0 does compute (~7–14 G
 can also run a ≤1024² **image** lane in the same scene with no switch (it fits on GPU0 beside the
 director). Full per-lane VRAM in [image.md](image.md) / [audio.md](audio.md) / [README.md](README.md).
 
-> **Director placement is a VRAM lever** (default: GPU0; `STUDIO_DIRECTOR_GPU` / `-ngl 0` relocate it
-> — see [requirements.md](requirements.md)). Its 4.5 GB on GPU0 is exactly what caps the single-card
+> **Director placement is a VRAM lever** (default: GPU0; one knob — `STUDIO_DIRECTOR_DEVICE=gpu0|gpu1|cpu`,
+> set via c3 → Settings → Director placement — relocates it; see [requirements.md](requirements.md)).
+> Its 4.5 GB on GPU0 is exactly what caps the single-card
 > Wan window at ~121 frames; freeing it lifts that to 161. **GPU0 is the safe default** — it coexists
 > with every shipped default lane. **GPU1 is *not* a blanket-safe target:** the LTX/Sulphur/10Eros
 > lanes already use GPU1 as their ~22 GB donor, so a director there OOMs them. GPU1 is fine only for

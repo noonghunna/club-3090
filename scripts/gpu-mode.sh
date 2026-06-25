@@ -210,6 +210,15 @@ start_studio_director() {
         "DIRECTOR_NGL=$ngl" "STUDIO_DIRECTOR_CUDA=$cvd" "STUDIO_DIRECTOR_GPU=$gpu" \
         && echo "done" || echo "failed"
 }
+stop_studio_director() {
+    printf "  ${RED}▼${NC} Stopping studio-director..."
+    compose_at "$COMPOSE_BASE/studio/enhancer" "down" && echo "done" || echo "skipped"
+}
+# Free a GPU-resident director before a GPU-heavy LLM scene claims the cards. A CPU-placed
+# director uses no GPU, so it STAYS UP across scenes — the always-on uncensored model in OWUI.
+_director_evict_if_gpu() {
+    [ "$(_director_device)" != "cpu" ] && stop_studio_director
+}
 start_studio_orchestrator() {
     printf "  ${GREEN}▲${NC} Starting studio-orchestrator (:8190, long-clip chaining)..."
     compose_at "$COMPOSE_BASE/studio/orchestrator" "up -d --build" && echo "done" || echo "failed"
@@ -443,8 +452,10 @@ mode_prune_all() {
 
 mode_chat() {
     echo -e "${CYAN}═══ Switching to CHAT mode ═══${NC}"
-    echo "Starting: Open WebUI, LiteLLM, Qdrant, SearXNG"
-    echo "Stopping: all GPU-served model containers (Qwen + Gemma)"
+    echo "Starting: Open WebUI + LiteLLM + Qdrant + SearXNG + uncensored director (:8090)"
+    echo "The supporting-infra home: launch ANY catalog model with 'switch.sh --owui <variant>'"
+    echo "and it appears in OWUI here (web search + document RAG included)."
+    echo "Stopping: all GPU-served scene models (Qwen + Gemma)."
     echo ""
     stop_all_27b
     stop_deckard
@@ -455,8 +466,11 @@ mode_chat() {
     start_service litellm
     start_service qdrant
     start_service searxng
+    start_studio_director
     echo ""
     echo -e "${GREEN}Chat mode active.${NC} Open WebUI: http://192.168.86.33:8080"
+    echo -e "${YELLOW}Director placement: $(_director_device) (change in c3 Settings · Director placement).${NC}"
+    echo -e "${YELLOW}Plug in catalog models: bash scripts/switch.sh --owui <variant>  (registers it into OWUI here).${NC}"
 }
 
 mode_27b() {
@@ -470,6 +484,7 @@ mode_27b() {
     stop_35b_a3b_dual
     stop_comfyui
     stop_step_voice
+    _director_evict_if_gpu
     stop_27b_dual_dflash
     stop_27b_dual_dflash_noviz
     stop_27b_dual_turbo
@@ -497,6 +512,7 @@ mode_35b_a3b() {
     stop_deckard
     stop_comfyui
     stop_step_voice
+    _director_evict_if_gpu
     stop_diffusiongemma
     start_35b_a3b_dual
     start_service litellm
@@ -521,6 +537,7 @@ mode_gemma_12b() {
     stop_35b_a3b_dual
     stop_comfyui
     stop_step_voice
+    _director_evict_if_gpu
     stop_diffusiongemma
     start_gemma_12b
     start_service litellm
@@ -546,6 +563,9 @@ mode_gemma_int8() {
     stop_35b_a3b_dual
     stop_gemma_12b
     stop_gemma_mtp
+    stop_comfyui             # TP=2 needs both cards — clear the studio lanes too
+    stop_step_voice
+    _director_evict_if_gpu
     stop_gemma_int8          # clean re-switch; the dflash/awq gemma scenes were pruned
     start_gemma_int8
     start_service litellm
@@ -566,6 +586,7 @@ mode_deckard() {
     stop_35b_a3b_dual
     stop_comfyui
     stop_step_voice
+    _director_evict_if_gpu
     start_deckard
     start_service litellm
     start_service qdrant
@@ -841,6 +862,7 @@ mode_off() {
     stop_all_gemma
     stop_comfyui
     stop_step_voice
+    stop_studio_director     # full off stops even a CPU/always-on director
     stop_estate
     for svc in "${SERVICES[@]}"; do
         stop_service "$svc"
@@ -873,7 +895,7 @@ mode_off() {
 list_modes_data() {
     # name<TAB>group<TAB>description<TAB>services<TAB>ports<TAB>gpus
     cat <<'TSV'
-chat	ops	Open WebUI + LiteLLM + Qdrant + SearXNG (browser chat, no GPU model)	openwebui,litellm,qdrant,searxng	8080,4000	none
+chat	ops	Open WebUI + LiteLLM + Qdrant + SearXNG + uncensored director — supporting-infra home for catalog models	openwebui,litellm,qdrant,searxng,studio-director	8080,4000,8090	none
 qwen27b	models	Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision (TP=2) — default	vllm-qwen36-27b-dual,litellm,qdrant,openwebui,searxng	8010,8080,4000	both
 qwen35b-a3b	models	Qwen3.6-35B-A3B MoE (3B active / 35B total) AutoRound INT4 + fp8 KV + 262K + vision (TP=2)	vllm-qwen36-35b-a3b-dual,litellm,qdrant,openwebui,searxng	8051,8080,4000	both
 gemma-31b	models	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
@@ -938,7 +960,7 @@ usage() {
     echo "Usage: gpu-mode <mode>"
     echo ""
     echo "Modes:"
-    echo "  chat               Open WebUI + LiteLLM + Qdrant + SearXNG (browser chat, no GPU model)"
+    echo "  chat               Open WebUI + LiteLLM + Qdrant + SearXNG + uncensored director (:8090) — catalog-model home"
     echo ""
     echo "  Qwen 3.6 27B (dual 3090, TP=2):"
     echo "  qwen27b            ⭐ DEFAULT — Qwen3.6-27B MTP + fp8 + 262K + vision + 2 streams (:8010) — alias: 27b"
