@@ -17,6 +17,9 @@
 #                   craft is ~single-digit tok/s — see docs/ai-studio/video.md director-placement lever)
 # On GPU0 the ~4.6 GB director coexists with ComfyUI's GPU0 compute; GPU1 is the video DiT donor
 # (don't put the director there during video). CPU is the universally-safe relocation.
+# CPU thread cap: DIRECTOR_THREADS (default 8 of 16) — bounds CPU use so it doesn't starve OWUI's
+# embedder/reranker. The ~2.6 GB GGUF loads into SYSTEM RAM (mmap'd → resident in page cache after
+# warm-up; the SSD is only the backing store, inference runs from RAM, not the disk).
 services:
   studio-director:
     image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
@@ -32,7 +35,7 @@ services:
     command: >-
       -m /models/${DIRECTOR_GGUF:-qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf}
       --mmproj /models/${DIRECTOR_MMPROJ:-qwen3.5-4b-gguf/hauhaucs-uncensored-q4km/mmproj-Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-BF16.gguf}
-      -ngl ${DIRECTOR_NGL:-99} -c 16384 --host 0.0.0.0 --port ${STUDIO_DIRECTOR_PORT:-8090}
+      -ngl ${DIRECTOR_NGL:-99} -t ${DIRECTOR_THREADS:-8} -c 16384 --host 0.0.0.0 --port ${STUDIO_DIRECTOR_PORT:-8090}
       --alias qwen3.5-4b-uncensored
     deploy:
       resources:

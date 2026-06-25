@@ -3254,3 +3254,42 @@ def test_api_booting_false_when_no_engine_running():
     assert st.api_booting is False
     # nothing running at all → not booting (truly down)
     assert _booting_state(reachable=False, conts=[]).api_booting is False
+
+
+class TestDirectorPlacement:
+    """director_device() reads STUDIO_DIRECTOR_DEVICE from the repo .env (default
+    gpu0); set_repo_env_var() upserts a key IN PLACE, preserving the rest of the
+    file — the c3 Settings 'Director placement' lever (CPU / GPU0 / GPU1)."""
+
+    def test_default_gpu0_when_unset(self, tmp_path):
+        (tmp_path / ".env").write_text("MODEL_DIR=/mnt/models/huggingface\n")
+        cd = CockpitData(tmp_path, runner=full_runner())
+        assert cd.director_device() == "gpu0"
+
+    def test_no_env_file_defaults_gpu0(self, tmp_path):
+        assert CockpitData(tmp_path, runner=full_runner()).director_device() == "gpu0"
+
+    def test_set_and_read_roundtrip_preserves_file(self, tmp_path):
+        (tmp_path / ".env").write_text("MODEL_DIR=/x\n# comment\nFOO=bar\n")
+        cd = CockpitData(tmp_path, runner=full_runner())
+        assert cd.set_repo_env_var("STUDIO_DIRECTOR_DEVICE", "cpu") is True
+        assert cd.director_device() == "cpu"
+        cd.set_repo_env_var("STUDIO_DIRECTOR_DEVICE", "gpu1")   # update in place
+        assert cd.director_device() == "gpu1"
+        txt = (tmp_path / ".env").read_text()
+        assert txt.count("STUDIO_DIRECTOR_DEVICE=") == 1        # no duplicate
+        assert "MODEL_DIR=/x" in txt and "FOO=bar" in txt       # other lines kept
+
+    def test_invalid_value_falls_back_gpu0(self, tmp_path):
+        (tmp_path / ".env").write_text("STUDIO_DIRECTOR_DEVICE=bogus\n")
+        assert CockpitData(tmp_path, runner=full_runner()).director_device() == "gpu0"
+
+    def test_creates_env_when_absent(self, tmp_path):
+        cd = CockpitData(tmp_path, runner=full_runner())
+        assert cd.set_repo_env_var("STUDIO_DIRECTOR_DEVICE", "cpu") is True
+        assert (tmp_path / ".env").is_file()
+        assert cd.director_device() == "cpu"
+
+    def test_commented_line_ignored(self, tmp_path):
+        (tmp_path / ".env").write_text("# STUDIO_DIRECTOR_DEVICE=cpu\n")
+        assert CockpitData(tmp_path, runner=full_runner()).director_device() == "gpu0"

@@ -576,6 +576,50 @@ class CockpitData:
             return ""
         return ""
 
+    def director_device(self) -> str:
+        """The studio director's placement — ``STUDIO_DIRECTOR_DEVICE`` from the repo
+        ``.env`` (``gpu0`` | ``gpu1`` | ``cpu``; default ``gpu0``).  Read by gpu-mode's
+        ``start_studio_director``; the Settings screen edits it via :meth:`set_repo_env_var`."""
+        try:
+            envf = self.repo_root / ".env"
+            if envf.is_file():
+                for raw in envf.read_text(encoding="utf-8", errors="replace").splitlines():
+                    s = raw.strip()
+                    if s.startswith("STUDIO_DIRECTOR_DEVICE=") and not s.startswith("#"):
+                        v = s.split("=", 1)[1].strip().strip('"').strip("'")
+                        if v in ("gpu0", "gpu1", "cpu"):
+                            return v
+        except OSError:
+            pass
+        return "gpu0"
+
+    def set_repo_env_var(self, key: str, value: str) -> bool:
+        """WRITE — upsert ``key=value`` in the repo ``.env`` (the SHARED config gpu-mode
+        and the composes read), preserving every other line.  Updates the first
+        uncommented ``key=`` line in place, else appends; creates the file if absent.
+        Returns True on a successful write."""
+        try:
+            envf = self.repo_root / ".env"
+            lines = (
+                envf.read_text(encoding="utf-8", errors="replace").splitlines()
+                if envf.is_file() else []
+            )
+            out: list[str] = []
+            done = False
+            for raw in lines:
+                st = raw.strip()
+                if st.startswith(f"{key}=") and not st.startswith("#"):
+                    out.append(f"{key}={value}")
+                    done = True
+                else:
+                    out.append(raw)
+            if not done:
+                out.append(f"{key}={value}")
+            envf.write_text("\n".join(out) + "\n", encoding="utf-8")
+            return True
+        except OSError:
+            return False
+
     def weights_model_dir(self) -> str:
         """The WEIGHTS ROOT — the dir that DIRECTLY holds the model subdirs
         (``<root>/<subdir>``), the SAME convention setup.sh uses (no extra

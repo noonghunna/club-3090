@@ -9891,6 +9891,24 @@ class TestSettings:
             assert os.environ.get("HF_TOKEN") == "hf_first"
 
     @pytest.mark.asyncio
+    async def test_director_placement_persists_to_repo_env(self, tmp_path):
+        """Director placement (CPU/GPU0/GPU1) persists to STUDIO_DIRECTOR_DEVICE in
+        the repo .env — what gpu-mode reads on the next ai-studio start."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app._data.repo_root = tmp_path                 # write the .env to a temp dir
+            assert app._data.director_device() == "gpu0"
+            app.apply_settings(model_dir="", hf_token="", director_device="cpu")
+            await _settle(pilot)
+            assert app._data.director_device() == "cpu"
+            assert "STUDIO_DIRECTOR_DEVICE=cpu" in (tmp_path / ".env").read_text()
+            # re-applying the same value is a no-op (no duplicate line)
+            app.apply_settings(model_dir="", hf_token="", director_device="cpu")
+            await _settle(pilot)
+            assert (tmp_path / ".env").read_text().count("STUDIO_DIRECTOR_DEVICE=") == 1
+
+    @pytest.mark.asyncio
     async def test_apply_persisted_settings_on_fresh_app(self):
         import os
         from club3090_cockpit import __main__ as M
