@@ -78,10 +78,12 @@ services:
       - ENABLE_RAG_LOCAL_WEB_FETCH=true
 
       # --- Image/file upload, document RAG ---
-      # Hybrid (BM25 + vector) search REQUIRES a reranking model in OWUI; with RAG_RERANKING_MODEL
-      # unset, the rerank step returns 0 → retrieval finds nothing. Off = pure vector retrieval
-      # (works without a reranker). Set a RAG_RERANKING_MODEL and flip this true for better recall.
-      - ENABLE_RAG_HYBRID_SEARCH=false
+      # Hybrid (BM25 + vector + rerank) retrieval for document RAG. Needs a cross-encoder reranker:
+      # bge-reranker-base (~280 MB) runs IN-PROCESS in OWUI on CPU (no GPU contention, no separate
+      # service), auto-downloaded from HF on first use. Document-RAG only — web search bypasses
+      # retrieval (above). For higher recall swap to BAAI/bge-reranker-v2-m3 (~2.3 GB, still CPU).
+      - ENABLE_RAG_HYBRID_SEARCH=true
+      - RAG_RERANKING_MODEL=BAAI/bge-reranker-base
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
