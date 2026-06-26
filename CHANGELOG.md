@@ -16,6 +16,182 @@ history; SemVer takes over from `v0.3.0` onward.
 
 ---
 
+## v0.10.0 — 2026-06-26
+
+
+### ⚠️ Cliffs, gotchas, regressions
+
+- c3 Phase R / R3b-1 fixups: temp unlink-on-decline + lane-native [v] regression test ([4ec2b2b](https://github.com/noonghunna/club-3090/commit/4ec2b2b6341fe85ae1eff652692a9ac49f4039b6))
+
+
+### ✨ Features
+
+- feat(lmcache): add NVLink auto-detection to dual-lmcache compose ([ea833ad](https://github.com/noonghunna/club-3090/commit/ea833ad134c98ef38152fd30ff93e0cc024bcd71))
+- feat(vibethinker-3b): add llamacpp/vibethinker-3b-single (Q8, incubating) ([d3cacfa](https://github.com/noonghunna/club-3090/commit/d3cacfad0c1155066c09893b6ab2939ecb4ba6e2))
+- feat(catalog): add 🐣 Incubating status tier + VibeThinker-3B (incubating) ([35a6965](https://github.com/noonghunna/club-3090/commit/35a69650fed92376d8f3d2bca920fdd034f2448d))
+- feat(qwen3.6-27b): add beellama/carnice-v2-dual-q8-mtp dual compose (#403) ([186ab9b](https://github.com/noonghunna/club-3090/commit/186ab9b2b6155936ef3d7ee365f00cae253710d6))
+
+
+### 🎯 New models + serving paths
+
+- Add gemma12b single-card gpu-mode scene + litellm route (#469) ([#469](https://github.com/noonghunna/club-3090/pull/469) by @noonghunna)
+- Add guard test: conditional compose entrypoints must $$-escape runtime bash ([1b87ebe](https://github.com/noonghunna/club-3090/commit/1b87ebe05e760fdb6c027341ec7210ef827c209b))
+- Add llamacpp/qwen27b-pi-reasoning-single (Qwen3.6-27B Pi-style coding agent, mainline llama.cpp + MTP) (#425) ([#425](https://github.com/noonghunna/club-3090/pull/425) by @noonghunna)
+- Add opt-in LMCache KV-offload compose (vllm/qwen-27b-dual-lmcache, incubating) (#421) ([#421](https://github.com/noonghunna/club-3090/pull/421) by @noonghunna)
+
+
+### 🐛 Bug fixes
+
+- fix(lmcache): forward env tuning knobs ([c90e4f2](https://github.com/noonghunna/club-3090/commit/c90e4f2e18ddd455576080ff6ebba8a195a4b6ad))
+- fix(nvlink): strip only expandable_segments on custom-AR path ([f5d5dca](https://github.com/noonghunna/club-3090/commit/f5d5dca09a4b907b9c5aafb611c1bb090af11bc3))
+
+
+### 📝 Documentation
+
+- docs: add PCIE_P2P.md — PCIe topology & enabling P2P (no NVLink) ([df419c9](https://github.com/noonghunna/club-3090/commit/df419c9bd7f4d518ed8ef4fc9199863c50201dfd))
+- README: add a getting-started subsection for the c3 TUI ([069ac27](https://github.com/noonghunna/club-3090/commit/069ac27256b0e1f5027a071d139add8536139d1e))
+- docs(lmcache): fold cross-rig findings — warm-L2 compute-bound + aborted-prefill caveat ([7b0c4d4](https://github.com/noonghunna/club-3090/commit/7b0c4d4abc12eda7e7db28fa63fc520856b4bdf2))
+- docs(c3): first-run Settings step (Model Dir + HF token) + S keybinding ([50bed70](https://github.com/noonghunna/club-3090/commit/50bed7047633df08ea29b5ddc5ca4e061e95bfad))
+- docs(ai-studio): Krea 2 is a real image lane (was "dropped") ([7daef3e](https://github.com/noonghunna/club-3090/commit/7daef3ec1ec5d07777416f379da9e762d0aa0175))
+- docs: note the image-lane quality ceiling + optional HQ upgrade path ([852820d](https://github.com/noonghunna/club-3090/commit/852820d2c3631e5053c4b45a22a12da81eec723e))
+- docs: AI Studio requirements + Wan tuning + director placement ([11984d1](https://github.com/noonghunna/club-3090/commit/11984d19dac66d0222d0aa66f4bdbf462808fff7))
+- docs: Z-Image + Wan2.2 lanes (11 lanes); Krea2 dropped (cloud-only) ([5c2ed40](https://github.com/noonghunna/club-3090/commit/5c2ed400d25b40f7ee653e06594c7b606dddf1ef))
+- docs: ai-studio consolidation pass (one scene, lanes inside it) ([813ddf9](https://github.com/noonghunna/club-3090/commit/813ddf94d8a22648fee9ccc8cd7cf56a4de25ac4))
+- docs(upstream): add ParserEngine tracker rows (#45413, #45588) ([0596283](https://github.com/noonghunna/club-3090/commit/05962838cfeb37436875c43eebb84bb65abd82c4))
+- docs(upstream): clarify #40812 is merged-but-insufficient; point at #43923 ([611587d](https://github.com/noonghunna/club-3090/commit/611587dff3912095097af01d5d5a91ca5bcf3b8f))
+- docs: mark transformers>=5.8.0 / gemma4_assistant upstream row resolved (#453) ([#453](https://github.com/noonghunna/club-3090/pull/453) by @steamEngineer)
+- docs: fix vLLM upstream table render (drop stray blank line) (#452) ([#452](https://github.com/noonghunna/club-3090/pull/452) by @steamEngineer)
+- docs(vibethinker-3b): add measured one-shot-coding scores (HE+ 97%, LCB 83%) ([8b3aa13](https://github.com/noonghunna/club-3090/commit/8b3aa13f54b1780b60f1d053512b65735b9efaa8))
+- docs: add ANNOUNCEMENT_TEMPLATE.md (Announcements-post skeleton) ([a728832](https://github.com/noonghunna/club-3090/commit/a728832f606631ef0c8e9c17a13cbf77d12c411b))
+
+
+### 🛠️ Scripts + tooling
+
+- report.sh: surface P2P engagement as a labeled field (#491) ([#491](https://github.com/noonghunna/club-3090/pull/491) by @noonghunna)
+- setup.sh: let WEIGHT_KEY bypass the friendly model-name dispatch ([f9d8f8d](https://github.com/noonghunna/club-3090/commit/f9d8f8d485d1e94686b4a4f7dd6a9b2ffc97d1ca))
+- weights.py: add `list --json` (download-state source for c3) ([1730e04](https://github.com/noonghunna/club-3090/commit/1730e0405b96da3aa09ac317b5c4db56f5ea997c))
+
+
+### 🧹 Other
+
+- BENCHMARKS: add @oven1231231234 dual-3090 NVLink-vs-PHB A/B (PCIe 3.0 x16) ([4032645](https://github.com/noonghunna/club-3090/commit/4032645ee45c31e9a37b3164e7ae208294903bf8))
+- Standardize 27b served-model-name → qwen3.6-27b-autoround (#490) ([#490](https://github.com/noonghunna/club-3090/pull/490) by @noonghunna)
+- gpu-mode: align power-cap default 230W -> 250W (completes #483) (#489) ([#489](https://github.com/noonghunna/club-3090/pull/489) by @noonghunna)
+- Add nvidia-power-cap.service for boot-time GPU power cap (#483) (#485) ([#485](https://github.com/noonghunna/club-3090/pull/485) by @alexpolo1)
+- BENCHMARKS: add Ornith-1.0 section (9B + 35B rows) ([c9f651e](https://github.com/noonghunna/club-3090/commit/c9f651ecffe0af72e91fb1e11722df2bd1d052fe))
+- Add Ornith-1.0-35B experimental slug (ik-llama/ornith35b-dual) (#479) ([#479](https://github.com/noonghunna/club-3090/pull/479) by @noonghunna)
+- BENCHMARKS: add @Whamp 4× 3090 TP=4 multi4 rows (#446) ([291fa74](https://github.com/noonghunna/club-3090/commit/291fa740ffce58a450795ca57ffadcadaa76363c))
+- BENCHMARKS: add @guybrush01 dual-5090 cross-rig row (Qwen3.6-27B, first Blackwell) ([2c686e9](https://github.com/noonghunna/club-3090/commit/2c686e96b6484f05f913eca6b2cb5ca61fb92395))
+- Add Ornith-1.0-9B experimental slug (ik-llama/ornith9b-single) (#477) ([#477](https://github.com/noonghunna/club-3090/pull/477) by @noonghunna)
+- c3: adaptive estate poll — fast GPU, regime-gated docker (burst/steady/idle) (#476) ([#476](https://github.com/noonghunna/club-3090/pull/476) by @noonghunna)
+- Director placement lever: CPU / GPU0 / GPU1 (c3 Settings) (#473) ([#473](https://github.com/noonghunna/club-3090/pull/473) by @noonghunna)
+- Wire SearXNG web search + Qdrant vector DB into Open WebUI (#472) ([#472](https://github.com/noonghunna/club-3090/pull/472) by @noonghunna)
+- Lazy-load step-voice + scene-wire it into ai-studio (#471) ([#471](https://github.com/noonghunna/club-3090/pull/471) by @noonghunna)
+- Make the OWUI model picker scene-accurate (studio lanes + LLMs) (#470) ([#470](https://github.com/noonghunna/club-3090/pull/470) by @noonghunna)
+- gpu-mode: rename model scenes to qwen27b / qwen35b-a3b / gemma-31b ([33a1f71](https://github.com/noonghunna/club-3090/commit/33a1f71c8198b54cfe22af8504893085cc005526))
+- gpu-mode: add the 35b-a3b scene (parity with 27b/gemma/deckard) ([9f1f3a9](https://github.com/noonghunna/club-3090/commit/9f1f3a9e37a2b1a907f73b596573b8668293593a))
+- gpu-mode: fix `gpu-mode gemma` (undefined fn aborted before start) + litellm port ([2b17aa5](https://github.com/noonghunna/club-3090/commit/2b17aa5070d4040a4a2aa8d86fb543d9d3fed33a))
+- c3: distinguish "booting" from "API not reachable" in Doctor (all engines) ([1ce5a5f](https://github.com/noonghunna/club-3090/commit/1ce5a5f717f303ec9b73f0d5ad958085fbe8e64c))
+- owui: wire LiteLLM gateway (:4000) as a chat connection ([f5ec5c3](https://github.com/noonghunna/club-3090/commit/f5ec5c3201ebad2e6e6575df3ce91dec903a6144))
+- c3: scene-preview box auto-grows to fit all services (not a cap) ([9459536](https://github.com/noonghunna/club-3090/commit/94595368d215983df4a3bfe88a785292a85c7458))
+- c3: cap scene-preview services with "+N more" (ai-studio truncation) ([9299e6f](https://github.com/noonghunna/club-3090/commit/9299e6fc1447a8ea36fee357e697049642c0739c))
+- serve-cockpit: declare PyYAML dependency (fixes c3 diagnose-estate crash) ([0cc9d9c](https://github.com/noonghunna/club-3090/commit/0cc9d9c5c4cbf64c5ca098c695178d2bd715149e))
+- ai-studio: wire the Krea 2 Turbo image lane (validated on v0.26.0) ([978052a](https://github.com/noonghunna/club-3090/commit/978052abfc6768647d52a5588f23eba7054d8113))
+- comfyui entrypoint: fix dubious-ownership blocking the pin checkout ([e738c7c](https://github.com/noonghunna/club-3090/commit/e738c7c59b24e0031132e712fd9c6c322436447a))
+- Bump ComfyUI pin to v0.26.0 + queue Krea 2 download ([2693d93](https://github.com/noonghunna/club-3090/commit/2693d937f8bbf1d26ccca654d6ff93d188383ff5))
+- detect_nvlink: auto-enable PCIe P2P when nvidia-smi reports it OK ([446c7d9](https://github.com/noonghunna/club-3090/commit/446c7d97428f80587a1e70cf887d7cc5f785c676))
+- studio: one-command setup-ai-studio.sh + auto-install the OWUI pipe ([aad1e69](https://github.com/noonghunna/club-3090/commit/aad1e69d0989dccf1381394b57588acac9675880))
+- c3: make fresh-clone install work + rewrite stale README + repo pointer ([37c680d](https://github.com/noonghunna/club-3090/commit/37c680d5d28f68eed6d4f7bcee7ac0a5fd9b7c80))
+- studio: Wan2.2 full parity — recipe fix, 720p valve, i2v, long-clip chaining ([0ff83b8](https://github.com/noonghunna/club-3090/commit/0ff83b8fae0cda90ccebf745d8531ac462f86644))
+- studio: download scripts + manifest rows for Z-Image + Wan2.2 ([5fb8fa1](https://github.com/noonghunna/club-3090/commit/5fb8fa1c7f0930c97da411af21b6fea2ea24d439))
+- studio: add Z-Image + Wan2.2 uncensored lanes; unify OWUI lane naming ([9b16ef9](https://github.com/noonghunna/club-3090/commit/9b16ef919c6efac4eeaa01060897307c6df36bf3))
+- cockpit: ai-studio missing-models modal + video⊕voice GPU guard ([75dbc0a](https://github.com/noonghunna/club-3090/commit/75dbc0a8f52ae6861f863eee93bae0d1287ee2c2))
+- studio: add the 10Eros uncensored video lane (A/B vs Sulphur) ([a4230b3](https://github.com/noonghunna/club-3090/commit/a4230b3861746d9a40e72331121b16b610e7049d))
+- studio: consolidate image/video into one `ai-studio` gpu-mode scene ([3fc2685](https://github.com/noonghunna/club-3090/commit/3fc26857f200d692effd189fd2c490a48ef275e2))
+- cockpit: give report/full-report/cap-sweep their own Doctor cards ([ef8cba8](https://github.com/noonghunna/club-3090/commit/ef8cba83b12ba0322eceb9f4ca5f76793878b26a))
+- studio: preflight the models before starting (gpu-mode + cockpit) ([757c1da](https://github.com/noonghunna/club-3090/commit/757c1daba3b4c8223cc9b4687b4637ed5cab1804))
+- studio: fetch the director / Kokoro / Step-Audio models for a fresh install ([cece4ec](https://github.com/noonghunna/club-3090/commit/cece4ec4fbb22d3c4e960677ff515f2c50ed3114))
+- cockpit/gpu-mode: comfyui engine label, drop power-cap strip + solo scene, list studio sidecars ([cae021d](https://github.com/noonghunna/club-3090/commit/cae021d6ead9e38c59376b95d3ec8cf4a6cee6c5))
+- cockpit: show engine + port for comfyui/qdrant (port-range + non-engine ports) ([ee954e1](https://github.com/noonghunna/club-3090/commit/ee954e140495688737517b7cd50558267a6476c4))
+- cockpit: guide studio setup when comfyui-local image is missing ([016bf36](https://github.com/noonghunna/club-3090/commit/016bf36fd50982bfc6bd63cc06f950e011dd7016))
+- comfyui: parameterize host paths for portability (${COMFYUI_ROOT} / ${MODEL_DIR}) ([ac31c7e](https://github.com/noonghunna/club-3090/commit/ac31c7e91f08489c56ed112052459a9a91c125f7))
+- cockpit: fix per-service stop/start to target the real container + project ([c52ab09](https://github.com/noonghunna/club-3090/commit/c52ab09b4885d51f48519ce6d9e696e7da26ccae))
+- stack: remove retired ollama service entirely ([9b73a4c](https://github.com/noonghunna/club-3090/commit/9b73a4ccfd652c2bab2330ca83b62b9c39f717aa))
+- cockpit: Containers shows service status/engine/port + start; de-dup Orchestration ([727d90b](https://github.com/noonghunna/club-3090/commit/727d90b06fc0896cdcebca55aa02b4a0541d4cb2))
+- cockpit: live status bullets on Orchestration services (read-only) ([1b4e2af](https://github.com/noonghunna/club-3090/commit/1b4e2af4bcf1de7467742e96a6886d26ed2a2148))
+- cockpit: cluster Orchestration scenes by group (models → studio → ops) ([0b58a48](https://github.com/noonghunna/club-3090/commit/0b58a48e93abecb7fe53b5e2aa19d0ce9bdbfbb3))
+- gpu-mode: collapse the gemma scenes to just 'gemma' ([7bca67c](https://github.com/noonghunna/club-3090/commit/7bca67cbde6fb5c8b2b4d6f43837e852bce43d31))
+- gpu-mode scenes: regroup (serving→models), drop bigmodel + diffusiongemma ([5fb2252](https://github.com/noonghunna/club-3090/commit/5fb22527c2e8cd38ee6f3df2b8c9f466a2734c9a))
+- c3 Orchestration scenes: footer-only confirm, clearer override, real 'off' ([0896bd9](https://github.com/noonghunna/club-3090/commit/0896bd9721373ea5db9e67e81de155b682bad082))
+- c3 Orchestration: power-cap menu, remove prune, move cap-sweep to Doctor ([38227ce](https://github.com/noonghunna/club-3090/commit/38227cea93d158acbbb0ddc2ea0af5416440ff0f))
+- c3: unify MODEL_DIR convention between the cockpit and setup.sh ([f03b514](https://github.com/noonghunna/club-3090/commit/f03b5146646d5c8018905fde5087dfdbdcd5a451))
+- c3 Download: ignore backup cruft (*.bak/*.old/~) in the progress byte-count ([acacfda](https://github.com/noonghunna/club-3090/commit/acacfdaaf1fbfb7e53d3a1cab6105461c92efe12))
+- c3 Download: live progress moves + state survives a catalog refresh ([32fadef](https://github.com/noonghunna/club-3090/commit/32fadef1925e078be3c34a28234ae36a1176875a))
+- c3 Download: registry-driven companion artifacts (DFlash draft / mmproj) ([639525b](https://github.com/noonghunna/club-3090/commit/639525bd85ade48efbf1e7390e84de6c046db3d4))
+- c3 Settings: show [S] in the footer + honor MODEL_DIR / HF_TOKEN env vars ([2aae1d0](https://github.com/noonghunna/club-3090/commit/2aae1d0fcce9068dcfdf84906a6bcba8422c72b0))
+- c3 Download UX: [S] Settings (model dir + HF token) + not-set banner ([340896c](https://github.com/noonghunna/club-3090/commit/340896c574a4e89d3a03d4d024c1262a7a895357))
+- c3 Download UX: Download-vs-Start pop-up, listing glyph, download worker ([8947d59](https://github.com/noonghunna/club-3090/commit/8947d597df5f638b1309de3a88e6cea13e3d3982))
+- profiles: wire hf_repo for 5 verified weight variants ([eb81c5f](https://github.com/noonghunna/club-3090/commit/eb81c5f0af750f176b4da313442081e1301991a7))
+- c3 Download UX (service): download plan + progress + disk-fit ([a28d3d1](https://github.com/noonghunna/club-3090/commit/a28d3d13b09890f5f393768da4d42aafddb95f49))
+- c3 Download UX (data layer): per-slug weights-on-disk state ([e8d99a5](https://github.com/noonghunna/club-3090/commit/e8d99a553c99e9e774db688ef85b4c88e4084c63))
+- c3: fix slug-match prefix shadow, idle-service reconcile, hint overflow, copy, experimental Force-Start ([53a570f](https://github.com/noonghunna/club-3090/commit/53a570f3059bedc48932e0b886620d117440462d))
+- c3: [Y] copy-to-clipboard + shift+arrow horizontal scroll ([d256a05](https://github.com/noonghunna/club-3090/commit/d256a058e92da1dbb6a021f98a4e229e5c2bfd07))
+- c3 Doctor: "is it serving correctly?" — verify / verify-full reads ([d05f132](https://github.com/noonghunna/club-3090/commit/d05f132b0a879b1139203870b4ddc733f494b667))
+- c3 serve pop-up: state-aware Stop/Start/warned-Start; drop Fit column ([8ad9a00](https://github.com/noonghunna/club-3090/commit/8ad9a00d21a86022a65905f914a466c85b71a03b))
+- c3 Catalog: topology column, multi-word filter; Modes/tab-bar arrow refinements ([ba22ccd](https://github.com/noonghunna/club-3090/commit/ba22ccd4b0f70dd4ec524027a155e7853769ff07))
+- c3 cockpit: stopped-drill clear, arrow-navigable Modes, lane no-yank ([303d9b6](https://github.com/noonghunna/club-3090/commit/303d9b6bdef78c6222ca44c98dd9e5d31ad3186c))
+- c3 cockpit: arrow-key focus descent (↓ into content, ↑ back to tab bar) ([0232797](https://github.com/noonghunna/club-3090/commit/02327971adfd2818fcbc2ce0633c1c935f43fdf2))
+- c3 cockpit: fix keyboard focus/navigation (footer + tab bar) ([6bca4e6](https://github.com/noonghunna/club-3090/commit/6bca4e6f6120af498384dcb37ce8a91845346c54))
+- c3 cockpit UX Tier-1: footer/binding hygiene (Codex review) ([982e034](https://github.com/noonghunna/club-3090/commit/982e034ca7d46b9e62ce22be2d8e7647df6a4db8))
+- c3 cockpit: merge Run+Operate; Bring & Validate visible by default ([b3b842a](https://github.com/noonghunna/club-3090/commit/b3b842a6127d05977775f497eec41e06db548de7))
+- c3 cockpit live-use fixes: table cursor preserve, curated profile dropdown, disk/RAM in the left rail ([ba984ca](https://github.com/noonghunna/club-3090/commit/ba984cadbccf6f2039586203c54aee29db48271d))
+- c3 cockpit UX batch 5: estate telemetry — disk/RAM bars, studio-* services, GPU-VRAM attribution ([24b672f](https://github.com/noonghunna/club-3090/commit/24b672f1468b6a7c297df78c200c5f8d07f584c9))
+- c3 cockpit UX batch 4b: inline previews + registry-derived profile dropdown ([171058c](https://github.com/noonghunna/club-3090/commit/171058c4471c5069aee579e745d61156f05e405b))
+- c3 cockpit UX batch 4a: navigation & discoverability + an unsafe-gate Enter safety fix ([78facde](https://github.com/noonghunna/club-3090/commit/78facdee867f32c5340e3354c1448bd3dc4fdc49))
+- c3 cockpit UX batch 3: honesty + serving actions (fit-vs-live-VRAM, real running config, targeted stop) ([bb2c30e](https://github.com/noonghunna/club-3090/commit/bb2c30ebca5528277853051e84472a5558efe363))
+- c3 cockpit UX batch 2: perception loop — live surfaces reflect writes + fail honestly ([049ede8](https://github.com/noonghunna/club-3090/commit/049ede882048f45b1196c3bf306e817063676df7))
+- c3 cockpit UX batch 1: serving panel, full service list, calm Containers, power/cap on cards ([dfe9004](https://github.com/noonghunna/club-3090/commit/dfe90043b0659d06e61f90dd179e7d5a92659b02))
+- c3 Phase R / R4: in-app Contribute door (runtime surface toggle + persistence) ([ca67481](https://github.com/noonghunna/club-3090/commit/ca67481b02bcb4ce8832bf6908e443159d477dd0))
+- c3 Phase R / R3b-2: ④ measure-vs-curated-bar + producer full-validation report ([a6df0c2](https://github.com/noonghunna/club-3090/commit/a6df0c2c0fab759cc3d0e17fe7f3c8c6f5c82124))
+- c3 Phase R / R3b-1: producer "Bring & Validate" lane — ①–⑤ stages + ② Serve ([2c3c93d](https://github.com/noonghunna/club-3090/commit/2c3c93d9409a3741e617580459daff1e223dbf47))
+- c3 Phase R / R3a: surface-gate the producer lane (consumer = Run + Operate) ([ddd70b6](https://github.com/noonghunna/club-3090/commit/ddd70b6c5431f597bc420496b05f2314035efaea))
+- c3 Phase R / R2b: consumer share-back — rig report [R] / submit bench [B] / problem [!] ([2a5397a](https://github.com/noonghunna/club-3090/commit/2a5397ace4379ca3078383bd84f8042500567c6f))
+- c3 Phase R / R2a: rename Estate → Operate + move Doctor into Operate ([250cd50](https://github.com/noonghunna/club-3090/commit/250cd50a93b8bc090cf62bf62274bd7046ee9c32))
+- c3 Phase R / R1: fold Discover + Serve + Benchmarks into one Run mode ([8762442](https://github.com/noonghunna/club-3090/commit/8762442fc56274ecaf5a9ce218bd8a621be001cd))
+- c3 Phase R / R0 fixups: surface gate before _ALWAYS_ON + de-flake gate tests ([e706f64](https://github.com/noonghunna/club-3090/commit/e706f6458733dc9a8ffee4df76c639a91147815a))
+- c3 Phase R / R0: surface scaffolding (consumer | producer) ([b04093e](https://github.com/noonghunna/club-3090/commit/b04093e3306d61c9df7f519c56d64189e91c5880))
+- Fix NVLink boot crash when compose pre-sets expandable_segments ([a4b8bd1](https://github.com/noonghunna/club-3090/commit/a4b8bd1d12b66fc6025b0455fa4fd93a3e96ef70))
+- Fix estate GPU visibility overrides (#447) ([#447](https://github.com/noonghunna/club-3090/pull/447) by @Whamp)
+- c3: auto-load container drill detail on select + consistent Esc ([1252921](https://github.com/noonghunna/club-3090/commit/12529211cb5e028d228568665539a6d9bd81fe6a))
+- c3 catalog: instant first-paint + batched fit via kv-calc --fit-all ([24c1f19](https://github.com/noonghunna/club-3090/commit/24c1f194d4767b8af88c2d1c5b1b114dc23a10c4))
+- Add kv-calc --fit-all: batch fit for all registry slugs in one process ([6653660](https://github.com/noonghunna/club-3090/commit/665366054f82d1077385d4a9b913b1e6e8081d34))
+- Speed up c3 catalog load ~10x (parallelize per-slug enrichment) ([65a7f36](https://github.com/noonghunna/club-3090/commit/65a7f3616f5a3e46c99ff588ffaf85269fe5df12))
+- Fix LMCache compose entrypoint for Compose v5 interpolation ([#429](https://github.com/noonghunna/club-3090/pull/429) by @steamEngineer)
+- Fix c3 cockpit keyboard hotkeys: context-gated footer + focus ([e881738](https://github.com/noonghunna/club-3090/commit/e881738d3e82ee02305c2c113e4a901ad851225b))
+- Phase 5 (v2): wire the c3t-Evaluate / promote-to-catalog / optimizer hooks ([b7b4b7d](https://github.com/noonghunna/club-3090/commit/b7b4b7d5fa2235cabf983d88a96a30f1f09ad795))
+- Phase 4 (v1.5): wire the Validate mode + Estate write-extras ([581da4f](https://github.com/noonghunna/club-3090/commit/581da4f71d0fcafd0aeab2142660b00a0e272d43))
+- Phase 3: wire cockpit panes to real data + reconcile-gated actions ([e5823bc](https://github.com/noonghunna/club-3090/commit/e5823bca0232f960cfa9901f501320fefde78d94))
+- Phase 2b: add --json/CLI contracts to 7 stack scripts (additive) ([d09a063](https://github.com/noonghunna/club-3090/commit/d09a063317b1af94eb49084bc2545ee973463aae))
+- Phase 2a: extract club3090_tui_core, repoint c3t + cockpit ([8bcbcd1](https://github.com/noonghunna/club-3090/commit/8bcbcd1846bca142a385ae84d67f757912ec1ada))
+- Apply Codex Phase-1 review: harden registry shell call + mark bench mock ([450ece0](https://github.com/noonghunna/club-3090/commit/450ece0fa7048da516db208a02f02089660b0c6b))
+- Mirror c3t shell: wider rail + persistent Estate status card ([21c66a6](https://github.com/noonghunna/club-3090/commit/21c66a6b13fd4613f5927a908fabeb7c8db34227))
+- Enrich Phase-1 cockpit with representative visual mockups ([128c0ed](https://github.com/noonghunna/club-3090/commit/128c0ed8c5cd77e0a457bef3d68a535328e59321))
+- Clarify c3 ⏎ action (per-mode) + fix mode-rail truncation ([b966f00](https://github.com/noonghunna/club-3090/commit/b966f005aee214980b4fd10049ee80497df8d5e0))
+- Add serve cockpit (c3) — Phase 1 walking skeleton ([b520dfb](https://github.com/noonghunna/club-3090/commit/b520dfb9801bbb4160bc37aa32de3b50251cf0d8))
+- Add NVLink auto-config to qwen3.6-35b-a3b dual (Production — rebench-gated) ([491226f](https://github.com/noonghunna/club-3090/commit/491226feadb12f54955539c75ec79c7466f8743c))
+- Add NVLink auto-config to gemma-4-26b-a4b + diffusiongemma duals ([7481aa7](https://github.com/noonghunna/club-3090/commit/7481aa7351700067a90ca094eda2c899ee4c7eb2))
+- Fix NVLink auto-detect dead on Docker Compose v5.1+ ([9a188b8](https://github.com/noonghunna/club-3090/commit/9a188b816b3d1b977f7f789e7e7dcad0aab16f63))
+- Add c3t — the club-3090 test-console TUI (built by Qwen Max from the spec) (#428) ([#428](https://github.com/noonghunna/club-3090/pull/428) by @noonghunna)
+- Record measured pi-reasoning rebench-full results + BENCHMARKS row ([79173b1](https://github.com/noonghunna/club-3090/commit/79173b12d5e5221be258efbd67051dde9b0ab1ca))
+- quality-test / rebench-full: forward --max-tokens to benchlocal-cli (#426) ([#426](https://github.com/noonghunna/club-3090/pull/426) by @noonghunna)
+- Correct pi-reasoning bench framing: 230W power-cap artifact, MTP head ≡ base ([78c4038](https://github.com/noonghunna/club-3090/commit/78c40388502735dbeb795e05a15969dc145aeab6))
+- Pull gate: actionable messages for uncurated derives of curated models (#424) ([#424](https://github.com/noonghunna/club-3090/pull/424) by @noonghunna)
+- LMCache: in-repo L2 default + LMCACHE_L2=1 toggle, preflight disk-check, corrected sizing (#422) ([#422](https://github.com/noonghunna/club-3090/pull/422) by @noonghunna)
+- Correct LMCache L2 docs with measured numbers (fs adapter, ~125 KB/token, 4.8s rehydrate) ([9901129](https://github.com/noonghunna/club-3090/commit/9901129781ed6019aec15209a39c65d10cca46ad))
+
+
+
+[Pin: `git checkout v0.10.0`] · [Full diff](https://github.com/noonghunna/club-3090/compare/v0.9.0...v0.10.0)
 ## v0.9.0 — 2026-06-15
 
 
