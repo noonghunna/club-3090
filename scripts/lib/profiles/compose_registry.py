@@ -772,6 +772,21 @@ COMPOSE_REGISTRY = {
         status_note="Ornith-1.0-9B (DeepReinforce agentic-coding RL) on ik_llama single 3090, Q4_K_M + q8_0 KV, full 262K. Arch CONFIRMED qwen35 Qwen3-Next DENSE-FFN HYBRID (8 full-attn + 24 GDN/DeltaNet layers, NON-MoE) — only 8/32 layers carry GQA KV, so 262K fits at 4.25 GiB KV (13.4 GiB total, ~10 GiB headroom). No MTP head → drafter-free ngram self-spec (--spec-type ngram-map-k, ~0.59 accept, +30% warm on copy-heavy gen; works DESPITE the DeltaNet hybrid, where DFlash/EAGLE are KV-rollback-blocked). Full gate PASS 2026-06-25: bench ~102/103 TPS (TTFT 144ms, CV<1%), verify-stress 8/8 incl NIAH→0.92×262K, soak-continuous PASS (0 MiB growth, 0/100 silent-empty, p50 104 TPS, 98.1% retention). 8-pack think-OFF 91/150 / think-ON 95/150 (temp 0.6). cli-40 7/40 is partly a termination-protocol artifact (model solves but mis-routes the <solution> sign-off via the bash tool + loops → agent_loop_exhausted; a hardened agent prompt lifts it 7→13/40). NICHE ONLY — gemma-4-12b beats it on quality (105/150) AND speed (117/122 vs 102 TPS) at +7 GiB; pick Ornith only for the lean 13.4 GiB footprint / 16 GB-card fit. Self-grabbed official GGUF, ik digest-pinned → 🧪.",
     ),
 
+    # Ornith-1.0-35B — DeepReinforce agentic-coding RL fine-tune of Qwen3.6-35B-A3B
+    # (qwen35moe MoE hybrid, 40L, 256 experts / 8 active ~3B, NO MTP head). Dual 3090,
+    # Q8_0 GGUF, full 262K, drafter-free ngram (opt-in; Q8 dual is tight). 🧪 — ties the
+    # base on the 8-pack, EDGES it on aider (15/30 vs 12-13) → coding-leaning lane.
+    "ik-llama/ornith35b-dual": _entry(
+        model="ornith-1.0-35b", weights_variant="deepreinforce-q8", workload="fast-chat",
+        engine="llama-cpp-local", drafter=None, kv_format="q8_0",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/ornith-1.0-35b/ik-llama/compose/dual/deepreinforce-q8/ngram.yml",
+        default_port=8071,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Ornith-1.0-35B (DeepReinforce agentic-coding RL fine-tune of Qwen3.6-35B-A3B) on ik_llama dual 3090, Q8_0 GGUF, full 262K. Arch CONFIRMED qwen35moe (MoE hybrid, 40L: 10 full-attn + 30 GDN, 256 experts / 8 active, ~3B active of 34.66B) — only ~10 layers carry GQA KV so 262K KV is ~2.7 GB. NO MTP head → drafter-free ngram (--spec-type ngram-map-k, OPT-IN: Q8 weights nearly fill dual so ngram needs n_max=32 + a balanced -ts to fit 262K). Full gate PASS 2026-06-26: bench ~108.8/108.6 TPS, verify-stress 8/8 (NIAH→240K), soak-continuous PASS (0 growth, 0/100 silent-empty, p50 112). 8-pack think-OFF 105/150 / think-ON 105/150 — TIES the base qwen3.6-35b-a3b (byteshape 110) within noise; thinking adds nothing. EDGES the base on real coding: aider-polyglot-30 15/30 (OFF==ON) vs the base's 12-13/30, corroborated by bugfind 15/15. Coding-leaning 35B-A3B; the base stays the pick for general use. Self-grabbed official GGUF, ik digest-pinned → 🧪.",
+    ),
+
     # VibeThinker-3B — WeiboAI verifiable-reasoning fine-tune of Qwen2.5-Coder-3B
     # (Qwen2 dense). First dense-family + first sub-4B model in the catalog.
     "vllm/vibethinker-3b-single": _entry(
