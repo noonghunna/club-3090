@@ -2,11 +2,14 @@ model_list:
   # === Current serving primaries (one GPU service runs at a time per gpu-mode;
   #     routes to the inactive backends fail until that mode is brought up) ===
 
-  # Qwen 3.6 27B (Lorbus AutoRound INT4) + MTP n=3 + fp8 KV + 262K + vision.
-  # Started by `gpu-mode 27b` → vllm-qwen36-27b-dual at :8010. Stack default.
+  # Qwen 3.6 27B (fp8) + LMCache + fp8 KV + 262K + vision.
+  # Live scene: vllm-qwen36-27b-lmcache at :8010, serving id `qwen3.6-27b-fp8`.
+  # Public model_name kept as -autoround for client back-compat; upstream `model:`
+  # repointed to the real served id (the old dual/autoround scene was retired —
+  # mismatch was 404ing LiteLLM's 30-min health check). Stack default.
   - model_name: qwen3.6-27b-autoround
     litellm_params:
-      model: openai/qwen3.6-27b-autoround
+      model: openai/qwen3.6-27b-fp8
       api_base: http://host.docker.internal:8010/v1
       api_key: EMPTY
 
