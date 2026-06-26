@@ -694,6 +694,27 @@ else
 
   subsection "Boot log highlights"
   {
+    # Interconnect / P2P ENGAGEMENT — the runtime truth. The GPU "Topology" /
+    # "PCIe / P2P detail" sections above report P2P *capability* (can it?); this
+    # reports whether P2P is actually ON for the running serving container.
+    # detect_nvlink.sh emits an [nvlink] decision trail at boot stating the
+    # resolved NCCL_P2P_LEVEL + custom-all-reduce state. Grep the WHOLE log (not
+    # head -200) so a late line on a 3-4 GPU boot isn't missed, and fall back to
+    # the live container env. ALWAYS prints something so a reviewer never has to
+    # guess whether P2P was engaged (the gap that forced asks on #446 / #488).
+    nvlink_boot=$(docker logs "$CONTAINER" 2>&1 | grep -E '\[nvlink\]' | head -8)
+    p2p_env=$(docker exec "$CONTAINER" env 2>/dev/null | grep -E '^(NCCL_P2P|NVLINK_MODE|NCCL_CUMEM)=' | sort)
+    echo "**Interconnect / P2P engagement:**"
+    if [[ -n "$nvlink_boot" || -n "$p2p_env" ]]; then
+      echo '```'
+      [[ -n "$nvlink_boot" ]] && echo "$nvlink_boot"
+      [[ -n "$p2p_env" ]] && { echo "# resolved container env:"; echo "$p2p_env"; }
+      echo '```'
+    else
+      echo "_No \`[nvlink]\` boot line or NCCL_P2P/NVLINK_MODE env found — P2P engagement undetermined (single-GPU, a non-NCCL engine like llama.cpp, or an entrypoint predating detect_nvlink.sh)._"
+    fi
+    echo
+
     genesis_results=$(docker logs "$CONTAINER" 2>&1 | grep -E '\[INFO:genesis\.apply_all\] (Genesis|✅) Results' | tail -1)
     if [[ -n "$genesis_results" ]]; then
       echo "**Genesis patches applied:**"
