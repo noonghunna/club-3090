@@ -4,6 +4,10 @@ model_list:
 
   # Qwen 3.6 27B (Lorbus AutoRound INT4) + MTP n=3 + fp8 KV + 262K + vision.
   # Started by `gpu-mode 27b` → vllm-qwen36-27b-dual at :8010. Stack default.
+  # NOTE: ALL 27b serving scenes (autoround / fp8 / awq / lmcache) serve under the
+  # canonical name `qwen3.6-27b-autoround` so this route matches whichever scene is
+  # brought up on :8010 — do NOT give a 27b compose a scene-specific --served-model-name
+  # (see #482). The quant differs by compose path/port, not by served name.
   - model_name: qwen3.6-27b-autoround
     litellm_params:
       model: openai/qwen3.6-27b-autoround
