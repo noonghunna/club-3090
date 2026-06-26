@@ -68,7 +68,19 @@ bash scripts/update.sh
 
 `launch.sh` calls `switch.sh` (down old, up new) and then `verify-full.sh` so you know it's serving cleanly before you point a client at it. See [`scripts/`](scripts/) for all helpers.
 
-> 🖥️ **Prefer a TUI?** The **serve cockpit (`c3`)** wraps the same flow — discover → serve → operate → validate — in one lazydocker-style screen (catalog, live GPU/scenes/containers, Doctor health, and the add-a-model pipeline). Install: `uv pip install -e tools/serve-cockpit` then run `c3`. See [`tools/serve-cockpit/`](tools/serve-cockpit/).
+### Prefer a screen to the CLI? — the serve cockpit (`c3`)
+
+**`c3`** is a lazydocker-style terminal UI that wraps the same flow — **discover → serve → operate → validate** — in one keyboard-driven cockpit: browse the catalog and serve a variant with `⏎`, watch live GPU / scenes / containers, run Doctor health checks, and (producer lane) walk the add-a-model pipeline.
+
+```bash
+# Install from the checkout (the cockpit + its in-repo core package):
+uv pip install -e tools/serve-cockpit          # with uv (recommended — one command)
+#   …or plain pip:  pip install -e tools/tui-core && pip install -e tools/serve-cockpit
+
+c3                                              # launch  (also: python -m club3090_cockpit)
+```
+
+**First run:** press **`S`** → set your **Model Dir** (where weights download) + **HuggingFace token** → **`Ctrl+S`** to save; then **`r`** to browse the catalog and serve one. **`c3 --lean`** (or **`[C]`** in-app) hides the producer lane for a consumer-only view. After a `git pull`, re-run the install to pick up new deps + UI changes. Full keybindings + details → [`tools/serve-cockpit/`](tools/serve-cockpit/).
 
 > ⚠️ **Single-card long-context note:** Cliff 2 (GDN prefill OOM at >~50K single-prompt) is **open** on 24 GB single-card vLLM. Genesis v7.72.2 PN59 was intended as the fix but doesn't engage on chunked-prefill. **Workarounds:** [`vllm/dual`](docs/DUAL_CARD.md) (TP=2 escapes it) or [`llamacpp/default`](docs/SINGLE_CARD.md#bulletproof-no-cliffs) (different engine, no cliff). Full diagnosis at [`docs/CLIFFS.md`](docs/CLIFFS.md).
 
