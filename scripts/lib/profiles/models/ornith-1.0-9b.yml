@@ -1,0 +1,41 @@
+schema_version: 1
+id: ornith-1.0-9b
+display_name: Ornith 1.0 9B (DeepReinforce)
+family: qwen3-next-hybrid
+# DeepReinforce agentic-coding RL fine-tune. Arch CONFIRMED from the GGUF header
+# (general.architecture=qwen35): a Qwen3-Next DENSE-FFN HYBRID — NOT MoE, but NOT
+# plain GQA either. full_attention_interval=4 over 32 layers → 8 full-attention
+# layers (standard GQA KV) + 24 GDN/DeltaNet linear-attention layers (SSM state).
+# Distinct from Deckard-40B (qwen35-dense = standard GQA, no GDN). No MTP head in
+# the GGUF → spec-dec is drafter-free n-gram (ik_llama --spec-type ngram-map-k).
+hidden_size: 4096
+num_hidden_layers: 32
+num_attn_heads: 16
+num_kv_heads: 4
+head_dim_attn: 256          # key_length == value_length == 256
+intermediate_size: 12288    # feed_forward_length
+attention_k_eq_v: false     # standard GQA on the full-attn layers — K and V separate caches
+max_ctx_supported: 262144
+# Hybrid KV: only the 8 full-attention layers carry GQA KV; the 24 GDN layers hold
+# tiny SSM state (ssm.state_size=128, ssm.group_count=16). This is why KV @262K
+# q8_0 is ~4.25 GiB (8/32 layers full-attn), not 32/32 — read the boot-log
+# `KV self size`, do NOT extrapolate per-layer × all-layers (overshoots ~4×).
+vision_capable: false
+weights:
+  deepreinforce-q4km:
+    path: ornith-1.0-9b-gguf/q4_k_m
+    local_subdir: ornith-1.0-9b-gguf/q4_k_m
+    size_gb: 5.2                 # 5.232 GiB GGUF (5.02 BPW), official DeepReinforce Q4_K_M
+    format: gguf
+    status: experimental
+    hf_repo: deepreinforce-ai/Ornith-1.0-9B-GGUF
+    files:
+      - ornith-1.0-9b-Q4_K_M.gguf
+    engine: ik-llama
+    kind: gguf
+    verify_glob: "*.gguf"
+default_weight_variant: deepreinforce-q4km
+compatible_drafters: []        # no MTP head, no draft model — ngram is drafter-free
+valid_tp:
+  - 1
+requires_genesis: false
