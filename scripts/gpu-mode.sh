@@ -723,21 +723,21 @@ stop_estate() {
 }
 
 # --- GPU power-cap controls -------------------------------------------------
-# The rig normally runs both 3090s capped at 230W (quieter / cooler — see the
+# The rig normally runs both 3090s capped at 250W (quieter / cooler — see the
 # systemd unit below). The cap suppresses benchmark TPS, so maintainers need a
 # quick way to uncap to the hardware default for a true-TPS bench, then re-cap.
 #
-# `nvidia-power-cap.service` is the single source of truth for the 230W value
+# `nvidia-power-cap.service` is the single source of truth for the 250W value
 # AND re-applies it on every boot (Type=oneshot, RemainAfterExit=yes, enabled).
 # So `power-cap on` *restarts* that unit — `restart` (not `start`) is required:
 # the unit is already `active` from boot, and `systemctl start` on an
 # already-active RemainAfterExit oneshot is a no-op (it won't re-run ExecStart,
 # so the cap wouldn't actually re-apply after a `power-cap off`). `restart`
-# stops it (clearing RemainAfterExit) then re-runs both `-pl 230` ExecStart
+# stops it (clearing RemainAfterExit) then re-runs both `-pl 250` ExecStart
 # lines. `power-cap off` reads each card's Default Power Limit from nvidia-smi
 # (370W on GPU 0, 420W on GPU 1 here — they differ, so we never hardcode) and
 # applies it. `off` is session-scoped: a reboot OR a driver reload re-applies
-# 230W via the service. We never disable the service.
+# 250W via the service. We never disable the service.
 POWER_CAP_SERVICE="nvidia-power-cap.service"
 
 # Print per-GPU enforced / default / min / max power limits (one row per card).
@@ -772,7 +772,7 @@ mode_powercap() {
     # A numeric action = an explicit CUSTOM wattage applied to both cards (the
     # serve-cockpit power-cap menu's "custom" option).  Validated against each
     # card's [min,max] range; session-scoped like `off` (the boot service still
-    # re-applies 230W on reboot/reload).
+    # re-applies 250W on reboot/reload).
     if [[ "$action" =~ ^[0-9]+$ ]]; then
         echo -e "${CYAN}═══ Setting custom GPU power cap (${action}W) ═══${NC}"
         local cidx cmin cmax crc=0 capplied=0
@@ -798,24 +798,24 @@ mode_powercap() {
             exit 1
         fi
         echo -e "${GREEN}Custom cap ${action}W applied.${NC} ${YELLOW}Session-scoped — a reboot or driver"
-        echo -e "reload re-applies 230W via ${POWER_CAP_SERVICE}.${NC}"
+        echo -e "reload re-applies 250W via ${POWER_CAP_SERVICE}.${NC}"
         powercap_echo_enforced
         [ "$crc" -eq 0 ] || exit 1
         return
     fi
     case "$action" in
         on)
-            echo -e "${CYAN}═══ Re-applying GPU power cap (230W) ═══${NC}"
-            echo "Restarting ${POWER_CAP_SERVICE} (the boot-time 230W enforcer)."
+            echo -e "${CYAN}═══ Re-applying GPU power cap (250W) ═══${NC}"
+            echo "Restarting ${POWER_CAP_SERVICE} (the boot-time 250W enforcer)."
             # restart, not start — the unit is already active from boot, so
             # `start` is a no-op on a RemainAfterExit oneshot (won't re-run -pl).
             if sudo systemctl restart "$POWER_CAP_SERVICE" 2>/dev/null; then
                 echo -e "${GREEN}Power cap re-applied via systemd.${NC}"
             else
-                # Fallback: service missing/disabled — apply 230W directly.
-                echo -e "${YELLOW}systemctl restart failed; falling back to direct nvidia-smi -pl 230.${NC}" >&2
-                if ! { sudo nvidia-smi -i 0 -pl 230 && sudo nvidia-smi -i 1 -pl 230; }; then
-                    echo -e "${RED}✗ Failed to set 230W cap.${NC} Check sudo + driver state with: nvidia-smi -q -d POWER" >&2
+                # Fallback: service missing/disabled — apply 250W directly.
+                echo -e "${YELLOW}systemctl restart failed; falling back to direct nvidia-smi -pl 250.${NC}" >&2
+                if ! { sudo nvidia-smi -i 0 -pl 250 && sudo nvidia-smi -i 1 -pl 250; }; then
+                    echo -e "${RED}✗ Failed to set 250W cap.${NC} Check sudo + driver state with: nvidia-smi -q -d POWER" >&2
                     exit 1
                 fi
             fi
@@ -844,7 +844,7 @@ mode_powercap() {
                 exit 1
             fi
             echo -e "${GREEN}Uncapped to default.${NC} ${YELLOW}Session-scoped — a reboot or driver"
-            echo -e "reload re-applies 230W via ${POWER_CAP_SERVICE}. Run 'gpu-mode power-cap on' to re-cap now.${NC}"
+            echo -e "reload re-applies 250W via ${POWER_CAP_SERVICE}. Run 'gpu-mode power-cap on' to re-cap now.${NC}"
             powercap_echo_enforced
             [ "$rc" -eq 0 ] || exit 1
             ;;
@@ -909,7 +909,7 @@ gemma12b	models	Gemma 4 12B AutoRound INT8 + bf16 KV + MTP n=2 (gemma4_unified a
 deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng	8199,8080,4000	both
 ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,studio-step-voice,openwebui,litellm,qdrant,searxng	8188,8090,8189,8190,8191,8192,8193,8080,4000,6333	both
 off	ops	Stop all services	all-stopped		none
-power-cap	ops	GPU power-cap controls (on/off/status; both 3090s, 230W default cap)			both
+power-cap	ops	GPU power-cap controls (on/off/status; both 3090s, 250W default cap)			both
 prune	ops	docker image prune -a (safe — only unreferenced images)			none
 prune-all	ops	+ build cache (keep 5 GB) + dangling networks (volumes safe)			none
 TSV
@@ -990,10 +990,10 @@ usage() {
     echo "  off                Stop all services"
     echo "  status             Show running services, GPU, RAM, disk, Docker disk"
     echo ""
-    echo "  GPU power cap (both 3090s; normally capped at 230W for quiet/cool operation):"
-    echo "  power-cap on       Re-apply the 230W cap (via nvidia-power-cap.service)"
+    echo "  GPU power cap (both 3090s; normally capped at 250W for quiet/cool operation):"
+    echo "  power-cap on       Re-apply the 250W cap (via nvidia-power-cap.service)"
     echo "  power-cap off      Uncap to hardware default for a true-TPS bench"
-    echo "                     (session-scoped — a reboot / driver reload re-caps at 230W)"
+    echo "                     (session-scoped — a reboot / driver reload re-caps at 250W)"
     echo "  power-cap <WATTS>  Apply a custom cap to both cards (e.g. 'power-cap 280';"
     echo "                     validated against each card's [min,max]; session-scoped)"
     echo "  power-cap status   Show per-GPU enforced / default / min / max power limits"
