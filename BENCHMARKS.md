@@ -377,6 +377,17 @@ First-pass numbers for the two MoE models onboarded in v0.7.3. **Preview** track
 
 ---
 
+## Ornith-1.0 (DeepReinforce agentic-coding fine-tunes — 🧪 experimental)
+
+DeepReinforce agentic-coding RL fine-tunes of the Qwen3-Next family (`qwen35` 9B dense-hybrid · `qwen35moe` 35B-A3B). Both land **in-band with the base Qwen** on general capability — the fine-tune's value, where any, is coding (the 35B edges the base on aider; the 9B is a footprint play). ik_llama GGUF, drafter-free ngram, full 262K.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `ik-llama/ornith9b-single` | @noonghunna (1× 3090) | q8_0 | 262K | 100.6 / 100.6 (decode 102.0 / 102.7) | — | **13.4 GB** | 2026-06-25 | **Qwen3-Next dense-FFN HYBRID** (arch `qwen35`: 8 full-attn + 24 GDN, NON-MoE) — 262K KV only 4.25 GB. No MTP → ngram (~0.59 accept, works despite DeltaNet). verify-stress 8/8, soak PASS. **8-pack 91/150 off / 95 on**; cli-40 7/40 is partly a `<solution>`-sign-off artifact (→13 hardened). **NICHE ONLY** — gemma-4-12b beats it on quality (105) + speed (117/122). The lean 13.4 GB footprint is the only reason to pick it. Slug shipped [#477](https://github.com/noonghunna/club-3090/pull/477). |
+| `ik-llama/ornith35b-dual` | @noonghunna (2× 3090) | q8_0 | 262K | 106.5 / 103.6 (decode 108.8 / 108.6) | — | ~22 GB/card | 2026-06-26 | **qwen35moe MoE hybrid** (40L, 256 experts / 8 active ~3B, NO MTP). 262K KV ~2.7 GB. ngram opt-in (Q8 dual tight; needs `n_max=32` + balanced `-ts`). verify-stress 8/8, soak PASS. **8-pack 105/150 off == on — TIES base qwen3.6-35b-a3b** (byteshape 110, within noise) but **EDGES it on aider-polyglot-30: 15/30 (off == on) vs the base's 12–13** + perfect bugfind 15/15. **Coding-leaning 35B-A3B**; the base stays the general pick. Slug shipped [#479](https://github.com/noonghunna/club-3090/pull/479). |
+
+---
+
 ## Quality benches — Aider Polyglot 30
 
 Pass rate on a curated 30-exercise subset of [aider-polyglot-benchmark](https://github.com/Aider-AI/polyglot-benchmark) (5 per language across cpp/go/java/javascript/python/rust, mix of easy/medium/hard). Tests **edit-format reliability** AND **algorithmic correctness** — does the model emit diffs aider can apply, AND do the resulting tests pass.
