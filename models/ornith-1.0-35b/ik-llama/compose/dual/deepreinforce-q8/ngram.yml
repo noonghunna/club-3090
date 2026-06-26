@@ -1,0 +1,67 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Ornith-1.0-35B (DeepReinforce official Q8_0 GGUF — agentic-coding RL)
+#   Engine:    ik_llama.cpp (cu13, digest-pinned — the --spec-type self-spec build)
+#   Topology:  Dual 3090 PCIe (layer-split via -ts, no NVLink)
+#   Drafter:   none by DEFAULT — Q8 weights nearly fill dual (~17.9/16.7 GB split), and
+#              the ngram per-step verify buffer is ~2 GB/card (256-expert MoE × the draft
+#              batch), tight at 262K. ngram is OPT-IN (drafter-free; no MTP head, verified):
+#              SPEC_TYPE_ARGS='--spec-type ngram-map-k:n_max=32,ngram_min_hits=1' + a
+#              balanced TENSOR_SPLIT=0.97,1.0 fits ~2.7 GB/card free at 262K. Output-lossless.
+#   KV:        q8_0 K + q8_0 V. qwen35moe is a hybrid MoE → only the full-attn layers
+#              (full_attention_interval) carry GQA KV, so 262K KV is cheap.
+#   Vision:    no
+#   Max ctx:   262K (native qwen35moe.context_length). Whole estate ~22 GB/card on dual
+#              (Q8 weights 17.9/16.7 split + KV 2.7 GB + buffers). Measured 2026-06-26.
+#   Genesis:   N/A — Genesis is a vLLM patch system; this is ik_llama GGUF.
+#   Status:    🧪 Experimental
+#   Quality:   8-pack think-OFF 105/150 / think-ON 105/150 (toolcall 13 · instructfollow 12
+#              · structoutput 14 · dataextract 10 · reasonmath 13 · bugfind 15 · hermes 12/20
+#              · cli 16/40) · aider-polyglot-30 15/30 (OFF==ON) (--full, temp 0.6, 2026-06-26).
+#              Ties the base qwen3.6-35b-a3b on the 8-pack (110); EDGES it on real coding
+#              (aider 15 vs the base's 12-13) — the agentic-coding fine-tune's actual value.
+#   Best for:  coding-leaning 35B-A3B on dual — full 262K, ~109 TPS, edges the base on aider.
+# ---------------------------------------------------------------------------
+# Ornith-1.0-35B = qwen35moe (MoE + DeltaNet hybrid), 35 GB Q8 → dual 3090.
+# Boot:  MODEL_DIR=/mnt/models/huggingface PORT=8071 docker compose -f ngram.yml -p ornith35b up -d
+# Tune:  TENSOR_SPLIT (default 1,1) rebalances cards; SPEC_TYPE_ARGS enables ngram (opt-in).
+# ===========================================================================
+services:
+  ik-llama-ornith-35b:
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp@sha256:b35e062cf032f1435b90387cfd9e9679006dd628d0999d86b6e7db2d4a43964d}
+    container_name: "${ESTATE_CONTAINER:-ik-llama-ornith-35b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8071}}:8080"
+    volumes:
+      - "${MODEL_DIR:-/mnt/models/huggingface}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      --model /models/${GGUF_FILE:-ornith-1.0-35b-gguf/q8_0/ornith-1.0-35b-Q8_0.gguf}
+      --alias ${MODEL_ALIAS:-ornith-1.0-35b}
+      -ngl 99
+      -ts ${TENSOR_SPLIT:-1,1}
+      --ctx-size ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-1024}
+      -np ${NP:-1}
+      -ctk ${KV_TYPE:-q8_0}
+      -ctv ${KV_TYPE:-q8_0}
+      -fa on
+      --jinja
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+      ${SPEC_TYPE_ARGS:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
