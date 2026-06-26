@@ -757,6 +757,21 @@ COMPOSE_REGISTRY = {
         category="uncensored",
     ),
 
+    # Ornith-1.0-9B — DeepReinforce agentic-coding RL fine-tune. Qwen3-Next DENSE-FFN
+    # HYBRID (arch=qwen35: 8 full-attn + 24 GDN/DeltaNet layers, NON-MoE) — only 8/32
+    # layers carry GQA KV so 262K fits at 4.25 GiB KV. No MTP head → drafter-free
+    # ngram self-spec on ik_llama. Lean single-card 9B. 🧪 niche (loses to gemma-12b).
+    "ik-llama/ornith9b-single": _entry(
+        model="ornith-1.0-9b", weights_variant="deepreinforce-q4km", workload="fast-chat",
+        engine="llama-cpp-local", drafter=None, kv_format="q8_0",
+        tp=1, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/ornith-1.0-9b/ik-llama/compose/single/deepreinforce-q4km/ngram.yml",
+        default_port=8070,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Ornith-1.0-9B (DeepReinforce agentic-coding RL) on ik_llama single 3090, Q4_K_M + q8_0 KV, full 262K. Arch CONFIRMED qwen35 Qwen3-Next DENSE-FFN HYBRID (8 full-attn + 24 GDN/DeltaNet layers, NON-MoE) — only 8/32 layers carry GQA KV, so 262K fits at 4.25 GiB KV (13.4 GiB total, ~10 GiB headroom). No MTP head → drafter-free ngram self-spec (--spec-type ngram-map-k, ~0.59 accept, +30% warm on copy-heavy gen; works DESPITE the DeltaNet hybrid, where DFlash/EAGLE are KV-rollback-blocked). Full gate PASS 2026-06-25: bench ~102/103 TPS (TTFT 144ms, CV<1%), verify-stress 8/8 incl NIAH→0.92×262K, soak-continuous PASS (0 MiB growth, 0/100 silent-empty, p50 104 TPS, 98.1% retention). 8-pack think-OFF 91/150 / think-ON 95/150 (temp 0.6). cli-40 7/40 is partly a termination-protocol artifact (model solves but mis-routes the <solution> sign-off via the bash tool + loops → agent_loop_exhausted; a hardened agent prompt lifts it 7→13/40). NICHE ONLY — gemma-4-12b beats it on quality (105/150) AND speed (117/122 vs 102 TPS) at +7 GiB; pick Ornith only for the lean 13.4 GiB footprint / 16 GB-card fit. Self-grabbed official GGUF, ik digest-pinned → 🧪.",
+    ),
+
     # VibeThinker-3B — WeiboAI verifiable-reasoning fine-tune of Qwen2.5-Coder-3B
     # (Qwen2 dense). First dense-family + first sub-4B model in the catalog.
     "vllm/vibethinker-3b-single": _entry(

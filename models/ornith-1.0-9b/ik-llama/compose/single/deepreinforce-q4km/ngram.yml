@@ -1,0 +1,77 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Ornith-1.0-9B (DeepReinforce official Q4_K_M GGUF — agentic-coding RL)
+#   Engine:    ik_llama.cpp (cu13, digest-pinned below — the 2026-06-18 build that
+#              carries the `--spec-type` self-spec system incl. n-gram)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   ngram K=64 — DRAFTER-FREE (no MTP head in this GGUF, no draft model).
+#              `--spec-type ngram-map-k:n_max=64,ngram_min_hits=1` (ik self-spec),
+#              baked default-on below. ~0.59 accept, +30% warm decode on copy-heavy
+#              gen, output-lossless. Works DESPITE the DeltaNet hybrid (DFlash/EAGLE
+#              are KV-rollback-blocked on Qwen3-Next; drafter-free ngram is not).
+#   KV:        q8_0 K + q8_0 V. Hybrid attention → only 8/32 layers carry GQA KV
+#              (full_attention_interval=4), so the full 262K fits at just 4.25 GiB KV.
+#   Vision:    no
+#   Max ctx:   262K (n_ctx_train=262144 — native). Whole estate ~13.4 GiB on one
+#              24 GiB 3090 (KV 4.25 + weights 5.23 + buffers), ~10 GiB headroom.
+#   Genesis:   N/A — Genesis is a vLLM patch system; this is ik_llama GGUF.
+#   Status:    🧪 Experimental
+#   Quality:   8-pack think-OFF 91/150 (toolcall 12 · instructfollow 12 · structoutput 14
+#              · dataextract 10 · reasonmath 10 · bugfind 14 · hermesagent 12/20 · cli 7/40)
+#              · think-ON 95/150 (--full, ik Q4_K_M + ngram, temp 0.6, 2026-06-25).
+#              cli-40 is partly a termination-protocol artifact: a hardened agent
+#              system prompt lifts it 7→13/40 (the model solves but mis-routes the
+#              `<solution>` sign-off via the bash tool). gemma-4-12b scores 16/40
+#              with the standard prompt.
+#   Best for:  lean single-card long-context small model that frees the 2nd GPU.
+#              NICHE ONLY — gemma-4-12b beats it on quality (105/150) AND speed
+#              (117/122 vs 102 TPS); pick Ornith only when the 13.4 GiB footprint /
+#              16 GB-card fit matters. NOT a default.
+# ---------------------------------------------------------------------------
+# Ornith-1.0-9B is a Qwen3-Next DENSE-FFN HYBRID (arch=qwen35): 8 full-attention
+# layers + 24 GDN/DeltaNet linear-attention layers, NON-MoE. The hybrid is why the
+# full 262K KV is only ~4.25 GiB (¾ of layers hold SSM state, not attention KV).
+#
+# Boot:   MODEL_DIR=/mnt/models/huggingface docker compose -f ngram.yml up -d
+# Tune:   NGRAM_NMAX / NGRAM_MIN_HITS env-override the ngram self-spec stage.
+# ===========================================================================
+services:
+  ik-llama-ornith-9b:
+    image: ${IK_LLAMA_IMAGE:-ghcr.io/ikawrakow/ik-llama-cpp@sha256:b35e062cf032f1435b90387cfd9e9679006dd628d0999d86b6e7db2d4a43964d}
+    container_name: "${ESTATE_CONTAINER:-ik-llama-ornith-9b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8070}}:8080"
+    volumes:
+      - "${MODEL_DIR:-/mnt/models/huggingface}:/models:ro"
+    # ENTRYPOINT is /app/llama-server — args only. The ngram self-spec stage is
+    # baked in (this is ngram.yml); tune via NGRAM_NMAX / NGRAM_MIN_HITS.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      --model /models/${GGUF_FILE:-ornith-1.0-9b-gguf/q4_k_m/ornith-1.0-9b-Q4_K_M.gguf}
+      --alias ${MODEL_ALIAS:-ornith-1.0-9b}
+      -ngl 99
+      --ctx-size ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-1024}
+      -np ${NP:-1}
+      -ctk ${KV_TYPE:-q8_0}
+      -ctv ${KV_TYPE:-q8_0}
+      -fa on
+      --jinja
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+      --spec-type ngram-map-k:n_max=${NGRAM_NMAX:-64},ngram_min_hits=${NGRAM_MIN_HITS:-1}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [gpu]
