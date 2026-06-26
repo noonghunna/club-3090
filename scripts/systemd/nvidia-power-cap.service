@@ -1,0 +1,31 @@
+# nvidia-power-cap.service — club-3090 GPU power cap (both RTX 3090s @ 250W)
+# ---------------------------------------------------------------------------
+# The single source of truth for this rig's boot-time power cap, and the unit
+# that scripts/gpu-mode.sh `power-cap on` restarts. Install with:
+#
+#   sudo cp scripts/systemd/nvidia-power-cap.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nvidia-power-cap.service   # --now skips on a hung GPU; reboot applies it
+#
+# Why 250W: the rtx-3090.yml `power_cap_w_prefill` operating point. Chosen
+# after GPU1 repeatedly fell off the bus (NVRM TLB-invalidate / full-chip
+# reset) under higher caps on this X670E rig. 250W stays under that envelope.
+#
+# Why After=gpu-tune.service: on this rig ai-setup's gpu-tune.service (also a
+# Type=oneshot that sets -pl at boot from its own thresholds.json = 260/280)
+# is enabled. Ordering this unit AFTER it makes club-3090 the LAST writer, so
+# 250W wins with no edit to ai-setup. (After= on an absent unit is a harmless
+# no-op, so this file is portable to rigs without gpu-tune.)
+[Unit]
+Description=club-3090 NVIDIA GPU power cap (250W both cards)
+After=nvidia-persistenced.service gpu-tune.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nvidia-smi -i 0 -pl 250
+ExecStart=/usr/bin/nvidia-smi -i 1 -pl 250
+
+[Install]
+WantedBy=multi-user.target
