@@ -23,6 +23,7 @@ Start here if you want to run a model.
 | [`PULL.md`](PULL.md) | Any HF safetensors repo — evaluate against the KV math, honest about confidence. |
 | [`BRING_YOUR_OWN.md`](BRING_YOUR_OWN.md) | Serve + tune + validate **your own** model/compose (any engine, single or dual) without touching the catalog. |
 | [`HARDWARE.md`](HARDWARE.md) | Card-class questions — 4090/5090, power caps, NVLink, laptop EC power. |
+| [`PCIE_P2P.md`](PCIE_P2P.md) | PCIe-only multi-GPU — read your `topo -m`, and optionally enable P2P over PCIe without NVLink. |
 | [`GLOSSARY.md`](GLOSSARY.md) | TPS / KV / MTP / TP and the rest of the vocabulary. |
 | [`FAQ.md`](FAQ.md) | Common setup and operational questions. |
 | [`COMPARISONS.md`](COMPARISONS.md) | Self-host vs cloud APIs — cost crossover and when each wins. |

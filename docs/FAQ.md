@@ -42,7 +42,7 @@ The composes don't currently use Blackwell-specific paths (FP4 quant, FP8 native
 
 ### Do I need NVLink?
 
-No. Our dual-card configs use PCIe-only, no NVLink. Custom all-reduce is disabled in the composes. NVLink would help dual-card TPS but it's not required, and the user has explicitly declined NVLink bridges as a default — adding the dependency would exclude most consumer rigs.
+No. Our dual-card configs use PCIe-only, no NVLink. Custom all-reduce is disabled in the composes. NVLink would help dual-card TPS but it's not required, and the user has explicitly declined NVLink bridges as a default — adding the dependency would exclude most consumer rigs. (If you *do* want to squeeze more out of the PCIe bus without NVLink — enabling P2P on a patched driver — see [PCIE_P2P.md](PCIE_P2P.md).)
 
 ### What dtype/quant should I pick for my GPU?
 

@@ -168,6 +168,8 @@ The dual-card composes automatically detect whether an NVLink bridge is installe
 
 Without NVLink, `--disable-custom-all-reduce` is passed to vLLM and `NCCL_P2P_DISABLE=1` is set. With NVLink, custom all-reduce is enabled and NCCL uses the NVLink path. The per-stream TPS difference is ~10-15% on dual 3090 (see cross-rig data in [BENCHMARKS.md](../BENCHMARKS.md)).
 
+**No NVLink bridge?** You can still enable P2P over the PCIe bus on a patched driver (`NVLINK_MODE=pcie_p2p`) for a workload-dependent gain — and understand what your `nvidia-smi topo -m` output means — in [PCIE_P2P.md](PCIE_P2P.md).
+
 ### `dual.yml` is Genesis-less by design
 
 The single-card cliffs (Cliff 1 / Cliff 2) and the cudagraph bug (#40880) that drove Genesis's existence don't fire on `dual.yml` — fp8 KV + 2 streams + 262K has plenty of headroom. So `dual.yml` runs **plain vLLM nightly** without any patch tree. If you want Genesis on dual (e.g. for `dual-turbo`'s TQ3 spec-verify path), it's structurally enabled there but absent from `dual.yml`.

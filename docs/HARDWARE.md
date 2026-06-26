@@ -74,6 +74,7 @@ Same `MAX_MODEL_LEN` / `GPU_MEMORY_UTILIZATION` env overrides apply for any setu
 - **Override**: set `NVLINK_MODE=force_on|force_off` in your `.env` to bypass auto-detection.
 - Without NVLink (PCIe), `--disable-custom-all-reduce` is passed to vLLM and `NCCL_P2P_DISABLE=1` is set. With NVLink, custom all-reduce is enabled and NCCL uses the NVLink path.
 - **If you have NVLink installed and working**, single-stream TPS on dual-card will be ~1.6-1.8× single-card (vs ~1.05× without). Measured NVLink lift is ~10-15% over PCIe on the same rig. See [BENCHMARKS.md](../BENCHMARKS.md) for cross-rig data.
+- **No NVLink?** You can still enable GPU↔GPU P2P over the PCIe bus on a patched driver for a workload-dependent gain — and learn why `nvidia-smi topo -m` reports `PHB` instead of `PIX` — in [PCIE_P2P.md](PCIE_P2P.md).
 
 ---
 
