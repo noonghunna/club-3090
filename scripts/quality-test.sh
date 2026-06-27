@@ -446,6 +446,33 @@ if [[ "$ENABLE_THINKING" != "1" && "$NO_THINKING" != "1" ]] && server_reasoning_
   echo "[quality-test] WARN: server appears to have reasoning enabled, but --enable-thinking is not forced. Pack defaults still apply; use --enable-thinking or ENABLE_THINKING=1 to force thinking on for every pack (or --no-thinking / NO_THINKING=1 to force it off)." >&2
 fi
 
+# ---- sandbox-image preflight (--full / --sandboxed-only) --------------------
+# The sandboxed packs (BugFind / CLI / Hermes) need pre-built Docker images that
+# are NOT auto-pulled. benchlocal-cli's own mid-run hint points at a relative
+# `tools/build-sandboxes.sh` that only exists inside a benchlocal-cli *checkout*
+# (not a pip install, and not here) — so surface the correct steps UP FRONT
+# instead of letting users discover a dead path mid-run (club-3090 #492).
+if [[ -z "$PACK" ]] && { [[ "$MODE" == "--full" && "$NO_SANDBOX" != "1" ]] || [[ "$SANDBOXED_ONLY" == "1" ]]; }; then
+  _sb_missing=()
+  if ! command -v docker >/dev/null 2>&1; then
+    _sb_missing=("Docker not found on PATH")
+  else
+    for _img in benchlocal-sandbox-bugfind benchlocal-sandbox-cli benchlocal-sandbox-hermes; do
+      docker image inspect "${_img}:latest" >/dev/null 2>&1 || _sb_missing+=("${_img}:latest")
+    done
+  fi
+  if [[ ${#_sb_missing[@]} -gt 0 ]]; then
+    echo "[quality-test] ⚠  sandbox packs (BugFind / CLI / Hermes) will be SKIPPED — not available: ${_sb_missing[*]}" >&2
+    echo "               They need pre-built Docker images that aren't auto-pulled. Build them once from a" >&2
+    echo "               benchlocal-cli CHECKOUT (the build tooling isn't in the pip package):" >&2
+    echo "                 git clone https://github.com/noonghunna/benchlocal-cli" >&2
+    echo "                 bash benchlocal-cli/tools/build-sandboxes.sh        # ~30 GB free; prune if tight" >&2
+    echo "               then re-run --full. For a clean no-Docker run now:  bash scripts/quality-test.sh --medium" >&2
+    echo "               (Continuing with the deterministic packs.)" >&2
+    echo >&2
+  fi
+fi
+
 # ---- run benchlocal-cli ------------------------------------------------------
 
 RESULTS_DIR="${ROOT_DIR}/results/quality"
