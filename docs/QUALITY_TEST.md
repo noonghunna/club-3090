@@ -59,6 +59,13 @@ The **reasoning suite** is also separate from `--full`; run it with `--reasoning
 
 `--full` runs the sandbox packs by default. `--no-sandboxed` drops `--full` back to the 5-pack deterministic scope (no Docker); `--sandboxed-only` runs just the 3 sandbox packs. `--reasoning` is independent of `--full`; use it for the four reasoning packs, with GPQA skipped until gated data is available.
 
+> ⚠️ **`--full` needs the sandbox images built first — "needs Docker" isn't enough.** The 3 sandboxed packs run inside pre-built `benchlocal-sandbox-*` Docker images that are **not auto-pulled**, and the build tooling is **not in the `pip install`** — it lives in a benchlocal-cli *checkout*. Build them once:
+> ```bash
+> git clone https://github.com/noonghunna/benchlocal-cli
+> bash benchlocal-cli/tools/build-sandboxes.sh        # ~30 GB free; the aider image is biggest — `docker system prune` if tight
+> ```
+> Then `--full` works. Without the images, `quality-test.sh` warns up front and runs the deterministic packs only; for a clean no-Docker run use **`--medium`** (or `--no-sandboxed`). (club-3090 #492 — benchlocal-cli's own mid-run hint pointed at a relative path that's wrong outside a checkout.)
+
 ## Install (one-time)
 
 ```bash
