@@ -549,6 +549,14 @@ class HelpScreen(ModalScreen):
 # ── Run · Catalog ─────────────────────────────────────────────────────────
 
 
+# Catalog model-scope dropdown — a "model name only" filter (toggle-hidden, [\\]).
+# The model→slugs grouping the flat variant table drops is restored ALWAYS by the
+# table's "model" column + group-by-model sort (the switch.sh --list view); this
+# dropdown just narrows to one model.  The sentinel = "no scope" (all lanes show).
+_ALL_MODELS_VALUE = "__all_models__"
+_ALL_MODELS_LABEL = "All models"
+
+
 class CatalogPane(Container):
     """Catalog tab: DataTable populated from the enriched registry catalog."""
 
@@ -560,6 +568,15 @@ class CatalogPane(Container):
         height: 1;
         color: $text-muted;
         padding: 0 1;
+    }
+    CatalogPane #catalog-model-select {
+        height: 3;
+        width: 1fr;
+        margin: 0 1;
+        display: none;
+    }
+    CatalogPane #catalog-model-select.visible {
+        display: block;
     }
     CatalogPane #catalog-filter {
         height: 3;
@@ -589,6 +606,18 @@ class CatalogPane(Container):
 
     def compose(self) -> ComposeResult:
         yield Label("Loading catalog…", id="catalog-status")
+        # Model-scope dropdown — a "model name only" filter.  TOGGLE-HIDDEN like
+        # the text filter ([\\] reveals it) so it stays out of the Tab/focus chain;
+        # an always-visible focusable Select destabilised the suite.  The model
+        # grouping is shown ALWAYS via the table's "model" column + group-by-model
+        # sort (the switch.sh --list view); this dropdown is just the scope filter.
+        # Seeded with "All models"; populate() refills it in registry order.
+        yield Select(
+            [(_ALL_MODELS_LABEL, _ALL_MODELS_VALUE)],
+            id="catalog-model-select",
+            value=_ALL_MODELS_VALUE,
+            allow_blank=False,
+        )
         yield Input(placeholder="filter slug / topology / engine / model / status… (space = AND)", id="catalog-filter")
         table: DataTable = DataTable(id="catalog-table", zebra_stripes=True)
         table.cursor_type = "row"
@@ -603,7 +632,7 @@ class CatalogPane(Container):
             id="catalog-preview",
         )
         yield Label(
-            "[dim]\\[/] filter   \\[⏎] serve   \\[e] explain   "
+            "[dim]\\[\\\\] model   \\[/] filter   \\[⏎] serve   \\[e] explain   "
             "\\[d] set-default   \\[D] clear-default[/dim]",
             id="catalog-hint",
         )
@@ -617,10 +646,14 @@ class CatalogPane(Container):
         # fit verdict is a pick-the-serve decision input, shown when you ⏎ a row).
         # Fit is STILL computed (it feeds the pop-up + the serving-row exemption);
         # it just no longer occupies a Catalog column.
-        table.add_columns("slug", "topology", "engine", "ctx", "TPS (our rig)", "8pk (our rig)", "status")
+        table.add_columns("model", "slug", "topology", "engine", "ctx", "TPS (our rig)", "8pk (our rig)", "status")
         # Full enriched catalog, and the current filter substring.
         self._entries: list[CatalogEntry] = []
         self._filter: str = ""
+        # Model-scope dropdown selection ("" = all models); AND-combined with _filter.
+        self._model_filter: str = ""
+        # Distinct model names (registry order) backing the dropdown — refreshed on load.
+        self._models: list[str] = []
         # N3: the slug currently live-serving (from the estate's matched_slug),
         # so its Run-catalog row carries a "● serving" badge.  "" → none serving.
         self._serving_slug: str = ""
@@ -655,11 +688,34 @@ class CatalogPane(Container):
             self._entries = []
             table.clear()
             status_label.update(f"[red]Catalog error:[/red] {error}")
-            table.add_row("—", "—", "—", "—", "—", "—", "—")
+            table.add_row("—", "—", "—", "—", "—", "—", "—", "—")
             return
 
         self._entries = list(entries)
+        self._refresh_model_options()
         self._render_rows()
+
+    def _refresh_model_options(self) -> None:
+        """Refill the model-scope dropdown with the DISTINCT model names in
+        registry order (first-seen — same source switch.sh --list groups by), an
+        "All models" sentinel first.  Uses _set_select_options so the programmatic
+        refill doesn't fire Select.Changed (which would re-trigger the filter).
+        Preserves the current scope if that model still exists, else falls to All."""
+        models: list[str] = []
+        for e in self._entries:
+            if e.model and e.model not in models:
+                models.append(e.model)
+        self._models = models
+        options = [(_ALL_MODELS_LABEL, _ALL_MODELS_VALUE)] + [(m, m) for m in models]
+        keep = self._model_filter if self._model_filter in models else _ALL_MODELS_VALUE
+        if self._model_filter and self._model_filter not in models:
+            self._model_filter = ""  # the scoped model vanished from the catalog
+        try:
+            _set_select_options(
+                self.query_one("#catalog-model-select", Select), options, default=keep
+            )
+        except Exception:
+            pass
 
     def _render_rows(self) -> None:
         status_label = self.query_one("#catalog-status", Label)
@@ -668,6 +724,7 @@ class CatalogPane(Container):
 
         rows = self._filtered_entries()
         serving = (self._serving_slug or "").strip()
+        prev_model: Optional[str] = None  # blank-on-repeat → the switch.sh --list grouped look
         for e in rows:
             # source provenance — flag a coarse markdown scrape so a measurement
             # from BENCHMARKS.md is never mistaken for a structured record.
@@ -687,11 +744,17 @@ class CatalogPane(Container):
                 dg = _weights_glyph(e)
                 if dg:
                     slug_cell = f"{dg} {e.slug}"
+            # Model cell — shown on the FIRST row of each model group only (rows are
+            # grouped by model, registry order), blank on the repeats → the
+            # switch.sh --list "model header, then its slugs" look.
+            model_cell = f"[cyan]{e.model}[/cyan]" if e.model != prev_model else ""
+            prev_model = e.model
             # The fit glyph is NO LONGER a Catalog column (it moved into the serve
             # confirm pop-up — see ConfirmActionScreen._render_serve_card).  Fit is
             # STILL computed here for the serving-row exemption + the pop-up; we
             # just don't emit a fit cell.
             table.add_row(
+                model_cell,
                 slug_cell,
                 e.topology,
                 e.engine,
@@ -702,9 +765,12 @@ class CatalogPane(Container):
             )
 
         banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
-        if self._filter:
+        # Surface an active model scope (dropdown) the same way the text filter is shown.
+        scope = f"model: [cyan]{self._model_filter}[/cyan]  ·  " if self._model_filter else ""
+        if self._filter or self._model_filter:
+            tail = f"  ·  filter: {self._filter!r}" if self._filter else ""
             status_label.update(
-                f"{banner}{len(rows)} / {len(self._entries)} variants  ·  filter: {self._filter!r}"
+                f"{banner}{scope}{len(rows)} / {len(self._entries)} variants{tail}"
             )
         else:
             star = "  ([dim]*[/dim] = BENCHMARKS.md scrape)" if self._has_md_scrape() else ""
@@ -765,8 +831,14 @@ class CatalogPane(Container):
         return any(e.measurement.source == "benchmarks.md" for e in self._entries)
 
     def _filtered_entries(self) -> list[CatalogEntry]:
+        # Model-scope dropdown first — AND-combined with the text filter below.
+        base = (
+            [e for e in self._entries if e.model == self._model_filter]
+            if self._model_filter
+            else self._entries
+        )
         if not self._filter:
-            return self._entries
+            return self._grouped_by_model(base)
         # Multi-word filter is AND-of-substrings: split the query on whitespace and
         # keep a row only when EVERY term is a (case-insensitive) substring of the
         # row's searchable text.  A single word reduces to the old contiguous
@@ -774,19 +846,51 @@ class CatalogPane(Container):
         # before, when the whole query was tested as one contiguous substring).
         terms = self._filter.lower().split()
         if not terms:
-            return self._entries
+            return self._grouped_by_model(base)
         out: list[CatalogEntry] = []
-        for e in self._entries:
+        for e in base:
             hay = (
                 f"{e.slug} {e.topology} {e.engine} {e.model} {e.status} {e.source}"
             ).lower()
             if all(t in hay for t in terms):
                 out.append(e)
-        return out
+        return self._grouped_by_model(out)
+
+    def _grouped_by_model(self, entries: list[CatalogEntry]) -> list[CatalogEntry]:
+        """Stable group-by-model: a model's lanes sit together, models in registry
+        (first-seen) order — the switch.sh --list view.  Intra-model order kept,
+        so it stays consistent with the dropdown options and the cursor mapping."""
+        rank = {m: i for i, m in enumerate(self._models)}
+        return sorted(entries, key=lambda e: rank.get(e.model, len(rank)))
 
     def set_filter(self, text: str) -> None:
         self._filter = (text or "").strip()
         self._render_rows()
+
+    def set_model_filter(self, model: str) -> None:
+        """Scope the catalog to one model name ("" / the All sentinel = all models).
+        AND-combines with the text filter.  Re-renders (cursor resets to the top of
+        the now-narrowed set)."""
+        new = (model or "").strip()
+        if new in ("", _ALL_MODELS_VALUE):
+            new = ""
+        if new == self._model_filter:
+            return
+        self._model_filter = new
+        self._render_rows()
+
+    def toggle_model_select(self) -> None:
+        """[\\] toggle the model-scope dropdown (hidden by default, like the text
+        filter): reveal + focus, or hide + refocus the table.  Hidden → out of the
+        Tab/focus chain.  Hiding keeps the scope (it shows in the model column +
+        status line); re-open and pick "All models" to clear it."""
+        sel = self.query_one("#catalog-model-select", Select)
+        if "visible" in sel.classes:
+            sel.remove_class("visible")
+            self.query_one("#catalog-table", DataTable).focus()
+        else:
+            sel.add_class("visible")
+            sel.focus()
 
     def selected_entry(self) -> Optional[CatalogEntry]:
         """The CatalogEntry under the table cursor, or None."""
@@ -861,16 +965,23 @@ class CatalogPane(Container):
             inp.focus()
 
     def close_filter_if_open(self) -> bool:
-        """Esc/cancel: hide + clear the filter and refocus the table. Returns
-        True if a filter was actually open (so the app can swallow the Esc)."""
+        """Esc/cancel: hide the text filter and/or the model dropdown overlay and
+        refocus the table. Returns True if one was open (so the app swallows the
+        Esc). Hiding the model dropdown KEEPS the scope (only hides the control)."""
+        closed = False
+        sel = self.query_one("#catalog-model-select", Select)
+        if "visible" in sel.classes:
+            sel.remove_class("visible")
+            closed = True
         inp = self.query_one("#catalog-filter", Input)
         if "visible" in inp.classes:
             inp.remove_class("visible")
             inp.value = ""
             self.set_filter("")
+            closed = True
+        if closed:
             self.query_one("#catalog-table", DataTable).focus()
-            return True
-        return False
+        return closed
 
 
 # ── Copy-to-clipboard support (Batch 4) ──────────────────────────────────────────
@@ -4832,6 +4943,7 @@ class CockpitApp(App):
         Binding("S", "settings", "Settings", show=True),
         # Context-sensitive — check_action enables/shows them only in the right mode.
         Binding("slash", "filter_catalog", "Filter", show=False),
+        Binding("backslash", "toggle_catalog_model", "Model", show=False),
         Binding("e", "explain", "Explain", show=False),
         # 2-mode merge: [1] = merged Run & Operate, [2] = Bring & Validate lane.
         Binding("1", "mode_run", "Run & Operate", show=True),
@@ -7108,6 +7220,14 @@ class CockpitApp(App):
             except Exception:
                 pass
 
+    def action_toggle_catalog_model(self) -> None:
+        """[\\] toggles the model-scope dropdown (merged mode 0 · Catalog tab)."""
+        if self._active_mode == 0 and self._current_subtab() == "tab-catalog":
+            try:
+                self.query_one("#catalog-pane", CatalogPane).toggle_model_select()
+            except Exception:
+                pass
+
     def _active_validate_tab(self) -> str:
         try:
             return self.query_one("#validate-tabs", TabbedContent).active
@@ -8441,6 +8561,15 @@ class CockpitApp(App):
         try:
             sel_id = event.select.id
         except Exception:
+            return
+        if sel_id == "catalog-model-select":
+            val = event.value
+            try:
+                self.query_one("#catalog-pane", CatalogPane).set_model_filter(
+                    "" if val in (Select.BLANK, _ALL_MODELS_VALUE) else str(val)
+                )
+            except Exception:
+                pass
             return
         if sel_id != "lane-bring-profile-input":
             return
