@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
-ROOT="/mnt/models/comfyui/models"
+ROOT="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
 echo "[$(date +%H:%M:%S)] Downloading llava_llama3_fp8_scaled.safetensors (~9 GB)..."
 hf download Comfy-Org/HunyuanVideo_repackaged \
     split_files/text_encoders/llava_llama3_fp8_scaled.safetensors \
