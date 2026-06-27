@@ -12,6 +12,12 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Derive COMFYUI_ROOT / COMFYUI_MODELS_DIR from MODEL_DIR so a direct CLI run (e.g. on a
+# rig where MODEL_DIR isn't /mnt/models) targets the right tree instead of failing on the
+# /mnt fallback. Each child download_*.sh inherits the exported COMFYUI_MODELS_DIR.
+# shellcheck disable=SC1091
+. "$HERE/comfyui-paths.sh"
+
 echo "════ ai-studio models — download all (idempotent; skips what's already present) ════"
 bash "$HERE/download_director.sh"
 bash "$HERE/download_ideogram4.sh"

@@ -10,9 +10,12 @@
 # Env knobs:
 #   SKIP_BUILD=1     skip the ComfyUI image build (already built)
 #   SKIP_DOWNLOAD=1  skip the ~120 GB roster pull (already on disk)
+#   SKIP_DISK_CHECK=1 bypass the free-space preflight (resume an idempotent download)
 #   SKIP_PIPE=1      skip installing the OWUI Studio pipe (do it later)
 #   ASSUME_YES=1     same as --yes (also auto-yes when not a TTY / under CI)
 #   LANIP=<ip>       host IP shown in the final URLs (auto-detected otherwise)
+#   MODEL_DIR=<dir>  HF/GGUF cache root; the ComfyUI tree goes to a "comfyui" sibling
+#                    of it (override COMFYUI_ROOT / COMFYUI_MODELS_DIR to decouple).
 #
 # Idempotent: re-running rebuilds/re-pulls only what changed, installs-or-updates
 # the pipe, then brings the stack up via `gpu-mode ai-studio`.
@@ -21,13 +24,18 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMFYUI_DIR="$REPO_DIR/services/comfyui"
 STUDIO_DIR="$REPO_DIR/services/studio"
+# Derive COMFYUI_ROOT / COMFYUI_MODELS_DIR from MODEL_DIR so the download target, the disk
+# check, and the container mounts all agree (a user who set MODEL_DIR gets the ComfyUI tree
+# alongside it instead of the rig's /mnt fallback). See services/comfyui/comfyui-paths.sh.
+# shellcheck disable=SC1091
+. "$COMFYUI_DIR/comfyui-paths.sh"
 LANIP="${LANIP:-$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^(192\.168|10\.|172\.)' | head -1)}"
 LANIP="${LANIP:-<host-ip>}"
 
 ASSUME_YES="${ASSUME_YES:-}"
 case "${1:-}" in
   -y|--yes) ASSUME_YES=1 ;;
-  -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 # Auto-yes when non-interactive (piped / nohup / CI) so we never hang on the prompt.
 [ -t 0 ] || ASSUME_YES=1
@@ -43,8 +51,8 @@ ok()   { echo -e "\033[0;32m$*\033[0m"; }
 if declare -f preflight_docker >/dev/null 2>&1; then
     preflight_docker || exit 1                                   # docker + compose v2 + daemon
     preflight_gpu 1  || exit 1                                   # 1 GPU runs image+audio; video wants 2 (warned below)
-    [ -z "${SKIP_BUILD:-}" ]    && { preflight_disk / 32 || exit 1; }                       # comfyui-local image + ~9 GB CUDA base
-    [ -z "${SKIP_DOWNLOAD:-}" ] && { preflight_disk /mnt/models/comfyui 130 || exit 1; }    # ~120 GB studio roster
+    [ -z "${SKIP_BUILD:-}${SKIP_DISK_CHECK:-}" ]    && { preflight_disk / 32 || exit 1; }                          # comfyui-local image + ~9 GB CUDA base
+    [ -z "${SKIP_DOWNLOAD:-}${SKIP_DISK_CHECK:-}" ] && { preflight_disk "$COMFYUI_MODELS_DIR" 130 || exit 1; }      # ~120 GB roster → MODEL_DIR-derived path
     preflight_gpu_idle || true                                   # soft warn if VRAM already in use
 else
     command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found." >&2; exit 1; }

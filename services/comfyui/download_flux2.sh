@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
-ROOT="/mnt/models/comfyui/models"
+ROOT="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
 
 ts() { date +%H:%M:%S; }
 log() { echo "[$(ts)] $*"; }

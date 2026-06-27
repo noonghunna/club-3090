@@ -5,10 +5,17 @@
 
 set -e
 
-# club-3090 is the canonical repo (qwen36-dual-3090 + /opt/ai/compose/<svc>
-# both deprecated 2026-05-10 — supporting services moved into services/).
-CLUB3090_DIR="/opt/ai/github/club-3090"
+# Repo root: auto-detected from this script's real location (resolving the
+# /usr/local/bin/gpu-mode symlink on the reference rig), so the script is portable to
+# any clone. Override with CLUB3090_DIR=... if needed.
+CLUB3090_DIR="${CLUB3090_DIR:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
 COMPOSE_BASE="$CLUB3090_DIR/services"
+# ComfyUI/studio paths derive from MODEL_DIR (see services/comfyui/comfyui-paths.sh) so the
+# ai-studio scene's compose mounts + missing-model check match wherever the user keeps models.
+if [ -f "$COMPOSE_BASE/comfyui/comfyui-paths.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$COMPOSE_BASE/comfyui/comfyui-paths.sh"
+fi
 # Post-PR-A (<quant>/ layer): dual composes live under <topology>/<quant>/.
 # Point each var at the quant dir so `compose_at` cd's into it — mount-safe,
 # the same invocation switch.sh uses (project dir = compose-file dir).

@@ -4,7 +4,7 @@
 # Run in background:  nohup ./download_models.sh > /tmp/comfyui-downloads.log 2>&1 &
 set -uo pipefail
 
-ROOT="/mnt/models/comfyui/models"
+ROOT="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
 LOG_TS() { date +%H:%M:%S; }
 log()  { echo "[$(LOG_TS)] $*"; }
 step() { log ""; log "=== $* ==="; }
