@@ -15,8 +15,12 @@
 #                (0.23.1-dev) than the stack's v0.22.0 pin; promotion to ✅ wants LMCache on our
 #                own image. (2) L2 disk tier (--l2-adapter) is wired but OFF by default
 #                (rehydrate ~5.3 s, compute-bound not disk-bound — cross-rig #423). (3) 38 GB image pulled
-#                on-demand. RAM-gated: --l1-size-gb 30 needs ~58 GB free; preflight rejects
-#                over-allocation (the l1=100→reboot lesson). Hidden from `switch.sh --list`
+#                on-demand. RAM-gated: preflight (preflight_lmcache_ram) hard-fails the launch
+#                unless AVAILABLE RAM (/proc/meminfo MemAvailable) >= L1 + 28 GB — the +28 covers
+#                the vLLM process + OS. The gate is COMPUTED from the live L1 (tracks the
+#                LMCACHE_L1_GB override), not the static 58 below: default --l1-size-gb 30 → ~58 GB;
+#                LMCACHE_L1_GB=10 → ~38 GB. Hard-fail is `--force`-proof (host-choke prevention is
+#                not optional — the l1=100→reboot lesson). Hidden from `switch.sh --list`
 #                (see --list --all); `--force` to launch.
 #   Quality:   inherits dual-max fidelity (FP8 + int8-PTH + MTP); 8-pack not re-run (KV-cache
 #                layer, not a quant change). Decode 74 narr / 94 code TPS — ZERO penalty vs
