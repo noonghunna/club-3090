@@ -898,8 +898,9 @@ class TestNavNodesExist:
             # Fold 3: TPS / 8pk columns are explicitly labelled as our-rig.
             # Round-4: "source" column dropped; "topology" added BEFORE "engine".
             # Serve-confirm rework: the "fit" column moved into the serve pop-up.
+            # Model-filter: a "model" column leads the table (group-by-model view).
             for expected in (
-                "slug", "topology", "engine", "ctx",
+                "model", "slug", "topology", "engine", "ctx",
                 "TPS (our rig)", "8pk (our rig)", "status",
             ):
                 assert expected in col_labels, f"missing {expected!r}: {col_labels}"
@@ -907,6 +908,8 @@ class TestNavNodesExist:
             assert "source" not in col_labels, col_labels
             # "fit" is gone — it lives in the serve confirm pop-up now.
             assert "fit" not in col_labels, col_labels
+            # "model" is the FIRST column (mirrors switch.sh --list's grouping).
+            assert col_labels[0] == "model", col_labels
             # topology sits immediately before engine.
             assert col_labels.index("topology") < col_labels.index("engine"), col_labels
 
@@ -1051,6 +1054,132 @@ class TestCatalogWired:
             # empty query → all rows.
             pane.set_filter("")
             assert len(pane._filtered_entries()) == 2
+
+    @pytest.mark.asyncio
+    async def test_catalog_model_dropdown_scopes_and_combines(self):
+        """Model-scope dropdown: options are the DISTINCT model names in registry
+        order (the switch.sh --list grouping the flat table drops); picking one
+        narrows the table to that model's lanes; it AND-combines with the text
+        filter; clearing returns to all; a scoped model that vanishes resets."""
+        from club3090_cockpit.app import _ALL_MODELS_VALUE as _AM
+        from club3090_cockpit.data import CatalogEntry as _CE
+        from club3090_tui_core import VariantRow as _VR
+
+        def _entry(slug: str, model: str, compose_path: str) -> _CE:
+            return _CE(
+                row=_VR(
+                    slug=slug, switch_engine="vllm", launch_engine="vllm",
+                    compose_dir=compose_path.rsplit("/", 1)[0],
+                    file=compose_path.rsplit("/", 1)[-1], port=8000, model=model,
+                    engine="vllm-stable", kvcalc_key=f"{model}:dual", container="c",
+                    compose_path=compose_path, status="production",
+                    ctx_label="262K", status_note="",
+                )
+            )
+
+        qwen_dual = _entry("vllm/dual", "qwen3.6-27b", "models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml")
+        qwen_single = _entry("vllm/single", "qwen3.6-27b", "models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml")
+        gemma_dual = _entry("vllm/gemma-dual", "gemma-4-31b", "models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml")
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([qwen_dual, qwen_single, gemma_dual], None)
+
+            # distinct models, registry (first-seen) order — irrespective of provider/quant.
+            assert pane._models == ["qwen3.6-27b", "gemma-4-31b"]
+
+            # group-by-model sort: even with INTERLEAVED input, a model's lanes sit
+            # together in registry order (qwen lanes, then gemma) — the switch.sh
+            # --list view, and what keeps the table↔cursor mapping consistent.
+            pane.populate([qwen_dual, gemma_dual, qwen_single], None)
+            assert [e.model for e in pane._filtered_entries()] == [
+                "qwen3.6-27b", "qwen3.6-27b", "gemma-4-31b",
+            ]
+            # restore canonical order for the scope assertions below.
+            pane.populate([qwen_dual, qwen_single, gemma_dual], None)
+
+            # scope to one model → only its lanes (both quants/topologies).
+            pane.set_model_filter("qwen3.6-27b")
+            assert {e.slug for e in pane._filtered_entries()} == {"vllm/dual", "vllm/single"}
+
+            # AND-combine with the text filter.
+            pane.set_filter("dual")
+            assert [e.slug for e in pane._filtered_entries()] == ["vllm/dual"]
+
+            # switch scope (text filter "dual" still active) → the gemma dual lane.
+            pane.set_model_filter("gemma-4-31b")
+            assert [e.slug for e in pane._filtered_entries()] == ["vllm/gemma-dual"]
+
+            # the All sentinel clears the scope; clearing both → every lane.
+            pane.set_model_filter(_AM)
+            pane.set_filter("")
+            assert len(pane._filtered_entries()) == 3
+
+            # a scoped model that disappears on the next load resets to all.
+            pane.set_model_filter("gemma-4-31b")
+            pane.populate([qwen_dual, qwen_single], None)
+            assert pane._model_filter == ""
+            assert pane._models == ["qwen3.6-27b"]
+            assert len(pane._filtered_entries()) == 2
+
+    @pytest.mark.asyncio
+    async def test_catalog_model_select_toggle_and_blank_on_repeat(self):
+        """The model dropdown is hidden by default (like the text filter) and
+        toggled by [\\]; the model COLUMN carries the grouping when it's hidden —
+        first row of each model group shows the name, repeats are blank."""
+        from club3090_cockpit.data import CatalogEntry as _CE
+        from club3090_tui_core import VariantRow as _VR
+
+        def _entry(slug: str, model: str, compose_path: str) -> _CE:
+            return _CE(
+                row=_VR(
+                    slug=slug, switch_engine="vllm", launch_engine="vllm",
+                    compose_dir=compose_path.rsplit("/", 1)[0],
+                    file=compose_path.rsplit("/", 1)[-1], port=8000, model=model,
+                    engine="vllm-stable", kvcalc_key=f"{model}:dual", container="c",
+                    compose_path=compose_path, status="production",
+                    ctx_label="262K", status_note="",
+                )
+            )
+
+        qwen_dual = _entry("vllm/dual", "qwen3.6-27b", "models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml")
+        qwen_single = _entry("vllm/single", "qwen3.6-27b", "models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml")
+        gemma_dual = _entry("vllm/gemma-dual", "gemma-4-31b", "models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml")
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([qwen_dual, qwen_single, gemma_dual], None)
+
+            sel = app.query_one("#catalog-model-select", Select)
+            # hidden by default (out of the Tab/focus chain).
+            assert "visible" not in sel.classes
+            # [\\] reveals it, again hides it.
+            pane.toggle_model_select()
+            assert "visible" in sel.classes
+            pane.toggle_model_select()
+            assert "visible" not in sel.classes
+            # Esc (close_filter_if_open) also hides it if open, KEEPING the scope.
+            pane.set_model_filter("qwen3.6-27b")
+            pane.toggle_model_select()
+            assert "visible" in sel.classes
+            assert pane.close_filter_if_open() is True
+            assert "visible" not in sel.classes
+            assert pane._model_filter == "qwen3.6-27b"  # scope survives the hide
+            pane.set_model_filter("")
+
+            # blank-on-repeat in the model column: first row of a model group shows
+            # the name (grouped: qwen, qwen, gemma), the repeat row is blank.
+            table = app.query_one("#catalog-table", DataTable)
+            r0 = str(table.get_row_at(0)[0])
+            r1 = str(table.get_row_at(1)[0])
+            r2 = str(table.get_row_at(2)[0])
+            assert "qwen3.6-27b" in r0
+            assert r1.strip() == ""        # second qwen lane → blank model cell
+            assert "gemma-4-31b" in r2     # new group → name shown again
 
     @pytest.mark.asyncio
     async def test_catalog_error_surfaces(self):
