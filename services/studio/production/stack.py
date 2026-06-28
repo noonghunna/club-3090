@@ -51,13 +51,17 @@ VIDEO_LANES: dict[str, dict] = {
 }
 
 # -- keyframe (image) lanes — the continuity-quality lever --------------------
+#   Keyframe prompts are PROSE (style bible + shot intent). chroma/zimage/krea/hidream
+#   take natural-language prompts; ideogram is trained on STRUCTURED JSON captions and
+#   emits a "safety filter" placeholder for prose — so it's a title-card/design lane,
+#   NOT a continuity keyframe lane (wired=False; matches its label).
 KEYFRAME_LANES: dict[str, dict] = {
     "chroma": {"label": "Chroma (uncensored · strong general keyframes)", "wired": True},
     "zimage": {"label": "Z-Image-Turbo (uncensored · fast)", "wired": True},
     "krea": {"label": "Krea 2 (aesthetic)", "wired": True},
-    "hidream": {"label": "HiDream-O1 (top quality · slow / heavy 2048²)", "wired": True},
-    "ideogram": {"label": "Ideogram-4 (design / text / title-card — not general continuity)",
-                 "wired": True},
+    "hidream": {"label": "HiDream-O1 (top quality · slow / heavy, native 2048²)", "wired": True},
+    "ideogram": {"label": "Ideogram-4 (design / text / title-card — needs JSON, not "
+                          "prose → not a continuity keyframe lane)", "wired": False},
 }
 
 DEFAULT_VIDEO = "wan"

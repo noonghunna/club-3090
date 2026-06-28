@@ -27,8 +27,44 @@ def _load_workflow(name: str) -> dict:
         return json.load(f)
 
 
-# image lane -> ComfyUI workflow (hero keyframes / reference stills, v0b-images)
-_IMAGE_WORKFLOWS = {"chroma": "chroma1_hd.json"}
+# image lane -> ComfyUI workflow (continuity keyframes / reference stills, v0b-images).
+# Only PROSE-prompt lanes belong here (keyframe prompts are prose): chroma/zimage/krea
+# take T5 prose, hidream takes natural-language. Ideogram needs structured JSON → it's a
+# title-card/design lane, NOT a continuity keyframe lane (see stack.KEYFRAME_LANES).
+_IMAGE_WORKFLOWS = {
+    "chroma": "chroma1_hd.json",
+    "zimage": "z_image_turbo.json",
+    "krea": "krea2.json",
+    "hidream": "hidream_o1.json",
+}
+
+
+def _patch_chroma(wf: dict, prompt: str, width: int, height: int, seed: int) -> None:
+    wf["pos"]["inputs"]["text"] = prompt
+    wf["latent"]["inputs"]["width"] = width
+    wf["latent"]["inputs"]["height"] = height
+    wf["noise"]["inputs"]["noise_seed"] = seed       # custom sampler graph (noise node)
+
+
+def _patch_ksampler(wf: dict, prompt: str, width: int, height: int, seed: int) -> None:
+    wf["pos"]["inputs"]["text"] = prompt              # z-image / krea — standard ksampler
+    wf["latent"]["inputs"]["width"] = width
+    wf["latent"]["inputs"]["height"] = height
+    wf["ksampler"]["inputs"]["seed"] = seed
+
+
+def _patch_hidream(wf: dict, prompt: str, width: int, height: int, seed: int) -> None:
+    wf["cond"]["inputs"]["prompt"] = prompt           # HiDream-O1: prompt on cond, size+seed on sampler
+    wf["sampler"]["inputs"]["width"] = width          # node renders native 2048² (snaps up); i2v resizes
+    wf["sampler"]["inputs"]["height"] = height
+    wf["sampler"]["inputs"]["seed"] = seed
+
+
+# lane -> the node-patch that injects prompt/size/seed for that workflow graph.
+_IMAGE_PATCH = {
+    "chroma": _patch_chroma, "zimage": _patch_ksampler,
+    "krea": _patch_ksampler, "hidream": _patch_hidream,
+}
 
 
 def _pull(src_host: str, dst: str, *, container: str, container_path: str) -> str:
@@ -131,13 +167,14 @@ class LiveBackend(StudioBackend):
 
     def generate_image(self, *, prompt, width, height, seed, lane, out_stem) -> str:
         wf_name = _IMAGE_WORKFLOWS.get(lane)
-        if not wf_name:
-            raise RuntimeError(f"no image workflow for lane {lane!r} (have {list(_IMAGE_WORKFLOWS)})")
+        patch = _IMAGE_PATCH.get(lane)
+        if not wf_name or not patch:
+            raise RuntimeError(
+                f"no production image workflow for keyframe lane {lane!r} "
+                f"(have {sorted(_IMAGE_WORKFLOWS)})"
+            )
         wf = _load_workflow(wf_name)
-        wf["pos"]["inputs"]["text"] = prompt
-        wf["latent"]["inputs"]["width"] = width
-        wf["latent"]["inputs"]["height"] = height
-        wf["noise"]["inputs"]["noise_seed"] = seed   # chroma sampler graph
+        patch(wf, prompt, width, height, seed)
         fn, sub = comfy.await_output(comfy.submit(wf), "image")
         return self._comfy_to(fn, sub, out_stem)
 

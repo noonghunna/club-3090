@@ -71,9 +71,15 @@ class TestResolveStack(unittest.TestCase):
                 with self.assertRaises(S.StackError):
                     S.resolve_stack(video_lane="flat", continuity=c)
 
-    def test_all_keyframe_lanes_resolve(self):
-        for k in S.KEYFRAME_LANES:
+    def test_wired_keyframe_lanes_resolve(self):
+        for k in S.wired_keyframe_lanes():
             self.assertEqual(S.resolve_stack(keyframe_lane=k).keyframe_lane, k)
+
+    def test_ideogram_keyframe_rejected_needs_json_not_prose(self):
+        # ideogram is a design/title-card lane (structured JSON), not a prose keyframe lane.
+        self.assertNotIn("ideogram", S.wired_keyframe_lanes())
+        with self.assertRaises(S.StackError):
+            S.resolve_stack(keyframe_lane="ideogram")
 
 
 class TestSchemaLaneValidation(unittest.TestCase):
@@ -145,6 +151,41 @@ class TestPlannerHonoursStack(unittest.TestCase):
                           "shots": [{"prompt_intent": "x", "lane": "ltx"}]}, video_lane="wan")
         self.assertEqual(data["project"]["video_lane"], "wan")
         self.assertEqual(data["shots"][0]["lane"], "wan")
+
+
+class TestKeyframeWorkflowWiring(unittest.TestCase):
+    """The data-plane: every WIRED keyframe lane has a real workflow + a patch that
+    injects prompt/size/seed into nodes that actually exist (no live render needed)."""
+
+    def test_wired_lanes_have_workflow_and_patch(self):
+        from .. import lanes
+        for lane in S.wired_keyframe_lanes():
+            self.assertIn(lane, lanes._IMAGE_WORKFLOWS, f"{lane} missing workflow")
+            self.assertIn(lane, lanes._IMAGE_PATCH, f"{lane} missing patch")
+
+    def test_no_unwired_lane_is_wired_in_lanes(self):
+        from .. import lanes
+        for lane, meta in S.KEYFRAME_LANES.items():
+            if not meta["wired"]:
+                self.assertNotIn(lane, lanes._IMAGE_WORKFLOWS,
+                                 f"{lane} is unwired in stack but present in lanes")
+
+    def test_patch_injects_into_real_workflow_nodes(self):
+        import copy
+        import json
+        from .. import config, lanes
+        for lane in S.wired_keyframe_lanes():
+            path = os.path.join(config.WORKFLOW_DIR, lanes._IMAGE_WORKFLOWS[lane])
+            self.assertTrue(os.path.isfile(path), f"missing workflow file for {lane}: {path}")
+            with open(path) as fh:
+                wf = json.load(fh)
+            base = copy.deepcopy(wf)
+            lanes._IMAGE_PATCH[lane](wf, "a vivid keyframe", 832, 480, 4242)
+            # the patch must have CHANGED the graph (i.e. it hit real nodes, not no-ops)
+            self.assertNotEqual(wf, base, f"{lane} patch was a no-op (node keys drifted?)")
+            blob = json.dumps(wf)
+            self.assertIn("a vivid keyframe", blob, f"{lane}: prompt not injected")
+            self.assertIn("4242", blob, f"{lane}: seed not injected")
 
 
 class TestStackInManifest(unittest.TestCase):
