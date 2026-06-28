@@ -27,8 +27,73 @@ def _load_workflow(name: str) -> dict:
         return json.load(f)
 
 
-# image lane -> ComfyUI workflow (hero keyframes / reference stills, v0b-images)
-_IMAGE_WORKFLOWS = {"chroma": "chroma1_hd.json"}
+# image lane -> ComfyUI workflow (continuity keyframes / reference stills, v0b-images).
+# Only PROSE-prompt lanes belong here (keyframe prompts are prose): chroma/zimage/krea
+# take T5 prose, hidream takes natural-language. Ideogram needs structured JSON → it's a
+# title-card/design lane, NOT a continuity keyframe lane (see stack.KEYFRAME_LANES).
+_IMAGE_WORKFLOWS = {
+    "chroma": "chroma1_hd.json",
+    "zimage": "z_image_turbo.json",
+    "krea": "krea2.json",
+    "hidream": "hidream_o1.json",
+}
+
+
+def _patch_chroma(wf: dict, prompt: str, width: int, height: int, seed: int) -> None:
+    wf["pos"]["inputs"]["text"] = prompt
+    wf["latent"]["inputs"]["width"] = width
+    wf["latent"]["inputs"]["height"] = height
+    wf["noise"]["inputs"]["noise_seed"] = seed       # custom sampler graph (noise node)
+
+
+def _patch_ksampler(wf: dict, prompt: str, width: int, height: int, seed: int) -> None:
+    wf["pos"]["inputs"]["text"] = prompt              # z-image / krea — standard ksampler
+    wf["latent"]["inputs"]["width"] = width
+    wf["latent"]["inputs"]["height"] = height
+    wf["ksampler"]["inputs"]["seed"] = seed
+
+
+def _hidream_dims(width: int, height: int) -> tuple[int, int]:
+    """HiDream-O1's sampler requires each side >= 512, step 32 (it then snaps to its
+    nearest patch-aligned resolution). Delivery dims (e.g. 832x480) have a sub-512
+    side → 400. Scale up so the SHORT side reaches 512, snap both to /32, keeping the
+    landscape aspect (the Wan i2v resize node downsizes the keyframe to the clip dims)."""
+    scale = max(1.0, 512.0 / max(1, min(width, height)))
+    w = max(512, int(round(width * scale / 32) * 32))
+    h = max(512, int(round(height * scale / 32) * 32))
+    return w, h
+
+
+def _patch_hidream(wf: dict, prompt: str, width: int, height: int, seed: int) -> None:
+    w, h = _hidream_dims(width, height)
+    wf["cond"]["inputs"]["prompt"] = prompt           # HiDream-O1: prompt on cond, size+seed on sampler
+    wf["sampler"]["inputs"]["width"] = w              # clamped to the node's >=512 /32 range; i2v resizes
+    wf["sampler"]["inputs"]["height"] = h
+    wf["sampler"]["inputs"]["seed"] = seed
+
+
+# lane -> the node-patch that injects prompt/size/seed for that workflow graph.
+_IMAGE_PATCH = {
+    "chroma": _patch_chroma, "zimage": _patch_ksampler,
+    "krea": _patch_ksampler, "hidream": _patch_hidream,
+}
+
+
+def _append_neg(inputs: dict, key: str, negative: str) -> None:
+    cur = (inputs.get(key) or "").strip().strip(",")
+    inputs[key] = (cur + ", " + negative).strip(", ") if cur else negative
+
+
+def _apply_image_negative(wf: dict, lane: str, negative: str) -> None:
+    """Best-effort character negative-drift injection where the lane has a TEXT neg.
+    hidream → cond.negative_prompt · chroma → neg.text. zimage/krea feed neg from a
+    conditioning node (cfg=1 turbo ignores negatives) → no-op."""
+    if not negative:
+        return
+    if lane == "hidream":
+        _append_neg(wf["cond"]["inputs"], "negative_prompt", negative)
+    elif lane == "chroma":
+        _append_neg(wf["neg"]["inputs"], "text", negative)
 
 
 def _pull(src_host: str, dst: str, *, container: str, container_path: str) -> str:
@@ -59,11 +124,12 @@ class StudioBackend(ABC):
     @abstractmethod
     def render_video(self, *, prompt: str, width: int, height: int, frames: int,
                      steps: int, seed: int, fps: int, out_stem: str,
-                     mode: str = "t2v", start_image: str | None = None) -> str: ...
+                     mode: str = "t2v", start_image: str | None = None,
+                     negative: str = "") -> str: ...
 
     @abstractmethod
     def generate_image(self, *, prompt: str, width: int, height: int, seed: int,
-                       lane: str, out_stem: str) -> str: ...
+                       lane: str, out_stem: str, negative: str = "") -> str: ...
 
     @abstractmethod
     def make_music(self, *, tags: str, lyrics: str, seconds: float, steps: int,
@@ -102,7 +168,7 @@ class LiveBackend(StudioBackend):
         return json.load(urllib.request.urlopen(req, timeout=60)).get("name", fname)
 
     def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem,
-                     mode="t2v", start_image=None) -> str:
+                     mode="t2v", start_image=None, negative="") -> str:
         if mode == "i2v":
             if not start_image:
                 raise RuntimeError("i2v render requires a start_image")
@@ -126,18 +192,22 @@ class LiveBackend(StudioBackend):
             wf["ksampler"]["inputs"]["steps"] = steps
             wf["ksampler"]["inputs"]["seed"] = seed
             wf["video"]["inputs"]["fps"] = float(fps)
+        if negative:                       # append character drift-avoidance to Wan's neg
+            _append_neg(wf["neg"]["inputs"], "text", negative)
         fn, sub = comfy.await_output(comfy.submit(wf), "video")
         return self._comfy_to(fn, sub, out_stem)
 
-    def generate_image(self, *, prompt, width, height, seed, lane, out_stem) -> str:
+    def generate_image(self, *, prompt, width, height, seed, lane, out_stem, negative="") -> str:
         wf_name = _IMAGE_WORKFLOWS.get(lane)
-        if not wf_name:
-            raise RuntimeError(f"no image workflow for lane {lane!r} (have {list(_IMAGE_WORKFLOWS)})")
+        patch = _IMAGE_PATCH.get(lane)
+        if not wf_name or not patch:
+            raise RuntimeError(
+                f"no production image workflow for keyframe lane {lane!r} "
+                f"(have {sorted(_IMAGE_WORKFLOWS)})"
+            )
         wf = _load_workflow(wf_name)
-        wf["pos"]["inputs"]["text"] = prompt
-        wf["latent"]["inputs"]["width"] = width
-        wf["latent"]["inputs"]["height"] = height
-        wf["noise"]["inputs"]["noise_seed"] = seed   # chroma sampler graph
+        patch(wf, prompt, width, height, seed)
+        _apply_image_negative(wf, lane, negative)
         fn, sub = comfy.await_output(comfy.submit(wf), "image")
         return self._comfy_to(fn, sub, out_stem)
 
@@ -182,7 +252,7 @@ class SyntheticBackend(StudioBackend):
     name = "synthetic"
 
     def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem,
-                     mode="t2v", start_image=None) -> str:
+                     mode="t2v", start_image=None, negative="") -> str:
         dur = max(0.1, frames / float(fps or 16))
         dst = out_stem + ".mp4"
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -201,7 +271,7 @@ class SyntheticBackend(StudioBackend):
                 "-t", f"{dur:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", dst])
         return dst
 
-    def generate_image(self, *, prompt, width, height, seed, lane, out_stem) -> str:
+    def generate_image(self, *, prompt, width, height, seed, lane, out_stem, negative="") -> str:
         colour = "0x%06x" % (abs(hash((prompt, seed, "img"))) % 0xFFFFFF)
         dst = out_stem + ".png"
         os.makedirs(os.path.dirname(dst), exist_ok=True)

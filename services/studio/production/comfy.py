@@ -46,6 +46,38 @@ def submit(wf: dict, base: str = config.COMFYUI_URL, client_id: str = "studio-pr
     return pid
 
 
+_EXTS = {
+    "video": (".mp4", ".webm", ".mkv"),
+    "image": (".png", ".jpg", ".jpeg", ".webp"),
+    "audio": (".mp3", ".flac", ".wav", ".opus"),
+}
+_KEYS = {"video": ("gifs", "videos", "images"),
+         "image": ("images",),
+         "audio": ("audio", "images")}
+
+
+def pick_output(outputs: dict, want: str) -> tuple[str, str] | None:
+    """Pick (filename, subfolder) for `want` from a /history `outputs` dict.
+
+    PREFERS a saved `type="output"` artifact over a `temp` preview: some nodes (e.g.
+    the HiDream sampler) emit a temp .jpg preview AND a SaveImage .png to /output —
+    only the latter lands at OUTPUT_ROOT, so picking the first (temp) one →
+    FileNotFoundError on copy. Returns None if nothing matches.
+    """
+    exts, keys = _EXTS[want], _KEYS[want]
+    candidates = []   # (filename, subfolder, type)
+    for node in (outputs or {}).values():
+        for k in keys:
+            for v in node.get(k, []) or []:
+                fn = str(v.get("filename", ""))
+                if fn.endswith(exts) or str(v.get("format", "")).startswith(want):
+                    candidates.append((fn, v.get("subfolder", ""), v.get("type", "output")))
+    if not candidates:
+        return None
+    fn, sub, _t = next((c for c in candidates if c[2] == "output"), candidates[0])
+    return fn, sub
+
+
 def await_output(
     pid: str,
     want: str,
@@ -56,17 +88,8 @@ def await_output(
     """Poll /history/{pid} until complete; return (filename, subfolder).
 
     `want` is 'video' | 'image' | 'audio'. Mirrors studio_pipe._await_output's
-    output-node walk.
+    output-node walk (see `pick_output` for the temp-vs-output preference).
     """
-    exts = {
-        "video": (".mp4", ".webm", ".mkv"),
-        "image": (".png", ".jpg", ".jpeg", ".webp"),
-        "audio": (".mp3", ".flac", ".wav", ".opus"),
-    }[want]
-    keys = {"video": ("gifs", "videos", "images"),
-            "image": ("images",),
-            "audio": ("audio", "images")}[want]
-
     t0 = time.time()
     while time.time() - t0 < timeout:
         time.sleep(poll)
@@ -81,11 +104,8 @@ def await_output(
             raise ComfyError(f"ComfyUI generation error for prompt {pid}")
         if not st.get("completed"):
             continue
-        for node in h[pid].get("outputs", {}).values():
-            for k in keys:
-                for v in node.get(k, []) or []:
-                    fn = str(v.get("filename", ""))
-                    if fn.endswith(exts) or str(v.get("format", "")).startswith(want):
-                        return fn, v.get("subfolder", "")
+        picked = pick_output(h[pid].get("outputs", {}), want)
+        if picked is not None:
+            return picked
         raise ComfyError(f"prompt {pid} completed but produced no {want} output")
     raise TimeoutError(f"ComfyUI timed out after {timeout:.0f}s for prompt {pid}")
