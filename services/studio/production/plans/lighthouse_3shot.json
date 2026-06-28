@@ -1,0 +1,62 @@
+{
+  "schema_version": "ProductionPlanV1",
+  "project": {
+    "title": "A Short History of Lighthouses",
+    "tone": "calm",
+    "target_seconds": 15,
+    "video_lane": "wan"
+  },
+  "delivery": {
+    "aspect": "16:9",
+    "width": 832,
+    "height": 480,
+    "fps": 16,
+    "codec": "h264",
+    "loudness_lufs": -14.0,
+    "subtitles": false
+  },
+  "shots": [
+    {
+      "id": "s1",
+      "lane": "wan",
+      "mode": "t2v",
+      "target_seconds": 5,
+      "prompt_intent": "dawn over a rocky New England cape, a white lighthouse silhouette, gentle swell, archival film grade",
+      "narration": "In 1716, the first American lighthouse rose over Boston Harbor.",
+      "seed": 12345
+    },
+    {
+      "id": "s2",
+      "lane": "wan",
+      "mode": "t2v",
+      "target_seconds": 5,
+      "prompt_intent": "slow reveal of a rotating Fresnel lens glowing amber inside the lamp room, warm light",
+      "narration": "Its rotating Fresnel lens could throw a beam for twenty miles.",
+      "seed": 23456
+    },
+    {
+      "id": "s3",
+      "lane": "wan",
+      "mode": "t2v",
+      "target_seconds": 5,
+      "prompt_intent": "a lighthouse at dusk in light fog, the beam sweeping across a calm sea, contemplative",
+      "narration": "Today most stand automated, quiet keepers of a fading craft.",
+      "seed": 34567
+    }
+  ],
+  "audio_layers": {
+    "narration": { "engine": "kokoro" },
+    "music": { "lane": "ace-step" }
+  },
+  "music": {
+    "lane": "ace-step",
+    "tags": "ambient, reflective, cinematic, soft piano, instrumental",
+    "lyrics": "[instrumental]",
+    "seed": 99
+  },
+  "timeline": [
+    { "clip": "s1", "narration_offset": 0.2, "music_level_db": -18 },
+    { "clip": "s2", "narration_offset": 0.0, "music_level_db": -18 },
+    { "clip": "s3", "narration_offset": 0.0, "music_level_db": -18 }
+  ]
+}
