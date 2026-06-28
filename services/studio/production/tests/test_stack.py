@@ -75,6 +75,18 @@ class TestResolveStack(unittest.TestCase):
         for k in S.wired_keyframe_lanes():
             self.assertEqual(S.resolve_stack(keyframe_lane=k).keyframe_lane, k)
 
+    def test_keyframe_lanes_are_tiered_and_hidream_is_not_default(self):
+        # the everyday default is a fast lane (chroma); hidream is the quality tier,
+        # NOT the default — Wan downscales away most of its 2560×1440 advantage.
+        self.assertEqual(S.DEFAULT_KEYFRAME, "chroma")
+        self.assertEqual(S.KEYFRAME_LANES["chroma"]["tier"], "default")
+        self.assertEqual(S.KEYFRAME_LANES["zimage"]["tier"], "fast")
+        self.assertEqual(S.KEYFRAME_LANES["hidream"]["tier"], "quality")
+        self.assertEqual(S.KEYFRAME_LANES["krea"]["tier"], "aesthetic")
+        for k in S.wired_keyframe_lanes():
+            self.assertTrue(S.KEYFRAME_LANES[k].get("tier"), f"{k} has no tier")
+        self.assertIn("default=chroma", S.lane_help())
+
     def test_ideogram_keyframe_rejected_needs_json_not_prose(self):
         # ideogram is a design/title-card lane (structured JSON), not a prose keyframe lane.
         self.assertNotIn("ideogram", S.wired_keyframe_lanes())

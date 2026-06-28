@@ -195,7 +195,7 @@ class Pipe:
         # storyboard), or PIN one to override. The director plans shot content within the
         # chosen stack — it never silently picks the video/image model.
         production_video_lane: str = Field(default="auto", description="Video model for every shot. 'auto' = wan (renders today). ltx/sulphur/10eros are roadmap (not yet wired in the production executor — use the interactive video lanes for those).")
-        production_keyframe_lane: str = Field(default="auto", description="Image model for continuity keyframes. 'auto' = chroma. Options: chroma · zimage · krea · hidream. (Ideogram is a title-card/design lane, not a continuity keyframe lane.)")
+        production_keyframe_lane: str = Field(default="auto", description="Image model for continuity keyframes (tiers). 'auto' = chroma (conservative default). chroma/zimage = fast everyday (zimage = fastest, 8-step turbo); hidream = quality / hero frames (slow ~1 min/kf, native 2560×1440 — but Wan downscales to 832×480, so reserve it for hero frames, not everyday iteration); krea = aesthetic / stylized. (Ideogram is a title-card/design lane, not a continuity keyframe lane.)")
         production_continuity: str = Field(default="storyboard", description="storyboard (per-shot keyframes + shared style bible, DEFAULT) · hero (one shared keyframe) · chain (i2v from prev frame) · none (independent t2v).")
         production_music: bool = Field(default=True, description="Add an ACE-Step music bed under the film. Off = narration + visuals only.")
 

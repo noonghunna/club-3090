@@ -70,8 +70,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="video model for every shot: wan (default, renders today) · "
                          "ltx/sulphur/10eros (roadmap — not yet wired in the executor). 'auto' = wan.")
     ap.add_argument("--keyframe-lane", default="auto",
-                    help="image model for continuity keyframes: chroma (default) · zimage · "
-                         "krea · hidream · ideogram. 'auto' = chroma.")
+                    help="image model for continuity keyframes (tiers): chroma (default) · "
+                         "zimage (fast) · hidream (quality / hero frames, ~1 min/kf) · krea "
+                         "(aesthetic). 'auto' = chroma.")
     ap.add_argument("--continuity", default="auto",
                     help="storyboard (per-shot keyframes + shared style bible, DEFAULT) · hero "
                          "(one shared keyframe) · chain (i2v from prev frame) · none (independent "

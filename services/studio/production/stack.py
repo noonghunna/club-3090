@@ -55,13 +55,22 @@ VIDEO_LANES: dict[str, dict] = {
 #   take natural-language prompts; ideogram is trained on STRUCTURED JSON captions and
 #   emits a "safety filter" placeholder for prose — so it's a title-card/design lane,
 #   NOT a continuity keyframe lane (wired=False; matches its label).
+#
+#   `tier` frames the choice (all 4 live-validated 2026-06-28): the everyday default is
+#   a fast lane (chroma is the conservative default; zimage is the fastest); HiDream is
+#   the quality/hero-frame option but is NOT the default — Wan downscales 832×480 and
+#   reinterprets, so its native 2560×1440 detail is largely compressed away and ~1 min/kf
+#   is too costly for everyday storyboard iteration. krea is the aesthetic/stylized option.
 KEYFRAME_LANES: dict[str, dict] = {
-    "chroma": {"label": "Chroma (uncensored · strong general keyframes)", "wired": True},
-    "zimage": {"label": "Z-Image-Turbo (uncensored · fast)", "wired": True},
-    "krea": {"label": "Krea 2 (aesthetic)", "wired": True},
-    "hidream": {"label": "HiDream-O1 (top quality · slow / heavy, native 2048²)", "wired": True},
+    "chroma": {"label": "Chroma (uncensored · strong general keyframes)",
+               "wired": True, "tier": "default"},
+    "zimage": {"label": "Z-Image-Turbo (uncensored · fast 8-step turbo)",
+               "wired": True, "tier": "fast"},
+    "krea": {"label": "Krea 2 (aesthetic / stylized)", "wired": True, "tier": "aesthetic"},
+    "hidream": {"label": "HiDream-O1 (top quality / hero frames · slow ~1 min/kf, native 2560×1440)",
+                "wired": True, "tier": "quality"},
     "ideogram": {"label": "Ideogram-4 (design / text / title-card — needs JSON, not "
-                          "prose → not a continuity keyframe lane)", "wired": False},
+                          "prose → not a continuity keyframe lane)", "wired": False, "tier": None},
 }
 
 DEFAULT_VIDEO = "wan"
@@ -196,8 +205,13 @@ def describe_stack(stack: ProductionStack) -> str:
 def lane_help() -> str:
     """Compact lane menu for the CLI --help epilog / OWUI valve docs."""
     vids = " · ".join(f"{k}{'' if v['wired'] else ' (roadmap)'}" for k, v in VIDEO_LANES.items())
+    kfs = " · ".join(
+        f"{k} [{v['tier']}]" if v.get("tier") else f"{k} (not for continuity)"
+        for k, v in KEYFRAME_LANES.items()
+    )
     return (
         f"video lanes:    {vids}\n"
-        f"keyframe lanes: {' · '.join(KEYFRAME_LANES)}\n"
+        f"keyframe lanes: {kfs}\n"
+        f"                (default=chroma · fast=zimage · quality=hidream · aesthetic=krea)\n"
         f"continuity:     {' · '.join(CONTINUITY_MODES)}  (storyboard = default)"
     )
