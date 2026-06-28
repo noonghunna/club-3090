@@ -51,6 +51,14 @@ class Music:
 
 
 @dataclass
+class Assembly:
+    """Deterministic post-production knobs (not 'brain' work)."""
+    transition_seconds: float = 0.6   # dissolve length between clips
+    duck_db: int = 6                  # bed duck depth under narration (gentler than the old ~12)
+    normalize: bool = True
+
+
+@dataclass
 class Project:
     title: str
     tone: str = ""
@@ -63,7 +71,7 @@ class TimelineEntry:
     clip: str                 # references Shot.id
     narration_offset: float = 0.0
     music_level_db: float = -18.0
-    transition_in: str = "cut"
+    transition_in: str = "dissolve"   # "dissolve" (default) | "cut" — transition INTO this clip
 
 
 @dataclass
@@ -73,6 +81,7 @@ class ProductionPlanV1:
     delivery: Delivery
     timeline: list                    # list[TimelineEntry]
     music: Optional[Music] = None
+    assembly: Assembly = field(default_factory=Assembly)
     schema_version: str = "ProductionPlanV1"
 
     # -- construction -------------------------------------------------------
@@ -84,11 +93,17 @@ class ProductionPlanV1:
             delivery = Delivery(**d.get("delivery", {}))
             timeline = [TimelineEntry(**t) for t in d.get("timeline", [])]
             music = Music(**d["music"]) if d.get("music") else None
-        except (KeyError, TypeError) as e:
+            _a = d.get("assembly", {}) or {}
+            assembly = Assembly(
+                transition_seconds=float(_a.get("transition_seconds", 0.6)),
+                duck_db=int(_a.get("duck_db", 6)),
+                normalize=bool(_a.get("normalize", True)),
+            )
+        except (KeyError, TypeError, ValueError) as e:
             raise PlanError(f"malformed plan: {e}") from e
         plan = ProductionPlanV1(
             project=project, shots=shots, delivery=delivery,
-            timeline=timeline, music=music,
+            timeline=timeline, music=music, assembly=assembly,
             schema_version=d.get("schema_version", "ProductionPlanV1"),
         )
         plan.validate()
@@ -128,6 +143,11 @@ class ProductionPlanV1:
                 raise PlanError(f"timeline references unknown clip {t.clip!r}")
             if t.clip in seen:
                 raise PlanError(f"timeline references clip {t.clip!r} twice")
+            if t.transition_in not in ("cut", "dissolve"):
+                raise PlanError(
+                    f"timeline {t.clip}: transition_in must be 'cut' or 'dissolve' "
+                    f"(got {t.transition_in!r})"
+                )
             seen.add(t.clip)
         if seen != known:
             missing = known - seen

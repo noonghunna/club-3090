@@ -78,7 +78,6 @@ def run_production(
 
     durations = [validators.ffprobe(clip_paths[s.id]).duration for s, _ in pairs]
     total = sum(durations)
-    starts = [sum(durations[:i]) for i in range(len(durations))]
 
     # -- Phase 2: audio production ----------------------------------------
     ensure.ensure_tts(backend=backend.name)
@@ -111,17 +110,21 @@ def run_production(
         ))
 
     # -- Phase 3: post-production (assemble) ------------------------------
-    narr_inputs: list[tuple[str, int]] = []
-    for i, (shot, t) in enumerate(pairs):
-        if shot.id in narration:
-            start_ms = max(0, int((starts[i] + t.narration_offset) * 1000))
-            narr_inputs.append((narration[shot.id], start_ms))
+    # narration as (path, shot_index, intra_offset) — assemble computes the
+    # crossfade-aware absolute start from the shot index.
+    narr_inputs = [
+        (narration[shot.id], i, t.narration_offset)
+        for i, (shot, t) in enumerate(pairs) if shot.id in narration
+    ]
+    # per-seam transitions — each governed by the transition_in of the clip the
+    # seam leads INTO (dissolve default, cut available).
+    transitions = [(t.transition_in, plan.assembly.transition_seconds) for (_s, t) in pairs[1:]]
     bed_level_db = pairs[0][1].music_level_db if pairs else -18.0
 
     final_path = os.path.join(prod_dir, "assembly", "final.mp4")
     cmd = _assemble.assemble(
-        final_path, [clip_paths[s.id] for s, _ in pairs], narr_inputs, bed,
-        fps=d.fps, lufs=d.loudness_lufs, bed_level_db=bed_level_db,
+        final_path, [clip_paths[s.id] for s, _ in pairs], durations, transitions, narr_inputs, bed,
+        fps=d.fps, lufs=d.loudness_lufs, bed_level_db=bed_level_db, duck_db=plan.assembly.duck_db,
     )
     man.ffmpeg_cmds.append(cmd)
     fpr = validators.ffprobe(final_path)

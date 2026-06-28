@@ -54,9 +54,13 @@
     "lyrics": "[instrumental]",
     "seed": 99
   },
+  "assembly": {
+    "transition_seconds": 0.6,
+    "duck_db": 6
+  },
   "timeline": [
-    { "clip": "s1", "narration_offset": 0.2, "music_level_db": -18 },
-    { "clip": "s2", "narration_offset": 0.0, "music_level_db": -18 },
-    { "clip": "s3", "narration_offset": 0.0, "music_level_db": -18 }
+    { "clip": "s1", "narration_offset": 0.2, "music_level_db": -18, "transition_in": "dissolve" },
+    { "clip": "s2", "narration_offset": 0.0, "music_level_db": -18, "transition_in": "dissolve" },
+    { "clip": "s3", "narration_offset": 0.0, "music_level_db": -18, "transition_in": "dissolve" }
   ]
 }

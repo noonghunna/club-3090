@@ -62,28 +62,54 @@ class TestSchema(unittest.TestCase):
         with self.assertRaises(PlanError):
             ProductionPlanV1.from_dict(_load(lambda d: d["shots"][0].update(mode="i2v")))
 
+    def test_transition_default_and_assembly_knobs(self):
+        plan = ProductionPlanV1.from_dict(_load())
+        self.assertTrue(all(t.transition_in == "dissolve" for t in plan.timeline))
+        self.assertEqual(plan.assembly.transition_seconds, 0.6)
+        self.assertEqual(plan.assembly.duck_db, 6)
+
+    def test_rejects_bad_transition(self):
+        with self.assertRaises(PlanError):
+            ProductionPlanV1.from_dict(_load(lambda d: d["timeline"][1].update(transition_in="wipe")))
+
 
 class TestAssembleCommand(unittest.TestCase):
-    def test_full_mix_graph(self):
+    def test_dissolve_mix_graph(self):
         cmd = assemble.build_mix_command(
             "/tmp/final.mp4",
             clips=["a.mp4", "b.mp4", "c.mp4"],
-            narrations=[("v1.wav", 200), ("v2.wav", 5000)],
-            bed="bed.wav", fps=16, lufs=-14.0, bed_level_db=-18,
+            durations=[5.0, 5.0, 5.0],
+            transitions=[("dissolve", 0.6), ("dissolve", 0.6)],
+            narrations=[("v1.wav", 0, 0.2), ("v2.wav", 1, 0.0)],
+            bed="bed.wav", fps=16, lufs=-14.0, bed_level_db=-18, duck_db=6,
         )
         fc = cmd[cmd.index("-filter_complex") + 1]
-        self.assertIn("concat=n=3:v=1:a=0[vid]", fc)
+        # dissolves -> xfade chain, not a hard concat
+        self.assertIn("xfade=transition=dissolve:duration=0.600", fc)
+        self.assertNotIn("concat=n=3", fc)
+        # narration delayed to crossfade-aware starts: shot0 @0.2s; shot1 @ (5-0.6)+0=4.4s
         self.assertIn("adelay=200|200", fc)
-        self.assertIn("sidechaincompress", fc)        # bed ducked under narration
+        self.assertIn("adelay=4400|4400", fc)
+        self.assertIn("sidechaincompress", fc)         # bed ducked under narration
+        self.assertIn("ratio=4", fc)                   # duck_db 6 -> ratio 4 (gentle)
         self.assertIn("asplit=2[nkey][nmix]", fc)      # narration split, used once each
         self.assertIn("loudnorm=I=-14.0", fc)
         self.assertIn("-shortest", cmd)
         self.assertEqual(cmd[-1], "/tmp/final.mp4")
 
+    def test_all_cut_uses_concat(self):
+        cmd = assemble.build_mix_command(
+            "/tmp/f.mp4", clips=["a.mp4", "b.mp4"], durations=[5.0, 5.0],
+            transitions=[("cut", 0.6)], narrations=[("v.wav", 0, 0.0)],
+            bed=None, fps=16, lufs=-14.0, bed_level_db=-18)
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        self.assertIn("concat=n=2:v=1:a=0[vid]", fc)   # hard cuts -> concat, no xfade
+        self.assertNotIn("xfade", fc)
+
     def test_bed_only_no_narration(self):
         cmd = assemble.build_mix_command(
-            "/tmp/f.mp4", clips=["a.mp4"], narrations=[], bed="bed.wav",
-            fps=16, lufs=-14.0, bed_level_db=-18)
+            "/tmp/f.mp4", clips=["a.mp4"], durations=[5.0], transitions=[],
+            narrations=[], bed="bed.wav", fps=16, lufs=-14.0, bed_level_db=-18)
         fc = cmd[cmd.index("-filter_complex") + 1]
         self.assertNotIn("sidechaincompress", fc)
         self.assertIn("loudnorm", fc)
