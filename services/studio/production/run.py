@@ -59,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--brief", default=None,
                     help='a one-line brief; the 4B director plans it (v0b), e.g. --brief "60s doc on lighthouses"')
     ap.add_argument("--shots", type=int, default=3, help="target shot count for --brief planning")
+    ap.add_argument("--continuity", choices=["none", "chain", "hero"], default="none",
+                    help="v0b-images continuity for --brief: chain (i2v from prev frame) or hero (shared keyframe)")
     ap.add_argument("--backend", choices=["live", "synthetic"], default="live",
                     help="live = ComfyUI+Kokoro on the rig; synthetic = offline ffmpeg stand-ins")
     ap.add_argument("--job-id", default=None, help="override the generated job id")
@@ -89,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
                 reg = registry.load()
                 print(f"[plan] director planning the brief into ~{args.shots} shots…", file=sys.stderr)
                 plan, extra_artifacts = planner.plan_from_brief(
-                    args.brief, reg, n_shots=args.shots,
+                    args.brief, reg, n_shots=args.shots, continuity=args.continuity,
                     prompts_dir=os.path.join(prod_dir, "prompts"),
                 )
             except planner.PlannerError as e:

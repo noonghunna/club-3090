@@ -93,5 +93,30 @@ class TestContinuityE2E(unittest.TestCase):
             self.assertIn("hero_keyframe", roles)
 
 
+class TestPlannerContinuity(unittest.TestCase):
+    """The planner deterministically wires continuity (4B stays creative)."""
+    def setUp(self):
+        from ..registry import load
+        self.reg = load()
+
+    def test_planner_applies_chain(self):
+        from ..planner import plan_from_brief
+        from .test_v0b import GOOD_PLAN, StubLLM
+        plan, _ = plan_from_brief("b", self.reg, llm=StubLLM(["t", GOOD_PLAN]), continuity="chain")
+        self.assertEqual(plan.project.continuity, "chain")
+        self.assertEqual(plan.shots[0].mode, "t2v")
+        self.assertTrue(all(s.mode == "i2v" and s.start_from == "prev_last_frame"
+                            for s in plan.shots[1:]))
+
+    def test_planner_applies_hero(self):
+        from ..planner import plan_from_brief
+        from .test_v0b import GOOD_PLAN, StubLLM
+        plan, _ = plan_from_brief("b", self.reg, llm=StubLLM(["t", GOOD_PLAN]), continuity="hero")
+        self.assertEqual(plan.project.continuity, "hero")
+        self.assertEqual([a.id for a in plan.asset_tasks], ["hero"])
+        self.assertTrue(all(s.mode == "i2v" and s.start_from == "hero" for s in plan.shots))
+        self.assertEqual(plan.project.image_policy.get("hero_keyframe_lane"), "chroma")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -95,9 +95,46 @@ def normalize(data: dict, video_lane: str = "wan") -> dict:
     return data
 
 
+# -- continuity (control-plane: the planner wires it, the 4B stays creative) ---
+def apply_continuity(data: dict, mode: str, *, image_lane: str = "chroma") -> dict:
+    """Deterministically rewrite a plan into a continuity mode (v0b-images).
+
+    The 4B produces creative shots; THIS wires the asset-DAG so consecutive clips
+    flow. `chain` = each shot i2v from the previous last frame; `hero` = all shots
+    i2v from one generated hero keyframe; `none` = leave as authored (t2v).
+    """
+    if mode not in ("none", "chain", "hero"):
+        raise ValueError(f"unknown continuity {mode!r}")
+    if mode == "none":
+        return data
+    shots = data.get("shots") or []
+    data.setdefault("project", {})["continuity"] = mode
+    if mode == "chain":
+        for i, s in enumerate(shots):
+            if i == 0:
+                s["mode"] = "t2v"
+                s.pop("start_from", None)
+            else:
+                s["mode"] = "i2v"
+                s["start_from"] = "prev_last_frame"
+    elif mode == "hero":
+        deliv = data.get("delivery", {})
+        anchor = (shots[0].get("prompt_intent") if shots else "") \
+            or data["project"].get("title", "establishing shot")
+        data["project"]["image_policy"] = {"hero_keyframe_lane": image_lane}
+        data["asset_tasks"] = [{
+            "id": "hero", "role": "hero_keyframe", "lane": image_lane, "prompt": anchor,
+            "seed": 7, "width": deliv.get("width", 832), "height": deliv.get("height", 480),
+        }]
+        for s in shots:
+            s["mode"] = "i2v"
+            s["start_from"] = "hero"
+    return data
+
+
 # -- the planner --------------------------------------------------------------
 def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
-                    n_shots: int = 3, prompts_dir: str | None = None):
+                    n_shots: int = 3, continuity: str = "none", prompts_dir: str | None = None):
     """Brief -> (ProductionPlanV1, list[Artifact]). Raises PlannerError on failure.
 
     `llm(messages, *, max_tokens, temperature)` is the injectable director call.
@@ -122,7 +159,7 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
     last_err = None
     for attempt in range(max_repairs + 1):
         try:
-            data = normalize(extract_json(raw))
+            data = apply_continuity(normalize(extract_json(raw)), continuity)
             plan = ProductionPlanV1.from_dict(data)     # validates
             return plan, _write_provenance(prov, prompts_dir)
         except (PlanError, ValueError, json.JSONDecodeError) as e:

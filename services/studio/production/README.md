@@ -1,4 +1,4 @@
-# Studio Production Agent — v0a + v0b-core
+# Studio Production Agent — v0a + v0b-core + v0b-images
 
 Brief → a finished MP4, by driving the **existing** AI-Studio lanes serially (Wan
 video · Kokoro narration · ACE-Step bed → ffmpeg mix). From
@@ -10,13 +10,18 @@ video · Kokoro narration · ACE-Step bed → ffmpeg mix). From
   (`capabilities.yaml`) + a prompt pack, with a **validator-repair loop** (parse →
   `schema.validate()` → feed errors back) — then the v0a executor renders it.
   Prompt provenance is stored as `llm_prompt` manifest records under `prompts/`.
+- **v0b-images** — **continuity** (the slideshow fix). Two modes via `--continuity`:
+  **chain** (each shot Wan-i2v from the previous shot's last frame) and **hero** (all
+  shots i2v from one generated **hero keyframe**, chroma image lane). Asset-DAG:
+  `asset_tasks[]` (generated images) + `shot.start_from` (`prev_last_frame` | `<asset id>`),
+  resolved in an executor **pre-production phase**; the 4B stays creative, the planner
+  wires continuity deterministically (`apply_continuity`).
 
-**Scope (deliberately tight):** CLI/admin only · single-flight (host file-lock) · one
-pinned video lane (`wan`, t2v) · ffprobe validators · ffmpeg mix at the delivery
-profile · typed manifest with run-level provenance.
+**Scope (deliberately tight):** CLI/admin only · single-flight · one pinned video
+lane · ffprobe validators · ffmpeg mix at the delivery profile · typed manifest.
 
-**Deferred to v0b-images / v1:** image lanes + `image_policy` roles + asset-DAG
-(continuity), skills, takes + rerender, Qdrant/SearXNG, durable queue, OWUI lane.
+**Deferred to v1:** skills, takes + rerender, Qdrant/SearXNG, durable queue, OWUI
+lane, the remaining image roles (reference / storyboard / title-card).
 
 ## Run
 
@@ -31,6 +36,13 @@ python3 -m services.studio.production.run \
 gpu-mode ai-studio
 python3 -m services.studio.production.run \
     --brief "a 15-second calm documentary about lighthouses" --backend live --shots 3
+
+# v0b-images — same, with CONTINUITY (chain = i2v from prev frame; hero = shared keyframe):
+python3 -m services.studio.production.run \
+    --brief "a 15-second calm documentary about lighthouses" --backend live --continuity chain
+# or the static continuity experiment plans:
+python3 -m services.studio.production.run \
+    services/studio/production/plans/lighthouse_hero.json --backend live
 
 # v0a live — a static plan; drives ComfyUI (:8188) + Kokoro TTS (:8192):
 gpu-mode ai-studio        # bring the scene up first
