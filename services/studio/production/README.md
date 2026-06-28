@@ -18,6 +18,18 @@ video · Kokoro narration · ACE-Step bed → ffmpeg mix). From
   (`prev_last_frame` | `<asset id>`), resolved in an executor **pre-production phase**;
   the 4B stays creative, the planner wires continuity deterministically (`apply_continuity`).
 
+## Character Bible — identity coherence (Tier A: semantic, no new model)
+
+Keeps the **same character** consistent across shots. First-class `characters` on the plan
+(id · name · role · canonical visual description · wardrobe · signature props · negative-drift
+notes · stable seed); shots reference characters by **id** instead of restating them. The
+executor injects the canonical block into every storyboard-keyframe and Wan shot prompt the
+character appears in (negative-drift into the text-neg lanes: chroma · hidream · wan), and
+stores `character_bible.json` + a manifest provenance entry. Self-gating: a character-less
+brief writes no bible and injects nothing. **This is SEMANTIC consistency (less drift), NOT a
+face lock** — true reference-image identity conditioning (PuLID/IP-Adapter) is the deferred
+**Tier B** (gated PR; `Character.reference_asset_id` is reserved for it). See the design doc.
+
 ## The production stack (operator-chosen, visible, overridable)
 
 The director plans shot **content**; it does **not** silently pick the models. The
