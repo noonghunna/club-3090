@@ -24,6 +24,12 @@ WORKFLOW_DIR = os.environ.get(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "workflows"),
 )
 
+# Container names — used to pull artifacts a service wrote root-only (e.g. Kokoro
+# TTS writes its WAV mode 0600, which the host CLI user can't read; `docker cp`
+# from the container works because the docker daemon reads as root).
+COMFY_CONTAINER = os.environ.get("STUDIO_COMFY_CONTAINER", "comfyui")
+TTS_CONTAINER = os.environ.get("STUDIO_TTS_CONTAINER", "studio-tts")
+
 # Network timeouts (seconds).
 SUBMIT_TIMEOUT = int(os.environ.get("STUDIO_SUBMIT_TIMEOUT", "60"))
 RENDER_TIMEOUT = int(os.environ.get("STUDIO_RENDER_TIMEOUT", "1800"))  # 30 min/clip ceiling

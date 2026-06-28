@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import urllib.request
 from abc import ABC, abstractmethod
 
@@ -24,6 +25,28 @@ def _load_workflow(name: str) -> dict:
     path = os.path.join(config.WORKFLOW_DIR, name)
     with open(path) as f:
         return json.load(f)
+
+
+def _pull(src_host: str, dst: str, *, container: str, container_path: str) -> str:
+    """Copy a service-written artifact into the production tree.
+
+    Tries a plain host copy first (ComfyUI writes 0666). If the service wrote the
+    file root-only (Kokoro TTS writes mode 0600), fall back to `docker cp` from the
+    owning container — the docker daemon reads it as root. Either way the result is
+    host-owned + 0644 so downstream ffmpeg can read it. Surfaced live on 2026-06-28;
+    the cleaner systemic fix is for the TTS service to write 0644 (a v0b follow-up).
+    """
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    try:
+        shutil.copyfile(src_host, dst)
+    except PermissionError:
+        subprocess.run(["docker", "cp", f"{container}:{container_path}", dst],
+                       check=True, capture_output=True, text=True)
+    try:
+        os.chmod(dst, 0o644)
+    except OSError:
+        pass
+    return dst
 
 
 class StudioBackend(ABC):
@@ -49,10 +72,8 @@ class LiveBackend(StudioBackend):
     def _comfy_to(self, fn: str, sub: str, out_stem: str) -> str:
         src = os.path.join(config.OUTPUT_ROOT, sub, fn)
         ext = os.path.splitext(fn)[1] or ".bin"
-        dst = out_stem + ext
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copyfile(src, dst)
-        return dst
+        cpath = "/output/" + (f"{sub}/{fn}" if sub else fn)
+        return _pull(src, out_stem + ext, container=config.COMFY_CONTAINER, container_path=cpath)
 
     def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem) -> str:
         wf = _load_workflow("wan22_rapid.json")
@@ -92,10 +113,8 @@ class LiveBackend(StudioBackend):
         if not name:
             raise RuntimeError(f"TTS returned no wav: {r}")
         src = os.path.join(config.OUTPUT_ROOT, name)
-        dst = out_stem + ".wav"
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copyfile(src, dst)
-        return dst
+        return _pull(src, out_stem + ".wav",
+                     container=config.TTS_CONTAINER, container_path="/output/" + name)
 
 
 # ---------------------------------------------------------------------- synthetic
