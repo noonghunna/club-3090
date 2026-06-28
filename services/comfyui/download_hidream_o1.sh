@@ -16,6 +16,9 @@
 #   models/diffusion_models/HiDream-O1-Image-Dev-2604-FP8/{model.safetensors,config.json,...}
 set -uo pipefail
 
+# Resolve COMFYUI_MODELS_DIR from MODEL_DIR/.env so a standalone run matches
+# setup-ai-studio.sh instead of falling back to the dev-rig /mnt path (issue #503).
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/comfyui-paths.sh"
 ROOT="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
 DEST="$ROOT/diffusion_models/HiDream-O1-Image-Dev-2604-FP8"   # folder name must match the loader's canonical choice
 REPO="drbaph/HiDream-O1-Image-Dev-2604-FP8"

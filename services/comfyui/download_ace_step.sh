@@ -8,6 +8,9 @@
 # Idempotent: skips if already on disk.  Run:  ./download_ace_step.sh
 set -uo pipefail
 
+# Resolve COMFYUI_MODELS_DIR from MODEL_DIR/.env so a standalone run matches
+# setup-ai-studio.sh instead of falling back to the dev-rig /mnt path (issue #503).
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/comfyui-paths.sh"
 ROOT="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 command -v hf >/dev/null 2>&1 || { echo "ERROR: 'hf' (huggingface_hub CLI) not found. pip install -U huggingface_hub" >&2; exit 1; }

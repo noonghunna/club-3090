@@ -12,6 +12,9 @@
 set -uo pipefail
 
 # Mirrors the step-voice compose default (${STEP_AUDIO_DIR:-/mnt/models/comfyui/models/Step-Audio}).
+# Resolve COMFYUI_MODELS_DIR from MODEL_DIR/.env so a standalone run matches
+# setup-ai-studio.sh instead of falling back to the dev-rig /mnt path (issue #503).
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/comfyui-paths.sh"
 ROOT="${STEP_AUDIO_DIR:-${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}/Step-Audio}"
 LOG_TS() { date +%H:%M:%S; }
 log()  { echo "[$(LOG_TS)] $*"; }
