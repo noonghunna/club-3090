@@ -197,6 +197,28 @@ class TestKeyframeWorkflowWiring(unittest.TestCase):
             self.assertIn("4242", blob, f"{lane}: seed not injected")
 
 
+class TestComfyOutputSelection(unittest.TestCase):
+    """pick_output prefers a saved `output` artifact over a `temp` preview — the real
+    HiDream history (a temp .jpg from the sampler + a SaveImage .png to /output)."""
+
+    def test_prefers_output_over_temp_preview(self):
+        from .. import comfy
+        outputs = {
+            "sampler": {"images": [{"filename": "hidream_o1_abc.jpg", "subfolder": "", "type": "temp"}]},
+            "save": {"images": [{"filename": "studio_hidream_00011_.png", "subfolder": "", "type": "output"}]},
+        }
+        self.assertEqual(comfy.pick_output(outputs, "image"), ("studio_hidream_00011_.png", ""))
+
+    def test_falls_back_to_only_candidate(self):
+        from .. import comfy
+        outputs = {"save": {"images": [{"filename": "chroma_1.png", "subfolder": "", "type": "output"}]}}
+        self.assertEqual(comfy.pick_output(outputs, "image"), ("chroma_1.png", ""))
+
+    def test_none_when_no_match(self):
+        from .. import comfy
+        self.assertIsNone(comfy.pick_output({}, "image"))
+
+
 class TestStackInManifest(unittest.TestCase):
     @unittest.skipUnless(_HAVE_FFMPEG, "ffmpeg/ffprobe required")
     def test_explicit_stack_recorded(self):
