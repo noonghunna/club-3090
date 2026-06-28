@@ -1,0 +1,67 @@
+# Lane capability registry — "what the machine can do."
+#
+# The planner chooses lanes ONLY from here (for video, only the production's pinned
+# `project.video_lane`). The executor + validators are AUTHORITATIVE: a plan that
+# violates a contract is repaired (validator-repair loop) or rejected — never
+# executed as-is. A skill/plan may guide creativity, but it never overrides this.
+#
+# v0b-core lanes: wan (video) · kokoro (narration) · ace-step (music).
+# Image lanes (hidream/chroma/krea/ideogram) + `image_policy` roles + asset
+# dependencies land in v0b-images — NOT available to the planner yet.
+
+version: 1
+
+video_lanes:
+  wan:
+    kind: video
+    supports: [t2v, i2v]            # i2v exists but v0b-core plans t2v only
+    inputs:
+      t2v: [prompt]
+      i2v: [prompt, start_image]
+    outputs: [mp4]
+    audio_behavior: none           # Wan clips are SILENT (no synced audio)
+    native_fps: 16
+    native_window_seconds: 5.06    # 81 frames @ 16 fps — one window
+    duration_limits:
+      min_seconds: 1
+      max_seconds: 5.1             # one native window; longer needs chaining (v1)
+    prompt_format: prose
+    resource_class: dual_card_dit  # DisTorch DiT across both 3090s
+    validators: [non_empty, duration, no_audio_expected]
+    when_to_use: "the one pinned video lane for a whole production"
+    avoid_when: "you need synced native audio in the clip, or a single shot > ~5 s"
+
+audio_lanes:
+  kokoro:
+    kind: narration
+    inputs: [text]
+    outputs: [wav]
+    audio_behavior: voice
+    prompt_format: plain_text      # narration sentences, NOT a generation prompt
+    words_per_second: 2.5          # rough, for VO-length budgeting (v0b VO-first)
+    resource_class: cpu
+    validators: [non_empty, audio_present]
+    when_to_use: "spoken narration / voiceover"
+    avoid_when: "you need a specific cloned voice (that is step-voice, premium, on-demand)"
+
+  ace-step:
+    kind: music
+    inputs: [tags, lyrics, seconds]
+    outputs: [mp3]
+    audio_behavior: music
+    prompt_format: tags_plus_lyrics  # comma-tags + [verse]/[chorus] structure, or [instrumental]
+    duration_limits:
+      min_seconds: 5
+      max_seconds: 240
+    resource_class: gpu0
+    validators: [non_empty, audio_present]
+    when_to_use: "one music bed under the whole piece"
+    avoid_when: "you need a specific licensed track"
+
+# Production-level rules the planner MUST honor (enforced by schema.validate()).
+rules:
+  - "Pin ONE video_lane for the whole production (project.video_lane); EVERY shot uses it."
+  - "Each shot: id, mode=t2v, target_seconds (<= the lane's native window), prompt_intent, optional narration."
+  - "Image lanes / asset dependencies are NOT available in v0b-core."
+  - "The timeline lists every shot exactly once, in play order, each with transition_in (dissolve|cut)."
+  - "If an idea exceeds a lane limit, ADAPT the idea (shorter shot, split into two) — never break the limit."

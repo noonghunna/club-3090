@@ -12,6 +12,9 @@ import os
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://localhost:8188").rstrip("/")
 TTS_URL = os.environ.get("TTS_URL", "http://localhost:8192").rstrip("/")
 VOICE_URL = os.environ.get("VOICE_URL", "http://localhost:8193").rstrip("/")
+# The director LLM (qwen3.5-4b-uncensored on llama.cpp) — the v0b planner.
+DIRECTOR_URL = os.environ.get("DIRECTOR_URL", "http://localhost:8090/v1").rstrip("/")
+DIRECTOR_MODEL = os.environ.get("DIRECTOR_MODEL", "qwen3.5-4b-uncensored")
 
 # ComfyUI's host output root (mounted at /output in the studio containers). All
 # lanes write here; we scope productions under `<root>/productions/<job_id>/`.

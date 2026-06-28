@@ -7,6 +7,8 @@ shows up as `zero_manual_restarts=False` in the summary).
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 
 from . import assemble as _assemble
@@ -38,6 +40,7 @@ def run_production(
     job_id: str,
     now_iso: str,
     productions_dir: str = config.PRODUCTIONS_DIR,
+    extra_artifacts: list = (),
 ) -> dict:
     backend = get_backend(backend_name)
     d = plan.delivery
@@ -56,6 +59,10 @@ def run_production(
         workflow_versions=_workflow_versions(),
         seeds=[s.seed for s, _ in pairs] + ([plan.music.seed] if plan.music else []),
     )
+    for a in (extra_artifacts or []):   # planner llm_prompt provenance (v0b)
+        man.add(a)
+    with open(os.path.join(prod_dir, "production.json"), "w") as f:
+        json.dump(dataclasses.asdict(plan), f, indent=2)
 
     # -- Phase 1: video production ----------------------------------------
     clip_paths: dict[str, str] = {}
