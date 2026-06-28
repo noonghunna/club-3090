@@ -1,0 +1,29 @@
+{
+  "schema_version": "ProductionPlanV1",
+  "project": {
+    "title": "Lighthouses — Chain",
+    "tone": "calm",
+    "target_seconds": 15,
+    "video_lane": "wan",
+    "continuity": "chain"
+  },
+  "delivery": { "aspect": "16:9", "width": 832, "height": 480, "fps": 16, "loudness_lufs": -14.0 },
+  "shots": [
+    { "id": "s1", "lane": "wan", "mode": "t2v", "target_seconds": 5,
+      "prompt_intent": "dawn over a rocky cape, a white lighthouse silhouette, gentle swell, archival film grade, muted maritime palette",
+      "narration": "In 1716 the first American lighthouse rose.", "seed": 12345 },
+    { "id": "s2", "lane": "wan", "mode": "i2v", "start_from": "prev_last_frame", "target_seconds": 5,
+      "prompt_intent": "the camera drifts inward toward a rotating Fresnel lens glowing amber",
+      "narration": "Its lens threw a beam for twenty miles.", "seed": 23456 },
+    { "id": "s3", "lane": "wan", "mode": "i2v", "start_from": "prev_last_frame", "target_seconds": 5,
+      "prompt_intent": "the beam sweeps out across a calm sea at dusk in light fog",
+      "narration": "Today they stand automated and quiet.", "seed": 34567 }
+  ],
+  "music": { "lane": "ace-step", "tags": "ambient, reflective, cinematic, soft piano, instrumental", "lyrics": "[instrumental]", "seed": 99 },
+  "assembly": { "transition_seconds": 0.6, "duck_db": 6 },
+  "timeline": [
+    { "clip": "s1", "narration_offset": 0.2, "music_level_db": -18, "transition_in": "dissolve" },
+    { "clip": "s2", "narration_offset": 0.0, "music_level_db": -18, "transition_in": "dissolve" },
+    { "clip": "s3", "narration_offset": 0.0, "music_level_db": -18, "transition_in": "dissolve" }
+  ]
+}

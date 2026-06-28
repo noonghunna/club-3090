@@ -17,7 +17,8 @@ class EnsureError(RuntimeError):
 
 
 VIDEO_LANES = {"wan", "ltx", "sulphur", "10eros"}
-COMFY_LANES = VIDEO_LANES | {"ace-step", "image"}
+IMAGE_LANES = {"chroma", "hidream", "krea", "ideogram", "z-image"}
+COMFY_LANES = VIDEO_LANES | IMAGE_LANES | {"ace-step", "image"}
 
 
 def _evict_voice() -> None:

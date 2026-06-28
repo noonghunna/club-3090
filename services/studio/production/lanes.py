@@ -27,6 +27,10 @@ def _load_workflow(name: str) -> dict:
         return json.load(f)
 
 
+# image lane -> ComfyUI workflow (hero keyframes / reference stills, v0b-images)
+_IMAGE_WORKFLOWS = {"chroma": "chroma1_hd.json"}
+
+
 def _pull(src_host: str, dst: str, *, container: str, container_path: str) -> str:
     """Copy a service-written artifact into the production tree.
 
@@ -54,7 +58,12 @@ class StudioBackend(ABC):
 
     @abstractmethod
     def render_video(self, *, prompt: str, width: int, height: int, frames: int,
-                     steps: int, seed: int, fps: int, out_stem: str) -> str: ...
+                     steps: int, seed: int, fps: int, out_stem: str,
+                     mode: str = "t2v", start_image: str | None = None) -> str: ...
+
+    @abstractmethod
+    def generate_image(self, *, prompt: str, width: int, height: int, seed: int,
+                       lane: str, out_stem: str) -> str: ...
 
     @abstractmethod
     def make_music(self, *, tags: str, lyrics: str, seconds: float, steps: int,
@@ -75,16 +84,61 @@ class LiveBackend(StudioBackend):
         cpath = "/output/" + (f"{sub}/{fn}" if sub else fn)
         return _pull(src, out_stem + ext, container=config.COMFY_CONTAINER, container_path=cpath)
 
-    def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem) -> str:
-        wf = _load_workflow("wan22_rapid.json")
+    def _upload_image(self, path: str) -> str:
+        """Upload a host image to ComfyUI (/upload/image); return its name."""
+        with open(path, "rb") as f:
+            raw = f.read()
+        ext = (os.path.splitext(path)[1].lstrip(".") or "png")
+        fname = "studio_prod_input." + ext
+        bnd = "----studioprodboundary7e3"
+        body = (b"--" + bnd.encode() + b"\r\n"
+                b'Content-Disposition: form-data; name="image"; filename="' + fname.encode() + b'"\r\n'
+                b"Content-Type: image/" + ext.encode() + b"\r\n\r\n" + raw + b"\r\n"
+                b"--" + bnd.encode() + b"\r\n"
+                b'Content-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n'
+                b"--" + bnd.encode() + b"--\r\n")
+        req = urllib.request.Request(config.COMFYUI_URL + "/upload/image", data=body,
+                                     headers={"Content-Type": "multipart/form-data; boundary=" + bnd})
+        return json.load(urllib.request.urlopen(req, timeout=60)).get("name", fname)
+
+    def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem,
+                     mode="t2v", start_image=None) -> str:
+        if mode == "i2v":
+            if not start_image:
+                raise RuntimeError("i2v render requires a start_image")
+            wf = _load_workflow("wan22_rapid_i2v.json")
+            wf["loadimage"]["inputs"]["image"] = self._upload_image(start_image)
+            wf["resize"]["inputs"]["width"] = width
+            wf["resize"]["inputs"]["height"] = height
+            wf["pos"]["inputs"]["text"] = prompt
+            wf["i2v"]["inputs"]["width"] = width
+            wf["i2v"]["inputs"]["height"] = height
+            wf["i2v"]["inputs"]["length"] = frames
+            wf["ksampler"]["inputs"]["steps"] = steps
+            wf["ksampler"]["inputs"]["seed"] = seed
+            wf["video"]["inputs"]["fps"] = float(fps)
+        else:
+            wf = _load_workflow("wan22_rapid.json")
+            wf["pos"]["inputs"]["text"] = prompt
+            wf["latent"]["inputs"]["width"] = width
+            wf["latent"]["inputs"]["height"] = height
+            wf["latent"]["inputs"]["length"] = frames
+            wf["ksampler"]["inputs"]["steps"] = steps
+            wf["ksampler"]["inputs"]["seed"] = seed
+            wf["video"]["inputs"]["fps"] = float(fps)
+        fn, sub = comfy.await_output(comfy.submit(wf), "video")
+        return self._comfy_to(fn, sub, out_stem)
+
+    def generate_image(self, *, prompt, width, height, seed, lane, out_stem) -> str:
+        wf_name = _IMAGE_WORKFLOWS.get(lane)
+        if not wf_name:
+            raise RuntimeError(f"no image workflow for lane {lane!r} (have {list(_IMAGE_WORKFLOWS)})")
+        wf = _load_workflow(wf_name)
         wf["pos"]["inputs"]["text"] = prompt
         wf["latent"]["inputs"]["width"] = width
         wf["latent"]["inputs"]["height"] = height
-        wf["latent"]["inputs"]["length"] = frames
-        wf["ksampler"]["inputs"]["steps"] = steps
-        wf["ksampler"]["inputs"]["seed"] = seed
-        wf["video"]["inputs"]["fps"] = float(fps)
-        fn, sub = comfy.await_output(comfy.submit(wf), "video")
+        wf["noise"]["inputs"]["noise_seed"] = seed   # chroma sampler graph
+        fn, sub = comfy.await_output(comfy.submit(wf), "image")
         return self._comfy_to(fn, sub, out_stem)
 
     def make_music(self, *, tags, lyrics, seconds, steps, cfg, seed, out_stem) -> str:
@@ -127,14 +181,32 @@ class SyntheticBackend(StudioBackend):
     """
     name = "synthetic"
 
-    def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem) -> str:
+    def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem,
+                     mode="t2v", start_image=None) -> str:
         dur = max(0.1, frames / float(fps or 16))
-        colour = "0x%06x" % (abs(hash((prompt, seed))) % 0xFFFFFF)
         dst = out_stem + ".mp4"
         os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if mode == "i2v" and start_image:
+            # synthetic i2v: a clip that literally BEGINS from the start frame (a
+            # static hold), so chaining/hero continuity is visibly continuous offline
+            # too — and the asset-DAG ordering is exercised for real.
+            sh(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", start_image,
+                "-t", f"{dur:.3f}", "-r", str(fps),
+                "-vf", f"scale={width}:{height},format=yuv420p",
+                "-c:v", "libx264", "-an", dst])
+        else:
+            colour = "0x%06x" % (abs(hash((prompt, seed))) % 0xFFFFFF)
+            sh(["ffmpeg", "-y", "-v", "error",
+                "-f", "lavfi", "-i", f"color=c={colour}:s={width}x{height}:r={fps}",
+                "-t", f"{dur:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", dst])
+        return dst
+
+    def generate_image(self, *, prompt, width, height, seed, lane, out_stem) -> str:
+        colour = "0x%06x" % (abs(hash((prompt, seed, "img"))) % 0xFFFFFF)
+        dst = out_stem + ".png"
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         sh(["ffmpeg", "-y", "-v", "error",
-            "-f", "lavfi", "-i", f"color=c={colour}:s={width}x{height}:r={fps}",
-            "-t", f"{dur:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", dst])
+            "-f", "lavfi", "-i", f"color=c={colour}:s={width}x{height}", "-frames:v", "1", dst])
         return dst
 
     def make_music(self, *, tags, lyrics, seconds, steps, cfg, seed, out_stem) -> str:

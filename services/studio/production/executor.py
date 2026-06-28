@@ -16,7 +16,7 @@ from . import config, ensure, validators
 from .lanes import get_backend
 from .manifest import Artifact, Manifest
 from .schema import ProductionPlanV1
-from .util import sha256_file, sha256_text
+from .util import last_frame, sha256_file, sha256_text
 
 WAN_STEPS = 4          # distilled AllInOne schedule (studio_pipe default)
 MUSIC_STEPS = 50
@@ -64,20 +64,53 @@ def run_production(
     with open(os.path.join(prod_dir, "production.json"), "w") as f:
         json.dump(dataclasses.asdict(plan), f, indent=2)
 
+    # -- Phase 0: pre-production (generate image assets, v0b-images) -------
+    # The asset-DAG resolves here: anything a shot's start_from references must be
+    # produced BEFORE the video that consumes it.
+    asset_paths: dict[str, str] = {}
+    for at in plan.asset_tasks:
+        ensure.ensure_lane(at.lane, backend=backend.name)
+        img = backend.generate_image(
+            prompt=at.prompt, width=at.width, height=at.height, seed=at.seed,
+            lane=at.lane, out_stem=os.path.join(prod_dir, "assets", at.id),
+        )
+        asset_paths[at.id] = img
+        ipr = validators.ffprobe(img)
+        man.add(Artifact(
+            id=f"asset.{at.id}", type="media", role=at.role, path=rel(img), lane=at.lane,
+            seed=at.seed, prompt_hash=sha256_text(at.prompt),
+            width=ipr.width, height=ipr.height,
+            validation=validators.run_all(["non_empty", "has_video"], img),
+        ))
+
     # -- Phase 1: video production ----------------------------------------
+    vlane = plan.project.video_lane
     clip_paths: dict[str, str] = {}
-    for shot, _t in pairs:
-        ensure.ensure_lane("wan", backend=backend.name)
+    prev_clip = None
+    for shot, _t in pairs:        # pairs is in play (timeline) order — prev_last_frame relies on it
+        mode, start_image = "t2v", None
+        if shot.start_from == "prev_last_frame":
+            if prev_clip is None:
+                raise RuntimeError(f"shot {shot.id}: start_from 'prev_last_frame' but no previous clip")
+            start_image = last_frame(prev_clip, os.path.join(prod_dir, "assets", f"{shot.id}_start.png"))
+            mode = "i2v"
+        elif shot.start_from:
+            start_image = asset_paths.get(shot.start_from)
+            if not start_image:
+                raise RuntimeError(f"shot {shot.id}: start_from {shot.start_from!r} was not generated")
+            mode = "i2v"
+        ensure.ensure_lane(vlane, backend=backend.name)
         frames = max(1, round(shot.target_seconds * d.fps))
         path = backend.render_video(
             prompt=shot.prompt_intent, width=d.width, height=d.height, frames=frames,
-            steps=WAN_STEPS, seed=shot.seed, fps=d.fps,
+            steps=WAN_STEPS, seed=shot.seed, fps=d.fps, mode=mode, start_image=start_image,
             out_stem=os.path.join(prod_dir, "shots", shot.id),
         )
         clip_paths[shot.id] = path
+        prev_clip = path
         pr = validators.ffprobe(path)
         man.add(Artifact(
-            id=f"shot.{shot.id}", type="media", role="shot", path=rel(path), lane="wan",
+            id=f"shot.{shot.id}", type="media", role="shot", path=rel(path), lane=vlane,
             seed=shot.seed, prompt_hash=sha256_text(shot.prompt_intent),
             width=pr.width, height=pr.height, duration=pr.duration,
             validation=validators.run_all(shot.validators, path, target_seconds=shot.target_seconds),
