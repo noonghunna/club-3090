@@ -93,6 +93,41 @@ class TestContinuityE2E(unittest.TestCase):
             self.assertIn("hero_keyframe", roles)
 
 
+class TestStoryboardMode(unittest.TestCase):
+    def test_storyboard_plan_valid(self):
+        p = ProductionPlanV1.from_dict(_load("lighthouse_storyboard.json"))
+        self.assertEqual(p.project.continuity, "storyboard")
+        # one keyframe per shot, each shot i2v from ITS OWN keyframe
+        self.assertEqual([a.id for a in p.asset_tasks], ["kf_s1", "kf_s2", "kf_s3"])
+        self.assertEqual([s.start_from for s in p.shots], ["kf_s1", "kf_s2", "kf_s3"])
+        self.assertTrue(all(s.mode == "i2v" for s in p.shots))
+
+    def test_planner_authors_storyboard(self):
+        from ..planner import plan_from_brief
+        from ..registry import load
+        from .test_v0b import GOOD_PLAN, StubLLM
+        plan, _ = plan_from_brief("b", load(), llm=StubLLM(["t", GOOD_PLAN]), continuity="storyboard")
+        self.assertEqual(plan.project.continuity, "storyboard")
+        # GOOD_PLAN has 2 shots -> 2 per-shot keyframes; each shot starts from its own
+        self.assertEqual(len(plan.asset_tasks), len(plan.shots))
+        for s in plan.shots:
+            self.assertEqual(s.start_from, f"kf_{s.id}")
+            self.assertEqual(s.mode, "i2v")
+        # shared style bible prefixes every keyframe prompt
+        self.assertTrue(all("cohesive cinematic style" in a.prompt for a in plan.asset_tasks))
+
+    @unittest.skipUnless(_HAVE_FFMPEG, "ffmpeg/ffprobe required")
+    def test_storyboard_renders_per_shot_keyframes(self):
+        from ..executor import run_production
+        plan = ProductionPlanV1.from_dict(_load("lighthouse_storyboard.json"))
+        with tempfile.TemporaryDirectory() as td:
+            s = run_production(plan, backend_name="synthetic", job_id="sb",
+                               now_iso="2026-01-01T00:00:00Z", productions_dir=td)
+            self.assertTrue(s["manifest"]["exit_criteria"]["all_validators_pass"])
+            for kf in ("kf_s1", "kf_s2", "kf_s3"):
+                self.assertTrue(os.path.isfile(os.path.join(td, "sb", "assets", kf + ".png")))
+
+
 class TestPlannerContinuity(unittest.TestCase):
     """The planner deterministically wires continuity (4B stays creative)."""
     def setUp(self):

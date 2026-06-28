@@ -103,12 +103,38 @@ def apply_continuity(data: dict, mode: str, *, image_lane: str = "chroma") -> di
     flow. `chain` = each shot i2v from the previous last frame; `hero` = all shots
     i2v from one generated hero keyframe; `none` = leave as authored (t2v).
     """
-    if mode not in ("none", "chain", "hero"):
+    if mode not in ("none", "chain", "hero", "storyboard"):
         raise ValueError(f"unknown continuity {mode!r}")
     if mode == "none":
         return data
     shots = data.get("shots") or []
-    data.setdefault("project", {})["continuity"] = mode
+    proj = data.setdefault("project", {})
+    proj["continuity"] = mode
+    deliv = data.get("delivery", {})
+    iw, ih = deliv.get("width", 832), deliv.get("height", 480)
+    if mode == "storyboard":
+        # a shared style bible + ONE deliberate keyframe per shot (each shot i2v from
+        # its OWN keyframe). Shared style/palette across keyframes -> coherence; the
+        # per-shot prompt -> deliberate per-shot subject. Threads between hero
+        # (every shot orbits one image) and chain (drifts).
+        tone = (proj.get("tone") or "").strip()
+        bible = ", ".join(filter(None, [
+            "cohesive cinematic style", "consistent palette and lighting",
+            "soft film grade", tone]))
+        proj["image_policy"] = {"storyboard_keyframe_lane": image_lane}
+        tasks = []
+        for s in shots:
+            kf = f"kf_{s.get('id', 'x')}"
+            tasks.append({
+                "id": kf, "role": "storyboard_keyframe", "lane": image_lane,
+                "prompt": f"{bible}. {s.get('prompt_intent', '')}".strip(),
+                "seed": 7,            # shared seed across keyframes -> stronger style coherence
+                "width": iw, "height": ih,
+            })
+            s["mode"] = "i2v"
+            s["start_from"] = kf
+        data["asset_tasks"] = tasks
+        return data
     if mode == "chain":
         for i, s in enumerate(shots):
             if i == 0:

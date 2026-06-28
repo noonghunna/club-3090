@@ -142,9 +142,10 @@ class ProductionPlanV1:
         if len(ids) != len(set(ids)):
             raise PlanError(f"duplicate shot ids: {ids}")
 
-        if self.project.continuity not in ("none", "chain", "hero"):
+        if self.project.continuity not in ("none", "chain", "hero", "storyboard"):
             raise PlanError(
-                f"project.continuity must be none|chain|hero (got {self.project.continuity!r})"
+                f"project.continuity must be none|chain|hero|storyboard "
+                f"(got {self.project.continuity!r})"
             )
         asset_ids = {a.id for a in self.asset_tasks}
         if len(asset_ids) != len(self.asset_tasks):

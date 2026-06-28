@@ -1,0 +1,41 @@
+{
+  "schema_version": "ProductionPlanV1",
+  "project": {
+    "title": "Lighthouses — Storyboard",
+    "tone": "calm",
+    "target_seconds": 15,
+    "video_lane": "wan",
+    "continuity": "storyboard",
+    "image_policy": { "storyboard_keyframe_lane": "chroma" }
+  },
+  "delivery": { "aspect": "16:9", "width": 832, "height": 480, "fps": 16, "loudness_lufs": -14.0 },
+  "asset_tasks": [
+    { "id": "kf_s1", "role": "storyboard_keyframe", "lane": "chroma",
+      "prompt": "cohesive cinematic style, consistent muted maritime palette, soft archival film grade, calm. a white lighthouse on a rocky cape at dawn, gentle swell",
+      "seed": 7, "width": 832, "height": 480 },
+    { "id": "kf_s2", "role": "storyboard_keyframe", "lane": "chroma",
+      "prompt": "cohesive cinematic style, consistent muted maritime palette, soft archival film grade, calm. inside the lamp room, a rotating Fresnel lens glowing amber",
+      "seed": 7, "width": 832, "height": 480 },
+    { "id": "kf_s3", "role": "storyboard_keyframe", "lane": "chroma",
+      "prompt": "cohesive cinematic style, consistent muted maritime palette, soft archival film grade, calm. the lighthouse beam sweeping across a calm sea at dusk in light fog",
+      "seed": 7, "width": 832, "height": 480 }
+  ],
+  "shots": [
+    { "id": "s1", "lane": "wan", "mode": "i2v", "start_from": "kf_s1", "target_seconds": 5,
+      "prompt_intent": "slow push toward the lighthouse at dawn, gentle swell",
+      "narration": "In 1716 the first American lighthouse rose.", "seed": 12345 },
+    { "id": "s2", "lane": "wan", "mode": "i2v", "start_from": "kf_s2", "target_seconds": 5,
+      "prompt_intent": "the Fresnel lens turns, throwing amber light around the lamp room",
+      "narration": "Its lens threw a beam for twenty miles.", "seed": 23456 },
+    { "id": "s3", "lane": "wan", "mode": "i2v", "start_from": "kf_s3", "target_seconds": 5,
+      "prompt_intent": "the beam sweeps across the dark sea at dusk",
+      "narration": "Today they stand automated and quiet.", "seed": 34567 }
+  ],
+  "music": { "lane": "ace-step", "tags": "ambient, reflective, cinematic, soft piano, instrumental", "lyrics": "[instrumental]", "seed": 99 },
+  "assembly": { "transition_seconds": 0.6, "duck_db": 6 },
+  "timeline": [
+    { "clip": "s1", "narration_offset": 0.2, "music_level_db": -18, "transition_in": "dissolve" },
+    { "clip": "s2", "narration_offset": 0.0, "music_level_db": -18, "transition_in": "dissolve" },
+    { "clip": "s3", "narration_offset": 0.0, "music_level_db": -18, "transition_in": "dissolve" }
+  ]
+}
