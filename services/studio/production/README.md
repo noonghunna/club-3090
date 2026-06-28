@@ -30,13 +30,13 @@ actually render, and **recorded in the manifest** (`stack` field). The lane pin 
 | Dimension | Default | Options (render **today**) | Roadmap (declared, not yet wired) |
 |---|---|---|---|
 | video lane | `wan` | `wan` | `ltx` · `sulphur` · `10eros` (LTX-family checkpoint-swap graph not yet ported to the executor) |
-| keyframe lane | `chroma` | `chroma` ✅ · `hidream` ✅ · `zimage` · `krea` | `ideogram` (needs structured JSON, not prose → a title-card lane, not a continuity keyframe lane) |
+| keyframe lane | `chroma` | `chroma` ✅ · `zimage` ✅ · `krea` ✅ · `hidream` ✅ | `ideogram` (needs structured JSON, not prose → a title-card lane, not a continuity keyframe lane) |
 | continuity | `storyboard` | `storyboard` · `hero` · `chain` · `none` | — |
 | audio | narration + music | `--no-music` · `--no-narration` · `--voice <id>` | — |
 
-✅ = live-validated end-to-end; `zimage`/`krea` are wired + structurally guarded but their
-first live render is still pending (HiDream's live A/B caught a dim-floor + a temp/output
-quirk, so the others get one real render each before they're marked ✅).
+✅ = all four keyframe lanes live-validated end-to-end (noir/candle A/B, 2026-06-28).
+HiDream renders at native 2560×1440 (16:9, snapped up from a /32 clamp); chroma/zimage/krea
+render at the requested 832×480. The Wan i2v resize downsizes each keyframe to the clip dims.
 
 A choice the executor can't honour (unknown or roadmap lane) **fails fast** with a clear
 message + the renderable set — an operator is never handed a choice that errors at render.
