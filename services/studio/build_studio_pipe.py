@@ -109,7 +109,7 @@ PIPE = r'''
 """
 title: Studio (text/image -> video · image · music)
 author: club-3090
-description: Type a rough idea — the studio director (qwen) crafts it and generates. Video: LTX (video+audio) or Sulphur/10Eros (uncensored, text->video or attach an image, with optional voiceover) or Wan2.2 (uncensored, text->video). Image: HiDream-O1 (top quality), Ideogram-4 (design/logo/photo/text), Chroma (uncensored), Z-Image (uncensored, fast), or Krea 2 (aesthetic). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Voice: Step-Audio-EditX (premium cloned voice + emotion/style). Refine anytime by just saying what to change.
+description: Type a rough idea — the studio director (qwen) crafts it and generates. Production: type a brief and the 4B director plans + renders a whole short film (keyframes → video → narration → music → assembly into one MP4) — pick the stack (video/keyframe model, continuity, music) in the lane's ⚙️ valves or leave it on Auto. Video: LTX (video+audio) or Sulphur/10Eros (uncensored, text->video or attach an image, with optional voiceover) or Wan2.2 (uncensored, text->video). Image: HiDream-O1 (top quality), Ideogram-4 (design/logo/photo/text), Chroma (uncensored), Z-Image (uncensored, fast), or Krea 2 (aesthetic). Music: ACE-Step (songs + instrumentals). SFX: Stable Audio (sound effects + ambient). Voice: Step-Audio-EditX (premium cloned voice + emotion/style). Refine anytime by just saying what to change.
 required_open_webui_version: 0.5.0
 version: 0.14.0
 """
@@ -187,11 +187,24 @@ class Pipe:
         voice_url: str = Field(default="http://host.docker.internal:8193", description="Studio premium-voice service (Step-Audio-EditX, isolated container, transformers 4.53.3). Zero-shot clone + emotion/style editing. GPU — bring up on demand (docker compose -f services/studio/step-voice/docker-compose.yml up -d). If unreachable, the voice lane errors.")
         voice_reference: str = Field(default="Narrator.wav", description="Default reference voice the lane clones — a bundled sample name (Narrator.wav / Narrator-UK.wav / Pirates.wav) or an absolute path inside the service. Replace with your own 10–30 s clean clip to clone your voice.")
         hide_unavailable_lanes: bool = Field(default=True, description="Only list lanes whose backend is currently reachable — ComfyUI (:8188) for every media lane, the voice service (:8193) for the voice lane. When the ai-studio scene is down, the Studio lanes drop out of the OWUI model picker instead of listing-but-erroring. Set false to always list all lanes regardless of backend state.")
+        # ── Production lane (the Director: brief → planned → finished film) ──────
+        production_url: str = Field(default="http://host.docker.internal:8195", description="Studio Production service (the host-side wrapper around the 4B director + executor). The 🎬 Production lane is a thin client over it; gated by /produce/health. Bring it up on the host: python3 -m services.studio.production.server")
+        production_timeout_s: int = Field(default=1800, description="Max wait for a production to finish (a full film = keyframes + i2v shots + narration + music + assembly; 15–25 min is normal). The lane polls progress until done / error / this timeout.")
+        production_shots: int = Field(default=3, description="Target shot count the director plans the brief into.")
+        # Two-level UX: leave these 'auto' for the visible default stack (Wan · Chroma ·
+        # storyboard), or PIN one to override. The director plans shot content within the
+        # chosen stack — it never silently picks the video/image model.
+        production_video_lane: str = Field(default="auto", description="Video model for every shot. 'auto' = wan (renders today). ltx/sulphur/10eros are roadmap (not yet wired in the production executor — use the interactive video lanes for those).")
+        production_keyframe_lane: str = Field(default="auto", description="Image model for continuity keyframes. 'auto' = chroma. Options: chroma · zimage · krea · hidream. (Ideogram is a title-card/design lane, not a continuity keyframe lane.)")
+        production_continuity: str = Field(default="storyboard", description="storyboard (per-shot keyframes + shared style bible, DEFAULT) · hero (one shared keyframe) · chain (i2v from prev frame) · none (independent t2v).")
+        production_music: bool = Field(default=True, description="Add an ACE-Step music bed under the film. Off = narration + visuals only.")
 
     # Lane catalog — (id, picker label, backend that must be live to serve it).
     #   "comfy" → ComfyUI (:8188), gates every image/video/music/SFX lane.
     #   "voice" → Step-Audio-EditX (:8193), an on-demand service, gates the voice lane.
+    #   "production" → the Production service (:8195), gates the Director lane.
     _LANES = [
+        ("production", "\U0001F3AC Studio · Production (Director · brief → finished film)",         "production"),
         ("ltx",     "\U0001F3AC Studio · Video (LTX-2.3 · +synced audio · text or image)",        "comfy"),
         ("sulphur", "\U0001F513 Studio · Video (Sulphur · uncensored · text or image)",           "comfy"),
         ("10eros",  "\U0001F513 Studio · Video (10Eros · uncensored · text or image)",            "comfy"),
@@ -232,6 +245,7 @@ class Pipe:
         self._live_cache = {
             "comfy": self._alive(self.valves.comfyui_url, "/system_stats"),
             "voice": self._alive(self.valves.voice_url, "/"),
+            "production": self._alive(self.valves.production_url, "/produce/health"),
         }
         self._live_ts = now
         return self._live_cache
@@ -749,6 +763,107 @@ class Pipe:
         if ("### Task:" in _lastu or "### Chat History:" in _lastu or "### Guidelines:" in _lastu
                 or "<chat_history>" in _lastu or "autocompletion" in _lastu.lower()):
             return ""   # OWUI internal task prompt, not a user generation request — do not render
+
+        # ── PRODUCTION LANE (the Director: brief → planned → finished film) ─────────────────────────
+        # plan-then-execute (NOT a live tool-loop): POST the brief + the operator-chosen stack to the
+        # Production service (:8195), then poll job progress and stream it. The 4B plans a
+        # ProductionPlanV1 and a deterministic executor runs keyframes → video → narration → music →
+        # assembly into one MP4. The stack (video/keyframe model, continuity, music) is chosen in the
+        # lane's ⚙️ valves — Auto by default, overridable — and never silently picked by the director.
+        if "production" in model:
+            loop = asyncio.get_event_loop()
+            brief = ""
+            for m in reversed(body.get("messages", [])):
+                if m.get("role") == "user":
+                    c = m.get("content")
+                    brief = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
+                             if isinstance(c, list) else (c or "").strip())
+                    break
+            if not brief:
+                return ("Type a brief and I'll plan + render the whole film — e.g. "
+                        "“make a 45s calm documentary about lighthouses”.\n\n"
+                        "I plan it (4B director), then run keyframes → video → narration → music → "
+                        "assembly into one MP4. Pick the stack in the lane's ⚙️ valves "
+                        "(video/keyframe model, continuity, music) or leave them on Auto.")
+            base_prod = self.valves.production_url.rstrip("/")
+            payload = {"brief": brief, "shots": int(self.valves.production_shots),
+                       "video_lane": self.valves.production_video_lane,
+                       "keyframe_lane": self.valves.production_keyframe_lane,
+                       "continuity": self.valves.production_continuity,
+                       "music": bool(self.valves.production_music)}
+
+            def _prod_post():
+                req = urllib.request.Request(base_prod + "/produce", data=json.dumps(payload).encode(),
+                                             headers={"Content-Type": "application/json"})
+                try:
+                    return 200, json.load(urllib.request.urlopen(req, timeout=30))
+                except urllib.error.HTTPError as e:
+                    try:
+                        return e.code, json.load(e)
+                    except Exception:
+                        return e.code, {"error": "HTTP " + str(e.code)}
+
+            await status("\U0001F3AC Director planning the production…")
+            try:
+                code, resp = await loop.run_in_executor(None, _prod_post)
+            except Exception as e:
+                await status("Failed", True)
+                return ("⚠️ Could not reach the Production service at " + base_prod +
+                        " — bring it up on the host: `python3 -m services.studio.production.server`\n\n" + str(e))
+            if code == 409:
+                await status("Busy", True)
+                return "⏳ A production is already running (one film at a time). Try again when it finishes."
+            if code != 200:
+                await status("Rejected", True)
+                rt = resp.get("renders_today") or {}
+                extra = ("\n\nRenders today — video: " + ", ".join(rt.get("video", [])) +
+                         " · keyframes: " + ", ".join(rt.get("keyframe", []))) if rt else ""
+                return "⚠️ " + str(resp.get("error", "stack rejected")) + extra
+            job_id = resp.get("job_id", "")
+            st = resp.get("stack", {})
+            stack_line = ("**Stack** — video: `" + str(st.get("video_lane")) + "` · keyframes: `" +
+                          str(st.get("keyframe_lane")) + "` · continuity: `" + str(st.get("continuity")) +
+                          "` · " + ("music on" if st.get("music") else "no music"))
+            deadline = time.time() + int(self.valves.production_timeout_s)
+            last_phase = ""
+            job = {}
+            while time.time() < deadline:
+                await asyncio.sleep(5)
+
+                def _prod_get():
+                    try:
+                        return json.load(urllib.request.urlopen(base_prod + "/job/" + job_id, timeout=30))
+                    except Exception:
+                        return {}
+
+                job = await loop.run_in_executor(None, _prod_get)
+                phase = job.get("phase", "")
+                pct = int(round(float(job.get("frac", 0.0)) * 100))
+                title = job.get("title") or "…"
+                if phase and phase != last_phase:
+                    await status("\U0001F3AC " + title + " — " + phase + " (" + str(pct) + "%)")
+                    last_phase = phase
+                if job.get("status") in ("done", "error"):
+                    break
+            if job.get("status") == "error":
+                await status("Failed", True)
+                return "⚠️ Production failed: " + str(job.get("error", "unknown error")) + "\n\n" + stack_line
+            if job.get("status") != "done":
+                await status("Timed out", True)
+                return ("⏱️ Production didn't finish within " + str(self.valves.production_timeout_s) +
+                        "s — it may still be rendering. Check the gallery: " +
+                        self.valves.browser_base.rstrip("/") + "/\n\n" + stack_line)
+            await status("Done", True)
+            base = self.valves.browser_base.rstrip("/")
+            gurl = base + "/" + str(job.get("gallery_url", "")).lstrip("/")
+            title = job.get("title") or "Production"
+            return ("**\U0001F3AC Studio · Production — " + title + "**\n\n" + stack_line + "\n\n"
+                    "<video src=\"" + gurl + "\" controls width=\"640\"></video>\n\n"
+                    "\U0001F3AC **[Open / download the film](" + gurl + ")**\n\n"
+                    "_The 4B director planned it, then the executor ran keyframes → video → narration "
+                    "→ music → assembly. Want changes? Adjust the stack in ⚙️ valves and send "
+                    "the brief again._ _(Browse all media: " + base + "/ )_")
+
         if "music" in model:
             lane = "music"
         elif "sfx" in model:
