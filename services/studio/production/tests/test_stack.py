@@ -170,6 +170,15 @@ class TestKeyframeWorkflowWiring(unittest.TestCase):
                 self.assertNotIn(lane, lanes._IMAGE_WORKFLOWS,
                                  f"{lane} is unwired in stack but present in lanes")
 
+    def test_hidream_dims_clamped_above_node_minimum(self):
+        # HiDream-O1's sampler rejects a side < 512 (step 32). Delivery dims (832x480)
+        # must be scaled up, not passed through, or ComfyUI 400s the graph.
+        from .. import lanes
+        w, h = lanes._hidream_dims(832, 480)
+        self.assertGreaterEqual(min(w, h), 512)
+        self.assertEqual((w % 32, h % 32), (0, 0))
+        self.assertGreater(w, h)            # landscape aspect preserved
+
     def test_patch_injects_into_real_workflow_nodes(self):
         import copy
         import json

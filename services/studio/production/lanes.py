@@ -53,10 +53,22 @@ def _patch_ksampler(wf: dict, prompt: str, width: int, height: int, seed: int) -
     wf["ksampler"]["inputs"]["seed"] = seed
 
 
+def _hidream_dims(width: int, height: int) -> tuple[int, int]:
+    """HiDream-O1's sampler requires each side >= 512, step 32 (it then snaps to its
+    nearest patch-aligned resolution). Delivery dims (e.g. 832x480) have a sub-512
+    side → 400. Scale up so the SHORT side reaches 512, snap both to /32, keeping the
+    landscape aspect (the Wan i2v resize node downsizes the keyframe to the clip dims)."""
+    scale = max(1.0, 512.0 / max(1, min(width, height)))
+    w = max(512, int(round(width * scale / 32) * 32))
+    h = max(512, int(round(height * scale / 32) * 32))
+    return w, h
+
+
 def _patch_hidream(wf: dict, prompt: str, width: int, height: int, seed: int) -> None:
+    w, h = _hidream_dims(width, height)
     wf["cond"]["inputs"]["prompt"] = prompt           # HiDream-O1: prompt on cond, size+seed on sampler
-    wf["sampler"]["inputs"]["width"] = width          # node renders native 2048² (snaps up); i2v resizes
-    wf["sampler"]["inputs"]["height"] = height
+    wf["sampler"]["inputs"]["width"] = w              # clamped to the node's >=512 /32 range; i2v resizes
+    wf["sampler"]["inputs"]["height"] = h
     wf["sampler"]["inputs"]["seed"] = seed
 
 
