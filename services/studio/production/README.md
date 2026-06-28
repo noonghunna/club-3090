@@ -1,20 +1,27 @@
-# Studio Production Agent — v0a
+# Studio Production Agent — v0a + v0b-core + v0b-images
 
-One static brief → a finished MP4, by driving the **existing** AI-Studio lanes
-serially (Wan video · Kokoro narration · ACE-Step bed → ffmpeg mix). This is the
-**v0a executor spike** from
-[`/opt/ai/docs/ai-studio-production-agent-design.md`](../../../../docs/ai-studio-production-agent-design.md):
-prove the executor + assembly can drive the lanes, collect + validate artifacts,
-and assemble something watchable **without manual babysitting**.
+Brief → a finished MP4, by driving the **existing** AI-Studio lanes serially (Wan
+video · Kokoro narration · ACE-Step bed → ffmpeg mix). From
+[`/opt/ai/docs/ai-studio-production-agent-design.md`](../../../../docs/ai-studio-production-agent-design.md).
 
-**v0a scope (deliberately tight):** CLI/admin only · no OWUI lane · single-flight
-(host file-lock) · **static** hand-authored `ProductionPlanV1` · one pinned video
-lane (`wan`, t2v) · ffprobe validators · final ffmpeg mix at the delivery profile ·
-typed/extensible manifest with run-level provenance.
+- **v0a** — a *static* hand-authored `ProductionPlanV1` → MP4 (the executor + assembly).
+- **v0b-core** — the **4B director** (`qwen3.5-4b-uncensored` @ `:8090`) *plans* a
+  one-line brief into a valid `ProductionPlanV1` — against the capability registry
+  (`capabilities.yaml`) + a prompt pack, with a **validator-repair loop** (parse →
+  `schema.validate()` → feed errors back) — then the v0a executor renders it.
+  Prompt provenance is stored as `llm_prompt` manifest records under `prompts/`.
+- **v0b-images** — **continuity** (the slideshow fix). Two modes via `--continuity`:
+  **chain** (each shot Wan-i2v from the previous shot's last frame) and **hero** (all
+  shots i2v from one generated **hero keyframe**, chroma image lane). Asset-DAG:
+  `asset_tasks[]` (generated images) + `shot.start_from` (`prev_last_frame` | `<asset id>`),
+  resolved in an executor **pre-production phase**; the 4B stays creative, the planner
+  wires continuity deterministically (`apply_continuity`).
 
-**Deferred to v0b/v1:** the 4B planner, skills, image lanes / asset-DAG, takes +
-rerender, Qdrant/SearXNG, durable queue, OWUI lane. (The manifest is already typed
-so v0b prompt-provenance records slot in with no redesign.)
+**Scope (deliberately tight):** CLI/admin only · single-flight · one pinned video
+lane · ffprobe validators · ffmpeg mix at the delivery profile · typed manifest.
+
+**Deferred to v1:** skills, takes + rerender, Qdrant/SearXNG, durable queue, OWUI
+lane, the remaining image roles (reference / storyboard / title-card).
 
 ## Run
 
@@ -25,7 +32,19 @@ so v0b prompt-provenance records slot in with no redesign.)
 python3 -m services.studio.production.run \
     services/studio/production/plans/lighthouse_3shot.json --backend synthetic
 
-# live — drives ComfyUI (:8188) + Kokoro TTS (:8192); needs the ai-studio scene up:
+# v0b — the 4B director PLANS a brief, then renders it (needs the ai-studio scene up):
+gpu-mode ai-studio
+python3 -m services.studio.production.run \
+    --brief "a 15-second calm documentary about lighthouses" --backend live --shots 3
+
+# v0b-images — same, with CONTINUITY (chain = i2v from prev frame; hero = shared keyframe):
+python3 -m services.studio.production.run \
+    --brief "a 15-second calm documentary about lighthouses" --backend live --continuity chain
+# or the static continuity experiment plans:
+python3 -m services.studio.production.run \
+    services/studio/production/plans/lighthouse_hero.json --backend live
+
+# v0a live — a static plan; drives ComfyUI (:8188) + Kokoro TTS (:8192):
 gpu-mode ai-studio        # bring the scene up first
 python3 -m services.studio.production.run \
     services/studio/production/plans/lighthouse_3shot.json --backend live
@@ -42,12 +61,14 @@ question: *is this better than picking lanes by hand?*
 ## Tests (offline, stdlib only — no pydantic/pytest/GPU)
 
 ```bash
-python3 -m unittest services.studio.production.tests.test_v0a -v
+python3 -m unittest services.studio.production.tests.test_v0a \
+                     services.studio.production.tests.test_v0b -v
 ```
 
-The end-to-end test runs the **whole** pipeline on the synthetic backend and
-asserts a real MP4 with an audio track + a well-formed manifest — so the logic is
-verified before it ever touches the rig.
+`test_v0a` runs the **whole** render pipeline on the synthetic backend (real MP4 +
+manifest). `test_v0b` drives the planner with a **stub LLM** — prompt construction,
+JSON extraction, normalization, and the validator-repair loop — so both the executor
+and the planner are verified before touching the rig.
 
 ## Layout
 
@@ -62,5 +83,9 @@ verified before it ever touches the rig.
 | `manifest.py` | typed, extensible manifest + run-level provenance |
 | `lock.py` | single-flight host file-lock |
 | `executor.py` | the four-phase loop (video → audio → post) |
-| `run.py` | CLI + exit-criteria summary |
-| `plans/` | static `ProductionPlanV1` JSON |
+| `capabilities.yaml` | lane capability registry — the planner's menu (wan/kokoro/ace) |
+| `registry.py` | load the registry + compress it into the planner's prompt slice |
+| `prompts.py` | the planner prompt pack (treatment + plan + repair) |
+| `planner.py` | the 4B director: brief → plan, with the validator-repair loop |
+| `run.py` | CLI (`PLAN.json` for v0a, `--brief "…"` for v0b) + exit-criteria summary |
+| `plans/` | static `ProductionPlanV1` JSON (v0a) |

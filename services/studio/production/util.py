@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 
 
@@ -15,6 +16,21 @@ def sh(cmd: list[str], timeout: int = 600) -> str:
     if r.returncode != 0:
         raise FFError(f"{cmd[0]} failed ({r.returncode}): {(r.stderr or '')[-600:]}")
     return r.stdout
+
+
+def last_frame(clip_path: str, out_png: str) -> str:
+    """Extract a video's final frame to a PNG (the i2v-chain hand-off)."""
+    os.makedirs(os.path.dirname(out_png), exist_ok=True)
+    n = sh(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+            "-show_entries", "stream=nb_read_frames", "-of",
+            "default=nokey=1:noprint_wrappers=1", clip_path]).strip()
+    try:
+        idx = max(0, int(n) - 1)
+    except ValueError:
+        idx = 0
+    sh(["ffmpeg", "-y", "-v", "error", "-i", clip_path,
+        "-vf", f"select=eq(n\\,{idx})", "-vframes", "1", out_png])
+    return out_png
 
 
 def sha256_file(path: str) -> str:

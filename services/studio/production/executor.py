@@ -7,6 +7,8 @@ shows up as `zero_manual_restarts=False` in the summary).
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
 
 from . import assemble as _assemble
@@ -14,7 +16,7 @@ from . import config, ensure, validators
 from .lanes import get_backend
 from .manifest import Artifact, Manifest
 from .schema import ProductionPlanV1
-from .util import sha256_file, sha256_text
+from .util import last_frame, sha256_file, sha256_text
 
 WAN_STEPS = 4          # distilled AllInOne schedule (studio_pipe default)
 MUSIC_STEPS = 50
@@ -38,6 +40,7 @@ def run_production(
     job_id: str,
     now_iso: str,
     productions_dir: str = config.PRODUCTIONS_DIR,
+    extra_artifacts: list = (),
 ) -> dict:
     backend = get_backend(backend_name)
     d = plan.delivery
@@ -56,21 +59,58 @@ def run_production(
         workflow_versions=_workflow_versions(),
         seeds=[s.seed for s, _ in pairs] + ([plan.music.seed] if plan.music else []),
     )
+    for a in (extra_artifacts or []):   # planner llm_prompt provenance (v0b)
+        man.add(a)
+    with open(os.path.join(prod_dir, "production.json"), "w") as f:
+        json.dump(dataclasses.asdict(plan), f, indent=2)
+
+    # -- Phase 0: pre-production (generate image assets, v0b-images) -------
+    # The asset-DAG resolves here: anything a shot's start_from references must be
+    # produced BEFORE the video that consumes it.
+    asset_paths: dict[str, str] = {}
+    for at in plan.asset_tasks:
+        ensure.ensure_lane(at.lane, backend=backend.name)
+        img = backend.generate_image(
+            prompt=at.prompt, width=at.width, height=at.height, seed=at.seed,
+            lane=at.lane, out_stem=os.path.join(prod_dir, "assets", at.id),
+        )
+        asset_paths[at.id] = img
+        ipr = validators.ffprobe(img)
+        man.add(Artifact(
+            id=f"asset.{at.id}", type="media", role=at.role, path=rel(img), lane=at.lane,
+            seed=at.seed, prompt_hash=sha256_text(at.prompt),
+            width=ipr.width, height=ipr.height,
+            validation=validators.run_all(["non_empty", "has_video"], img),
+        ))
 
     # -- Phase 1: video production ----------------------------------------
+    vlane = plan.project.video_lane
     clip_paths: dict[str, str] = {}
-    for shot, _t in pairs:
-        ensure.ensure_lane("wan", backend=backend.name)
+    prev_clip = None
+    for shot, _t in pairs:        # pairs is in play (timeline) order — prev_last_frame relies on it
+        mode, start_image = "t2v", None
+        if shot.start_from == "prev_last_frame":
+            if prev_clip is None:
+                raise RuntimeError(f"shot {shot.id}: start_from 'prev_last_frame' but no previous clip")
+            start_image = last_frame(prev_clip, os.path.join(prod_dir, "assets", f"{shot.id}_start.png"))
+            mode = "i2v"
+        elif shot.start_from:
+            start_image = asset_paths.get(shot.start_from)
+            if not start_image:
+                raise RuntimeError(f"shot {shot.id}: start_from {shot.start_from!r} was not generated")
+            mode = "i2v"
+        ensure.ensure_lane(vlane, backend=backend.name)
         frames = max(1, round(shot.target_seconds * d.fps))
         path = backend.render_video(
             prompt=shot.prompt_intent, width=d.width, height=d.height, frames=frames,
-            steps=WAN_STEPS, seed=shot.seed, fps=d.fps,
+            steps=WAN_STEPS, seed=shot.seed, fps=d.fps, mode=mode, start_image=start_image,
             out_stem=os.path.join(prod_dir, "shots", shot.id),
         )
         clip_paths[shot.id] = path
+        prev_clip = path
         pr = validators.ffprobe(path)
         man.add(Artifact(
-            id=f"shot.{shot.id}", type="media", role="shot", path=rel(path), lane="wan",
+            id=f"shot.{shot.id}", type="media", role="shot", path=rel(path), lane=vlane,
             seed=shot.seed, prompt_hash=sha256_text(shot.prompt_intent),
             width=pr.width, height=pr.height, duration=pr.duration,
             validation=validators.run_all(shot.validators, path, target_seconds=shot.target_seconds),
@@ -143,7 +183,10 @@ def run_production(
             vo_ok.append({"shot": shot.id, "vo_s": round(vo_dur, 2), "shot_s": round(durations[i], 2),
                           "ok": vo_dur <= durations[i] + VO_TOLERANCE_S})
     man.exit_criteria = {
-        "all_validators_pass": all(a.validation.get("ok") for a in man.artifacts),
+        # only MEDIA artifacts carry validators; llm_prompt provenance is excluded.
+        "all_validators_pass": all(
+            a.validation.get("ok", False) for a in man.artifacts if a.type == "media"
+        ),
         "vo_within_tolerance": all(v["ok"] for v in vo_ok),
         "vo_detail": vo_ok,
         "final_has_audio": fpr.has_audio,

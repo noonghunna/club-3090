@@ -36,6 +36,7 @@ class Shot:
     prompt_intent: str
     narration: str = ""
     seed: int = 0
+    start_from: Optional[str] = None   # None=t2v · "prev_last_frame"=chain · "<asset id>"=hero/keyframe
     validators: list = field(
         default_factory=lambda: ["non_empty", "duration", "no_audio_expected"]
     )
@@ -59,11 +60,25 @@ class Assembly:
 
 
 @dataclass
+class AssetTask:
+    """A generated image asset produced in pre-production (v0b-images)."""
+    id: str
+    role: str            # hero_keyframe | reference | storyboard | title_card
+    lane: str            # an image lane (e.g. "chroma")
+    prompt: str
+    seed: int = 0
+    width: int = 832
+    height: int = 480
+
+
+@dataclass
 class Project:
     title: str
     tone: str = ""
     target_seconds: float = 0.0
     video_lane: str = "wan"
+    continuity: str = "none"          # none | chain | hero  (v0b-images continuity mode)
+    image_policy: dict = field(default_factory=dict)   # role -> image lane
 
 
 @dataclass
@@ -82,6 +97,7 @@ class ProductionPlanV1:
     timeline: list                    # list[TimelineEntry]
     music: Optional[Music] = None
     assembly: Assembly = field(default_factory=Assembly)
+    asset_tasks: list = field(default_factory=list)   # list[AssetTask] (v0b-images)
     schema_version: str = "ProductionPlanV1"
 
     # -- construction -------------------------------------------------------
@@ -99,11 +115,13 @@ class ProductionPlanV1:
                 duck_db=int(_a.get("duck_db", 6)),
                 normalize=bool(_a.get("normalize", True)),
             )
+            asset_tasks = [AssetTask(**a) for a in (d.get("asset_tasks") or [])]
         except (KeyError, TypeError, ValueError) as e:
             raise PlanError(f"malformed plan: {e}") from e
         plan = ProductionPlanV1(
             project=project, shots=shots, delivery=delivery,
             timeline=timeline, music=music, assembly=assembly,
+            asset_tasks=asset_tasks,
             schema_version=d.get("schema_version", "ProductionPlanV1"),
         )
         plan.validate()
@@ -124,16 +142,33 @@ class ProductionPlanV1:
         if len(ids) != len(set(ids)):
             raise PlanError(f"duplicate shot ids: {ids}")
 
+        if self.project.continuity not in ("none", "chain", "hero", "storyboard"):
+            raise PlanError(
+                f"project.continuity must be none|chain|hero|storyboard "
+                f"(got {self.project.continuity!r})"
+            )
+        asset_ids = {a.id for a in self.asset_tasks}
+        if len(asset_ids) != len(self.asset_tasks):
+            raise PlanError("duplicate asset_task ids")
+
         for s in self.shots:
             if s.lane != self.project.video_lane:
                 raise PlanError(
                     f"shot {s.id}: lane {s.lane!r} != pinned video_lane "
-                    f"{self.project.video_lane!r} (v0a pins one video lane)"
+                    f"{self.project.video_lane!r} (one pinned video lane per job)"
                 )
-            if s.mode != "t2v":
-                raise PlanError(f"shot {s.id}: v0a supports only mode='t2v' (got {s.mode!r})")
+            if s.mode not in ("t2v", "i2v"):
+                raise PlanError(f"shot {s.id}: mode must be 't2v' or 'i2v' (got {s.mode!r})")
             if s.target_seconds <= 0:
                 raise PlanError(f"shot {s.id}: target_seconds must be > 0")
+            if s.mode == "i2v" and not s.start_from:
+                raise PlanError(f"shot {s.id}: mode 'i2v' requires start_from")
+            # missing-dependency rejection: start_from must resolve.
+            if s.start_from and s.start_from != "prev_last_frame" and s.start_from not in asset_ids:
+                raise PlanError(
+                    f"shot {s.id}: start_from {s.start_from!r} is neither 'prev_last_frame' "
+                    f"nor a declared asset_task id {sorted(asset_ids)}"
+                )
 
         # Timeline: one entry per shot, all references valid, order = play order.
         known = set(ids)
@@ -153,6 +188,13 @@ class ProductionPlanV1:
             missing = known - seen
             raise PlanError(f"timeline missing shots: {sorted(missing)}")
 
+        # asset-DAG ordering: the FIRST shot (play order) can't chain from a previous clip.
+        ordered = self.ordered_shots()
+        if ordered and ordered[0].start_from == "prev_last_frame":
+            raise PlanError(
+                f"first shot {ordered[0].id!r} cannot start_from 'prev_last_frame' (no previous clip)"
+            )
+
         if self.delivery.fps <= 0 or self.delivery.width <= 0 or self.delivery.height <= 0:
             raise PlanError("delivery fps/width/height must be > 0")
 
@@ -161,6 +203,12 @@ class ProductionPlanV1:
             if s.id == sid:
                 return s
         raise PlanError(f"no shot {sid!r}")
+
+    def asset_task_by_id(self, aid: str):
+        for a in self.asset_tasks:
+            if a.id == aid:
+                return a
+        raise PlanError(f"no asset_task {aid!r}")
 
     def ordered_shots(self) -> list:
         """Shots in timeline (play) order."""

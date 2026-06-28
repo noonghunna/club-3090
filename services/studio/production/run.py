@@ -45,15 +45,24 @@ def _print_summary(summary: dict) -> bool:
     print("  --- the decisive (human) question " + "-" * 29)
     print("  > is this assembled MP4 better than picking lanes by hand?  [you decide]")
     print("=" * 64)
-    failed = [a["id"] for a in man["artifacts"] if not a["validation"].get("ok")]
+    failed = [a["id"] for a in man["artifacts"]
+              if a["type"] == "media" and not a["validation"].get("ok")]
     if failed:
         print(f"  ⚠ validators FAILED on: {failed}")
     return bool(ec["all_validators_pass"] and ec["vo_within_tolerance"] and ec["final_has_audio"])
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="studio-production", description="v0a: static plan -> MP4")
-    ap.add_argument("plan", help="path to a ProductionPlanV1 JSON")
+    ap = argparse.ArgumentParser(prog="studio-production",
+                                 description="static plan (v0a) or a brief the 4B plans (v0b) -> MP4")
+    ap.add_argument("plan", nargs="?", help="path to a ProductionPlanV1 JSON (v0a path)")
+    ap.add_argument("--brief", default=None,
+                    help='a one-line brief; the 4B director plans it (v0b), e.g. --brief "60s doc on lighthouses"')
+    ap.add_argument("--shots", type=int, default=3, help="target shot count for --brief planning")
+    ap.add_argument("--continuity", choices=["none", "chain", "hero", "storyboard"], default="storyboard",
+                    help="v0b-images continuity for --brief: storyboard (per-shot keyframes + shared "
+                         "style bible, DEFAULT) · hero (one shared keyframe) · chain (i2v from prev "
+                         "frame) · none (independent t2v)")
     ap.add_argument("--backend", choices=["live", "synthetic"], default="live",
                     help="live = ComfyUI+Kokoro on the rig; synthetic = offline ffmpeg stand-ins")
     ap.add_argument("--job-id", default=None, help="override the generated job id")
@@ -61,15 +70,12 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"base dir (default {config.PRODUCTIONS_DIR})")
     args = ap.parse_args(argv)
 
-    try:
-        with open(args.plan) as f:
-            plan = ProductionPlanV1.from_dict(json.load(f))
-    except (OSError, json.JSONDecodeError, PlanError) as e:
-        print(f"[plan error] {e}", file=sys.stderr)
+    if bool(args.plan) == bool(args.brief):
+        print('[args] give exactly one of: a plan file, or --brief "..."', file=sys.stderr)
         return 2
 
-    job_id = args.job_id or _job_id(plan.project.title)
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    extra_artifacts: list = []
 
     lock = ProductionLock(os.path.join(args.productions_dir, ".run.lock"))
     try:
@@ -78,8 +84,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[locked] {e}", file=sys.stderr)
         return 3
     try:
+        if args.brief:
+            from . import planner, registry
+            job_id = args.job_id or _job_id(args.brief)
+            prod_dir = os.path.join(args.productions_dir, job_id)
+            os.makedirs(prod_dir, exist_ok=True)
+            try:
+                reg = registry.load()
+                print(f"[plan] director planning the brief into ~{args.shots} shots…", file=sys.stderr)
+                plan, extra_artifacts = planner.plan_from_brief(
+                    args.brief, reg, n_shots=args.shots, continuity=args.continuity,
+                    prompts_dir=os.path.join(prod_dir, "prompts"),
+                )
+            except planner.PlannerError as e:
+                print(f"[plan error] {e}", file=sys.stderr)
+                return 2
+            print(f"[plan] director produced {len(plan.shots)} shots: "
+                  f"{plan.project.title!r}", file=sys.stderr)
+        else:
+            try:
+                with open(args.plan) as f:
+                    plan = ProductionPlanV1.from_dict(json.load(f))
+            except (OSError, json.JSONDecodeError, PlanError) as e:
+                print(f"[plan error] {e}", file=sys.stderr)
+                return 2
+            job_id = args.job_id or _job_id(plan.project.title)
+
         summary = run_production(plan, backend_name=args.backend, job_id=job_id,
-                                 now_iso=now_iso, productions_dir=args.productions_dir)
+                                 now_iso=now_iso, productions_dir=args.productions_dir,
+                                 extra_artifacts=extra_artifacts)
     finally:
         lock.release()
 
