@@ -16,6 +16,9 @@
 #   models/vae/wan_2.1_vae.safetensors
 set -uo pipefail
 
+# Resolve COMFYUI_MODELS_DIR from MODEL_DIR/.env so a standalone run matches
+# setup-ai-studio.sh instead of falling back to the dev-rig /mnt path (issue #503).
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/comfyui-paths.sh"
 ROOT="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
 export HF_HUB_DISABLE_XET=1
 LOG_TS() { date +%H:%M:%S; }

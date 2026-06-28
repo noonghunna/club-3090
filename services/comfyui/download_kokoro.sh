@@ -16,6 +16,9 @@
 set -uo pipefail
 
 # Mirrors the studio-tts compose default (${KOKORO_DIR:-/mnt/models/comfyui/models/tts/kokoro}).
+# Resolve COMFYUI_MODELS_DIR from MODEL_DIR/.env so a standalone run matches
+# setup-ai-studio.sh instead of falling back to the dev-rig /mnt path (issue #503).
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/comfyui-paths.sh"
 ROOT="${KOKORO_DIR:-${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}/tts/kokoro}"
 REL="https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
 LOG_TS() { date +%H:%M:%S; }

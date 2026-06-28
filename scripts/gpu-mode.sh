@@ -48,6 +48,12 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# LAN IP for the URLs printed by the mode banners below — auto-detected (override with
+# LANIP=...), matching setup-ai-studio.sh. Falls back to 'localhost' so a fresh clone never
+# prints the dev rig's hardcoded address (issue #504). `|| true` keeps set -e happy on no match.
+LANIP="${LANIP:-$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^(192\.168|10\.|172\.)' | head -1 || true)}"
+LANIP="${LANIP:-localhost}"
+
 # Standard supporting services living under $CLUB3090_DIR/services.
 # Ollama removed 2026-06-22 (dropped from serving 2026-05-10 — Qwen/Gemma route
 # through LiteLLM directly; the unused services/ollama/ compose dir was deleted).
@@ -481,7 +487,7 @@ mode_chat() {
     start_service searxng
     start_studio_director
     echo ""
-    echo -e "${GREEN}Chat mode active.${NC} Open WebUI: http://192.168.86.33:8080"
+    echo -e "${GREEN}Chat mode active.${NC} Open WebUI: http://$LANIP:8080"
     echo -e "${YELLOW}Director placement: $(_director_device) (change in c3 Settings · Director placement).${NC}"
     echo -e "${YELLOW}Plug in catalog models: bash scripts/switch.sh --owui <variant>  (registers it into OWUI here).${NC}"
 }
@@ -507,7 +513,7 @@ mode_27b() {
     start_service openwebui
     start_service searxng
     echo ""
-    echo -e "${GREEN}27B dual-card MTP mode active.${NC} API: http://192.168.86.33:8010"
+    echo -e "${GREEN}27B dual-card MTP mode active.${NC} API: http://$LANIP:8010"
     echo -e "${YELLOW}Per-stream: 68 narr / 89 code TPS short, 36 TPS @ 100K, 28 TPS @ 200K warm.${NC}"
     echo -e "${YELLOW}2 concurrent streams. KV pool 168K, max concurrency 2.36× at full 262K.${NC}"
     echo -e "${YELLOW}Vision + tools + thinking + 262K ctx all working. Boot ~3-4 min.${NC}"
@@ -533,7 +539,7 @@ mode_35b_a3b() {
     start_service openwebui
     start_service searxng
     echo ""
-    echo -e "${GREEN}35B-A3B dual-card mode active.${NC} API: http://192.168.86.33:8051"
+    echo -e "${GREEN}35B-A3B dual-card mode active.${NC} API: http://$LANIP:8051"
     echo -e "${YELLOW}MoE: 3B active / 35B total — ~178/174 TPS, 262K ctx, vision. Boot ~3-4 min.${NC}"
     echo -e "${YELLOW}Tail: sudo docker logs -f vllm-qwen36-35b-a3b-dual${NC}"
 }
@@ -558,7 +564,7 @@ mode_gemma_12b() {
     start_service openwebui
     start_service searxng
     echo ""
-    echo -e "${GREEN}Gemma 4 12B mode active.${NC} API: http://192.168.86.33:8038"
+    echo -e "${GREEN}Gemma 4 12B mode active.${NC} API: http://$LANIP:8038"
     echo -e "${YELLOW}gemma4_unified arch-preview image (EPHEMERAL tag — pin a digest before prod). Single card; the other GPU is free.${NC}"
     echo -e "${YELLOW}Tail: sudo docker logs -f vllm-gemma-4-12b-int8-mtp${NC}"
 }
@@ -586,7 +592,7 @@ mode_gemma_int8() {
     start_service openwebui
     start_service searxng
     echo ""
-    echo -e "${GREEN}Gemma 4 31B INT8 PTH mode active.${NC} API: http://192.168.86.33:8032"
+    echo -e "${GREEN}Gemma 4 31B INT8 PTH mode active.${NC} API: http://$LANIP:8032"
     echo -e "${YELLOW}Tail: sudo docker logs -f vllm-gemma-4-31b-mtp-int8${NC}"
 }
 mode_deckard() {
@@ -612,7 +618,7 @@ mode_deckard() {
         bash "$CLUB3090_DIR/scripts/lib/owui-register.sh" 8199 || true
     fi
     echo ""
-    echo -e "${GREEN}Deckard-40B mode active.${NC} API: http://192.168.86.33:8199  (model: deckard-40b)"
+    echo -e "${GREEN}Deckard-40B mode active.${NC} API: http://$LANIP:8199  (model: deckard-40b)"
     echo -e "${YELLOW}MTP n=2: ~36 narr / 46 code TPS · 128K ctx @ q8_0 KV · uncensored, text-only.${NC}"
     echo -e "${YELLOW}First boot ~1-2 min (31 GB GGUF load + 128K KV alloc across both cards).${NC}"
     echo -e "${YELLOW}Tail: sudo docker logs -f llama-cpp-deckard-40b${NC}"
@@ -695,9 +701,9 @@ mode_ai_studio() {
     start_service searxng
     echo ""
     echo -e "${GREEN}AI-studio mode active.${NC} — one scene; pick the lane in Open WebUI."
-    echo -e "  Open WebUI:  http://192.168.86.33:8080   (image · video · music · SFX · voice lanes)"
-    echo -e "  Gallery:     http://192.168.86.33:8189   (all generated media; survives ComfyUI down)"
-    echo -e "  ComfyUI:     http://192.168.86.33:8188   (full node graph / control)"
+    echo -e "  Open WebUI:  http://$LANIP:8080   (image · video · music · SFX · voice lanes)"
+    echo -e "  Gallery:     http://$LANIP:8189   (all generated media; survives ComfyUI down)"
+    echo -e "  ComfyUI:     http://$LANIP:8188   (full node graph / control)"
     echo -e "${YELLOW}First ComfyUI boot can take a few min (clones + node deps). Video DiT splits across both 3090s (DisTorch); image/audio lanes run on GPU0 beside the director.${NC}"
     echo -e "${YELLOW}GPU-mutex with the dual-card LLMs. Premium voice (step-audio-editx) is on-demand on GPU1 — mutually exclusive with an active video render.${NC}"
     echo -e "${YELLOW}Tail: sudo docker logs -f comfyui${NC}"

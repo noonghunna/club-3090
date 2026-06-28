@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
+# Resolve COMFYUI_MODELS_DIR from MODEL_DIR/.env so a standalone run matches
+# setup-ai-studio.sh instead of falling back to the dev-rig /mnt path (issue #503).
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/comfyui-paths.sh"
 ROOT="${COMFYUI_MODELS_DIR:-/mnt/models/comfyui/models}"
 
 ts() { date +%H:%M:%S; }
