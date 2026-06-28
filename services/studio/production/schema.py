@@ -1,15 +1,18 @@
 """ProductionPlanV1 — the validatable plan contract (v0a subset).
 
 stdlib dataclasses + an explicit `validate()` (host has no pydantic). The shape is
-forward-compatible with the full schema in the design doc; v0a only *enforces* the
-slice it executes (single pinned video lane = wan, t2v shots, one timeline entry
-per shot). Fields the design reserves but v0a ignores (creative_intent, style_bible,
-asset_dependencies, image_policy, takes, ...) are simply not modelled here yet.
+forward-compatible with the full schema in the design doc. One pinned video lane per
+job (operator-chosen via stack.py — validated against the production-renderable set,
+never silently picked), continuity-aware shots (t2v / i2v), one timeline entry per
+shot. Fields the design reserves but v0a ignores (creative_intent, style_bible,
+takes, ...) are simply not modelled here yet.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+from .stack import KEYFRAME_LANES, VIDEO_LANES, wired_keyframe_lanes, wired_video_lanes
 
 
 class PlanError(ValueError):
@@ -30,8 +33,8 @@ class Delivery:
 @dataclass
 class Shot:
     id: str
-    lane: str                 # v0a: must equal project.video_lane ("wan")
-    mode: str                 # v0a: "t2v"
+    lane: str                 # must equal project.video_lane (one pinned lane per job)
+    mode: str                 # "t2v" | "i2v"
     target_seconds: float
     prompt_intent: str
     narration: str = ""
@@ -76,8 +79,8 @@ class Project:
     title: str
     tone: str = ""
     target_seconds: float = 0.0
-    video_lane: str = "wan"
-    continuity: str = "none"          # none | chain | hero  (v0b-images continuity mode)
+    video_lane: str = "wan"           # operator-pinned (stack.py); default wan
+    continuity: str = "none"          # none | chain | hero | storyboard (v0b-images)
     image_policy: dict = field(default_factory=dict)   # role -> image lane
 
 
@@ -131,9 +134,17 @@ class ProductionPlanV1:
     def validate(self) -> None:
         if self.schema_version != "ProductionPlanV1":
             raise PlanError(f"unsupported schema_version {self.schema_version!r}")
-        if self.project.video_lane != "wan":
+        # The video lane is an operator/stack decision (see stack.py). Validate it is a
+        # known lane the production executor can actually render — never silently picked.
+        vl = self.project.video_lane
+        if vl not in VIDEO_LANES:
             raise PlanError(
-                f"v0a supports only video_lane='wan' (got {self.project.video_lane!r})"
+                f"unknown video_lane {vl!r}; choose from {sorted(VIDEO_LANES)}"
+            )
+        if not VIDEO_LANES[vl]["wired"]:
+            raise PlanError(
+                f"video_lane {vl!r} is a known studio lane but not yet wired into the "
+                f"production executor (renders today: {wired_video_lanes()})"
             )
         if not self.shots:
             raise PlanError("plan has no shots")
@@ -150,6 +161,26 @@ class ProductionPlanV1:
         asset_ids = {a.id for a in self.asset_tasks}
         if len(asset_ids) != len(self.asset_tasks):
             raise PlanError("duplicate asset_task ids")
+
+        # keyframe assets must use a wired image lane (the continuity-quality lever).
+        for a in self.asset_tasks:
+            if a.lane not in KEYFRAME_LANES:
+                raise PlanError(
+                    f"asset {a.id}: unknown keyframe lane {a.lane!r}; "
+                    f"choose from {sorted(KEYFRAME_LANES)}"
+                )
+            if not KEYFRAME_LANES[a.lane]["wired"]:
+                raise PlanError(
+                    f"asset {a.id}: keyframe lane {a.lane!r} not wired "
+                    f"(renders today: {wired_keyframe_lanes()})"
+                )
+
+        # continuity needs image->video: any i2v shot requires the pinned lane to have i2v.
+        if any(s.mode == "i2v" for s in self.shots) and not VIDEO_LANES[vl]["i2v"]:
+            raise PlanError(
+                f"plan has i2v shots but video_lane {vl!r} has no i2v workflow "
+                f"(use continuity='none' or a video lane with i2v)"
+            )
 
         for s in self.shots:
             if s.lane != self.project.video_lane:

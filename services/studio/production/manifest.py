@@ -35,6 +35,7 @@ class Manifest:
     created_utc: str
     backend: str                          # "live" | "synthetic"
     schema_version: str = "ProductionPlanV1"
+    stack: dict = field(default_factory=dict)               # operator-chosen lanes (stack.ProductionStack)
     delivery: dict = field(default_factory=dict)
     workflow_versions: dict = field(default_factory=dict)   # {"wan": sha, "ace-step": sha}
     seeds: list = field(default_factory=list)

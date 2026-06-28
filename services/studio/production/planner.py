@@ -69,22 +69,25 @@ def extract_json(text: str) -> dict:
 
 
 # -- lenient normalization (fill obvious defaults so the 4B can be terse) -----
-def normalize(data: dict, video_lane: str = "wan") -> dict:
+def normalize(data: dict, video_lane: str = "wan", *, music: bool = True) -> dict:
     data.setdefault("schema_version", "ProductionPlanV1")
     proj = data.setdefault("project", {})
-    proj.setdefault("video_lane", video_lane)
+    # The video lane is an operator/stack decision — FORCE it (the planner authors
+    # shot content, not the lane). Whatever the 4B emitted is overridden by the pin.
+    proj["video_lane"] = video_lane
     proj.setdefault("title", "Untitled")
-    vl = proj.get("video_lane", video_lane)
     shots = data.get("shots") or []
     for i, s in enumerate(shots):
         s.setdefault("id", f"s{i + 1}")
-        s.setdefault("lane", vl)
+        s["lane"] = video_lane          # every shot uses the pinned lane
         s.setdefault("mode", "t2v")
         s.setdefault("prompt_intent", "")
     data.setdefault("delivery", {"aspect": "16:9", "width": 832, "height": 480,
                                  "fps": 16, "loudness_lufs": -14.0})
     data.setdefault("assembly", {"transition_seconds": 0.6, "duck_db": 6})
-    if not data.get("music"):
+    if not music:
+        data["music"] = None            # operator opted out of a music bed
+    elif not data.get("music"):
         data["music"] = {"lane": "ace-step", "tags": "ambient, cinematic, instrumental",
                          "lyrics": "[instrumental]", "seed": 7}
     if not data.get("timeline"):
@@ -160,11 +163,21 @@ def apply_continuity(data: dict, mode: str, *, image_lane: str = "chroma") -> di
 
 # -- the planner --------------------------------------------------------------
 def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
-                    n_shots: int = 3, continuity: str = "none", prompts_dir: str | None = None):
+                    n_shots: int = 3, continuity: str = "none", stack=None,
+                    prompts_dir: str | None = None):
     """Brief -> (ProductionPlanV1, list[Artifact]). Raises PlannerError on failure.
 
     `llm(messages, *, max_tokens, temperature)` is the injectable director call.
+    `stack` is a resolved ProductionStack (stack.py) pinning video/keyframe lanes,
+    continuity, and narration/music. When None, the operator pinned nothing → the
+    default stack (wan · chroma · storyboard · narration+music) is resolved from the
+    `continuity=` kwarg, preserving the pre-stack call signature.
+
+    The planner authors shot CONTENT within these bounds; it does NOT choose lanes —
+    the lane pin is forced (see `normalize`), so the 4B can't silently pick Wan vs LTX.
     """
+    from .stack import resolve_stack
+    st = stack or resolve_stack(continuity=continuity)
     call = llm or director_call
     prov: list[tuple[str, str, str, str]] = []   # (role, system, user, response)
 
@@ -174,18 +187,28 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
                      max_tokens=400, temperature=0.8)
     prov.append(("treatment", TREATMENT_SYS, brief, treatment))
 
-    # stage 2 — structured plan
-    plan_sys = build_plan_system(reg, n_shots=n_shots)
+    # stage 2 — structured plan (the video lane is PINNED to the operator's choice)
+    plan_sys = build_plan_system(reg, n_shots=n_shots, video_lane=st.video_lane)
     plan_user = f"BRIEF: {brief}\n\nTREATMENT:\n{treatment}\n\nNow output the ProductionPlanV1 JSON only."
     raw = call([{"role": "system", "content": plan_sys}, {"role": "user", "content": plan_user}],
                max_tokens=900, temperature=0.4)
     prov.append(("plan", plan_sys, plan_user, raw))
 
+    def _build(raw_json: str) -> dict:
+        data = apply_continuity(
+            normalize(extract_json(raw_json), video_lane=st.video_lane, music=st.music),
+            st.continuity, image_lane=st.keyframe_lane,
+        )
+        if not st.narration:                      # operator opted out of voiceover
+            for s in data.get("shots", []):
+                s["narration"] = ""
+        return data
+
     # validator-repair loop
     last_err = None
     for attempt in range(max_repairs + 1):
         try:
-            data = apply_continuity(normalize(extract_json(raw)), continuity)
+            data = _build(raw)
             plan = ProductionPlanV1.from_dict(data)     # validates
             return plan, _write_provenance(prov, prompts_dir)
         except (PlanError, ValueError, json.JSONDecodeError) as e:

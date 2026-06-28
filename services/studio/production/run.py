@@ -18,6 +18,7 @@ from . import config
 from .executor import run_production
 from .lock import ProductionLock, ProductionLockHeld
 from .schema import PlanError, ProductionPlanV1
+from .stack import StackError, describe_stack, lane_help, resolve_stack, stack_from_plan
 
 
 def _slug(s: str) -> str:
@@ -53,16 +54,33 @@ def _print_summary(summary: dict) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="studio-production",
-                                 description="static plan (v0a) or a brief the 4B plans (v0b) -> MP4")
+    ap = argparse.ArgumentParser(
+        prog="studio-production",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="static plan (v0a) or a brief the 4B plans (v0b) -> MP4",
+        epilog="The production stack is operator-chosen, defaulted-but-visible, and "
+               "recorded in the manifest — the director never silently picks a model.\n\n"
+               + lane_help())
     ap.add_argument("plan", nargs="?", help="path to a ProductionPlanV1 JSON (v0a path)")
     ap.add_argument("--brief", default=None,
                     help='a one-line brief; the 4B director plans it (v0b), e.g. --brief "60s doc on lighthouses"')
     ap.add_argument("--shots", type=int, default=3, help="target shot count for --brief planning")
-    ap.add_argument("--continuity", choices=["none", "chain", "hero", "storyboard"], default="storyboard",
-                    help="v0b-images continuity for --brief: storyboard (per-shot keyframes + shared "
-                         "style bible, DEFAULT) · hero (one shared keyframe) · chain (i2v from prev "
-                         "frame) · none (independent t2v)")
+    # -- the production stack (operator-chosen; 'auto' = the visible default) --
+    ap.add_argument("--video-lane", default="auto",
+                    help="video model for every shot: wan (default, renders today) · "
+                         "ltx/sulphur/10eros (roadmap — not yet wired in the executor). 'auto' = wan.")
+    ap.add_argument("--keyframe-lane", default="auto",
+                    help="image model for continuity keyframes: chroma (default) · zimage · "
+                         "krea · hidream · ideogram. 'auto' = chroma.")
+    ap.add_argument("--continuity", default="auto",
+                    help="storyboard (per-shot keyframes + shared style bible, DEFAULT) · hero "
+                         "(one shared keyframe) · chain (i2v from prev frame) · none (independent "
+                         "t2v). 'auto' = storyboard.")
+    ap.add_argument("--no-music", dest="music", action="store_false", default=True,
+                    help="omit the ACE-Step music bed")
+    ap.add_argument("--no-narration", dest="narration", action="store_false", default=True,
+                    help="omit Kokoro voiceover (visuals + music only)")
+    ap.add_argument("--voice", default="", help="Kokoro voice id for narration (default af_heart)")
     ap.add_argument("--backend", choices=["live", "synthetic"], default="live",
                     help="live = ComfyUI+Kokoro on the rig; synthetic = offline ffmpeg stand-ins")
     ap.add_argument("--job-id", default=None, help="override the generated job id")
@@ -72,6 +90,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if bool(args.plan) == bool(args.brief):
         print('[args] give exactly one of: a plan file, or --brief "..."', file=sys.stderr)
+        return 2
+
+    # Resolve + ECHO the stack up front (validates against what the executor renders,
+    # so an unwired/unknown lane fails fast with a clear message — before the lock).
+    try:
+        stack = resolve_stack(
+            video_lane=args.video_lane, keyframe_lane=args.keyframe_lane,
+            continuity=args.continuity, narration=args.narration,
+            music=args.music, voice=args.voice,
+        )
+    except StackError as e:
+        print(f"[stack] {e}", file=sys.stderr)
         return 2
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -85,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     try:
         if args.brief:
+            # brief path: the CLI stack pins the lanes; the director plans within it.
+            print(describe_stack(stack), file=sys.stderr)
             from . import planner, registry
             job_id = args.job_id or _job_id(args.brief)
             prod_dir = os.path.join(args.productions_dir, job_id)
@@ -93,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
                 reg = registry.load()
                 print(f"[plan] director planning the brief into ~{args.shots} shots…", file=sys.stderr)
                 plan, extra_artifacts = planner.plan_from_brief(
-                    args.brief, reg, n_shots=args.shots, continuity=args.continuity,
+                    args.brief, reg, n_shots=args.shots, stack=stack,
                     prompts_dir=os.path.join(prod_dir, "prompts"),
                 )
             except planner.PlannerError as e:
@@ -102,6 +134,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[plan] director produced {len(plan.shots)} shots: "
                   f"{plan.project.title!r}", file=sys.stderr)
         else:
+            # static-plan path: the plan file is self-describing — its own encoded stack
+            # wins over CLI lane flags (which target --brief planning). We echo what the
+            # plan actually encodes so the operator still SEES the stack.
             try:
                 with open(args.plan) as f:
                     plan = ProductionPlanV1.from_dict(json.load(f))
@@ -109,10 +144,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[plan error] {e}", file=sys.stderr)
                 return 2
             job_id = args.job_id or _job_id(plan.project.title)
+            stack = stack_from_plan(plan)
+            print(describe_stack(stack), file=sys.stderr)
 
         summary = run_production(plan, backend_name=args.backend, job_id=job_id,
                                  now_iso=now_iso, productions_dir=args.productions_dir,
-                                 extra_artifacts=extra_artifacts)
+                                 extra_artifacts=extra_artifacts, stack=stack)
     finally:
         lock.release()
 

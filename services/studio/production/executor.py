@@ -42,6 +42,7 @@ def run_production(
     productions_dir: str = config.PRODUCTIONS_DIR,
     extra_artifacts: list = (),
     progress_cb=None,
+    stack=None,
 ) -> dict:
     def _p(msg: str, frac: float):
         if progress_cb:
@@ -59,8 +60,11 @@ def run_production(
         return os.path.relpath(p, prod_dir)
 
     pairs = [(plan.shot_by_id(t.clip), t) for t in plan.timeline]   # (shot, timeline) in play order
+    from .stack import stack_from_plan
+    st = stack or stack_from_plan(plan)   # record the operator-chosen lanes in the manifest
     man = Manifest(
         job_id=job_id, title=plan.project.title, created_utc=now_iso, backend=backend.name,
+        stack=st.to_dict(),
         delivery={"aspect": d.aspect, "width": d.width, "height": d.height, "fps": d.fps,
                   "codec": d.codec, "loudness_lufs": d.loudness_lufs},
         workflow_versions=_workflow_versions(),

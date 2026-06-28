@@ -17,16 +17,18 @@ TREATMENT_SYS = (
 )
 
 
-def build_plan_system(reg: dict, n_shots: int = 3) -> str:
+def build_plan_system(reg: dict, n_shots: int = 3, video_lane: str = "wan") -> str:
     return f"""You are the production director for an automated video studio. Turn the brief and treatment into ONE valid ProductionPlanV1 JSON object. OUTPUT ONLY THE JSON — no prose, no markdown fences, no comments.
 
 {prompt_slice(reg)}
 
+The video lane is PINNED by the operator to '{video_lane}'. Output project.video_lane = "{video_lane}" and EVERY shot's lane = "{video_lane}". Do NOT choose a different video lane.
+
 ProductionPlanV1 shape:
 {{
-  "project": {{"title": str, "tone": str, "target_seconds": int, "video_lane": "wan"}},
+  "project": {{"title": str, "tone": str, "target_seconds": int, "video_lane": "{video_lane}"}},
   "shots": [
-    {{"id": "s1", "lane": "wan", "mode": "t2v", "target_seconds": 5,
+    {{"id": "s1", "lane": "{video_lane}", "mode": "t2v", "target_seconds": 5,
       "prompt_intent": "<vivid cinematic prose describing the shot>",
       "narration": "<ONE short spoken sentence heard over this shot>", "seed": 12345}}
   ],
@@ -37,7 +39,7 @@ ProductionPlanV1 shape:
 }}
 
 Guidance (be inventive WITHIN these bounds):
-- Aim for {n_shots} shots. Each shot is ONE Wan window (<= 5 s), so keep target_seconds 4-5.
+- Aim for {n_shots} shots. Each shot is ONE video window (<= 5 s), so keep target_seconds 4-5.
 - prompt_intent: vivid, cinematic prose for the video model (one shot's worth of imagery).
 - narration: ONE spoken sentence the viewer hears over that shot, in ENGLISH ONLY (no other-language words). Keep it short enough to fit (~2.5 words per second), so a 5 s shot is AT MOST 10 words.
 - If an idea needs more than ~5 s, SPLIT it into two shots — never exceed the limit.
