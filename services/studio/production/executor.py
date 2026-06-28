@@ -150,7 +150,10 @@ def run_production(
             vo_ok.append({"shot": shot.id, "vo_s": round(vo_dur, 2), "shot_s": round(durations[i], 2),
                           "ok": vo_dur <= durations[i] + VO_TOLERANCE_S})
     man.exit_criteria = {
-        "all_validators_pass": all(a.validation.get("ok") for a in man.artifacts),
+        # only MEDIA artifacts carry validators; llm_prompt provenance is excluded.
+        "all_validators_pass": all(
+            a.validation.get("ok", False) for a in man.artifacts if a.type == "media"
+        ),
         "vo_within_tolerance": all(v["ok"] for v in vo_ok),
         "vo_detail": vo_ok,
         "final_has_audio": fpr.has_audio,

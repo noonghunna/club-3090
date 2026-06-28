@@ -8,10 +8,18 @@ Run:  python3 -m unittest services.studio.production.tests.test_v0b -v
 """
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import tempfile
 import unittest
 
 from ..planner import PlannerError, extract_json, normalize, plan_from_brief
 from ..registry import audio_lanes, load, prompt_slice, video_lanes
+
+_PROD = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PLAN = os.path.join(_PROD, "plans", "lighthouse_3shot.json")
+_HAVE_FFMPEG = shutil.which("ffmpeg") and shutil.which("ffprobe")
 
 GOOD_PLAN = """{
   "project": {"title": "Test", "tone": "calm", "target_seconds": 10, "video_lane": "wan"},
@@ -95,6 +103,32 @@ class TestPlanner(unittest.TestCase):
         self.assertEqual(extract_json('prefix {"a": {"b": 1}} suffix')["a"]["b"], 1)
         with self.assertRaises(ValueError):
             extract_json("no json here")
+
+
+class TestProvenanceNotCountedAsValidator(unittest.TestCase):
+    """Regression: llm_prompt provenance must NOT fail all_validators_pass.
+
+    (Live v0b run #1 reported rc=1 because the planner's prompt records — which carry
+    no media 'ok' — were counted as failed validators.)
+    """
+    @unittest.skipUnless(_HAVE_FFMPEG, "ffmpeg/ffprobe required")
+    def test_llm_prompt_excluded_from_exit_criteria(self):
+        from ..executor import run_production
+        from ..manifest import Artifact
+        from ..schema import ProductionPlanV1
+        with open(_PLAN) as f:
+            plan = ProductionPlanV1.from_dict(json.load(f))
+        prov = [Artifact(id="prompt.plan", type="llm_prompt", role="plan",
+                         path="prompts/plan.json", validation={"response_hash": "x"})]
+        with tempfile.TemporaryDirectory() as td:
+            s = run_production(plan, backend_name="synthetic", job_id="prov",
+                               now_iso="2026-01-01T00:00:00Z", productions_dir=td,
+                               extra_artifacts=prov)
+            ec = s["manifest"]["exit_criteria"]
+            self.assertTrue(ec["all_validators_pass"])   # media all pass; provenance excluded
+            types = {a["type"] for a in s["manifest"]["artifacts"]}
+            self.assertIn("llm_prompt", types)           # provenance still carried
+            self.assertIn("media", types)
 
 
 if __name__ == "__main__":

@@ -45,7 +45,8 @@ def _print_summary(summary: dict) -> bool:
     print("  --- the decisive (human) question " + "-" * 29)
     print("  > is this assembled MP4 better than picking lanes by hand?  [you decide]")
     print("=" * 64)
-    failed = [a["id"] for a in man["artifacts"] if not a["validation"].get("ok")]
+    failed = [a["id"] for a in man["artifacts"]
+              if a["type"] == "media" and not a["validation"].get("ok")]
     if failed:
         print(f"  ⚠ validators FAILED on: {failed}")
     return bool(ec["all_validators_pass"] and ec["vo_within_tolerance"] and ec["final_has_audio"])

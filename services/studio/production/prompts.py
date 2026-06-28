@@ -39,7 +39,7 @@ ProductionPlanV1 shape:
 Guidance (be inventive WITHIN these bounds):
 - Aim for {n_shots} shots. Each shot is ONE Wan window (<= 5 s), so keep target_seconds 4-5.
 - prompt_intent: vivid, cinematic prose for the video model (one shot's worth of imagery).
-- narration: ONE spoken sentence the viewer hears over that shot. Keep it short enough to fit (~2.5 words per second), so a 5 s shot is ~12 words max.
+- narration: ONE spoken sentence the viewer hears over that shot, in ENGLISH ONLY (no other-language words). Keep it short enough to fit (~2.5 words per second), so a 5 s shot is AT MOST 10 words.
 - If an idea needs more than ~5 s, SPLIT it into two shots — never exceed the limit.
 - Every shot needs a UNIQUE id. The timeline lists EVERY shot exactly once, in play order.
 - OUTPUT ONLY THE JSON OBJECT."""
