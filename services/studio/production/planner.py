@@ -82,6 +82,7 @@ def normalize(data: dict, video_lane: str = "wan", *, music: bool = True) -> dic
         s["lane"] = video_lane          # every shot uses the pinned lane
         s.setdefault("mode", "t2v")
         s.setdefault("prompt_intent", "")
+        s.setdefault("characters", [])  # Character Bible cast (ids); [] = none
     data.setdefault("delivery", {"aspect": "16:9", "width": 832, "height": 480,
                                  "fps": 16, "loudness_lufs": -14.0})
     data.setdefault("assembly", {"transition_seconds": 0.6, "duck_db": 6})
@@ -133,6 +134,7 @@ def apply_continuity(data: dict, mode: str, *, image_lane: str = "chroma") -> di
                 "prompt": f"{bible}. {s.get('prompt_intent', '')}".strip(),
                 "seed": 7,            # shared seed across keyframes -> stronger style coherence
                 "width": iw, "height": ih,
+                "characters": list(s.get("characters", [])),   # cast → executor injects the bible
             })
             s["mode"] = "i2v"
             s["start_from"] = kf
@@ -151,9 +153,11 @@ def apply_continuity(data: dict, mode: str, *, image_lane: str = "chroma") -> di
         anchor = (shots[0].get("prompt_intent") if shots else "") \
             or data["project"].get("title", "establishing shot")
         data["project"]["image_policy"] = {"hero_keyframe_lane": image_lane}
+        hero_cast = list(dict.fromkeys(c for s in shots for c in s.get("characters", [])))
         data["asset_tasks"] = [{
             "id": "hero", "role": "hero_keyframe", "lane": image_lane, "prompt": anchor,
             "seed": 7, "width": deliv.get("width", 832), "height": deliv.get("height", 480),
+            "characters": hero_cast,   # the hero anchor depicts the whole recurring cast
         }]
         for s in shots:
             s["mode"] = "i2v"

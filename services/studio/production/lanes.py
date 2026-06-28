@@ -79,6 +79,23 @@ _IMAGE_PATCH = {
 }
 
 
+def _append_neg(inputs: dict, key: str, negative: str) -> None:
+    cur = (inputs.get(key) or "").strip().strip(",")
+    inputs[key] = (cur + ", " + negative).strip(", ") if cur else negative
+
+
+def _apply_image_negative(wf: dict, lane: str, negative: str) -> None:
+    """Best-effort character negative-drift injection where the lane has a TEXT neg.
+    hidream → cond.negative_prompt · chroma → neg.text. zimage/krea feed neg from a
+    conditioning node (cfg=1 turbo ignores negatives) → no-op."""
+    if not negative:
+        return
+    if lane == "hidream":
+        _append_neg(wf["cond"]["inputs"], "negative_prompt", negative)
+    elif lane == "chroma":
+        _append_neg(wf["neg"]["inputs"], "text", negative)
+
+
 def _pull(src_host: str, dst: str, *, container: str, container_path: str) -> str:
     """Copy a service-written artifact into the production tree.
 
@@ -107,11 +124,12 @@ class StudioBackend(ABC):
     @abstractmethod
     def render_video(self, *, prompt: str, width: int, height: int, frames: int,
                      steps: int, seed: int, fps: int, out_stem: str,
-                     mode: str = "t2v", start_image: str | None = None) -> str: ...
+                     mode: str = "t2v", start_image: str | None = None,
+                     negative: str = "") -> str: ...
 
     @abstractmethod
     def generate_image(self, *, prompt: str, width: int, height: int, seed: int,
-                       lane: str, out_stem: str) -> str: ...
+                       lane: str, out_stem: str, negative: str = "") -> str: ...
 
     @abstractmethod
     def make_music(self, *, tags: str, lyrics: str, seconds: float, steps: int,
@@ -150,7 +168,7 @@ class LiveBackend(StudioBackend):
         return json.load(urllib.request.urlopen(req, timeout=60)).get("name", fname)
 
     def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem,
-                     mode="t2v", start_image=None) -> str:
+                     mode="t2v", start_image=None, negative="") -> str:
         if mode == "i2v":
             if not start_image:
                 raise RuntimeError("i2v render requires a start_image")
@@ -174,10 +192,12 @@ class LiveBackend(StudioBackend):
             wf["ksampler"]["inputs"]["steps"] = steps
             wf["ksampler"]["inputs"]["seed"] = seed
             wf["video"]["inputs"]["fps"] = float(fps)
+        if negative:                       # append character drift-avoidance to Wan's neg
+            _append_neg(wf["neg"]["inputs"], "text", negative)
         fn, sub = comfy.await_output(comfy.submit(wf), "video")
         return self._comfy_to(fn, sub, out_stem)
 
-    def generate_image(self, *, prompt, width, height, seed, lane, out_stem) -> str:
+    def generate_image(self, *, prompt, width, height, seed, lane, out_stem, negative="") -> str:
         wf_name = _IMAGE_WORKFLOWS.get(lane)
         patch = _IMAGE_PATCH.get(lane)
         if not wf_name or not patch:
@@ -187,6 +207,7 @@ class LiveBackend(StudioBackend):
             )
         wf = _load_workflow(wf_name)
         patch(wf, prompt, width, height, seed)
+        _apply_image_negative(wf, lane, negative)
         fn, sub = comfy.await_output(comfy.submit(wf), "image")
         return self._comfy_to(fn, sub, out_stem)
 
@@ -231,7 +252,7 @@ class SyntheticBackend(StudioBackend):
     name = "synthetic"
 
     def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem,
-                     mode="t2v", start_image=None) -> str:
+                     mode="t2v", start_image=None, negative="") -> str:
         dur = max(0.1, frames / float(fps or 16))
         dst = out_stem + ".mp4"
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -250,7 +271,7 @@ class SyntheticBackend(StudioBackend):
                 "-t", f"{dur:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", dst])
         return dst
 
-    def generate_image(self, *, prompt, width, height, seed, lane, out_stem) -> str:
+    def generate_image(self, *, prompt, width, height, seed, lane, out_stem, negative="") -> str:
         colour = "0x%06x" % (abs(hash((prompt, seed, "img"))) % 0xFFFFFF)
         dst = out_stem + ".png"
         os.makedirs(os.path.dirname(dst), exist_ok=True)

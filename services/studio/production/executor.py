@@ -62,9 +62,15 @@ def run_production(
     pairs = [(plan.shot_by_id(t.clip), t) for t in plan.timeline]   # (shot, timeline) in play order
     from .stack import stack_from_plan
     st = stack or stack_from_plan(plan)   # record the operator-chosen lanes in the manifest
+
+    def _inject(base: str, pos: str) -> str:
+        """Prepend the canonical Character-Bible block to a render prompt (identity first)."""
+        return f"{pos}. {base}".strip(". ") if pos else base
+
     man = Manifest(
         job_id=job_id, title=plan.project.title, created_utc=now_iso, backend=backend.name,
         stack=st.to_dict(),
+        characters=[{"id": c.id, "name": c.name, "role": c.role} for c in plan.characters],
         delivery={"aspect": d.aspect, "width": d.width, "height": d.height, "fps": d.fps,
                   "codec": d.codec, "loudness_lufs": d.loudness_lufs},
         workflow_versions=_workflow_versions(),
@@ -74,6 +80,13 @@ def run_production(
         man.add(a)
     with open(os.path.join(prod_dir, "production.json"), "w") as f:
         json.dump(dataclasses.asdict(plan), f, indent=2)
+    # Character Bible → a first-class production asset + manifest provenance entry.
+    if plan.characters:
+        bible_path = os.path.join(prod_dir, "character_bible.json")
+        with open(bible_path, "w") as f:
+            json.dump([dataclasses.asdict(c) for c in plan.characters], f, indent=2)
+        man.add(Artifact(id="character_bible", type="provenance", role="character_bible",
+                         path=rel(bible_path)))
 
     # -- Phase 0: pre-production (generate image assets, v0b-images) -------
     # The asset-DAG resolves here: anything a shot's start_from references must be
@@ -83,9 +96,10 @@ def run_production(
     for ai, at in enumerate(plan.asset_tasks):
         _p(f"keyframe {ai + 1}/{_na} ({at.role})", 0.05 + 0.20 * ai / max(1, _na))
         ensure.ensure_lane(at.lane, backend=backend.name)
+        cpos, cneg = plan.character_block(getattr(at, "characters", []))
         img = backend.generate_image(
-            prompt=at.prompt, width=at.width, height=at.height, seed=at.seed,
-            lane=at.lane, out_stem=os.path.join(prod_dir, "assets", at.id),
+            prompt=_inject(at.prompt, cpos), width=at.width, height=at.height, seed=at.seed,
+            lane=at.lane, out_stem=os.path.join(prod_dir, "assets", at.id), negative=cneg,
         )
         asset_paths[at.id] = img
         ipr = validators.ffprobe(img)
@@ -116,10 +130,11 @@ def run_production(
         _p(f"shot {si + 1}/{_ns} ({mode}, {vlane})", 0.25 + 0.35 * si / max(1, _ns))
         ensure.ensure_lane(vlane, backend=backend.name)
         frames = max(1, round(shot.target_seconds * d.fps))
+        spos, sneg = plan.character_block(shot.characters)
         path = backend.render_video(
-            prompt=shot.prompt_intent, width=d.width, height=d.height, frames=frames,
+            prompt=_inject(shot.prompt_intent, spos), width=d.width, height=d.height, frames=frames,
             steps=WAN_STEPS, seed=shot.seed, fps=d.fps, mode=mode, start_image=start_image,
-            out_stem=os.path.join(prod_dir, "shots", shot.id),
+            out_stem=os.path.join(prod_dir, "shots", shot.id), negative=sneg,
         )
         clip_paths[shot.id] = path
         prev_clip = path
