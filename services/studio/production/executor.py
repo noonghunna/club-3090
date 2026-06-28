@@ -41,7 +41,14 @@ def run_production(
     now_iso: str,
     productions_dir: str = config.PRODUCTIONS_DIR,
     extra_artifacts: list = (),
+    progress_cb=None,
 ) -> dict:
+    def _p(msg: str, frac: float):
+        if progress_cb:
+            try:
+                progress_cb(msg, round(frac, 3))
+            except Exception:
+                pass
     backend = get_backend(backend_name)
     d = plan.delivery
     prod_dir = os.path.join(productions_dir, job_id)
@@ -68,7 +75,9 @@ def run_production(
     # The asset-DAG resolves here: anything a shot's start_from references must be
     # produced BEFORE the video that consumes it.
     asset_paths: dict[str, str] = {}
-    for at in plan.asset_tasks:
+    _na = len(plan.asset_tasks)
+    for ai, at in enumerate(plan.asset_tasks):
+        _p(f"keyframe {ai + 1}/{_na} ({at.role})", 0.05 + 0.20 * ai / max(1, _na))
         ensure.ensure_lane(at.lane, backend=backend.name)
         img = backend.generate_image(
             prompt=at.prompt, width=at.width, height=at.height, seed=at.seed,
@@ -87,7 +96,8 @@ def run_production(
     vlane = plan.project.video_lane
     clip_paths: dict[str, str] = {}
     prev_clip = None
-    for shot, _t in pairs:        # pairs is in play (timeline) order — prev_last_frame relies on it
+    _ns = len(pairs)
+    for si, (shot, _t) in enumerate(pairs):   # play (timeline) order — prev_last_frame relies on it
         mode, start_image = "t2v", None
         if shot.start_from == "prev_last_frame":
             if prev_clip is None:
@@ -99,6 +109,7 @@ def run_production(
             if not start_image:
                 raise RuntimeError(f"shot {shot.id}: start_from {shot.start_from!r} was not generated")
             mode = "i2v"
+        _p(f"shot {si + 1}/{_ns} ({mode}, {vlane})", 0.25 + 0.35 * si / max(1, _ns))
         ensure.ensure_lane(vlane, backend=backend.name)
         frames = max(1, round(shot.target_seconds * d.fps))
         path = backend.render_video(
@@ -120,6 +131,7 @@ def run_production(
     total = sum(durations)
 
     # -- Phase 2: audio production ----------------------------------------
+    _p("narration + music bed", 0.62)
     ensure.ensure_tts(backend=backend.name)
     narration: dict[str, str] = {}
     for shot, _t in pairs:
@@ -195,4 +207,5 @@ def run_production(
         "better_than_lane_by_lane": None,   # human judgment — printed as a prompt
     }
     man.write(prod_dir)
+    _p("done", 1.0)
     return {"prod_dir": prod_dir, "final": final_path, "manifest": man.to_dict()}
