@@ -224,11 +224,15 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
                      max_tokens=400, temperature=0.8)
     prov.append(("treatment", TREATMENT_SYS, brief, treatment))
 
-    # stage 2 — structured plan (the video lane is PINNED to the operator's choice)
+    # stage 2 — structured plan (the video lane is PINNED to the operator's choice).
+    # Size the token budget to the shot count — a ProductionPlanV1 is ~150 tokens/shot
+    # (prompt_intent + narration + timeline + characters); a fixed 900 truncated longer
+    # films (e.g. a 30 s / 6-shot brief) into unbalanced JSON.
+    plan_tokens = min(4096, 700 + n_shots * 180)
     plan_sys = build_plan_system(reg, n_shots=n_shots, video_lane=st.video_lane)
     plan_user = f"BRIEF: {brief}\n\nTREATMENT:\n{treatment}\n\nNow output the ProductionPlanV1 JSON only."
     raw = call([{"role": "system", "content": plan_sys}, {"role": "user", "content": plan_user}],
-               max_tokens=900, temperature=0.4)
+               max_tokens=plan_tokens, temperature=0.4)
     prov.append(("plan", plan_sys, plan_user, raw))
 
     def _build(raw_json: str) -> dict:
@@ -254,7 +258,7 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
                 break
             ru = repair_user(raw, last_err)
             raw = call([{"role": "system", "content": plan_sys}, {"role": "user", "content": ru}],
-                       max_tokens=900, temperature=0.2)
+                       max_tokens=plan_tokens, temperature=0.2)
             prov.append((f"repair_{attempt + 1}", plan_sys, ru, raw))
 
     _write_provenance(prov, prompts_dir)   # keep the failed trail for debugging
