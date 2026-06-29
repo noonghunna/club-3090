@@ -12,7 +12,7 @@ import json
 import os
 
 from . import assemble as _assemble
-from . import config, ensure, validators
+from . import config, ensure, ltx_workflows, validators
 from .lanes import get_backend
 from .manifest import Artifact, Manifest
 from .schema import ProductionPlanV1
@@ -139,11 +139,15 @@ def run_production(
         clip_paths[shot.id] = path
         prev_clip = path
         pr = validators.ffprobe(path)
+        # LTX-family clips legitimately carry synced audio (Wan is silent) — so don't assert
+        # 'no_audio_expected' on them (their audio is unused; the soundtrack is narration+music).
+        svals = ([v for v in shot.validators if v != "no_audio_expected"]
+                 if ltx_workflows.is_ltx_family(vlane) else shot.validators)
         man.add(Artifact(
             id=f"shot.{shot.id}", type="media", role="shot", path=rel(path), lane=vlane,
             seed=shot.seed, prompt_hash=sha256_text(shot.prompt_intent),
             width=pr.width, height=pr.height, duration=pr.duration,
-            validation=validators.run_all(shot.validators, path, target_seconds=shot.target_seconds),
+            validation=validators.run_all(svals, path, target_seconds=shot.target_seconds),
         ))
 
     durations = [validators.ffprobe(clip_paths[s.id]).duration for s, _ in pairs]
