@@ -32,6 +32,13 @@ with open(DIRECTOR_AGENTS) as _f:
     # wrap in a 1-element array so the injected literal starts with '[' (not a bare '"' that would
     # collide with the r\"\"\"...\"\"\" wrapper); the template indexes [0] back out.
     DIRECTOR_MD = json.dumps([_f.read().split('\n---\n', 1)[-1].strip()])
+
+# Pure conversation-intent classifiers — the SOURCE OF TRUTH lives in director_intent.py
+# (stdlib-only, unit-tested offline). Its source is injected verbatim at module level so the
+# deployed pipe and the tests can't drift. Strip the module docstring/import header below the
+# marker — only the functions/constants are injected (the template already `import re`).
+INTENT_SRC = open(os.path.join(_HERE, 'director_intent.py')).read()
+
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
 # LTX-family video graphs (LTX-2.3 · Sulphur · 10Eros, t2v + i2v) are built from the SHARED
@@ -116,6 +123,10 @@ from pydantic import BaseModel, Field
 
 WORKFLOWS = json.loads(r"""__WF_JSON__""")
 
+# ── conversation-intent classifiers (injected from services/studio/director_intent.py) ──
+__INTENT_SRC__
+# ── end injected intent classifiers ──
+
 class Pipe:
     class Valves(BaseModel):
         comfyui_url: str = Field(default="http://host.docker.internal:8188")
@@ -163,7 +174,7 @@ class Pipe:
         # Two-level UX: leave these 'auto' for the visible default stack (Wan · Chroma ·
         # storyboard), or PIN one to override. The director plans shot content within the
         # chosen stack — it never silently picks the video/image model.
-        production_video_lane: str = Field(default="auto", description="Video model for every shot. 'auto' = wan (renders today). ltx/sulphur/10eros are roadmap (not yet wired in the production executor — use the interactive video lanes for those).")
+        production_video_lane: str = Field(default="auto", description="Video model for every shot — ALL render in the production executor. 'auto' = wan (832×480, no native audio). ltx = LTX-2.3 base (768×512, 24fps). sulphur / 10eros = uncensored LTX-2.3 dev fine-tunes (1280×720). LTX-family clips carry native audio, but the film's soundtrack is the narration + music layer.")
         production_keyframe_lane: str = Field(default="auto", description="Image model for continuity keyframes (tiers). 'auto' = chroma (conservative default). chroma/zimage = fast everyday (zimage = fastest, 8-step turbo); hidream = quality / hero frames (slow ~1 min/kf, native 2560×1440 — but Wan downscales to 832×480, so reserve it for hero frames, not everyday iteration); krea = aesthetic / stylized. (Ideogram is a title-card/design lane, not a continuity keyframe lane.)")
         production_continuity: str = Field(default="storyboard", description="storyboard (per-shot keyframes + shared style bible, DEFAULT) · hero (one shared keyframe) · chain (i2v from prev frame) · none (independent t2v).")
         production_music: bool = Field(default=True, description="Add an ACE-Step music bed under the film. Off = narration + visuals only.")
@@ -779,17 +790,12 @@ class Pipe:
             if not last:
                 return _help
 
-            _GREET = ("hi", "hello", "hey", "yo", "sup", "hiya", "hello there", "hola", "thanks",
-                      "thank you", "cool", "nice", "test", "testing", "ping", "help", "?")
-            _CONFIRM = ("go", "yes", "y", "start", "render", "render it", "proceed", "do it", "ok",
-                        "okay", "ok go", "yep", "yeah", "sure", "build", "build it", "make it",
-                        "let's go", "go ahead", "confirm", "\U0001F44D")
-            def _norm(t):
-                return t.strip().lower().strip(" .!?")
-            def _is_confirm(t):
-                return _norm(t) in _CONFIRM
-            def _is_greeting(t):
-                return _norm(t) in _GREET
+            # intent classifiers are injected at module level from director_intent.py (stdlib-only,
+            # unit-tested offline; the bake keeps the deployed pipe and the tests in sync). Thin
+            # local aliases keep the rest of this method unchanged.
+            _is_confirm = is_confirm
+            _is_greeting = is_greeting
+            _is_question = is_question
             def _overrides(t):
                 tl = t.lower(); words = set(re.findall(r"[a-z0-9\-]+", tl)); o = {}
                 for k in ("10eros", "sulphur", "ltx", "wan"):
@@ -814,17 +820,12 @@ class Pipe:
                 return o
             def _pure_override(t):
                 return bool(_overrides(t)) and len(t.split()) <= 5
-            _QWORDS = ("what", "how", "why", "which", "can", "could", "should", "do", "does",
-                       "is", "are", "who", "when", "where", "will", "would", "tell")
-            def _is_question(t):
-                tl = t.strip().lower()
-                return tl.endswith("?") or (tl.split()[:1] and tl.split()[0] in _QWORDS)
 
-            # effective brief = the first real film description (not a greeting / confirm / short
-            # tweak / question) — so "what other options do we have?" is treated as chat, not a brief.
-            brief = next((t for t in users
-                          if not _is_confirm(t) and not _is_greeting(t) and not _pure_override(t)
-                          and not _is_question(t)), "")
+            # effective brief = the first turn that reads as a film brief. A GENERATION REQUEST
+            # ("can you make a 30s noir short?", "do a 1-min documentary on Pakistan") counts even
+            # though it's question-shaped — the old gate dropped those as questions and never
+            # captured a brief, so it dove into chit-chat (Codex F1, 2026-06-29).
+            brief = pick_brief(users, _pure_override)
             ov = {}
             for t in users:
                 ov.update(_overrides(t))         # accumulate tweaks across the convo (later wins)
@@ -835,7 +836,8 @@ class Pipe:
             narr = ov.get("narration", True)
             secs = ov.get("seconds") or 0
             if secs:
-                shots = max(1, min(24, round(secs / 5.0)))      # ~5s per Wan shot, capped at ~2 min
+                shots = max(1, min(24, math.ceil(secs / 5.0)))  # ~5s/shot, capped ~2 min. ceil (NOT
+                #   round) — must match production.planner.derive_shots so the proposal == what /produce builds.
             elif int(self.valves.production_shots or 0) > 0:
                 shots = int(self.valves.production_shots)
             else:
@@ -1387,7 +1389,7 @@ class Pipe:
                 "_Want changes? Just say what to tweak — e.g. “more moody”, “make it night”, "
                 "“slower camera”, or “voiceover: …” — and I’ll re-craft from this and regenerate._ "
                 "_(Browse all media: " + base + "/ )_")
-'''.replace('__WF_JSON__', WF_JSON).replace('__DIRECTOR_MD__', DIRECTOR_MD)
+'''.replace('__WF_JSON__', WF_JSON).replace('__DIRECTOR_MD__', DIRECTOR_MD).replace('__INTENT_SRC__', INTENT_SRC)
 
 open(OUT_PATH, 'w').write(PIPE)
 print("wrote %s (%d bytes; %d workflows (video: ltx/sulphur/10eros x t2v+i2v + wan · image x5: ideogram/chroma/hidream/zimage/krea · music · sfx) + narration + voice service)" % (OUT_PATH, len(PIPE), len(WF)))

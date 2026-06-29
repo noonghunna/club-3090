@@ -54,6 +54,27 @@ class TestResolveStack(unittest.TestCase):
             self.assertEqual(S.resolve_stack(video_lane=lane).video_lane, lane)
         self.assertEqual(sorted(S.wired_video_lanes()), ["10eros", "ltx", "sulphur", "wan"])
 
+    def test_capabilities_match_wired_video_lanes(self):
+        # F8 drift guard: every wired video lane (stack.py) must have a capability contract
+        # the planner is shown, else the 4B plans against the wrong lane's physics.
+        from ..registry import load, video_lanes
+        reg_lanes = set(video_lanes(load()))
+        for lane in S.wired_video_lanes():
+            self.assertIn(lane, reg_lanes, f"{lane} is wired but missing from capabilities.yaml")
+
+    def test_prompt_slice_shows_only_the_pinned_lane_with_its_physics(self):
+        # The planner sees ONLY the pinned lane's real fps/audio — not a Wan-shaped default.
+        from ..registry import load, prompt_slice
+        reg = load()
+        ltx = prompt_slice(reg, video_lane="ltx")
+        self.assertIn("'ltx'", ltx)
+        self.assertNotIn("'wan'", ltx)               # other lanes are filtered out
+        self.assertIn("24fps", ltx)                  # LTX is 24 fps, not Wan's 16
+        self.assertNotIn("SILENT", ltx)              # LTX has native audio
+        wan = prompt_slice(reg, video_lane="wan")
+        self.assertIn("16fps", wan)
+        self.assertIn("SILENT", wan)                 # Wan clips are silent
+
     def test_unknown_keyframe_and_continuity_rejected(self):
         with self.assertRaises(S.StackError):
             S.resolve_stack(keyframe_lane="zzz")
