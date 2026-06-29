@@ -3,7 +3,24 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def strip_reasoning(text: str) -> str:
+    """Drop <think>…</think> reasoning blocks so a thinking-on stage can't pollute JSON parsing.
+
+    Guardrail for F6/F7: with thinking enabled the model may emit a reasoning block that itself
+    contains JSON-looking text BEFORE the real answer — a balanced-brace scan would grab that.
+    Strip closed blocks; if a <think> opened but never closed, keep everything after the last one
+    (the answer follows the reasoning). Shared by planner.extract_json + critic.parse_critique."""
+    t = text or ""
+    t = _THINK_RE.sub("", t)
+    if "<think>" in t.lower():
+        t = t[t.lower().rfind("<think>") + len("<think>"):]
+    return t.strip()
 
 
 class FFError(RuntimeError):

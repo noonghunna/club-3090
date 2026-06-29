@@ -18,11 +18,12 @@ import os
 import re
 import urllib.request
 
-from . import config
+from . import config, critic
 from .manifest import Artifact
-from .prompts import build_plan_system, build_treatment_system, detect_format, repair_user
+from .prompts import (build_plan_system, build_treatment_system, critic_repair_user,
+                      detect_format, repair_user)
 from .schema import PlanError, ProductionPlanV1
-from .util import sha256_text
+from .util import sha256_text, strip_reasoning
 
 
 class PlannerError(RuntimeError):
@@ -62,14 +63,19 @@ def derive_shots(brief: str, *, default: int = DEFAULT_SHOTS):
 
 # -- director call (the injectable boundary) ----------------------------------
 def director_call(messages: list[dict], *, max_tokens: int, temperature: float,
-                  base: str | None = None, timeout: int = 120) -> str:
-    """One /v1/chat/completions call to the llama.cpp director. Returns content."""
+                  base: str | None = None, timeout: int = 120,
+                  enable_thinking: bool = False) -> str:
+    """One /v1/chat/completions call to the llama.cpp director. Returns content.
+
+    `enable_thinking` is off for the structured stages (treatment/plan/repair — a <think> block
+    would pollute JSON extraction) and ON for the semantic critic, where reasoning improves the
+    judgement; extract_json/parse_critique strip any <think> block defensively (F6/F7)."""
     payload = {
         "model": config.DIRECTOR_MODEL,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": enable_thinking},
     }
     req = urllib.request.Request(
         (base or config.DIRECTOR_URL).rstrip("/") + "/chat/completions",
@@ -82,7 +88,7 @@ def director_call(messages: list[dict], *, max_tokens: int, temperature: float,
 # -- robust JSON extraction (director emits free-form) ------------------------
 def extract_json(text: str) -> dict:
     """Pull the first balanced {...} object out of the director's reply."""
-    t = (text or "").strip()
+    t = strip_reasoning(text)
     if t.startswith("```"):
         t = t.strip("`")
         t = t[4:] if t[:4].lower() == "json" else t
@@ -210,9 +216,12 @@ def apply_continuity(data: dict, mode: str, *, image_lane: str = "chroma") -> di
 
 
 # -- the planner --------------------------------------------------------------
+MAX_CRITIC_ROUNDS = 1   # one semantic-critic fix attempt, then ship the valid plan (fail-open)
+
+
 def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
                     n_shots: int = 3, continuity: str = "none", stack=None,
-                    prompts_dir: str | None = None):
+                    prompts_dir: str | None = None, use_critic: bool = False):
     """Brief -> (ProductionPlanV1, list[Artifact]). Raises PlannerError on failure.
 
     `llm(messages, *, max_tokens, temperature)` is the injectable director call.
@@ -263,26 +272,43 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
                 s["narration"] = ""
         return data
 
-    # validator-repair loop
+    # SCHEMA-repair → SEMANTIC-critic loop. Schema errors repair against max_repairs; once a plan
+    # is structurally valid, the critic (deterministic + LLM, fail-open) gets MAX_CRITIC_ROUNDS to
+    # fix CONTENT problems (off-topic drift, repetition, bad narration) before we ship. A critic
+    # that finds nothing — or errors — never blocks: 'valid JSON' degrades to shipping the plan.
     last_err = None
-    for attempt in range(max_repairs + 1):
+    schema_repairs = 0
+    critic_rounds = 0
+    while True:
         try:
-            data = _build(raw)
-            plan = ProductionPlanV1.from_dict(data)     # validates
-            return plan, _write_provenance(prov, prompts_dir)
+            plan = ProductionPlanV1.from_dict(_build(raw))   # parse + schema validate
         except (PlanError, ValueError, json.JSONDecodeError) as e:
             last_err = str(e)
-            if attempt == max_repairs:
-                break
+            if schema_repairs >= max_repairs:
+                _write_provenance(prov, prompts_dir)         # keep the failed trail for debugging
+                raise PlannerError(
+                    f"director could not produce a valid plan after {max_repairs} repairs: {last_err}"
+                )
+            schema_repairs += 1
             ru = repair_user(raw, last_err)
             raw = call([{"role": "system", "content": plan_sys}, {"role": "user", "content": ru}],
                        max_tokens=plan_tokens, temperature=0.2)
-            prov.append((f"repair_{attempt + 1}", plan_sys, ru, raw))
+            prov.append((f"repair_{schema_repairs}", plan_sys, ru, raw))
+            continue
 
-    _write_provenance(prov, prompts_dir)   # keep the failed trail for debugging
-    raise PlannerError(
-        f"director could not produce a valid plan after {max_repairs} repairs: {last_err}"
-    )
+        # structurally valid → critique CONTENT (only while budget remains, so we never re-critique
+        # a plan we're about to ship anyway).
+        issues = (critic.critique(plan, brief, fmt, call=call, prov=prov)
+                  if (use_critic and critic_rounds < MAX_CRITIC_ROUNDS) else [])
+        if issues:
+            critic_rounds += 1
+            ru = critic_repair_user(raw, issues)
+            raw = call([{"role": "system", "content": plan_sys}, {"role": "user", "content": ru}],
+                       max_tokens=plan_tokens, temperature=0.3)
+            prov.append((f"critic_repair_{critic_rounds}", plan_sys, ru, raw))
+            continue
+
+        return plan, _write_provenance(prov, prompts_dir)
 
 
 def _write_provenance(prov, prompts_dir) -> list[Artifact]:

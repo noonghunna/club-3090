@@ -84,6 +84,7 @@ def _run_job(job_id: str, brief: str, stack: ProductionStack, shots: int, backen
         plan, arts = planner.plan_from_brief(
             brief, registry.load(), n_shots=shots, stack=stack,
             prompts_dir=os.path.join(prod_dir, "prompts"),
+            use_critic=True,   # semantic critic gates content before the (minutes-long) render
         )
         _set(job_id, status="rendering", title=plan.project.title, phase="planned", frac=0.05)
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
