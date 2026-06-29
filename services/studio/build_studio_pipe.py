@@ -34,56 +34,17 @@ with open(DIRECTOR_AGENTS) as _f:
     DIRECTOR_MD = json.dumps([_f.read().split('\n---\n', 1)[-1].strip()])
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
-def build(dit, audio_vae, video_vae, connectors, width, height, frames=121, lora=None):
-    wf = json.load(open(TEMPLATE))
-    wf['3']['inputs']['unet_name'] = dit
-    wf['1']['inputs']['vae_name'] = audio_vae
-    wf['2']['inputs']['vae_name'] = video_vae
-    wf['47']['inputs']['clip_name2'] = connectors
-    wf['7']['inputs']['width'] = width; wf['7']['inputs']['height'] = height
-    wf['8']['inputs']['scale_by'] = 1.0          # output res == base res (no upscaler stage)
-    wf['10']['inputs']['value'] = frames
-    if lora:                                     # distill LoRA -> dev DiT runs single-stage 8-step cfg=1
-        wf['50'] = {"class_type": "LoraLoaderModelOnly",
-                    "inputs": {"model": ["3", 0], "lora_name": lora, "strength_model": 1.0}}
-        wf['18']['inputs']['model'] = ["50", 0]  # CFGGuider reads the LoRA'd model
-    return wf
+# LTX-family video graphs (LTX-2.3 · Sulphur · 10Eros, t2v + i2v) are built from the SHARED
+# recipe in production/ltx_workflows.py, which the Production executor also uses at render time
+# (one source of truth — the interactive lanes + the production executor can't drift). The
+# script's own dir (services/studio) is on sys.path, so `production` is importable.
+import sys as _sys
+if _HERE not in _sys.path:
+    _sys.path.insert(0, _HERE)
+from production import ltx_workflows   # noqa: E402
 
-def i2v_insert(wf, base_longer_edge):
-    """Insert LoadImage->resize->preprocess->ImgToVideoInplace, conditioning the base video latent (node 14) on an image."""
-    wf = json.loads(json.dumps(wf))
-    wf['100'] = {"class_type": "LoadImage", "inputs": {"image": "__STUDIO_IMAGE__"}}
-    wf['101'] = {"class_type": "ResizeImagesByLongerEdge", "inputs": {"images": ["100", 0], "longer_edge": base_longer_edge}}
-    wf['102'] = {"class_type": "LTXVPreprocess", "inputs": {"image": ["101", 0], "img_compression": 35}}
-    wf['103'] = {"class_type": "LTXVImgToVideoInplace",
-                 "inputs": {"vae": ["2", 0], "image": ["102", 0], "latent": ["14", 0], "strength": 1.0, "bypass": False}}
-    wf['15']['inputs']['video_latent'] = ["103", 0]   # rewire concat: empty latent -> image-conditioned latent
-    return wf
-
-LTX_DIT      = 'ltx2.3/distilled-1.1/ltx-2.3-22b-distilled-1.1-Q8_0.gguf'
-SUL_DIT      = 'sulphur-2/sulphur_dev-Q8_0.gguf'
-EROS_DIT     = '10eros/10Eros_v1-Q8_0.gguf'
-DISTILL_LORA = 'ltx-2.3-22b-distilled-lora-384-1.1.safetensors'   # 22B distilled LoRA — shared by both dev lanes
-
-# LTX: pre-distilled checkpoint, distilled VAEs/connectors, no LoRA (already single-stage). 768x512 proven (00016).
-ltx_t2v = build(LTX_DIT,
-                'ltx-2.3-22b-distilled_audio_vae.safetensors', 'ltx-2.3-22b-distilled_video_vae.safetensors',
-                'ltx-2.3-22b-distilled_embeddings_connectors.safetensors', 768, 512)
-# Uncensored dev lanes (both LTX-2.3-22B-dev) -> dev VAEs/connectors + the shared distill LoRA,
-# single-stage 8-step cfg=1, 1280x720. Two lanes so Sulphur and 10Eros can be compared directly.
-sul_t2v  = build(SUL_DIT,
-                 'ltx-2.3-22b-dev_audio_vae.safetensors', 'ltx-2.3-22b-dev_video_vae.safetensors',
-                 'ltx-2.3-22b-dev_embeddings_connectors.safetensors', 1280, 720, lora=DISTILL_LORA)
-eros_t2v = build(EROS_DIT,
-                 'ltx-2.3-22b-dev_audio_vae.safetensors', 'ltx-2.3-22b-dev_video_vae.safetensors',
-                 'ltx-2.3-22b-dev_embeddings_connectors.safetensors', 1280, 720, lora=DISTILL_LORA)
 WF = {
-    "ltx-t2v": ltx_t2v,
-    "ltx-i2v": i2v_insert(ltx_t2v, 768),
-    "sulphur-t2v": sul_t2v,
-    "sulphur-i2v": i2v_insert(sul_t2v, 1280),
-    "10eros-t2v": eros_t2v,
-    "10eros-i2v": i2v_insert(eros_t2v, 1280),
+    **ltx_workflows.build_workflows(),   # ltx/sulphur/10eros × t2v+i2v
     # Image lane: Ideogram-4 fp8 (DualModelGuider, native nodes). Single-device GPU0,
     # coexists with the director on GPU0 at <=1024^2 (2048^2 would OOM — capped in pipe).
     "image": json.load(open(IMAGE_TEMPLATE)),
@@ -888,9 +849,7 @@ class Pipe:
                          % (video, keyf, cont, _audio_txt, shots))
             def _proposal():
                 _vl = {"auto": "Wan2.2 (auto)", "wan": "Wan2.2", "ltx": "LTX-2.3",
-                       "sulphur": "Sulphur", "10eros": "10Eros"}.get(video, video)
-                if video not in ("auto", "wan"):
-                    _vl += " ⚠️ roadmap — only Wan renders today"
+                       "sulphur": "Sulphur (uncensored)", "10eros": "10Eros (uncensored)"}.get(video, video)
                 _kl = {"auto": "Chroma (auto)", "chroma": "Chroma", "zimage": "Z-Image",
                        "krea": "Krea 2", "hidream": "HiDream-O1"}.get(keyf, keyf)
                 _audio = ("narration" if narr else "no narration") + " + " + ("music" if music else "no music")
@@ -904,9 +863,10 @@ class Pipe:
                     "| \U0001F39E️ continuity | **" + str(cont) + "**  ·  \U0001F50A audio **" + _audio + "** |\n"
                     "| ⏱️ length | **" + _len + "** |\n"
                     "| ⚙️ est. render | **~" + str(est_lo) + "–" + str(est_hi) + " min** on 1× 3090 |\n\n"
-                    "Reply **go** to start — or tell me what to change: _“use LTX” · “30 seconds” · "
-                    "“no music” · “hidream keyframes” · “hero continuity”_.\n\n"
-                    "_(Video renders on **Wan** today; LTX/Sulphur/10Eros are roadmap.)_"
+                    "Reply **go** to start — or tell me what to change: _“use LTX” · “sulphur” · "
+                    "“30 seconds” · “no music” · “hidream keyframes” · “hero continuity”_.\n\n"
+                    "_(Video: Wan2.2 · LTX-2.3 · Sulphur · 10Eros — all render. LTX-family lanes "
+                    "use their own resolution; the film's audio is the narration + music layer.)_"
                 )
 
             async def _chat(msg, ctx):

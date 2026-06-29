@@ -46,14 +46,16 @@ actually render, and **recorded in the manifest** (`stack` field). The lane pin 
 
 | Dimension | Default | Options (render **today**) | Roadmap (declared, not yet wired) |
 |---|---|---|---|
-| video lane | `wan` | `wan` | `ltx` · `sulphur` · `10eros` (LTX-family checkpoint-swap graph not yet ported to the executor) |
+| video lane | `wan` | `wan` (832×480) · `ltx` (768×512) · `sulphur` (1280×720) · `10eros` (1280×720) | — |
 | keyframe lane | `chroma` | `chroma` ✅ · `zimage` ✅ · `krea` ✅ · `hidream` ✅ | `ideogram` (needs structured JSON, not prose → a title-card lane, not a continuity keyframe lane) |
 | continuity | `storyboard` | `storyboard` · `hero` · `chain` · `none` | — |
 | audio | narration + music | `--no-music` · `--no-narration` · `--voice <id>` | — |
 
-✅ = all four keyframe lanes live-validated end-to-end (noir/candle A/B, 2026-06-28).
-HiDream renders at native 2560×1440 (16:9, snapped up from a /32 clamp); chroma/zimage/krea
-render at the requested 832×480. The Wan i2v resize downsizes each keyframe to the clip dims.
+All four **video** lanes render via the executor (shared `ltx_workflows.py` recipe — the same
+graph the interactive Studio lanes use). The LTX family runs at its own native res + 24 fps
+and can emit synced audio, but in a multi-shot film the soundtrack is the narration+music
+layer (the assembler ignores the clip's own audio). The four **keyframe** lanes are live-A/B
+validated; HiDream renders native 2560×1440 (snapped from a /32 clamp), the others at 832×480.
 
 A choice the executor can't honour (unknown or roadmap lane) **fails fast** with a clear
 message + the renderable set — an operator is never handed a choice that errors at render.

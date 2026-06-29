@@ -33,20 +33,20 @@ class StackError(ValueError):
 #   i2v   = the lane has an image->video workflow (every continuity mode needs i2v).
 VIDEO_LANES: dict[str, dict] = {
     "wan": {
-        "label": "Wan2.2 (uncensored · i2v/storyboard flow · no native audio)",
+        "label": "Wan2.2 (uncensored · 832×480 · no native audio)",
         "wired": True, "i2v": True,
     },
     "ltx": {
-        "label": "LTX-2.3 (native synced audio · text→video)",
-        "wired": False, "i2v": True,
+        "label": "LTX-2.3 (768×512 · the distilled base)",
+        "wired": True, "i2v": True,
     },
     "sulphur": {
-        "label": "Sulphur (uncensored LTX-2.3 dev fine-tune)",
-        "wired": False, "i2v": True,
+        "label": "Sulphur (uncensored LTX-2.3 dev fine-tune · 1280×720)",
+        "wired": True, "i2v": True,
     },
     "10eros": {
-        "label": "10Eros (uncensored LTX-2.3 dev fine-tune)",
-        "wired": False, "i2v": True,
+        "label": "10Eros (uncensored LTX-2.3 dev fine-tune · 1280×720)",
+        "wired": True, "i2v": True,
     },
 }
 

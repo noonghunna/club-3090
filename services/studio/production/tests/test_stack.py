@@ -48,12 +48,11 @@ class TestResolveStack(unittest.TestCase):
         with self.assertRaises(S.StackError):
             S.resolve_stack(video_lane="nope")
 
-    def test_unwired_video_lane_rejected_with_renderable_set(self):
-        # ltx/sulphur/10eros are known studio lanes but not yet wired in the executor.
-        for lane in ("ltx", "sulphur", "10eros"):
-            with self.assertRaises(S.StackError) as cm:
-                S.resolve_stack(video_lane=lane)
-            self.assertIn("wan", str(cm.exception))   # points the operator at what renders
+    def test_all_video_lanes_wired_and_resolve(self):
+        # wan + the LTX family (ltx/sulphur/10eros) all render via the executor now.
+        for lane in ("wan", "ltx", "sulphur", "10eros"):
+            self.assertEqual(S.resolve_stack(video_lane=lane).video_lane, lane)
+        self.assertEqual(sorted(S.wired_video_lanes()), ["10eros", "ltx", "sulphur", "wan"])
 
     def test_unknown_keyframe_and_continuity_rejected(self):
         with self.assertRaises(S.StackError):
@@ -103,13 +102,12 @@ class TestSchemaLaneValidation(unittest.TestCase):
             "timeline": [{"clip": "s1", "transition_in": "dissolve"}],
         }
 
-    def test_unwired_video_lane_rejected(self):
-        d = self._good()
-        d["project"]["video_lane"] = "ltx"
-        d["shots"][0]["lane"] = "ltx"
-        with self.assertRaises(PlanError) as cm:
-            ProductionPlanV1.from_dict(d)
-        self.assertIn("not yet wired", str(cm.exception))
+    def test_ltx_family_video_lanes_accepted(self):
+        for lane in ("ltx", "sulphur", "10eros"):
+            d = self._good()
+            d["project"]["video_lane"] = lane
+            d["shots"][0]["lane"] = lane
+            ProductionPlanV1.from_dict(d)   # wired now → must not raise
 
     def test_unknown_video_lane_rejected(self):
         d = self._good()
@@ -256,6 +254,36 @@ class TestStackInManifest(unittest.TestCase):
         self.assertEqual(st.video_lane, "wan")
         self.assertEqual(st.continuity, "hero")
         self.assertEqual(st.keyframe_lane, "chroma")   # from image_policy / asset lane
+
+
+class TestLtxWorkflows(unittest.TestCase):
+    """The shared LTX-family builder used by both the interactive pipe and the executor."""
+
+    def test_family_membership(self):
+        from .. import ltx_workflows as L
+        self.assertTrue(all(L.is_ltx_family(x) for x in ("ltx", "sulphur", "10eros")))
+        self.assertFalse(L.is_ltx_family("wan"))
+
+    def test_render_graph_sizes_at_24fps_native_res(self):
+        from .. import ltx_workflows as L
+        wf, w, h = L.render_graph("sulphur", prompt="noir alley", seconds=5, seed=7)
+        self.assertEqual((w, h), (1280, 720))                 # native dev res (not Wan 832×480)
+        self.assertEqual(wf["5"]["inputs"]["text"], "noir alley")
+        self.assertEqual(wf["16"]["inputs"]["noise_seed"], 7)
+        self.assertEqual(wf["10"]["inputs"]["value"], 120)    # 5 s × 24 fps
+
+    def test_i2v_conditions_on_image(self):
+        from .. import ltx_workflows as L
+        wf, w, h = L.render_graph("ltx", prompt="x", seconds=4, seed=1, mode="i2v", image_name="kf.png")
+        self.assertEqual((w, h), (768, 512))
+        self.assertEqual(wf["100"]["inputs"]["image"], "kf.png")
+        self.assertEqual(wf["10"]["inputs"]["value"], 96)     # 4 s × 24 fps
+
+    def test_build_workflows_has_all_six(self):
+        from .. import ltx_workflows as L
+        self.assertEqual(sorted(L.build_workflows()),
+                         sorted(["ltx-t2v", "ltx-i2v", "sulphur-t2v", "sulphur-i2v",
+                                 "10eros-t2v", "10eros-i2v"]))
 
 
 if __name__ == "__main__":
