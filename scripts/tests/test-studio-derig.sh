@@ -38,11 +38,20 @@ for f in "$ROOT"/services/comfyui/download_*.sh; do
   fi
 done
 
-# 4. Both launchers detect the LAN IP via the SHARED c3_lan_ip helper (no inline drift).
+# 4. Both launchers detect the LAN IP via a SHARED helper (no inline drift) — c3_lan_ip or the
+#    persist-to-.env wrapper c3_resolve_lanip.
 for s in scripts/gpu-mode.sh scripts/setup-ai-studio.sh; do
-  if grep -q 'c3_lan_ip' "$ROOT/$s"; then chk ok "$s uses shared c3_lan_ip"
-  else chk fail "$s does not use the shared c3_lan_ip helper"; fi
+  if grep -qE 'c3_lan_ip|c3_resolve_lanip' "$ROOT/$s"; then chk ok "$s uses a shared LAN-IP helper"
+  else chk fail "$s does not use the shared LAN-IP helper"; fi
 done
+
+# 4b. c3_lan_ip must not rely SOLELY on `hostname -I` (net-tools only — missing on CachyOS /
+#     GNU inetutils, club-3090 #512). It needs the portable `ip` fallback.
+if grep -q 'ip -4' "$ROOT/services/comfyui/comfyui-paths.sh"; then
+  chk ok "c3_lan_ip has the portable 'ip' fallback (not hostname -I only)"
+else
+  chk fail "c3_lan_ip relies on hostname -I only — breaks on GNU inetutils / CachyOS (#512)"
+fi
 
 # 5. The production video-lane valve must not call a WIRED lane "not yet wired" / "roadmap"
 #    (Codex F11, 2026-06-29: ltx/sulphur/10eros render in the executor but the valve text lagged).
