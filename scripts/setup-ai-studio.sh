@@ -13,7 +13,8 @@
 #   SKIP_DISK_CHECK=1 bypass the free-space preflight (resume an idempotent download)
 #   SKIP_PIPE=1      skip installing the OWUI Studio pipe (do it later)
 #   ASSUME_YES=1     same as --yes (also auto-yes when not a TTY / under CI)
-#   LANIP=<ip>       host IP shown in the final URLs (auto-detected otherwise)
+#   LANIP=<ip>       host IP shown in the final URLs. Auto-detected + saved to .env on first run;
+#                    pin it in .env (or via this env var) if it picks the wrong NIC / can't detect.
 #   MODEL_DIR=<dir>  HF/GGUF cache root; the ComfyUI tree goes to a "comfyui" sibling
 #                    of it (override COMFYUI_ROOT / COMFYUI_MODELS_DIR to decouple).
 #
@@ -29,10 +30,10 @@ STUDIO_DIR="$REPO_DIR/services/studio"
 # alongside it instead of the rig's /mnt fallback). See services/comfyui/comfyui-paths.sh.
 # shellcheck disable=SC1091
 . "$COMFYUI_DIR/comfyui-paths.sh"
-# LAN IP for the final URLs — via the shared c3_lan_ip helper (sourced just above), so setup
-# and gpu-mode can't drift. Prefers a LAN address over docker bridges; override with LANIP=.
-LANIP="${LANIP:-$(c3_lan_ip 2>/dev/null || true)}"
-LANIP="${LANIP:-localhost}"
+# LAN IP for the final URLs. Resolve via the shared helper: env / .env win, else auto-detect and
+# PERSIST to .env (the source of truth) — or, if nothing detects, fall back to localhost and tell
+# the user to set LANIP in .env. Keeps setup + gpu-mode from drifting. (#504, #512)
+c3_resolve_lanip
 
 ASSUME_YES="${ASSUME_YES:-}"
 case "${1:-}" in
