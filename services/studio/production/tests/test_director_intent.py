@@ -57,6 +57,14 @@ class TestClassifiers(unittest.TestCase):
         for t in ["a lone detective in the rain", "make a noir short"]:
             self.assertFalse(di.is_question(t), t)
 
+    def test_compound_confirms(self):
+        # "ok do it" etc. must read as a confirm so they don't leak into brief detection
+        for t in ["ok do it", "yes go ahead", "do it now", "ok go", "yes please", "go on", "sure lets go"]:
+            self.assertTrue(di.is_confirm(t), t)
+        # NOT bare confirms: a compound confirm+stack, or any real content
+        for t in ["go with ltx", "make a noir film", "do some research", "a noir short"]:
+            self.assertFalse(di.is_confirm(t), t)
+
 
 class TestBriefCandidate(unittest.TestCase):
     def test_generation_request_beats_question_shape(self):
@@ -94,6 +102,19 @@ class TestPickBrief(unittest.TestCase):
 
     def test_all_smalltalk_yields_no_brief(self):
         self.assertEqual(di.pick_brief(["hi", "hello", "what can you do?"]), "")
+
+    def test_documentary_subject_is_a_brief_even_as_a_question(self):
+        self.assertTrue(di.is_brief_candidate("dig history of pakistan?"))
+        self.assertTrue(di.is_brief_candidate("the history of jazz"))
+
+    def test_the_ok_do_it_transcript_captures_the_real_brief(self):
+        # Regression (2026-06-29): "dig history of pakistan?" was dropped as a question and the
+        # confirm phrase "ok do it" became the film brief. Now the subject is the brief, and
+        # "ok do it" is a confirm.
+        turns = ["hi", "can you search the web?", "can you research?",
+                 "dig history of pakistan?", "ok do it"]
+        self.assertEqual(di.pick_brief(turns), "dig history of pakistan?")
+        self.assertTrue(di.is_confirm("ok do it"))
 
 
 class TestConfirmWord(unittest.TestCase):

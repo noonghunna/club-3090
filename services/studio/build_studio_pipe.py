@@ -495,7 +495,7 @@ class Pipe:
         body = json.dumps({"model": self.valves.chat_model,
                            "messages": [{"role": "system", "content": build_controller_system()},
                                         {"role": "user", "content": u}],
-                           "max_tokens": 320, "temperature": 0.2,
+                           "max_tokens": 320, "temperature": 0.0,   # deterministic intent across turns
                            "chat_template_kwargs": {"enable_thinking": False}}).encode()
         try:
             req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
@@ -872,13 +872,22 @@ class Pipe:
                 (", ~%d shots" % _pshots) if _pshots else "")
             _decision = await loop.run_in_executor(None, self._classify, users, _prelim_ctx)
             if _decision:
-                brief = _decision["brief"] or brief_kw
-                for _k, _v in _decision["stack_patch"].items():
-                    ov.setdefault(_k, _v)        # keyword floor wins; the LLM only fills a lane it left blank
-                confirmed = (_decision["confirm"] or confirm_kw) and has_confirm_word(last)
+                # The LLM is the DRIVER — trust its read of the conversation (brief, intent, reply).
+                # The keyword floor is NOT consulted for the brief; it only supplies the explicit
+                # stack toggles the user typed ("use ltx", "no music", "research") the LLM might miss.
+                # Brief extraction is the LLM's job — that's what the controller prompt is for.
+                brief = _decision["brief"]
                 intent = _decision["intent"]
                 llm_reply = _decision["reply"]
+                for _k, _v in _decision["stack_patch"].items():
+                    ov.setdefault(_k, _v)        # explicit keyword toggles win; the LLM fills gaps
+                # render is irreversible → fire on a BARE confirm ("go", "ok do it") or an
+                # LLM-confirmed compound ("go with ltx"), ALWAYS gated by a real go-word (safety latch).
+                confirmed = confirm_kw or (_decision["confirm"] and has_confirm_word(last))
             else:
+                # LLM unreachable → minimal keyword fallback (the 4B planner is down too, so this
+                # mostly keeps the lane honest until the director is back — it never guesses a brief
+                # from a confirm phrase).
                 brief = brief_kw
                 confirmed = confirm_kw
                 intent = ("confirm" if confirm_kw
