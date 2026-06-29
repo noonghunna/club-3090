@@ -17,7 +17,11 @@ from __future__ import annotations
 
 from .util import sh
 
-_CUT_XFADE = 1.0 / 30.0   # a "cut" seam inside an xfade chain: ~1 frame (no visible blend)
+# A "cut" seam inside an xfade chain is faked with a near-instant blend. It MUST be ≥ ~1 frame
+# at the output fps — a sub-frame xfade duration (the old 1/30 s = 0.033 s, < 1 frame at 24 fps)
+# silently produces a degenerate transition that collapses the whole chain to one clip's length
+# (surfaced on a 6-shot LTX/Sulphur noir with cut seams, 2026-06-29). fps-aware below.
+_CUT_FRAMES = 2.0   # 2 frames: imperceptible (reads as a cut) but valid for xfade
 
 
 def db_to_linear(db: float) -> float:
@@ -62,8 +66,11 @@ def build_mix_command(
     if len(transitions) != max(0, n - 1):
         raise ValueError("transitions must have one entry per seam (clips-1)")
 
-    # effective crossfade per seam: dissolve -> its seconds; cut -> ~1 frame
-    xf = [secs if typ == "dissolve" else _CUT_XFADE for (typ, secs) in transitions]
+    # effective crossfade per seam: dissolve -> its seconds; cut -> a 2-frame blend at the
+    # output fps (NOT sub-frame, which collapses the xfade chain). Never longer than the seam's
+    # own dissolve seconds would be, and clamped below each clip so the offset math stays valid.
+    cut_xf = _CUT_FRAMES / float(max(1, fps))
+    xf = [secs if typ == "dissolve" else cut_xf for (typ, secs) in transitions]
     all_cut = all(typ == "cut" for (typ, _s) in transitions)
     starts = (
         [sum(durations[:k]) for k in range(n)] if (all_cut or n == 1)

@@ -106,6 +106,22 @@ class TestAssembleCommand(unittest.TestCase):
         self.assertIn("concat=n=2:v=1:a=0[vid]", fc)   # hard cuts -> concat, no xfade
         self.assertNotIn("xfade", fc)
 
+    def test_mixed_cut_dissolve_cut_xfade_is_at_least_one_frame(self):
+        # Regression (2026-06-29): a MIXED chain takes the xfade path, where a "cut" seam was
+        # faked with a SUB-FRAME duration (0.033 s < 1 frame @24fps) → degenerate xfade collapsed
+        # the whole video to one clip's length. The cut blend must be ≥ 1 frame at the fps.
+        import re
+        for fps in (16, 24):
+            cmd = assemble.build_mix_command(
+                "/tmp/f.mp4", clips=["a.mp4", "b.mp4", "c.mp4"], durations=[5.0, 5.0, 5.0],
+                transitions=[("cut", 0.6), ("dissolve", 0.6)],   # mixed -> xfade chain
+                narrations=[("v.wav", 0, 0.0)], bed=None, fps=fps, lufs=-14.0, bed_level_db=-18)
+            fc = cmd[cmd.index("-filter_complex") + 1]
+            self.assertIn("xfade=transition=dissolve", fc)        # mixed uses the xfade chain
+            cut_durs = [float(d) for d in re.findall(r"xfade=transition=dissolve:duration=([0-9.]+)", fc)]
+            self.assertTrue(min(cut_durs) >= 1.0 / fps - 1e-6,    # no sub-frame xfade
+                            f"fps={fps}: a seam xfade {min(cut_durs)} is sub-frame")
+
     def test_bed_only_no_narration(self):
         cmd = assemble.build_mix_command(
             "/tmp/f.mp4", clips=["a.mp4"], durations=[5.0], transitions=[],
