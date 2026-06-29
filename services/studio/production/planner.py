@@ -18,7 +18,7 @@ import os
 import re
 import urllib.request
 
-from . import config, critic
+from . import config, critic, research
 from .manifest import Artifact
 from .prompts import (build_plan_system, build_treatment_system, critic_repair_user,
                       detect_format, repair_user)
@@ -221,7 +221,8 @@ MAX_CRITIC_ROUNDS = 1   # one semantic-critic fix attempt, then ship the valid p
 
 def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
                     n_shots: int = 3, continuity: str = "none", stack=None,
-                    prompts_dir: str | None = None, use_critic: bool = False):
+                    prompts_dir: str | None = None, use_critic: bool = False,
+                    use_research: bool = False):
     """Brief -> (ProductionPlanV1, list[Artifact]). Raises PlannerError on failure.
 
     `llm(messages, *, max_tokens, temperature)` is the injectable director call.
@@ -245,11 +246,19 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
     fmt = detect_format(brief)
     treatment_sys = build_treatment_system(fmt)
 
-    # stage 1 — creative treatment (free-form)
+    # OPTIONAL web research — for a DOCUMENTARY brief, when the operator asked for it, pull real
+    # facts from SearXNG and ground both stages in them (real names/dates/events instead of the
+    # 4B's frozen guesses). Fails open: no results / search down → notes='' → plan from own knowledge.
+    notes = research.research_notes(brief) if (use_research and fmt == "documentary") else ""
+    if notes:
+        prov.append(("research", "searxng", brief, notes))
+    notes_block = ("\n\n" + notes) if notes else ""
+
+    # stage 1 — creative treatment (free-form), grounded in the research notes when present
     treatment = call([{"role": "system", "content": treatment_sys},
-                      {"role": "user", "content": brief}],
+                      {"role": "user", "content": brief + notes_block}],
                      max_tokens=400, temperature=0.8)
-    prov.append(("treatment", treatment_sys, brief, treatment))
+    prov.append(("treatment", treatment_sys, brief + notes_block, treatment))
 
     # stage 2 — structured plan (the video lane is PINNED to the operator's choice).
     # Size the token budget to the shot count — a ProductionPlanV1 is ~150 tokens/shot
@@ -257,7 +266,8 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
     # films (e.g. a 30 s / 6-shot brief) into unbalanced JSON.
     plan_tokens = min(4096, 700 + n_shots * 180)
     plan_sys = build_plan_system(reg, n_shots=n_shots, video_lane=st.video_lane, fmt=fmt)
-    plan_user = f"BRIEF: {brief}\n\nTREATMENT:\n{treatment}\n\nNow output the ProductionPlanV1 JSON only."
+    plan_user = (f"BRIEF: {brief}\n\nTREATMENT:\n{treatment}{notes_block}\n\n"
+                 "Now output the ProductionPlanV1 JSON only.")
     raw = call([{"role": "system", "content": plan_sys}, {"role": "user", "content": plan_user}],
                max_tokens=plan_tokens, temperature=0.4)
     prov.append(("plan", plan_sys, plan_user, raw))

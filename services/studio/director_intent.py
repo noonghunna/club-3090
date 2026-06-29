@@ -53,6 +53,25 @@ def is_generation_request(t):
     return bool(_GEN_RE.search(t or ""))
 
 
+# Documentary/factual signal — MIRRORS production/prompts.py detect_format (guarded by
+# test_looks_documentary_matches_detect_format). Used in the pipe to OFFER web research on a
+# documentary brief (the pipe can't import the server-side detect_format).
+_DOC_SIGNALS = re.compile(
+    r"document\w*"
+    r"|\bhistory of\b|\bthe history\b|\bhistories of\b"
+    r"|\bexplainer\b|\bexplain(?:ed|s|ing)?\b"
+    r"|\beducational\b|\bbiograph\w*"
+    r"|\bguide to\b|\boverview of\b|\btimeline of\b|\bfacts? about\b"
+    r"|\btutorial\b|\bhow to\b|\bhow .{0,30}?works?\b|\bcase study\b",
+    re.I,
+)
+
+
+def looks_documentary(brief):
+    """True if a brief reads as documentary/factual (→ offer web research)."""
+    return bool(_DOC_SIGNALS.search(brief or ""))
+
+
 def is_question(t):
     """Question-shaped (leading interrogative or trailing '?'). Pure to its name —
     callers that want creation-asks excluded use is_brief_candidate (gen wins there)."""

@@ -33,6 +33,14 @@ class TestGenerationRequest(unittest.TestCase):
                   "do you have other models?", "thanks", "use ltx", "no music", "go"]:
             self.assertFalse(di.is_generation_request(t), t)
 
+    def test_looks_documentary_matches_detect_format(self):
+        # The pipe's looks_documentary must agree with the server's detect_format (no drift).
+        from ..prompts import detect_format
+        for b in ["a documentary on the history of pakistan", "explain how vaccines work",
+                  "a guide to the solar system", "the biography of Tesla",
+                  "a 15s noir detective short", "two robots fall in love", "a lighthouse at dawn"]:
+            self.assertEqual(di.looks_documentary(b), detect_format(b) == "documentary", b)
+
 
 class TestClassifiers(unittest.TestCase):
     def test_confirm_and_greeting_are_exact(self):

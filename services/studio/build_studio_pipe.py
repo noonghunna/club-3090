@@ -836,6 +836,13 @@ class Pipe:
                     o["music"] = False
                 if "no narration" in tl or "no voice" in tl or "no voiceover" in tl:
                     o["narration"] = False
+                # web research toggle (documentary grounding) — opt-in; "dig"/"search"/"research"
+                if ("research" in words or "dig" in words or "search" in words
+                        or "look it up" in tl or "find facts" in tl):
+                    o["research"] = True
+                if ("no research" in tl or "without research" in tl or "don't search" in tl
+                        or "skip research" in tl or "no search" in tl):
+                    o["research"] = False
                 s = self._target_seconds(t)
                 if s:
                     o["seconds"] = s
@@ -893,6 +900,8 @@ class Pipe:
             else:
                 shots = 4                                       # no stated length → a short default
             est_lo, est_hi = int(round(shots * 2.5)), int(round(shots * 3)) + 3
+            research = bool(ov.get("research", False))   # documentary web-research, opt-in
+            is_doc = looks_documentary(brief)            # offer research only for factual briefs
 
             # the plan proposal card (shown when there's a new / changed plan to confirm)
             _audio_txt = ("narration + music" if (narr and music) else "narration only" if narr
@@ -907,6 +916,11 @@ class Pipe:
                 _audio = ("narration" if narr else "no narration") + " + " + ("music" if music else "no music")
                 _len = ("~%ds → %d shots" % (int(secs), shots)) if secs else \
                        ("%d shots (~%ds — say a length like “1 minute” to size it)" % (shots, shots * 5))
+                _research_row = ("| \U0001F50E research | **on** — real web facts ground the script |\n"
+                                 if (is_doc and research) else "")
+                _research_offer = ("\n\n\U0001F50E _This looks like a documentary — reply **research** to "
+                                   "ground the shots in real web facts (recommended for accuracy), or just "
+                                   "**go** to use what I already know._" if (is_doc and not research) else "")
                 return (
                     "\U0001F3AC **Plan — " + brief + "**\n\n"
                     "| | |\n|---|---|\n"
@@ -914,10 +928,12 @@ class Pipe:
                     "| \U0001F5BC️ keyframes | **" + _kl + "** |\n"
                     "| \U0001F39E️ continuity | **" + str(cont) + "**  ·  \U0001F50A audio **" + _audio + "** |\n"
                     "| ⏱️ length | **" + _len + "** |\n"
+                    + _research_row +
                     "| ⚙️ est. render | **~" + str(est_lo) + "–" + str(est_hi) + " min** on 1× 3090 |\n\n"
                     "Reply **go** to start — or tell me what to change: _“use LTX” · “sulphur” · "
-                    "“30 seconds” · “no music” · “hidream keyframes” · “hero continuity”_.\n\n"
-                    "_(Video: Wan2.2 · LTX-2.3 · Sulphur · 10Eros — all render. LTX-family lanes "
+                    "“30 seconds” · “no music” · “hidream keyframes” · “hero continuity”_."
+                    + _research_offer +
+                    "\n\n_(Video: Wan2.2 · LTX-2.3 · Sulphur · 10Eros — all render. LTX-family lanes "
                     "use their own resolution; the film's audio is the narration + music layer.)_"
                 )
 
@@ -948,7 +964,7 @@ class Pipe:
                          str(est_lo) + "–" + str(est_hi) + " min…")
             base_prod = self.valves.production_url.rstrip("/")
             payload = {"brief": brief, "shots": shots, "video_lane": video, "keyframe_lane": keyf,
-                       "continuity": cont, "music": music, "narration": narr}
+                       "continuity": cont, "music": music, "narration": narr, "research": research}
 
             def _prod_post():
                 req = urllib.request.Request(base_prod + "/produce", data=json.dumps(payload).encode(),
