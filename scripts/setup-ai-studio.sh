@@ -29,8 +29,10 @@ STUDIO_DIR="$REPO_DIR/services/studio"
 # alongside it instead of the rig's /mnt fallback). See services/comfyui/comfyui-paths.sh.
 # shellcheck disable=SC1091
 . "$COMFYUI_DIR/comfyui-paths.sh"
-LANIP="${LANIP:-$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^(192\.168|10\.|172\.)' | head -1)}"
-LANIP="${LANIP:-<host-ip>}"
+# LAN IP for the final URLs — via the shared c3_lan_ip helper (sourced just above), so setup
+# and gpu-mode can't drift. Prefers a LAN address over docker bridges; override with LANIP=.
+LANIP="${LANIP:-$(c3_lan_ip 2>/dev/null || true)}"
+LANIP="${LANIP:-localhost}"
 
 ASSUME_YES="${ASSUME_YES:-}"
 case "${1:-}" in
