@@ -79,12 +79,25 @@ _GEN_NOUN = (r"(?:films?|movies?|shorts?|videos?|clips?|documentar\w*|docu\w*|tr
 _GEN_RE = re.compile(_GEN_VERB + r"\b.{0,40}?\b" + _GEN_NOUN, re.I)
 
 
+# Tokens that, on their own, only ever mean "yes, proceed" — so a SHORT turn made up entirely of
+# them is a confirm even if the exact phrase isn't in CONFIRM (e.g. "ok do it", "yes go ahead").
+# This stops a compound confirm from leaking into brief detection (the "ok do it" became the film
+# brief bug, 2026-06-29).
+_CONFIRM_TOKENS = {"go", "yes", "y", "ya", "yeah", "yep", "yup", "sure", "ok", "okay", "k",
+                   "do", "it", "that", "start", "render", "build", "proceed", "confirm",
+                   "please", "now", "lets", "let's", "ahead", "on", "make", "run", "begin"}
+
+
 def _norm(t):
     return (t or "").strip().lower().strip(" .!?")
 
 
 def is_confirm(t):
-    return _norm(t) in CONFIRM
+    norm = _norm(t)
+    if norm in CONFIRM:
+        return True
+    toks = [w.strip(".,!?") for w in norm.split() if w]
+    return bool(toks) and len(toks) <= 4 and all(w in _CONFIRM_TOKENS for w in toks)
 
 
 def is_greeting(t):
@@ -132,7 +145,10 @@ def is_brief_candidate(t, pure_override=False):
     Otherwise it's a brief only if it isn't a greeting / confirm / pure stack-tweak / question.
     `pure_override` is supplied by the caller (it needs valve/seconds context to compute).
     """
-    if is_generation_request(t):
+    # A creation ask OR a named factual subject ("dig history of pakistan?", "the history of jazz")
+    # is a brief even when question-shaped — the old gate dropped "dig history of pakistan?" as a
+    # question and the confirm phrase after it became the brief (2026-06-29).
+    if is_generation_request(t) or looks_documentary(t):
         return True
     return not (is_confirm(t) or is_greeting(t) or pure_override or is_question(t))
 
@@ -195,18 +211,23 @@ def build_controller_system():
         '  "reply": "<a warm, concise 1-2 sentence reply to the user>"\n'
         "}\n\n"
         "Rules:\n"
-        "- brief: the film the user wants, using their LATEST description. If they CHANGED the subject "
-        "(\"actually make it a bookstore promo\"), use the NEW one. Empty if they haven't described a film yet.\n"
+        "- brief: the SUBJECT the user wants a film about — INFER it even from indirect phrasing: a topic "
+        "they asked you to research / dig / search (\"dig history of pakistan\" -> \"the history of pakistan\"), "
+        "a bare topic (\"history of jazz\"), or a changed subject (\"actually make it a bookstore promo\" -> use "
+        "the NEW one). If they named ANY subject to film or research, THAT subject is the brief. Leave it empty "
+        "ONLY if they named no topic at all (pure greetings, or questions about what you can do).\n"
         "- stack_patch: include ONLY settings the user explicitly asked for; OMIT keys they didn't mention. "
         "video_lane ∈ {wan, ltx, sulphur, 10eros}; keyframe_lane ∈ {chroma, zimage, krea, hidream}; "
         "continuity ∈ {storyboard, hero, chain, none}; music/narration are booleans; seconds is the requested length.\n"
-        "- confirm: true ONLY if the user is telling you to START rendering now (\"go\", \"yes do it\", "
-        "\"go with ltx\", \"render it\"). A change request like \"make it 30 seconds\" is NOT a confirm.\n"
+        "- confirm: true ONLY if the user is telling you to START rendering now (\"go\", \"ok do it\", "
+        "\"yes do it\", \"go with ltx\", \"render it\"). A change request like \"make it 30 seconds\" is NOT a confirm.\n"
         "- intent: brief = first/main film description; revise = changing the film; stack = changing a "
         "setting/model; question = asking something; confirm = start now; smalltalk = greeting/chit-chat; "
         "cancel = stop/never mind.\n"
-        "- reply: what to say back, warm and concise. For a question, ANSWER it. Never claim rendering "
-        "has started (only the word \"go\" starts it).\n"
+        "- reply: what to say back, warm and concise. For a question, ANSWER it truthfully. You CAN research "
+        "real facts on the web (SearXNG) to ground a DOCUMENTARY you're making — so \"can you search the web?\" "
+        "is YES, for grounding a documentary — but you canNOT browse arbitrary pages or fetch live info to chat "
+        "about. Never claim rendering or searching has already started (only \"go\" starts a render).\n"
         "Output ONLY the JSON object."
     )
 
@@ -665,7 +686,7 @@ class Pipe:
         body = json.dumps({"model": self.valves.chat_model,
                            "messages": [{"role": "system", "content": build_controller_system()},
                                         {"role": "user", "content": u}],
-                           "max_tokens": 320, "temperature": 0.2,
+                           "max_tokens": 320, "temperature": 0.0,   # deterministic intent across turns
                            "chat_template_kwargs": {"enable_thinking": False}}).encode()
         try:
             req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
@@ -1042,13 +1063,22 @@ class Pipe:
                 (", ~%d shots" % _pshots) if _pshots else "")
             _decision = await loop.run_in_executor(None, self._classify, users, _prelim_ctx)
             if _decision:
-                brief = _decision["brief"] or brief_kw
-                for _k, _v in _decision["stack_patch"].items():
-                    ov.setdefault(_k, _v)        # keyword floor wins; the LLM only fills a lane it left blank
-                confirmed = (_decision["confirm"] or confirm_kw) and has_confirm_word(last)
+                # The LLM is the DRIVER — trust its read of the conversation (brief, intent, reply).
+                # The keyword floor is NOT consulted for the brief; it only supplies the explicit
+                # stack toggles the user typed ("use ltx", "no music", "research") the LLM might miss.
+                # Brief extraction is the LLM's job — that's what the controller prompt is for.
+                brief = _decision["brief"]
                 intent = _decision["intent"]
                 llm_reply = _decision["reply"]
+                for _k, _v in _decision["stack_patch"].items():
+                    ov.setdefault(_k, _v)        # explicit keyword toggles win; the LLM fills gaps
+                # render is irreversible → fire on a BARE confirm ("go", "ok do it") or an
+                # LLM-confirmed compound ("go with ltx"), ALWAYS gated by a real go-word (safety latch).
+                confirmed = confirm_kw or (_decision["confirm"] and has_confirm_word(last))
             else:
+                # LLM unreachable → minimal keyword fallback (the 4B planner is down too, so this
+                # mostly keeps the lane honest until the director is back — it never guesses a brief
+                # from a confirm phrase).
                 brief = brief_kw
                 confirmed = confirm_kw
                 intent = ("confirm" if confirm_kw
