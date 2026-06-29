@@ -44,5 +44,17 @@ for s in scripts/gpu-mode.sh scripts/setup-ai-studio.sh; do
   else chk fail "$s does not use the shared c3_lan_ip helper"; fi
 done
 
+# 5. The production video-lane valve must not call a WIRED lane "not yet wired" / "roadmap"
+#    (Codex F11, 2026-06-29: ltx/sulphur/10eros render in the executor but the valve text lagged).
+for f in "$ROOT/services/studio/build_studio_pipe.py" "$ROOT/services/studio/studio_pipe.py"; do
+  [ -f "$f" ] || continue
+  vline="$(grep -n 'production_video_lane: str' "$f" | head -1 | cut -d: -f2-)"
+  if printf '%s' "$vline" | grep -Eq 'not yet wired|are roadmap'; then
+    chk fail "$(basename "$f"): production_video_lane valve still calls a wired lane 'not yet wired'"
+  else
+    chk ok "$(basename "$f"): production video-lane valve text matches wired reality"
+  fi
+done
+
 if [ "$fails" -eq 0 ]; then echo "PASS: studio scripts carry no dev-rig defaults"; exit 0
 else echo "FAIL: $fails assertion(s)"; exit 1; fi

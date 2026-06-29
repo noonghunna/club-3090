@@ -116,7 +116,7 @@ def build_plan_system(reg: dict, n_shots: int = 3, video_lane: str = "wan",
 
     return f"""You are the production director for an automated video studio. Turn the brief and treatment into ONE valid ProductionPlanV1 JSON object. OUTPUT ONLY THE JSON — no prose, no markdown fences, no comments.
 
-{format_banner}{prompt_slice(reg)}
+{format_banner}{prompt_slice(reg, video_lane=video_lane)}
 
 The video lane is PINNED by the operator to '{video_lane}'. Output project.video_lane = "{video_lane}" and EVERY shot's lane = "{video_lane}". Do NOT choose a different video lane.
 

@@ -26,15 +26,26 @@ def audio_lanes(reg: dict) -> list[str]:
     return list((reg.get("audio_lanes") or {}).keys())
 
 
-def prompt_slice(reg: dict) -> str:
-    """The compact lane menu + rules handed to the planner."""
+def prompt_slice(reg: dict, video_lane: str | None = None) -> str:
+    """The compact lane menu + rules handed to the planner.
+
+    When `video_lane` is given (the operator's pin), only THAT lane's contract is shown —
+    the planner can't choose the video lane anyway (it's forced), and showing the pinned
+    lane's real fps/window/audio prevents the 4B from planning against the wrong lane's
+    physics (e.g. Wan's 16 fps / silent when LTX at 24 fps is pinned).
+    """
     lines = ["LANES YOU MAY USE (choose ONLY from these):"]
-    for name, c in (reg.get("video_lanes") or {}).items():
+    vlanes = reg.get("video_lanes") or {}
+    items = ([(video_lane, vlanes[video_lane])] if video_lane and video_lane in vlanes
+             else list(vlanes.items()))
+    for name, c in items:
         win = c.get("native_window_seconds", 5.0)
         fps = c.get("native_fps", 16)
+        audio = ("SILENT (no audio in the clip)" if c.get("audio_behavior") == "none"
+                 else "the clip has native audio, but the film's soundtrack is the narration + music layer")
         lines.append(
             f"- VIDEO lane '{name}': mode t2v, vivid PROSE prompt, each shot <= {win:.1f}s "
-            f"@ {fps}fps, SILENT (no audio in the clip). {c.get('when_to_use', '')}"
+            f"@ {fps}fps — {audio}. {c.get('when_to_use', '')}"
         )
     for name, c in (reg.get("audio_lanes") or {}).items():
         lines.append(

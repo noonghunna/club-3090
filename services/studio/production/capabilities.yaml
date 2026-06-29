@@ -5,9 +5,13 @@
 # violates a contract is repaired (validator-repair loop) or rejected — never
 # executed as-is. A skill/plan may guide creativity, but it never overrides this.
 #
-# v0b-core lanes: wan (video) · kokoro (narration) · ace-step (music).
-# Image lanes (hidream/chroma/krea/ideogram) + `image_policy` roles + asset
-# dependencies land in v0b-images — NOT available to the planner yet.
+# Video lanes (all WIRED in the production executor): wan · ltx · sulphur · 10eros.
+# Audio lanes: kokoro (narration) · ace-step (music).
+# The operator pins ONE video lane per production; the planner is shown only that
+# lane's contract (registry.prompt_slice filters by the pin). Keep in sync with
+# stack.py VIDEO_LANES — test_capabilities_match_wired_video_lanes guards the drift.
+# Image lanes (hidream/chroma/krea/ideogram) are wired via the storyboard continuity
+# asset-DAG (v0b-images); they are not chosen by the planner as a "lane" here.
 
 version: 1
 
@@ -22,14 +26,77 @@ video_lanes:
     audio_behavior: none           # Wan clips are SILENT (no synced audio)
     native_fps: 16
     native_window_seconds: 5.06    # 81 frames @ 16 fps — one window
+    native_dimensions: "832x480"
     duration_limits:
       min_seconds: 1
       max_seconds: 5.1             # one native window; longer needs chaining (v1)
     prompt_format: prose
     resource_class: dual_card_dit  # DisTorch DiT across both 3090s
     validators: [non_empty, duration, no_audio_expected]
-    when_to_use: "the one pinned video lane for a whole production"
+    when_to_use: "the pinned video lane — Wan2.2, uncensored, no native audio"
     avoid_when: "you need synced native audio in the clip, or a single shot > ~5 s"
+
+  ltx:
+    kind: video
+    supports: [t2v, i2v]
+    inputs:
+      t2v: [prompt]
+      i2v: [prompt, start_image]
+    outputs: [mp4]
+    # LTX-family clips carry synced NATIVE audio, but a multi-shot film's soundtrack is the
+    # narration + music layer — so the native audio is unused (executor skips no_audio_expected).
+    audio_behavior: native_unused
+    native_fps: 24
+    native_window_seconds: 5.0     # ~121 frames @ 24 fps — one window
+    native_dimensions: "768x512"
+    duration_limits:
+      min_seconds: 1
+      max_seconds: 5.1
+    prompt_format: prose
+    resource_class: dual_card_dit
+    validators: [non_empty, duration]
+    when_to_use: "the pinned video lane — distilled LTX-2.3 base (24 fps, crisper motion than Wan)"
+    avoid_when: "a single shot > ~5 s (longer needs chaining)"
+
+  sulphur:
+    kind: video
+    supports: [t2v, i2v]
+    inputs:
+      t2v: [prompt]
+      i2v: [prompt, start_image]
+    outputs: [mp4]
+    audio_behavior: native_unused
+    native_fps: 24
+    native_window_seconds: 5.0
+    native_dimensions: "1280x720"
+    duration_limits:
+      min_seconds: 1
+      max_seconds: 5.1
+    prompt_format: prose
+    resource_class: dual_card_dit
+    validators: [non_empty, duration]
+    when_to_use: "the pinned video lane — uncensored LTX-2.3 dev fine-tune at 720p"
+    avoid_when: "a single shot > ~5 s"
+
+  "10eros":
+    kind: video
+    supports: [t2v, i2v]
+    inputs:
+      t2v: [prompt]
+      i2v: [prompt, start_image]
+    outputs: [mp4]
+    audio_behavior: native_unused
+    native_fps: 24
+    native_window_seconds: 5.0
+    native_dimensions: "1280x720"
+    duration_limits:
+      min_seconds: 1
+      max_seconds: 5.1
+    prompt_format: prose
+    resource_class: dual_card_dit
+    validators: [non_empty, duration]
+    when_to_use: "the pinned video lane — uncensored LTX-2.3 dev fine-tune at 720p (alt to Sulphur)"
+    avoid_when: "a single shot > ~5 s"
 
 audio_lanes:
   kokoro:
