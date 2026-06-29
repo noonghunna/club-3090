@@ -24,6 +24,14 @@ ZIMAGE_TEMPLATE = os.path.join(_HERE, 'workflows', 'z_image_turbo.json')        
 KREA_TEMPLATE = os.path.join(_HERE, 'workflows', 'krea2.json')                  # Krea 2 Turbo fp8 graph (aesthetic image, ~18GB; natural-language, 8-step cfg=1; Qwen3-VL-4B encoder type=krea2; needs ComfyUI >= v0.26.0)
 WAN_TEMPLATE = os.path.join(_HERE, 'workflows', 'wan22_rapid.json')             # Wan2.2-Rapid-AllInOne Mega NSFW Q8 GGUF graph (uncensored video, t2v; umt5 encoder, euler_ancestral/beta 4-step cfg=1 distill-baked)
 WAN_I2V_TEMPLATE = os.path.join(_HERE, 'workflows', 'wan22_rapid_i2v.json')      # Wan2.2-Rapid i2v graph (WanImageToVideo start_image → animate an attached still)
+
+# Production director's behavioral spec (persona / capabilities / how to chat) — editable source
+# of truth, baked into the pipe at build time (everything after the '---' marker is the prompt).
+DIRECTOR_AGENTS = os.path.join(_HERE, 'director', 'AGENTS.md')
+with open(DIRECTOR_AGENTS) as _f:
+    # wrap in a 1-element array so the injected literal starts with '[' (not a bare '"' that would
+    # collide with the r\"\"\"...\"\"\" wrapper); the template indexes [0] back out.
+    DIRECTOR_MD = json.dumps([_f.read().split('\n---\n', 1)[-1].strip()])
 OUT_PATH = os.path.join(_HERE, 'studio_pipe.py')
 
 def build(dit, audio_vae, video_vae, connectors, width, height, frames=121, lora=None):
@@ -366,6 +374,11 @@ class Pipe:
         "Output ONLY the final sound prompt — no preamble, no quotes."
     )
 
+    # The 🎬 Production lane's conversational voice (greetings, "what options?", nudging toward a
+    # brief). The behavioral spec is the editable source of truth in director/AGENTS.md — the build
+    # bakes its body in here (the pipe runs in-container and can't read the repo at runtime).
+    DIRECTOR_PRODUCER_SYS = json.loads(r"""__DIRECTOR_MD__""")[0]
+
     # HiDream-O1 takes rich NATURAL-LANGUAGE prompts (Qwen3-VL text understanding). The Dev-2604
     # build runs CFG-off (no negative prompt), so everything must live in the positive description.
     DIRECTOR_HIDREAM_SYS = (
@@ -483,6 +496,20 @@ class Pipe:
         if t[:5].upper() == "CHAT:":
             return t[5:].strip() or "Tell me what you'd like to create and I'll generate it."
         return None
+
+    def _produce_reply(self, user_msg, plan_ctx=""):
+        """Natural studio-director chat for the 🎬 Production lane — greetings + questions like
+        'what other options do we have?' get a real answer, not a canned re-dump. Returns plain
+        prose; raises on director error so the caller can fall back to a static line."""
+        u = ("Current plan: " + plan_ctx + "\n\n" if plan_ctx else "") + "User: " + user_msg
+        body = json.dumps({"model": self.valves.chat_model,
+                           "messages": [{"role": "system", "content": self.DIRECTOR_PRODUCER_SYS},
+                                        {"role": "user", "content": u}],
+                           "max_tokens": 220, "temperature": 0.7,
+                           "chat_template_kwargs": {"enable_thinking": False}}).encode()
+        req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
+                                     headers={"Content-Type": "application/json"})
+        return json.load(urllib.request.urlopen(req, timeout=120))["choices"][0]["message"]["content"].strip()
 
     # ── long-clip (>15s) via the orchestrator: chain ~10s segments → one combined video ──
     def _target_seconds(self, text):
@@ -826,10 +853,17 @@ class Pipe:
                 return o
             def _pure_override(t):
                 return bool(_overrides(t)) and len(t.split()) <= 5
+            _QWORDS = ("what", "how", "why", "which", "can", "could", "should", "do", "does",
+                       "is", "are", "who", "when", "where", "will", "would", "tell")
+            def _is_question(t):
+                tl = t.strip().lower()
+                return tl.endswith("?") or (tl.split()[:1] and tl.split()[0] in _QWORDS)
 
-            # effective brief = the first real turn (not a greeting / confirmation / short tweak)
+            # effective brief = the first real film description (not a greeting / confirm / short
+            # tweak / question) — so "what other options do we have?" is treated as chat, not a brief.
             brief = next((t for t in users
-                          if not _is_confirm(t) and not _is_greeting(t) and not _pure_override(t)), "")
+                          if not _is_confirm(t) and not _is_greeting(t) and not _pure_override(t)
+                          and not _is_question(t)), "")
             ov = {}
             for t in users:
                 ov.update(_overrides(t))         # accumulate tweaks across the convo (later wins)
@@ -847,23 +881,12 @@ class Pipe:
                 shots = 4                                       # no stated length → a short default
             est_lo, est_hi = int(round(shots * 2.5)), int(round(shots * 3)) + 3
 
-            # no real brief yet → chit-chat (greeting / vague), never a render
-            if not brief:
-                if _is_confirm(last):
-                    return ("Nothing to start yet — give me a one-line brief first, e.g. "
-                            "“a 1-minute documentary on the history of Pakistan”.")
-                if not _is_greeting(last):
-                    try:
-                        _c = self._chat_gate(await loop.run_in_executor(None, self._enhance, last, False, None, "video"))
-                        if _c is not None:
-                            await status("", True)
-                            return "\U0001F3AC " + _c + "\n\n_(Give me a one-line film brief and I'll plan it.)_"
-                    except Exception:
-                        pass
-                return _help
-
-            # have a brief but NOT confirming → PROPOSE the plan (qualify); no render
-            if not _is_confirm(last):
+            # the plan proposal card (shown when there's a new / changed plan to confirm)
+            _audio_txt = ("narration + music" if (narr and music) else "narration only" if narr
+                          else "music only" if music else "silent")
+            _plan_ctx = ("video=%s, keyframes=%s, continuity=%s, audio=%s, ~%d shots"
+                         % (video, keyf, cont, _audio_txt, shots))
+            def _proposal():
                 _vl = {"auto": "Wan2.2 (auto)", "wan": "Wan2.2", "ltx": "LTX-2.3",
                        "sulphur": "Sulphur", "10eros": "10Eros"}.get(video, video)
                 if video not in ("auto", "wan"):
@@ -873,7 +896,6 @@ class Pipe:
                 _audio = ("narration" if narr else "no narration") + " + " + ("music" if music else "no music")
                 _len = ("~%ds → %d shots" % (int(secs), shots)) if secs else \
                        ("%d shots (~%ds — say a length like “1 minute” to size it)" % (shots, shots * 5))
-                await status("", True)
                 return (
                     "\U0001F3AC **Plan — " + brief + "**\n\n"
                     "| | |\n|---|---|\n"
@@ -886,6 +908,28 @@ class Pipe:
                     "“no music” · “hidream keyframes” · “hero continuity”_.\n\n"
                     "_(Video renders on **Wan** today; LTX/Sulphur/10Eros are roadmap.)_"
                 )
+
+            async def _chat(msg, ctx):
+                await status("", True)
+                try:
+                    return "\U0001F3AC " + await loop.run_in_executor(None, self._produce_reply, msg, ctx)
+                except Exception:
+                    return None   # director unreachable
+
+            # no brief yet → converse NATURALLY (greeting / question), never a render
+            if not brief:
+                if _is_confirm(last):
+                    return ("Nothing to start yet — give me a one-line brief first, e.g. "
+                            "“a 1-minute documentary on the history of Pakistan”.")
+                return (await _chat(last, "")) or _help
+
+            # have a brief, not confirming → show the plan when it's new/changed, else just chat
+            if not _is_confirm(last):
+                if last == brief or _overrides(last):   # the brief itself, or a settings tweak → plan card
+                    await status("", True)
+                    return _proposal()
+                # a question / chit-chat about the plan → answer naturally (NOT a canned re-dump)
+                return (await _chat(last, _plan_ctx)) or _proposal()
 
             # CONFIRMED + have a brief → build with the resolved plan
             await status("\U0001F3AC Starting “" + brief + "” — " + str(shots) + " shots, ~" +
@@ -1383,7 +1427,7 @@ class Pipe:
                 "_Want changes? Just say what to tweak — e.g. “more moody”, “make it night”, "
                 "“slower camera”, or “voiceover: …” — and I’ll re-craft from this and regenerate._ "
                 "_(Browse all media: " + base + "/ )_")
-'''.replace('__WF_JSON__', WF_JSON)
+'''.replace('__WF_JSON__', WF_JSON).replace('__DIRECTOR_MD__', DIRECTOR_MD)
 
 open(OUT_PATH, 'w').write(PIPE)
 print("wrote %s (%d bytes; %d workflows (video: ltx/sulphur/10eros x t2v+i2v + wan · image x5: ideogram/chroma/hidream/zimage/krea · music · sfx) + narration + voice service)" % (OUT_PATH, len(PIPE), len(WF)))
