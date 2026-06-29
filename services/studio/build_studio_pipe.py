@@ -189,8 +189,8 @@ class Pipe:
         hide_unavailable_lanes: bool = Field(default=True, description="Only list lanes whose backend is currently reachable — ComfyUI (:8188) for every media lane, the voice service (:8193) for the voice lane. When the ai-studio scene is down, the Studio lanes drop out of the OWUI model picker instead of listing-but-erroring. Set false to always list all lanes regardless of backend state.")
         # ── Production lane (the Director: brief → planned → finished film) ──────
         production_url: str = Field(default="http://host.docker.internal:8195", description="Studio Production service (the host-side wrapper around the 4B director + executor). The 🎬 Production lane is a thin client over it; gated by /produce/health. Bring it up on the host: python3 -m services.studio.production.server")
-        production_timeout_s: int = Field(default=1800, description="Max wait for a production to finish (a full film = keyframes + i2v shots + narration + music + assembly; 15–25 min is normal). The lane polls progress until done / error / this timeout.")
-        production_shots: int = Field(default=3, description="Target shot count the director plans the brief into.")
+        production_timeout_s: int = Field(default=1800, description="Min wait for a production to finish; the lane auto-extends this by the shot count (~3.5 min/shot) so a long film doesn't time out. Polls progress until done / error / this budget.")
+        production_shots: int = Field(default=0, description="Shot count. 0 (default) = SIZE it from the brief's stated duration (~5s/shot, e.g. “1 minute” → ~12 shots), else 4 when no length is given. Set >0 to force an exact count.")
         # Two-level UX: leave these 'auto' for the visible default stack (Wan · Chroma ·
         # storyboard), or PIN one to override. The director plans shot content within the
         # chosen stack — it never silently picks the video/image model.
@@ -772,43 +772,127 @@ class Pipe:
         # lane's ⚙️ valves — Auto by default, overridable — and never silently picked by the director.
         if "production" in model:
             loop = asyncio.get_event_loop()
-            brief = ""
-            for m in reversed(body.get("messages", [])):
+            # QUALIFY → CONFIRM → BUILD. The conversation is the state: gather the user turns,
+            # resolve a plan, PROPOSE it (models · length→shots · est. time), and only build once
+            # the user says "go". Never fire a render straight off a brief (or a greeting).
+            users = []
+            for m in body.get("messages", []):
                 if m.get("role") == "user":
                     c = m.get("content")
-                    brief = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
-                             if isinstance(c, list) else (c or "").strip())
-                    break
+                    t = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
+                         if isinstance(c, list) else (c or "").strip())
+                    if t:
+                        users.append(t)
+            last = users[-1] if users else ""
             _help = ("\U0001F3AC Tell me what film to make — a one-line brief like "
-                     "“a 45s calm documentary about lighthouses” or “a 15s noir detective short”. "
-                     "I'll plan it and render the whole thing (keyframes → video → narration → music "
-                     "→ assembly into one MP4); pick the stack in the lane's ⚙️ valves "
-                     "(video/keyframe model, continuity, music) or leave it on Auto.")
+                     "“a 1-minute documentary on the history of Pakistan” or “a 15s noir detective short”. "
+                     "I'll size it, show you the plan (models · length · render time), and build it once "
+                     "you say **go**.")
+            if not last:
+                return _help
+
+            _GREET = ("hi", "hello", "hey", "yo", "sup", "hiya", "hello there", "hola", "thanks",
+                      "thank you", "cool", "nice", "test", "testing", "ping", "help", "?")
+            _CONFIRM = ("go", "yes", "y", "start", "render", "render it", "proceed", "do it", "ok",
+                        "okay", "ok go", "yep", "yeah", "sure", "build", "build it", "make it",
+                        "let's go", "go ahead", "confirm", "\U0001F44D")
+            def _norm(t):
+                return t.strip().lower().strip(" .!?")
+            def _is_confirm(t):
+                return _norm(t) in _CONFIRM
+            def _is_greeting(t):
+                return _norm(t) in _GREET
+            def _overrides(t):
+                tl = t.lower(); words = set(re.findall(r"[a-z0-9\-]+", tl)); o = {}
+                for k in ("10eros", "sulphur", "ltx", "wan"):
+                    if k in words:
+                        o["video_lane"] = k; break
+                for k, v in (("hidream", "hidream"), ("z-image", "zimage"), ("zimage", "zimage"),
+                             ("chroma", "chroma"), ("krea", "krea")):
+                    if k in words:
+                        o["keyframe_lane"] = v; break
+                for cc in ("storyboard", "hero", "chain"):
+                    if cc in words:
+                        o["continuity"] = cc
+                if "no continuity" in tl or "independent" in words:
+                    o["continuity"] = "none"
+                if "no music" in tl or "without music" in tl:
+                    o["music"] = False
+                if "no narration" in tl or "no voice" in tl or "no voiceover" in tl:
+                    o["narration"] = False
+                s = self._target_seconds(t)
+                if s:
+                    o["seconds"] = s
+                return o
+            def _pure_override(t):
+                return bool(_overrides(t)) and len(t.split()) <= 5
+
+            # effective brief = the first real turn (not a greeting / confirmation / short tweak)
+            brief = next((t for t in users
+                          if not _is_confirm(t) and not _is_greeting(t) and not _pure_override(t)), "")
+            ov = {}
+            for t in users:
+                ov.update(_overrides(t))         # accumulate tweaks across the convo (later wins)
+            video = ov.get("video_lane") or (self.valves.production_video_lane or "auto")
+            keyf = ov.get("keyframe_lane") or (self.valves.production_keyframe_lane or "auto")
+            cont = ov.get("continuity") or (self.valves.production_continuity or "auto")
+            music = ov.get("music", bool(self.valves.production_music))
+            narr = ov.get("narration", True)
+            secs = ov.get("seconds") or 0
+            if secs:
+                shots = max(1, min(24, round(secs / 5.0)))      # ~5s per Wan shot, capped at ~2 min
+            elif int(self.valves.production_shots or 0) > 0:
+                shots = int(self.valves.production_shots)
+            else:
+                shots = 4                                       # no stated length → a short default
+            est_lo, est_hi = int(round(shots * 2.5)), int(round(shots * 3)) + 3
+
+            # no real brief yet → chit-chat (greeting / vague), never a render
             if not brief:
+                if _is_confirm(last):
+                    return ("Nothing to start yet — give me a one-line brief first, e.g. "
+                            "“a 1-minute documentary on the history of Pakistan”.")
+                if not _is_greeting(last):
+                    try:
+                        _c = self._chat_gate(await loop.run_in_executor(None, self._enhance, last, False, None, "video"))
+                        if _c is not None:
+                            await status("", True)
+                            return "\U0001F3AC " + _c + "\n\n_(Give me a one-line film brief and I'll plan it.)_"
+                    except Exception:
+                        pass
                 return _help
-            # CHIT-CHAT GATE — don't spin up a full production for a greeting / vague message
-            # (otherwise the director invents + renders a random film from "hello"). Cheap
-            # exact-match fast path, then the director's CHAT: gate (same as every other lane).
-            if brief.strip().lower().strip(" .!?") in (
-                    "hi", "hello", "hey", "yo", "sup", "hiya", "hello there", "hola", "thanks",
-                    "thank you", "ok", "okay", "cool", "nice", "test", "testing", "ping", "help", "?"):
+
+            # have a brief but NOT confirming → PROPOSE the plan (qualify); no render
+            if not _is_confirm(last):
+                _vl = {"auto": "Wan2.2 (auto)", "wan": "Wan2.2", "ltx": "LTX-2.3",
+                       "sulphur": "Sulphur", "10eros": "10Eros"}.get(video, video)
+                if video not in ("auto", "wan"):
+                    _vl += " ⚠️ roadmap — only Wan renders today"
+                _kl = {"auto": "Chroma (auto)", "chroma": "Chroma", "zimage": "Z-Image",
+                       "krea": "Krea 2", "hidream": "HiDream-O1"}.get(keyf, keyf)
+                _audio = ("narration" if narr else "no narration") + " + " + ("music" if music else "no music")
+                _len = ("~%ds → %d shots" % (int(secs), shots)) if secs else \
+                       ("%d shots (~%ds — say a length like “1 minute” to size it)" % (shots, shots * 5))
                 await status("", True)
-                return _help
-            try:
-                _crafted = await loop.run_in_executor(None, self._enhance, brief, False, None, "video")
-                _chat = self._chat_gate(_crafted)
-                if _chat is not None:           # director judged it chit-chat / too vague → no render
-                    await status("", True)
-                    return ("\U0001F3AC " + _chat +
-                            "\n\n_(Give me a one-line film brief and I'll plan + render it.)_")
-            except Exception:
-                pass    # director unreachable → fall through; the production service surfaces the error
+                return (
+                    "\U0001F3AC **Plan — " + brief + "**\n\n"
+                    "| | |\n|---|---|\n"
+                    "| \U0001F3A5 video | **" + _vl + "** |\n"
+                    "| \U0001F5BC️ keyframes | **" + _kl + "** |\n"
+                    "| \U0001F39E️ continuity | **" + str(cont) + "**  ·  \U0001F50A audio **" + _audio + "** |\n"
+                    "| ⏱️ length | **" + _len + "** |\n"
+                    "| ⚙️ est. render | **~" + str(est_lo) + "–" + str(est_hi) + " min** on 1× 3090 |\n\n"
+                    "Reply **go** to start — or tell me what to change: _“use LTX” · “30 seconds” · "
+                    "“no music” · “hidream keyframes” · “hero continuity”_.\n\n"
+                    "_(Video renders on **Wan** today; LTX/Sulphur/10Eros are roadmap.)_"
+                )
+
+            # CONFIRMED + have a brief → build with the resolved plan
+            await status("\U0001F3AC Starting “" + brief + "” — " + str(shots) + " shots, ~" +
+                         str(est_lo) + "–" + str(est_hi) + " min…")
             base_prod = self.valves.production_url.rstrip("/")
-            payload = {"brief": brief, "shots": int(self.valves.production_shots),
-                       "video_lane": self.valves.production_video_lane,
-                       "keyframe_lane": self.valves.production_keyframe_lane,
-                       "continuity": self.valves.production_continuity,
-                       "music": bool(self.valves.production_music)}
+            payload = {"brief": brief, "shots": shots, "video_lane": video, "keyframe_lane": keyf,
+                       "continuity": cont, "music": music, "narration": narr}
 
             def _prod_post():
                 req = urllib.request.Request(base_prod + "/produce", data=json.dumps(payload).encode(),
@@ -842,7 +926,7 @@ class Pipe:
             stack_line = ("**Stack** — video: `" + str(st.get("video_lane")) + "` · keyframes: `" +
                           str(st.get("keyframe_lane")) + "` · continuity: `" + str(st.get("continuity")) +
                           "` · " + ("music on" if st.get("music") else "no music"))
-            deadline = time.time() + int(self.valves.production_timeout_s)
+            deadline = time.time() + max(int(self.valves.production_timeout_s), shots * 210 + 300)
             last_phase = ""
             job = {}
             while time.time() < deadline:

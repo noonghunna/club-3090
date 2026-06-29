@@ -13,7 +13,9 @@ model required (mirrors the synthetic lane backend).
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import urllib.request
 
 from . import config
@@ -25,6 +27,37 @@ from .util import sha256_text
 
 class PlannerError(RuntimeError):
     pass
+
+
+# -- sizing: derive the shot count from the brief's requested duration --------
+SECONDS_PER_SHOT = 5.0   # Wan native window ≈ 81 frames @ 16 fps ≈ 5 s
+MAX_SHOTS = 24           # cap auto-derivation (~120 s) so a stray "10 minute" can't queue hours
+DEFAULT_SHOTS = 4        # when the brief states no duration
+
+
+def parse_duration_seconds(text: str):
+    """Best-effort 'how long' from a brief: '1 minute' -> 60.0, '45s' -> 45.0. None if absent."""
+    t = text or ""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m)\b", t, re.I)
+    if m:
+        return float(m.group(1)) * 60.0
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", t, re.I)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def derive_shots(brief: str, *, default: int = DEFAULT_SHOTS):
+    """Map a brief's requested duration to a shot count (~5 s/shot, capped at MAX_SHOTS).
+
+    The agent SIZES the film from the request instead of a fixed test count —
+    'a 1 minute video' -> ~12 shots. Returns (shots, requested_seconds | None).
+    """
+    secs = parse_duration_seconds(brief)
+    if not secs or secs <= 0:
+        return default, None
+    shots = max(1, min(MAX_SHOTS, math.ceil(secs / SECONDS_PER_SHOT)))
+    return shots, secs
 
 
 # -- director call (the injectable boundary) ----------------------------------

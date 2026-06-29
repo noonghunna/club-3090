@@ -153,17 +153,29 @@ class Handler(BaseHTTPRequestHandler):
         except StackError as e:
             return self._json(400, {"error": str(e), "renders_today": {
                 "video": wired_video_lanes(), "keyframe": wired_keyframe_lanes()}})
+        # Shot count: an explicit shots>0 wins; otherwise SIZE it from the brief's stated
+        # duration ("1 minute" -> ~12 shots) instead of a fixed test count (#production).
+        try:
+            req_shots = int(b.get("shots", 0) or 0)
+        except (TypeError, ValueError):
+            req_shots = 0
+        if req_shots > 0:
+            shots, req_secs = req_shots, None
+        else:
+            shots, req_secs = planner.derive_shots(brief)
         if _active():
             return self._json(409, {"error": "a production is already running", "job_id": _active()[0]})
         job_id = _job_id(brief)
         _set(job_id, status="planning", phase="queued", frac=0.0, brief=brief, title="…",
-             stack=stack.to_dict(), stack_desc=describe_stack(stack))
+             stack=stack.to_dict(), stack_desc=describe_stack(stack),
+             shots=shots, requested_seconds=req_secs)
         threading.Thread(
             target=_run_job,
-            args=(job_id, brief, stack, int(b.get("shots", 3)), b.get("backend", "live")),
+            args=(job_id, brief, stack, shots, b.get("backend", "live")),
             daemon=True,
         ).start()
-        return self._json(200, {"job_id": job_id, "stack": stack.to_dict()})
+        return self._json(200, {"job_id": job_id, "stack": stack.to_dict(),
+                                "shots": shots, "requested_seconds": req_secs})
 
 
 def main() -> None:

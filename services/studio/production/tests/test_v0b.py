@@ -131,5 +131,25 @@ class TestProvenanceNotCountedAsValidator(unittest.TestCase):
             self.assertIn("media", types)
 
 
+class TestDeriveShots(unittest.TestCase):
+    """Size the film from the brief's stated duration (~5s/shot), not a fixed test count."""
+
+    def test_minutes_and_seconds(self):
+        from ..planner import derive_shots
+        self.assertEqual(derive_shots("a 1 minute video on the history of pakistan")[0], 12)
+        self.assertEqual(derive_shots("a 45 second noir short")[0], 9)
+        self.assertEqual(derive_shots("make a 30s clip")[0], 6)
+
+    def test_caps_runaway_requests(self):
+        from ..planner import derive_shots
+        self.assertEqual(derive_shots("a 10 minute epic")[0], 24)   # capped, not 120 shots
+
+    def test_default_when_no_duration(self):
+        from ..planner import derive_shots
+        shots, secs = derive_shots("a noir detective short")
+        self.assertEqual(shots, 4)
+        self.assertIsNone(secs)
+
+
 if __name__ == "__main__":
     unittest.main()
