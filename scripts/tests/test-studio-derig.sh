@@ -38,5 +38,11 @@ for f in "$ROOT"/services/comfyui/download_*.sh; do
   fi
 done
 
+# 4. Both launchers detect the LAN IP via the SHARED c3_lan_ip helper (no inline drift).
+for s in scripts/gpu-mode.sh scripts/setup-ai-studio.sh; do
+  if grep -q 'c3_lan_ip' "$ROOT/$s"; then chk ok "$s uses shared c3_lan_ip"
+  else chk fail "$s does not use the shared c3_lan_ip helper"; fi
+done
+
 if [ "$fails" -eq 0 ]; then echo "PASS: studio scripts carry no dev-rig defaults"; exit 0
 else echo "FAIL: $fails assertion(s)"; exit 1; fi

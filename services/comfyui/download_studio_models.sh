@@ -17,6 +17,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # /mnt fallback. Each child download_*.sh inherits the exported COMFYUI_MODELS_DIR.
 # shellcheck disable=SC1091
 . "$HERE/comfyui-paths.sh"
+c3_ensure_comfy_models_dir   # fail fast with an actionable message if the tree isn't writable (#503)
 
 echo "════ ai-studio models — download all (idempotent; skips what's already present) ════"
 bash "$HERE/download_director.sh"

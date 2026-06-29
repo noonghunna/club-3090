@@ -48,10 +48,10 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# LAN IP for the URLs printed by the mode banners below — auto-detected (override with
-# LANIP=...), matching setup-ai-studio.sh. Falls back to 'localhost' so a fresh clone never
-# prints the dev rig's hardcoded address (issue #504). `|| true` keeps set -e happy on no match.
-LANIP="${LANIP:-$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^(192\.168|10\.|172\.)' | head -1 || true)}"
+# LAN IP for the URLs printed by the mode banners below — via the shared c3_lan_ip helper
+# (prefers LAN over docker bridges; LANIP=-overridable), so it can't drift from setup-ai-
+# studio.sh. Falls back to 'localhost' so a fresh clone never prints the rig's IP (#504).
+LANIP="${LANIP:-$(c3_lan_ip 2>/dev/null || true)}"
 LANIP="${LANIP:-localhost}"
 
 # Standard supporting services living under $CLUB3090_DIR/services.

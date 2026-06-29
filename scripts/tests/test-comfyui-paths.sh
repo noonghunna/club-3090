@@ -39,4 +39,17 @@ chk "models follows root"     "/data/cr/models" "${got#*|}"
 got="$(derive -u COMFYUI_ROOT COMFYUI_MODELS_DIR=/data/m MODEL_DIR=/x)"
 chk "explicit models respected" "/data/m" "${got#*|}"
 
+# E — zero-config default (no MODEL_DIR, .env skipped): a USER-OWNED $HOME tree, NOT /mnt (#503)
+got="$(derive -u MODEL_DIR -u COMFYUI_ROOT -u COMFYUI_MODELS_DIR C3_PATHS_NO_ENV=1 HOME=/home/u)"
+chk "zero-config root → \$HOME"   "/home/u/comfyui"        "${got%|*}"
+chk "zero-config models → \$HOME" "/home/u/comfyui/models" "${got#*|}"
+
+# F — HOME-less (CI/root) keeps the legacy /mnt default
+got="$(derive -u MODEL_DIR -u COMFYUI_ROOT -u COMFYUI_MODELS_DIR -u HOME C3_PATHS_NO_ENV=1)"
+chk "HOME-less models → /mnt legacy" "/mnt/models/comfyui/models" "${got#*|}"
+
+# G — c3_lan_ip prefers a LAN address over a docker bridge, even when the bridge is listed first
+lan="$(hostname() { echo '172.17.0.1 192.168.1.50 10.0.0.2'; }; . "$HELPER"; c3_lan_ip)"
+chk "lan_ip prefers LAN over 172.x bridge" "192.168.1.50" "$lan"
+
 if [ "$fails" -eq 0 ]; then echo "PASS: comfyui-paths derivation"; exit 0; else echo "FAIL: $fails assertion(s)"; exit 1; fi
