@@ -483,6 +483,28 @@ class Pipe:
                                      headers={"Content-Type": "application/json"})
         return json.load(urllib.request.urlopen(req, timeout=120))["choices"][0]["message"]["content"].strip()
 
+    def _classify(self, turns, plan_ctx=""):
+        """Batch-2 LLM intent controller (blocking; call via run_in_executor).
+
+        Reads the whole conversation and returns a validated decision dict
+        {intent, brief, stack_patch, confirm, reply}, or None on any failure (→ the caller
+        falls back to the Batch-1 keyword heuristics). build_controller_system /
+        parse_controller_json / normalize_decision are injected from director_intent.py."""
+        convo = "\n".join("User: " + t for t in turns[-10:])
+        u = (("Current plan: " + plan_ctx + "\n\n") if plan_ctx else "") + "Conversation:\n" + convo
+        body = json.dumps({"model": self.valves.chat_model,
+                           "messages": [{"role": "system", "content": build_controller_system()},
+                                        {"role": "user", "content": u}],
+                           "max_tokens": 320, "temperature": 0.2,
+                           "chat_template_kwargs": {"enable_thinking": False}}).encode()
+        try:
+            req = urllib.request.Request(self.valves.chat_url + "/chat/completions", data=body,
+                                         headers={"Content-Type": "application/json"})
+            raw = json.load(urllib.request.urlopen(req, timeout=45))["choices"][0]["message"]["content"]
+            return normalize_decision(parse_controller_json(raw))
+        except Exception:
+            return None   # director unreachable / bad JSON → caller uses the keyword floor
+
     # ── long-clip (>15s) via the orchestrator: chain ~10s segments → one combined video ──
     def _target_seconds(self, text):
         """Parse a requested duration from the user's text. 0 = none (single clip)."""
@@ -821,14 +843,42 @@ class Pipe:
             def _pure_override(t):
                 return bool(_overrides(t)) and len(t.split()) <= 5
 
-            # effective brief = the first turn that reads as a film brief. A GENERATION REQUEST
-            # ("can you make a 30s noir short?", "do a 1-min documentary on Pakistan") counts even
-            # though it's question-shaped — the old gate dropped those as questions and never
-            # captured a brief, so it dove into chit-chat (Codex F1, 2026-06-29).
-            brief = pick_brief(users, _pure_override)
+            # ── FLOOR (Batch 1): deterministic keyword heuristics — the fallback when the LLM is down.
+            # A GENERATION REQUEST ("can you make a 30s noir short?") counts as a brief even though
+            # it's question-shaped (Codex F1, 2026-06-29).
+            brief_kw = pick_brief(users, _pure_override)
             ov = {}
             for t in users:
-                ov.update(_overrides(t))         # accumulate tweaks across the convo (later wins)
+                ov.update(_overrides(t))         # accumulate explicit tweaks across the convo (later wins)
+            confirm_kw = _is_confirm(last)
+
+            # ── CONTROLLER (Batch 2): the 4B reads the WHOLE conversation and returns a structured
+            # decision {intent, brief, stack_patch(lanes), confirm, reply}. It REFINES the floor —
+            # a mid-chat brief change ("actually make it a bookstore promo"), a compound confirm
+            # ("go with ltx"), a natural question — and FALLS BACK to the floor on any failure. A
+            # render starts only when the decision says confirm AND the latest turn carries a real
+            # confirm word (has_confirm_word) — never on the LLM's say-so alone (Codex F1/F2/F3).
+            _pshots = max(1, math.ceil(ov["seconds"] / 5.0)) if ov.get("seconds") else 0
+            _prelim_ctx = "film so far: %s; video=%s%s" % (
+                brief_kw or "(none described yet)",
+                ov.get("video_lane") or (self.valves.production_video_lane or "auto"),
+                (", ~%d shots" % _pshots) if _pshots else "")
+            _decision = await loop.run_in_executor(None, self._classify, users, _prelim_ctx)
+            if _decision:
+                brief = _decision["brief"] or brief_kw
+                for _k, _v in _decision["stack_patch"].items():
+                    ov.setdefault(_k, _v)        # keyword floor wins; the LLM only fills a lane it left blank
+                confirmed = (_decision["confirm"] or confirm_kw) and has_confirm_word(last)
+                intent = _decision["intent"]
+                llm_reply = _decision["reply"]
+            else:
+                brief = brief_kw
+                confirmed = confirm_kw
+                intent = ("confirm" if confirm_kw
+                          else "question" if (_is_question(last) and last != brief_kw and not _overrides(last))
+                          else "stack" if (last == brief_kw or _overrides(last)) else "smalltalk")
+                llm_reply = None
+
             video = ov.get("video_lane") or (self.valves.production_video_lane or "auto")
             keyf = ov.get("keyframe_lane") or (self.valves.production_keyframe_lane or "auto")
             cont = ov.get("continuity") or (self.valves.production_continuity or "auto")
@@ -878,20 +928,20 @@ class Pipe:
                 except Exception:
                     return None   # director unreachable
 
-            # no brief yet → converse NATURALLY (greeting / question), never a render
-            if not brief:
-                if _is_confirm(last):
-                    return ("Nothing to start yet — give me a one-line brief first, e.g. "
-                            "“a 1-minute documentary on the history of Pakistan”.")
-                return (await _chat(last, "")) or _help
-
-            # have a brief, not confirming → show the plan when it's new/changed, else just chat
-            if not _is_confirm(last):
-                if last == brief or _overrides(last):   # the brief itself, or a settings tweak → plan card
-                    await status("", True)
-                    return _proposal()
-                # a question / chit-chat about the plan → answer naturally (NOT a canned re-dump)
-                return (await _chat(last, _plan_ctx)) or _proposal()
+            # route the resolved turn → ONE action (tested: director_intent.decide_action).
+            action = decide_action(brief, confirmed, intent)
+            if action == "need_brief":
+                return ("Nothing to start yet — give me a one-line brief first, e.g. "
+                        "“a 1-minute documentary on the history of Pakistan”.")
+            if action == "chat":
+                # the LLM's own reply when it has one, else a fresh director chat call; the static
+                # fallback is the plan card (if we have a brief) or the help line.
+                return llm_reply or (await _chat(last, _plan_ctx if brief else "")) or \
+                    (_proposal() if brief else _help)
+            if action == "proposal":
+                await status("", True)
+                return _proposal()
+            # action == "build" → fall through to the resolved-plan build below
 
             # CONFIRMED + have a brief → build with the resolved plan
             await status("\U0001F3AC Starting “" + brief + "” — " + str(shots) + " shots, ~" +

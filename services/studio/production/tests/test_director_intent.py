@@ -88,5 +88,92 @@ class TestPickBrief(unittest.TestCase):
         self.assertEqual(di.pick_brief(["hi", "hello", "what can you do?"]), "")
 
 
+class TestConfirmWord(unittest.TestCase):
+    """has_confirm_word corroborates the LLM confirm so a render never fires on a hallucination."""
+
+    def test_start_signals(self):
+        for t in ["go", "go with ltx", "yes do it", "render it", "let's go", "ok go", "build it now"]:
+            self.assertTrue(di.has_confirm_word(t), t)
+
+    def test_non_starts(self):
+        for t in ["use ltx", "what about hidream?", "a noir short", "30 seconds"]:
+            self.assertFalse(di.has_confirm_word(t), t)
+
+
+class TestParseControllerJson(unittest.TestCase):
+    def test_plain_and_fenced(self):
+        self.assertEqual(di.parse_controller_json('{"intent": "confirm", "confirm": true}')["confirm"], True)
+        self.assertEqual(di.parse_controller_json('```json\n{"a": 1}\n```')["a"], 1)
+        # leading chatter + trailing text → still pulls the object
+        self.assertEqual(di.parse_controller_json('sure! {"a": {"b": 2}} hope that helps')["a"]["b"], 2)
+
+    def test_garbage_is_none(self):
+        for bad in ["", "no json here", "{unbalanced", "[1,2,3]"]:
+            self.assertIsNone(di.parse_controller_json(bad), bad)
+
+
+class TestNormalizeDecision(unittest.TestCase):
+    def test_valid_decision_keeps_only_lane_picks(self):
+        d = di.normalize_decision({
+            "intent": "stack", "brief": "a noir short",
+            "stack_patch": {"video_lane": "ltx", "keyframe_lane": "hidream", "music": False, "seconds": 30},
+            "confirm": False, "reply": "Switching to LTX."})
+        self.assertEqual(d["brief"], "a noir short")
+        # music/seconds are NOT taken from the LLM (keyword floor owns them) — lanes only
+        self.assertEqual(d["stack_patch"], {"video_lane": "ltx", "keyframe_lane": "hidream"})
+        self.assertNotIn("music", d["stack_patch"])
+        self.assertNotIn("seconds", d["stack_patch"])
+        self.assertEqual(d["intent"], "stack")
+        self.assertEqual(d["reply"], "Switching to LTX.")
+
+    def test_drops_unknown_lanes_and_bad_types(self):
+        d = di.normalize_decision({
+            "intent": "stack",
+            "stack_patch": {"video_lane": "veo", "keyframe_lane": "dalle", "continuity": "morph",
+                            "music": "yes", "seconds": 99999}})
+        self.assertEqual(d["stack_patch"], {})   # every invalid value dropped, none coerced
+
+    def test_intent_defaulted_and_confirm_coerced(self):
+        self.assertEqual(di.normalize_decision({"brief": "x"})["intent"], "brief")
+        self.assertEqual(di.normalize_decision({"brief": ""})["intent"], "smalltalk")
+        self.assertEqual(di.normalize_decision({"confirm": 1, "brief": "x"})["confirm"], True)
+
+    def test_none_on_non_dict(self):
+        self.assertIsNone(di.normalize_decision(None))
+        self.assertIsNone(di.normalize_decision("nope"))
+
+    def test_controller_system_lists_the_valid_slots(self):
+        s = di.build_controller_system()
+        for tok in ("wan", "ltx", "sulphur", "10eros", "chroma", "hidream", "storyboard", "confirm"):
+            self.assertIn(tok, s)
+
+
+class TestDecideAction(unittest.TestCase):
+    """The pipe routes a resolved turn through decide_action — the core branch logic."""
+
+    def test_build_only_when_brief_and_confirmed(self):
+        self.assertEqual(di.decide_action("a noir short", True, "confirm"), "build")
+
+    def test_confirm_without_brief_needs_a_brief(self):
+        self.assertEqual(di.decide_action("", True, "confirm"), "need_brief")
+
+    def test_no_brief_is_chat(self):
+        self.assertEqual(di.decide_action("", False, "smalltalk"), "chat")
+        self.assertEqual(di.decide_action("", False, "question"), "chat")
+
+    def test_brief_with_question_or_smalltalk_is_chat(self):
+        self.assertEqual(di.decide_action("a noir short", False, "question"), "chat")
+        self.assertEqual(di.decide_action("a noir short", False, "smalltalk"), "chat")
+        self.assertEqual(di.decide_action("a noir short", False, "cancel"), "chat")
+
+    def test_brief_with_plan_change_shows_proposal(self):
+        for intent in ("brief", "revise", "stack"):
+            self.assertEqual(di.decide_action("a noir short", False, intent), "proposal", intent)
+
+    def test_confirmed_wins_over_intent(self):
+        # a corroborated confirm builds even if the LLM labeled the intent "stack" ("go with ltx")
+        self.assertEqual(di.decide_action("a noir short", True, "stack"), "build")
+
+
 if __name__ == "__main__":
     unittest.main()

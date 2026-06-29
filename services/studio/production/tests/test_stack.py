@@ -54,6 +54,18 @@ class TestResolveStack(unittest.TestCase):
             self.assertEqual(S.resolve_stack(video_lane=lane).video_lane, lane)
         self.assertEqual(sorted(S.wired_video_lanes()), ["10eros", "ltx", "sulphur", "wan"])
 
+    def test_controller_lane_constants_match_stack(self):
+        # The injected intent controller duplicates the lane menus (it can't import stack.py —
+        # it runs in the OWUI container). Guard the duplication against drift.
+        import os as _os
+        import sys as _sys
+        # services/studio/production/tests/ -> services/studio (where director_intent.py lives)
+        _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(
+            _os.path.abspath(__file__)))))
+        import director_intent as di
+        self.assertEqual(sorted(di.VIDEO_LANES_VALID), sorted(S.wired_video_lanes()))
+        self.assertEqual(sorted(di.KEYFRAME_LANES_VALID), sorted(S.wired_keyframe_lanes()))
+
     def test_capabilities_match_wired_video_lanes(self):
         # F8 drift guard: every wired video lane (stack.py) must have a capability contract
         # the planner is shown, else the 4B plans against the wrong lane's physics.
