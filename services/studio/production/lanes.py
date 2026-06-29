@@ -17,7 +17,7 @@ import subprocess
 import urllib.request
 from abc import ABC, abstractmethod
 
-from . import comfy, config
+from . import comfy, config, ltx_workflows
 from .util import sh
 
 
@@ -125,7 +125,7 @@ class StudioBackend(ABC):
     def render_video(self, *, prompt: str, width: int, height: int, frames: int,
                      steps: int, seed: int, fps: int, out_stem: str,
                      mode: str = "t2v", start_image: str | None = None,
-                     negative: str = "") -> str: ...
+                     negative: str = "", lane: str = "wan") -> str: ...
 
     @abstractmethod
     def generate_image(self, *, prompt: str, width: int, height: int, seed: int,
@@ -168,7 +168,22 @@ class LiveBackend(StudioBackend):
         return json.load(urllib.request.urlopen(req, timeout=60)).get("name", fname)
 
     def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem,
-                     mode="t2v", start_image=None, negative="") -> str:
+                     mode="t2v", start_image=None, negative="", lane="wan") -> str:
+        # LTX family (LTX-2.3 / Sulphur / 10Eros): built from the shared recipe at the lane's
+        # OWN native res + 24 fps (NOT the Wan delivery dims). frames were sized Wan-shaped by the
+        # executor → recover the seconds and let LTX re-size at 24 fps.
+        if ltx_workflows.is_ltx_family(lane):
+            img_name = None
+            if mode == "i2v":
+                if not start_image:
+                    raise RuntimeError("i2v render requires a start_image")
+                img_name = self._upload_image(start_image)
+            seconds = frames / float(fps or 16)
+            wf, _w, _h = ltx_workflows.render_graph(
+                lane, prompt=prompt, seconds=seconds, seed=seed, mode=mode,
+                image_name=img_name, negative=negative)
+            fn, sub = comfy.await_output(comfy.submit(wf), "video")
+            return self._comfy_to(fn, sub, out_stem)
         if mode == "i2v":
             if not start_image:
                 raise RuntimeError("i2v render requires a start_image")
@@ -252,7 +267,7 @@ class SyntheticBackend(StudioBackend):
     name = "synthetic"
 
     def render_video(self, *, prompt, width, height, frames, steps, seed, fps, out_stem,
-                     mode="t2v", start_image=None, negative="") -> str:
+                     mode="t2v", start_image=None, negative="", lane="wan") -> str:
         dur = max(0.1, frames / float(fps or 16))
         dst = out_stem + ".mp4"
         os.makedirs(os.path.dirname(dst), exist_ok=True)

@@ -134,7 +134,7 @@ def run_production(
         path = backend.render_video(
             prompt=_inject(shot.prompt_intent, spos), width=d.width, height=d.height, frames=frames,
             steps=WAN_STEPS, seed=shot.seed, fps=d.fps, mode=mode, start_image=start_image,
-            out_stem=os.path.join(prod_dir, "shots", shot.id), negative=sneg,
+            out_stem=os.path.join(prod_dir, "shots", shot.id), negative=sneg, lane=vlane,
         )
         clip_paths[shot.id] = path
         prev_clip = path

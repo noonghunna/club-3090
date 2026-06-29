@@ -262,7 +262,7 @@ class Pipe:
     # The 🎬 Production lane's conversational voice (greetings, "what options?", nudging toward a
     # brief). The behavioral spec is the editable source of truth in director/AGENTS.md — the build
     # bakes its body in here (the pipe runs in-container and can't read the repo at runtime).
-    DIRECTOR_PRODUCER_SYS = json.loads(r"""["You are the Studio Production Director \u2014 a warm, concise assistant that plans and renders SHORT AI films from a one-line brief. Chat naturally; keep replies to 1\u20134 sentences, plain prose (NO JSON, NO markdown tables).\n\nWhat you can make, and the options the user can pick:\n- Length: any \u2014 roughly 5 seconds per shot (e.g. a 1-minute film \u2248 12 shots).\n- Video model: Wan2.2 is the only one that RENDERS TODAY; LTX-2.3, Sulphur and 10Eros are on the roadmap (not renderable yet).\n- Keyframe / image model (drives the look + character consistency): Chroma (default), Z-Image (fast), Krea 2 (aesthetic), or HiDream-O1 (top quality, slower).\n- Continuity: storyboard (default), hero, chain, or none.\n- Audio: narration (Kokoro) and/or background music (ACE-Step) \u2014 either can be turned off.\n\nThe user changes anything by just saying so (\"use HiDream\", \"30 seconds\", \"no music\"). When they're happy they say \"go\" and the build starts \u2014 only \"go\" renders; never claim you've already started rendering. If they haven't described a film yet, warmly invite a one-line brief. Answer the user's actual message; when useful, end with a light nudge to say \"go\" or tell you what to change."]""")[0]
+    DIRECTOR_PRODUCER_SYS = json.loads(r"""["You are the Studio Production Director \u2014 a warm, concise assistant that plans and renders SHORT AI films from a one-line brief. Chat naturally; keep replies to 1\u20134 sentences, plain prose (NO JSON, NO markdown tables).\n\nWhat you can make, and the options the user can pick:\n- Length: any \u2014 roughly 5 seconds per shot (e.g. a 1-minute film \u2248 12 shots).\n- Video model (all render): Wan2.2 (default, 832\u00d7480, uncensored), LTX-2.3 (768\u00d7512, the distilled base), Sulphur (uncensored LTX dev, 1280\u00d7720), or 10Eros (uncensored LTX dev, 1280\u00d7720). The LTX-family lanes can generate their own audio, but in a multi-shot film the soundtrack comes from the narration + music layer, so their native audio isn't used.\n- Keyframe / image model (drives the look + character consistency): Chroma (default), Z-Image (fast), Krea 2 (aesthetic), or HiDream-O1 (top quality, slower).\n- Continuity: storyboard (default), hero, chain, or none.\n- Audio: narration (Kokoro) and/or background music (ACE-Step) \u2014 either can be turned off.\n\nThe user changes anything by just saying so (\"use HiDream\", \"30 seconds\", \"no music\"). When they're happy they say \"go\" and the build starts \u2014 only \"go\" renders; never claim you've already started rendering. If they haven't described a film yet, warmly invite a one-line brief. Answer the user's actual message; when useful, end with a light nudge to say \"go\" or tell you what to change."]""")[0]
 
     # HiDream-O1 takes rich NATURAL-LANGUAGE prompts (Qwen3-VL text understanding). The Dev-2604
     # build runs CFG-off (no negative prompt), so everything must live in the positive description.
@@ -773,9 +773,7 @@ class Pipe:
                          % (video, keyf, cont, _audio_txt, shots))
             def _proposal():
                 _vl = {"auto": "Wan2.2 (auto)", "wan": "Wan2.2", "ltx": "LTX-2.3",
-                       "sulphur": "Sulphur", "10eros": "10Eros"}.get(video, video)
-                if video not in ("auto", "wan"):
-                    _vl += " ⚠️ roadmap — only Wan renders today"
+                       "sulphur": "Sulphur (uncensored)", "10eros": "10Eros (uncensored)"}.get(video, video)
                 _kl = {"auto": "Chroma (auto)", "chroma": "Chroma", "zimage": "Z-Image",
                        "krea": "Krea 2", "hidream": "HiDream-O1"}.get(keyf, keyf)
                 _audio = ("narration" if narr else "no narration") + " + " + ("music" if music else "no music")
@@ -789,9 +787,10 @@ class Pipe:
                     "| \U0001F39E️ continuity | **" + str(cont) + "**  ·  \U0001F50A audio **" + _audio + "** |\n"
                     "| ⏱️ length | **" + _len + "** |\n"
                     "| ⚙️ est. render | **~" + str(est_lo) + "–" + str(est_hi) + " min** on 1× 3090 |\n\n"
-                    "Reply **go** to start — or tell me what to change: _“use LTX” · “30 seconds” · "
-                    "“no music” · “hidream keyframes” · “hero continuity”_.\n\n"
-                    "_(Video renders on **Wan** today; LTX/Sulphur/10Eros are roadmap.)_"
+                    "Reply **go** to start — or tell me what to change: _“use LTX” · “sulphur” · "
+                    "“30 seconds” · “no music” · “hidream keyframes” · “hero continuity”_.\n\n"
+                    "_(Video: Wan2.2 · LTX-2.3 · Sulphur · 10Eros — all render. LTX-family lanes "
+                    "use their own resolution; the film's audio is the narration + music layer.)_"
                 )
 
             async def _chat(msg, ctx):
