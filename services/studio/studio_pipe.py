@@ -96,6 +96,25 @@ def is_generation_request(t):
     return bool(_GEN_RE.search(t or ""))
 
 
+# Documentary/factual signal — MIRRORS production/prompts.py detect_format (guarded by
+# test_looks_documentary_matches_detect_format). Used in the pipe to OFFER web research on a
+# documentary brief (the pipe can't import the server-side detect_format).
+_DOC_SIGNALS = re.compile(
+    r"document\w*"
+    r"|\bhistory of\b|\bthe history\b|\bhistories of\b"
+    r"|\bexplainer\b|\bexplain(?:ed|s|ing)?\b"
+    r"|\beducational\b|\bbiograph\w*"
+    r"|\bguide to\b|\boverview of\b|\btimeline of\b|\bfacts? about\b"
+    r"|\btutorial\b|\bhow to\b|\bhow .{0,30}?works?\b|\bcase study\b",
+    re.I,
+)
+
+
+def looks_documentary(brief):
+    """True if a brief reads as documentary/factual (→ offer web research)."""
+    return bool(_DOC_SIGNALS.search(brief or ""))
+
+
 def is_question(t):
     """Question-shaped (leading interrogative or trailing '?'). Pure to its name —
     callers that want creation-asks excluded use is_brief_candidate (gen wins there)."""
@@ -500,7 +519,7 @@ class Pipe:
     # The 🎬 Production lane's conversational voice (greetings, "what options?", nudging toward a
     # brief). The behavioral spec is the editable source of truth in director/AGENTS.md — the build
     # bakes its body in here (the pipe runs in-container and can't read the repo at runtime).
-    DIRECTOR_PRODUCER_SYS = json.loads(r"""["You are the Studio Production Director \u2014 a warm, concise assistant that plans and renders SHORT AI films from a one-line brief. Chat naturally; keep replies to 1\u20134 sentences, plain prose (NO JSON, NO markdown tables).\n\nWhat you can make, and the options the user can pick:\n- Length: any \u2014 roughly 5 seconds per shot (e.g. a 1-minute film \u2248 12 shots).\n- Video model (all render): Wan2.2 (default, 832\u00d7480, uncensored), LTX-2.3 (768\u00d7512, the distilled base), Sulphur (uncensored LTX dev, 1280\u00d7720), or 10Eros (uncensored LTX dev, 1280\u00d7720). The LTX-family lanes can generate their own audio, but in a multi-shot film the soundtrack comes from the narration + music layer, so their native audio isn't used.\n- Keyframe / image model (drives the look + character consistency): Chroma (default), Z-Image (fast), Krea 2 (aesthetic), or HiDream-O1 (top quality, slower).\n- Continuity: storyboard (default), hero, chain, or none.\n- Audio: narration (Kokoro) and/or background music (ACE-Step) \u2014 either can be turned off.\n\nThe user changes anything by just saying so (\"use HiDream\", \"30 seconds\", \"no music\"). When they're happy they say \"go\" and the build starts \u2014 only \"go\" renders; never claim you've already started rendering. If they haven't described a film yet, warmly invite a one-line brief. Answer the user's actual message; when useful, end with a light nudge to say \"go\" or tell you what to change."]""")[0]
+    DIRECTOR_PRODUCER_SYS = json.loads(r"""["You are the Studio Production Director \u2014 a warm, concise assistant that plans and renders SHORT AI films from a one-line brief. Chat naturally; keep replies to 1\u20134 sentences, plain prose (NO JSON, NO markdown tables).\n\nWhat you can make, and the options the user can pick:\n- Length: any \u2014 roughly 5 seconds per shot (e.g. a 1-minute film \u2248 12 shots).\n- Video model (all render): Wan2.2 (default, 832\u00d7480, uncensored), LTX-2.3 (768\u00d7512, the distilled base), Sulphur (uncensored LTX dev, 1280\u00d7720), or 10Eros (uncensored LTX dev, 1280\u00d7720). The LTX-family lanes can generate their own audio, but in a multi-shot film the soundtrack comes from the narration + music layer, so their native audio isn't used.\n- Keyframe / image model (drives the look + character consistency): Chroma (default), Z-Image (fast), Krea 2 (aesthetic), or HiDream-O1 (top quality, slower).\n- Continuity: storyboard (default), hero, chain, or none.\n- Audio: narration (Kokoro) and/or background music (ACE-Step) \u2014 either can be turned off.\n- Research (documentary / factual films only): I can look up real facts on the web first (just say \"research\", \"search\", or \"dig\") so the narration and shots use real names, dates, and events instead of guesses. Be honest about the limit: I only research the film you're making \u2014 I CANNOT browse arbitrary web pages, open links, or fetch live info to chat about. If someone asks \"can you search the web?\", say yes \u2014 for grounding a documentary \u2014 then ask for a one-line factual brief.\n\nThe user changes anything by just saying so (\"use HiDream\", \"30 seconds\", \"no music\", \"research\"). When they're happy they say \"go\" and the build starts \u2014 only \"go\" renders; never claim you've already started rendering or searching. If they haven't described a film yet, warmly invite a one-line brief. Answer the user's actual message; when useful, end with a light nudge to say \"go\" or tell you what to change."]""")[0]
 
     # HiDream-O1 takes rich NATURAL-LANGUAGE prompts (Qwen3-VL text understanding). The Dev-2604
     # build runs CFG-off (no negative prompt), so everything must live in the positive description.
@@ -987,6 +1006,13 @@ class Pipe:
                     o["music"] = False
                 if "no narration" in tl or "no voice" in tl or "no voiceover" in tl:
                     o["narration"] = False
+                # web research toggle (documentary grounding) — opt-in; "dig"/"search"/"research"
+                if ("research" in words or "dig" in words or "search" in words
+                        or "look it up" in tl or "find facts" in tl):
+                    o["research"] = True
+                if ("no research" in tl or "without research" in tl or "don't search" in tl
+                        or "skip research" in tl or "no search" in tl):
+                    o["research"] = False
                 s = self._target_seconds(t)
                 if s:
                     o["seconds"] = s
@@ -1044,6 +1070,8 @@ class Pipe:
             else:
                 shots = 4                                       # no stated length → a short default
             est_lo, est_hi = int(round(shots * 2.5)), int(round(shots * 3)) + 3
+            research = bool(ov.get("research", False))   # documentary web-research, opt-in
+            is_doc = looks_documentary(brief)            # offer research only for factual briefs
 
             # the plan proposal card (shown when there's a new / changed plan to confirm)
             _audio_txt = ("narration + music" if (narr and music) else "narration only" if narr
@@ -1058,6 +1086,11 @@ class Pipe:
                 _audio = ("narration" if narr else "no narration") + " + " + ("music" if music else "no music")
                 _len = ("~%ds → %d shots" % (int(secs), shots)) if secs else \
                        ("%d shots (~%ds — say a length like “1 minute” to size it)" % (shots, shots * 5))
+                _research_row = ("| \U0001F50E research | **on** — real web facts ground the script |\n"
+                                 if (is_doc and research) else "")
+                _research_offer = ("\n\n\U0001F50E _This looks like a documentary — reply **research** to "
+                                   "ground the shots in real web facts (recommended for accuracy), or just "
+                                   "**go** to use what I already know._" if (is_doc and not research) else "")
                 return (
                     "\U0001F3AC **Plan — " + brief + "**\n\n"
                     "| | |\n|---|---|\n"
@@ -1065,10 +1098,12 @@ class Pipe:
                     "| \U0001F5BC️ keyframes | **" + _kl + "** |\n"
                     "| \U0001F39E️ continuity | **" + str(cont) + "**  ·  \U0001F50A audio **" + _audio + "** |\n"
                     "| ⏱️ length | **" + _len + "** |\n"
+                    + _research_row +
                     "| ⚙️ est. render | **~" + str(est_lo) + "–" + str(est_hi) + " min** on 1× 3090 |\n\n"
                     "Reply **go** to start — or tell me what to change: _“use LTX” · “sulphur” · "
-                    "“30 seconds” · “no music” · “hidream keyframes” · “hero continuity”_.\n\n"
-                    "_(Video: Wan2.2 · LTX-2.3 · Sulphur · 10Eros — all render. LTX-family lanes "
+                    "“30 seconds” · “no music” · “hidream keyframes” · “hero continuity”_."
+                    + _research_offer +
+                    "\n\n_(Video: Wan2.2 · LTX-2.3 · Sulphur · 10Eros — all render. LTX-family lanes "
                     "use their own resolution; the film's audio is the narration + music layer.)_"
                 )
 
@@ -1099,7 +1134,7 @@ class Pipe:
                          str(est_lo) + "–" + str(est_hi) + " min…")
             base_prod = self.valves.production_url.rstrip("/")
             payload = {"brief": brief, "shots": shots, "video_lane": video, "keyframe_lane": keyf,
-                       "continuity": cont, "music": music, "narration": narr}
+                       "continuity": cont, "music": music, "narration": narr, "research": research}
 
             def _prod_post():
                 req = urllib.request.Request(base_prod + "/produce", data=json.dumps(payload).encode(),

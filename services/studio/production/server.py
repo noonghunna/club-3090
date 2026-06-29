@@ -69,7 +69,8 @@ def _active() -> list[str]:
         return [j for j, v in _JOBS.items() if v.get("status") in ("planning", "rendering")]
 
 
-def _run_job(job_id: str, brief: str, stack: ProductionStack, shots: int, backend: str) -> None:
+def _run_job(job_id: str, brief: str, stack: ProductionStack, shots: int, backend: str,
+             research: bool = False) -> None:
     """Background worker: plan then render, holding the production lock end-to-end."""
     lock = ProductionLock()
     try:
@@ -80,11 +81,14 @@ def _run_job(job_id: str, brief: str, stack: ProductionStack, shots: int, backen
     try:
         prod_dir = os.path.join(config.PRODUCTIONS_DIR, job_id)
         os.makedirs(prod_dir, exist_ok=True)
-        _set(job_id, status="planning", phase="director planning the brief", frac=0.02)
+        _set(job_id, status="planning",
+             phase=("researching the web + planning" if research else "director planning the brief"),
+             frac=0.02)
         plan, arts = planner.plan_from_brief(
             brief, registry.load(), n_shots=shots, stack=stack,
             prompts_dir=os.path.join(prod_dir, "prompts"),
-            use_critic=True,   # semantic critic gates content before the (minutes-long) render
+            use_critic=True,        # semantic critic gates content before the (minutes-long) render
+            use_research=research,   # documentary web research, when the operator asked for it
         )
         _set(job_id, status="rendering", title=plan.project.title, phase="planned", frac=0.05)
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -166,17 +170,18 @@ class Handler(BaseHTTPRequestHandler):
             shots, req_secs = planner.derive_shots(brief)
         if _active():
             return self._json(409, {"error": "a production is already running", "job_id": _active()[0]})
+        research = bool(b.get("research", False))   # documentary web research, operator opt-in
         job_id = _job_id(brief)
         _set(job_id, status="planning", phase="queued", frac=0.0, brief=brief, title="…",
              stack=stack.to_dict(), stack_desc=describe_stack(stack),
-             shots=shots, requested_seconds=req_secs)
+             shots=shots, requested_seconds=req_secs, research=research)
         threading.Thread(
             target=_run_job,
-            args=(job_id, brief, stack, shots, b.get("backend", "live")),
+            args=(job_id, brief, stack, shots, b.get("backend", "live"), research),
             daemon=True,
         ).start()
         return self._json(200, {"job_id": job_id, "stack": stack.to_dict(),
-                                "shots": shots, "requested_seconds": req_secs})
+                                "shots": shots, "requested_seconds": req_secs, "research": research})
 
 
 def main() -> None:
