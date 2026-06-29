@@ -64,7 +64,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("plan", nargs="?", help="path to a ProductionPlanV1 JSON (v0a path)")
     ap.add_argument("--brief", default=None,
                     help='a one-line brief; the 4B director plans it (v0b), e.g. --brief "60s doc on lighthouses"')
-    ap.add_argument("--shots", type=int, default=3, help="target shot count for --brief planning")
+    ap.add_argument("--shots", type=int, default=0,
+                    help="shot count for --brief planning. 0 (default) = SIZE it from the brief's "
+                         "stated duration (~5s/shot, e.g. \"1 minute\" → ~12 shots); >0 = explicit.")
     # -- the production stack (operator-chosen; 'auto' = the visible default) --
     ap.add_argument("--video-lane", default="auto",
                     help="video model for every shot: wan (default, renders today) · "
@@ -119,14 +121,21 @@ def main(argv: list[str] | None = None) -> int:
             # brief path: the CLI stack pins the lanes; the director plans within it.
             print(describe_stack(stack), file=sys.stderr)
             from . import planner, registry
+            # Size the film from the brief's stated duration unless --shots was given.
+            if args.shots > 0:
+                shots = args.shots
+            else:
+                shots, _secs = planner.derive_shots(args.brief)
+                if _secs:
+                    print(f"[plan] brief asks for ~{_secs:.0f}s → ~{shots} shots", file=sys.stderr)
             job_id = args.job_id or _job_id(args.brief)
             prod_dir = os.path.join(args.productions_dir, job_id)
             os.makedirs(prod_dir, exist_ok=True)
             try:
                 reg = registry.load()
-                print(f"[plan] director planning the brief into ~{args.shots} shots…", file=sys.stderr)
+                print(f"[plan] director planning the brief into ~{shots} shots…", file=sys.stderr)
                 plan, extra_artifacts = planner.plan_from_brief(
-                    args.brief, reg, n_shots=args.shots, stack=stack,
+                    args.brief, reg, n_shots=shots, stack=stack,
                     prompts_dir=os.path.join(prod_dir, "prompts"),
                 )
             except planner.PlannerError as e:
