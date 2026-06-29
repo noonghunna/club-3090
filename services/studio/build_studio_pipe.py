@@ -779,12 +779,30 @@ class Pipe:
                     brief = (" ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text").strip()
                              if isinstance(c, list) else (c or "").strip())
                     break
+            _help = ("\U0001F3AC Tell me what film to make — a one-line brief like "
+                     "“a 45s calm documentary about lighthouses” or “a 15s noir detective short”. "
+                     "I'll plan it and render the whole thing (keyframes → video → narration → music "
+                     "→ assembly into one MP4); pick the stack in the lane's ⚙️ valves "
+                     "(video/keyframe model, continuity, music) or leave it on Auto.")
             if not brief:
-                return ("Type a brief and I'll plan + render the whole film — e.g. "
-                        "“make a 45s calm documentary about lighthouses”.\n\n"
-                        "I plan it (4B director), then run keyframes → video → narration → music → "
-                        "assembly into one MP4. Pick the stack in the lane's ⚙️ valves "
-                        "(video/keyframe model, continuity, music) or leave them on Auto.")
+                return _help
+            # CHIT-CHAT GATE — don't spin up a full production for a greeting / vague message
+            # (otherwise the director invents + renders a random film from "hello"). Cheap
+            # exact-match fast path, then the director's CHAT: gate (same as every other lane).
+            if brief.strip().lower().strip(" .!?") in (
+                    "hi", "hello", "hey", "yo", "sup", "hiya", "hello there", "hola", "thanks",
+                    "thank you", "ok", "okay", "cool", "nice", "test", "testing", "ping", "help", "?"):
+                await status("", True)
+                return _help
+            try:
+                _crafted = await loop.run_in_executor(None, self._enhance, brief, False, None, "video")
+                _chat = self._chat_gate(_crafted)
+                if _chat is not None:           # director judged it chit-chat / too vague → no render
+                    await status("", True)
+                    return ("\U0001F3AC " + _chat +
+                            "\n\n_(Give me a one-line film brief and I'll plan + render it.)_")
+            except Exception:
+                pass    # director unreachable → fall through; the production service surfaces the error
             base_prod = self.valves.production_url.rstrip("/")
             payload = {"brief": brief, "shots": int(self.valves.production_shots),
                        "video_lane": self.valves.production_video_lane,
