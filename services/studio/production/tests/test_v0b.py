@@ -57,8 +57,8 @@ class StubLLM:
         self.responses = list(responses)
         self.calls = []
 
-    def __call__(self, messages, *, max_tokens, temperature):
-        self.calls.append(messages)
+    def __call__(self, messages, *, max_tokens, temperature, **kwargs):
+        self.calls.append(messages)   # **kwargs absorbs enable_thinking (critic stage)
         return self.responses.pop(0)
 
 

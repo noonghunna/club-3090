@@ -151,3 +151,15 @@ def repair_user(raw: str, error: str) -> str:
         f"PREVIOUS OUTPUT:\n{raw}\n\n"
         "Output a corrected ProductionPlanV1 JSON object ONLY (no prose, no fences) that fixes that error."
     )
+
+
+def critic_repair_user(raw: str, issues: list) -> str:
+    """Re-ask the plan model to fix CONTENT problems the critic found (the plan is valid JSON)."""
+    bullets = "\n".join(f"- {i}" for i in issues)
+    return (
+        "Your plan is valid JSON but has these CONTENT problems:\n"
+        f"{bullets}\n\n"
+        f"PREVIOUS PLAN:\n{raw}\n\n"
+        "Output a corrected ProductionPlanV1 JSON object ONLY (no prose, no fences) that fixes these "
+        "problems. Keep the SAME format, the SAME pinned video lane, and the SAME number of shots."
+    )
