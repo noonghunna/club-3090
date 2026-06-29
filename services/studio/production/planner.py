@@ -20,7 +20,7 @@ import urllib.request
 
 from . import config
 from .manifest import Artifact
-from .prompts import TREATMENT_SYS, build_plan_system, repair_user
+from .prompts import build_plan_system, build_treatment_system, detect_format, repair_user
 from .schema import PlanError, ProductionPlanV1
 from .util import sha256_text
 
@@ -102,20 +102,31 @@ def extract_json(text: str) -> dict:
 
 
 # -- lenient normalization (fill obvious defaults so the 4B can be terse) -----
-def normalize(data: dict, video_lane: str = "wan", *, music: bool = True) -> dict:
+def normalize(data: dict, video_lane: str = "wan", *, music: bool = True,
+              fmt: str = "narrative") -> dict:
     data.setdefault("schema_version", "ProductionPlanV1")
     proj = data.setdefault("project", {})
     # The video lane is an operator/stack decision — FORCE it (the planner authors
     # shot content, not the lane). Whatever the 4B emitted is overridden by the pin.
     proj["video_lane"] = video_lane
+    # Format is the planner's deterministic genre decision (documentary vs narrative) —
+    # FORCE it so the manifest records how the piece was planned (and a documentary
+    # can't carry an invented protagonist the model snuck in).
+    proj["format"] = fmt
     proj.setdefault("title", "Untitled")
+    documentary = fmt == "documentary"
+    if documentary:
+        # Hard guarantee: a documentary has NO recurring fictional person. Strip any
+        # Character Bible the 4B emitted anyway, so the executor never stamps an invented
+        # protagonist onto every shot of a factual piece (the "Arif" failure, 2026-06-29).
+        data["characters"] = []
     shots = data.get("shots") or []
     for i, s in enumerate(shots):
         s.setdefault("id", f"s{i + 1}")
         s["lane"] = video_lane          # every shot uses the pinned lane
         s.setdefault("mode", "t2v")
         s.setdefault("prompt_intent", "")
-        s.setdefault("characters", [])  # Character Bible cast (ids); [] = none
+        s["characters"] = [] if documentary else s.get("characters", [])  # Bible cast ids; [] = none
     data.setdefault("delivery", {"aspect": "16:9", "width": 832, "height": 480,
                                  "fps": 16, "loudness_lufs": -14.0})
     data.setdefault("assembly", {"transition_seconds": 0.6, "duck_db": 6})
@@ -218,18 +229,25 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
     call = llm or director_call
     prov: list[tuple[str, str, str, str]] = []   # (role, system, user, response)
 
+    # FORMAT first — documentary (non-fiction, no protagonist) vs narrative (fiction).
+    # Decided deterministically from the brief and threaded through BOTH stages so the
+    # 4B can't fictionalize a factual brief (it used to invent a protagonist for a
+    # "documentary on the history of Pakistan"; diagnosed 2026-06-29).
+    fmt = detect_format(brief)
+    treatment_sys = build_treatment_system(fmt)
+
     # stage 1 — creative treatment (free-form)
-    treatment = call([{"role": "system", "content": TREATMENT_SYS},
+    treatment = call([{"role": "system", "content": treatment_sys},
                       {"role": "user", "content": brief}],
                      max_tokens=400, temperature=0.8)
-    prov.append(("treatment", TREATMENT_SYS, brief, treatment))
+    prov.append(("treatment", treatment_sys, brief, treatment))
 
     # stage 2 — structured plan (the video lane is PINNED to the operator's choice).
     # Size the token budget to the shot count — a ProductionPlanV1 is ~150 tokens/shot
     # (prompt_intent + narration + timeline + characters); a fixed 900 truncated longer
     # films (e.g. a 30 s / 6-shot brief) into unbalanced JSON.
     plan_tokens = min(4096, 700 + n_shots * 180)
-    plan_sys = build_plan_system(reg, n_shots=n_shots, video_lane=st.video_lane)
+    plan_sys = build_plan_system(reg, n_shots=n_shots, video_lane=st.video_lane, fmt=fmt)
     plan_user = f"BRIEF: {brief}\n\nTREATMENT:\n{treatment}\n\nNow output the ProductionPlanV1 JSON only."
     raw = call([{"role": "system", "content": plan_sys}, {"role": "user", "content": plan_user}],
                max_tokens=plan_tokens, temperature=0.4)
@@ -237,7 +255,7 @@ def plan_from_brief(brief: str, reg: dict, *, llm=None, max_repairs: int = 3,
 
     def _build(raw_json: str) -> dict:
         data = apply_continuity(
-            normalize(extract_json(raw_json), video_lane=st.video_lane, music=st.music),
+            normalize(extract_json(raw_json), video_lane=st.video_lane, music=st.music, fmt=fmt),
             st.continuity, image_lane=st.keyframe_lane,
         )
         if not st.narration:                      # operator opted out of voiceover

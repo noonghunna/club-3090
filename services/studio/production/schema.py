@@ -105,6 +105,7 @@ class Project:
     video_lane: str = "wan"           # operator-pinned (stack.py); default wan
     continuity: str = "none"          # none | chain | hero | storyboard (v0b-images)
     image_policy: dict = field(default_factory=dict)   # role -> image lane
+    format: str = "narrative"         # narrative (fiction) | documentary (non-fiction) — set by planner
 
 
 @dataclass
