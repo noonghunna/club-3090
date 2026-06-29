@@ -34,6 +34,22 @@ GOOD_PLAN = """{
   ]
 }"""
 
+# A documentary brief where the 4B disobeyed and snuck in a fictional protagonist
+# (the "Arif" failure, 2026-06-29) — the planner must strip it for a documentary.
+DOC_PLAN_WITH_SNEAKY_CHARACTER = """{
+  "project": {"title": "The Architect's Line", "tone": "reflective", "target_seconds": 10, "video_lane": "wan"},
+  "characters": [{"id": "p", "name": "Arif", "role": "protagonist", "description": "young man", "seed": 9}],
+  "shots": [
+    {"id": "s1", "lane": "wan", "mode": "t2v", "target_seconds": 5, "prompt_intent": "ancient ruins of Mohenjo-daro", "characters": ["p"], "narration": "The Indus Valley civilization thrived here.", "seed": 1},
+    {"id": "s2", "lane": "wan", "mode": "t2v", "target_seconds": 5, "prompt_intent": "1947 partition crowds", "characters": ["p"], "narration": "In 1947 the subcontinent was partitioned.", "seed": 2}
+  ],
+  "music": {"lane": "ace-step", "tags": "documentary", "lyrics": "[instrumental]", "seed": 3},
+  "timeline": [
+    {"clip": "s1", "transition_in": "dissolve"},
+    {"clip": "s2", "transition_in": "dissolve"}
+  ]
+}"""
+
 
 class StubLLM:
     """Returns a queue of canned director responses; records the calls."""
@@ -149,6 +165,69 @@ class TestDeriveShots(unittest.TestCase):
         shots, secs = derive_shots("a noir detective short")
         self.assertEqual(shots, 4)
         self.assertIsNone(secs)
+
+
+class TestDocumentaryFormat(unittest.TestCase):
+    """A documentary/factual brief must NOT become a character-driven fiction — the 4B
+    used to invent a protagonist ("Arif") for a documentary on Pakistan's history
+    (diagnosed 2026-06-29). Format is detected from the brief, steered in the prompts,
+    AND enforced deterministically in normalize so the failure can't recur."""
+
+    def setUp(self):
+        self.reg = load()
+
+    def test_detect_format(self):
+        from ..prompts import detect_format
+        for b in ["a documentary on the history of pakistan",
+                  "give me a 2 minute documentory on history of pakistan",   # user's typo
+                  "explain how vaccines work", "a guide to the solar system",
+                  "the biography of Tesla", "a tutorial on knife sharpening",
+                  "an overview of the Roman empire"]:
+            self.assertEqual(detect_format(b), "documentary", b)
+        for b in ["a 15s noir detective short", "make a 30s noir short, use sulphur",
+                  "a lone wanderer crosses a desert at dusk", "two robots fall in love"]:
+            self.assertEqual(detect_format(b), "narrative", b)
+
+    def test_documentary_prompt_suppresses_character_bible(self):
+        from ..prompts import build_plan_system
+        doc = build_plan_system(self.reg, n_shots=6, video_lane="ltx", fmt="documentary")
+        self.assertIn("DOCUMENTARY", doc)
+        self.assertIn('"characters": []', doc)            # empty cast in the shape
+        self.assertNotIn("Detective Marlowe", doc)        # no protagonist example
+        self.assertNotIn("CHARACTER BIBLE", doc)
+        nar = build_plan_system(self.reg, n_shots=6, video_lane="ltx", fmt="narrative")
+        self.assertIn("CHARACTER BIBLE", nar)             # narrative keeps the bible
+        self.assertIn("Detective Marlowe", nar)
+
+    def test_normalize_strips_characters_in_documentary(self):
+        data = normalize(
+            {"project": {"video_lane": "wan"},
+             "characters": [{"id": "p", "name": "Arif"}],
+             "shots": [{"prompt_intent": "ruins", "characters": ["p"], "narration": "n"}]},
+            fmt="documentary")
+        self.assertEqual(data["characters"], [])
+        self.assertEqual(data["shots"][0]["characters"], [])
+        self.assertEqual(data["project"]["format"], "documentary")
+
+    def test_normalize_keeps_characters_in_narrative(self):
+        data = normalize(
+            {"project": {"video_lane": "wan"},
+             "characters": [{"id": "p", "name": "Marlowe"}],
+             "shots": [{"prompt_intent": "alley", "characters": ["p"], "narration": "n"}]},
+            fmt="narrative")
+        self.assertEqual(data["characters"], [{"id": "p", "name": "Marlowe"}])
+        self.assertEqual(data["shots"][0]["characters"], ["p"])
+        self.assertEqual(data["project"]["format"], "narrative")
+
+    def test_planner_routes_documentary_brief_and_strips_protagonist(self):
+        # End-to-end: a doc brief + a disobedient 4B that emitted "Arif" → stripped.
+        llm = StubLLM(["a factual treatment", DOC_PLAN_WITH_SNEAKY_CHARACTER])
+        plan, _ = plan_from_brief("a documentary on the history of pakistan", self.reg, llm=llm)
+        self.assertEqual(plan.project.format, "documentary")
+        self.assertEqual(plan.characters, [])
+        self.assertTrue(all(s.characters == [] for s in plan.shots))
+        # narration stays factual content the model wrote (we don't rewrite it)
+        self.assertIn("1947", " ".join(s.narration for s in plan.shots))
 
 
 if __name__ == "__main__":
