@@ -81,7 +81,7 @@ Studio only borrows a small qwen "director" to craft prompts.)_
                                            └───────────────────────────┘
 ```
 
-The qwen **director** crafts the right prompt shape per lane; **ComfyUI** renders image/video/music/SFX; the **step-voice** and **studio-tts** services handle premium + narration voice; the **orchestrator** chains long videos; everything lands in the always-on **gallery**. Text/LLM chat is the separate core stack (this is image/video/audio only).
+The qwen **director** crafts the right prompt shape per lane; **ComfyUI** renders image/video/music/SFX; the **step-voice** and **studio-tts** services handle premium + narration voice; the **orchestrator** chains long videos; **SearXNG** (`:8088`) lets the experimental 🎬 Production director ground documentaries in real web facts (see [agents-architecture.md](agents-architecture.md)); everything lands in the always-on **gallery**. Text/LLM chat is the separate core stack (this is image/video/audio only).
 
 ### One scene, lanes inside it
 
