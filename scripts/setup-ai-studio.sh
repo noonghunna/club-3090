@@ -113,14 +113,18 @@ say "── [3/4] Starting the studio (gpu-mode ai-studio) ──"
 bash "$REPO_DIR/scripts/gpu-mode.sh" ai-studio
 
 # --- 4. Install the OWUI Studio pipe (install-if-absent; needs an OWUI admin) ---
+# PIPE_OK drives the onboarding below: a fresh install has no OWUI admin yet (you create it by
+# signing up), so the pipe install is EXPECTED to be skipped here — we then make "sign up THEN
+# install the pipe" a prominent numbered step instead of a warning that scrolls past (#510).
+PIPE_OK=0
 if [ -z "${SKIP_PIPE:-}" ]; then
     say "── [4/4] Installing the Open WebUI Studio pipe ──"
     if bash "$STUDIO_DIR/push-pipe-to-owui.sh"; then
         ok "  Studio pipe installed/updated."
+        PIPE_OK=1
     else
-        warn "  Pipe install skipped — Open WebUI likely has no admin account yet."
-        warn "  Sign up at http://$LANIP:8080 (first account = admin), then run:"
-        warn "    bash services/studio/push-pipe-to-owui.sh"
+        warn "  Pipe install skipped — Open WebUI has no admin account yet (expected on a fresh install)."
+        warn "  → see the highlighted step below: sign up first, then install the pipe."
     fi
 else
     echo "  (SKIP_PIPE set — install later: bash services/studio/push-pipe-to-owui.sh)"
@@ -152,12 +156,23 @@ echo "  ComfyUI:     http://$LANIP:8188   ← optional: full node-graph control"
 echo "  Gallery:     http://$LANIP:8189   ← your renders (survive ComfyUI restarts)"
 echo ""
 say  "  Get started:"
-echo "    1. Open the Open WebUI URL and SIGN UP — the FIRST account becomes the admin."
-echo "       (If you signed up after this ran, install the pipe now:"
-echo "        bash services/studio/push-pipe-to-owui.sh )"
-echo "    2. On the 'Studio' function (gear icon), set the 'browser_base' valve to"
-echo "       http://$LANIP:8189 so returned media links open from your browser."
-echo "    3. Pick a lane in the model selector (🎬 Video · 🖼️ Image · 🎵 Audio), type an idea,"
+_n=1
+echo "    $_n. Open the Open WebUI URL and SIGN UP — the FIRST account becomes the admin."; _n=$((_n + 1))
+# The pipe couldn't install without an admin → make installing it a LOUD, unmissable step.
+if [ "$PIPE_OK" != "1" ] && [ -z "${SKIP_PIPE:-}" ]; then
+    echo ""
+    warn "    $_n. ⚠ INSTALL THE STUDIO LANES — they were skipped because Open WebUI had no admin"
+    warn "       account yet. After you sign up (step 1), run this ONE command:"
+    warn ""
+    warn "           bash services/studio/push-pipe-to-owui.sh"
+    warn ""
+    warn "       Then reload Open WebUI — the 🎬 Studio lanes appear in the model selector."
+    echo ""
+    _n=$((_n + 1))
+fi
+echo "    $_n. On the 'Studio' function (Admin → Functions → Studio), set the 'browser_base'"
+echo "       valve to http://$LANIP:8189 so returned media links open from your browser."; _n=$((_n + 1))
+echo "    $_n. Pick a lane in the model selector (🎬 Video · 🖼️ Image · 🎵 Audio), type an idea,"
 echo "       and refine by just replying. Full guide: docs/ai-studio/README.md"
 echo ""
 warn "  Notes:"
