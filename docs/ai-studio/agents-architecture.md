@@ -4,6 +4,16 @@ How the AI Studio "director" makes decisions: the one 4B model behind every lane
 distinct agent shapes** it runs in, the Production Director's decision flow, and exactly how the
 agent differs lane-by-lane.
 
+> ## ⚠️ Status — the 🎬 Production Director is a work in progress
+>
+> **It is NOT recommended for production use.** The multi-turn chat interface is still **buggy and
+> does not yet follow instructions reliably** — intent reads, mid-conversation stack changes, and
+> confirms can misfire. Treat it as **experimental**: fun to play with, not something to depend on.
+>
+> The 12 single-shot lanes (image · video · audio) are simpler and further along, but still carry
+> the rough edges listed in [Current challenges](#current-challenges--known-limitations). Everything
+> below describes the **current design**, not a finished, dependable agent.
+
 > **One model, many roles.** Every lane is powered by the **same** small director —
 > `qwen3.5-4b-uncensored` (HauhauCS-Aggressive Q4_K_M) on llama.cpp, container `studio-director`
 > @ `:8090`. It always runs **thinking-OFF** (see [Key decisions](#key-design-decisions)). What
@@ -216,7 +226,7 @@ the LLM-first intent controller): club-3090 PRs **#519–#524**.
 
 ## Current challenges / known limitations
 
-Open as of the #519–#524 hardening — documented so they're tracked, not surprises.
+**The Production Director is work-in-progress and not production-ready** (see the [status banner](#-status--the--production-director-is-a-work-in-progress) up top) — the chat does not yet follow instructions reliably. These are the known open issues as of the #519–#524 hardening, documented so they're tracked, not surprises.
 
 | Challenge | What happens | Path forward |
 |---|---|---|
