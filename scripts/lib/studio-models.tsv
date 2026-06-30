@@ -16,6 +16,8 @@ director	Director (Qwen3.5-4B uncensored)	weights	qwen3.5-4b-gguf/hauhaucs-uncen
 image	Ideogram-4 (design / logo / text)	comfy	diffusion_models/ideogram4_fp8_scaled.safetensors	9.0	services/comfyui/download_ideogram4.sh
 image	Z-Image (uncensored / fast)	comfy	diffusion_models/z-image-turbo-fp8-e4m3fn.safetensors	6.15	services/comfyui/download_zimage.sh
 image	Krea 2 Turbo (aesthetic)	comfy	diffusion_models/krea2_turbo_fp8_scaled.safetensors	13.14	services/comfyui/download_krea.sh
+image	Chroma1-HD (uncensored)	comfy	diffusion_models/Chroma1-HD-fp8mixed.safetensors	9.0	services/comfyui/download_chroma.sh
+image	HiDream-O1 (top quality)	comfy	diffusion_models/HiDream-O1-Image-Dev-2604-FP8/model.safetensors	8.8	services/comfyui/download_hidream_o1.sh
 video	LTX-2.3 (video + audio)	comfy	unet/ltx2.3/distilled-1.1/ltx-2.3-22b-distilled-1.1-Q8_0.gguf	22.8	services/comfyui/download_video_models.sh
 video	Sulphur (uncensored video)	comfy	unet/sulphur-2/sulphur_dev-Q8_0.gguf	22.8	services/comfyui/download_video_models.sh
 video	10Eros (uncensored video)	comfy	unet/10eros/10Eros_v1-Q8_0.gguf	22.8	services/comfyui/download_video_models.sh
