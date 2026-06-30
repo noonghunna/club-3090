@@ -28,6 +28,7 @@ body:
         | Boot crash, wrong output, tool-call regression | `bash scripts/report.sh --verify > my-rig.md` | ~2 min |
         | OOM mid-conversation, hermes/openhands/IDE-agent failures, multi-turn cliff | `bash scripts/report.sh --soak > my-rig.md` | ~25 min — runs `SOAK_MODE=continuous` which is the **only** test that catches Cliff 2b |
         | TPS regression / cross-rig perf comparison | `bash scripts/report.sh --bench > my-rig.md` | ~5 min |
+        | AI Studio — image / video / audio generation fails ("ComfyUI generation error", lane error) | `bash scripts/report.sh --studio > my-rig.md` | ~5 sec — adds the ComfyUI + director container log tails (the actual generation error) |
         | Not sure / want to capture everything | `bash scripts/report.sh --full > my-rig.md` | ~35 min — verify + stress + soak + bench |
 
         Whichever you pick, that single command captures hardware, GPU details
@@ -67,7 +68,7 @@ body:
   - type: textarea
     id: rig-report
     attributes:
-      label: Rig report — paste contents of `bash scripts/report.sh [--verify | --soak | --bench | --full]`
+      label: Rig report — paste contents of `bash scripts/report.sh [--verify | --soak | --bench | --studio | --full]`
       description: |
         Pick the flag that matches your bug type (see table above). Run from the
         repo root, then paste the contents here.
