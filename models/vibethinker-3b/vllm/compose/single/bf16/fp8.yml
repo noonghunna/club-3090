@@ -73,7 +73,7 @@
 # Tensor-parallel: 1
 services:
   vllm-vibethinker-3b:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
     container_name: "${ESTATE_CONTAINER:-vllm-vibethinker-3b}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

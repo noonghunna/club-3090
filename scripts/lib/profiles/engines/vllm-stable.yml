@@ -1,11 +1,11 @@
 schema_version: 1
 id: vllm-stable
-display_name: vLLM stable v0.22.0 (overlay-free)
+display_name: vLLM stable v0.24.0 (overlay-free)
 type: vllm
 stability: stable
 install:
   method: docker_image
-  spec: vllm/vllm-openai:v0.22.0
+  spec: vllm/vllm-openai:v0.24.0
 min_sm: 7.5
 supported_model_families:
   - dense

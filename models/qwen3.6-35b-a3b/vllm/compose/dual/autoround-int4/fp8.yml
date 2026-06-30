@@ -59,7 +59,7 @@ services:
     # after a verify-stress + soak gate. (Engine-profile metadata still reads
     # vllm-nightly-clean for compat; aligning the profile to a stable engine is
     # tracked in club-3090 #254.) Override with VLLM_IMAGE=... for a specific build.
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.22.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-dual}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
