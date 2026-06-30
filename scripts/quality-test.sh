@@ -97,8 +97,9 @@ OPTIONS (extra)
   --no-thinking
                    Forward to benchlocal-cli --no-thinking — force thinking
                    OFF for every pack, ignoring per-pack default_thinking
-                   (the two packs that default thinking-on: instructfollow-15,
-                   reasonmath-15). Mutually exclusive with --enable-thinking.
+                   (the packs that default thinking-on: instructfollow-15,
+                   reasonmath-15, bugfind-15, hermesagent-20 — plus the
+                   --reasoning suite). Mutually exclusive with --enable-thinking.
                    Use for a clean all-off arm of a reasoning A/B. Also
                    settable via NO_THINKING=1 env.
   --thinking-max-tokens N
