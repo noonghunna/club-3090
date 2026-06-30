@@ -140,9 +140,14 @@ When you say **go**, the director plans and renders the whole film:
   look + a stable seed, then referenced by name in each shot, so the same character looks the same
   across shots ([#502](https://github.com/noonghunna/club-3090/pull/502)). Documentaries keep this
   **empty** — they narrate a real subject, no protagonist.
-- **Continuity mode** (⚙️ valve) — how shots are visually linked: **storyboard** (per-shot keyframes
-  + a shared style bible, *default*) · **hero** (one shared keyframe) · **chain** (each shot
-  continues from the previous frame) · **none** (independent shots).
+- **Continuity mode** (⚙️ valve) — how shots are kept visually consistent:
+
+  | Mode | How it links shots | Best for |
+  |---|---|---|
+  | **storyboard** *(default)* | each shot gets its **own keyframe** from the image model, all sharing one **style bible** (palette/look); the shot's video is then animated (i2v) from that keyframe | most films — per-shot art direction **and** a film-wide consistent look |
+  | **hero** | **one** shared keyframe seeds every shot | a single subject / scene throughout |
+  | **chain** | each shot continues (i2v) from the **previous shot's last frame** | one flowing, continuous take |
+  | **none** | independent text→video shots, no keyframes | fastest; loosest continuity |
 
 > **Web research (SearXNG).** Step 2 leans on the rig's **SearXNG** (`:8088`, the same instance
 > OWUI's web search uses). It's **opt-in** (say "research" / "dig", or accept the offer on the plan
@@ -249,6 +254,79 @@ the LLM-first intent controller): club-3090 PRs **#519–#524**.
 | **Duration parsing mis-reads decades.** `_target_seconds`'s `\d+\s*s\b` regex matches "1980s" / "90s" / "2000s" as **seconds** (verified). | "a film set in the **1980s**" → parsed as 1980 s → capped to 120 s → a multi-segment long clip nobody asked for; "**90s** synthwave" → a 90 s track. | Tighten the regex — require a separating space or exclude decade-style `\d{2,4}s`, drop bare-`s` matching, add a test. Small, self-contained fix. |
 | **Fragmented agent instructions.** 8 system prompts across `AGENTS.md` + inline `DIRECTOR_*_SYS` + `director_intent.py` + `prompts.py` (see the [system-prompt map](#system-prompt-map)). | No single studio persona/voice; a cross-lane tone change is several edits, not one. | If a consistent voice becomes a goal: a shared persona preamble + per-lane task suffix. |
 | **Not user-validated end-to-end since #524.** The LLM-first intent + research + critic chain passes its offline unit tests + dry-runs, but hasn't had a live OWUI run by a user since the last change. | Unknown real-world rough edges — e.g. the 4B's JSON-decision quality under genuinely messy multi-turn chat. | The parked **live validation**: re-run the search → dig → "ok do it" flow in OWUI on the rig. |
+
+---
+
+## Diagnosing & troubleshooting
+
+The Director spans three moving parts — the **OWUI pipe** (Stage 1), the **4B model** (`:8090`), and
+the **planning server** (`:8195`) — so most problems localize to one of them. Work top-down.
+
+### 1. Is everything up?
+
+| Check | Command | Healthy = |
+|---|---|---|
+| Planning server | `curl -s localhost:8195/produce/health` | `{"ok": true, …}` — **if this fails the 🎬 lane won't even appear in OWUI** (it's health-gated) |
+| 4B director | `sudo docker ps --filter name=studio-director` · `sudo docker logs --tail 50 studio-director` | container **Up (healthy)**, serving `:8090` |
+| Research backend | `curl -sf localhost:8088 >/dev/null && echo ok` | SearXNG up (research fails *open*, so this only matters for documentary grounding) |
+| The scene | `gpu-mode status` | `ai-studio` active |
+
+Start the planning server if it's down: `nohup python3 -m services.studio.production.server &`
+(restart it after a code change — it bakes nothing, but it holds the loaded config).
+
+### 2. Reproduce a plan offline — the key diagnostic
+
+To see **what the Director plans** for a brief without burning a GPU render, run the CLI with the
+**synthetic** backend (ffmpeg stand-ins, no ComfyUI):
+
+```bash
+python3 -m services.studio.production.run \
+  --brief "a 1-minute documentary on the history of Pakistan" \
+  --backend synthetic
+```
+
+It runs the whole chain — format detection → (research) → treatment → plan → critic → assemble — and
+writes the **plan JSON** + a stand-in MP4 under the productions dir. This is how you debug "the plan
+is wrong" (off-topic shots, a documentary that invents a protagonist, bad sizing) in seconds. Add
+`--continuity` / `--keyframe-lane` / `--shots` to match the stack you're chasing, or `--backend live`
+to render for real. (Stage-1 *intent* isn't exercised here — `run.py` takes the brief directly; for
+intent bugs see §4 + §5.)
+
+### 3. Inspect a live render
+
+A `/produce` call returns a `job_id`; poll it:
+
+```bash
+curl -s localhost:8195/job/<job_id>     # → {status, phase, frac, title, error?}
+```
+
+`status: error` carries the failure in `error`; `done` carries the gallery URL. One film at a time —
+a second `/produce` while one runs returns **409**.
+
+### 4. Test the logic offline (no rig)
+
+The intent / critic / research / stack logic is pure and unit-tested — run these to localize a
+behavioral bug without the GPU:
+
+```bash
+python3 -m unittest \
+  services.studio.production.tests.test_director_intent \
+  services.studio.production.tests.test_critic \
+  services.studio.production.tests.test_research \
+  services.studio.production.tests.test_stack
+```
+
+### 5. Symptom → where to look
+
+| Symptom | Likely cause | Where to look |
+|---|---|---|
+| 🎬 Production lane missing from the OWUI picker | `:8195` server down (the lane is health-gated) | start the server (§1) |
+| "Could not reach the Production service" mid-chat | `:8195` went down | restart the server |
+| Chat misreads you — renders without "go", ignores a change, treats a brief as chat | **Stage 1 intent** (the 4B's JSON decision) | `sudo docker logs studio-director` (the controller request/response); prompt is `build_controller_system()` in `director_intent.py` |
+| Plan is off-topic, or a documentary invents a character | **Stage 2 planner** | reproduce with `run.py --backend synthetic` (§2); check `detect_format` + the treatment/plan prompts in `prompts.py` |
+| Director hangs ~100 s then fails / empty reply | the 4B's **thinking ran away** (it must stay thinking-OFF) or the model is overloaded | `sudo docker logs studio-director` for `finish_reason=length` / empty `content` |
+| Research never grounds the script | SearXNG down — it **fails open silently** | `curl :8088`; documentary briefs only |
+| Wrong segment count / unexpected long clip | duration mis-parse (e.g. "1980s" → 1980 s — see [Challenges](#current-challenges--known-limitations)) | the brief's wording; `_target_seconds` |
 
 ---
 
