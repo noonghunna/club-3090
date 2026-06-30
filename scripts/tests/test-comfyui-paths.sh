@@ -52,4 +52,20 @@ chk "HOME-less models → /mnt legacy" "/mnt/models/comfyui/models" "${got#*|}"
 lan="$(hostname() { echo '172.17.0.1 192.168.1.50 10.0.0.2'; }; . "$HELPER"; c3_lan_ip)"
 chk "lan_ip prefers LAN over 172.x bridge" "192.168.1.50" "$lan"
 
+# H — c3_persist_comfy_root pins the derived COMFYUI_ROOT into .env when absent (club-3090
+#     #510/#530: the comfyui compose mounts ${COMFYUI_ROOT}/models via --env-file, so without this
+#     the container falls back to the /mnt default and mounts an EMPTY tree on any non-/mnt rig).
+_tmpenv="$(mktemp)"; : > "$_tmpenv"
+env -u COMFYUI_ROOT -u COMFYUI_MODELS_DIR MODEL_DIR=/home/u/models C3_ENV_FILE="$_tmpenv" \
+  bash -c '. "'"$HELPER"'"; c3_persist_comfy_root' >/dev/null 2>&1
+chk "persist writes COMFYUI_ROOT when absent" "COMFYUI_ROOT=/home/u/comfyui" "$(grep '^COMFYUI_ROOT=' "$_tmpenv")"
+
+# I — never clobbers a hand-set COMFYUI_ROOT already in .env (exactly one line, value unchanged)
+printf 'COMFYUI_ROOT=/data/custom\n' > "$_tmpenv"
+env -u COMFYUI_ROOT -u COMFYUI_MODELS_DIR MODEL_DIR=/home/u/models C3_ENV_FILE="$_tmpenv" \
+  bash -c '. "'"$HELPER"'"; c3_persist_comfy_root' >/dev/null 2>&1
+chk "persist respects an existing COMFYUI_ROOT" "/data/custom|1" \
+  "$(grep '^COMFYUI_ROOT=' "$_tmpenv" | cut -d= -f2-)|$(grep -c '^COMFYUI_ROOT=' "$_tmpenv")"
+rm -f "$_tmpenv"
+
 if [ "$fails" -eq 0 ]; then echo "PASS: comfyui-paths derivation"; exit 0; else echo "FAIL: $fails assertion(s)"; exit 1; fi

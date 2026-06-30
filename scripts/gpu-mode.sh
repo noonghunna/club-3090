@@ -184,6 +184,9 @@ stop_gemma_12b() {
 # GPU-bound — mutex with all vLLM / SGLang / llama-server LLM serving.
 start_comfyui() {
     printf "  ${GREEN}▲${NC} Starting comfyui..."
+    # Pin COMFYUI_ROOT into repo-root .env so the compose's `--env-file` mounts the SAME tree the
+    # downloads went into (not the /mnt default) on any rig whose MODEL_DIR isn't /mnt — #510/#530.
+    type c3_persist_comfy_root >/dev/null 2>&1 && c3_persist_comfy_root || true
     compose_at "$COMPOSE_BASE/comfyui" "up -d" && echo "done" || echo "failed"
 }
 stop_comfyui() {
