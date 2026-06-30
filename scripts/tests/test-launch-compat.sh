@@ -86,7 +86,7 @@ fi
 assert_contains "$out" "install.spec is not a docker image"
 
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell)"
-assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.22.0"
+assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.24.0"
 
 
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/gemma-int8-mtp --format shell)"
@@ -94,7 +94,7 @@ assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.22.0"
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"
-  assert_contains "$out" "image: vllm/vllm-openai:v0.22.0"
+  assert_contains "$out" "image: vllm/vllm-openai:v0.24.0"
 
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" VLLM_IMAGE=vllm/vllm-openai:latest docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"
   assert_contains "$out" "image: vllm/vllm-openai:latest"
@@ -110,6 +110,7 @@ print(clean["VLLM_IMAGE"])
 print(gemma["VLLM_IMAGE"])
 PY
 )"
-assert_contains "$out" "vllm/vllm-openai:v0.22.0"
+assert_contains "$out" "vllm/vllm-openai:v0.24.0"   # clean (vllm/dual → vllm-stable) bumped to v0.24.0
+assert_contains "$out" "vllm/vllm-openai:v0.22.0"   # gemma (vllm/gemma-int8-mtp → vllm-gemma-stable) stays v0.22.0
 
 echo "test-launch-compat: ok"
