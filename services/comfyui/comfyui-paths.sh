@@ -104,10 +104,28 @@ c3_resolve_lanip() {
   return 0
 }
 
+# Persist the resolved COMFYUI_ROOT to repo-root .env so the comfyui compose — launched as
+# `sudo docker compose --env-file .env` — mounts the SAME tree the downloader writes into.
+# Without this, COMFYUI_ROOT is derived in-shell but stripped by sudo AND absent from .env, so the
+# compose's `${COMFYUI_ROOT:-/mnt/models/comfyui}/models` falls back to the /mnt default and mounts
+# an EMPTY tree on any rig whose MODEL_DIR isn't the /mnt layout → ComfyUI's model dropdowns come up
+# empty (loaders 400 with "not in []"; the HiDream node says "not installed"). club-3090 #510 + #530.
+# Write-if-absent: never clobbers a hand-set COMFYUI_ROOT. No-op under C3_PATHS_NO_ENV / unwritable .env.
+c3_persist_comfy_root() {
+  [ -n "${C3_PATHS_NO_ENV:-}" ] && return 0
+  local env_file="${C3_ENV_FILE:-${C3_REPO_ROOT:-.}/.env}"
+  grep -qE '^COMFYUI_ROOT=' "$env_file" 2>/dev/null && return 0   # already pinned — respect it
+  touch "$env_file" 2>/dev/null && printf 'COMFYUI_ROOT=%s\n' "$COMFYUI_ROOT" >> "$env_file" 2>/dev/null || true
+  return 0
+}
+
 # Ensure COMFYUI_MODELS_DIR exists + is writable, else exit with an ACTIONABLE message instead
 # of letting hf/mkdir cascade into a traceback. Call from download entry points. (#503)
 c3_ensure_comfy_models_dir() {
-  if mkdir -p "$COMFYUI_MODELS_DIR" 2>/dev/null && [ -w "$COMFYUI_MODELS_DIR" ]; then return 0; fi
+  if mkdir -p "$COMFYUI_MODELS_DIR" 2>/dev/null && [ -w "$COMFYUI_MODELS_DIR" ]; then
+    c3_persist_comfy_root   # pin COMFYUI_ROOT so the container mounts this same tree (#510/#530)
+    return 0
+  fi
   echo "ERROR: ComfyUI models dir is not writable: $COMFYUI_MODELS_DIR" >&2
   echo "       Set MODEL_DIR to a writable location and retry, e.g.:" >&2
   echo "         MODEL_DIR=\"\$HOME/models\" $(basename "${0:-this script}")" >&2
