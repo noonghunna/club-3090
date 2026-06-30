@@ -119,6 +119,7 @@ async def tts(request):
     name = "studio_tts_" + uuid.uuid4().hex[:8] + ".wav"
     dst = os.path.join(OUTPUT_DIR, name)
     shutil.move(wav, dst)   # /tmp -> /output is cross-device; shutil.move copies+unlinks
+    os.chmod(dst, 0o644)    # world-readable so host-side consumers can read it (like ComfyUI's save nodes)
     return web.json_response({"wav": name})
 
 
@@ -139,6 +140,7 @@ async def narrate(request):
         out_name = "studio_narrated_" + uuid.uuid4().hex[:8] + ".mp4"
         out_path = os.path.join(OUTPUT_DIR, out_name)
         await loop.run_in_executor(None, _mixdown, video_path, voice_wav, out_path, int(b.get("duck_db", 12)))
+        os.chmod(out_path, 0o644)   # world-readable so host-side consumers can read it
         return web.json_response({"filename": out_name, "subfolder": ""})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
