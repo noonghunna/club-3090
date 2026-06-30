@@ -16,6 +16,7 @@ gallery, one refine-by-reply UX across the creative modalities.
 
 | Deep-dive | Covers |
 |---|---|
+| **[agents-architecture.md](agents-architecture.md)** | **How the director thinks** — the one 4B behind every lane, the two agent shapes, the Production Director decision flow, the per-lane comparison + the system-prompt map |
 | **[requirements.md](requirements.md)** | **Can I run this?** — GPU / CPU / RAM / disk / software, single-vs-dual-card, the director-placement VRAM lever |
 | **[image.md](image.md)** | HiDream-O1 (top quality) · Ideogram-4 (design/logo/text) · Chroma + Z-Image (uncensored) · Krea 2 (aesthetic) · the native-button shim |
 | **[video.md](video.md)** | LTX-2.3 (video+audio) · Sulphur / 10Eros (uncensored) · Wan2.2 (uncensored T2V) · 60 s+ chaining · the single-stage rule |
