@@ -80,6 +80,27 @@ A real conversational agent: it holds the conversation as state, **proposes** a 
 **builds** the (expensive, irreversible) film when you say **go**. Two stages — how it responds to
 you, then what "go" actually builds.
 
+### Why this shape — "creative within bounds"
+
+Two choices explain why the Director plans-then-executes rather than running a live tool-calling loop:
+
+- **Serial is the unlock, not the limitation.** On a 2× 3090 PCIe rig (no NVLink), co-loading
+  video+image+audio buys almost nothing — ComfyUI runs one workflow at a time and a diffusion step
+  can't be cheaply split across cards, so you'd burn most of the 48 GB budget just to skip reloads.
+  Going **serial** (load a lane for its step → render → evict → next) dissolves the VRAM problem and
+  turns the hard part into *creative orchestration*, where an LLM actually adds value.
+- **The model proposes, the executor disposes.** The 4B plans once, up front, into a validatable
+  JSON plan (pure reasoning, no side effects); a deterministic executor then runs it shot-by-shot and
+  owns everything safety-critical — valid lanes, durations, asset wiring, the VRAM mutex, the
+  validators. The LLM is **never trusted to sequence GPU ops**. It's the rig's ethos: *deterministic
+  control flow, the model only for the fuzzy bits.*
+
+So the director is **creative in the film-making layer, never the control plane**: it chooses story
+angle, tone, pacing, shot concepts, camera language, narration, when a keyframe or music helps — but
+it *can't* choose invalid lanes, impossible durations, or arbitrary paths (the executor rejects those
+and feeds back a bounded repair). The schema isn't there to make it less creative — it's there to
+stop it spending creativity on things the machine can't execute.
+
 ### Stage 1 — how it responds to you
 
 Every message, the director reads the **whole conversation so far** and works out what you want now:
@@ -134,7 +155,9 @@ When you say **go**, the director plans and renders the whole film:
                              MP4, with live progress streamed into the chat
 ```
 
-**Keeping a film coherent** is the Director's real job beyond a single clip:
+**Keeping a film coherent** is the Director's real job beyond a single clip — characters and style
+*drifting* between independently-generated shots is **the** classic AI-film problem (the quality
+ceiling, not a VRAM one). Two mechanisms attack it:
 
 - **Character Bible** (stories only) — recurring characters are described **once** with a canonical
   look + a stable seed, then referenced by name in each shot, so the same character looks the same
@@ -235,6 +258,10 @@ These are settled (don't re-litigate without new evidence):
 - **The director is truthful about its capabilities.** It won't claim a render/search has already
   started, and won't pretend it can browse arbitrary web pages — only that it can look up real facts
   to ground a documentary (the #523 "honesty fix").
+- **Transport-success ≠ real success.** The executor validates the *actual* output before assembly
+  — ffprobe duration + audio presence, dimensions, placeholder / near-uniform-frame checks — and
+  fails or re-renders the shot. A call that returned a file but produced an empty / placeholder /
+  collapsed clip is a failure, not a success.
 - **Single-shot lanes refuse to render on chit-chat** (the `CHAT:` gate) — no GPU spend on "hi".
 
 History of the Production-lane hardening (genre detection, the semantic critic, SearXNG research,
@@ -302,6 +329,13 @@ curl -s localhost:8195/job/<job_id>     # → {status, phase, frac, title, error
 
 `status: error` carries the failure in `error`; `done` carries the gallery URL. One film at a time —
 a second `/produce` while one runs returns **409**.
+
+Every run also writes a self-contained **`productions/<job_id>/`** folder under the ComfyUI output
+tree — the plan, per-shot assets, audio, the final MP4, logs, and a typed **`manifest.json`** that
+records run-level provenance (registry + workflow versions, every seed, validator results, and the
+**exact ffmpeg assembly command**) plus per-artifact records. So a finished *or failed* production is
+fully reproducible and any single shot is re-runnable in isolation — read the manifest to see exactly
+what was generated, with which seed, and whether each validator passed.
 
 ### 4. Test the logic offline (no rig)
 
