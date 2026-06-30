@@ -214,6 +214,21 @@ the LLM-first intent controller): club-3090 PRs **#519–#524**.
 
 ---
 
+## Current challenges / known limitations
+
+Open as of the #519–#524 hardening — documented so they're tracked, not surprises.
+
+| Challenge | What happens | Path forward |
+|---|---|---|
+| **No cross-lane routing** — lane choice is 100% manual (the OWUI model picker); only the Production lane reasons about intent. | A documentary brief typed into a single-shot video lane (e.g. "a 30s video on the history of Pakistan" → LTX) renders one scenic clip chained to the duration, **not** a researched/narrated documentary — that lane has none of the genre/research/narration machinery. | The parked **Q4 cross-lane router**: one front door that detects "make a film" / "documentary" / "read this aloud" intent and routes (or nudges) to the right lane instead of trusting the manual pick. |
+| **The 4B is the capability ceiling.** It runs thinking-OFF (its `<think>` runs away), so planning leans on the temperature ladder, not real reasoning — and it's a borderline critic that occasionally garbles a researched fact. | Weak factual judgment in the critic; plans can drift on nuanced briefs; the researched script isn't always faithful to the facts. | The critic/treatment `call` is injectable → route those stages to the **27B/35B** for stronger factual judgment (parked). |
+| **Single-shot lanes are shallow conversationalists.** Their "chat" is the craft-or-`CHAT:` gate, nothing more. | "Chroma or HiDream?" gets a generic *"tell me what to create"* nudge, not an answer; no genre/research awareness; refinement remembers only the **previous render's** prompt (`prior_spec`), not the conversation. | Give the single-shot `CHAT:` branch `_produce_reply`-style latitude (small change), and/or fold lane Q&A into the cross-lane router. |
+| **Duration parsing mis-reads decades.** `_target_seconds`'s `\d+\s*s\b` regex matches "1980s" / "90s" / "2000s" as **seconds** (verified). | "a film set in the **1980s**" → parsed as 1980 s → capped to 120 s → a multi-segment long clip nobody asked for; "**90s** synthwave" → a 90 s track. | Tighten the regex — require a separating space or exclude decade-style `\d{2,4}s`, drop bare-`s` matching, add a test. Small, self-contained fix. |
+| **Fragmented agent instructions.** 8 system prompts across `AGENTS.md` + inline `DIRECTOR_*_SYS` + `director_intent.py` + `prompts.py` (see the [system-prompt map](#system-prompt-map)). | No single studio persona/voice; a cross-lane tone change is several edits, not one. | If a consistent voice becomes a goal: a shared persona preamble + per-lane task suffix. |
+| **Not user-validated end-to-end since #524.** The LLM-first intent + research + critic chain passes its offline unit tests + dry-runs, but hasn't had a live OWUI run by a user since the last change. | Unknown real-world rough edges — e.g. the 4B's JSON-decision quality under genuinely messy multi-turn chat. | The parked **live validation**: re-run the search → dig → "ok do it" flow in OWUI on the rig. |
+
+---
+
 ## See also
 
 - [`README.md`](README.md) — the AI Studio overview + the 12-lane table
