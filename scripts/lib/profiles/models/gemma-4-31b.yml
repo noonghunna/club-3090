@@ -52,6 +52,18 @@ weights:
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"
+  qat-awq-int4:
+    path: gemma-4-31b-qat-awq-int4
+    local_subdir: gemma-4-31b-qat-awq-int4
+    size_gb: 20.0
+    format: compressed-tensors
+    status: experimental
+    hf_repo: cyankiwi/gemma-4-31B-it-qat-AWQ-INT4
+    hf_repos:
+      - cyankiwi/gemma-4-31B-it-qat-AWQ-INT4
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
   assistant:
     path: gemma-4-31b-it-assistant
     local_subdir: gemma-4-31b-it-assistant
