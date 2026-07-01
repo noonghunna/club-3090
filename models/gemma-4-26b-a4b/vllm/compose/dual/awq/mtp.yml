@@ -2,13 +2,13 @@
 # Profile (at-a-glance):
 #   Model:     Gemma 4 26B-A4B MoE (cyankiwi AWQ-4bit, compressed-tensors)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
-#   Drafter:   MTP n=4 — google/gemma-4-26B-A4B-it-assistant (external)
+#   Drafter:   none — MTP DISABLED on v0.24.0 (Gemma-4 MTP×tools broken; see caveat block below)
 #   KV:        bfloat16 (sidesteps Ampere fp8 dispatch issues)
 #   Vision:    off (limit-mm-per-prompt image=0 audio=0)
 #   Max ctx:   262K (model max — laddered: KV pool 806,821 tok at 262144/0.92
 #              util on 2x 3090; sliding_window=1024 keeps most-layer KV cheap)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 Experimental — AWQ + external MTP on stock vLLM v0.22.0; boot-validated 2026-06-06 (#326), rebench-full/soak pending before Production
+#   Status:    🧪 Experimental — AWQ on stock vLLM v0.24.0 (overlay-free, vllm-stable); MTP-off. Live-validated 2026-07-01: serves (KV pool 944K), streaming multi-tool 3/3 no-leak. rebench-full/soak pending.
 # ---------------------------------------------------------------------------
 # AWQ-4bit (compressed-tensors → Marlin WNA16 on sm_86) + the external MTP
 # assistant drafter wired via `--speculative-config`. n=4 per the
@@ -131,6 +131,11 @@ services:
       - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
       - --enable-prefix-caching
       - --enable-chunked-prefill
-      # External MTP assistant drafter — n=4 per gemma-26b-it-assistant DrafterProfile.
-      - --speculative-config
-      - '{"model":"/root/.cache/huggingface/gemma-4-26b-a4b-it-assistant","num_speculative_tokens":4}'
+      # ⏸️ MTP DISABLED on v0.24.0 — Gemma-4 MTP × tool-calling is broken (upstream vLLM #39043;
+      #    MTP fix #42006 closed-unmerged). A/B-verified on-rig 2026-07-01: MTP-off tools PASS,
+      #    MTP-on tools FAIL (<pad>/<|tool_call> leak). Re-enable when a stable vLLM ships the fix:
+      #      gh api repos/vllm-project/vllm/issues/39043 --jq '.state, .state_reason'
+      #      gh api repos/vllm-project/vllm/pulls/42006  --jq '.state, .merged_at'
+      #    then restore + re-run a streaming multi-tool test:
+      #      - --speculative-config
+      #      - '{"model":"/root/.cache/huggingface/gemma-4-26b-a4b-it-assistant","num_speculative_tokens":4}'

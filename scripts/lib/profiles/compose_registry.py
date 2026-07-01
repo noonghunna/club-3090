@@ -718,7 +718,7 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/gemma-26ba4b-dual": _entry(
         model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat",
-        engine="vllm-stable", drafter="gemma-26b-it-assistant", kv_format="bf16",
+        engine="vllm-stable", drafter=None, kv_format="bf16",  # MTP off on v0.24.0 (Gemma-4 MTP×tools broken, vLLM #39043/#42006)
         tp=2, max_ctx=262144, max_num_seqs=256, mem_util=0.92,
         compose_path="models/gemma-4-26b-a4b/vllm/compose/dual/awq/mtp.yml",
         default_port=8041,
