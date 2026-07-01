@@ -11,6 +11,8 @@ supported_model_families:
   - dense
   - gemma4-swa-dense
   - gemma4-swa-moe
+  - gemma4-unified   # Gemma-4-12B unified arch — NATIVE in v0.24.0 (PR #44429 merged) → folds off
+                     # the ephemeral vllm-gemma4-unified image onto this engine (2026-07-01).
   - qwen3-next-hybrid
   - qwen3-next-moe
 features:

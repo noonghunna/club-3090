@@ -565,7 +565,7 @@ COMPOSE_REGISTRY = {
     # fits the full 262144, so the bases bought nothing).
     "vllm/gemma-12b-dual-bf16-mtp": _entry(
         model="gemma-4-12b", weights_variant="bf16", workload="fast-chat",
-        engine="vllm-gemma4-unified", drafter="gemma-12b-it-assistant", kv_format="bf16",
+        engine="vllm-stable", drafter=None, kv_format="bf16",  # v0.24.0: gemma4_unified native (#44429) → vllm-stable; MTP off (Gemma-4 MTP×tools broken #39043/#42006)
         tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.90,
         compose_path="models/gemma-4-12b/vllm/compose/dual/bf16/mtp.yml",
         default_port=8036,
