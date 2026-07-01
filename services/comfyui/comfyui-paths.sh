@@ -53,7 +53,13 @@ fi
 # 3. Derive (only when unset), then export so child processes + docker compose inherit them.
 : "${COMFYUI_ROOT:=$(dirname "$MODEL_DIR")/comfyui}"
 : "${COMFYUI_MODELS_DIR:=${COMFYUI_ROOT}/models}"
-export MODEL_DIR COMFYUI_ROOT COMFYUI_MODELS_DIR
+# COMFYUI_OUTPUT_DIR is where ComfyUI WRITES renders ($COMFYUI_ROOT/output) AND what every studio
+# output consumer mounts (gallery :8189, orchestrator, tts, step-voice, production). It MUST derive
+# from COMFYUI_ROOT — otherwise it falls back to the /mnt default and the gallery serves an EMPTY
+# tree while ComfyUI writes renders elsewhere → 404 on generated media on any non-/mnt rig
+# (club-3090 #510 follow-on; #531 pinned COMFYUI_ROOT for the *input* side but not the output side).
+: "${COMFYUI_OUTPUT_DIR:=${COMFYUI_ROOT}/output}"
+export MODEL_DIR COMFYUI_ROOT COMFYUI_MODELS_DIR COMFYUI_OUTPUT_DIR
 
 
 # --- shared studio host helpers (this is the lib every studio entry point sources) -----------
@@ -104,18 +110,23 @@ c3_resolve_lanip() {
   return 0
 }
 
-# Persist the resolved COMFYUI_ROOT to repo-root .env so the comfyui compose — launched as
-# `sudo docker compose --env-file .env` — mounts the SAME tree the downloader writes into.
-# Without this, COMFYUI_ROOT is derived in-shell but stripped by sudo AND absent from .env, so the
-# compose's `${COMFYUI_ROOT:-/mnt/models/comfyui}/models` falls back to the /mnt default and mounts
-# an EMPTY tree on any rig whose MODEL_DIR isn't the /mnt layout → ComfyUI's model dropdowns come up
-# empty (loaders 400 with "not in []"; the HiDream node says "not installed"). club-3090 #510 + #530.
-# Write-if-absent: never clobbers a hand-set COMFYUI_ROOT. No-op under C3_PATHS_NO_ENV / unwritable .env.
+# Persist the resolved COMFYUI_ROOT + COMFYUI_OUTPUT_DIR to repo-root .env so the studio composes —
+# launched as `sudo docker compose --env-file .env` — mount the SAME trees this shell derives.
+# Without this, the vars are derived in-shell but stripped by sudo AND absent from .env, so:
+#   • `${COMFYUI_ROOT:-/mnt/models/comfyui}/models` falls back to /mnt → ComfyUI model dropdowns come
+#     up EMPTY (loaders 400 "not in []"; HiDream node "not installed"). club-3090 #510 + #530.
+#   • `${COMFYUI_OUTPUT_DIR:-/mnt/models/comfyui/output}` (gallery :8189 + orchestrator / tts /
+#     step-voice / production) falls back to /mnt → generated renders 404 in the gallery / don't show
+#     in OWUI, while ComfyUI writes them to $COMFYUI_ROOT/output. club-3090 #510 follow-on.
+# Write-if-absent PER VAR: never clobbers a hand-set value, and — critically — adds COMFYUI_OUTPUT_DIR
+# for users who already have COMFYUI_ROOT pinned from #531 (don't gate on ROOT presence). No-op under
+# C3_PATHS_NO_ENV / unwritable .env.
 c3_persist_comfy_root() {
   [ -n "${C3_PATHS_NO_ENV:-}" ] && return 0
   local env_file="${C3_ENV_FILE:-${C3_REPO_ROOT:-.}/.env}"
-  grep -qE '^COMFYUI_ROOT=' "$env_file" 2>/dev/null && return 0   # already pinned — respect it
-  touch "$env_file" 2>/dev/null && printf 'COMFYUI_ROOT=%s\n' "$COMFYUI_ROOT" >> "$env_file" 2>/dev/null || true
+  touch "$env_file" 2>/dev/null || return 0
+  grep -qE '^COMFYUI_ROOT='       "$env_file" 2>/dev/null || printf 'COMFYUI_ROOT=%s\n'       "$COMFYUI_ROOT"       >> "$env_file" 2>/dev/null || true
+  grep -qE '^COMFYUI_OUTPUT_DIR=' "$env_file" 2>/dev/null || printf 'COMFYUI_OUTPUT_DIR=%s\n' "$COMFYUI_OUTPUT_DIR" >> "$env_file" 2>/dev/null || true
   return 0
 }
 
