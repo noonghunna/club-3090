@@ -14,7 +14,9 @@ supported_model_families:
   - qwen3-next-hybrid
   - qwen3-next-moe
 features:
-  int8_per_token_head: false
+  int8_per_token_head: true    # v0.24.0: #40391 KV page-align is NATIVE (overlay-only on v0.22.0) →
+                               # gemma int8-PTH serves overlay-free. Validated 2026-07-01 (gemma-31b-dual
+                               # cyankiwi @262K, no overlay); qwen3-next was already native.
   turboquant_3bit_nc: false
   marlin_pad_sub_tile_n: false
   qwen3_coder_tool_parser: false
@@ -23,12 +25,10 @@ supported_kv_formats:
   - fp16
   - fp8_e4m3
   - fp8_e5m2
-  - int8_per_token_head   # NATIVE on stock v0.22.0 for uniform-head-dim models (qwen3-next):
-                          # no overlay needed (live-validated 2026-06-07, qwen fp8 dual-max @262K,
-                          # KV pool 295K tok). Distinct from the gemma path, where hetero head dims
-                          # require the #40391 overlay — hence features.int8_per_token_head stays
-                          # false here (no provenance-backed feature) and the overlay-carrying
-                          # vllm-gemma-stable owns Gemma's int8-PTH.
+  - int8_per_token_head   # NATIVE: uniform-head-dim models (qwen3-next) since v0.22.0; Gemma-4
+                          # (hetero head dims) needed the #40391 overlay on v0.22.0, but #40391 landed
+                          # NATIVE in v0.24.0 — so gemma int8-PTH now serves overlay-free on this engine
+                          # (validated 2026-07-01, gemma-31b-dual cyankiwi @262K). features flag = true.
 supported_drafters:
   - mtp
   - mtp_assistant

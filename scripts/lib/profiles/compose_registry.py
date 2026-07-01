@@ -520,6 +520,23 @@ COMPOSE_REGISTRY = {
         kvcalc_key="gemma-4-31b:gemma-dual-int8",
     ),
 
+    # Gemma-4-31B cyankiwi QAT-AWQ-INT4 (compressed-tensors, lm_head bf16) — the v0.24.0
+    # OVERLAY-FREE dual on vllm-stable. On v0.24.0 the autoround/qat-w4a16 duals live on
+    # vllm-gemma-stable (autoround crashes tie_weights, qat-w4a16 carries #40391/#42006);
+    # cyankiwi's lm_head-excluded checkpoint dodges tie_weights, #40391 is native, and the
+    # native ParserEngine handles tools — so this folds onto vllm-stable, no overlays.
+    # MTP DISABLED (Gemma-4 MTP×tools broken on v0.24.0 — vLLM #39043/#42006; see compose caveat).
+    "vllm/gemma-31b-dual": _entry(
+        model="gemma-4-31b", weights_variant="qat-awq-int4", workload="multi-stream-tenant",
+        engine="vllm-stable", drafter=None, kv_format="int8_per_token_head",
+        tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.965,
+        compose_path="models/gemma-4-31b/vllm/compose/dual/qat-awq-int4/int8.yml",
+        default_port=8032, required_engine_features=["int8_per_token_head"],
+        kvcalc_key="gemma-4-31b:gemma-dual-int8",
+        status="experimental",
+        status_note="Gemma-4-31B cyankiwi QAT-AWQ-INT4 (compressed-tensors, lm_head bf16), dual TP=2 int8-PTH KV @262K, stock vLLM v0.24.0 OVERLAY-FREE. Live-validated 2026-07-01: serves 267K KV pool, coherent, streaming multi-tool 3/3 (all args, no <|tool_call> leak). tie_weights dodged (lm_head excluded; util 0.965 for the bf16 lm_head's ~0.3 GiB), #40391 KV page-align NATIVE in v0.24.0 (no overlay), gemma4 tool+reasoning parsers native (#45588). MTP DISABLED — Gemma-4 MTP×tool-calling is broken on v0.24.0 (upstream vLLM #39043; MTP fix #42006 closed-unmerged); re-enable when a stable vLLM ships the fix (see compose caveat). Supersedes the autoround/qat-w4a16 duals for v0.24.0. NIAH/soak/bench pending.",
+    ),
+
     # Gemma-4-31B unsloth QAT W4A16 (compressed-tensors int4) — QAT-int4 fidelity alt to
     # autoround-int4. Same dual / int8-PTH-KV(#40391) / assistant-MTP path as gemma-int8-mtp.
     "vllm/gemma-31b-qat-w4a16-dual": _entry(
