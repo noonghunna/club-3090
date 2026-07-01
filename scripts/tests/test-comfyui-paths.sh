@@ -68,4 +68,45 @@ chk "persist respects an existing COMFYUI_ROOT" "/data/custom|1" \
   "$(grep '^COMFYUI_ROOT=' "$_tmpenv" | cut -d= -f2-)|$(grep -c '^COMFYUI_ROOT=' "$_tmpenv")"
 rm -f "$_tmpenv"
 
+# --- COMFYUI_OUTPUT_DIR (#510 follow-on): the gallery :8189 + orchestrator / tts / step-voice /
+#     production mount ${COMFYUI_OUTPUT_DIR}; it MUST derive from COMFYUI_ROOT or ComfyUI writes
+#     renders to $COMFYUI_ROOT/output while the gallery serves the empty /mnt default → 404.
+out() { env "$@" bash -c '. "'"$HELPER"'"; printf "%s" "$COMFYUI_OUTPUT_DIR"'; }
+
+# J — derives as $COMFYUI_ROOT/output (home case — where ComfyUI actually writes)
+chk "output dir → \$COMFYUI_ROOT/output" "/home/u/comfyui/output" \
+  "$(out -u COMFYUI_ROOT -u COMFYUI_OUTPUT_DIR MODEL_DIR=/home/u/models)"
+# K — follows an explicit COMFYUI_ROOT
+chk "output dir follows explicit root" "/data/cr/output" \
+  "$(out -u COMFYUI_OUTPUT_DIR COMFYUI_ROOT=/data/cr MODEL_DIR=/x)"
+# L — respects an explicit COMFYUI_OUTPUT_DIR
+chk "explicit output dir respected" "/data/out" \
+  "$(out -u COMFYUI_ROOT COMFYUI_OUTPUT_DIR=/data/out MODEL_DIR=/x)"
+
+_tmpenv="$(mktemp)"
+# M — c3_persist_comfy_root pins COMFYUI_OUTPUT_DIR when absent
+: > "$_tmpenv"
+env -u COMFYUI_ROOT -u COMFYUI_OUTPUT_DIR MODEL_DIR=/home/u/models C3_ENV_FILE="$_tmpenv" \
+  bash -c '. "'"$HELPER"'"; c3_persist_comfy_root' >/dev/null 2>&1
+chk "persist writes COMFYUI_OUTPUT_DIR when absent" "COMFYUI_OUTPUT_DIR=/home/u/comfyui/output" \
+  "$(grep '^COMFYUI_OUTPUT_DIR=' "$_tmpenv")"
+
+# N — THE migration case: COMFYUI_ROOT already pinned (from #531) but no OUTPUT_DIR → persist must
+#     ADD OUTPUT_DIR (not bail on ROOT presence) and leave ROOT untouched.
+printf 'COMFYUI_ROOT=/home/u/comfyui\n' > "$_tmpenv"
+env -u COMFYUI_ROOT -u COMFYUI_OUTPUT_DIR MODEL_DIR=/home/u/models C3_ENV_FILE="$_tmpenv" \
+  bash -c '. "'"$HELPER"'"; c3_persist_comfy_root' >/dev/null 2>&1
+chk "adds OUTPUT_DIR when only ROOT was pinned" "COMFYUI_OUTPUT_DIR=/home/u/comfyui/output" \
+  "$(grep '^COMFYUI_OUTPUT_DIR=' "$_tmpenv")"
+chk "ROOT untouched in the migration case" "/home/u/comfyui|1" \
+  "$(grep '^COMFYUI_ROOT=' "$_tmpenv" | cut -d= -f2-)|$(grep -c '^COMFYUI_ROOT=' "$_tmpenv")"
+
+# O — never clobbers a hand-set COMFYUI_OUTPUT_DIR (exactly one line, unchanged)
+printf 'COMFYUI_OUTPUT_DIR=/data/custom-out\n' > "$_tmpenv"
+env -u COMFYUI_ROOT -u COMFYUI_OUTPUT_DIR MODEL_DIR=/home/u/models C3_ENV_FILE="$_tmpenv" \
+  bash -c '. "'"$HELPER"'"; c3_persist_comfy_root' >/dev/null 2>&1
+chk "persist respects an existing COMFYUI_OUTPUT_DIR" "/data/custom-out|1" \
+  "$(grep '^COMFYUI_OUTPUT_DIR=' "$_tmpenv" | cut -d= -f2-)|$(grep -c '^COMFYUI_OUTPUT_DIR=' "$_tmpenv")"
+rm -f "$_tmpenv"
+
 if [ "$fails" -eq 0 ]; then echo "PASS: comfyui-paths derivation"; exit 0; else echo "FAIL: $fails assertion(s)"; exit 1; fi
