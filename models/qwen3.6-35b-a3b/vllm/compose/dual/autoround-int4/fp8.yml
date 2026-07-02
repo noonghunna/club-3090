@@ -48,17 +48,17 @@
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
-# Engine-profile: vllm-nightly-clean
+# Engine-profile: vllm-stable
 # Requires-min-gpu-count: 2
 # Tensor-parallel: 2
 # Requires-sm: 7.5+
 services:
   vllm-qwen36-35b-a3b-dual:
-    # Pinned to vLLM STABLE v0.22.0 (immutable — validated 2026-05-30; never
-    # purged from Docker Hub, unlike nightlies). No source overlays. Bump the tag
-    # after a verify-stress + soak gate. (Engine-profile metadata still reads
-    # vllm-nightly-clean for compat; aligning the profile to a stable engine is
-    # tracked in club-3090 #254.) Override with VLLM_IMAGE=... for a specific build.
+    # Pinned to vLLM STABLE v0.24.0 (immutable — never purged from Docker Hub,
+    # unlike nightlies). No source overlays. Bump the tag after a verify-stress +
+    # soak gate. (Engine-profile aligned to vllm-stable 2026-07-02 — the #254
+    # two-engine split shipped + the former vllm-nightly-clean tag was purged.)
+    # Override with VLLM_IMAGE=... for a specific build.
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-dual}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
