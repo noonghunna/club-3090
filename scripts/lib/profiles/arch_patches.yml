@@ -31,7 +31,7 @@ arches:
     requires_trust_remote_code: "false"
     requires_trust_remote_code_evidence: "qwen3.6-27b weights config.json (qwen3.6-27b-autoround-int4) architectures=[Qwen3_5ForConditionalGeneration], auto_map absent, no *modeling*.py modeling file shipped with the weights -> built-in vLLM/transformers class, no remote code executed; see scripts/lib/profiles/profile_runtime.yml arch_model_xref.Qwen3NextForCausalLM"
     kernel_constraints:
-      - "AutoRound INT4 TP paths may need Marlin pad-sub-tile-n until vllm#40361 lands."
+      - "AutoRound INT4 TP paths need Marlin tile-N alignment — native in vLLM v0.24.0 via vllm#45295 (our vllm#40361 closed-superseded); the vendored vllm-marlin-pad overlay is de-registered (patches.yml: merged/deprecated 2026-07-02)."
       - "TurboQuant KV is Genesis-gated on shipped production composes."
       - "Boot-fit does not imply accumulated-context stability; single-card vLLM remains Cliff-2-prone."
     confidence: exact
