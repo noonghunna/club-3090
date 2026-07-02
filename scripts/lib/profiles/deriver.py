@@ -600,6 +600,24 @@ def _quant_bpw(quant_cfg: dict) -> Optional[float]:
     )
     if isinstance(bits, (int, float)) and bits > 0:
         return float(bits)
+    # compressed-tensors (llm-compressor) checkpoints nest the bit-width per
+    # config-group instead of top-level: config_groups.<g>.weights =
+    # {num_bits: 8, type: "float"|"int", ...}. Take the widest weights
+    # num_bits across groups (mixed-precision groups exist; the widest
+    # dominates the VRAM footprint the fit-check cares about). Explicit
+    # structure beats the method-name heuristics below — "compressed-tensors"
+    # as a method name matches none of them (the Agents-A1-FP8-dynamic
+    # producer-zero dogfood finding, 2026-07-02).
+    groups = quant_cfg.get("config_groups")
+    if isinstance(groups, dict):
+        bits_seen = []
+        for g in groups.values():
+            w = g.get("weights") if isinstance(g, dict) else None
+            nb = w.get("num_bits") if isinstance(w, dict) else None
+            if isinstance(nb, (int, float)) and nb > 0:
+                bits_seen.append(float(nb))
+        if bits_seen:
+            return max(bits_seen)
     method = str(
         quant_cfg.get("quant_method")
         or quant_cfg.get("method")
