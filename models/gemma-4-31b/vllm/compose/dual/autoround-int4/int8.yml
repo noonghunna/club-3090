@@ -7,7 +7,11 @@
 #   Vision:    yes
 #   Max ctx:   262K native default (dual-card max-ctx rule) @ 4-stream cap; INT8 PTH pool ~2× BF16
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    ✅ Production
+#   Status:    🗑️ Deprecated
+#   Caveats:   Superseded by vllm/gemma-31b-dual (cyankiwi bf16 @224K, stock v0.24.0, overlay-free) in the
+#              v0.24.0 consolidation (2026-07-02). This was the 262K int8-PTH+#40391 path on v0.22.0 — NOT
+#              migrated to v0.24.0 (int8-PTH silently craters recall there; #40391 open/unmerged upstream).
+#              The 262K int8-PTH path returns when #40391 merges. Use vllm/gemma-31b-dual (bf16, ~224K).
 #   Quality:   105/150 (70%) thinking-OFF default — det 59/75 · sandbox 46/75
 #                TC 13/15 · IF 8/15 · SO 14/15 · DE 10/15 · RM 14/15 · BF 13/15 · HA 14/20 · CLI 19/40
 #                (--full, v0.22.0, 2026-05-31). Reasoning-ON A/B (with --reasoning-parser gemma4) = 107/150

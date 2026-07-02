@@ -8,7 +8,10 @@
 #   Max ctx:   131K default @ 4 streams (NIAH-validated to 120K) — BF16 KV pool
 #              196,527 tok @ mem-util 0.95. For native 262K use vllm/gemma-int8-mtp.
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    ✅ Production
+#   Status:    🗑️ Deprecated
+#   Caveats:   Superseded by vllm/gemma-31b-dual (cyankiwi bf16 @224K, stock v0.24.0, overlay-free) in the
+#              v0.24.0 consolidation (2026-07-02) — this was the v0.22.0 131K bf16 + #42006 path. Kept for
+#              history; use vllm/gemma-31b-dual.
 #   Quality:   reasoning-ON 111/150 (74%) — det 65/75 · sandbox 46/75
 #                TC 14/15 · IF 14/15 · SO 14/15 · DE 11/15 · RM 12/15 · BF 15/15 · HA 12/20 · CLI 19/40
 #                (--full, --enable-thinking, --reasoning-parser gemma4, v0.22.0, 2026-05-31). Thinking-OFF
