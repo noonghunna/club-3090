@@ -352,7 +352,7 @@ New `gemma4_unified` arch (vLLM PR #44429 / llama.cpp #24077, merged 2026-06-03)
 
 ## DiffusionGemma 26B-A4B (dLLM — experimental)
 
-Block-diffusion LLM (`DiffusionGemmaForBlockDiffusion`), not autoregressive — it emits **blocks** of tokens per step, so decode TPS reads much higher than AR models and is high-variance (entropy-dependent). Runs on Ampere via the official `vllm/vllm-openai:gemma` image + our 3 bind-mounted Ampere/TP fixes (Marlin-K-pad ×2 + diffusion_gemma TP-vocab/dtype) — the Marlin-pad is what clears the sm_86 FP8 shared-mem tile wall (`Padding FP8 MoE Marlin intermediate 352→384`). Slug `vllm/diffusiongemma-dual` (🧪, `--force`).
+Block-diffusion LLM (`DiffusionGemmaForBlockDiffusion`), not autoregressive — it emits **blocks** of tokens per step, so decode TPS reads much higher than AR models and is high-variance (entropy-dependent). Runs on Ampere via **stock `vllm/vllm-openai:v0.24.0`** (DiffusionGemma arch native — PR #45163 merged 2026-06-12; bumped 2026-07-02 off the former `:gemma` branch digest) + our 3 bind-mounted Ampere/TP fixes (Marlin-K-pad ×2 + diffusion_gemma TP-vocab/dtype) — the Marlin-pad is what clears the sm_86 FP8 shared-mem tile wall (`Padding FP8 MoE Marlin intermediate 352→384`), still needed because #45295's dense marlin-pad (native in v0.24.0) doesn't cover the `marlin_moe_wna16` MoE fp8 path. Slug `vllm/diffusiongemma-dual` (🧪, `--force`).
 
 | Config | Rig | KV | Max ctx | Narr / Code TPS | KV pool | Peak VRAM | Date | Notes |
 | --- | --- | --- | ---: | ---: | --- | ---: | --- | --- |
