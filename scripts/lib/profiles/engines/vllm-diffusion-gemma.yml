@@ -1,15 +1,17 @@
 schema_version: 1
 id: vllm-diffusion-gemma
-display_name: vLLM DiffusionGemma (official :gemma image + Ampere/TP fix-mounts)
+display_name: vLLM DiffusionGemma (stock v0.24.0 + Ampere/TP fix-mounts)
 type: vllm
 stability: experimental
 install:
   method: docker_image
-  # OFFICIAL vLLM image with DiffusionGemma baked in (a stock vLLM build of the dgemma
-  # branch commit 74b5964f; DiffusionGemmaForBlockDiffusion registers natively). Pinned
-  # BY DIGEST (the :gemma tag is purge-resistant but mutable). Re-pin + rebase the 3
-  # fix-mounts if vLLM re-pushes :gemma (see the fix dir README).
-  spec: vllm/vllm-openai:gemma@sha256:9c719fc0c869092c7d0533f8357d6985a38d5ff03b20ffb6a4620c2b4806dd4b
+  # Stock vLLM v0.24.0 — the DiffusionGemma arch is NATIVE here (PR #45163 merged
+  # 2026-06-12, shipped in v0.24.0; DiffusionGemmaForBlockDiffusion registers). Bumped
+  # 2026-07-02 off the former :gemma branch digest (dgemma branch 74b5964f) now that the
+  # arch landed in a tagged release — drops a mutable/branch image for the same pinned
+  # stable tag the rest of the stack uses. The 3 Ampere/TP fix-mounts below are STILL
+  # required (NOT in #45163 — see vendored_overlays).
+  spec: vllm/vllm-openai:v0.24.0
 min_sm: 8.0
 supported_model_families:
   - diffusion-gemma
@@ -33,9 +35,9 @@ vendored_overlays:
     local_status: vendored
     delivery: site_package_overlay      # 3 files bind-mounted over the image's vllm pkg (wired_at: volumes)
     purpose: >-
-      The official `vllm/vllm-openai:gemma` image has the DiffusionGemma arch baked in
-      (stock build of dgemma branch 74b5964f), so we no longer sideload the model code.
-      But 3 fixes are NOT upstream (not in PR #45163) and so not in :gemma — vLLM
+      Stock vLLM v0.24.0 has the DiffusionGemma arch NATIVE (PR #45163 merged 2026-06-12,
+      shipped in v0.24.0), so we no longer sideload the model code nor pin a branch image.
+      But 3 fixes are NOT upstream (not in PR #45163) and so not in stock v0.24.0 — vLLM
       builds/tests on H100/B200 and their recipe is TP=1, so neither our Ampere fp8 path
       nor our TP=2 path is exercised. The compose bind-mounts them from
       models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/:
@@ -43,14 +45,15 @@ vendored_overlays:
       dies in warmup with "Invalid thread config … num_bits=8 … max_shared_mem=101376"
       for K=352/1056); diffusion_gemma.py = TP-vocab soft-embed + :656 dtype fix (:gemma's
       copy is the pristine branch file → TP=2 vocab bug). Eager-only (torch.compile works,
-      no gain). Validated live 2026-06-11: :gemma + these 3 mounts boots, serves, 262K,
-      ~177/180 TPS typical / ~1100 peak. Supersedes the former 123-file sideload overlay
-      on a stock nightly (same perf, 120 fewer files). REBASE on a :gemma re-pin (diff the
-      new image's marlin/diffusion_gemma vs these, re-apply the K-pad + TP-vocab deltas).
+      no gain). Validated 2026-06-11 (:gemma) + RE-VALIDATED on stock v0.24.0 2026-07-02
+      (boots + coherent at TP=2 with the 3 mounts; native #45163 diffusion_gemma.py alone
+      → TP=2 vocab matmul mismatch, so the TP-vocab fix is still required). ~177/180 TPS
+      typical / ~1100 peak. REBASE on any vLLM pin bump (diff the new image's marlin /
+      diffusion_gemma vs these, re-apply the K-pad + TP-vocab deltas).
 required_genesis: false
 notes: >-
   vLLM's first discrete-diffusion LM (DiffusionGemma 26B-A4B) on the V2 model runner
-  (VLLM_USE_V2_MODEL_RUNNER=1), on the OFFICIAL vllm/vllm-openai:gemma image (digest-pinned)
+  (VLLM_USE_V2_MODEL_RUNNER=1), on STOCK vllm/vllm-openai:v0.24.0 (arch native via #45163)
   + 3 vendored Ampere/TP fix-mounts. Boots+serves on 2x RTX 3090 (Ampere sm_86). gemma4
-  tool+reasoning parsers work. Eager-only. Experimental: still 3 vendored fixes + a
-  branch-not-main image + no soak. See the model's learnings + the fix dir README.
+  tool+reasoning parsers work. Eager-only. Experimental: still 3 vendored fixes (sm_86
+  fp8-Marlin K-pad + TP-vocab, not upstreamed) + no soak. See the model's learnings + the fix dir README.

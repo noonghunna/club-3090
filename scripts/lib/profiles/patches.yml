@@ -592,7 +592,7 @@ patches:
     load_bearing_when:
       - composes:
           - vllm/diffusiongemma-dual
-        reason: "The official vllm/vllm-openai:gemma image has the DiffusionGemma arch baked in, but 3 fixes are NOT upstream (vLLM tests H100/B200 + TP=1): marlin.py + marlin_utils_fp8.py = sm_86 fp8 Marlin sub-tile-K pad (without them :gemma dies in warmup, K=352/1056 can't tile in 99 KB shared mem); diffusion_gemma.py = TP-vocab soft-embed + dtype fix (TP=2 path). Bind-mounted over the image's vllm pkg."
+        reason: "Stock vLLM v0.24.0 has the DiffusionGemma arch NATIVE (PR #45163 merged 2026-06-12, in v0.24.0), but 3 fixes are NOT in #45163 (vLLM tests H100/B200 + TP=1): marlin.py + marlin_utils_fp8.py = sm_86 fp8 Marlin sub-tile-K pad (without them stock v0.24.0 dies in warmup, K=352/1056 can't tile in 99 KB shared mem); diffusion_gemma.py = TP-vocab soft-embed + dtype fix (native #45163 copy is TP=1 → TP=2 vocab matmul mismatch). Bind-mounted over the image's vllm pkg. Bumped off the :gemma branch digest + re-validated on stock v0.24.0 2026-07-02."
         evidence: "models/diffusiongemma-26b-a4b/vllm/patches/gemma-image-fixes/README.md"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
       dockerfile_bake: false
@@ -612,14 +612,14 @@ patches:
       wired_at: volumes
     drift_guard:
       kind: import-and-boot
-      check: "On the pinned :gemma image, fp8 Marlin GEMM tiles K=352/1056 on sm_86 (no Invalid-thread-config) AND DiffusionGemma serves coherent output at TP=2 (no vocab/dtype mismatch)"
-      on_fail: hard-refuse   # foundational: :gemma clean dies in warmup on the Marlin wall without these
+      check: "On stock vllm/vllm-openai:v0.24.0, fp8 Marlin GEMM tiles K=352/1056 on sm_86 (no Invalid-thread-config) AND DiffusionGemma serves coherent output at TP=2 (no vocab/dtype mismatch)"
+      on_fail: hard-refuse   # foundational: stock v0.24.0 clean dies in warmup on the Marlin wall without these
     capability: diffusion-gemma-ampere-serve
     foundational: true
     upstream:
       ref: vllm-project/vllm#45163
       status: open
-      drop_when: "the K-pad lands upstream (our #40361 / an Ampere Marlin fix) AND the TP-vocab fix merges into :gemma — then mount nothing"
+      drop_when: "the K-pad lands upstream (our #40361 / an Ampere Marlin fix) AND the TP-vocab fix merges into a stock vLLM release — then mount nothing"
     status: verified
 
   - id: gemma4-unified-vision-unquant

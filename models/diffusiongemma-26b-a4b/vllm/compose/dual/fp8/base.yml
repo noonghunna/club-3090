@@ -8,7 +8,7 @@
 #   Vision:    no (text diffusion)
 #   Max ctx:   262144 (NIAH retrieval validated to ~250K)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 Experimental — runs on the OFFICIAL vllm/vllm-openai:gemma image +
+#   Status:    🧪 Experimental — runs on STOCK vllm/vllm-openai:v0.24.0 (arch native #45163) +
 #              3 vendored Ampere/TP fix-mounts; under active validation, eager-only.
 #              Launch needs --force (non-functional status).
 #   Quality:   8-pack 100/150 (67%) — toolcall 13/15 · instructfollow 13-15/15 ·
@@ -24,13 +24,13 @@
 # model-runner-v2 (`VLLM_USE_V2_MODEL_RUNNER=1`). Throughput is content-dependent
 # (entropy-bound sampler): ~150–200 tok/s typical, up to ~1100 on low-entropy text.
 #
-# DELIVERY: the OFFICIAL `vllm/vllm-openai:gemma` image (pushed 2026-06-10) has the
-# dLLM arch baked in (a stock vLLM build of the dgemma branch commit 74b5964f). We pin
-# it BY DIGEST (purge-resistant), then bind-mount 3 fix files that are NOT upstream:
+# DELIVERY: stock vLLM v0.24.0 has the dLLM arch NATIVE (PR #45163 merged 2026-06-12,
+# shipped in v0.24.0) — bumped 2026-07-02 off the former :gemma branch digest now that the
+# arch landed in a tagged release. We then bind-mount 3 fix files that are NOT in #45163:
 #   • marlin.py + marlin_utils_fp8.py — sm_86 fp8 Marlin sub-tile-K pad. Without them
-#     :gemma dies in warmup (Invalid thread config, K=352/1056, 99 KB shared mem).
-#   • diffusion_gemma.py — TP-vocab soft-embed + dtype fix (their recipe is TP=1, so
-#     the TP=2 vocab bug is unfixed upstream).
+#     stock v0.24.0 dies in warmup (Invalid thread config, K=352/1056, 99 KB shared mem).
+#   • diffusion_gemma.py — TP-vocab soft-embed + dtype fix (upstream recipe is TP=1 →
+#     native #45163 diffusion_gemma.py still craters TP=2 with a vocab matmul mismatch).
 # See ../../../patches/gemma-image-fixes/README.md (provenance + rebase). This replaces
 # the former 123-file sideload overlay on a stock nightly — same perf, 120 fewer files.
 #
@@ -58,7 +58,7 @@
 # Requires-sm: 8.0+
 services:
   vllm-diffusiongemma-26b-a4b-fp8-tp2:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:gemma@sha256:9c719fc0c869092c7d0533f8357d6985a38d5ff03b20ffb6a4620c2b4806dd4b}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
     container_name: "${ESTATE_CONTAINER:-vllm-diffusiongemma-26b-a4b-fp8-tp2}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
@@ -121,6 +121,10 @@ services:
         fi
       - --
     command:
+      # v0.24.0: model MUST be the --model flag, not a bare positional — v0.24.0's
+      # `vllm serve` arg-parser requires the positional model to be first, but the
+      # entrypoint prepends `--disable-custom-all-reduce`, so use the flag form.
+      - --model
       - /root/.cache/huggingface/diffusiongemma-26b-a4b-it-fp8-dynamic
       - --served-model-name
       - diffusiongemma-26b-a4b
