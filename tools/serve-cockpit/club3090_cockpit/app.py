@@ -652,6 +652,8 @@ class CatalogPane(Container):
         self._filter: str = ""
         # Model-scope dropdown selection ("" = all models); AND-combined with _filter.
         self._model_filter: str = ""
+        # [h] toggle: hide 🗑️ deprecated slugs by default (mirrors `switch.sh --list`).
+        self._show_deprecated: bool = False
         # Distinct model names (registry order) backing the dropdown — refreshed on load.
         self._models: list[str] = []
         # N3: the slug currently live-serving (from the estate's matched_slug),
@@ -767,14 +769,17 @@ class CatalogPane(Container):
         banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
         # Surface an active model scope (dropdown) the same way the text filter is shown.
         scope = f"model: [cyan]{self._model_filter}[/cyan]  ·  " if self._model_filter else ""
+        # [h] hint: N 🗑️ deprecated slugs hidden (0 when revealed).
+        dep_n = self._deprecated_hidden_count()
+        dep_note = f"  ·  [dim]+{dep_n} deprecated hidden — h[/dim]" if dep_n else ""
         if self._filter or self._model_filter:
             tail = f"  ·  filter: {self._filter!r}" if self._filter else ""
             status_label.update(
-                f"{banner}{scope}{len(rows)} / {len(self._entries)} variants{tail}"
+                f"{banner}{scope}{len(rows)} / {len(self._entries)} variants{tail}{dep_note}"
             )
         else:
             star = "  ([dim]*[/dim] = BENCHMARKS.md scrape)" if self._has_md_scrape() else ""
-            status_label.update(f"{banner}{len(self._entries)} variants loaded from registry{star}")
+            status_label.update(f"{banner}{len(self._entries)} variants loaded from registry{star}{dep_note}")
 
         # #9/A8 — keep the preview strip in sync with the cursor after a (re-)render
         # (enrichment mutates fit/measurement in place; the preview must reflect it).
@@ -831,11 +836,17 @@ class CatalogPane(Container):
         return any(e.measurement.source == "benchmarks.md" for e in self._entries)
 
     def _filtered_entries(self) -> list[CatalogEntry]:
+        # Hide 🗑️ deprecated slugs by default (mirrors `switch.sh --list`); [h] reveals them.
+        pool = (
+            self._entries
+            if self._show_deprecated
+            else [e for e in self._entries if (e.status or "").strip().lower() != "deprecated"]
+        )
         # Model-scope dropdown first — AND-combined with the text filter below.
         base = (
-            [e for e in self._entries if e.model == self._model_filter]
+            [e for e in pool if e.model == self._model_filter]
             if self._model_filter
-            else self._entries
+            else pool
         )
         if not self._filter:
             return self._grouped_by_model(base)
@@ -878,6 +889,21 @@ class CatalogPane(Container):
             return
         self._model_filter = new
         self._render_rows()
+
+    def toggle_deprecated(self) -> None:
+        """[h] show/hide 🗑️ deprecated slugs (hidden by default, mirroring
+        `switch.sh --list`).  Re-renders (cursor resets to the top of the
+        now-widened / narrowed set)."""
+        self._show_deprecated = not self._show_deprecated
+        self._render_rows()
+
+    def _deprecated_hidden_count(self) -> int:
+        """How many 🗑️ deprecated slugs are currently hidden (0 once revealed)."""
+        if self._show_deprecated:
+            return 0
+        return sum(
+            1 for e in self._entries if (e.status or "").strip().lower() == "deprecated"
+        )
 
     def toggle_model_select(self) -> None:
         """[\\] toggle the model-scope dropdown (hidden by default, like the text
@@ -4794,6 +4820,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("primary_action", "Serve selected / primary action", "⏎ — serve the selected slug (reconcile-gated)"),
     ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
+    ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated slugs (hidden by default)"),
     ("set_default", "Set default", "Catalog — pin the selected slug as model default"),
     ("clear_default", "Clear default", "Catalog — clear the model default pin"),
     ("optimize_card", "Optimize for my card", "Catalog — v0.10.0 seam (not available yet)"),
@@ -4944,6 +4971,7 @@ class CockpitApp(App):
         # Context-sensitive — check_action enables/shows them only in the right mode.
         Binding("slash", "filter_catalog", "Filter", show=False),
         Binding("backslash", "toggle_catalog_model", "Model", show=False),
+        Binding("h", "toggle_catalog_deprecated", "Deprecated", show=False),
         Binding("e", "explain", "Explain", show=False),
         # 2-mode merge: [1] = merged Run & Operate, [2] = Bring & Validate lane.
         Binding("1", "mode_run", "Run & Operate", show=True),
@@ -5135,6 +5163,7 @@ class CockpitApp(App):
     _CONTEXT_KEYS: dict[str, tuple[set[int], Optional[set[str]]]] = {
         # Merged mode 0 · Catalog tab
         "filter_catalog":   ({0}, {"tab-catalog"}),  # Catalog
+        "toggle_catalog_deprecated": ({0}, {"tab-catalog"}),  # Catalog — [h] hide/show deprecated
         "explain":          ({0}, {"tab-catalog"}),  # Catalog (guards inside action)
         "set_default":      ({0}, {"tab-catalog"}),  # Catalog
         "clear_default":    ({0}, {"tab-catalog"}),  # Catalog
@@ -7225,6 +7254,14 @@ class CockpitApp(App):
         if self._active_mode == 0 and self._current_subtab() == "tab-catalog":
             try:
                 self.query_one("#catalog-pane", CatalogPane).toggle_model_select()
+            except Exception:
+                pass
+
+    def action_toggle_catalog_deprecated(self) -> None:
+        """[h] show/hide 🗑️ deprecated slugs (merged mode 0 · Catalog tab)."""
+        if self._active_mode == 0 and self._current_subtab() == "tab-catalog":
+            try:
+                self.query_one("#catalog-pane", CatalogPane).toggle_deprecated()
             except Exception:
                 pass
 
