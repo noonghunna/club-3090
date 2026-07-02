@@ -381,7 +381,7 @@ def cmd_model(path):
     with open(path) as f:
         data = json.load(f)
     models = data.get("data") or []
-    print(models[0].get("id", "qwen3.6-27b-autoround") if models else "qwen3.6-27b-autoround")
+    print(models[0].get("id", "qwen3.6-27b") if models else "qwen3.6-27b")
 
 
 def cmd_baseline(out_dir, container, endpoint, model, sessions, turns, growth):

@@ -23,9 +23,9 @@ services:
       # leaves OWUI's picker.) Served names match the catalog, so model IDs are unchanged:
       #   :8090 = ai-studio qwen director (uncensored prompt crafter; studio lanes call it internally,
       #           and it doubles as a general chat model). Up only in the ai-studio scene.
-      #   :8010 = qwen3.6-27b-autoround     (gpu-mode qwen27b)
+      #   :8010 = qwen3.6-27b     (gpu-mode qwen27b)
       #   :8051 = qwen3.6-35b-a3b-autoround (gpu-mode qwen35b-a3b)
-      #   :8032 = gemma-4-31b-autoround     (gpu-mode gemma-31b)
+      #   :8032 = gemma-4-31b     (gpu-mode gemma-31b)
       #   :8038 = gemma-4-12b-int8          (gpu-mode gemma12b)
       #   :8199 = deckard-40b               (gpu-mode deckard)
       # Plural *_URLS / *_KEYS are ;-separated. On an EXISTING volume the stored config wins — re-run

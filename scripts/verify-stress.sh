@@ -50,7 +50,7 @@
 # Env (optional):
 #   URL                    Default: http://localhost:8020
 #   MODEL                  Default: auto-detected from /v1/models, else
-#                          qwen3.6-27b-autoround
+#                          qwen3.6-27b
 #   CONTAINER              Default: vllm-qwen36-27b
 #   SKIP_LONGCTX           Set to 1 to skip the long-context needle ladder.
 #   SKIP_TOOL_PREFILL      Set to 1 to skip the tool-response prefill test.
@@ -94,7 +94,7 @@ URL="${URL:-http://localhost:8020}"
 # Resolve the served model from /v1/models when MODEL is unset (#372). The qwen
 # literal below is only a last resort if detection no-ops (endpoint unreachable).
 declare -F preflight_autodetect_model >/dev/null && preflight_autodetect_model
-MODEL="${MODEL:-qwen3.6-27b-autoround}"
+MODEL="${MODEL:-qwen3.6-27b}"
 CONTAINER="${CONTAINER:-vllm-qwen36-27b}"
 
 # Detect VLLM_ENFORCE_EAGER=1 in the running container's env. Eager-mode

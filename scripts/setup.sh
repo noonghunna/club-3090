@@ -680,7 +680,7 @@ case "${MODEL_NAME}" in
     SAMPLE_CONTAINER="vllm-qwen36-27b"
     SAMPLE_COMPOSE_FLAGS_DUAL=" -f dual/autoround-int4/fp8-mtp.yml"
     SAMPLE_PORT="8020"
-    SAMPLE_MODEL_NAME="qwen3.6-27b-autoround"
+    SAMPLE_MODEL_NAME="qwen3.6-27b"
     NEXT_STEPS_NOTE="Or dual-card vLLM (Marlin patched files already vendored in-repo):
   cd models/${MODEL_NAME}/vllm/compose && docker compose -f dual/autoround-int4/fp8-mtp.yml up -d"
     ;;
@@ -690,7 +690,7 @@ case "${MODEL_NAME}" in
     # Use scripts/switch.sh which auto-selects the right compose by variant.
     SAMPLE_COMPOSE_FLAGS_DUAL=""
     SAMPLE_PORT="8030"
-    SAMPLE_MODEL_NAME="gemma-4-31b-autoround"
+    SAMPLE_MODEL_NAME="gemma-4-31b"
     NEXT_STEPS_NOTE="Available variants:
   bash scripts/switch.sh vllm/gemma-31b-dual        # bf16 KV, TP=2, port 8032 (dual-card, v0.24.0 overlay-free)
   bash scripts/switch.sh beellama/gemma-dflash # DFlash, single-card default, port 8061"

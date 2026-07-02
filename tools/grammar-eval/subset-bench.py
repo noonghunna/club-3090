@@ -359,7 +359,7 @@ def dataset_kind(task_id: str) -> str:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--base-url", default="http://localhost:8020/v1")
-    p.add_argument("--model", default="qwen3.6-27b-autoround")
+    p.add_argument("--model", default="qwen3.6-27b")
     p.add_argument("--tokenizer", default="/opt/ai/github/qwen36-dual-3090/models/qwen3.6-27b-autoround-int4")
     p.add_argument("--structured-cot-dir", type=pathlib.Path, default=DEFAULT_STRUCTURED_COT_DIR)
     p.add_argument("--prior-results", type=pathlib.Path, default=DEFAULT_PRIOR)

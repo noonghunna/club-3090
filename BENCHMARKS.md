@@ -529,16 +529,16 @@ gpu-mode 27b                                                    # bring up at :8
 RUNS=3 WARMUPS=1 bash scripts/bench.sh                          # TPS
 bash scripts/quality-test.sh --full                             # 8-pack quality
 benchlocal-cli run --pack aider-polyglot-30 \
-  --endpoint http://localhost:8010 --model qwen3.6-27b-autoround
+  --endpoint http://localhost:8010 --model qwen3.6-27b
 
 # Gemma leg (cycle GPU)
 gpu-mode gemma                                                  # bring up at :8030
-URL=http://localhost:8030 MODEL=gemma-4-31b-autoround \
+URL=http://localhost:8030 MODEL=gemma-4-31b \
   RUNS=3 WARMUPS=1 bash scripts/bench.sh
-URL=http://localhost:8030 MODEL=gemma-4-31b-autoround \
+URL=http://localhost:8030 MODEL=gemma-4-31b \
   bash scripts/quality-test.sh --full
 benchlocal-cli run --pack aider-polyglot-30 \
-  --endpoint http://localhost:8030 --model gemma-4-31b-autoround
+  --endpoint http://localhost:8030 --model gemma-4-31b
 ```
 
 End-to-end takes ~3 hours on dual 3090. quality-test.sh auto-detects the endpoint and served-model-id, so `URL`/`MODEL` overrides are only needed when running against non-default ports.

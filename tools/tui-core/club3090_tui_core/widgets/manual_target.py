@@ -70,7 +70,7 @@ class ManualTargetScreen(ModalScreen[Optional[ServingTarget]]):
             yield Label("URL:")
             yield Input(placeholder="http://192.168.1.50:8887", id="input-url")
             yield Label("Model name:")
-            yield Input(placeholder="qwen3.6-27b-autoround", id="input-model")
+            yield Input(placeholder="qwen3.6-27b", id="input-model")
             yield Label("Engine (vllm/llamacpp/sglang/other):")
             yield Input(placeholder="vllm", id="input-engine")
 

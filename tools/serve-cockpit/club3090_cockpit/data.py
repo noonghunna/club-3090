@@ -1724,7 +1724,7 @@ _REPORT_DECODE_ROW_RE = re.compile(
 _REPORT_QUALITY_RE = re.compile(
     r"\*\*\s*(\d+)\s*/\s*(\d+)\s*\*\*", re.IGNORECASE
 )
-# REPORT.md Meta line:  - **Served as:** `qwen3.6-27b-autoround` from `…`
+# REPORT.md Meta line:  - **Served as:** `qwen3.6-27b` from `…`
 _REPORT_SERVED_RE = re.compile(r"\*\*Served as:\*\*\s*`([^`]+)`")
 # REPORT.md Meta line:  - **Model arch:** qwen3_next (Qwen3NextForCausalLM)
 _REPORT_ARCH_RE = re.compile(r"\*\*Model arch:\*\*\s*([^\s(]+)")
@@ -1858,7 +1858,7 @@ def _canon_model_key(model: str) -> str:
     """Reduce a model id / served-name to a coarse comparable token.
 
     The curated bar's model is a registry slug (``qwen3.6-27b``); a rebench
-    REPORT.md's ``Served as`` is a served-model-name (``qwen3.6-27b-autoround``).
+    REPORT.md's ``Served as`` is a served-model-name (``qwen3.6-27b``).
     Strip non-alnum + a trailing weights-variant tail so both reduce to the same
     family token for the loose match."""
     norm = re.sub(r"[^a-z0-9.]", "", (model or "").lower())

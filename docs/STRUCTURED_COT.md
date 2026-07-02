@@ -119,7 +119,7 @@ client = OpenAI(base_url="http://localhost:8020/v1", api_key="dummy")
 GRAMMAR = open("grammars/fsm_grammar_no_open.gbnf").read()
 
 r = client.chat.completions.create(
-    model="qwen3.6-27b-autoround",
+    model="qwen3.6-27b",
     messages=[
         {"role": "system", "content": "You are an expert Python programmer. Think only inside the required <think> block. After </think>, output runnable Python code directly."},
         {"role": "user", "content": "Write a function add(a, b) that returns the sum."},
@@ -218,7 +218,7 @@ git clone https://github.com/andthattoo/structured-cot.git ~/structured-cot
 cd ~/structured-cot
 python fsm_vs_free_eval.py \
   --base-url http://localhost:8020/v1 \
-  --model qwen3.6-27b-autoround \
+  --model qwen3.6-27b \
   --tokenizer Qwen/Qwen3.6-27B \
   --dataset humaneval --n-problems 164 --only all \
   --grammar-file grammars/fsm_grammar_no_open.gbnf \

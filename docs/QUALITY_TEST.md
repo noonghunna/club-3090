@@ -131,7 +131,7 @@ Output:
 Example output:
 
 ```
-=== benchlocal-cli --medium  (endpoint: http://localhost:8020, model: qwen3.6-27b-autoround) ===
+=== benchlocal-cli --medium  (endpoint: http://localhost:8020, model: qwen3.6-27b) ===
 
 Pack                       | Pass / Total | Score | p50 latency | p95 latency | Status
 ToolCall-15 (v1.0.1)       |   14 / 15    |  93%  |     8.2s    |     12.1s   | ✅
