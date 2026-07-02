@@ -16,6 +16,85 @@ history; SemVer takes over from `v0.3.0` onward.
 
 ---
 
+## v0.10.1 — 2026-07-02
+
+
+### ✨ Features
+
+- feat(gemma): v0.24.0 overlay-free 31b dual (cyankiwi, MTP-off) ([2535bb9](https://github.com/noonghunna/club-3090/commit/2535bb9a3d0194f48e1369f0970ed22c1d29daf5))
+
+
+### 🐛 Bug fixes
+
+- fix(studio): derive + pin COMFYUI_OUTPUT_DIR from COMFYUI_ROOT (#510 render-mount) (#534) ([#534](https://github.com/noonghunna/club-3090/pull/534) by @noonghunna)
+- fix(studio): pin COMFYUI_ROOT to .env so ComfyUI mounts the models tree (#510, #530) (#531) ([#531](https://github.com/noonghunna/club-3090/pull/531) by @noonghunna)
+- fix(studio): pull HiDream + Chroma weights in the ai-studio roster (#510) (#529) ([#529](https://github.com/noonghunna/club-3090/pull/529) by @noonghunna)
+- fix(quality-test): preflight sandbox images + document the build step (#492) (#494) ([#494](https://github.com/noonghunna/club-3090/pull/494) by @noonghunna)
+- fix(ai-studio): derive ComfyUI paths from MODEL_DIR + make gpu-mode portable (#493) ([#493](https://github.com/noonghunna/club-3090/pull/493) by @noonghunna)
+
+
+### 📝 Documentation
+
+- docs(quant): add QUANTIZATION §4b tier trade-space ([8d4a6ec](https://github.com/noonghunna/club-3090/commit/8d4a6ecc11953d693c82375f6b46c44a2ec7c676))
+- docs(gemma-31b): reflect the v0.24.0 bf16 consolidation ([f7214fb](https://github.com/noonghunna/club-3090/commit/f7214fb4d354445942d8ca79a9cd697f01543865))
+- docs(ai-studio): add design rationale + 3 complements from the production-agent design ([81181fc](https://github.com/noonghunna/club-3090/commit/81181fc4fa513706fedab0b3974bf1288dae7780))
+- docs(ai-studio): explain storyboard continuity + add a troubleshooting section ([f28dde4](https://github.com/noonghunna/club-3090/commit/f28dde4167f821a2cfca0125387c9a90a709b4e4))
+- docs(ai-studio): rewrite director flow as behavioral + add Character Bible / continuity / research ([01cb15b](https://github.com/noonghunna/club-3090/commit/01cb15b17e9766659f0c56d72ccc3be12f1dd7bd))
+- docs(ai-studio): flag Production Director as WIP / not production-ready ([b494b50](https://github.com/noonghunna/club-3090/commit/b494b509c3ee4fac7b2517db1fb6cae3f50dc7f1))
+- docs(ai-studio): add "Current challenges / known limitations" to agents doc ([a517324](https://github.com/noonghunna/club-3090/commit/a517324a261f01bbbac0817bba5757cf94c34f58))
+- docs(ai-studio): add agents-architecture.md (director decision flow) ([38487e5](https://github.com/noonghunna/club-3090/commit/38487e5c410990b777af96a8d258604e613fb421))
+- docs: correct --no-thinking help — four packs default thinking-on ([fa66758](https://github.com/noonghunna/club-3090/commit/fa66758b94120d4592072ef9ef38ce53b7015375))
+- Document LMCache RAM gate formula (L1 + 28) in compose caveat ([c4bd455](https://github.com/noonghunna/club-3090/commit/c4bd45581c95c40b916f5299c551975ed423b098))
+
+
+### 🔧 Pin bumps + upstream
+
+- Bump vllm-stable v0.22.0 → v0.24.0 (overlay-free; marlin-pad native) (#533) ([#533](https://github.com/noonghunna/club-3090/pull/533) by @noonghunna)
+
+
+### 🛠️ Scripts + tooling
+
+- setup-ai-studio.sh: make the "sign up then install the pipe" step unmissable (#510) (#527) ([#527](https://github.com/noonghunna/club-3090/pull/527) by @noonghunna)
+- report.sh: add --studio flag (AI Studio / ComfyUI container log tails) (#526) ([#526](https://github.com/noonghunna/club-3090/pull/526) by @noonghunna)
+
+
+### 🧹 Other
+
+- serve: neutral primary model name (qwen3.6-27b / gemma-4-31b), keep -autoround alias ([7e9f5cb](https://github.com/noonghunna/club-3090/commit/7e9f5cb9302b117f8abbf7c135b9654aa992ba86))
+- patches: de-register vllm-marlin-pad (merged upstream, native in v0.24.0) ([ae4d1fc](https://github.com/noonghunna/club-3090/commit/ae4d1fcad6621a8b61a30e8e2e4bb970e6ba35f6))
+- c3: hide deprecated slugs in catalog by default ([h] toggles) ([8b43b48](https://github.com/noonghunna/club-3090/commit/8b43b485f9b3b53da81871b15efb15e265dfe7c4))
+- hygiene(qwen composes): align stale Engine-profile headers vllm-nightly-clean -> vllm-stable ([126e5c5](https://github.com/noonghunna/club-3090/commit/126e5c5afbbe47c8d6f141745cb1d20f68f47a6a))
+- bump(diffusiongemma): :gemma branch digest -> stock vLLM v0.24.0 ([68c6ea8](https://github.com/noonghunna/club-3090/commit/68c6ea80fb102730c28c7bcfdafe27e2e269e63b))
+- consolidate(gemma-31b): single bf16 dual slug on v0.24.0, retire v0.22.0 composes ([6cfcbc6](https://github.com/noonghunna/club-3090/commit/6cfcbc6bc07dfbca06b1b77ca97e7bb5058316cf))
+- fold(gemma-12b): dual-bf16 onto vllm-stable v0.24.0, MTP-off ([dea4579](https://github.com/noonghunna/club-3090/commit/dea457968ee1662ed0519837d6d3969ca6093cc6))
+- fold(gemma-26b): MTP-off on v0.24.0 dual (Gemma-4 MTP×tools broken) ([93b1642](https://github.com/noonghunna/club-3090/commit/93b1642ada4a17c1e9c3eb5106ec52aeaf31803c))
+- BENCHMARKS: W8A8 row is an experimental data point, not a shipped slug ([852b561](https://github.com/noonghunna/club-3090/commit/852b5610119fbe9dc5a6d8ad85f345a93c47b1d1))
+- BENCHMARKS: add v0.24.0 dual-max FP8 + W8A8 rows (8-bit decode vs prefill corners) ([1f4028e](https://github.com/noonghunna/club-3090/commit/1f4028eaffd73914f273eafc898291ea1b1b35b7))
+- studio(tts): chmod 0644 the TTS + narrate outputs so the host can read them (#501) ([#501](https://github.com/noonghunna/club-3090/pull/501) by @noonghunna)
+- Fix #512: portable LAN-IP detection + persist to .env (CachyOS / GNU inetutils) (#525) ([#525](https://github.com/noonghunna/club-3090/pull/525) by @noonghunna)
+- Director: make the LLM the intent driver, demote keyword detection to a bare fallback (#524) ([#524](https://github.com/noonghunna/club-3090/pull/524) by @noonghunna)
+- Director: web research for documentaries (SearXNG-grounded facts) + honesty fix (#523) ([#523](https://github.com/noonghunna/club-3090/pull/523) by @noonghunna)
+- Director Batch 3: semantic plan critic before render (Codex F5/F6/F7) (#522) ([#522](https://github.com/noonghunna/club-3090/pull/522) by @noonghunna)
+- Director Batch 2: structured LLM intent controller (natural multi-turn conversation) (#521) ([#521](https://github.com/noonghunna/club-3090/pull/521) by @noonghunna)
+- Director Batch 1: creation-question gate, pinned-lane capabilities, sizing + valve fixes (#520) ([#520](https://github.com/noonghunna/club-3090/pull/520) by @noonghunna)
+- Planner: detect documentary vs narrative format, suppress invented protagonist (#519) ([#519](https://github.com/noonghunna/club-3090/pull/519) by @noonghunna)
+- Production assemble: fix sub-frame cut xfade collapsing multi-shot films (#514) ([#514](https://github.com/noonghunna/club-3090/pull/514) by @noonghunna)
+- Production planner: scale director token budget by shot count (#513) ([#513](https://github.com/noonghunna/club-3090/pull/513) by @noonghunna)
+- Production: wire LTX-2.3 / Sulphur / 10Eros video lanes into the executor (#511) ([#511](https://github.com/noonghunna/club-3090/pull/511) by @noonghunna)
+- Production lane: conversational director + persona in AGENTS.md (#509) ([#509](https://github.com/noonghunna/club-3090/pull/509) by @noonghunna)
+- Production lane: qualify (size + propose) → confirm → build (#508) ([#508](https://github.com/noonghunna/club-3090/pull/508) by @noonghunna)
+- Fix: Production lane chit-chat gate — don't render a film from 'hello' (#507) ([#507](https://github.com/noonghunna/club-3090/pull/507) by @noonghunna)
+- Studio setup: zero-config defaults — portable MODEL_DIR + fail-fast + shared LAN-IP (#506) ([#506](https://github.com/noonghunna/club-3090/pull/506) by @noonghunna)
+- Studio setup: de-rig standalone scripts — fix #503 model path + #504 LAN IP (#505) ([#505](https://github.com/noonghunna/club-3090/pull/505) by @noonghunna)
+- Studio Production: stack + OWUI lane + keyframe tiers + Character Bible (Tier A) (#502) ([#502](https://github.com/noonghunna/club-3090/pull/502) by @noonghunna)
+- Studio Production Agent v0b-core + v0b-images (#497, #499) ([6ee5e32](https://github.com/noonghunna/club-3090/commit/6ee5e32baeb8e5ea4ff328b929150794e3293c8e))
+- Studio Production Agent v0a — executor spike (offline + live PASS) (#496) ([#496](https://github.com/noonghunna/club-3090/pull/496) by @noonghunna)
+- BENCHMARKS: fold @guybrush01 dual-5090 8-pack quality onto cross-rig row ([2886de4](https://github.com/noonghunna/club-3090/commit/2886de4687285b7634c23b8bb9619993e82cdf77))
+- Add model-scope dropdown + group-by-model to c3 Catalog (#495) ([#495](https://github.com/noonghunna/club-3090/pull/495) by @noonghunna)
+
+
+
+[Pin: `git checkout v0.10.1`] · [Full diff](https://github.com/noonghunna/club-3090/compare/v0.10.0...v0.10.1)
 ## v0.10.0 — 2026-06-26
 
 
