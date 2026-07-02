@@ -58,38 +58,32 @@ patches:
     status: suspect
 
   - id: qwen-vllm-marlin-pad
+    deprecated_on: "2026-07-02"
+    deprecation_reason: "merged upstream (native in vLLM v0.24.0) — our #40361 sub-tile-n pad was closed-superseded by mgoin's #45295 (consolidated `marlin_padded_nk` across all dense Marlin paths). `vllm-stable` pins v0.24.0, so it's native there."
     model: [qwen3.6-27b]
     files:
       - models/qwen3.6-27b/vllm/patches/vllm-marlin-pad
-    load_bearing_when:
-      - composes:
-          - vllm/dual
-        reason: "AutoRound INT4 TP shards can fall below Marlin's output-feature tile floor."
-        evidence: "models/qwen3.6-27b/vllm/patches/vllm-marlin-pad/README.md; models/qwen3.6-27b/INTERNALS.md#dual-card-the-marlin-pad-sub-tile-n-patch-vllm40361"
+    # NOT load-bearing anymore: #40361 (our per-case W4A16 sub-tile-n pad) was
+    # closed-superseded by #45295 (general marlin_padded_nk), which is native in
+    # vLLM v0.24.0. `vllm-stable` is pinned v0.24.0, and the AutoRound INT4 TP=2
+    # path (vllm/dual) boots clean WITHOUT the overlay — validated 2026-06-30
+    # (PR #533 Phase 0b: "marlin-pad confirmed unnecessary"). No live compose
+    # mounts it (archive-only). Kept as historical reference (delivery: none).
+    load_bearing_when: []
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
-      dockerfile_bake: true
-      entrypoint_invoke: true
+      dockerfile_bake: false
+      entrypoint_invoke: false
       genesis: false
     delivery_gaps: []
-    delivery_mechanism: site_package_overlay
-    delivery_spec:
-      overlay_files:
-        - src: models/qwen3.6-27b/vllm/patches/vllm-marlin-pad/marlin.py
-          dest: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/marlin.py
-        - src: models/qwen3.6-27b/vllm/patches/vllm-marlin-pad/MPLinearKernel.py
-          dest: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mixed_precision/MPLinearKernel.py
-      mount_mode: ro
-      wired_at: volumes
-    drift_guard:
-      kind: import-and-boot
-      check: "vLLM AutoRound W4A16 TP shard loads without Marlin sub-tile-n assertion (overlay target paths exist in selected nightly)"
-      on_fail: hard-refuse   # foundational: TP weights will not load without it
+    delivery_mechanism: none   # merged into stock v0.24.0 (#45295); dropped from all live composes
+    delivery_spec: null
+    drift_guard: null
     capability: tp-weight-load
-    foundational: true
+    foundational: false
     upstream:
       ref: vllm-project/vllm#40361
-      status: open
-      drop_when: "merged into the selected vLLM nightly and all affected composes pin beyond the merge"
+      status: merged
+      drop_when: "DONE — #40361 closed-superseded by #45295 (native in v0.24.0); vllm-stable pinned v0.24.0; no live compose mounts it. Entry retained as history."
     status: verified
 
   - id: qwen-vllm-pr35936-required-fallback
