@@ -79,6 +79,7 @@ These are cross-cutting references both tracks reach for.
 | [`engines/`](engines/) | Per-engine deep dives — [vLLM](engines/VLLM.md), [llama.cpp](engines/LLAMA_CPP.md), [SGLang](engines/SGLANG.md). |
 | [`INFERENCE_ENGINES.md`](INFERENCE_ENGINES.md) | Engine picker — which engine for which workload, and structural gaps. |
 | [`CLIFFS.md`](CLIFFS.md) | The accumulated-context / prefill failure modes (Cliff 2, Cliff 2b) and how to detect them. |
+| [`QUANTIZATION.md`](QUANTIZATION.md) | **Quant field guide** — GGUF ladder, the vLLM/safetensors schemes, KLD-by-fidelity (§4a), and the **fast/balanced/max tier trade-space** (§4b). The conceptual home the dtype/kernel matrices support. |
 | [`DTYPE_MATRIX.md`](DTYPE_MATRIX.md) | Supported dtype × model × engine matrix. |
 | [`KERNEL_MATRIX.md`](KERNEL_MATRIX.md) | Quant-kernel availability and alignment constraints. |
 | [`QUALITY_TEST.md`](QUALITY_TEST.md) | The quality-test harness and what it measures. |
