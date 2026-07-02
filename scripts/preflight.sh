@@ -506,6 +506,66 @@ preflight_gpu_idle() {
   return 0
 }
 
+# preflight_compose_gpu_fit <compose_file> <force>
+#   HARD-fail (unless force=1) when the GPUs lack enough FREE VRAM for the compose's
+#   gpu_memory_utilization. vLLM aborts at boot if `free < util × total`; with
+#   restart:unless-stopped it then restart-loops, so `switch.sh` waits the full
+#   READY_TIMEOUT (600s) for an endpoint that never comes. This converts that silent
+#   timeout into an instant, actionable error — the failure @stage-chuk hit switching
+#   ai-studio → gemma on a desktop rig (club-3090 #535): GNOME on the GPUs (~1.3 GiB/card)
+#   leaves < the 0.95 budget free. We mirror vLLM's own check (util × total × 0.98 ≈ its
+#   mem_get_info total, i.e. nvidia-smi total minus ~2% driver-reserved) and briefly retry,
+#   because `docker compose down` returns before CUDA actually releases a torn-down scene.
+preflight_compose_gpu_fit() {
+  local compose="$1" force="${2:-0}"
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  [[ -f "$compose" ]] || return 0
+
+  # Effective util: an env GPU_MEMORY_UTILIZATION override wins over the compose default
+  # (`${GPU_MEMORY_UTILIZATION:-<X>}`), so the gate matches what vLLM will actually use.
+  local util_default util
+  util_default=$(grep -oE 'GPU_MEMORY_UTILIZATION:-[0-9.]+' "$compose" | head -1 | sed 's/.*-//')
+  util="${GPU_MEMORY_UTILIZATION:-$util_default}"
+  case "$util" in ''|*[!0-9.]*) return 0 ;; esac   # unknown / non-numeric → can't gate
+
+  # Cards this compose uses (TP / min-gpu-count header; default 1).
+  local need_cards
+  need_cards=$(grep -oiE '#[[:space:]]*(Tensor-parallel|Requires-min-gpu-count):[[:space:]]*[0-9]+' "$compose" \
+               | grep -oE '[0-9]+' | sort -rn | head -1)
+  [[ -z "$need_cards" ]] && need_cards=1
+
+  # Settle window (~10s): a just-`down`ed scene's VRAM lags docker's return.
+  local attempt result idx fg ng fits
+  for attempt in 1 2 3 4 5; do
+    result=$(nvidia-smi --query-gpu=index,memory.total,memory.free --format=csv,noheader,nounits 2>/dev/null \
+      | awk -F, -v util="$util" -v n="$need_cards" '
+          { gi[NR]=$1+0; f[NR]=$3+0; d[NR]=util*$2*0.98 }
+          END {
+            if (NR==0) { print "-1 0 0 1"; exit }          # no cards visible → skip
+            for (i=1;i<=NR;i++) ord[i]=i                    # sort card rows by free desc
+            for (i=1;i<=NR;i++) for (j=i+1;j<=NR;j++) if (f[ord[j]]>f[ord[i]]) { t=ord[i]; ord[i]=ord[j]; ord[j]=t }
+            k=(n<NR ? n : NR); fits=1; wf=1e18; wn=0; wi=-1  # check the k best cards; report the worst
+            for (i=1;i<=k;i++){ c=ord[i]; if (f[c]<d[c]) fits=0; if (f[c]<wf){ wf=f[c]; wn=d[c]; wi=gi[c] } }
+            printf "%d %.1f %.1f %d", wi, wf/1024, wn/1024, fits
+          }')
+    read -r idx fg ng fits <<< "$result"
+    [[ "$fits" == "1" ]] && return 0
+    [[ "$attempt" -lt 5 ]] && sleep 2
+  done
+
+  echo "[preflight] ERROR: GPU ${idx} has ${fg} GiB free, but this config needs ~${ng} GiB/card" >&2
+  echo "[preflight]        (gpu_memory_utilization=${util}, ${need_cards} card(s) for TP). Something else is holding VRAM —" >&2
+  echo "[preflight]        a desktop on the GPU, another model, or a scene that isn't fully stopped (check: docker ps / nvidia-smi)." >&2
+  echo "[preflight]        Fix: free that VRAM, or lower the ceiling —" >&2
+  echo "[preflight]             GPU_MEMORY_UTILIZATION=0.90 bash scripts/switch.sh <variant>" >&2
+  echo "[preflight]        — then retry.  (Bypass this check with --force.)" >&2
+  if [[ "$force" == "1" ]]; then
+    echo "[preflight] WARN:  --force set — launching anyway; vLLM may still abort at the free-memory check." >&2
+    return 0
+  fi
+  return 1
+}
+
 preflight_running() {
   command -v docker >/dev/null 2>&1 || return 0
   local running

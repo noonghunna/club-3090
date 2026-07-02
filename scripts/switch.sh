@@ -978,6 +978,11 @@ up_variant() {
     preflight_compose_deps "${full_dir}/${file}" || exit 1
     if [[ "$eng" == "vllm" ]]; then
       preflight_compose_hardware "${full_dir}/${file}" "$v" "${FORCE:-0}" || exit 1
+      # Free-VRAM gate: fail fast (not a 600s restart-loop) when the GPUs don't have
+      # room for this config's gpu_memory_utilization — e.g. a desktop/other scene
+      # still holding VRAM after a switch (club-3090 #535). Runs AFTER down_running(),
+      # so its settle-retry also covers the just-torn-down container's VRAM lag.
+      preflight_compose_gpu_fit "${full_dir}/${file}" "${FORCE:-0}" || exit 1
     fi
     # LMCache host-RAM guard — runs even under --force (incubating LMCache slugs
     # launch WITH --force, yet over-sizing --l1-size-gb can OOM the host; #133).
