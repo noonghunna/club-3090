@@ -1056,6 +1056,68 @@ class TestCatalogWired:
             assert len(pane._filtered_entries()) == 2
 
     @pytest.mark.asyncio
+    async def test_catalog_hides_deprecated_by_default_and_h_reveals(self):
+        """🗑️ Deprecated slugs are HIDDEN from the catalog by default (mirrors
+        `switch.sh --list`); [h] / toggle_deprecated() reveals them, and the banner
+        surfaces the hidden count.  A deprecated slug stays filtered even when it
+        matches the active text filter — until revealed."""
+        from club3090_cockpit.data import CatalogEntry as _CE
+        from club3090_tui_core import VariantRow as _VR
+
+        def _entry(slug: str, status: str) -> _CE:
+            leaf = slug.split("/")[-1]
+            path = f"models/gemma-4-31b/vllm/compose/dual/autoround-int4/{leaf}.yml"
+            return _CE(
+                row=_VR(
+                    slug=slug, switch_engine="vllm", launch_engine="vllm",
+                    compose_dir=path.rsplit("/", 1)[0], file=path.rsplit("/", 1)[-1],
+                    port=8000, model="gemma-4-31b", engine="vllm-stable",
+                    kvcalc_key="gemma-4-31b:dual", container="c",
+                    compose_path=path, status=status, ctx_label="229K", status_note="",
+                )
+            )
+
+        live = _entry("vllm/gemma-dual", "caveats")
+        prod = _entry("vllm/gemma-prod", "production")
+        dead1 = _entry("vllm/gemma-int8-mtp", "deprecated")
+        dead2 = _entry("vllm/gemma-bf16-mtp", "deprecated")
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([live, prod, dead1, dead2], None)
+
+            # Default: 2 deprecated hidden; only the functional slugs show.
+            assert pane._show_deprecated is False
+            assert {e.slug for e in pane._filtered_entries()} == {
+                "vllm/gemma-dual", "vllm/gemma-prod",
+            }
+            assert pane._deprecated_hidden_count() == 2
+            assert app.query_one("#catalog-table", DataTable).row_count == 2
+
+            # A deprecated slug stays hidden even when it matches the text filter.
+            pane.set_filter("int8")
+            assert pane._filtered_entries() == []
+            pane.set_filter("")
+
+            # [h] reveals: all 4 rows show, hidden-count drops to 0.
+            pane.toggle_deprecated()
+            assert pane._show_deprecated is True
+            assert len(pane._filtered_entries()) == 4
+            assert pane._deprecated_hidden_count() == 0
+            assert app.query_one("#catalog-table", DataTable).row_count == 4
+            # Revealed → the deprecated slug is now findable by filter.
+            pane.set_filter("int8")
+            assert [e.slug for e in pane._filtered_entries()] == ["vllm/gemma-int8-mtp"]
+            pane.set_filter("")
+
+            # Toggling back hides them again.
+            pane.toggle_deprecated()
+            assert pane._show_deprecated is False
+            assert len(pane._filtered_entries()) == 2
+
+    @pytest.mark.asyncio
     async def test_catalog_model_dropdown_scopes_and_combines(self):
         """Model-scope dropdown: options are the DISTINCT model names in registry
         order (the switch.sh --list grouping the flat table drops); picking one
@@ -4345,6 +4407,7 @@ class TestCheckActionPerModeSubtab:
             # Catalog (default mode/tab): filter enabled.
             assert app._active_mode == 0
             assert app.check_action("filter_catalog", ()) is True
+            assert app.check_action("toggle_catalog_deprecated", ()) is True
             # Lane mode: no benchmarks tab → context_t (sort) disabled, and
             # filter_catalog is off (not a Catalog context).
             await pilot.press("2")
@@ -4352,6 +4415,7 @@ class TestCheckActionPerModeSubtab:
             assert app._active_mode == 1
             assert app.check_action("context_t", ()) is False
             assert app.check_action("filter_catalog", ()) is False
+            assert app.check_action("toggle_catalog_deprecated", ()) is False
 
     @pytest.mark.asyncio
     async def test_validate_evidence_enables_s_key(self):
@@ -4376,6 +4440,7 @@ class TestCheckActionPerModeSubtab:
             assert app._active_mode == 0
             assert app.check_action("explain", ()) is False
             assert app.check_action("filter_catalog", ()) is False
+            assert app.check_action("toggle_catalog_deprecated", ()) is False
 
     @pytest.mark.asyncio
     async def test_always_on_keys_active_in_every_mode(self):
