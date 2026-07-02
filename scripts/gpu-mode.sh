@@ -241,6 +241,27 @@ stop_studio_director() {
 _director_evict_if_gpu() {
     [ "$(_director_device)" != "cpu" ] && stop_studio_director
 }
+# `docker compose down` returns before CUDA actually releases the GPU memory, so the
+# next model scene can boot into not-yet-freed VRAM and hit vLLM's free-memory check
+# (club-3090 #535: ai-studio → gemma). Poll until total used-VRAM stops falling (or a
+# timeout) so the incoming model sees the freed memory.
+wait_gpu_vram_settle() {
+    command -v nvidia-smi >/dev/null 2>&1 || return 0
+    local timeout="${1:-20}" prev="" cur stable=0 waited=0 noted=0
+    while [ "$waited" -lt "$timeout" ]; do
+        cur=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | awk '{s+=$1} END{print s+0}')
+        [ -z "$cur" ] && return 0
+        if [ -n "$prev" ] && [ "$cur" -ge "$prev" ]; then
+            stable=$((stable+1)); [ "$stable" -ge 2 ] && { [ "$noted" = 1 ] && echo "done"; return 0; }
+        else
+            if [ "$noted" = 0 ] && [ -n "$prev" ]; then printf "  ${YELLOW}◔${NC} waiting for the previous scene's GPU VRAM to release..."; noted=1; fi
+            stable=0
+        fi
+        prev="$cur"; sleep 1; waited=$((waited+1))
+    done
+    [ "$noted" = 1 ] && echo "timeout"
+    return 0
+}
 start_studio_orchestrator() {
     printf "  ${GREEN}▲${NC} Starting studio-orchestrator (:8190, long-clip chaining)..."
     compose_at "$COMPOSE_BASE/studio/orchestrator" "up -d --build" && echo "done" || echo "failed"
@@ -589,6 +610,7 @@ mode_gemma_int8() {
     stop_step_voice
     _director_evict_if_gpu
     stop_gemma_int8          # clean re-switch; the dflash/awq gemma scenes were pruned
+    wait_gpu_vram_settle     # let the torn-down scene's VRAM release before TP=2 gemma boots (#535)
     start_gemma_int8
     start_service litellm
     start_service qdrant
