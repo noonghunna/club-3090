@@ -44,9 +44,10 @@ out="$(model_default_target "$ROOT_DIR" qwen3.6-27b multi4 2>&1)"
 assert_contains "$out" "falling back to the dual default" "qwen multi4 degradation notice (no multi4 vLLM slug post-#327)"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b multi4 2>/dev/null)" \
   "vllm/dual" "qwen multi4 degrades to dual slug"
-# gemma-4-31b dual → vllm/gemma-int8-mtp (full-ctx default; gemma-mtp is the stable fallback).
+# gemma-4-31b dual → vllm/gemma-31b-dual (bf16 @224K, stock v0.24.0, overlay-free; the v0.22.0
+# int8-PTH/bf16-mtp composes are now deprecated — see the v0.24.0 consolidation).
 assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b dual 2>/dev/null)" \
-  "vllm/gemma-int8-mtp" "gemma dual curated"
+  "vllm/gemma-31b-dual" "gemmadual curated"
 
 # --- (NA) skip + graceful degradation ---------------------------------------
 # gemma-4-31b single → beellama/gemma-dflash. vllm/gemma-mtp-tp1 is upstream-gated/(NA),
@@ -63,7 +64,7 @@ fi
 out="$(model_default_target "$ROOT_DIR" gemma-4-31b multi4 2>&1)"
 assert_contains "$out" "falling back to the dual default" "gemma multi4 degradation notice"
 assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b multi4 2>/dev/null)" \
-  "vllm/gemma-int8-mtp" "gemma multi4 degrades to dual slug"
+  "vllm/gemma-31b-dual" "gemmamulti4 degrades to dual slug"
 
 # --- X/default dispatch ------------------------------------------------------
 # engine name → engine recommendation (back-compat).

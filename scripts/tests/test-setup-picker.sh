@@ -243,11 +243,11 @@ out="$(MODEL_DIR="${TMP_DIR}/models" CLUB3090_FAKE_GPUS="${FAKE_8X3090}" \
   SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" \
   --no-preflight --no-verify --model gemma-4-31b --gpus 0,1,2,3,4,5,6,7 --tp 8 2>&1)"
 assert_contains "$out" "[launch] Tensor parallel TP=8"
-assert_contains "$out" "[launch] Suggested: vllm/gemma-bf16-mtp"
+assert_contains "$out" "[launch] Suggested: vllm/gemma-31b-dual"
 assert_contains "$out" "VRAM budget — per card"
 assert_contains "$out" "Note: TP > 4 predictions are extrapolated"
 assert_not_contains "$out" "KV projection skipped"
-assert_contains "$out" "SWITCHED vllm/gemma-bf16-mtp CUDA=0,1,2,3,4,5,6,7 NVD=0,1,2,3,4,5,6,7 TP=8 PP=1"
+assert_contains "$out" "SWITCHED vllm/gemma-31b-dual CUDA=0,1,2,3,4,5,6,7 NVD=0,1,2,3,4,5,6,7 TP=8 PP=1"
 
 if out="$(MODEL_DIR="${TMP_DIR}/models" CLUB3090_FAKE_GPUS="${FAKE_8X3090}" \
   SWITCH="${TMP_DIR}/switch-mock" bash "${ROOT_DIR}/scripts/launch.sh" \

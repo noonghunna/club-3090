@@ -510,6 +510,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml",
         default_port=8030,
         kvcalc_key="gemma-4-31b:gemma-dual",
+        status="deprecated",
+        status_note="DEPRECATED 2026-07-02 (v0.24.0 consolidation): superseded by vllm/gemma-31b-dual (cyankiwi bf16 @224K on STOCK v0.24.0, overlay-free). This rode vllm-gemma-stable v0.22.0 + the #42006 overlay at 131K bf16; the v0.24.0 bf16 path reaches ~224K on stock with no overlay, so this no longer earns its keep. Kept (not deleted) for history.",
     ),
     "vllm/gemma-int8-mtp": _entry(
         model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
@@ -518,6 +520,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml",
         default_port=8032, required_engine_features=["int8_per_token_head"],
         kvcalc_key="gemma-4-31b:gemma-dual-int8",
+        status="deprecated",
+        status_note="DEPRECATED 2026-07-02 (v0.24.0 consolidation): the 262K int8-PTH+#40391 path on vllm-gemma-stable v0.22.0. Superseded by vllm/gemma-31b-dual (bf16 @224K, stock v0.24.0, overlay-free) as the single dual slug. NOT migrated to v0.24.0 — int8-PTH silently craters recall past ~32K there (#40391 open/unmerged upstream, verified 2026-07-01). Kept for history + as the 262K reference; when PR #40391 merges, a v0.24.0 int8-PTH 262K path can return overlay-free. required_engine_features/kv_format kept so pull-gate + launch-compat assertions stay meaningful.",
     ),
 
     # Gemma-4-31B cyankiwi QAT-AWQ-INT4 (compressed-tensors, lm_head bf16) — the v0.24.0
@@ -528,13 +532,13 @@ COMPOSE_REGISTRY = {
     # MTP DISABLED (Gemma-4 MTP×tools broken on v0.24.0 — vLLM #39043/#42006; see compose caveat).
     "vllm/gemma-31b-dual": _entry(
         model="gemma-4-31b", weights_variant="qat-awq-int4", workload="multi-stream-tenant",
-        engine="vllm-stable", drafter=None, kv_format="int8_per_token_head",
-        tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.965,
-        compose_path="models/gemma-4-31b/vllm/compose/dual/qat-awq-int4/int8.yml",
-        default_port=8032, required_engine_features=["int8_per_token_head"],
-        kvcalc_key="gemma-4-31b:gemma-dual-int8",
-        status="experimental",
-        status_note="Gemma-4-31B cyankiwi QAT-AWQ-INT4 (compressed-tensors, lm_head bf16), dual TP=2 int8-PTH KV @262K, stock vLLM v0.24.0 OVERLAY-FREE. Live-validated 2026-07-01: serves 267K KV pool, coherent, streaming multi-tool 3/3 (all args, no <|tool_call> leak). tie_weights dodged (lm_head excluded; util 0.965 for the bf16 lm_head's ~0.3 GiB), #40391 KV page-align NATIVE in v0.24.0 (no overlay), gemma4 tool+reasoning parsers native (#45588). MTP DISABLED — Gemma-4 MTP×tool-calling is broken on v0.24.0 (upstream vLLM #39043; MTP fix #42006 closed-unmerged); re-enable when a stable vLLM ships the fix (see compose caveat). Supersedes the autoround/qat-w4a16 duals for v0.24.0. NIAH/soak/bench pending.",
+        engine="vllm-stable", drafter=None, kv_format="bf16",
+        tp=2, max_ctx=229376, max_num_seqs=2, mem_util=0.95,
+        compose_path="models/gemma-4-31b/vllm/compose/dual/qat-awq-int4/base.yml",
+        default_port=8032,
+        kvcalc_key="gemma-4-31b:gemma-dual",
+        status="caveats",
+        status_note="Gemma-4-31B cyankiwi QAT-AWQ-INT4 (compressed-tensors, lm_head bf16), dual TP=2 BF16 KV @224K, stock vLLM v0.24.0 OVERLAY-FREE — the consolidation 31b (folds onto vllm-stable, retires the 31b's vllm-gemma-stable dependence). BF16 (not int8-PTH): on v0.24.0 int8-PTH allocates 262K but SILENTLY craters recall past ~32K (needs #40391, open/conflicting upstream — verified 2026-07-01, both cyankiwi + w4a16 crater identically; the SAME cyankiwi weights on v0.22.0+#40391 recall clean to 112K+). bf16 KV is overlay-free + no cliff. rebench-full VALIDATED 2026-07-02 @0.95/229376: verify-full 9/9 (tools+streaming-tool-calls+reasoning clean, MTP-off), verify-stress ALL 5 ceiling rungs to 210K (91%) with healthy VRAM margin 1162MB>1024 (the 0.97/245K thin-margin flag is resolved at 0.95/224K), bench decode ~59 TPS (CV 0.1%, TTFT 69ms), soak PASS (0 err · 0 MiB growth · 0/100 silent · p50 58.7 · 99.6% retention). tie_weights dodged (lm_head excluded), gemma4 tool+reasoning parsers native (#45588). CAVEATS: (1) MTP DISABLED — Gemma-4 MTP×tool-calling broken on v0.24.0 (vLLM #39043; #42006 closed-unmerged); (2) ~224K ceiling (bf16 ~2×/tok vs int8-PTH's 262K) — int8-PTH+#40391 (262K) returns free when #40391 merges. Supersedes gemma-int8-mtp/gemma-bf16-mtp/qat-w4a16 for v0.24.0. 8-pack deferred (maintainer call).",
     ),
 
     # Gemma-4-31B unsloth QAT W4A16 (compressed-tensors int4) — QAT-int4 fidelity alt to
@@ -546,8 +550,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/vllm/compose/dual/qat-w4a16/int8.yml",
         default_port=8033, required_engine_features=["int8_per_token_head"],
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="Gemma-4-31B unsloth QAT W4A16 (compressed-tensors int4) + int8-PTH KV (#40391) + assistant MTP n=4, dual TP=2 @262K. Boots clean on stock vllm-gemma-stable (NO #44494 workaround — tower-based Gemma4ForConditionalGeneration, unlike the 12B unified arch). 8-pack A/B 2026-06-07: 109/150 vs the autoround-int4 int8.yml's 105 (+4, within ±5-7 8-pack noise ≈ tie; real instructfollow edge IF 15-vs-8 offset by hermes/cli/TC/RM). WEAKER spec-decode though: MTP accept-len ~2.3 (n=3, the n-swept default) vs autoround's ~3.9 → less speedup. n-swept @370W: n2 72.9/86.1 · n3 74.0/87.7 · n4 71.6/87.8 (all within ~3%; n=3 = top narr + tied code + ~20% less drafting → set as the default vs autoround's n=4, since the QAT-int4's fast acceptance decay favors a lower n). Still slower than autoround (106/139 @230W — power not matched; the AL gap is the clean signal). Comparable QUALITY but slower — autoround-int4 (gemma-int8-mtp) stays the clear default. NIAH/soak not yet run.",
+        status="deprecated",
+        status_note="DEPRECATED 2026-07-02 (v0.24.0 consolidation): QAT-int4 data point on vllm-gemma-stable v0.22.0, superseded by vllm/gemma-31b-dual (bf16, stock v0.24.0) as the single dual slug. Kept for history. ORIGINAL NOTE: Gemma-4-31B unsloth QAT W4A16 (compressed-tensors int4) + int8-PTH KV (#40391) + assistant MTP n=4, dual TP=2 @262K. Boots clean on stock vllm-gemma-stable (NO #44494 workaround — tower-based Gemma4ForConditionalGeneration, unlike the 12B unified arch). 8-pack A/B 2026-06-07: 109/150 vs the autoround-int4 int8.yml's 105 (+4, within ±5-7 8-pack noise ≈ tie; real instructfollow edge IF 15-vs-8 offset by hermes/cli/TC/RM). WEAKER spec-decode though: MTP accept-len ~2.3 (n=3, the n-swept default) vs autoround's ~3.9 → less speedup. n-swept @370W: n2 72.9/86.1 · n3 74.0/87.7 · n4 71.6/87.8 (all within ~3%; n=3 = top narr + tied code + ~20% less drafting → set as the default vs autoround's n=4, since the QAT-int4's fast acceptance decay favors a lower n). Still slower than autoround (106/139 @230W — power not matched; the AL gap is the clean signal). Comparable QUALITY but slower — autoround-int4 (gemma-int8-mtp) stays the clear default. NIAH/soak not yet run.",
     ),
 
     # Gemma-4-12B (gemma4_unified arch — vLLM PR #44429, merged 2026-06-03),
@@ -565,7 +569,7 @@ COMPOSE_REGISTRY = {
     # fits the full 262144, so the bases bought nothing).
     "vllm/gemma-12b-dual-bf16-mtp": _entry(
         model="gemma-4-12b", weights_variant="bf16", workload="fast-chat",
-        engine="vllm-gemma4-unified", drafter="gemma-12b-it-assistant", kv_format="bf16",
+        engine="vllm-stable", drafter=None, kv_format="bf16",  # v0.24.0: gemma4_unified native (#44429) → vllm-stable; MTP off (Gemma-4 MTP×tools broken #39043/#42006)
         tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.90,
         compose_path="models/gemma-4-12b/vllm/compose/dual/bf16/mtp.yml",
         default_port=8036,
@@ -718,7 +722,7 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/gemma-26ba4b-dual": _entry(
         model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat",
-        engine="vllm-stable", drafter="gemma-26b-it-assistant", kv_format="bf16",
+        engine="vllm-stable", drafter=None, kv_format="bf16",  # MTP off on v0.24.0 (Gemma-4 MTP×tools broken, vLLM #39043/#42006)
         tp=2, max_ctx=262144, max_num_seqs=256, mem_util=0.92,
         compose_path="models/gemma-4-26b-a4b/vllm/compose/dual/awq/mtp.yml",
         default_port=8041,
@@ -840,11 +844,12 @@ DEFAULTS = {
     # sm_86 (vllm/gemma-mtp-tp1 deprecated 2026-05-31) and no bf16 single compose
     # ships. Single-card Gemma → beellama/gemma-dflash (the curated walk picks it).
     ("gemma-4-31b", "beellama", "single"): "beellama/gemma-dflash",
-    # Dual default is gemma-int8-mtp: full 262K + vision + 4 streams (the full-context
-    # priority). It rides v0.21.0 + the vendored #40391 per-head-KV overlay (the one
-    # gemma config that can't follow stable). gemma-bf16-mtp stays as the stable v0.22.0
-    # no-overlay 32K fallback — kept, not deprecated, just no longer the default.
-    ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-int8-mtp",
+    # Dual default is gemma-31b-dual: cyankiwi bf16 @224K on STOCK vLLM v0.24.0, OVERLAY-FREE
+    # (⚠️ Production w/ caveats, validated 2026-07-02 — verify-full 9/9 + verify-stress to 210K with
+    # healthy VRAM margin + soak PASS). Supersedes the v0.22.0 gemma-int8-mtp (int8-PTH+#40391, 262K),
+    # now DEPRECATED: int8-PTH silently craters recall on v0.24.0 (#40391 open/unmerged upstream) — the
+    # 262K int8-PTH path returns when #40391 merges. bf16 trades ~224K vs 262K for zero overlays.
+    ("gemma-4-31b", "vllm", "dual"): "vllm/gemma-31b-dual",
     ("gemma-4-26b-a4b", "vllm", "single"): "vllm/gemma-26ba4b-single",
     ("gemma-4-26b-a4b", "vllm", "dual"): "vllm/gemma-26ba4b-dual",
     ("qwen3.6-35b-a3b", "vllm", "single"): "vllm/qwen-a3b-preview-single",

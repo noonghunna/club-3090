@@ -11,12 +11,16 @@ supported_model_families:
   - dense
   - gemma4-swa-dense
   - gemma4-swa-moe
+  - gemma4-unified   # Gemma-4-12B unified arch — NATIVE in v0.24.0 (PR #44429 merged) → folds off
+                     # the ephemeral vllm-gemma4-unified image onto this engine (2026-07-01).
   - qwen3-next-hybrid
   - qwen3-next-moe
 features:
-  int8_per_token_head: true    # v0.24.0: #40391 KV page-align is NATIVE (overlay-only on v0.22.0) →
-                               # gemma int8-PTH serves overlay-free. Validated 2026-07-01 (gemma-31b-dual
-                               # cyankiwi @262K, no overlay); qwen3-next was already native.
+  int8_per_token_head: true    # NATIVE for qwen3-next (uniform head dims) since v0.22.0 — that's why the
+                               # flag is true. NOT correct for Gemma-4 (hetero heads): on v0.24.0 int8-PTH
+                               # allocates the pool but SILENTLY craters recall past ~32K (needs #40391,
+                               # open/conflicting upstream) → gemma-31b-dual ships BF16 here, not int8-PTH.
+                               # (verified 2026-07-01; corrects the earlier "gemma native @262K" claim.)
   turboquant_3bit_nc: false
   marlin_pad_sub_tile_n: false
   qwen3_coder_tool_parser: false
@@ -25,10 +29,11 @@ supported_kv_formats:
   - fp16
   - fp8_e4m3
   - fp8_e5m2
-  - int8_per_token_head   # NATIVE: uniform-head-dim models (qwen3-next) since v0.22.0; Gemma-4
-                          # (hetero head dims) needed the #40391 overlay on v0.22.0, but #40391 landed
-                          # NATIVE in v0.24.0 — so gemma int8-PTH now serves overlay-free on this engine
-                          # (validated 2026-07-01, gemma-31b-dual cyankiwi @262K). features flag = true.
+  - int8_per_token_head   # NATIVE for uniform-head-dim models (qwen3-next) since v0.22.0. Gemma-4 (hetero
+                          # head dims) needs the #40391 page-align overlay for CORRECT recall — and #40391 is
+                          # NOT native in v0.24.0 (it allocates the pool but recall craters past ~32K). So
+                          # Gemma-4 uses BF16 KV on THIS engine (gemma-31b-dual); int8-PTH here = qwen3-next
+                          # only. Gemma int8-PTH+#40391 (262K) stays on vllm-gemma-stable. (corrected 2026-07-01)
 supported_drafters:
   - mtp
   - mtp_assistant

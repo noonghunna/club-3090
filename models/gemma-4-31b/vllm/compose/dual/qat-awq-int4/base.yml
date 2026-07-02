@@ -3,15 +3,23 @@
 #   Model:     Gemma 4 31B — cyankiwi QAT-AWQ INT4 (compressed-tensors, lm_head bf16)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   none — MTP DISABLED on v0.24.0 (see the ⏸️ MTP caveat block below)
-#   KV:        int8_per_token_head (1 byte/token — compressed-tensors can't do fp8 KV; TurboQuant is arch-blocked on Gemma-4)
+#   KV:        bf16 (engine-default; overlay-free — no #40391, no cliff)
 #   Vision:    yes
-#   Max ctx:   262K native default (dual-card max-ctx rule) @ 4-stream cap
+#   Max ctx:   229376 (~224K) — bf16 KV pool ceiling on 2× 3090 @ util 0.95 (est. ~237K tok;
+#              ship below it for a healthy VRAM margin). Overridable via MAX_MODEL_LEN.
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 Experimental
-#   Caveats:   MTP (speculative decoding) is DISABLED on vLLM v0.24.0 — Gemma-4 MTP×tool-calling
-#              is broken upstream (vLLM #39043; MTP fix #42006 closed-unmerged). Plain chat + tools
-#              (without MTP) work perfectly. Re-enable when a stable vLLM ships the fix — see block below.
-#   Best for:  The Gemma-4-31B dual on v0.24.0 — overlay-free, vision + tools + 262K long-context. ⭐
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   (1) MTP (speculative decoding) DISABLED on vLLM v0.24.0 — Gemma-4 MTP×tool-calling
+#              is broken upstream (vLLM #39043; MTP fix #42006 closed-unmerged); plain chat + tools
+#              (without MTP) work. Re-enable when a stable vLLM ships the fix — see block below.
+#              (2) Context ceiling ~224K (bf16 KV is ~2×/token vs int8-PTH's 262K) — the overlay-free
+#              trade for retiring the 31b's vllm-gemma-stable dependence. int8-PTH+#40391 (262K)
+#              returns FREE when PR #40391 merges upstream.
+#   Quality:   rebench-full 2026-07-02 @0.95/229376: verify-full 9/9 (tools+streaming-tool-calls+
+#              reasoning clean, MTP-off) · verify-stress all 5 ceiling rungs to 210K (91%, VRAM
+#              margin 1162MB>1024 ✓) · bench decode ~59 TPS (CV 0.1%, TTFT 69ms) · soak PASS
+#              (0 err · 0 MiB growth · 0/100 silent · p50 58.7 · 99.6% retention). 8-pack deferred.
+#   Best for:  The Gemma-4-31B dual on v0.24.0 — OVERLAY-FREE (stock vllm-stable), vision + tools. ⭐
 # ---------------------------------------------------------------------------
 # Gemma-4-31B (cyankiwi QAT-AWQ-INT4) on 2× RTX 3090 TP=2, stock vLLM v0.24.0.
 #
@@ -20,37 +28,36 @@
 # lm_head) raises NotImplementedError at model init. cyankiwi's compressed-tensors
 # checkpoint keeps lm_head EXCLUDED from quant (bf16), so the tie dispatches to the
 # unquantized path → boots clean. QAT-int4 is also ≥ AutoRound-int4 fidelity (§4a).
-# The bf16 lm_head costs ~0.3 GiB, so util defaults to 0.965 to hold the full 262K.
 #
-# OVERLAY-FREE on v0.24.0 (this is the whole point of the migration):
-#   • #40391 (per-token-head KV page-align) — NATIVE in v0.24.0. int8-PTH allocates
-#     the full 262K pool with no page-size crash; the vendored overlay is GONE.
-#   • #42006 (MTP streaming multi-tool) — not needed here (MTP disabled, see below).
-#   • gemma4 tool + reasoning parsers — native ParserEngine (#45588). Streaming
-#     multi-tool validated clean (all args, no <|tool_call> leak) on stock v0.24.0.
+# WHY bf16 KV (this is the whole point of the v0.24.0 consolidation):
+#   bf16 is the engine-default KV — it needs NO overlay. Gemma-4's sliding_window=1024
+#   windows most layers, so bf16 KV is cheap enough to reach ~224–250K on 2× 3090.
+#   int8-PTH would give the full 262K but needs the #40391 page-align overlay, which is
+#   NOT native in v0.24.0 (it boots but SILENTLY craters recall past ~32K — verified
+#   2026-07-01, both cyankiwi + w4a16 checkpoints; PR #40391 is open/conflicting upstream).
+#   So the overlay-free 31b ships bf16; int8-PTH returns free when #40391 merges.
+#   (fp8 KV is dead on Gemma-4 Ampere: sm_86 lacks the fp8e4nv kernel; TurboQuant is
+#   arch-blocked — heterogeneous head dims force TRITON_ATTN, which rejects TQ dtypes.)
 #
 # ──────────────────────────────────────────────────────────────────────────
 # ⏸️ MTP (speculative decoding) DISABLED on v0.24.0 — re-enable when upstream lands.
 #   Why: Gemma-4 MTP × tool-calling is broken on stock v0.24.0 — with spec-decode ON,
 #   tool calls emit <pad> / leak raw <|tool_call> tokens instead of parsed calls.
-#   (Plain chat is fine; tools WITHOUT MTP are fine — verified by A/B on this rig
-#   2026-07-01: MTP-off → tools PASS, MTP-on → tools FAIL.) Root cause = upstream
-#   vLLM #39043; the MTP fix (#42006) is closed-unmerged and NOT in v0.24.0.
-#   Re-enable trigger: a stable vLLM release carrying the #39043 / #42006 Gemma-4
-#   tool-call + MTP fixes. Check before re-enabling:
+#   (Plain chat is fine; tools WITHOUT MTP are fine — A/B-verified on this rig 2026-07-01:
+#   MTP-off → tools PASS, MTP-on → tools FAIL.) Root cause = upstream vLLM #39043; the
+#   MTP fix (#42006) is closed-unmerged and NOT in v0.24.0.
+#   Re-enable trigger: a stable vLLM release carrying the #39043 / #42006 fixes. Check:
 #     gh api repos/vllm-project/vllm/issues/39043 --jq '.state, .state_reason'
 #     gh api repos/vllm-project/vllm/pulls/42006  --jq '.state, .merged_at'
-#   Then restore the two --speculative-config lines below + re-run a streaming
-#   multi-tool test (must return all args, no leak) before shipping:
+#   Then add the two --speculative-config lines + re-run a streaming multi-tool test
+#   (must return all args, no leak) before shipping:
 #     - --speculative-config
 #     - '{"model":"/root/.cache/huggingface/gemma-4-31b-it-assistant","num_speculative_tokens":${SPEC_N_MAX:-3}}'
 # ──────────────────────────────────────────────────────────────────────────
 #
 # Companion composes:
-#   single (TP=1) — Gemma-4-31B is DUAL-ONLY on 24 GB. Weights fit a single card but
-#                   int8-PTH KV leaves only a few-K ctx, and TurboQuant KV (the only
-#                   sub-byte option) is arch-blocked on Gemma-4 (heterogeneous head
-#                   dims force TRITON_ATTN, which rejects TQ dtypes). Needs ≥32 GB.
+#   single (TP=1) — Gemma-4-31B is DUAL-ONLY on 24 GB (weights fit a single card but leave
+#                   only a few-K ctx). Needs ≥32 GB for single-card long-context.
 #
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
@@ -72,7 +79,7 @@ services:
       - ../../../cache/triton_qatawq:/root/.triton/cache
       # NVLink auto-detection — runs inside container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
-      # NO overlay mounts — #40391 (KV) native in v0.24.0; #42006 (MTP tool) N/A (MTP off).
+      # NO overlay mounts — overlay-free on stock v0.24.0 (bf16 KV needs no patch).
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -101,7 +108,6 @@ services:
       - -c
       - |
         # Overlay-free on v0.24.0 — no boot-time patch apply. Just NVLink autodetect + serve.
-        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
         if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
           exec vllm serve "$$@"
@@ -124,30 +130,25 @@ services:
       - "${TP:-2}"
       - --pipeline-parallel-size
       - "${PP:-1}"
-      # ---- KV format ----
-      # int8_per_token_head (1 byte/token) — the only sub-fp16 KV that works on Gemma-4:
-      #   • compressed-tensors weights can't take fp8 KV;
-      #   • fp8_e4m3/e5m2 PTH need Ada/Blackwell (sm_86 lacks the fp8e4nv Triton kernel);
-      #   • TurboQuant (turboquant_*_nc) is arch-blocked — Gemma-4's heterogeneous head
-      #     dims force TRITON_ATTN, which rejects TQ KV ("kv_cache_dtype not supported").
-      # #40391 page-align is NATIVE in v0.24.0 — no overlay needed.
+      # ---- KV format: bf16 (engine-default, overlay-free). `auto` resolves to the
+      #      model dtype (bf16). int8-PTH is NOT used here (needs #40391, unmerged →
+      #      silent recall cliff on v0.24.0). Ada/Blackwell users MAY override
+      #      KV_DTYPE=fp8_per_token_head; sm_86 Ampere cannot (no fp8e4nv kernel).
       - --kv-cache-dtype
-      - "${KV_DTYPE:-int8_per_token_head}"
-      # ---- max-model-len (TP=2, INT8 PTH KV) — DUAL-CARD RULE: prioritize max context
-      #      over concurrency (docs/DUAL_CARD.md). --max-num-seqs is a CAP, not a
-      #      reservation; the int8-PTH pool holds a single 262K request with room, so the
-      #      262144 native default is ~free for short-request concurrency.
+      - "${KV_DTYPE:-auto}"
+      # ---- max-model-len: bf16 KV pool ceiling on 2× 3090 @ util 0.95 is ~237K tok;
+      #      ship at 224K for VRAM-margin headroom (verify-stress flagged a thin margin
+      #      at 91% fill on the tighter 0.97/245K config). Raise MAX_MODEL_LEN toward
+      #      ~237K only if you also lower it below the measured pool at boot.
       - --max-model-len
-      - "${MAX_MODEL_LEN:-${CTX:-262144}}"
-      # 0.965 (not 0.95): cyankiwi's bf16 lm_head costs ~0.3 GiB; 0.965 holds the full
-      # 262K int8-PTH pool (measured GPU KV cache ~267K tok). Drop for vision-heavy 262K.
+      - "${MAX_MODEL_LEN:-${CTX:-229376}}"
       - --gpu-memory-utilization
-      - "${GPU_MEMORY_UTILIZATION:-0.965}"
-      # Lower --max-num-seqs only to GUARANTEE long requests are never preempted:
-      #   4 = native ctx, 4-wide for shorter reqs · 2 = two un-preempted long agents · 1 = one long request
-      # ⚠️ vision + near-max ctx: drop max-num-seqs/mem-util (thin headroom at 262K).
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      # bf16 KV is ~2×/token vs int8-PTH → tighter pool. --max-num-seqs is a CAP:
+      #   2 = one un-preempted long-ctx agent (or 2 short) · 1 = single long request
+      # ⚠️ vision + near-max ctx: drop max-num-seqs/mem-util (thin headroom near 224K).
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-4}"
+      - "${MAX_NUM_SEQS:-2}"
       # Vision tower: max_tokens_per_mm_item=2496 must fit in batched tokens.
       - --max-num-batched-tokens
       - "4096"

@@ -7,7 +7,9 @@
 #   Vision:    yes
 #   Max ctx:   262K native default (dual-card max-ctx rule) @ 4-stream cap
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 Experimental
+#   Status:    🗑️ Deprecated
+#   Caveats:   Superseded by vllm/gemma-31b-dual (cyankiwi bf16, stock v0.24.0) in the v0.24.0 consolidation
+#              (2026-07-02) — this was the v0.22.0 QAT-int4 int8-PTH+#40391 data point. Kept for history.
 #   Quality:   8-pack 109/150 (73%) thinking-OFF (2026-06-07) — TC12·IF15·SO14·DE11·RM13·BF15·HA12·CLI17.
 #                +4 vs the autoround-int4 `int8.yml` (105/150) — within ±5-7 8-pack noise (≈ a quality TIE),
 #                driven by a real instructfollow edge (IF 15 vs autoround's think-OFF 8) offset by
