@@ -25,7 +25,7 @@ AND the control engine and compare DROP rates — that's the streaming A/B.
 
 Usage:
   python3 scripts/stream-toolcall-probe.py --url http://localhost:8010 \
-      --model qwen3.6-27b-autoround --thinking on --tool-choice required --repeat 3
+      --model qwen3.6-27b --thinking on --tool-choice required --repeat 3
 
   # A/B: run twice (control vs candidate) and diff the DROP counts.
 """

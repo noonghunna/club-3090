@@ -28,7 +28,7 @@ On a single RTX 3090 running Qwen3.6-27B AutoRound INT4 dense via vLLM long-text
 
 ```
 --model /root/.cache/huggingface/qwen3.6-27b-autoround-int4
---served-model-name qwen3.6-27b-autoround
+--served-model-name qwen3.6-27b
 --quantization auto_round
 --dtype float16
 --tensor-parallel-size 1
@@ -78,7 +78,7 @@ git clone https://github.com/andthattoo/structured-cot.git ~/structured-cot
 # 4. Run HE+ 164
 /tmp/structured-cot-venv/bin/python fsm_vs_free_eval.py \
   --base-url http://localhost:8020/v1 \
-  --model qwen3.6-27b-autoround \
+  --model qwen3.6-27b \
   --tokenizer $MODEL_DIR/qwen3.6-27b-autoround-int4 \
   --dataset humaneval --n-problems 164 --only all \
   --grammar-file grammars/fsm_grammar_no_open.gbnf \
@@ -88,7 +88,7 @@ git clone https://github.com/andthattoo/structured-cot.git ~/structured-cot
 # 5. Run LCB v6 50
 /tmp/structured-cot-venv/bin/python fsm_vs_free_eval.py \
   --base-url http://localhost:8020/v1 \
-  --model qwen3.6-27b-autoround \
+  --model qwen3.6-27b \
   --tokenizer $MODEL_DIR/qwen3.6-27b-autoround-int4 \
   --dataset livecodebench --lcb-version release_v6 \
   --date-cutoff 2025-01-01 --platform leetcode \

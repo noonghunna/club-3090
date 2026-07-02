@@ -81,7 +81,7 @@ def wait_models(base_url: str, timeout_s: int) -> str:
     while time.time() < deadline:
         status, body = get_json(models_url, 10)
         if status == 200 and isinstance(body, dict) and body.get("data"):
-            return body["data"][0].get("id", "qwen3.6-27b-autoround")
+            return body["data"][0].get("id", "qwen3.6-27b")
         last = str(body)[:200]
         time.sleep(5)
     raise SystemExit(f"[grammar-smoke] endpoint did not become ready: {last}")

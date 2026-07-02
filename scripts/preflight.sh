@@ -1190,7 +1190,7 @@ preflight_autodetect_endpoint() {
 # Why this exists (#372): report.sh autodetects container + URL + engine but NOT
 # the served model, so the verify/bench scripts fell back to MODEL=qwen3.6-27b-
 # autoround. Against a non-qwen vLLM endpoint (e.g. gemma-4-26b-a4b-awq) every
-# request 404'd ("The model `qwen3.6-27b-autoround` does not exist"). llama.cpp
+# request 404'd ("The model `qwen3.6-27b` does not exist"). llama.cpp
 # ignores the request's model field, so the same wrong default silently "worked"
 # there (#371) — which is exactly what masked the bug.
 #

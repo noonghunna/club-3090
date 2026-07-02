@@ -2,15 +2,22 @@ model_list:
   # === Current serving primaries (one GPU service runs at a time per gpu-mode;
   #     routes to the inactive backends fail until that mode is brought up) ===
 
-  # Qwen 3.6 27B (Lorbus AutoRound INT4) + MTP n=3 + fp8 KV + 262K + vision.
+  # Qwen 3.6 27B — MTP n=3 + fp8/int8-PTH KV + 262K + vision.
   # Started by `gpu-mode 27b` → vllm-qwen36-27b-dual at :8010. Stack default.
-  # NOTE: ALL 27b serving scenes (autoround / fp8 / awq / lmcache) serve under the
-  # canonical name `qwen3.6-27b-autoround` so this route matches whichever scene is
-  # brought up on :8010 — do NOT give a 27b compose a scene-specific --served-model-name
-  # (see #482). The quant differs by compose path/port, not by served name.
+  # NOTE: EVERY 27b scene (autoround / fp8 / awq / lmcache) serves the neutral shared
+  # primary `qwen3.6-27b` (+ its own quant-specific name as an alias), so this route
+  # matches whichever scene is on :8010 regardless of quant (#482/#490). The quant
+  # differs by compose path/port + the scene's alias, NOT by the primary name.
+  - model_name: qwen3.6-27b
+    litellm_params:
+      model: openai/qwen3.6-27b
+      api_base: http://host.docker.internal:8010/v1
+      api_key: EMPTY
+
+  # Back-compat alias (pre-2026-07 clients that hardcode the old name); same upstream.
   - model_name: qwen3.6-27b-autoround
     litellm_params:
-      model: openai/qwen3.6-27b-autoround
+      model: openai/qwen3.6-27b
       api_base: http://host.docker.internal:8010/v1
       api_key: EMPTY
 
@@ -22,12 +29,22 @@ model_list:
       api_base: http://host.docker.internal:8051/v1
       api_key: EMPTY
 
-  # Gemma 4 31B (Intel AutoRound INT4) + INT8-PTH KV @262K.
-  # Started by `gpu-mode gemma` → vllm-gemma-4-31b-mtp-int8 at :8032 (the old gemma-mtp
-  # :8030 scene was pruned; the live scene is mode_gemma_int8 on :8032).
+  # Gemma 4 31B — dual-card @262K. Started by `gpu-mode gemma` at :8032.
+  # EVERY gemma-31b scene now serves the neutral shared primary `gemma-4-31b` (+ its own
+  # quant name as an alias: qat-awq-int4 / qat-w4a16 / autoround), so this route matches
+  # whichever scene is on :8032 regardless of quant. This also repairs the prior drift:
+  # the default is now cyankiwi qat-AWQ-INT4 (bf16 KV) — it never served
+  # `gemma-4-31b-autoround`, so the old route would 404; the shared primary fixes it (#482).
+  - model_name: gemma-4-31b
+    litellm_params:
+      model: openai/gemma-4-31b
+      api_base: http://host.docker.internal:8032/v1
+      api_key: EMPTY
+
+  # Back-compat alias; same upstream.
   - model_name: gemma-4-31b-autoround
     litellm_params:
-      model: openai/gemma-4-31b-autoround
+      model: openai/gemma-4-31b
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
 

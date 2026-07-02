@@ -135,6 +135,7 @@ services:
       - --model
       - /root/.cache/huggingface/gemma-4-31b-autoround-int4
       - --served-model-name
+      - gemma-4-31b
       - gemma-4-31b-autoround
       - --tensor-parallel-size
       - "${TP:-2}"

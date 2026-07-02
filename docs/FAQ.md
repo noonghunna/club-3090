@@ -417,7 +417,7 @@ You'd need different ports per variant. Set `PORT=9876` in `.env` (or pass inlin
 
 ### Will this work behind Open WebUI?
 
-Yes. Add a connection in Open WebUI's Settings → Connections → OpenAI: base URL `http://localhost:8020/v1`, any non-empty API key, model `qwen3.6-27b-autoround`. See [docs/EXAMPLES.md](EXAMPLES.md#open-webui).
+Yes. Add a connection in Open WebUI's Settings → Connections → OpenAI: base URL `http://localhost:8020/v1`, any non-empty API key, model `qwen3.6-27b`. See [docs/EXAMPLES.md](EXAMPLES.md#open-webui).
 
 ### Will this work with VS Code GitHub Copilot LLM Gateway?
 

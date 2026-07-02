@@ -518,7 +518,7 @@ MEASURE_REPORT_MD = (
     "\n"
     "## Meta\n"
     "\n"
-    "- **Served as:** `qwen3.6-27b-autoround` from `/mnt/models/x`\n"
+    "- **Served as:** `qwen3.6-27b` from `/mnt/models/x`\n"
     "- **Model arch:** qwen3_next (Qwen3NextForCausalLM)\n"
     "- **vLLM image:** `vllm/vllm-openai:v0.22.0`\n"
     "- **Container:** `vllm-qwen36-dual`\n"
@@ -2877,7 +2877,7 @@ class TestMeasureVsBarData:
             assert vsbar.measured.narr_tps == 150.0
             assert vsbar.measured.code_tps == 40.0
             assert vsbar.measured.quality_8pk == "100/150"
-            assert vsbar.measured.model == "qwen3.6-27b-autoround"
+            assert vsbar.measured.model == "qwen3.6-27b"
             # Matched the curated bar (qwen3.6-27b vllm/dual @ 174/42) by
             # canon-model AND the run's engine-family (vllm, resolved from the
             # REPORT.md Meta Container/vLLM-image) — NOT the single-card

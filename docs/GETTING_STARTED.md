@@ -19,7 +19,7 @@ bash scripts/launch.sh --variant qwen3.6-27b/default
 # 4. Test it
 curl -sf http://localhost:8020/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3.6-27b-autoround","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":200}'
+  -d '{"model":"qwen3.6-27b","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":200}'
 ```
 
 If you see `Paris` in the response, you're up and running.

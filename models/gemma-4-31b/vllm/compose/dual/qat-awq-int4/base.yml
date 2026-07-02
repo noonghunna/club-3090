@@ -125,6 +125,7 @@ services:
       - --model
       - /root/.cache/huggingface/gemma-4-31b-qat-awq-int4
       - --served-model-name
+      - gemma-4-31b
       - gemma-4-31b-qat-awq-int4
       - --tensor-parallel-size
       - "${TP:-2}"

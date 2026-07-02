@@ -1,6 +1,6 @@
 # Client examples
 
-Copy-pasteable snippets for talking to the club-3090 endpoint. The default URL is `http://localhost:8020`; the served model name is `qwen3.6-27b-autoround` (vLLM) or `qwen3.6-27b-autoround` (llama.cpp via the `--alias` flag we set).
+Copy-pasteable snippets for talking to the club-3090 endpoint. The default URL is `http://localhost:8020`; the served model name is `qwen3.6-27b` (vLLM) or `qwen3.6-27b` (llama.cpp via the `--alias` flag we set).
 
 All examples assume:
 
@@ -36,7 +36,7 @@ The smoke-test examples below use `max_tokens: 200` because they ask short quest
 curl -sf http://localhost:8020/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "qwen3.6-27b-autoround",
+    "model": "qwen3.6-27b",
     "messages": [{"role": "user", "content": "Capital of France?"}],
     "max_tokens": 200
   }' | jq -r '.choices[0].message.content'
@@ -60,7 +60,7 @@ from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8020/v1", api_key="not-needed")
 
 resp = client.chat.completions.create(
-    model="qwen3.6-27b-autoround",
+    model="qwen3.6-27b",
     messages=[{"role": "user", "content": "Write a haiku about tensor cores."}],
     max_tokens=120,
     temperature=0.6,
@@ -73,7 +73,7 @@ print(resp.choices[0].message.content)
 
 ```python
 stream = client.chat.completions.create(
-    model="qwen3.6-27b-autoround",
+    model="qwen3.6-27b",
     messages=[{"role": "user", "content": "Explain attention in 100 words."}],
     max_tokens=300,
     stream=True,
@@ -105,7 +105,7 @@ tools = [
 ]
 
 resp = client.chat.completions.create(
-    model="qwen3.6-27b-autoround",
+    model="qwen3.6-27b",
     messages=[{"role": "user", "content": "What's the weather in Tokyo?"}],
     tools=tools,
     tool_choice="auto",
@@ -131,7 +131,7 @@ from pathlib import Path
 img_b64 = base64.b64encode(Path("photo.png").read_bytes()).decode()
 
 resp = client.chat.completions.create(
-    model="qwen3.6-27b-autoround",
+    model="qwen3.6-27b",
     messages=[
         {
             "role": "user",
@@ -154,7 +154,7 @@ print(resp.choices[0].message.content)
 
 ```python
 resp = client.chat.completions.create(
-    model="qwen3.6-27b-autoround",
+    model="qwen3.6-27b",
     messages=[{"role": "user", "content": "Solve: 7x + 14 = 49. Show your reasoning."}],
     max_tokens=2048,  # FREE thinking on; 2048 fits easy math comfortably. Bump to 8192 for harder reasoning.
     extra_body={"chat_template_kwargs": {"enable_thinking": True}},
@@ -179,7 +179,7 @@ resp = requests.post(
     "http://localhost:8020/v1/chat/completions",
     headers={"Content-Type": "application/json"},
     json={
-        "model": "qwen3.6-27b-autoround",
+        "model": "qwen3.6-27b",
         "messages": [{"role": "user", "content": "What is 17 × 23?"}],
         "max_tokens": 50,
     },
@@ -194,7 +194,7 @@ For streaming, use `stream=True` and parse SSE lines:
 with requests.post(
     "http://localhost:8020/v1/chat/completions",
     headers={"Content-Type": "application/json"},
-    json={"model": "qwen3.6-27b-autoround", "messages": [...], "stream": True, "max_tokens": 200},
+    json={"model": "qwen3.6-27b", "messages": [...], "stream": True, "max_tokens": 200},
     stream=True,
 ) as r:
     for line in r.iter_lines():
@@ -237,7 +237,7 @@ tools = [
 
 # First turn: model decides to call the tool
 resp = client.chat.completions.create(
-    model="qwen3.6-27b-autoround",
+    model="qwen3.6-27b",
     messages=[{"role": "user", "content": "What's the weather in Paris?"}],
     tools=tools,
     tool_choice="auto",
@@ -255,7 +255,7 @@ messages = [
 ]
 
 resp2 = client.chat.completions.create(
-    model="qwen3.6-27b-autoround",
+    model="qwen3.6-27b",
     messages=messages,
     tools=tools,
     max_tokens=512,
@@ -281,7 +281,7 @@ const client = new OpenAI({
 });
 
 const resp = await client.chat.completions.create({
-  model: "qwen3.6-27b-autoround",
+  model: "qwen3.6-27b",
   messages: [{ role: "user", content: "Quicksort in Rust, please." }],
   // Shipped composes default enable_thinking:false → this answers with no <think> block; 4096 is generous.
   // To get reasoning, add extra_body chat_template_kwargs {"enable_thinking": true} and budget 8192+ (800 traps mid-think).
@@ -297,7 +297,7 @@ Streaming:
 
 ```ts
 const stream = await client.chat.completions.create({
-  model: "qwen3.6-27b-autoround",
+  model: "qwen3.6-27b",
   messages: [{ role: "user", content: "..." }],
   max_tokens: 300,
   stream: true,
@@ -319,7 +319,7 @@ Settings → Connections → Add OpenAI Connection:
 
 - **Base URL:** `http://localhost:8020/v1`  *(or `http://<host-ip>:8020/v1` from another machine on your LAN — see [Security](#security-note-network-binding))*
 - **API Key:** anything (e.g. `sk-local`) — the server doesn't check it
-- **Model:** `qwen3.6-27b-autoround`
+- **Model:** `qwen3.6-27b`
 
 Vision, tool calling, streaming all work through the WebUI's standard flows.
 
@@ -330,7 +330,7 @@ In the Cline settings panel:
 - **API Provider:** OpenAI Compatible
 - **Base URL:** `http://localhost:8020/v1`
 - **API Key:** `sk-local` (any non-empty string)
-- **Model ID:** `qwen3.6-27b-autoround`
+- **Model ID:** `qwen3.6-27b`
 
 Cline sends large tool returns (file reads, web fetches) up to ~25K tokens. As of 2026-05-02 PM (Genesis v7.69 dev tip + vllm#35975 backport), `vllm/long-text` (180K balanced + MTP K=3) handles these cleanly — 33K AND 50K tool-prefill stress PASS, and **60K single-prompt prefill PASS** (the Cliff 2 wall closed at 60K). For one-shot prompts beyond 60K, switch to `llamacpp/default` (262K vanilla, slower), `llamacpp/mtp` (131K + MTP, ~60 code TPS, single-card, 7/7 verify-stress incl. 91K needle), or `dual-turbo.yml` (262K + 4 streams). See [docs/SINGLE_CARD.md](SINGLE_CARD.md), [docs/CLIFFS.md](CLIFFS.md), and the [VRAM diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs).
 
@@ -339,8 +339,8 @@ Cline sends large tool returns (file reads, web fetches) up to ~25K tokens. As o
 Settings → Models → Add OpenAI-compatible:
 
 - **Override OpenAI Base URL:** `http://localhost:8020/v1`
-- **Verify config:** click "Verify" — should list `qwen3.6-27b-autoround`
-- **Model name:** `qwen3.6-27b-autoround`
+- **Verify config:** click "Verify" — should list `qwen3.6-27b`
+- **Model name:** `qwen3.6-27b`
 
 Cursor's "Apply" feature works against this model since tool-calling is supported.
 

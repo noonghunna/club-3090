@@ -143,6 +143,7 @@ services:
       - --model
       - /root/.cache/huggingface/qwen3.6-27b-fp8
       - --served-model-name
+      - qwen3.6-27b
       - qwen3.6-27b-autoround
       - --quantization
       - fp8
