@@ -762,6 +762,24 @@ COMPOSE_REGISTRY = {
         kvcalc_key="qwen3.6-35b-a3b:qwen-35b-a3b-dual",
     ),
 
+    # Agents-A1 — InternScience's 35B agentic MoE (Qwen3-Next MoE arch, OWN model
+    # per its card's base_model; NOT a qwen fine-tune slug). Official FP8-dynamic
+    # compressed-tensors checkpoint; on Ampere sm_86 vLLM serves it Marlin FP8-MoE
+    # WEIGHT-ONLY (no native FP8 compute — activation quant inert; sm_89+ runs the
+    # real checkpoint). No MTP head shipped (safetensors-verified) → drafter-free.
+    # T2 producer-zero validation 2026-07-03: brought via pull.sh route-C sibling
+    # swap + generate-compose (first model onboarded through the lane end-to-end).
+    "vllm/agents-a1-dual": _entry(
+        model="agents-a1", weights_variant="fp8-dynamic", workload="long-ctx-single",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e5m2",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/agents-a1/vllm/compose/dual/fp8-dynamic/fp8.yml",
+        default_port=8072,
+        kvcalc_key="agents-a1:agents-a1-dual",
+        status="caveats",
+        status_note="Agents-A1 FP8-dynamic dual (TP=2) @262K — the agentic thinking-ON specialist. Full gate PASS 2026-07-03 (rebench agents-a1-fp8-dual): verify-full ✓ · bench 154.0/153.8 decode TPS (TTFT ~129ms, CV 0.1%) · verify-stress 8/8 incl. staggered NIAH exact-recall to 240K (91% of 262K, VRAM Δ0 across the ladder) · soak-continuous PASS (0 growth, 0/100 silent-empty, 99.8% retention) · 8-pack OFF 105/150 / ON 110/150 (post benchlocal #79+#81 harness). vs the qwen3.6-35b-a3b incumbent: general capability TIES (ON 110=110), ~13% slower decode (154 vs 178) — but cli-40 thinking-ON 23/40 vs 17/40 (+6, the highest cli-40 on this stack) + toolcall 15/15 (OFF). CAVEATS: (1) hermes-20 REGRESSES with thinking ON (12→9 — genuine model behavior: wrong-path rm -rf claimed as success, duplicate cron; verified not-harness), (2) Ampere = weight-only FP8 (activation quant inert), (3) not a general upgrade — reach for it on tool/CLI-agent work with thinking ENABLED (that's where the 23/40 lives). Vision retained. Dual-only (36 GB weights).",
+    ),
+
     # Qwen3.6-40B-Deckard — dense 40B uncensored community merge, llama.cpp dual.
     # First dual llama.cpp compose in the catalog. Q6_K GGUF (31 GB) requires both
     # cards; layer-split via -ts 1,1. MTP n=2 sweet spot (41.6 tok/s, 0.81 accept).

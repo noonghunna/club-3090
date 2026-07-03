@@ -394,6 +394,16 @@ DeepReinforce agentic-coding RL fine-tunes of the Qwen3-Next family (`qwen35` 9B
 
 ---
 
+## Agents-A1 (InternScience 35B agentic MoE — ⚠️ production w/ caveats)
+
+InternScience's own 35B agentic MoE (Qwen3-Next MoE architecture; card declares its OWN base — not a Qwen fine-tune slug), served from the official FP8-dynamic compressed-tensors checkpoint. **The agentic thinking-ON specialist**: ties the base qwen3.6-35b-a3b on general capability, beats it on cli-40. First model onboarded end-to-end through the Bring & Validate lane (T2 producer-zero).
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `vllm/agents-a1-dual` | @noonghunna (2× 3090 PCIe, 370/420 W) | fp8_e5m2 | 262K | **150.9 / 149.6** (decode 153.9 / 154.0, n=5, CV 0.1%, TTFT 130/131 ms) | 7.9K→4.6K t/s across 94K→240K (NIAH-rung diagnostic) | ~22.0 GB/card | 2026-07-03 | **Qwen3-Next MoE** (geometry == 35B-A3B; ~3B active), NO MTP head (safetensors-verified) → drafter-free. On sm_86 vLLM serves **Marlin FP8-MoE weight-only** (activation quant inert — sm_89+ runs the real checkpoint). verify-stress **8/8** — staggered NIAH exact-recall to **240K (91%)**, VRAM Δ0 across the ladder; soak PASS (0 growth, 0/100 silent-empty, 99.8% retention). **8-pack --full: OFF 105/150 · ON 110/150** (post benchlocal #79+#81 harness; fresh sandbox images): toolcall 15/15 OFF · IF 15/15 ON · **cli-40 thinking-ON 23/40 — the stack's highest** (base: 17/40) · hermes 12/20 OFF but **regresses to 9/20 thinking-ON** (verified model behavior). vs base 35B-A3B: general TIES (ON 110=110), decode −13% (154 vs 178) — reach for A1 on tool/CLI-agent work with thinking ENABLED. Vision retained. Dual-only (36 GB weights). |
+
+---
+
 ## Quality benches — Aider Polyglot 30
 
 Pass rate on a curated 30-exercise subset of [aider-polyglot-benchmark](https://github.com/Aider-AI/polyglot-benchmark) (5 per language across cpp/go/java/javascript/python/rust, mix of easy/medium/hard). Tests **edit-format reliability** AND **algorithmic correctness** — does the model emit diffs aider can apply, AND do the resulting tests pass.

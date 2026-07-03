@@ -1,0 +1,66 @@
+schema_version: 1
+id: agents-a1
+display_name: Agents-A1 (InternScience 35B agentic MoE)
+family: qwen3-next-moe
+# Geometry verified byte-identical to qwen3.6-35b-a3b from the checkpoint's
+# config.json (2026-07-03): InternScience builds on the Qwen3-Next MoE
+# architecture (Qwen3_5MoeForConditionalGeneration) but declares its OWN base
+# (cardData base_model -> InternScience/Agents-A1) — hence an independent
+# model entry, NOT a derivative quant slug (taxonomy call 2026-07-03; see
+# /opt/ai learnings/agents-a1.md for the T2 producer-zero provenance trail).
+hidden_size: 2048
+num_hidden_layers: 40
+# Hybrid: 10 full_attention layers (full_attention_interval=4), 30 GDN/DeltaNet
+num_gdn_layers: 30
+num_attn_layers: 10
+num_attn_heads: 16
+num_kv_heads: 2
+head_dim_attn: 256
+linear_num_v_heads: 32
+linear_num_k_heads: 16
+linear_v_head_dim: 128
+linear_k_head_dim: 128
+linear_conv_kernel_dim: 4
+max_ctx_supported: 262144
+attention_k_eq_v: false
+# MoE (config.json text_config)
+num_experts: 256
+num_experts_per_tok: 8
+moe_intermediate_size: 512
+shared_expert_intermediate_size: 512
+active_params_b: 3.0
+# config.json declares mtp_num_hidden_layers=1 (inherited arch default), but a
+# safetensors header scan (2026-07-03) shows ZERO mtp.* tensors of 62,547 keys
+# — the FP8-dynamic checkpoint ships NO MTP head. Drafter-free.
+mtp_num_hidden_layers: 0
+attn_output_gate: true
+vision_capable: true
+weights:
+  fp8-dynamic:
+    path: Agents-A1-FP8-dynamic
+    local_subdir: Agents-A1-FP8-dynamic
+    size_gb: 36.0
+    format: compressed-tensors
+    status: production
+    # InternScience's OFFICIAL FP8-dynamic quant (weights FP8 channel-static +
+    # activations FP8 dynamic per-token, llm-compressor). On Ampere sm_86 the
+    # activation half is inert — vLLM serves Marlin FP8-MoE WEIGHT-ONLY (boot
+    # log warns; validated 2026-07-03). sm_89+ exercises the real checkpoint.
+    hf_repo: InternScience/Agents-A1-FP8-dynamic
+    hf_repos:
+      - InternScience/Agents-A1-FP8-dynamic
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+default_weight_variant: fp8-dynamic
+# NO compatible drafters: no MTP head in the checkpoint (verified, above);
+# EAGLE/DFlash blocked on the Qwen3-Next family (DeltaNet rollback — stack truth).
+compatible_drafters: []
+# num_kv_heads=2 caps TP at 2 (each rank needs at least 1 KV head)
+valid_tp:
+  - 1
+  - 2
+requires_genesis: false
+# kv-calc models the qwen3-next-moe hybrid (same math as qwen3.6-35b-a3b —
+# identical geometry). No calibration rows yet; first bench row 2026-07-03.
+kv_calc_supported: true
