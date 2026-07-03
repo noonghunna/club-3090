@@ -1,0 +1,132 @@
+; ModuleID = 'LLVMDialectModule'
+source_filename = "LLVMDialectModule"
+target datalayout = "e-p3:32:32-p4:32:32-p5:32:32-p6:32:32-p7:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
+
+@global_smem = external local_unnamed_addr addrspace(3) global [0 x i8], align 16
+
+; Function Attrs: nounwind
+define ptx_kernel void @triton_(ptr addrspace(1) %0, ptr addrspace(1) %1, i32 %2, i32 %3, ptr addrspace(1) readnone captures(none) %4, ptr addrspace(1) readnone captures(none) %5) local_unnamed_addr #0 !dbg !4 {
+  %.fr3 = freeze i32 %2, !dbg !7
+  %7 = tail call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x(), !dbg !8
+  %8 = shl i32 %7, 6, !dbg !9
+  %9 = tail call i32 @llvm.nvvm.read.ptx.sreg.tid.x(), !dbg !10
+  %10 = and i32 %9, 252, !dbg !10
+  %11 = lshr exact i32 %10, 2, !dbg !10
+  %12 = or disjoint i32 %11, %8, !dbg !11
+  %13 = icmp slt i32 %12, %.fr3, !dbg !7
+  %14 = and i32 %9, 3, !dbg !12
+  %15 = mul i32 %12, 4608, !dbg !13
+  %16 = add i32 %15, 4096
+  br i1 %13, label %.split.us, label %.split
+
+.split.us:                                        ; preds = %6, %.split.us
+  %indvars.iv5 = phi i64 [ %indvars.iv.next6, %.split.us ], [ 0, %6 ]
+  %17 = phi float [ %28, %.split.us ], [ 0.000000e+00, %6 ]
+  %18 = trunc nuw nsw i64 %indvars.iv5 to i32, !dbg !14
+  %19 = or disjoint i32 %14, %18, !dbg !14
+  %20 = add i32 %16, %19, !dbg !14
+  %21 = sext i32 %20 to i64, !dbg !15
+  %22 = getelementptr half, ptr addrspace(1) %0, i64 %21, !dbg !15
+  %23 = tail call i64 asm sideeffect "mov.u64 $0, 0x0;\0A\09createpolicy.fractional.L2::evict_first.b64 $0, 1.0;", "=l"() #4, !dbg !16
+  %24 = tail call i16 asm sideeffect "mov.u16 $0, $1;\0A\09@$4 ld.global.L1::evict_first.L2::cache_hint.b16 { $0 }, [ $2 + 0 ], $3;", "=c,c,l,l,b"(i16 0, ptr addrspace(1) %22, i64 %23, i1 true) #4, !dbg !16
+  %25 = bitcast i16 %24 to half, !dbg !16
+  %26 = fpext half %25 to float, !dbg !17
+  %27 = fmul float %26, %26, !dbg !18
+  %28 = fadd float %17, %27, !dbg !19
+  %indvars.iv.next6 = add nuw nsw i64 %indvars.iv5, 4, !dbg !20
+  %29 = icmp samesign ult i64 %indvars.iv5, 252, !dbg !20
+  br i1 %29, label %.split.us, label %.split2.us, !dbg !20
+
+.split:                                           ; preds = %6, %.split
+  %indvars.iv = phi i64 [ %indvars.iv.next, %.split ], [ 0, %6 ]
+  %30 = trunc nuw nsw i64 %indvars.iv to i32, !dbg !14
+  %31 = or disjoint i32 %14, %30, !dbg !14
+  %32 = add i32 %16, %31, !dbg !14
+  %33 = sext i32 %32 to i64, !dbg !15
+  %34 = getelementptr half, ptr addrspace(1) %0, i64 %33, !dbg !15
+  %35 = tail call i64 asm sideeffect "mov.u64 $0, 0x0;\0A\09createpolicy.fractional.L2::evict_first.b64 $0, 1.0;", "=l"() #4, !dbg !16
+  %36 = tail call i16 asm sideeffect "mov.u16 $0, $1;\0A\09@$4 ld.global.L1::evict_first.L2::cache_hint.b16 { $0 }, [ $2 + 0 ], $3;", "=c,c,l,l,b"(i16 0, ptr addrspace(1) %34, i64 %35, i1 false) #4, !dbg !16
+  %indvars.iv.next = add nuw nsw i64 %indvars.iv, 4, !dbg !20
+  %37 = icmp samesign ult i64 %indvars.iv, 252, !dbg !20
+  br i1 %37, label %.split, label %.split2.us, !dbg !20
+
+.split2.us:                                       ; preds = %.split, %.split.us
+  %.us-phi = phi float [ %28, %.split.us ], [ 0.000000e+00, %.split ], !dbg !10
+  %38 = and i32 %9, 63, !dbg !10
+  %39 = or disjoint i32 %8, %38, !dbg !11
+  %40 = icmp slt i32 %39, %.fr3, !dbg !7
+  %41 = bitcast float %.us-phi to i32, !dbg !21
+  %42 = tail call i32 @llvm.nvvm.shfl.sync.bfly.i32(i32 -1, i32 %41, i32 2, i32 31), !dbg !21
+  %43 = bitcast i32 %42 to float, !dbg !21
+  %44 = fadd float %.us-phi, %43, !dbg !26
+  %45 = bitcast float %44 to i32, !dbg !21
+  %46 = tail call i32 @llvm.nvvm.shfl.sync.bfly.i32(i32 -1, i32 %45, i32 1, i32 31), !dbg !21
+  %47 = bitcast i32 %46 to float, !dbg !21
+  %48 = fadd float %44, %47, !dbg !26
+  %49 = getelementptr inbounds nuw i8, ptr addrspace(3) @global_smem, i32 %10, !dbg !27
+  store float %48, ptr addrspace(3) %49, align 4, !dbg !27
+  tail call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0), !dbg !27
+  %50 = shl nuw nsw i32 %38, 2, !dbg !27
+  %51 = getelementptr inbounds nuw i8, ptr addrspace(3) @global_smem, i32 %50, !dbg !27
+  %52 = load i32, ptr addrspace(3) %51, align 4, !dbg !27
+  %53 = sext i32 %39 to i64, !dbg !28
+  %54 = getelementptr float, ptr addrspace(1) %1, i64 %53, !dbg !28
+  %55 = and i32 %9, 192, !dbg !29
+  %56 = icmp eq i32 %55, 0, !dbg !29
+  %57 = and i1 %56, %40, !dbg !29
+  tail call void asm sideeffect "@$2 st.global.b32 [ $1 + 0 ], { $0 };", "r,l,b"(i32 %52, ptr addrspace(1) %54, i1 %57) #4, !dbg !29
+  ret void, !dbg !30
+}
+
+; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #1
+
+; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #1
+
+; Function Attrs: convergent nocallback nounwind memory(inaccessiblemem: readwrite)
+declare i32 @llvm.nvvm.shfl.sync.bfly.i32(i32, i32, i32, i32) #2
+
+; Function Attrs: convergent nocallback nounwind
+declare void @llvm.nvvm.barrier.cta.sync.aligned.all(i32) #3
+
+attributes #0 = { nounwind "nvvm.reqntid"="256" }
+attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
+attributes #2 = { convergent nocallback nounwind memory(inaccessiblemem: readwrite) }
+attributes #3 = { convergent nocallback nounwind }
+attributes #4 = { nounwind }
+
+!llvm.dbg.cu = !{!0}
+!llvm.module.flags = !{!2, !3}
+
+!0 = distinct !DICompileUnit(language: DW_LANG_C, file: !1, producer: "triton", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly)
+!1 = !DIFile(filename: "ccpsge7mfp27npsag4utjppqvmefecme7x5mpqgvibeul6aocl7n.py", directory: "/root/.cache/vllm/torch_compile_cache/torch_aot_compile/61bda05feca29378847c32f031efa5c8dba258f38b0176a06a3e99e41df8ca50/inductor_cache/cp")
+!2 = !{i32 2, !"Debug Info Version", i32 3}
+!3 = !{i32 4, !"nvvm-reflect-ftz", i32 1}
+!4 = distinct !DISubprogram(name: "triton_", linkageName: "triton_", scope: !1, file: !1, line: 22, type: !5, scopeLine: 22, spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0)
+!5 = !DISubroutineType(cc: DW_CC_normal, types: !6)
+!6 = !{}
+!7 = !DILocation(line: 28, column: 21, scope: !4)
+!8 = !DILocation(line: 26, column: 28, scope: !4)
+!9 = !DILocation(line: 26, column: 33, scope: !4)
+!10 = !DILocation(line: 27, column: 44, scope: !4)
+!11 = !DILocation(line: 27, column: 23, scope: !4)
+!12 = !DILocation(line: 29, column: 37, scope: !4)
+!13 = !DILocation(line: 39, column: 53, scope: !4)
+!14 = !DILocation(line: 39, column: 48, scope: !4)
+!15 = !DILocation(line: 39, column: 34, scope: !4)
+!16 = !DILocation(line: 39, column: 58, scope: !4)
+!17 = !DILocation(line: 39, column: 120, scope: !4)
+!18 = !DILocation(line: 41, column: 22, scope: !4)
+!19 = !DILocation(line: 43, column: 23, scope: !4)
+!20 = !DILocation(line: 33, column: 43, scope: !4)
+!21 = !DILocation(line: 293, column: 36, scope: !22, inlinedAt: !24)
+!22 = distinct !DILexicalBlockFile(scope: !4, file: !23, discriminator: 0)
+!23 = !DIFile(filename: "standard.py", directory: "/usr/local/lib/python3.12/dist-packages/triton/language")
+!24 = !DILocation(line: 45, column: 25, scope: !25)
+!25 = distinct !DILexicalBlockFile(scope: !4, file: !1, discriminator: 0)
+!26 = !DILocation(line: 263, column: 15, scope: !22, inlinedAt: !21)
+!27 = !DILocation(line: 45, column: 28, scope: !4)
+!28 = !DILocation(line: 46, column: 25, scope: !4)
+!29 = !DILocation(line: 46, column: 36, scope: !4)
+!30 = !DILocation(line: 46, column: 4, scope: !4)

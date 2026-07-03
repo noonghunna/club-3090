@@ -125,9 +125,17 @@ def _load_model_specs_from_yaml(profiles):
     g12_int8 = _weight_size(gemma12, "autoround-int8")
     g12_int4 = _weight_size(gemma12, "qat-w4a16")
     g12spec = {"model_id": gemma12.id, "model_family": "gemma4-swa-dense", **{k: getattr(gemma12, k) for k in g_fields}, "valid_tp": list(gemma12.valid_tp), "weights_int4_gb": g12_int4, "weights_awq_gb": g12_int4, "weights_bf16_gb": g12_bf16, "weights_int8_gb": g12_int8, "drafter_mtp_gb": float(profiles.drafters["gemma-12b-it-assistant"].vram_footprint_gb), "measured_kv_growing_bpt_tp1": 45632, "mtp_n_default": profiles.drafters["gemma-12b-it-assistant"].n_default}
+    # Agents-A1 (InternScience 35B agentic MoE): geometry verified byte-identical
+    # to qwen3.6-35b-a3b (same Qwen3-Next MoE arch class) — rides the SAME
+    # qwen3-next-moe KV math. Own weights footprint (FP8-dynamic 36 GB, Marlin
+    # weight-only on Ampere). No MTP head in the checkpoint (safetensors header
+    # scan 2026-07-03: 0 mtp tensors) — mtp_n_default is inert (drafter=None).
+    a1 = profiles.models["agents-a1"]
+    a1spec = {"model_id": a1.id, "model_family": a1.family, **{k: getattr(a1, k) for k in qm_fields}, "valid_tp": list(a1.valid_tp), "weights_total_gb": _weight_size(a1, a1.default_weight_variant), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
     return {
         "qwen3.6-27b": qspec,
         "qwen3.6-35b-a3b": qmspec,
+        "agents-a1": a1spec,
         "gemma-4-31b": gspec,
         "gemma-4-26b-a4b": gmspec,
         "gemma-4-12b": g12spec,
@@ -255,6 +263,7 @@ GENERIC_DENSE_ACTIVATION_FLOOR_GB = 1.5         # ≥ Gemma dense constant activ
 COMPOSE_ALIAS_TEXT = {
     "qwen3.6-27b": "minimal=vllm/minimal dual=vllm/dual",
     "qwen3.6-35b-a3b": "qwen-a3b-preview-single=vllm/qwen-a3b-preview-single qwen-35b-a3b-dual=vllm/qwen-35b-a3b-dual",
+    "agents-a1": "agents-a1-dual=vllm/agents-a1-dual",
     "gemma-4-31b": "gemma-dual=vllm/gemma-bf16-mtp gemma-dual-int8=vllm/gemma-int8-mtp gemma-single=vllm/gemma-mtp-tp1",
     # gemma-4-12b legacy alias namespace is keyed by model id, so reusing the
     # bare `gemma-dual` string here is harmless — compat + the CLI always pass

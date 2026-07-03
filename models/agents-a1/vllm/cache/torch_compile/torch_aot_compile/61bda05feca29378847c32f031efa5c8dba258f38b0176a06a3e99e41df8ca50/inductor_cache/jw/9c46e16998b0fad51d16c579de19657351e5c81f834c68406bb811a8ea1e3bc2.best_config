@@ -1,0 +1,1 @@
+{"XBLOCK": 128, "num_warps": 4, "num_stages": 1, "configs_hash": "1b2cc4dbebb9680d3ce31843331593b159e4046c056f195ca1ccf2464d5b37d1", "found_by_coordesc": false, "time_taken_ms": 25, "triton_cache_hash": "OAC22U4AIAAKAWUI55Q6NBJHSS7IAZ6FFF365NGWFF5CIET52S7A"}

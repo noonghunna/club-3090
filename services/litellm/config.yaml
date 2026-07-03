@@ -21,6 +21,15 @@ model_list:
       api_base: http://host.docker.internal:8010/v1
       api_key: EMPTY
 
+  # Agents-A1 — InternScience 35B agentic MoE (⚠️ caveats; the agentic thinking-ON
+  # specialist). Launched via `switch.sh vllm/agents-a1-dual` → vllm-agents-a1-dual
+  # at :8072 (own port — never share a sibling's; see the slug-masquerade note).
+  - model_name: agents-a1
+    litellm_params:
+      model: openai/agents-a1
+      api_base: http://host.docker.internal:8072/v1
+      api_key: EMPTY
+
   # Qwen 3.6 35B-A3B (Intel AutoRound INT4 MoE) — 262K + vision, no MTP.
   # Launched via `launch.sh vllm/qwen-35b-a3b-dual` → vllm-qwen36-35b-a3b-dual at :8051.
   - model_name: qwen3.6-35b-a3b-autoround
