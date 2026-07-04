@@ -196,7 +196,9 @@ baselines:
   # ── Agents-A1 ────────────────────────────────────────────────────────────
   vllm/agents-a1-dual:
     # rebench tag agents-a1-fp8-dual (2026-07-03 gate): bench n=3 CV 0.1%
-    # (RUNS=3 env leak — n=5 was misstated in early publications; artifact-
+    # (n=3 came from rebench-full.sh's old RUNS:-3 default — NOT an env leak
+    # as first attributed; fixed to protocol n=5 2026-07-04. n=5 was
+    # misstated in early publications; artifact-
     # verified by catalog-baseline.sh 2026-07-04. think-on 110 = the #81
     # rescored total, MATERIALIZED into the tag JSONs 2026-07-04 via
     # `benchlocal-cli rescore --in-place` — artifact and publication agree;
@@ -254,6 +256,23 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     source_tag: "gemma-26ba4b-int8r"
+    submitted_by: "noonghunna"
+
+  beellama/gemma-dflash:
+    # inducted by catalog-baseline.sh from rebench tag gemma-dflash-regate (2026-07-04);
+    # evidence: verify-full pass · bench n=5 · quality both arms · NIAH ladder
+    narr_tps: 44.91
+    code_tps: 79.76
+    ttft_ms: 115
+    prefill_tps: { 10k: 949, 90k: 603 }
+    quality_8pk: "108/150"
+    quality_8pk_think_on: "113/150"
+    ctx_validated: { tokens: 117513, niah: "clean@118K" }
+    date: 2026-07-04
+    engine_pin: "ghcr.io/anbeeld/beellama.cpp@sha256:858e7cfbfb0d5d3d605723a82ace1474698de368b81bc310f4df4dadc6c1b7d2"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    source_tag: "gemma-dflash-regate"
     submitted_by: "noonghunna"
 
 # ───────────────────────────────────────────────────────────────────────────

@@ -120,7 +120,11 @@ narr, code = bench.get("narrative") or {}, bench.get("code") or {}
 if narr.get("decode_tps_mean") is None or code.get("decode_tps_mean") is None:
     die("bench gate not covered: no decode TPS means in _internal.json")
 bench_log = (tag_dir / "bench.log").read_text(errors="replace") if (tag_dir / "bench.log").is_file() else ""
-n_runs = len(re.findall(r"^\s*run-\d+", bench_log, re.M)) // 2 if bench_log else 0
+# n from the canonical summary headers ONLY — a raw run-line count also picks
+# up the prefill-probe blocks' run lines and over-states n (found on the first
+# probe-enabled induction: n=5 read as n=8)
+_ns = re.findall(r"^=== summary \[(?:narrative|code)\] \(n=(\d+)\) ===$", bench_log, re.M)
+n_runs = min(int(x) for x in _ns) if _ns else 0
 if bench_log and n_runs < 3:
     die(f"bench gate not covered: {n_runs} measured runs per prompt (< 3, the protocol minimum)")
 if bench_log and n_runs < 5:
