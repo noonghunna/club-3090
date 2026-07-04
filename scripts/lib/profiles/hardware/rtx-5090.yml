@@ -10,6 +10,9 @@ supported_kv_formats:
   - fp16
   - fp8_e5m2
   - fp8_e4m3
+  - nvfp4                 # Blackwell FP4 KV — vLLM v0.24.0 literal; CANDIDATE, unvalidated
+                          # on this stack (#246 A/B arm 3). Promote to kv_format_default
+                          # only after a NIAH-clean cross-rig gate.
   - turboquant_3bit_nc
   - int8_per_token_head
   - q4_0

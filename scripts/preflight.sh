@@ -70,6 +70,24 @@ preflight_gpu() {
   fi
   echo "[preflight] gpu:     ${gpu_count}× detected"
   echo "$gpu_lines" | sed 's/^/[preflight]            /'
+  # GPU arch class (display-only, #246). The launchers inject arch-aware env
+  # (KV dtype) from the hardware profiles; this banner just names the class.
+  local _cap _arch_class
+  _cap="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d '[:space:]')"
+  if [[ -n "$_cap" ]]; then
+    case "$_cap" in
+      8.6|8.7)      _arch_class="ampere" ;;
+      8.9)          _arch_class="ada" ;;
+      9.*)          _arch_class="hopper" ;;
+      1[0-9].*)     _arch_class="blackwell" ;;
+      *)            _arch_class="unknown" ;;
+    esac
+    if [[ "$_arch_class" == "ampere" || "$_arch_class" == "unknown" ]]; then
+      echo "[preflight] arch:    ${_arch_class} (sm_${_cap}) — compose defaults apply (no arch-aware override)"
+    else
+      echo "[preflight] arch:    ${_arch_class} (sm_${_cap}) — arch-aware KV defaults active for pilot slugs (#246)"
+    fi
+  fi
   # Cross-rig friendliness: surface a hint when 4090 / 5090 cards are
   # detected. Composes run cross-rig but per-class gotchas (ctx derate,
   # VRAM envelope, SM-gated kernels) live in the FAQ — easier to catch

@@ -1156,9 +1156,12 @@ validate_selected_variant() {
 }
 
 export_variant_engine_pin() {
-  local variant="$1" output line key value
+  local variant="$1" output line key value gpu_spec
   [[ "$variant" == vllm/* || "$variant" == beellama/* ]] || return 0
-  if ! output="$(python3 "$LAUNCH_PROFILE" resolve-variant-pin --variant "$variant" --format shell 2>&1)"; then
+  # detected-GPU spec enables the #246 arch-aware env for pilot variants;
+  # empty (no selection yet / no nvidia-smi) -> pin exports only.
+  gpu_spec="$(selected_gpu_profile_spec 2>/dev/null || true)"
+  if ! output="$(python3 "$LAUNCH_PROFILE" resolve-variant-pin --variant "$variant" --format shell --gpu-spec "$gpu_spec" 2>&1)"; then
     echo "$output" >&2
     exit 2
   fi
@@ -1168,6 +1171,11 @@ export_variant_engine_pin() {
       VLLM_NIGHTLY_SHA) export VLLM_NIGHTLY_SHA="$value" ;;
       VLLM_IMAGE) export VLLM_IMAGE="$value" ;;
       BEELLAMA_IMAGE) export BEELLAMA_IMAGE="$value" ;;
+      # #246 arch-aware env (pilot slugs; hardware-profile balanced default)
+      KV_CACHE_DTYPE)
+        export KV_CACHE_DTYPE="$value"
+        echo "[launch] arch-aware KV dtype: ${value} (hardware-profile default for detected GPUs — #246)" ;;
+      VLLM_ATTENTION_BACKEND) export VLLM_ATTENTION_BACKEND="$value" ;;
       *) echo "[launch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac
   done <<< "$output"

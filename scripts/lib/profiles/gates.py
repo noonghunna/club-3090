@@ -68,14 +68,21 @@ from typing import Any, Callable, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Arch-kernel SM rule (locked design [C0] / brief): these KV formats require
-# an SM-9.0-class kernel and are NOT loadable on Ampere sm_86 (RTX 3090).
-# (fp8_e4m3 native compute + Gemma-TQ3 are the §1 confidently-wrong-on-3090
-# risks Codex-r5 High-1 closes; mirrors compose_registry required_sm:9.0 +
-# arch_patches Gemma kernel_constraints "fp8_e4m3 is not supported on sm_86".)
+# Arch-kernel SM rule (locked design [C0] / brief): per-KV-format SM floors —
+# none loadable on Ampere sm_86 (RTX 3090). Floors are the vLLM kernel truth:
+#   fp8_e4m3            8.9  — vLLM "FP8 KV cache … requires SM89+" (Ada+;
+#                              was 9.0 here — corrected for #246, since the
+#                              launcher now injects e4m3 on 4090s. The gemma
+#                              fp8 slug keeps its explicit required_sm 9.0.)
+#   turboquant_3bit_nc  9.0  — MAINLINE TQ3 kernels (Genesis-Ampere TQ3 is a
+#                              different path; mirrors arch_patches Gemma
+#                              kernel_constraints)
+#   nvfp4               10.0 — Blackwell FP4 tensor cores; v0.24.0 literal,
+#                              unvalidated on this stack (#246 A/B arm 3)
 _ARCH_KERNEL_SM = {
-    "fp8_e4m3": 9.0,
+    "fp8_e4m3": 8.9,
     "turboquant_3bit_nc": 9.0,
+    "nvfp4": 10.0,
 }
 
 
@@ -502,7 +509,8 @@ def c0_engine_support(
             f"registry.required_sm={entry.get('required_sm')}, "
             f"arch-kernel[{kv_format}]="
             f"{_ARCH_KERNEL_SM.get(kv_format, 0.0):g}); "
-            f"e.g. fp8_e4m3 / Gemma-TQ3 need SM 9.0 — NOT loadable on sm_86"
+            f"e.g. fp8_e4m3 needs SM 8.9+, Gemma-TQ3 SM 9.0+, nvfp4 SM 10.0+ "
+            f"— NOT loadable on sm_86"
         )
 
     # --- 4. supported -----------------------------------------------------

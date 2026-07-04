@@ -161,7 +161,9 @@ Independent of the weight quant, you can quantize the **KV cache** — this is w
 | `f16` | 16 | all | Lossless, biggest. Rarely needed. |
 | `q8_0` | 8 | llama.cpp / ik | Near-lossless; good default when context is moderate. |
 | `q4_0` | 4 | llama.cpp / ik | Halves KV vs q8_0 → enables **262K on one 3090** (ik IQ4_KS). Tiny quality cost. |
-| `fp8_e5m2` | 8 | vLLM | Our `vllm/dual` default (AutoRound weights). |
+| `fp8_e5m2` | 8 | vLLM | Our `vllm/dual` default (AutoRound weights) — the Ampere-safe storage-only fp8. |
+| `fp8_e4m3` | 8 | vLLM | Same bytes as e5m2 but **native FP8 Tensor-Core compute on sm_89+** (Ada/Hopper/Blackwell; hard-rejected on Ampere). Since [#246](https://github.com/noonghunna/club-3090/issues/246) the launchers inject it automatically on those cards for the pilot slugs — you don't hand-pick it; `KV_CACHE_DTYPE=` in your env overrides. |
+| `nvfp4` | 4 | vLLM ≥ v0.24.0 | Blackwell-only (sm ≥ 10.0) FP4 KV — a valid dtype literal in our pin, **unvalidated on this stack** (candidate on the Blackwell hardware profiles; #246 A/B arm 3). Needs a NIAH-clean cross-rig gate before it's anyone's default. |
 | **`int8_per_token_head`** | 8 | vLLM | ~1 byte/tok like fp8; **native in stock v0.22.0** for standard models (Gemma-4 needs the #40391 overlay). The KV path for **compressed-tensors weights (AWQ/FP8/INT8) at long context** — those can't use fp8 KV. |
 | **TQ3 (TurboQuant)** | 3 | vLLM (Genesis) | 3-bit KV — beats fp8 on long-context memory; powers our `dual-turbo`. See [TQ3_MTP_GENESIS.md](TQ3_MTP_GENESIS.md) + [CLIFFS.md](CLIFFS.md). |
 | `-khad` (modifier) | — | **ik only** | Hadamard transform on the K-cache → recovers accuracy lost to KV quantization, so you keep quality at q4_0/q8_0. |

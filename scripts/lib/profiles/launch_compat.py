@@ -151,6 +151,49 @@ def _entry_objects(entry: dict, profiles):
 _ENGINE_IMAGE_ENV = {"beellama-local": "BEELLAMA_IMAGE"}
 
 
+# --- #246 Phase 1: arch-aware KV dtype injection (pilot) ---------------------
+# The launchers export KV_CACHE_DTYPE for these slugs when the detected cards'
+# hardware profiles declare a different `kv_format_default.balanced` than the
+# variant's registry kv_format. Expand this set only after the cross-rig A/B
+# (issue #246 acceptance: >=15% on a volunteer 4090/5090, else close-with-data).
+ARCH_KV_PILOT_VARIANTS = frozenset({"vllm/dual", "vllm/minimal"})
+
+# The ONLY substitutions Phase 1 may make. Keyed by the variant's registry
+# kv_format; values are the hardware-profile targets allowed to replace it.
+# fp8_e5m2 -> fp8_e4m3 is the native-FP8-compute swap for sm_89+ cards.
+# Nothing else is injectable: 3090-class profiles declare balanced=fp8_e5m2
+# (the Ampere no-op is data equality), and their long_context default (TQ3)
+# is a Genesis-era format that must never reach stock composes.
+_ARCH_KV_ALLOWED = {"fp8_e5m2": frozenset({"fp8_e4m3"})}
+
+
+def _arch_aware_env(profiles, variant: str, entry: dict, gpu_spec: str,
+                    pin_exports: dict) -> dict[str, str]:
+    """Arch-aware env for a variant (#246 Phase 1). Empty dict = no injection
+    (compose ${VAR:-default} fallbacks apply, i.e. pre-#246 behavior)."""
+    if not gpu_spec or variant not in ARCH_KV_PILOT_VARIANTS:
+        return {}
+    allowed = _ARCH_KV_ALLOWED.get(entry.get("kv_format") or "")
+    if not allowed:
+        return {}  # quant-specific KV (int8-PTH, turbo, bf16, ...) — never override
+    if not ({"VLLM_IMAGE", "VLLM_NIGHTLY_SHA"} & set(pin_exports)):
+        return {}  # vLLM-family variants only; KV_CACHE_DTYPE is a vLLM knob
+    if os.environ.get("KV_CACHE_DTYPE"):
+        return {}  # an explicit user pin always wins
+    try:
+        hardware = _parse_gpu_specs(gpu_spec, profiles)
+    except LaunchCompatError:
+        return {}  # unmapped card -> compose defaults (today's behavior)
+    balanced = {hw.kv_format_default.get("balanced") for hw in hardware}
+    if len(balanced) != 1:
+        return {}  # heterogeneous rig -> no single right answer; don't guess
+    target = balanced.pop()
+    if (not target or target == entry["kv_format"] or target not in allowed
+            or not all(target in hw.supported_kv_formats for hw in hardware)):
+        return {}
+    return {"KV_CACHE_DTYPE": target}
+
+
 def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
     """Resolve EngineProfile.install into compose environment exports."""
     try:
@@ -181,11 +224,16 @@ def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
     return {env_key: spec}
 
 
-def resolve_variant_pin(profiles, variant: str) -> dict[str, str]:
+def resolve_variant_pin(profiles, variant: str, gpu_spec: str = "") -> dict[str, str]:
     entry = COMPOSE_REGISTRY.get(variant)
     if not entry:
         raise ProfileError(f"unknown compose variant `{variant}`")
-    return resolve_engine_pin(profiles, entry["engine"])
+    exports = resolve_engine_pin(profiles, entry["engine"])
+    # #246: arch-aware env rides the same export channel as the image pin.
+    # Only emitted when a gpu_spec is passed (launchers do; the registry-emit
+    # baselines join calls without one and sees pins only).
+    exports.update(_arch_aware_env(profiles, variant, entry, gpu_spec, exports))
+    return exports
 
 
 def _print_env(exports: dict[str, str], fmt: str) -> None:
@@ -405,7 +453,7 @@ def command_resolve_engine_pin(args: argparse.Namespace) -> int:
 def command_resolve_variant_pin(args: argparse.Namespace) -> int:
     _quiet_compat_logger()
     profiles = load_profiles()
-    _print_env(resolve_variant_pin(profiles, args.variant), args.format)
+    _print_env(resolve_variant_pin(profiles, args.variant, args.gpu_spec), args.format)
     return 0
 
 
@@ -531,6 +579,9 @@ def build_parser() -> argparse.ArgumentParser:
     variant_pin = sub.add_parser("resolve-variant-pin")
     variant_pin.add_argument("--variant", required=True)
     variant_pin.add_argument("--format", choices=("shell", "json", "value"), default="shell")
+    # optional: detected GPUs (idx|name|mem_mib|sm;...) — enables the #246
+    # arch-aware env for pilot variants; omitted -> pin exports only.
+    variant_pin.add_argument("--gpu-spec", dest="gpu_spec", default="")
     variant_pin.set_defaults(func=command_resolve_variant_pin)
 
     topology = sub.add_parser("topology")

@@ -110,9 +110,11 @@ KV cache is a separate concern from weights — vLLM ships several KV-quant sche
 
 **Ada / Hopper / Blackwell get a real win on FP8 KV** because the Tensor Cores can multiply FP8 directly without an upcast. On Ampere, FP8 KV is just smaller storage — the matmul still happens in FP16, so you save VRAM but not compute time. That's why the 3090's fp8 KV gives lower per-stream TPS than INT8 PTH (which *can* multiply in INT8 on the Tensor Core directly).
 
+**The launchers act on this automatically since [#246](https://github.com/noonghunna/club-3090/issues/246) Phase 1**: `launch.sh` / `switch.sh` detect the GPU arch and, for the pilot slugs (`vllm/dual`, `vllm/minimal`), export `KV_CACHE_DTYPE=fp8_e4m3` on sm_89+ cards (the hardware profiles' `balanced` default). Ampere emits no override at all — compose defaults apply, byte-for-byte pre-#246 behavior. An explicit `KV_CACHE_DTYPE=` in your environment always wins, quant-specific KV slugs (int8-PTH / TQ) are never touched, and direct `docker compose up` keeps the Ampere-safe compose defaults. Expansion beyond the pilot slugs is gated on the cross-rig A/B in #246.
+
 **Emerging KV recipes** (worth watching, not yet defaults):
 - **Block-scaled FP8 KV** — per-block scales like MXFP8 but applied to KV cache rather than weights. Recovers accuracy at long-context where flat FP8 can lose precision in deep layers. Lands on Hopper / Blackwell first.
-- **NVFP4 KV** — Blackwell-native, ~4× smaller than FP16 KV at NVFP4 weight accuracy levels. Kernels still maturing in vLLM nightlies.
+- **NVFP4 KV** — Blackwell-native, ~4× smaller than FP16 KV at NVFP4 weight accuracy levels. **A valid `--kv-cache-dtype nvfp4` literal in our v0.24.0 pin** (declared as a *candidate* on the Blackwell hardware profiles; SM-gated ≥10.0). Unvalidated on this stack — it's arm 3 of the #246 cross-rig A/B; a literal existing ≠ working kernels + clean recall (see the int8-PTH-on-Gemma and mainline-TQ precedents).
 - **TensorRT-LLM W4A8 / W4A4** — Hopper/Blackwell weight+activation quant recipes that pair INT4/NVFP4 weights with FP8/FP4 activations. Out of scope for the vLLM-first composes here but worth knowing if you cross-shop.
 
 ### KV-quant × checkpoint compatibility — the two Ampere traps
@@ -318,9 +320,9 @@ What to ship as the default for each GPU class, given the matrix above:
 | **Turing (T4, 20-series)** | INT8 native; GPTQ INT4 via Marlin works | FP16 / INT8 | n-gram only | not a primary target |
 | **Ampere consumer (3090/3080/3060)** ⭐ | **AutoRound INT4** | **TQ3 (Genesis) / INT8 PTH / fp8** | **MTP n=3** + Genesis P67 | `dual/autoround-int4/turbo.yml`, `dual/autoround-int4/tq3-mtp-genesis.yml`, `single/autoround-int4/long-text.yml` — primary target of this stack |
 | **Ampere DC (A100)** | AutoRound INT4 or FP16 | TQ3 / fp8 | MTP n=3 | Same composes as 3090, more VRAM headroom |
-| **Ada (4090 / L40)** | AutoRound INT4 (preserve INT4 path) **OR** FP8 weights for full TC use | **fp8 (HW)** / TQ3 / INT8 PTH | MTP n=3 / DFlash | Same composes work; FP8 KV is now a real perf win |
+| **Ada (4090 / L40)** | AutoRound INT4 (preserve INT4 path) **OR** FP8 weights for full TC use | **fp8_e4m3 (HW — launcher-injected for pilot slugs, #246)** / TQ3 / INT8 PTH | MTP n=3 / DFlash | Same composes work; FP8 KV is now a real perf win |
 | **Hopper (H100/H200)** | FP8 weights (FBGEMM/INC) | **fp8 (HW transformer engine)** | MTP / DFlash | Not a primary target — these cards are usually already running their own optimised stacks |
-| **Blackwell consumer (5090/5080/5070)** | AutoRound INT4 today; NVFP4 when vLLM kernels mature | fp8_e5m2 advisory (e4m3 path undertuned per #51) | MTP n=3 | Genesis treats Blackwell consumer as a separate regime — some Hopper-targeted patches don't apply |
+| **Blackwell consumer (5090/5080/5070)** | AutoRound INT4 today; NVFP4 when vLLM kernels mature | **fp8_e4m3 (launcher-injected for pilot slugs, #246 — A/B pending)** · nvfp4 = candidate arm 3 | MTP n=3 | The old "e4m3 path undertuned per #51" advisory was **Genesis-nightly-era** — stock v0.24.0 is what the #246 A/B measures. Genesis treats Blackwell consumer as a separate regime — some Hopper-targeted patches don't apply |
 | **Blackwell DC (B100/B200/GB200)** | NVFP4 / FP8 weights | NVFP4 / fp8 | MTP / DFlash | Out of scope for club-3090 |
 
 The starred row (Ampere consumer) is the actual target of this stack; everything else is "should work, here's the data point we have".

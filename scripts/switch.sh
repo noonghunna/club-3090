@@ -135,6 +135,21 @@ declare -A VARIANT_CONTAINER=()
 # shellcheck source=lib/registry-emit.sh
 source "${ROOT_DIR}/scripts/lib/registry-emit.sh"
 derive_switch_variant_tables "${ROOT_DIR}"
+# shellcheck source=lib/compose-meta.sh
+source "${ROOT_DIR}/scripts/lib/compose-meta.sh"
+
+# Detected GPUs as an idx|name|mem_mib|sm;... spec (the launch_compat format).
+# Empty when detection fails -> the #246 arch-aware env simply stays off.
+switch_gpu_profile_spec() {
+  local lines idx name mem sm parts=()
+  lines="$(compose_hw_detect_gpus 2>/dev/null || true)"
+  [[ -n "$lines" ]] || { printf ''; return 0; }
+  while IFS=$'\t' read -r idx name mem sm; do
+    [[ -z "$idx" ]] && continue
+    parts+=("${idx}|${name}|${mem}|${sm}")
+  done <<< "$lines"
+  (IFS=';'; printf '%s' "${parts[*]}")
+}
 
 # Teardown is registry-derived from VARIANT_CONTAINER (see down_running()). This
 # replaced a fixed `^(vllm-|llama-cpp-)` regex that missed beellama-/ik-llama-/
@@ -894,9 +909,10 @@ gpu_preflight() {
 }
 
 export_variant_engine_pin() {
-  local variant="$1" output line key value
+  local variant="$1" output line key value gpu_spec
   [[ "$variant" == vllm/* || "$variant" == beellama/* ]] || return 0
-  if ! output="$(python3 "$LAUNCH_PROFILE" resolve-variant-pin --variant "$variant" --format shell 2>&1)"; then
+  gpu_spec="$(switch_gpu_profile_spec 2>/dev/null || true)"
+  if ! output="$(python3 "$LAUNCH_PROFILE" resolve-variant-pin --variant "$variant" --format shell --gpu-spec "$gpu_spec" 2>&1)"; then
     echo "$output" >&2
     exit 2
   fi
@@ -906,6 +922,11 @@ export_variant_engine_pin() {
       VLLM_NIGHTLY_SHA) export VLLM_NIGHTLY_SHA="$value" ;;
       VLLM_IMAGE) export VLLM_IMAGE="$value" ;;
       BEELLAMA_IMAGE) export BEELLAMA_IMAGE="$value" ;;
+      # #246 arch-aware env (pilot slugs; hardware-profile balanced default)
+      KV_CACHE_DTYPE)
+        export KV_CACHE_DTYPE="$value"
+        echo "[switch] arch-aware KV dtype: ${value} (hardware-profile default for detected GPUs — #246)" ;;
+      VLLM_ATTENTION_BACKEND) export VLLM_ATTENTION_BACKEND="$value" ;;
       *) echo "[switch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac
   done <<< "$output"

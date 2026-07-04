@@ -65,6 +65,29 @@ Same `MAX_MODEL_LEN` / `GPU_MEMORY_UTILIZATION` env overrides apply for any setu
 
 ---
 
+## Arch-aware launcher defaults (#246 Phase 1)
+
+The shipped composes carry **Ampere-safe defaults** (fp8_e5m2 KV etc.). Since [#246](https://github.com/noonghunna/club-3090/issues/246) Phase 1, `launch.sh` / `switch.sh` detect your GPU's compute capability and export the better flag for newer silicon so you don't hand-tune:
+
+| Detected class | What the launchers do |
+|---|---|
+| **ampere** (sm_8.6/8.7) | Nothing — compose defaults apply, byte-for-byte pre-#246 behavior |
+| **ada** (sm_8.9) / **hopper** (sm_9.x) / **blackwell** (sm_10+) | Export `KV_CACHE_DTYPE=fp8_e4m3` (native FP8 Tensor-Core compute) for the **pilot slugs** |
+| unknown / heterogeneous mix / no nvidia-smi | Nothing — compose defaults apply |
+
+Mechanics and boundaries:
+
+- **Pilot slugs only**: `vllm/dual`, `vllm/minimal` — the two Qwen fp8-KV reference configs. Expansion to the rest of the catalog is gated on the cross-rig A/B in #246 (≥15% on either canonical prompt on a volunteer 4090/5090; within CV → the injection framework gets closed out instead).
+- **The injected value comes from the hardware profiles** (`scripts/lib/profiles/hardware/<card>.yml` → `kv_format_default.balanced`) — one source of truth shared with the pull gates and c3. 3090-class profiles declare `fp8_e5m2` there, which equals the compose default: the Ampere no-op is data, not a code branch.
+- **Your env wins**: an explicit `KV_CACHE_DTYPE=…` before `launch.sh`/`switch.sh` suppresses the injection entirely.
+- **Quant-specific KV slugs are never touched** — int8-PTH (compressed-tensors weights *reject* fp8 KV), TurboQuant, and bf16 configs keep their registry KV format.
+- **Direct `docker compose -f … up` bypasses all of this** and keeps the Ampere-safe compose defaults on any card.
+- The preflight banner names the detected class: `[preflight] arch: ada (sm_8.9) — arch-aware KV defaults active for pilot slugs (#246)`.
+- `VLLM_ATTENTION_BACKEND` is plumbed through the same channel but **ships no value** — vLLM's backend auto-detect is the default until someone measures a better per-arch choice.
+- **Blackwell + `nvfp4` KV**: a valid dtype literal in our v0.24.0 pin and declared as a *candidate* on the Blackwell hardware profiles, but unvalidated (no NIAH/quality data on any rig we've seen) — it's arm 3 of the #246 A/B, opt-in via `KV_CACHE_DTYPE=nvfp4`, not a default.
+
+---
+
 ## NVLink
 
 **Not required.** Dual-card composes auto-detect NVLink and configure themselves accordingly.

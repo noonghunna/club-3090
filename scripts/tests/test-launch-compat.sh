@@ -92,6 +92,36 @@ assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.24.0"
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/gemma-int8-mtp --format shell)"
 assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.22.0"
 
+# --- #246 arch-aware KV injection matrix (resolve-variant-pin --gpu-spec) ----
+GPU_4090='0|NVIDIA GeForce RTX 4090|24564|8.9'
+GPU_5090X2='0|NVIDIA GeForce RTX 5090|32607|12.0;1|NVIDIA GeForce RTX 5090|32607|12.0'
+
+# ampere -> NOTHING injected (compose defaults; the no-op is data equality)
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_3090")"
+assert_not_contains "$out" "KV_CACHE_DTYPE"
+# ada / blackwell pilot slugs -> native-fp8 swap
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_4090")"
+assert_contains "$out" "KV_CACHE_DTYPE=fp8_e4m3"
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/minimal --format shell --gpu-spec "$GPU_5090X2")"
+assert_contains "$out" "KV_CACHE_DTYPE=fp8_e4m3"
+# non-pilot slug (same kv_format) -> no injection until the #246 A/B expands the pilot
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/qwen-27b-dual-fast --format shell --gpu-spec "$GPU_4090")"
+assert_not_contains "$out" "KV_CACHE_DTYPE"
+# quant-specific KV slug -> never overridden (compressed-tensors reject fp8 KV)
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/gemma-int8-mtp --format shell --gpu-spec "$GPU_4090")"
+assert_not_contains "$out" "KV_CACHE_DTYPE"
+# explicit user env pin wins
+out="$(KV_CACHE_DTYPE=fp8_e5m2 python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_4090")"
+assert_not_contains "$out" "KV_CACHE_DTYPE"
+# heterogeneous rig -> no single right answer -> no injection
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "${GPU_3090};1|NVIDIA GeForce RTX 4090|24564|8.9")"
+assert_not_contains "$out" "KV_CACHE_DTYPE"
+# unmapped card -> degrade to compose defaults, never an error
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "0|Weird GPU|8192|7.0")"
+assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.24.0"
+assert_not_contains "$out" "KV_CACHE_DTYPE"
+echo "  ok: #246 arch-aware KV injection matrix (8 cases)"
+
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"
   assert_contains "$out" "image: vllm/vllm-openai:v0.24.0"
