@@ -26,9 +26,20 @@ fi
 SECRET="$(docker exec "$OWUI" cat /app/backend/.webui_secret_key 2>/dev/null || true)"
 if [[ -z "$SECRET" ]]; then log "couldn't read OWUI secret key — skipping."; exit 0; fi
 
-docker exec -i "$OWUI" python3 - "$SECRET" "$PORT" <<'PY'
+# The OpenAI API key OWUI stores for this endpoint. On a VLLM_API_KEY-secured
+# compose the picker's calls 401 unless OWUI presents the real bearer token, so
+# register that (not a placeholder). switch.sh --owui exports .env into our env;
+# fall back to reading .env directly, then to "sk-noauth" for an open endpoint.
+API_KEY="${VLLM_API_KEY:-${CLUB3090_API_TOKEN:-}}"
+if [[ -z "$API_KEY" ]]; then
+  _owui_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+  [[ -f "${_owui_root}/.env" ]] && API_KEY="$(set -a; . "${_owui_root}/.env" >/dev/null 2>&1; printf '%s' "${VLLM_API_KEY:-${CLUB3090_API_TOKEN:-}}")"
+fi
+API_KEY="${API_KEY:-sk-noauth}"
+
+docker exec -i "$OWUI" python3 - "$SECRET" "$PORT" "$API_KEY" <<'PY'
 import sys, sqlite3, hmac, hashlib, base64, json, urllib.request
-secret = sys.argv[1].encode(); port = sys.argv[2]
+secret = sys.argv[1].encode(); port = sys.argv[2]; api_key = sys.argv[3]
 db = "/app/backend/data/webui.db"
 try:
     admins = [r[0] for r in sqlite3.connect(db).execute(
@@ -55,7 +66,7 @@ except Exception as e:
 urls = cfg.get("OPENAI_API_BASE_URLS") or []; keys = cfg.get("OPENAI_API_KEYS") or []
 if url in urls:
     print("[owui-register] already registered: %s" % url); sys.exit(0)
-urls.append(url); keys.append("sk-noauth")
+urls.append(url); keys.append(api_key)
 new = dict(cfg); new.update({"ENABLE_OPENAI_API": True, "OPENAI_API_BASE_URLS": urls, "OPENAI_API_KEYS": keys})
 try:
     call("/openai/config/update", new)

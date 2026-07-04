@@ -30,6 +30,13 @@ CONTAINER="${CONTAINER:-}"
 LOG_LINES="${LOG_LINES:-200}"
 WATCH_INTERVAL="${WATCH_INTERVAL:-5}"
 
+# Bearer auth for VLLM_API_KEY-secured composes (the /v1/models probe below
+# 401s without it). No key set → no-op. See scripts/lib/curl-auth.sh.
+_HEALTH_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/curl-auth.sh
+source "${_HEALTH_ROOT}/scripts/lib/curl-auth.sh"
+club3090_curl_auth_setup "${_HEALTH_ROOT}"
+
 # Engine-prefix regex used when CONTAINER= is unset: any recognized inference
 # engine, not just qwen36-27b. (qwen36-27b containers — vllm-qwen36-27b /
 # llama-cpp-qwen36-27b — still match the first two alternatives, so a running

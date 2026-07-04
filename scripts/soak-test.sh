@@ -279,6 +279,9 @@ finish() {
   local rc=$?
   capture_state "final"
   log "artifacts: ${SOAK_OUTPUT}"
+  # curl-auth.sh sees this EXIT trap and skips its own auto-cleanup, so remove
+  # its temp .curlrc here. Guarded — die() can exit before curl-auth is sourced.
+  declare -F club3090_curl_auth_cleanup >/dev/null && club3090_curl_auth_cleanup
   exit "$rc"
 }
 trap finish EXIT
@@ -303,6 +306,13 @@ else
   ENDPOINT="${ENDPOINT:-${URL:-$(endpoint_from_container "$CONTAINER")}}"
 fi
 mkdir -p "$SOAK_OUTPUT"
+
+# Bearer auth for VLLM_API_KEY-secured composes (the /v1/models probe below and
+# every soak turn 401 without it). No key set → no-op. This script owns an EXIT
+# trap (finish), which chains club3090_curl_auth_cleanup — see curl-auth.sh.
+# shellcheck source=lib/curl-auth.sh
+source "${REPO_ROOT}/scripts/lib/curl-auth.sh"
+club3090_curl_auth_setup "${REPO_ROOT}"
 
 MODELS_JSON="${SOAK_OUTPUT}/models.json"
 curl -sf -m 10 "${ENDPOINT}/v1/models" -o "$MODELS_JSON" \

@@ -397,6 +397,19 @@ if [[ -n "$DETECTED_MODEL" && "$DETECTED_MODEL" != "$MODEL" ]]; then
   fi
 fi
 
+# Bearer auth for VLLM_API_KEY-secured composes. benchlocal-cli sends its
+# --api-key as `Authorization: Bearer`, defaulting to $BENCHLOCAL_API_KEY; the
+# wrapper's own /props probe goes through curl-auth's $CURL_HOME. Resolve the key
+# (env, else repo-root .env) and hand it to benchlocal-cli unless already set.
+# No key set → no-op. See scripts/lib/curl-auth.sh.
+# shellcheck source=lib/curl-auth.sh
+source "${ROOT_DIR}/scripts/lib/curl-auth.sh"
+club3090_curl_auth_setup "${ROOT_DIR}"
+if [[ -z "${BENCHLOCAL_API_KEY:-}" && -n "${CLUB3090_RESOLVED_API_KEY:-}" ]]; then
+  export BENCHLOCAL_API_KEY="$CLUB3090_RESOLVED_API_KEY"
+  echo "[quality-test] VLLM_API_KEY detected — set BENCHLOCAL_API_KEY so benchlocal-cli authenticates to the secured endpoint" >&2
+fi
+
 # hermesagent-20 runs its agent inside a Docker sandbox container. Localhost-style
 # URLs (localhost/127.x/[::1]) inside the container resolve to the container itself,
 # not the host's vLLM. Auto-set BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1 so benchlocal-cli

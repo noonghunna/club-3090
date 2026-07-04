@@ -356,6 +356,14 @@ fi
 
 # Determine paths — script may be invoked from anywhere
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Bearer auth for VLLM_API_KEY-secured composes (its /v1/models detection + the
+# bench.sh child it drives 401 without it). No key set → no-op. This script owns
+# an EXIT trap (cleanup), which chains club3090_curl_auth_cleanup — see curl-auth.sh.
+# shellcheck source=lib/curl-auth.sh
+source "${REPO_ROOT}/scripts/lib/curl-auth.sh"
+club3090_curl_auth_setup "${REPO_ROOT}"
+
 BENCH="$REPO_ROOT/scripts/bench.sh"
 if [ ! -x "$BENCH" ]; then
   echo "[error] expected $BENCH" >&2; exit 1
@@ -436,6 +444,9 @@ cleanup() {
   if [ -n "${GPU_LIST_CSV:-}" ]; then
     restore_gpus
   fi
+
+  # Remove curl-auth's temp .curlrc (this EXIT trap supersedes its auto-cleanup).
+  declare -F club3090_curl_auth_cleanup >/dev/null && club3090_curl_auth_cleanup
 }
 trap cleanup EXIT INT TERM
 

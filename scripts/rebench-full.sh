@@ -102,6 +102,13 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Bearer auth for VLLM_API_KEY-secured composes (its /v1/models detection + the
+# verify-full/bench children it drives all 401 without it). No key set → no-op.
+# See scripts/lib/curl-auth.sh.
+# shellcheck source=lib/curl-auth.sh
+source "${ROOT_DIR}/scripts/lib/curl-auth.sh"
+club3090_curl_auth_setup "${ROOT_DIR}"
+
 # --- args -------------------------------------------------------------------
 SKIP_CSV=""
 RESUME=0

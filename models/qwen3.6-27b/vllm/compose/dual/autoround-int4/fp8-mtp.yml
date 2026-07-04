@@ -93,6 +93,9 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      # Optional bearer-token auth. Set VLLM_API_KEY in compose/.env to require
+      # `Authorization: Bearer <key>` on every request. Empty = open (no auth).
+      - VLLM_API_KEY=${VLLM_API_KEY:-}
       - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
       - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn

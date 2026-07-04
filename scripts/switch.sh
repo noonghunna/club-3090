@@ -3,7 +3,7 @@
 # Switch between club-3090 compose variants.
 #
 # Brings down whatever's currently running, brings up the new variant,
-# and (optionally) waits for the server to report ready on /v1/models.
+# and (optionally) waits for the server to report ready on /health.
 # Stateless — re-run any time you want a different config.
 #
 # Usage:
@@ -65,7 +65,8 @@
 #   COMPOSE_BIN     Default: "docker compose" (set to e.g. "podman compose" if needed)
 #   CLUB3090_GPU    Single-card GPU index override, e.g. "1" on a hetero rig
 #   FORCE           Set to 1 to skip hardware/free-VRAM preflight
-#   READY_URL       Default: http://localhost:8020/v1/models
+#   READY_URL       Default: http://localhost:8020/health  (unauthenticated —
+#                   works whether or not the compose sets VLLM_API_KEY)
 #   READY_TIMEOUT   Default: 600 (seconds — longer for cold cudagraph capture)
 
 set -euo pipefail
@@ -1000,12 +1001,19 @@ up_variant() {
 resolve_ready_url() {
   # Precedence: $READY_URL (full override) → $PORT (port only, host=localhost)
   # → per-variant default port from VARIANT_DEFAULT_PORT.
+  #
+  # Default probe is /health, NOT /v1/models. /health is unauthenticated and
+  # only returns 200 once the engine has finished loading, so readiness works
+  # whether or not the compose sets VLLM_API_KEY. An auth-gated /v1/models probe
+  # returns 401 forever when a key is set → the server never looks "ready" and
+  # we burn the full READY_TIMEOUT on a healthy model (the false-timeout we hit
+  # on the secured rig). Override READY_URL to probe a different path.
   local variant="$1"
   if [[ -n "${READY_URL:-}" ]]; then
     return 0
   fi
   local port="${PORT:-${VARIANT_DEFAULT_PORT[$variant]:-8020}}"
-  READY_URL="http://localhost:${port}/v1/models"
+  READY_URL="http://localhost:${port}/health"
 }
 
 wait_ready() {
@@ -1167,4 +1175,8 @@ if [[ "$OWUI_REGISTER" -eq 1 && "$WAIT" -eq 1 ]]; then
   _owui_port="${READY_URL##*:}"; _owui_port="${_owui_port%%/*}"
   bash "$(dirname "$0")/lib/owui-register.sh" "$_owui_port" || true
 fi
-echo "[switch] done. Try:  curl -s ${READY_URL%/v1/models}/v1/models | jq ."
+# Derive scheme://host:port from READY_URL (whatever its path) so the hint is
+# correct regardless of whether the probe path is /health or an override.
+_ready_rest="${READY_URL#*://}"                       # strip scheme
+_ready_origin="${READY_URL%%://*}://${_ready_rest%%/*}" # scheme + host:port
+echo "[switch] done. Try:  curl -s ${_ready_origin}/v1/models | jq ."

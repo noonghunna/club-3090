@@ -53,6 +53,15 @@ done
 # Auto-detect running container + port (URL/CONTAINER env vars still win).
 # See scripts/preflight.sh::preflight_autodetect_endpoint.
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Bearer auth for VLLM_API_KEY-secured composes. MUST run before the preflight
+# autodetect below, which probes /v1/models over HTTP — if that 401s, model
+# detection silently falls back to the wrong default and every completion POSTs
+# a bad model name. No key set → no-op. (See scripts/lib/curl-auth.sh.)
+# shellcheck source=lib/curl-auth.sh
+source "${ROOT_DIR}/scripts/lib/curl-auth.sh"
+club3090_curl_auth_setup "${ROOT_DIR}"
+
 if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   # shellcheck source=preflight.sh
   source "${ROOT_DIR}/scripts/preflight.sh"
