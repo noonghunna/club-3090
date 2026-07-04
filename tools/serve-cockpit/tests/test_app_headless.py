@@ -9258,6 +9258,36 @@ class TestCatalogPreview:
             assert "Cliff-2b" not in second  # the caveat is row-0's, not row-1's
 
     @pytest.mark.asyncio
+    async def test_f2_wrapping_caveat_not_clipped(self):
+        """F2 — a long (wrapping) caveat line must GROW the preview strip, not
+        clip below the old max-height 6 (border eats 2 rows → 4 content lines;
+        the dual-fast caveat wrapped past that and lost its tail)."""
+        responses = fake_responses(**{"registry-emit.sh --json": ok(REGISTRY_JSON_CAVEAT)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            t = app.query_one("#catalog-table", DataTable)
+            t.move_cursor(row=0)
+            await pilot.pause()
+            entry = pane.selected_entry()
+            # A ~240-char caveat wraps to 3 display lines at 120 cols → content
+            # = 3 base + 3 caveat = 6 → 8 with the border.  (status_note is a
+            # property over the registry row — mutate the row.)
+            entry.row.status_note = (
+                "prose regression on DFlash v0.3.0 above 50K ctx — code packs OK; "
+                "promote only on a stable upstream tag; see UPSTREAM.md row and "
+                "the beellama pin-bump helper before changing anything here; "
+                "workaround: run the q8 dual instead for long prose"
+            )
+            pane.render_preview(entry)
+            await pilot.pause()
+            preview = app.query_one("#catalog-preview", Static)
+            assert preview.region.height >= 7, preview.region
+            # The caveat's TAIL is inside the rendered region (not clipped).
+            assert "long prose" in str(preview.render())
+
+    @pytest.mark.asyncio
     async def test_vs_empty_card_not_doubled_when_free_unknown(self):
         # N3 — with live free-VRAM UNKNOWN, the fit line must show "vs empty card"
         # exactly ONCE (the trailing "({fit_basis})"), not doubled by also

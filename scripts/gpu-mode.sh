@@ -531,6 +531,7 @@ mode_27b() {
     stop_27b_dual_dflash
     stop_27b_dual_dflash_noviz
     stop_27b_dual_turbo
+    wait_gpu_vram_settle     # let the torn-down scene's VRAM release before TP=2 boots (#535 follow-up)
     start_27b_dual_mtp
     start_service litellm
     start_service qdrant
@@ -557,6 +558,7 @@ mode_35b_a3b() {
     stop_step_voice
     _director_evict_if_gpu
     stop_diffusiongemma
+    wait_gpu_vram_settle     # let the torn-down scene's VRAM release before TP=2 boots (#535 follow-up)
     start_35b_a3b_dual
     start_service litellm
     start_service qdrant
@@ -582,6 +584,7 @@ mode_gemma_12b() {
     stop_step_voice
     _director_evict_if_gpu
     stop_diffusiongemma
+    wait_gpu_vram_settle     # single-card boot can still land in another scene's residue (#535 follow-up)
     start_gemma_12b
     start_service litellm
     start_service qdrant
@@ -631,6 +634,7 @@ mode_deckard() {
     stop_comfyui
     stop_step_voice
     _director_evict_if_gpu
+    wait_gpu_vram_settle     # 31 GB GGUF layer-splits both cards — don't boot into residue (#535 follow-up)
     start_deckard
     start_service litellm
     start_service qdrant
@@ -713,6 +717,7 @@ mode_ai_studio() {
     stop_35b_a3b_dual
     stop_all_gemma
     stop_diffusiongemma
+    wait_gpu_vram_settle     # ComfyUI checkpoints load into the just-freed cards (#535 follow-up)
     start_comfyui
     start_studio_director
     start_studio_gallery
@@ -908,6 +913,18 @@ mode_off() {
     stop_step_voice
     stop_studio_director     # full off stops even a CPU/always-on director
     stop_estate
+    # CATCH-ALL: the enumerated stop_* lists above cover the gpu-mode SCENES,
+    # but a catalog-launched engine (switch.sh <slug>, e.g. vllm/minimal) isn't
+    # in any of them — and 'off' promises "ALL services".  Stop every remaining
+    # engine-prefixed container so the next scene never boots into held VRAM
+    # (#535 class; caught live 2026-07-04 when off left vllm-qwen36-27b-minimal
+    # serving and the 27b TP=2 scene booted into its residue).
+    _stragglers=$(docker ps --format '{{.Names}}' 2>/dev/null \
+        | grep -E '^(vllm-|llama-cpp-|ik-llama-|sglang-|beellama-)' || true)
+    if [ -n "$_stragglers" ]; then
+        echo -e "  ${YELLOW}▼${NC} Stopping catalog-launched engine(s): $(echo "$_stragglers" | tr '\n' ' ')"
+        echo "$_stragglers" | xargs -r docker stop >/dev/null 2>&1 || true
+    fi
     for svc in "${SERVICES[@]}"; do
         stop_service "$svc"
     done
