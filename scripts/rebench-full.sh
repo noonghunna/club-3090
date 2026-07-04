@@ -323,7 +323,10 @@ if ! URL="$URL" MODEL="$MODEL" \
 fi
 
 # --- step 1: bench ----------------------------------------------------------
-URL="$URL" MODEL="$MODEL" RUNS="${RUNS:-3}" WARMUPS="${WARMUPS:-1}" \
+# Defaults match bench.sh's protocol (5 measured / 3 warm). The old
+# RUNS:-3 / WARMUPS:-1 overrides here silently under-ran the protocol on
+# every orchestrated gate (the A1 "n=3 env leak" was actually this line).
+URL="$URL" MODEL="$MODEL" RUNS="${RUNS:-5}" WARMUPS="${WARMUPS:-3}" \
   ENABLE_THINKING="${ENABLE_THINKING:-0}" \
   run_step bench "$OUT_DIR/bench.log" \
     bash "$ROOT_DIR/scripts/bench.sh" || true

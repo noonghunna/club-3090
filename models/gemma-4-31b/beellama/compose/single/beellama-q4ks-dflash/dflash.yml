@@ -12,10 +12,11 @@
 #              that FAILS: verify-stress's ceiling ladder OOMs 140K at ~125K fill (engine
 #              crash; real wall ~95K with the 140K KV pool). 128K is the highest ctx that
 #              PASSES NIAH — recalls cleanly to 117K (91% fill) — but with a KNOWN CAVEAT:
-#              VRAM margin at the ceiling is VERY THIN (~177 MB free, under the 1 GB
-#              agent-safety bar — see Caveats). For full agent/long-session headroom set
-#              CTX_SIZE=102400 (~1.1 GB margin, gate-clean). (validated 2026-05-31; see
-#              learnings/gemma-4-31b.md "beellama DFlash".)
+#              VRAM margin at the ceiling is under the 1 GB agent-safety bar (929 MB free
+#              on the official v0.3.2-preview pin, 2026-07-04 re-gate — up from ~177 MB
+#              on the 2026-05-31 multiarch-era validation; see Caveats). For full
+#              agent/long-session headroom set CTX_SIZE=102400 (~1.1 GB margin,
+#              gate-clean). (see learnings/gemma-4-31b.md "beellama DFlash".)
 #              beellama is the only single-card engine that does Gemma-4 SWA windowed KV
 #              (big ctx) AND Gemma-4 spec-dec — ik-llama walls ~24K, mainline is ~10 TPS.
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
@@ -24,7 +25,8 @@
 #              Gemma-4 path (vLLM FA-walled at head_dim=512, ik-llama walls ~24K, stock
 #              llama.cpp ~12 TPS). Validated #441 + verify-full 8/8. Caveats:
 #              (1) THIN VRAM MARGIN at the 128K default — NIAH recalls to 117K but only
-#              ~177 MB free at the ceiling, so verify-stress fails its 1 GB margin check
+#              929 MB free at the ceiling (2026-07-04 re-gate; was ~177 MB pre-v0.3.2),
+#              so verify-stress fails its 1 GB margin check
 #              (this is why the config is ⚠️ caveats, not ✅). Agents / long sessions carry
 #              ~+292 MB cache+checkpoint overhead and CAN OOM at high fill — set
 #              CTX_SIZE=102400 for full headroom (~1.1 GB margin, gate-clean). 140K
@@ -41,10 +43,12 @@
 #              2026-06-03; earlier 'prose regression' RETRACTED — AR over-read + wrong
 #              baseline); re-point to mainline llama.cpp#23398 (Gemma-4 MTP) when it
 #              merges — docs/UPSTREAM.md. Override BEELLAMA_IMAGE= to pin another build.
-#   Quality:   toolcall-15 12/15 · instructfollow-15 14/15 · structoutput-15 13/15 ·
-#              dataextract-15 11/15 · reasonmath-15 13/15 · bugfind-15 14/15 ·
-#              hermesagent-20 13/20 · cli-40 19/40 = 109/150 (73%) think-off; 114/150
-#              (76%) think-on — reasoning is net-positive on Gemma-4. (--full, 2026-05-27, #239)
+#   Quality:   toolcall-15 12/15 · instructfollow-15 13/15 · structoutput-15 14/15 ·
+#              dataextract-15 12/15 · reasonmath-15 12/15 · bugfind-15 14/15 ·
+#              hermesagent-20 11/20 · cli-40 20/40 = 108/150 (72%) think-off; 113/150
+#              (75%) think-on — +5 in-band wash; think-off default holds. (--full,
+#              2026-07-04 re-gate on the official v0.3.2-preview pin, current harness,
+#              tag gemma-dflash-regate. Prior harness-era numbers: 109/114, 2026-05-27, #239.)
 #   Engine-profile: beellama-local
 #   Best for:  ⭐ single-card Gemma-4-31B default — long-context + spec-dec in a single
 #              GGUF on one 3090 (54-193 TPS DFlash, workload-dependent; reasoning-on is
