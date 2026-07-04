@@ -87,6 +87,12 @@ IFS=',' read -ra ARM_LIST <<< "$ARMS"
 [[ "${#ARM_LIST[@]}" -ge 1 ]] || die "no arms given"
 for arm in "${ARM_LIST[@]}"; do
   [[ -n "${ARM_DTYPE[$arm]+x}" ]] || die "unknown arm '${arm}' (valid: e5m2, e4m3, nvfp4, fp8w)"
+  if [[ "$arm" == "e4m3" ]]; then
+    # vLLM hard-rejects fp8_e4m3 KV below SM 8.9 at boot — without this guard
+    # an Ampere rig sits in switch.sh's ready-wait until the 10-min timeout.
+    awk -v a="$MIN_SM" 'BEGIN{exit !(a>=8.9)}' \
+      || die "arm 'e4m3' needs sm>=8.9 (fp8_e4m3 KV is boot-rejected on Ampere); detected min sm_${MIN_SM}. On a 3090-class rig there is no arch delta to measure — this A/B is for Ada/Blackwell rigs (run --arms e5m2 if you just want the control numbers)"
+  fi
   if [[ "$arm" == "nvfp4" ]]; then
     awk -v a="$MIN_SM" 'BEGIN{exit !(a>=10.0)}' \
       || die "arm 'nvfp4' needs Blackwell (sm>=10.0); detected min sm_${MIN_SM}. Drop it: --arms e5m2,e4m3"
