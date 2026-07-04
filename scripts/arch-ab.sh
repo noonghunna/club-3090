@@ -186,8 +186,17 @@ for arm in arms:
     print(f"{arm:<8} {fmt(narr):>9} {fmt(code):>9} {fmt(ttft):>8}  {ladder}")
 PY
 
+# Rig triage report (default fast mode, path/host/user redaction ON) — the
+# cross-rig context that makes A/B variance interpretable: PCIe lane width,
+# driver, power caps, WSL-vs-bare-metal, NVLink state.
+echo "[arch-ab] capturing rig report (redacted) ..."
+bash scripts/report.sh > results/rebench/246-ab-rig-report.md 2>/dev/null \
+  || echo "[arch-ab] WARN: report.sh failed — bundle will ship without the rig report" >&2
+
 bundle="results/rebench/246-ab-bundle-$(hostname)-$(date +%Y%m%d).tgz"
-tar czf "$bundle" $(for arm in "${ARM_LIST[@]}"; do echo "results/rebench/246-ab-${arm}"; done)
+tar czf "$bundle" \
+  $(for arm in "${ARM_LIST[@]}"; do echo "results/rebench/246-ab-${arm}"; done) \
+  $( [[ -s results/rebench/246-ab-rig-report.md ]] && echo results/rebench/246-ab-rig-report.md )
 echo ""
 echo "[arch-ab] bundle written: ${bundle}"
 echo "[arch-ab] -> attach that ONE file to https://github.com/noonghunna/club-3090/issues/246"
