@@ -1,0 +1,34 @@
+# club3090-model-switch.service — HTTP control plane for swapping the served model.
+# ---------------------------------------------------------------------------
+# Runs tools/model-switch/server.py as a host daemon (it drives `docker compose`
+# via scripts/switch.sh, so it runs on the HOST, not in a container).
+#
+# Install (edit the two rig-specific values first — User= and the repo path):
+#
+#   sed -e "s|/opt/club-3090|$PWD|g" -e "s|User=youruser|User=$USER|" \
+#       scripts/systemd/club3090-model-switch.service | sudo tee /etc/systemd/system/club3090-model-switch.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now club3090-model-switch.service
+#
+# The token + model port are read from the repo-root .env via EnvironmentFile
+# (CLUB3090_API_TOKEN / VLLM_API_KEY, PORT, MODEL_DIR, …), so switch.sh's child
+# `docker compose` inherits the same environment the CLI uses.
+[Unit]
+Description=club-3090 model-switch HTTP control plane
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+# The account that owns the repo checkout AND is in the `docker` group.
+User=youruser
+WorkingDirectory=/opt/club-3090
+# Leading '-' = optional: a fresh checkout has no root .env yet (loopback + a
+# token passed another way still works). Add the token/port here for the tailnet.
+EnvironmentFile=-/opt/club-3090/.env
+ExecStart=/usr/bin/python3 /opt/club-3090/tools/model-switch/server.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

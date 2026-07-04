@@ -366,8 +366,33 @@ Or override at run-time with `--host 127.0.0.1` (llama.cpp) / by editing the com
 
 ---
 
+## Switch the served model over HTTP
+
+On a 1–2 GPU rig only one model fits in VRAM at a time. The optional
+[`tools/model-switch`](../tools/model-switch/README.md) service wraps
+`scripts/switch.sh` behind an HTTP endpoint so an experiment harness can swap
+models programmatically (it adds no orchestration — `switch.sh` stays the source
+of truth). stdlib-only; run it on the host:
+
+```bash
+python3 tools/model-switch/server.py        # or the club3090-model-switch systemd unit
+```
+
+```bash
+TOKEN=...   # CLUB3090_API_TOKEN (falls back to VLLM_API_KEY); empty = open on loopback
+# what's serving now:
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8099/status
+# switch (blocks until the new model is ready, ~1-2 min):
+curl -s -XPOST -H "Authorization: Bearer $TOKEN" localhost:8099/switch -d '{"model":"gemma-4-31b"}'
+# list switchable slugs:
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8099/models
+```
+
+---
+
 ## See also
 
+- [`tools/model-switch/README.md`](../tools/model-switch/README.md) — HTTP endpoint to swap the served model
 - [`models/qwen3.6-27b/README.md`](../models/qwen3.6-27b/README.md) — variant matrix + VRAM diagram
 - [`docs/SINGLE_CARD.md`](SINGLE_CARD.md) and [`docs/DUAL_CARD.md`](DUAL_CARD.md) — workload → recommended compose
 - [`scripts/launch.sh`](../scripts/launch.sh) — interactive variant picker
