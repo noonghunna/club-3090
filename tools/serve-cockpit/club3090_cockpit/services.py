@@ -63,6 +63,7 @@ from .data import (
     EvidenceReport,
     EvidenceTag,
     FitVerdict,
+    GATE_STEPS,
     GpuCompApp,
     GpuConflict,
     Measurement,
@@ -2723,6 +2724,10 @@ class CockpitData:
             )
             if has_report:
                 et.date, et.tldr = self._scrape_report_meta(report)
+            else:
+                # F10 — no REPORT.md (rebench-full writes it LAST) → the run is
+                # in flight or died mid-run.  Read the live state off the dir.
+                self._evidence_live_read(d, et)
             if not et.date:
                 # mtime fallback (YYYY-MM-DD).
                 import datetime as _dt
@@ -2730,6 +2735,84 @@ class CockpitData:
                 et.date = _dt.datetime.fromtimestamp(d.stat().st_mtime).strftime("%Y-%m-%d")
             tags.append(et)
         return tags
+
+    # F10 — a run with no writes for this long is treated as aborted/orphaned,
+    # not live.  Generous: gate steps stream tee output continuously, but a
+    # single long generation (quality-full at depth) can go quiet for minutes.
+    EVIDENCE_LIVE_AGE_SECS = 600
+
+    def _evidence_live_read(self, d: Path, et: EvidenceTag) -> None:
+        """F10 — fill an EvidenceTag's live-run fields from a report-less tag dir.
+
+        Pure filesystem READ (observer, never executor) so it works identically
+        for CLI-launched (nohup) runs: rebench-full's ``run_step`` tees each
+        step to ``<step>.log`` and records completed steps in ``timings.json``,
+        so the ACTIVE step is the newest step log with no timings entry.  A dir
+        that has gone quiet (> EVIDENCE_LIVE_AGE_SECS) is ``stale`` instead."""
+        try:
+            # Newest write across the dir's top-level artifacts = run liveness.
+            newest = d.stat().st_mtime
+            for f in d.iterdir():
+                try:
+                    m = f.stat().st_mtime
+                except OSError:
+                    continue
+                newest = max(newest, m)
+            et.age_secs = max(0, int(time.time() - newest))
+            # Completed steps ([(name, secs)…] in gate order) from timings.json;
+            # tolerate a mid-rewrite read (record_timing rewrites the file).
+            timings: dict = {}
+            try:
+                timings = json.loads((d / "timings.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                timings = {}
+            et.steps_done = [
+                (s, int(timings[s])) for s in GATE_STEPS if s in timings
+            ] + [(k, int(v)) for k, v in timings.items() if k not in GATE_STEPS]
+            # Active step = the newest <step>.log NOT yet in timings.json.
+            cand: list[tuple[float, str]] = []
+            for s in GATE_STEPS:
+                if s in timings:
+                    continue
+                log = d / f"{s}.log"
+                try:
+                    cand.append((log.stat().st_mtime, s))
+                except OSError:
+                    continue
+            if cand:
+                et.live_step = max(cand)[1]
+            et.live = et.age_secs < self.EVIDENCE_LIVE_AGE_SECS
+            et.stale = not et.live
+            if et.live and et.live_step:
+                et.live_tail = self._evidence_log_tail(d / f"{et.live_step}.log")
+        except OSError:
+            # Unreadable dir — leave the tag as a plain incomplete entry.
+            et.stale = True
+
+    @staticmethod
+    def _evidence_log_tail(log_path: Path, lines: int = 6) -> str:
+        """Last non-empty lines of a step log, ANSI/CR-cleaned for display.
+
+        Step logs carry benchlocal/verify ANSI colors and ``\\r`` progress
+        overdraw; keep only what a terminal would show."""
+        try:
+            with open(log_path, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                fh.seek(max(0, size - 4096))
+                raw = fh.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+        raw = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw)
+        out: list[str] = []
+        # Split on \n ONLY (splitlines() would split on \r and resurrect the
+        # progress frames a terminal overdraws).
+        for line in raw.split("\n"):
+            # \r overdraw: a terminal shows only the text after the last CR.
+            line = line.rsplit("\r", 1)[-1].strip()
+            if line:
+                out.append(line)
+        return "\n".join(out[-lines:])
 
     def _scrape_report_meta(self, report_path: Path) -> tuple[str, str]:
         """Pull (date, tldr) from a REPORT.md without importing the generator.

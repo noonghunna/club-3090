@@ -2778,6 +2778,99 @@ class TestPhase4Evidence:
 
 
 # ===========================================================================
+# F10 — Evidence live gate-run OBSERVER (pure filesystem READ of the
+# rebench-full artifacts: timings.json + <step>.log; REPORT.md is written LAST
+# so its absence == run in flight / aborted)
+# ===========================================================================
+
+
+def _seed_live_run(base: Path, tag: str = "live-run") -> Path:
+    """A mid-flight rebench dir: 2 steps done (timings.json), the 3rd step's
+    log growing with ANSI + \\r-overdraw progress lines."""
+    d = base / "results" / "rebench" / tag
+    d.mkdir(parents=True)
+    (d / "timings.json").write_text(
+        json.dumps({"verify-full": 132, "bench": 241}), encoding="utf-8"
+    )
+    (d / "verify-full.log").write_text("8/8 PASS\n", encoding="utf-8")
+    (d / "bench.log").write_text("narrative 153.9 TPS\n", encoding="utf-8")
+    (d / "verify-stress.log").write_text(
+        "ladder 32K ok\n\x1b[32mladder 91K ok\x1b[0m\n"
+        "run [1/7]…\rrun [2/7]…\rrun [3/7] longctx probe\n",
+        encoding="utf-8",
+    )
+    return d
+
+
+class TestF10EvidenceLiveObserver:
+    @pytest.mark.asyncio
+    async def test_live_run_detected_with_ladder_and_tail(self, tmp_path):
+        _seed_live_run(tmp_path)
+        # A completed sibling stays a plain completed row.
+        done = tmp_path / "results" / "rebench" / "done-run"
+        done.mkdir(parents=True)
+        (done / "REPORT.md").write_text("# Rebench report\n", encoding="utf-8")
+        cd = CockpitData(tmp_path, runner=full_runner())
+        tags = {t.tag: t for t in await cd.evidence_list()}
+        live = tags["live-run"]
+        assert live.live and not live.stale
+        assert live.steps_done == [("verify-full", 132), ("bench", 241)]
+        # Active step = the newest step log with no timings entry.
+        assert live.live_step == "verify-stress"
+        # Tail is ANSI-stripped and \r-overdraw-resolved (a terminal's view).
+        assert "\x1b" not in live.live_tail
+        assert "run [3/7] longctx probe" in live.live_tail
+        assert "run [1/7]" not in live.live_tail
+        assert "ladder 91K ok" in live.live_tail
+        comp = tags["done-run"]
+        assert not comp.live and not comp.stale
+
+    @pytest.mark.asyncio
+    async def test_quiet_incomplete_run_is_stale_not_live(self, tmp_path):
+        import os as _os
+
+        d = _seed_live_run(tmp_path, tag="dead-run")
+        old = time.time() - 7200
+        for f in [d, *d.iterdir()]:
+            _os.utime(f, (old, old))
+        cd = CockpitData(tmp_path, runner=full_runner())
+        t = next(t for t in await cd.evidence_list() if t.tag == "dead-run")
+        assert t.stale and not t.live
+        assert t.age_secs >= 7000
+        # The ladder data is still read (what it finished before dying).
+        assert t.steps_done and t.live_step == "verify-stress"
+        # No tail read for a dead run.
+        assert t.live_tail == ""
+
+    @pytest.mark.asyncio
+    async def test_mid_rewrite_timings_tolerated(self, tmp_path):
+        # record_timing REWRITES timings.json — a torn read must not crash the
+        # observer; it degrades to "no steps recorded (yet)".
+        d = _seed_live_run(tmp_path, tag="torn-run")
+        (d / "timings.json").write_text('{"verify-full": 13', encoding="utf-8")
+        cd = CockpitData(tmp_path, runner=full_runner())
+        t = next(t for t in await cd.evidence_list() if t.tag == "torn-run")
+        assert t.live
+        assert t.steps_done == []
+        # With no timings, every present step log is a candidate → newest wins.
+        assert t.live_step == "verify-stress"
+
+    def test_gate_steps_match_rebench_script(self):
+        """Drift guard: GATE_STEPS is a render constant mirroring the run_step
+        call sites in scripts/rebench-full.sh — the script owns the sequence."""
+        import re as _re
+
+        from club3090_cockpit.data import GATE_STEPS
+
+        script = Path(__file__).resolve().parents[3] / "scripts" / "rebench-full.sh"
+        if not script.is_file():
+            pytest.skip("rebench-full.sh not present (standalone checkout)")
+        text = script.read_text(encoding="utf-8", errors="replace")
+        names = _re.findall(r"\brun_step\s+([a-z][a-z-]*)", text)
+        assert tuple(names) == GATE_STEPS
+
+
+# ===========================================================================
 # PHASE 4 — submit-bench (READ preview vs OUTWARD-FACING gated write)
 # ===========================================================================
 

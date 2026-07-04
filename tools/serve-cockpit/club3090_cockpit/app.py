@@ -86,6 +86,7 @@ from .data import (
     EstateTelemetry,
     EvidenceReport,
     EvidenceTag,
+    GATE_STEPS,
     Measurement,
     MeasureVsBar,
     OptimizerReport,
@@ -3099,11 +3100,45 @@ class DoctorPane(Container):
         body.update("\n".join(lines))
 
 
+def _age_label(secs: int) -> str:
+    """Compact 'how long ago' label for the F10 live/stale evidence rows."""
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
+
+
+def _gate_ladder(et: EvidenceTag) -> str:
+    """F10 — one-line gate ladder for a live/incomplete run.
+
+    ``✓`` done (with duration) · ``▶`` the step running now · ``·`` not yet
+    reached.  Steps rendered positionally from GATE_STEPS; a step that was
+    skipped (--skip/--resume) simply never turns ✓ — the ▶ marker carries the
+    truth of what is actually executing."""
+    done = {s: secs for s, secs in et.steps_done}
+    parts: list[str] = []
+    for s in GATE_STEPS:
+        if s in done:
+            parts.append(f"[green]✓[/green]{s} [dim]{_age_label(int(done[s]))}[/dim]")
+        elif s == et.live_step:
+            parts.append(f"[yellow]▶{s}[/yellow]")
+        else:
+            parts.append(f"[dim]·{s}[/dim]")
+    return "  ".join(parts)
+
+
 class ValidateEvidencePane(Container):
     """Validate / Evidence tab: real ``results/rebench/<tag>/`` run list from
     ``evidence_list()``; ``⏎`` opens the paste-ready report (``evidence_report``)
     in a modal (reuses the history_view pattern), ``s`` stages the gated
-    submit-to-localmaxxing for the selected tag (confirm modal; never auto)."""
+    submit-to-localmaxxing for the selected tag (confirm modal; never auto).
+
+    F10 — doubles as the live gate-run OBSERVER: a tag dir with no REPORT.md is
+    a run in flight (badged ▶, ladder + live tail in the preview, 4s self
+    refresh) or an aborted one (⚠ incomplete).  Renders script-owned artifacts
+    only (timings.json + step logs) — works for CLI-launched runs, never
+    executes anything."""
 
     DEFAULT_CSS = """
     ValidateEvidencePane {
@@ -3162,21 +3197,57 @@ class ValidateEvidencePane(Container):
         t = self.query_one("#evidence-table", DataTable)
         t.add_columns("tag", "date", "report", "internal", "soak", "TL;DR")
         self._tags: list[EvidenceTag] = []
+        # F10 — live gate-run observer: while a run is in flight the list
+        # re-reads itself so the ladder + tail stay fresh (a producer facing a
+        # silent 3-hr gate otherwise assumes a hang).  Paused whenever nothing
+        # is live — populate() resumes/pauses it from the data, so CLI-launched
+        # runs picked up by any refresh start the ticking too.
+        self._live_timer = self.set_interval(4.0, self._live_tick, pause=True)
+
+    def _live_tick(self) -> None:
+        """F10 — periodic re-read while a run is live (READ; observer only)."""
+        try:
+            self.app.load_evidence()  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def populate(self, tags: list[EvidenceTag]) -> None:
         status = self.query_one("#evidence-status", Label)
         t = self.query_one("#evidence-table", DataTable)
+        saved_row = t.cursor_row  # F10: periodic refresh must not yank the cursor
         t.clear()
         self._tags = list(tags)
+        # F10 — tick only while a run is in flight.
+        try:
+            if any(et.live for et in tags):
+                self._live_timer.resume()
+            else:
+                self._live_timer.pause()
+        except Exception:
+            pass
         if not tags:
             status.update("[dim]no runs under results/rebench/[/dim]")
             t.add_row("[dim]—[/dim]", "—", "—", "—", "—", "—")
             return
         for et in tags:
             yn = lambda b: "[green]✓[/green]" if b else "[dim]·[/dim]"
+            tag_cell = et.tag
             tldr = (et.tldr[:48] + "…") if len(et.tldr) > 49 else (et.tldr or "—")
-            t.add_row(et.tag, et.date or "—", yn(et.has_report), yn(et.has_internal), yn(et.has_soak), tldr)
+            if et.live:
+                # F10 — a run in flight: badge the row + say what's running now.
+                tag_cell = f"[green]▶[/green] {et.tag}"
+                step = et.live_step or "starting"
+                tldr = f"[green]running[/green] — {step} · {len(et.steps_done)}/{len(GATE_STEPS)} steps done"
+            elif et.stale:
+                tag_cell = f"[yellow]⚠[/yellow] {et.tag}"
+                tldr = f"[yellow]incomplete[/yellow] [dim](no REPORT.md · quiet {_age_label(et.age_secs)})[/dim]"
+            t.add_row(tag_cell, et.date or "—", yn(et.has_report), yn(et.has_internal), yn(et.has_soak), tldr)
         status.update(f"{len(tags)} run tag(s) under results/rebench/")
+        try:
+            if t.row_count and saved_row > 0:
+                t.move_cursor(row=min(saved_row, t.row_count - 1), animate=False)
+        except Exception:
+            pass
         # N8 — keep the preview in sync with the cursor after a (re-)populate.
         try:
             self.render_preview(self.selected_tag())
@@ -3203,6 +3274,28 @@ class ValidateEvidencePane(Container):
             return
         from rich.markup import escape
 
+        if tag.live:
+            # F10 — a run in flight: the ladder + the active step's live tail.
+            lines = [
+                f"  [green]▶ RUNNING[/green]  [bold]{escape(tag.tag)}[/bold]"
+                f"  [dim]· last write {_age_label(tag.age_secs)} ago[/dim]",
+                f"  {_gate_ladder(tag)}",
+            ]
+            for tl in (tag.live_tail or "").splitlines()[-4:]:
+                lines.append(f"  [dim]│[/dim] {escape(tl)}")
+            if not tag.live_tail:
+                lines.append("  [dim]│ (no step output yet)[/dim]")
+            body.update("\n".join(lines))
+            return
+        if tag.stale:
+            lines = [
+                f"  [yellow]⚠ INCOMPLETE[/yellow]  [bold]{escape(tag.tag)}[/bold]"
+                f"  [dim]· no REPORT.md · quiet {_age_label(tag.age_secs)}[/dim]",
+                f"  {_gate_ladder(tag)}",
+                "  [dim]aborted or orphaned — re-run with --resume to continue from its artifacts[/dim]",
+            ]
+            body.update("\n".join(lines))
+            return
         yn = lambda b: "[green]✓[/green]" if b else "[dim]·[/dim]"
         lines = [
             f"  [bold]{escape(tag.tag)}[/bold]"
@@ -7540,6 +7633,18 @@ class CockpitApp(App):
         if tag is None:
             self.notify("No run tag selected.", title="Evidence", severity="warning", timeout=3)
             return
+        if tag.live:
+            # F10 — report generation WRITES REPORT.md into the tag dir; doing
+            # that mid-run would corrupt the observer's completed/live signal
+            # (and the observer never executes against a run in flight).
+            self.notify(
+                "Run in flight — REPORT.md generates when it completes. "
+                "Watch the ladder + live tail in the preview below the list.",
+                title="Evidence",
+                severity="information",
+                timeout=5,
+            )
+            return
         # The screen loads its own report on mount (run_evidence_report), so the
         # set_report query resolves against a fully-mounted modal.
         self.push_screen(EvidenceReportScreen(tag.tag))
@@ -8157,6 +8262,16 @@ class CockpitApp(App):
             tag = None
         if tag is None:
             self.notify("No run tag selected.", title="Evidence", severity="warning", timeout=3)
+            return
+        if tag.live or tag.stale:
+            # F10 — an in-flight run has incomplete artifacts; an aborted one
+            # has no REPORT.md.  Neither is submittable evidence.
+            self.notify(
+                "This run has no completed REPORT.md — submit when the gate finishes.",
+                title="Evidence",
+                severity="warning",
+                timeout=4,
+            )
             return
         plan = self._data.submit_bench(tag.tag)
         self.push_screen(ConfirmActionScreen(plan))

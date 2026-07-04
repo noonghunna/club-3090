@@ -832,6 +832,20 @@ class BenchRow:
 
 # ── Phase 4: Evidence (rebench run tags) ──────────────────────────────────────────
 
+# F10 — the rebench-full gate ladder, in run order.  MUST mirror the `run_step
+# <name>` call sites in scripts/rebench-full.sh (the script owns the sequence;
+# this is a render constant — test_gate_steps_match_rebench_script pins the two
+# together so they can't drift).  Steps may be absent from a given run
+# (--skip / --resume / --quick): the observer renders those positionally.
+GATE_STEPS: tuple[str, ...] = (
+    "verify-full",
+    "bench",
+    "verify-stress",
+    "quality-full",
+    "quality-thinking",
+    "soak",
+)
+
 
 @dataclass
 class EvidenceTag:
@@ -845,6 +859,17 @@ class EvidenceTag:
     date: str = ""                      # from REPORT.md Meta or dir mtime
     # A coarse one-line TL;DR scraped from REPORT.md if present.
     tldr: str = ""
+    # F10 — live gate-run observer.  A dir with NO REPORT.md is a run in
+    # flight (rebench-full synthesizes REPORT.md last): ``live`` while its
+    # artifacts are still being written, ``stale`` once it has gone quiet
+    # (aborted / orphaned).  Both derive purely from the dir's files — the
+    # observer works identically for CLI-launched (nohup) runs.
+    live: bool = False
+    stale: bool = False                 # incomplete AND no recent writes
+    live_step: str = ""                 # the step whose log is growing now
+    steps_done: list = field(default_factory=list)   # [(step, secs), …] from timings.json
+    live_tail: str = ""                 # last lines of the active step's log
+    age_secs: int = 0                   # since the newest artifact write
 
 
 @dataclass
