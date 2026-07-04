@@ -57,6 +57,7 @@ class ServingTarget:
     tp: int = 0
     status: str = ""           # registry status
     status_note: str = ""
+    match_confidence: str = ""  # "identity" | "shape" | "" — see match_target_to_registry
     health: str = "unknown"    # serving | unreachable | multiple
     gpus: list[GpuInfo] = field(default_factory=list)
 
@@ -248,6 +249,16 @@ def match_target_to_registry(target: ServingTarget, variants: list) -> ServingTa
          docker project/scale suffix (``<name>-1``); longest-first so a prefix
          sibling can never shadow the real container.
 
+    Match GRADE is recorded on ``target.match_confidence``:
+      - ``"identity"`` — rule 1 (exact container).  The container IS this slug.
+      - ``"shape"``    — rule 2/3 (port / substring fallback).  The slug is the
+        best *shape* guess, NOT a verified identity: a brought model serving on
+        a sibling's port (or a copied compose) lands here while actually running
+        something else entirely — renderers must lead with the probed served-model
+        id and present the slug as the matched shape (the Agents-A1 bring,
+        2026-07-03, masqueraded as the 35B sibling through exactly this path).
+      - ``""``         — unmatched (target returned unchanged).
+
     Accepts list[VariantRow] (core) or list[dict] (compat).
     """
 
@@ -262,12 +273,13 @@ def match_target_to_registry(target: ServingTarget, variants: list) -> ServingTa
     def _norm(c: str) -> str:
         return (c or "").replace("_", "-")
 
-    def _apply(fields) -> ServingTarget:
+    def _apply(fields, confidence: str) -> ServingTarget:
         _container, _port, slug, kvcalc_key, status, status_note = fields
         target.slug = slug
         target.kv_format = kvcalc_key
         target.status = status
         target.status_note = status_note
+        target.match_confidence = confidence
         return target
 
     rows = [_fields(v) for v in variants]
@@ -277,17 +289,17 @@ def match_target_to_registry(target: ServingTarget, variants: list) -> ServingTa
     if tcont:
         for f in rows:
             if _norm(f[0]) == tcont:
-                return _apply(f)
-    # 2. EXACT host port.
+                return _apply(f, "identity")
+    # 2. EXACT host port — a SHAPE guess (ports are copied between composes).
     if target.host_port:
         for f in rows:
             if f[1] == target.host_port:
-                return _apply(f)
+                return _apply(f, "shape")
     # 3. SUBSTRING container, longest registry container first (never let a prefix
-    #    sibling shadow the real one).
+    #    sibling shadow the real one) — also a shape guess.
     if tcont:
         for f in sorted(rows, key=lambda r: len(_norm(r[0])), reverse=True):
             c = _norm(f[0])
             if c and c in tcont:
-                return _apply(f)
+                return _apply(f, "shape")
     return target

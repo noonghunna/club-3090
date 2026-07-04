@@ -941,10 +941,12 @@ class CockpitData:
         infos: list[ContainerInfo] = []
         for name, host_port, internal_port, engine, kind in await self._docker_ps_stack_containers():
             slug = ""
+            confidence = ""
             if kind == "engine" and variants:
                 tmp = ServingTarget(container=name, host_port=host_port)
                 tmp = match_target_to_registry(tmp, variants)
                 slug = tmp.slug
+                confidence = tmp.match_confidence
             infos.append(
                 ContainerInfo(
                     name=name,
@@ -953,6 +955,7 @@ class CockpitData:
                     internal_port=internal_port,
                     engine=engine,
                     slug=slug,
+                    match_confidence=confidence,
                 )
             )
         return infos

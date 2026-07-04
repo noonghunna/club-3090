@@ -225,3 +225,45 @@ class TestRegistryMatchExactNotPrefix:
             match_target_to_registry(target, self.VARIANTS).slug
             == "beellama/carnice-v2-dual-q8-mtp"
         )
+
+
+class TestMatchConfidence:
+    """F9 (slug masquerade): the match GRADE is recorded on ``match_confidence``
+    so renderers can distinguish a verified identity (exact container) from a
+    shape guess (port/substring fallback).  Regression source: the Agents-A1
+    bring (2026-07-03) served on a sibling's port and was PRESENTED as
+    ``vllm/qwen-35b-a3b-dual`` with no hint it was a different model."""
+
+    VARIANTS = [
+        _make_variant_row(container="vllm-qwen36-35b-a3b-dual", port=8051,
+                          slug="vllm/qwen-35b-a3b-dual"),
+        _make_variant_row(container="vllm-qwen36-27b-dual", port=8010, slug="vllm/dual"),
+    ]
+
+    def test_exact_container_is_identity(self):
+        target = ServingTarget(container="vllm-qwen36-27b-dual", host_port=8010)
+        result = match_target_to_registry(target, self.VARIANTS)
+        assert result.slug == "vllm/dual"
+        assert result.match_confidence == "identity"
+
+    def test_port_fallback_is_shape(self):
+        # The A1 masquerade: an unknown (brought) container on a sibling's port
+        # still slug-matches — but MUST be graded a shape guess, not an identity.
+        target = ServingTarget(
+            container="vllm-agents-a1-dual", host_port=8051, model="agents-a1"
+        )
+        result = match_target_to_registry(target, self.VARIANTS)
+        assert result.slug == "vllm/qwen-35b-a3b-dual"
+        assert result.match_confidence == "shape"
+
+    def test_substring_fallback_is_shape(self):
+        target = ServingTarget(container="vllm-qwen36-27b-dual-1", host_port=0)
+        result = match_target_to_registry(target, self.VARIANTS)
+        assert result.slug == "vllm/dual"
+        assert result.match_confidence == "shape"
+
+    def test_unmatched_is_empty(self):
+        target = ServingTarget(container="comfyui", host_port=7861)
+        result = match_target_to_registry(target, self.VARIANTS)
+        assert result.slug == ""
+        assert result.match_confidence == ""
