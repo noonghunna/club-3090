@@ -136,6 +136,18 @@ print("code :", m.content)
 
 The reasoning channel will contain exactly `GOAL: ... APPROACH: ... EDGE: ...`; the content channel will have the runnable code.
 
+> **Heads-up — the legacy `guided_*` params are silently dropped on vLLM 0.24.0.** The old top-level fields (`guided_grammar`, `guided_json`, `guided_regex`, `guided_choice`, `guided_decoding_backend`) were deprecated and then **removed upstream in v0.12.0** (this repo pins 0.24.0, well past that) in favour of the `structured_outputs` object. The trap: the OpenAI server treats a removed field as an unknown extra, **ignores it, and still returns HTTP 200** — so the request succeeds and just generates *unconstrained*. No error, no warning. If a grammar "isn't firing" (FREE-length output when you asked for a constrained shape), this is almost always why. Use the new form:
+>
+> | Legacy (dropped — silently ignored) | New (`extra_body={...}`) |
+> |---|---|
+> | `guided_grammar: "<gbnf>"` | `structured_outputs: {"grammar": "<gbnf>"}` |
+> | `guided_json: <schema>` | `structured_outputs: {"json": <schema>}`  (or OpenAI-standard `response_format: {"type":"json_schema", ...}`) |
+> | `guided_regex: "<re>"` | `structured_outputs: {"regex": "<re>"}` |
+> | `guided_choice: [...]` | `structured_outputs: {"choice": [...]}` |
+> | `guided_decoding_backend: "xgrammar"` | server flag `--structured-outputs-config` (not per-request) |
+>
+> Quick check that a grammar is actually firing: send a prompt that would ramble unconstrained (e.g. "explain in a paragraph") with a grammar that forces a fixed short shape — if you get the long answer back, the grammar was dropped.
+
 ### 3. llama.cpp bounded-thinking port
 
 llama.cpp has a sibling structured-CoT compose for users who want the GGUF/MTP path instead of vLLM:
