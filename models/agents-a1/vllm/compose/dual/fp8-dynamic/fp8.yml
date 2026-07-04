@@ -16,7 +16,12 @@
 #              (Marlin FP8-MoE; the checkpoint's dynamic activation quant is inert
 #              — sm_89+ exercises the real checkpoint); (3) not a general upgrade
 #              over qwen3.6-35b-a3b — ~13% slower decode; its edge is agentic
-#              thinking-ON work (cli-40 23/40, the stack's highest).
+#              thinking-ON work (cli-40 23/40, the stack's highest);
+#              (4) Blackwell sm_120: upstream vLLM v0.24.0 kernel-selection bug
+#              crashes boot ('QKVParallelLinear' has no attribute 'workspace',
+#              club-3090 #548) — workaround: VLLM_TEST_FORCE_FP8_MARLIN=1 (the
+#              commented line in the environment block below; forces the exact
+#              weight-only path this gate validated).
 #   Quality:   8-pack --full: thinking-OFF 105/150 · thinking-ON 110/150
 #                (toolcall 15/15 OFF · IF 15/15 ON · cli-40 23/40 ON vs incumbent 17)
 #                (post benchlocal-cli #79+#81 harness, 2026-07-03)
@@ -112,6 +117,13 @@
 #   NOTE: --trust-remote-code is a GOVERNED slot (locked §88); it is
 #   NOT emitted for any in-scope profile (arch trc gate = false).
 # ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+# Requires-sm: 8.0+
+# ===========================================================================
 services:
   vllm-agents-a1-dual:
     
@@ -142,6 +154,10 @@ services:
       - VLLM_NO_USAGE_STATS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
       - OMP_NUM_THREADS=1
+      # Blackwell (sm_120) on v0.24.0: uncomment to dodge the upstream
+      # kernel-selection crash — forces the Marlin weight-only path this
+      # compose's gate validated (see Caveats (4) + club-3090 #548).
+      # - VLLM_TEST_FORCE_FP8_MARLIN=1
     shm_size: "16gb"
     ipc: host
     deploy:
