@@ -1,0 +1,188 @@
+# baselines.yml — the shipped catalog baseline ("the bar").
+# ===========================================================================
+# One row per registry slug: the ACCEPTED display projection of a validated
+# gate run (full evidence stays in results/rebench/<source_tag>/ or the
+# BENCHMARKS.md row it was reviewed from). PR-reviewed; written by
+# scripts/catalog-baseline.sh (slice 2) or by hand at promotion time.
+# Consumers read the registry-emit join, NEVER this file directly, and NEVER
+# BENCHMARKS.md (which stays the public human/cross-rig ledger — publication,
+# not machine source).
+#
+# Conventions:
+#   narr_tps / code_tps   DECODE-class TPS means (bench.sh canonical prompts,
+#                         warm, n>=3; the per-token rate, not wall).
+#   quality_8pk           thinking-OFF arm "P/150"; _think_on = thinking-ON.
+#                         8-pack noise band is ±5–7 — separates classes, not
+#                         fine rankings (badge semantics, design §2.1.4).
+#   ctx_validated         highest ctx EXERCISED by the gate, with the recall
+#                         verdict: {tokens: N, niah: "clean@XK" | "allocation-
+#                         only"} — allocation alone is NOT validation (§2.1.2).
+#   engine_pin            the pin the numbers were measured ON. If it differs
+#                         from the slug's current engine pin, the row is
+#                         PROVABLY STALE → c3 badges "re-bench owed" (§2.2).
+#   rig / power_cap_w     hardware fingerprint class + per-card caps at bench.
+#   source_tag            results/rebench/<tag>/ when a tag dir exists;
+#                         omitted for rows reviewed from a BENCHMARKS.md entry
+#                         (the row comment names the source).
+#
+# SEED WAVE 1 (2026-07-04): rows with airtight traceability only — a rebench
+# tag on disk or an unambiguous decode-class BENCHMARKS.md row. Slugs still
+# owed a row (evidence exists but needs review/archaeology) are listed at the
+# bottom; DON'T guess numbers into them.
+# ===========================================================================
+schema_version: 1
+baselines:
+
+  # ── Qwen3.6-27B ───────────────────────────────────────────────────────────
+  llamacpp/default:
+    # BENCHMARKS.md 2026-05-23 row (decode, n=3, CV 0.6%/1.4%).
+    # Measured on the pre-2026-05-26 ROLLING tag (unknowable build) — the
+    # compose has pinned server-cuda-b9246 since → BORN-STALE, re-bench owed.
+    narr_tps: 50.27
+    code_tps: 58.92
+    date: 2026-05-23
+    engine_pin: "ghcr.io/ggml-org/llama.cpp:server-cuda"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
+  llamacpp/mtp:
+    # BENCHMARKS.md 2026-06-18 row (decode, n=5, CV <2%, thinking-off).
+    narr_tps: 47.9
+    code_tps: 55.3
+    date: 2026-06-18
+    engine_pin: "ghcr.io/ggml-org/llama.cpp:server-cuda-b9246"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
+  llamacpp/mtp-vision:
+    # BENCHMARKS.md 2026-05-20 row (decode, n=5, CV 1.6%/1.7%).
+    # Rolling-tag era (pre-b9246 pin) → BORN-STALE, re-bench owed.
+    narr_tps: 56.52
+    code_tps: 66.17
+    date: 2026-05-20
+    engine_pin: "ghcr.io/ggml-org/llama.cpp:server-cuda"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
+  ik-llama/iq4ks-mtp:
+    # BENCHMARKS.md 2026-05-23 row (decode 60.39/72.40, n=3; set+readback 370 W).
+    narr_tps: 60.39
+    code_tps: 72.4
+    date: 2026-05-23
+    # ik composes pin by digest; measurement-era pin presumed == current cu13
+    # digest (verify + exactify on the next gate via the induction tool).
+    engine_pin: "ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
+  ik-llama/iq4ks-two-stage:
+    # BENCHMARKS.md 2026-05-24 row (decode, n=3, CV 1.9%/5.3%).
+    narr_tps: 59.4
+    code_tps: 97.8
+    date: 2026-05-24
+    engine_pin: "ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
+  beellama/dflash:
+    # BENCHMARKS.md 2026-05-30 row (decode 50.4/101.3, n=5, CV 5.6%/7.4%).
+    # Measured on the pre-#296 noonghunna multiarch image → PROVABLY STALE vs
+    # the current v0.3.2-preview engine pin (never re-benched on it) — the
+    # staleness badge is CORRECT here, keep it until a re-bench.
+    narr_tps: 50.4
+    code_tps: 101.3
+    date: 2026-05-30
+    engine_pin: "ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
+  ik-llama/byteshape-iq4xs-mtp:
+    # BENCHMARKS.md row (decode 115.60/137.07, n=5) + 8-pack 110/150 off —
+    # community intake #293/#299 reproduced on our rig 2026-06-02.
+    narr_tps: 115.6
+    code_tps: 137.07
+    quality_8pk: "110/150"
+    date: 2026-06-02
+    engine_pin: "ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
+  # ── Qwen3.6-35B-A3B ──────────────────────────────────────────────────────
+  vllm/qwen-35b-a3b-dual:
+    # BENCHMARKS.md promotion row (#259, decode 182.3/182.3; NIAH-clean 240K).
+    # Measured on v0.22.0; the slug now pins v0.24.0 (fast/max-tier era) →
+    # PROVABLY STALE — the born-stale demo row for the guard (§2.2).
+    # quality_8pk_think_on from the fresher #480-era measurement (incumbent
+    # baseline used in the Agents-A1 comparison).
+    narr_tps: 182.3
+    code_tps: 182.3
+    quality_8pk_think_on: "110/150"
+    ctx_validated: { tokens: 245760, niah: "clean@240K" }
+    date: 2026-05-30
+    engine_pin: "vllm/vllm-openai:v0.22.0"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 420]
+    submitted_by: "noonghunna"
+
+  # ── Agents-A1 ────────────────────────────────────────────────────────────
+  vllm/agents-a1-dual:
+    # rebench tag agents-a1-fp8-dual (2026-07-03 gate): bench n=5 CV 0.1%;
+    # verify-stress 8/8 staggered NIAH to 240,635 tok exact-recall, VRAM Δ0;
+    # soak PASS (99.8% retention). Quality = post benchlocal #79+#81 harness:
+    # OFF 105/150 · ON 110/150 (cli-40 ON 23/40 fresh-image).
+    # Cross-rig confirmed 2026-07-04 (#552 @sumo-dandan, decode −1%).
+    narr_tps: 153.9
+    code_tps: 154.0
+    ttft_ms: 130
+    quality_8pk: "105/150"
+    quality_8pk_think_on: "110/150"
+    ctx_validated: { tokens: 240635, niah: "clean@240K" }
+    date: 2026-07-03
+    engine_pin: "vllm/vllm-openai:v0.24.0"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 420]
+    source_tag: "agents-a1-fp8-dual"
+    submitted_by: "noonghunna"
+
+  # ── Gemma-4-31B ──────────────────────────────────────────────────────────
+  vllm/gemma-31b-dual:
+    # rebench tag gemma-31b-dual-bf16 (v0.24.0 consolidation gate #538/#539):
+    # decode 59.07/59.06, TTFT ~72 ms, soak PASS p50 58.69.
+    # TODO-review: quality_8pk + ctx_validated (gate artifacts have the NIAH
+    # ladder — extract the verdict; 224K claim pending #40391 for 262K).
+    narr_tps: 59.07
+    code_tps: 59.06
+    ttft_ms: 72
+    date: 2026-07-02
+    engine_pin: "vllm/vllm-openai:v0.24.0"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 420]
+    source_tag: "gemma-31b-dual-bf16"
+    submitted_by: "noonghunna"
+
+# ───────────────────────────────────────────────────────────────────────────
+# SEED WAVE 2 — rows owed, evidence needs review before numbers land here
+# (do NOT guess; each needs its primary row disambiguated):
+#   vllm/minimal · vllm/dual · vllm/qwen-27b-dual-fast — rows exist under
+#     pre-rename sections/tags (fp8-mtp era + the #340 tier work); pick the
+#     current-pin (v0.24.0) or mark born-stale from the v0.22.0-era rows.
+#   ik-llama/iq4ks-mtp-vision — only a "carried" row exists (decode ≈ 60/72
+#     carried from iq4ks-mtp); decide whether carried rows qualify.
+#   ik-llama/apex-fit-q8q5 — decode 105.63/156.80 (n=5) exists but the row's
+#     date needs confirming (APEX intake era).
+#   vllm/gemma-12b-dual-bf16-mtp (76.4/120.9) · vllm/gemma-12b-single-int8-mtp
+#     (117/122.5) — 2026-06-04 rows; confirm decode-vs-wall class + current-pin
+#     status after the v0.24.0 consolidation (both slugs re-pinned since).
+#   vllm/gemma-26ba4b-single — decode 169.2/219.9; confirm date + pin era.
+#   beellama/gemma-dflash — no direct BENCHMARKS row under the slug; numbers
+#     live in the promotion-era notes; needs archaeology.
+#   llamacpp/deckard40B-dual-mtp — 41.6 tok/s MTP in registry notes; no
+#     BENCHMARKS row; needs a proper gate run or an honest no-row.
+# ───────────────────────────────────────────────────────────────────────────

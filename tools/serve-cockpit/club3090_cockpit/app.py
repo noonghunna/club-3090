@@ -741,12 +741,14 @@ class CatalogPane(Container):
         serving = (self._serving_slug or "").strip()
         prev_model: Optional[str] = None  # blank-on-repeat → the switch.sh --list grouped look
         for e in rows:
-            # source provenance — flag a coarse markdown scrape so a measurement
-            # from BENCHMARKS.md is never mistaken for a structured record.
-            meas_src = e.measurement.source
+            # Measured columns come from the SHIPPED BASELINE (registry-emit
+            # join) — the BENCHMARKS.md scrape is gone from the catalog path.
+            # Honesty marker: † = the row was measured on an OLDER engine pin
+            # than the slug currently runs (staleness guard §2.2; re-bench
+            # owed — full badge/overlay treatment lands in slice 2).
             tps = e.measurement.tps_label
-            if meas_src == "benchmarks.md" and tps != "—":
-                tps = f"{tps}*"
+            if e.measurement.stale is True and tps != "—":
+                tps = f"{tps}[yellow]†[/yellow]"
             # N3: mark the live-serving row so the running model is visible at a
             # glance in Run.  Driven by the estate's matched_slug.
             slug_cell = e.slug
@@ -797,8 +799,14 @@ class CatalogPane(Container):
                 f"{banner}{scope}{len(rows)} / {len(self._entries)} variants{tail}{dep_note}"
             )
         else:
-            star = "  ([dim]*[/dim] = BENCHMARKS.md scrape)" if self._has_md_scrape() else ""
-            status_label.update(f"{banner}{len(self._entries)} variants loaded from registry{star}{dep_note}")
+            stale_note = (
+                "  ([yellow]†[/yellow][dim] = measured on an older engine pin — re-bench owed[/dim])"
+                if self._has_stale_baseline()
+                else ""
+            )
+            status_label.update(
+                f"{banner}{len(self._entries)} variants loaded from registry{stale_note}{dep_note}"
+            )
 
         # #9/A8 — keep the preview strip in sync with the cursor after a (re-)render
         # (enrichment mutates fit/measurement in place; the preview must reflect it).
@@ -858,8 +866,8 @@ class CatalogPane(Container):
         if self._entries:
             self.refresh_enriched()
 
-    def _has_md_scrape(self) -> bool:
-        return any(e.measurement.source == "benchmarks.md" for e in self._entries)
+    def _has_stale_baseline(self) -> bool:
+        return any(e.measurement.stale is True for e in self._entries)
 
     def _filtered_entries(self) -> list[CatalogEntry]:
         # Hide 🗑️ deprecated slugs by default (mirrors `switch.sh --list`); [h] reveals them.

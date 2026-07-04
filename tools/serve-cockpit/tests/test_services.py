@@ -143,6 +143,13 @@ REGISTRY_JSON = json.dumps(
                 "ctx_label": "262K",
                 "status_note": "",
                 "source": "curated",
+                "baseline": {
+                    "narr_tps": 174.0, "code_tps": 42.0, "quality_8pk": "109/150",
+                    "date": "2026-07-01", "engine_pin": "vllm/vllm-openai:v0.24.0",
+                    "current_pin": "vllm/vllm-openai:v0.24.0", "stale": False,
+                    "rig": "2x3090-pcie", "power_cap_w": [370, 420],
+                    "submitted_by": "noonghunna",
+                },
             },
             {
                 "slug": "ik-llama/iq4ks-mtp",
@@ -160,6 +167,13 @@ REGISTRY_JSON = json.dumps(
                 "ctx_label": "200K",
                 "status_note": "",
                 "source": "curated",
+                "baseline": {
+                    "narr_tps": 60.4, "code_tps": 72.4,
+                    "date": "2026-05-23", "engine_pin": "ghcr.io/ik-old@sha256:aaa",
+                    "current_pin": "ghcr.io/ik-new@sha256:bbb", "stale": True,
+                    "rig": "1x3090-pcie", "power_cap_w": [370],
+                    "submitted_by": "noonghunna",
+                },
             },
         ],
     }
@@ -487,13 +501,23 @@ class TestLoadCatalog:
         assert ik.fit.verdict == "skip"
 
     @pytest.mark.asyncio
-    async def test_catalog_enriches_measurement_from_explain(self):
+    async def test_catalog_enriches_measurement_from_baseline(self):
+        """Catalog-baselines slice 1: measured columns come from the shipped
+        baseline joined into the registry-emit contract — no per-slug explain
+        fan-out, no BENCHMARKS.md scrape (that stays a human ledger)."""
         cd = CockpitData(ROOT, runner=full_runner())
         entries, _ = await cd.load_catalog(enrich_fit=False, enrich_measurement=True)
         vllm = next(e for e in entries if e.slug == "vllm/dual")
-        assert vllm.measurement.source == "explain"
+        assert vllm.measurement.source == "baseline"
         assert vllm.measurement.tps_label == "174/42"
         assert vllm.measurement.quality_label == "109/150"
+        assert vllm.measurement.stale is False
+        # The enrichment ran ZERO --explain subprocesses (the ~4s/slug leg is gone).
+        assert not any("--explain" in " ".join(c) for c in cd._runner.calls)
+        # A stale row carries the emit-computed verdict through.
+        ik = next(e for e in entries if e.slug == "ik-llama/iq4ks-mtp")
+        assert ik.measurement.source == "baseline"
+        assert ik.measurement.stale is True
 
     @pytest.mark.asyncio
     async def test_catalog_empty_registry_returns_error(self):
