@@ -58,6 +58,12 @@ for slug, row in rows.items():
               and isinstance(cv.get("niah"), str))
         if not ok:
             errors.append(f"{where}.ctx_validated: {{tokens: int, niah: str}}")
+    if "prefill_tps" in row:
+        pf = row["prefill_tps"]
+        ok = (isinstance(pf, dict) and pf
+              and all(isinstance(v, (int, float)) for v in pf.values()))
+        if not ok:
+            errors.append(f"{where}.prefill_tps: dict of numeric depth points (e.g. {{10k: N, 90k: M}})")
     if "source_tag" in row and not isinstance(row["source_tag"], str):
         errors.append(f"{where}.source_tag: string")
 

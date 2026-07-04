@@ -190,6 +190,12 @@ class BenchMetrics:
     power_cap_w: Optional[float] = None
     # Power draw in watts, per GPU index, if present.
     power_draw_w: dict[int, float] = field(default_factory=dict)
+    # Catalog-baselines 2c: the two-depth cache-busted prefill probe
+    # (``=== summary [prefill-<N>k] ===`` blocks). Keys = prompt-token depth
+    # as a string ("10000", "90000"); empty dicts when the probe didn't run
+    # (older bench captures / PREFILL_PROBE=0).
+    prefill_tps_by_ctx: dict[str, float] = field(default_factory=dict)
+    ttft_ms_by_ctx: dict[str, float] = field(default_factory=dict)
 
     # --- Parse provenance (drift / hollow-record detection) ----------------- #
     # How many ``=== summary [...] ===`` blocks carrying a ``decode_TPS mean=``
@@ -248,6 +254,29 @@ def parse_bench_output(text: str) -> BenchMetrics:
     if ttft:
         val = _f(ttft[-1])
         m.ttft_s = (val / 1000.0) if val is not None else None
+
+    # ── per-block pass (catalog-baselines 2c) ─────────────────────────────────
+    # The prefill probe appends ``=== summary [prefill-<N>k] ===`` blocks whose
+    # TTFT is a DEPTH measurement (seconds at 90K), not the canonical
+    # short-prompt TTFT — the naive last-occurrence rule above would swallow it.
+    # Parse per block: prefill blocks feed the by-depth dicts; the canonical
+    # ttft_s is re-anchored to the last NON-prefill block's TTFT.
+    parts = re.split(r"^=== summary \[([^\]]+)\] \(n=\d+\) ===$", text, flags=re.MULTILINE)
+    canonical_ttft_ms: Optional[float] = None
+    for label, body in zip(parts[1::2], parts[2::2]):
+        t_m = re.search(r"^\s*TTFT\s+mean=\s*([0-9.]+)ms", body, re.MULTILINE)
+        depth_m = re.fullmatch(r"prefill-(\d+)k", label.strip())
+        if depth_m:
+            depth = str(int(depth_m.group(1)) * 1000)
+            p_m = re.search(r"^\s*prefill tok/s\s+mean=\s*([0-9.]+)", body, re.MULTILINE)
+            if p_m:
+                m.prefill_tps_by_ctx[depth] = float(p_m.group(1))
+            if t_m:
+                m.ttft_ms_by_ctx[depth] = float(t_m.group(1))
+        elif t_m:
+            canonical_ttft_ms = float(t_m.group(1))
+    if canonical_ttft_ms is not None:
+        m.ttft_s = canonical_ttft_ms / 1000.0
 
     # nvidia-smi line (CSV, noheader):
     #   index, utilization.gpu, memory.used, memory.total, power.draw,
@@ -445,6 +474,10 @@ def build_record(
         "prefill_tps": bench_metrics.prefill_tps,
         "ttft_s": bench_metrics.ttft_s,
         "wall_tps": bench_metrics.wall_tps,
+        # Catalog-baselines 2c: the two-depth cache-busted prefill probe
+        # (empty dicts when the capture predates the probe / PREFILL_PROBE=0).
+        "prefill_tps_by_ctx": dict(bench_metrics.prefill_tps_by_ctx),
+        "ttft_ms_by_ctx": dict(bench_metrics.ttft_ms_by_ctx),
         "peak_vram_mib_by_gpu": {str(k): v for k, v in sorted(bench_metrics.vram_used_mib.items())},
         "power_draw_w_by_gpu": {str(k): v for k, v in sorted(bench_metrics.power_draw_w.items())},
         # power_cap_w is part of the conditions fingerprint AND an extension.

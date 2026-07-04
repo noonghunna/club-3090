@@ -31,9 +31,23 @@ EOF
   echo "========== NARRATIVE =========="
   echo "=== measured (5) ==="
   for i in 1 2 3 4 5; do echo "  run-$i  wall= 6.6s ttft= 130ms toks=1000 wall_TPS=150.0 decode_TPS=153.9"; done
+  echo "=== summary [narrative] (n=5) ==="
+  echo "  decode_TPS     mean= 153.90   std=  0.10   CV= 0.1%   min=153.80   max=154.00"
+  echo "  TTFT          mean=   130ms  std=    2ms  min=128ms  max=132ms"
   echo "========== CODE =========="
   echo "=== measured (5) ==="
   for i in 1 2 3 4 5; do echo "  run-$i  wall= 5.3s ttft= 128ms toks=800 wall_TPS=149.9 decode_TPS=154.0"; done
+  echo "=== summary [code] (n=5) ==="
+  echo "  decode_TPS     mean= 154.00   std=  0.10   CV= 0.1%   min=153.90   max=154.10"
+  echo "  TTFT          mean=   128ms  std=    2ms  min=126ms  max=130ms"
+  # 2c prefill-probe blocks: the 90K TTFT (17s!) must NOT bleed into the
+  # canonical short-prompt ttft_ms (per-block parser protection).
+  echo "=== summary [prefill-10k] (n=3) ==="
+  echo "  prefill tok/s  mean=7976.62   std= 87.19   CV= 1.1%   min=7902.43   max=8072.65"
+  echo "  TTFT          mean=  1254ms  std=   56ms  min=1193ms  max=1303ms"
+  echo "=== summary [prefill-90k] (n=3) ==="
+  echo "  prefill tok/s  mean=5459.14   std= 23.81   CV= 0.4%   min=5442.01   max=5486.33"
+  echo "  TTFT          mean= 17096ms  std=   74ms  min=17012ms  max=17150ms"
 } > "$TAGD/bench.log"
 cat > "$TAGD/_internal.json" <<'EOF'
 {"bench": {"narrative": {"decode_tps_mean": 153.9, "ttft_ms_mean": 130.0},
@@ -46,6 +60,7 @@ cat > "$TAGD/quality-full-thinking.json" <<'EOF'
 {"packs": [{"passed": 60, "total": 75}, {"passed": 50, "total": 75}]}
 EOF
 cat > "$TAGD/verify-stress.log" <<'EOF'
+    ✓ rung 1/6: target=95K  actual=94K tok (36%)  recalled 'violet chinchilla 79'  prefill=7402.9 t/s (13s)  VRAM_free=1403MB
   ✓ ceiling ladder: all 6 rungs passed — fillable to 240635 tok (91% of n_ctx=262144)
 All stress / boundary checks passed. KV-cache and prefill paths are sound.
 EOF
@@ -61,6 +76,12 @@ grep -q "code_tps: 154.0" <<<"$out" || fail "code_tps not extracted"
 grep -q 'quality_8pk: "105/150"' <<<"$out" || fail "quality_8pk not extracted"
 grep -q 'quality_8pk_think_on: "110/150"' <<<"$out" || fail "think-on not extracted"
 grep -q 'tokens: 240635' <<<"$out" || fail "ctx_validated not extracted"
+# 2c: prefill depth points land; the canonical ttft_ms stays the SHORT-prompt
+# value (the 90K block's 17s TTFT must not bleed into it).
+grep -q 'prefill_tps: { 10k: 7977, 90k: 5459 }' <<<"$out" || fail "prefill_tps not extracted: $out"
+grep -q 'ttft_ms: 130' <<<"$out" || fail "canonical ttft_ms polluted by probe blocks"
+# anchor calibration: probe 5459 @90K vs ladder 7403 @94K → ratio 0.74 → OK.
+grep -q "anchor calibration OK" <<<"$out" || fail "anchor calibration not reported"
 grep -q "DRY RUN" <<<"$out" || fail "dry-run not flagged"
 [[ "$(sha256sum "$BL" | cut -d' ' -f1)" == "$sum_before" ]] || fail "dry-run WROTE the file"
 
