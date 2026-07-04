@@ -270,6 +270,29 @@ Suggested gates (informal, not enforced):
 
 For comparing a new pin / quant / config A/B against the previous version: a >10pp drop on any pack vs the previous baseline is a signal worth investigating before promoting `Status: ✅ Production`.
 
+### Rescoring saved results — MATERIALIZE, don't just read
+
+When a harness fix changes how saved runs score (e.g. the benchlocal-cli #79/#81
+fairness + reasoning-channel fixes), re-score the SAVED result JSONs with the
+`rescore` subcommand — and **write the corrected results back into the artifact**:
+
+```bash
+benchlocal-cli rescore results/rebench/<tag>/quality-full-thinking.json --in-place
+```
+
+`rescore` re-runs the deterministic scorers against each run's saved
+`raw_response` (sandbox packs like hermes/cli-40 are skipped — those need a live
+re-run). Printing the corrected totals to stdout and publishing them **without
+`--in-place`/`--output` leaves the tag artifact stale** — anything that later
+reads the tag (the `catalog-baseline.sh` induction tool, `rebench-report.py`,
+the measurement-record corpus) silently resurrects the pre-fix numbers. This
+bit the Agents-A1 gate: the published thinking-on 110/150 was rescore-corrected,
+but the tag JSON read 108/150 until the rescore was materialized on 2026-07-04.
+
+**Rule: a rescore that changes a number you publish must be materialized into
+the tag artifact in the same session** (keep a copy of the pre-rescore JSON
+elsewhere if you want the history; the tag carries the accepted truth).
+
 ### Regression baselines (the curated corpus)
 
 Rather than hunt down "the previous baseline" by hand each time, the curated corpus in

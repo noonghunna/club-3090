@@ -7,11 +7,17 @@
 # One mechanism, three entry points: ⑤ Promote (c3 producer lane) · maintainer
 # CLI · the rebench-full completion prompt (re-validation after pin bumps).
 #
-# It VALIDATES the tag dir covers the gates (verify-full pass · bench n>=5 ·
-# quality run present), extracts the display projection (decode TPS · TTFT ·
-# 8-pack arms · ctx_validated with the NIAH verdict · provenance), UPSERTS the
-# YAML row textually (comments preserved), and prints a unified diff for
-# review. It NEVER commits — the row ships via PR (design §2: PR-reviewed).
+# It VALIDATES the tag dir covers the gates (verify-full pass · bench n>=3,
+# n<5 warned · quality run present), extracts the display projection (decode
+# TPS · TTFT · 8-pack arms · prefill depth points · ctx_validated with the
+# NIAH verdict · provenance), UPSERTS the YAML row textually (comments
+# preserved), and prints a unified diff for review. It NEVER commits — the
+# row ships via PR (design §2: PR-reviewed).
+#
+# READS THE TAG ARTIFACTS AS TRUTH: if a harness fix rescored saved results,
+# MATERIALIZE the rescore first (`benchlocal-cli rescore <json> --in-place`)
+# or this tool inducts the pre-fix numbers — docs/QUALITY_TEST.md "Rescoring
+# saved results".
 #
 # Options:
 #   --from-tag <tag>     rebench tag under results/rebench/ (required)

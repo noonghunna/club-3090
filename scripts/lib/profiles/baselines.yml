@@ -136,8 +136,9 @@ baselines:
     # rebench tag agents-a1-fp8-dual (2026-07-03 gate): bench n=3 CV 0.1%
     # (RUNS=3 env leak — n=5 was misstated in early publications; artifact-
     # verified by catalog-baseline.sh 2026-07-04. think-on 110 = the #81
-    # RESCORED total; the tag's pre-rescore JSON reads 108 — materialize
-    # rescores back into tag artifacts before re-induction);
+    # rescored total, MATERIALIZED into the tag JSONs 2026-07-04 via
+    # `benchlocal-cli rescore --in-place` — artifact and publication agree;
+    # see docs/QUALITY_TEST.md "Rescoring saved results");
     # verify-stress 8/8 staggered NIAH to 240,635 tok exact-recall, VRAM Δ0;
     # soak PASS (99.8% retention). Quality = post benchlocal #79+#81 harness:
     # OFF 105/150 · ON 110/150 (cli-40 ON 23/40 fresh-image).
