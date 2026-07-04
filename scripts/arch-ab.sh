@@ -87,6 +87,12 @@ IFS=',' read -ra ARM_LIST <<< "$ARMS"
 [[ "${#ARM_LIST[@]}" -ge 1 ]] || die "no arms given"
 for arm in "${ARM_LIST[@]}"; do
   [[ -n "${ARM_DTYPE[$arm]+x}" ]] || die "unknown arm '${arm}' (valid: e5m2, e4m3, nvfp4, fp8w)"
+  if [[ "$arm" == "e4m3" ]]; then
+    # vLLM hard-rejects fp8_e4m3 KV below SM 8.9 at boot — without this guard
+    # an Ampere rig sits in switch.sh's ready-wait until the 10-min timeout.
+    awk -v a="$MIN_SM" 'BEGIN{exit !(a>=8.9)}' \
+      || die "arm 'e4m3' needs sm>=8.9 (fp8_e4m3 KV is boot-rejected on Ampere); detected min sm_${MIN_SM}. On a 3090-class rig there is no arch delta to measure — this A/B is for Ada/Blackwell rigs (run --arms e5m2 if you just want the control numbers)"
+  fi
   if [[ "$arm" == "nvfp4" ]]; then
     awk -v a="$MIN_SM" 'BEGIN{exit !(a>=10.0)}' \
       || die "arm 'nvfp4' needs Blackwell (sm>=10.0); detected min sm_${MIN_SM}. Drop it: --arms e5m2,e4m3"
@@ -143,13 +149,25 @@ for arm in "${ARM_LIST[@]}"; do
     *) die "arm ${arm}: container '${container}' is NOT running --kv-cache-dtype ${assert_dtype} — aborting before benching the wrong config" ;;
   esac
   rb_args=(--tag "$tag")
+  stress_fast=0
   if (( FULL )); then
     rb_args+=(--with-8pack-thinking=both)
   else
     rb_args+=(--skip soak)
+    # A/B tier: STRESS_FAST halves verify-stress's deep-prefill request count
+    # (large fresh needles skipped + ladder capped at ~3 rungs) while keeping
+    # the fillable-to proof, ceiling recall, and VRAM margin.
+    stress_fast=1
   fi
   (( RESUME )) && rb_args+=(--resume)
-  bash scripts/rebench-full.sh "${rb_args[@]}"
+  STRESS_FAST="$stress_fast" bash scripts/rebench-full.sh "${rb_args[@]}"
+  # A margin-advisory rc=1 with a clean ladder scares first-time runners into
+  # aborting — say explicitly that it is not a failure.
+  if command grep -q "rungs passed" "results/rebench/${tag}/verify-stress.log" 2>/dev/null \
+     && command grep -q "VRAM margin thin at ceiling" "results/rebench/${tag}/verify-stress.log" 2>/dev/null; then
+    echo "[arch-ab] note: verify-stress exited nonzero on the VRAM-margin ADVISORY only —"
+    echo "[arch-ab]       the NIAH ladder is CLEAN. Expected on tightly-packed configs; carry on."
+  fi
 done
 
 # --- summary + bundle ---------------------------------------------------------
@@ -178,6 +196,10 @@ for arm in arms:
                       (tag / "verify-stress.log").read_text(errors="replace"))
         if m:
             ladder = f"{m.group(1)} rungs clean, fillable to {int(m.group(2)):,} tok"
+            mm = re.search(r"VRAM margin thin at ceiling: (\d+) MB free < (\d+) MB",
+                           (tag / "verify-stress.log").read_text(errors="replace"))
+            if mm:
+                ladder += f" (margin advisory: {mm.group(1)} MB < {mm.group(2)} MB — not a failure)"
         else:
             ladder = "LADDER DID NOT PASS — check verify-stress.log"
     except OSError:
@@ -202,6 +224,7 @@ tar czf "$bundle" \
   $( [[ -s results/rebench/246-ab-rig-report.md ]] && echo results/rebench/246-ab-rig-report.md )
 echo ""
 echo "[arch-ab] bundle written: ${bundle}"
-echo "[arch-ab] -> attach that ONE file to https://github.com/noonghunna/club-3090/issues/246"
+echo "[arch-ab] -> attach that ONE file to the #246 cross-rig test thread (link pinned on"
+echo "[arch-ab]    https://github.com/noonghunna/club-3090/issues/246)"
 echo "[arch-ab]    plus a sentence on anything that surprised or annoyed you — the friction"
 echo "[arch-ab]    report is as valuable as the numbers."

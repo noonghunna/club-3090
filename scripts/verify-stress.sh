@@ -55,6 +55,10 @@
 #   SKIP_LONGCTX           Set to 1 to skip the long-context needle ladder.
 #   SKIP_TOOL_PREFILL      Set to 1 to skip the tool-response prefill test.
 #   SKIP_CEILING           Set to 1 to skip the context ceiling ladder (#199).
+#   STRESS_FAST            Set to 1 for the A/B-tier fast mode (#246): skips
+#                          probe 7's large fresh needles and caps the ceiling
+#                          ladder at 2 rungs (~2/3 anchor + ceiling). Roughly
+#                          halves wall time; full mode stays the gate default.
 #   PREFILL_TARGET_CHARS   Tool-response prefill payload size in chars
 #                          (default: 100000 ≈ 25K tokens; set higher to
 #                          push closer to the cliff under investigation).
@@ -918,6 +922,14 @@ check_longctx_large() {
     skip "SKIP_LONGCTX=1"
     return 0
   fi
+  if [[ "${STRESS_FAST:-0}" == "1" ]]; then
+    # #246 A/B tier: these fresh 60K/90K fills cost ~4 min and near-duplicate
+    # the ceiling ladder's first-rung depth; depth recall transfers to the
+    # rungs. Full mode keeps the fresh-context vs accumulated-context
+    # distinction (this probe is fresh-fill; the ladder is staggered).
+    skip "STRESS_FAST=1 — large fresh needles skipped (depth coverage via ceiling rungs)"
+    return 0
+  fi
   LONGCTX_SCALES="900 1400" check_longctx
 }
 # Engine health check after crash-prone probes (7, 8).
@@ -1050,10 +1062,13 @@ except Exception:
 # env to identify which GPU(s) the model actually uses.
 #
 # Priority:
-#   1. Docker HostConfig.DeviceRequests[0].DeviceIDs (compose device_ids)
-#   2. Container env CUDA_VISIBLE_DEVICES
-#   3. Container env NVIDIA_VISIBLE_DEVICES (if numeric, e.g. "0")
-#   4. Fallback: sum all GPUs with a warning (multi-GPU host, can't determine subset)
+#   1. Docker HostConfig.DeviceRequests DeviceIDs (compose device_ids), or
+#      Count: -1 (compose `count: all`) -> ALL host GPUs, no warning
+#   2. Container env CUDA_VISIBLE_DEVICES ('all' -> ALL)
+#   3. Container env NVIDIA_VISIBLE_DEVICES (numeric, or 'all' -> ALL)
+#   4. Fallback: min over all GPUs with a warning (genuinely undetermined)
+# Aggregation is MIN free across the model's GPUs (TP OOMs on the first card
+# to run out — a sum overstates dual-rig margins ~2x; corrected 2026-07-04).
 # Returns 0 when nvidia-smi is unavailable.
 get_vram_free_mb() {
   if ! command -v nvidia-smi >/dev/null 2>&1; then
@@ -1078,16 +1093,27 @@ try:
         if ids:
             print(','.join(ids))
             sys.exit(0)
+        # count: all (compose) -> Count: -1, DeviceIDs: null. That IS a
+        # determined answer: the container sees every host GPU.
+        if dr.get('Count') == -1:
+            print('ALL')
+            sys.exit(0)
     # Fallback: check env vars
     for e in cfg.get('Config', {}).get('Env', []) or []:
         if e.startswith('CUDA_VISIBLE_DEVICES='):
             val = e.split('=', 1)[1]
-            if val and val != 'all':
+            if val == 'all':
+                print('ALL')
+                sys.exit(0)
+            if val:
                 print(val)
                 sys.exit(0)
         if e.startswith('NVIDIA_VISIBLE_DEVICES='):
             val = e.split('=', 1)[1]
-            if val and val != 'all' and val.replace(',', '').isdigit():
+            if val == 'all':
+                print('ALL')
+                sys.exit(0)
+            if val and val.replace(',', '').isdigit():
                 print(val)
                 sys.exit(0)
     print('')
@@ -1096,18 +1122,26 @@ except Exception:
 " 2>/dev/null)"
   fi
 
-  if [[ -n "$gpu_ids" ]]; then
+  # Aggregation: MIN free across the model's GPUs, not sum. TP splits the KV
+  # pool and activations per card and OOM hits whichever card runs out first,
+  # so min is the honest margin (sum overstated dual-rig headroom ~2x; noted
+  # 2026-07-04 while dogfooding #246 — this makes the margin advisory
+  # STRICTER on multi-GPU configs than earlier runs' summed readings).
+  if [[ "$gpu_ids" == "ALL" ]]; then
+    nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null \
+      | awk 'NR==1||$1<m{m=$1} END {printf "%.0f\n", m}' 2>/dev/null || echo 0
+  elif [[ -n "$gpu_ids" ]]; then
     nvidia-smi -i "$gpu_ids" --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null \
-      | awk '{s+=$1} END {printf "%.0f\n", s}' 2>/dev/null || echo 0
+      | awk 'NR==1||$1<m{m=$1} END {printf "%.0f\n", m}' 2>/dev/null || echo 0
   else
-    # Can't determine which GPUs — sum all, but flag it
+    # Genuinely undetermined (no docker, exotic env) — min over all, flagged
     local total_gpus
     total_gpus="$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l)"
     if [[ "$total_gpus" -gt 1 ]]; then
-      echo "    [vram] WARN: could not determine model GPU(s) on ${total_gpus}-GPU host — summing all (margin may be inflated)" >&2
+      echo "    [vram] WARN: could not determine model GPU(s) on ${total_gpus}-GPU host — using min free across all" >&2
     fi
     nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null \
-      | awk '{s+=$1} END {printf "%.0f\n", s}' 2>/dev/null || echo 0
+      | awk 'NR==1||$1<m{m=$1} END {printf "%.0f\n", m}' 2>/dev/null || echo 0
   fi
 }
 
@@ -1142,6 +1176,21 @@ check_ceiling_ladder() {
   if [[ "$ceiling_top" -le "$ceiling_start" ]]; then
     skip "n_ctx=${n_ctx} → ceiling target ${ceiling_top} ≤ start ${ceiling_start} (probe 7 already covers this range)"
     return 0
+  fi
+
+  # STRESS_FAST (#246 A/B tier): cap the ladder at 2 rungs — one mid anchor
+  # at ~2/3 of the ceiling target, then the ceiling. Every rung is a FULL
+  # prefill at its depth (measured: rungs dominate this script's wall time),
+  # so the rung budget IS the time budget (861s -> ~450s on the 262K dual).
+  # Depth coverage stays 4-anchor: bench probe 10K + 90K, mid rung, ceiling.
+  # Never ADDS rungs on small-ctx configs (max() guards). Explicit CEILING_*
+  # overrides win.
+  if [[ "${STRESS_FAST:-0}" == "1" ]]; then
+    [[ -z "${CEILING_START_TOKENS:-}" ]] && \
+      ceiling_start="$(python3 -c "print(max(${ceiling_start}, ${ceiling_top} * 2 // 3))")"
+    [[ -z "${CEILING_STEP_TOKENS:-}" ]] && \
+      ceiling_step="$(python3 -c "print(max(${ceiling_step}, ${ceiling_top} - ${ceiling_start} + 1))")"
+    echo "    STRESS_FAST=1 — ladder capped (start=${ceiling_start}, step=${ceiling_step}); full-mode gates use the fine ladder"
   fi
 
   # Compute rungs as a space-separated list

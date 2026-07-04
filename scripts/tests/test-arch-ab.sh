@@ -33,6 +33,15 @@ assert_contains "$out" "arm nvfp4: vllm/dual + KV_CACHE_DTYPE=nvfp4"
 assert_contains "$out" "arm fp8w: vllm/qwen-27b-dual-max STOCK"
 
 # --- refusals (fail-loud, each names the fix) ---------------------------------
+# default arms include e4m3 -> a bare run on an Ampere rig must refuse with the
+# "no arch delta to measure" explanation, NOT hang in the boot ready-wait
+if out="$(CLUB3090_FAKE_GPUS="$GPU_3090" bash scripts/arch-ab.sh --dry-run 2>&1)"; then
+  fail "default arms on sm_8.6 must refuse (e4m3 boot-rejects on Ampere)"
+fi
+assert_contains "$out" "no arch delta to measure"
+# ...but the explicit control-only run stays possible on Ampere
+out="$(CLUB3090_FAKE_GPUS="$GPU_3090" bash scripts/arch-ab.sh --arms e5m2 --dry-run)"
+assert_contains "$out" "arm e5m2"
 if out="$(CLUB3090_FAKE_GPUS="$GPU_3090" bash scripts/arch-ab.sh --arms e5m2,nvfp4 --dry-run 2>&1)"; then
   fail "nvfp4 on sm_8.6 must refuse"
 fi

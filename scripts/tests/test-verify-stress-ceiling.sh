@@ -112,7 +112,10 @@ result="$(ENGINE_KIND=llamacpp URL=http://mock CONTAINER=none \
   bash -c "source '$HELPERS_FILE'; get_n_ctx")"
 assert_eq "get_n_ctx 512K compose (nested)" "524288" "$result"
 
-# ---- Test get_vram_free_mb dual GPU (no container context — sums all) ----
+# ---- Test get_vram_free_mb dual GPU (no container context — MIN, not sum) ----
+# TP OOMs on whichever card runs out first, so min per-card free is the honest
+# margin; the old sum overstated dual-rig headroom ~2x (corrected 2026-07-04
+# while dogfooding #246).
 cat > "${tmp_dir}/nvidia-smi" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
@@ -124,7 +127,7 @@ chmod +x "${tmp_dir}/nvidia-smi"
 
 result="$(CONTAINER=none PATH="${tmp_dir}:/usr/bin:/bin" \
   bash -c "source '$HELPERS_FILE'; get_vram_free_mb")"
-assert_eq "get_vram_free_mb dual-GPU sum (no container)" "23500" "$result"
+assert_eq "get_vram_free_mb dual-GPU min (no container)" "11500" "$result"
 
 # ---- Test get_vram_free_mb single GPU ----
 cat > "${tmp_dir}/nvidia-smi" <<'EOF'
