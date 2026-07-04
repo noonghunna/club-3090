@@ -1062,6 +1062,22 @@ wait_ready() {
     fi
   done
   echo "[switch] ✓ ready (${elapsed}s)"
+  # F3 (CLI parity with c3's serving card): print the USABLE endpoint — the LAN
+  # URL an agent/client should point at, the served model id, and the auth
+  # status. LANIP's source of truth is the repo .env (#512, loaded above; shell
+  # env wins); fall back to the shared c3_lan_ip helper in a SUBSHELL
+  # (comfyui-paths.sh sets studio paths at source time — keep that contained),
+  # then localhost.
+  local _lanip _served _port
+  _lanip="${LANIP:-}"
+  if [[ -z "$_lanip" && -f "${ROOT_DIR}/services/comfyui/comfyui-paths.sh" ]]; then
+    _lanip="$(bash -c ". '${ROOT_DIR}/services/comfyui/comfyui-paths.sh' >/dev/null 2>&1; c3_lan_ip" 2>/dev/null || true)"
+  fi
+  _lanip="${_lanip:-localhost}"
+  _port="${READY_URL#*://}"; _port="${_port#*:}"; _port="${_port%%/*}"
+  _served="$(curl -sf --max-time 3 "${READY_URL}" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+  echo "[switch] ▶ API:  http://${_lanip}:${_port}/v1   (model: ${_served:-?} · OpenAI-compatible · no auth)"
 }
 
 # --- arg parsing ---

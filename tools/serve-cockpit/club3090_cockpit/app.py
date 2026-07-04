@@ -2071,7 +2071,13 @@ class OperateOrchPane(Container):
         if slug:
             parts.append(f"[dim]{slug}[/dim]")
         if port:
-            parts.append(f"[dim]:{port}[/dim]")
+            # F3: the USABLE endpoint — full LAN URL + auth status, not a bare
+            # port. Same derivation as switch.sh's ready-line (services.lan_ip).
+            try:
+                lan = self.app._data.lan_ip()
+            except Exception:
+                lan = "localhost"
+            parts.append(f"http://{lan}:{port}/v1 [dim]· no auth · \\[u] copy[/dim]")
         elif url:
             parts.append(f"[dim]{url}[/dim]")
         head = "[green]▶[/green] Serving: " + "  ·  ".join(parts)
@@ -4479,6 +4485,11 @@ class RailStatus(Static):
         if dr.reachable:
             glyph = "[green]●[/green]" if dr.serving else "[yellow]○[/yellow]"
             lines.append(f"{glyph} {dr.summary}")
+            # F3: the endpoint, compactly (the rail is ~30 cols — the FULL URL
+            # lives on the Orchestration serving card; [u] copies it anywhere).
+            _port = getattr(state.target, "host_port", 0) or 0
+            if _port:
+                lines.append(f"[dim]api :{_port}/v1 · \\[u] copy[/dim]")
         elif dr.booting:
             lines.append("[yellow]⏳[/yellow] booting…")
         else:
@@ -4821,6 +4832,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
     ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated slugs (hidden by default)"),
+    ("copy_endpoint", "Copy the serving API URL", "Run & Operate — copy http://<lan>:<port>/v1 for your agent/client (no auth by default)"),
     ("set_default", "Set default", "Catalog — pin the selected slug as model default"),
     ("clear_default", "Clear default", "Catalog — clear the model default pin"),
     ("optimize_card", "Optimize for my card", "Catalog — v0.10.0 seam (not available yet)"),
@@ -4972,6 +4984,7 @@ class CockpitApp(App):
         Binding("slash", "filter_catalog", "Filter", show=False),
         Binding("backslash", "toggle_catalog_model", "Model", show=False),
         Binding("h", "toggle_catalog_deprecated", "Deprecated", show=False),
+        Binding("u", "copy_endpoint", "API URL", show=False),
         Binding("e", "explain", "Explain", show=False),
         # 2-mode merge: [1] = merged Run & Operate, [2] = Bring & Validate lane.
         Binding("1", "mode_run", "Run & Operate", show=True),
@@ -5164,6 +5177,10 @@ class CockpitApp(App):
         # Merged mode 0 · Catalog tab
         "filter_catalog":   ({0}, {"tab-catalog"}),  # Catalog
         "toggle_catalog_deprecated": ({0}, {"tab-catalog"}),  # Catalog — [h] hide/show deprecated
+        # [u] copy the serving API URL — the endpoint is rig-global, so it's
+        # live on EVERY merged-mode tab (F3; guards inside the action when
+        # nothing is serving).
+        "copy_endpoint":    ({0}, {"tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"}),
         "explain":          ({0}, {"tab-catalog"}),  # Catalog (guards inside action)
         "set_default":      ({0}, {"tab-catalog"}),  # Catalog
         "clear_default":    ({0}, {"tab-catalog"}),  # Catalog
@@ -5769,6 +5786,28 @@ class CockpitApp(App):
             self.query_one("#operate-orch-pane", OperateOrchPane).refresh_gpu_cards(gpus)
         except Exception:
             pass
+        # F3b: readiness fast-flip. api_booting only clears when the HEAVY
+        # docker+health batch re-runs — so "⏳ booting" outlived actual readiness
+        # by a poll cycle (audit: ≥25s stale). While booting, piggyback a CHEAP
+        # direct /v1/models probe on this fast tick; on 200, pull the next heavy
+        # poll forward (burst regime) so every "booting" surface flips promptly.
+        # Bounded: fires ONLY in the booting state, 1.5s timeout, best-effort.
+        state = getattr(self, "_last_estate_state", None)
+        if state is not None and getattr(state.doctor, "booting", False):
+            url = (getattr(state.target, "url", "") or "").strip()
+            if not url:
+                port = getattr(state.target, "host_port", 0) or 0
+                url = f"http://localhost:{port}" if port else ""
+            if url:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=1.5) as client:
+                        r = await client.get(f"{url.rstrip('/')}/v1/models")
+                    if r.status_code == 200:
+                        import time as _t
+                        self._docker_burst_until = _t.monotonic() + 6.0
+                except Exception:
+                    pass
 
     def _docker_poll_due(self) -> bool:
         """Whether THIS tick runs the heavy docker+host batch, by regime: burst (within
@@ -7064,6 +7103,36 @@ class CockpitApp(App):
             rail.remove_class("rail-hidden")
 
     # ── Batch 4 · copy-to-clipboard + horizontal scroll ──────────────────────────
+
+    def _serving_endpoint_url(self) -> str:
+        """F3: the serving endpoint URL (``http://<lan>:<port>/v1``) from the
+        CACHED estate state — '' when nothing is serving / port unknown. Same
+        LAN-IP derivation as switch.sh's ready-line (services.lan_ip)."""
+        state = getattr(self, "_last_estate_state", None)
+        port = getattr(getattr(state, "target", None), "host_port", 0) or 0
+        if not port:
+            return ""
+        try:
+            lan = self._data.lan_ip()
+        except Exception:
+            lan = "localhost"
+        return f"http://{lan}:{port}/v1"
+
+    def action_copy_endpoint(self) -> None:
+        """[u] — copy the serving API URL (the "point your agent here" string).
+        No-ops with a notify when nothing is serving."""
+        url = self._serving_endpoint_url()
+        if not url:
+            self.notify(
+                "No model serving — nothing to point an agent at yet.",
+                title="API URL", severity="warning", timeout=3,
+            )
+            return
+        self.copy_to_clipboard(url)
+        self.notify(
+            f"Copied API URL: {url}  (OpenAI-compatible · no auth)",
+            title="API URL", severity="information", timeout=4,
+        )
 
     def action_copy_context(self) -> None:
         """[Y] — yank the contextually-relevant text to the system clipboard.
