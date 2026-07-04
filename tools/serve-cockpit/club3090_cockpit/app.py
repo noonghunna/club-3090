@@ -1006,10 +1006,38 @@ class CatalogPane(Container):
             f"  [bold]{entry.slug}[/bold]  [dim]·[/dim]  {entry.engine}"
             f"  [dim]·[/dim]  {_status_glyph(entry.status)} {entry.status or '—'}",
             f"  [bold]fit[/bold]  {fit_line}  [dim]({fit_basis})[/dim]",
-            f"  [bold]ctx[/bold]  {entry.ctx_label or '—'}"
-            f"   [bold]measured[/bold]  {entry.measurement.tps_label} TPS"
-            f"  ·  8pk {entry.measurement.quality_label}",
         ]
+        # Slice 2b — the measured line is the shipped BAR with its provenance;
+        # a stale bar gets an explicit detail line; THIS RIG's newest corpus
+        # record renders as "yours" for the at-a-glance rig-vs-bar read.
+        m = entry.measurement
+        bar_line = (
+            f"  [bold]ctx[/bold]  {entry.ctx_label or '—'}"
+            f"   [bold]bar[/bold]  {m.tps_label} TPS  ·  8pk {m.quality_label}"
+        )
+        b = getattr(entry.row, "baseline", None) or {}
+        if m.source == "baseline" and b:
+            prov = " · ".join(
+                str(x) for x in (b.get("date"), b.get("rig"), b.get("submitted_by")) if x
+            )
+            if prov:
+                bar_line += f"  [dim]({prov})[/dim]"
+        lines.append(bar_line)
+        if m.stale is True and b:
+            lines.append(
+                f"  [yellow]† bar measured on {b.get('engine_pin')} — "
+                f"current pin {b.get('current_pin')}; re-bench owed[/yellow]"
+            )
+        lm = entry.local_measurement
+        if lm is not None:
+            dec = f"{lm.decode_tps:.0f}" if lm.decode_tps is not None else "—"
+            yours = f"  [bold]yours[/bold]  ~{dec} decode"
+            if lm.quality_8pk:
+                yours += f"  ·  8pk {lm.quality_8pk}"
+            if lm.quality_8pk_think_on:
+                yours += f"  [dim]· on {lm.quality_8pk_think_on}[/dim]"
+            yours += f"  [dim]({lm.date} · this rig)[/dim]"
+            lines.append(yours)
         note = (entry.status_note or "").strip()
         if note:
             lines.append(f"  [bold]caveat[/bold]  [yellow]{note}[/yellow]")

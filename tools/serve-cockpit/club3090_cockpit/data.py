@@ -319,6 +319,10 @@ class CatalogEntry:
     weights_state: str = "unknown"
     weights: Optional["WeightsMeta"] = None
     download_pct: Optional[int] = None   # 0-99 while weights_state == "downloading"
+    # Catalog-baselines slice 2b: THIS RIG's newest corpus record for the slug
+    # (results/measurement-records/, written by rebench-full) — the "yours vs
+    # the bar" overlay.  None when this rig has never gated the slug.
+    local_measurement: Optional["LocalMeasured"] = None
 
     # Convenience pass-throughs (so panes can read entry.slug, not entry.row.slug)
     @property
@@ -400,6 +404,22 @@ class CatalogEntry:
         """Provenance string for the catalog 'source' column (registry source
         field, e.g. 'curated' / 'community' / 'local')."""
         return getattr(self.row, "source", "") or "·"
+
+
+@dataclass
+class LocalMeasured:
+    """The local "yours" overlay projection of one #249 corpus record
+    (catalog-baselines slice 2b) — THIS RIG's newest gate numbers for a slug.
+
+    The record's bench carries ONE canonical-short decode point (not the
+    narr/code pair — a parser limitation noted for slice 2c), plus the
+    quality extensions and the pin the run measured on."""
+
+    decode_tps: Optional[float] = None
+    quality_8pk: Optional[str] = None
+    quality_8pk_think_on: Optional[str] = None
+    engine_pin: Optional[str] = None
+    date: str = ""                       # _recorded_at date, else file-mtime date
 
 
 # ── Estate / Scene / Container / Doctor ─────────────────────────────────────────
