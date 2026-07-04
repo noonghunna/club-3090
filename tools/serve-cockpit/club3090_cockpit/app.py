@@ -592,7 +592,12 @@ class CatalogPane(Container):
     }
     CatalogPane #catalog-preview {
         height: auto;
-        max-height: 6;
+        /* F2 — the border eats 2 rows, so max-height 6 capped content at 4
+           lines and a WRAPPING caveat line clipped (the dual-fast case).
+           8 fits the 3 base lines + a caveat wrapped to 2-3; anything
+           pathological scrolls instead of silently clipping. */
+        max-height: 8;
+        overflow-y: auto;
         border: solid $primary;
         padding: 0 1;
         margin: 0 1;
