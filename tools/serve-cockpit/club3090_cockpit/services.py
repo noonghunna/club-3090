@@ -96,8 +96,6 @@ from .data import (
     compute_promote_scaffold,
     measured_from_internal_json,
     measured_from_report_md,
-    measurement_from_explain_benchmarks,
-    parse_benchmarks_md_for_slug,
     parse_compute_apps,
     parse_df_output,
     parse_docker_ps_id_names,
@@ -804,31 +802,28 @@ class CockpitData:
                 e.fit = FitVerdict(verdict="skip", card=self.card)
 
     async def enrich_measurements(self, entries: list[CatalogEntry]) -> None:
-        # Read BENCHMARKS.md once up front — the per-slug md fallback below is
-        # then a pure in-memory parse (no I/O per slug).
-        bench_md = self._read_benchmarks_md()
-        sem = asyncio.Semaphore(self._ENRICH_CONCURRENCY)
+        """Catalog measured columns from the SHIPPED BASELINE joined into the
+        registry-emit --json contract (catalog-baselines slice 1).
 
-        async def _one(e: CatalogEntry) -> None:
-            # Preferred: structured benchmarks from the explain contract.  The
-            # REAL shape is [{"row","columns"}]; measurement_from_explain_*
-            # parses TPS out of columns[].  Only COMMIT the explain result when
-            # it actually yields a TPS — otherwise an empty benchmarks[] (or a
-            # row that is stress/soak-only) must NOT suppress the markdown
-            # fallback (the `continue`-suppresses-fallback bug this fixes).
-            async with sem:
-                explain, _err = await self.explain(e.slug)
-            if explain and explain.get("benchmarks"):
-                m = measurement_from_explain_benchmarks(explain["benchmarks"])
-                if m.narr_tps is not None or m.code_tps is not None:
-                    e.measurement = m
-                    return
-            # Fallback: coarse BENCHMARKS.md scrape (flagged in source).
-            m = parse_benchmarks_md_for_slug(bench_md or "", e.slug)
-            if m:
-                e.measurement = m
-
-        await asyncio.gather(*(_one(e) for e in entries))
+        Replaces BOTH prior sources: the per-slug ``--explain`` fan-out (the
+        ~4s/slug TPS leg, #439 option-3) and the coarse BENCHMARKS.md scrape —
+        BENCHMARKS.md is the public human/cross-rig ledger, never a machine
+        source.  The baseline dict rides the variant row we already loaded, so
+        this is a pure in-memory map (no I/O, no subprocess).  ``stale`` is the
+        emit-computed pin-staleness verdict (badged; slice 2 adds the local
+        measurement-record overlay)."""
+        for e in entries:
+            b = getattr(e.row, "baseline", None)
+            if not b:
+                continue
+            e.measurement = Measurement(
+                narr_tps=b.get("narr_tps"),
+                code_tps=b.get("code_tps"),
+                quality_8pk=b.get("quality_8pk"),
+                date=str(b.get("date") or ""),
+                source="baseline",
+                stale=b.get("stale"),
+            )
 
     def _read_benchmarks_md(self) -> str:
         path = self.repo_root / "BENCHMARKS.md"
@@ -3725,6 +3720,10 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         object.__setattr__(row, "weights_companions", [str(c) for c in comp])
         object.__setattr__(row, "drafter", str(d.get("drafter") or ""))
         object.__setattr__(row, "vision", bool(d.get("vision")))
+        # Catalog-baselines slice 1: the shipped baseline row joined at
+        # registry-emit (narr/code TPS · 8pk · ctx_validated · provenance ·
+        # computed 'stale') — None when the slug has no accepted row.
+        object.__setattr__(row, "baseline", d.get("baseline") or None)
     except Exception:
         pass
     return row

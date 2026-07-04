@@ -210,6 +210,13 @@ REGISTRY_JSON = json.dumps(
                 "configured_ctx": 262144,
                 "status_note": "",
                 "source": "curated",
+                "baseline": {
+                    "narr_tps": 174.0, "code_tps": 42.0, "quality_8pk": "109/150",
+                    "date": "2026-07-01", "engine_pin": "vllm/vllm-openai:v0.24.0",
+                    "current_pin": "vllm/vllm-openai:v0.24.0", "stale": False,
+                    "rig": "2x3090-pcie", "power_cap_w": [370, 420],
+                    "submitted_by": "noonghunna",
+                },
             },
             {
                 "slug": "ik-llama/iq4ks-mtp",
@@ -228,6 +235,13 @@ REGISTRY_JSON = json.dumps(
                 "configured_ctx": 200000,
                 "status_note": "",
                 "source": "curated",
+                "baseline": {
+                    "narr_tps": 60.4, "code_tps": 72.4,
+                    "date": "2026-05-23", "engine_pin": "ghcr.io/ik-old@sha256:aaa",
+                    "current_pin": "ghcr.io/ik-new@sha256:bbb", "stale": True,
+                    "rig": "1x3090-pcie", "power_cap_w": [370],
+                    "submitted_by": "noonghunna",
+                },
             },
         ],
     }
@@ -964,6 +978,25 @@ class TestCatalogWired:
             assert entry.fit.glyph == "●"            # fits-clean
             assert entry.measurement.tps_label == "174/42"
             assert entry.measurement.quality_label == "109/150"
+            # Catalog-baselines slice 1: the source is the shipped baseline.
+            assert entry.measurement.source == "baseline"
+
+    @pytest.mark.asyncio
+    async def test_catalog_stale_baseline_dagger(self):
+        """Catalog-baselines slice 1 — a baseline measured on an OLDER engine
+        pin renders the † staleness marker on its TPS cell + the status-line
+        legend (re-bench owed); a current-pin row stays unmarked."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tbl = app.query_one("#catalog-table", DataTable)
+            rows = [" ".join(str(c) for c in tbl.get_row_at(r)) for r in range(tbl.row_count)]
+            ik_row = next(r for r in rows if "iq4ks-mtp" in r)     # stale fixture row
+            dual_row = next(r for r in rows if "vllm/dual" in r)   # fresh fixture row
+            assert "†" in ik_row
+            assert "†" not in dual_row
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert "older engine pin" in status
 
     @pytest.mark.asyncio
     async def test_catalog_ik_llama_fit_is_skip(self):

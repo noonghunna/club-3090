@@ -202,16 +202,22 @@ class FitVerdict:
 
 @dataclass
 class Measurement:
-    """A measured result for a slug, joined from a structured corpus or parsed
-    coarsely from BENCHMARKS.md.  ``source`` records provenance so the UI can
-    distinguish a structured record from a best-effort markdown parse."""
+    """A measured result for a slug.  The catalog's source is the SHIPPED
+    BASELINE joined at registry-emit (source=="baseline"); "explain"/
+    "benchmarks.md" remain only for non-catalog surfaces (Explain modal,
+    cross-rig explorer).  ``source`` records provenance so the UI never
+    presents a coarse parse as an accepted number."""
 
     narr_tps: Optional[float] = None
     code_tps: Optional[float] = None
     quality_8pk: Optional[str] = None   # e.g. "107/150"
     max_ctx_label: str = ""
     date: str = ""
-    source: str = ""                    # "explain" | "corpus" | "benchmarks.md" | ""
+    source: str = ""                    # "baseline" | "explain" | "corpus" | "benchmarks.md" | ""
+    # Catalog-baselines: emit-computed pin-staleness for a baseline row —
+    # True = measured on an older engine pin (re-bench owed), False = current
+    # pin, None = undeterminable / not a baseline measurement.
+    stale: Optional[bool] = None
 
     @property
     def tps_label(self) -> str:

@@ -397,8 +397,71 @@ _spec.loader.exec_module(_tui_registry)
 
 from scripts.lib.profiles.compat import load_profiles  # noqa: E402
 from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY, DEFAULTS  # noqa: E402
+from scripts.lib.profiles.launch_compat import ProfileError, resolve_variant_pin  # noqa: E402
 
 tab = os.environ.get("REGISTRY_TAB", "")
+
+# --- profiles: sourced via the EXISTING loaders (never re-derived).  Loaded
+#     HERE (not after the variants block) because the baselines join below
+#     resolves per-slug current pins through the engine profiles. ---
+profiles = load_profiles()
+
+# --- baselines join (catalog-baselines slice 1): the shipped bar rows from
+#     scripts/lib/profiles/baselines.yml, joined per-slug with a computed
+#     staleness verdict.  THIS is the single point where measured display
+#     numbers enter the contract — consumers never read baselines.yml (or
+#     BENCHMARKS.md) directly. ---
+import re as _re  # noqa: E402
+
+import yaml as _yaml  # noqa: E402
+
+_bl_path = root / "scripts" / "lib" / "profiles" / "baselines.yml"
+_baselines = {}
+if _bl_path.exists():
+    _baselines = (_yaml.safe_load(_bl_path.read_text()) or {}).get("baselines") or {}
+
+# First `image:` default in the compose (handles both a bare literal and the
+# ${ENGINE_IMAGE:-literal} env-fallback form) — the pin truth for engines with
+# no docker-image install.spec (ik / llama.cpp pin per-compose or roll by policy).
+_IMG_RE = _re.compile(r"^\s*image:\s*[\"']?(?:\$\{[A-Z_0-9]+:-)?([^\s}\"']+)\}?", _re.M)
+
+
+def _compose_image_default(compose_path: str):
+    try:
+        txt = (root / compose_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = _IMG_RE.search(txt)
+    return m.group(1) if m else None
+
+
+def _current_pin(slug: str, compose_path: str):
+    """The pin a launcher-started serve actually runs TODAY: the engine
+    profile's docker-image spec when it has one (launchers inject it), else
+    the compose's image default."""
+    try:
+        exports = resolve_variant_pin(profiles, slug)
+        # Nightly pins export a bare SHA (VLLM_NIGHTLY_SHA) — not comparable to
+        # an image string; fall through to the compose default for those.
+        if "VLLM_NIGHTLY_SHA" not in exports:
+            return next(iter(exports.values()))
+    except ProfileError:
+        pass
+    return _compose_image_default(compose_path)
+
+
+def _baseline_for(slug: str, compose_path: str):
+    row = _baselines.get(slug)
+    if not row:
+        return None
+    out = dict(row)
+    cur = _current_pin(slug, compose_path)
+    measured = row.get("engine_pin")
+    # stale: true/false when both pins are known; null = undeterminable
+    # (unpinned engine or unreadable compose) — badge only on TRUE.
+    out["stale"] = (cur != measured) if (cur and measured) else None
+    out["current_pin"] = cur
+    return out
 
 # --- variants: exactly the fields parse_variant_rows produces from the tab form,
 #     trimmed to the contract's variant schema (+ 'source' default "curated"). ---
@@ -444,6 +507,10 @@ for vr in _tui_registry.parse_variant_rows(tab):
             ),
             "status_note": d["status_note"],
             "source": "curated",
+            # The shipped baseline row ("the bar") + computed staleness — the
+            # ONLY measured-display source for consumers (replaces the c3-side
+            # BENCHMARKS.md scrape).  None when the slug has no accepted row.
+            "baseline": _baseline_for(d["slug"], d["compose_path"]),
         }
     )
 
@@ -459,8 +526,7 @@ defaults = [
     for (model, engine, topology), slug in DEFAULTS.items()
 ]
 
-# --- profiles: sourced via the EXISTING loaders (never re-derived). ---
-profiles = load_profiles()
+# (profiles loaded above, before the variants block — the baselines join needs it.)
 
 
 def _engine(e):
@@ -515,7 +581,8 @@ payload = {
     },
 }
 
-json.dump(payload, sys.stdout, sort_keys=True)
+# default=str: baseline rows carry YAML-parsed datetime.date values.
+json.dump(payload, sys.stdout, sort_keys=True, default=str)
 sys.stdout.write("\n")
 PY_JSON
 }

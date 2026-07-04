@@ -9,6 +9,15 @@ This is distinct from the runtime **measurement-record** TPS corpus
 (`scripts/lib/profiles/measurement_record.py`) — that tracks throughput; this tracks
 *behavioral quality* (ToolCall / InstructFollow / StructOutput / DataExtract / …).
 
+It is ALSO distinct from the **shipped catalog baseline**
+(`scripts/lib/profiles/baselines.yml`) — the slug-keyed *display* bar (decode TPS ·
+8-pack headline · ctx-validated · pin provenance) joined into `registry-emit --json`
+for c3/switch. The three stores answer different questions (regression-diff vs raw
+corpus vs accepted display row) but must not drift: the induction tool
+(`catalog-baseline.sh`, slice 2) refreshes `baselines.yml`'s `quality_8pk` from the
+same capture that lands here, so a slug's headline never disagrees with its
+regression baseline.
+
 ## What lives here
 
 One JSON per `(registry-slug, thinking-mode)`, named:
