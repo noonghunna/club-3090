@@ -2908,6 +2908,96 @@ class TestValidateEvidenceWired:
             assert "--auto-submit" in wr.started[0]["cmd"]
 
 
+def _seed_live_gate_run(root: Path, tag: str = "live-gate") -> Path:
+    """F10 — a mid-flight rebench dir: verify-full done (timings.json), bench's
+    log growing.  Fresh mtimes → the observer grades it live."""
+    d = root / "results" / "rebench" / tag
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "timings.json").write_text('{"verify-full": 132}', encoding="utf-8")
+    (d / "verify-full.log").write_text("8/8 PASS\n", encoding="utf-8")
+    (d / "bench.log").write_text("warmup done\nrun 3/5 narrative…\n", encoding="utf-8")
+    return d
+
+
+class TestF10LiveGateObserver:
+    """F10 — the Evidence pane doubles as the live gate-run observer: a run in
+    flight (no REPORT.md, fresh writes) is badged ▶ with a ladder + live tail;
+    an aborted one reads ⚠ incomplete; report/submit are guarded mid-run.
+    Regression source: rebench-full via nohup was invisible in c3 — a producer
+    facing a silent 3-hr gate assumes a hang (T2 friction #7)."""
+
+    async def _open_evidence(self, pilot):
+        await pilot.press("2")
+        await _settle(pilot)
+        pilot.app.query_one("#validate-tabs", TabbedContent).active = "tab-evidence"
+        await pilot.pause()
+
+    @pytest.mark.asyncio
+    async def test_live_run_badged_with_ladder_and_tail(self, tmp_path):
+        seed_repo(tmp_path)
+        _seed_live_gate_run(tmp_path)
+        app, _, _ = make_app(repo_root=tmp_path, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self._open_evidence(pilot)
+            pane = app.query_one("#validate-evidence-pane", ValidateEvidencePane)
+            live_idx = next(i for i, t in enumerate(pane._tags) if t.tag == "live-gate")
+            assert pane._tags[live_idx].live
+            t = app.query_one("#evidence-table", DataTable)
+            row = " ".join(str(c) for c in t.get_row_at(live_idx))
+            assert "▶" in row and "running" in row and "bench" in row
+            # Preview for the live row: ladder + the active step's tail.
+            t.move_cursor(row=live_idx)
+            pane.render_preview(pane.selected_tag())
+            prev = str(app.query_one("#evidence-preview", Static).render())
+            assert "RUNNING" in prev
+            assert "verify-full" in prev and "bench" in prev   # ✓ done + ▶ active
+            assert "run 3/5 narrative…" in prev                 # live tail line
+
+    @pytest.mark.asyncio
+    async def test_enter_and_submit_guarded_on_live_run(self, tmp_path):
+        seed_repo(tmp_path)
+        _seed_live_gate_run(tmp_path)
+        app, _, _ = make_app(repo_root=tmp_path, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self._open_evidence(pilot)
+            pane = app.query_one("#validate-evidence-pane", ValidateEvidencePane)
+            live_idx = next(i for i, t in enumerate(pane._tags) if t.tag == "live-gate")
+            app.query_one("#evidence-table", DataTable).move_cursor(row=live_idx)
+            # ⏎ must NOT generate a report mid-run (rebench-report WRITES
+            # REPORT.md into the dir → would corrupt the live/complete signal).
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not isinstance(app.screen, EvidenceReportScreen)
+            # [s] must not stage a submit of incomplete artifacts.
+            await pilot.press("s")
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmActionScreen)
+
+    @pytest.mark.asyncio
+    async def test_quiet_incomplete_run_reads_incomplete(self, tmp_path):
+        import os as _os
+        import time as _t
+
+        seed_repo(tmp_path)
+        d = _seed_live_gate_run(tmp_path, tag="dead-gate")
+        old = _t.time() - 7200
+        for f in [d, *d.iterdir()]:
+            _os.utime(f, (old, old))
+        app, _, _ = make_app(repo_root=tmp_path, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await self._open_evidence(pilot)
+            pane = app.query_one("#validate-evidence-pane", ValidateEvidencePane)
+            idx = next(i for i, t in enumerate(pane._tags) if t.tag == "dead-gate")
+            assert pane._tags[idx].stale and not pane._tags[idx].live
+            t = app.query_one("#evidence-table", DataTable)
+            row = " ".join(str(c) for c in t.get_row_at(idx))
+            assert "⚠" in row and "incomplete" in row
+            # A completed tag (seed_repo's vllm-dual-test) keeps the plain look.
+            done_idx = next(i for i, t2 in enumerate(pane._tags) if t2.tag == "vllm-dual-test")
+            done_row = " ".join(str(c) for c in t.get_row_at(done_idx))
+            assert "▶" not in done_row and "incomplete" not in done_row
+
+
 # ===========================================================================
 # Phase R / R3b-2 — ④ Measure-vs-curated-bar (READ · producer-only)
 #
