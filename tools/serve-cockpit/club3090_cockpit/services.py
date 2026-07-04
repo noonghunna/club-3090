@@ -836,6 +836,41 @@ class CockpitData:
         except OSError:
             return ""
 
+    def lan_ip(self) -> str:
+        """The rig's LAN IP for user-facing endpoint URLs (F3) — the SAME
+        derivation as the launchers (layer rule, #512 precedence): env LANIP →
+        repo .env `LANIP=` → the shared `c3_lan_ip` helper (subshell-contained;
+        comfyui-paths.sh sets studio paths at source time) → localhost.
+        Cached for the session (the LAN IP doesn't move under a running TUI)."""
+        cached = getattr(self, "_lan_ip_cache", "")
+        if cached:
+            return cached
+        import os
+        import re
+        import subprocess
+        ip = (os.environ.get("LANIP") or "").strip()
+        if not ip:
+            try:
+                m = re.search(
+                    r"^LANIP=(.+)$", (self.repo_root / ".env").read_text(), re.M
+                )
+                if m:
+                    ip = m.group(1).strip()
+            except OSError:
+                pass
+        if not ip:
+            helper = self.repo_root / "services" / "comfyui" / "comfyui-paths.sh"
+            if helper.is_file():
+                try:
+                    ip = subprocess.run(
+                        ["bash", "-c", f". '{helper}' >/dev/null 2>&1; c3_lan_ip"],
+                        capture_output=True, text=True, timeout=5,
+                    ).stdout.strip()
+                except Exception:
+                    ip = ""
+        self._lan_ip_cache = ip or "localhost"
+        return self._lan_ip_cache
+
     # ── READ: explain (Tier-3 detail) ────────────────────────────────────────────
 
     async def explain(self, slug: str) -> tuple[Optional[dict[str, Any]], Optional[str]]:
