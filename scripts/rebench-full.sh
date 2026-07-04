@@ -412,3 +412,132 @@ echo "  soak:          grep -E 'verdict|silent_empty|p50_decode' $OUT_DIR/soak.l
 echo
 echo "To submit your numbers (review then PR):"
 echo "  bash scripts/submit-bench.sh --tag $TAG"
+
+# --- measurement record + baseline-induction prompt (catalog-baselines slice 2) ---
+# Auto-emit the #249 measurement record into the per-rig corpus when the served
+# container EXACT-matches a registry slug (identity semantics — a port/substring
+# match is a shape guess and must not stamp another slug's record; see the c3
+# detect layer). BYO/swap serves have no registry identity → skipped with a note.
+if [[ -f "$OUT_DIR/bench.log" ]] && command -v python3 >/dev/null 2>&1; then
+  OUT_DIR="$OUT_DIR" TAG="$TAG" python3 - <<'PY_RECORD' || true
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parent if "__file__" in dir() else Path.cwd()
+sys.path.insert(0, str(Path.cwd()))
+try:
+    from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+    from scripts.lib.profiles.measurement_record import (
+        build_record, parse_bench_output, write_record,
+    )
+except Exception as exc:  # pragma: no cover - env without the profiles tree
+    print(f"  record:      skipped (profiles unavailable: {exc})")
+    raise SystemExit(0)
+
+out_dir = Path(os.environ["OUT_DIR"])
+tag = os.environ["TAG"]
+
+# EXACT container -> slug (never port/substring).
+slug = None
+try:
+    names = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}}"],
+        capture_output=True, text=True, timeout=10,
+    ).stdout.split()
+    norm = {n.replace("_", "-") for n in names}
+    for s, e in COMPOSE_REGISTRY.items():
+        # container name = the compose's container_name default
+        try:
+            txt = Path(e["compose_path"]).read_text(errors="replace")
+        except OSError:
+            continue
+        m = re.search(r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt)
+        if m and m.group(1).replace("_", "-") in norm:
+            slug = s
+            break
+except Exception:
+    pass
+
+if not slug:
+    print("  record:      skipped — no running container exact-matches a registry slug")
+    raise SystemExit(0)
+
+
+def _quality(path: Path):
+    try:
+        q = json.loads(path.read_text())
+        p = sum(int(x.get("passed") or 0) for x in q.get("packs") or [])
+        t = sum(int(x.get("total") or 0) for x in q.get("packs") or [])
+        return f"{p}/{t}" if t else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+# Fingerprint enrichment — the cohort keys the corpus joins/staleness rely on.
+engine_pin = None
+try:
+    from scripts.lib.profiles.compat import load_profiles
+    from scripts.lib.profiles.launch_compat import ProfileError, resolve_variant_pin
+
+    exports = resolve_variant_pin(load_profiles(), slug)
+    if "VLLM_NIGHTLY_SHA" not in exports:
+        engine_pin = next(iter(exports.values()))
+except Exception:
+    pass
+if not engine_pin:
+    try:
+        txt = Path(COMPOSE_REGISTRY[slug]["compose_path"]).read_text(errors="replace")
+        m = re.search(r'^\s*image:\s*["\x27]?(?:\$\{[A-Z_0-9]+:-)?([^\s}"\x27]+)\}?', txt, re.M)
+        engine_pin = m.group(1) if m else None
+    except OSError:
+        pass
+
+hardware = None
+power_cap = None
+try:
+    rows = subprocess.run(
+        ["nvidia-smi", "--query-gpu=name,power.limit", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=10,
+    ).stdout.strip().splitlines()
+    if rows:
+        name = rows[0].split(",")[0].strip()
+        m = re.search(r"RTX\s*(\d{4})", name)
+        hardware = f"rtx-{m.group(1)}" if m else None
+        power_cap = round(float(rows[0].split(",")[1]))
+except Exception:
+    pass
+
+try:
+    metrics = parse_bench_output((out_dir / "bench.log").read_text(errors="replace"))
+    soak = "not-run"
+    soak_log = out_dir / "soak.log"
+    if soak_log.is_file():
+        soak = "pass" if re.search(r"verdict\s+PASS", soak_log.read_text(errors="replace")) else "fail"
+    rec = build_record(
+        tag=slug, bench_metrics=metrics,
+        hardware=hardware, engine_pin=engine_pin, power_cap_w=power_cap,
+        smoke_status="pass",   # rebench aborts at step 0 unless verify-full passed
+        soak_status=soak,
+    )
+    q_off = _quality(out_dir / "quality-full.json")
+    q_on = _quality(out_dir / "quality-full-thinking.json")
+    if q_off:
+        rec["measured_extensions"]["quality_8pk"] = q_off
+    if q_on:
+        rec["measured_extensions"]["quality_8pk_think_on"] = q_on
+    rec["_rebench_tag"] = tag
+    path = write_record(rec)
+    print(f"  record:      corpus record appended -> {path}  (slug {slug})")
+except Exception as exc:
+    print(f"  record:      skipped ({exc})")
+    raise SystemExit(0)
+
+print()
+print("To induct these numbers as the slug's SHIPPED baseline (review then PR):")
+print(f"  bash scripts/catalog-baseline.sh {slug} --from-tag {tag}")
+PY_RECORD
+fi
