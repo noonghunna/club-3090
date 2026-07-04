@@ -1860,6 +1860,14 @@ class CockpitData:
         active = (report or {}).get("active_estate") or {}
         if active.get("present") and active.get("instances"):
             for inst in active["instances"]:
+                # F7: estate.yml is a desired-state PLAN — only a LIVE instance
+                # is a claim.  running == False means estate_cli probed docker
+                # and the instance's container is NOT up (a leftover plan file
+                # must not fake a stop-conflict on an empty rig).  True / null /
+                # missing (older CLI, or docker unavailable) stay claims — the
+                # gate fails CLOSED on unknown liveness.
+                if inst.get("running", None) is False:
+                    continue
                 inst_gpus = set(inst.get("gpus", []) or [])
                 if inst_gpus & wanted:
                     result.estate_claims.append(inst)
