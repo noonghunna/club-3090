@@ -951,21 +951,38 @@ def report_state_payload(args: argparse.Namespace) -> tuple[dict[str, Any], int]
         payload["active_estate"] = {"present": True, "valid": False, "path": str(path), "error": str(exc)}
         return payload, 0
     claimed = sorted({gpu for inst in instances for gpu in inst.gpu_indices})
-    payload["active_estate"] = {
-        "present": True,
-        "valid": bool(result.valid),
-        "path": str(path),
-        "instance_count": len(instances),
-        "gpu_coverage": {"claimed_count": len(claimed), "total": len(hardware), "claimed": claimed},
-        "instances": [
+
+    # F7 (c3 T1.1 audit): estate.yml is a desired-state PLAN — reporting its
+    # instances without probing liveness made consumers (the c3 reconcile gate)
+    # treat a leftover plan file as live GPU claims on an empty rig.  Probe
+    # docker per instance: true/false when the probe answers, null when docker
+    # itself is unavailable (consumers must fail CLOSED on null/missing).
+    def _probe_running(name: str):
+        try:
+            return container_running(name)
+        except Exception:
+            return None
+
+    inst_rows = []
+    for inst in instances:
+        inst_rows.append(
             {
                 "name": inst.name,
                 "compose": inst.compose_name,
                 "gpus": list(inst.gpu_indices),
                 "port": inst.port,
+                "container": container_name(inst.name),
+                "running": _probe_running(inst.name),
             }
-            for inst in instances
-        ],
+        )
+    payload["active_estate"] = {
+        "present": True,
+        "valid": bool(result.valid),
+        "path": str(path),
+        "instance_count": len(instances),
+        "running_count": sum(1 for r in inst_rows if r["running"] is True),
+        "gpu_coverage": {"claimed_count": len(claimed), "total": len(hardware), "claimed": claimed},
+        "instances": inst_rows,
     }
     return payload, 0
 
@@ -1007,7 +1024,16 @@ def command_report_state(args: argparse.Namespace) -> int:
     print(f"  - Validation: {'PASS' if result.valid else 'FAIL'}")
     print(f"  - GPU coverage: {len(claimed)}/{len(hardware)} cards claimed ({claimed})")
     for inst in instances:
-        print(f"  - {inst.name}: {inst.compose_name}, GPUs {list(inst.gpu_indices)}, port {inst.port}")
+        # F7 — estate.yml is a PLAN: say per instance whether it is actually up
+        # (same probe the --json payload carries as `running`).
+        try:
+            live = "running" if container_running(inst.name) else "down (plan only)"
+        except Exception:
+            live = "liveness unknown (docker unavailable)"
+        print(
+            f"  - {inst.name}: {inst.compose_name}, GPUs {list(inst.gpu_indices)}, "
+            f"port {inst.port} — {live}"
+        )
     return 0
 
 

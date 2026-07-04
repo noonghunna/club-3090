@@ -73,6 +73,13 @@ assert_json_keys "$out" "d['active_estate']['instance_count']" "2"
 assert_json_keys "$out" "d['active_estate']['instances'][0]['name']" "qwen-left"
 assert_json_keys "$out" "d['active_estate']['instances'][0]['compose']" "llamacpp/default"
 assert_json_keys "$out" "d['active_estate']['instances'][0]['gpus']==[0]" "True"
+# F7 — per-instance LIVENESS: estate.yml is a plan; report-state probes docker
+# per instance. The test instances are never booted → running is False (probed,
+# down) or None (docker unavailable in this env) — NEVER True. Consumers treat
+# only running==False as "not a claim" (fail closed on None/missing).
+assert_json_keys "$out" "d['active_estate']['instances'][0]['running'] in (False, None)" "True"
+assert_json_keys "$out" "d['active_estate']['instances'][0]['container']" "club3090-qwen-left"
+assert_json_keys "$out" "d['active_estate']['running_count']" "0"
 assert_json_keys "$out" "sorted(d['profile_counts'].keys())==['drafters','engines','hardware','models','workloads']" "True"
 
 # report-state --json with a missing estate file

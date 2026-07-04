@@ -1562,6 +1562,83 @@ class TestReconcileGate:
         assert rec.estate_claims == []
         assert rec.safe is True
 
+    # ── F7 — estate.yml is a PLAN: only LIVE instances are claims ────────────────
+    # (T1.1 audit: an EMPTY rig warned "⚠ Starting this will STOP estate
+    # llama-gpu0, llama-gpu1" off a leftover ~/.club3090/estate.yml.  estate_cli
+    # report-state now probes docker per instance; running==False → not a claim;
+    # True / null / missing → claim, the gate fails CLOSED on unknown liveness.
+    # The missing-key case is the legacy fixtures above, which must stay claims.)
+
+    def _estate_report(self, running):
+        return json.dumps(
+            {
+                "active_estate": {
+                    "present": True,
+                    "valid": True,
+                    "instances": [
+                        {"name": "llama-gpu0", "compose": "llamacpp/default",
+                         "gpus": [0], "port": 8010, "container": "club3090-llama-gpu0",
+                         "running": running},
+                        {"name": "llama-gpu1", "compose": "llamacpp/default",
+                         "gpus": [1], "port": 8020, "container": "club3090-llama-gpu1",
+                         "running": running},
+                    ],
+                }
+            }
+        )
+
+    def _empty_rig_data(self, runner):
+        gpus = [GpuInfo(index=0, mem_used_mib=3), GpuInfo(index=1, mem_used_mib=3)]
+        return CockpitData(
+            ROOT, runner=runner,
+            detect_endpoint_fn=make_detect(ServingTarget(gpus=gpus)),
+            get_gpu_info_fn=make_gpu_info(gpus),
+        )
+
+    @pytest.mark.asyncio
+    async def test_stale_estate_plan_is_not_a_claim(self):
+        """The audit repro: empty rig + leftover estate.yml (instances probed
+        DOWN) → the gate is SAFE; no scary stop-conflict for a fresh user."""
+        runner = full_runner(
+            **{
+                "docker ps": ok(DOCKER_PS_EMPTY),
+                "estate_cli.py report-state --json": ok(self._estate_report(False)),
+            }
+        )
+        cd = self._empty_rig_data(runner)
+        rec = await cd.reconcile_before_write("serve:dual", pending_gpus=[0, 1])
+        assert rec.estate_claims == []
+        assert rec.safe is True
+
+    @pytest.mark.asyncio
+    async def test_live_estate_instance_still_claims(self):
+        """running == True stays a conflict even when nvidia-smi shows the cards
+        idle (the instance may be mid-boot, VRAM not allocated yet)."""
+        runner = full_runner(
+            **{
+                "docker ps": ok(DOCKER_PS_EMPTY),
+                "estate_cli.py report-state --json": ok(self._estate_report(True)),
+            }
+        )
+        cd = self._empty_rig_data(runner)
+        rec = await cd.reconcile_before_write("serve:dual", pending_gpus=[0, 1])
+        assert len(rec.estate_claims) == 2
+        assert rec.safe is False
+
+    @pytest.mark.asyncio
+    async def test_unknown_estate_liveness_fails_closed(self):
+        """running == null (docker unavailable to estate_cli) → still a claim."""
+        runner = full_runner(
+            **{
+                "docker ps": ok(DOCKER_PS_EMPTY),
+                "estate_cli.py report-state --json": ok(self._estate_report(None)),
+            }
+        )
+        cd = self._empty_rig_data(runner)
+        rec = await cd.reconcile_before_write("serve:dual", pending_gpus=[0, 1])
+        assert len(rec.estate_claims) == 2
+        assert rec.safe is False
+
     @pytest.mark.asyncio
     async def test_pending_gpus_none_is_conservative_both_cards(self):
         """pending_gpus=None means 'wants both cards' → any GPU1 use conflicts."""
