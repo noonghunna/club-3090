@@ -1816,6 +1816,63 @@ class TestBatch1OperateServingPanel:
             assert "no model serving" in line.lower()
 
 
+class TestF9SlugMasquerade:
+    """F9 — a port/substring registry match is a SHAPE guess, not an identity:
+    the UI must lead with the PROBED served id + 👤 badge and demote the slug to
+    'shape'.  Regression source: the Agents-A1 bring (2026-07-03) served on a
+    sibling's port and was presented as vllm/qwen-35b-a3b-dual with no hint it
+    was a different model."""
+
+    def _shape_target(self) -> ServingTarget:
+        # A brought container UNKNOWN to the registry, serving on vllm/dual's
+        # port 8010 → slug matches by PORT only (shape); the model id is the
+        # probed served id.
+        return ServingTarget(
+            url="http://localhost:8010", model="agents-a1", host_port=8010,
+            container="vllm-agents-a1-dual",
+            gpus=[GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)],
+        )
+
+    @pytest.mark.asyncio
+    async def test_serving_panel_shape_match_badges(self):
+        app, _, _ = make_app(target=self._shape_target())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            line = str(app.query_one("#serving-line", Static).render())
+            # The probed served id leads; the slug is presented as the SHAPE.
+            assert "agents-a1" in line
+            assert "👤" in line
+            assert "on vllm/dual shape" in line
+
+    @pytest.mark.asyncio
+    async def test_serving_panel_identity_match_has_no_badge(self):
+        # EXACT container match (the registry row's container, "_"→"-"
+        # normalized) → identity → the slug renders plainly, no badge.
+        tgt = ServingTarget(
+            url="http://localhost:8010", model="qwen3.6-27b", host_port=8010,
+            container="vllm_qwen36_27b",
+            gpus=[GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)],
+        )
+        app, _, _ = make_app(target=tgt)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            line = str(app.query_one("#serving-line", Static).render())
+            assert "vllm/dual" in line
+            assert "👤" not in line
+            assert "shape" not in line
+
+    @pytest.mark.asyncio
+    async def test_rail_shape_match_leads_with_served_id(self):
+        app, _, _ = make_app(target=self._shape_target())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            rail = str(app.query_one("#rail-status", RailStatus).render())
+            # Served id + badge on the model line; the slug demoted to shape.
+            assert "agents-a1 👤" in rail
+            assert "shape" in rail
+            assert "vllm/dual" in rail
+
+
 class TestBatch1KnownServices:
     """#2 — the Containers view shows known-but-stopped supporting services."""
 
@@ -6056,9 +6113,12 @@ class TestBatch2N3CatalogServingMarker:
 
     @pytest.mark.asyncio
     async def test_catalog_marks_serving_slug(self):
-        # A target on port 8010 → matched_slug vllm/dual.
+        # The registry row's EXACT container + port 8010 → matched_slug vllm/dual
+        # as an IDENTITY match (F9: a container-less port match is only a shape
+        # guess and renders the 👤 badge instead — see the test below).
         tgt = ServingTarget(
             url="http://localhost:8010", model="qwen3.6-27b", host_port=8010,
+            container="vllm_qwen36_27b",
             gpus=[GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)],
         )
         app, _, _ = make_app(target=tgt)
@@ -6070,6 +6130,29 @@ class TestBatch2N3CatalogServingMarker:
             tbl = app.query_one("#catalog-table", DataTable)
             blob = " ".join(str(tbl.get_row_at(r)) for r in range(tbl.row_count))
             assert "serving" in blob        # the ● serving badge
+            assert "👤" not in blob
+
+    @pytest.mark.asyncio
+    async def test_catalog_shape_match_never_claims_serving(self):
+        # F9 — a brought container UNKNOWN to the registry on vllm/dual's port:
+        # the row must NOT read "● serving" (the A1 masquerade); it reads the
+        # 👤 port-in-use guess instead.
+        tgt = ServingTarget(
+            url="http://localhost:8010", model="agents-a1", host_port=8010,
+            container="vllm-agents-a1-dual",
+            gpus=[GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)],
+        )
+        app, _, _ = make_app(target=tgt)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await _enter_operate(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            assert pane._serving_slug == "vllm/dual"
+            assert pane._serving_confidence == "shape"
+            tbl = app.query_one("#catalog-table", DataTable)
+            blob = " ".join(str(tbl.get_row_at(r)) for r in range(tbl.row_count))
+            assert "serving" not in blob
+            assert "👤" in blob and "port in use" in blob
 
     @pytest.mark.asyncio
     async def test_catalog_marker_clears_when_nothing_serving(self):

@@ -452,6 +452,7 @@ class ContainerInfo:
     internal_port: int = 0
     engine: str = ""                    # for engine containers
     slug: str = ""                      # registry slug if matched
+    match_confidence: str = ""          # "identity" | "shape" | "" (see core detect)
     gpus: str = ""                      # "0,1" if known, else ""
     status: str = "running"             # "running" | "stopped" (known-but-down service)
 

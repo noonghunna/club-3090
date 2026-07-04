@@ -659,6 +659,8 @@ class CatalogPane(Container):
         # N3: the slug currently live-serving (from the estate's matched_slug),
         # so its Run-catalog row carries a "● serving" badge.  "" → none serving.
         self._serving_slug: str = ""
+        # F9: the match grade for _serving_slug ("identity" | "shape" | "").
+        self._serving_confidence: str = ""
         # A6: live per-GPU free-VRAM (GB) from the last estate poll, used to
         # DOWNGRADE a "● fits-clean" glyph that would actually OOM right now (e.g.
         # GPU0 holding ComfyUI).  None → unknown (the fit column is then labelled
@@ -739,7 +741,13 @@ class CatalogPane(Container):
             slug_cell = e.slug
             is_serving_row = bool(serving and e.slug == serving)
             if is_serving_row:
-                slug_cell = f"[green]●[/green] {e.slug} [green]serving[/green]"
+                if (self._serving_confidence or "") == "shape":
+                    # F9: port/substring match — what's serving merely has this
+                    # row's SHAPE (its port / a name fragment); it is NOT verified
+                    # to BE this slug.  Never claim "serving" for a guess.
+                    slug_cell = f"[yellow]👤[/yellow] {e.slug} [yellow]port in use[/yellow]"
+                else:
+                    slug_cell = f"[green]●[/green] {e.slug} [green]serving[/green]"
             else:
                 # Download UX — a glyph for the on-disk state: ⏳NN% downloading,
                 # ⬇ absent (not downloaded), ⚠ partial.  present/unknown → clean.
@@ -800,15 +808,22 @@ class CatalogPane(Container):
             except Exception:
                 pass
 
-    def set_serving_slug(self, slug: str) -> None:
+    def set_serving_slug(self, slug: str, confidence: str = "") -> None:
         """N3: set (or clear, with "") the live-serving slug + re-render so the
         Run-catalog row badge stays fresh.  Cheap: only re-renders when the slug
         actually changed (so the periodic Operate poll doesn't churn the Run
-        table on every tick).  Cursor + filter preserved via refresh_enriched."""
+        table on every tick).  Cursor + filter preserved via refresh_enriched.
+
+        F9: ``confidence`` is the match grade ("identity" | "shape" | "") — a
+        shape match renders the row badge as a guess, never as "serving"."""
         new = (slug or "").strip()
-        if new == (self._serving_slug or "").strip():
+        new_conf = (confidence or "").strip()
+        if new == (self._serving_slug or "").strip() and new_conf == (
+            self._serving_confidence or ""
+        ):
             return
         self._serving_slug = new
+        self._serving_confidence = new_conf
         # Re-render only if rows are present (mount-order safe).
         if self._entries:
             self.refresh_enriched()
@@ -2066,10 +2081,16 @@ class OperateOrchPane(Container):
             line.update("[dim]○ no model serving[/dim]")
             return
         parts: list[str] = []
+        conf = (getattr(tgt, "match_confidence", "") or "").strip()
         if model:
             parts.append(f"[green]{model}[/green]")
         if slug:
-            parts.append(f"[dim]{slug}[/dim]")
+            if conf == "shape":
+                # F9: port/substring match — the slug is the matched SHAPE, not
+                # the verified identity of what's serving.  Say so.
+                parts.append(f"[yellow]👤[/yellow] [dim]on {slug} shape[/dim]")
+            else:
+                parts.append(f"[dim]{slug}[/dim]")
         if port:
             # F3: the USABLE endpoint — full LAN URL + auth status, not a bare
             # port. Same derivation as switch.sh's ready-line (services.lan_ip).
@@ -2573,7 +2594,9 @@ class OperateContainersPane(Container):
                     c.kind,
                     c.engine or "—",
                     str(c.host_port) if c.host_port else "—",
-                    c.slug or "—",
+                    # F9: badge a port/substring (shape) match — the slug is a
+                    # guess for this container, not a verified identity.
+                    (f"👤 {c.slug}" if getattr(c, "match_confidence", "") == "shape" and c.slug else (c.slug or "—")),
                 )
         # FIX 1 — restore the cursor by key: if the selected container still
         # exists, move to its new index; if it's gone, clamp the OLD index; if the
@@ -2629,7 +2652,12 @@ class OperateContainersPane(Container):
             f"  [bold]Kind[/bold]       {con.kind}",
             f"  [bold]Port[/bold]       {con.host_port or '—'} → {con.internal_port or '—'}",
             f"  [bold]Engine[/bold]     {con.engine or '—'}",
-            f"  [bold]Slug[/bold]       {con.slug or '[dim]unmatched[/dim]'}",
+            f"  [bold]Slug[/bold]       "
+            + (
+                f"👤 {con.slug} [dim](shape match — port/substring, not an exact container)[/dim]"
+                if getattr(con, "match_confidence", "") == "shape" and con.slug
+                else (con.slug or "[dim]unmatched[/dim]")
+            ),
         ]
         if variant is not None:
             lines.append(f"  [bold]Compose[/bold]    [dim]{getattr(variant, 'compose_path', '') or '—'}[/dim]")
@@ -4478,7 +4506,19 @@ class RailStatus(Static):
             lines.append(f"{bar} GPU{i} {used:.0f}/{total:.0f}G")
         lines.append("")
         if state.matched_slug:
-            lines.append(f"model   {state.matched_slug}")
+            # F9: a port/substring registry match is a SHAPE guess, not a verified
+            # identity — a brought model on a sibling's port masquerades as the
+            # sibling otherwise.  Lead with the PROBED served id + 👤 badge and
+            # demote the slug to "shape"; only an exact-container match may claim
+            # the slug as the identity.
+            _conf = (getattr(state.target, "match_confidence", "") or "") if state.target is not None else ""
+            _served = (getattr(state.target, "model", "") or "").strip() if state.target is not None else ""
+            if _conf == "shape":
+                lines.append(f"model   {_served or state.matched_slug} 👤")
+                if _served:
+                    lines.append(f"[dim]shape   {state.matched_slug}[/dim]")
+            else:
+                lines.append(f"model   {state.matched_slug}")
         elif state.target is not None and getattr(state.target, "model", ""):
             lines.append(f"model   {state.target.model}")
         dr = state.doctor
@@ -5467,6 +5507,9 @@ class CockpitApp(App):
         self._target_slug: str = ""
         self._target_model: str = ""
         self._target_url: str = ""
+        # F9: the slug match GRADE ("identity" | "shape" | "") from the last
+        # estate poll — a shape match must never be presented as an identity.
+        self._target_confidence: str = ""
         # Phase 5: the SHARED ServingTarget OBJECT from the last estate poll —
         # held by identity so the c3t Evaluate hand-off passes the SAME dataclass
         # instance c3t speaks (design §4/§6.6), not a reconstructed copy.
@@ -6196,6 +6239,7 @@ class CockpitApp(App):
         tgt = state.target
         self._target_model = getattr(tgt, "model", "") or ""
         self._target_url = getattr(tgt, "url", "") or ""
+        self._target_confidence = getattr(tgt, "match_confidence", "") or ""
         # Hold the SHARED ServingTarget object (by identity) for the c3t Evaluate
         # hand-off — design §4/§6.6 requires passing the SAME dataclass instance.
         self._target_obj = tgt
@@ -6306,7 +6350,7 @@ class CockpitApp(App):
         # the Run marker fresh.
         try:
             cat = self.query_one("#catalog-pane", CatalogPane)
-            cat.set_serving_slug(self._target_slug)
+            cat.set_serving_slug(self._target_slug, self._target_confidence)
             # A6: feed the Run catalog the LIVE per-GPU free-VRAM so a
             # "fits-clean" row that would OOM right now (e.g. GPU0 holding
             # ComfyUI) is downgraded.  Derived from THIS poll's GpuInfo
