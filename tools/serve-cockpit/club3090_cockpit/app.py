@@ -647,7 +647,12 @@ class CatalogPane(Container):
         # fit verdict is a pick-the-serve decision input, shown when you ⏎ a row).
         # Fit is STILL computed (it feeds the pop-up + the serving-row exemption);
         # it just no longer occupies a Catalog column.
-        table.add_columns("model", "slug", "topology", "engine", "ctx", "TPS (our rig)", "8pk (our rig)", "status")
+        # F6 — column budget: the money columns (ctx · TPS · 8pk · status) come
+        # RIGHT after the identity (model · slug); topology/engine — largely
+        # redundant with the slug, which encodes both — moved to the tail so a
+        # 120-140-col terminal folds THEM, not the numbers a user picks by.
+        # "(rig)" keeps the our-rig provenance at 4 chars ("our rig" cost 8 more).
+        table.add_columns("model", "slug", "ctx", "TPS (rig)", "8pk (rig)", "status", "topo", "engine")
         # Full enriched catalog, and the current filter substring.
         self._entries: list[CatalogEntry] = []
         self._filter: str = ""
@@ -767,12 +772,12 @@ class CatalogPane(Container):
             table.add_row(
                 model_cell,
                 slug_cell,
-                e.topology,
-                e.engine,
                 e.ctx_label or "—",
                 tps,
                 e.measurement.quality_label,
                 _status_glyph(e.status),
+                e.topology,
+                e.engine,
             )
 
         banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
