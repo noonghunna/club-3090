@@ -284,8 +284,8 @@ if block_re.search(old):
     new = block_re.sub(row_text + "\n", old, count=1)
     action = "replaced"
 else:
-    # append before the top-level wave-2 footer comment block (or at EOF)
-    m = re.search(r"^# ─+\n# SEED WAVE 2", old, re.M)
+    # append before the top-level gap-list footer comment block (or at EOF)
+    m = re.search(r"^# ─+\n# (?:KNOWN GAPS|SEED WAVE 2)", old, re.M)
     ins = m.start() if m else len(old)
     new = old[:ins] + row_text + "\n" + old[ins:]
     action = "added"

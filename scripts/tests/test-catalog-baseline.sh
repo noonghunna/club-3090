@@ -18,6 +18,18 @@ mkdir -p "$TAGD"
 BL="$TMP/baselines.yml"
 cp scripts/lib/profiles/baselines.yml "$BL"
 REAL_SUM_BEFORE="$(sha256sum scripts/lib/profiles/baselines.yml | cut -d' ' -f1)"
+# guarantee the ADD path below: strip any real vllm/dual row from the copy
+# (the real file seeds one since wave-2)
+python3 - "$BL" <<'PY'
+import re
+import sys
+
+p = sys.argv[1]
+old = open(p).read()
+new = re.sub(r"^  vllm/dual:\n(?:^(?:    .*|\s*)\n)*?(?=^  \S|^#|^\S|\Z)",
+             "", old, count=1, flags=re.M)
+open(p, "w").write(new)
+PY
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
@@ -85,8 +97,9 @@ grep -q "anchor calibration OK" <<<"$out" || fail "anchor calibration not report
 grep -q "DRY RUN" <<<"$out" || fail "dry-run not flagged"
 [[ "$(sha256sum "$BL" | cut -d' ' -f1)" == "$sum_before" ]] || fail "dry-run WROTE the file"
 
-# ── 2. write path: add (vllm/dual has no row) then replace ───────────────────
-bash scripts/catalog-baseline.sh vllm/dual "${ARGS[@]}" >/dev/null 2>&1
+# ── 2. write path: add (row stripped from the copy above) then replace ───────
+out="$(bash scripts/catalog-baseline.sh vllm/dual "${ARGS[@]}" 2>&1)" || fail "add run failed"
+grep -q "added" <<<"$out" || fail "first induction did not ADD"
 python3 - "$BL" <<'PY'
 import sys
 
@@ -98,6 +111,11 @@ assert row["narr_tps"] == 153.9 and row["code_tps"] == 154.0, row
 assert row["quality_8pk"] == "105/150" and row["quality_8pk_think_on"] == "110/150"
 assert row["ctx_validated"]["tokens"] == 240635
 assert row["engine_pin"] == "test/pin:v1" and row["submitted_by"] == "tester"
+# added rows must land BEFORE the gap-list footer, not at EOF (marker-drift
+# guard — the footer was retitled once and silently broke the insertion anchor)
+txt = open(sys.argv[1]).read()
+assert txt.index("  vllm/dual:") < txt.index("KNOWN GAPS"), \
+    "added row landed after the gap-list footer (insertion anchor drifted)"
 PY
 # replace: run again with a different pin — one row, updated in place.
 out="$(bash scripts/catalog-baseline.sh vllm/dual "${ARGS[@]/test\/pin:v1/test/pin:v2}" 2>&1)" || fail "replace run failed"

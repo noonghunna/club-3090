@@ -29,11 +29,43 @@
 # tag on disk or an unambiguous decode-class BENCHMARKS.md row. Slugs still
 # owed a row (evidence exists but needs review/archaeology) are listed at the
 # bottom; DON'T guess numbers into them.
+# SEED WAVE 2 (2026-07-04): the reviewed dispositions of the wave-1 gap list —
+# 5 slugs seeded (each from a named BENCHMARKS.md row), the rest converted to
+# explicit no-row gaps with their re-gate status (footer).
 # ===========================================================================
 schema_version: 1
 baselines:
 
   # ── Qwen3.6-27B ───────────────────────────────────────────────────────────
+  vllm/dual:
+    # BENCHMARKS.md 2026-06-30 row — the v0.22.0→v0.24.0 pin-bump validation
+    # gate (decode 70.7/93.5; MTP n=3 accept 3.51, KV pool 622K/2.37×,
+    # verify-full 8/8, verify-stress NIAH→240K, soak-continuous PASS).
+    # Measured ON the current vllm-stable pin → FRESH. Quality gate was
+    # `--quick` only (toolcall 11/15 · IF 15/15) — no 8-pack yet; add
+    # quality_8pk on the next full gate.
+    narr_tps: 70.7
+    code_tps: 93.5
+    ctx_validated: { tokens: 245760, niah: "clean@240K" }
+    date: 2026-06-30
+    engine_pin: "vllm/vllm-openai:v0.24.0"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 420]
+    submitted_by: "noonghunna"
+
+  vllm/qwen-27b-dual-fast:
+    # alias of vllm/dual (same compose_path dual/autoround-int4/fp8-mtp.yml,
+    # same port — the #340 tier naming). Row mirrors vllm/dual verbatim;
+    # update both together.
+    narr_tps: 70.7
+    code_tps: 93.5
+    ctx_validated: { tokens: 245760, niah: "clean@240K" }
+    date: 2026-06-30
+    engine_pin: "vllm/vllm-openai:v0.24.0"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 420]
+    submitted_by: "noonghunna"
+
   llamacpp/default:
     # BENCHMARKS.md 2026-05-23 row (decode, n=3, CV 0.6%/1.4%).
     # Measured on the pre-2026-05-26 ROLLING tag (unknowable build) — the
@@ -102,6 +134,21 @@ baselines:
     power_cap_w: [370]
     submitted_by: "noonghunna"
 
+  ik-llama/iq4ks-mtp-vision:
+    # BENCHMARKS.md 2026-05-25 vision re-tune row (PR #227/#437): decode
+    # CARRIED from ik-llama/iq4ks-mtp (≈60/72 — decode is ctx-independent;
+    # never re-benched with the mmproj loaded). verify-stress 8/8 @160K+1M-px
+    # was measured directly (recall to 147K, vision functional). Carried
+    # numbers qualify because the delta config doesn't touch the decode path;
+    # replace with measured values on the next gate.
+    narr_tps: 60.39
+    code_tps: 72.4
+    date: 2026-05-25
+    engine_pin: "ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
   ik-llama/byteshape-iq4xs-mtp:
     # BENCHMARKS.md row (decode 115.60/137.07, n=5) + 8-pack 110/150 off —
     # community intake #293/#299 reproduced on our rig 2026-06-02.
@@ -115,6 +162,21 @@ baselines:
     submitted_by: "noonghunna"
 
   # ── Qwen3.6-35B-A3B ──────────────────────────────────────────────────────
+  ik-llama/apex-fit-q8q5:
+    # BENCHMARKS.md 2026-05-28 row (decode 105.63/156.80, n=5, CV 3.0%/1.5%;
+    # @laurimyllari's --fit + asymmetric q8/q5 KV from #241). verify-full 8/8,
+    # verify-stress 8/8 incl. 180K NIAH, soak-continuous PASS. Quality in the
+    # row is deterministic-6 76/90 + sandbox packs — not an 8-pack /150, so no
+    # quality_8pk here (add on the next full gate).
+    narr_tps: 105.63
+    code_tps: 156.8
+    ctx_validated: { tokens: 184320, niah: "clean@180K" }
+    date: 2026-05-28
+    engine_pin: "ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    submitted_by: "noonghunna"
+
   vllm/qwen-35b-a3b-dual:
     # BENCHMARKS.md promotion row (#259, decode 182.3/182.3; NIAH-clean 240K).
     # Measured on v0.22.0; the slug now pins v0.24.0 (fast/max-tier era) →
@@ -143,8 +205,10 @@ baselines:
     # soak PASS (99.8% retention). Quality = post benchlocal #79+#81 harness:
     # OFF 105/150 · ON 110/150 (cli-40 ON 23/40 fresh-image).
     # Cross-rig confirmed 2026-07-04 (#552 @sumo-dandan, decode −1%).
-    narr_tps: 153.9
-    code_tps: 154.0
+    # Decode pair order corrected in wave-2 from the tag artifact
+    # (narrative 153.97 / code 153.78 — the wave-1 seed had them swapped).
+    narr_tps: 154.0
+    code_tps: 153.8
     ttft_ms: 130
     quality_8pk: "105/150"
     quality_8pk_think_on: "110/150"
@@ -172,22 +236,39 @@ baselines:
     source_tag: "gemma-31b-dual-bf16"
     submitted_by: "noonghunna"
 
+  # ── Gemma-4-26B-A4B ──────────────────────────────────────────────────────
+  vllm/gemma-26ba4b-single:
+    # BENCHMARKS.md 2026-06-06 row (decode 169.2/219.9, CV 1.9%/2.0%; rebench
+    # tag gemma-26ba4b-int8r): single-3090 INT8-PTH KV via the vendored
+    # #40391 overlay on stock v0.22.0 (`vllm-gemma-stable`) + external MTP
+    # drafter n=4. verify-full ✓, NIAH-clean to 161K (91% of 176K), soak PASS
+    # 0-growth. gemma-stable still pins v0.22.0 → FRESH (the v0.24.0
+    # consolidation moved the gemma-TEXT slugs; this one kept the overlay pin).
+    narr_tps: 169.2
+    code_tps: 219.9
+    quality_8pk: "98/150"
+    quality_8pk_think_on: "109/150"
+    ctx_validated: { tokens: 164864, niah: "clean@161K" }
+    date: 2026-06-06
+    engine_pin: "vllm/vllm-openai:v0.22.0"
+    rig: "1x3090-pcie"
+    power_cap_w: [370]
+    source_tag: "gemma-26ba4b-int8r"
+    submitted_by: "noonghunna"
+
 # ───────────────────────────────────────────────────────────────────────────
-# SEED WAVE 2 — rows owed, evidence needs review before numbers land here
-# (do NOT guess; each needs its primary row disambiguated):
-#   vllm/minimal · vllm/dual · vllm/qwen-27b-dual-fast — rows exist under
-#     pre-rename sections/tags (fp8-mtp era + the #340 tier work); pick the
-#     current-pin (v0.24.0) or mark born-stale from the v0.22.0-era rows.
-#   ik-llama/iq4ks-mtp-vision — only a "carried" row exists (decode ≈ 60/72
-#     carried from iq4ks-mtp); decide whether carried rows qualify.
-#   ik-llama/apex-fit-q8q5 — decode 105.63/156.80 (n=5) exists but the row's
-#     date needs confirming (APEX intake era).
-#   vllm/gemma-12b-dual-bf16-mtp (76.4/120.9) · vllm/gemma-12b-single-int8-mtp
-#     (117/122.5) — 2026-06-04 rows; confirm decode-vs-wall class + current-pin
-#     status after the v0.24.0 consolidation (both slugs re-pinned since).
-#   vllm/gemma-26ba4b-single — decode 169.2/219.9; confirm date + pin era.
-#   beellama/gemma-dflash — no direct BENCHMARKS row under the slug; numbers
-#     live in the promotion-era notes; needs archaeology.
-#   llamacpp/deckard40B-dual-mtp — 41.6 tok/s MTP in registry notes; no
-#     BENCHMARKS row; needs a proper gate run or an honest no-row.
+# KNOWN GAPS — wave-2 dispositions (2026-07-04): each slug below has NO row
+# on purpose; the disposition says what unlocks one. Do NOT guess numbers in.
+#   vllm/minimal — only ~32/~33 approximations exist (never a protocol bench);
+#     needs a proper gate run. No row until then.
+#   vllm/gemma-12b-dual-bf16-mtp · vllm/gemma-12b-single-int8-mtp —
+#     conflicting-era rows (2026-06-04) with ambiguous decode-vs-wall class,
+#     AND both slugs re-pinned in the v0.24.0 gemma consolidation (#538/#539)
+#     → any seed would be born-stale AND class-uncertain. Re-gate owed.
+#   beellama/gemma-dflash — no direct BENCHMARKS row under the slug (numbers
+#     live in promotion-era notes). PRIORITY re-gate: this is the single-card
+#     gemma DEFAULT — the catalog's recommended path with no bar is the worst
+#     gap on this list.
+#   llamacpp/deckard40B-dual-mtp — 41.6 tok/s MTP exists only in registry
+#     notes; no BENCHMARKS row. Needs a gate run.
 # ───────────────────────────────────────────────────────────────────────────
