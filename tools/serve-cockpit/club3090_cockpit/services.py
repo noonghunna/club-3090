@@ -66,6 +66,7 @@ from .data import (
     GATE_STEPS,
     GpuCompApp,
     GpuConflict,
+    LocalMeasured,
     Measurement,
     MeasuredNumbers,
     MeasureVsBar,
@@ -810,9 +811,12 @@ class CockpitData:
         BENCHMARKS.md is the public human/cross-rig ledger, never a machine
         source.  The baseline dict rides the variant row we already loaded, so
         this is a pure in-memory map (no I/O, no subprocess).  ``stale`` is the
-        emit-computed pin-staleness verdict (badged; slice 2 adds the local
-        measurement-record overlay)."""
+        emit-computed pin-staleness verdict (badged).  Slice 2b: the per-rig
+        corpus overlay joins here too — ``local_measurement`` carries THIS
+        RIG's newest gate numbers for the "yours vs the bar" preview line."""
+        local = self.local_measurements()
         for e in entries:
+            e.local_measurement = local.get(e.slug)
             b = getattr(e.row, "baseline", None)
             if not b:
                 continue
@@ -824,6 +828,54 @@ class CockpitData:
                 source="baseline",
                 stale=b.get("stale"),
             )
+
+    def local_measurements(self) -> dict[str, LocalMeasured]:
+        """The per-rig corpus overlay (slice 2b): THIS RIG's newest #249 record
+        per variant slug from results/measurement-records/*.jsonl (written by
+        rebench-full's completion block).  Pure filesystem read; {} when the
+        corpus is empty/absent.
+
+        Newest = the record's _recorded_at stamp when present, else the file's
+        mtime + line order (records append; later lines are later runs)."""
+        base = self.repo_root / "results" / "measurement-records"
+        if not base.is_dir():
+            return {}
+        import datetime as _dt
+
+        best: dict[str, tuple[float, LocalMeasured]] = {}
+        for f in sorted(base.glob("*.jsonl")):
+            try:
+                mtime = f.stat().st_mtime
+                lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for i, ln in enumerate(lines):
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                slug = r.get("_tag")
+                if not slug:
+                    continue
+                stamp = r.get("_recorded_at") or ""
+                try:
+                    ts = _dt.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    ts = mtime + i * 1e-6
+                ext = r.get("measured_extensions") or {}
+                by_ctx = ext.get("decode_tps_by_ctx") or {}
+                decode = next(iter(by_ctx.values()), None)
+                lm = LocalMeasured(
+                    decode_tps=decode,
+                    quality_8pk=ext.get("quality_8pk"),
+                    quality_8pk_think_on=ext.get("quality_8pk_think_on"),
+                    engine_pin=r.get("engine_pin"),
+                    date=(stamp[:10] if stamp
+                          else _dt.date.fromtimestamp(mtime).isoformat()),
+                )
+                if slug not in best or ts > best[slug][0]:
+                    best[slug] = (ts, lm)
+        return {s: lm for s, (ts, lm) in best.items()}
 
     def _read_benchmarks_md(self) -> str:
         path = self.repo_root / "BENCHMARKS.md"

@@ -9321,6 +9321,43 @@ class TestCatalogPreview:
             assert "long prose" in str(preview.render())
 
     @pytest.mark.asyncio
+    async def test_preview_bar_provenance_stale_detail_and_yours(self, tmp_path):
+        """Slice 2b — the preview's measured line is the BAR with provenance;
+        a stale bar gets the explicit pin-detail line; a slug this rig has
+        gated shows the 'yours' corpus overlay line."""
+        seed_repo(tmp_path)
+        corpus = tmp_path / "results" / "measurement-records"
+        corpus.mkdir(parents=True)
+        (corpus / "vllm-dual__test.jsonl").write_text(json.dumps({
+            "_tag": "vllm/dual", "_recorded_at": "2026-07-04T12:00:00Z",
+            "engine_pin": "vllm/vllm-openai:v0.24.0",
+            "measured_extensions": {"decode_tps_by_ctx": {"canonical-short": 172.4},
+                                     "quality_8pk": "108/150"},
+        }) + "\n")
+        app, _, _ = make_app(repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            t = app.query_one("#catalog-table", DataTable)
+            # vllm/dual: fresh bar + provenance + yours (this rig gated it).
+            t.move_cursor(row=0)
+            await pilot.pause()
+            prev = str(app.query_one("#catalog-preview", Static).render())
+            assert "bar" in prev and "174/42" in prev
+            assert "2026-07-01" in prev and "noonghunna" in prev   # provenance
+            assert "yours" in prev and "~172 decode" in prev and "108/150" in prev
+            assert "re-bench owed" not in prev                     # fresh bar
+            # ik row: stale bar → the explicit pin-detail line; no 'yours'.
+            ik_idx = next(i for i, e in enumerate(pane._filtered_entries())
+                          if e.slug == "ik-llama/iq4ks-mtp")
+            t.move_cursor(row=ik_idx)
+            await pilot.pause()
+            prev = str(app.query_one("#catalog-preview", Static).render())
+            assert "re-bench owed" in prev
+            assert "ghcr.io/ik-old@sha256:aaa" in prev and "ghcr.io/ik-new@sha256:bbb" in prev
+            assert "yours" not in prev
+
+    @pytest.mark.asyncio
     async def test_vs_empty_card_not_doubled_when_free_unknown(self):
         # N3 — with live free-VRAM UNKNOWN, the fit line must show "vs empty card"
         # exactly ONCE (the trailing "({fit_basis})"), not doubled by also

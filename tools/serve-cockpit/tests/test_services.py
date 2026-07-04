@@ -520,6 +520,39 @@ class TestLoadCatalog:
         assert ik.measurement.stale is True
 
     @pytest.mark.asyncio
+    async def test_local_measurements_overlay(self, tmp_path):
+        """Slice 2b — the per-rig corpus overlay: newest record per slug wins
+        (by _recorded_at), malformed lines are skipped, and the overlay joins
+        onto catalog entries as local_measurement."""
+        corpus = tmp_path / "results" / "measurement-records"
+        corpus.mkdir(parents=True)
+        older = {"_tag": "vllm/dual", "_recorded_at": "2026-07-01T10:00:00Z",
+                 "engine_pin": "vllm/vllm-openai:v0.22.0",
+                 "measured_extensions": {"decode_tps_by_ctx": {"canonical-short": 170.0},
+                                          "quality_8pk": "100/150"}}
+        newer = {"_tag": "vllm/dual", "_recorded_at": "2026-07-04T10:00:00Z",
+                 "engine_pin": "vllm/vllm-openai:v0.24.0",
+                 "measured_extensions": {"decode_tps_by_ctx": {"canonical-short": 174.5},
+                                          "quality_8pk": "109/150",
+                                          "quality_8pk_think_on": "111/150"}}
+        (corpus / "vllm-dual__aaaa.jsonl").write_text(
+            json.dumps(older) + "\nnot-json\n" + json.dumps(newer) + "\n"
+        )
+        cd = CockpitData(tmp_path, runner=full_runner())
+        local = cd.local_measurements()
+        lm = local["vllm/dual"]
+        assert lm.decode_tps == 174.5 and lm.quality_8pk == "109/150"
+        assert lm.quality_8pk_think_on == "111/150"
+        assert lm.engine_pin == "vllm/vllm-openai:v0.24.0"
+        assert lm.date == "2026-07-04"
+        # joins onto the catalog entry
+        entries, _ = await cd.load_catalog(enrich_fit=False, enrich_measurement=True)
+        vllm = next(e for e in entries if e.slug == "vllm/dual")
+        assert vllm.local_measurement == lm
+        ik = next(e for e in entries if e.slug == "ik-llama/iq4ks-mtp")
+        assert ik.local_measurement is None   # this rig never gated it
+
+    @pytest.mark.asyncio
     async def test_catalog_empty_registry_returns_error(self):
         runner = full_runner(**{"registry-emit.sh --json": ok(json.dumps({"variants": []}))})
         cd = CockpitData(ROOT, runner=runner)

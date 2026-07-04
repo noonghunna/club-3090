@@ -530,6 +530,8 @@ try:
     if q_on:
         rec["measured_extensions"]["quality_8pk_think_on"] = q_on
     rec["_rebench_tag"] = tag
+    from datetime import datetime, timezone
+    rec["_recorded_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     path = write_record(rec)
     print(f"  record:      corpus record appended -> {path}  (slug {slug})")
 except Exception as exc:
