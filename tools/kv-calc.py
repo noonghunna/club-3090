@@ -167,6 +167,9 @@ KV_FORMAT_BYTES = {
     "q4_0":                  0.5 + 0.0625, # 4-bit + per-group scale
     "k8v4":                  0.75,         # avg of K=int8 V=int4
     "turboquant_3bit_nc":    0.375 + 0.05, # 3 bits + small QJL overhead
+    "nvfp4":                 0.5 + 0.0625, # 4-bit elements + fp8 block scale per 16
+                                           # (PROJECTED — Blackwell-only, no measured
+                                           # boot on this stack yet; #246 A/B arm 3)
 }
 
 INDEXER_FORMAT_BYTES = {
@@ -197,6 +200,7 @@ QWEN_GDN_ACTIVATION_COEF = {
     "q4_0":               155,
     "k8v4":               155,
     "turboquant_3bit_nc": 165,
+    "nvfp4":              130,  # PROJECTED — mirror fp8 until a Blackwell boot calibrates it (#246)
 }
 
 # ---- Qwen MoE activation + built-in MTP workspace ----
@@ -217,6 +221,7 @@ QWEN_MOE_ACTIVATION_COEF = {
     "q4_0":               130,
     "k8v4":               130,
     "turboquant_3bit_nc": 140,
+    "nvfp4":              105,  # PROJECTED — mirror fp8 until a Blackwell boot calibrates it (#246)
 }
 QWEN_MOE_EXPERT_DISPATCH_GB = 0.20
 QWEN_MOE_BUILTIN_MTP_WORKSPACE_GB = 0.10
