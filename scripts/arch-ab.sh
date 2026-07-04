@@ -186,11 +186,14 @@ for arm in arms:
     print(f"{arm:<8} {fmt(narr):>9} {fmt(code):>9} {fmt(ttft):>8}  {ladder}")
 PY
 
-# Rig triage report (default fast mode, path/host/user redaction ON) — the
-# cross-rig context that makes A/B variance interpretable: PCIe lane width,
-# driver, power caps, WSL-vs-bare-metal, NVLink state.
-echo "[arch-ab] capturing rig report (redacted) ..."
-bash scripts/report.sh > results/rebench/246-ab-rig-report.md 2>/dev/null \
+# Rig triage report (fast mode + kv-calc calibration matrix; path/host/user
+# redaction ON) — the cross-rig context that makes A/B variance interpretable
+# (PCIe lane width, driver, power caps, WSL-vs-bare-metal, NVLink state), plus
+# predicted-vs-actual VRAM calibration on this card class (Phase 2 input).
+# Deliberately NOT --full: that re-runs the whole test battery (~43 min)
+# against only the LAST arm's container — the arms already carry that data.
+echo "[arch-ab] capturing rig report (redacted, + kv-calc calibration) ..."
+bash scripts/report.sh --full-calibration > results/rebench/246-ab-rig-report.md 2>/dev/null \
   || echo "[arch-ab] WARN: report.sh failed — bundle will ship without the rig report" >&2
 
 bundle="results/rebench/246-ab-bundle-$(hostname)-$(date +%Y%m%d).tgz"
