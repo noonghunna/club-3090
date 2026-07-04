@@ -895,13 +895,16 @@ class TestNavNodesExist:
         async with app.run_test(size=(120, 40)) as pilot:
             table = app.query_one("#catalog-table", DataTable)
             col_labels = [str(c.label) for c in table.columns.values()]
-            # Fold 3: TPS / 8pk columns are explicitly labelled as our-rig.
-            # Round-4: "source" column dropped; "topology" added BEFORE "engine".
+            # Fold 3: TPS / 8pk columns are explicitly labelled as this-rig
+            # (F6 shortened "our rig" → "rig" for column budget).
             # Serve-confirm rework: the "fit" column moved into the serve pop-up.
             # Model-filter: a "model" column leads the table (group-by-model view).
+            # F6: money columns (ctx · TPS · 8pk · status) directly after the
+            # identity; topology/engine (slug-redundant) at the tail so a
+            # 120-140-col terminal folds them, not the numbers.
             for expected in (
-                "model", "slug", "topology", "engine", "ctx",
-                "TPS (our rig)", "8pk (our rig)", "status",
+                "model", "slug", "ctx", "TPS (rig)", "8pk (rig)",
+                "status", "topo", "engine",
             ):
                 assert expected in col_labels, f"missing {expected!r}: {col_labels}"
             # "source" is gone.
@@ -910,8 +913,10 @@ class TestNavNodesExist:
             assert "fit" not in col_labels, col_labels
             # "model" is the FIRST column (mirrors switch.sh --list's grouping).
             assert col_labels[0] == "model", col_labels
-            # topology sits immediately before engine.
-            assert col_labels.index("topology") < col_labels.index("engine"), col_labels
+            # F6 — every money column sits LEFT of topo/engine.
+            fold = col_labels.index("topo")
+            for money in ("ctx", "TPS (rig)", "8pk (rig)", "status"):
+                assert col_labels.index(money) < fold, col_labels
 
     @pytest.mark.asyncio
     async def test_mode_switcher_exists(self):
