@@ -581,6 +581,20 @@ def _build_arg_parser():
         action="store_true",
         help="Print the record JSON to stdout and do NOT write the corpus file.",
     )
+    # Catalog-baselines slice 2: the 8-pack headline rides the record as a
+    # measured_extensions entry (the schema's designed extension namespace —
+    # trajectory invariant #1), so rebench-full's auto-record carries quality
+    # alongside TPS without touching the frozen schema fields.
+    p.add_argument(
+        "--quality-8pk",
+        default=None,
+        help='8-pack thinking-OFF headline, e.g. "105/150" (extension field).',
+    )
+    p.add_argument(
+        "--quality-8pk-think-on",
+        default=None,
+        help='8-pack thinking-ON headline, e.g. "110/150" (extension field).',
+    )
     return p
 
 
@@ -612,6 +626,12 @@ def main(argv=None) -> int:
         # Fail loud, but with a clean operator message (not a raw traceback).
         print(f"[measurement_record] ERROR: {exc}", file=sys.stderr)
         return 2
+
+    # Optional 8-pack headlines → the extension namespace (slice 2).
+    if args.quality_8pk:
+        record["measured_extensions"]["quality_8pk"] = args.quality_8pk
+    if args.quality_8pk_think_on:
+        record["measured_extensions"]["quality_8pk_think_on"] = args.quality_8pk_think_on
 
     # Surface soft-gap warnings so a partial record is never silently accepted.
     for w in record.get("parse_warnings", []):
