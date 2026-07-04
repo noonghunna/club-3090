@@ -146,17 +146,52 @@ if not q_off and not q_on:
 # ── ctx_validated: the verify-stress ceiling ladder verdict ──────────────────
 ctx_tokens = None
 niah = None
+stress_text = ""
 stress = tag_dir / "verify-stress.log"
 if stress.is_file():
-    st = stress.read_text(errors="replace")
-    m = re.search(r"all (\d+) rungs passed — fillable to (\d+) tok", st)
+    stress_text = stress.read_text(errors="replace")
+    m = re.search(r"all (\d+) rungs passed — fillable to (\d+) tok", stress_text)
     if m:
         ctx_tokens = int(m.group(2))
         niah = f"clean@{round(ctx_tokens / 1000)}K"
-    elif "All stress / boundary checks passed" in st:
+    elif "All stress / boundary checks passed" in stress_text:
         niah = "passed (no ceiling-ladder line parsed)"
 else:
     warn("no verify-stress.log — ctx_validated omitted")
+
+# ── prefill probe (catalog-baselines 2c) + anchor calibration ─────────────────
+# Reuse THE parser (measurement_record.parse_bench_output) — one grammar for
+# bench output, never a second regex set here.
+prefill_by_ctx = {}
+ttft_by_ctx = {}
+if bench_log:
+    from scripts.lib.profiles.measurement_record import parse_bench_output
+
+    bm = parse_bench_output(bench_log)
+    prefill_by_ctx = dict(bm.prefill_tps_by_ctx)
+    ttft_by_ctx = dict(bm.ttft_ms_by_ctx)
+    # Anchor calibration: the probe's DEEP warm anchor vs the NIAH ladder's
+    # nearest rung measure the same point — agreement certifies the ladder's
+    # whole depth curve; divergence is itself a finding (design §2.1.1).
+    if prefill_by_ctx and stress_text:
+        rungs = [
+            (int(a), float(p))
+            for a, p in re.findall(r"rung \d+/\d+: .*?actual=(\d+)K tok.*?prefill=([0-9.]+) t/s", stress_text)
+        ]
+        deep = max(((int(d), v) for d, v in prefill_by_ctx.items()), default=None)
+        if deep and rungs:
+            depth_k = deep[0] / 1000
+            nearest = min(rungs, key=lambda r: abs(r[0] - depth_k))
+            if abs(nearest[0] - depth_k) <= 20:  # comparable depths only
+                ratio = deep[1] / nearest[1] if nearest[1] else 0
+                if 0.7 <= ratio <= 1.3:
+                    print(f"[catalog-baseline] anchor calibration OK: probe {deep[1]:.0f} t/s @{depth_k:.0f}K "
+                          f"vs ladder {nearest[1]:.0f} t/s @{nearest[0]}K (ratio {ratio:.2f}) — depth curve certified",
+                          file=sys.stderr)
+                else:
+                    warn(f"anchor DIVERGENCE: probe {deep[1]:.0f} t/s @{depth_k:.0f}K vs ladder "
+                         f"{nearest[1]:.0f} t/s @{nearest[0]}K (ratio {ratio:.2f}, tolerance 0.7-1.3) — "
+                         "warm-vs-cold or config drift; investigate before trusting the depth curve")
 
 # ── provenance ────────────────────────────────────────────────────────────────
 engine_pin = os.environ["ENGINE_PIN"]
@@ -213,6 +248,12 @@ lines.append(f"    narr_tps: {round(float(narr['decode_tps_mean']), 2)}")
 lines.append(f"    code_tps: {round(float(code['decode_tps_mean']), 2)}")
 if ttft is not None:
     lines.append(f"    ttft_ms: {round(float(ttft))}")
+if prefill_by_ctx:
+    inner = ", ".join(
+        f"{int(k) // 1000}k: {v:.0f}"
+        for k, v in sorted(prefill_by_ctx.items(), key=lambda x: int(x[0]))
+    )
+    lines.append(f"    prefill_tps: {{ {inner} }}")
 if q_off:
     lines.append(f'    quality_8pk: "{q_off}"')
 if q_on:
