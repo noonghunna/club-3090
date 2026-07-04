@@ -2485,7 +2485,12 @@ class OperateContainersPane(Container):
         yield ct
         with TabbedContent(id="drill-tabs"):
             with TabPane("Logs", id="drill-tab-logs"):
-                yield LivePane(id="drill-logs")
+                # F8 — pane-specific idle copy (the shared LivePane default once
+                # leaked test-runner wording into this docker-logs drill).
+                yield LivePane(
+                    id="drill-logs",
+                    placeholder="Select a running container — its docker logs stream here.",
+                )
             with TabPane("Top", id="drill-tab-stats"):
                 yield Static("[dim]highlight a container (move cursor) or press [t] — docker top loads[/dim]", id="drill-stats")
             with TabPane("Config", id="drill-tab-config"):
@@ -2778,7 +2783,10 @@ class ValidateRunPane(Container):
             id="run-step-preview",
         )
         yield Static(_TUNE_GOTCHAS, id="run-gotchas")
-        yield LivePane(id="run-output")
+        yield LivePane(
+            id="run-output",
+            placeholder="Ready. Launch a validation run (⏎ on a step) — output streams here.",
+        )
         yield Label(
             "[dim]\\[⏎] launch selected (heavy — confirm) · streams below[/dim]",
             id="run-hint",
@@ -5753,7 +5761,8 @@ class CockpitApp(App):
                     # the user can flip to Orchestration (SAME mode) to watch.
                     # Hidden until ⏎ on a Catalog row stages a serve and the
                     # reconcile-gated confirm commits.
-                    yield LivePane(id="serve-live")
+                    # Hidden until a serve streams — no idle placeholder.
+                    yield LivePane(id="serve-live", placeholder="")
 
                 # Mode 1 — Bring & Validate (producer lane).  Renumbered 2→1 in the
                 # 2-mode merge.  An ORDERED, numbered pipeline reusing the
@@ -7374,8 +7383,37 @@ class CockpitApp(App):
                 payload = ""
             if payload:
                 return payload, "details"
+        # 2.5 (F4) — the live-log pane the user is looking at (Containers Logs
+        # drill / ③ Gate output).  RichLog-family widgets don't implement text
+        # selection (Top/Config are selectable Statics), so [Y] copies the
+        # pane's streamed tail.  An idle pane has an empty tail (placeholders
+        # aren't buffered) → falls through to the row-primary copy below.
+        pane, label = self._visible_live_pane()
+        if pane is not None:
+            tail = pane.tail_text()
+            if tail:
+                return tail, label
         # 3. the highlighted row's primary id on the active table.
         return self._active_row_primary()
+
+    def _visible_live_pane(self) -> tuple[Optional[LivePane], str]:
+        """F4 — the LivePane the user is currently LOOKING at, if any: the
+        Containers Logs drill or the ③ Gate run output.  Main screen only (a
+        modal on top owns [Y] via its own binding / copyable_text).  The
+        transient #serve-live pane is deliberately NOT routed: it shares the
+        screen with the primary tables, whose [Y]-copies-the-slug semantics
+        are established."""
+        if len(self.screen_stack) > 1:
+            return None, ""
+        try:
+            tab = self._current_subtab()
+            if tab == "tab-containers" and self._active_drill_tab() == "drill-tab-logs":
+                return self.query_one("#drill-logs", LivePane), "log tail"
+            if tab == "tab-run":
+                return self.query_one("#run-output", LivePane), "run-output tail"
+        except Exception:
+            pass
+        return None, ""
 
     def _active_row_primary(self) -> tuple[str, str]:
         """The most-pasteable id of the highlighted row on the active primary
@@ -9023,7 +9061,9 @@ class CockpitApp(App):
         try:
             live = self.query_one("#drill-logs", LivePane)
             live.clear_log()
-            live.append_line(f"[dim]{placeholder}[/dim]")
+            # buffer=False: a display-only note — [Y] on an idle/stopped drill
+            # must fall through to the container name, not copy this line (F4).
+            live.append_line(f"[dim]{placeholder}[/dim]", buffer=False)
         except Exception:
             pass
         try:

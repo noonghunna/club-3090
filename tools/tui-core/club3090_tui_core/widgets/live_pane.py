@@ -237,10 +237,21 @@ class LivePane(Static):
 
     current_test: reactive[Optional[TestType]] = reactive(None)
 
-    def __init__(self, **kwargs):
+    # [Y]-copy tail cap — plain-text lines retained for tail_text().
+    _RAW_LINES_MAX = 2000
+
+    def __init__(self, placeholder: str = "Ready.", **kwargs):
+        """``placeholder`` is the idle line written on mount — hosts should pass
+        copy that names THEIR pane's purpose (the old hardcoded test-runner
+        wording leaked into non-test-runner mounts); "" writes nothing."""
         super().__init__(**kwargs)
         self._follow = True
         self._run_start_time = None
+        self._placeholder = placeholder
+        # Plain-text tail for [Y]-copy: RichLog-family widgets don't implement
+        # text selection, so hosts copy tail_text() instead.  The placeholder
+        # and set_run_header banner are NOT buffered — the tail is the output.
+        self._raw_lines: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Label("Live", classes="live-title")
@@ -248,11 +259,22 @@ class LivePane(Static):
         yield RichLog(id="live-log", wrap=True, highlight=True, markup=True)
 
     def on_mount(self) -> None:
-        log = self.query_one("#live-log", RichLog)
-        log.write("[dim]Ready. Select a test and press Enter to run.[/dim]")
+        if self._placeholder:
+            log = self.query_one("#live-log", RichLog)
+            log.write(f"[dim]{self._placeholder}[/dim]")
 
-    def append_line(self, line: str) -> None:
-        """Append a raw log line."""
+    def append_line(self, line: str, buffer: bool = True) -> None:
+        """Append a raw log line.  ``buffer=False`` writes display-only lines
+        (idle/stopped notes) that must NOT appear in the [Y]-copy tail."""
+        if buffer:
+            try:
+                from rich.text import Text
+
+                self._raw_lines.append(Text.from_markup(line).plain)
+            except Exception:
+                self._raw_lines.append(str(line))
+            if len(self._raw_lines) > self._RAW_LINES_MAX:
+                del self._raw_lines[: self._RAW_LINES_MAX // 2]
         try:
             log = self.query_one("#live-log", RichLog)
             log.write(line)
@@ -260,6 +282,11 @@ class LivePane(Static):
                 log.scroll_end(animate=False)
         except Exception:
             pass
+
+    def tail_text(self, lines: int = 400) -> str:
+        """The last ``lines`` buffered output lines as plain text — the
+        [Y]-copy payload ('' when nothing has streamed yet)."""
+        return "\n".join(self._raw_lines[-lines:])
 
     def process_event(self, event: ParseEvent, test_type: TestType) -> None:
         """Process a parsed event and update the structured header."""
@@ -270,7 +297,8 @@ class LivePane(Static):
             pass
 
     def clear_log(self) -> None:
-        """Clear the log and structured header."""
+        """Clear the log, structured header, and the [Y]-copy tail buffer."""
+        self._raw_lines.clear()
         try:
             log = self.query_one("#live-log", RichLog)
             log.clear()

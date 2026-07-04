@@ -7932,6 +7932,89 @@ class TestCopyAndHScroll:
             await _settle(pilot)
             assert app.check_action("copy_context", ()) is True
 
+
+class TestF4F8LiveLogCopy:
+    """F4 — [Y] copies the VISIBLE live-log tail: RichLog-family panes capture
+    the mouse and don't implement text selection (Top/Config are selectable
+    Statics), so the Logs drill / ③ Gate output get the copy affordance via
+    the pane's plain-text tail buffer.  F8 — pane-specific idle placeholders
+    (the shared LivePane default once leaked 'Select a test and press Enter'
+    test-runner wording into the docker-logs drill)."""
+
+    @pytest.mark.asyncio
+    async def test_f8_pane_placeholders_name_their_purpose(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            drill = app.query_one("#drill-logs")
+            assert "container" in drill._placeholder
+            assert "test" not in drill._placeholder.lower()
+            assert "validation" in app.query_one("#run-output")._placeholder
+            # The transient serve pane is hidden until a serve — no idle copy.
+            assert app.query_one("#serve-live")._placeholder == ""
+
+    async def _open_logs_drill(self, app, pilot):
+        await _enter_operate(pilot)
+        app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+        await _settle(pilot)
+        app.query_one("#drill-tabs", TabbedContent).active = "drill-tab-logs"
+        await _settle(pilot)
+        tbl = app.query_one("#containers-table", DataTable)
+        tbl.focus()
+        tbl.move_cursor(row=0)
+        await pilot.pause()
+        return app.query_one("#drill-logs")
+
+    @pytest.mark.asyncio
+    async def test_y_copies_logs_drill_tail(self):
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, _, _ = make_app(responses=responses)
+        copied: dict = {}
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.copy_to_clipboard = lambda t: copied.__setitem__("text", t)
+            drill = await self._open_logs_drill(app, pilot)
+            # Deterministic pane content (any auto-streamed fixture lines out).
+            drill.clear_log()
+            drill.append_line("[cyan]INFO[/cyan] engine ready")
+            drill.append_line("request 1 done")
+            await pilot.press("Y")
+            await _settle(pilot)
+            # The tail wins over the highlighted container name while the Logs
+            # drill is showing — plain text, markup stripped.
+            assert copied.get("text") == "INFO engine ready\nrequest 1 done"
+
+    @pytest.mark.asyncio
+    async def test_y_on_idle_logs_drill_falls_back_to_container_name(self):
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, _, _ = make_app(responses=responses)
+        copied: dict = {}
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.copy_to_clipboard = lambda t: copied.__setitem__("text", t)
+            drill = await self._open_logs_drill(app, pilot)
+            # Idle pane: placeholders/notes aren't buffered → empty tail.
+            drill.clear_log()
+            await pilot.press("Y")
+            await _settle(pilot)
+            assert copied.get("text") == "vllm-qwen36-27b-dual"
+
+    @pytest.mark.asyncio
+    async def test_y_copies_gate_run_output_tail(self):
+        app, _, _ = make_app(surface="producer")
+        copied: dict = {}
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.copy_to_clipboard = lambda t: copied.__setitem__("text", t)
+            await pilot.press("2")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
+            await pilot.pause()
+            out = app.query_one("#run-output")
+            out.clear_log()
+            out.append_line("verify-full [3/8] tool call ✓")
+            await pilot.press("Y")
+            await _settle(pilot)
+            assert copied.get("text") == "verify-full [3/8] tool call ✓"
+
     @pytest.mark.asyncio
     async def test_shift_arrows_page_scroll_wide_table(self):
         app, _, _ = make_app()
