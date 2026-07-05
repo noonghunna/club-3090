@@ -261,6 +261,40 @@ def _envelope_env(profiles, variant: str, gpu_spec: str) -> dict[str, str]:
     return {"MAX_NUM_SEQS": str(seqs)}
 
 
+def _mem_util_env(profiles, variant: str, gpu_spec: str) -> dict[str, str]:
+    """Phase 2 memory-fraction safety floor. Injects GPU_MEMORY_UTILIZATION
+    DOWNWARD only — when a detected card cannot safely give the compose's default
+    fraction. Today that means unified-memory cards (DGX Spark: its LPDDR5X is
+    shared with the Grace CPU/OS, so mem_util_safe=0.85 < the 0.92 default — boot
+    at 0.92 would starve the OS). It NEVER raises above the tested compose
+    default: a bigger discrete card *could* give more, but that touches Cliff-2b
+    margin + boot-OOM, so the upward move stays a validated opt-in, not an
+    automatic bump. Empty dict = no injection (compose default stands)."""
+    if not gpu_spec:
+        return {}
+    if os.environ.get("GPU_MEMORY_UTILIZATION"):
+        return {}  # explicit user pin always wins
+    entry = COMPOSE_REGISTRY.get(variant)
+    if not entry:
+        return {}
+    compose_gmu = entry.get("mem_util")  # the compose's default --gpu-memory-utilization
+    if not isinstance(compose_gmu, (int, float)):
+        return {}
+    try:
+        hardware = _parse_gpu_specs(gpu_spec, profiles)
+    except LaunchCompatError:
+        return {}  # unmapped card -> compose default
+    # One GMU applies across every rank, so the safe fraction is the LOWEST card's
+    # ceiling — a unified-memory card in a mixed rig forces the whole rig down.
+    ceilings = [hw.mem_util_safe for hw in hardware if hw.mem_util_safe is not None]
+    if not ceilings:
+        return {}
+    safe = min(ceilings)
+    if safe < compose_gmu:  # downward only — never raise above the tested default
+        return {"GPU_MEMORY_UTILIZATION": f"{safe:g}"}
+    return {}
+
+
 def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
     """Resolve EngineProfile.install into compose environment exports."""
     try:
@@ -300,7 +334,8 @@ def resolve_variant_pin(profiles, variant: str, gpu_spec: str = "") -> dict[str,
     # Only emitted when a gpu_spec is passed (launchers do; the registry-emit
     # baselines join calls without one and sees pins only).
     exports.update(_arch_aware_env(profiles, variant, entry, gpu_spec, exports))
-    exports.update(_envelope_env(profiles, variant, gpu_spec))  # Phase 2 concurrency
+    exports.update(_envelope_env(profiles, variant, gpu_spec))   # Phase 2 concurrency
+    exports.update(_mem_util_env(profiles, variant, gpu_spec))   # Phase 2 mem-fraction floor
     return exports
 
 

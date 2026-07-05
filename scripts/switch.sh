@@ -929,6 +929,9 @@ export_variant_engine_pin() {
       MAX_NUM_SEQS)
         export MAX_NUM_SEQS="$value"
         echo "[switch] memory-envelope concurrency: MAX_NUM_SEQS=${value} (measured for this card class — #246 Phase 2)" ;;
+      GPU_MEMORY_UTILIZATION)
+        export GPU_MEMORY_UTILIZATION="$value"
+        echo "[switch] memory-fraction floor: GPU_MEMORY_UTILIZATION=${value} (unified-memory card can't safely give the default — #246 Phase 2)" ;;
       VLLM_ATTENTION_BACKEND) export VLLM_ATTENTION_BACKEND="$value" ;;
       *) echo "[switch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac
