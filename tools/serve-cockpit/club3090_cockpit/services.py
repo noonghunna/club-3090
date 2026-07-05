@@ -48,6 +48,7 @@ from club3090_tui_core.runner import SubprocessRunner
 
 from .data import (
     ActionPlan,
+    ArtifactInventory,
     BenchRow,
     ByoResult,
     CatalogEntry,
@@ -949,6 +950,83 @@ class CockpitData:
         return FitVerdict.from_dict(data, card=card)
 
     # ── READ: BYO check ──────────────────────────────────────────────────────────────
+
+    def _bring_hf_home(self) -> Path:
+        """The HF_HOME the lane's pull.sh runs under: env HF_HOME when set,
+        else the models-disk cache (same convention as run_weights_download —
+        multi-GB staging stays off the root disk).  run_bring_download PINS
+        the child to this value, so probe and download can't diverge."""
+        return Path(
+            os.environ.get("HF_HOME")
+            or (Path(self.weights_model_dir()) / ".cache" / "huggingface")
+        )
+
+    def bring_pull_dir(self, repo: str) -> Path:
+        """The CONTRACT-2 pull dir a brought repo's weights land in
+        (``<hf_home>/club3090/pulls/<sanitized>``).  Mirrors
+        scripts/lib/profiles/downloader.py pull_dir/sanitize_slug — a path
+        COMPUTATION only, no I/O."""
+        s = re.sub(r"[^a-z0-9._-]+", "-", repo.strip().lower())
+        s = re.sub(r"-{2,}", "-", s).strip("-._") or "model"
+        return self._bring_hf_home() / "club3090" / "pulls" / s
+
+    def bring_weights_present(self, repo: str) -> bool:
+        """§2b-6/7 — weights-on-disk probe for a brought repo: the pull dir
+        holds at least one weight blob and no ``.incomplete`` staging tree
+        remains (downloader deletes it on success, leaves none on failure)."""
+        d = self.bring_pull_dir(repo)
+        if not d.is_dir() or (d / ".incomplete").exists():
+            return False
+        try:
+            return any(d.glob("*.safetensors")) or any(d.glob("*.gguf"))
+        except OSError:
+            return False
+
+    async def run_bring_download(
+        self,
+        repo: str,
+        profile_like: str,
+        *,
+        on_line: Optional[Callable[[str], None]] = None,
+    ) -> Any:
+        """§2b-6 — the lane's weights download: the REAL ``pull.sh`` run
+        (Path B: SHA-verified fetch into the pull dir + serve-locally compose
+        emission).  A DISK write, NO GPU claim — the pane's [D] press is the
+        confirm, same discipline as the catalog Download.  Shares the single
+        download runner (one download at a time).  HF_HOME is pinned to the
+        SAME value the presence probe reads.  WIRED-BUT-MOCK-ONLY in tests
+        (conftest blocks the real spawn)."""
+        env = dict(os.environ)
+        env.setdefault("HF_HOME", str(self._bring_hf_home()))
+        if on_line is not None:
+            self._download_runner.set_callbacks(on_line=on_line)
+        return await self._download_runner.start_raw(
+            ["bash", "scripts/pull.sh", repo, "--profile-like", profile_like],
+            env=env,
+            run_type="download",
+            parser=None,
+        )
+
+    async def bring_inspect(self, repo: str) -> ArtifactInventory:
+        """Bring-funnel stage-1 INSPECT (design §2b-1): the deriver's artifact
+        inventory for an HF repo — what formats/quants it carries, BEFORE any
+        engine/template is shown.  READ-only (HF API metadata; never downloads
+        a weight).  A GGUF-only repo comes back as a first-class bring with
+        its variants enumerated; the staged Bring UI reveals nothing
+        template-side until this succeeds."""
+        data, err = await self._run_json(
+            [
+                "python3",
+                "scripts/lib/profiles/deriver.py",
+                "--inventory",
+                repo,
+                "--json",
+            ],
+            timeout=60.0,
+        )
+        if data is None:
+            return ArtifactInventory(repo=repo, error=err or "no output")
+        return ArtifactInventory.from_dict(data)
 
     async def byo_check(self, repo: str, profile_like: str) -> ByoResult:
         """pull.sh <repo> --profile-like <key> --dry-run --json.

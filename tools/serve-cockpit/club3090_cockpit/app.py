@@ -78,6 +78,7 @@ from club3090_tui_core.widgets.live_pane import LivePane
 
 from .data import (
     ActionPlan,
+    ArtifactInventory,
     BenchRow,
     ByoResult,
     CatalogEntry,
@@ -106,6 +107,7 @@ from .data import (
     downgrade_fit_glyph,
     measurement_from_explain_columns,
     parse_ctx_label,
+    variant_quant,
 )
 from .services import CockpitData
 
@@ -222,6 +224,87 @@ def profile_select_options(
     pairs = [(o.label, o.slug) for o in options]
     pairs.append(("✎ custom slug…", PROFILE_CUSTOM_SENTINEL))
     return pairs
+
+
+# ── Bring funnel (design §2b, maintainer UX decisions 2026-07-05) ─────────────
+# §2b-3 — artifact→engine compat is ABSOLUTE: a GGUF pick never sees a vLLM
+# slug; a safetensors repo never sees the llama.cpp family.  Tokens are the
+# _canon_engine_family space (which collapses ik-llama + llamacpp to ONE
+# "llama-cpp" family — both are GGUF engines, so the filter doesn't care;
+# the display label uses the precise switch_engine / slug prefix instead).
+_GGUF_ENGINE_FAMILIES = frozenset({"llama-cpp", "beellama"})
+_SAFETENSORS_ENGINE_FAMILIES = frozenset({"vllm", "sglang"})
+_TOPO_CARDS = {"single": 1, "dual": 2, "multi3": 3, "multi4": 4, "multi8": 8}
+# The weights may claim at most this fraction of a topology's TOTAL VRAM in
+# the DISPLAY filter — KV + runtime overhead need the rest.  Deliberately
+# generous: the funnel only HIDES what clearly cannot fit; borderline stays
+# visible and the real fit-check adjudicates.
+_FUNNEL_WEIGHTS_VRAM_FRAC = 0.90
+
+
+def funnel_slug_options(
+    variants: list["VariantRow"],
+    artifact_format: str,
+    *,
+    artifact_gb: Optional[float] = None,
+    vram_gb: Optional[float] = None,
+    gpu_count: Optional[int] = None,
+) -> list["ProfileOption"]:
+    """§2b-4/5 — the staged Bring funnel's slug options: EVERY catalog variant
+    that passes the artifact→engine compat filter (the filter already shrinks
+    the list, so no representative-collapsing here — distinct from
+    :func:`profile_templates`, which stays the pre-inspect short list), labeled
+    topology-FIRST (``topology/engine/model-quant · serving``) and sorted so
+    all models under the same topology/engine appear together.
+
+    Topology floor (maintainer rule, 2026-07-05): when the selected artifact's
+    size is known, HIDE topologies whose total VRAM can't hold the weights
+    (``artifact_gb > cards × vram_gb × 0.90``) — a 34G Q8 never shows single-
+    card slugs on a 24G card.  One-directional by design: larger topologies
+    are NEVER hidden (running a small quant across more GPUs for KV/concurrency
+    is legitimate).  Topologies needing more cards than the rig has are hidden
+    too.  Unknown sizes/rig → no floor (never guess-hide)."""
+    fams = (
+        _GGUF_ENGINE_FAMILIES if artifact_format == "gguf"
+        else _SAFETENSORS_ENGINE_FAMILIES
+    )
+    out: list[ProfileOption] = []
+    seen: set[str] = set()
+    for row in variants:
+        slug = (getattr(row, "slug", "") or "").strip()
+        if not slug or slug in seen:
+            continue
+        family = _canon_engine_family(getattr(row, "engine", "") or "")
+        if family not in fams:
+            continue
+        topo = _variant_topology(row) or ""
+        cards = _TOPO_CARDS.get(topo)
+        if cards is not None:
+            if gpu_count is not None and cards > gpu_count:
+                continue  # the rig can't host this topology at all
+            if (
+                artifact_gb is not None
+                and vram_gb is not None
+                and artifact_gb > cards * vram_gb * _FUNNEL_WEIGHTS_VRAM_FRAC
+            ):
+                continue  # weights alone exceed the topology's VRAM — floor
+        seen.add(slug)
+        model = (getattr(row, "model", "") or "").strip() or "—"
+        quant = variant_quant(row) or ""
+        stem = ((getattr(row, "file", "") or "").rsplit(".", 1)[0]) or ""
+        # Display engine = the PRECISE token (switch_engine, else the slug's
+        # own prefix) — the canon family is filter-only (it can't tell
+        # ik-llama from llamacpp, which the label must).
+        eng = (
+            (getattr(row, "switch_engine", "") or "").strip()
+            or slug.split("/", 1)[0]
+        )
+        tail = f"{model}-{quant}" if quant else model
+        label = f"{topo or '—'}/{eng}/{tail}" + (f"  ·  {stem}" if stem else "")
+        status = (getattr(row, "status", "") or "").strip().lower()
+        out.append(ProfileOption(label=label, slug=slug, topology=topo or "—", status=status))
+    out.sort(key=lambda o: (_TOPO_ORDER.get(o.topology, 99), o.label))
+    return out
 
 
 def _curated_default_map(
@@ -4297,15 +4380,21 @@ class UntestedComposePreviewScreen(ModalScreen):
 
 
 class LaneBringPane(Container):
-    """① Bring — the producer lane's fit-check entry, and (since the 2-mode merge)
-    the SINGLE bring-an-arbitrary-repo entry point in the app.
+    """① Bring — the producer lane's STAGED artifact-first funnel (design §2b,
+    maintainer UX 2026-07-05), and (since the 2-mode merge) the SINGLE
+    bring-an-arbitrary-repo entry point in the app.
 
-    REUSES ``byo_check`` (pull.sh --dry-run --json → ByoResult: supported? fits?
-    the swap_path route) as the lane's first stage: paste an HF repo / slug,
-    Fit-check, read the route + sibling_slug + quant_match.  (The standalone
-    Run · Bring-your-own tab + its ByoPane were removed in the merge — this pane's
-    widget IDs are the only fit-check widgets now.)  The cached ``_last_byo`` it
-    produces feeds ② Serve and ⑤ Promote."""
+    Staged reveal — nothing template-side shows until the artifact is known:
+      1. repo input + [Inspect] → deriver artifact inventory (READ; a
+         GGUF-only repo is a first-class bring, never unsupported-format);
+      2. GGUF discovered → ALL quant variants presented for the pick FIRST;
+      3. only then the slug Select appears — every catalog option passing the
+         artifact→engine compat filter (GGUF never sees vLLM; safetensors
+         never sees the llama.cpp family), labeled topology-first
+         (``topology/engine/model-quant · serving``), topology-floored by the
+         picked artifact's size vs the rig's VRAM;
+      4. Fit-check (the existing ``byo_check``) → ② Serve / ⑤ Promote arm.
+    The cached ``_last_byo`` it produces feeds ② Serve and ⑤ Promote."""
 
     DEFAULT_CSS = """
     LaneBringPane {
@@ -4320,11 +4409,22 @@ class LaneBringPane(Container):
         height: 3;
         margin-bottom: 1;
     }
+    LaneBringPane #lane-bring-stage2-row {
+        height: 3;
+        margin-bottom: 1;
+    }
     LaneBringPane #lane-bring-url-input {
         width: 1fr;
     }
+    LaneBringPane #lane-bring-inspect-btn {
+        width: 13;
+        margin-left: 1;
+    }
+    LaneBringPane #lane-bring-gguf-select {
+        width: 36;
+    }
     LaneBringPane #lane-bring-profile-input {
-        width: 40;
+        width: 1fr;
         margin-left: 1;
     }
     LaneBringPane #lane-bring-profile-custom {
@@ -4332,6 +4432,9 @@ class LaneBringPane(Container):
         margin-left: 1;
     }
     LaneBringPane .profile-custom-hidden {
+        display: none;
+    }
+    LaneBringPane .funnel-hidden {
         display: none;
     }
     LaneBringPane #lane-bring-fit-btn {
@@ -4344,6 +4447,11 @@ class LaneBringPane(Container):
         margin-top: 1;
         height: auto;
     }
+    LaneBringPane #lane-bring-weights-line {
+        padding: 0 2;
+        margin-top: 1;
+        height: auto;
+    }
     LaneBringPane #lane-bring-hint {
         color: $text-muted;
         margin-top: 1;
@@ -4351,19 +4459,33 @@ class LaneBringPane(Container):
     """
 
     def compose(self) -> ComposeResult:
-        yield Label("① Bring — fit-check an HF model", id="lane-bring-heading")
+        yield Label("① Bring — inspect an HF model", id="lane-bring-heading")
         with Horizontal(id="lane-bring-input-row"):
             yield Input(
                 placeholder="org/Model  (e.g. unsloth/Qwen3-27B-abliterated-GGUF)",
                 id="lane-bring-url-input",
             )
-            # #6/A12 — same registry-derived (engine, topology) template Select as
-            # Run · BYO (populated by set_profile_options after the catalog loads).
+            yield Button("Inspect", id="lane-bring-inspect-btn", variant="primary")
+        # Stage 2/3 — HIDDEN until Inspect identifies a supported artifact
+        # (§2b-1: no engine/topology/template before the artifact is known).
+        with Horizontal(id="lane-bring-stage2-row", classes="funnel-hidden"):
+            # §2b-2 — the GGUF quant pick comes BEFORE any slug appears.
+            yield Select(
+                [],
+                prompt="— pick a GGUF quant —",
+                allow_blank=True,
+                id="lane-bring-gguf-select",
+                classes="funnel-hidden",
+            )
+            # §2b-4/5 — the artifact-filtered, topology-first catalog options
+            # (repopulated per inventory/pick by the app; the pre-inspect
+            # template fill is harmless — the row is hidden).
             yield Select(
                 [("vllm/dual  ·  loading templates…", "vllm/dual")],
                 value="vllm/dual",
                 allow_blank=False,
                 id="lane-bring-profile-input",
+                classes="funnel-hidden",
             )
             # FIX 2 (escape hatch) — companion free-text override, hidden until the
             # "✎ custom slug…" sentinel is chosen (same idiom as Run · BYO).
@@ -4372,14 +4494,23 @@ class LaneBringPane(Container):
                 id="lane-bring-profile-custom",
                 classes="profile-custom-hidden",
             )
-            yield Button("Fit-check", id="lane-bring-fit-btn", variant="primary")
+            yield Button(
+                "Fit-check",
+                id="lane-bring-fit-btn",
+                variant="primary",
+                classes="funnel-hidden",
+            )
         yield Static(
-            "[dim]Stage ① of the Bring & Validate pipeline.  Enter an HF repo + a\n"
-            "profile-like slug, then Fit-check — pull.sh --dry-run (Path B, never\n"
-            "downloads).  A successful fit-check unlocks ② Serve (generate + serve\n"
-            "the untested compose) and ⑤ Promote.[/dim]",
+            "[dim]Stage ① of the Bring & Validate pipeline.  Enter an HF repo and\n"
+            "Inspect — the deriver enumerates its artifacts (safetensors / GGUF\n"
+            "quants) from HF metadata, never downloading a weight.  The matching\n"
+            "engine/topology slugs appear once the artifact is known; a successful\n"
+            "Fit-check then unlocks ② Serve and ⑤ Promote.[/dim]",
             id="lane-bring-result-card",
         )
+        # §2b-6/7 — the weights state + download/handoff affordance line
+        # (hidden until a fit-check succeeds).
+        yield Static("", id="lane-bring-weights-line", classes="funnel-hidden")
         yield Label(
             "[dim]Routes:  A = new curated profile   ·   B = serve-locally   ·   "
             "C = reuse a sibling compose + swap weights\n"
@@ -4393,6 +4524,12 @@ class LaneBringPane(Container):
             f"[dim]Checking[/dim] [cyan]{repo}[/cyan] [dim](pull.sh --dry-run --json)…[/dim]"
         )
 
+    def set_inspecting(self, repo: str) -> None:
+        self.query_one("#lane-bring-result-card", Static).update(
+            f"[dim]Inspecting[/dim] [cyan]{repo}[/cyan] "
+            "[dim](deriver --inventory — HF metadata only, no download)…[/dim]"
+        )
+
     def set_profile_options(
         self, options: list[tuple[str, str]], default: Optional[str]
     ) -> None:
@@ -4401,6 +4538,76 @@ class LaneBringPane(Container):
         _set_select_options(
             self.query_one("#lane-bring-profile-input", Select), options, default
         )
+
+    def show_inventory(self, inv: "ArtifactInventory") -> None:
+        """Stage-1 verdict: render the inventory + reveal the matching stage-2
+        widgets.  GGUF → the quant Select (slugs stay hidden until the pick);
+        safetensors → straight to the slug stage (the app repopulates it)."""
+        card = self.query_one("#lane-bring-result-card", Static)
+        row = self.query_one("#lane-bring-stage2-row", Horizontal)
+        gsel = self.query_one("#lane-bring-gguf-select", Select)
+        if inv.error:
+            card.update(f"[red]Inspect failed:[/red] {inv.error}")
+            row.add_class("funnel-hidden")
+            return
+        lines = [f"  [bold]{inv.repo}[/bold]   formats: [cyan]{', '.join(inv.formats) or '—'}[/cyan]"]
+        if inv.has_safetensors:
+            lines.append(
+                f"  [bold]safetensors[/bold]  {inv.safetensors_files} file(s), "
+                f"{inv.safetensors_size_gb:.1f} GiB"
+            )
+        if inv.has_gguf:
+            lines.append(
+                f"  [bold]gguf[/bold]  {len(inv.gguf_variants)} quant(s) discovered — "
+                "pick one below to see the matching slugs"
+            )
+        if inv.gguf_mmproj:
+            lines.append(f"  [dim]mmproj (vision projector): {', '.join(inv.gguf_mmproj)}[/dim]")
+        if inv.lineage_base_model:
+            lines.append(f"  [dim]base_model: {inv.lineage_base_model}[/dim]")
+        card.update("\n".join(lines))
+        row.remove_class("funnel-hidden")
+        if inv.has_gguf:
+            opts = [
+                (f"{v.quant}  ·  {v.size_gb:.1f} GiB" + (f" ({v.parts} parts)" if v.parts > 1 else ""), v.quant)
+                for v in inv.gguf_variants
+            ]
+            # Start BLANK — the pick is the USER's stage-2 decision (§2b-2);
+            # pre-selecting would fire the slug reveal without a genuine pick.
+            try:
+                with gsel.prevent(Select.Changed):
+                    gsel.set_options(opts)
+                    gsel.value = Select.BLANK
+            except Exception:
+                gsel.set_options(opts)
+            gsel.remove_class("funnel-hidden")
+        else:
+            gsel.add_class("funnel-hidden")
+
+    def reveal_slug_stage(
+        self, options: list[tuple[str, str]], default: Optional[str]
+    ) -> None:
+        """Stage-3: populate + reveal the artifact-filtered slug Select and the
+        Fit-check button (§2b-3/4/5 — only now do engine/topology slugs show)."""
+        sel = self.query_one("#lane-bring-profile-input", Select)
+        _set_select_options(sel, options, default)
+        sel.remove_class("funnel-hidden")
+        self.query_one("#lane-bring-fit-btn", Button).remove_class("funnel-hidden")
+
+    def hide_slug_stage(self) -> None:
+        self.query_one("#lane-bring-profile-input", Select).add_class("funnel-hidden")
+        self.query_one("#lane-bring-fit-btn", Button).add_class("funnel-hidden")
+
+    def set_weights_line(self, markup: str) -> None:
+        """§2b-6/7 — the weights-state / download / handoff line under the
+        verdict card.  Empty markup hides it."""
+        line = self.query_one("#lane-bring-weights-line", Static)
+        if markup:
+            line.update(markup)
+            line.remove_class("funnel-hidden")
+        else:
+            line.update("")
+            line.add_class("funnel-hidden")
 
     def populate(self, res: ByoResult) -> None:
         card = self.query_one("#lane-bring-result-card", Static)
@@ -5223,6 +5430,9 @@ class CockpitApp(App):
         # R3b-2 — producer lane ④ Measure: compare the selected tag's measured
         # numbers to the curated catalog bar (READ · producer-only).
         Binding("m", "measure_vs_bar", "vs catalog bar", show=False),
+        # Funnel §2b-6 — ① Bring: download the fit-checked repo's weights
+        # (pull.sh real run — DISK write, no GPU claim; streams into the pane).
+        Binding("D", "bring_download", "Download weights", show=False),
         # R3b-2 — producer lane: the ~43-min FULL validation battery
         # (report.sh --full) — confirm-gated, bg-streamed, producer-only, uses the
         # serving model (claims no GPU); NEVER auto-fired.
@@ -5704,6 +5914,10 @@ class CockpitApp(App):
         # Phase 5: the last BYO fit-check result (Run · BYO) — the arch facts
         # the Promote-to-catalog scaffold computes from.
         self._last_byo: Optional[ByoResult] = None
+        # Bring funnel (§2b): the last stage-1 inventory + the user's GGUF pick
+        # — drive the staged reveal + the artifact→engine/topology filters.
+        self._last_inventory: Optional[ArtifactInventory] = None
+        self._funnel_gguf_pick: str = ""
         # Phase R / R2b: failure context for the [!] problem report — captured AT
         # a failed serve in dispatch_action (the slug + the boot-log lines that
         # were streamed into the serve-live pane) so problem_report can assemble
@@ -6648,6 +6862,88 @@ class CockpitApp(App):
 
     # ── BYO fit-check ────────────────────────────────────────────────────────────────
 
+    def _trigger_lane_inspect(self) -> None:
+        """[Inspect] / ⏎ on the ① Bring repo input: stage-1 of the funnel —
+        the deriver artifact inventory (§2b-1).  Nothing template-side shows
+        until this succeeds."""
+        try:
+            repo = self.query_one("#lane-bring-url-input", Input).value.strip()
+        except Exception:
+            return
+        if not repo:
+            self.notify("Enter an HF repo (org/Model).", title="① Bring", severity="warning", timeout=3)
+            return
+        self.run_bring_inspect(repo)
+
+    def _known_gpu_vram_gb(self) -> Optional[float]:
+        """Best-known per-card VRAM (GiB) from the last estate poll — the MIN
+        across cards (heterogeneous rigs: the smallest card dictates the pool,
+        mirroring the launcher's het-clamp).  None before the first poll —
+        the funnel then applies NO size floor (never guess-hide)."""
+        st = self._last_estate_state
+        gpus = getattr(st, "gpus", None) if st is not None else None
+        if not gpus:
+            return None
+        totals = [g.mem_total_mib for g in gpus if getattr(g, "mem_total_mib", 0) > 0]
+        return (min(totals) / 1024.0) if totals else None
+
+    def _funnel_options_for(
+        self, artifact_format: str, artifact_gb: Optional[float]
+    ) -> list[tuple[str, str]]:
+        """The stage-3 slug options for the current artifact (§2b-3/4/5):
+        compat-filtered, topology-floored by size vs the rig, topology-first
+        labels, sentinel appended."""
+        opts = funnel_slug_options(
+            self._variants or [],
+            artifact_format,
+            artifact_gb=artifact_gb,
+            vram_gb=self._known_gpu_vram_gb(),
+            gpu_count=self._known_gpu_count(),
+        )
+        return profile_select_options(opts)
+
+    def _reveal_funnel_slugs(
+        self, artifact_format: str, artifact_gb: Optional[float]
+    ) -> None:
+        pairs = self._funnel_options_for(artifact_format, artifact_gb)
+        opts = funnel_slug_options(
+            self._variants or [],
+            artifact_format,
+            artifact_gb=artifact_gb,
+            vram_gb=self._known_gpu_vram_gb(),
+            gpu_count=self._known_gpu_count(),
+        )
+        default = default_profile_template(opts, self._known_gpu_count() or 2)
+        try:
+            self.query_one("#lane-bring-pane", LaneBringPane).reveal_slug_stage(pairs, default)
+        except Exception:
+            pass
+
+    @work(exclusive=True, group="byo")
+    async def run_bring_inspect(self, repo: str) -> None:
+        """Stage-1 INSPECT worker: deriver artifact inventory → staged reveal.
+        GGUF present → quant pick first (slugs stay hidden); safetensors →
+        straight to the compat-filtered slug stage."""
+        lane_pane = None
+        try:
+            lane_pane = self.query_one("#lane-bring-pane", LaneBringPane)
+            lane_pane.set_inspecting(repo)
+        except Exception:
+            lane_pane = None
+        inv = await self._data.bring_inspect(repo)
+        self._last_inventory = inv
+        self._funnel_gguf_pick = ""
+        if lane_pane is not None:
+            lane_pane.show_inventory(inv)
+        if inv.error:
+            return
+        if inv.has_safetensors:
+            # §2b-1: the safetensors set is the artifact — slugs reveal now.
+            self._reveal_funnel_slugs("safetensors", inv.safetensors_size_gb or None)
+        elif lane_pane is not None:
+            # GGUF-only: slugs stay hidden until the quant pick (§2b-2).
+            lane_pane.hide_slug_stage()
+
     @work(exclusive=True, group="byo")
     async def run_byo_check(self, repo: str, profile_like: str) -> None:
         # The fit-check is the producer lane's ① Bring stage (the standalone Run ·
@@ -6696,6 +6992,82 @@ class CockpitApp(App):
             )
         except Exception:
             pass
+        # §2b-6/7 — weights state after a successful fit-check: on disk → the
+        # ② Serve handoff is explicit; absent → the [D] download affordance.
+        if lane_pane is not None:
+            if getattr(res, "error", ""):
+                lane_pane.set_weights_line("")
+            elif self._data.bring_weights_present(repo):
+                lane_pane.set_weights_line(
+                    "  [green]✓ weights on disk[/green] — "
+                    "[green]→ ② Serve[/green] [dim](\\[2/]] next stage)[/dim]"
+                )
+            else:
+                lane_pane.set_weights_line(
+                    "  [yellow]weights not on disk[/yellow] — press [bold]\\[D][/bold] "
+                    "to download via pull.sh [dim](SHA-verified, streams here; "
+                    "disk write only, no GPU claim)[/dim]"
+                )
+
+    def action_bring_download(self) -> None:
+        """[D] — §2b-6: download the fit-checked repo's weights (the REAL
+        pull.sh run — Path B fetch into the pull dir).  Guarded on a successful
+        fit-check; a disk write with no GPU claim, so the key press is the
+        confirm (same discipline as the catalog Download)."""
+        if self._active_mode != 1:
+            return
+        byo = self._last_byo
+        if byo is None or getattr(byo, "error", ""):
+            self.notify(
+                "Run ① Bring fit-check first — nothing to download.",
+                title="Download", severity="warning", timeout=4,
+            )
+            return
+        repo = getattr(byo, "repo", "")
+        if self._data.bring_weights_present(repo):
+            self.notify("Weights already on disk.", title="Download", timeout=3)
+            return
+        self.run_bring_download_worker(repo, getattr(byo, "profile_like", ""))
+
+    @work(exclusive=True, group="bring-download")
+    async def run_bring_download_worker(self, repo: str, profile_like: str) -> None:
+        """§2b-6/7 — stream the pull.sh download into the weights line, then
+        re-probe and hand off to ② Serve."""
+        lane_pane = None
+        try:
+            lane_pane = self.query_one("#lane-bring-pane", LaneBringPane)
+        except Exception:
+            pass
+
+        from rich.markup import escape
+
+        def _on_line(line: str) -> None:
+            if lane_pane is not None:
+                clipped = line.strip()[-100:]
+                try:
+                    lane_pane.set_weights_line(
+                        f"  [cyan]downloading[/cyan] [dim]{escape(clipped)}[/dim]"
+                    )
+                except Exception:
+                    pass
+
+        handle = await self._data.run_bring_download(repo, profile_like, on_line=_on_line)
+        try:
+            await handle.done.wait()
+        except Exception:
+            pass
+        if lane_pane is None:
+            return
+        if self._data.bring_weights_present(repo):
+            lane_pane.set_weights_line(
+                "  [green]✓ weights downloaded[/green] — "
+                "[green]→ ② Serve[/green] [dim](\\[2/]] next stage)[/dim]"
+            )
+        else:
+            lane_pane.set_weights_line(
+                "  [red]download did not complete[/red] — check the pull.sh output "
+                "[dim](re-press \\[D] to retry)[/dim]"
+            )
 
     # ── Explain ──────────────────────────────────────────────────────────────────────
 
@@ -8945,6 +9317,24 @@ class CockpitApp(App):
             except Exception:
                 pass
             return
+        if sel_id == "lane-bring-gguf-select":
+            # §2b-2 — the GGUF quant pick: only NOW do the matching slugs
+            # appear, topology-floored by THIS variant's size (§2b size rule:
+            # hide topologies whose VRAM can't hold the weights; never hide
+            # larger ones — small-quant-on-many-GPUs is legitimate).
+            val = event.value
+            if val is None or val is Select.BLANK:
+                return
+            self._funnel_gguf_pick = str(val)
+            inv = self._last_inventory
+            size = None
+            if inv is not None:
+                for v in inv.gguf_variants:
+                    if v.quant == self._funnel_gguf_pick:
+                        size = v.size_gb or None
+                        break
+            self._reveal_funnel_slugs("gguf", size)
+            return
         if sel_id != "lane-bring-profile-input":
             return
         new_val = event.value
@@ -9167,6 +9557,8 @@ class CockpitApp(App):
         bid = event.button.id
         if bid == "lane-bring-fit-btn":
             self._trigger_lane_bring()
+        elif bid == "lane-bring-inspect-btn":
+            self._trigger_lane_inspect()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "catalog-filter":
@@ -9178,7 +9570,9 @@ class CockpitApp(App):
             except Exception:
                 pass
         elif event.input.id == "lane-bring-url-input":
-            self._trigger_lane_bring()
+            # §2b-1 — ⏎ on the repo input runs stage-1 INSPECT (the funnel's
+            # entry), not the fit-check (which needs a slug pick first).
+            self._trigger_lane_inspect()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "catalog-filter":

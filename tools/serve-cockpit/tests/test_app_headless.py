@@ -319,6 +319,32 @@ PULL_JSON = json.dumps(
     }
 )
 
+# Bring funnel (§2b) — deriver --inventory canned responses (stage-1 INSPECT).
+INVENTORY_SAFETENSORS_JSON = json.dumps(
+    {
+        "repo": "org/Model",
+        "formats": ["safetensors"],
+        "safetensors": {"weight_files": ["model.safetensors"], "size_gb": 16.2},
+        "gguf_variants": [],
+        "gguf_mmproj": [],
+        "lineage_base_model": "Qwen/Qwen3.6-27B",
+    }
+)
+INVENTORY_GGUF_JSON = json.dumps(
+    {
+        "repo": "org/Model-GGUF",
+        "formats": ["gguf"],
+        "safetensors": None,
+        "gguf_variants": [
+            {"quant": "Q4_K_M", "size_gb": 17.0, "parts": 1, "files": ["m-Q4_K_M.gguf"]},
+            {"quant": "Q8_0", "size_gb": 29.0, "parts": 2,
+             "files": ["m-Q8_0-00001-of-00002.gguf", "m-Q8_0-00002-of-00002.gguf"]},
+        ],
+        "gguf_mmproj": ["mmproj-F16.gguf"],
+        "lineage_base_model": None,
+    }
+)
+
 ESTATE_REPORT_FREE = json.dumps({"active_estate": {"present": False, "instances": []}})
 ESTATE_REPORT_BUSY = json.dumps(
     {
@@ -579,6 +605,8 @@ def fake_responses(**overrides) -> dict[str, RunResult]:
         "--explain ik-llama/iq4ks-mtp --json": ok(EXPLAIN_NO_BENCH_JSON),
         "gpu-mode.sh --list-modes --json": ok(SCENES_JSON),
         "pull.sh": ok(PULL_JSON),
+        # Bring funnel §2b stage-1 (safetensors default; gguf tests override)
+        "deriver.py --inventory": ok(INVENTORY_SAFETENSORS_JSON),
         "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
         "health.sh": ok(HEALTH_SERVING),
         "docker ps": ok(DOCKER_PS_EMPTY),
@@ -1344,10 +1372,15 @@ class TestByoWired:
 
     @pytest.mark.asyncio
     async def test_lane_bring_fit_check_renders_route(self):
+        # Funnel §2b: the fit-check is stage 4 — Inspect must run first (the
+        # fit button is HIDDEN until the artifact is known; press() on a
+        # hidden button is a Textual no-op, which IS the staged-reveal guard).
         app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_bring(pilot)
             app.query_one("#lane-bring-url-input", Input).value = "org/Model"
+            app.query_one("#lane-bring-inspect-btn", Button).press()
+            await _settle(pilot)
             app.query_one("#lane-bring-fit-btn", Button).press()
             await _settle(pilot)
             card = app.query_one("#lane-bring-result-card", Static)
@@ -1369,6 +1402,9 @@ class TestByoWired:
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_bring(pilot)
             app.query_one("#lane-bring-url-input", Input).value = "org/Model"
+            # Funnel §2b: the slug Select is hidden until Inspect resolves.
+            app.query_one("#lane-bring-inspect-btn", Button).press()
+            await _settle(pilot)
             sel = app.query_one("#lane-bring-profile-input", Select)
             custom = app.query_one("#lane-bring-profile-custom", Input)
             # Reveal the companion Input by selecting the sentinel.
@@ -1387,6 +1423,185 @@ class TestByoWired:
             joined = " ".join(pull)
             assert "--profile-like ik-llama/iq4ks-mtp" in joined
             assert PROFILE_CUSTOM_SENTINEL not in joined   # sentinel never leaks
+
+
+class TestBringFunnelStagedReveal:
+    """Bring funnel §2b (maintainer UX 2026-07-05): staged reveal, GGUF pick
+    before slugs, artifact→engine compat filtering, topology-first labels."""
+
+    @pytest.mark.asyncio
+    async def test_nothing_template_side_before_inspect(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_bring(pilot)
+            row = app.query_one("#lane-bring-stage2-row")
+            assert row.has_class("funnel-hidden")          # §2b-1
+            assert not app.query_one("#lane-bring-fit-btn", Button).display
+
+    @pytest.mark.asyncio
+    async def test_safetensors_inspect_reveals_filtered_sorted_slugs(self):
+        from club3090_cockpit.app import PROFILE_CUSTOM_SENTINEL
+
+        app, runner, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_bring(pilot)
+            app.query_one("#lane-bring-url-input", Input).value = "org/Model"
+            app.query_one("#lane-bring-inspect-btn", Button).press()
+            await _settle(pilot)
+            # deriver --inventory ran (READ-only, --json)
+            inv_call = next(c for c in runner.calls if "--inventory" in " ".join(c))
+            assert "--json" in inv_call
+            # card renders the inventory verdict + lineage
+            text = str(app.query_one("#lane-bring-result-card", Static).render())
+            assert "safetensors" in text and "16.2" in text
+            assert "Qwen/Qwen3.6-27B" in text              # lineage rides (friction #11)
+            # slug stage revealed; gguf pick NOT shown for a safetensors repo
+            sel = app.query_one("#lane-bring-profile-input", Select)
+            assert sel.display
+            assert not app.query_one("#lane-bring-gguf-select", Select).display
+            assert app.query_one("#lane-bring-fit-btn", Button).display
+            # §2b-3/4: only safetensors engines; topology-FIRST labels
+            labels = [l for (l, v) in sel._options if v != PROFILE_CUSTOM_SENTINEL]
+            assert labels == ["dual/vllm/qwen3.6-27b-autoround-int4  ·  fp8-mtp"]
+
+    @pytest.mark.asyncio
+    async def test_gguf_inspect_requires_quant_pick_before_slugs(self):
+        from club3090_cockpit.app import PROFILE_CUSTOM_SENTINEL
+
+        responses = fake_responses(
+            **{"deriver.py --inventory": ok(INVENTORY_GGUF_JSON)}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_bring(pilot)
+            app.query_one("#lane-bring-url-input", Input).value = "org/Model-GGUF"
+            app.query_one("#lane-bring-inspect-btn", Button).press()
+            await _settle(pilot)
+            gsel = app.query_one("#lane-bring-gguf-select", Select)
+            sel = app.query_one("#lane-bring-profile-input", Select)
+            # §2b-2: ALL gguf quants presented; slugs stay hidden until the pick
+            assert gsel.display
+            assert not sel.display
+            glabels = [l for (l, _v) in gsel._options]
+            assert any("Q4_K_M" in l and "17.0" in l for l in glabels)
+            assert any("Q8_0" in l and "29.0" in l and "2 parts" in l for l in glabels)
+            # mmproj is informational, never a variant
+            assert not any("mmproj" in l for l in glabels)
+            # the pick reveals the gguf-engine slugs (§2b-3: never vLLM)
+            gsel.value = "Q4_K_M"
+            await _settle(pilot)
+            assert sel.display
+            labels = [l for (l, v) in sel._options if v != PROFILE_CUSTOM_SENTINEL]
+            assert labels == ["single/ik-llama/qwen3.6-27b-ubergarm-iq4ks  ·  mtp"]
+
+    @pytest.mark.asyncio
+    async def test_fit_check_surfaces_weights_state_and_handoff(self, monkeypatch, tmp_path):
+        # §2b-6/7 — after a successful fit-check: weights absent → the [D]
+        # download affordance; weights on disk → the explicit ② Serve handoff.
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_bring(pilot)
+            app.query_one("#lane-bring-url-input", Input).value = "org/Model"
+            app.query_one("#lane-bring-inspect-btn", Button).press()
+            await _settle(pilot)
+            app.query_one("#lane-bring-fit-btn", Button).press()
+            await _settle(pilot)
+            line = app.query_one("#lane-bring-weights-line", Static)
+            assert line.display
+            text = str(line.render())
+            assert "not on disk" in text and "[D]" in text
+            # weights land on disk → a re-fit-check flips the line to handoff
+            d = app._data.bring_pull_dir("org/Model")
+            d.mkdir(parents=True)
+            (d / "model.safetensors").write_bytes(b"x")
+            app.query_one("#lane-bring-fit-btn", Button).press()
+            await _settle(pilot)
+            text = str(line.render())
+            assert "on disk" in text and "② Serve" in text
+
+    @pytest.mark.asyncio
+    async def test_inspect_error_reveals_nothing(self):
+        responses = fake_responses(
+            **{"deriver.py --inventory": ok(json.dumps(
+                {"repo": "org/Nope", "error": "repo-not-found: org/Nope",
+                 "formats": [], "gguf_variants": [], "gguf_mmproj": []}))}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_bring(pilot)
+            app.query_one("#lane-bring-url-input", Input).value = "org/Nope"
+            app.query_one("#lane-bring-inspect-btn", Button).press()
+            await _settle(pilot)
+            text = str(app.query_one("#lane-bring-result-card", Static).render())
+            assert "repo-not-found" in text
+            assert app.query_one("#lane-bring-stage2-row").has_class("funnel-hidden")
+
+
+class TestFunnelSlugOptionsPure:
+    """funnel_slug_options — the §2b filters as a pure function."""
+
+    def _rows(self):
+        from types import SimpleNamespace as NS
+
+        return [
+            NS(slug="vllm/dual", engine="vllm-stable", model="qwen3.6-27b",
+               file="fp8-mtp.yml", status="production",
+               compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
+               compose_dir=""),
+            NS(slug="vllm/minimal", engine="vllm-stable", model="qwen3.6-27b",
+               file="minimal.yml", status="production",
+               compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml",
+               compose_dir=""),
+            NS(slug="ik-llama/iq4ks-mtp", engine="ik-llama", model="qwen3.6-27b",
+               file="mtp.yml", status="production",
+               compose_path="models/qwen3.6-27b/ik-llama/compose/single/ubergarm-iq4ks/mtp.yml",
+               compose_dir=""),
+        ]
+
+    def test_compat_filter_is_absolute(self):
+        from club3090_cockpit.app import funnel_slug_options
+
+        st = funnel_slug_options(self._rows(), "safetensors")
+        assert {o.slug for o in st} == {"vllm/dual", "vllm/minimal"}   # never llama-family
+        gg = funnel_slug_options(self._rows(), "gguf")
+        assert {o.slug for o in gg} == {"ik-llama/iq4ks-mtp"}          # never vLLM
+
+    def test_topology_first_labels_and_grouped_sort(self):
+        from club3090_cockpit.app import funnel_slug_options
+
+        st = funnel_slug_options(self._rows(), "safetensors")
+        # single before dual; label = topology/engine/model-quant · serving
+        assert [o.label for o in st] == [
+            "single/vllm/qwen3.6-27b-autoround-int4  ·  minimal",
+            "dual/vllm/qwen3.6-27b-autoround-int4  ·  fp8-mtp",
+        ]
+
+    def test_size_floor_hides_too_small_topologies_only(self):
+        from club3090_cockpit.app import funnel_slug_options
+
+        # 34G weights on 24G cards: single (24×0.9=21.6) hidden, dual kept.
+        st = funnel_slug_options(
+            self._rows(), "safetensors", artifact_gb=34.0, vram_gb=24.0, gpu_count=2
+        )
+        assert {o.slug for o in st} == {"vllm/dual"}
+        # Small artifact: NOTHING hidden — running a small quant on more GPUs
+        # is legitimate (the floor is one-directional).
+        st = funnel_slug_options(
+            self._rows(), "safetensors", artifact_gb=5.0, vram_gb=24.0, gpu_count=2
+        )
+        assert {o.slug for o in st} == {"vllm/dual", "vllm/minimal"}
+        # Unknown rig → no floor (never guess-hide).
+        st = funnel_slug_options(self._rows(), "safetensors", artifact_gb=34.0)
+        assert {o.slug for o in st} == {"vllm/dual", "vllm/minimal"}
+
+    def test_rig_card_count_hides_unhostable_topologies(self):
+        from club3090_cockpit.app import funnel_slug_options
+
+        st = funnel_slug_options(
+            self._rows(), "safetensors", artifact_gb=5.0, vram_gb=24.0, gpu_count=1
+        )
+        assert {o.slug for o in st} == {"vllm/minimal"}   # dual unhostable on 1 card
 
 
 # ===========================================================================

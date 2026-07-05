@@ -2133,6 +2133,40 @@ class TestContainerLogs:
         assert "No such container" in out["error"]
 
 
+class TestBringDownloadSeam:
+    """§2b-6/7 — the lane download's presence probe + path contract."""
+
+    def test_pull_dir_mirrors_downloader_sanitizer(self, monkeypatch, tmp_path):
+        # The c3-side path computation must equal the SoT sanitizer in
+        # scripts/lib/profiles/downloader.py (drift guard — the probe reads
+        # where pull.sh actually writes).
+        import sys
+        from pathlib import Path as _P
+
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        cd = CockpitData(ROOT, runner=full_runner())
+        repo_root = str(_P(__file__).resolve().parents[3])
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from scripts.lib.profiles.downloader import pull_dir as sot_pull_dir
+
+        for repo in ("Org/Some Model-7B", "unsloth/Qwen3-27B-GGUF", "a/B__c"):
+            assert cd.bring_pull_dir(repo) == sot_pull_dir(tmp_path, repo), repo
+
+    def test_weights_present_probe(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        cd = CockpitData(ROOT, runner=full_runner())
+        repo = "org/Model"
+        assert cd.bring_weights_present(repo) is False          # no dir
+        d = cd.bring_pull_dir(repo)
+        d.mkdir(parents=True)
+        assert cd.bring_weights_present(repo) is False          # dir, no blobs
+        (d / "model.safetensors").write_bytes(b"x")
+        assert cd.bring_weights_present(repo) is True           # blob present
+        (d / ".incomplete").mkdir()
+        assert cd.bring_weights_present(repo) is False          # staging = not done
+
+
 class TestRealRunnerNotInvokedInTests:
     """Sanity: a CockpitData built with a FakeRunner never constructs a
     RealRunner, and the default RealRunner is only the production fallback."""
