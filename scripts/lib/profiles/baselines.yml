@@ -311,6 +311,26 @@ baselines:
     submitted_by: "noonghunna"
     tier: local
 
+  vllm/qwen-27b-dual-max:
+    # cross-rig submissions only — no local baseline row yet
+    submissions:
+      2x5090-pcie:
+        # inducted by catalog-baseline.sh --from-bundle from rebench tag 246-ab-fp8w (2026-07-05);
+        # evidence: verify-full pass · bench n=5 · TPS-ONLY (no quality) · NIAH ladder
+        narr_tps: 134.52
+        code_tps: 165.11
+        ttft_ms: 56
+        prefill_tps: { 10k: 3693, 90k: 1906 }
+        ctx_validated: { tokens: 240635, niah: "clean@241K" }
+        date: 2026-07-05
+        engine_pin: "vllm/vllm-openai:v0.24.0"
+        rig: "2x5090-pcie"
+        power_cap_w: [575, 575]
+        source: "https://github.com/noonghunna/club-3090/discussions/571#discussioncomment-17536412"
+        source_tag: "246-ab-fp8w"
+        submitted_by: "guybrush01"
+        tier: submitted
+
 # ───────────────────────────────────────────────────────────────────────────
 # KNOWN GAPS — wave-2 dispositions (2026-07-04): each slug below has NO row
 # on purpose; the disposition says what unlocks one. Do NOT guess numbers in.
