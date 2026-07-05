@@ -7,18 +7,22 @@
 #   Vision:    yes
 #   Max ctx:   262K (237K single-prompt verified)
 #   Genesis:   none — intentionally Genesis-free (isolation control + fallback)
-#   Status:    🧪 Experimental (TP=4 cross-rig — config = vllm/dual validated @TP=2)
+#   Status:    ✅ Production
 #   Quality:   = the dual fast proxy (vllm/dual): 109/150 (--full, current harness 2026-06-07);
 #                3-way A/B fast 109 · balanced 105 · max 110 = TIE. (Earlier 129/150 on the
-#                2026-05-09 harness is not comparable — verifier fixes since.) No 4-card bench.
+#                2026-05-09 harness is not comparable — verifier fixes since.) Quality is
+#                TP-invariant (same weights/KV/sampling as vllm/dual, only TP differs); a
+#                4-card 8-pack confirmation is the open follow-up (report.sh runs no 8-pack).
 #   Best for:  4-card Qwen "fast" tier (vllm/qwen-27b-multi-fast) — AutoRound int4 + fp8 KV + MTP, TP=4 ⭐
 # ---------------------------------------------------------------------------
 # Quad RTX 3090 — Qwen3.6-27B "fast" tier at TP=4 (vllm/qwen-27b-multi-fast).
 # AutoRound INT4 weights + MTP n=3 + fp8_e5m2 KV + vision. The serving config is
 # identical to the 2-card vllm/dual (≡ vllm/qwen-27b-dual-fast) — only the
 # tensor-parallel size and the required gpu-count bump to 4. vllm/dual at TP=2 is
-# the on-rig validation proxy; this 4-card variant is 🧪 Experimental until a real
-# ≥4× 3090 host validates it (this dev rig has 2 cards).
+# the on-rig proxy (this dev rig has 2 cards). Promoted to ✅ Production 2026-07-05
+# on the cross-rig validation the header required — #584 (@ryanmpelletier, 4× 3090
+# Proxmox VM): verify-full 9/9, verify-stress needles clean to 240K, soak-continuous
+# PASS, bench n=5 (decode 74.8/90.8, KV pool 1.77M/6.77×). See BENCHMARKS.md.
 #
 # What the extra cards buy you (vs the 2-card vllm/dual):
 #   - TP=4 → ~2× the aggregate KV headroom at 262K (more concurrent streams /
