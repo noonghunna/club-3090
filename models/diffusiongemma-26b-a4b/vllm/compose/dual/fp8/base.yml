@@ -90,6 +90,14 @@ services:
       # replaces the former static VLLM_DISABLE_CUSTOM_ALL_REDUCE=1.
       - VLLM_NO_USAGE_STATS=1
       - OMP_NUM_THREADS=1
+      # DeepGEMM (vLLM's fp8-GEMM path) is built for Hopper (sm_90) + datacenter
+      # Blackwell (sm_100/103). Consumer Blackwell (5090 / PRO 6000 / GB10,
+      # sm_120/121) has no recipe and hard-fails "recipe not found" at boot
+      # (disc #571). Pass-through: switch.sh/launch.sh auto-inject
+      # VLLM_USE_DEEP_GEMM=0 on those cards; if you run raw `docker compose` on a
+      # consumer Blackwell card, set it yourself (VLLM_USE_DEEP_GEMM=0). Unset =
+      # vLLM's arch default (DeepGEMM stays on where it works).
+      - VLLM_USE_DEEP_GEMM
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
       - VLLM_ATTENTION_BACKEND=TRITON_ATTN
