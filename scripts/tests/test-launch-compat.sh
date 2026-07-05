@@ -173,9 +173,12 @@ out="$(python3 "$HELPER" resolve-variant-pin --variant "$DMAX" --format shell --
 assert_not_contains "$out" "VLLM_USE_DEEP_GEMM"        # Hopper keeps the fast path
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_5090X2")"
 assert_not_contains "$out" "VLLM_USE_DEEP_GEMM"        # int4-weights slug: not the DeepGEMM path
+# fp8-DYNAMIC (compressed-tensors) is fp8-family too — agents-a1 must also disable
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/agents-a1-dual --format shell --gpu-spec "$GPU_5090X2")"
+assert_contains "$out" "VLLM_USE_DEEP_GEMM=0"          # fp8-dynamic weights route FP8 GEMM
 out="$(VLLM_USE_DEEP_GEMM=1 python3 "$HELPER" resolve-variant-pin --variant "$DMAX" --format shell --gpu-spec "$GPU_5090X2")"
 assert_not_contains "$out" "VLLM_USE_DEEP_GEMM=0"      # explicit user pin wins
-echo "  ok: fp8w DeepGEMM disable (5090/Ada down · Hopper keep · non-fp8 skip · user-pin — 5 cases)"
+echo "  ok: fp8w DeepGEMM disable (5090/Ada down · Hopper keep · non-fp8 skip · fp8-dynamic · user-pin — 6 cases)"
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"

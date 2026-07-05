@@ -27,9 +27,10 @@ LINE = re.compile(r"^\s*-\s*VLLM_USE_DEEP_GEMM\s*$", re.M)
 missing = []
 checked = 0
 for slug, e in COMPOSE_REGISTRY.items():
-    # The _deepgemm_env launcher injection gates on fp8 weights + a vLLM engine;
-    # match that exact set (INT4/AWQ/bf16/W8A8 never invoke DeepGEMM).
-    if e.get("weights_variant") != "fp8":
+    # Mirror the _deepgemm_env gate EXACTLY: fp8-FAMILY weights (startswith
+    # "fp8" → "fp8" and "fp8-dynamic"/compressed-tensors, e.g. agents-a1) on a
+    # vLLM engine. INT4/AWQ/W8A8/bf16 never invoke DeepGEMM → correctly excluded.
+    if not (e.get("weights_variant") or "").startswith("fp8"):
         continue
     if "vllm" not in (e.get("engine") or ""):
         continue
