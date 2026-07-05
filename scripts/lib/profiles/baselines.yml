@@ -14,6 +14,12 @@
 #   quality_8pk           thinking-OFF arm "P/150"; _think_on = thinking-ON.
 #                         8-pack noise band is ±5–7 — separates classes, not
 #                         fine rankings (badge semantics, design §2.1.4).
+#   quality_env           the harness fingerprint the quality numbers were
+#                         produced ON: { harness: "benchlocal-cli X.Y.Z",
+#                         sandbox_digest?: "sha256:…" } — §2.1.4 provenance
+#                         (the half-deployed-sandbox lesson). Written by
+#                         catalog-baseline.sh from the results JSON; digest
+#                         rides along once benchlocal emits it.
 #   ctx_validated         highest ctx EXERCISED by the gate, with the recall
 #                         verdict: {tokens: N, niah: "clean@XK" | "allocation-
 #                         only"} — allocation alone is NOT validation (§2.1.2).

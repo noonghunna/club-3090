@@ -67,6 +67,16 @@ def check_row(where, row, submission=False):
     for k in ("quality_8pk", "quality_8pk_think_on"):
         if k in row and not QUALITY_RE.match(str(row[k])):
             errors.append(f"{where}.{k}: must look like 'P/150'")
+    # quality_env (friction #8 / §2.1.4): the harness fingerprint the quality
+    # numbers were produced on — harness required, sandbox_digest optional
+    # (rides along once benchlocal emits it)
+    if "quality_env" in row:
+        qe = row["quality_env"]
+        ok = (isinstance(qe, dict)
+              and isinstance(qe.get("harness"), str) and qe["harness"].strip()
+              and ("sandbox_digest" not in qe or isinstance(qe["sandbox_digest"], str)))
+        if not ok:
+            errors.append(f"{where}.quality_env: {{harness: str, sandbox_digest?: str}}")
     if "ctx_validated" in row:
         cv = row["ctx_validated"]
         ok = (isinstance(cv, dict) and isinstance(cv.get("tokens"), int)

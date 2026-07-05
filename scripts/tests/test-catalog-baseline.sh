@@ -69,10 +69,12 @@ cat > "$TAGD/_internal.json" <<'EOF'
            "code": {"decode_tps_mean": 154.0, "ttft_ms_mean": 128.0}}}
 EOF
 cat > "$TAGD/quality-full.json" <<'EOF'
-{"packs": [{"passed": 55, "total": 75}, {"passed": 50, "total": 75}]}
+{"runner_version": "0.9.9",
+ "packs": [{"passed": 55, "total": 75}, {"passed": 50, "total": 75}]}
 EOF
 cat > "$TAGD/quality-full-thinking.json" <<'EOF'
-{"packs": [{"passed": 60, "total": 75}, {"passed": 50, "total": 75}]}
+{"runner_version": "0.9.9",
+ "packs": [{"passed": 60, "total": 75}, {"passed": 50, "total": 75}]}
 EOF
 cat > "$TAGD/verify-stress.log" <<'EOF'
     ✓ rung 1/6: target=95K  actual=94K tok (36%)  recalled 'violet chinchilla 79'  prefill=7402.9 t/s (13s)  VRAM_free=1403MB
@@ -90,6 +92,9 @@ grep -q "narr_tps: 153.9" <<<"$out" || fail "narr_tps not extracted: $out"
 grep -q "code_tps: 154.0" <<<"$out" || fail "code_tps not extracted"
 grep -q 'quality_8pk: "105/150"' <<<"$out" || fail "quality_8pk not extracted"
 grep -q 'quality_8pk_think_on: "110/150"' <<<"$out" || fail "think-on not extracted"
+# friction #8: the harness fingerprint rides the row (§2.1.4 provenance)
+grep -q 'quality_env: { harness: "benchlocal-cli 0.9.9" }' <<<"$out" \
+  || fail "quality_env not extracted from runner_version: $out"
 grep -q 'tokens: 240635' <<<"$out" || fail "ctx_validated not extracted"
 # 2c: prefill depth points land; the canonical ttft_ms stays the SHORT-prompt
 # value (the 90K block's 17s TTFT must not bleed into it).

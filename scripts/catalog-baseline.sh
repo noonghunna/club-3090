@@ -186,25 +186,50 @@ if bench_log and n_runs < 5:
 
 
 def _quality_from(path: Path):
+    """(score, provenance) from a benchlocal results JSON.  Provenance is the
+    friction-#8 hook: a quality number without its harness fingerprint is
+    unreproducible (the half-deployed-sandbox incident).  runner_version is in
+    every results JSON; sandbox_digest rides along when benchlocal starts
+    emitting it (upstream candidate — no warn until then)."""
     if not path.is_file():
-        return None
+        return None, None
     try:
         q = json.loads(path.read_text())
         packs = q.get("packs") or []
         p = sum(int(x.get("passed") or 0) for x in packs)
         t = sum(int(x.get("total") or 0) for x in packs)
-        return f"{p}/{t}" if t else None
+        prov = {
+            "runner_version": q.get("runner_version") or None,
+            "sandbox_digest": q.get("sandbox_digest") or None,
+        }
+        return (f"{p}/{t}" if t else None), prov
     except (ValueError, TypeError):
-        return None
+        return None, None
 
 
-q_off = _quality_from(tag_dir / "quality-full.json")
-q_on = _quality_from(tag_dir / "quality-full-thinking.json")
+q_off, prov_off = _quality_from(tag_dir / "quality-full.json")
+q_on, prov_on = _quality_from(tag_dir / "quality-full-thinking.json")
 if not q_off and not q_on:
     if not tps_only:
         die("quality gate not covered: no quality-full*.json in the tag dir "
             "(re-run with --tps-only to induct a TPS-only row, WARNED)")
     warn("inducting WITHOUT a quality run (--tps-only) — 8pk stays empty")
+
+# quality_env (friction #8 / design §2.1.4): the harness fingerprint the
+# quality numbers were produced ON.  Both arms must agree — a version split
+# means the arms aren't comparable, so the field is omitted LOUDLY.
+quality_env = None
+_provs = [p for p in (prov_off, prov_on) if p and p.get("runner_version")]
+if _provs:
+    _vers = sorted({p["runner_version"] for p in _provs})
+    if len(_vers) > 1:
+        warn(f"quality arms ran on DIFFERENT harness versions {_vers} — "
+             "quality_env omitted; investigate before trusting the arm delta")
+    else:
+        quality_env = f'harness: "benchlocal-cli {_vers[0]}"'
+        _digs = sorted({p["sandbox_digest"] for p in _provs if p.get("sandbox_digest")})
+        if len(_digs) == 1:
+            quality_env += f', sandbox_digest: "{_digs[0]}"'
 
 # ── ctx_validated: the verify-stress ceiling ladder verdict ──────────────────
 ctx_tokens = None
@@ -360,6 +385,8 @@ if q_off:
     fields.append(f'quality_8pk: "{q_off}"')
 if q_on:
     fields.append(f'quality_8pk_think_on: "{q_on}"')
+if (q_off or q_on) and quality_env:
+    fields.append(f"quality_env: {{ {quality_env} }}")
 if ctx_tokens:
     fields.append(f'ctx_validated: {{ tokens: {ctx_tokens}, niah: "{niah}" }}')
 fields.append(f"date: {row_date}")
