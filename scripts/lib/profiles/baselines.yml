@@ -353,6 +353,34 @@ baselines:
         submitted_by: "guybrush01"
         tier: submitted
 
+  vllm/qwen-27b-multi-fast:
+    # Cross-rig submission only — the reference bench has 2 cards, so there is
+    # no local 4-card row (and can't be). This is the FIRST measured data for
+    # the 4-card fast tier; promotion to ✅ Production rests on it (the compose
+    # header's own experimental-unblock: "until a real ≥4× 3090 host validates").
+    submissions:
+      4x3090-pcie:
+        # cross-rig report #584 (@ryanmpelletier, 4× 3090 Proxmox VM passthrough,
+        # v0.24.0, caps 350 W, all x16): verify-full 9/9 · verify-stress needles
+        # clean to 240K · soak-continuous PASS (0 err / 0 silent / <200 MiB) ·
+        # bench n=5 CV 4.2%/3.0%. KV pool 1.77M tok / 6.77× @262K (vs 2-card
+        # vllm/dual 622K/2.37×) — the 4-card win is concurrency, not single-stream
+        # speed (decode ~flat, TP=4 all-reduce over PCIe). TPS-only: report.sh
+        # runs no 8-pack; quality is TP-invariant, carried from the vllm/dual
+        # proxy (109/150). ⚠ ceiling margin thin (851 MB @240K on driver 595, #149).
+        narr_tps: 74.76
+        code_tps: 90.83
+        ttft_ms: 141
+        prefill_tps: { 10k: 1288, 90k: 1175 }
+        ctx_validated: { tokens: 240633, niah: "clean@240K" }
+        date: 2026-07-05
+        engine_pin: "vllm/vllm-openai:v0.24.0"
+        rig: "4x3090-pcie"
+        power_cap_w: [350, 350, 350, 350]
+        source: "https://github.com/noonghunna/club-3090/issues/584"
+        submitted_by: "ryanmpelletier"
+        tier: submitted
+
 # ───────────────────────────────────────────────────────────────────────────
 # KNOWN GAPS — wave-2 dispositions (2026-07-04): each slug below has NO row
 # on purpose; the disposition says what unlocks one. Do NOT guess numbers in.

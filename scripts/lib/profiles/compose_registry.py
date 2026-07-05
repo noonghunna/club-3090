@@ -217,8 +217,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/mtp.yml",
         default_port=8014,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="Qwen3.6-27B 'fast' tier, 4-card (TP=4): AutoRound INT4 + fp8_e5m2 KV + MTP n=3 @262K. 🧪 Experimental (cross-rig) — byte-identical to vllm/dual (≡ vllm/qwen-27b-dual-fast) apart from TP=4 + gpu-count; vllm/dual @TP=2 is the on-rig validation proxy (this dev rig has 2× 3090). The extra cards buy ~2x aggregate KV headroom at 262K. Validate on a real ≥4× 3090 host before promotion.",
+        status="production",
+        status_note="Qwen3.6-27B 'fast' tier, 4-card (TP=4): AutoRound INT4 + fp8_e5m2 KV + MTP n=3 @262K. Byte-identical to vllm/dual (≡ vllm/qwen-27b-dual-fast) apart from TP=4 + gpu-count; vllm/dual @TP=2 is the on-rig proxy (this dev rig has 2× 3090). Promoted 2026-07-05 on the cross-rig validation the header required — #584 (@ryanmpelletier, 4× 3090): verify-full 9/9, verify-stress clean to 240K, soak PASS, bench n=5. The 4 cards buy concurrency — KV pool 1.77M/6.77× vs the 2-card 622K/2.37× (single-stream decode ~flat). Quality is TP-invariant, carried from the vllm/dual proxy (109/150); a 4-card 8-pack confirmation is the open follow-up.",
     ),
     "vllm/qwen-27b-multi-max": _entry(
         model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single",
