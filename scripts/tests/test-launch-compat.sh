@@ -122,6 +122,26 @@ assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.24.0"
 assert_not_contains "$out" "KV_CACHE_DTYPE"
 echo "  ok: #246 arch-aware KV injection matrix (8 cases)"
 
+# --- detector: Blackwell family must not collapse to rtx-5090 (#576 wrinkle) --
+# The sm>=12 bucket used to map every Blackwell to rtx-5090, so a 96 GB PRO 6000
+# and a 128 GB GB10 both mis-detected as a 32 GB 5090. Lock the split.
+det="$(python3 - <<'PY'
+import sys; sys.path.insert(0, "scripts/lib/profiles")
+from launch_compat import _hardware_id_from_gpu as m
+cases = [
+    ("NVIDIA RTX PRO 6000 Blackwell", 98304, 12.0, "rtx-6000-pro-blackwell"),
+    ("Unnamed Blackwell 96GB",        98304, 12.0, "rtx-6000-pro-blackwell"),  # alias-miss fallback
+    ("NVIDIA GB10",                  131072, 12.1, "dgx-spark"),
+    ("NVIDIA GeForce RTX 5090",       32607, 12.0, "rtx-5090"),
+    ("NVIDIA RTX 6000 Ada Generation",49140,  8.9, "rtx-4090"),                # 'pro 6000' must NOT catch Ada
+]
+bad = [f"{n}->{m(n,v,s)} want {e}" for n, v, s, e in cases if m(n, v, s) != e]
+print("FAIL: " + " | ".join(bad) if bad else "OK")
+PY
+)"
+[[ "$det" == "OK" ]] || { echo "  FAIL: detector: $det"; exit 1; }
+echo "  ok: Blackwell detector split (PRO 6000 / GB10 / 5090 / Ada — 5 cases)"
+
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"
   assert_contains "$out" "image: vllm/vllm-openai:v0.24.0"
