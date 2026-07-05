@@ -1038,6 +1038,21 @@ class CatalogPane(Container):
                 yours += f"  [dim]· on {lm.quality_8pk_think_on}[/dim]"
             yours += f"  [dim]({lm.date} · this rig)[/dim]"
             lines.append(yours)
+        # Slice 3 — cross-rig submissions: rig-labeled, tier-badged, NEVER
+        # merged into the bar (a 5090 number is not this rig's bar). A
+        # submission-only entry shows bar "—" with only these lines.
+        for rc, s in sorted((b.get("submissions") or {}).items()):
+            n = s.get("narr_tps")
+            c = s.get("code_tps")
+            tps = (f"{n:.0f}" if n is not None else "—") + "/" + (
+                f"{c:.0f}" if c is not None else "—")
+            sub = (
+                f"  [bold]⑂ {rc}[/bold]  {tps} TPS"
+                f"  [dim]({s.get('tier')} · {s.get('date')} · {s.get('submitted_by')})[/dim]"
+            )
+            if s.get("stale") is True:
+                sub += "  [yellow]†[/yellow]"
+            lines.append(sub)
         note = (entry.status_note or "").strip()
         if note:
             lines.append(f"  [bold]caveat[/bold]  [yellow]{note}[/yellow]")

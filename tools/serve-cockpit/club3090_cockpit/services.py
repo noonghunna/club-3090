@@ -820,6 +820,11 @@ class CockpitData:
             b = getattr(e.row, "baseline", None)
             if not b:
                 continue
+            # Slice 3: a submission-only entry (cross-rig rows, no primary
+            # local row) is NOT the bar — the TPS column stays "—" and the
+            # cross-rig rows surface rig-labeled in the detail panel only.
+            if b.get("narr_tps") is None and b.get("code_tps") is None:
+                continue
             e.measurement = Measurement(
                 narr_tps=b.get("narr_tps"),
                 code_tps=b.get("code_tps"),

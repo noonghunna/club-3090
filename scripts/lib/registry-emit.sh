@@ -461,6 +461,20 @@ def _baseline_for(slug: str, compose_path: str):
     # (unpinned engine or unreadable compose) — badge only on TRUE.
     out["stale"] = (cur != measured) if (cur and measured) else None
     out["current_pin"] = cur
+    # slice 3: cross-rig submissions ride the join with the SAME per-row
+    # staleness verdict (an image pin is rig-independent, so the comparison
+    # holds for foreign rigs).  A submission-only entry (no primary row) has
+    # out["stale"] = None and carries only this map.
+    subs = row.get("submissions")
+    if isinstance(subs, dict):
+        out["submissions"] = {
+            rc: {
+                **s,
+                "stale": (cur != s.get("engine_pin"))
+                if (cur and s.get("engine_pin")) else None,
+            }
+            for rc, s in subs.items()
+        }
     return out
 
 # --- variants: exactly the fields parse_variant_rows produces from the tab form,
