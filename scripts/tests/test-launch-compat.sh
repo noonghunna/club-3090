@@ -142,6 +142,23 @@ PY
 [[ "$det" == "OK" ]] || { echo "  FAIL: detector: $det"; exit 1; }
 echo "  ok: Blackwell detector split (PRO 6000 / GB10 / 5090 / Ada — 5 cases)"
 
+# --- #246 Phase 2 mem-fraction floor (DOWNWARD only) --------------------------
+# A unified-memory card (Spark, mem_util_safe 0.85) can't safely give the 0.92
+# compose default -> inject the floor. Discrete cards (0.95/0.96 > 0.92) are
+# never raised (that touches Cliff margin -> validated opt-in, not automatic).
+GPU_SPARK='0|NVIDIA GB10|131072|12.1'
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_SPARK")"
+assert_contains "$out" "GPU_MEMORY_UTILIZATION=0.85"
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_5090X2")"
+assert_not_contains "$out" "GPU_MEMORY_UTILIZATION"
+# heterogeneous: the lowest ceiling (Spark 0.85) forces the whole rig down
+out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "${GPU_SPARK};1|NVIDIA GeForce RTX 5090|32607|12.0")"
+assert_contains "$out" "GPU_MEMORY_UTILIZATION=0.85"
+# explicit user pin wins
+out="$(GPU_MEMORY_UTILIZATION=0.7 python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_SPARK")"
+assert_not_contains "$out" "GPU_MEMORY_UTILIZATION=0.85"
+echo "  ok: #246 mem-fraction floor (Spark down · discrete no-raise · het-min · user-pin — 4 cases)"
+
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"
   assert_contains "$out" "image: vllm/vllm-openai:v0.24.0"
