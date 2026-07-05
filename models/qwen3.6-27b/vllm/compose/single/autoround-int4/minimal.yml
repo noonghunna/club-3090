@@ -112,7 +112,7 @@ services:
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
-      - "1"
+      - "${MAX_NUM_SEQS:-1}"
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8_e5m2}"
       - --trust-remote-code

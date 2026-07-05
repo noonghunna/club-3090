@@ -150,7 +150,7 @@ services:
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
-      - "2"
+      - "${MAX_NUM_SEQS:-2}"
       - --max-num-batched-tokens
       - "8192"
       - --kv-cache-dtype
