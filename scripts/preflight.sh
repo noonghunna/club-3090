@@ -104,7 +104,7 @@ preflight_gpu() {
           echo "[preflight] p2p:     NVLink bridge detected — launcher auto-engages it (NVLINK_MODE=${NVLINK_MODE:-auto})"
         fi ;;
       pcie_p2p)
-        echo "[preflight] p2p:     driver reports PCIe P2P available — launcher auto-engages it (patched-driver path, NVLINK_MODE=${NVLINK_MODE:-auto})" ;;
+        echo "[preflight] p2p:     driver reports PCIe P2P available — launcher auto-engages it (patched-driver path, NVLINK_MODE=${NVLINK_MODE:-auto}; docs/PCIE_P2P.md)" ;;
     esac
   fi
   # Cross-rig friendliness: surface a hint when 4090 / 5090 cards are

@@ -94,8 +94,8 @@ p2p_verdict() {
     pcie_p2p:on)
       echo "✓ interconnect: PCIe P2P engaged (patched driver, custom all-reduce ON)" ;;
     nvlink:*)
-      echo "⚠ interconnect WARN: an NVLink bridge is present on this host but the serving container ${state} — the bridge is idle, leaving ~15% decode on the table (controlled A/B, BENCHMARKS #77). Boot via launch.sh/switch.sh (auto-detects) or set NVLINK_MODE=force_on; if auto-detect misses on your rig, please file it." ;;
+      echo "⚠ interconnect WARN: an NVLink bridge is present on this host but the serving container ${state} — the bridge is idle, leaving ~15% decode on the table (controlled A/B, BENCHMARKS #77). Boot via launch.sh/switch.sh (auto-detects) or set NVLINK_MODE=force_on; if auto-detect misses on your rig, please file it. Full guide: docs/PCIE_P2P.md" ;;
     pcie_p2p:*)
-      echo "ℹ interconnect: this driver reports PCIe P2P available (patched driver / P2P-capable layout) but the serving container ${state}. Launcher boots auto-enable it; for direct docker compose set NVLINK_MODE=pcie_p2p (+10–22% code TPS measured, #91/#295)." ;;
+      echo "ℹ interconnect: this driver reports PCIe P2P available (patched driver / P2P-capable layout) but the serving container ${state}. Launcher boots auto-enable it; for direct docker compose set NVLINK_MODE=pcie_p2p (+10–22% code TPS measured, #91/#295). Full guide: docs/PCIE_P2P.md" ;;
   esac
 }

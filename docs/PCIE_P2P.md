@@ -66,7 +66,7 @@ A 3-slot (triple-width) card like most 3090s covers its own slot **plus the two 
 
 Two hard truths set expectations before you start:
 
-1. **The stock NVIDIA driver refuses P2P on GeForce cards over `PHB`.** Even with perfect topology and BIOS, the consumer driver disables peer access. Enabling it requires a **patched kernel module** — the community [`aikitoria/open-gpu-kernel-modules`](https://github.com/aikitoria/open-gpu-kernel-modules) fork ([Sam McLeod's walkthrough](https://smcleod.net/2026/02/patching-nvidias-driver-and-vllm-to-enable-p2p-on-consumer-gpus/)). This is a custom DKMS module — weigh the maintenance cost.
+1. **The stock NVIDIA driver refuses P2P on GeForce cards over `PHB`.** Even with perfect topology and BIOS, the consumer driver disables peer access. Enabling it requires a **patched kernel module** — the community [`aikitoria/open-gpu-kernel-modules`](https://github.com/aikitoria/open-gpu-kernel-modules) fork ([Sam McLeod's walkthrough](https://smcleod.net/2026/02/patching-nvidias-driver-and-vllm-to-enable-p2p-on-consumer-gpus/)). This is a custom DKMS module — weigh the maintenance cost. (Should the walkthrough link ever rot, the shape of it: clone the fork matching your driver branch → build + install via DKMS in place of the stock `nvidia` kernel module → reboot → `nvidia-smi topo -p2p r` should now report `OK` between your GPUs.)
 2. **`PHB` P2P is PCIe-bounded** (~25 GB/s on PCIe 4.0 x16), well under NVLink. So the win is real but modest and workload-shaped (§6).
 
 **On this stack**, once the patched module is installed you don't edit composes — set one env var:
@@ -104,7 +104,7 @@ Capability (`topo -m` / `topo -p2p`) tells you it *can* — it doesn't tell you 
 bash scripts/report.sh
 ```
 
-Read the **"Interconnect / P2P engagement"** field under *Boot log highlights* — it surfaces the `[nvlink]` boot line and the resolved `NCCL_P2P_LEVEL` + custom-all-reduce state for the running container, so you see e.g. `P2P ENABLED — NCCL_P2P_LEVEL=PHB, custom all-reduce ON` rather than guessing. (This is exactly the round-trip the field was added to avoid — [#446](https://github.com/noonghunna/club-3090/issues/446), [#488](https://github.com/noonghunna/club-3090/issues/488).)
+Read the **"Interconnect verdict"** line under *Boot log highlights* — the report cross-references host capability against the running container's engagement automatically: `✓ engaged`, `⚠ WARN` (NVLink bridge present but idle), or `ℹ` (P2P-capable driver, container not using it), each naming the fix. The raw evidence sits directly above it: the `[nvlink]` boot line plus the resolved `NCCL_P2P_LEVEL` + custom-all-reduce env. On rigs with no P2P capability the verdict line is deliberately absent — silence means "nothing to gain here", not "check failed". (This is exactly the round-trip the field was added to avoid — [#446](https://github.com/noonghunna/club-3090/issues/446), [#488](https://github.com/noonghunna/club-3090/issues/488).)
 
 ---
 
