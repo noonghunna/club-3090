@@ -77,6 +77,21 @@ print("  ✓ unservable repo → empty formats (inspect_repo maps this to error)
 inv = artifact_inventory(api([("weird-model.gguf", 5 * GB)]))
 assert len(inv["gguf_variants"]) == 1 and inv["gguf_variants"][0]["quant"] == "weird-model"
 print("  ✓ unparseable quant token keys by stem (never silently dropped)")
+
+# ── 6. DISTINCT artifacts sharing a quant token stay separate ────────────────
+# (live dogfood 2026-07-05: Qwythos ships base + MTP builds per quant —
+# token-keyed grouping merged them into one "2-part" variant with a summed,
+# WRONG size and no way to pick just one)
+inv = artifact_inventory(api([
+    ("Qwythos-9B-Q4_K_M.gguf", 5 * GB),
+    ("Qwythos-9B-MTP-Q4_K_M.gguf", 6 * GB),
+    ("Qwythos-9B-Q8_0.gguf", 9 * GB),
+]))
+quants = {v["quant"]: v for v in inv["gguf_variants"]}
+assert set(quants) == {"Q4_K_M", "MTP-Q4_K_M", "Q8_0"}, quants
+assert quants["Q4_K_M"]["parts"] == 1 and abs(quants["Q4_K_M"]["size_gb"] - 5.0) < 0.01
+assert quants["MTP-Q4_K_M"]["parts"] == 1 and abs(quants["MTP-Q4_K_M"]["size_gb"] - 6.0) < 0.01
+print("  ✓ base vs MTP builds per quant = separate variants, honest sizes")
 PY
 
 # CLI shim: --inventory is required; bad usage exits 2 without network

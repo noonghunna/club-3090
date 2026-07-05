@@ -566,6 +566,12 @@ def artifact_inventory(api: dict) -> dict:
         }
 
     # GGUF: any depth (quant subdirs are common), mmproj split out.
+    # Grouping key = the STEM (basename minus the -NNNNN-of-NNNNN part
+    # suffix), NOT the quant token — a repo can ship DISTINCT artifacts
+    # sharing a token (live dogfood 2026-07-05: Qwythos ships
+    # `…-Q4_K_M.gguf` AND `…-MTP-Q4_K_M.gguf` per quant; token-keying
+    # merged them into one "2-part variant" with a summed, wrong size).
+    # True multi-part shards share a stem, so `parts` still counts them.
     variants: dict[str, dict] = {}
     mmproj: list[str] = []
     for n in names:
@@ -576,17 +582,26 @@ def artifact_inventory(api: dict) -> dict:
             mmproj.append(n)
             continue
         stem = _GGUF_PART_RE.sub("", base)
-        m = _GGUF_QUANT_RE.search(stem)
-        key = m.group(1).upper() if m else stem
-        v = variants.setdefault(key, {"quant": key, "size_gb": 0.0, "parts": 0, "files": []})
+        v = variants.setdefault(stem, {"size_gb": 0.0, "parts": 0, "files": []})
         v["size_gb"] += sizes.get(n, 0) / (1024 ** 3)
         v["parts"] += 1
         v["files"].append(n)
-    gguf_variants = sorted(
-        ({**v, "size_gb": round(v["size_gb"], 4), "files": sorted(v["files"])}
-         for v in variants.values()),
-        key=lambda v: (v["size_gb"], v["quant"]),
-    )
+    # Display label: the stem minus the repo-wide COMMON prefix — for
+    # standard repos that IS the quant token ("Q4_K_M"); for multi-artifact
+    # repos it keeps the distinguishing part ("MTP-Q4_K_M").  Falls back to
+    # the parsed token, then the full stem (labels stay unique: stems are).
+    common = os.path.commonprefix(list(variants)) if len(variants) > 1 else ""
+    out_variants = []
+    for stem, v in variants.items():
+        label = stem[len(common):].strip("-_. ")
+        if not label:
+            m = _GGUF_QUANT_RE.search(stem)
+            label = m.group(1).upper() if m else stem
+        out_variants.append(
+            {"quant": label, "size_gb": round(v["size_gb"], 4),
+             "parts": v["parts"], "files": sorted(v["files"])}
+        )
+    gguf_variants = sorted(out_variants, key=lambda v: (v["size_gb"], v["quant"]))
 
     formats = []
     if st:

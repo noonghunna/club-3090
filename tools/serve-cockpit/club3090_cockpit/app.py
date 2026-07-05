@@ -268,7 +268,7 @@ def funnel_slug_options(
         _GGUF_ENGINE_FAMILIES if artifact_format == "gguf"
         else _SAFETENSORS_ENGINE_FAMILIES
     )
-    out: list[ProfileOption] = []
+    raw: list[tuple[str, str, ProfileOption]] = []
     seen: set[str] = set()
     for row in variants:
         slug = (getattr(row, "slug", "") or "").strip()
@@ -291,7 +291,9 @@ def funnel_slug_options(
         seen.add(slug)
         model = (getattr(row, "model", "") or "").strip() or "—"
         quant = variant_quant(row) or ""
-        stem = ((getattr(row, "file", "") or "").rsplit(".", 1)[0]) or ""
+        # basename stem ONLY — some registry rows carry a subpath in `file`
+        # (dogfood r2: `dual/piehsoft-q6k/mtp.yml` rendered a duplicated tail)
+        stem = (getattr(row, "file", "") or "").rsplit("/", 1)[-1].rsplit(".", 1)[0]
         # Display engine = the PRECISE token (switch_engine, else the slug's
         # own prefix) — the canon family is filter-only (it can't tell
         # ik-llama from llamacpp, which the label must).
@@ -300,11 +302,52 @@ def funnel_slug_options(
             or slug.split("/", 1)[0]
         )
         tail = f"{model}-{quant}" if quant else model
-        label = f"{topo or '—'}/{eng}/{tail}" + (f"  ·  {stem}" if stem else "")
+        label = f"{topo or '—'}/{eng}/{tail}"
         status = (getattr(row, "status", "") or "").strip().lower()
-        out.append(ProfileOption(label=label, slug=slug, topology=topo or "—", status=status))
+        raw.append((label, stem, ProfileOption(label=label, slug=slug, topology=topo or "—", status=status)))
+    # §2b dogfood r2 (maintainer): the label is topology/engine/model-quant
+    # ONLY — a serving-stem tail duplicated the path axes and read as a
+    # second slug.  The stem is appended SOLELY to disambiguate genuine
+    # collisions (two slugs sharing all three axes, e.g. fp8-mtp vs turbo).
+    counts: dict[str, int] = {}
+    for label, _stem, _o in raw:
+        counts[label] = counts.get(label, 0) + 1
+    out = [
+        ProfileOption(
+            label=(f"{label}  ·  {stem}" if (counts[label] > 1 and stem) else label),
+            slug=o.slug, topology=o.topology, status=o.status,
+        )
+        for (label, stem, o) in raw
+    ]
     out.sort(key=lambda o: (_TOPO_ORDER.get(o.topology, 99), o.label))
     return out
+
+
+def funnel_recommended(
+    options: list["ProfileOption"], defaults: Optional[list[dict]] = None
+) -> Optional[str]:
+    """§2b follow-up (live dogfood 2026-07-05): the funnel surfaces ONE
+    visible recommendation — the old rig-topology default picked a DUAL slug
+    for a 5 GiB gguf on a 2-card rig, which reads as 'the UI wants me on two
+    cards'.  Rule: the SMALLEST fitting topology wins (options are already
+    size-floored + topology-sorted, so that's the first group — the cheapest
+    config that holds the artifact); within it, prefer the registry's own
+    curated default for the (family, topology), else the first functional-
+    status option, else the group's first.  Pure."""
+    if not options:
+        return None
+    topo = options[0].topology
+    group = [o for o in options if o.topology == topo]
+    curated = _curated_default_map(defaults)
+    for o in group:
+        prefix = o.slug.split("/", 1)[0]
+        fam = _canon_engine_family(prefix) or prefix
+        if curated.get((fam, topo)) == o.slug:
+            return o.slug
+    for o in group:
+        if _status_is_functional(o.status):
+            return o.slug
+    return group[0].slug
 
 
 def _curated_default_map(
@@ -4406,12 +4449,23 @@ class LaneBringPane(Container):
         margin-bottom: 1;
     }
     LaneBringPane #lane-bring-input-row {
-        height: 3;
+        height: 4;
         margin-bottom: 1;
     }
     LaneBringPane #lane-bring-stage2-row {
-        height: 3;
+        height: 4;
         margin-bottom: 1;
+    }
+    LaneBringPane .funnel-field {
+        width: auto;
+        height: auto;
+    }
+    LaneBringPane .funnel-field-grow {
+        width: 1fr;
+    }
+    LaneBringPane .funnel-field-title {
+        color: $text-muted;
+        height: 1;
     }
     LaneBringPane #lane-bring-url-input {
         width: 1fr;
@@ -4430,6 +4484,12 @@ class LaneBringPane(Container):
     LaneBringPane #lane-bring-profile-custom {
         width: 40;
         margin-left: 1;
+    }
+    LaneBringPane #lane-bring-slug-card {
+        border: solid $secondary;
+        padding: 0 2;
+        margin-top: 1;
+        height: auto;
     }
     LaneBringPane .profile-custom-hidden {
         display: none;
@@ -4460,46 +4520,69 @@ class LaneBringPane(Container):
 
     def compose(self) -> ComposeResult:
         yield Label("① Bring — inspect an HF model", id="lane-bring-heading")
+        # Dogfood r2 (maintainer): every input carries a TITLE — bare
+        # dropdowns read as anonymous fields.  Each field = a Vertical
+        # (title Label + widget); titles toggle WITH their widget.
         with Horizontal(id="lane-bring-input-row"):
-            yield Input(
-                placeholder="org/Model  (e.g. unsloth/Qwen3-27B-abliterated-GGUF)",
-                id="lane-bring-url-input",
-            )
-            yield Button("Inspect", id="lane-bring-inspect-btn", variant="primary")
+            with Vertical(classes="funnel-field funnel-field-grow"):
+                yield Label("HF repo", classes="funnel-field-title")
+                yield Input(
+                    placeholder="org/Model  (e.g. unsloth/Qwen3-27B-abliterated-GGUF)",
+                    id="lane-bring-url-input",
+                )
+            with Vertical(classes="funnel-field"):
+                yield Label(" ", classes="funnel-field-title")
+                yield Button("Inspect", id="lane-bring-inspect-btn", variant="primary")
         # Stage 2/3 — HIDDEN until Inspect identifies a supported artifact
         # (§2b-1: no engine/topology/template before the artifact is known).
         with Horizontal(id="lane-bring-stage2-row", classes="funnel-hidden"):
-            # §2b-2 — the GGUF quant pick comes BEFORE any slug appears.
-            yield Select(
-                [],
-                prompt="— pick a GGUF quant —",
-                allow_blank=True,
-                id="lane-bring-gguf-select",
-                classes="funnel-hidden",
-            )
-            # §2b-4/5 — the artifact-filtered, topology-first catalog options
-            # (repopulated per inventory/pick by the app; the pre-inspect
-            # template fill is harmless — the row is hidden).
-            yield Select(
-                [("vllm/dual  ·  loading templates…", "vllm/dual")],
-                value="vllm/dual",
-                allow_blank=False,
-                id="lane-bring-profile-input",
-                classes="funnel-hidden",
-            )
-            # FIX 2 (escape hatch) — companion free-text override, hidden until the
-            # "✎ custom slug…" sentinel is chosen (same idiom as Run · BYO).
+            with Vertical(classes="funnel-field"):
+                # §2b-2 — the GGUF quant pick comes BEFORE any slug appears.
+                yield Label(
+                    "GGUF quant",
+                    id="lane-bring-gguf-title",
+                    classes="funnel-field-title funnel-hidden",
+                )
+                yield Select(
+                    [],
+                    prompt="— pick a GGUF quant —",
+                    allow_blank=True,
+                    id="lane-bring-gguf-select",
+                    classes="funnel-hidden",
+                )
+            with Vertical(classes="funnel-field funnel-field-grow"):
+                # §2b-4/5 — the artifact-filtered, topology-first catalog options
+                # (repopulated per inventory/pick by the app; the pre-inspect
+                # template fill is harmless — the row is hidden).
+                yield Label(
+                    "catalog config  (topology/engine/model-quant · ⭐ recommended)",
+                    id="lane-bring-profile-title",
+                    classes="funnel-field-title funnel-hidden",
+                )
+                yield Select(
+                    [("vllm/dual  ·  loading templates…", "vllm/dual")],
+                    value="vllm/dual",
+                    allow_blank=False,
+                    id="lane-bring-profile-input",
+                    classes="funnel-hidden",
+                )
+            # FIX 2 (escape hatch) — companion free-text override, hidden until
+            # the "✎ custom slug…" sentinel is chosen (same idiom as Run · BYO;
+            # untitled — its placeholder is the title, and it must collapse
+            # fully when hidden).
             yield Input(
                 placeholder="profile-like slug — e.g. ik-llama/iq4ks-mtp",
                 id="lane-bring-profile-custom",
                 classes="profile-custom-hidden",
             )
-            yield Button(
-                "Fit-check",
-                id="lane-bring-fit-btn",
-                variant="primary",
-                classes="funnel-hidden",
-            )
+            with Vertical(classes="funnel-field"):
+                yield Label(" ", classes="funnel-field-title")
+                yield Button(
+                    "Fit-check",
+                    id="lane-bring-fit-btn",
+                    variant="primary",
+                    classes="funnel-hidden",
+                )
         yield Static(
             "[dim]Stage ① of the Bring & Validate pipeline.  Enter an HF repo and\n"
             "Inspect — the deriver enumerates its artifacts (safetensors / GGUF\n"
@@ -4508,6 +4591,9 @@ class LaneBringPane(Container):
             "Fit-check then unlocks ② Serve and ⑤ Promote.[/dim]",
             id="lane-bring-result-card",
         )
+        # Dogfood r2 — the SELECTED SLUG's detail card (ctx / status / port /
+        # drafter / the bar), beside the HF-repo inventory verdict above.
+        yield Static("", id="lane-bring-slug-card", classes="funnel-hidden")
         # §2b-6/7 — the weights state + download/handoff affordance line
         # (hidden until a fit-check succeeds).
         yield Static("", id="lane-bring-weights-line", classes="funnel-hidden")
@@ -4567,6 +4653,7 @@ class LaneBringPane(Container):
             lines.append(f"  [dim]base_model: {inv.lineage_base_model}[/dim]")
         card.update("\n".join(lines))
         row.remove_class("funnel-hidden")
+        gtitle = self.query_one("#lane-bring-gguf-title", Label)
         if inv.has_gguf:
             opts = [
                 (f"{v.quant}  ·  {v.size_gb:.1f} GiB" + (f" ({v.parts} parts)" if v.parts > 1 else ""), v.quant)
@@ -4581,8 +4668,10 @@ class LaneBringPane(Container):
             except Exception:
                 gsel.set_options(opts)
             gsel.remove_class("funnel-hidden")
+            gtitle.remove_class("funnel-hidden")
         else:
             gsel.add_class("funnel-hidden")
+            gtitle.add_class("funnel-hidden")
 
     def reveal_slug_stage(
         self, options: list[tuple[str, str]], default: Optional[str]
@@ -4592,11 +4681,25 @@ class LaneBringPane(Container):
         sel = self.query_one("#lane-bring-profile-input", Select)
         _set_select_options(sel, options, default)
         sel.remove_class("funnel-hidden")
+        self.query_one("#lane-bring-profile-title", Label).remove_class("funnel-hidden")
         self.query_one("#lane-bring-fit-btn", Button).remove_class("funnel-hidden")
 
     def hide_slug_stage(self) -> None:
         self.query_one("#lane-bring-profile-input", Select).add_class("funnel-hidden")
+        self.query_one("#lane-bring-profile-title", Label).add_class("funnel-hidden")
         self.query_one("#lane-bring-fit-btn", Button).add_class("funnel-hidden")
+        self.show_slug_details("")
+
+    def show_slug_details(self, markup: str) -> None:
+        """Dogfood r2 — the selected slug's detail card (ctx / status / port /
+        drafter / the bar).  Empty markup hides it."""
+        card = self.query_one("#lane-bring-slug-card", Static)
+        if markup:
+            card.update(markup)
+            card.remove_class("funnel-hidden")
+        else:
+            card.update("")
+            card.add_class("funnel-hidden")
 
     def set_weights_line(self, markup: str) -> None:
         """§2b-6/7 — the weights-state / download / handoff line under the
@@ -6905,7 +7008,6 @@ class CockpitApp(App):
     def _reveal_funnel_slugs(
         self, artifact_format: str, artifact_gb: Optional[float]
     ) -> None:
-        pairs = self._funnel_options_for(artifact_format, artifact_gb)
         opts = funnel_slug_options(
             self._variants or [],
             artifact_format,
@@ -6913,11 +7015,69 @@ class CockpitApp(App):
             vram_gb=self._known_gpu_vram_gb(),
             gpu_count=self._known_gpu_count(),
         )
-        default = default_profile_template(opts, self._known_gpu_count() or 2)
+        # ONE visible recommendation (§2b follow-up): smallest fitting
+        # topology + curated engine preference — starred AND pre-selected;
+        # the full filtered list stays reachable below it.
+        rec = funnel_recommended(
+            opts, list(getattr(self._data, "catalog_defaults", None) or [])
+        )
+        pairs = [
+            ((f"⭐ {label}" if value == rec else label), value)
+            for (label, value) in profile_select_options(opts)
+        ]
         try:
-            self.query_one("#lane-bring-pane", LaneBringPane).reveal_slug_stage(pairs, default)
+            pane = self.query_one("#lane-bring-pane", LaneBringPane)
+            pane.reveal_slug_stage(pairs, rec)
+            # Dogfood r2 — the pre-selected recommendation's details show
+            # immediately (updates ride on_select_changed thereafter).
+            pane.show_slug_details(self._funnel_slug_details(rec) if rec else "")
         except Exception:
             pass
+
+    def _funnel_slug_details(self, slug: str) -> str:
+        """Dogfood r2 — the SELECTED catalog slug's key facts for the Bring
+        pane's detail card: status · ctx · port · drafter · vision · the
+        shipped bar (with the staleness dagger).  Pure read of the cached
+        variants (the baseline dict rides each row via the emit join)."""
+        row = next(
+            (v for v in (self._variants or []) if getattr(v, "slug", "") == slug),
+            None,
+        )
+        if row is None:
+            return ""
+        status = (getattr(row, "status", "") or "").strip()
+        lines = [
+            f"  [bold]{slug}[/bold]  [dim]·[/dim]  {_status_glyph(status)} {status or '—'}"
+            f"  [dim]·[/dim]  ctx {getattr(row, 'ctx_label', '') or '—'}"
+            f"  [dim]·[/dim]  port {getattr(row, 'port', '') or '—'}"
+        ]
+        drafter = str(getattr(row, "drafter", "") or "")
+        vision = bool(getattr(row, "vision", False))
+        facets = []
+        if drafter:
+            facets.append(f"drafter {drafter}")
+        if vision:
+            facets.append("vision")
+        if facets:
+            lines.append(f"  [dim]{' · '.join(facets)}[/dim]")
+        b = getattr(row, "baseline", None) or {}
+        n, c = b.get("narr_tps"), b.get("code_tps")
+        if n is not None or c is not None:
+            tps = (f"{n:.0f}" if n is not None else "—") + "/" + (
+                f"{c:.0f}" if c is not None else "—")
+            bar = f"  [bold]bar[/bold]  {tps} TPS"
+            if b.get("quality_8pk"):
+                bar += f"  ·  8pk {b['quality_8pk']}"
+            prov = " · ".join(str(x) for x in (b.get("date"), b.get("rig")) if x)
+            if prov:
+                bar += f"  [dim]({prov})[/dim]"
+            if b.get("stale") is True:
+                bar += "  [yellow]† re-bench owed[/yellow]"
+            lines.append(bar)
+        note = (getattr(row, "status_note", "") or "").strip()
+        if note:
+            lines.append(f"  [yellow]caveat: {note}[/yellow]")
+        return "\n".join(lines)
 
     @work(exclusive=True, group="byo")
     async def run_bring_inspect(self, repo: str) -> None:
@@ -9350,6 +9510,16 @@ class CockpitApp(App):
                 custom.focus()
             else:
                 custom.add_class("profile-custom-hidden")
+        except Exception:
+            pass
+        # Dogfood r2 — the detail card follows the selection (a custom-slug
+        # sentinel has no catalog row → hide).
+        try:
+            pane = self.query_one("#lane-bring-pane", LaneBringPane)
+            if new_val == PROFILE_CUSTOM_SENTINEL or new_val in (None, Select.BLANK):
+                pane.show_slug_details("")
+            else:
+                pane.show_slug_details(self._funnel_slug_details(str(new_val)))
         except Exception:
             pass
         # Before the registry-derived default has been applied, any Changed is the

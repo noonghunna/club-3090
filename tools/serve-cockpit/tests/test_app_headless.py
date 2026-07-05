@@ -1462,7 +1462,19 @@ class TestBringFunnelStagedReveal:
             assert app.query_one("#lane-bring-fit-btn", Button).display
             # §2b-3/4: only safetensors engines; topology-FIRST labels
             labels = [l for (l, v) in sel._options if v != PROFILE_CUSTOM_SENTINEL]
-            assert labels == ["dual/vllm/qwen3.6-27b-autoround-int4  ·  fp8-mtp"]
+            # the sole option IS the recommendation → starred + pre-selected
+            assert labels == ["⭐ dual/vllm/qwen3.6-27b-autoround-int4"]
+            # dogfood r2 — titled field + the selected slug's detail card
+            assert app.query_one("#lane-bring-profile-title").display
+            card = app.query_one("#lane-bring-slug-card", Static)
+            assert card.display
+            ctext = str(card.render())
+            assert "vllm/dual" in ctext and "262K" in ctext
+            assert "174/42" in ctext          # the shipped bar rides the card
+            # sentinel pick hides the card (no catalog row to describe)
+            sel.value = PROFILE_CUSTOM_SENTINEL
+            await pilot.pause()
+            assert not card.display
 
     @pytest.mark.asyncio
     async def test_gguf_inspect_requires_quant_pick_before_slugs(self):
@@ -1492,7 +1504,7 @@ class TestBringFunnelStagedReveal:
             await _settle(pilot)
             assert sel.display
             labels = [l for (l, v) in sel._options if v != PROFILE_CUSTOM_SENTINEL]
-            assert labels == ["single/ik-llama/qwen3.6-27b-ubergarm-iq4ks  ·  mtp"]
+            assert labels == ["⭐ single/ik-llama/qwen3.6-27b-ubergarm-iq4ks"]
 
     @pytest.mark.asyncio
     async def test_fit_check_surfaces_weights_state_and_handoff(self, monkeypatch, tmp_path):
@@ -1571,11 +1583,32 @@ class TestFunnelSlugOptionsPure:
         from club3090_cockpit.app import funnel_slug_options
 
         st = funnel_slug_options(self._rows(), "safetensors")
-        # single before dual; label = topology/engine/model-quant · serving
+        # single before dual; label = topology/engine/model-quant (NO serving
+        # tail — dogfood r2: it duplicated the path axes)
         assert [o.label for o in st] == [
-            "single/vllm/qwen3.6-27b-autoround-int4  ·  minimal",
-            "dual/vllm/qwen3.6-27b-autoround-int4  ·  fp8-mtp",
+            "single/vllm/qwen3.6-27b-autoround-int4",
+            "dual/vllm/qwen3.6-27b-autoround-int4",
         ]
+
+    def test_serving_stem_disambiguates_collisions_only(self):
+        # Two slugs sharing (topology, engine, model, quant) differ only by
+        # serving stack → ONLY those two get the stem tail (basename, even
+        # when the registry file field carries a subpath).
+        from types import SimpleNamespace as NS
+
+        from club3090_cockpit.app import funnel_slug_options
+
+        rows = self._rows() + [
+            NS(slug="vllm/qwen-27b-dual-turbo", engine="vllm-stable",
+               model="qwen3.6-27b", file="dual/autoround-int4/turbo.yml",
+               status="production", compose_dir="",
+               compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/turbo.yml"),
+        ]
+        st = funnel_slug_options(rows, "safetensors")
+        by_slug = {o.slug: o.label for o in st}
+        assert by_slug["vllm/minimal"] == "single/vllm/qwen3.6-27b-autoround-int4"
+        assert by_slug["vllm/dual"] == "dual/vllm/qwen3.6-27b-autoround-int4  ·  fp8-mtp"
+        assert by_slug["vllm/qwen-27b-dual-turbo"] == "dual/vllm/qwen3.6-27b-autoround-int4  ·  turbo"
 
     def test_size_floor_hides_too_small_topologies_only(self):
         from club3090_cockpit.app import funnel_slug_options
@@ -1602,6 +1635,27 @@ class TestFunnelSlugOptionsPure:
             self._rows(), "safetensors", artifact_gb=5.0, vram_gb=24.0, gpu_count=1
         )
         assert {o.slug for o in st} == {"vllm/minimal"}   # dual unhostable on 1 card
+
+    def test_recommendation_prefers_smallest_fitting_topology(self):
+        # Live dogfood 2026-07-05: a 5 GiB gguf on a 2-card rig defaulted to a
+        # DUAL slug (rig-topology rule) — the recommendation must be the
+        # SMALLEST fitting topology, curated default preferred within it.
+        from club3090_cockpit.app import funnel_recommended, funnel_slug_options
+
+        opts = funnel_slug_options(
+            self._rows(), "safetensors", artifact_gb=5.0, vram_gb=24.0, gpu_count=2
+        )
+        assert {o.slug for o in opts} == {"vllm/dual", "vllm/minimal"}
+        # no curated defaults → first functional option of the SINGLE group
+        assert funnel_recommended(opts) == "vllm/minimal"
+        # the registry's curated default for (vllm, single) wins within the group
+        defaults = [{"engine": "vllm-stable", "topology": "single", "slug": "vllm/minimal"}]
+        assert funnel_recommended(opts, defaults) == "vllm/minimal"
+        # big artifact → single floored away → the recommendation follows
+        opts = funnel_slug_options(
+            self._rows(), "safetensors", artifact_gb=34.0, vram_gb=24.0, gpu_count=2
+        )
+        assert funnel_recommended(opts) == "vllm/dual"
 
 
 # ===========================================================================
