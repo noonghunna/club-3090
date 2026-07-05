@@ -926,6 +926,9 @@ export_variant_engine_pin() {
       KV_CACHE_DTYPE)
         export KV_CACHE_DTYPE="$value"
         echo "[switch] arch-aware KV dtype: ${value} (hardware-profile default for detected GPUs — #246)" ;;
+      MAX_NUM_SEQS)
+        export MAX_NUM_SEQS="$value"
+        echo "[switch] memory-envelope concurrency: MAX_NUM_SEQS=${value} (measured for this card class — #246 Phase 2)" ;;
       VLLM_ATTENTION_BACKEND) export VLLM_ATTENTION_BACKEND="$value" ;;
       *) echo "[switch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac

@@ -1,0 +1,41 @@
+# envelopes.yml — the memory-envelope injection defaults (#246 Phase 2).
+# ===========================================================================
+# Weights-INVARIANT per-(slug, card-class) knobs the launcher injects to spend
+# a bigger card's KV pool. FIRST PASS = concurrency only: `max_num_seqs` (a
+# CAP, not a reservation — raising it is ~free until the pool fills). The
+# context lever (bigger max_model_len) is deferred (single-card vLLM only, and
+# Cliff-2b-capped) — see /opt/ai/docs/phase2-32gb-envelope-design.md §6.3.
+#
+# DISCIPLINE (identical to baselines.yml): a value here is a MEASURED, reviewed
+# ceiling from a validated concurrency-soak run — NEVER a raw projection. The
+# concurrency probe proposes; the soak validates (0 growth / 100% retention /
+# 0 silent-empty); this file stores the validated number. A row without a
+# `validated` block is a schema error (test-envelopes).
+#
+# HOW IT INJECTS: launch.sh/switch.sh detect the card class (hardware profile
+# id). If a row exists for (slug, card-class) with a value ABOVE the compose
+# default, the launcher exports `MAX_NUM_SEQS=<value>`; the compose consumes
+# `${MAX_NUM_SEQS:-<default>}`. 24 GB / no-row / heterogeneous / user-env-set
+# -> no injection (compose default stands). Consumers read the registry-emit
+# join, never this file directly.
+#
+# Conventions:
+#   max_num_seqs       measured concurrency cap the card's pool sustains.
+#   compose_default    the slug's shipped ${MAX_NUM_SEQS:-N} default (24 GB);
+#                      injection only fires when max_num_seqs > this.
+#   validated          { concurrency_soak: "N streams @ <ctx>, 0-growth",
+#                        vram_peak_gb: X, date: YYYY-MM-DD, source_tag: ... }
+#   rig / submitted_by hardware fingerprint class + who ran it.
+# ===========================================================================
+schema_version: 1
+envelopes:
+
+  # (empty — awaiting first validated 32 GB concurrency-soak runs)
+  #
+  # SEEDING PLAN (each needs a validated concurrency-soak on the card class):
+  #   vllm/dual  @ rtx-5090 (2x, 64 GB)  — HARVEST from guybrush's fp8w dual
+  #     ladder if it carries multi-stream, else a dedicated soak (disc #571).
+  #   vllm/minimal @ rtx-5090 (1x, 32 GB) — single-5090 concurrency soak
+  #     (the clean new ask, sequenced AFTER the fp8w round).
+  # 24 GB (rtx-3090) baseline is measured for REFERENCE (what the compose
+  # default should be) but carries NO row — the compose default already stands.

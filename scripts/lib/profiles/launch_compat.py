@@ -194,6 +194,50 @@ def _arch_aware_env(profiles, variant: str, entry: dict, gpu_spec: str,
     return {"KV_CACHE_DTYPE": target}
 
 
+# --- #246 Phase 2: memory-envelope injection (concurrency-only first pass) ---
+# Weights-invariant. Injects MAX_NUM_SEQS from a MEASURED per-(slug, card-class)
+# ceiling in envelopes.yml, to spend a bigger card's KV pool on concurrency.
+# 24 GB / no-row / heterogeneous / user-env-set -> no injection.
+_ENVELOPES_PATH = Path(__file__).with_name("envelopes.yml")
+
+
+def _load_envelopes() -> dict:
+    try:
+        import yaml
+        doc = yaml.safe_load(_ENVELOPES_PATH.read_text()) or {}
+        return doc.get("envelopes") or {}
+    except (OSError, ImportError):
+        return {}
+
+
+def _envelope_env(profiles, variant: str, gpu_spec: str) -> dict[str, str]:
+    """Phase 2 concurrency injection. Empty dict = no injection (compose
+    ${MAX_NUM_SEQS:-default} stands)."""
+    if not gpu_spec:
+        return {}
+    if os.environ.get("MAX_NUM_SEQS"):
+        return {}  # explicit user pin always wins
+    row = _load_envelopes().get(variant)
+    if not row:
+        return {}
+    try:
+        hardware = _parse_gpu_specs(gpu_spec, profiles)
+    except LaunchCompatError:
+        return {}  # unmapped card -> compose default
+    card_ids = {hw.id for hw in hardware}
+    if len(card_ids) != 1:
+        return {}  # heterogeneous rig -> no single card-class row applies
+    card_row = row.get(card_ids.pop())
+    if not isinstance(card_row, dict):
+        return {}
+    seqs = card_row.get("max_num_seqs")
+    default = card_row.get("compose_default")
+    # only inject a validated value that actually raises the ceiling
+    if not isinstance(seqs, int) or (isinstance(default, int) and seqs <= default):
+        return {}
+    return {"MAX_NUM_SEQS": str(seqs)}
+
+
 def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
     """Resolve EngineProfile.install into compose environment exports."""
     try:
@@ -233,6 +277,7 @@ def resolve_variant_pin(profiles, variant: str, gpu_spec: str = "") -> dict[str,
     # Only emitted when a gpu_spec is passed (launchers do; the registry-emit
     # baselines join calls without one and sees pins only).
     exports.update(_arch_aware_env(profiles, variant, entry, gpu_spec, exports))
+    exports.update(_envelope_env(profiles, variant, gpu_spec))  # Phase 2 concurrency
     return exports
 
 
