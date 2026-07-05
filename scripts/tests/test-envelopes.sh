@@ -79,10 +79,16 @@ EOF
 pin() { python3 "$HELPER" resolve-variant-pin --variant "$1" --format shell --gpu-spec "$2" 2>/dev/null; }
 S5090="0|RTX 5090|32607|12.0;1|RTX 5090|32607|12.0"
 S3090="0|RTX 3090|24576|8.6;1|RTX 3090|24576|8.6"
-HET="0|RTX 5090|32607|12.0;1|RTX 3090|24576|8.6"
+HET_SMALL="0|RTX 5090|32607|12.0;1|RTX 3090|24576|8.6"       # smallest = 3090 (no row)
+HET_BIG="0|RTX 5090|32607|12.0;1|NVIDIA H100|81920|9.0"      # smallest = 5090 (seeded)
 
 grep -q "MAX_NUM_SEQS=4" <(pin vllm/dual "$S5090") || fail "5090 with a row must inject MAX_NUM_SEQS=4"
 grep -q "MAX_NUM_SEQS" <(pin vllm/dual "$S3090") && fail "3090 (no row) must NOT inject"
+# heterogeneous clamps to the SMALLEST-VRAM card (= the pool vLLM allocates):
+#   5090+3090 -> smallest 3090 has no row -> compose default (no inject)
+#   5090+H100 -> smallest 5090 is seeded  -> inject its ceiling (4)
+grep -q "MAX_NUM_SEQS" <(pin vllm/dual "$HET_SMALL") && fail "het rig w/ smallest=3090 (no row) must NOT inject"
+grep -q "MAX_NUM_SEQS=4" <(pin vllm/dual "$HET_BIG") || fail "het rig must clamp to smallest-VRAM card (5090) and inject its ceiling"
 
 # injection is provenance-agnostic: a `computed` row injects exactly like a
 # `validated` one (the guard cares about provenance; the launcher does not).
@@ -105,7 +111,6 @@ envelopes:
       compose_default: 2
       validated: { concurrency_soak: "4 @262K, 0-growth" }
 EOF
-grep -q "MAX_NUM_SEQS" <(pin vllm/dual "$HET") && fail "heterogeneous rig must NOT inject"
 grep -q "MAX_NUM_SEQS" <(MAX_NUM_SEQS=9 pin vllm/dual "$S5090" | grep "MAX_NUM_SEQS=4") && fail "user env must win"
 # value at/below compose_default must not fire
 cat > "$REAL" <<'EOF'
@@ -115,7 +120,7 @@ envelopes:
     rtx-5090: { max_num_seqs: 2, compose_default: 2, validated: { concurrency_soak: "x" } }
 EOF
 grep -q "MAX_NUM_SEQS" <(pin vllm/dual "$S5090") && fail "value == compose_default must NOT inject (no gain)"
-echo "  ✓ injection contract (inject · no-row · heterogeneous · user-env · no-gain)"
+echo "  ✓ injection contract (inject · no-row · het-clamp-to-smallest · computed-parity · user-env · no-gain)"
 
 cp "$BACKUP" "$REAL"
 [[ "$(sha256sum "$REAL" | cut -d' ' -f1)" == "$REAL_SUM" ]] || fail "real envelopes.yml not restored"

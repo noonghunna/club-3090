@@ -28,9 +28,12 @@
 # HOW IT INJECTS: launch.sh/switch.sh detect the card class (hardware profile
 # id). If a row exists for (slug, card-class) with a value ABOVE the compose
 # default, the launcher exports `MAX_NUM_SEQS=<value>`; the compose consumes
-# `${MAX_NUM_SEQS:-<default>}`. 24 GB / no-row / heterogeneous / user-env-set
-# -> no injection (compose default stands). Consumers read the registry-emit
-# join, never this file directly.
+# `${MAX_NUM_SEQS:-<default>}`. no-row / user-env-set -> no injection (compose
+# default stands). HETEROGENEOUS rigs clamp to the SMALLEST-VRAM card — that is
+# exactly the pool vLLM allocates (TP symmetric-shards the KV cache, so the pool
+# = min free-blocks across ranks), so a 24 GB card in the mix lands on the
+# compose default while a 5090+bigger rig gets the 5090 ceiling. Consumers read
+# the registry-emit join, never this file directly.
 #
 # Conventions:
 #   max_num_seqs       concurrency cap the card's pool sustains (injected value).
@@ -86,5 +89,6 @@ envelopes:
   #     (--tp 4 --gpus 4: dual4 @ 4x5090/128 GB → N=8 ceiling @262K). Not seeded
   #     because those TP=4 slugs are `experimental` and 4x/8x-5090 rigs are rare
   #     — same kv-calc sweep seeds them the day one graduates or a volunteer
-  #     appears. Heterogeneous rigs (mixed cards) always no-op by design: one
-  #     pool ceiling can't be safe for two different VRAM sizes.
+  #     appears. Heterogeneous rigs (mixed cards) clamp to the smallest-VRAM
+  #     card (the pool vLLM actually allocates), so a 5090+bigger rig gets the
+  #     5090 ceiling while any 24 GB card in the mix falls back to the default.
