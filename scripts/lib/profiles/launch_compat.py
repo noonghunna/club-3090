@@ -54,8 +54,14 @@ def _hardware_id_from_gpu(name: str, mem_mib: int, sm: float) -> str:
     vram_gb = round(mem_mib / 1024)
 
     aliases = (
-        ("rtx 6000 pro blackwell", "rtx-6000-pro-blackwell"),
-        ("6000 pro blackwell", "rtx-6000-pro-blackwell"),
+        # RTX PRO 6000 Blackwell reports as "RTX PRO 6000 Blackwell" -> normalizes
+        # to "rtx pro 6000 blackwell" (PRO before 6000), so match "pro 6000".
+        # ("6000" alone is avoided — it would swallow the sm_89 "RTX 6000 Ada".)
+        ("rtx pro 6000", "rtx-6000-pro-blackwell"),
+        ("pro 6000", "rtx-6000-pro-blackwell"),
+        # DGX Spark's GB10 superchip reports as "GB10" / "NVIDIA GB10".
+        ("dgx spark", "dgx-spark"),
+        ("gb10", "dgx-spark"),
         ("rtx 3090 ti", "rtx-3090-ti"),
         ("3090 ti", "rtx-3090-ti"),
         ("rtx 3090", "rtx-3090"),
@@ -75,7 +81,16 @@ def _hardware_id_from_gpu(name: str, mem_mib: int, sm: float) -> str:
         if needle in normalized:
             return hardware_id
 
-    if sm >= 12 and vram_gb >= 32:
+    # sm >= 12 Blackwell family, split by SM then VRAM (name aliases above are
+    # the primary signal; these are the fallback when the name string is odd):
+    #   GB10 / DGX Spark = sm_121 (unified 128 GB)
+    #   RTX PRO 6000 Blackwell = sm_120, 96 GB
+    #   RTX 5090 = sm_120, 32 GB
+    if 12.05 <= sm <= 12.2:
+        return "dgx-spark"
+    if sm >= 12 and vram_gb >= 64:
+        return "rtx-6000-pro-blackwell"
+    if sm >= 12 and vram_gb >= 24:
         return "rtx-5090"
     if sm >= 9 and vram_gb >= 80:
         return "h100-80gb"

@@ -63,6 +63,14 @@ envelopes:
         target_ctx: 262144
         date: 2026-07-05
         note: "no-preemption ceiling (2x RTX 5090, 64 GB). Arithmetic, sm_120-calibrated (disc #571 paulp verify-stress PASS); awaiting a concurrency-soak to upgrade to validated."
+    rtx-6000-pro-blackwell:
+      max_num_seqs: 8          # 2 -> 8 on 2x96 GB (NVLink-bridged workstation)
+      compose_default: 2
+      computed:
+        basis: "kv-calc pool ceiling is ~16 (--compose dual --vram 96 --tp 2 --max-ctx 262144 --mem-util 0.96: N=16 PASS, N=20 caps), but capped to 8 — BANDWIDTH, not pool, binds. PRO 6000 GDDR7 (~1.8 TB/s) ≈ a 5090's, so useful concurrency sits near the 5090's 4, lifted to 8 by the 3x pool (less preemption); the rest of the pool is context headroom."
+        target_ctx: 262144
+        date: 2026-07-05
+        note: "operational cap, not the raw pool ceiling (see basis). 2x RTX PRO 6000 Blackwell, NVLink-bridged. No PRO 6000 on this rig — a concurrency-soak refines this and upgrades it to validated."
 
   vllm/minimal:
     rtx-5090:
@@ -73,15 +81,32 @@ envelopes:
         target_ctx: 32768
         date: 2026-07-05
         note: "no-preemption ceiling (1x RTX 5090, 32 GB). Arithmetic, sm_120-calibrated (disc #571 paulp verify-stress PASS); awaiting a concurrency-soak to upgrade to validated."
+    rtx-6000-pro-blackwell:
+      max_num_seqs: 16         # 1 -> 16 on 1x96 GB
+      compose_default: 1
+      computed:
+        basis: "kv-calc pool ceiling is >56 (--compose minimal --vram 96 --tp 1 --max-ctx 32768 --mem-util 0.96: N=56 still PASS), but capped to 16 — bandwidth-bound. GDDR7 ≈ a 5090's, so 16 concurrent 32K streams (small per-stream KV) is a defensible operating point on the 3x pool; the raw >56 would over-batch into throughput collapse."
+        target_ctx: 32768
+        date: 2026-07-05
+        note: "operational cap, not the raw pool ceiling (see basis). 1x RTX PRO 6000 Blackwell. Spec-derived, no PRO 6000 on this rig — a soak refines + upgrades to validated."
+    dgx-spark:
+      max_num_seqs: 8          # 1 -> 8 on 1x128 GB unified (bandwidth-capped)
+      compose_default: 1
+      computed:
+        basis: "kv-calc pool ceiling is >80 (--compose minimal --vram 128 --tp 1 --max-ctx 32768 --mem-util 0.85: N=80 still PASS), but capped to 8 — Spark's ~273 GB/s LPDDR5X (≈1/7 of a 5090) HARD-binds concurrency. Useful streams sit near a 5090's (or below), NOT scaled by the 4x pool; the pool's value here is context headroom, not more streams."
+        target_ctx: 32768
+        date: 2026-07-05
+        note: "operational cap, bandwidth-bound (see basis). 1x DGX Spark (GB10), single-unit. TP=2 across two units is ConnectX/RDMA (network-bound) — NOT seeded for dual. No Spark on this rig — a soak refines + upgrades to validated."
 
+  # ON BIG CARDS, POOL != CONCURRENCY. The rtx-6000-pro-blackwell and dgx-spark
+  # rows above are OPERATIONAL CAPS, not raw kv-calc pool ceilings: past a point
+  # decode concurrency is bound by memory BANDWIDTH, not pool size. PRO 6000
+  # (~1.8 TB/s GDDR7 ≈ a 5090) lifts modestly above the 5090; Spark (~273 GB/s
+  # LPDDR5X, ~1/7 of a 5090) does NOT — its huge pool buys context headroom, not
+  # streams. Each row's `basis` cites the raw ceiling AND the bandwidth cap; a
+  # soak on real hardware refines the operating point and upgrades to validated.
+  #
   # NOT SEEDED yet (computable, deferred on purpose):
-  #   rtx-6000-pro-blackwell (96 GB): pool ceilings run very high (minimal ~40+,
-  #     dual 16+) — those need a latency-aware cap (concurrency past a point
-  #     trades single-stream TPS), not the raw pool ceiling. Seed once we pick
-  #     the policy. Rare card; 5090 is the realistic target first.
-  #   DGX Spark (GB10, sm_121, 128 GB): folds into the SAME framework, but has
-  #     no hardware profile yet — add scripts/lib/profiles/hardware/dgx-spark.yml
-  #     before a row can inject (the guard requires card ∈ hardware profiles).
   #   MULTI-GPU (TP>2, e.g. vllm/qwen-27b-multi-fast/max @ TP=4): the injection
   #     seam ALREADY handles homogeneous >2-card rigs — it collapses N identical
   #     cards to one class, so `vllm/dual` on 4x5090 injects the dual ceiling and

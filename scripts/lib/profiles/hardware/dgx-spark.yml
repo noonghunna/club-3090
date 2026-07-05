@@ -1,0 +1,44 @@
+schema_version: 1
+id: dgx-spark
+display_name: NVIDIA DGX Spark (GB10)
+sm: 12.1
+vram_gb: 128
+arch: blackwell-gb10
+# Unified LPDDR5X shared with the Grace CPU, so usable device memory is well
+# below the 128 GB spec — mem_util_safe is deliberately conservative (OS + CPU
+# reservation) rather than the 0.96 the discrete Blackwell SKUs carry.
+mem_util_safe: 0.85
+# NOTE: nvfp4 KV is DELIBERATELY NOT listed — like consumer Blackwell (sm_120),
+# GB10 (sm_121) has no trtllm-gen FP4 FMHA build (that kernel is datacenter
+# Blackwell sm_100/103 only). FP4 weights work; nvfp4 KV crashes. fp8_e4m3 is
+# the FP4-era KV here. The #574 nvfp4 gate already excludes sm_121.
+supported_kv_formats:
+  - bf16
+  - fp16
+  - fp8_e5m2
+  - fp8_e4m3
+  - turboquant_3bit_nc
+  - int8_per_token_head
+  - q4_0
+  - q5_0
+  - q8_0
+  - k8v4
+kv_format_default:
+  long_context: fp8_e4m3
+  multi_stream: fp8_e4m3
+  balanced: fp8_e4m3
+cudagraph: full
+driver_pin_recommended:
+  min: "580.0"
+  notes: "GB10 ships on DGX OS with a 580.x-class (CUDA 13) driver."
+nvlink_capable: false
+power_cap_w_optimal: 120
+power_cap_w_max: 140
+# CRITICAL for concurrency envelopes: the 128 GB pool is huge but the ~273 GB/s
+# LPDDR5X bandwidth (~1/7 of a 5090's GDDR7) is the binding constraint on decode
+# concurrency — useful streams saturate near a 5090's, NOT scaled by the 4x pool
+# (the extra pool buys context headroom, not more streams). Two units cluster
+# over ConnectX (RDMA, not NVLink), so TP=2 across units is network-bound and
+# NOT recommended — single-unit serving is the realistic mode. Specs are from
+# public sheets; no DGX Spark on this rig (values not rig-measured).
+notes: "GB10 Grace-Blackwell superchip, 128 GB unified LPDDR5X (~273 GB/s). Bandwidth-bound for concurrency. Single-unit serving; ConnectX clustering is not low-latency TP. Spec-derived, not rig-measured."
