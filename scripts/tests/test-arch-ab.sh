@@ -26,10 +26,11 @@ assert_contains "$out" "arm e5m2: vllm/minimal + KV_CACHE_DTYPE=fp8_e5m2"
 assert_contains "$out" "arm e4m3: vllm/minimal + KV_CACHE_DTYPE=fp8_e4m3"
 assert_contains "$out" "dry run — nothing executed"
 
-# --- dual auto-pick + all four arms on 2x blackwell ---------------------------
-out="$(CLUB3090_FAKE_GPUS="$GPU_5090x2" bash scripts/arch-ab.sh --arms e5m2,e4m3,nvfp4,fp8w --dry-run)"
+# --- dual auto-pick + the arms that RUN on 2x consumer Blackwell --------------
+# (nvfp4 is excluded here — sm_120 has no nvfp4-KV FMHA kernel; covered below.)
+out="$(CLUB3090_FAKE_GPUS="$GPU_5090x2" bash scripts/arch-ab.sh --arms e5m2,e4m3,fp8w --dry-run)"
 assert_contains "$out" "variant=vllm/dual"
-assert_contains "$out" "arm nvfp4: vllm/dual + KV_CACHE_DTYPE=nvfp4"
+assert_contains "$out" "arm e4m3: vllm/dual + KV_CACHE_DTYPE=fp8_e4m3"
 assert_contains "$out" "arm fp8w: vllm/qwen-27b-dual-max STOCK"
 
 # --- refusals (fail-loud, each names the fix) ---------------------------------
@@ -42,10 +43,21 @@ assert_contains "$out" "no arch delta to measure"
 # ...but the explicit control-only run stays possible on Ampere
 out="$(CLUB3090_FAKE_GPUS="$GPU_3090" bash scripts/arch-ab.sh --arms e5m2 --dry-run)"
 assert_contains "$out" "arm e5m2"
+# nvfp4 needs DATACENTER Blackwell (sm_100/103) — refuse on Ampere AND on
+# CONSUMER Blackwell (sm_120), which is a higher number but has no FMHA kernel
+# (the disc #571 crash: a plain ">=10" wrongly passed sm_120).
 if out="$(CLUB3090_FAKE_GPUS="$GPU_3090" bash scripts/arch-ab.sh --arms e5m2,nvfp4 --dry-run 2>&1)"; then
   fail "nvfp4 on sm_8.6 must refuse"
 fi
-assert_contains "$out" "needs Blackwell"
+assert_contains "$out" "DATACENTER Blackwell"
+GPU_5090="0:NVIDIA_GeForce_RTX_5090:32607:12.0"
+if out="$(CLUB3090_FAKE_GPUS="$GPU_5090" bash scripts/arch-ab.sh --arms e5m2,nvfp4 --dry-run 2>&1)"; then
+  fail "nvfp4 on consumer sm_12.0 must refuse (no FMHA kernel)"
+fi
+assert_contains "$out" "DATACENTER Blackwell"
+# ...but datacenter Blackwell (sm_100) is allowed
+out="$(CLUB3090_FAKE_GPUS="0:NVIDIA_B200:186000:10.0" bash scripts/arch-ab.sh --arms nvfp4 --dry-run 2>&1)"
+assert_contains "$out" "arm nvfp4"
 if out="$(CLUB3090_FAKE_GPUS="$GPU_4090" bash scripts/arch-ab.sh --arms fp8w --dry-run 2>&1)"; then
   fail "fp8w on 1 GPU must refuse"
 fi

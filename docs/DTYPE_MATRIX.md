@@ -114,7 +114,7 @@ KV cache is a separate concern from weights — vLLM ships several KV-quant sche
 
 **Emerging KV recipes** (worth watching, not yet defaults):
 - **Block-scaled FP8 KV** — per-block scales like MXFP8 but applied to KV cache rather than weights. Recovers accuracy at long-context where flat FP8 can lose precision in deep layers. Lands on Hopper / Blackwell first.
-- **NVFP4 KV** — Blackwell-native, ~4× smaller than FP16 KV at NVFP4 weight accuracy levels. **A valid `--kv-cache-dtype nvfp4` literal in our v0.24.0 pin** (declared as a *candidate* on the Blackwell hardware profiles; SM-gated ≥10.0). Unvalidated on this stack — it's arm 3 of the #246 cross-rig A/B; a literal existing ≠ working kernels + clean recall (see the int8-PTH-on-Gemma and mainline-TQ precedents).
+- **NVFP4 KV** — **DATACENTER Blackwell only (sm_100/sm_103: B100/B200/GB200).** It forces vLLM's trtllm-gen FP4 FMHA, which has **no consumer-Blackwell (sm_120/121) build** — so it **crashes on RTX 5090s** despite their FP4 hardware ([vLLM #43562](https://github.com/vllm-project/vllm/issues/43562) / [TRT-LLM #10241](https://github.com/NVIDIA/TensorRT-LLM/issues/10241); empirically hit on two 5090s via #246, disc #571). NVFP4 *weights* run on consumer Blackwell — only the KV/attention path doesn't. Consumer-Blackwell FP4-era KV = **fp8_e4m3**. (A textbook 'literal exists ≠ kernel exists' — the exact trap the #246 A/B was built to catch.)
 - **TensorRT-LLM W4A8 / W4A4** — Hopper/Blackwell weight+activation quant recipes that pair INT4/NVFP4 weights with FP8/FP4 activations. Out of scope for the vLLM-first composes here but worth knowing if you cross-shop.
 
 ### KV-quant × checkpoint compatibility — the two Ampere traps
@@ -322,7 +322,7 @@ What to ship as the default for each GPU class, given the matrix above:
 | **Ampere DC (A100)** | AutoRound INT4 or FP16 | TQ3 / fp8 | MTP n=3 | Same composes as 3090, more VRAM headroom |
 | **Ada (4090 / L40)** | AutoRound INT4 (preserve INT4 path) **OR** FP8 weights for full TC use | **fp8_e4m3 (HW — launcher-injected for pilot slugs, #246)** / TQ3 / INT8 PTH | MTP n=3 / DFlash | Same composes work; FP8 KV is now a real perf win |
 | **Hopper (H100/H200)** | FP8 weights (FBGEMM/INC) | **fp8 (HW transformer engine)** | MTP / DFlash | Not a primary target — these cards are usually already running their own optimised stacks |
-| **Blackwell consumer (5090/5080/5070)** | AutoRound INT4 today; NVFP4 when vLLM kernels mature | **fp8_e4m3 (launcher-injected for pilot slugs, #246 — A/B pending)** · nvfp4 = candidate arm 3 | MTP n=3 | The old "e4m3 path undertuned per #51" advisory was **Genesis-nightly-era** — stock v0.24.0 is what the #246 A/B measures. Genesis treats Blackwell consumer as a separate regime — some Hopper-targeted patches don't apply |
+| **Blackwell consumer (5090/5080/5070)** | AutoRound INT4 today; NVFP4 *weights* work | **fp8_e4m3** (launcher-injected for pilot slugs, #246 — A/B pending). **nvfp4 KV does NOT work here** — datacenter-Blackwell-only FMHA kernel (#43562) | MTP n=3 | The old "e4m3 path undertuned per #51" advisory was **Genesis-nightly-era** — stock v0.24.0 is what the #246 A/B measures. Genesis treats Blackwell consumer as a separate regime — some Hopper-targeted patches don't apply |
 | **Blackwell DC (B100/B200/GB200)** | NVFP4 / FP8 weights | NVFP4 / fp8 | MTP / DFlash | Out of scope for club-3090 |
 
 The starred row (Ampere consumer) is the actual target of this stack; everything else is "should work, here's the data point we have".

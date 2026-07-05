@@ -77,12 +77,25 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 #   turboquant_3bit_nc  9.0  — MAINLINE TQ3 kernels (Genesis-Ampere TQ3 is a
 #                              different path; mirrors arch_patches Gemma
 #                              kernel_constraints)
-#   nvfp4               10.0 — Blackwell FP4 tensor cores; v0.24.0 literal,
-#                              unvalidated on this stack (#246 A/B arm 3)
+#   nvfp4               family-gated (see _ARCH_KERNEL_SM_FAMILY) — NOT a floor
 _ARCH_KERNEL_SM = {
     "fp8_e4m3": 8.9,
     "turboquant_3bit_nc": 9.0,
-    "nvfp4": 10.0,
+}
+
+# KV formats whose kernel is gated to a SPECIFIC SM FAMILY, not a "≥ floor".
+# A numeric floor is WRONG here: consumer Blackwell (sm_120/121, RTX 5090 /
+# PRO 6000 Blackwell) is a HIGHER compute-capability number than datacenter
+# Blackwell (sm_100/103) but a DIFFERENT family that lacks the kernel.
+#   nvfp4  KV forces vLLM's trtllm-gen FP4 FMHA (fused attention), which is
+#          built ONLY for datacenter Blackwell sm_100/sm_103 (B100/B200/GB200).
+#          No sm_120/121 build exists → nvfp4 KV crashes on consumer 5090s
+#          despite their FP4 hardware (nvfp4 *weights* are fine — different
+#          path). Re-test when TRT-LLM #10241 / vLLM #43562 add the sm_120
+#          FMHA. Consumer-Blackwell KV answer is fp8_e4m3. (Empirically hit on
+#          two 5090s via the #246 A/B, disc #571, 2026-07-05.)
+_ARCH_KERNEL_SM_FAMILY = {
+    "nvfp4": {10.0, 10.3},
 }
 
 
@@ -500,7 +513,7 @@ def c0_engine_support(
             f"llama.cpp / ik-llama / beellama compose, not a vLLM one"
         )
 
-    # 3d. hardware SM ≥ max(engine.min_sm, registry required_sm, arch-kernel)
+    # 3d. hardware SM ≥ max(engine.min_sm, registry required_sm, arch-kernel floor)
     need_sm = _required_sm(engine, entry, kv_format)
     if float(hardware_sm) < need_sm:
         return _incompat(
@@ -509,8 +522,20 @@ def c0_engine_support(
             f"registry.required_sm={entry.get('required_sm')}, "
             f"arch-kernel[{kv_format}]="
             f"{_ARCH_KERNEL_SM.get(kv_format, 0.0):g}); "
-            f"e.g. fp8_e4m3 needs SM 8.9+, Gemma-TQ3 SM 9.0+, nvfp4 SM 10.0+ "
-            f"— NOT loadable on sm_86"
+            f"e.g. fp8_e4m3 needs SM 8.9+, Gemma-TQ3 SM 9.0+ — NOT loadable on sm_86"
+        )
+
+    # 3d-bis. family-specific kernels — a numeric floor can't express these.
+    # nvfp4 KV needs the trtllm-gen FP4 FMHA, built only for datacenter Blackwell
+    # sm_100/sm_103; consumer sm_120/121 is a HIGHER number but has no build.
+    allowed_family = _ARCH_KERNEL_SM_FAMILY.get(kv_format)
+    if allowed_family is not None and float(hardware_sm) not in allowed_family:
+        fam = "/".join(f"sm_{s:g}" for s in sorted(allowed_family))
+        return _incompat(
+            f"kv_format '{kv_format}' needs a family-specific kernel available "
+            f"only on {fam} (datacenter Blackwell); sm_{float(hardware_sm):g} has "
+            f"no build. nvfp4 KV's trtllm-gen FP4 FMHA has no consumer-Blackwell "
+            f"(sm_120/121) kernel (vLLM #43562 / TRT-LLM #10241) — use fp8_e4m3 KV"
         )
 
     # --- 4. supported -----------------------------------------------------

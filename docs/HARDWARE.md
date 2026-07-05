@@ -84,7 +84,7 @@ Mechanics and boundaries:
 - **Direct `docker compose -f … up` bypasses all of this** and keeps the Ampere-safe compose defaults on any card.
 - The preflight banner names the detected class: `[preflight] arch: ada (sm_8.9) — arch-aware KV defaults active for pilot slugs (#246)`.
 - `VLLM_ATTENTION_BACKEND` is plumbed through the same channel but **ships no value** — vLLM's backend auto-detect is the default until someone measures a better per-arch choice.
-- **Blackwell + `nvfp4` KV**: a valid dtype literal in our v0.24.0 pin and declared as a *candidate* on the Blackwell hardware profiles, but unvalidated (no NIAH/quality data on any rig we've seen) — it's arm 3 of the #246 A/B, opt-in via `KV_CACHE_DTYPE=nvfp4`, not a default.
+- **`nvfp4` KV is DATACENTER-Blackwell-only** (sm_100/sm_103). It needs vLLM's trtllm-gen FP4 FMHA, which has no consumer-Blackwell (sm_120/121) build — so it **crashes on RTX 5090s** even though they run NVFP4 *weights* fine ([vLLM #43562](https://github.com/vllm-project/vllm/issues/43562) / [TRT-LLM #10241](https://github.com/NVIDIA/TensorRT-LLM/issues/10241); confirmed on two 5090s, disc #571). On consumer Blackwell use **fp8_e4m3** KV — the launchers inject it automatically for the pilot slugs.
 
 ---
 

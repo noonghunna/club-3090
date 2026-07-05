@@ -107,7 +107,7 @@ For hybrid architectures (DeltaNet, SWA), only the **growing** attention layers 
 | `k8v4` | 0.75 | Mixed precision |
 | `q4_0` | ~0.56 | Includes packed-quant overhead |
 | `turboquant_3bit_nc` (TQ3) | ~0.425 | Genesis-supplied; cheapest KV format on this stack |
-| `nvfp4` | ~0.56 (**projected**) | 4-bit elements + fp8 block scale per 16 (9/16 B). Blackwell-only (sm ≥ 10.0); vLLM v0.24.0 literal, **no measured boot on this stack** — #246 A/B arm 3. kv-calc carries mirrored-fp8 activation coefs until a real boot calibrates them |
+| `nvfp4` | ~0.56 (**projected**) | 4-bit elements + fp8 block scale per 16 (9/16 B). **DATACENTER Blackwell only (sm_100/103)** — the trtllm-gen FP4 FMHA has no consumer (sm_120/121) build, so it crashes on 5090s ([vLLM #43562](https://github.com/vllm-project/vllm/issues/43562)). No measured boot on this stack. kv-calc carries mirrored-fp8 coefs until a datacenter-Blackwell boot calibrates them |
 
 **Note on Ampere**: `fp8_e4m3` is NOT supported by the Triton kernel on sm_86 (3090/3090-Ti/A5000). Use `fp8_e5m2` (engine-level fallback) or `int8_per_token_head` (vendored via PR #42102). On sm_89+ the launchers inject `fp8_e4m3` automatically for the #246 pilot slugs. See [DTYPE_MATRIX.md](DTYPE_MATRIX.md).
 
