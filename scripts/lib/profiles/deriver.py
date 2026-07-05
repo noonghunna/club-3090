@@ -38,6 +38,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import struct
 import sys
 import urllib.error
@@ -512,6 +513,124 @@ def sized_download_gb(api: dict) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Bring-funnel stage-1 INSPECT — artifact inventory (design §2 / §2b)
+# ---------------------------------------------------------------------------
+# GGUF quant token in a basename (Q4_K_M / IQ4_XS / UD-Q5_K_XL / Q8_0 / TQ1_0 /
+# BF16 / F16), tolerant of multi-part suffixes which are stripped first.
+_GGUF_PART_RE = re.compile(r"-(\d{5})-of-(\d{5})$", re.I)
+_GGUF_QUANT_RE = re.compile(
+    r"(?:^|[-_.])((?:UD-)?(?:I?Q\d|TQ\d|BF16|F16|F32)[A-Z0-9_]*)$", re.I
+)
+
+
+def _blob_sizes(api: dict) -> dict[str, int]:
+    by_name: dict[str, int] = {}
+    for s in _siblings(api or {}):
+        size = s.get("size")
+        if size is None and isinstance(s.get("lfs"), dict):
+            size = s["lfs"].get("size")
+        if size is not None:
+            by_name[s["rfilename"]] = int(size)
+    return by_name
+
+
+def artifact_inventory(api: dict) -> dict:
+    """What servable artifacts does this repo carry? — WITHOUT gating on
+    format.  A GGUF-only repo is a first-class bring here (design §2b-1/2:
+    the staged Bring UI reveals nothing template-side until this says the
+    repo is supported, and presents ALL discovered GGUF variants for the
+    user to pick BEFORE any engine/slug appears).  `select_weight_files`
+    stays the vLLM/safetensors gate — this never replaces it.
+
+    Returns (all sizes GiB, from the ?blobs=true siblings):
+      formats          ["safetensors", "gguf"] — whichever are present
+      safetensors      {weight_files, size_gb} | None (top-level, non-adapter)
+      gguf_variants    [{quant, size_gb, parts, files}] sorted by size —
+                       multi-part files grouped under one quant token; a file
+                       with no parseable token keys by its stem (never dropped)
+      gguf_mmproj      vision-projector *.gguf names (NOT variants)
+      lineage_base_model  cardData.base_model when the API carries it
+                          (friction #11 — ⑤'s taxonomy default + credits)"""
+    sizes = _blob_sizes(api)
+    names = [s["rfilename"] for s in _siblings(api or {})]
+
+    safet = [
+        n for n in names
+        if n.endswith(".safetensors") and "/" not in n and not _is_adapter(n)
+    ]
+    st = None
+    if safet:
+        st = {
+            "weight_files": sorted(safet),
+            "size_gb": round(sum(sizes.get(n, 0) for n in safet) / (1024 ** 3), 4),
+        }
+
+    # GGUF: any depth (quant subdirs are common), mmproj split out.
+    variants: dict[str, dict] = {}
+    mmproj: list[str] = []
+    for n in names:
+        if not n.lower().endswith(".gguf"):
+            continue
+        base = n.rsplit("/", 1)[-1][: -len(".gguf")]
+        if base.lower().startswith("mmproj"):
+            mmproj.append(n)
+            continue
+        stem = _GGUF_PART_RE.sub("", base)
+        m = _GGUF_QUANT_RE.search(stem)
+        key = m.group(1).upper() if m else stem
+        v = variants.setdefault(key, {"quant": key, "size_gb": 0.0, "parts": 0, "files": []})
+        v["size_gb"] += sizes.get(n, 0) / (1024 ** 3)
+        v["parts"] += 1
+        v["files"].append(n)
+    gguf_variants = sorted(
+        ({**v, "size_gb": round(v["size_gb"], 4), "files": sorted(v["files"])}
+         for v in variants.values()),
+        key=lambda v: (v["size_gb"], v["quant"]),
+    )
+
+    formats = []
+    if st:
+        formats.append("safetensors")
+    if gguf_variants or mmproj:
+        formats.append("gguf")
+
+    card = api.get("cardData") if isinstance(api, dict) else None
+    base_model = (card or {}).get("base_model") if isinstance(card, dict) else None
+
+    return {
+        "formats": formats,
+        "safetensors": st,
+        "gguf_variants": gguf_variants,
+        "gguf_mmproj": sorted(mmproj),
+        "lineage_base_model": base_model,
+    }
+
+
+def inspect_repo(
+    slug: str,
+    *,
+    hf_token: Optional[str] = None,
+    fetcher: Optional[HttpFetcher] = None,
+) -> dict:
+    """Stage-1 INSPECT entry: fetch the model API + return the inventory.
+    Structured errors, never a traceback (same discipline as derive())."""
+    if fetcher is None:
+        fetcher = HttpFetcher()
+    hf_token = hf_token or os.environ.get("HF_TOKEN") or None
+    try:
+        api, err = _fetch_model_api(slug, fetcher, hf_token)
+    except NetworkError as exc:
+        return {"repo": slug, "error": f"network error: {exc}"}
+    if err is not None:
+        return {"repo": slug, "error": str(err)}
+    inv = artifact_inventory(api or {})
+    inv["repo"] = slug
+    if not inv["formats"]:
+        inv["error"] = "no servable artifacts (no safetensors weight set, no *.gguf)"
+    return inv
+
+
+# ---------------------------------------------------------------------------
 # Bounded safetensors-header probe (pre-download, range-bounded)
 # ---------------------------------------------------------------------------
 def probe_safetensors_dtype(
@@ -873,3 +992,42 @@ def derive(
         res.confidence = Confidence.NOT_ELIGIBLE  # P4 wires stratum-5 abort
 
     return res
+
+
+# ---------------------------------------------------------------------------
+# CLI — stage-1 INSPECT for the Bring funnel (c3 subprocess + standalone use)
+#   python3 scripts/lib/profiles/deriver.py --inventory <org/Model> [--json]
+# ---------------------------------------------------------------------------
+def _cli(argv: list[str]) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        prog="deriver", description="Bring-funnel stage-1 INSPECT (artifact inventory)"
+    )
+    ap.add_argument("repo", help="HF repo slug, e.g. org/Model")
+    ap.add_argument("--inventory", action="store_true", required=True,
+                    help="emit the artifact inventory (the only CLI mode)")
+    ap.add_argument("--json", action="store_true", help="JSON output (default: pretty)")
+    ns = ap.parse_args(argv)
+    inv = inspect_repo(ns.repo)
+    if ns.json:
+        print(json.dumps(inv))
+    else:
+        if inv.get("error"):
+            print(f"error: {inv['error']}")
+        else:
+            print(f"repo: {inv['repo']}  formats: {', '.join(inv['formats'])}")
+            if inv.get("safetensors"):
+                st = inv["safetensors"]
+                print(f"  safetensors: {len(st['weight_files'])} file(s), {st['size_gb']:.1f} GiB")
+            for v in inv.get("gguf_variants") or []:
+                print(f"  gguf {v['quant']}: {v['size_gb']:.1f} GiB ({v['parts']} file(s))")
+            for m in inv.get("gguf_mmproj") or []:
+                print(f"  mmproj: {m}")
+            if inv.get("lineage_base_model"):
+                print(f"  base_model: {inv['lineage_base_model']}")
+    return 1 if inv.get("error") else 0
+
+
+if __name__ == "__main__":  # pragma: no cover - thin CLI shim
+    raise SystemExit(_cli(sys.argv[1:]))

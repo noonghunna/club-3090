@@ -607,6 +607,65 @@ class ReconcileResult:
 
 
 @dataclass
+class GgufVariant:
+    """One GGUF quant discovered in an HF repo (deriver artifact inventory)."""
+
+    quant: str = ""
+    size_gb: float = 0.0
+    parts: int = 1
+    files: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ArtifactInventory:
+    """Bring-funnel stage-1 INSPECT (design §2b): what servable artifacts an
+    HF repo carries — BEFORE any engine/template is shown.  From
+    ``deriver.py --inventory <repo> --json`` (offline-testable; a GGUF-only
+    repo is a first-class bring here, never ``unsupported-format``)."""
+
+    repo: str = ""
+    error: str = ""
+    formats: list[str] = field(default_factory=list)
+    safetensors_files: int = 0
+    safetensors_size_gb: float = 0.0
+    gguf_variants: list[GgufVariant] = field(default_factory=list)
+    gguf_mmproj: list[str] = field(default_factory=list)
+    lineage_base_model: Any = None
+
+    @property
+    def has_safetensors(self) -> bool:
+        return "safetensors" in self.formats
+
+    @property
+    def has_gguf(self) -> bool:
+        return bool(self.gguf_variants)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any] | None) -> "ArtifactInventory":
+        if not d:
+            return cls(error="no output")
+        st = d.get("safetensors") or {}
+        return cls(
+            repo=str(d.get("repo", "")),
+            error=str(d.get("error", "") or ""),
+            formats=list(d.get("formats") or []),
+            safetensors_files=len(st.get("weight_files") or []),
+            safetensors_size_gb=float(st.get("size_gb") or 0.0),
+            gguf_variants=[
+                GgufVariant(
+                    quant=str(v.get("quant", "")),
+                    size_gb=float(v.get("size_gb") or 0.0),
+                    parts=int(v.get("parts") or 1),
+                    files=list(v.get("files") or []),
+                )
+                for v in (d.get("gguf_variants") or [])
+            ],
+            gguf_mmproj=list(d.get("gguf_mmproj") or []),
+            lineage_base_model=d.get("lineage_base_model"),
+        )
+
+
+@dataclass
 class ByoResult:
     """Result of pull.sh --profile-like <repo> --dry-run --json."""
 
