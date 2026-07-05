@@ -295,6 +295,33 @@ def _mem_util_env(profiles, variant: str, gpu_spec: str) -> dict[str, str]:
     return {}
 
 
+_DEEPGEMM_DISABLE_SM = {8.9, 12.0, 12.1}
+
+
+def _deepgemm_env(profiles, variant: str, entry: dict, gpu_spec: str) -> dict[str, str]:
+    """Disable vLLM's DeepGEMM fp8-GEMM path on CONSUMER cards that serve fp8
+    weights. DeepGEMM is built for Hopper (sm_90) + datacenter Blackwell
+    (sm_100/103). Consumer Blackwell (sm_120/121) hard-fails with 'recipe not
+    found' (confirmed on a 5090 — disc #571 guybrush01); Ada (sm_89) never routes
+    fp8 through DeepGEMM at all (Marlin/CUTLASS), so injecting 0 there is a
+    harmless no-op that pre-empts the same wall for 4090 owners. Hopper/datacenter
+    (where DeepGEMM is the fast path) are left untouched. Only fires for fp8-weights
+    slugs. Empty dict = no injection."""
+    if not gpu_spec:
+        return {}
+    if os.environ.get("VLLM_USE_DEEP_GEMM"):
+        return {}  # explicit user pin always wins
+    if (entry or {}).get("weights_variant") != "fp8":
+        return {}  # only native fp8-weights slugs touch the DeepGEMM path
+    try:
+        hardware = _parse_gpu_specs(gpu_spec, profiles)
+    except LaunchCompatError:
+        return {}
+    if any(float(hw.sm) in _DEEPGEMM_DISABLE_SM for hw in hardware):
+        return {"VLLM_USE_DEEP_GEMM": "0"}
+    return {}
+
+
 def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
     """Resolve EngineProfile.install into compose environment exports."""
     try:
@@ -336,6 +363,7 @@ def resolve_variant_pin(profiles, variant: str, gpu_spec: str = "") -> dict[str,
     exports.update(_arch_aware_env(profiles, variant, entry, gpu_spec, exports))
     exports.update(_envelope_env(profiles, variant, gpu_spec))   # Phase 2 concurrency
     exports.update(_mem_util_env(profiles, variant, gpu_spec))   # Phase 2 mem-fraction floor
+    exports.update(_deepgemm_env(profiles, variant, entry, gpu_spec))  # fp8w consumer-Blackwell fix
     return exports
 
 
