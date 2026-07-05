@@ -72,7 +72,7 @@ The shipped composes carry **Ampere-safe defaults** (fp8_e5m2 KV etc.). Since [#
 | Detected class | What the launchers do |
 |---|---|
 | **ampere** (sm_8.6/8.7) | Nothing — compose defaults apply, byte-for-byte pre-#246 behavior |
-| **ada** (sm_8.9) / **hopper** (sm_9.x) / **blackwell** (sm_10+) | Export `KV_CACHE_DTYPE=fp8_e4m3` (native FP8 Tensor-Core compute) for the **pilot slugs** |
+| **ada** (sm_8.9) / **hopper** (sm_9.x) / **blackwell** (sm_10+) | Export `KV_CACHE_DTYPE=fp8_e4m3` for the **pilot slugs** — a **better-precision** FP8 KV format. NB: it's storage-only (≡e5m2 in speed) on consumer cards; native FP8 *attention* is Hopper/datacenter-only. See [DTYPE_MATRIX](DTYPE_MATRIX.md#having-the-tensor-cores--using-them-the-two-axes-that-decide-real-behavior) |
 | unknown / heterogeneous mix / no nvidia-smi | Nothing — compose defaults apply |
 
 Mechanics and boundaries:
