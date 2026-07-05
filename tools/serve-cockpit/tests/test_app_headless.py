@@ -1462,7 +1462,8 @@ class TestBringFunnelStagedReveal:
             assert app.query_one("#lane-bring-fit-btn", Button).display
             # §2b-3/4: only safetensors engines; topology-FIRST labels
             labels = [l for (l, v) in sel._options if v != PROFILE_CUSTOM_SENTINEL]
-            assert labels == ["dual/vllm/qwen3.6-27b-autoround-int4  ·  fp8-mtp"]
+            # the sole option IS the recommendation → starred + pre-selected
+            assert labels == ["⭐ dual/vllm/qwen3.6-27b-autoround-int4  ·  fp8-mtp"]
 
     @pytest.mark.asyncio
     async def test_gguf_inspect_requires_quant_pick_before_slugs(self):
@@ -1492,7 +1493,7 @@ class TestBringFunnelStagedReveal:
             await _settle(pilot)
             assert sel.display
             labels = [l for (l, v) in sel._options if v != PROFILE_CUSTOM_SENTINEL]
-            assert labels == ["single/ik-llama/qwen3.6-27b-ubergarm-iq4ks  ·  mtp"]
+            assert labels == ["⭐ single/ik-llama/qwen3.6-27b-ubergarm-iq4ks  ·  mtp"]
 
     @pytest.mark.asyncio
     async def test_fit_check_surfaces_weights_state_and_handoff(self, monkeypatch, tmp_path):
@@ -1602,6 +1603,27 @@ class TestFunnelSlugOptionsPure:
             self._rows(), "safetensors", artifact_gb=5.0, vram_gb=24.0, gpu_count=1
         )
         assert {o.slug for o in st} == {"vllm/minimal"}   # dual unhostable on 1 card
+
+    def test_recommendation_prefers_smallest_fitting_topology(self):
+        # Live dogfood 2026-07-05: a 5 GiB gguf on a 2-card rig defaulted to a
+        # DUAL slug (rig-topology rule) — the recommendation must be the
+        # SMALLEST fitting topology, curated default preferred within it.
+        from club3090_cockpit.app import funnel_recommended, funnel_slug_options
+
+        opts = funnel_slug_options(
+            self._rows(), "safetensors", artifact_gb=5.0, vram_gb=24.0, gpu_count=2
+        )
+        assert {o.slug for o in opts} == {"vllm/dual", "vllm/minimal"}
+        # no curated defaults → first functional option of the SINGLE group
+        assert funnel_recommended(opts) == "vllm/minimal"
+        # the registry's curated default for (vllm, single) wins within the group
+        defaults = [{"engine": "vllm-stable", "topology": "single", "slug": "vllm/minimal"}]
+        assert funnel_recommended(opts, defaults) == "vllm/minimal"
+        # big artifact → single floored away → the recommendation follows
+        opts = funnel_slug_options(
+            self._rows(), "safetensors", artifact_gb=34.0, vram_gb=24.0, gpu_count=2
+        )
+        assert funnel_recommended(opts) == "vllm/dual"
 
 
 # ===========================================================================

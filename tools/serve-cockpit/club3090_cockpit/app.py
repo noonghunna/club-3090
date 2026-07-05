@@ -307,6 +307,33 @@ def funnel_slug_options(
     return out
 
 
+def funnel_recommended(
+    options: list["ProfileOption"], defaults: Optional[list[dict]] = None
+) -> Optional[str]:
+    """§2b follow-up (live dogfood 2026-07-05): the funnel surfaces ONE
+    visible recommendation — the old rig-topology default picked a DUAL slug
+    for a 5 GiB gguf on a 2-card rig, which reads as 'the UI wants me on two
+    cards'.  Rule: the SMALLEST fitting topology wins (options are already
+    size-floored + topology-sorted, so that's the first group — the cheapest
+    config that holds the artifact); within it, prefer the registry's own
+    curated default for the (family, topology), else the first functional-
+    status option, else the group's first.  Pure."""
+    if not options:
+        return None
+    topo = options[0].topology
+    group = [o for o in options if o.topology == topo]
+    curated = _curated_default_map(defaults)
+    for o in group:
+        prefix = o.slug.split("/", 1)[0]
+        fam = _canon_engine_family(prefix) or prefix
+        if curated.get((fam, topo)) == o.slug:
+            return o.slug
+    for o in group:
+        if _status_is_functional(o.status):
+            return o.slug
+    return group[0].slug
+
+
 def _curated_default_map(
     defaults: Optional[list[dict]],
 ) -> dict[tuple[str, str], str]:
@@ -6905,7 +6932,6 @@ class CockpitApp(App):
     def _reveal_funnel_slugs(
         self, artifact_format: str, artifact_gb: Optional[float]
     ) -> None:
-        pairs = self._funnel_options_for(artifact_format, artifact_gb)
         opts = funnel_slug_options(
             self._variants or [],
             artifact_format,
@@ -6913,9 +6939,18 @@ class CockpitApp(App):
             vram_gb=self._known_gpu_vram_gb(),
             gpu_count=self._known_gpu_count(),
         )
-        default = default_profile_template(opts, self._known_gpu_count() or 2)
+        # ONE visible recommendation (§2b follow-up): smallest fitting
+        # topology + curated engine preference — starred AND pre-selected;
+        # the full filtered list stays reachable below it.
+        rec = funnel_recommended(
+            opts, list(getattr(self._data, "catalog_defaults", None) or [])
+        )
+        pairs = [
+            ((f"⭐ {label}" if value == rec else label), value)
+            for (label, value) in profile_select_options(opts)
+        ]
         try:
-            self.query_one("#lane-bring-pane", LaneBringPane).reveal_slug_stage(pairs, default)
+            self.query_one("#lane-bring-pane", LaneBringPane).reveal_slug_stage(pairs, rec)
         except Exception:
             pass
 
