@@ -1038,6 +1038,21 @@ class CatalogPane(Container):
                 yours += f"  [dim]· on {lm.quality_8pk_think_on}[/dim]"
             yours += f"  [dim]({lm.date} · this rig)[/dim]"
             lines.append(yours)
+        # Slice 3 — cross-rig submissions: rig-labeled, tier-badged, NEVER
+        # merged into the bar (a 5090 number is not this rig's bar). A
+        # submission-only entry shows bar "—" with only these lines.
+        for rc, s in sorted((b.get("submissions") or {}).items()):
+            n = s.get("narr_tps")
+            c = s.get("code_tps")
+            tps = (f"{n:.0f}" if n is not None else "—") + "/" + (
+                f"{c:.0f}" if c is not None else "—")
+            sub = (
+                f"  [bold]⑂ {rc}[/bold]  {tps} TPS"
+                f"  [dim]({s.get('tier')} · {s.get('date')} · {s.get('submitted_by')})[/dim]"
+            )
+            if s.get("stale") is True:
+                sub += "  [yellow]†[/yellow]"
+            lines.append(sub)
         note = (entry.status_note or "").strip()
         if note:
             lines.append(f"  [bold]caveat[/bold]  [yellow]{note}[/yellow]")
@@ -8191,8 +8206,18 @@ class CockpitApp(App):
     async def run_measure_vs_bar(self, screen: "MeasureVsBarScreen", tag: str) -> None:
         """Compute the measured-vs-bar comparison for a tag (READ) + push it to
         the modal.  No GPU / network / write — pure filesystem reads + the
-        benchmarks explorer."""
-        vsbar = await self._data.measure_vs_bar(tag, variants=self._variants or None)
+        benchmarks explorer.
+
+        Friction #9: when a ① Bring fit-check ran this session, its swap_path
+        sibling rides along as the CLASS-bar fallback — a NEW model has no
+        same-model bar by definition."""
+        byo = self._last_byo
+        class_hint = ""
+        if byo is not None and not getattr(byo, "error", ""):
+            class_hint = getattr(byo, "sibling_slug", "") or ""
+        vsbar = await self._data.measure_vs_bar(
+            tag, variants=self._variants or None, class_hint=class_hint
+        )
         try:
             screen.set_result(vsbar)
         except Exception:

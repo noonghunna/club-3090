@@ -14,6 +14,12 @@
 #   quality_8pk           thinking-OFF arm "P/150"; _think_on = thinking-ON.
 #                         8-pack noise band is ±5–7 — separates classes, not
 #                         fine rankings (badge semantics, design §2.1.4).
+#   quality_env           the harness fingerprint the quality numbers were
+#                         produced ON: { harness: "benchlocal-cli X.Y.Z",
+#                         sandbox_digest?: "sha256:…" } — §2.1.4 provenance
+#                         (the half-deployed-sandbox lesson). Written by
+#                         catalog-baseline.sh from the results JSON; digest
+#                         rides along once benchlocal emits it.
 #   ctx_validated         highest ctx EXERCISED by the gate, with the recall
 #                         verdict: {tokens: N, niah: "clean@XK" | "allocation-
 #                         only"} — allocation alone is NOT validation (§2.1.2).
@@ -24,6 +30,26 @@
 #   source_tag            results/rebench/<tag>/ when a tag dir exists;
 #                         omitted for rows reviewed from a BENCHMARKS.md entry
 #                         (the row comment names the source).
+#   tier                  provenance trust tier (slice 3):
+#                           local      — measured on the maintainer reference
+#                                        rig via the full gate (primary rows
+#                                        are ALWAYS tier: local)
+#                           submitted  — foreign bundle, ingested via
+#                                        catalog-baseline.sh --from-bundle;
+#                                        NOT independently verified
+#                           reproduced — a submission independently re-run
+#                                        (second submitter on the same
+#                                        rig-class, or maintainer on matching
+#                                        hardware)
+#   submissions           OPTIONAL map keyed by rig_class (e.g. 2x5090-pcie):
+#                         cross-rig rows ingested from volunteer bundles.
+#                         Same fields as a primary row PLUS required `source:`
+#                         (the disc/PR link) and tier ∈ {submitted,reproduced}.
+#                         ONE row per rig_class — newest-by-date wins, older
+#                         stays in git history. Submissions NEVER become the
+#                         slug's default bar (consumers show them rig-labeled);
+#                         a slug MAY carry submissions with no primary row
+#                         (measured on hardware we don't have).
 #
 # SEED WAVE 1 (2026-07-04): rows with airtight traceability only — a rebench
 # tag on disk or an unambiguous decode-class BENCHMARKS.md row. Slugs still
@@ -52,6 +78,7 @@ baselines:
     rig: "2x3090-pcie"
     power_cap_w: [370, 420]
     submitted_by: "noonghunna"
+    tier: local
 
   vllm/qwen-27b-dual-fast:
     # alias of vllm/dual (same compose_path dual/autoround-int4/fp8-mtp.yml,
@@ -65,6 +92,7 @@ baselines:
     rig: "2x3090-pcie"
     power_cap_w: [370, 420]
     submitted_by: "noonghunna"
+    tier: local
 
   llamacpp/default:
     # BENCHMARKS.md 2026-05-23 row (decode, n=3, CV 0.6%/1.4%).
@@ -77,6 +105,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   llamacpp/mtp:
     # BENCHMARKS.md 2026-06-18 row (decode, n=5, CV <2%, thinking-off).
@@ -87,6 +116,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   llamacpp/mtp-vision:
     # BENCHMARKS.md 2026-05-20 row (decode, n=5, CV 1.6%/1.7%).
@@ -98,6 +128,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   ik-llama/iq4ks-mtp:
     # BENCHMARKS.md 2026-05-23 row (decode 60.39/72.40, n=3; set+readback 370 W).
@@ -110,6 +141,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   ik-llama/iq4ks-two-stage:
     # BENCHMARKS.md 2026-05-24 row (decode, n=3, CV 1.9%/5.3%).
@@ -120,6 +152,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   beellama/dflash:
     # BENCHMARKS.md 2026-05-30 row (decode 50.4/101.3, n=5, CV 5.6%/7.4%).
@@ -133,6 +166,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   ik-llama/iq4ks-mtp-vision:
     # BENCHMARKS.md 2026-05-25 vision re-tune row (PR #227/#437): decode
@@ -148,6 +182,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   ik-llama/byteshape-iq4xs-mtp:
     # BENCHMARKS.md row (decode 115.60/137.07, n=5) + 8-pack 110/150 off —
@@ -160,6 +195,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   # ── Qwen3.6-35B-A3B ──────────────────────────────────────────────────────
   ik-llama/apex-fit-q8q5:
@@ -176,6 +212,7 @@ baselines:
     rig: "1x3090-pcie"
     power_cap_w: [370]
     submitted_by: "noonghunna"
+    tier: local
 
   vllm/qwen-35b-a3b-dual:
     # BENCHMARKS.md promotion row (#259, decode 182.3/182.3; NIAH-clean 240K).
@@ -192,6 +229,7 @@ baselines:
     rig: "2x3090-pcie"
     power_cap_w: [370, 420]
     submitted_by: "noonghunna"
+    tier: local
 
   # ── Agents-A1 ────────────────────────────────────────────────────────────
   vllm/agents-a1-dual:
@@ -221,6 +259,7 @@ baselines:
     power_cap_w: [370, 420]
     source_tag: "agents-a1-fp8-dual"
     submitted_by: "noonghunna"
+    tier: local
 
   # ── Gemma-4-31B ──────────────────────────────────────────────────────────
   vllm/gemma-31b-dual:
@@ -237,6 +276,7 @@ baselines:
     power_cap_w: [370, 420]
     source_tag: "gemma-31b-dual-bf16"
     submitted_by: "noonghunna"
+    tier: local
 
   # ── Gemma-4-26B-A4B ──────────────────────────────────────────────────────
   vllm/gemma-26ba4b-single:
@@ -257,6 +297,7 @@ baselines:
     power_cap_w: [370]
     source_tag: "gemma-26ba4b-int8r"
     submitted_by: "noonghunna"
+    tier: local
 
   beellama/gemma-dflash:
     # inducted by catalog-baseline.sh from rebench tag gemma-dflash-regate (2026-07-04);
@@ -274,6 +315,27 @@ baselines:
     power_cap_w: [370]
     source_tag: "gemma-dflash-regate"
     submitted_by: "noonghunna"
+    tier: local
+
+  vllm/qwen-27b-dual-max:
+    # cross-rig submissions only — no local baseline row yet
+    submissions:
+      2x5090-pcie:
+        # inducted by catalog-baseline.sh --from-bundle from rebench tag 246-ab-fp8w (2026-07-05);
+        # evidence: verify-full pass · bench n=5 · TPS-ONLY (no quality) · NIAH ladder
+        narr_tps: 134.52
+        code_tps: 165.11
+        ttft_ms: 56
+        prefill_tps: { 10k: 3693, 90k: 1906 }
+        ctx_validated: { tokens: 240635, niah: "clean@241K" }
+        date: 2026-07-05
+        engine_pin: "vllm/vllm-openai:v0.24.0"
+        rig: "2x5090-pcie"
+        power_cap_w: [575, 575]
+        source: "https://github.com/noonghunna/club-3090/discussions/571#discussioncomment-17536412"
+        source_tag: "246-ab-fp8w"
+        submitted_by: "guybrush01"
+        tier: submitted
 
 # ───────────────────────────────────────────────────────────────────────────
 # KNOWN GAPS — wave-2 dispositions (2026-07-04): each slug below has NO row

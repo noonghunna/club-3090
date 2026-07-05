@@ -520,6 +520,48 @@ class TestLoadCatalog:
         assert ik.measurement.stale is True
 
     @pytest.mark.asyncio
+    async def test_submission_only_baseline_is_not_the_bar(self):
+        """Slice 3 — cross-rig submissions: a submission-only baseline (no
+        primary local row) must NOT become the slug's bar — the TPS column
+        stays "—"; the rows surface rig-labeled in the detail panel only.  A
+        primary row WITH submissions keeps its bar untouched."""
+        import copy
+
+        emit = json.loads(REGISTRY_JSON)
+        # vllm/dual: primary row + a cross-rig submission riding along
+        emit["variants"][0]["baseline"]["submissions"] = {
+            "2x5090-pcie": {
+                "narr_tps": 134.5, "code_tps": 165.1, "date": "2026-07-05",
+                "engine_pin": "vllm/vllm-openai:v0.24.0", "rig": "2x5090-pcie",
+                "power_cap_w": [575, 575], "tier": "submitted",
+                "source": "https://example.test/disc#42",
+                "submitted_by": "guybrush01", "stale": False,
+            }
+        }
+        # ik slug: submission-only (no primary fields at all)
+        sub_only = copy.deepcopy(emit["variants"][1])
+        emit["variants"][1]["baseline"] = {
+            "stale": None, "current_pin": "ghcr.io/ik-new@sha256:bbb",
+            "submissions": emit["variants"][0]["baseline"]["submissions"],
+        }
+        del sub_only  # (structure reuse above is enough)
+        cd = CockpitData(ROOT, runner=full_runner(**{
+            "registry-emit.sh --json": ok(json.dumps(emit)),
+        }))
+        entries, _ = await cd.load_catalog(enrich_fit=False, enrich_measurement=True)
+        vllm = next(e for e in entries if e.slug == "vllm/dual")
+        # primary bar unchanged by the riding submission
+        assert vllm.measurement.source == "baseline"
+        assert vllm.measurement.tps_label == "174/42"
+        ik = next(e for e in entries if e.slug == "ik-llama/iq4ks-mtp")
+        # submission-only: NOT enriched as the bar
+        assert ik.measurement.source == ""
+        assert ik.measurement.tps_label == "—"
+        # ...but the submissions ride the row for the detail panel
+        subs = (getattr(ik.row, "baseline", None) or {}).get("submissions") or {}
+        assert subs["2x5090-pcie"]["tier"] == "submitted"
+
+    @pytest.mark.asyncio
     async def test_local_measurements_overlay(self, tmp_path):
         """Slice 2b — the per-rig corpus overlay: newest record per slug wins
         (by _recorded_at), malformed lines are skipped, and the overlay joins

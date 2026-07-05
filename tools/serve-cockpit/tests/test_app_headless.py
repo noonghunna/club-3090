@@ -3123,6 +3123,39 @@ class TestMeasureVsBarData:
             assert "could not resolve" in joined or "no curated catalog bar" in joined
 
     @pytest.mark.asyncio
+    async def test_measure_vs_bar_class_fallback_for_new_model(self, tmp_path):
+        """Friction #9 (T2): a NEW model has no same-model bar BY DEFINITION —
+        with ①'s swap_path sibling as class_hint the comparison falls back to
+        the labeled CLASS bar (engine-matched, bar_is_class + caveat); without
+        a hint the no-bar caveat says how to get one (run ① fit-check)."""
+        app, _, _ = make_app(repo_root=tmp_path, surface="producer")
+        d = tmp_path / "results" / "rebench" / "new-model-tag"
+        d.mkdir(parents=True)
+        (d / "REPORT.md").write_text(
+            MEASURE_REPORT_MD.replace("`qwen3.6-27b`", "`brandnew-40b`")
+        )
+        (d / "_internal.json").write_text(MEASURE_INTERNAL_JSON)
+        (tmp_path / "BENCHMARKS.md").write_text(BENCHMARKS_MD)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # No hint → honest no-bar + the actionable pointer to ① fit-check.
+            vsbar = await app._data.measure_vs_bar("new-model-tag")
+            assert vsbar.bar is None
+            assert vsbar.bar_is_class is False
+            joined = " ".join(vsbar.protocol_caveats).lower()
+            assert "sibling class" in joined and "fit-check" in joined
+            # With the sibling hint → the labeled CLASS bar, engine-matched.
+            vsbar = await app._data.measure_vs_bar(
+                "new-model-tag", class_hint="qwen3.6-27b"
+            )
+            assert vsbar.bar is not None
+            assert vsbar.bar_is_class is True
+            assert vsbar.class_model == "qwen3.6-27b"
+            assert vsbar.bar.model == "qwen3.6-27b"
+            assert vsbar.bar.engine == "vllm"  # engine-matched within the class
+            assert any("CLASS bar" in c for c in vsbar.protocol_caveats)
+
+    @pytest.mark.asyncio
     async def test_measure_vs_bar_missing_tag_dir_errors(self, tmp_path):
         app, _, _ = make_app(repo_root=tmp_path, surface="producer")
         (tmp_path / "BENCHMARKS.md").write_text(BENCHMARKS_MD)

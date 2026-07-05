@@ -18,17 +18,20 @@ mkdir -p "$TAGD"
 BL="$TMP/baselines.yml"
 cp scripts/lib/profiles/baselines.yml "$BL"
 REAL_SUM_BEFORE="$(sha256sum scripts/lib/profiles/baselines.yml | cut -d' ' -f1)"
-# guarantee the ADD path below: strip any real vllm/dual row from the copy
-# (the real file seeds one since wave-2)
+# guarantee the ADD paths below: strip any real vllm/dual row (the real file
+# seeds one since wave-2) AND any real vllm/qwen-27b-dual-max entry (the real
+# file carries a submission-only entry since slice 3 — section 5's
+# submission-only case needs the slug absent)
 python3 - "$BL" <<'PY'
 import re
 import sys
 
 p = sys.argv[1]
 old = open(p).read()
-new = re.sub(r"^  vllm/dual:\n(?:^(?:    .*|\s*)\n)*?(?=^  \S|^#|^\S|\Z)",
-             "", old, count=1, flags=re.M)
-open(p, "w").write(new)
+for slug in ("vllm/dual", "vllm/qwen-27b-dual-max"):
+    old = re.sub(rf"^  {re.escape(slug)}:\n(?:^(?:    .*|\s*)\n)*?(?=^  \S|^#|^\S|\Z)",
+                 "", old, count=1, flags=re.M)
+open(p, "w").write(old)
 PY
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
@@ -66,10 +69,12 @@ cat > "$TAGD/_internal.json" <<'EOF'
            "code": {"decode_tps_mean": 154.0, "ttft_ms_mean": 128.0}}}
 EOF
 cat > "$TAGD/quality-full.json" <<'EOF'
-{"packs": [{"passed": 55, "total": 75}, {"passed": 50, "total": 75}]}
+{"runner_version": "0.9.9",
+ "packs": [{"passed": 55, "total": 75}, {"passed": 50, "total": 75}]}
 EOF
 cat > "$TAGD/quality-full-thinking.json" <<'EOF'
-{"packs": [{"passed": 60, "total": 75}, {"passed": 50, "total": 75}]}
+{"runner_version": "0.9.9",
+ "packs": [{"passed": 60, "total": 75}, {"passed": 50, "total": 75}]}
 EOF
 cat > "$TAGD/verify-stress.log" <<'EOF'
     ✓ rung 1/6: target=95K  actual=94K tok (36%)  recalled 'violet chinchilla 79'  prefill=7402.9 t/s (13s)  VRAM_free=1403MB
@@ -87,6 +92,9 @@ grep -q "narr_tps: 153.9" <<<"$out" || fail "narr_tps not extracted: $out"
 grep -q "code_tps: 154.0" <<<"$out" || fail "code_tps not extracted"
 grep -q 'quality_8pk: "105/150"' <<<"$out" || fail "quality_8pk not extracted"
 grep -q 'quality_8pk_think_on: "110/150"' <<<"$out" || fail "think-on not extracted"
+# friction #8: the harness fingerprint rides the row (§2.1.4 provenance)
+grep -q 'quality_env: { harness: "benchlocal-cli 0.9.9" }' <<<"$out" \
+  || fail "quality_env not extracted from runner_version: $out"
 grep -q 'tokens: 240635' <<<"$out" || fail "ctx_validated not extracted"
 # 2c: prefill depth points land; the canonical ttft_ms stays the SHORT-prompt
 # value (the 90K block's 17s TTFT must not bleed into it).
@@ -147,6 +155,125 @@ grep -q "WITHOUT a quality run" <<<"$out" || fail "--tps-only must WARN"
 if bash scripts/catalog-baseline.sh vllm/__nope__ "${ARGS[@]}" --dry-run >/dev/null 2>&1; then
   fail "unknown slug must refuse"
 fi
+
+# ── 5. bundle mode (slice 3): provenance FROM the bundle → submissions map ───
+# Synthetic volunteer bundle: the same gate artifacts + rig.txt +
+# container-config.json (a 2×5090 rig, one global power line, a pin that is
+# NOT this rig's resolved pin — so any local-fallback leak fails loudly).
+BSRC="$TMP/bundle-src/results/rebench/synth-fp8w"
+mkdir -p "$BSRC"
+cp "$TAGD"/verify-full.log "$TAGD"/bench.log "$TAGD"/_internal.json \
+   "$TAGD"/verify-stress.log "$BSRC"/
+cat > "$BSRC/rig.txt" <<'EOF'
+hostname: volunteer-box
+GPU 0: NVIDIA GeForce RTX 5090 (UUID: GPU-aaa)
+GPU 1: NVIDIA GeForce RTX 5090 (UUID: GPU-bbb)
+power_cap_w: 575.00
+EOF
+cat > "$BSRC/container-config.json" <<'EOF'
+[{"Config": {"Image": "vllm/test-pin:v9"}}]
+EOF
+tar czf "$TMP/bundle.tgz" -C "$TMP/bundle-src" results
+
+BARGS=(--from-bundle "$TMP/bundle.tgz" --source "https://example.test/disc#42"
+       --submitted-by volunteer1 --tps-only --baselines-file "$BL")
+
+# refusals: --source and --submitted-by are the trust boundary — REQUIRED
+if bash scripts/catalog-baseline.sh vllm/dual --from-bundle "$TMP/bundle.tgz" \
+     --submitted-by v --tps-only --baselines-file "$BL" --dry-run >/dev/null 2>&1; then
+  fail "bundle mode without --source must refuse"
+fi
+if bash scripts/catalog-baseline.sh vllm/dual --from-bundle "$TMP/bundle.tgz" \
+     --source x --tps-only --baselines-file "$BL" --dry-run >/dev/null 2>&1; then
+  fail "bundle mode without --submitted-by must refuse (no \$USER default)"
+fi
+
+# dry-run: every provenance field derived FROM the bundle, none from this rig
+sum_before="$(sha256sum "$BL" | cut -d' ' -f1)"
+out="$(bash scripts/catalog-baseline.sh vllm/dual "${BARGS[@]}" --dry-run 2>&1)"
+grep -q 'rig: "2x5090-pcie"' <<<"$out" || fail "rig not derived from rig.txt: $out"
+grep -q 'power_cap_w: \[575, 575\]' <<<"$out" || fail "one global cap line not replicated per card"
+grep -q 'engine_pin: "vllm/test-pin:v9"' <<<"$out" || fail "pin not read from container-config.json"
+grep -q 'tier: submitted' <<<"$out" || fail "tier: submitted missing"
+[[ "$(sha256sum "$BL" | cut -d' ' -f1)" == "$sum_before" ]] || fail "bundle dry-run WROTE the file"
+
+# write: the submissions map lands; the primary row is untouched
+out="$(bash scripts/catalog-baseline.sh vllm/dual "${BARGS[@]}" 2>&1)" || fail "bundle add failed"
+grep -q "added submissions map" <<<"$out" || fail "first bundle induction did not add the map"
+python3 - "$BL" <<'PY'
+import sys
+
+import yaml
+
+d = yaml.safe_load(open(sys.argv[1]))
+row = d["baselines"]["vllm/dual"]
+assert row["narr_tps"] == 153.9 and row["engine_pin"] == "test/pin:v2", \
+    "primary row disturbed by a bundle induction"
+s = row["submissions"]["2x5090-pcie"]
+assert s["narr_tps"] == 153.9 and s["tier"] == "submitted"
+assert s["source"] == "https://example.test/disc#42" and s["submitted_by"] == "volunteer1"
+assert s["power_cap_w"] == [575, 575] and s["engine_pin"] == "vllm/test-pin:v9"
+assert s["rig"] == "2x5090-pcie"
+PY
+
+# same rig_class re-induction REPLACES (one row per rig_class, newest wins)
+out="$(bash scripts/catalog-baseline.sh vllm/dual "${BARGS[@]}" 2>&1)" || fail "bundle replace failed"
+grep -q "replaced submission" <<<"$out" || fail "same-rig_class re-induction did not replace"
+python3 - "$BL" <<'PY'
+import sys
+
+import yaml
+
+d = yaml.safe_load(open(sys.argv[1]))
+assert len(d["baselines"]["vllm/dual"]["submissions"]) == 1
+PY
+
+# primary re-induction PRESERVES the submissions map (the block regex would
+# otherwise swallow it — the slice-3 splice-safety guard)
+out="$(bash scripts/catalog-baseline.sh vllm/dual "${ARGS[@]}" --tps-only 2>&1)" \
+  || fail "primary re-induction over a row with submissions failed"
+python3 - "$BL" <<'PY'
+import sys
+
+import yaml
+
+d = yaml.safe_load(open(sys.argv[1]))
+row = d["baselines"]["vllm/dual"]
+assert row.get("tier") == "local", "primary induction must stamp tier: local"
+assert row["submissions"]["2x5090-pcie"]["tier"] == "submitted", \
+    "primary re-induction dropped the submissions map"
+PY
+
+# submission-only entry: a slug measured on hardware we don't have
+out="$(bash scripts/catalog-baseline.sh vllm/qwen-27b-dual-max "${BARGS[@]}" 2>&1)" \
+  || fail "submission-only add failed"
+grep -q "submission-only" <<<"$out" || fail "did not create a submission-only entry"
+python3 - "$BL" <<'PY'
+import sys
+
+import yaml
+
+d = yaml.safe_load(open(sys.argv[1]))
+row = d["baselines"]["vllm/qwen-27b-dual-max"]
+assert "narr_tps" not in row, "submission-only entry must carry no primary fields"
+assert row["submissions"]["2x5090-pcie"]["tier"] == "submitted"
+txt = open(sys.argv[1]).read()
+assert txt.index("  vllm/qwen-27b-dual-max:") < txt.index("KNOWN GAPS"), \
+    "submission-only entry landed after the gap-list footer"
+PY
+
+# multi-tag bundle: refuse without --from-tag, select with it
+mkdir -p "$TMP/bundle-src/results/rebench/synth-second"
+cp "$BSRC"/* "$TMP/bundle-src/results/rebench/synth-second/"
+tar czf "$TMP/bundle2.tgz" -C "$TMP/bundle-src" results
+if bash scripts/catalog-baseline.sh vllm/dual --from-bundle "$TMP/bundle2.tgz" \
+     --source x --submitted-by v --tps-only --baselines-file "$BL" --dry-run >/dev/null 2>&1; then
+  fail "multi-tag bundle without --from-tag must refuse"
+fi
+out="$(bash scripts/catalog-baseline.sh vllm/dual --from-bundle "$TMP/bundle2.tgz" \
+     --from-tag synth-second --source x --submitted-by v --tps-only \
+     --baselines-file "$BL" --dry-run 2>&1)" || fail "multi-tag --from-tag selection failed"
+grep -q 'source_tag: "synth-second"' <<<"$out" || fail "--from-tag did not select the tag in the bundle"
 
 # real file untouched throughout (checksum across the run — git state may
 # legitimately be dirty in a working checkout)

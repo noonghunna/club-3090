@@ -30,11 +30,16 @@ rows = doc.get("baselines") or {}
 assert rows, "baselines.yml has no rows"
 
 QUALITY_RE = re.compile(r"^\d{1,3}/150$")
+# rig_class key format (slice 3): <count>x<card-token>-<interconnect-ish tail>,
+# e.g. 2x3090-pcie / 2x5090-pcie / 1xdgx-spark. Format check, NOT a fixed set —
+# a new GPU model must not require a guard edit.
+RIG_CLASS_RE = re.compile(r"^\d+x[a-z0-9][a-z0-9-]*$")
 errors = []
-for slug, row in rows.items():
-    where = f"baselines[{slug}]"
-    if slug not in COMPOSE_REGISTRY:
-        errors.append(f"{where}: unknown registry slug"); continue
+
+
+def check_row(where, row, submission=False):
+    """Shared field validation — primary rows and submission rows carry the
+    same measurement fields; submissions ADD required source/tier semantics."""
     for k in ("narr_tps", "code_tps"):
         if not isinstance(row.get(k), (int, float)):
             errors.append(f"{where}.{k}: required numeric")
@@ -46,12 +51,32 @@ for slug, row in rows.items():
     pw = row.get("power_cap_w")
     if not (isinstance(pw, list) and pw and all(isinstance(x, int) for x in pw)):
         errors.append(f"{where}.power_cap_w: required list of ints")
+    # tier (slice 3): primary rows are ALWAYS the local bar; submissions carry
+    # the trust verdict (submitted = unverified, reproduced = independently re-run)
+    tier = row.get("tier")
+    if submission:
+        if tier not in ("submitted", "reproduced"):
+            errors.append(f"{where}.tier: must be submitted|reproduced")
+        if not (isinstance(row.get("source"), str) and row["source"].strip()):
+            errors.append(f"{where}.source: required non-empty string (disc/PR link)")
+    elif tier != "local":
+        errors.append(f"{where}.tier: primary rows must be tier: local")
     # optional, typed when present
     if "ttft_ms" in row and not isinstance(row["ttft_ms"], (int, float)):
         errors.append(f"{where}.ttft_ms: numeric")
     for k in ("quality_8pk", "quality_8pk_think_on"):
         if k in row and not QUALITY_RE.match(str(row[k])):
             errors.append(f"{where}.{k}: must look like 'P/150'")
+    # quality_env (friction #8 / §2.1.4): the harness fingerprint the quality
+    # numbers were produced on — harness required, sandbox_digest optional
+    # (rides along once benchlocal emits it)
+    if "quality_env" in row:
+        qe = row["quality_env"]
+        ok = (isinstance(qe, dict)
+              and isinstance(qe.get("harness"), str) and qe["harness"].strip()
+              and ("sandbox_digest" not in qe or isinstance(qe["sandbox_digest"], str)))
+        if not ok:
+            errors.append(f"{where}.quality_env: {{harness: str, sandbox_digest?: str}}")
     if "ctx_validated" in row:
         cv = row["ctx_validated"]
         ok = (isinstance(cv, dict) and isinstance(cv.get("tokens"), int)
@@ -66,6 +91,32 @@ for slug, row in rows.items():
             errors.append(f"{where}.prefill_tps: dict of numeric depth points (e.g. {{10k: N, 90k: M}})")
     if "source_tag" in row and not isinstance(row["source_tag"], str):
         errors.append(f"{where}.source_tag: string")
+
+
+for slug, row in rows.items():
+    where = f"baselines[{slug}]"
+    if slug not in COMPOSE_REGISTRY:
+        errors.append(f"{where}: unknown registry slug"); continue
+    subs = row.get("submissions")
+    has_primary = any(k in row for k in ("narr_tps", "code_tps"))
+    if not has_primary and subs is None:
+        errors.append(f"{where}: empty entry (needs a primary row and/or submissions)")
+        continue
+    if has_primary:
+        check_row(where, row)
+    if subs is not None:
+        if not (isinstance(subs, dict) and subs):
+            errors.append(f"{where}.submissions: must be a non-empty map keyed by rig_class")
+        else:
+            for rc, srow in subs.items():
+                swhere = f"{where}.submissions[{rc}]"
+                if not RIG_CLASS_RE.match(str(rc)):
+                    errors.append(f"{swhere}: rig_class key must look like '2x5090-pcie'")
+                if not isinstance(srow, dict):
+                    errors.append(f"{swhere}: must be a row map"); continue
+                check_row(swhere, srow, submission=True)
+                if srow.get("rig") != rc:
+                    errors.append(f"{swhere}.rig: must equal the rig_class key ({srow.get('rig')!r} != {rc!r})")
 
 # ctx parity (functional slugs): compose ctx-env default == registry max_ctx.
 CTX_RE = re.compile(r"\$\{(?:MAX_MODEL_LEN|CTX_SIZE|MAX_CTX)[^:}]*:-(\d+)\}")
@@ -119,6 +170,19 @@ if missing:
 bad = [s for s in rows if "stale" not in by_slug[s]["baseline"]]
 if bad:
     print(f"test-baselines: FAIL — joined rows missing 'stale': {bad}", file=sys.stderr)
+    sys.exit(1)
+
+# slice 3: submissions must ride the join with a per-submission staleness
+# verdict (same mechanism as the primary row — the pin comparison is
+# rig-independent)
+sub_bad = []
+for s in rows:
+    for rc, srow in (by_slug[s]["baseline"].get("submissions") or {}).items():
+        if "stale" not in srow:
+            sub_bad.append(f"{s}[{rc}]")
+if sub_bad:
+    print(f"test-baselines: FAIL — joined submissions missing 'stale': {sub_bad}",
+          file=sys.stderr)
     sys.exit(1)
 
 stale = [s for s in rows if by_slug[s]["baseline"]["stale"] is True]
