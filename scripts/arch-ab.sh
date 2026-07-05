@@ -10,7 +10,9 @@
 #
 # Usage:
 #   bash scripts/arch-ab.sh                          # arms e5m2,e4m3; variant by GPU count
-#   bash scripts/arch-ab.sh --arms e5m2,e4m3,nvfp4   # Blackwell (sm>=10) opt-in third arm
+#   bash scripts/arch-ab.sh --arms e5m2,e4m3         # standard A/B (any sm_89+ rig)
+#   (nvfp4 arm exists but refuses on consumer Blackwell — sm_120/121 5090s lack
+#    the nvfp4-KV FMHA kernel; it needs DATACENTER Blackwell sm_100/103.)
 #   bash scripts/arch-ab.sh --variant vllm/dual      # force the variant
 #   bash scripts/arch-ab.sh --dry-run                # print the plan, run nothing
 #   bash scripts/arch-ab.sh --resume                 # skip arms/steps with artifacts
@@ -20,8 +22,11 @@
 # Arms:
 #   e5m2   fp8_e5m2 KV on the pilot variant (control — today's shipped default)
 #   e4m3   fp8_e4m3 KV on the pilot variant (native FP8 KV compute on sm_89+)
-#   nvfp4  nvfp4 KV on the pilot variant (Blackwell-only, UNVALIDATED — refuse
-#          below sm 10.0)
+#   nvfp4  nvfp4 KV on the pilot variant — DATACENTER Blackwell (sm_100/103)
+#          ONLY. Consumer Blackwell (sm_120/121, RTX 5090 / PRO 6000 Blackwell)
+#          runs FP4 weights but has no nvfp4-KV FMHA kernel (vLLM #43562 /
+#          TRT-LLM #10241); the arm refuses there. fp8_e4m3 is the
+#          consumer-Blackwell FP4-era KV path.
 #   fp8w   vllm/qwen-27b-dual-max STOCK (FP8 weights + int8-PTH KV, no dtype
 #          override; dual-rig only) — measures the native-FP8-WEIGHTS lift on
 #          sm_89+ vs Ampere's Marlin-dequant path. NOTE: fp8 KV is rejected on
@@ -94,8 +99,14 @@ for arm in "${ARM_LIST[@]}"; do
       || die "arm 'e4m3' needs sm>=8.9 (fp8_e4m3 KV is boot-rejected on Ampere); detected min sm_${MIN_SM}. On a 3090-class rig there is no arch delta to measure — this A/B is for Ada/Blackwell rigs (run --arms e5m2 if you just want the control numbers)"
   fi
   if [[ "$arm" == "nvfp4" ]]; then
-    awk -v a="$MIN_SM" 'BEGIN{exit !(a>=10.0)}' \
-      || die "arm 'nvfp4' needs Blackwell (sm>=10.0); detected min sm_${MIN_SM}. Drop it: --arms e5m2,e4m3"
+    # nvfp4 KV forces vLLM's trtllm-gen FP4 FMHA — built ONLY for DATACENTER
+    # Blackwell sm_100/sm_103 (B100/B200/GB200). Consumer Blackwell (sm_120/121,
+    # RTX 5090 / PRO 6000 Blackwell) is a HIGHER cc number but a different family
+    # with NO FMHA build → crashes mid-boot (vLLM #43562 / TRT-LLM #10241). A
+    # plain ">=10.0" would wrongly pass sm_120, which is exactly what crashed two
+    # 5090s on disc #571 (2026-07-05). fp8_e4m3 IS the FP4-era KV path there.
+    awk -v a="$MIN_SM" 'BEGIN{exit !(a==10.0 || a==10.3)}' \
+      || die "arm 'nvfp4' needs DATACENTER Blackwell (sm_100/sm_103); detected sm_${MIN_SM}. Consumer Blackwell (sm_120/121, e.g. RTX 5090) runs FP4 WEIGHTS but has NO nvfp4-KV FMHA kernel (vLLM #43562 / TRT-LLM #10241) — it crashes mid-boot. Use --arms e5m2,e4m3 — e4m3 is the FP4-era KV path for your card."
   fi
   if [[ "$arm" == "fp8w" && "$GPU_COUNT" -lt 2 ]]; then
     die "arm 'fp8w' runs vllm/qwen-27b-dual-max (TP=2) and needs 2 GPUs (detected ${GPU_COUNT})"

@@ -5,14 +5,15 @@ sm: 12.0
 vram_gb: 96
 arch: blackwell-workstation
 mem_util_safe: 0.96
+# NOTE: nvfp4 KV is DELIBERATELY NOT listed — it needs the trtllm-gen FP4 FMHA
+# kernel, built only for datacenter Blackwell (sm_100/103). This is CONSUMER
+# Blackwell (sm_120): FP4 weights work, but nvfp4 KV has no FMHA build and
+# crashes (vLLM #43562 / TRT-LLM #10241). fp8_e4m3 is the FP4-era KV here.
 supported_kv_formats:
   - bf16
   - fp16
   - fp8_e5m2
   - fp8_e4m3
-  - nvfp4                 # Blackwell FP4 KV — vLLM v0.24.0 literal; CANDIDATE, unvalidated
-                          # on this stack (#246 A/B arm 3). Promote to kv_format_default
-                          # only after a NIAH-clean cross-rig gate.
   - turboquant_3bit_nc
   - int8_per_token_head
   - q4_0
