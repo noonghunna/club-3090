@@ -83,9 +83,13 @@ def one(stream, rnd):
     try:
         r = json.load(urllib.request.urlopen(req, timeout=600))
         toks = (r.get("usage") or {}).get("completion_tokens", 0)
-        content = (r.get("choices") or [{}])[0].get("message",{}).get("content","") or ""
-        ok = toks > 0 and len(content.strip()) > 0
-        return {"ok": ok, "toks": toks, "silent": toks == 0 or not content.strip(),
+        # KV-pool stress semantics: a stream "ran" if it GENERATED tokens
+        # (held KV, decoded) — content-emptiness is irrelevant here (reasoning
+        # models legitimately return empty content when max_tokens truncates
+        # mid-<think>). silent-empty = HTTP 200 but ZERO tokens (the real
+        # failure soak-test flags).
+        ok = toks > 0
+        return {"ok": ok, "toks": toks, "silent": toks == 0,
                 "err": None, "dt": time.time()-t0}
     except Exception as e:
         return {"ok": False, "toks": 0, "silent": False, "err": str(e)[:80], "dt": time.time()-t0}
