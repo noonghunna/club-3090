@@ -82,6 +82,17 @@ Two consequences, both empirically confirmed on this program:
 
 **Consumer Blackwell is one family (sm_12x).** The 5090 (sm_120), RTX PRO 6000 Blackwell (sm_120), and DGX Spark GB10 (sm_121) share this behavior — do **not** conflate them with datacenter Blackwell (B100/B200/GB200, sm_100/103), which *does* ship the trtllm-gen FMHA and therefore native FP8/FP4 KV compute. On consumer Blackwell the useful KV lever is **compression for capacity** (fit more context — e.g. INT8-PTH / TQ3), not dtype-for-compute.
 
+### Does this apply to the other engines? No — it's a vLLM-family story
+
+Everything above is about the **vLLM family (vLLM + SGLang)**, and it's a *consequence of* those engines having a native-quantized-KV-attention path at all. The **llama.cpp family (mainline / ik-llama / beellama)** — which is where most of our single-card composes live — is a completely different regime with **no consumer-vs-datacenter split**:
+
+- **llama.cpp KV quant (`q4_0`/`q8_0`/`q5_0`/`iq4_nl`/TQ) is storage-only on *every* arch.** The quantized KV is dequantized on-the-fly *inside* the flash-attention kernel; the matmul runs in FP16/FP32. It never touches FP8/FP4 tensor cores — [not even on Hopper](https://github.com/ggml-org/llama.cpp/discussions/22411), where the hardware could. So `q4_0` KV behaves identically on a 3090, 4090, 5090, or DGX Spark — **which is exactly why our single-3090 ik/beellama configs hit 262K, and why they're the right tool for a consumer card that wants big context.**
+- **The flip side:** GGUF engines never get a *native-KV-compute* speedup on *any* hardware — the memory saving is the whole benefit, universally. There's no `e4m3`-vs-`e5m2`-for-speed question in GGUF-land because there's no native-KV-compute path. (The only "fast path" nuance is that symmetric K/V quant enables the *fused* FA kernel vs a slower fallback — arch-agnostic, not a tensor-core-precision effect.)
+- **Weights too:** GGUF weight quant (K-quants / IQ-quants) is dequant-to-FP16 — a Q4/Q8 GGUF on a 5090 does **not** use the FP8/FP4 tensor cores. The "native FP8/NVFP4 weights" win is vLLM/CUTLASS-only; there's no GGUF equivalent.
+
+**Division of labor, then:** the *native low-precision compute* wins (FP8/FP4 weights, FP8 KV compute) are **vLLM-only, and mostly datacenter-only for KV**. The *capacity* win (KV compression for long context) is delivered **universally and arch-agnostically by the llama.cpp family**. So a consumer card (4090 / 5090 / Spark) that wants long context is best served by the GGUF composes — which were never in the "consumer can't do native KV compute" trap, because they don't do native KV compute anywhere.
+
+
 
 ## Weight-quantization schemes — storage format vs compute path
 
