@@ -15,8 +15,10 @@
 #                same day: fast 109 · balanced 105 · max 110 — a TIE (det 64/64/65; within ±5-7
 #                noise). FP8 (8-bit) + int8-PTH KV are NOT a behavioral-quality win over the
 #                AutoRound-int4 fast tier on the short-ctx 8-pack — the differentiation is KV
-#                fidelity (long-ctx NIAH A/B is the open follow-up). Slowest of the three
-#                (~56 TPS decode vs fast ~89) with the smallest KV pool (1.13×).
+#                fidelity (long-ctx NIAH A/B is the open follow-up). Decode 83/108 (v0.24.0
+#                bench 2026-06-30 — corrects the stale ~56 probe); the real tradeoffs are the
+#                smallest KV pool (295K/1.13×) and the slowest prefill/TTFT of the three
+#                (158 ms — FP8's Marlin W8A16 dequant is compute-heavy on Ampere).
 #   Best for:  max-accuracy Qwen on 2 cards, and the validation proxy for the 4-card
 #                vllm/qwen-27b-multi-max — FP8 + int8-PTH KV at full 262K ⭐
 # ---------------------------------------------------------------------------
@@ -30,8 +32,9 @@
 #   - max_num_seqs=2 → 2 concurrent agents at full 262K context (KV pool 2.36×)
 #   - max_model_len=262144 → model's natural max, no rope_scaling needed
 #   - vision + tools + MTP n=3 + recall — everything on, no compromises
-#   - Measured (re-bench 2026-04-28 on club-3090 substrate, dev205 + Genesis v7.51-stable):
-#     69.05 narr (CV 2.3%) / 88.58 code (CV 3.4%) TPS single-stream, AL 3.4, VRAM 23.6 GB/card
+#   - Measured (v0.24.0 stable, 2026-06-30, 2× 3090 caps 370/420 W — BENCHMARKS.md + disc #515):
+#     decode 83.1 narr / 108.2 code TPS single-stream, TTFT 158/167 ms, ~21.4 GB/card, KV
+#     pool 295K/1.13×. (Older 2026-04-28 dev205/Genesis-v7.51 probe read ~56/69 — superseded.)
 #
 # What's intentionally NOT enabled:
 #   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e5m2 is plenty for
