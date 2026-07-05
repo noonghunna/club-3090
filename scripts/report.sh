@@ -73,6 +73,8 @@ cd "$REPO_ROOT"
 
 # KV-calc calibration helpers (engine/model detection + per-model filter, #168).
 source "$REPO_ROOT/scripts/lib/report_calib.sh"
+# shellcheck source=lib/p2p-state.sh
+source "$REPO_ROOT/scripts/lib/p2p-state.sh"
 
 # Pick up a saved MODEL_DIR (and other config) from the repo .env — same as
 # launch.sh / switch.sh, and what setup.sh writes there. An explicit exported
@@ -716,6 +718,12 @@ else
     else
       echo "_No \`[nvlink]\` boot line or NCCL_P2P/NVLINK_MODE env found — P2P engagement undetermined (single-GPU, a non-NCCL engine like llama.cpp, or an entrypoint predating detect_nvlink.sh)._"
     fi
+    # Cross-referenced VERDICT (capability x engagement — the #488/#158 matrix).
+    # Silent on single-GPU / no-capability rigs so the OK/WARN/INFO line is
+    # always signal, never boilerplate.
+    _p2p_verdict_line="$(p2p_verdict "$(p2p_gpu_count)" "$(p2p_host_capability)" \
+      "$(printf '%s\n%s' "$nvlink_boot" "$p2p_env" | p2p_classify_engagement)")"
+    [[ -n "$_p2p_verdict_line" ]] && { echo; echo "**Interconnect verdict:** ${_p2p_verdict_line}"; }
     echo
 
     genesis_results=$(docker logs "$CONTAINER" 2>&1 | grep -E '\[INFO:genesis\.apply_all\] (Genesis|✅) Results' | tail -1)

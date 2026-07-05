@@ -88,6 +88,25 @@ preflight_gpu() {
       echo "[preflight] arch:    ${_arch_class} (sm_${_cap}) — arch-aware KV defaults active for pilot slugs (#246)"
     fi
   fi
+  # Interconnect capability (display-only; the engagement VERDICT lives in
+  # report.sh — pre-boot there is no container to audit). Silent on
+  # single-GPU / stock-PCIe rigs so the line is always signal.
+  if [[ "$gpu_count" -ge 2 ]]; then
+    local _p2p_cap=""
+    # shellcheck source=lib/p2p-state.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/p2p-state.sh" 2>/dev/null && \
+      _p2p_cap="$(p2p_host_capability "$gpu_count")"
+    case "$_p2p_cap" in
+      nvlink)
+        if [[ "${NVLINK_MODE:-auto}" == "force_off" ]]; then
+          echo "[preflight] p2p:     NVLink bridge detected but NVLINK_MODE=force_off — the bridge will sit idle this boot (~15% decode, BENCHMARKS #77)"
+        else
+          echo "[preflight] p2p:     NVLink bridge detected — launcher auto-engages it (NVLINK_MODE=${NVLINK_MODE:-auto})"
+        fi ;;
+      pcie_p2p)
+        echo "[preflight] p2p:     driver reports PCIe P2P available — launcher auto-engages it (patched-driver path, NVLINK_MODE=${NVLINK_MODE:-auto})" ;;
+    esac
+  fi
   # Cross-rig friendliness: surface a hint when 4090 / 5090 cards are
   # detected. Composes run cross-rig but per-class gotchas (ctx derate,
   # VRAM envelope, SM-gated kernels) live in the FAQ — easier to catch
