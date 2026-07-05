@@ -318,7 +318,23 @@ baselines:
     tier: local
 
   vllm/qwen-27b-dual-max:
-    # cross-rig submissions only — no local baseline row yet
+    # BENCHMARKS.md 2026-06-30 row (line 122) + disc #515 controlled A/B
+    # (c17490565, FP8-vs-W8A8, same compose isolated): decode 83.1/108.2,
+    # wall 82.0/104.6, TTFT 158/167 ms, KV pool 295K/1.13×, ~21.4 GB/card,
+    # NIAH clean@240K, 8-pack --full 107/150 (thinking-off). Measured ON the
+    # current v0.24.0 pin → FRESH. Corrects the stale "~56 TPS" probe.
+    narr_tps: 83.1
+    code_tps: 108.2
+    ttft_ms: 158
+    prefill_tps: { 10k: 1364, 90k: 875 }
+    quality_8pk: "107/150"
+    ctx_validated: { tokens: 245760, niah: "clean@240K" }
+    date: 2026-06-30
+    engine_pin: "vllm/vllm-openai:v0.24.0"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 420]
+    submitted_by: "noonghunna"
+    tier: local
     submissions:
       2x5090-pcie:
         # inducted by catalog-baseline.sh --from-bundle from rebench tag 246-ab-fp8w (2026-07-05);
