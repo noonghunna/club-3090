@@ -305,14 +305,18 @@ def _deepgemm_env(profiles, variant: str, entry: dict, gpu_spec: str) -> dict[st
     found' (confirmed on a 5090 — disc #571 guybrush01); Ada (sm_89) never routes
     fp8 through DeepGEMM at all (Marlin/CUTLASS), so injecting 0 there is a
     harmless no-op that pre-empts the same wall for 4090 owners. Hopper/datacenter
-    (where DeepGEMM is the fast path) are left untouched. Only fires for fp8-weights
-    slugs. Empty dict = no injection."""
+    (where DeepGEMM is the fast path) are left untouched. Fires for the whole
+    fp8-family weight set — "fp8" AND "fp8-dynamic" (compressed-tensors FP8, e.g.
+    agents-a1) — since both route FP8 GEMM. Empty dict = no injection."""
     if not gpu_spec:
         return {}
     if os.environ.get("VLLM_USE_DEEP_GEMM"):
         return {}  # explicit user pin always wins
-    if (entry or {}).get("weights_variant") != "fp8":
-        return {}  # only native fp8-weights slugs touch the DeepGEMM path
+    if not ((entry or {}).get("weights_variant") or "").startswith("fp8"):
+        return {}  # fp8-FAMILY weight formats only: "fp8" AND "fp8-dynamic"
+        # (compressed-tensors FP8, e.g. agents-a1) — both route FP8 GEMM →
+        # DeepGEMM. INT4/AWQ/W8A8/bf16 never do. New fp8 variants must be
+        # named fp8-* for this to catch them (test-deepgemm-fp8-parity guards).
     try:
         hardware = _parse_gpu_specs(gpu_spec, profiles)
     except LaunchCompatError:

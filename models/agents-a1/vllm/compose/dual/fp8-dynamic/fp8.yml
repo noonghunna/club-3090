@@ -154,6 +154,14 @@ services:
       - VLLM_NO_USAGE_STATS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
       - OMP_NUM_THREADS=1
+      # DeepGEMM (vLLM's fp8-GEMM path) is built for Hopper (sm_90) + datacenter
+      # Blackwell (sm_100/103). This is FP8-dynamic (compressed-tensors) weights →
+      # it routes FP8 GEMM, so consumer Blackwell (5090 / PRO 6000 / GB10,
+      # sm_120/121) hard-fails "recipe not found" at boot (disc #571). Pass-through:
+      # switch.sh/launch.sh auto-inject VLLM_USE_DEEP_GEMM=0 on those cards; on raw
+      # `docker compose` on a consumer Blackwell card, set it yourself. Unset =
+      # vLLM's arch default (DeepGEMM stays on where it works).
+      - VLLM_USE_DEEP_GEMM
       # Blackwell (sm_120) on v0.24.0: uncomment to dodge the upstream
       # kernel-selection crash — forces the Marlin weight-only path this
       # compose's gate validated (see Caveats (4) + club-3090 #548).
