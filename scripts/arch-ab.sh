@@ -147,11 +147,13 @@ for arm in "${ARM_LIST[@]}"; do
   echo "[arch-ab] ===== arm ${arm}: ${arm_variant}$( [[ -n "$dtype" ]] && echo " KV_CACHE_DTYPE=${dtype}" || echo " (stock)") -> tag ${tag} ====="
   # Fresh symmetric boot per arm (same settle path for every arm). KV arms use
   # an explicit env pin so what ran is unambiguous on any launcher version;
-  # the fp8w arm runs stock (its checkpoint REJECTS fp8 KV — see header).
+  # the fp8w arm runs stock (its checkpoint REJECTS fp8 KV — see header) and
+  # needs --force: vllm/qwen-27b-dual-max is status=experimental, so switch.sh
+  # gates it without --force (disc #571 guybrush01).
   if [[ -n "$dtype" ]]; then
     KV_CACHE_DTYPE="$dtype" bash scripts/switch.sh "$arm_variant"
   else
-    bash scripts/switch.sh "$arm_variant"
+    bash scripts/switch.sh --force "$arm_variant"
   fi
   # Assert the expected dtype is actually live before spending bench time on it.
   running_cmd="$(docker inspect "$container" --format '{{join .Config.Cmd " "}}' 2>/dev/null || true)"

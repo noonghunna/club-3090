@@ -1181,6 +1181,9 @@ export_variant_engine_pin() {
       GPU_MEMORY_UTILIZATION)
         export GPU_MEMORY_UTILIZATION="$value"
         echo "[launch] memory-fraction floor: GPU_MEMORY_UTILIZATION=${value} (unified-memory card can't safely give the default — #246 Phase 2)" ;;
+      VLLM_USE_DEEP_GEMM)
+        export VLLM_USE_DEEP_GEMM="$value"
+        echo "[launch] fp8 weights: VLLM_USE_DEEP_GEMM=${value} (consumer card has no DeepGEMM recipe — disc #571)" ;;
       VLLM_ATTENTION_BACKEND) export VLLM_ATTENTION_BACKEND="$value" ;;
       *) echo "[launch] ERROR: unexpected engine pin export: $key" >&2; exit 2 ;;
     esac
