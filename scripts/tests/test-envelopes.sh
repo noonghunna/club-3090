@@ -3,8 +3,9 @@
 # injection (#246 Phase 2, concurrency-only first pass).
 #
 # REDs on: schema violations · unknown slugs · unknown card-class ids · a row
-# missing its `validated` block (born-from-measurement discipline) · a broken
-# injection contract. An EMPTY envelopes file is valid (rows land from probes).
+# with neither a `validated` (soak) nor a `computed` (kv-calc) provenance block,
+# or a `computed` block missing its `basis` (born-from-a-basis discipline) · a
+# broken injection contract. An EMPTY envelopes file is valid.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,9 +40,19 @@ for slug, byc in rows.items():
             errors.append(f"{w}.max_num_seqs: required int")
         if "compose_default" in row and not isinstance(row["compose_default"], int):
             errors.append(f"{w}.compose_default: int")
-        # born-from-measurement: a value MUST cite a validated soak
-        if not isinstance(row.get("validated"), dict) or not row["validated"]:
-            errors.append(f"{w}.validated: required {{concurrency_soak, ...}} — no guessed rows")
+        # born-from-a-basis: a value MUST cite a `validated` soak OR a `computed`
+        # kv-calc ceiling — never a bare guess. (concurrency is a capacity
+        # question kv-calc answers deterministically; see envelopes.yml header.)
+        validated = row.get("validated")
+        computed = row.get("computed")
+        if not (isinstance(validated, dict) and validated) and \
+           not (isinstance(computed, dict) and computed):
+            errors.append(f"{w}: requires a `validated` (soak) OR `computed` "
+                          "(kv-calc) provenance block — no guessed rows")
+        # a computed row must name its kv-calc basis (the invocation + boundary)
+        if isinstance(computed, dict) and computed and not computed.get("basis"):
+            errors.append(f"{w}.computed.basis: required — cite the kv-calc "
+                          "invocation + PASS/cap boundary")
 if errors:
     print("test-envelopes: FAIL", file=sys.stderr)
     for e in errors: print(f"  ✗ {e}", file=sys.stderr)
@@ -68,11 +79,38 @@ EOF
 pin() { python3 "$HELPER" resolve-variant-pin --variant "$1" --format shell --gpu-spec "$2" 2>/dev/null; }
 S5090="0|RTX 5090|32607|12.0;1|RTX 5090|32607|12.0"
 S3090="0|RTX 3090|24576|8.6;1|RTX 3090|24576|8.6"
-HET="0|RTX 5090|32607|12.0;1|RTX 3090|24576|8.6"
+HET_SMALL="0|RTX 5090|32607|12.0;1|RTX 3090|24576|8.6"       # smallest = 3090 (no row)
+HET_BIG="0|RTX 5090|32607|12.0;1|NVIDIA H100|81920|9.0"      # smallest = 5090 (seeded)
 
 grep -q "MAX_NUM_SEQS=4" <(pin vllm/dual "$S5090") || fail "5090 with a row must inject MAX_NUM_SEQS=4"
 grep -q "MAX_NUM_SEQS" <(pin vllm/dual "$S3090") && fail "3090 (no row) must NOT inject"
-grep -q "MAX_NUM_SEQS" <(pin vllm/dual "$HET") && fail "heterogeneous rig must NOT inject"
+# heterogeneous clamps to the SMALLEST-VRAM card (= the pool vLLM allocates):
+#   5090+3090 -> smallest 3090 has no row -> compose default (no inject)
+#   5090+H100 -> smallest 5090 is seeded  -> inject its ceiling (4)
+grep -q "MAX_NUM_SEQS" <(pin vllm/dual "$HET_SMALL") && fail "het rig w/ smallest=3090 (no row) must NOT inject"
+grep -q "MAX_NUM_SEQS=4" <(pin vllm/dual "$HET_BIG") || fail "het rig must clamp to smallest-VRAM card (5090) and inject its ceiling"
+
+# injection is provenance-agnostic: a `computed` row injects exactly like a
+# `validated` one (the guard cares about provenance; the launcher does not).
+cat > "$REAL" <<'EOF'
+schema_version: 1
+envelopes:
+  vllm/dual:
+    rtx-5090:
+      max_num_seqs: 4
+      compose_default: 2
+      computed: { basis: "kv-calc N=4 PASS, N=5 caps", target_ctx: 262144 }
+EOF
+grep -q "MAX_NUM_SEQS=4" <(pin vllm/dual "$S5090") || fail "computed row must inject like a validated one"
+cat > "$REAL" <<'EOF'
+schema_version: 1
+envelopes:
+  vllm/dual:
+    rtx-5090:
+      max_num_seqs: 4
+      compose_default: 2
+      validated: { concurrency_soak: "4 @262K, 0-growth" }
+EOF
 grep -q "MAX_NUM_SEQS" <(MAX_NUM_SEQS=9 pin vllm/dual "$S5090" | grep "MAX_NUM_SEQS=4") && fail "user env must win"
 # value at/below compose_default must not fire
 cat > "$REAL" <<'EOF'
@@ -82,7 +120,7 @@ envelopes:
     rtx-5090: { max_num_seqs: 2, compose_default: 2, validated: { concurrency_soak: "x" } }
 EOF
 grep -q "MAX_NUM_SEQS" <(pin vllm/dual "$S5090") && fail "value == compose_default must NOT inject (no gain)"
-echo "  ✓ injection contract (inject · no-row · heterogeneous · user-env · no-gain)"
+echo "  ✓ injection contract (inject · no-row · het-clamp-to-smallest · computed-parity · user-env · no-gain)"
 
 cp "$BACKUP" "$REAL"
 [[ "$(sha256sum "$REAL" | cut -d' ' -f1)" == "$REAL_SUM" ]] || fail "real envelopes.yml not restored"

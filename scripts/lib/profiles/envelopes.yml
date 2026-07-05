@@ -6,23 +6,41 @@
 # context lever (bigger max_model_len) is deferred (single-card vLLM only, and
 # Cliff-2b-capped) — see /opt/ai/docs/phase2-32gb-envelope-design.md §6.3.
 #
-# DISCIPLINE (identical to baselines.yml): a value here is a MEASURED, reviewed
-# ceiling from a validated concurrency-soak run — NEVER a raw projection. The
-# concurrency probe proposes; the soak validates (0 growth / 100% retention /
-# 0 silent-empty); this file stores the validated number. A row without a
-# `validated` block is a schema error (test-envelopes).
+# PROVENANCE (two accepted bases — a bare row with neither is a schema error):
+#
+#   computed   The kv-calc pool CEILING at model-max context. Concurrency is a
+#              CAPACITY question — "do N full-context sequences' KV blocks fit
+#              the pool?" — not a performance one, so kv-calc answers it
+#              deterministically (arithmetic, arch-INDEPENDENT; the model math
+#              doesn't change across GPUs). We seed these because max_num_seqs
+#              is a cap with GRACEFUL PREEMPTION (never OOM): an over-optimistic
+#              ceiling costs an occasional preempt, not a crash. kv-calc is
+#              sm_120-calibrated (disc #571 paulp83's real-5090 verify-stress
+#              PASS), so a 32 GB projection is trusted arithmetic, not a guess.
+#   validated  A real concurrency-soak on the card class (0 growth / 0 silent-
+#              empty / bounded VRAM). scripts/concurrency-probe.sh produces it.
+#              A `validated` block UPGRADES a `computed` row when a volunteer
+#              runs the soak; keep both if you want the audit trail.
+#
+# So: kv-calc proposes the ceiling (computed), the probe confirms it (validated).
+# Every row MUST carry one block or the other (test-envelopes REDs otherwise).
 #
 # HOW IT INJECTS: launch.sh/switch.sh detect the card class (hardware profile
 # id). If a row exists for (slug, card-class) with a value ABOVE the compose
 # default, the launcher exports `MAX_NUM_SEQS=<value>`; the compose consumes
-# `${MAX_NUM_SEQS:-<default>}`. 24 GB / no-row / heterogeneous / user-env-set
-# -> no injection (compose default stands). Consumers read the registry-emit
-# join, never this file directly.
+# `${MAX_NUM_SEQS:-<default>}`. no-row / user-env-set -> no injection (compose
+# default stands). HETEROGENEOUS rigs clamp to the SMALLEST-VRAM card — that is
+# exactly the pool vLLM allocates (TP symmetric-shards the KV cache, so the pool
+# = min free-blocks across ranks), so a 24 GB card in the mix lands on the
+# compose default while a 5090+bigger rig gets the 5090 ceiling. Consumers read
+# the registry-emit join, never this file directly.
 #
 # Conventions:
-#   max_num_seqs       measured concurrency cap the card's pool sustains.
+#   max_num_seqs       concurrency cap the card's pool sustains (injected value).
 #   compose_default    the slug's shipped ${MAX_NUM_SEQS:-N} default (24 GB);
 #                      injection only fires when max_num_seqs > this.
+#   computed           { basis: "<kv-calc invocation + PASS/cap boundary>",
+#                        target_ctx: <model-max>, date: YYYY-MM-DD, note: ... }
 #   validated          { concurrency_soak: "N streams @ <ctx>, 0-growth",
 #                        vram_peak_gb: X, date: YYYY-MM-DD, source_tag: ... }
 #   rig / submitted_by hardware fingerprint class + who ran it.
@@ -30,12 +48,47 @@
 schema_version: 1
 envelopes:
 
-  # (empty — awaiting first validated 32 GB concurrency-soak runs)
-  #
-  # SEEDING PLAN (each needs a validated concurrency-soak on the card class):
-  #   vllm/dual  @ rtx-5090 (2x, 64 GB)  — HARVEST from guybrush's fp8w dual
-  #     ladder if it carries multi-stream, else a dedicated soak (disc #571).
-  #   vllm/minimal @ rtx-5090 (1x, 32 GB) — single-5090 concurrency soak
-  #     (the clean new ask, sequenced AFTER the fp8w round).
-  # 24 GB (rtx-3090) baseline is measured for REFERENCE (what the compose
-  # default should be) but carries NO row — the compose default already stands.
+  # --- computed seed (kv-calc pool ceilings @ model-max ctx) -----------------
+  # Boundaries pinned 2026-07-05 by sweeping max_num_seqs through kv-calc until
+  # the KV pool caps. Target context = each slug's model-max (the no-preemption
+  # policy: N *full-context* concurrent sessions). 24 GB (rtx-3090) carries no
+  # row — the compose default already stands there.
+
+  vllm/dual:
+    rtx-5090:
+      max_num_seqs: 4          # 2 -> 4 concurrent full-262K sessions on 2x32 GB
+      compose_default: 2
+      computed:
+        basis: "kv-calc pool ceiling — tools/kv-calc.py --compose dual --vram 32 --tp 2 --max-ctx 262144: N=4 PASS, N=5 caps"
+        target_ctx: 262144
+        date: 2026-07-05
+        note: "no-preemption ceiling (2x RTX 5090, 64 GB). Arithmetic, sm_120-calibrated (disc #571 paulp verify-stress PASS); awaiting a concurrency-soak to upgrade to validated."
+
+  vllm/minimal:
+    rtx-5090:
+      max_num_seqs: 9          # 1 -> 9 concurrent full-32K sessions on 1x32 GB
+      compose_default: 1
+      computed:
+        basis: "kv-calc pool ceiling — tools/kv-calc.py --compose minimal --vram 32 --tp 1 --max-ctx 32768: N=9 PASS, N=10 caps"
+        target_ctx: 32768
+        date: 2026-07-05
+        note: "no-preemption ceiling (1x RTX 5090, 32 GB). Arithmetic, sm_120-calibrated (disc #571 paulp verify-stress PASS); awaiting a concurrency-soak to upgrade to validated."
+
+  # NOT SEEDED yet (computable, deferred on purpose):
+  #   rtx-6000-pro-blackwell (96 GB): pool ceilings run very high (minimal ~40+,
+  #     dual 16+) — those need a latency-aware cap (concurrency past a point
+  #     trades single-stream TPS), not the raw pool ceiling. Seed once we pick
+  #     the policy. Rare card; 5090 is the realistic target first.
+  #   DGX Spark (GB10, sm_121, 128 GB): folds into the SAME framework, but has
+  #     no hardware profile yet — add scripts/lib/profiles/hardware/dgx-spark.yml
+  #     before a row can inject (the guard requires card ∈ hardware profiles).
+  #   MULTI-GPU (TP>2, e.g. vllm/qwen-27b-multi-fast/max @ TP=4): the injection
+  #     seam ALREADY handles homogeneous >2-card rigs — it collapses N identical
+  #     cards to one class, so `vllm/dual` on 4x5090 injects the dual ceiling and
+  #     a TP=4 slug would inject the 4-card ceiling. kv-calc computes it too
+  #     (--tp 4 --gpus 4: dual4 @ 4x5090/128 GB → N=8 ceiling @262K). Not seeded
+  #     because those TP=4 slugs are `experimental` and 4x/8x-5090 rigs are rare
+  #     — same kv-calc sweep seeds them the day one graduates or a volunteer
+  #     appears. Heterogeneous rigs (mixed cards) clamp to the smallest-VRAM
+  #     card (the pool vLLM actually allocates), so a 5090+bigger rig gets the
+  #     5090 ceiling while any 24 GB card in the mix falls back to the default.

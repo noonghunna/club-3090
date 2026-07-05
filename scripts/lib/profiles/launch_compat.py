@@ -195,9 +195,11 @@ def _arch_aware_env(profiles, variant: str, entry: dict, gpu_spec: str,
 
 
 # --- #246 Phase 2: memory-envelope injection (concurrency-only first pass) ---
-# Weights-invariant. Injects MAX_NUM_SEQS from a MEASURED per-(slug, card-class)
-# ceiling in envelopes.yml, to spend a bigger card's KV pool on concurrency.
-# 24 GB / no-row / heterogeneous / user-env-set -> no injection.
+# Weights-invariant. Injects MAX_NUM_SEQS from a per-(slug, card-class) ceiling
+# in envelopes.yml (validated soak OR computed kv-calc), to spend a bigger
+# card's KV pool on concurrency. no-row / user-env-set -> no injection.
+# Heterogeneous rigs clamp to the smallest-VRAM card (which is exactly the pool
+# vLLM allocates); a 24 GB card in the mix therefore lands on the compose default.
 _ENVELOPES_PATH = Path(__file__).with_name("envelopes.yml")
 
 
@@ -224,10 +226,16 @@ def _envelope_env(profiles, variant: str, gpu_spec: str) -> dict[str, str]:
         hardware = _parse_gpu_specs(gpu_spec, profiles)
     except LaunchCompatError:
         return {}  # unmapped card -> compose default
-    card_ids = {hw.id for hw in hardware}
-    if len(card_ids) != 1:
-        return {}  # heterogeneous rig -> no single card-class row applies
-    card_row = row.get(card_ids.pop())
+    # Heterogeneous rigs: clamp to the SMALLEST-VRAM card. This mirrors vLLM
+    # rather than guessing — with TP the KV cache is symmetric-sharded, so the
+    # engine sizes the pool to min(free blocks) across ranks: the smallest card
+    # already dictates the pool. A smallest-card ceiling is therefore the real
+    # ceiling, not a conservative fudge. (Homogeneous rigs collapse to their one
+    # class. TP=1 stays safe too: the ceiling fits whichever single card vLLM
+    # runs on — all are >= the smallest.) No-op falls out for free when the
+    # smallest card has no row: a 24 GB card in the mix -> compose default holds.
+    smallest = min(hardware, key=lambda hw: hw.vram_gb)
+    card_row = row.get(smallest.id)
     if not isinstance(card_row, dict):
         return {}
     seqs = card_row.get("max_num_seqs")
