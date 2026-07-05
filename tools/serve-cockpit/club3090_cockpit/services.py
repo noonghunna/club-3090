@@ -2936,7 +2936,11 @@ class CockpitData:
     # ── Validate / ④ Measure: producer-measured vs the curated catalog bar (READ) ─
 
     async def measure_vs_bar(
-        self, tag: str, *, variants: Optional[list[VariantRow]] = None
+        self,
+        tag: str,
+        *,
+        variants: Optional[list[VariantRow]] = None,
+        class_hint: str = "",
     ) -> MeasureVsBar:
         """Compare a rebench tag's MEASURED numbers against the curated catalog's
         published bar for the SAME class — "did this config earn catalog-grade?"
@@ -3030,6 +3034,35 @@ class CockpitData:
             model_rows.sort(key=lambda r: 0 if r.source == "corpus" else 1)
             bar = model_rows[0] if model_rows else None
 
+        # Friction #9 (T2): a NEW model has no same-model rows BY DEFINITION —
+        # the lane's primary case.  Fall back to the CLASS bar when the caller
+        # carries ①'s swap_path sibling (a registry slug or a model id).
+        # Labeled, never silent: bar_is_class rides the struct + a caveat.
+        bar_is_class = False
+        class_model = ""
+        if bar is None and measured.model and class_hint and rows:
+            class_model = class_hint
+            for v in variants or []:
+                if getattr(v, "slug", "") == class_hint:
+                    class_model = getattr(v, "model", "") or class_hint
+                    break
+            ckey = _canon_model_key(class_model)
+            crows = [r for r in rows if _bench_row_matches(r, class_model, "")]
+            if not crows and ckey:
+                crows = [r for r in rows if _canon_model_key(r.model) == ckey]
+            if run_engine:
+                eng_rows = [
+                    r for r in crows
+                    if _canon_engine_family(r.engine) == run_engine
+                ]
+                if eng_rows:
+                    crows = eng_rows
+                    engine_resolved = True
+            crows.sort(key=lambda r: 0 if r.source == "corpus" else 1)
+            if crows:
+                bar = crows[0]
+                bar_is_class = True
+
         vsbar = MeasureVsBar(
             tag=tag,
             measured=measured,
@@ -3037,6 +3070,8 @@ class CockpitData:
             bar_source=(bar.source if bar else ""),
             run_engine=run_engine,
             engine_resolved=engine_resolved,
+            bar_is_class=bar_is_class,
+            class_model=class_model if bar_is_class else "",
         )
         if bar is not None:
             # Fix 2 (corpus metric mismatch): a corpus bar's narr_tps is WALL TPS
@@ -3103,9 +3138,19 @@ class CockpitData:
                 )
             else:
                 caveats.append(
-                    f"No curated catalog bar found for model '{vsbar.measured.model}'."
+                    f"No curated catalog bar found for model '{vsbar.measured.model}' "
+                    "— and no sibling class to fall back to. A ① Bring fit-check "
+                    "computes the sibling (swap_path) that enables the class-bar "
+                    "comparison for a NEW model."
                 )
             return caveats
+        # Friction #9: the CLASS bar is a labeled fallback, never a silent swap.
+        if vsbar.bar_is_class:
+            caveats.append(
+                f"CLASS bar: no published bar exists for '{vsbar.measured.model}' — "
+                f"compared against its sibling class '{vsbar.class_model}' "
+                "(①'s swap_path). Read deltas as class-relative, not same-model."
+            )
         # We have a bar — surface WHICH bar was used (engine + topology) so the
         # comparison is legible, then flag every protocol dimension we can't
         # confirm.

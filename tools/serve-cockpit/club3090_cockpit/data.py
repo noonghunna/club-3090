@@ -969,6 +969,11 @@ class MeasureVsBar:
     # was picked deterministically on model alone (surfaced as a caveat).
     run_engine: str = ""
     engine_resolved: bool = False       # True when run_engine drove bar selection
+    # Friction #9 (T2): the bar is the SIBLING-CLASS bar (①'s swap_path
+    # sibling) because no same-model bar exists — a NEW model's primary case.
+    # Labeled, never silent: the verdict reads class-relative.
+    bar_is_class: bool = False
+    class_model: str = ""
     # Per-metric measured−bar deltas (None when either side is missing).
     narr_tps_delta: Optional[float] = None
     code_tps_delta: Optional[float] = None

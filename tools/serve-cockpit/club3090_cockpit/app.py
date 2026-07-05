@@ -8206,8 +8206,18 @@ class CockpitApp(App):
     async def run_measure_vs_bar(self, screen: "MeasureVsBarScreen", tag: str) -> None:
         """Compute the measured-vs-bar comparison for a tag (READ) + push it to
         the modal.  No GPU / network / write — pure filesystem reads + the
-        benchmarks explorer."""
-        vsbar = await self._data.measure_vs_bar(tag, variants=self._variants or None)
+        benchmarks explorer.
+
+        Friction #9: when a ① Bring fit-check ran this session, its swap_path
+        sibling rides along as the CLASS-bar fallback — a NEW model has no
+        same-model bar by definition."""
+        byo = self._last_byo
+        class_hint = ""
+        if byo is not None and not getattr(byo, "error", ""):
+            class_hint = getattr(byo, "sibling_slug", "") or ""
+        vsbar = await self._data.measure_vs_bar(
+            tag, variants=self._variants or None, class_hint=class_hint
+        )
         try:
             screen.set_result(vsbar)
         except Exception:
