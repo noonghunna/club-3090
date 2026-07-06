@@ -341,11 +341,19 @@ baselines:
     submissions:
       2x5090-pcie:
         # inducted by catalog-baseline.sh --from-bundle from rebench tag 246-ab-fp8w (2026-07-05);
-        # evidence: verify-full pass · bench n=5 · TPS-ONLY (no quality) · NIAH ladder
+        # evidence: verify-full pass · bench n=5 · NIAH ladder. QUALITY added
+        # 2026-07-06 (disc #571 c17542975): full 8-pack thinking-off 102/150 —
+        # within ±5-7 noise of our 2×3090 fp8 (107), so FP8 is near-lossless on
+        # native Blackwell too (closes the "route Blackwell → FP8 weights" gate).
+        # One dip: dataextract 9/15 (vs 13 elsewhere) — mostly verifier_fail, the
+        # known DE brittleness cluster, not an obvious fp8 regression. thinking-on
+        # run pending.
         narr_tps: 134.52
         code_tps: 165.11
         ttft_ms: 56
         prefill_tps: { 10k: 3693, 90k: 1906 }
+        quality_8pk: "102/150"
+        quality_env: { harness: "benchlocal-cli @ club-3090 master (2026-07-06)" }
         ctx_validated: { tokens: 240635, niah: "clean@241K" }
         date: 2026-07-05
         engine_pin: "vllm/vllm-openai:v0.24.0"
