@@ -1127,9 +1127,10 @@ class TestCatalogWired:
             pane.set_filter("")
             assert len(pane._filtered_entries()) == 2
 
-    def _label_entry(self, quant: str, weights_format: str = ""):
+    def _label_entry(self, quant: str, weights_format: str = "", quant_label: str = ""):
         """Minimal CatalogEntry whose compose path carries the given <quant>/ dir
-        (weights_variant derives from the path) + an optional threaded format."""
+        (weights_variant derives from the path) + optional threaded format /
+        quant_label (the emit weights_quant_label / weights_format joins)."""
         from club3090_cockpit.data import CatalogEntry as _CE
         from club3090_tui_core import VariantRow as _VR
 
@@ -1143,6 +1144,8 @@ class TestCatalogWired:
         )
         if weights_format:
             object.__setattr__(row, "weights_format", weights_format)
+        if quant_label:
+            object.__setattr__(row, "weights_quant_label", quant_label)
         return _CE(row=row)
 
     def test_weights_label_quant_segment_beats_provider_prefix(self):
@@ -1172,11 +1175,19 @@ class TestCatalogWired:
         }.items():
             assert _weights_label(self._label_entry(tok)) == want, tok
 
-    def test_weights_label_no_quant_segment_falls_back_to_format(self):
-        """Fine-tune artifact tokens with no quant segment show the model
-        profile's format (emit weights_format join), else the raw token."""
+    def test_weights_label_no_quant_segment_fallback_chain(self):
+        """Custom-named pack tokens with no quant segment fall back, in order:
+        the entry's explicit quant_label (GGUF-header ground truth baked into
+        the model YAML — prism-pro-dq→q3km, apex-compact→q4km, apex-quality→q6k),
+        then the coarse format ("gguf"), then the raw token."""
         from club3090_cockpit.app import _weights_label
 
+        assert (
+            _weights_label(
+                self._label_entry("ex0bit-prism-pro-dq", "gguf", quant_label="q3km")
+            )
+            == "q3km"
+        )
         assert _weights_label(self._label_entry("mudler-apex-compact", "gguf")) == "gguf"
         assert (
             _weights_label(self._label_entry("mudler-apex-compact"))

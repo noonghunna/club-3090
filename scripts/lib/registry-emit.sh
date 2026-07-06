@@ -492,7 +492,11 @@ def _baseline_for(slug: str, compose_path: str):
 # artifact slugs like mudler-apex-compact).  Built once from ALL model YAMLs,
 # keyed (model_id, variant); encoding= is load-bearing (#599).
 _WFMT = None
-def weights_format(model: str, variant: str):
+def _weights_meta(model: str, variant: str):
+    """(quant_label, format) for a weights entry — quant_label is the optional
+    explicit display quant for custom-named artifacts (mixed-quant packs like
+    PRISM-PRO-DQ whose token carries no quant segment; value read from the GGUF
+    header's general.file_type and baked into the model YAML)."""
     global _WFMT
     if _WFMT is None:
         _WFMT = {}
@@ -503,8 +507,11 @@ def weights_format(model: str, variant: str):
             _data = _yaml.safe_load(_p.read_text(encoding="utf-8")) or {}
             _mid = _data.get("id") or _p.stem
             for _wk, _wv in (_data.get("weights") or {}).items():
-                _WFMT[(_mid, _wk)] = (_wv or {}).get("format")
-    return _WFMT.get((model, variant))
+                _WFMT[(_mid, _wk)] = (
+                    (_wv or {}).get("quant_label"),
+                    (_wv or {}).get("format"),
+                )
+    return _WFMT.get((model, variant)) or (None, None)
 
 # --- variants: exactly the fields parse_variant_rows produces from the tab form,
 #     trimmed to the contract's variant schema (+ 'source' default "curated"). ---
@@ -535,12 +542,16 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # KV-cache format from the registry (for the catalog KV column) —
             # int8_per_token_head / fp8_e4m3 / fp8_e5m2 / turboquant_3bit_nc / bf16 / q*.
             "kv_format": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("kv_format"),
-            # Weights FORMAT from the model profile (catalog Weights column
-            # fallback) — see weights_format() above.
-            "weights_format": weights_format(
+            # Weights quant_label + FORMAT from the model profile (catalog
+            # Weights column fallbacks) — see _weights_meta() above.
+            "weights_quant_label": _weights_meta(
                 (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("model") or "",
                 (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("weights_variant") or "",
-            ),
+            )[0],
+            "weights_format": _weights_meta(
+                (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("model") or "",
+                (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("weights_variant") or "",
+            )[1],
             # Per-slug download artifacts BEYOND the core weights_variant — the
             # extra weight-variant keys (a DFlash draft / an mmproj vision
             # projector) the slug's compose mounts from a separate subdir.  The

@@ -186,7 +186,15 @@ def _weights_label(e: "CatalogEntry") -> str:
         return "fp8"
     if "bf16" in segs:
         return "bf16"
-    return (getattr(e.row, "weights_format", "") or "") or wv
+    # No quant segment in the token (custom-named mixed-quant packs like
+    # PRISM-PRO-DQ / APEX-MTP-I-*): prefer the entry's explicit quant_label
+    # (GGUF-header ground truth baked into the model YAML), then the coarse
+    # format ("gguf"), then the raw token.
+    return (
+        (getattr(e.row, "weights_quant_label", "") or "")
+        or (getattr(e.row, "weights_format", "") or "")
+        or wv
+    )
 
 
 def _kv_label(e: "CatalogEntry") -> str:

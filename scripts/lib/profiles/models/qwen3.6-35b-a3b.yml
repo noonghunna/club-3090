@@ -91,6 +91,9 @@ weights:
     local_subdir: qwen3.6-35b-a3b-gguf/mudler-apex-mtp
     size_gb: variable
     format: gguf
+    # custom-named mixed-quant pack — quant_label read from the GGUF header
+    # (general.file_type=15 → Q4_K_M, verified 2026-07-06); catalog Weights column.
+    quant_label: q4km
     status: community-experimental
     hf_repo: mudler/Qwen3.6-35B-A3B-APEX-MTP-GGUF
     files:
@@ -115,6 +118,9 @@ weights:
     local_subdir: qwen3.6-35b-a3b-gguf/mudler-apex-mtp
     size_gb: variable
     format: gguf
+    # quant_label from the GGUF header via HTTP Range read of the HF artifact
+    # (general.file_type=18 → Q6_K, verified 2026-07-06); catalog Weights column.
+    quant_label: q6k
     status: community-experimental
     hf_repo: mudler/Qwen3.6-35B-A3B-APEX-MTP-GGUF
     files:
