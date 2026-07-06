@@ -10,7 +10,7 @@
 #              constrained on 2 cards, comfortable on the 4-card multi-max). Validation proxy for
 #              the TP=4 multi-max (vllm/qwen-27b-multi-max, same config).
 #   Genesis:   none — intentionally Genesis-free
-#   Status:    🧪 Experimental
+#   Status:    ✅ Production
 #   Quality:   110/150 (det 65/75 · sandbox 45/75) (--full, same harness 2026-06-07). 8-pack A/B
 #                same day: fast 109 · balanced 105 · max 110 — a TIE (det 64/64/65; within ±5-7
 #                noise). FP8 (8-bit) + int8-PTH KV are NOT a behavioral-quality win over the
