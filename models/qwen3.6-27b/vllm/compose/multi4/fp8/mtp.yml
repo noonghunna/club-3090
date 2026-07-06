@@ -12,8 +12,13 @@
 #              tight on 2 cards, comfortable on 4.
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    ⚠️ Production w/ caveats
-#   Caveats:   Cross-rig validation only (this dev rig has 2 cards). Promoted on @Whamp's 4× 3090
-#                full chain — #446: verify-full + verify-stress 7/7 + soak-continuous PASS (85/102) —
+#   Caveats:   ⚠️ #595 (2026-07-06) flipped KV int8-PTH → fp8/e4m3. The fp8 KV is validated on the
+#                2-card dual-max proxy (all gates green: 8-pack 109 ties int8-PTH's 107, soak PASS,
+#                decode 2.3× at depth) — but the prior 4-card validation (@Whamp #446) was on the OLD
+#                int8-PTH KV. A fresh TP=4 report on the fp8 config is requested (@Whamp / @ryanmpelletier)
+#                to re-confirm at 4 cards and upgrade toward ✅.
+#              Cross-rig validation only (this dev rig has 2 cards). Prior int8-PTH promotion on @Whamp's
+#                4× 3090 full chain — #446: verify-full + verify-stress 7/7 + soak-continuous PASS (85/102) —
 #                BUT on an OLDER engine (pre-v0.24.0 pin) + a non-standard rig (aikitoria P2P kernel,
 #                mixed x4/x16/x8/x16 lanes), single report. No clean v0.24.0 4-card datapoint yet →
 #                a fresh one upgrades this to ✅. Byte-identical to the production dual-max @TP=4.
