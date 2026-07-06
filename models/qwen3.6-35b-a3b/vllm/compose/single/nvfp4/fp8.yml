@@ -1,0 +1,140 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-35B-A3B NVFP4 (nvidia modelopt MIXED_PRECISION MoE:
+#              NVFP4 gs16 expert FFNs + FP8-static attention/linear_attn +
+#              UNQUANTIZED mtp.* head — 23.4 GB, 3B active params)
+#   Topology:  Single Hopper/Blackwell card, 32 GB+ — required_sm=9.0: the
+#              launchers REFUSE this on Ampere (sm_86). THE GB10 / DGX-Spark
+#              slug: a 3B-active MoE is the right shape for big-capacity,
+#              lower-bandwidth unified-memory parts.
+#   Drafter:   none — DELIBERATE. On this MoE the built-in MTP head shares the
+#              MoE forward and is NET-NEGATIVE (-51% measured on the AutoRound
+#              tier; drafter type matters — learnings/qwen3.6-35b-a3b.md).
+#              Do not "add MTP back" without a fresh A/B on your arch.
+#   KV:        fp8 → e4m3 at scale=1.0 — this checkpoint has NO baked KV
+#              scales (kv_cache_scheme: null, unlike the 27B NVFP4), and
+#              calculate_kv_scales is disabled on Qwen3-Next hybrid. Same
+#              regime our production 27B fp8 tier quality-TIED at (#594).
+#   Vision:    yes (image only — audio off via --limit-mm-per-prompt)
+#   Max ctx:   131K default — sized for the smallest target card (5090 32 GB:
+#              kv-calc 27.4/29.4 GB @ util 0.92 = PASS at 93%; MoE KV is tiny,
+#              ~1.3 GB). Bigger cards raise via env — kv-calc'd:
+#                GB10 (128 GB unified): MAX_MODEL_LEN=262144 → 29.1 GB (25%
+#                  of budget) — full ctx is trivial here; the primary home.
+#                H100 (80 GB) / RTX 6000 Pro (96 GB): 262144 fits similarly.
+#   Genesis:   none — intentionally Genesis-free
+#   Status:    🧪 Experimental
+#   Best for:  fast MoE chat/agents with vision on ONE Blackwell/Hopper card —
+#              unified-memory (GB10) first; pending first community validation
+# ---------------------------------------------------------------------------
+# ⚠️ AUTHORED BLIND — READ THIS FIRST.
+# The maintainer rig is Ampere sm_86 and CANNOT BOOT NVFP4: this compose has
+# never been started anywhere. Shape mirrors the validated
+# vllm/qwen-35b-a3b-dual (no drafter, vision on, thinking off) + NVIDIA's
+# model-card recipe (--quantization modelopt). If you have a GB10 / 5090 /
+# H100, YOU are the validation:
+#   1. bash scripts/switch.sh vllm/qwen-35b-a3b-single-nvfp4
+#   2. bash scripts/verify-full.sh MODEL=qwen3.6-35b-a3b
+#   3. bash scripts/rebench-full.sh
+#   4. Report numbers or the boot failure via the numbers-from-your-rig
+#      template (or the c3 funnel). "It crashed here" is a useful result.
+# Known-unknowns (report either way): modelopt MoE expert-quant load path on
+# your arch; fp8 KV at scale=1.0 quality on THIS checkpoint (tied for the 27B,
+# unmeasured here); MoE token-routing throughput on unified memory.
+#
+# Run (Blackwell/Hopper only):
+#   cd <repo>/models/qwen3.6-35b-a3b/vllm/compose
+#   docker compose -f single/nvfp4/fp8.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 32
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 1
+# Tensor-parallel: 1
+services:
+  vllm-qwen36-35b-a3b-single-nvfp4:
+    # Pinned to a vLLM STABLE release (immutable, #407); the launchers inject
+    # the engine-profile image over this default (#254).
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-single-nvfp4}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8078}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — warm-start across boots.
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      # DeepGEMM (vLLM's fp8-GEMM path — this checkpoint's ATTENTION layers
+      # are FP8): no recipe on consumer Blackwell (5090/GB10 sm_120/121) —
+      # launchers auto-inject VLLM_USE_DEEP_GEMM=0 there (disc #571); raw
+      # `docker compose` users on those cards set it themselves.
+      - VLLM_USE_DEEP_GEMM
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-35b-a3b-nvfp4
+      - --served-model-name
+      - qwen3.6-35b-a3b
+      - qwen3.6-35b-a3b-autoround
+      - qwen3.6-35b-a3b-nvfp4
+      # NVIDIA model-card recipe: modelopt quantization (MIXED_PRECISION
+      # NVFP4 experts + FP8 attention).
+      - --quantization
+      - modelopt
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-131072}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
+      - --max-num-batched-tokens
+      - "8192"
+      - --limit-mm-per-prompt
+      - '{"image":2,"audio":0}'
+      # fp8 (= e4m3) at scale=1.0 — no baked KV scales in this checkpoint and
+      # calculate_kv_scales is disabled on Qwen3-Next hybrid; the 27B fp8 tier
+      # quality-TIED in this exact regime (#594). NOT fp8_e5m2 (rejected with
+      # fp8-quantized checkpoints), NOT nvfp4 KV (no FP4 FMHA on consumer
+      # Blackwell — vllm#43562).
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8}"
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # NO --speculative-config: built-in MTP is net-negative on this MoE
+      # (-51% measured; the head shares the MoE forward). See at-a-glance.
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

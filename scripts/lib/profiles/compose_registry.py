@@ -791,6 +791,36 @@ COMPOSE_REGISTRY = {
         kvcalc_key="qwen3.6-35b-a3b:qwen-35b-a3b-dual",
     ),
 
+    # Qwen3.6-35B-A3B NVFP4 (nvidia modelopt MoE) — community-validated
+    # Hopper/Blackwell tier, sibling of the 27B nvfp4 pair. AUTHORED BLIND on
+    # this sm_86 rig (required_sm=9.0 gates launch). MoE + unified-memory is
+    # the marquee pairing: 3B active params suit big-capacity/lower-bandwidth
+    # parts (GB10 Spark), so the SINGLE slug is the primary ask there. NO MTP:
+    # our measured finding on this MoE is that the built-in head shares the
+    # MoE forward and is NET-NEGATIVE (-51%; learnings/qwen3.6-35b-a3b.md) —
+    # base serving only. fp8/e4m3 KV at scale=1.0 (checkpoint has NO baked KV
+    # scales, kv_cache_scheme null; same regime the 27B fp8 tier tied at, #594).
+    "vllm/qwen-35b-a3b-single-nvfp4": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="nvfp4", workload="fast-chat",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
+        tp=1, max_ctx=131072, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen3.6-35b-a3b/vllm/compose/single/nvfp4/fp8.yml",
+        default_port=8078, required_sm=9.0,
+        kvcalc_key="qwen3.6-35b-a3b:nvfp4-single",
+        status="experimental",
+        status_note="Qwen3.6-35B-A3B NVFP4 (nvidia modelopt MIXED_PRECISION MoE: NVFP4 expert FFNs + FP8 attention; ~23.4 GB), single Hopper/Blackwell card (required_sm=9.0; NOT Ampere). 🧪 AUTHORED BLIND — sm_86 dev rig cannot boot NVFP4; first community boot + rebench-full validates (funnel). THE GB10/DGX-Spark single-card ask: 3B-active MoE suits unified-memory parts — GB10 128 GB runs the full 262K via MAX_MODEL_LEN env (131K default sized for 5090 32 GB). NO MTP by design: the built-in head is net-negative on this MoE (-51% measured on the AutoRound tier — drafter type matters, learnings). fp8/e4m3 KV @ scale=1.0 (no baked KV scales in this checkpoint). No DEFAULTS row (opt-in only).",
+    ),
+    "vllm/qwen-35b-a3b-dual-nvfp4": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="nvfp4", workload="fast-chat",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/nvfp4/fp8.yml",
+        default_port=8079, required_sm=9.0,
+        kvcalc_key="qwen3.6-35b-a3b:nvfp4-dual",
+        status="experimental",
+        status_note="Qwen3.6-35B-A3B NVFP4 (see single-nvfp4) at TP=2 @262K full ctx, 2x Hopper/Blackwell (2x 5090 primary community target; ~11.7 GB/card weights). 🧪 AUTHORED BLIND on an sm_86 rig — first community boot + rebench-full validates. Mirrors vllm/qwen-35b-a3b-dual's shape (no drafter — MTP net-negative on this MoE, vision on, thinking off) with NVFP4 weights + fp8/e4m3 KV instead of AutoRound + e5m2. No DEFAULTS row (opt-in only).",
+    ),
+
     # Agents-A1 — InternScience's 35B agentic MoE (Qwen3-Next MoE arch, OWN model
     # per its card's base_model; NOT a qwen fine-tune slug). Official FP8-dynamic
     # compressed-tensors checkpoint; on Ampere sm_86 vLLM serves it Marlin FP8-MoE
