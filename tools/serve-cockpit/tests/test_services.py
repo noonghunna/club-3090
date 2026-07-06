@@ -520,11 +520,12 @@ class TestLoadCatalog:
         assert ik.measurement.stale is True
 
     @pytest.mark.asyncio
-    async def test_submission_only_baseline_is_not_the_bar(self):
-        """Slice 3 — cross-rig submissions: a submission-only baseline (no
-        primary local row) must NOT become the slug's bar — the TPS column
-        stays "—"; the rows surface rig-labeled in the detail panel only.  A
-        primary row WITH submissions keeps its bar untouched."""
+    async def test_submission_only_baseline_surfaces_rig_labelled(self):
+        """Slice 3 (revised): a submission-only baseline (no primary local row)
+        is SURFACED from its best cross-rig submission so the catalog isn't blank,
+        but tagged `submission_rig` so tps_label renders it ⑂-labelled — never
+        passed off as this rig's own on-rig bar.  A primary row WITH submissions
+        keeps its bar untouched."""
         import copy
 
         emit = json.loads(REGISTRY_JSON)
@@ -554,10 +555,13 @@ class TestLoadCatalog:
         assert vllm.measurement.source == "baseline"
         assert vllm.measurement.tps_label == "174/42"
         ik = next(e for e in entries if e.slug == "ik-llama/iq4ks-mtp")
-        # submission-only: NOT enriched as the bar
-        assert ik.measurement.source == ""
-        assert ik.measurement.tps_label == "—"
-        # ...but the submissions ride the row for the detail panel
+        # submission-only: surfaced from the best submission so the catalog isn't
+        # blank, but ⑂-labelled + tagged with its rig_class (NOT this rig's own bar).
+        assert ik.measurement.source == "submission"
+        assert ik.measurement.submission_rig == "2x5090-pcie"
+        assert "⑂" in ik.measurement.tps_label
+        assert ik.measurement.tps_label.startswith("134/165")
+        # ...and the submissions still ride the row for the detail panel
         subs = (getattr(ik.row, "baseline", None) or {}).get("submissions") or {}
         assert subs["2x5090-pcie"]["tier"] == "submitted"
 

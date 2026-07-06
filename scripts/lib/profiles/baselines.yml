@@ -401,6 +401,29 @@ baselines:
         submitted_by: "ryanmpelletier"
         tier: submitted
 
+  vllm/qwen-27b-multi-max:
+    # Cross-rig submission only — 4-card; our 2-card reference rig can't run it.
+    # ⚠ STALE: the only 4-card data (@Whamp #446) was measured on the OLD int8-PTH
+    # KV, before #595 flipped multi-max to fp8/e4m3 (and on a pre-v0.24.0 engine).
+    # Kept stale-flagged so the catalog shows something with the caveat — REPLACE
+    # with the pending 4-card fp8 re-test (the #584 request) when it lands.
+    submissions:
+      4x3090-pcie:
+        # #446 (@Whamp, 4× 3090 PCIe x4/x16/x8/x16, aikitoria P2P kernel, 230 W):
+        # verify-full + verify-stress 7/7 + soak-continuous PASS, 85.09/102.43.
+        # int8-PTH KV (pre-#595 fp8 flip) + pre-v0.24.0 engine → doubly STALE.
+        narr_tps: 85.09
+        code_tps: 102.43
+        ctx_validated: { tokens: 240633, niah: "clean@240K" }
+        date: 2026-06-19
+        engine_pin: "vllm/vllm-openai:v0.22.0"
+        rig: "4x3090-pcie"
+        power_cap_w: [230, 230, 230, 230]
+        source: "https://github.com/noonghunna/club-3090/issues/446"
+        submitted_by: "Whamp"
+        tier: submitted
+        stale: true
+
 # ───────────────────────────────────────────────────────────────────────────
 # KNOWN GAPS — wave-2 dispositions (2026-07-04): each slug below has NO row
 # on purpose; the disposition says what unlocks one. Do NOT guess numbers in.
