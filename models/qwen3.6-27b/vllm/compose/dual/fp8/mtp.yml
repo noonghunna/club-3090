@@ -3,17 +3,17 @@
 #   Model:     Qwen3.6-27B FP8 (near-lossless 8-bit; embedded mtp.fc head)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (built-in — the fp8 checkpoint embeds the mtp.* head)
-#   KV:        fp8 (1 byte/token, 8-bit — same KV fidelity as the fast tier's fp8,
-#              but with the official FP8 weights' higher-weight-fidelity decode)
+#   KV:        fp8 → e4m3 (1 byte/token; runs at scale=1.0 — checkpoint is weight-only —
+#              → FlashInfer backend → flat decode at depth). NOT fp8_e5m2 — see "NOT enabled" note.
 #   Vision:    yes
 #   Max ctx:   262K — fp8 KV keeps the full ctx at TP=2. Validation proxy for
 #              the TP=4 multi-max (vllm/qwen-27b-multi-max, same config).
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    ✅ Production
-#   Quality:   TBD — re-measure with fp8 KV (previously 110/150 with int8-PTH KV).
-#              FP8 (8-bit) + fp8 KV are a fidelity sidegrade from int8-PTH KV on
-#              short-ctx; long-ctx NIAH A/B is the open follow-up. Decode TPS expected
-#              within measurement noise of the int8-PTH baseline (83/108, v0.24.0 2026-06-30).
+#   Quality:   109/150 (--full, thinking-off, 2026-07-06, jesse #594) — TIES int8-PTH's 107/150
+#              (+2, within noise). Quality-neutral despite scale=1.0: `calculate_kv_scales` is
+#              disabled on Qwen3-Next hybrid (GDN recurrent state → unreliable warmup scales),
+#              so 1.0 is the only fp8 KV; e4m3's exponent range tolerates it. NIAH also ties → 240K.
 #   Best for:  max-accuracy Qwen on 2 cards, and the validation proxy for the 4-card
 #                vllm/qwen-27b-multi-max — FP8 + fp8 KV at full 262K ⭐
 # ---------------------------------------------------------------------------
@@ -33,7 +33,16 @@
 #     KV format switching to fp8; numbers above are with int8-PTH KV — re-bench needed.
 #
 # What's intentionally NOT enabled:
-#   - int8-PTH KV — switched to fp8 KV (better performance on this config).
+#   - int8-PTH KV — switched to fp8 (e4m3) KV. Why: int8-PTH is confined to the TRITON_ATTN
+#     backend, whose single-stream decode craters with context (measured 130.8 → 50.7 TPS @ 35K);
+#     fp8/e4m3 KV routes to FlashInfer → decode stays flat (~114 → 115 @ 35K, ≈2.3×) at ~2× prefill
+#     and equal NIAH recall to 240K + 8-pack quality tie (109 vs 107) (jesse, #594). ⚠️ Must be `fp8`
+#     (= e4m3, runs at scale=1.0 — the checkpoint is weight-only, and `calculate_kv_scales` is disabled
+#     on Qwen3-Next hybrid: GDN recurrent state → unreliable warmup scales, so 1.0 is the only fp8 KV).
+#     NOT `fp8_e5m2` — scale-free and hard-rejected with FP8 checkpoints
+#     (`ValueError: fp8_e5m2 kv-cache is not supported with fp8 checkpoints`). Don't "simplify" to e5m2.
+#     Trade vs int8-PTH: ~14% slower short-ctx (<5K) + tighter VRAM margin (509 MB free @ deepest soak
+#     fill, 0 MiB growth / 100% retention / p50 125.5 — soak-continuous PASS 2026-07-06).
 #     For 4-stream concurrency at 262K, switch to
 #     dual/turbo.yml (which uses TurboQuant KV + Genesis P65).
 #
@@ -47,7 +56,7 @@
 # dual config; the A/B variants were deprecated):
 #
 #   Slug               Ctx    Streams  KV    Vision  Topology   Notes
-#   vllm/dual (this)   262K   2        fp8  ✅      2× PCIe    THE dual default ⭐
+#   vllm/dual (this)   262K   2        fp8   ✅      2× PCIe    THE dual default ⭐
 #   vllm/dual4         262K   4        fp8   ✅      4× PCIe    4-card
 #   vllm/dual4-dflash  262K   2        FP16  ✅      4× PCIe    4-card, peak code TPS
 #   (deprecated 2026-05-31, recover from git if needed: dual-dflash, dual-dflash-noviz,
