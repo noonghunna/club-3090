@@ -358,8 +358,13 @@ baselines:
         code_tps: 165.11
         ttft_ms: 56
         prefill_tps: { 10k: 3693, 90k: 1906 }
-        quality_8pk: "102/150"
-        quality_env: { harness: "benchlocal-cli @ club-3090 master (2026-07-06)" }
+        # 8-pack: n=2 on-rig --full runs — 102 (2026-07-05) and 109 (2026-07-06,
+        # full per-pack + JSON in the source thread). Both inside the ±5-7
+        # noise band of the 2x3090 primary's 109/150 (#594) → cross-arch
+        # quality PARITY (Blackwell native FP8 GEMM vs Ampere Marlin W8A16).
+        # Row carries the better-evidenced latest run.
+        quality_8pk: "109/150"
+        quality_env: { harness: "benchlocal-cli --full on-rig (2026-07-06, thinking=mixed pack-defaults, timeout-scaling 1.37); n=2 runs 102->109, both within noise of the 2x3090 primary 109; per-pack: TC 14/15 IF 15/15 SO 14/15 DE 9/15 RM 13/15 BF 14/15 HA 11/20 CLI 19/40; https://github.com/noonghunna/club-3090/discussions/571#discussioncomment-17553023" }
         ctx_validated: { tokens: 240635, niah: "clean@241K" }
         date: 2026-07-05
         engine_pin: "vllm/vllm-openai:v0.24.0"
