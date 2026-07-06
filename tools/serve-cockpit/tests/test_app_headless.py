@@ -941,12 +941,13 @@ class TestNavNodesExist:
             # (F6 shortened "our rig" → "rig" for column budget).
             # Serve-confirm rework: the "fit" column moved into the serve pop-up.
             # Model-filter: a "model" column leads the table (group-by-model view).
-            # F6: money columns (ctx · TPS · 8pk · status) directly after the
-            # identity; topology/engine (slug-redundant) at the tail so a
-            # 120-140-col terminal folds them, not the numbers.
+            # Layout, left→right: identity (model · slug) → config (weights · kv)
+            # → money (ctx · TPS · 8pk) → topology/engine (slug-redundant, fold
+            # first) → status LAST (its emoji glyph is the one variable-width cell,
+            # so nothing follows it to misalign — see _STATUS_GLYPH note).
             for expected in (
-                "model", "slug", "ctx", "TPS (rig)", "8pk (rig)",
-                "status", "topo", "engine",
+                "model", "slug", "weights", "kv", "ctx", "TPS (rig)", "8pk (rig)",
+                "topo", "engine", "status",
             ):
                 assert expected in col_labels, f"missing {expected!r}: {col_labels}"
             # "source" is gone.
@@ -955,9 +956,14 @@ class TestNavNodesExist:
             assert "fit" not in col_labels, col_labels
             # "model" is the FIRST column (mirrors switch.sh --list's grouping).
             assert col_labels[0] == "model", col_labels
-            # F6 — every money column sits LEFT of topo/engine.
+            # status is the LAST column (emoji-width slop has nothing after it).
+            assert col_labels[-1] == "status", col_labels
+            # config (weights · kv) sits between the identity and the money columns.
+            assert col_labels.index("weights") < col_labels.index("ctx"), col_labels
+            assert col_labels.index("kv") < col_labels.index("ctx"), col_labels
+            # every money column sits LEFT of topo/engine.
             fold = col_labels.index("topo")
-            for money in ("ctx", "TPS (rig)", "8pk (rig)", "status"):
+            for money in ("ctx", "TPS (rig)", "8pk (rig)"):
                 assert col_labels.index(money) < fold, col_labels
 
     @pytest.mark.asyncio

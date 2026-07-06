@@ -115,12 +115,17 @@ from .services import CockpitData
 
 _STATUS_GLYPH: dict[str, str] = {
     "production": "✅",
-    "caveats": "⚠️",
+    # ⚠️ 👁️ ⏸️ 🗑️ carry a U+FE0F variation selector — Rich's cell_len reserves
+    # 2 cols but many terminals render them 1-wide, shifting every column after
+    # the status cell.  These replacements are Emoji_Presentation=Yes (no VS16),
+    # so cell_len == terminal width == 2 everywhere.  (Status is also the LAST
+    # catalog column now, so any residual slop has nothing to misalign.)
+    "caveats": "❗",
     "experimental": "🧪",
     "incubating": "🐣",
-    "preview": "👁️",
-    "upstream-gated": "⏸️",
-    "deprecated": "🗑️",
+    "preview": "👀",
+    "upstream-gated": "🚧",
+    "deprecated": "🚫",
 }
 
 
@@ -682,8 +687,8 @@ class HelpScreen(ModalScreen):
             "",
             "[bold]Status glyphs[/bold]",
             "",
-            "  ✅ production   ⚠️  caveats   🧪 experimental",
-            "  🐣 incubating  👁️  preview   ⏸️  upstream-gated   🗑️  deprecated",
+            "  ✅ production   ❗ caveats   🧪 experimental",
+            "  🐣 incubating  👀 preview   🚧 upstream-gated   🚫 deprecated",
             "",
             "[bold]Fit glyphs (local card)[/bold]",
             "",
@@ -805,12 +810,14 @@ class CatalogPane(Container):
         # fit verdict is a pick-the-serve decision input, shown when you ⏎ a row).
         # Fit is STILL computed (it feeds the pop-up + the serving-row exemption);
         # it just no longer occupies a Catalog column.
-        # F6 — column budget: the money columns (ctx · TPS · 8pk · status) come
-        # RIGHT after the identity (model · slug); topology/engine — largely
-        # redundant with the slug, which encodes both — moved to the tail so a
-        # 120-140-col terminal folds THEM, not the numbers a user picks by.
+        # Column budget, left→right: identity (model · slug) → config the user
+        # picks by (weights · kv) → money (ctx · TPS · 8pk) → topology/engine
+        # (largely slug-redundant, fold first on a narrow terminal) → status.
+        # Status is deliberately LAST: its glyph is the one emoji-width column, so
+        # putting it at the tail means nothing follows it to misalign (belt +
+        # braces with the VS16-free glyphs in _STATUS_GLYPH).
         # "(rig)" keeps the our-rig provenance at 4 chars ("our rig" cost 8 more).
-        table.add_columns("model", "slug", "ctx", "TPS (rig)", "8pk (rig)", "status", "topo", "engine", "weights", "kv")
+        table.add_columns("model", "slug", "weights", "kv", "ctx", "TPS (rig)", "8pk (rig)", "topo", "engine", "status")
         # Full enriched catalog, and the current filter substring.
         self._entries: list[CatalogEntry] = []
         self._filter: str = ""
@@ -932,14 +939,14 @@ class CatalogPane(Container):
             table.add_row(
                 model_cell,
                 slug_cell,
+                _weights_label(e),
+                _kv_label(e),
                 e.ctx_label or "—",
                 tps,
                 e.measurement.quality_label,
-                _status_glyph(e.status),
                 e.topology,
                 e.engine,
-                _weights_label(e),
-                _kv_label(e),
+                _status_glyph(e.status),
             )
 
         banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
