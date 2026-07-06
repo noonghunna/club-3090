@@ -3,27 +3,22 @@
 #   Model:     Qwen3.6-27B FP8 (near-lossless 8-bit; embedded mtp.fc head)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (built-in — the fp8 checkpoint embeds the mtp.* head)
-#   KV:        int8_per_token_head (1 byte/token, 8-bit near-lossless — higher KV fidelity than
-#              the fast tier's fp8_e5m2, and keeps the full 262K at TP=2 unlike bf16 KV)
+#   KV:        fp8 (1 byte/token, 8-bit — same KV fidelity as the fast tier's fp8,
+#              but with the official FP8 weights' higher-weight-fidelity decode)
 #   Vision:    yes
-#   Max ctx:   262K — int8-PTH KV keeps the full ctx at TP=2 (KV pool 295K tok, 1.13× concurrency:
-#              constrained on 2 cards, comfortable on the 4-card multi-max). Validation proxy for
+#   Max ctx:   262K — fp8 KV keeps the full ctx at TP=2. Validation proxy for
 #              the TP=4 multi-max (vllm/qwen-27b-multi-max, same config).
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    ✅ Production
-#   Quality:   110/150 (det 65/75 · sandbox 45/75) (--full, same harness 2026-06-07). 8-pack A/B
-#                same day: fast 109 · balanced 105 · max 110 — a TIE (det 64/64/65; within ±5-7
-#                noise). FP8 (8-bit) + int8-PTH KV are NOT a behavioral-quality win over the
-#                AutoRound-int4 fast tier on the short-ctx 8-pack — the differentiation is KV
-#                fidelity (long-ctx NIAH A/B is the open follow-up). Decode 83/108 (v0.24.0
-#                bench 2026-06-30 — corrects the stale ~56 probe); the real tradeoffs are the
-#                smallest KV pool (295K/1.13×) and the slowest prefill/TTFT of the three
-#                (158 ms — FP8's Marlin W8A16 dequant is compute-heavy on Ampere).
+#   Quality:   TBD — re-measure with fp8 KV (previously 110/150 with int8-PTH KV).
+#              FP8 (8-bit) + fp8 KV are a fidelity sidegrade from int8-PTH KV on
+#              short-ctx; long-ctx NIAH A/B is the open follow-up. Decode TPS expected
+#              within measurement noise of the int8-PTH baseline (83/108, v0.24.0 2026-06-30).
 #   Best for:  max-accuracy Qwen on 2 cards, and the validation proxy for the 4-card
-#                vllm/qwen-27b-multi-max — FP8 + int8-PTH KV at full 262K ⭐
+#                vllm/qwen-27b-multi-max — FP8 + fp8 KV at full 262K ⭐
 # ---------------------------------------------------------------------------
 # Dual RTX 3090 — Qwen3.6-27B FP8 "max accuracy" tier (vllm/qwen-27b-dual-max).
-# FP8 weights + MTP n=3 + int8-PTH KV + vision. The validation proxy for the 4-card
+# FP8 weights + MTP n=3 + fp8 KV + vision. The validation proxy for the 4-card
 # vllm/qwen-27b-multi-max (same config @ TP=4). NOTE: some prose below is inherited from the
 # AutoRound "fast" template — the at-a-glance block above is authoritative for this variant.
 #
@@ -33,12 +28,13 @@
 #   - max_model_len=262144 → model's natural max, no rope_scaling needed
 #   - vision + tools + MTP n=3 + recall — everything on, no compromises
 #   - Measured (v0.24.0 stable, 2026-06-30, 2× 3090 caps 370/420 W — BENCHMARKS.md + disc #515):
-#     decode 83.1 narr / 108.2 code TPS single-stream, TTFT 158/167 ms, ~21.4 GB/card, KV
-#     pool 295K/1.13×. (Older 2026-04-28 dev205/Genesis-v7.51 probe read ~56/69 — superseded.)
+#     decode 83.1 narr / 108.2 code TPS single-stream, TTFT 158/167 ms, ~21.4 GB/card.
+#     (Older 2026-04-28 dev205/Genesis-v7.51 probe read ~56/69 — superseded.)
+#     KV format switching to fp8; numbers above are with int8-PTH KV — re-bench needed.
 #
 # What's intentionally NOT enabled:
-#   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e5m2 is plenty for
-#     262K across two cards. For 4-stream concurrency at 262K, switch to
+#   - int8-PTH KV — switched to fp8 KV (better performance on this config).
+#     For 4-stream concurrency at 262K, switch to
 #     dual/turbo.yml (which uses TurboQuant KV + Genesis P65).
 #
 # Dependencies:
@@ -51,7 +47,7 @@
 # dual config; the A/B variants were deprecated):
 #
 #   Slug               Ctx    Streams  KV    Vision  Topology   Notes
-#   vllm/dual (this)   262K   2        fp8   ✅      2× PCIe    THE dual default ⭐
+#   vllm/dual (this)   262K   2        fp8  ✅      2× PCIe    THE dual default ⭐
 #   vllm/dual4         262K   4        fp8   ✅      4× PCIe    4-card
 #   vllm/dual4-dflash  262K   2        FP16  ✅      4× PCIe    4-card, peak code TPS
 #   (deprecated 2026-05-31, recover from git if needed: dual-dflash, dual-dflash-noviz,
@@ -173,7 +169,7 @@ services:
       - --max-num-batched-tokens
       - "8192"
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-int8_per_token_head}"
+      - "${KV_CACHE_DTYPE:-fp8}"
       - --trust-remote-code
       # froggeric chat-template override (see volumes block + docs/UPSTREAM.md)
       - --chat-template
