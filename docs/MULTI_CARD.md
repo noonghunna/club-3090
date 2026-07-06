@@ -207,6 +207,8 @@ dual-max proxy at TP=2 (KV pool **295K tok / 1.13×** @262K, MTP active) — the
 2-card KV pool is exactly what TP=4 relieves. **No 4-card bench on this layout yet**,
 and the quality A/B vs the fast tier is pending.
 
+> **KV decode-at-depth applies here too ([#594](https://github.com/noonghunna/club-3090/pull/594)).** Because multi-max mirrors dual-max exactly (fp8 weights + int8-PTH KV), it inherits the same behaviour: int8-PTH KV is `TRITON_ATTN`-only and single-stream decode craters with context (measured on the dual proxy: 130.8→50.7 TPS @ 35K), while `KV_CACHE_DTYPE=fp8` (e4m3 → FlashInfer) keeps it flat (~115 @ 35K) at equal NIAH recall to 240K. **dual-max flipped to fp8 in [#594](https://github.com/noonghunna/club-3090/pull/594)** (all gates green: 8-pack 109 ties 107, decode 2.3× at depth, soak-continuous PASS / 0 growth / margin holds). **multi-max flips in a follow-up PR** — identical one-line env swap, bundled with the registry `kv_format` + rtx-3090 fp8_e4m3-compat sync.
+
 > **DFlash on TP=4 was removed.** The former `vllm/dual4-dflash`
 > (`multi4/autoround-int4/dflash.yml`) is gone — DFlash on Qwen3-Next vLLM is blocked
 > by DeltaNet KV rollback ([vllm#39931](UPSTREAM.md), the same block as the dual-card
