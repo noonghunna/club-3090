@@ -67,11 +67,15 @@ baselines:
     # BENCHMARKS.md 2026-06-30 row — the v0.22.0→v0.24.0 pin-bump validation
     # gate (decode 70.7/93.5; MTP n=3 accept 3.51, KV pool 622K/2.37×,
     # verify-full 8/8, verify-stress NIAH→240K, soak-continuous PASS).
-    # Measured ON the current vllm-stable pin → FRESH. Quality gate was
-    # `--quick` only (toolcall 11/15 · IF 15/15) — no 8-pack yet; add
-    # quality_8pk on the next full gate.
+    # Measured ON the current vllm-stable pin → FRESH. On-rig quality gate was
+    # `--quick` (toolcall 11/15 · IF 15/15); the 8-pack below is CARRIED from
+    # multi-fast #584 (ryan, 4×3090, same AutoRound-INT4 weights, current harness)
+    # — TP-invariant (4-card = 2-card; TP is not a quality lever, confirmed on #584).
+    # Replace with an on-rig 2-card --full number if/when one is run.
     narr_tps: 70.7
     code_tps: 93.5
+    quality_8pk: "108/150"
+    quality_env: { harness: "carried from multi-fast #584 (ryan 4×3090, TP-invariant); on-rig 2-card --full pending" }
     ctx_validated: { tokens: 245760, niah: "clean@240K" }
     date: 2026-06-30
     engine_pin: "vllm/vllm-openai:v0.24.0"
@@ -83,9 +87,11 @@ baselines:
   vllm/qwen-27b-dual-fast:
     # alias of vllm/dual (same compose_path dual/autoround-int4/fp8-mtp.yml,
     # same port — the #340 tier naming). Row mirrors vllm/dual verbatim;
-    # update both together.
+    # update both together. 8-pack carried from multi-fast #584 (TP-invariant).
     narr_tps: 70.7
     code_tps: 93.5
+    quality_8pk: "108/150"
+    quality_env: { harness: "carried from multi-fast #584 (ryan 4×3090, TP-invariant); on-rig 2-card --full pending" }
     ctx_validated: { tokens: 245760, niah: "clean@240K" }
     date: 2026-06-30
     engine_pin: "vllm/vllm-openai:v0.24.0"

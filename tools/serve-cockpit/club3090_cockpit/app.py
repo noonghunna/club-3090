@@ -1172,8 +1172,10 @@ class CatalogPane(Container):
             c = s.get("code_tps")
             tps = (f"{n:.0f}" if n is not None else "—") + "/" + (
                 f"{c:.0f}" if c is not None else "—")
-            sub = (
-                f"  [bold]⑂ {rc}[/bold]  {tps} TPS"
+            sub = f"  [bold]⑂ {rc}[/bold]  {tps} TPS"
+            if s.get("quality_8pk"):
+                sub += f"  ·  8pk {s['quality_8pk']}"
+            sub += (
                 f"  [dim]({s.get('tier')} · {s.get('date')} · {s.get('submitted_by')})[/dim]"
             )
             if s.get("stale") is True:
@@ -7074,6 +7076,20 @@ class CockpitApp(App):
             if b.get("stale") is True:
                 bar += "  [yellow]† re-bench owed[/yellow]"
             lines.append(bar)
+        # Cross-rig submissions — rig-labeled, NEVER merged into the bar (a 4-card /
+        # 5090 number isn't this rig's bar). This is what surfaces submission-only
+        # slugs (e.g. multi-fast: 4-card, no on-rig bar) in the detail card.
+        for rc, s in sorted((b.get("submissions") or {}).items()):
+            sn, sc = s.get("narr_tps"), s.get("code_tps")
+            stps = (f"{sn:.0f}" if sn is not None else "—") + "/" + (
+                f"{sc:.0f}" if sc is not None else "—")
+            sub = f"  [bold]⑂ {rc}[/bold]  {stps} TPS"
+            if s.get("quality_8pk"):
+                sub += f"  ·  8pk {s['quality_8pk']}"
+            sub += (
+                f"  [dim]({s.get('tier')} · {s.get('date')} · {s.get('submitted_by')})[/dim]"
+            )
+            lines.append(sub)
         note = (getattr(row, "status_note", "") or "").strip()
         if note:
             lines.append(f"  [yellow]caveat: {note}[/yellow]")
