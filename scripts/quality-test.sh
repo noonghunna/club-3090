@@ -465,6 +465,23 @@ if [[ -z "$PACK" ]] && { [[ "$MODE" == "--full" && "$NO_SANDBOX" != "1" ]] || [[
     _bl_bin="$(command -v benchlocal-cli || true)"
     _bl_mtime=0
     [[ -n "$_bl_bin" ]] && _bl_mtime="$(stat -c %Y "$_bl_bin" 2>/dev/null || echo 0)"
+    # Editable-checkout installs (maintainer rigs): `git pull` updates the code
+    # WITHOUT rewriting the console script, so the script mtime under-reports
+    # "CLI last updated". Take max(script mtime, checkout last-commit time).
+    if [[ -n "$_bl_bin" ]]; then
+      _bl_py="$(head -1 "$_bl_bin" 2>/dev/null | sed 's/^#!//')"
+      _bl_src_dir="$([[ -x "$_bl_py" ]] && "$_bl_py" -c 'import importlib.metadata as m, json
+try:
+    d = json.loads(m.distribution("benchlocal-cli").read_text("direct_url.json") or "{}")
+    u = d.get("url", "")
+    print(u[7:] if (d.get("dir_info") or {}).get("editable") and u.startswith("file://") else "")
+except Exception:
+    pass' 2>/dev/null)"
+      if [[ -n "$_bl_src_dir" && -d "$_bl_src_dir" ]]; then
+        _bl_commit_ts="$(git -C "$_bl_src_dir" log -1 --format=%ct 2>/dev/null || echo 0)"
+        [[ "$_bl_commit_ts" -gt "$_bl_mtime" ]] && _bl_mtime="$_bl_commit_ts"
+      fi
+    fi
     for _img in benchlocal-sandbox-bugfind benchlocal-sandbox-cli benchlocal-sandbox-hermes; do
       if ! docker image inspect "${_img}:latest" >/dev/null 2>&1; then
         _sb_missing+=("${_img}:latest")
@@ -480,7 +497,7 @@ if [[ -z "$PACK" ]] && { [[ "$MODE" == "--full" && "$NO_SANDBOX" != "1" ]] || [[
       if [[ -n "$_img_created" && "$_bl_mtime" -gt 0 ]]; then
         _img_epoch="$(date -d "$_img_created" +%s 2>/dev/null || echo 0)"
         if [[ "$_img_epoch" -gt 0 && "$_img_epoch" -lt "$_bl_mtime" ]]; then
-          _sb_stale+=("${_img}:latest ($(date -d "@${_img_epoch}" +%F) < CLI $(date -d "@${_bl_mtime}" +%F))")
+          _sb_stale+=("${_img}:latest (built $(date -d "@${_img_epoch}" '+%F %H:%M') < CLI updated $(date -d "@${_bl_mtime}" '+%F %H:%M'))")
         fi
       fi
     done
