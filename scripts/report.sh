@@ -556,6 +556,58 @@ if have python3 && [[ -f tools/kv-calc.py ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Quality tooling (benchlocal-cli + sandboxes)
+# ---------------------------------------------------------------------------
+# Triage for "my quality run skipped packs / scored weird": is benchlocal-cli
+# installed, how fresh, are the sandbox images built, and do they PREDATE the
+# CLI (the rebuilt-CLI-stale-sandboxes incident class)? All best-effort — a
+# rig without any of this still produces a report.
+
+section "Quality tooling (benchlocal-cli + sandboxes)"
+{
+  bl_bin=$(command -v benchlocal-cli 2>/dev/null || true)
+  if [[ -z "$bl_bin" ]]; then
+    echo "- **benchlocal-cli:** not installed (quality-test.sh needs it — \`pip install git+https://github.com/noonghunna/benchlocal-cli.git\`)"
+  else
+    bl_mtime=$(stat -c %Y "$bl_bin" 2>/dev/null || echo 0)
+    bl_when=$([[ "$bl_mtime" -gt 0 ]] && date -d "@${bl_mtime}" +%F 2>/dev/null || echo "unknown")
+    # Version via the CLI's own interpreter (works for pip-from-git AND
+    # editable-checkout installs; console-script shebang points at the env).
+    bl_py=$(head -1 "$bl_bin" 2>/dev/null | sed 's/^#!//')
+    bl_ver=$([[ -x "$bl_py" ]] && "$bl_py" -c 'import importlib.metadata as m; print(m.version("benchlocal-cli"))' 2>/dev/null || true)
+    echo "- **benchlocal-cli:** \`${bl_bin}\` (version: \`${bl_ver:-unknown}\`, installed/updated: ${bl_when})"
+    if have docker && docker info >/dev/null 2>&1; then
+      stale_any=0
+      echo "- **Sandbox images** (needed by the --full sandboxed packs):"
+      for img in benchlocal-sandbox-bugfind benchlocal-sandbox-cli benchlocal-sandbox-hermes benchlocal-sandbox-aider-polyglot; do
+        created=$(docker image inspect "${img}:latest" --format '{{.Created}}' 2>/dev/null || true)
+        if [[ -z "$created" ]]; then
+          echo "  - \`${img}\`: ✗ not built"
+          continue
+        fi
+        cdate=$(date -d "$created" +%F 2>/dev/null || echo "$created")
+        cepoch=$(date -d "$created" +%s 2>/dev/null || echo 0)
+        mark=""
+        if [[ "$cepoch" -gt 0 && "$bl_mtime" -gt 0 && "$cepoch" -lt "$bl_mtime" ]]; then
+          mark="  ⚠ OLDER than the installed CLI — rebuild if the update touched sandbox sources"
+          stale_any=1
+        fi
+        echo "  - \`${img}\`: built ${cdate}${mark}"
+      done
+      [[ "$stale_any" == "1" ]] && echo "- **Rebuild:** \`bash <benchlocal-cli-checkout>/tools/build-sandboxes.sh\` (heuristic — an unrelated reinstall also trips it)"
+    else
+      echo "- **Sandbox images:** docker unavailable — cannot inspect (sandboxed packs need Docker)"
+    fi
+  fi
+  latest_q=$(ls -t results/quality/quality-*.json 2>/dev/null | head -1)
+  if [[ -n "$latest_q" ]]; then
+    echo "- **Latest quality result:** \`${latest_q}\` ($(date -d "@$(stat -c %Y "$latest_q")" +%F 2>/dev/null || echo '?'))"
+  else
+    echo "- **Latest quality result:** none found under results/quality/"
+  fi
+} | redact
+
+# ---------------------------------------------------------------------------
 # Active container
 # ---------------------------------------------------------------------------
 
