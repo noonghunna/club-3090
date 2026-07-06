@@ -887,7 +887,22 @@ def fits(
     else:
         ok("C4")
 
-    unsupported_hw = [hw.id for hw in hardware if effective_kv not in hw.supported_kv_formats]
+    # fp8_e4m3 KV runs on Ampere (sm_86) ONLY for fp8-weights checkpoints: those route
+    # to FlashInfer (native fp8 storage on Ampere), whereas non-fp8 weights (e.g. Gemma
+    # W4A16) route to Triton, whose fp8e4nv path needs SM89+. `weights_variant` is a
+    # validated proxy for that backend split — Qwen fp8 dual/multi-max WORK on the 3090
+    # (#594: boot/decode/NIAH/quality/soak all green), while gemma-4-31b + fp8_e4m3 FAILS
+    # at KV-init on the same sm_86/v0.24.0 stack (learnings/gemma-4-31b.md 2026-07-01).
+    # So bypass the hardware supported_kv_formats gate for fp8_e4m3 + fp8-weights on
+    # sm>=8.6 without listing fp8_e4m3 in the Ampere profile (keeps Gemma correctly
+    # rejected). See docs/DTYPE_MATRIX.md. Caveat: a future Gemma-*fp8-weights* checkpoint
+    # would route to Triton and still fail — this proxy would wrongly allow it; revisit then.
+    _fp8w_ampere_kv = effective_kv == "fp8_e4m3" and str(effective_weights or "").startswith("fp8")
+    unsupported_hw = [
+        hw.id for hw in hardware
+        if effective_kv not in hw.supported_kv_formats
+        and not (_fp8w_ampere_kv and hw.sm >= 8.6)
+    ]
     if unsupported_hw:
         fail("C5", f"kv_format={effective_kv} not supported by hardware: {', '.join(unsupported_hw)}")
     else:
