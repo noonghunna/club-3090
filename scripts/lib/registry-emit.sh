@@ -9,11 +9,33 @@ registry_variant_rows() {
   python3 - "$root" <<'PY_EMIT'
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
-import yaml
+# PyYAML is OPTIONAL on this path (the switch.sh/launch.sh table derivation):
+# community rigs run minimal VMs without python3-yaml (#584 — ryan's Proxmox
+# box), and the ONLY thing this block used yaml for is pulling container_name
+# out of each compose — which the regex fallback below handles for our own
+# compose files. The `--json` contract path (c3 cockpit / baselines join)
+# still requires PyYAML. CLUB3090_EMIT_NO_YAML=1 forces the fallback so the
+# no-yaml guard test can exercise it on rigs where yaml IS installed.
+try:
+    import yaml
+except Exception:
+    yaml = None
+if os.environ.get("CLUB3090_EMIT_NO_YAML") == "1":
+    yaml = None
+
+# Non-UTF-8 locales (LC_ALL=C VMs, #599/#584) also break the WRITE side: a
+# piped stdout defaults to the locale codec → UnicodeEncodeError printing the
+# unicode in status notes. Reads were fixed in #599; pin the output too.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
@@ -35,8 +57,27 @@ def switch_engine(key: str) -> str:
     return "llamacpp" if prefix == "llamacpp" else prefix
 
 
+# First non-comment `container_name:` line — the regex fallback for rigs
+# without PyYAML. Our compose files are single-service (or first-service-wins,
+# matching the yaml path's dict-order iteration), so this is equivalent for
+# every checked-in compose; test-registry-emit-no-yaml asserts that parity.
+_CONTAINER_RX = re.compile(r"""^\s*container_name:\s*(['"]?)(.+?)\1\s*$""", re.M)
+
+
+def _unwrap_env_default(raw: str) -> str:
+    match = re.fullmatch(r"\$\{[^}:]+:-(.+)\}", raw)
+    return match.group(1) if match else raw
+
+
 def container_name(compose_path: str) -> str:
     path = root / compose_path
+    if yaml is None:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception as exc:
+            raise RuntimeError(f"could not read compose yaml: {exc}") from exc
+        m = _CONTAINER_RX.search(text)
+        return _unwrap_env_default(m.group(2).strip()) if m else ""
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception as exc:
@@ -46,9 +87,7 @@ def container_name(compose_path: str) -> str:
         raw = service.get("container_name")
         if not raw:
             continue
-        raw = str(raw)
-        match = re.fullmatch(r"\$\{[^}:]+:-(.+)\}", raw)
-        return match.group(1) if match else raw
+        return _unwrap_env_default(str(raw))
     return ""
 
 
@@ -390,6 +429,28 @@ import os
 import sys
 from pathlib import Path
 
+# PyYAML is REQUIRED on the --json contract path (profiles + baselines join —
+# load_profiles() below imports it too, so check FIRST and fail with the fix,
+# not a bare ModuleNotFoundError traceback). The switch.sh/launch.sh table
+# path runs stdlib-only (regex container_name fallback, #584) — only
+# c3-cockpit consumers need PyYAML.
+try:
+    import yaml  # noqa: E402,F401
+except Exception:
+    print(
+        "registry-emit --json requires PyYAML (profiles/baselines join).\n"
+        "Fix: sudo apt install python3-yaml   (or: pip install pyyaml)",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
+# Pin output to UTF-8 regardless of locale (see the table-path note, #599/#584).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 
@@ -421,7 +482,7 @@ profiles = load_profiles()
 #     BENCHMARKS.md) directly. ---
 import re as _re  # noqa: E402
 
-import yaml as _yaml  # noqa: E402
+_yaml = yaml  # required-import guard at the top of this block (#584)
 
 _bl_path = root / "scripts" / "lib" / "profiles" / "baselines.yml"
 _baselines = {}
