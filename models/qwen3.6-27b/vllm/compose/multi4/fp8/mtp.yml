@@ -3,10 +3,11 @@
 #   Model:     Qwen3.6-27B FP8 (near-lossless 8-bit; embedded mtp.fc head)
 #   Topology:  Quad 3090 (TP=4, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (built-in — the fp8 checkpoint embeds the mtp.* head)
-#   KV:        int8_per_token_head (1 byte/token, 8-bit near-lossless — higher KV fidelity than
-#              the fast tier's fp8_e5m2, and keeps the full 262K at TP=2 unlike bf16 KV)
+#   KV:        fp8 → e4m3 (1 byte/token; runs at scale=1.0 — checkpoint is weight-only —
+#              → FlashInfer backend → flat decode at depth). Mirrors dual-max (#594). NOT
+#              fp8_e5m2 (hard-rejected with FP8 checkpoints); int8-PTH is TRITON_ATTN-only.
 #   Vision:    yes
-#   Max ctx:   262K — int8-PTH KV keeps the full ctx at TP=4. Validated on the 2-card
+#   Max ctx:   262K — fp8/e4m3 KV keeps the full ctx at TP=4. Validated on the 2-card
 #              proxy (vllm/qwen-27b-dual-max, TP=2): KV pool 295K tok, 1.13× concurrency —
 #              tight on 2 cards, comfortable on 4.
 #   Genesis:   none — intentionally Genesis-free
@@ -158,7 +159,7 @@ services:
       - --max-num-batched-tokens
       - "8192"
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-int8_per_token_head}"
+      - "${KV_CACHE_DTYPE:-fp8}"
       - --trust-remote-code
       # froggeric chat-template override (see volumes block + docs/UPSTREAM.md)
       - --chat-template
