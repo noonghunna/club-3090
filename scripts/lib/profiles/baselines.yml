@@ -323,6 +323,9 @@ baselines:
     # wall 82.0/104.6, TTFT 158/167 ms, KV pool 295K/1.13×, ~21.4 GB/card,
     # NIAH clean@240K, 8-pack --full 107/150 (thinking-off). Measured ON the
     # current v0.24.0 pin → FRESH. Corrects the stale "~56 TPS" probe.
+    # Promoted to ✅ Production 2026-07-06: soak-continuous PASS re-run on the
+    # v0.24.0 pin (0 err / 0 growth / 100% retention, p50 decode 85) + verify-
+    # full 9/9 + verify-stress fillable to 240,636 tok — completes the gate.
     narr_tps: 83.1
     code_tps: 108.2
     ttft_ms: 158

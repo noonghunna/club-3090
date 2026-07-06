@@ -187,8 +187,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/dual/fp8/mtp.yml",
         default_port=8013,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="Qwen3.6-27B 'max accuracy' tier, 2-card: official FP8 weights (e4m3, embedded MTP head) + int8-PTH KV + MTP n=3, TP=2 @262K. 🧪 Experimental — live-validated 2026-06-07 (boots + serves @262K, KV pool 295K tok / 1.13x concurrency via int8-PTH, MarlinFP8 W8A16 on Ampere, coherent + MTP active; ~56 TPS decode). 8-pack A/B (--full, same harness 2026-06-07): 110/150 vs fast 109 vs balanced 105 — a TIE (det 65/64/64; spread within noise). The 8-pack (short-ctx) does NOT separate the quants; FP8 + int8-PTH differentiate on KV fidelity, not behavioral quality — a long-ctx NIAH A/B (where int8-PTH should matter) is the open follow-up. Slowest of the three (~56 vs fast ~89 code) with the smallest KV pool (1.13x). Also the validation proxy for vllm/qwen-27b-multi-max (same config @ TP=4).",
+        status="production",
+        status_note="Qwen3.6-27B 'max accuracy' tier, 2-card: official FP8 weights (e4m3, embedded MTP head) + int8-PTH KV + MTP n=3, TP=2 @262K. Promoted to ✅ Production 2026-07-06 on a full gate (v0.24.0): verify-full 9/9, verify-stress fillable to 240,636 tok, soak-continuous PASS (0 err / 0 growth / 100% retention, p50 decode 85), bench decode 83.1/108.2, 8-pack --full 107/150. KV pool 295K tok / 1.13x concurrency (int8-PTH — smallest pool of the tiers, the fidelity trade; slowest PREFILL/TTFT of the three since FP8 uses MarlinFP8 W8A16 on Ampere, not decode). The highest-fidelity weight tier; consumer Blackwell (5090+) gets native FP8 GEMM via the launcher's DeepGEMM-disable. Also the validation proxy for vllm/qwen-27b-multi-max (same config @ TP=4).",
     ),
     "vllm/qwen-27b-dual-lmcache": _entry(
         model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single",
