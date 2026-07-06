@@ -3914,6 +3914,9 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         object.__setattr__(row, "weights_companions", [str(c) for c in comp])
         object.__setattr__(row, "drafter", str(d.get("drafter") or ""))
         object.__setattr__(row, "vision", bool(d.get("vision")))
+        # KV-cache format from the registry (catalog KV column) — attached same
+        # as the facets above; "" when the contract didn't carry it.
+        object.__setattr__(row, "kv_format", str(d.get("kv_format") or ""))
         # Catalog-baselines slice 1: the shipped baseline row joined at
         # registry-emit (narr/code TPS · 8pk · ctx_validated · provenance ·
         # computed 'stale') — None when the slug has no accepted row.

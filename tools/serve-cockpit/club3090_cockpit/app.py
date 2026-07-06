@@ -139,6 +139,33 @@ def _status_glyph(status: str) -> str:
     return _STATUS_GLYPH.get(status.lower(), status)
 
 
+_WEIGHTS_LABELS = {
+    "fp8": "fp8", "autoround-int4": "int4·AR", "awq-bf16-int4": "awq4",
+    "qat-w4a16": "qat4", "bf16": "bf16", "bf16-mtp": "bf16",
+    "ubergarm-iq4ks": "iq4ks", "byteshape-iq4xs": "iq4xs",
+    "unsloth-q4km": "q4km", "unsloth-q5kxl": "q5kxl", "unsloth-q8": "q8",
+    "carnice-bf16mtp": "carnice", "qwopus-bf16mtp": "qwopus", "awq": "awq4",
+}
+_KV_LABELS = {
+    "int8_per_token_head": "int8-PTH", "fp8_e4m3": "fp8/e4m3",
+    "fp8_e5m2": "fp8/e5m2", "fp8": "fp8", "turboquant_3bit_nc": "tq3",
+    "turboquant_4bit_nc": "tq4", "bf16": "bf16", "fp16": "fp16",
+    "q4_0": "q4_0", "q4_1": "q4_1", "q5_0": "q5_0", "q8_0": "q8_0",
+}
+
+
+def _weights_label(e: "CatalogEntry") -> str:
+    """Compact weights-quant token for the catalog Weights column."""
+    wv = (e.weights_variant or "").lower()
+    return _WEIGHTS_LABELS.get(wv, wv.split("-")[0] if wv else "—")
+
+
+def _kv_label(e: "CatalogEntry") -> str:
+    """Compact KV-cache-format token for the catalog KV column (from the registry)."""
+    kv = (getattr(e.row, "kv_format", "") or "").lower()
+    return _KV_LABELS.get(kv, kv or "—")
+
+
 def _weights_glyph(e: CatalogEntry) -> str:
     """Download-state prefix for the catalog slug cell (Download UX).  ⏳NN%
     downloading · ⬇ absent (not on disk) · ⚠ partial (interrupted/wrong).
@@ -783,7 +810,7 @@ class CatalogPane(Container):
         # redundant with the slug, which encodes both — moved to the tail so a
         # 120-140-col terminal folds THEM, not the numbers a user picks by.
         # "(rig)" keeps the our-rig provenance at 4 chars ("our rig" cost 8 more).
-        table.add_columns("model", "slug", "ctx", "TPS (rig)", "8pk (rig)", "status", "topo", "engine")
+        table.add_columns("model", "slug", "ctx", "TPS (rig)", "8pk (rig)", "status", "topo", "engine", "weights", "kv")
         # Full enriched catalog, and the current filter substring.
         self._entries: list[CatalogEntry] = []
         self._filter: str = ""
@@ -829,7 +856,7 @@ class CatalogPane(Container):
             self._entries = []
             table.clear()
             status_label.update(f"[red]Catalog error:[/red] {error}")
-            table.add_row("—", "—", "—", "—", "—", "—", "—", "—")
+            table.add_row("—", "—", "—", "—", "—", "—", "—", "—", "—", "—")
             return
 
         self._entries = list(entries)
@@ -911,6 +938,8 @@ class CatalogPane(Container):
                 _status_glyph(e.status),
                 e.topology,
                 e.engine,
+                _weights_label(e),
+                _kv_label(e),
             )
 
         banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""

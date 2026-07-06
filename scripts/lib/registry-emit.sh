@@ -511,6 +511,9 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # probed running ctx against the slug's CONFIGURED ctx as an exact int,
             # never round-tripping through the colloquial ÷1000 label.
             "configured_ctx": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("max_ctx"),
+            # KV-cache format from the registry (for the catalog KV column) —
+            # int8_per_token_head / fp8_e4m3 / fp8_e5m2 / turboquant_3bit_nc / bf16 / q*.
+            "kv_format": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("kv_format"),
             # Per-slug download artifacts BEYOND the core weights_variant — the
             # extra weight-variant keys (a DFlash draft / an mmproj vision
             # projector) the slug's compose mounts from a separate subdir.  The
