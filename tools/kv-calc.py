@@ -1346,6 +1346,29 @@ CARD_VRAM_GB = {
 # can compare vram_est to budget with the same tolerance the gate uses.
 FIT_BAND_GB = 1.5
 
+# Per-card SM (compute capability) for the required_sm gate — derived from the
+# hardware profiles (the SAME source compat.py's C3 floor uses), keyed like
+# CARD_VRAM_GB (canonical hyphenated id + dehyphenated alias). A bare-number
+# --card describes VRAM only, so it has no SM → the gate is skipped
+# (permissive by design: an uncatalogued card is not assumed incompatible).
+CARD_SM = {}
+for _hid, _h in PROFILES.hardware.items():
+    CARD_SM[_hid] = float(_h.sm)
+    CARD_SM[_hid.replace("-", "")] = float(_h.sm)
+
+
+def _resolve_card_sm(card: Optional[str]) -> Optional[float]:
+    if card is None:
+        return None
+    raw = str(card).strip()
+    try:
+        float(raw)
+        return None  # bare VRAM number — carries no arch info
+    except ValueError:
+        pass
+    key = raw.lower().replace(" ", "").replace("_", "").replace("/", "-")
+    return CARD_SM.get(key) or CARD_SM.get(key.replace("-", ""))
+
 
 def _resolve_card_vram_gb(card: Optional[str]) -> Optional[float]:
     """Map a `--card` value to per-card VRAM in GB. Accepts a known card key
@@ -1435,6 +1458,19 @@ def fit_verdict(target: str, card: Optional[str], vram_default: float) -> dict:
     if err is not None:
         return {"verdict": "unknown", "error": err}
 
+    # required_sm gate (compat C3's arch floor, surfaced in the FIT verdict so
+    # the cockpit can hide/warn hardware-incompatible slugs — e.g. NVFP4 on
+    # Ampere: the VRAM would "fit" but the kernels don't exist below sm 9.0).
+    _req_sm = COMPOSE_REGISTRY[slug].get("required_sm")
+    _card_sm = _resolve_card_sm(card)
+    if _req_sm is not None and _card_sm is not None and _card_sm < float(_req_sm):
+        return {
+            "verdict": "incompatible-hw",
+            "required_sm": float(_req_sm),
+            "card_sm": _card_sm,
+            "error": f"requires sm >= {float(_req_sm):g} (this card is sm_{_card_sm:g})",
+        }
+
     try:
         spec = MODEL_SPECS[model_id]
         cfg = _compose_cfg_from_registry(PROFILES, model_id, "__fit__", slug)
@@ -1488,7 +1524,19 @@ def fit_all_verdicts(card: Optional[str], vram_default: float) -> dict:
         vram = float(vram_default)
 
     variants: dict = {}
+    _card_sm = _resolve_card_sm(card)
     for slug, entry in COMPOSE_REGISTRY.items():
+        # required_sm gate first — applies to SKIP (non-vLLM) slugs too, and
+        # short-circuits the pricing for slugs whose kernels can't exist here.
+        _req_sm = entry.get("required_sm")
+        if _req_sm is not None and _card_sm is not None and _card_sm < float(_req_sm):
+            variants[slug] = {
+                "verdict": "incompatible-hw",
+                "required_sm": float(_req_sm),
+                "card_sm": _card_sm,
+                "error": f"requires sm >= {float(_req_sm):g} (this card is sm_{_card_sm:g})",
+            }
+            continue
         if entry.get("kvcalc_key") in (None, "SKIP"):
             variants[slug] = {"verdict": "skip"}
             continue
