@@ -1,0 +1,189 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-27B NVFP4 (nvidia modelopt v0.45 MIXED_PRECISION:
+#              NVFP4 gs16 FFN + FP8-static attention/linear_attn + FP8 KV scales
+#              baked + UNQUANTIZED mtp.* head — 21.9 GB)
+#   Topology:  Dual Hopper/Blackwell (TP=2) — 2× 5090 is the primary target;
+#              H100 / RTX 6000 Pro / GB10 pairs also qualify. required_sm=9.0:
+#              the launchers REFUSE this on Ampere (sm_86) — NVFP4 has no
+#              kernel there (NVIDIA supports Hopper + Blackwell only).
+#   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized)
+#   KV:        fp8 → e4m3 (this checkpoint BAKES FP8 KV scales — modelopt
+#              kv_cache_quant_algo=FP8 — unlike our weight-only fp8 tier which
+#              runs scale=1.0). NVFP4 *KV* is deliberately NOT used: consumer
+#              Blackwell (sm_120/121) has no FP4 FMHA build (see
+#              hardware/rtx-5090.yml + vllm#43562) — fp8/e4m3 is the FP4-era KV.
+#   Vision:    yes (full VLM — vision tower + preprocessors ship in the repo)
+#   Max ctx:   262K (kv-calc: ~22.1 GB/card on 2× 32 GB @ util 0.92 — 75% of
+#              budget, comfortable; ~11 GB/card weights vs dual-max's 14.5)
+#   Genesis:   none — intentionally Genesis-free
+#   Status:    🧪 Experimental
+#   Best for:  max-ctx Qwen on Blackwell/Hopper pairs at 2.5× less weight
+#              memory than bf16 — pending first community validation
+# ---------------------------------------------------------------------------
+# ⚠️ AUTHORED BLIND — READ THIS FIRST.
+# The maintainer rig is 2× RTX 3090 (Ampere sm_86) and CANNOT BOOT NVFP4: this
+# compose has never been started anywhere. It mirrors the production-validated
+# vllm/qwen-27b-dual-max shape (TP=2 + MTP n=3 + fp8/e4m3 KV + vision @262K)
+# with the weights swapped to nvidia/Qwen3.6-27B-NVFP4 per NVIDIA's own model
+# card recipe (--quantization modelopt). If you have 2× Hopper/Blackwell
+# cards, YOU are the validation:
+#   1. bash scripts/switch.sh vllm/qwen-27b-dual-nvfp4
+#   2. bash scripts/verify-full.sh            (MODEL=qwen3.6-27b if needed)
+#   3. bash scripts/rebench-full.sh           (full eval chain, resumable)
+#   4. Report numbers + any boot failure via the numbers-from-your-rig issue
+#      template (or the c3 cockpit funnel). Boot logs >>> silence — a clean
+#      "it crashed here" report is exactly what promotes/kills this slug.
+# Known-unknowns to watch for (report either way):
+#   - MTP: the head is unquantized in the checkpoint and SHOULD load; if
+#     spec-dec errors on the modelopt path, delete the --speculative-config
+#     flag below and report — the slug is still useful without it.
+#   - Cliff 2 (DeltaNet GDN activation spikes at >50K single-prompt) was
+#     measured on Ampere; unknown on Blackwell. VLLM_ENFORCE_EAGER=1 is the
+#     mitigation if you see mid-generation hangs at depth.
+#   - froggeric chat-template: fixes 7 upstream Qwen3.6 template bugs; the
+#     NVFP4 repo ships the same base template, so it applies — but it has only
+#     been exercised against the AutoRound/FP8 tiers.
+#
+# What this gives you (once validated):
+#   - Full 262K ctx, 2 concurrent streams, vision + tools + MTP
+#   - ~11 GB/card weights (vs 14.5 dual-max FP8) → bigger KV headroom on 32 GB
+#   - Native FP4 GEMM on Blackwell (NVIDIA claims near-FP8 throughput);
+#     Hopper runs the supported-but-emulated path
+#   - NVIDIA's own accuracy deltas vs bf16 are <1% on MMLU-Pro/GSM8K (model
+#     card) — our 8-pack verdict lands with the first community rebench
+#
+# Run (Blackwell/Hopper only):
+#   cd <repo>/models/qwen3.6-27b/vllm/compose
+#   docker compose -f dual/nvfp4/mtp.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+services:
+  vllm-qwen36-27b-dual-nvfp4:
+    # Pinned to a vLLM STABLE release (immutable — never purged from Docker
+    # Hub, unlike nightlies; #407). The launchers inject the engine-profile
+    # image over this default (#254). Override with VLLM_IMAGE=... if needed.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-dual-nvfp4}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8077}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs.
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      # froggeric/Qwen-Fixed-Chat-Templates qwen3.6 — fixes 7 default-template
+      # bugs (empty <think></think> spam, </thinking> hallucination, unclosed
+      # think before tool call, no-user-query crash, developer role, etc.).
+      # See docs/UPSTREAM.md "Community templates / model assets".
+      - ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      # Safe PCIe default (mirrors the validated dual composes). On a rig with
+      # working P2P (NVLink pairs, datacenter fabric) set NCCL_P2P_DISABLE=0.
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      # DeepGEMM (vLLM's fp8-GEMM path — this checkpoint's ATTENTION layers are
+      # FP8) is built for Hopper (sm_90) + datacenter Blackwell (sm_100/103).
+      # Consumer Blackwell (5090 / PRO 6000 / GB10, sm_120/121) hard-fails
+      # "recipe not found" at boot (disc #571). Pass-through: switch.sh /
+      # launch.sh auto-inject VLLM_USE_DEEP_GEMM=0 on those cards; raw
+      # `docker compose` users on consumer Blackwell set it themselves.
+      - VLLM_USE_DEEP_GEMM
+      # expandable_segments:True crashes boot on some setups (WSL2, some
+      # NVLink rigs). Override via .env if boot fails in cuMemMap.
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — the
+        # Cliff 2 mitigation if you see mid-generation hangs at >50K depth
+        # (unverified on Blackwell — report either way).
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
+        else
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-27b-nvfp4
+      - --served-model-name
+      - qwen3.6-27b
+      - qwen3.6-27b-autoround
+      - qwen3.6-27b-nvfp4
+      # NVIDIA model-card recipe: modelopt quantization (MIXED_PRECISION
+      # NVFP4 + FP8 — vLLM reads hf_quant_config.json / quantization_config).
+      - --quantization
+      - modelopt
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "2"
+      - --max-num-batched-tokens
+      - "8192"
+      # fp8 (= e4m3). This checkpoint bakes FP8 KV scales (modelopt
+      # kv_cache_quant_algo=FP8) — do NOT "simplify" to fp8_e5m2 (hard-rejected
+      # with fp8 checkpoints) and do NOT use nvfp4 KV (no FP4 FMHA on consumer
+      # Blackwell — vllm#43562).
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8}"
+      - --trust-remote-code
+      # froggeric chat-template override (see volumes block + docs/UPSTREAM.md)
+      - --chat-template
+      - /etc/qwen-froggeric-chat-template.jinja
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # MTP n=3 — the checkpoint keeps mtp.* unquantized. If spec-dec fails on
+      # the modelopt path on your rig, delete these two lines and REPORT it.
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":3}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

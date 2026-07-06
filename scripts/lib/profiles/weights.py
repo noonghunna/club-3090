@@ -27,6 +27,7 @@ PROFILE_ROOT = Path(__file__).resolve().parent
 
 ALIASES = {
     "qwen3.6-27b:autoround_int4": ("qwen3.6-27b", "autoround-int4"),
+    "qwen3.6-27b:nvfp4": ("qwen3.6-27b", "nvfp4"),
     "qwen3.6-27b:gguf_q4km": ("qwen3.6-27b", "unsloth-q4km"),
     "qwen3.6-27b:gguf_iq4ks": ("qwen3.6-27b", "ubergarm-iq4ks"),
     "qwen3.6-27b:carnice_bf16mtp": ("qwen3.6-27b", "carnice-bf16mtp"),
@@ -37,6 +38,8 @@ ALIASES = {
     "gemma-4-26b-a4b:autoround_int4_mixed": ("gemma-4-26b-a4b", "autoround-int4-mixed"),
     "gemma-4-26b-a4b:awq_compressed_tensors": ("gemma-4-26b-a4b", "awq"),
     "qwen3.6-27b-autoround-int4": ("qwen3.6-27b", "autoround-int4"),
+    "qwen3.6-27b-nvfp4": ("qwen3.6-27b", "nvfp4"),
+    "Qwen3.6-27B-NVFP4": ("qwen3.6-27b", "nvfp4"),
     "qwen3.6-27b-dflash": ("qwen3.6-27b", "dflash"),
     "qwen3.6-27b-prism-eagle3": ("qwen3.6-27b", "prism_eagle3"),
     "qwen3.6-27b-mtp-head": ("qwen3.6-27b", "mtp_head"),

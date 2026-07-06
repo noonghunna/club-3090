@@ -46,6 +46,10 @@ supported_weight_formats:
   - compressed-tensors
   - fp8                   # qwen3.6-27b-fp8 (official e4m3 release) — Marlin W8A16 on Ampere sm_86
                           # (memory win, no FP8 compute speedup). Drives the qwen "max accuracy" tier.
+  - modelopt              # nvidia modelopt checkpoints (NVFP4 / MIXED_PRECISION) — stock vLLM
+                          # supports --quantization modelopt; the FP4 KERNELS need Hopper/Blackwell,
+                          # which is encoded per-slug via required_sm=9.0 (vllm/qwen-27b-*-nvfp4),
+                          # NOT here (the loader itself is arch-agnostic).
 required_overlays: []
 # OVERLAY-FREE BY DESIGN. This is the load-bearing distinction (#254, 2026-06-05):
 # `derived_emittable` (CONTRACT-5) refuses any engine with vendored_overlays != []

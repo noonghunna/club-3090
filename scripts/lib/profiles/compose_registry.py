@@ -231,6 +231,35 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.6-27B 'max accuracy' tier, 4-card (TP=4): official FP8 weights + fp8/e4m3 KV (flipped from int8-PTH alongside dual-max #594; follow-up multi-max PR) + MTP n=3 @262K. ⚠️ Production w/ caveats — byte-identical to the now-production vllm/qwen-27b-dual-max apart from TP=4 + gpu-count (dual-max @TP=2 is the on-rig proxy; this dev rig has 2 cards). Promoted 2026-07-06 on @Whamp's cross-rig full chain (#446, 4× 3090: verify-full + verify-stress 7/7 + soak-continuous PASS, 85/102). CAVEAT: that validation was on an OLDER engine (pre-v0.24.0-pin) + a non-standard rig (aikitoria P2P kernel, mixed x4/x16/x8/x16 lanes), single report — no clean v0.24.0 4-card datapoint yet; a fresh one upgrades this to ✅ Production. TP=4 relieves dual-max's tight 1.13x KV pool (→ 6.77x). Value is concurrency/fidelity, single-stream decode ~flat vs 2-card.",
     ),
 
+    # Qwen3.6-27B NVFP4 (nvidia modelopt) — the community-validated Hopper/
+    # Blackwell tier. AUTHORED BLIND on this sm_86 dev rig (NVFP4 cannot boot
+    # here): required_sm=9.0 gates launch to NVIDIA's supported set (Hopper
+    # sm_90 / Blackwell sm_100+ incl. 5090 sm_120, GB10 sm_121); the first
+    # community booter is the validation, not a confirmation. NVFP4 *KV* stays
+    # off everywhere (consumer Blackwell has no FP4 FMHA — see hardware
+    # rtx-5090.yml note); fp8_e4m3 KV is the FP4-era KV, and this checkpoint
+    # bakes FP8 KV scales (modelopt kv_cache_quant_algo=FP8).
+    "vllm/qwen-27b-single-nvfp4": _entry(
+        model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
+        tp=1, max_ctx=131072, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen3.6-27b/vllm/compose/single/nvfp4/mtp.yml",
+        default_port=8076, required_sm=9.0,
+        kvcalc_key="qwen3.6-27b:nvfp4-single",
+        status="experimental",
+        status_note="Qwen3.6-27B NVFP4 (nvidia modelopt MIXED_PRECISION: NVFP4 FFN + FP8 attention + FP8 KV scales + unquantized MTP head), single Hopper/Blackwell card (required_sm=9.0 — H100 / 5090 / RTX 6000 Pro / GB10; NOT Ampere). 🧪 AUTHORED BLIND — this dev rig is sm_86 and cannot boot NVFP4; ships untested pending first community boot + rebench-full via the funnel. Ships 131K (kv-calc-predicted fit on the smallest target card, 5090 32 GB: ~22 GB weights + fp8/e4m3 KV; 80 GB+ cards raise MAX_MODEL_LEN toward the model's 262K). MTP n=3 on (head is unquantized in the checkpoint) — if spec-dec fails on your rig, drop the --speculative-config flag and report. ~2.5x smaller than bf16, NVIDIA MMLU-Pro/GSM8K deltas <1% vs bf16 per the model card. No DEFAULTS row (opt-in only).",
+    ),
+    "vllm/qwen-27b-dual-nvfp4": _entry(
+        model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
+        tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
+        compose_path="models/qwen3.6-27b/vllm/compose/dual/nvfp4/mtp.yml",
+        default_port=8077, required_sm=9.0,
+        kvcalc_key="qwen3.6-27b:nvfp4-dual",
+        status="experimental",
+        status_note="Qwen3.6-27B NVFP4 (nvidia modelopt MIXED_PRECISION — see single-nvfp4) at TP=2 @262K full ctx, 2x Hopper/Blackwell (required_sm=9.0; the 2x 5090 configuration is the primary community target). 🧪 AUTHORED BLIND on an sm_86 rig — cannot boot here; first community boot + rebench-full validates (funnel). Mirrors vllm/qwen-27b-dual-max's shape (TP=2 + MTP n=3 + fp8/e4m3 KV + vision @262K) with NVFP4 weights instead of FP8: ~11 GB/card weights vs dual-max's 14.5 — bigger KV pool headroom on 32 GB cards. On native-FP4 GEMM parts (Blackwell) NVIDIA claims near-fp8 throughput at 2.5x less weight memory. No DEFAULTS row (opt-in only).",
+    ),
+
     # Qwen 3.6 27B, llama.cpp single-card.
     # `llamacpp/default` is an alias for `llamacpp/mtp` (collapsed 2026-05-22):
     # the old Q3_K_XL vanilla compose was retired and `default` now points at

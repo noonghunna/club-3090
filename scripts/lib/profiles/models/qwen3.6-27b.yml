@@ -51,6 +51,17 @@ weights:
     kind: main
     verify_glob: "*.safetensors"
     manual_note: "Official Qwen3.6-27B FP8 release (e4m3, dynamic act-scale): layer-split safetensors (layers-N.safetensors + outside.safetensors) with an embedded MTP head (mtp.safetensors) and the multimodal vision tower. Drives the 'max accuracy' tier (vllm/qwen-27b-dual-max + vllm/qwen-27b-multi-max). On Ampere sm_86 FP8 weights run via the Marlin W8A16 kernel (memory win, no FP8 compute speedup). Pull recipe wired (hf_repo above): WEIGHTS=fp8 bash scripts/setup.sh qwen3.6-27b (whole-repo fetch + per-file SHA verify). For a stall-resistant manual pull of this 29 GB layer-split repo, hf-download.sh also works."
+  nvfp4:
+    path: qwen3.6-27b-nvfp4
+    local_subdir: qwen3.6-27b-nvfp4
+    size_gb: 22
+    format: modelopt
+    status: experimental
+    hf_repo: nvidia/Qwen3.6-27B-NVFP4
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "Official NVIDIA modelopt (v0.45) MIXED_PRECISION quant of Qwen/Qwen3.6-27B: NVFP4 (4-bit float, group_size 16) on the FFN linears + FP8 static on all self_attn/linear_attn projections + FP8 KV scales baked (kv_cache_quant_algo FP8) + the mtp.* head kept UNQUANTIZED (ignore: mtp*). Full VLM (vision tower + preprocessor configs). NVIDIA-supported runtimes: vLLM on Hopper + Blackwell (sm >= 9.0) — NOT runnable on this rig's Ampere sm_86; drives the community-validated vllm/qwen-27b-{single,dual}-nvfp4 slugs (authored blind, gated required_sm=9.0). Serving recipe per the model card: --quantization modelopt. 21.9 GB across 3 safetensors shards."
   awq-bf16-int4:
     path: qwen3.6-27b-awq-bf16-int4
     local_subdir: qwen3.6-27b-awq-bf16-int4
