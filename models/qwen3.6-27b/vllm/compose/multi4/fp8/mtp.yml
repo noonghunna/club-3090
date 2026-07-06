@@ -10,7 +10,12 @@
 #              proxy (vllm/qwen-27b-dual-max, TP=2): KV pool 295K tok, 1.13× concurrency —
 #              tight on 2 cards, comfortable on 4.
 #   Genesis:   none — intentionally Genesis-free
-#   Status:    🧪 Experimental (TP=4 cross-rig — config = vllm/qwen-27b-dual-max validated @TP=2)
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   Cross-rig validation only (this dev rig has 2 cards). Promoted on @Whamp's 4× 3090
+#                full chain — #446: verify-full + verify-stress 7/7 + soak-continuous PASS (85/102) —
+#                BUT on an OLDER engine (pre-v0.24.0 pin) + a non-standard rig (aikitoria P2P kernel,
+#                mixed x4/x16/x8/x16 lanes), single report. No clean v0.24.0 4-card datapoint yet →
+#                a fresh one upgrades this to ✅. Byte-identical to the production dual-max @TP=4.
 #   Quality:   = the dual-max proxy (vllm/qwen-27b-dual-max): 8-pack 110/150 (--full, current
 #                harness 2026-06-07); 3-way A/B fast 109 · balanced 105 · max 110 = TIE — FP8 +
 #                int8-PTH is NOT an 8-pack quality win over the fast tier (the differentiation is
@@ -23,8 +28,9 @@
 # 2-card vllm/qwen-27b-dual-max (dual/fp8/mtp.yml) — only the tensor-parallel size and
 # the required gpu-count bump to 4. The dual-max at TP=2 is the on-rig validation proxy
 # (boots/serves @262K, KV pool 295K tok, 1.13× concurrency — tight on 2 cards,
-# comfortable on 4); this 4-card variant is 🧪 Experimental until a real ≥4× 3090 host
-# validates it (this dev rig has 2 cards).
+# comfortable on 4). Promoted to ⚠️ Production w/ caveats 2026-07-06 on @Whamp's 4× 3090
+# cross-rig full chain (#446); see the Caveats line above for the validation's limits
+# (older engine + non-standard rig, single report) — a clean v0.24.0 4-card report upgrades to ✅.
 #
 # Why "max accuracy": FP8 weights (8-bit, near-lossless per our KLD findings) + int8-PTH
 # KV (8-bit, higher fidelity than the fast tier's fp8_e5m2), vs the AutoRound-INT4 fast
