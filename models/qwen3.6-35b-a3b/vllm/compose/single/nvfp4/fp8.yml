@@ -11,10 +11,11 @@
 #              MoE forward and is NET-NEGATIVE (-51% measured on the AutoRound
 #              tier; drafter type matters — learnings/qwen3.6-35b-a3b.md).
 #              Do not "add MTP back" without a fresh A/B on your arch.
-#   KV:        fp8 → e4m3 at scale=1.0 — this checkpoint has NO baked KV
-#              scales (kv_cache_scheme: null, unlike the 27B NVFP4), and
-#              calculate_kv_scales is disabled on Qwen3-Next hybrid. Same
-#              regime our production 27B fp8 tier quality-TIED at (#594).
+#   KV:        fp8 → e4m3 at scale=1.0 — SAME as the 27B NVFP4 (both DECLARE
+#              FP8 KV in hf_quant_config; NEITHER ships k_scale/v_scale
+#              tensors, index-verified 2026-07-06), and calculate_kv_scales is
+#              disabled on Qwen3-Next hybrid. Same regime our production 27B
+#              fp8 tier quality-TIED at (#594).
 #   Vision:    yes (image only — audio off via --limit-mm-per-prompt)
 #   Max ctx:   131K default — sized for the smallest target card (5090 32 GB:
 #              kv-calc 27.4/29.4 GB @ util 0.92 = PASS at 93%; MoE KV is tiny,
@@ -113,11 +114,12 @@ services:
       - "8192"
       - --limit-mm-per-prompt
       - '{"image":2,"audio":0}'
-      # fp8 (= e4m3) at scale=1.0 — no baked KV scales in this checkpoint and
-      # calculate_kv_scales is disabled on Qwen3-Next hybrid; the 27B fp8 tier
-      # quality-TIED in this exact regime (#594). NOT fp8_e5m2 (rejected with
-      # fp8-quantized checkpoints), NOT nvfp4 KV (no FP4 FMHA on consumer
-      # Blackwell — vllm#43562).
+      # fp8 (= e4m3) at scale=1.0 — FP8 KV declared in hf_quant_config, no
+      # k_scale/v_scale tensors shipped (same as the 27B NVFP4); hybrid
+      # disables calculate_kv_scales; the 27B fp8 tier quality-TIED in this
+      # exact regime (#594). NOT fp8_e5m2 (rejected with fp8-quantized
+      # checkpoints), NOT nvfp4 KV (no FP4 FMHA on consumer Blackwell —
+      # vllm#43562).
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8}"
       - --trust-remote-code

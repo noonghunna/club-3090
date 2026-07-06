@@ -8,9 +8,10 @@
 #   Drafter:   none — DELIBERATE. Built-in MTP is NET-NEGATIVE on this MoE
 #              (-51% measured on the AutoRound tier; the head shares the MoE
 #              forward — learnings/qwen3.6-35b-a3b.md). Don't re-add blind.
-#   KV:        fp8 → e4m3 at scale=1.0 — NO baked KV scales in this checkpoint
-#              (kv_cache_scheme: null, unlike the 27B NVFP4); same regime the
-#              production 27B fp8 tier quality-TIED at (#594).
+#   KV:        fp8 → e4m3 at scale=1.0 — SAME as the 27B NVFP4 (FP8 KV
+#              declared in hf_quant_config, no k_scale/v_scale tensors shipped,
+#              index-verified 2026-07-06); same regime the production 27B fp8
+#              tier quality-TIED at (#594).
 #   Vision:    yes (image only)
 #   Max ctx:   262K (kv-calc: 15.7 GB/card on 2× 32 GB @ util 0.92 — 53% of
 #              budget; ~11.7 GB/card weights, MoE KV is tiny)
@@ -125,8 +126,9 @@ services:
       - "8192"
       - --limit-mm-per-prompt
       - '{"image":2,"audio":0}'
-      # fp8 (= e4m3) at scale=1.0 (no baked KV scales; hybrid disables
-      # calculate_kv_scales — the 27B fp8 tier tied in this regime, #594).
+      # fp8 (= e4m3) at scale=1.0 (FP8 KV declared, no scale tensors shipped —
+      # same as the 27B; hybrid disables calculate_kv_scales — the 27B fp8
+      # tier tied in this regime, #594).
       # NOT fp8_e5m2 / NOT nvfp4 KV — see the single-nvfp4 header.
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8}"

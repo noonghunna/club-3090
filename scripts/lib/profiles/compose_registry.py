@@ -237,8 +237,10 @@ COMPOSE_REGISTRY = {
     # sm_90 / Blackwell sm_100+ incl. 5090 sm_120, GB10 sm_121); the first
     # community booter is the validation, not a confirmation. NVFP4 *KV* stays
     # off everywhere (consumer Blackwell has no FP4 FMHA — see hardware
-    # rtx-5090.yml note); fp8_e4m3 KV is the FP4-era KV, and this checkpoint
-    # bakes FP8 KV scales (modelopt kv_cache_quant_algo=FP8).
+    # rtx-5090.yml note); fp8_e4m3 KV is the FP4-era KV. NOTE (corrected
+    # 2026-07-06): hf_quant_config DECLARES kv_cache_quant_algo=FP8 but the
+    # checkpoint ships NO k_scale/v_scale tensors (index-verified) → runs at
+    # scale=1.0, the #594-quality-tied regime. Same for the 35B-A3B sibling.
     "vllm/qwen-27b-single-nvfp4": _entry(
         model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
@@ -247,7 +249,7 @@ COMPOSE_REGISTRY = {
         default_port=8076, required_sm=9.0,
         kvcalc_key="qwen3.6-27b:nvfp4-single",
         status="experimental",
-        status_note="Qwen3.6-27B NVFP4 (nvidia modelopt MIXED_PRECISION: NVFP4 FFN + FP8 attention + FP8 KV scales + unquantized MTP head), single Hopper/Blackwell card (required_sm=9.0 — H100 / 5090 / RTX 6000 Pro / GB10; NOT Ampere). 🧪 AUTHORED BLIND — this dev rig is sm_86 and cannot boot NVFP4; ships untested pending first community boot + rebench-full via the funnel. Ships 131K (kv-calc-predicted fit on the smallest target card, 5090 32 GB: ~22 GB weights + fp8/e4m3 KV; 80 GB+ cards raise MAX_MODEL_LEN toward the model's 262K). MTP n=3 on (head is unquantized in the checkpoint) — if spec-dec fails on your rig, drop the --speculative-config flag and report. ~2.5x smaller than bf16, NVIDIA MMLU-Pro/GSM8K deltas <1% vs bf16 per the model card. No DEFAULTS row (opt-in only).",
+        status_note="Qwen3.6-27B NVFP4 (nvidia modelopt MIXED_PRECISION: NVFP4 FFN + FP8 attention + FP8 KV scales + unquantized MTP head), single Hopper/Blackwell card (required_sm=9.0 — H100 / 5090 / RTX 6000 Pro / GB10; NOT Ampere). 🧪 AUTHORED BLIND — this dev rig is sm_86 and cannot boot NVFP4; ships untested pending first community boot + rebench-full via the funnel. Ships 131K (kv-calc-predicted fit on the smallest target card, 5090 32 GB: ~22 GB weights + fp8/e4m3 KV; 80 GB+ cards raise MAX_MODEL_LEN toward the model's 262K). MTP n=3 on (head is unquantized in the checkpoint); fp8/e4m3 KV runs scale=1.0 (FP8 KV declared in hf_quant_config, NO k_scale/v_scale tensors shipped — index-verified, the #594-tied regime) — if spec-dec fails on your rig, drop the --speculative-config flag and report. ~2.5x smaller than bf16, NVIDIA MMLU-Pro/GSM8K deltas <1% vs bf16 per the model card. No DEFAULTS row (opt-in only).",
     ),
     "vllm/qwen-27b-dual-nvfp4": _entry(
         model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single",
@@ -798,8 +800,9 @@ COMPOSE_REGISTRY = {
     # parts (GB10 Spark), so the SINGLE slug is the primary ask there. NO MTP:
     # our measured finding on this MoE is that the built-in head shares the
     # MoE forward and is NET-NEGATIVE (-51%; learnings/qwen3.6-35b-a3b.md) —
-    # base serving only. fp8/e4m3 KV at scale=1.0 (checkpoint has NO baked KV
-    # scales, kv_cache_scheme null; same regime the 27B fp8 tier tied at, #594).
+    # base serving only. fp8/e4m3 KV at scale=1.0 — SAME as the 27B nvfp4
+    # (FP8 KV declared in hf_quant_config, no scale tensors shipped,
+    # index-verified 2026-07-06; the #594-quality-tied regime).
     "vllm/qwen-35b-a3b-single-nvfp4": _entry(
         model="qwen3.6-35b-a3b", weights_variant="nvfp4", workload="fast-chat",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
@@ -808,7 +811,7 @@ COMPOSE_REGISTRY = {
         default_port=8078, required_sm=9.0,
         kvcalc_key="qwen3.6-35b-a3b:nvfp4-single",
         status="experimental",
-        status_note="Qwen3.6-35B-A3B NVFP4 (nvidia modelopt MIXED_PRECISION MoE: NVFP4 expert FFNs + FP8 attention; ~23.4 GB), single Hopper/Blackwell card (required_sm=9.0; NOT Ampere). 🧪 AUTHORED BLIND — sm_86 dev rig cannot boot NVFP4; first community boot + rebench-full validates (funnel). THE GB10/DGX-Spark single-card ask: 3B-active MoE suits unified-memory parts — GB10 128 GB runs the full 262K via MAX_MODEL_LEN env (131K default sized for 5090 32 GB). NO MTP by design: the built-in head is net-negative on this MoE (-51% measured on the AutoRound tier — drafter type matters, learnings). fp8/e4m3 KV @ scale=1.0 (no baked KV scales in this checkpoint). No DEFAULTS row (opt-in only).",
+        status_note="Qwen3.6-35B-A3B NVFP4 (nvidia modelopt MIXED_PRECISION MoE: NVFP4 expert FFNs + FP8 attention; ~23.4 GB), single Hopper/Blackwell card (required_sm=9.0; NOT Ampere). 🧪 AUTHORED BLIND — sm_86 dev rig cannot boot NVFP4; first community boot + rebench-full validates (funnel). THE GB10/DGX-Spark single-card ask: 3B-active MoE suits unified-memory parts — GB10 128 GB runs the full 262K via MAX_MODEL_LEN env (131K default sized for 5090 32 GB). NO MTP by design: the built-in head is net-negative on this MoE (-51% measured on the AutoRound tier — drafter type matters, learnings). fp8/e4m3 KV @ scale=1.0 (FP8 KV declared in hf_quant_config, no scale tensors shipped — same as the 27B nvfp4). No DEFAULTS row (opt-in only).",
     ),
     "vllm/qwen-35b-a3b-dual-nvfp4": _entry(
         model="qwen3.6-35b-a3b", weights_variant="nvfp4", workload="fast-chat",

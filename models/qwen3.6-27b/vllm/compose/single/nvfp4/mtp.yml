@@ -8,8 +8,10 @@
 #              the launchers REFUSE this on Ampere (sm_86) — NVFP4 has no
 #              kernel there (NVIDIA supports Hopper + Blackwell only).
 #   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized)
-#   KV:        fp8 → e4m3 (checkpoint bakes FP8 KV scales — modelopt
-#              kv_cache_quant_algo=FP8). NVFP4 *KV* deliberately NOT used:
+#   KV:        fp8 → e4m3 at scale=1.0 (hf_quant_config DECLARES FP8 KV but
+#              ships NO k_scale/v_scale tensors — index-verified 2026-07-06;
+#              hybrid disables calculate_kv_scales → the #594-tied regime).
+#              NVFP4 *KV* deliberately NOT used:
 #              consumer Blackwell has no FP4 FMHA (rtx-5090.yml, vllm#43562).
 #   Vision:    yes (full VLM)
 #   Max ctx:   131K default — sized for the SMALLEST target card (5090 32 GB:
@@ -113,8 +115,10 @@ services:
       - "1"
       - --max-num-batched-tokens
       - "8192"
-      # fp8 (= e4m3) — checkpoint bakes FP8 KV scales. NOT fp8_e5m2 (rejected
-      # with fp8 checkpoints), NOT nvfp4 KV (no FP4 FMHA on consumer Blackwell).
+      # fp8 (= e4m3) at scale=1.0 — FP8 KV is DECLARED in hf_quant_config but
+      # no k_scale/v_scale tensors ship (the #594-tied regime). NOT fp8_e5m2
+      # (rejected with fp8 checkpoints), NOT nvfp4 KV (no FP4 FMHA on consumer
+      # Blackwell).
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8}"
       - --trust-remote-code

@@ -57,7 +57,7 @@ weights:
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"
-    manual_note: "Official NVIDIA modelopt MIXED_PRECISION quant of Qwen/Qwen3.6-35B-A3B (MoE): NVFP4 gs16 on the expert FFNs (161 targets) + FP8 static on self_attn/linear_attn projections (130 targets) + mtp.* kept UNQUANTIZED. kv_cache_scheme is NULL (no baked KV scales — unlike the 27B NVFP4): fp8 KV runs at scale=1.0 on Qwen3-Next hybrid (calculate_kv_scales disabled), the same regime our production 27B fp8 tier quality-tied at (#594). Hopper/Blackwell only (sm >= 9.0) — NOT runnable on this rig's Ampere; drives the community-validated vllm/qwen-35b-a3b-{single,dual}-nvfp4 slugs. 23.4 GB / 3 shards."
+    manual_note: "Official NVIDIA modelopt MIXED_PRECISION quant of Qwen/Qwen3.6-35B-A3B (MoE): NVFP4 gs16 on the expert FFNs (161 targets) + FP8 static on self_attn/linear_attn projections (130 targets) + mtp.* kept UNQUANTIZED. KV: SAME as the 27B NVFP4 — hf_quant_config declares kv_cache_quant_algo=FP8 but NO k_scale/v_scale tensors ship (index-verified 2026-07-06; config.json kv_cache_scheme is null); fp8 KV runs at scale=1.0 on Qwen3-Next hybrid (calculate_kv_scales disabled), the same regime our production 27B fp8 tier quality-tied at (#594). Hopper/Blackwell only (sm >= 9.0) — NOT runnable on this rig's Ampere; drives the community-validated vllm/qwen-35b-a3b-{single,dual}-nvfp4 slugs. 23.4 GB / 3 shards."
   gptq_int4:
     path: qwen3.6-35b-a3b-gptq-int4
     local_subdir: qwen3.6-35b-a3b-gptq-int4

@@ -158,9 +158,12 @@ services:
       - "2"
       - --max-num-batched-tokens
       - "8192"
-      # fp8 (= e4m3). This checkpoint bakes FP8 KV scales (modelopt
-      # kv_cache_quant_algo=FP8) — do NOT "simplify" to fp8_e5m2 (hard-rejected
-      # with fp8 checkpoints) and do NOT use nvfp4 KV (no FP4 FMHA on consumer
+      # fp8 (= e4m3) at scale=1.0. hf_quant_config DECLARES FP8 KV
+      # (kv_cache_quant_algo=FP8) but the checkpoint ships NO k_scale/v_scale
+      # tensors (safetensors-index-verified 2026-07-06), and Qwen3-Next hybrid
+      # disables calculate_kv_scales → scale=1.0 — the exact #594-validated
+      # regime. Do NOT "simplify" to fp8_e5m2 (hard-rejected with fp8
+      # checkpoints) and do NOT use nvfp4 KV (no FP4 FMHA on consumer
       # Blackwell — vllm#43562).
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8}"
