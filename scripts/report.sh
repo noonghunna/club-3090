@@ -575,7 +575,32 @@ section "Quality tooling (benchlocal-cli + sandboxes)"
     # editable-checkout installs; console-script shebang points at the env).
     bl_py=$(head -1 "$bl_bin" 2>/dev/null | sed 's/^#!//')
     bl_ver=$([[ -x "$bl_py" ]] && "$bl_py" -c 'import importlib.metadata as m; print(m.version("benchlocal-cli"))' 2>/dev/null || true)
-    echo "- **benchlocal-cli:** \`${bl_bin}\` (version: \`${bl_ver:-unknown}\`, installed/updated: ${bl_when})"
+    # PRECISE source — the metadata version is frozen at install time and
+    # fixes are pushed without bumping it, so it alone can't identify the
+    # code. pip records the truth in direct_url.json: a git install carries
+    # the exact commit; an editable install carries the checkout dir → git
+    # describe (path itself withheld from the public report).
+    bl_src=$([[ -x "$bl_py" ]] && "$bl_py" - <<'PYEOF' 2>/dev/null
+import importlib.metadata as m, json, subprocess
+try:
+    raw = m.distribution("benchlocal-cli").read_text("direct_url.json") or ""
+    d = json.loads(raw)
+except Exception:
+    d = {}
+vcs = (d.get("vcs_info") or {}).get("commit_id")
+if vcs:
+    print(f"git@{vcs[:9]}")
+elif (d.get("dir_info") or {}).get("editable") and str(d.get("url", "")).startswith("file://"):
+    path = d["url"][7:]
+    try:
+        desc = subprocess.run(["git", "-C", path, "describe", "--tags", "--always", "--dirty"],
+                              capture_output=True, text=True, timeout=5).stdout.strip()
+        print(f"{desc} (editable checkout)" if desc else "editable checkout")
+    except Exception:
+        print("editable checkout")
+PYEOF
+    )
+    echo "- **benchlocal-cli:** \`${bl_bin}\` (version: \`${bl_ver:-unknown}\`${bl_src:+, source: \`${bl_src}\`}, installed/updated: ${bl_when})"
     if have docker && docker info >/dev/null 2>&1; then
       stale_any=0
       echo "- **Sandbox images** (needed by the --full sandboxed packs):"
