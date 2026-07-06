@@ -139,14 +139,39 @@ _preflight_csv_token() {
   printf '%s' "$value"
 }
 
+# UUID→index normalization (#610): launch.sh --gpus exports GPU UUIDs (the
+# runtime-agnostic form — CDI ignores NVIDIA_VISIBLE_DEVICES, and indices
+# renumber inside classic-runtime containers). Preflight's checks are all
+# host-index-based, so translate any GPU-xxxx token back to its host index
+# here — ONE choke point for every selector consumer. Unknown tokens pass
+# through untouched (they fail the match downstream with the existing error).
+_preflight_selector_normalize() {
+  local selector="$1" token out="" idx
+  [[ "$selector" != *GPU-* ]] && { printf '%s' "$selector"; return 0; }
+  local uuid_map
+  uuid_map="$(nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits 2>/dev/null || true)"
+  IFS=',' read -ra _pf_norm_tokens <<< "$selector"
+  for token in "${_pf_norm_tokens[@]}"; do
+    token="$(_preflight_trim "$token")"
+    if [[ "$token" == GPU-* && -n "$uuid_map" ]]; then
+      idx="$(awk -F', *' -v u="$token" '$2 == u {print $1; exit}' <<< "$uuid_map")"
+      [[ -n "$idx" ]] && token="$idx"
+    fi
+    out="${out:+${out},}${token}"
+  done
+  printf '%s' "$out"
+}
+
 _preflight_selector() {
+  local raw=""
   if [[ -n "${CLUB3090_GPU:-}" ]]; then
-    printf '%s' "${CLUB3090_GPU}"
+    raw="${CLUB3090_GPU}"
   elif [[ -n "${NVIDIA_VISIBLE_DEVICES:-}" && "${NVIDIA_VISIBLE_DEVICES}" != "all" && "${NVIDIA_VISIBLE_DEVICES}" != "void" ]]; then
-    printf '%s' "${NVIDIA_VISIBLE_DEVICES}"
+    raw="${NVIDIA_VISIBLE_DEVICES}"
   elif [[ -n "${CUDA_VISIBLE_DEVICES:-}" && "${CUDA_VISIBLE_DEVICES}" != "all" && "${CUDA_VISIBLE_DEVICES}" != "void" ]]; then
-    printf '%s' "${CUDA_VISIBLE_DEVICES}"
+    raw="${CUDA_VISIBLE_DEVICES}"
   fi
+  [[ -n "$raw" ]] && _preflight_selector_normalize "$raw"
 }
 
 _preflight_selector_is_specific() {
