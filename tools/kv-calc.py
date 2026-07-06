@@ -98,7 +98,7 @@ def _load_model_specs_from_yaml(profiles):
     g_fields = ("hidden_size", "intermediate_size", "num_hidden_layers", "num_full_attn_layers", "num_sliding_attn_layers", "num_attn_heads", "num_kv_heads", "head_dim_sliding", "global_head_dim", "sliding_window", "max_ctx_supported", "attention_k_eq_v")
     gm_fields = (*g_fields, "num_global_kv_heads", "num_experts", "num_experts_per_tok", "moe_intermediate_size", "active_params_b", "mtp_num_hidden_layers")
     qm_fields = (*q_fields, "num_experts", "num_experts_per_tok", "moe_intermediate_size", "shared_expert_intermediate_size", "active_params_b", "mtp_num_hidden_layers")
-    qspec = {"model_id": qwen.id, "model_family": qwen.family, **{k: getattr(qwen, k) for k in q_fields}, "valid_tp": list(qwen.valid_tp), "weights_total_gb": _weight_size(qwen, qwen.default_weight_variant), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
+    qspec = {"model_id": qwen.id, "model_family": qwen.family, **{k: getattr(qwen, k) for k in q_fields}, "valid_tp": list(qwen.valid_tp), "weights_total_gb": _weight_size(qwen, qwen.default_weight_variant), "weights_nvfp4_gb": _weight_size(qwen, "nvfp4"), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
     qmspec = {"model_id": qwen_moe.id, "model_family": qwen_moe.family, **{k: getattr(qwen_moe, k) for k in qm_fields}, "valid_tp": list(qwen_moe.valid_tp), "weights_total_gb": _weight_size(qwen_moe, qwen_moe.default_weight_variant), "weights_gptq_gb": _weight_size(qwen_moe, "gptq_int4"), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
     gspec = {"model_id": gemma.id, "model_family": gemma.family, **{k: getattr(gemma, k) for k in g_fields}, "valid_tp": list(gemma.valid_tp), "weights_int4_gb": _weight_size(gemma, "autoround-int4"), "weights_awq_gb": _weight_size(gemma, "awq"), "weights_bf16_gb": _weight_size(gemma, "bf16"), "drafter_mtp_gb": float(profiles.drafters["gemma-it-assistant"].vram_footprint_gb), "drafter_dflash_gb": float(profiles.drafters["gemma-dflash"].vram_footprint_gb), "mtp_n_default": profiles.drafters["gemma-it-assistant"].n_default}
     gmspec = {"model_id": gemma_moe.id, "model_family": gemma_moe.family, **{k: getattr(gemma_moe, k) for k in gm_fields}, "valid_tp": list(gemma_moe.valid_tp), "weights_int4_gb": _weight_size(gemma_moe, "autoround-int4-mixed"), "weights_awq_gb": _weight_size(gemma_moe, "awq"), "drafter_mtp_gb": float(profiles.drafters["gemma-26b-it-assistant"].vram_footprint_gb), "mtp_n_default": profiles.drafters["gemma-26b-it-assistant"].n_default}
@@ -266,7 +266,7 @@ GENERIC_DENSE_ACTIVATION_FLOOR_GB = 1.5         # ≥ Gemma dense constant activ
 # Compose presets (per-model)
 # =============================================================================
 COMPOSE_ALIAS_TEXT = {
-    "qwen3.6-27b": "minimal=vllm/minimal dual=vllm/dual",
+    "qwen3.6-27b": "minimal=vllm/minimal dual=vllm/dual nvfp4-single=vllm/qwen-27b-single-nvfp4 nvfp4-dual=vllm/qwen-27b-dual-nvfp4",
     "qwen3.6-35b-a3b": "qwen-a3b-preview-single=vllm/qwen-a3b-preview-single qwen-35b-a3b-dual=vllm/qwen-35b-a3b-dual",
     "agents-a1": "agents-a1-dual=vllm/agents-a1-dual",
     "gemma-4-31b": "gemma-dual=vllm/gemma-bf16-mtp gemma-dual-int8=vllm/gemma-int8-mtp gemma-single=vllm/gemma-mtp-tp1",
@@ -313,6 +313,8 @@ def _compose_cfg_from_registry(profiles, model_id, legacy_name, registry_name):
             cfg["drafter_gb"] = float(drafter.vram_footprint_gb)
     if model_id == "qwen3.6-35b-a3b":
         cfg["weights_variant"] = "gptq" if entry["weights_variant"] == "gptq_int4" else "default"
+    if model_id == "qwen3.6-27b":
+        cfg["weights_variant"] = "nvfp4" if entry["weights_variant"] == "nvfp4" else "default"
     cfg.update(COMPOSE_COMPAT_OVERRIDES.get((model_id, legacy_name), {}))
     return cfg
 
@@ -377,6 +379,10 @@ class CacheBreakdown:
 def _weights_per_card_gb(spec, tp, weights_variant="default"):
     """Return per-card weights footprint in GB after TP split."""
     if spec["model_family"] == "qwen3-next-hybrid":
+        # nvfp4 (nvidia modelopt, 21.9 GB) vs the default AutoRound INT4 —
+        # the community Hopper/Blackwell slugs (vllm/qwen-27b-*-nvfp4).
+        if weights_variant == "nvfp4":
+            return spec["weights_nvfp4_gb"] / tp
         return spec["weights_total_gb"] / tp
     elif spec["model_family"] == "qwen3-next-moe":
         # vLLM shards attention + MoE expert weights across TP ranks, so
@@ -1536,7 +1542,7 @@ def main():
                    help="Drafter model size in GB (MTP / DFlash). 0 if not using a drafter.")
     p.add_argument("--dflash-draft-gb", type=float, default=None,
                    help="(deprecated alias for --drafter-gb)")
-    p.add_argument("--weights-variant", choices=["default", "int4", "awq", "bf16", "int8"], default=None,
+    p.add_argument("--weights-variant", choices=["default", "int4", "awq", "bf16", "int8", "nvfp4"], default=None,
                    help="Gemma 4 only: which weight quant variant. Default: from --compose, or int4.")
     p.add_argument("--calibration", action="store_true", help="Print predicted vs measured for all calibrated models.")
     p.add_argument("--fit", metavar="SLUG|MODEL",
