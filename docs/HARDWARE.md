@@ -88,6 +88,38 @@ Mechanics and boundaries:
 
 ---
 
+## Pinning specific GPUs on multi-GPU rigs (and CDI / NixOS runtimes)
+
+`bash scripts/launch.sh --gpus 1,2` pins the model to host GPUs 1+2 (leaving GPU 0 free for e.g. a desktop session or an image-gen stack). As of [#610] the launcher resolves your indices to **GPU UUIDs** (`nvidia-smi -L`) and exports them as *both* `NVIDIA_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` — one mechanism that works on **both** container GPU runtimes:
+
+| Runtime | How devices reach the container | What pins the cards |
+|---|---|---|
+| classic `nvidia` runtime (default Docker + nvidia-container-toolkit) | `NVIDIA_VISIBLE_DEVICES` (the runtime hook) | the UUID exposure itself; the CUDA mask is a no-op that agrees with it |
+| **CDI** (NixOS `hardware.nvidia-container-toolkit`, `nvidia-ctk cdi`, Podman) | the compose `deploy` block's CDI `device_ids` (typically `nvidia.com/gpu=all`) — **`NVIDIA_VISIBLE_DEVICES` is IGNORED** | the in-container `CUDA_VISIBLE_DEVICES` UUID mask |
+
+Why UUIDs and not indices: the classic runtime **renumbers** the exposed set inside the container (host GPUs 1,2 become 0,1), so an index-based inner mask would point at the wrong or a nonexistent card. UUIDs are stable under any exposure order.
+
+**CDI rigs (NixOS etc.)** — swap the compose's `deploy` device block for the CDI form and let the CUDA mask do the selection:
+
+```yaml
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi
+              device_ids:
+                - nvidia.com/gpu=all
+```
+
+then `bash scripts/launch.sh --gpus 1,2` as normal (the composes pass `CUDA_VISIBLE_DEVICES` through). Manual/no-launcher equivalent: `CUDA_VISIBLE_DEVICES=GPU-xxxx,GPU-yyyy docker compose -f … up -d` with the UUIDs from `nvidia-smi -L` (indices also work under CDI-with-all-exposed, but UUIDs are unambiguous).
+
+**Gotchas:**
+- *In-container renumbering is expected, not a bug*: with 2 of 3 cards pinned, `nvidia-smi` **inside** the container shows them as GPU 0/1 (classic runtime) or shows *all* cards while CUDA uses only the masked pair (CDI). Verify placement with **host** `nvidia-smi` — the utilization lands on the cards you picked.
+- The single-card GGUF composes (beellama / llama.cpp / ik-llama) select via `device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]` interpolated on the **host** side — they honor the same launcher export on the classic runtime; on CDI, apply the device-block swap above.
+- Estate (multi-instance) GPU pinning on CDI rigs is a tracked follow-up on [#610].
+
+[#610]: https://github.com/noonghunna/club-3090/issues/610
+
 ## NVLink
 
 **Not required.** Dual-card composes auto-detect NVLink and configure themselves accordingly.

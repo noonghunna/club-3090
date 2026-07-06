@@ -53,6 +53,12 @@ services:
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
+      # (#610): launch.sh --gpus exports GPU UUIDs here. CDI runtimes (NixOS,
+      # nvidia-ctk cdi) IGNORE NVIDIA_VISIBLE_DEVICES, so this mask is what
+      # actually pins cards there; on the classic runtime the UUID form is
+      # renumbering-proof. Unset → absent (no masking).
+      - CUDA_VISIBLE_DEVICES
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
       - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
