@@ -3914,6 +3914,18 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         object.__setattr__(row, "weights_companions", [str(c) for c in comp])
         object.__setattr__(row, "drafter", str(d.get("drafter") or ""))
         object.__setattr__(row, "vision", bool(d.get("vision")))
+        # KV-cache format from the registry (catalog KV column) — attached same
+        # as the facets above; "" when the contract didn't carry it.
+        object.__setattr__(row, "kv_format", str(d.get("kv_format") or ""))
+        # Weights quant_label + FORMAT from the model profile (emit join) —
+        # the catalog Weights column's fallbacks for weights_variant tokens that
+        # carry no recognisable quant segment: quant_label is the explicit
+        # per-artifact quant (GGUF header ground truth, baked into the model
+        # YAML for custom-named packs); format is the coarse last resort.
+        object.__setattr__(
+            row, "weights_quant_label", str(d.get("weights_quant_label") or "")
+        )
+        object.__setattr__(row, "weights_format", str(d.get("weights_format") or ""))
         # Catalog-baselines slice 1: the shipped baseline row joined at
         # registry-emit (narr/code TPS · 8pk · ctx_validated · provenance ·
         # computed 'stale') — None when the slug has no accepted row.

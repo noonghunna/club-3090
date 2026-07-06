@@ -42,6 +42,7 @@ NEVER executed live — tests inject fakes and conftest blocks the real spawn.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections import OrderedDict
 from pathlib import Path
 from typing import NamedTuple, Optional
@@ -115,12 +116,17 @@ from .services import CockpitData
 
 _STATUS_GLYPH: dict[str, str] = {
     "production": "✅",
-    "caveats": "⚠️",
+    # ⚠️ 👁️ ⏸️ 🗑️ carry a U+FE0F variation selector — Rich's cell_len reserves
+    # 2 cols but many terminals render them 1-wide, shifting every column after
+    # the status cell.  These replacements are Emoji_Presentation=Yes (no VS16),
+    # so cell_len == terminal width == 2 everywhere.  (Status is also the LAST
+    # catalog column now, so any residual slop has nothing to misalign.)
+    "caveats": "❗",
     "experimental": "🧪",
     "incubating": "🐣",
-    "preview": "👁️",
-    "upstream-gated": "⏸️",
-    "deprecated": "🗑️",
+    "preview": "👀",
+    "upstream-gated": "🚧",
+    "deprecated": "🚫",
 }
 
 
@@ -137,6 +143,64 @@ def _error_headline(err: str) -> str:
 
 def _status_glyph(status: str) -> str:
     return _STATUS_GLYPH.get(status.lower(), status)
+
+
+_KV_LABELS = {
+    "int8_per_token_head": "int8-PTH", "fp8_e4m3": "fp8/e4m3",
+    "fp8_e5m2": "fp8/e5m2", "fp8": "fp8", "turboquant_3bit_nc": "tq3",
+    "turboquant_4bit_nc": "tq4", "bf16": "bf16", "fp16": "fp16",
+    "q4_0": "q4_0", "q4_1": "q4_1", "q5_0": "q5_0", "q8_0": "q8_0",
+}
+
+
+# Weights column — the label is DERIVED from the weights_variant token (the
+# compose <quant>/ dir name) by PATTERN, not by a hand-map keyed on full tokens:
+# the hand-map drifted immediately (18/30 catalog tokens fell to a naive
+# first-segment fallback that showed the PROVIDER prefix — "beellama",
+# "unsloth", "deepreinforce" — instead of the quant).  Precedence: an explicit
+# GGUF quant segment (q4km / q8kxl / iq4ks / q6kp …) wins; then the known
+# safetensors formats; else the model profile's `format:` (threaded through the
+# emit as row.weights_format) — the honest answer for fine-tune artifact slugs
+# whose token carries no quant segment (mudler-apex-compact → "gguf").
+_GGUF_SEG = re.compile(r"^i?q\d[a-z0-9_]*$")
+
+
+def _weights_label(e: "CatalogEntry") -> str:
+    """Compact weights-quant token for the catalog Weights column."""
+    wv = (e.weights_variant or "").lower()
+    if not wv:
+        return "—"
+    segs = wv.split("-")
+    for s in segs:
+        if _GGUF_SEG.match(s):
+            return s
+    if "nvfp4" in segs:
+        return "nvfp4"
+    if "w4a16" in segs:
+        return "w4a16"
+    if "awq" in segs:  # awq · awq-bf16-int4 · qat-awq-int4 — all int4 weights
+        return "awq4"
+    if "autoround" in segs:
+        return "int8·AR" if "int8" in segs else "int4·AR"
+    if "fp8" in segs:  # fp8 · fp8-dynamic
+        return "fp8"
+    if "bf16" in segs:
+        return "bf16"
+    # No quant segment in the token (custom-named mixed-quant packs like
+    # PRISM-PRO-DQ / APEX-MTP-I-*): prefer the entry's explicit quant_label
+    # (GGUF-header ground truth baked into the model YAML), then the coarse
+    # format ("gguf"), then the raw token.
+    return (
+        (getattr(e.row, "weights_quant_label", "") or "")
+        or (getattr(e.row, "weights_format", "") or "")
+        or wv
+    )
+
+
+def _kv_label(e: "CatalogEntry") -> str:
+    """Compact KV-cache-format token for the catalog KV column (from the registry)."""
+    kv = (getattr(e.row, "kv_format", "") or "").lower()
+    return _KV_LABELS.get(kv, kv or "—")
 
 
 def _weights_glyph(e: CatalogEntry) -> str:
@@ -655,8 +719,8 @@ class HelpScreen(ModalScreen):
             "",
             "[bold]Status glyphs[/bold]",
             "",
-            "  ✅ production   ⚠️  caveats   🧪 experimental",
-            "  🐣 incubating  👁️  preview   ⏸️  upstream-gated   🗑️  deprecated",
+            "  ✅ production   ❗ caveats   🧪 experimental",
+            "  🐣 incubating  👀 preview   🚧 upstream-gated   🚫 deprecated",
             "",
             "[bold]Fit glyphs (local card)[/bold]",
             "",
@@ -778,12 +842,14 @@ class CatalogPane(Container):
         # fit verdict is a pick-the-serve decision input, shown when you ⏎ a row).
         # Fit is STILL computed (it feeds the pop-up + the serving-row exemption);
         # it just no longer occupies a Catalog column.
-        # F6 — column budget: the money columns (ctx · TPS · 8pk · status) come
-        # RIGHT after the identity (model · slug); topology/engine — largely
-        # redundant with the slug, which encodes both — moved to the tail so a
-        # 120-140-col terminal folds THEM, not the numbers a user picks by.
+        # Column budget, left→right: identity (model · slug) → config the user
+        # picks by (weights · kv) → money (ctx · TPS · 8pk) → topology/engine
+        # (largely slug-redundant, fold first on a narrow terminal) → status.
+        # Status is deliberately LAST: its glyph is the one emoji-width column, so
+        # putting it at the tail means nothing follows it to misalign (belt +
+        # braces with the VS16-free glyphs in _STATUS_GLYPH).
         # "(rig)" keeps the our-rig provenance at 4 chars ("our rig" cost 8 more).
-        table.add_columns("model", "slug", "ctx", "TPS (rig)", "8pk (rig)", "status", "topo", "engine")
+        table.add_columns("model", "slug", "weights", "kv", "ctx", "TPS (rig)", "8pk (rig)", "topo", "engine", "status")
         # Full enriched catalog, and the current filter substring.
         self._entries: list[CatalogEntry] = []
         self._filter: str = ""
@@ -829,7 +895,7 @@ class CatalogPane(Container):
             self._entries = []
             table.clear()
             status_label.update(f"[red]Catalog error:[/red] {error}")
-            table.add_row("—", "—", "—", "—", "—", "—", "—", "—")
+            table.add_row("—", "—", "—", "—", "—", "—", "—", "—", "—", "—")
             return
 
         self._entries = list(entries)
@@ -905,12 +971,14 @@ class CatalogPane(Container):
             table.add_row(
                 model_cell,
                 slug_cell,
+                _weights_label(e),
+                _kv_label(e),
                 e.ctx_label or "—",
                 tps,
                 e.measurement.quality_label,
-                _status_glyph(e.status),
                 e.topology,
                 e.engine,
+                _status_glyph(e.status),
             )
 
         banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
@@ -930,8 +998,16 @@ class CatalogPane(Container):
                 if self._has_stale_baseline()
                 else ""
             )
+            # ⑂ legend — shown whenever any row's numbers come from a COMMUNITY
+            # SUBMISSION (rig-labelled, never the local bar) so the marker on the
+            # TPS cell is decodable without opening the slug detail card.
+            sub_note = (
+                "  ([dim]⑂ = community-submitted numbers (other rig) — not a local baseline[/dim])"
+                if self._has_submission_measurement()
+                else ""
+            )
             status_label.update(
-                f"{banner}{len(self._entries)} variants loaded from registry{stale_note}{dep_note}"
+                f"{banner}{len(self._entries)} variants loaded from registry{stale_note}{sub_note}{dep_note}"
             )
 
         # #9/A8 — keep the preview strip in sync with the cursor after a (re-)render
@@ -994,6 +1070,13 @@ class CatalogPane(Container):
 
     def _has_stale_baseline(self) -> bool:
         return any(e.measurement.stale is True for e in self._entries)
+
+    def _has_submission_measurement(self) -> bool:
+        """Any loaded row whose numbers came from a community submission (the
+        ⑂-marked cells) — drives the ⑂ legend in the status line."""
+        return any(
+            getattr(e.measurement, "submission_rig", None) for e in self._entries
+        )
 
     def _filtered_entries(self) -> list[CatalogEntry]:
         # Hide 🗑️ deprecated slugs by default (mirrors `switch.sh --list`); [h] reveals them.

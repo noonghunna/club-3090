@@ -247,6 +247,9 @@ weights:
     local_subdir: qwen3.6-27b-gguf/ex0bit-prism-pro-dq
     size_gb: variable
     format: gguf
+    # custom-named mixed-quant pack — quant_label read from the GGUF header
+    # (general.file_type=12 → Q3_K_M, verified 2026-07-06); catalog Weights column.
+    quant_label: q3km
     status: community-experimental
     hf_repo: Ex0bit/Qwen3.6-27B-PRISM-PRO-DQ
     files:
