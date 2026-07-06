@@ -11,8 +11,9 @@
 #   Quality:   = the dual fast proxy (vllm/dual): 109/150 (--full, current harness 2026-06-07);
 #                3-way A/B fast 109 · balanced 105 · max 110 = TIE. (Earlier 129/150 on the
 #                2026-05-09 harness is not comparable — verifier fixes since.) Quality is
-#                TP-invariant (same weights/KV/sampling as vllm/dual, only TP differs); a
-#                4-card 8-pack confirmation is the open follow-up (report.sh runs no 8-pack).
+#                TP-invariant (same weights/KV/sampling as vllm/dual, only TP differs) — and
+#                now MEASURED on real 4-card hardware: @ryanmpelletier ran the full 8-pack
+#                thinking-off = 108/150 (#584, 2026-07-06), within ±1 of the 2-card carry.
 #   Best for:  4-card Qwen "fast" tier (vllm/qwen-27b-multi-fast) — AutoRound int4 + fp8 KV + MTP, TP=4 ⭐
 # ---------------------------------------------------------------------------
 # Quad RTX 3090 — Qwen3.6-27B "fast" tier at TP=4 (vllm/qwen-27b-multi-fast).

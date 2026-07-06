@@ -368,13 +368,16 @@ baselines:
         # clean to 240K · soak-continuous PASS (0 err / 0 silent / <200 MiB) ·
         # bench n=5 CV 4.2%/3.0%. KV pool 1.77M tok / 6.77× @262K (vs 2-card
         # vllm/dual 622K/2.37×) — the 4-card win is concurrency, not single-stream
-        # speed (decode ~flat, TP=4 all-reduce over PCIe). TPS-only: report.sh
-        # runs no 8-pack; quality is TP-invariant, carried from the vllm/dual
-        # proxy (109/150). ⚠ ceiling margin thin (851 MB @240K on driver 595, #149).
+        # speed (decode ~flat, TP=4 all-reduce over PCIe). ⚠ ceiling margin thin
+        # (851 MB @240K on driver 595, #149). QUALITY confirmed 2026-07-06 (#584
+        # follow-up): full 8-pack thinking-off 108/150 — within ±1 of the carried
+        # vllm/dual proxy (109), so TP-invariance is now MEASURED, not assumed.
         narr_tps: 74.76
         code_tps: 90.83
         ttft_ms: 141
         prefill_tps: { 10k: 1288, 90k: 1175 }
+        quality_8pk: "108/150"
+        quality_env: { harness: "benchlocal-cli @ club-3090 087d094 (sandboxes rebuilt 2026-07-06)" }
         ctx_validated: { tokens: 240633, niah: "clean@240K" }
         date: 2026-07-05
         engine_pin: "vllm/vllm-openai:v0.24.0"
