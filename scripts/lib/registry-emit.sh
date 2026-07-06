@@ -38,7 +38,7 @@ def switch_engine(key: str) -> str:
 def container_name(compose_path: str) -> str:
     path = root / compose_path
     try:
-        data = yaml.safe_load(path.read_text()) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception as exc:
         raise RuntimeError(f"could not parse compose yaml: {exc}") from exc
     services = data.get("services") or {}
@@ -59,7 +59,7 @@ _CTX_FLAG = re.compile(r"(?:--max-model-len|--ctx-size|--n-ctx|(?<!\w)-c)\s*\n?\
 def compose_default_ctx(compose_path: str):
     """The ctx the compose serves by DEFAULT (its ${VAR:-N} fallback or flag literal)."""
     try:
-        txt = (root / compose_path).read_text()
+        txt = (root / compose_path).read_text(encoding="utf-8")
     except Exception:
         return None
     m = _CTX_ENV.search(txt) or _CTX_FLAG.search(txt)
@@ -132,10 +132,14 @@ derive_switch_variant_tables() {
   # proper assoc arrays without each having to declare them. VARIANT_CONTAINER
   # (slug -> container name) drives switch.sh's registry-derived orphan teardown.
   declare -gA VARIANT_CTX VARIANT_CONTAINER
-  if ! emit="$(registry_variant_rows "$root" 2>/dev/null)"; then
+  local _emit_err; _emit_err="$(mktemp)"
+  if ! emit="$(registry_variant_rows "$root" 2>"$_emit_err")"; then
     echo "[switch] ERROR: could not derive variant tables from compose_registry.py" >&2
+    [[ -s "$_emit_err" ]] && sed 's/^/[switch]   /' "$_emit_err" >&2
+    rm -f "$_emit_err"
     exit 2
   fi
+  rm -f "$_emit_err"
   while IFS=$'\t' read -r kind key switch_engine _launch_engine cdir cfile port _model _profile_engine _kvcalc container _compose_path status max_ctx status_note; do
     [[ -n "${kind:-}" ]] || continue
     case "$kind" in
@@ -161,10 +165,14 @@ derive_switch_variant_tables() {
 
 derive_launch_variant_tables() {
   local root="$1" emit key _switch_engine launch_engine cdir cfile port model profile_engine kvcalc container _compose_path status _max_ctx status_note
-  if ! emit="$(registry_variant_rows "$root" 2>/dev/null)"; then
+  local _emit_err; _emit_err="$(mktemp)"
+  if ! emit="$(registry_variant_rows "$root" 2>"$_emit_err")"; then
     echo "[launch] ERROR: could not derive variant tables from compose_registry.py" >&2
+    [[ -s "$_emit_err" ]] && sed 's/^/[launch]   /' "$_emit_err" >&2
+    rm -f "$_emit_err"
     exit 2
   fi
+  rm -f "$_emit_err"
   while IFS=$'\t' read -r kind key _switch_engine launch_engine cdir cfile port model profile_engine kvcalc container _compose_path status _max_ctx status_note; do
     [[ -n "${kind:-}" ]] || continue
     case "$kind" in
@@ -418,7 +426,7 @@ import yaml as _yaml  # noqa: E402
 _bl_path = root / "scripts" / "lib" / "profiles" / "baselines.yml"
 _baselines = {}
 if _bl_path.exists():
-    _baselines = (_yaml.safe_load(_bl_path.read_text()) or {}).get("baselines") or {}
+    _baselines = (_yaml.safe_load(_bl_path.read_text(encoding="utf-8")) or {}).get("baselines") or {}
 
 # First `image:` default in the compose (handles both a bare literal and the
 # ${ENGINE_IMAGE:-literal} env-fallback form) — the pin truth for engines with
