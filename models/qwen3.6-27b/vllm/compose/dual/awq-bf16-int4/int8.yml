@@ -40,7 +40,7 @@
 # Dependencies:
 #   - 2× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine; NVLink
 #     auto-detected at boot via NVLINK_MODE if present)
-#   - vLLM STABLE v0.22.0 image (Docker Hub, immutable) — no source overlays.
+#   - vLLM STABLE image (v0.24.0, from the `vllm-stable` engine profile — version in install.spec, #254) — no source overlays.
 #     AWQ pack-quantized loads via the compressed-tensors path (Marlin int4 on Ampere);
 #     int8_per_token_head KV is native on stock v0.22.0 for this uniform-head-dim model.
 #

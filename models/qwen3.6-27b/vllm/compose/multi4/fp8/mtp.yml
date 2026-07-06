@@ -47,7 +47,8 @@
 # Dependencies:
 #   - 4× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine; NVLink
 #     auto-detected at boot via NVLINK_MODE if present)
-#   - vLLM STABLE v0.22.0 image (Docker Hub, immutable) — no source overlays. FP8
+#   - vLLM STABLE image (v0.24.0, from the `vllm-stable` engine profile — version in
+#     install.spec, #254; launcher injects it over the compose default) — no source overlays. FP8
 #     weights run via the Marlin W8A16 kernel on Ampere sm_86 (a memory win; there is
 #     no native FP8 compute speedup on Ampere).
 #

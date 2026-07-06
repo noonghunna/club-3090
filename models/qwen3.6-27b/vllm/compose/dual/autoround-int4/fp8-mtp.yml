@@ -32,7 +32,7 @@
 #
 # Dependencies:
 #   - 2× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine)
-#   - vLLM STABLE v0.21.0 image (pulled from Docker Hub) — no source overlays
+#   - vLLM STABLE image (v0.24.0, from the `vllm-stable` engine profile — version in install.spec, #254) — no source overlays
 #     required (validated 2026-05-25: marlin-pad / PR-35936 / PR-41800 all
 #     unnecessary on a current vLLM; AutoRound INT4 TP=2 + MTP + vision boot clean).
 #
