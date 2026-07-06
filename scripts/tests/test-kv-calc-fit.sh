@@ -171,10 +171,45 @@ if parsed_a:
               for v in variants.values()),
           "(e) every variant value carries a verdict string")
 
+# (f) required_sm gate — the arch floor surfaced in the fit verdict (the
+# cockpit's hide/warn signal for hardware-incompatible slugs, e.g. NVFP4 on
+# Ampere). Three contract points: below-floor card → incompatible-hw with
+# required_sm/card_sm populated; at/above-floor card → a REAL priced verdict;
+# bare-number --card carries no arch info → gate skipped (permissive).
+rc_f, out_f, err_f = run_fit("--fit", "vllm/qwen-27b-dual-nvfp4", "--card", "rtx-3090", "--json")
+check(rc_f == 0, f"(f) nvfp4 --card rtx-3090 exits 0 (got {rc_f})")
+try:
+    df = json.loads(out_f)
+except Exception as exc:  # noqa: BLE001
+    df = {}
+    check(False, f"(f) nvfp4/3090 output is valid JSON (got {exc})")
+check(df.get("verdict") == "incompatible-hw",
+      f"(f) nvfp4 on rtx-3090 → incompatible-hw (got {df.get('verdict')!r})")
+check(df.get("required_sm") == 9.0 and df.get("card_sm") == 8.6,
+      f"(f) incompatible-hw carries required_sm=9.0/card_sm=8.6 (got {df!r})")
+check("sm" in str(df.get("error", "")),
+      f"(f) incompatible-hw error names the sm floor (got {df.get('error')!r})")
+
+rc_g, out_g, _err_g = run_fit("--fit", "vllm/qwen-27b-dual-nvfp4", "--card", "rtx-5090", "--json")
+dg = json.loads(out_g) if rc_g == 0 else {}
+check(dg.get("verdict") in VERDICTS_OK and dg.get("verdict") != "incompatible-hw",
+      f"(f) nvfp4 on rtx-5090 (sm 12.0) → real priced verdict (got {dg.get('verdict')!r})")
+
+rc_h, out_h, _err_h = run_fit("--fit", "vllm/qwen-27b-dual-nvfp4", "--card", "64", "--json")
+dh = json.loads(out_h) if rc_h == 0 else {}
+check(dh.get("verdict") != "incompatible-hw",
+      f"(f) bare-number --card 64 skips the sm gate — permissive (got {dh.get('verdict')!r})")
+
+# batch parity: --fit-all --card rtx-3090 marks nvfp4 incompatible-hw too
+rc_i, out_i, _err_i = run_fit("--fit-all", "--card", "rtx-3090", "--json")
+di = json.loads(out_i) if rc_i == 0 else {"variants": {}}
+check(di.get("variants", {}).get("vllm/qwen-27b-single-nvfp4", {}).get("verdict") == "incompatible-hw",
+      "(f) --fit-all on rtx-3090 marks single-nvfp4 incompatible-hw")
+
 if failures:
     print(f"\n{len(failures)} assertion(s) failed.", file=sys.stderr)
     sys.exit(1)
-print("\nAll --fit / --fit-all JSON shape assertions passed (a-e).")
+print("\nAll --fit / --fit-all JSON shape assertions passed (a-f).")
 PY
 
 echo "test-kv-calc-fit.sh OK"

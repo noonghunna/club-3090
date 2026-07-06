@@ -1214,6 +1214,78 @@ class TestCatalogWired:
             assert "⑂" in status and "community-submitted" in status
 
     @pytest.mark.asyncio
+    async def test_catalog_hides_hw_incompatible_by_default_and_h_reveals(self):
+        """A slug whose fit verdict is incompatible-hw (registry required_sm
+        above the local card's SM — e.g. NVFP4 on Ampere) is HIDDEN from the
+        catalog by default, in the SAME [h] bucket as deprecated; the status
+        line counts it as incompatible-hw; [h] reveals it."""
+        from club3090_cockpit.data import FitVerdict
+
+        ok = self._label_entry("autoround-int4")
+        nv = self._label_entry("nvfp4")
+        nv.fit = FitVerdict(
+            verdict="incompatible-hw", required_sm=9.0, card_sm=8.6,
+            card="rtx-3090", error="requires sm >= 9 (this card is sm_8.6)",
+        )
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([ok, nv], None)
+
+            # Default: the incompatible slug is hidden + counted.
+            assert [e.slug for e in pane._filtered_entries()] == ["x/autoround-int4"]
+            assert pane._incompatible_hidden_count() == 1
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert "incompatible-hw" in status and "h" in status
+
+            # [h] reveals it (same toggle as deprecated).
+            pane.toggle_deprecated()
+            assert {e.slug for e in pane._filtered_entries()} == {
+                "x/autoround-int4", "x/nvfp4",
+            }
+            assert pane._incompatible_hidden_count() == 0
+
+            # And a compatible-fit verdict is never hidden.
+            nv.fit = FitVerdict(verdict="fits-clean", card="rtx-5090")
+            pane.toggle_deprecated()  # back to default hide mode
+            assert {e.slug for e in pane._filtered_entries()} == {
+                "x/autoround-int4", "x/nvfp4",
+            }
+
+    @pytest.mark.asyncio
+    async def test_download_card_warns_on_hw_incompatible(self):
+        """The Download confirm card leads with the no-compatible-hardware
+        warning (still proceedable) when the slug's fit verdict is
+        incompatible-hw — instead of pitching the download unqualified."""
+        from club3090_cockpit.data import FitVerdict
+
+        nv = self._label_entry("nvfp4")
+        nv.fit = FitVerdict(
+            verdict="incompatible-hw", required_sm=9.0, card_sm=8.6,
+            card="rtx-3090", error="requires sm >= 9 (this card is sm_8.6)",
+        )
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            screen = ConfirmActionScreen.__new__(ConfirmActionScreen)
+            # _serve_mode is a property over _serve_ctx; None → "" → the
+            # mode-"download" (offer) branch, which is the one under test.
+            screen._serve_ctx = None
+            text = ConfirmActionScreen._download_card_text(screen, nv)
+            assert "no compatible hardware detected" in text
+            assert "sm ≥ 9" in text
+            assert "sm_8.6" in text
+            assert "NOT boot on this machine" in text
+            # still proceedable: the manual/no-recipe path retains its message
+            # (this fixture has no hf_repo wired → manual note branch).
+            assert "no direct download recipe" in text
+            # compatible slug → no warning
+            nv.fit = FitVerdict(verdict="fits-clean", card="rtx-5090")
+            text2 = ConfirmActionScreen._download_card_text(screen, nv)
+            assert "no compatible hardware" not in text2
+
+    @pytest.mark.asyncio
     async def test_catalog_hides_deprecated_by_default_and_h_reveals(self):
         """🗑️ Deprecated slugs are HIDDEN from the catalog by default (mirrors
         `switch.sh --list`); [h] / toggle_deprecated() reveals them, and the banner

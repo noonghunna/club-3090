@@ -163,14 +163,21 @@ class FitVerdict:
     """Result of kv-calc --fit / switch.sh --explain's fit block for one slug."""
 
     # Real kv-calc --fit verdict enum (verified live):
-    #   fits-clean | fits-constrained | wont-fit | unknown
+    #   fits-clean | fits-constrained | wont-fit | incompatible-hw | unknown
     # plus the cockpit-internal "skip" (ik/llama kvcalc_key=SKIP — no vLLM fit).
-    verdict: str = "unknown"          # fits-clean | fits-constrained | wont-fit | unknown | skip
+    # "incompatible-hw" = the registry's required_sm exceeds the local card's
+    # compute capability (e.g. NVFP4 on Ampere) — VRAM is irrelevant, the
+    # kernels don't exist here. Drives the catalog default-hide + the
+    # download/serve hardware warning.
+    verdict: str = "unknown"          # fits-clean | fits-constrained | wont-fit | incompatible-hw | unknown | skip
     vram_est_gb: Optional[float] = None
     band_gb: Optional[float] = None
     max_ctx: Optional[int] = None
     card: str = ""
     error: str = ""
+    # Populated only for verdict == "incompatible-hw".
+    required_sm: Optional[float] = None
+    card_sm: Optional[float] = None
 
     # Compact glyph for the Catalog "fit" column.
     @property
@@ -179,6 +186,7 @@ class FitVerdict:
             "fits-clean": "●",
             "fits-constrained": "◐",
             "wont-fit": "○",
+            "incompatible-hw": "⊘",
             "skip": "·",
             "unknown": "·",
         }.get(self.verdict, "·")
@@ -194,6 +202,8 @@ class FitVerdict:
             max_ctx=_as_int(d.get("max_ctx")),
             card=card,
             error=str(d.get("error", "")),
+            required_sm=_as_float(d.get("required_sm")),
+            card_sm=_as_float(d.get("card_sm")),
         )
 
 

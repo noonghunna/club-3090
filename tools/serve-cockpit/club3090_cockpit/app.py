@@ -984,9 +984,19 @@ class CatalogPane(Container):
         banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
         # Surface an active model scope (dropdown) the same way the text filter is shown.
         scope = f"model: [cyan]{self._model_filter}[/cyan]  ·  " if self._model_filter else ""
-        # [h] hint: N 🗑️ deprecated slugs hidden (0 when revealed).
+        # [h] hint: N 🗑️ deprecated + M hardware-incompatible slugs hidden
+        # (both 0 when revealed — one toggle, one bucket).
         dep_n = self._deprecated_hidden_count()
-        dep_note = f"  ·  [dim]+{dep_n} deprecated hidden — h[/dim]" if dep_n else ""
+        inc_n = self._incompatible_hidden_count()
+        _hidden_bits = []
+        if dep_n:
+            _hidden_bits.append(f"+{dep_n} deprecated")
+        if inc_n:
+            _hidden_bits.append(f"+{inc_n} incompatible-hw")
+        dep_note = (
+            f"  ·  [dim]{' · '.join(_hidden_bits)} hidden — h[/dim]"
+            if _hidden_bits else ""
+        )
         if self._filter or self._model_filter:
             tail = f"  ·  filter: {self._filter!r}" if self._filter else ""
             status_label.update(
@@ -1079,11 +1089,20 @@ class CatalogPane(Container):
         )
 
     def _filtered_entries(self) -> list[CatalogEntry]:
-        # Hide 🗑️ deprecated slugs by default (mirrors `switch.sh --list`); [h] reveals them.
+        # Hide 🗑️ deprecated slugs by default (mirrors `switch.sh --list`); [h]
+        # reveals them. Hardware-INCOMPATIBLE slugs (fit verdict incompatible-hw —
+        # the registry's required_sm exceeds this rig's card, e.g. NVFP4 on
+        # Ampere) share the SAME bucket: hidden by default, [h] reveals. The
+        # verdict lands with async fit enrichment, so such rows may be visible
+        # briefly on first paint, then fold away on refresh_enriched.
         pool = (
             self._entries
             if self._show_deprecated
-            else [e for e in self._entries if (e.status or "").strip().lower() != "deprecated"]
+            else [
+                e for e in self._entries
+                if (e.status or "").strip().lower() != "deprecated"
+                and not self._hw_incompatible(e)
+            ]
         )
         # Model-scope dropdown first — AND-combined with the text filter below.
         base = (
@@ -1139,6 +1158,27 @@ class CatalogPane(Container):
         now-widened / narrowed set)."""
         self._show_deprecated = not self._show_deprecated
         self._render_rows()
+
+    @staticmethod
+    def _hw_incompatible(e: CatalogEntry) -> bool:
+        """This rig's card can't run the slug's kernels (kv-calc fit verdict
+        incompatible-hw — required_sm above the local card's SM)."""
+        try:
+            return getattr(e.fit, "verdict", "") == "incompatible-hw"
+        except Exception:
+            return False
+
+    def _incompatible_hidden_count(self) -> int:
+        """How many hardware-incompatible slugs are currently hidden (0 once
+        revealed via [h]; deprecated slugs are counted by their own counter,
+        not double-counted here)."""
+        if self._show_deprecated:
+            return 0
+        return sum(
+            1 for e in self._entries
+            if self._hw_incompatible(e)
+            and (e.status or "").strip().lower() != "deprecated"
+        )
 
     def _deprecated_hidden_count(self) -> int:
         """How many 🗑️ deprecated slugs are currently hidden (0 once revealed)."""
@@ -1729,9 +1769,29 @@ class ConfirmActionScreen(ModalScreen):
                 "continues) · [cyan]k[/cyan] cancels the download[/dim]"
             )
         # mode "download"
+        # Hardware-incompatibility interstitial (still proceedable): the slug's
+        # kernels can't run on THIS rig's card (required_sm gate) — say so
+        # BEFORE the size/disk pitch so nobody downloads 20 GB expecting it to
+        # boot here. Download stays allowed (staging for another rig / a future
+        # GPU is legitimate).
+        _hw_warn = ""
+        fv = getattr(entry, "fit", None) if entry is not None else None
+        if fv is not None and getattr(fv, "verdict", "") == "incompatible-hw":
+            req = getattr(fv, "required_sm", None)
+            got = getattr(fv, "card_sm", None)
+            req_s = f"sm ≥ {req:g}" if req is not None else "a newer GPU architecture"
+            got_s = f" — this rig's card is sm_{got:g}" if got is not None else ""
+            _hw_warn = (
+                f"  [red]⊘ no compatible hardware detected[/red] — this slug requires "
+                f"[bold]{req_s}[/bold] (Hopper/Blackwell class){got_s}.\n"
+                "  [yellow]It will NOT boot on this machine.[/yellow] You can still "
+                "download the weights\n"
+                "  (e.g. to stage them for another rig), but serving here will be refused.\n\n"
+            )
         if w is None or not w.hf_repo:
             return (
                 f"  [bold]{slug}[/bold]\n\n"
+                f"{_hw_warn}"
                 "  [yellow]⚠ no direct download recipe[/yellow] — these weights are "
                 "manual (no HF repo wired).\n  See the model profile's manual_note."
             )
@@ -1747,6 +1807,7 @@ class ConfirmActionScreen(ModalScreen):
             warn = "  [yellow]⚠ partial download on disk — Download resumes it[/yellow]\n"
         return (
             f"  [bold]{slug}[/bold]   [dim]weights not on disk[/dim]\n"
+            f"{_hw_warn}"
             f"  repo   [dim]{w.hf_repo}[/dim]   ({size})\n"
             f"{disk}\n"
             f"{warn}\n"
@@ -1795,6 +1856,16 @@ class ConfirmActionScreen(ModalScreen):
                 if fv.band_gb is not None:
                     fit_line += f" / {float(fv.band_gb):.1f} GiB band"
             lines.append(f"  [bold]fit[/bold]    {fit_line}")
+            if fv.verdict == "incompatible-hw":
+                req = fv.required_sm
+                got = fv.card_sm
+                req_s = f"sm ≥ {req:g}" if req is not None else "a newer GPU architecture"
+                got_s = f" — this rig's card is sm_{got:g}" if got is not None else ""
+                lines.append(
+                    f"  [red]⊘ no compatible hardware detected[/red] — requires "
+                    f"{req_s} (Hopper/Blackwell class){got_s}. "
+                    "[yellow]Serving here will NOT boot.[/yellow]"
+                )
             note = (entry.status_note or "").strip()
             if note:
                 lines.append(f"  [bold]caveat[/bold] [yellow]{note}[/yellow]")
