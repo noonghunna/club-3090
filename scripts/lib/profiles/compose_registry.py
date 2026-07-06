@@ -227,8 +227,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/multi4/fp8/mtp.yml",
         default_port=8015,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="Qwen3.6-27B 'max accuracy' tier, 4-card (TP=4): official FP8 weights + int8-PTH KV + MTP n=3 @262K. 🧪 Experimental (cross-rig) — byte-identical to vllm/qwen-27b-dual-max apart from TP=4 + gpu-count; the dual-max @TP=2 is the on-rig validation proxy. FP8 + int8-PTH = the highest-fidelity Qwen path at full 262K, with TP=4 relieving the dual-max's tight (1.13x) KV pool. Validate on a real ≥4× 3090 host before promotion.",
+        status="caveats",
+        status_note="Qwen3.6-27B 'max accuracy' tier, 4-card (TP=4): official FP8 weights + int8-PTH KV + MTP n=3 @262K. ⚠️ Production w/ caveats — byte-identical to the now-production vllm/qwen-27b-dual-max apart from TP=4 + gpu-count (dual-max @TP=2 is the on-rig proxy; this dev rig has 2 cards). Promoted 2026-07-06 on @Whamp's cross-rig full chain (#446, 4× 3090: verify-full + verify-stress 7/7 + soak-continuous PASS, 85/102). CAVEAT: that validation was on an OLDER engine (pre-v0.24.0-pin) + a non-standard rig (aikitoria P2P kernel, mixed x4/x16/x8/x16 lanes), single report — no clean v0.24.0 4-card datapoint yet; a fresh one upgrades this to ✅ Production. TP=4 relieves dual-max's tight 1.13x KV pool (→ 6.77x). Value is concurrency/fidelity, single-stream decode ~flat vs 2-card.",
     ),
 
     # Qwen 3.6 27B, llama.cpp single-card.
