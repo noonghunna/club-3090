@@ -2,6 +2,10 @@
 
 Dated history for Qwen3.6-27B configs in this repo. Combines the single-card and dual-card timelines (both were previously separate repos; consolidated here 2026-04-28).
 
+## 2026-07-06 — dual-max KV switch: int8_per_token_head → fp8
+
+Switches `vllm/qwen-27b-dual-max` (compose: `dual/fp8/mtp.yml`) from `int8_per_token_head` KV cache to `fp8`.
+
 ## 2026-05-30 — beellama.cpp as a first-class compose engine (DFlash, single-card)
 
 Onboards [beellama.cpp](https://github.com/Anbeeld/beellama.cpp) (Anbeeld's llama.cpp fork — DFlash cross-attention spec-dec + SWA windowed KV) as a registry engine, with one single-card DFlash compose per model:
