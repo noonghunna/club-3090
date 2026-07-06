@@ -42,6 +42,7 @@ NEVER executed live — tests inject fakes and conftest blocks the real spawn.
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections import OrderedDict
 from pathlib import Path
 from typing import NamedTuple, Optional
@@ -144,13 +145,6 @@ def _status_glyph(status: str) -> str:
     return _STATUS_GLYPH.get(status.lower(), status)
 
 
-_WEIGHTS_LABELS = {
-    "fp8": "fp8", "autoround-int4": "int4·AR", "awq-bf16-int4": "awq4",
-    "qat-w4a16": "qat4", "bf16": "bf16", "bf16-mtp": "bf16",
-    "ubergarm-iq4ks": "iq4ks", "byteshape-iq4xs": "iq4xs",
-    "unsloth-q4km": "q4km", "unsloth-q5kxl": "q5kxl", "unsloth-q8": "q8",
-    "carnice-bf16mtp": "carnice", "qwopus-bf16mtp": "qwopus", "awq": "awq4",
-}
 _KV_LABELS = {
     "int8_per_token_head": "int8-PTH", "fp8_e4m3": "fp8/e4m3",
     "fp8_e5m2": "fp8/e5m2", "fp8": "fp8", "turboquant_3bit_nc": "tq3",
@@ -159,10 +153,40 @@ _KV_LABELS = {
 }
 
 
+# Weights column — the label is DERIVED from the weights_variant token (the
+# compose <quant>/ dir name) by PATTERN, not by a hand-map keyed on full tokens:
+# the hand-map drifted immediately (18/30 catalog tokens fell to a naive
+# first-segment fallback that showed the PROVIDER prefix — "beellama",
+# "unsloth", "deepreinforce" — instead of the quant).  Precedence: an explicit
+# GGUF quant segment (q4km / q8kxl / iq4ks / q6kp …) wins; then the known
+# safetensors formats; else the model profile's `format:` (threaded through the
+# emit as row.weights_format) — the honest answer for fine-tune artifact slugs
+# whose token carries no quant segment (mudler-apex-compact → "gguf").
+_GGUF_SEG = re.compile(r"^i?q\d[a-z0-9_]*$")
+
+
 def _weights_label(e: "CatalogEntry") -> str:
     """Compact weights-quant token for the catalog Weights column."""
     wv = (e.weights_variant or "").lower()
-    return _WEIGHTS_LABELS.get(wv, wv.split("-")[0] if wv else "—")
+    if not wv:
+        return "—"
+    segs = wv.split("-")
+    for s in segs:
+        if _GGUF_SEG.match(s):
+            return s
+    if "nvfp4" in segs:
+        return "nvfp4"
+    if "w4a16" in segs:
+        return "w4a16"
+    if "awq" in segs:  # awq · awq-bf16-int4 · qat-awq-int4 — all int4 weights
+        return "awq4"
+    if "autoround" in segs:
+        return "int8·AR" if "int8" in segs else "int4·AR"
+    if "fp8" in segs:  # fp8 · fp8-dynamic
+        return "fp8"
+    if "bf16" in segs:
+        return "bf16"
+    return (getattr(e.row, "weights_format", "") or "") or wv
 
 
 def _kv_label(e: "CatalogEntry") -> str:
@@ -966,8 +990,16 @@ class CatalogPane(Container):
                 if self._has_stale_baseline()
                 else ""
             )
+            # ⑂ legend — shown whenever any row's numbers come from a COMMUNITY
+            # SUBMISSION (rig-labelled, never the local bar) so the marker on the
+            # TPS cell is decodable without opening the slug detail card.
+            sub_note = (
+                "  ([dim]⑂ = community-submitted numbers (other rig) — not a local baseline[/dim])"
+                if self._has_submission_measurement()
+                else ""
+            )
             status_label.update(
-                f"{banner}{len(self._entries)} variants loaded from registry{stale_note}{dep_note}"
+                f"{banner}{len(self._entries)} variants loaded from registry{stale_note}{sub_note}{dep_note}"
             )
 
         # #9/A8 — keep the preview strip in sync with the cursor after a (re-)render
@@ -1030,6 +1062,13 @@ class CatalogPane(Container):
 
     def _has_stale_baseline(self) -> bool:
         return any(e.measurement.stale is True for e in self._entries)
+
+    def _has_submission_measurement(self) -> bool:
+        """Any loaded row whose numbers came from a community submission (the
+        ⑂-marked cells) — drives the ⑂ legend in the status line."""
+        return any(
+            getattr(e.measurement, "submission_rig", None) for e in self._entries
+        )
 
     def _filtered_entries(self) -> list[CatalogEntry]:
         # Hide 🗑️ deprecated slugs by default (mirrors `switch.sh --list`); [h] reveals them.

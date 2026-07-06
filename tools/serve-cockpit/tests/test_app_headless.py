@@ -1127,6 +1127,81 @@ class TestCatalogWired:
             pane.set_filter("")
             assert len(pane._filtered_entries()) == 2
 
+    def _label_entry(self, quant: str, weights_format: str = ""):
+        """Minimal CatalogEntry whose compose path carries the given <quant>/ dir
+        (weights_variant derives from the path) + an optional threaded format."""
+        from club3090_cockpit.data import CatalogEntry as _CE
+        from club3090_tui_core import VariantRow as _VR
+
+        row = _VR(
+            slug=f"x/{quant}", switch_engine="vllm", launch_engine="vllm",
+            compose_dir=f"models/m/vllm/compose/dual/{quant}",
+            file="base.yml", port=8000, model="m", engine="vllm-stable",
+            kvcalc_key="SKIP", container="c",
+            compose_path=f"models/m/vllm/compose/dual/{quant}/base.yml",
+            status="production", ctx_label="262K", status_note="",
+        )
+        if weights_format:
+            object.__setattr__(row, "weights_format", weights_format)
+        return _CE(row=row)
+
+    def test_weights_label_quant_segment_beats_provider_prefix(self):
+        """Regression: the Weights column labeller must extract the QUANT segment
+        from provider-prefixed tokens — the retired hand-map fell back to the
+        first '-'-segment and showed the PROVIDER ("beellama", "unsloth",
+        "deepreinforce") for 18/30 catalog tokens."""
+        from club3090_cockpit.app import _weights_label
+
+        for tok, want in {
+            "beellama-q4ks-dflash": "q4ks", "beellama-q8kxl-mtp": "q8kxl",
+            "unsloth-q8kxl": "q8kxl", "deepreinforce-q4km": "q4km",
+            "carnice-v2-q5km": "q5km", "ubergarm-iq4ks": "iq4ks",
+            "byteshape-iq4xs": "iq4xs", "morikomorizz-q6kp": "q6kp",
+            "qwopus-coder-mtp-q5km": "q5km", "prithivmlmods-q8": "q8",
+        }.items():
+            assert _weights_label(self._label_entry(tok)) == want, tok
+
+    def test_weights_label_safetensors_formats(self):
+        from club3090_cockpit.app import _weights_label
+
+        for tok, want in {
+            "autoround-int4": "int4·AR", "autoround-int8": "int8·AR",
+            "awq": "awq4", "awq-bf16-int4": "awq4", "qat-awq-int4": "awq4",
+            "qat-w4a16": "w4a16", "fp8": "fp8", "fp8-dynamic": "fp8",
+            "bf16": "bf16", "nvidia-nvfp4": "nvfp4",
+        }.items():
+            assert _weights_label(self._label_entry(tok)) == want, tok
+
+    def test_weights_label_no_quant_segment_falls_back_to_format(self):
+        """Fine-tune artifact tokens with no quant segment show the model
+        profile's format (emit weights_format join), else the raw token."""
+        from club3090_cockpit.app import _weights_label
+
+        assert _weights_label(self._label_entry("mudler-apex-compact", "gguf")) == "gguf"
+        assert (
+            _weights_label(self._label_entry("mudler-apex-compact"))
+            == "mudler-apex-compact"
+        )
+
+    @pytest.mark.asyncio
+    async def test_catalog_submission_legend_in_status_line(self):
+        """When any loaded row's numbers came from a community submission
+        (measurement.submission_rig set → ⑂-marked TPS cell), the catalog status
+        line carries the ⑂ legend so the marker is decodable in-place; without
+        one, no legend."""
+        entry = self._label_entry("autoround-int4")
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate([entry], None)
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert "⑂" not in status
+            object.__setattr__(entry.measurement, "submission_rig", "2x5090")
+            pane.populate([entry], None)
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert "⑂" in status and "community-submitted" in status
+
     @pytest.mark.asyncio
     async def test_catalog_hides_deprecated_by_default_and_h_reveals(self):
         """🗑️ Deprecated slugs are HIDDEN from the catalog by default (mirrors
