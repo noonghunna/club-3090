@@ -821,10 +821,24 @@ class CockpitData:
             b = getattr(e.row, "baseline", None)
             if not b:
                 continue
-            # Slice 3: a submission-only entry (cross-rig rows, no primary
-            # local row) is NOT the bar — the TPS column stays "—" and the
-            # cross-rig rows surface rig-labeled in the detail panel only.
+            # Slice 3 (revised): a submission-only entry (no on-rig primary — e.g.
+            # 4-card slugs our 2-card rig can't bench) surfaces its BEST cross-rig
+            # submission so the catalog isn't blank, tagged submission_rig so
+            # tps_label renders it ⑂-labelled (a submission is NOT this rig's own
+            # bar; the ⑂ marker + the detail panel keep it honest).
             if b.get("narr_tps") is None and b.get("code_tps") is None:
+                subs = b.get("submissions") or {}
+                if subs:
+                    rc, s = sorted(subs.items())[0]
+                    e.measurement = Measurement(
+                        narr_tps=s.get("narr_tps"),
+                        code_tps=s.get("code_tps"),
+                        quality_8pk=s.get("quality_8pk"),
+                        date=str(s.get("date") or ""),
+                        source="submission",
+                        stale=s.get("stale"),
+                        submission_rig=rc,
+                    )
                 continue
             e.measurement = Measurement(
                 narr_tps=b.get("narr_tps"),

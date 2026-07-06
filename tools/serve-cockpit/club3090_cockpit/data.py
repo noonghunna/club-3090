@@ -218,6 +218,11 @@ class Measurement:
     # True = measured on an older engine pin (re-bench owed), False = current
     # pin, None = undeterminable / not a baseline measurement.
     stale: Optional[bool] = None
+    # Slice 3: set when this row is a CROSS-RIG submission surfaced because the
+    # slug has NO on-rig primary (e.g. 4-card slugs our 2-card rig can't run) —
+    # the rig_class it came from.  The catalog cell then renders it ⑂-labelled so
+    # it's never mistaken for this rig's own bar.  None = a normal on-rig row.
+    submission_rig: Optional[str] = None
 
     @property
     def tps_label(self) -> str:
@@ -225,7 +230,10 @@ class Measurement:
             return "—"
         n = f"{self.narr_tps:.0f}" if self.narr_tps is not None else "—"
         c = f"{self.code_tps:.0f}" if self.code_tps is not None else "—"
-        return f"{n}/{c}"
+        lab = f"{n}/{c}"
+        if self.submission_rig:
+            lab += "  [dim]⑂[/dim]"
+        return lab
 
     @property
     def quality_label(self) -> str:
