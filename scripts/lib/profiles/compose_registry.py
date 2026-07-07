@@ -227,8 +227,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/vllm/compose/multi4/fp8/mtp.yml",
         default_port=8015,
         kvcalc_key="SKIP",
-        status="caveats",
-        status_note="Qwen3.6-27B 'max accuracy' tier, 4-card (TP=4): official FP8 weights + fp8/e4m3 KV (flipped from int8-PTH alongside dual-max #594; follow-up multi-max PR) + MTP n=3 @262K. ⚠️ Production w/ caveats — byte-identical to the now-production vllm/qwen-27b-dual-max apart from TP=4 + gpu-count (dual-max @TP=2 is the on-rig proxy; this dev rig has 2 cards). Promoted 2026-07-06 on @Whamp's cross-rig full chain (#446, 4× 3090: verify-full + verify-stress 7/7 + soak-continuous PASS, 85/102). CAVEAT: that validation was on an OLDER engine (pre-v0.24.0-pin) + a non-standard rig (aikitoria P2P kernel, mixed x4/x16/x8/x16 lanes), single report — no clean v0.24.0 4-card datapoint yet; a fresh one upgrades this to ✅ Production. TP=4 relieves dual-max's tight 1.13x KV pool (→ 6.77x). Value is concurrency/fidelity, single-stream decode ~flat vs 2-card.",
+        status="production",
+        status_note="Qwen3.6-27B 'max accuracy' tier, 4-card (TP=4): official FP8 weights + fp8/e4m3 KV (flipped from int8-PTH alongside dual-max #594/#595) + MTP n=3 @262K. Byte-identical to vllm/qwen-27b-dual-max apart from TP=4 + gpu-count (dual-max @TP=2 is the on-rig proxy; this dev rig has 2 cards). Promoted 2026-07-07 on the clean v0.24.0 4-card validation the caveats required — #584 (@ryanmpelletier, 4× 3090 x16): verify-full 9/9, verify-stress clean to 240K, soak PASS, bench n=5, 8-pack 111/150 (ties the dual-max proxy 109 → quality TP-invariant). Corroborated by a 2nd 4-card rig — #625 (@MoppelMat, 4× 3090 mixed x4/x8, 300 W: decode 79/102, prefill-90K clean, soak PASS). fp8/e4m3 routes KV attention to FlashInfer (int8-PTH is Triton-only) → flat decode at depth. TP=4 buys the 6.77x KV pool; single-stream decode ~flat vs 2-card.",
     ),
 
     # Qwen3.6-27B NVFP4 (nvidia modelopt) — the community-validation Hopper/
