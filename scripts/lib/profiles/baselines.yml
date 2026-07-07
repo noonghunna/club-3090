@@ -434,22 +434,25 @@ baselines:
     # can't run it. FIRST community validation of the whole NVFP4 tier.
     submissions:
       1x5090-pcie:
-        # #619 (@paulp83, single RTX 5090 32 GB, driver 595.71.05, CUDA 13.2):
-        # vLLM v0.24.0 quant=modelopt_mixed, fp8 KV @131K, MTP off (as shipped).
-        # verify-full 9/9 · verify-stress needle-clean (9.8K + 29K) · soak-
-        # continuous PASS (15 MiB growth / 100% retention / 0 err / p50 311).
-        # VRAM 30.6/32 GB @131K — tight but flat. 8-pack quality NOT run
-        # (sandboxes not built) → quality_8pk owed.
+        # TWO independent 5090 validations, agreeing to within noise:
+        #  · #612 (@guybrush01, 5090, 185 GB RAM): decode 257.3/258.0 TPS,
+        #    verify-stress needle-clean to 120K (fillable 120,320 = 91% of
+        #    131K), soak PASS (0 growth). THE DEEPER run → ctx_validated below.
+        #  · #619 (@paulp83, laptop 5090, 28 GB RAM): decode 255.8/257.9 TPS,
+        #    verify-full 9/9, stress 9.8K+29K, soak PASS (15 MiB / p50 311).
+        # Both vLLM v0.24.0 modelopt_mixed, fp8 KV @131K, MTP off (as shipped).
+        # VRAM ~30.5/32 GB @131K — tight but flat. 8-pack quality NOT run on
+        # either (benchlocal sandboxes not built) → quality_8pk owed.
         narr_tps: 255.79
         code_tps: 257.93
         ttft_ms: 60
-        ctx_validated: { tokens: 29320, niah: "clean@29K" }
+        ctx_validated: { tokens: 120320, niah: "clean@120K" }
         date: 2026-07-07
         engine_pin: "vllm/vllm-openai:v0.24.0"
         rig: "1x5090-pcie"
         power_cap_w: [600]   # uncapped (5090 default=max=600 W); PCIe x4 slot (single-card → no allreduce, decode unaffected)
-        source: "https://github.com/noonghunna/club-3090/issues/619"
-        submitted_by: "paulp83"
+        source: "https://github.com/noonghunna/club-3090/issues/612"  # + #619 (two 5090s, see comment)
+        submitted_by: "guybrush01"  # + paulp83 (#619)
         tier: submitted
 
 # ───────────────────────────────────────────────────────────────────────────
