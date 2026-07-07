@@ -118,7 +118,7 @@ then `bash scripts/launch.sh --gpus 1,2` as normal (the composes pass `CUDA_VISI
 - The single-card GGUF composes (beellama / llama.cpp / ik-llama) select via `device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]` interpolated on the **host** side — they honor the same launcher export on the classic runtime; on CDI, apply the device-block swap above.
 - Estate (multi-instance) GPU pinning is UUID-pinned the same way (#610 Phase A): each instance's `gpus: [..]` stays index-based in the estate file, and the boot path resolves them to UUIDs — so estates land on the cards they claimed on CDI rigs too. After boot, a **placement assertion** (`docker exec … nvidia-smi --query-compute-apps=gpu_uuid`) confirms the model actually ran on the requested GPUs and prints a loud ⚠ on mismatch — no more silent wrong-card serving.
 
-**Multiple models on one host (clusters).** Running several models at once, each pinned to its own GPU set + port, is a **cluster** workload — managed with `scripts/cluster.sh` (CLI) or the c3 cockpit's Operate tab, both over one estate file with the UUID pinning + placement verification described above. Full guide: **[CLUSTERS.md](CLUSTERS.md)**.
+**Multiple models on one host (pods).** Running several models at once, each pinned to its own GPU set + port, is a **pod** workload — managed with `scripts/pod.sh` (CLI) or the c3 cockpit's Operate tab, both over one estate file with the UUID pinning + placement verification described above. Full guide: **[PODS.md](PODS.md)**.
 
 [#610]: https://github.com/noonghunna/club-3090/issues/610
 

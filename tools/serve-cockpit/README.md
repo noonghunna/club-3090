@@ -64,17 +64,17 @@ own location; override with **`C3_REPO_ROOT=/path/to/club-3090`** if you install
 | `f` | force-start (experimental — skips the fit gate) |
 | `r` | refresh the catalog (re-reads the registry) |
 | `S` | settings — set Model Dir + HF token (`Ctrl+S` saves) |
-| `n` | new cluster — Operate · Orchestration: compose a model + GPU set (fit-checked, gated) |
+| `N` | new pod — Operate · Orchestration: compose a model + GPU set (fit-checked, gated) |
 | `Y` | copy the focused context to the clipboard |
 | `.` | toggle the left rail (full-width content) |
 | `C` | toggle lean view (hide / restore the Bring & Validate mode) |
 | `?` | help · `q` quit |
 
-## Clusters (multiple models on one host)
+## Pods (multiple models on one host)
 
-A **cluster** = one model pinned to a chosen GPU set + port (an estate instance). The **Operate · Orchestration** tab shows a **cluster view** — each cluster with its GPUs stacked and a placement health badge (`✓ placed` / `⚠ PLACEMENT MISMATCH`, so you see where models *actually* landed) — and `[n]` opens a **New-cluster** modal (name · slug · GPU set, prefilled with the free GPUs). The create is fit-checked against the selected GPUs and routed through the confirm gate.
+A **pod** = one model pinned to a chosen GPU set + port (an estate instance). The **Operate · Orchestration** tab shows a **pod view** — each pod with its GPUs stacked and a placement health badge (`✓ placed` / `⚠ PLACEMENT MISMATCH`, so you see where models *actually* landed) — and `[N]` opens a **New-pod** modal (name · slug · GPU set, prefilled with the free GPUs). The create is fit-checked against the selected GPUs and routed through the confirm gate.
 
-Same capability headless via the CLI: `bash scripts/cluster.sh create/list/status/up/down/rm` (`--json` on reads). Full guide → [`docs/CLUSTERS.md`](../../docs/CLUSTERS.md).
+Same capability headless via the CLI: `bash scripts/pod.sh create/list/status/up/down/rm` (`--json` on reads). Full guide → [`docs/PODS.md`](../../docs/PODS.md).
 
 ## Running tests
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-cluster-cli.sh — scripts/cluster.sh + the estate_cli cluster verbs
+# test-pod-cli.sh — scripts/pod.sh + the estate_cli pod verbs
 # (#610 Phase A′). Runs hardware-free via CLUB3090_FAKE_GPUS (kv-calc prices
 # by card NAME, no real GPU needed) so CI exercises the full lifecycle:
 #   create (with D1 fit) · count!=TP hard-reject · GPU-collision reject ·
@@ -13,11 +13,11 @@ export CLUB3090_FAKE_GPUS='0:NVIDIA GeForce RTX 3090:24576:8.6,1:NVIDIA GeForce 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 EST="$TMP/estate.yml"
-CL=(bash scripts/cluster.sh)
+CL=(bash scripts/pod.sh)
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# 1. create a TP=1 cluster on GPU 1 — must fit + write the file.
+# 1. create a TP=1 pod on GPU 1 — must fit + write the file.
 "${CL[@]}" create chat --gpus 1 --slug vllm/minimal --file "$EST" >/dev/null 2>&1 \
   || fail "create chat (TP=1 on GPU 1) should succeed"
 [[ -f "$EST" ]] || fail "estate file not written"
@@ -34,16 +34,16 @@ grep -q 'TP=2' <<<"$err" || fail "D1 rejection should name the TP mismatch (got:
 
 # 3. GPU collision -> validate_estate reject (GPU 1 already claimed by chat).
 if "${CL[@]}" create chat2 --gpus 1 --slug vllm/minimal --file "$EST" >/dev/null 2>&1; then
-  fail "second cluster on the same GPU must be rejected"
+  fail "second pod on the same GPU must be rejected"
 fi
 
-# 4. list --json: one cluster, GPU 0 free.
+# 4. list --json: one pod, GPU 0 free.
 json="$("${CL[@]}" list --json --file "$EST" 2>/dev/null)"
 python3 - "$json" <<'PY' || exit 1
 import json, sys
 d = json.loads(sys.argv[1])
-assert len(d["clusters"]) == 1, d
-assert d["clusters"][0]["name"] == "chat", d
+assert len(d["pods"]) == 1, d
+assert d["pods"][0]["name"] == "chat", d
 assert d["free_gpus"] == [0], d
 assert d["claimed_gpus"] == [1], d
 print("  list --json ok")
@@ -54,14 +54,14 @@ sjson="$("${CL[@]}" status --json --file "$EST" 2>/dev/null)"
 python3 - "$sjson" <<'PY' || exit 1
 import json, sys
 d = json.loads(sys.argv[1])
-c = d["clusters"][0]
+c = d["pods"][0]
 assert c["running"] is False, c
 assert c["placement"]["placement"] == "unknown", c
 assert set(c["placement"]) == {"requested", "actual", "placement"}, c
 print("  status --json ok")
 PY
 
-# 6. a second, non-colliding cluster on GPU 0 succeeds.
+# 6. a second, non-colliding pod on GPU 0 succeeds.
 "${CL[@]}" create chat0 --gpus 0 --slug vllm/minimal --file "$EST" >/dev/null 2>&1 \
   || fail "create chat0 on the free GPU 0 should succeed"
 
@@ -69,4 +69,4 @@ PY
 "${CL[@]}" rm chat0 --file "$EST" >/dev/null 2>&1 || fail "rm chat0 should succeed"
 grep -q 'name: chat0' "$EST" && fail "chat0 still in estate file after rm"
 
-echo "PASS: cluster.sh create/list/status/rm + D1 count!=TP + GPU-collision rejects (fake-GPU)"
+echo "PASS: pod.sh create/list/status/rm + D1 count!=TP + GPU-collision rejects (fake-GPU)"
