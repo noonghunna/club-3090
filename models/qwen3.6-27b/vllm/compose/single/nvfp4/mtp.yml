@@ -7,17 +7,18 @@
 #              target; H100 / RTX 6000 Pro / GB10 also qualify. required_sm=9.0:
 #              the launchers REFUSE this on Ampere (sm_86) — NVFP4 has no
 #              kernel there (NVIDIA supports Hopper + Blackwell only).
-#   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized)
+#   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized;
+#              SPEC=off disables it — tight-RAM / spec-dec-fails mitigation, #617)
 #   KV:        fp8 → e4m3 at scale=1.0 (hf_quant_config DECLARES FP8 KV but
 #              ships NO k_scale/v_scale tensors — index-verified 2026-07-06;
 #              hybrid disables calculate_kv_scales → the #594-tied regime).
 #              NVFP4 *KV* deliberately NOT used:
 #              consumer Blackwell has no FP4 FMHA (rtx-5090.yml, vllm#43562).
 #   Vision:    yes (full VLM)
-#   Max ctx:   131K default — sized for the SMALLEST target card (5090 32 GB:
-#              kv-calc 28.5/29.4 GB @ util 0.92 = PASS at 97%, inside the
-#              ±1.5 GB error band; if the boot pre-check OOMs →
-#              MAX_MODEL_LEN=98304). Bigger cards raise via env — kv-calc'd:
+#   Max ctx:   98K default (98304 = 12×8192) on 5090 32 GB. The first 5090
+#              validation (#613) proved 131K boots and short-decodes, but is too
+#              tight for long-prefill GDN scratch: the engine OOMed trying to
+#              allocate 94 MiB with only ~60 MiB free. Bigger cards raise via env:
 #                GB10 (128 GB unified): MAX_MODEL_LEN=262144 → 33.7 GB (29% of
 #                  budget). Even 4 streams @ full 262K → 59.4 GB (50%) — the
 #                  GB10 is THE single-card home for this slug.
@@ -26,22 +27,21 @@
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    🧪 Experimental
 #   Best for:  27B-class Qwen with vision+tools on ONE Blackwell/Hopper card —
-#              pending first community validation
+#              5090 default is derated for long-prefill headroom
 # ---------------------------------------------------------------------------
 # ⚠️ AUTHORED BLIND — READ THIS FIRST.
-# The maintainer rig is Ampere sm_86 and CANNOT BOOT NVFP4: this compose has
-# never been started anywhere. Shape mirrors the validated Qwen singles +
-# NVIDIA's own model-card recipe (--quantization modelopt). If you have a
-# 5090 / H100 / GB10, YOU are the validation:
+# The maintainer rig is Ampere sm_86 and CANNOT BOOT NVFP4: this compose is
+# community-validated only. First 5090 report (#613) passed verify-full and
+# short decode, then OOMed at 131K long prefill; the default is now 98K. If you
+# have a 5090 / H100 / GB10, YOU are the validation:
 #   1. bash scripts/switch.sh vllm/qwen-27b-single-nvfp4
 #   2. bash scripts/verify-full.sh
 #   3. bash scripts/rebench-full.sh
 #   4. Report numbers or the boot failure via the numbers-from-your-rig
 #      template (or the c3 funnel). "It crashed here" is a useful result.
-# Known-unknowns (report either way): MTP-on-modelopt loading; Cliff 2
-# (DeltaNet GDN >50K single-prompt — measured on Ampere, unknown on
-# Blackwell; VLLM_ENFORCE_EAGER=1 is the mitigation); froggeric template on
-# this repo (same base template as the validated tiers, but unexercised here).
+# Known-unknowns (report either way): 98K stress/soak stability on 5090; Cliff 2
+# (DeltaNet GDN >50K single-prompt — 131K failed on the first 5090 report;
+# VLLM_ENFORCE_EAGER=1 and/or no-MTP are the mitigations if 98K still fails).
 #
 # Run (Blackwell/Hopper only):
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
@@ -88,6 +88,11 @@ services:
       # launchers auto-inject VLLM_USE_DEEP_GEMM=0 there (disc #571); raw
       # `docker compose` users on those cards set it themselves.
       - VLLM_USE_DEEP_GEMM
+      # SPEC=off disables the built-in MTP drafter at boot (bare passthrough —
+      # set via `SPEC=off bash scripts/switch.sh …` or compose/.env). The
+      # mitigation for tight system-RAM rigs (laptop / consumer 5090) where the
+      # extra draft-model load OOMs during boot (#617). Default = MTP on.
+      - SPEC
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
     shm_size: "16gb"
     ipc: host
@@ -98,6 +103,23 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # SPEC=off drops the built-in MTP drafter (--speculative-config) — the
+        # tight-system-RAM mitigation (#617: on a 28 GB laptop 5090 the extra
+        # MTP draft-model load OOM'd during boot; the MTP-off 35B booted fine on
+        # the same rig). Default on (spec-dec active). Also honors
+        # VLLM_ENFORCE_EAGER=1 (Cliff-2 mitigation at >50K single-prompt).
+        SPEC_ARGS=()
+        if [ "$${SPEC:-on}" != "off" ]; then
+          SPEC_ARGS=(--speculative-config '{"method":"mtp","num_speculative_tokens":3}')
+        else
+          echo "[nvfp4] SPEC=off — MTP drafter disabled (loads lighter; no spec-dec)" >&2
+        fi
+        exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}"
+      - --
     command:
       - --model
       - /root/.cache/huggingface/qwen3.6-27b-nvfp4
@@ -113,7 +135,7 @@ services:
       - --tensor-parallel-size
       - "${TP:-1}"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-131072}"
+      - "${MAX_MODEL_LEN:-98304}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
@@ -138,10 +160,9 @@ services:
       - qwen3_coder
       - --enable-prefix-caching
       - --enable-chunked-prefill
-      # MTP n=3 — mtp.* is unquantized in the checkpoint. If spec-dec fails on
-      # the modelopt path on your rig, delete these two lines and REPORT it.
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":3}'
+      # MTP n=3 — mtp.* is unquantized in the checkpoint. Applied by the
+      # entrypoint unless SPEC=off (see the environment block + entrypoint):
+      # drop it on tight-RAM rigs where the draft-model load OOMs at boot (#617).
       - --override-generation-config
       - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
       - --host
