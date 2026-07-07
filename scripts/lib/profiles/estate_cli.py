@@ -1135,9 +1135,266 @@ def command_report_state(args: argparse.Namespace) -> int:
     return 0
 
 
+# ===========================================================================
+# Cluster verbs (#610 Phase A′) — create / list / status / rm.
+# A "cluster" is an estate instance (a named model on a GPU set + port). These
+# add the CLI surface scripts/cluster.sh (and, later, the c3 wizard/view) wrap;
+# up/down reuse `boot`/`down --only <name>`. ONE validation path: everything
+# routes through validate_estate + kv-calc, so a hand-written estate file, the
+# CLI, and the wizard pass identical gates (#610 addendum 3, D2).
+# ===========================================================================
+
+KVCALC = REPO_ROOT / "tools" / "kv-calc.py"
+
+
+def _selected_gpu_infos(indices: list[int]) -> list[GpuInfo]:
+    """Map requested host GPU indices to their detected GpuInfo, erroring on an
+    index the rig doesn't have."""
+    by_idx = {g.index: g for g in detect_gpus_from_host()}
+    out = []
+    for i in indices:
+        if i not in by_idx:
+            raise EstateCliError(f"GPU index {i} not present (detected: {sorted(by_idx)})")
+        out.append(by_idx[i])
+    return out
+
+
+def fit_slug_on_gpuset(slug: str, gpu_infos: list[GpuInfo]) -> dict:
+    """D1 (#610 addendum 3): fit-check a slug against the SELECTED GPU set.
+    kv-calc --card is single-card + registry TP, so:
+      - count != compose TP  -> HARD REJECT (raise);
+      - heterogeneous set     -> fit with the min-VRAM card (conservative floor)
+                                 + a note; true per-card het modeling is a
+                                 deferred kv-calc enhancement;
+      - homogeneous, count==TP -> the common path.
+    Returns {verdict, card, note, ...kv-calc fields}. kvcalc_key=SKIP slugs
+    (ik/llama) skip pricing with verdict 'skip'."""
+    entry = COMPOSE_REGISTRY.get(slug)
+    if not entry:
+        raise EstateCliError(f"unknown slug `{slug}`")
+    tp = int(entry.get("tp") or 1)
+    n = len(gpu_infos)
+    if n != tp:
+        raise EstateCliError(
+            f"slug `{slug}` is TP={tp} but you selected {n} GPU(s) — "
+            f"a cluster's GPU count must equal the compose's tensor-parallel size"
+        )
+    if entry.get("kvcalc_key") in (None, "SKIP"):
+        return {"verdict": "skip", "card": None, "note": "non-vLLM slug — kv-calc prices vLLM only"}
+    cards = {g.hardware_id for g in gpu_infos}
+    note = ""
+    if len(cards) == 1:
+        card = next(iter(cards))
+    else:
+        # Heterogeneous: fit against the smallest card in the set (floor).
+        floor = min(gpu_infos, key=lambda g: g.mem_mib)
+        card = floor.hardware_id
+        note = f"heterogeneous set {sorted(cards)} — estimate uses the smallest card ({card})"
+    proc = subprocess.run(
+        ["python3", str(KVCALC), "--fit", slug, "--card", card, "--json"],
+        text=True, capture_output=True, check=False, cwd=REPO_ROOT,
+    )
+    try:
+        verdict = json.loads(proc.stdout) if proc.stdout.strip() else {}
+    except json.JSONDecodeError:
+        verdict = {}
+    verdict.setdefault("verdict", "unknown")
+    verdict["card"] = card
+    verdict["note"] = note
+    return verdict
+
+
+def _cluster_free_gpus(instances: list[InstanceSpec]) -> tuple[list[int], list[int]]:
+    """(claimed, free) host GPU indices given the estate's instances."""
+    claimed = sorted({g for inst in instances for g in inst.gpu_indices})
+    try:
+        all_idx = [g.index for g in detect_gpus_from_host()]
+    except EstateCliError:
+        all_idx = claimed  # can't detect — report what we know
+    free = [i for i in all_idx if i not in claimed]
+    return claimed, free
+
+
+def command_create(args: argparse.Namespace) -> int:
+    path = estate_path(args.file)
+    try:
+        gpu_indices = [int(x) for x in str(args.gpus).split(",") if str(x).strip() != ""]
+        if not gpu_indices:
+            raise EstateCliError("--gpus must list at least one index, e.g. --gpus 1,2")
+        if COMPOSE_REGISTRY.get(args.slug) is None:
+            raise EstateCliError(f"unknown slug `{args.slug}` — see `switch.sh --list`")
+        # Existing estate (or a fresh doc).
+        if path.exists():
+            data, instances = parse_estate_yaml(path)
+        else:
+            data, instances = {"schema_version": 1, "estate": []}, []
+        if any(inst.name == args.name for inst in instances):
+            raise EstateCliError(f"cluster `{args.name}` already exists in {path}")
+        gpu_infos = _selected_gpu_infos(gpu_indices)
+        # D1 fit-vs-set (raises on count!=TP).
+        fit = fit_slug_on_gpuset(args.slug, gpu_infos)
+        if fit["verdict"] in ("wont-fit", "incompatible-hw"):
+            reason = fit.get("error") or fit["verdict"]
+            raise EstateCliError(f"slug `{args.slug}` does not fit the selected GPU(s): {reason}")
+        # Port: explicit, else the registry default nudged off collisions.
+        used_ports = {inst.port for inst in instances}
+        entry = COMPOSE_REGISTRY[args.slug]
+        port = int(args.port) if args.port else default_port(int(entry["default_port"]), len(instances), used_ports)
+        new_inst = InstanceSpec(name=args.name, compose_name=args.slug, gpu_indices=tuple(gpu_indices), port=port)
+        # ONE validation path: the whole set (GPU collision, port collision, per-instance fits).
+        candidate = instances + [new_inst]
+        profiles = load_profiles()
+        hardware, _ = hardware_for_estate(data, profiles)
+        nvlink_active, nvlink_pairs = detect_nvlink_pairs()
+        result = validate_estate(candidate, hardware, profiles, nvlink_active, nvlink_pairs)
+        if not result.valid:
+            print(f"[cluster] ✗ cannot create `{args.name}` — validation failed:", file=sys.stderr)
+            inst_res = result.per_instance.get(args.name)
+            for reason in (inst_res.reasons if inst_res else []):
+                print(f"    - {reason}", file=sys.stderr)
+            for failure in result.cross_instance_failures:
+                print(f"    - {failure}", file=sys.stderr)
+            return 1
+        # Append + persist (indices stay in the file; UUIDs resolved at boot).
+        data.setdefault("schema_version", 1)
+        data.setdefault("estate", [])
+        data["estate"].append({"name": args.name, "compose": args.slug, "gpus": gpu_indices, "port": port})
+        write_estate(path, data)
+        fit_line = fit["verdict"] + (f" (~{fit['vram_est_gb']:.1f} GiB/card)" if fit.get("vram_est_gb") else "")
+        if fit.get("note"):
+            fit_line += f" · {fit['note']}"
+        print(f"[cluster] ✓ created `{args.name}`: {args.slug} on GPU {gpu_indices} port {port} — fit {fit_line}")
+        print(f"[cluster]   boot it:  bash scripts/cluster.sh up {args.name}")
+        return 0
+    except EstateCliError as exc:
+        print(f"[cluster] ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+def command_list(args: argparse.Namespace) -> int:
+    path = estate_path(args.file)
+    if not path.exists():
+        if getattr(args, "json", False):
+            print(json.dumps({"file": str(path), "clusters": [], "free_gpus": []}))
+        else:
+            print(f"[cluster] no estate file at {path} — create one with `cluster.sh create`")
+        return 0
+    try:
+        _data, instances = parse_estate_yaml(path)
+    except EstateCliError as exc:
+        print(f"[cluster] ERROR: {exc}", file=sys.stderr)
+        return 1
+    claimed, free = _cluster_free_gpus(instances)
+    clusters = [
+        {"name": i.name, "slug": i.compose_name, "gpus": list(i.gpu_indices), "port": i.port}
+        for i in instances
+    ]
+    if getattr(args, "json", False):
+        print(json.dumps({"file": str(path), "clusters": clusters, "claimed_gpus": claimed, "free_gpus": free}, indent=2))
+        return 0
+    if not clusters:
+        print(f"[cluster] no clusters defined in {path}")
+    else:
+        print(f"[cluster] {len(clusters)} cluster(s) in {path}:")
+        for c in clusters:
+            print(f"  {c['name']:20s} {c['slug']:32s} GPU {c['gpus']}  port {c['port']}")
+    print(f"[cluster] free GPU(s): {free if free else '(none)'}")
+    return 0
+
+
+def command_status(args: argparse.Namespace) -> int:
+    path = estate_path(args.file)
+    if not path.exists():
+        if getattr(args, "json", False):
+            print(json.dumps({"file": str(path), "clusters": []}))
+        else:
+            print(f"[cluster] no estate file at {path}")
+        return 0
+    try:
+        _data, instances = parse_estate_yaml(path)
+    except EstateCliError as exc:
+        print(f"[cluster] ERROR: {exc}", file=sys.stderr)
+        return 1
+    rows = []
+    for inst in instances:
+        try:
+            running = container_running(inst.name)
+        except Exception:
+            running = False
+        serving = endpoint_ready(inst.port) if running else False
+        placement = {"requested": "", "actual": "", "placement": "unknown"}
+        if running:
+            placement = assert_placement_quiet(inst, resolve_gpu_uuids(inst.gpu_indices))
+        rows.append({
+            "name": inst.name, "slug": inst.compose_name, "gpus": list(inst.gpu_indices),
+            "port": inst.port, "running": running, "serving": serving, "placement": placement,
+        })
+    if getattr(args, "json", False):
+        print(json.dumps({"file": str(path), "clusters": rows}, indent=2))
+        return 0
+    if not rows:
+        print(f"[cluster] no clusters defined in {path}")
+        return 0
+    print(f"[cluster] status ({path}):")
+    for r in rows:
+        state = "serving" if r["serving"] else ("running" if r["running"] else "down")
+        pl = r["placement"]["placement"]
+        pl_mark = {"ok": "✓", "mismatch": "⚠ MISMATCH", "unknown": ""}.get(pl, "")
+        print(f"  {r['name']:20s} {state:8s} GPU {r['gpus']}  port {r['port']}  {pl_mark}")
+    return 0
+
+
+def command_rm(args: argparse.Namespace) -> int:
+    path = estate_path(args.file)
+    try:
+        if not path.exists():
+            raise EstateCliError(f"no estate file at {path}")
+        data, instances = parse_estate_yaml(path)
+        target = next((i for i in instances if i.name == args.name), None)
+        if target is None:
+            raise EstateCliError(f"cluster `{args.name}` not found in {path}")
+        try:
+            if container_running(target.name):
+                raise EstateCliError(f"cluster `{args.name}` is running — `cluster.sh down {args.name}` first")
+        except EstateCliError:
+            raise
+        except Exception:
+            pass  # docker unavailable — allow removal from the plan
+        data["estate"] = [e for e in data.get("estate", []) if str(e.get("name")) != args.name]
+        write_estate(path, data)
+        print(f"[cluster] ✓ removed `{args.name}` from {path}")
+        return 0
+    except EstateCliError as exc:
+        print(f"[cluster] ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="club-3090 estate planner")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    create = sub.add_parser("create")
+    create.add_argument("name")
+    create.add_argument("--gpus", required=True, help="comma-separated host GPU indices, e.g. 1,2")
+    create.add_argument("--slug", required=True, help="registry compose slug, e.g. vllm/dual")
+    create.add_argument("--port", type=int, default=0)
+    create.add_argument("--file", default=str(DEFAULT_ESTATE_PATH))
+    create.set_defaults(func=command_create)
+
+    clist = sub.add_parser("list")
+    clist.add_argument("--file", default=str(DEFAULT_ESTATE_PATH))
+    clist.add_argument("--json", action="store_true")
+    clist.set_defaults(func=command_list)
+
+    cstatus = sub.add_parser("status")
+    cstatus.add_argument("--file", default=str(DEFAULT_ESTATE_PATH))
+    cstatus.add_argument("--json", action="store_true")
+    cstatus.set_defaults(func=command_status)
+
+    crm = sub.add_parser("rm")
+    crm.add_argument("name")
+    crm.add_argument("--file", default=str(DEFAULT_ESTATE_PATH))
+    crm.set_defaults(func=command_rm)
 
     validate = sub.add_parser("validate")
     validate.add_argument("--file", default=str(DEFAULT_ESTATE_PATH))
