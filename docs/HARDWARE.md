@@ -118,18 +118,7 @@ then `bash scripts/launch.sh --gpus 1,2` as normal (the composes pass `CUDA_VISI
 - The single-card GGUF composes (beellama / llama.cpp / ik-llama) select via `device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]` interpolated on the **host** side — they honor the same launcher export on the classic runtime; on CDI, apply the device-block swap above.
 - Estate (multi-instance) GPU pinning is UUID-pinned the same way (#610 Phase A): each instance's `gpus: [..]` stays index-based in the estate file, and the boot path resolves them to UUIDs — so estates land on the cards they claimed on CDI rigs too. After boot, a **placement assertion** (`docker exec … nvidia-smi --query-compute-apps=gpu_uuid`) confirms the model actually ran on the requested GPUs and prints a loud ⚠ on mismatch — no more silent wrong-card serving.
 
-**Multiple models on one host (clusters).** `scripts/cluster.sh` manages named model-on-GPU-set instances (a "cluster" = one model pinned to a chosen GPU set + port) over the estate file — one validation path shared with hand-written estates:
-
-```bash
-bash scripts/cluster.sh create chat  --gpus 0   --slug beellama/dflash    # TP=1 on GPU 0
-bash scripts/cluster.sh create coder --gpus 1,2 --slug vllm/dual          # TP=2 on GPUs 1+2
-bash scripts/cluster.sh up chat        # boot just this cluster (UUID-pinned + placement-asserted)
-bash scripts/cluster.sh list           # clusters + free GPUs   (--json for tooling)
-bash scripts/cluster.sh status         # live serving + placement per cluster
-bash scripts/cluster.sh down chat ; bash scripts/cluster.sh rm chat
-```
-
-`create` fit-checks the slug against the **selected GPU set** (`kv-calc --card`) and hard-rejects a GPU count that doesn't match the compose's tensor-parallel size. Heterogeneous sets are estimated against the smallest card in the set.
+**Multiple models on one host (clusters).** Running several models at once, each pinned to its own GPU set + port, is a **cluster** workload — managed with `scripts/cluster.sh` (CLI) or the c3 cockpit's Operate tab, both over one estate file with the UUID pinning + placement verification described above. Full guide: **[CLUSTERS.md](CLUSTERS.md)**.
 
 [#610]: https://github.com/noonghunna/club-3090/issues/610
 

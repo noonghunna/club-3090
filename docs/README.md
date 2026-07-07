@@ -20,6 +20,7 @@ Start here if you want to run a model.
 | [`SINGLE_CARD.md`](SINGLE_CARD.md) | 1× RTX 3090 — workload → curated config → quick start. |
 | [`DUAL_CARD.md`](DUAL_CARD.md) | 2× RTX 3090 (PCIe / NVLink auto-detected) — workload → config → quick start. |
 | [`MULTI_CARD.md`](MULTI_CARD.md) | 3+ GPUs — TP scaling math, derivation from `dual.yml`, valid TP values. |
+| [`CLUSTERS.md`](CLUSTERS.md) | Multiple models on one host — `cluster.sh` + the c3 cluster view/wizard, GPU pinning, placement, the estate file. |
 | [`PULL.md`](PULL.md) | Any HF safetensors repo — evaluate against the KV math, honest about confidence. |
 | [`BRING_YOUR_OWN.md`](BRING_YOUR_OWN.md) | Serve + tune + validate **your own** model/compose (any engine, single or dual) without touching the catalog. |
 | [`HARDWARE.md`](HARDWARE.md) | Card-class questions — 4090/5090, power caps, NVLink, laptop EC power. |

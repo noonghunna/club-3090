@@ -2,7 +2,7 @@
 
 You have **3 or more GPUs** and want to know if club-3090 applies. Short
 answer: yes. We ship a community-validated 4×3090 fp8/MTP baseline (now the
-`vllm/qwen-27b-multi-fast` slug) plus a matching FP8 + int8-PTH "max accuracy"
+`vllm/qwen-27b-multi-fast` slug) plus a matching FP8 + fp8/e4m3 "max accuracy"
 variant (`vllm/qwen-27b-multi-max`), and keep other 3+ GPU configs as derivation
 recipes until someone measures them. This page explains what scales (and what
 doesn't) when going beyond TP=2, the constraints to know, and how to derive your
@@ -66,6 +66,8 @@ for a subset.
 | `vram_matched_compute_mismatched` | Same VRAM, different compute tier | RTX 3090 + RTX 4090 | TP=N works correctly, but faster cards wait at NCCL allreduce. Estate planner is better for multi-model workloads. |
 | `vram_mismatched` | Different VRAM sizes | RTX 3060 12 GB + RTX 3090 24 GB | Prefer llama.cpp `--tensor-split`, manual PP=N experiments, or estate planner. Avoid TP=N across the full mismatched set. |
 | `heterogeneous_mixed` | Multiple VRAM and compute tiers | RTX 3060 + RTX 3090 + RTX 4090 | Manual selection. Run one model on the largest matched subset or use estate planner for separate endpoints. |
+
+> **Running several models at once** (the "estate planner / separate endpoints" rows above) is a **cluster** workload — one model per GPU subset, managed with `cluster.sh` or the c3 Operate tab. See **[CLUSTERS.md](CLUSTERS.md)**.
 
 ### Why TP=N is poor on VRAM-mismatched cards
 
@@ -194,20 +196,20 @@ since renamed `fp8-mtp.yml` → `mtp.yml`; config unchanged):
 
 (Validation thread: [discussion #26](https://github.com/noonghunna/club-3090/discussions/26), 2026-05-03.)
 
-### `vllm/qwen-27b-multi-max` — FP8 weights + int8-PTH KV (highest fidelity)
+### `vllm/qwen-27b-multi-max` — FP8 weights + fp8/e4m3 KV (highest fidelity)
 
 ```bash
 bash scripts/switch.sh vllm/qwen-27b-multi-max
 ```
 
 `multi4/fp8/mtp.yml` mirrors the 2-card `vllm/qwen-27b-dual-max`: official **FP8**
-weights (Marlin W8A16 on Ampere — memory win, no FP8 compute speedup) + **int8-PTH**
-KV (8-bit, higher fidelity than fast's fp8_e5m2) + MTP n=3 @ 262K. Validated via the
-dual-max proxy at TP=2 (KV pool **295K tok / 1.13×** @262K, MTP active) — the tight
-2-card KV pool is exactly what TP=4 relieves. **No 4-card bench on this layout yet**,
-and the quality A/B vs the fast tier is pending.
+weights (Marlin W8A16 on Ampere — memory win, no FP8 compute speedup) + **fp8/e4m3**
+KV (1 byte/token, FlashInfer backend, scale=1.0 on this checkpoint) + MTP n=3 @ 262K.
+Validated via the dual-max proxy at TP=2 (KV pool **295K tok / 1.13×** @262K, MTP
+active) — the tight 2-card KV pool is exactly what TP=4 relieves. **No 4-card bench
+on this fp8-KV layout yet**, and the quality A/B vs the fast tier is pending.
 
-> **KV decode-at-depth applies here too ([#594](https://github.com/noonghunna/club-3090/pull/594)).** Because multi-max mirrors dual-max exactly (fp8 weights + int8-PTH KV), it inherits the same behaviour: int8-PTH KV is `TRITON_ATTN`-only and single-stream decode craters with context (measured on the dual proxy: 130.8→50.7 TPS @ 35K), while `KV_CACHE_DTYPE=fp8` (e4m3 → FlashInfer) keeps it flat (~115 @ 35K) at equal NIAH recall to 240K. **dual-max flipped to fp8 in [#594](https://github.com/noonghunna/club-3090/pull/594)** (all gates green: 8-pack 109 ties 107, decode 2.3× at depth, soak-continuous PASS / 0 growth / margin holds). **multi-max flips in a follow-up PR** — identical one-line env swap, bundled with the registry `kv_format` + rtx-3090 fp8_e4m3-compat sync.
+> **KV decode-at-depth applies here too ([#594](https://github.com/noonghunna/club-3090/pull/594), [#595](https://github.com/noonghunna/club-3090/pull/595)).** `multi-max` now mirrors `dual-max` exactly: FP8 weights + `KV_CACHE_DTYPE=fp8` (e4m3 → FlashInfer). The prior int8-PTH KV was `TRITON_ATTN`-only and cratered at depth on the dual proxy (130.8→50.7 TPS @ 35K); fp8/e4m3 stayed flat (~115 @ 35K), recalled NIAH to 240K, tied the 8-pack (109 vs 107), and passed soak. `multi-max` inherited that one-line KV flip in #595, but still needs a fresh TP=4 confirmation.
 
 > **DFlash on TP=4 was removed.** The former `vllm/dual4-dflash`
 > (`multi4/autoround-int4/dflash.yml`) is gone — DFlash on Qwen3-Next vLLM is blocked
@@ -336,7 +338,7 @@ Specifically interested in:
 ## Why we ship only a fast/max pair of pre-baked 4-card configs
 
 We ship two TP=4 composes — `vllm/qwen-27b-multi-fast` (fp8/MTP) and
-`vllm/qwen-27b-multi-max` (FP8 + int8-PTH) — mirroring the 2-card fast/max tiers.
+`vllm/qwen-27b-multi-max` (FP8 + fp8/e4m3) — mirroring the 2-card fast/max tiers.
 The `multi-fast` config is here because a community rig validated that exact
 4× RTX 3090 PCIe topology with `verify-full.sh`, `verify-stress.sh`, and
 `bench.sh`; `multi-max` is its higher-fidelity sibling (validated via the
