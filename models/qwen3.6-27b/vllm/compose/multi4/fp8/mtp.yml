@@ -11,21 +11,11 @@
 #              proxy (vllm/qwen-27b-dual-max, TP=2): KV pool 295K tok, 1.13× concurrency —
 #              tight on 2 cards, comfortable on 4.
 #   Genesis:   none — intentionally Genesis-free
-#   Status:    ⚠️ Production w/ caveats
-#   Caveats:   ⚠️ #595 (2026-07-06) flipped KV int8-PTH → fp8/e4m3. The fp8 KV is validated on the
-#                2-card dual-max proxy (all gates green: 8-pack 109 ties int8-PTH's 107, soak PASS,
-#                decode 2.3× at depth) — but the prior 4-card validation (@Whamp #446) was on the OLD
-#                int8-PTH KV. A fresh TP=4 report on the fp8 config is requested (@Whamp / @ryanmpelletier)
-#                to re-confirm at 4 cards and upgrade toward ✅.
-#              Cross-rig validation only (this dev rig has 2 cards). Prior int8-PTH promotion on @Whamp's
-#                4× 3090 full chain — #446: verify-full + verify-stress 7/7 + soak-continuous PASS (85/102) —
-#                BUT on an OLDER engine (pre-v0.24.0 pin) + a non-standard rig (aikitoria P2P kernel,
-#                mixed x4/x16/x8/x16 lanes), single report. No clean v0.24.0 4-card datapoint yet →
-#                a fresh one upgrades this to ✅. Byte-identical to the production dual-max @TP=4.
-#   Quality:   = the dual-max proxy (vllm/qwen-27b-dual-max): 8-pack 109/150 (--full, 2026-07-06);
-#                fp8/e4m3 KV ties the prior int8-PTH path within noise while avoiding its
-#                decode-at-depth crater. No 4-card bench on this fp8-KV layout yet; the
-#                dual-max @TP=2 boots/serves @262K + MTP.
+#   Status:    ✅ Production
+#   Quality:   4-card v0.24.0 8-pack 111/150 (--full, @ryanmpelletier #584, 2026-07-07) —
+#                ties the 2-card dual-max proxy (109/150) → quality is TP-invariant on the
+#                max tier. fp8/e4m3 KV ties the prior int8-PTH path within noise while
+#                avoiding its decode-at-depth crater (FlashInfer vs int8-PTH Triton-only).
 #   Best for:  max-accuracy 4-card Qwen (vllm/qwen-27b-multi-max) — FP8 + fp8/e4m3 KV @ 262K, TP=4 ⭐
 # ---------------------------------------------------------------------------
 # Quad RTX 3090 — Qwen3.6-27B FP8 "max accuracy" tier at TP=4 (vllm/qwen-27b-multi-max).
@@ -33,15 +23,19 @@
 # 2-card vllm/qwen-27b-dual-max (dual/fp8/mtp.yml) — only the tensor-parallel size and
 # the required gpu-count bump to 4. The dual-max at TP=2 is the on-rig validation proxy
 # (boots/serves @262K, KV pool 295K tok, 1.13× concurrency — tight on 2 cards,
-# comfortable on 4). Promoted to ⚠️ Production w/ caveats 2026-07-06 on @Whamp's 4× 3090
-# cross-rig full chain (#446); see the Caveats line above for the validation's limits
-# (older engine + non-standard rig, single report) — a clean v0.24.0 4-card report upgrades to ✅.
+# comfortable on 4). Promoted to ✅ Production 2026-07-07 on the clean v0.24.0 4-card
+# validation the caveats required — #584 (@ryanmpelletier, 4× 3090 x16, Proxmox passthrough,
+# 350 W): verify-full 9/9, verify-stress needles clean to 240K, soak-continuous PASS, bench
+# n=5, and the full 8-pack at 111/150 (ties the dual-max proxy 109 → quality TP-invariant).
+# FLASHINFER confirmed (the #595 fp8/e4m3 flip live at TP=4). Corroborated by a second,
+# independent 4-card rig — #625 (@MoppelMat, 4× 3090 bare metal, mixed x4/x8 lanes, 300 W):
+# decode 79/102, prefill-90K clean, soak PASS.
 #
 # Why "max accuracy": official FP8 weights (8-bit, near-lossless per our KLD findings)
 # instead of the fast tier's AutoRound INT4 weights, with fp8/e4m3 KV chosen because
 # it ties the prior int8-PTH quality checks while routing attention through FlashInfer
-# instead of the int8-PTH Triton-only path. The 4-card fp8-KV validation is still pending;
-# the dual-max proxy validated the config boots, serves, and spec-decodes coherently @262K.
+# instead of the int8-PTH Triton-only path. TP=4's value is the 6.77× KV pool / concurrency;
+# single-stream decode is ~flat vs the 2-card dual-max (as the two 4-card reports confirm).
 #
 # Dependencies:
 #   - 4× RTX 3090 (Ampere SM 8.6), PCIe-only (no NVLink — works fine; NVLink

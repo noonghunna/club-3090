@@ -205,11 +205,15 @@ bash scripts/switch.sh vllm/qwen-27b-multi-max
 `multi4/fp8/mtp.yml` mirrors the 2-card `vllm/qwen-27b-dual-max`: official **FP8**
 weights (Marlin W8A16 on Ampere — memory win, no FP8 compute speedup) + **fp8/e4m3**
 KV (1 byte/token, FlashInfer backend, scale=1.0 on this checkpoint) + MTP n=3 @ 262K.
-Validated via the dual-max proxy at TP=2 (KV pool **295K tok / 1.13×** @262K, MTP
-active) — the tight 2-card KV pool is exactly what TP=4 relieves. **No 4-card bench
-on this fp8-KV layout yet**, and the quality A/B vs the fast tier is pending.
+**✅ Production** (2026-07-07) — validated on a clean v0.24.0 4-card rig:
+[#584](https://github.com/noonghunna/club-3090/issues/584) (@ryanmpelletier, 4× 3090
+x16) passed verify-full 9/9, verify-stress to 240K, soak-continuous, and the full 8-pack
+at **111/150** (ties the dual-max proxy 109 → quality is TP-invariant), corroborated by a
+2nd independent rig [#625](https://github.com/noonghunna/club-3090/issues/625) (@MoppelMat,
+mixed x4/x8 lanes). The 4 cards relieve the dual-max proxy's tight **295K-tok / 1.13×** KV
+pool → **6.77×** at TP=4; single-stream decode is ~flat vs the 2-card tier.
 
-> **KV decode-at-depth applies here too ([#594](https://github.com/noonghunna/club-3090/pull/594), [#595](https://github.com/noonghunna/club-3090/pull/595)).** `multi-max` now mirrors `dual-max` exactly: FP8 weights + `KV_CACHE_DTYPE=fp8` (e4m3 → FlashInfer). The prior int8-PTH KV was `TRITON_ATTN`-only and cratered at depth on the dual proxy (130.8→50.7 TPS @ 35K); fp8/e4m3 stayed flat (~115 @ 35K), recalled NIAH to 240K, tied the 8-pack (109 vs 107), and passed soak. `multi-max` inherited that one-line KV flip in #595, but still needs a fresh TP=4 confirmation.
+> **KV decode-at-depth applies here too ([#594](https://github.com/noonghunna/club-3090/pull/594), [#595](https://github.com/noonghunna/club-3090/pull/595)).** `multi-max` now mirrors `dual-max` exactly: FP8 weights + `KV_CACHE_DTYPE=fp8` (e4m3 → FlashInfer). The prior int8-PTH KV was `TRITON_ATTN`-only and cratered at depth on the dual proxy (130.8→50.7 TPS @ 35K); fp8/e4m3 stayed flat (~115 @ 35K), recalled NIAH to 240K, tied the 8-pack (109 vs 107), and passed soak. `multi-max` inherited that one-line KV flip in #595, and it was confirmed at TP=4 on [#584](https://github.com/noonghunna/club-3090/issues/584) (verify-full 9/9, stress to 240K, soak, 8-pack 111/150) + corroborated on [#625](https://github.com/noonghunna/club-3090/issues/625) — hence its promotion to ✅ Production.
 
 > **DFlash on TP=4 was removed.** The former `vllm/dual4-dflash`
 > (`multi4/autoround-int4/dflash.yml`) is gone — DFlash on Qwen3-Next vLLM is blocked
