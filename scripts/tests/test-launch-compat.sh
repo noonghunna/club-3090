@@ -177,11 +177,12 @@ out="$(GPU_MEMORY_UTILIZATION=0.7 python3 "$HELPER" resolve-variant-pin --varian
 assert_not_contains "$out" "GPU_MEMORY_UTILIZATION=0.85"
 echo "  ok: #246 mem-fraction floor (Spark down · discrete no-raise · het-min · user-pin — 4 cases)"
 
-# --- fp8-weights DeepGEMM disable on consumer cards (disc #571) ----------------
+# --- fp8/NVFP4-weights DeepGEMM disable on consumer cards (disc #571/#613) ---
 # DeepGEMM has no recipe on consumer Blackwell (sm_120/121, hard-fails) and is
-# unused on Ada (sm_89, harmless no-op) -> disable for fp8-weights slugs. Hopper
-# (sm_90) keeps it; non-fp8 slugs are untouched.
+# unused on Ada (sm_89, harmless no-op) -> disable for fp8-family and ModelOpt
+# NVFP4 slugs. Hopper (sm_90) keeps it; unrelated quant families are untouched.
 DMAX=vllm/qwen-27b-dual-max
+NVFP4_SINGLE=vllm/qwen-27b-single-nvfp4
 GPU_H100X2='0|NVIDIA H100|81920|9.0;1|NVIDIA H100|81920|9.0'
 out="$(python3 "$HELPER" resolve-variant-pin --variant "$DMAX" --format shell --gpu-spec "$GPU_5090X2")"
 assert_contains "$out" "VLLM_USE_DEEP_GEMM=0"
@@ -194,9 +195,11 @@ assert_not_contains "$out" "VLLM_USE_DEEP_GEMM"        # int4-weights slug: not 
 # fp8-DYNAMIC (compressed-tensors) is fp8-family too — agents-a1 must also disable
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/agents-a1-dual --format shell --gpu-spec "$GPU_5090X2")"
 assert_contains "$out" "VLLM_USE_DEEP_GEMM=0"          # fp8-dynamic weights route FP8 GEMM
+out="$(python3 "$HELPER" resolve-variant-pin --variant "$NVFP4_SINGLE" --format shell --gpu-spec "$GPU_5090X2")"
+assert_contains "$out" "VLLM_USE_DEEP_GEMM=0"          # ModelOpt NVFP4 carries FP8 linears
 out="$(VLLM_USE_DEEP_GEMM=1 python3 "$HELPER" resolve-variant-pin --variant "$DMAX" --format shell --gpu-spec "$GPU_5090X2")"
 assert_not_contains "$out" "VLLM_USE_DEEP_GEMM=0"      # explicit user pin wins
-echo "  ok: fp8w DeepGEMM disable (5090/Ada down · Hopper keep · non-fp8 skip · fp8-dynamic · user-pin — 6 cases)"
+echo "  ok: fp8/NVFP4 DeepGEMM disable (5090/Ada down · Hopper keep · non-fp8 skip · fp8-dynamic · nvfp4 · user-pin — 7 cases)"
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"

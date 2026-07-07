@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# test-deepgemm-fp8-parity — every fp8-weights vLLM compose MUST carry the
+# test-deepgemm-fp8-parity — every fp8/NVFP4-weights vLLM compose MUST carry the
 # `- VLLM_USE_DEEP_GEMM` pass-through so the launcher's consumer-Blackwell
 # auto-disable (_deepgemm_env, sm {8.9, 12.0, 12.1}) actually reaches the
 # container. Without the receiving line, docker-compose drops the injected
 # VLLM_USE_DEEP_GEMM=0 and a 5090 / PRO 6000 / GB10 user hits the fp8-GEMM
-# "recipe not found" boot crash (disc #571 / #580).
+# "recipe not found" boot crash (disc #571 / #580; NVFP4 follow-up #613).
 #
 # This guards the sibling-compose DRIFT class: dual-max carried the line
 # (added in #580) but multi-max / dual-lmcache / diffusiongemma-dual — the
-# same fp8-weights config — had silently drifted without it. These composes
+# same fp8-weights config — had silently drifted without it. NVFP4 ModelOpt
+# composes also route their FP8 attention/linear layers through DeepGEMM. These composes
 # are hand-maintained parallel copies (no extends/include), so nothing else
 # keeps them in sync.
 set -euo pipefail
@@ -28,9 +29,11 @@ missing = []
 checked = 0
 for slug, e in COMPOSE_REGISTRY.items():
     # Mirror the _deepgemm_env gate EXACTLY: fp8-FAMILY weights (startswith
-    # "fp8" → "fp8" and "fp8-dynamic"/compressed-tensors, e.g. agents-a1) on a
-    # vLLM engine. INT4/AWQ/W8A8/bf16 never invoke DeepGEMM → correctly excluded.
-    if not (e.get("weights_variant") or "").startswith("fp8"):
+    # "fp8" → "fp8" and "fp8-dynamic"/compressed-tensors, e.g. agents-a1)
+    # plus ModelOpt NVFP4, whose FP8 attention/linear layers route through
+    # DeepGEMM. INT4/AWQ/W8A8/bf16 never invoke DeepGEMM → correctly excluded.
+    weights_variant = e.get("weights_variant") or ""
+    if not (weights_variant.startswith("fp8") or weights_variant == "nvfp4"):
         continue
     if "vllm" not in (e.get("engine") or ""):
         continue
@@ -53,7 +56,7 @@ if missing:
           file=sys.stderr)
     sys.exit(1)
 
-print(f"  ✓ all {checked} fp8-weights vLLM composes carry the VLLM_USE_DEEP_GEMM pass-through")
+print(f"  ✓ all {checked} fp8/NVFP4-weights vLLM composes carry the VLLM_USE_DEEP_GEMM pass-through")
 PY
 
 echo "test-deepgemm-fp8-parity: ok"

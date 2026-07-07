@@ -300,23 +300,23 @@ _DEEPGEMM_DISABLE_SM = {8.9, 12.0, 12.1}
 
 def _deepgemm_env(profiles, variant: str, entry: dict, gpu_spec: str) -> dict[str, str]:
     """Disable vLLM's DeepGEMM fp8-GEMM path on CONSUMER cards that serve fp8
-    weights. DeepGEMM is built for Hopper (sm_90) + datacenter Blackwell
+    weights or ModelOpt NVFP4 weights with FP8 linears. DeepGEMM is built for
+    Hopper (sm_90) + datacenter Blackwell
     (sm_100/103). Consumer Blackwell (sm_120/121) hard-fails with 'recipe not
     found' (confirmed on a 5090 — disc #571 guybrush01); Ada (sm_89) never routes
     fp8 through DeepGEMM at all (Marlin/CUTLASS), so injecting 0 there is a
     harmless no-op that pre-empts the same wall for 4090 owners. Hopper/datacenter
     (where DeepGEMM is the fast path) are left untouched. Fires for the whole
     fp8-family weight set — "fp8" AND "fp8-dynamic" (compressed-tensors FP8, e.g.
-    agents-a1) — since both route FP8 GEMM. Empty dict = no injection."""
+    agents-a1) — and for "nvfp4" ModelOpt checkpoints, which still route FP8
+    attention/linear layers through the same DeepGEMM path. Empty dict = no injection."""
     if not gpu_spec:
         return {}
     if os.environ.get("VLLM_USE_DEEP_GEMM"):
         return {}  # explicit user pin always wins
-    if not ((entry or {}).get("weights_variant") or "").startswith("fp8"):
-        return {}  # fp8-FAMILY weight formats only: "fp8" AND "fp8-dynamic"
-        # (compressed-tensors FP8, e.g. agents-a1) — both route FP8 GEMM →
-        # DeepGEMM. INT4/AWQ/W8A8/bf16 never do. New fp8 variants must be
-        # named fp8-* for this to catch them (test-deepgemm-fp8-parity guards).
+    weights_variant = ((entry or {}).get("weights_variant") or "")
+    if not (weights_variant.startswith("fp8") or weights_variant == "nvfp4"):
+        return {}  # FP8-family + ModelOpt NVFP4 only; INT4/AWQ/W8A8/bf16 skip.
     try:
         hardware = _parse_gpu_specs(gpu_spec, profiles)
     except LaunchCompatError:
