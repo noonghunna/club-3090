@@ -2287,18 +2287,18 @@ class TestBatch1OperateServingPanel:
             assert "no model serving" in line.lower()
 
     @pytest.mark.asyncio
-    async def test_cluster_create_modal_collects_and_dismisses(self):
-        """C2 (#610 Phase C): the New-cluster modal collects name · slug · GPUs
-        and dismisses the payload the app routes to cluster.sh create; a blank
+    async def test_pod_create_modal_collects_and_dismisses(self):
+        """C2 (#610 Phase C): the New-pod modal collects name · slug · GPUs
+        and dismisses the payload the app routes to pod.sh create; a blank
         field stays open (no dismiss). The plan builder produces the create cmd
         with requires_reconcile=False (a file write, not a GPU claim)."""
-        from club3090_cockpit.app import ClusterCreateScreen
+        from club3090_cockpit.app import PodCreateScreen
 
         captured = {}
         app, _, _ = make_app(target=ServingTarget())
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot)
-            screen = ClusterCreateScreen([1, 2], ["vllm/dual", "vllm/minimal"])
+            screen = PodCreateScreen([1, 2], ["vllm/dual", "vllm/minimal"])
             app.push_screen(screen, lambda r: captured.update(result=r))
             await pilot.pause()
             # GPUs prefill from the free set.
@@ -2315,27 +2315,29 @@ class TestBatch1OperateServingPanel:
             assert captured["result"] == {"name": "coder", "slug": "vllm/dual", "gpus": "1,2"}
 
         # The plan builder: a file write, no reconcile, correct cmd.
-        plan = app._data.cluster_create_plan("coder", "1,2", "vllm/dual")
-        assert plan.kind == "cluster_create"
+        plan = app._data.pod_create_plan("coder", "1,2", "vllm/dual")
+        assert plan.kind == "pod_create"
         assert plan.requires_reconcile is False
-        assert plan.cmd == ["bash", "scripts/cluster.sh", "create", "coder",
+        assert plan.cmd == ["bash", "scripts/pod.sh", "create", "coder",
                             "--gpus", "1,2", "--slug", "vllm/dual"]
 
     @pytest.mark.asyncio
-    async def test_cluster_view_groups_gpus_with_placement_badge(self):
-        """C1 (#610 Phase C): the cluster-view groups estate instances with
+    async def test_pod_view_groups_gpus_with_placement_badge(self):
+        """C1 (#610 Phase C): the pod-view groups estate instances with
         their GPUs stacked and a placement health badge fed by the D3 verdict —
-        ✓ placed / ⚠ MISMATCH — and lists free GPUs. Empty when no clusters."""
+        ✓ placed / ⚠ MISMATCH — and lists free GPUs. Empty when no pods."""
         app, _, _ = make_app(target=ServingTarget())
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot)
             orch = app.query_one("#operate-orch-pane", OperateOrchPane)
 
-            # No estate → the cluster view is empty (single-model case unaffected).
-            orch._populate_clusters(EstateState(gpus=[GpuInfo(index=0, mem_used_mib=1)]))
-            assert str(app.query_one("#cluster-view", Static).render()).strip() == ""
+            # No pods → still show the discoverability affordance (the [N]
+            # create key), NOT an empty box — the feature was invisible before.
+            orch._populate_pods(EstateState(gpus=[GpuInfo(index=0, mem_used_mib=1)]))
+            empty = str(app.query_one("#pod-view", Static).render())
+            assert "none yet" in empty and "N" in empty
 
-            # Two clusters on a 3-GPU rig: one placed-ok, one placement-mismatch;
+            # Two pods on a 3-GPU rig: one placed-ok, one placement-mismatch;
             # GPU 2 free.
             state = EstateState(
                 gpus=[GpuInfo(index=i, mem_used_mib=1) for i in range(3)],
@@ -2346,12 +2348,12 @@ class TestBatch1OperateServingPanel:
                      "running": True, "placement": {"placement": "mismatch"}},
                 ]}},
             )
-            orch._populate_clusters(state)
-            view = str(app.query_one("#cluster-view", Static).render())
-            assert "Clusters" in view
-            assert "chat" in view and "coder" in view          # both cluster headers
+            orch._populate_pods(state)
+            view = str(app.query_one("#pod-view", Static).render())
+            assert "Pods" in view
+            assert "chat" in view and "coder" in view          # both pod headers
             assert "vllm/minimal" in view and ":8020" in view   # slug + port
-            assert "GPU0" in view and "GPU1" in view            # GPUs stacked under clusters
+            assert "GPU0" in view and "GPU1" in view            # GPUs stacked under pods
             assert "✓ placed" in view                           # ok badge (chat)
             assert "MISMATCH" in view                           # ⚠ badge (coder)
             assert "free: GPU2" in view                         # GPU 2 unassigned

@@ -1065,7 +1065,7 @@ def report_state_payload(args: argparse.Namespace) -> tuple[dict[str, Any], int]
     for inst in instances:
         running = _probe_running(inst.name)
         # D3 (#610 addendum 3): carry the per-instance placement verdict so the
-        # c3 cluster view (C1) reads ONE source for its health badge. Only probe
+        # c3 pod view (C1) reads ONE source for its health badge. Only probe
         # a RUNNING instance (the docker-exec check is meaningless otherwise).
         placement = {"requested": "", "actual": "", "placement": "unknown"}
         if running is True:
@@ -1147,9 +1147,9 @@ def command_report_state(args: argparse.Namespace) -> int:
 
 
 # ===========================================================================
-# Cluster verbs (#610 Phase A′) — create / list / status / rm.
-# A "cluster" is an estate instance (a named model on a GPU set + port). These
-# add the CLI surface scripts/cluster.sh (and, later, the c3 wizard/view) wrap;
+# Pod verbs (#610 Phase A′) — create / list / status / rm.
+# A "pod" is an estate instance (a named model on a GPU set + port). These
+# add the CLI surface scripts/pod.sh (and, later, the c3 wizard/view) wrap;
 # up/down reuse `boot`/`down --only <name>`. ONE validation path: everything
 # routes through validate_estate + kv-calc, so a hand-written estate file, the
 # CLI, and the wizard pass identical gates (#610 addendum 3, D2).
@@ -1188,7 +1188,7 @@ def fit_slug_on_gpuset(slug: str, gpu_infos: list[GpuInfo]) -> dict:
     if n != tp:
         raise EstateCliError(
             f"slug `{slug}` is TP={tp} but you selected {n} GPU(s) — "
-            f"a cluster's GPU count must equal the compose's tensor-parallel size"
+            f"a pod's GPU count must equal the compose's tensor-parallel size"
         )
     if entry.get("kvcalc_key") in (None, "SKIP"):
         return {"verdict": "skip", "card": None, "note": "non-vLLM slug — kv-calc prices vLLM only"}
@@ -1215,7 +1215,7 @@ def fit_slug_on_gpuset(slug: str, gpu_infos: list[GpuInfo]) -> dict:
     return verdict
 
 
-def _cluster_free_gpus(instances: list[InstanceSpec]) -> tuple[list[int], list[int]]:
+def _pod_free_gpus(instances: list[InstanceSpec]) -> tuple[list[int], list[int]]:
     """(claimed, free) host GPU indices given the estate's instances."""
     claimed = sorted({g for inst in instances for g in inst.gpu_indices})
     try:
@@ -1240,7 +1240,7 @@ def command_create(args: argparse.Namespace) -> int:
         else:
             data, instances = {"schema_version": 1, "estate": []}, []
         if any(inst.name == args.name for inst in instances):
-            raise EstateCliError(f"cluster `{args.name}` already exists in {path}")
+            raise EstateCliError(f"pod `{args.name}` already exists in {path}")
         gpu_infos = _selected_gpu_infos(gpu_indices)
         # D1 fit-vs-set (raises on count!=TP).
         fit = fit_slug_on_gpuset(args.slug, gpu_infos)
@@ -1259,7 +1259,7 @@ def command_create(args: argparse.Namespace) -> int:
         nvlink_active, nvlink_pairs = detect_nvlink_pairs()
         result = validate_estate(candidate, hardware, profiles, nvlink_active, nvlink_pairs)
         if not result.valid:
-            print(f"[cluster] ✗ cannot create `{args.name}` — validation failed:", file=sys.stderr)
+            print(f"[pod] ✗ cannot create `{args.name}` — validation failed:", file=sys.stderr)
             inst_res = result.per_instance.get(args.name)
             for reason in (inst_res.reasons if inst_res else []):
                 print(f"    - {reason}", file=sys.stderr)
@@ -1274,11 +1274,11 @@ def command_create(args: argparse.Namespace) -> int:
         fit_line = fit["verdict"] + (f" (~{fit['vram_est_gb']:.1f} GiB/card)" if fit.get("vram_est_gb") else "")
         if fit.get("note"):
             fit_line += f" · {fit['note']}"
-        print(f"[cluster] ✓ created `{args.name}`: {args.slug} on GPU {gpu_indices} port {port} — fit {fit_line}")
-        print(f"[cluster]   boot it:  bash scripts/cluster.sh up {args.name}")
+        print(f"[pod] ✓ created `{args.name}`: {args.slug} on GPU {gpu_indices} port {port} — fit {fit_line}")
+        print(f"[pod]   boot it:  bash scripts/pod.sh up {args.name}")
         return 0
     except EstateCliError as exc:
-        print(f"[cluster] ERROR: {exc}", file=sys.stderr)
+        print(f"[pod] ERROR: {exc}", file=sys.stderr)
         return 1
 
 
@@ -1286,30 +1286,30 @@ def command_list(args: argparse.Namespace) -> int:
     path = estate_path(args.file)
     if not path.exists():
         if getattr(args, "json", False):
-            print(json.dumps({"file": str(path), "clusters": [], "free_gpus": []}))
+            print(json.dumps({"file": str(path), "pods": [], "free_gpus": []}))
         else:
-            print(f"[cluster] no estate file at {path} — create one with `cluster.sh create`")
+            print(f"[pod] no estate file at {path} — create one with `pod.sh create`")
         return 0
     try:
         _data, instances = parse_estate_yaml(path)
     except EstateCliError as exc:
-        print(f"[cluster] ERROR: {exc}", file=sys.stderr)
+        print(f"[pod] ERROR: {exc}", file=sys.stderr)
         return 1
-    claimed, free = _cluster_free_gpus(instances)
-    clusters = [
+    claimed, free = _pod_free_gpus(instances)
+    pods = [
         {"name": i.name, "slug": i.compose_name, "gpus": list(i.gpu_indices), "port": i.port}
         for i in instances
     ]
     if getattr(args, "json", False):
-        print(json.dumps({"file": str(path), "clusters": clusters, "claimed_gpus": claimed, "free_gpus": free}, indent=2))
+        print(json.dumps({"file": str(path), "pods": pods, "claimed_gpus": claimed, "free_gpus": free}, indent=2))
         return 0
-    if not clusters:
-        print(f"[cluster] no clusters defined in {path}")
+    if not pods:
+        print(f"[pod] no pods defined in {path}")
     else:
-        print(f"[cluster] {len(clusters)} cluster(s) in {path}:")
-        for c in clusters:
+        print(f"[pod] {len(pods)} pod(s) in {path}:")
+        for c in pods:
             print(f"  {c['name']:20s} {c['slug']:32s} GPU {c['gpus']}  port {c['port']}")
-    print(f"[cluster] free GPU(s): {free if free else '(none)'}")
+    print(f"[pod] free GPU(s): {free if free else '(none)'}")
     return 0
 
 
@@ -1317,14 +1317,14 @@ def command_status(args: argparse.Namespace) -> int:
     path = estate_path(args.file)
     if not path.exists():
         if getattr(args, "json", False):
-            print(json.dumps({"file": str(path), "clusters": []}))
+            print(json.dumps({"file": str(path), "pods": []}))
         else:
-            print(f"[cluster] no estate file at {path}")
+            print(f"[pod] no estate file at {path}")
         return 0
     try:
         _data, instances = parse_estate_yaml(path)
     except EstateCliError as exc:
-        print(f"[cluster] ERROR: {exc}", file=sys.stderr)
+        print(f"[pod] ERROR: {exc}", file=sys.stderr)
         return 1
     rows = []
     for inst in instances:
@@ -1341,12 +1341,12 @@ def command_status(args: argparse.Namespace) -> int:
             "port": inst.port, "running": running, "serving": serving, "placement": placement,
         })
     if getattr(args, "json", False):
-        print(json.dumps({"file": str(path), "clusters": rows}, indent=2))
+        print(json.dumps({"file": str(path), "pods": rows}, indent=2))
         return 0
     if not rows:
-        print(f"[cluster] no clusters defined in {path}")
+        print(f"[pod] no pods defined in {path}")
         return 0
-    print(f"[cluster] status ({path}):")
+    print(f"[pod] status ({path}):")
     for r in rows:
         state = "serving" if r["serving"] else ("running" if r["running"] else "down")
         pl = r["placement"]["placement"]
@@ -1363,20 +1363,20 @@ def command_rm(args: argparse.Namespace) -> int:
         data, instances = parse_estate_yaml(path)
         target = next((i for i in instances if i.name == args.name), None)
         if target is None:
-            raise EstateCliError(f"cluster `{args.name}` not found in {path}")
+            raise EstateCliError(f"pod `{args.name}` not found in {path}")
         try:
             if container_running(target.name):
-                raise EstateCliError(f"cluster `{args.name}` is running — `cluster.sh down {args.name}` first")
+                raise EstateCliError(f"pod `{args.name}` is running — `pod.sh down {args.name}` first")
         except EstateCliError:
             raise
         except Exception:
             pass  # docker unavailable — allow removal from the plan
         data["estate"] = [e for e in data.get("estate", []) if str(e.get("name")) != args.name]
         write_estate(path, data)
-        print(f"[cluster] ✓ removed `{args.name}` from {path}")
+        print(f"[pod] ✓ removed `{args.name}` from {path}")
         return 0
     except EstateCliError as exc:
-        print(f"[cluster] ERROR: {exc}", file=sys.stderr)
+        print(f"[pod] ERROR: {exc}", file=sys.stderr)
         return 1
 
 

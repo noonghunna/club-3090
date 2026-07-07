@@ -692,6 +692,7 @@ class HelpScreen(ModalScreen):
             "[bold]Run & Operate · Orchestration[/bold]",
             "  [cyan]⏎[/cyan] switch scene   [cyan]k[/cyan] stop THIS model   [cyan]b[/cyan] restart serving   [cyan]n[/cyan] switch model (→ Catalog tab)   (writes gated)",
             "  [cyan]o[/cyan] stop ALL (tears down the whole estate)   [cyan]c[/cyan] power cap… (default 230W / clear / custom W)   (all gated)",
+            "  [cyan]N[/cyan] new pod (run several models on GPU subsets — name · slug · GPU set, fit-checked + gated)",
             "[bold]Run & Operate · Containers[/bold]",
             "  [cyan]l[/cyan] logs   [cyan]t[/cyan] top (read)   [cyan]s[/cyan] restart   [cyan]x[/cyan] stop   [cyan]X[/cyan] rm   (writes gated)",
             "[bold]Run & Operate · Doctor[/bold]  — is it serving correctly?",
@@ -2308,10 +2309,10 @@ class OperateOrchPane(Container):
                 yield Label("GPU1", classes="gpu-card-title")
                 yield Static("[dim]querying nvidia-smi…[/dim]", id="gpu1-bar")
             yield Static("[dim]reading estate…[/dim]", id="serving-line")
-            # C1 (#610 Phase C): clusters (estate instances) grouped with their
+            # C1 (#610 Phase C): pods (estate instances) grouped with their
             # GPUs stacked + a placement health badge. Shown only when the
-            # estate file declares ≥1 cluster; empty otherwise.
-            yield Static("", id="cluster-view")
+            # estate file declares ≥1 pod; empty otherwise.
+            yield Static("", id="pod-view")
             yield Static("[dim]reading health.sh…[/dim]", id="doctor-line")
             yield Label("Scenes  [dim](⏎ to switch — gated)[/dim]", id="scene-heading")
             scene_table: DataTable = DataTable(
@@ -2383,7 +2384,7 @@ class OperateOrchPane(Container):
         self._populate_error(state)
         self._populate_gpus(state)
         self._populate_serving(state)
-        self._populate_clusters(state)
+        self._populate_pods(state)
         self._populate_doctor(state)
         self._populate_scenes(state.scenes)
         # #11-ext — re-render the scene preview every poll (NOT only when the scene
@@ -2503,23 +2504,26 @@ class OperateOrchPane(Container):
             return ""
         return "\n   " + "  ·  ".join(bits)
 
-    def _populate_clusters(self, state: EstateState) -> None:
-        """C1 (#610 Phase C): render the estate's CLUSTERS (instances) grouped —
-        each cluster header (name · slug · :port · state · placement badge) with
+    def _populate_pods(self, state: EstateState) -> None:
+        """C1 (#610 Phase C): render the estate's PODS (instances) grouped —
+        each pod header (name · slug · :port · state · placement badge) with
         its member GPUs stacked beneath, and a trailing 'free GPUs' line. Reads
         the `active_estate.instances` block of the report-state poll (which now
-        carries the per-instance placement verdict, D3). Hidden when the estate
-        declares no clusters — the common single-model case is unaffected."""
-        view = self.query_one("#cluster-view", Static)
+        carries the per-instance placement verdict, D3). With no pods yet it
+        still shows a one-line affordance ([N] new pod) so the feature is
+        discoverable on a fresh (empty-estate) setup."""
+        view = self.query_one("#pod-view", Static)
         est = (getattr(state, "estate_report", None) or {}).get("active_estate") or {}
         instances = est.get("instances") if isinstance(est, dict) else None
         if not instances:
-            view.update("")
+            # Discoverability: no pods is the DEFAULT — surface the create key
+            # rather than rendering nothing (the feature was invisible before).
+            view.update("[bold]Pods[/bold]  [dim]none yet — [/dim][cyan]N[/cyan][dim] new pod (run several models on GPU subsets)[/dim]")
             return
         total_gpus = len(getattr(state, "gpus", []) or [])
         claimed = {g for inst in instances for g in (inst.get("gpus") or [])}
         free = sorted(i for i in range(total_gpus) if i not in claimed) if total_gpus else []
-        lines: list[str] = [f"[bold]Clusters[/bold]  [dim]({len(instances)} · {len(claimed)}/{total_gpus or '?'} GPUs claimed)[/dim]"]
+        lines: list[str] = [f"[bold]Pods[/bold]  [dim]({len(instances)} · {len(claimed)}/{total_gpus or '?'} GPUs claimed)[/dim]"]
         for inst in instances:
             name = str(inst.get("name") or "?")
             slug = str(inst.get("compose") or inst.get("slug") or "?")
@@ -2541,7 +2545,7 @@ class OperateOrchPane(Container):
                 state_glyph, badge = "[yellow]◐[/yellow]", "  [yellow]liveness unknown[/yellow]"
             port_s = f":{port}" if port else ""
             lines.append(f"  {state_glyph} [bold]{name}[/bold]  [dim]{slug}{port_s}[/dim]{badge}")
-            # GPUs stacked under the cluster header.
+            # GPUs stacked under the pod header.
             gpu_s = " ".join(f"GPU{g}" for g in gpus) if gpus else "[dim](none)[/dim]"
             lines.append(f"      [dim]└─[/dim] {gpu_s}")
         lines.append(f"  [dim]free: {('GPU' + ' GPU'.join(map(str, free))) if free else '(none)'}[/dim]")
@@ -4049,28 +4053,28 @@ class SettingsScreen(ModalScreen):
         self.app.pop_screen()
 
 
-class ClusterCreateScreen(ModalScreen):
-    """C2 (#610 Phase C): compose a new cluster (a model on a GPU set + port).
+class PodCreateScreen(ModalScreen):
+    """C2 (#610 Phase C): compose a new pod (a model on a GPU set + port).
     Collects name · slug · GPU set, then ``dismiss``es the params — the app
-    routes them through cluster.sh create (which runs the D1 fit-vs-set +
+    routes them through pod.sh create (which runs the D1 fit-vs-set +
     validate_estate gates and refuses a bad set), matching the codebase rule
     that a modal never touches the rig itself. dismiss: ``{"name","slug",
     "gpus"}`` or ``None`` on cancel."""
 
     DEFAULT_CSS = """
-    ClusterCreateScreen {
+    PodCreateScreen {
         align: center middle;
     }
-    ClusterCreateScreen > Vertical {
+    PodCreateScreen > Vertical {
         width: 84;
         height: auto;
         border: thick $accent;
         background: $surface;
         padding: 1 2;
     }
-    ClusterCreateScreen .cc-title { text-style: bold; color: $accent; margin-bottom: 1; }
-    ClusterCreateScreen .cc-field { margin-top: 1; }
-    ClusterCreateScreen Input { margin-bottom: 1; }
+    PodCreateScreen .cc-title { text-style: bold; color: $accent; margin-bottom: 1; }
+    PodCreateScreen .cc-field { margin-top: 1; }
+    PodCreateScreen Input { margin-bottom: 1; }
     """
 
     BINDINGS = [
@@ -4085,7 +4089,7 @@ class ClusterCreateScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("New cluster", classes="cc-title")
+            yield Label("New pod", classes="cc-title")
             yield Label("Name", classes="cc-field")
             yield Input(placeholder="e.g. coder", id="cc-name")
             yield Label("Model / slug", classes="cc-field")
@@ -4115,7 +4119,7 @@ class ClusterCreateScreen(ModalScreen):
         if not (name and slug and gpus):
             self.app.notify(
                 "Name, slug and GPUs are all required.",
-                title="New cluster", severity="warning", timeout=4,
+                title="New pod", severity="warning", timeout=4,
             )
             return
         self.dismiss({"name": name, "slug": slug, "gpus": gpus})
@@ -5633,7 +5637,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("serving_restart", "Restart serving", "Orchestration — restart the serving container (gated)"),
     ("serving_switch", "Switch model", "Orchestration — flip to the Catalog tab to pick another"),
     ("estate_off", "Stop ALL (estate down)", "Orchestration — tear down the whole estate (gated)"),
-    ("new_cluster", "New cluster…", "Orchestration — compose a new cluster (model + GPU set), fit-checked + gated"),
+    ("new_pod", "New pod…", "Orchestration — compose a new pod (model + GPU set), fit-checked + gated"),
     ("power_cap", "Power cap…", "Orchestration — power-cap menu: default 230W / clear / custom W (gated)"),
     ("power_cap_sweep", "Power cap sweep", "Doctor — sweep power caps + bench at each (gated)"),
     ("container_logs", "Container logs", "Containers — stream the selected container's logs"),
@@ -5795,7 +5799,7 @@ class CockpitApp(App):
         Binding("X", "container_rm", "Remove", show=False),
         # Operate · Orchestration — stop all (estate down, gated write).
         Binding("o", "estate_off", "Stop all", show=False),
-        Binding("n", "new_cluster", "New cluster", show=False),
+        Binding("N", "new_pod", "New pod", show=False),
         # Operate · Orchestration — power-cap menu (default / clear / custom W).
         Binding("c", "power_cap", "Power cap", show=False),
         # Operate · Doctor — power-cap sweep (heavy A/B bench; gated rig write).
@@ -5994,7 +5998,7 @@ class CockpitApp(App):
         "full_report":      ({0, 1}, {"tab-doctor", "tab-run"}),
         # Merged mode 0 · Orchestration tab
         "estate_off":       ({0}, {"tab-orchestration"}),
-        "new_cluster":      ({0}, {"tab-orchestration"}),
+        "new_pod":      ({0}, {"tab-orchestration"}),
         "power_cap":        ({0}, {"tab-orchestration"}),
         # power-cap sweep lives on Doctor now (a tuning/diagnostic bench, not a
         # live-estate control) — prune was removed from the cockpit entirely.
@@ -9216,9 +9220,9 @@ class CockpitApp(App):
 
     # ── Operate · Orchestration: power cap (gated rig write) ────────────────────────────
 
-    def _cluster_free_gpus(self) -> list[int]:
-        """Host GPU indices not already claimed by an estate cluster — the hint
-        the New-cluster modal prefills. Best-effort off the last estate poll."""
+    def _pod_free_gpus(self) -> list[int]:
+        """Host GPU indices not already claimed by an estate pod — the hint
+        the New-pod modal prefills. Best-effort off the last estate poll."""
         st = getattr(self, "_last_estate_state", None)
         if st is None:
             return []
@@ -9228,9 +9232,9 @@ class CockpitApp(App):
         claimed = {g for inst in (instances or []) for g in (inst.get("gpus") or [])}
         return [i for i in range(total) if i not in claimed]
 
-    def action_new_cluster(self) -> None:
-        """[n] in Operate · Orchestration: open the New-cluster modal (C2, #610).
-        Collects name · slug · GPU set; the create routes through cluster.sh
+    def action_new_pod(self) -> None:
+        """[n] in Operate · Orchestration: open the New-pod modal (C2, #610).
+        Collects name · slug · GPU set; the create routes through pod.sh
         create (D1 fit + validate_estate) via the standard confirm gate. NEVER
         auto-fired."""
         if self._active_mode != 0 or self._active_operate_tab() != "tab-orchestration":
@@ -9238,19 +9242,19 @@ class CockpitApp(App):
         slugs = sorted({r.slug for r in (self._variants or []) if getattr(r, "slug", "")})
         if not slugs:
             self.notify("No catalog slugs loaded yet — try again after the estate poll.",
-                        title="New cluster", severity="warning", timeout=4)
+                        title="New pod", severity="warning", timeout=4)
             return
         self.push_screen(
-            ClusterCreateScreen(self._cluster_free_gpus(), slugs),
-            self._on_cluster_create,
+            PodCreateScreen(self._pod_free_gpus(), slugs),
+            self._on_pod_create,
         )
 
-    def _on_cluster_create(self, result) -> None:
-        """Modal dismiss → build the cluster.sh create WRITE + route through the
+    def _on_pod_create(self, result) -> None:
+        """Modal dismiss → build the pod.sh create WRITE + route through the
         confirm gate. ``result`` is ``{"name","slug","gpus"}`` or ``None``."""
         if not result:
             return
-        plan = self._data.cluster_create_plan(result["name"], result["gpus"], result["slug"])
+        plan = self._data.pod_create_plan(result["name"], result["gpus"], result["slug"])
         self.push_screen(ConfirmActionScreen(plan))
 
     def action_power_cap(self) -> None:

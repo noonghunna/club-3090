@@ -67,7 +67,7 @@ for a subset.
 | `vram_mismatched` | Different VRAM sizes | RTX 3060 12 GB + RTX 3090 24 GB | Prefer llama.cpp `--tensor-split`, manual PP=N experiments, or estate planner. Avoid TP=N across the full mismatched set. |
 | `heterogeneous_mixed` | Multiple VRAM and compute tiers | RTX 3060 + RTX 3090 + RTX 4090 | Manual selection. Run one model on the largest matched subset or use estate planner for separate endpoints. |
 
-> **Running several models at once** (the "estate planner / separate endpoints" rows above) is a **cluster** workload — one model per GPU subset, managed with `cluster.sh` or the c3 Operate tab. See **[CLUSTERS.md](CLUSTERS.md)**.
+> **Running several models at once** (the "estate planner / separate endpoints" rows above) is a **pod** workload — one model per GPU subset, managed with `pod.sh` or the c3 Operate tab. See **[PODS.md](PODS.md)**.
 
 ### Why TP=N is poor on VRAM-mismatched cards
 
