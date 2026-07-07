@@ -136,6 +136,88 @@ def parse_fake_gpus(value: str) -> list[GpuInfo]:
     return sorted(out, key=lambda gpu: gpu.index)
 
 
+# --- GPU UUID resolution (#610 Phase A) -------------------------------------
+# The estate boot path pins GPUs by index (ESTATE_GPUS / CUDA_VISIBLE_DEVICES),
+# which CDI runtimes IGNORE and the classic runtime renumbers — the exact bug
+# gpu-select.sh fixed for `launch.sh --gpus`. Resolve to UUIDs here so estate
+# instances land on the cards they claimed on both runtimes. This is the
+# python twin of scripts/lib/gpu-select.sh; test-gpu-select asserts parity.
+
+
+def resolve_gpu_uuids(indices) -> str | None:
+    """Comma-separated host GPU indices -> their UUID csv. Returns None on any
+    failure (no nvidia-smi, an index that doesn't resolve, fake-GPU test mode)
+    so callers fall back to raw indices — the pre-UUID behavior."""
+    idxs = [str(i).strip() for i in indices if str(i).strip() != ""]
+    if not idxs:
+        return None
+    # Honor the CLUB3090_FAKE_GPUS test seam: no real nvidia-smi to query.
+    if os.environ.get("CLUB3090_FAKE_GPUS"):
+        return None
+    uuids = []
+    for idx in idxs:
+        proc = subprocess.run(
+            ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader", "-i", idx],
+            text=True, capture_output=True, check=False,
+        )
+        uuid = (proc.stdout or "").strip().splitlines()[0].strip() if proc.stdout.strip() else ""
+        if proc.returncode != 0 or not uuid.startswith("GPU-"):
+            return None  # partial UUID pinning is worse than the index fallback
+        uuids.append(uuid)
+    return ",".join(uuids)
+
+
+def container_placement_uuids(container: str) -> str:
+    """The GPU UUIDs the container's COMPUTE PROCESSES actually run on — the
+    runtime-agnostic ground truth (--query-compute-apps, NOT --query-gpu: under
+    CDI the container sees all cards but runs on the CUDA-masked set). Sorted,
+    unique csv; empty when no compute apps yet / nvidia-smi unavailable."""
+    proc = subprocess.run(
+        ["docker", "exec", container, "nvidia-smi",
+         "--query-compute-apps=gpu_uuid", "--format=csv,noheader"],
+        text=True, capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        return ""
+    seen = sorted({ln.strip() for ln in proc.stdout.splitlines() if ln.strip().startswith("GPU-")})
+    return ",".join(seen)
+
+
+def assert_placement(inst: "InstanceSpec", requested_uuids: str | None) -> dict:
+    """Post-boot placement assertion for one instance (#610 Phase A): confirm
+    the model landed on the GPU(s) it claimed. Loud warning on mismatch; never
+    raises. Returns the {requested, actual, placement: ok|mismatch|unknown}
+    verdict — the single shape the state report + (Phase C) c3 badge read."""
+    verdict = assert_placement_quiet(inst, requested_uuids)
+    if verdict["placement"] == "mismatch":
+        actual_set = set(verdict["actual"].split(","))
+        missing = [u for u in requested_uuids.split(",") if u and u not in actual_set]
+        print(f"[estate] ⚠ PLACEMENT MISMATCH for {inst.name}: requested GPU(s) not running the model — {' '.join(missing)}", file=sys.stderr)
+        print(f"[estate]   requested: {requested_uuids}", file=sys.stderr)
+        print(f"[estate]   actual:    {verdict['actual']}", file=sys.stderr)
+        print("[estate]   On a CDI runtime this usually means CUDA_VISIBLE_DEVICES didn't reach the container (docs/HARDWARE.md → Pinning specific GPUs).", file=sys.stderr)
+    elif verdict["placement"] == "ok":
+        print(f"[estate] ✓ placement verified for {inst.name} — model on the requested GPU(s)", file=sys.stderr)
+    return verdict
+
+
+def assert_placement_quiet(inst: "InstanceSpec", requested_uuids: str | None) -> dict:
+    """assert_placement's verdict WITHOUT the stderr prints — for the parallel
+    boot path (captured stdout) and the state report. Same {requested, actual,
+    placement} shape."""
+    verdict = {"requested": requested_uuids or "", "actual": "", "placement": "unknown"}
+    if not requested_uuids or not requested_uuids.startswith("GPU-"):
+        return verdict
+    actual = container_placement_uuids(container_name(inst.name))
+    verdict["actual"] = actual
+    if not actual:
+        return verdict
+    actual_set = set(actual.split(","))
+    missing = [u for u in requested_uuids.split(",") if u and u not in actual_set]
+    verdict["placement"] = "mismatch" if missing else "ok"
+    return verdict
+
+
 def detect_gpus_from_host() -> list[GpuInfo]:
     fake = os.environ.get("CLUB3090_FAKE_GPUS")
     if fake:
@@ -345,13 +427,19 @@ def compose_abs_path(compose_name: str) -> Path:
 def compose_env(inst: InstanceSpec) -> dict[str, str]:
     env = load_dotenv()
     joined = ",".join(str(gpu) for gpu in inst.gpu_indices)
+    # Pin CUDA_/NVIDIA_VISIBLE_DEVICES by UUID so the instance lands on the
+    # cards it claimed on BOTH runtimes (#610 Phase A) — CDI ignores the
+    # NVIDIA index form, the classic runtime renumbers it. ESTATE_GPUS stays
+    # index-based (the compose's device_ids interpolation reads the host view).
+    # Falls back to indices when UUIDs can't be resolved (pre-#610 behavior).
+    visible = resolve_gpu_uuids(inst.gpu_indices) or joined
     env.update(
         {
             "ESTATE_GPUS": joined,
             "ESTATE_PORT": str(inst.port),
             "ESTATE_CONTAINER": container_name(inst.name),
-            "CUDA_VISIBLE_DEVICES": joined,
-            "NVIDIA_VISIBLE_DEVICES": joined,
+            "CUDA_VISIBLE_DEVICES": visible,
+            "NVIDIA_VISIBLE_DEVICES": visible,
             "PORT": str(inst.port),
         }
     )
@@ -388,12 +476,16 @@ def compose_override_doc(inst: InstanceSpec) -> dict[str, Any]:
     GPUs it claimed.
     """
     joined = ",".join(str(gpu) for gpu in inst.gpu_indices)
+    # UUID-pin (#610 Phase A): CDI ignores the NVIDIA index form and the
+    # classic runtime renumbers it; UUIDs mask correctly on both. Fall back to
+    # indices when UUIDs can't be resolved.
+    visible = resolve_gpu_uuids(inst.gpu_indices) or joined
     return {
         "services": {
             service: {
                 "environment": {
-                    "CUDA_VISIBLE_DEVICES": joined,
-                    "NVIDIA_VISIBLE_DEVICES": joined,
+                    "CUDA_VISIBLE_DEVICES": visible,
+                    "NVIDIA_VISIBLE_DEVICES": visible,
                 }
             }
             for service in compose_service_names(inst.compose_name)
@@ -561,6 +653,11 @@ def boot_instance_parallel(index: int, total: int, inst: InstanceSpec, timeout: 
         run_compose(inst, "up", log_path=log_path)
         elapsed_s = wait_ready_quiet(inst, timeout)
         append_log(log_path, f"[estate] healthy after {elapsed_s}s")
+        # Placement assertion (#610 Phase A) — into the per-instance log (the
+        # parallel path has no clean stdout; the verdict lands where the boot
+        # log is). Non-fatal.
+        _pv = assert_placement_quiet(inst, resolve_gpu_uuids(inst.gpu_indices))
+        append_log(log_path, f"[estate] placement: {_pv['placement']} (requested={_pv['requested'] or '-'} actual={_pv['actual'] or '-'})")
         return BootOutcome(index=index, total=total, inst=inst, ok=True, elapsed_s=elapsed_s, log_path=log_path)
     except Exception as exc:
         elapsed_s = int(time.monotonic() - start)
@@ -628,6 +725,7 @@ def command_boot(args: argparse.Namespace) -> int:
             print(f"[estate] [{i}/{total}] booting {inst.name}: {inst.compose_name} GPUs={list(inst.gpu_indices)} port={inst.port}")
             run_compose(inst, "up")
             wait_ready(inst, args.timeout)
+            assert_placement(inst, resolve_gpu_uuids(inst.gpu_indices))
         print("[estate] all selected instances are healthy")
         return 0
     except EstateCliError as exc:

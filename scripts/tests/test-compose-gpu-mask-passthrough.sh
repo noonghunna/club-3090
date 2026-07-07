@@ -20,9 +20,13 @@ while IFS= read -r f; do
   fi
 done < <(grep -rlE '^\s*- NVIDIA_VISIBLE_DEVICES=' models/*/*/compose --include='*.yml' 2>/dev/null | grep -v '/_archive/' || true)
 
-# launch.sh must still carry the UUID resolution (the other half of #610).
-grep -q 'query-gpu=uuid' scripts/launch.sh \
-  || { echo "FAIL: launch.sh lost the --gpus index→UUID resolution (#610)" >&2; fails=$((fails+1)); }
+# The UUID resolution (other half of #610) moved into the shared
+# scripts/lib/gpu-select.sh lib (Phase A); launch.sh must source + use it.
+# (test-gpu-select asserts the lib itself + bash/python resolver parity.)
+grep -q 'query-gpu=uuid' scripts/lib/gpu-select.sh \
+  || { echo "FAIL: gpu-select.sh lost the index→UUID resolution (#610)" >&2; fails=$((fails+1)); }
+grep -q 'scripts/lib/gpu-select.sh' scripts/launch.sh \
+  || { echo "FAIL: launch.sh no longer sources gpu-select.sh (#610)" >&2; fails=$((fails+1)); }
 
 if [[ $fails -gt 0 ]]; then
   echo "$fails GPU-mask passthrough check(s) failed" >&2
