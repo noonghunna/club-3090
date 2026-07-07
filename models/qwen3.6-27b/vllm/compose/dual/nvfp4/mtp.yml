@@ -7,7 +7,8 @@
 #              H100 / RTX 6000 Pro / GB10 pairs also qualify. required_sm=9.0:
 #              the launchers REFUSE this on Ampere (sm_86) — NVFP4 has no
 #              kernel there (NVIDIA supports Hopper + Blackwell only).
-#   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized)
+#   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized;
+#              SPEC=off disables it — tight-RAM / spec-dec-fails mitigation, #617)
 #   KV:        fp8 → e4m3 (this checkpoint BAKES FP8 KV scales — modelopt
 #              kv_cache_quant_algo=FP8 — unlike our weight-only fp8 tier which
 #              runs scale=1.0). NVFP4 *KV* is deliberately NOT used: consumer
@@ -112,6 +113,9 @@ services:
       # launch.sh auto-inject VLLM_USE_DEEP_GEMM=0 on those cards; raw
       # `docker compose` users on consumer Blackwell set it themselves.
       - VLLM_USE_DEEP_GEMM
+      # SPEC=off disables the built-in MTP drafter at boot (bare passthrough;
+      # tight-RAM / spec-dec-fails mitigation, #617). Default = MTP on.
+      - SPEC
       # expandable_segments:True crashes boot on some setups (WSL2, some
       # NVLink rigs). Override via .env if boot fails in cuMemMap.
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
@@ -131,12 +135,20 @@ services:
         # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — the
         # Cliff 2 mitigation if you see mid-generation hangs at >50K depth
         # (unverified on Blackwell — report either way).
+        # SPEC=off drops the built-in MTP drafter (--speculative-config) — the
+        # tight-system-RAM mitigation (#617), matching the single-nvfp4 toggle.
+        SPEC_ARGS=()
+        if [ "$${SPEC:-on}" != "off" ]; then
+          SPEC_ARGS=(--speculative-config '{"method":"mtp","num_speculative_tokens":3}')
+        else
+          echo "[nvfp4] SPEC=off — MTP drafter disabled (loads lighter; no spec-dec)" >&2
+        fi
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
         if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}"
         else
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@"
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}"
         fi
       - --
     command:
@@ -186,10 +198,8 @@ services:
       - qwen3_coder
       - --enable-prefix-caching
       - --enable-chunked-prefill
-      # MTP n=3 — the checkpoint keeps mtp.* unquantized. If spec-dec fails on
-      # the modelopt path on your rig, delete these two lines and REPORT it.
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":3}'
+      # MTP n=3 — the checkpoint keeps mtp.* unquantized. Applied by the
+      # entrypoint unless SPEC=off (tight-RAM / spec-dec-fails mitigation, #617).
       - --override-generation-config
       - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
       - --host
