@@ -2286,6 +2286,41 @@ class TestBatch1OperateServingPanel:
             line = str(app.query_one("#serving-line", Static).render())
             assert "no model serving" in line.lower()
 
+    @pytest.mark.asyncio
+    async def test_cluster_view_groups_gpus_with_placement_badge(self):
+        """C1 (#610 Phase C): the cluster-view groups estate instances with
+        their GPUs stacked and a placement health badge fed by the D3 verdict —
+        ✓ placed / ⚠ MISMATCH — and lists free GPUs. Empty when no clusters."""
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            orch = app.query_one("#operate-orch-pane", OperateOrchPane)
+
+            # No estate → the cluster view is empty (single-model case unaffected).
+            orch._populate_clusters(EstateState(gpus=[GpuInfo(index=0, mem_used_mib=1)]))
+            assert str(app.query_one("#cluster-view", Static).render()).strip() == ""
+
+            # Two clusters on a 3-GPU rig: one placed-ok, one placement-mismatch;
+            # GPU 2 free.
+            state = EstateState(
+                gpus=[GpuInfo(index=i, mem_used_mib=1) for i in range(3)],
+                estate_report={"active_estate": {"instances": [
+                    {"name": "chat", "compose": "vllm/minimal", "gpus": [0], "port": 8020,
+                     "running": True, "placement": {"placement": "ok"}},
+                    {"name": "coder", "compose": "vllm/dual", "gpus": [1], "port": 8010,
+                     "running": True, "placement": {"placement": "mismatch"}},
+                ]}},
+            )
+            orch._populate_clusters(state)
+            view = str(app.query_one("#cluster-view", Static).render())
+            assert "Clusters" in view
+            assert "chat" in view and "coder" in view          # both cluster headers
+            assert "vllm/minimal" in view and ":8020" in view   # slug + port
+            assert "GPU0" in view and "GPU1" in view            # GPUs stacked under clusters
+            assert "✓ placed" in view                           # ok badge (chat)
+            assert "MISMATCH" in view                           # ⚠ badge (coder)
+            assert "free: GPU2" in view                         # GPU 2 unassigned
+
 
 class TestF9SlugMasquerade:
     """F9 — a port/substring registry match is a SHAPE guess, not an identity:

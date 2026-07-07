@@ -1063,6 +1063,16 @@ def report_state_payload(args: argparse.Namespace) -> tuple[dict[str, Any], int]
 
     inst_rows = []
     for inst in instances:
+        running = _probe_running(inst.name)
+        # D3 (#610 addendum 3): carry the per-instance placement verdict so the
+        # c3 cluster view (C1) reads ONE source for its health badge. Only probe
+        # a RUNNING instance (the docker-exec check is meaningless otherwise).
+        placement = {"requested": "", "actual": "", "placement": "unknown"}
+        if running is True:
+            try:
+                placement = assert_placement_quiet(inst, resolve_gpu_uuids(inst.gpu_indices))
+            except Exception:
+                pass
         inst_rows.append(
             {
                 "name": inst.name,
@@ -1070,7 +1080,8 @@ def report_state_payload(args: argparse.Namespace) -> tuple[dict[str, Any], int]
                 "gpus": list(inst.gpu_indices),
                 "port": inst.port,
                 "container": container_name(inst.name),
-                "running": _probe_running(inst.name),
+                "running": running,
+                "placement": placement,
             }
         )
     payload["active_estate"] = {
