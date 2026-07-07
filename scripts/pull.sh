@@ -71,14 +71,70 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # byte-identical. Present -> strip it and hand the remaining argv to the
 # structured-emit helper (which forces the evaluate-only gate).
 _pull_json=0
+_pull_apply_swap=0
 _pull_args=()
 for _a in "$@"; do
     if [ "$_a" = "--json" ]; then
         _pull_json=1
+    elif [ "$_a" = "--apply-swap" ]; then
+        _pull_apply_swap=1
     else
         _pull_args+=("$_a")
     fi
 done
+
+# --apply-swap: the BYO Route-C weight-swap ACTION (strictly additive, like
+# --json). It NEVER runs the locked 6-stratum gate — a curated-arch fine-tune
+# hard-stops there at stratum-5 `no-fit-model`, which is correct (nothing to
+# price). Instead it downloads the brought weights SHA-verified and emits a
+# serve-locally compose that CLONES the --profile-like sibling with --model
+# re-pointed at those weights. The c3 [D] press on a Route-C fit-check is the
+# explicit opt-in; without --apply-swap this script's behaviour is unchanged.
+if [ "$_pull_apply_swap" -eq 1 ]; then
+    exec python3 - "${ROOT_DIR}" "${_pull_args[@]+"${_pull_args[@]}"}" <<'PY'
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+if str(root) not in sys.path:
+    sys.path.insert(0, str(root))
+
+from scripts.lib.profiles import swap_apply as SA   # the apply-swap action
+
+ap = argparse.ArgumentParser(prog="pull.sh --apply-swap", add_help=False)
+ap.add_argument("slug")
+ap.add_argument("--profile-like", required=True, dest="profile_like")
+ap.add_argument("--hf-home", default=None)
+# tolerate (ignore) the flags a caller may carry over from the fit-check line
+for _f in ("--dry-run", "--yes", "--force-download", "--experimental-arch",
+           "--trust-remote-code", "--recommend"):
+    ap.add_argument(_f, action="store_true")
+ap.add_argument("--hardware", default=None)
+ap.add_argument("--hardware-gpus", default=None)
+ap.add_argument("--out", default=None)
+args, _unknown = ap.parse_known_args(sys.argv[2:])
+
+print(f"[apply-swap] resolving Route-C swap for {args.slug} "
+      f"(profile-like={args.profile_like})", flush=True)
+res = SA.apply_swap(root, args.slug, args.profile_like, hf_home=args.hf_home)
+if not res.get("ok"):
+    print(f"[apply-swap] ERROR: {res.get('error')}", file=sys.stderr, flush=True)
+    if res.get("detail"):
+        print(f"[apply-swap]   detail: {res['detail']}", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+mtp = "MTP kept" if res.get("has_mtp_head") else "MTP dropped (no head)"
+print(f"[apply-swap] sibling={res['sibling_slug']}  served-as={res['served_model_name']}"
+      f"  ({mtp})", flush=True)
+print(f"[apply-swap] weights: {res['weights_dir']}", flush=True)
+# The final, machine-parseable line the c3 lane greps for → serve this compose.
+print(f"[apply-swap] compose: {res['compose_path']}", flush=True)
+print("[apply-swap] ok", flush=True)
+PY
+fi
 
 if [ "$_pull_json" -eq 0 ]; then
     exec python3 "${ROOT_DIR}/scripts/lib/profiles/pull.py" "$@"

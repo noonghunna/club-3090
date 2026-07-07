@@ -717,6 +717,36 @@ class TestLoadCatalog:
         assert "WEIGHT_EXTRA_KEYS" not in cap2.env
 
     @pytest.mark.asyncio
+    async def test_run_bring_download_apply_swap_flag_and_capture(self):
+        """Route-C apply-swap: run_bring_download(apply_swap=True) appends
+        --apply-swap to pull.sh AND captures the emitted serve-locally compose
+        from the `[apply-swap] compose: <path>` line (② Serve serves it). With
+        apply_swap=False it does neither — the plain Path-B fetch is unchanged."""
+        import asyncio
+
+        class _SwapDL:
+            def __init__(self, emit): self.cmd = None; self._on = None; self._emit = emit
+            def set_callbacks(self, on_line=None, **kw): self._on = on_line
+            async def start_raw(self, cmd, env=None, run_type=None, parser=None):
+                self.cmd = cmd
+                if self._on and self._emit:
+                    self._on("[apply-swap] compose: /tmp/_brought-x.yml")
+                h = type("H", (), {})(); h.done = asyncio.Event(); h.done.set(); h.exit_code = 0
+                return h
+
+        dl = _SwapDL(emit=True)
+        cd = CockpitData(ROOT, runner=full_runner(), download_runner=dl)
+        await cd.run_bring_download("some/Fine-Tune", "vllm/dual", apply_swap=True)
+        assert "--apply-swap" in dl.cmd, dl.cmd
+        assert cd.last_swap_compose() == "/tmp/_brought-x.yml"
+
+        dl2 = _SwapDL(emit=False)
+        cd2 = CockpitData(ROOT, runner=full_runner(), download_runner=dl2)
+        await cd2.run_bring_download("some/Fine-Tune", "vllm/dual", apply_swap=False)
+        assert "--apply-swap" not in dl2.cmd, dl2.cmd
+        assert cd2.last_swap_compose() == ""
+
+    @pytest.mark.asyncio
     async def test_weights_state_partial_until_companion_present(self, tmp_path):
         """A slug with a companion (DFlash draft) is PARTIAL while the core is on
         disk but the companion subdir is missing, and PRESENT once both exist —

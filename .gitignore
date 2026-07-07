@@ -21,6 +21,11 @@ models/*/vllm/patches/genesis
 # gitignored so a crash-leftover never lands in `git add -A`.
 c3-genc-*.yml
 
+# BYO Route-C apply-swap serve-locally composes (pull.sh --apply-swap): a clone
+# of the sibling compose with --model → the brought weights, written IN the
+# sibling's compose dir so its relative ../ mounts resolve. Generated artifact.
+_brought-*.yml
+
 # Python
 __pycache__/
 *.pyc
