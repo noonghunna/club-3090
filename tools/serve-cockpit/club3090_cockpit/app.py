@@ -203,6 +203,36 @@ def _kv_label(e: "CatalogEntry") -> str:
     return _KV_LABELS.get(kv, kv or "—")
 
 
+# Spec Dec column — DERIVED from the registry `drafter` id (already in-app as
+# row.drafter; emitted at registry-emit.sh, threaded in services.py) → a compact
+# method[·mechanism] token, by PATTERN on the id (zero emit/guard change; the id
+# reliably encodes the mechanism).  DFlash is ALWAYS an external drafter, so it
+# needs no suffix; the built-in-vs-external split exists only WITHIN MTP, so the
+# suffix names the actual mechanism (`gguf` external GGUF drafter · `asst`
+# external assistant draft-model) — the "drafter type matters" distinction — not
+# a vague "ext".  The bare `MTP` = built-in head (the common qwen case).  The
+# slug detail card carries the full form (n= count + source).
+def _spec_token(drafter: str) -> str:
+    """Pure ``drafter``-id → compact spec-dec label.  '' when no drafter."""
+    dr = (drafter or "").strip().lower()
+    if not dr:
+        return ""
+    if "dflash" in dr:
+        return "DFlash"
+    if "ngram" in dr:
+        return "ngram"
+    if "assistant" in dr:      # gemma *-it-assistant → spec_method mtp_assistant
+        return "MTP·asst"
+    if "mtp" in dr:            # builtin head vs external gguf drafter
+        return "MTP·gguf" if "gguf" in dr else "MTP"
+    return "spec"              # unknown non-empty drafter — safety fallback
+
+
+def _spec_label(e: "CatalogEntry") -> str:
+    """Compact spec-dec method token for the catalog Spec Dec column ('—' = none)."""
+    return _spec_token(getattr(e.row, "drafter", "")) or "—"
+
+
 def _weights_glyph(e: CatalogEntry) -> str:
     """Download-state prefix for the catalog slug cell (Download UX).  ⏳NN%
     downloading · ⬇ absent (not on disk) · ⚠ partial (interrupted/wrong).
@@ -367,12 +397,22 @@ def funnel_slug_options(
         )
         tail = f"{model}-{quant}" if quant else model
         label = f"{topo or '—'}/{eng}/{tail}"
+        # Spec-dec facet (the Catalog Spec Dec column, mirrored into the funnel —
+        # a producer picks partly by which drafter a candidate enables).  Folded
+        # into the LABEL, not just appended, so two slugs identical on
+        # topology/engine/quant but differing only by drafter (e.g. fp8-mtp vs a
+        # no-drafter fp8) get disambiguated by `· MTP` instead of falling to the
+        # serving-stem tail.  Skipped for no-drafter slugs (keeps them clean).
+        spec = _spec_token(getattr(row, "drafter", ""))
+        if spec:
+            label = f"{label}  ·  {spec}"
         status = (getattr(row, "status", "") or "").strip().lower()
         raw.append((label, stem, ProfileOption(label=label, slug=slug, topology=topo or "—", status=status)))
     # §2b dogfood r2 (maintainer): the label is topology/engine/model-quant
-    # ONLY — a serving-stem tail duplicated the path axes and read as a
-    # second slug.  The stem is appended SOLELY to disambiguate genuine
-    # collisions (two slugs sharing all three axes, e.g. fp8-mtp vs turbo).
+    # (+ the spec-dec facet above) — a serving-stem tail duplicated the path axes
+    # and read as a second slug.  The stem is appended SOLELY to disambiguate
+    # genuine collisions that survive even the spec facet (two slugs sharing all
+    # axes AND drafter, e.g. fp8-mtp vs turbo).
     counts: dict[str, int] = {}
     for label, _stem, _o in raw:
         counts[label] = counts.get(label, 0) + 1
@@ -723,6 +763,11 @@ class HelpScreen(ModalScreen):
             "  ✅ production   ❗ caveats   🧪 experimental",
             "  🐣 incubating  👀 preview   🚧 upstream-gated   🚫 deprecated",
             "",
+            "[bold]Spec Dec column[/bold] (default drafter)",
+            "",
+            "  MTP built-in head · MTP·gguf ext GGUF drafter · MTP·asst ext assistant",
+            "  DFlash ext drafter · ngram · — none",
+            "",
             "[bold]Fit glyphs (local card)[/bold]",
             "",
             "  ● fits-clean   ◐ fits-constrained   ○ won't-fit   · skip / unknown",
@@ -844,13 +889,15 @@ class CatalogPane(Container):
         # Fit is STILL computed (it feeds the pop-up + the serving-row exemption);
         # it just no longer occupies a Catalog column.
         # Column budget, left→right: identity (model · slug) → config the user
-        # picks by (weights · kv) → money (ctx · TPS · 8pk) → topology/engine
+        # picks by (weights · kv · spec) → money (ctx · TPS · 8pk) → topology/engine
         # (largely slug-redundant, fold first on a narrow terminal) → status.
+        # `spec` groups with weights/kv (the serving-config facets): which drafter
+        # (MTP / MTP·gguf / MTP·asst / DFlash / — none) the slug enables by default.
         # Status is deliberately LAST: its glyph is the one emoji-width column, so
         # putting it at the tail means nothing follows it to misalign (belt +
         # braces with the VS16-free glyphs in _STATUS_GLYPH).
         # "(rig)" keeps the our-rig provenance at 4 chars ("our rig" cost 8 more).
-        table.add_columns("model", "slug", "weights", "kv", "ctx", "TPS (rig)", "8pk (rig)", "topo", "engine", "status")
+        table.add_columns("model", "slug", "weights", "kv", "spec", "ctx", "TPS (rig)", "8pk (rig)", "topo", "engine", "status")
         # Full enriched catalog, and the current filter substring.
         self._entries: list[CatalogEntry] = []
         self._filter: str = ""
@@ -974,6 +1021,7 @@ class CatalogPane(Container):
                 slug_cell,
                 _weights_label(e),
                 _kv_label(e),
+                _spec_label(e),
                 e.ctx_label or "—",
                 tps,
                 e.measurement.quality_label,

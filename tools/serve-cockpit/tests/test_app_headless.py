@@ -941,13 +941,13 @@ class TestNavNodesExist:
             # (F6 shortened "our rig" → "rig" for column budget).
             # Serve-confirm rework: the "fit" column moved into the serve pop-up.
             # Model-filter: a "model" column leads the table (group-by-model view).
-            # Layout, left→right: identity (model · slug) → config (weights · kv)
-            # → money (ctx · TPS · 8pk) → topology/engine (slug-redundant, fold
-            # first) → status LAST (its emoji glyph is the one variable-width cell,
-            # so nothing follows it to misalign — see _STATUS_GLYPH note).
+            # Layout, left→right: identity (model · slug) → config (weights · kv
+            # · spec) → money (ctx · TPS · 8pk) → topology/engine (slug-redundant,
+            # fold first) → status LAST (its emoji glyph is the one variable-width
+            # cell, so nothing follows it to misalign — see _STATUS_GLYPH note).
             for expected in (
-                "model", "slug", "weights", "kv", "ctx", "TPS (rig)", "8pk (rig)",
-                "topo", "engine", "status",
+                "model", "slug", "weights", "kv", "spec", "ctx", "TPS (rig)",
+                "8pk (rig)", "topo", "engine", "status",
             ):
                 assert expected in col_labels, f"missing {expected!r}: {col_labels}"
             # "source" is gone.
@@ -958,9 +958,12 @@ class TestNavNodesExist:
             assert col_labels[0] == "model", col_labels
             # status is the LAST column (emoji-width slop has nothing after it).
             assert col_labels[-1] == "status", col_labels
-            # config (weights · kv) sits between the identity and the money columns.
+            # config (weights · kv · spec) sits between the identity and the money
+            # columns, in that order (the three serving-config facets grouped).
             assert col_labels.index("weights") < col_labels.index("ctx"), col_labels
             assert col_labels.index("kv") < col_labels.index("ctx"), col_labels
+            assert col_labels.index("spec") < col_labels.index("ctx"), col_labels
+            assert col_labels.index("kv") < col_labels.index("spec"), col_labels
             # every money column sits LEFT of topo/engine.
             fold = col_labels.index("topo")
             for money in ("ctx", "TPS (rig)", "8pk (rig)"):
@@ -1127,10 +1130,12 @@ class TestCatalogWired:
             pane.set_filter("")
             assert len(pane._filtered_entries()) == 2
 
-    def _label_entry(self, quant: str, weights_format: str = "", quant_label: str = ""):
+    def _label_entry(self, quant: str, weights_format: str = "", quant_label: str = "",
+                     drafter: str = ""):
         """Minimal CatalogEntry whose compose path carries the given <quant>/ dir
         (weights_variant derives from the path) + optional threaded format /
-        quant_label (the emit weights_quant_label / weights_format joins)."""
+        quant_label (the emit weights_quant_label / weights_format joins) +
+        optional drafter id (the emit drafter join → Spec Dec column)."""
         from club3090_cockpit.data import CatalogEntry as _CE
         from club3090_tui_core import VariantRow as _VR
 
@@ -1146,6 +1151,7 @@ class TestCatalogWired:
             object.__setattr__(row, "weights_format", weights_format)
         if quant_label:
             object.__setattr__(row, "weights_quant_label", quant_label)
+        object.__setattr__(row, "drafter", drafter)
         return _CE(row=row)
 
     def test_weights_label_quant_segment_beats_provider_prefix(self):
@@ -1193,6 +1199,31 @@ class TestCatalogWired:
             _weights_label(self._label_entry("mudler-apex-compact"))
             == "mudler-apex-compact"
         )
+
+    def test_spec_label_from_drafter_id(self):
+        """The Spec Dec column derives METHOD·mechanism from the registry drafter
+        id (already in-app as row.drafter).  DFlash is always external → no suffix;
+        the built-in-vs-external split lives WITHIN MTP → `gguf` / `asst` name the
+        mechanism.  None → '—'."""
+        from club3090_cockpit.app import _spec_label, _spec_token
+
+        for drafter, want in {
+            "qwen-mtp-builtin": "MTP",
+            "carnice-mtp-gguf": "MTP·gguf",
+            "unsloth-mtp-gguf": "MTP·gguf",
+            "qwopus-mtp-gguf": "MTP·gguf",
+            "gemma-it-assistant": "MTP·asst",
+            "gemma-26b-it-assistant": "MTP·asst",
+            "anbeeld-qwen-dflash": "DFlash",
+            "gemma-dflash": "DFlash",
+            "zlab-qwen-dflash": "DFlash",
+        }.items():
+            assert _spec_label(self._label_entry("fp8", drafter=drafter)) == want, drafter
+        # No drafter → the column shows an em-dash; the pure token is empty so the
+        # funnel can skip the suffix entirely.
+        assert _spec_label(self._label_entry("fp8", drafter="")) == "—"
+        assert _spec_token("") == ""
+        assert _spec_token("some-future-ngram-drafter") == "ngram"
 
     @pytest.mark.asyncio
     async def test_catalog_submission_legend_in_status_line(self):
@@ -1773,6 +1804,32 @@ class TestFunnelSlugOptionsPure:
         assert by_slug["vllm/minimal"] == "single/vllm/qwen3.6-27b-autoround-int4"
         assert by_slug["vllm/dual"] == "dual/vllm/qwen3.6-27b-autoround-int4  ·  fp8-mtp"
         assert by_slug["vllm/qwen-27b-dual-turbo"] == "dual/vllm/qwen3.6-27b-autoround-int4  ·  turbo"
+
+    def test_funnel_spec_facet_folds_into_label_and_disambiguates(self):
+        """The Spec Dec facet is mirrored into the funnel label (a producer picks
+        partly by which drafter a candidate enables).  It's FOLDED into the label
+        so two slugs identical on topology/engine/quant but differing ONLY by
+        drafter split on `· MTP` instead of falling to the serving-stem tail;
+        no-drafter slugs stay clean."""
+        from types import SimpleNamespace as NS
+
+        from club3090_cockpit.app import funnel_slug_options
+
+        rows = [
+            NS(slug="vllm/dual-mtp", engine="vllm-stable", model="qwen3.6-27b",
+               file="fp8-mtp.yml", status="production", compose_dir="",
+               drafter="qwen-mtp-builtin",
+               compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml"),
+            NS(slug="vllm/dual-plain", engine="vllm-stable", model="qwen3.6-27b",
+               file="base.yml", status="production", compose_dir="", drafter="",
+               compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/base.yml"),
+        ]
+        by_slug = {o.slug: o.label for o in funnel_slug_options(rows, "safetensors")}
+        # Same topology/engine/quant, differ only by drafter → the spec facet
+        # disambiguates; NO stem tail is appended (the spec split already made the
+        # labels distinct).  The no-drafter sibling stays bare.
+        assert by_slug["vllm/dual-mtp"] == "dual/vllm/qwen3.6-27b-autoround-int4  ·  MTP"
+        assert by_slug["vllm/dual-plain"] == "dual/vllm/qwen3.6-27b-autoround-int4"
 
     def test_size_floor_hides_too_small_topologies_only(self):
         from club3090_cockpit.app import funnel_slug_options
