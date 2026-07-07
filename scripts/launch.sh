@@ -95,6 +95,9 @@ fi
 MODEL_DIR="${MODEL_DIR:-${ROOT_DIR}/models-cache}"
 # shellcheck source=preflight.sh
 source "${ROOT_DIR}/scripts/preflight.sh"
+# Runtime-agnostic GPU selection helpers (#610 Phase A) — gpu_select_export
+# (UUID-pin the --gpus set) + gpu_select_assert_placement (post-boot check).
+source "${ROOT_DIR}/scripts/lib/gpu-select.sh"
 
 # --- arg parsing ---
 ENGINE=""
@@ -1309,39 +1312,10 @@ case "$_launch_status" in
 esac
 echo ""
 if [[ -n "$SELECTED_GPU_CSV" ]]; then
-  # Resolve the selected indices to GPU UUIDs so ONE selection mechanism works
-  # on BOTH container GPU runtimes (#610):
-  #   - classic nvidia runtime: honors NVIDIA_VISIBLE_DEVICES (indices OR
-  #     UUIDs) but RENUMBERS the exposed set inside the container — so an
-  #     index-based CUDA_VISIBLE_DEVICES would point at the wrong (or a
-  #     nonexistent) card;
-  #   - CDI runtimes (NixOS, nvidia-ctk cdi): IGNORE NVIDIA_VISIBLE_DEVICES
-  #     entirely (devices come from the compose's CDI device_ids, typically
-  #     nvidia.com/gpu=all) — only a CUDA-level mask can pin cards there.
-  # UUIDs sidestep both problems: the classic runtime exposes-by-UUID, and
-  # CUDA_VISIBLE_DEVICES masks-by-UUID regardless of exposure order. The
-  # composes pass CUDA_VISIBLE_DEVICES through (bare env passthrough).
-  # Fallback to raw indices if the UUID query fails (pre-UUID behavior).
-  _gpu_uuid_csv=""
-  if command -v nvidia-smi >/dev/null 2>&1; then
-    IFS=',' read -ra _sel_idx <<< "$SELECTED_GPU_CSV"
-    for _idx in "${_sel_idx[@]}"; do
-      _uuid="$(nvidia-smi --query-gpu=uuid --format=csv,noheader -i "$_idx" 2>/dev/null | head -1 | tr -d ' ')"
-      if [[ "$_uuid" != GPU-* ]]; then
-        _gpu_uuid_csv=""
-        break
-      fi
-      _gpu_uuid_csv="${_gpu_uuid_csv:+${_gpu_uuid_csv},}${_uuid}"
-    done
-  fi
-  if [[ -n "$_gpu_uuid_csv" ]]; then
-    export CUDA_VISIBLE_DEVICES="$_gpu_uuid_csv"
-    export NVIDIA_VISIBLE_DEVICES="$_gpu_uuid_csv"
-    echo "[launch] GPU selection ${SELECTED_GPU_CSV} → UUID-pinned (runtime-agnostic: classic nvidia + CDI, #610)" >&2
-  else
-    export CUDA_VISIBLE_DEVICES="$SELECTED_GPU_CSV"
-    export NVIDIA_VISIBLE_DEVICES="$SELECTED_GPU_CSV"
-  fi
+  # Resolve the selected indices to GPU UUIDs and export both CUDA_/NVIDIA_
+  # VISIBLE_DEVICES so ONE selection mechanism works on both container GPU
+  # runtimes (#610). Logic lives in the shared gpu-select.sh lib (Phase A).
+  gpu_select_export "$SELECTED_GPU_CSV" "launch"
 fi
 if [[ -n "$TP_VALUE" ]]; then
   export TP="$TP_VALUE"
@@ -1369,6 +1343,12 @@ else
     echo "  - 'Genesis patches' / 'MTP acceptance' skipped on llama.cpp = expected (vLLM-only checks)"
     exit 1
   }
+  # Post-boot placement assertion (#610 Phase A): when the user pinned a GPU
+  # set, confirm the model actually landed there (loud warn on mismatch, never
+  # fatal). Runs after verify so the compute processes exist to inspect.
+  if [[ -n "$SELECTED_GPU_CSV" ]]; then
+    gpu_select_assert_placement "$ENDPOINT_CONTAINER" "${CUDA_VISIBLE_DEVICES:-}" "launch"
+  fi
 fi
 
 echo ""

@@ -116,7 +116,7 @@ then `bash scripts/launch.sh --gpus 1,2` as normal (the composes pass `CUDA_VISI
 **Gotchas:**
 - *In-container renumbering is expected, not a bug*: with 2 of 3 cards pinned, `nvidia-smi` **inside** the container shows them as GPU 0/1 (classic runtime) or shows *all* cards while CUDA uses only the masked pair (CDI). Verify placement with **host** `nvidia-smi` — the utilization lands on the cards you picked.
 - The single-card GGUF composes (beellama / llama.cpp / ik-llama) select via `device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]` interpolated on the **host** side — they honor the same launcher export on the classic runtime; on CDI, apply the device-block swap above.
-- Estate (multi-instance) GPU pinning on CDI rigs is a tracked follow-up on [#610].
+- Estate (multi-instance) GPU pinning is UUID-pinned the same way (#610 Phase A): each instance's `gpus: [..]` stays index-based in the estate file, and the boot path resolves them to UUIDs — so estates land on the cards they claimed on CDI rigs too. After boot, a **placement assertion** (`docker exec … nvidia-smi --query-compute-apps=gpu_uuid`) confirms the model actually ran on the requested GPUs and prints a loud ⚠ on mismatch — no more silent wrong-card serving.
 
 [#610]: https://github.com/noonghunna/club-3090/issues/610
 
