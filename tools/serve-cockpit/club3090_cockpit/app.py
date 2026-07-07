@@ -2308,6 +2308,10 @@ class OperateOrchPane(Container):
                 yield Label("GPU1", classes="gpu-card-title")
                 yield Static("[dim]querying nvidia-smi…[/dim]", id="gpu1-bar")
             yield Static("[dim]reading estate…[/dim]", id="serving-line")
+            # C1 (#610 Phase C): clusters (estate instances) grouped with their
+            # GPUs stacked + a placement health badge. Shown only when the
+            # estate file declares ≥1 cluster; empty otherwise.
+            yield Static("", id="cluster-view")
             yield Static("[dim]reading health.sh…[/dim]", id="doctor-line")
             yield Label("Scenes  [dim](⏎ to switch — gated)[/dim]", id="scene-heading")
             scene_table: DataTable = DataTable(
@@ -2379,6 +2383,7 @@ class OperateOrchPane(Container):
         self._populate_error(state)
         self._populate_gpus(state)
         self._populate_serving(state)
+        self._populate_clusters(state)
         self._populate_doctor(state)
         self._populate_scenes(state.scenes)
         # #11-ext — re-render the scene preview every poll (NOT only when the scene
@@ -2497,6 +2502,50 @@ class OperateOrchPane(Container):
         if not bits:
             return ""
         return "\n   " + "  ·  ".join(bits)
+
+    def _populate_clusters(self, state: EstateState) -> None:
+        """C1 (#610 Phase C): render the estate's CLUSTERS (instances) grouped —
+        each cluster header (name · slug · :port · state · placement badge) with
+        its member GPUs stacked beneath, and a trailing 'free GPUs' line. Reads
+        the `active_estate.instances` block of the report-state poll (which now
+        carries the per-instance placement verdict, D3). Hidden when the estate
+        declares no clusters — the common single-model case is unaffected."""
+        view = self.query_one("#cluster-view", Static)
+        est = (getattr(state, "estate_report", None) or {}).get("active_estate") or {}
+        instances = est.get("instances") if isinstance(est, dict) else None
+        if not instances:
+            view.update("")
+            return
+        total_gpus = len(getattr(state, "gpus", []) or [])
+        claimed = {g for inst in instances for g in (inst.get("gpus") or [])}
+        free = sorted(i for i in range(total_gpus) if i not in claimed) if total_gpus else []
+        lines: list[str] = [f"[bold]Clusters[/bold]  [dim]({len(instances)} · {len(claimed)}/{total_gpus or '?'} GPUs claimed)[/dim]"]
+        for inst in instances:
+            name = str(inst.get("name") or "?")
+            slug = str(inst.get("compose") or inst.get("slug") or "?")
+            port = inst.get("port")
+            running = inst.get("running")
+            gpus = inst.get("gpus") or []
+            placement = (inst.get("placement") or {}).get("placement", "unknown")
+            # State glyph + placement badge (the C1 health signal, fed by the
+            # Phase-A assertion via D3 — never renders requested-but-not-actual).
+            if running is True:
+                state_glyph = "[green]●[/green]"
+                badge = {
+                    "ok": "  [green]✓ placed[/green]",
+                    "mismatch": "  [red]⚠ PLACEMENT MISMATCH[/red]",
+                }.get(placement, "  [dim]placement …[/dim]")
+            elif running is False:
+                state_glyph, badge = "[dim]○[/dim]", "  [dim]down (plan)[/dim]"
+            else:
+                state_glyph, badge = "[yellow]◐[/yellow]", "  [yellow]liveness unknown[/yellow]"
+            port_s = f":{port}" if port else ""
+            lines.append(f"  {state_glyph} [bold]{name}[/bold]  [dim]{slug}{port_s}[/dim]{badge}")
+            # GPUs stacked under the cluster header.
+            gpu_s = " ".join(f"GPU{g}" for g in gpus) if gpus else "[dim](none)[/dim]"
+            lines.append(f"      [dim]└─[/dim] {gpu_s}")
+        lines.append(f"  [dim]free: {('GPU' + ' GPU'.join(map(str, free))) if free else '(none)'}[/dim]")
+        view.update("\n".join(lines))
 
     def populate_power_cap(self, st: PowerCapState) -> None:
         # #10(a): cache the active cap per GPU so the GPU cards can annotate it.
