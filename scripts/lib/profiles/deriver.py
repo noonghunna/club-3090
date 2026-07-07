@@ -315,6 +315,43 @@ def _siblings(api: dict) -> list[dict]:
     return out
 
 
+def _declares_mtp(config: dict) -> bool:
+    """True when config.json declares a multi-token-prediction head — Qwen3-Next
+    uses `mtp_num_hidden_layers`; other families use `num_nextn_predict_layers`.
+    Checks the top level AND a nested `text_config` (VLMs nest the LM config)."""
+    for cfg in (config or {}, (config or {}).get("text_config") or {}):
+        if not isinstance(cfg, dict):
+            continue
+        for key in ("mtp_num_hidden_layers", "num_nextn_predict_layers"):
+            v = cfg.get(key)
+            if isinstance(v, int) and v > 0:
+                return True
+    return False
+
+
+def _has_mtp_weight_file(api: dict) -> bool:
+    """True when the repo ships a dedicated MTP-head weights file — the layout
+    fine-tune re-quants use (e.g. `model_mtp_bf16.safetensors`)."""
+    for s in _siblings(api):
+        name = (s.get("rfilename") or "").lower()
+        if name.endswith(".safetensors") and ("mtp" in name or "nextn" in name):
+            return True
+    return False
+
+
+def detect_mtp_head(config: dict, api: dict) -> bool:
+    """Whether a brought checkpoint actually carries an MTP draft head, so the
+    Route-C weight-swap keeps `--speculative-config` instead of blanket-dropping
+    it. The blanket drop was a bug: fine-tunes that PRESERVE the head (e.g.
+    ThinkingCap) were served MTP-off. Signal (no extra fetch — config + siblings
+    are already in hand): config DECLARES the MTP layers AND a dedicated mtp
+    weights file is present. Ground-truth for the separate-file layout every
+    fine-tune uses. An embedded-head repo (head baked into the shards with no
+    named file) still falls back to drop — the named-file layout is the norm and
+    the alternative is reading each shard's index weight_map."""
+    return _declares_mtp(config) and _has_mtp_weight_file(api)
+
+
 def select_weight_files(
     api: dict,
 ) -> tuple[Optional[list[str]], Optional[DeriverError]]:
@@ -997,6 +1034,11 @@ def derive(
         "config_num_hidden_layers": _int(config or {}, "num_hidden_layers"),
         "config_num_attention_heads": _int(config or {}, "num_attention_heads"),
         "config_num_key_value_heads": _int(config or {}, "num_key_value_heads"),
+        # Additive: does the brought checkpoint carry an MTP draft head? The
+        # Route-C weight-swap (pull.sh _swap_path) reads this to keep vs drop
+        # --speculative-config, instead of the old blanket "fine-tune → no MTP"
+        # drop that silently served head-preserving fine-tunes MTP-off.
+        "has_mtp_head": detect_mtp_head(config or {}, api or {}),
     }
     res.diagnostics["resolution"] = "derived"
 
