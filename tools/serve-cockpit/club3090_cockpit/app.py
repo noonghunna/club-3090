@@ -4049,6 +4049,81 @@ class SettingsScreen(ModalScreen):
         self.app.pop_screen()
 
 
+class ClusterCreateScreen(ModalScreen):
+    """C2 (#610 Phase C): compose a new cluster (a model on a GPU set + port).
+    Collects name · slug · GPU set, then ``dismiss``es the params — the app
+    routes them through cluster.sh create (which runs the D1 fit-vs-set +
+    validate_estate gates and refuses a bad set), matching the codebase rule
+    that a modal never touches the rig itself. dismiss: ``{"name","slug",
+    "gpus"}`` or ``None`` on cancel."""
+
+    DEFAULT_CSS = """
+    ClusterCreateScreen {
+        align: center middle;
+    }
+    ClusterCreateScreen > Vertical {
+        width: 84;
+        height: auto;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    ClusterCreateScreen .cc-title { text-style: bold; color: $accent; margin-bottom: 1; }
+    ClusterCreateScreen .cc-field { margin-top: 1; }
+    ClusterCreateScreen Input { margin-bottom: 1; }
+    """
+
+    BINDINGS = [
+        Binding("ctrl+s", "save", "Create", show=True, priority=True),
+        Binding("escape", "cancel", "Cancel", show=True),
+    ]
+
+    def __init__(self, free_gpus: list[int], slugs: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self._free_gpus = free_gpus or []
+        self._slugs = slugs or []
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("New cluster", classes="cc-title")
+            yield Label("Name", classes="cc-field")
+            yield Input(placeholder="e.g. coder", id="cc-name")
+            yield Label("Model / slug", classes="cc-field")
+            yield Select(
+                [(s, s) for s in self._slugs],
+                allow_blank=True, id="cc-slug",
+            )
+            free = ",".join(str(g) for g in self._free_gpus)
+            yield Label(
+                f"GPUs  [dim](comma-separated indices; count must match the slug's TP. "
+                f"free now: {free or 'none'})[/dim]",
+                classes="cc-field",
+            )
+            yield Input(value=free, placeholder="e.g. 1,2", id="cc-gpus")
+            yield Label(
+                "[dim]Ctrl+S create · Esc cancel · the create is fit-checked against the "
+                "selected GPUs and confirmed before it writes[/dim]",
+                classes="cc-field",
+            )
+            yield Footer()
+
+    def action_save(self) -> None:
+        name = self.query_one("#cc-name", Input).value.strip()
+        slug_val = self.query_one("#cc-slug", Select).value
+        slug = "" if slug_val is Select.BLANK else str(slug_val).strip()
+        gpus = self.query_one("#cc-gpus", Input).value.strip()
+        if not (name and slug and gpus):
+            self.app.notify(
+                "Name, slug and GPUs are all required.",
+                title="New cluster", severity="warning", timeout=4,
+            )
+            return
+        self.dismiss({"name": name, "slug": slug, "gpus": gpus})
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class PowerCapMenuScreen(ModalScreen):
     """[c] power-cap menu (Orchestration): apply the default 230W cap · clear the
     cap (uncap to hardware default) · set a custom wattage.  The choice is returned
@@ -5558,6 +5633,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("serving_restart", "Restart serving", "Orchestration — restart the serving container (gated)"),
     ("serving_switch", "Switch model", "Orchestration — flip to the Catalog tab to pick another"),
     ("estate_off", "Stop ALL (estate down)", "Orchestration — tear down the whole estate (gated)"),
+    ("new_cluster", "New cluster…", "Orchestration — compose a new cluster (model + GPU set), fit-checked + gated"),
     ("power_cap", "Power cap…", "Orchestration — power-cap menu: default 230W / clear / custom W (gated)"),
     ("power_cap_sweep", "Power cap sweep", "Doctor — sweep power caps + bench at each (gated)"),
     ("container_logs", "Container logs", "Containers — stream the selected container's logs"),
@@ -5719,6 +5795,7 @@ class CockpitApp(App):
         Binding("X", "container_rm", "Remove", show=False),
         # Operate · Orchestration — stop all (estate down, gated write).
         Binding("o", "estate_off", "Stop all", show=False),
+        Binding("n", "new_cluster", "New cluster", show=False),
         # Operate · Orchestration — power-cap menu (default / clear / custom W).
         Binding("c", "power_cap", "Power cap", show=False),
         # Operate · Doctor — power-cap sweep (heavy A/B bench; gated rig write).
@@ -5917,6 +5994,7 @@ class CockpitApp(App):
         "full_report":      ({0, 1}, {"tab-doctor", "tab-run"}),
         # Merged mode 0 · Orchestration tab
         "estate_off":       ({0}, {"tab-orchestration"}),
+        "new_cluster":      ({0}, {"tab-orchestration"}),
         "power_cap":        ({0}, {"tab-orchestration"}),
         # power-cap sweep lives on Doctor now (a tuning/diagnostic bench, not a
         # live-estate control) — prune was removed from the cockpit entirely.
@@ -9137,6 +9215,43 @@ class CockpitApp(App):
         self.push_screen(ConfirmActionScreen(plan))
 
     # ── Operate · Orchestration: power cap (gated rig write) ────────────────────────────
+
+    def _cluster_free_gpus(self) -> list[int]:
+        """Host GPU indices not already claimed by an estate cluster — the hint
+        the New-cluster modal prefills. Best-effort off the last estate poll."""
+        st = getattr(self, "_last_estate_state", None)
+        if st is None:
+            return []
+        total = len(getattr(st, "gpus", []) or [])
+        est = (getattr(st, "estate_report", None) or {}).get("active_estate") or {}
+        instances = est.get("instances") if isinstance(est, dict) else None
+        claimed = {g for inst in (instances or []) for g in (inst.get("gpus") or [])}
+        return [i for i in range(total) if i not in claimed]
+
+    def action_new_cluster(self) -> None:
+        """[n] in Operate · Orchestration: open the New-cluster modal (C2, #610).
+        Collects name · slug · GPU set; the create routes through cluster.sh
+        create (D1 fit + validate_estate) via the standard confirm gate. NEVER
+        auto-fired."""
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-orchestration":
+            return
+        slugs = sorted({r.slug for r in (self._variants or []) if getattr(r, "slug", "")})
+        if not slugs:
+            self.notify("No catalog slugs loaded yet — try again after the estate poll.",
+                        title="New cluster", severity="warning", timeout=4)
+            return
+        self.push_screen(
+            ClusterCreateScreen(self._cluster_free_gpus(), slugs),
+            self._on_cluster_create,
+        )
+
+    def _on_cluster_create(self, result) -> None:
+        """Modal dismiss → build the cluster.sh create WRITE + route through the
+        confirm gate. ``result`` is ``{"name","slug","gpus"}`` or ``None``."""
+        if not result:
+            return
+        plan = self._data.cluster_create_plan(result["name"], result["gpus"], result["slug"])
+        self.push_screen(ConfirmActionScreen(plan))
 
     def action_power_cap(self) -> None:
         """[c] in Operate · Orchestration: open the power-cap MENU — apply the
