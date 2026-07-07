@@ -2169,6 +2169,18 @@ class CockpitData:
             requires_reconcile=False,
         )
 
+    def cluster_create_plan(self, name: str, gpus: str, slug: str) -> ActionPlan:
+        """C2 (#610 Phase C): write a new cluster to the estate file via
+        cluster.sh create. A pure FILE write (no GPU claimed until `up`), so it
+        skips the reconcile gate — but cluster.sh create itself runs the D1
+        fit-vs-set + validate_estate gates, so a bad set is refused there."""
+        return ActionPlan(
+            kind="cluster_create",
+            cmd=["bash", "scripts/cluster.sh", "create", name, "--gpus", gpus, "--slug", slug],
+            description=f"cluster.sh create {name} --gpus {gpus} --slug {slug}",
+            requires_reconcile=False,
+        )
+
     def scene_switch(self, mode: str) -> ActionPlan:
         return ActionPlan(
             kind="scene",

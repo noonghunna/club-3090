@@ -731,7 +731,7 @@ class ActionPlan:
     The reconcile gate is consulted BEFORE execution.
     """
 
-    kind: str                           # "serve" | "set_default" | "clear_default" | "scene" | "estate_down" | "container" | "validation" | "submit_bench" | "power_cap" | "power_cap_sweep" | "prune" | "container_rm"
+    kind: str                           # "serve" | "set_default" | "clear_default" | "scene" | "estate_down" | "container" | "validation" | "submit_bench" | "power_cap" | "power_cap_sweep" | "prune" | "container_rm" | "cluster_create"
     cmd: list[str]
     description: str = ""
     is_write: bool = True

@@ -2287,6 +2287,41 @@ class TestBatch1OperateServingPanel:
             assert "no model serving" in line.lower()
 
     @pytest.mark.asyncio
+    async def test_cluster_create_modal_collects_and_dismisses(self):
+        """C2 (#610 Phase C): the New-cluster modal collects name · slug · GPUs
+        and dismisses the payload the app routes to cluster.sh create; a blank
+        field stays open (no dismiss). The plan builder produces the create cmd
+        with requires_reconcile=False (a file write, not a GPU claim)."""
+        from club3090_cockpit.app import ClusterCreateScreen
+
+        captured = {}
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            screen = ClusterCreateScreen([1, 2], ["vllm/dual", "vllm/minimal"])
+            app.push_screen(screen, lambda r: captured.update(result=r))
+            await pilot.pause()
+            # GPUs prefill from the free set.
+            assert screen.query_one("#cc-gpus", Input).value == "1,2"
+            # A blank name → save is a no-op (stays open, no dismiss).
+            screen.action_save()
+            await pilot.pause()
+            assert "result" not in captured
+            # Fill it in → save dismisses the payload.
+            screen.query_one("#cc-name", Input).value = "coder"
+            screen.query_one("#cc-slug", Select).value = "vllm/dual"
+            screen.action_save()
+            await pilot.pause()
+            assert captured["result"] == {"name": "coder", "slug": "vllm/dual", "gpus": "1,2"}
+
+        # The plan builder: a file write, no reconcile, correct cmd.
+        plan = app._data.cluster_create_plan("coder", "1,2", "vllm/dual")
+        assert plan.kind == "cluster_create"
+        assert plan.requires_reconcile is False
+        assert plan.cmd == ["bash", "scripts/cluster.sh", "create", "coder",
+                            "--gpus", "1,2", "--slug", "vllm/dual"]
+
+    @pytest.mark.asyncio
     async def test_cluster_view_groups_gpus_with_placement_badge(self):
         """C1 (#610 Phase C): the cluster-view groups estate instances with
         their GPUs stacked and a placement health badge fed by the D3 verdict —
