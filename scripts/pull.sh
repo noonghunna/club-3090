@@ -197,12 +197,15 @@ def _swap_path(slug, der, eligible):
                 quant_match = meta.get("format") or first_slug
         except Exception:
             quant_match = None
+        # Keep --speculative-config IFF the brought checkpoint actually carries
+        # an MTP head (deriver.detect_mtp_head: config declares MTP layers + a
+        # dedicated mtp weights file). The old blanket drop served head-
+        # preserving fine-tunes (e.g. ThinkingCap AutoRound) MTP-off; a plain
+        # re-quant without the head still drops.
+        has_mtp = bool((der.profile or {}).get("has_mtp_head"))
         return {"route": "C", "sibling_slug": sibling,
                 "quant_match": quant_match,
-                # The curated configs use a built-in MTP head; a generic repo
-                # carries no MTP head, so drop --speculative-config unless an
-                # -MTP variant is brought (mirrors the human NOTE + docs).
-                "drop_spec_config": True}
+                "drop_spec_config": not has_mtp}
     # No curated sibling -> the self-contained GGUF fallback (route B).
     return {"route": "B", "sibling_slug": None,
             "quant_match": "gguf", "drop_spec_config": False}

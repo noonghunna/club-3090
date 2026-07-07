@@ -150,10 +150,26 @@ quant_match = (m.weights[first] or {}).get("format") or first
 check(isinstance(quant_match, str) and quant_match,
       f"route-C: quant_match resolved from the curated model's weights "
       f"(got {quant_match!r})")
-# drop_spec_config is True on the route-C path (generic repo carries no MTP
-# head; drop --speculative-config unless an -MTP variant is brought).
-check(True, "route-C: drop_spec_config=True (curated MTP head absent in a "
-            "generic repo) — mirrors the human NOTE + BRING_YOUR_OWN docs")
+# drop_spec_config is now DETECTED, not blanket-True: _swap_path keeps
+# --speculative-config when the brought checkpoint actually carries an MTP head
+# (deriver.detect_mtp_head: config DECLARES the MTP layers + a dedicated mtp
+# weights file). Regression guard for the bug where head-preserving fine-tunes
+# (e.g. ThinkingCap AutoRound) were silently served MTP-off.
+from scripts.lib.profiles.deriver import detect_mtp_head
+_mtp_api = {"siblings": [{"rfilename": "model-00001-of-00007.safetensors"},
+                         {"rfilename": "model_mtp_bf16.safetensors"}]}
+_plain_api = {"siblings": [{"rfilename": "model.safetensors"}]}
+check(detect_mtp_head({"mtp_num_hidden_layers": 1}, _mtp_api) is True,
+      "route-C: MTP head PRESENT (config declares + mtp weights file) -> keep "
+      "--speculative-config (drop_spec_config=False)")
+check(detect_mtp_head({"num_hidden_layers": 48}, _plain_api) is False,
+      "route-C: plain re-quant (no MTP declared, no mtp file) -> drop "
+      "--speculative-config (drop_spec_config=True)")
+check(detect_mtp_head({"text_config": {"num_nextn_predict_layers": 1}}, _mtp_api) is True,
+      "route-C: MTP declared in nested text_config (VLM) + file present -> keep")
+check(detect_mtp_head({"mtp_num_hidden_layers": 1}, _plain_api) is False,
+      "route-C: declares MTP but no dedicated mtp weights file -> drop "
+      "(embedded head not detectable without the index; conservative)")
 
 # Route B: an arch with NO curated sibling -> the self-contained GGUF
 # fallback (route B, no sibling/quant_match).
