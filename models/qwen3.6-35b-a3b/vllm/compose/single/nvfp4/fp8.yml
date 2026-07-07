@@ -26,22 +26,24 @@
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    🧪 Experimental
 #   Best for:  fast MoE chat/agents with vision on ONE Blackwell/Hopper card —
-#              unified-memory (GB10) first; pending first community validation
+#              unified-memory (GB10) first; single-5090 community-validated
 # ---------------------------------------------------------------------------
-# ⚠️ AUTHORED BLIND — READ THIS FIRST.
-# The maintainer rig is Ampere sm_86 and CANNOT BOOT NVFP4: this compose has
-# never been started anywhere. Shape mirrors the validated
-# vllm/qwen-35b-a3b-dual (no drafter, vision on, thinking off) + NVIDIA's
-# model-card recipe (--quantization modelopt). If you have a GB10 / 5090 /
-# H100, YOU are the validation:
+# ✅ FIRST COMMUNITY VALIDATION — single RTX 5090, #619 (@paulp83), 2026-07-07.
+# Authored on the sm_86 dev rig (which can't boot NVFP4), first booted + gated
+# on a 5090: vLLM v0.24.0 (quant=modelopt_mixed), verify-full 9/9, verify-
+# stress needle-clean (9.8K + 29K), soak-continuous PASS (15 MiB growth /
+# 100% retention / 0 err / p50 311 TPS). Decode 255.8 narr / 257.9 code TPS
+# @ 60 ms TTFT — ~2.5-3x our 2x3090 AutoRound tier (native FP4 GEMM). MTP
+# loaded OFF as shipped. VRAM 30.6/32 GB @131K — TIGHT but flat through soak
+# on a 32 GB card (if a longer soak OOMs on yours, MAX_MODEL_LEN=98304).
+# Stays 🧪 until an 8-pack quality number lands (that run's sandboxes weren't
+# built). More Blackwell/Hopper reports still welcome (GB10 @262K especially):
 #   1. bash scripts/switch.sh vllm/qwen-35b-a3b-single-nvfp4
 #   2. bash scripts/verify-full.sh MODEL=qwen3.6-35b-a3b
-#   3. bash scripts/rebench-full.sh
-#   4. Report numbers or the boot failure via the numbers-from-your-rig
-#      template (or the c3 funnel). "It crashed here" is a useful result.
-# Known-unknowns (report either way): modelopt MoE expert-quant load path on
-# your arch; fp8 KV at scale=1.0 quality on THIS checkpoint (tied for the 27B,
-# unmeasured here); MoE token-routing throughput on unified memory.
+#   3. bash scripts/rebench-full.sh   (build the benchlocal sandboxes first for the 8-pack)
+#   4. Report via the numbers-from-your-rig template (or the c3 funnel).
+# Still-open: 8-pack quality on this checkpoint; MoE routing throughput on
+# unified memory (GB10).
 #
 # Run (Blackwell/Hopper only):
 #   cd <repo>/models/qwen3.6-35b-a3b/vllm/compose
