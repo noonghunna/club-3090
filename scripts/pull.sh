@@ -72,12 +72,15 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # structured-emit helper (which forces the evaluate-only gate).
 _pull_json=0
 _pull_apply_swap=0
+_pull_emit_only=0
 _pull_args=()
 for _a in "$@"; do
     if [ "$_a" = "--json" ]; then
         _pull_json=1
     elif [ "$_a" = "--apply-swap" ]; then
         _pull_apply_swap=1
+    elif [ "$_a" = "--emit-only" ]; then
+        _pull_emit_only=1
     else
         _pull_args+=("$_a")
     fi
@@ -90,11 +93,18 @@ done
 # serve-locally compose that CLONES the --profile-like sibling with --model
 # re-pointed at those weights. The c3 [D] press on a Route-C fit-check is the
 # explicit opt-in; without --apply-swap this script's behaviour is unchanged.
+#
+# --emit-only (with --apply-swap): skip the SHA-verified download and JUST emit
+# the serve-locally compose (do_download=False). For when the weights are
+# already on disk — c3's ② Serve uses this so a present-weights serve needs no
+# [D] download step (the mount points at the existing pull dir).
 if [ "$_pull_apply_swap" -eq 1 ]; then
+    export _PULL_EMIT_ONLY="$_pull_emit_only"
     exec python3 - "${ROOT_DIR}" "${_pull_args[@]+"${_pull_args[@]}"}" <<'PY'
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -117,9 +127,13 @@ ap.add_argument("--hardware-gpus", default=None)
 ap.add_argument("--out", default=None)
 args, _unknown = ap.parse_known_args(sys.argv[2:])
 
+_emit_only = os.environ.get("_PULL_EMIT_ONLY") == "1"
 print(f"[apply-swap] resolving Route-C swap for {args.slug} "
-      f"(profile-like={args.profile_like})", flush=True)
-res = SA.apply_swap(root, args.slug, args.profile_like, hf_home=args.hf_home)
+      f"(profile-like={args.profile_like})"
+      + (" [emit-only — weights on disk, no download]" if _emit_only else ""),
+      flush=True)
+res = SA.apply_swap(root, args.slug, args.profile_like, hf_home=args.hf_home,
+                    do_download=not _emit_only)
 if not res.get("ok"):
     print(f"[apply-swap] ERROR: {res.get('error')}", file=sys.stderr, flush=True)
     if res.get("detail"):

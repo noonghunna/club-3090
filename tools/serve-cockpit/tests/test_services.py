@@ -740,11 +740,23 @@ class TestLoadCatalog:
         assert "--apply-swap" in dl.cmd, dl.cmd
         assert cd.last_swap_compose() == "/tmp/_brought-x.yml"
 
+        assert "--emit-only" not in dl.cmd, dl.cmd    # default: full download
+
         dl2 = _SwapDL(emit=False)
         cd2 = CockpitData(ROOT, runner=full_runner(), download_runner=dl2)
         await cd2.run_bring_download("some/Fine-Tune", "vllm/dual", apply_swap=False)
         assert "--apply-swap" not in dl2.cmd, dl2.cmd
         assert cd2.last_swap_compose() == ""
+
+        # emit_only=True (present weights) → --apply-swap AND --emit-only, so
+        # pull.sh emits the serve compose WITHOUT downloading (② Serve's no-[D] path)
+        dl3 = _SwapDL(emit=True)
+        cd3 = CockpitData(ROOT, runner=full_runner(), download_runner=dl3)
+        await cd3.run_bring_download(
+            "some/Fine-Tune", "vllm/dual", apply_swap=True, emit_only=True
+        )
+        assert "--apply-swap" in dl3.cmd and "--emit-only" in dl3.cmd, dl3.cmd
+        assert cd3.last_swap_compose() == "/tmp/_brought-x.yml"
 
     @pytest.mark.asyncio
     async def test_weights_state_partial_until_companion_present(self, tmp_path):
