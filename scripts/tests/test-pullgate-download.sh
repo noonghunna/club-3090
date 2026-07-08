@@ -132,6 +132,22 @@ check("chat_template.jinja" in ds and "vocab.json" in ds
       and "merges.txt" in ds,
       "download_set reconciles BOTH v2's *.jinja AND legacy vocab/merges")
 
+# 1b. A dedicated MTP/nextn head (e.g. `mtp_grafted.safetensors`) is a real
+# weight the model needs with MTP enabled, but it's neither a `model-*` nor
+# `-of-` shard — the shard filter used to DROP it, silently omitting
+# Tess-4-27B-FP8's MTP head → broken MTP serving (club-3090 #617). It must now
+# be unioned into the weight set.
+MTP_API = {"siblings": [{"rfilename": n} for n in (
+    "model-00001-of-00007.safetensors", "model-00007-of-00007.safetensors",
+    "model.safetensors.index.json", "mtp_grafted.safetensors",
+    "config.json", "tokenizer.json",
+)]}
+mtp_ds = D.download_set(MTP_API)
+check("mtp_grafted.safetensors" in mtp_ds,
+      f"download_set unions a dedicated MTP head (mtp_grafted.safetensors); got={sorted(mtp_ds)}")
+check("model-00001-of-00007.safetensors" in mtp_ds,
+      "download_set still includes the main shards alongside the MTP head")
+
 # ---------------------------------------------------------------------------
 # 2. sized_download_gb sizes EXACTLY download_set; gates.c2a_disk consumes
 #    the SHARED set (no drift between [C2a] / E2 / E3).
