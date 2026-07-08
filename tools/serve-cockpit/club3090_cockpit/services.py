@@ -996,6 +996,53 @@ class CockpitData:
         except OSError:
             return False
 
+    def bring_download_in_progress(
+        self, repo: str, expected_gb: Optional[float] = None
+    ) -> Optional[dict]:
+        """Disk-truth in-progress probe for a brought download (club-3090 #617).
+
+        Returns ``{"in_progress": True, "pid": int, "pct": <0-100|None>}`` when a
+        LIVE download lock is held for this repo — downloader.py writes
+        ``<pull_dir>/.download.lock/pid`` = holder PID + UTC start on acquire and
+        removes it on release. Unlike the in-memory ``_active_bring_download``
+        tracker, this survives a c3 restart AND sees a download started outside
+        this session (e.g. a bare ``pull.sh --apply-swap``), so the fit-check can
+        REFLECT a running download instead of re-offering [D] and stacking a
+        duplicate. Returns None when no lock, a STALE lock (dead holder), or an
+        unreadable one. A cheap stat — safe to call on every fit-check render.
+        ``pct`` from ``.incomplete`` bytes / ``expected_gb`` when the size is
+        known, else None."""
+        d = self.bring_pull_dir(repo)
+        try:
+            raw = (d / ".download.lock" / "pid").read_text(
+                encoding="utf-8"
+            ).splitlines()
+            pid = int(raw[0].strip())
+        except (OSError, ValueError, IndexError):
+            return None
+        if pid <= 0:
+            return None
+        try:
+            os.kill(pid, 0)                 # signal 0 = liveness probe
+        except ProcessLookupError:
+            return None                     # stale (dead holder) — not running
+        except PermissionError:
+            pass                            # alive, just not ours
+        except OSError:
+            return None
+        pct = None
+        if expected_gb and expected_gb > 0:
+            try:
+                got = sum(
+                    f.stat().st_size
+                    for f in (d / ".incomplete").rglob("*")
+                    if f.is_file()
+                )
+                pct = max(0, min(100, int(got / (expected_gb * 1e9) * 100)))
+            except OSError:
+                pct = None
+        return {"in_progress": True, "pid": pid, "pct": pct}
+
     def last_swap_compose(self) -> str:
         """The serve-locally compose emitted by the most recent Route-C
         apply-swap download ("" if none). Captured from pull.sh's

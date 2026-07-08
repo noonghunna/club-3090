@@ -135,6 +135,13 @@ print(f"[apply-swap] resolving Route-C swap for {args.slug} "
 res = SA.apply_swap(root, args.slug, args.profile_like, hf_home=args.hf_home,
                     do_download=not _emit_only)
 if not res.get("ok"):
+    # rc=3 = "already downloading" (distinct from rc=1 failure): a concurrent
+    # download of this slug holds the pull-dir lock; do NOT start a duplicate
+    # (club-3090 #617). Callers (c3) treat rc=3 as "reflect the live download".
+    if res.get("in_progress"):
+        print(f"[apply-swap] already in progress ({res.get('detail','')}) "
+              "— not starting a duplicate", flush=True)
+        sys.exit(3)
     print(f"[apply-swap] ERROR: {res.get('error')}", file=sys.stderr, flush=True)
     if res.get("detail"):
         print(f"[apply-swap]   detail: {res['detail']}", file=sys.stderr, flush=True)

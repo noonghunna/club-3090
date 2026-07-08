@@ -647,6 +647,41 @@ class TestLoadCatalog:
         assert e_unk.weights_state == WEIGHTS_UNKNOWN          # no weights entry to join
 
     @pytest.mark.asyncio
+    async def test_bring_download_in_progress_live_stale_absent(self, tmp_path, monkeypatch):
+        """#617 disk-truth probe: bring_download_in_progress reads the pull-dir
+        download lock — in-progress for a LIVE holder (with pct from .incomplete
+        bytes), None for a STALE (dead-holder) lock or no lock at all."""
+        import subprocess
+        cd = CockpitData(ROOT, runner=full_runner())
+        monkeypatch.setattr(cd, "_bring_hf_home", lambda: tmp_path)
+        repo = "org/Tess-4-27B-FP8"
+
+        assert cd.bring_download_in_progress(repo) is None        # no lock → absent
+
+        pull = cd.bring_pull_dir(repo)
+        (pull / ".download.lock").mkdir(parents=True)
+        inc = pull / ".incomplete"
+        inc.mkdir()
+        (inc / "part.bin").write_bytes(b"x" * 1000)               # 1000 bytes staged
+
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            (pull / ".download.lock" / "pid").write_text(
+                f"{holder.pid}\n2026-01-01T00:00:00+00:00\n", encoding="utf-8"
+            )
+            info = cd.bring_download_in_progress(repo, expected_gb=2e-6)  # 2000 B expected
+            assert info is not None and info["in_progress"] is True
+            assert info["pid"] == holder.pid
+            assert info["pct"] == 50                              # 1000 / 2000 B
+            # pct is None when the total size is unknown
+            assert cd.bring_download_in_progress(repo)["pct"] is None
+        finally:
+            holder.terminate()
+            holder.wait()
+
+        assert cd.bring_download_in_progress(repo) is None        # dead holder → stale
+
+    @pytest.mark.asyncio
     async def test_weights_download_plan_and_progress(self, tmp_path):
         """Download UX (service): the download plan is `WEIGHT_KEY=… setup.sh
         <model>` (disk write, no reconcile/confirm gate); progress = bytes-on-disk

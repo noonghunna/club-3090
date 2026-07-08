@@ -272,6 +272,15 @@ def apply_swap(
         except TypeError:
             dl = download_fn(ei)  # an injected mock may omit the fetcher kwarg
         if not getattr(dl, "ok", False):
+            # A concurrent download of this slug already holds the pull-dir
+            # lock — surface it distinctly (in_progress) so pull.sh exits with
+            # the rc=3 "already running" contract, NOT the rc=1 failure path
+            # (club-3090 #617: retries must reflect the live download, not
+            # stack a duplicate).
+            if getattr(dl, "failure", "") == "in-progress":
+                return {"ok": False, "in_progress": True,
+                        "error": "download already in progress",
+                        "detail": getattr(dl, "detail", "")}
             return {"ok": False,
                     "error": f"download failed: {getattr(dl, 'failure', '?')}",
                     "detail": getattr(dl, "detail", "")}
