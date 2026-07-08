@@ -13,7 +13,7 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 python3 - <<'PY'
-import sys, os, tempfile, subprocess
+import sys, os, tempfile, subprocess, time
 sys.path.insert(0, "scripts")
 from pathlib import Path
 from lib.profiles import downloader as DL
@@ -62,6 +62,34 @@ r = DL.download_model(EI())
 assert r is sentinel, "stale lock must be reclaimed and the fetch proceed"
 assert not lock.exists(), "lock must be RELEASED (rmdir) after the fetch"
 print("PASS 3: stale lock reclaimed → fetch proceeded → lock released")
+
+# 4) MID-ACQUIRE window → refuse (pidless + FRESH lock = a holder just mkdir'd
+#    and hasn't written its pid yet; reclaiming it would let BOTH callers
+#    proceed — the very dup race the lock closes) -----------------------------
+def _must_not_fetch(einput, *, fetcher=None):
+    raise AssertionError("must NOT reach the fetch for a fresh pidless lock")
+DL._download_model_impl = _must_not_fetch  # type: ignore
+lock = DL.download_lock_dir(tmp, slug)
+lock.mkdir(parents=True, exist_ok=True)
+(lock / "pid").unlink(missing_ok=True)         # no pid yet, mtime = now (fresh)
+r = DL.download_model(EI())
+assert r.ok is False and r.failure == "in-progress", \
+    f"fresh pidless lock (mid-acquire) must be refused, got ok={r.ok} failure={r.failure}"
+assert lock.exists(), "must NOT reclaim a fresh pidless lock (holder mid-acquire)"
+print("PASS 4: fresh pidless lock (mid-acquire) refused — not stolen")
+
+# 5) OLD pidless lock → reclaim (a genuinely broken/abandoned lock, past grace)
+sentinel2 = DL.DownloadResult(ok=True, local_dir=str(tmp / "y"), files=["g"])
+DL._download_model_impl = lambda einput, *, fetcher=None: sentinel2  # type: ignore
+lock = DL.download_lock_dir(tmp, slug)
+lock.mkdir(parents=True, exist_ok=True)
+(lock / "pid").unlink(missing_ok=True)
+old = time.time() - (DL._LOCK_ACQUIRE_GRACE_S + 5)
+os.utime(lock, (old, old))                     # age past the grace window
+r = DL.download_model(EI())
+assert r is sentinel2, "old pidless lock must be reclaimed and the fetch proceed"
+assert not lock.exists(), "lock released after reclaim + fetch"
+print("PASS 5: old pidless lock reclaimed → fetch proceeded → lock released")
 
 print("OK test-download-lock")
 PY

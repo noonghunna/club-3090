@@ -79,6 +79,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -146,6 +147,14 @@ def pull_dir(hf_home: Path, slug: str) -> Path:
 def incomplete_dir(hf_home: Path, slug: str) -> Path:
     """The atomic-staging `.incomplete` tree (deleted on ANY failure)."""
     return pull_dir(hf_home, slug) / ".incomplete"
+
+
+# A lock dir that exists but has NO `pid` file yet is a holder mid-acquire
+# (mkdir done, pid write imminent) — refuse rather than reclaim it, so two racing
+# callers can't both proceed. Only reclaim a pidless lock OLDER than this (a
+# genuinely broken/abandoned one). The real mkdir→pid-write gap is microseconds;
+# 10s is a safe margin against a slow filesystem.
+_LOCK_ACQUIRE_GRACE_S = 10.0
 
 
 def download_lock_dir(hf_home: Path, slug: str) -> Path:
@@ -462,7 +471,22 @@ def download_model(einput, *, fetcher: Optional[Any] = None) -> DownloadResult:
                     files=[],
                     detail=f"pid={active['pid']} since {active['since']}",
                 )
-            _rmtree(lock)                              # stale holder → reclaim
+            # Not a LIVE holder. Reclaiming the WRONG case re-opens the dup race
+            # this lock closes, so split it: a pidless lock that's still FRESH is
+            # a holder mid-acquire (pid write imminent) → refuse, don't steal it.
+            # A pid-present-but-dead lock, or an old pidless one, is genuinely
+            # abandoned → reclaim.
+            if not (lock / "pid").exists():
+                try:
+                    fresh = (time.time() - lock.stat().st_mtime) < _LOCK_ACQUIRE_GRACE_S
+                except OSError:
+                    fresh = False
+                if fresh:                              # mid-acquire → refuse
+                    return DownloadResult(
+                        ok=False, failure="in-progress",
+                        local_dir=str(final_dir), files=[], detail="acquiring",
+                    )
+            _rmtree(lock)                              # dead/abandoned → reclaim
         except OSError:
             break
     if not acquired:
