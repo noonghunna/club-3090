@@ -337,6 +337,11 @@ baselines:
     ttft_ms: 158
     prefill_tps: { 10k: 1364, 90k: 875 }
     quality_8pk: "107/150"
+    # thinking-ON here is pack-defaults (mixed regime), NOT force-on: the 2026-06-07
+    # #515 quant-A/B ran the fp8 dual-max config full 8-pack = 110/150 (autoround
+    # sibling 109/150); measured then but never promoted to this row until 2026-07-08.
+    # Source: results/quality/quality-2026-06-07T15-18-18.json (endpoint :8013).
+    quality_8pk_think_on: "110/150"
     ctx_validated: { tokens: 245760, niah: "clean@240K" }
     date: 2026-06-30
     engine_pin: "vllm/vllm-openai:v0.24.0"
