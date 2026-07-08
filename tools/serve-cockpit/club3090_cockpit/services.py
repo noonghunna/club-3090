@@ -996,11 +996,18 @@ class CockpitData:
         except OSError:
             return False
 
+    def last_swap_compose(self) -> str:
+        """The serve-locally compose emitted by the most recent Route-C
+        apply-swap download ("" if none). Captured from pull.sh's
+        ``[apply-swap] compose: <path>`` line; ② Serve serves it directly."""
+        return getattr(self, "_last_swap_compose", "")
+
     async def run_bring_download(
         self,
         repo: str,
         profile_like: str,
         *,
+        apply_swap: bool = False,
         on_line: Optional[Callable[[str], None]] = None,
     ) -> Any:
         """§2b-6 — the lane's weights download: the REAL ``pull.sh`` run
@@ -1012,10 +1019,26 @@ class CockpitData:
         (conftest blocks the real spawn)."""
         env = dict(os.environ)
         env.setdefault("HF_HOME", str(self._bring_hf_home()))
-        if on_line is not None:
-            self._download_runner.set_callbacks(on_line=on_line)
+        self._last_swap_compose = ""
+
+        def _capture(line: str) -> None:
+            # Route-C apply-swap prints "[apply-swap] compose: <path>" — capture
+            # it so ② Serve can serve the emitted sibling-clone compose.
+            marker = "[apply-swap] compose:"
+            if marker in line:
+                self._last_swap_compose = line.split(marker, 1)[1].strip()
+            if on_line is not None:
+                on_line(line)
+
+        if apply_swap or on_line is not None:
+            self._download_runner.set_callbacks(on_line=_capture)
+        cmd = ["bash", "scripts/pull.sh", repo, "--profile-like", profile_like]
+        if apply_swap:
+            # The BYO weight-swap ACTION: download the brought weights AND emit a
+            # serve-locally clone of the sibling compose (--model at the weights).
+            cmd.append("--apply-swap")
         return await self._download_runner.start_raw(
-            ["bash", "scripts/pull.sh", repo, "--profile-like", profile_like],
+            cmd,
             env=env,
             run_type="download",
             parser=None,

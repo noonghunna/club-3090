@@ -1225,6 +1225,40 @@ class TestCatalogWired:
         assert _spec_token("") == ""
         assert _spec_token("some-future-ngram-drafter") == "ngram"
 
+    def test_byo_result_route_c_reframes_as_servable(self):
+        """A Route-C swap (curated-arch fine-tune) reframes the engine's
+        'no-fit-model' verdict into a positive, actionable card — regression guard
+        for the self-contradicting fit-check ('not eligible' red + '② Serve armed
+        with <sibling>' green, which named the wrong model)."""
+        from dataclasses import replace
+        from club3090_cockpit.app import _byo_result_text
+        from club3090_cockpit.data import ByoResult
+        res = ByoResult(
+            repo="josefprusa/ThinkingCap-Qwen3.6-27B-int4-AutoRound-v1",
+            profile_like="vllm/dual", arch="Qwen3_5ForConditionalGeneration",
+            eligible=False, fit_verdict="no-fit-model", note="engine jargon",
+            route="C", sibling_slug="qwen3.6-27b", quant_match="auto_round",
+            drop_spec_config=False, error=None,
+        )
+        txt = _byo_result_text(res)
+        assert "✓ Servable" in txt                       # positive headline
+        assert "not eligible" not in txt                 # no scary red for a servable swap
+        assert "\\[D]" in txt                            # explicit [D] next-step
+        # the [D] action names the BROUGHT model, not the sibling
+        action = txt.split("→ Press")[1]
+        assert "ThinkingCap-Qwen3.6-27B-int4-AutoRound-v1" in action
+        assert "qwen3.6-27b" in txt                      # sibling recipe named
+        assert "MTP kept" in txt                         # has_mtp_head True
+        # raw verdict only in the dim debug line, not as the headline
+        assert txt.index("no-fit-model") > txt.index("✓ Servable")
+        # no-head fine-tune → MTP dropped
+        assert "MTP dropped" in _byo_result_text(replace(res, drop_spec_config=True))
+        # a normal eligible model is UNCHANGED (old card: eligible + ② Serve armed)
+        plain = _byo_result_text(replace(
+            res, eligible=True, fit_verdict="fits-clean", route=None, sibling_slug=None,
+        ))
+        assert "eligible" in plain and "② Serve" in plain and "✓ Servable" not in plain
+
     @pytest.mark.asyncio
     async def test_catalog_submission_legend_in_status_line(self):
         """When any loaded row's numbers came from a community submission

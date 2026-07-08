@@ -5054,6 +5054,32 @@ def _byo_result_text(res: ByoResult) -> str:
     producer lane's ① Bring stage)."""
     if res.error:
         return f"[red]Fit-check failed:[/red] {res.error}"
+    # Route-C swap (a curated-arch fine-tune → serve via the sibling's recipe with
+    # the brought weights): the engine verdict is "no-fit-model" because the generic
+    # fit-math can't PRICE a curated-hybrid arch — but the OUTCOME is servable. A red
+    # "not eligible / no-fit-model" headline + "② Serve armed with <sibling>" read as
+    # a self-contradicting dead-end (and named the wrong model). Reframe: green
+    # "✓ Servable", the [D] next-step names the BROUGHT model, raw verdict dimmed for
+    # debugging. Non-swap cases (eligible / Route A / B / plain no-fit) fall through.
+    if str(res.route).upper() == "C" and res.sibling_slug:
+        brought = res.repo.rsplit("/", 1)[-1]
+        mtp = ("[dim]MTP dropped — no head in this checkpoint[/dim]"
+               if res.drop_spec_config
+               else "[dim]MTP kept — head present[/dim]")
+        return "\n".join([
+            f"  [bold]{res.repo}[/bold]",
+            f"  [green]✓ Servable[/green] — a fine-tune of [green]{res.sibling_slug}[/green]",
+            f"  [bold]arch[/bold]  [cyan]{res.arch or '—'}[/cyan]",
+            "",
+            f"  [dim]How it serves:[/dim] reuses [green]{res.sibling_slug}[/green]'s proven "
+            "recipe (chat template, tools, spec-dec) with your weights.",
+            f"  {mtp}",
+            "",
+            f"  [green]→ Press[/green] [bold]\\[D][/bold] [green]to download + serve[/green] "
+            f"[bold]{brought}[/bold]",
+            f"  [dim]engine verdict: {res.fit_verdict or 'no-fit-model'} → Route-C swap "
+            "(generic fit-math can't price a curated-hybrid arch)[/dim]",
+        ])
     lines: list[str] = []
     elig = "[green]eligible[/green]" if res.eligible else "[red]not eligible[/red]"
     lines.append(f"  [bold]{res.repo}[/bold]   {elig}")
@@ -7560,12 +7586,38 @@ class CockpitApp(App):
                 except Exception:
                     pass
 
-        handle = await self._data.run_bring_download(repo, profile_like, on_line=_on_line)
+        # Route-C fine-tune → apply-swap: pull.sh downloads the brought weights
+        # AND emits a serve-locally clone of the sibling compose (--model at the
+        # weights). Any other route is the plain Path-B fetch.
+        apply_swap = bool(
+            self._last_byo is not None
+            and getattr(self._last_byo, "route", "") == "C"
+        )
+        self._bring_swap_compose = ""
+        handle = await self._data.run_bring_download(
+            repo, profile_like, apply_swap=apply_swap, on_line=_on_line
+        )
         try:
             await handle.done.wait()
         except Exception:
             pass
         if lane_pane is None:
+            return
+        if apply_swap:
+            # The swap compose is the servable artifact — its presence (not the
+            # HF pull-dir probe) is the success signal for a Route-C swap.
+            swap_compose = self._data.last_swap_compose()
+            if swap_compose:
+                self._bring_swap_compose = swap_compose
+                lane_pane.set_weights_line(
+                    "  [green]✓ weights + swap compose ready[/green] — "
+                    "[green]→ ② Serve[/green] [dim](serves the brought model)[/dim]"
+                )
+            else:
+                lane_pane.set_weights_line(
+                    "  [red]apply-swap did not complete[/red] — check the pull.sh "
+                    "output [dim](re-press \\[D] to retry)[/dim]"
+                )
             return
         if self._data.bring_weights_present(repo):
             lane_pane.set_weights_line(
@@ -9553,12 +9605,19 @@ class CockpitApp(App):
                 timeout=4,
             )
             return
-        # The CATALOG slug whose compose we reproduce: the Route-C sibling, else
-        # the profile-like the fit-check was run against.  We do NOT swap in the
-        # brought model's weights (no --repo on generate-compose.sh yet) and we do
-        # NOT fall back to a generic profile — if neither resolves, this route has
-        # no servable target yet (the bring-your-own weight-swap is a pending
-        # follow-up).
+        # Route-C apply-swap: if the [D] download emitted a serve-locally clone of
+        # the sibling compose (--model at the BROUGHT weights + MTP per the head),
+        # serve THAT directly — not a reproduction of the sibling's own catalog
+        # compose. This is the bring-your-own weight-swap, now wired.
+        swap_compose = getattr(self, "_bring_swap_compose", "")
+        if swap_compose and getattr(self._last_byo, "route", "") == "C":
+            self._serve_generated_compose(swap_compose)
+            return
+        # Otherwise (non-swap route, or the swap download hasn't run) the CATALOG
+        # slug whose compose we reproduce: the Route-C sibling, else the
+        # profile-like the fit-check was run against.  We do NOT fall back to a
+        # generic profile — if neither resolves, this route has no servable
+        # target yet.
         slug = (
             getattr(self._last_byo, "sibling_slug", "")
             or getattr(self._last_byo, "profile_like", "")

@@ -812,8 +812,8 @@ def run_pull(
                             f" NOTE: this arch is the curated '{_slugs[0]}' "
                             f"({_row.get('family')}) — generic derive can't fit it, "
                             f"but the curated path can: clone that model's compose and "
-                            f"point --model at your weights (use a quantized + MTP "
-                            f"variant; the bf16 base won't fit and lacks the MTP head). "
+                            f"point --model at your weights (use a quantized "
+                            f"variant; the bf16 base is too large to fit). "
                             f"See docs/BRING_YOUR_OWN.md → 'Swap a curated model for a "
                             f"fine-tune / abliterated variant'."
                         )
