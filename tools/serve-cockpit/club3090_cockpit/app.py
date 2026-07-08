@@ -5054,6 +5054,32 @@ def _byo_result_text(res: ByoResult) -> str:
     producer lane's ① Bring stage)."""
     if res.error:
         return f"[red]Fit-check failed:[/red] {res.error}"
+    # Route-C swap (a curated-arch fine-tune → serve via the sibling's recipe with
+    # the brought weights): the engine verdict is "no-fit-model" because the generic
+    # fit-math can't PRICE a curated-hybrid arch — but the OUTCOME is servable. A red
+    # "not eligible / no-fit-model" headline + "② Serve armed with <sibling>" read as
+    # a self-contradicting dead-end (and named the wrong model). Reframe: green
+    # "✓ Servable", the [D] next-step names the BROUGHT model, raw verdict dimmed for
+    # debugging. Non-swap cases (eligible / Route A / B / plain no-fit) fall through.
+    if str(res.route).upper() == "C" and res.sibling_slug:
+        brought = res.repo.rsplit("/", 1)[-1]
+        mtp = ("[dim]MTP dropped — no head in this checkpoint[/dim]"
+               if res.drop_spec_config
+               else "[dim]MTP kept — head present[/dim]")
+        return "\n".join([
+            f"  [bold]{res.repo}[/bold]",
+            f"  [green]✓ Servable[/green] — a fine-tune of [green]{res.sibling_slug}[/green]",
+            f"  [bold]arch[/bold]  [cyan]{res.arch or '—'}[/cyan]",
+            "",
+            f"  [dim]How it serves:[/dim] reuses [green]{res.sibling_slug}[/green]'s proven "
+            "recipe (chat template, tools, spec-dec) with your weights.",
+            f"  {mtp}",
+            "",
+            f"  [green]→ Press[/green] [bold]\\[D][/bold] [green]to download + serve[/green] "
+            f"[bold]{brought}[/bold]",
+            f"  [dim]engine verdict: {res.fit_verdict or 'no-fit-model'} → Route-C swap "
+            "(generic fit-math can't price a curated-hybrid arch)[/dim]",
+        ])
     lines: list[str] = []
     elig = "[green]eligible[/green]" if res.eligible else "[red]not eligible[/red]"
     lines.append(f"  [bold]{res.repo}[/bold]   {elig}")
