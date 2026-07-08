@@ -15,33 +15,32 @@
 #              NVFP4 *KV* deliberately NOT used:
 #              consumer Blackwell has no FP4 FMHA (rtx-5090.yml, vllm#43562).
 #   Vision:    yes (full VLM)
-#   Max ctx:   98K default (98304 = 12×8192) on 5090 32 GB. The first 5090
-#              validation (#613) proved 131K boots and short-decodes, but is too
-#              tight for long-prefill GDN scratch: the engine OOMed trying to
-#              allocate 94 MiB with only ~60 MiB free. Bigger cards raise via env:
-#                GB10 (128 GB unified): MAX_MODEL_LEN=262144 → 33.7 GB (29% of
-#                  budget). Even 4 streams @ full 262K → 59.4 GB (50%) — the
-#                  GB10 is THE single-card home for this slug.
-#                H100 (80 GB): 262144 → 33.7 GB (46% of budget).
-#                RTX 6000 Pro (96 GB): 262144 fits similarly.
+#   Max ctx:   65K default (65536 = 8×8192) + util 0.85 on 5090 32 GB — the config
+#              that keeps MTP AND fits. #613: MTP-on OOMed at 98K (the KV
+#              reservation left no room for the draft head + cudagraphs + GDN
+#              prefill scratch); dropping ctx to 65K frees that room. Confirmed on
+#              two 5090s (@guybrush01 + @paulp83): verify-stress all-pass, 131/155
+#              TPS decode, MTP accept ~3.2, ~1.4 GB VRAM free. SPEC=off trades MTP
+#              for more ctx (81K/98K @ 71 TPS). Bigger cards raise via env (MTP on):
+#                GB10 (128 GB unified): MAX_MODEL_LEN=262144 → the single-card home.
+#                H100 (80 GB) / RTX 6000 Pro (96 GB): 262144 fits similarly.
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    🧪 Experimental
 #   Best for:  27B-class Qwen with vision+tools on ONE Blackwell/Hopper card —
-#              5090 default is derated for long-prefill headroom
+#              5090 default 65K keeps MTP's ~2x (131/155 TPS); SPEC=off for max ctx
 # ---------------------------------------------------------------------------
 # ⚠️ AUTHORED BLIND — READ THIS FIRST.
 # The maintainer rig is Ampere sm_86 and CANNOT BOOT NVFP4: this compose is
-# community-validated only. First 5090 report (#613) passed verify-full and
-# short decode, then OOMed at 131K long prefill; the default is now 98K. If you
-# have a 5090 / H100 / GB10, YOU are the validation:
+# community-validated only. Two 5090s (#613 @guybrush01, #617 @paulp83) swept the
+# config space: MTP-on OOMs at 98K but PASSES at 65K + util 0.85 (verify-stress
+# all-pass, 131/155 TPS, MTP accept 3.2) — that's now the default. SPEC=off is the
+# max-ctx fallback (81K/98K @ 71 TPS) and the tight-system-RAM path (MTP's draft
+# load OOM-kills a 28 GB host — #617). If you have a 5090 / H100 / GB10, YOU are
+# the validation:
 #   1. bash scripts/switch.sh vllm/qwen-27b-single-nvfp4
-#   2. bash scripts/verify-full.sh
-#   3. bash scripts/rebench-full.sh
-#   4. Report numbers or the boot failure via the numbers-from-your-rig
-#      template (or the c3 funnel). "It crashed here" is a useful result.
-# Known-unknowns (report either way): 98K stress/soak stability on 5090; Cliff 2
-# (DeltaNet GDN >50K single-prompt — 131K failed on the first 5090 report;
-# VLLM_ENFORCE_EAGER=1 and/or no-MTP are the mitigations if 98K still fails).
+#   2. bash scripts/verify-full.sh   (+ verify-stress + rebench-full)
+#   3. Report via the numbers-from-your-rig template (or the c3 funnel).
+# Still owed: an 8-pack quality run (stays 🧪 until it lands).
 #
 # Run (Blackwell/Hopper only):
 #   cd <repo>/models/qwen3.6-27b/vllm/compose
@@ -135,9 +134,9 @@ services:
       - --tensor-parallel-size
       - "${TP:-1}"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-98304}"
+      - "${MAX_MODEL_LEN:-65536}"
       - --gpu-memory-utilization
-      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - "${GPU_MEMORY_UTILIZATION:-0.85}"
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
