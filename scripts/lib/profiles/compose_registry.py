@@ -244,12 +244,12 @@ COMPOSE_REGISTRY = {
     "vllm/qwen-27b-single-nvfp4": _entry(
         model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
-        tp=1, max_ctx=98304, max_num_seqs=1, mem_util=0.92,
+        tp=1, max_ctx=65536, max_num_seqs=1, mem_util=0.85,
         compose_path="models/qwen3.6-27b/vllm/compose/single/nvfp4/mtp.yml",
         default_port=8076, required_sm=9.0,
         kvcalc_key="qwen3.6-27b:nvfp4-single",
         status="experimental",
-        status_note="Qwen3.6-27B NVFP4 (nvidia modelopt MIXED_PRECISION: NVFP4 FFN + FP8 attention + FP8 KV scales + unquantized MTP head), single Hopper/Blackwell card (required_sm=9.0 — H100 / 5090 / RTX 6000 Pro / GB10; NOT Ampere). 🧪 AUTHORED BLIND on the sm_86 dev rig, community-validated on a 5090 in #613: verify-full passed and short decode worked (~131 TPS narrative / ~155 TPS code), but the original 131K default OOMed in long-prefill GDN scratch with only ~60 MiB free. Ships 98K (98304 = 12×8192) on 32 GB cards for scratch headroom; 80 GB+ cards raise MAX_MODEL_LEN toward 262K. MTP n=3 on (head is unquantized in the checkpoint); fp8/e4m3 KV runs scale=1.0 (FP8 KV declared in hf_quant_config, NO k_scale/v_scale tensors shipped — index-verified, the #594-tied regime). If 98K stress still fails, retry no-MTP and report. ~2.5x smaller than bf16, NVIDIA MMLU-Pro/GSM8K deltas <1% vs bf16 per the model card. No DEFAULTS row (opt-in only).",
+        status_note="Qwen3.6-27B NVFP4 (nvidia modelopt MIXED_PRECISION: NVFP4 FFN + FP8 attention + FP8 KV scales + unquantized MTP head), single Hopper/Blackwell card (required_sm=9.0 — H100 / 5090 / RTX 6000 Pro / GB10; NOT Ampere). 🧪 AUTHORED BLIND on the sm_86 dev rig, community-validated on two 5090s (#613 @guybrush01 + #617 @paulp83). Root cause of the original OOM was MTP, not ctx: MTP-on at 98K left no room for the draft head + cudagraphs + GDN prefill scratch. Default is now MTP-on + MAX_MODEL_LEN=65536 + mem_util=0.85 — the config that keeps MTP's ~2x AND fits (verify-stress all-pass, 131/155 TPS decode, MTP accept ~3.2, ~1.4 GB VRAM free @ 65K). SPEC=off trades MTP for more ctx (81K/98K @ 71 TPS) and is the tight-system-RAM path (MTP's draft load OOM-kills a 28 GB host, #617). 80 GB+ cards raise MAX_MODEL_LEN toward 262K with MTP on. fp8/e4m3 KV runs scale=1.0 (FP8 KV declared in hf_quant_config, NO k_scale/v_scale tensors shipped — index-verified, the #594-tied regime). ~2.5x smaller than bf16, NVIDIA MMLU-Pro/GSM8K deltas <1% vs bf16 per the model card. 8-pack quality owed (stays 🧪). No DEFAULTS row (opt-in only).",
     ),
     "vllm/qwen-27b-dual-nvfp4": _entry(
         model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single",

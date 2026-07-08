@@ -437,6 +437,31 @@ baselines:
         submitted_by: "ryanmpelletier"  # + MoppelMat (#625)
         tier: submitted
 
+  vllm/qwen-27b-single-nvfp4:
+    # Cross-rig submission only — NVFP4 needs Hopper/Blackwell; our sm_86 rig
+    # can't run it. Community-validated on two 5090s (#613, #617).
+    submissions:
+      1x5090-pcie:
+        # #613 (@guybrush01, 5090, 185 GB RAM): the config sweep pinned MTP as the
+        # OOM cause — MTP-on OOMs at 98K, but PASSES at 65K + util 0.85. THIS is the
+        # 65K + MTP-on WIN: verify-stress all-pass (60K/90K needle clean, above-ctx
+        # cleanly rejected), MTP accept ~3.2 (draft ~74%), ~1.4 GB VRAM free — ~2x
+        # the SPEC=off throughput (71/71). Drove the default re-derate (98K/util-0.92
+        # → 65K/util-0.85, MTP kept). SPEC=off is the max-ctx (81K/98K @ 71) + tight-
+        # system-RAM path (@paulp83 28 GB host OOM-kills MTP load, #617). 8-pack owed.
+        narr_tps: 129.16
+        code_tps: 155.29
+        ttft_ms: 76
+        prefill_tps: { 10k: 4437 }
+        ctx_validated: { tokens: 58569, niah: "clean@58K (65K max-ctx)" }
+        date: 2026-07-08
+        engine_pin: "vllm/vllm-openai:v0.24.0"
+        rig: "1x5090-pcie"
+        power_cap_w: [600]   # 5090 uncapped (default=max=600 W); single-card → no allreduce
+        source: "https://github.com/noonghunna/club-3090/issues/613"  # + #617 (host-RAM axis)
+        submitted_by: "guybrush01"
+        tier: submitted
+
   vllm/qwen-35b-a3b-single-nvfp4:
     # Cross-rig submission only — NVFP4 needs Hopper/Blackwell; our sm_86 rig
     # can't run it. FIRST community validation of the whole NVFP4 tier.
