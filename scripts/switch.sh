@@ -1024,6 +1024,9 @@ up_variant() {
     # No-op for composes without an LMCache-l1-gb metadata header.
     preflight_lmcache_ram "${full_dir}/${file}" || exit 1
     preflight_kv_format_hint "${full_dir}/${file}" || true
+    # Single-card util-override guard — runs even under --force (the nvfp4 slug
+    # launches with --force, and util=0.92 on one card OOMs the tool-prefill; #617).
+    preflight_single_card_util "${full_dir}/${file}" "$v" || true
   fi
   gpu_preflight
 

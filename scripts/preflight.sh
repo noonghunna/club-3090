@@ -1371,6 +1371,42 @@ _driver_cuda_version() {
   printf '%s' "$v"
 }
 
+# preflight_single_card_util <compose_file> [variant]
+# Advisory WARN (never blocks; runs even under --force) when the user raises
+# GPU_MEMORY_UTILIZATION above the compose's validated default on a SINGLE-CARD
+# (TP<=1) config. On one GPU a higher util shrinks the free VRAM a large
+# tool-response prefill needs for its activation peak, so vLLM OOMs mid-prefill
+# even though boot succeeds (verify-stress step 2/8). Two 5090 testers hit this
+# by setting util=0.92 on the nvfp4 slug whose validated default is 0.85 (#617).
+# No-op unless the user overrode the env AND the compose ships a
+# `GPU_MEMORY_UTILIZATION:-<default>` (so it never fires for non-vLLM engines,
+# dual/multi-card, or a plain default run).
+preflight_single_card_util() {
+  local compose_file="$1" variant="${2:-}"
+  [[ -f "$compose_file" ]] || return 0
+  local user_util="${GPU_MEMORY_UTILIZATION:-}"
+  [[ -n "$user_util" ]] || return 0                 # only when explicitly overridden
+
+  local tp=""
+  if declare -F compose_meta_get >/dev/null 2>&1; then
+    tp="$(compose_meta_get "$compose_file" tensor-parallel 2>/dev/null || true)"
+  fi
+  [[ "$tp" =~ ^[0-9]+$ ]] || return 0               # unknown topology → stay quiet
+  (( tp <= 1 )) || return 0                          # single-card only
+
+  local default_util
+  default_util="$(command grep -oE 'GPU_MEMORY_UTILIZATION:-[0-9.]+' "$compose_file" | head -1 | sed -E 's/.*:-//')"
+  [[ -n "$default_util" ]] || return 0               # compose ships no util default
+
+  if awk -v u="$user_util" -v d="$default_util" 'BEGIN{exit !((u+0) > (d+0))}'; then
+    echo "[preflight] WARN:  GPU_MEMORY_UTILIZATION=${user_util} exceeds ${variant:-this config}'s validated single-card default of ${default_util}." >&2
+    echo "[preflight]        On one GPU a higher util steals the headroom a large tool-response prefill needs for its" >&2
+    echo "[preflight]        activation peak — vLLM can OOM mid-prefill (verify-stress step 2/8) even though boot succeeds." >&2
+    echo "[preflight]        Fix: grow context via MAX_MODEL_LEN and keep GPU_MEMORY_UTILIZATION <= ${default_util}. (#617)" >&2
+  fi
+  return 0
+}
+
 preflight_ik_llama_image() {
   local variant="${1:-}"
   [[ "$variant" == ik-llama/* ]] || return 0
