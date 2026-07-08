@@ -195,14 +195,51 @@ def _load_kv_calc():
 
 
 # ---------------------------------------------------------------------------
-# HF_HOME resolution (--hf-home > $HF_HOME > $XDG_CACHE_HOME/huggingface > ~)
+# HF_HOME resolution
+#   --hf-home > $HF_HOME > $MODEL_DIR/.cache/huggingface > $XDG_CACHE_HOME/hf > ~
 # ---------------------------------------------------------------------------
+def _model_dir_from_env_or_dotenv() -> Optional[str]:
+    """MODEL_DIR from the environment, else parsed from the repo `.env` (the
+    SAME value switch.sh / launch.sh / c3 resolve). `None` if set in neither.
+    Read with `encoding="utf-8"` (non-UTF-8-locale rigs, #599)."""
+    env = os.environ.get("MODEL_DIR")
+    if env:
+        return env
+    try:
+        for raw in (REPO_ROOT / ".env").read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines():
+            s = raw.strip().rstrip("\r")
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            if s.startswith("export "):
+                s = s[len("export "):]
+            key, _, val = s.partition("=")
+            if key.strip() == "MODEL_DIR":
+                val = val.strip().strip('"').strip("'")
+                return val or None
+    except OSError:
+        pass
+    return None
+
+
 def resolve_hf_home(hf_home: Optional[str] = None) -> Path:
+    """HF_HOME precedence: `--hf-home > $HF_HOME > $MODEL_DIR/.cache/huggingface
+    > $XDG_CACHE_HOME/huggingface > ~/.cache/huggingface`.
+
+    The MODEL_DIR step keeps a bare `pull.sh <repo>` — run with only `.env`'s
+    MODEL_DIR set and no explicit HF_HOME — on the MODEL DISK, instead of
+    silently falling to `~/.cache` on root (the footgun that misplaced a brought
+    model's weights, #617-followup). c3 is unaffected: it sets HF_HOME
+    explicitly, which still wins here."""
     if hf_home:
         return Path(hf_home).expanduser()
     env = os.environ.get("HF_HOME")
     if env:
         return Path(env).expanduser()
+    model_dir = _model_dir_from_env_or_dotenv()
+    if model_dir:
+        return Path(model_dir).expanduser() / ".cache" / "huggingface"
     xdg = os.environ.get("XDG_CACHE_HOME")
     if xdg:
         return Path(xdg).expanduser() / "huggingface"
