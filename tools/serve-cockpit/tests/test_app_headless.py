@@ -1814,6 +1814,55 @@ class TestBringFunnelStagedReveal:
             assert repo not in app._active_bring_download()
 
     @pytest.mark.asyncio
+    async def test_bring_download_disk_detected_suppresses_noops_cancels(
+        self, monkeypatch, tmp_path
+    ):
+        """#617 disk-truth: a download detected ON DISK (in-memory tracker EMPTY
+        — a prior c3 session or a bare pull.sh holds the pull-dir lock) still
+        shows '⏳ downloading', no-ops a fresh [D] instead of stacking a
+        duplicate, and [k] kills the lock holder PID."""
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_bring(pilot)
+            repo, prof = "unsloth/Qwen3-27B-abliterated", "vllm/dual"
+            # disk says in-progress (pid 424242); the in-memory tracker stays EMPTY
+            monkeypatch.setattr(
+                app._data, "bring_download_in_progress",
+                lambda r, expected_gb=None: (
+                    {"in_progress": True, "pid": 424242, "pct": 42}
+                    if r == repo else None
+                ),
+            )
+            app.run_byo_check(repo, prof)
+            await _settle(pilot)
+            line = app.query_one("#lane-bring-weights-line", Static)
+            assert "downloading" in str(line.render())     # disk-detected, tracker empty
+            assert not app._active_bring_download()
+
+            # fresh [D] must NOT launch a worker (disk-guard blocks the duplicate)
+            app._active_mode = 1
+            launched = {"n": 0}
+            monkeypatch.setattr(
+                app, "run_bring_download_worker",
+                lambda *a, **k: launched.__setitem__("n", launched["n"] + 1),
+            )
+            app.action_bring_download()
+            await _settle(pilot)
+            assert launched["n"] == 0
+            assert not app._active_bring_download()
+
+            # [k] kills the disk holder PID (no in-memory handle to cancel)
+            killed = {"pid": None}
+            monkeypatch.setattr(
+                app, "_kill_bring_pid",
+                lambda pid: killed.__setitem__("pid", pid),
+            )
+            app.action_bring_cancel_download()
+            await _settle(pilot)
+            assert killed["pid"] == 424242
+
+    @pytest.mark.asyncio
     async def test_inspect_error_reveals_nothing(self):
         responses = fake_responses(
             **{"deriver.py --inventory": ok(json.dumps(

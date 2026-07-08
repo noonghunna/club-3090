@@ -6400,7 +6400,13 @@ class CockpitApp(App):
         # a live download, so the shared "k" falls through to serving_stop
         # everywhere else (mode 1 is producer-only, so no surface leak).
         if action == "bring_cancel_download":
-            return self._active_mode == 1 and bool(self._active_bring_download())
+            # Cancelable when this session started a download (tracker) OR a
+            # disk-truth download lock is live for the fit-checked repo (a
+            # prior session / bare pull.sh — the tracker can't see it). #617.
+            return self._active_mode == 1 and (
+                bool(self._active_bring_download())
+                or self._bring_disk_download()[1] is not None
+            )
 
         # Arrow-key focus descent (tab bar ↔ primary list).  These are gated here —
         # BEFORE _ALWAYS_ON — so the result is fully controlled (neither is in
@@ -7769,7 +7775,11 @@ class CockpitApp(App):
         # #617: a re-run fit-check (or refresh) must SEE an in-flight [D] download
         # for this repo — render "⏳ downloading" + suppress the [D] re-offer,
         # rather than the stale disk verdict that invites a second 20+ GB fetch.
-        downloading = repo in self._active_bring_download()
+        # Two sources: the in-memory tracker (this session) OR disk truth (the
+        # pull-dir download lock) — the latter survives a c3 restart AND sees a
+        # download started outside this session (a bare pull.sh --apply-swap).
+        disk_dl = self._data.bring_download_in_progress(repo)
+        downloading = (repo in self._active_bring_download()) or bool(disk_dl)
         if lane_pane is not None:
             lane_pane.populate(res, weights_present, downloading=downloading)
         # N9 — carry the fit-check result forward: pre-arm ② Serve with the
@@ -7787,9 +7797,11 @@ class CockpitApp(App):
             if getattr(res, "error", ""):
                 lane_pane.set_weights_line("")
             elif downloading:
+                pct = (disk_dl or {}).get("pct")
+                pcts = f" (resuming {pct}%)" if isinstance(pct, int) else ""
                 lane_pane.set_weights_line(
-                    "  [cyan]⏳ downloading…[/cyan] [dim](in progress — leave it "
-                    "running; \\[k] cancels)[/dim]"
+                    f"  [cyan]⏳ downloading{pcts}…[/cyan] [dim](in progress — leave "
+                    "it running; \\[k] cancels)[/dim]"
                 )
             elif weights_present:
                 lane_pane.set_weights_line(
@@ -7816,6 +7828,39 @@ class CockpitApp(App):
             self._bring_downloads = d
         return d
 
+    def _bring_disk_download(self):
+        """``(repo, info)`` when a disk-truth download lock is live for the
+        CURRENTLY fit-checked repo, else ``(None, None)``.  Lets [k] cancel a
+        download this session's in-memory tracker can't see — one started
+        before a c3 restart or by a bare ``pull.sh --apply-swap`` (#617)."""
+        byo = self._last_byo
+        repo = getattr(byo, "repo", "") if byo is not None else ""
+        if not repo:
+            return None, None
+        info = self._data.bring_download_in_progress(repo)
+        return (repo, info) if info is not None else (None, None)
+
+    def _kill_bring_pid(self, pid) -> None:
+        """Best-effort kill of a disk-detected download holder (its PID from
+        the pull-dir lock).  Tries the process GROUP first (takes the `hf`
+        child too), then the bare PID.  A leaked lock self-heals via the
+        downloader's stale-reclaim regardless."""
+        import os as _os
+        import signal as _sig
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            return
+        if pid <= 0:
+            return
+        try:
+            _os.killpg(_os.getpgid(pid), _sig.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                _os.kill(pid, _sig.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+
     def action_bring_download(self) -> None:
         """[D] — §2b-6: download the fit-checked repo's weights (the REAL
         pull.sh run — Path B fetch into the pull dir).  Guarded on a successful
@@ -7837,6 +7882,17 @@ class CockpitApp(App):
         if repo in self._active_bring_download():
             self.notify(
                 f"Already downloading {repo} — press [k] to cancel.",
+                title="Download", timeout=4,
+            )
+            return
+        # Disk-truth guard: a download from a PRIOR c3 session or a bare
+        # pull.sh holds the pull-dir lock but isn't in this session's tracker —
+        # still must not stack a duplicate (#617).  [k] cancels it.
+        _disk = self._data.bring_download_in_progress(repo)
+        if _disk is not None:
+            self.notify(
+                f"Already downloading {repo} (pid {_disk.get('pid')}) — "
+                "press [k] to cancel.",
                 title="Download", timeout=4,
             )
             return
@@ -7864,11 +7920,19 @@ class CockpitApp(App):
         cancel).  check_action gates this to mode 1 + an active download so the
         shared [k] falls through to serving_stop everywhere else."""
         dls = self._active_bring_download()
-        if not dls:
-            return
-        repo = next(iter(dls))
-        dls.pop(repo, None)
-        self._cancel_bring_download()
+        if dls:
+            # In-session download → cancel via the runner (SIGINT→TERM→KILL).
+            repo = next(iter(dls))
+            dls.pop(repo, None)
+            self._cancel_bring_download()
+        else:
+            # Disk-detected download (prior session / bare pull.sh) → kill the
+            # lock holder PID directly; the downloader's stale-reclaim frees the
+            # lock. (#617)
+            repo, info = self._bring_disk_download()
+            if info is None:
+                return
+            self._kill_bring_pid(info.get("pid"))
         try:
             self.query_one("#lane-bring-pane", LaneBringPane).set_weights_line(
                 "  [yellow]download cancelled[/yellow] — press [bold]\\[D][/bold] to restart"

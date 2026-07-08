@@ -79,9 +79,11 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -145,6 +147,60 @@ def pull_dir(hf_home: Path, slug: str) -> Path:
 def incomplete_dir(hf_home: Path, slug: str) -> Path:
     """The atomic-staging `.incomplete` tree (deleted on ANY failure)."""
     return pull_dir(hf_home, slug) / ".incomplete"
+
+
+# A lock dir that exists but has NO `pid` file yet is a holder mid-acquire
+# (mkdir done, pid write imminent) — refuse rather than reclaim it, so two racing
+# callers can't both proceed. Only reclaim a pidless lock OLDER than this (a
+# genuinely broken/abandoned one). The real mkdir→pid-write gap is microseconds;
+# 10s is a safe margin against a slow filesystem.
+_LOCK_ACQUIRE_GRACE_S = 10.0
+
+
+def download_lock_dir(hf_home: Path, slug: str) -> Path:
+    """The atomic per-repo download lock (`mkdir` = acquire). Its `pid` file
+    holds the live holder's PID + UTC start time so a 2nd concurrent
+    `download_model` for the SAME slug can REFUSE (holder alive) vs RECLAIM
+    (holder dead). Without it, repeated ① Bring [D] presses each spawned a
+    fresh download that rmtree'd + re-fetched the shared `.incomplete`,
+    racing 5-deep (club-3090 #617)."""
+    return pull_dir(hf_home, slug) / ".download.lock"
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if `pid` is a live process. Signal 0 probes without delivering."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True   # exists, just not ours to signal
+    except OSError:
+        return False
+    return True
+
+
+def read_active_download(hf_home: Path, slug: str) -> Optional[dict]:
+    """`{'pid': int, 'since': str}` if a LIVE download lock is held for `slug`;
+    `None` when there is no lock OR the lock is STALE (dead holder — a
+    crashed/killed download; the caller may reclaim it). A cheap stat, safe to
+    poll from the UI — this is the disk-truth an in-progress probe reads."""
+    pidf = download_lock_dir(hf_home, slug) / "pid"
+    try:
+        raw = pidf.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return None
+    if not raw:
+        return None
+    try:
+        pid = int(raw[0].strip())
+    except ValueError:
+        return None
+    if not _pid_alive(pid):
+        return None
+    return {"pid": pid, "since": raw[1].strip() if len(raw) > 1 else ""}
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +441,73 @@ class DiskError(RuntimeError):
 # THE download stage.
 # ---------------------------------------------------------------------------
 def download_model(einput, *, fetcher: Optional[Any] = None) -> DownloadResult:
+    """Public entry — serialize per-repo via an atomic pull-dir lock, then run
+    the verified fetch (`_download_model_impl`).
+
+    A 2nd concurrent `download_model` for the SAME slug is REFUSED with
+    `failure="in-progress"` (`.detail="pid=<N> since <T>"`) instead of racing
+    into — and rmtree-ing — the first's `.incomplete` staging (the club-3090
+    #617 five-duplicate-downloads bug). A STALE lock (dead holder: a crashed
+    or SIGKILL'd download that couldn't run `finally`) is reclaimed on the next
+    call, so a leaked lock self-heals — more robust than a signal trap (which a
+    SIGKILL skips anyway). The lock releases in `finally` on every normal /
+    exception return path."""
+    hf_home = Path(einput.hf_home)
+    slug = einput.slug
+    final_dir = pull_dir(hf_home, slug)
+    lock = download_lock_dir(hf_home, slug)
+
+    acquired = False
+    for _attempt in range(2):
+        try:
+            lock.mkdir(parents=True, exist_ok=False)   # atomic acquire
+            acquired = True
+            break
+        except FileExistsError:
+            active = read_active_download(hf_home, slug)
+            if active is not None:                     # live holder → refuse
+                return DownloadResult(
+                    ok=False, failure="in-progress", local_dir=str(final_dir),
+                    files=[],
+                    detail=f"pid={active['pid']} since {active['since']}",
+                )
+            # Not a LIVE holder. Reclaiming the WRONG case re-opens the dup race
+            # this lock closes, so split it: a pidless lock that's still FRESH is
+            # a holder mid-acquire (pid write imminent) → refuse, don't steal it.
+            # A pid-present-but-dead lock, or an old pidless one, is genuinely
+            # abandoned → reclaim.
+            if not (lock / "pid").exists():
+                try:
+                    fresh = (time.time() - lock.stat().st_mtime) < _LOCK_ACQUIRE_GRACE_S
+                except OSError:
+                    fresh = False
+                if fresh:                              # mid-acquire → refuse
+                    return DownloadResult(
+                        ok=False, failure="in-progress",
+                        local_dir=str(final_dir), files=[], detail="acquiring",
+                    )
+            _rmtree(lock)                              # dead/abandoned → reclaim
+        except OSError:
+            break
+    if not acquired:
+        return DownloadResult(
+            ok=False, failure="disk", local_dir=str(final_dir), files=[]
+        )
+    try:
+        (lock / "pid").write_text(
+            f"{os.getpid()}\n"
+            f"{datetime.now(timezone.utc).isoformat(timespec='seconds')}\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+    try:
+        return _download_model_impl(einput, fetcher=fetcher)
+    finally:
+        _rmtree(lock)
+
+
+def _download_model_impl(einput, *, fetcher: Optional[Any] = None) -> DownloadResult:
     """Fetch EXACTLY `deriver.download_set(api)`, etag-SHA-verify every
     `*.safetensors`, atomically stage into the CONTRACT-2 host `--model`
     dir. Returns the structured `DownloadResult` (== §6 capture-point-2
