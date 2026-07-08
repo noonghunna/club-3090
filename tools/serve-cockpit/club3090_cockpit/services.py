@@ -2198,23 +2198,25 @@ class CockpitData:
                 # sibling's --speculative-config method + num_speculative_tokens.
                 sm = _re.search(r'"method"\s*:\s*"([a-z0-9_]+)"', txt)
                 if sm:
-                    drafter = sm.group(1).upper()
+                    method = sm.group(1)
                     nm = _re.search(r'"num_speculative_tokens"\s*:\s*(\d+)', txt)
-                    out["SPEC_DRAFTER"] = f"{drafter} n={nm.group(1)}" if nm else drafter
+                    out["SPEC_METHOD"] = method                    # raw, e.g. "mtp"
+                    out["SPEC_N"] = nm.group(1) if nm else ""
+                    out["SPEC_DRAFTER"] = (
+                        f"{method.upper()} n={nm.group(1)}" if nm else method.upper())
         except Exception:
             pass
-        # KV dropdown options come from the ENGINE's supported set (not a generic
-        # vLLM list) — a vLLM pin, llama.cpp and ik-llama each support a different
-        # KV family.  The "✎ custom…" escape hatch reaches anything not listed
-        # (e.g. turboquant_4bit_nc, which v0.24.0 supports but the profile hasn't
-        # been widened to yet).
+        # KV + drafter dropdown options come from the ENGINE's supported set (not a
+        # generic vLLM list) — vLLM, llama.cpp, beellama each support a different
+        # family.  The "✎ custom…" hatch (KV) reaches anything not listed.
         out["KV_OPTIONS"] = self.engine_kv_formats(out["ENGINE"])
+        out["DRAFTER_OPTIONS"] = self.engine_drafters(out["ENGINE"])
         return out
 
-    def engine_kv_formats(self, engine: str) -> list:
-        """KV dtypes the ENGINE declares support for (its profile's
-        ``supported_kv_formats``).  Stdlib line-parse — the c3 path has no PyYAML.
-        Empty list → the caller uses a generic fallback."""
+    def _engine_yaml_list(self, engine: str, key: str) -> list:
+        """A top-level YAML list block (``key:`` then ``  - item``) from the
+        engine profile.  Stdlib line-parse — the c3 path has no PyYAML.  Empty
+        list → the caller uses a generic fallback."""
         out: list = []
         if not engine:
             return out
@@ -2223,7 +2225,7 @@ class CockpitData:
                  / "engines" / f"{engine}.yml")
             grab = False
             for ln in p.read_text(encoding="utf-8").splitlines():
-                if ln.strip().startswith("supported_kv_formats:"):
+                if ln.strip().startswith(f"{key}:"):
                     grab = True
                     continue
                 if grab:
@@ -2237,6 +2239,15 @@ class CockpitData:
         except Exception:
             pass
         return out
+
+    def engine_kv_formats(self, engine: str) -> list:
+        """KV dtypes the ENGINE declares support for (``supported_kv_formats``)."""
+        return self._engine_yaml_list(engine, "supported_kv_formats")
+
+    def engine_drafters(self, engine: str) -> list:
+        """Spec-dec drafters the ENGINE declares support for
+        (``supported_drafters`` — vLLM: mtp/mtp_assistant; beellama: dflash/…)."""
+        return self._engine_yaml_list(engine, "supported_drafters")
 
     def serve_generated(
         self, compose_path: str, overrides: Optional[dict[str, str]] = None

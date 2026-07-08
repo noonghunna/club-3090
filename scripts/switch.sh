@@ -100,6 +100,11 @@ if [[ -f "${ROOT_DIR}/.env" ]]; then
   done < "${ROOT_DIR}/.env"
   unset _env_line _env_key _env_val
 fi
+# #632 — surface a user engine-image pin (ik-llama / llama.cpp images are NOT
+# profile-injected, so a .env/shell pin is the only override path; echo it so a
+# wrong-image boot is never silent).  Fires only when actually set.
+[[ -n "${IK_LLAMA_IMAGE:-}" ]] && echo "[switch] ik-llama image pinned: ${IK_LLAMA_IMAGE}"
+[[ -n "${LLAMACPP_IMAGE:-}" ]] && echo "[switch] llama.cpp image pinned: ${LLAMACPP_IMAGE}"
 
 # Surface the resolved MODEL_DIR + its source so the precedence is unambiguous
 # (the exact confusion behind #425 / #187). Unset → the compose's built-in

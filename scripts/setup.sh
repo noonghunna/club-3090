@@ -622,7 +622,11 @@ download_weight_key() {
   _verify_downloaded_files "$WEIGHT_REPO" "$WEIGHT_SUBDIR" "$WEIGHT_VERIFY_GLOB" "${WEIGHT_REVISION:-main}"
 }
 
-VERIFY_GLOB="${VERIFY_GLOB_OVERRIDE:-*.safetensors}"
+# #634 — honour the PRIMARY recipe's verify_glob (set by load_weight_recipe →
+# line 100, e.g. "*.gguf" for GGUF keys), NOT a re-hardcoded *.safetensors, or
+# every GGUF primary fetch (WEIGHTS=gguf/iq4ks) fails verify despite a good
+# download.  An explicit VERIFY_GLOB_OVERRIDE still wins.
+VERIFY_GLOB="${VERIFY_GLOB_OVERRIDE:-${VERIFY_GLOB}}"
 _hf_download_repo "${MODEL_REPO}" "${MODEL_SUBDIR}" "${GGUF_FILES}" "${MODEL_REVISION:-}"
 _verify_downloaded_files "${MODEL_REPO}" "${MODEL_SUBDIR}" "${VERIFY_GLOB}" "${MODEL_REVISION:-main}"
 

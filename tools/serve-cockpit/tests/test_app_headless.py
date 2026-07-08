@@ -10494,6 +10494,31 @@ class TestProducerLaneHandoff:
             assert pane.collect_overrides()["KV_CACHE_DTYPE"] == "turboquant_4bit_nc"
 
     @pytest.mark.asyncio
+    async def test_serve_override_spec_selects_drafter_method(self, monkeypatch, tmp_path):
+        # The spec dropdown VALUE is the drafter method; collect maps method →
+        # SPEC=on + DRAFTER_METHOD, and "off" → SPEC=off (no DRAFTER_METHOD).
+        from textual.widgets import Select as _S
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 48)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            pane = app.query_one("#lane-serve-pane", LaneServePane)
+            sel = pane.query_one("#ov-spec", _S)
+            # simulate the engine-driven drafter options, then switch the type
+            sel.set_options([("MTP n=3", "mtp"),
+                             ("mtp_assistant", "mtp_assistant"),
+                             ("off — no spec-dec", "off")])
+            sel.value = "mtp_assistant"
+            ovr = pane.collect_overrides()
+            assert ovr["SPEC"] == "on" and ovr["DRAFTER_METHOD"] == "mtp_assistant"
+            sel.value = "off"
+            ovr2 = pane.collect_overrides()
+            assert ovr2["SPEC"] == "off" and "DRAFTER_METHOD" not in ovr2
+
+    @pytest.mark.asyncio
     async def test_serve_armed_route_c_serves_your_weights(self, monkeypatch, tmp_path):
         # ② Serve armed for a Route-C brought model reflects the TRUTH: serves
         # YOUR weights via the sibling recipe — NOT a catalog reproduction, and no
