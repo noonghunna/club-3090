@@ -5136,6 +5136,15 @@ def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None) -> 
     return "\n".join(lines)
 
 
+# ② Serve override-editor dropdown presets (loose validation; dropdowns to prevent
+# typos — the resolved slug's own default is folded in at arm-time if it's not here).
+_OV_CTX = ["16384", "32768", "65536", "98304", "131072", "196608", "262144"]
+_OV_KV = ["fp8_e5m2", "fp8_e4m3", "turboquant_4bit_nc", "turboquant_3bit_nc",
+          "int8_per_token_head", "bf16"]
+_OV_UTIL = ["0.80", "0.85", "0.90", "0.92", "0.95"]
+_OV_SPEC = ["on", "off"]
+
+
 class LaneServePane(Container):
     """② Serve — generate a minimal compose for the resolved CATALOG profile, then
     serve it (untested) through the reconcile-gated path (R3b-1, the critical new
@@ -5173,6 +5182,16 @@ class LaneServePane(Container):
         color: $text-muted;
         margin-top: 1;
     }
+    LaneServePane #lane-serve-overrides {
+        height: auto;
+        margin-top: 1;
+        border: round $primary-darken-2;
+        padding: 0 1;
+    }
+    LaneServePane #lane-serve-ov-title { margin-bottom: 1; }
+    LaneServePane .ov-row { height: 3; margin-bottom: 0; }
+    LaneServePane .ov-lbl { width: 12; content-align: left middle; height: 3; }
+    LaneServePane .ov-row Input, LaneServePane .ov-row Select { width: 1fr; }
     """
 
     def compose(self) -> ComposeResult:
@@ -5193,21 +5212,52 @@ class LaneServePane(Container):
             "[/yellow][/dim]",
             id="lane-serve-body",
         )
+        # Override editor — revealed (populated) only for a Route-C brought model
+        # with weights on disk (set_armed).  Values ride on the serve's plan.env →
+        # the compose's ${VAR} at up-time (no re-emit).
+        yield Vertical(
+            Label("[bold]Override before serve[/bold] [dim](optional · defaults from the "
+                  "resolved slug)[/dim]", id="lane-serve-ov-title"),
+            Horizontal(Label("served as", classes="ov-lbl"),
+                       Input(id="ov-served-name"), classes="ov-row"),
+            Horizontal(Label("ctx", classes="ov-lbl"),
+                       Select([(v, v) for v in _OV_CTX], id="ov-ctx", allow_blank=False),
+                       classes="ov-row"),
+            Horizontal(Label("KV cache", classes="ov-lbl"),
+                       Select([(v, v) for v in _OV_KV], id="ov-kv", allow_blank=False),
+                       classes="ov-row"),
+            Horizontal(Label("spec-dec", classes="ov-lbl"),
+                       Select([(v, v) for v in _OV_SPEC], id="ov-spec", allow_blank=False),
+                       classes="ov-row"),
+            Horizontal(Label("VRAM util", classes="ov-lbl"),
+                       Select([(v, v) for v in _OV_UTIL], id="ov-util", allow_blank=False),
+                       classes="ov-row"),
+            id="lane-serve-overrides", classes="funnel-hidden",
+        )
         yield Label(
-            "[dim]\\[⏎] generate + preview + serve (reconcile-gated · untested)[/dim]",
+            "[dim]\\[⏎] serve with the values above (reconcile-gated · 👤 untested)[/dim]",
             id="lane-serve-hint",
         )
 
     def set_status(self, text: str) -> None:
         self.query_one("#lane-serve-body", Static).update(text)
 
-    def set_armed(self, byo: "Optional[ByoResult]") -> None:
+    def set_armed(
+        self, byo: "Optional[ByoResult]",
+        overrides_defaults: Optional[dict] = None,
+    ) -> None:
         """N9 — pre-arm ② Serve from the cached ① Bring fit-check: show the
         resolved servable catalog target so ⏎ here serves it WITHOUT re-entering
         ① Bring.  Pure render off the cached ByoResult (no I/O).  When there's no
-        usable fit-check yet, restore the calm "run ① Bring first" placeholder."""
+        usable fit-check yet, restore the calm "run ① Bring first" placeholder.
+
+        For a Route-C brought model, ``overrides_defaults`` (from
+        ``serve_override_defaults``) pre-fills + reveals the override editor;
+        other routes hide it (the editor rides the swap compose's ${VAR} env)."""
         body = self.query_one("#lane-serve-body", Static)
+        ov = self.query_one("#lane-serve-overrides", Vertical)
         if byo is None or getattr(byo, "error", ""):
+            ov.add_class("funnel-hidden")
             body.update(
                 "[dim]Stage ② of the Bring & Validate pipeline.\n"
                 "\n"
@@ -5220,6 +5270,11 @@ class LaneServePane(Container):
         sibling = getattr(byo, "sibling_slug", "")
         repo = getattr(byo, "repo", "") or "—"
         brought = repo.rsplit("/", 1)[-1]
+        if route == "C" and sibling and overrides_defaults:
+            self._populate_overrides(overrides_defaults)
+            ov.remove_class("funnel-hidden")
+        else:
+            ov.add_class("funnel-hidden")
         if route == "C" and sibling:
             # #628/#630 — a Route-C fine-tune serves YOUR brought weights via the
             # sibling's proven recipe (chat-template · tools · spec-dec), NOT a
@@ -5260,6 +5315,59 @@ class LaneServePane(Container):
                     "fit-check found no sibling/profile slug."
                 )
         body.update("\n".join(lines))
+
+    def _populate_overrides(self, d: dict) -> None:
+        """Pre-fill the editor from the resolved slug's defaults.  The slug's own
+        value is folded into each dropdown if it isn't already a preset (so the
+        default is always selectable — loose validation, no typo surface)."""
+        try:
+            self.query_one("#ov-served-name", Input).value = str(d.get("SERVED_NAME", ""))
+        except Exception:
+            pass
+        for wid, key, presets in (
+            ("#ov-ctx", "MAX_MODEL_LEN", _OV_CTX),
+            ("#ov-kv", "KV_CACHE_DTYPE", _OV_KV),
+            ("#ov-spec", "SPEC", _OV_SPEC),
+            ("#ov-util", "GPU_MEMORY_UTILIZATION", _OV_UTIL),
+        ):
+            try:
+                sel = self.query_one(wid, Select)
+                val = str(d.get(key, "")).strip()
+                opts = list(presets)
+                if val and val not in opts:
+                    opts = [val] + opts
+                sel.set_options([(o, o) for o in opts])
+                sel.value = val if val in opts else opts[0]
+            except Exception:
+                pass
+
+    def collect_overrides(self) -> dict:
+        """Read the editor fields → env overrides for the serve.  Only non-empty
+        values are returned (empty = keep the compose's own default).  Returns
+        ``{}`` when the editor is hidden (non-Route-C serve — no override surface)."""
+        out: dict = {}
+        try:
+            if self.query_one("#lane-serve-overrides", Vertical).has_class("funnel-hidden"):
+                return {}
+        except Exception:
+            return {}
+        try:
+            name = self.query_one("#ov-served-name", Input).value.strip()
+            if name:
+                out["SERVED_NAME"] = name
+        except Exception:
+            pass
+        for wid, key in (
+            ("#ov-ctx", "MAX_MODEL_LEN"), ("#ov-kv", "KV_CACHE_DTYPE"),
+            ("#ov-spec", "SPEC"), ("#ov-util", "GPU_MEMORY_UTILIZATION"),
+        ):
+            try:
+                v = self.query_one(wid, Select).value
+                if v not in (None, Select.BLANK):
+                    out[key] = str(v)
+            except Exception:
+                pass
+        return out
 
 
 class LanePromotePane(Container):
@@ -7568,8 +7676,9 @@ class CockpitApp(App):
         # N9 — carry the fit-check result forward: pre-arm ② Serve with the
         # resolved target so the producer pipeline flows ① → ② without re-entry.
         try:
+            armed_byo = res if not getattr(res, "error", "") else None
             self.query_one("#lane-serve-pane", LaneServePane).set_armed(
-                res if not getattr(res, "error", "") else None
+                armed_byo, self._armed_overrides_defaults(armed_byo)
             )
         except Exception:
             pass
@@ -9819,6 +9928,23 @@ class CockpitApp(App):
             )
         )
 
+    def _armed_overrides_defaults(self, byo) -> Optional[dict]:
+        """② Serve override-editor pre-fill for a Route-C armed model (else None,
+        which keeps the editor hidden — the editor rides the swap compose's env)."""
+        if (
+            byo is None
+            or getattr(byo, "error", "")
+            or str(getattr(byo, "route", "") or "").upper() != "C"
+            or not getattr(byo, "sibling_slug", "")
+        ):
+            return None
+        try:
+            return self._data.serve_override_defaults(
+                getattr(byo, "profile_like", ""), getattr(byo, "repo", "")
+            )
+        except Exception:
+            return None
+
     def _serve_generated_compose(self, compose_path: str) -> None:
         """Stage the serve of a GENERATED compose through the reconcile gate.
 
@@ -9829,7 +9955,14 @@ class CockpitApp(App):
         # entry staged by a PRIOR catalog serve so that stale slug can NEVER drive
         # a false "✓ serving <that model>" via _serve_slug_for / failure capture.
         self._staged_entry = None
-        plan = self._data.serve_generated(compose_path)
+        # ② Serve override editor — collect the field values (empty when the editor
+        # is hidden / non-Route-C).  They ride on plan.env → the compose's ${VAR}.
+        overrides = {}
+        try:
+            overrides = self.query_one("#lane-serve-pane", LaneServePane).collect_overrides()
+        except Exception:
+            overrides = {}
+        plan = self._data.serve_generated(compose_path, overrides or None)
         self.push_screen(ConfirmActionScreen(plan))
 
     # ── Phase 5 · Hook 2: Promote the BYO model to the catalog (design §3.5b) ──────────
@@ -9986,7 +10119,9 @@ class CockpitApp(App):
         # resolved target is shown WITHOUT re-entering ① Bring (the pipeline flows).
         if tab_id == "tab-serve":
             try:
-                self.query_one("#lane-serve-pane", LaneServePane).set_armed(self._last_byo)
+                self.query_one("#lane-serve-pane", LaneServePane).set_armed(
+                    self._last_byo, self._armed_overrides_defaults(self._last_byo)
+                )
             except Exception:
                 pass
         # Only respond to tabs that belong to the current mode's active panel.

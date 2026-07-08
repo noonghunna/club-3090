@@ -3700,3 +3700,30 @@ class TestStudioSidecarEnumeration:
         # No services/studio/* present → no sidecar rows (only any top-level dirs).
         names = CockpitData(tmp_path, runner=full_runner())._known_service_dirs()
         assert not any(n.startswith("studio-") for n in names)
+
+
+class TestServeOverrides:
+    """② Serve override editor — plan.env threading + compose-default pre-fill."""
+
+    def test_serve_generated_overrides_ride_plan_env(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        plan = cd.serve_generated("/tmp/x.yml", {
+            "MAX_MODEL_LEN": "65536", "SPEC": "off",
+            "KV_CACHE_DTYPE": "", "SERVED_NAME": "Foo",   # empty is dropped
+        })
+        assert plan.env["MAX_MODEL_LEN"] == "65536"
+        assert plan.env["SPEC"] == "off"
+        assert plan.env["SERVED_NAME"] == "Foo"
+        assert "KV_CACHE_DTYPE" not in plan.env          # empty override dropped
+        assert plan.env["MODEL_DIR"]                     # pinned (HF mount resolves)
+        # no overrides → only the pinned MODEL_DIR rides
+        assert cd.serve_generated("/tmp/x.yml").env == {"MODEL_DIR": cd.weights_model_dir()}
+
+    def test_serve_override_defaults_parses_sibling_compose(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        cd = CockpitData(repo_root, runner=full_runner())
+        d = cd.serve_override_defaults("vllm/dual", "org/MyFineTune")
+        assert d["SERVED_NAME"] == "MyFineTune"          # from the brought repo name
+        assert d["MAX_MODEL_LEN"] == "262144"            # parsed ${MAX_MODEL_LEN:-262144}
+        assert d["KV_CACHE_DTYPE"] == "fp8_e5m2"
+        assert d["SPEC"] == "on"

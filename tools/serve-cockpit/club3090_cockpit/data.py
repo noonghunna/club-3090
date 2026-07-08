@@ -745,6 +745,11 @@ class ActionPlan:
     # (submit-bench POST/PR) so the confirm copy can warn it leaves the rig.
     requires_confirm: bool = True
     network: bool = False
+    # Extra env merged over os.environ when the cmd runs (dispatch_action).  Used
+    # by the ② Serve override editor to pass MAX_MODEL_LEN / KV_CACHE_DTYPE / SPEC
+    # / GPU_MEMORY_UTILIZATION / SERVED_NAME to `docker compose up` — the compose
+    # interpolates ${VAR}, so no compose rewrite per serve.
+    env: Optional[dict[str, str]] = None
 
 
 # ── Phase 4: Doctor (estate + profile triage reads) ──────────────────────────────

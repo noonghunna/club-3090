@@ -105,7 +105,11 @@ def apply_command_overrides(
     ``--served-model-name`` value(s) with the brought name, and drop
     ``--speculative-config`` + its value iff the brought checkpoint has no MTP
     head. ``--quantization`` is left UNTOUCHED — the Route-C precondition is that
-    the brought weights match the sibling compose's quant."""
+    the brought weights match the sibling compose's quant.
+
+    The served-name is emitted as ``${SERVED_NAME:-<brought>}`` so the ② Serve
+    override editor can rename the endpoint at up-time (env interpolation) without
+    a re-emit — same shape as the compose's ${MAX_MODEL_LEN}/${KV_CACHE_DTYPE}."""
     out: list = []
     i, n = 0, len(cmd)
     while i < n:
@@ -115,7 +119,7 @@ def apply_command_overrides(
             i += 2
             continue
         if tok == "--served-model-name":
-            out += ["--served-model-name", served_name]
+            out += ["--served-model-name", f"${{SERVED_NAME:-{served_name}}}"]
             i += 1
             while i < n and not str(cmd[i]).startswith("--"):
                 i += 1  # drop the sibling's served-name value(s)
@@ -126,6 +130,49 @@ def apply_command_overrides(
         out.append(tok)
         i += 1
     return out
+
+
+def _gate_spec_via_entrypoint(svc: dict) -> None:
+    """Move ``--speculative-config <json>`` out of ``command`` and re-add it from
+    an entrypoint gated on ``${SPEC:-on}`` (mirrors the shipped nvfp4 compose), so
+    SPEC=off drops the MTP drafter at up-time.  No-op if the command carries no
+    ``--speculative-config``.  Mutates ``svc`` in place."""
+    cmd = list(svc.get("command") or [])
+    spec_val = None
+    out: list = []
+    i, n = 0, len(cmd)
+    while i < n:
+        if cmd[i] == "--speculative-config":
+            spec_val = cmd[i + 1] if i + 1 < n else None
+            i += 2
+            continue
+        out.append(cmd[i])
+        i += 1
+    if spec_val is None:
+        return
+    svc["command"] = out
+    env_list = list(svc.get("environment") or [])
+    if "SPEC" not in env_list:
+        env_list.append("SPEC")
+    svc["environment"] = env_list
+    # `$$` = docker-compose-escaped `$` (evaluated by the container's bash at
+    # runtime, NOT interpolated by compose).  The JSON spec value has no single
+    # quotes, so single-quoting it for the bash array is safe.
+    svc["entrypoint"] = [
+        "bash", "-c",
+        (
+            "# SPEC=off drops the built-in MTP drafter (tight-RAM / no-spec path);\n"
+            "# default on. Toggled by the c3 ② Serve override editor.\n"
+            "SPEC_ARGS=()\n"
+            'if [ "$${SPEC:-on}" != "off" ]; then\n'
+            f"  SPEC_ARGS=(--speculative-config '{spec_val}')\n"
+            "else\n"
+            '  echo "[brought] SPEC=off — MTP drafter disabled (no spec-dec)" >&2\n'
+            "fi\n"
+            'exec vllm serve "$$@" "$${SPEC_ARGS[@]}"'
+        ),
+        "--",
+    ]
 
 
 def emit_swap_compose(
@@ -157,6 +204,12 @@ def emit_swap_compose(
         model_path=_BROUGHT_MODEL_MOUNT, served_name=served_name,
         drop_spec=not has_mtp_head,
     )
+    # SPEC on/off gating (only when the checkpoint HAS an MTP head — else there's
+    # nothing to toggle): pull --speculative-config out of the command and gate it
+    # behind ${SPEC:-on} via the SAME entrypoint pattern the nvfp4 compose ships,
+    # so the ② Serve override editor can flip spec-decode at up-time (no re-emit).
+    if has_mtp_head:
+        _gate_spec_via_entrypoint(svc)
     vols = list(svc.get("volumes") or [])
     vols.append(f"{weights_host_dir}:{_BROUGHT_MODEL_MOUNT}:ro")
     svc["volumes"] = vols
