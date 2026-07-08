@@ -10467,6 +10467,33 @@ class TestProducerLaneHandoff:
             assert pane.collect_overrides() == {}
 
     @pytest.mark.asyncio
+    async def test_serve_override_custom_kv_and_preview(self, monkeypatch, tmp_path):
+        # Preview shows the engine; the "✎ custom…" KV sentinel reveals the
+        # companion Input and collect reads it (reaches turboquant_4bit_nc even
+        # though the engine dropdown doesn't list it).
+        from textual.widgets import Input as _I, Select as _S
+        from club3090_cockpit.app import _OV_CUSTOM
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 48)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            pane = app.query_one("#lane-serve-pane", LaneServePane)
+            assert "engine" in str(pane.query_one("#lane-serve-ov-preview", Static).render())
+            # custom starts hidden; a real user pick of "✎ custom…" reveals it via
+            # on_select_changed (same idiom as ① Bring's profile hatch — the reveal
+            # is verified there + by a posted Select.Changed; programmatic .value=
+            # skips the message, so here we assert the FUNCTIONAL contract).
+            assert pane.query_one("#ov-kv-custom", _I).has_class("ov-custom-hidden")
+            # sentinel on the dropdown → collect reads the companion Input, so a
+            # KV dtype the engine list omits (turboquant_4bit_nc) is still reachable.
+            pane.query_one("#ov-kv", _S).value = _OV_CUSTOM
+            pane.query_one("#ov-kv-custom", _I).value = "turboquant_4bit_nc"
+            assert pane.collect_overrides()["KV_CACHE_DTYPE"] == "turboquant_4bit_nc"
+
+    @pytest.mark.asyncio
     async def test_serve_armed_route_c_serves_your_weights(self, monkeypatch, tmp_path):
         # ② Serve armed for a Route-C brought model reflects the TRUTH: serves
         # YOUR weights via the sibling recipe — NOT a catalog reproduction, and no

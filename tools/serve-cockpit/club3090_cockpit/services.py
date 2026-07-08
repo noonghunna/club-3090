@@ -2178,16 +2178,62 @@ class CockpitData:
             "KV_CACHE_DTYPE": "fp8_e5m2",
             "GPU_MEMORY_UTILIZATION": "0.92",
             "SPEC": "on",
+            "SPEC_DRAFTER": "",   # e.g. "MTP n=3" — the real drafter (label only)
+            "ENGINE": "",         # e.g. "vllm-stable" — for the ② Serve preview
         }
         try:
+            import sys as _sys
+            if str(self.repo_root) not in _sys.path:
+                _sys.path.insert(0, str(self.repo_root))   # cwd-independent import
             from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
             entry = COMPOSE_REGISTRY.get(profile_like)
             if entry:
+                out["ENGINE"] = str(entry.get("engine", "") or "")
                 txt = (self.repo_root / entry["compose_path"]).read_text(encoding="utf-8")
                 for var in ("MAX_MODEL_LEN", "KV_CACHE_DTYPE", "GPU_MEMORY_UTILIZATION"):
                     m = _re.search(r"\$\{" + var + r":-([^}]+)\}", txt)
                     if m:
                         out[var] = m.group(1).strip().strip('"')
+                # Real drafter for the SPEC label ("on" is uninformative): parse the
+                # sibling's --speculative-config method + num_speculative_tokens.
+                sm = _re.search(r'"method"\s*:\s*"([a-z0-9_]+)"', txt)
+                if sm:
+                    drafter = sm.group(1).upper()
+                    nm = _re.search(r'"num_speculative_tokens"\s*:\s*(\d+)', txt)
+                    out["SPEC_DRAFTER"] = f"{drafter} n={nm.group(1)}" if nm else drafter
+        except Exception:
+            pass
+        # KV dropdown options come from the ENGINE's supported set (not a generic
+        # vLLM list) — a vLLM pin, llama.cpp and ik-llama each support a different
+        # KV family.  The "✎ custom…" escape hatch reaches anything not listed
+        # (e.g. turboquant_4bit_nc, which v0.24.0 supports but the profile hasn't
+        # been widened to yet).
+        out["KV_OPTIONS"] = self.engine_kv_formats(out["ENGINE"])
+        return out
+
+    def engine_kv_formats(self, engine: str) -> list:
+        """KV dtypes the ENGINE declares support for (its profile's
+        ``supported_kv_formats``).  Stdlib line-parse — the c3 path has no PyYAML.
+        Empty list → the caller uses a generic fallback."""
+        out: list = []
+        if not engine:
+            return out
+        try:
+            p = (self.repo_root / "scripts" / "lib" / "profiles"
+                 / "engines" / f"{engine}.yml")
+            grab = False
+            for ln in p.read_text(encoding="utf-8").splitlines():
+                if ln.strip().startswith("supported_kv_formats:"):
+                    grab = True
+                    continue
+                if grab:
+                    st = ln.strip()
+                    if st.startswith("- "):
+                        item = st[2:].split("#", 1)[0].strip().strip('"')
+                        if item:
+                            out.append(item)
+                    elif st and not st.startswith("#"):
+                        break   # dedented → end of the list block
         except Exception:
             pass
         return out
