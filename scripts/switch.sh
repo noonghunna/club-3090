@@ -1024,6 +1024,7 @@ up_variant() {
 
   echo "[switch] bringing up: ${v}  (${dir}/${file})"
   export_variant_engine_pin "$v"
+  preflight_ik_llama_image "$v"   # #633 — cu12 fallback on <13.2 drivers (unless pinned)
   (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d --remove-orphans)
 }
 

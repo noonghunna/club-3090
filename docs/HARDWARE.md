@@ -9,6 +9,7 @@ What this stack assumes about your hardware. True regardless of which model or e
 - **NVIDIA RTX 3090 (24 GB, Ampere SM 8.6)** — 1 or 2 cards.
 - **PCIe Gen 4 slot** — Gen 3 works but allreduce on dual-card is slower (mild impact on multi-tenant; minimal impact on single-stream).
 - **NVIDIA driver 580.x or newer** — for CUDA 13 runtime in vLLM nightly. `nvidia-smi` to check. Older drivers won't load CUDA 13 kernels.
+  - ⚠️ **The ik-llama `cu13` pin needs CUDA ≥ 13.2 specifically** (not just 580.x). Its digest is a CUDA 13.2 runtime, so a driver whose *supported* CUDA < 13.2 — e.g. 580.159 = CUDA 13.0 — forward-compat-fails on GeForce (error 804) → CPU fallback → crash loop ([#633](../../../noonghunna/club-3090/issues/633)). The launcher **auto-selects the cu12 sibling build** (same build, backward-compatible) on such drivers; override with `IK_LLAMA_IMAGE=…:cu12-server-4574` in `.env`. Check your ceiling top-right in `nvidia-smi`.
 - **Linux** (Ubuntu 22.04+ tested). vLLM is Linux + CUDA only. llama.cpp works on macOS / Windows but our recipes assume Linux paths.
 - **Docker + NVIDIA Container Toolkit** for vLLM. llama.cpp doesn't need Docker.
 

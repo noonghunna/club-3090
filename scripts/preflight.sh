@@ -1342,3 +1342,49 @@ except Exception:
   fi
   return 0
 }
+
+# ── #633 — ik-llama cu13/cu12 driver-aware image selection ────────────────────
+# The pinned cu13 ik-llama image has a CUDA 13.2 runtime; on a driver whose
+# supported CUDA < 13.2 the forward-compat path fails on GeForce (CUDA error
+# 804) → silent CPU fallback → segfault crash-loop, with no actionable hint
+# (launch just times out after 600 s). Auto-pick the cu12 sibling build (same
+# build 4574, CUDA 12.6, backward-compatible with the 13.0 driver — validated on
+# a 580.159 rig, #633) unless the user pinned IK_LLAMA_IMAGE. ik-llama only.
+IK_LLAMA_CU13_MIN_CUDA="13.2"
+IK_LLAMA_CU12_FALLBACK="${IK_LLAMA_CU12_FALLBACK:-ghcr.io/ikawrakow/ik-llama-cpp:cu12-server-4574}"
+
+# _cuda_ge A B → 0 (true) iff major.minor A >= B
+_cuda_ge() {
+  local a1="${1%%.*}" b1="${2%%.*}" a2 b2
+  a2="${1#*.}"; [[ "$a2" == "$1" ]] && a2=0
+  b2="${2#*.}"; [[ "$b2" == "$2" ]] && b2=0
+  (( 10#${a1:-0} > 10#${b1:-0} )) && return 0
+  (( 10#${a1:-0} < 10#${b1:-0} )) && return 1
+  (( 10#${a2:-0} >= 10#${b2:-0} ))
+}
+
+# Driver's max supported CUDA (major.minor), or "" if undetectable.
+_driver_cuda_version() {
+  local v
+  v="$(nvidia-smi --query 2>/dev/null | grep -m1 -oE 'CUDA Version[[:space:]]*:[[:space:]]*[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' || true)"
+  [[ -z "$v" ]] && v="$(nvidia-smi 2>/dev/null | grep -m1 -oE 'CUDA Version:?[[:space:]]*[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' || true)"
+  printf '%s' "$v"
+}
+
+preflight_ik_llama_image() {
+  local variant="${1:-}"
+  [[ "$variant" == ik-llama/* ]] || return 0
+  if [[ -n "${IK_LLAMA_IMAGE:-}" ]]; then
+    echo "[preflight] ik-llama image pinned (.env/shell): ${IK_LLAMA_IMAGE}"
+    return 0
+  fi
+  local drv; drv="$(_driver_cuda_version)"
+  [[ -z "$drv" ]] && return 0                    # undetectable → leave compose default (cu13)
+  _cuda_ge "$drv" "$IK_LLAMA_CU13_MIN_CUDA" && return 0   # >=13.2 → cu13 runtime OK
+  export IK_LLAMA_IMAGE="$IK_LLAMA_CU12_FALLBACK"
+  echo "[preflight] ⚠ driver CUDA ${drv} < ${IK_LLAMA_CU13_MIN_CUDA} (the cu13 ik-llama pin's runtime)." >&2
+  echo "[preflight]   cu13 would forward-compat-fail on GeForce (error 804) → CPU fallback → crash loop (#633)." >&2
+  echo "[preflight]   Auto-selected the cu12 sibling build (same build, CUDA 12.6, backward-compatible):" >&2
+  echo "[preflight]     IK_LLAMA_IMAGE=${IK_LLAMA_CU12_FALLBACK}" >&2
+  echo "[preflight]   Pin IK_LLAMA_IMAGE in .env to override." >&2
+}
