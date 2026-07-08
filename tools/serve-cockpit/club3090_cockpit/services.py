@@ -2165,7 +2165,36 @@ class CockpitData:
             return _fail(res.stdout.strip()[:300] or "generator emitted no compose")
         return {"compose_path": tmp_path, "compose_yaml": yaml_text, "error": ""}
 
-    def serve_generated(self, compose_path: str) -> ActionPlan:
+    def serve_override_defaults(self, profile_like: str, repo: str) -> dict[str, str]:
+        """Pre-fill values for the ② Serve override editor, read from the resolved
+        ``profile_like`` sibling compose's ``${VAR:-default}`` env knobs (+ the
+        brought repo name for SERVED_NAME).  Best-effort: any field we can't parse
+        falls back to a sane default.  Pure READ (regex over the compose text) —
+        no PyYAML (keeps this importable on the launcher's stdlib-only path)."""
+        import re as _re
+        out = {
+            "SERVED_NAME": repo.rsplit("/", 1)[-1] if repo else "",
+            "MAX_MODEL_LEN": "262144",
+            "KV_CACHE_DTYPE": "fp8_e5m2",
+            "GPU_MEMORY_UTILIZATION": "0.92",
+            "SPEC": "on",
+        }
+        try:
+            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+            entry = COMPOSE_REGISTRY.get(profile_like)
+            if entry:
+                txt = (self.repo_root / entry["compose_path"]).read_text(encoding="utf-8")
+                for var in ("MAX_MODEL_LEN", "KV_CACHE_DTYPE", "GPU_MEMORY_UTILIZATION"):
+                    m = _re.search(r"\$\{" + var + r":-([^}]+)\}", txt)
+                    if m:
+                        out[var] = m.group(1).strip().strip('"')
+        except Exception:
+            pass
+        return out
+
+    def serve_generated(
+        self, compose_path: str, overrides: Optional[dict[str, str]] = None
+    ) -> ActionPlan:
         """Serve a GENERATED (producer-lane ②) compose, badged untested.
 
         Serving a generated compose CLAIMS the GPU exactly like any serve, so the
@@ -2173,13 +2202,24 @@ class CockpitData:
         through the SAME ConfirmActionScreen → run_reconcile_for_modal →
         dispatch_action gate (the dual-writer lease MUST hold).  We launch it via
         ``docker compose -f <path> up`` — the generated compose is a verbatim
-        minimal reproduction, NOT a registry slug switch.sh knows about."""
+        minimal reproduction, NOT a registry slug switch.sh knows about.
+
+        ``overrides`` (the ② Serve editor's field values — MAX_MODEL_LEN /
+        KV_CACHE_DTYPE / SPEC / GPU_MEMORY_UTILIZATION / SERVED_NAME) ride on
+        ``plan.env`` and interpolate into the compose's ``${VAR}`` at up-time —
+        so a re-tuned serve needs no compose rewrite.  MODEL_DIR is pinned here
+        too so the sibling's HF-cache mount resolves off the models disk."""
+        env: dict[str, str] = {"MODEL_DIR": self.weights_model_dir()}
+        for k, v in (overrides or {}).items():
+            if v is not None and str(v) != "":
+                env[k] = str(v)
         return ActionPlan(
             kind="serve",
             cmd=["docker", "compose", "-f", compose_path, "up", "-d"],
             description=f"serve generated compose {Path(compose_path).name} (untested)",
             requires_reconcile=True,
             requires_confirm=True,
+            env=env,
         )
 
     def set_default(self, slug: str) -> ActionPlan:
@@ -2473,9 +2513,15 @@ class CockpitData:
             import os as _os
 
             try:
+                # plan.env (e.g. the ② Serve override editor's field values) is
+                # merged OVER os.environ so `docker compose up` interpolates the
+                # re-tuned ${MAX_MODEL_LEN}/${KV_CACHE_DTYPE}/${SPEC}/… .
+                _run_env = dict(_os.environ)
+                if plan.env:
+                    _run_env.update(plan.env)
                 state = await self._write_runner.start_raw(
                     plan.cmd,
-                    env=dict(_os.environ),
+                    env=_run_env,
                     run_type=run_type or plan.kind,
                     parser=run_parser,
                 )

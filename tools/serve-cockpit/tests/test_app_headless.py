@@ -10428,6 +10428,45 @@ class TestProducerLaneHandoff:
             assert app.query_one("#validate-tabs", TabbedContent).active == "tab-bring"
 
     @pytest.mark.asyncio
+    async def test_serve_override_editor_reveals_prefills_and_collects(self, monkeypatch, tmp_path):
+        # Route-C fit-check → the ② Serve override editor is revealed + pre-filled
+        # from the resolved slug's defaults; an edit round-trips via collect_overrides.
+        from textual.widgets import Input as _I, Select as _S
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 46)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            pane = app.query_one("#lane-serve-pane", LaneServePane)
+            ov = pane.query_one("#lane-serve-overrides")
+            assert not ov.has_class("funnel-hidden")            # revealed for Route-C
+            assert pane.query_one("#ov-served-name", _I).value  # pre-filled served-name
+            assert pane.query_one("#ov-kv", _S).value == "fp8_e5m2"
+            assert pane.query_one("#ov-spec", _S).value == "on"
+            # edits round-trip
+            pane.query_one("#ov-served-name", _I).value = "MyCustomName"
+            pane.query_one("#ov-ctx", _S).value = "65536"
+            pane.query_one("#ov-spec", _S).value = "off"
+            ovr = pane.collect_overrides()
+            assert ovr["SERVED_NAME"] == "MyCustomName"
+            assert ovr["MAX_MODEL_LEN"] == "65536"
+            assert ovr["SPEC"] == "off"
+
+    @pytest.mark.asyncio
+    async def test_serve_override_editor_hidden_and_empty_without_route_c(self):
+        # No fit-check → editor hidden and collect_overrides returns {} (so a
+        # non-Route-C serve applies no overrides).
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 46)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            pane = app.query_one("#lane-serve-pane", LaneServePane)
+            assert pane.query_one("#lane-serve-overrides").has_class("funnel-hidden")
+            assert pane.collect_overrides() == {}
+
+    @pytest.mark.asyncio
     async def test_serve_armed_route_c_serves_your_weights(self, monkeypatch, tmp_path):
         # ② Serve armed for a Route-C brought model reflects the TRUTH: serves
         # YOUR weights via the sibling recipe — NOT a catalog reproduction, and no
