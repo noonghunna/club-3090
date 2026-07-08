@@ -66,7 +66,13 @@
 # Engine pinned by digest (engine policy):
 #   ghcr.io/ikawrakow/ik-llama-cpp@sha256:5f914f1ccade922417af58c94bd1cbb558052c8852d86678ead3fe693eec0143
 #     @sha256:c13e0798e4117649962833adc932362b64cb7080cfc9dbb1235161f43f8d5c49
-#   cu13 = matches our CUDA 13.2 host driver.
+#   cu13 = a CUDA 13.2 RUNTIME. Requires a driver whose supported CUDA >= 13.2
+#   (nvidia-smi top-right). ⚠️ On a driver < 13.2 — e.g. 580.159 = CUDA 13.0,
+#   which satisfies the README's "580.x+" but NOT this pin — cu13 forward-compat-
+#   fails on GeForce (CUDA error 804) -> silent CPU fallback -> crash loop (#633).
+#   The launcher auto-selects the cu12 sibling build there (same build 4574,
+#   CUDA 12.6, backward-compatible, community-validated ~68 TPS). Pin
+#   IK_LLAMA_IMAGE=ghcr.io/ikawrakow/ik-llama-cpp:cu12-server-4574 in .env to force it.
 #
 # Quick start:
 #   1. Get the MTP-IQ4_KS GGUF:
