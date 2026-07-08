@@ -1259,6 +1259,25 @@ class TestCatalogWired:
         ))
         assert "eligible" in plain and "② Serve" in plain and "✓ Servable" not in plain
 
+    def test_byo_result_downloading_suppresses_d_reoffer(self):
+        """#617: while a ① Bring [D] download is IN FLIGHT, the Route-C card must
+        show '⏳ downloading' and NOT re-offer [D] — otherwise a refresh invites a
+        second 20+ GB fetch of the same repo."""
+        from club3090_cockpit.app import _byo_result_text
+        from club3090_cockpit.data import ByoResult
+        res = ByoResult(
+            repo="josefprusa/Tess-4-27B-FP8", profile_like="vllm/dual",
+            arch="Qwen3_5ForConditionalGeneration", eligible=False,
+            fit_verdict="no-fit-model", route="C", sibling_slug="qwen3.6-27b",
+            quant_match="auto_round", drop_spec_config=False, error=None,
+        )
+        txt = _byo_result_text(res, weights_present=False, downloading=True)
+        assert "downloading" in txt                 # in-flight signalled
+        assert "\\[D]" not in txt                    # [D] re-offer suppressed
+        assert "→ Press" not in txt                  # ...and its prompt
+        # not-downloading still offers [D] (regression guard for the default path)
+        assert "\\[D]" in _byo_result_text(res, weights_present=False, downloading=False)
+
     @pytest.mark.asyncio
     async def test_catalog_submission_legend_in_status_line(self):
         """When any loaded row's numbers came from a community submission
@@ -1760,6 +1779,39 @@ class TestBringFunnelStagedReveal:
             await _settle(pilot)
             text = str(line.render())
             assert "on disk" in text and "② Serve" in text
+
+    @pytest.mark.asyncio
+    async def test_bring_download_tracked_guarded_and_cancelable(self, monkeypatch, tmp_path):
+        """#617 parity: an in-flight ① Bring download is tracked so a re-fit-check
+        SEES it (⏳ downloading, not the [D] re-offer), a second [D] no-ops instead
+        of double-fetching, and [k] cancels it."""
+        from club3090_cockpit.data import ByoResult
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_bring(pilot)
+            repo, prof = "unsloth/Qwen3-27B-abliterated", "vllm/dual"
+            app.run_byo_check(repo, prof)
+            await _settle(pilot)
+            line = app.query_one("#lane-bring-weights-line", Static)
+            assert "not on disk" in str(line.render())    # baseline: [D] affordance
+            # simulate an in-flight download for this repo
+            app._active_bring_download()[repo] = {
+                "handle": None, "profile_like": prof, "apply_swap": False,
+            }
+            # bug 2: a re-fit-check now shows "downloading", not the stale verdict
+            app.run_byo_check(repo, prof)
+            await _settle(pilot)
+            assert "downloading" in str(line.render())
+            # no-op guard: [D] while in-flight must NOT launch a second worker
+            app._active_mode = 1
+            app.action_bring_download()
+            await _settle(pilot)
+            assert app._active_bring_download()[repo]["handle"] is None  # no worker ran
+            # [k] cancels → tracker cleared
+            app.action_bring_cancel_download()
+            await _settle(pilot)
+            assert repo not in app._active_bring_download()
 
     @pytest.mark.asyncio
     async def test_inspect_error_reveals_nothing(self):
