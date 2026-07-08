@@ -5075,9 +5075,9 @@ def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None) -> 
         # straight at ② Serve (which emits the compose itself, no download).
         if weights_present:
             next_step = (
-                f"  [green]✓ weights on disk[/green] — [green]→ press[/green] "
-                f"[bold]\\[⏎][/bold] [green]② Serve to serve[/green] "
-                f"[bold]{brought}[/bold] [dim](no download needed)[/dim]"
+                f"  [green]✓ weights on disk[/green] — [green]press[/green] "
+                f"[bold]\\[⏎][/bold] [green]to continue to ② Serve[/green] "
+                f"[dim](serves {brought} — no download)[/dim]"
             )
         else:
             next_step = (
@@ -7559,7 +7559,7 @@ class CockpitApp(App):
             elif weights_present:
                 lane_pane.set_weights_line(
                     "  [green]✓ weights on disk[/green] — "
-                    "[green]→ ② Serve[/green] [dim](\\[2/]] next stage)[/dim]"
+                    "[green]→ ② Serve[/green] [dim](press \\[⏎] to continue)[/dim]"
                 )
             else:
                 lane_pane.set_weights_line(
@@ -7646,7 +7646,7 @@ class CockpitApp(App):
         if self._data.bring_weights_present(repo):
             lane_pane.set_weights_line(
                 "  [green]✓ weights downloaded[/green] — "
-                "[green]→ ② Serve[/green] [dim](\\[2/]] next stage)[/dim]"
+                "[green]→ ② Serve[/green] [dim](press \\[⏎] to continue)[/dim]"
             )
         else:
             lane_pane.set_weights_line(
@@ -8653,7 +8653,7 @@ class CockpitApp(App):
           primary action.)"""
         tab = self._active_validate_tab()
         if tab == "tab-bring":
-            self._trigger_lane_bring()
+            self._bring_primary()
         elif tab == "tab-serve":
             self.action_serve_untested()
         elif tab == "tab-run":
@@ -8662,6 +8662,40 @@ class CockpitApp(App):
             self._open_evidence_report()
         elif tab == "tab-promote":
             self.action_promote_catalog()
+
+    def _bring_primary(self) -> None:
+        """⏎ on ① Bring — DWIM:
+          - a fresh/changed target (or no cached result) → run the fit-check;
+          - an ALREADY fit-checked, servable target whose weights are ON DISK →
+            ADVANCE to the pre-armed ② Serve (the card's "press [⏎] ② Serve").
+            Re-running the fit-check on ⏎ was the reported confusion; the [Fit]
+            button still forces a re-check.
+        Weights ABSENT stays on fit-check — the card there points at [D]
+        (download is the real next step), not ② Serve."""
+        byo = self._last_byo
+        try:
+            cur_repo = self.query_one("#lane-bring-url-input", Input).value.strip()
+        except Exception:
+            cur_repo = ""
+        servable = bool(
+            byo is not None
+            and not getattr(byo, "error", "")
+            and (getattr(byo, "sibling_slug", "") or getattr(byo, "profile_like", ""))
+            and cur_repo == getattr(byo, "repo", "")
+        )
+        if servable and self._data.bring_weights_present(getattr(byo, "repo", "")):
+            self._advance_to_serve()
+        else:
+            self._trigger_lane_bring()
+
+    def _advance_to_serve(self) -> None:
+        """Advance the Bring & Validate lane from ① Bring to the pre-armed
+        ② Serve stage (⏎'s "proceed" after a successful fit-check).  ② Serve was
+        armed by the fit-check's set_armed, so ⏎ there serves straightaway."""
+        try:
+            self.query_one("#validate-tabs", TabbedContent).active = "tab-serve"
+        except Exception:
+            pass
 
     def _run_validation_selected(self) -> None:
         """Stage the selected Run step as a confirm-gated validation launch."""

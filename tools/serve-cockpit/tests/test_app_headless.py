@@ -10370,6 +10370,43 @@ class TestProducerLaneHandoff:
             assert "vllm/dual" in card
 
     @pytest.mark.asyncio
+    async def test_bring_enter_advances_to_serve_when_present(self, monkeypatch, tmp_path):
+        # After a servable fit-check with weights ON DISK, ⏎ on ① Bring ADVANCES
+        # to the pre-armed ② Serve — not re-run the fit-check (the reported bug).
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            d = app._data.bring_pull_dir("unsloth/Qwen3-27B-abliterated")
+            d.mkdir(parents=True)
+            (d / "model.safetensors").write_bytes(b"x")
+            app.query_one("#lane-bring-url-input", Input).value = "unsloth/Qwen3-27B-abliterated"
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-bring"
+            app._validate_primary()                              # ⏎ on ① Bring
+            await _settle(pilot)
+            assert app.query_one("#validate-tabs", TabbedContent).active == "tab-serve"
+
+    @pytest.mark.asyncio
+    async def test_bring_enter_refits_when_weights_absent(self, monkeypatch, tmp_path):
+        # weights ABSENT → ⏎ stays on ① Bring (re-fit); the card there points at
+        # [D] (download is the real next step), so ⏎ must NOT skip to ② Serve.
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.query_one("#lane-bring-url-input", Input).value = "unsloth/Qwen3-27B-abliterated"
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-bring"
+            app._validate_primary()
+            await _settle(pilot)
+            assert app.query_one("#validate-tabs", TabbedContent).active == "tab-bring"
+
+    @pytest.mark.asyncio
     async def test_serve_tab_rearms_from_cached_byo(self):
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
