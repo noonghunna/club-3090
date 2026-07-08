@@ -402,6 +402,20 @@ def select_weight_files(
             # Index present but no obvious shard naming — fall back to all
             # non-adapter top-level safetensors as the set.
             shards = sorted(safet)
+        else:
+            # A dedicated MTP/nextn head (e.g. `mtp_grafted.safetensors`) is a
+            # real weight the model needs with MTP enabled, but it's neither a
+            # `model-*` nor `-of-` shard, so the filter above drops it —
+            # which silently omitted Tess-4-27B-FP8's MTP head and would break
+            # MTP serving (club-3090 #617). `detect_mtp_head` already sees such a
+            # file; union it into the download set so it's actually fetched.
+            mtp_head = [
+                n for n in safet
+                if n not in shards
+                and ("mtp" in n.lower() or "nextn" in n.lower())
+            ]
+            if mtp_head:
+                shards = sorted(set(shards) | set(mtp_head))
         return shards, None
 
     # No index: must be exactly one complete set.
