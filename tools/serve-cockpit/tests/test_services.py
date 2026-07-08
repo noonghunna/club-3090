@@ -3727,3 +3727,15 @@ class TestServeOverrides:
         assert d["MAX_MODEL_LEN"] == "262144"            # parsed ${MAX_MODEL_LEN:-262144}
         assert d["KV_CACHE_DTYPE"] == "fp8_e5m2"
         assert d["SPEC"] == "on"
+        assert d["ENGINE"] == "vllm-stable"              # only parsing gives this
+        assert d["SPEC_DRAFTER"] == "MTP n=3"            # real drafter, not "on"
+
+    def test_engine_kv_formats_is_engine_specific(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        cd = CockpitData(repo_root, runner=full_runner())
+        vk = cd.engine_kv_formats("vllm-stable")
+        assert "fp8_e5m2" in vk and "int8_per_token_head" in vk
+        # a totally different engine → a totally different KV family
+        assert cd.engine_kv_formats("llama-cpp-mainline") == ["q4_0", "q5_0", "q8_0", "k8v4"]
+        # the editor's KV options come from the engine, not a generic list
+        assert cd.serve_override_defaults("vllm/dual", "org/Foo")["KV_OPTIONS"] == vk

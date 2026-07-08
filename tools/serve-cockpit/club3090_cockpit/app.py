@@ -5136,13 +5136,23 @@ def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None) -> 
     return "\n".join(lines)
 
 
-# ② Serve override-editor dropdown presets (loose validation; dropdowns to prevent
-# typos — the resolved slug's own default is folded in at arm-time if it's not here).
-_OV_CTX = ["16384", "32768", "65536", "98304", "131072", "196608", "262144"]
-_OV_KV = ["fp8_e5m2", "fp8_e4m3", "turboquant_4bit_nc", "turboquant_3bit_nc",
-          "int8_per_token_head", "bf16"]
-_OV_UTIL = ["0.80", "0.85", "0.90", "0.92", "0.95"]
+# ② Serve override-editor dropdown presets (dropdowns to prevent typos — the
+# resolved slug's own default is folded in at arm-time if it's not here; a trailing
+# "✎ custom…" sentinel reveals a free-text Input for any value not in the list).
+_OV_CTX = ["16384", "32768", "65536", "81920", "98304", "131072", "196608", "262144"]
+# The FULL vLLM 0.24.0 --kv-cache-dtype set (ground truth from EngineArgs), ordered
+# by relevance: fp8 family · int8/nvfp4 · turboquant family · raw dtypes.
+_OV_KV = [
+    "fp8_e5m2", "fp8_e4m3", "fp8", "fp8_per_token_head", "fp8_inc", "fp8_ds_mla",
+    "int8_per_token_head", "nvfp4",
+    "turboquant_4bit_nc", "turboquant_3bit_nc", "turboquant_k3v4_nc", "turboquant_k8v4",
+    "bfloat16", "float16", "auto",
+]
+_OV_UTIL = ["0.80", "0.85", "0.88", "0.90", "0.92", "0.95"]
+# SPEC value stays on/off (the compose's ${SPEC} gate); the label shows the real
+# drafter (set at arm-time from SPEC_DRAFTER) so it's not an uninformative "on".
 _OV_SPEC = ["on", "off"]
+_OV_CUSTOM = "__ov_custom__"   # sentinel: reveals the companion free-text Input
 
 
 class LaneServePane(Container):
@@ -5189,9 +5199,11 @@ class LaneServePane(Container):
         padding: 0 1;
     }
     LaneServePane #lane-serve-ov-title { margin-bottom: 1; }
+    LaneServePane #lane-serve-ov-preview { color: $text-muted; margin-bottom: 1; }
     LaneServePane .ov-row { height: 3; margin-bottom: 0; }
     LaneServePane .ov-lbl { width: 12; content-align: left middle; height: 3; }
     LaneServePane .ov-row Input, LaneServePane .ov-row Select { width: 1fr; }
+    LaneServePane .ov-custom-hidden { display: none; }
     """
 
     def compose(self) -> ComposeResult:
@@ -5217,20 +5229,30 @@ class LaneServePane(Container):
         # the compose's ${VAR} at up-time (no re-emit).
         yield Vertical(
             Label("[bold]Override before serve[/bold] [dim](optional · defaults from the "
-                  "resolved slug)[/dim]", id="lane-serve-ov-title"),
+                  "resolved slug · ✎ custom… for any value)[/dim]", id="lane-serve-ov-title"),
+            Static("", id="lane-serve-ov-preview"),
             Horizontal(Label("served as", classes="ov-lbl"),
                        Input(id="ov-served-name"), classes="ov-row"),
             Horizontal(Label("ctx", classes="ov-lbl"),
-                       Select([(v, v) for v in _OV_CTX], id="ov-ctx", allow_blank=False),
+                       Select([(v, v) for v in _OV_CTX] + [("✎ custom…", _OV_CUSTOM)],
+                              id="ov-ctx", allow_blank=False),
+                       Input(placeholder="custom ctx", id="ov-ctx-custom",
+                             classes="ov-custom-hidden"),
                        classes="ov-row"),
             Horizontal(Label("KV cache", classes="ov-lbl"),
-                       Select([(v, v) for v in _OV_KV], id="ov-kv", allow_blank=False),
+                       Select([(v, v) for v in _OV_KV] + [("✎ custom…", _OV_CUSTOM)],
+                              id="ov-kv", allow_blank=False),
+                       Input(placeholder="custom KV dtype", id="ov-kv-custom",
+                             classes="ov-custom-hidden"),
                        classes="ov-row"),
             Horizontal(Label("spec-dec", classes="ov-lbl"),
                        Select([(v, v) for v in _OV_SPEC], id="ov-spec", allow_blank=False),
                        classes="ov-row"),
             Horizontal(Label("VRAM util", classes="ov-lbl"),
-                       Select([(v, v) for v in _OV_UTIL], id="ov-util", allow_blank=False),
+                       Select([(v, v) for v in _OV_UTIL] + [("✎ custom…", _OV_CUSTOM)],
+                              id="ov-util", allow_blank=False),
+                       Input(placeholder="custom util", id="ov-util-custom",
+                             classes="ov-custom-hidden"),
                        classes="ov-row"),
             id="lane-serve-overrides", classes="funnel-hidden",
         )
@@ -5317,34 +5339,54 @@ class LaneServePane(Container):
         body.update("\n".join(lines))
 
     def _populate_overrides(self, d: dict) -> None:
-        """Pre-fill the editor from the resolved slug's defaults.  The slug's own
-        value is folded into each dropdown if it isn't already a preset (so the
-        default is always selectable — loose validation, no typo surface)."""
+        """Pre-fill the editor from the resolved slug's defaults + engine.  KV
+        options come from the ENGINE (not a generic vLLM list); SPEC shows the
+        real drafter; a "✎ custom…" tail reaches anything else.  Each dropdown
+        folds in the slug's own value if it isn't already a preset."""
         try:
             self.query_one("#ov-served-name", Input).value = str(d.get("SERVED_NAME", ""))
         except Exception:
             pass
-        for wid, key, presets in (
-            ("#ov-ctx", "MAX_MODEL_LEN", _OV_CTX),
-            ("#ov-kv", "KV_CACHE_DTYPE", _OV_KV),
-            ("#ov-spec", "SPEC", _OV_SPEC),
-            ("#ov-util", "GPU_MEMORY_UTILIZATION", _OV_UTIL),
+        # Preview: engine + the values this serve can override (the slug's defaults).
+        try:
+            drafter = d.get("SPEC_DRAFTER") or (
+                "on" if str(d.get("SPEC")) == "on" else "off")
+            self.query_one("#lane-serve-ov-preview", Static).update(
+                f"[dim]engine[/dim] [cyan]{d.get('ENGINE') or '—'}[/cyan]   "
+                f"[dim]· ctx[/dim] {d.get('MAX_MODEL_LEN', '?')}   "
+                f"[dim]· KV[/dim] {d.get('KV_CACHE_DTYPE', '?')}   "
+                f"[dim]· spec[/dim] {drafter}   "
+                f"[dim]· util[/dim] {d.get('GPU_MEMORY_UTILIZATION', '?')}"
+            )
+        except Exception:
+            pass
+        kv_opts = list(d.get("KV_OPTIONS") or _OV_KV)               # engine-declared
+        drafter = d.get("SPEC_DRAFTER") or "spec-dec"
+        spec_opts = [(f"{drafter} (on)", "on"), ("off — no spec-dec", "off")]
+        for wid, key, presets, custom in (
+            ("#ov-ctx", "MAX_MODEL_LEN", [(v, v) for v in _OV_CTX], True),
+            ("#ov-kv", "KV_CACHE_DTYPE", [(v, v) for v in kv_opts], True),
+            ("#ov-spec", "SPEC", spec_opts, False),
+            ("#ov-util", "GPU_MEMORY_UTILIZATION", [(v, v) for v in _OV_UTIL], True),
         ):
             try:
                 sel = self.query_one(wid, Select)
                 val = str(d.get(key, "")).strip()
                 opts = list(presets)
-                if val and val not in opts:
-                    opts = [val] + opts
-                sel.set_options([(o, o) for o in opts])
-                sel.value = val if val in opts else opts[0]
+                if val and val not in [o[1] for o in opts]:
+                    opts = [(val, val)] + opts          # fold in the slug's default
+                if custom:
+                    opts = opts + [("✎ custom…", _OV_CUSTOM)]
+                sel.set_options(opts)
+                sel.value = val if val in [o[1] for o in opts] else opts[0][1]
             except Exception:
                 pass
 
     def collect_overrides(self) -> dict:
         """Read the editor fields → env overrides for the serve.  Only non-empty
-        values are returned (empty = keep the compose's own default).  Returns
-        ``{}`` when the editor is hidden (non-Route-C serve — no override surface)."""
+        values are returned (empty = keep the compose's own default).  A dropdown
+        on "✎ custom…" reads its companion free-text Input.  Returns ``{}`` when
+        the editor is hidden (non-Route-C serve — no override surface)."""
         out: dict = {}
         try:
             if self.query_one("#lane-serve-overrides", Vertical).has_class("funnel-hidden"):
@@ -5357,13 +5399,19 @@ class LaneServePane(Container):
                 out["SERVED_NAME"] = name
         except Exception:
             pass
-        for wid, key in (
-            ("#ov-ctx", "MAX_MODEL_LEN"), ("#ov-kv", "KV_CACHE_DTYPE"),
-            ("#ov-spec", "SPEC"), ("#ov-util", "GPU_MEMORY_UTILIZATION"),
+        for wid, key, custom_id in (
+            ("#ov-ctx", "MAX_MODEL_LEN", "#ov-ctx-custom"),
+            ("#ov-kv", "KV_CACHE_DTYPE", "#ov-kv-custom"),
+            ("#ov-spec", "SPEC", None),
+            ("#ov-util", "GPU_MEMORY_UTILIZATION", "#ov-util-custom"),
         ):
             try:
                 v = self.query_one(wid, Select).value
-                if v not in (None, Select.BLANK):
+                if v == _OV_CUSTOM and custom_id:
+                    cv = self.query_one(custom_id, Input).value.strip()
+                    if cv:
+                        out[key] = cv
+                elif v not in (None, Select.BLANK, _OV_CUSTOM):
                     out[key] = str(v)
             except Exception:
                 pass
@@ -10193,6 +10241,20 @@ class CockpitApp(App):
         try:
             sel_id = event.select.id
         except Exception:
+            return
+        # ② Serve override editor — the "✎ custom…" sentinel reveals + focuses the
+        # companion free-text Input (any value the engine dropdown doesn't list,
+        # e.g. turboquant_4bit_nc); any real pick hides it again.
+        if sel_id in ("ov-ctx", "ov-kv", "ov-util"):
+            try:
+                inp = self.query_one(f"#{sel_id}-custom", Input)
+                if event.value == _OV_CUSTOM:
+                    inp.remove_class("ov-custom-hidden")
+                    inp.focus()
+                else:
+                    inp.add_class("ov-custom-hidden")
+            except Exception:
+                pass
             return
         if sel_id == "catalog-model-select":
             val = event.value
