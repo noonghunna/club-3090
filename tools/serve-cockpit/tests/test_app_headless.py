@@ -10329,7 +10329,11 @@ class TestProducerLaneHandoff:
             assert "unsloth/Qwen3-27B-abliterated" in body   # the brought repo
 
     @pytest.mark.asyncio
-    async def test_bring_result_points_forward_to_serve(self):
+    async def test_bring_result_points_forward_to_serve(self, monkeypatch, tmp_path):
+        # Route-C fit-check, weights ABSENT → the card's next-step points at the
+        # [D] download (which emits the serve compose + serves).  The presence-
+        # aware card MUST show the download prompt here, not the ② Serve pointer.
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("2")
@@ -10339,7 +10343,30 @@ class TestProducerLaneHandoff:
             card = str(app.query_one("#lane-bring-pane", LaneBringPane).query_one(
                 "#lane-bring-result-card", Static
             ).render())
-            assert "→ ② Serve" in card
+            assert "[D]" in card and "download" in card
+            assert "vllm/dual" in card
+
+    @pytest.mark.asyncio
+    async def test_bring_result_present_points_to_serve(self, monkeypatch, tmp_path):
+        # Route-C fit-check, weights already ON DISK → the card drops the [D]
+        # download prompt and points straight at ② Serve (no download needed).
+        # This is the [D]-when-already-present contradiction fix.
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            # land the brought weights at the pull dir the presence probe reads
+            d = app._data.bring_pull_dir("unsloth/Qwen3-27B-abliterated")
+            d.mkdir(parents=True)
+            (d / "model.safetensors").write_bytes(b"x")
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            card = str(app.query_one("#lane-bring-pane", LaneBringPane).query_one(
+                "#lane-bring-result-card", Static
+            ).render())
+            assert "② Serve" in card and "no download" in card
+            assert "[D]" not in card               # the download prompt is gone
             assert "vllm/dual" in card
 
     @pytest.mark.asyncio

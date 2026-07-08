@@ -1008,6 +1008,7 @@ class CockpitData:
         profile_like: str,
         *,
         apply_swap: bool = False,
+        emit_only: bool = False,
         on_line: Optional[Callable[[str], None]] = None,
     ) -> Any:
         """§2b-6 — the lane's weights download: the REAL ``pull.sh`` run
@@ -1037,6 +1038,11 @@ class CockpitData:
             # The BYO weight-swap ACTION: download the brought weights AND emit a
             # serve-locally clone of the sibling compose (--model at the weights).
             cmd.append("--apply-swap")
+        if emit_only:
+            # Weights already on disk — skip the download, JUST emit the serve
+            # compose (do_download=False).  ② Serve uses this so a present-weights
+            # serve needs no [D] step.  Only meaningful alongside --apply-swap.
+            cmd.append("--emit-only")
         return await self._download_runner.start_raw(
             cmd,
             env=env,

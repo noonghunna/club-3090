@@ -5044,14 +5044,18 @@ class LaneBringPane(Container):
             line.update("")
             line.add_class("funnel-hidden")
 
-    def populate(self, res: ByoResult) -> None:
+    def populate(self, res: ByoResult, weights_present: Optional[bool] = None) -> None:
         card = self.query_one("#lane-bring-result-card", Static)
-        card.update(_byo_result_text(res))
+        card.update(_byo_result_text(res, weights_present))
 
 
-def _byo_result_text(res: ByoResult) -> str:
+def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None) -> str:
     """Render a ByoResult into the verdict card text (shared by Run · BYO + the
-    producer lane's ① Bring stage)."""
+    producer lane's ① Bring stage).
+
+    ``weights_present`` (probed once by the caller) makes the Route-C next-step
+    honest: on disk → point at ② Serve (no download); absent → the [D] download
+    affordance.  ``None`` = unknown → keep the download prompt (safe default)."""
     if res.error:
         return f"[red]Fit-check failed:[/red] {res.error}"
     # Route-C swap (a curated-arch fine-tune → serve via the sibling's recipe with
@@ -5066,6 +5070,20 @@ def _byo_result_text(res: ByoResult) -> str:
         mtp = ("[dim]MTP dropped — no head in this checkpoint[/dim]"
                if res.drop_spec_config
                else "[dim]MTP kept — head present[/dim]")
+        # Presence-aware next-step: [D] emits the serve compose, so when the
+        # weights are already on disk it must NOT read as "download" — point
+        # straight at ② Serve (which emits the compose itself, no download).
+        if weights_present:
+            next_step = (
+                f"  [green]✓ weights on disk[/green] — [green]→ press[/green] "
+                f"[bold]\\[⏎][/bold] [green]② Serve to serve[/green] "
+                f"[bold]{brought}[/bold] [dim](no download needed)[/dim]"
+            )
+        else:
+            next_step = (
+                f"  [green]→ Press[/green] [bold]\\[D][/bold] "
+                f"[green]to download + serve[/green] [bold]{brought}[/bold]"
+            )
         return "\n".join([
             f"  [bold]{res.repo}[/bold]",
             f"  [green]✓ Servable[/green] — a fine-tune of [green]{res.sibling_slug}[/green]",
@@ -5075,8 +5093,7 @@ def _byo_result_text(res: ByoResult) -> str:
             "recipe (chat template, tools, spec-dec) with your weights.",
             f"  {mtp}",
             "",
-            f"  [green]→ Press[/green] [bold]\\[D][/bold] [green]to download + serve[/green] "
-            f"[bold]{brought}[/bold]",
+            next_step,
             f"  [dim]engine verdict: {res.fit_verdict or 'no-fit-model'} → Route-C swap "
             "(generic fit-math can't price a curated-hybrid arch)[/dim]",
         ])
@@ -7517,8 +7534,15 @@ class CockpitApp(App):
         res = await self._data.byo_check(repo, profile_like)
         # Cache the arch facts for the lane ② Serve + the Promote scaffold (Phase 5).
         self._last_byo = res
+        # Probe on-disk ONCE (skip on a fit-check error) — feeds BOTH the verdict
+        # card's presence-aware next-step and the weights-line below, so they can't
+        # disagree (the [D]-when-already-present contradiction).
+        weights_present = bool(
+            not getattr(res, "error", "")
+            and self._data.bring_weights_present(repo)
+        )
         if lane_pane is not None:
-            lane_pane.populate(res)
+            lane_pane.populate(res, weights_present)
         # N9 — carry the fit-check result forward: pre-arm ② Serve with the
         # resolved target so the producer pipeline flows ① → ② without re-entry.
         try:
@@ -7532,7 +7556,7 @@ class CockpitApp(App):
         if lane_pane is not None:
             if getattr(res, "error", ""):
                 lane_pane.set_weights_line("")
-            elif self._data.bring_weights_present(repo):
+            elif weights_present:
                 lane_pane.set_weights_line(
                     "  [green]✓ weights on disk[/green] — "
                     "[green]→ ② Serve[/green] [dim](\\[2/]] next stage)[/dim]"
@@ -9613,6 +9637,21 @@ class CockpitApp(App):
         if swap_compose and getattr(self._last_byo, "route", "") == "C":
             self._serve_generated_compose(swap_compose)
             return
+        # Route-C with the weights ALREADY on disk but no swap compose emitted yet
+        # (the user went straight to ② Serve because [D] was hidden — weights
+        # present): emit the serve-locally clone NOW with do_download=False (no
+        # download), then serve it.  This is the present-weights path that needs no
+        # [D] step — the "② Serve owns the compose emission" half of the UX fix.
+        if (
+            getattr(self._last_byo, "route", "") == "C"
+            and getattr(self._last_byo, "sibling_slug", "")
+            and self._data.bring_weights_present(getattr(self._last_byo, "repo", ""))
+        ):
+            self.run_bring_emit_and_serve(
+                getattr(self._last_byo, "repo", ""),
+                getattr(self._last_byo, "profile_like", ""),
+            )
+            return
         # Otherwise (non-swap route, or the swap download hasn't run) the CATALOG
         # slug whose compose we reproduce: the Route-C sibling, else the
         # profile-like the fit-check was run against.  We do NOT fall back to a
@@ -9633,6 +9672,49 @@ class CockpitApp(App):
             )
             return
         self.generate_and_preview_compose(slug)
+
+    @work(exclusive=True, group="bring-emit-serve")
+    async def run_bring_emit_and_serve(self, repo: str, profile_like: str) -> None:
+        """② Serve for a Route-C brought model whose weights are ALREADY on disk:
+        emit the serve-locally swap compose WITHOUT downloading (pull.sh
+        --apply-swap --emit-only), then hand it to the reconcile-gated serve.
+        This is the present-weights path — no [D] download step needed."""
+        lane_pane = None
+        try:
+            lane_pane = self.query_one("#lane-serve-pane", LaneServePane)
+            lane_pane.set_status(
+                "[dim]Emitting serve compose[/dim] "
+                "[dim](apply-swap --emit-only — weights on disk, no download)…[/dim]"
+            )
+        except Exception:
+            pass
+        from rich.markup import escape
+
+        def _on_line(line: str) -> None:
+            if lane_pane is not None:
+                try:
+                    lane_pane.set_status(f"[dim]{escape(line.strip()[-100:])}[/dim]")
+                except Exception:
+                    pass
+
+        self._bring_swap_compose = ""
+        handle = await self._data.run_bring_download(
+            repo, profile_like, apply_swap=True, emit_only=True, on_line=_on_line
+        )
+        try:
+            await handle.done.wait()
+        except Exception:
+            pass
+        swap_compose = self._data.last_swap_compose()
+        if not swap_compose:
+            self.notify(
+                "② Serve: apply-swap --emit-only produced no compose — see the log. "
+                "You can still press [D] to download + emit.",
+                title="② Serve", severity="warning", timeout=6,
+            )
+            return
+        self._bring_swap_compose = swap_compose
+        self._serve_generated_compose(swap_compose)
 
     @work(exclusive=True, group="generate-compose")
     async def generate_and_preview_compose(self, slug: str) -> None:
