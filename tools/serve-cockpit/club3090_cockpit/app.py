@@ -5361,12 +5361,9 @@ class LaneServePane(Container):
         except Exception:
             pass
         kv_opts = list(d.get("KV_OPTIONS") or _OV_KV)               # engine-declared
-        drafter = d.get("SPEC_DRAFTER") or "spec-dec"
-        spec_opts = [(f"{drafter} (on)", "on"), ("off — no spec-dec", "off")]
         for wid, key, presets, custom in (
             ("#ov-ctx", "MAX_MODEL_LEN", [(v, v) for v in _OV_CTX], True),
             ("#ov-kv", "KV_CACHE_DTYPE", [(v, v) for v in kv_opts], True),
-            ("#ov-spec", "SPEC", spec_opts, False),
             ("#ov-util", "GPU_MEMORY_UTILIZATION", [(v, v) for v in _OV_UTIL], True),
         ):
             try:
@@ -5381,6 +5378,26 @@ class LaneServePane(Container):
                 sel.value = val if val in [o[1] for o in opts] else opts[0][1]
             except Exception:
                 pass
+        # spec-dec: the dropdown lists the ENGINE's supported drafters + off; the
+        # VALUE is the drafter METHOD (or "off").  collect maps method→SPEC=on +
+        # DRAFTER_METHOD, off→SPEC=off (the swap entrypoint parameterizes the method).
+        try:
+            drafters = list(d.get("DRAFTER_OPTIONS") or [])
+            # fallback (engine not resolvable) → a plain on/off "on" option
+            cur = d.get("SPEC_METHOD") or (drafters[0] if drafters else "on")
+            spec_n = d.get("SPEC_N") or ""
+            spec_opts = [
+                ((f"{m} n={spec_n}" if (m == cur and spec_n) else m), m)
+                for m in drafters
+            ] or [("on", "on")]
+            spec_opts.append(("off — no spec-dec", "off"))
+            sel = self.query_one("#ov-spec", Select)
+            sel.set_options(spec_opts)
+            method_vals = [o[1] for o in spec_opts]
+            sel.value = (cur if (str(d.get("SPEC")) == "on" and cur in method_vals)
+                         else "off")
+        except Exception:
+            pass
 
     def collect_overrides(self) -> dict:
         """Read the editor fields → env overrides for the serve.  Only non-empty
@@ -5402,7 +5419,6 @@ class LaneServePane(Container):
         for wid, key, custom_id in (
             ("#ov-ctx", "MAX_MODEL_LEN", "#ov-ctx-custom"),
             ("#ov-kv", "KV_CACHE_DTYPE", "#ov-kv-custom"),
-            ("#ov-spec", "SPEC", None),
             ("#ov-util", "GPU_MEMORY_UTILIZATION", "#ov-util-custom"),
         ):
             try:
@@ -5415,6 +5431,18 @@ class LaneServePane(Container):
                     out[key] = str(v)
             except Exception:
                 pass
+        # spec-dec: the dropdown value is the drafter METHOD (or "off").  off →
+        # SPEC=off; a method → SPEC=on + DRAFTER_METHOD (the swap entrypoint's
+        # ${DRAFTER_METHOD} rebuilds --speculative-config for that drafter).
+        try:
+            sv = self.query_one("#ov-spec", Select).value
+            if sv == "off":
+                out["SPEC"] = "off"
+            elif sv not in (None, Select.BLANK):
+                out["SPEC"] = "on"
+                out["DRAFTER_METHOD"] = str(sv)
+        except Exception:
+            pass
         return out
 
 

@@ -3739,3 +3739,12 @@ class TestServeOverrides:
         assert cd.engine_kv_formats("llama-cpp-mainline") == ["q4_0", "q5_0", "q8_0", "k8v4"]
         # the editor's KV options come from the engine, not a generic list
         assert cd.serve_override_defaults("vllm/dual", "org/Foo")["KV_OPTIONS"] == vk
+
+    def test_engine_drafters_and_options(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        cd = CockpitData(repo_root, runner=full_runner())
+        assert cd.engine_drafters("vllm-stable") == ["mtp", "mtp_assistant"]
+        assert "dflash" in cd.engine_drafters("beellama-local")
+        d = cd.serve_override_defaults("vllm/dual", "org/Foo")
+        assert d["DRAFTER_OPTIONS"] == ["mtp", "mtp_assistant"]   # engine-driven
+        assert d["SPEC_METHOD"] == "mtp" and d["SPEC_N"] == "3"

@@ -133,10 +133,13 @@ def apply_command_overrides(
 
 
 def _gate_spec_via_entrypoint(svc: dict) -> None:
-    """Move ``--speculative-config <json>`` out of ``command`` and re-add it from
-    an entrypoint gated on ``${SPEC:-on}`` (mirrors the shipped nvfp4 compose), so
-    SPEC=off drops the MTP drafter at up-time.  No-op if the command carries no
-    ``--speculative-config``.  Mutates ``svc`` in place."""
+    """Move ``--speculative-config <json>`` out of ``command`` and REBUILD it from
+    an entrypoint gated on ``${SPEC:-on}`` (mirrors the shipped nvfp4 compose), with
+    the drafter method + n parameterized by ``${DRAFTER_METHOD}`` / ``${DRAFTER_N}``
+    (defaults = the sibling's).  So the c3 ② Serve editor can toggle spec-dec off
+    AND switch the drafter type (mtp / mtp_assistant / …).  No-op if the command
+    carries no ``--speculative-config``.  Mutates ``svc`` in place."""
+    import re
     cmd = list(svc.get("command") or [])
     spec_val = None
     out: list = []
@@ -150,27 +153,34 @@ def _gate_spec_via_entrypoint(svc: dict) -> None:
         i += 1
     if spec_val is None:
         return
+    mm = re.search(r'"method"\s*:\s*"([a-z0-9_]+)"', spec_val or "")
+    nn = re.search(r'"num_speculative_tokens"\s*:\s*(\d+)', spec_val or "")
+    d_method = mm.group(1) if mm else "mtp"
+    d_n = nn.group(1) if nn else "3"
     svc["command"] = out
     env_list = list(svc.get("environment") or [])
-    if "SPEC" not in env_list:
-        env_list.append("SPEC")
+    for e in ("SPEC", "DRAFTER_METHOD", "DRAFTER_N"):
+        if e not in env_list:
+            env_list.append(e)
     svc["environment"] = env_list
-    # `$$` = docker-compose-escaped `$` (evaluated by the container's bash at
-    # runtime, NOT interpolated by compose).  The JSON spec value has no single
-    # quotes, so single-quoting it for the bash array is safe.
+    # `$$` = docker-compose-escaped `$` (bash evaluates it at runtime, NOT compose).
+    # printf builds the JSON so the method/n substitute cleanly — no quote-in-YAML
+    # escaping hell.  ${DRAFTER_METHOD}/${DRAFTER_N} default to the sibling's.
+    script = (
+        "# SPEC=off drops the drafter; DRAFTER_METHOD/DRAFTER_N select the type\n"
+        "# (defaults = the sibling's).  Toggled/selected by the c3 ② Serve editor.\n"
+        "SPEC_ARGS=()\n"
+        'if [ "$${SPEC:-on}" != "off" ]; then\n'
+        "  _cfg=$$(printf '{\"method\":\"%s\",\"num_speculative_tokens\":%s}' "
+        '"$${DRAFTER_METHOD:-' + d_method + '}" "$${DRAFTER_N:-' + d_n + '}")\n'
+        '  SPEC_ARGS=(--speculative-config "$$_cfg")\n'
+        "else\n"
+        '  echo "[brought] SPEC=off — drafter disabled (no spec-dec)" >&2\n'
+        "fi\n"
+        'exec vllm serve "$$@" "$${SPEC_ARGS[@]}"'
+    )
     svc["entrypoint"] = [
-        "bash", "-c",
-        (
-            "# SPEC=off drops the built-in MTP drafter (tight-RAM / no-spec path);\n"
-            "# default on. Toggled by the c3 ② Serve override editor.\n"
-            "SPEC_ARGS=()\n"
-            'if [ "$${SPEC:-on}" != "off" ]; then\n'
-            f"  SPEC_ARGS=(--speculative-config '{spec_val}')\n"
-            "else\n"
-            '  echo "[brought] SPEC=off — MTP drafter disabled (no spec-dec)" >&2\n'
-            "fi\n"
-            'exec vllm serve "$$@" "$${SPEC_ARGS[@]}"'
-        ),
+        "bash", "-c", script,
         "--",
     ]
 
