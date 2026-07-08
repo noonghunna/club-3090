@@ -5044,12 +5044,14 @@ class LaneBringPane(Container):
             line.update("")
             line.add_class("funnel-hidden")
 
-    def populate(self, res: ByoResult, weights_present: Optional[bool] = None) -> None:
+    def populate(self, res: ByoResult, weights_present: Optional[bool] = None,
+                 downloading: bool = False) -> None:
         card = self.query_one("#lane-bring-result-card", Static)
-        card.update(_byo_result_text(res, weights_present))
+        card.update(_byo_result_text(res, weights_present, downloading))
 
 
-def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None) -> str:
+def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None,
+                     downloading: bool = False) -> str:
     """Render a ByoResult into the verdict card text (shared by Run · BYO + the
     producer lane's ① Bring stage).
 
@@ -5072,8 +5074,14 @@ def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None) -> 
                else "[dim]MTP kept — head present[/dim]")
         # Presence-aware next-step: [D] emits the serve compose, so when the
         # weights are already on disk it must NOT read as "download" — point
-        # straight at ② Serve (which emits the compose itself, no download).
-        if weights_present:
+        # straight at ② Serve (which emits the compose itself, no download).  And
+        # while a [D] download is IN FLIGHT, suppress the re-offer entirely (#617).
+        if downloading:
+            next_step = (
+                f"  [cyan]⏳ downloading {brought}…[/cyan] "
+                f"[dim](in progress — \\[k] cancels)[/dim]"
+            )
+        elif weights_present:
             next_step = (
                 f"  [green]✓ weights on disk[/green] — [green]press[/green] "
                 f"[bold]\\[s][/bold] [green]to continue to ② Serve[/green] "
@@ -6118,6 +6126,11 @@ class CockpitApp(App):
         # Funnel §2b-6 — ① Bring: download the fit-checked repo's weights
         # (pull.sh real run — DISK write, no GPU claim; streams into the pane).
         Binding("D", "bring_download", "Download weights", show=False),
+        # [k] cancels an in-flight ① Bring download.  Shares "k" with serving_stop;
+        # check_action gates it to mode 1 + a live download so they're disjoint
+        # (same duplicate-key + check_action pattern as the modal's k=stop /
+        # k=cancel_download).
+        Binding("k", "bring_cancel_download", "Cancel download", show=True),
         # R3b-2 — producer lane: the ~43-min FULL validation battery
         # (report.sh --full) — confirm-gated, bg-streamed, producer-only, uses the
         # serving model (claims no GPU); NEVER auto-fired.
@@ -6382,6 +6395,12 @@ class CockpitApp(App):
         # consumer via this gate, so it MUST beat _ALWAYS_ON.
         if self._surface != "producer" and action in self._PRODUCER_ONLY:
             return False
+
+        # [k] cancels an in-flight ① Bring download — enabled ONLY in mode 1 with
+        # a live download, so the shared "k" falls through to serving_stop
+        # everywhere else (mode 1 is producer-only, so no surface leak).
+        if action == "bring_cancel_download":
+            return self._active_mode == 1 and bool(self._active_bring_download())
 
         # Arrow-key focus descent (tab bar ↔ primary list).  These are gated here —
         # BEFORE _ALWAYS_ON — so the result is fully controlled (neither is in
@@ -7747,8 +7766,12 @@ class CockpitApp(App):
             not getattr(res, "error", "")
             and self._data.bring_weights_present(repo)
         )
+        # #617: a re-run fit-check (or refresh) must SEE an in-flight [D] download
+        # for this repo — render "⏳ downloading" + suppress the [D] re-offer,
+        # rather than the stale disk verdict that invites a second 20+ GB fetch.
+        downloading = repo in self._active_bring_download()
         if lane_pane is not None:
-            lane_pane.populate(res, weights_present)
+            lane_pane.populate(res, weights_present, downloading=downloading)
         # N9 — carry the fit-check result forward: pre-arm ② Serve with the
         # resolved target so the producer pipeline flows ① → ② without re-entry.
         try:
@@ -7763,6 +7786,11 @@ class CockpitApp(App):
         if lane_pane is not None:
             if getattr(res, "error", ""):
                 lane_pane.set_weights_line("")
+            elif downloading:
+                lane_pane.set_weights_line(
+                    "  [cyan]⏳ downloading…[/cyan] [dim](in progress — leave it "
+                    "running; \\[k] cancels)[/dim]"
+                )
             elif weights_present:
                 lane_pane.set_weights_line(
                     "  [green]✓ weights on disk[/green] — "
@@ -7774,6 +7802,19 @@ class CockpitApp(App):
                     "to download via pull.sh [dim](SHA-verified, streams here; "
                     "disk write only, no GPU claim)[/dim]"
                 )
+
+    def _active_bring_download(self) -> dict:
+        """repo → {handle, profile_like, apply_swap} for an in-flight ① Bring
+        [D] download (lazy).  Repo-keyed so a re-run fit-check / refresh can SEE
+        the download in flight — the parity gap with the catalog
+        ``_active_downloads`` that produced BOTH #617 dogfood bugs: the
+        'apply-swap did not complete' false-negative (verdict raced the marker)
+        and the re-offer-[D] double-download (fit-check was blind to the run)."""
+        d = getattr(self, "_bring_downloads", None)
+        if d is None:
+            d = {}
+            self._bring_downloads = d
+        return d
 
     def action_bring_download(self) -> None:
         """[D] — §2b-6: download the fit-checked repo's weights (the REAL
@@ -7790,15 +7831,66 @@ class CockpitApp(App):
             )
             return
         repo = getattr(byo, "repo", "")
+        # No-op if a download for this repo is already in flight — mirrors the
+        # catalog Download's "No-op if already downloading this slug"; stops a
+        # second 20+ GB fetch of the same repo (#617).  [k] cancels.
+        if repo in self._active_bring_download():
+            self.notify(
+                f"Already downloading {repo} — press [k] to cancel.",
+                title="Download", timeout=4,
+            )
+            return
         if self._data.bring_weights_present(repo):
             self.notify("Weights already on disk.", title="Download", timeout=3)
             return
+        # One download at a time (shared runner + exclusive worker): starting a
+        # new repo supersedes any prior in-flight entry (the old worker's await is
+        # cancelled), so clear stale keys — otherwise an abandoned repo could stick
+        # as "already downloading" and block a later re-download of it.
+        self._active_bring_download().clear()
+        # Register synchronously so a fast re-press / re-fit-check sees it at once
+        # (the worker fills in the real handle).  Popped on terminal completion or
+        # [k] cancel.
+        self._active_bring_download()[repo] = {
+            "handle": None,
+            "profile_like": getattr(byo, "profile_like", ""),
+            "apply_swap": bool(getattr(byo, "route", "") == "C"),
+        }
         self.run_bring_download_worker(repo, getattr(byo, "profile_like", ""))
+
+    def action_bring_cancel_download(self) -> None:
+        """[k] — cancel the in-flight ① Bring download (kills the pull.sh / hf
+        process group via the runner's SIGINT→TERM→KILL, same path as the catalog
+        cancel).  check_action gates this to mode 1 + an active download so the
+        shared [k] falls through to serving_stop everywhere else."""
+        dls = self._active_bring_download()
+        if not dls:
+            return
+        repo = next(iter(dls))
+        dls.pop(repo, None)
+        self._cancel_bring_download()
+        try:
+            self.query_one("#lane-bring-pane", LaneBringPane).set_weights_line(
+                "  [yellow]download cancelled[/yellow] — press [bold]\\[D][/bold] to restart"
+            )
+        except Exception:
+            pass
+        self.notify(f"Cancelled download of {repo}.", title="Download", timeout=3)
+
+    @work(group="bring-download-ctl")
+    async def _cancel_bring_download(self) -> None:
+        await self._data.cancel_weights_download()
 
     @work(exclusive=True, group="bring-download")
     async def run_bring_download_worker(self, repo: str, profile_like: str) -> None:
-        """§2b-6/7 — stream the pull.sh download into the weights line, then
-        re-probe and hand off to ② Serve."""
+        """§2b-6/7 — stream the pull.sh download into the weights line, poll to
+        TRUE completion, then hand the verdict off an AUTHORITATIVE disk re-stat
+        (not the captured apply-swap marker).  Mirrors the catalog run_download's
+        robustness so #617's two bugs can't recur: (a) the tracker keeps the run
+        visible to a concurrent re-fit-check; (b) the verdict is derived from
+        weights-present, so a Route-C download whose weights landed but whose
+        marker was missed reads as ✓ (→ ② Serve emit-only), NOT a false failure."""
+        import asyncio
         lane_pane = None
         try:
             lane_pane = self.query_one("#lane-bring-pane", LaneBringPane)
@@ -7812,7 +7904,8 @@ class CockpitApp(App):
                 clipped = line.strip()[-100:]
                 try:
                     lane_pane.set_weights_line(
-                        f"  [cyan]downloading[/cyan] [dim]{escape(clipped)}[/dim]"
+                        f"  [cyan]⏳ downloading[/cyan] [dim]{escape(clipped)}[/dim] "
+                        "[dim](\\[k] cancels)[/dim]"
                     )
                 except Exception:
                     pass
@@ -7828,37 +7921,58 @@ class CockpitApp(App):
         handle = await self._data.run_bring_download(
             repo, profile_like, apply_swap=apply_swap, on_line=_on_line
         )
+        # Attach the real handle to the tracker entry (registered synchronously in
+        # action_bring_download).  If it's already gone, we were cancelled before
+        # the spawn returned — bail without rendering.
+        info = self._active_bring_download().get(repo)
+        if info is None:
+            return
+        info["handle"] = handle
+        # Poll to true completion (catalog run_download pattern) so the tracker —
+        # and thus the "⏳ downloading" fit-check render — stays live for the whole
+        # fetch, not just the initial await.
         try:
-            await handle.done.wait()
+            while not handle.done.is_set():
+                try:
+                    await asyncio.wait_for(handle.done.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    continue
         except Exception:
             pass
+        # Superseded (exclusive-worker replacement) or [k]-cancelled → the tracker
+        # no longer holds this repo.  Do NOT render a stale verdict; the owner of
+        # the newer state renders instead.
+        if repo not in self._active_bring_download():
+            return
+        self._active_bring_download().pop(repo, None)
         if lane_pane is None:
             return
-        if apply_swap:
-            # The swap compose is the servable artifact — its presence (not the
-            # HF pull-dir probe) is the success signal for a Route-C swap.
-            swap_compose = self._data.last_swap_compose()
-            if swap_compose:
-                self._bring_swap_compose = swap_compose
-                lane_pane.set_weights_line(
-                    "  [green]✓ weights + swap compose ready[/green] — "
-                    "[green]→ ② Serve[/green] [dim](serves the brought model)[/dim]"
-                )
-            else:
-                lane_pane.set_weights_line(
-                    "  [red]apply-swap did not complete[/red] — check the pull.sh "
-                    "output [dim](re-press \\[D] to retry)[/dim]"
-                )
-            return
-        if self._data.bring_weights_present(repo):
+        # AUTHORITATIVE: disk truth (re-stat) wins over the exit code / marker race.
+        present = self._data.bring_weights_present(repo)
+        swap_compose = self._data.last_swap_compose() if apply_swap else ""
+        if apply_swap and swap_compose:
+            self._bring_swap_compose = swap_compose
+            lane_pane.set_weights_line(
+                "  [green]✓ weights + swap compose ready[/green] — "
+                "[green]→ ② Serve[/green] [dim](serves the brought model)[/dim]"
+            )
+        elif present and apply_swap:
+            # Weights DID land but no compose was captured — NOT a failure: ② Serve
+            # re-emits the swap compose from the present weights (apply-swap
+            # --emit-only, no re-download).  #617.
+            lane_pane.set_weights_line(
+                "  [green]✓ weights downloaded[/green] — [green]→ ② Serve[/green] "
+                "[dim](press \\[s]; emits the swap compose from disk — no re-download)[/dim]"
+            )
+        elif present:
             lane_pane.set_weights_line(
                 "  [green]✓ weights downloaded[/green] — "
                 "[green]→ ② Serve[/green] [dim](press \\[s] to continue)[/dim]"
             )
         else:
             lane_pane.set_weights_line(
-                "  [red]download did not complete[/red] — check the pull.sh output "
-                "[dim](re-press \\[D] to retry)[/dim]"
+                "  [red]download did not complete[/red] — weights not on disk; "
+                "check the pull.sh output [dim](re-press \\[D] to retry)[/dim]"
             )
 
     # ── Explain ──────────────────────────────────────────────────────────────────────
