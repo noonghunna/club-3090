@@ -9390,19 +9390,20 @@ class TestTier1PrimaryActionAndSKeyHonesty:
                 assert app.check_action("s_key", ()) is False, tab
 
     @pytest.mark.asyncio
-    async def test_s_key_gated_to_evidence_only_in_lane(self):
-        """In the Bring & Validate lane [s] is valid ONLY on ④ Measure (submit),
-        not on ① Bring / ② Serve / ③ Gate / ⑤ Promote."""
+    async def test_s_key_gated_to_bring_and_evidence_in_lane(self):
+        """In the Bring & Validate lane [s] is valid on ① Bring (advance → ②
+        Serve) and ④ Measure (submit), NOT on ② Serve / ③ Gate / ⑤ Promote."""
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#validate-tabs", TabbedContent)
-            tc.active = "tab-evidence"
-            await pilot.pause()
-            assert app.check_action("s_key", ()) is True
-            for tab in ("tab-bring", "tab-serve", "tab-run", "tab-promote"):
+            for tab in ("tab-bring", "tab-evidence"):
+                tc.active = tab
+                await pilot.pause()
+                assert app.check_action("s_key", ()) is True, tab
+            for tab in ("tab-serve", "tab-run", "tab-promote"):
                 tc.active = tab
                 await pilot.pause()
                 assert app.check_action("s_key", ()) is False, tab
@@ -10370,9 +10371,29 @@ class TestProducerLaneHandoff:
             assert "vllm/dual" in card
 
     @pytest.mark.asyncio
-    async def test_bring_enter_advances_to_serve_when_present(self, monkeypatch, tmp_path):
-        # After a servable fit-check with weights ON DISK, ⏎ on ① Bring ADVANCES
-        # to the pre-armed ② Serve — not re-run the fit-check (the reported bug).
+    async def test_bring_s_key_advances_to_serve_when_present(self, monkeypatch, tmp_path):
+        # After a servable fit-check with weights ON DISK, [s] on ① Bring ADVANCES
+        # to the pre-armed ② Serve (the dedicated "proceed" key).
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            d = app._data.bring_pull_dir("unsloth/Qwen3-27B-abliterated")
+            d.mkdir(parents=True)
+            (d / "model.safetensors").write_bytes(b"x")
+            app.query_one("#lane-bring-url-input", Input).value = "unsloth/Qwen3-27B-abliterated"
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-bring"
+            app.action_s_key()                                   # [s] on ① Bring
+            await _settle(pilot)
+            assert app.query_one("#validate-tabs", TabbedContent).active == "tab-serve"
+
+    @pytest.mark.asyncio
+    async def test_bring_enter_always_fitchecks_never_advances(self, monkeypatch, tmp_path):
+        # ⏎ on ① Bring ALWAYS fit-checks — even with weights on disk it must NOT
+        # skip to ② Serve (advance is [s]'s job; ⏎ stays fit-check).
         monkeypatch.setenv("HF_HOME", str(tmp_path))
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
@@ -10387,12 +10408,12 @@ class TestProducerLaneHandoff:
             app.query_one("#validate-tabs", TabbedContent).active = "tab-bring"
             app._validate_primary()                              # ⏎ on ① Bring
             await _settle(pilot)
-            assert app.query_one("#validate-tabs", TabbedContent).active == "tab-serve"
+            assert app.query_one("#validate-tabs", TabbedContent).active == "tab-bring"
 
     @pytest.mark.asyncio
-    async def test_bring_enter_refits_when_weights_absent(self, monkeypatch, tmp_path):
-        # weights ABSENT → ⏎ stays on ① Bring (re-fit); the card there points at
-        # [D] (download is the real next step), so ⏎ must NOT skip to ② Serve.
+    async def test_bring_s_key_no_advance_when_weights_absent(self, monkeypatch, tmp_path):
+        # [s] with weights ABSENT → stays on ① Bring ([D] download is the next
+        # step, not ② Serve).
         monkeypatch.setenv("HF_HOME", str(tmp_path))
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
@@ -10402,9 +10423,28 @@ class TestProducerLaneHandoff:
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
             await _settle(pilot)
             app.query_one("#validate-tabs", TabbedContent).active = "tab-bring"
-            app._validate_primary()
+            app.action_s_key()
             await _settle(pilot)
             assert app.query_one("#validate-tabs", TabbedContent).active == "tab-bring"
+
+    @pytest.mark.asyncio
+    async def test_serve_armed_route_c_serves_your_weights(self, monkeypatch, tmp_path):
+        # ② Serve armed for a Route-C brought model reflects the TRUTH: serves
+        # YOUR weights via the sibling recipe — NOT a catalog reproduction, and no
+        # dead end (bring-funnel-design §2b item 7).
+        monkeypatch.setenv("HF_HOME", str(tmp_path))
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
+                "#lane-serve-body", Static
+            ).render())
+            assert "your brought weights" in body
+            assert "to serve" in body                          # a clear action, no dead end
+            assert "NOT your brought model" not in body        # stale contradiction is gone
 
     @pytest.mark.asyncio
     async def test_serve_tab_rearms_from_cached_byo(self):

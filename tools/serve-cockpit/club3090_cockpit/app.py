@@ -5076,7 +5076,7 @@ def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None) -> 
         if weights_present:
             next_step = (
                 f"  [green]✓ weights on disk[/green] — [green]press[/green] "
-                f"[bold]\\[⏎][/bold] [green]to continue to ② Serve[/green] "
+                f"[bold]\\[s][/bold] [green]to continue to ② Serve[/green] "
                 f"[dim](serves {brought} — no download)[/dim]"
             )
         else:
@@ -5216,28 +5216,49 @@ class LaneServePane(Container):
                 "untested).[/dim]"
             )
             return
-        slug = (
-            getattr(byo, "sibling_slug", "")
-            or getattr(byo, "profile_like", "")
-        )
+        route = str(getattr(byo, "route", "") or "").upper()
+        sibling = getattr(byo, "sibling_slug", "")
         repo = getattr(byo, "repo", "") or "—"
-        lines = [
-            "[green]● armed from ① Bring[/green] — ⏎ serves the resolved catalog compose (untested):",
-            "",
-            f"  [bold]brought[/bold]   [cyan]{repo}[/cyan]",
-        ]
-        if slug:
-            lines.append(f"  [bold]serves[/bold]    [green]{slug}[/green]  [dim](resolved catalog profile)[/dim]")
+        brought = repo.rsplit("/", 1)[-1]
+        if route == "C" and sibling:
+            # #628/#630 — a Route-C fine-tune serves YOUR brought weights via the
+            # sibling's proven recipe (chat-template · tools · spec-dec), NOT a
+            # catalog reproduction.  Honest text + a clear serve action (no dead
+            # end — bring-funnel-design §2b item 7).
+            lines = [
+                f"[green]● armed from ① Bring[/green] — serves [bold]{brought}[/bold] "
+                "[dim](your brought weights)[/dim]:",
+                "",
+                f"  [bold]brought[/bold]  [cyan]{repo}[/cyan]",
+                f"  [bold]recipe[/bold]   [green]{sibling}[/green] "
+                "[dim](chat-template · tools · spec-dec — applied to your weights)[/dim]",
+                "",
+                "  [green]→ press [bold]\\[⏎][/bold] to serve[/green] "
+                "[dim](reconcile-gated · 👤 untested)[/dim]",
+            ]
         else:
-            lines.append(
-                "  [yellow]no servable catalog target resolved[/yellow] — the fit-check found "
-                "no sibling/profile slug (the bring-your-own weight-swap is a deferred follow-up)."
-            )
-        lines.append("")
-        lines.append(
-            "[yellow]Note: serves an UNTESTED reproduction of the catalog profile's "
-            "compose — NOT your brought model's weights.[/yellow]"
-        )
+            slug = sibling or getattr(byo, "profile_like", "")
+            lines = [
+                "[green]● armed from ① Bring[/green] — ⏎ serves the resolved catalog "
+                "compose (untested):",
+                "",
+                f"  [bold]brought[/bold]  [cyan]{repo}[/cyan]",
+            ]
+            if slug:
+                lines.append(
+                    f"  [bold]serves[/bold]   [green]{slug}[/green]  "
+                    "[dim](resolved catalog profile)[/dim]"
+                )
+                lines.append("")
+                lines.append(
+                    "[yellow]Note: serves an UNTESTED reproduction of the catalog "
+                    "profile's compose — NOT your brought model's weights.[/yellow]"
+                )
+            else:
+                lines.append(
+                    "  [yellow]no servable catalog target resolved[/yellow] — the "
+                    "fit-check found no sibling/profile slug."
+                )
         body.update("\n".join(lines))
 
 
@@ -6257,7 +6278,8 @@ class CockpitApp(App):
             if self._active_mode == 0:
                 return self._current_subtab() == "tab-containers"
             if self._active_mode == 1:
-                return self._active_validate_tab() == "tab-evidence"
+                # ① Bring (advance → ② Serve) + ④ Measure (submit-to-localmaxxing)
+                return self._active_validate_tab() in ("tab-bring", "tab-evidence")
             return False
 
         # Sub-tab cycle keys: both modes have sub-tabs (merged 0 = 4 tabs; lane 1
@@ -7559,7 +7581,7 @@ class CockpitApp(App):
             elif weights_present:
                 lane_pane.set_weights_line(
                     "  [green]✓ weights on disk[/green] — "
-                    "[green]→ ② Serve[/green] [dim](press \\[⏎] to continue)[/dim]"
+                    "[green]→ ② Serve[/green] [dim](press \\[s] to continue)[/dim]"
                 )
             else:
                 lane_pane.set_weights_line(
@@ -7646,7 +7668,7 @@ class CockpitApp(App):
         if self._data.bring_weights_present(repo):
             lane_pane.set_weights_line(
                 "  [green]✓ weights downloaded[/green] — "
-                "[green]→ ② Serve[/green] [dim](press \\[⏎] to continue)[/dim]"
+                "[green]→ ② Serve[/green] [dim](press \\[s] to continue)[/dim]"
             )
         else:
             lane_pane.set_weights_line(
@@ -8653,7 +8675,7 @@ class CockpitApp(App):
           primary action.)"""
         tab = self._active_validate_tab()
         if tab == "tab-bring":
-            self._bring_primary()
+            self._trigger_lane_bring()          # ⏎ ALWAYS fit-checks (advance = [s])
         elif tab == "tab-serve":
             self.action_serve_untested()
         elif tab == "tab-run":
@@ -8663,30 +8685,32 @@ class CockpitApp(App):
         elif tab == "tab-promote":
             self.action_promote_catalog()
 
-    def _bring_primary(self) -> None:
-        """⏎ on ① Bring — DWIM:
-          - a fresh/changed target (or no cached result) → run the fit-check;
-          - an ALREADY fit-checked, servable target whose weights are ON DISK →
-            ADVANCE to the pre-armed ② Serve (the card's "press [⏎] ② Serve").
-            Re-running the fit-check on ⏎ was the reported confusion; the [Fit]
-            button still forces a re-check.
-        Weights ABSENT stays on fit-check — the card there points at [D]
-        (download is the real next step), not ② Serve."""
+    def _bring_advance_to_serve(self) -> None:
+        """[s] on ① Bring — advance to the pre-armed ② Serve, but ONLY when the
+        fit-checked target is servable AND its weights are on disk.  ⏎ stays
+        fit-check; [s] is the explicit "proceed" (the reported "⏎ re-ran the
+        fit-check" fix — a dedicated key, not an overload).  Guards:
+          - no servable fit-check yet → ask the user to fit-check (⏎) first;
+          - weights absent → [D] download is the next step, not ② Serve."""
         byo = self._last_byo
-        try:
-            cur_repo = self.query_one("#lane-bring-url-input", Input).value.strip()
-        except Exception:
-            cur_repo = ""
         servable = bool(
             byo is not None
             and not getattr(byo, "error", "")
             and (getattr(byo, "sibling_slug", "") or getattr(byo, "profile_like", ""))
-            and cur_repo == getattr(byo, "repo", "")
         )
-        if servable and self._data.bring_weights_present(getattr(byo, "repo", "")):
-            self._advance_to_serve()
-        else:
-            self._trigger_lane_bring()
+        if not servable:
+            self.notify(
+                "Fit-check a model first (⏎ on ① Bring).",
+                title="② Serve", severity="warning", timeout=3,
+            )
+            return
+        if not self._data.bring_weights_present(getattr(byo, "repo", "")):
+            self.notify(
+                "Weights not on disk yet — press [D] to download first.",
+                title="② Serve", severity="warning", timeout=4,
+            )
+            return
+        self._advance_to_serve()
 
     def _advance_to_serve(self) -> None:
         """Advance the Bring & Validate lane from ① Bring to the pre-armed
@@ -8945,11 +8969,17 @@ class CockpitApp(App):
     def action_s_key(self) -> None:
         """[s] is context-sensitive:
           - merged mode 0 · Containers : gated `docker restart <name>`.
+          - Bring & Validate · ① Bring  : advance to the armed ② Serve (weights on disk).
           - Bring & Validate · ④ Measure : gated submit-to-localmaxxing for the tag.
         Other contexts ignore it."""
-        if self._active_mode == 1 and self._active_validate_tab() == "tab-evidence":
-            self.action_evidence_submit()
-            return
+        if self._active_mode == 1:
+            tab = self._active_validate_tab()
+            if tab == "tab-bring":
+                self._bring_advance_to_serve()
+                return
+            if tab == "tab-evidence":
+                self.action_evidence_submit()
+                return
         self.action_container_restart()
 
     def action_container_restart(self) -> None:
