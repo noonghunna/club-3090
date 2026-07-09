@@ -277,6 +277,18 @@ Dense 40B uncensored community merge of Qwen3.6 (DavidAU Opus-Deckard). Q6_K GGU
 
 ---
 
+## Tess-4-27B
+
+Migtissera's Qwen3.5-based dense 27B instruct/agentic fine-tune (`migtissera/Tess-4-27B-GGUF`). Q4_K_M GGUF with a **separate (external) MTP draft head** — the catalog's first external-MTP compose (engaged via `--spec-draft-model … --spec-type draft-mtp`, vs Deckard's *embedded* head). Arch is `qwen35-dense` (standard GQA, 64 layers) per the GGUF header. Vision-capable base (F16 mmproj on disk) but shipped **text-only**. llama.cpp mainline, pin `server-cuda-b9246`.
+
+### Dual-card (2× RTX 3090) — llama.cpp
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `mtp.yml` (ext MTP n=2) | @noonghunna (2× 3090, PCIe) | q4_0/q4_0 | 262144 | 52 / 68 | ~1325 (short) / ~1017 (90K) | 12.6+17.2 GB | 2026-07-09 | ⚠️ Production w/ caveats. External MTP (separate `mtp-*.gguf` draft). decode CV 2.4%, TTFT 233 ms. **verify-stress 8/8** (NIAH ladder clean to 240,634 tok = 91% of 262K, ~5.9 GB free at deepest fill). **soak-continuous PASS** (0 err, 0/100 silent-empty, p50 66.4, 96.3% retention). 8-pack (benchlocal `--full`): **115/150 think-off · 118/150 think-on** — ties/edges qwen3.6-27b **dual-max (109)** and LEADS agentic (hermesagent **15/20 vs 9** · cli-40 **25/40 vs 20**); per-pack OFF: toolcall 14·instructfollow 13·structoutput 14·dataextract 12·reasonmath 11·bugfind 11. **vs dual-max:** ~½ the throughput (52 vs ~114 TPS) for a quality tie/edge + vision base + smaller footprint (12.6+17.2 vs ~22 GB/card). ⚠️ Caveat: streaming tool-calls + thinking-ON → `finish=length` (use thinking-off for tool/agent). Arch confirmed `qwen35-dense` from GGUF header. |
+
+---
+
 ## See also
 
 - [docs/SINGLE_CARD.md](docs/SINGLE_CARD.md) — single-card variant picker

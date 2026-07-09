@@ -1,0 +1,128 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Tess-4-27B (Qwen3.5-based dense 27B, migtissera Q4_K_M GGUF)
+#   Engine:    llama.cpp (mainline server-cuda-b9246, external draft-mtp)
+#   Topology:  Dual 3090 (layer-split -ts 1,1)
+#   Drafter:   MTP n=2 external — --spec-draft-model mtp-Tess-*.gguf + --spec-type draft-mtp
+#   KV:        q4_0 K + q4_0 V
+#   Vision:    no (base is VL-capable; mmproj on disk, not mounted — text-only ship)
+#   Template:  native (GGUF-embedded, Qwen-style)
+#   Max ctx:   262144 (q4_0 KV; validated to 240K NIAH on the dual split)
+#   Genesis:   N/A — llama.cpp engine
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   Streaming tool-calls + thinking-ON → finish=length (heavy reasoner
+#              exhausts the token budget before emitting the call); use thinking-OFF
+#              (the shipped default) for tool/agent workloads. cli-40 62% think-off
+#              (mid-tier autonomous-CLI). See BENCHMARKS.md / learnings/tess-4-27b.md.
+#   Engine-profile: llama-cpp-local
+#   Quality:   core 8-pack 115/150 (77%) think-off, 118/150 (79%) think-on
+#              (benchlocal --full, 2026-07-09); leads the agentic packs (hermes
+#              15/20, cli 25/40) vs the qwen3.6-27b dual-max reference (9, 20).
+#   Best for:  Vision-capable-base agentic/chat alternative to the fast qwen dual —
+#              trades ~½ the throughput for a quality-tie-to-edge + smaller footprint. ⭐
+# NOTE: Arch CONFIRMED qwen35-dense (standard GQA, 64 layers) from the GGUF header
+# — same family as Deckard-40B. Migtissera ships the MTP head as a SEPARATE GGUF
+# (external draft), so this compose passes --spec-draft-model (contrast Deckard's
+# embedded head, which needs only --spec-type draft-mtp).
+# ---------------------------------------------------------------------------
+# Tess-4-27B on llama.cpp — dual 3090, external MTP n=2, 262K ctx, text-only.
+#
+# Tess-4-27B is migtissera's Qwen3.5-based dense 27B instruct/agentic fine-tune
+# (thinking model; emits <think>). We serve the migtissera Q4_K_M GGUF with the
+# repo's separate MTP draft head (hf: migtissera/Tess-4-27B-GGUF).
+#
+# Layer-split across both 3090s via `-ts 1,1` (tensor-split), pipelining layers
+# across the PCIe bus (no NVLink needed — layer-split avoids cross-GPU all-reduce).
+# The 16 GB Q4_K_M fits one 24 GB card, but 262K q4_0 KV wants the dual pool;
+# a single-card long-ctx variant is architecturally valid but not yet benched.
+#
+# External MTP: the draft head is a standalone GGUF (mtp-Tess-4-27B-Q4_K_M.gguf).
+# On mainline llama.cpp b9246 it is engaged via `--spec-draft-model <file>
+# --spec-type draft-mtp` (drafter: tess-mtp-gguf, spec_method mtp_gguf).
+# Validated 2026-07-09: decode ~52 narrative / 68 code tok/s, prefill ~1.3K tok/s.
+#
+# Context ceiling (q4_0 KV): verify-stress NIAH ladder recalls cleanly to 240,634
+# tok (91% of 262144) with ~5.9 GB VRAM free at the deepest fill; soak-continuous
+# PASS (0 err, 0/100 silent-empty, p50 66.4 tok/s, 96.3% retention).
+#
+# Engine pin: validated on `ghcr.io/ggml-org/llama.cpp:server-cuda-b9246` (the
+# shared `llama-cpp-local` pin). draft-mtp spec type (PR #22673, mainline) works
+# on it. Bump via env once a newer build is validated:
+#   LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE             main weights path under /models
+#   MTP_DRAFT_FILE        external MTP draft path under /models
+#   CTX_SIZE              KV pool size        (default: 262144)
+#   BATCH_SIZE            llama.cpp -b        (default: 4096)
+#   UBATCH_SIZE           llama.cpp -ub       (default: 512)
+#   KV_TYPE               K and V quant type  (default: q4_0)
+#   NP                    parallel slots      (default: 1)
+#   MTP_DRAFT_N_MAX       MTP draft tokens    (default: 2)
+#   TENSOR_SPLIT          manual tensor split (default: 1,1)
+#   SERVED_NAME           --alias value       (default: tess-4-27b)
+#   REASONING             thinking gate       (default: off — stack-wide policy)
+#   REASONING_FORMAT      reasoning routing   (default: deepseek — hygiene)
+#   REPEAT_PENALTY        repetition penalty  (default: 1.0 — validated neutral)
+#   DRY_MULTIPLIER        DRY sampler strength (default: 0.0 = OFF). For severe long-ctx
+#                         loops set 0.8 (strongest loop-breaker; opt-in, #517).
+#   DRY_BASE / DRY_ALLOWED_LENGTH  DRY tuning (defaults: 1.75 / 2; active when DRY_MULTIPLIER>0)
+#   PORT                  host port           (default: 8020)
+#   CUDA_VISIBLE_DEVICES  which GPUs to use   (default: 0,1)
+#
+# Quick start:
+#   1. Get the GGUF + MTP draft (setup.sh/launch.sh auto-fetch, or manually):
+#        hf download migtissera/Tess-4-27B-GGUF \
+#          Tess-4-27B-Q4_K_M.gguf mtp-Tess-4-27B-Q4_K_M.gguf \
+#          --local-dir <MODEL_DIR>/tess-4-27b-gguf/migtissera-q4km
+#   2. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f mtp.yml up -d
+#   3. curl http://localhost:8020/v1/models  → should list tess-4-27b.
+
+services:
+  llama-cpp-tess-4-27b:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9246}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-tess-4-27b}"
+    restart: unless-stopped
+    ports:
+      - "${ESTATE_PORT:-${PORT:-8020}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    # ⚠ -np 1 is intentional — do NOT raise it. One decode stream per dual-card
+    #   config; extra slots divide throughput and can OOM the spec-context buffer.
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-tess-4-27b-gguf/migtissera-q4km/Tess-4-27B-Q4_K_M.gguf}
+      --alias ${SERVED_NAME:-tess-4-27b}
+      -c ${CTX_SIZE:-262144}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-512}
+      -ngl 99
+      -ts ${TENSOR_SPLIT:-1,1}
+      -fa on
+      --cache-type-k ${KV_TYPE:-q4_0}
+      --cache-type-v ${KV_TYPE:-q4_0}
+      -np ${NP:-1}
+      --spec-draft-model /models/${MTP_DRAFT_FILE:-tess-4-27b-gguf/migtissera-q4km/mtp-Tess-4-27B-Q4_K_M.gguf}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${MTP_DRAFT_N_MAX:-2}
+      --jinja
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+      --dry-multiplier ${DRY_MULTIPLIER:-0.0}
+      --dry-base ${DRY_BASE:-1.75}
+      --dry-allowed-length ${DRY_ALLOWED_LENGTH:-2}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

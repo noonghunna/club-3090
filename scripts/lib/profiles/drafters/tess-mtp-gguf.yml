@@ -1,0 +1,25 @@
+schema_version: 1
+id: tess-mtp-gguf
+display_name: Tess-4-27B external MTP GGUF draft
+spec_method: mtp_gguf
+model_compat:
+  - tess-4-27b
+engine_compat:
+  engine_type: llama.cpp
+n_default: 2
+n_max: 3
+download:
+  hf_repo: migtissera/Tess-4-27B-GGUF
+  size_gb: 1.9
+vram_footprint_gb: variable
+status: production
+# Migtissera ships the Tess-4-27B nextn (MTP) head as a SEPARATE GGUF
+# (mtp-Tess-4-27B-Q4_K_M.gguf), unlike Deckard's embedded head. Engaged on
+# mainline llama.cpp via `--spec-draft-model <file> --spec-type draft-mtp`
+# (spec_method: mtp_gguf). Live-validated on server-cuda-b9246 (dual 3090, 262K):
+# rebench decode ~52 narr / 68 code, verify-stress 8/8 (NIAH→240K), soak PASS
+# (2026-07-09). No vLLM `--speculative-config` form exists (llama.cpp-only draft
+# flag set) → OUT of the #141 vLLM-only generator scope; captured null so the
+# schema stays uniform and the generator never selects it.
+speculative_config_template: null   # N/A — llama.cpp engine, not vLLM
+local_model_path: null

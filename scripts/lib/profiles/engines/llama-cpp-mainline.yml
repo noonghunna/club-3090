@@ -20,7 +20,8 @@ supported_kv_formats:
   - q8_0
   - k8v4
 supported_drafters:
-  - mtp
+  - mtp                   # embedded nextn head (self-spec) — 27B built-in, Deckard-40B
+  - mtp_gguf              # external draft GGUF via --spec-draft-model — Tess-4-27B; live-validated on server-cuda-b9246 (dual 3090, 262K, 2026-07-09)
 supported_weight_formats:
   - gguf
 required_overlays: []

@@ -858,6 +858,21 @@ COMPOSE_REGISTRY = {
         category="uncensored",
     ),
 
+    # Tess-4-27B — Qwen3.5-based dense 27B (migtissera Q4_K_M GGUF), llama.cpp dual.
+    # First EXTERNAL-MTP compose in the catalog: the nextn head ships as a SEPARATE
+    # GGUF (mtp-Tess-*.gguf), engaged via --spec-draft-model + --spec-type draft-mtp
+    # (contrast Deckard's embedded head). kv_format q4_0 (K+V). kvcalc SKIP.
+    "llamacpp/tess-dual-mtp": _entry(
+        model="tess-4-27b", weights_variant="migtissera-q4km", workload="fast-chat",
+        engine="llama-cpp-local", drafter="tess-mtp-gguf", kv_format="q4_0",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/tess-4-27b/llama-cpp/compose/dual/migtissera-q4km/mtp.yml",
+        default_port=8020,
+        kvcalc_key="SKIP",
+        status="caveats",
+        status_note="Tess-4-27B (migtissera Q4_K_M GGUF, 16 GB) — Qwen3.5-based dense 27B instruct/agentic fine-tune on dual 3090 llama.cpp. Arch CONFIRMED qwen35-dense (standard GQA, 64 layers) from the GGUF header — same family as Deckard-40B. EXTERNAL MTP n=2 (separate mtp-*.gguf draft via --spec-draft-model, spec_method mtp_gguf) — first external-draft compose in the catalog. q4_0 KV, 262K ctx. Live-validated 2026-07-09 on server-cuda-b9246: decode ~52 narrative / 68 code tok/s (TTFT 233 ms), prefill ~1.3K tok/s; verify-stress 8/8 (NIAH ladder clean to 240,634 tok = 91% of 262K, ~5.9 GB free at deepest fill); soak-continuous PASS (0 err, 0/100 silent-empty, p50 66.4 tok/s, 96.3% retention). Quality (benchlocal --full): core 8-pack 115/150 (77%) think-off, 118/150 (79%) think-on — ties-to-edges the qwen3.6-27b dual-max reference (109) and LEADS the agentic packs (hermesagent 15/20 vs 9, cli-40 25/40 vs 20). CAVEAT: streaming tool-calls + thinking-ON -> finish=length (heavy reasoner blows the token budget before emitting the call); use thinking-OFF (shipped default) for tool/agent streaming. Trades ~1/2 the qwen-dual throughput for a quality tie/edge + vision-capable base + smaller footprint (~12.7+17.2 GB layer-split vs ~22 GB/card TP=2).",
+    ),
+
     # Ornith-1.0-9B — DeepReinforce agentic-coding RL fine-tune. Qwen3-Next DENSE-FFN
     # HYBRID (arch=qwen35: 8 full-attn + 24 GDN/DeltaNet layers, NON-MoE) — only 8/32
     # layers carry GQA KV so 262K fits at 4.25 GiB KV. No MTP head → drafter-free
@@ -936,6 +951,8 @@ DEFAULTS = {
     ("qwen3.6-35b-a3b", "vllm", "dual"): "vllm/qwen-35b-a3b-dual",
     # Deckard: only one compose (dual llama.cpp MTP), so the dual default is trivial.
     ("qwen3.6-40b-deckard", "llamacpp", "dual"): "llamacpp/deckard40B-dual-mtp",
+    # Tess-4-27B: single dual llama.cpp compose (external MTP); ⚠️ caveats = functional.
+    ("tess-4-27b", "llamacpp", "dual"): "llamacpp/tess-dual-mtp",
 }
 
 
