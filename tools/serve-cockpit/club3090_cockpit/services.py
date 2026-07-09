@@ -1065,6 +1065,7 @@ class CockpitData:
         *,
         apply_swap: bool = False,
         emit_only: bool = False,
+        gguf_includes: Optional[list[str]] = None,
         on_line: Optional[Callable[[str], None]] = None,
     ) -> Any:
         """§2b-6 — the lane's weights download: the REAL ``pull.sh`` run
@@ -1089,16 +1090,38 @@ class CockpitData:
 
         if apply_swap or on_line is not None:
             self._download_runner.set_callbacks(on_line=_capture)
-        cmd = ["bash", "scripts/pull.sh", repo, "--profile-like", profile_like]
-        if apply_swap:
-            # The BYO weight-swap ACTION: download the brought weights AND emit a
-            # serve-locally clone of the sibling compose (--model at the weights).
-            cmd.append("--apply-swap")
-        if emit_only:
-            # Weights already on disk — skip the download, JUST emit the serve
-            # compose (do_download=False).  ② Serve uses this so a present-weights
-            # serve needs no [D] step.  Only meaningful alongside --apply-swap.
-            cmd.append("--emit-only")
+        if gguf_includes:
+            # GGUF bring (route-G): pull.sh is the SAFETENSORS evaluate/download
+            # path — it ABORTS `unsupported-format (no config.json)` on a GGUF repo.
+            # So fetch the picked quant's files DIRECTLY into the pull dir with the
+            # same guards as hf-download.sh (classic LFS = resumable; token survives
+            # a non-login shell).  One `--include` per pattern.  (2026-07-09 dogfood.)
+            pull = self.bring_pull_dir(repo)
+            env.setdefault("HF_HUB_DISABLE_XET", "1")
+            env.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
+            if not env.get("HF_TOKEN"):
+                try:
+                    tok = (Path.home() / ".cache" / "huggingface" / "token").read_text(
+                        encoding="utf-8").strip()
+                    if tok:
+                        env["HF_TOKEN"] = tok
+                except OSError:
+                    pass
+            hf_bin = shutil.which("hf") or str(Path.home() / ".local" / "bin" / "hf")
+            cmd = [hf_bin, "download", repo, "--local-dir", str(pull)]
+            for pat in gguf_includes:
+                cmd += ["--include", pat]
+        else:
+            cmd = ["bash", "scripts/pull.sh", repo, "--profile-like", profile_like]
+            if apply_swap:
+                # The BYO weight-swap ACTION: download the brought weights AND emit a
+                # serve-locally clone of the sibling compose (--model at the weights).
+                cmd.append("--apply-swap")
+            if emit_only:
+                # Weights already on disk — skip the download, JUST emit the serve
+                # compose (do_download=False).  ② Serve uses this so a present-weights
+                # serve needs no [D] step.  Only meaningful alongside --apply-swap.
+                cmd.append("--emit-only")
         return await self._download_runner.start_raw(
             cmd,
             env=env,
