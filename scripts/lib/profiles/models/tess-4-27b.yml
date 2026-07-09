@@ -1,0 +1,50 @@
+schema_version: 1
+id: tess-4-27b
+display_name: Tess 4 27B
+family: qwen35-dense
+# Migtissera's Tess-4-27B — a Qwen3.5-based dense 27B instruct/agentic fine-tune.
+# Arch CONFIRMED from the GGUF header (general.architecture=qwen35): STANDARD GQA
+# attention, uniform across all 64 layers — NOT a Qwen3-Next/DeltaNet hybrid (no
+# GDN / linear-attention layers). Same qwen35-dense family as Qwen3.6-40B-Deckard,
+# 64 layers instead of 97. The base is VL-capable (an F16 mmproj ships alongside
+# the weights), but this catalog entry serves TEXT-ONLY — no mmproj is mounted.
+# A vision variant (mtp-vision.yml) can be added once validated.
+hidden_size: 5120
+num_hidden_layers: 64
+num_attn_heads: 24
+num_kv_heads: 4
+head_dim_attn: 256          # key_length == value_length == 256
+intermediate_size: 17408    # feed_forward_length
+attention_k_eq_v: false     # standard GQA — K and V are separate caches (same as Deckard/27B)
+max_ctx_supported: 262144
+# rope_theta = 1e7. MTP: migtissera ships the nextn (MTP) predict-layer as a
+# SEPARATE GGUF (mtp-Tess-4-27B-Q4_K_M.gguf) — an EXTERNAL draft, engaged via
+# `--spec-draft-model <file> --spec-type draft-mtp` (drafter: tess-mtp-gguf).
+# The main quant carries NO embedded nextn head (contrast Deckard, embedded).
+vision_capable: false
+weights:
+  migtissera-q4km:
+    path: tess-4-27b-gguf/migtissera-q4km
+    local_subdir: tess-4-27b-gguf/migtissera-q4km
+    size_gb: 18                 # 16 GB main Q4_K_M + 1.9 GB external MTP draft
+    format: gguf
+    status: production
+    # Migtissera's GGUF build carries BOTH the main Q4_K_M weights and the
+    # separate mtp-*.gguf draft head; setup.sh/launch.sh fetch both (the MTP
+    # draft is required for --spec-type draft-mtp spec-decode).
+    hf_repo: migtissera/Tess-4-27B-GGUF
+    files:
+      - Tess-4-27B-Q4_K_M.gguf
+      - mtp-Tess-4-27B-Q4_K_M.gguf
+    engine: llama-cpp
+    kind: gguf
+    verify_glob: "*.gguf"
+default_weight_variant: migtissera-q4km
+compatible_drafters:
+  - tess-mtp-gguf
+# num_kv_heads=4 supports TP up to 4; we ship + validated dual (TP=2). Single-card
+# (16 GB Q4_K_M fits one 24 GB card) is architecturally valid but not yet benched.
+valid_tp:
+  - 1
+  - 2
+requires_genesis: false
