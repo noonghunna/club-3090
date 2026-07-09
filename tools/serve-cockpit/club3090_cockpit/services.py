@@ -1378,26 +1378,79 @@ class CockpitData:
             return {"compose_path": "", "compose_yaml": "", "error": "no services"}
         _svc_name, svc = next(iter(services.items()))
         cmd = self._normalize_compose_command(svc.get("command"))
-        mount = "/models/brought.gguf"
-        mmproj_mount = "/models/brought.mmproj" if mmproj_host_file else ""
-        mtp_mount = "/models/brought-mtp.gguf" if mtp_draft_host_file else ""
+        # Brought GGUFs live UNDER MODEL_DIR (the pull dir), and the sibling
+        # already mounts MODEL_DIR → /models (its `-m /models/<rel>`).  So address
+        # each file at /models/<realpath-relative-to-MODEL_DIR> and mount MODEL_DIR
+        # ONCE — never per-file INTO /models: that races the sibling's own /models
+        # mount and dies at boot with "read-only file system" (OCI can't create the
+        # /models/brought-* mountpoints inside an already-mounted /models — the
+        # 2026-07-09 live-boot ExitCode 128).  ``realpath`` also follows the pull-dir
+        # symlink into the curated store.
+        model_dir = os.path.realpath(self.weights_model_dir())
+        extra_vols: list[str] = []
+
+        def _container_path(host_file: str, tag: str) -> str:
+            rp = os.path.realpath(host_file)
+            rel = os.path.relpath(rp, model_dir)
+            if not rel.startswith(".."):
+                return "/models/" + rel            # covered by the MODEL_DIR mount
+            cp = f"/brought/{tag}-{_P(rp).name}"    # outside MODEL_DIR → its own mount
+            extra_vols.append(f"{rp}:{cp}:ro")
+            return cp
+
+        mount = _container_path(weights_host_file, "model")
+        mmproj_mount = (
+            _container_path(mmproj_host_file, "mmproj") if mmproj_host_file else ""
+        )
+        mtp_mount = (
+            _container_path(mtp_draft_host_file, "mtp") if mtp_draft_host_file else ""
+        )
         svc["command"] = self._rewrite_gguf_command(
             cmd,
             model_mount=mount,
             mmproj_mount=mmproj_mount,
             mtp_draft_mount=mtp_mount,
         )
-        vols = list(svc.get("volumes") or [])
-        vols.append(f"{weights_host_file}:{mount}:ro")
-        if mmproj_host_file:
-            vols.append(f"{mmproj_host_file}:{mmproj_mount}:ro")
-        if mtp_draft_host_file:
-            vols.append(f"{mtp_draft_host_file}:{mtp_mount}:ro")
+
+        def _abs_vol(v: str) -> str:
+            """Relocatable volume.  The /models mount source may be
+            ``${MODEL_DIR:-../relative}`` — whose ``:-`` defeats a naive ``split(':')``
+            — so key off the ``:/models`` TARGET and replace everything before it with
+            the absolute MODEL_DIR (drops the relative fallback so the compose works
+            from any dir).  Other simple relative bind srcs → absolute vs the sibling
+            dir; ``${..}`` / absolute / named-volume srcs pass through."""
+            i = v.find(":/models")
+            if i != -1 and v[i + 8:i + 9] in ("", ":"):   # ':/models' or ':/models:mode'
+                return f"{model_dir}{v[i:]}"
+            if "${" not in v:
+                parts = v.split(":")
+                if len(parts) >= 2 and parts[0].startswith(("./", "../")):
+                    abs_src = os.path.abspath(
+                        os.path.join(compose_file.parent, parts[0])
+                    )
+                    return f"{abs_src}:{':'.join(parts[1:])}"
+            return v
+
+        vols = [_abs_vol(v) for v in (svc.get("volumes") or [])] + extra_vols
+        # The /models/<rel> command paths depend on MODEL_DIR being mounted at
+        # /models.  Real llama.cpp/ik siblings ship that mount; guarantee it in case
+        # one doesn't (never leave the model path dangling).
+        if not any(":/models:" in v or v.endswith(":/models") for v in vols):
+            vols.insert(0, f"{model_dir}:/models:ro")
         svc["volumes"] = vols
         san = (served_name or _P(weights_host_file).stem)[:40]
         san = "".join(c if c.isalnum() or c in "-_" else "-" for c in san)
         svc["container_name"] = f"llama-brought-{san or 'gguf'}"
-        out_path = compose_file.parent / f"_brought-gguf-{san or 'x'}.yml"
+        # Write to a RUNTIME dir on the model disk — NOT the project tree (a
+        # throwaway BYO serve shouldn't drop files beside catalog composes;
+        # 2026-07-09 dogfood).  The compose is now self-contained (absolute /models
+        # mount + /models/<rel> command paths), so its location is free.
+        run_dir = _P(model_dir) / ".cache" / "huggingface" / "club3090" / "composes"
+        try:
+            run_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            run_dir = compose_file.parent          # fallback: beside the sibling
+        out_path = run_dir / f"_brought-gguf-{san or 'x'}.yml"
         header = (
             "# GENERATED GGUF serve-locally compose (route-G) — clone of\n"
             f"#   {compose_rel}\n"
