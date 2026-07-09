@@ -262,8 +262,8 @@ _in = ["--model", "/old", "--served-model-name", "a", "b",
 _keep = SA.apply_command_overrides(_in, model_path="/brought-model",
                                    served_name="mine", drop_spec=False)
 check(_val(_keep, "--model") == "/brought-model", "override: --model repointed")
-check(_val(_keep, "--served-model-name") == "mine" and "a" not in _keep and "b" not in _keep,
-      "override: --served-model-name replaces ALL sibling served values")
+check(_val(_keep, "--served-model-name") == "${SERVED_NAME:-mine}" and "a" not in _keep and "b" not in _keep,
+      "override: --served-model-name replaces ALL sibling served values (env-gated, P2b)")
 check(_val(_keep, "--quantization") == "auto_round", "override: --quantization untouched")
 check("--speculative-config" in _keep, "override: spec-config KEPT when drop_spec=False")
 _drop = SA.apply_command_overrides(_in, model_path="/b", served_name="m", drop_spec=True)
@@ -275,9 +275,10 @@ p_mtp = SA.emit_swap_compose(root, "vllm/dual", Path("/tmp/brought-weights"),
                              brought_san="test-mtp")
 svc, cmd, txt = _cmd(p_mtp)
 check(_val(cmd, "--model") == "/brought-model", "emit(MTP): --model at the mounted brought weights")
-check("--speculative-config" in cmd, "emit(MTP): --speculative-config KEPT (head present)")
-check('"method":"mtp"' in _val(cmd, "--speculative-config"),
-      "emit(MTP): spec-config JSON survives the YAML round-trip")
+check("--speculative-config" not in cmd,
+      "emit(MTP): spec-config LIFTED out of the command (P2b: SPEC-gated entrypoint)")
+check("DRAFTER_METHOD:-mtp" in txt and "SPEC_ARGS" in txt,
+      "emit(MTP): MTP drafter preserved + SPEC-gated in the entrypoint (P2b)")
 check("qwen-froggeric-chat-template" in txt, "emit(MTP): curated chat template PRESERVED")
 check(_val(cmd, "--reasoning-parser") == "qwen3" and _val(cmd, "--tool-call-parser") == "qwen3_coder",
       "emit(MTP): curated parsers PRESERVED")
