@@ -24,7 +24,11 @@
 #                  of budget) — full ctx is trivial here; the primary home.
 #                H100 (80 GB) / RTX 6000 Pro (96 GB): 262144 fits similarly.
 #   Genesis:   none — intentionally Genesis-free
-#   Status:    🧪 Experimental
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   8-pack quality NOT yet cross-rig-measured — operationally validated on
+#              TWO independent 5090s (#619 @paulp83 + #612/#652 @guybrush01: verify-full
+#              9/9, verify-stress to ~120K, soak PASS ~311 TPS), quality run pending (#492).
+#              NVFP4 = experimental nvidia-modelopt format; Blackwell/Hopper only (sm_90+).
 #   Best for:  fast MoE chat/agents with vision on ONE Blackwell/Hopper card —
 #              unified-memory (GB10) first; single-5090 community-validated
 # ---------------------------------------------------------------------------
