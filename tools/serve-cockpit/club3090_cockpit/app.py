@@ -1847,12 +1847,12 @@ class ConfirmActionScreen(ModalScreen):
                 "  [yellow]⚠ no direct download recipe[/yellow] — these weights are "
                 "manual (no HF repo wired).\n  See the model profile's manual_note."
             )
-        size = f"~{w.size_gb:.0f} GiB" if w.size_gb else "size unknown"
+        size = f"~{w.size_gb:.0f} GB" if w.size_gb else "size unknown"
         fits, free_gb, need_gb = self.app._data.weights_fits_disk(w)  # type: ignore[attr-defined]
         disk = (
-            f"  [green]● fits[/green] — {free_gb:.0f} GiB free / ~{need_gb:.0f} GiB needed"
+            f"  [green]● fits[/green] — {free_gb:.0f} GB free / ~{need_gb:.0f} GB needed"
             if fits else
-            f"  [red]✗ may not fit[/red] — {free_gb:.0f} GiB free / ~{need_gb:.0f} GiB needed"
+            f"  [red]✗ may not fit[/red] — {free_gb:.0f} GB free / ~{need_gb:.0f} GB needed"
         )
         warn = ""
         if (getattr(entry, "weights_state", "") or "") == WEIGHTS_PARTIAL:
@@ -8247,7 +8247,7 @@ class CockpitApp(App):
             fits, free_gb, need_gb = self._data.weights_fits_disk(meta)
         try:
             pane = self.query_one("#lane-bring-pane", LaneBringPane)
-            size_s = f"~{size_gb:.0f} GiB" if size_gb else "size unknown"
+            size_s = f"~{size_gb:.0f} GB" if size_gb else "size unknown"
             if size_gb and size_gb > 0:
                 disk_s = (
                     f"[green]● fits[/green] {free_gb:.0f} free / ~{need_gb:.0f} need"
@@ -8264,7 +8264,7 @@ class CockpitApp(App):
             pass
         if size_gb and size_gb > 0 and not fits:
             self.notify(
-                f"Disk may be tight ({free_gb:.0f} GiB free / ~{need_gb:.0f} needed) "
+                f"Disk may be tight ({free_gb:.0f} GB free / ~{need_gb:.0f} needed) "
                 "— starting anyway; free space or change Model Dir [S] if it fails.",
                 title="Download", severity="warning", timeout=8,
             )
@@ -10505,13 +10505,18 @@ class CockpitApp(App):
         """[g] / ⏎ in the Bring & Validate lane ② Serve: serve an untested
         REPRODUCTION of the resolved CATALOG profile's compose (R3b-1).
 
-        ⚠️  HONESTY (R3b-1 fix): this does NOT serve the brought model's weights.
-        ``generate-compose.sh`` has no --repo / weights-swap, so ② Serve generates
-        + serves a verbatim reproduction of the *resolved catalog slug*'s compose
-        (the Route-C sibling, else the profile-like the fit-check ran against) —
-        the BYO repo / quant_match / drop_spec_config are NOT applied.  The full
-        brought-model serve (pull-to-disk + a generate-compose.sh --repo extension)
-        is a DEFERRED follow-up.
+        Three modes, by route:
+        • Route-C with the brought weights on disk — serves the BYO weights via
+          the sibling recipe: the [D] weight-swap compose if one was emitted,
+          else emitted now with do_download=False.  The brought weights ARE
+          served (this path is wired, not deferred).
+        • Route-G (brought GGUF) with weights on disk — emits an llama.cpp-family
+          compose pointing --model at the downloaded .gguf (mmproj / MTP drafter
+          wired when present) and serves that.
+        • Otherwise (no brought weights to swap in) — serves an untested verbatim
+          reproduction of the *resolved catalog slug*'s compose (the Route-C
+          sibling, else the profile-like the fit-check ran against).  Here the
+          BYO repo / quant_match / drop_spec_config are NOT applied.
 
         Requires a successful ① Bring fit-check first (the cached ``_last_byo``).
         If no servable catalog slug resolves we do NOT fall back to a generic
@@ -10572,9 +10577,9 @@ class CockpitApp(App):
         )
         if not slug:
             self.notify(
-                "② Serve has no servable catalog target yet — the fit-check "
-                "resolved no sibling/profile slug, and the bring-your-own "
-                "weight-swap is a pending follow-up.",
+                "② Serve has no servable target yet — the fit-check resolved "
+                "no sibling recipe or catalog profile to serve. Re-run ① Bring "
+                "against a repo that matches a catalog profile.",
                 title="② Serve",
                 severity="warning",
                 timeout=5,
