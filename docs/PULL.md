@@ -245,6 +245,25 @@ depth behind a passing run:
 
 ---
 
+## Where weights land
+
+`MODEL_DIR` is the single storage root — set it once (the repo `.env` ships a
+default) and every path below derives from it, so a model downloaded by one tool
+is found by the others and you never re-download the same weights.
+
+| Tier | Path | Notes |
+|---|---|---|
+| **Curated catalog** | `$MODEL_DIR/<model>/` (safetensors) · `$MODEL_DIR/<model>-gguf/<variant>/<file>.gguf` (GGUF) | Human-readable, registry-tracked, referenced by the compose files. The ⑤ *Promote* target — a validated model in the catalog. |
+| **BYO / brought pulls** | `$MODEL_DIR/.cache/huggingface/club3090/pulls/<repo-slug>/` | `<repo-slug>` = the HF repo id, lowercased, with `/` and other non-`[a-z0-9._-]` runs collapsed to `-` (`migtissera/Tess-4-27B-GGUF` → `migtissera-tess-4-27b-gguf`). **`pull.sh` and the c3 Bring `[D]` button compute the SAME path**, so a pull by either is discovered by both. Staging until you promote it. |
+| **HF hub cache + token** | `$MODEL_DIR/.cache/huggingface/` (`HF_HOME`) | Shared download staging for all pulls. |
+
+Two deliberate tiers: the **curated catalog** (top-level, compose-referenced) and
+the derivable **BYO staging** the Bring funnel operates on. Point the root
+elsewhere per-run with `--hf-home DIR` (or the `HF_HOME` env); everything else
+follows from it.
+
+---
+
 ## `--recommend` — the honest one-line answer
 
 Add `--recommend` to any `pull` invocation and, after the gate runs, you
