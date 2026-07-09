@@ -1141,6 +1141,149 @@ class CockpitData:
             return ByoResult(repo=repo, profile_like=profile_like, error=err or "no output")
         return ByoResult.from_dict(repo, profile_like, data)
 
+    def byo_check_gguf(
+        self,
+        repo: str,
+        profile_like: str,
+        *,
+        quant: str,
+        size_gb: float,
+        card_vram_gb: float = 24.0,
+    ) -> ByoResult:
+        """Phase 4 route-G: GGUF fit without the vLLM/safetensors deriver.
+
+        Weights = selected ``.gguf`` size from Inspect inventory.  Rough fit vs
+        ``card_vram_gb`` (default single 3090): weights + ~2 GiB KV/runtime
+        headroom.  Never routes through ``pull.sh --dry-run`` (that path returns
+        unsupported-format for GGUF-only repos).
+        """
+        if not quant:
+            return ByoResult(
+                repo=repo, profile_like=profile_like,
+                error="pick a GGUF quant first",
+            )
+        # Conservative: weights + 2 GiB overhead must fit the card.
+        need = float(size_gb or 0) + 2.0
+        if size_gb <= 0:
+            verdict = "fits-constrained"
+            note = f"GGUF {quant} · size unknown — assume constrained on {card_vram_gb:.0f} GiB"
+        elif need <= card_vram_gb * 0.85:
+            verdict = "fits-clean"
+            note = f"GGUF {quant} · {size_gb:.1f} GiB weights + ~2 GiB headroom ≤ {card_vram_gb:.0f} GiB"
+        elif need <= card_vram_gb:
+            verdict = "fits-constrained"
+            note = f"GGUF {quant} · {size_gb:.1f} GiB tight on {card_vram_gb:.0f} GiB card"
+        else:
+            verdict = "wont-fit"
+            note = f"GGUF {quant} · {size_gb:.1f} GiB + overhead exceeds {card_vram_gb:.0f} GiB"
+        eligible = verdict != "wont-fit"
+        return ByoResult(
+            repo=repo,
+            profile_like=profile_like,
+            arch="gguf",
+            eligible=eligible,
+            fit_verdict=verdict,
+            note=note,
+            # Route G = GGUF serve-locally via a GGUF-engine sibling compose.
+            route="G" if eligible else None,
+            sibling_slug=profile_like if eligible else None,
+            quant_match=quant,
+            drop_spec_config=False,
+            error="",
+        )
+
+    def emit_gguf_compose(
+        self,
+        profile_like: str,
+        weights_host_file: str,
+        *,
+        served_name: str = "",
+        mmproj_host_file: str = "",
+    ) -> dict:
+        """Clone a GGUF-engine sibling compose with --model → the downloaded .gguf.
+
+        Returns ``{compose_path, compose_yaml, error}``.  Maintainer boots the
+        result; this only emits on disk (gitignored temp next to sibling).
+        """
+        import yaml
+        from pathlib import Path as _P
+
+        try:
+            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+        except Exception as exc:
+            return {"compose_path": "", "compose_yaml": "", "error": f"registry: {exc}"}
+        entry = COMPOSE_REGISTRY.get(profile_like)
+        if entry is None:
+            return {
+                "compose_path": "", "compose_yaml": "",
+                "error": f"unknown profile-like {profile_like!r}",
+            }
+        compose_rel = entry.get("compose_path") or ""
+        compose_file = self.repo_root / compose_rel
+        if not compose_file.is_file():
+            return {
+                "compose_path": "", "compose_yaml": "",
+                "error": f"sibling compose missing: {compose_rel}",
+            }
+        try:
+            doc = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {"compose_path": "", "compose_yaml": "", "error": f"yaml: {exc}"}
+        services = (doc or {}).get("services") or {}
+        if not services:
+            return {"compose_path": "", "compose_yaml": "", "error": "no services"}
+        svc_name, svc = next(iter(services.items()))
+        cmd = list(svc.get("command") or [])
+        # Rewrite --model / -m to the brought GGUF mount path.
+        mount = "/models/brought.gguf"
+        out_cmd: list = []
+        i = 0
+        while i < len(cmd):
+            tok = str(cmd[i])
+            if tok in ("--model", "-m") and i + 1 < len(cmd):
+                out_cmd += [tok, mount]
+                i += 2
+                continue
+            if tok.startswith("--model="):
+                out_cmd.append(f"--model={mount}")
+                i += 1
+                continue
+            out_cmd.append(cmd[i])
+            i += 1
+        if "--model" not in [str(x) for x in out_cmd] and "-m" not in [str(x) for x in out_cmd]:
+            out_cmd += ["--model", mount]
+        if mmproj_host_file:
+            # Ensure mmproj flag if vision.
+            if not any(str(x).startswith("--mmproj") for x in out_cmd):
+                out_cmd += ["--mmproj", "/models/brought.mmproj"]
+        svc["command"] = out_cmd
+        vols = list(svc.get("volumes") or [])
+        vols.append(f"{weights_host_file}:{mount}:ro")
+        if mmproj_host_file:
+            vols.append(f"{mmproj_host_file}:/models/brought.mmproj:ro")
+        svc["volumes"] = vols
+        san = (served_name or _P(weights_host_file).stem)[:40]
+        san = "".join(c if c.isalnum() or c in "-_" else "-" for c in san)
+        svc["container_name"] = f"llama-brought-{san or 'gguf'}"
+        out_path = compose_file.parent / f"_brought-gguf-{san or 'x'}.yml"
+        header = (
+            "# GENERATED GGUF serve-locally compose (route-G) — clone of\n"
+            f"#   {compose_rel}\n"
+            f"# with --model → {weights_host_file}\n"
+        )
+        yaml_text = header + yaml.safe_dump(
+            doc, default_flow_style=False, sort_keys=False
+        )
+        try:
+            out_path.write_text(yaml_text, encoding="utf-8")
+        except OSError as exc:
+            return {"compose_path": "", "compose_yaml": "", "error": str(exc)}
+        return {
+            "compose_path": str(out_path),
+            "compose_yaml": yaml_text,
+            "error": "",
+        }
+
     # ── READ: containers ────────────────────────────────────────────────────────────
 
     async def containers(
