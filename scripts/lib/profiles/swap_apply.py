@@ -19,6 +19,7 @@ head) ``--speculative-config``.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -28,10 +29,35 @@ from scripts.lib.profiles import deriver as D
 from scripts.lib.profiles import downloader as DL
 from scripts.lib.profiles.einput import EInput
 
-# The generated serve-locally compose is written ALONGSIDE the sibling compose
-# (so the sibling's relative ../ mounts — caches, chat template — resolve) and
-# gitignored via the `_brought-*.yml` pattern.
+# The generated serve-locally compose is written to a RUNTIME dir on the model
+# disk (NOT the project tree — a throwaway BYO serve shouldn't drop files beside
+# catalog composes; 2026-07-09 dogfood).  Every relative sibling mount (caches,
+# chat template, scripts, the MODEL_DIR fallback) is absolutized first so the
+# compose is relocatable.  Gitignored via the `_brought-*.yml` pattern.
 _BROUGHT_MODEL_MOUNT = "/brought-model"
+
+
+def _absolutize_volume(v: str, base_dir: Path) -> str:
+    """Resolve a compose volume's RELATIVE bind source to absolute (vs ``base_dir``,
+    the sibling compose dir) so the emitted compose can live OUTSIDE that dir.
+    Handles ``${VAR:-relpath}`` (absolutize the fallback in place) and plain
+    ``./``/``../`` sources; leaves absolute / named-volume / ``${VAR}``-without-a-
+    relative-fallback sources untouched.  The container TARGET starts at the first
+    ``:/`` (a ``${VAR:-...}`` source contains ``:-``, never ``:/``).  Pure."""
+    i = v.find(":/")
+    if i == -1:
+        return v                       # named volume / no bind target
+    src, rest = v[:i], v[i:]           # rest = ':/target[:mode]'
+    if src.startswith("${") and ":-" in src and src.endswith("}"):
+        var, _, fb = src[2:-1].partition(":-")
+        if fb and not fb.startswith(("/", "~", "$")):
+            fb = os.path.abspath(os.path.join(base_dir, fb))
+        return f"${{{var}:-{fb}}}{rest}"
+    if src.startswith(("./", "../")) or (
+        "/" in src and not src.startswith(("/", "~", "$"))
+    ):
+        return f"{os.path.abspath(os.path.join(base_dir, src))}{rest}"
+    return v
 
 
 def resolve_swap(slug: str, der: Any, root: Path) -> dict:
@@ -222,10 +248,21 @@ def emit_swap_compose(
         _gate_spec_via_entrypoint(svc)
     vols = list(svc.get("volumes") or [])
     vols.append(f"{weights_host_dir}:{_BROUGHT_MODEL_MOUNT}:ro")
-    svc["volumes"] = vols
+    # Absolutize every relative bind source (vs the sibling dir) so the compose can
+    # be written OUTSIDE that dir without its ../ mounts dangling.
+    svc["volumes"] = [_absolutize_volume(v, compose_file.parent) for v in vols]
     svc["container_name"] = f"vllm-brought-{brought_san}"
 
+    # Write to a RUNTIME dir beside the pull dir (<MODEL_DIR>/.cache/huggingface/
+    # club3090/composes/), NOT the project tree; fall back beside the sibling.
     out_path = compose_file.parent / f"_brought-{brought_san}.yml"
+    if weights_host_dir.parent.name == "pulls":
+        cand_dir = weights_host_dir.parent.parent / "composes"
+        try:
+            cand_dir.mkdir(parents=True, exist_ok=True)
+            out_path = cand_dir / f"_brought-{brought_san}.yml"
+        except OSError:
+            pass
     header = (
         "# GENERATED serve-locally compose (BYO Route-C apply-swap) — a clone of\n"
         f"#   {compose_rel}\n"
