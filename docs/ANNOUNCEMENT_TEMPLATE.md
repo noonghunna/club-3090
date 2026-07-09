@@ -24,8 +24,9 @@ For a *reply* answering a specific question (e.g. "where's the X YAML?"), you ca
 | 4 | **Why / context** | Why this model/config is worth shipping — the workload it serves, the trade it makes. (#350's "Why an uncensored model?" / "Why it's Production".) | A trivially-obvious ship. |
 | 5 | **Getting it** | Where the weights live (public HF repo + `hf download`), whether `setup.sh`/`launch.sh` auto-fetch, any engine-version floor. | — |
 | 6 | **Run it** | The exact `switch.sh` / `gpu-mode` command, the port + served model name, OWUI wiring. Copy-pasteable. | — |
-| 7 | **What'd help** | The concrete cross-rig / follow-up ask. Call out the *portable* finding (what holds beyond our rig). | — |
-| 8 | **Credits** | Model author · quant/drafter author · engine — each `@handle` + link. Restates §1 attribution in full. | No third-party work involved. |
+| 7 | **Run the evals** | How to reproduce/contribute numbers: build the benchlocal sandboxes → `quality-test.sh` (8-pack, both thinking) + `report.sh --full` (operational). Two non-overlapping passes. | A non-servable / one-off artifact. |
+| 8 | **What'd help** | The concrete cross-rig / follow-up ask. Call out the *portable* finding (what holds beyond our rig). | — |
+| 9 | **Credits** | Model author · quant/drafter author · engine — each `@handle` + link. Restates §1 attribution in full. | No third-party work involved. |
 
 ## Skeleton
 
@@ -87,11 +88,19 @@ bash scripts/switch.sh --owui <engine>/<slug>   # launches on :<port> and wires 
 \`\`\`
 Serves an OpenAI-compatible API on **`:<port>`** (model `<served-name>`). Point any OpenAI client at it.
 
-<!-- §7 ask -->
+<!-- §7 run the evals -->
+## Run the evals yourself (or add your rig to the matrix)
+Two **non-overlapping** passes — behavioral quality (the 8-pack) + operational health (verify / stress / soak / bench / agentic):
+- **One-time:** `pip install git+https://github.com/noonghunna/benchlocal-cli.git`, then `git clone` it + `bash benchlocal-cli/tools/build-sandboxes.sh` (~30 GB; builds the 3 Docker sandbox packs — bugfind, cli-40, hermesagent).
+- **Quality (both modes):** `bash scripts/quality-test.sh --full --no-thinking` then `--enable-thinking`. ⚠️ Thinking model → boot the compose with reasoning parsing on (`REASONING=on` for llama.cpp, `--reasoning-parser` for vLLM) for the reasoning-ON leg, so `<think>` lands in reasoning_content not the graded answer.
+- **Operational:** `bash scripts/report.sh --full` (redacted, paste-ready bundle).
+Non-overlapping by design — `quality-test.sh` is behavioral-only, `report.sh --full` is operational-only. Ask contributors to paste the `report.sh` bundle + their 8-pack totals in a comment or the `numbers-from-your-rig` template.
+
+<!-- §8 ask -->
 ## What'd help
 <cross-rig numbers / long-ctx / behaviour notes>. The portable finding: **<what holds beyond our rig>**.
 
-<!-- §8 credits -->
+<!-- §9 credits -->
 ## Credits
 - **The model:** [**@<author>**](<link>) — <what>.
 - **The <quant/drafter>:** [**@<author2>**](<link>) — <what>.
