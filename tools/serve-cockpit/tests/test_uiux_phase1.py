@@ -51,13 +51,10 @@ class TestPhase11OverrideHidden:
             pane = app.query_one("#lane-serve-pane", LaneServePane)
             pane.set_armed(None)
             await pilot.pause()
-            ov = pane.query_one("#lane-serve-overrides", Vertical)
-            assert ov.has_class("funnel-hidden")
-            assert ov.display is False
-            # Parent display:none removes the block from layout; children may still
-            # report .display True in Textual, so assert they are not can_focus
-            # walk targets via the parent's visible region.
-            assert ov.styles.display == "none"
+            # Phase 2: override block lives under #lane-serve-ov-wrap Collapsible.
+            wrap = pane.query_one("#lane-serve-ov-wrap")
+            assert wrap.has_class("funnel-hidden")
+            assert wrap.display is False
 
 
 class TestPhase12Honesty:
@@ -112,7 +109,7 @@ class TestPhase12Honesty:
             assert "NOT your brought" not in body
             assert "deferred" not in body.lower()
             assert "MyFineTune" in body or "org/MyFineTune" in body
-            assert pane.query_one("#lane-serve-overrides").display is False
+            assert pane.query_one("#lane-serve-ov-wrap").display is False
 
 
 class TestPhase13NextStepAndFooter:
@@ -194,13 +191,11 @@ class TestPhase14PromotePreview:
             heading = str(
                 app.query_one("#lane-promote-heading", Label).render()
             )
-            body = str(app.query_one("#lane-promote-body", Static).render())
+            badge = str(app.query_one("#lane-promote-badge", Static).render())
             assert "Promotion Preview" in heading or "Scaffold" in heading
-            assert "preview only" in body.lower() or "no catalog write" in body.lower()
-            # Tab label
-            from textual.widgets import TabPane
-            tab = app.query_one("#tab-promote", TabPane)
-            assert "Preview" in (tab.name or str(tab)) or "preview" in heading.lower()
+            assert "preview only" in badge.lower() or "no catalog write" in badge.lower()
+            prereqs = str(app.query_one("#lane-promote-prereqs", Static).render())
+            assert "fit-checked" in prereqs
 
     def test_promote_modal_badge(self):
         sc = PromoteScaffold(
