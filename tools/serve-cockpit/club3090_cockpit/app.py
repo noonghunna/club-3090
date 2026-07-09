@@ -5223,6 +5223,7 @@ def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None,
             "A": "Needs a catalog profile",
             "B": "Local-only serve",
             "C": "Can serve now (reuse sibling recipe)",
+            "G": "Can serve now (GGUF · llama.cpp family)",
         }.get(route_u, f"Route {res.route}")
         lines.append("")
         lines.append(f"  [bold]{route_label}[/bold]  [dim](route {route_u})[/dim]")
@@ -8082,7 +8083,20 @@ class CockpitApp(App):
             except Exception:
                 pass
             return
-        res = await self._data.byo_check(repo, profile_like)
+        # Phase 4 route-G: GGUF pick → bypass vLLM/safetensors deriver.
+        # Budget = 24 GiB × topology cards of the chosen sibling (dual/multi).
+        gguf_quant, gguf_gb = self._funnel_gguf_selection()
+        if gguf_quant:
+            cards = self._data.topology_cards_for_profile(profile_like)
+            res = self._data.byo_check_gguf(
+                repo,
+                profile_like,
+                quant=gguf_quant,
+                size_gb=gguf_gb or 0.0,
+                card_vram_gb=24.0 * max(1, cards),
+            )
+        else:
+            res = await self._data.byo_check(repo, profile_like)
         # Cache the arch facts for the lane ② Serve + the Promote scaffold (Phase 5).
         self._last_byo = res
         # Probe on-disk ONCE (skip on a fit-check error) — feeds BOTH the verdict
@@ -8271,24 +8285,34 @@ class CockpitApp(App):
         self.run_bring_download_worker(repo, getattr(byo, "profile_like", ""))
         self._sync_jobs_chip()
 
+    def _funnel_gguf_selection(self) -> tuple[str, Optional[float]]:
+        """``(quant, size_gb)`` for the ① Bring GGUF pick, or ``("", None)``."""
+        inv = getattr(self, "_last_inventory", None)
+        if inv is None or not getattr(inv, "has_gguf", False):
+            return "", None
+        try:
+            pane = self.query_one("#lane-bring-pane", LaneBringPane)
+            sel = pane.query_one("#lane-bring-gguf-select", Select)
+            q = sel.value
+            if q in (None, Select.BLANK):
+                return "", None
+            for v in inv.gguf_variants:
+                if v.quant == q:
+                    return str(q), float(v.size_gb or 0) or None
+            return str(q), None
+        except Exception:
+            return "", None
+
     def _bring_expected_size_gb(self) -> Optional[float]:
         """Best-effort size from last Inspect inventory (safetensors total or GGUF pick)."""
+        q, gb = self._funnel_gguf_selection()
+        if q and gb:
+            return gb
         inv = getattr(self, "_last_inventory", None)
         if inv is None:
             return None
         try:
             if getattr(inv, "has_gguf", False) and getattr(inv, "gguf_variants", None):
-                # Prefer the selected quant if we can read the Select; else largest.
-                try:
-                    pane = self.query_one("#lane-bring-pane", LaneBringPane)
-                    sel = pane.query_one("#lane-bring-gguf-select", Select)
-                    q = sel.value
-                    if q not in (None, Select.BLANK):
-                        for v in inv.gguf_variants:
-                            if v.quant == q and v.size_gb:
-                                return float(v.size_gb)
-                except Exception:
-                    pass
                 sizes = [float(v.size_gb) for v in inv.gguf_variants if v.size_gb]
                 return max(sizes) if sizes else None
             if getattr(inv, "safetensors_size_gb", 0):
@@ -10530,6 +10554,13 @@ class CockpitApp(App):
                 getattr(self._last_byo, "profile_like", ""),
             )
             return
+        # Phase 4 route-G: GGUF weights on disk → emit llama.cpp-family compose.
+        if (
+            str(getattr(self._last_byo, "route", "") or "").upper() == "G"
+            and self._data.bring_weights_present(getattr(self._last_byo, "repo", ""))
+        ):
+            self.run_gguf_emit_and_serve()
+            return
         # Otherwise (non-swap route, or the swap download hasn't run) the CATALOG
         # slug whose compose we reproduce: the Route-C sibling, else the
         # profile-like the fit-check was run against.  We do NOT fall back to a
@@ -10680,6 +10711,89 @@ class CockpitApp(App):
             self._armed_overrides_defaults(byo),
             host_port=port,
         )
+
+    @work(exclusive=True, group="gguf-emit-serve")
+    async def run_gguf_emit_and_serve(self) -> None:
+        """Phase 4 route-G: emit a GGUF-engine compose pointing at on-disk .gguf."""
+        byo = self._last_byo
+        if byo is None:
+            return
+        repo = getattr(byo, "repo", "")
+        profile = getattr(byo, "profile_like", "") or getattr(byo, "sibling_slug", "")
+        quant = getattr(byo, "quant_match", "") or ""
+        pull = self._data.bring_pull_dir(repo)
+        # Prefer a file matching the quant token; else any .gguf.
+        weights_file = ""
+        try:
+            cands = sorted(pull.glob("**/*.gguf"))
+            for p in cands:
+                if quant and quant.lower() in p.name.lower() and "mmproj" not in p.name.lower():
+                    weights_file = str(p)
+                    break
+            if not weights_file:
+                for p in cands:
+                    if "mmproj" not in p.name.lower():
+                        weights_file = str(p)
+                        break
+        except Exception:
+            weights_file = ""
+        if not weights_file:
+            self.notify(
+                "No .gguf on disk yet — press [D] to download the selected quant.",
+                title="② Serve", severity="warning", timeout=5,
+            )
+            return
+        mmproj = ""
+        mtp_draft = ""
+        try:
+            for p in pull.glob("**/*mmproj*.gguf"):
+                mmproj = str(p)
+                break
+            # Brought-repo MTP draft (e.g. migtissera Tess: main + mtp-*.gguf).
+            main_name = Path(weights_file).name.lower()
+            for p in pull.glob("**/*mtp*.gguf"):
+                n = p.name.lower()
+                if "mmproj" in n:
+                    continue
+                if n == main_name:
+                    continue  # main weights already named *mtp*
+                # Prefer files that look like a separate draft head.
+                if n.startswith("mtp") or "-mtp-" in n or n.startswith("mtp-"):
+                    mtp_draft = str(p)
+                    break
+                if "mtp" in n and quant and quant.lower() not in n:
+                    mtp_draft = str(p)
+                    break
+            if not mtp_draft:
+                for p in pull.glob("**/mtp-*.gguf"):
+                    if "mmproj" not in p.name.lower():
+                        mtp_draft = str(p)
+                        break
+        except Exception:
+            pass
+        served = repo.rsplit("/", 1)[-1]
+        res = self._data.emit_gguf_compose(
+            profile,
+            weights_file,
+            served_name=served,
+            mmproj_host_file=mmproj,
+            mtp_draft_host_file=mtp_draft,
+        )
+        if res.get("error") or not res.get("compose_path"):
+            self.notify(
+                f"GGUF compose emit failed: {res.get('error') or 'no path'}",
+                title="② Serve", severity="warning", timeout=6,
+            )
+            return
+        self._bring_swap_compose = res["compose_path"]
+        try:
+            self.query_one("#lane-serve-pane", LaneServePane).set_status(
+                f"[green]✓ GGUF compose[/green] for [cyan]{quant or served}[/cyan] — "
+                f"serving via [green]{profile}[/green] recipe"
+            )
+        except Exception:
+            pass
+        self._serve_generated_compose(res["compose_path"])
 
     def _refresh_gate_target_banner(self) -> None:
         """Phase 2 — ③ Gate target line from live estate / BYO context."""

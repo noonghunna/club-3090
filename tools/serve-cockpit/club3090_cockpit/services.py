@@ -1141,6 +1141,285 @@ class CockpitData:
             return ByoResult(repo=repo, profile_like=profile_like, error=err or "no output")
         return ByoResult.from_dict(repo, profile_like, data)
 
+    # Topology → card count (same tokens as funnel_slug_options / compose paths).
+    _GGUF_TOPO_CARDS = {
+        "single": 1, "dual": 2, "multi3": 3, "multi4": 4, "multi8": 8,
+    }
+    # Sibling drafter / MTP / DFlash flags to strip for a foreign brought model
+    # (their values point at Qwen/Anbeeld draft paths that won't match the bring).
+    _GGUF_STRIP_SPEC_FLAGS = frozenset({
+        "--spec-type",
+        "--spec-draft-model",
+        "--spec-draft-n-max",
+        "--spec-draft-ngl",
+        "--spec-dflash-cross-ctx",
+        "--spec-dflash-n-max",
+    })
+
+    def topology_cards_for_profile(self, profile_like: str) -> int:
+        """Card count for a registry slug from its compose path topology segment."""
+        path = ""
+        try:
+            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+            entry = COMPOSE_REGISTRY.get(profile_like) or {}
+            path = str(entry.get("compose_path") or "")
+        except Exception:
+            path = ""
+        for part in path.replace("\\", "/").split("/"):
+            if part in self._GGUF_TOPO_CARDS:
+                return self._GGUF_TOPO_CARDS[part]
+        # Fallback: token in the profile-like string itself.
+        for tok, n in self._GGUF_TOPO_CARDS.items():
+            if tok in (profile_like or "").replace("\\", "/").split("/"):
+                return n
+        return 1
+
+    def byo_check_gguf(
+        self,
+        repo: str,
+        profile_like: str,
+        *,
+        quant: str,
+        size_gb: float,
+        card_vram_gb: Optional[float] = None,
+        companion_gb: float = 0.0,
+        per_card_gb: float = 24.0,
+    ) -> ByoResult:
+        """Phase 4 route-G: GGUF fit without the vLLM/safetensors deriver.
+
+        Weights = selected ``.gguf`` size (+ optional companion_gb for mmproj /
+        mtp draft).  Budget = ``card_vram_gb`` if given, else
+        ``per_card_gb × topology_cards(profile_like)`` so dual/multi siblings
+        are judged against combined VRAM (not always one 24 GB card).
+        """
+        if not quant:
+            return ByoResult(
+                repo=repo, profile_like=profile_like,
+                error="pick a GGUF quant first",
+            )
+        cards = self.topology_cards_for_profile(profile_like)
+        budget = float(card_vram_gb) if card_vram_gb is not None else (
+            float(per_card_gb) * max(1, cards)
+        )
+        topo = next(
+            (t for t, n in self._GGUF_TOPO_CARDS.items() if n == cards),
+            f"{cards}×card",
+        )
+        # Conservative: weights + companions + 2 GiB KV/runtime headroom.
+        need = float(size_gb or 0) + float(companion_gb or 0) + 2.0
+        size_bit = f"{size_gb:.1f} GiB" if size_gb > 0 else "size unknown"
+        comp_bit = f" + {companion_gb:.1f} GiB companions" if companion_gb > 0 else ""
+        budget_bit = f"{budget:.0f} GiB ({topo})"
+        if size_gb <= 0:
+            verdict = "fits-constrained"
+            note = f"GGUF {quant} · {size_bit}{comp_bit} — assume constrained on {budget_bit}"
+        elif need <= budget * 0.85:
+            verdict = "fits-clean"
+            note = (
+                f"GGUF {quant} · {size_bit}{comp_bit} + ~2 GiB headroom ≤ {budget_bit}"
+            )
+        elif need <= budget:
+            verdict = "fits-constrained"
+            note = f"GGUF {quant} · {size_bit}{comp_bit} tight on {budget_bit}"
+        else:
+            verdict = "wont-fit"
+            note = (
+                f"GGUF {quant} · {size_bit}{comp_bit} + overhead exceeds {budget_bit}"
+            )
+        eligible = verdict != "wont-fit"
+        return ByoResult(
+            repo=repo,
+            profile_like=profile_like,
+            arch="gguf",
+            eligible=eligible,
+            fit_verdict=verdict,
+            note=note,
+            # Route G = GGUF serve-locally via a GGUF-engine sibling compose.
+            route="G" if eligible else None,
+            sibling_slug=profile_like if eligible else None,
+            quant_match=quant,
+            drop_spec_config=False,
+            error="",
+        )
+
+    @staticmethod
+    def _normalize_compose_command(raw) -> list:
+        """Ship GGUF siblings use ``command: >-`` (folded scalar → str).  List-
+        form is only for tests.  Never ``list(str)`` (one arg per character)."""
+        import shlex
+
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            return shlex.split(raw)
+        if isinstance(raw, (list, tuple)):
+            return [str(x) for x in raw]
+        return shlex.split(str(raw))
+
+    def _rewrite_gguf_command(
+        self,
+        cmd: list,
+        *,
+        model_mount: str,
+        mmproj_mount: str = "",
+        mtp_draft_mount: str = "",
+    ) -> list:
+        """Rewrite sibling argv for a brought GGUF:
+
+        * ``--model`` / ``-m`` → brought weights mount
+        * ``--mmproj`` rewritten (not only append-if-missing) when projector set
+        * strip sibling ``--spec-*`` drafter flags (wrong vocab / missing paths)
+        * if brought ``mtp-*.gguf`` present, wire as ``--spec-draft-model`` +
+          ``--spec-type draft-mtp``
+        """
+        out: list = []
+        i = 0
+        n = len(cmd)
+        while i < n:
+            tok = str(cmd[i])
+            # Strip ALL sibling --spec-* drafter / MTP / DFlash flags (+ value).
+            if tok.startswith("--spec-"):
+                if "=" in tok:
+                    i += 1
+                    continue
+                i += 1
+                if i < n and not str(cmd[i]).startswith("-"):
+                    i += 1
+                continue
+            # --model= / -m= form
+            if tok.startswith("--model=") or tok.startswith("-m="):
+                out.append(f"--model={model_mount}")
+                i += 1
+                continue
+            if tok in ("--model", "-m") and i + 1 < n:
+                # Keep -m if sibling used it; otherwise --model.
+                out += [tok, model_mount]
+                i += 2
+                continue
+            # --mmproj: rewrite value when we have a brought projector; drop sibling
+            # projector when we don't (foreign vision projector would be wrong).
+            if tok.startswith("--mmproj="):
+                if mmproj_mount:
+                    out.append(f"--mmproj={mmproj_mount}")
+                i += 1
+                continue
+            if tok == "--mmproj":
+                if mmproj_mount:
+                    out += ["--mmproj", mmproj_mount]
+                # skip sibling value either way
+                i += 1
+                if i < n and not str(cmd[i]).startswith("-"):
+                    i += 1
+                continue
+            out.append(cmd[i])
+            i += 1
+        # Ensure --model present.
+        has_model = any(
+            str(x) in ("--model", "-m") or str(x).startswith("--model=")
+            or str(x).startswith("-m=")
+            for x in out
+        )
+        if not has_model:
+            out += ["--model", model_mount]
+        # mmproj: if sibling had none and we have a projector, append.
+        if mmproj_mount and not any(
+            str(x) == "--mmproj" or str(x).startswith("--mmproj=") for x in out
+        ):
+            out += ["--mmproj", mmproj_mount]
+        # Brought MTP draft (bonus) — only after stripping sibling drafter flags.
+        if mtp_draft_mount:
+            out += [
+                "--spec-draft-model", mtp_draft_mount,
+                "--spec-type", "draft-mtp",
+            ]
+        return out
+
+    def emit_gguf_compose(
+        self,
+        profile_like: str,
+        weights_host_file: str,
+        *,
+        served_name: str = "",
+        mmproj_host_file: str = "",
+        mtp_draft_host_file: str = "",
+    ) -> dict:
+        """Clone a GGUF-engine sibling compose with --model → the downloaded .gguf.
+
+        Handles ``command: >-`` (str) via shlex; strips sibling drafter flags;
+        rewrites ``--mmproj`` when a projector is provided.  Returns
+        ``{compose_path, compose_yaml, error}``.
+        """
+        import yaml
+        from pathlib import Path as _P
+
+        try:
+            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+        except Exception as exc:
+            return {"compose_path": "", "compose_yaml": "", "error": f"registry: {exc}"}
+        entry = COMPOSE_REGISTRY.get(profile_like)
+        if entry is None:
+            return {
+                "compose_path": "", "compose_yaml": "",
+                "error": f"unknown profile-like {profile_like!r}",
+            }
+        compose_rel = entry.get("compose_path") or ""
+        compose_file = self.repo_root / compose_rel
+        if not compose_file.is_file():
+            return {
+                "compose_path": "", "compose_yaml": "",
+                "error": f"sibling compose missing: {compose_rel}",
+            }
+        try:
+            doc = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {"compose_path": "", "compose_yaml": "", "error": f"yaml: {exc}"}
+        services = (doc or {}).get("services") or {}
+        if not services:
+            return {"compose_path": "", "compose_yaml": "", "error": "no services"}
+        _svc_name, svc = next(iter(services.items()))
+        cmd = self._normalize_compose_command(svc.get("command"))
+        mount = "/models/brought.gguf"
+        mmproj_mount = "/models/brought.mmproj" if mmproj_host_file else ""
+        mtp_mount = "/models/brought-mtp.gguf" if mtp_draft_host_file else ""
+        svc["command"] = self._rewrite_gguf_command(
+            cmd,
+            model_mount=mount,
+            mmproj_mount=mmproj_mount,
+            mtp_draft_mount=mtp_mount,
+        )
+        vols = list(svc.get("volumes") or [])
+        vols.append(f"{weights_host_file}:{mount}:ro")
+        if mmproj_host_file:
+            vols.append(f"{mmproj_host_file}:{mmproj_mount}:ro")
+        if mtp_draft_host_file:
+            vols.append(f"{mtp_draft_host_file}:{mtp_mount}:ro")
+        svc["volumes"] = vols
+        san = (served_name or _P(weights_host_file).stem)[:40]
+        san = "".join(c if c.isalnum() or c in "-_" else "-" for c in san)
+        svc["container_name"] = f"llama-brought-{san or 'gguf'}"
+        out_path = compose_file.parent / f"_brought-gguf-{san or 'x'}.yml"
+        header = (
+            "# GENERATED GGUF serve-locally compose (route-G) — clone of\n"
+            f"#   {compose_rel}\n"
+            f"# with --model → {weights_host_file}\n"
+        )
+        if mmproj_host_file:
+            header += f"#      --mmproj → {mmproj_host_file}\n"
+        if mtp_draft_host_file:
+            header += f"#      --spec-draft-model → {mtp_draft_host_file}\n"
+        yaml_text = header + yaml.safe_dump(
+            doc, default_flow_style=False, sort_keys=False
+        )
+        try:
+            out_path.write_text(yaml_text, encoding="utf-8")
+        except OSError as exc:
+            return {"compose_path": "", "compose_yaml": "", "error": str(exc)}
+        return {
+            "compose_path": str(out_path),
+            "compose_yaml": yaml_text,
+            "error": "",
+        }
+
     # ── READ: containers ────────────────────────────────────────────────────────────
 
     async def containers(
