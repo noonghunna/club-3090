@@ -283,9 +283,22 @@ check(_val(cmd, "--reasoning-parser") == "qwen3" and _val(cmd, "--tool-call-pars
       "emit(MTP): curated parsers PRESERVED")
 check(any("/brought-model:ro" in str(v) for v in svc["volumes"]),
       "emit(MTP): brought-weights volume mount added")
+check(not any(str(v).split(":/", 1)[0].startswith(("./", "../"))
+              or "/../" in str(v).split(":/", 1)[0] for v in svc["volumes"]),
+      "emit(MTP): sibling relative ../ mounts absolutized (compose is relocatable)")
 check(str(svc.get("container_name", "")).startswith("vllm-brought-"),
       "emit(MTP): container_name distinct (no collision with the sibling)")
 p_mtp.unlink()
+
+# weights under a pulls/ dir → compose lands in the RUNTIME composes dir, not repo
+import tempfile
+_pd = Path(tempfile.mkdtemp()) / "club3090" / "pulls" / "repo-z"
+_pd.mkdir(parents=True)
+p_loc = SA.emit_swap_compose(root, "vllm/dual", _pd, served_name="loc",
+                             has_mtp_head=False, brought_san="loc-z")
+check("club3090/composes" in str(p_loc) and str(root) not in str(p_loc),
+      "emit: compose written to RUNTIME composes dir, NOT the project tree")
+p_loc.unlink()
 
 # no MTP head → spec-config dropped, curated flags still intact
 p_plain = SA.emit_swap_compose(root, "vllm/dual", Path("/tmp/brought-weights"),
