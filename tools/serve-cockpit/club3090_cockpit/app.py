@@ -8084,10 +8084,16 @@ class CockpitApp(App):
                 pass
             return
         # Phase 4 route-G: GGUF pick → bypass vLLM/safetensors deriver.
+        # Budget = 24 GiB × topology cards of the chosen sibling (dual/multi).
         gguf_quant, gguf_gb = self._funnel_gguf_selection()
         if gguf_quant:
+            cards = self._data.topology_cards_for_profile(profile_like)
             res = self._data.byo_check_gguf(
-                repo, profile_like, quant=gguf_quant, size_gb=gguf_gb or 0.0,
+                repo,
+                profile_like,
+                quant=gguf_quant,
+                size_gb=gguf_gb or 0.0,
+                card_vram_gb=24.0 * max(1, cards),
             )
         else:
             res = await self._data.byo_check(repo, profile_like)
@@ -10738,15 +10744,40 @@ class CockpitApp(App):
             )
             return
         mmproj = ""
+        mtp_draft = ""
         try:
             for p in pull.glob("**/*mmproj*.gguf"):
                 mmproj = str(p)
                 break
+            # Brought-repo MTP draft (e.g. migtissera Tess: main + mtp-*.gguf).
+            main_name = Path(weights_file).name.lower()
+            for p in pull.glob("**/*mtp*.gguf"):
+                n = p.name.lower()
+                if "mmproj" in n:
+                    continue
+                if n == main_name:
+                    continue  # main weights already named *mtp*
+                # Prefer files that look like a separate draft head.
+                if n.startswith("mtp") or "-mtp-" in n or n.startswith("mtp-"):
+                    mtp_draft = str(p)
+                    break
+                if "mtp" in n and quant and quant.lower() not in n:
+                    mtp_draft = str(p)
+                    break
+            if not mtp_draft:
+                for p in pull.glob("**/mtp-*.gguf"):
+                    if "mmproj" not in p.name.lower():
+                        mtp_draft = str(p)
+                        break
         except Exception:
             pass
         served = repo.rsplit("/", 1)[-1]
         res = self._data.emit_gguf_compose(
-            profile, weights_file, served_name=served, mmproj_host_file=mmproj,
+            profile,
+            weights_file,
+            served_name=served,
+            mmproj_host_file=mmproj,
+            mtp_draft_host_file=mtp_draft,
         )
         if res.get("error") or not res.get("compose_path"):
             self.notify(

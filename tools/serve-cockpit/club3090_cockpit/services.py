@@ -1141,6 +1141,39 @@ class CockpitData:
             return ByoResult(repo=repo, profile_like=profile_like, error=err or "no output")
         return ByoResult.from_dict(repo, profile_like, data)
 
+    # Topology → card count (same tokens as funnel_slug_options / compose paths).
+    _GGUF_TOPO_CARDS = {
+        "single": 1, "dual": 2, "multi3": 3, "multi4": 4, "multi8": 8,
+    }
+    # Sibling drafter / MTP / DFlash flags to strip for a foreign brought model
+    # (their values point at Qwen/Anbeeld draft paths that won't match the bring).
+    _GGUF_STRIP_SPEC_FLAGS = frozenset({
+        "--spec-type",
+        "--spec-draft-model",
+        "--spec-draft-n-max",
+        "--spec-draft-ngl",
+        "--spec-dflash-cross-ctx",
+        "--spec-dflash-n-max",
+    })
+
+    def topology_cards_for_profile(self, profile_like: str) -> int:
+        """Card count for a registry slug from its compose path topology segment."""
+        path = ""
+        try:
+            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+            entry = COMPOSE_REGISTRY.get(profile_like) or {}
+            path = str(entry.get("compose_path") or "")
+        except Exception:
+            path = ""
+        for part in path.replace("\\", "/").split("/"):
+            if part in self._GGUF_TOPO_CARDS:
+                return self._GGUF_TOPO_CARDS[part]
+        # Fallback: token in the profile-like string itself.
+        for tok, n in self._GGUF_TOPO_CARDS.items():
+            if tok in (profile_like or "").replace("\\", "/").split("/"):
+                return n
+        return 1
+
     def byo_check_gguf(
         self,
         repo: str,
@@ -1148,34 +1181,51 @@ class CockpitData:
         *,
         quant: str,
         size_gb: float,
-        card_vram_gb: float = 24.0,
+        card_vram_gb: Optional[float] = None,
+        companion_gb: float = 0.0,
+        per_card_gb: float = 24.0,
     ) -> ByoResult:
         """Phase 4 route-G: GGUF fit without the vLLM/safetensors deriver.
 
-        Weights = selected ``.gguf`` size from Inspect inventory.  Rough fit vs
-        ``card_vram_gb`` (default single 3090): weights + ~2 GiB KV/runtime
-        headroom.  Never routes through ``pull.sh --dry-run`` (that path returns
-        unsupported-format for GGUF-only repos).
+        Weights = selected ``.gguf`` size (+ optional companion_gb for mmproj /
+        mtp draft).  Budget = ``card_vram_gb`` if given, else
+        ``per_card_gb × topology_cards(profile_like)`` so dual/multi siblings
+        are judged against combined VRAM (not always one 24 GB card).
         """
         if not quant:
             return ByoResult(
                 repo=repo, profile_like=profile_like,
                 error="pick a GGUF quant first",
             )
-        # Conservative: weights + 2 GiB overhead must fit the card.
-        need = float(size_gb or 0) + 2.0
+        cards = self.topology_cards_for_profile(profile_like)
+        budget = float(card_vram_gb) if card_vram_gb is not None else (
+            float(per_card_gb) * max(1, cards)
+        )
+        topo = next(
+            (t for t, n in self._GGUF_TOPO_CARDS.items() if n == cards),
+            f"{cards}×card",
+        )
+        # Conservative: weights + companions + 2 GiB KV/runtime headroom.
+        need = float(size_gb or 0) + float(companion_gb or 0) + 2.0
+        size_bit = f"{size_gb:.1f} GiB" if size_gb > 0 else "size unknown"
+        comp_bit = f" + {companion_gb:.1f} GiB companions" if companion_gb > 0 else ""
+        budget_bit = f"{budget:.0f} GiB ({topo})"
         if size_gb <= 0:
             verdict = "fits-constrained"
-            note = f"GGUF {quant} · size unknown — assume constrained on {card_vram_gb:.0f} GiB"
-        elif need <= card_vram_gb * 0.85:
+            note = f"GGUF {quant} · {size_bit}{comp_bit} — assume constrained on {budget_bit}"
+        elif need <= budget * 0.85:
             verdict = "fits-clean"
-            note = f"GGUF {quant} · {size_gb:.1f} GiB weights + ~2 GiB headroom ≤ {card_vram_gb:.0f} GiB"
-        elif need <= card_vram_gb:
+            note = (
+                f"GGUF {quant} · {size_bit}{comp_bit} + ~2 GiB headroom ≤ {budget_bit}"
+            )
+        elif need <= budget:
             verdict = "fits-constrained"
-            note = f"GGUF {quant} · {size_gb:.1f} GiB tight on {card_vram_gb:.0f} GiB card"
+            note = f"GGUF {quant} · {size_bit}{comp_bit} tight on {budget_bit}"
         else:
             verdict = "wont-fit"
-            note = f"GGUF {quant} · {size_gb:.1f} GiB + overhead exceeds {card_vram_gb:.0f} GiB"
+            note = (
+                f"GGUF {quant} · {size_bit}{comp_bit} + overhead exceeds {budget_bit}"
+            )
         eligible = verdict != "wont-fit"
         return ByoResult(
             repo=repo,
@@ -1192,6 +1242,98 @@ class CockpitData:
             error="",
         )
 
+    @staticmethod
+    def _normalize_compose_command(raw) -> list:
+        """Ship GGUF siblings use ``command: >-`` (folded scalar → str).  List-
+        form is only for tests.  Never ``list(str)`` (one arg per character)."""
+        import shlex
+
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            return shlex.split(raw)
+        if isinstance(raw, (list, tuple)):
+            return [str(x) for x in raw]
+        return shlex.split(str(raw))
+
+    def _rewrite_gguf_command(
+        self,
+        cmd: list,
+        *,
+        model_mount: str,
+        mmproj_mount: str = "",
+        mtp_draft_mount: str = "",
+    ) -> list:
+        """Rewrite sibling argv for a brought GGUF:
+
+        * ``--model`` / ``-m`` → brought weights mount
+        * ``--mmproj`` rewritten (not only append-if-missing) when projector set
+        * strip sibling ``--spec-*`` drafter flags (wrong vocab / missing paths)
+        * if brought ``mtp-*.gguf`` present, wire as ``--spec-draft-model`` +
+          ``--spec-type draft-mtp``
+        """
+        out: list = []
+        i = 0
+        n = len(cmd)
+        while i < n:
+            tok = str(cmd[i])
+            # Strip ALL sibling --spec-* drafter / MTP / DFlash flags (+ value).
+            if tok.startswith("--spec-"):
+                if "=" in tok:
+                    i += 1
+                    continue
+                i += 1
+                if i < n and not str(cmd[i]).startswith("-"):
+                    i += 1
+                continue
+            # --model= / -m= form
+            if tok.startswith("--model=") or tok.startswith("-m="):
+                out.append(f"--model={model_mount}")
+                i += 1
+                continue
+            if tok in ("--model", "-m") and i + 1 < n:
+                # Keep -m if sibling used it; otherwise --model.
+                out += [tok, model_mount]
+                i += 2
+                continue
+            # --mmproj: rewrite value when we have a brought projector; drop sibling
+            # projector when we don't (foreign vision projector would be wrong).
+            if tok.startswith("--mmproj="):
+                if mmproj_mount:
+                    out.append(f"--mmproj={mmproj_mount}")
+                i += 1
+                continue
+            if tok == "--mmproj":
+                if mmproj_mount:
+                    out += ["--mmproj", mmproj_mount]
+                # skip sibling value either way
+                i += 1
+                if i < n and not str(cmd[i]).startswith("-"):
+                    i += 1
+                continue
+            out.append(cmd[i])
+            i += 1
+        # Ensure --model present.
+        has_model = any(
+            str(x) in ("--model", "-m") or str(x).startswith("--model=")
+            or str(x).startswith("-m=")
+            for x in out
+        )
+        if not has_model:
+            out += ["--model", model_mount]
+        # mmproj: if sibling had none and we have a projector, append.
+        if mmproj_mount and not any(
+            str(x) == "--mmproj" or str(x).startswith("--mmproj=") for x in out
+        ):
+            out += ["--mmproj", mmproj_mount]
+        # Brought MTP draft (bonus) — only after stripping sibling drafter flags.
+        if mtp_draft_mount:
+            out += [
+                "--spec-draft-model", mtp_draft_mount,
+                "--spec-type", "draft-mtp",
+            ]
+        return out
+
     def emit_gguf_compose(
         self,
         profile_like: str,
@@ -1199,11 +1341,13 @@ class CockpitData:
         *,
         served_name: str = "",
         mmproj_host_file: str = "",
+        mtp_draft_host_file: str = "",
     ) -> dict:
         """Clone a GGUF-engine sibling compose with --model → the downloaded .gguf.
 
-        Returns ``{compose_path, compose_yaml, error}``.  Maintainer boots the
-        result; this only emits on disk (gitignored temp next to sibling).
+        Handles ``command: >-`` (str) via shlex; strips sibling drafter flags;
+        rewrites ``--mmproj`` when a projector is provided.  Returns
+        ``{compose_path, compose_yaml, error}``.
         """
         import yaml
         from pathlib import Path as _P
@@ -1232,35 +1376,23 @@ class CockpitData:
         services = (doc or {}).get("services") or {}
         if not services:
             return {"compose_path": "", "compose_yaml": "", "error": "no services"}
-        svc_name, svc = next(iter(services.items()))
-        cmd = list(svc.get("command") or [])
-        # Rewrite --model / -m to the brought GGUF mount path.
+        _svc_name, svc = next(iter(services.items()))
+        cmd = self._normalize_compose_command(svc.get("command"))
         mount = "/models/brought.gguf"
-        out_cmd: list = []
-        i = 0
-        while i < len(cmd):
-            tok = str(cmd[i])
-            if tok in ("--model", "-m") and i + 1 < len(cmd):
-                out_cmd += [tok, mount]
-                i += 2
-                continue
-            if tok.startswith("--model="):
-                out_cmd.append(f"--model={mount}")
-                i += 1
-                continue
-            out_cmd.append(cmd[i])
-            i += 1
-        if "--model" not in [str(x) for x in out_cmd] and "-m" not in [str(x) for x in out_cmd]:
-            out_cmd += ["--model", mount]
-        if mmproj_host_file:
-            # Ensure mmproj flag if vision.
-            if not any(str(x).startswith("--mmproj") for x in out_cmd):
-                out_cmd += ["--mmproj", "/models/brought.mmproj"]
-        svc["command"] = out_cmd
+        mmproj_mount = "/models/brought.mmproj" if mmproj_host_file else ""
+        mtp_mount = "/models/brought-mtp.gguf" if mtp_draft_host_file else ""
+        svc["command"] = self._rewrite_gguf_command(
+            cmd,
+            model_mount=mount,
+            mmproj_mount=mmproj_mount,
+            mtp_draft_mount=mtp_mount,
+        )
         vols = list(svc.get("volumes") or [])
         vols.append(f"{weights_host_file}:{mount}:ro")
         if mmproj_host_file:
-            vols.append(f"{mmproj_host_file}:/models/brought.mmproj:ro")
+            vols.append(f"{mmproj_host_file}:{mmproj_mount}:ro")
+        if mtp_draft_host_file:
+            vols.append(f"{mtp_draft_host_file}:{mtp_mount}:ro")
         svc["volumes"] = vols
         san = (served_name or _P(weights_host_file).stem)[:40]
         san = "".join(c if c.isalnum() or c in "-_" else "-" for c in san)
@@ -1271,6 +1403,10 @@ class CockpitData:
             f"#   {compose_rel}\n"
             f"# with --model → {weights_host_file}\n"
         )
+        if mmproj_host_file:
+            header += f"#      --mmproj → {mmproj_host_file}\n"
+        if mtp_draft_host_file:
+            header += f"#      --spec-draft-model → {mtp_draft_host_file}\n"
         yaml_text = header + yaml.safe_dump(
             doc, default_flow_style=False, sort_keys=False
         )
