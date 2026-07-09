@@ -102,6 +102,56 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# --- usage / help -----------------------------------------------------------
+# Self-contained heredoc (NOT `sed "$0"`, which breaks after the cd above when
+# invoked via a relative path from another cwd, and truncated the env section).
+usage() {
+  cat <<'EOF'
+rebench-full.sh — canonical full-eval orchestrator for the running model.
+
+Fail-fast verify-full preflight + measured steps in docs/QUALITY_TEST.md pipeline
+order, with the recurring manual-run mistakes guarded (cwd, MODEL= 404, hermes
+localhost env, port, --resume idempotency). Artifacts land in results/rebench/<tag>/.
+
+PIPELINE
+  0. verify-full     functional preflight, FAIL-FAST                      (~2 min)
+  1. bench           narrative + code TPS                                 (~5 min)
+  2. verify-stress   long-context NIAH ladder + boundary                  (~10-15 min)
+  3. 8-pack quality  OPT-IN via --with-8pack-thinking (needs benchlocal)  (~45-90 min/pass)
+  4. soak            multi-turn VRAM stability                            (~15-20 min)
+  -> REPORT.md + REPORT-discuss.md synthesized at the end.
+
+USAGE
+  bash scripts/rebench-full.sh [OPTIONS]
+
+OPTIONS
+  --with-8pack-thinking[=off|on|both]
+                  Add the behavioral 8-pack (/150). off=reasoning-OFF,
+                  on=reasoning-ON, both=both passes (production-promotion gate).
+                  Omit to run structural gates only (~35-45 min). Requires
+                  benchlocal-cli + sandbox images (see docs/QUALITY_TEST.md).
+  --tag NAME      Output-dir basename (default: <model>-YYYYMMDD-HHMM).
+  --skip CSV      Skip phases (comma-sep): verify-full,bench,verify-stress,soak.
+  --resume        Skip steps that already have artifacts (idempotent).
+  --url URL       Target any OpenAI-compatible endpoint; skips container
+                  autodetect and runs host-only (CONTAINER=none).
+  --model NAME    Served-model-name (default: GET /v1/models).
+  --engine KIND   vllm|llama-cpp|sglang|other (use with --url).
+  -h, --help      Show this help and exit.
+
+ENV OVERRIDES (rarely needed — preflight autodetects our composes)
+  URL MODEL TAG OUT_DIR · SOAK_SESSIONS (10) · SOAK_TURNS (5)
+  MAX_TOKENS (both 8-pack passes) · THINKING_MAX_TOKENS (reasoning-ON pass)
+  SAMPLING_FROM_SERVER (inherit serving sampling; tags runs non-canonical)
+
+EXAMPLES
+  bash scripts/rebench-full.sh                             # structural gates only
+  bash scripts/rebench-full.sh --with-8pack-thinking=both  # + full 8-pack off+on
+  bash scripts/rebench-full.sh --url http://localhost:8020 --model tess-4-27b --engine llama-cpp
+  bash scripts/rebench-full.sh --resume                    # continue an interrupted run
+EOF
+}
+
 # --- args -------------------------------------------------------------------
 SKIP_CSV=""
 RESUME=0
@@ -121,7 +171,7 @@ while [[ $# -gt 0 ]]; do
     --with-8pack-thinking)    WITH_8PACK="off"; shift ;;
     --with-8pack-thinking=*)  WITH_8PACK="${1#*=}"; shift ;;
     -h|--help)
-      sed -n '2,55p' "$0"
+      usage
       exit 0
       ;;
     *)
