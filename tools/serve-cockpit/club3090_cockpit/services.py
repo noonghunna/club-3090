@@ -286,6 +286,15 @@ class CockpitData:
         download_runner: Optional[SubprocessRunner] = None,
     ):
         self.repo_root = Path(repo_root)
+        # Make the repo's `scripts` package importable process-wide: c3 runs from
+        # tools/serve-cockpit/, so the repo root ISN'T on sys.path, yet the emit
+        # paths do `from scripts.lib.profiles.compose_registry import …`.  Without
+        # this the ② Serve route-G/route-C emit dies with "No module named
+        # 'scripts'" (and fit-check's topology detection silently degrades).
+        # 2026-07-09 dogfood — previously only one call site guarded this.
+        import sys as _sys
+        if str(self.repo_root) not in _sys.path:
+            _sys.path.insert(0, str(self.repo_root))
         self.card = card
         # FIX 2 — the registry's top-level ``defaults`` array (curated
         # per-(model,engine,topology) recommendations) from registry-emit --json.

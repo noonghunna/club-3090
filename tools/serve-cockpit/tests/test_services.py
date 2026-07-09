@@ -314,6 +314,17 @@ def full_runner(**overrides) -> FakeRunner:
 # ===========================================================================
 
 
+class TestScriptsImportable:
+    def test_init_puts_repo_root_on_sys_path(self, tmp_path):
+        """route-G/C ② Serve emit does `from scripts.lib.profiles...`; c3 runs from
+        tools/serve-cockpit/ so the repo root ISN'T on sys.path by default. __init__
+        must add it, else serve dies "No module named 'scripts'" (2026-07-09)."""
+        import sys
+        assert str(tmp_path) not in sys.path
+        CockpitData(tmp_path, runner=full_runner())
+        assert str(tmp_path) in sys.path
+
+
 class TestParseHelpers:
     def test_strip_ansi(self):
         assert strip_ansi("\x1b[0;32m✓\x1b[0m serving") == "✓ serving"
