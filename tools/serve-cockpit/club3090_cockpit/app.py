@@ -10815,12 +10815,18 @@ class CockpitApp(App):
         except Exception:
             pass
         served = repo.rsplit("/", 1)[-1]
+        # No external drafter? The main gguf may still carry an EMBEDDED MTP head
+        # (nextn) — activate it with --spec-type and no draft model.  (bartowski /
+        # unsloth builds embed it; migtissera ships an external mtp-*.gguf instead.)
+        embedded_mtp = bool(weights_file) and not mtp_draft and \
+            self._data.gguf_has_embedded_mtp(weights_file)
         res = self._data.emit_gguf_compose(
             profile,
             weights_file,
             served_name=served,
             mmproj_host_file=mmproj,
             mtp_draft_host_file=mtp_draft,
+            embedded_mtp=embedded_mtp,
         )
         if res.get("error") or not res.get("compose_path"):
             self.notify(

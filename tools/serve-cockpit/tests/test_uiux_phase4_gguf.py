@@ -378,3 +378,52 @@ class TestEmitGgufCompose:
         assert cmd[mi + 1].startswith("/brought/")                   # not /models/../
         vols = _emitted_volumes(res["compose_path"])
         assert any(str(w) in v and cmd[mi + 1] in v for v in vols)   # explicit mount
+
+
+def _mini_gguf(tmp_path: Path, nextn: int) -> Path:
+    """A minimal valid GGUF header (v3) carrying one metadata KV:
+    ``qwen35.nextn_predict_layers`` = ``nextn`` (uint32).  Enough to exercise the
+    stdlib parser without a real multi-GB weights file."""
+    import struct
+    p = tmp_path / f"mini-nextn{nextn}.gguf"
+    key = b"qwen35.nextn_predict_layers"
+    kv = struct.pack("<Q", len(key)) + key + struct.pack("<I", 4) + struct.pack("<I", nextn)
+    buf = (b"GGUF" + struct.pack("<I", 3) + struct.pack("<Q", 0)   # magic, v3, 0 tensors
+           + struct.pack("<Q", 1) + kv)                             # 1 KV
+    p.write_bytes(buf)
+    return p
+
+
+class TestEmbeddedMtp:
+    def test_parser_reads_nextn_predict_layers(self, tmp_path: Path):
+        data = CockpitData(tmp_path)
+        assert data._gguf_nextn_predict_layers(str(_mini_gguf(tmp_path, 2))) == 2
+        assert data.gguf_has_embedded_mtp(str(_mini_gguf(tmp_path, 1))) is True
+        assert data.gguf_has_embedded_mtp(str(_mini_gguf(tmp_path, 0))) is False
+        bad = tmp_path / "not.gguf"; bad.write_bytes(b"NOPE" + b"\x00" * 32)
+        assert data.gguf_has_embedded_mtp(str(bad)) is False        # never raises
+
+    def test_embedded_mtp_activates_spec_type_no_draft_model(self, tmp_path: Path):
+        """Embedded MTP (nextn in the main gguf, no separate drafter) → --spec-type
+        draft-mtp with NO --spec-draft-model (the bartowski/unsloth case)."""
+        data = CockpitData(tmp_path)
+        cmd = ["--host", "0.0.0.0", "-m", "/models/x.gguf", "--spec-type", "mtp:n=2"]
+        out = data._rewrite_gguf_command(
+            cmd, model_mount="/models/brought.gguf", embedded_mtp=True)
+        assert "--spec-type" in out and out[out.index("--spec-type") + 1] == "draft-mtp"
+        assert "--spec-draft-model" not in out
+        assert "mtp:n=2" not in out                                 # sibling flag stripped
+
+    def test_external_drafter_wins_over_embedded(self, tmp_path: Path):
+        data = CockpitData(tmp_path)
+        out = data._rewrite_gguf_command(
+            ["-m", "/old.gguf"], model_mount="/models/b.gguf",
+            mtp_draft_mount="/models/mtp.gguf", embedded_mtp=True)
+        assert "--spec-draft-model" in out
+        assert out[out.index("--spec-draft-model") + 1] == "/models/mtp.gguf"
+
+    def test_no_mtp_no_spec_flags(self, tmp_path: Path):
+        data = CockpitData(tmp_path)
+        out = data._rewrite_gguf_command(
+            ["-m", "/old.gguf"], model_mount="/models/b.gguf", embedded_mtp=False)
+        assert "--spec-type" not in out and "--spec-draft-model" not in out
