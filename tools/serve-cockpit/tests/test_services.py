@@ -3794,3 +3794,43 @@ class TestServeOverrides:
         d = cd.serve_override_defaults("vllm/dual", "org/Foo")
         assert d["DRAFTER_OPTIONS"] == ["mtp", "mtp_assistant"]   # engine-driven
         assert d["SPEC_METHOD"] == "mtp" and d["SPEC_N"] == "3"
+
+
+class TestBringGgufDownload:
+    """route-G [D]: a GGUF bring must fetch the picked quant's files directly (hf
+    download --include), NOT pull.sh — pull.sh aborts unsupported-format on a GGUF
+    repo (no config.json).  (2026-07-09 dogfood.)"""
+
+    def test_gguf_includes_build_hf_download_cmd(self, tmp_path):
+        import asyncio
+        d = CockpitData(tmp_path)
+        cap = {}
+
+        class R:
+            def set_callbacks(self, **k): pass
+            async def start_raw(self, cmd, **kw):
+                cap["cmd"] = cmd; cap["env"] = kw["env"]; return "h"
+
+        d._download_runner = R()
+        asyncio.run(d.run_bring_download(
+            "org/Repo-GGUF", "llamacpp/default",
+            gguf_includes=["org_Repo-Q8_0.gguf", "mmproj-f16.gguf"]))
+        c = cap["cmd"]
+        assert c[1] == "download" and "pull.sh" not in " ".join(c)     # hf download, not pull.sh
+        assert "--local-dir" in c and str(d.bring_pull_dir("org/Repo-GGUF")) in c
+        assert c.count("--include") == 2
+        assert cap["env"].get("HF_HUB_DISABLE_XET") == "1"             # resumable classic LFS
+
+    def test_no_gguf_includes_uses_pull_sh(self, tmp_path):
+        import asyncio
+        d = CockpitData(tmp_path)
+        cap = {}
+
+        class R:
+            def set_callbacks(self, **k): pass
+            async def start_raw(self, cmd, **kw):
+                cap["cmd"] = cmd; return "h"
+
+        d._download_runner = R()
+        asyncio.run(d.run_bring_download("org/Repo", "vllm/dual"))
+        assert cap["cmd"][:2] == ["bash", "scripts/pull.sh"]           # safetensors path unchanged

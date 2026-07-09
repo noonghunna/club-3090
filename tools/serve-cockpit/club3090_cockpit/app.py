@@ -8341,6 +8341,27 @@ class CockpitApp(App):
         except Exception:
             return "", None
 
+    def _gguf_download_includes(self) -> list[str]:
+        """hf-download ``--include`` patterns for the picked GGUF quant: the main
+        quant file(s) + the vision mmproj + a quant-matched external MTP drafter (if
+        the repo ships one).  Empty when this isn't a GGUF bring (→ pull.sh path).
+        A GGUF repo has no config.json, so pull.sh aborts unsupported-format."""
+        quant, _ = self._funnel_gguf_selection()
+        inv = getattr(self, "_last_inventory", None)
+        if not quant or inv is None or not getattr(inv, "has_gguf", False):
+            return []
+        pats: list[str] = []
+        for v in getattr(inv, "gguf_variants", []):
+            if v.quant == quant:
+                pats += list(getattr(v, "files", []) or [f"*{quant}*.gguf"])
+                break
+        else:
+            pats.append(f"*{quant}*.gguf")
+        pats += list(getattr(inv, "gguf_mmproj", []))     # vision projector(s)
+        pats.append(f"*mtp*{quant}*.gguf")                # external MTP drafter if present
+        seen: set = set()
+        return [p for p in pats if p and not (p in seen or seen.add(p))]
+
     def _bring_expected_size_gb(self) -> Optional[float]:
         """Best-effort size from last Inspect inventory (safetensors total or GGUF pick)."""
         q, gb = self._funnel_gguf_selection()
@@ -8486,8 +8507,10 @@ class CockpitApp(App):
             and getattr(self._last_byo, "route", "") == "C"
         )
         self._bring_swap_compose = ""
+        gguf_includes = self._gguf_download_includes()
         handle = await self._data.run_bring_download(
-            repo, profile_like, apply_swap=apply_swap, on_line=_on_line
+            repo, profile_like, apply_swap=apply_swap,
+            gguf_includes=gguf_includes or None, on_line=_on_line,
         )
         # Attach the real handle to the tracker entry (registered synchronously in
         # action_bring_download).  If it's already gone, we were cancelled before
