@@ -3,7 +3,7 @@
 #   Model:     Tess-4-27B (Qwen3.5-based dense 27B, migtissera Q4_K_M GGUF)
 #   Engine:    llama.cpp (mainline server-cuda-b9246, external draft-mtp)
 #   Topology:  Dual 3090 (layer-split -ts 1,1)
-#   Drafter:   MTP n=2 external — --spec-draft-model mtp-Tess-*.gguf + --spec-type draft-mtp
+#   Drafter:   MTP n=2 external (n-sweep sweet spot 2026-07-09) — --spec-draft-model mtp-Tess-*.gguf + --spec-type draft-mtp
 #   KV:        q4_0 K + q4_0 V
 #   Vision:    no (base is VL-capable; mmproj on disk, not mounted — text-only ship)
 #   Template:  native (GGUF-embedded, Qwen-style)
