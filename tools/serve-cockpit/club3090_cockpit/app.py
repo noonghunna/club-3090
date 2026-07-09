@@ -688,6 +688,8 @@ class HelpScreen(ModalScreen):
   ④ Measure: [cyan]⏎[/cyan] open report   [cyan]m[/cyan] vs catalog bar (read)   [cyan]s[/cyan] submit to localmaxxing (gated · never auto)
   ⑤ Promotion Preview: [cyan]P[/cyan] scaffold preview [yellow](preview only — no catalog write yet)[/yellow]
   [cyan]v[/cyan] ▸ Evaluate via c3t [yellow](preview / mock this phase)[/yellow]
+  [cyan]Ctrl+n[/cyan] New bring — clear ①/② state and start over
+  Happy path: [cyan]2[/cyan] → paste repo → Inspect → Fit-check → [cyan]D[/cyan]? → [cyan]s[/cyan] → ⏎ Serve → ③ Gate → ④ Measure → [cyan]P[/cyan]
 """
 
     def __init__(self, *, surface: str = "consumer", **kwargs):
@@ -728,7 +730,8 @@ class HelpScreen(ModalScreen):
             "[bold]Run & Operate · Catalog[/bold]",
             "  [cyan]⏎[/cyan] serve selected slug (reconcile-gated confirm; F to Force the teardown)",
             "  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default",
-            "  [cyan]O[/cyan] ▸ Optimize for my card (v0.10.0 seam — not available yet)",
+            "  [cyan]O[/cyan] ▸ Optimize for my card [yellow](coming soon — v0.10.0)[/yellow]",
+            "",
             "[bold]Run & Operate · Orchestration[/bold]",
             "  [cyan]⏎[/cyan] switch scene   [cyan]k[/cyan] stop THIS model   [cyan]b[/cyan] restart serving   [cyan]n[/cyan] switch model (→ Catalog tab)   (writes gated)",
             "  [cyan]o[/cyan] stop ALL (tears down the whole estate)   [cyan]c[/cyan] power cap… (default 230W / clear / custom W)   (all gated)",
@@ -5214,13 +5217,15 @@ def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None,
     }.get(res.fit_verdict, res.fit_verdict or "—")
     lines.append(f"  [bold]fit[/bold]      {fitc}")
     if res.route:
+        # Phase 3 — outcome-first headings; A/B/C kept as dim metadata.
+        route_u = str(res.route).upper()
         route_label = {
-            "A": "Route A — author a new curated profile",
-            "B": "Route B — serve locally (no catalog entry)",
-            "C": "Route C — reuse a sibling compose + swap weights",
-        }.get(str(res.route).upper(), f"Route {res.route}")
+            "A": "Needs a catalog profile",
+            "B": "Local-only serve",
+            "C": "Can serve now (reuse sibling recipe)",
+        }.get(route_u, f"Route {res.route}")
         lines.append("")
-        lines.append(f"  [bold]{route_label}[/bold]")
+        lines.append(f"  [bold]{route_label}[/bold]  [dim](route {route_u})[/dim]")
         if res.sibling_slug:
             lines.append(f"    • reuse compose for [green]{res.sibling_slug}[/green]")
         if res.quant_match:
@@ -6352,7 +6357,9 @@ class CockpitApp(App):
         # R3b-1 — producer lane ② Serve: generate a compose + serve it untested
         # (also reachable via ⏎ on the ② Serve stage).
         Binding("g", "serve_untested", "Serve untested", show=False),
-        Binding("O", "optimize_card", "Optimize", show=False),
+        Binding("O", "optimize_card", "Optimize (soon)", show=False),
+        # Phase 3 — start over / new bring (clear ① cache + disarm ②).
+        Binding("ctrl+n", "new_bring", "New bring", show=False),
         # R3b-2 — producer lane ④ Measure: compare the selected tag's measured
         # numbers to the curated catalog bar (READ · producer-only).
         Binding("m", "measure_vs_bar", "vs catalog bar", show=False),
@@ -8216,6 +8223,37 @@ class CockpitApp(App):
         if self._data.bring_weights_present(repo):
             self.notify("Weights already on disk.", title="Download", timeout=3)
             return
+        # Phase 3 B23 — disk-fit + size preflight (reuse catalog weights_fits_disk).
+        size_gb = self._bring_expected_size_gb()
+        fits, free_gb, need_gb = True, 0.0, 0.0
+        if size_gb and size_gb > 0:
+            from club3090_cockpit.data import WeightsMeta
+
+            meta = WeightsMeta(hf_repo=repo, size_gb=float(size_gb))
+            fits, free_gb, need_gb = self._data.weights_fits_disk(meta)
+        try:
+            pane = self.query_one("#lane-bring-pane", LaneBringPane)
+            size_s = f"~{size_gb:.0f} GiB" if size_gb else "size unknown"
+            if size_gb and size_gb > 0:
+                disk_s = (
+                    f"[green]● fits[/green] {free_gb:.0f} free / ~{need_gb:.0f} need"
+                    if fits else
+                    f"[red]✗ may not fit[/red] {free_gb:.0f} free / ~{need_gb:.0f} need"
+                )
+            else:
+                disk_s = "[dim]disk check skipped (size unknown)[/dim]"
+            pane.set_weights_line(
+                f"  [cyan]↓ downloading[/cyan] [bold]{repo}[/bold]  ({size_s})\n"
+                f"  {disk_s}  [dim]· \\[k] cancels · \\[S] HF token if gated[/dim]"
+            )
+        except Exception:
+            pass
+        if size_gb and size_gb > 0 and not fits:
+            self.notify(
+                f"Disk may be tight ({free_gb:.0f} GiB free / ~{need_gb:.0f} needed) "
+                "— starting anyway; free space or change Model Dir [S] if it fails.",
+                title="Download", severity="warning", timeout=8,
+            )
         # One download at a time (shared runner + exclusive worker): starting a
         # new repo supersedes any prior in-flight entry (the old worker's await is
         # cancelled), so clear stale keys — otherwise an abandoned repo could stick
@@ -8228,8 +8266,36 @@ class CockpitApp(App):
             "handle": None,
             "profile_like": getattr(byo, "profile_like", ""),
             "apply_swap": bool(getattr(byo, "route", "") == "C"),
+            "size_gb": size_gb,
         }
         self.run_bring_download_worker(repo, getattr(byo, "profile_like", ""))
+        self._sync_jobs_chip()
+
+    def _bring_expected_size_gb(self) -> Optional[float]:
+        """Best-effort size from last Inspect inventory (safetensors total or GGUF pick)."""
+        inv = getattr(self, "_last_inventory", None)
+        if inv is None:
+            return None
+        try:
+            if getattr(inv, "has_gguf", False) and getattr(inv, "gguf_variants", None):
+                # Prefer the selected quant if we can read the Select; else largest.
+                try:
+                    pane = self.query_one("#lane-bring-pane", LaneBringPane)
+                    sel = pane.query_one("#lane-bring-gguf-select", Select)
+                    q = sel.value
+                    if q not in (None, Select.BLANK):
+                        for v in inv.gguf_variants:
+                            if v.quant == q and v.size_gb:
+                                return float(v.size_gb)
+                except Exception:
+                    pass
+                sizes = [float(v.size_gb) for v in inv.gguf_variants if v.size_gb]
+                return max(sizes) if sizes else None
+            if getattr(inv, "safetensors_size_gb", 0):
+                return float(inv.safetensors_size_gb)
+        except Exception:
+            return None
+        return None
 
     def action_bring_cancel_download(self) -> None:
         """[k] — cancel the in-flight ① Bring download (kills the pull.sh / hf
@@ -8257,6 +8323,65 @@ class CockpitApp(App):
         except Exception:
             pass
         self.notify(f"Cancelled download of {repo}.", title="Download", timeout=3)
+        self._sync_jobs_chip()
+
+    def action_new_bring(self) -> None:
+        """Phase 3 — Ctrl+n: clear ①/② funnel state and start over (no disk wipe)."""
+        if self._active_mode != 1:
+            return
+        self._last_byo = None
+        self._bring_swap_compose = ""
+        self._last_inventory = None
+        try:
+            self.query_one("#lane-serve-pane", LaneServePane).set_armed(None)
+        except Exception:
+            pass
+        try:
+            pane = self.query_one("#lane-bring-pane", LaneBringPane)
+            pane.query_one("#lane-bring-url-input", Input).value = ""
+            pane.set_weights_line("")
+            pane.set_continue_visible(False)
+            pane.show_slug_details("")
+            pane.set_next_hint(
+                "[dim]next: enter an HF repo and press Inspect[/dim]"
+            )
+            pane.query_one("#lane-bring-result-card", Static).update(
+                "[dim]Enter an HF repo and Inspect — metadata only, no download. "
+                "Fit-check unlocks ② Serve.[/dim]"
+            )
+            try:
+                pane.query_one("#lane-bring-stage2-row", Vertical).add_class(
+                    "funnel-hidden"
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            self.query_one("#validate-tabs", TabbedContent).active = "tab-bring"
+        except Exception:
+            pass
+        self._sync_footer_labels()
+        self.refresh_bindings()
+        self.notify(
+            "Bring state cleared — weights on disk kept. Paste a new HF repo.",
+            title="New bring", timeout=4,
+        )
+
+    def _sync_jobs_chip(self) -> None:
+        """Phase 3 B8 — header subtitle for active long jobs (download / full report)."""
+        parts: list[str] = []
+        dls = self._active_bring_download()
+        if dls:
+            repo = next(iter(dls))
+            short = repo.rsplit("/", 1)[-1]
+            parts.append(f"⏳ downloading {short} · [k] cancels")
+        if getattr(self, "_full_report_running", False):
+            parts.append("⏳ report.sh --full · ③ Gate")
+        base = "wired"
+        if self._surface == "consumer":
+            base = f"{base} · ▸ LEAN"
+        self.sub_title = f"{base} · {' · '.join(parts)}" if parts else base
 
     @work(group="bring-download-ctl")
     async def _cancel_bring_download(self) -> None:
@@ -8324,8 +8449,10 @@ class CockpitApp(App):
         # no longer holds this repo.  Do NOT render a stale verdict; the owner of
         # the newer state renders instead.
         if repo not in self._active_bring_download():
+            self._sync_jobs_chip()
             return
         self._active_bring_download().pop(repo, None)
+        self._sync_jobs_chip()
         if lane_pane is None:
             return
         # AUTHORITATIVE: disk truth (re-stat) wins over the exit code / marker race.
@@ -9978,17 +10105,23 @@ class CockpitApp(App):
             if live is not None:
                 live.append_line(text)
 
-        await self._data.run_full_validation_report(
-            model=self._target_model or None,
-            url=self._target_url or None,
-            on_line=_on_line,
-        )
-        self.notify(
-            "report.sh --full launched (~43-min battery).",
-            title="Full report",
-            severity="information",
-            timeout=4,
-        )
+        self._full_report_running = True
+        self._sync_jobs_chip()
+        try:
+            await self._data.run_full_validation_report(
+                model=self._target_model or None,
+                url=self._target_url or None,
+                on_line=_on_line,
+            )
+            self.notify(
+                "report.sh --full finished (or mock-returned).",
+                title="Full report",
+                severity="information",
+                timeout=4,
+            )
+        finally:
+            self._full_report_running = False
+            self._sync_jobs_chip()
 
     # ── Phase R / R2b · Consumer share-back (READ paste-ready + outward submit) ────
 
