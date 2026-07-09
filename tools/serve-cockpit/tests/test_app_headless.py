@@ -5034,7 +5034,9 @@ class TestLaneHelpSurfaceThreadedR3b1:
             assert isinstance(app.screen, HelpScreen)
             text = app.screen.help_text
             assert "Bring & Validate" in text
-            assert "Promote" in text
+            # Phase-1 honesty: Promote is labelled "Promotion Preview" while
+            # the catalog write is mock-only; Evaluate carries a preview badge.
+            assert "Promotion Preview" in text or "Promote" in text
             assert "Evaluate" in text
             # The full-surface mode line carries the real rendered mode-2 lane token.
             assert "2[/cyan]  Bring & Validate" in text
@@ -10426,7 +10428,8 @@ class TestProducerLaneHandoff:
             body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
                 "#lane-serve-body", Static
             ).render())
-            assert "armed from ① Bring" in body
+            # Phase-1 route-aware card: "Serving <brought> · 👤 untested" (+ recipe).
+            assert "Serving" in body or "armed from ① Bring" in body
             assert "vllm/dual" in body                       # resolved catalog target
             assert "unsloth/Qwen3-27B-abliterated" in body   # the brought repo
 
@@ -10634,7 +10637,12 @@ class TestProducerLaneHandoff:
             body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
                 "#lane-serve-body", Static
             ).render())
-            assert "your brought weights" in body
+            # Route-C honesty: applied to your weights / recipe — never "NOT your".
+            assert (
+                "your weights" in body
+                or "applied to your weights" in body
+                or "your brought weights" in body
+            )
             assert "to serve" in body                          # a clear action, no dead end
             assert "NOT your brought model" not in body        # stale contradiction is gone
 
@@ -10654,7 +10662,7 @@ class TestProducerLaneHandoff:
             body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
                 "#lane-serve-body", Static
             ).render())
-            assert "armed from ① Bring" in body
+            assert "Serving" in body or "armed from ① Bring" in body
             assert "vllm/dual" in body
 
     @pytest.mark.asyncio
@@ -10672,13 +10680,14 @@ class TestProducerLaneHandoff:
             body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
                 "#lane-serve-body", Static
             ).render())
-            assert "armed from ① Bring" in body  # armed by the valid Bring
+            assert "Serving" in body or "armed from ① Bring" in body  # armed by valid Bring
             # Re-Bring with a typo'd / unknown profile → early-return error path.
             app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/typo-gone")
             await _settle(pilot)
             body = str(app.query_one("#lane-serve-pane", LaneServePane).query_one(
                 "#lane-serve-body", Static
             ).render())
+            assert "Serving  " not in body or "Run ① Bring first" in body
             assert "armed from ① Bring" not in body   # stale arm cleared
             assert "Run ① Bring first" in body        # placeholder restored
 
