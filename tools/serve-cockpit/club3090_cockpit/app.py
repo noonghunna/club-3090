@@ -5064,6 +5064,18 @@ class LaneBringPane(Container):
         sel.remove_class("funnel-hidden")
         self.query_one("#lane-bring-profile-title", Label).remove_class("funnel-hidden")
         self.query_one("#lane-bring-fit-btn", Button).remove_class("funnel-hidden")
+        # Bug B (2026-07-09): when the §2b size floor leaves ONLY the ✎ custom-slug
+        # sentinel, _set_select_options pre-selects it under prevent(Select.Changed)
+        # — so the Changed-gated custom-Input reveal never fires and the escape
+        # hatch is unreachable (re-picking the already-selected sentinel is a no-op).
+        # Reveal the Input eagerly iff the sentinel is the sole option; keep it
+        # hidden (until a genuine pick) whenever real slugs exist.
+        real = [v for (_l, v) in options if v != PROFILE_CUSTOM_SENTINEL]
+        custom = self.query_one("#lane-bring-profile-custom", Input)
+        if real:
+            custom.add_class("profile-custom-hidden")
+        else:
+            custom.remove_class("profile-custom-hidden")
 
     def hide_slug_stage(self) -> None:
         self.query_one("#lane-bring-profile-input", Select).add_class("funnel-hidden")
@@ -7938,12 +7950,14 @@ class CockpitApp(App):
     def _reveal_funnel_slugs(
         self, artifact_format: str, artifact_gb: Optional[float]
     ) -> None:
+        vram = self._known_gpu_vram_gb()
+        gpus = self._known_gpu_count()
         opts = funnel_slug_options(
             self._variants or [],
             artifact_format,
             artifact_gb=artifact_gb,
-            vram_gb=self._known_gpu_vram_gb(),
-            gpu_count=self._known_gpu_count(),
+            vram_gb=vram,
+            gpu_count=gpus,
         )
         # ONE visible recommendation (§2b follow-up): smallest fitting
         # topology + curated engine preference — starred AND pre-selected;
@@ -7961,6 +7975,30 @@ class CockpitApp(App):
             # Dogfood r2 — the pre-selected recommendation's details show
             # immediately (updates ride on_select_changed thereafter).
             pane.show_slug_details(self._funnel_slug_details(rec) if rec else "")
+            # Bug A (2026-07-09): the §2b size floor can hide EVERY slug — a 54G
+            # bf16 repo on a 48G rig — leaving only the ✎ sentinel with NO
+            # explanation.  Surface an honest verdict, distinguishing "too big for
+            # the rig" (compat slugs exist but all exceed VRAM) from "no compatible
+            # recipe" (artifact→engine compat matched nothing at all).
+            if not opts:
+                unfloored = funnel_slug_options(self._variants or [], artifact_format)
+                if unfloored and artifact_gb:
+                    total = (vram or 0) * (gpus or 0)
+                    rig = (
+                        f"{gpus}×{vram:.0f}={total:.0f} GB total"
+                        if (vram and gpus) else "your rig's VRAM"
+                    )
+                    pane.set_next_hint(
+                        f"[yellow]⚠ won't fit[/yellow] — these weights "
+                        f"(~{artifact_gb:.0f} GB) exceed every topology on {rig}. "
+                        f"Bring a smaller quant (an FP8 build, or a GGUF) — "
+                        f"or ✎ custom slug to point at one by hand."
+                    )
+                else:
+                    pane.set_next_hint(
+                        "[yellow]no catalog recipe matches this artifact[/yellow] "
+                        "— use ✎ custom slug to point at one by hand."
+                    )
         except Exception:
             pass
 
