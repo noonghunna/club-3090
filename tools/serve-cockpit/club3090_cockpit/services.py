@@ -1265,6 +1265,64 @@ class CockpitData:
             return [str(x) for x in raw]
         return shlex.split(str(raw))
 
+    @staticmethod
+    def _gguf_nextn_predict_layers(path: str) -> int:
+        """The GGUF ``<arch>.nextn_predict_layers`` value = the model's EMBEDDED MTP
+        (self-speculation) layer count; 0 when absent.  Minimal stdlib GGUF-metadata
+        parser — the ``gguf`` package isn't in the c3 venv.  Early-returns on the key
+        (it sits with the arch hyper-params, before the big tokenizer arrays)."""
+        import struct
+        _S = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
+        try:
+            with open(path, "rb") as f:
+                if f.read(4) != b"GGUF":
+                    return 0
+                (ver,) = struct.unpack("<I", f.read(4))
+                if ver < 2:
+                    return 0
+                f.read(8)                                    # tensor_count
+                (kvc,) = struct.unpack("<Q", f.read(8))      # metadata_kv_count
+
+                def _skip(vt: int) -> None:
+                    if vt in _S:
+                        f.seek(_S[vt], 1)
+                    elif vt == 8:                            # string
+                        (n,) = struct.unpack("<Q", f.read(8)); f.seek(n, 1)
+                    elif vt == 9:                            # array
+                        (et,) = struct.unpack("<I", f.read(4))
+                        (cnt,) = struct.unpack("<Q", f.read(8))
+                        if et in _S:
+                            f.seek(_S[et] * cnt, 1)
+                        elif et == 8:
+                            for _ in range(cnt):
+                                (m,) = struct.unpack("<Q", f.read(8)); f.seek(m, 1)
+                        else:
+                            raise ValueError(f"nested array type {et}")
+                    else:
+                        raise ValueError(f"value type {vt}")
+
+                for _ in range(kvc):
+                    (kl,) = struct.unpack("<Q", f.read(8))
+                    key = f.read(kl)
+                    (vt,) = struct.unpack("<I", f.read(4))
+                    if key.endswith(b".nextn_predict_layers"):
+                        if vt in (0, 2, 4, 10):              # uint 8/16/32/64
+                            return int.from_bytes(f.read(_S[vt]), "little")
+                        if vt in (1, 3, 5, 11):              # int 8/16/32/64
+                            return int.from_bytes(f.read(_S[vt]), "little", signed=True)
+                        return 1                             # present, odd type
+                    _skip(vt)
+        except Exception:
+            return 0
+        return 0
+
+    def gguf_has_embedded_mtp(self, path: str) -> bool:
+        """True iff the GGUF carries an EMBEDDED MTP head (``nextn_predict_layers``
+        ≥ 1) — activated by ``--spec-type draft-mtp`` with NO separate draft model,
+        distinct from an EXTERNAL ``mtp-*.gguf`` drafter (which uses
+        ``--spec-draft-model`` too)."""
+        return self._gguf_nextn_predict_layers(path) >= 1
+
     def _rewrite_gguf_command(
         self,
         cmd: list,
@@ -1272,6 +1330,7 @@ class CockpitData:
         model_mount: str,
         mmproj_mount: str = "",
         mtp_draft_mount: str = "",
+        embedded_mtp: bool = False,
     ) -> list:
         """Rewrite sibling argv for a brought GGUF:
 
@@ -1335,12 +1394,19 @@ class CockpitData:
             str(x) == "--mmproj" or str(x).startswith("--mmproj=") for x in out
         ):
             out += ["--mmproj", mmproj_mount]
-        # Brought MTP draft (bonus) — only after stripping sibling drafter flags.
+        # Spec-decode, after stripping the sibling's own drafter flags:
+        #   • EXTERNAL drafter (a brought mtp-*.gguf, e.g. migtissera Tess) →
+        #     --spec-draft-model + --spec-type draft-mtp
+        #   • else EMBEDDED MTP head (nextn baked into the main gguf, e.g. bartowski
+        #     / unsloth builds) → --spec-type draft-mtp WITH NO draft model
+        # External wins if somehow both are present (the preferred path on this rig).
         if mtp_draft_mount:
             out += [
                 "--spec-draft-model", mtp_draft_mount,
                 "--spec-type", "draft-mtp",
             ]
+        elif embedded_mtp:
+            out += ["--spec-type", "draft-mtp"]   # activate the embedded nextn head
         return out
 
     def emit_gguf_compose(
@@ -1351,6 +1417,7 @@ class CockpitData:
         served_name: str = "",
         mmproj_host_file: str = "",
         mtp_draft_host_file: str = "",
+        embedded_mtp: bool = False,
     ) -> dict:
         """Clone a GGUF-engine sibling compose with --model → the downloaded .gguf.
 
@@ -1419,6 +1486,7 @@ class CockpitData:
             model_mount=mount,
             mmproj_mount=mmproj_mount,
             mtp_draft_mount=mtp_mount,
+            embedded_mtp=embedded_mtp,
         )
 
         def _abs_vol(v: str) -> str:
