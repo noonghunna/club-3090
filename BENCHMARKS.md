@@ -195,6 +195,24 @@ Not TPS, but load-bearing. Every shipped variant is validated against:
 
 The single-card vLLM Cliff 2b status is canonicalized in [#41](https://github.com/noonghunna/club-3090/issues/41) — fix is gated on upstream [Sandermage genesis-vllm-patches#19](https://github.com/Sandermage/genesis-vllm-patches/issues/19). See [docs/CLIFFS.md](docs/CLIFFS.md) for the byte-level explanation.
 
+### Concurrency sweep — dense 27B vs 35B-A3B MoE aggregate throughput (`concurrency-probe.sh`)
+
+First first-party aggregate matrix (2026-07-10, @noonghunna 2× 3090 PCIe, vLLM v0.24.0, `SWEEP` mode — fresh boot per N, 5 rounds, steady-state last round). **Aggregate = summed completion tokens / wall**; per-stream = median decode tok/s. All arms clean (0 errors, 0 silent-empty, 0 VRAM growth, retention ≥99%).
+
+**Agent shape (16K-token prompt / 256 gen):**
+
+| N | 27B `dual-fast` (MTP n=3) per-stream | ×N decode-agg | 35B-A3B `dual` (MTP off) per-stream | ×N decode-agg |
+|--:|--:|--:|--:|--:|
+| 1 | 87.3 | 87 | — | — |
+| 2 | 51.8 | **104** ⭐ | 133.0 | 266 |
+| 4 | 22.1 | 88 | 68.0 | **272** ⭐ |
+| 8 | 6.8 | 54 ⚠ | 32.6 | 261 |
+| 16 | — | — | 15.4 | 246 |
+
+**Generation shape (512-token prompt / 800 gen):** 27B @ N=8 → **211 tok/s aggregate** (58.4/stream) · 35B-A3B @ N=16 → **1,037 tok/s aggregate** (92.8/stream, retention 99.4%).
+
+Takeaways: (1) the **dense 27B's batching knee is N=2** at agent contexts — decode-aggregate *halves* by N=8 (MTP-under-batching + chunked-prefill interleave; per-stream falls faster than N grows); (2) the **A3B MoE holds ~250–270 decode-agg flat to N=16** (3B active params + tiny hybrid-attention KV) — the multi-agent serving pick; (3) at 16K contexts *end-to-end generated* tok/s is prefill-bound (~20 for 27B, ~93–121 for MoE, nearly flat in N) — batching at deep context buys utilization, not generated tokens; the >1K aggregate lives at generation-heavy shapes. See FAQ "How do I serve multiple coding agents concurrently".
+
 ### Cross-engine — Luce DFlash (lucebox-hub) on Qwen3.5-27B
 
 Not directly comparable to vLLM rows above (different engine, different bench script, different model — Qwen3.5-27B not 3.6 because the 3.6 DFlash draft is still under training as of 2026-05-04). Bench harness: `lucebox-hub/dflash/scripts/bench_he.py`, HumanEval 10 prompts, n_gen=128.

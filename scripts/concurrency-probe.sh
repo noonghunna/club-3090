@@ -51,6 +51,9 @@ SLUG="${SLUG:-}"                      # required for SWEEP (reboot target)
 SWEEP_DRY="${SWEEP_DRY:-0}"
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-360}"
 
+# Remember whether the caller pinned MODEL — SWEEP re-resolves after each boot
+# and must not clobber an explicit pin.
+MODEL_PINNED="${MODEL:+1}"
 MODEL="${MODEL:-$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || echo qwen3.6-27b)}"
 # best-effort container for VRAM + cmd introspection (name heuristic)
@@ -152,7 +155,7 @@ def one(stream, rnd):
 
 print(f"\n{'round':>5} {'done':>7} {'silent':>7} {'errors':>7} {'vram_MB':>8} {'agg_t/s':>8} {'per-strm':>9}")
 vram0=vram_used_mb()
-vram_by_round=[]; mtps_by_round=[]; bad=0
+vram_by_round=[]; mtps_by_round=[]; agg_by_round=[]; bad=0
 for rnd in range(1,ROUNDS+1):
     t0=time.time()
     with cf.ThreadPoolExecutor(max_workers=N) as ex:
@@ -164,7 +167,7 @@ for rnd in range(1,ROUNDS+1):
     agg=sum(r["toks"] for r in res)/wall if wall else 0
     tps_ok=[r["tps"] for r in res if r["ok"] and r["tps"]>0]
     mtps=statistics.median(tps_ok) if tps_ok else 0.0
-    mtps_by_round.append(mtps)
+    mtps_by_round.append(mtps); agg_by_round.append(agg)
     print(f"{rnd:>5} {done:>4}/{N:<2} {silent:>7} {errs:>7} {v:>8} {agg:>8.1f} {mtps:>9.1f}")
     if done<N or silent or errs: bad+=1
 
@@ -178,6 +181,9 @@ vram_peak=max(vram_by_round) if vram_by_round else -1
 # Round 1 is cudagraph/cold warmup (systematically slow) — anchoring retention
 # on it would flatter the ratio, so drop it once there are >=4 rounds.
 report_tps=mtps_by_round[-1] if mtps_by_round else 0.0
+# aggregate = summed completion tokens / wall per round (what "total rig
+# throughput at N agents" means); steady-state = last round, like per-stream.
+report_agg=agg_by_round[-1] if agg_by_round else 0.0
 warm_tps=mtps_by_round[1:] if ROUNDS>=4 else mtps_by_round
 if len(warm_tps)>=3 and warm_tps[0]>0:
     early=statistics.median(warm_tps[:2]); late=statistics.median(warm_tps[-2:])
@@ -193,7 +199,8 @@ PASS=clean_fit and floor_ok and (retention_ok if VALIDATE else True)
 print(f"\n=== verdict (N={N}) ===")
 print(f"  VRAM: cold {vram0} -> warm {warm} MB (pool fill {pool_fill} MB, expected) "
       f"-> final {vram_by_round[-1]} MB (post-warm growth {leak} MB / {GROWTH})  peak {vram_peak} MB")
-print(f"  per-stream decode: {report_tps:.1f} tok/s (steady) · retention {retention*100:.1f}% "
+print(f"  per-stream decode: {report_tps:.1f} tok/s (steady) · aggregate {report_agg:.1f} tok/s "
+      f"({N} streams) · retention {retention*100:.1f}% "
       f"(min {RETENTION_MIN*100:.0f}%)" + (f" · floor {TPS_FLOOR:.0f}" if TPS_FLOOR>0 else " · floor off"))
 flags=[]
 if not clean_fit: flags.append("fit")
@@ -206,7 +213,7 @@ if PASS:
           f"vram_peak_gb: {vram_peak/1024:.1f} }}")
 # machine-readable line for SWEEP parsing
 print(f"RESULT N={N} clean={int(clean_fit)} pass={int(PASS)} mps_tps={report_tps:.2f} "
-      f"retention={retention:.3f} leak={leak} vram_peak={vram_peak} floor_ok={int(floor_ok)}")
+      f"agg_tps={report_agg:.2f} retention={retention:.3f} leak={leak} vram_peak={vram_peak} floor_ok={int(floor_ok)}")
 raise SystemExit(0 if PASS else 1)
 PY
 }
@@ -218,7 +225,7 @@ if [[ -n "$SWEEP" ]]; then
     exit 2
   fi
   echo "[sweep] slug=$SLUG N in { $SWEEP } · floor=${TPS_FLOOR} tok/s/stream · reboots the server per N"
-  knee=""; knee_tps=""
+  knee=""; knee_tps=""; knee_agg=""; sweep_rows=""
   for N in $SWEEP; do
     if [[ "$SWEEP_DRY" == "1" ]]; then
       echo "[sweep:dry] would: MAX_NUM_SEQS=$N switch.sh $SLUG  ->  wait ready  ->  probe N=$N"
@@ -234,18 +241,36 @@ if [[ -n "$SWEEP" ]]; then
       sleep 2
     done
     if [[ "$ready" != "1" ]]; then echo "[sweep] N=$N: not ready in ${BOOT_TIMEOUT}s — skipping"; continue; fi
+    # Re-resolve the served model AFTER the boot. The top-of-script autodetect
+    # ran BEFORE the sweep booted anything on $URL, so it silently fell back to
+    # the default — which 404s every request against any other model (the whole
+    # arm reads as errors=N). Skip when the caller pinned MODEL explicitly.
+    if [[ -z "$MODEL_PINNED" ]]; then
+      det="$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
+        | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+      if [[ -n "$det" && "$det" != "$MODEL" ]]; then
+        echo "[sweep] served model: $det (re-resolved post-boot; was: $MODEL)"
+        MODEL="$det"
+      fi
+    fi
     out="$(run_probe "$N" || true)"; echo "$out"
     line="$(printf '%s\n' "$out" | grep -m1 '^RESULT ' || true)"
     clean="$(sed -n 's/.* clean=\([0-9]*\).*/\1/p' <<<"$line")"
     mps="$(sed -n 's/.* mps_tps=\([0-9.]*\).*/\1/p' <<<"$line")"
+    agg="$(sed -n 's/.* agg_tps=\([0-9.]*\).*/\1/p' <<<"$line")"
+    sweep_rows="${sweep_rows:-}
+  N=$N  per-stream=${mps:-?} tok/s  aggregate=${agg:-?} tok/s  clean=${clean:-?}"
     # knee = largest N that is fit-clean AND (floor off OR per-stream TPS >= floor)
     above="$(awk -v t="$mps" -v f="$TPS_FLOOR" 'BEGIN{print (f<=0 || t>=f)?1:0}')"
-    if [[ "$clean" == "1" && "$above" == "1" ]]; then knee="$N"; knee_tps="$mps"; fi
+    if [[ "$clean" == "1" && "$above" == "1" ]]; then knee="$N"; knee_tps="$mps"; knee_agg="$agg"; fi
   done
+  echo ""
+  echo "=== sweep summary (per-stream vs aggregate) ==="
+  echo "${sweep_rows:-  (no completed rows)}"
   echo ""
   echo "=== sweep knee ==="
   if [[ -n "$knee" ]]; then
-    echo "  largest clean N at/above floor: N=$knee (${knee_tps} tok/s/stream)"
+    echo "  largest clean N at/above floor: N=$knee (${knee_tps} tok/s/stream · ${knee_agg:-?} tok/s aggregate)"
     echo "  -> validate the envelope row at max_num_seqs: $knee"
   else
     echo "  no N met the bar — lower the sweep range or the target_ctx, or check the floor."
