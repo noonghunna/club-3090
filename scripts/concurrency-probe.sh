@@ -51,6 +51,9 @@ SLUG="${SLUG:-}"                      # required for SWEEP (reboot target)
 SWEEP_DRY="${SWEEP_DRY:-0}"
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-360}"
 
+# Remember whether the caller pinned MODEL — SWEEP re-resolves after each boot
+# and must not clobber an explicit pin.
+MODEL_PINNED="${MODEL:+1}"
 MODEL="${MODEL:-$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || echo qwen3.6-27b)}"
 # best-effort container for VRAM + cmd introspection (name heuristic)
@@ -238,6 +241,18 @@ if [[ -n "$SWEEP" ]]; then
       sleep 2
     done
     if [[ "$ready" != "1" ]]; then echo "[sweep] N=$N: not ready in ${BOOT_TIMEOUT}s — skipping"; continue; fi
+    # Re-resolve the served model AFTER the boot. The top-of-script autodetect
+    # ran BEFORE the sweep booted anything on $URL, so it silently fell back to
+    # the default — which 404s every request against any other model (the whole
+    # arm reads as errors=N). Skip when the caller pinned MODEL explicitly.
+    if [[ -z "$MODEL_PINNED" ]]; then
+      det="$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
+        | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+      if [[ -n "$det" && "$det" != "$MODEL" ]]; then
+        echo "[sweep] served model: $det (re-resolved post-boot; was: $MODEL)"
+        MODEL="$det"
+      fi
+    fi
     out="$(run_probe "$N" || true)"; echo "$out"
     line="$(printf '%s\n' "$out" | grep -m1 '^RESULT ' || true)"
     clean="$(sed -n 's/.* clean=\([0-9]*\).*/\1/p' <<<"$line")"
