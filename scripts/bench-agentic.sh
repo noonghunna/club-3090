@@ -171,7 +171,11 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
         "messages": messages,
         "tools": TOOLS,
         "tool_choice": "required",  # guarantee a tool call every turn
-        "max_tokens": 150,
+        # #665: max_tokens=150 truncated the tool-call JSON on reasoning models
+        # (Tess) mid-object → unterminated `arguments` that poisoned every later
+        # turn (HTTP 500 on replay). 600 lets the call complete; the _safe_args
+        # guard below backstops any residual clip.
+        "max_tokens": 600,
         "temperature": 0.3,
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -226,10 +230,22 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
 
     # Reconstruct assistant message from real tool calls.
     # tool_choice=required guarantees at least one; treat empty as a server bug.
+    # #665 guard: a reasoning model can burn max_tokens mid-object → truncated,
+    # unterminated `arguments` JSON. Replaying that assistant turn poisons EVERY
+    # subsequent turn — llama-server throws HTTP 500 in func_args_not_string() when
+    # it re-parses the client-supplied history. Substitute "{}" for any args that
+    # don't parse, so a single clip can't kill the whole ramp.
+    def _safe_args(a):
+        a = a or "{}"
+        try:
+            json.loads(a)
+            return a
+        except (json.JSONDecodeError, ValueError):
+            return "{}"
     tool_calls_response = [
         {"id": s["id"] or f"call_t{turn_idx}_s{session_id}_{i}",
          "type": "function",
-         "function": {"name": s["name"], "arguments": s["args"] or "{}"}}
+         "function": {"name": s["name"], "arguments": _safe_args(s["args"])}}
         for i, s in sorted(tool_calls_acc.items()) if s["name"]
     ]
     # #255: decouple the context ramp from tool-call success. A turn that fails
@@ -262,7 +278,7 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
     # The model may have called a different tool than the original session;
     # that's intentional — fixed results make TTFT measurements reproducible
     # across runs and engines. Only the first call gets the full result; any
-    # additional calls (rare with max_tokens=150) get a placeholder so the
+    # additional calls (rare even at max_tokens=600) get a placeholder so the
     # context size matches the single-tool-call case.
     messages.append({
         "role": "tool",
