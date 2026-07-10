@@ -226,6 +226,26 @@ bash scripts/rebench-full.sh \
 
 The chained scripts run in host-only mode (no `docker logs` / `docker inspect` scrapes) when `--url` is set, so the entire suite works against any OpenAI-API endpoint.
 
+### How do I serve multiple coding agents concurrently — and what total throughput can I expect?
+
+Use **vLLM** (llama.cpp is single-user-oriented: `-np` splits the KV pool statically; vLLM continuous-batches). Two knobs:
+
+1. **`MAX_NUM_SEQS`** — the concurrent-stream cap. Every vLLM compose accepts it as an env override: `MAX_NUM_SEQS=8 bash scripts/switch.sh <slug>`. It's a *cap, not a reservation* — raising it is ~free when streams are idle.
+2. **Context vs concurrency** — the KV pool is shared: N streams × per-stream context must fit it. Drop `MAX_MODEL_LEN` if you want more streams instead of depth.
+
+**Pick the model by architecture, not size.** Measured on the reference rig (2× 3090, `concurrency-probe.sh`, 2026-07-10):
+
+| shape | dense 27B (`vllm/qwen-27b-dual-fast`, MTP n=3) | MoE 35B-A3B (`vllm/qwen-35b-a3b-dual`, MTP off) |
+|---|---|---|
+| agent ctx (16K in / 256 out), decode-aggregate | peaks **~104 tok/s @ N=2**, collapses to ~54 by N=8 | **~250–270 tok/s flat N=2→16** (still clean at 16) |
+| generation (0.5K in / 800 out), aggregate | **211 tok/s** @ N=8 | **~1,037 tok/s** @ N=16 (92.8 tok/s *per stream*, 99.4% retention, 0 leak) |
+
+Why: the A3B MoE has **3B active params** (cheap decode → the batching knee sits far higher) and hybrid-attention **tiny KV** (~a fraction of the dense 27B's per token → many more streams fit). The dense 27B stays the single/dual-agent *quality* pick; for **3+ concurrent agents, serve `vllm/qwen-35b-a3b-dual` with `MAX_NUM_SEQS` raised**.
+
+Three caveats: aggregate numbers are **summed across streams** — a single request never sees them (per-stream *falls* as N rises); at long agent contexts throughput becomes **prefill-bound** (end-to-end generated tok/s is nearly flat in N — batching buys utilization/latency-hiding, not more generated tokens); and for agents run **thinking-OFF** (tool-call accuracy) and mind Cliff 2 on single-card vLLM (`docs/CLIFFS.md`).
+
+Measure your own rig: `SWEEP="2 4 8 16" SLUG=<slug> URL=http://localhost:<port> bash scripts/concurrency-probe.sh` — reboots per N, reports per-stream + aggregate + the knee.
+
 ### Which KV-cache quant should I use? (`q4_0` / `q5_0` / `turbo3` / `fp8`)
 
 KV-cache quant trades **quality ↔ context ceiling ↔ a little speed**, and the metric that matters is **tail precision** (99.9th-percentile KL divergence), not perplexity — the worst 0.1% of positions are exactly where quantization breaks JSON keys, closing braces, and tool-call grammar. [Anbeeld's KV-quant long-context benchmarks](https://anbeeld.com/articles/kv-cache-quantization-benchmarks-for-long-context) measured this on **Qwen3.6-27B / single RTX 3090 — the same model + GPU as this stack**:
