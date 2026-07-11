@@ -4,9 +4,11 @@
 #              NVFP4 gs16 FFN + FP8-static attention/linear_attn + FP8 KV scales
 #              baked + UNQUANTIZED mtp.* head — 21.9 GB)
 #   Topology:  Single Hopper/Blackwell card, 32 GB+ — 5090 is the primary
-#              target; H100 / RTX 6000 Pro / GB10 also qualify. required_sm=9.0:
-#              the launchers REFUSE this on Ampere (sm_86) — NVFP4 has no
-#              kernel there (NVIDIA supports Hopper + Blackwell only).
+#              target; H100 / RTX 6000 Pro / GB10 also qualify. required_sm=9.0
+#              (native); fallback_sm=7.5 — sub-9.0 cards RUN it via the Marlin
+#              W4A16 weight-only fallback (vLLM v0.24+, confirmed on sm_86
+#              2026-07-11; no native-FP4 speed edge), though this single-card
+#              config needs >24 GB VRAM regardless.
 #   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized;
 #              SPEC=off disables it — tight-RAM / spec-dec-fails mitigation, #617)
 #   KV:        fp8 → e4m3 at scale=1.0 (hf_quant_config DECLARES FP8 KV but
@@ -30,8 +32,9 @@
 #              5090 default 65K keeps MTP's ~2x (131/155 TPS); SPEC=off for max ctx
 # ---------------------------------------------------------------------------
 # ⚠️ AUTHORED BLIND — READ THIS FIRST.
-# The maintainer rig is Ampere sm_86 and CANNOT BOOT NVFP4: this compose is
-# community-validated only. Two 5090s (#613 @guybrush01, #617 @paulp83) swept the
+# NVFP4 runs on the sm_86 maintainer rig via the Marlin W4A16 fallback
+# (confirmed 2026-07-11 on the dual sibling), but this 21.9 GB single-card
+# config exceeds a 24 GB card — so it remains community-validated only. Two 5090s (#613 @guybrush01, #617 @paulp83) swept the
 # config space: MTP-on OOMs at 98K but PASSES at 65K + util 0.85 (verify-stress
 # all-pass, 131/155 TPS, MTP accept 3.2) — that's now the default. SPEC=off is the
 # max-ctx fallback (81K/98K @ 71 TPS) and the tight-system-RAM path (MTP's draft

@@ -4,7 +4,9 @@
 #              NVFP4 gs16 expert FFNs + FP8-static attention/linear_attn +
 #              UNQUANTIZED mtp.* head — 23.4 GB, 3B active params)
 #   Topology:  Dual Hopper/Blackwell (TP=2) — 2× 5090 is the primary target;
-#              required_sm=9.0: the launchers REFUSE this on Ampere (sm_86).
+#              required_sm=9.0 (native); fallback_sm=7.5 — sub-9.0 cards run
+#              it via the Marlin W4A16 fallback (validated on the 27B sibling
+#              2026-07-11; on Ampere the AutoRound tier is faster).
 #   Drafter:   none — DELIBERATE. Built-in MTP is NET-NEGATIVE on this MoE
 #              (-51% measured on the AutoRound tier; the head shares the MoE
 #              forward — learnings/qwen3.6-35b-a3b.md). Don't re-add blind.
@@ -21,8 +23,9 @@
 #              community validation
 # ---------------------------------------------------------------------------
 # ⚠️ AUTHORED BLIND — READ THIS FIRST.
-# The maintainer rig is 2× RTX 3090 (Ampere sm_86) and CANNOT BOOT NVFP4:
-# this compose has never been started anywhere. It mirrors the validated
+# NVFP4 runs on the maintainer rig (2× RTX 3090 sm_86) via the Marlin W4A16
+# fallback since v0.24 (validated on the 27B sibling 2026-07-11), but this
+# compose itself has not been booted yet. It mirrors the validated
 # vllm/qwen-35b-a3b-dual shape (TP=2, no drafter, vision on, thinking off,
 # 262K) with NVFP4 weights + fp8/e4m3 KV per NVIDIA's model-card recipe
 # (--quantization modelopt). If you have 2× Hopper/Blackwell cards, YOU are

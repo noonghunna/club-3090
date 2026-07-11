@@ -1090,7 +1090,10 @@ def from_compose_name(
         nvlink_active=nvlink_active,
         requires_nvlink=bool(entry.get("requires_nvlink", False)),
         required_engine_features=list(entry.get("required_engine_features", [])),
-        required_sm=entry.get("required_sm"),
+        # fallback_sm (weight-only fallback floor, e.g. NVFP4→Marlin W4A16 @7.5)
+        # replaces required_sm as the HARD floor when present — the C3 gate then
+        # admits fallback-band hardware (sm_86 live-confirmed 2026-07-11).
+        required_sm=entry.get("fallback_sm") or entry.get("required_sm"),
         project_vram=project_vram,
     )
     result.compose_name = name

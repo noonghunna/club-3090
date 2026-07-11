@@ -178,10 +178,23 @@ class FitVerdict:
     # Populated only for verdict == "incompatible-hw".
     required_sm: Optional[float] = None
     card_sm: Optional[float] = None
+    # Populated when the card sits in a registry fallback band
+    # (fallback_sm <= card_sm < required_sm): the slug RUNS here via a
+    # weight-only fallback kernel (e.g. NVFP4 -> Marlin W4A16 on Ampere,
+    # live-confirmed 2026-07-11) and kv-calc prices it normally — the fit
+    # verdict is a real fits-*/wont-fit, this dict just carries the badge
+    # data: {"required_sm": float, "card_sm": float, "note": str}.
+    # Fallback-band slugs are VISIBLE by default (not [h]-hidden).
+    hw_fallback: Optional[dict[str, Any]] = None
 
     # Compact glyph for the Catalog "fit" column.
     @property
     def glyph(self) -> str:
+        # Fallback-band + fits → flag glyph: "runs here, via fallback kernels
+        # (no native speed edge)". wont-fit/unknown keep their own glyphs —
+        # the VRAM story outranks the kernel story.
+        if self.hw_fallback and self.verdict in ("fits-clean", "fits-constrained"):
+            return "⚑"
         return {
             "fits-clean": "●",
             "fits-constrained": "◐",
@@ -204,6 +217,7 @@ class FitVerdict:
             error=str(d.get("error", "")),
             required_sm=_as_float(d.get("required_sm")),
             card_sm=_as_float(d.get("card_sm")),
+            hw_fallback=d.get("hw_fallback") if isinstance(d.get("hw_fallback"), dict) else None,
         )
 
 

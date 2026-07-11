@@ -1462,16 +1462,35 @@ def fit_verdict(target: str, card: Optional[str], vram_default: float) -> dict:
 
     # required_sm gate (compat C3's arch floor, surfaced in the FIT verdict so
     # the cockpit can hide/warn hardware-incompatible slugs — e.g. NVFP4 on
-    # Ampere: the VRAM would "fit" but the kernels don't exist below sm 9.0).
-    _req_sm = COMPOSE_REGISTRY[slug].get("required_sm")
+    # Ampere: the VRAM would "fit" but the NATIVE kernels don't exist below
+    # sm 9.0). Since v0.24 some formats have a weight-only FALLBACK kernel
+    # below required_sm (registry `fallback_sm` — NVFP4 -> Marlin W4A16,
+    # floor sm 7.5; live-confirmed on 2x3090 2026-07-11). In the band
+    # [fallback_sm, required_sm) we PRICE the fit normally and attach an
+    # `hw_fallback` annotation instead of hiding — the cockpit badges it.
+    _entry_reg = COMPOSE_REGISTRY[slug]
+    _req_sm = _entry_reg.get("required_sm")
+    _fb_sm = _entry_reg.get("fallback_sm")
     _card_sm = _resolve_card_sm(card)
+    _hw_fallback = None
     if _req_sm is not None and _card_sm is not None and _card_sm < float(_req_sm):
-        return {
-            "verdict": "incompatible-hw",
-            "required_sm": float(_req_sm),
-            "card_sm": _card_sm,
-            "error": f"requires sm >= {float(_req_sm):g} (this card is sm_{_card_sm:g})",
-        }
+        if _fb_sm is not None and _card_sm >= float(_fb_sm):
+            _hw_fallback = {
+                "required_sm": float(_req_sm),
+                "card_sm": _card_sm,
+                "note": (
+                    f"no native kernels below sm {float(_req_sm):g} — runs via "
+                    f"weight-only fallback (Marlin); works, no speed edge vs "
+                    f"native 4-bit quants on this card"
+                ),
+            }
+        else:
+            return {
+                "verdict": "incompatible-hw",
+                "required_sm": float(_req_sm),
+                "card_sm": _card_sm,
+                "error": f"requires sm >= {float(_req_sm):g} (this card is sm_{_card_sm:g})",
+            }
 
     try:
         spec = MODEL_SPECS[model_id]
@@ -1495,12 +1514,15 @@ def fit_verdict(target: str, card: Optional[str], vram_default: float) -> dict:
     except Exception as exc:  # any pricing-path failure → honest unknown
         return {"verdict": "unknown", "error": f"pricing {slug!r} failed: {exc}"}
 
-    return {
+    res = {
         "verdict": _RAW_VERDICT_MAP[pred.verdict],
         "vram_est_gb": round(pred.total_gb, 4),
         "band_gb": FIT_BAND_GB,
         "max_ctx": int(max_ctx_fit),
     }
+    if _hw_fallback is not None:
+        res["hw_fallback"] = _hw_fallback
+    return res
 
 
 def fit_all_verdicts(card: Optional[str], vram_default: float) -> dict:
@@ -1530,8 +1552,16 @@ def fit_all_verdicts(card: Optional[str], vram_default: float) -> dict:
     for slug, entry in COMPOSE_REGISTRY.items():
         # required_sm gate first — applies to SKIP (non-vLLM) slugs too, and
         # short-circuits the pricing for slugs whose kernels can't exist here.
+        # Slugs with a `fallback_sm` at/below this card fall THROUGH to normal
+        # pricing (fit_verdict re-checks and attaches the hw_fallback note).
         _req_sm = entry.get("required_sm")
-        if _req_sm is not None and _card_sm is not None and _card_sm < float(_req_sm):
+        _fb_sm = entry.get("fallback_sm")
+        if (
+            _req_sm is not None
+            and _card_sm is not None
+            and _card_sm < float(_req_sm)
+            and not (_fb_sm is not None and _card_sm >= float(_fb_sm))
+        ):
             variants[slug] = {
                 "verdict": "incompatible-hw",
                 "required_sm": float(_req_sm),
