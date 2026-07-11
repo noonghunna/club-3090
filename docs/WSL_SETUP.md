@@ -212,7 +212,7 @@ You still do steps **1–3** (WSL + driver/passthrough + `.wslconfig` RAM) and *
    git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
    cmake -B build -DGGML_CUDA=ON && cmake --build build --config Release -j
    ```
-   …or grab a prebuilt CUDA binary. To match the MTP / spec-decode support the Docker image ships, track a recent build — the composes pin `ghcr.io/ggml-org/llama.cpp:server-cuda-b9246` (or newer).
+   …or grab a prebuilt CUDA binary. To match the MTP / spec-decode support the Docker image ships, track a recent build — the composes pin `ghcr.io/ggml-org/llama.cpp:server-cuda-b9967` (or newer).
 
 2. **Run `llama-server` with the flags the compose uses.** The compose is the source of truth — lift them from [`models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp.yml`](../models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp.yml). The equivalent native invocation:
    ```bash
