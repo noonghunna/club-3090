@@ -53,7 +53,7 @@ services:
     # regressed at b9282 (broken lib packaging: `libllama-common.so.0: cannot
     # open shared object file` → crash loop) — see #187. Bump via env when a
     # newer build is validated:  LLAMACPP_IMAGE=ghcr.io/ggml-org/llama.cpp:server-cuda-bXXXX
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9246}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9967}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen36-27b-bounded-thinking}"
     restart: unless-stopped
     ports:

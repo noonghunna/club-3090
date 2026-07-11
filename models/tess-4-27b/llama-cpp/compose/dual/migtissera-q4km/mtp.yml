@@ -93,7 +93,7 @@
 
 services:
   llama-cpp-tess-4-27b:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9246}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9967}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-tess-4-27b}"
     restart: unless-stopped
     ports:

@@ -41,7 +41,7 @@
 
 services:
   llama-cpp-gemma4-12b:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9967}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-gemma4-12b}"
     restart: unless-stopped
     ports:

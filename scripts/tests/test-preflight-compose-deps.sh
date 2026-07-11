@@ -80,7 +80,7 @@ llama_compose="${TMP_DIR}/llama.yml"
 cat > "$llama_compose" <<'YAML'
 services:
   llama:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9246}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9967}
     command: >-
       -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-mtp-q4km/Qwen3.6-27B-Q4_K_M.gguf}
 YAML

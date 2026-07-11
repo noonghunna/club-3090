@@ -5,7 +5,7 @@ type: llama.cpp
 stability: stable
 install:
   method: docker_image
-  spec: ghcr.io/ggml-org/llama.cpp:server-cuda
+  spec: ghcr.io/ggml-org/llama.cpp:server-cuda-b9967
 min_sm: 6.0
 supported_model_families:
   - qwen3-next-hybrid
@@ -27,5 +27,5 @@ supported_weight_formats:
 required_overlays: []
 vendored_overlays: []
 required_genesis: false
-notes: "Cliff-immune single-card fallback for Qwen GGUF serving. Uses upstream `ghcr.io/ggml-org/llama.cpp`, pinned to build `server-cuda-b9246` (NOT the rolling `:server-cuda` tag — it regressed at b9282 with a broken-lib crash loop, #187). MTP PR #22673 merged upstream + draft-eagle3 + draft-mtp spec types available natively. Bump via env once a newer build is validated: `LLAMACPP_IMAGE=ghcr.io/.../server-cuda-bXXXX`. No club-3090 patches on llama.cpp; we follow upstream as-is."
+notes: "Cliff-immune single-card fallback for Qwen GGUF serving. Uses upstream `ghcr.io/ggml-org/llama.cpp`, pinned to build `server-cuda-b9967` (bumped from b9246 2026-07-11 after a full quality A/B on Tess dual: think-OFF total tie 115=115, think-ON 122 vs the 118x3 pin — the lift is thinking-path-specific; boots clean, draft-mtp works. NOT the rolling `:server-cuda` tag — it regressed at b9282 with a broken-lib crash loop, #187; always pin validated builds). MTP PR #22673 merged upstream + draft-eagle3 + draft-mtp spec types available natively. Bump via env once a newer build is validated: `LLAMACPP_IMAGE=ghcr.io/.../server-cuda-bXXXX`. No club-3090 patches on llama.cpp; we follow upstream as-is."
 
