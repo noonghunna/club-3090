@@ -25,12 +25,19 @@ json="$(bash scripts/lib/registry-emit.sh --json "$ROOT_DIR" 2>/dev/null)"
 # python pass. The JSON is passed via the environment (not stdin) so the heredoc
 # can serve as the python script. Exits non-zero with a clear message on the
 # first mismatch.
-REGISTRY_JSON="$json" python3 - <<'PY'
+# Temp file, not env: a single env value is capped at MAX_ARG_STRLEN
+# (~128 KB on Linux) — the emit crossed that at 63 registry entries
+# ("Argument list too long", 2026-07-11).
+json_file="$(mktemp)"
+trap 'rm -f "$json_file"' EXIT
+printf '%s' "$json" > "$json_file"
+REGISTRY_JSON_FILE="$json_file" python3 - <<'PY'
 import json
 import os
 import sys
+from pathlib import Path
 
-d = json.loads(os.environ["REGISTRY_JSON"])
+d = json.loads(Path(os.environ["REGISTRY_JSON_FILE"]).read_text(encoding="utf-8"))
 
 def need(cond, msg):
     if not cond:

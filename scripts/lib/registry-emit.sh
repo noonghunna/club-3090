@@ -417,9 +417,14 @@ registry_variant_rows_json() {
     echo "[registry-emit] ERROR: registry_variant_rows failed" >&2
     return 2
   fi
-  # Pass the tab rows via the environment (not stdin) so the heredoc below can
-  # still serve as the python script's stdin.
-  REGISTRY_TAB="$rows" python3 - "$root" <<'PY_JSON'
+  # Pass the tab rows via a TEMP FILE (not stdin — the heredoc below owns the
+  # python script's stdin; not env — a single env value is capped at
+  # MAX_ARG_STRLEN ~128 KB on Linux and the emit sits just under it at 63
+  # entries, 2026-07-11).
+  local _tab_file _py_rc
+  _tab_file="$(mktemp)"
+  printf '%s' "$rows" > "$_tab_file"
+  REGISTRY_TAB_FILE="$_tab_file" python3 - "$root" <<'PY_JSON'
 from __future__ import annotations
 
 import dataclasses
@@ -468,7 +473,8 @@ from scripts.lib.profiles.compat import load_profiles  # noqa: E402
 from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY, DEFAULTS  # noqa: E402
 from scripts.lib.profiles.launch_compat import ProfileError, resolve_variant_pin  # noqa: E402
 
-tab = os.environ.get("REGISTRY_TAB", "")
+_tab_path = os.environ.get("REGISTRY_TAB_FILE", "")
+tab = Path(_tab_path).read_text(encoding="utf-8") if _tab_path and Path(_tab_path).exists() else ""
 
 # --- profiles: sourced via the EXISTING loaders (never re-derived).  Loaded
 #     HERE (not after the variants block) because the baselines join below
@@ -709,6 +715,9 @@ payload = {
 json.dump(payload, sys.stdout, sort_keys=True, default=str)
 sys.stdout.write("\n")
 PY_JSON
+  _py_rc=$?
+  rm -f "$_tab_file"
+  return "$_py_rc"
 }
 
 # x_default_dispatch ROOT TOKEN TOPOLOGY MODEL  →  resolved slug on stdout.
