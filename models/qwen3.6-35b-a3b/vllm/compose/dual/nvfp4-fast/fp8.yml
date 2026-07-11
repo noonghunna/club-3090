@@ -23,7 +23,14 @@
 #   Vision:    yes (image only; tower unquantized)
 #   Max ctx:   262K (validated on 2× 24 GB: 22.46 GB/card peak @ util 0.92)
 #   Genesis:   none — intentionally Genesis-free
-#   Status:    🧪 Experimental
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   (1) streaming tool-calls + thinking-ON → finish=length (the
+#              known family class — same signature Tess-4-27B documents; the
+#              reasoner burns the token budget before emitting the call;
+#              non-streaming tool-calls unaffected — verify-full check 6).
+#              (2) Native-FP4 (sm_90+) quality UNVALIDATED — all first-party
+#              numbers are the Ampere Marlin W4A16 bound; native rigs also
+#              quantize activations (true W4A4) and need their own 8-pack.
 #   Quality:   toolcall-15 14/15 (93%) · instructfollow-15 13/15 (87%) ·
 #              structoutput-15 14/15 (93%) · dataextract-15 12/15 (80%) ·
 #              reasonmath-15 11/15 (73%) · bugfind-15 12/15 (80%) ·
@@ -48,8 +55,10 @@
 #     → finish=length — the KNOWN family caveat class (same signature Tess
 #     ships ⚠️ for: the reasoner burns the token budget before emitting the
 #     call; non-streaming tool-calls, plain streaming, and thinking each pass).
-#   - Still 🧪 because verify-stress / soak-continuous remain unrun — the ✅/⚠️
-#     promotion gate needs them. Note: the 8-pack was
+#   - PROMOTED 🧪 → ⚠️ 2026-07-11 after the full gate: verify-stress 8/8
+#     (NIAH clean to 240,635 = 91% of 262K, ceiling margin 1,801 MB, Δ0
+#     across the ladder) + soak-continuous PASS (0 err, 0/25 silent-empty,
+#     0 VRAM growth, p50 215.9 batched, 100% retention). Note: the 8-pack was
 #     run with the froggeric family template; the repo's own chat_template
 #     .jinja is BYTE-IDENTICAL to the validated AutoRound checkpoint's
 #     (sha e84f32a2…), so this compose ships unpinned like the sibling.
