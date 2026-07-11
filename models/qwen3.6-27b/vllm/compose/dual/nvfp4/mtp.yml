@@ -4,9 +4,10 @@
 #              NVFP4 gs16 FFN + FP8-static attention/linear_attn + FP8 KV scales
 #              baked + UNQUANTIZED mtp.* head — 21.9 GB)
 #   Topology:  Dual Hopper/Blackwell (TP=2) — 2× 5090 is the primary target;
-#              H100 / RTX 6000 Pro / GB10 pairs also qualify. required_sm=9.0:
-#              the launchers REFUSE this on Ampere (sm_86) — NVFP4 has no
-#              kernel there (NVIDIA supports Hopper + Blackwell only).
+#              H100 / RTX 6000 Pro / GB10 pairs also qualify. required_sm=9.0
+#              (native); fallback_sm=7.5 — sub-9.0 cards RUN it via the Marlin
+#              W4A16 weight-only fallback (vLLM v0.24+; live-validated on
+#              2x 3090 sm_86 2026-07-11, ~20% slower than the AutoRound tier).
 #   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized;
 #              SPEC=off disables it — tight-RAM / spec-dec-fails mitigation, #617)
 #   KV:        fp8 → e4m3 (this checkpoint BAKES FP8 KV scales — modelopt
@@ -23,8 +24,10 @@
 #              memory than bf16 — pending first community validation
 # ---------------------------------------------------------------------------
 # ⚠️ AUTHORED BLIND — READ THIS FIRST.
-# The maintainer rig is 2× RTX 3090 (Ampere sm_86) and CANNOT BOOT NVFP4: this
-# compose has never been started anywhere. It mirrors the production-validated
+# FIRST BOOT: the maintainer rig (2× RTX 3090 sm_86) via the Marlin W4A16
+# fallback, 2026-07-11 — 262K + fp8 KV + MTP n=3 (accept 97%+), 69.7/85.5
+# decode TPS, 23.77 GB/card, 8-pack think-off 110/150 (ties the fp8 tier's
+# 109). Native-FP4 (sm_90+) validation still wanted. It mirrors the production-validated
 # vllm/qwen-27b-dual-max shape (TP=2 + MTP n=3 + fp8/e4m3 KV + vision @262K)
 # with the weights swapped to nvidia/Qwen3.6-27B-NVFP4 per NVIDIA's own model
 # card recipe (--quantization modelopt). If you have 2× Hopper/Blackwell

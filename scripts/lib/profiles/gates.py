@@ -323,15 +323,19 @@ def _resolve_arch_row(gc, root, runtime, arches, model_slug: str):
 
 
 def _required_sm(engine: dict, entry: dict, kv_format: str) -> float:
-    """hardware SM ≥ max(engine.min_sm, registry required_sm,
+    """hardware SM ≥ max(engine.min_sm, registry SM floor,
     arch-kernel SM rule for the requested runtime).
 
     - engine.min_sm        : engines/<id>.yml `min_sm`
-    - registry required_sm : compose_registry `required_sm` (9.0 rows)
+    - registry SM floor    : compose_registry `fallback_sm` when present
+                             (the weight-only-fallback floor — e.g. NVFP4 →
+                             Marlin W4A16, sm 7.5; live-confirmed on sm_86
+                             2026-07-11), else `required_sm` (the native
+                             floor, hard gate when no fallback exists)
     - arch-kernel SM rule  : _ARCH_KERNEL_SM[kv_format] (fp8_e4m3 / Gemma-TQ3)
     """
     eng_sm = float(engine.get("min_sm") or 0.0)
-    reg_sm = float(entry.get("required_sm") or 0.0)
+    reg_sm = float(entry.get("fallback_sm") or entry.get("required_sm") or 0.0)
     arch_sm = float(_ARCH_KERNEL_SM.get(kv_format, 0.0))
     return max(eng_sm, reg_sm, arch_sm)
 
