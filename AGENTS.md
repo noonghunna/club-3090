@@ -227,6 +227,8 @@ For **entirely new models** under validation (e.g. "let's try MiniMax-M2.7"): ke
 - `soak-test.sh` — stability (30-60 min). Run before shipping config / Genesis / memory-policy changes — catches Cliff 2b.
 - `rebench-full.sh` — **the canonical full-eval orchestrator: use this instead of hand-sequencing the scripts above.** verify-full preflight (fail-fast) + 5 measured steps in the `docs/QUALITY_TEST.md` pipeline order, with the recurring manual-run mistakes guarded (wrong cwd, missing `--save-json`, forgotten `MODEL=` override, missing hermes localhost env, wrong port) and `--resume` idempotency so an interrupt doesn't redo the matrix.
 
+**Long-running tests: redirect full output to a log file — NEVER pipe through `tail`/`head`/`grep`.** A pipe buffers until the process exits, so a `--full` quality run piped to `tail -12` is a ~2 h black box: no live `[N/M]` progress, no partial scores, and an interrupt leaves nothing readable (benchlocal also writes its results JSON only at completion — noonghunna/benchlocal-cli#82 tracks scenario-level resume). Do `bash scripts/quality-test.sh --full ... > /path/run.log 2>&1` (or `| tee`) and summarize from the file; `tail -f` the file for live progress. Learned 2026-07-11 on a template A/B.
+
 **Gotcha (all serving tests):** `verify-*`/`bench.sh` default `MODEL=qwen3.6-27b-autoround` — against any other served model that's a silent HTTP 404. Pass `MODEL=<served-name>` explicitly (or use `rebench-full.sh`, which autodetects).
 
 The pipeline is layered: each script has a different question it answers ("does it serve / work / survive / fast / behave correctly / stay healthy"). Skipping any layer can mask regressions.
