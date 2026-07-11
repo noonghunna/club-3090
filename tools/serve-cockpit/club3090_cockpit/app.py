@@ -121,7 +121,12 @@ _STATUS_GLYPH: dict[str, str] = {
     # the status cell.  These replacements are Emoji_Presentation=Yes (no VS16),
     # so cell_len == terminal width == 2 everywhere.  (Status is also the LAST
     # catalog column now, so any residual slop has nothing to misalign.)
-    "caveats": "❗",
+    # caveats = an ORANGE text-presentation checkmark (U+2714 — colorable,
+    # unlike the ✅ emoji whose green is baked into the color font): reads as
+    # "works, with caveats" instead of the error-adjacent ❗ (user call
+    # 2026-07-11). Markup-wrapped — glyph consumers must render via markup
+    # (the DataTable cell wraps with Text.from_markup).
+    "caveats": "[orange1]✔[/orange1]",
     "experimental": "🧪",
     "incubating": "🐣",
     "preview": "👀",
@@ -763,7 +768,7 @@ class HelpScreen(ModalScreen):
             "",
             "[bold]Status glyphs[/bold]",
             "",
-            "  ✅ production   ❗ caveats   🧪 experimental",
+            "  ✅ production   [orange1]✔[/orange1] caveats   🧪 experimental",
             "  🐣 incubating  👀 preview   🚧 upstream-gated   🚫 deprecated",
             "",
             "[bold]Spec Dec column[/bold] (default drafter)",
@@ -1030,7 +1035,7 @@ class CatalogPane(Container):
                 e.measurement.quality_label,
                 e.topology,
                 e.engine,
-                _status_glyph(e.status),
+                Text.from_markup(_status_glyph(e.status)),
             )
 
         banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
