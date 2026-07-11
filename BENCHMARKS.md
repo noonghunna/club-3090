@@ -298,7 +298,7 @@ Dense 40B uncensored community merge of Qwen3.6 (DavidAU Opus-Deckard). Q6_K GGU
 
 ## Tess-4-27B
 
-Migtissera's Qwen3.5-based dense 27B instruct/agentic fine-tune (`migtissera/Tess-4-27B-GGUF`). Q4_K_M GGUF with a **separate (external) MTP draft head** — the catalog's first external-MTP compose (engaged via `--spec-draft-model … --spec-type draft-mtp`, vs Deckard's *embedded* head). Arch is `qwen35-dense` (dense = non-MoE; hybrid attention — 48 linear + 16 full-attention layers, 3:1 interleave, 64 total; the GGUF `qwen35` arch carries the hybrid internally). Vision-capable base (F16 mmproj on disk) but shipped **text-only**. llama.cpp mainline, pin `server-cuda-b9246`.
+Migtissera's Qwen3.5-based dense 27B instruct/agentic fine-tune (`migtissera/Tess-4-27B-GGUF`). Q4_K_M GGUF with a **separate (external) MTP draft head** — the catalog's first external-MTP compose (engaged via `--spec-draft-model … --spec-type draft-mtp`, vs Deckard's *embedded* head). Arch is `qwen35-dense` (dense = non-MoE; hybrid attention — 48 linear + 16 full-attention layers, 3:1 interleave, 64 total; the GGUF `qwen35` arch carries the hybrid internally). Vision-capable base (F16 mmproj on disk) but shipped **text-only**. llama.cpp mainline, pin `server-cuda-b9967` (bumped from b9246 in #680 — think-ON quality +4 on the engine A/B, think-OFF tie; dated rows below record the pin they ran on).
 
 ### Dual-card (2× RTX 3090) — llama.cpp
 
