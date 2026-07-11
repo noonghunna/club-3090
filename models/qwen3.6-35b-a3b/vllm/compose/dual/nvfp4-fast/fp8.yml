@@ -41,8 +41,14 @@
 #     Prefill 8,289 tok/s @10K · 5,155 @90K (TTFT 1.2 s / 17.9 s).
 #   - 8-pack --full think-off: 103/150 (see Quality line) vs the tier's
 #     104-equivalent (79/90 + HA 11 + CLI 14, 2026-05-30) → quality tie.
-#   - Still 🧪 because verify-full / verify-stress / soak-continuous have NOT
-#     yet run on this compose — the ✅ gate needs them. Note: the 8-pack was
+#   - switch.sh --force boot of THIS compose: ready 272s, all 3 served names
+#     on :8081. verify-full 7✓/1✗/2 skips (skips = Genesis marker + MTP
+#     metrics, both N/A here). The ✗ is streaming-tool-calls-with-thinking-ON
+#     → finish=length — the KNOWN family caveat class (same signature Tess
+#     ships ⚠️ for: the reasoner burns the token budget before emitting the
+#     call; non-streaming tool-calls, plain streaming, and thinking each pass).
+#   - Still 🧪 because verify-stress / soak-continuous remain unrun — the ✅/⚠️
+#     promotion gate needs them. Note: the 8-pack was
 #     run with the froggeric family template; the repo's own chat_template
 #     .jinja is BYTE-IDENTICAL to the validated AutoRound checkpoint's
 #     (sha e84f32a2…), so this compose ships unpinned like the sibling.
