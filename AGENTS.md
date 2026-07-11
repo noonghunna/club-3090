@@ -230,6 +230,30 @@ For **entirely new models** under validation (e.g. "let's try MiniMax-M2.7"): ke
 
 The pipeline is layered: each script has a different question it answers ("does it serve / work / survive / fast / behave correctly / stay healthy"). Skipping any layer can mask regressions.
 
+#### Running a full eval — two non-overlapping passes
+
+**Behavioral quality** (the 8-pack) and **operational health** (verify / stress / soak / bench / agentic) split cleanly. Run one of each — together they cover everything with nothing run twice:
+
+**One-time setup (quality):** the suite wraps `benchlocal-cli`; three of the eight packs (bugfind-15, cli-40, hermesagent-20) run inside Docker sandboxes that build once:
+
+```bash
+pip install git+https://github.com/noonghunna/benchlocal-cli.git
+git clone https://github.com/noonghunna/benchlocal-cli
+bash benchlocal-cli/tools/build-sandboxes.sh   # ~30 GB free; `docker system prune` if tight
+```
+
+(Without the images the 5 deterministic packs still run; the 3 sandboxed ones skip with a warning.)
+
+1. **Behavioral quality — the 8-pack, both reasoning modes:**
+   ```bash
+   bash scripts/quality-test.sh --full --no-thinking       # reasoning OFF
+   bash scripts/quality-test.sh --full --enable-thinking   # reasoning ON
+   ```
+   ⚠️ For the reasoning-ON leg on a thinking model, boot the compose with reasoning parsing on (`REASONING=on` for llama.cpp composes, `--reasoning-parser` for vLLM) so `<think>` lands in `reasoning_content`, not the graded answer.
+2. **Operational health:** `bash scripts/report.sh --full` (~43 min; redacted, paste-ready bundle — verify + stress + soak + bench + agentic).
+
+**Don't pair `rebench-full.sh` with `report.sh --full`** — rebench re-runs the same operational gates (verify/bench/stress/soak), so it *replaces* `report.sh --full` rather than complementing it. Pick by goal: `rebench-full --with-8pack-thinking=both` when you want one synthesized `REPORT.md` (quant A/B, BENCHMARKS row); the two-pass split above when you want the paste-ready cross-rig bundle. If you ran rebench-full and also want the agentic curve, add only `report.sh --agentic`. The same guidance ships user-facing in [`docs/ANNOUNCEMENT_TEMPLATE.md`](docs/ANNOUNCEMENT_TEMPLATE.md) §7 "Run the evals".
+
 ### serve-cockpit (c3)
 `tools/serve-cockpit/` is the Textual TUI cockpit — a separate Python app with its **own venv and pytest suite**, NOT covered by `scripts/tests/*.sh`. See its `README.md`. For agents:
 - Run tests with `tools/serve-cockpit/.venv/bin/python -m pytest tools/serve-cockpit/tests/ -q`. `test_services.py` + `test_registry_parser.py` are fast — run them on every c3 change; `test_app_headless.py` boots the full app and is slow — prefer targeted `-k` selection while iterating.
