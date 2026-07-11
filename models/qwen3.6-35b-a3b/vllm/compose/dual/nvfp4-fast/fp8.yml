@@ -13,12 +13,13 @@
 #              the MoE forward — learnings/qwen3.6-35b-a3b.md). The checkpoint
 #              DOES ship the head unquantized (unlike llm-compressor's usual
 #              drop) — kept OFF here; don't re-add blind.
-#   KV:        fp8 → e4m3. The checkpoint ships a `kv_cache_scheme` AND 32
-#              real k_scale/v_scale tensors (unlike the nvidia exports, which
-#              declare FP8 KV but ship no scales) — whether they LOAD on the
-#              Qwen hybrid is UNVERIFIED (vLLM force-disables runtime KV-scale
-#              calc on this family); assume scale=1.0 (the #594-tied regime)
-#              until verified.
+#   KV:        fp8 → e4m3 with the checkpoint's CALIBRATED k/v scales ACTIVE —
+#              LOAD VERIFIED 2026-07-11 via in-worker apply_model probe on the
+#              27B sibling (identical loader path: qwen3_5 maybe_remap +
+#              CompressedTensorsKVCacheMethod): all full-attention layers carry
+#              the shipped values (0.02–0.27), none at 1.0. Note the 27B A/B
+#              showed calibrated scales ≈ scale=1.0 on quality/recall (109 vs
+#              110, NIAH tie) — a robustness datapoint, not a win.
 #   Vision:    yes (image only; tower unquantized)
 #   Max ctx:   262K (validated on 2× 24 GB: 22.46 GB/card peak @ util 0.92)
 #   Genesis:   none — intentionally Genesis-free
@@ -168,9 +169,9 @@ services:
       - "8192"
       - --limit-mm-per-prompt
       - '{"image":2,"audio":0}'
-      # fp8 (= e4m3). This checkpoint ships kv_cache_scheme + 32 k/v scale
-      # tensors (unlike the nvidia export) — load-on-hybrid UNVERIFIED, so
-      # treat as scale=1.0 (the #594-tied regime) until proven otherwise.
+      # fp8 (= e4m3). The checkpoint's calibrated k/v scales LOAD and apply
+      # (verified in-worker 2026-07-11 on the 27B sibling; measured effect vs
+      # scale=1.0 on this family: none — see learnings).
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8}"
       - --trust-remote-code
