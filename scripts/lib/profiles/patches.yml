@@ -236,14 +236,15 @@ patches:
     status: verified
 
   - id: qwen-froggeric-chat-template
-    model: [qwen3.6-27b]
+    model: [qwen3.6-27b, tess-4-27b]
     files:
       - models/qwen3.6-27b/vllm/patches/froggeric-chat-template/chat_template.jinja
     load_bearing_when:
       - composes:
           - vllm/minimal
           - vllm/dual
-        reason: "Default Qwen3.6 chat template mis-handles tool-call XML / reasoning delimiters / streaming (the #145 silent-break class); the froggeric override fixes 7 default-template defects and is behavior-critical for every tool/agent compose. Carnice/Qwopus are intentional excludes (they ship their own carnice template)."
+          - vllm/tess-dual-nvfp4
+        reason: "Default Qwen3.6 chat template mis-handles tool-call XML / reasoning delimiters / streaming (the #145 silent-break class); the froggeric override fixes 7 default-template defects and is behavior-critical for every tool/agent compose. Tess-4-27B (same qwen3_5 template family) additionally NEEDS it because its repo template is stock-broken (developer-role crash). Carnice/Qwopus are intentional excludes (they ship their own carnice template)."
         evidence: "models/qwen3.6-27b/vllm/patches/froggeric-chat-template/PROVENANCE.md; docs/UPSTREAM.md (froggeric template re-eval #150 / v19 adopted PR #157)"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
       dockerfile_bake: false

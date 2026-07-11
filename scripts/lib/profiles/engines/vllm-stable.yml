@@ -15,6 +15,10 @@ supported_model_families:
                      # the ephemeral vllm-gemma4-unified image onto this engine (2026-07-01).
   - qwen3-next-hybrid
   - qwen3-next-moe
+  - qwen35-dense     # Tess-4-27B (qwen3_5 hybrid) — LIVE-VALIDATED on stock v0.24.0
+                     # 2026-07-11 (62.4 tok/s TP=2, forensics-week boots; slug
+                     # vllm/tess-dual-nvfp4). Family also covers Deckard-40B if a
+                     # vLLM path is ever added there.
 features:
   int8_per_token_head: true    # NATIVE for qwen3-next (uniform head dims) since v0.22.0 — that's why the
                                # flag is true. NOT correct for Gemma-4 (hetero heads): on v0.24.0 int8-PTH
