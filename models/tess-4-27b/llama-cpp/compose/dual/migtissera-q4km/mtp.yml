@@ -68,10 +68,13 @@
 #                         REASONING=off). Caps the think phase so long reasoning
 #                         can't eat the whole completion budget — kills the
 #                         token_limit truncation class on think-ON runs
-#                         (@seanyourhighness #665, cross-rig 4090; expected to
-#                         mitigate the streaming-toolcall+thinking ⚠️ caveat —
-#                         first-party think-ON validation in flight 2026-07-11).
-#                         -1 = unrestricted (the raw llama.cpp default).
+#                         (@seanyourhighness #665, cross-rig 4090). First-party
+#                         A/B 2026-07-11: think-ON total NEUTRAL (118 ≡ 118 —
+#                         our baseline had 0 token_limit fails to cure) with
+#                         toolcall recovered 13 → 15/15 under thinking; shipped
+#                         as zero-cost cross-rig INSURANCE, not a local lift.
+#                         Streaming-toolcall caveat NOT yet re-tested under the
+#                         budget. -1 = unrestricted (raw llama.cpp default).
 #   REPEAT_PENALTY        repetition penalty  (default: 1.0 — validated neutral)
 #   DRY_MULTIPLIER        DRY sampler strength (default: 0.0 = OFF). For severe long-ctx
 #                         loops set 0.8 (strongest loop-breaker; opt-in, #517).
