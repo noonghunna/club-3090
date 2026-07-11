@@ -12,8 +12,13 @@
 #   Status:    ⚠️ Production w/ caveats
 #   Caveats:   Streaming tool-calls + thinking-ON → finish=length (heavy reasoner
 #              exhausts the token budget before emitting the call); use thinking-OFF
-#              (the shipped default) for tool/agent workloads. cli-40 62% think-off
-#              (mid-tier autonomous-CLI). See BENCHMARKS.md / learnings/tess-4-27b.md.
+#              (the shipped default) for tool/agent workloads. ⤷ 2026-07-11: does NOT
+#              reproduce on the current shipped config (b9967 + --reasoning-budget
+#              16384 default) — 3/3 streaming+thinking tool-calls clean incl. a
+#              parallel 2-tool call (finish=tool_calls, reasoning separated). Caveat
+#              retained until the full-gate refresh re-run; attribution (engine build
+#              vs budget) unresolved. cli-40 62% think-off (mid-tier autonomous-CLI).
+#              See BENCHMARKS.md / learnings/tess-4-27b.md.
 #   Engine-profile: llama-cpp-local
 #   Quality:   core 8-pack 115/150 (77%) think-off, 118/150 (79%) think-on
 #              (benchlocal --full, 2026-07-09); leads the agentic packs (hermes
