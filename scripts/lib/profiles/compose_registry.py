@@ -836,6 +836,17 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.6-35B-A3B NVFP4 (see single-nvfp4) at TP=2 @262K full ctx, 2x Hopper/Blackwell native (2x 5090 primary community target; ~11.7 GB/card weights; fallback_sm=7.5 — sub-9.0 cards run it via the Marlin W4A16 fallback, validated on the 27B sibling 2026-07-11, though on Ampere the AutoRound tier serves this model faster). 🧪 first community boot + rebench-full validates. Mirrors vllm/qwen-35b-a3b-dual's shape (no drafter — MTP net-negative on this MoE, vision on, thinking off) with NVFP4 weights + fp8/e4m3 KV instead of AutoRound + e5m2. No DEFAULTS row (opt-in only).",
     ),
 
+    "vllm/qwen-35b-a3b-dual-nvfp4-fast": _entry(
+        model="qwen3.6-35b-a3b", weights_variant="nvfp4-fast", workload="fast-chat",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/nvfp4-fast/fp8.yml",
+        default_port=8080, required_sm=9.0, fallback_sm=7.5,
+        kvcalc_key="qwen3.6-35b-a3b:nvfp4-dual",
+        status="experimental",
+        status_note="Qwen3.6-35B-A3B NVFP4-Fast (unsloth compressed-tensors MIXED: true W4A4 NVFP4 expert FFNs + FP8-dynamic attention; quant auto-detects — NOT modelopt), TP=2 @262K. THE AMPERE-VALIDATED NVFP4 PATH — inverse of dual-nvfp4: FIRST-PARTY VALIDATED on the reference 2x3090 2026-07-11 (first MoE-FP4 fallback boot anywhere, MARLIN NvFp4 MoE backend): decode 179.5/179.4 (n=5, CV<=0.8%) + 8-pack think-off 103/150 = DOUBLE STATISTICAL TIE with the AutoRound tier (182.3/182.3, 104-equiv) at full 262K, 22.46 GB/card; cli-40 20/40 = best measured on this MoE. See BENCHMARKS 2026-07-11. 🧪 until verify-full/stress/soak run (bench + 8-pack done). NATIVE FP4 (sm_90+) UNVALIDATED — there the silicon quantizes activations too (true W4A4; family is activation-quant-sensitive), so the native quality number is the arc's missing datapoint. Ships 32 real k/v scale tensors (nvidia's export ships none) — load-on-hybrid unverified, assume scale=1.0. mtp.* head shipped unquantized but OFF (net-negative on this MoE at TP=2). On Ampere, pick the AutoRound tier unless you specifically want the NVFP4 artifact. No DEFAULTS row (opt-in only).",
+    ),
+
     # Agents-A1 — InternScience's 35B agentic MoE (Qwen3-Next MoE arch, OWN model
     # per its card's base_model; NOT a qwen fine-tune slug). Official FP8-dynamic
     # compressed-tensors checkpoint; on Ampere sm_86 vLLM serves it Marlin FP8-MoE
