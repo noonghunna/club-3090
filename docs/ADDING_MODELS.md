@@ -33,7 +33,7 @@ No `compose_registry.py` entry, no profile YAML, no calibration. You give up `la
 | New drafter for an existing model | Just a DrafterProfile YAML + COMPOSE_REGISTRY entries; no model-level changes |
 | New engine for an existing model | EngineProfile YAML; no model-level changes |
 
-This doc covers the **new base model** case. The others are addressed in the v0.7.0 profile model design.
+This doc's Steps 1–9 cover the **new base model** case. The **new-quant/new-slug case has its own checklist** — see [The lightweight path](#the-lightweight-path--adding-a-quantslug-to-an-existing-model) below (new drafter / new engine remain profile-YAML-only changes).
 
 ## Coherence rules when engines, composes, or patches change
 
@@ -282,7 +282,7 @@ Fallback defaults preserve single-mode boot. The estate orchestrator overrides p
 ### vLLM-specific compose conventions
 
 - Match other model composes for the same engine (look at `models/qwen3.6-27b/vllm/compose/dual/autoround-int4/` or `models/gemma-4-31b/vllm/compose/dual/autoround-int4/` as templates)
-- Genesis pin must match the rest of the stack (currently v7.72.2)
+- Genesis: retired from all shipped paths (2026-07-06, composes archived) — write `Genesis: none` (or `N/A — Genesis is Qwen3-Next-specific`) in the profile header; do NOT add Genesis env/pins to new composes
 - Set `--max-model-len`, `--max-num-seqs`, `--gpu-memory-utilization`, `--kv-cache-dtype` based on KV math projections
 - Note any required vendored overlays (Marlin pad, DFlash + KV-quant, qwen3coder tool parser, etc.)
 
@@ -303,9 +303,9 @@ COMPOSE_REGISTRY = {
         model="<model-id>",                          # matches models/<id>.yml
         weights_variant="autoround-int4",            # the quant-slug (weights map key == compose <quant>/ dir)
         workload="long-ctx-single",                  # one of the 5 workload IDs
-        engine="vllm-nightly-mtp",                   # matches engines/<id>.yml (and its supported_model_families!)
+        engine="vllm-stable",                        # matches engines/<id>.yml (and its supported_model_families!)
         drafter="qwen-mtp-builtin",                  # or None
-        kv_format="turboquant_3bit_nc",              # must be in the hardware profile's supported_kv_formats
+        kv_format="fp8_e5m2",                        # must be in the hardware profile's supported_kv_formats
         tp=2,
         max_ctx=180000,
         max_num_seqs=1,
@@ -313,7 +313,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/<model-id>/vllm/compose/dual/autoround-int4/<serving>.yml",
         default_port=8040,                           # MUST equal the compose's ${PORT:-NNNN} fallback (parity test)
         kvcalc_key="<model-id>:dual",                # vLLM: "<model>:<kvcalc-profile>"; llama.cpp/ik-llama/beellama: "SKIP"
-        required_engine_features=["turboquant_3bit_nc"],
+        required_engine_features=[],                 # only when the compose needs an engine capability gate
         status="incubating",                         # NEW MODELS START HERE. production|caveats|experimental|incubating|preview|upstream-gated|deprecated
                                                      #   maps to the compose header ✅/⚠️/🧪/🐣/👁️/⏸️/🗑️ (test-compose-status-drift checks both match)
                                                      #   incubating = hidden from `switch.sh --list` (see --all), --force to launch; promote as it validates
@@ -422,8 +422,8 @@ rows:
     measured_peak_gb: <X.X>
     ctx_override: null                  # or specific override
     status: active                      # active | stale | historical
-    engine_pin: vllm-nightly-<sha>
-    genesis_pin: v7.72.2
+    engine_pin: vllm-v0.24.0            # RELEASE tag only — never nightly (purged upstream)
+    genesis_pin: null                   # Genesis retired 2026-07-06; null for all new rows
     source: "BENCHMARKS.md#<model-id> <variant> @<user> <date>"
   # ... more rows ...
 ```
@@ -444,7 +444,7 @@ python3 tools/kv-calc.py --calibration
 
 Look at the verdict accuracy per model. Target: **≥80% within ±1.5 GB**.
 
-If accuracy is poor, the activation coefficient in `tools/kv-calc.py` needs tuning for this model. The coefficient lives in `MODEL_SPECS` or activation coefficient dicts (see Phase 3 refactor for the current home).
+If accuracy is poor, the activation coefficient in `tools/kv-calc.py` needs tuning for this model. `MODEL_SPECS` in `tools/kv-calc.py` is loaded from the profile YAMLs (`_load_model_specs_from_yaml`) — tune the coefficient in `scripts/lib/profiles/models/<id>.yml`, not in kv-calc itself.
 
 ## Step 7 — Validate: per-compose triage + the FULL guard suite
 
@@ -480,7 +480,7 @@ bash scripts/rebench-full.sh --with-8pack-thinking=both
 
 This runs the structural gates (verify-full → bench → verify-stress → soak) **plus** the full 8-pack quality eval in both reasoning modes (think-OFF + think-ON). **`--with-8pack-thinking=both` is required for a production-promotion gate** — the 8-pack is opt-in and skipped without the flag (#338). Result goes into BENCHMARKS.md per the existing per-model section pattern.
 
-Required BENCHMARKS.md columns per row: TPS (narrative + code), context, VRAM peak per card, KV format, drafter, AL (if spec-decode), engine pin, Genesis pin, date.
+Required BENCHMARKS.md columns per row: TPS (narrative + code), context, VRAM peak per card, KV format, drafter, AL (if spec-decode), engine pin, date. (Genesis pin only appears on historical rows — retired 2026-07-06.)
 
 ## Step 9 — Update CLAUDE.md, ARCHITECTURE.md, learnings/<model>.md
 
@@ -546,12 +546,17 @@ k_v_tensors: 2
 num_experts: 128
 num_experts_per_tok: 8
 active_params_b: 3
-weights:
-  - id: autoround-int4
-    format: hf_safetensors
-    path: /mnt/models/huggingface/qwen3.6-35b-a3b-autoround-int4
+weights:                         # a MAP keyed by quant-slug — NOT a list
+  autoround-int4:
+    path: qwen3.6-35b-a3b-autoround-int4
+    local_subdir: qwen3.6-35b-a3b-autoround-int4
     size_gb: 23                  # estimate; update after download
+    format: autoround            # autoround|awq|gptq|gguf|modelopt|compressed-tensors|bf16|fp16
     status: production
+    hf_repo: <org>/<repo>
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
 default_weight_variant: autoround-int4
 compatible_drafters:
   - qwen-mtp-builtin             # check if MoE has matching drafter
@@ -579,7 +584,7 @@ Mirror `models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml` shape, 
     model="qwen3.6-35b-a3b",
     weights_variant="autoround-int4",
     workload="long-ctx-single",
-    engine="vllm-nightly-mtp",
+    engine="vllm-stable",
     drafter="qwen-mtp-builtin",
     kv_format="fp8_e5m2",
     tp=2,
@@ -593,6 +598,19 @@ Mirror `models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml` shape, 
 ```
 
 **Boot, then calibrate**: capture `Available KV cache / card`, back-solve `per_token_bytes`, compare to predicted `2 × 2 × 256 × 2 × 1 = 2048 bytes` at fp8 TP=2. If measured matches → ship the calibration row. If 2× off → check K=V tying. If completely off → check the growing-layer count assumption.
+
+## The lightweight path — adding a quant/slug to an existing model
+
+The most common catalog change (a new provider quant of a model we already serve — AWQ alongside AutoRound, an NVFP4 export, a new GGUF). No new ModelProfile architecture facts and **no new calibration anchors** (KV math is unchanged; `diagnose-profile` extrapolating from a sibling row is expected). The checklist — every item, in order; the ones people skip are **bolded** (each has shipped a real gap):
+
+1. **Weights-variant entry** in `scripts/lib/profiles/models/<id>.yml` — the map key is the SAME string as the compose `<quant>/` dir and the registry `weights_variant`. Record quant scheme, `format:` (drives engine compat), and any load gotchas in `manual_note`.
+2. **Compose** at `models/<id>/<engine>/compose/<topology>/<quant-slug>/<serving>.yml` — copy the nearest validated sibling; keep the `ESTATE_GPUS`/`ESTATE_PORT`/`ESTATE_CONTAINER` hooks; full profile header with honest `Status:`.
+3. **Registry `_entry`** — `default_port` == the compose `${PORT:-NNNN}` fallback (parity-tested); reuse the sibling `kvcalc_key` when weights size is within ~1 GB; no `DEFAULTS` row unless this is explicitly a default promotion.
+4. **Count bumps** in `scripts/tests/test-compose-registry-disk.sh` (registry + disk).
+5. **Run the FULL `scripts/tests/*.sh` suite** — a new slug IS a catalog-shape change; targeted guards are for scoped changes only. Baseline any failure against master before blaming (or excusing) your change.
+6. **`bash scripts/diagnose-profile.sh <slug>` → GREEN.**
+7. **Boot the ACTUAL compose** (`bash scripts/switch.sh <slug>`) **+ `verify-full.sh`** — an equivalent hand `docker run` does NOT count; the compose file itself (env interpolation, entrypoint, mounts) is what ships.
+8. **BENCHMARKS.md row + `learnings/<model>.md` note** — same session as the work.
 
 ## Common pitfalls
 
@@ -621,7 +639,7 @@ When the new model is ready for review:
 - [ ] `scripts/lib/profiles/calibration/<id>.yml` populated with ≥4 measured rows
 - [ ] `python3 tools/kv-calc.py --calibration` verdict accuracy ≥80% on this model
 - [ ] `bash scripts/diagnose-profile.sh <slug>` GREEN
-- [ ] BENCHMARKS.md row added (TPS + ctx + VRAM + KV + drafter + AL + engine pin + Genesis pin + date)
+- [ ] BENCHMARKS.md row added (TPS + ctx + VRAM + KV + drafter + AL + engine pin + date)
 - [ ] `learnings/<id>.md` populated per the canonical template
 - [ ] CLAUDE.md + ARCHITECTURE.md cross-references updated
 

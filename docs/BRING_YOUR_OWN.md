@@ -5,6 +5,14 @@ on your rig. The same scripts that gate our shipped composes work on anything yo
 serve. The arc is **serve → tune → validate → share**: bring it up, dial it in
 with the fast loops, then run the full gate once it's settled.
 
+> **Prefer a guided flow?** The `c3` cockpit's producer lane fronts this same
+> path as **Bring & Validate** — a 5-stage funnel (① Bring → ② Serve → ③ Tune →
+> ④ Measure vs the curated bar → ⑤ Promote to catalog), launched with
+> `c3 --contribute` (see [`tools/serve-cockpit/README.md`](../tools/serve-cockpit/README.md)).
+> Everything below is the same flow driven by hand — use the scripts when you
+> want the individual loops, the cockpit when you want the rails; they gate on
+> the same tests.
+
 ## 1. Serve it
 
 Which path depends on what weights you have.
@@ -217,7 +225,7 @@ pass: bench → verify-stress → 8-pack quality (think-OFF **and** think-ON) �
 ```bash
 bash scripts/rebench-full.sh \
   --url http://localhost:<port> --model <served-name> \
-  --engine vllm|llama-cpp|sglang|beellama --tag <your-tag>
+  --engine vllm|llama-cpp|sglang|other --tag <your-tag>
 ```
 
 > **Optional for your own use — mandatory to contribute.** Just serving it
