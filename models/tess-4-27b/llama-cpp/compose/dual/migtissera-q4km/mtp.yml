@@ -64,6 +64,14 @@
 #   SERVED_NAME           --alias value       (default: tess-4-27b)
 #   REASONING             thinking gate       (default: off — stack-wide policy)
 #   REASONING_FORMAT      reasoning routing   (default: deepseek — hygiene)
+#   REASONING_BUDGET      think-token cap     (default: 16384; inert while
+#                         REASONING=off). Caps the think phase so long reasoning
+#                         can't eat the whole completion budget — kills the
+#                         token_limit truncation class on think-ON runs
+#                         (@seanyourhighness #665, cross-rig 4090; expected to
+#                         mitigate the streaming-toolcall+thinking ⚠️ caveat —
+#                         first-party think-ON validation in flight 2026-07-11).
+#                         -1 = unrestricted (the raw llama.cpp default).
 #   REPEAT_PENALTY        repetition penalty  (default: 1.0 — validated neutral)
 #   DRY_MULTIPLIER        DRY sampler strength (default: 0.0 = OFF). For severe long-ctx
 #                         loops set 0.8 (strongest loop-breaker; opt-in, #517).
@@ -111,6 +119,7 @@ services:
       --jinja
       --reasoning ${REASONING:-off}
       --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --reasoning-budget ${REASONING_BUDGET:-16384}
       --temp ${TEMP:-${TEMPERATURE:-0.6}}
       --top-p ${TOP_P:-0.95}
       --top-k ${TOP_K:-20}
