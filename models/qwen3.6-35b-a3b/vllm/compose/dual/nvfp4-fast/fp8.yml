@@ -83,7 +83,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-dual-nvfp4-fast}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8080}}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8081}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
       # torch.compile + Triton kernel caches — warm-start across boots.
