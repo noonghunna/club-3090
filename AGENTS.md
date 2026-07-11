@@ -54,18 +54,20 @@ If you're considering enabling a new Genesis env var by default in a shipped com
 3. Pure bugfixes (no behavioral override) are fine to ship default-on once they pass `verify-full.sh`.
 
 ### Engine image pinning
-Pin engine images only when we vendor patches into the running container. Otherwise track upstream's rolling tag and accept that the compose YAML may need maintenance when upstream changes flags.
+Pin engine images when **either** trigger holds: (1) we vendor patches into the running container, or (2) the engine's rolling tag has burned us with a regression (a crash-loop or behavior break shipped under the same tag we'd validated — llama.cpp earned this pin via #187). Otherwise track upstream's rolling tag and accept that the compose YAML may need maintenance when upstream changes flags.
 
-**Why:** patches hook into specific upstream code paths — a silent upstream change drifts those hooks and breaks the patched container in production. Pinning ensures the bytes we tested against are the bytes users get. Unpatched engines have no such hook, so upstream changes are upstream's problem to fix (or the YAML's, which is cheap to maintain).
+**Why:** patches hook into specific upstream code paths — a silent upstream change drifts those hooks and breaks the patched container in production. Pinning ensures the bytes we tested against are the bytes users get. Unpatched engines have no such hook, so upstream changes are upstream's problem to fix (or the YAML's, which is cheap to maintain) — *unless* the tag itself has proven mutable-under-validation, which is trigger (2).
+
+**Pins are a maintenance liability — bump them on a cadence.** A stale stability-pin silently costs quality, not just features: the b9246→b9967 llama.cpp A/B (2026-07-11, #680) was think-OFF-neutral but **+4 think-ON** with 3 scenario-level flips. `scripts/engine-pin-bump.sh <engine-id> <tag> --check` does the mechanical half (spec + compose defaults + a bucketed report of fixtures/claims needing hands); the judgment half (re-validation, live boot) stays with the pin-bump checklist.
 
 | Engine | Patches we vendor | Tag policy |
 |---|---|---|
-| `llama.cpp` | none | rolling `ghcr.io/ggml-org/llama.cpp:server-cuda` |
+| `llama.cpp` | none | pinned **build tag** (e.g. `server-cuda-b9967`) — trigger (2): stability-pinned after the #187 rolling-tag crash-loop; zero patches, so bumps are cheap (`engine-pin-bump.sh llama-cpp-local <tag>`) |
 | `vLLM` | Marlin pad, KV/loader overlays — `scripts/lib/profiles/patches.yml` is the source of truth | pinned **release tag** (e.g. `v0.22.0`, `v0.24.0`) — **never `nightly-*`/`latest`**: upstream purges nightly tags, orphaning the pin |
 | `beellama.cpp` | none (the fork *is* the delta) | **digest-pinned** to Anbeeld's official image (`engines/beellama-local.yml` `install.spec`) |
 | `SGLang` | per-compose decision (pin if we vendor a patch, rolling otherwise) | per-compose |
 
-When adding the first vendored patch to a previously-rolling engine: pin in the same commit. When dropping the last patch: unpin in the same commit. Bump pins via PR with a `verify-full.sh` + `bench.sh` re-run, never silently.
+When adding the first vendored patch to a previously-rolling engine: pin in the same commit. When dropping the last patch: unpin in the same commit — unless the engine holds a trigger-(2) stability pin, which outlives its patches. Bump pins via PR with a `verify-full.sh` + `bench.sh` re-run, never silently.
 
 **Delivery model (vLLM):** patches reach the container by **volume-mounting into the pinned *stock* `vllm/vllm-openai` image** (python sidecars / site-package overlays / install scripts — see `delivery_mechanism` in `scripts/lib/profiles/patches.yml`), **not** by baking a custom image. The older baked-image path (`ghcr.io/noonghunna/vllm-club3090`, which shipped the release images through `club-v0.8.3`) is **retired** — no compose or engine-pin references it, and the `dockerfile_bake` `delivery:` block in `patches.yml` is legacy/test-only. The GHCR package is kept as historical release artifacts (users pinned to a `club-v0.8.x` tag can still pull); it is not deleted and not produced by anything in-repo.
 
