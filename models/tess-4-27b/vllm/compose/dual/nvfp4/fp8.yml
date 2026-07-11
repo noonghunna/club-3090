@@ -1,0 +1,169 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Tess-4-27B NVFP4 (migtissera compressed-tensors: W4A4 recipe,
+#              FP8-dynamic attention/linear_attn + NVFP4 FFNs; ~19 GB.
+#              Executes as Marlin W4A16 weight-only on Ampere)
+#   Topology:  Dual 3090 PCIe (TP=2, no NVLink) — AMPERE-VALIDATED serve;
+#              native FP4 (sm_90+) untested. required_sm=9.0 (native),
+#              fallback_sm=7.5.
+#   Drafter:   none — DELIBERATE, forensically settled 2026-07-11: the grafted
+#              base-Qwen MTP head accepts 0% in vLLM (feature-space misaligned;
+#              works only token-fed in llama.cpp draft-mtp) and the EAGLE3
+#              head (~40% accept) is NET-NEGATIVE on this fast trunk (−27%).
+#              See learnings/tess-4-27b.md "2026-07-11" + club #662. Don't
+#              re-add without a retrained head.
+#   KV:        fp8 → e4m3 at scale=1.0 (no scale tensors in this checkpoint;
+#              runtime KV calibration force-disabled on qwen3_5 hybrids —
+#              measured quality-equivalent regime on this family)
+#   Vision:    yes (tower unquantized in-checkpoint) — UNTESTED on this serve;
+#              all validation is text-only
+#   Max ctx:   131K (validated envelope; weights ~9.5 GB/card leave headroom —
+#              raise MAX_MODEL_LEN at your own risk, unprofiled)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific (this is qwen3_5)
+#   Status:    🧪 Experimental
+#   Best for:  the FASTEST Tess on 2× 24 GB — 62.4 tok/s spec-off vs the
+#              llama.cpp catalog entry's 57.9 with MTP; first vLLM-servable
+#              Tess on consumer cards
+# ---------------------------------------------------------------------------
+# FIRST-PARTY VALIDATED ON AMPERE (2026-07-11 forensics week, reference 2×3090):
+#   - bench: **62.4 tok/s decode spec-off (CV 0.2%)** @131K + fp8 KV — beats
+#     the shipped llama.cpp Q4+MTP entry (57.9). BENCHMARKS.md Tess section.
+#   - Boot/serving path exercised heavily across the EAGLE3/MTP forensics
+#     (dozens of boots, coherence-clean), KV-scale probes, and template A/Bs.
+#   - 🧪 because the 8-PACK HAS NOT RUN on this serve (scheduled — "A0" in the
+#     vLLM quality program) and verify-stress/soak are unrun. Promotion gate:
+#     A0 quality vs the GGUF tier bar (115/118 ±5-7 noise) + stress + soak.
+#   - PIN RULE (maintainer, 2026-07-11): this compose pins migtissera's NVFP4
+#     (the artifact all first-party numbers were measured on). If A0 quality
+#     undershoots the GGUF bar beyond noise, the fallback pin is
+#     huginnfork/Tess-4-27B-NVFP4A16 (on-disk; W4A16-calibrated, measured
+#     KLD 0.0418 vs bf16, regrafted MTP slots) — mechanism: W4A4 weight
+#     rounding can cost quality even under Ampere's weight-only execution.
+#   - Template: the repo's chat_template.jinja is STOCK-BROKEN (developer-role
+#     crash; HF PR with the fix is in flight) — this compose pins the vendored
+#     froggeric v19 family template regardless, same as the qwen3.6 composes.
+#
+# ⚠️ Native-FP4 rigs (5090/Hopper/Blackwell): Ampere executes weight-only
+# W4A16 — your silicon also quantizes activations (true W4A4), reported to
+# cost real quality on this family (~2× KLD). All numbers here are the W4A16
+# bound. If you run this natively, rebench-full + 8-pack and report — the
+# native-W4A4 Tess datapoint doesn't exist yet.
+#
+# Run:
+#   cd <repo>/models/tess-4-27b/vllm/compose
+#   docker compose -f dual/nvfp4/fp8.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+services:
+  vllm-tess-4-27b-dual-nvfp4:
+    # Pinned to a vLLM STABLE release (immutable, #407); the launchers inject
+    # the engine-profile image over this default (#254).
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-tess-4-27b-dual-nvfp4}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8082}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — warm-start across boots.
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      # froggeric v19 family chat template — SHARED with the qwen3.6-27b
+      # composes (same qwen3_5/qwen3.6 template family; single vendored copy,
+      # see patches.yml qwen-froggeric-chat-template). Required: the model
+      # repo's own template is stock-broken (developer-role crash).
+      - ../../../../../qwen3.6-27b/vllm/patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      # CUDA-level GPU mask — see #610; UUID form is renumbering-proof and is
+      # what CDI runtimes honor. Unset → absent (no masking).
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      # Safe PCIe default (mirrors the validated dual composes); rigs with
+      # working P2P set NCCL_P2P_DISABLE=0.
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      # FP8-GEMM lib guard for consumer Blackwell — launchers auto-inject
+      # VLLM_USE_DEEP_GEMM=0 there (disc #571); raw compose users set it.
+      - VLLM_USE_DEEP_GEMM
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$$@"
+        else
+          exec vllm serve --disable-custom-all-reduce "$$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/tess-4-27b-nvfp4
+      - --served-model-name
+      - tess-4-27b
+      - tess-4-27b-nvfp4
+      # NO --quantization flag — compressed-tensors auto-detects. Do NOT pass
+      # `--quantization modelopt` (that's the nvidia-export recipe; it fails
+      # config validation on this checkpoint).
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-131072}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-2}"
+      - --max-num-batched-tokens
+      - "8192"
+      # fp8 (= e4m3) at scale=1.0 — no scale tensors in this checkpoint;
+      # measured quality-equivalent regime on this family.
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8}"
+      - --trust-remote-code
+      # froggeric v19 pin (see volumes) — the model-dir template is broken.
+      - --chat-template
+      - /etc/qwen-froggeric-chat-template.jinja
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-chunked-prefill
+      # NO --speculative-config: grafted MTP head = 0% accept in vLLM;
+      # EAGLE3 = net-negative. Forensically settled — see header.
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

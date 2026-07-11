@@ -3,11 +3,16 @@ id: tess-4-27b
 display_name: Tess 4 27B
 family: qwen35-dense
 # Migtissera's Tess-4-27B — a Qwen3.5-based dense 27B instruct/agentic fine-tune.
-# Arch CONFIRMED from the GGUF header (general.architecture=qwen35): STANDARD GQA
-# attention, uniform across all 64 layers — NOT a Qwen3-Next/DeltaNet hybrid (no
-# GDN / linear-attention layers). Same qwen35-dense family as Qwen3.6-40B-Deckard,
-# 64 layers instead of 97. The base is VL-capable (an F16 mmproj ships alongside
-# the weights), but this catalog entry serves TEXT-ONLY — no mmproj is mounted.
+# Arch: qwen35 — ⚠️ CORRECTED 2026-07-11: this is a HYBRID (48 linear_attention
+# SSM-style + 16 full_attention layers, 3:1 interleave; model_type qwen3_5_text,
+# verified from safetensors config). The earlier "standard GQA uniform" claim
+# came from the GGUF header, which only describes the full-attention geometry.
+# NOTE for kv-calc: the attn fields below describe the 16 FULL-ATTENTION layers;
+# KV cache exists on those 16 only — naive 64-layer KV math overestimates ~4×
+# (why the vLLM entry ships kvcalc_key=SKIP pending real hybrid modeling).
+# Same qwen35-dense family as Qwen3.6-40B-Deckard (also hybrid), 64 layers vs 97.
+# The base is VL-capable (an F16 mmproj ships alongside the GGUF weights), but
+# the GGUF catalog entry serves TEXT-ONLY — no mmproj is mounted.
 # A vision variant (mtp-vision.yml) can be added once validated.
 hidden_size: 5120
 num_hidden_layers: 64
@@ -17,12 +22,26 @@ head_dim_attn: 256          # key_length == value_length == 256
 intermediate_size: 17408    # feed_forward_length
 attention_k_eq_v: false     # standard GQA — K and V are separate caches (same as Deckard/27B)
 max_ctx_supported: 262144
+kv_calc_supported: false    # HYBRID (KV on 16/64 layers) — not wired into
+                            # tools/kv-calc.py; naive 64-layer math overestimates
+                            # ~4x. Wire + calibrate at vLLM-slug promotion time.
 # rope_theta = 1e7. MTP: migtissera ships the nextn (MTP) predict-layer as a
 # SEPARATE GGUF (mtp-Tess-4-27B-Q4_K_M.gguf) — an EXTERNAL draft, engaged via
 # `--spec-draft-model <file> --spec-type draft-mtp` (drafter: tess-mtp-gguf).
 # The main quant carries NO embedded nextn head (contrast Deckard, embedded).
 vision_capable: false
 weights:
+  nvfp4:
+    path: tess-4-27b-nvfp4
+    local_subdir: tess-4-27b-nvfp4
+    size_gb: 19
+    format: compressed-tensors
+    status: experimental
+    hf_repo: migtissera/Tess-4-27B-NVFP4
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "migtissera's llm-compressor NVFP4 (TRUE W4A4 recipe: 4-bit float gs16 weights AND activations on FFNs, FP8-dynamic attention/linear_attn; single safetensors, 2,672 tensors, 0 mtp — llm-compressor drops the head). On Ampere executes as Marlin W4A16 weight-only → 62.4 tok/s TP=2 @131K (2026-07-11, BENCHMARKS). Quant AUTO-DETECTS (do NOT pass --quantization modelopt). Repo chat_template is STOCK-BROKEN (developer-role crash; our HF fix PR in flight) → composes must pin froggeric. PIN RULE: this is the shipped vLLM pin (all first-party numbers measured on it); fallback = huginnfork/Tess-4-27B-NVFP4A16 (on-disk, W4A16-calibrated, KLD 0.0418) ONLY IF the A0 8-pack undershoots the GGUF tier bar beyond noise. Native-FP4 (sm_90+) quality unmeasured."
   migtissera-q4km:
     path: tess-4-27b-gguf/migtissera-q4km
     local_subdir: tess-4-27b-gguf/migtissera-q4km
