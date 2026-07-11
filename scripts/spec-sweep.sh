@@ -149,6 +149,30 @@ _measure_llamacpp_arm() {
   printf "  n=%-3s decode=%-8s accept=%s  (tps: %s)\n" "$n" "$med" "$acc" "${tps_list[*]}"
 }
 
+# Rebooted-arm variant: the boot config sets the depth, so requests carry NO
+# per-request speculative field; TPS + acceptance read from response timings.
+_measure_llamacpp_rebooted_arm() {
+  local n="$1" tps_list=() dn_tot=0 da_tot=0
+  _gen "" 300 "$TEMP" >/dev/null
+  for _ in $(seq 1 "$GENS"); do
+    read -r tps dn da < <(_gen "" "$GEN_TOKENS" "$TEMP" | _timings)
+    tps_list+=("$tps")
+    [[ "$dn" != "-1" ]] && dn_tot=$((dn_tot + dn)) && da_tot=$((da_tot + da))
+  done
+  local med acc="—"
+  med="$(printf '%s\n' "${tps_list[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}')"
+  if [[ "$n" == "0" && $dn_tot -gt 0 ]]; then
+    # The compose ignored SPEC=off (drafter hardcoded, e.g. tess mtp.yml) —
+    # this "baseline" is actually spec-ON. Mark it rather than lie.
+    acc="SPEC-OFF-IGNORED"
+    echo "  ⚠ n=0 arm INVALID: drafter still active after SPEC=off (compose lacks a SPEC gate) — baseline requires a SPEC-gated compose"
+  elif [[ "$n" != "0" && $dn_tot -gt 0 ]]; then
+    acc="$(awk -v a="$da_tot" -v d="$dn_tot" 'BEGIN{printf "%.2f", a/d}')"
+  fi
+  RESULTS+=("$n|$med|$acc")
+  printf "  n=%-3s decode=%-8s accept=%s  (tps: %s)\n" "$n" "$med" "$acc" "${tps_list[*]}"
+}
+
 _measure_vllm_arm() {
   local n="$1" tps_list=()
   _gen "" 300 "$TEMP" >/dev/null  # warm
@@ -186,16 +210,38 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
   _detect_model
   # capability probe: draft_n must be REPORTED and must DIFFER between n=1 and
   # a larger n — otherwise the server is ignoring per-request speculative and a
-  # "sweep" would be a flat lie. (Requires the server to have a drafter loaded:
-  # a spec-less boot always reports draft_n=-1 -> refuse with a hint.)
+  # "sweep" would be a flat lie (caught live on b9246 2026-07-11: the field is
+  # silently ignored, draft_n identical across requested n, every arm measured
+  # the boot default). Requires a drafter loaded: a spec-less boot reports
+  # draft_n=-1.
   read -r _ p1 _ < <(_gen 1 64 0 | _timings)
   read -r _ p4 _ < <(_gen 4 64 0 | _timings)
-  if [[ "$p1" == "-1" || "$p4" == "-1" ]]; then
-    echo "[spec-sweep] REFUSING: server does not report timings.draft_n — either no drafter is loaded on this serve, or this build predates per-request speculative. Fallback: reboot per arm (MTP_DRAFT_N_MAX=<n> bash scripts/switch.sh <slug>)." >&2
+  if [[ "$p1" != "-1" && "$p4" != "-1" && "$p1" != "$p4" ]]; then
+    echo "[spec-sweep] per-request speculative honored (probe draft_n: n1=$p1 n4=$p4) — fast path, no reboots"
+    for n in $SWEEP_N; do _measure_llamacpp_arm "$n"; done
+  elif [[ -n "$SLUG" ]]; then
+    echo "[spec-sweep] per-request speculative NOT honored (probe draft_n: n1=$p1 n4=$p4) — falling back to reboot-per-arm (llama.cpp boots are ~15s, still quick)"
+    for n in $SWEEP_N; do
+      if [[ "$n" == "0" ]]; then
+        echo "[spec-sweep] boot $SLUG SPEC=off…"
+        SPEC=off bash scripts/switch.sh "$SLUG" >/dev/null
+      else
+        echo "[spec-sweep] boot $SLUG MTP_DRAFT_N_MAX=$n…"
+        MTP_DRAFT_N_MAX="$n" bash scripts/switch.sh "$SLUG" >/dev/null
+      fi
+      ready=0
+      for _ in $(seq 1 90); do curl -sf -m 3 "$URL/v1/models" >/dev/null 2>&1 && { ready=1; break; }; sleep 2; done
+      [[ "$ready" == "1" ]] || { echo "  n=$n: boot not ready — skipping"; continue; }
+      # per-arm measurement WITHOUT the per-request field (boot config rules);
+      # acceptance still comes from timings (reported when a drafter is active).
+      _measure_llamacpp_rebooted_arm "$n"
+    done
+    echo "[spec-sweep] restoring the slug's default boot config…"
+    bash scripts/switch.sh "$SLUG" >/dev/null 2>&1 || true
+  else
+    echo "[spec-sweep] REFUSING: per-request speculative not honored (draft_n: n1=$p1 n4=$p4) and no SLUG to reboot with — pass SLUG=<registry slug> for the reboot-per-arm fallback." >&2
     exit 3
   fi
-  echo "[spec-sweep] per-request speculative honored (probe draft_n: n1=$p1 n4=$p4) — fast path, no reboots"
-  for n in $SWEEP_N; do _measure_llamacpp_arm "$n"; done
 else
   # --- vLLM: reboot per arm ----------------------------------------------------
   for n in $SWEEP_N; do
