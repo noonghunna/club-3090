@@ -1,0 +1,193 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.6-35B-A3B NVFP4-Fast (unsloth compressed-tensors MIXED
+#              recipe: W4A4 NVFP4 gs16 expert FFNs + FP8-dynamic W8A8
+#              attention/linear_attn/lm_head + UNQUANTIZED mtp.* head +
+#              unquantized vision tower — 23.6 GB, 3B active params)
+#   Topology:  Dual-card TP=2 — VALIDATED ON 2× RTX 3090 (sm_86, Marlin
+#              weight-only fallback); native FP4 (sm_90+) unvalidated — the
+#              INVERSE of the dual/nvfp4 sibling. required_sm=9.0 (native),
+#              fallback_sm=7.5.
+#   Drafter:   none — DELIBERATE. Built-in MTP is NET-NEGATIVE on this MoE at
+#              vLLM TP=2 (-51% measured on the AutoRound tier; the head shares
+#              the MoE forward — learnings/qwen3.6-35b-a3b.md). The checkpoint
+#              DOES ship the head unquantized (unlike llm-compressor's usual
+#              drop) — kept OFF here; don't re-add blind.
+#   KV:        fp8 → e4m3. The checkpoint ships a `kv_cache_scheme` AND 32
+#              real k_scale/v_scale tensors (unlike the nvidia exports, which
+#              declare FP8 KV but ship no scales) — whether they LOAD on the
+#              Qwen hybrid is UNVERIFIED (vLLM force-disables runtime KV-scale
+#              calc on this family); assume scale=1.0 (the #594-tied regime)
+#              until verified.
+#   Vision:    yes (image only; tower unquantized)
+#   Max ctx:   262K (validated on 2× 24 GB: 22.46 GB/card peak @ util 0.92)
+#   Genesis:   none — intentionally Genesis-free
+#   Status:    🧪 Experimental
+#   Quality:   toolcall-15 14/15 (93%) · instructfollow-15 13/15 (87%) ·
+#              structoutput-15 14/15 (93%) · dataextract-15 12/15 (80%) ·
+#              reasonmath-15 11/15 (73%) · bugfind-15 12/15 (80%) ·
+#              hermesagent-20 7/20 (35%; 4 of 13 fails were 300 s runner
+#              timeouts) · cli-40 20/40 (50%) (--full --no-thinking,
+#              2026-07-11) — statistical TIE with the AutoRound tier's
+#              104-equivalent; cli-40 +6 is the best measured on this MoE.
+#   Best for:  full-ctx fast MoE when you want/have the NVFP4 artifact — on
+#              Ampere it TIES the AutoRound tier (decode −1.5%); on native-FP4
+#              cards it's the checkpoint built for the silicon (unvalidated)
+# ---------------------------------------------------------------------------
+# FIRST-PARTY VALIDATED ON AMPERE (2026-07-11, reference 2× 3090):
+#   - First confirmed boot of the MARLIN NvFp4 MoE backend on Ampere.
+#   - bench.sh: wall 175.5 narr / 172.2 code · decode 179.5 / 179.4 (n=5,
+#     CV ≤0.8%) vs the AutoRound tier's 182.3/182.3 → −1.5%, statistical tie.
+#     Prefill 8,289 tok/s @10K · 5,155 @90K (TTFT 1.2 s / 17.9 s).
+#   - 8-pack --full think-off: 103/150 (see Quality line) vs the tier's
+#     104-equivalent (79/90 + HA 11 + CLI 14, 2026-05-30) → quality tie.
+#   - switch.sh --force boot of THIS compose: ready 272s, all 3 served names
+#     on :8081. verify-full 7✓/1✗/2 skips (skips = Genesis marker + MTP
+#     metrics, both N/A here). The ✗ is streaming-tool-calls-with-thinking-ON
+#     → finish=length — the KNOWN family caveat class (same signature Tess
+#     ships ⚠️ for: the reasoner burns the token budget before emitting the
+#     call; non-streaming tool-calls, plain streaming, and thinking each pass).
+#   - Still 🧪 because verify-stress / soak-continuous remain unrun — the ✅/⚠️
+#     promotion gate needs them. Note: the 8-pack was
+#     run with the froggeric family template; the repo's own chat_template
+#     .jinja is BYTE-IDENTICAL to the validated AutoRound checkpoint's
+#     (sha e84f32a2…), so this compose ships unpinned like the sibling.
+#   - Full row: BENCHMARKS.md → Qwen3.6-35B-A3B section (2026-07-11).
+#
+# vs siblings in dual/:
+#   - dual/autoround-int4/fp8.yml ⭐ — the production tier; same shape, ~equal
+#     speed + quality on Ampere. Pick it unless you specifically want NVFP4.
+#   - dual/nvfp4/fp8.yml 🧪 — nvidia modelopt export: no KV scales, MTP head
+#     unquantized too, needs `--quantization modelopt`. Authored blind for
+#     Blackwell; THIS compose is the Ampere-validated NVFP4 path.
+#
+# ⚠️ Native-FP4 rigs (2× 5090 / Hopper / Blackwell): Ampere executes
+# weight-only W4A16 — your silicon also quantizes ACTIVATIONS (true W4A4),
+# which is reported to cost real quality on this family (~2× KLD, huginnfork).
+# Our 103/150 is the W4A16 bound, NOT your number. If you run this natively:
+#   1. bash scripts/switch.sh vllm/qwen-35b-a3b-dual-nvfp4-fast
+#   2. bash scripts/rebench-full.sh --with-8pack-thinking=both
+#   3. Report via the numbers-from-your-rig template — the native-W4A4
+#      quality number is the missing datapoint for the whole NVFP4 arc.
+# SM120 note: if engine startup aborts in FlashInfer JIT, see the workaround
+# posted in discussion #608 (TORCH_CUDA_ARCH_LIST=12.0+PTX + FlashInfer off).
+#
+# Run:
+#   cd <repo>/models/qwen3.6-35b-a3b/vllm/compose
+#   docker compose -f dual/nvfp4-fast/fp8.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+services:
+  vllm-qwen36-35b-a3b-dual-nvfp4-fast:
+    # Pinned to a vLLM STABLE release (immutable, #407); the launchers inject
+    # the engine-profile image over this default (#254).
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-dual-nvfp4-fast}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8081}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — warm-start across boots.
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
+      # (#610): launch.sh --gpus exports GPU UUIDs here. CDI runtimes (NixOS,
+      # nvidia-ctk cdi) IGNORE NVIDIA_VISIBLE_DEVICES, so this mask is what
+      # actually pins cards there; on the classic runtime the UUID form is
+      # renumbering-proof. Unset → absent (no masking).
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      # Safe PCIe default (mirrors the validated dual composes); rigs with
+      # working P2P set NCCL_P2P_DISABLE=0.
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      # DeepGEMM (fp8-GEMM — this checkpoint's attention layers are FP8): no
+      # recipe on consumer Blackwell (5090/GB10) — launchers auto-inject
+      # VLLM_USE_DEEP_GEMM=0 there (disc #571); raw compose users set it.
+      - VLLM_USE_DEEP_GEMM
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$$@"
+        else
+          exec vllm serve --disable-custom-all-reduce "$$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.6-35b-a3b-nvfp4-fast
+      - --served-model-name
+      - qwen3.6-35b-a3b
+      - qwen3.6-35b-a3b-autoround
+      - qwen3.6-35b-a3b-nvfp4-fast
+      # NO --quantization flag — this is a compressed-tensors checkpoint and
+      # vLLM auto-detects it. Do NOT pass `--quantization modelopt` (that's
+      # the nvidia export's recipe; it fails config validation here).
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
+      - --max-num-batched-tokens
+      - "8192"
+      - --limit-mm-per-prompt
+      - '{"image":2,"audio":0}'
+      # fp8 (= e4m3). This checkpoint ships kv_cache_scheme + 32 k/v scale
+      # tensors (unlike the nvidia export) — load-on-hybrid UNVERIFIED, so
+      # treat as scale=1.0 (the #594-tied regime) until proven otherwise.
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8}"
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      # NO --speculative-config: built-in MTP is net-negative on this MoE
+      # (the checkpoint's unquantized mtp.* head is present but unused).
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

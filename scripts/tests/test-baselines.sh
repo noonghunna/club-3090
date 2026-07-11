@@ -146,9 +146,14 @@ PY
 # shellcheck source=/dev/null
 source scripts/lib/registry-emit.sh
 json="$(registry_variant_rows_json "$ROOT_DIR")"
-# Env (not a pipe): the heredoc below owns the python interpreter's stdin —
-# the same trick registry-emit itself uses for REGISTRY_TAB.
-EMIT_JSON="$json" python3 - <<'PY'
+# Temp file (not env, not a pipe): the heredoc below owns the python
+# interpreter's stdin, and a single env value is capped at MAX_ARG_STRLEN
+# (~128 KB on Linux) — the emit crossed that at 63 registry entries
+# ("Argument list too long", 2026-07-11).
+emit_file="$(mktemp)"
+trap 'rm -f "$emit_file"' EXIT
+printf '%s' "$json" > "$emit_file"
+EMIT_JSON_FILE="$emit_file" python3 - <<'PY'
 import json
 import os
 import sys
@@ -156,7 +161,7 @@ from pathlib import Path
 
 import yaml
 
-d = json.loads(os.environ["EMIT_JSON"])
+d = json.loads(Path(os.environ["EMIT_JSON_FILE"]).read_text(encoding="utf-8"))
 by_slug = {v["slug"]: v for v in d["variants"]}
 rows = yaml.safe_load(Path("scripts/lib/profiles/baselines.yml").read_text())["baselines"]
 
