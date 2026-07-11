@@ -19,3 +19,19 @@ Source: https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates
   but no commit/release pin, and the previous local file did not exactly match
   any current upstream qwen3.5/qwen3.6 archived template v8-v19 or main commit
   in the HF repo history available on 2026-05-17.
+
+## Rejected candidate — v21.3 (2026-07-11)
+
+- Upstream revision: `23a40b0bd4d197c31d39e3c442fd2cd6100b3971` (2026-07-03, release label v21.3)
+- Candidate file SHA256: `d203f3342d8a7f8474dd55563eece3a26e71b21c6f667c9db9c93b762b3bf997`
+- Status: **REJECTED** — failed the adoption gate on `vllm/dual` (fp8-mtp, v0.24.0).
+- Gate results: TPS-neutral ✓ (74.68 decode vs banked v19 73.98, same-session); toolcall-15 15/15 ✓;
+  **hermesagent-20 6/20 (30%) ✗ with p95 pinned at the 300s pack timeout** — scenarios
+  STALLING in multi-turn tool loops, not failing on content. Total 106/150 vs v19's 109.
+- The stall signature is mechanical (suspects: v21's `preserve_thinking` default flip,
+  payload-truncation defaults, or the reworked tool-error scoping) and hits exactly the
+  pack the v19 adoption was won on (#150: hermes +10pp). v21's prefix-cache/streaming
+  fixes do not outweigh a 30% hermes pack.
+- Next re-vendor attempt should start by isolating the hermes stall (hermes-only run
+  with `--sandbox-log-dir`) before re-running the full gate. Candidate + A/B artifacts
+  were session-local (not vendored); re-fetch by revision above.
