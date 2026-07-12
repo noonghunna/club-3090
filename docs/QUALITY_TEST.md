@@ -194,6 +194,42 @@ bash scripts/quality-test.sh --resume results/quality/quality-<ts>.json.partial.
 
 **`scripts/rerun-failed-packs.sh`** now re-runs a prior run's failures as ONE selection run (was: whole-pack loops) — 6 failures over 5 packs = 6 scenarios, with `--incremental` durability and a REPRODUCED/FIXED verdict per original failure. `RERUN_DRY=1` previews the plan.
 
+## pass@1 vs pass@N — the churn-harvest ceiling (and why we don't report it)
+
+Every `/150` total in this repo is **pass@1 at pack-contract sampling**: think-OFF legs are greedy (deterministic), think-ON legs are a *single draw* at temp 1.0 / top-p 0.95 / top-k 20. That contract is what makes totals comparable across rigs, engines, and dates.
+
+**The observation** (from the #665 cross-rig work, 2026-07-12): at temp 1.0, many "failing" scenarios aren't failures — they're **churners** with a per-draw pass probability. Measured examples on Tess-4-27B: scenarios that read as hard-0 on any single run pass 1-in-7 to ~2-in-5 across repeated draws (`tess4-model-floor.txt` Tier 2 documents six of them with evidence). Take the union of passes across enough draws and the effective ceiling rises sharply: a 7-draw window on a single 4090 reached ~139/150-equivalent coverage, and across every stack we've measured only **10 scenarios sit at p≈0** (Tier 1). The gap between a model's pass@1 total (~116–118) and its churn-harvest ceiling (~139) is ~20 points of *probability*, not capability.
+
+**Two consequences, deliberately kept apart:**
+
+### 1. As a serving technique, harvesting is legitimate — and now cheap to size
+
+If the **caller owns a verifier** — tests pass, JSON validates against a schema, an archive hash matches, a migration applies cleanly — then verifier-guided best-of-N (rejection sampling) converts probability gaps into successes at predictable cost:
+
+| per-draw p | N for ≥90% | N for ≥99% |
+|---:|---:|---:|
+| 0.15 | 15 | 29 |
+| 0.30 | 7 | 13 |
+| 0.40 | 5 | 10 |
+
+(`P = 1 − (1−p)^N`; cost ≈ N× tokens plus the verifier, and draws parallelize — see the concurrency numbers in FAQ.) Agent harnesses already do a degenerate version of this via retry-on-error; doing it *deliberately*, with the validator run before accepting, is strictly better. Measuring a scenario's p is now a minutes-scale task: `--scenarios-file <set> --repeat N` returns per-scenario pass rates directly.
+
+**When it applies:** only where verification is cheaper than generation and mechanical (schema/tests/hashes). It does nothing for open-ended prose, and nothing for Tier-1 capability gaps — no N rescues p≈0.
+
+**What it is not (yet):** a stack feature. It's a client-side pattern; if it graduates, it would be a retry-with-validator wrapper in front of the endpoint, never an engine or compose change. Structured-output constrained decoding remains the first choice where the check is expressible as a grammar — best-of-N is the fallback for checks that only a verifier can run.
+
+### 2. As a benchmark number, harvesting is laundering — and the tooling refuses it
+
+pass@N and pass@1 are different metrics, and mixing them inflates a model's number with the *verifier's* work. This is why the guardrails are shaped the way they are:
+
+- Selection results are labeled `PARTIAL SELECTION` and refuse history/`rescore` ingestion without `--allow-partial`.
+- `--repeat N` aggregates at ≥50% per scenario — a *majority* vote, not a best-of harvest.
+- Canonical sampling is pinned per pack; overrides mark the run non-canonical.
+
+**Reporting rules:** BENCHMARKS `/150` columns are pass@1-at-contract, always. If you publish a harvested number, label it `pass@k` with k and the verifier stated (e.g. "pass@7, pack verifiers as oracle") — and never in the same column as pass@1 totals. Scenario-level claims ("X now passes") follow the same discipline: a churner observed once is `1/N draws`, not "passes".
+
+*Credit: the ceiling observation and the "probability lifted vs capability trained in" framing come from @seanyourhighness's 7-draw b9967 window in #665.*
+
 ## Diagnosing failures
 
 Failure reasons are surfaced in three places, cheapest first:
