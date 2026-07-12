@@ -1,19 +1,22 @@
-# Tess-4-27B model-floor probe set ("Set A") — the retrain-target list.
+# Tess-4-27B model-floor probe set ("Set A") — the retrain-target list, TWO TIERS.
 #
-# Provenance: scenario-level intersection of 6 full 8-pack runs across 2 rigs
-# (reference 2×3090 + seanyourhighness's 1×4090), 2 external drafters (MTP,
-# DFlash/EAGLE3), 2 engine builds (llama.cpp b9246→b9967; his b9932), both
-# reasoning modes — club-3090 #665 (2026-07-11). The 14 below failed EVERY run;
-# the 2 marked thinking-only failed stably only in the reasoning-ON legs.
+# Provenance: cross-rig intersection of 6 full 8-pack runs (2 rigs, 2 drafters,
+# 2 llama.cpp builds, both modes — club-3090 #665, 2026-07-11), re-tiered
+# 2026-07-12 from seanyourhighness's b9967 ×3 probes + the vLLM A0 baseline:
+# union of passes across ALL known runs (2 rigs × {b9932,b9967} llama.cpp ×
+# all draws + vLLM v0.24 A0 both modes).
+#
+# TIER 1 — never passed anywhere (10): needs a CAPABILITY trained in.
+# TIER 2 — in-distribution but rare (6): passes in 1-2 of N draws somewhere;
+#          needs a PROBABILITY lifted. "N of 16 now pass" conflates the tiers —
+#          report them separately. Scenario-level claims need ×3 draws (churn).
 #
 # Use: bash scripts/quality-test.sh --scenarios-file scripts/scenario-sets/tess4-model-floor.txt \
-#        [--no-thinking | --enable-thinking] [--repeat 3]
-# Probe discipline: results are PARTIAL (never a /150 claim); thinking-ON legs
-# sample at temp 1.0 by pack contract → use --repeat 3 when a number gates anything.
+#        [--no-thinking | --enable-thinking] --repeat 3
+# Probe discipline: results are PARTIAL (never a /150 claim); temp-1.0 ON legs
+# and Tier-2 scenarios are churners — --repeat 3 is the floor, not a nicety.
 #
-# fails-everywhere (14):
-bugfind-15/BF-03
-cli-40/CLI-08
+# ── TIER 1: never passed anywhere (10) ──
 cli-40/CLI-11
 cli-40/CLI-17
 cli-40/CLI-24
@@ -22,10 +25,18 @@ cli-40/CLI-34
 cli-40/CLI-37
 cli-40/CLI-38
 dataextract-15/DE-07
-hermesagent-20/HA-08
 hermesagent-20/HA-16
-reasonmath-15/RM-13
 structoutput-15/SO-07
-# thinking-only-stable tail (2):
+# ── TIER 2: reachable but rare (6) ──
+# BF-03  (2/4 ON draws @4090 b9967; vLLM A0 ON pass)
+bugfind-15/BF-03
+# CLI-08 (1/4 ON draws @4090 b9967)
+cli-40/CLI-08
+# CLI-13 (1/4 @4090; passes OFF on newer builds both rigs; vLLM A0 OFF pass)
 cli-40/CLI-13
+# HA-02  (passes greedy @4090 b9967 + vLLM A0 ON; ON-leg llama churner)
 hermesagent-20/HA-02
+# HA-08  (2/4 ON draws @4090 b9967)
+hermesagent-20/HA-08
+# RM-13  (vLLM A0 OFF pass — the datapoint that shrank Tier 1 from 11 to 10)
+reasonmath-15/RM-13
