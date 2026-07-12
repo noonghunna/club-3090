@@ -23,7 +23,16 @@
 #              prefill scratch); dropping ctx to 65K frees that room. Confirmed on
 #              two 5090s (@guybrush01 + @paulp83): verify-stress all-pass, 131/155
 #              TPS decode, MTP accept ~3.2, ~1.4 GB VRAM free. SPEC=off trades MTP
-#              for more ctx (81K/98K @ 71 TPS). Bigger cards raise via env (MTP on):
+#              for more ctx (81K/98K @ 71 TPS).
+#              ⤷ CEILING DE-BLIND 2026-07-12 (#617 @paulp83, headless 32 GB 5090):
+#                MTP-on (SPEC=on) verify-stress ALL-PASS + NIAH-clean to 91K at
+#                MAX_MODEL_LEN up to 98K; 100K = the boot-fit edge (600s timeout,
+#                KV pool + cudagraphs hit the 32 GB wall). So the MTP-on ceiling is
+#                ~98K on a HEADLESS 5090 — #613's "MTP-on OOMs at 98K" was the
+#                tighter desktop/system-RAM condition; freeing VRAM (headless)
+#                lifts MTP-on to the SPEC=off ceiling. 65K stays the conservative
+#                fits-anywhere default; SPEC=off remains the tight-RAM fallback.
+#              Bigger cards raise via env (MTP on):
 #                GB10 (128 GB unified): MAX_MODEL_LEN=262144 → the single-card home.
 #                H100 (80 GB) / RTX 6000 Pro (96 GB): 262144 fits similarly.
 #   Genesis:   none — intentionally Genesis-free
