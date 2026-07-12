@@ -162,8 +162,13 @@ Since benchlocal-cli [#84](https://github.com/noonghunna/benchlocal-cli/pull/84)
 # one or more specific scenarios (pack-qualified, repeatable)
 bash scripts/quality-test.sh --scenario cli-40/CLI-31 --scenario reasonmath-15/RM-04 --no-thinking
 
-# a curated probe set from a file (newline PACK_ID/SCENARIO_ID, # comments)
-bash scripts/quality-test.sh --scenarios-file scripts/scenario-sets/tess4-engine-window.txt \
+# a curated probe set from a file (newline PACK_ID/SCENARIO_ID, # comments),
+# BOTH reasoning modes — same pairing as a full eval:
+bash scripts/quality-test.sh --scenarios-file scripts/scenario-sets/tess4-model-floor.txt --no-thinking
+# ⚠ ON leg: boot the compose with reasoning parsing on FIRST (REASONING=on for
+#   llama.cpp composes, --reasoning-parser for vLLM) so <think> lands in
+#   reasoning_content, not the graded answer — then:
+bash scripts/quality-test.sh --scenarios-file scripts/scenario-sets/tess4-model-floor.txt \
     --enable-thinking --repeat 3
 
 # journal each scored scenario (fsynced sidecar) so an interrupt is resumable
@@ -184,8 +189,8 @@ bash scripts/quality-test.sh --resume results/quality/quality-<ts>.json.partial.
 
 | file | what | when to run |
 |---|---|---|
-| `tess4-model-floor.txt` | 14 fails-everywhere (+2 thinking-only) across 2 rigs / 2 drafters / 2 engine builds — the Tess retrain-target list (#665 intersection) | before/after a Tess fine-tune or retrained drafter head; quantifying a "did the model move" claim |
-| `tess4-engine-window.txt` | CLI-25/31/32 — the b9932→b9967 engine-window flips | first probe on any new engine build/pin arm, before paying for a full 8-pack |
+| `tess4-model-floor.txt` | 14 fails-everywhere (+2 thinking-only) across 2 rigs / 2 drafters / 2 engine builds — the Tess retrain-target list (#665 intersection) | before/after a Tess fine-tune or retrained drafter head; quantifying a "did the model move" claim. **Measured (Tess dual, b9967, 2026-07-12): OFF ~3.5 min · ON ~11 min single draw** (ON ×3 ≈ 30 min — still ⅓ of one full 8-pack leg) |
+| `tess4-engine-window.txt` | CLI-25/31/32 — the b9932→b9967 engine-window flips | first probe on any new engine build/pin arm, before paying for a full 8-pack. **Measured: ~40 s OFF** |
 
 **`scripts/rerun-failed-packs.sh`** now re-runs a prior run's failures as ONE selection run (was: whole-pack loops) — 6 failures over 5 packs = 6 scenarios, with `--incremental` durability and a REPRODUCED/FIXED verdict per original failure. `RERUN_DRY=1` previews the plan.
 
