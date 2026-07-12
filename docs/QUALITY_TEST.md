@@ -194,6 +194,30 @@ bash scripts/quality-test.sh --resume results/quality/quality-<ts>.json.partial.
 
 **`scripts/rerun-failed-packs.sh`** now re-runs a prior run's failures as ONE selection run (was: whole-pack loops) — 6 failures over 5 packs = 6 scenarios, with `--incremental` durability and a REPRODUCED/FIXED verdict per original failure. `RERUN_DRY=1` previews the plan.
 
+## Which probe for which question — cheap comparison before a full eval
+
+A full 8-pack (both modes) is ~1–2 h and the bar for any *published* number. But most day-to-day questions — "is this quant better?", "did the retrain move?", "did the engine bump help?" — don't need it. They need the *right* cheap probe, because **the discriminating scenarios depend on what you're comparing**, and a targeted probe runs in minutes.
+
+The principle that makes this work: **same-family checkpoints tie on the deterministic packs and diverge only on specific fragile ones.** So you don't re-measure what won't move — you probe where the difference lives, and only "earn" the full eval when the probe moves.
+
+| You're asking… | Probe | "Better" means | Why it discriminates |
+|---|---|---|---|
+| Is this a better **quant / recipe** of the *same* model? | **cli-40** (`--pack cli-40`, ~15 min) | higher cli-40 (precision preserved) | Quant differences concentrate in agentic behavior; deterministic packs (TC/IF/SO/DE/RM) tie across recipes, so cli-40 is where 4-bit-vs-8-bit-vs-GGUF actually separates. Proven 2026-07-12 (recipe arms below). |
+| Did a **retrain / new fine-tune** of *this model line* crack its known-hard scenarios? | the model's **floor set** (e.g. `scenario-sets/tess4-model-floor.txt`, ~15 min) | more floor scenarios pass (capability added) | The floor is the model's hardest scenarios; quant can't move them (it preserves/degrades, doesn't add capability) — only real *training* does. |
+| Did an **engine build / pin bump** help? | the **engine-window set** (e.g. `tess4-engine-window.txt`, ~40 s) | the flip scenarios pass | Isolates the handful of scenarios a build version is known to move; the rest are engine-invariant. |
+| Is a **new / different** model worth a full eval at all? | `--medium` (5 deterministic packs, ~15–25 min) | overall lift | A different model has its *own* floor — the Tess floor won't gauge a Qwen. A broad slice is the right first screen. |
+| Are last run's failures **real or flaky**? | `scripts/rerun-failed-packs.sh <result.json>` | REPRODUCED vs FIXED | Re-runs only the failed scenarios as one selection. |
+
+**The gate rule (this is the whole method):** a probe is a **cheap positive trigger**, not a verdict. Probe *moves* → run the full 8-pack for the real number. Probe *doesn't* move → you've saved ~2.5 h, *and that's the call for quant/engine comparison* (they either move the fragile pack or they don't). It is the exact rule the recipe arms used: cli-40-OFF ≥ 21 earned a full run; huginnfork's 18 didn't, FP8's 22 did.
+
+**Two rules to not over-apply it:**
+- **The floor is model-line-specific and a *one-way* trigger.** A retrain that lifts the *mid-tier* churny scenarios (the ones that pass 1-in-4) can leave the floor flat — so a flat floor is ambiguous, not a "skip." Floor-moved is a strong yes; floor-flat means fall back to `--medium` or the full run, don't conclude "no gain."
+- **OFF is the clean discriminator; ON is churny.** Gate on the greedy OFF leg (deterministic, reproducible). ON legs sample at temp 1.0 — a single ON probe is a draw; use `--repeat 3` if an ON number is load-bearing.
+
+**Free pre-screen where you have it: KLD.** If the checkpoints ship KL-divergence self-reports (many quant exports do), they predict the quant ranking at *zero* GPU cost — 2026-07-12 the reports (fp8 0.013 < NVFP4A16 0.042 < NVFP4-W4A4) called the cli-40 order exactly. Sort by KLD, then cli-40-probe only the top candidate.
+
+**Worked example (2026-07-12 recipe arms).** Comparing four Tess checkpoints (migtissera NVFP4 / huginnfork NVFP4A16 / FP8 / GGUF) the naive way = four full 8-packs ≈ 10 h. Instead: KLD pre-screened the order, a cli-40 probe (~15 min each) ranked all four and gated the full runs, and only the two that cleared the gate got a full 8-pack. Total ≈ 2 h, same conclusion (precision is the lever, FP8 111/117 ties the GGUF-ON) — see `learnings/tess-4-27b.md` 2026-07-12 and [#662](https://github.com/noonghunna/club-3090/discussions/662).
+
 ## pass@1 vs pass@N — the churn-harvest ceiling (and why we don't report it)
 
 Every `/150` total in this repo is **pass@1 at pack-contract sampling**: think-OFF legs are greedy (deterministic), think-ON legs are a *single draw* at temp 1.0 / top-p 0.95 / top-k 20. That contract is what makes totals comparable across rigs, engines, and dates.
