@@ -497,11 +497,26 @@ For *deep* agent sessions (50K+) even TP=2 falls behind — at that depth, batch
 
 llama.cpp's GDN implementation streams the recurrent state computation tile-by-tile during prefill — the same property that lets it dodge Cliff 2 (OOM) also dodges Cliff 3 (TTFT scaling). The constant factor per-token is similar to vLLM's, but llama.cpp doesn't try to cache anything; it just streams. So a "cache hit" doesn't give you any speedup, but a 30K-context cold prefill takes ~30 sec instead of 200+ sec. **Sustained throughput is lower, sustained TTFT is much better** — exactly the opposite tradeoff vLLM makes.
 
+### Mitigation on vLLM — LMCache keeps the DeltaNet state warm (opt-in)
+
+The Cliff-3 scaling above is a property of vLLM's **native** prefix cache: it caches the attention KV blocks but *replays* the GDN recurrent state from token 0, so a cache hit saves nothing on the recurrent path. **LMCache is the measured mitigation for exactly this.** Its HMA hybrid support (0.4.7) caches the recurrent state that native caching drops — so a previously-computed prefix warm-loads instead of replaying.
+
+Measured on the reference dual-3090 ([#423](https://github.com/noonghunna/club-3090/discussions/423), reproduced cross-rig by @alexpolo1 + @efschu): a **~40K-token prefix warm-loads in 0.5–2.4 s (L1 RAM) vs 34–43 s cold** — a 14–69× TTFT win. A 0.5 s hit is far faster than a 40K Mamba replay, so it is genuinely keeping GDN state warm, not just attention blocks. **Native prefix cache and vLLM's generic CPU KV-offload do NOT do this** — they are attention-KV-block mechanisms and hit the same Cliff 3; LMCache's hybrid recurrent-state caching is the differentiator on GDN models.
+
+What it fixes depends on the loop shape:
+- **Resumed / repeated prefixes** (reopen a session, survive a restart, many agents sharing a big system prompt): **measured win** — this is #423's headline case.
+- **A single *growing* agentic session** (each turn longer — the classic IDE-agent shape): mechanically it *should* bound per-turn TTFT to the new-token delta (LMCache commits state per request, so turn N warm-hits turn N-1's prefix instead of replaying from 0) — but **this is not yet benchmarked end-to-end**; #423 tested cold→warm on fixed prefixes only. Treat as promising-but-unverified; cross-rig numbers on a live growing loop are wanted.
+
+Caveats (why it stays 🐣): **L1 RAM** keeps state warm *within* a session; **L2 disk recomputes** the Mamba state on rehydrate (~4.8 s, compute-bound — good for cross-restart survival, not within-session warmth). Real single-request fillable ceiling ~214K (OOM-wall at 241K), a soak VRAM-growth caveat, and ~58 GB host-RAM for the default `--l1-size-gb 30`. Full sizing + the env-passthrough fix (#454) in [`models/qwen3.6-27b/INTERNALS.md` → LMCache KV-offload](../models/qwen3.6-27b/INTERNALS.md#lmcache-kv-offload-opt-in--incubating--ram--disk-sizing).
+
 ### Practical recommendation
 
-**For single-card multi-turn agentic Qwen3-Next, use llama.cpp.** This is now elevated from "implied" to "explicit" in our docs. Even when vLLM is faster on the canonical bench (49/65 TPS vs 49/66 for llama.cpp + MTP on 5090 Laptop), the architectural mismatch with prefix caching makes vLLM the wrong choice for IDE-agent workloads on one card.
+Two viable paths for multi-turn agentic Qwen3-Next — pick by whether you want simplicity or vLLM's throughput:
 
-For dual-card setups: `dual.yml` (fp8 KV) is the right call — handles 25K-30K accumulated context smoothly, and Cliff 3's reach extends but doesn't disappear at TP=2.
+- **Simplest, no RAM, guaranteed-flat TTFT: llama.cpp** (`llamacpp/mtp` single-card, or the dual llama.cpp paths). It streams the recurrent state tile-by-tile instead of caching it — a 30K cold prefill is ~30 s vs 200+ s on native vLLM, *with no cache and no dependence on hit rates*. Lower sustained throughput, dramatically better and more predictable TTFT. For pure agentic-prefill pain on one card, this is the low-effort answer — even when vLLM wins the canonical bench (49/65 vs 49/66 TPS on 5090 Laptop), the native-cache mismatch makes it the wrong default for IDE-agent workloads.
+- **Keep vLLM's throughput, feed it RAM: `vllm/qwen-27b-dual-lmcache`** (🐣, `--force`). The measured mitigation above — best when your sessions *repeat/resume*; promising-but-unverified for a growing single loop.
+
+For dual-card without LMCache: `dual.yml` (fp8 KV) handles 25K–30K accumulated context smoothly — Cliff 3's reach extends but doesn't disappear at TP=2.
 
 ---
 
