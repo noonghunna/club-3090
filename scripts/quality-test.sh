@@ -48,6 +48,22 @@ MODES
                      toolcall-15  instructfollow-15  structoutput-15
                      dataextract-15  reasonmath-15
                      bugfind-15  cli-40  hermesagent-20  (require Docker)
+  --scenario P/S   Run one pack-qualified scenario, e.g. cli-40/CLI-31 (repeatable;
+                   intersects with --pack / mode when one is given, else the pack
+                   set is derived from the selection).
+  --scenarios-file F
+                   Newline-delimited PACK_ID/SCENARIO_ID selections (# comments OK).
+                   Curated probe sets live in scripts/scenario-sets/.
+                   ⚠ Selection results are PARTIAL — labeled in the JSON
+                   (selection + catalog_scenario_count) and never a /150 claim;
+                   history ingestion and rescore refuse them without --allow-partial.
+  --incremental    Journal each scored scenario to <save-json>.partial.jsonl
+                   (fsynced) so an interrupted run is inspectable and resumable.
+  --resume PATH    Resume a result.json or .partial.jsonl: restores the original
+                   pack-set/selection/thinking/sampling/timeout config and runs
+                   only the missing scenario/repeat arms. Mutually exclusive with
+                   mode/--pack/--scenario/thinking/sampling/timeout flags.
+  --allow-partial  Permit a partial (selection) result into --history-file / rescore.
                      humaneval-plus-30  lcb-v6-30  gsm-symbolic-30
                      gpqa-diamond  (gated metadata-only until access approved)
 
@@ -217,11 +233,19 @@ MAX_TOKENS="${MAX_TOKENS:-}"
 REPEAT=""
 PREVIOUS_RESULT=""
 SAVE_JSON_OVERRIDE=""
+# benchlocal #84/#85: scenario-level selection + incremental/resume passthroughs.
+SCENARIOS=()
+SCENARIOS_FILE=""
+INCREMENTAL=0
+RESUME=""
+ALLOW_PARTIAL=0
+MODE_EXPLICIT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --quick|--medium|--full|--reasoning)
       MODE="$1"
+      MODE_EXPLICIT=1
       shift
       ;;
     --pack)
@@ -231,6 +255,38 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       shift 2
+      ;;
+    --scenario)
+      if [[ -z "${2:-}" ]]; then
+        echo "✗ --scenario requires PACK_ID/SCENARIO_ID (e.g. cli-40/CLI-31)" >&2
+        exit 2
+      fi
+      SCENARIOS+=("$2")
+      shift 2
+      ;;
+    --scenarios-file)
+      if [[ -z "${2:-}" || ! -f "${2:-}" ]]; then
+        echo "✗ --scenarios-file requires an existing file (see scripts/scenario-sets/)" >&2
+        exit 2
+      fi
+      SCENARIOS_FILE="$2"
+      shift 2
+      ;;
+    --incremental)
+      INCREMENTAL=1
+      shift
+      ;;
+    --resume)
+      if [[ -z "${2:-}" || ! -e "${2:-}" ]]; then
+        echo "✗ --resume requires an existing results.json or .partial.jsonl" >&2
+        exit 2
+      fi
+      RESUME="$2"
+      shift 2
+      ;;
+    --allow-partial)
+      ALLOW_PARTIAL=1
+      shift
       ;;
     --model)
       MODEL="${2:-}"
@@ -349,6 +405,29 @@ if [[ "$ENABLE_THINKING" == "1" && "$NO_THINKING" == "1" ]]; then
   exit 2
 fi
 
+# --resume restores pack-set/selection/thinking/sampling/timeout from the saved
+# run — passing any of those alongside it would silently fork the config, so refuse.
+if [[ -n "$RESUME" ]]; then
+  _resume_conflicts=()
+  # (if-form, not `[[ ]] &&` — a false condition would trip set -e)
+  if [[ "$MODE_EXPLICIT" == "1" ]]; then _resume_conflicts+=("$MODE"); fi
+  if [[ -n "$PACK" ]]; then _resume_conflicts+=(--pack); fi
+  if [[ ${#SCENARIOS[@]} -gt 0 ]]; then _resume_conflicts+=(--scenario); fi
+  if [[ -n "$SCENARIOS_FILE" ]]; then _resume_conflicts+=(--scenarios-file); fi
+  if [[ "$SANDBOXED_ONLY" == "1" ]]; then _resume_conflicts+=(--sandboxed-only); fi
+  if [[ -n "$REPEAT" ]]; then _resume_conflicts+=(--repeat); fi
+  if [[ -n "$PREVIOUS_RESULT" ]]; then _resume_conflicts+=(--previous-result); fi
+  if [[ "$ENABLE_THINKING" == "1" ]]; then _resume_conflicts+=(--enable-thinking); fi
+  if [[ "$NO_THINKING" == "1" ]]; then _resume_conflicts+=(--no-thinking); fi
+  if [[ -n "$THINKING_MAX_TOKENS" ]]; then _resume_conflicts+=(--thinking-max-tokens); fi
+  if [[ -n "$MAX_TOKENS" ]]; then _resume_conflicts+=(--max-tokens); fi
+  if [[ "$SAMPLING_FROM_SERVER" == "1" ]]; then _resume_conflicts+=(--sampling-from-server); fi
+  if [[ ${#_resume_conflicts[@]} -gt 0 ]]; then
+    echo "✗ --resume restores the original run configuration; drop: ${_resume_conflicts[*]}" >&2
+    exit 2
+  fi
+fi
+
 if ! command -v benchlocal-cli >/dev/null 2>&1; then
   cat >&2 <<EOF
 ✗ benchlocal-cli not found on \$PATH
@@ -453,7 +532,20 @@ fi
 # `tools/build-sandboxes.sh` that only exists inside a benchlocal-cli *checkout*
 # (not a pip install, and not here) — so surface the correct steps UP FRONT
 # instead of letting users discover a dead path mid-run (club-3090 #492).
-if [[ -z "$PACK" ]] && { [[ "$MODE" == "--full" && "$NO_SANDBOX" != "1" ]] || [[ "$SANDBOXED_ONLY" == "1" ]]; }; then
+# Does a scenario selection touch the Docker-sandboxed packs? (drives the
+# same image preflight that --full gets — cli-40 probes are the primary use)
+SELECTION_HAS_SANDBOX=0
+if [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
+  _sel_lines="$(printf '%s\n' ${SCENARIOS[@]+"${SCENARIOS[@]}"})"
+  if [[ -n "$SCENARIOS_FILE" ]]; then
+    _sel_lines+=$'\n'"$(command grep -vE '^[[:space:]]*(#|$)' "$SCENARIOS_FILE" 2>/dev/null || true)"
+  fi
+  if command grep -qE '^(bugfind-15|cli-40|hermesagent-20)/' <<<"$_sel_lines"; then
+    SELECTION_HAS_SANDBOX=1
+  fi
+fi
+
+if { [[ -z "$PACK" ]] && { [[ "$MODE" == "--full" && "$NO_SANDBOX" != "1" ]] || [[ "$SANDBOXED_ONLY" == "1" ]]; }; } || [[ "$SELECTION_HAS_SANDBOX" == "1" && "$NO_SANDBOX" != "1" ]]; then
   _sb_missing=()
   _sb_stale=()
   if ! command -v docker >/dev/null 2>&1; then
@@ -551,7 +643,16 @@ if [[ "$TIMEOUT_PER_CASE_SET" == "1" ]]; then
 else
   TIMEOUT_DISPLAY="pack-default (60s deterministic / 300s cli-40+hermes / 1800s aider)"
 fi
-if [[ -n "$PACK" ]]; then
+if [[ -n "$RESUME" ]]; then
+  echo "[quality-test] RESUME ${RESUME}  endpoint=${URL}  model=${MODEL} (config restored from the saved run)"
+elif [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
+  _sel_n=${#SCENARIOS[@]}
+  if [[ -n "$SCENARIOS_FILE" ]]; then
+    _sel_n=$(( _sel_n + $(command grep -cvE '^[[:space:]]*(#|$)' "$SCENARIOS_FILE" 2>/dev/null || echo 0) ))
+  fi
+  echo "[quality-test] SELECTION (${_sel_n} scenarios${SCENARIOS_FILE:+, file=$SCENARIOS_FILE})${PACK:+ ∩ pack=$PACK}  endpoint=${URL}  model=${MODEL}  timeout=${TIMEOUT_DISPLAY}"
+  echo "[quality-test] ⚠ partial-selection result — never a canonical pack total (needs --allow-partial for history/rescore)"
+elif [[ -n "$PACK" ]]; then
   echo "[quality-test] pack=${PACK}  endpoint=${URL}  model=${MODEL}  timeout=${TIMEOUT_DISPLAY}"
 else
   echo "[quality-test] mode=${MODE}  endpoint=${URL}  model=${MODEL}  timeout=${TIMEOUT_DISPLAY}"
@@ -579,12 +680,31 @@ fi
 if [[ "$PROGRESS" == "1" ]]; then
   CLI_ARGS+=(--progress)
 fi
-if [[ "$SANDBOXED_ONLY" == "1" ]]; then
+if [[ -n "$RESUME" ]]; then
+  # resume restores pack-set/selection/thinking/sampling/timeout from the journal
+  CLI_ARGS+=(--resume "$RESUME")
+elif [[ "$SANDBOXED_ONLY" == "1" ]]; then
   CLI_ARGS+=(--sandboxed-only)
 elif [[ -n "$PACK" ]]; then
   CLI_ARGS+=(--pack "$PACK")
+elif [[ ${#SCENARIOS[@]} -gt 0 || -n "$SCENARIOS_FILE" ]]; then
+  : # bare selection: benchlocal derives the pack set from it (mode "custom")
 else
   CLI_ARGS+=("$MODE")
+fi
+if [[ -z "$RESUME" ]]; then
+  for _sc in ${SCENARIOS[@]+"${SCENARIOS[@]}"}; do
+    CLI_ARGS+=(--scenario "$_sc")
+  done
+  if [[ -n "$SCENARIOS_FILE" ]]; then
+    CLI_ARGS+=(--scenarios-file "$SCENARIOS_FILE")
+  fi
+fi
+if [[ "$INCREMENTAL" == "1" ]]; then
+  CLI_ARGS+=(--incremental)
+fi
+if [[ "$ALLOW_PARTIAL" == "1" ]]; then
+  CLI_ARGS+=(--allow-partial)
 fi
 if [[ "$NO_SANDBOX" == "1" && "$SANDBOXED_ONLY" != "1" ]]; then
   CLI_ARGS+=(--no-sandboxed-packs)
