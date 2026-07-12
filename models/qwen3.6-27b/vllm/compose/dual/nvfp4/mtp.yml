@@ -163,6 +163,11 @@ services:
       - qwen3.6-27b-nvfp4
       # NVIDIA model-card recipe: modelopt quantization (MIXED_PRECISION
       # NVFP4 + FP8 — vLLM reads hf_quant_config.json / quantization_config).
+      # ⚠ This flag matches NVIDIA's export (nvidia/Qwen3.6-27B-NVFP4) ONLY.
+      # Serving unsloth/Qwen3.6-27B-NVFP4 instead? Its config declares
+      # compressed-tensors → DELETE the two lines below (vLLM auto-detects;
+      # keeping them errors: "Quantization method ... (compressed-tensors)
+      # does not match ... (modelopt)"). Provider A/B 2026-07-11: quality/TPS tie.
       - --quantization
       - modelopt
       - --dtype
