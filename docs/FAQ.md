@@ -277,7 +277,7 @@ On vLLM, `turboquant_3bit_nc` is the long-context default; where context allows,
 
 ### Where can I ask quick questions or hang out with other users?
 
-- **Discord** — [discord.gg/3t6UKFGhKw](https://discord.gg/3t6UKFGhKw). Synchronous, casual; good for "I'm stuck, can someone eyeball this" type questions.
+- **Discord** — [discord.gg/gzdfjhj5yN](https://discord.gg/gzdfjhj5yN). Synchronous, casual; good for "I'm stuck, can someone eyeball this" type questions.
 - **GitHub Discussions** — [discussions tab](https://github.com/noonghunna/club-3090/discussions). Searchable, async, links cleanly to issues/PRs. Best for cross-rig bench drops, longer threads worth preserving.
 - **GitHub Issues** — [issues tab](https://github.com/noonghunna/club-3090/issues). Bug reports + regression repros only — please use the [triage ladder](#before-symptom-matching--boot-the-simplest-stack-first) before filing.
 
