@@ -31,11 +31,13 @@ cat > "$TMP/r.json" <<'JSON'
 }
 JSON
 out="$(RERUN_DRY=1 bash "$S" "$TMP/r.json" 2>&1)"
-echo "$out" | command grep -q "failed packs: reasonmath-15$" || fail "plan should list only reasonmath-15 (got: $out)"
+echo "$out" | command grep -q "failed scenarios (1): reasonmath-15/RM-04$" || fail "plan should select only reasonmath-15/RM-04 (got: $out)"
 echo "$out" | command grep -q -- "--enable-thinking" || fail "plan should derive --enable-thinking from thinking_enabled=true"
 echo "$out" | command grep -q -- "--previous-result $TMP/r.json" || fail "plan should pass --previous-result"
-echo "$out" | command grep -qv "toolcall-15" || true
-echo "$out" | command grep -q "\[dry\] quality-test.sh --pack toolcall-15" && fail "clean pack must not be re-run"
+echo "$out" | command grep -q -- "--scenarios-file" || fail "plan should run ONE selection via --scenarios-file (post benchlocal #84)"
+echo "$out" | command grep -q -- "--incremental" || fail "plan should pass --incremental for resume durability"
+echo "$out" | command grep -q "\[dry\]   reasonmath-15/RM-04" || fail "selection file should contain the failed scenario"
+echo "$out" | command grep -q "toolcall-15/TC-01" && fail "passing scenario must not be selected"
 
 # 4. all-clean result → exit 0, nothing to re-run
 cat > "$TMP/clean.json" <<'JSON'

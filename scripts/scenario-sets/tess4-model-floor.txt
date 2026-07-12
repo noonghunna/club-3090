@@ -1,0 +1,31 @@
+# Tess-4-27B model-floor probe set ("Set A") — the retrain-target list.
+#
+# Provenance: scenario-level intersection of 6 full 8-pack runs across 2 rigs
+# (reference 2×3090 + seanyourhighness's 1×4090), 2 external drafters (MTP,
+# DFlash/EAGLE3), 2 engine builds (llama.cpp b9246→b9967; his b9932), both
+# reasoning modes — club-3090 #665 (2026-07-11). The 14 below failed EVERY run;
+# the 2 marked thinking-only failed stably only in the reasoning-ON legs.
+#
+# Use: bash scripts/quality-test.sh --scenarios-file scripts/scenario-sets/tess4-model-floor.txt \
+#        [--no-thinking | --enable-thinking] [--repeat 3]
+# Probe discipline: results are PARTIAL (never a /150 claim); thinking-ON legs
+# sample at temp 1.0 by pack contract → use --repeat 3 when a number gates anything.
+#
+# fails-everywhere (14):
+bugfind-15/BF-03
+cli-40/CLI-08
+cli-40/CLI-11
+cli-40/CLI-17
+cli-40/CLI-24
+cli-40/CLI-33
+cli-40/CLI-34
+cli-40/CLI-37
+cli-40/CLI-38
+dataextract-15/DE-07
+hermesagent-20/HA-08
+hermesagent-20/HA-16
+reasonmath-15/RM-13
+structoutput-15/SO-07
+# thinking-only-stable tail (2):
+cli-40/CLI-13
+hermesagent-20/HA-02

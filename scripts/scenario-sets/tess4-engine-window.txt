@@ -1,0 +1,15 @@
+# Tess-4-27B engine-window discriminators ("Set B") — cheap engine-arm check.
+#
+# Provenance: the three scenarios seanyourhighness's 2× stable think-ON runs on
+# llama.cpp b9932 never passed while the reference rig's b9967 run passes all
+# three; none sit in either rig's churn set (club-3090 #665, 2026-07-11). They
+# localize an engine-build behavior change to the b9932→b9967 window — probe
+# them first on any new engine build/pin arm (e.g. a vLLM or llama.cpp bump)
+# before paying for a full 8-pack.
+#
+# Use: bash scripts/quality-test.sh --scenarios-file scripts/scenario-sets/tess4-engine-window.txt \
+#        --enable-thinking --repeat 3
+# (These flipped on the THINKING leg — probe reasoning-ON, and repeat: temp 1.0.)
+cli-40/CLI-25
+cli-40/CLI-31
+cli-40/CLI-32

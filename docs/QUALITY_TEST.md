@@ -154,6 +154,41 @@ Quality: line for compose schema field (paste into compose YAML header):
 Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%) · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%) · ReasonMath-15 11/15 (73%) (--medium, packs v1.0.x, 2026-05-09)
 ```
 
+## Scenario-level probes (selection, incremental, resume)
+
+Since benchlocal-cli [#84](https://github.com/noonghunna/benchlocal-cli/pull/84)/[#85](https://github.com/noonghunna/benchlocal-cli/pull/85) the wrapper passes through scenario-granular runs:
+
+```bash
+# one or more specific scenarios (pack-qualified, repeatable)
+bash scripts/quality-test.sh --scenario cli-40/CLI-31 --scenario reasonmath-15/RM-04 --no-thinking
+
+# a curated probe set from a file (newline PACK_ID/SCENARIO_ID, # comments)
+bash scripts/quality-test.sh --scenarios-file scripts/scenario-sets/tess4-engine-window.txt \
+    --enable-thinking --repeat 3
+
+# journal each scored scenario (fsynced sidecar) so an interrupt is resumable
+bash scripts/quality-test.sh --full --no-thinking --incremental
+
+# resume an interrupted (or inspect-then-continue) run — restores the original
+# pack-set/selection/thinking/sampling/timeout config; only missing arms run
+bash scripts/quality-test.sh --resume results/quality/quality-<ts>.json.partial.jsonl
+```
+
+**Probe discipline (the tool enforces most of this):**
+
+- A selection result is **PARTIAL** — the JSON carries top-level `selection` + per-pack `catalog_scenario_count`, human output says `PARTIAL SELECTION`, and history ingestion / `rescore` refuse it without `--allow-partial`. **It is never a `/150` claim** — full 8-pack both modes remains the bar for BENCHMARKS rows, `Quality:` lines, and promotions.
+- Thinking-ON probes sample at temp 1.0 by pack contract → single ON probes are draws; pass `--repeat 3` (cheap at scenario granularity) when a number gates a decision.
+- `--resume` is mutually exclusive with mode/pack/selection/thinking/sampling/timeout flags — it restores those from the saved run; the wrapper refuses the combination rather than fork the config.
+
+**Curated probe sets** live in `scripts/scenario-sets/` with provenance headers:
+
+| file | what | when to run |
+|---|---|---|
+| `tess4-model-floor.txt` | 14 fails-everywhere (+2 thinking-only) across 2 rigs / 2 drafters / 2 engine builds — the Tess retrain-target list (#665 intersection) | before/after a Tess fine-tune or retrained drafter head; quantifying a "did the model move" claim |
+| `tess4-engine-window.txt` | CLI-25/31/32 — the b9932→b9967 engine-window flips | first probe on any new engine build/pin arm, before paying for a full 8-pack |
+
+**`scripts/rerun-failed-packs.sh`** now re-runs a prior run's failures as ONE selection run (was: whole-pack loops) — 6 failures over 5 packs = 6 scenarios, with `--incremental` durability and a REPRODUCED/FIXED verdict per original failure. `RERUN_DRY=1` previews the plan.
+
 ## Diagnosing failures
 
 Failure reasons are surfaced in three places, cheapest first:
