@@ -165,7 +165,7 @@ The dual-card composes automatically detect whether an NVLink bridge is installe
 - `force_on` — assume NVLink bridge present, enable NVLink mode
 - `force_off` — force PCIe-only path even if NVLink detected
 
-Without NVLink, `--disable-custom-all-reduce` is passed to vLLM and `NCCL_P2P_DISABLE=1` is set. With NVLink, custom all-reduce is enabled and NCCL uses the NVLink path. The per-stream TPS difference is ~10-15% on dual 3090 (see cross-rig data in [BENCHMARKS.md](../BENCHMARKS.md)).
+Without NVLink, `--disable-custom-all-reduce` is passed to vLLM and `NCCL_P2P_DISABLE=1` is set. With NVLink, custom all-reduce is enabled and NCCL uses the NVLink path. The gain is **workload-shaped**: small on single-stream **decode** (~2–5% on modern vLLM v0.24+ — the older ~15% figure was the v7.72.2 image), but large on **prefill / long-context** (~35–49%). So NVLink matters most for big-context / agentic movement, not short-prompt decode serving — prefill all-reduces the full activation tensor across TP=2 while decode only moves one token per step (cross-rig data in [BENCHMARKS.md](../BENCHMARKS.md), #698 / #77).
 
 **No NVLink bridge?** You can still enable P2P over the PCIe bus on a patched driver (`NVLINK_MODE=pcie_p2p`) for a workload-dependent gain — and understand what your `nvidia-smi topo -m` output means — in [PCIE_P2P.md](PCIE_P2P.md).
 
