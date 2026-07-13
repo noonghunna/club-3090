@@ -109,4 +109,16 @@ chk "persist respects an existing COMFYUI_OUTPUT_DIR" "/data/custom-out|1" \
   "$(grep '^COMFYUI_OUTPUT_DIR=' "$_tmpenv" | cut -d= -f2-)|$(grep -c '^COMFYUI_OUTPUT_DIR=' "$_tmpenv")"
 rm -f "$_tmpenv"
 
+# P (#686) — sourcing under a `set -e`+pipefail caller (setup-ai-studio.sh) MUST NOT
+#     silently exit when .env lacks a LANIP line. The grep-no-match returned 1, pipefail
+#     propagated it, the assignment failed, and set -e killed the caller BEFORE the
+#     LAN-IP auto-detect could run → "no output at all". Copy the helper into a throwaway
+#     repo root so C3_REPO_ROOT/.env (a MODEL_DIR-only .env) is controlled.
+_reroot="$(mktemp -d)"; mkdir -p "$_reroot/services/comfyui"
+cp "$HELPER" "$_reroot/services/comfyui/comfyui-paths.sh"
+printf 'MODEL_DIR=%s/models\n' "$_reroot" > "$_reroot/.env"   # NO LANIP line
+( cd "$_reroot" && bash -c 'set -euo pipefail; . services/comfyui/comfyui-paths.sh' ) >/dev/null 2>&1
+chk "no silent set-e exit when .env lacks LANIP (#686)" "0" "$?"
+rm -rf "$_reroot"
+
 if [ "$fails" -eq 0 ]; then echo "PASS: comfyui-paths derivation"; exit 0; else echo "FAIL: $fails assertion(s)"; exit 1; fi

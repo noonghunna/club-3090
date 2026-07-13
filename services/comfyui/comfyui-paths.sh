@@ -27,14 +27,18 @@ if [ -z "${C3_PATHS_NO_ENV:-}" ] && [ -n "$C3_REPO_ROOT" ]; then
   if [ -f "$_c3_env" ]; then
     # MODEL_DIR (the studio's one knob) — env wins over .env.
     if [ -z "${MODEL_DIR:-}" ]; then
-      MODEL_DIR="$(grep -E '^MODEL_DIR=' "$_c3_env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+      # `|| true`: a no-match grep returns 1, which pipefail propagates → the
+      # assignment fails → a `set -e` caller (setup-ai-studio.sh) exits SILENTLY
+      # before it can auto-detect. MODEL_DIR is usually present so it rarely bit;
+      # LANIP (below) is usually absent, which is the #686 silent-no-op.
+      MODEL_DIR="$(grep -E '^MODEL_DIR=' "$_c3_env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
       MODEL_DIR="${MODEL_DIR%\"}"; MODEL_DIR="${MODEL_DIR#\"}"   # strip optional surrounding quotes
     fi
     # LANIP for the printed URLs — pin it here when auto-detect can't pick the right NIC, or on
     # hosts without `hostname -I` / `ip` (club-3090 #512). Env wins; auto-detect (c3_lan_ip) is the
     # fallback when neither sets it.
     if [ -z "${LANIP:-}" ]; then
-      LANIP="$(grep -E '^LANIP=' "$_c3_env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+      LANIP="$(grep -E '^LANIP=' "$_c3_env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"   # || true: see MODEL_DIR note above (#686)
       LANIP="${LANIP%\"}"; LANIP="${LANIP#\"}"
       [ -n "$LANIP" ] && export LANIP
     fi
