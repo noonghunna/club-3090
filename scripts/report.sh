@@ -150,6 +150,30 @@ section "System"
   echo "- **OS:** $os_name"
   echo "- **Kernel:** $(uname -r)"
 
+  # Motherboard / BIOS — from sysfs DMI (readable WITHOUT root; serials/UUIDs
+  # are root-only in sysfs so they are never exposed here). #690.
+  _dmi() {
+    local v; v="$(cat "/sys/class/dmi/id/$1" 2>/dev/null)"
+    v="${v//$'\n'/ }"; v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"
+    # drop common OEM placeholder junk so it degrades to "(not exposed)"
+    case "$v" in
+      "To Be Filled By O.E.M."|"To be filled by O.E.M."|"Default string"|      "System manufacturer"|"System Product Name"|"System Version"|      "Not Applicable"|"None"|"N/A"|"Unknown"|"0.0.0"|"") v="" ;;
+    esac
+    printf '%s' "$v"
+  }
+  _mb_vendor="$(_dmi board_vendor)"; _mb_name="$(_dmi board_name)"
+  _mb_product="$(_dmi product_name)"; _mb_bios="$(_dmi bios_version)"; _mb_biosdate="$(_dmi bios_date)"
+  _mb="$_mb_vendor${_mb_vendor:+${_mb_name:+ }}$_mb_name"
+  if [[ -n "$_mb" ]]; then
+    [[ -n "$_mb_product" && "$_mb_product" != "$_mb" ]] && _mb="$_mb  (system: $_mb_product)"
+    echo "- **Motherboard:** $_mb"
+  elif [[ -n "$_mb_product" ]]; then
+    echo "- **Motherboard:** (board DMI not exposed; system: $_mb_product)"
+  else
+    echo "- **Motherboard:** (not exposed)"
+  fi
+  [[ -n "$_mb_bios" ]] && echo "- **BIOS:** ${_mb_bios}${_mb_biosdate:+ ($_mb_biosdate)}"
+
   # Environment detection
   env_kind="bare metal"
   if grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
