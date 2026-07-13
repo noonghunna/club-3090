@@ -16,6 +16,10 @@ Two directions:
                      ``Qwen3_5ForConditionalGeneration`` multimodal layout so
                      vLLM's MTP speculative path fires.
 
+Not required for the checkpoints club-3090 ships (they load directly with MTP);
+this is for rolling your own AutoRound INT4 quant.  Full docs + usage:
+tools/repack_prefix.md.
+
 STDLIB ONLY.  Reads default to utf-8 per repo convention.
 """
 from __future__ import annotations
