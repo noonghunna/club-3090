@@ -547,6 +547,72 @@ if [[ "${SKIP_MODEL:-0}" == "1" ]]; then
   exit 0
 fi
 
+# Ensure an HF download CLI ('hf', or legacy 'huggingface-cli') is available.
+# If neither is present, offer a CONSENT-GATED, ISOLATED install (uv tool / pipx
+# — lands on PATH, no changes to system Python). We deliberately NEVER run
+# `pip --break-system-packages` or `sudo apt` on the user's behalf; those stay
+# copy-paste the user owns. Returns 0 when a CLI is available (already or after
+# an accepted install); prints the working manual options + returns 1 otherwise.
+# Honors CLUB3090_ASSUME_YES=1 for non-interactive opt-in. Fixes the PEP 668
+# `externally-managed-environment` wall on Ubuntu 24.04 / WSL, where the old
+# bare `pip install` hint could not run.
+ensure_hf_cli() {
+  command -v hf >/dev/null 2>&1 && return 0
+  command -v huggingface-cli >/dev/null 2>&1 && return 0
+
+  # First ISOLATED installer available (never touches system Python).
+  local installer="" cmd=""
+  if command -v uv >/dev/null 2>&1; then
+    installer="uv";   cmd="uv tool install --with hf_transfer huggingface-hub"
+  elif command -v pipx >/dev/null 2>&1; then
+    installer="pipx"; cmd="pipx install 'huggingface-hub[hf_transfer]'"
+  fi
+
+  if [[ -n "$installer" ]]; then
+    local go=""
+    if [[ "${CLUB3090_ASSUME_YES:-0}" == "1" ]]; then
+      go=1
+      echo "[model] hf CLI missing — CLUB3090_ASSUME_YES=1, installing via ${installer} (isolated)." >&2
+    elif [[ -t 0 ]]; then
+      echo "[model] The Hugging Face CLI ('hf') is required to download weights, but it's not installed." >&2
+      echo "[model] I can install it for you, isolated (on your PATH, no changes to system Python):" >&2
+      echo "[model]     ${cmd}" >&2
+      local reply=""
+      read -rp "[model] Install it now? [Y/n] " reply
+      case "${reply}" in ""|[Yy]|[Yy][Ee][Ss]) go=1 ;; esac
+    fi
+    if [[ -n "$go" ]]; then
+      echo "[model] Installing: ${cmd}" >&2
+      if eval "$cmd" >&2; then
+        # Freshly-installed console scripts land in ~/.local/bin (pipx + uv's
+        # default tool bin) — make them visible to THIS run, no shell restart.
+        export PATH="${HOME}/.local/bin:${PATH}"
+        hash -r 2>/dev/null || true
+        if command -v hf >/dev/null 2>&1 || command -v huggingface-cli >/dev/null 2>&1; then
+          echo "[model] hf CLI installed and on PATH." >&2
+          return 0
+        fi
+        echo "[model] Installed, but 'hf' isn't on PATH in this shell yet — restart your terminal (or run 'pipx ensurepath' / add ~/.local/bin to PATH) and re-run setup.sh." >&2
+        return 1
+      fi
+      echo "[model] Automatic install did not complete — use a manual option below." >&2
+    fi
+  fi
+
+  # No isolated installer, declined, or install failed → the working manual set.
+  {
+    echo "ERROR: the Hugging Face CLI ('hf') is required but not installed."
+    echo "  Recommended — isolated, puts 'hf' on your PATH (works on Ubuntu 24.04 / WSL):"
+    echo "    sudo apt install -y pipx && pipx install 'huggingface-hub[hf_transfer]' && pipx ensurepath"
+    echo "    (then restart your shell and re-run this command)"
+    echo "  Or, with uv:"
+    echo "    uv tool install --with hf_transfer huggingface-hub"
+    echo "  Quick override — modifies SYSTEM Python (only on a dedicated box / WSL):"
+    echo "    pip install --break-system-packages 'huggingface-hub[hf_transfer]'"
+  } >&2
+  return 1
+}
+
 _hf_download_repo() {
   local repo="$1"
   local subdir="$2"
@@ -556,6 +622,8 @@ _hf_download_repo() {
   local rev_args=()
   [[ -n "$revision" ]] && rev_args=(--revision "$revision")
   mkdir -p "${MODEL_DIR}/${subdir}"
+  # Guarantee a download CLI (consent-gated isolated install if missing).
+  ensure_hf_cli || exit 1
   if command -v hf >/dev/null 2>&1; then
     echo "[model]   Using 'hf download' (hf_transfer if available) ..."
     # files is intentionally word-split: empty -> whole repo; non-empty -> selected files.
@@ -566,10 +634,8 @@ _hf_download_repo() {
     HF_HUB_ENABLE_HF_TRANSFER=1 HF_HUB_DISABLE_XET=1 \
       huggingface-cli download "$repo" ${files} "${rev_args[@]}" --local-dir "${MODEL_DIR}/${subdir}"
   else
-    echo "ERROR: neither 'hf' nor 'huggingface-cli' found. Install with:" >&2
-    echo "  pip install 'huggingface-hub[hf_transfer]'" >&2
-    echo "or:" >&2
-    echo "  uv tool install --with hf_transfer huggingface-hub" >&2
+    # Unreachable: ensure_hf_cli returned 0 so one of the above resolves.
+    echo "ERROR: hf CLI unexpectedly unavailable after ensure_hf_cli." >&2
     exit 1
   fi
 }

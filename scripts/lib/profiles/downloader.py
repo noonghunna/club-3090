@@ -109,17 +109,23 @@ class DownloadResult:
     failure: Optional[str] = None
     local_dir: str = ""
     # Actionable detail (populated for "hf-cli-missing"; the canonical
-    # install hint mirrored from setup.sh:418-421). Optional / additive —
-    # existing failure paths leave it "".
+    # PEP-668-aware install hint, in sync with setup.sh `ensure_hf_cli`).
+    # Optional / additive — existing failure paths leave it "".
     detail: str = ""
 
 
 # The canonical actionable message when NEITHER `hf` nor `huggingface-cli`
-# resolves — mirrors setup.sh:418-421 verbatim in intent.
+# resolves — PEP-668-aware (the bare `pip install` fails on externally-managed
+# Ubuntu 24.04 / WSL); mirrors the manual-options set in setup.sh `ensure_hf_cli`.
+# This library RETURNS the message (pull.sh surfaces it via
+# DownloadResult.detail); the interactive consent-gated install lives in setup.sh.
 _HF_CLI_MISSING_MSG = (
-    "neither 'hf' nor 'huggingface-cli' found. Install with: "
-    "pip install 'huggingface-hub[hf_transfer]'  or:  "
-    "uv tool install --with hf_transfer huggingface-hub"
+    "the 'hf' CLI is required but not installed. Recommended (isolated, on PATH, "
+    "works on Ubuntu 24.04 / WSL): 'sudo apt install -y pipx && "
+    "pipx install huggingface-hub[hf_transfer] && pipx ensurepath' then restart "
+    "your shell. Or with uv: 'uv tool install --with hf_transfer huggingface-hub'. "
+    "Quick override (modifies system Python): "
+    "'pip install --break-system-packages huggingface-hub[hf_transfer]'."
 )
 
 
