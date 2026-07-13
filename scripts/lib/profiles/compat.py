@@ -893,11 +893,13 @@ def fits(
     # validated proxy for that backend split — Qwen fp8 dual/multi-max WORK on the 3090
     # (#594: boot/decode/NIAH/quality/soak all green), while gemma-4-31b + fp8_e4m3 FAILS
     # at KV-init on the same sm_86/v0.24.0 stack (learnings/gemma-4-31b.md 2026-07-01).
-    # So bypass the hardware supported_kv_formats gate for fp8_e4m3 + fp8-weights on
+    # So bypass the hardware supported_kv_formats gate for fp8_e4m3 + fp8/nvfp4-weights on
     # sm>=8.6 without listing fp8_e4m3 in the Ampere profile (keeps Gemma correctly
     # rejected). See docs/DTYPE_MATRIX.md. Caveat: a future Gemma-*fp8-weights* checkpoint
     # would route to Triton and still fail — this proxy would wrongly allow it; revisit then.
-    _fp8w_ampere_kv = effective_kv == "fp8_e4m3" and str(effective_weights or "").startswith("fp8")
+    # nvfp4 weights added 2026-07-13 (#686): tess/qwen NVFP4 run e4m3 KV via FlashInfer
+    # on sm_86 — live-validated (A0 8-pack on 2x3090, BENCHMARKS) — while gemma stays rejected.
+    _fp8w_ampere_kv = effective_kv == "fp8_e4m3" and str(effective_weights or "").startswith(("fp8", "nvfp4"))
     unsupported_hw = [
         hw.id for hw in hardware
         if effective_kv not in hw.supported_kv_formats
