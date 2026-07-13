@@ -24,6 +24,14 @@ vLLM Genesis patches work cleanly on Ada.
 
 **Watch out for the context derate.** A 24 GB 4090 carries more idle desktop + driver VRAM than a headless 3090, so single-card context ceilings land **~15–20% lower**. Observed: `long-text.yml` 180K → 90K, ik two-stage 200K → 160K, `dual-dflash-noviz` 200K → 180K. Start below the 3090 number and verify with `verify-stress.sh` (watch its ceiling VRAM-margin line).
 
+**⚠ The single-card default (`beellama/dflash`) is currently broken on Ada.** beellama's DFlash speculative path returns gibberish (`//////`) on sm_89 — reproduced on a 4090 in [#693](https://github.com/noonghunna/club-3090/issues/693) (the same weights serve fine under mainline llama.cpp and ik-llama on the same rig, so it's the DFlash path, not your setup). Until it's fixed, use **`ik-llama/iq4ks-mtp`** (keeps spec-dec via MTP, which works on Ada) or **`llamacpp/default`**, and pin your choice so `launch.sh` doesn't re-select the broken default:
+
+```bash
+./scripts/switch.sh --set-default ik-llama/iq4ks-mtp
+```
+
+Tracking + status: the beellama row in [`UPSTREAM.md`](UPSTREAM.md).
+
 The composes don't currently inject Ada-specific FP8-native-compute defaults — vLLM auto-detects most of it, but the explicit-flag path is tracked in [#246](https://github.com/noonghunna/club-3090/issues/246).
 
 ### Can I use a 5090?
