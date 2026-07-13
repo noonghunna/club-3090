@@ -6,8 +6,8 @@
 #   2. gpu_indices_from_container — read NVIDIA_VISIBLE_DEVICES / device requests
 #   3. aggregate_gpu_sample — collapse N per-GPU sampler lines to one synthetic
 #      line: SUM power, MAX util/temp, OR throttle (keeps downstream untouched)
-#   4. capture_envelopes    — per-GPU INIT/STOCK arrays + intersected MIN/MAX range
-#   5. restore_gpus         — RESET=1 -> stock per GPU; --no-reset -> captured per GPU
+#   4. capture_envelopes    — per-GPU INIT array + intersected MIN/MAX range
+#   5. restore_gpus         — RESET=1 -> captured pre-sweep cap; --no-reset -> leave last cap
 #
 # The end-to-end sweep (setting caps, measuring) needs a real dual-GPU rig; this
 # guards the logic that is wrong/subtle, with mocks. Functions are extracted with
@@ -99,25 +99,24 @@ agg1="$(printf '%s\n' '0, 90, 300.00, 65, 1700, 9501, P2, Not Active, Not Active
 eq "aggregate single GPU" "$agg1" "agg, 90, 300.00, 65, 1700, 9501, P2, Not Active, Not Active"
 
 # --- 4. capture_envelopes: intersected range + per-GPU arrays -----------------
-declare -A INIT_ARR=() STOCK_ARR=()
+declare -A INIT_ARR=()
 GPU_INDICES=(0 1)
 capture_envelopes
 eq "MIN_LIMIT = max(per-gpu min)" "$MIN_LIMIT" "100"
 eq "MAX_LIMIT = min(per-gpu max)" "$MAX_LIMIT" "400"
+eq "STOCK_TDP = min(per-gpu default)" "$STOCK_TDP" "370"
 eq "INIT_ARR[0] = current limit"  "${INIT_ARR[0]}" "300"
 eq "INIT_ARR[1] = current limit"  "${INIT_ARR[1]}" "310"
-eq "STOCK_ARR[0] = default limit" "${STOCK_ARR[0]}" "370"
-eq "STOCK_ARR[1] = default limit" "${STOCK_ARR[1]}" "390"
 
-# --- 5. restore_gpus: stock (default) vs captured (--no-reset) -----------------
+# --- 5. restore_gpus: captured pre-sweep cap (default) vs --no-reset -----------
 : > "$NVSMI_LOG"
 RESET=1 restore_gpus
 got="$(sort "$NVSMI_LOG" | tr '\n' ';')"
-eq "RESET=1 restores stock per GPU" "$got" "PL idx=0 w=370;PL idx=1 w=390;"
+eq "RESET=1 restores captured per GPU" "$got" "PL idx=0 w=300;PL idx=1 w=310;"
 : > "$NVSMI_LOG"
 RESET=0 restore_gpus
 got="$(sort "$NVSMI_LOG" | tr '\n' ';')"
-eq "--no-reset restores captured per GPU" "$got" "PL idx=0 w=300;PL idx=1 w=310;"
+eq "--no-reset leaves last cap untouched" "$got" ""
 
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"

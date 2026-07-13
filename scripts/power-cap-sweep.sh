@@ -123,7 +123,10 @@
 #   See docs/HARDWARE.md > Power > "Recommended sweep chain" for the full rationale.
 #
 # Requires sudo for `nvidia-smi -pl`. Auto-detects running container + URL +
-# MODEL via the same logic as bench.sh.
+# MODEL via the same logic as bench.sh. By default, restores each GPU to the
+# power limit it had before the sweep started. This preserves local operating
+# policy (for example, a 4090 normally capped below NVIDIA default TDP). Pass
+# --no-reset to leave the last tested cap in place.
 #
 # Why --cooling matters:
 #   Air-cooled cards thermal-throttle around 80-83°C, capping effective
@@ -140,7 +143,7 @@ GPU_INDEX=0
 GPU_INDEX_SET=0      # set to 1 once --gpu is explicitly passed (distinguishes from the default 0)
 GPUS=""              # explicit --gpus a,b list; empty → auto-detect the workload's GPUs
 CAPS=""              # empty → auto-derive from card's min/max power limits at STEP_SIZE granularity
-RESET=1              # 1 = reset to stock at end; 0 = leave at last cap
+RESET=1              # 1 = restore pre-sweep cap at end; 0 = leave at last cap
 COOLING="unspecified" # air|water|aio|unspecified — affects how to read the data
 STEP_SIZE=10          # increment in W between caps when --caps not specified (10W matches @laurimyllari's resolution)
 LOAD_MODE="decode-single"   # decode-single | decode-concurrent | prefill-heavy
@@ -312,8 +315,7 @@ aggregate_gpu_sample() {
 }
 
 capture_envelopes() {
-  # Populate INIT_ARR[idx] (current power.limit — for --no-reset restore) and
-  # STOCK_ARR[idx] (factory default_limit — for the default reset) for every GPU
+  # Populate INIT_ARR[idx] (current power.limit — default restore target) for every GPU
   # in GPU_INDICES, and derive the SYMMETRIC sweep range as the intersection of
   # all cards' envelopes: floor = max of per-card mins, ceiling = min of per-card
   # maxes, so a single cap value is valid on every card. STOCK_TDP (used only for
@@ -326,7 +328,6 @@ capture_envelopes() {
     mx=$(nvidia-smi --query-gpu=power.max_limit     --format=csv,noheader,nounits -i "$idx" | head -1 | tr -d ' ')
     lim=$(nvidia-smi --query-gpu=power.limit        --format=csv,noheader,nounits -i "$idx" | head -1 | tr -d ' ')
     INIT_ARR[$idx]="$lim"
-    STOCK_ARR[$idx]="$df"
     if [ -z "$MIN_LIMIT" ] || awk "BEGIN{exit !($mn > $MIN_LIMIT)}"; then MIN_LIMIT="$mn"; fi
     if [ -z "$MAX_LIMIT" ] || awk "BEGIN{exit !($mx < $MAX_LIMIT)}"; then MAX_LIMIT="$mx"; fi
     if [ -z "$STOCK_TDP" ] || awk "BEGIN{exit !($df < $STOCK_TDP)}"; then STOCK_TDP="$df"; fi
@@ -334,12 +335,15 @@ capture_envelopes() {
 }
 
 restore_gpus() {
-  # On end/exit: RESET=1 (default) → set each GPU to its factory stock; --no-reset
-  # (RESET=0) → restore each GPU to the limit it had when the sweep started.
+  # On end/exit: RESET=1 (default) → restore each GPU to the limit it had when
+  # the sweep started. RESET=0 (--no-reset) leaves the last tested cap in place.
   local idx target
+  if [ "${RESET:-1}" -ne 1 ]; then return 0; fi
   for idx in "${GPU_INDICES[@]}"; do
-    if [ "${RESET:-1}" -eq 1 ]; then target="${STOCK_ARR[$idx]:-}"; else target="${INIT_ARR[$idx]:-}"; fi
-    [ -n "$target" ] && nvidia-smi -pl "$target" -i "$idx" >/dev/null 2>&1 || true
+    target="${INIT_ARR[$idx]:-}"
+    if [ -n "$target" ]; then
+      nvidia-smi -pl "$target" -i "$idx" >/dev/null 2>&1 || true
+    fi
   done
 }
 
@@ -407,10 +411,10 @@ if [ "${#GPU_INDICES[@]}" -eq 0 ] || [ -z "${GPU_INDICES[0]:-}" ]; then
   exit 1
 fi
 PRIMARY_GPU="${GPU_INDICES[0]}"
-declare -A INIT_ARR=() STOCK_ARR=()
+declare -A INIT_ARR=()
 echo "[setup] GPUs:     ${GPU_LIST_CSV}"
 
-# Capture each card's power envelope: per-GPU INIT/STOCK arrays + the intersected
+# Capture each card's power envelope: per-GPU INIT array + the intersected
 # symmetric sweep range (MIN_LIMIT/MAX_LIMIT/STOCK_TDP). See capture_envelopes().
 capture_envelopes
 GPU_NAME=$(nvidia-smi --query-gpu=name         --format=csv,noheader        -i "$PRIMARY_GPU" | head -1)
@@ -902,7 +906,7 @@ start = ((floor + step - 1) // step) * step
 end   = (max_l // step) * step
 caps = list(range(start, end + 1, step))
 # Always include the exact max_limit at the end if rounding clipped it (so we
-# capture the stock-or-near anchor).
+# capture the high-cap anchor).
 if caps[-1] != max_l:
     caps.append(max_l)
 print(','.join(str(c) for c in caps))
@@ -1600,9 +1604,9 @@ fi
 
 # Reset
 if [ "$RESET" -eq 1 ]; then
-  echo "[reset] restoring GPUs ${GPU_LIST_CSV} to stock TDP"
+  echo "[reset] restoring GPUs ${GPU_LIST_CSV} to their pre-sweep limits"
 else
-  echo "[reset] --no-reset: restoring GPUs ${GPU_LIST_CSV} to their pre-sweep limits"
+  echo "[reset] --no-reset: leaving GPUs ${GPU_LIST_CSV} at the last tested cap"
 fi
 restore_gpus
 
@@ -1619,7 +1623,7 @@ restore_gpus
     done <<< "$PLATEAU_LINES"
     echo ""
   fi
-  echo "**Reset:** $([ $RESET -eq 1 ] && echo "auto-reset to per-GPU stock" || echo "restored to pre-sweep limits (--no-reset)")"
+  echo "**Reset:** $([ $RESET -eq 1 ] && echo "restored to pre-sweep power limits" || echo "left at last tested cap (--no-reset)")"
   echo ""
   echo "**Notes:**"
   case "$LOAD_MODE" in
