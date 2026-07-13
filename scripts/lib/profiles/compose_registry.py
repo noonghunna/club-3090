@@ -63,6 +63,7 @@ def _entry(
     recommended_engine_features=None,
     required_sm=None,
     fallback_sm=None,
+    default_arch_allow=None,
     status="production",
     status_note=None,
     category=None,
@@ -113,6 +114,14 @@ def _entry(
         # Live-confirmed on 2x3090 sm_86 2026-07-11: NVFP4-27B boots,
         # 69.7/85.5 TPS, 8-pack 110/150 (ties the fp8 tier's 109).
         entry["fallback_sm"] = fallback_sm
+    if default_arch_allow is not None:
+        # GPU arches (compute-cap strings, e.g. "8.6") on which this slug is
+        # validated enough to be an AUTO-DEFAULT. When set, the curated-default
+        # walk skips it on any OTHER detected arch (see default_arch_gated).
+        # This gates only the *default* — an explicit selection / user pin still
+        # launches it (with a warning). #693: beellama DFlash returns gibberish
+        # on Ada/sm_8.9; we only ever validated it on sm_8.6.
+        entry["default_arch_allow"] = list(default_arch_allow)
     if category is not None:
         entry["category"] = category
     return entry
@@ -357,6 +366,9 @@ COMPOSE_REGISTRY = {
     # in the compose. kv_format reflects K-side precision (V is q4_1).
     "beellama/dflash": _entry(
         model="qwen3.6-27b", weights_variant="beellama-q5ks-dflash", workload="fast-chat",
+        # sm_86-only auto-default: DFlash returns gibberish on Ada/sm_8.9 (#693);
+        # off-86 the curated walk steers to ik-llama/iq4ks-mtp instead.
+        default_arch_allow=["8.6"],
         engine="beellama-local", drafter="anbeeld-qwen-dflash", kv_format="q5_0",
         tp=1, max_ctx=102400, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/beellama/compose/single/beellama-q5ks-dflash/dflash.yml",
@@ -364,7 +376,7 @@ COMPOSE_REGISTRY = {
         default_port=8060,
         kvcalc_key="SKIP",
         status="caveats",
-        status_note="Single-GPU default. Launchers inject the beellama engine pin (Anbeeld's official v0.3.2-preview digest — engines/beellama-local.yml install.spec); sm_86 verified on this rig 2026-07-04 (verify-full all-pass), sm_89 runs the sm_80 cubins. 5090/sm_120: official images build on CUDA 12.4 and carry NO sm_120 (upstream ask Anbeeld#85) — self-build with CUDA_DOCKER_ARCH=120 + CUDA_VERSION=12.8.1 (engine notes have the verified recipe) or the unmaintained v0.3.0-feature-level snapshot ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397. Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. DFlash prose is net-positive on tok/s (+27% vs no-spec, re-tested 2026-06-03); the earlier 'prose-DFlash regression' is RETRACTED — it was an AR over-read + wrong baseline (docs/UPSTREAM.md).",
+        status_note="Single-GPU default. Launchers inject the beellama engine pin (Anbeeld's official v0.3.2-preview digest — engines/beellama-local.yml install.spec); sm_86 verified on this rig 2026-07-04 (verify-full all-pass); sm_89 IS natively compiled (890 in the image's CUDA ARCHS per the #693 boot log — NOT an sm_80 fallback) but DFlash returns gibberish on Ada, so default_arch_allow=[\"8.6\"] steers 4090/5090 off this default (#693). 5090/sm_120: official images build on CUDA 12.4 and carry NO sm_120 (upstream ask Anbeeld#85) — self-build with CUDA_DOCKER_ARCH=120 + CUDA_VERSION=12.8.1 (engine notes have the verified recipe) or the unmaintained v0.3.0-feature-level snapshot ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397. Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. DFlash prose is net-positive on tok/s (+27% vs no-spec, re-tested 2026-06-03); the earlier 'prose-DFlash regression' is RETRACTED — it was an AR over-read + wrong baseline (docs/UPSTREAM.md).",
     ),
 
     # Qwopus3.6-27B-Coder (Jackrong coder fine-tune of Qwen3.6-27B) — single 3090, Q5_K_M
@@ -681,6 +693,11 @@ COMPOSE_REGISTRY = {
     # (Gemma-4 MTP) merges — see docs/UPSTREAM.md.
     "beellama/gemma-dflash": _entry(
         model="gemma-4-31b", weights_variant="beellama-q4ks-dflash", workload="fast-chat",
+        # sm_86-only auto-default: same beellama DFlash path as #693 (validated
+        # only on sm_8.6). Gemma has no other single-card default, so off-86 the
+        # curated walk returns None → "pick explicitly" (honest: no validated
+        # fast single-card Gemma path exists on Ada).
+        default_arch_allow=["8.6"],
         engine="beellama-local", drafter="anbeeld-gemma-dflash", kv_format="q5_0",
         tp=1, max_ctx=128000, max_num_seqs=1, mem_util=None,
         compose_path="models/gemma-4-31b/beellama/compose/single/beellama-q4ks-dflash/dflash.yml",
@@ -688,7 +705,7 @@ COMPOSE_REGISTRY = {
         default_port=8061,
         kvcalc_key="SKIP",
         status="caveats",
-        status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Launchers inject the beellama engine pin (Anbeeld's official v0.3.2-preview digest — engines/beellama-local.yml install.spec); sm_89 runs the sm_80 cubins. 5090/sm_120: official images build on CUDA 12.4 and carry NO sm_120 (upstream ask Anbeeld#85) — self-build with CUDA_DOCKER_ARCH=120 + CUDA_VERSION=12.8.1 (engine notes) or the unmaintained v0.3.0-feature-level snapshot ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397. DFlash prose is net-positive on tok/s (+28–31% vs no-spec, re-tested 2026-06-03; earlier 'prose regression' RETRACTED — AR over-read + wrong baseline); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
+        status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Launchers inject the beellama engine pin (Anbeeld's official v0.3.2-preview digest — engines/beellama-local.yml install.spec); sm_89 IS natively compiled (890 in the image's CUDA ARCHS — NOT an sm_80 fallback) but the same beellama DFlash path (validated only on sm_86) is unvalidated/likely-broken on Ada, so default_arch_allow=[\"8.6\"] steers off-86 users off this default (#693). 5090/sm_120: official images build on CUDA 12.4 and carry NO sm_120 (upstream ask Anbeeld#85) — self-build with CUDA_DOCKER_ARCH=120 + CUDA_VERSION=12.8.1 (engine notes) or the unmaintained v0.3.0-feature-level snapshot ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397. DFlash prose is net-positive on tok/s (+28–31% vs no-spec, re-tested 2026-06-03; earlier 'prose regression' RETRACTED — AR over-read + wrong baseline); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
     ),
     # Dual-card beellama Gemma-4 (layer-split, 262K) — PARKED upstream-gated 2026-05-31.
     # Boots + recalls 262K fine, but DFlash spec-dec is broken on multi-GPU in our pinned
@@ -1074,13 +1091,35 @@ def model_set():
     return {model for (model, _engine, _topology) in DEFAULTS}
 
 
-def _functional_default(model, engine, topology):
-    """A DEFAULTS slug for (model, engine, topology) whose status is functional.
+def default_arch_gated(slug, detected_sm):
+    """True when `slug` may NOT auto-default on the detected GPU arch.
 
-    Returns the slug only when an entry exists AND its registry status is NOT
-    in the (NA) set (experimental/preview/upstream-gated/deprecated) — a
-    broken/preview config must never become someone's auto-default (§12.5).
-    Returns None otherwise.
+    A slug with a `default_arch_allow` list (compute-cap strings) is validated
+    as a default only on those arches. FAIL-OPEN: no allow-list, or an
+    unknown/empty `detected_sm`, never gates — so CI / headless / an
+    undetectable GPU keep today's behavior. #693: beellama DFlash is validated
+    only on sm_8.6 and returns gibberish on sm_8.9 (Ada), so its default slug
+    carries default_arch_allow=["8.6"].
+    """
+    if not detected_sm:
+        return False
+    entry = COMPOSE_REGISTRY.get(slug)
+    if not entry:
+        return False
+    allow = entry.get("default_arch_allow")
+    if not allow:
+        return False
+    return detected_sm not in allow
+
+
+def _functional_default(model, engine, topology, detected_sm=None):
+    """A DEFAULTS slug for (model, engine, topology) whose status is functional
+    AND (when detected_sm is known) not arch-gated off the detected arch.
+
+    Returns the slug only when an entry exists, its registry status is NOT in
+    the (NA) set (experimental/preview/upstream-gated/deprecated), and it is not
+    default_arch_gated for detected_sm — a broken/preview/off-arch config must
+    never become someone's auto-default (§12.5, #693). Returns None otherwise.
     """
     slug = DEFAULTS.get((model, engine, topology))
     if not slug:
@@ -1090,17 +1129,19 @@ def _functional_default(model, engine, topology):
         return None
     if entry.get("status", "production") not in FUNCTIONAL_STATUSES:
         return None
+    if default_arch_gated(slug, detected_sm):
+        return None
     return slug
 
 
-def curated_default_target(model, topology):
+def curated_default_target(model, topology, detected_sm=None):
     """Curated fallback (§4): walk ENGINE_PREFERENCE[family], first functional
-    DEFAULTS slug wins. Returns the slug, or None if no functional curated
-    default exists for (model, topology).
+    (and, for detected_sm, not-arch-gated) DEFAULTS slug wins. Returns the slug,
+    or None if no functional curated default exists for (model, topology[, sm]).
     """
     family = _topology_family(topology)
     for engine in ENGINE_PREFERENCE.get(family, []):
-        slug = _functional_default(model, engine, topology)
+        slug = _functional_default(model, engine, topology, detected_sm)
         if slug:
             return slug
     return None
