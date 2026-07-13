@@ -657,10 +657,12 @@ with tempfile.TemporaryDirectory() as td:
           f"'hf-cli-missing') (got ok={getattr(r,'ok',None)} "
           f"fail={getattr(r,'failure',None)})")
     check(r is not None and "hf download" not in (r.detail or "")
-          and "huggingface-cli" in (r.detail or "")
-          and "uv tool install" in (r.detail or ""),
-          f"missing-CLI carries the canonical actionable detail "
-          f"(setup.sh:418-421 install hint); detail={getattr(r,'detail',None)!r}")
+          and "pipx" in (r.detail or "")
+          and "uv tool install" in (r.detail or "")
+          and "break-system-packages" in (r.detail or ""),
+          f"missing-CLI carries the canonical PEP-668-aware install hint "
+          f"(pipx / uv / --break-system-packages; in sync with setup.sh "
+          f"ensure_hf_cli); detail={getattr(r,'detail',None)!r}")
     final = DL.pull_dir(Path(td), "Org/NoCli")
     check(not (final / ".incomplete").exists(),
           "missing-CLI: .incomplete tree deleted (no residue)")

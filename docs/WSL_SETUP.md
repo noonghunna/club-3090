@@ -105,6 +105,16 @@ In VS Code, set the file's EOL to **LF** (bottom-right status bar) and enable `"
 
 ## 7. Download weights — `WEIGHTS` + `MODEL_DIR`
 
+**Prerequisite — the `hf` CLI.** `setup.sh` fetches weights with Hugging Face's `hf` CLI. On a fresh Ubuntu 24.04 / WSL, the usual `pip install huggingface-hub` is blocked (`error: externally-managed-environment` — that's [PEP 668](https://peps.python.org/pep-0668/), not a bug on your end). If the CLI is missing, `setup.sh` will **offer to install it for you** — isolated, via `pipx`/`uv`, no changes to system Python — just answer **Y**. To install it yourself first:
+
+```bash
+sudo apt install -y pipx
+pipx install 'huggingface-hub[hf_transfer]'
+pipx ensurepath      # then restart the terminal so `hf` lands on PATH
+```
+
+> ⚠️ **Don't use a raw `python -m venv` for this.** Activating a venv rewrites your `PATH` and can hide `docker` and your model paths (a common WSL trip-up). `pipx` installs the `hf` CLI *isolated* but on your PATH — no `activate`, nothing shadowed.
+
 For the **robust single-card path on a 24 GB card** (recommended on WSL2 — see step 10), fetch the **GGUF** weights for llama.cpp / ik_llama:
 
 ```bash
