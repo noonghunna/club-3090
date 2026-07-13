@@ -12,6 +12,8 @@
 #                                        left on the table per the #77 A/B)
 #   PCIe-P2P-capable + engagement OFF  -> INFO (launcher boots auto-enable;
 #                                        direct compose users can opt in)
+#   pcie_p2p forced, grant UNVERIFIED  -> WARN (looked engaged, wasn't — #688;
+#                                        driver didn't confirm peer access)
 
 # GPU count (host).
 p2p_gpu_count() {
@@ -53,6 +55,29 @@ _p2p_pairs_ok() {
   '
 }
 
+# NVIDIA kernel-module flavor: "open" | "proprietary" | "unknown". The open
+# kernel modules (`nvidia-open`, OR a fork like aikitoria/open-gpu-kernel-modules)
+# report license "Dual MIT/GPL"; the closed/proprietary module reports "NVIDIA".
+# This is the reliable, actionable signal for GeForce P2P triage — a proprietary
+# module REFUSES peer access; the open modules can GRANT it. It is host-side
+# (needs /lib/modules → modinfo), so it belongs here / in report.sh, not in the
+# in-container detect_nvlink.sh boot path.
+#   IMPORTANT: this canNOT fingerprint the aikitoria patch specifically. That
+#   fork is the open modules with the P2P block removed — identical license,
+#   version, and filename to stock nvidia-open. The functional proof a
+#   P2P-enabling module is actually working is `topo -p2p rw = OK`
+#   (_p2p_pairs_ok), NOT this flavor probe. So we report open-vs-proprietary and
+#   pair it with the topo result; we never claim "aikitoria detected".
+p2p_driver_flavor() {
+  local lic
+  lic="$(modinfo -F license nvidia 2>/dev/null)"
+  case "$lic" in
+    *NVIDIA*)    echo proprietary ;;
+    *GPL*|*MIT*) echo open ;;
+    *)           echo unknown ;;
+  esac
+}
+
 # Engagement classifier — PURE (takes the boot-trail/env text on stdin so the
 # caller decides where it comes from and tests can feed fixtures).
 # report.sh already gathers exactly this text: the container's `[nvlink]`
@@ -61,6 +86,13 @@ _p2p_pairs_ok() {
 p2p_classify_engagement() {
   local text
   text="$(cat)"
+  # A forced PCIe-P2P request whose driver grant we could NOT confirm: the
+  # NCCL/all-reduce config is applied but peer access is unverified. Must NOT
+  # read as "on" — that's the false-engaged bug from #688. Checked FIRST so it
+  # wins over the "custom all-reduce" signal the forced path also carries.
+  case "$text" in
+    *"P2P REQUESTED (UNVERIFIED)"*) echo requested; return 0 ;;
+  esac
   # The [nvlink] decision trail is authoritative (it states what the boot
   # resolved, post-override); env is the fallback for pre-trail entrypoints.
   case "$text" in
@@ -81,6 +113,13 @@ p2p_classify_engagement() {
 p2p_verdict() {
   local count="$1" cap="$2" eng="$3" state
   [[ "${count:-0}" -ge 2 ]] || return 0
+  # A forced-but-unverified P2P request is worth flagging EVEN when the
+  # capability probe says "none": the request asked for P2P, the driver didn't
+  # confirm it. This is the #688 case (looked engaged, wasn't) — never silent.
+  if [[ "$eng" == "requested" ]]; then
+    echo "⚠ interconnect WARN: NVLINK_MODE=pcie_p2p forced PCIe P2P on, but nvidia-smi does not report peer access as OK — the driver likely refused it (a closed GeForce driver disables P2P; the open kernel modules or a patched module + a P2P-capable board enable it). NCCL falls back, so throughput ≈ P2P-off. Verify: nvidia-smi topo -p2p rw. Guide: docs/PCIE_P2P.md"
+    return 0
+  fi
   [[ "$cap" != "none" ]] || return 0
   case "$eng" in
     on)      state="" ;;

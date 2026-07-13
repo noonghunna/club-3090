@@ -825,6 +825,17 @@ else
     _p2p_verdict_line="$(p2p_verdict "$(p2p_gpu_count)" "$(p2p_host_capability)" \
       "$(printf '%s\n%s' "$nvlink_boot" "$p2p_env" | p2p_classify_engagement)")"
     [[ -n "$_p2p_verdict_line" ]] && { echo; echo "**Interconnect verdict:** ${_p2p_verdict_line}"; }
+    # Kernel-module flavor — the WHY behind a P2P result on GeForce cards. A
+    # proprietary (closed) module refuses P2P; the open modules can grant it, with
+    # `topo -p2p rw` above the functional proof. Only meaningful multi-GPU.
+    # We report open-vs-proprietary (detectable); we do NOT claim to fingerprint
+    # the aikitoria patch — it's metadata-identical to stock nvidia-open.
+    if [[ "$(p2p_gpu_count)" -ge 2 ]]; then
+      case "$(p2p_driver_flavor)" in
+        proprietary) echo; echo "**NVIDIA kernel module:** proprietary (closed) — refuses P2P on GeForce; the open kernel modules (\`nvidia-open\`, or a patched fork) are what enable it. A \`CNS\` in \`topo -p2p rw\` above is this. See docs/PCIE_P2P.md." ;;
+        open)        echo; echo "**NVIDIA kernel module:** open (\`Dual MIT/GPL\`) — P2P-capable on GeForce; whether it's granted is the \`topo -p2p rw\` result above (\`OK\` = engaged, \`CNS\` = board/layout still refusing). Metadata can't tell stock \`nvidia-open\` from a patched fork — the topo result is the proof." ;;
+      esac
+    fi
     echo
 
     genesis_results=$(docker logs "$CONTAINER" 2>&1 | grep -E '\[INFO:genesis\.apply_all\] (Genesis|✅) Results' | tail -1)

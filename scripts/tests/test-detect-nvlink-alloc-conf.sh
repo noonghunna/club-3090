@@ -15,10 +15,12 @@ fail=0
 # $1 = NVLINK_MODE, $2 = pre-set PYTORCH_CUDA_ALLOC_CONF ("__UNSET__" to leave unset).
 resolve() {
   local mode="$1" pre="$2"
+  # 2>/dev/null: pcie_p2p's honest "unverified" warning (no mocked nvidia-smi here)
+  # goes to stderr — irrelevant to the alloc-conf assertion, so keep output clean.
   if [[ "$pre" == "__UNSET__" ]]; then
-    NVLINK_MODE="$mode" bash -c "unset PYTORCH_CUDA_ALLOC_CONF; source '$DETECT' >/dev/null; printf '%s' \"\${PYTORCH_CUDA_ALLOC_CONF:-}\""
+    NVLINK_MODE="$mode" bash -c "unset PYTORCH_CUDA_ALLOC_CONF; source '$DETECT' >/dev/null 2>&1; printf '%s' \"\${PYTORCH_CUDA_ALLOC_CONF:-}\""
   else
-    PYTORCH_CUDA_ALLOC_CONF="$pre" NVLINK_MODE="$mode" bash -c "source '$DETECT' >/dev/null; printf '%s' \"\${PYTORCH_CUDA_ALLOC_CONF:-}\""
+    PYTORCH_CUDA_ALLOC_CONF="$pre" NVLINK_MODE="$mode" bash -c "source '$DETECT' >/dev/null 2>&1; printf '%s' \"\${PYTORCH_CUDA_ALLOC_CONF:-}\""
   fi
 }
 

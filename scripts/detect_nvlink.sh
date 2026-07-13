@@ -13,10 +13,15 @@
 #                and cards on separate root complexes can't P2P — both correctly stay off.
 #   force_on   — assert NVLink present (NCCL_P2P_LEVEL=NVL).
 #   force_off  — no P2P at all (NCCL_P2P_DISABLE=1).
-#   pcie_p2p   — FORCE PCIe P2P on (assert the patched driver is loaded + working),
-#                bypassing auto-detect. Sets NCCL_P2P_LEVEL=PHB (or your own NCCL_P2P_LEVEL),
-#                P2P ENABLED, custom all-reduce ON. Use when you trust the patch but auto's
-#                `topo -p2p r` probe doesn't report OK. See club-3090 #290.
+#   pcie_p2p   — FORCE the PCIe P2P config on (NCCL_P2P_LEVEL=PHB or your own,
+#                custom all-reduce ON), bypassing auto-detect. It ALSO probes
+#                `topo -p2p` and reports honestly: "P2P ENABLED" when the driver
+#                confirms peer access, "P2P REQUESTED (UNVERIFIED)" + a warning
+#                when it doesn't (a closed GeForce driver refuses P2P; the open
+#                kernel modules / a patched module + a P2P-capable board enable
+#                it). The config is forced either way — this is the escape hatch
+#                for a rig whose probe is stricter than reality — but we never
+#                claim "engaged" without evidence. See club-3090 #290, #688.
 
 NVLINK_MODE="${NVLINK_MODE:-auto}"
 _P2P_LEVEL=NVL   # NCCL_P2P_LEVEL used when _NVLINK_ENABLED=1 (overridden by pcie_p2p)
@@ -48,10 +53,20 @@ case "$NVLINK_MODE" in
     echo "[nvlink] NVLINK_MODE=force_off — forcing PCIe mode (P2P off)"
     ;;
   pcie_p2p)
-    # Explicit opt-in for PCIe P2P (no NVLink) — e.g. a patched consumer-GPU driver.
+    # Explicit opt-in for PCIe P2P (no NVLink) — a patched module OR a driver/board
+    # that grants peer access (some server boards + the open kernel modules do).
+    # Force the config on either way (the escape hatch for a rig whose topo -p2p
+    # probe is stricter than reality), but VERIFY peer access and flag it honestly
+    # when the driver didn't grant it — else we'd falsely report "P2P engaged" on a
+    # closed/stock driver that silently refuses it (club-3090 #688).
     _NVLINK_ENABLED=1
     _P2P_LEVEL="${NCCL_P2P_LEVEL:-PHB}"
-    echo "[nvlink] NVLINK_MODE=pcie_p2p — forcing PCIe P2P (NCCL_P2P_LEVEL=$_P2P_LEVEL, custom all-reduce ON)"
+    if _pcie_p2p_available; then
+      echo "[nvlink] NVLINK_MODE=pcie_p2p — forcing PCIe P2P; driver confirms peer access (nvidia-smi topo -p2p: OK) — NCCL_P2P_LEVEL=$_P2P_LEVEL, custom all-reduce ON"
+    else
+      _P2P_UNVERIFIED=1
+      echo "[nvlink] WARNING: NVLINK_MODE=pcie_p2p set, but nvidia-smi topo -p2p does NOT report peer access as OK — the driver likely refused P2P (a closed GeForce driver disables it; the open kernel modules or a patched module + a P2P-capable board are what enable it). Forcing the NCCL/all-reduce config on as requested, but NCCL will silently fall back → throughput ≈ P2P-off. Verify with: nvidia-smi topo -p2p rw. Guide: docs/PCIE_P2P.md" >&2
+    fi
     ;;
   auto)
     GPU_COUNT=$(nvidia-smi -L 2>/dev/null | grep -c 'GPU' || echo 0)
@@ -109,7 +124,13 @@ if [ "$_NVLINK_ENABLED" -eq 1 ]; then
   _alloc="$(printf '%s' "$_alloc" | sed -E 's/(^|,)expandable_segments:[^,]*//g; s/^,+//; s/,+$//; s/,+/,/g')"
   [ -n "$_alloc" ] || _alloc="max_split_size_mb:512"
   export PYTORCH_CUDA_ALLOC_CONF="$_alloc"
-  echo "[nvlink] P2P ENABLED — NCCL_P2P_LEVEL=$NCCL_P2P_LEVEL, custom all-reduce ON, expandable_segments stripped (PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF)"
+  if [ "${_P2P_UNVERIFIED:-0}" -eq 1 ]; then
+    # pcie_p2p forced, but topo -p2p didn't confirm peer access. Config is applied;
+    # engagement is NOT proven. Say so — never print "ENABLED" without evidence (#688).
+    echo "[nvlink] P2P REQUESTED (UNVERIFIED) — NCCL_P2P_LEVEL=$NCCL_P2P_LEVEL + custom all-reduce configured as forced, but peer access is UNCONFIRMED (topo -p2p ≠ OK; see the warning above). If the driver refused P2P, NCCL falls back and throughput ≈ P2P-off — verify with nvidia-smi topo -p2p rw. expandable_segments stripped (PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF)"
+  else
+    echo "[nvlink] P2P ENABLED — NCCL_P2P_LEVEL=$NCCL_P2P_LEVEL, custom all-reduce ON, expandable_segments stripped (PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF)"
+  fi
 else
   export NCCL_P2P_DISABLE=1
   unset NCCL_P2P_LEVEL 2>/dev/null || true
