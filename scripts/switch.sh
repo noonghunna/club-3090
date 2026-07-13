@@ -205,7 +205,7 @@ resolve_default_variant() {
     return 0
   elif [[ "$variant" =~ ^([^/]+)/default$ ]]; then
     topology="$(switch_topology_from_gpus)"
-    if ! target="$(x_default_dispatch "$ROOT_DIR" "$variant" "$topology" "$PRIMARY_MODEL")"; then
+    if ! target="$(x_default_dispatch "$ROOT_DIR" "$variant" "$topology" "$PRIMARY_MODEL" "$(primary_sm_from_gpu_spec "$(switch_gpu_profile_spec 2>/dev/null || true)")")"; then
       echo "ERROR: cannot resolve default variant '${variant}'." >&2
       exit 1
     fi
@@ -1211,6 +1211,10 @@ fi
 
 [[ -n "$VARIANT" ]] || usage
 VARIANT="$(resolve_default_variant "$VARIANT")"
+# Explicit selection / pin of an off-arch default (e.g. beellama/dflash on a
+# 4090) still launches — but warn loudly (#693). The curated default already
+# steered away; this catches the deliberate-or-pinned case.
+warn_if_default_arch_gated "$ROOT_DIR" "$VARIANT" "$(primary_sm_from_gpu_spec "$(switch_gpu_profile_spec 2>/dev/null || true)")"
 
 resolve_ready_url "${VARIANT}"
 down_running

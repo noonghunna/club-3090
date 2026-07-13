@@ -931,7 +931,7 @@ resolve_launch_default_variant() {
     topology="$(launch_topology_from_selected)"
     MODEL_NAME="${MODEL_NAME:-$PRIMARY_MODEL}"
     MODEL_NAME="$(normalize_model_name "$MODEL_NAME")"
-    if ! target="$(x_default_dispatch "$ROOT_DIR" "$variant" "$topology" "$MODEL_NAME")"; then
+    if ! target="$(x_default_dispatch "$ROOT_DIR" "$variant" "$topology" "$MODEL_NAME" "$(primary_sm_from_gpu_spec "$(selected_gpu_profile_spec 2>/dev/null || true)")")"; then
       echo "[launch] ERROR: cannot resolve default variant '${variant}'." >&2
       exit 1
     fi
@@ -983,7 +983,7 @@ try_bare_launch_default() {
   local pin_key pin_value
   pin_key="$(model_pin_key "$model")"
   pin_value="${!pin_key:-}"
-  if ! target="$(model_default_target "$ROOT_DIR" "$model" "$topology")"; then
+  if ! target="$(model_default_target "$ROOT_DIR" "$model" "$topology" "$(primary_sm_from_gpu_spec "$(selected_gpu_profile_spec 2>/dev/null || true)")")"; then
     return 1
   fi
   MODEL_NAME="$model"
@@ -1016,7 +1016,7 @@ try_pinned_fast_path() {
   fi
   local topology target
   topology="$(launch_topology_from_selected)"
-  if ! target="$(model_default_target "$ROOT_DIR" "$model" "$topology")"; then
+  if ! target="$(model_default_target "$ROOT_DIR" "$model" "$topology" "$(primary_sm_from_gpu_spec "$(selected_gpu_profile_spec 2>/dev/null || true)")")"; then
     return 1
   fi
   if [[ ! -t 0 ]]; then

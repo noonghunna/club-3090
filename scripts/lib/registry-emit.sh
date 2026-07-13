@@ -274,7 +274,60 @@ PY_DEFAULT
 
 # --- PR-B: model-default resolver (the single injection point) ---------------
 #
-# model_default_target ROOT MODEL TOPOLOGY  →  resolved slug on stdout.
+# primary_sm_from_gpu_spec GPU_SPEC  →  first GPU's compute-cap ("8.6") on stdout.
+# GPU_SPEC is the switch/launch "idx|name|mem|sm;idx|name|mem|sm" form. Empty
+# output when the spec is empty/malformed → callers fail-open (no arch gating).
+primary_sm_from_gpu_spec() {
+  local spec="${1:-}" first
+  first="${spec%%;*}"            # first GPU entry
+  [[ "$first" == *"|"* ]] || { printf ''; return 0; }
+  printf '%s' "${first##*|}"     # last |-field = sm
+}
+
+# warn_if_default_arch_gated ROOT SLUG DETECTED_SM  →  loud stderr warning when
+# SLUG is validated as a default only on other arches than DETECTED_SM (its
+# default_arch_allow). No-op otherwise. Covers explicit selection + user pins of
+# an off-arch slug (the curated default already steers away). #693.
+warn_if_default_arch_gated() {
+  local root="$1" slug="$2" sm="$3"
+  [[ -n "$slug" && -n "$sm" ]] || return 0
+  python3 - "$root" "$slug" "$sm" <<'PY_ARCH_WARN'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root))
+from scripts.lib.profiles.compose_registry import (  # noqa: E402
+    COMPOSE_REGISTRY,
+    curated_default_target,
+    default_arch_gated,
+    model_of_slug,
+    slug_topology,
+)
+
+slug, sm = sys.argv[2], sys.argv[3]
+if not default_arch_gated(slug, sm):
+    raise SystemExit(0)
+entry = COMPOSE_REGISTRY.get(slug, {})
+allow = ", ".join("sm_" + a for a in entry.get("default_arch_allow", []))
+model = model_of_slug(slug)
+alt = curated_default_target(model, slug_topology(slug) or "single", sm) if model else None
+rec = (
+    f"Recommended on your card: {alt} (pin it: scripts/switch.sh --set-default {alt})."
+    if alt
+    else "No validated single-card default exists for your arch — run a dual "
+    "config or pick a slug explicitly."
+)
+print(
+    f"[arch-gate] WARNING: {slug} is validated as a default only on {allow} "
+    f"(RTX 3090); your GPU is sm_{sm}. beellama's DFlash path returns gibberish "
+    f"on Ada/sm_8.9 and is unvalidated on other arches (club-3090 #693). {rec}",
+    file=sys.stderr,
+)
+PY_ARCH_WARN
+}
+
+# model_default_target ROOT MODEL TOPOLOGY [DETECTED_SM]  →  resolved slug on stdout.
 #
 # Resolution precedence ladder (design §3); `--variant X` (caller-explicit) is
 # handled by the callers BEFORE they reach here, so this implements:
@@ -288,7 +341,7 @@ PY_DEFAULT
 # only the resolved slug goes to stdout. Returns non-zero with a clear message
 # when no functional default exists at any topology (never crashes).
 model_default_target() {
-  local root="$1" model="$2" topology="$3"
+  local root="$1" model="$2" topology="$3" detected_sm="${4:-}"
   # Compute the .env pin key for this model, then read its value from the
   # environment (the caller has already loaded .env into the env).
   local pin_key pin_value
@@ -302,7 +355,7 @@ PY_PINKEY
 )"
   pin_value="${!pin_key:-}"
 
-  python3 - "$root" "$model" "$topology" "$pin_value" "$pin_key" <<'PY_MODEL_DEFAULT'
+  python3 - "$root" "$model" "$topology" "$pin_value" "$pin_key" "$detected_sm" <<'PY_MODEL_DEFAULT'
 from __future__ import annotations
 
 import sys
@@ -321,7 +374,8 @@ from scripts.lib.profiles.compose_registry import (  # noqa: E402
     _topology_family,
 )
 
-model, topology, pin_value, pin_key = sys.argv[2:6]
+model, topology, pin_value, pin_key, detected_sm = sys.argv[2:7]
+_sm = detected_sm or None
 
 
 def warn(msg: str) -> None:
@@ -368,8 +422,8 @@ if community:
     print(community)
     raise SystemExit(0)
 
-# 3) Curated fallback (§4) at the detected topology.
-slug = curated_default_target(model, topology)
+# 3) Curated fallback (§4) at the detected topology (arch-gated for the GPU).
+slug = curated_default_target(model, topology, _sm)
 if slug:
     print(slug)
     raise SystemExit(0)
@@ -377,7 +431,7 @@ if slug:
 # 4) Degradation (§6): notice + nearest-lower topology, then a clear message.
 fallback_topology = _nearest_lower_topology(topology)
 while fallback_topology:
-    slug = curated_default_target(model, fallback_topology)
+    slug = curated_default_target(model, fallback_topology, _sm)
     if slug:
         warn(
             f"no functional default for {model!r} on the detected "
@@ -720,7 +774,7 @@ PY_JSON
   return "$_py_rc"
 }
 
-# x_default_dispatch ROOT TOKEN TOPOLOGY MODEL  →  resolved slug on stdout.
+# x_default_dispatch ROOT TOKEN TOPOLOGY MODEL [DETECTED_SM]  →  slug on stdout.
 #
 # Parses an `X/default` token (design §13.1): if X is an engine name →
 # engine-recommendation (registry_default_target on the given MODEL); else if X
@@ -728,7 +782,7 @@ PY_JSON
 # sets come from the registry and are disjoint. The caller passes the model to
 # use for the engine-recommendation branch (its PRIMARY_MODEL / chosen model).
 x_default_dispatch() {
-  local root="$1" token="$2" topology="$3" model="$4" x
+  local root="$1" token="$2" topology="$3" model="$4" detected_sm="${5:-}" x
   x="${token%/default}"
   local kind
   kind="$(python3 - "$root" "$x" <<'PY_DISPATCH'
@@ -750,7 +804,7 @@ PY_DISPATCH
       registry_default_target "$root" "$model" "$x" "$topology"
       ;;
     model)
-      model_default_target "$root" "$x" "$topology"
+      model_default_target "$root" "$x" "$topology" "$detected_sm"
       ;;
     *)
       echo "[default] ERROR: '${token}': '${x}' is neither a known engine nor a known model." >&2

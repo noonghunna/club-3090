@@ -66,6 +66,47 @@ assert_contains "$out" "falling back to the dual default" "gemma multi4 degradat
 assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b multi4 2>/dev/null)" \
   "vllm/gemma-31b-dual" "gemmamulti4 degrades to dual slug"
 
+# --- arch-gate: beellama DFlash default steers off non-sm_86 (#693) ----------
+# On sm_8.6 (RTX 3090) the beellama DFlash default is unchanged; on any other
+# DETECTED arch the curated walk skips it (DFlash returns gibberish on Ada) and
+# falls through to the next functional engine. sm empty/unknown → fail-open (so
+# CI / headless keep today's behavior — the 3-arg calls above prove that).
+assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 8.6 2>/dev/null)" \
+  "beellama/dflash" "qwen single sm_8.6 → beellama (on-arch, unchanged)"
+assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 8.9 2>/dev/null)" \
+  "ik-llama/iq4ks-mtp" "qwen single sm_8.9 (Ada) → steers to ik-llama (#693)"
+assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 12.0 2>/dev/null)" \
+  "ik-llama/iq4ks-mtp" "qwen single sm_12.0 (Blackwell) → steers to ik-llama"
+assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single '' 2>/dev/null)" \
+  "beellama/dflash" "qwen single sm unknown → fail-open (beellama)"
+# gemma single has no other single default → off-arch degrades to pick-explicitly.
+assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b single 8.6 2>/dev/null)" \
+  "beellama/gemma-dflash" "gemma single sm_8.6 → beellama (unchanged)"
+if model_default_target "$ROOT_DIR" gemma-4-31b single 8.9 >/dev/null 2>&1; then
+  note "gemma single sm_8.9 should have NO default (beellama gated, no fallback)"
+fi
+assert_contains "$(model_default_target "$ROOT_DIR" gemma-4-31b single 8.9 2>&1)" \
+  "pick a config explicitly" "gemma single sm_8.9 → pick-explicitly"
+# X/default dispatch threads the sm too.
+assert_eq "$(x_default_dispatch "$ROOT_DIR" qwen3.6-27b/default single qwen3.6-27b 8.9 2>/dev/null)" \
+  "ik-llama/iq4ks-mtp" "qwen/default X-dispatch on sm_8.9 → ik-llama"
+assert_eq "$(x_default_dispatch "$ROOT_DIR" qwen3.6-27b/default single qwen3.6-27b 8.6 2>/dev/null)" \
+  "beellama/dflash" "qwen/default X-dispatch on sm_8.6 → beellama"
+
+# --- helpers: primary_sm_from_gpu_spec + warn_if_default_arch_gated -----------
+assert_eq "$(primary_sm_from_gpu_spec '0|NVIDIA GeForce RTX 4090|24564|8.9;1|x|24564|8.9')" \
+  "8.9" "primary_sm_from_gpu_spec extracts the first GPU sm"
+assert_eq "$(primary_sm_from_gpu_spec '')" "" "primary_sm_from_gpu_spec empty → empty"
+warn_out="$(warn_if_default_arch_gated "$ROOT_DIR" beellama/dflash 8.9 2>&1 >/dev/null)"
+assert_contains "$warn_out" "arch-gate" "warn fires for beellama/dflash on sm_8.9"
+assert_contains "$warn_out" "ik-llama/iq4ks-mtp" "warn recommends ik-llama for qwen"
+assert_contains "$(warn_if_default_arch_gated "$ROOT_DIR" beellama/gemma-dflash 8.9 2>&1 >/dev/null)" \
+  "No validated single-card default" "gemma warn → no-fallback message"
+assert_eq "$(warn_if_default_arch_gated "$ROOT_DIR" beellama/dflash 8.6 2>&1)" \
+  "" "warn silent for beellama/dflash on sm_8.6 (on-arch)"
+assert_eq "$(warn_if_default_arch_gated "$ROOT_DIR" ik-llama/iq4ks-mtp 8.9 2>&1)" \
+  "" "warn silent for a non-gated slug"
+
 # --- X/default dispatch ------------------------------------------------------
 # engine name → engine recommendation (back-compat).
 assert_eq "$(x_default_dispatch "$ROOT_DIR" vllm/default single qwen3.6-27b 2>/dev/null)" \
