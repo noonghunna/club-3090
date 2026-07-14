@@ -170,7 +170,10 @@ services:
       - --enable-chunked-prefill
       - --enable-prefix-caching
       - --max-num-batched-tokens
-      - "8192"
+      # Prefill chunk size: bigger = faster single-stream prefill (fewer, larger forward
+      # passes), but it's ALSO the profile-run activation cap — raise it only with VRAM
+      # headroom to spare (24 GB is tight; 8192 is TheFuzy's proven-fit value, #706).
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       # Single-stream (seqs=1) for the first boot — matches TheFuzy's proven config. Each
       # concurrent seq needs its own Mamba SSM-state cache, so concurrency (+ the
       # --long-prefill-token-threshold scheduling win) is a follow-up once a community
