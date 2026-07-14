@@ -934,13 +934,13 @@ COMPOSE_REGISTRY = {
     # Engine support for the arch on vllm/vllm-openai:v0.24.0 is UNVERIFIED until a 4-card boot.
     "vllm/nemotron-75b-multi-mtp": _entry(
         model="nemotron-3-puzzle-75b", weights_variant="nvfp4", workload="fast-chat",
-        engine="vllm-stable", drafter="nemotron-mtp-builtin", kv_format="bf16",
-        tp=4, max_ctx=262144, max_num_seqs=1, mem_util=0.85,
+        engine="vllm-stable", drafter="nemotron-mtp-builtin", kv_format="fp8_e4m3",
+        tp=4, max_ctx=200000, max_num_seqs=1, mem_util=0.85,
         compose_path="models/nemotron-3-puzzle-75b/vllm/compose/multi4/nvfp4/mtp.yml",
         default_port=8095, required_sm=9.0, fallback_sm=7.5,
         kvcalc_key="SKIP",
         status="experimental",
-        status_note="Nemotron-3 Puzzle 75B-A9B NVFP4 (nvidia modelopt MIXED: NVFP4 routed-expert FFNs + FP8 Mamba/shared projections), 4-card TP=4 @262K, built-in MTP via --speculative-config. Mamba2-Transformer hybrid LatentMoE, 9.3B active / 75.3B total. 🧪 Experimental — CANNOT be booted/validated on the maintainer's 2x3090 rig (needs 4x3090); shown in switch.sh --list, launch requires --force. bf16 attention KV (fp8 NOT forced — the hybrid holds KV on only a few attn layers, so it's tiny) + fp16 Mamba SSM state (stochastic-rounded; never fp8). kv-calc bypassed (hybrid arch, no spec → kvcalc SKIP + model kv_calc_supported=false). NVIDIA supported-HW = Blackwell+Hopper ONLY; arch NemotronHPuzzleForCausalLM aliases to the NemotronH loader (registered v0.24.0 + v0.25.0; card tested v0.20.0) but the Ampere quant/kernel path (NVFP4->Marlin W4A16, FP8->bf16, flashinfer-mamba on sm_86) is UNVERIFIED — first 4-card boot is the validation. FP8 sibling (83 GB) too big for 4x24GB → NVFP4 is the only quad-3090 fit. No DEFAULTS row (opt-in only). Community-float to 4x3090 owners.",
+        status_note="Nemotron-3 Puzzle 75B-A9B NVFP4 (nvidia modelopt MIXED: NVFP4 routed-expert FFNs + FP8 Mamba/shared projections), 4-card TP=4 @200K single-stream, built-in MTP via --speculative-config. Mamba2-Transformer hybrid LatentMoE, 9.3B active / 75.3B total. 🧪 Experimental — CANNOT be booted/validated on the maintainer's 2x3090 rig (needs 4x3090); shown in switch.sh --list, launch requires --force. fp8_e4m3 attention KV (checkpoint-declared) + fp16 Mamba SSM state (stochastic-rounded; never fp8). kv-calc bypassed (hybrid arch, no spec → kvcalc SKIP + model kv_calc_supported=false). NVIDIA supported-HW = Blackwell+Hopper ONLY; arch NemotronHPuzzleForCausalLM aliases to the NemotronH loader (registered v0.24.0 + v0.25.0; card tested v0.20.0) and CONFIRMED to run on 4x3090 (#706, @TheFuzy: weights 13.31 GiB/card, arch/quant/mamba/MTP all work on Ampere). This config is FIT-TUNED for 24 GB after our first cut OOM'd at 262K single-stream (profile-run prefill blew up with chunked-prefill off): chunked prefill ON + max-num-batched-tokens 8192 + max-model-len 200000 + fp8 KV. Concurrency (max_num_seqs>1 + --long-prefill-token-threshold) is a follow-up gated on a community VRAM report. FP8 sibling (83 GB) too big for 4x24GB → NVFP4 is the only quad-3090 fit. No DEFAULTS row (opt-in only). Community-float to 4x3090 owners.",
     ),
 
     # Ornith-1.0-9B — DeepReinforce agentic-coding RL fine-tune. Qwen3-Next DENSE-FFN
