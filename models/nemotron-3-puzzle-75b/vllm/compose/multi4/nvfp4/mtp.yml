@@ -117,7 +117,7 @@ services:
       - --
     command:
       - --model
-      - /root/.cache/huggingface/nemotron-3-puzzle-75b-a9b-nvfp4
+      - /root/.cache/huggingface/nemotron-3-puzzle-75b-nvfp4
       - --served-model-name
       - nemotron-3-puzzle-75b
       - --tensor-parallel-size
