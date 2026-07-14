@@ -140,7 +140,7 @@ services:
       # precision-sensitive; that is exactly why NVIDIA rounds instead of shrinking it.
       - --mamba-backend
       - flashinfer
-      - --mamba_ssm_cache_dtype
+      - --mamba-ssm-cache-dtype
       - float16
       - --enable-mamba-cache-stochastic-rounding
       - --mamba-cache-philox-rounds
