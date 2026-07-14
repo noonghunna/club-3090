@@ -5,22 +5,23 @@
 #   Topology:  Quad 3090 PCIe (TP=4, no NVLink — auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (NVIDIA's built-in MTP head — the accelerated path from the card)
 #   KV:        two separate caches (hybrid model):
-#              • Attention layers → default (bf16); tiny (few attn layers). fp8 is an
-#                OPTIONAL lever only when chasing 1M ctx — NOT set here.
+#              • Attention layers → fp8_e4m3 (checkpoint declares this scheme; vLLM
+#                auto-selects it, made explicit via --kv-cache-dtype fp8). Storage-only on Ampere.
 #              • Mamba2 SSM state → float16 + stochastic rounding (NVIDIA's config;
 #                precision-critical recurrent state — do NOT fp8 this).
 #   Vision:    no
-#   Max ctx:   262K default (model card: up to 1M) — ESTIMATE, unmeasured on Ampere
+#   Max ctx:   200K default (TheFuzy's proven 4×3090 value, #706; card: up to 1M) — env-overridable
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 EXPERIMENTAL — UNTESTED on this stack; Ampere unvalidated by NVIDIA
-#   Best for:  Quad-3090 owners wanting a fast 75B-class hybrid MoE — COMMUNITY-FLOAT draft
+#   Status:    🧪 EXPERIMENTAL — quant/kernel path CONFIRMED on 4×3090 (#706); config fit-tuned
+#              for 24 GB, pending end-to-end re-test
+#   Best for:  Quad-3090 owners wanting a fast 75B-class hybrid MoE — single-stream (concurrency TBD)
 # ---------------------------------------------------------------------------
-# ⚠️  READ BEFORE RUNNING — this is a SPECULATIVE Ampere port, not a validated recipe.
+# ⚠️  STATUS — CONFIRMED to load + serve on 4× RTX 3090 (@TheFuzy ran an equivalent config, #706).
 #
 # NVIDIA's model card lists supported microarchitectures as **Blackwell + Hopper ONLY**
 # (tested on 1×/8× H100 and 8× B200). NVFP4 is "optimized for Blackwell-class GPUs."
-# There is NO Ampere / consumer-GPU support statement. On a 4× RTX 3090 (Ampere sm_86)
-# FOUR things are unproven and any one could stop it booting:
+# There is NO Ampere / consumer-GPU support statement — yet it runs. FOUR things we'd flagged
+# as boot risks are now all CONFIRMED WORKING (#706); kept below as the record of the unknowns:
 #   1. NVFP4 (routed experts) + FP8 (Mamba/shared projections) → on sm_86 there is no
 #      native FP4/FP8 compute, so both must DEQUANTIZE (NVFP4 → Marlin W4A16, FP8 → bf16).
 #      Whether vLLM's ModelOpt loader provides that fallback for THIS mixed scheme on
@@ -43,15 +44,17 @@
 # club-3090's PCIe multi-card conventions. VALIDATE each flag against the pinned image before
 # trusting it (v0.20.0 → v0.24.0 flag drift is possible).
 #
-# VRAM (ESTIMATE, unmeasured): ~44–48 GB weights (mixed NVFP4/FP8) + the MTP head across 96 GB
-# (4×3090) → ~12 GB/card, huge headroom for the tiny hybrid-KV. Comfortably fits; the constraint
-# is correctness, not memory. (Will NOT fit a usable context on 2×3090 — hence no local eval.)
+# VRAM (MEASURED, #706): weights = 13.31 GiB/card. Memory IS the constraint on 24 GB, not
+# correctness — our first cut OOM'd at 262K single-stream in the profile run (chunked prefill
+# was off, so it tried to prefill the full ctx in one shot). Fixed here: chunked prefill ON +
+# --max-num-batched-tokens 8192 + --max-model-len 200000 + fp8_e4m3 KV. (Still won't fit the
+# maintainer's 2×3090 — hence no local eval.)
 #
 # num_speculative_tokens: NVIDIA left this a variable. 3 is a reasonable start; tune to the MTP
 # head depth / your accept rate. Override with NUM_SPEC_TOKENS=.
 #
-# Run (direct docker — NOT registry-wired; there is no launch.sh slug for this yet):
-#   docker compose -f nemotron-3-puzzle-75b-multi4-nvfp4-mtp.yml up -d
+# Run (registry-wired as vllm/nemotron-75b-multi-mtp; experimental → --force):
+#   bash scripts/switch.sh vllm/nemotron-75b-multi-mtp --force
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
@@ -142,11 +145,15 @@ services:
       - --enable-mamba-cache-stochastic-rounding
       - --mamba-cache-philox-rounds
       - "5"
-      # --- attention KV cache: left at DEFAULT (bf16). It's tiny on this hybrid (few
-      # attention layers), so fp8 buys little on 96 GB. To chase the 1M ceiling later,
-      # add:  --kv-cache-dtype fp8   (Ampere = storage-only, no speed) — NOT in base. ---
+      # --- attention KV cache: fp8 (the NVFP4 checkpoint declares kv_cache_scheme
+      # fp8_e4m3 — vLLM auto-selects it; made explicit here, and matches TheFuzy's
+      # working 4×3090 config on #706). Storage-only on Ampere (no native fp8 compute). ---
+      - --kv-cache-dtype
+      - fp8
+      # 200000 = TheFuzy's proven single-stream max-model-len on 4×3090 (#706). Our 262K
+      # OOM'd in the profile run; env-overridable up for cards with headroom to spare.
       - --max-model-len
-      - "${MAX_MODEL_LEN:-262144}"
+      - "${MAX_MODEL_LEN:-200000}"
       # NVIDIA's stated default is 0.85 (0.9 only for H200-class / more VRAM). 0.85 is
       # also the safer first-boot value with the 512-expert MoE + CUDA-graph capture.
       - --gpu-memory-utilization
@@ -155,10 +162,21 @@ services:
       # checkpoint's quant config (faithful to NVIDIA). If auto-detect misfires on
       # Ampere, try:  --quantization modelopt_fp4
       - --trust-remote-code
-      # Chunked prefill OFF — NVIDIA's explicit throughput recommendation for this model
-      # (`--no-enable-chunked-prefill`; also the safer path for hybrid-Mamba prefill).
-      # vLLM defaults chunked-prefill ON, so this flag is required to honor the rec.
-      - --no-enable-chunked-prefill
+      # Chunked prefill ON — REQUIRED to fit 24 GB (the OOM fix; #706 / TheFuzy 4×3090).
+      # NVIDIA's card recommends OFF for throughput, but that assumes 80 GB datacenter
+      # cards; on a 24 GB card OFF makes the profile run prefill the full max-model-len in
+      # ONE shot → ~9 GiB activation spike on top of 13.3 GiB weights → OOM. Chunked
+      # prefill + a capped batch keeps the profile run within budget.
+      - --enable-chunked-prefill
+      - --enable-prefix-caching
+      - --max-num-batched-tokens
+      - "8192"
+      # Single-stream (seqs=1) for the first boot — matches TheFuzy's proven config. Each
+      # concurrent seq needs its own Mamba SSM-state cache, so concurrency (+ the
+      # --long-prefill-token-threshold scheduling win) is a follow-up once a community
+      # memory report shows the actual VRAM headroom. Env-overridable to experiment.
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
       - --reasoning-parser
       - nemotron_v3
       - --enable-auto-tool-choice
