@@ -161,6 +161,14 @@ services:
       - "${MAX_MODEL_LEN:-200000}"
       # NVIDIA's stated default is 0.85 (0.9 only for H200-class / more VRAM). 0.85 is
       # also the safer first-boot value with the 512-expert MoE + CUDA-graph capture.
+      # HEADROOM — util goes ENTIRELY to the KV pool (weights/activation/CUDA-graph are fixed),
+      # so raising it buys context + concurrency. Measured @ util 0.85 (@TheFuzy, #706): KV pool
+      # 314,979 tokens → N=2 both-streams-at-full ceiling ≈ 157K (pool÷2); a single 262K stream
+      # fits. Each +0.01 util ≈ +240 MB/card KV ≈ +25K pool tokens (~+12K per stream at N=2).
+      # Estimates (extrapolated — confirm live): 0.88 → ~185K N=2 · 0.90 → ~200K · 0.92 → ~222K,
+      # but 0.92 leaves only ~1.5 GB/card margin — this hybrid's Mamba/GDN forward spikes activation
+      # (it's what OOM'd the profile_run under --no-enable-chunked-prefill), so >0.90 risks OOM under
+      # a concurrent prefill. 0.88–0.90 is the safe "more room" bump; boot + soak before trusting >0.90.
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.85}"
       # No --quantization flag: vLLM auto-detects the mixed NVFP4/FP8 scheme from the
