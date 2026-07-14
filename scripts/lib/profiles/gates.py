@@ -68,18 +68,24 @@ from typing import Any, Callable, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Arch-kernel SM rule (locked design [C0] / brief): per-KV-format SM floors —
-# none loadable on Ampere sm_86 (RTX 3090). Floors are the vLLM kernel truth:
-#   fp8_e4m3            8.9  — vLLM "FP8 KV cache … requires SM89+" (Ada+;
-#                              was 9.0 here — corrected for #246, since the
-#                              launcher now injects e4m3 on 4090s. The gemma
-#                              fp8 slug keeps its explicit required_sm 9.0.)
+# Arch-kernel SM rule (locked design [C0] / brief): per-KV-format SM floors.
+# Floors are the vLLM kernel truth:
+#   fp8_e4m3            8.6  — CORRECTED 2026-07-14: fp8_e4m3 KV *storage* runs on
+#                              Ampere sm_86 via FlashInfer (live-verified — Qwen3-
+#                              Next dual-fast + 35b-a3b + vibethinker bf16 all boot
+#                              on 2x3090, FlashInfer selected, coherent). The old
+#                              "requires SM89+" floor was really the *Triton* fp8e4nv
+#                              path (W4A16 models like Gemma) — those keep their
+#                              explicit registry required_sm (gemma fp8 = 9.0), which
+#                              still gates them here. So e4m3's own floor is just
+#                              Ampere-minimum; per-model Triton gating lives in
+#                              required_sm. Mirrors compat.py `_fp8w_ampere_kv`.
 #   turboquant_3bit_nc  9.0  — MAINLINE TQ3 kernels (Genesis-Ampere TQ3 is a
 #                              different path; mirrors arch_patches Gemma
 #                              kernel_constraints)
 #   nvfp4               family-gated (see _ARCH_KERNEL_SM_FAMILY) — NOT a floor
 _ARCH_KERNEL_SM = {
-    "fp8_e4m3": 8.9,
+    "fp8_e4m3": 8.6,
     "turboquant_3bit_nc": 9.0,
 }
 
@@ -526,7 +532,9 @@ def c0_engine_support(
             f"registry.required_sm={entry.get('required_sm')}, "
             f"arch-kernel[{kv_format}]="
             f"{_ARCH_KERNEL_SM.get(kv_format, 0.0):g}); "
-            f"e.g. fp8_e4m3 needs SM 8.9+, Gemma-TQ3 SM 9.0+ — NOT loadable on sm_86"
+            f"e.g. Gemma-4 fp8 needs SM 9.0+ (Triton fp8e4nv path; via required_sm), "
+            f"Gemma-TQ3 SM 9.0+ — NOT loadable on sm_86 (fp8_e4m3 KV itself runs on "
+            f"Ampere via FlashInfer for FlashInfer-path models)"
         )
 
     # 3d-bis. family-specific kernels — a numeric floor can't express these.

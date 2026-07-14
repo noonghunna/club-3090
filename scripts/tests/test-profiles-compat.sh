@@ -155,12 +155,25 @@ assert not r.valid
 assert any(reason.startswith("C4:") for reason in r.reasons), r.reasons
 PY
 
-run_test "C5 hardware KV support: Ampere rejects fp8_e4m3" <<'PY'
+run_test "C5 hardware KV support: Ampere rejects fp8_e4m3 on the Triton path (gemma)" <<'PY'
 from scripts.lib.profiles.compat import load_profiles, fits
 p = load_profiles()
-r = fits([p.hardware["rtx-3090"]], p.models["qwen3.6-27b"], p.workloads["long-ctx-single"], p.engines["vllm-nightly-mtp"], kv_format="fp8_e4m3", tp=1, project_vram=False)
+# gemma-4 (W4A16 → Triton, whose fp8e4nv path needs sm_89+) is the Triton-path model:
+# fp8_e4m3 KV is correctly REJECTED on Ampere. (Qwen3-Next routes to FlashInfer and is
+# now allowed on Ampere — see the positive test below; changed 2026-07-14.)
+r = fits([p.hardware["rtx-3090"]], p.models["gemma-4-31b"], p.workloads["long-ctx-single"], p.engines["vllm-gemma-stable"], kv_format="fp8_e4m3", tp=1, project_vram=False)
 assert not r.valid
 assert any(reason.startswith("C5:") for reason in r.reasons), r.reasons
+PY
+
+run_test "C5 hardware KV support: Ampere ALLOWS fp8_e4m3 for Qwen3-Next (FlashInfer path)" <<'PY'
+from scripts.lib.profiles.compat import load_profiles, fits
+p = load_profiles()
+# Qwen3-Next (DeltaNet hybrid attn) routes fp8_e4m3 KV to FlashInfer on sm_86 regardless of
+# weight variant — live-verified 2026-07-14 (dual-fast autoround-int4 + 35b-a3b-dual both boot,
+# FlashInfer selected, coherent). So C5 must PASS even with autoround-int4 weights on the 3090.
+r = fits([p.hardware["rtx-3090"], p.hardware["rtx-3090"]], p.models["qwen3.6-27b"], p.workloads["long-ctx-single"], p.engines["vllm-stable"], p.drafters["qwen-mtp-builtin"], kv_format="fp8_e4m3", tp=2, weights_variant="autoround-int4", project_vram=False)
+assert "C5" not in r.diagnostics["constraints_failed"], r.reasons
 PY
 
 run_test "C6 Genesis one-way: TQ3 KV on non-Genesis engine rejected (via C15)" <<'PY'
@@ -298,7 +311,7 @@ name = to_compose_name(
     p.models["qwen3.6-27b"],
     p.engines["vllm-stable"],
     p.drafters["qwen-mtp-builtin"],
-    "fp8_e5m2",
+    "fp8_e4m3",
     2,
     1,
     workload=p.workloads["long-ctx-single"],

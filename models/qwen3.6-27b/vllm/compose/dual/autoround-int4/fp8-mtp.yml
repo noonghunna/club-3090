@@ -3,7 +3,7 @@
 #   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (built-in)
-#   KV:        fp8_e5m2 (1 byte/token)
+#   KV:        fp8_e4m3 (1 byte/token — more mantissa precision than e5m2; matches dual-max)
 #   Vision:    yes
 #   Max ctx:   262K (237K single-prompt verified)
 #   Genesis:   none — intentionally Genesis-free (isolation control + fallback)
@@ -26,7 +26,7 @@
 #     69.05 narr (CV 2.3%) / 88.58 code (CV 3.4%) TPS single-stream, AL 3.4, VRAM 23.6 GB/card
 #
 # What's intentionally NOT enabled:
-#   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e5m2 is plenty for
+#   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e4m3 is plenty for
 #     262K across two cards. For 4-stream concurrency at 262K, switch to
 #     dual/turbo.yml (which uses TurboQuant KV + Genesis P65).
 #
@@ -160,7 +160,7 @@ services:
       - --max-num-batched-tokens
       - "8192"
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
       # froggeric chat-template override (see volumes block + docs/UPSTREAM.md)
       - --chat-template
@@ -174,6 +174,17 @@ services:
       - qwen3_coder
       - --enable-prefix-caching
       - --enable-chunked-prefill
+      # Head-of-line fix (Zylone's vLLM tip; validated on-rig 2026-07-14). Caps a long
+      # prefill's per-step tokens so a concurrent short/agentic request isn't starved.
+      # DEFAULT 2048 = ON — this is an N=2 concurrency lane. On-rig A/B (262K, N=2):
+      # short-request TTFT under a 60K concurrent prefill 14.8s -> 2.6s @ 2048 (5.8x);
+      # 5.5s @ 4096 (2.7x). Works at NATIVE 262K — the DeltaNet block_size is 1600 here
+      # (well under the 8192 batch), so no context-lowering needed. Must stay
+      # < max-num-batched-tokens (8192) and >= block_size (1600 @ 262K).
+      # Scheduling-only (no quality change); ~6% slower on an UNCONTENDED long prefill.
+      # Set LONG_PREFILL_TOKEN_THRESHOLD=0 to disable.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-2048}"
       - --speculative-config
       - '{"method":"mtp","num_speculative_tokens":3}'
       - --override-generation-config

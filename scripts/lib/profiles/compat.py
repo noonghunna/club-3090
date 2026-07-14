@@ -899,7 +899,19 @@ def fits(
     # would route to Triton and still fail — this proxy would wrongly allow it; revisit then.
     # nvfp4 weights added 2026-07-13 (#686): tess/qwen NVFP4 run e4m3 KV via FlashInfer
     # on sm_86 — live-validated (A0 8-pack on 2x3090, BENCHMARKS) — while gemma stays rejected.
-    _fp8w_ampere_kv = effective_kv == "fp8_e4m3" and str(effective_weights or "").startswith(("fp8", "nvfp4"))
+    # Qwen3-Next family added 2026-07-14: autoround-int4 weights + e4m3 KV ALSO route to
+    # FlashInfer on sm_86 (live-verified — dual-fast + 35b-a3b-dual boot: block_size 1600/2096,
+    # FlashInfer selected, coherent). The backend split is model-driven (DeltaNet hybrid attn),
+    # NOT weight-variant-driven, so key on family here — gemma (gemma4-swa-dense) stays on
+    # Triton → correctly rejected regardless of weight variant. See docs/DTYPE_MATRIX.md.
+    # bf16/fp16 (full-precision) weights added 2026-07-14: no W4A16 quant kernel to force
+    # Triton, so fp8_e4m3 KV routes to FlashInfer on sm_86 — live-verified on vibethinker-3b
+    # (bf16 Qwen2-dense: FlashInfer selected, coherent). Only gemma-style W4A16 on a non-
+    # qwen3-next family still routes to Triton → stays correctly rejected.
+    _fp8w_ampere_kv = effective_kv == "fp8_e4m3" and (
+        str(effective_weights or "").startswith(("fp8", "nvfp4", "bf16", "fp16"))
+        or model.family.startswith("qwen3-next")
+    )
     unsupported_hw = [
         hw.id for hw in hardware
         if effective_kv not in hw.supported_kv_formats

@@ -5,7 +5,8 @@
 #   Drafter:   none — NO MTP head in the checkpoint (safetensors-verified: 0 mtp
 #              tensors of 62,547; config's mtp_num_hidden_layers=1 is an inherited
 #              arch default). EAGLE/DFlash blocked on Qwen3-Next (DeltaNet rollback).
-#   KV:        fp8_e5m2 (storage-only on Ampere)
+#   KV:        fp8_e4m3 (FlashInfer on Ampere, verified 2026-07-14; +1 mantissa bit vs e5m2 —
+#              and e4m3 is the correct pairing for an fp8-dynamic checkpoint)
 #   Vision:    yes (limit-mm-per-prompt image=2)
 #   Max ctx:   262K — staggered-NIAH exact-recall validated to 240K (91%), VRAM Δ0
 #   Genesis:   N/A on this path (drafter-free stock vLLM; Genesis is Qwen3-Next-
@@ -228,7 +229,7 @@ services:
       - --limit-mm-per-prompt
       - '{"image":2,"audio":0}'
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --reasoning-parser
       - qwen3
       - --default-chat-template-kwargs
