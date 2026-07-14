@@ -137,6 +137,12 @@ services:
       - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
       - --enable-prefix-caching
       - --enable-chunked-prefill
+      # Head-of-line fix: cap a long prefill's per-step tokens so a concurrent short/agentic
+      # request gets budget in the same step. Must be < max-num-batched-tokens (4096) and
+      # >= block_size (Gemma non-hybrid -> small, no floor). On-rig A/B 2026-07-14: short-request
+      # TTFT under a 60K concurrent prefill 18.0s -> 1.09s (16.5x); solo long-prefill +~6%.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-2048}"
       # ⏸️ MTP DISABLED on v0.24.0 — Gemma-4 MTP × tool-calling is broken (upstream vLLM #39043;
       #    MTP fix #42006 closed-unmerged). A/B-verified on-rig 2026-07-01: MTP-off tools PASS,
       #    MTP-on tools FAIL (<pad>/<|tool_call> leak). Re-enable when a stable vLLM ships the fix:

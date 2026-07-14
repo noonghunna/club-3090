@@ -170,6 +170,12 @@ services:
       - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
       - --enable-prefix-caching
       - --enable-chunked-prefill
+      # Head-of-line fix: cap a long prefill's per-step tokens so a concurrent short/agentic
+      # request gets budget in the same step. Must be < max-num-batched-tokens (4096) and
+      # >= block_size (Gemma non-hybrid -> small, no floor). On-rig A/B 2026-07-14: short-request
+      # TTFT under a 60K concurrent prefill 18.0s -> 1.09s (16.5x); solo long-prefill +~6%.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-2048}"
       # External MTP assistant drafter — n=4 per gemma-26b-it-assistant DrafterProfile.
       # Same external-drafter path as the dual; bypasses MoE expert routing.
       - --speculative-config
