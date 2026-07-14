@@ -463,6 +463,16 @@ InternScience's own 35B agentic MoE (Qwen3-Next MoE architecture; card declares 
 
 ---
 
+## Nemotron-3-Puzzle-75B-A9B (NVIDIA NVFP4 hybrid MoE — ⚠️ production w/ caveats)
+
+NVIDIA's Nemotron-3-Puzzle-75B-A9B — a **Mamba2-Transformer Hybrid LatentMoE** (75.3B total / 9.3B active, 512 routed + 1 shared expert), NVFP4 modelopt-mixed weights (NVFP4 routed-expert FFNs + FP8 Mamba/shared projections). The **quad-3090 flagship**: a fast 75B-class hybrid MoE for 4-card owners (dense Qwen 27B underuses 96 GB). NVIDIA's card lists Blackwell/Hopper only — but it runs clean on **Ampere** via the NVFP4→Marlin-W4A16 + FP8→bf16 dequant + `flashinfer`-Mamba fallbacks. First validated end-to-end by @TheFuzy on 4×3090 ([#706](https://github.com/noonghunna/club-3090/discussions/706)).
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `vllm/nemotron-75b-multi-mtp` | @TheFuzy (4× 3090 PCIe, EPYC 7302P, 250 W caps, PCIe-P2P engaged; [#706](https://github.com/noonghunna/club-3090/discussions/706)) | fp8_e4m3 attn + fp16 Mamba SSM | 200K (**N=2**) | **104 / 128** (decode 105.4 / 130.3, n=5, CV 4.6%, TTFT 148 / 130 ms) | 2.9K→4.9K t/s (10K→30K NIAH) | ~21.4 GB/card | 2026-07-14 | **First real Ampere datapoint — full validation at N=2 concurrency.** TP=4 + expert-parallel, MTP n=3, `--mamba-backend flashinfer`, util 0.85. **verify-full 9/9** (incl. streaming tool-calls thinking-ON, no leak) · **verify-stress** NIAH clean @10K+30K + ~25K tool-prefill OK · **soak-continuous PASS** (0 MiB growth, 0/25 silent-empty, 100% retention, p50 **185 TPS** batched) · agentic decode 128–146 TPS to 44K ctx (sub-linear TTFT). KV pool 4.18 GiB = 314,979 tokens. ⚠️ 8-pack quality pending; 262K + N≥4 untested (pool > 262K → 262K should fit). |
+
+---
+
 ## Quality benches — Aider Polyglot 30
 
 Pass rate on a curated 30-exercise subset of [aider-polyglot-benchmark](https://github.com/Aider-AI/polyglot-benchmark) (5 per language across cpp/go/java/javascript/python/rust, mix of easy/medium/hard). Tests **edit-format reliability** AND **algorithmic correctness** — does the model emit diffs aider can apply, AND do the resulting tests pass.

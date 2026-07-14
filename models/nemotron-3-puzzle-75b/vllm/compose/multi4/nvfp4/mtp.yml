@@ -12,11 +12,16 @@
 #   Vision:    no
 #   Max ctx:   200K default (TheFuzy's proven 4×3090 value, #706; card: up to 1M) — env-overridable
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 EXPERIMENTAL — quant/kernel path CONFIRMED on 4×3090 (#706); config fit-tuned
-#              for 24 GB, pending end-to-end re-test
-#   Best for:  Quad-3090 owners wanting a fast 75B-class hybrid MoE — single-stream (concurrency TBD)
+#   Status:    ⚠️ Production w/ caveats — FULL 4×3090 validation 2026-07-14 (@TheFuzy, #706):
+#              verify-full 9/9 + verify-stress (NIAH clean) + soak-continuous PASS + bench + agentic,
+#              at N=2 concurrency. First real Ampere datapoint; see BENCHMARKS.md.
+#   Caveats:   • 8-pack behavioral quality NOT yet run (operational metrics only) • single-rig
+#              validation (one 4×3090) • ships max_num_seqs=1 default (N=2 validated — env-overridable)
+#              • 200K default (262K untested — KV pool 314,979 tok > 262K, should fit; confirm live).
+#   Best for:  Quad-3090 owners wanting a fast 75B-class hybrid MoE — validated at N=2 concurrency ⭐
 # ---------------------------------------------------------------------------
-# ⚠️  STATUS — CONFIRMED to load + serve on 4× RTX 3090 (@TheFuzy ran an equivalent config, #706).
+# ⚠️  STATUS — FULLY VALIDATED on 4× RTX 3090 (@TheFuzy, #706): verify 9/9 + stress + soak PASS
+#     + bench + agentic, at N=2. Promoted 🧪 → ⚠️ Production w/ caveats 2026-07-14 (8-pack pending).
 #
 # NVIDIA's model card lists supported microarchitectures as **Blackwell + Hopper ONLY**
 # (tested on 1×/8× H100 and 8× B200). NVFP4 is "optimized for Blackwell-class GPUs."
