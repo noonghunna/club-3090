@@ -3,7 +3,7 @@
 #   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
 #   Topology:  Quad 3090 (TP=4, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (built-in)
-#   KV:        fp8_e5m2 (1 byte/token)
+#   KV:        fp8_e4m3 (1 byte/token)
 #   Vision:    yes
 #   Max ctx:   262K (237K single-prompt verified)
 #   Genesis:   none — intentionally Genesis-free (isolation control + fallback)
@@ -17,7 +17,7 @@
 #   Best for:  4-card Qwen "fast" tier (vllm/qwen-27b-multi-fast) — AutoRound int4 + fp8 KV + MTP, TP=4 ⭐
 # ---------------------------------------------------------------------------
 # Quad RTX 3090 — Qwen3.6-27B "fast" tier at TP=4 (vllm/qwen-27b-multi-fast).
-# AutoRound INT4 weights + MTP n=3 + fp8_e5m2 KV + vision. The serving config is
+# AutoRound INT4 weights + MTP n=3 + fp8_e4m3 KV + vision. The serving config is
 # identical to the 2-card vllm/dual (≡ vllm/qwen-27b-dual-fast) — only the
 # tensor-parallel size and the required gpu-count bump to 4. vllm/dual at TP=2 is
 # the on-rig proxy (this dev rig has 2 cards). Promoted to ✅ Production 2026-07-05
@@ -28,7 +28,7 @@
 # What the extra cards buy you (vs the 2-card vllm/dual):
 #   - TP=4 → ~2× the aggregate KV headroom at 262K (more concurrent streams /
 #     more decode-batch room) and the weights sharded thinner per card
-#   - everything else identical: full 262K, vision + tools + MTP n=3, fp8_e5m2 KV
+#   - everything else identical: full 262K, vision + tools + MTP n=3, fp8_e4m3 KV
 #
 # Pair with the "max accuracy" 4-card tier (vllm/qwen-27b-multi-max,
 # multi4/fp8/mtp.yml): FP8 weights + int8-PTH KV for higher fidelity at 262K.
@@ -149,7 +149,7 @@ services:
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
       # froggeric chat-template override (see volumes block + docs/UPSTREAM.md)
       - --chat-template
@@ -163,6 +163,14 @@ services:
       - qwen3_coder
       - --enable-prefix-caching
       - --enable-chunked-prefill
+      # Head-of-line fix (Zylone; validated on the dual-fast sibling — same 27B, block_size
+      # 1600, batch 8192). DEFAULT 2048 = ON (N=2 concurrency lane): caps a long prefill's
+      # per-step tokens so a concurrent short/agentic request isn't starved. The 4-card
+      # analogue of the dual-fast A/B (14.8s -> 2.6s @ 2048); not independently 4-card boot-
+      # tested here. Must stay < max-num-batched-tokens (8192) and >= block_size (1600).
+      # Set LONG_PREFILL_TOKEN_THRESHOLD=0 to disable.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-2048}"
       - --speculative-config
       - '{"method":"mtp","num_speculative_tokens":3}'
       - --override-generation-config

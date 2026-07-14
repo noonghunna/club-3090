@@ -4,7 +4,7 @@
 #              SFT+RL fine-tune of Qwen2.5-Coder-3B. Qwen2 dense, GQA 16h/2kv.)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   none (no spec-decode — no MTP head, no matched draft model)
-#   KV:        fp8_e5m2 (storage-only — bf16 weights untouched, so NO quality hit; halves the
+#   KV:        fp8_e4m3 (storage-only — bf16 weights untouched, so NO quality hit; halves the
 #              cache. At the default single-concurrency mem_util 0.40 → 174K-token / 1.33x pool,
 #              ~9.8 GB total, frees ~14 GB to co-reside w/ a 27B — full 131K retained)
 #   Vision:    no (text-only)
@@ -20,9 +20,9 @@
 #              (AIME, LiveCodeBench, LeetCode). NOT an open-domain-knowledge or
 #              prose model (the authors say so) — pick a larger general model for that.
 # ---------------------------------------------------------------------------
-# VibeThinker-3B on vLLM — single 3090, bf16 weights + fp8_e5m2 KV.
+# VibeThinker-3B on vLLM — single 3090, bf16 weights + fp8_e4m3 KV.
 # A 3B reasoning model: ~5.8 GB of bf16 weights leave the bulk of a 24 GB card free.
-# KV is quantized to fp8_e5m2 (storage-only — weights stay bf16, so quality is intact;
+# KV is quantized to fp8_e4m3 (storage-only — weights stay bf16, so quality is intact;
 # A/B'd 2026-06-16: math/code answers identical to bf16 KV). Combined with single concurrency
 # (max_num_seqs=1) the default GPU_MEMORY_UTILIZATION is 0.40 — sized for ONE full-131K stream,
 # not a fat multi-seq pool: ~9.8 GB total (5.8 GB weights + a 174K-token / 1.33x fp8-KV pool),
@@ -61,7 +61,7 @@
 #                                               ~0.37 is the 1.0x floor for full 131K; raise for
 #                                               more concurrency; lower needs a smaller MAX_MODEL_LEN.)
 #   MAX_NUM_SEQS     concurrent sequences      (default: 1 — single concurrency)
-#   KV_CACHE_DTYPE   K/V cache dtype           (default: fp8_e5m2; set 'auto' for bf16 KV)
+#   KV_CACHE_DTYPE   K/V cache dtype           (default: fp8_e4m3; set 'auto' for bf16 KV)
 #   TEMP / TOP_P / TOP_K / MIN_P               (defaults: 1.0 / 0.95 / -1 / 0.0)
 #   PORT             host port                 (default: 8074)
 #   VLLM_IMAGE       engine image              (default: vllm/vllm-openai:v0.22.0)
@@ -141,7 +141,7 @@ services:
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-1}"
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
       # NO tool-calling: VibeThinker is a math/code/STEM reasoning model — the authors
       # don't support function-calling, and it emits bare JSON (not <tool_call>) so no

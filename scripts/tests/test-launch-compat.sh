@@ -117,11 +117,13 @@ GPU_5090X2='0|NVIDIA GeForce RTX 5090|32607|12.0;1|NVIDIA GeForce RTX 5090|32607
 # ampere -> NOTHING injected (compose defaults; the no-op is data equality)
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_3090")"
 assert_not_contains "$out" "KV_CACHE_DTYPE"
-# ada / blackwell pilot slugs -> native-fp8 swap
+# vllm/dual + vllm/minimal are now fp8_e4m3-native on ALL arches (2026-07-14 KV switch): the
+# compose default already gives native fp8 on Ada/Blackwell, so there is nothing to swap -> no
+# injection. (#246's Qwen e5m2->e4m3 arch-swap is now vestigial for these slugs — see followup.)
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "$GPU_4090")"
-assert_contains "$out" "KV_CACHE_DTYPE=fp8_e4m3"
+assert_not_contains "$out" "KV_CACHE_DTYPE"
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/minimal --format shell --gpu-spec "$GPU_5090X2")"
-assert_contains "$out" "KV_CACHE_DTYPE=fp8_e4m3"
+assert_not_contains "$out" "KV_CACHE_DTYPE"
 # non-pilot slug (same kv_format) -> no injection until the #246 A/B expands the pilot
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/qwen-27b-dual-fast --format shell --gpu-spec "$GPU_4090")"
 assert_not_contains "$out" "KV_CACHE_DTYPE"

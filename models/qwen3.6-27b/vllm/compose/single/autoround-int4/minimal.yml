@@ -3,7 +3,7 @@
 #   Model:     Qwen3.6-27B (Lorbus AutoRound INT4 + BF16 mtp.fc preserved)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   none (no spec-decode — simplest path)
-#   KV:        fp8_e5m2 (no TQ3 to avoid cudagraph cascade bugs)
+#   KV:        fp8_e4m3 (no TQ3 to avoid cudagraph cascade bugs)
 #   Vision:    no
 #   Max ctx:   65K (mem-util 0.95)
 #   Genesis:   none — bare vLLM, isolation control
@@ -118,7 +118,7 @@ services:
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-1}"
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
       # froggeric chat-template override (see volumes block + docs/UPSTREAM.md)
       - --chat-template

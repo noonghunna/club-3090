@@ -4,7 +4,7 @@
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   none (smoke compose — built-in MTP head added in a follow-up
 #              once base boot is validated)
-#   KV:        fp8_e5m2 (no TQ3 — Genesis-only, not available here)
+#   KV:        fp8_e4m3 (FlashInfer on sm_86; no TQ3 — Genesis-only, not available here)
 #   Vision:    off (limit-mm-per-prompt image=0 audio=0) for first boot
 #   Max ctx:   8K (conservative — KV pool tight after 20 GB weights on 24 GB card)
 #   Genesis:   N/A — stock vLLM v0.22.0 (vllm-stable); Genesis path retired (#254)
@@ -29,7 +29,9 @@
 #   draft : none on this compose
 #
 # KV format:
-#   - fp8_e5m2 chosen over fp8_e4m3 (Triton fp8e4nv unsupported on sm_86).
+#   - fp8_e4m3 (not e5m2): finer KV precision; routes to FlashInfer on sm_86 (the
+#     "fp8e4nv unsupported" note was the Triton path only — verified on the dual MoE
+#     2026-07-14, same model + loader). e5m2 was the incidental prior default.
 #   - TQ3 not available without Genesis.
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
@@ -109,7 +111,7 @@ services:
       - --limit-mm-per-prompt
       - '{"image":0,"audio":0}'
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
       - --reasoning-parser
       - qwen3

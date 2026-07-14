@@ -6,8 +6,8 @@
 #              this MoE under vLLM TP=2: the draft forward incurs inter-GPU sync
 #              the acceptance gain can't amortize). MTP head is present in the
 #              weights but intentionally unused. See dual-mtp variant / BENCHMARKS.
-#   KV:        fp8_e5m2 (1 B/tok; vLLM's only viable KV quant on sm_86 —
-#              q5_0/q4_1/asymmetric K-V are llama.cpp-only and unnecessary here)
+#   KV:        fp8_e4m3 (1 B/tok; +1 mantissa bit vs e5m2 for finer KV precision —
+#              routes to FlashInfer on sm_86, verified live 2026-07-14; matches dual-max)
 #   Vision:    yes (limit-mm-per-prompt image=2) — vision tower retained + validated
 #   Max ctx:   262K (model's full max — NIAH-clean to 240K, 7.81× concurrency,
 #              2.05M-token KV pool: DeltaNet-hybrid KV is cheap so 262K fits easily)
@@ -44,7 +44,12 @@
 #   draft : none
 #
 # KV format:
-#   - fp8_e5m2 chosen over fp8_e4m3 (Triton fp8e4nv unsupported on sm_86).
+#   - fp8_e4m3 (not e5m2): +1 mantissa bit → finer KV precision at 1 B/tok, and matches
+#     dual-max. The prior "fp8e4nv unsupported on sm_86" note was the Triton path only —
+#     the fp8-checkpoint→FlashInfer path handles e4m3 on Ampere (verified live 2026-07-14:
+#     FlashInfer, block_size 2096, KV pool 2.0M, coherent). e5m2 was the incidental prior
+#     default (AutoRound loader sidesteps vLLM's e5m2/fp8 guard). Quality numbers above
+#     predate the switch (e5m2); e4m3 expected neutral-or-better (KV-dtype 8-pack-neutral here).
 # ===========================================================================
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
@@ -144,7 +149,7 @@ services:
       - --limit-mm-per-prompt
       - '{"image":2,"audio":0}'
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-fp8_e5m2}"
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
@@ -155,3 +160,13 @@ services:
       - qwen3_coder
       - --enable-prefix-caching
       - --enable-chunked-prefill
+      # Head-of-line fix (Zylone's vLLM tip). Caps a long prefill's per-step tokens so a
+      # concurrent short/agentic request isn't starved. DEFAULT 0 = OFF here, on purpose:
+      # this compose ships max_num_seqs=1 (single-stream), so there is no concurrent request
+      # to protect — the flag is inert until you raise concurrency. To enable agentic serving:
+      #   MAX_NUM_SEQS=8 LONG_PREFILL_TOKEN_THRESHOLD=2560 switch.sh <slug>
+      # Value must stay < max-num-batched-tokens (8192) and >= block_size — which is 2096 at
+      # 262K on this MoE (live-measured 2026-07-14), so use >=2560, NOT 2048. Works at native
+      # 262K (no context-lowering needed). Scheduling-only; no quality change.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-0}"

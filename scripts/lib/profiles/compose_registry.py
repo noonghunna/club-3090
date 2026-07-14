@@ -163,7 +163,7 @@ COMPOSE_REGISTRY = {
     # Qwen 3.6 27B, vLLM single-card.
     "vllm/minimal": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-stable", drafter=None, kv_format="fp8_e5m2",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=1, max_ctx=32768, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml",
         default_port=8020,
@@ -173,7 +173,7 @@ COMPOSE_REGISTRY = {
     # Qwen 3.6 27B, vLLM dual/multi-card.
     "vllm/dual": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
         default_port=8010,
@@ -194,7 +194,7 @@ COMPOSE_REGISTRY = {
     # (qwen,vllm,dual) DEFAULT stays "vllm/dual" (the long-established slug).
     "vllm/qwen-27b-dual-fast": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
         default_port=8010,
@@ -233,7 +233,7 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/qwen-27b-multi-fast": _entry(
         model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
-        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e5m2",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/mtp.yml",
         default_port=8014,
@@ -805,7 +805,7 @@ COMPOSE_REGISTRY = {
     # slug `vllm/diffusiongemma-dual` (launch requires --force).
     "vllm/qwen-a3b-preview-single": _entry(
         model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-stable", drafter=None, kv_format="fp8_e5m2",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=1, max_ctx=8192, max_num_seqs=1, mem_util=0.95,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/single/autoround-int4/preview.yml",
         default_port=8050,
@@ -815,7 +815,7 @@ COMPOSE_REGISTRY = {
     ),
     "vllm/qwen-35b-a3b-dual": _entry(
         model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat",
-        engine="vllm-stable", drafter=None, kv_format="fp8_e5m2",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4/fp8.yml",
         default_port=8051,
@@ -873,7 +873,7 @@ COMPOSE_REGISTRY = {
     # swap + generate-compose (first model onboarded through the lane end-to-end).
     "vllm/agents-a1-dual": _entry(
         model="agents-a1", weights_variant="fp8-dynamic", workload="long-ctx-single",
-        engine="vllm-stable", drafter=None, kv_format="fp8_e5m2",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/agents-a1/vllm/compose/dual/fp8-dynamic/fp8.yml",
         default_port=8072,
@@ -977,7 +977,7 @@ COMPOSE_REGISTRY = {
     # (Qwen2 dense). First dense-family + first sub-4B model in the catalog.
     "vllm/vibethinker-3b-single": _entry(
         model="vibethinker-3b", weights_variant="bf16", workload="long-ctx-single",
-        engine="vllm-stable", drafter=None, kv_format="fp8_e5m2",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=1, max_ctx=131072, max_num_seqs=1, mem_util=0.40,
         compose_path="models/vibethinker-3b/vllm/compose/single/bf16/fp8.yml",
         default_port=8074,
