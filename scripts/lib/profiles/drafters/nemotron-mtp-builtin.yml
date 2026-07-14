@@ -1,0 +1,20 @@
+schema_version: 1
+id: nemotron-mtp-builtin
+display_name: Nemotron-3 Puzzle built-in MTP head
+spec_method: mtp
+model_compat:
+  - nemotron-3-puzzle-75b
+n_default: 3
+n_max: 7
+download: false
+vram_footprint_gb: 0
+status: experimental
+# Built-in MTP head shipped inside the NVFP4 checkpoint (the MTP layers are kept
+# higher-precision, not NVFP4-quantized). Grounded from NVIDIA's reference command:
+# '{"method":"mtp","num_speculative_tokens":N}' — n_default=3 (best throughput at
+# typical batch), 5/7 for latency-sensitive low-batch (card guidance). No separate
+# drafter weights → download: false, local_model_path: null. {N} is substituted from
+# n_default (or the compose's ${NUM_SPEC_TOKENS:-N} override). UNVALIDATED on Ampere —
+# MTP-over-Marlin-dequant on sm_86 is unverified; first 4x3090 boot is the check.
+speculative_config_template: '{"method":"mtp","num_speculative_tokens":{N}}'
+local_model_path: null

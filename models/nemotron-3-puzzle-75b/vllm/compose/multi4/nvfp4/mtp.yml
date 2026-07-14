@@ -1,0 +1,179 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Nemotron-3-Puzzle-75B-A9B (NVIDIA NVFP4 — 75.3B total / 9.3B active,
+#              Mamba2-Transformer Hybrid LatentMoE, 512 routed experts + 1 shared)
+#   Topology:  Quad 3090 PCIe (TP=4, no NVLink — auto-detected via NVLINK_MODE)
+#   Drafter:   MTP n=3 (NVIDIA's built-in MTP head — the accelerated path from the card)
+#   KV:        two separate caches (hybrid model):
+#              • Attention layers → default (bf16); tiny (few attn layers). fp8 is an
+#                OPTIONAL lever only when chasing 1M ctx — NOT set here.
+#              • Mamba2 SSM state → float16 + stochastic rounding (NVIDIA's config;
+#                precision-critical recurrent state — do NOT fp8 this).
+#   Vision:    no
+#   Max ctx:   262K default (model card: up to 1M) — ESTIMATE, unmeasured on Ampere
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🧪 EXPERIMENTAL — UNTESTED on this stack; Ampere unvalidated by NVIDIA
+#   Best for:  Quad-3090 owners wanting a fast 75B-class hybrid MoE — COMMUNITY-FLOAT draft
+# ---------------------------------------------------------------------------
+# ⚠️  READ BEFORE RUNNING — this is a SPECULATIVE Ampere port, not a validated recipe.
+#
+# NVIDIA's model card lists supported microarchitectures as **Blackwell + Hopper ONLY**
+# (tested on 1×/8× H100 and 8× B200). NVFP4 is "optimized for Blackwell-class GPUs."
+# There is NO Ampere / consumer-GPU support statement. On a 4× RTX 3090 (Ampere sm_86)
+# FOUR things are unproven and any one could stop it booting:
+#   1. NVFP4 (routed experts) + FP8 (Mamba/shared projections) → on sm_86 there is no
+#      native FP4/FP8 compute, so both must DEQUANTIZE (NVFP4 → Marlin W4A16, FP8 → bf16).
+#      Whether vLLM's ModelOpt loader provides that fallback for THIS mixed scheme on
+#      Ampere is the open question. No speed edge if it does (all 4-bit → same Marlin path).
+#   2. `--mamba-backend flashinfer` — FlashInfer's Mamba2 kernels on sm_86 are unverified here.
+#   3. The Puzzle per-layer heterogeneity (experts-per-token 4–22) under the aliased NemotronH path.
+#   4. **MTP spec-dec on the Ampere-dequantized path** — MTP is the ONE spec-dec method that
+#      works on hybrid/Mamba models (EAGLE/DFlash are blocked by state rollback), and NVIDIA
+#      validated it on Hopper/Blackwell — but MTP-over-Marlin-dequant on sm_86 is its own unknown.
+#      **If MTP errors or degrades, comment out the two `--speculative-config` lines in the command
+#      below to run without MTP — that isolates MTP from the base model load.**
+#
+# Arch support IS present: vLLM registry aliases `NemotronHPuzzleForCausalLM` →
+# `NemotronHForCausalLM`; confirmed in v0.24.0 (this pin) AND v0.25.0. NVIDIA validated on
+# vLLM v0.20.0. So the arch string will not be rejected — the risk is the Ampere quant/kernel
+# path (+ MTP on it), not the model registry. This draft exists to be floated to 4×3090 owners:
+# "does it boot, is it coherent, does MTP hold, what TPS?"
+#
+# Flags below are transcribed from NVIDIA's v0.20.0 reference command (MTP variant), plus
+# club-3090's PCIe multi-card conventions. VALIDATE each flag against the pinned image before
+# trusting it (v0.20.0 → v0.24.0 flag drift is possible).
+#
+# VRAM (ESTIMATE, unmeasured): ~44–48 GB weights (mixed NVFP4/FP8) + the MTP head across 96 GB
+# (4×3090) → ~12 GB/card, huge headroom for the tiny hybrid-KV. Comfortably fits; the constraint
+# is correctness, not memory. (Will NOT fit a usable context on 2×3090 — hence no local eval.)
+#
+# num_speculative_tokens: NVIDIA left this a variable. 3 is a reasonable start; tune to the MTP
+# head depth / your accept rate. Override with NUM_SPEC_TOKENS=.
+#
+# Run (direct docker — NOT registry-wired; there is no launch.sh slug for this yet):
+#   docker compose -f nemotron-3-puzzle-75b-multi4-nvfp4-mtp.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 4
+# Tensor-parallel: 4
+services:
+  vllm-nemotron-puzzle-75b:
+    # vLLM STABLE. v0.24.0 registers NemotronHPuzzleForCausalLM (verified 2026-07-14).
+    # NVIDIA's card used v0.20.0; any v0.20+ stable should carry the arch. Override with
+    # VLLM_IMAGE=... to pin a specific build (e.g. to match NVIDIA's exact version).
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-nemotron-puzzle-75b-multi4-mtp}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8095}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches (first boot warms; reused after).
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      # NVLink auto-detection — runs inside container at boot (sets _NVLINK_ENABLED).
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=1
+      - OMP_NUM_THREADS=1
+      # DeepGEMM is a no-op on Ampere; launcher auto-injects VLLM_USE_DEEP_GEMM=0 on
+      # consumer Blackwell. Left unset here = arch default.
+      - VLLM_USE_DEEP_GEMM
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # NVLink auto-detection (sets NCCL env + _NVLINK_ENABLED). On PCIe-only rigs
+        # (the common 4×3090 case) custom all-reduce is disabled — NVLink-assumed
+        # allreduce paths break on PCIe.
+        source /etc/club3090/detect_nvlink.sh
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
+        else
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/nemotron-3-puzzle-75b-nvfp4
+      - --served-model-name
+      - nemotron-3-puzzle-75b
+      - --tensor-parallel-size
+      - "${TP:-4}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      # 512-expert MoE → expert-parallel across the TP group (NVIDIA's config).
+      - --enable-expert-parallel
+      - --async-scheduling
+      # --- MTP speculative decoding (NVIDIA's accelerated path). Comment out the two lines
+      # below to run without MTP (no-drafter fallback) if MTP misbehaves on Ampere. ---
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":${NUM_SPEC_TOKENS:-3}}'
+      # --- Mamba2 SSM state cache (NOT the attention KV cache) ---
+      # float16 + stochastic rounding is NVIDIA's precision-preserving recurrent-state
+      # config. Do NOT lower this to fp8 — SSM state accumulates recurrently and is
+      # precision-sensitive; that is exactly why NVIDIA rounds instead of shrinking it.
+      - --mamba-backend
+      - flashinfer
+      - --mamba_ssm_cache_dtype
+      - float16
+      - --enable-mamba-cache-stochastic-rounding
+      - --mamba-cache-philox-rounds
+      - "5"
+      # --- attention KV cache: left at DEFAULT (bf16). It's tiny on this hybrid (few
+      # attention layers), so fp8 buys little on 96 GB. To chase the 1M ceiling later,
+      # add:  --kv-cache-dtype fp8   (Ampere = storage-only, no speed) — NOT in base. ---
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      # NVIDIA's stated default is 0.85 (0.9 only for H200-class / more VRAM). 0.85 is
+      # also the safer first-boot value with the 512-expert MoE + CUDA-graph capture.
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.85}"
+      # No --quantization flag: vLLM auto-detects the mixed NVFP4/FP8 scheme from the
+      # checkpoint's quant config (faithful to NVIDIA). If auto-detect misfires on
+      # Ampere, try:  --quantization modelopt_fp4
+      - --trust-remote-code
+      # Chunked prefill OFF — NVIDIA's explicit throughput recommendation for this model
+      # (`--no-enable-chunked-prefill`; also the safer path for hybrid-Mamba prefill).
+      # vLLM defaults chunked-prefill ON, so this flag is required to honor the rec.
+      - --no-enable-chunked-prefill
+      - --reasoning-parser
+      - nemotron_v3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      # Reasoning is ON by default (NVIDIA's default). Toggle per-request via
+      # chat_template_kwargs, or flip ENABLE_THINKING=false here. Add "low_effort": true
+      # for low-effort reasoning. force_nonempty_content=true is NVIDIA's tool-calling rec.
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": ${ENABLE_THINKING:-true}, "force_nonempty_content": true}'
+      # Sampling per generation_config.json / NVIDIA API examples: temp 1.0, top_p 0.95
+      # (NOT Qwen's 0.6/0.95/20 — this model wants higher temperature). No top_k/rep-penalty.
+      - --override-generation-config
+      - '{"temperature":${TEMP:-1.0},"top_p":${TOP_P:-0.95}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
