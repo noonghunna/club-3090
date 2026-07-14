@@ -158,7 +158,7 @@ services:
       - "${MAX_NUM_SEQS:-2}"
       # Vision tower: max_tokens_per_mm_item=2496 must fit in batched tokens.
       - --max-num-batched-tokens
-      - "4096"
+      - "${MAX_NUM_BATCHED_TOKENS:-4096}"
       - --trust-remote-code
       # Tool-call support — native gemma4 ParserEngine (#45588) on v0.24.0. Streaming
       # multi-tool validated clean (all args, no <|tool_call> leak) 2026-07-01.

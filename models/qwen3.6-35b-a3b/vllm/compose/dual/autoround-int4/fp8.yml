@@ -138,7 +138,7 @@ services:
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-1}"
       - --max-num-batched-tokens
-      - "8192"
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       # Vision ON: image tower retained + validated (read a test image correctly
       # at 262K). max-num-batched-tokens ≥ per-image token budget.
       - --limit-mm-per-prompt

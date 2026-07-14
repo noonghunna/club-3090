@@ -183,7 +183,7 @@ services:
       - --max-num-seqs
       - "2"
       - --max-num-batched-tokens
-      - "8192"
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       # fp8 (= e4m3) at scale=1.0. hf_quant_config DECLARES FP8 KV
       # (kv_cache_quant_algo=FP8) but the checkpoint ships NO k_scale/v_scale
       # tensors (safetensors-index-verified 2026-07-06), and Qwen3-Next hybrid

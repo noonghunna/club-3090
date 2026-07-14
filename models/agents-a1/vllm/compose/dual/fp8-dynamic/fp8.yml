@@ -222,7 +222,7 @@ services:
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-1}"
       - --max-num-batched-tokens
-      - "8192"
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       
       
       - --limit-mm-per-prompt

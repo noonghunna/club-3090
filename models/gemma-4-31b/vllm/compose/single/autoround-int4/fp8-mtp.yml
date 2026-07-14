@@ -137,7 +137,7 @@ services:
       # --limit-mm-per-prompt image=0, the encoder-budget computation still
       # asserts. 4096 (above 2496 floor) leaves more profiling room than 8192.
       - --max-num-batched-tokens
-      - "4096"
+      - "${MAX_NUM_BATCHED_TOKENS:-4096}"
       - --limit-mm-per-prompt
       - '{"image":0,"audio":0}'
       # fp8 KV per vLLM recipe — halves KV pool footprint vs bf16 default.
