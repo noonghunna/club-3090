@@ -924,6 +924,25 @@ COMPOSE_REGISTRY = {
         status_note="Tess-4-27B NVFP4 (migtissera compressed-tensors, W4A4 recipe; Marlin W4A16 weight-only on Ampere) at TP=2 @131K + fp8 KV, spec-off — THE FASTEST TESS on 2x24GB: 62.4 tok/s decode (CV 0.2%) vs the llama.cpp catalog entry's 57.9 with MTP, and the first vLLM-servable Tess on consumer cards (validated 2026-07-11, BENCHMARKS). Froggeric template pinned (repo template stock-broken). Drafter-less BY FORENSIC RESULT: grafted MTP head = 0% accept in vLLM (works only token-fed in llama.cpp), EAGLE3 ~40% = net-negative on this trunk (club #662). kvcalc SKIP: Tess is a qwen35 HYBRID (KV on 16/64 layers) and no hybrid kv-calc model exists for it yet — follow-up at promotion. A0 8-pack LANDED 2026-07-12: 106/150 off / 113/150 on — UNDERSHOOTS the GGUF bar (116/117), gap cli-40-concentrated (17 vs 25 off); deterministic packs tie+ (RM-off 14/15 best-ever). Fallback arms DONE 2026-07-12: huginnfork NVFP4A16 = gated wash (recipe doesn't matter on Ampere, both 4-bit dequant same Marlin path); FP8 W8A16 = 111/117 (ON ties GGUF, gap was PRECISION not serving-path — cli-40 OFF 17->22). FP8 not productized (35GB, slower, GGUF already production 116/117). Slug stays as the FAST experimental vLLM-Tess with the honest agentic-undershoot caveat; stress/soak still unrun. Slug stays experimental; llamacpp/tess-dual-mtp (now Production) remains the tess recommendation.",
     ),
 
+    # Nemotron-3 Puzzle 75B-A9B NVFP4 — hybrid Mamba2-Transformer LatentMoE (512 routed
+    # experts, 2 KV heads, 88 heterogeneous Puzzle-NAS layers), built-in MTP. NON-FUNCTIONAL
+    # on the 2x3090 rig: needs 4x3090 (TP=4). 🧪 experimental (shown in --list, --force to
+    # launch, excluded from DEFAULTS). drafter=nemotron-mtp-builtin (the built-in MTP head;
+    # the compose carries the matching --speculative-config → c3 spec column shows MTP).
+    # kvcalc SKIP (hybrid; paired with model-YAML kv_calc_supported=
+    # false). fallback_sm=7.5 lets the 4x-3090 canonical scenario validate via Marlin W4A16.
+    # Engine support for the arch on vllm/vllm-openai:v0.24.0 is UNVERIFIED until a 4-card boot.
+    "vllm/nemotron-75b-multi-mtp": _entry(
+        model="nemotron-3-puzzle-75b", weights_variant="nvfp4", workload="fast-chat",
+        engine="vllm-stable", drafter="nemotron-mtp-builtin", kv_format="bf16",
+        tp=4, max_ctx=262144, max_num_seqs=1, mem_util=0.85,
+        compose_path="models/nemotron-3-puzzle-75b/vllm/compose/multi4/nvfp4/mtp.yml",
+        default_port=8095, required_sm=9.0, fallback_sm=7.5,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Nemotron-3 Puzzle 75B-A9B NVFP4 (nvidia modelopt MIXED: NVFP4 routed-expert FFNs + FP8 Mamba/shared projections), 4-card TP=4 @262K, built-in MTP via --speculative-config. Mamba2-Transformer hybrid LatentMoE, 9.3B active / 75.3B total. 🧪 Experimental — CANNOT be booted/validated on the maintainer's 2x3090 rig (needs 4x3090); shown in switch.sh --list, launch requires --force. bf16 attention KV (fp8 NOT forced — the hybrid holds KV on only a few attn layers, so it's tiny) + fp16 Mamba SSM state (stochastic-rounded; never fp8). kv-calc bypassed (hybrid arch, no spec → kvcalc SKIP + model kv_calc_supported=false). NVIDIA supported-HW = Blackwell+Hopper ONLY; arch NemotronHPuzzleForCausalLM aliases to the NemotronH loader (registered v0.24.0 + v0.25.0; card tested v0.20.0) but the Ampere quant/kernel path (NVFP4->Marlin W4A16, FP8->bf16, flashinfer-mamba on sm_86) is UNVERIFIED — first 4-card boot is the validation. FP8 sibling (83 GB) too big for 4x24GB → NVFP4 is the only quad-3090 fit. No DEFAULTS row (opt-in only). Community-float to 4x3090 owners.",
+    ),
+
     # Ornith-1.0-9B — DeepReinforce agentic-coding RL fine-tune. Qwen3-Next DENSE-FFN
     # HYBRID (arch=qwen35: 8 full-attn + 24 GDN/DeltaNet layers, NON-MoE) — only 8/32
     # layers carry GQA KV so 262K fits at 4.25 GiB KV. No MTP head → drafter-free

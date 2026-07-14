@@ -19,6 +19,11 @@ supported_model_families:
                      # 2026-07-11 (62.4 tok/s TP=2, forensics-week boots; slug
                      # vllm/tess-dual-nvfp4). Family also covers Deckard-40B if a
                      # vLLM path is ever added there.
+  - nemotron-h-puzzle-moe   # Nemotron-3 Puzzle 75B-A9B (NemotronHPuzzleForCausalLM, hybrid
+                            # Mamba2+attn MoE) — arch aliases to the NemotronH loader (registered
+                            # in v0.24.0 + v0.25.0; NVIDIA card tested v0.20.0). UNVERIFIED on-rig
+                            # (Blackwell/Hopper-only per NVIDIA; needs 4x3090) — drives the 🧪
+                            # community-float slug vllm/nemotron-75b-multi-mtp.
 features:
   int8_per_token_head: true    # NATIVE for qwen3-next (uniform head dims) since v0.22.0 — that's why the
                                # flag is true. NOT correct for Gemma-4 (hetero heads): on v0.24.0 int8-PTH
