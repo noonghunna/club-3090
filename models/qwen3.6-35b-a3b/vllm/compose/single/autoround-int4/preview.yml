@@ -105,7 +105,7 @@ services:
       - --max-num-seqs
       - "1"
       - --max-num-batched-tokens
-      - "4096"
+      - "${MAX_NUM_BATCHED_TOKENS:-4096}"
       - --limit-mm-per-prompt
       - '{"image":0,"audio":0}'
       - --kv-cache-dtype

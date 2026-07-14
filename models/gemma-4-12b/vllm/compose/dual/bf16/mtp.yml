@@ -115,7 +115,7 @@ services:
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-4}"
       - --max-num-batched-tokens
-      - "4096"
+      - "${MAX_NUM_BATCHED_TOKENS:-4096}"
       - --trust-remote-code
       - --enable-auto-tool-choice
       - --tool-call-parser

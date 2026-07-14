@@ -175,7 +175,7 @@ services:
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-1}"
       - --max-num-batched-tokens
-      - "8192"
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       - --limit-mm-per-prompt
       - '{"image":2,"audio":0}'
       # fp8 (= e4m3). The checkpoint's calibrated k/v scales LOAD and apply

@@ -153,7 +153,7 @@ services:
       - --max-num-seqs
       - "2"
       - --max-num-batched-tokens
-      - "8192"
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-int8_per_token_head}"
       - --trust-remote-code

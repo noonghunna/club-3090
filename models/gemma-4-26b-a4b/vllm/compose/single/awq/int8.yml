@@ -154,7 +154,7 @@ services:
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-256}"
       - --max-num-batched-tokens
-      - "4096"
+      - "${MAX_NUM_BATCHED_TOKENS:-4096}"
       - --limit-mm-per-prompt
       - '{"image":0,"audio":0}'
       - --trust-remote-code

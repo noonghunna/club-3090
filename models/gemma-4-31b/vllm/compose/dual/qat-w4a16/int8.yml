@@ -245,7 +245,7 @@ services:
       - "${MAX_NUM_SEQS:-4}"
       # Vision tower: max_tokens_per_mm_item=2496 must fit in batched tokens.
       - --max-num-batched-tokens
-      - "4096"
+      - "${MAX_NUM_BATCHED_TOKENS:-4096}"
       - --trust-remote-code
       # Tool-call support — required for soak / agent traffic that includes
       # `tools: [...]` array. The vendored tool-parser overlay above also

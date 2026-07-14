@@ -146,7 +146,7 @@ services:
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-2}"
       - --max-num-batched-tokens
-      - "8192"
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       # fp8 (= e4m3) at scale=1.0 — no scale tensors in this checkpoint;
       # measured quality-equivalent regime on this family.
       - --kv-cache-dtype
