@@ -16,6 +16,12 @@
 #              hybrid disables calculate_kv_scales → the #594-tied regime).
 #              NVFP4 *KV* deliberately NOT used:
 #              consumer Blackwell has no FP4 FMHA (rtx-5090.yml, vllm#43562).
+#              TurboQuant *KV* (turbo4_nc) NOT viable either: it fits more ctx
+#              (160K + MTP boots where fp8 caps ~98K) but CRATERS recall — every
+#              NIAH depth misses with token-repetition on this scale-less
+#              checkpoint (#617 @paulp83 2026-07-15). 4-bit KV needs the
+#              k_scale/v_scale this checkpoint doesn't ship (the #594 regime);
+#              fp8/e4m3 tolerates scale=1.0, 4-bit does not. Stay on fp8.
 #   Vision:    yes (full VLM)
 #   Max ctx:   65K default (65536 = 8×8192) + util 0.85 on 5090 32 GB — the config
 #              that keeps MTP AND fits. #613: MTP-on OOMed at 98K (the KV
