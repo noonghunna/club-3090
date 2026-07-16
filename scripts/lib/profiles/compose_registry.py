@@ -51,6 +51,11 @@ def _entry(
     engine,
     drafter,
     kv_format,
+    # Activation compute format (the A in W4A16/W4A8/W8A8). Default "16bit" —
+    # engine-native half precision (fp16/bf16 per the compose --dtype); a slug
+    # that dynamic-quantizes activations sets "int8" (W4A8/W8A8 class) or "fp8".
+    # Surfaced as the c3 catalog "act" column (#723).
+    act_format="16bit",
     tp,
     max_ctx,
     max_num_seqs,
@@ -80,6 +85,7 @@ def _entry(
         "engine": engine,
         "drafter": drafter,
         "kv_format": kv_format,
+        "act_format": act_format,
         "tp": tp,
         "pp": 1,
         "max_ctx": max_ctx,

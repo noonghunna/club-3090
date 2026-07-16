@@ -945,11 +945,17 @@ class TestNavNodesExist:
             # · spec) → money (ctx · TPS · 8pk) → topology/engine (slug-redundant,
             # fold first) → status LAST (its emoji glyph is the one variable-width
             # cell, so nothing follows it to misalign — see _STATUS_GLYPH note).
+            # #723: provider (before weights) · GB (before kv) · act (before spec).
             for expected in (
-                "model", "slug", "weights", "kv", "spec", "ctx", "TPS (rig)",
-                "8pk (rig)", "topo", "engine", "status",
+                "model", "slug", "provider", "weights", "GB", "kv", "act",
+                "spec", "ctx", "TPS (rig)", "8pk (rig)", "topo", "engine",
+                "status",
             ):
                 assert expected in col_labels, f"missing {expected!r}: {col_labels}"
+            # #723 ordering: provider < weights < GB < kv < act < spec.
+            for a, b in (("provider", "weights"), ("weights", "GB"),
+                         ("GB", "kv"), ("kv", "act"), ("act", "spec")):
+                assert col_labels.index(a) < col_labels.index(b), col_labels
             # "source" is gone.
             assert "source" not in col_labels, col_labels
             # "fit" is gone — it lives in the serve confirm pop-up now.

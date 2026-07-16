@@ -208,6 +208,36 @@ def _kv_label(e: "CatalogEntry") -> str:
     return _KV_LABELS.get(kv, kv or "—")
 
 
+def _provider_label(e: "CatalogEntry") -> str:
+    """Weights author/org for the catalog provider column (#723) — the org
+    segment of the joined ``WeightsMeta.hf_repo`` (``weights.py list --json``,
+    set by ``enrich_weights``).  "—" when the slug has no joined meta (e.g. a
+    self-grabbed GGUF compose) or the entry hasn't been enriched yet."""
+    meta = getattr(e, "weights", None)
+    repo = (getattr(meta, "hf_repo", "") or "").strip()
+    if "/" in repo:
+        return repo.split("/", 1)[0]
+    return repo or "—"
+
+
+def _size_label(e: "CatalogEntry") -> str:
+    """Weights artifact size for the catalog GB column (#723) — the joined
+    ``WeightsMeta.size_gb``; "—" when unknown/unjoined."""
+    meta = getattr(e, "weights", None)
+    gb = getattr(meta, "size_gb", None)
+    if gb is None:
+        return "—"
+    return f"{gb:g}G"
+
+
+def _act_label(e: "CatalogEntry") -> str:
+    """Activation compute format for the catalog act column (#723) — the
+    registry ``act_format`` facet (emitted like ``kv_format``): "16bit"
+    (fp16/bf16 engine-native) / "int8" (W4A8/W8A8 class) / "fp8"; "—" when the
+    contract didn't carry it (older emit)."""
+    return (getattr(e.row, "act_format", "") or "") or "—"
+
+
 # Spec Dec column — DERIVED from the registry `drafter` id (already in-app as
 # row.drafter; emitted at registry-emit.sh, threaded in services.py) → a compact
 # method[·mechanism] token, by PATTERN on the id (zero emit/guard change; the id
@@ -897,15 +927,20 @@ class CatalogPane(Container):
         # Fit is STILL computed (it feeds the pop-up + the serving-row exemption);
         # it just no longer occupies a Catalog column.
         # Column budget, left→right: identity (model · slug) → config the user
-        # picks by (weights · kv · spec) → money (ctx · TPS · 8pk) → topology/engine
-        # (largely slug-redundant, fold first on a narrow terminal) → status.
+        # picks by (provider · weights · GB · kv · act · spec) → money (ctx ·
+        # TPS · 8pk) → topology/engine (largely slug-redundant, fold first on a
+        # narrow terminal) → status.
+        # #723 additions: `provider` (weights author/org, before weights), `GB`
+        # (artifact size, before kv), `act` (activation compute format, before
+        # spec) — provider/GB join from the enriched WeightsMeta, act from the
+        # registry act_format facet (same plumbing as kv_format).
         # `spec` groups with weights/kv (the serving-config facets): which drafter
         # (MTP / MTP·gguf / MTP·asst / DFlash / — none) the slug enables by default.
         # Status is deliberately LAST: its glyph is the one emoji-width column, so
         # putting it at the tail means nothing follows it to misalign (belt +
         # braces with the VS16-free glyphs in _STATUS_GLYPH).
         # "(rig)" keeps the our-rig provenance at 4 chars ("our rig" cost 8 more).
-        table.add_columns("model", "slug", "weights", "kv", "spec", "ctx", "TPS (rig)", "8pk (rig)", "topo", "engine", "status")
+        table.add_columns("model", "slug", "provider", "weights", "GB", "kv", "act", "spec", "ctx", "TPS (rig)", "8pk (rig)", "topo", "engine", "status")
         # Full enriched catalog, and the current filter substring.
         self._entries: list[CatalogEntry] = []
         self._filter: str = ""
@@ -951,7 +986,7 @@ class CatalogPane(Container):
             self._entries = []
             table.clear()
             status_label.update(f"[red]Catalog error:[/red] {error}")
-            table.add_row("—", "—", "—", "—", "—", "—", "—", "—", "—", "—")
+            table.add_row(*(["—"] * 14))
             return
 
         self._entries = list(entries)
@@ -1027,8 +1062,11 @@ class CatalogPane(Container):
             table.add_row(
                 model_cell,
                 slug_cell,
+                _provider_label(e),
                 _weights_label(e),
+                _size_label(e),
                 _kv_label(e),
+                _act_label(e),
                 _spec_label(e),
                 e.ctx_label or "—",
                 tps,
