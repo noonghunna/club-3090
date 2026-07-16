@@ -9,20 +9,19 @@
 #   Vision:    yes
 #   Max ctx:   262K (text_config max_position_embeddings; head_dim 256 uniform → int8-PTH native)
 #   Genesis:   none — intentionally Genesis-free
-#   Status:    🧪 Experimental
+#   Status:    🗑️ Deprecated
+#   Caveats:   DEPRECATED 2026-07-16 (maintainer decision, tier-space review). Dominated by the
+#                fast tier on every measured axis (decode ~67 vs ~89 code TPS · KV pool 370K/1.41×
+#                vs fast's 622K/2.37× · 8-pack tie 105 vs 109), and its ONLY reason-to-exist —
+#                the int8-PTH KV fidelity bet (#470) — was invalidated by #594/#595: int8-PTH KV
+#                routes to TRITON_ATTN and CRATERS decode at depth vs fp8/e4m3→FlashInfer (the
+#                same finding that flipped dual-max OFF int8-PTH). The pending NIAH A/B is moot —
+#                the instrument arrived and answered AGAINST the bet. Use vllm/dual (fast); for
+#                higher weight fidelity use vllm/qwen-27b-dual-max (fp8 + fp8/e4m3 KV).
 #   Quality:   105/150 (det 64/75 · sandbox 41/75) (--full, same harness 2026-06-07). 8-pack A/B
 #                same day: fast 109 · balanced 105 · max 110 — a TIE (det 64/64/65; within ±5-7
 #                noise; balanced nominally lowest). The short-ctx 8-pack can't separate the quants.
-#   ⚠️ Honest standing: balanced is DOMINATED by the fast tier (vllm/dual) — slower (~67 vs ~89
-#                code TPS), SMALLER KV pool (370K/1.41× vs fast's measured 622K/2.37× @262K: the
-#                heavier 27 GB AWQ weights leave less KV room than fast's 17.5 GB autoround), AND
-#                tied/below on the 8-pack. Its ONLY possible edge is int8-PTH KV fidelity > fast's
-#                fp8_e5m2 — UNPROVEN (the short-ctx 8-pack is blind to it). Note int8-PTH and fp8
-#                are the SAME size, so this is a fidelity bet, not a memory one. Survives only if
-#                the long-ctx NIAH A/B (#470) shows int8-PTH materially better high-ctx recall;
-#                otherwise deprecate — fast wins on speed AND pool.
-#   Best for:  EXPERIMENTAL int8-PTH-KV-fidelity bet, pending the long-ctx NIAH A/B (#470). NOT a
-#                recommended tier today — fast (vllm/dual) dominates it on speed + KV pool.
+#   Best for:  nothing — deprecated; kept for historical reference (see Caveats).
 # ---------------------------------------------------------------------------
 # Dual RTX 3090 — Qwen3.6-27B "balanced" tier (vllm/qwen-27b-dual-balanced).
 # cyankiwi AWQ-BF16-INT4 weights + MTP n=3 + int8-PTH KV + vision. 4-bit weights (Marlin

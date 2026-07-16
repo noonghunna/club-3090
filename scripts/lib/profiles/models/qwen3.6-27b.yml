@@ -72,7 +72,7 @@ weights:
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"
-    manual_note: "cyankiwi AWQ-BF16-INT4 (compressed-tensors pack-quantized, int4 group-32 asym body + BF16 mtp head + multimodal vision; embedded MTP head loads via method:mtp). Drives the 'balanced' tier (vllm/qwen-27b-dual-balanced): int4 weights (Marlin WNA16, fast-class speed) + int8-PTH KV. Loads on stock vLLM v0.22.0 via --quantization compressed-tensors."
+    manual_note: "cyankiwi AWQ-BF16-INT4 (compressed-tensors pack-quantized, int4 group-32 asym body + BF16 mtp head + multimodal vision; embedded MTP head loads via method:mtp). Drove the 'balanced' tier (vllm/qwen-27b-dual-balanced — 🗑️ deprecated 2026-07-16, tier-space review; int8-PTH fidelity bet invalidated by #594). Weights stay registered/BYO-servable. Loads on stock vLLM v0.22.0 via --quantization compressed-tensors."
   dflash:
     path: qwen3.6-27b-dflash
     local_subdir: qwen3.6-27b-dflash
