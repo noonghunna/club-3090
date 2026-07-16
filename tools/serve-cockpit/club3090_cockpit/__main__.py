@@ -73,6 +73,12 @@ def apply_persisted_settings(app, environ) -> None:
     tok = str(s.get("hf_token") or "").strip()
     if tok and not environ.get("HF_TOKEN"):
         environ["HF_TOKEN"] = tok
+    # Catalog columns (#724): the [|] picker's persisted order/visibility —
+    # applied via an app attribute (CatalogPane reads it on mount) so a
+    # directly-constructed app (tests) always starts canonical.
+    cols = s.get("catalog_columns")
+    if isinstance(cols, dict):
+        app.catalog_columns_pref = cols
 
 
 def load_surface_setting() -> "str | None":

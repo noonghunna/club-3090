@@ -922,6 +922,79 @@ class TestNavNodesExist:
             await _enter_operate(pilot, tab="tab-doctor")
             assert operate.active == "tab-doctor"
 
+    def test_sanitize_catalog_columns(self):
+        """#724: the picker-state sanitizer — canonical defaults, unknown keys
+        dropped, newly-shipped canonical keys inserted at their canonical
+        neighbour, pinned keys forced visible, dedup."""
+        from club3090_cockpit.app import _sanitize_catalog_columns, _CATALOG_COLUMNS
+
+        default = [k for k, _ in _CATALOG_COLUMNS]
+        # None / malformed → canonical, nothing hidden
+        assert _sanitize_catalog_columns(None) == (default, set())
+        assert _sanitize_catalog_columns("nonsense") == (default, set())
+        # unknown keys dropped from both order + hidden
+        order, hidden = _sanitize_catalog_columns(
+            {"order": ["slug", "bogus", "model"], "hidden": ["bogus", "topo"]}
+        )
+        assert "bogus" not in order and "bogus" not in hidden
+        assert hidden == {"topo"}
+        # saved partial order respected; missing canonical keys re-inserted
+        # after their canonical predecessor (all 14 keys present exactly once)
+        assert sorted(order) == sorted(default)
+        # user-relative order preserved (slug stays before model) and every
+        # canonical key is present exactly once, even from a degenerate
+        # hand-edited 2-key saved order
+        assert order[0] == "slug"
+        assert order.index("slug") < order.index("model")
+        # the REALISTIC missing-key case — a saved full layout from before a
+        # new column shipped: the new key slots at its canonical position
+        # (act's canonical left neighbour is kv) without disturbing the rest
+        order13 = [k for k in default if k != "act"]
+        merged, _ = _sanitize_catalog_columns({"order": order13, "hidden": []})
+        assert merged.index("act") == merged.index("kv") + 1
+        assert [k for k in merged if k != "act"] == order13
+        # pinned slug can never be hidden
+        _, hidden2 = _sanitize_catalog_columns({"order": default, "hidden": ["slug"]})
+        assert "slug" not in hidden2
+        # dedup — first occurrence wins
+        order3, _ = _sanitize_catalog_columns({"order": ["kv", "kv", "slug"], "hidden": []})
+        assert order3.count("kv") == 1
+
+    @pytest.mark.asyncio
+    async def test_catalog_columns_pref_applies_and_persists(self, monkeypatch, tmp_path):
+        """#724 end-to-end: a persisted catalog_columns pref (applied the way
+        __main__.apply_persisted_settings does) drives the header set — hidden
+        columns gone, custom order kept — and set_columns() writes the pref to
+        c3-settings.json for the next launch."""
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        from club3090_cockpit.app import _CATALOG_COLUMNS, CatalogPane
+        from club3090_cockpit import __main__ as M
+
+        default = [k for k, _ in _CATALOG_COLUMNS]
+        # act moved right after slug; topo/engine hidden
+        order = ["model", "slug", "act"] + [
+            k for k in default if k not in ("model", "slug", "act")
+        ]
+        app, _, _ = make_app()
+        app.catalog_columns_pref = {"order": order, "hidden": ["topo", "engine"]}
+        async with app.run_test(size=(120, 40)) as pilot:
+            table = app.query_one("#catalog-table", DataTable)
+            col_labels = [str(c.label) for c in table.columns.values()]
+            assert "topo" not in col_labels and "engine" not in col_labels
+            assert col_labels[:3] == ["model", "slug", "act"]
+            # the picker apply path: unhide everything, restore canonical —
+            # persisted for the next launch
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.set_columns(default, [])
+            col_labels = [
+                str(c.label)
+                for c in app.query_one("#catalog-table", DataTable).columns.values()
+            ]
+            assert col_labels[0] == "model" and col_labels[-1] == "status"
+            assert "topo" in col_labels and "engine" in col_labels
+        saved = M.load_settings().get("catalog_columns")
+        assert saved == {"order": default, "hidden": []}
+
     @pytest.mark.asyncio
     async def test_benchmarks_tab_is_gone(self):
         """Fold 3 removed the standalone Validate · Benchmarks tab + its pane."""
