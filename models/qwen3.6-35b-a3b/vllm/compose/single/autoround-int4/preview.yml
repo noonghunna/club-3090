@@ -42,7 +42,7 @@
 # Requires-sm: 7.5+
 services:
   vllm-qwen36-35b-a3b-preview:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-preview}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

@@ -71,7 +71,7 @@ services:
     # vLLM STABLE. v0.24.0 registers NemotronHPuzzleForCausalLM (verified 2026-07-14).
     # NVIDIA's card used v0.20.0; any v0.20+ stable should carry the arch. Override with
     # VLLM_IMAGE=... to pin a specific build (e.g. to match NVIDIA's exact version).
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
     container_name: "${ESTATE_CONTAINER:-vllm-nemotron-puzzle-75b-multi4-mtp}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

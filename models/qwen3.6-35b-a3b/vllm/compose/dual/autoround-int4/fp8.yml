@@ -64,7 +64,7 @@ services:
     # soak gate. (Engine-profile aligned to vllm-stable 2026-07-02 — the #254
     # two-engine split shipped + the former vllm-nightly-clean tag was purged.)
     # Override with VLLM_IMAGE=... for a specific build.
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-35b-a3b-dual}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
