@@ -724,14 +724,18 @@ class TestLoadCatalog:
             "slug": "beellama/qwen-dflash-dual", "port": 8065, "status": "experimental",
             "weights_companions": ["anbeeld-dflash-iq4xs"],
             "drafter": "anbeeld-qwen-dflash", "vision": False,
+            "act_format": "16bit",
         })
         assert getattr(row, "weights_companions") == ["anbeeld-dflash-iq4xs"]
         assert getattr(row, "drafter") == "anbeeld-qwen-dflash"
         assert getattr(row, "vision") is False
+        # #723: activation-format facet attaches like kv_format.
+        assert getattr(row, "act_format") == "16bit"
         # absent → safe defaults
         bare = _variant_row_from_dict({"slug": "x/y", "port": 1})
         assert getattr(bare, "weights_companions") == []
         assert getattr(bare, "vision") is False
+        assert getattr(bare, "act_format") == ""  # older emit → column shows "—"
 
     @pytest.mark.asyncio
     async def test_run_weights_download_injects_companion_keys(self):
@@ -3771,7 +3775,7 @@ class TestServeOverrides:
         d = cd.serve_override_defaults("vllm/dual", "org/MyFineTune")
         assert d["SERVED_NAME"] == "MyFineTune"          # from the brought repo name
         assert d["MAX_MODEL_LEN"] == "262144"            # parsed ${MAX_MODEL_LEN:-262144}
-        assert d["KV_CACHE_DTYPE"] == "fp8_e5m2"
+        assert d["KV_CACHE_DTYPE"] == "fp8_e4m3"  # the fast tier's KV since the #594-era flip
         assert d["SPEC"] == "on"
         assert d["ENGINE"] == "vllm-stable"              # only parsing gives this
         assert d["SPEC_DRAFTER"] == "MTP n=3"            # real drafter, not "on"

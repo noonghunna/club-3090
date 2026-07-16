@@ -663,6 +663,9 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # KV-cache format from the registry (for the catalog KV column) —
             # int8_per_token_head / fp8_e4m3 / fp8_e5m2 / turboquant_3bit_nc / bf16 / q*.
             "kv_format": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("kv_format"),
+            # Activation compute format (for the catalog act column, #723) —
+            # "16bit" default (fp16/bf16 per compose --dtype) / "int8" / "fp8".
+            "act_format": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("act_format"),
             # Weights quant_label + FORMAT from the model profile (catalog
             # Weights column fallbacks) — see _weights_meta() above.
             "weights_quant_label": _weights_meta(
