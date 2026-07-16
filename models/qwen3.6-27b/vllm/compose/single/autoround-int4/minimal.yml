@@ -60,6 +60,9 @@ services:
       # See docs/UPSTREAM.md "Community templates / model assets" + the row at
       # https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates
       - ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # W4A8 int8-activation enablement (#609) — NO-OP until VLLM_MARLIN_INPUT_DTYPE=int8
+      # is set (see the patch README). Applied by the entrypoint before vllm serve.
+      - ../../../patches/w4a8-int8-act:/etc/club3090/w4a8:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
@@ -68,6 +71,9 @@ services:
       # actually pins cards there; on the classic runtime the UUID form is
       # renumbering-proof. Unset → absent (no masking).
       - CUDA_VISIBLE_DEVICES
+      # W4A8 knob (#609): VLLM_MARLIN_INPUT_DTYPE=int8 → int8 activations (see the
+      # w4a8 patch mount). Bare passthrough — unset → absent → stock W4A16.
+      - VLLM_MARLIN_INPUT_DTYPE
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
       - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
@@ -93,6 +99,8 @@ services:
       - /bin/bash
       - -c
       - |
+        # W4A8 patches (#609) — no-op unless VLLM_MARLIN_INPUT_DTYPE=int8 (see mount).
+        bash /etc/club3090/w4a8/install.sh || exit 1
         # VLLM_ENFORCE_EAGER=1 in .env disables CUDA graphs — use on
         # hardware where graph capture causes OOM or instability (e.g. WSL2).
         exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
