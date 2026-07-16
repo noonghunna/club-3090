@@ -6,7 +6,10 @@ services:
     container_name: open-webui
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # Host port is a knob (#715 gap 3): set OWUI_PORT in the repo .env (compose reads
+      # it via --env-file) AND export it for setup-ai-studio.sh + the pipe helper.
+      # The container-internal port stays 8080 (docker-exec helpers rely on it).
+      - "${OWUI_PORT:-8080}:8080"
     volumes:
       - open-webui-data:/app/backend/data
     env_file:

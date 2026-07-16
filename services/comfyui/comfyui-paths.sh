@@ -147,3 +147,86 @@ c3_ensure_comfy_models_dir() {
   echo "       (or set COMFYUI_MODELS_DIR directly; c3 Settings writes MODEL_DIR to repo .env)." >&2
   exit 1
 }
+
+
+# Pre-create EVERY studio bind-mount source dir USER-OWNED before any `sudo docker`
+# runs (#715 gap 1). The studio containers run as root under `sudo docker compose`,
+# and Docker auto-creates a missing bind-mount source dir ROOT-OWNED — so the later
+# non-sudo download step can't write to it, a mess the installer used to create
+# itself and then blame the user for. mkdir -p as the CALLING user prevents the
+# whole class. If a dir already exists root-owned (a previously-damaged install),
+# prevention can't help — detect it and say exactly how to fix it instead.
+# Call from setup-ai-studio.sh (before the build) AND gpu-mode's start_comfyui
+# (before compose up). Idempotent; fails only on the damaged-install case.
+c3_precreate_comfy_mounts() {
+  local d bad=""
+  # the comfyui compose's host-side mount sources (services/comfyui/docker-compose.yml)
+  # + the shared HF cache root.
+  for d in \
+      "$COMFYUI_ROOT/ComfyUI" \
+      "$COMFYUI_ROOT/models" \
+      "$COMFYUI_ROOT/input" \
+      "$COMFYUI_ROOT/output" \
+      "$COMFYUI_ROOT/user" \
+      "$COMFYUI_ROOT/pip-cache" \
+      "$MODEL_DIR"; do
+    mkdir -p "$d" 2>/dev/null || true
+    [ -w "$d" ] || bad="$bad $d"
+  done
+  if [ -n "$bad" ]; then
+    echo "ERROR: studio bind-mount dir(s) not writable by $(id -un):$bad" >&2
+    echo "       (Usually root-owned leftovers from an earlier run where Docker" >&2
+    echo "       auto-created them under sudo. Fix once:)" >&2
+    echo "         sudo chown -R $(id -un):$(id -gn)$bad" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Hardened `hf` for every studio download script (#715 gap 2) — the same guards the
+# main stack mandates, made repo-portable. Every download_*.sh sources this file (or
+# inherits via `export -f` from download_studio_models.sh), so their bare `hf download`
+# calls transparently gain:
+#   • XET OFF by default   — the classic LFS path RESUMES from .incomplete; Xet restarts
+#     from 0 on failure, so retries on it are lossy (caller may re-enable via env).
+#   • a read timeout       — a dead socket errors instead of hanging forever.
+#   • retry-until-success  — transient network errors resume mid-file (6 attempts).
+#   • a false-DONE guard   — on a mid-run network loss, huggingface_hub can degrade to
+#     "returning existing local_dir" and exit 0 with the payload still *.incomplete
+#     (observed live 2026-07-16); rc=0 with leftover .incomplete files is treated as a
+#     FAILURE and retried, not reported as success.
+# Non-download subcommands pass straight through.
+hf() {
+  if [ "${1:-}" != "download" ]; then command hf "$@"; return; fi
+  # recover --local-dir for the false-DONE .incomplete scan (absent -> cache-mode, skip scan)
+  local _dest="" _prev="" _a
+  for _a in "$@"; do
+    [ "$_prev" = "--local-dir" ] && _dest="$_a"
+    _prev="$_a"
+  done
+  local _attempt=1 _max=6 _rc
+  while :; do
+    HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}" \
+    HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-30}" \
+      command hf "$@" && _rc=0 || _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+      if [ -n "$_dest" ] && [ -d "$_dest" ] && \
+         find "$_dest" -name '*.incomplete' -print -quit 2>/dev/null | grep -q .; then
+        echo "[hf-fetch] rc=0 but *.incomplete remains under $_dest (offline-degrade false DONE) — retrying" >&2
+        _rc=75  # EX_TEMPFAIL
+      else
+        return 0
+      fi
+    fi
+    if [ "$_attempt" -ge "$_max" ]; then
+      echo "[hf-fetch] giving up after $_max attempts (rc=$_rc)" >&2
+      return "$_rc"
+    fi
+    echo "[hf-fetch] retry $_attempt/$_max in 8s (rc=$_rc) — the classic path resumes from .incomplete" >&2
+    _attempt=$((_attempt + 1))
+    sleep 8
+  done
+}
+# Inherit into child bash processes (download_studio_models.sh runs each lane script
+# as `bash download_X.sh`) so even the two children that don't source this file get it.
+export -f hf 2>/dev/null || true
