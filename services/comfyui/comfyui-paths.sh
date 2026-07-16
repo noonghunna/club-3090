@@ -195,7 +195,33 @@ c3_precreate_comfy_mounts() {
 #     "returning existing local_dir" and exit 0 with the payload still *.incomplete
 #     (observed live 2026-07-16); rc=0 with leftover .incomplete files is treated as a
 #     FAILURE and retried, not reported as success.
+#   • a stall watchdog     — HF_HUB_DOWNLOAD_TIMEOUT only bounds SOCKET reads; hf_hub's
+#     "Still waiting to acquire lock" wait is unbounded and hangs the whole install
+#     (#726 — kodcuserkan, 3 attempts stuck on the same HiDream .lock). If dest bytes
+#     stop growing for HF_FETCH_STALL_TIMEOUT (default 300s) the attempt is killed and
+#     the retry loop takes over. Tune/disable: HF_FETCH_STALL_TIMEOUT=<secs|0>.
+#   • stale-lock clearing  — before each attempt, *.lock files under the dest download
+#     cache with NO live holder (fuser; age-only fallback) and ≥5 min age are removed,
+#     so a lock orphaned by a killed run (SoftFileLock filesystems / dead holders)
+#     can't wedge every future attempt (#726). A lock a LIVE process holds is spared.
 # Non-download subcommands pass straight through.
+
+# stale-lock sweep for c3_hf's retry loop (#726) — see the bullet above.
+_c3_hf_clear_stale_locks() {
+  local _cache="$1/.cache/huggingface/download" _lk _age_min
+  [ -d "$_cache" ] || return 0
+  # without fuser we can't see a live fcntl holder — demand a longer age instead
+  if command -v fuser >/dev/null 2>&1; then _age_min=5; else _age_min=10; fi
+  find "$_cache" -name '*.lock' -mmin "+$_age_min" 2>/dev/null | while IFS= read -r _lk; do
+    if command -v fuser >/dev/null 2>&1 && fuser -s "$_lk" 2>/dev/null; then
+      continue  # a live process holds it — a real concurrent download, leave it
+    fi
+    echo "[hf-fetch] clearing stale download lock (no live holder, >${_age_min}min): $_lk" >&2
+    rm -f "$_lk" 2>/dev/null || true
+  done
+  return 0
+}
+
 hf() {
   if [ "${1:-}" != "download" ]; then command hf "$@"; return; fi
   # recover --local-dir for the false-DONE .incomplete scan (absent -> cache-mode, skip scan)
@@ -204,11 +230,42 @@ hf() {
     [ "$_prev" = "--local-dir" ] && _dest="$_a"
     _prev="$_a"
   done
-  local _attempt=1 _max=6 _rc
+  local _attempt=1 _max=6 _rc _hfpid _wpid _stall="${HF_FETCH_STALL_TIMEOUT:-300}"
   while :; do
-    HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}" \
-    HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-30}" \
-      command hf "$@" && _rc=0 || _rc=$?
+    [ -n "$_dest" ] && _c3_hf_clear_stale_locks "$_dest"
+    # setsid → own process GROUP, so the watchdog kill takes any subprocess the
+    # downloader spawned with it (an orphaned child would keep holding the lock
+    # AND the callers' stdout pipe). Fallback: plain background + single-pid kill.
+    if command -v setsid >/dev/null 2>&1; then
+      HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}" \
+      HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-30}" \
+        setsid hf "$@" &   # exec via PATH — the real binary, not this function
+    else
+      HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}" \
+      HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-30}" \
+        command hf "$@" &
+    fi
+    _hfpid=$!
+    _wpid=""
+    if [ -n "$_dest" ] && [ "$_stall" -gt 0 ] 2>/dev/null; then
+      (
+        _last=-1; _same=0
+        while kill -0 "$_hfpid" 2>/dev/null; do
+          sleep 15
+          _cur=$(du -sb "$_dest" 2>/dev/null | cut -f1) || _cur=0
+          if [ "${_cur:-0}" = "$_last" ]; then _same=$((_same + 15)); else _same=0; _last="${_cur:-0}"; fi
+          if [ "$_same" -ge "$_stall" ]; then
+            echo "[hf-fetch] no byte growth for ${_stall}s — killing the stalled attempt (lock-wait or dead peer); retrying" >&2
+            echo "[hf-fetch] if another download is genuinely running, check: pgrep -af 'hf download'" >&2
+            kill -- "-$_hfpid" 2>/dev/null || kill "$_hfpid" 2>/dev/null
+            exit 0
+          fi
+        done
+      ) &
+      _wpid=$!
+    fi
+    wait "$_hfpid" && _rc=0 || _rc=$?
+    [ -n "$_wpid" ] && { kill "$_wpid" 2>/dev/null; wait "$_wpid" 2>/dev/null; } || true
     if [ "$_rc" -eq 0 ]; then
       if [ -n "$_dest" ] && [ -d "$_dest" ] && \
          find "$_dest" -name '*.incomplete' -print -quit 2>/dev/null | grep -q .; then
