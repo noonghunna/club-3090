@@ -42,6 +42,15 @@ if [ -z "${C3_PATHS_NO_ENV:-}" ] && [ -n "$C3_REPO_ROOT" ]; then
       LANIP="${LANIP%\"}"; LANIP="${LANIP#\"}"
       [ -n "$LANIP" ] && export LANIP
     fi
+    # HF_TOKEN for the roster downloads (gated repos) — env wins; the repo .env is
+    # where users naturally put it, and until now it was silently ignored by the
+    # HOST-side hf calls (only the composes read .env) — MoppelMat had to env-prefix
+    # the whole setup script (#686). Same read-then-export pattern as LANIP.
+    if [ -z "${HF_TOKEN:-}" ]; then
+      HF_TOKEN="$(grep -E '^HF_TOKEN=' "$_c3_env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+      HF_TOKEN="${HF_TOKEN%\"}"; HF_TOKEN="${HF_TOKEN#\"}"
+      [ -n "$HF_TOKEN" ] && export HF_TOKEN
+    fi
   fi
   unset _c3_env
 fi

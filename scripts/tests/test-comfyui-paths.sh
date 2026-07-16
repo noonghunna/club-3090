@@ -121,4 +121,16 @@ printf 'MODEL_DIR=%s/models\n' "$_reroot" > "$_reroot/.env"   # NO LANIP line
 chk "no silent set-e exit when .env lacks LANIP (#686)" "0" "$?"
 rm -rf "$_reroot"
 
+# --- HF_TOKEN from .env (#686): the token in repo .env was silently ignored by the
+#     HOST-side hf calls (only the composes read .env), forcing users to env-prefix
+#     the whole setup script. The paths lib now reads + exports it (env wins).
+_tkroot="$(mktemp -d)"; mkdir -p "$_tkroot/services/comfyui"
+cp "$HELPER" "$_tkroot/services/comfyui/comfyui-paths.sh"
+printf 'HF_TOKEN=hf_dotenv_test\n' > "$_tkroot/.env"
+chk "HF_TOKEN read from .env + exported (#686)" "hf_dotenv_test" \
+  "$(env -u HF_TOKEN MODEL_DIR=/home/u/models bash -c '. "'"$_tkroot"'/services/comfyui/comfyui-paths.sh"; printf "%s" "${HF_TOKEN:-}"')"
+chk "explicit env HF_TOKEN wins over .env" "hf_env_wins" \
+  "$(env HF_TOKEN=hf_env_wins MODEL_DIR=/home/u/models bash -c '. "'"$_tkroot"'/services/comfyui/comfyui-paths.sh"; printf "%s" "${HF_TOKEN:-}"')"
+rm -rf "$_tkroot"
+
 if [ "$fails" -eq 0 ]; then echo "PASS: comfyui-paths derivation"; exit 0; else echo "FAIL: $fails assertion(s)"; exit 1; fi
