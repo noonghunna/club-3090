@@ -33,7 +33,7 @@ FN_ID="${POS[0]:-studio}"
 OWUI="${POS[1]:-open-webui}"
 DB="${OWUI_DB:-/app/backend/data/webui.db}"
 DOCKER="${DOCKER:-sudo docker}"
-HEALTH_URL="${OWUI_HEALTH_URL:-http://localhost:8080/health}"
+HEALTH_URL="${OWUI_HEALTH_URL:-http://localhost:${OWUI_PORT:-8080}/health}"
 
 echo "[push] building studio_pipe.py …"
 python3 "$HERE/build_studio_pipe.py"
@@ -41,10 +41,27 @@ PIPE="$HERE/studio_pipe.py"
 [ -f "$PIPE" ] || { echo "[push] ERROR: $PIPE not found"; exit 1; }
 echo "[push] pipe = $(wc -c < "$PIPE") bytes"
 
+# #715 gap 6 — stamp the configured LAN IP into the pipe's browser_base default so
+# gallery/media links open from OTHER machines without the manual valve step (the
+# runtime cousin of the #703 LANIP class). LANIP: env wins, else repo .env; unset /
+# localhost keeps the localhost default (single-machine rigs). Stamps a TEMP copy —
+# the tracked studio_pipe.py is never mutated.
+_lanip="${LANIP:-}"
+if [ -z "$_lanip" ] && [ -f "$HERE/../../.env" ]; then
+    _lanip="$(grep -E '^LANIP=' "$HERE/../../.env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+fi
+_lanip="${_lanip%\"}"; _lanip="${_lanip#\"}"
+PIPE_PUSH="$PIPE"
+if [ -n "$_lanip" ] && [ "$_lanip" != "localhost" ] && [ "$_lanip" != "127.0.0.1" ]; then
+    PIPE_PUSH="$(mktemp /tmp/studio_pipe_push.XXXXXX.py)"
+    sed "s|http://localhost:8189|http://${_lanip}:8189|g" "$PIPE" > "$PIPE_PUSH"
+    echo "[push] browser_base default stamped → http://${_lanip}:8189 (#715)"
+fi
+
 $DOCKER ps --format '{{.Names}}' | grep -qx "$OWUI" || { echo "[push] ERROR: container '$OWUI' is not running"; exit 1; }
 
 echo "[push] copy → $OWUI : install/update function '$FN_ID' in $DB …"
-$DOCKER cp "$PIPE" "$OWUI:/tmp/_studio_pipe_push.py"
+$DOCKER cp "$PIPE_PUSH" "$OWUI:/tmp/_studio_pipe_push.py"
 $DOCKER exec -e FN_ID="$FN_ID" -e DB="$DB" -e FN_NAME="${OWUI_FN_NAME:-🎬 Studio}" "$OWUI" python -c '
 import os, sqlite3, time, json, sys
 fn_id, db, fn_name = os.environ["FN_ID"], os.environ["DB"], os.environ["FN_NAME"]

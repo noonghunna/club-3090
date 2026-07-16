@@ -82,6 +82,15 @@ compose_at() {
     fi
 }
 
+# #715 gap 4 — start-failure tracking. start_* helpers used to swallow a failed
+# `compose up` ('… || echo "failed"' returns 0), so every mode printed "failed"
+# per-service yet exited 0 and the caller declared the scene ready (#686). Each
+# start site now RECORDS its failure; the dispatch tail prints a summary and
+# exits 1 when any service failed. Failures don't abort mid-scene (a partial
+# scene beats an aborted one) — they just can't masquerade as success anymore.
+FAILED_SERVICES=()
+c3_mark_start_failure() { FAILED_SERVICES+=("$1"); }
+
 # Like compose_at, but injects per-invocation env assignments that survive `sudo`.
 # `sudo docker compose` sanitizes the caller's environment, so vars set in the shell
 # don't reach compose interpolation — pass them as leading `VAR=val` args to the
@@ -106,7 +115,7 @@ compose_cmd() {
 
 start_service() {
     printf "  ${GREEN}▲${NC} Starting %-12s" "$1..."
-    compose_cmd "$1" "up -d" && echo "done" || echo "failed"
+    compose_cmd "$1" "up -d" && echo "done" || { echo "failed"; c3_mark_start_failure "$1"; }
 }
 
 stop_service() {
@@ -117,7 +126,7 @@ stop_service() {
 # Project-specific helpers
 start_27b_dual_mtp() {
     printf "  ${GREEN}▲${NC} Starting 27b-dual-mtp..."
-    compose_at "$DUAL_27B_DIR" "up -d" fp8-mtp.yml && echo "done" || echo "failed"
+    compose_at "$DUAL_27B_DIR" "up -d" fp8-mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "27b-dual-mtp"; }
 }
 stop_27b_dual_mtp() {
     printf "  ${RED}▼${NC} Stopping 27b-dual-mtp..."
@@ -126,7 +135,7 @@ stop_27b_dual_mtp() {
 
 start_27b_dual_dflash() {
     printf "  ${GREEN}▲${NC} Starting 27b-dual-dflash..."
-    compose_at "$DUAL_27B_DIR" "up -d" dflash.yml && echo "done" || echo "failed"
+    compose_at "$DUAL_27B_DIR" "up -d" dflash.yml && echo "done" || { echo "failed"; c3_mark_start_failure "27b-dual-dflash"; }
 }
 stop_27b_dual_dflash() {
     printf "  ${RED}▼${NC} Stopping 27b-dual-dflash..."
@@ -135,7 +144,7 @@ stop_27b_dual_dflash() {
 
 start_27b_dual_dflash_noviz() {
     printf "  ${GREEN}▲${NC} Starting 27b-dflash-noviz..."
-    compose_at "$DUAL_27B_DIR" "up -d" dflash-noviz.yml && echo "done" || echo "failed"
+    compose_at "$DUAL_27B_DIR" "up -d" dflash-noviz.yml && echo "done" || { echo "failed"; c3_mark_start_failure "27b-dual-dflash-noviz"; }
 }
 stop_27b_dual_dflash_noviz() {
     printf "  ${RED}▼${NC} Stopping 27b-dflash-noviz..."
@@ -144,7 +153,7 @@ stop_27b_dual_dflash_noviz() {
 
 start_27b_dual_turbo() {
     printf "  ${GREEN}▲${NC} Starting 27b-dual-turbo..."
-    compose_at "$DUAL_27B_DIR" "up -d" turbo.yml && echo "done" || echo "failed"
+    compose_at "$DUAL_27B_DIR" "up -d" turbo.yml && echo "done" || { echo "failed"; c3_mark_start_failure "27b-dual-turbo"; }
 }
 stop_27b_dual_turbo() {
     printf "  ${RED}▼${NC} Stopping 27b-dual-turbo..."
@@ -163,7 +172,7 @@ stop_all_27b() {
 # vllm/qwen-35b-a3b-dual (AutoRound INT4 + fp8 KV + 262K + vision, :8051).
 start_35b_a3b_dual() {
     printf "  ${GREEN}▲${NC} Starting 35b-a3b-dual..."
-    compose_at "$A3B_DUAL_DIR" "up -d" fp8.yml && echo "done" || echo "failed"
+    compose_at "$A3B_DUAL_DIR" "up -d" fp8.yml && echo "done" || { echo "failed"; c3_mark_start_failure "35b-a3b-dual"; }
 }
 stop_35b_a3b_dual() {
     printf "  ${RED}▼${NC} Stopping 35b-a3b-dual..."
@@ -173,7 +182,7 @@ stop_35b_a3b_dual() {
 # Gemma 4 12B single-card vLLM (gemma4_unified arch-preview image, AutoRound INT8 + MTP n=2).
 start_gemma_12b() {
     printf "  ${GREEN}▲${NC} Starting gemma-12b..."
-    compose_at "$GEMMA_12B_DIR" "up -d" mtp.yml && echo "done" || echo "failed"
+    compose_at "$GEMMA_12B_DIR" "up -d" mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "gemma-12b"; }
 }
 stop_gemma_12b() {
     printf "  ${RED}▼${NC} Stopping gemma-12b..."
@@ -187,7 +196,12 @@ start_comfyui() {
     # Pin COMFYUI_ROOT into repo-root .env so the compose's `--env-file` mounts the SAME tree the
     # downloads went into (not the /mnt default) on any rig whose MODEL_DIR isn't /mnt — #510/#530.
     type c3_persist_comfy_root >/dev/null 2>&1 && c3_persist_comfy_root || true
-    compose_at "$COMPOSE_BASE/comfyui" "up -d" && echo "done" || echo "failed"
+    # Pre-create the bind-mount sources USER-OWNED before sudo docker can root-own
+    # them (#715 gap 1); a damaged (root-owned) tree fails loud with the chown fix.
+    if type c3_precreate_comfy_mounts >/dev/null 2>&1 && ! c3_precreate_comfy_mounts; then
+        echo "failed"; c3_mark_start_failure "comfyui"; return 0
+    fi
+    compose_at "$COMPOSE_BASE/comfyui" "up -d" && echo "done" || { echo "failed"; c3_mark_start_failure "comfyui"; }
 }
 stop_comfyui() {
     printf "  ${RED}▼${NC} Stopping comfyui..."
@@ -198,7 +212,7 @@ stop_comfyui() {
 # "director" LLM (:8090, GPU0). See services/studio/ + docs/ai-studio/video.md.
 start_studio_gallery() {
     printf "  ${GREEN}▲${NC} Starting studio-gallery (:8189)..."
-    compose_at "$COMPOSE_BASE/studio/gallery" "up -d" && echo "done" || echo "failed"
+    compose_at "$COMPOSE_BASE/studio/gallery" "up -d" && echo "done" || { echo "failed"; c3_mark_start_failure "studio-gallery"; }
 }
 # Director placement lever — STUDIO_DIRECTOR_DEVICE (gpu0|gpu1|cpu) from the rig .env, set by
 # c3's Settings "Director placement" field (default gpu0). gpu0 = ~4.6 GB on GPU0 (fast craft,
@@ -230,7 +244,7 @@ start_studio_director() {
     printf "  ${GREEN}▲${NC} Starting studio-director ($label)..."
     compose_at_env "$COMPOSE_BASE/studio/enhancer" "up -d" docker-compose.yml \
         "DIRECTOR_NGL=$ngl" "STUDIO_DIRECTOR_CUDA=$cvd" "STUDIO_DIRECTOR_GPU=$gpu" "DIRECTOR_THINK_ARGS=$think_args" \
-        && echo "done" || echo "failed"
+        && echo "done" || { echo "failed"; c3_mark_start_failure "studio-director"; }
 }
 stop_studio_director() {
     printf "  ${RED}▼${NC} Stopping studio-director..."
@@ -264,20 +278,20 @@ wait_gpu_vram_settle() {
 }
 start_studio_orchestrator() {
     printf "  ${GREEN}▲${NC} Starting studio-orchestrator (:8190, long-clip chaining)..."
-    compose_at "$COMPOSE_BASE/studio/orchestrator" "up -d --build" && echo "done" || echo "failed"
+    compose_at "$COMPOSE_BASE/studio/orchestrator" "up -d --build" && echo "done" || { echo "failed"; c3_mark_start_failure "studio-orchestrator"; }
 }
 # Native-button image shim (:8191): ComfyUI reverse-proxy that crafts Ideogram-4 JSON
 # captions (via the director) so OWUI's native 🖼️ image button renders instead of hitting
 # the "blocked by safety filter" placeholder. Needs the director (:8090) up.
 start_studio_image_shim() {
     printf "  ${GREEN}▲${NC} Starting studio-image-shim (:8191, native-button Ideogram captions)..."
-    compose_at "$COMPOSE_BASE/studio/image-shim" "up -d --build" && echo "done" || echo "failed"
+    compose_at "$COMPOSE_BASE/studio/image-shim" "up -d --build" && echo "done" || { echo "failed"; c3_mark_start_failure "studio-image-shim"; }
 }
 # Integrated-voices TTS + audio mixdown (:8192, Kokoro on CPU). The pipe POSTs /narrate after a
 # video render to mix a voiceover over the clip's native audio (ducked + normalized). No GPU.
 start_studio_tts() {
     printf "  ${GREEN}▲${NC} Starting studio-tts (:8192, Kokoro voices + mixdown, CPU)..."
-    compose_at "$COMPOSE_BASE/studio/tts" "up -d --build" && echo "done" || echo "failed"
+    compose_at "$COMPOSE_BASE/studio/tts" "up -d --build" && echo "done" || { echo "failed"; c3_mark_start_failure "studio-tts"; }
 }
 # Premium voice (:8193, Step-Audio-EditX, GPU1, isolated transformers 4.53.3). LAZY: the container
 # comes up cheap (~0 GB) so the OWUI voice lane appears as soon as ai-studio starts it; the ~14 GB
@@ -286,7 +300,7 @@ start_studio_tts() {
 # `--build` picks up server.py edits (layer-cached → fast when unchanged).
 start_step_voice() {
     printf "  ${GREEN}▲${NC} Starting step-voice (:8193, lazy — model loads on first use, GPU1)..."
-    compose_at "$COMPOSE_BASE/studio/step-voice" "up -d --build" && echo "done" || echo "failed"
+    compose_at "$COMPOSE_BASE/studio/step-voice" "up -d --build" && echo "done" || { echo "failed"; c3_mark_start_failure "step-voice"; }
 }
 stop_step_voice() {
     printf "  ${RED}▼${NC} Stopping step-voice..."
@@ -307,7 +321,7 @@ stop_gemma_mtp() {
 
 start_gemma_int8() {
     printf "  ${GREEN}▲${NC} Starting gemma-int8..."
-    compose_at "$GEMMA_DUAL_DIR" "up -d" int8.yml && echo "done" || echo "failed"
+    compose_at "$GEMMA_DUAL_DIR" "up -d" int8.yml && echo "done" || { echo "failed"; c3_mark_start_failure "gemma-int8"; }
 }
 stop_gemma_int8() {
     printf "  ${RED}▼${NC} Stopping gemma-int8..."
@@ -323,7 +337,7 @@ stop_all_gemma() {
 
 start_deckard() {
     printf "  ${GREEN}▲${NC} Starting deckard-40b..."
-    compose_at "$DECKARD_DIR" "up -d" mtp.yml && echo "done" || echo "failed"
+    compose_at "$DECKARD_DIR" "up -d" mtp.yml && echo "done" || { echo "failed"; c3_mark_start_failure "deckard"; }
 }
 stop_deckard() {
     printf "  ${RED}▼${NC} Stopping deckard-40b..."
@@ -731,7 +745,7 @@ mode_ai_studio() {
     start_service searxng
     echo ""
     echo -e "${GREEN}AI-studio mode active.${NC} — one scene; pick the lane in Open WebUI."
-    echo -e "  Open WebUI:  http://$LANIP:8080   (image · video · music · SFX · voice lanes)"
+    echo -e "  Open WebUI:  http://$LANIP:${OWUI_PORT:-8080}   (image · video · music · SFX · voice lanes)"
     echo -e "  Gallery:     http://$LANIP:8189   (all generated media; survives ComfyUI down)"
     echo -e "  ComfyUI:     http://$LANIP:8188   (full node graph / control)"
     echo -e "${YELLOW}First ComfyUI boot can take a few min (clones + node deps). Video DiT splits across both 3090s (DisTorch); image/audio lanes run on GPU0 beside the director.${NC}"
@@ -1076,3 +1090,12 @@ case "${1:-}" in
     --list-modes)       list_modes "${2:-}" ;;
     *)                  usage ;;
 esac
+
+# #715 gap 4 — propagate start failures to the exit code (see FAILED_SERVICES).
+if [ "${#FAILED_SERVICES[@]}" -gt 0 ]; then
+    echo "" >&2
+    echo -e "${RED}✗ ${#FAILED_SERVICES[@]} service(s) FAILED to start: ${FAILED_SERVICES[*]}${NC}" >&2
+    echo "  Inspect: sudo docker compose logs <service>   (in its compose dir)" >&2
+    echo "  Then re-run this mode — starts are idempotent." >&2
+    exit 1
+fi

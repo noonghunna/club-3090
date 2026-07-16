@@ -30,6 +30,13 @@ STUDIO_DIR="$REPO_DIR/services/studio"
 # alongside it instead of the rig's /mnt fallback). See services/comfyui/comfyui-paths.sh.
 # shellcheck disable=SC1091
 . "$COMFYUI_DIR/comfyui-paths.sh"
+# Open WebUI host port — #715 gap 3: no longer hardcoded. Set OWUI_PORT in the env or
+# repo .env (compose reads .env via --env-file; export it for the register/pipe helpers).
+OWUI_PORT="${OWUI_PORT:-8080}"
+export OWUI_PORT
+# Testability hook (#715 gap 5 regression test): the bring-up step must run even under
+# SKIP_BUILD/SKIP_DOWNLOAD — the test stubs this to assert it was reached.
+GPU_MODE_BIN="${GPU_MODE_BIN:-$REPO_DIR/scripts/gpu-mode.sh}"
 # LAN IP for the final URLs. Resolve via the shared helper: env / .env win, else auto-detect and
 # PERSIST to .env (the source of truth) — or, if nothing detects, fall back to localhost and tell
 # the user to set LANIP in .env. Keeps setup + gpu-mode from drifting. (#504, #512)
@@ -92,6 +99,13 @@ if [ -z "$ASSUME_YES" ]; then
     case "$reply" in [yY]|[yY][eE][sS]) ;; *) echo "  aborted."; exit 0 ;; esac
 fi
 
+# --- 0b. Pre-create every studio bind-mount dir USER-OWNED (#715 gap 1) --------
+# Must happen before ANY `sudo docker` below — Docker root-owns missing bind-mount
+# sources, and the later non-sudo download step then can't write to them (a mess
+# the installer used to create itself). Fails loud with the exact chown fix when a
+# previously-damaged (root-owned) tree is detected.
+c3_precreate_comfy_mounts || exit 1
+
 # --- 1. Build the ComfyUI image (clones a pinned ComfyUI + custom nodes on first boot) ---
 if [ -z "${SKIP_BUILD:-}" ]; then
     say "── [1/4] Building ComfyUI image (comfyui-local:latest) ──"
@@ -115,24 +129,23 @@ fi
 # gpu-mode's start_service swallows that failure ('… || echo "failed"' returns
 # 0). So gate the bring-up on 8080 being free, and verify OWUI afterwards,
 # instead of reporting a false "ready" (#686).
-if ! docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -qE '^open-webui .*:8080->'; then
-    _p8080=""
+if ! docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -qE "^open-webui .*:${OWUI_PORT}->"; then
+    _powui=""
     if command -v ss >/dev/null 2>&1; then
-        _p8080=$(ss -Hltn 2>/dev/null | awk '{print $4}' | grep -E ':8080$' | head -1)
+        _powui=$(ss -Hltn 2>/dev/null | awk '{print $4}' | grep -E ":${OWUI_PORT}\$" | head -1)
     elif command -v lsof >/dev/null 2>&1; then
-        _p8080=$(lsof -iTCP:8080 -sTCP:LISTEN -Pn 2>/dev/null | tail -n +2 | head -1)
+        _powui=$(lsof -iTCP:"$OWUI_PORT" -sTCP:LISTEN -Pn 2>/dev/null | tail -n +2 | head -1)
     fi
-    if [ -n "$_p8080" ]; then
-        warn "  ✗ Port 8080 is already in use — Open WebUI can't bind it (listener: $_p8080)."
-        echo "     OWUI's host port 8080 is fixed (baked into the compose + the pipe/register helpers)."
-        echo "     Free 8080 first — e.g. move the other service (a llama-server router: add"
-        echo "     '--port 8081' and point your client at the new port) — then re-run this script." >&2
+    if [ -n "$_powui" ]; then
+        warn "  ✗ Port $OWUI_PORT is already in use — Open WebUI can't bind it (listener: $_powui)."
+        echo "     Either free the port, or move OWUI: set OWUI_PORT=<free port> in the repo .env" >&2
+        echo "     (and export it when running the register/pipe helpers), then re-run this script." >&2
         exit 1
     fi
 fi
 
 say "── [3/4] Starting the studio (gpu-mode ai-studio) ──"
-bash "$REPO_DIR/scripts/gpu-mode.sh" ai-studio
+bash "$GPU_MODE_BIN" ai-studio
 
 # gpu-mode's start_service swallows a failed 'compose up' (#686), so trust the
 # container STATE, not the exit code: a bind failure leaves open-webui missing
@@ -142,7 +155,7 @@ case "$_owui_status" in
     Up*) ;;   # running (optionally "(healthy)") — good
     *)
         warn "  ✗ Open WebUI did not come up (status: ${_owui_status:-missing})."
-        echo "     Most common cause: something else is bound to its host port 8080." >&2
+        echo "     Most common cause: something else is bound to its host port $OWUI_PORT." >&2
         echo "     Inspect:  docker ps -a | grep open-webui" >&2
         echo "               docker logs open-webui 2>&1 | tail -20" >&2
         echo "     Fix the conflict, then re-run:  bash scripts/setup-ai-studio.sh" >&2
@@ -188,7 +201,7 @@ fi
 # --- Done — onboarding -------------------------------------------------------
 echo ""
 ok "═══ AI Studio ready ═══"
-echo "  Open WebUI:  http://$LANIP:8080   ← start here"
+echo "  Open WebUI:  http://$LANIP:$OWUI_PORT   ← start here"
 echo "  ComfyUI:     http://$LANIP:8188   ← optional: full node-graph control"
 echo "  Gallery:     http://$LANIP:8189   ← your renders (survive ComfyUI restarts)"
 echo ""
@@ -207,8 +220,8 @@ if [ "$PIPE_OK" != "1" ] && [ -z "${SKIP_PIPE:-}" ]; then
     echo ""
     _n=$((_n + 1))
 fi
-echo "    $_n. On the 'Studio' function (Admin → Functions → Studio), set the 'browser_base'"
-echo "       valve to http://$LANIP:8189 so returned media links open from your browser."; _n=$((_n + 1))
+echo "    $_n. Media links are pre-pointed at http://$LANIP:8189 (stamped at pipe install — #715)."
+echo "       If they 404 from another machine, check Admin → Functions → Studio → 'browser_base' valve."; _n=$((_n + 1))
 echo "    $_n. Pick a lane in the model selector (🎬 Video · 🖼️ Image · 🎵 Audio), type an idea,"
 echo "       and refine by just replying. Full guide: docs/ai-studio/README.md"
 echo ""
