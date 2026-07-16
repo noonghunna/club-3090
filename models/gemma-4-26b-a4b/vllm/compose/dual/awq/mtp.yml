@@ -42,7 +42,7 @@
 # Requires-sm: 7.5+
 services:
   vllm-gemma-4-26b-a4b-awq-mtp-tp2:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
     container_name: "${ESTATE_CONTAINER:-vllm-gemma-4-26b-a4b-awq-mtp-tp2}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

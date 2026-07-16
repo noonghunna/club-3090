@@ -7,6 +7,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
         loads: false
       - pin: vllm-nightly-mtp@01d4d1ad375dc5854779c593eee093bcebb0cada
@@ -43,6 +45,8 @@ arches:
       - pin: vllm-stable@v0.22.0
         loads: true
       - pin: vllm-stable@v0.24.0
+        loads: true
+      - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
         loads: false
@@ -122,6 +126,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
         loads: false
         reason: "Engine DEPRECATED 2026-06-06 (#326): purged nightly; AWQ compressed-tensors MoE serves on stock vllm-stable@v0.22.0 (Marlin WNA16 MoE). AutoRound int4-mixed stays Ampere-dead either way."
@@ -145,6 +151,8 @@ arches:
       - pin: vllm-stable@v0.22.0
         loads: true
       - pin: vllm-stable@v0.24.0
+        loads: true
+      - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
@@ -170,6 +178,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -193,6 +203,8 @@ arches:
       - pin: vllm-stable@v0.22.0
         loads: true
       - pin: vllm-stable@v0.24.0
+        loads: true
+      - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
@@ -218,6 +230,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-stable-next@>=0.21.0rc0,<0.21.0
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -242,6 +256,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -265,6 +281,8 @@ arches:
       - pin: vllm-stable@v0.22.0
         loads: true
       - pin: vllm-stable@v0.24.0
+        loads: true
+      - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
@@ -341,6 +359,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -364,6 +384,8 @@ arches:
       - pin: vllm-stable@v0.22.0
         loads: true
       - pin: vllm-stable@v0.24.0
+        loads: true
+      - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
@@ -389,6 +411,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -412,6 +436,8 @@ arches:
       - pin: vllm-stable@v0.22.0
         loads: true
       - pin: vllm-stable@v0.24.0
+        loads: true
+      - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
@@ -438,6 +464,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -463,6 +491,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -487,6 +517,8 @@ arches:
         loads: true
       - pin: vllm-stable@v0.24.0
         loads: true
+      - pin: vllm-stable@v0.25.1
+        loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
       - pin: vllm-nightly-clean@bf610c2f56764e1b30bc6065f4ceace3d6e59036
@@ -510,6 +542,8 @@ arches:
       - pin: vllm-stable@v0.22.0
         loads: true
       - pin: vllm-stable@v0.24.0
+        loads: true
+      - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
@@ -594,6 +628,8 @@ arches:
       - pin: vllm-stable@v0.22.0
         loads: true
       - pin: vllm-stable@v0.24.0
+        loads: true
+      - pin: vllm-stable@v0.25.1
         loads: true
       - pin: vllm-pip-baseline@0.20.2
         loads: true
