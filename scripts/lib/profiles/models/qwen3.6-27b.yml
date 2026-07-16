@@ -30,6 +30,10 @@ weights:
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"
+    # W4A8 eligibility (#609): int8 activations are safe on these weights — sym int4,
+    # negative scales handled by the vendored sign-fold (8-pack-verified: 110/111 vs
+    # 109 baseline). Consumed by the c3 serve-confirm toggle (#730 follow-up).
+    act8_capable: true
   awq:
     path: qwen3.6-27b-awq-int4
     local_subdir: qwen3.6-27b-awq-int4

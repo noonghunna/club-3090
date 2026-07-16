@@ -64,6 +64,23 @@ Depends on the arch. The short version:
 
 Full hardware-acceleration matrix (which dtypes/quants run on Tensor Cores natively vs in software, per GPU class) at [DTYPE_MATRIX.md](DTYPE_MATRIX.md), including the weight-only vs weight+activation axis and the NVFP4 / MXFP4 / FP6 Blackwell additions.
 
+### What is the W4A8 knob and should I turn it on?
+
+`VLLM_MARLIN_INPUT_DTYPE=int8` on the Qwen vLLM composes (`vllm/dual`, `vllm/minimal`) runs
+**int8 activations on the int4 weights** — measured on the reference dual-3090 (single-variable
+A/B, env-only): **prefill +50%, decode neutral, quality tied with the default on both reasoning
+legs** (8-pack 110/111 vs 109).
+Turn it on if your workload is prefill-heavy (big agent prompts, RAG):
+
+```bash
+VLLM_MARLIN_INPUT_DTYPE=int8 bash scripts/switch.sh vllm/dual
+```
+
+Requirements: bf16 serving dtype (the composes' default path handles it) and positive-symmetric
+int4 weights — the shipped autoround checkpoint qualifies; an asymmetric AWQ checkpoint refuses
+with an actionable error instead of producing garbage. Off by default; unset = exactly the stock
+behavior. Full story: [QUANTIZATION.md](QUANTIZATION.md) "W4A8" + discussion #609.
+
 ### My AWQ / FP8 model errors on `--kv-cache-dtype fp8` — why, and what do I use?
 
 You'll see `ValueError: fp8_e5m2 kv-cache is not supported with fp8 checkpoints`. It fires for any **compressed-tensors** checkpoint (AWQ, FP8-weight, INT8-weight): vLLM won't pair fp8 KV with a compressed-tensors-loaded model, and the guard triggers whether you pass `--quantization compressed-tensors` or let it auto-detect (it keys off the *detected* method, not the flag). It is **not** about a real fp8 weight — a pure-int4 AWQ trips it too.

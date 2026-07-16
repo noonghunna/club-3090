@@ -271,6 +271,43 @@ patches:
       drop_when: "upstream Qwen ships a corrected default chat template and the pinned engines bundle it, OR the override is re-vendored (the same drift_guard must clear the next re-vendor)"
     status: verified
 
+  - id: qwen-w4a8-int8-act
+    model: [qwen3.6-27b]
+    files:
+      - models/qwen3.6-27b/vllm/patches/w4a8-int8-act/install.sh
+      - models/qwen3.6-27b/vllm/patches/w4a8-int8-act/patch-inc-w4a8.py
+      - models/qwen3.6-27b/vllm/patches/w4a8-int8-act/patch-negscale-fold.py
+    load_bearing_when:
+      - composes:
+          - vllm/dual
+          - vllm/minimal
+        reason: "Enables the STOCK serve-time W4A8 toggle (VLLM_MARLIN_INPUT_DTYPE=int8 — int8 activations on the int4 weights, +50% prefill / decode ~neutral dual (env-only A/B), 8-pack-tied 110/111 vs 109) on auto-round checkpoints: vLLM's inc route silently drops the toggle (bug A), and the int8 kernel reads group scales UNSIGNED while AutoRound emits ~50% negative scales → garbage (bug B; load-time sign-fold, exact except 0.61% of weights). BOTH patches are NO-OPS while the env is unset, so they ship applied-always with zero default-path behavior change. Forensics + measurements: club-3090#609."
+        evidence: "models/qwen3.6-27b/vllm/patches/w4a8-int8-act/README.md; club-3090#609 (c-17664346 + c-17666873); docs/UPSTREAM.md W4A8 rows"
+    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.6-27b/vllm/patches/w4a8-int8-act/install.sh
+      mounted_at: /etc/club3090/w4a8
+      invoke: "bash /etc/club3090/w4a8/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Idempotent, anchor-based (anchors byte-stable v0.24.0 & v0.25.1), and a NO-OP without the env. Failure policy: anchors drifted + env SET → boot refused (never a silent half-wire); env unset → warn and serve stock."
+    drift_guard:
+      kind: behavioral
+      check: "With VLLM_MARLIN_INPUT_DTYPE=int8 on the autoround ckpt: boot logs the single fold warning, prefill gains >=30% vs the same compose without the env, and completions stay coherent (logprob sanity: 'capital of Italy is' -> ' Rome' at > -1.0). Without the env: byte-identical serving behavior to the unpatched image (the no-op guarantee)."
+      on_fail: capability-degraded   # env unset → stock W4A16 serving, knob unavailable
+    capability: w4a8-int8-activations
+    foundational: false
+    upstream:
+      ref: "two vLLM bugs to file (inc drops input_dtype; Marlin unsigned int16 group-scale read) — forensics club-3090#609; toy repro vendored in the exploration artifacts"
+      status: local-vendored
+      drop_when: "both fixes merge upstream and land in the pinned release (re-run the drift_guard on the new pin, then delete the mount + this entry)"
+    status: verified
+
   - id: qwen-carnice-chat-template
     deprecated_on: "2026-06-05"
     deprecation_reason: "carnice fine-tune compose archived to _archive/; orphaned (#254)."
