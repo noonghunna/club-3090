@@ -65,6 +65,10 @@ services:
       - "${ESTATE_PORT:-${PORT:-8042}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # Google Gemma 4 CANONICAL chat template (published 2026-07-09) — SHARED
+      # from the gemma-4-31b tree (one canonical template family-wide); the
+      # image-bundled example predates Google's fix (see the patch README).
+      - ../../../../../gemma-4-31b/vllm/patches/google-canonical-chat-template/chat_template.jinja:/etc/club3090/gemma-canonical-template.jinja:ro
       # 3 Ampere/TP fix-mounts over the official :gemma image's vllm pkg (NOT upstream —
       # see ../../../patches/gemma-image-fixes/README.md). marlin.py + marlin_utils_fp8.py
       # = sm_86 fp8 Marlin K-pad; diffusion_gemma.py = TP-vocab soft-embed + dtype fix.
@@ -177,7 +181,7 @@ services:
       - --reasoning-parser
       - gemma4
       - --chat-template
-      - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
+      - /etc/club3090/gemma-canonical-template.jinja
       # Thinking: left at the model/template natural default (NOT force-disabled) — the
       # earlier "stuck in thinking / empty answer" was the 256-tok cap above, not thinking.
       # The reasoning parser routes any thinking into the `reasoning` field; clients can

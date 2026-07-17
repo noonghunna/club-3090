@@ -235,6 +235,42 @@ patches:
       drop_when: "each affected engine profile pins a vLLM nightly after d5b31c95"
     status: verified
 
+  - id: gemma-google-canonical-chat-template
+    model: [gemma-4-31b, gemma-4-12b, gemma-4-26b-a4b, diffusiongemma-26b-a4b]
+    files:
+      - models/gemma-4-31b/vllm/patches/google-canonical-chat-template/chat_template.jinja
+    load_bearing_when:
+      - composes:
+          - vllm/gemma-31b-dual
+          - vllm/gemma-12b-single-int8-mtp
+          - vllm/gemma-26ba4b-single
+        reason: "The image-bundled /vllm-workspace/examples/tool_chat_template_gemma4.jinja in the v0.25.1-era pins PREDATES Google's 2026-07-09 canonical template fix (repo commit: null handling, reasoning preservation, turn-tag balance). Three functional deltas, each an agent-loop failure class: (1) the old copy injects an empty thought channel into HISTORY model-turns when thinking is off; (2) preserve_thinking applied to every turn vs canonical scoping to tool-call turns only; (3) turn-closure emission ignores the next turn (unbalanced turn tags in tool loops). All gemma-family vLLM composes (11) now mount this vendored canonical instead of the image path. GGUF gemma lanes keep embedded templates (minja compat with this file UNVALIDATED - do not repoint them without a minja parse check)."
+        evidence: "models/gemma-4-31b/vllm/patches/google-canonical-chat-template/README.md (provenance + sha + diff summary)"
+    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: chat_template
+    delivery_spec:
+      jinja: models/gemma-4-31b/vllm/patches/google-canonical-chat-template/chat_template.jinja
+      mounted_at: /etc/club3090/gemma-canonical-template.jinja
+      mount_mode: ro
+      invoke: "--chat-template /etc/club3090/gemma-canonical-template.jinja"
+      wired_at: [volumes, entrypoint]
+      note: "sha256 ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4 (google/gemma-4-31B-it @ main, template published 2026-07-09; byte-identical across the 12B/26B-A4B/31B repos). Mounted read-only; the compose --chat-template flag points here so the model-dir and image-example templates are both bypassed deterministically."
+    drift_guard:
+      kind: behavioral
+      check: "Boot log renders the canonical header (Google Gemma 4 Canonical Chat Template) via the mounted path; tool-call smoke (auto tool choice, one get_weather-class call) returns finish_reason=tool_calls with valid JSON args; a 3-turn tool loop replays without unbalanced turn tags (the fix classes). Warm-first: send 3 warm-ups before judging output (gemma cudagraph-warmup gibberish is NOT corruption). Any behavioral/TPS comparison the guard performs MUST use the SELF-CONTAINED symmetric restart+settle protocol: identical docker restart on BOTH arms -> healthy -> fixed 60s settle -> >=3 bench.sh runs/arm -> compare the GRAND MEAN of the SAME canonical segment; flag ONLY a deterministic regression reproduced across ALL 3 runs."
+      on_fail: capability-degraded   # serves with the stale image-example template semantics
+    capability: chat-template-override
+    foundational: false
+    upstream:
+      ref: "google/gemma-4-{12B,26B-A4B,31B}-it @ main - canonical template published 2026-07-09"
+      status: upstream-adopted-vendored
+      drop_when: "a future vllm-stable pin bundles an example template byte-identical-or-newer vs the canonical (diff check in the patch README) -> repoint composes at the image path and retire this dir."
+    status: verified
+
   - id: qwen-froggeric-chat-template
     model: [qwen3.6-27b, tess-4-27b]
     files:
