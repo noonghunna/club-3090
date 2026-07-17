@@ -84,6 +84,9 @@ services:
       - ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
       # NVLink auto-detection — runs inside container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # Vendored vllm#48375 (MambaManager drop_eagle_block) — inert under the
+      # prefix-off default; protects PREFIX_CACHE_ARG users. See patches.yml.
+      - ../../../patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
@@ -125,6 +128,7 @@ services:
         # stability. See docs/HARDWARE.md "Note for WSL2 / Windows users".
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
         if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
         else
@@ -166,11 +170,11 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
-      # Prefix-caching OFF by default: MTP × prefix-cache poisons recurrent-state
-      # KV on this Qwen3-Next hybrid → corrupts tool calls on chained agents
-      # (#710, vllm#43559). Interim until the fix (vllm#48375) is in our pin;
-      # then restore. Re-enable now: PREFIX_CACHE_ARG=--enable-prefix-caching
-      - "${PREFIX_CACHE_ARG:---no-enable-prefix-caching}"
+      # Prefix-caching ON by default (flipped 2026-07-17, #710/#736): the
+      # vllm#43559 fix (vllm#48375) is VENDORED on this compose and applied at
+      # boot, plus 7-day production + 6-arm probe evidence of the pair clean on
+      # v0.25.x. Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
       - --enable-chunked-prefill
       - --speculative-config
       - '{"method":"mtp","num_speculative_tokens":3}'
