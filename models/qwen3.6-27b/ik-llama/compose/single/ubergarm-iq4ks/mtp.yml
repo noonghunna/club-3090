@@ -8,7 +8,7 @@
 #              Hadamard transforms on K and V caches for quantized-KV accuracy,
 #              no VRAM cost. KV_TYPE=q8_0 = ampersandru's, higher KV fidelity,
 #              caps ~131-200K ctx)
-#   Template:  native (GGUF-embedded) — A/B'd froggeric v19 here, native won
+#   Template:  native (GGUF-embedded) — A/B'd froggeric (pinned) here, native won
 #              the 8-pack 103 vs 99 (toolcall TIED 9/9); see header note below
 #   Vision:    NO (text-only this profile; mmproj is a separate axis → -vision.yml)
 #   Default ctx: 200000 — ik's MEASURED max-safe fill (ceiling-laddered on-rig
@@ -55,7 +55,7 @@
 #      ON; short-budget requests return empty content (all tokens spent in
 #      <think>). Bench passes enable_thinking=false anyway; this aligns the
 #      raw endpoint to the same policy.
-#   3. NATIVE chat template (no --chat-template-file). We A/B'd froggeric v19
+#   3. NATIVE chat template (no --chat-template-file). We A/B'd froggeric (pinned)
 #      here (it loads + suppresses thinking fine) but native scored HIGHER on
 #      the 8-pack: 103 vs 99, with the toolcall pack TIED 9/9 and the agentic
 #      hermesagent pack favouring native (12 vs 11). froggeric's template fixes

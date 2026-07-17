@@ -49,7 +49,7 @@
 #     rounding can cost quality even under Ampere's weight-only execution.
 #   - Template: the repo's chat_template.jinja is STOCK-BROKEN (developer-role
 #     crash; HF PR with the fix is in flight) — this compose pins the vendored
-#     froggeric v19 family template regardless, same as the qwen3.6 composes.
+#     froggeric (pinned) family template regardless, same as the qwen3.6 composes.
 #
 # ⚠️ Native-FP4 rigs (5090/Hopper/Blackwell): Ampere executes weight-only
 # W4A16 — your silicon also quantizes activations (true W4A4), reported to
@@ -80,7 +80,7 @@ services:
       # torch.compile + Triton kernel caches — warm-start across boots.
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
-      # froggeric v19 family chat template — SHARED with the qwen3.6-27b
+      # froggeric family chat template (pinned; version + gate history in the patch PROVENANCE) — SHARED with the qwen3.6-27b
       # composes (same qwen3_5/qwen3.6 template family; single vendored copy,
       # see patches.yml qwen-froggeric-chat-template). Required: the model
       # repo's own template is stock-broken (developer-role crash).
@@ -156,7 +156,7 @@ services:
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8}"
       - --trust-remote-code
-      # froggeric v19 pin (see volumes) — the model-dir template is broken.
+      # froggeric pin (see volumes) — the model-dir template is broken.
       - --chat-template
       - /etc/qwen-froggeric-chat-template.jinja
       - --reasoning-parser

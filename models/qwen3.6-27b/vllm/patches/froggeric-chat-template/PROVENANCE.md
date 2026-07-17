@@ -4,12 +4,34 @@ Source: https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates
 
 ## Current vendored snapshot
 
+- Date vendored: 2026-07-17
+- Upstream revision: `23a40b0bd4d197c31d39e3c442fd2cd6100b3971` (2026-07-03, release label v21.3)
+- Local file SHA256: `d203f3342d8a7f8474dd55563eece3a26e71b21c6f667c9db9c93b762b3bf997`
+- Status: **ADOPTED 2026-07-17 (#671 arc)** — the 2026-07-11 rejection below is
+  formally superseded: it was **engine-version-gated**. Re-gate on the current
+  `vllm-stable` pin (v0.25.1, which ships the Streaming Parser Engine):
+  - hermesagent-20 same-night A/B: **11/20 = 11/20 dead tie vs v19, ZERO
+    timeout-class failures** (the 07-11 stall signature — 6/20 with p95 pinned
+    at 300s — does not reproduce; 7 of 9 failed scenarios common to both arms,
+    edges are ordinary churn).
+  - toolcall-15: 15/15. Full 8-pack think-OFF: **109/150 vs v19's 108 baseline**.
+    Think-ON leg: recorded in the adopting PR at merge time.
+  - minja compat (the 4 llama.cpp/ik GGUF-lane consumers): parses + boots +
+    serves on `server-cuda-b9967` (CPU-only check, end-to-end request 200).
+  - Adoption trigger: club-3090 **#671** — VSCode agent clients ≥1.126 render
+    v19 into a prompt the model answers with an immediate stop (Aduer's
+    5-cell matrix: every v19 cell fails, the v21.3 cell works; the failure is
+    template-INPUT-side, upstream of any parser). The VSCode-relevant handling
+    exists only in the v21 line.
+
+## Superseded snapshot — v19
+
 - Date vendored for re-eval: 2026-05-17
 - Upstream revision: `c31fd393e531dbacd92b6deb99a2037cc949f950`
 - Upstream timestamp: 2026-05-16T13:44:07Z
 - Upstream release label: v19
 - Local file SHA256: `4649b3fa3db3fda4d51173ed4ff0175fde7ece8bbceb9d595d04d862020c9746`
-- Status: **ADOPTED 2026-05-18 (#150)** — re-eval PASSED on `vllm/dual` (template-only A/B: hermesagent-20 +10pp 50→60%, 7 packs flat, TPS-neutral). See docs/UPSTREAM.md froggeric row (authoritative).
+- Status: **ADOPTED 2026-05-18 (#150)** — re-eval PASSED on `vllm/dual` (template-only A/B: hermesagent-20 +10pp 50→60%, 7 packs flat, TPS-neutral). **SUPERSEDED by v21.3 2026-07-17** (see Current above). See docs/UPSTREAM.md froggeric row (authoritative).
 
 ## Previous vendored snapshot
 
@@ -20,7 +42,7 @@ Source: https://huggingface.co/froggeric/Qwen-Fixed-Chat-Templates
   any current upstream qwen3.5/qwen3.6 archived template v8-v19 or main commit
   in the HF repo history available on 2026-05-17.
 
-## Rejected candidate — v21.3 (2026-07-11)
+## Rejected candidate — v21.3 (2026-07-11) — **REJECTION SUPERSEDED 2026-07-17: engine-version-gated (v0.24.0); see Current snapshot**
 
 - Upstream revision: `23a40b0bd4d197c31d39e3c442fd2cd6100b3971` (2026-07-03, release label v21.3)
 - Candidate file SHA256: `d203f3342d8a7f8474dd55563eece3a26e71b21c6f667c9db9c93b762b3bf997`
