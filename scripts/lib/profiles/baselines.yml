@@ -516,6 +516,9 @@ baselines:
     # see the w4a16 sibling). Measured on v0.24.0 → stale vs the v0.25.1 pin
     # by design (the deferred "Tess vLLM arm" from #682); re-bench owed.
     narr_tps: 62.4
+    # code_tps: the A0 gate recorded one decode figure; spec-off decode is
+    # workload-flat here (MoppelMat pod measured 61.6 narr / 61.2 code) — carried equal.
+    code_tps: 62.4
     # prefill re-measured 2026-07-17 on v0.25.1 (same-rig A/B vs the w4a16 sibling;
     # decode re-parity 62.0 on that run). Quality/decode rows remain the v0.24.0
     # gate -> the engine_pin below (and the stale badge) intentionally stand.

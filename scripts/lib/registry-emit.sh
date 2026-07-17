@@ -666,6 +666,7 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # Activation compute format (for the catalog act column, #723) —
             # "16bit" default (fp16/bf16 per compose --dtype) / "int8" / "fp8".
             "act_format": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("act_format"),
+            "chat_template": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("chat_template"),
             # W4A8-int8-activation capability (c3 serve-confirm checkbox, #609) —
             # True when the compose is wired + weights are positive-sym int4.
             "act8_capable": bool((COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("act8_capable")),

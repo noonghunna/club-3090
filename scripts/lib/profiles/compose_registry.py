@@ -60,6 +60,7 @@ def _entry(
     # its weights are positive-symmetric int4 (the c3 serve-confirm checkbox reads
     # this to offer VLLM_MARLIN_INPUT_DTYPE=int8 per-launch). #609.
     act8_capable=False,
+    chat_template="native",
     tp,
     max_ctx,
     max_num_seqs,
@@ -91,6 +92,7 @@ def _entry(
         "kv_format": kv_format,
         "act_format": act_format,
         "act8_capable": act8_capable,
+        "chat_template": chat_template,
         "tp": tp,
         "pp": 1,
         "max_ctx": max_ctx,
@@ -173,7 +175,7 @@ def compose_header_status(text):
 COMPOSE_REGISTRY = {
     # Qwen 3.6 27B, vLLM single-card.
     "vllm/minimal": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="fast-chat",
+        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="fast-chat", chat_template="froggeric",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=1, max_ctx=32768, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml",
@@ -183,7 +185,7 @@ COMPOSE_REGISTRY = {
 
     # Qwen 3.6 27B, vLLM dual/multi-card.
     "vllm/dual": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
@@ -204,7 +206,7 @@ COMPOSE_REGISTRY = {
     # same port) — it just names the fast tier in the symmetric family. The
     # (qwen,vllm,dual) DEFAULT stays "vllm/dual" (the long-established slug).
     "vllm/qwen-27b-dual-fast": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
@@ -213,7 +215,7 @@ COMPOSE_REGISTRY = {
         status_note="Alias of vllm/dual — names the 'fast' tier in the fast/max family (AutoRound INT4 + fp8_e5m2 KV + MTP n=3, TP=2 @262K). Same compose + port as vllm/dual; production-validated there (129/150). Pair with vllm/qwen-27b-dual-max for higher fidelity.",
     ),
     "vllm/qwen-27b-dual-max": _entry(
-        model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/fp8/mtp.yml",
@@ -223,7 +225,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.6-27B 'max accuracy' tier, 2-card: official FP8 weights (embedded MTP head) + fp8/e4m3 KV (flipped from int8-PTH in #594) + MTP n=3, TP=2 @262K. fp8/e4m3 routes KV attention to FlashInfer (int8-PTH is TRITON_ATTN-only): decode stays FLAT at depth — 2.3x int8-PTH @35K — where int8-PTH craters. Full v0.24.0 gate: verify-full 9/9, verify-stress fillable to 240,636 tok, soak-continuous PASS (0 err / 0 growth / 100% retention, p50 decode 125.5), 8-pack --full 109/150 (ties int8-PTH's 107, quality-neutral despite fp8 scale=1.0 — vLLM disables calculate_kv_scales on Qwen3-Next hybrid). KV pool 295K tok / 1.13x concurrency (smallest pool of the tiers; FP8 weights use MarlinFP8 W8A16 on Ampere — memory win, not decode). The highest-fidelity weight tier; consumer Blackwell (5090+) gets native FP8 GEMM via the launcher's DeepGEMM-disable. Also the validation proxy for vllm/qwen-27b-multi-max (same config @ TP=4).",
     ),
     "vllm/qwen-27b-dual-lmcache": _entry(
-        model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-lmcache", drafter="qwen-mtp-builtin", kv_format="int8_per_token_head",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm-lmcache/compose/dual/fp8/lmcache.yml",
@@ -233,7 +235,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.6-27B 'max accuracy + LMCache KV-offload' tier, 2-card: byte-identical serving fidelity to vllm/qwen-27b-dual-max (FP8 weights + int8-PTH KV + MTP n=3 @262K, TP=2) PLUS an LMCache tiered persistent prefix-KV cache (MP/HMA connector, lmcache 0.4.7). 🐣 Incubating — OPT-IN, hidden from switch.sh --list (--force to launch). Live-validated 2026-06-17 (club-3090 #133): boots + serves @262K (util 0.92, KV pool 279K tok / 1.07x), MTP active (~83% accept), and a CONTROLLED A/B (toggle ONLY the connector, same image+config) shows decode 74 narr / 94 code TPS == WITHOUT LMCache → ZERO decode penalty (offload is async/overlapped; an earlier 'halves decode' claim was an uncontrolled-measurement error, retracted — see #133). LMCache caches each session's prefix KV in CPU RAM (L1, --l1-size-gb 30 default ≈ ~4 realistic 50K sessions / <1 full 262K @ ~131 KB/token measured cache footprint — 7x the GPU's 18.9 int8-PTH rate, which only sets max ctx) + optional disk (L2 fs adapter, env-gated LMCACHE_L2=1 or LMCACHE_L2_ADAPTER, off by default, ~131 KB/token; rehydrate 4.8s vs 43s cold ~9x, survives restarts; unbounded — size disk per the INTERNALS table). THREE reasons incubating not production: (1) runs LMCache's third-party image (lmcache/vllm-openai, DIGEST-pinned — the tag is MUTABLE, and it bundles a newer vLLM 0.23.1-dev than our v0.22.0 pin; ✅-promotion wants LMCache on our own image), (2) L2 disk tier is unbounded (no size cap — disk-fill is on the operator; preflight soft-warns), (3) 38 GB image pulled on-demand. RAM-gated: preflight rejects --l1-size-gb over-allocation (the l1=100→reboot incident); needs ~58 GB free at l1=30, cap ~50 GB on a 94 GB rig; shm_size must track l1. Best for many concurrent long sessions kept warm (cold→warm TTFT ~7-8x) — efschu's high-context multi-session use case. Standard duals (vllm/dual, vllm/qwen-27b-dual-max) stay LMCache-free.",
     ),
     "vllm/qwen-27b-dual-balanced": _entry(
-        model="qwen3.6-27b", weights_variant="awq-bf16-int4", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="awq-bf16-int4", workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="int8_per_token_head",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/awq-bf16-int4/int8.yml",
@@ -243,7 +245,7 @@ COMPOSE_REGISTRY = {
         status_note="🗑️ DEPRECATED 2026-07-16 (maintainer decision, tier-space review). Qwen3.6-27B 'balanced' tier, 2-card: cyankiwi AWQ-BF16-INT4 + int8-PTH KV + MTP n=3, TP=2 @262K. Dominated by the fast tier (vllm/dual) on every measured axis — decode ~67 vs ~89 code TPS, KV pool 370K/1.41x vs 622K/2.37x, 8-pack tie (105 vs 109, within ±5-7 noise) — and its ONLY reason-to-exist, the int8-PTH KV fidelity bet (#470), was invalidated by #594/#595: int8-PTH routes to TRITON_ATTN and craters decode at depth vs fp8/e4m3→FlashInfer (the same finding that flipped dual-max off int8-PTH). The pending long-ctx NIAH A/B is moot. Not a DEFAULTS target (nothing to repoint). Replacements: vllm/dual (fast) for speed+pool; vllm/qwen-27b-dual-max (fp8 + fp8/e4m3 KV) for weight fidelity. History: live-validated 2026-06-07 (Marlin WNA16, ~67 TPS); the cyankiwi awq-bf16-int4 weights stay registered (BYO-servable).",
     ),
     "vllm/qwen-27b-multi-fast": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/mtp.yml",
@@ -253,7 +255,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.6-27B 'fast' tier, 4-card (TP=4): AutoRound INT4 + fp8_e5m2 KV + MTP n=3 @262K. Byte-identical to vllm/dual (≡ vllm/qwen-27b-dual-fast) apart from TP=4 + gpu-count; vllm/dual @TP=2 is the on-rig proxy (this dev rig has 2× 3090). Promoted 2026-07-05 on the cross-rig validation the header required — #584 (@ryanmpelletier, 4× 3090): verify-full 9/9, verify-stress clean to 240K, soak PASS, bench n=5. The 4 cards buy concurrency — KV pool 1.77M/6.77× vs the 2-card 622K/2.37× (single-stream decode ~flat). Quality is TP-invariant, carried from the vllm/dual proxy (109/150); a 4-card 8-pack confirmation is the open follow-up.",
     ),
     "vllm/qwen-27b-multi-max": _entry(
-        model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/multi4/fp8/mtp.yml",
@@ -274,7 +276,7 @@ COMPOSE_REGISTRY = {
     # checkpoint ships NO k_scale/v_scale tensors (index-verified) → runs at
     # scale=1.0, the #594-quality-tied regime. Same for the 35B-A3B sibling.
     "vllm/qwen-27b-single-nvfp4": _entry(
-        model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=1, max_ctx=65536, max_num_seqs=1, mem_util=0.85,
         compose_path="models/qwen3.6-27b/vllm/compose/single/nvfp4/mtp.yml",
@@ -284,7 +286,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.6-27B NVFP4 (nvidia modelopt MIXED_PRECISION: NVFP4 FFN + FP8 attention + FP8 KV scales + unquantized MTP head), single Hopper/Blackwell card (native sm_90+ — H100 / 5090 / RTX 6000 Pro / GB10; fallback_sm=7.5: sub-9.0 cards RUN it via the Marlin W4A16 weight-only fallback since vLLM v0.24 — no native-FP4 speed edge, and this single-card config needs >24 GB VRAM regardless). 🧪 AUTHORED BLIND on the sm_86 dev rig, community-validated on two 5090s (#613 @guybrush01 + #617 @paulp83). Root cause of the original OOM was MTP, not ctx: MTP-on at 98K left no room for the draft head + cudagraphs + GDN prefill scratch. Default is now MTP-on + MAX_MODEL_LEN=65536 + mem_util=0.85 — the config that keeps MTP's ~2x AND fits (verify-stress all-pass, 131/155 TPS decode, MTP accept ~3.2, ~1.4 GB VRAM free @ 65K). SPEC=off trades MTP for more ctx (81K/98K @ 71 TPS) and is the tight-system-RAM path (MTP's draft load OOM-kills a 28 GB host, #617). CEILING DE-BLINDED 2026-07-12 (#617 @paulp83, headless 32 GB 5090): MTP-on verify-stress ALL-PASS + NIAH-clean to 91K at MAX_MODEL_LEN up to 98K (100K = boot-fit edge) — so the MTP-on ceiling is ~98K on a headless 5090, not 65K; #613's 98K OOM was the tighter desktop condition. 65K stays the conservative fits-anywhere default. 80 GB+ cards raise MAX_MODEL_LEN toward 262K with MTP on. fp8/e4m3 KV runs scale=1.0 (FP8 KV declared in hf_quant_config, NO k_scale/v_scale tensors shipped — index-verified, the #594-tied regime). ~2.5x smaller than bf16, NVIDIA MMLU-Pro/GSM8K deltas <1% vs bf16 per the model card. 8-pack think-off measured 2026-07-11 on the dual sibling (sm_86 Marlin fallback, weight-identical): 110/150 — ties the fp8 tier's 109; native-FP4 activation path still owed (stays 🧪). No DEFAULTS row (opt-in only).",
     ),
     "vllm/qwen-27b-dual-nvfp4": _entry(
-        model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="nvfp4", workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/nvfp4/mtp.yml",
@@ -300,7 +302,7 @@ COMPOSE_REGISTRY = {
     # the MTP compose. max_ctx = the 200K max-safe default (262K boots but walls
     # ~125K at fill — see docs/CLIFFS.md; runtime CTX_SIZE default is 200000).
     "llamacpp/default": _entry(
-        model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="fast-chat",
+        model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="fast-chat", chat_template="froggeric",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp.yml",
@@ -308,7 +310,7 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
     ),
     "llamacpp/mtp": _entry(
-        model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="fast-chat",
+        model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="fast-chat", chat_template="froggeric",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp.yml",
@@ -326,7 +328,7 @@ COMPOSE_REGISTRY = {
         status_note="New structured-CoT port; live grammar + MTP validation pending.",
     ),
     "llamacpp/mtp-vision": _entry(
-        model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="vision-coding",
+        model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="vision-coding", chat_template="froggeric",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         # 150K @ 1M-px (IMAGE_MAX_TOKENS=1024) — re-tuned 2026-05-25 (PR #227); was a
         # stale 49152. Full-res 4M-px OOMs at fill, so 1M-px is the safe default.
@@ -342,7 +344,7 @@ COMPOSE_REGISTRY = {
     # single-card (sub-24 GB, shared GPU, WSL display overhead). Its own image
     # (ikawrakow/ik-llama-cpp), so unaffected by mainline llama.cpp drift.
     "ik-llama/iq4ks-mtp": _entry(
-        model="qwen3.6-27b", weights_variant="ubergarm-iq4ks", workload="fast-chat",
+        model="qwen3.6-27b", weights_variant="ubergarm-iq4ks", workload="fast-chat", chat_template="froggeric",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ubergarm-iq4ks/mtp.yml",
@@ -350,7 +352,7 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
     ),
     "ik-llama/iq4ks-mtp-vision": _entry(
-        model="qwen3.6-27b", weights_variant="ubergarm-iq4ks", workload="vision-coding",
+        model="qwen3.6-27b", weights_variant="ubergarm-iq4ks", workload="vision-coding", chat_template="froggeric",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=163840, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ubergarm-iq4ks/mtp-vision.yml",
@@ -560,7 +562,7 @@ COMPOSE_REGISTRY = {
 
     # Gemma 4 31B, vLLM. Lean v0.21.0 set: bf16 default, int8 long-context, single-card fp8 risk path.
     "vllm/gemma-mtp-tp1": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
+        model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat", chat_template="gemma-canonical",
         engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="fp8_e4m3",
         tp=1, max_ctx=8192, max_num_seqs=256, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/single/autoround-int4/fp8-mtp.yml",
@@ -570,7 +572,7 @@ COMPOSE_REGISTRY = {
         status_note="Dead on Ampere: no fp8 KV path for Gemma 4 on sm_86 (attention asserts kv ∈ {fp8,fp8_e4m3,nvfp4} — rejects fp8_e5m2; fp8/fp8_e4m3 need the fp8e4nv kernel sm_86 lacks; nvfp4 Blackwell-only). Live-confirmed stock v0.22.0 2026-05-31. Single-card → beellama/gemma-dflash; dual → vllm/gemma-bf16-mtp. See compose Caveats.",
     ),
     "vllm/gemma-bf16-mtp": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat",
+        model="gemma-4-31b", weights_variant="autoround-int4", workload="fast-chat", chat_template="gemma-canonical",
         engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="bf16",
         tp=2, max_ctx=131072, max_num_seqs=4, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml",
@@ -580,7 +582,7 @@ COMPOSE_REGISTRY = {
         status_note="DEPRECATED 2026-07-02 (v0.24.0 consolidation): superseded by vllm/gemma-31b-dual (cyankiwi bf16 @224K on STOCK v0.24.0, overlay-free). This rode vllm-gemma-stable v0.22.0 + the #42006 overlay at 131K bf16; the v0.24.0 bf16 path reaches ~224K on stock with no overlay, so this no longer earns its keep. Kept (not deleted) for history.",
     ),
     "vllm/gemma-int8-mtp": _entry(
-        model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant",
+        model="gemma-4-31b", weights_variant="autoround-int4", workload="multi-stream-tenant", chat_template="gemma-canonical",
         engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
         tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml",
@@ -597,7 +599,7 @@ COMPOSE_REGISTRY = {
     # native ParserEngine handles tools — so this folds onto vllm-stable, no overlays.
     # MTP DISABLED (Gemma-4 MTP×tools broken on v0.24.0 — vLLM #39043/#42006; see compose caveat).
     "vllm/gemma-31b-dual": _entry(
-        model="gemma-4-31b", weights_variant="qat-awq-int4", workload="multi-stream-tenant",
+        model="gemma-4-31b", weights_variant="qat-awq-int4", workload="multi-stream-tenant", chat_template="gemma-canonical",
         engine="vllm-stable", drafter=None, kv_format="bf16",
         tp=2, max_ctx=229376, max_num_seqs=2, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/qat-awq-int4/base.yml",
@@ -610,7 +612,7 @@ COMPOSE_REGISTRY = {
     # Gemma-4-31B unsloth QAT W4A16 (compressed-tensors int4) — QAT-int4 fidelity alt to
     # autoround-int4. Same dual / int8-PTH-KV(#40391) / assistant-MTP path as gemma-int8-mtp.
     "vllm/gemma-31b-qat-w4a16-dual": _entry(
-        model="gemma-4-31b", weights_variant="qat-w4a16", workload="multi-stream-tenant",
+        model="gemma-4-31b", weights_variant="qat-w4a16", workload="multi-stream-tenant", chat_template="gemma-canonical",
         engine="vllm-gemma-stable", drafter="gemma-it-assistant", kv_format="int8_per_token_head",
         tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.95,
         compose_path="models/gemma-4-31b/vllm/compose/dual/qat-w4a16/int8.yml",
@@ -634,7 +636,7 @@ COMPOSE_REGISTRY = {
     # variants ship (the no-drafter base composes were pruned — MTP is lossless and
     # fits the full 262144, so the bases bought nothing).
     "vllm/gemma-12b-dual-bf16-mtp": _entry(
-        model="gemma-4-12b", weights_variant="bf16", workload="fast-chat",
+        model="gemma-4-12b", weights_variant="bf16", workload="fast-chat", chat_template="gemma-canonical",
         engine="vllm-stable", drafter=None, kv_format="bf16",  # v0.24.0: gemma4_unified native (#44429) → vllm-stable; MTP off (Gemma-4 MTP×tools broken #39043/#42006)
         tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.90,
         compose_path="models/gemma-4-12b/vllm/compose/dual/bf16/mtp.yml",
@@ -644,7 +646,7 @@ COMPOSE_REGISTRY = {
         status_note="Gemma-4-12B (gemma4_unified, vLLM PR #44429) dual-3090 bf16 + assistant spec-dec (n=4). ⚠️ Production w/ caveats: rebench-full 2026-06-04 (verify-full + bench + verify-stress + 8-pack 94/150 + soak PASS); 256K NIAH overlay-free (stock config fix vllm#39914). CAVEAT: ephemeral gemma4-unified arch-preview image (0.1.dev) — pin a digest; promotes to Production on a STABLE vLLM gemma4_unified release.",
     ),
     "vllm/gemma-12b-single-int8-mtp": _entry(
-        model="gemma-4-12b", weights_variant="autoround-int8", workload="fast-chat",
+        model="gemma-4-12b", weights_variant="autoround-int8", workload="fast-chat", chat_template="gemma-canonical",
         engine="vllm-gemma4-unified", drafter="gemma-12b-it-assistant", kv_format="bf16",
         tp=1, max_ctx=262144, max_num_seqs=4, mem_util=0.92,
         compose_path="models/gemma-4-12b/vllm/compose/single/autoround-int8/mtp.yml",
@@ -658,7 +660,7 @@ COMPOSE_REGISTRY = {
     # the INT8 single on the 8-pack (int4-vs-int8 fidelity), so on a 24 GB card prefer
     # the INT8. Needs the vendored gemma4-unified-vision-unquant workaround (vLLM #44494).
     "vllm/gemma-12b-qat-w4a16-single": _entry(
-        model="gemma-4-12b", weights_variant="qat-w4a16", workload="fast-chat",
+        model="gemma-4-12b", weights_variant="qat-w4a16", workload="fast-chat", chat_template="gemma-canonical",
         engine="vllm-gemma4-unified", drafter="gemma-12b-it-assistant", kv_format="bf16",
         tp=1, max_ctx=262144, max_num_seqs=4, mem_util=0.94,
         compose_path="models/gemma-4-12b/vllm/compose/single/qat-w4a16/mtp.yml",
@@ -782,7 +784,7 @@ COMPOSE_REGISTRY = {
     # lifts the single-card ceiling to long context (240K NIAH-clean) vs the prior
     # bf16/16K path. Dual stays bf16/262K (no overlay; PR #40886 is in v0.22.0).
     "vllm/gemma-26ba4b-single": _entry(
-        model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat",
+        model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat", chat_template="gemma-canonical",
         engine="vllm-gemma-stable", drafter="gemma-26b-it-assistant", kv_format="int8_per_token_head",
         tp=1, max_ctx=176000, max_num_seqs=256, mem_util=0.94,
         compose_path="models/gemma-4-26b-a4b/vllm/compose/single/awq/int8.yml",
@@ -792,7 +794,7 @@ COMPOSE_REGISTRY = {
         status_note="AWQ MoE + external MTP (n=4) + INT8-PTH KV via vendored PR #40391 on vLLM v0.22.0 (vllm-gemma-stable). Gate PASS 2026-06-06 (rebench gemma-26ba4b-int8r): verify-full ✓, bench 168 narr / 217 code TPS @370W (MTP AL 3.0-3.8), verify-stress NIAH→161K ✓, soak 20x5 PASS 0-growth, quality 109/150 think-ON (~ gemma-4-31B 107/150) / 98/150 think-OFF. Caveats: needs the #40391 overlay (not in stock v0.22.0); 176K @ mem_util 0.94 (262K only WITHOUT the MTP drafter — 0.96 OOMs the cudagraph-capture tail); think-OFF agentic/extraction softer (cli-40 30%, DataExtract 60% — recover to 52%/73% with thinking). INT8-PTH lifted single-card ctx from the prior bf16/16K.",
     ),
     "vllm/gemma-26ba4b-dual": _entry(
-        model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat",
+        model="gemma-4-26b-a4b", weights_variant="awq", workload="fast-chat", chat_template="gemma-canonical",
         engine="vllm-stable", drafter=None, kv_format="bf16",  # MTP off on v0.24.0 (Gemma-4 MTP×tools broken, vLLM #39043/#42006)
         tp=2, max_ctx=262144, max_num_seqs=256, mem_util=0.92,
         compose_path="models/gemma-4-26b-a4b/vllm/compose/dual/awq/mtp.yml",
@@ -802,7 +804,7 @@ COMPOSE_REGISTRY = {
         status_note="AWQ + external MTP (gemma-26b-it-assistant n=4) on stock v0.22.0 — MTP +55% TPS (134->208, AL 3.55) validated 2026-06-05. Max ctx 262K (model max; KV pool 806,821 tok at 262144/0.92, 2x 3090) boot+coherence validated 2026-06-06. Promote after rebench-full + soak.",
     ),
     "vllm/diffusiongemma-dual": _entry(
-        model="diffusiongemma-26b-a4b", weights_variant="fp8", workload="fast-chat",
+        model="diffusiongemma-26b-a4b", weights_variant="fp8", workload="fast-chat", chat_template="gemma-canonical",
         engine="vllm-diffusion-gemma", drafter=None, kv_format="bf16",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.82,
         compose_path="models/diffusiongemma-26b-a4b/vllm/compose/dual/fp8/base.yml",
@@ -865,7 +867,7 @@ COMPOSE_REGISTRY = {
     ),
 
     "vllm/qwen-35b-a3b-dual-nvfp4-fast": _entry(
-        model="qwen3.6-35b-a3b", weights_variant="nvfp4-fast", workload="fast-chat",
+        model="qwen3.6-35b-a3b", weights_variant="nvfp4-fast", workload="fast-chat", chat_template="froggeric",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/nvfp4-fast/fp8.yml",
@@ -883,7 +885,7 @@ COMPOSE_REGISTRY = {
     # T2 producer-zero validation 2026-07-03: brought via pull.sh route-C sibling
     # swap + generate-compose (first model onboarded through the lane end-to-end).
     "vllm/agents-a1-dual": _entry(
-        model="agents-a1", weights_variant="fp8-dynamic", workload="long-ctx-single",
+        model="agents-a1", weights_variant="fp8-dynamic", workload="long-ctx-single", chat_template="froggeric",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/agents-a1/vllm/compose/dual/fp8-dynamic/fp8.yml",
@@ -925,7 +927,7 @@ COMPOSE_REGISTRY = {
     ),
 
     "vllm/tess-dual-nvfp4": _entry(
-        model="tess-4-27b", weights_variant="nvfp4", workload="fast-chat",
+        model="tess-4-27b", weights_variant="nvfp4", workload="fast-chat", chat_template="froggeric",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=2, max_ctx=131072, max_num_seqs=2, mem_util=0.92,
         compose_path="models/tess-4-27b/vllm/compose/dual/nvfp4/fp8.yml",
@@ -942,7 +944,7 @@ COMPOSE_REGISTRY = {
     # break-even; n=6/8 regress). DFlash alternative upstream-blocked on this hybrid
     # (vllm#40898). kvcalc SKIP (hybrid, KV on 16/64 layers). Full 262K (NVFP4: 131K).
     "vllm/tess-dual-w4a16": _entry(
-        model="tess-4-27b", weights_variant="leaderboard-w4a16", workload="fast-chat",
+        model="tess-4-27b", weights_variant="leaderboard-w4a16", workload="fast-chat", chat_template="froggeric",
         engine="vllm-stable", drafter="tess-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.90,
         compose_path="models/tess-4-27b/vllm/compose/dual/leaderboard-w4a16/fp8-mtp.yml",
