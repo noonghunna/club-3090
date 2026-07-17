@@ -21,6 +21,7 @@ fi
 # the same invocation switch.sh uses (project dir = compose-file dir).
 DUAL_27B_DIR="$CLUB3090_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4"
 GEMMA_DUAL_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/autoround-int4"
+GEMMA_31B_DUAL_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/qat-awq-int4"   # current dual default (vllm/gemma-31b-dual); autoround-int4/int8.yml deprecated 07-02
 # Gemma 4 12B (gemma4_unified arch) — AutoRound INT8 weights + bf16 KV, single-card vLLM on
 # the EPHEMERAL vllm/vllm-openai:gemma4-unified arch-preview image (:8038, served gemma-4-12b-int8).
 GEMMA_12B_DIR="$CLUB3090_DIR/models/gemma-4-12b/vllm/compose/single/autoround-int8"
@@ -320,12 +321,19 @@ stop_gemma_mtp() {
 }
 
 start_gemma_int8() {
-    printf "  ${GREEN}▲${NC} Starting gemma-int8..."
-    compose_at "$GEMMA_DUAL_DIR" "up -d" int8.yml && echo "done" || { echo "failed"; c3_mark_start_failure "gemma-int8"; }
+    # REPOINTED 2026-07-18: boots the CURRENT dual default vllm/gemma-31b-dual
+    # (qat-awq-int4 bf16 @224K, stock v0.24.0+, MTP-off). The old target
+    # autoround-int4/int8.yml = the slug DEPRECATED 2026-07-02 (int8-PTH
+    # silently craters recall past ~32K without #40391) — this direct
+    # compose_at path bypassed switch.sh's status gate. Function name kept
+    # (every mode's stop-list references it).
+    printf "  ${GREEN}▲${NC} Starting gemma-31b..."
+    compose_at "$GEMMA_31B_DUAL_DIR" "up -d" base.yml && echo "done" || { echo "failed"; c3_mark_start_failure "gemma-31b"; }
 }
 stop_gemma_int8() {
-    printf "  ${RED}▼${NC} Stopping gemma-int8..."
-    compose_at "$GEMMA_DUAL_DIR" "down" int8.yml && echo "done" || echo "skipped"
+    printf "  ${RED}▼${NC} Stopping gemma-31b..."
+    compose_at "$GEMMA_31B_DUAL_DIR" "down" base.yml >/dev/null 2>&1 || true
+    compose_at "$GEMMA_DUAL_DIR" "down" int8.yml && echo "done" || echo "skipped"   # legacy int8 residue too
 }
 
 # Stop every Gemma serving variant before starting a new one
@@ -619,8 +627,8 @@ mode_gemma_12b() {
 #  via its catalog slug if needed.)
 
 mode_gemma_int8() {
-    echo -e "${CYAN}═══ Switching to Gemma 4 31B INT8-PTH mode (dual default, long ctx) ═══${NC}"
-    echo "Starting: Gemma 4 31B + INT8 PTH KV + 262K ctx (TP=2, :8032)"
+    echo -e "${CYAN}═══ Switching to Gemma 4 31B mode (dual default) ═══${NC}"
+    echo "Starting: Gemma 4 31B QAT-AWQ-INT4 + bf16 KV + 224K ctx (TP=2, :8032, MTP-off; canonical template)"
     echo ""
     stop_all_27b
     stop_deckard
@@ -980,7 +988,7 @@ list_modes_data() {
 chat	ops	Open WebUI + LiteLLM + Qdrant + SearXNG + uncensored director — supporting-infra home for catalog models	openwebui,litellm,qdrant,searxng,studio-director,spark-dashboard	8080,4000,8090,3010	none
 qwen27b	models	Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision (TP=2) — default	vllm-qwen36-27b-dual,litellm,qdrant,openwebui,searxng,spark-dashboard	8010,8080,4000,3010	both
 qwen35b-a3b	models	Qwen3.6-35B-A3B MoE (3B active / 35B total) AutoRound INT4 + fp8 KV + 262K + vision (TP=2)	vllm-qwen36-35b-a3b-dual,litellm,qdrant,openwebui,searxng,spark-dashboard	8051,8080,4000,3010	both
-gemma-31b	models	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng,spark-dashboard	8032,8080,4000,3010	both
+gemma-31b	models	Gemma 4 31B QAT-AWQ-INT4 bf16 KV @224K (TP=2, MTP-off, canonical template) — dual default	vllm-gemma-4-31b-qat-awq-int4,litellm,qdrant,openwebui,searxng,spark-dashboard	8032,8080,4000,3010	both
 gemma12b	models	Gemma 4 12B AutoRound INT8 + bf16 KV + MTP n=2 (gemma4_unified arch-preview, single-card)	vllm-gemma-4-12b-int8-mtp,litellm,qdrant,openwebui,searxng,spark-dashboard	8038,8080,4000,3010	1
 deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng,spark-dashboard	8199,8080,4000,3010	both
 ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,studio-step-voice,openwebui,litellm,qdrant,searxng,spark-dashboard	8188,8090,8189,8190,8191,8192,8193,8080,4000,6333,3010	both

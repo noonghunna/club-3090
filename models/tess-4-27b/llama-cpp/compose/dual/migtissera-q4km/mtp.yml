@@ -24,8 +24,14 @@
 # 16384 config — 3/3 clean incl. a parallel 2-tool call, and the full-gate quality
 # refresh passed both modes with no pack regression (OFF 116 / ON 117). Attribution
 # engine-build vs budget unresolved (both changed); history in learnings/tess-4-27b.md.
-# NOTE: Arch CONFIRMED qwen35-dense (standard GQA, 64 layers) from the GGUF header
-# — same family as Deckard-40B. Migtissera ships the MTP head as a SEPARATE GGUF
+# NOTE (arch corrected 2026-07-17): Tess is a qwen3_5 HYBRID — 48 linear_attention
+# (DeltaNet) + 16 full_attention layers per the safetensors config; the earlier
+# "standard GQA from the GGUF header" read only described the full-attention
+# geometry (llama.cpp's qwen35 arch carries the hybrid internally). Same family
+# as Deckard-40B (whose GGUF-header "dense" claim deserves the same audit).
+# Implication: DeltaNet recurrent state exists → the #710/#43559 MTP×prefix-cache
+# mechanism class applies in principle (llama.cpp lane unaffected in practice —
+# different caching model). Migtissera ships the MTP head as a SEPARATE GGUF
 # (external draft), so this compose passes --spec-draft-model (contrast Deckard's
 # embedded head, which needs only --spec-type draft-mtp).
 # ---------------------------------------------------------------------------
