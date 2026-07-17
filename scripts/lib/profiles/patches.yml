@@ -304,7 +304,7 @@ patches:
     capability: w4a8-int8-activations
     foundational: false
     upstream:
-      ref: "two vLLM bugs to file (inc drops input_dtype; Marlin unsigned int16 group-scale read) — forensics club-3090#609; toy repro vendored in the exploration artifacts"
+      ref: "two vLLM bugs FILED 2026-07-17: inc drops input_dtype = vllm#48904; Marlin unsigned int16 group-scale read = vllm#48905. Forensics club-3090#609."
       status: local-vendored
       drop_when: "both fixes merge upstream and land in the pinned release (re-run the drift_guard on the new pin, then delete the mount + this entry)"
     status: verified
