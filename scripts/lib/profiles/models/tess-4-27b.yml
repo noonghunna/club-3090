@@ -42,6 +42,17 @@ weights:
     kind: main
     verify_glob: "*.safetensors"
     manual_note: "migtissera's llm-compressor NVFP4 (TRUE W4A4 recipe: 4-bit float gs16 weights AND activations on FFNs, FP8-dynamic attention/linear_attn; single safetensors, 2,672 tensors, 0 mtp — llm-compressor drops the head). On Ampere executes as Marlin W4A16 weight-only → 62.4 tok/s TP=2 @131K (2026-07-11, BENCHMARKS). Quant AUTO-DETECTS (do NOT pass --quantization modelopt). Repo chat_template is STOCK-BROKEN (developer-role crash; our HF fix PR in flight) → composes must pin froggeric. PIN RULE: this is the shipped vLLM pin (all first-party numbers measured on it); fallback = huginnfork/Tess-4-27B-NVFP4A16 (on-disk, W4A16-calibrated, KLD 0.0418) ONLY IF the A0 8-pack undershoots the GGUF tier bar beyond noise. Native-FP4 (sm_90+) quality unmeasured."
+  leaderboard-w4a16:
+    path: tess-4-27b-autoround-w4a16
+    local_subdir: tess-4-27b-autoround-w4a16
+    size_gb: 18
+    format: autoround
+    status: production
+    hf_repo: LeaderboardModel1/Tess-4-27B-AutoRound-W4A16-Tuning
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "AutoRound W4A16 (sym INT4 g128) of migtissera/Tess-4-27B with the MTP head + hybrid projections kept BF16 via extra_config (mtp.fc={bits:16,fp} + linear_attn.in_proj@16) — the export pattern the migtissera NVFP4 got wrong (4-bit'd mtp.fc -> 0% accept, club #662). Native Marlin WNA16 on Ampere (no NVFP4 dequant fallback). Revived MTP: accept-len 5.0 / 80% (warm code), n-sweep knee n=5 (code +49%, prose break-even). rebench-full 2026-07-17: 73.5/108.2 TPS, stress 8/8 @262K, soak PASS, 8-pack 108/115 (beats NVFP4 A0 106/113 both legs)."
   migtissera-q4km:
     path: tess-4-27b-gguf/migtissera-q4km
     local_subdir: tess-4-27b-gguf/migtissera-q4km
@@ -61,6 +72,7 @@ weights:
 default_weight_variant: migtissera-q4km
 compatible_drafters:
   - tess-mtp-gguf
+  - tess-mtp-builtin
 # num_kv_heads=4 supports TP up to 4; we ship + validated dual (TP=2). Single-card
 # (16 GB Q4_K_M fits one 24 GB card) is architecturally valid but not yet benched.
 valid_tp:
