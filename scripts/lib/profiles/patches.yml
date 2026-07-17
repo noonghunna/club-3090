@@ -241,8 +241,9 @@ patches:
       - models/gemma-4-31b/vllm/patches/google-canonical-chat-template/chat_template.jinja
     load_bearing_when:
       - composes:
-          - vllm/gemma-int8-mtp
-          - vllm/gemma-bf16-mtp
+          - vllm/gemma-31b-dual
+          - vllm/gemma-12b-single-int8-mtp
+          - vllm/gemma-26ba4b-single
         reason: "The image-bundled /vllm-workspace/examples/tool_chat_template_gemma4.jinja in the v0.25.1-era pins PREDATES Google's 2026-07-09 canonical template fix (repo commit: null handling, reasoning preservation, turn-tag balance). Three functional deltas, each an agent-loop failure class: (1) the old copy injects an empty thought channel into HISTORY model-turns when thinking is off; (2) preserve_thinking applied to every turn vs canonical scoping to tool-call turns only; (3) turn-closure emission ignores the next turn (unbalanced turn tags in tool loops). All gemma-family vLLM composes (11) now mount this vendored canonical instead of the image path. GGUF gemma lanes keep embedded templates (minja compat with this file UNVALIDATED - do not repoint them without a minja parse check)."
         evidence: "models/gemma-4-31b/vllm/patches/google-canonical-chat-template/README.md (provenance + sha + diff summary)"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
