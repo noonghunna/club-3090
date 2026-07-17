@@ -18,7 +18,7 @@
 # Override via .env or shell:
 #   SPARK_DASHBOARD_IMAGE   image (default: pinned v0.11.0)
 #   SPARK_DASHBOARD_PORT    UI/API port on the host (default 3010; host network)
-#   DOCKER_GID              host docker group GID (this rig: 988; find yours:
+#   DOCKER_GID              host docker group GID (default 999 = Debian/Ubuntu common; find yours:
 #                           getent group docker | cut -d: -f3 — a mismatch
 #                           silently disables container-based engine discovery)
 services:
@@ -45,7 +45,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     group_add:
-      - "${DOCKER_GID:-988}"
+      - "${DOCKER_GID:-999}"
 
     environment:
       - SPARK_DASHBOARD_PORT=${SPARK_DASHBOARD_PORT:-3010}
