@@ -21,8 +21,15 @@ Enable per launch:
 VLLM_MARLIN_INPUT_DTYPE=int8 bash scripts/switch.sh vllm/dual
 ```
 
+**Symmetry is per-layer and all-or-nothing under int8:** the fold handles symmetric int4
+regardless of scale sign (the AutoRound case). But **any** asymmetric (zero-point) layer trips
+the actionable assert and refuses the boot — it is *not* "reject only if all layers are asym."
+That's deliberate: avesed's fork documents that asym-weight W4A8 produces **garbage** (not a crash)
+even when it loads, so a mixed checkpoint with some asym layers would corrupt the whole output —
+there is no coherent partial-int8. Refuse-loud beats serve-garbage.
+
 Requirements: **positive-symmetric int4** weights (the shipped autoround checkpoint
-qualifies via the fold; asymmetric AWQ refuses loudly). Qwen validated on the composes' fp16 AND
+qualifies via the fold; any asymmetric layer refuses loudly). Qwen validated on the composes' fp16 AND
 bf16; prefer bf16 for other model families (Gemma overflows fp16 under int8 dequant). Compressed-
 tensors positive-sym checkpoints need no patches at all (the hook is stock there).
 

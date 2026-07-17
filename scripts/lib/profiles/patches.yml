@@ -281,6 +281,7 @@ patches:
       - composes:
           - vllm/dual
           - vllm/minimal
+          - vllm/qwen-27b-multi-fast
         reason: "Enables the STOCK serve-time W4A8 toggle (VLLM_MARLIN_INPUT_DTYPE=int8 — int8 activations on the int4 weights, +50% prefill / decode ~neutral dual (env-only A/B), 8-pack-tied 110/111 vs 109) on auto-round checkpoints: vLLM's inc route silently drops the toggle (bug A), and the int8 kernel reads group scales UNSIGNED while AutoRound emits ~50% negative scales → garbage (bug B; load-time sign-fold, exact except 0.61% of weights). BOTH patches are NO-OPS while the env is unset, so they ship applied-always with zero default-path behavior change. Forensics + measurements: club-3090#609."
         evidence: "models/qwen3.6-27b/vllm/patches/w4a8-int8-act/README.md; club-3090#609 (c-17664346 + c-17666873); docs/UPSTREAM.md W4A8 rows"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -295,7 +296,7 @@ patches:
       invoke: "bash /etc/club3090/w4a8/install.sh"
       invoked_before: vllm-serve
       wired_at: [volumes, entrypoint]
-      note: "Idempotent, anchor-based (anchors byte-stable v0.24.0 & v0.25.1), and a NO-OP without the env. Failure policy: anchors drifted + env SET → boot refused (never a silent half-wire); env unset → warn and serve stock."
+      note: "Idempotent, anchor-based (anchors byte-stable v0.24.0 & v0.25.1), and a NO-OP without the env. Failure policy: anchors drifted + env SET → boot refused (never a silent half-wire); env unset → warn and serve stock. SCOPE: DENSE autoround-int4 (positive-sym int4) composes ONLY — dual/minimal/multi-fast. NOT the 35b-a3b MoE autoround (dual/preview-single): its experts go through a SEPARATE path — inc get_moe_method drops input_dtype (Bug A analog) AND the fold does not reach AutoGPTQMoEMethod.process_weights (Bug B analog); stock v0.25.1 HAS the MoE int8 GEMM (marlin_moe.py) so it is tractable but needs two more patch sites + a validation boot (open follow-up). NOT wired on fp8 (dual-max: vLLM RuntimeError 'Marlin W8A8 not supported') or nvfp4 (single/dual-nvfp4: RuntimeError 'NVFP4 weight + INT8/FP8 activation is not supported' at marlin_utils_fp4.py — FP4 is float, can't widen losslessly to int8). Those composes omit the env passthrough, so the knob can't even reach them."
     drift_guard:
       kind: behavioral
       check: "With VLLM_MARLIN_INPUT_DTYPE=int8 on the autoround ckpt: boot logs the single fold warning, prefill gains >=30% vs the same compose without the env, and completions stay coherent (logprob sanity: 'capital of Italy is' -> ' Rome' at > -1.0). Without the env: byte-identical serving behavior to the unpatched image (the no-op guarantee)."
