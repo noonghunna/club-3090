@@ -932,7 +932,24 @@ COMPOSE_REGISTRY = {
         default_port=8082, required_sm=9.0, fallback_sm=7.5,
         kvcalc_key="SKIP",
         status="experimental",
-        status_note="Tess-4-27B NVFP4 (migtissera compressed-tensors, W4A4 recipe; Marlin W4A16 weight-only on Ampere) at TP=2 @131K + fp8 KV, spec-off — THE FASTEST TESS on 2x24GB: 62.4 tok/s decode (CV 0.2%) vs the llama.cpp catalog entry's 57.9 with MTP, and the first vLLM-servable Tess on consumer cards (validated 2026-07-11, BENCHMARKS). Froggeric template pinned (repo template stock-broken). Drafter-less BY FORENSIC RESULT: grafted MTP head = 0% accept in vLLM (works only token-fed in llama.cpp), EAGLE3 ~40% = net-negative on this trunk (club #662). kvcalc SKIP: Tess is a qwen35 HYBRID (KV on 16/64 layers) and no hybrid kv-calc model exists for it yet — follow-up at promotion. A0 8-pack LANDED 2026-07-12: 106/150 off / 113/150 on — UNDERSHOOTS the GGUF bar (116/117), gap cli-40-concentrated (17 vs 25 off); deterministic packs tie+ (RM-off 14/15 best-ever). Fallback arms DONE 2026-07-12: huginnfork NVFP4A16 = gated wash (recipe doesn't matter on Ampere, both 4-bit dequant same Marlin path); FP8 W8A16 = 111/117 (ON ties GGUF, gap was PRECISION not serving-path — cli-40 OFF 17->22). FP8 not productized (35GB, slower, GGUF already production 116/117). Slug stays as the FAST experimental vLLM-Tess with the honest agentic-undershoot caveat; stress/soak still unrun. Slug stays experimental; llamacpp/tess-dual-mtp (now Production) remains the tess recommendation.",
+        status_note="Tess-4-27B NVFP4 (migtissera compressed-tensors, W4A4 recipe; Marlin W4A16 weight-only on Ampere) at TP=2 @131K + fp8 KV, spec-off — THE FASTEST TESS on 2x24GB: 62.4 tok/s decode (CV 0.2%) vs the llama.cpp catalog entry's 57.9 with MTP, and the first vLLM-servable Tess on consumer cards (validated 2026-07-11, BENCHMARKS). Froggeric template pinned (repo template stock-broken). Drafter-less BY FORENSIC RESULT: grafted MTP head = 0% accept in vLLM (works only token-fed in llama.cpp), EAGLE3 ~40% = net-negative on this trunk (club #662). kvcalc SKIP: Tess is a qwen35 HYBRID (KV on 16/64 layers) and no hybrid kv-calc model exists for it yet — follow-up at promotion. A0 8-pack LANDED 2026-07-12: 106/150 off / 113/150 on — UNDERSHOOTS the GGUF bar (116/117), gap cli-40-concentrated (17 vs 25 off); deterministic packs tie+ (RM-off 14/15 best-ever). Fallback arms DONE 2026-07-12: huginnfork NVFP4A16 = gated wash (recipe doesn't matter on Ampere, both 4-bit dequant same Marlin path); FP8 W8A16 = 111/117 (ON ties GGUF, gap was PRECISION not serving-path — cli-40 OFF 17->22). FP8 not productized (35GB, slower, GGUF already production 116/117). Slug stays as the FAST experimental vLLM-Tess with the honest agentic-undershoot caveat; stress/soak still unrun. SUPERSEDED as the fast pick 2026-07-17 by vllm/tess-dual-w4a16 (LeaderboardModel1 W4A16 + revived MTP n=5: 73.5/108.2 TPS @262K, 8-pack 108/115) — this slug stays for native-FP4 rigs (sm_90+) where NVFP4 executes natively; on Ampere prefer the W4A16 sibling. NOTE the drafter-less forensics are RE-ATTRIBUTED: the 0% accept was the NVFP4 EXPORT (4-bit'd mtp.fc), not head misalignment — the head works at 80% accept on the W4A16 export (club #662).",
+    ),
+
+    # Tess-4-27B AutoRound W4A16 (LeaderboardModel1) — the MTP-REVIVAL slug (club #662).
+    # Same base as the NVFP4 sibling but the export keeps mtp.fc + linear_attn.in_proj
+    # BF16 (extra_config) → the built-in MTP head WORKS (80% accept, accept-len 5.0)
+    # where the NVFP4 export's is dead (0%). n-sweep knee n=5 (code +49%, prose
+    # break-even; n=6/8 regress). DFlash alternative upstream-blocked on this hybrid
+    # (vllm#40898). kvcalc SKIP (hybrid, KV on 16/64 layers). Full 262K (NVFP4: 131K).
+    "vllm/tess-dual-w4a16": _entry(
+        model="tess-4-27b", weights_variant="leaderboard-w4a16", workload="fast-chat",
+        engine="vllm-stable", drafter="tess-mtp-builtin", kv_format="fp8_e4m3",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.90,
+        compose_path="models/tess-4-27b/vllm/compose/dual/leaderboard-w4a16/fp8-mtp.yml",
+        default_port=8083, fallback_sm=7.5,
+        kvcalc_key="SKIP",
+        status="caveats",
+        status_note="Tess-4-27B AutoRound W4A16 (LeaderboardModel1; sym INT4 g128, mtp.fc@BF16) at TP=2 @262K + fp8_e4m3 KV + built-in MTP n=5 — THE FASTEST TESS on 2x24GB and the MTP-revival result (club #662): 73.5 narrative / 108.2 code tok/s decode (vs the NVFP4 sibling's spec-off 62.4), accept-len 5.0 / 80% warm. Native Marlin WNA16 on Ampere. rebench-full 2026-07-17 (131 min): verify-stress 8/8 incl. NIAH ceiling ladder to 0.92x262K (2.2 GB margin), soak PASS (0/100 silent-empty, p50 110.6, 105% retention), 8-pack 108/150 off / 115/150 on — beats the NVFP4 A0 baseline (106/113) on BOTH legs. CAVEAT (why not full production): think-OFF still undershoots the GGUF tier bar (108 vs 116, cli-40-concentrated 19/40 vs 25/40); think-ON ties (115 vs 117, cli-40 25/40 = parity) — same precision-not-serving-path gap as the NVFP4 arms. n-sweep (single-variable): no-spec 70.1/70.0, n=5 69.9/104.3 (knee), n=6/8 regress. Prefix caching OFF (hybrid DeltaNet state). Froggeric template pinned. SPEC_N overridable; the head is NOT valid on the NVFP4 slug (dead there - export, not head).",
     ),
 
     # Nemotron-3 Puzzle 75B-A9B NVFP4 — hybrid Mamba2-Transformer LatentMoE (512 routed
@@ -1034,6 +1051,12 @@ DEFAULTS = {
     ("qwen3.6-40b-deckard", "llamacpp", "dual"): "llamacpp/deckard40B-dual-mtp",
     # Tess-4-27B: single dual llama.cpp compose (external MTP); ⚠️ caveats = functional.
     ("tess-4-27b", "llamacpp", "dual"): "llamacpp/tess-dual-mtp",
+    # Tess-4-27B vLLM: the W4A16 MTP-revival slug (2026-07-17). ⚠️ NOTE: because
+    # ENGINE_PREFERENCE[dual] walks vllm first and status=caveats is functional,
+    # this row ALSO flips the curated `tess-4-27b/default` from llamacpp to vllm
+    # (73/108 TPS vs 52-63/67; think-ON quality ties 115/117, think-OFF -8).
+    # Remove this row (slug stays launchable by name) to keep the GGUF default.
+    ("tess-4-27b", "vllm", "dual"): "vllm/tess-dual-w4a16",
 }
 
 

@@ -1,0 +1,177 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Tess-4-27B (LeaderboardModel1 AutoRound W4A16 — sym INT4 g128
+#              weights + mtp.fc@BF16 + linear_attn.in_proj@BF16 via
+#              extra_config; ~18 GB. Native Marlin WNA16 on Ampere)
+#   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
+#   Drafter:   MTP n=5 built-in (SPEC_N override) — the WORKING head. The
+#              NVFP4 sibling's 0% accept was the EXPORT (4-bit'd mtp.fc),
+#              not the head — settled 2026-07-17, club #662. n-sweep knee at
+#              n=5: prose break-even, code +49%; n=6/8 regress (tail accept
+#              collapses). DFlash alternative is upstream-blocked on this
+#              hybrid family (vllm#40898 — mixed layer_types).
+#   KV:        fp8_e4m3 (validated); prefix caching OFF — Tess is a qwen3_5
+#              HYBRID (48 linear_attention + 16 full_attention), DeltaNet
+#              state is not prefix-reusable
+#   Vision:    base is VL-capable — UNTESTED on this serve; validation text-only
+#   Max ctx:   262144 (validated: NIAH ceiling ladder clean to ~241K,
+#              20.8 GB/card, KV pool 585K tokens, 2.2 GB margin)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific (this is qwen3_5)
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   think-OFF 8-pack undershoots the GGUF dual tier (108/150 vs
+#              116/150, cli-40-concentrated 19/40 vs 25/40); think-ON ties
+#              (115 vs 117, within ±5-7 noise, cli-40 25/40 = parity). Same
+#              precision-not-serving-path gap as the NVFP4 A0 arms.
+#   Quality:   core 8-pack 108/150 (72%) think-off · 115/150 (77%) think-on
+#              (benchlocal --full, rebench tess-4-27b-20260717-0529) — BEATS
+#              the NVFP4 A0 baseline (106/113) on both legs.
+#   Best for:  ⭐ the fastest Tess on 2× 24 GB — 73.5 narrative / 108.2 code
+#              tok/s decode (vs NVFP4 spec-off 62.4) with the revived MTP
+#              head at 80% accept; full 262K ctx (NVFP4 envelope: 131K)
+# ---------------------------------------------------------------------------
+# FIRST-PARTY VALIDATED (2026-07-17 rebench-full, reference 2×3090, 131 min):
+#   - bench: 73.5 narrative / 108.2 code tok/s decode (TTFT ~154 ms); MTP
+#     warm accept-len 5.0, avg accept 80%.
+#   - verify-stress 8/8 incl. context-ceiling ladder to 0.92×262K; soak PASS
+#     (0/100 silent-empty, p50 110.6 tok/s, 105% retention).
+#   - 8-pack both legs: 108 off / 115 on (NVFP4 baseline 106/113).
+#   - n-sweep (this checkpoint, single-variable): no-spec 70.1/70.0 →
+#     n=5 69.9/104.3 (knee); n=2..4 within 66–87; n=6/8 regress 83.8/84.5.
+#
+# Checkpoint provenance: LeaderboardModel1/Tess-4-27B-AutoRound-W4A16-Tuning —
+# an AutoRound W4A16 of migtissera/Tess-4-27B with the MTP head + hybrid
+# linear_attn.in_proj kept BF16 (the Qwen extra_config pattern). This is what
+# the migtissera NVFP4 export got wrong (llm-compressor drops/4-bits the head
+# → 0% accept). Recipe documented in learnings/tess-4-27b.md + club #662.
+#
+# Template: repo chat_template is STOCK-BROKEN (developer-role crash) — pins
+# the vendored froggeric v19 family template, same as the qwen3.6 composes.
+#
+# Sibling composes (models/tess-4-27b/):
+#   - vllm/dual/leaderboard-w4a16/fp8-mtp.yml (this): 262K, MTP n=5, 73/108 TPS ⭐
+#   - vllm/dual/nvfp4/fp8.yml:      131K, spec-off, 62.4 TPS — superseded as
+#                                   the fast pick; native-FP4 rigs still start here
+#   - llama-cpp/dual/migtissera-q4km/mtp.yml: 262K, external draft-mtp n=2,
+#                                   52-63/67 TPS — quality-tier pick (116/117)
+#
+# Run:
+#   cd <repo>/models/tess-4-27b/vllm/compose
+#   docker compose -f dual/leaderboard-w4a16/fp8-mtp.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+services:
+  vllm-tess-4-27b-dual-w4a16:
+    # Pinned to a vLLM STABLE release (immutable, #407); the launchers inject
+    # the engine-profile image over this default (#254).
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    container_name: "${ESTATE_CONTAINER:-vllm-tess-4-27b-dual-w4a16}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8083}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — warm-start across boots.
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      # froggeric v19 family chat template — SHARED with the qwen3.6-27b
+      # composes (single vendored copy, see patches.yml
+      # qwen-froggeric-chat-template). Required: the model repo's own
+      # template is stock-broken (developer-role crash).
+      - ../../../../../qwen3.6-27b/vllm/patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      # CUDA-level GPU mask — see #610; UUID form is renumbering-proof and is
+      # what CDI runtimes honor. Unset → absent (no masking).
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      # Safe PCIe default (mirrors the validated dual composes); rigs with
+      # working P2P set NCCL_P2P_DISABLE=0.
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      # FP8-GEMM lib guard for consumer Blackwell — launchers auto-inject
+      # VLLM_USE_DEEP_GEMM=0 there (disc #571); raw compose users set it.
+      - VLLM_USE_DEEP_GEMM
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$$@"
+        else
+          exec vllm serve --disable-custom-all-reduce "$$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/tess-4-27b-autoround-w4a16
+      - --served-model-name
+      - tess-4-27b
+      - tess-4-27b-w4a16
+      - --quantization
+      - auto_round
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.90}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
+      - --trust-remote-code
+      # HYBRID (DeltaNet linear-attention state) — prefix caching is not
+      # state-reusable on this arch; keep OFF.
+      - --no-enable-prefix-caching
+      - --enable-chunked-prefill
+      # froggeric v19 pin (see volumes) — the model-dir template is broken.
+      - --chat-template
+      - /etc/qwen-froggeric-chat-template.jinja
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      # The revived built-in MTP head (BF16-preserved in this checkpoint).
+      # n=5 = the measured knee; n=6/8 REGRESS (see header). SPEC_N=0 is NOT
+      # supported here — comment the block out to run spec-off.
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":${SPEC_N:-5}}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

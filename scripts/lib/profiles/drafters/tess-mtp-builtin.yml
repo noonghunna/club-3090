@@ -1,0 +1,25 @@
+schema_version: 1
+id: tess-mtp-builtin
+display_name: Tess-4-27B built-in MTP head (vLLM)
+spec_method: mtp
+model_compat:
+  - tess-4-27b
+n_default: 5
+n_max: 8
+download: false
+vram_footprint_gb: 0
+status: production
+# Built-in MTP head inside the LeaderboardModel1 AutoRound W4A16 checkpoint —
+# the SAME base-Qwen head that accepts 0% in the migtissera NVFP4 export.
+# Root cause settled 2026-07-17 (club #662): the NVFP4 export 4-bit'd mtp.fc;
+# LeaderboardModel1 keeps it BF16 via extra_config['mtp.fc']={bits:16,fp}
+# (+ linear_attn.in_proj@bf16) → accept-len 5.0 / 80% accept (warm, code).
+# n-sweep 2026-07-17 (single-variable boots, W4A16 TP=2): knee = n=5
+# (prose 69.9 tie / code 104.3 = +49% vs no-spec 70.1/70.0); n=6/8 REGRESS
+# (83.8/84.5 — tail accept collapses to 0.12–0.36). Prose is break-even at
+# every n (tail dies ~0.2 by pos 5); the win is code/structured output.
+# No separate drafter weights → download: false. {N} substituted from
+# n_default or the compose's ${SPEC_N:-5} override.
+# NOT valid for the NVFP4 slug (dead head there — export, not head).
+speculative_config_template: '{"method":"mtp","num_speculative_tokens":{N}}'
+local_model_path: null

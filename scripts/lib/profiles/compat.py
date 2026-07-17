@@ -908,9 +908,13 @@ def fits(
     # Triton, so fp8_e4m3 KV routes to FlashInfer on sm_86 — live-verified on vibethinker-3b
     # (bf16 Qwen2-dense: FlashInfer selected, coherent). Only gemma-style W4A16 on a non-
     # qwen3-next family still routes to Triton → stays correctly rejected.
+    # qwen35-dense family added 2026-07-17: same DeltaNet-hybrid attention class as
+    # qwen3-next (the family label predates the hybrid correction) — Tess-4-27B AutoRound
+    # W4A16 + e4m3 KV live-validated on 2x3090 sm_86 @262K (rebench-full: verify-stress
+    # 8/8 incl. NIAH ceiling ladder, soak PASS, 8-pack both legs). FlashInfer path.
     _fp8w_ampere_kv = effective_kv == "fp8_e4m3" and (
         str(effective_weights or "").startswith(("fp8", "nvfp4", "bf16", "fp16"))
-        or model.family.startswith("qwen3-next")
+        or model.family.startswith(("qwen3-next", "qwen35"))
     )
     unsupported_hw = [
         hw.id for hw in hardware

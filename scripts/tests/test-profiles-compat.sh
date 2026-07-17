@@ -27,7 +27,7 @@ assert len(p.hardware) == 10  # +dgx-spark (#576 follow-up)
 assert len(p.models) == 13
 assert len(p.workloads) == 5
 assert len(p.engines) == 13
-assert len(p.drafters) == 13
+assert len(p.drafters) == 14
 assert len(p.calibration) == 5
 PY
 

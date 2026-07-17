@@ -6,12 +6,14 @@
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink) — AMPERE-VALIDATED serve;
 #              native FP4 (sm_90+) untested. required_sm=9.0 (native),
 #              fallback_sm=7.5.
-#   Drafter:   none — DELIBERATE, forensically settled 2026-07-11: the grafted
-#              base-Qwen MTP head accepts 0% in vLLM (feature-space misaligned;
-#              works only token-fed in llama.cpp draft-mtp) and the EAGLE3
-#              head (~40% accept) is NET-NEGATIVE on this fast trunk (−27%).
-#              See learnings/tess-4-27b.md "2026-07-11" + club #662. Don't
-#              re-add without a retrained head.
+#   Drafter:   none — the head in THIS checkpoint is dead (0% accept).
+#              ⚠️ RE-ATTRIBUTED 2026-07-17 (club #662): the killer is the
+#              NVFP4 EXPORT (llm-compressor 4-bit'd mtp.fc), NOT feature-space
+#              misalignment — the identical head runs at 80% accept in the
+#              LeaderboardModel1 W4A16 export (mtp.fc kept BF16). Don't add
+#              --speculative-config HERE (still dead on these weights); use
+#              the dual/leaderboard-w4a16/fp8-mtp.yml sibling for working MTP.
+#              EAGLE3 (~40% accept, net-negative) remains ruled out.
 #   KV:        fp8 → e4m3 at scale=1.0 (no scale tensors in this checkpoint;
 #              runtime KV calibration force-disabled on qwen3_5 hybrids —
 #              measured quality-equivalent regime on this family)
@@ -25,9 +27,11 @@
 #              (benchlocal --full, 2026-07-12) — undershoots the GGUF dual's
 #              116/117; gap is cli-40-concentrated (17/40 off vs 25/40). See
 #              BENCHMARKS.md Tess vLLM row + learnings for the fallback plan.
-#   Best for:  the FASTEST Tess on 2× 24 GB — 62.4 tok/s spec-off vs the
-#              llama.cpp catalog entry's 57.9 with MTP; first vLLM-servable
-#              Tess on consumer cards
+#   Best for:  native-FP4 rigs (sm_90+) where NVFP4 executes natively. On
+#              Ampere this slug is SUPERSEDED 2026-07-17 by
+#              dual/leaderboard-w4a16/fp8-mtp.yml (73.5/108.2 tok/s with the
+#              revived MTP n=5, 262K ctx, 8-pack 108/115 vs this A0's
+#              106/113) — first vLLM-servable Tess on consumer cards
 # ---------------------------------------------------------------------------
 # FIRST-PARTY VALIDATED ON AMPERE (2026-07-11 forensics week, reference 2×3090):
 #   - bench: **62.4 tok/s decode spec-off (CV 0.2%)** @131K + fp8 KV — beats
