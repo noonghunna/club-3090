@@ -70,6 +70,8 @@ VARIANT_KEYS = {
     # c3 catalog act column (#723): registry act_format facet — "16bit"
     # default / "int8" / "fp8" (the A in W4A16/W4A8/W8A8).
     "act_format",
+    # c3 serve-confirm W4A8 checkbox capability (#609).
+    "act8_capable",
 }
 v0 = d["variants"][0]
 need(set(v0.keys()) == VARIANT_KEYS,

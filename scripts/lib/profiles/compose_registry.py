@@ -56,6 +56,10 @@ def _entry(
     # that dynamic-quantizes activations sets "int8" (W4A8/W8A8 class) or "fp8".
     # Surfaced as the c3 catalog "act" column (#723).
     act_format="16bit",
+    # True when the slug's compose is wired for the W4A8 int8-activation knob AND
+    # its weights are positive-symmetric int4 (the c3 serve-confirm checkbox reads
+    # this to offer VLLM_MARLIN_INPUT_DTYPE=int8 per-launch). #609.
+    act8_capable=False,
     tp,
     max_ctx,
     max_num_seqs,
@@ -86,6 +90,7 @@ def _entry(
         "drafter": drafter,
         "kv_format": kv_format,
         "act_format": act_format,
+        "act8_capable": act8_capable,
         "tp": tp,
         "pp": 1,
         "max_ctx": max_ctx,
@@ -168,7 +173,7 @@ def compose_header_status(text):
 COMPOSE_REGISTRY = {
     # Qwen 3.6 27B, vLLM single-card.
     "vllm/minimal": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="fast-chat",
+        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="fast-chat",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=1, max_ctx=32768, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml",
@@ -178,7 +183,7 @@ COMPOSE_REGISTRY = {
 
     # Qwen 3.6 27B, vLLM dual/multi-card.
     "vllm/dual": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
@@ -199,7 +204,7 @@ COMPOSE_REGISTRY = {
     # same port) — it just names the fast tier in the symmetric family. The
     # (qwen,vllm,dual) DEFAULT stays "vllm/dual" (the long-established slug).
     "vllm/qwen-27b-dual-fast": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
@@ -238,7 +243,7 @@ COMPOSE_REGISTRY = {
         status_note="🗑️ DEPRECATED 2026-07-16 (maintainer decision, tier-space review). Qwen3.6-27B 'balanced' tier, 2-card: cyankiwi AWQ-BF16-INT4 + int8-PTH KV + MTP n=3, TP=2 @262K. Dominated by the fast tier (vllm/dual) on every measured axis — decode ~67 vs ~89 code TPS, KV pool 370K/1.41x vs 622K/2.37x, 8-pack tie (105 vs 109, within ±5-7 noise) — and its ONLY reason-to-exist, the int8-PTH KV fidelity bet (#470), was invalidated by #594/#595: int8-PTH routes to TRITON_ATTN and craters decode at depth vs fp8/e4m3→FlashInfer (the same finding that flipped dual-max off int8-PTH). The pending long-ctx NIAH A/B is moot. Not a DEFAULTS target (nothing to repoint). Replacements: vllm/dual (fast) for speed+pool; vllm/qwen-27b-dual-max (fp8 + fp8/e4m3 KV) for weight fidelity. History: live-validated 2026-06-07 (Marlin WNA16, ~67 TPS); the cyankiwi awq-bf16-int4 weights stay registered (BYO-servable).",
     ),
     "vllm/qwen-27b-multi-fast": _entry(
-        model="qwen3.6-27b", weights_variant="autoround-int4", workload="long-ctx-single",
+        model="qwen3.6-27b", weights_variant="autoround-int4", act8_capable=True, workload="long-ctx-single",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/multi4/autoround-int4/mtp.yml",
