@@ -1,0 +1,55 @@
+# spark-dashboard — real-time GPU + vLLM inference monitoring
+# (https://github.com/niklasfrick/spark-dashboard, MIT).
+#
+# What it gives this stack: live NVML hardware panels (util/temp/power/clocks,
+# both cards) + the vLLM Prometheus metrics that matter operationally —
+# decode TPS, TTFT/latency, queue depth, batch size, KV-cache utilization and
+# **prefix-cache hit rate** (the counter our #710 probe protocol asserts on;
+# with prefix caching default-ON since #736 this makes cache health visible
+# at a glance instead of via /metrics curls).
+#
+# Discovery: host network + host PID namespace + read-only docker.sock —
+# auto-detects vLLM containers/processes; no per-model config needed. Works
+# with whatever `switch.sh` has booted.
+#
+# Port: 3010 on this rig (3000 = OpenWebUI). Image PINNED to a release tag
+# (repo policy: never `latest` for services we depend on operationally).
+#
+# Override via .env or shell:
+#   SPARK_DASHBOARD_IMAGE   image (default: pinned v0.11.0)
+#   SPARK_DASHBOARD_PORT    UI/API port on the host (default 3010; host network)
+#   DOCKER_GID              host docker group GID (this rig: 988; find yours:
+#                           getent group docker | cut -d: -f3 — a mismatch
+#                           silently disables container-based engine discovery)
+services:
+  spark-dashboard:
+    image: ${SPARK_DASHBOARD_IMAGE:-ghcr.io/niklasfrick/spark-dashboard:v0.11.0}
+    container_name: spark-dashboard
+    restart: unless-stopped
+
+    # Host network + PID namespace: required for engine discovery (vLLM bound
+    # on host ports; process scanning). The dashboard binds its own port.
+    network_mode: host
+    pid: host
+
+    # GPU metrics via NVML through the NVIDIA Container Toolkit.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Read-only Docker socket for container-based engine discovery.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    group_add:
+      - "${DOCKER_GID:-988}"
+
+    environment:
+      - SPARK_DASHBOARD_PORT=${SPARK_DASHBOARD_PORT:-3010}
+      - SPARK_DASHBOARD_BIND=${SPARK_DASHBOARD_BIND:-0.0.0.0}
+      - SPARK_DASHBOARD_POLL_INTERVAL=${SPARK_DASHBOARD_POLL_INTERVAL:-1000}
+      - SPARK_DASHBOARD_GPU_INDEX=${SPARK_DASHBOARD_GPU_INDEX:-0}
+      - RUST_LOG=${RUST_LOG:-info}
