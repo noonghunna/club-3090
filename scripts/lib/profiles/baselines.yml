@@ -516,6 +516,10 @@ baselines:
     # see the w4a16 sibling). Measured on v0.24.0 → stale vs the v0.25.1 pin
     # by design (the deferred "Tess vLLM arm" from #682); re-bench owed.
     narr_tps: 62.4
+    # prefill re-measured 2026-07-17 on v0.25.1 (same-rig A/B vs the w4a16 sibling;
+    # decode re-parity 62.0 on that run). Quality/decode rows remain the v0.24.0
+    # gate -> the engine_pin below (and the stale badge) intentionally stand.
+    prefill_tps: { 10k: 1651, 90k: 1315 }
     quality_8pk: "106/150"
     quality_8pk_think_on: "113/150"
     quality_env: { harness: "benchlocal-cli --full, 2026-07-12 A0 arms" }
@@ -534,6 +538,7 @@ baselines:
     # p50 110.6, 105% retention), 8-pack both modes. Fresh on the v0.25.1 pin.
     narr_tps: 73.5
     code_tps: 108.2
+    prefill_tps: { 10k: 1597, 90k: 1252 }
     quality_8pk: "108/150"
     quality_8pk_think_on: "115/150"
     quality_env: { harness: "benchlocal-cli --full via rebench-full, 2026-07-17" }
