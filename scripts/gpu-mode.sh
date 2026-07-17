@@ -57,7 +57,7 @@ LANIP="${LANIP:-localhost}"
 # Standard supporting services living under $CLUB3090_DIR/services.
 # Ollama removed 2026-06-22 (dropped from serving 2026-05-10 — Qwen/Gemma route
 # through LiteLLM directly; the unused services/ollama/ compose dir was deleted).
-SERVICES=(openwebui litellm qdrant searxng)
+SERVICES=(openwebui litellm qdrant searxng spark-dashboard)
 
 # Run a docker compose command in any directory, with optional -f override.
 # Args: <dir> <action> [compose_file]
@@ -521,6 +521,7 @@ mode_chat() {
     stop_step_voice
     start_service openwebui
     start_service litellm
+    start_service spark-dashboard
     start_service qdrant
     start_service searxng
     start_studio_director
@@ -548,6 +549,7 @@ mode_27b() {
     wait_gpu_vram_settle     # let the torn-down scene's VRAM release before TP=2 boots (#535 follow-up)
     start_27b_dual_mtp
     start_service litellm
+    start_service spark-dashboard
     start_service qdrant
     start_service openwebui
     start_service searxng
@@ -575,6 +577,7 @@ mode_35b_a3b() {
     wait_gpu_vram_settle     # let the torn-down scene's VRAM release before TP=2 boots (#535 follow-up)
     start_35b_a3b_dual
     start_service litellm
+    start_service spark-dashboard
     start_service qdrant
     start_service openwebui
     start_service searxng
@@ -601,6 +604,7 @@ mode_gemma_12b() {
     wait_gpu_vram_settle     # single-card boot can still land in another scene's residue (#535 follow-up)
     start_gemma_12b
     start_service litellm
+    start_service spark-dashboard
     start_service qdrant
     start_service openwebui
     start_service searxng
@@ -630,6 +634,7 @@ mode_gemma_int8() {
     wait_gpu_vram_settle     # let the torn-down scene's VRAM release before TP=2 gemma boots (#535)
     start_gemma_int8
     start_service litellm
+    start_service spark-dashboard
     start_service qdrant
     start_service openwebui
     start_service searxng
@@ -651,6 +656,7 @@ mode_deckard() {
     wait_gpu_vram_settle     # 31 GB GGUF layer-splits both cards — don't boot into residue (#535 follow-up)
     start_deckard
     start_service litellm
+    start_service spark-dashboard
     start_service qdrant
     start_service openwebui
     start_service searxng
@@ -741,6 +747,7 @@ mode_ai_studio() {
     start_step_voice
     start_service openwebui
     start_service litellm
+    start_service spark-dashboard
     start_service qdrant
     start_service searxng
     echo ""
@@ -970,13 +977,13 @@ mode_off() {
 list_modes_data() {
     # name<TAB>group<TAB>description<TAB>services<TAB>ports<TAB>gpus
     cat <<'TSV'
-chat	ops	Open WebUI + LiteLLM + Qdrant + SearXNG + uncensored director — supporting-infra home for catalog models	openwebui,litellm,qdrant,searxng,studio-director	8080,4000,8090	none
-qwen27b	models	Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision (TP=2) — default	vllm-qwen36-27b-dual,litellm,qdrant,openwebui,searxng	8010,8080,4000	both
-qwen35b-a3b	models	Qwen3.6-35B-A3B MoE (3B active / 35B total) AutoRound INT4 + fp8 KV + 262K + vision (TP=2)	vllm-qwen36-35b-a3b-dual,litellm,qdrant,openwebui,searxng	8051,8080,4000	both
-gemma-31b	models	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng	8032,8080,4000	both
-gemma12b	models	Gemma 4 12B AutoRound INT8 + bf16 KV + MTP n=2 (gemma4_unified arch-preview, single-card)	vllm-gemma-4-12b-int8-mtp,litellm,qdrant,openwebui,searxng	8038,8080,4000	1
-deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng	8199,8080,4000	both
-ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,studio-step-voice,openwebui,litellm,qdrant,searxng	8188,8090,8189,8190,8191,8192,8193,8080,4000,6333	both
+chat	ops	Open WebUI + LiteLLM + Qdrant + SearXNG + uncensored director — supporting-infra home for catalog models	openwebui,litellm,qdrant,searxng,studio-director,spark-dashboard	8080,4000,8090,3010	none
+qwen27b	models	Qwen3.6-27B MTP n=3 + fp8 KV + 262K + vision (TP=2) — default	vllm-qwen36-27b-dual,litellm,qdrant,openwebui,searxng,spark-dashboard	8010,8080,4000,3010	both
+qwen35b-a3b	models	Qwen3.6-35B-A3B MoE (3B active / 35B total) AutoRound INT4 + fp8 KV + 262K + vision (TP=2)	vllm-qwen36-35b-a3b-dual,litellm,qdrant,openwebui,searxng,spark-dashboard	8051,8080,4000,3010	both
+gemma-31b	models	Gemma 4 31B INT8 PTH KV + 262K + vision (TP=2) — dual default	vllm-gemma-4-31b-mtp-int8,litellm,qdrant,openwebui,searxng,spark-dashboard	8032,8080,4000,3010	both
+gemma12b	models	Gemma 4 12B AutoRound INT8 + bf16 KV + MTP n=2 (gemma4_unified arch-preview, single-card)	vllm-gemma-4-12b-int8-mtp,litellm,qdrant,openwebui,searxng,spark-dashboard	8038,8080,4000,3010	1
+deckard	models	Qwen3.6-40B-Deckard Q6_K + MTP n=2 + q8_0 KV + 128K (llama.cpp, dual)	llama-cpp-deckard-40b,litellm,qdrant,openwebui,searxng,spark-dashboard	8199,8080,4000,3010	both
+ai-studio	studio	image · video · audio · voice — ComfyUI both GPUs + qwen director + sidecars + Open WebUI (pick the lane in OWUI)	comfyui,studio-director,studio-gallery,studio-orchestrator,studio-image-shim,studio-tts,studio-step-voice,openwebui,litellm,qdrant,searxng,spark-dashboard	8188,8090,8189,8190,8191,8192,8193,8080,4000,6333,3010	both
 off	ops	Stop all services	all-stopped		none
 power-cap	ops	GPU power-cap controls (on/off/status; both 3090s, 250W default cap)			both
 prune	ops	docker image prune -a (safe — only unreferenced images)			none
