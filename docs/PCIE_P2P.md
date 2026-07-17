@@ -60,6 +60,14 @@ A 3-slot (triple-width) card like most 3090s covers its own slot **plus the two 
 | **ACS (Access Control Services)** | **Disabled** for bare-metal P2P | ACS-redirect on the upstream port forces P2P transactions through the root complex — the **#1 silent P2P killer**. Leave **On** only if you need VM isolation (a genuine tradeoff). |
 | **NPS** (EPYC) | **NPS1** | Keeps both GPUs in one NUMA domain (§2). |
 
+> **⚠️ Ampere consumer cards: the ReBAR toggle is gated by GPU firmware, not the motherboard** (#734, @alexpolo1). On RTX 3090-class cards the BAR1 size ceiling comes from the **VBIOS** — with a launch-era (pre-ReBAR) VBIOS the BIOS toggle silently does nothing. Check before assuming:
+>
+> ```
+> sudo lspci -vv -s <bus> | grep -A4 "Physical Resizable BAR"
+> ```
+>
+> If `BAR 1: supported:` tops out at 256MB, the card needs a ReBAR VBIOS from its **board vendor** before any BIOS setting matters. And a ReBAR-*era* VBIOS date is not sufficient evidence: the reference rig's two 3090s run `94.02.42.*` (the ReBAR-era family) and still advertise `supported: 256MB` only. Trust the `lspci` `supported:` list, never the VBIOS date.
+
 ---
 
 ## 5. Enabling P2P on consumer GPUs
@@ -68,6 +76,18 @@ Two hard truths set expectations before you start:
 
 1. **The stock NVIDIA driver refuses P2P on GeForce cards over `PHB`.** Even with perfect topology and BIOS, the consumer driver disables peer access. Enabling it requires a **patched kernel module** — the community [`aikitoria/open-gpu-kernel-modules`](https://github.com/aikitoria/open-gpu-kernel-modules) fork ([Sam McLeod's walkthrough](https://smcleod.net/2026/02/patching-nvidias-driver-and-vllm-to-enable-p2p-on-consumer-gpus/)). This is a custom DKMS module — weigh the maintenance cost. (Should the walkthrough link ever rot, the shape of it: clone the fork matching your driver branch → build + install via DKMS in place of the stock `nvidia` kernel module → reboot → `nvidia-smi topo -p2p r` should now report `OK` between your GPUs.)
 2. **`PHB` P2P is PCIe-bounded** (~25 GB/s on PCIe 4.0 x16), well under NVLink. So the win is real but modest and workload-shaped (§6).
+3. **Large BAR1 is a hard prerequisite for the patched-module path, not a nice-to-have** (#734). The patch maps the **full VRAM aperture through BAR1** (static BAR1 mapping) rather than using mailbox windows — a 256MB BAR1 cannot map 24GB, so on a card whose `lspci` `supported:` list caps at 256MB (§4 note) this path is unreachable **regardless of topology, IOMMU, or ACS**. Fix the firmware first or stop here.
+
+> **Identifying your board for a VBIOS hunt** (#734): `nvidia-smi` reports `Board Part Number: N/A` on many AIB cards. A non-destructive ROM read surfaces the real board ID:
+>
+> ```
+> echo 1 | sudo tee /sys/bus/pci/devices/<dbdf>/rom
+> sudo cat /sys/bus/pci/devices/<dbdf>/rom > card.rom
+> echo 0 | sudo tee /sys/bus/pci/devices/<dbdf>/rom
+> strings card.rom | head -20
+> ```
+>
+> Match the exact board string **and revision** against the vendor's VBIOS — same-vendor ROMs for a different cooler/board variant will flash but can brick or misbehave. Note the sysfs dump is often truncated (fine for ID, **not a backup**); use `nvflash --save` for a real pre-flash backup.
 
 **On this stack**, once the patched module is installed you don't edit composes — set one env var:
 
@@ -115,6 +135,7 @@ Read the **"Interconnect verdict"** line under *Boot log highlights* — the rep
 | `topo -m` shows `NODE` / `SYS`, not `PHB` | Wrong NUMA placement → set `NPS1`; reseat both GPUs in same-NUMA (same-socket) slots. |
 | Second GPU trains at **x8** or disappears | A populated M.2 / adjacent slot is stealing its lanes → move the card or clear the bifurcation jumper (board manual). |
 | `topo -p2p rw` shows `CNS` ("chipset not supported") | Stock driver refusing P2P on consumer GPU → install the patched module (§5), then re-check. |
+| `topo -p2p rw` shows `GNS` **and** `lspci` `BAR 1: supported:` caps at 256MB | **Pre-ReBAR / BAR1-capped VBIOS** — a firmware gate, not a driver or topology problem (#734). No BIOS setting or driver swap helps; the §5 patched path needs large BAR1. Vendor ReBAR VBIOS first (§4 note + the board-ID tip in §5), then re-check `supported:`. |
 | Boot crash after enabling P2P: `custom_all_reduce.cuh … invalid argument` | Known `expandable_segments` ↔ custom-all-reduce IPC clash → `detect_nvlink.sh` strips the token on the P2P path automatically; ensure you're on a current pin ([UPSTREAM.md → #42609](UPSTREAM.md)). |
 | Enabled it but TPS didn't move | Check it actually engaged (§7); then check your workload — narrative decode barely benefits, code/spec-decode does (§6). |
 
