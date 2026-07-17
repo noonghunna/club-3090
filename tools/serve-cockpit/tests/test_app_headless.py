@@ -995,6 +995,47 @@ class TestNavNodesExist:
         saved = M.load_settings().get("catalog_columns")
         assert saved == {"order": default, "hidden": []}
 
+    def test_act8_serve_toggle(self):
+        """#609: the W4A8 int8-activation opt-in on the serve-confirm modal —
+        shown + wired only for act8-capable START slugs, injects the env, hidden
+        elsewhere. Tests the modal's logic directly (no app mount needed)."""
+        from club3090_cockpit.app import ConfirmActionScreen, ServeContext
+        from club3090_cockpit.data import ActionPlan, CatalogEntry
+        from club3090_cockpit.services import _variant_row_from_dict
+
+        def modal(act8, mode="start"):
+            row = _variant_row_from_dict({"slug": "vllm/dual", "port": 8010, "act8_capable": act8})
+            ctx = ServeContext(mode=mode, entry=CatalogEntry(row=row))
+            m = ConfirmActionScreen.__new__(ConfirmActionScreen)
+            m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", "vllm/dual"])
+            m._serve_ctx = ctx
+            m._act8_on = False
+            m._reconcile = None
+            return m
+
+        # capable START slug → toggle available + gated ON
+        cap = modal(True)
+        assert cap._act8_capable() is True
+        assert cap.check_action("toggle_act8", ()) is True
+        # env attaches (idempotent, prepended before switch.sh)
+        cap._act8_on = True
+        inj = cap._with_act8_env(cap._plan.cmd)
+        assert inj[:2] == ["env", "VLLM_MARLIN_INPUT_DTYPE=int8"]
+        assert cap._with_act8_env(inj) == inj  # idempotent
+
+        # NON-capable slug → toggle hidden, capability False
+        nocap = modal(False)
+        assert nocap._act8_capable() is False
+        assert nocap.check_action("toggle_act8", ()) is False
+
+        # capable but STOP mode (not a launch) → not offered
+        stop = modal(True, mode="stop")
+        assert stop._act8_capable() is False
+
+        # row facet plumbs through from the emit contract
+        assert getattr(_variant_row_from_dict({"slug": "x", "port": 1, "act8_capable": True}), "act8_capable") is True
+        assert getattr(_variant_row_from_dict({"slug": "x", "port": 1}), "act8_capable") is False
+
     @pytest.mark.asyncio
     async def test_benchmarks_tab_is_gone(self):
         """Fold 3 removed the standalone Validate · Benchmarks tab + its pane."""

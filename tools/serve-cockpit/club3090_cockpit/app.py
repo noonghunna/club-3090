@@ -1862,6 +1862,8 @@ class ConfirmActionScreen(ModalScreen):
         Binding("k", "stop", "Stop", show=True, priority=True),
         Binding("k", "cancel_download", "Cancel download", show=True, priority=True),
         Binding("f", "force", "Force", show=True, priority=True),
+        # W4A8 int8-activation opt-in (#609) — shown only for act8-capable serve slugs.
+        Binding("a", "toggle_act8", "int8 acts", show=True),
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
@@ -1877,8 +1879,30 @@ class ConfirmActionScreen(ModalScreen):
         self._on_confirm = on_confirm
         # The state-aware SERVE context (None → the legacy Confirm/Force modal).
         self._serve_ctx: Optional[ServeContext] = serve_ctx
+        # W4A8 int8-activation opt-in (#609) — a per-launch toggle ([a]) shown only
+        # for act8-capable slugs. Default from the "prefer_int8_activations" Settings
+        # pref (else OFF). When ON, the serve cmd gets VLLM_MARLIN_INPUT_DTYPE=int8.
+        self._act8_on: bool = self._act8_capable() and self._act8_pref_default()
 
     # ── presentation predicates ───────────────────────────────────────────────────
+
+    def _act8_capable(self) -> bool:
+        """True iff this serve targets a slug wired for the W4A8 int8-activation
+        knob (registry act8_capable). START mode only — the knob is a launch flag."""
+        ctx = self._serve_ctx
+        if ctx is None or ctx.mode != "start" or ctx.entry is None:
+            return False
+        return bool(getattr(getattr(ctx.entry, "row", None), "act8_capable", False))
+
+    @staticmethod
+    def _act8_pref_default() -> bool:
+        """The 'prefer int8 activations where capable' Settings default (else OFF)."""
+        try:
+            from .__main__ import load_settings
+
+            return bool(load_settings().get("prefer_int8_activations"))
+        except Exception:
+            return False
 
     @property
     def _is_serve(self) -> bool:
@@ -2082,6 +2106,19 @@ class ConfirmActionScreen(ModalScreen):
                     f"{req_s} (Hopper/Blackwell class){got_s}. "
                     "[yellow]Serving here will NOT boot.[/yellow]"
                 )
+            # W4A8 int8-activation opt-in (#609) — only for act8-capable slugs.
+            if self._act8_capable():
+                if self._act8_on:
+                    lines.append(
+                        "  [bold]int8 acts[/bold] [green]ON[/green] "
+                        "([green]VLLM_MARLIN_INPUT_DTYPE=int8[/green] — ~+50% prefill, "
+                        "quality-tied ⚑) · [a] toggle"
+                    )
+                else:
+                    lines.append(
+                        "  [bold]int8 acts[/bold] [dim]off[/dim] "
+                        "(W4A8 int8 activations — ~+50% prefill ⚑ experimental) · [a] enable"
+                    )
             note = (entry.status_note or "").strip()
             if note:
                 lines.append(f"  [bold]caveat[/bold] [yellow]{note}[/yellow]")
@@ -2323,10 +2360,15 @@ class ConfirmActionScreen(ModalScreen):
                 return bool(resolved and mode == "stop")
             if action == "start":
                 return bool(resolved and mode == "start")
+            # W4A8 int8-activation toggle — only for act8-capable START slugs.
+            if action == "toggle_act8":
+                return self._act8_capable()
             # confirm/force never apply in serve mode.
             if action in ("confirm", "force"):
                 return False
             return True
+        if action == "toggle_act8":
+            return False
         if action == "confirm":
             return bool(resolved and rec.safe)
         if action == "force":
@@ -2390,8 +2432,36 @@ class ConfirmActionScreen(ModalScreen):
         self.app.pop_screen()
         self.app.cancel_download(ctx.entry.slug)  # type: ignore[attr-defined]
 
+    def action_toggle_act8(self) -> None:
+        """[a] → flip the W4A8 int8-activation opt-in (#609). No-op for slugs that
+        aren't act8-capable (check_action hides the key there)."""
+        if not self._act8_capable():
+            return
+        self._act8_on = not self._act8_on
+        self._render_serve_card()   # reflect ON/OFF in the card
+
+    @staticmethod
+    def _with_act8_env(cmd: list[str]) -> list[str]:
+        """Prepend `env VLLM_MARLIN_INPUT_DTYPE=int8` to a serve cmd (#609). switch.sh
+        runs `docker compose`, which reads the env for the compose's bare
+        `- VLLM_MARLIN_INPUT_DTYPE` passthrough → int8 activations in the container.
+        Idempotent."""
+        if "VLLM_MARLIN_INPUT_DTYPE=int8" in cmd:
+            return cmd
+        return ["env", "VLLM_MARLIN_INPUT_DTYPE=int8", *cmd]
+
     def _commit(self, *, force: bool) -> None:
         plan = self._plan
+        # W4A8 (#609): when the int8-activation opt-in is ON for an act8-capable
+        # slug, inject the env into the serve cmd BEFORE the force re-issue (so
+        # _with_force still finds the switch.sh positional last).
+        if self._act8_on and self._act8_capable() and plan.kind == "serve":
+            plan = ActionPlan(
+                kind=plan.kind, cmd=self._with_act8_env(plan.cmd),
+                description=plan.description + " +int8-acts",
+                is_write=plan.is_write, requires_reconcile=plan.requires_reconcile,
+                force=plan.force, force_reason=plan.force_reason,
+            )
         if force and not plan.force:
             # Re-issue the plan as a forced one (with a surfaced reason) so the
             # executor's force path is taken explicitly — never silently.  In serve
