@@ -84,6 +84,10 @@ services:
       - ../../../../../qwen3.6-27b/vllm/patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
       # NVLink auto-detection — runs inside container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # Vendored vllm#48375 (MambaManager drop_eagle_block) — SHARED from the
+      # qwen3.6-27b tree (same hybrid family). Inert while prefix caching is
+      # off; protects PREFIX_CACHE_ARG users. See patches.yml.
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — see #610; UUID form is renumbering-proof and is
@@ -119,6 +123,7 @@ services:
       - |
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
         if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
           exec vllm serve "$$@"
         else
@@ -152,7 +157,9 @@ services:
       - --trust-remote-code
       # HYBRID (DeltaNet linear-attention state) — prefix caching is not
       # state-reusable on this arch; keep OFF.
-      - --no-enable-prefix-caching
+      # #720 seam: prefix caching OFF by default (hybrid DeltaNet state +
+      # the MTP pair, vllm#43559). Restore: PREFIX_CACHE_ARG=--enable-prefix-caching
+      - "${PREFIX_CACHE_ARG:---no-enable-prefix-caching}"
       - --enable-chunked-prefill
       # froggeric v19 pin (see volumes) — the model-dir template is broken.
       - --chat-template

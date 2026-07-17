@@ -108,6 +108,9 @@ services:
       - ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
       # NVLink auto-detection — runs inside container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # Vendored vllm#48375 (MambaManager drop_eagle_block) — inert under the
+      # prefix-off default; protects PREFIX_CACHE_ARG users. See patches.yml.
+      - ../../../patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
@@ -157,6 +160,7 @@ services:
         # stability. See docs/HARDWARE.md "Note for WSL2 / Windows users".
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
         if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
         else
