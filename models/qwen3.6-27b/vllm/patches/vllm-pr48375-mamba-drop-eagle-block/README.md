@@ -13,11 +13,12 @@ install script (`install.sh` → `patch_mamba_drop_eagle_block.py`), mounted at
 `/etc/club3090/pr48375/` and invoked from the compose entrypoint before serve.
 Anchor drift → the container **refuses to boot** rather than serving unpatched.
 
-**Runtime behavior:** inert under the shipped `--no-enable-prefix-caching`
-default (#720) — the patched code path only executes when prefix caching is
-enabled. For users who flip `PREFIX_CACHE_ARG=--enable-prefix-caching`, the fix
-is active; measured cost is ~5% fewer prefix-cache hit tokens (the by-design
-one-block search reduction), correctness-neutral otherwise.
+**Runtime behavior:** ACTIVE by default — the same PR (#736) flipped the
+pair-capable composes back to `--enable-prefix-caching` (the #720 off-default
+cost 7.4× TTFT on long prefixes; see the UPSTREAM.md row for the evidence
+stack). Measured cost of the fix: ~5% fewer prefix-cache hit tokens (the
+by-design one-block search reduction), correctness-neutral otherwise. Opt-out:
+`PREFIX_CACHE_ARG=--no-enable-prefix-caching` (makes the patched path dormant).
 
 **Validation (2026-07-17, reference 2×3090, v0.25.1):** boots + serves both
 hybrid families (27B dense-hybrid, 35B-A3B MoE) with MTP n=3 + prefix-ON;

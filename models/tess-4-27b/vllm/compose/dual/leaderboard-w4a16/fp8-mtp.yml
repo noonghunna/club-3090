@@ -10,9 +10,9 @@
 #              n=5: prose break-even, code +49%; n=6/8 regress (tail accept
 #              collapses). DFlash alternative is upstream-blocked on this
 #              hybrid family (vllm#40898 — mixed layer_types).
-#   KV:        fp8_e4m3 (validated); prefix caching OFF — Tess is a qwen3_5
-#              HYBRID (48 linear_attention + 16 full_attention), DeltaNet
-#              state is not prefix-reusable
+#   KV:        fp8_e4m3 (validated); prefix caching ON by default (#736 —
+#              vllm#48375 vendored; Tess is a qwen3_5 HYBRID, 48 linear + 16
+#              full attention; hybrid prefix caching via mamba align mode)
 #   Vision:    base is VL-capable — UNTESTED on this serve; validation text-only
 #   Max ctx:   262144 (validated: NIAH ceiling ladder clean to ~241K,
 #              20.8 GB/card, KV pool 585K tokens, 2.2 GB margin)
@@ -155,11 +155,10 @@ services:
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
-      # HYBRID (DeltaNet linear-attention state) — prefix caching is not
-      # state-reusable on this arch; keep OFF.
-      # #720 seam: prefix caching OFF by default (hybrid DeltaNet state +
-      # the MTP pair, vllm#43559). Restore: PREFIX_CACHE_ARG=--enable-prefix-caching
-      - "${PREFIX_CACHE_ARG:---no-enable-prefix-caching}"
+      # Prefix-caching ON by default (flipped 2026-07-17, #710/#736): the
+      # vllm#43559 fix (vllm#48375) is VENDORED here and applied at boot.
+      # Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
       - --enable-chunked-prefill
       # froggeric v19 pin (see volumes) — the model-dir template is broken.
       - --chat-template

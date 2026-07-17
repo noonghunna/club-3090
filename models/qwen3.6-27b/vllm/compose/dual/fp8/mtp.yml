@@ -202,11 +202,11 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
-      # Prefix-caching OFF by default: MTP × prefix-cache poisons recurrent-state
-      # KV on this Qwen3-Next hybrid → corrupts tool calls on chained agents
-      # (#710, vllm#43559). Interim until the fix (vllm#48375) is in our pin;
-      # then restore. Re-enable now: PREFIX_CACHE_ARG=--enable-prefix-caching
-      - "${PREFIX_CACHE_ARG:---no-enable-prefix-caching}"
+      # Prefix-caching ON by default (flipped 2026-07-17, #710/#736): the
+      # vllm#43559 fix (vllm#48375) is VENDORED on this compose and applied at
+      # boot, plus 7-day production + 6-arm probe evidence of the pair clean on
+      # v0.25.x. Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
       - --enable-chunked-prefill
       - --speculative-config
       - '{"method":"mtp","num_speculative_tokens":3}'
