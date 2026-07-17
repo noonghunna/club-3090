@@ -49,6 +49,10 @@ services:
       - "${ESTATE_PORT:-${PORT:-8041}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # Google Gemma 4 CANONICAL chat template (published 2026-07-09) — SHARED
+      # from the gemma-4-31b tree (one canonical template family-wide); the
+      # image-bundled example predates Google's fix (see the patch README).
+      - ../../../../../gemma-4-31b/vllm/patches/google-canonical-chat-template/chat_template.jinja:/etc/club3090/gemma-canonical-template.jinja:ro
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
       # NVLink auto-detection — runs inside container at boot (same path as dual-max).
@@ -134,7 +138,7 @@ services:
       - --reasoning-parser
       - gemma4
       - --chat-template
-      - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
+      - /etc/club3090/gemma-canonical-template.jinja
       - --enable-prefix-caching
       - --enable-chunked-prefill
       # Head-of-line fix: cap a long prefill's per-step tokens so a concurrent short/agentic

@@ -122,6 +122,9 @@ services:
       - "${ESTATE_PORT:-${PORT:-8033}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # Google Gemma 4 CANONICAL chat template (published 2026-07-09) — vendored;
+      # the image-bundled example predates Google's fix (see the patch README).
+      - ../../../patches/google-canonical-chat-template/chat_template.jinja:/etc/club3090/gemma-canonical-template.jinja:ro
       # torch.compile + Triton kernel caches — first boot warms (~5-7 min);
       # subsequent boots reuse cached graphs (~3 min). Separate cache dirs
       # from dual.yml because the overlay file set differs (cudagraph
@@ -261,7 +264,7 @@ services:
       - --reasoning-parser
       - gemma4
       - --chat-template
-      - /vllm-workspace/examples/tool_chat_template_gemma4.jinja
+      - /etc/club3090/gemma-canonical-template.jinja
       # SPEC_N_MAX defaults to 3 — the n-swept TPS optimum for THIS quant (2026-06-07,
       # dual @370W): the QAT-int4's fast acceptance decay (67/42/26/14% per-pos) makes
       # n=3 the best balance — top narrative (74.0 TPS), code tied with n=4 (87.7), and
