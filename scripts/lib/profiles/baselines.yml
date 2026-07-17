@@ -493,6 +493,59 @@ baselines:
         submitted_by: "guybrush01"  # + paulp83 (#619)
         tier: submitted
 
+  llamacpp/tess-dual-mtp:
+    # BENCHMARKS.md 2026-07-11 b9967 re-bench row (decode 64.6/75.9, MTP accept
+    # 0.737) + the 2026-07-12 shipped-config 8-pack refresh (native template +
+    # 16K reasoning budget, both modes) that promoted the compose ⚠️→✅.
+    narr_tps: 64.6
+    code_tps: 75.9
+    quality_8pk: "116/150"
+    quality_8pk_think_on: "117/150"
+    quality_env: { harness: "benchlocal-cli --full, shipped config @ b9967 + 16K budget, 2026-07-12" }
+    ctx_validated: { tokens: 240634, niah: "clean@240K" }
+    date: 2026-07-11
+    engine_pin: "ghcr.io/ggml-org/llama.cpp:server-cuda-b9967"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 370]
+    submitted_by: "noonghunna"
+    tier: local
+
+  vllm/tess-dual-nvfp4:
+    # The A0 quality baseline (2026-07-12 forensics: 8-pack --full both modes)
+    # + the 62.4 decode gate (#679; spec-off — the head is dead in THIS export,
+    # see the w4a16 sibling). Measured on v0.24.0 → stale vs the v0.25.1 pin
+    # by design (the deferred "Tess vLLM arm" from #682); re-bench owed.
+    narr_tps: 62.4
+    quality_8pk: "106/150"
+    quality_8pk_think_on: "113/150"
+    quality_env: { harness: "benchlocal-cli --full, 2026-07-12 A0 arms" }
+    ctx_validated: { tokens: 131072, niah: "allocation-only" }
+    date: 2026-07-12
+    engine_pin: "vllm/vllm-openai:v0.24.0"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 370]
+    submitted_by: "noonghunna"
+    tier: local
+
+  vllm/tess-dual-w4a16:
+    # The MTP-revival promotion gate (club #662): rebench-full 2026-07-17 —
+    # decode 73.5/108.2 (MTP n=5, accept-len 5.0 / 80% warm), verify-stress 8/8
+    # incl. the NIAH ceiling ladder to 0.92×262K, soak PASS (0/100 silent-empty,
+    # p50 110.6, 105% retention), 8-pack both modes. Fresh on the v0.25.1 pin.
+    narr_tps: 73.5
+    code_tps: 108.2
+    quality_8pk: "108/150"
+    quality_8pk_think_on: "115/150"
+    quality_env: { harness: "benchlocal-cli --full via rebench-full, 2026-07-17" }
+    ctx_validated: { tokens: 241172, niah: "clean@241K" }
+    date: 2026-07-17
+    engine_pin: "vllm/vllm-openai:v0.25.1"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 370]
+    source_tag: "tess-4-27b-20260717-0529"
+    submitted_by: "noonghunna"
+    tier: local
+
 # ───────────────────────────────────────────────────────────────────────────
 # KNOWN GAPS — wave-2 dispositions (2026-07-04): each slug below has NO row
 # on purpose; the disposition says what unlocks one. Do NOT guess numbers in.
