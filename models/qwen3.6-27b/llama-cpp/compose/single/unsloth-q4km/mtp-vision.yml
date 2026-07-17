@@ -26,7 +26,7 @@
 # cleanly, this profile is the first to ship the combination.
 #
 # Stack-wide thinking-off-by-default policy applies (same as mtp.yml): native
-# (GGUF-embedded) template + `--reasoning off`. (froggeric v19 was A/B'd on the
+# (GGUF-embedded) template + `--reasoning off`. (froggeric (pinned) was A/B'd on the
 # text profile and regressed the 8-pack on mainline llama.cpp — native is the
 # default on both mainline composes.) Default -b 1024 / -ub 1024.
 #

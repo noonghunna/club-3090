@@ -5,7 +5,7 @@
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   MTP n=2, p-min 0.0 (built-in MTP head)
 #   KV:        q4_0 K + q4_0 V
-#   Template:  native (GGUF-embedded) — froggeric v19 A/B'd on the text sibling,
+#   Template:  native (GGUF-embedded) — froggeric (pinned) A/B'd on the text sibling,
 #              native won the 8-pack 103 vs 99 (toolcall TIED); see iq4ks-mtp.yml
 #   Vision:    YES (mmproj-F16 mounted — multimodal input enabled)
 #   Defaults:  CTX_SIZE=163840 (160K) + IMAGE_MAX_TOKENS=1024 (1M-px images), -b 1024,
@@ -72,7 +72,7 @@
 #     spiky; a tight config that serves one image can still OOM under load).
 #
 # Thinking-off: native (GGUF-embedded) template + --reasoning off — clean
-# suppression on ik_llama (validated 2026-05-22). froggeric v19 was A/B'd on
+# suppression on ik_llama (validated 2026-05-22). froggeric (pinned) was A/B'd on
 # the text sibling and LOST the 8-pack (99 vs native 103, toolcall tied), so
 # both ik profiles default native. (vLLM keeps its own froggeric copy.)
 #

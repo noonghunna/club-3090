@@ -45,7 +45,7 @@
 # → 0% accept). Recipe documented in learnings/tess-4-27b.md + club #662.
 #
 # Template: repo chat_template is STOCK-BROKEN (developer-role crash) — pins
-# the vendored froggeric v19 family template, same as the qwen3.6 composes.
+# the vendored froggeric (pinned) family template, same as the qwen3.6 composes.
 #
 # Sibling composes (models/tess-4-27b/):
 #   - vllm/dual/leaderboard-w4a16/fp8-mtp.yml (this): 262K, MTP n=5, 73/108 TPS ⭐
@@ -77,7 +77,7 @@ services:
       # torch.compile + Triton kernel caches — warm-start across boots.
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
-      # froggeric v19 family chat template — SHARED with the qwen3.6-27b
+      # froggeric family chat template (pinned; version + gate history in the patch PROVENANCE) — SHARED with the qwen3.6-27b
       # composes (single vendored copy, see patches.yml
       # qwen-froggeric-chat-template). Required: the model repo's own
       # template is stock-broken (developer-role crash).
@@ -160,7 +160,7 @@ services:
       # Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
       - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
       - --enable-chunked-prefill
-      # froggeric v19 pin (see volumes) — the model-dir template is broken.
+      # froggeric pin (see volumes) — the model-dir template is broken.
       - --chat-template
       - /etc/qwen-froggeric-chat-template.jinja
       - --reasoning-parser

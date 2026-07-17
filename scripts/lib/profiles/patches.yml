@@ -266,7 +266,7 @@ patches:
     capability: chat-template-override
     foundational: false
     upstream:
-      ref: froggeric/Qwen-Fixed-Chat-Templates (re-eval club-3090#150 / v19 via PR #157)
+      ref: froggeric/Qwen-Fixed-Chat-Templates (v19 via #150/#157; v21.3 re-vendored 2026-07-17 via the #671 arc - engine-gated 07-11 rejection superseded on the v0.25.1 pin)
       status: local-vendored
       drop_when: "upstream Qwen ships a corrected default chat template and the pinned engines bundle it, OR the override is re-vendored (the same drift_guard must clear the next re-vendor)"
     status: verified

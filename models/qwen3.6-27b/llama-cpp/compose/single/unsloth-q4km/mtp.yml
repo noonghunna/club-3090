@@ -30,7 +30,7 @@
 # If you don't need image input, this is the better MTP profile.
 #
 # Template: native (GGUF-embedded) + `--reasoning off` + `--reasoning-format
-# deepseek` — the stack-wide thinking-off lever. We A/B'd froggeric v19 here
+# deepseek` — the stack-wide thinking-off lever. We A/B'd froggeric (pinned) here
 # (it loads + honours --reasoning off fine on b9246 — the old "froggeric
 # suppresses --reasoning off" lore is stale), but it REGRESSED the 8-pack
 # 102 → 95 on mainline llama.cpp. froggeric helps the vLLM/Qwen3-Next path,
