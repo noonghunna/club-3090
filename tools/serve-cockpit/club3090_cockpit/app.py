@@ -1338,9 +1338,27 @@ class CatalogPane(Container):
             return self._grouped_by_model(base)
         out: list[CatalogEntry] = []
         for e in base:
-            hay = (
-                f"{e.slug} {e.topology} {e.engine} {e.model} {e.status} {e.source}"
-            ).lower()
+            # Search across EVERYTHING the table can display (#724 cell set +
+            # the chat_template facet) — built from the SAME label helpers the
+            # renderer uses, so search coverage can never drift from the
+            # visible columns again. Raw status word (not the glyph) so
+            # "production"/"caveats"/"experimental" match; measurement labels
+            # degrade to em-dashes pre-enrichment (harmless in the haystack).
+            hay = " ".join([
+                e.slug, e.topology, e.engine, e.model,
+                str(e.status or ""), str(e.source or ""),
+                _provider_label(e), _weights_label(e), _size_label(e),
+                # display label AND raw registry value for the facet columns —
+                # the table shows "fp8/e4m3" but docs/registry say "fp8_e4m3";
+                # both must match.
+                _kv_label(e), str(getattr(e.row, "kv_format", "") or ""),
+                _act_label(e), str(getattr(e.row, "act_format", "") or ""),
+                _spec_label(e), str(getattr(e.row, "drafter", "") or ""),
+                str(e.ctx_label or ""),
+                str(e.measurement.tps_label or ""),
+                str(e.measurement.quality_label or ""),
+                str(getattr(e.row, "chat_template", "") or ""),
+            ]).lower()
             if all(t in hay for t in terms):
                 out.append(e)
         return self._grouped_by_model(out)

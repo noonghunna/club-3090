@@ -1243,6 +1243,25 @@ class TestCatalogWired:
             # term order is irrelevant for AND.
             pane.set_filter("dual gemma")
             assert [e.slug for e in pane._filtered_entries()] == ["vllm/gemma-dual"]
+
+            # Full-field coverage (2026-07-18): search must reach EVERY column
+            # the table can display, not just slug/topo/engine/model/status/source.
+            # kv_format, drafter (spec column) and the chat_template facet are
+            # row-driven — set them on one row and assert the filter finds it.
+            object.__setattr__(gemma_dual.row, "kv_format", "fp8_e4m3")
+            object.__setattr__(gemma_dual.row, "drafter", "gemma-mtp")
+            object.__setattr__(gemma_dual.row, "chat_template", "gemma-canonical")
+            pane.set_filter("fp8_e4m3")
+            assert [e.slug for e in pane._filtered_entries()] == ["vllm/gemma-dual"]
+            pane.set_filter("mtp")          # spec column token
+            assert [e.slug for e in pane._filtered_entries()] == ["vllm/gemma-dual"]
+            pane.set_filter("gemma-canonical")   # template-regime facet
+            assert [e.slug for e in pane._filtered_entries()] == ["vllm/gemma-dual"]
+            pane.set_filter("production")   # raw status WORD (not just the glyph)
+            assert {e.slug for e in pane._filtered_entries()} == {
+                "vllm/gemma-dual", "vllm/gemma-single",
+            }
+            pane.set_filter("")
             # a term that matches nothing → no rows.
             pane.set_filter("gemma qwen")
             assert pane._filtered_entries() == []
