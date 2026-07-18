@@ -817,7 +817,7 @@ COMPOSE_REGISTRY = {
     # degrades out of the curated <model>/default walk; reachable only by explicit
     # slug `vllm/diffusiongemma-dual` (launch requires --force).
     "vllm/qwen-a3b-preview-single": _entry(
-        model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat",
+        model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat", chat_template="froggeric",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=1, max_ctx=8192, max_num_seqs=1, mem_util=0.95,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/single/autoround-int4/preview.yml",
@@ -827,7 +827,7 @@ COMPOSE_REGISTRY = {
         status_note="MoE onboarding smoke — Cliff 2 mitigations unavailable without Genesis. Do NOT use for long-ctx.",
     ),
     "vllm/qwen-35b-a3b-dual": _entry(
-        model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat",
+        model="qwen3.6-35b-a3b", weights_variant="autoround-int4", workload="fast-chat", chat_template="froggeric",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4/fp8.yml",
@@ -846,7 +846,7 @@ COMPOSE_REGISTRY = {
     # (FP8 KV declared in hf_quant_config, no scale tensors shipped,
     # index-verified 2026-07-06; the #594-quality-tied regime).
     "vllm/qwen-35b-a3b-single-nvfp4": _entry(
-        model="qwen3.6-35b-a3b", weights_variant="nvfp4", workload="fast-chat",
+        model="qwen3.6-35b-a3b", weights_variant="nvfp4", workload="fast-chat", chat_template="froggeric",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=1, max_ctx=131072, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/single/nvfp4/fp8.yml",
@@ -856,7 +856,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.6-35B-A3B NVFP4 (nvidia modelopt MIXED_PRECISION MoE: NVFP4 expert FFNs + FP8 attention; ~23.4 GB), single Hopper/Blackwell card (native sm_90+; fallback_sm=7.5 — sub-9.0 runs via the Marlin W4A16 fallback, validated on the 27B sibling 2026-07-11, but this 23.4 GB single-card config needs a 32 GB card regardless). Authored on the sm_86 dev rig, FIRST community validation on a single RTX 5090 in #619 (@paulp83): boots clean on vLLM v0.24.0 (quant=modelopt_mixed), verify-full 9/9 (tool-calls + streaming + reasoning), verify-stress needle-clean (9.8K + 29K), soak-continuous PASS (15 MiB growth / 100% retention / 0 err / p50 311 TPS). Decode 255.8 narr / 257.9 code TPS @ 60 ms TTFT — ~2.5-3x our 2x3090 AutoRound tier (native FP4 GEMM). VRAM 30.6/32 GB @131K — TIGHT but flat through soak on a 32 GB card. ⚠️ PROMOTED to Production w/ caveats 2026-07-09 on TWO independent 5090 validations (#619 @paulp83 + #612/#652 @guybrush01, within noise: verify-full 9/9, verify-stress to ~120K, soak PASS ~311 TPS). CAVEAT: 8-pack quality NOT yet cross-rig-measured (sandboxes weren't built on these runs; quality run pending, gated on #492) — reverts to 🧪 if a quality run regresses. THE GB10/DGX-Spark single-card ask: 3B-active MoE suits unified-memory parts — GB10 128 GB runs the full 262K via MAX_MODEL_LEN env (131K default sized for 5090 32 GB). NO MTP by design: the built-in head is net-negative on this MoE (-51% measured on the AutoRound tier; @paulp83's speculative_config=None confirms it loaded MTP-off). fp8/e4m3 KV @ scale=1.0 (FP8 KV declared in hf_quant_config, no scale tensors shipped — same as the 27B nvfp4). No DEFAULTS row (opt-in only).",
     ),
     "vllm/qwen-35b-a3b-dual-nvfp4": _entry(
-        model="qwen3.6-35b-a3b", weights_variant="nvfp4", workload="fast-chat",
+        model="qwen3.6-35b-a3b", weights_variant="nvfp4", workload="fast-chat", chat_template="froggeric",
         engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/nvfp4/fp8.yml",

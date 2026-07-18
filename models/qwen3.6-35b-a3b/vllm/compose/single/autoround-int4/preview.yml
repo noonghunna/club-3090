@@ -49,6 +49,12 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8050}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # froggeric family chat template (pinned; version + gate history in the
+      # patch PROVENANCE) — SHARED from the qwen3.6-27b tree. Wired 2026-07-18
+      # after the 35B template A/B (froggeric ≥ stock: toolcall 15/15 vs 14/15,
+      # hermes tie, verify-full pass) + the #671 arc's lesson that the stock
+      # template's client-shape breaks (VSCode ≥1.126) don't show on bench packs.
+      - ../../../../../qwen3.6-27b/vllm/patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
     environment:
@@ -113,6 +119,8 @@ services:
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
+      - --chat-template
+      - /etc/qwen-froggeric-chat-template.jinja
       - --reasoning-parser
       - qwen3
       - --default-chat-template-kwargs
