@@ -27,9 +27,10 @@
 #   - max_num_seqs=2 → 2 concurrent agents at full 262K context (KV pool 2.36×)
 #   - max_model_len=262144 → model's natural max, no rope_scaling needed
 #   - vision + tools + MTP n=3 + recall — everything on, no compromises
-#   - Measured (v0.24.0 stable, 2026-06-30, 2× 3090 caps 370/420 W — BENCHMARKS.md + disc #515):
-#     decode 83.1 narr / 108.2 code TPS single-stream, TTFT 158/167 ms, ~21.4 GB/card.
-#     (Older 2026-04-28 dev205/Genesis-v7.51 probe read ~56/69 — superseded.)
+#   - Measured (canonical 262K 2-boot mean, v0.25.1, 2026-07-20 #662 A/B): decode ~69 narr / ~90 code
+#     single-stream — DECODE-TIED with the fast tier (fast ~72/90). The prior 83/108 (v0.24.0 2026-06-30)
+#     was cross-session inflation; single boots swing ~5 TPS on code, so do not compare 1-draw figures.
+#     max degrades at full ctx (1.13× KV pool). TTFT 158/167 ms, ~21.4 GB/card.
 #     NOTE: the decode 83/108 above is the int8-PTH short-prompt bench. With fp8/e4m3 KV
 #     (#594): decode stays flat at depth (114→115 @35K, 2.3× int8-PTH), 8-pack 109/150. See BENCHMARKS.md.
 #

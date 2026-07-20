@@ -23,7 +23,7 @@
 #   - max_model_len=262144 → model's natural max, no rope_scaling needed
 #   - vision + tools + MTP n=3 + recall — everything on, no compromises
 #   - Measured (re-bench 2026-04-28 on club-3090 substrate, dev205 + Genesis v7.51-stable):
-#     69.05 narr (CV 2.3%) / 88.58 code (CV 3.4%) TPS single-stream, AL 3.4, VRAM 23.6 GB/card
+#     72 narr / 90 code decode TPS (canonical 262K 2-boot mean, MTP n=3, AL ~3.4; #662 A/B 2026-07-20 — single boots swing ~5 TPS, do not compare 1-draw), VRAM 23.6 GB/card
 #
 # What's intentionally NOT enabled:
 #   - TurboQuant KV — sidesteps vllm#40831 entirely. fp8_e4m3 is plenty for
