@@ -83,3 +83,31 @@ model_list:
       model: openai/deckard-40b
       api_base: http://host.docker.internal:8199/v1
       api_key: EMPTY
+
+  # === Cloud reference endpoint (DashScope MaaS workspace, OpenAI-compatible) ===
+  # Qwen 3.8 Max Preview — first CLOUD reference for benchlocal-cli quality runs
+  # (all prior references were local composes). Same endpoint pi uses.
+  #
+  # Thinking-only model: upstream REJECTS enable_thinking=false ("The value of the
+  # enable_thinking parameter is restricted to True"), so the "thinking-off" arm is
+  # realized as thinking_budget=1 (~1 reasoning token) via the -nothink alias's
+  # extra_body — NOT enable_thinking=false. reasoning_effort is accepted but ignored.
+  #
+  # Rate limits prescribed to us: 500K TPM / 120 RPM per person, no token cap.
+  # rpm/tpm below make LiteLLM pace/queue BEFORE the upstream 429s (with ~8% headroom).
+  - model_name: qwen3.8-max
+    litellm_params:
+      model: openai/qwen3.8-max-preview
+      api_base: https://ws-rcka3ndnpjlt5fku.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+      api_key: os.environ/DASHSCOPE_API_KEY
+      rpm: 110
+      tpm: 480000
+  # "Thinking-off" arm: identical upstream, but thinking clamped to 1 token.
+  - model_name: qwen3.8-max-nothink
+    litellm_params:
+      model: openai/qwen3.8-max-preview
+      api_base: https://ws-rcka3ndnpjlt5fku.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+      api_key: os.environ/DASHSCOPE_API_KEY
+      rpm: 110
+      tpm: 480000
+      extra_body: {"thinking_budget": 1}
