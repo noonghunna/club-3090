@@ -1,0 +1,44 @@
+schema_version: 1
+id: thinkingcap-27b
+display_name: ThinkingCap Qwen3.6-27B
+family: qwen35-dense
+# LeaderboardModel1's ThinkingCap — a Qwen3.6-27B (qwen3_5) VL reasoning fine-tune,
+# AutoRound W4A16 quantized. Arch is the SAME hybrid as Tess-4-27B: 48 linear_attention
+# (SSM-style) + 16 full_attention layers (3:1, full_attention_interval 4), model_type
+# qwen3_5, verified from the safetensors config. KV cache exists on the 16 FULL-ATTENTION
+# layers only — naive 64-layer KV math overestimates ~4x (why the vLLM slug ships
+# kvcalc_key=SKIP). Same qwen35-dense family as Tess-4-27B / Qwen3.6-40B-Deckard.
+# Unlike Tess, this checkpoint IS vision-capable (333 vision tensors + processor); the
+# shipped compose serves it text-only (vision tower resident but untested on this serve).
+hidden_size: 5120
+num_hidden_layers: 64
+num_attn_heads: 24
+num_kv_heads: 4
+head_dim_attn: 256          # key_length == value_length == 256
+intermediate_size: 17408    # feed_forward_length
+attention_k_eq_v: false     # standard GQA — K and V are separate caches
+max_ctx_supported: 262144
+kv_calc_supported: false    # HYBRID (KV on 16/64 layers) — not wired into
+                            # tools/kv-calc.py; naive 64-layer math overestimates ~4x.
+vision_capable: true
+weights:
+  w4a16:
+    path: thinkingcap-qwen3.6-27b-w4a16
+    local_subdir: thinkingcap-qwen3.6-27b-w4a16
+    size_gb: 18
+    format: autoround
+    status: production
+    hf_repo: LeaderboardModel1/ThinkingCap-Qwen3.6-27B-AutoRound-W4A16-Tuning
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "AutoRound W4A16 (sym INT4 g128, data_type int) of ThinkingCap-Qwen3.6-27B with the built-in MTP head kept BF16 (mtp.fc stored as .weight — the WORKING-head signature) + hybrid linear_attn.in_proj@BF16 via extra_config. Native Marlin WNA16 on Ampere. Serves W4A8 (int8 activations) via VLLM_MARLIN_INPUT_DTYPE=int8 + the 2 vendored patches (patches/w4a8; INC input_dtype + negscale fold — AutoRound emits ~50% negative scales, confirmed + folded at boot). rebench-full 2026-07-21 (thinkingcap-27b-20260721-0758): 73.3 narrative / 106.1 code tok/s (MTP n=5, accept 5.0/80%), verify-stress boundary 8/8 (NIAH clean to 240K; THIN 69 MB ceiling margin with MTP), soak PASS (0/100 silent-empty, p50 119.75), 8-pack 113/150 off / 120/150 on — TOPS Tess W4A16 (108/115) and Qwen fast-tier (109) on both legs. n-sweep knee n=5 (code +64% 65->107; n=6/8 regress). Single-card W4A8 tops ~76K (vision tower + 18.5 GB weights); dual holds full 262K."
+default_weight_variant: w4a16
+compatible_drafters:
+  - thinkingcap-mtp-builtin
+# num_kv_heads=4 supports TP up to 4; we ship + validated dual (TP=2). Single-card
+# W4A8 is architecturally valid (~76K ceiling, vision-limited) but not shipped.
+valid_tp:
+  - 1
+  - 2
+requires_genesis: false

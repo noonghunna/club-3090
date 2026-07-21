@@ -1,0 +1,147 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     ThinkingCap-Qwen3.6-27B (LeaderboardModel1 AutoRound W4A16 — sym
+#              INT4 g128 + mtp.fc/linear_attn.in_proj@BF16; VL reasoning
+#              fine-tune of Qwen3.6-27B. ~18.5 GB)
+#   Topology:  Dual 3090 PCIe (TP=2, no NVLink — auto-detected via NVLINK_MODE)
+#   Drafter:   MTP n=5 built-in (SPEC_N override) — the working head (mtp.fc@BF16,
+#              same recipe as Tess). n-sweep knee at n=5: code +64% (65->107 tok/s),
+#              prose break-even, accept-len 4.36-5.0 / 67-80%; n=6/8 regress.
+#   KV:        fp8_e4m3
+#   Vision:    base is VL-capable (tower resident) — validation is TEXT-ONLY
+#   Max ctx:   262144 (full native — dual card frees the KV headroom the
+#              single-card W4A8 lacked: single topped out ~76K)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific (this is qwen3_5)
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   • THIN VRAM margin at the 262K ceiling: 69 MB free with MTP n=5
+#                (MTP eats ~1.2 GB headroom; no-MTP ladder had 1245 MB). NIAH
+#                recall is CLEAN to 240K — but sustained agents at MAX ctx should
+#                size below 262K or lower util. Same class as Nemotron.
+#              • 8-bit activations (VLLM_MARLIN_INPUT_DTYPE=int8) on this AUTO-ROUND
+#                ckpt need 2 vendored patches (INC input_dtype + negative-scale
+#                fold) — applied at boot via patches/w4a8/install.sh (see patches.yml).
+#              • dedicated compile cache (int8 flag AOT cache-key collision).
+#              • vision untested on this serve (text-only validated).
+#   Quality:   8-pack 113/150 (75%) think-off · 120/150 (80%) think-on
+#              (benchlocal --full, rebench thinkingcap-27b-20260721-0758) — TOPS the
+#              Tess W4A16 (108/115) and Qwen fast-tier (109) on BOTH legs.
+#   Best for:  ⭐ top-of-class 27B W4 quality (esp. reasoning) at Tess-tied speed —
+#              73 narrative / 106 code tok/s, full 262K, on 2× 24 GB
+# ---------------------------------------------------------------------------
+# Dual-3090 W4A8 config. Derived from the Tess-4-27B LeaderboardModel1 W4A16 DUAL
+# compose (same AutoRound family) — adapted to W4A8 (int8 activations). Single-card
+# W4A8 tops out ~76K (18.5 GB weights+vision leave ~2.5 GB KV); TP=2 splits the
+# weights so the full 262K KV pool fits, like Tess dual.
+#
+# W4A8 delivery: stock vLLM image, unmodified; two pure-Python source-patches run
+# against the container's vLLM at boot (patches/w4a8/install.sh, registered in
+# patches.yml). Recipe + measured deltas (+108% prefill single-card, +52% dual):
+# see patches/w4a8/README.md.
+#
+# Run:
+#   cd <repo>/models/thinkingcap-27b/vllm/compose
+#   MODEL_DIR=<your-weights-dir> docker compose -f dual/w4a16/w4a8.yml up -d
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+services:
+  vllm-thinkingcap-27b-dual-w4a8:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    container_name: "${ESTATE_CONTAINER:-vllm-thinkingcap-27b-dual-w4a8}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8099}:8000"
+    volumes:
+      - ${MODEL_DIR:-/opt/ai/models}:/root/.cache/huggingface
+      # W4A8 int8-activation patches (Bug A INC input_dtype + Bug B negscale fold) —
+      # SHARED from the qwen3.6-27b tree (single source of truth, like pr48375);
+      # run at boot via install.sh. Registered in patches.yml (qwen-w4a8-int8-act).
+      - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      - VLLM_MARLIN_INPUT_DTYPE=int8
+      - SPEC_N=${SPEC_N:-5}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        source /etc/club3090/detect_nvlink.sh
+        bash /etc/club3090/w4a8/install.sh
+        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE}"
+        SPEC=""
+        if [ "$${SPEC_N:-5}" -gt 0 ] 2>/dev/null; then
+          SPEC="--speculative-config {\"method\":\"mtp\",\"num_speculative_tokens\":$${SPEC_N:-5}}"
+          echo "[mtp] SPEC_N=$${SPEC_N:-5}"
+        else
+          echo "[mtp] SPEC_N=0 -> no speculative decoding"
+        fi
+        AR=""
+        [ "$${_NVLINK_ENABLED:-0}" = "1" ] || AR="--disable-custom-all-reduce"
+        exec vllm serve $$AR $$SPEC "$$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/thinkingcap-qwen3.6-27b-w4a16
+      - --served-model-name
+      - thinkingcap-27b
+      - --quantization
+      - auto_round
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "2"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.90}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-8}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
+      - --trust-remote-code
+      - --no-enable-prefix-caching
+      - --enable-chunked-prefill
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      # MTP (mtp_num_hidden_layers=1, mtp.fc@BF16 = working head, Tess recipe) is
+      # added by the entrypoint from SPEC_N (SPEC_N=0 → no-spec) for the n-sweep.
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": ${ENABLE_THINKING:-false}}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-0.6},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

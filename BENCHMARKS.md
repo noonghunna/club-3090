@@ -337,6 +337,20 @@ Migtissera's Qwen3.5-based dense 27B instruct/agentic fine-tune (`migtissera/Tes
 
 ---
 
+## ThinkingCap-Qwen3.6-27B
+
+LeaderboardModel1's ThinkingCap — a **Qwen3.6-27B (qwen3_5) VL reasoning fine-tune**, AutoRound W4A16, served **W4A8** (int8 activations via `VLLM_MARLIN_INPUT_DTYPE=int8` + the shared `qwen-w4a8-int8-act` patches). Same `qwen35-dense` hybrid (48 linear + 16 full-attn, 64 total) + **working built-in MTP head** as Tess (`mtp.fc`@BF16). Vision-capable base, shipped **text-only**.
+
+### Dual-card (2× RTX 3090) — vLLM
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `w4a8.yml` (W4A8, MTP n=5) | @noonghunna (2× 3090, PCIe) | fp8_e4m3 | 262144 | **73.3 / 106.1** (TTFT 105/117 ms) | 2466 @10K / 1742 @90K | ~21.6 GB/card | 2026-07-21 | ⚠️ Production w/ caveats. AutoRound W4A16 served **W4A8** (int8 acts via the shared `qwen-w4a8-int8-act` patches — AutoRound ~50% negative scales folded at boot). Built-in **MTP n=5** (accept 5.0 / 80% warm; n-sweep knee — code +64% 65→107, n=6/8 regress). **verify-stress boundary 8/8** (NIAH clean to 240,634 tok = 91% of 262K). **soak-continuous PASS** (0/100 silent-empty, p50 119.75 decode). **8-pack (benchlocal `--full`): 113/150 think-off · 120/150 think-on** — TOPS Tess W4A16 (108/115) and Qwen fast-tier (109) on BOTH legs; per-pack ON: toolcall 14·instructfollow **15**·structoutput 14·dataextract 13·reasonmath 12·bugfind **15**·hermesagent 14/20·cli-40 23/40. ⚠️ **Caveat:** thin **69 MB** VRAM margin at the 262K ceiling with MTP (MTP eats ~1.2 GB headroom; the no-MTP ladder had 1245 MB) — recall is clean to 240K, but sustained agents at MAX ctx should size below 262K or lower util. Single-card W4A8 tops ~76K (vision tower). Native template (no froggeric pin). rebench `thinkingcap-27b-20260721-0758`. |
+
+**Bonus — concurrency N-sweep (agg tok/s, no-MTP):** N=1 65.7 · N=2 113.3 · N=4 212.9 · N=8 **390.9** (5.95× to N=8 — W4A8 int8-GEMM scales unusually well at batch for a dense 27B).
+
+---
+
 ## See also
 
 - [docs/SINGLE_CARD.md](docs/SINGLE_CARD.md) — single-card variant picker

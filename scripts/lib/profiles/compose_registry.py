@@ -954,6 +954,23 @@ COMPOSE_REGISTRY = {
         status_note="Tess-4-27B AutoRound W4A16 (LeaderboardModel1; sym INT4 g128, mtp.fc@BF16) at TP=2 @262K + fp8_e4m3 KV + built-in MTP n=5 — THE FASTEST TESS on 2x24GB and the MTP-revival result (club #662): 73.5 narrative / 108.2 code tok/s decode (vs the NVFP4 sibling's spec-off 62.4), accept-len 5.0 / 80% warm. Native Marlin WNA16 on Ampere. rebench-full 2026-07-17 (131 min): verify-stress 8/8 incl. NIAH ceiling ladder to 0.92x262K (2.2 GB margin), soak PASS (0/100 silent-empty, p50 110.6, 105% retention), 8-pack 108/150 off / 115/150 on — beats the NVFP4 A0 baseline (106/113) on BOTH legs. CAVEAT (why not full production): think-OFF still undershoots the GGUF tier bar (108 vs 116, cli-40-concentrated 19/40 vs 25/40); think-ON ties (115 vs 117, cli-40 25/40 = parity) — same precision-not-serving-path gap as the NVFP4 arms. n-sweep (single-variable): no-spec 70.1/70.0, n=5 69.9/104.3 (knee), n=6/8 regress. Prefix caching OFF (hybrid DeltaNet state). Froggeric template pinned. SPEC_N overridable; the head is NOT valid on the NVFP4 slug (dead there - export, not head).",
     ),
 
+    # ThinkingCap-Qwen3.6-27B AutoRound W4A16, served W4A8 (int8 activations via 2 vendored
+    # patches + VLLM_MARLIN_INPUT_DTYPE=int8). Same qwen35-dense hybrid + working built-in MTP
+    # head as Tess. Top-of-class 27B W4 quality (113 off / 120 on). fp8_e4m3 KV, TP=2 @262K.
+    # kvcalc SKIP (hybrid; model-YAML kv_calc_supported=false). CAVEAT: thin 69 MB ceiling
+    # margin at 262K with MTP (NIAH clean to 240K) -> sustained agents size below max.
+    "vllm/thinkingcap-dual-w4a8": _entry(
+        model="thinkingcap-27b", weights_variant="w4a16", workload="fast-chat",
+        engine="vllm-stable", drafter="thinkingcap-mtp-builtin", kv_format="fp8_e4m3",
+        act_format="int8", act8_capable=True,
+        tp=2, max_ctx=262144, max_num_seqs=8, mem_util=0.90,
+        compose_path="models/thinkingcap-27b/vllm/compose/dual/w4a16/w4a8.yml",
+        default_port=8099, fallback_sm=7.5,
+        kvcalc_key="SKIP",
+        status="caveats",
+        status_note="ThinkingCap-Qwen3.6-27B AutoRound W4A16 (LeaderboardModel1; sym INT4 g128, mtp.fc@BF16 working head) served W4A8 — int8 activations via VLLM_MARLIN_INPUT_DTYPE=int8 + 2 vendored patches (patches/w4a8: INC input_dtype + negative-scale fold; AutoRound emits ~50% negative scales, folded at boot). Same qwen35-dense hybrid (48 linear + 16 full attn) + built-in MTP n=5 as Tess. TP=2 @262K + fp8_e4m3 KV. rebench-full 2026-07-21 (thinkingcap-27b-20260721-0758): 73.3 narrative / 106.1 code tok/s (MTP accept 5.0/80%), verify-stress boundary 8/8 (NIAH clean to 240K), soak PASS (0/100 silent-empty, p50 119.75 decode), 8-pack 113/150 off / 120/150 on — TOPS Tess W4A16 (108/115) and Qwen fast-tier (109) on BOTH legs (esp. reasoning: IF 15/15 + BugFind 15/15 think-on). n-sweep knee n=5 (code +64% 65->107; n=6/8 regress). CAVEAT (why caveats not production): THIN 69 MB VRAM margin at the 262K ceiling with MTP (MTP eats ~1.2 GB headroom; no-MTP ladder had 1245 MB) — NIAH recall is clean to 240K but sustained agents at MAX ctx should size below 262K or lower util. Vision tower resident but untested (text-only validated). Single-card W4A8 tops ~76K (vision-limited). Native template works (no froggeric pin needed). SPEC_N overridable.",
+    ),
+
     # Nemotron-3 Puzzle 75B-A9B NVFP4 — hybrid Mamba2-Transformer LatentMoE (512 routed
     # experts, 2 KV heads, 88 heterogeneous Puzzle-NAS layers), built-in MTP. NON-FUNCTIONAL
     # on the 2x3090 rig: needs 4x3090 (TP=4). 🧪 experimental (shown in --list, --force to
@@ -1076,6 +1093,7 @@ DEFAULTS = {
     # (73/108 TPS vs 52-63/67; think-ON quality ties 115/117, think-OFF -8).
     # Remove this row (slug stays launchable by name) to keep the GGUF default.
     ("tess-4-27b", "vllm", "dual"): "vllm/tess-dual-w4a16",
+    ("thinkingcap-27b", "vllm", "dual"): "vllm/thinkingcap-dual-w4a8",
 }
 
 
