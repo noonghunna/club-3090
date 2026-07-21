@@ -566,7 +566,11 @@ baselines:
     prefill_tps: { 10k: 2466, 90k: 1742 }
     quality_8pk: "113/150"
     quality_8pk_think_on: "120/150"
-    quality_env: { harness: "benchlocal-cli --full via rebench-full, 2026-07-21" }
+    # PROVENANCE: measured on benchlocal-cli v0.9.7 — PRE-v0.9.8, so it predates the
+    # grader-fidelity fixes (#101 cli-40 correctness-authoritative, #102 ReasonMath
+    # answers-authoritative, #95 hermes HA-20, #79 fairness audit). cli-40 and
+    # hermesagent are UNDER-reported here; re-run on v0.9.8 owed.
+    quality_env: { harness: "benchlocal-cli v0.9.7 (pre-#101/#102) --full via rebench-full, 2026-07-21" }
     ctx_validated: { tokens: 240634, niah: "clean@240K" }
     date: 2026-07-21
     engine_pin: "vllm/vllm-openai:v0.25.1"
