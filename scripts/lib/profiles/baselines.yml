@@ -564,13 +564,20 @@ baselines:
     narr_tps: 73.3
     code_tps: 106.1
     prefill_tps: { 10k: 2466, 90k: 1742 }
-    quality_8pk: "113/150"
-    quality_8pk_think_on: "120/150"
-    # PROVENANCE: measured on benchlocal-cli v0.9.7 — PRE-v0.9.8, so it predates the
-    # grader-fidelity fixes (#101 cli-40 correctness-authoritative, #102 ReasonMath
-    # answers-authoritative, #95 hermes HA-20, #79 fairness audit). cli-40 and
-    # hermesagent are UNDER-reported here; re-run on v0.9.8 owed.
-    quality_env: { harness: "benchlocal-cli v0.9.7 (pre-#101/#102) --full via rebench-full, 2026-07-21" }
+    quality_8pk: "114/150"
+    quality_8pk_think_on: "126/150"
+    # QUALITY RE-RUN 2026-07-21 on benchlocal-cli v0.9.8 (the original gate ran on a
+    # v0.9.7 checkout, predating the grader-fidelity fixes). OFF 113->114 (a tie),
+    # ON 120->126 (+6) — driven by cli-40 (+9 ON / +4 OFF, #101 correctness-
+    # authoritative) and reasonmath (+2, #102). hermesagent moved DOWN on BOTH legs
+    # (-2/-3), consistent with the #95/#79 verifier tightening rather than variance.
+    # Evidence: results/rebench/thinkingcap-27b-20260721-1620/. Operational numbers
+    # (tps, prefill, ctx_validated) still come from source_tag below (the 0758 gate).
+    # WARNING - NOT like-for-like vs the Tess (108/115) / Qwen (109) rows: those were
+    # measured on PRE-v0.9.8 harnesses. The like-for-like pairing is the v0.9.7 one
+    # (ThinkingCap 113/120 vs Tess 108/115). Re-run those before any ranking claim
+    # against these numbers.
+    quality_env: { harness: "benchlocal-cli v0.9.8 (runner_version 0.9.8; hermes/bugfind sandboxes rebuilt pre-run) --full, quality re-run 2026-07-21, evidence results/rebench/thinkingcap-27b-20260721-1620" }
     ctx_validated: { tokens: 240634, niah: "clean@240K" }
     date: 2026-07-21
     engine_pin: "vllm/vllm-openai:v0.25.1"
