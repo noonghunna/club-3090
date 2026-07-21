@@ -350,7 +350,7 @@ patches:
       drop_when: "vllm#48375 merges upstream AND the vllm-stable pin moves past it -> remove the 6 compose mounts + entrypoint calls + the patch dir; retire this row (re-run the #710 probe protocol on the new pin first)."
 
   - id: qwen-w4a8-int8-act
-    model: [qwen3.6-27b]
+    model: [qwen3.6-27b, thinkingcap-27b]
     files:
       - models/qwen3.6-27b/vllm/patches/w4a8-int8-act/install.sh
       - models/qwen3.6-27b/vllm/patches/w4a8-int8-act/patch-inc-w4a8.py
@@ -360,6 +360,7 @@ patches:
           - vllm/dual
           - vllm/minimal
           - vllm/qwen-27b-multi-fast
+          - vllm/thinkingcap-dual-w4a8
         reason: "Enables the STOCK serve-time W4A8 toggle (VLLM_MARLIN_INPUT_DTYPE=int8 — int8 activations on the int4 weights, +50% prefill / decode ~neutral dual (env-only A/B), 8-pack-tied 110/111 vs 109) on auto-round checkpoints: vLLM's inc route silently drops the toggle (bug A), and the int8 kernel reads group scales UNSIGNED while AutoRound emits ~50% negative scales → garbage (bug B; load-time sign-fold, exact except 0.61% of weights). BOTH patches are NO-OPS while the env is unset, so they ship applied-always with zero default-path behavior change. Forensics + measurements: club-3090#609."
         evidence: "models/qwen3.6-27b/vllm/patches/w4a8-int8-act/README.md; club-3090#609 (c-17664346 + c-17666873); docs/UPSTREAM.md W4A8 rows"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header

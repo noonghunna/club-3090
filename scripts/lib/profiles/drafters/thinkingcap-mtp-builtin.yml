@@ -1,0 +1,23 @@
+schema_version: 1
+id: thinkingcap-mtp-builtin
+display_name: ThinkingCap-Qwen3.6-27B built-in MTP head (vLLM)
+spec_method: mtp
+model_compat:
+  - thinkingcap-27b
+n_default: 5
+n_max: 8
+download: false
+vram_footprint_gb: 0
+status: production
+# Built-in MTP head inside the LeaderboardModel1 AutoRound W4A16 checkpoint —
+# the working head (config mtp_num_hidden_layers=1; mtp.fc stored as .weight =
+# BF16, NOT 4-bit'd -> not the dead-head trap). Same recipe as tess-mtp-builtin.
+# n-sweep 2026-07-21 (single-variable, W4A8 TP=2, narrative/code decode):
+#   n=0 66/65 · n=2 62/76 (accept 2.70/85%) · n=5 68/107 (accept 4.36-5.0/67-80%)
+#   = knee (code +64% vs no-spec) · n=6 65/103 · n=8 57/101 REGRESS (tail accept
+#   collapses 67%->47%). Prose is break-even at every n; the win is code/structured.
+# ~1.2 GB VRAM headroom cost at 262K (draft KV) — see the compose thin-margin caveat.
+# No separate drafter weights -> download: false. {N} from n_default or the
+# compose's ${SPEC_N:-5} override.
+speculative_config_template: '{"method":"mtp","num_speculative_tokens":{N}}'
+local_model_path: null
