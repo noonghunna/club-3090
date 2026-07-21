@@ -569,16 +569,30 @@ baselines:
     # QUALITY RE-RUN 2026-07-21 on benchlocal-cli v0.9.8 (the original gate ran on a
     # v0.9.7 checkout, predating the grader-fidelity fixes). OFF 113->114 (a tie),
     # ON 120->126 (+6) — driven by cli-40 (+9 ON / +4 OFF, #101 correctness-
-    # authoritative) and reasonmath (+2, #102). hermesagent moved DOWN on both legs
-    # (-2/-3) = run-to-run VARIANCE, not a verifier change (correction, credit @qwen):
-    # the hermes agent executes from the BAKED pin (/opt/hermes-agent @ 44cdf555,
-    # asserted by hermes-runtime.mjs or the run crashes) — identical across both runs;
-    # the recorded hermes_agent_commit swing is host METADATA, not executed code. Use
-    # HERMES_AGENT_FORCE_BAKED=1 for a reproducible hermesagent number.
-    # NOTE: the think-OFF 114 is itself UNDERSTATED — the pack default caps completions
-    # at max_tokens=1024 vs 16384 on the thinking arm, so RM-04/RM-06 truncate before
-    # emitting ANSWER: (token_limit, not wrong). --max-tokens 4096 recovers reasonmath
-    # 11->13. A corrected OFF number is pending.
+    # authoritative) and reasonmath (+2, #102).
+    #
+    # hermesagent (-2/-3): CONFOUNDED — do not attribute. Two earlier readings were
+    # both wrong: "the verifier tightened" (inference, no evidence) and then
+    # "run-to-run variance" (adopted from @qwen, also wrong). The actual cause is a
+    # SECOND unpinned component. The Hermes CLI under test is pinned (44cdf555,
+    # asserted by hermes-runtime.mjs); hermes-agent — the AGENT implementation — is
+    # separate and was auto-detected from the host and bind-mounted, so the recorded
+    # hermes_agent_commit IS executed code, not metadata. Provenance from the saved
+    # result JSONs: 07-20 host-mount 7f12d4f = 12/20 · 07-21 host-mount d604141 =
+    # 9/20 · 07-21 baked 44cdf555 = 13/20. Three agent builds, three numbers, none
+    # comparable. hermesagent-20 also runs at temperature 0, so a 4-point spread is
+    # not plausibly inference non-determinism.
+    # FIXED in benchlocal-cli #105 (merged): the baked agent is now the DEFAULT; host
+    # use is opt-in (HERMES_AGENT_ALLOW_HOST=1). Any hermesagent number from before
+    # that carries an unrecorded agent version — re-establish, don't reconcile.
+    #
+    # NOTE: the think-OFF 114 is UNDERSTATED — the pack default capped completions at
+    # max_tokens=1024 vs 16384 on the thinking arm, so RM-04/RM-06 truncated before
+    # emitting ANSWER:. Measured recovery was +1 (11->12), not the +2 projected:
+    # RM-06 completed at 4096 and was WRONG (the cap had been masking a real miss),
+    # and RM-04 still truncated at 4096. FIXED in #105: reasonmath-15 now defaults to
+    # 16384 with timeout_baseline_tokens=1024 so the clock scales with it.
+    # A canonical both-arms re-run on the merged harness supersedes 114/126.
     # Evidence: results/rebench/thinkingcap-27b-20260721-1620/. Operational numbers
     # (tps, prefill, ctx_validated) still come from source_tag below (the 0758 gate).
     # WARNING - NOT like-for-like vs the Tess (108/115) / Qwen (109) rows: those were
