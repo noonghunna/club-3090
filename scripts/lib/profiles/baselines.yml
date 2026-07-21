@@ -564,9 +564,23 @@ baselines:
     narr_tps: 73.3
     code_tps: 106.1
     prefill_tps: { 10k: 2466, 90k: 1742 }
-    quality_8pk: "114/150"
-    quality_8pk_think_on: "126/150"
-    # QUALITY RE-RUN 2026-07-21 on benchlocal-cli v0.9.8 (the original gate ran on a
+    quality_8pk: "118/150"
+    quality_8pk_think_on: "123/150"
+    # CANONICAL PAIR 2026-07-21 19:27 — both legs back-to-back, one harness state, one
+    # boot, agent pinned: benchlocal-cli master @ 488521e (post-#105), baked hermes-agent
+    # 44cdf555, reasonmath budget 16384. NOTE: no tag was cut, so the saved artifacts
+    # self-report runner_version 0.9.8 — reproduce from the COMMIT, not the version.
+    # Supersedes 114/126 (and 113/120). The movement is NOT improvement:
+    #   OFF 114->118 = hermesagent +4 (re-baseline onto a different agent build, not a
+    #   gain) + the other seven packs summing to 0.  ON 126->123.
+    # NOISE BAND IS +/-3 AT n=1: bugfind -3 on the OFF leg, cli-40 -3 on the ON leg —
+    # neither pack is touched by #105 (no hermes dep, budgets unchanged) and both run at
+    # temperature 0, so it isn't sampling. 7 of 8 packs moved and roughly cancelled.
+    # Every single-run delta here sits inside that band, including reasonmath +1.
+    # Report the mean of n>=3 before treating any per-pack move as real (credit @qwen).
+    # Artifacts: results/quality/quality-2026-07-21T18-46-04.json (OFF) + 18-59-04 (ON).
+    #
+    # PRIOR RUN 2026-07-21 16:20 on benchlocal-cli v0.9.8 (the original gate ran on a
     # v0.9.7 checkout, predating the grader-fidelity fixes). OFF 113->114 (a tie),
     # ON 120->126 (+6) — driven by cli-40 (+9 ON / +4 OFF, #101 correctness-
     # authoritative) and reasonmath (+2, #102).
