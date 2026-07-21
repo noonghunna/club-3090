@@ -554,6 +554,28 @@ baselines:
     submitted_by: "noonghunna"
     tier: local
 
+  vllm/thinkingcap-dual-w4a8:
+    # Promotion gate (#748): rebench-full 2026-07-21 — decode 73.3/106.1 (served
+    # W4A8, int8 activations via the shared qwen-w4a8-int8-act patches, + built-in
+    # MTP n=5, accept-len 5.0 / 80% warm), verify-full 9/9, verify-stress boundary
+    # 8/8 incl. the NIAH ceiling ladder to 0.92x262K, soak PASS (0/100 silent-empty,
+    # p50 119.75). 8-pack both modes TOPS Tess W4A16 (108/115) and the Qwen fast
+    # tier (109) on BOTH legs. Measured on the v0.25.1 pin.
+    narr_tps: 73.3
+    code_tps: 106.1
+    prefill_tps: { 10k: 2466, 90k: 1742 }
+    quality_8pk: "113/150"
+    quality_8pk_think_on: "120/150"
+    quality_env: { harness: "benchlocal-cli --full via rebench-full, 2026-07-21" }
+    ctx_validated: { tokens: 240634, niah: "clean@240K" }
+    date: 2026-07-21
+    engine_pin: "vllm/vllm-openai:v0.25.1"
+    rig: "2x3090-pcie"
+    power_cap_w: [370, 370]
+    source_tag: "thinkingcap-27b-20260721-0758"
+    submitted_by: "noonghunna"
+    tier: local
+
 # ───────────────────────────────────────────────────────────────────────────
 # KNOWN GAPS — wave-2 dispositions (2026-07-04): each slug below has NO row
 # on purpose; the disposition says what unlocks one. Do NOT guess numbers in.
