@@ -973,6 +973,23 @@ COMPOSE_REGISTRY = {
         status_note="Nemotron-3 Puzzle 75B-A9B NVFP4 (nvidia modelopt MIXED: NVFP4 routed-expert FFNs + FP8 Mamba/shared projections), 4-card TP=4 @200K single-stream, built-in MTP via --speculative-config. Mamba2-Transformer hybrid LatentMoE, 9.3B active / 75.3B total. 🧪 Experimental — CANNOT be booted/validated on the maintainer's 2x3090 rig (needs 4x3090); shown in switch.sh --list, launch requires --force. fp8_e4m3 attention KV (checkpoint-declared) + fp16 Mamba SSM state (stochastic-rounded; never fp8). kv-calc bypassed (hybrid arch, no spec → kvcalc SKIP + model kv_calc_supported=false). NVIDIA supported-HW = Blackwell+Hopper ONLY; arch NemotronHPuzzleForCausalLM aliases to the NemotronH loader (registered v0.24.0 + v0.25.0; card tested v0.20.0) and CONFIRMED to run on 4x3090 (#706, @TheFuzy: weights 13.31 GiB/card, arch/quant/mamba/MTP all work on Ampere). This config is FIT-TUNED for 24 GB after our first cut OOM'd at 262K single-stream (profile-run prefill blew up with chunked-prefill off): chunked prefill ON + max-num-batched-tokens 8192 + max-model-len 200000 + fp8 KV. Concurrency (max_num_seqs>1 + --long-prefill-token-threshold) is a follow-up gated on a community VRAM report. FP8 sibling (83 GB) too big for 4x24GB → NVFP4 is the only quad-3090 fit. No DEFAULTS row (opt-in only). Community-float to 4x3090 owners.",
     ),
 
+    # Nemotron-3 Puzzle 75B-A9B W4A16 — the 2-CARD sibling of the NVFP4 flagship. danielrmay
+    # compressed-tensors (INT4 experts / INT8 shared+mamba / BF16 attn+latent+router+embed+lm_head)
+    # fits 2x3090 (TP=2, ~21.3 GiB/card) unlike the TP=4-only NVFP4. MTP-STRIPPED → drafter=None.
+    # int8_per_token_head KV (Ampere-native, workspace-free) is the fit; kvcalc SKIP (hybrid).
+    # fallback_sm=7.5 (Marlin W4A16, no Blackwell needed). 🧪 experimental (submitter-validated on
+    # 2x3090 #719; maintainer verify/stress/soak gates pending). --force to launch, out of DEFAULTS.
+    "vllm/nemotron-75b-dual-w4a16": _entry(
+        model="nemotron-3-puzzle-75b", weights_variant="w4a16", workload="fast-chat",
+        engine="vllm-stable", drafter=None, kv_format="int8_per_token_head",
+        tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.96,
+        compose_path="models/nemotron-3-puzzle-75b/vllm/compose/dual/w4a16/turbo.yml",
+        default_port=8096, required_sm=7.5, fallback_sm=7.5,
+        kvcalc_key="SKIP",
+        status="experimental",
+        status_note="Nemotron-3 Puzzle 75B-A9B W4A16 (danielrmay compressed-tensors: INT4 routed experts / INT8 shared+mamba / BF16 attn+latent+router+embed+lm_head), 2-card TP=2 + expert-parallel @262K, N=4. The 2-CARD SIBLING of vllm/nemotron-75b-multi-mtp — HALVES the hardware (41.48 GB / 11 shards, ~21.3 GiB/card fits 2x24GB; NVFP4's 53.5 GB is TP=4-only). Mamba2-Transformer hybrid LatentMoE, 9.3B active / 75.3B total. MTP-STRIPPED (config declares num_nextn_predict_layers=1 but 0 mtp.* weights → drafter-free; enabling mtp = ~0% accept). 🧪 Experimental — validated on the SUBMITTER's 2x3090 (@MIkamal88, #719): correctness (847*293, 'all but 9'), RULER 10/10 to 195K, decode/prefill/concurrency, benchlocal 8-pack 100/150 (think-on, t=1.0) / medium 65/75 (t=0.3); NOT yet through the maintainer's reference verify/stress/soak gates. Three Ampere levers make it fit on 24 GB (the card's 0.97 recipe is simulated on 48 GB A6000 clamps): int8_per_token_head KV + TRITON_ATTN (workspace-free; fp8 KV is FlashInfer-only on sm_86 → 394 MiB workspace → OOM), PIECEWISE CUDA graphs [1,2,4] (27.9 eager → ~88 tok/s; capture_sizes MUST cover N=4 or N≥3 silently → eager), and the GC allocator (garbage_collection_threshold:0.6,max_split_size_mb:128 reclaims ~1.07 GiB fragmentation expandable_segments can't on this hybrid+EP pattern). Ships custom-AR OFF (stock-driver: PCIe branch of detect_nvlink disables it; +330 MiB/card floor); custom-AR ON via aikitoria BAR1-P2P + GC allocator = +6-8% opt-in. Measured AR-off (real 2x3090, full 262K, N=4): N=1 87.3 tok/s, N=4 240.7 agg (64.7/stream), TTFT p50 0.61s, floor 347/365 MiB, KV pool ~278K tokens, 0 preempt/OOM. Measured on cu129-nightly dev1060; compose pins v0.24.0 (arch registered) with VLLM_IMAGE override — release-tag boot re-confirm pending. kvcalc SKIP (hybrid, model kv_calc_supported=false). dataextract is the one soft 8-pack spot (over-extraction) = model/distillation trait, not W4A16 damage (same failing scenarios as 4xNVFP4 #706). No DEFAULTS row (opt-in only).",
+    ),
+
     # Ornith-1.0-9B — DeepReinforce agentic-coding RL fine-tune. Qwen3-Next DENSE-FFN
     # HYBRID (arch=qwen35: 8 full-attn + 24 GDN/DeltaNet layers, NON-MoE) — only 8/32
     # layers carry GQA KV so 262K fits at 4.25 GiB KV. No MTP head → drafter-free

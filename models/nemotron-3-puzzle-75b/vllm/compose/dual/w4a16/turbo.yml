@@ -1,0 +1,193 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Nemotron-3-Puzzle-75B-A9B (danielrmay W4A16 — 75.3B total / 9.3B active,
+#              Mamba2-Transformer Hybrid LatentMoE, 512 routed experts + 1 shared)
+#   Topology:  Dual 3090 PCIe (TP=2 + expert-parallel, no NVLink — auto-detected via NVLINK_MODE)
+#   Drafter:   none — this checkpoint is MTP-STRIPPED (config declares num_nextn_predict_layers=1
+#              but ships ZERO mtp.* weights; --speculative-config mtp loads garbage → ~0% accept).
+#   KV:        two separate caches (hybrid model):
+#              • Attention layers → int8_per_token_head (Ampere-native, workspace-free — the key
+#                lever; fp8 KV is FlashInfer-only on sm_86 and pays a 394 MiB workspace that OOMs).
+#              • Mamba2 SSM state → triton backend (--mamba-backend triton).
+#   Vision:    no
+#   Max ctx:   262144 (FULL native — fits at N=4 on 2×24 GB; int8 KV pool ~278K tokens)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific
+#   Status:    🧪 Experimental — validated on the submitter's 2×3090 (@MIkamal88, #719): correctness,
+#              RULER 10/10 to 195K, decode/prefill/concurrency, 8-pack 100/150 (think-on). NOT yet
+#              run through the maintainer's reference verify/stress/soak gates.
+#   Caveats:   • MTP-stripped: no speculative decoding on this checkpoint • measured on vLLM
+#              dev1060 nightly; pinned here to the v0.24.0 release that registers the arch
+#              (release-tag boot re-confirm pending) • single-rig validation (one 2×3090)
+#              • dataextract is the one soft 8-pack spot (over-extraction) — a MODEL/distillation
+#                trait, not W4A16 damage (same failing scenarios as official 4×NVFP4, #706).
+#   Best for:  Dual-3090 owners wanting a 75B-class hybrid MoE — HALVES the hardware vs the
+#              4×NVFP4 flagship, full 262K, N=4 concurrency ⭐
+# ---------------------------------------------------------------------------
+# THE 2-CARD SIBLING of vllm/nemotron-75b-multi-mtp. TheFuzy's path needs 4×3090 (53.5 GB NVFP4,
+# TP=4); this danielrmay W4A16 (compressed-tensors: INT4 experts / INT8 shared+mamba / BF16
+# attn+latent+router+embed+lm_head, 41.48 GiB / 11 shards) fits TWO cards (~21.3 GiB/card) and
+# still holds the full 262K context at N=4. Same model, half the rig.
+#
+# THREE Ampere-specific levers make it fit (all discovered empirically on real 3090s — the
+# NVIDIA card's 0.97 recipe is simulated on 48 GB A6000 clamps and does NOT fit 24 GB):
+#
+#   1. int8_per_token_head KV + TRITON_ATTN — the fit. ~1 byte/token like fp8 but WORKSPACE-FREE.
+#      fp8 KV is FlashInfer-only on sm_86 and pays a fixed 394 MiB workspace that OOMs GPU1 at
+#      first inference; Triton hard-blocks fp8 below sm_89. int8_per_token_head is Ampere-native
+#      (same path Gemma uses here). Frees the workspace AND gives a bigger pool.
+#
+#   2. PIECEWISE CUDA graphs [1,2,4] — the decode win (27.9 eager → ~88 tok/s). Eager Python
+#      dispatch over the 88-layer hybrid was the real N=1 bottleneck, not TP all-reduce.
+#      splitting_ops keeps mamba/attention eager; only MoE/MLP subgraphs are captured (~tens of
+#      MiB). FULL graphs do NOT fit real 24 GB (they capture the whole hybrid, per capture size —
+#      materially more than the ~330 MiB that turning P2P off would free); PIECEWISE does.
+#      >>> capture_sizes MUST cover max-num-seqs (N=4) or N≥3 decode SILENTLY drops to eager. <<<
+#
+#   3. GC allocator (garbage_collection_threshold:0.6,max_split_size_mb:128) — reclaims a
+#      ~1.07 GiB reserved-but-unallocated fragmentation that expandable_segments:True could NOT,
+#      and rebalances the two ranks. Prerequisite for everything above on this hybrid+EP pattern.
+#      (It ALSO makes custom-AR IPC handles valid on patched-P2P rigs — see AR note below.)
+#
+# custom-all-reduce: OFF by default (this ships stock-driver-friendly). The PCIe branch of
+# detect_nvlink.sh appends --disable-custom-all-reduce, which is the shipped path: no patched
+# driver needed, ~330 MiB/card more floor. custom-AR ON (via an aikitoria BAR1-P2P driver + the
+# GC allocator) buys +6-8% but needs the patched driver — opt-in only, not assumed here.
+# It accelerates only the TP all-reduce (attn + mamba); the EP MoE all-to-all stays PyNCCL.
+#
+# MEASURED (real 2×3090, AR-off, full 262K, N=4 — @MIkamal88, #719):
+#   N=1 decode 87.3 tok/s · prefill ~3.66K tok/s @4-8K · N=4 aggregate 240.7 (64.7/stream),
+#   TTFT p50 0.61s, 0 preempt/0 OOM · GPU floor 347/365 MiB · KV pool ~278K tokens.
+#   vs llama.cpp UD-IQ4-XL control (25.5 TG / 425 PP): ~3.4× TG, ~8.6× PP.
+#
+# Run (registry-wired as vllm/nemotron-75b-dual-w4a16; experimental → --force):
+#   bash scripts/switch.sh vllm/nemotron-75b-dual-w4a16 --force
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+services:
+  vllm-nemotron-puzzle-75b:
+    # vLLM STABLE. v0.24.0 registers NemotronHPuzzleForCausalLM (verified 2026-07-14, #706);
+    # v0.25.0 also carries it. Measured on the cu129-nightly dev1060 build; pinned here to the
+    # release tag per repo convention (nightly tags get purged). Override with VLLM_IMAGE=... to
+    # match the exact nightly (cu129-nightly dev1060 = 9e57de71) or a newer release.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    container_name: "${ESTATE_CONTAINER:-vllm-nemotron-puzzle-75b-dual-w4a16}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8096}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches (first boot warms; reused after).
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      # NVLink auto-detection — runs inside container at boot (sets _NVLINK_ENABLED).
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - CUDA_VISIBLE_DEVICES
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=1
+      - VLLM_NO_USAGE_STATS=1
+      # Ampere attention path: TRITON_ATTN (int8_per_token_head KV is Triton-native, workspace-free)
+      # + FlashInfer sampler OFF (trims workspace). Both are load-bearing on 24 GB.
+      - VLLM_ATTENTION_BACKEND=TRITON_ATTN
+      - VLLM_USE_FLASHINFER_SAMPLER=0
+      - OMP_NUM_THREADS=1
+      - VLLM_USE_DEEP_GEMM
+      # THE GC-ALLOCATOR LEVER (lever #3 above). Reclaims ~1.07 GiB fragmentation that
+      # expandable_segments:True cannot on this 88-layer hybrid + EP allocation pattern, and
+      # rebalances the ranks. Overridable, but this default is what makes 262K@N=4 fit on 2×24 GB.
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-garbage_collection_threshold:0.6,max_split_size_mb:128}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # NVLink auto-detection (sets NCCL env + _NVLINK_ENABLED). On PCIe-only rigs
+        # (the common 2×3090 case) custom all-reduce is disabled — this is the shipped,
+        # stock-driver path (no patched P2P required). An NVLink rig keeps custom-AR ON.
+        source /etc/club3090/detect_nvlink.sh
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
+        else
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/nemotron-3-puzzle-75b-w4a16
+      - --served-model-name
+      - nemotron-3-puzzle-75b
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      # 512-expert MoE → expert-parallel across the TP group (NVIDIA's config).
+      - --enable-expert-parallel
+      # --- NO --speculative-config: this W4A16 checkpoint is MTP-STRIPPED (0 mtp.* weights).
+      #     Enabling mtp loads uninitialised head → ~0% accept. Runs drafter-free. ---
+      # --- Mamba2 SSM state cache: triton backend (Ampere-native; flashinfer's Mamba2 kernels
+      #     are the NVFP4-path choice, triton is the validated choice here). ---
+      - --mamba-backend
+      - triton
+      # --- attention KV cache: int8_per_token_head — the Ampere fit (lever #1). Workspace-free,
+      #     unlike fp8 (FlashInfer-only on sm_86 → 394 MiB workspace → OOM). ---
+      - --kv-cache-dtype
+      - int8_per_token_head
+      # KV pin holds the full 262K pool WITH the AR-off floor (820 MB → ~278K tokens at N=4).
+      # On an NVLink/AR-on rig custom-AR costs ~330 MiB/card — drop this to ~680 MB there.
+      - --kv-cache-memory-bytes
+      - "${KV_CACHE_MEMORY_BYTES:-820000000}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      # util → KV pool. 0.96 holds full 262K@N=4 with a 347/365 MiB floor (AR-off). The hybrid's
+      # Mamba forward spikes activation, so do not chase >0.96 without a soak.
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.96}"
+      - --trust-remote-code
+      # Hybrid Mamba prefix caching stores SSM state per block (~3× per-token) and will not fit
+      # at 262K — keep OFF. (Cold-prompt decode/prefill unaffected; no cache hits in bench.)
+      - --no-enable-prefix-caching
+      # PIECEWISE CUDA graphs (lever #2). capture_sizes MUST cover N=4 or N≥3 silently → eager.
+      - --compilation-config
+      - '{"cudagraph_mode":"PIECEWISE","cudagraph_capture_sizes":[1,2,4]}'
+      # N=4 concurrency (matches the capture set). Each seq carries its own Mamba SSM-state cache.
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-4}"
+      # Small prefill chunk (int8 + graphs give room); implicitly enables chunked prefill
+      # (batched-tokens < max-model-len). Bigger = faster single-stream prefill at more VRAM.
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-1024}"
+      - --reasoning-parser
+      - nemotron_v3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      # Reasoning ON by default (NVIDIA default; fixes over-eager tool calls). force_nonempty_content
+      # is NVIDIA's tool-calling rec. Add "low_effort": true to cut reasoning tokens.
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": ${ENABLE_THINKING:-true}, "force_nonempty_content": true}'
+      # Sampling per generation_config.json / NVIDIA API examples: temp 1.0, top_p 0.95.
+      - --override-generation-config
+      - '{"temperature":${TEMP:-1.0},"top_p":${TOP_P:-0.95}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

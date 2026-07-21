@@ -28,12 +28,25 @@ weights:
     kind: main
     verify_glob: "*.safetensors"
     manual_note: "NVIDIA modelopt MIXED quant of Nemotron-3-Puzzle-75B-A9B (Mamba2-Transformer hybrid LatentMoE, 512 routed experts + 1 shared, 9.3B active / 75.3B total): NVFP4 gs16 on the routed-expert FFNs + FP8 on the Mamba/shared-expert projections; MTP head kept higher-precision. Arch NemotronHPuzzleForCausalLM aliases to the NemotronH loader (registered in vLLM v0.24.0 + v0.25.0; NVIDIA card tested on v0.20.0). NVIDIA supported-hardware = Blackwell + Hopper ONLY; NVFP4 kernels native sm_90+, Marlin W4A16 fallback sm_7.5+. CANNOT be validated on the 2x3090 reference rig (needs 4x3090, TP=4) — drives the community-float vllm/nemotron-75b-multi-mtp slug. 53.5 GB / 6 shards. FP8 sibling (83 GB) is too big for 4x24GB → NVFP4 is the only practical quad-3090 fit."
+  w4a16:
+    path: nemotron-3-puzzle-75b-w4a16
+    local_subdir: nemotron-3-puzzle-75b-w4a16
+    size_gb: 41.48
+    format: compressed-tensors
+    status: experimental
+    hf_repo: danielrmay/NVIDIA-Nemotron-Labs-3-Puzzle-75B-A9B-W4A16
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "Community W4A16 (compressed-tensors) of Nemotron-3-Puzzle-75B-A9B: INT4 routed experts / INT8 shared+mamba / BF16 attn+latent+router+embed+lm_head. MTP head STRIPPED (config declares num_nextn_predict_layers=1 but ships 0 mtp.* tensors → no speculative decoding). 41.48 GB / 11 shards → ~21.3 GiB/card, FITS 2x3090 (TP=2) unlike the 53.5 GB NVFP4 (TP=4 only). Marlin W4A16 dequant on sm_7.5+ (no Blackwell/Hopper requirement). Validated on 2x3090 (@MIkamal88, #719): full 262K @ N=4 via int8_per_token_head KV + TRITON_ATTN + PIECEWISE graphs + the GC allocator; drives the vllm/nemotron-75b-dual-w4a16 slug. Halves the hardware vs NVFP4."
 default_weight_variant: nvfp4
 compatible_drafters:
   - nemotron-mtp-builtin
-# TP=4 only: 53.5 GB weights need 4x24GB (won't fit 2 cards). num_attn_heads=32 % 4 == 0;
-# num_kv_heads=2 with tp=4 → vLLM replicates KV (tp % kv == 0); experts 512 % 4 == 0.
+# NVFP4 (53.5 GB) is TP=4-only (won't fit 2 cards); W4A16 (41.48 GB) fits TP=2. Both valid:
+# num_attn_heads=32 % {2,4} == 0; num_kv_heads=2 with tp {2,4} → vLLM replicates KV
+# (tp % kv == 0); experts 512 % {2,4} == 0.
 valid_tp:
+  - 2
   - 4
 requires_genesis: false
 # Hybrid Mamba2+attention: KV cache lives only on the attention layers plus a fixed-size
