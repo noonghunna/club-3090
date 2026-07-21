@@ -569,8 +569,16 @@ baselines:
     # QUALITY RE-RUN 2026-07-21 on benchlocal-cli v0.9.8 (the original gate ran on a
     # v0.9.7 checkout, predating the grader-fidelity fixes). OFF 113->114 (a tie),
     # ON 120->126 (+6) — driven by cli-40 (+9 ON / +4 OFF, #101 correctness-
-    # authoritative) and reasonmath (+2, #102). hermesagent moved DOWN on BOTH legs
-    # (-2/-3), consistent with the #95/#79 verifier tightening rather than variance.
+    # authoritative) and reasonmath (+2, #102). hermesagent moved DOWN on both legs
+    # (-2/-3) = run-to-run VARIANCE, not a verifier change (correction, credit @qwen):
+    # the hermes agent executes from the BAKED pin (/opt/hermes-agent @ 44cdf555,
+    # asserted by hermes-runtime.mjs or the run crashes) — identical across both runs;
+    # the recorded hermes_agent_commit swing is host METADATA, not executed code. Use
+    # HERMES_AGENT_FORCE_BAKED=1 for a reproducible hermesagent number.
+    # NOTE: the think-OFF 114 is itself UNDERSTATED — the pack default caps completions
+    # at max_tokens=1024 vs 16384 on the thinking arm, so RM-04/RM-06 truncate before
+    # emitting ANSWER: (token_limit, not wrong). --max-tokens 4096 recovers reasonmath
+    # 11->13. A corrected OFF number is pending.
     # Evidence: results/rebench/thinkingcap-27b-20260721-1620/. Operational numbers
     # (tps, prefill, ctx_validated) still come from source_tag below (the 0758 gate).
     # WARNING - NOT like-for-like vs the Tess (108/115) / Qwen (109) rows: those were
