@@ -12,14 +12,18 @@
 #   Vision:    no
 #   Max ctx:   262144 (FULL native — fits at N=4 on 2×24 GB; int8 KV pool ~278K tokens)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 Experimental — validated on the submitter's 2×3090 (@MIkamal88, #719): correctness,
-#              RULER 10/10 to 195K, decode/prefill/concurrency, 8-pack 100/150 (think-on). NOT yet
-#              run through the maintainer's reference verify/stress/soak gates.
-#   Caveats:   • MTP-stripped: no speculative decoding on this checkpoint • measured on vLLM
-#              dev1060 nightly; pinned here to the v0.24.0 release that registers the arch
-#              (release-tag boot re-confirm pending) • single-rig validation (one 2×3090)
-#              • dataextract is the one soft 8-pack spot (over-extraction) — a MODEL/distillation
-#                trait, not W4A16 damage (same failing scenarios as official 4×NVFP4, #706).
+#   Status:    🧪 Experimental — validated on the submitter's 2×3090 (@MIkamal88, #719) AND the
+#              maintainer reference 2×3090: verify-full pass, verify-stress 7/8 (NIAH to 240K/91%),
+#              soak-continuous PASS (0 growth, 0/25 silent-empty, p50 73), canonical bench
+#              (45.8/49.0 narr/code, think-off). Held experimental pending a behavioral re-run —
+#              the 8-pack (100/150 think-on) is verifier-depressed (42/46 misses grader-side
+#              verifier_fail); re-run after the benchlocal-cli verifier-fidelity release (#95/#89/#81).
+#   Caveats:   • MTP-stripped: no speculative decoding on this checkpoint • validated on the pinned
+#              v0.24.0 release (arch registered; maintainer booted + gated on it — submitter
+#              measured on dev1060 nightly) • two-rig validation (submitter + maintainer 2×3090)
+#              • dataextract is the one soft 8-pack spot — all 6 misses were verifier_fail, so it's
+#                model-trait-OR-grader-strictness (quant-independent: same scenarios as 4×NVFP4 #706);
+#                TBD on the re-run.
 #   Best for:  Dual-3090 owners wanting a 75B-class hybrid MoE — HALVES the hardware vs the
 #              4×NVFP4 flagship, full 262K, N=4 concurrency ⭐
 # ---------------------------------------------------------------------------
