@@ -240,6 +240,10 @@ INCREMENTAL=0
 RESUME=""
 ALLOW_PARTIAL=0
 MODE_EXPLICIT=0
+# Cloud/proxy endpoint auth: bearer token forwarded to benchlocal-cli (--api-key)
+# and added to the reachability probe below. Falls back to BENCHLOCAL_API_KEY so
+# either env works. Local composes leave it empty and behave exactly as before.
+API_KEY="${API_KEY:-${BENCHLOCAL_API_KEY:-}}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -378,6 +382,14 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
+    --api-key)
+      API_KEY="${2:-}"
+      if [[ -z "$API_KEY" ]]; then
+        echo "✗ --api-key requires a bearer token" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
     --progress)
       PROGRESS=1
       shift
@@ -448,10 +460,20 @@ if [[ "$LIST_PACKS" == "1" ]]; then
   exit 0
 fi
 
-if ! curl -sf -m 5 "${URL}/v1/models" >/dev/null 2>&1; then
-  echo "✗ endpoint ${URL}/v1/models not responding" >&2
-  echo "  bring up a compose first: bash scripts/launch.sh" >&2
+# Reachability probe. Local composes answer 200 on /v1/models; authenticated
+# proxies (LiteLLM master key) answer 401 without the key; some cloud endpoints
+# (DashScope MaaS) serve only /chat/completions and 404 on /v1/models. Treat ANY
+# HTTP response as "reachable" and abort only when nothing answers at all
+# (http_code 000 = no connection), so cloud/proxy references work without a
+# local compose. The probe sends the bearer key when one is set.
+_probe_code=$(curl -s -m 8 -o /dev/null -w "%{http_code}" \
+  ${API_KEY:+-H "Authorization: Bearer ${API_KEY}"} "${URL}/v1/models" 2>/dev/null || echo "000")
+if [[ "${_probe_code}" == "000" ]]; then
+  echo "✗ endpoint ${URL} not responding (no HTTP response on /v1/models)" >&2
+  echo "  bring up a compose first: bash scripts/launch.sh  (or check URL= / --api-key for a cloud/proxy endpoint)" >&2
   exit 1
+elif [[ "${_probe_code}" =~ ^[45] ]]; then
+  echo "[quality-test] NOTE: ${URL}/v1/models returned HTTP ${_probe_code} — endpoint reachable; continuing with model=${MODEL}." >&2
 fi
 
 # Resolve the served model id from /v1/models. Behaviour depends on whether
@@ -734,6 +756,10 @@ fi
 if [[ -n "$MAX_TOKENS" ]]; then
   CLI_ARGS+=(--max-tokens "$MAX_TOKENS")
   echo "[quality-test] max tokens: $MAX_TOKENS (overrides the per-pack completion budget for both arms)"
+fi
+if [[ -n "$API_KEY" ]]; then
+  CLI_ARGS+=(--api-key "$API_KEY")
+  echo "[quality-test] api-key: set (cloud/proxy endpoint auth)"
 fi
 
 # Run; capture exit code so we can also try to emit the compact one-liner
