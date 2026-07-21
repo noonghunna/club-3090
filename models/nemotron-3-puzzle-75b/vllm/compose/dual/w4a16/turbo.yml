@@ -73,11 +73,13 @@
 # Tensor-parallel: 2
 services:
   vllm-nemotron-puzzle-75b:
-    # vLLM STABLE. v0.24.0 registers NemotronHPuzzleForCausalLM (verified 2026-07-14, #706);
-    # v0.25.0 also carries it. Measured on the cu129-nightly dev1060 build; pinned here to the
-    # release tag per repo convention (nightly tags get purged). Override with VLLM_IMAGE=... to
-    # match the exact nightly (cu129-nightly dev1060 = 9e57de71) or a newer release.
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    # vLLM STABLE. NemotronHPuzzleForCausalLM registered since v0.24.0 (#706) and carried in
+    # v0.25.x. Pinned to the vllm-stable engine spec (v0.25.1) so the direct-`docker compose`
+    # default matches the launcher-injected image — the NVFP4 multi4 sibling already runs v0.25.1
+    # (TheFuzy's 4-card validation, #716) and Marlin csrc is byte-identical v0.24.0->v0.25.1.
+    # Bumped v0.24.0->v0.25.1 2026-07-21 (image-drift fix; smoke-boot re-confirmed the W4A16 dual
+    # path boots coherent on v0.25.1). Override with VLLM_IMAGE=... for a specific nightly.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
     container_name: "${ESTATE_CONTAINER:-vllm-nemotron-puzzle-75b-dual-w4a16}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
