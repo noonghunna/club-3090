@@ -154,6 +154,47 @@ Quality: line for compose schema field (paste into compose YAML header):
 Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%) · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%) · ReasonMath-15 11/15 (73%) (--medium, packs v1.0.x, 2026-05-09)
 ```
 
+## Cloud / proxy endpoints
+
+`quality-test.sh` runs the same 8-pack against any **cloud or proxied OpenAI-compatible endpoint** — a managed API (DashScope, OpenRouter, together, DeepInfra), a router, or your own hosted model — for a like-for-like local-vs-cloud comparison (identical prompts, identical verifiers). Cloud support shipped in [#746](https://github.com/noonghunna/club-3090/pull/746); the underlying knobs live in [benchlocal-cli → Running against a cloud / managed endpoint](https://github.com/noonghunna/benchlocal-cli#running-against-a-cloud--managed-endpoint).
+
+Three env vars (or flags) point the wrapper at a remote endpoint:
+
+| Knob | Flag | Purpose |
+|---|---|---|
+| `URL` | `--endpoint` | The endpoint's OpenAI-compatible base (`https://…/v1`). |
+| `API_KEY` | `--api-key` | Bearer token (`Authorization: Bearer <key>`); falls back to `BENCHLOCAL_API_KEY`. |
+| `MODEL` | `--model` | The model id the endpoint serves (overrides the local auto-detect default). |
+
+```bash
+# thinking-ON arm against a cloud endpoint
+URL=https://your-endpoint/v1 API_KEY="$YOUR_KEY" MODEL=your-model-id \
+  bash scripts/quality-test.sh --full --enable-thinking --incremental --save-json cloud-on.json
+# thinking-OFF arm
+URL=https://your-endpoint/v1 API_KEY="$YOUR_KEY" MODEL=your-model-id \
+  bash scripts/quality-test.sh --full --no-thinking --incremental --save-json cloud-off.json
+```
+
+**Reachability probe is cloud-tolerant.** Proxies (a LiteLLM master key) answer `401` without the key, and some cloud endpoints (DashScope MaaS) serve only `/chat/completions` and `404` on `/v1/models`. The wrapper treats **any** HTTP response as reachable (only `http_code 000` = no connection fails fast), so cloud/proxy references pass the preflight without a `/v1/models` route.
+
+**Match the thinking state explicitly.** Most managed endpoints ignore the vLLM-side `chat_template_kwargs.enable_thinking` field — use the provider's native controls. The `cli-40` / `hermesagent-20` adapters send Qwen-compatible `enable_thinking` + `thinking_budget` automatically; for a thinking-only endpoint the off arm is `enable_thinking=true` clamped to `thinking_budget=1`. DashScope **rejects** `enable_thinking=false`, so its off arm uses that clamp (worked example below). Run **both** arms for a fair comparison and verify the saved request payloads.
+
+**Sandboxed agentic packs over a remote endpoint** work (HermesAgent-20 calls your endpoint over the network from inside its sandbox) but need the sandbox images built and are less battle-tested remotely than the deterministic packs — land the 5 deterministic packs first, then add the sandboxed three. `BENCHLOCAL_HERMES_RESOLVE_LOCALHOST` is irrelevant for a genuinely remote URL (it only rewrites `localhost` for the in-sandbox agent).
+
+**Pacing + spend.** Set `--request-delay <sec>` (env `BENCHLOCAL_REQUEST_DELAY`) to stay under the endpoint's RPM ceiling, and `--max-total-tokens <N>` as a cost ceiling (the agentic packs spend the most). 429s auto-retry (`--max-transient-retries`, default 3) — see [benchlocal-cli #106](https://github.com/noonghunna/benchlocal-cli/issues/106) for the minute-window backoff caveat.
+
+### Worked example — Qwen3.8-Max-Preview (DashScope)
+
+Our first cloud reference ([Discussion #753](https://github.com/noonghunna/club-3090/discussions/753)): `qwen3.8-max-preview` via a LiteLLM proxy that normalizes auth + thinking controls into two routes — `qwen3.8-max` (thinking-on) and `qwen3.8-max-nothink` (`thinking_budget=1`). Result: **125/150 think-off · 134/150 think-on** (n=1) — see the [cloud references table](../BENCHMARKS.md#cloud-references).
+
+```bash
+# via the proxy routes (services/litellm/config.yaml)
+URL=http://localhost:4000 API_KEY="$LITELLM_KEY" MODEL=qwen3.8-max \
+  bash scripts/quality-test.sh --full --enable-thinking --save-json qwen38max-on.json
+URL=http://localhost:4000 API_KEY="$LITELLM_KEY" MODEL=qwen3.8-max-nothink \
+  bash scripts/quality-test.sh --full --no-thinking --save-json qwen38max-off.json
+```
+
 ## Scenario-level probes (selection, incremental, resume)
 
 Since benchlocal-cli [#84](https://github.com/noonghunna/benchlocal-cli/pull/84)/[#85](https://github.com/noonghunna/benchlocal-cli/pull/85) the wrapper passes through scenario-granular runs:
