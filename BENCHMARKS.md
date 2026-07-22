@@ -651,3 +651,17 @@ benchlocal-cli run --pack aider-polyglot-30 \
 ```
 
 End-to-end takes ~3 hours on dual 3090. quality-test.sh auto-detects the endpoint and served-model-id, so `URL`/`MODEL` overrides are only needed when running against non-default ports.
+
+---
+
+## Cloud references
+
+The rows above are **local** composes (we control serving: TPS, VRAM, context ceilings, soak). This section is **hosted / managed endpoints** graded with the *identical* 8-pack and sampling contract — for like-for-like local-vs-cloud comparison. Because we don't serve these, the columns are **quality-only** (no TPS/VRAM/soak — those belong to the provider). Both thinking arms are reported; see [QUALITY_TEST.md → Cloud / proxy endpoints](docs/QUALITY_TEST.md#cloud--proxy-endpoints) for how to run them.
+
+| Model | Endpoint | think-OFF /150 | think-ON /150 | Harness | Date | Notes |
+|---|---|--:|--:|---|---|---|
+| `qwen3.8-max-preview` | DashScope MaaS (via LiteLLM proxy) | **125 (83.3%)** | **134 (89.3%)** | benchlocal-cli @ `488521e` (post-#105), baked hermes `44cdf555`, sandbox images content-verified (cli has #101) | 2026-07-22 | **First cloud-endpoint 8-pack reference.** n=1 → ±3 band (report mean of n≥3 to rank). 40 genuine model fails / **0 harness**; headline gap is **safety/refusal** — CLI-31/32/33/34 fail both arms (complies with destructive ops). RM-08 (on) was a transient `HTTP 429` → 135/150 (90.0%) on isolated re-run. [Discussion #753](https://github.com/noonghunna/club-3090/discussions/753). |
+
+### Adding a cloud reference row
+
+Run the 8-pack against the endpoint in **both** thinking arms ([QUALITY_TEST.md → Cloud / proxy endpoints](docs/QUALITY_TEST.md#cloud--proxy-endpoints)), then append a row with the endpoint, both `/150` totals, the harness commit (reproduce from the commit, not `runner_version`), and the date. Same rules as local rows: **measured, not estimated**, n stated, and a link to the write-up. Cloud rows are quality-only — don't fill TPS/VRAM/soak cells (the provider owns serving).
