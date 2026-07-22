@@ -104,6 +104,24 @@ Pinning specific GPUs is only trustworthy if you can confirm it worked. After an
 
 A mismatch on a CDI/NixOS rig usually means `CUDA_VISIBLE_DEVICES` didn't reach the container — see [HARDWARE.md](HARDWARE.md#pinning-specific-gpus-on-multi-gpu-rigs-and-cdi--nixos-runtimes) for the CDI deploy-block recipe. The view **never** shows a requested-but-not-actual placement.
 
+### ⚠️ Known incompatibility — `vllm-gemma-stable` slugs × UUID pinning
+
+Pods boot GPUs **UUID-pinned** (#610). The `vllm-gemma-stable` engine is pinned at **vLLM v0.22.0**, whose `Platform.device_id_to_physical_device_id` casts the `CUDA_VISIBLE_DEVICES` entry with a bare `int()` — so a `GPU-<uuid>` mask raises before the model loads:
+
+```
+ValueError: invalid literal for int() with base 10: 'GPU-1c6f148d-...'
+  → pydantic ValidationError: Model architectures [...] failed to be inspected
+  → container restart loop
+```
+
+**Affected slugs** (all six on that engine): `vllm/gemma-mtp-tp1` · `vllm/gemma-bf16-mtp` · `vllm/gemma-int8-mtp` · `vllm/gemma-31b-dual` · `vllm/gemma-31b-qat-w4a16-dual` · `vllm/gemma-26ba4b-single`.
+
+This is **not Gemma-specific and not a pod-tooling bug** — it's the engine pin. Upstream fixed the parse between v0.22.0 and v0.24.0, so `vllm-stable` slugs (v0.25.1) pin by UUID cleanly; only the un-bumped gemma engine trips it. The combination was never gate-tested because those slugs were last gated before #610 landed.
+
+**Until the pin bump lands** ([UPSTREAM.md](UPSTREAM.md#vllm-vllm-projectvllm) → `device_id_to_physical_device_id`, [#750](https://github.com/noonghunna/club-3090/issues/750)), run these slugs outside the pod path — e.g. `launch.sh` with plain Docker GPU selection, or `docker compose` directly with `--gpus device=N` and no `CUDA_VISIBLE_DEVICES` override.
+
+> On a **classic** nvidia runtime you can instead keep `NVIDIA_VISIBLE_DEVICES` on UUIDs (it performs the card selection; the container renumbers the exposed set to `0..N-1`) and pass `CUDA_VISIBLE_DEVICES` in index form. **Don't do this on CDI** — there `NVIDIA_VISIBLE_DEVICES` is ignored and the UUID mask is the only thing pinning cards.
+
 ## The estate file
 
 Pods live in a YAML estate file (default `scripts/lib/profiles/estate.yml`; override with `--file`). GPU indices are stored **index-based**; they're resolved to UUIDs at boot so pods land on the right cards on both container runtimes. Hand-written files pass the same validation as `pod.sh create`.
