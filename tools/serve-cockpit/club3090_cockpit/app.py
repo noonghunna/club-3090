@@ -238,6 +238,14 @@ def _act_label(e: "CatalogEntry") -> str:
     return (getattr(e.row, "act_format", "") or "") or "—"
 
 
+def _offload_label(e: "CatalogEntry") -> str:
+    """Weight-offload backend for the catalog offload column — the registry
+    ``offload`` facet (emitted like ``act_format``): "uva" (vLLM demand-paged
+    expert offload) / "n-cpu-moe" (llama.cpp CPU-computed) / "prefetch"; "—" for
+    a fully-resident slug (the default) or when the contract didn't carry it."""
+    return (getattr(e.row, "offload", "") or "") or "—"
+
+
 # ── Catalog column picker (#724) ─────────────────────────────────────────────
 # The CANONICAL catalog column set — the ONE source for the header build, the
 # row-cell build and the [|] columns picker.  (key, header) pairs in DEFAULT
@@ -253,6 +261,7 @@ _CATALOG_COLUMNS: "list[tuple[str, str]]" = [
     ("gb", "GB"),
     ("kv", "kv"),
     ("act", "act"),
+    ("offload", "offload"),
     ("spec", "spec"),
     ("ctx", "ctx"),
     ("tps", "TPS (rig)"),
@@ -1187,6 +1196,7 @@ class CatalogPane(Container):
                 "gb": _size_label(e),
                 "kv": _kv_label(e),
                 "act": _act_label(e),
+                "offload": _offload_label(e),
                 "spec": _spec_label(e),
                 "ctx": e.ctx_label or "—",
                 "tps": tps,

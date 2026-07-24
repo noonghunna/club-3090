@@ -60,6 +60,14 @@ def _entry(
     # its weights are positive-symmetric int4 (the c3 serve-confirm checkbox reads
     # this to offer VLLM_MARLIN_INPUT_DTYPE=int8 per-launch). #609.
     act8_capable=False,
+    # Weight-offload backend when the slug serves a model too large to fit VRAM
+    # by paging expert/layer weights to host RAM. None = fully resident (the
+    # default — every existing slug). "uva" = vLLM zero-copy demand-paged expert
+    # offload (GPU computes, weights stream over PCIe); "n-cpu-moe" = llama.cpp
+    # CPU-computed expert offload (weights stay in RAM, only activations cross
+    # PCIe); "prefetch" = vLLM bulk layer prefetch. Surfaced as the c3 catalog
+    # "offload" column. First used by the Laguna 118B-MoE offload slugs.
+    offload=None,
     chat_template="native",
     tp,
     max_ctx,
@@ -92,6 +100,7 @@ def _entry(
         "kv_format": kv_format,
         "act_format": act_format,
         "act8_capable": act8_capable,
+        "offload": offload,
         "chat_template": chat_template,
         "tp": tp,
         "pp": 1,

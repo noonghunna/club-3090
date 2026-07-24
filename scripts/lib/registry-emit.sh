@@ -670,6 +670,9 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # W4A8-int8-activation capability (c3 serve-confirm checkbox, #609) —
             # True when the compose is wired + weights are positive-sym int4.
             "act8_capable": bool((COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("act8_capable")),
+            # Weight-offload backend (catalog "offload" column) — None = resident
+            # (default) / "uva" / "n-cpu-moe" / "prefetch". Laguna 118B-MoE slugs.
+            "offload": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("offload"),
             # Weights quant_label + FORMAT from the model profile (catalog
             # Weights column fallbacks) — see _weights_meta() above.
             "weights_quant_label": _weights_meta(
