@@ -111,7 +111,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-27b}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-${PORT:-8020}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8020}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     # server target ENTRYPOINT is /app/llama-server — args only below.

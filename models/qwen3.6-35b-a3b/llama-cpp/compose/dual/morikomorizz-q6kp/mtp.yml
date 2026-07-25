@@ -92,7 +92,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-llama-cpp-hauhaucs-35ba3b}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-${PORT:-8073}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8073}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     # ⚠ -np 1 is intentional — one decode stream per dual-card config; extra

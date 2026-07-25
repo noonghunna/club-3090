@@ -91,7 +91,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-llama-cpp-pi-reasoning}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-${PORT:-8063}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8063}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     # -np 1 is intentional on a single 24 GB card — extra slots divide a compute-bound GPU

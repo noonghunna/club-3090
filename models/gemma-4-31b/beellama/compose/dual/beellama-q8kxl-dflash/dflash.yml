@@ -65,7 +65,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-beellama-gemma4-31b-dual-dflash}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-${PORT:-8066}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8066}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     command: >-

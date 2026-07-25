@@ -41,7 +41,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-ik-llama-ornith-9b}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-${PORT:-8070}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8070}}:8080"
     volumes:
       - "${MODEL_DIR:-/mnt/models/huggingface}:/models:ro"
     # ENTRYPOINT is /app/llama-server — args only. The ngram self-spec stage is

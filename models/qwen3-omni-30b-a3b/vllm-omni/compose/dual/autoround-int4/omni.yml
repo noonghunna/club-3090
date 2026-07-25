@@ -52,7 +52,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-vllm-omni-qwen3-omni-30b}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-${PORT:-8042}}:8091"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8042}}:8091"
     ipc: host
     shm_size: "16gb"
     environment:

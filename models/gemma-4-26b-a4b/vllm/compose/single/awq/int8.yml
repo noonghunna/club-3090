@@ -66,7 +66,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-vllm-gemma-26b-a4b-awq-int8-tp1}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
-      - "${ESTATE_PORT:-${PORT:-8040}}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8040}}:8000"
     volumes:
       - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
       # Google Gemma 4 CANONICAL chat template (published 2026-07-09) — SHARED

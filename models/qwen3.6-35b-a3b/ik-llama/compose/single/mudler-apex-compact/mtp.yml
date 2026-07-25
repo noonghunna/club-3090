@@ -42,7 +42,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-ik-llama-qwen36-35b-a3b-apex-compact}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-${PORT:-8054}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8054}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
       - ../../../patches/apex-qwen-chat-template.jinja:/etc/apex-qwen-chat-template.jinja:ro

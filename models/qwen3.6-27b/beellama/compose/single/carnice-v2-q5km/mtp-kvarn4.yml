@@ -122,7 +122,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-beellama-carnice-v2}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-${PORT:-8068}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8068}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     # server target ENTRYPOINT is /app/llama-server — args only below.

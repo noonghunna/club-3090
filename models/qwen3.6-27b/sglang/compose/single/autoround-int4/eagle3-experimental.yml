@@ -88,7 +88,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-sglang-qwen36-27b-eagle3}"
     restart: unless-stopped
     ports:
-      - "${ESTATE_PORT:-8040}:30000"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-8040}:30000"
     ipc: host
     shm_size: "16g"
     deploy:
