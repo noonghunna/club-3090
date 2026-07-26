@@ -77,6 +77,28 @@ def _entry(
     default_port,
     kvcalc_key=None,
     requires_nvlink=False,
+    # True when the slug has an ARCH-GATED kernel path that torch.compile (or a
+    # hardcoded quant-method kernel) emits PER RANK, so a mixed-compute-capability
+    # TP group must be REFUSED rather than warned. The canonical case is a
+    # quantization method that bypasses the shared kernel selector and therefore
+    # has no per-rank fallback to reach — nvidia modelopt NVFP4 hardcodes
+    # FlashInferFP8ScaledMMLinearKernel for its FP8 attention layers, so a
+    # sub-sm_90 rank in the group dies even though `fallback_sm` says that card
+    # is individually fine (fallback_sm reasons per card; the weight-only
+    # fallback is a property of the whole TP GROUP).
+    #
+    # ⚠️ NOT every NVFP4 slug: compressed-tensors exports (unsloth `nvfp4-fast`,
+    # migtissera tess) route through init_fp8_linear_kernel() -> shared selector,
+    # where Marlin IS reachable — mixed-arch is solvable there and gating them
+    # would foreclose it (validated on DiffusionGemma, disc #768 Test 6).
+    # The axis is the QUANT RUNTIME, not the weights_variant string.
+    #
+    # Mirrored by `# Requires-homogeneous-arch: true` in the compose header,
+    # which is what preflight.sh actually reads. `test-homogeneous-arch-drift`
+    # asserts the two agree in BOTH directions — #762 shipped the guard on only
+    # the reported slug and the 35B-A3B sibling silently kept crash-looping
+    # (#783). TP=1 slugs never need this: there is no TP group to disagree.
+    requires_homogeneous_arch=False,
     required_engine_features=None,
     recommended_engine_features=None,
     required_sm=None,
@@ -109,6 +131,7 @@ def _entry(
         "mem_util": mem_util,
         "compose_path": compose_path,
         "requires_nvlink": requires_nvlink,
+        "requires_homogeneous_arch": requires_homogeneous_arch,
         "required_engine_features": list(required_engine_features or []),
         "default_port": default_port,
         "gpu_assignment_mode": "contiguous",
@@ -302,6 +325,7 @@ COMPOSE_REGISTRY = {
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.6-27b/vllm/compose/dual/nvfp4/mtp.yml",
         default_port=8077, required_sm=9.0, fallback_sm=7.5,
+        requires_homogeneous_arch=True,
         kvcalc_key="qwen3.6-27b:nvfp4-dual",
         status="experimental",
         status_note="Qwen3.6-27B NVFP4 (nvidia modelopt MIXED_PRECISION — see single-nvfp4) at TP=2 @262K full ctx, 2x Hopper/Blackwell native (the 2x 5090 configuration is the primary community target; fallback_sm=7.5). HOMOGENEOUS RIGS ONLY (#762 @paulp83): mixed-arch TP crashes in torch.compile AOT -- a 5090 sm_120 + 3090 Ti sm_86 pair loads weights fine via the Marlin fallback, then the Inductor emits `tl.float8e4nv` MXFP8 ACTIVATION kernels the Ampere rank cannot compile (`type fp8e4nv not supported in this architecture`); TP1 dies, TP0 hangs on the broadcast. fallback_sm reasons PER CARD but the weight-only fallback is a property of the whole TP GROUP -- guarded from 2026-07-26 by Requires-homogeneous-arch in preflight. LIVE-VALIDATED ON 2x3090 sm_86 (HOMOGENEOUS) 2026-07-11 via the Marlin W4A16 fallback: boots @262K + fp8 KV + MTP n=3 (accept 97%+), 69.7 narr / 85.5 code decode TPS, 23.77 GB/card, 8-pack think-off 110/150 — statistically TIES the fp8 production tier's 109 (weight-identical path; native-FP4 activations unmeasured). On Ampere it works but has NO edge (~20% slower than the AutoRound tier for the same model) — prefer AutoRound/fp8 there; this slug's value on sub-sm_90 cards is models/cases where NVFP4 is the only quant. First native-FP4 community boot + rebench-full still wanted (funnel). Mirrors vllm/qwen-27b-dual-max's shape (TP=2 + MTP n=3 + fp8/e4m3 KV + vision @262K) with NVFP4 weights instead of FP8: ~11 GB/card weights vs dual-max's 14.5 — bigger KV pool headroom on 32 GB cards. On native-FP4 GEMM parts (Blackwell) NVIDIA claims near-fp8 throughput at 2.5x less weight memory. No DEFAULTS row (opt-in only).",
@@ -872,6 +896,7 @@ COMPOSE_REGISTRY = {
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/nvfp4/fp8.yml",
         default_port=8079, required_sm=9.0, fallback_sm=7.5,
+        requires_homogeneous_arch=True,
         kvcalc_key="qwen3.6-35b-a3b:nvfp4-dual",
         status="experimental",
         status_note="Qwen3.6-35B-A3B NVFP4 (see single-nvfp4) at TP=2 @262K full ctx, 2x Hopper/Blackwell native (2x 5090 primary community target; ~11.7 GB/card weights; fallback_sm=7.5 — sub-9.0 cards run it via the Marlin W4A16 fallback, validated on the 27B sibling 2026-07-11, though on Ampere the AutoRound tier serves this model faster). 🧪 first community boot + rebench-full validates. Mirrors vllm/qwen-35b-a3b-dual's shape (no drafter — MTP net-negative on this MoE, vision on, thinking off) with NVFP4 weights + fp8/e4m3 KV instead of AutoRound + e5m2. No DEFAULTS row (opt-in only).",
@@ -996,6 +1021,7 @@ COMPOSE_REGISTRY = {
         tp=4, max_ctx=200000, max_num_seqs=1, mem_util=0.85,
         compose_path="models/nemotron-3-puzzle-75b/vllm/compose/multi4/nvfp4/mtp.yml",
         default_port=8095, required_sm=9.0, fallback_sm=7.5,
+        requires_homogeneous_arch=True,
         kvcalc_key="SKIP",
         status="caveats",
         status_note="Nemotron-3 Puzzle 75B-A9B NVFP4 (nvidia modelopt MIXED: NVFP4 routed-expert FFNs + FP8 Mamba/shared projections), 4-card TP=4 @200K single-stream, built-in MTP via --speculative-config. Mamba2-Transformer hybrid LatentMoE, 9.3B active / 75.3B total. 🧪 Experimental — CANNOT be booted/validated on the maintainer's 2x3090 rig (needs 4x3090); shown in switch.sh --list, launch requires --force. fp8_e4m3 attention KV (checkpoint-declared) + fp16 Mamba SSM state (stochastic-rounded; never fp8). kv-calc bypassed (hybrid arch, no spec → kvcalc SKIP + model kv_calc_supported=false). NVIDIA supported-HW = Blackwell+Hopper ONLY; arch NemotronHPuzzleForCausalLM aliases to the NemotronH loader (registered v0.24.0 + v0.25.0; card tested v0.20.0) and CONFIRMED to run on 4x3090 (#706, @TheFuzy: weights 13.31 GiB/card, arch/quant/mamba/MTP all work on Ampere). This config is FIT-TUNED for 24 GB after our first cut OOM'd at 262K single-stream (profile-run prefill blew up with chunked-prefill off): chunked prefill ON + max-num-batched-tokens 8192 + max-model-len 200000 + fp8 KV. Concurrency (max_num_seqs>1 + --long-prefill-token-threshold) is a follow-up gated on a community VRAM report. FP8 sibling (83 GB) too big for 4x24GB → NVFP4 is the only quad-3090 fit. No DEFAULTS row (opt-in only). Community-float to 4x3090 owners.",
