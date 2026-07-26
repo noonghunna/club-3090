@@ -116,7 +116,13 @@ services:
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
       - VLLM_NO_USAGE_STATS=1
-      - VLLM_USE_FLASHINFER_SAMPLER=1
+      # FlashInfer sampler OFF: measured -3.0% narrative / -1.7% code decode on the
+      # 2x3090 flagship (bench.sh, 5 measured runs/arm, symmetric boots, single
+      # variable). With MTP spec-decode active, sampling routes through the
+      # rejection-sampler path where the FlashInfer kernel adds overhead without a
+      # win. Also trims sampler workspace, which is load-bearing on 24 GB (same
+      # reasoning as nemotron dual/w4a16/turbo.yml). Reported by @Aduer in #671.
+      - VLLM_USE_FLASHINFER_SAMPLER=0
       - OMP_NUM_THREADS=1
       # expandable_segments:True crashes boot on some setups (likely cuMemMap path).
       # Known: JusefPol on NVLink (PR #31), WSL2 single-card 3090 Ti.
