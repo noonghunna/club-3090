@@ -301,6 +301,12 @@ preflight_compose_hardware() {
   min_gpu_count="$(compose_meta_get "$compose_file" requires-min-gpu-count || true)"
   tp="$(compose_meta_get "$compose_file" tensor-parallel || true)"
   requires_sm="$(compose_meta_get "$compose_file" requires-sm || true)"
+  # Requires-homogeneous-arch: true -> this compose has an ARCH-GATED path
+  # (e.g. NVFP4/MXFP8 activation kernels) that torch.compile emits per rank.
+  # A weight-only fallback can be valid per card and still be invalid across
+  # ranks, so mixed compute capabilities must be REFUSED, not warned. (#762)
+  local requires_homog_arch
+  requires_homog_arch="$(compose_meta_get "$compose_file" requires-homogeneous-arch || true)"
 
   if [[ -z "$min_vram_gb" || -z "$min_gpu_count" || -z "$tp" ]]; then
     echo "[preflight] WARN:  compose has no hardware metadata; allowing boot: $compose_file" >&2
@@ -323,6 +329,10 @@ preflight_compose_hardware() {
 
   local total_count=0 selected_count=0 eligible_count=0 selected_below_vram=0 selected_below_sm=0
   local best_idx="" best_name="" best_mib=0 best_sm=""
+  # Architecture heterogeneity across the SELECTED cards (#762). The
+  # pre-existing HET check in launch.sh keys on VRAM only, so a 3090+4090
+  # pair (equal 24 GB, sm_86 vs sm_89) carried no architecture signal.
+  local sel_sm_list=""
   local first_idx="" first_name="" first_mib=0 first_sm=""
   local idx name mem_mib sm rest vram_gb sm_int
 
@@ -345,6 +355,10 @@ preflight_compose_hardware() {
 
     vram_gb="$(_preflight_vram_gb "$mem_mib")"
     sm_int="$(_preflight_sm_to_int "$sm")"
+    case " ${sel_sm_list} " in
+      *" ${sm} "*) : ;;
+      *) sel_sm_list="${sel_sm_list}${sm} " ;;
+    esac
 
     if (( vram_gb < min_vram_gb )); then
       selected_below_vram=1
@@ -443,6 +457,54 @@ preflight_compose_hardware() {
     echo "[preflight] WARN:  ${variant:-compose} requires >=${min_vram_gb} GB per visible GPU for TP=${tp}, but at least one selected GPU is smaller." >&2
     echo "[preflight]        Continuing because TP>=2 sub-24 GB rigs may use tuned gpu-memory-utilization/KV settings." >&2
   fi
+
+  # --- Mixed-architecture TP guard (#762, @paulp83) -------------------------
+  # Reported: NVFP4 + MXFP8 activations on a 5090 (sm_120) + 3090 Ti (sm_86)
+  # pair. Weight loading succeeded via the Marlin W4A16 weight-only fallback,
+  # then torch.compile AOT emitted `tl.float8e4nv` activation kernels the
+  # Ampere rank cannot compile:
+  #     ValueError("type fp8e4nv not supported in this architecture")
+  # Worker_TP1 died; Worker_TP0 hung on the shared-memory broadcast.
+  #
+  # Why the SM floor did not catch it: fallback_sm replaces required_sm as the
+  # hard floor (compat.py), so both cards individually cleared 7.5. But a
+  # weight-only fallback is a property of the TP GROUP, not of one card -- on a
+  # homogeneous sub-sm_90 pair the fallback is the only path taken and works
+  # (live-validated 2x3090 sm_86, 2026-07-11); on a MIXED pair the faster rank
+  # takes the native activation path and the slower one cannot follow.
+  local sel_sm_count
+  sel_sm_count="$(printf '%s\n' ${sel_sm_list} | grep -c . || true)"
+  if (( tp > 1 && sel_sm_count > 1 )); then
+    if [[ "${requires_homog_arch,,}" == "true" || "${requires_homog_arch,,}" == "yes" ]]; then
+      echo "[preflight] ERROR: ${variant:-compose} requires a HOMOGENEOUS GPU architecture for TP=${tp}." >&2
+      echo "[preflight]        Selected cards span compute capabilities: ${sel_sm_list% }" >&2
+      while IFS=',' read -r idx name mem_mib sm rest; do
+        idx="$(_preflight_csv_token "$idx")"
+        name="$(_preflight_csv_token "$name")"
+        mem_mib="$(_preflight_csv_token "$mem_mib")"
+        sm="$(_preflight_csv_token "$sm")"
+        [[ -z "$idx" ]] && continue
+        _preflight_selector_allows_index "$selector" "$idx" || continue
+        echo "[preflight]          GPU ${idx}: ${name}, $(_preflight_vram_gb "$mem_mib") GB, sm_${sm}" >&2
+      done <<< "$gpu_query"
+      echo "[preflight]        This compose has an arch-gated activation path (e.g. NVFP4/MXFP8)." >&2
+      echo "[preflight]        A weight-only fallback can be valid per card and still be invalid" >&2
+      echo "[preflight]        across ranks: torch.compile emits activation kernels per rank, and" >&2
+      echo "[preflight]        the lower-capability rank cannot compile them (club-3090 #762)." >&2
+      echo "[preflight]        Options:" >&2
+      echo "[preflight]          - run on a HOMOGENEOUS pair (all same sm_), or" >&2
+      echo "[preflight]          - use the single-card slug on the higher-capability GPU, or" >&2
+      echo "[preflight]          - try VLLM_ENFORCE_EAGER=1 to skip torch.compile AOT (~20-30% TPS), or" >&2
+      echo "[preflight]          - for genuinely heterogeneous serving see https://github.com/efschu/shvllm" >&2
+      _preflight_hardware_suggestions "$variant"
+      return 1
+    fi
+    echo "[preflight] WARN:  mixed GPU architectures selected for TP=${tp} (sm: ${sel_sm_list% })." >&2
+    echo "[preflight]        Mixed-arch tensor parallelism is NOT validated on this stack: ranks do" >&2
+    echo "[preflight]        not compute identically, and arch-gated kernels can fail on the lower" >&2
+    echo "[preflight]        card mid-compile. Prefer a homogeneous pair (club-3090 #762)." >&2
+  fi
+  # -------------------------------------------------------------------------
 
   echo "[preflight] hardware: ${variant:-compose} TP=${tp} requires ${min_gpu_count} GPU(s), >=${min_vram_gb} GB each${sm_label}; ${selected_count} visible GPU(s) detected"
   return 0

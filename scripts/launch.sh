@@ -1274,6 +1274,11 @@ if [[ -z "$VARIANT" ]]; then
   echo "[launch] model: $(model_label "$MODEL_NAME")" >&2
   if (( HET_VRAM_MIXED == 1 && TP_VALUE > 1 )); then
     echo "[launch] Note: heterogeneous TP is bottlenecked by the smallest selected card (${MIN_VRAM_GB} GB)." >&2
+    # This note is about CAPACITY only. Architecture heterogeneity is a separate
+    # and more dangerous axis, checked in preflight.sh (mixed-arch TP guard, #762):
+    # a 3090+4090 pair has equal 24 GB and never trips this VRAM check at all,
+    # despite spanning sm_86/sm_89.
+    echo "[launch]       (VRAM only -- architecture mismatch is checked separately; see #762.)" >&2
   fi
   if (( PP_VALUE > 1 )) && [[ "$VARIANT" == vllm/* ]]; then
     echo "[launch] WARN: PP + vLLM drafter/spec-decode paths are experimental on this stack." >&2

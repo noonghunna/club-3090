@@ -64,6 +64,13 @@
 # Hardware metadata (parsed by scripts/preflight.sh):
 # Requires-min-vram-gb: 24
 # Engine-profile: vllm-stable
+# Requires-homogeneous-arch: true
+#   ^ arch-gated activation path (MXFP8) -- torch.compile emits activation
+#     kernels PER RANK, and a lower-capability rank cannot compile them.
+#     Mixed-arch TP (e.g. 5090 sm_120 + 3090 Ti sm_86) crashes in AOT with
+#     `type fp8e4nv not supported in this architecture` -- club-3090 #762.
+#     The Marlin W4A16 weight-only fallback covers WEIGHTS only, and its
+#     validity is a property of the whole TP group, not of one card.
 # Requires-min-gpu-count: 4
 # Tensor-parallel: 4
 services:
