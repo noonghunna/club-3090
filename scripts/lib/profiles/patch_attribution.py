@@ -224,6 +224,12 @@ def _docker_compose_config(path: Path) -> str | None:
             cwd=str(path.parent),
             capture_output=True,
             text=True,
+            # Locale-independent decode: text=True otherwise decodes the child's
+            # stdout with the LOCALE encoding, so `docker compose config` output
+            # containing an em-dash dies with UnicodeDecodeError on an LC_ALL=C
+            # rig (#779). Same class as the read_text pins, different mechanism.
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
         )
     except (OSError, subprocess.SubprocessError):
