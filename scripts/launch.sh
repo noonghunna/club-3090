@@ -52,6 +52,15 @@
 
 set -euo pipefail
 
+# Force Python's UTF-8 mode (PEP 540) for every python3 this script runs.
+# Repo sources are full of unicode (— × → ⚠), and without this a rig on a real
+# non-UTF-8 locale (de_DE.iso88591 and friends) decodes reads, stdout AND argv
+# with the locale codec, which crashes the launcher/emit paths (#779). Python
+# already auto-enables UTF-8 mode for the C/POSIX locale, so this covers the
+# case it does NOT: a genuine non-UTF-8, non-C locale. Exported, so child
+# processes and nested scripts inherit it. Guarded by test-locale-utf8.sh.
+export PYTHONUTF8="${PYTHONUTF8:-1}"
+
 # The VRAM-budget block formats dot-decimal numbers emitted by kv-calc.py JSON
 # (e.g. "9.0") with `printf "%.2f"`. Under a comma-decimal LC_NUMERIC locale
 # (de_DE, fr_FR, …) bash printf rejects the dot — `printf: 9.0: invalid number`
