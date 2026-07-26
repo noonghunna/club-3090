@@ -453,18 +453,17 @@ if out="$(PATH="${TMP_BIN}:${PATH}" bash scripts/submit-bench.sh --tag "$tag" --
 fi
 assert_contains "$out" "not authed with gh. Run: gh auth login"
 
-# (k) the FORMATTER under a non-UTF-8 locale. Every section name carries "×", so
-# a piped stdout defaulting to ASCII made bench_row_format die with
-# UnicodeEncodeError on community rigs running LC_ALL=C (#599 class) — never
-# caught because this path had never run off the maintainer rig (#776).
+# (k) a non-UTF-8 locale, end to end. Two independent failure mechanisms lived
+# here, both invisible on the maintainer rig (#776) because the path never ran
+# off it:
+#   1. every section name carries "×", and a piped stdout defaults to ASCII, so
+#      the formatter died with UnicodeEncodeError (#599 class, fixed in #778);
+#   2. Python decodes sys.argv with ASCII+surrogateescape under such a locale, so
+#      the row reached submit-bench.sh's python heredocs as LONE SURROGATES —
+#      which strict utf-8 refuses, so no encoding= pin helps. Fixed with
+#      os.fsencode()-based recovery (#777).
 # PYTHONUTF8=0 + PYTHONCOERCECLOCALE=0 are load-bearing: modern Python coerces a
-# bare LC_ALL=C to C.UTF-8, so without them this assertion is vacuous.
-#
-# Scope: the formatter only. submit-bench.sh itself is still broken under a
-# non-UTF-8 locale for a DIFFERENT reason — Python decodes sys.argv with
-# ASCII+surrogateescape there, so the row it passes to its python heredocs
-# arrives as lone surrogates and no encoding= pin can save the write. That needs
-# os.fsencode()-based argv recovery and is tracked separately (#777).
+# bare LC_ALL=C to C.UTF-8, so without them these assertions are vacuous.
 locale_env=(PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 LC_ALL=C LANG=C)
 row="$(env "${locale_env[@]}" bash -c "source scripts/lib/bench-row-formatter.sh; bench_row_format '${REBENCH_DIR}/${tag}'")"
 [[ "$row" == \|*\| ]] || {
@@ -477,6 +476,114 @@ assert_contains "$row" "2× 3090"   # simplify_gpu() drops the "NVIDIA GeForce R
 section="$(env "${locale_env[@]}" bash -c "source scripts/lib/bench-row-formatter.sh; bench_row_section '${REBENCH_DIR}/${tag}'")"
 if [[ "$section" != "Dual-card (2× RTX 3090, TP=2)" ]]; then
   echo "ASSERTION FAILED: section under non-UTF-8 locale was '$section'" >&2
+  exit 1
+fi
+
+# ...and submit-bench.sh itself, on the --as-pr path, which is where the argv
+# surrogates bit: it reads the unicode-bearing PR template and writes the body.
+#
+# Checked with an explicit `if !` rather than a bare assignment: under `set -e` a
+# failing command substitution aborts the test with NO message, so a regression
+# here would surface as a silent rc=1 and cost someone an afternoon.
+run_submit_locale() {
+  local what="$1"; shift
+  if ! out="$(env "${locale_env[@]}" GH_MOCK=1 GH_MOCK_USER=octocat bash scripts/submit-bench.sh "$@" 2>&1)"; then
+    echo "ASSERTION FAILED: submit-bench.sh ${what} failed under a non-UTF-8 locale" >&2
+    echo "--- output ---" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+}
+
+run_submit_locale "--auto-submit --as-pr" --tag "$tag" --auto-submit --as-pr
+assert_contains "$out" "PR title: bench(matrix): @octocat ${tag}"
+assert_contains "$(cat "results/rebench/${tag}/PR-body.md")" "2× 3090"
+run_submit_locale "--auto-submit" --tag "$tag" --auto-submit
+assert_contains "$out" "Issue title: [bench] @octocat ${tag}"
+
+# (l) insert_row() — the only function here that mutates a tracked file, and
+# until now the only one with NO coverage: GH_MOCK exits before the real-gh path
+# that calls it. Exercised against a throwaway copy via BENCHMARKS_FILE, under
+# both locales, because its write is where a half-done encoding fix destroys
+# data: Path.write_text truncates on open, so the failed encode left the target
+# at 0 bytes (measured 46 -> 0). It now writes a temp sibling + os.replace.
+bench_copy="${TMP_BIN}/BENCHMARKS-copy.md"
+for loc in utf8 c; do
+  cp BENCHMARKS.md "$bench_copy"
+  before_bytes="$(wc -c < "$bench_copy")"
+  if [[ "$loc" == "c" ]]; then
+    insert_out="$(env "${locale_env[@]}" GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="$bench_copy" \
+      bash scripts/submit-bench.sh --tag "$tag" --auto-submit --as-pr 2>&1)" || insert_rc=$?
+  else
+    insert_out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="$bench_copy" \
+      bash scripts/submit-bench.sh --tag "$tag" --auto-submit --as-pr 2>&1)" || insert_rc=$?
+  fi
+  if [[ "${insert_rc:-0}" != 0 ]]; then
+    echo "ASSERTION FAILED: insert_row run failed ($loc locale, rc=${insert_rc})" >&2
+    echo "$insert_out" >&2
+    exit 1
+  fi
+  assert_contains "$insert_out" "inserted row under 'Dual-card (2× RTX 3090, TP=2)'"
+  after_bytes="$(wc -c < "$bench_copy")"
+  if (( after_bytes <= before_bytes )); then
+    echo "ASSERTION FAILED: insert_row ($loc locale) did not grow the file: ${before_bytes} -> ${after_bytes} bytes" >&2
+    exit 1
+  fi
+  # The row must land inside the Dual-card table, and the rest of the file must
+  # survive intact — a truncating write would take the unicode headings with it.
+  assert_contains "$(cat "$bench_copy")" "results/rebench/${tag}/REPORT.md"
+  assert_contains "$(cat "$bench_copy")" "Dual-card (2× RTX 3090, TP=2)"
+  inserted_under="$(awk '/^#+ Dual-card \(2× RTX 3090, TP=2\)/{f=1;next} f&&/^#/{exit} f&&/^\|/{print;exit}' "$bench_copy")"
+  [[ -n "$inserted_under" ]] || {
+    echo "ASSERTION FAILED: no table row under the Dual-card heading after insert ($loc)" >&2
+    exit 1
+  }
+  # No temp file left behind by the atomic write.
+  if compgen -G "${bench_copy}.submit-bench.tmp" >/dev/null; then
+    echo "ASSERTION FAILED: atomic-write temp file leaked ($loc)" >&2
+    exit 1
+  fi
+done
+
+# A FAILED insert must leave the target byte-identical. The reachable failure is
+# an unknown section (SystemExit before any write); the unreachable-by-default one
+# is an encode error mid-write, which is why the write goes through a temp sibling
+# + os.replace rather than write_text — the latter truncates on open, and with an
+# ASCII-named section (the Gemma row is the only one) that turned a #777 encode
+# error into 180693 -> 0 bytes. That A/B is in the PR; asserted here is the
+# invariant it protects: a failing insert never damages the file.
+# A target file WITHOUT the derived section reaches insert_row's own not-found
+# branch. (`--section` can't be used for this: it is validated against the file
+# up front, so it exits before insert_row ever runs.)
+bench_stub="${TMP_BIN}/BENCHMARKS-stub.md"
+printf '# Bench\n\n## Some Other Section\n\n| a | b |\n|---|---|\n| 1 | 2 |\n' > "$bench_stub"
+before_sum="$(sha256sum < "$bench_stub")"
+if out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="$bench_stub" \
+          bash scripts/submit-bench.sh --tag "$tag" --auto-submit --as-pr 2>&1)"; then
+  echo "ASSERTION FAILED: insert into a file lacking the section unexpectedly succeeded" >&2
+  exit 1
+fi
+assert_contains "$out" "section not found in BENCHMARKS.md"
+bench_copy="$bench_stub"
+if [[ "$(sha256sum < "$bench_copy")" != "$before_sum" ]]; then
+  echo "ASSERTION FAILED: a failed insert modified the target file" >&2
+  exit 1
+fi
+if compgen -G "${bench_copy}.submit-bench.tmp" >/dev/null; then
+  echo "ASSERTION FAILED: atomic-write temp file leaked after a failed insert" >&2
+  exit 1
+fi
+
+# The repo's own BENCHMARKS.md must be refused outright, so a bare GH_MOCK run
+# can never mutate tracked history.
+if out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="${ROOT_DIR}/BENCHMARKS.md" \
+          bash scripts/submit-bench.sh --tag "$tag" --auto-submit --as-pr 2>&1)"; then
+  echo "ASSERTION FAILED: insert into the repo's own BENCHMARKS.md was allowed" >&2
+  exit 1
+fi
+assert_contains "$out" "refusing to insert into the repo's own BENCHMARKS.md"
+if ! git diff --quiet -- BENCHMARKS.md; then
+  echo "ASSERTION FAILED: BENCHMARKS.md was modified by the test" >&2
   exit 1
 fi
 

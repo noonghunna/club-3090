@@ -114,17 +114,34 @@ write_pr_body() {
   if [[ -f "$template" ]]; then
     python3 - "$template" "$body_file" "$tag" "$row" <<'PY'
 from pathlib import Path
+import os
 import sys
 
-template, body_file, tag, row = sys.argv[1:5]
-text = Path(template).read_text()
+
+def argv_utf8(i: int) -> str:
+    """Recover a UTF-8 argv value regardless of locale.
+
+    Under a non-UTF-8 locale Python decodes argv with ASCII + surrogateescape,
+    so the row's "×" / "—" arrive as LONE SURROGATES. No encoding= pin can save
+    a later write — strict utf-8 refuses surrogates outright. os.fsencode()
+    reverses surrogateescape losslessly, giving back the original bytes to
+    decode properly, and is a no-op under a UTF-8 locale. (#777)
+    """
+    return os.fsencode(sys.argv[i]).decode("utf-8", "replace")
+
+
+# Paths stay as-received: surrogateescape round-trips correctly through the
+# filesystem calls, and re-decoding them would corrupt a non-UTF-8 filename.
+template, body_file = sys.argv[1], sys.argv[2]
+tag, row = argv_utf8(3), argv_utf8(4)
+text = Path(template).read_text(encoding="utf-8")
 text = text.replace("<TAG>", tag)
 text = text.replace("<!-- The generated BENCHMARKS.md row goes here -->", row)
 text = text.replace(
     "<!-- Output of `bash scripts/report.sh` (redacted) -->",
     f"See `results/rebench/{tag}/rig.txt`.",
 )
-Path(body_file).write_text(text)
+Path(body_file).write_text(text, encoding="utf-8")
 PY
   else
     {
@@ -176,13 +193,26 @@ insert_row() {
   python3 - "$section" "$row" <<'PY'
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-section = sys.argv[1]
-row = sys.argv[2]
-path = Path("BENCHMARKS.md")
-lines = path.read_text().splitlines()
+
+def argv_utf8(i: int) -> str:
+    """Recover a UTF-8 argv value regardless of locale — see write_pr_body's
+    copy for the full rationale. Short version: a non-UTF-8 locale decodes argv
+    with ASCII + surrogateescape, so the row arrives as lone surrogates that no
+    strict encode will write; os.fsencode() reverses that losslessly. (#777)"""
+    return os.fsencode(sys.argv[i]).decode("utf-8", "replace")
+
+
+section = argv_utf8(1)
+row = argv_utf8(2)
+# BENCHMARKS_FILE is a test seam (see test-submit-bench.sh) — it lets the suite
+# exercise this function, the only one here that mutates a tracked file, against
+# a throwaway copy. Unset in normal use.
+path = Path(os.environ.get("BENCHMARKS_FILE") or "BENCHMARKS.md")
+lines = path.read_text(encoding="utf-8").splitlines()
 
 heading_idx = None
 for i, line in enumerate(lines):
@@ -216,7 +246,19 @@ for i in range(table_start, len(lines)):
         break
 
 lines.insert(insert_at, row)
-path.write_text("\n".join(lines) + "\n")
+
+# ATOMIC write. Path.write_text() opens with mode "w", which TRUNCATES on open —
+# so any failure between open and flush leaves the target EMPTY. That turned the
+# #777 encode error into silent destruction of a tracked file: measured 46 bytes
+# -> 0. Write a sibling temp file and os.replace() it in, so BENCHMARKS.md is
+# either fully updated or completely untouched, whatever goes wrong. (#777)
+tmp = path.with_name(path.name + ".submit-bench.tmp")
+try:
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+except BaseException:
+    tmp.unlink(missing_ok=True)
+    raise
 PY
 }
 
@@ -266,6 +308,19 @@ fi
 if [[ "${GH_MOCK:-0}" == "1" ]]; then
   MOCK_LOG="$TAG_DIR/auto-submit-mock.log"
   if [[ "$AS_PR" -eq 1 ]]; then
+    # Mock fidelity: with BENCHMARKS_FILE pointed at a throwaway copy, actually
+    # perform the insert so the suite covers insert_row(). Otherwise it is
+    # unreachable under GH_MOCK (this branch exits before the real-gh path at the
+    # bottom of the script), and the one function here that mutates a tracked
+    # file — and runs `git switch -c` — ships with no coverage at all. Refuses
+    # the repo's own BENCHMARKS.md, so a bare GH_MOCK run still cannot touch it.
+    if [[ -n "${BENCHMARKS_FILE:-}" ]]; then
+      if [[ "$(cd -- "$(dirname -- "$BENCHMARKS_FILE")" && pwd)/$(basename -- "$BENCHMARKS_FILE")" == "${ROOT_DIR}/BENCHMARKS.md" ]]; then
+        die "refusing to insert into the repo's own BENCHMARKS.md under GH_MOCK; point BENCHMARKS_FILE at a copy"
+      fi
+      insert_row "$SECTION" "$ROW"
+      log "GH_MOCK=1 — inserted row under '${SECTION}' into ${BENCHMARKS_FILE}"
+    fi
     {
       echo "git switch -c ${BRANCH}"
       echo "insert BENCHMARKS.md row under: ${SECTION}"
