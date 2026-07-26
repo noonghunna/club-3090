@@ -74,6 +74,9 @@ VARIANT_KEYS = {
     "chat_template",
     # c3 serve-confirm W4A8 checkbox capability (#609).
     "act8_capable",
+    # c3 catalog offload column: weight-offload backend — None (resident, the
+    # default) / "uva" / "n-cpu-moe" / "prefetch".
+    "offload",
 }
 v0 = d["variants"][0]
 need(set(v0.keys()) == VARIANT_KEYS,
