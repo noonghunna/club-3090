@@ -3,7 +3,7 @@
 #   Model:     Qwen3.6-27B (Unsloth Q5_K_S GGUF target + Anbeeld DFlash drafter)
 #   Engine:    beellama.cpp (Anbeeld llama.cpp fork — DFlash spec-dec + windowed KV)
 #   Topology:  Single 3090 (TP=1)
-#   Drafter:   DFlash (--spec-type dflash, Anbeeld DFlash-IQ4_XS GGUF, adaptive draft-max)
+#   Drafter:   DFlash (--spec-type dflash, Anbeeld DFlash-Q4_K_M GGUF, adaptive draft-max)
 #   KV:        q5_0 K + q4_1 V (Anbeeld's long-ctx precision default — better
 #              quality/size than turbo KV per his KV-quant benchmarks)
 #   Vision:    no (mmproj NOT mounted; for vision pass MMPROJ_FILE + --mmproj — CPU-offloaded)
@@ -14,7 +14,18 @@
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
 #   Status:    ⚠️ Production w/ caveats
 #   Caveats:   single-GPU DEFAULT for Qwen3.6-27B (code-throughput leader ~100 TPS +
-#              slight 8-pack quality edge over ik-llama, think-off). Three caveats:
+#              slight 8-pack quality edge over ik-llama, think-off).
+#              (0) ⚠️ DRAFTER FORMAT (#759, @superbiche, UNVERIFIED on our rig):
+#              the published Anbeeld DFlash GGUFs are reported to be MAINLINE-format
+#              and NOT loadable by beellama's current DFlash loader — a drafter
+#              *format* divergence, not a version skew. If the drafter fails to load
+#              here, that is the likely cause and it is an upstream-engine
+#              constraint, not a bad path. The pragmatic single-card DFlash route
+#              today is MAINLINE llama.cpp (`--spec-type draft-dflash`) — see
+#              models/qwen3.6-27b/llama-cpp/README.md. Fixing the DRAFT_FILE default
+#              (IQ4_XS -> Q4_K_M, below) makes the path correct; it does not by
+#              itself guarantee beellama can parse the file.
+#              Three further caveats:
 #              (1) Launchers inject Anbeeld's OFFICIAL image
 #              ghcr.io/anbeeld/beellama.cpp:server-cuda-v0.3.0 (sm_86/89 = RTX 3090/4090);
 #              only sm_86/3090 is verified on club-3090's rig — 4090 (sm_89) users please
@@ -37,13 +48,22 @@
 #              that is tool-grammar-neutral (does NOT amplify the CodeAct attractor the
 #              built-in MTP head does — club-3090#237) on a llama.cpp-family stack.
 # ---------------------------------------------------------------------------
-# Qwen3.6-27B on beellama.cpp — single 3090, Q5_K_S + DFlash (Anbeeld IQ4_XS draft),
+# Qwen3.6-27B on beellama.cpp — single 3090, Q5_K_S + DFlash (Anbeeld Q4_K_M draft),
 # q5_0/q4_1 KV, 102K ctx, no vision.
 #
 # CONFIG SOURCE: beellama.cpp/docs/quickstart-qwen36-dflash.md "Precision combo"
-# (Q5_K_S target, IQ4_XS/Q4_K_M/Q5_K_M drafter, q5_0 K + q4_1 V cache). We ship
-# the IQ4_XS drafter (smallest, on-disk) — the doc lists it as a valid precision
-# drafter and notes heavier drafters were net-negative for tok/s.
+# (Q5_K_S target, Q4_K_M/Q5_K_M drafter, q5_0 K + q4_1 V cache). We ship the
+# Q4_K_M drafter (1.03 GB) — the doc lists it as a valid precision drafter and
+# notes heavier drafters were net-negative for tok/s.
+#
+# NOTE (#759, @superbiche): this previously defaulted to a DFlash-IQ4_XS file,
+# which DOES NOT EXIST — Anbeeld/Qwen3.6-27B-DFlash-GGUF ships only
+# Q2_K / Q3_K_M / Q4_K_M / Q5_K_M / Q6_K / Q8_0 / bf16, so a fresh
+# `docker compose -f dflash.yml up -d` with defaults could not fetch the drafter.
+# Q4_K_M is the floor rather than the smaller Q2_K/Q3_K_M on purpose: a drafter's
+# only job is acceptance rate, and under-quantizing the draft head is a known way
+# to crater it (measured on this stack — a well-exported MTP head at Q8_0/BF16
+# gave 62.8% acceptance; poorly-exported heads give near-zero).
 #
 # JUSTIFIED DEVIATIONS from the doc's verbatim Linux launch line:
 #   1. --reasoning OFF (doc default is `on`). Stack-wide thinking-off-by-default
@@ -67,8 +87,8 @@
 #   2. Get the GGUFs (target + DFlash draft):
 #        hf download unsloth/Qwen3.6-27B-GGUF Qwen3.6-27B-Q5_K_S.gguf \
 #          --local-dir $MODEL_DIR/qwen3.6-27b-gguf/unsloth-q5ks
-#        hf download Anbeeld/Qwen3.6-27B-DFlash-GGUF Qwen3.6-27B-DFlash-IQ4_XS.gguf \
-#          --local-dir $MODEL_DIR/qwen3.6-27b-gguf/anbeeld-dflash-iq4xs
+#        hf download Anbeeld/Qwen3.6-27B-DFlash-GGUF Qwen3.6-27B-DFlash-Q4_K_M.gguf \
+#          --local-dir $MODEL_DIR/qwen3.6-27b-gguf/anbeeld-dflash-q4km
 #   3. From this directory:
 #        MODEL_DIR=/your/models/dir docker compose -f dflash.yml up -d
 #   4. curl http://localhost:8060/v1/models  → should list the model.
@@ -76,7 +96,7 @@
 # Override defaults via .env or shell:
 #   MODEL_DIR              host dir to mount as /models  (default: ../../../../../../models-cache)
 #   GGUF_FILE             target GGUF under /models   (default: …unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf)
-#   DRAFT_FILE            DFlash draft GGUF under /models (default: …anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf)
+#   DRAFT_FILE            DFlash draft GGUF under /models (default: …anbeeld-dflash-q4km/Qwen3.6-27B-DFlash-Q4_K_M.gguf)
 #   CTX_SIZE              KV pool size                (default: 102400 — 24 GB-safe; up to 160K validated, 200K OOMs)
 #   BATCH_SIZE            llama.cpp -b                (default: 2048)
 #   UBATCH_SIZE           llama.cpp -ub               (default: 512 — prefill speed)
@@ -105,7 +125,7 @@ services:
       --host 0.0.0.0
       --port 8080
       -m /models/${GGUF_FILE:-qwen3.6-27b-gguf/unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf}
-      --spec-draft-model /models/${DRAFT_FILE:-qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf}
+      --spec-draft-model /models/${DRAFT_FILE:-qwen3.6-27b-gguf/anbeeld-dflash-q4km/Qwen3.6-27B-DFlash-Q4_K_M.gguf}
       --spec-type dflash
       --spec-dflash-cross-ctx ${CROSS_CTX:-1024}
       -ngl all

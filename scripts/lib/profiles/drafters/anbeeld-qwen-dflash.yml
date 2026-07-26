@@ -19,4 +19,4 @@ status: experimental
 # adaptive (the `profit` controller raises/lowers active draft depth up to
 # n_max). Grounded against the on-disk file used by
 # models/qwen3.6-27b/beellama/compose/single/beellama-q5ks-dflash/dflash.yml
-# (qwen3.6-27b-gguf/anbeeld-dflash-iq4xs/Qwen3.6-27B-DFlash-IQ4_XS.gguf, 0.93 GB).
+# (qwen3.6-27b-gguf/anbeeld-dflash-q4km/Qwen3.6-27B-DFlash-Q4_K_M.gguf, 1.03 GB).

@@ -12,7 +12,7 @@ The lightweight path. Best for: max context on a single 3090, lightest cold-star
 
 ## When NOT to pick llama.cpp
 
-- ❌ You need MTP spec-decode (only DFlash N=5 via [Luce z-lab fork](https://github.com/Luce-Org/lucebox-hub); mainline doesn't have it)
+- ⚠️ You need spec-decode *and* maximum context on one card — DFlash is native on mainline now (see below), but enabling it costs context (the drafter inherits `-c`)
 - ❌ You need full OpenAI API parity for tool calling, structured output
 - ❌ You're serving multi-user (llama-server forks per request — sluggish under concurrent load)
 
@@ -150,6 +150,55 @@ For first-class tool calls in OpenAI format, vLLM is still the easier option. Se
 
 ---
 
-## DFlash spec-decode (Luce z-lab fork)
+## DFlash spec-decode — native on mainline (no fork needed)
 
-If you want spec-decode equivalent to vLLM's MTP, build [Luce's fork](https://github.com/Luce-Org/lucebox-hub) and download the DFlash N=5 draft. See [`/docs/engines/LLAMA_CPP.md`](../../../docs/engines/LLAMA_CPP.md#recipe--dflash-n5-via-luce-fork-for-code-workloads) for the full recipe. Measured ~106 TPS code on this stack.
+**Updated 2026-07-26 (#759).** DFlash is a native spec type on mainline llama.cpp — `--spec-type draft-dflash`, implemented in `common/speculative.cpp`. The previous "Luce fork only" guidance here was stale. Verified present on **b10066**, **b10088** and **b10103**; it loads the published [Anbeeld DFlash GGUF](https://huggingface.co/Anbeeld/Qwen3.6-27B-DFlash-GGUF) drafters with no fork.
+
+```bash
+llama-server \
+  -m   .../unsloth-q5ks/Qwen3.6-27B-Q5_K_S.gguf \
+  --spec-type draft-dflash \
+  --spec-draft-model .../anbeeld-dflash-q4km/Qwen3.6-27B-DFlash-Q4_K_M.gguf \
+  --spec-draft-n-max 15 \
+  -ngl 99 -ngld 99 --ctx-size 32768 -b 2048 -ub 512 -np 1 \
+  --flash-attn on --cache-type-k q5_0 --cache-type-v q4_1 --jinja \
+  --temp 0.6 --top-k 20 --top-p 0.95 --min-p 0.0
+```
+
+**Community-measured on 1× RTX 3090 Ti, TP=1** (@superbiche, #759 — code workload, 3 warm + 5 measured):
+
+| config | gen tok/s (mean / median) | acceptance |
+|---|--:|--:|
+| no-spec (Q5_K_S target only) | 28.79 / 28.92 | — |
+| DFlash, mainline b10066 | **68.16 / 64.03** | 0.238 mean |
+| speedup | **~2.37× mean, ~2.22× median** | 3.6–6.1 tok/accepted-run |
+
+Confirm engagement from the server log rather than inferring it — you should see:
+
+```
+common_speculative_impl_draft_dflash: adding speculative implementation 'draft-dflash'
+  block_size=16, mask_token_id=248070, n_extract=5
+```
+
+plus a `draft acceptance = X (A accepted / G generated)` line per request.
+
+### ⚠️ Spec-decode costs you context — budget for it
+
+**The drafter inherits the main `-c`**, and mainline has no flag to cap the draft context independently (buun's fork auto-sets `-cd 256`). So enabling DFlash reduces the context you can serve, on any card size:
+
+- **1× 24 GB, Q5_K_S target (18.6 GB):** usable ctx caps around **32768** with DFlash. The `102400` default OOMs on compute buffers at prefill (#759).
+- **2× 24 GB, IQ4_NL 27B target + MTP:** 262144 serves fine *without* spec-decode; the ceiling *with* it is **196608** (measured on this stack).
+
+⚠️ **Quantizing the draft KV does not recover it.** `--spec-draft-type-k/-v q4_0` did not rescue the 2-card case — the binding constraint is the drafter's **compute buffers**, not its KV.
+
+### `--spec-draft-n-max` is clamped to 15
+
+DFlash was trained with `block_size=16`, so values above **15** are clamped. Asking for 16 wastes a run. (Poolside's own Laguna config likewise specifies `num_speculative_tokens: 15`.)
+
+### Alternative: the Luce z-lab fork
+
+[Luce's fork](https://github.com/Luce-Org/lucebox-hub) remains an option and measured ~106 TPS code on this stack, but it is **no longer required** — mainline gets most of that on a single card. Prefer mainline unless you specifically need something the fork adds.
+
+### ⚠️ Acceptance is model-specific — verify, don't assume
+
+DFlash acceptance varies enormously by target model, and a bad pairing looks like a catastrophic slowdown rather than a mild one. On this stack, **Laguna-S-2.1** with poolside's own fork and their official drafter measured **0.25% acceptance / −85% decode**, against Qwen3.6-27B's healthy 23.8%. Always read the `draft acceptance` line before trusting a spec-decode config: below ~10% you are paying for drafts nobody uses.

@@ -177,7 +177,13 @@ For first-class tool calls in OpenAI format, vLLM is still the easiest option.
 
 ---
 
-## Recipe — DFlash N=5 via Luce fork (for code workloads)
+## Recipe — DFlash spec-decode (for code workloads)
+
+> **Updated 2026-07-26 (#759): prefer mainline.** DFlash is native on mainline
+> (`--spec-type draft-dflash`) and needs no fork — see
+> [`models/qwen3.6-27b/llama-cpp/README.md`](../../models/qwen3.6-27b/llama-cpp/README.md#dflash-spec-decode--native-on-mainline-no-fork-needed)
+> for the mainline recipe, the measured numbers, and the context cost. The Luce
+> fork recipe below is retained as an **alternative**, not the only path.
 
 If you want spec-decode equivalent to vLLM's MTP path:
 
@@ -282,7 +288,7 @@ The q8 → q4_0 jump is **counter-intuitive** because q8 is "higher precision" �
 
 - [llama.cpp PR #21089](https://github.com/ggerganov/llama.cpp/pull/21089) — TurboQuant KV cache landing (CPU first, CUDA follow-on). When CUDA path lands, `turbo3` becomes a first-class option on llama.cpp.
 - **MTP spec-decode** — ✅ merged on mainline ([PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673), 2026-05-16). No longer pending.
-- DFlash mainline integration — currently fork-only (Luce's [lucebox-hub](https://github.com/Luce-Org/lucebox-hub)).
+- **DFlash spec-decode** — ✅ native on mainline (`--spec-type draft-dflash`, impl in `common/speculative.cpp`; verified on b10066/b10088/b10103). No longer fork-only. Loads the published [Anbeeld DFlash GGUFs](https://huggingface.co/Anbeeld/Qwen3.6-27B-DFlash-GGUF) directly. Community-measured ~2.37× on 1× 3090 Ti (#759). ⚠️ Enabling it costs context — the drafter inherits `-c` and mainline has no `-cd`-style cap.
 
 ---
 
