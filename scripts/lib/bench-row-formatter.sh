@@ -10,19 +10,30 @@
 _BENCH_ROW_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 _BENCH_ROW_ROOT="$(cd -- "${_BENCH_ROW_LIB_DIR}/../.." && pwd)"
 
+# Enumerate results/rebench/<tag>/ dirs that carry every artifact the formatter
+# requires. DISCOVERY, deliberately not a hardcoded tag list: this used to name
+# six specific 2026-05 tags, which only ever existed as UNTRACKED local output
+# on the maintainer rig (results/* is gitignored), so every fresh clone found
+# zero of them and test-submit-bench.sh was red for every contributor (#776).
+# The four -f guards mirror the require_file() calls in _bench_row_python and
+# submit-bench.sh's own preflight, so a half-written dir from an interrupted
+# rebench is skipped rather than handed downstream to fail mid-format.
 bench_row_fixtures() {
-  local tag
-  for tag in \
-    qwen-int8-pth-n4-2026-05-10 \
-    qwen-bf16-n4-2026-05-11 \
-    qwen-int8-tq3-n3-2026-05-11 \
-    qwen-tq3-mtp-genesis-2026-05-11 \
-    gemma-int8-pth-n4-2026-05-11 \
-    gemma-bf16-n4-2026-05-11; do
-    if [[ -d "${_BENCH_ROW_ROOT}/results/rebench/${tag}" ]]; then
-      printf '%s\n' "${_BENCH_ROW_ROOT}/results/rebench/${tag}"
-    fi
-  done
+  local results_dir="${_BENCH_ROW_ROOT}/results/rebench"
+  [[ -d "$results_dir" ]] || return 0
+  local dir
+  # -L follows symlinks: a bulky results/ tree parked on another volume and
+  # symlinked back in is normal practice on big rigs, and a plain `-type d`
+  # silently skips those, which would reproduce #776's "found 0" from a
+  # different direction. 2>/dev/null swallows the warning from a dangling link
+  # (its artifacts then fail the -f guards below and it is skipped anyway).
+  while IFS= read -r dir; do
+    [[ -f "${dir}/_internal.json" ]] || continue
+    [[ -f "${dir}/REPORT.md" ]] || continue
+    [[ -f "${dir}/container-config.json" ]] || continue
+    [[ -f "${dir}/rig.txt" ]] || continue
+    printf '%s\n' "$dir"
+  done < <(find -L "$results_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 }
 
 bench_row_section() {
@@ -55,6 +66,17 @@ MODE = sys.argv[1]
 TAG_DIR = Path(sys.argv[2]).resolve()
 ROOT = Path(os.environ.get("BENCH_ROW_REPO_ROOT", ".")).resolve()
 
+# Community rigs run non-UTF-8 locales (minimal VMs / containers with LC_ALL=C),
+# where a PIPED stdout defaults to ASCII — and every section name carries "×"
+# ("2× RTX 3090"), so emitting a row raised UnicodeEncodeError for those users.
+# Same #599 class the launcher paths already pin, and the same reason nobody
+# caught it: this path had never run outside the maintainer rig (#776).
+# Repro: PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 LC_ALL=C (plain LC_ALL=C is coerced).
+#
+# This fixes the FORMATTER only. submit-bench.sh remains broken on those rigs for
+# an unrelated reason (argv decoded with surrogateescape) — tracked in #777.
+sys.stdout.reconfigure(encoding="utf-8")
+
 
 def die(msg: str) -> None:
     print(f"[bench-row] ERROR: {msg}", file=sys.stderr)
@@ -63,14 +85,14 @@ def die(msg: str) -> None:
 
 def read_text(path: Path) -> str:
     try:
-        return path.read_text(errors="replace")
+        return path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return ""
 
 
 def read_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(errors="replace"))
+        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except Exception:
         return None
 
