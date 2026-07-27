@@ -6,8 +6,9 @@
 #   2. gpu_indices_from_container — read NVIDIA_VISIBLE_DEVICES / device requests
 #   3. aggregate_gpu_sample — collapse N per-GPU sampler lines to one synthetic
 #      line: SUM power, MAX util/temp, OR throttle (keeps downstream untouched)
-#   4. capture_envelopes    — per-GPU INIT array + intersected MIN/MAX range
-#   5. restore_gpus         — RESET=1 -> captured pre-sweep cap; --no-reset -> leave last cap
+#   4. capture_envelopes    — per-GPU identity/envelope arrays + intersected range
+#   5. clamp_caps_to_ceiling — warn, clamp to min(max_limit), de-duplicate
+#   6. restore_gpus         — RESET=1 -> captured pre-sweep cap; --no-reset -> leave last cap
 #
 # The end-to-end sweep (setting caps, measuring) needs a real dual-GPU rig; this
 # guards the logic that is wrong/subtle, with mocks. Functions are extracted with
@@ -24,7 +25,7 @@ eq()  { if [[ "$2" == "$3" ]]; then ok; else no "$1: expected '$3', got '$2'"; f
 
 # --- Extract the functions under test -----------------------------------------
 HELPERS="$(mktemp --suffix=.sh)"
-for fn in gpu_indices_from_container resolve_gpu_indices aggregate_gpu_sample capture_envelopes restore_gpus; do
+for fn in gpu_indices_from_container resolve_gpu_indices aggregate_gpu_sample capture_envelopes clamp_caps_to_ceiling restore_gpus; do
   sed -n "/^${fn}()/,/^}/p" scripts/power-cap-sweep.sh >> "$HELPERS"
 done
 
@@ -99,16 +100,35 @@ agg1="$(printf '%s\n' '0, 90, 300.00, 65, 1700, 9501, P2, Not Active, Not Active
 eq "aggregate single GPU" "$agg1" "agg, 90, 300.00, 65, 1700, 9501, P2, Not Active, Not Active"
 
 # --- 4. capture_envelopes: intersected range + per-GPU arrays -----------------
-declare -A INIT_ARR=()
+declare -A INIT_ARR=() MIN_ARR=() MAX_ARR=() DEFAULT_ARR=() NAME_ARR=() VRAM_ARR=()
 GPU_INDICES=(0 1)
+GPU_LIST_CSV="0,1"
 capture_envelopes
 eq "MIN_LIMIT = max(per-gpu min)" "$MIN_LIMIT" "100"
 eq "MAX_LIMIT = min(per-gpu max)" "$MAX_LIMIT" "400"
 eq "STOCK_TDP = min(per-gpu default)" "$STOCK_TDP" "370"
 eq "INIT_ARR[0] = current limit"  "${INIT_ARR[0]}" "300"
 eq "INIT_ARR[1] = current limit"  "${INIT_ARR[1]}" "310"
+eq "MAX_ARR[0] = per-card max"      "${MAX_ARR[0]}" "400"
+eq "MAX_ARR[1] = per-card max"      "${MAX_ARR[1]}" "420"
+eq "DEFAULT_ARR preserves card 1 TDP" "${DEFAULT_ARR[1]}" "390"
+eq "NAME_ARR lists each active card" "${NAME_ARR[0]}" "Mock GPU"
 
-# --- 5. restore_gpus: captured pre-sweep cap (default) vs --no-reset -----------
+# --- 5. explicit caps clamp to the lowest max_limit, with a visible warning ----
+warn_file="$tmp/clamp.warn"
+out=$(clamp_caps_to_ceiling "330,400,410,420" "$MAX_LIMIT" 2>"$warn_file")
+eq "caps clamp + de-duplicate at uniform ceiling" "$out" "330,400"
+warn_text=$(<"$warn_file")
+if [[ "$warn_text" == *"410W/card exceeds the uniform 400W/card ceiling"* \
+  && "$warn_text" == *"clamping to 400W/card"* ]]; then
+  ok
+else
+  no "clamp emits requested/max_limit warning: $warn_text"
+fi
+out=$(clamp_caps_to_ceiling "220,330,370" "350" 2>"$warn_file")
+eq "reporter-style 370W request clamps to 350W ceiling" "$out" "220,330,350"
+
+# --- 6. restore_gpus: captured pre-sweep cap (default) vs --no-reset -----------
 : > "$NVSMI_LOG"
 RESET=1 restore_gpus
 got="$(sort "$NVSMI_LOG" | tr '\n' ';')"
@@ -117,6 +137,26 @@ eq "RESET=1 restores captured per GPU" "$got" "PL idx=0 w=300;PL idx=1 w=310;"
 RESET=0 restore_gpus
 got="$(sort "$NVSMI_LOG" | tr '\n' ';')"
 eq "--no-reset leaves last cap untouched" "$got" ""
+
+# --- 7. source-level protocol guards (no live service / GPU required) ----------
+for protocol_line in \
+  "DECODE_SINGLE_WARMUPS=3" \
+  "\"stream_options\": {\"include_usage\": True}" \
+  "decode_seconds = max(wall - ttft, 1e-6)" \
+  "tps = completion_tokens / decode_seconds" \
+  "bench_decode_single_for_budget" \
+  "Actual power combined (\${GPU_COUNT} cards) (W)"; do
+  if command grep -Fq "$protocol_line" scripts/power-cap-sweep.sh; then
+    ok
+  else
+    no "missing protocol guard: $protocol_line"
+  fi
+done
+if command grep -Fq "bench_decode_single_for_seconds" scripts/power-cap-sweep.sh; then
+  no "legacy timed chunk-count decode probe still present"
+else
+  ok
+fi
 
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"
