@@ -157,7 +157,7 @@ FIXTURES = {
         [{
             "Name": "/vllm-qwen-dual",
             "Config": {
-                "Image": "vllm/vllm-openai:v0.25.1",
+                "Image": "vllm/vllm-openai:v0.26.0",
                 "Labels": {"com.docker.compose.project.config_files": QWEN_DUAL},
                 "Cmd": cmd("qwen3.6-27b-autoround", 2, "fp8_e5m2", 262144,
                            {"method": "mtp", "num_speculative_tokens": 3}),
@@ -175,7 +175,7 @@ FIXTURES = {
         [{
             "Name": "/vllm-qwen-dual-tq3-mtp-genesis",
             "Config": {
-                "Image": "vllm/vllm-openai:v0.25.1",
+                "Image": "vllm/vllm-openai:v0.26.0",
                 "Labels": {},
                 "Cmd": cmd("qwen3.6-27b-autoround", 2, "turboquant_3bit_nc", 262144,
                            {"method": "mtp", "num_speculative_tokens": 2}),
@@ -193,7 +193,7 @@ FIXTURES = {
         {
             "Name": "/vllm-qwen-minimal",
             "Config": {
-                "Image": "vllm/vllm-openai:v0.25.1",
+                "Image": "vllm/vllm-openai:v0.26.0",
                 "Labels": {"com.docker.compose.project.config_files": QWEN_SINGLE},
                 "Cmd": cmd("qwen3.6-27b-autoround", 1, "auto", 48000),
                 "Env": [],
@@ -226,7 +226,7 @@ FIXTURES = {
         [{
             "Name": "/vllm-qwen-multi4",
             "Config": {
-                "Image": "vllm/vllm-openai:v0.25.1",
+                "Image": "vllm/vllm-openai:v0.26.0",
                 "Labels": {},
                 "Cmd": cmd("qwen3.6-27b-autoround", 4, "fp8_e4m3", 262144,
                            {"method": "mtp", "num_speculative_tokens": 3}),
@@ -245,7 +245,7 @@ FIXTURES = {
         [{
             "Name": "/vllm-gemma-dual",
             "Config": {
-                "Image": "vllm/vllm-openai:v0.25.1",
+                "Image": "vllm/vllm-openai:v0.26.0",
                 "Labels": {"com.docker.compose.project.config_files": GEMMA_DUAL},
                 "Cmd": cmd("gemma-4-31b", 2, "int8_per_token_head", 224000,
                            {"method": "mtp", "num_speculative_tokens": 4}),
