@@ -13,6 +13,7 @@ script calls.  Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -74,6 +75,7 @@ from club3090_cockpit.data import (
 from club3090_cockpit.services import CockpitData, RealRunner, RunResult, _variant_row_from_dict
 
 
+_REAL_RUN = RealRunner.run
 ROOT = Path("/tmp/fake-club-3090-root")
 
 
@@ -1205,6 +1207,120 @@ class TestByoCheck:
         remaining = list(d.glob("c3-download-*.log"))
         assert len(remaining) == DownloadLog.KEEP
         assert any("prune-test" in p.name for p in remaining)  # newest survives
+
+    @pytest.mark.asyncio
+    async def test_master_logging_defaults_off_for_write_runner(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+
+        class WriteRunner:
+            async def start_raw(self, cmd, env, run_type, parser):
+                return CoreRunState(run_type=run_type, started=time.time())
+
+        cd = CockpitData(ROOT, runner=full_runner(), write_runner=WriteRunner())
+        await cd._start_raw_logged(
+            cd._write_runner,
+            ["bash", "scripts/verify.sh"],
+            env={"HF_TOKEN": "hf_must_not_leak"},
+            run_type="verify",
+            parser=object(),
+        )
+        assert not list((tmp_path / "logs").glob("c3-run-*.log"))
+
+    @pytest.mark.asyncio
+    async def test_write_runner_log_stream_footer_and_env_redaction(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+
+        class WriteRunner:
+            def __init__(self):
+                self.callbacks = {}
+
+            def set_callbacks(self, **callbacks):
+                self.callbacks = callbacks
+
+            async def start_raw(self, cmd, env, run_type, parser):
+                self.callbacks["on_line"]("streamed line")
+                state = CoreRunState(
+                    run_type=run_type,
+                    started=time.time(),
+                    finished=time.time(),
+                    exit_code=0,
+                    verdict="passed",
+                )
+                state.done.set()
+                self.callbacks["on_complete"](state)
+                return state
+
+        writer = WriteRunner()
+        cd = CockpitData(ROOT, runner=full_runner(), write_runner=writer)
+        cd.set_logging_enabled(True)
+        await cd._start_raw_logged(
+            writer,
+            ["bash", "scripts/verify.sh"],
+            env={"HF_TOKEN": "hf_must_not_leak"},
+            run_type="verify",
+            parser=object(),
+        )
+        assert all(callback is None for callback in writer.callbacks.values())
+        log = next((tmp_path / "logs").glob("c3-run-*-verify.log"))
+        text = log.read_text(encoding="utf-8")
+        assert "# cmd: bash scripts/verify.sh" in text
+        assert "streamed line" in text
+        assert "# done · exit=0 · verdict=passed" in text
+        assert "hf_must_not_leak" not in text
+        assert "HF_TOKEN" not in text
+
+    @pytest.mark.asyncio
+    async def test_read_runner_logs_failure_but_omits_healthy_json(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+
+        class Proc:
+            def __init__(self, rc, out, err):
+                self.returncode = rc
+                self._out = out
+                self._err = err
+
+            async def communicate(self):
+                return self._out.encode(), self._err.encode()
+
+        responses = iter([
+            Proc(0, '{"large": [1, 2, 3]}', ""),
+            Proc(2, "partial output", "parse failed"),
+        ])
+
+        async def fake_exec(*args, **kwargs):
+            return next(responses)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        runner = RealRunner(logging_enabled=True)
+        healthy = await _REAL_RUN(runner, ["bash", "registry-emit"], cwd="/tmp")
+        failed = await _REAL_RUN(runner, ["bash", "kv-calc"], cwd="/tmp")
+        assert healthy.ok and not failed.ok
+        logs = list((tmp_path / "logs").glob("c3-run-*-read.log"))
+        assert len(logs) == 2
+        texts = [path.read_text(encoding="utf-8") for path in logs]
+        healthy_text = next(text for text in texts if "registry-emit" in text)
+        failed_text = next(text for text in texts if "kv-calc" in text)
+        assert '"large"' not in healthy_text
+        assert "# done · exit=0 · verdict=passed" in healthy_text
+        assert "partial output" in failed_text
+        assert "parse failed" in failed_text
+        assert "# done · exit=2 · verdict=failed" in failed_text
+
+    def test_session_log_prune_keeps_ten(self, tmp_path, monkeypatch):
+        from club3090_cockpit.session_logging import SessionLog
+
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        for i in range(12):
+            path = log_dir / f"c3-session-old{i:03d}.log"
+            path.write_text("old", encoding="utf-8")
+            os.utime(path, (1000 + i, 1000 + i))
+        session = SessionLog()
+        session.close()
+        remaining = list(log_dir.glob("c3-session-*.log"))
+        assert len(remaining) == SessionLog.KEEP
+        assert session.path in remaining
 
     def test_profile_like_is_gguf_engine(self):
         cd = CockpitData(ROOT, runner=full_runner())

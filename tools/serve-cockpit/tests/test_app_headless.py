@@ -30,7 +30,7 @@ from typing import Any, Optional
 
 import pytest
 
-from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent, TabPane, Label, Tabs
+from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TabbedContent, TabPane, Label, Tabs
 from textual.widgets._footer import FooterKey
 from textual.widgets._tabbed_content import ContentTabs
 
@@ -11479,6 +11479,7 @@ class TestSettings:
         # would make the persisted-settings tests non-deterministic — clear it;
         # the env-precedence tests below set it explicitly.
         monkeypatch.delenv("MODEL_DIR", raising=False)
+        monkeypatch.delenv("C3_LOG", raising=False)
 
     @pytest.mark.asyncio
     async def test_s_opens_settings_modal(self):
@@ -11492,19 +11493,81 @@ class TestSettings:
             assert isinstance(app.screen, SettingsScreen)
 
     @pytest.mark.asyncio
+    async def test_settings_shows_active_log_path(self):
+        app, _, _ = make_app()
+        app.configure_session_logging(True)
+        active_path = str(app._session_log.path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("S")
+            await _settle(pilot)
+            switch = app.screen.query_one("#set-c3-log", Switch)
+            assert switch.value is True
+            labels = "\n".join(str(label.render()) for label in app.screen.query(Label))
+            assert active_path in labels
+        app.configure_session_logging(False)
+
+    def test_session_log_captures_traceback_without_settings_values(self):
+        from club3090_cockpit import __main__ as M
+
+        M.save_settings({
+            "model_dir": "/private/models",
+            "hf_token": "hf_super_secret",
+            "logging_enabled": False,
+        })
+        app, _, _ = make_app()
+        M.apply_persisted_settings(app, {"C3_LOG": "1"})
+        path = app._session_log.path
+        try:
+            raise RuntimeError("traceback sentinel")
+        except RuntimeError as exc:
+            app._log_unhandled_exception(exc)
+        app.configure_session_logging(False)
+        text = path.read_text(encoding="utf-8")
+        assert "Traceback" in text
+        assert "RuntimeError: traceback sentinel" in text
+        assert "hf_super_secret" not in text
+        assert "/private/models" not in text
+
+    def test_c3_log_env_override_wins_over_persisted(self):
+        from club3090_cockpit import __main__ as M
+
+        M.save_settings({"logging_enabled": True})
+        app, _, _ = make_app()
+        M.apply_persisted_settings(app, {"C3_LOG": "0"})
+        assert app._c3_log_enabled is False
+        assert app._c3_log_env_override is True
+        assert app._session_log is None
+        app.apply_settings(model_dir="", hf_token="", log_enabled=False)
+        assert M.load_settings()["logging_enabled"] is True
+
+        M.save_settings({"logging_enabled": False})
+        app2, _, _ = make_app()
+        M.apply_persisted_settings(app2, {"C3_LOG": "1"})
+        assert app2._c3_log_enabled is True
+        assert app2._c3_log_env_override is True
+        assert app2._session_log.path.exists()
+        app2.configure_session_logging(False)
+
+    @pytest.mark.asyncio
     async def test_apply_settings_persists_and_applies(self):
         import os
         from club3090_cockpit import __main__ as M
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            app.apply_settings(model_dir="/tmp/my-models", hf_token="hf_secret123")
+            app.apply_settings(
+                model_dir="/tmp/my-models",
+                hf_token="hf_secret123",
+                log_enabled=True,
+            )
             await _settle(pilot)
             assert app._data.weights_model_dir() == "/tmp/my-models"
             assert os.environ.get("HF_TOKEN") == "hf_secret123"
             s = M.load_settings()
             assert s.get("model_dir") == "/tmp/my-models"
             assert s.get("hf_token") == "hf_secret123"
+            assert s.get("logging_enabled") is True
 
     @pytest.mark.asyncio
     async def test_blank_fields_keep_current(self):

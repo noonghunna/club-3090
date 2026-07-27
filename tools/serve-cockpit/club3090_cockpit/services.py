@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
@@ -227,9 +228,13 @@ class Runner(Protocol):
 class RealRunner:
     """Production runner — actually shells out (READ contracts only)."""
 
+    def __init__(self, *, logging_enabled: bool = False):
+        self.logging_enabled = logging_enabled
+
     async def run(
         self, cmd: list[str], *, cwd: str, timeout: float = 30.0
     ) -> RunResult:
+        log = RunLog("read", cmd) if self.logging_enabled else None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -238,17 +243,20 @@ class RealRunner:
                 stderr=asyncio.subprocess.PIPE,
             )
             out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            return RunResult(
+            result = RunResult(
                 returncode=proc.returncode if proc.returncode is not None else -1,
                 stdout=out.decode("utf-8", errors="replace"),
                 stderr=err.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
-            return RunResult(returncode=-1, stdout="", stderr="timeout", timed_out=True)
+            result = RunResult(returncode=-1, stdout="", stderr="timeout", timed_out=True)
         except FileNotFoundError as exc:
-            return RunResult(returncode=127, stdout="", stderr=str(exc))
+            result = RunResult(returncode=127, stdout="", stderr=str(exc))
         except Exception as exc:  # pragma: no cover - defensive
-            return RunResult(returncode=-1, stdout="", stderr=str(exc))
+            result = RunResult(returncode=-1, stdout="", stderr=str(exc))
+        if log is not None:
+            log.complete_result(result)
+        return result
 
 
 # Detect seam: async callables matching the core signatures.
@@ -262,29 +270,30 @@ ProbeServedFn = Callable[[Any], Awaitable["ServedProbe"]]
 # ── The service class ───────────────────────────────────────────────────────────
 
 
-class DownloadLog:
-    """Persistent per-download log — ``<config>/logs/c3-download-<ts>-<kind>.log``.
+class RunLog:
+    """Persistent subprocess log — ``<config>/logs/c3-<category>-<ts>-<kind>.log``.
 
-    The "no logs for c3" fix (2026-07-27 community triage): a download's
-    streamed lines, spawn errors and exit state survive the pane.  Best-effort
-    everywhere — a failed write must never break a download.  The child ENV is
-    never logged (it carries HF_TOKEN); the argv is (it never does).
+    Best-effort everywhere — a failed write must never break the underlying
+    action.  The child ENV is never logged (it carries HF_TOKEN); the argv is
+    safe to log.  ``DownloadLog`` below keeps the #793 always-on behavior while
+    general runs are constructed only when the master logging switch is on.
     """
 
     KEEP = 30  # newest logs retained; older pruned at construction
 
-    def __init__(self, kind: str, cmd: list[str]):
+    def __init__(self, kind: str, cmd: list[str], *, category: str = "run"):
         self.path: Optional[Path] = None
         self._fh = None
+        self.category = category
         try:
             base = os.environ.get("C3_CONFIG_DIR")
             d = (Path(base) if base else Path.home() / ".config" / "club-3090") / "logs"
             d.mkdir(parents=True, exist_ok=True)
-            ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-            slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", kind).strip("-") or "download"
-            self.path = d / f"c3-download-{ts}-{slug}.log"
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+            slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", kind).strip("-") or category
+            self.path = d / f"c3-{category}-{ts}-{slug}.log"
             self._fh = self.path.open("a", encoding="utf-8")
-            self._fh.write(f"# c3 download log · kind={kind} · started {ts}\n")
+            self._fh.write(f"# c3 {category} log · kind={kind} · started {ts}\n")
             self._fh.write(f"# cmd: {' '.join(map(str, cmd))}\n")
             self._fh.flush()
             self._prune(d)
@@ -294,7 +303,10 @@ class DownloadLog:
 
     def _prune(self, d: Path) -> None:
         try:
-            logs = sorted(d.glob("c3-download-*.log"), key=lambda p: p.stat().st_mtime)
+            logs = sorted(
+                d.glob(f"c3-{self.category}-*.log"),
+                key=lambda p: p.stat().st_mtime,
+            )
             for old in logs[: max(0, len(logs) - self.KEEP)]:
                 old.unlink(missing_ok=True)
         except OSError:
@@ -325,6 +337,50 @@ class DownloadLog:
         except (OSError, ValueError):
             pass
         self._fh = None
+
+    def complete_result(self, result: RunResult) -> None:
+        """Footer for a read runner, with noisy output only when it is useful."""
+        if self._fh is None:
+            return
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        parseable_json = False
+        if result.ok and stdout.strip():
+            try:
+                json.loads(stdout)
+                parseable_json = True
+            except (TypeError, ValueError):
+                pass
+        try:
+            nonparseable_output = bool(stderr.strip()) or bool(
+                stdout.strip() and not parseable_json
+            )
+            if not result.ok or nonparseable_output:
+                if stdout:
+                    self._fh.write("# stdout\n")
+                    self._fh.write(stdout.rstrip("\n") + "\n")
+                if stderr:
+                    self._fh.write("# stderr\n")
+                    self._fh.write(stderr.rstrip("\n") + "\n")
+            self._fh.write(
+                f"# done · exit={result.returncode} · "
+                f"verdict={'passed' if result.ok else 'failed'}"
+                + (" · error=timeout" if result.timed_out else "")
+                + "\n"
+            )
+            self._fh.close()
+        except (OSError, ValueError):
+            pass
+        self._fh = None
+
+
+class DownloadLog(RunLog):
+    """Always-on #793 download log; intentionally outside the master switch."""
+
+    KEEP = 30
+
+    def __init__(self, kind: str, cmd: list[str]):
+        super().__init__(kind, cmd, category="download")
 
 
 class CockpitData:
@@ -369,6 +425,7 @@ class CockpitData:
         # on each ``load_catalog_rows``; empty on the raw-tab fallback path.
         self.catalog_defaults: list[dict] = []
         self._runner: Runner = runner or RealRunner()
+        self._logging_enabled = False
         self._detect_endpoint: DetectEndpointFn = detect_endpoint_fn or core_detect_endpoint
         self._get_gpu_info: GetGpuInfoFn = get_gpu_info_fn or core_get_gpu_info
         # A7: the live-config probe seam.  Defaults to the real httpx + docker
@@ -399,6 +456,73 @@ class CockpitData:
         # own READY_TIMEOUT is already 600s, so a TTL near that would prune a
         # still-booting claim; keep it well above a worst-case boot.
         self._claim_ttl = 1800.0  # seconds
+
+    def set_logging_enabled(self, enabled: bool) -> None:
+        """Apply the master switch to read and non-download write runners."""
+        self._logging_enabled = bool(enabled)
+        if isinstance(self._runner, RealRunner):
+            self._runner.logging_enabled = self._logging_enabled
+
+    async def _start_raw_logged(
+        self,
+        runner: SubprocessRunner,
+        cmd: list[str],
+        *,
+        env: dict,
+        run_type: str,
+        parser: Any,
+        on_event: Optional[Callable[[Any], None]] = None,
+        on_line: Optional[Callable[[str], None]] = None,
+    ) -> Any:
+        """Start a non-download stream, teeing it when master logging is on.
+
+        Callback values are never serialized.  In particular, ``env`` is passed
+        to the child only and is intentionally absent from the log.
+        """
+        existing_event = getattr(runner, "_on_event", None)
+        existing_line = getattr(runner, "_on_line", None)
+        existing_complete = getattr(runner, "_on_complete", None)
+        event_cb = on_event if on_event is not None else existing_event
+        line_cb = on_line if on_line is not None else existing_line
+        log = RunLog(run_type, cmd) if self._logging_enabled else None
+
+        def emit(line: str) -> None:
+            if log is not None:
+                log.line(line)
+            if line_cb is not None:
+                line_cb(line)
+
+        def complete(state: Any) -> None:
+            try:
+                if log is not None:
+                    log.complete(state)
+                if existing_complete is not None:
+                    existing_complete(state)
+            finally:
+                # ``SubprocessRunner`` stores callbacks on the runner instance.
+                # Restore the prior set after this asynchronous run finishes so
+                # repeated launches do not build callback/log wrapper chains.
+                runner.set_callbacks(
+                    on_event=existing_event,
+                    on_line=existing_line,
+                    on_complete=existing_complete,
+                )
+
+        if log is not None or on_event is not None or on_line is not None:
+            runner.set_callbacks(
+                on_event=event_cb,
+                on_line=emit if log is not None or line_cb is not None else None,
+                on_complete=complete,
+            )
+        try:
+            return await runner.start_raw(cmd, env=env, run_type=run_type, parser=parser)
+        except Exception:
+            runner.set_callbacks(
+                on_event=existing_event,
+                on_line=existing_line,
+                on_complete=existing_complete,
+            )
+            raise
 
     # ── small JSON helper ──────────────────────────────────────────────────────
 
@@ -3252,7 +3376,8 @@ class CockpitData:
                 _run_env = dict(_os.environ)
                 if plan.env:
                     _run_env.update(plan.env)
-                state = await self._write_runner.start_raw(
+                state = await self._start_raw_logged(
+                    self._write_runner,
                     plan.cmd,
                     env=_run_env,
                     run_type=run_type or plan.kind,
@@ -3430,14 +3555,16 @@ class CockpitData:
         if url:
             env["URL"] = url
         parser = self._validation_parser(kind)
-        if on_event is not None or on_line is not None:
-            # Per-launch callbacks for the live pane.  set_callbacks is on the
-            # shared runner; the caller owns wiring/teardown.
-            self._write_runner.set_callbacks(on_event=on_event, on_line=on_line)
         # No reconcile gate (validation does not claim a GPU); straight to the
         # streamer.  In tests this is the FakeWriteRunner; live it is blocked.
-        return await self._write_runner.start_raw(
-            plan.cmd, env=env, run_type=plan.kind, parser=parser
+        return await self._start_raw_logged(
+            self._write_runner,
+            plan.cmd,
+            env=env,
+            run_type=plan.kind,
+            parser=parser,
+            on_event=on_event,
+            on_line=on_line,
         )
 
     # ── Producer / ③ Gate: the FULL validation battery (report.sh --full) ─────────
@@ -3494,12 +3621,16 @@ class CockpitData:
             env["MODEL"] = model
         if url:
             env["URL"] = url
-        if on_event is not None or on_line is not None:
-            self._write_runner.set_callbacks(on_event=on_event, on_line=on_line)
         # No reconcile gate (uses the serving model; claims no GPU); straight to
         # the streamer.  In tests this is the FakeWriteRunner; live it is blocked.
-        return await self._write_runner.start_raw(
-            plan.cmd, env=env, run_type=plan.kind, parser=_NullParser()
+        return await self._start_raw_logged(
+            self._write_runner,
+            plan.cmd,
+            env=env,
+            run_type=plan.kind,
+            parser=_NullParser(),
+            on_event=on_event,
+            on_line=on_line,
         )
 
     # ── Validate / Doctor: health + estate-diagnose + profile-triage (READS) ──────
@@ -4484,10 +4615,14 @@ class CockpitData:
                 env["C3T_TARGET_CONTAINER"] = target.container
             if getattr(target, "slug", ""):
                 env["C3T_TARGET_SLUG"] = target.slug
-        if on_event is not None or on_line is not None:
-            self._write_runner.set_callbacks(on_event=on_event, on_line=on_line)
-        return await self._write_runner.start_raw(
-            handoff.plan.cmd, env=env, run_type=handoff.plan.kind, parser=_NullParser()
+        return await self._start_raw_logged(
+            self._write_runner,
+            handoff.plan.cmd,
+            env=env,
+            run_type=handoff.plan.kind,
+            parser=_NullParser(),
+            on_event=on_event,
+            on_line=on_line,
         )
 
     # ── Hook 2: Promote to catalog — SCAFFOLD + GATE (design §3.5b) ────────────────

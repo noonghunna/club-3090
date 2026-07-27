@@ -42,6 +42,7 @@ NEVER executed live — tests inject fakes and conftest blocks the real spawn.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 from collections import OrderedDict
 from pathlib import Path
@@ -61,6 +62,7 @@ from textual.widgets import (
     Label,
     Select,
     Static,
+    Switch,
     TabbedContent,
     TabPane,
     Tabs,
@@ -4348,11 +4350,24 @@ class SettingsScreen(ModalScreen):
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
-    def __init__(self, model_dir: str, hf_token_set: bool, director_device: str = "gpu0", **kwargs):
+    def __init__(
+        self,
+        model_dir: str,
+        hf_token_set: bool,
+        director_device: str = "gpu0",
+        *,
+        log_enabled: bool = False,
+        log_path: str = "",
+        log_env_override: bool = False,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self._model_dir = model_dir or ""
         self._hf_token_set = hf_token_set
         self._director_device = director_device if director_device in ("gpu0", "gpu1", "cpu") else "gpu0"
+        self._log_enabled = log_enabled
+        self._log_path = log_path
+        self._log_env_override = log_env_override
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -4373,6 +4388,20 @@ class SettingsScreen(ModalScreen):
                 value=self._director_device, allow_blank=False, id="set-director-device",
             )
             yield Label(
+                "Master logging  [dim](app + non-download commands · downloads always log)[/dim]",
+                classes="settings-field",
+            )
+            log_switch = Switch(value=self._log_enabled, id="set-c3-log")
+            log_switch.disabled = self._log_env_override
+            yield log_switch
+            if self._log_path:
+                yield Label(f"[dim]Active log: {self._log_path}[/dim]", classes="settings-field")
+            elif self._log_env_override:
+                yield Label(
+                    "[dim]C3_LOG controls this launch; change the shell override to alter it.[/dim]",
+                    classes="settings-field",
+                )
+            yield Label(
                 "[dim]Ctrl+S save · Esc cancel · HF_HOME auto-derived under the model dir · "
                 "director change applies on next ai-studio start[/dim]",
                 classes="settings-field",
@@ -4383,8 +4412,14 @@ class SettingsScreen(ModalScreen):
         mdir = self.query_one("#set-model-dir", Input).value.strip()
         tok = self.query_one("#set-hf-token", Input).value.strip()
         dev = str(self.query_one("#set-director-device", Select).value)
+        log_enabled = self.query_one("#set-c3-log", Switch).value
         self.app.pop_screen()
-        self.app.apply_settings(model_dir=mdir, hf_token=tok, director_device=dev)  # type: ignore[attr-defined]
+        self.app.apply_settings(  # type: ignore[attr-defined]
+            model_dir=mdir,
+            hf_token=tok,
+            director_device=dev,
+            log_enabled=log_enabled,
+        )
 
     def action_cancel(self) -> None:
         self.app.pop_screen()
@@ -7309,6 +7344,9 @@ class CockpitApp(App):
             self.sub_title = f"{self.SUB_TITLE} · ▸ LEAN"
         # Injectable service layer — defaults to the real (live-read) impl.
         self._data: CockpitData = data or CockpitData(repo_root)
+        self._session_log = None
+        self._c3_log_enabled = False
+        self._c3_log_env_override = False
         self._active_mode = 0  # 0=Run & Operate (merged) · 1=Bring & Validate
         # Cache the last-loaded variants so detect/match + containers can match
         # running engines back to registry slugs.
@@ -7572,11 +7610,16 @@ class CockpitApp(App):
         footer.set_class(modal_topmost, "base-footer-hidden")
 
     def push_screen(self, *args, **kwargs):
+        screen = args[0] if args else kwargs.get("screen")
+        logging.getLogger("club3090_cockpit").info(
+            "push screen %s", type(screen).__name__ if screen is not None else "unknown"
+        )
         result = super().push_screen(*args, **kwargs)
         self._sync_base_footer_visibility()
         return result
 
     def pop_screen(self, *args, **kwargs):
+        logging.getLogger("club3090_cockpit").info("pop screen")
         result = super().pop_screen(*args, **kwargs)
         self._sync_base_footer_visibility()
         return result
@@ -9647,11 +9690,24 @@ class CockpitApp(App):
         """[S] — open Settings (MODEL_DIR + HF_TOKEN + director placement)."""
         import os as _os
         self.push_screen(
-            SettingsScreen(self._data.weights_model_dir(), bool(_os.environ.get("HF_TOKEN")),
-                           self._data.director_device())
+            SettingsScreen(
+                self._data.weights_model_dir(),
+                bool(_os.environ.get("HF_TOKEN")),
+                self._data.director_device(),
+                log_enabled=self._c3_log_enabled,
+                log_path=str(getattr(self._session_log, "path", "") or ""),
+                log_env_override=self._c3_log_env_override,
+            )
         )
 
-    def apply_settings(self, *, model_dir: str, hf_token: str, director_device: str = "gpu0") -> None:
+    def apply_settings(
+        self,
+        *,
+        model_dir: str,
+        hf_token: str,
+        director_device: str = "gpu0",
+        log_enabled: Optional[bool] = None,
+    ) -> None:
         """Persist + apply Settings.  MODEL_DIR / HF_TOKEN persist to c3-settings.json;
         the director placement persists to the repo .env (STUDIO_DIRECTOR_DEVICE — what
         gpu-mode reads, applied on the next ai-studio start).  Empty text fields are
@@ -9668,6 +9724,13 @@ class CockpitApp(App):
             _os.environ["HF_TOKEN"] = hf_token
             s["hf_token"] = hf_token
             json_changed = True
+        if (
+            log_enabled is not None
+            and not self._c3_log_env_override
+            and log_enabled != s.get("logging_enabled")
+        ):
+            s["logging_enabled"] = bool(log_enabled)
+            json_changed = True
         if json_changed:
             save_settings(s)
         env_changed = False
@@ -9679,8 +9742,49 @@ class CockpitApp(App):
             self.notify(msg, title="Settings", timeout=4)
         else:
             self.notify("No changes.", title="Settings", timeout=2)
+        if log_enabled is not None and not self._c3_log_env_override:
+            self.configure_session_logging(log_enabled)
         if model_dir:
             self.load_catalog()   # re-stat weights against the (possibly new) dir
+
+    def configure_session_logging(self, enabled: bool) -> None:
+        """Apply the master switch without logging settings or environment data."""
+        from .session_logging import SessionLog
+
+        enabled = bool(enabled)
+        if enabled and self._session_log is None:
+            self._session_log = SessionLog()
+        elif not enabled and self._session_log is not None:
+            self._session_log.close()
+            self._session_log = None
+        self._c3_log_enabled = enabled
+        self._data.set_logging_enabled(enabled)
+
+    async def _dispatch_action(self, namespace, action_name: str, params) -> bool:
+        """Log action names only; parameters may contain user-entered values."""
+        logger = logging.getLogger("club3090_cockpit")
+        logger.info("action %s target=%s", action_name, type(namespace).__name__)
+        try:
+            return await super()._dispatch_action(namespace, action_name, params)
+        except Exception:
+            logger.exception("action %s failed", action_name)
+            raise
+
+    def _log_unhandled_exception(self, error: Exception) -> None:
+        logging.getLogger("club3090_cockpit").error(
+            "unhandled exception",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Capture Textual/asyncio failures before Textual tears down the app."""
+        self._log_unhandled_exception(error)
+        super()._handle_exception(error)
+
+    def on_unmount(self) -> None:
+        if self._session_log is not None:
+            self._session_log.close()
+            self._session_log = None
 
     def on_mouse_down(self, event) -> None:
         """RIGHT-CLICK → copy.  A TUI captures the mouse, so the terminal's native

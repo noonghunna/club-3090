@@ -55,7 +55,7 @@ def save_settings(settings: dict) -> None:
 
 
 def apply_persisted_settings(app, environ) -> None:
-    """Apply MODEL_DIR / HF_TOKEN to the app + process env before run().
+    """Apply MODEL_DIR / HF_TOKEN / C3_LOG to the app before run().
 
     Precedence (highest first): an explicit shell env var > the persisted
     setting (``c3-settings.json``) > the bundled default.  An env var is a
@@ -79,6 +79,15 @@ def apply_persisted_settings(app, environ) -> None:
     cols = s.get("catalog_columns")
     if isinstance(cols, dict):
         app.catalog_columns_pref = cols
+    # Master logging: strict C3_LOG=1|0 shell override wins for this launch.
+    # Invalid/absent values fall back to the persisted boolean, default OFF.
+    from .session_logging import env_log_override
+
+    env_override = env_log_override(environ)
+    persisted_log = s.get("logging_enabled")
+    enabled = env_override if env_override is not None else persisted_log is True
+    app._c3_log_env_override = env_override is not None
+    app.configure_session_logging(enabled)
 
 
 def load_surface_setting() -> "str | None":
