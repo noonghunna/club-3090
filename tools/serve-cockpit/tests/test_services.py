@@ -1270,7 +1270,9 @@ class TestByoCheck:
         assert "HF_TOKEN" not in text
 
     @pytest.mark.asyncio
-    async def test_read_runner_logs_failure_but_omits_healthy_json(self, tmp_path, monkeypatch):
+    async def test_read_runner_logs_failure_but_omits_healthy_poll_output(
+        self, tmp_path, monkeypatch
+    ):
         monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
 
         class Proc:
@@ -1284,6 +1286,12 @@ class TestByoCheck:
 
         responses = iter([
             Proc(0, '{"large": [1, 2, 3]}', ""),
+            Proc(
+                0,
+                "Filesystem 1K-blocks Used Available Use% Mounted on\n"
+                "/dev/root 1 1 0 100% /\n",
+                "",
+            ),
             Proc(2, "partial output", "parse failed"),
         ])
 
@@ -1292,19 +1300,48 @@ class TestByoCheck:
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
         runner = RealRunner(logging_enabled=True)
-        healthy = await _REAL_RUN(runner, ["bash", "registry-emit"], cwd="/tmp")
+        healthy_json = await _REAL_RUN(runner, ["bash", "registry-emit"], cwd="/tmp")
+        healthy_text = await _REAL_RUN(runner, ["df", "-P"], cwd="/tmp")
         failed = await _REAL_RUN(runner, ["bash", "kv-calc"], cwd="/tmp")
-        assert healthy.ok and not failed.ok
-        logs = list((tmp_path / "logs").glob("c3-run-*-read.log"))
-        assert len(logs) == 2
+        assert healthy_json.ok and healthy_text.ok and not failed.ok
+        logs = list((tmp_path / "logs").glob("c3-read-*-read.log"))
+        assert len(logs) == 3
+        assert not list((tmp_path / "logs").glob("c3-run-*-read.log"))
         texts = [path.read_text(encoding="utf-8") for path in logs]
-        healthy_text = next(text for text in texts if "registry-emit" in text)
+        healthy_json_log = next(text for text in texts if "registry-emit" in text)
+        healthy_text_log = next(text for text in texts if "# cmd: df -P" in text)
         failed_text = next(text for text in texts if "kv-calc" in text)
-        assert '"large"' not in healthy_text
-        assert "# done · exit=0 · verdict=passed" in healthy_text
+        assert '"large"' not in healthy_json_log
+        assert "# done · exit=0 · verdict=passed" in healthy_json_log
+        assert "Filesystem" not in healthy_text_log
+        assert "/dev/root" not in healthy_text_log
+        assert "# done · exit=0 · verdict=passed" in healthy_text_log
         assert "partial output" in failed_text
         assert "parse failed" in failed_text
         assert "# done · exit=2 · verdict=failed" in failed_text
+
+    def test_read_churn_cannot_prune_write_logs(self, tmp_path, monkeypatch):
+        from club3090_cockpit.services import ReadLog, RunLog
+
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        write_log = RunLog(
+            "serve", ["bash", "scripts/switch.sh", "vllm/default"]
+        )
+        write_path = write_log.path
+        write_log.complete_result(RunResult(1, "boot output", "serve crashed"))
+
+        for i in range(ReadLog.KEEP + 5):
+            read_log = ReadLog(["poll", str(i)])
+            read_log.complete_result(RunResult(0, f"healthy poll dump {i}", ""))
+
+        assert write_path is not None and write_path.exists()
+        assert "serve crashed" in write_path.read_text(encoding="utf-8")
+        read_logs = list((tmp_path / "logs").glob("c3-read-*.log"))
+        assert len(read_logs) == ReadLog.KEEP
+        assert not any(
+            "healthy poll dump" in path.read_text(encoding="utf-8")
+            for path in read_logs
+        )
 
     def test_session_log_prune_keeps_ten(self, tmp_path, monkeypatch):
         from club3090_cockpit.session_logging import SessionLog

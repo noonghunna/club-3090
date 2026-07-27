@@ -234,7 +234,7 @@ class RealRunner:
     async def run(
         self, cmd: list[str], *, cwd: str, timeout: float = 30.0
     ) -> RunResult:
-        log = RunLog("read", cmd) if self.logging_enabled else None
+        log = ReadLog(cmd) if self.logging_enabled else None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -280,6 +280,7 @@ class RunLog:
     """
 
     KEEP = 30  # newest logs retained; older pruned at construction
+    LOG_SUCCESS_OUTPUT = True
 
     def __init__(self, kind: str, cmd: list[str], *, category: str = "run"):
         self.path: Optional[Path] = None
@@ -345,7 +346,7 @@ class RunLog:
         stdout = result.stdout or ""
         stderr = result.stderr or ""
         parseable_json = False
-        if result.ok and stdout.strip():
+        if self.LOG_SUCCESS_OUTPUT and result.ok and stdout.strip():
             try:
                 json.loads(stdout)
                 parseable_json = True
@@ -355,7 +356,7 @@ class RunLog:
             nonparseable_output = bool(stderr.strip()) or bool(
                 stdout.strip() and not parseable_json
             )
-            if not result.ok or nonparseable_output:
+            if not result.ok or (self.LOG_SUCCESS_OUTPUT and nonparseable_output):
                 if stdout:
                     self._fh.write("# stdout\n")
                     self._fh.write(stdout.rstrip("\n") + "\n")
@@ -372,6 +373,21 @@ class RunLog:
         except (OSError, ValueError):
             pass
         self._fh = None
+
+
+class ReadLog(RunLog):
+    """High-churn read record pool, isolated from actionable write logs.
+
+    Healthy poll bodies are intentionally omitted: argv + exit status retain
+    the audit record without repeatedly dumping df/meminfo/nvidia-smi output.
+    Failures still include stdout/stderr through ``RunLog.complete_result``.
+    """
+
+    KEEP = 100
+    LOG_SUCCESS_OUTPUT = False
+
+    def __init__(self, cmd: list[str]):
+        super().__init__("read", cmd, category="read")
 
 
 class DownloadLog(RunLog):
