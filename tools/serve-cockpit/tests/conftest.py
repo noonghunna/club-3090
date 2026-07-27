@@ -20,8 +20,18 @@ real runner.  This fixture guarantees the real one never runs.
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 
 import pytest
+
+# Download plumbing must stay hermetic under test: DownloadLog must never touch
+# the user's real ~/.config/club-3090, and download_preflight must never depend
+# on the HOST's `hf` CLI / token state (a dev box with hf installed would pass
+# where CI fails, and vice versa).  Explicit preflight/log tests override these
+# per-test via monkeypatch.
+os.environ.setdefault("C3_SKIP_DOWNLOAD_PREFLIGHT", "1")
+os.environ.setdefault("C3_CONFIG_DIR", tempfile.mkdtemp(prefix="c3-tests-config-"))
 
 from club3090_tui_core.runner import SubprocessRunner
 from club3090_cockpit.services import RealRunner

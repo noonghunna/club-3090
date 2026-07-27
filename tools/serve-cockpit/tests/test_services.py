@@ -14,6 +14,7 @@ script calls.  Covers:
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -1108,6 +1109,102 @@ class TestByoCheck:
         cd = CockpitData(ROOT, runner=runner)
         res = await cd.byo_check("org/Model-GGUF", "llamacpp/deckard40B-dual-mtp")
         assert res.fit_verdict == "unsupported-format"
+
+    # ── Download logs + preflight (2026-07-27 triage fixes) ──────────────────
+
+    @staticmethod
+    def _dl_capture():
+        import asyncio as _a
+
+        class _CaptureDL:
+            def __init__(self):
+                self.calls = []
+                self.cbs = {}
+
+            def set_callbacks(self, **kw):
+                self.cbs = kw
+
+            async def start_raw(self, cmd, env=None, run_type=None, parser=None):
+                self.calls.append(list(cmd))
+                h = type("H", (), {})()
+                h.done = _a.Event()
+                h.done.set()
+                h.exit_code = 0
+                return h
+
+        return _CaptureDL()
+
+    @pytest.mark.asyncio
+    async def test_download_log_written_and_announced(self, tmp_path, monkeypatch):
+        """Every weights download tees to <config>/logs/ and announces the path
+        as the pane's first line (the "no logs for c3" fix)."""
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        cap = self._dl_capture()
+        lines: list[str] = []
+        cd = CockpitData(ROOT, runner=full_runner(), download_runner=cap)
+        await cd.run_weights_download("qwen3.6-27b", "autoround-int4", on_line=lines.append)
+        logs = list((tmp_path / "logs").glob("c3-download-*weights-qwen3.6-27b*.log"))
+        assert len(logs) == 1
+        text = logs[0].read_text(encoding="utf-8")
+        assert "# cmd: bash scripts/setup.sh qwen3.6-27b" in text
+        assert lines and lines[0].startswith("[log] ")
+        assert cap.calls  # preflight skipped suite-wide -> spawn reached
+
+    @pytest.mark.asyncio
+    async def test_preflight_blocks_weights_download_without_hf_cli(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("C3_SKIP_DOWNLOAD_PREFLIGHT", raising=False)
+        monkeypatch.setattr(CockpitData, "_hf_cli_present", lambda self: False)
+        cap = self._dl_capture()
+        lines: list[str] = []
+        cd = CockpitData(ROOT, runner=full_runner(), download_runner=cap)
+        st = await cd.run_weights_download("qwen3.6-27b", "autoround-int4", on_line=lines.append)
+        assert not cap.calls, "must not spawn on a preflight blocker"
+        assert st.verdict == "failed"
+        assert "hf" in st.error
+        joined = "\n".join(lines)
+        assert "setup.sh" in joined and "pipx install" in joined
+        text = next((tmp_path / "logs").glob("c3-download-*.log")).read_text(encoding="utf-8")
+        assert "preflight" in text and "# done" in text
+
+    @pytest.mark.asyncio
+    async def test_preflight_blocks_bring_download_too(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("C3_SKIP_DOWNLOAD_PREFLIGHT", raising=False)
+        monkeypatch.setattr(CockpitData, "_hf_cli_present", lambda self: False)
+        cap = self._dl_capture()
+        cd = CockpitData(ROOT, runner=full_runner(), download_runner=cap)
+        st = await cd.run_bring_download("org/Model-GGUF", "llamacpp/deckard40B-dual-mtp")
+        assert not cap.calls
+        assert st.verdict == "failed"
+
+    @pytest.mark.asyncio
+    async def test_preflight_token_note_never_blocks(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("C3_SKIP_DOWNLOAD_PREFLIGHT", raising=False)
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        monkeypatch.setattr(CockpitData, "_hf_cli_present", lambda self: True)
+        monkeypatch.setattr(
+            CockpitData, "_hf_token_file", lambda self: tmp_path / "absent-token"
+        )
+        cd = CockpitData(ROOT, runner=full_runner(), download_runner=self._dl_capture())
+        blockers, notes = cd.download_preflight()
+        assert not blockers
+        assert any("401" in n for n in notes)
+
+    def test_download_log_prune_keeps_newest(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        from club3090_cockpit.services import DownloadLog
+
+        d = tmp_path / "logs"
+        d.mkdir()
+        for i in range(35):
+            f = d / f"c3-download-old{i:03d}-x.log"
+            f.write_text("x", encoding="utf-8")
+            os.utime(f, (1000 + i, 1000 + i))
+        DownloadLog("prune-test", ["true"])
+        remaining = list(d.glob("c3-download-*.log"))
+        assert len(remaining) == DownloadLog.KEEP
+        assert any("prune-test" in p.name for p in remaining)  # newest survives
 
     def test_profile_like_is_gguf_engine(self):
         cd = CockpitData(ROOT, runner=full_runner())

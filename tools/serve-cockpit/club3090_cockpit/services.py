@@ -44,7 +44,7 @@ from club3090_tui_core.detect import (
     match_target_to_registry,
 )
 from club3090_tui_core.registry import VariantRow, parse_variant_rows
-from club3090_tui_core.runner import SubprocessRunner
+from club3090_tui_core.runner import CoreRunState, SubprocessRunner
 
 from .data import (
     ActionPlan,
@@ -260,6 +260,71 @@ ProbeServedFn = Callable[[Any], Awaitable["ServedProbe"]]
 
 
 # ── The service class ───────────────────────────────────────────────────────────
+
+
+class DownloadLog:
+    """Persistent per-download log — ``<config>/logs/c3-download-<ts>-<kind>.log``.
+
+    The "no logs for c3" fix (2026-07-27 community triage): a download's
+    streamed lines, spawn errors and exit state survive the pane.  Best-effort
+    everywhere — a failed write must never break a download.  The child ENV is
+    never logged (it carries HF_TOKEN); the argv is (it never does).
+    """
+
+    KEEP = 30  # newest logs retained; older pruned at construction
+
+    def __init__(self, kind: str, cmd: list[str]):
+        self.path: Optional[Path] = None
+        self._fh = None
+        try:
+            base = os.environ.get("C3_CONFIG_DIR")
+            d = (Path(base) if base else Path.home() / ".config" / "club-3090") / "logs"
+            d.mkdir(parents=True, exist_ok=True)
+            ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", kind).strip("-") or "download"
+            self.path = d / f"c3-download-{ts}-{slug}.log"
+            self._fh = self.path.open("a", encoding="utf-8")
+            self._fh.write(f"# c3 download log · kind={kind} · started {ts}\n")
+            self._fh.write(f"# cmd: {' '.join(map(str, cmd))}\n")
+            self._fh.flush()
+            self._prune(d)
+        except OSError:
+            self.path = None
+            self._fh = None
+
+    def _prune(self, d: Path) -> None:
+        try:
+            logs = sorted(d.glob("c3-download-*.log"), key=lambda p: p.stat().st_mtime)
+            for old in logs[: max(0, len(logs) - self.KEEP)]:
+                old.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def line(self, s: str) -> None:
+        if self._fh is None:
+            return
+        try:
+            self._fh.write(s.rstrip("\n") + "\n")
+            self._fh.flush()
+        except (OSError, ValueError):
+            self._fh = None
+
+    def complete(self, state) -> None:
+        """Footer from the run state (also fired by the runner's on_complete)."""
+        if self._fh is None:
+            return
+        try:
+            err = getattr(state, "error", "") or ""
+            self._fh.write(
+                f"# done · exit={getattr(state, 'exit_code', None)} · "
+                f"verdict={getattr(state, 'verdict', '')}"
+                + (f" · error={err}" if err else "")
+                + "\n"
+            )
+            self._fh.close()
+        except (OSError, ValueError):
+            pass
+        self._fh = None
 
 
 class CockpitData:
@@ -506,6 +571,71 @@ class CockpitData:
             except Exception:
                 pass
 
+    # ── Download plumbing: persistent logs + preflight ────────────────────────
+    # 2026-07-27 community triage: a failed download left NOTHING on disk (pane
+    # scrollback only), and a missing `hf` CLI surfaced as an opaque spawn error.
+    # Every download now (a) tees its stream to <config>/logs/ and (b) preflights
+    # its prerequisites with actionable pane lines BEFORE spawning.
+
+    @staticmethod
+    def _c3_config_dir() -> Path:
+        """Mirror __main__.settings_path(): C3_CONFIG_DIR or ~/.config/club-3090."""
+        base = os.environ.get("C3_CONFIG_DIR")
+        return Path(base) if base else Path.home() / ".config" / "club-3090"
+
+    def _hf_cli_present(self) -> bool:
+        """The `hf` CLI every download path shells out to (route-G directly;
+        setup.sh + pull.sh's HubFetcher underneath)."""
+        return bool(shutil.which("hf")) or (
+            Path.home() / ".local" / "bin" / "hf"
+        ).exists()
+
+    def _hf_token_file(self) -> Path:
+        return Path.home() / ".cache" / "huggingface" / "token"
+
+    def download_preflight(self, *, needs_hf_cli: bool = True) -> tuple[list[str], list[str]]:
+        """(blockers, notes) checked BEFORE spawning a download.
+
+        Blockers stop the spawn (the pane gets the fix, not a stack trace);
+        notes are informational and never block.  ``C3_SKIP_DOWNLOAD_PREFLIGHT=1``
+        bypasses both (tests; power users who know their rig)."""
+        if os.environ.get("C3_SKIP_DOWNLOAD_PREFLIGHT") == "1":
+            return [], []
+        blockers: list[str] = []
+        notes: list[str] = []
+        if needs_hf_cli and not self._hf_cli_present():
+            blockers += [
+                "✗ preflight: the Hugging Face CLI ('hf') is not installed — the download can't start.",
+                "  fix: run `bash scripts/setup.sh` once in a terminal (it offers an isolated install),",
+                "  or:  pipx install 'huggingface-hub[hf_transfer]' && pipx ensurepath",
+            ]
+        if not os.environ.get("HF_TOKEN") and not self._hf_token_file().exists():
+            notes.append(
+                "ℹ preflight: no HF token found (env HF_TOKEN / ~/.cache/huggingface/token) — "
+                "gated repos will fail with 401; set one in [S] Settings."
+            )
+        return blockers, notes
+
+    def _preflight_failed_state(self, run_type: str, blockers: list[str]) -> CoreRunState:
+        """A failed CoreRunState WITHOUT spawning — the same shape start_raw
+        returns on a spawn failure, so panes handle it identically."""
+        st = CoreRunState(run_type=run_type, started=time.time())
+        st.finished = time.time()
+        st.exit_code = -1
+        st.verdict = "failed"
+        st.error = blockers[0] if blockers else "preflight failed"
+        st.done.set()
+        return st
+
+    @staticmethod
+    def _tee(on_line: Optional[Callable[[str], None]], log: "DownloadLog") -> Callable[[str], None]:
+        """One emitter: every line goes to the log AND (when set) the pane."""
+        def emit(line: str) -> None:
+            log.line(line)
+            if on_line is not None:
+                on_line(line)
+        return emit
+
     # ── Download (Download UX): fetch a slug's weights via setup.sh ───────────────
 
     def weights_download_plan(self, model: str, variant: str) -> ActionPlan:
@@ -553,8 +683,20 @@ class CockpitData:
         if comp_keys:
             env["WEIGHT_EXTRA_KEYS"] = " ".join(comp_keys)
         env.setdefault("HF_HOME", str(Path(root) / ".cache" / "huggingface"))
-        if on_line is not None:
-            self._download_runner.set_callbacks(on_line=on_line)
+        log = DownloadLog(f"weights-{model}", plan.cmd)
+        emit = self._tee(on_line, log)
+        if log.path:
+            emit(f"[log] {log.path}")
+        blockers, notes = self.download_preflight()
+        for n in notes:
+            emit(n)
+        if blockers:
+            for b in blockers:
+                emit(b)
+            st = self._preflight_failed_state(plan.kind, blockers)
+            log.complete(st)
+            return st
+        self._download_runner.set_callbacks(on_line=emit, on_complete=log.complete)
         return await self._download_runner.start_raw(
             plan.cmd, env=env, run_type=plan.kind, parser=None
         )
@@ -571,8 +713,11 @@ class CockpitData:
         env["MODEL_DIR"] = self.weights_model_dir()
         env["COMFYUI_MODELS_DIR"] = self.comfyui_models_dir()
         env.setdefault("HF_HOME", str(Path(self.weights_model_dir()) / ".cache" / "huggingface"))
-        if on_line is not None:
-            self._download_runner.set_callbacks(on_line=on_line)
+        log = DownloadLog("studio", plan.cmd)
+        emit = self._tee(on_line, log)
+        if log.path:
+            emit(f"[log] {log.path}")
+        self._download_runner.set_callbacks(on_line=emit, on_complete=log.complete)
         return await self._download_runner.start_raw(
             plan.cmd, env=env, run_type=plan.kind, parser=None
         )
@@ -1078,6 +1223,7 @@ class CockpitData:
         env = dict(os.environ)
         env.setdefault("HF_HOME", str(self._bring_hf_home()))
         self._last_swap_compose = ""
+        log = DownloadLog(f"bring-{repo.rsplit('/', 1)[-1]}", ["(bring)", repo])
 
         def _capture(line: str) -> None:
             # Route-C apply-swap prints "[apply-swap] compose: <path>" — capture
@@ -1088,8 +1234,19 @@ class CockpitData:
             if on_line is not None:
                 on_line(line)
 
-        if apply_swap or on_line is not None:
-            self._download_runner.set_callbacks(on_line=_capture)
+        emit = self._tee(_capture, log)
+        if log.path:
+            emit(f"[log] {log.path}")
+        blockers, notes = self.download_preflight()
+        for n in notes:
+            emit(n)
+        if blockers:
+            for b in blockers:
+                emit(b)
+            st = self._preflight_failed_state("download", blockers)
+            log.complete(st)
+            return st
+        self._download_runner.set_callbacks(on_line=emit, on_complete=log.complete)
         if gguf_includes:
             # GGUF bring (route-G): pull.sh is the SAFETENSORS evaluate/download
             # path — it ABORTS `unsupported-format (no config.json)` on a GGUF repo.
@@ -1122,6 +1279,7 @@ class CockpitData:
                 # compose (do_download=False).  ② Serve uses this so a present-weights
                 # serve needs no [D] step.  Only meaningful alongside --apply-swap.
                 cmd.append("--emit-only")
+        log.line(f"# cmd: {' '.join(map(str, cmd))}")
         return await self._download_runner.start_raw(
             cmd,
             env=env,
