@@ -15,7 +15,8 @@
 #              it CUDA-OOB-crashes on large prefill past 131K (vllm#39914). Q8 @ 256K ≈
 #              15 GB on one 24 GB card. Decode ~34 TPS @ 200K ctx (~47 short-ctx).
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    🧪 Experimental — stability soak PASS 2026-06-04 (fresh 20×5: 0/100 silent-empty,
+#   Status:    🗑️ Deprecated
+#   Caveats:   Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.
 #              0 MiB growth, 100% TPS retention). Held 🧪 pending MTP — no Gemma-4 spec-dec on
 #              llama.cpp yet (llama.cpp#23398); promote when it lands (stability gate already met).
 #   Engine-profile: beellama-local

@@ -12,8 +12,8 @@
 #              160K usable (115K-token prefill OK, ~0.8 GB headroom); 200K boots but
 #              OOMs on prefill. Raise via CTX_SIZE up to 160K.
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    ⚠️ Production w/ caveats
-#   Caveats:   single-GPU DEFAULT for Qwen3.6-27B (code-throughput leader ~100 TPS +
+#   Status:    🗑️ Deprecated
+#   Caveats:   [Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.] single-GPU DEFAULT for Qwen3.6-27B (code-throughput leader ~100 TPS +
 #              slight 8-pack quality edge over ik-llama, think-off).
 #              (0) ⚠️ DRAFTER FORMAT (#759, @superbiche, UNVERIFIED on our rig):
 #              the published Anbeeld DFlash GGUFs are reported to be MAINLINE-format

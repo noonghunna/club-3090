@@ -423,7 +423,7 @@ COMPOSE_REGISTRY = {
         weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8060,
         kvcalc_key="SKIP",
-        status="caveats",
+        status="deprecated",
         status_note="Single-GPU default. Launchers inject the beellama engine pin (Anbeeld's official v0.3.2-preview digest — engines/beellama-local.yml install.spec); sm_86 verified on this rig 2026-07-04 (verify-full all-pass); sm_89 IS natively compiled (890 in the image's CUDA ARCHS per the #693 boot log — NOT an sm_80 fallback) but DFlash returns gibberish on Ada, so default_arch_allow=[\"8.6\"] steers 4090/5090 off this default (#693). 5090/sm_120: official images build on CUDA 12.4 and carry NO sm_120 (upstream ask Anbeeld#85) — self-build with CUDA_DOCKER_ARCH=120 + CUDA_VERSION=12.8.1 (engine notes have the verified recipe) or the unmaintained v0.3.0-feature-level snapshot ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397. Usable ctx ceiling 160K (200K OOMs on prefill); ships 102K. DFlash prose is net-positive on tok/s (+27% vs no-spec, re-tested 2026-06-03); the earlier 'prose-DFlash regression' is RETRACTED — it was an AR over-read + wrong baseline (docs/UPSTREAM.md).",
     ),
 
@@ -437,7 +437,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/beellama/compose/single/qwopus-coder-mtp-q5km/mtp.yml",
         default_port=8067,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="Qwopus3.6-27B-Coder (Jackrong) Q5_K_M GGUF + EMBEDDED MTP head (--spec-type draft-mtp) + KVarN-4 KV, single 3090. Launch with --force (experimental). REQUIRES the KVarN engine build (beellama v0.3.2 PREVIEW, digest-pinned) — the v0.3.0/earlier images reject --cache-type-k kvarn4. 2026-06-12 on sm_86: embedded MTP head loads, verify-full all-pass, NIAH needle @72K (= q5_0/q4_1 control), bench ~46/58 TPS narr/code (≈ q5_0/q4_1 — KVarN decode-neutral), 8-pack quality 104/103 think-off/on ≈ q5_0/q4_1 102/107 (quality-neutral; disc #329). Ships 160K (MTP-on ceiling; 230K via the no-MTP env opt-in in the compose). Launcher path (switch.sh --force) + soak-continuous PASS (0-growth, 0/25 silent-empty, 100% retention). beellama v0.3.2 is a rolling PRE-RELEASE → stays experimental (un-park on a stable Anbeeld tag; full verify-stress NIAH ladder pending for ⚠️ promotion).",
     ),
 
@@ -451,7 +451,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/beellama/compose/single/carnice-v2-q5km/mtp-kvarn4.yml",
         default_port=8068,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="Carnice-V2-27B (stuchapin — kai-os/Carnice-V2-27b, Hermes-style agentic SFT of Qwen3.6-27B) Q5_K_M GGUF + EMBEDDED MTP head (--spec-type draft-mtp, n=1) + KVarN-4 KV, single 3090. Launch with --force (experimental). REQUIRES the KVarN engine build (beellama v0.3.2 PREVIEW, digest-pinned) — v0.3.0/earlier reject --cache-type-k kvarn4. FULLY VALIDATED 2026-06-14 (rebench-full, reasoning-on): engine-compat PASS (beellama LOADS the PR#22673-fused GGUF — the card's 'mainline fails to load' does NOT apply), verify-full all-pass, verify-stress 8/8 (NIAH clean to 150K), soak PASS (0-growth, 0/100 silent-empty, 100.5% retention, p50 49.5 TPS), bench 46.8/50.5 TPS narr/code, MTP accept ~94%. 8-pack reasoning-on 110/150 — BEATS sibling beellama/qwopus-coder 103/150 (edge is agentic/instruct: hermes 13 vs 10, instructfollow 15, reasonmath 13; dataextract 10 = Qwen-family number-format floor). Ships 160K (MTP-on default; 176K measured ceiling, 192K OOMs; 230K via the no-MTP env opt-in). n=1 default; n=2 is a +12%-TPS opt-in (DRAFT_N_MAX=2, doesn't crash on our single-card kvarn4 unlike the author's 2×3090) pending a dedicated soak. beellama v0.3.2 is a rolling PRE-RELEASE → stays experimental (un-park on a stable Anbeeld tag, #455).",
     ),
     "beellama/carnice-v2-dual-q8-mtp": _entry(
@@ -461,7 +461,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/beellama/compose/dual/carnice-v2-q8/mtp-q8kv.yml",
         default_port=8070,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="Carnice-V2-27B Q8_0 + EMBEDDED MTP head (--spec-type draft-mtp, n=1) + q8_0/q8_0 KV, DUAL 3090 (layer-split -ts 0.55,0.45). The dual / higher-quant follow-through requested in #403 (Q5_K_M single = beellama/carnice-v2-single-q5km-mtp). FULLY VALIDATED 2026-06-16 (rebench-full): verify-full ALL-PASS, bench n=5 narr 40.7/code 44.0 decode TPS, verify-stress 8/8 (NIAH->240K), soak fresh 20x5 PASS (0 growth, 0/100 silent-empty, p50 42.2, 100% retention), 8-pack think-OFF 103/150 / think-ON 105/150 (in-band, q8_0 KV held quality). MTP accept ~81%, full 262K fits @ -ts 0.55,0.45 (21.9/21.2 GB/card, ~2.5GB free). KV A/B: chose q8_0 over the originally-spec'd kvarn6 — q8_0 prefills +17% (1003 vs 860 t/s; kvarn6's software-compression compute throttled prefill), higher-fidelity (q8 > q6-class), reference path (kvarn6 = Anbeeld 'experimental'), fits 262K on dual. -b/-ub/--no-mmap A/B'd FLAT; n=2 = +13% validated-stable opt-in (DRAFT_N_MAX=2). DFlash A/B RULED OUT (base-27B drafter ~10% accept on the fine-tune; no Carnice-matched drafter exists) → MTP-only. Launch --force. beellama v0.3.2 rolling pre-release → experimental (#455).",
     ),
     # Qwen3.6-27B-MTP-pi-reasoning (bytkim) — reasoning fine-tune, Q4_K_M GGUF + embedded
@@ -717,7 +717,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-12b/beellama/compose/single/beellama-q8kxl/base.yml",
         default_port=8067,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="Gemma-4-12B Q8_K_XL single-3090 on beellama.cpp (q5_0(K)/q4_1(V) KV, 256K via --override-kv, no spec-dec). NIAH-clean to 246K. Launchers inject the beellama engine pin (Anbeeld's official v0.3.2-preview digest — engines/beellama-local.yml install.spec; no sm_120 until Anbeeld#85). Preview = rolling pre-release → experimental; promote on a stable tag.",
     ),
     "llamacpp/gemma-12b-single-q8kxl": _entry(
@@ -752,7 +752,7 @@ COMPOSE_REGISTRY = {
         weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8061,
         kvcalc_key="SKIP",
-        status="caveats",
+        status="deprecated",
         status_note="Single-GPU default — the only viable fast single-card Gemma-4 path on Ampere. Launchers inject the beellama engine pin (Anbeeld's official v0.3.2-preview digest — engines/beellama-local.yml install.spec); sm_89 IS natively compiled (890 in the image's CUDA ARCHS — NOT an sm_80 fallback) but the same beellama DFlash path (validated only on sm_86) is unvalidated/likely-broken on Ada, so default_arch_allow=[\"8.6\"] steers off-86 users off this default (#693). 5090/sm_120: official images build on CUDA 12.4 and carry NO sm_120 (upstream ask Anbeeld#85) — self-build with CUDA_DOCKER_ARCH=120 + CUDA_VERSION=12.8.1 (engine notes) or the unmaintained v0.3.0-feature-level snapshot ghcr.io/noonghunna/beellama-cpp:multiarch-v0.3.0-efe856397. DFlash prose is net-positive on tok/s (+28–31% vs no-spec, re-tested 2026-06-03; earlier 'prose regression' RETRACTED — AR over-read + wrong baseline); re-point to mainline llama.cpp#23398 Gemma-4 MTP when it merges — docs/UPSTREAM.md.",
     ),
     # Dual-card beellama Gemma-4 (layer-split, 262K) — PARKED upstream-gated 2026-05-31.
@@ -768,7 +768,7 @@ COMPOSE_REGISTRY = {
         weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8062,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="Dual-card beellama Gemma-4 (layer-split, 262K) on v0.3.0 — RELEASED experimental for community v0.3.0 testing (Anbeeld's request, club-3090#288). Multi-GPU DFlash FIXED on v0.3.0 (GPU cross-ring; validated sm_86 2026-06-01, FA_ALL_QUANTS=1; image injected from beellama-local install.spec = Anbeeld's official server-cuda-v0.3.0 commit tag). Earlier 'v0.3.0-wide DFlash-on-PROSE regression' RETRACTED (2026-06-03) — did NOT reproduce on qwen single+dual or gemma single (DFlash prose net-positive +27–58% vs no-spec); was an AR over-read + wrong baseline. This gemma-dual not separately re-benched. Promote experimental→caveats when Anbeeld tags a STABLE release. docs/UPSTREAM.md.",
     ),
 
@@ -786,7 +786,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/beellama/compose/dual/beellama-q8kxl-mtp/mtp.yml",
         default_port=8064,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="Dual-card beellama Qwen3.6-27B Q8_K_XL + embedded MTP head (--spec-type draft-mtp, unsloth-mtp-gguf drafter). v0.3.0 sm_86 2026-06-01: boots + coherent, MTP active (code accept ~0.90, ~58 TPS decode). Ships 65536 safe first-boot ctx; validated robust to ~160K (262K impossible — DeltaNet recurrent draft state hard-pins to one card). High-fidelity Q8 sibling of vllm/dual fp8-mtp. Promote experimental→caveats on a STABLE Anbeeld tag.",
     ),
     "beellama/qwen-dflash-dual": _entry(
@@ -797,7 +797,7 @@ COMPOSE_REGISTRY = {
         weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8065,
         kvcalc_key="SKIP",
-        status="upstream-gated",
+        status="deprecated",
         status_note="⏸️ UPSTREAM-GATED — cannot load on the pinned image, and the pin bump that would fix loading breaks context instead. Failure on the current pin: Anbeeld re-exported the drafter repo in upstream format 2026-07-19 and dropped IQ4_XS, and our pinned v0.3.2-preview digest is a fork build whose llama.cpp base predates the current Qwen3.6 GGUF conversion — it refuses the new-format drafter (missing hidden_norm.weight) and the referenced anbeeld-dflash-iq4xs artifact no longer exists. CORRECTION 2026-07-26: an earlier note said this and the Ada gibberish (#693) 'both un-break on v0.4.0' — FALSE. v0.4.x swaps fork-DFlash for upstream draft-dflash, which OOMs card0 at 262K (live Ampere 2026-07-21; single 102K->27K). Anbeeld closed our Anbeeld#98 as won't-fix (upstream architecture), and v0.4.1 stable is the SAME COMMIT as the preview we OOM'd on. Blocked on an upstream llama.cpp memory fix, not a pin bump; queued for retirement with the beellama engine (todo 2026-07-26). Re-statused from experimental 2026-07-26 per #740. HISTORICAL: v0.3.0 sm_86 2026-06-01 booted + coherent at 262K, code accept 0.58 / prose ~0.41.",
     ),
     "beellama/gemma-q8-dflash-dual": _entry(
@@ -808,7 +808,7 @@ COMPOSE_REGISTRY = {
         weights_companions=("anbeeld-dflash-iq4xs",),  # DFlash draft GGUF the compose mounts
         default_port=8066,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="Dual-card beellama Gemma-4-31B Q8_K_XL + DFlash (Anbeeld DFlash-IQ4_XS draft). v0.3.0 sm_86 2026-06-01: 192K balanced ceiling (tensor-split 0.55,0.45 → ~21.4/21.9 GB; 262K OOMs — Gemma full-attn layers grow KV). High-fidelity Q8 sibling of beellama/gemma-dflash-dual (q4ks). Earlier 'v0.3.0-wide DFlash-on-PROSE regression' RETRACTED (2026-06-03) — didn't reproduce on qwen single+dual or gemma single; was an AR over-read + wrong baseline. This gemma-Q8-dual not separately re-benched. Promote on a STABLE tag.",
     ),
 
@@ -1105,11 +1105,9 @@ DEFAULTS = {
     ("qwen3.6-27b", "vllm", "dual"): "vllm/dual",
     ("qwen3.6-27b", "llamacpp", "single"): "llamacpp/default",
     ("qwen3.6-27b", "ik-llama", "single"): "ik-llama/iq4ks-mtp",
-    ("qwen3.6-27b", "beellama", "single"): "beellama/dflash",
     # No vLLM single-card Gemma default: fp8 KV is hardware-impossible on Ampere
     # sm_86 (vllm/gemma-mtp-tp1 deprecated 2026-05-31) and no bf16 single compose
     # ships. Single-card Gemma → beellama/gemma-dflash (the curated walk picks it).
-    ("gemma-4-31b", "beellama", "single"): "beellama/gemma-dflash",
     # Dual default is gemma-31b-dual: cyankiwi bf16 @224K on STOCK vLLM v0.24.0, OVERLAY-FREE
     # (⚠️ Production w/ caveats, validated 2026-07-02 — verify-full 9/9 + verify-stress to 210K with
     # healthy VRAM margin + soak PASS). Supersedes the v0.22.0 gemma-int8-mtp (int8-PTH+#40391, 262K),
@@ -1163,10 +1161,14 @@ RECOMMENDED_DEFAULT_MODELS = ["qwen3.6-27b", "gemma-4-31b"]
 # upstream Docker image — see docs/UPSTREAM.md). The resolver skips it
 # naturally (no DEFAULTS hit) → no behavior change until it is onboarded, at
 # which point it AUTO-PROMOTES to the single-GPU default with no resolver edit.
+# beellama removed from every walk 2026-07-27: the engine is retired (all 10
+# slugs deprecated — Anbeeld #98 won't-fix upstream DFlash VRAM regression;
+# pin v0.3.2-preview unmaintained). Slugs stay launchable by name with --force.
+# Re-add if the llama-cpp-mainline migration ever revives a beellama build.
 ENGINE_PREFERENCE = {
-    "single": ["beellama", "ik-llama", "llamacpp", "vllm"],
-    "dual": ["vllm", "ik-llama", "llamacpp", "beellama"],
-    "multi": ["vllm", "ik-llama", "llamacpp", "beellama"],
+    "single": ["ik-llama", "llamacpp", "vllm"],
+    "dual": ["vllm", "ik-llama", "llamacpp"],
+    "multi": ["vllm", "ik-llama", "llamacpp"],
 }
 
 

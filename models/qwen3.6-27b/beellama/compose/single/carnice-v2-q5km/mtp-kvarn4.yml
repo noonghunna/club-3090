@@ -18,7 +18,7 @@
 #              as predicted (n_max=1 frees draft VRAM vs its n_max=3). Card itself ran q4_0 KV @ 64K
 #              (CTX_SIZE=65536 = card-conservative fallback). Native max 262144 (MTP off — see "Big-context").
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    🧪 EXPERIMENTAL — authored + boot-validated 2026-06-14 (single 3090, KVarN digest
+#   Status:    🗑️ Deprecated
 #              858e7c…). Engine-compat PASS: beellama LOADS the PR#22673-fused GGUF (MTP head
 #              registers, "speculative decoding context initialized") — the card's "mainline
 #              fails to load" does NOT apply to beellama. Basic gen + tool-call clean; reasoning
@@ -35,7 +35,7 @@
 #              n=1, 2026-06-14). Edge vs qwopus is agentic/instruct (hermes 13 vs 10, instructfollow
 #              15, reasonmath 13). dataextract 10 = Qwen-family number-format floor (string-vs-number,
 #              same as qwopus), not a KV artifact.
-#   Caveats:   (1) MTP n_max=1 is the card-faithful default — the author warns n=3 is "wrong by a
+#   Caveats:   [Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.] (1) MTP n_max=1 is the card-faithful default — the author warns n=3 is "wrong by a
 #              wide margin" (mtp_num_hidden_layers=1) and reports n=2 CRASHED on his 2×3090.
 #              n_max FINDING (2026-06-14, our single-card kvarn4): n=2 does NOT crash here and is
 #              ~12% FASTER (55.6 vs 49.6 TPS) — spec-dec is lossless so the lower acceptance

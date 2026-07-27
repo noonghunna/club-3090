@@ -313,7 +313,7 @@ Honest gaps:
   docker pull ghcr.io/noonghunna/beellama-cpp:multiarch-b9459-07ac3ce
   ```
 
-  `beellama/dflash` (Qwen3.6-27B) is now the **single-card default** (⚠️ caveats); `beellama/gemma-dflash` stays 🧪 **Experimental**. **Caveat: sm_89 / sm_120 are compiled but UNVALIDATED** — only sm_86 / RTX 3090 is verified on club-3090's rig, so 4090 / 5090 users should treat it as unverified and report back via the *numbers-from-your-rig* issue template. Anbeeld's official v0.3.0 (CI + Docker) is in progress ([discussion #239](https://github.com/noonghunna/club-3090/discussions/239)); when it lands we drop our unofficial image. **To build your own image** (a different arch, or to self-host), from a clone of the fork (Linux GCC + CUDA):
+  **RETIRED 2026-07-27:** all beellama slugs are 🗑️ Deprecated (Anbeeld #98 won't-fix — v0.4.x DFlash is the upstream implementation carrying the VRAM regression; the v0.3.2-preview pin is unmaintained). `beellama/dflash` *was* the single-card default; the walk now resolves to `ik-llama/iq4ks-mtp`. Historical notes below kept as-is: **Caveat: sm_89 / sm_120 are compiled but UNVALIDATED** — only sm_86 / RTX 3090 is verified on club-3090's rig, so 4090 / 5090 users should treat it as unverified and report back via the *numbers-from-your-rig* issue template. Anbeeld's official v0.3.0 (CI + Docker) is in progress ([discussion #239](https://github.com/noonghunna/club-3090/discussions/239)); when it lands we drop our unofficial image. **To build your own image** (a different arch, or to self-host), from a clone of the fork (Linux GCC + CUDA):
 
   ```bash
   cmake -B build -DGGML_CUDA=ON -DGGML_NATIVE=ON \

@@ -10,11 +10,11 @@
 #   Max ctx:   65536 default (safe first-boot on dual; Q8 weights ~17 GB/card leave room
 #              to ladder up — raise CTX_SIZE and watch for OOM).
 #   Genesis:   N/A — beellama is a llama.cpp-family engine
-#   Status:    🧪 EXPERIMENTAL — boots + serves coherently + MTP active on Q8 (confirmed
+#   Status:    🗑️ Deprecated
 #              2026-06-01: prose+code coherent, draft acceptance 0.90 on code, ~58 TPS decode,
 #              ~16/21 GB across the 2 cards). Full verify/soak/bench gate (#455) + tagged-
 #              release un-park still pending, so NOT git-tracked yet.
-#   Caveats:   Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
+#   Caveats:   [Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.] Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
 #              not a tagged release — same upstream gate as the gemma dual (Anbeeld #39 / #48).
 #              MTP is the ROBUST Qwen spec path on v0.3.0: prior run held prose acceptance ~0.44
 #              where DFlash collapsed to ~0.07. This compose pairs that with Q8 weights for the

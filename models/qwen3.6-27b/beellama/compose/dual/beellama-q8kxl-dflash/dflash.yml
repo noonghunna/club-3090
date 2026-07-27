@@ -20,14 +20,14 @@
 #              main-model layers to card0 to compensate → BALANCED ~21.2/21.2 GB, ~2.8 GB
 #              free per card (validated 2026-06-01). Re-tune via TENSOR_SPLIT if VRAM shifts.
 #   Genesis:   N/A — beellama is a llama.cpp-family engine
-#   Status:    ⏸️ Upstream-gated — CANNOT LOAD on the pinned image as of 2026-07-19.
+#   Status:    🗑️ Deprecated
 #              Re-statused from 🧪 Experimental 2026-07-26 (#740, @alexpolo1): 🧪 implies
 #              "under validation", which understates "refuses to start".
 #              Historical: DID boot + serve coherently at full 262K on beellama v0.3.0
 #              (2026-06-01: code accept 0.58, prose accept ~0.41 net-positive re-tested
 #              2026-06-03, 10K-prefill clean @262K, 0 OOM). That validation stands for the
 #              image it ran on; it is not reachable from the currently pinned one.
-#   Caveats:   ⛔ BLOCKED ON: an UPSTREAM llama.cpp fix to DFlash memory. NOT on a beellama
+#   Caveats:   [Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.] ⛔ BLOCKED ON: an UPSTREAM llama.cpp fix to DFlash memory. NOT on a beellama
 #              pin bump — that was tried and rejected (see below). Slug is queued for
 #              retirement with the rest of the beellama engine (todo 2026-07-26).
 #              Failure mechanism on the CURRENT pin: Anbeeld re-exported the drafter repo in

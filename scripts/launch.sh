@@ -893,10 +893,10 @@ suggest_default_variant() {
     if (( cards >= 2 )); then
       echo "vllm/gemma-31b-dual"
     else
-      # Single card: beellama/gemma-dflash is the recommended Gemma-4 path — the
-      # only viable fast single-card config on Ampere. vLLM single-card is dead
-      # here (no fp8 KV path on sm_86; the old vllm/gemma-mtp-tp1 was deprecated).
-      echo "beellama/gemma-dflash"
+      # Single card: no functional Gemma-4-31B single-card config exists since the
+      # beellama retirement (2026-07-27, Anbeeld #98 won't-fix) — suggest the dual
+      # (functional) and the 12B single as the on-one-card alternative.
+      echo "vllm/gemma-31b-dual"
     fi
   fi
 }

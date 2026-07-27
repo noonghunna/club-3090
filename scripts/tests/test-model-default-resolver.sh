@@ -42,11 +42,11 @@ assert_contains() {
 source "$ROOT_DIR/scripts/lib/registry-emit.sh"
 
 # --- curated walk (no pin) ---------------------------------------------------
-# qwen3.6-27b: single → beellama (ranked #1 in ENGINE_PREFERENCE; promoted to a
-# functional `caveats` DEFAULTS entry 2026-05-30, so the resolver now picks it
-# ahead of ik-llama); dual → vllm; multi4 → vllm.
+# qwen3.6-27b: single → ik-llama (#1 in ENGINE_PREFERENCE since the 2026-07-27
+# beellama retirement — engine removed from every walk, all its slugs
+# deprecated); dual → vllm; multi4 → vllm.
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 2>/dev/null)" \
-  "beellama/dflash" "qwen single curated"
+  "ik-llama/iq4ks-mtp" "qwen single curated"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>/dev/null)" \
   "vllm/dual" "qwen dual curated"
 out="$(model_default_target "$ROOT_DIR" qwen3.6-27b multi4 2>&1)"
@@ -59,12 +59,14 @@ assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b dual 2>/dev/null)" \
   "vllm/gemma-31b-dual" "gemmadual curated"
 
 # --- (NA) skip + graceful degradation ---------------------------------------
-# gemma-4-31b single → beellama/gemma-dflash. vllm/gemma-mtp-tp1 is upstream-gated/(NA),
-# so the resolver SKIPS it and picks the next functional engine — beellama, #1 in
-# ENGINE_PREFERENCE[single] (promoted to the single-card default 2026-05-30). This
-# exercises the (NA)-skip-then-fall-through path with a real fallback present.
-assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b single 2>/dev/null)" \
-  "beellama/gemma-dflash" "gemma single curated (vllm NA → beellama)"
+# gemma-4-31b single: NO functional default since the 2026-07-27 beellama
+# retirement (its vllm singles are deprecated too) — the resolver honestly
+# degrades to pick-explicitly. This exercises the every-candidate-(NA) path.
+if model_default_target "$ROOT_DIR" gemma-4-31b single >/dev/null 2>&1; then
+  note "gemma-4-31b single unexpectedly resolved (no functional single since the beellama retirement)"
+fi
+assert_contains "$(model_default_target "$ROOT_DIR" gemma-4-31b single 2>&1)" \
+  "pick a config explicitly" "gemma single curated → pick-explicitly (beellama retired)"
 # qwen3.6-35b-a3b single: preview-only → (NA) → no functional default at single.
 if model_default_target "$ROOT_DIR" qwen3.6-35b-a3b single >/dev/null 2>&1; then
   note "qwen-35b-a3b single unexpectedly resolved (all candidates are (NA))"
@@ -81,16 +83,17 @@ assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b multi4 2>/dev/null)" \
 # falls through to the next functional engine. sm empty/unknown → fail-open (so
 # CI / headless keep today's behavior — the 3-arg calls above prove that).
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 8.6 2>/dev/null)" \
-  "beellama/dflash" "qwen single sm_8.6 → beellama (on-arch, unchanged)"
+  "ik-llama/iq4ks-mtp" "qwen single sm_8.6 → ik-llama (beellama retired; gate moot on-default)"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 8.9 2>/dev/null)" \
   "ik-llama/iq4ks-mtp" "qwen single sm_8.9 (Ada) → steers to ik-llama (#693)"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single 12.0 2>/dev/null)" \
   "ik-llama/iq4ks-mtp" "qwen single sm_12.0 (Blackwell) → steers to ik-llama"
 assert_eq "$(model_default_target "$ROOT_DIR" qwen3.6-27b single '' 2>/dev/null)" \
-  "beellama/dflash" "qwen single sm unknown → fail-open (beellama)"
+  "ik-llama/iq4ks-mtp" "qwen single sm unknown → ik-llama (no arch gate on the ik default)"
 # gemma single has no other single default → off-arch degrades to pick-explicitly.
-assert_eq "$(model_default_target "$ROOT_DIR" gemma-4-31b single 8.6 2>/dev/null)" \
-  "beellama/gemma-dflash" "gemma single sm_8.6 → beellama (unchanged)"
+if model_default_target "$ROOT_DIR" gemma-4-31b single 8.6 >/dev/null 2>&1; then
+  note "gemma single sm_8.6 unexpectedly resolved (beellama retired, no functional single)"
+fi
 if model_default_target "$ROOT_DIR" gemma-4-31b single 8.9 >/dev/null 2>&1; then
   note "gemma single sm_8.9 should have NO default (beellama gated, no fallback)"
 fi
@@ -100,7 +103,7 @@ assert_contains "$(model_default_target "$ROOT_DIR" gemma-4-31b single 8.9 2>&1)
 assert_eq "$(x_default_dispatch "$ROOT_DIR" qwen3.6-27b/default single qwen3.6-27b 8.9 2>/dev/null)" \
   "ik-llama/iq4ks-mtp" "qwen/default X-dispatch on sm_8.9 → ik-llama"
 assert_eq "$(x_default_dispatch "$ROOT_DIR" qwen3.6-27b/default single qwen3.6-27b 8.6 2>/dev/null)" \
-  "beellama/dflash" "qwen/default X-dispatch on sm_8.6 → beellama"
+  "ik-llama/iq4ks-mtp" "qwen/default X-dispatch on sm_8.6 → ik-llama (beellama retired)"
 
 # --- helpers: primary_sm_from_gpu_spec + warn_if_default_arch_gated -----------
 assert_eq "$(primary_sm_from_gpu_spec '0|NVIDIA GeForce RTX 4090|24564|8.9;1|x|24564|8.9')" \
@@ -124,7 +127,7 @@ assert_eq "$(x_default_dispatch "$ROOT_DIR" ik-llama/default single qwen3.6-27b 
   "ik-llama/iq4ks-mtp" "ik-llama/default engine dispatch"
 # model-id → model default (model token overrides the passed model).
 assert_eq "$(x_default_dispatch "$ROOT_DIR" qwen3.6-27b/default single qwen3.6-27b 2>/dev/null)" \
-  "beellama/dflash" "qwen3.6-27b/default model dispatch"
+  "ik-llama/iq4ks-mtp" "qwen3.6-27b/default model dispatch"
 # unknown → error, lists both sets.
 if out="$(x_default_dispatch "$ROOT_DIR" bogus/default single qwen3.6-27b 2>&1)"; then
   note "bogus/default unexpectedly resolved to '${out}'"
@@ -158,7 +161,7 @@ PIN=CLUB3090_DEFAULT_QWEN3_6_27B
   out="$(model_default_target "$ROOT_DIR" qwen3.6-27b single 2>&1 1>/dev/null)"
   slug="$(model_default_target "$ROOT_DIR" qwen3.6-27b single 2>/dev/null)"
   assert_contains "$out" "this rig is single" "topology-mismatch pin warns"
-  assert_eq "$slug" "beellama/dflash" "topology-mismatch pin falls back to single curated" )
+  assert_eq "$slug" "ik-llama/iq4ks-mtp" "topology-mismatch pin falls back to single curated" )
 # unknown-slug pin → warn + fall back.
 ( export "$PIN=vllm/nope"
   out="$(model_default_target "$ROOT_DIR" qwen3.6-27b dual 2>&1 1>/dev/null)"

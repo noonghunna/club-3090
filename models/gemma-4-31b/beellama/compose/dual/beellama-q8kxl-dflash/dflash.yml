@@ -14,9 +14,9 @@
 #              Qwen, which reaches 262K). Lower CTX_SIZE for more headroom; 128K @ 0.55,0.45
 #              leaves ~3.5 GB/card.
 #   Genesis:   N/A — beellama is a llama.cpp-family engine
-#   Status:    🧪 EXPERIMENTAL — under active validation (Q8_K_XL, 2026-06-01). The Q8 counterpart
+#   Status:    🗑️ Deprecated
 #              to beellama/gemma-dflash-dual (Q4_K_S). Same dev-branch image gate.
-#   Caveats:   Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
+#   Caveats:   [Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.] Local test compose (untracked). beellama v0.3.0 is a DEV branch (efe856397),
 #              not a tagged release — same upstream gate as gemma-dflash-dual (Anbeeld #39 / #48).
 #              ↩️ Gemma DFlash code ~157 TPS. The earlier "PROSE acceptance regressed to ~0.07
 #              (v0.3.0-wide)" claim is RETRACTED 2026-06-03 — it did NOT reproduce; re-test on

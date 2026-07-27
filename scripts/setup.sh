@@ -772,7 +772,7 @@ case "${MODEL_NAME}" in
     SAMPLE_MODEL_NAME="gemma-4-31b"
     NEXT_STEPS_NOTE="Available variants:
   bash scripts/switch.sh vllm/gemma-31b-dual        # bf16 KV, TP=2, port 8032 (dual-card, v0.24.0 overlay-free)
-  bash scripts/switch.sh beellama/gemma-dflash # DFlash, single-card default, port 8061"
+  bash scripts/switch.sh vllm/gemma-31b-dual # dual (single-card 31B has no functional config since the beellama retirement)"
     ;;
   gemma-4-26b-a4b)
     SAMPLE_CONTAINER="vllm-gemma-4-26b-a4b"

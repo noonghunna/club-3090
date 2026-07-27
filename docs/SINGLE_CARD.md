@@ -35,7 +35,7 @@ For workloads that **don't** accumulate context across turns (single-shot RAG, s
 
 > 💡 **Simplest vs fastest (single-card):** `llamacpp/default` (mainline Q4_K_M, clean upstream image) is the no-friction pick; **`ik-llama/iq4ks-mtp` is ~18–20% faster + leanest VRAM** (separate fork + IQK quant) for max single-card speed. Both are cliff-immune — see [#184](https://github.com/noonghunna/club-3090/discussions/184).
 >
-> 🎯 **Don't want to choose?** `bash scripts/switch.sh qwen3.6-27b/default` (or a bare `bash scripts/launch.sh`) resolves the **blessed single-card default automatically** — on one 3090 that's **`ik-llama/iq4ks-mtp` (fastest + leanest)**, with **`llamacpp/default` as the cliff-immune alternative** (this is the `single` order in `ENGINE_PREFERENCE`: `ik-llama > llama.cpp > vllm`; `beellama` ranks first but isn't onboarded yet — see [docs/UPSTREAM.md](UPSTREAM.md)). Pin your own with `--set-default <slug>`; see the [FAQ](FAQ.md#how-do-i-set-my-own-default-config).
+> 🎯 **Don't want to choose?** `bash scripts/switch.sh qwen3.6-27b/default` (or a bare `bash scripts/launch.sh`) resolves the **blessed single-card default automatically** — on one 3090 that's **`ik-llama/iq4ks-mtp` (fastest + leanest)**, with **`llamacpp/default` as the cliff-immune alternative** (this is the `single` order in `ENGINE_PREFERENCE`: `ik-llama > llama.cpp > vllm`; `beellama` was retired 2026-07-27 — Anbeeld #98 won't-fix, all its slugs deprecated). Pin your own with `--set-default <slug>`; see the [FAQ](FAQ.md#how-do-i-set-my-own-default-config).
 
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
 |---|---|---|---|---|
@@ -274,7 +274,7 @@ bash scripts/setup.sh qwen3.6-27b
 bash scripts/launch.sh
 
 # 3. Or skip the wizard:
-bash scripts/launch.sh --variant beellama/dflash   # single-card default (DFlash, code-fast)
+bash scripts/launch.sh --variant ik-llama/iq4ks-mtp   # single-card default (MTP, fastest + leanest)
 bash scripts/launch.sh --variant llamacpp/default  # easy mode
 
 # 4. Sanity test

@@ -15,7 +15,7 @@
 #              23.5 GB). See "Big-context mode" below. Native model max is 262144 (needs
 #              kvarn2 single-card — too low-fidelity for code — or dual-card).
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    🧪 EXPERIMENTAL — validated 2026-06-12 on the v0.3.2-preview KVarN digest build
+#   Status:    🗑️ Deprecated
 #              (sha256:858e7c…): embedded MTP head LOADS, verify-full all-pass (Paris/tools/
 #              streaming/thinking), NIAH needle recalled at ~72K depth (= q5_0/q4_1 control),
 #              bench ~46/58 TPS narr/code @ kvarn4+MTP (≈ q5_0/q4_1 — KVarN is decode-speed-
@@ -29,7 +29,7 @@
 #              structoutput 14·dataextract 9-10·reasonmath 11-12·bugfind 12-14·hermes 10·
 #              cli 17-19. (--full, kvarn4/kvarn4, 2026-06-12; disc #329). dataextract sits
 #              8-10 across ALL configs incl. q5_0/q4_1 = model number-formatting trait, not KV.
-#   Caveats:   (1) Needs the KVarN build (v0.3.2 preview, digest-pinned) — the older
+#   Caveats:   [Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.] (1) Needs the KVarN build (v0.3.2 preview, digest-pinned) — the older
 #              -317c65 tag has no kvarn* cache types; engines/beellama-local.yml install.spec
 #              carries the right digest (PR #389).
 #              (2) 160K is the MTP-on ceiling; 230K requires MTP off (~35 TPS, ~40% slower).

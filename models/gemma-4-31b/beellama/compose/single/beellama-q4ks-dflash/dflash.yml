@@ -20,8 +20,8 @@
 #              beellama is the only single-card engine that does Gemma-4 SWA windowed KV
 #              (big ctx) AND Gemma-4 spec-dec — ik-llama walls ~24K, mainline is ~10 TPS.
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    ⚠️ Production w/ caveats
-#   Caveats:   single-GPU DEFAULT for Gemma-4-31B — the ONLY viable fast single-card
+#   Status:    🗑️ Deprecated
+#   Caveats:   [Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.] single-GPU DEFAULT for Gemma-4-31B — the ONLY viable fast single-card
 #              Gemma-4 path (vLLM FA-walled at head_dim=512, ik-llama walls ~24K, stock
 #              llama.cpp ~12 TPS). Validated #441 + verify-full 8/8. Caveats:
 #              (1) THIN VRAM MARGIN at the 128K default — NIAH recalls to 117K but only

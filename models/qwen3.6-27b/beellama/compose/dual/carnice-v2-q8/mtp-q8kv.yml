@@ -12,7 +12,7 @@
 #   Template:  native (GGUF-embedded) via --jinja
 #   Max ctx:   262144 (full native) — fits @ -ts 0.55,0.45: 21.9/21.2 GB/card (~2.5 GB free each).
 #   Genesis:   N/A — beellama is a llama.cpp-family engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    🧪 Experimental
+#   Status:    🗑️ Deprecated
 #   Quality:   FULLY VALIDATED 2026-06-16 (rebench-full, dual 3090, q8_0 KV, n=1, 262K): verify-full
 #              ALL-PASS; bench n=5 narr 40.7 / code 44.0 decode TPS (CV <1.5%), TTFT ~90 ms, PP
 #              ~1197 t/s; verify-stress 8/8 (NIAH ladder clean to 240K = 91% of 262K); soak fresh
@@ -21,8 +21,7 @@
 #              toolcall 13/14 · instructfollow 13/14 · structoutput 14/14 · dataextract 9/10 ·
 #              reasonmath 13/12 · bugfind 12/13 · hermes 12/12 (of 20) · cli 17/16 (of 40). In-band
 #              (≈ qwopus-coder 103; Q5 single = 110) — q8_0 KV held quality with the +17% prefill.
-#   Caveats:
-#     - MTP n_max=1 default (the head is mtp_num_hidden_layers=1; author: n=3 "wrong by a wide
+#   Caveats:   [Engine RETIRED 2026-07-27: Anbeeld closed #98 won't-fix (v0.4.x DFlash = upstream impl with the VRAM regression, ~32K ceiling); pin v0.3.2-preview unmaintained. Migration target: llama-cpp-mainline (see the retire plan). Launch requires --force.] #     - MTP n_max=1 default (the head is mtp_num_hidden_layers=1; author: n=3 "wrong by a wide
 #       margin", n=2 "crashed on my 2x3090"). On OUR dual, n=2 does NOT crash and is ~+13% decode
 #       (45 vs 40 narr) — spec-dec is lossless, so the lower acceptance (62% vs 81%) costs speed
 #       only, not quality. n=2 is a validated opt-in (DRAFT_N_MAX=2); n=1 stays default.
