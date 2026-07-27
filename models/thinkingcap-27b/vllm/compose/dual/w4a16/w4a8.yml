@@ -22,11 +22,21 @@
 #                fold) — applied at boot via patches/w4a8/install.sh (see patches.yml).
 #              • dedicated compile cache (int8 flag AOT cache-key collision).
 #              • vision untested on this serve (text-only validated).
+#              • NO froggeric template mount — DELIBERATE: this is the
+#                structured-CoT fine-tune; the bundled template is the product
+#                and the Quality numbers below were validated on it (#790).
+#              • prefix caching ON (mamba-align) costs ~7% NARRATIVE decode vs
+#                off — 67.5 vs 72.7 tok/s, same-sitting A/B 2026-07-27, n=5/arm;
+#                code neutral (107.0 vs 109.1). The trade buys up to ~7.4x TTFT
+#                on held-prefix agent lanes (#736). Narrative-heavy non-agent
+#                serving: PREFIX_CACHE_ARG=--no-enable-prefix-caching restores
+#                the 73/106 profile.
 #   Quality:   8-pack 113/150 (75%) think-off · 120/150 (80%) think-on
 #              (benchlocal --full, rebench thinkingcap-27b-20260721-0758) — TOPS the
 #              Tess W4A16 (108/115) and Qwen fast-tier (109) on BOTH legs.
 #   Best for:  ⭐ top-of-class 27B W4 quality (esp. reasoning) at Tess-tied speed —
-#              73 narrative / 106 code tok/s, full 262K, on 2× 24 GB
+#              67.5 narrative / 107 code tok/s (prefix-ON default; 72.7/109 with
+#              prefix off), full 262K, on 2× 24 GB
 # ---------------------------------------------------------------------------
 # Dual-3090 W4A8 config. Derived from the Tess-4-27B LeaderboardModel1 W4A16 DUAL
 # compose (same AutoRound family) — adapted to W4A8 (int8 activations). Single-card
@@ -60,6 +70,10 @@ services:
       # SHARED from the qwen3.6-27b tree (single source of truth, like pr48375);
       # run at boot via install.sh. Registered in patches.yml (qwen-w4a8-int8-act).
       - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
+      # Vendored vllm#48375 (MambaManager drop_eagle_block) — SHARED from the
+      # qwen3.6-27b tree (same hybrid family). Makes MTP x prefix-caching safe;
+      # inert if PREFIX_CACHE_ARG opts back out. See patches.yml + #736/#790.
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
@@ -94,6 +108,7 @@ services:
         set -e
         source /etc/club3090/detect_nvlink.sh
         bash /etc/club3090/w4a8/install.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
         echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE}"
         SPEC=""
         if [ "$${SPEC_N:-5}" -gt 0 ] 2>/dev/null; then
@@ -128,7 +143,10 @@ services:
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
-      - --no-enable-prefix-caching
+      # Prefix caching ON by default (#736 parity, closes the #790 gap): safe
+      # under MTP because the vllm#43559 fix (vllm#48375) is VENDORED here and
+      # applied at boot. Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
       - --enable-chunked-prefill
       - --reasoning-parser
       - qwen3
