@@ -360,6 +360,13 @@ check(r.stratum is P.Stratum.DERIVER
       f"g12: no safetensors -> stratum-1 unsupported-format "
       f"(got {r.stratum.name}/{r.abort_reason})")
 
+# g12a-hint: the CLI prints an actionable GGUF hint on this abort (the
+# 2026-07-27 triage class — bare pull.sh on a *-GGUF repo read as broken).
+h = "\n".join(P._unsupported_format_hint(s))
+check("route-G" in h and f"hf download {s}" in h
+      and "Run a local GGUF without the catalog" in h,
+      "g12a-hint: unsupported-format hint carries route-G + hf download + doc pointer")
+
 # g12b: multiple top-level safetensors, no index -> ambiguous-weight-set.
 s = "fixtures/ambiguous"
 ff = FixtureFetcher({

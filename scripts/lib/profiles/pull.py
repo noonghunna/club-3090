@@ -1711,6 +1711,26 @@ def _maybe_submit_verb(argv: list[str]) -> Optional[int]:
     )
 
 
+def _unsupported_format_hint(slug: str) -> list[str]:
+    """Actionable hint lines for the `unsupported-format` abort.
+
+    The evaluate path is safetensors-only BY DESIGN (the fit math reads
+    config.json), and this abort is USUALLY a GGUF-only repo hitting it
+    (2026-07-27 community triage: the bare abort read as "downloads are
+    broken").  No detection here — the deriver 404s on config.json before any
+    file listing exists, and a print site must not add network calls — so the
+    wording stays conditional.
+    """
+    return [
+        "hint: 'unsupported-format' means no transformers config.json — "
+        "usually a GGUF-only repo. GGUF is served WITHOUT this evaluate path:",
+        "hint:   c3 → Bring & Validate → pick a quant in the GGUF table (route-G), or fetch directly:",
+        f"hint:   hf download {slug} --include '<Quant>*.gguf'",
+        "hint:   then serve it via a llama.cpp/ik compose — docs/ADDING_MODELS.md "
+        "→ 'Run a local GGUF without the catalog'",
+    ]
+
+
 def main(argv: list[str]) -> int:
     import argparse
 
@@ -1823,6 +1843,9 @@ def main(argv: list[str]) -> int:
         print(f"[pull] reason={res.abort_reason}")
     if res.detail:
         print(f"[pull] {res.detail}")
+    if res.abort_reason == "unsupported-format":
+        for h in _unsupported_format_hint(res.slug):
+            print(f"[pull] {h}")
     for n in res.notices:
         print(f"[pull] note: {n}")
     if res.emitted and not args.out:
