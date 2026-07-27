@@ -68,9 +68,23 @@ contributor happened to mention. **Every `Rig` cell should state, in order:**
    [PCIE_P2P.md §7](docs/PCIE_P2P.md). **So this field is automatic on any run
    from 2026-07-05 onward** — the only rows missing it are older ones, and those
    can't be used in a P2P comparison.
-4. anything else non-default — virtualization, riser/PCIe gen, cooling.
+4. **resolved custom-all-reduce state** — `custom AR on` / `custom AR off` /
+   `custom AR off (vLLM >2-PCIe gate)`. This is a **silent recipe axis**: vLLM
+   force-disables its custom all-reduce at world_size > 2 without a FULLY-
+   connected NVLink mesh — pairwise 3090 bridges (2 bridges on 4 cards) do NOT
+   qualify (its gate checks 1-hop NVLink via NVML, never peer access — [#786](https://github.com/noonghunna/club-3090/issues/786),
+   found via [disc #773](https://github.com/noonghunna/club-3090/discussions/773)),
+   so **every dual row and every multi3+/multi4 PCIe row differ on this axis by
+   construction** — and dual rows split again between first-party (AR off via
+   `--disable-custom-all-reduce`, the no-P2P reference rig) and community
+   P2P/NVLink duals (AR on). A TP=2-vs-TP=4 comparison that doesn't state it is
+   comparing recipes, not topologies. `report.sh` resolves it in the
+   *Interconnect verdict* (the `via NCCL` wording = vLLM vetoed its kernel);
+   ground truth in any vLLM log is the presence/absence of the
+   `Custom allreduce is disabled…` line.
+5. anything else non-default — virtualization, riser/PCIe gen, cooling.
 
-`report.sh --full` captures all four automatically. It is only when a row is
+`report.sh --full` captures all five automatically. It is only when a row is
 hand-written that they go missing — which is exactly how the confound in the
 `multi-fast` @ryanmpelletier row (softened below) got published.
 

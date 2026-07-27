@@ -112,7 +112,9 @@ From cross-rig data on this stack (2× 3090, TP=2):
 | DFlash / spec-decode path — patched P2P | **+19–22%** | [#95](https://github.com/noonghunna/club-3090/issues/95) |
 | NVLink hardware (reference, power-matched A/B) | **~+15%** | [#77](https://github.com/noonghunna/club-3090/issues/77) |
 
-**Translation:** code / spec-decode workloads see a real lift (the K+1 cross-card verify is bandwidth-bound, so it benefits most); narrative decode barely moves. The gain also grows with GPU count (more all-reduce traffic at TP=4). For most users the stock no-P2P PCIe path is already perfectly fine — **P2P is an enthusiast tuning lever, not a requirement.**
+**Translation:** code / spec-decode workloads see a real lift (the K+1 cross-card verify is bandwidth-bound, so it benefits most); narrative decode barely moves. For most users the stock no-P2P PCIe path is already perfectly fine — **P2P is an enthusiast tuning lever, not a requirement.**
+
+⚠️ **These are DUAL-card measurements — do not extrapolate them to 3+ GPUs.** At world_size > 2 without NVLink, **vLLM force-disables its custom all-reduce kernel** (its gate queries NVML for NVLink and never consults peer access — [#786](https://github.com/noonghunna/club-3090/issues/786)), so whatever P2P is worth at TP=4 arrives **through NCCL peer transfers only** — a lower ceiling than the dual-card custom-kernel path above. An earlier revision of this section claimed the gain "grows with GPU count"; that was a projection, not a measurement, and is withdrawn — **no measured multi-GPU P2P A/B exists yet** ([disc #773](https://github.com/noonghunna/club-3090/discussions/773) has the first candidate rig).
 
 ---
 
@@ -125,6 +127,10 @@ bash scripts/report.sh
 ```
 
 Read the **"Interconnect verdict"** line under *Boot log highlights* — the report cross-references host capability against the running container's engagement automatically: `✓ engaged`, `⚠ WARN` (NVLink bridge present but idle), or `ℹ` (P2P-capable driver, container not using it), each naming the fix. The raw evidence sits directly above it: the `[nvlink]` boot line plus the resolved `NCCL_P2P_LEVEL` + custom-all-reduce env. On rigs with no P2P capability the verdict line is deliberately absent — silence means "nothing to gain here", not "check failed". (This is exactly the round-trip the field was added to avoid — [#446](https://github.com/noonghunna/club-3090/issues/446), [#488](https://github.com/noonghunna/club-3090/issues/488).)
+
+**On 3+ PCIe cards, expect "engaged via NCCL", not "custom all-reduce ON".** vLLM vetoes its custom kernel at world_size > 2 without NVLink and logs `Custom allreduce is disabled because it's not supported on more than two PCIe-only GPUs` — that line is **expected on every 3+-card PCIe rig, patched or not**, and is not a misconfiguration. The same veto fires on **pairwise NVLink bridges** at 3+ cards (2 bridges on 4x 3090 is never a full 1-hop mesh — consumer cards bridge exactly two GPUs), so a quad-3090-with-bridges rig is also NCCL-only in vLLM; only NVSwitch/SXM-class full meshes keep the custom kernel at world>2. The report folds it into the verdict automatically ([#786](https://github.com/noonghunna/club-3090/issues/786)); P2P remains active on the NCCL path.
+
+**Transfer-verified P2P — the strongest evidence tier.** Everything above is ultimately a driver *assertion* (the topo matrix, the module license, a clean boot — all the same query asked three ways). vLLM ships a functional check that actually moves bytes: boot once with `VLLM_SKIP_P2P_CHECK=0` and it performs an IPC write/read-back across every directed GPU pair, caching the result to `~/.cache/vllm/gpu_p2p_access_cache_for_<devices>.json`. `report.sh` reads that cache automatically when present (host first, then the serving container) and adds a **"Transfer check"** line — `✓ N/N directed pairs OK` upgrades the verdict from driver-asserted to *measured*, and a partial result flags advertised-but-broken peer access that no driver query can see. The check costs seconds and the cache is a durable, paste-able artifact (idea from [disc #773](https://github.com/noonghunna/club-3090/discussions/773)).
 
 ---
 
