@@ -5552,6 +5552,21 @@ def _byo_result_text(res: ByoResult, weights_present: Optional[bool] = None,
     affordance.  ``None`` = unknown → keep the download prompt (safe default)."""
     if res.error:
         return f"[red]Fit-check failed:[/red] {res.error}"
+    # GGUF redirect (services.byo_check intercept): the safetensors evaluate leg
+    # can't score a GGUF-only repo — route the user to the quant picker instead
+    # of a dead-end verdict.  NOT an error (red) and NOT servable-yet (green).
+    if res.fit_verdict == "gguf-pick-quant":
+        return "\n".join([
+            f"  [bold]{res.repo}[/bold]",
+            "  [yellow]◆ GGUF-only repo[/yellow] — the profile fit-check is "
+            "safetensors-only.",
+            f"  {res.note}",
+            "",
+            "  [green]→ Pick a quant in the GGUF table above, then re-run the "
+            "fit-check[/green]",
+            "  [dim]route-G serves it via a GGUF-engine sibling clone "
+            "(size-fit only)[/dim]",
+        ])
     # Route-C swap (a curated-arch fine-tune → serve via the sibling's recipe with
     # the brought weights): the engine verdict is "no-fit-model" because the generic
     # fit-math can't PRICE a curated-hybrid arch — but the OUTCOME is servable. A red
@@ -8541,7 +8556,12 @@ class CockpitApp(App):
         # N9 — carry the fit-check result forward: pre-arm ② Serve with the
         # resolved target so the producer pipeline flows ① → ② without re-entry.
         try:
-            armed_byo = res if not getattr(res, "error", "") else None
+            armed_byo = (
+                res
+                if not getattr(res, "error", "")
+                and getattr(res, "fit_verdict", "") != "gguf-pick-quant"
+                else None
+            )
             self._arm_serve_pane(armed_byo)
         except Exception:
             pass

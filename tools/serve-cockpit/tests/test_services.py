@@ -1043,6 +1043,80 @@ class TestByoCheck:
         res = await cd.byo_check("org/Model", "vllm/dual")
         assert res.error
 
+    # ── GGUF redirect: the safetensors evaluate leg on a GGUF-only repo ──────
+    UNSUPPORTED_JSON = (
+        '{"arch": null, "eligible": false, "fit_verdict": "unsupported-format",'
+        ' "note": "unsupported-format: org/Model-GGUF (no config.json)",'
+        ' "swap_path": {"drop_spec_config": false, "quant_match": null,'
+        ' "route": null, "sibling_slug": null}}'
+    )
+    GGUF_INV_JSON = (
+        '{"formats": ["gguf"], "safetensors": null, "gguf_variants":'
+        ' [{"quant": "Q4_K_M", "size_gb": 16.8, "parts": 1, "files": ["a.gguf"]},'
+        '  {"quant": "MTP-IQ4_XS", "size_gb": 15.9, "parts": 1, "files": ["b.gguf"]}]}'
+    )
+
+    @pytest.mark.asyncio
+    async def test_byo_gguf_only_redirects_to_quant_picker(self):
+        """unsupported-format + GGUF-only inventory -> gguf-pick-quant, not a
+        dead-end (the 2026-07-27 community-triage class)."""
+        runner = full_runner(**{
+            "pull.sh": ok(self.UNSUPPORTED_JSON),
+            "--inventory": ok(self.GGUF_INV_JSON),
+        })
+        cd = CockpitData(ROOT, runner=runner)
+        res = await cd.byo_check("org/Model-GGUF", "llamacpp/deckard40B-dual-mtp")
+        assert res.fit_verdict == "gguf-pick-quant"
+        assert res.arch == "gguf"
+        assert res.eligible is False
+        assert not res.error
+        assert "2 quant(s)" in res.note
+        assert "llamacpp/deckard40B-dual-mtp" in res.note
+
+    @pytest.mark.asyncio
+    async def test_byo_gguf_only_safetensors_profile_suggests_gguf_engines(self):
+        runner = full_runner(**{
+            "pull.sh": ok(self.UNSUPPORTED_JSON),
+            "--inventory": ok(self.GGUF_INV_JSON),
+        })
+        cd = CockpitData(ROOT, runner=runner)
+        res = await cd.byo_check("org/Model-GGUF", "vllm/dual")
+        assert res.fit_verdict == "gguf-pick-quant"
+        assert "safetensors engine" in res.note
+        assert "llamacpp" in res.note
+
+    @pytest.mark.asyncio
+    async def test_byo_unsupported_format_non_gguf_passes_through(self):
+        """A genuinely unsupported repo (no GGUF either) keeps the original
+        verdict — the intercept must not swallow it."""
+        runner = full_runner(**{
+            "pull.sh": ok(self.UNSUPPORTED_JSON),
+            "--inventory": ok('{"formats": [], "safetensors": null, "gguf_variants": []}'),
+        })
+        cd = CockpitData(ROOT, runner=runner)
+        res = await cd.byo_check("org/NotAModel", "vllm/dual")
+        assert res.fit_verdict == "unsupported-format"
+
+    @pytest.mark.asyncio
+    async def test_byo_unsupported_format_inventory_error_passes_through(self):
+        """Inventory fetch failure -> keep the original verdict (never crash
+        the fit-check on the redirect's own probe)."""
+        runner = full_runner(**{
+            "pull.sh": ok(self.UNSUPPORTED_JSON),
+            "--inventory": ok(""),
+        })
+        cd = CockpitData(ROOT, runner=runner)
+        res = await cd.byo_check("org/Model-GGUF", "llamacpp/deckard40B-dual-mtp")
+        assert res.fit_verdict == "unsupported-format"
+
+    def test_profile_like_is_gguf_engine(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        assert cd.profile_like_is_gguf_engine("llamacpp/deckard40B-dual-mtp")
+        assert cd.profile_like_is_gguf_engine("ik-llama/iq4ks-mtp")
+        assert cd.profile_like_is_gguf_engine("beellama/dflash")
+        assert not cd.profile_like_is_gguf_engine("vllm/dual")
+        assert not cd.profile_like_is_gguf_engine("")
+
 
 class TestScenesDoctor:
     @pytest.mark.asyncio

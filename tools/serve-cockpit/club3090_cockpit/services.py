@@ -1171,7 +1171,46 @@ class CockpitData:
         )
         if data is None:
             return ByoResult(repo=repo, profile_like=profile_like, error=err or "no output")
-        return ByoResult.from_dict(repo, profile_like, data)
+        res = ByoResult.from_dict(repo, profile_like, data)
+        # The evaluate leg is safetensors-only BY DESIGN (the deriver's fit math
+        # reads config.json), so a GGUF-only repo aborts `unsupported-format`
+        # here even though route-G handles it first-class.  Intercept exactly
+        # that verdict, confirm the format from the inventory (error path only —
+        # the success path pays no extra API call), and redirect to the quant
+        # picker instead of surfacing a dead-end the user reads as "downloads
+        # are broken" (2026-07-27 community triage: a DavidAU *-GGUF repo +
+        # `--profile-like llamacpp/…` looked like a c3 download failure).
+        if res.fit_verdict == "unsupported-format":
+            inv = await self.bring_inspect(repo)
+            n = len(getattr(inv, "gguf_variants", None) or [])
+            if not getattr(inv, "error", "") and n and not inv.has_safetensors:
+                if self.profile_like_is_gguf_engine(profile_like):
+                    note = (
+                        f"GGUF-only repo — {n} quant(s) discovered. Pick one to "
+                        f"fit-check against {profile_like} (size-fit; the full "
+                        "gate math is safetensors-only)."
+                    )
+                else:
+                    note = (
+                        f"GGUF-only repo — {n} quant(s) discovered, but "
+                        f"{profile_like} is a safetensors engine. Pick a quant "
+                        "and a GGUF-engine sibling (llamacpp / ik-llama / "
+                        "beellama)."
+                    )
+                return ByoResult(
+                    repo=repo, profile_like=profile_like, arch="gguf",
+                    eligible=False, fit_verdict="gguf-pick-quant", note=note,
+                )
+        return res
+
+    # GGUF-engine slug prefixes (the registry's engine path segment) — the
+    # engines whose sibling composes route-G can clone.  vllm (safetensors)
+    # is deliberately absent.
+    _GGUF_ENGINE_PREFIXES = frozenset({"llamacpp", "ik-llama", "beellama"})
+
+    def profile_like_is_gguf_engine(self, profile_like: str) -> bool:
+        """True iff the slug's engine segment is a GGUF engine (route-G clonable)."""
+        return (profile_like or "").split("/", 1)[0] in self._GGUF_ENGINE_PREFIXES
 
     # Topology → card count (same tokens as funnel_slug_options / compose paths).
     _GGUF_TOPO_CARDS = {
