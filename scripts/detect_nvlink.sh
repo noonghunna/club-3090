@@ -25,6 +25,40 @@
 
 NVLINK_MODE="${NVLINK_MODE:-auto}"
 _P2P_LEVEL=NVL   # NCCL_P2P_LEVEL used when _NVLINK_ENABLED=1 (overridden by pcie_p2p)
+_GPU_COUNT=$(nvidia-smi -L 2>/dev/null | grep -c 'GPU' || echo 0)
+
+# What may we honestly claim about vLLM's custom all-reduce? Only "ON" for <=2
+# GPUs, or for a FULLY-CONNECTED NVLink mesh: vLLM hard-disables its custom
+# kernel at world_size>2 unless every GPU pair is 1-hop NVLink (its gate
+# queries NVML for NVLink, never peer access). Two consequences (club-3090
+# #786): a >2-GPU PCIe-P2P boot must not assert it, and neither may a >2-GPU
+# rig with PAIRWISE bridges — consumer 3090-class cards bridge exactly two
+# cards, so 4x 3090 = 2 separate bridges = never a full mesh. P2P/NVLink still
+# runs via NCCL in both cases. The auditor (p2p-state.sh) keys on both wordings.
+_ar_claim() {
+  if [ "${_GPU_COUNT:-0}" -gt 2 ] && [ "${_P2P_LEVEL:-NVL}" != "NVL" ]; then
+    printf 'custom all-reduce engine-gated (vLLM disables its custom kernel at >2 PCIe-only GPUs — P2P runs via NCCL; #786)'
+  elif [ "${_GPU_COUNT:-0}" -gt 2 ] && [ "${_NVLINK_PARTIAL:-0}" -eq 1 ]; then
+    printf 'custom all-reduce engine-gated (NVLink mesh not fully connected — pairwise bridges; vLLM requires full 1-hop connectivity at world>2, so its kernel is off and NVLink/P2P runs via NCCL; #786)'
+  else
+    printf 'custom all-reduce ON'
+  fi
+}
+
+# Full-mesh NVLink probe (>2 GPUs): every off-diagonal GPU-GPU cell in
+# `topo -m` must be NV<n>. Pairwise 3090 bridges (2 bridges on 4 cards) fail
+# this; NVSwitch/SXM meshes pass. Exit 0 = full mesh.
+_nvlink_full_mesh() {
+  nvidia-smi topo -m 2>/dev/null | awk '
+    NR == 1 { for (i = 1; i <= NF; i++) if ($i ~ /^GPU[0-9]+$/) ngpu++ ; next }
+    $1 ~ /^GPU[0-9]+$/ {
+      rows++
+      for (i = 2; i <= ngpu + 1; i++)
+        if ($i != "X" && $i !~ /^NV[0-9]+$/) partial = 1
+    }
+    END { exit (rows > 0 && !partial) ? 0 : 1 }
+  '
+}
 
 # True (0) when nvidia-smi reports working P2P between ALL GPU pairs — e.g. a patched
 # consumer-GPU driver (NVIDIA's stock driver software-disables P2P → reports "CNS") on a
@@ -62,22 +96,27 @@ case "$NVLINK_MODE" in
     _NVLINK_ENABLED=1
     _P2P_LEVEL="${NCCL_P2P_LEVEL:-PHB}"
     if _pcie_p2p_available; then
-      echo "[nvlink] NVLINK_MODE=pcie_p2p — forcing PCIe P2P; driver confirms peer access (nvidia-smi topo -p2p: OK) — NCCL_P2P_LEVEL=$_P2P_LEVEL, custom all-reduce ON"
+      echo "[nvlink] NVLINK_MODE=pcie_p2p — forcing PCIe P2P; driver confirms peer access (nvidia-smi topo -p2p: OK) — NCCL_P2P_LEVEL=$_P2P_LEVEL, $(_ar_claim)"
     else
       _P2P_UNVERIFIED=1
       echo "[nvlink] WARNING: NVLINK_MODE=pcie_p2p set, but nvidia-smi topo -p2p does NOT report peer access as OK — the driver likely refused P2P (a closed GeForce driver disables it; the open kernel modules or a patched module + a P2P-capable board are what enable it). Forcing the NCCL/all-reduce config on as requested, but NCCL will silently fall back → throughput ≈ P2P-off. Verify with: nvidia-smi topo -p2p rw. Guide: docs/PCIE_P2P.md" >&2
     fi
     ;;
   auto)
-    GPU_COUNT=$(nvidia-smi -L 2>/dev/null | grep -c 'GPU' || echo 0)
+    GPU_COUNT="$_GPU_COUNT"
     if [ "$GPU_COUNT" -gt 2 ]; then
       # Check topology matrix for any NVLink connections (e.g. 2 bridges on 4 cards).
       if nvidia-smi topo -m 2>/dev/null | grep -qP '\bNV[0-9]+\b'; then
         _NVLINK_ENABLED=1
-        echo "[nvlink] $GPU_COUNT GPUs detected — NVLink found, enabling NVLink mode"
+        if _nvlink_full_mesh; then
+          echo "[nvlink] $GPU_COUNT GPUs detected — NVLink full mesh, enabling NVLink mode"
+        else
+          _NVLINK_PARTIAL=1
+          echo "[nvlink] $GPU_COUNT GPUs detected — NVLink found on GPU pairs but the mesh is NOT fully connected (pairwise bridges, e.g. 2 bridges on 4 cards) — enabling NVLink mode; NCCL uses NVLink per bridged pair"
+        fi
       elif _pcie_p2p_available; then
         _NVLINK_ENABLED=1; _P2P_LEVEL="${NCCL_P2P_LEVEL:-PHB}"
-        echo "[nvlink] $GPU_COUNT GPUs — no NVLink, but nvidia-smi reports P2P=OK (patched driver / P2P-capable layout) — auto-enabling PCIe P2P (NCCL_P2P_LEVEL=$_P2P_LEVEL, custom all-reduce ON)"
+        echo "[nvlink] $GPU_COUNT GPUs — no NVLink, but nvidia-smi reports P2P=OK (patched driver / P2P-capable layout) — auto-enabling PCIe P2P (NCCL_P2P_LEVEL=$_P2P_LEVEL, $(_ar_claim))"
       else
         _NVLINK_ENABLED=0
         echo "[nvlink] $GPU_COUNT GPUs detected — no NVLink, no P2P — using PCIe mode"
@@ -129,7 +168,7 @@ if [ "$_NVLINK_ENABLED" -eq 1 ]; then
     # engagement is NOT proven. Say so — never print "ENABLED" without evidence (#688).
     echo "[nvlink] P2P REQUESTED (UNVERIFIED) — NCCL_P2P_LEVEL=$NCCL_P2P_LEVEL + custom all-reduce configured as forced, but peer access is UNCONFIRMED (topo -p2p ≠ OK; see the warning above). If the driver refused P2P, NCCL falls back and throughput ≈ P2P-off — verify with nvidia-smi topo -p2p rw. expandable_segments stripped (PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF)"
   else
-    echo "[nvlink] P2P ENABLED — NCCL_P2P_LEVEL=$NCCL_P2P_LEVEL, custom all-reduce ON, expandable_segments stripped (PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF)"
+    echo "[nvlink] P2P ENABLED — NCCL_P2P_LEVEL=$NCCL_P2P_LEVEL, $(_ar_claim), expandable_segments stripped (PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF)"
   fi
 else
   export NCCL_P2P_DISABLE=1
@@ -138,4 +177,4 @@ else
   echo "[nvlink] P2P DISABLED — NCCL_P2P_DISABLE=1, custom all-reduce OFF, expandable_segments ON"
 fi
 
-unset -f _pcie_p2p_available 2>/dev/null || true   # don't leak the probe into the sourcing shell
+unset -f _pcie_p2p_available _ar_claim _nvlink_full_mesh 2>/dev/null || true   # don't leak the probes into the sourcing shell

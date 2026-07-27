@@ -819,10 +819,15 @@ else
     # guess whether P2P was engaged (the gap that forced asks on #446 / #488).
     nvlink_boot=$(docker logs "$CONTAINER" 2>&1 | grep -E '\[nvlink\]' | head -8)
     p2p_env=$(docker exec "$CONTAINER" env 2>/dev/null | grep -E '^(NCCL_P2P|NVLINK_MODE|NCCL_CUMEM)=' | sort)
+    # vLLM's runtime custom-AR veto (world>2 without NVLink — its gate never
+    # consults peer access). Fed to the classifier so the verdict can't claim
+    # "custom all-reduce ON" that vLLM already vetoed (#786).
+    vllm_ar_gate=$(docker logs "$CONTAINER" 2>&1 | grep -m1 'Custom allreduce is disabled' || true)
     echo "**Interconnect / P2P engagement:**"
-    if [[ -n "$nvlink_boot" || -n "$p2p_env" ]]; then
+    if [[ -n "$nvlink_boot" || -n "$p2p_env" || -n "$vllm_ar_gate" ]]; then
       echo '```'
       [[ -n "$nvlink_boot" ]] && echo "$nvlink_boot"
+      [[ -n "$vllm_ar_gate" ]] && { echo "# vLLM runtime:"; echo "$vllm_ar_gate"; }
       [[ -n "$p2p_env" ]] && { echo "# resolved container env:"; echo "$p2p_env"; }
       echo '```'
     else
@@ -832,7 +837,7 @@ else
     # Silent on single-GPU / no-capability rigs so the OK/WARN/INFO line is
     # always signal, never boilerplate.
     _p2p_verdict_line="$(p2p_verdict "$(p2p_gpu_count)" "$(p2p_host_capability)" \
-      "$(printf '%s\n%s' "$nvlink_boot" "$p2p_env" | p2p_classify_engagement)")"
+      "$(printf '%s\n%s\n%s' "$nvlink_boot" "$vllm_ar_gate" "$p2p_env" | p2p_classify_engagement)")"
     [[ -n "$_p2p_verdict_line" ]] && { echo; echo "**Interconnect verdict:** ${_p2p_verdict_line}"; }
     # Kernel-module flavor — the WHY behind a P2P result on GeForce cards. A
     # proprietary (closed) module refuses P2P; the open modules can grant it, with
@@ -844,6 +849,25 @@ else
         proprietary) echo; echo "**NVIDIA kernel module:** proprietary (closed) — refuses P2P on GeForce; the open kernel modules (\`nvidia-open\`, or a patched fork) are what enable it. A \`CNS\` in \`topo -p2p rw\` above is this. See docs/PCIE_P2P.md." ;;
         open)        echo; echo "**NVIDIA kernel module:** open (\`Dual MIT/GPL\`) — P2P-capable on GeForce; whether it's granted is the \`topo -p2p rw\` result above (\`OK\` = engaged, \`CNS\` = board/layout still refusing). Metadata can't tell stock \`nvidia-open\` from a patched fork — the topo result is the proof." ;;
       esac
+      # Transfer-verified P2P (#786, read-only tier folded from #787): report
+      # vLLM's functional-check cache when a boot ever ran with
+      # VLLM_SKIP_P2P_CHECK=0 — host first, then the serving container.
+      # Absence is normal (the check is off by default upstream); when present
+      # it upgrades the verdict above from driver-asserted to measured.
+      _tc_json=""; _tc_src=""
+      _tc_f="$(p2p_transfer_cache_file)"
+      if [[ -n "$_tc_f" ]]; then
+        _tc_json="$(cat "$_tc_f" 2>/dev/null)"; _tc_src="${_tc_f/#$HOME/\~}"
+      fi
+      if [[ -z "$_tc_json" ]]; then
+        _tc_f="$(docker exec "$CONTAINER" sh -c 'ls -t /root/.cache/vllm/gpu_p2p_access_cache_for_*.json 2>/dev/null | head -1' 2>/dev/null || true)"
+        [[ -n "$_tc_f" ]] && { _tc_json="$(docker exec "$CONTAINER" cat "$_tc_f" 2>/dev/null)"; _tc_src="container:${_tc_f}"; }
+      fi
+      if [[ -n "$_tc_json" ]]; then
+        read -r _tc_ok _tc_total <<<"$(printf '%s' "$_tc_json" | p2p_transfer_cache_parse)" || true
+        _tc_line="$(p2p_transfer_verdict "${_tc_ok:-0}" "${_tc_total:-0}" "$_tc_src")"
+        [[ -n "$_tc_line" ]] && { echo; echo "**Transfer check:** ${_tc_line}"; }
+      fi
     fi
     echo
 
