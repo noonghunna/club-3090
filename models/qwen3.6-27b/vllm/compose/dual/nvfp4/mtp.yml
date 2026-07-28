@@ -214,8 +214,11 @@ services:
       # Prefix-caching ON by default (flipped 2026-07-17, #710/#736): this
       # compose ships NO MTP arg, so the vllm#43559 corruption pair cannot
       # form here — the #720 off-default was pure TTFT cost (measured 7.4x on
-      # long prefixes). Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
-      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
+      # ⚠️ #810: SPEC_ARGS injects MTP by default, so prefix-cache-ON forms the
+      # vllm#43559 corruption pair (the old exemption note claiming 'no MTP arg' was
+      # stale). Defaults OFF until pr48375 is wired here (#810).
+      # Re-enable at your own risk: PREFIX_CACHE_ARG=--enable-prefix-caching
+      - "${PREFIX_CACHE_ARG:---no-enable-prefix-caching}"
       - --enable-chunked-prefill
       # MTP n=3 — the checkpoint keeps mtp.* unquantized. Applied by the
       # entrypoint unless SPEC=off (tight-RAM / spec-dec-fails mitigation, #617).

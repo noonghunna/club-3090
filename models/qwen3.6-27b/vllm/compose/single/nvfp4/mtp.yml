@@ -180,7 +180,11 @@ services:
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
-      - --enable-prefix-caching
+      # ⚠️ #810: this slug injects MTP via SPEC_ARGS by default — MTP + prefix caching
+      # is the vllm#43559 DeltaNet corruption pair, and pr48375 is NOT wired here yet.
+      # Prefix caching therefore defaults OFF until the wiring lands (#810).
+      # Re-enable at your own risk: PREFIX_CACHE_ARG=--enable-prefix-caching
+      - "${PREFIX_CACHE_ARG:---no-enable-prefix-caching}"
       - --enable-chunked-prefill
       # MTP n=3 — mtp.* is unquantized in the checkpoint. Applied by the
       # entrypoint unless SPEC=off (see the environment block + entrypoint):
