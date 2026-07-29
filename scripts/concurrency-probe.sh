@@ -70,11 +70,28 @@ CONTAINER="${CONTAINER:-$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1
 
 _container_cmd() { docker inspect "$CONTAINER" --format '{{join .Config.Cmd " "}}' 2>/dev/null || true; }
 _served_seqs()   { _container_cmd | grep -oE 'max-num-seqs [0-9]+'  | grep -oE '[0-9]+' | head -1; }
+_served_np()     { _container_cmd | grep -oE '\-np +[0-9]+'         | grep -oE '[0-9]+' | head -1; }
 _served_ctx()    { _container_cmd | grep -oE 'max-model-len [0-9]+' | grep -oE '[0-9]+' | head -1; }
+# llama.cpp-family servers report the slot count as total_slots on /props.
+_props_slots()   { curl -s -m 3 "${URL}/props" 2>/dev/null \
+  | python3 -c 'import json,sys; v=json.load(sys.stdin).get("total_slots",""); print(v if isinstance(v,int) else "")' 2>/dev/null; }
 
-# CONCURRENCY defaults to the served max-num-seqs (the thing we're validating).
+# CONCURRENCY defaults to the served slot count (the thing we're validating).
+# Detection order: vLLM container flag -> llama.cpp container flag -> /props.
+# A failed detection is FATAL (#818): the old silent CONCURRENCY=2 fallback
+# measured queue-wait as concurrency against 1-slot servers and mislabeled arms.
 if [[ -z "${CONCURRENCY:-}" ]]; then
-  CONCURRENCY="$(_served_seqs || true)"; CONCURRENCY="${CONCURRENCY:-2}"
+  _conc_src="container max-num-seqs"; CONCURRENCY="$(_served_seqs || true)"
+  if [[ -z "$CONCURRENCY" ]]; then _conc_src="container -np";          CONCURRENCY="$(_served_np || true)"; fi
+  if [[ -z "$CONCURRENCY" ]]; then _conc_src="server /props total_slots"; CONCURRENCY="$(_props_slots || true)"; fi
+  if [[ -z "$CONCURRENCY" ]]; then
+    echo "[concurrency-probe] FATAL: cannot detect the served slot count" \
+         "(container cmd and ${URL}/props both failed) — pass CONCURRENCY=N explicitly" >&2
+    exit 2
+  fi
+  echo "[concurrency-probe] CONCURRENCY=$CONCURRENCY (detected: $_conc_src)"
+else
+  echo "[concurrency-probe] CONCURRENCY=$CONCURRENCY (explicit)"
 fi
 
 # VALIDATE preset: fill each stream to the served target context (N full-context
@@ -162,9 +179,9 @@ def one(stream, rnd):
     except Exception as e:
         return {"ok":False,"toks":0,"silent":False,"err":str(e)[:80],"dt":time.time()-t0,"ttft":None,"tps":0.0}
 
-print(f"\n{'round':>5} {'done':>7} {'silent':>7} {'errors':>7} {'vram_MB':>8} {'agg_t/s':>8} {'per-strm':>9}")
+print(f"\n{'round':>5} {'done':>7} {'silent':>7} {'errors':>7} {'vram_MB':>8} {'agg_t/s':>8} {'per-strm':>9} {'ttft_ms':>8} {'pf_t/s':>7}")
 vram0=vram_used_mb()
-vram_by_round=[]; mtps_by_round=[]; agg_by_round=[]; bad=0
+vram_by_round=[]; mtps_by_round=[]; agg_by_round=[]; ttft_by_round=[]; pf_by_round=[]; bad=0
 for rnd in range(1,ROUNDS+1):
     t0=time.time()
     with cf.ThreadPoolExecutor(max_workers=N) as ex:
@@ -177,7 +194,13 @@ for rnd in range(1,ROUNDS+1):
     tps_ok=[r["tps"] for r in res if r["ok"] and r["tps"]>0]
     mtps=statistics.median(tps_ok) if tps_ok else 0.0
     mtps_by_round.append(mtps); agg_by_round.append(agg)
-    print(f"{rnd:>5} {done:>4}/{N:<2} {silent:>7} {errs:>7} {v:>8} {agg:>8.1f} {mtps:>9.1f}")
+    # concurrent prefill: median TTFT across streams; prefill rate derived as
+    # PTOK/ttft (same convention as bench.sh's prefill probe: prompt_tokens/TTFT).
+    ttfts=[r["ttft"] for r in res if r["ok"] and r["ttft"]]
+    ttft_med=statistics.median(ttfts) if ttfts else 0.0
+    pf=(PTOK/ttft_med) if ttft_med>0 else 0.0
+    ttft_by_round.append(ttft_med); pf_by_round.append(pf)
+    print(f"{rnd:>5} {done:>4}/{N:<2} {silent:>7} {errs:>7} {v:>8} {agg:>8.1f} {mtps:>9.1f} {ttft_med*1000:>8.0f} {pf:>7.0f}")
     if done<N or silent or errs: bad+=1
 
 # VRAM: leak = post-warm growth (round 2 baseline), NOT the expected cold->warm fill.
@@ -211,6 +234,10 @@ print(f"  VRAM: cold {vram0} -> warm {warm} MB (pool fill {pool_fill} MB, expect
 print(f"  per-stream decode: {report_tps:.1f} tok/s (steady) · aggregate {report_agg:.1f} tok/s "
       f"({N} streams) · retention {retention*100:.1f}% "
       f"(min {RETENTION_MIN*100:.0f}%)" + (f" · floor {TPS_FLOOR:.0f}" if TPS_FLOOR>0 else " · floor off"))
+steady_ttft=ttft_by_round[-1] if ttft_by_round else 0.0
+steady_pf=pf_by_round[-1] if pf_by_round else 0.0
+print(f"  concurrent prefill: steady TTFT {steady_ttft*1000:.0f} ms (median of {N} streams) "
+      f"· ~{steady_pf:.0f} tok/s/stream derived @ {PTOK}-tok prompts")
 flags=[]
 if not clean_fit: flags.append("fit")
 if TPS_FLOOR>0 and not floor_ok: flags.append("tps-floor")
@@ -222,7 +249,8 @@ if PASS:
           f"vram_peak_gb: {vram_peak/1024:.1f} }}")
 # machine-readable line for SWEEP parsing
 print(f"RESULT N={N} clean={int(clean_fit)} pass={int(PASS)} mps_tps={report_tps:.2f} "
-      f"agg_tps={report_agg:.2f} retention={retention:.3f} leak={leak} vram_peak={vram_peak} floor_ok={int(floor_ok)}")
+      f"agg_tps={report_agg:.2f} retention={retention:.3f} leak={leak} vram_peak={vram_peak} floor_ok={int(floor_ok)} "
+      f"ttft_ms={steady_ttft*1000:.0f} pf_tps={steady_pf:.1f}")
 raise SystemExit(0 if PASS else 1)
 PY
 }
