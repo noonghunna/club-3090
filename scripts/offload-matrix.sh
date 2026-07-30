@@ -191,6 +191,13 @@ ROUNDS="${ROUNDS:-4}"
 GEN="${GEN:-900}"
 RESERVE_MB="${RESERVE_MB:-}"              # expert-cache reserve; unset = engine default
 PROMPT_FILE="${PROMPT_FILE:-}"            # override the built-in shapes with one static prompt
+SWEEP_PCACHE="${SWEEP_PCACHE:-on}"        # on | off — llama-server prompt (prefix) caching.
+                                          # ⚠ The engine defaults this ON and the driver sends the SAME
+                                          # prompt each round, so measured rounds reuse the prefix and SKIP
+                                          # prefill: 3115ms/2073tok on the first request vs 120ms/1tok
+                                          # after, worth ~14% on agg. Realistic for agentic multi-turn,
+                                          # optimistic for distinct-prompt fleets — so it is passed
+                                          # explicitly and recorded per arm, never left to a default.
 SWEEP_SHAPE="${SWEEP_SHAPE:-copy}"        # copy | novel | code  (workload FLIPS the sign of
                                           # spec results, so this is a first-class dimension)
 HETERO="${HETERO:-1}"                     # 1 = each slot gets a DIFFERENT prompt instance.
@@ -290,7 +297,7 @@ print(len(sel), file=sys.stderr)
 PY
 }
 
-HDR=$'arm\trep\tshape\toffload\tlayers_total\tN\tctx_slot\tdrafter\tnmax\tmax_batch\tcache_mb\tadmit\tthrottle\tagg\tstrm\tttft_ms\taccept\tpool_slots\thits_pct\tmisses\tevicts\trxpci\ttxpci\tsm_pct\tmemctl_pct\tcpu_pct\tram_rd_mbps\tvram_peak\tvram_idle\tvram_post\tleak\tbypass\terrors\tstatus'
+HDR=$'arm\trep\tshape\tpcache\toffload\tlayers_total\tN\tctx_slot\tdrafter\tnmax\tmax_batch\tcache_mb\tadmit\tthrottle\tagg\tstrm\tttft_ms\taccept\tpool_slots\thits_pct\tmisses\tevicts\trxpci\ttxpci\tsm_pct\tmemctl_pct\tcpu_pct\tram_rd_mbps\tvram_peak\tvram_idle\tvram_post\tleak\tbypass\terrors\tstatus'
 [[ -f "$TSV" ]] || printf '%s\n' "$HDR" > "$TSV"
 NCOL=$(awk -F'\t' '{print NF}' <<<"$HDR")
 # Emit a row padded to the header width, with $status always last. Early-exit rows
@@ -331,7 +338,7 @@ drafter_flags() {
 
 run_arm() {
   set +u
-  local off="$1" n="$2" nmax="$3" cache="$4" admit_pair="$5" ctx="$6" drafter="$7" rep="$8" shape="${9:-copy}"
+  local off="$1" n="$2" nmax="$3" cache="$4" admit_pair="$5" ctx="$6" drafter="$7" rep="$8" shape="${9:-copy}" pcache="${10:-on}"
   local admit throttle
   if [[ "$admit_pair" == default ]]; then admit=""; throttle=""
   else admit="${admit_pair%%/*}"; throttle="${admit_pair##*/}"; fi
@@ -341,7 +348,7 @@ run_arm() {
     [[ -n "$ot" ]] || { echo "  !! could not build offload regex"; return 1; }
   fi
   local dtag="$drafter"; (( nmax == 0 )) && dtag="none"
-  local arm="off${off:-0}-n${n}-c$((ctx/1024))K-${shape}-${dtag}d${nmax}-p${cache}-a${admit_pair//\//x}"
+  local arm="off${off:-0}-n${n}-c$((ctx/1024))K-${shape}-${dtag}d${nmax}-p${cache}-a${admit_pair//\//x}-pc${pcache}"
   local log="$OUT_DIR/om-$arm-r$rep.log"
   # RULE: the expert-cache batch clamp must be >= n-max + 1 (a sequence's verify
   # block). Whether concurrency also enters it depends on whether the engine packs
@@ -368,6 +375,9 @@ run_arm() {
   fi
   local cache_args=()
   (( HAS_MOE_CACHE )) && [[ "$cache" != 0 ]] && cache_args=(--moe-cache "$cache")
+  # Passed EXPLICITLY either way, so the arm's log records the intent rather than
+  # inheriting whatever the engine happens to default to.
+  local pc_args=(); [[ "$pcache" == off ]] && pc_args=(--no-cache-prompt) || pc_args=(--cache-prompt)
 
   # R01: if the port already answers, a foreign server would satisfy our readiness
   # probe while our own boot bind-fails -- every arm then measures the SAME untouched
@@ -380,7 +390,7 @@ run_arm() {
              "-" "$dtag" "$nmax" "$mb" "$cache" "${admit:--}" "${throttle:--}"
     return 1
   fi
-  echo "### $arm rep$rep  offload=${off:-0}/${LAYERS_TOTAL:-?} N=$n ctx=$ctx depth=$nmax($dtag) clamp=$mb pool=${cache}MiB admit=${admit_pair}  $(date +%T)"
+  echo "### $arm rep$rep  offload=${off:-0}/${LAYERS_TOTAL:-?} N=$n ctx=$ctx depth=$nmax($dtag) pc=$pcache clamp=$mb pool=${cache}MiB admit=${admit_pair}  $(date +%T)"
 
   # DIAGNOSTIC HEADER. Truncates the log (the server below APPENDS), so a re-run into
   # an existing OUT_DIR can never leave stale text for the cache-stat greps to parse.
@@ -394,7 +404,7 @@ run_arm() {
     echo "# env: GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${admit:-<unset>} THROTTLE=${throttle:-<unset>} MAX_BATCH=${mb}"
     echo "# cmd: $LLAMA_SERVER -m $MODEL --host $HOST --port $PORT -np $n -c $ctx $ROPE_ARGS \\"
     echo "#        -ngl $NGL $SPLIT_ARGS -fa on ${ot:+-ot \"$ot\"} -t $THREADS -ub $UBATCH -ct $KV_TYPE \\"
-    echo "#        ${cache_args[*]} ${extra[*]} $EXTRA_ARGS -lv 4"
+    echo "#        ${cache_args[*]} ${pc_args[*]} ${extra[*]} $EXTRA_ARGS -lv 4"
     echo "# =========================================================="
   } > "$log"
 
@@ -405,10 +415,10 @@ run_arm() {
     exec "$LLAMA_SERVER" -m "$MODEL" --host "$HOST" --port "$PORT" \
       -np "$n" -c "$ctx" $ROPE_ARGS -ngl "$NGL" $SPLIT_ARGS -fa on \
       ${ot:+-ot "$ot"} -t "$THREADS" -ub "$UBATCH" -ct "$KV_TYPE" \
-      "${cache_args[@]}" "${extra[@]}" $EXTRA_ARGS -lv 4 ) >> "$log" 2>&1 &
+      "${cache_args[@]}" "${pc_args[@]}" "${extra[@]}" $EXTRA_ARGS -lv 4 ) >> "$log" 2>&1 &
   local pid=$! ok=0 i
   # leading identity columns, shared by the failure rows below (padded by emit_row)
-  local -a idcols=("$arm" "$rep" "$shape" "${off:-0}" "${LAYERS_TOTAL:--}" "$n" \
+  local -a idcols=("$arm" "$rep" "$shape" "$pcache" "${off:-0}" "${LAYERS_TOTAL:--}" "$n" \
                    "${ctx_slot:--}" "$dtag" "$nmax" "$mb" "$cache" "${admit:--}" "${throttle:--}")
   for i in $(seq 1 "$BOOT_TIMEOUT"); do
     kill -0 "$pid" 2>/dev/null || { echo "  BOOT FAILED (see $log)"; emit_row BOOT_FAIL "${idcols[@]}"; return 1; }
@@ -612,7 +622,7 @@ PY
   # format string for the surplus arg, so every arm wrote a short row PLUS a junk row
   # containing just the status. Never hand-count columns again.
   emit_row "$status" \
-    "$arm" "$rep" "$shape" "${off:-0}" "${LAYERS_TOTAL:--}" "$n" "${ctx_slot:--}" "$dtag" "$nmax" "$mb" "$cache" \
+    "$arm" "$rep" "$shape" "$pcache" "${off:-0}" "${LAYERS_TOTAL:--}" "$n" "${ctx_slot:--}" "$dtag" "$nmax" "$mb" "$cache" \
     "${admit:--}" "${throttle:--}" "${agg:--}" "${strm:--}" "${ttft:--}" "${acc:--}" "${pool:--}" \
     "${hits:--}" "${miss:--}" "${ev:--}" "${rx:--}" "${tx:--}" "${smp:--}" "${memc:--}" "${cpu_pct:--}" \
     "${ramrd:--}" "${vpeak:--}" "${vram_idle:--}" "${vram_post:--}" "${leak:--}" "$byp" "${req_err:--}"
@@ -784,10 +794,12 @@ for r in $(seq 1 "$REPS"); do
     for c in $SWEEP_CACHE; do
      for a in $SWEEP_ADMIT; do
       for sh in $SWEEP_SHAPE; do
-       for d in $SWEEP_NMAX; do
-        if (( d == 0 )); then run_arm "$off" "$n" 0 "$c" "$a" "$x" none "$r" "$sh"
-        else for dr in $SWEEP_DRAFTER; do run_arm "$off" "$n" "$d" "$c" "$a" "$x" "$dr" "$r" "$sh"; done
-        fi
+       for pc in $SWEEP_PCACHE; do
+        for d in $SWEEP_NMAX; do
+         if (( d == 0 )); then run_arm "$off" "$n" 0 "$c" "$a" "$x" none "$r" "$sh" "$pc"
+         else for dr in $SWEEP_DRAFTER; do run_arm "$off" "$n" "$d" "$c" "$a" "$x" "$dr" "$r" "$sh" "$pc"; done
+         fi
+        done
        done
       done
      done
