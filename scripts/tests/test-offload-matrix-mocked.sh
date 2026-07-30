@@ -13,6 +13,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SWEEP="$ROOT_DIR/scripts/offload-matrix.sh"
 FAKE="$ROOT_DIR/scripts/tests/fixtures/fake-llama-server.py"
+export PYTHONUTF8="${PYTHONUTF8:-1}"   # repo rule: locale must not decide python decoding
 fail() { echo "FAIL: $1" >&2; [[ -n "${LOG:-}" && -f "${LOG:-}" ]] && tail -20 "$LOG" >&2; exit 1; }
 TMP="$(mktemp -d)"
 # NOTE the bracket in the pattern below. An unbracketed pkill -f matches the
