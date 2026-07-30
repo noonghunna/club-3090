@@ -69,12 +69,12 @@ grep -qE '^KEY *= *\(' "$RENDER" || fail "renderer should define an explicit pai
 python3 - "$RENDER" <<'PY' || exit 1
 import re,sys
 k=re.search(r'^KEY *= *\(([^)]*)\)',open(sys.argv[1],encoding="utf-8").read(),re.M).group(1)
-need={"offload","N","ctx_slot","cache_mb","admit","throttle","shape","pcache"}
+need={"offload","N","ctx_req","cache_mb","admit","throttle","shape","pcache"}
 have={x.strip().strip('"\'') for x in k.split(",") if x.strip()}
 missing=need-have
 if missing: print(f"FAIL: pairing KEY missing {sorted(missing)}",file=sys.stderr); sys.exit(1)
 PY
-echo "  ✓ pairing key includes shape + pcache (sign-flip and prefill-skew mispairs)"
+echo "  ✓ pairing key: shape, pcache, ctx_req (sign-flip / prefill-skew / unified-KV mispairs)"
 
 # 6. ENGINE-SCOPE GUARD — the tool emits llama.cpp flags and scrapes llama.cpp
 #    log lines, so it must refuse a binary that is not one. vLLM's CPU offload

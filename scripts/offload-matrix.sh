@@ -297,7 +297,7 @@ print(len(sel), file=sys.stderr)
 PY
 }
 
-HDR=$'arm\trep\tshape\tpcache\toffload\tlayers_total\tN\tctx_slot\tdrafter\tnmax\tmax_batch\tcache_mb\tadmit\tthrottle\tagg\tstrm\tttft_ms\taccept\tpool_slots\thits_pct\tmisses\tevicts\trxpci\ttxpci\tsm_pct\tmemctl_pct\tcpu_pct\tram_rd_mbps\tvram_peak\tvram_idle\tvram_post\tleak\tbypass\terrors\tstatus'
+HDR=$'arm\trep\tshape\tpcache\toffload\tlayers_total\tN\tctx_req\tctx_slot\tdrafter\tnmax\tmax_batch\tcache_mb\tadmit\tthrottle\tagg\tstrm\tttft_ms\taccept\tpool_slots\thits_pct\tmisses\tevicts\trxpci\ttxpci\tsm_pct\tmemctl_pct\tcpu_pct\tram_rd_mbps\tvram_peak\tvram_idle\tvram_post\tleak\tbypass\terrors\tstatus'
 [[ -f "$TSV" ]] || printf '%s\n' "$HDR" > "$TSV"
 NCOL=$(awk -F'\t' '{print NF}' <<<"$HDR")
 # Emit a row padded to the header width, with $status always last. Early-exit rows
@@ -354,7 +354,24 @@ run_arm() {
   # block). Whether concurrency also enters it depends on whether the engine packs
   # multiple sequences into one ubatch — on hybrid/recurrent memory with
   # kv_unified=false it does not. We size for the safe upper bound.
-  local mb=$(( nmax + 1 )); (( mb < n )) && mb="$n"; (( mb < 4 )) && mb=4; (( mb > 8 )) && mb=8
+  # MAX_BATCH sizing. MEASURED 2026-07-30, and it corrects an earlier published rule
+  # of ours ("MAX_BATCH >= n-max+1, N does NOT enter it"):
+  #
+  #     N=1 n-max=0/3  clamp 4 -> clean
+  #     N=2 n-max=0    clamp 4 -> clean
+  #     N=2 n-max=3    clamp 4 -> BYPASS, packed batch 5
+  #     N=4 n-max=0    clamp 4 -> BYPASS, packed batch 6   <- no speculation at all
+  #     N=4 n-max=3    clamp 4 -> BYPASS, packed batch 6
+  #
+  # The packed decode batch grows with n-max AND N jointly. Worse, those observed
+  # sizes are LOWER BOUNDS: the engine warns once per session on the FIRST breach,
+  # never reporting the largest, so no formula can be fitted from them.
+  # Since the engine ceiling is 8 and sitting at it has no measured cost, take the
+  # ceiling whenever concurrency is in play and treat n-max+1 purely as a floor.
+  # Guessing tighter buys nothing and risks a silently uncached arm.
+  local mb=$(( nmax + 1 ))
+  (( n > 1 )) && mb=8
+  (( mb < 4 )) && mb=4; (( mb > 8 )) && mb=8
   # R03: the engine clamps MAX_BATCH to [1,8]. At n-max >= 8 the clamp CANNOT satisfy
   # mb >= nmax+1, so the expert cache would refuse every decode and the arm would
   # silently measure the no-cache path. Refuse before burning a boot on it.
@@ -418,7 +435,7 @@ run_arm() {
       "${cache_args[@]}" "${pc_args[@]}" "${extra[@]}" $EXTRA_ARGS -lv 4 ) >> "$log" 2>&1 &
   local pid=$! ok=0 i
   # leading identity columns, shared by the failure rows below (padded by emit_row)
-  local -a idcols=("$arm" "$rep" "$shape" "$pcache" "${off:-0}" "${LAYERS_TOTAL:--}" "$n" \
+  local -a idcols=("$arm" "$rep" "$shape" "$pcache" "${off:-0}" "${LAYERS_TOTAL:--}" "$n" "$ctx" \
                    "${ctx_slot:--}" "$dtag" "$nmax" "$mb" "$cache" "${admit:--}" "${throttle:--}")
   for i in $(seq 1 "$BOOT_TIMEOUT"); do
     kill -0 "$pid" 2>/dev/null || { echo "  BOOT FAILED (see $log)"; emit_row BOOT_FAIL "${idcols[@]}"; return 1; }
@@ -622,7 +639,7 @@ PY
   # format string for the surplus arg, so every arm wrote a short row PLUS a junk row
   # containing just the status. Never hand-count columns again.
   emit_row "$status" \
-    "$arm" "$rep" "$shape" "$pcache" "${off:-0}" "${LAYERS_TOTAL:--}" "$n" "${ctx_slot:--}" "$dtag" "$nmax" "$mb" "$cache" \
+    "$arm" "$rep" "$shape" "$pcache" "${off:-0}" "${LAYERS_TOTAL:--}" "$n" "$ctx" "${ctx_slot:--}" "$dtag" "$nmax" "$mb" "$cache" \
     "${admit:--}" "${throttle:--}" "${agg:--}" "${strm:--}" "${ttft:--}" "${acc:--}" "${pool:--}" \
     "${hits:--}" "${miss:--}" "${ev:--}" "${rx:--}" "${tx:--}" "${smp:--}" "${memc:--}" "${cpu_pct:--}" \
     "${ramrd:--}" "${vpeak:--}" "${vram_idle:--}" "${vram_post:--}" "${leak:--}" "$byp" "${req_err:--}"
@@ -703,6 +720,35 @@ if [[ -n "${_running_pid:-}" && "${PLAN:-0}" != 1 ]]; then
   echo "   (config was inherited from it above, so re-running after the kill keeps"
   echo "   the same settings. Set ALLOW_CONCURRENT_SERVER=1 to override.)"
   [[ "${ALLOW_CONCURRENT_SERVER:-0}" == 1 ]] || exit 2
+fi
+
+# --- ARM BUDGET ---------------------------------------------------------------
+# The sweep is a cartesian product over NINE dimensions. A careless list turns
+# minutes into days: three values on three dimensions is 27 arms, and every arm
+# is a full server boot. This counts the planned work BEFORE anything boots and
+# refuses to start past the budget, so a typo costs a message instead of a night.
+#
+# Counted in BOOTS (arms x REPS), because a boot is the unit of rig time.
+MAX_BOOTS="${MAX_BOOTS:-50}"
+_n() { local c=0 x; for x in $1; do c=$((c+1)); done; (( c )) || c=1; echo "$c"; }
+_arms=1
+for _d in "${SWEEP_OFFLOAD:-0}" "$SWEEP_CTX" "$SWEEP_N" "$SWEEP_CACHE" "$SWEEP_ADMIT" \
+          "$SWEEP_SHAPE" "$SWEEP_PCACHE"; do _arms=$(( _arms * $(_n "$_d") )); done
+# n-max: each 0 is one arm (no drafter); each non-zero fans out over the drafters
+_spec=0; _base=0
+for _d in $SWEEP_NMAX; do if [[ "$_d" == 0 ]]; then _base=$((_base+1)); else _spec=$((_spec+1)); fi; done
+_arms=$(( _arms * ( _base + _spec * $(_n "$SWEEP_DRAFTER") ) ))
+_boots=$(( _arms * REPS ))
+echo "  -> planned: $_arms arms x REPS=$REPS = $_boots boots (budget MAX_BOOTS=$MAX_BOOTS)"
+if (( _boots > MAX_BOOTS )); then
+  echo
+  echo "REFUSING: $_boots boots exceeds MAX_BOOTS=$MAX_BOOTS."
+  echo "   Nine sweepable dimensions multiply, so this is usually a wider list than"
+  echo "   intended rather than a deliberate long run. Either narrow the sweep (the"
+  echo "   docs recommend staging it — run PLAN=1 to see the order), or raise the"
+  echo "   budget deliberately:  MAX_BOOTS=$(( _boots > 200 ? _boots : 200 )) $0"
+  echo "   At roughly 1-2 min per boot that is about $(( _boots * 90 / 60 )) minutes of rig time."
+  exit 2
 fi
 
 # --- PLAN mode: print the dependency-ordered sequence and exit -----------------

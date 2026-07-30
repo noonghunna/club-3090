@@ -38,7 +38,12 @@ NUM = ("agg","strm","ttft_ms","accept","pool_slots","misses","evicts",
 # everything-else. `shape` is part of it because workload shape FLIPS THE SIGN of the
 # speculation result (+76% agentic vs +2.7% prose on this stack) -- pairing a copy-heavy
 # spec arm against a prose baseline would manufacture a gain that does not exist.
-KEY = ("offload","N","ctx_slot","cache_mb","admit","throttle","shape","pcache")
+# Pair on the REQUESTED context, not the scraped per-slot value. Attaching a drafter
+# switches the target to unified KV, so at N>1 a spec arm reports n_ctx_seq = full ctx
+# while its no-spec baseline reports ctx/N -- measured 2026-07-30: 262144 vs 65536 at
+# N=4. Keying on the scraped value made those two look like different configurations
+# and silently prevented the pairing the whole concurrency block exists for.
+KEY = ("offload","N","ctx_req","cache_mb","admit","throttle","shape","pcache")
 
 INTCOL = {"ttft_ms","pool_slots","misses","evicts","vram_peak","errors"}
 
@@ -81,7 +86,7 @@ def delta(r, key):
     except Exception: return v
 
 VIEWS = {
- "perf":  [("arm","arm"),("reps","reps"),("N","N"),("shape","shape"),("pc","pcache"),("L","_layers"),("ctx/slot","ctx_slot"),
+ "perf":  [("arm","arm"),("reps","reps"),("N","N"),("shape","shape"),("pc","pcache"),("L","_layers"),("ctx req","ctx_req"),("ctx/slot","ctx_slot"),
            ("drafter","drafter"),("n-max","nmax"),("MB","max_batch"),
            ("no-spec agg","_bagg"),("agg","_dagg"),("per-strm","strm"),("accept","accept"),
            ("no-spec TTFT","_bttft"),("TTFT","ttft_ms"),("err","errors"),("status","status")],
