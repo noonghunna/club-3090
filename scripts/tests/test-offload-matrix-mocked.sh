@@ -15,11 +15,13 @@ SWEEP="$ROOT_DIR/scripts/offload-matrix.sh"
 FAKE="$ROOT_DIR/scripts/tests/fixtures/fake-llama-server.py"
 export PYTHONUTF8="${PYTHONUTF8:-1}"   # repo rule: locale must not decide python decoding
 fail() { echo "FAIL: $1" >&2; [[ -n "${LOG:-}" && -f "${LOG:-}" ]] && tail -20 "$LOG" >&2; exit 1; }
-# The suite boots a FAKE server and never touches a GPU, so the sweep's
-# "a llama-server is already running" VRAM-contention refusal has no bearing on
-# it — without this override the whole suite goes red on any box that happens to
-# be serving a model, which is most dev rigs.
-export ALLOW_CONCURRENT_SERVER=1
+# The cases below boot a FAKE server and never touch a GPU, so the sweep's "a
+# llama-server is already running" VRAM-contention refusal has no bearing on
+# them — without the override the whole suite goes red on any box that happens to
+# be serving a model, which is most dev rigs. Passed PER CASE, deliberately NOT
+# exported: a future case that asserts the conflict guard itself must be able to
+# run without it, and a suite-wide export would make that case pass vacuously.
+ALLOW_CONC="ALLOW_CONCURRENT_SERVER=1"
 TMP="$(mktemp -d)"
 # NOTE the bracket in the pattern below. An unbracketed pkill -f matches the
 # killing command's OWN command line and kills this shell (exit 144), so the
@@ -39,7 +41,7 @@ run_case() {  # $1=scenario; each case gets its own ctx so arms stay distinguish
   CTX_SEQ=$((CTX_SEQ + 1024))
   local out="$TMP/$sc"; rm -rf "$out"
   LOG="$TMP/$sc.log"
-  env FAKE_SCENARIO="$sc" FAKE_NDEV=2 NGPU=2 \
+  env $ALLOW_CONC FAKE_SCENARIO="$sc" FAKE_NDEV=2 NGPU=2 \
       MODEL="$TMP/model.gguf" LLAMA_SERVER="$FAKE" INHERIT=0 OUT_DIR="$out" PORT="$PORT" \
       LAYERS_TOTAL=48 N_EXPERT=256 REPS=1 ROUNDS=2 GEN=8 BOOT_TIMEOUT=40 \
       SWEEP_OFFLOAD=19 SWEEP_N=1 SWEEP_NMAX=0 SWEEP_CTX="$CTX_SEQ" SWEEP_CACHE=8192 \
@@ -135,7 +137,7 @@ strays() {
 [[ -z "$(strays)" ]] || fail "a fixture from an earlier case is still running: $(strays)"
 LOG="$TMP/probefail.log"
 set +e
-timeout 60 env FAKE_SCENARIO=probefail MODEL="$TMP/model.gguf" LLAMA_SERVER="$FAKE" \
+timeout 60 env $ALLOW_CONC FAKE_SCENARIO=probefail MODEL="$TMP/model.gguf" LLAMA_SERVER="$FAKE" \
   INHERIT=0 OUT_DIR="$TMP/probefail" PORT="$PORT" LAYERS_TOTAL= PROBE_TIMEOUT=3 \
   SWEEP_OFFLOAD=19 bash "$SWEEP" > "$LOG" 2>&1
 rc=$?
