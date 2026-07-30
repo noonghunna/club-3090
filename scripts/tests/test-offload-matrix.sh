@@ -20,7 +20,7 @@ python3 -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())
 echo "  ✓ syntax (sweep + renderer)"
 
 # 2. MODEL is mandatory and the refusal is actionable (not a traceback)
-set +e; out="$(MODEL= INHERIT=0 bash "$SWEEP" 2>&1)"; rc=$?; set -e
+set +e; out="$(MODEL= INHERIT=0 OUT_DIR="$TMP/out" bash "$SWEEP" 2>&1)"; rc=$?; set -e
 [[ "$rc" == "2" ]] || fail "missing MODEL should exit 2, got $rc"
 grep -q "MODEL=" <<<"$out" || fail "missing-MODEL error should name the MODEL variable"
 echo "  ✓ refuses without MODEL (exit 2, actionable)"
@@ -82,7 +82,7 @@ echo "  ✓ pairing key includes shape (guards the sign-flip mispair)"
 touch "$TMP/fake.gguf"
 set +e
 out="$(MODEL="$TMP/fake.gguf" INHERIT=0 PLAN=1 LAYERS_TOTAL=48 LLAMA_SERVER=/bin/true \
-       bash "$SWEEP" 2>&1)"; rc=$?
+       OUT_DIR="$TMP/out" bash "$SWEEP" 2>&1)"; rc=$?
 set -e
 [[ "$rc" == "2" ]] || fail "non-llama.cpp server should exit 2, got $rc"
 grep -qi "llama.cpp" <<<"$out" || fail "engine-scope refusal should say what it accepts"
@@ -103,7 +103,7 @@ exit 0
 STUB
 chmod +x "$TMP/fake-llama-server"
 out="$(MODEL="$TMP/fake.gguf" INHERIT=0 PLAN=1 LAYERS_TOTAL=48 LLAMA_SERVER="$TMP/fake-llama-server" \
-       SWEEP_OFFLOAD="19 28" SWEEP_N="1 4" bash "$SWEEP" 2>&1)" || fail "PLAN=1 should exit 0"
+       OUT_DIR="$TMP/out" SWEEP_OFFLOAD="19 28" SWEEP_N="1 4" bash "$SWEEP" 2>&1)" || fail "PLAN=1 should exit 0"
 grep -qiE 'arm|stage|plan' <<<"$out" || fail "PLAN=1 should enumerate the planned sequence"
 grep -q '\[OK\]' <<<"$out" && fail "PLAN=1 must not produce measured arms"
 echo "  ✓ PLAN=1 enumerates without booting"
@@ -131,5 +131,10 @@ grep -q "NOT OK" <<<"$out" || fail "renderer must list non-OK arms separately"
 grep -q "CACHE_DISABLED" <<<"$out" || fail "renderer must surface CACHE_DISABLED"
 grep -qE '\+7[0-9]\.[0-9]%' <<<"$out" || fail "renderer should pair B against A and show the delta"
 echo "  ✓ renderer handles mixed TSV; non-OK arms excluded from conclusions"
+
+# 9. The suite must not pollute the repo: the sweep mkdir's $PWD/offload-matrix-out
+#    unless OUT_DIR is set, and a test that leaves artifacts behind is a bad test.
+[[ -e "$ROOT_DIR/offload-matrix-out" ]] && fail "test leaked offload-matrix-out into the repo"
+echo "  ✓ no artifacts left in the repo"
 
 echo "test-offload-matrix: ok (Tier 0 — static, no server)"
