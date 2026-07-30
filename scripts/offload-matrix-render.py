@@ -128,7 +128,11 @@ bad = [r for r in merged if r["status"] != "OK"]
 if bad:
     print(f"\n⚠ {len(bad)} arm(s) NOT OK — exclude from conclusions:")
     for r in bad:
-        note = {"INVALID_BYPASS": "  cache was REFUSED: this arm measured spec with the expert cache OFF",
+        # `bypass` counts WARNINGS, and the engine warns once per session — on the
+        # first refused decode and never again. So a non-zero count proves at least
+        # one refusal and says nothing about how many; arms flagged here at clamp 4
+        # re-ran within 0.3% of themselves at clamp 8 with bypass=0 (2026-07-30).
+        note = {"INVALID_BYPASS": "  cache refused ≥1 decode (one-shot warning) -- not clean for cache conclusions; TPS impact not bounded by this",
                 "NO_TOKENS":      "  zero tokens returned: every request failed",
                 "REQ_ERRORS":     f"  {r.get('errors','?')} request error(s) -- see the arm log",
                 "BOOT_FAIL":      "  server never started (OOM at this ctx/pool is the usual cause)",
