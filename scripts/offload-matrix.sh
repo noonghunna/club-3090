@@ -565,8 +565,15 @@ PY
   # Found live 2026-07-30: the engine's DEFAULT reserve (3072 MiB) left no budget at
   # 262K ctx, logging "CUDA0 has no cache budget after 3072 MiB reserve" -- a string the
   # bypass grep does not match. Both arms reported OK and ran ~12-22% slow.
-  local cache_enabled=0 reserve_seen=""
-  command grep -q '\[moe-cache\] enabled:' "$log" && cache_enabled=1
+  # Count DEVICES THAT ACTUALLY GOT A POOL, not the presence of the "enabled:" line.
+  # A per-device budget failure still prints "enabled:" while one GPU runs with no
+  # pool at all — measured 2026-07-30: CUDA0 got no budget, CUDA1 allocated 69 slots,
+  # and "enabled:" printed regardless. Keying on that line reports OK for a run that
+  # is half-uncached.
+  local cache_enabled=0 reserve_seen="" pooled_devs=0
+  pooled_devs=$(command grep -oE 'CUDA[0-9]+ pool\[' "$log" 2>/dev/null \
+                | awk '{print $1}' | sort -u | command grep -c '' )
+  (( pooled_devs > 0 )) && cache_enabled=1
   reserve_seen=$(command grep -oE 'reserve=[0-9]+ MiB|after [0-9]+ MiB reserve' "$log" \
                  | command grep -oE '[0-9]+' | tail -1)
   local nobudget; nobudget=$(command grep -c 'no cache budget' "$log")
@@ -579,13 +586,21 @@ PY
   # conclusion, so it must never read OK.
   if (( HAS_MOE_CACHE )) && [[ "$cache" != 0 ]] && (( cache_enabled == 0 )); then
     status="CACHE_DISABLED"
-    echo "  !! expert cache was REQUESTED (--moe-cache $cache) but NEVER ALLOCATED."
+    echo "  !! expert cache was REQUESTED (--moe-cache $cache) but NO DEVICE ALLOCATED A POOL."
     if (( nobudget > 0 )); then
       echo "     reason: no budget after ${reserve_seen:-?} MiB reserve. Lower the reserve"
       echo "     (RESERVE_MB=1536) or reduce ctx/pool so the pool fits."
     else
-      echo "     no '[moe-cache] enabled:' line in $log -- check the build and flags."
+      echo "     no '[moe-cache] CUDAn pool[' lines in $log -- check the build and flags."
     fi
+  elif (( HAS_MOE_CACHE )) && [[ "$cache" != 0 ]] && (( NGPU > 0 )) && (( pooled_devs < NGPU )); then
+    # PARTIAL: some devices cached, others not. Worse than either extreme, because
+    # the arm looks healthy and the uncached device silently drags the whole number.
+    status="CACHE_PARTIAL"
+    echo "  !! expert cache allocated on only $pooled_devs of $NGPU devices."
+    echo "     The uncached device(s) run at no-cache speed and this arm's throughput"
+    echo "     is a blend of two regimes — not comparable with a fully-cached arm."
+    (( nobudget > 0 )) && echo "     reason: no budget after ${reserve_seen:-?} MiB reserve on at least one device."
   fi
   # zero throughput means every request failed — never let that land as OK (the
   # first live run reported agg=0.00 with status OK because the prompt builder

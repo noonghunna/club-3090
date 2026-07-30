@@ -129,6 +129,7 @@ if bad:
                 "BOOT_FAIL":      "  server never started (OOM at this ctx/pool is the usual cause)",
                 "TIMEOUT":        "  server did not reach /health before BOOT_TIMEOUT",
                 "CACHE_DISABLED": "  expert cache requested but NEVER allocated -- try RESERVE_MB=1536",
+                "CACHE_PARTIAL":  "  cache allocated on only SOME devices -- throughput blends cached and uncached",
                 "PORT_BUSY":      "  port was already served by another process; arm did not boot",
                 "MB_CLAMP_CONFLICT": "  n-max too high for the [1,8] MAX_BATCH clamp; cache would bypass"}.get(r["status"], "")
         print(f"   {r['arm']}: {r['status']}{note}")
