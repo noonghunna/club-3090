@@ -211,6 +211,7 @@ HETERO="${HETERO:-1}"                     # 1 = each slot gets a DIFFERENT promp
                                           # expert-union overlap and flatter multi-slot numbers.
 AVG_EXPERT_KIB="${AVG_EXPERT_KIB:-}"      # for derived RAM read; auto-read from pool lines if available
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-1200}"
+PROBE_TIMEOUT="${PROBE_TIMEOUT:-300}"     # seconds the n_layer probe waits before giving up
 
 # ---- capability detection --------------------------------------------------
 # NOTE: do NOT pipe --help into `grep -q` here. grep -q exits on first match,
@@ -239,6 +240,24 @@ if (( ! HAS_MOE_CACHE )) && [[ "$SWEEP_CACHE" != "0" || "$SWEEP_ADMIT" != "defau
 fi
 
 # ---- probe total layer count once (cheap: -ngl 0, tiny ctx, killed at ready) --
+# The probe boots a REAL server, so EVERY exit path out of it must reap that
+# server -- including the ones that do not return normally. A probe that gives up
+# and leaves its child alive hands the rest of the run a VRAM-starved machine, and
+# every arm measured afterwards is then plausible and wrong, which is the exact
+# failure class this harness exists to prevent. Seen live 2026-07-30: the probe
+# timed out, printed its "set LAYERS_TOTAL" advice, and left a server resident.
+PROBE_PID=""
+probe_reap() {   # idempotent — called from the trap AND inline; must print nothing
+  [[ -n "$PROBE_PID" ]] || return 0
+  local p="$PROBE_PID" i; PROBE_PID=""
+  kill "$p" 2>/dev/null
+  # SIGTERM is a request, not a guarantee: a server still inside model load can
+  # defer or ignore it, and `wait` then blocks forever on a child that never
+  # exits. Escalate instead -- the probe holds no state worth a clean shutdown.
+  for i in $(seq 1 20); do kill -0 "$p" 2>/dev/null || break; sleep 0.5; done
+  kill -9 "$p" 2>/dev/null
+  wait "$p" 2>/dev/null
+}
 probe_layers() {
   local plog="$OUT_DIR/.probe.log"
   # -lv 4 is REQUIRED: the `print_info:` block (which carries n_layer / n_expert)
@@ -246,16 +265,19 @@ probe_layers() {
   # timeout for a line that never prints.
   "$LLAMA_SERVER" -m "$MODEL" --host "$HOST" --port "$PORT" -ngl 0 -c 256 -np 1 \
     $ROPE_ARGS -lv 4 > "$plog" 2>&1 &
-  local pp=$! i
-  for i in $(seq 1 300); do
-    kill -0 "$pp" 2>/dev/null || break
+  PROBE_PID=$!
+  trap 'probe_reap' EXIT INT TERM   # covers timeout, interrupt and any early exit
+  local i
+  for i in $(seq 1 "$PROBE_TIMEOUT"); do
+    kill -0 "$PROBE_PID" 2>/dev/null || break
     command grep -qE 'n_layer +=' "$plog" && break
     # also stop once the model is up: if n_layer has not appeared by then it is
     # not going to, so fail fast instead of burning the full timeout.
     command grep -q 'model loaded' "$plog" && break
     sleep 1
   done
-  kill "$pp" 2>/dev/null; wait "$pp" 2>/dev/null
+  probe_reap
+  trap - EXIT INT TERM
   command grep -oE 'n_layer +=[ ]*[0-9]+' "$plog" | head -1 | command grep -oE '[0-9]+'
 }
 probe_experts() {   # 0 / empty => dense model => offloading "_exps" matches nothing

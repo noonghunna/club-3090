@@ -15,12 +15,19 @@ SWEEP="$ROOT_DIR/scripts/offload-matrix.sh"
 FAKE="$ROOT_DIR/scripts/tests/fixtures/fake-llama-server.py"
 export PYTHONUTF8="${PYTHONUTF8:-1}"   # repo rule: locale must not decide python decoding
 fail() { echo "FAIL: $1" >&2; [[ -n "${LOG:-}" && -f "${LOG:-}" ]] && tail -20 "$LOG" >&2; exit 1; }
+# The suite boots a FAKE server and never touches a GPU, so the sweep's
+# "a llama-server is already running" VRAM-contention refusal has no bearing on
+# it — without this override the whole suite goes red on any box that happens to
+# be serving a model, which is most dev rigs.
+export ALLOW_CONCURRENT_SERVER=1
 TMP="$(mktemp -d)"
 # NOTE the bracket in the pattern below. An unbracketed pkill -f matches the
 # killing command's OWN command line and kills this shell (exit 144), so the
 # trap never finishes and the fixture it should reap survives. Bracketing the
 # first character makes the pattern unable to match itself.
-trap 'rm -rf "$TMP"; pkill -f "[f]ake-llama-server" >/dev/null 2>&1 || true' EXIT
+# SIGKILL, not SIGTERM: the `probefail` fixture ignores SIGTERM on purpose, so a
+# TERM-only cleanup would leave the very process this suite asserts about.
+trap 'rm -rf "$TMP"; pkill -9 -f "[f]ake-llama-server" >/dev/null 2>&1 || true' EXIT
 touch "$TMP/model.gguf"
 
 # pick a port nothing is using, so a stray local server can't poison the run
@@ -102,5 +109,45 @@ for s in CACHE_PARTIAL CACHE_DISABLED INVALID_BYPASS NO_TOKENS; do
 done
 grep -q "NOT OK" <<<"$out" || fail "renderer must list non-OK arms separately"
 echo "  ✓ renderer surfaces every failure status and separates them"
+
+# PIDs of fixture servers still alive. Three guards, each one a real footgun:
+#   * bracketed pattern, so the pgrep cannot match its own command line;
+#   * comm filter, because the bracket trick does NOT save a CALLER whose command
+#     line merely quotes the pattern (a wrapper shell running this suite matched);
+#   * `|| true`, because pgrep exits 1 on no-match and under `set -e` a bare
+#     assignment from a failing substitution aborts the suite instead of asserting.
+strays() {
+  local p out=""
+  for p in $(pgrep -f "[f]ake-llama-server" 2>/dev/null || true); do
+    [[ -r "/proc/$p/comm" ]] || continue
+    if [[ "$(</proc/$p/comm)" == python3* ]]; then out+="$p "; fi
+  done
+  printf '%s' "$out"
+}
+
+# 7. PROBE LEAK — the layer probe boots a REAL server, so a probe that gives up
+#    without reaping it leaves that server holding the model's VRAM, and every
+#    arm launched afterwards measures a starved machine while reporting OK
+#    (observed live 2026-07-30, ~22 GiB held on both cards). The fixture never
+#    prints n_layer, so the probe must time out, AND it ignores SIGTERM the way a
+#    server still inside model load does — so `kill; wait` alone both hangs and
+#    leaks. Only an escalating reap on every exit path passes this.
+[[ -z "$(strays)" ]] || fail "a fixture from an earlier case is still running: $(strays)"
+LOG="$TMP/probefail.log"
+set +e
+timeout 60 env FAKE_SCENARIO=probefail MODEL="$TMP/model.gguf" LLAMA_SERVER="$FAKE" \
+  INHERIT=0 OUT_DIR="$TMP/probefail" PORT="$PORT" LAYERS_TOTAL= PROBE_TIMEOUT=3 \
+  SWEEP_OFFLOAD=19 bash "$SWEEP" > "$LOG" 2>&1
+rc=$?
+set -e
+(( rc != 124 )) || fail "probe never returned: it waits on a child that ignores SIGTERM"
+[[ "$rc" == "2" ]] || fail "a probe that cannot read n_layer should exit 2, got $rc"
+grep -q "LAYERS_TOTAL" "$LOG" || fail "probe failure should tell the operator to set LAYERS_TOTAL"
+left="$(strays)"
+if [[ -n "$left" ]]; then
+  pkill -9 -f "[f]ake-llama-server" >/dev/null 2>&1 || true
+  fail "failed probe LEAKED its server (pid(s): $left) — it would hold VRAM for the whole run"
+fi
+echo "  ✓ failed probe reaps its server and exits actionably (no leaked VRAM holder)"
 
 echo "test-offload-matrix-mocked: ok (Tier 1 — mocked server, no GPU)"
