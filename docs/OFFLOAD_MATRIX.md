@@ -48,7 +48,9 @@ Each is a **space-separated list**; the tool runs the cartesian product, one ser
 | `SWEEP_SHAPE` | Workload: `copy`, `novel`, `code` | `copy` |
 | `REPS` | Repeats per arm — **each rep is a fresh boot** | `1` |
 
-Other knobs worth knowing: `ROUNDS` (default 4; **round 0 is a discarded warm-up**), `GEN` (max tokens, 900), `RESERVE_MB`, `KV_TYPE`, `UBATCH`, `THREADS`, `PORT`, `OUT_DIR`, `PROMPT_FILE` (replace the built-in shapes with your own static prompt), `HETERO`.
+Other knobs worth knowing: `ROUNDS` (default 4; **round 0 is a discarded warm-up**), `GEN` (max tokens, 900), `RESERVE_MB`, `KV_TYPE`, `UBATCH`, `THREADS`, `PORT`, `OUT_DIR`, `PROBE_TIMEOUT` (seconds the `n_layer` probe waits, 300), `PROMPT_FILE` (replace the built-in shapes with your own static prompt), `HETERO`.
+
+> **⚠ `SWEEP_DRAFTER` × `SWEEP_NMAX` does not make drafters comparable on its own.** `SWEEP_NMAX` is *draft length*, and it maps correctly to whichever flag the selected drafter uses (`--spec-ngram-mod-n-max`, `--spec-ngram-simple-size-m`, `--draft-max`, …). What the sweep does **not** control is each drafter's **lookup length**, and the defaults differ: `ngram-simple` needs a 12-gram match (`--spec-ngram-simple-size-n`, default 12) where `ngram-mod` matches on 24 (`--spec-ngram-mod-n-match`). Equal `n-max` therefore means equal draft length and *different matching behaviour* — a drafter that shows no gain may simply be **failing to find a match**, not drafting badly. Pin the match lengths through `EXTRA_ARGS` (and re-check them against your fork's `--help`, the defaults are fork-specific) before ranking drafters against each other.
 
 ### Presets
 
@@ -124,7 +126,7 @@ The TSV is append-only and is the source of truth — the renderer never mutates
 |---|---|
 | `OK` | usable |
 | `CACHE_DISABLED` | expert cache was requested but **never allocated** — see §5a |
-| `INVALID_BYPASS` | cache exists but decodes declined it — see §5b |
+| `INVALID_BYPASS` | cache exists but **at least one** decode was refused it. The engine warns **once per session**, so the `bypass` count bounds nothing about how much of the run ran uncached — the arm is not usable for cache-dimension conclusions, but its throughput is not necessarily wrong. See §5b |
 | `MB_CLAMP_CONFLICT` | `n-max` too high for the batch clamp; refused pre-boot |
 | `PORT_BUSY` | something already served that port; arm did not boot |
 | `NO_TOKENS` | zero tokens returned — every request failed |
