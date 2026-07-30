@@ -14,7 +14,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SWEEP="$ROOT_DIR/scripts/offload-matrix.sh"
 FAKE="$ROOT_DIR/scripts/tests/fixtures/fake-llama-server.py"
 fail() { echo "FAIL: $1" >&2; [[ -n "${LOG:-}" && -f "${LOG:-}" ]] && tail -20 "$LOG" >&2; exit 1; }
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; pkill -f fake-llama-server >/dev/null 2>&1 || true' EXIT
+TMP="$(mktemp -d)"
+# NOTE the bracket in the pattern below. An unbracketed pkill -f matches the
+# killing command's OWN command line and kills this shell (exit 144), so the
+# trap never finishes and the fixture it should reap survives. Bracketing the
+# first character makes the pattern unable to match itself.
+trap 'rm -rf "$TMP"; pkill -f "[f]ake-llama-server" >/dev/null 2>&1 || true' EXIT
 touch "$TMP/model.gguf"
 
 # pick a port nothing is using, so a stray local server can't poison the run
