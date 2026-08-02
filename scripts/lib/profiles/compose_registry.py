@@ -925,6 +925,24 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.6-35B-A3B NVFP4-Fast (unsloth compressed-tensors MIXED: true W4A4 NVFP4 expert FFNs + FP8-dynamic attention; quant auto-detects — NOT modelopt), TP=2 @262K. THE AMPERE-VALIDATED NVFP4 PATH — inverse of dual-nvfp4: FIRST-PARTY VALIDATED on the reference 2x3090 2026-07-11 (first MoE-FP4 fallback boot anywhere, MARLIN NvFp4 MoE backend): decode 179.5/179.4 (n=5, CV<=0.8%) + 8-pack think-off 103/150 = DOUBLE STATISTICAL TIE with the AutoRound tier (182.3/182.3, 104-equiv) at full 262K, 22.46 GB/card; cli-40 20/40 = best measured on this MoE. See BENCHMARKS 2026-07-11. PROMOTED to Production w/ caveats 2026-07-11 on the full gate: verify-stress 8/8 (NIAH to 240,635 = 91%, ceiling margin 1,801 MB) + soak-continuous PASS (0 err, 0 growth, 100% retention) + bench + 8-pack. CAVEATS: streaming-toolcall+thinking-on finish=length (known family class, verify-full check 6; non-streaming unaffected); native-FP4 quality unvalidated (numbers = Ampere W4A16 bound). NATIVE FP4 (sm_90+) UNVALIDATED — there the silicon quantizes activations too (true W4A4; family is activation-quant-sensitive), so the native quality number is the arc's missing datapoint. Ships real calibrated k/v scale tensors (nvidia's export ships none) and they LOAD (in-worker verified 2026-07-11 on the 27B sibling); measured effect vs scale=1.0 on this family: none (27B A/B quality/NIAH tie). mtp.* head shipped unquantized but OFF (net-negative on this MoE at TP=2). On Ampere, pick the AutoRound tier unless you specifically want the NVFP4 artifact. No DEFAULTS row (opt-in only).",
     ),
 
+    # Qwen-AgentWorld-35B-A3B — Qwen's specialized language world model for
+    # predicting environment state after an agent action. Same Qwen3-Next MoE
+    # geometry as qwen3.6-35b-a3b, but language-only and MTP-stripped despite
+    # inherited multimodal/MTP config fields. Quality-first BF16-KV baseline;
+    # live boot/bench/NIAH complete, but hidden and --force-gated while tool API,
+    # soak, behavioral quality, and AgentWorldBench remain open.
+    "vllm/qwen-agentworld-35b-a3b-dual-awq-int4": _entry(
+        model="qwen-agentworld-35b-a3b", weights_variant="cyankiwi-awq-int4",
+        workload="long-ctx-single",
+        engine="vllm-stable", drafter=None, kv_format="bf16",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen-agentworld-35b-a3b/vllm/compose/dual/cyankiwi-awq-int4/base.yml",
+        default_port=8080,
+        kvcalc_key="qwen-agentworld-35b-a3b:dual",
+        status="incubating",
+        status_note="Qwen-AgentWorld-35B-A3B language world model, cyankiwi AWQ INT4 compressed-tensors, dual TP=2 at 262K with quality-first BF16 KV. FIRST-PARTY INCUBATION 2026-08-02 on 2x3090: stock vLLM v0.25.1 booted in 148 s from a warm model cache; world-simulation smoke returned the correct terminal observation; canonical decode 147.25 narrative / 147.30 code TPS (CV <=0.1%), prefill 5,244 @10K / 3,914 @90K; NIAH exact recall passed every rung through 240,636 tokens (91%) with 1,069 MiB/card free and no VRAM loss; peak 23,060 MiB/card. qwen3_coder tool parsing is enabled: verify-full passed every applicable check, including ordinary and streamed tool calls with finish_reason=tool_calls and no protocol-tag leak; verify-stress passed 8/8, including tool-prefill and agent request shapes. Quick quality: ToolCall-15 12/15 (80%, pass@3 13/15) and InstructFollow-15 15/15 (100%); misses were one no-call and two incomplete/misordered multi-tool chains, not parser errors. Checkpoint is language-only (--language-model-only) and has zero mtp.* tensors despite config declaring one layer, so vision and speculation stay off. Soak, the full 8-pack, and AgentWorldBench remain unrun. No DEFAULTS or recommended-model promotion.",
+    ),
+
     # Agents-A1 — InternScience's 35B agentic MoE (Qwen3-Next MoE arch, OWN model
     # per its card's base_model; NOT a qwen fine-tune slug). Official FP8-dynamic
     # compressed-tensors checkpoint; on Ampere sm_86 vLLM serves it Marlin FP8-MoE

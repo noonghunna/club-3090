@@ -535,6 +535,16 @@ DeepReinforce agentic-coding RL fine-tunes of the Qwen3-Next family (`qwen35` 9B
 
 ---
 
+## Qwen-AgentWorld-35B-A3B (language world model — 🐣 incubating)
+
+Qwen's specialized environment simulator predicts the next environment state from an agent action and interaction history. This is not a general assistant tier. The first compose uses cyankiwi's AWQ INT4 compressed-tensors quant, BF16 KV, the checkpoint-native template, no drafter, and vLLM's `qwen3_coder` tool parser.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `vllm/qwen-agentworld-35b-a3b-dual-awq-int4` | @noonghunna (2× 3090 PCIe x4/x16, 230 W/card, patched P2P engaged, custom AR on) | bf16 | **262K** | **144.46 / 143.66 wall** (decode **147.25 / 147.30**, n=5, CV ≤0.1%, TTFT 130/134 ms) | **5,244 @10K · 3,914 @90K** | **23,060 MiB/card** | 2026-08-02 | **Soak: —. First incubation run on stock vLLM v0.25.1.** Warm-cache tool-enabled boot ready in 148 s; WNA16 Marlin MoE on Ampere; correct world-simulation terminal smoke. Exact-recall NIAH passed every rung through **240,636 tokens (91%)**, with 1,069 MiB/card free and no VRAM loss across the six-rung ladder. `verify-full` passed every applicable check: ordinary and streamed `get_weather` calls parsed through `qwen3_coder`, streaming ended with `finish_reason=tool_calls`, and no raw protocol tags leaked. `verify-stress` passed 8/8, including tool-prefill and agent request shapes. Quick quality: **ToolCall-15 12/15 (80%, pass@3 13/15)** and **InstructFollow-15 15/15 (100%)**; misses were one no-call and two incomplete/misordered multi-tool chains, not parser errors. The checkpoint is language-only (`--language-model-only`) and drafter-free (zero `mtp.*` tensors despite the inherited config field). Soak, the full 8-pack, and AgentWorldBench remain unrun; status stays 🐣. |
+
+---
+
 ## Agents-A1 (InternScience 35B agentic MoE — ⚠️ production w/ caveats)
 
 InternScience's own 35B agentic MoE (Qwen3-Next MoE architecture; card declares its OWN base — not a Qwen fine-tune slug), served from the official FP8-dynamic compressed-tensors checkpoint. **The agentic thinking-ON specialist**: ties the base qwen3.6-35b-a3b on general capability, beats it on cli-40. First model onboarded end-to-end through the Bring & Validate lane (T2 producer-zero).
