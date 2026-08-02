@@ -4,28 +4,29 @@
 #   Topology:  Dual 3090 PCIe (TP=2; NVLink auto-detected when available)
 #   Drafter:   none — config declares one MTP layer, but the pinned checkpoint
 #              contains zero mtp.* tensors (safetensors-index verified)
-#   KV:        bf16 — quality-first incubation baseline; quantized KV untested
+#   KV:        bf16 — quality-first production config; quantized KV untested
 #   Vision:    no — multimodal config but no visual.* weights; vLLM requires
 #              --language-model-only for this checkpoint
 #   Max ctx:   262K — exact-recall NIAH passed to 240,636 tokens (91%) with
 #              1,069 MiB/card free and no VRAM loss across the six-rung ladder
 #   Genesis:   N/A — no Genesis patches on this stock vLLM path
-#   Status:    🐣 Incubating
-#   Caveats:   Specialized environment simulator, not a general assistant.
-#              Soak, the full 8-pack, and AgentWorldBench remain unrun.
-#   Quality:   ToolCall-15 12/15 (80%) · InstructFollow-15 15/15 (100%)
-#              (--quick, packs v1.0.1/v1.0.0, 2026-08-02)
-#   Best for:  Evaluating agent-action → environment-state simulation across seven domains
+#   Status:    ⚠️ Production w/ caveats
+#   Caveats:   Use thinking ON: full 8-pack 125/150 vs 101/150 OFF; HermesAgent
+#              is 11/20; the 262K ceiling has 1,069 MiB/card free; AgentWorldBench
+#              remains unrun. This is an environment simulator, not a general assistant.
+#   Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 15/15 (100%)
+#              · StructOutput-15 14/15 (93%) · DataExtract-15 12/15 (80%)
+#              (--full, thinking ON, packs v1.0.x, 2026-08-02)
+#   Best for:  Agent-action → environment-state simulation across seven domains
 # ---------------------------------------------------------------------------
-# First and only Qwen-AgentWorld compose. This starts with the checkpoint-native
-# chat template, thinking enabled, BF16 KV, qwen3_coder tool parsing, and no
-# speculative decoding. First-party incubation on 2×3090 (2026-08-02): boot
-# ready in 148 s from a warm model cache; world-simulation smoke produced the
-# correct terminal observation; verify-full passed every applicable check,
-# including ordinary + streamed tool calls with no protocol-tag leak;
-# verify-stress passed 8/8 and recalled every NIAH secret from 10K through 240K.
-# Canonical decode: 147.25 narrative / 147.30 code TPS (CV ≤0.1%); prefill:
-# 5,244 tok/s @10K and 3,914 tok/s @90K; peak 23,060 MiB/card; soak not run.
+# First and only Qwen-AgentWorld compose. It uses the checkpoint-native template,
+# thinking enabled, BF16 KV, qwen3_coder tool parsing, and no speculation.
+# Production gate on 2×3090 (2026-08-02): verify-full PASS; verify-stress 8/8
+# with exact recall through 240,636 tokens; canonical decode 146.87 narrative /
+# 146.93 code TPS; prefill 5,205 tok/s @10K and 3,914 tok/s @90K; 100-turn soak
+# PASS with 0 errors, 0 silent outputs, 0 MiB growth, and 100% TPS retention.
+# Full 8-pack: 125/150 thinking ON vs 101/150 OFF. A terminal world-simulation
+# smoke returned the exact expected observation; AgentWorldBench remains unrun.
 #
 # Upstream card serving requirements:
 #   - --language-model-only (checkpoint omits the visual tower)

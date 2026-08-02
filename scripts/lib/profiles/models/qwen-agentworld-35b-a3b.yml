@@ -39,7 +39,7 @@ weights:
     local_subdir: qwen-agentworld-35b-a3b-awq-int4
     size_gb: 23.52
     format: compressed-tensors
-    status: experimental
+    status: production
     hf_repo: cyankiwi/Qwen-AgentWorld-35B-A3B-AWQ-INT4
     revision: 76b26bbd88c6819e7623357a49275154fe420a64
     engine: vllm

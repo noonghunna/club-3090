@@ -535,13 +535,13 @@ DeepReinforce agentic-coding RL fine-tunes of the Qwen3-Next family (`qwen35` 9B
 
 ---
 
-## Qwen-AgentWorld-35B-A3B (language world model — 🐣 incubating)
+## Qwen-AgentWorld-35B-A3B (language world model — ⚠️ production w/ caveats)
 
 Qwen's specialized environment simulator predicts the next environment state from an agent action and interaction history. This is not a general assistant tier. The first compose uses cyankiwi's AWQ INT4 compressed-tensors quant, BF16 KV, the checkpoint-native template, no drafter, and vLLM's `qwen3_coder` tool parser.
 
 | Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `vllm/qwen-agentworld-35b-a3b-dual-awq-int4` | @noonghunna (2× 3090 PCIe x4/x16, 230 W/card, patched P2P engaged, custom AR on) | bf16 | **262K** | **144.46 / 143.66 wall** (decode **147.25 / 147.30**, n=5, CV ≤0.1%, TTFT 130/134 ms) | **5,244 @10K · 3,914 @90K** | **23,060 MiB/card** | 2026-08-02 | **Soak: —. First incubation run on stock vLLM v0.25.1.** Warm-cache tool-enabled boot ready in 148 s; WNA16 Marlin MoE on Ampere; correct world-simulation terminal smoke. Exact-recall NIAH passed every rung through **240,636 tokens (91%)**, with 1,069 MiB/card free and no VRAM loss across the six-rung ladder. `verify-full` passed every applicable check: ordinary and streamed `get_weather` calls parsed through `qwen3_coder`, streaming ended with `finish_reason=tool_calls`, and no raw protocol tags leaked. `verify-stress` passed 8/8, including tool-prefill and agent request shapes. Quick quality: **ToolCall-15 12/15 (80%, pass@3 13/15)** and **InstructFollow-15 15/15 (100%)**; misses were one no-call and two incomplete/misordered multi-tool chains, not parser errors. The checkpoint is language-only (`--language-model-only`) and drafter-free (zero `mtp.*` tensors despite the inherited config field). Soak, the full 8-pack, and AgentWorldBench remain unrun; status stays 🐣. |
+| `vllm/qwen-agentworld-35b-a3b-dual-awq-int4` | @noonghunna (2× 3090 PCIe x4/x16, 230 W/card, patched P2P engaged) | bf16 | **262K** | **144.15 / 142.70 wall** (decode **146.87 / 146.93**, n=5, CV ≤0.8%, TTFT 128/128 ms) | **5,205 @10K · 3,914 @90K** | **23,060 MiB/card** | 2026-08-02 | **⚠️ Production w/ caveats — full gate PASS on stock vLLM v0.25.1.** `verify-full` PASS, including ordinary + streamed `qwen3_coder` tool calls with `finish_reason=tool_calls` and no tag leak. `verify-stress` 8/8; exact recall through **240,636 tokens (91%)**, with **1,069 MiB/card free** and no VRAM loss. 100-turn soak PASS: **0 errors · 0 silent · 0 MiB growth · p50 147.27 TPS · 100% retention**. Full 8-pack: **125/150 thinking ON vs 101/150 OFF**; ON = TC14 · IF15 · SO14 · DE12 · RM14 · BF13 · HA11 · CLI32. Use thinking ON. CAVEATS: AgentWorldBench remains unrun; HermesAgent is 11/20; the 262K margin is thin; specialized environment simulator, not a general assistant. Checkpoint is language-only (`--language-model-only`) and drafter-free (zero `mtp.*` tensors). No default promotion. |
 
 ---
 

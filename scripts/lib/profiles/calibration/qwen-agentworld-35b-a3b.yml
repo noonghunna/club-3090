@@ -1,7 +1,7 @@
 schema_version: 1
 model: qwen-agentworld-35b-a3b
-# First live anchor: dual 3090, full 262K, BF16 KV, no drafter. The peak is
-# the engine-held post-stress value after exact-recall NIAH to 240,634 tokens.
+# Production-gate anchor: dual 3090, full 262K, BF16 KV, no drafter. The peak
+# held through exact-recall NIAH to 240,636 tokens and a 100-turn soak.
 rows:
   - compose: vllm/qwen-agentworld-35b-a3b-dual-awq-int4
     vram_gb: 24
@@ -10,4 +10,4 @@ rows:
     status: active
     engine_pin: vllm-v0.25.1
     genesis_pin: null
-    source: "BENCHMARKS.md#Qwen-AgentWorld-35B-A3B dual AWQ INT4 incubation @noonghunna 2026-08-02"
+    source: "BENCHMARKS.md#Qwen-AgentWorld-35B-A3B dual AWQ INT4 production gate @noonghunna 2026-08-02"
