@@ -928,19 +928,18 @@ COMPOSE_REGISTRY = {
     # Qwen-AgentWorld-35B-A3B — Qwen's specialized language world model for
     # predicting environment state after an agent action. Same Qwen3-Next MoE
     # geometry as qwen3.6-35b-a3b, but language-only and MTP-stripped despite
-    # inherited multimodal/MTP config fields. Quality-first BF16-KV production
-    # path; full operational + behavioral gate passed thinking ON. Opt-in because
-    # AgentWorldBench and the thin full-context margin remain caveats.
+    # inherited multimodal/MTP config fields. FP8-E4M3 KV production path with
+    # four full-context serving slots; full operational + behavioral gates passed.
     "vllm/qwen-agentworld-35b-a3b-dual-awq-int4": _entry(
         model="qwen-agentworld-35b-a3b", weights_variant="cyankiwi-awq-int4",
-        workload="long-ctx-single",
-        engine="vllm-stable", drafter=None, kv_format="bf16",
-        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
-        compose_path="models/qwen-agentworld-35b-a3b/vllm/compose/dual/cyankiwi-awq-int4/base.yml",
+        workload="multi-stream-tenant",
+        engine="vllm-stable", drafter=None, kv_format="fp8_e4m3",
+        tp=2, max_ctx=262144, max_num_seqs=4, mem_util=0.92,
+        compose_path="models/qwen-agentworld-35b-a3b/vllm/compose/dual/cyankiwi-awq-int4/fp8.yml",
         default_port=8080,
         kvcalc_key="qwen-agentworld-35b-a3b:dual",
-        status="caveats",
-        status_note="Qwen-AgentWorld-35B-A3B language world model, cyankiwi AWQ INT4 compressed-tensors, dual TP=2 at 262K with BF16 KV. PROMOTED to Production w/ caveats on the full 2026-08-02 gate on 2x3090, stock vLLM v0.25.1: verify-full PASS, including ordinary + streamed qwen3_coder tool calls with finish_reason=tool_calls and no tag leak; verify-stress 8/8 with exact recall through 240,636 tokens (91%); canonical decode 146.87 narrative / 146.93 code TPS (CV <=0.8%), prefill 5,205 @10K / 3,914 @90K; 100-turn soak PASS with 0 errors, 0 silent outputs, 0 MiB growth, p50 147.27 TPS, and 100% retention. Full 8-pack: 125/150 thinking ON vs 101/150 OFF; thinking ON scores ToolCall 14/15, InstructFollow 15/15, StructOutput 14/15, DataExtract 12/15, ReasonMath 14/15, BugFind 13/15, HermesAgent 11/20, CLI 32/40. CAVEATS: use thinking ON; AgentWorldBench remains unrun; full-context margin is 1,069 MiB/card; specialized environment simulator, not a general assistant. Checkpoint is language-only (--language-model-only) and has zero mtp.* tensors, so vision and speculation stay off. No DEFAULTS or recommended-model promotion.",
+        status="production",
+        status_note="Qwen-AgentWorld-35B-A3B language world model, cyankiwi AWQ INT4 compressed-tensors, dual TP=2 at 262K with FP8-E4M3 KV and four serving slots. PRODUCTION gate on 2x3090, stock vLLM v0.25.1: verify-full PASS; verify-stress 8/8 with exact recall through 240,634 tokens (91%); canonical decode 147.12 narrative / 147.24 code TPS, prefill 5,116 @10K / 3,788 @90K; 100-turn soak PASS with 0 errors, 0 silent outputs, 0 MiB growth, p50 147.61 TPS, and 100% retention. The 1,795,289-token KV pool projects 6.85 full-length sequences; C=4 was exercised for six rounds with four simultaneous ~261,529-token prompts: 24/24 completed, 0 errors, 0 silent outputs, 0 MiB growth, 100% retention. FP8 quick quality scored ToolCall 14/15 and InstructFollow 15/15 thinking ON; the matched BF16 baseline full 8-pack scored 125/150 ON vs 101/150 OFF. Checkpoint is language-only (--language-model-only) and has zero mtp.* tensors, so vision and speculation stay off. No DEFAULTS or recommended-model promotion.",
     ),
 
     # Agents-A1 — InternScience's 35B agentic MoE (Qwen3-Next MoE arch, OWN model

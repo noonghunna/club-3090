@@ -54,6 +54,6 @@ valid_tp:
   - 2
 requires_genesis: false
 # Geometry is identical to the calibrated qwen3.6-35b-a3b hybrid MoE. The first
-# live 262K boot and 240K NIAH ladder confirmed the inherited KV math direction;
-# the model-specific calibration row records the measured 22.52 GiB/card peak.
+# live 262K FP8 boot, 240K NIAH ladder, and 4 × ~261.5K concurrency confirmed
+# the KV math direction; calibration records the measured 22.87 GiB/card peak.
 kv_calc_supported: true

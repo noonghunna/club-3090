@@ -4,29 +4,28 @@
 #   Topology:  Dual 3090 PCIe (TP=2; NVLink auto-detected when available)
 #   Drafter:   none — config declares one MTP layer, but the pinned checkpoint
 #              contains zero mtp.* tensors (safetensors-index verified)
-#   KV:        bf16 — quality-first production config; quantized KV untested
+#   KV:        fp8_e4m3 — FlashInfer storage path on Ampere; 1,795,289-token
+#              pool, enough for 6.85 × 262K sequences
 #   Vision:    no — multimodal config but no visual.* weights; vLLM requires
 #              --language-model-only for this checkpoint
-#   Max ctx:   262K — exact-recall NIAH passed to 240,636 tokens (91%) with
-#              1,069 MiB/card free and no VRAM loss across the six-rung ladder
+#   Max ctx:   262K — exact-recall NIAH passed to 240,634 tokens (91%); four
+#              concurrent streams each completed at ~261,529 prompt tokens
 #   Genesis:   N/A — no Genesis patches on this stock vLLM path
-#   Status:    ⚠️ Production w/ caveats
-#   Caveats:   Use thinking ON: full 8-pack 125/150 vs 101/150 OFF; HermesAgent
-#              is 11/20; the 262K ceiling has 1,069 MiB/card free; AgentWorldBench
-#              remains unrun. This is an environment simulator, not a general assistant.
+#   Status:    ✅ Production
 #   Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 15/15 (100%)
-#              · StructOutput-15 14/15 (93%) · DataExtract-15 12/15 (80%)
-#              (--full, thinking ON, packs v1.0.x, 2026-08-02)
-#   Best for:  Agent-action → environment-state simulation across seven domains
+#              (--quick, thinking ON, packs v1.0.x, 2026-08-03)
+#   Best for:  Concurrent full-context environment simulation across seven domains
 # ---------------------------------------------------------------------------
 # First and only Qwen-AgentWorld compose. It uses the checkpoint-native template,
-# thinking enabled, BF16 KV, qwen3_coder tool parsing, and no speculation.
-# Production gate on 2×3090 (2026-08-02): verify-full PASS; verify-stress 8/8
-# with exact recall through 240,636 tokens; canonical decode 146.87 narrative /
-# 146.93 code TPS; prefill 5,205 tok/s @10K and 3,914 tok/s @90K; 100-turn soak
-# PASS with 0 errors, 0 silent outputs, 0 MiB growth, and 100% TPS retention.
-# Full 8-pack: 125/150 thinking ON vs 101/150 OFF. A terminal world-simulation
-# smoke returned the exact expected observation; AgentWorldBench remains unrun.
+# thinking enabled, FP8 E4M3 KV, qwen3_coder tool parsing, and no speculation.
+# Production gate on 2×3090 (2026-08-03): verify-full PASS; verify-stress 8/8
+# with exact recall through 240,634 tokens; canonical decode 147.12 narrative /
+# 147.24 code TPS; prefill 5,116 tok/s @10K and 3,788 tok/s @90K. C=4 passed
+# at 256 tokens, 10K tokens, and six validation rounds with four simultaneous
+# ~261,529-token prompts (0 errors, 0 silent outputs, 0 MiB growth, 100%
+# retention). Fresh-session soak passed 100/100 with p50 147.61 TPS and 0 MiB
+# growth. FP8 quick quality passed 29/30 thinking ON; the matched BF16 baseline's
+# full 8-pack scored 125/150 thinking ON vs 101/150 OFF.
 #
 # Upstream card serving requirements:
 #   - --language-model-only (checkpoint omits the visual tower)
@@ -107,11 +106,11 @@ services:
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-1}"
+      - "${MAX_NUM_SEQS:-4}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-bfloat16}"
+      - "${KV_CACHE_DTYPE:-fp8}"
       - --language-model-only
       - --trust-remote-code
       - --reasoning-parser
