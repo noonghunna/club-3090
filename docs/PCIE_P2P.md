@@ -160,6 +160,67 @@ Note also that **Above 4G Decoding being on is not the same as ReBAR being on** 
 >
 > ⚠️ **And even a patched module may not be enough under VFIO.** Peer DMA between two passed-through devices must be routed by the host IOMMU, and ACS on the root ports — the very thing giving you clean per-GPU IOMMU groups — pushes peer traffic upstream. **Do not reflexively disable ACS to chase this**: on the reference rig each GPU sits alone with its audio function in its own IOMMU group, and merging those groups can break passthrough outright. That is trading "no P2P" for "no GPUs". Treat ACS as a deliberate, reversible experiment, never a default.
 
+### Why a VM reports `CNS` — the exact gate, read from the driver source
+
+Two functions decide this, both in `src/nvidia/src/kernel/platform/`:
+
+**1. `p2p_caps.c` — the gate itself:**
+
+```c
+// If the chipset is not capable AND there is no common PCIe switch,
+// then P2P is not supported.
+if ((!pCl->bPciePeerReadCapable || !pCl->bPciePeerWriteCapable) &&
+    (!bCommonPciSwitchFound))
+{
+    *pP2PReadCapStatus  = NV0000_P2P_CAPS_STATUS_CHIPSET_NOT_SUPPORTED;
+    *pP2PWriteCapStatus = NV0000_P2P_CAPS_STATUS_CHIPSET_NOT_SUPPORTED;
+}
+```
+
+**2. `chipset_pcie.c` — where the capability flags come from.** The driver walks a
+`pciePeerAccessCaps[]` table, matching the **Front Host Bridge** (`00:00.0`) on vendor /
+device / subsystem IDs. The table **ends in a default-deny**:
+
+```c
+// Last entry - default = not supported
+{CHIPSET_ANY, CHIPSET_ANY, CHIPSET_ANY, CHIPSET_ANY, CHIPSET_ANY, CAPABLE_NONE},
+```
+
+A QEMU guest presents an emulated **Intel 82G33 [`8086:29c0`]** front host bridge, which appears
+nowhere in that table. It falls through to the deny-all, both flags go `NV_FALSE`, and the gate
+fires. **On bare metal the same rig's real bridge (e.g. AMD `[1022:1480]`) matches an allow entry
+and the gate never fires** — which is the entire difference between host and guest.
+
+> ⚠️ **The patched-module forks do NOT change this.** We read the `610.43.02-p2p` tree: it modifies
+> BAR1 P2P *transport* across 17 files, and touches `chipset_pcie.c` **not at all**. On bare metal
+> the gate never fires so this is invisible; in a VM the gate fires first and nothing downstream
+> matters. **Installing a patched module in a VM will not clear `CNS`.** Confirm before you build.
+
+### Two escape hatches that need no patched driver
+
+Note the gate is an **AND**. `bCommonPciSwitchFound` bypasses the chipset table entirely, and
+`clFindCommonDownstreamBR()` sets it when both GPUs share a **common downstream bridge**:
+
+```c
+clFindCommonDownstreamBR(pFirstGpu, pGpu, pCl, &pciSwitchBus);
+if ((pciSwitchBus == 0xFF) || (pciSwitchBus_ref != pciSwitchBus))
+    bCommonPciSwitchFound = NV_FALSE;
+```
+
+| approach | what it does | cost |
+|---|---|---|
+| **Emulated PCIe switch** ⭐ | Attach both passed-through GPUs to downstream ports of one QEMU switch (`x3130-upstream` + `xio3130-downstream`) instead of separate root ports. Common bridge found → chipset table never consulted. | **VM config only — no driver build** |
+| Front-host-bridge IDs | Present an FHB whose IDs match an allow entry (the table has a permissive `PCI_VENDOR_ID_NVIDIA` rule). | VM config, but fragile/undocumented |
+
+A default Proxmox `q35` guest puts each passthrough device on its **own root port**
+(`00:1c.0`, `00:1c.1`) — no common bridge, which is exactly why the default layout reports `CNS`.
+
+> ⚠️ **Clearing `CNS` is not the same as working P2P.** Both hatches make the driver *report*
+> capability; neither proves peer DMA survives VFIO/IOMMU translation. A **false** grant is worse
+> than an honest refusal — our composes auto-enable on the grant, and NCCL then **hangs silently**
+> instead of falling back ([#873](https://github.com/noonghunna/club-3090/issues/873)). Always follow
+> with a **transfer** check (§7) and keep `NVLINK_MODE=force_off` ready.
+
 **Order of operations on a virtualised rig:** confirm you're a guest → read BAR1 + bridge window **on the host** → host BIOS Re-Size BAR (Above 4G stays on; leave ACS and IOMMU alone) → verify the host window grew → verify the guest sees the large BAR → *then* driver/patch work → then a **transfer** check (§7), never the grant alone.
 
 ---
