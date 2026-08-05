@@ -53,6 +53,90 @@ Two details confirming it is a heuristic and not a kernel limit:
 
 ---
 
+## 0. The layer stack — what has to be true for P2P to actually help
+
+Six gates. **Every one must pass**, and each fails with a different symptom. Most confusion comes from
+fixing one gate and expecting the whole stack to work.
+
+```mermaid
+flowchart TD
+    L0["<b>0 · Topology</b><br/>PIX / PXB / PHB = workable<br/>SYS (cross-socket) = no"]
+    L1["<b>1 · BAR1 aperture</b><br/>needed by the <i>patched-module</i> path only<br/>NOT needed by the clique path"]
+    L2["<b>2 · Driver grant</b><br/>three independent routes"]
+    L3["<b>3 · Transfers actually work</b><br/>p2pBandwidthLatencyTest"]
+    L4["<b>4 · Engine uses it</b><br/>vLLM: automatic via NCCL<br/>llama.cpp: GGML_CUDA_P2P (opt-in, OFF)"]
+    L5["<b>5 · Workload benefits</b><br/>TP yes · PP barely · EP n/a"]
+
+    R1["real chipset<br/>in NVIDIA's table"]
+    R2["common PCIe switch<br/>(PLX/BR03/BR04/Mellanox<br/>allowlist only)"]
+    R3["hypervisor clique<br/>x-nv-gpudirect-clique<br/><b>← the VM answer</b>"]
+
+    L0 --> L1 --> L2
+    L2 --- R1 & R2 & R3
+    R1 & R2 & R3 --> L3 --> L4 --> L5
+    L5 --> WIN["P2P pays off"]
+
+    F0["SYS: stop"]:::f
+    F2["CNS"]:::f
+    F3["<b>OK but hangs</b><br/>false grant"]:::f
+    F4["no effect<br/>(flag never set)"]:::f
+    F5["no effect<br/>(nothing to accelerate)"]:::f
+
+    L0 -.-> F0
+    L2 -.-> F2
+    L3 -.-> F3
+    L4 -.-> F4
+    L5 -.-> F5
+
+    classDef f fill:#fdd,stroke:#c00,color:#000
+```
+
+| gate | fails as | where |
+|---|---|---|
+| 0 Topology | cross-socket is unfixable | §1, §2 |
+| 1 BAR1 | patched path unreachable | §4, §4a |
+| 2 Driver grant | **`CNS`** | §4a |
+| 3 Transfers | `OK` that **hangs** | §4a, §7 |
+| 4 Engine | silently no effect | §6, §7a |
+| 5 Workload | honest zero | §6 |
+
+---
+
+## 0a. TP vs PP vs EP — why the parallelism mode decides whether P2P matters
+
+```mermaid
+flowchart LR
+    subgraph PP["PP · --split-mode layer"]
+        direction TB
+        P1["GPU0: layers 0-19"] -->|"activations only<br/><b>~7 MB/s</b>"| P2["GPU1: layers 20-39"]
+    end
+    subgraph TP["TP · --split-mode row/tensor"]
+        direction TB
+        T1["GPU0: half of EVERY tensor"] <-->|"all-reduce EVERY layer<br/><b>~1400 MB/s, latency-bound</b>"| T2["GPU1: other half"]
+    end
+    subgraph EP["EP · expert parallel"]
+        direction TB
+        E1["GPU0: experts 0-127"] <-->|"all-to-all dispatch/combine"| E2["GPU1: experts 128-255"]
+    end
+```
+
+| mode | inter-GPU traffic | does P2P help? | availability |
+|---|---|---|---|
+| **PP** (`layer`) | activations at the boundary — **~7 MB/s measured** | **Barely.** Nothing to accelerate | ✅ everywhere; the safe default |
+| **TP** (`row`/`tensor`) | all-reduce every layer — **~1400 MB/s**, many small serialized transfers | **Yes — and via LATENCY, not bandwidth.** 15.23 → 1.01 µs is the real win | ⚠️ `row` needs split-buffer support; `tensor` is upstream-EXPERIMENTAL and hits [#24489](https://github.com/ggml-org/llama.cpp/issues/24489) below NCCL 2.27.5 |
+| **EP** | all-to-all token routing | Yes in principle | ⛔ **not expressible in llama.cpp** — all experts of a layer live in one packed tensor, so `-ot` granularity is the whole per-layer bundle |
+
+> ⚠️ **PP is not parallelism at `-np 1`.** With a single sequence the GPUs run in *sequence* — GPU0 does
+> its layers while GPU1 idles, then swaps. Measured: 1 GPU **128.72** → 2 GPU `layer` **144.29** TPS,
+> just **+12%**. The second card is buying **capacity, not speed**. Expect real pipelining only with
+> multiple in-flight sequences.
+>
+> ⚠️ **Reason about latency, not bandwidth.** Link utilisation is often under 20% while the latency
+> saving is 15×. Concluding "P2P can't matter, we're not bandwidth-bound" is the single most common
+> analysis error here — we made it ourselves.
+
+---
+
 ## 1. Reading your topology: why `PHB`, not `PIX`
 
 `nvidia-smi topo -m` labels each GPU↔GPU link by the *closest common point* the two cards share:
@@ -290,7 +374,42 @@ mistake.
 > than falling back ([#873](https://github.com/noonghunna/club-3090/issues/873)). Keep
 > `NVLINK_MODE=force_off` staged as the escape hatch.
 
-> ### ⚠️⚠️ A PASSING TRANSFER TEST IS NECESSARY BUT **NOT SUFFICIENT** (measured 2026-08-05)
+> ### ⛔⛔ VERDICT ON THIS RIG: the clique grant BROKE both engines' collective paths
+
+**Read this before following the recipe above.** On the reference rig the clique produced a working
+*benchmark* and a broken *stack*:
+
+| workload | result with the clique active |
+|---|---|
+| `p2pBandwidthLatencyTest` | ✅ 11.28 → **27.12 GB/s**, 15.23 → **1.01 µs** |
+| llama.cpp `--split-mode layer` | ✅ unaffected, boots 12 s |
+| llama.cpp `--split-mode tensor` | ❌ **hangs in warmup** |
+| **vLLM TP=2** | ❌ **hangs at `ncclCommInitRank`** — 492 MiB, weights never load, both GPUs spinning |
+
+The vLLM hang is [#873](https://github.com/noonghunna/club-3090/issues/873)'s exact signature: boot
+stops dead after `vLLM is using nccl==…`, no error.
+
+⚠️ **These are two different bugs and only one is #24489.** llama.cpp's image ships NCCL **2.25.1**
+(exposed to the [#24489](https://github.com/ggml-org/llama.cpp/issues/24489) OOB write); vLLM ships
+**2.28.9**, which is *past* that fix — and it hangs anyway. Two engines, two NCCL versions, same hang.
+The common factor is the **clique-asserted peer path in a VM**.
+
+**Point-to-point copies work. Real collectives do not.** That is the whole finding, and it is exactly
+what NVIDIA's comment leaves room for: the hypervisor *warrants* P2P works, and a warrant is not a
+measurement.
+
+**So on a VM, treat the clique as UNPROVEN until your own collective workload boots.** If it hangs:
+- Immediate, no reboot: `NCCL_P2P_DISABLE=1` (verified — vLLM TP=2 then loaded 9.66 GiB in 41 s and
+  served normally), or `NVLINK_MODE=force_off` on our composes.
+- Proper: drop the `args` line from the VM config and restart.
+
+The recipe above is still the only mechanism that clears `CNS` config-only, and it may well work on
+other hosts — the XCP-ng/L40 and OpenStack reports suggest it does. But **it did not work here**, and
+"it passed the bandwidth test" is not evidence that it will work for you.
+
+---
+
+### ⚠️⚠️ A PASSING TRANSFER TEST IS NECESSARY BUT **NOT SUFFICIENT** (measured 2026-08-05)
 >
 > This corrects the obvious reading of §7. On the reference rig, with the clique active:
 >
@@ -493,6 +612,7 @@ Everything below was hit for real. Start from the symptom.
 | `NVLINK_MODE=force_off` changes nothing on llama.cpp | It's a **vLLM-compose** variable | Not applicable — see the two rows above |
 | Two pairs both `PHB` but very different speed | `topo -m` shows link *type*, not *quality* (§1) | Run `p2pBandwidthLatencyTest`; prefer GPUs on direct CPU lanes over chipset-attached |
 | Transfer test **passes**, real workload still hangs | A synthetic copy is weaker than a real collective (§4a) | Validate with the engine + config you actually serve. Revert the clique or pin `NVLINK_MODE=force_off` |
+| **vLLM TP=2 hangs at `ncclCommInitRank`** (492 MiB, weights never load) | False peer grant — [#873](https://github.com/noonghunna/club-3090/issues/873) signature. **Not** #24489: vLLM ships NCCL 2.28.9, past that fix | `NCCL_P2P_DISABLE=1` (no reboot; verified working) or revert the clique |
 
 > ### ⚠️ `--split-mode tensor` + a live peer path = known-broken below NCCL 2.27.5
 >
