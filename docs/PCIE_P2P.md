@@ -146,7 +146,17 @@ Note also that **Above 4G Decoding being on is not the same as ReBAR being on** 
 >
 > Two things follow, both measured on this rig rather than inferred:
 > - **Stock `nvidia-open` alone does not grant P2P on consumer 3090s under virtualisation.** (It has been reported working on bare-metal server boards — see #688 — so this is a statement about VMs, not about the open modules.)
-> - Defeating a chipset-table verdict is exactly what the §5 patched module removes from the source. Registry keys like `PeerMappingOverride` relax peer *mapping* restrictions; they are not documented to bypass the chipset check.
+> - Defeating a chipset-table verdict is exactly what the §5 patched module removes from the source. Registry keys like `PeerMappingOverride` relax peer *mapping* restrictions; they do not reach the chipset check.
+>
+>   **Measured, not assumed (2026-08-05):** with `options nvidia NVreg_RegistryDwords="RMForceStaticBar1=1;PeerMappingOverride=1"` **confirmed live** after a reboot, `topo -p2p r` still reported `CNS`. The cheap registry path is therefore **ruled out** on a virtualised rig — go straight to §5 if you intend to pursue this.
+>
+>   ⚠️ **Verify the override the right way, or you'll misread the result.** `/sys/module/nvidia/parameters/NVreg_RegistryDwords` reads **empty even when the setting is active** (it's a `charp` the module copies without retaining). The authoritative source is:
+>
+>   ```
+>   grep -i registrydwords /proc/driver/nvidia/params
+>   ```
+>
+>   Trusting the sysfs node would make you conclude the override never applied and retry it forever.
 >
 > ⚠️ **And even a patched module may not be enough under VFIO.** Peer DMA between two passed-through devices must be routed by the host IOMMU, and ACS on the root ports — the very thing giving you clean per-GPU IOMMU groups — pushes peer traffic upstream. **Do not reflexively disable ACS to chase this**: on the reference rig each GPU sits alone with its audio function in its own IOMMU group, and merging those groups can break passthrough outright. That is trading "no P2P" for "no GPUs". Treat ACS as a deliberate, reversible experiment, never a default.
 
