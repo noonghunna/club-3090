@@ -478,6 +478,46 @@ Read the **"Interconnect verdict"** line under *Boot log highlights* — the rep
 
 ---
 
+## 7a. Gotchas — symptom → cause → fix
+
+Everything below was hit for real. Start from the symptom.
+
+| symptom | cause | fix |
+|---|---|---|
+| `topo -p2p` = **`CNS`** in a VM | Emulated front host bridge isn't in the driver's chipset table (§4a) | `x-nv-gpudirect-clique` (§4a). **Not** a BAR, driver-flavour or topology problem |
+| `CNS` persists after a **large BAR1** + **open driver** | BAR/driver were never the gate; the chipset table is | Same — clique. Measured: 32 GB BAR1 + `nvidia-open` still `CNS` |
+| `CNS` persists after `NVreg_RegistryDwords` | Those keys relax peer *mapping*, not the chipset verdict | Refuted on-rig. Don't retry |
+| **`--split-mode tensor` hangs in warmup** or crashes with `illegal memory access` | **NCCL all-reduce OOB write** — [ggml-org#24489](https://github.com/ggml-org/llama.cpp/issues/24489). Fires once a peer path is live | **NCCL ≥ 2.27.5** (rebuild), or build `-DGGML_CUDA_NO_VMM=ON`. Or just use `--split-mode layer` |
+| `-sm tensor` segfaults with no clear error | **Flash attention is REQUIRED for `-sm tensor`** and nothing validates it (#24489) | Pass `-fa on` |
+| P2P "makes no difference" on llama.cpp | Peer access is **opt-in** via `GGML_CUDA_P2P` (off by default), and `layer` split barely uses the link | Set `GGML_CUDA_P2P=1` *and* use `row`/`tensor`. Expect ~0 anyway (§6) |
+| `NVLINK_MODE=force_off` changes nothing on llama.cpp | It's a **vLLM-compose** variable | Not applicable — see the two rows above |
+| Two pairs both `PHB` but very different speed | `topo -m` shows link *type*, not *quality* (§1) | Run `p2pBandwidthLatencyTest`; prefer GPUs on direct CPU lanes over chipset-attached |
+| Transfer test **passes**, real workload still hangs | A synthetic copy is weaker than a real collective (§4a) | Validate with the engine + config you actually serve. Revert the clique or pin `NVLINK_MODE=force_off` |
+
+> ### ⚠️ `--split-mode tensor` + a live peer path = known-broken below NCCL 2.27.5
+>
+> [ggml-org#24489](https://github.com/ggml-org/llama.cpp/issues/24489): `compute-sanitizer` traced it to
+> `ncclDevFunc_AllReduce_Sum_bf16_RING_SIMPLE` writing **~32 GiB past a 2 MiB allocation**. It's an NCCL
+> P2P/VMM bug, not a llama.cpp logic error, and it only fires on the **large-tensor bf16 branch** — MoE
+> models often take the small path and escape it, which makes it look intermittent.
+>
+> **Check what you're running:**
+>
+> ```bash
+> docker run --rm --entrypoint sh <llama-image> -c 'ls -l /lib/x86_64-linux-gnu/libnccl.so.2'
+> ```
+>
+> The pinned `server-cuda-b10236` image ships **NCCL 2.25.1** — **below the fix**. Both workarounds
+> (NCCL ≥ 2.27.5, or `-DGGML_CUDA_NO_VMM=ON`) require a rebuild, so **neither is available on the
+> pinned image**. On this stack that makes `--split-mode tensor` **unusable** until the pin moves;
+> `--split-mode layer` is unaffected and is the production path.
+>
+> ⚠️ **This bites precisely when P2P starts working.** The same `tensor` config that ran fine with P2P
+> unavailable will hang once a peer path exists — so "it broke after I enabled P2P" is expected here,
+> and is not evidence that your P2P grant is false.
+
+---
+
 ## 8. Troubleshooting
 
 | Symptom | Likely cause → fix |
