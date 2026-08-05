@@ -542,10 +542,13 @@ mistake.
 The vLLM hang is [#873](https://github.com/noonghunna/club-3090/issues/873)'s exact signature: boot
 stops dead after `vLLM is using nccl==…`, no error.
 
-⚠️ **These are two different bugs and only one is #24489.** llama.cpp's image ships NCCL **2.25.1**
-(exposed to the [#24489](https://github.com/ggml-org/llama.cpp/issues/24489) OOB write); vLLM ships
-**2.28.9**, which is *past* that fix — and it hangs anyway. Two engines, two NCCL versions, same hang.
-The common factor is the **clique-asserted peer path in a VM**.
+✅ **CORRECTED: these are ONE bug, not two.** We first blamed llama.cpp's half on
+[#24489](https://github.com/ggml-org/llama.cpp/issues/24489) and an NCCL version boundary. Wrong on
+both counts — #24489's real fix is [PR #24491](https://github.com/ggml-org/llama.cpp/pull/24491)
+(`cuMemSetAccess` on llama.cpp's own VMM pool), and `b10236` **already contains it**. Both engines fail
+for the **same** reason: **NCCL collectives over a clique-granted peer path**. Isolated to a standalone
+`nccl-tests` reproducer with no engine involved — `ncclCommInitRank` completes in ~0.22 s, then the
+**first collective** never returns.
 
 **Point-to-point copies work. Real collectives do not.** That is the whole finding, and it is exactly
 what NVIDIA's comment leaves room for: the hypervisor *warrants* P2P works, and a warrant is not a
@@ -759,7 +762,7 @@ Everything below was hit for real. Start from the symptom.
 | `topo -p2p` = **`CNS`** in a VM | Emulated front host bridge isn't in the driver's chipset table (§4a) | `x-nv-gpudirect-clique` (§4a). **Not** a BAR, driver-flavour or topology problem |
 | `CNS` persists after a **large BAR1** + **open driver** | BAR/driver were never the gate; the chipset table is | Same — clique. Measured: 32 GB BAR1 + `nvidia-open` still `CNS` |
 | `CNS` persists after `NVreg_RegistryDwords` | Those keys relax peer *mapping*, not the chipset verdict | Refuted on-rig. Don't retry |
-| **`--split-mode tensor` hangs in warmup** or crashes with `illegal memory access` | **NCCL all-reduce OOB write** — [ggml-org#24489](https://github.com/ggml-org/llama.cpp/issues/24489). Fires once a peer path is live | **NCCL ≥ 2.27.5** (rebuild), or build `-DGGML_CUDA_NO_VMM=ON`. Or just use `--split-mode layer` |
+| **`--split-mode tensor` hangs in warmup** | **NCCL collectives over a clique-granted peer path** — same root cause as the vLLM TP=2 hang. ⚠️ **NOT** [#24489](https://github.com/ggml-org/llama.cpp/issues/24489), whose real fix ([PR #24491](https://github.com/ggml-org/llama.cpp/pull/24491), `cuMemSetAccess` on llama.cpp's VMM pool) is already in `b10236` | **`NCCL_P2P_DISABLE=1`** — verified: boots 16 s, benches on par with `layer`. `GGML_CUDA_ALLREDUCE=internal` does **not** clear it |
 | `-sm tensor` segfaults with no clear error | **Flash attention is REQUIRED for `-sm tensor`** and nothing validates it (#24489) | Pass `-fa on` |
 | P2P "makes no difference" on llama.cpp | Peer access is **opt-in** via `GGML_CUDA_P2P` (off by default), and `layer` split barely uses the link | Set `GGML_CUDA_P2P=1` *and* use `row`/`tensor`. Expect ~0 anyway (§6) |
 | `NVLINK_MODE=force_off` changes nothing on llama.cpp | It's a **vLLM-compose** variable | Not applicable — see the two rows above |
@@ -767,28 +770,36 @@ Everything below was hit for real. Start from the symptom.
 | Transfer test **passes**, real workload still hangs | A synthetic copy is weaker than a real collective (§4a) | Validate with the engine + config you actually serve. Revert the clique or pin `NVLINK_MODE=force_off` |
 | **vLLM TP=2 hangs at `ncclCommInitRank`** (492 MiB, weights never load) | False peer grant — [#873](https://github.com/noonghunna/club-3090/issues/873) signature. **Not** #24489: vLLM ships NCCL 2.28.9, past that fix | `NCCL_P2P_DISABLE=1` (no reboot; verified working) or revert the clique |
 
-> ### ⚠️ `--split-mode tensor` + a live peer path = known-broken below NCCL 2.27.5
+> ### ⚠️ `--split-mode tensor` + a live peer path — NCCL collectives hang
 >
-> [ggml-org#24489](https://github.com/ggml-org/llama.cpp/issues/24489): `compute-sanitizer` traced it to
-> `ncclDevFunc_AllReduce_Sum_bf16_RING_SIMPLE` writing **~32 GiB past a 2 MiB allocation**. It's an NCCL
-> P2P/VMM bug, not a llama.cpp logic error, and it only fires on the **large-tensor bf16 branch** — MoE
-> models often take the small path and escape it, which makes it look intermittent.
+> **Not a version problem.** We initially attributed this to
+> [#24489](https://github.com/ggml-org/llama.cpp/issues/24489) and an NCCL 2.27.5 boundary; both were
+> wrong. That issue's real fix is [PR #24491](https://github.com/ggml-org/llama.cpp/pull/24491)
+> (`7a63fde`) — it makes llama.cpp's **CUDA VMM pool** peer-accessible via `cuMemSetAccess`, because
+> `cudaDeviceEnablePeerAccess` does not do so retroactively. `server-cuda-b10236` (2026-08-03) already
+> has it.
 >
-> **Check what you're running:**
+> The hang we actually see is **NCCL's device-driven P2P transport failing over a clique-granted
+> mapping** — the same failure that hangs vLLM TP=2. A standalone `nccl-tests` run reproduces it with no
+> engine, no model and no cross-process IPC: `ncclCommInitRank` succeeds in ~0.22 s, channels connect
+> `via P2P/CUMEM`, and the **first four-byte all-reduce never completes**.
 >
-> ```bash
-> docker run --rm --entrypoint sh <llama-image> -c 'ls -l /lib/x86_64-linux-gnu/libnccl.so.2'
+> Ruled out by A/B: `NCCL_CUMEM_ENABLE=0`, `NCCL_P2P_DIRECT_DISABLE=1`, `NCCL_PROTO=Simple` — all still
+> hang. `GGML_CUDA_ALLREDUCE=internal` also does not clear it.
+>
+> **What works:**
+>
+> ```
+> NCCL_P2P_DISABLE=1      # global host/SHM staging — verified on both engines
+> NCCL_P2P_LEVEL=PXB      # topology-scoped equivalent; same data path on a PHB pair
 > ```
 >
-> The pinned `server-cuda-b10236` image ships **NCCL 2.25.1** — **below the fix**. Both workarounds
-> (NCCL ≥ 2.27.5, or `-DGGML_CUDA_NO_VMM=ON`) require a rebuild, so **neither is available on the
-> pinned image**. On this stack that makes `--split-mode tensor` **unusable** until the pin moves;
-> `--split-mode layer` is unaffected and is the production path.
+> ⚠️ Do **not** set `NCCL_SHM_DISABLE=1` — that disables the fallback you are relying on.
 >
-> ⚠️ **This bites precisely when P2P starts working.** The same `tensor` config that ran fine with P2P
-> unavailable will hang once a peer path exists — so "it broke after I enabled P2P" is expected here,
-> and is not evidence that your P2P grant is false.
-
+> With `NCCL_P2P_DISABLE=1`, `--split-mode tensor` boots in 16 s and benches **on par with `layer`**
+> (141.6 vs 140.7 same-session). Note this means P2P is *off* for collectives — you keep the clique's
+> CUDA copy path, not accelerated collectives.
+>
 ---
 
 ## 8. Troubleshooting
