@@ -8,6 +8,11 @@ This is the home for **getting the most out of a PCIe-only multi-GPU rig** — u
 
 ---
 
+> **Two models, one subject — how they fit.** §0 below is the **setup** model: six gates from hardware
+> to workload, each with a distinct failure. The **three layers** here are a **diagnostic** zoom-in on
+> gates 2 and 4 — use them when P2P is already configured and you're asking "is it actually on right
+> now?". Setting up? Start at §0. Triaging a live rig? Start here.
+
 ## The three layers of "is P2P on?" — read this first
 
 "P2P" is three independent questions stacked on top of each other, and every confused triage in our tracker came from conflating them ([disc #773](https://github.com/noonghunna/club-3090/discussions/773) has the worked example):
@@ -134,6 +139,78 @@ flowchart LR
 > ⚠️ **Reason about latency, not bandwidth.** Link utilisation is often under 20% while the latency
 > saving is 15×. Concluding "P2P can't matter, we're not bandwidth-bound" is the single most common
 > analysis error here — we made it ourselves.
+
+---
+
+## 0b. Which path are you on? Bare metal vs virtualised
+
+**Check first — it changes every step that follows:**
+
+```bash
+systemd-detect-virt          # qemu/kvm = virtualised · none = bare metal
+```
+
+| step | 🖥️ **Bare metal** | 🧊 **VM (VFIO passthrough)** |
+|---|---|---|
+| **Read BAR1 / ReBAR** | `lspci -vv` in place | ⚠️ **on the HOST** — a guest exposes *no* ReBAR capability and reports 256M for a card that supports 32G |
+| **Enable large BAR1** | BIOS: Above 4G + Re-Size BAR | Host BIOS (same), then confirm the guest sees it |
+| **Get the driver grant** | open modules, or the §5 patched module | ⚠️ **`x-nv-gpudirect-clique`** (§4a). The chipset table can never match an emulated bridge |
+| **Verify** | transfer test (§7) | transfer test **and a real collective** — copies can pass while collectives hang |
+| **Enable in the engine** | §0c | §0c (identical) |
+
+### Pitfalls of each — the ones that actually cost us time
+
+**🖥️ Bare metal**
+
+| pitfall | why it bites |
+|---|---|
+| VBIOS caps BAR1 at 256MB | A genuine firmware gate. No BIOS setting or driver helps; needs a vendor ReBAR VBIOS (#734). Check `lspci` `supported:` — but only on bare metal |
+| Closed driver refuses P2P on GeForce | `modinfo -F license nvidia` = `NVIDIA` → refuses. Open modules (`Dual MIT/GPL`) may grant; the §5 patched module usually does |
+| **ACS silently kills it** | ACS-redirect forces peer traffic through the root complex. The #1 silent killer — costs bandwidth, not correctness |
+| Cross-socket (`SYS`) | Unfixable. Move a card |
+| `topo -m` looks fine but one GPU is slow | It shows link *type*, not *quality* — a chipset-attached card can run at half the bandwidth of a CPU-attached pair (§1) |
+
+**🧊 Virtualised**
+
+| pitfall | why it bites |
+|---|---|
+| **Guest BAR1 reading is a lie** | No ReBAR capability is exposed. We diagnosed our own cards as VBIOS-capped when they support 32G |
+| **`CNS` is a chipset-table verdict** | Not fixable by BAR size, driver flavour, IOMMU or ACS. We proved all four (§4a) |
+| `NVreg_RegistryDwords` don't help | Measured, refuted. They relax peer *mapping*, not the chipset check |
+| **A patched module doesn't help either** | The p2p forks never touch `chipset_pcie.c`. The gate fires upstream of everything they change |
+| Emulated PCIe switch doesn't help | `clFindCommonDownstreamBR()` uses an allowlist; QEMU's TI XIO3130 isn't on it |
+| `hidden=1` silently defeats the clique | It emits `kvm=off`, and the clique path is gated on `bDetected` |
+| Dotted QEMU ids silently defeat it | A bare BDF yields `hostpci0.0`; `-set` can't target dotted ids. Use explicit `.0` |
+| **⛔ The clique can grant copies but hang collectives** | On this rig: 27 GB/s verified, then llama.cpp `tensor` and vLLM TP=2 both hung. **Test a real collective** (§4a) |
+| **Lockout risk** | A bad `args` line stops the VM booting. If your only shell is *inside* that guest, back the config up first |
+
+---
+
+## 0c. Turning P2P ON in your engine (gate 4) — it is not automatic
+
+A driver grant does **not** mean your engine uses it. Each engine has its own switch and its own default:
+
+| engine | default | turn ON | turn OFF (escape hatch) |
+|---|---|---|---|
+| **vLLM** | **auto-enabled** by our composes' entrypoint on a grant | `NVLINK_MODE=pcie_p2p` to force | `NVLINK_MODE=force_off`, or `NCCL_P2P_DISABLE=1` on a raw `docker run` |
+| **llama.cpp** | ⚠️ **OFF** — opt-in regardless of the grant | `GGML_CUDA_P2P=1` **and** `--split-mode row`/`tensor` | unset `GGML_CUDA_P2P` |
+| **SGLang** | no interconnect detection | `NCCL_P2P_DISABLE=0` | `NCCL_P2P_DISABLE=1` |
+
+⚠️ **The three most common mistakes here:**
+
+1. **`NVLINK_MODE` on llama.cpp does nothing** — it is a vLLM-compose variable. Toggling it proves nothing.
+2. **`NCCL_P2P_DISABLE` on llama.cpp `--split-mode layer` does nothing** — that path uses no NCCL. It *does* apply to `row`/`tensor`, which do NCCL all-reduce.
+3. **Enabling it on `--split-mode layer` changes nothing measurable** — that mode moves ~7 MB/s between GPUs. There is nothing to accelerate (§0a).
+
+**Confirm it actually engaged** — don't infer from TPS:
+
+```bash
+# vLLM: the boot log states it plainly
+docker logs <container> 2>&1 | grep -iE "custom allreduce|nccl"
+
+# llama.cpp: peer access is only attempted when the env var is set
+docker inspect <container> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep GGML_CUDA_P2P
+```
 
 ---
 
