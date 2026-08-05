@@ -111,7 +111,46 @@ A 3-slot (triple-width) card like most 3090s covers its own slot **plus the two 
 > sudo lspci -vv -s <bus> | grep -A4 "Physical Resizable BAR"
 > ```
 >
-> If `BAR 1: supported:` tops out at 256MB, the card needs a ReBAR VBIOS from its **board vendor** before any BIOS setting matters. And a ReBAR-*era* VBIOS date is not sufficient evidence: the reference rig's two 3090s run `94.02.42.*` (the ReBAR-era family) and still advertise `supported: 256MB` only. Trust the `lspci` `supported:` list, never the VBIOS date.
+> If `BAR 1: supported:` tops out at 256MB, the card *may* need a ReBAR VBIOS from its **board vendor** — but **read §4a first if there is any chance you are inside a VM**, because a guest can report exactly this while the physical card supports 32GB.
+>
+> ⚠️ **CORRECTED 2026-08-05.** This note previously cited the reference rig's two 3090s as ReBAR-era VBIOS (`94.02.42.*`) that "still advertise `supported: 256MB` only", and concluded the VBIOS was the cap. **That was wrong, and it was wrong in an instructive way.** That reading was taken *inside a QEMU guest*, which exposes **no Resizable BAR capability at all**. Read on the *host*, the same two cards report `supported: 64MB 128MB 256MB 512MB 1GB 2GB 4GB 8GB 16GB 32GB`. Nothing was VBIOS-capped; the capability was simply invisible from where we looked. A `supported:` list is only evidence about the *hardware* when you read it on bare metal.
+
+---
+
+## 4a. Virtualised rigs (VFIO passthrough): diagnose on the HOST, not the guest
+
+If your GPUs are passed through to a VM, **every BAR/ReBAR reading taken inside the guest is untrustworthy** and the fix lives on the host. Confirm where you are before believing anything else:
+
+```
+systemd-detect-virt                 # qemu / kvm / none
+cat /sys/class/dmi/id/product_name  # "Standard PC (Q35 + ICH9, ...)" = emulated
+```
+
+**Worked example (reference rig, 2026-08-05).** Guest showed BAR1 `256M`, no Resizable BAR capability, `topo -p2p r` = `CNS`. The host told a completely different story — and the actual gate was a single BIOS toggle:
+
+| where | before | after enabling **Re-Size BAR Support** in host BIOS |
+|---|---|---|
+| host `lspci` BAR1 | 256M | **32G** |
+| host bridge prefetchable window | **288M** (= 256M BAR1 + 32M BAR3, i.e. sized exactly to the current BARs — the tell) | **32800M** |
+| guest `nvidia-smi -q -d MEMORY` BAR1 | 256 MiB | **32768 MiB** |
+
+**The bridge window is the real diagnostic, not the BAR.** A window sized to exactly `BAR1 + BAR3` means firmware allocated no room to grow, which is what ReBAR-disabled looks like. The `resource1_resize` sysfs knob will exist and still fail, because there is nowhere to expand into.
+
+Note also that **Above 4G Decoding being on is not the same as ReBAR being on** — the reference rig had 64-bit prefetchable regions at ~4.9 TB (so Above 4G was clearly working) while BAR1 stayed at 256M.
+
+> ### ⛔ A large BAR1 is necessary but NOT sufficient in a VM
+>
+> With BAR1 at 32 GB in the guest **and** the open kernel modules loaded (`modinfo -F license nvidia` → `Dual MIT/GPL`, driver 610.57.04), `topo -p2p r` **still reported `CNS`**.
+>
+> `CNS` is *Chipset Not Supported* — the driver consulting its **supported-chipset table**. A QEMU guest presents an emulated **Q35/ICH9**, which will never appear on that list at any aperture size. **The aperture was never the gate at that layer.**
+>
+> Two things follow, both measured on this rig rather than inferred:
+> - **Stock `nvidia-open` alone does not grant P2P on consumer 3090s under virtualisation.** (It has been reported working on bare-metal server boards — see #688 — so this is a statement about VMs, not about the open modules.)
+> - Defeating a chipset-table verdict is exactly what the §5 patched module removes from the source. Registry keys like `PeerMappingOverride` relax peer *mapping* restrictions; they are not documented to bypass the chipset check.
+>
+> ⚠️ **And even a patched module may not be enough under VFIO.** Peer DMA between two passed-through devices must be routed by the host IOMMU, and ACS on the root ports — the very thing giving you clean per-GPU IOMMU groups — pushes peer traffic upstream. **Do not reflexively disable ACS to chase this**: on the reference rig each GPU sits alone with its audio function in its own IOMMU group, and merging those groups can break passthrough outright. That is trading "no P2P" for "no GPUs". Treat ACS as a deliberate, reversible experiment, never a default.
+
+**Order of operations on a virtualised rig:** confirm you're a guest → read BAR1 + bridge window **on the host** → host BIOS Re-Size BAR (Above 4G stays on; leave ACS and IOMMU alone) → verify the host window grew → verify the guest sees the large BAR → *then* driver/patch work → then a **transfer** check (§7), never the grant alone.
 
 ---
 
@@ -248,7 +287,8 @@ Read the **"Interconnect verdict"** line under *Boot log highlights* — the rep
 | `topo -m` shows `NODE` / `SYS`, not `PHB` | Wrong NUMA placement → set `NPS1`; reseat both GPUs in same-NUMA (same-socket) slots. |
 | Second GPU trains at **x8** or disappears | A populated M.2 / adjacent slot is stealing its lanes → move the card or clear the bifurcation jumper (board manual). |
 | `topo -p2p rw` shows `CNS` ("chipset not supported") | Stock driver refusing P2P on consumer GPU → install the patched module (§5), then re-check. |
-| `topo -p2p rw` shows `GNS` **and** `lspci` `BAR 1: supported:` caps at 256MB | **Pre-ReBAR / BAR1-capped VBIOS** — a firmware gate, not a driver or topology problem (#734). No BIOS setting or driver swap helps; the §5 patched path needs large BAR1. Vendor ReBAR VBIOS first (§4 note + the board-ID tip in §5), then re-check `supported:`. |
+| `topo -p2p rw` shows `GNS` **and** `lspci` `BAR 1: supported:` caps at 256MB | **First rule out virtualisation (§4a)** — a QEMU guest exposes no Resizable BAR capability, so it reports this while the physical card supports 32GB. Run `systemd-detect-virt`; if it says `qemu`/`kvm`, re-read on the host, and the fix is host BIOS Re-Size BAR, not a VBIOS. **On bare metal**, this is a genuine **pre-ReBAR / BAR1-capped VBIOS** — a firmware gate, not a driver or topology problem (#734). No BIOS setting or driver swap helps; the §5 patched path needs large BAR1. Vendor ReBAR VBIOS first (§4 note + the board-ID tip in §5), then re-check `supported:`. |
+| BAR1 is large, driver is open (`Dual MIT/GPL`), but `topo -p2p r` still says **`CNS`** | **Chipset-table verdict, not an aperture problem** (§4a). Expected inside a VM: the emulated Q35/ICH9 is not on NVIDIA's supported list, and no BAR size or registry key changes that. Needs the §5 patched module — and even then, verify with a **transfer** check, because VFIO peer DMA can still be blocked by host IOMMU/ACS routing. |
 | `[nvlink] WARNING: … BAR1 is far smaller than VRAM …` | The launcher's BAR1 sanity check fired: P2P is being enabled, but the aperture is too small to back the patch's static full-VRAM mapping (§5) — the firmware-gated #734 class, caught *before* the hang instead of after. It **warns rather than gating**; the config is applied unchanged, so if this boot then hangs at `pynccl`, that's the row below. ⚠️ **Silence is not a clean bill of health** — [#873](https://github.com/noonghunna/club-3090/issues/873) had a full-size 32 GB BAR1 and still needed the §5 override, so the absence of this warning does not mean the mapping is in use. If P2P demonstrably works on your rig *despite* the warning, say so in an issue and bring `nvidia-smi -q -d MEMORY`. |
 | Boot crash after enabling P2P: `custom_all_reduce.cuh … invalid argument` | Known `expandable_segments` ↔ custom-all-reduce IPC clash → `detect_nvlink.sh` strips the token on the P2P path automatically; ensure you're on a current pin ([UPSTREAM.md → #42609](UPSTREAM.md)). |
 | **vLLM slugs HANG at `pynccl` init after installing a patched driver/module** (last line `vLLM is using nccl==…`, weights never load, no error) | The driver now *grants* P2P, so `detect_nvlink.sh` auto-enabled the P2P path (§5) — but the grant doesn't carry actual transfers, so NCCL blocks on its first peer op. **Unblock: `NVLINK_MODE=force_off` in `.env`, relaunch** (back to pre-patch behavior). Then validate the grant with raw transfers: cuda-samples `p2pBandwidthLatencyTest`, or §7's `VLLM_SKIP_P2P_CHECK=0` transfer check. If raw P2P hangs/reads garbage, in order: (1) **force the static BAR1 mapping** with the two-key registry override in §5 — this is what resolved the 5090 case ([#873](https://github.com/noonghunna/club-3090/issues/873)), and note it was needed *even though* `nvidia-smi -q -d MEMORY` already showed a full-size 32 GB BAR1, so **a healthy BAR1 number does not rule this out**; (2) match the patch branch to your **exact** driver version; (3) check ACS (`lspci -vvv \| grep ACSCtl` — ACS redirect stalls peer TLPs) and confirm `iommu=pt` per §4. Common right after a driver upgrade: the patch fork lags new driver branches. |
