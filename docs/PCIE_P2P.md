@@ -287,8 +287,41 @@ mistake.
 > ⚠️ **The clique flag ASSERTS capability; it does not create it.** NVIDIA's wording is that the
 > hypervisor *warrants* P2P works. If it doesn't, you have manufactured a false grant — worse than an
 > honest refusal, because composes auto-enable on the grant and NCCL then **hangs silently** rather
-> than falling back ([#873](https://github.com/noonghunna/club-3090/issues/873)). **Always run a
-> transfer check (§7) before serving**, and keep `NVLINK_MODE=force_off` staged as the escape hatch.
+> than falling back ([#873](https://github.com/noonghunna/club-3090/issues/873)). Keep
+> `NVLINK_MODE=force_off` staged as the escape hatch.
+
+> ### ⚠️⚠️ A PASSING TRANSFER TEST IS NECESSARY BUT **NOT SUFFICIENT** (measured 2026-08-05)
+>
+> This corrects the obvious reading of §7. On the reference rig, with the clique active:
+>
+> | check | result |
+> |---|---|
+> | `topo -p2p r/w` | `OK` |
+> | `p2pBandwidthLatencyTest` | ✅ **passes** — 11.28 → 27.12 GB/s, 15.23 → 1.01 µs, no Xids, no IOMMU faults |
+> | llama.cpp `--split-mode layer` | ✅ boots 12 s, serves normally |
+> | llama.cpp **`--split-mode tensor`** | ❌ **hangs in warmup**, deterministically |
+>
+> The same `tensor` config ran fine **before** the clique was applied. The hang reproduces at any
+> context, and **with `GGML_CUDA_P2P` unset** — so it is triggered by the *driver-level grant*, not by
+> llama.cpp's opt-in. It stops at `common_init_: warming up the model with an empty run` with both GPUs
+> pegged at 100%.
+>
+> A bare-metal rig with genuine (non-asserted) P2P runs the same `tensor` split fine. So this is
+> specific to a **clique-warranted grant in a VM** — precisely the case NVIDIA's comment covers when it
+> says the hypervisor *warrants* P2P "has been tested and works correctly". A synthetic point-to-point
+> copy is a weaker test than a real collective pattern.
+>
+> **Therefore: validate with your ACTUAL serving stack, not just the benchmark.** Three tiers, and you
+> need all three:
+>
+> 1. `topo -p2p` grant — cheapest, proves least
+> 2. `p2pBandwidthLatencyTest` — proves copies work
+> 3. **Boot the engine and config you actually serve, and complete a real request** — the only tier
+>    that catches this class
+>
+> If tier 3 hangs, revert the clique (drop the `args` line) or pin `NVLINK_MODE=force_off`. Note that
+> different engines and split modes fail independently: on this rig `layer` was unaffected while
+> `tensor` broke, so "one config works" does not clear the others.
 
 ### ⛔ Approaches that do NOT work (don't spend time here)
 
