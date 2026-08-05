@@ -72,6 +72,21 @@ Two details confirming it is a heuristic and not a kernel limit:
 
 ---
 
+> ### ⚠️ `topo -m` tells you link *type*, not link *quality*
+>
+> Two pairs can both report `PHB` and differ **2× in real bandwidth**. Worked example from a community
+> 3× 3090 rig (2026-08-05): all three pairs showed `PHB`, yet
+>
+> | pair | attachment | P2P bandwidth |
+> |---|---|---|
+> | GPU1 ↔ GPU2 | direct CPU lanes, true x8 | **13.17 GB/s** |
+> | GPU0 ↔ GPU1/2 | **via the chipset**, x4 effective | **~6.5 GB/s** |
+>
+> All three negotiated "PCIe 4.0 x8" and `topo -m` gave no hint that one card sits behind the chipset.
+> Only `p2pBandwidthLatencyTest` exposed it. **Run the bandwidth test on any new multi-GPU layout
+> before trusting the topology matrix** — and when picking which cards to pair, prefer the ones on
+> direct CPU lanes. A chipset-attached GPU drags every collective down to its own link.
+
 ## 2. NUMA: keep both cards in one domain
 
 EPYC (and multi-socket Xeon) can expose the socket as 1 or 4 NUMA nodes — `NPS1` / `NPS4` in BIOS. Under `NPS4`, two GPUs in different CPU quadrants can report `NODE` (or worse) instead of `PHB`, adding cross-die latency to every all-reduce.
@@ -196,30 +211,93 @@ and the gate never fires** — which is the entire difference between host and g
 > the gate never fires so this is invisible; in a VM the gate fires first and nothing downstream
 > matters. **Installing a patched module in a VM will not clear `CNS`.** Confirm before you build.
 
-### Two escape hatches that need no patched driver
+### ✅ THE FIX — `x-nv-gpudirect-clique` (config-only, transfer-verified)
 
-Note the gate is an **AND**. `bCommonPciSwitchFound` bypasses the chipset table entirely, and
-`clFindCommonDownstreamBR()` sets it when both GPUs share a **common downstream bridge**:
+**This works. It is NVIDIA's own sanctioned mechanism, it needs no patched driver, and it was verified
+by transfer test on 2× RTX 3090 passed through to a Proxmox/QEMU guest on 2026-08-05.**
+
+`hypervisorPcieP2pDetection()` is consulted **125 lines before** the chipset denial and short-circuits
+straight out of it (`p2p_caps.c:438`):
 
 ```c
-clFindCommonDownstreamBR(pFirstGpu, pGpu, pCl, &pciSwitchBus);
-if ((pciSwitchBus == 0xFF) || (pciSwitchBus_ref != pciSwitchBus))
-    bCommonPciSwitchFound = NV_FALSE;
+// Check for hypervisor oriented PCIe P2P overrides
+if (pHypervisor && pHypervisor->bDetected &&
+    hypervisorPcieP2pDetection(pHypervisor, gpuMask))
+{
+    *pP2PReadCapStatus  = NV0000_P2P_CAPS_STATUS_OK;
+    *pP2PWriteCapStatus = NV0000_P2P_CAPS_STATUS_OK;
+    goto done;                       // chipset table never reached
+}
 ```
 
-| approach | what it does | cost |
-|---|---|---|
-| **Emulated PCIe switch** ⭐ | Attach both passed-through GPUs to downstream ports of one QEMU switch (`x3130-upstream` + `xio3130-downstream`) instead of separate root ports. Common bridge found → chipset table never consulted. | **VM config only — no driver build** |
-| Front-host-bridge IDs | Present an FHB whose IDs match an allow entry (the table has a permissive `PCI_VENDOR_ID_NVIDIA` rule). | VM config, but fragile/undocumented |
+The driver reads a **Virtual P2P Approval** capability from the GPU's PCI config space, which the
+hypervisor injects. NVIDIA's own comment states the intent:
 
-A default Proxmox `q35` guest puts each passthrough device on its **own root port**
-(`00:1c.0`, `00:1c.1`) — no common bridge, which is exactly why the default layout reports `CNS`.
+> *"We provide a way for any hypervisor … to indicate peer-to-peer capability among GPUs by specifying
+> a peer 'clique' ID … By specifying a peer clique ID, the hypervisor **warrants** that PCI-E P2P has
+> been tested and works correctly between all GPUs with the same clique ID."*
 
-> ⚠️ **Clearing `CNS` is not the same as working P2P.** Both hatches make the driver *report*
-> capability; neither proves peer DMA survives VFIO/IOMMU translation. A **false** grant is worse
-> than an honest refusal — our composes auto-enable on the grant, and NCCL then **hangs silently**
-> instead of falling back ([#873](https://github.com/noonghunna/club-3090/issues/873)). Always follow
-> with a **transfer** check (§7) and keep `NVLINK_MODE=force_off` ready.
+QEMU implements it as `x-nv-gpudirect-clique`. **GPUs sharing a clique ID are granted P2P.**
+
+#### Proxmox recipe
+
+```ini
+cpu: host,flags=+pcid                    # ⚠️ hidden=1 REMOVED — see below
+hostpci0: 0000:81:00.0,pcie=1            # ⚠️ explicit .0 — see below
+hostpci1: 0000:c1:00.0,pcie=1
+args: -set device.hostpci0.x-nv-gpudirect-clique=1 -set device.hostpci1.x-nv-gpudirect-clique=1
+```
+
+Two details are load-bearing; get either wrong and it silently does nothing:
+
+| detail | why |
+|---|---|
+| **Remove `hidden=1`** | It emits `-cpu host,kvm=off`, hiding the CPUID hypervisor signature. The clique path is gated on `pHypervisor->bDetected` — hide KVM and the override is never consulted. |
+| **Specify function `.0`** | Bare `0000:81:00` passes *all* functions and yields QEMU IDs containing dots (`hostpci0.0`, `hostpci0.1`). QEMU's `-set` parser cannot target dotted IDs, so the property lands nowhere. Explicit `.0` gives `hostpci0`. (Side effect: the HDMI audio function is no longer passed. Irrelevant for inference; re-add as separate `hostpciN` entries **without** the clique property if needed.) |
+
+`qm set` on a running VM stages into `[PENDING]` and applies at next boot. **Back up first** —
+`cp /etc/pve/qemu-server/<vmid>.conf /root/<vmid>.conf.bak` — because a bad `args` line can stop the VM
+booting, and if your only shell is *inside* that guest you will have locked yourself out.
+
+Verify the generated command line **after** boot (`qm showcmd` reads the *active* config, not `[PENDING]`):
+
+```bash
+ps -o args= -p "$(qm status <vmid> --verbose | awk '/^pid:/{print $2}')" \
+  | tr ' ' '\n' | grep -E 'kvm=off|gpudirect-clique'
+```
+
+Want: two `gpudirect-clique=1`, and **no** `kvm=off`.
+
+#### Measured result (2× RTX 3090, PCIe gen4 x16, Proxmox q35 guest)
+
+| metric | P2P off | P2P on | gain |
+|---|---|---|---|
+| Unidirectional | 11.28 GB/s | **27.12 GB/s** | 2.4× |
+| Bidirectional | 16.77 GB/s | **54.21 GB/s** | 3.2× |
+| **Latency** | 15.23 µs | **1.01 µs** | **15×** |
+
+27 GB/s is gen4 x16 line rate — the full physical link, not a partial path. No Xids, no AMD-Vi/IOMMU
+faults. `topo -p2p` went `CNS` → `OK` in both directions.
+
+⚠️ **The latency number is the important one.** Tensor-parallel all-reduce is a stream of many small
+serialized transfers — latency-bound, not bandwidth-bound. Reasoning only about GB/s will lead you to
+conclude P2P "can't matter here" when the 15× latency drop is the whole story. We made exactly that
+mistake.
+
+> ⚠️ **The clique flag ASSERTS capability; it does not create it.** NVIDIA's wording is that the
+> hypervisor *warrants* P2P works. If it doesn't, you have manufactured a false grant — worse than an
+> honest refusal, because composes auto-enable on the grant and NCCL then **hangs silently** rather
+> than falling back ([#873](https://github.com/noonghunna/club-3090/issues/873)). **Always run a
+> transfer check (§7) before serving**, and keep `NVLINK_MODE=force_off` staged as the escape hatch.
+
+### ⛔ Approaches that do NOT work (don't spend time here)
+
+| approach | why it fails |
+|---|---|
+| **Emulated PCIe switch** (`x3130-upstream` + `xio3130-downstream`) | `clFindCommonDownstreamBR()` accepts only an **allowlist** of switches — NVIDIA BR03/BR04, PLX `0x10B5` 87xx/97xx, PMC, Mellanox. QEMU's XIO3130 is a **TI** device (`104c:8232/8233`) and is rejected even when `lspci -t` shows both GPUs beneath it. QEMU exposes no vendor/device override for it. |
+| **`NVreg_RegistryDwords` overrides** | Measured: `RMForceStaticBar1=1;PeerMappingOverride=1` confirmed live, still `CNS`. They relax peer *mapping*, not the chipset verdict. |
+| **Patched driver forks in a VM** | The p2p forks change BAR1 *transport* only — 17 files, `chipset_pcie.c` untouched. The gate fires upstream of everything they modify. |
+| **Front-host-bridge ID spoofing** | No supported QEMU/Proxmox knob, and it would still be an unverified grant. |
 
 **Order of operations on a virtualised rig:** confirm you're a guest → read BAR1 + bridge window **on the host** → host BIOS Re-Size BAR (Above 4G stays on; leave ACS and IOMMU alone) → verify the host window grew → verify the guest sees the large BAR → *then* driver/patch work → then a **transfer** check (§7), never the grant alone.
 
@@ -322,6 +400,22 @@ From cross-rig data on this stack. ⚠️ **The gain is strongly card-dependent*
 ⚠️ **These are DUAL-card measurements — do not extrapolate them to 3+ GPUs.** At world_size > 2 without NVLink, **vLLM force-disables its custom all-reduce kernel** (its gate queries NVML for NVLink and never consults peer access — [#786](https://github.com/noonghunna/club-3090/issues/786)), so whatever P2P is worth at TP=4 arrives **through NCCL peer transfers only** — a lower ceiling than the dual-card custom-kernel path above. An earlier revision claimed the gain "grows with GPU count"; that was a projection, not a measurement, and stays withdrawn. **UPDATE 2026-07-30 — a measured multi-GPU A/B now exists, on ONE rig:** [disc #773](https://github.com/noonghunna/club-3090/discussions/773) (4× 3090, patched P2P, vLLM 0.25.1, MTP n=3, 220 W, one sitting) reports TP=2 → TP=4 as **prefill +55% @10K / +62% @90K, TTFT −38% @90K, decode +4.0% prose / −2.6% code**. Read it as *four cards read faster; they do not write faster* — the win is prefill and TTFT, and the decode column is inside run-to-run noise. It is one rig, one sitting, and it is a **TP-scaling** A/B (2 vs 4 cards, P2P on throughout), **not** a P2P-on-vs-off A/B at fixed TP. **That A/B now exists — see the Blackwell row below.** So: do not extrapolate "P2P scales with GPU count" from it, and do not cite the decode figures as a P2P result.
 
 ---
+
+> ### ⚠️ Engine scope: these gains are **vLLM** numbers
+>
+> **llama.cpp's measured gain is ZERO.** A community 3× 3090 rig with transfer-verified P2P
+> (6.08 → 13.17 GB/s, 2.2×) on its *best* pair saw **no TPS change at all** with `GGML_CUDA_P2P=1`
+> vs unset, `--split-mode tensor` at ~150 TPS. Single-stream llama.cpp moves ~2 GB/s against 13 GB/s
+> available — it is not interconnect-bound, so P2P has no headroom to give back.
+>
+> Note also that **llama.cpp peer access is opt-in**: it is gated on the `GGML_CUDA_P2P` env var and is
+> **off by default**, regardless of what the driver grants. `NVLINK_MODE` and `NCCL_P2P_DISABLE` are
+> both no-ops there — setting either proves nothing.
+>
+> **Where P2P does pay is latency, not bandwidth.** Tensor-parallel all-reduce is many small serialized
+> transfers; the measured 15.23 µs → 1.01 µs drop matters far more than the GB/s figure. If you reason
+> only about bandwidth you will wrongly conclude P2P cannot help — utilisation is often under 20% while
+> the latency saving is 15×.
 
 ## 7. Verifying P2P actually engaged
 
