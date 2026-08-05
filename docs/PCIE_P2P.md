@@ -271,6 +271,82 @@ A 3-slot (triple-width) card like most 3090s covers its own slot **plus the two 
 
 ---
 
+### 3a. Which slots — CPU lanes vs chipset lanes
+
+**Not all x16 slots are equal.** Slots hang off either the CPU's own lanes or the chipset/PCH, and the
+difference is invisible in `nvidia-smi topo -m` — both report `PHB`.
+
+Measured on a community 3× 3090 rig (2026-08-05), all three pairs reporting `PHB`:
+
+| pair | attachment | P2P bandwidth |
+|---|---|---|
+| GPU1 ↔ GPU2 | **direct CPU lanes**, true x8 | **13.17 GB/s** |
+| GPU0 ↔ GPU1/2 | **via the chipset**, x4 effective | **~6.5 GB/s** |
+
+All three negotiated "PCIe 4.0 x8" on paper. **Put your GPUs on CPU lanes.** A chipset-attached card
+drags every collective down to its own link, because all-reduce runs at the slowest participant. If you
+have three cards and only two CPU-attached slots, pair the two good ones and give the chipset slot the
+least interconnect-sensitive job.
+
+Find out which is which from the board manual, or infer it from the PCIe tree — chipset-attached
+devices sit behind an extra bridge:
+
+```bash
+lspci -tv | head -30      # devices under the chipset appear beneath its bridge
+lspci -vv -s <bdf> | grep -E 'LnkCap|LnkSta'
+```
+
+### 3b. Boards with a REAL PCIe switch (PLX) — a shortcut past the chipset gate
+
+If both GPUs sit under a genuine **PLX/Broadcom 87xx or 97xx** switch (common on HEDT/server boards and
+some 4-way GPU carriers), `clFindCommonDownstreamBR()` finds a common downstream bridge and the driver
+**skips the chipset table entirely** — the `CNS` failure in §4a cannot occur.
+
+The allowlist is specific: **NVIDIA BR03/BR04, PLX `0x10B5` 87xx/97xx, PMC, Mellanox**. A switch outside
+it does not count — which is exactly why QEMU's emulated TI XIO3130 fails (§4a).
+
+```bash
+lspci -nn | grep -iE '10b5|bridge'    # look for a 10b5:87xx / 10b5:97xx upstream port
+```
+
+Worth knowing when buying: a board with a real PLX switch sidesteps the entire chipset-compatibility
+question. The trade is that a switch shares its upstream bandwidth across everything behind it.
+
+### 3c. Risers — the quiet source of half-speed links
+
+Risers are common in multi-GPU builds (clearance, orientation, mining frames) and are a frequent cause
+of links that train below their physical width.
+
+| risk | detail |
+|---|---|
+| **Mining risers are useless here** | USB-cable "x16-to-x1" risers give **x1** — 1/16 of the bandwidth. Fine for mining, unusable for P2P or tensor-parallel |
+| **Gen4 needs a gen4-rated riser** | Gen4 doubles signalling rate and is far less tolerant of cheap cable/PCB. A gen3-era riser typically trains **down to gen3 or gen1**, or errors under load |
+| **Length and redrivers** | Longer runs need a redriver/retimer. Passive risers past ~15 cm at gen4 are marginal |
+| **Failures are silent** | You get a working GPU at reduced bandwidth, or intermittent instability — not an error message |
+
+**Verify under load, not at idle** — links downtrain when idle, so an idle reading looks worse than reality:
+
+```bash
+# while a job is running:
+nvidia-smi --query-gpu=index,pcie.link.gen.current,pcie.link.width.current --format=csv
+```
+
+Compare against `pcie.link.gen.max` / `pcie.link.width.max`. Trained below capability on a slot you
+believe is x16 → suspect the riser first, then BIOS bifurcation, then the slot itself.
+
+**Check for link errors**, which a bad riser produces and nothing else surfaces:
+
+```bash
+sudo lspci -vv -s <bdf> | grep -A2 -E 'Correctable|UncorrectableErr|AER'
+sudo dmesg -T | grep -iE 'AER|pcieport.*error'
+```
+
+Rising correctable-error counts under load are the signature of a marginal riser. A clean link reports
+none. ⚠️ `report.sh` flags a slot that trained narrower than the GPU's capability, but it cannot tell you
+*why* — riser, bifurcation and slot all look identical from the trained width alone.
+
+---
+
 ## 4. BIOS settings that matter
 
 | Setting | Set to | Why |
