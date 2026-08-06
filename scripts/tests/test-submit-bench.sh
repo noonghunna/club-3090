@@ -210,7 +210,7 @@ FIXTURES = {
         [{
             "Name": "/llama-cpp-qwen-single",
             "Config": {
-                "Image": "ghcr.io/ggml-org/llama.cpp:server-cuda-b9967",
+                "Image": "ghcr.io/ggml-org/llama.cpp:server-cuda-b10236",
                 "Labels": {},
                 "Cmd": cmd("qwen3.6-27b", 1, "q8_0", 131072),
                 "Env": [],
