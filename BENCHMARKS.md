@@ -535,6 +535,17 @@ DeepReinforce agentic-coding RL fine-tunes of the Qwen3-Next family (`qwen35` 9B
 
 ---
 
+## Qwen-AgentWorld-35B-A3B (language world model — ✅ production)
+
+Qwen's specialized environment simulator predicts the next environment state from an agent action and interaction history. This is not a general assistant tier. The production compose uses cyankiwi's AWQ INT4 compressed-tensors quant, FP8-E4M3 KV, four serving slots, the checkpoint-native template, no drafter, and vLLM's `qwen3_coder` tool parser.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `vllm/qwen-agentworld-35b-a3b-dual-awq-int4` | @noonghunna (2× 3090 PCIe x4/x16, 230 W/card, patched P2P engaged) | fp8_e4m3 | **262K × C=4** | **144.29 / 142.70 wall** (decode **147.12 / 147.24**, n=5, CV ≤0.9%, TTFT 133/129 ms) | **5,116 @10K · 3,788 @90K** | **23,414 MiB/card** | 2026-08-03 | **✅ Production — full FP8/C=4 gate PASS on stock vLLM v0.25.1.** `verify-full` PASS; `verify-stress` 8/8 with exact recall through **240,634 tokens (91%)**. KV pool: **1,795,289 tokens = 6.85 × 262K**. Validation-grade concurrency: six rounds of **4 simultaneous ~261,529-token prompts**, 24/24 complete, 0 errors, 0 silent outputs, 0 MiB growth, 100% retention. C=4×10K: 76.5 TPS/stream, 103.3 aggregate, 6,395 ms TTFT. 100-turn soak PASS: **0 errors · 0 silent · 0 MiB growth · p50 147.61 TPS · 100% retention**. FP8 quick quality thinking ON: **ToolCall 14/15 · InstructFollow 15/15**. Language-only and drafter-free. No default promotion. |
+| `vllm/qwen-agentworld-35b-a3b-dual-awq-int4` (BF16 A/B baseline) | @noonghunna (same rig) | bf16 | **262K × C=4** | **144.15 / 142.70 wall** (decode **146.87 / 146.93**, n=5, CV ≤0.8%, TTFT 128/128 ms) | **5,205 @10K · 3,914 @90K** | **23,070 MiB/card** | 2026-08-03 | Exact recall through **240,635 tokens** with 1,057 MiB/card free. C=4×10K PASS: 83.6 TPS/stream, 104.2 aggregate, 6,622 ms TTFT. Original 100-turn soak PASS with 0 errors, 0 silent outputs, 0 MiB growth, p50 147.27 TPS, 100% retention. Full 8-pack: **125/150 thinking ON vs 101/150 OFF**. Superseded by FP8 because FP8 preserves performance/quality while nearly doubling concurrent full-context capacity. |
+
+---
+
 ## Agents-A1 (InternScience 35B agentic MoE — ⚠️ production w/ caveats)
 
 InternScience's own 35B agentic MoE (Qwen3-Next MoE architecture; card declares its OWN base — not a Qwen fine-tune slug), served from the official FP8-dynamic compressed-tensors checkpoint. **The agentic thinking-ON specialist**: ties the base qwen3.6-35b-a3b on general capability, beats it on cli-40. First model onboarded end-to-end through the Bring & Validate lane (T2 producer-zero).

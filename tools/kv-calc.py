@@ -15,9 +15,10 @@ Predicts (per card, after TP split):
   - Total vs available VRAM
   - Verdict: PASS / TIGHT / FAIL
 
-Four models modelled:
+Curated hybrid models include:
   - Qwen 3.6 27B (DeltaNet hybrid: 16 full_attention + 48 GDN)
-  - Qwen 3.6 35B-A3B (MoE + DeltaNet hybrid: 10 attention + 30 GDN)
+  - Qwen 3.6 35B-A3B and same-geometry fine-tunes such as Agents-A1 and
+    Qwen-AgentWorld-35B-A3B (MoE + DeltaNet hybrid: 10 attention + 30 GDN)
   - Gemma 4 31B (SWA + dense MLP: 10 full_attention + 50 sliding_attention)
   - Gemma 4 26B-A4B (MoE + SWA: 5 full_attention + 25 sliding_attention)
 
@@ -133,10 +134,16 @@ def _load_model_specs_from_yaml(profiles):
     # scan 2026-07-03: 0 mtp tensors) — mtp_n_default is inert (drafter=None).
     a1 = profiles.models["agents-a1"]
     a1spec = {"model_id": a1.id, "model_family": a1.family, **{k: getattr(a1, k) for k in qm_fields}, "valid_tp": list(a1.valid_tp), "weights_total_gb": _weight_size(a1, a1.default_weight_variant), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
+    # Qwen-AgentWorld-35B-A3B: same Qwen3-Next MoE geometry and KV math,
+    # with its own AWQ INT4 footprint. The config's inherited MTP declaration
+    # is normalized to zero by its ModelProfile because no mtp.* tensors ship.
+    agentworld = profiles.models["qwen-agentworld-35b-a3b"]
+    agentworld_spec = {"model_id": agentworld.id, "model_family": agentworld.family, **{k: getattr(agentworld, k) for k in qm_fields}, "valid_tp": list(agentworld.valid_tp), "weights_total_gb": _weight_size(agentworld, agentworld.default_weight_variant), "mamba_state_bytes": 4, "chunk_size": 256, "mtp_n_default": profiles.drafters["qwen-mtp-builtin"].n_default}
     return {
         "qwen3.6-27b": qspec,
         "qwen3.6-35b-a3b": qmspec,
         "agents-a1": a1spec,
+        "qwen-agentworld-35b-a3b": agentworld_spec,
         "gemma-4-31b": gspec,
         "gemma-4-26b-a4b": gmspec,
         "gemma-4-12b": g12spec,
@@ -322,6 +329,7 @@ COMPOSE_ALIAS_TEXT = {
     "qwen3.6-27b": "minimal=vllm/minimal dual=vllm/dual nvfp4-single=vllm/qwen-27b-single-nvfp4 nvfp4-dual=vllm/qwen-27b-dual-nvfp4",
     "qwen3.6-35b-a3b": "qwen-a3b-preview-single=vllm/qwen-a3b-preview-single qwen-35b-a3b-dual=vllm/qwen-35b-a3b-dual nvfp4-single=vllm/qwen-35b-a3b-single-nvfp4 nvfp4-dual=vllm/qwen-35b-a3b-dual-nvfp4",
     "agents-a1": "agents-a1-dual=vllm/agents-a1-dual",
+    "qwen-agentworld-35b-a3b": "dual=vllm/qwen-agentworld-35b-a3b-dual-awq-int4",
     "gemma-4-31b": "gemma-dual=vllm/gemma-bf16-mtp gemma-dual-int8=vllm/gemma-int8-mtp gemma-single=vllm/gemma-mtp-tp1",
     # gemma-4-12b legacy alias namespace is keyed by model id, so reusing the
     # bare `gemma-dual` string here is harmless — compat + the CLI always pass

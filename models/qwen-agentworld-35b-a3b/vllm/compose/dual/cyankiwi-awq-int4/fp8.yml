@@ -1,0 +1,130 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen-AgentWorld-35B-A3B (cyankiwi AWQ INT4, compressed-tensors)
+#   Topology:  Dual 3090 PCIe (TP=2; NVLink auto-detected when available)
+#   Drafter:   none — config declares one MTP layer, but the pinned checkpoint
+#              contains zero mtp.* tensors (safetensors-index verified)
+#   KV:        fp8_e4m3 — FlashInfer storage path on Ampere; 1,795,289-token
+#              pool, enough for 6.85 × 262K sequences
+#   Vision:    no — multimodal config but no visual.* weights; vLLM requires
+#              --language-model-only for this checkpoint
+#   Max ctx:   262K — exact-recall NIAH passed to 240,634 tokens (91%); four
+#              concurrent streams each completed at ~261,529 prompt tokens
+#   Genesis:   N/A — no Genesis patches on this stock vLLM path
+#   Status:    ✅ Production
+#   Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 15/15 (100%)
+#              (--quick, thinking ON, packs v1.0.x, 2026-08-03)
+#   Best for:  Concurrent full-context environment simulation across seven domains
+# ---------------------------------------------------------------------------
+# First and only Qwen-AgentWorld compose. It uses the checkpoint-native template,
+# thinking enabled, FP8 E4M3 KV, qwen3_coder tool parsing, and no speculation.
+# Production gate on 2×3090 (2026-08-03): verify-full PASS; verify-stress 8/8
+# with exact recall through 240,634 tokens; canonical decode 147.12 narrative /
+# 147.24 code TPS; prefill 5,116 tok/s @10K and 3,788 tok/s @90K. C=4 passed
+# at 256 tokens, 10K tokens, and six validation rounds with four simultaneous
+# ~261,529-token prompts (0 errors, 0 silent outputs, 0 MiB growth, 100%
+# retention). Fresh-session soak passed 100/100 with p50 147.61 TPS and 0 MiB
+# growth. FP8 quick quality passed 29/30 thinking ON; the matched BF16 baseline's
+# full 8-pack scored 125/150 thinking ON vs 101/150 OFF.
+#
+# Upstream card serving requirements:
+#   - --language-model-only (checkpoint omits the visual tower)
+#   - --reasoning-parser qwen3
+#   - temperature=0.6, top_p=0.95, top_k=20
+#   - at least 128K context recommended for multi-turn environment simulation
+#
+# Local checkpoint:
+#   /mnt/models/huggingface/qwen-agentworld-35b-a3b-awq-int4
+#   -> HF cache revision 76b26bbd88c6819e7623357a49275154fe420a64
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+# Requires-sm: 7.5+
+services:
+  vllm-qwen-agentworld-35b-a3b-dual:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen-agentworld-35b-a3b-dual}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8080}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - OMP_NUM_THREADS=1
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        source /etc/club3090/detect_nvlink.sh
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$$@"
+        else
+          exec vllm serve --disable-custom-all-reduce "$$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen-agentworld-35b-a3b-awq-int4
+      - --served-model-name
+      - qwen-agentworld-35b-a3b
+      - --quantization
+      - compressed-tensors
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.92}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-4}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8}"
+      - --language-model-only
+      - --trust-remote-code
+      - --reasoning-parser
+      - qwen3
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": true}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

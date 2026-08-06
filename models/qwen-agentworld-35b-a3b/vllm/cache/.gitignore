@@ -1,0 +1,5 @@
+# Per-variant compile/Triton artifacts. These get regenerated on first boot
+# of any variant whose config changed; not source. Don't commit.
+*
+!.gitignore
+!README.md
