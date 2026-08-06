@@ -13,7 +13,10 @@
 #   Engine-profile: llama-cpp-local
 #   Quality:   core 8-pack 116/150 (77%) think-off, 117/150 (78%) think-on single
 #              draw (benchlocal --full, shipped config @ b9967 + 16K budget,
-#              2026-07-12; prior b9246 basis: 115/118 on 2026-07-09). Leads the
+#              2026-07-12; prior b9246 basis: 115/118 on 2026-07-09). ⚠️ NOT
+#              re-run at the current b10236 pin — quality gate consciously
+#              skipped at that bump (maintainer, 2026-08-06); numbers are
+#              b9967-era provenance, functional validation is current. Leads the
 #              agentic packs (hermes 14-15/20, cli 25/40 off) vs the qwen3.6-27b
 #              dual-max reference (9, 20). cli-40 62% think-off = mid-tier
 #              autonomous-CLI — the known quality shape, not a caveat.
