@@ -1495,3 +1495,138 @@ preflight_ik_llama_image() {
   echo "[preflight]     IK_LLAMA_IMAGE=${IK_LLAMA_CU12_FALLBACK}" >&2
   echo "[preflight]   Pin IK_LLAMA_IMAGE in .env to override." >&2
 }
+
+# ---------------------------------------------------------------------------
+# CPU-offload guards.
+#
+# MARKER-SCOPED, never model-scoped. Model-keyed guards rot: every new offload
+# model needs an update and the one that gets forgotten is the one that bites.
+# Keying on the offload flags means every future offload model inherits these
+# for free. Same convention as preflight_lmcache_ram(), which keys on a header.
+#
+# ⭐ Our OWN composes are correct by construction — we author and measure them.
+# The entire value of these guards is in configs we DON'T control: user edits,
+# community composes, someone adapting our pattern to a different MoE.
+# ---------------------------------------------------------------------------
+
+# is_cpu_offload_compose <compose_file>
+# True when the compose actually offloads experts to host RAM.
+#
+# ⚠️ Match `=CPU` SPECIFICALLY, not the presence of `-ot`. Our offload composes
+#    carry two-to-four `-ot` rules that are `=CUDA0`/`=CUDA1`/... RESIDENCY —
+#    GPU-side placement, the exact opposite of offload. A naive "has -ot" test
+#    false-positives on a fully GPU-resident config.
+is_cpu_offload_compose() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 1
+  # ⚠️ Must work for BOTH compose command forms. The list form puts every arg on its
+  # own line ("      - '-ot'" / "      - '...=CPU'"), so a same-line regex silently
+  # misses it — which is exactly what happened when these composes moved to list form
+  # (Docker Compose rejects `(gate|up|down)` in a folded string). Match per-token.
+  command grep -qE -- "=CPU|--cpu-moe|(^|[[:space:]'\"])-cmoe([[:space:]'\"]|$)|--n-cpu-moe|(^|[[:space:]'\"])-ncmoe([[:space:]'\"]|$)" \
+    "$compose_file"
+}
+
+# preflight_offload_split_mode <compose_file>
+# Refuses split modes that are measured-catastrophic under CPU offload.
+#
+# GUARD AND ADVISE — never auto-switch the mode. detect_nvlink.sh's auto mode is
+# the cautionary tale in this repo: it enables P2P on a DETECTED GRANT ALONE, and
+# that is what took the reference rig to a hang. Auto-selecting a split mode from
+# a detected property repeats that one layer up.
+preflight_offload_split_mode() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 0
+  is_cpu_offload_compose "$compose_file" || return 0   # not an offload compose → no-op
+
+  local sm="${SPLIT_MODE:-}"
+  # same-line form (folded command:)
+  [[ -z "$sm" ]] && sm="$(command grep -oE -- '(--split-mode|[[:space:]]-sm)[[:space:]]+[a-z]+' "$compose_file" | head -1 | awk '{print $NF}')"
+  # list form: the VALUE is the next list item after the flag
+  # list form: each arg is its own list item, so the VALUE is the NEXT line.
+  # A same-line regex silently misses it — the exact regression that shipped when
+  # these composes moved to list form (Compose rejects `(gate|up|down)` when folded).
+  if [[ -z "$sm" ]]; then
+    sm="$(awk -F"['\" ]+" '
+      /^[[:space:]]*-[[:space:]]+.?(--split-mode|-sm).?[[:space:]]*$/ { want=1; next }
+      want { for (i=1;i<=NF;i++) if ($i ~ /^(layer|row|tensor|none)$/) { print $i; exit } want=0 }
+    ' "$compose_file" | head -1)"
+  fi
+  [[ -z "$sm" ]] && return 0
+
+  if [[ "$sm" == "tensor" || "$sm" == "row" ]]; then
+    echo "[preflight] ERROR: --split-mode ${sm} with CPU expert offload is measured-catastrophic." >&2
+    echo "            Offloaded prefill: 305 t/s vs 2031 t/s on --split-mode layer (-85%)." >&2
+    echo "            Offloaded decode:  32.75 vs 47.14." >&2
+    echo "            With speculative decoding it SIGSEGVs on the second request while the" >&2
+    echo "            container still reports healthy — the worst possible failure shape." >&2
+    echo "            Why: under offload the GPU is idle ~87% of the time (SM 12.8%) waiting on" >&2
+    echo "            sequential CPU handoffs. TP parallelises GPU compute — which is NOT the" >&2
+    echo "            bottleneck — and adds an all-reduce that scales with batch size, so prefill" >&2
+    echo "            pays it ~1000x harder than decode. The experts are not even on the GPUs." >&2
+    echo "            Fix: use --split-mode layer (the llama.cpp default for multi-GPU)." >&2
+    return 1
+  fi
+
+  # Uneven VRAM: TP wants an even split, and offload composes pin per-device rules.
+  if [[ "$sm" == "layer" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+    local sizes; sizes="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -u | wc -l)"
+    if [[ "${sizes:-1}" -gt 1 ]]; then
+      echo "[preflight] NOTE: mixed GPU memory sizes detected — residency is sized per device," >&2
+      echo "            so asymmetric counts are expected and fine on --split-mode layer." >&2
+    fi
+  fi
+  return 0
+}
+
+# preflight_cpu_offload_ram <compose_file>
+# Guards an offload compose against a host that cannot hold the experts.
+#
+# Reads the compose's `CPU-Offload-Host-RAM-GB:` header, which declares the
+# WORST CASE (all experts on CPU). Residency only MOVES bytes onto the GPUs, so
+# the real requirement is lower — the guard is conservative by construction,
+# which is the safe direction for a guard.
+#
+# ⚠️ The number is MEASURED, not computed. The quant name does not give you the
+#    byte size (UD-Q8_K_XL is really MXFP4 experts + BF16 attention), and on
+#    Unsloth *Dynamic* quants the per-layer bundles are not even uniform. Do not
+#    "simplify" this into a formula.
+preflight_cpu_offload_ram() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 0
+  declare -F compose_meta_get >/dev/null 2>&1 || return 0
+
+  local need_hdr
+  need_hdr="$(compose_meta_get "$compose_file" cpu-offload-host-ram-gb || true)"
+  [[ -z "$need_hdr" ]] && return 0                 # not an offload compose we size
+  if ! [[ "$need_hdr" =~ ^[0-9]+$ ]]; then
+    echo "[preflight] WARN:  CPU-Offload-Host-RAM-GB='${need_hdr}' is not an integer; skipping." >&2
+    return 0
+  fi
+
+  if [[ ! -r /proc/meminfo ]]; then
+    echo "[preflight] WARN:  cannot read /proc/meminfo; skipping CPU-offload RAM check." >&2
+    return 0
+  fi
+  local kb total_gb avail_gb
+  kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo)";     total_gb=$(( kb / 1024 / 1024 ))
+  kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"; avail_gb=$(( kb / 1024 / 1024 ))
+
+  if (( total_gb < need_hdr )); then
+    echo "[preflight] ERROR: this compose offloads experts to host RAM and needs ~${need_hdr} GB," >&2
+    echo "            but the machine has only ${total_gb} GB TOTAL. It cannot run here." >&2
+    echo "            This is a hard gate, not a tuning knob: below it the box thrashes or OOMs." >&2
+    echo "            Fix: use a lower-bit tier (the IQ2 slug needs ~86 GB), add RAM, or pick a" >&2
+    echo "            model that fits VRAM. On a 4-card rig the same model needs LESS host RAM," >&2
+    echo "            because residency moves expert bytes onto the GPUs." >&2
+    return 1
+  fi
+  if (( avail_gb < need_hdr )); then
+    echo "[preflight] ERROR: needs ~${need_hdr} GB of host RAM; only ${avail_gb} GB is AVAILABLE" >&2
+    echo "            (of ${total_gb} GB total). Something else is holding memory." >&2
+    echo "            Fix: stop other services and retry — 'docker ps' is the usual culprit." >&2
+    return 1
+  fi
+  echo "[preflight] cpu-offload: RAM ok — needs ~${need_hdr} GB (worst case), ${avail_gb} GB available"
+  return 0
+}

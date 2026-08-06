@@ -352,3 +352,67 @@ compose_hw_model_status() {
   printf 'no|%s (your rig: %s)' "$friendly_need" "$(compose_hw_summary)"
   return 1
 }
+
+# ---------------------------------------------------------------------------
+# resolve_offload_residency <compose_file>
+#
+# Sizes CPU-offload RESIDENCY from DETECTED per-device VRAM and exports OT_G0..N,
+# which the offload composes expand into their leading `-ot` slots.
+#
+# Division of labour (matches how VLLM_IMAGE is handled): profiles hold policy,
+# LAUNCHERS resolve and inject, preflight gates. Nothing is hardcoded in a compose,
+# because the right count is card-dependent — a 24 GB-tuned regex either wastes VRAM
+# on a 32 GB card or OOMs a smaller one.
+#
+# ⚠️ THE 0.55 CALIBRATION IS LOAD-BEARING. Naive free-VRAM ÷ bundle-size
+#    OVERESTIMATES BY ~2x because it ignores the compute-buffer reserve (measured
+#    3948+3697 MiB at -ub 4096, plus ~8-9 GB more when the DSpark drafter attaches).
+#    Predicted 4 layers for Q8 on 2x24 GB; measured 2. Predicted 11 for IQ2; measured 6.
+#    Shipping the naive number hands users a config that dies on first prefill.
+#
+# ⚠️ A LAYER'S EXPERTS MUST SIT ON THE CARD OWNING ITS DENSE TENSORS, or every token
+#    pays a cross-PCIe hop. With `-sm layer` over N cards, layer i lives on card
+#    floor(i*N/L) — so each card draws its resident layers from its OWN range.
+#
+# Emits nothing (leaving the composes' no-op defaults in place) when VRAM cannot be
+# read or the header is absent. Degrading to all-experts-CPU is always safe; it is
+# the config that runs anywhere.
+# ---------------------------------------------------------------------------
+resolve_offload_residency() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 0
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+
+  local bundle; bundle="$(compose_meta_get "$compose_file" cpu-offload-bundle-mib || true)"
+  [[ "$bundle" =~ ^[0-9]+$ ]] || return 0          # not a residency-capable compose
+  local layers; layers="$(compose_meta_get "$compose_file" cpu-offload-moe-layers || true)"
+  [[ "$layers" =~ ^[0-9]+$ ]] || return 0
+  local reserve; reserve="$(compose_meta_get "$compose_file" cpu-offload-gpu-reserve-mib || true)"
+  [[ "$reserve" =~ ^[0-9]+$ ]] || reserve=18000
+
+  local -a totals=()
+  while read -r m; do [[ "$m" =~ ^[0-9]+$ ]] && totals+=("$m"); done \
+    < <(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null)
+  local n="${#totals[@]}"
+  (( n >= 2 )) || return 0
+
+  local per_card=$(( layers / n ))
+  local i card_free fit lo hi start rule count
+  for (( i=0; i<n; i++ )); do
+    card_free=$(( totals[i] - reserve ))
+    (( card_free < 0 )) && card_free=0
+    # calibrated, not naive — see the warning above
+    fit=$(( card_free * 55 / 100 / bundle ))
+    (( fit > per_card )) && fit=$per_card
+    (( fit < 0 )) && fit=0
+    if (( fit == 0 )); then continue; fi          # leave this card's no-op default
+    lo=$(( i * layers / n ))                      # this card's own layer range
+    rule=""
+    for (( count=0; count<fit; count++ )); do
+      start=$(( lo + count ))
+      rule="${rule}${rule:+|}${start}"
+    done
+    export "OT_G${i}=blk\.(${rule})\.ffn_(gate|up|down)_exps\.weight=CUDA${i}"
+  done
+  return 0
+}

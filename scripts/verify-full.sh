@@ -452,7 +452,10 @@ run_check "thinking" check_thinking
 check_output_quality() {
   echo "[8/9] Output quality / cascade detection (2K-token completion) ..."
   local resp
-  resp="$(curl -sf -m 180 "${URL}/v1/chat/completions" \
+  # ⚠️ Scaled, not fixed: a 2K-token generation on a CPU-OFFLOAD slug runs at
+  # ~10-23 t/s, so it needs 200-400s — DeepSeek-V4-Flash measured 217s and the
+  # old hardcoded 180s failed a HEALTHY server. Raise via VERIFY_LONG_TIMEOUT.
+  resp="$(curl -sf -m "${VERIFY_LONG_TIMEOUT:-180}" "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "{
       \"model\": \"${MODEL}\",

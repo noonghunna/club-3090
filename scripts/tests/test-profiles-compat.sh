@@ -33,10 +33,10 @@ run_test "load_profiles parses all profile groups" <<'PY'
 from scripts.lib.profiles.compat import load_profiles
 p = load_profiles()
 assert len(p.hardware) == 10  # +dgx-spark (#576 follow-up)
-assert len(p.models) == 14
+assert len(p.models) == 15   # +deepseek-v4-flash-0731
 assert len(p.workloads) == 5
 assert len(p.engines) == 13
-assert len(p.drafters) == 15
+assert len(p.drafters) == 16  # +dspark
 assert len(p.calibration) == 5
 PY
 

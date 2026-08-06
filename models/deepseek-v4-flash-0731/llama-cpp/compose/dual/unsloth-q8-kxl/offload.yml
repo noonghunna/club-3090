@@ -1,0 +1,143 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     DeepSeek-V4-Flash-0731 (284B MoE, unsloth UD-Q8_K_XL — MXFP4
+#              experts + BF16 attention, 151 GB across 5 shards)
+#   Engine:    llama.cpp (mainline server-cuda-b10236, external DSpark drafter)
+#   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
+#   Drafter:   DSpark n=5 external (--spec-type draft-dspark) — runtime landed in
+#              ggml-org#25784; ABSENT in b9967, so this slug REQUIRES b10236+
+#   KV:        fp16 (llama.cpp default — MLA + a 4,352-cell SWA window keep it tiny)
+#   Vision:    no
+#   Max ctx:   204800  (⚠️ NOT 262144 — see Caveats)
+#   Genesis:   N/A — llama.cpp engine
+#   Status:    🐣 Incubating
+#   Caveats:   • Quality is UNTESTED on this tier — no 8-pack has been run.
+#              • Needs ~140 GB of HOST RAM (experts live in CPU memory). This is a
+#                hard gate, not a recommendation: the box will thrash or OOM below it.
+#              • Load takes ~8-10 min (--no-mmap) and decode is ~23 t/s single-stream.
+#                The point is that a 284B model runs AT ALL on 2×24 GB — not speed.
+#              • 262K is NOT offered. With the drafter attached it boots READY at
+#                97.4% VRAM and survives a trivial decode, then dies on a ~15.7K-token
+#                prefill with CUDA OOM in cuMemCreate (measured 2026-08-06).
+#              • multi-GPU beyond 2 cards uses the multi4 compose, not this one.
+#   Best for:  The quality tier of the two DeepSeek-Flash slugs — best decode
+#              measured on this model. Pick IQ2 instead if you are host-RAM bound
+#              or prefill-bound. ⭐
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS
+#   Our fastest historical DeepSeek config (393 t/s prefill) can never ship — it
+#   needs an unmerged expert cache plus local engine patches. This is stock
+#   upstream, zero patches, and it BEATS that config on decode.
+#
+# THE THREE LEVERS, and they compose:
+#   1. CPU expert offload  — 137 GiB of routed experts live in host RAM.
+#   2. Partial residency   — a few expert bundles pinned back onto the GPUs.
+#                            +13.2% decode AND −6.5 GB host RAM. The only lever
+#                            here with no downside axis.
+#   3. DSpark drafter      — external speculative decode (+26-56%).
+#
+# ⚠️ -ot IS FIRST-MATCH-WINS. The two device rules MUST precede the catch-all
+#    =CPU rule. Reverse them and every expert silently lands on CPU: no error,
+#    no warning, just a config that quietly isn't what it claims to be.
+#
+# ⚠️ THE RESIDENCY RULES ARE INJECTED, NOT HARDCODED. OT_G0/OT_G1 are resolved by
+#    launch.sh / switch.sh from DETECTED free VRAM (a 24 GB card fits 1 bundle per
+#    card; a 32 GB card fits more). The defaults below deliberately match NO layer
+#    (blk.99999), so a bare `docker compose up` degrades to all-experts-CPU — the
+#    config that runs anywhere — rather than to one that OOMs.
+# ---------------------------------------------------------------------------
+#
+#   | variant                          | quant      | host RAM | decode | p@10K |
+#   |----------------------------------|------------|---------:|-------:|------:|
+#   | dual/unsloth-q8-kxl/offload.yml  | UD-Q8_K_XL |  ~140 GB |  23.62 |   376 |
+#   | dual/unsloth-iq2-xxs/offload.yml | UD-IQ2_XXS |   ~76 GB |  22.03 |   480 |
+#   | multi4/unsloth-q8-kxl/offload.yml| UD-Q8_K_XL | ~113 GB* |   est. |  est. |
+#   *4-card residency moves more experts onto GPU, so host RAM FALLS with card count.
+#
+# CPU-Offload-Host-RAM-GB: 146
+#   Worst case: ALL experts on CPU. Residency only MOVES bytes onto the GPUs, so the
+#   real requirement is LOWER — the guard is conservative by construction, which is the
+#   safe direction. Read by preflight_cpu_offload_ram(); measured, not computed (the
+#   quant name does not give you the byte size).
+# CPU-Offload-Bundle-MiB: 3264
+# CPU-Offload-MoE-Layers: 43
+# CPU-Offload-GPU-Reserve-MiB: 18000
+#   Inputs for resolve_offload_residency(). The RESERVE is what the naive
+#   free-VRAM/bundle arithmetic forgets: dense stack + compute reserve + drafter.
+#   A ~0.55 calibration is applied on top — naive sizing overestimates ~2x and
+#   would hand users a config that dies on its first prefill.
+# ===========================================================================
+
+services:
+  llama-cpp-deepseek-flash:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b10236}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-q8}"
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8030}:${PORT:-8030}"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    shm_size: "16g"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
+    # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a folded
+    # string: `invalid command line string`. The alternation is the trigger (verified
+    # by bisection; `blk\.[0-9]+\.ffn_exps\.weight=CPU` parses fine, adding the group
+    # breaks it). The list form skips shell parsing altogether, so the regex — and any
+    # injected OT_G* value — survives byte-for-byte.
+    command:
+      - '-m'
+      - '/models/deepseek-v4-flash-0731-gguf/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf'
+      - '--host'
+      - '0.0.0.0'
+      - '--port'
+      - '${PORT:-8030}'
+      - '--alias'
+      - 'deepseek-v4-flash'
+      - '-np'
+      - '1'
+      - '-c'
+      - '${CTX:-204800}'
+      - '-ngl'
+      - '99'
+      - '-sm'
+      - 'layer'
+      - '-ts'
+      - '1,1'
+      - '-fa'
+      - 'on'
+      - '-ot'
+      - '${OT_G0:-blk\.99999\.ffn_(gate|up|down)_exps\.weight=CUDA0}'
+      - '-ot'
+      - '${OT_G1:-blk\.99999\.ffn_(gate|up|down)_exps\.weight=CUDA1}'
+      - '-ot'
+      - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
+      - '-t'
+      - '${THREADS:-24}'
+      - '-ub'
+      - '4096'
+      - '-b'
+      - '4096'
+      - '--cache-prompt'
+      - '--no-mmap'
+      - '-md'
+      - '/models/deepseek-v4-flash-0731-gguf/dspark/dspark-DeepSeek-V4-Flash-0731-Q8_0.gguf'
+      - '--spec-type'
+      - 'draft-dspark'
+      - '--spec-draft-n-max'
+      - '${SPEC_N:-5}'
+      - '--fit'
+      - 'off'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:-8030}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 900s

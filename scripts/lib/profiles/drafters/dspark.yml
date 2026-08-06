@@ -1,0 +1,37 @@
+schema_version: 1
+id: dspark
+display_name: DeepSeek-V4-Flash DSpark external draft GGUF
+spec_method: dspark
+model_compat:
+  - deepseek-v4-flash-0731
+engine_compat:
+  engine_type: llama.cpp
+n_default: 5
+n_max: 8
+download:
+  hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
+  size_gb: 11
+vram_footprint_gb: variable
+status: incubating
+# unsloth ships DSpark drafters for 0731 as separate GGUFs
+# (dspark/dspark-DeepSeek-V4-Flash-0731-{BF16,Q8_0}.gguf); we use Q8_0.
+# Engaged via `--spec-draft-model <file> --spec-type draft-dspark`.
+#
+# ⚠️ ENGINE FLOOR IS REAL, not cosmetic: the DSpark runtime landed in
+# ggml-org#25784 ("DeepseekV4 MTP + DSpark", merged 2026-08-02). VERIFIED
+# present in server-cuda-b10236 (2 `dspark` hits in libllama.so and
+# `llama-server --help` advertises it) and ABSENT in b9967. On an older pin the
+# flag is simply not understood.
+#
+# ⚠️ NOT optional-with-a-fallback: the main GGUF carries NO embedded nextn/MTP
+# head (unsloth's conversion dropped it — verified 0 nextn-family tensors across
+# all 5 shards), so self-speculation is impossible and DSpark is the ONLY
+# speculative path on this model.
+#
+# ⚠️ VRAM COST IS LARGE and is what forces the 200K ceiling: ~9.1 GB on CUDA0 and
+# ~8.1 GB on CUDA1 (model + compute, measured with -lv 4). At 262K that pushes a
+# dual-3090 rig to 97.4% VRAM — boots READY, passes a trivial decode, then dies on
+# a realistic prefill. See docs/UPSTREAM.md and the model profile's vram_sizing.
+requires_engine_min: server-cuda-b10236
+speculative_config_template: null   # N/A — llama.cpp engine, not vLLM
+local_model_path: null

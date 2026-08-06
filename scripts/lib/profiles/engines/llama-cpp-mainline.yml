@@ -13,8 +13,10 @@ supported_model_families:
   - qwen35-dense          # Deckard-40B (standard GQA, arch=qwen35; MTP via embedded nextn head)
   - gemma4-unified
   - dense                 # plain transformer GGUFs (e.g. VibeThinker-3B, Qwen2 dense — no MTP)
+  - deepseek4-moe         # DeepSeek-V4-Flash-0731 (arch deepseek4, 43 all-MoE layers, MLA+DSA) — CPU-offload slugs
 features: {}
 supported_kv_formats:
+  - fp16                  # llama.cpp default when no -ctk/-ctv is passed (DeepSeek-Flash offload slugs)
   - q4_0
   - q5_0
   - q8_0
@@ -22,6 +24,7 @@ supported_kv_formats:
 supported_drafters:
   - mtp                   # embedded nextn head (self-spec) — 27B built-in, Deckard-40B
   - mtp_gguf              # external draft GGUF via --spec-draft-model — Tess-4-27B; live-validated on server-cuda-b9246 (dual 3090, 262K, 2026-07-09)
+  - dspark                # DeepSeek-V4-Flash external DSpark drafter (--spec-type draft-dspark); runtime landed ggml-org#25784, present in b10236, ABSENT in b9967
 supported_weight_formats:
   - gguf
 required_overlays: []

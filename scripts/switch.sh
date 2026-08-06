@@ -1039,6 +1039,12 @@ up_variant() {
     # launch WITH --force, yet over-sizing --l1-size-gb can OOM the host; #133).
     # No-op for composes without an LMCache-l1-gb metadata header.
     preflight_lmcache_ram "${full_dir}/${file}" || exit 1
+    # CPU-offload: size residency from DETECTED VRAM, then gate. Order matters —
+    # the guards must see the RESOLVED config, not the compose defaults.
+    resolve_offload_residency "${full_dir}/${file}"
+    # CPU-offload guards: marker-scoped, no-ops on non-offload composes (#deepseek-flash)
+    preflight_cpu_offload_ram "${full_dir}/${file}" || exit 1
+    preflight_offload_split_mode "${full_dir}/${file}" || exit 1
     preflight_kv_format_hint "${full_dir}/${file}" || true
     # Single-card util-override guard — runs even under --force (the nvfp4 slug
     # launches with --force, and util=0.92 on one card OOMs the tool-prefill; #617).

@@ -562,6 +562,35 @@ A community **W4A16** quant (danielrmay compressed-tensors, MTP-stripped) **halv
 
 ---
 
+## DeepSeek-V4-Flash-0731 (284B MoE — CPU expert offload — 🐣 incubating)
+
+The catalog's **first CPU-offload slugs**: a 284B MoE on 2× 24 GB, with 137 GiB of routed experts
+living in host RAM and a few expert bundles pinned back onto the GPUs. Stock upstream `b10236`,
+**zero patches** — and it beats our own patched moe-cache config by 38% on decode.
+
+Three levers compose: **offload** + **partial residency** (+13.2% decode *and* −6.5 GB host RAM —
+the only one of the three with no downside axis) + the **DSpark** drafter (ggml-org#25784, absent in
+b9967, which is why this needed the pin bump).
+
+⚠️ **`🐣 Incubating` — hidden from `switch.sh --list`, launch needs `--force`.** Quality is UNTESTED
+on every tier. Host RAM is a **hard gate**, not a recommendation.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Host RAM | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `llamacpp/deepseek-flash-dual-q8` | maintainer ref 2× 3090 PCIe (PHB/no-P2P) | fp16 (MLA + 4,352-cell SWA) | **200K** | **23.62** (decode, 2 resident + DSpark) | 376 @10K | **~140 GB** | 23,660 / 23,286 MiB | 2026-08-06 | **QUALITY TIER — best decode measured on this model.** Boot 136 s. verify-full **all checks passed**; probe cell survives a **14,011-token prefill**. Residency auto-sized from detected VRAM (1 bundle/card here) and injected as `-ot …=CUDA0/1` ahead of the `=CPU` catch-all. ⚠️ **Ships 200K, NOT 262K** — at 262K with the drafter it boots READY at 97.4% VRAM, passes a trivial decode, then **dies on a ~15.7K-token prefill** (`CUDA error: out of memory` in `cuMemCreate`, reproduced 2026-08-06). ⚠️ 8-pack pending. |
+| `llamacpp/deepseek-flash-dual-iq2` | maintainer ref 2× 3090 PCIe (PHB/no-P2P) | fp16 (MLA + 4,352-cell SWA) | **200K** | **22.03** (decode, 6 resident + DSpark) | **480 @10K** ⭐ | **~76 GB** | 22,326 / 21,384 MiB | 2026-08-06 | **REACH TIER — 64 GB less host RAM and the best prefill of any config measured on this model (+28% over Q8).** Boot 72 s. verify-full **all checks passed**; 14,011-token prefill survives. 3 bundles/card auto-sized. Flat context scaling (−1.3% 64K→200K vs Q8's −5.8%). ⚠️ ~2.6-bit experts and quality is UNTESTED — our notes warn the speed ranking is probably the **inverse** of the quality ranking. |
+| `llamacpp/deepseek-flash-multi4-q8` | ⏳ **UNBOOTED — needs a 4-card owner** | fp16 | 200K | est. | est. | **~113 GB (est.)** | est. | — | **Authored from measured 2-card data + the ~0.55 residency calibration. Every number is an estimate.** ⭐ The argument is NOT throughput: every layer pinned to a GPU is a layer *not* in host RAM, so host RAM **falls** with card count — ~113 GB at 4×24 GB vs ~140 at 2×24. **128 GB is a common host config that the 2-card Q8 slug excludes and this one fits**, which is what puts the quality tier inside a mainstream RAM budget. Candidates: @alesha-pro, @TheFuzy, @MIkamal88. |
+
+**Decode and prefill optima sit on DIFFERENT tiers** — Q8 wins decode, IQ2 wins prefill by 28%. There
+is no single "fastest" slug here; the pick is set by which phase your workload is bound by and by how
+much host RAM you have. That is measured, not positioning.
+
+⚠️ **IQ4_NL is on disk but deliberately NOT a slug**: slower than Q8 on decode *and* slower than IQ2
+on prefill, at an intermediate RAM cost — dominated in every workload. (Under the *moe-cache fork* IQ4
+at max pool was the leader; that config can never ship. Both readings are correct for their engine.)
+
+---
+
 ## Quality benches — Aider Polyglot 30
 
 Pass rate on a curated 30-exercise subset of [aider-polyglot-benchmark](https://github.com/Aider-AI/polyglot-benchmark) (5 per language across cpp/go/java/javascript/python/rust, mix of easy/medium/hard). Tests **edit-format reliability** AND **algorithmic correctness** — does the model emit diffs aider can apply, AND do the resulting tests pass.
