@@ -10,7 +10,10 @@
 #   Max ctx:   204800
 #   Genesis:   N/A — llama.cpp engine
 #   Status:    🐣 Incubating
-#   Caveats:   • Quality is UNTESTED, and this is the tier where that matters most:
+#   Caveats:   • NO performance or quality numbers are published for this slug —
+#                it is INCUBATING. A canonical bench and the 8-pack are both owed;
+#                only operational validation (boot + prefill probe + verify-full) exists.
+#              • Quality is UNTESTED, and this is the tier where that matters most:
 #                ~2.6-bit experts. Our own notes warn the speed ranking is probably
 #                the INVERSE of the quality ranking. Treat output with suspicion
 #                until an 8-pack lands.
@@ -19,14 +22,13 @@
 #              • Scoped to dual 24 GB deliberately: on 32 GB cards Q8 becomes
 #                comfortable and wins on quality, so there is no 5090 case for this
 #                tier and no multi4 IQ2 slug.
-#   Best for:  The REACH tier — makes a 284B model fit a constrained box, and has
-#              the best prefill of any config measured on it (480 t/s). ⭐
+#   Best for:  The REACH tier — makes a 284B model fit a constrained box, on a constrained box. ⭐
 # ---------------------------------------------------------------------------
 # WHY BOTH TIERS EXIST — they are different CAPABILITY profiles, not a speed/quality
 # slider, and the decode and prefill optima genuinely sit on DIFFERENT tiers:
 #
-#   Q8  = make it good, then fast   → best decode (23.62), needs ~140 GB host RAM
-#   IQ2 = make it FIT               → best prefill (480, +28%), needs ~76 GB
+#   Q8  = the quality tier   — needs ~146 GB host RAM (worst case)
+#   IQ2 = the REACH tier     — needs ~86 GB, which is the whole point
 #
 # So the pick is set by which phase your workload is bound by, and by how much host
 # RAM you have. That framing is measured, not positioning.
@@ -41,11 +43,6 @@
 #    than to a config that OOMs. IQ2 fits ~3 bundles per 24 GB card.
 # ---------------------------------------------------------------------------
 #
-#   | variant                          | quant      | host RAM | decode | p@10K |
-#   |----------------------------------|------------|---------:|-------:|------:|
-#   | dual/unsloth-iq2-xxs/offload.yml | UD-IQ2_XXS |   ~76 GB |  22.03 |   480 |
-#   | dual/unsloth-q8-kxl/offload.yml  | UD-Q8_K_XL |  ~140 GB |  23.62 |   376 |
-#   | multi4/unsloth-q8-kxl/offload.yml| UD-Q8_K_XL | ~113 GB* |   est. |  est. |
 #   *4-card residency moves more experts onto GPU, so host RAM FALLS with card count.
 #
 # CPU-Offload-Host-RAM-GB: 86
@@ -55,6 +52,10 @@
 #   quant name does not give you the byte size).
 # CPU-Offload-Bundle-MiB: 1840
 # CPU-Offload-MoE-Layers: 43
+# CPU-Offload-First-MoE-Layer: 0
+#   0 = no dense prefix on this model (all 43 layers are MoE). Models WITH one
+#   (Laguna=1, Inkling=2) must set it: a residency rule naming a dense layer
+#   silently matches nothing, so fewer layers land resident than we granted.
 # CPU-Offload-GPU-Reserve-MiB: 14000
 #   Inputs for resolve_offload_residency(). The RESERVE is what the naive
 #   free-VRAM/bundle arithmetic forgets: dense stack + compute reserve + drafter.
@@ -80,6 +81,12 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    # ⚠️ THREADS is INJECTED by the launcher as nproc/2 — `-t` must track the rig, not
+    # a number that suited the reference box. The `:-8` below is the bare-`docker
+    # compose up` fallback and is deliberately LOW: the error is ASYMMETRIC.
+    # Measured on 35B-A3B: over-subscribing costs -69% (-t 48 on 32 cores, 94% CPU for
+    # 31% of peak) while under-subscribing costs -9.6% (-t 8 vs the -t 16 peak). When
+    # the core count is unknown, being too low is ~7x cheaper than being too high.
     # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
     # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a folded
     # string: `invalid command line string`. The alternation is the trigger (verified
@@ -114,13 +121,20 @@ services:
       - '-ot'
       - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
       - '-t'
-      - '${THREADS:-24}'
+      - '${THREADS:-8}'
       - '-ub'
       - '4096'
       - '-b'
       - '4096'
       - '--cache-prompt'
       - '--no-mmap'
+      # q8_0 KV on the IQ2 tier ONLY: measured to free ~300 MiB/card, which clears
+      # this tier's 1840 MiB bundle. On Q8 (3264 MiB bundle) it buys nothing, so we
+      # do not take the quality reduction there. At our stated KV serving floor.
+      - '--cache-type-k'
+      - 'q8_0'
+      - '--cache-type-v'
+      - 'q8_0'
       - '-md'
       - '/models/deepseek-v4-flash-0731-gguf/dspark/dspark-DeepSeek-V4-Flash-0731-Q8_0.gguf'
       - '--spec-type'

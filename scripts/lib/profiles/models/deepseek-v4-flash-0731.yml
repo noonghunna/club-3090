@@ -90,7 +90,7 @@ weights:
     # MXFP4 experts (~91% of the file) + BF16 attention. ⚠️ The quant NAME does not
     # give you the byte size — 3264 MiB/layer is a MEASUREMENT, not a calculation
     # from "Q8". Every new quant needs measuring, not deriving.
-    manual_note: "Quality tier. Best decode measured (23.62 @200K with 2 resident layers + DSpark). Ships 200K, NOT 262K: at 262K with the drafter attached it boots READY at 97.4% VRAM, survives a trivial decode, then dies on a ~15.7K-token prefill with CUDA OOM in cuMemCreate (reproduced 2026-08-06)."
+    manual_note: "Quality tier. NO published perf/quality numbers — incubating. Ships 200K, NOT 262K: at 262K with the drafter attached it boots READY at 97.4% VRAM, survives a trivial decode, then dies on a ~15.7K-token prefill with CUDA OOM in cuMemCreate (reproduced 2026-08-06)."
   unsloth-iq2-xxs:
     path: deepseek-v4-flash-0731-gguf/UD-IQ2_XXS
     local_subdir: deepseek-v4-flash-0731-gguf/UD-IQ2_XXS
@@ -99,7 +99,7 @@ weights:
     status: incubating
     hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
     shards: 3
-    manual_note: "Reach tier. 64 GB less host RAM than Q8 (~76 vs ~140), flat context scaling, 6 resident layers, and the best prefill of any config measured (480 t/s). ⚠️ Quality untested — ~2.6-bit experts."
+    manual_note: "Reach tier — substantially lower host-RAM requirement than Q8 (~86 vs ~146 GB worst case), which is what makes the model fit a constrained box. NO published perf/quality numbers — incubating. ⚠️ ~2.6-bit experts; quality is the open question on this tier."
   # IQ4_NL is on disk but DELIBERATELY NOT a slug (plan D6): slower than Q8 on
   # decode AND slower than IQ2 on prefill, at an intermediate RAM cost — dominated
   # in every workload. Kept for the quality ladder only.

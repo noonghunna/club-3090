@@ -1042,6 +1042,7 @@ up_variant() {
     # CPU-offload: size residency from DETECTED VRAM, then gate. Order matters —
     # the guards must see the RESOLVED config, not the compose defaults.
     resolve_offload_residency "${full_dir}/${file}"
+    resolve_offload_threads   "${full_dir}/${file}"
     # CPU-offload guards: marker-scoped, no-ops on non-offload composes (#deepseek-flash)
     preflight_cpu_offload_ram "${full_dir}/${file}" || exit 1
     preflight_offload_split_mode "${full_dir}/${file}" || exit 1

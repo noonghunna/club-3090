@@ -83,6 +83,24 @@ printf '# CPU-Offload-Host-RAM-GB: 999999\nservices:\n  x:\n    command: >-\n   
 preflight_cpu_offload_ram "$tmp" >/dev/null 2>&1 \
   && bad "impossible RAM requirement was NOT refused" || ok "impossible RAM requirement refused"
 
+# ---- thread resolution (nproc/2 -- a SAFE limit for rigs whose core count we don't know) ----
+declare -F resolve_offload_threads >/dev/null 2>&1 && ok "resolve_offload_threads defined" \
+  || bad "resolve_offload_threads missing"
+( unset THREADS; resolve_offload_threads "$Q8" >/dev/null 2>&1
+  want=$(( $(nproc) / 2 )); [[ "${THREADS:-}" == "$want" ]] ) \
+  && ok "resolves THREADS=nproc/2" || bad "THREADS != nproc/2"
+( export THREADS=8; resolve_offload_threads "$Q8" >/dev/null 2>&1; [[ "$THREADS" == "8" ]] ) \
+  && ok "explicit THREADS is never clobbered" || bad "user THREADS was overwritten"
+( unset THREADS; resolve_offload_threads "$NONOFF" >/dev/null 2>&1; [[ -z "${THREADS:-}" ]] ) \
+  && ok "no-op on a non-offload compose" || bad "set THREADS on a non-offload compose"
+# the bare-compose fallback must be LOW, not the reference rig's number: over-subscribing
+# measured -69% vs under-subscribing -9.6%, so err low when the core count is unknown.
+for f in "$Q8" "$IQ2" "$M4"; do
+  fb="$(command grep -oE 'THREADS:-[0-9]+' "$f" | command grep -oE '[0-9]+' | head -1)"
+  [[ -n "$fb" && "$fb" -le 8 ]] && ok "$(basename "$(dirname "$f")"): safe THREADS fallback ($fb)" \
+    || bad "$(basename "$(dirname "$f")"): THREADS fallback '$fb' is too high for an unknown rig"
+done
+
 # ---- wiring ----
 command grep -q "preflight_cpu_offload_ram" scripts/switch.sh \
   && ok "switch.sh calls the RAM guard" || bad "switch.sh does not call the RAM guard"

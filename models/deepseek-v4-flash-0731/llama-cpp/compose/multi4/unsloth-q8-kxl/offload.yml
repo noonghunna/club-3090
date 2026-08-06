@@ -9,7 +9,10 @@
 #   Max ctx:   204800
 #   Genesis:   N/A — llama.cpp engine
 #   Status:    🐣 Incubating
-#   Caveats:   • ⚠️ NEVER BOOTED BY US — authored from measured 2-card data plus a
+#   Caveats:   • NO performance or quality numbers are published for this slug —
+#                it is INCUBATING. A canonical bench and the 8-pack are both owed;
+#                only operational validation (boot + prefill probe + verify-full) exists.
+#              • ⚠️ NEVER BOOTED BY US — authored from measured 2-card data plus a
 #                calibrated extrapolation. We have 2 cards. Every number in the
 #                multi4 row of BENCHMARKS is an ESTIMATE until a 4-card owner runs it.
 #              • Quality UNTESTED on this tier (no 8-pack).
@@ -33,8 +36,7 @@
 # 128 GB is a very common host configuration. At ~140 GB the 2-card Q8 slug EXCLUDES
 # those users and pushes them to the low-bit tier; at ~113 GB the 4-card config FITS.
 # So multi4 is what puts the QUALITY tier inside a mainstream RAM budget — that, not
-# throughput, is its argument. (It should also be the best case for residency as a
-# lever: ~23% of expert traffic served from GPU vs 4.7% on two cards.)
+# throughput, is its argument. 
 #
 # ⚠️ STATIC ARITY IS WHY THIS FILE EXISTS SEPARATELY. A folded `command:` string
 #    cannot vary its number of -ot flags, so an N-card rig needs N device slots plus
@@ -53,6 +55,10 @@
 #   quant name does not give you the byte size).
 # CPU-Offload-Bundle-MiB: 3264
 # CPU-Offload-MoE-Layers: 43
+# CPU-Offload-First-MoE-Layer: 0
+#   0 = no dense prefix on this model (all 43 layers are MoE). Models WITH one
+#   (Laguna=1, Inkling=2) must set it: a residency rule naming a dense layer
+#   silently matches nothing, so fewer layers land resident than we granted.
 # CPU-Offload-GPU-Reserve-MiB: 18000
 #   Inputs for resolve_offload_residency(). The RESERVE is what the naive
 #   free-VRAM/bundle arithmetic forgets: dense stack + compute reserve + drafter.
@@ -78,6 +84,12 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    # ⚠️ THREADS is INJECTED by the launcher as nproc/2 — `-t` must track the rig, not
+    # a number that suited the reference box. The `:-8` below is the bare-`docker
+    # compose up` fallback and is deliberately LOW: the error is ASYMMETRIC.
+    # Measured on 35B-A3B: over-subscribing costs -69% (-t 48 on 32 cores, 94% CPU for
+    # 31% of peak) while under-subscribing costs -9.6% (-t 8 vs the -t 16 peak). When
+    # the core count is unknown, being too low is ~7x cheaper than being too high.
     # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
     # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a folded
     # string: `invalid command line string`. The alternation is the trigger (verified
@@ -116,7 +128,7 @@ services:
       - '-ot'
       - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
       - '-t'
-      - '${THREADS:-24}'
+      - '${THREADS:-8}'
       - '-ub'
       - '4096'
       - '-b'

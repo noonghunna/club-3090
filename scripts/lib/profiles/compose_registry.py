@@ -979,7 +979,7 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
         required_sm=8.6,
         status="incubating",
-        status_note="A 284B model on 2x24 GB. QUALITY TIER: best decode measured on this model (23.62 t/s @200K, prefill 376 t/s @10K) on stock upstream b10236 with zero patches -- it beats our own patched moe-cache config by 38%. Three levers compose: CPU expert offload + partial residency (+13.2% decode AND -6.5 GB host RAM, the only lever with no downside axis) + DSpark drafter. HARD GATE: ~140 GB host RAM. Ships 200K not 262K -- at 262K with the drafter it boots READY at 97.4% VRAM, passes a trivial decode, then dies on a ~15.7K-token prefill (CUDA OOM in cuMemCreate, reproduced 2026-08-06). Quality UNTESTED on every tier. Load ~8-10 min (--no-mmap).",
+        status_note="A 284B MoE on 2x24 GB. QUALITY TIER of the two DeepSeek-Flash offload slugs. Stock upstream b10236, zero patches. Three levers compose: CPU expert offload (137 GiB of routed experts in host RAM) + partial residency (bundles pinned back onto the GPUs, sized by the launcher from DETECTED free VRAM) + the DSpark drafter. HARD GATE: ~146 GB host RAM worst case -- preflight REFUSES below it. Ships 200K, NOT 262K: at 262K with the drafter it boots READY at 97.4% VRAM, passes a trivial decode, then dies on a ~15.7K-token prefill (CUDA OOM in cuMemCreate, reproduced 2026-08-06). NO PERFORMANCE OR QUALITY NUMBERS ARE PUBLISHED -- incubating; a canonical bench and the 8-pack are both owed. Validated operationally only: boot + a 14,011-token prefill probe + verify-full all checks passed.",
         category="frontier",
     ),
 
@@ -992,7 +992,7 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
         required_sm=8.6,
         status="incubating",
-        status_note="REACH TIER of the DeepSeek-Flash pair: 64 GB less host RAM than Q8 (~76 vs ~140), flat context scaling (-1.3% 64K->200K vs Q8's -5.8%), 6 resident layers, and the BEST PREFILL of any config measured on this model (480 t/s @10K, +28% over Q8). Decode 22.03. Decode and prefill optima genuinely sit on DIFFERENT tiers, so there is no single 'fastest' slug -- pick by which phase your workload is bound by. Scoped to dual 24 GB by design (on 32 GB cards Q8 is comfortable and wins on quality). WARNING: ~2.6-bit experts and quality is UNTESTED -- our notes warn the speed ranking is probably the INVERSE of the quality ranking.",
+        status_note="REACH TIER of the two DeepSeek-Flash offload slugs: ~86 GB host RAM worst case vs the Q8 tier's ~146 GB, which is what makes a 284B model fit a constrained box. Stock upstream b10236, zero patches; same three levers (offload + launcher-sized residency + DSpark). ~2.6-bit experts. Scoped to dual 24 GB by design. NO PERFORMANCE OR QUALITY NUMBERS ARE PUBLISHED -- incubating; canonical bench and 8-pack both owed, and quality is the open question on a quant this low. Validated operationally only: boot + a 14,011-token prefill probe + verify-full all checks passed.",
         category="frontier",
     ),
 

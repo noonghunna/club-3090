@@ -11,7 +11,10 @@
 #   Max ctx:   204800  (⚠️ NOT 262144 — see Caveats)
 #   Genesis:   N/A — llama.cpp engine
 #   Status:    🐣 Incubating
-#   Caveats:   • Quality is UNTESTED on this tier — no 8-pack has been run.
+#   Caveats:   • NO performance or quality numbers are published for this slug —
+#                it is INCUBATING. A canonical bench and the 8-pack are both owed;
+#                only operational validation (boot + prefill probe + verify-full) exists.
+#              • Quality is UNTESTED on this tier — no 8-pack has been run.
 #              • Needs ~140 GB of HOST RAM (experts live in CPU memory). This is a
 #                hard gate, not a recommendation: the box will thrash or OOM below it.
 #              • Load takes ~8-10 min (--no-mmap) and decode is ~23 t/s single-stream.
@@ -20,8 +23,7 @@
 #                97.4% VRAM and survives a trivial decode, then dies on a ~15.7K-token
 #                prefill with CUDA OOM in cuMemCreate (measured 2026-08-06).
 #              • multi-GPU beyond 2 cards uses the multi4 compose, not this one.
-#   Best for:  The quality tier of the two DeepSeek-Flash slugs — best decode
-#              measured on this model. Pick IQ2 instead if you are host-RAM bound
+#   Best for:  The quality tier of the two DeepSeek-Flash slugs Pick IQ2 instead if you are host-RAM bound
 #              or prefill-bound. ⭐
 # ---------------------------------------------------------------------------
 # WHY THIS EXISTS
@@ -32,9 +34,9 @@
 # THE THREE LEVERS, and they compose:
 #   1. CPU expert offload  — 137 GiB of routed experts live in host RAM.
 #   2. Partial residency   — a few expert bundles pinned back onto the GPUs.
-#                            +13.2% decode AND −6.5 GB host RAM. The only lever
-#                            here with no downside axis.
-#   3. DSpark drafter      — external speculative decode (+26-56%).
+#                            moves expert bytes off the CPU buffer, so it improves
+#                            both residency and the host-RAM requirement.
+#   3. DSpark drafter      — external speculative decode.
 #
 # ⚠️ -ot IS FIRST-MATCH-WINS. The two device rules MUST precede the catch-all
 #    =CPU rule. Reverse them and every expert silently lands on CPU: no error,
@@ -47,11 +49,6 @@
 #    config that runs anywhere — rather than to one that OOMs.
 # ---------------------------------------------------------------------------
 #
-#   | variant                          | quant      | host RAM | decode | p@10K |
-#   |----------------------------------|------------|---------:|-------:|------:|
-#   | dual/unsloth-q8-kxl/offload.yml  | UD-Q8_K_XL |  ~140 GB |  23.62 |   376 |
-#   | dual/unsloth-iq2-xxs/offload.yml | UD-IQ2_XXS |   ~76 GB |  22.03 |   480 |
-#   | multi4/unsloth-q8-kxl/offload.yml| UD-Q8_K_XL | ~113 GB* |   est. |  est. |
 #   *4-card residency moves more experts onto GPU, so host RAM FALLS with card count.
 #
 # CPU-Offload-Host-RAM-GB: 146
@@ -61,6 +58,10 @@
 #   quant name does not give you the byte size).
 # CPU-Offload-Bundle-MiB: 3264
 # CPU-Offload-MoE-Layers: 43
+# CPU-Offload-First-MoE-Layer: 0
+#   0 = no dense prefix on this model (all 43 layers are MoE). Models WITH one
+#   (Laguna=1, Inkling=2) must set it: a residency rule naming a dense layer
+#   silently matches nothing, so fewer layers land resident than we granted.
 # CPU-Offload-GPU-Reserve-MiB: 18000
 #   Inputs for resolve_offload_residency(). The RESERVE is what the naive
 #   free-VRAM/bundle arithmetic forgets: dense stack + compute reserve + drafter.
@@ -86,6 +87,12 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    # ⚠️ THREADS is INJECTED by the launcher as nproc/2 — `-t` must track the rig, not
+    # a number that suited the reference box. The `:-8` below is the bare-`docker
+    # compose up` fallback and is deliberately LOW: the error is ASYMMETRIC.
+    # Measured on 35B-A3B: over-subscribing costs -69% (-t 48 on 32 cores, 94% CPU for
+    # 31% of peak) while under-subscribing costs -9.6% (-t 8 vs the -t 16 peak). When
+    # the core count is unknown, being too low is ~7x cheaper than being too high.
     # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
     # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a folded
     # string: `invalid command line string`. The alternation is the trigger (verified
@@ -120,7 +127,7 @@ services:
       - '-ot'
       - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
       - '-t'
-      - '${THREADS:-24}'
+      - '${THREADS:-8}'
       - '-ub'
       - '4096'
       - '-b'
