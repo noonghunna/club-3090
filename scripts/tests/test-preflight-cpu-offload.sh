@@ -132,6 +132,16 @@ _mkstub '24576\n24576\n'
   && ok "injector: 2x24 Q8 pins blk.0->CUDA0 + blk.42->CUDA1 (outer-edge)" \
   || bad "injector OT_G rules drifted from the known-good 2x24 placement"
 
+# an explicit OT_G<i> from the user must NEVER be clobbered (the supported way to
+# pin more residency than the calibrated sizer grants — #931), and the OTHER
+# card's slot must still be auto-sized
+( export OT_G0='blk\.(0|1|2|3)\.ffn_(gate|up|down)_exps\.weight=CUDA0'
+  PATH="$stub:$PATH" resolve_offload_residency "$Q8"
+  [[ "$OT_G0" == 'blk\.(0|1|2|3)\.ffn_(gate|up|down)_exps\.weight=CUDA0' ]] \
+    && [[ "${OT_G1:-}" == 'blk\.(42)\.ffn_(gate|up|down)_exps\.weight=CUDA1' ]] ) \
+  && ok "user OT_G0 wins; OT_G1 still auto-sized" \
+  || bad "user OT_G override was clobbered (or blocked the other card's auto-size)"
+
 # the gate must SUBTRACT the grant: worst-case 999999 minus 6528 MiB -> ~999993
 printf '# CPU-Offload-Host-RAM-GB: 999999\n# CPU-Offload-Bundle-MiB: 3264\n# CPU-Offload-MoE-Layers: 43\n# CPU-Offload-First-MoE-Layer: 0\n# CPU-Offload-GPU-Reserve-MiB: 18000\nservices:\n  x:\n    command: >-\n      -ot a=CPU\n' > "$tmp"
 msg="$(PATH="$stub:$PATH" preflight_cpu_offload_ram "$tmp" 2>&1)"

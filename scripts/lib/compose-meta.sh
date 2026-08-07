@@ -453,8 +453,17 @@ resolve_offload_residency() {
   (( n >= 2 )) || return 0
 
   local per_card=$(( layers / n ))
-  local i fit rule
+  local i fit rule var
   for (( i=0; i<n; i++ )); do
+    # An explicit OT_G<i> from the user/env ALWAYS WINS and is never clobbered —
+    # same contract as THREADS (resolve_offload_threads). This is the supported
+    # way to pin more residency than the calibrated sizer grants (the 0.55 was
+    # calibrated on 24 GB cards and under-fills larger ones — club-3090 #931).
+    # ⚠️ RAM-gate interaction: the gate subtracts the AUTO grant. A user pinning
+    # MORE layers needs LESS host RAM than gated (conservative, fine); pinning
+    # FEWER on a RAM-tight box could under-gate — exotic, accepted.
+    var="OT_G${i}"
+    [[ -n "${!var:-}" ]] && continue
     fit="$(_offload_fit_count "${totals[i]}" "$reserve" "$bundle" "$per_card")"
     (( fit < 1 )) && continue                     # leave this card's no-op default
     rule="$(_offload_layers_for_card "$i" "$n" "$first" "$layers" "$fit")"
