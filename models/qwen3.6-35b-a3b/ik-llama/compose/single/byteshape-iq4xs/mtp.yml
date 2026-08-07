@@ -13,7 +13,29 @@
 #              (narrative 113/116 · code 129/137 wall/decode TPS, CV <2.3%), 8-pack 110/150,
 #              soak-continuous PASS (0 err, 0 VRAM growth, 0/25 silent-empty, 100% retention).
 #              Community intake from PR #293 (@Rhonstin).
-#   Caveats:   Single-rig validation (1× 3090, 370 W) — cross-rig numbers welcome. Agent-pack
+#   Caveats:   ⚠️⚠️ NP=1 IS REQUIRED, NOT A DEFAULT. Raising NP on this engine pin returns
+#              SILENTLY WRONG OUTPUT. Qwen3-Next is a hybrid: 30 of 40 layers are GDN
+#              (recurrent), and on this pin ik_llama's graph-reuse key is shape-based, so a
+#              graph built for one sequence is reused for another without re-pointing the
+#              recurrent state. Every slot then decodes on the first slot's state. No crash,
+#              no error — the server stays healthy and returns fluent text that is simply not
+#              conditioned on that slot's prompt.
+#              Reproduced first-party on THIS digest + quant (2026-08-07), 4 identical greedy
+#              prompts, temperature 0, seed 42, concurrent:
+#                  NP=1 → 1/1 distinct answers ✅        NP=4 → 3/4 distinct ❌
+#              Two of the four slots answered questions that were never asked.
+#              ⚠️ MTP DOES NOT PROTECT YOU. At NP>1 the server logs "MTP is not supported with
+#              parallel slots yet, removing the MTP stage" and boots with n_parallel=4 — NP
+#              wins and MTP is silently DROPPED, so you get the corruption AND lose this
+#              compose's headline drafter.
+#              ⚠️ Do NOT gate this on byte-identity against a sequential reference — batch-shape
+#              FP drift makes correct answers differ, which flags healthy runs and lets a
+#              non-fix look like a fix. Count DISTINCT answers to identical prompts; must be 1.
+#              Fixed upstream by ikawrakow/ik_llama.cpp#2260 (merged 2026-08-05, @ShubhamPriyadarshi),
+#              which this pinned digest PREDATES. Reported as club-3090#896; pin bump tracked in
+#              docs/UPSTREAM.md. Until that bump lands, NP=1 is the only supported value.
+#              ---
+#              Single-rig validation (1× 3090, 370 W) — cross-rig numbers welcome. Agent-pack
 #              scores (hermesagent-20 11/20 = 55%, cli-40 17/40 = 42%) are typical for the
 #              35B-A3B class (the apex sibling scores similarly). Intake fixes vs PR #293:
 #              image cu12→cu13-server, port 8020→8058.
@@ -40,7 +62,7 @@
 #   CTX_SIZE               KV pool size (overrides --fit if set)
 #   BATCH_SIZE             llama.cpp -b        (default: 4096)
 #   UBATCH_SIZE            llama.cpp -ub       (default: 1024)
-#   NP                     parallel slots      (default: 1)
+#   NP                     parallel slots      ⚠️ MUST STAY 1 — see below
 #   KV_TYPE                K and V quant type  (default: q4_0)
 #   MTP_DRAFT_N_MAX        MTP draft tokens    (default: 2)
 #   DRAFT_P_MIN            draft accept floor  (default: 0.0)
