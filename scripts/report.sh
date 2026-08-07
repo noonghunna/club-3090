@@ -66,6 +66,10 @@ print_help() {
   sed -n '2,/^set/p' "$0" | sed 's/^# \?//' | head -n -1
 }
 
+# Preserve the invocation so the "re-run with sudo" hint can echo back the SAME
+# flags, rather than a bare command the user has to reconstruct.
+REPORT_ARGS="$*"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --verify) DO_VERIFY=1; shift ;;
@@ -154,6 +158,29 @@ if [[ $REDACT -eq 1 ]]; then
   printf '\n_Redacted output (paths, host, user, tokens). Re-run with `--no-redact` for full data._\n'
 fi
 
+# Root-gated captures — warn UP FRONT, not per-section.
+#
+# Some of the most decision-relevant hardware facts are root-only: DIMM
+# population + configured memory speed (dmidecode), and ACS state on the
+# upstream bridge (lspci extended config space). Without them a report looks
+# complete while missing the fields that actually explain CPU-offload
+# throughput and whether GPU↔GPU P2P can engage.
+#
+# This is deterministic at start-up, so say it BEFORE the sections rather than
+# leaving a reader to notice three "needs root" lines scattered through a long
+# paste — which they will not, because reports get truncated from the bottom.
+if [[ $EUID -ne 0 ]] && ! sudo -n true 2>/dev/null; then
+  _root_gated=()
+  command -v dmidecode >/dev/null 2>&1 && _root_gated+=("DIMM count / size / configured memory speed")
+  command -v lspci >/dev/null 2>&1     && _root_gated+=("PCIe ACS capability state (LnkSta is still accurate)")
+  if [[ ${#_root_gated[@]} -gt 0 ]]; then
+    printf '\n> ⚠️ **Incomplete — running without root.** These fields were skipped:\n'
+    for _g in "${_root_gated[@]}"; do printf '> - %s\n' "$_g"; done
+    printf '>\n> For a complete report re-run with sudo:\n>\n> ```bash\n> sudo bash scripts/report.sh %s\n> ```\n' "${REPORT_ARGS:-}"
+    printf '>\n> Worth doing before filing a CPU-offload issue: memory channels and speed are the\n> variables that set throughput on those configs, and they cannot be read without root.\n'
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # System
 # ---------------------------------------------------------------------------
@@ -218,10 +245,44 @@ section "System"
 
 section "CPU + RAM"
 {
+  # ⚠️ This section is load-bearing for the CPU-offload slugs. Their throughput
+  # is set by the HOST — memory channels, memory speed, physical core count —
+  # not by the GPU, which is why those slugs publish no first-party numbers and
+  # ask readers for theirs instead. Reporting only "model name + thread count"
+  # made that ask unanswerable: physical cores are not derivable from the model
+  # string on most vendors, and channels/speed were not collected at all.
   if have lscpu; then
-    cpu_model=$(lscpu 2>/dev/null | awk -F: '/Model name/ {sub(/^ */, "", $2); print $2; exit}')
-    cpu_cores=$(lscpu 2>/dev/null | awk -F: '/^CPU\(s\):/ {gsub(/ /, "", $2); print $2; exit}')
-    echo "- **CPU:** ${cpu_model:-unknown} (${cpu_cores:-?} threads)"
+    # LC_ALL=C — lscpu TRANSLATES its field labels, so every lookup below would
+    # silently return empty on a non-English locale (same class as #779).
+    _lscpu="$(LC_ALL=C lscpu 2>/dev/null)"
+    _lscpu_f() { printf '%s\n' "$_lscpu" | grep -m1 -E "^$1:" | sed -E 's/^[^:]*:[[:space:]]*//'; }
+
+    cpu_model="$(_lscpu_f 'Model name')"
+    cpu_threads="$(_lscpu_f 'CPU\(s\)')"
+    cpu_sockets="$(_lscpu_f 'Socket\(s\)')"
+    cpu_percore="$(_lscpu_f 'Core\(s\) per socket')"
+    cpu_tpc="$(_lscpu_f 'Thread\(s\) per core')"
+    cpu_numa="$(_lscpu_f 'NUMA node\(s\)')"
+    cpu_hyp="$(_lscpu_f 'Hypervisor vendor')"
+
+    echo "- **CPU:** ${cpu_model:-unknown}"
+    cpu_phys=""
+    [[ -n "$cpu_sockets" && -n "$cpu_percore" ]] && cpu_phys=$(( cpu_sockets * cpu_percore ))
+    echo "- **CPU topology:** ${cpu_sockets:-?} socket(s) × ${cpu_percore:-?} core(s) = ${cpu_phys:-?} physical, ${cpu_tpc:-?} thread(s)/core → ${cpu_threads:-?} logical"
+    [[ -n "$cpu_numa" ]] && echo "- **NUMA nodes:** $cpu_numa"
+
+    # nproc honours cgroup/affinity limits and is what the offload `-t` default
+    # halves — so a divergence from lscpu's total changes the thread count the
+    # launcher picks, and is worth surfacing rather than silently disagreeing.
+    if have nproc; then
+      cpu_nproc="$(nproc 2>/dev/null)"
+      if [[ -n "$cpu_nproc" && -n "$cpu_threads" && "$cpu_nproc" != "$cpu_threads" ]]; then
+        echo "- **nproc:** $cpu_nproc ⚠️ differs from lscpu's $cpu_threads — cgroup/affinity limited; offload \`-t\` derives from this"
+      else
+        echo "- **nproc:** ${cpu_nproc:-?}"
+      fi
+    fi
+    [[ -n "$cpu_hyp" ]] && echo "- **Virtualized:** yes — $cpu_hyp ($(_lscpu_f 'Virtualization type'))"
   else
     echo "- **CPU:** lscpu not available"
   fi
@@ -232,6 +293,45 @@ section "CPU + RAM"
     echo "- **RAM:** ${ram_total} total, ${ram_avail} available"
     swap_total=$(free -h 2>/dev/null | awk '/^Swap:/ {print $2}')
     [[ "$swap_total" != "0B" && -n "$swap_total" ]] && echo "- **Swap:** $swap_total"
+  fi
+
+  # DIMM population + configured speed. Needs root, so it is best-effort — but
+  # ALWAYS print a line: an omitted row is indistinguishable from "nothing to
+  # report", and a reader must be able to tell "unknown" from "not collected".
+  _dmi=""
+  if have dmidecode; then
+    if [[ $EUID -eq 0 ]]; then
+      _dmi="$(dmidecode -t memory 2>/dev/null)"
+    elif sudo -n true 2>/dev/null; then
+      _dmi="$(sudo -n dmidecode -t memory 2>/dev/null)"
+    fi
+  fi
+  if [[ -n "$_dmi" ]]; then
+    printf '%s\n' "$_dmi" | awk '
+      BEGIN { RS = ""; FS = "\n" }
+      /Memory Device/ {
+        slots++; size = ""; spd = ""
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^[[:space:]]*Size:/)                    { s = $i; sub(/^[^:]*:[[:space:]]*/, "", s); size = s }
+          if ($i ~ /^[[:space:]]*Configured Memory Speed:/) { s = $i; sub(/^[^:]*:[[:space:]]*/, "", s); spd  = s }
+        }
+        if (size != "" && size !~ /No Module/) {
+          pop++; sizes[size]++
+          if (spd != "" && spd !~ /Unknown/) speeds[spd]++
+        }
+      }
+      END {
+        if (slots == 0) { print "- **Memory config:** dmidecode reported no memory devices"; exit }
+        for (s in sizes)  desc = desc (desc ? " + " : "") sizes[s] "× " s
+        for (s in speeds) sp   = sp   (sp   ? ", "   : "") s
+        printf "- **Memory config:** %d of %d slot(s) populated — %s%s\n", pop, slots, desc,
+               (sp != "" ? " @ " sp : " (speed not reported by firmware)")
+        if (pop < slots) print "  - _Populated slot count drives channel width; an unbalanced fill is a real throughput variable for CPU-offload configs._"
+      }'
+  elif have dmidecode; then
+    echo "- **Memory config:** not collected (needs root) — run \`sudo dmidecode -t memory\` for DIMM count / size / configured speed"
+  else
+    echo "- **Memory config:** not collected (\`dmidecode\` not installed)"
   fi
 } | redact
 
