@@ -1672,9 +1672,17 @@ preflight_offload_split_mode() {
 # Guards an offload compose against a host that cannot hold the experts.
 #
 # Reads the compose's `CPU-Offload-Host-RAM-GB:` header, which declares the
-# WORST CASE (all experts on CPU). Residency only MOVES bytes onto the GPUs, so
-# the real requirement is lower — the guard is conservative by construction,
-# which is the safe direction for a guard.
+# WORST CASE (all experts on CPU), then subtracts the expert bundles the launcher
+# will pin onto THIS rig's GPUs (offload_residency_grant_mib — the launcher's own
+# arithmetic, so gate and boot cannot disagree). Every pinned bundle is bytes NOT
+# in host RAM, which is why a 4-card rig needs less than a 2-card one and a
+# big-VRAM rig less than the header. When VRAM is unreadable the grant is 0 and
+# the gate degrades to the worst case — the safe direction.
+#
+# ⚠️ The header MUST stay the all-experts-on-CPU number. Pre-baking expected
+#    residency into it double-counts once the gate subtracts, and under-gates
+#    rigs whose cards fit fewer bundles than the header assumed (a 4x16 GB rig
+#    fits ZERO and truly needs the full worst case).
 #
 # ⚠️ The number is MEASURED, not computed. The quant name does not give you the
 #    byte size (UD-Q8_K_XL is really MXFP4 experts + BF16 attention), and on
@@ -1693,6 +1701,19 @@ preflight_cpu_offload_ram() {
     return 0
   fi
 
+  # Residency-adjusted need for THIS rig. Integer division floors the subtraction,
+  # which errs conservative (subtracts slightly less than granted).
+  local grant_mib=0 grant_gb=0 need_gb="$need_hdr"
+  if declare -F offload_residency_grant_mib >/dev/null 2>&1; then
+    grant_mib="$(offload_residency_grant_mib "$compose_file" 2>/dev/null || printf '0')"
+    [[ "$grant_mib" =~ ^[0-9]+$ ]] || grant_mib=0
+    if (( grant_mib > 0 )); then
+      grant_gb=$(( grant_mib / 1024 ))
+      need_gb=$(( need_hdr - grant_gb ))
+      (( need_gb < 1 )) && need_gb=1
+    fi
+  fi
+
   if [[ ! -r /proc/meminfo ]]; then
     echo "[preflight] WARN:  cannot read /proc/meminfo; skipping CPU-offload RAM check." >&2
     return 0
@@ -1701,21 +1722,32 @@ preflight_cpu_offload_ram() {
   kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo)";     total_gb=$(( kb / 1024 / 1024 ))
   kb="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"; avail_gb=$(( kb / 1024 / 1024 ))
 
-  if (( total_gb < need_hdr )); then
-    echo "[preflight] ERROR: this compose offloads experts to host RAM and needs ~${need_hdr} GB," >&2
-    echo "            but the machine has only ${total_gb} GB TOTAL. It cannot run here." >&2
+  if (( total_gb < need_gb )); then
+    echo "[preflight] ERROR: this compose offloads experts to host RAM and needs ~${need_gb} GB" >&2
+    if (( grant_gb > 0 )); then
+      echo "            on this rig (${need_hdr} GB worst case, minus ~${grant_gb} GB of experts" >&2
+      echo "            residency keeps on your GPUs), but the machine has only ${total_gb} GB TOTAL." >&2
+    else
+      echo "            (worst case: all experts on CPU), but the machine has only ${total_gb} GB TOTAL." >&2
+    fi
+    echo "            It cannot run here." >&2
     echo "            This is a hard gate, not a tuning knob: below it the box thrashes or OOMs." >&2
     echo "            Fix: use a lower-bit tier (the IQ2 slug needs ~86 GB), add RAM, or pick a" >&2
     echo "            model that fits VRAM. On a 4-card rig the same model needs LESS host RAM," >&2
     echo "            because residency moves expert bytes onto the GPUs." >&2
     return 1
   fi
-  if (( avail_gb < need_hdr )); then
-    echo "[preflight] ERROR: needs ~${need_hdr} GB of host RAM; only ${avail_gb} GB is AVAILABLE" >&2
+  if (( avail_gb < need_gb )); then
+    echo "[preflight] ERROR: needs ~${need_gb} GB of host RAM; only ${avail_gb} GB is AVAILABLE" >&2
     echo "            (of ${total_gb} GB total). Something else is holding memory." >&2
     echo "            Fix: stop other services and retry — 'docker ps' is the usual culprit." >&2
     return 1
   fi
-  echo "[preflight] cpu-offload: RAM ok — needs ~${need_hdr} GB (worst case), ${avail_gb} GB available"
+  if (( grant_gb > 0 )); then
+    echo "[preflight] cpu-offload: RAM ok — needs ~${need_gb} GB on this rig (${need_hdr} GB worst" \
+         "case, residency keeps ~${grant_gb} GB of experts on GPU), ${avail_gb} GB available"
+  else
+    echo "[preflight] cpu-offload: RAM ok — needs ~${need_hdr} GB (worst case), ${avail_gb} GB available"
+  fi
   return 0
 }

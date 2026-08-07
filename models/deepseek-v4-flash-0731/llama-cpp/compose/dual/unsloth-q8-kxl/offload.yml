@@ -52,10 +52,11 @@
 #   *4-card residency moves more experts onto GPU, so host RAM FALLS with card count.
 #
 # CPU-Offload-Host-RAM-GB: 146
-#   Worst case: ALL experts on CPU. Residency only MOVES bytes onto the GPUs, so the
-#   real requirement is LOWER — the guard is conservative by construction, which is the
-#   safe direction. Read by preflight_cpu_offload_ram(); measured, not computed (the
-#   quant name does not give you the byte size).
+#   ⚠️ MUST stay the ALL-experts-on-CPU worst case — preflight_cpu_offload_ram()
+#   subtracts this rig's detected residency grant itself (offload_residency_grant_mib),
+#   so pre-baking expected residency here would DOUBLE-COUNT it and under-gate.
+#   On a real 2x24 the gate computes ~140 (worst case minus 2 resident bundles).
+#   Measured, not computed (the quant name does not give you the byte size).
 # CPU-Offload-Bundle-MiB: 3264
 # CPU-Offload-MoE-Layers: 43
 # CPU-Offload-First-MoE-Layer: 0

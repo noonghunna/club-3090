@@ -378,6 +378,57 @@ compose_hw_model_status() {
 # read or the header is absent. Degrading to all-experts-CPU is always safe; it is
 # the config that runs anywhere.
 # ---------------------------------------------------------------------------
+
+# _offload_fit_count <total_mib> <reserve_mib> <bundle_mib> <per_card_cap>
+#
+# The per-card fit arithmetic, extracted so the residency INJECTOR and the RAM
+# GATE (offload_residency_grant_mib → preflight_cpu_offload_ram) can never
+# disagree about how many bundles a card holds. The 0.55 calibration lives HERE
+# and nowhere else.
+_offload_fit_count() {
+  local total="$1" reserve="$2" bundle="$3" per_card="$4"
+  local free=$(( total - reserve ))
+  (( free < 0 )) && free=0
+  # Calibrated, not naive: raw free/bundle overestimates ~2x because it ignores the
+  # compute reserve and the drafter. Verified against measured counts.
+  local fit=$(( free * 55 / 100 / bundle ))
+  (( fit > per_card )) && fit=$per_card
+  printf '%s' "$fit"
+}
+
+# _offload_layers_for_card <card_i> <n_cards> <first_moe_layer> <moe_layers> <fit>
+#
+# ⭐ OUTER-EDGE SELECTION. Card 0 counts UP from the first MoE layer; the last card
+# counts DOWN from the last. Middle cards work outward from their range centre.
+#
+# Why not "first layer of this card's nominal range": that lands exactly ON the
+# -sm layer split point, which we do NOT know (the engine reports buffer sizes, not
+# per-layer device assignment). Land on the wrong side and the bundle sits on a card
+# that does not own the layer's dense tensors -- every token then pays a cross-PCIe
+# hop, the precise pathology explicit device pinning exists to avoid. Working from
+# the outer edges is correct for ANY split.
+#
+# Prints the pipe-separated layer list for the -ot regex. Shared with the RAM gate
+# so the gate subtracts EXACTLY the bundles that will be pinned — count the entries
+# here rather than trusting `fit` (out-of-range layers are dropped, never emitted).
+_offload_layers_for_card() {
+  local i="$1" n="$2" first="$3" layers="$4" fit="$5"
+  local last=$(( first + layers - 1 ))
+  local rule="" count lay
+  for (( count=0; count<fit; count++ )); do
+    if (( i == 0 )); then                       # first card: up from the bottom
+      lay=$(( first + count ))
+    elif (( i == n - 1 )); then                 # last card: down from the top
+      lay=$(( last - count ))
+    else                                        # middle: outward from the centre
+      lay=$(( first + (2*i + 1) * layers / (2*n) + (count % 2 == 0 ? count/2 : -(count/2 + 1)) ))
+    fi
+    (( lay < first || lay > last )) && continue
+    rule="${rule}${rule:+|}${lay}"
+  done
+  printf '%s' "$rule"
+}
+
 resolve_offload_residency() {
   local compose_file="$1"
   [[ -f "$compose_file" ]] || return 0
@@ -394,7 +445,6 @@ resolve_offload_residency() {
   # gets fewer resident layers than we think we granted and host RAM errs UNSAFE.
   local first; first="$(compose_meta_get "$compose_file" cpu-offload-first-moe-layer || true)"
   [[ "$first" =~ ^[0-9]+$ ]] || first=0
-  local last=$(( first + layers - 1 ))
 
   local -a totals=()
   while read -r m; do [[ "$m" =~ ^[0-9]+$ ]] && totals+=("$m"); done \
@@ -403,41 +453,66 @@ resolve_offload_residency() {
   (( n >= 2 )) || return 0
 
   local per_card=$(( layers / n ))
-  local i card_free fit rule count lay
+  local i fit rule
   for (( i=0; i<n; i++ )); do
-    card_free=$(( totals[i] - reserve ))
-    (( card_free < 0 )) && card_free=0
-    # Calibrated, not naive: raw free/bundle overestimates ~2x because it ignores the
-    # compute reserve and the drafter. Verified against measured counts.
-    fit=$(( card_free * 55 / 100 / bundle ))
-    (( fit > per_card )) && fit=$per_card
+    fit="$(_offload_fit_count "${totals[i]}" "$reserve" "$bundle" "$per_card")"
     (( fit < 1 )) && continue                     # leave this card's no-op default
-
-    # ⭐ OUTER-EDGE SELECTION. Card 0 counts UP from the first MoE layer; the last card
-    # counts DOWN from the last. Middle cards work outward from their range centre.
-    #
-    # Why not "first layer of this card's nominal range": that lands exactly ON the
-    # -sm layer split point, which we do NOT know (the engine reports buffer sizes, not
-    # per-layer device assignment). Land on the wrong side and the bundle sits on a card
-    # that does not own the layer's dense tensors -- every token then pays a cross-PCIe
-    # hop, the precise pathology explicit device pinning exists to avoid. Working from
-    # the outer edges is correct for ANY split.
-    rule=""
-    for (( count=0; count<fit; count++ )); do
-      if (( i == 0 )); then                       # first card: up from the bottom
-        lay=$(( first + count ))
-      elif (( i == n - 1 )); then                 # last card: down from the top
-        lay=$(( last - count ))
-      else                                        # middle: outward from the centre
-        lay=$(( first + (2*i + 1) * layers / (2*n) + (count % 2 == 0 ? count/2 : -(count/2 + 1)) ))
-      fi
-      (( lay < first || lay > last )) && continue
-      rule="${rule}${rule:+|}${lay}"
-    done
+    rule="$(_offload_layers_for_card "$i" "$n" "$first" "$layers" "$fit")"
     [[ -z "$rule" ]] && continue
     export "OT_G${i}=blk\.(${rule})\.ffn_(gate|up|down)_exps\.weight=CUDA${i}"
   done
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# offload_residency_grant_mib <compose_file>
+#
+# Prints the TOTAL MiB of expert bundles resolve_offload_residency will pin onto
+# THIS rig's GPUs — same headers, same detection, same calibrated fit, same layer
+# selection — so preflight's RAM gate can subtract bytes that will NOT be in host
+# RAM. The compose's CPU-Offload-Host-RAM-GB header MUST therefore stay the
+# ALL-experts-on-CPU worst case: the gate does the subtraction itself, and a
+# header with residency pre-baked would double-count it and under-gate (a 4x16 GB
+# rig fits ZERO bundles and truly needs the full worst case — the exact shape the
+# multi4 header briefly shipped before this function existed).
+#
+# Prints 0 whenever the injector would emit nothing (no VRAM readable, <2 cards,
+# not a residency-capable compose): "assume nothing resident" keeps the gate at
+# the worst case, which is the safe direction.
+# ---------------------------------------------------------------------------
+offload_residency_grant_mib() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || { printf '0'; return 0; }
+  command -v nvidia-smi >/dev/null 2>&1 || { printf '0'; return 0; }
+
+  local bundle; bundle="$(compose_meta_get "$compose_file" cpu-offload-bundle-mib || true)"
+  [[ "$bundle" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
+  local layers; layers="$(compose_meta_get "$compose_file" cpu-offload-moe-layers || true)"
+  [[ "$layers" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
+  local reserve; reserve="$(compose_meta_get "$compose_file" cpu-offload-gpu-reserve-mib || true)"
+  [[ "$reserve" =~ ^[0-9]+$ ]] || reserve=18000
+  local first; first="$(compose_meta_get "$compose_file" cpu-offload-first-moe-layer || true)"
+  [[ "$first" =~ ^[0-9]+$ ]] || first=0
+
+  local -a totals=()
+  local m
+  while read -r m; do [[ "$m" =~ ^[0-9]+$ ]] && totals+=("$m"); done \
+    < <(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null)
+  local n="${#totals[@]}"
+  (( n >= 2 )) || { printf '0'; return 0; }
+
+  local per_card=$(( layers / n ))
+  local i fit rule total_mib=0
+  local -a lays
+  for (( i=0; i<n; i++ )); do
+    fit="$(_offload_fit_count "${totals[i]}" "$reserve" "$bundle" "$per_card")"
+    (( fit < 1 )) && continue
+    rule="$(_offload_layers_for_card "$i" "$n" "$first" "$layers" "$fit")"
+    [[ -z "$rule" ]] && continue
+    IFS='|' read -ra lays <<<"$rule"
+    total_mib=$(( total_mib + ${#lays[@]} * bundle ))
+  done
+  printf '%s' "$total_mib"
 }
 
 # ---------------------------------------------------------------------------

@@ -30,11 +30,11 @@
 #   | rig        | resident layers | host RAM  |
 #   |------------|----------------:|----------:|
 #   | 2× 24 GB   |  2 (measured)   | ~140 GB   |
-#   | 4× 24 GB   | ~10 (est.)      | **~113 GB** |
+#   | 4× 24 GB   |  8 (@milano, 2026-08-07) | **~120 GB** |
 #   | 4× 32 GB   | ~15 (est.)      |  ~95 GB   |
 #
 # 128 GB is a very common host configuration. At ~140 GB the 2-card Q8 slug EXCLUDES
-# those users and pushes them to the low-bit tier; at ~113 GB the 4-card config FITS.
+# those users and pushes them to the low-bit tier; at ~120 GB the 4-card config FITS.
 # So multi4 is what puts the QUALITY tier inside a mainstream RAM budget — that, not
 # throughput, is its argument. 
 #
@@ -60,12 +60,18 @@
 #     budget", naming 128 GB. So preflight REFUSED the exact box the slug exists for.
 # Corrected from a real 4x3090 + 128 GB boot by @milano (Discord, 2026-08-07), and the
 # pair is self-consistent with our own residency math: reserve 12000 -> 2 bundles/card ->
-# 8 resident -> 137.1 GiB routed - 8x3.19 GiB = 111.6 GiB = ~120 GB host.
-# CPU-Offload-Host-RAM-GB: 120
-#   Worst case: ALL experts on CPU. Residency only MOVES bytes onto the GPUs, so the
-#   real requirement is LOWER — the guard is conservative by construction, which is the
-#   safe direction. Read by preflight_cpu_offload_ram(); measured, not computed (the
-#   quant name does not give you the byte size).
+# 8 resident -> 137.1 GiB routed - 8x3.19 GiB = 111.6 GiB = ~120 GB host. That ~120 is
+# what preflight now COMPUTES on a real 4x24 rig (worst case minus detected residency);
+# the header below stays the all-on-CPU worst case. It briefly shipped as 120 here —
+# which under-gated any 4-card rig fitting fewer than 8 bundles (4x16 GB fits ZERO and
+# truly needs the full ~146). The gate subtracting residency itself is what lets one
+# header serve every card size.
+# CPU-Offload-Host-RAM-GB: 146
+#   ⚠️ MUST stay the ALL-experts-on-CPU worst case — preflight_cpu_offload_ram()
+#   subtracts this rig's detected residency grant itself (offload_residency_grant_mib),
+#   so pre-baking expected residency here would DOUBLE-COUNT it and under-gate.
+#   Same quant, same worst case as the dual Q8 compose (guarded by the offload test).
+#   Measured, not computed (the quant name does not give you the byte size).
 # CPU-Offload-Bundle-MiB: 3264
 # CPU-Offload-MoE-Layers: 43
 # CPU-Offload-First-MoE-Layer: 0
