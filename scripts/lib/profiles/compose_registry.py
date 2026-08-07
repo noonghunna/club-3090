@@ -1025,10 +1025,10 @@ COMPOSE_REGISTRY = {
         default_port=8032,
         kvcalc_key="SKIP",
         offload="n-cpu-moe",
-        host_ram_gb=146,
+        host_ram_gb=120,
         required_sm=8.6,
         status="incubating",
-        status_note="4-card QUALITY tier. NEVER BOOTED BY US -- authored from measured 2-card data plus the ~0.55 residency calibration; every number is an ESTIMATE until a 4-card owner runs it. The argument is NOT throughput: every layer pinned to a GPU is a layer NOT in host RAM, so host RAM FALLS with card count -- ~113 GB (est.) at 4x24 GB vs ~140 GB at 2x24. 128 GB is a very common host config, which the 2-card Q8 slug EXCLUDES and this one FITS, so multi4 is what puts the quality tier inside a mainstream RAM budget. Residency should also be at its best here (~23% of expert traffic on GPU vs 4.7% on two cards). No IQ2 multi slug: on four cards Q8 itself drops into a 128 GB budget, so a low-bit tier is not needed to fit.",
+        status_note="4-card QUALITY tier. NEVER BOOTED BY US. 2026-08-07: a 4x3090 + 128 GB owner (@milano, Discord) BOOTED it after correcting two constants this compose had COPIED from the dual file and never re-derived for four cards -- reserve 18000 (a 2-way dense split) granted 1 bundle/card where 2 fit, and the 146 GB gate then REFUSED the 128 GB box this slug exists to serve. Now reserve 12000 / host 120, self-consistent with our residency math. STILL UNVALIDATED BEYOND BOOT: no real prefill probe yet, and on this model boot is NOT sufficient -- the 262K config booted, passed a trivial decode, then died on the first ~15.7K prefill. Prefill probe requested. The argument is NOT throughput: every layer pinned to a GPU is a layer NOT in host RAM, so host RAM FALLS with card count -- **120 GB MEASURED** at 4x24 GB (was ~113 est.) vs ~146 at 2x24 -- first 4-card boot by @milano 2026-08-07. 128 GB is a very common host config, which the 2-card Q8 slug EXCLUDES and this one FITS, so multi4 is what puts the quality tier inside a mainstream RAM budget. Residency should also be at its best here (~23% of expert traffic on GPU vs 4.7% on two cards). No IQ2 multi slug: on four cards Q8 itself drops into a 128 GB budget, so a low-bit tier is not needed to fit.",
         category="frontier",
     ),
 

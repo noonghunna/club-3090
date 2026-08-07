@@ -48,7 +48,20 @@
 #    Defaults match NO layer (blk.99999), so an unset env degrades to all-experts-CPU
 #    rather than to an OOM. Asymmetric counts fall out for free, which is what mixed
 #    rigs (e.g. 5090 + 3090) need.
-# CPU-Offload-Host-RAM-GB: 146
+# ⚠️ THESE TWO CONSTANTS ARE 4-CARD-DERIVED — do NOT copy them from the dual compose.
+# This slug originally shipped with the dual's values (reserve 18000 / host 146) because
+# it was authored by copying that file, and neither was re-derived for four cards. Both
+# were wrong in the same direction and the slug contradicted its own purpose:
+#   • reserve 18000 was sized for a 2-WAY dense split. On four cards each card carries a
+#     quarter of the dense stack, so the budget was far too conservative — the sizer
+#     granted 1 bundle/card where 2 fit, i.e. HALF the residency the hardware holds.
+#   • host 146 GB then followed from those 4 resident layers — and the registry note for
+#     this very slug sells it as "what puts the quality tier inside a mainstream RAM
+#     budget", naming 128 GB. So preflight REFUSED the exact box the slug exists for.
+# Corrected from a real 4x3090 + 128 GB boot by @milano (Discord, 2026-08-07), and the
+# pair is self-consistent with our own residency math: reserve 12000 -> 2 bundles/card ->
+# 8 resident -> 137.1 GiB routed - 8x3.19 GiB = 111.6 GiB = ~120 GB host.
+# CPU-Offload-Host-RAM-GB: 120
 #   Worst case: ALL experts on CPU. Residency only MOVES bytes onto the GPUs, so the
 #   real requirement is LOWER — the guard is conservative by construction, which is the
 #   safe direction. Read by preflight_cpu_offload_ram(); measured, not computed (the
@@ -59,7 +72,7 @@
 #   0 = no dense prefix on this model (all 43 layers are MoE). Models WITH one
 #   (Laguna=1, Inkling=2) must set it: a residency rule naming a dense layer
 #   silently matches nothing, so fewer layers land resident than we granted.
-# CPU-Offload-GPU-Reserve-MiB: 18000
+# CPU-Offload-GPU-Reserve-MiB: 12000
 #   Inputs for resolve_offload_residency(). The RESERVE is what the naive
 #   free-VRAM/bundle arithmetic forgets: dense stack + compute reserve + drafter.
 #   A ~0.55 calibration is applied on top — naive sizing overestimates ~2x and
