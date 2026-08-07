@@ -82,4 +82,33 @@ assert_lookup carnice-v2-27b-int4-recipe-d-bf16mtp/chat_template.jinja qwen3.6-2
 assert_lookup qwopus3.6-27b-int4-recipe-d-bf16mtp/config.json qwen3.6-27b:qwopus-bf16mtp
 assert_lookup gemma-4-31b-google-qat-w4a16/config.json gemma-4-31b:google-qat-w4a16
 
+# `verify_glob` must match the entry's declared `format`.
+#
+# It DEFAULTS to `*.safetensors` (weights.py), so a GGUF entry that simply omits
+# it gets a glob matching nothing — and both consumers fail SILENTLY-ish in ways
+# that blame the wrong thing: c3 reports the weights absent while they sit on
+# disk, and setup.sh's post-download verify counts zero files and exits with
+# "download may have failed" AFTER a successful multi-hundred-GB pull. Nothing
+# else catches it, because a mismatched glob is valid YAML and a valid glob.
+python3 - <<'PY'
+import pathlib, sys, yaml
+
+bad = []
+for f in sorted(pathlib.Path("scripts/lib/profiles/models").glob("*.yml")):
+    doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    for key, meta in (doc.get("weights") or {}).items():
+        if not isinstance(meta, dict):
+            continue
+        glob = meta.get("verify_glob") or "*.safetensors"   # weights.py default
+        is_gguf = str(meta.get("format", "")).lower() == "gguf"
+        if is_gguf != glob.endswith(".gguf"):
+            bad.append(f"  {f.name}::{key}  format={meta.get('format')}  "
+                       f"verify_glob={glob}"
+                       f"{'  (DEFAULTED — declare it)' if not meta.get('verify_glob') else ''}")
+
+if bad:
+    print("verify_glob does not match declared format:", *bad, sep="\n", file=sys.stderr)
+    sys.exit(1)
+PY
+
 echo "test-model-weights-registry: ok"

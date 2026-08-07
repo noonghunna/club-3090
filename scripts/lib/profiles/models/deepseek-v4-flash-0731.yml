@@ -87,6 +87,11 @@ weights:
     status: incubating
     hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
     shards: 5
+    # ⚠️ REQUIRED on every GGUF entry — `verify_glob` defaults to `*.safetensors`,
+    # which matches NOTHING here. Omitting it made c3 report the weights absent
+    # while they sat on disk, and made setup.sh exit 1 after a successful 151 GB
+    # download with "download may have failed" (weights.py:132, setup.sh:114).
+    verify_glob: "*.gguf"
     # MXFP4 experts (~91% of the file) + BF16 attention. ⚠️ The quant NAME does not
     # give you the byte size — 3264 MiB/layer is a MEASUREMENT, not a calculation
     # from "Q8". Every new quant needs measuring, not deriving.
@@ -99,6 +104,7 @@ weights:
     status: incubating
     hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
     shards: 3
+    verify_glob: "*.gguf"          # see the note on unsloth-q8-kxl — not optional
     manual_note: "Reach tier — substantially lower host-RAM requirement than Q8 (~86 vs ~146 GB worst case), which is what makes the model fit a constrained box. NO published perf/quality numbers — incubating. ⚠️ ~2.6-bit experts; quality is the open question on this tier."
   dspark:
     path: deepseek-v4-flash-0731-gguf/dspark
