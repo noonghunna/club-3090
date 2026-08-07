@@ -330,12 +330,39 @@ else
     # PCIe rig actually has, which every other line in this report leaves
     # unanswered (the verdict below needs a RUNNING container; this doesn't).
     # Tiered + achievability-gated on purpose: see p2p_opportunity_hint.
-    _p2p_hint="$(p2p_opportunity_hint "$(p2p_gpu_count)" "$(p2p_host_capability)" 2>/dev/null || true)"
-    [[ -n "$_p2p_hint" ]] && { echo; echo "$_p2p_hint"; }
+    _p2p_count="$(p2p_gpu_count)"
+    _p2p_cap="$(p2p_host_capability "$_p2p_count" 2>/dev/null || echo none)"
+    if [[ "$_p2p_cap" == "pcie_p2p" ]]; then
+      # ⚠️ The hint below deliberately says NOTHING once peer access is already
+      # granted ("already covered"). That left a rig with working P2P showing no
+      # interconnect status at all — and a reader cannot tell "nothing to say"
+      # from "never ran". State it positively instead, with the caveat that
+      # matters most here: a grant is not proof.
+      echo
+      echo "ℹ interconnect: ${_p2p_count} GPUs, no NVLink, but \`topo -p2p\` reports peer access **enabled on every pair** — P2P is granted on this host."
+      echo
+      echo "  ⚠️ A grant is not proof it works. \`topo -p2p OK\` reflects the driver's *permission*, not a completed transfer: a dual-5090 pair read OK and then hung inside \`ncclCommInitRank\` (#873). Only an actual peer transfer settles it — \`bash scripts/p2p-validate.sh\` runs a real all-reduce, which copy-then-sync benchmarks cannot substitute for. If a multi-GPU engine hangs at init, suspect this first."
+    else
+      _p2p_hint="$(p2p_opportunity_hint "$_p2p_count" "$_p2p_cap" 2>/dev/null || true)"
+      [[ -n "$_p2p_hint" ]] && { echo; echo "$_p2p_hint"; }
+    fi
   fi
 
   subsection "Topology"
   nvidia-smi topo -m 2>&1 | redact | details "PCIe / GPU topology matrix"
+
+  # Peer-access matrix — ALWAYS, not just when lspci is missing.
+  #
+  # This used to be emitted only as an lspci fallback, so any rig with pciutils
+  # installed (i.e. most) filed a report containing no P2P verdict at all — the
+  # one command that answers "is peer access on?" was the one we skipped. It is
+  # a single cheap call and it is the PRIMARY signal; the lspci ACS/LnkSta dump
+  # below is supporting evidence, not a substitute for it.
+  if have nvidia-smi && [[ "$(p2p_gpu_count)" -ge 2 ]]; then
+    if nvidia-smi topo -p2p rw >/dev/null 2>&1; then
+      nvidia-smi topo -p2p rw 2>&1 | redact | details "GPU peer-access matrix (topo -p2p rw)"
+    fi
+  fi
 
   # lspci-based PCIe/P2P detail. nvidia-smi reports negotiated gen/width but
   # cannot show trained link state vs capability side-by-side, ACS state on the
@@ -343,14 +370,9 @@ else
   # actually decide whether GPU↔GPU P2P engages (see issues #137, #351).
   subsection "PCIe / P2P detail (lspci)"
   if ! have lspci; then
-    # Fallback: nvidia-smi topo -p2p doesn't need pciutils and shows P2P capability
-    if have nvidia-smi && nvidia-smi topo -p2p rw >/dev/null 2>&1; then
-      echo "_lspci not available (pciutils not installed) — showing P2P capability matrix instead._"
-      echo
-      nvidia-smi topo -p2p rw | redact
-    else
-      echo "_lspci not available (pciutils not installed) — skipping PCIe/P2P detail._"
-    fi
+    # The peer-access matrix is emitted unconditionally under Topology above, so
+    # there is nothing to fall back to here any more — just say what is missing.
+    echo "_lspci not available (pciutils not installed) — skipping ACS / LnkSta detail. The peer-access matrix under **Topology** above is unaffected; install \`pciutils\` for the link-state and ACS evidence._"
   else
     # sudo lspci -vvv is needed for full capability blocks (ACS lives in the
     # extended config space, root-only). Degrade gracefully if sudo is
