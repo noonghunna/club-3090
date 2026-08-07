@@ -886,6 +886,44 @@ _preflight_compose_model_dir() {
   printf '%s' "$model_dir"
 }
 
+# _preflight_compose_flag_paths <flag-alternation> <compose-file>... — emit every
+# `/models/...` value passed to one of the given flags, in BOTH compose spellings.
+#
+# ⚠️ Compose command args come in two forms, and matching only one is a SILENT
+# hole — the guard returns green for a compose it never actually read:
+#
+#     command: -m /models/x.gguf          # inline: flag + value on one line
+#     command:                            # list: flag and value are SEPARATE items
+#       - '-m'
+#       - '/models/x.gguf'
+#
+# Every extractor here was inline-only, so all three DeepSeek-Flash composes
+# (list form) were invisible: the path came back empty, the qwen fallback took
+# over, and `switch.sh` validated *Qwen's* files while launching DeepSeek. That
+# is how paulp83 got three container restarts and a cryptic in-container
+# "failed to open GGUF file" instead of one clear "weights missing" (#913).
+_preflight_compose_flag_paths() {
+  local flags="$1"
+  shift
+  [[ $# -gt 0 ]] || return 0
+
+  # (a) inline — flag and value on the same line.
+  grep -hoE -- "(^|[[:space:]])(${flags})[[:space:]]+/models/[^[:space:]]+" "$@" 2>/dev/null \
+    | awk '{print $NF}' || true
+
+  # (b) YAML list — the value is the NEXT list item after the flag item.
+  # `q` carries the single quote so the program stays single-quotable in bash.
+  awk -v flagre="^(${flags})$" -v q="'" '
+    FNR == 1 { pending = 0 }                       # never span two files
+    {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line)  # strip the list dash
+      gsub("^[\"" q "]|[\"" q "],?$", "", line)    # strip quotes / trailing comma
+      if (pending && line ~ /^\/models\//) { print line; pending = 0; next }
+      pending = (line ~ flagre) ? 1 : 0
+    }' "$@" 2>/dev/null || true
+}
+
 _preflight_compose_path_default() {
   local value="$1"
   value="$(_preflight_trim "$value")"
@@ -1134,8 +1172,7 @@ preflight_compose_deps() {
     while IFS= read -r token; do
       path="$(_preflight_compose_path_default "$token")"
       [[ -n "$path" ]] && gguf_paths+=("$path")
-    done < <(grep -hoE -- '(^|[[:space:]])(-m|--model)[[:space:]]+/models/[^[:space:]]+' "${compose_files[@]}" \
-      | awk '{print $NF}' || true)
+    done < <(_preflight_compose_flag_paths '-m|--model' "${compose_files[@]}")
 
     # Speculative drafter: beellama --spec-draft-model, llama.cpp -md/--model-draft.
     # A missing drafter GGUF otherwise surfaces only as a cryptic in-container
@@ -1143,14 +1180,12 @@ preflight_compose_deps() {
     while IFS= read -r token; do
       path="$(_preflight_compose_path_default "$token")"
       [[ -n "$path" ]] && draft_paths+=("$path")
-    done < <(grep -hoE -- '(^|[[:space:]])(--spec-draft-model|--model-draft|-md)[[:space:]]+/models/[^[:space:]]+' "${compose_files[@]}" \
-      | awk '{print $NF}' || true)
+    done < <(_preflight_compose_flag_paths '--spec-draft-model|--model-draft|-md' "${compose_files[@]}")
 
     while IFS= read -r token; do
       path="$(_preflight_compose_path_default "$token")"
       [[ -n "$path" ]] && mmproj_paths+=("$path")
-    done < <(grep -hoE -- '(^|[[:space:]])--mmproj[[:space:]]+/models/[^[:space:]]+' "${compose_files[@]}" \
-      | awk '{print $NF}' || true)
+    done < <(_preflight_compose_flag_paths '--mmproj' "${compose_files[@]}")
 
     # Env overrides mirror the compose knobs (GGUF_FILE / DRAFT_FILE / MMPROJ_FILE),
     # each replacing only its own path class.
