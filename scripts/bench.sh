@@ -10,6 +10,26 @@
 #     + prompt-processing throughput (`PP tok/s`)
 #   - shows MTP SpecDecoding metrics from docker logs at the end
 #
+# ⚠️⚠️ NEVER COMPARE A COLD BOOT AGAINST A HEAT-SOAKED ONE.
+#   The 3 warmups above settle the ENGINE (cudagraphs, caches). They do NOT settle
+#   the HARDWARE. A rig can take ~1 hour to reach thermal steady state, and a cold
+#   card measures materially faster on decode — @juslex reported ~4% on 2x3090
+#   (#922: rack air 29.6 -> 35.6 C over ~55 min, cores 80/82 -> 82/84 C). No
+#   throttling was involved: power sat pinned at the cap the whole time, so the
+#   CAP binds, not temperature — which is exactly why it does not show up as a
+#   clock drop you would notice.
+#
+#   That is larger than most deltas worth reporting. Their first read put one cold
+#   boot against three soaked ones and inflated a decode delta; it cost a day.
+#   Shubham independently hit the same shape on ik_llama (whichever arm ran SECOND
+#   was ~1% faster regardless of which arm it was).
+#
+#   ⇒ For any A/B: pre-warm both arms, or interleave A/B/A/B and compare like with
+#     like. A single sequential pair — the thing this script makes easiest — is the
+#     one design that cannot distinguish the patch from the position.
+#   ⇒ Prefill is far more robust (CV <=0.1% within a boot, <=1% across boots);
+#     decode is where this bites.
+#
 # Why two TPS metrics:
 #   - wall_TPS  = "user-perceived speed" (includes prefill cost)
 #   - decode_TPS = "model decode rate" (excludes prefill)
@@ -1862,7 +1882,7 @@ bench_interconnect_block() {
   eng_text=""
   if [[ "${CONTAINER:-}" != "none" ]] && command -v docker >/dev/null 2>&1 \
      && docker inspect "${CONTAINER}" >/dev/null 2>&1; then
-    eng_text="$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]|Custom allreduce is disabled' | head -8 || true)"
+    eng_text="$(docker logs "$CONTAINER" 2>&1 | command grep -E '\[nvlink\]|Custom allreduce is disabled|disable_custom_all_reduce=True' | head -8 || true)"
   fi
   if [[ "$ENGINE_KIND" == "llamacpp" || "${CONTAINER:-}" == "none" ]]; then
     # llama.cpp/ik-llama split layers across cards with plain copies — there is
@@ -1872,7 +1892,7 @@ bench_interconnect_block() {
   else
     case "$(printf '%s\n%s' "$eng_text" "$nccl_line" | p2p_classify_engagement 2>/dev/null || echo unknown)" in
       on)        l3="ENGAGED — engine reports its custom all-reduce ON" ;;
-      nccl_only) l3="engine-VETOED — vLLM disabled its custom all-reduce (NVLink-only gate at world>2, #786); P2P still live via NCCL peer transfers" ;;
+      nccl_only) l3="custom-AR OFF, P2P LIVE — the engine is not using its custom all-reduce; peer transfers still go via NCCL. Cause is either vLLM's own NVLink-only gate at world>2 (#786) or an operator-supplied --disable-custom-all-reduce (#922). Check the engine log to tell which; both are healthy states" ;;
       off)       l3="OFF — the serving container resolved to PCIe/no-P2P mode" ;;
       requested) l3="REQUESTED but UNVERIFIED — P2P forced on without a driver grant (#688)" ;;
       *)         l3="unknown — no [nvlink] boot line and no engine gate line in the log" ;;

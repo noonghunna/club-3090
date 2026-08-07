@@ -757,8 +757,21 @@ Read the **"Interconnect verdict"** line under *Boot log highlights* — the rep
 
 Everything below was hit for real. Start from the symptom.
 
+> ### ⚠️⚠️ A green verdict line is not a correctness check — and neither is TPS
+>
+> This doc says a copy test is weaker than a collective. #922 goes one further: a rig where the
+> **collective itself completed, fast, and was still wrong.** Every indicator was green —
+> `topo -p2p rw` = OK, 6.60 GB/s peer with bytes verified by a Driver-API comparison, clean boot,
+> zero Xid, VRAM on reference — and the throughput was *plausible* at 29.7 tok/s, a number you could
+> rationalise as "Ampere is just slower."
+>
+> **Only reading the generated text caught it.** That is strictly worse than a hang, which at least
+> announces itself. Before trusting any verdict in §7, generate real output and read it.
+
+
 | symptom | cause | fix |
 |---|---|---|
+| ⚠️⚠️ Collectives **complete**, at a plausible TPS, but the model emits **garbage on every request** (e.g. `!!!!!!!!!!!!` at 18 prompt tokens) over a patched peer path | vLLM's **custom all-reduce** over BAR1 P2P returns WRONG DATA — NCCL itself is fine. aikitoria [#21](https://github.com/aikitoria/open-gpu-kernel-modules/issues/21) class; related `vllm#28334` (IMA in custom AR during graph capture with spec-decode). **NOT universal on Ampere** — a configuration interaction, not "Ampere is broken" | **`--disable-custom-all-reduce`** — keeps NCCL P2P *and* its prefill gain. `NVLINK_MODE=force_off` also works but discards the win. Reported by @juslex ([#922](https://github.com/noonghunna/club-3090/issues/922), 2×3090 + aikitoria `610.43.03-p2p`, measured A/B) |
 | `topo -p2p` = **`CNS`** in a VM | Emulated front host bridge isn't in the driver's chipset table (§4a) | `x-nv-gpudirect-clique` (§4a). **Not** a BAR, driver-flavour or topology problem |
 | `CNS` persists after a **large BAR1** + **open driver** | BAR/driver were never the gate; the chipset table is | Same — clique. Measured: 32 GB BAR1 + `nvidia-open` still `CNS` |
 | `CNS` persists after `NVreg_RegistryDwords` | Those keys relax peer *mapping*, not the chipset verdict | Refuted on-rig. Don't retry |

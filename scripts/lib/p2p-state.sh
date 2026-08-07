@@ -97,6 +97,28 @@ p2p_classify_engagement() {
   case "$text" in
     *"P2P REQUESTED (UNVERIFIED)"*) echo requested; return 0 ;;
   esac
+  # ⚠️ USER-disabled is a THIRD state, and it used to read as "on" (#922, juslex).
+  # When the operator passes `--disable-custom-all-reduce`, vLLM does NOT emit
+  # "Custom allreduce is disabled" — that string is its OWN world>2 veto (#786).
+  # It emits the config-dump form `disable_custom_all_reduce=True` and dispatches
+  # through PYNCCL. Meanwhile the [nvlink] trail still says P2P is up, so the
+  # classifier fell through to "on" and the report asserted the OPPOSITE of what
+  # was running — on precisely the configuration where that flag is the remedy for
+  # silent WRONG OUTPUT over a patched peer path. Checked BEFORE the "on" match.
+  # NB the flag is injected into the entrypoint AFTER detect_nvlink.sh runs, so
+  # the [nvlink] heuristic cannot see it either way — only the engine's own log can.
+  case "$text" in
+    *"disable_custom_all_reduce=True"*|*"--disable-custom-all-reduce"*)
+      # Same refinement the veto branch needs: custom-AR off says nothing about
+      # whether the PEER TRANSPORT is also off. If P2P itself is disabled this is
+      # plain "off", not "custom-AR off but P2P live". Dropping this check made
+      # the `veto + P2P disabled` fixture regress nccl_only — the guard caught it.
+      case "$text" in
+        *"P2P off"*|*"using PCIe mode"*|*"forcing PCIe mode"*|*NCCL_P2P_DISABLE=1*)
+          echo off; return 0 ;;
+      esac
+      echo nccl_only; return 0 ;;
+  esac
   # vLLM runtime veto (#786): at world_size>2 without NVLink, vLLM disables its
   # custom all-reduce regardless of peer access — its gate queries NVML for
   # NVLink only. A pre-#786 boot trail still asserts "custom all-reduce ON" in
