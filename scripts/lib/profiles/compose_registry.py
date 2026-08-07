@@ -982,6 +982,9 @@ COMPOSE_REGISTRY = {
         engine="llama-cpp-local", drafter="dspark", kv_format="fp16",
         tp=2, max_ctx=204800, max_num_seqs=1, mem_util=None,
         compose_path="models/deepseek-v4-flash-0731/llama-cpp/compose/dual/unsloth-q8-kxl/offload.yml",
+        # DSpark is REQUIRED, not optional -- the compose passes -md and will not
+        # boot without it, so readiness must gate on it (c3 Start would serve-fail).
+        weights_companions=("dspark",),  # DSpark draft GGUF the compose mounts
         default_port=8030,
         kvcalc_key="SKIP",
         offload="n-cpu-moe",
@@ -997,6 +1000,9 @@ COMPOSE_REGISTRY = {
         engine="llama-cpp-local", drafter="dspark", kv_format="fp16",
         tp=2, max_ctx=204800, max_num_seqs=1, mem_util=None,
         compose_path="models/deepseek-v4-flash-0731/llama-cpp/compose/dual/unsloth-iq2-xxs/offload.yml",
+        # DSpark is REQUIRED, not optional -- the compose passes -md and will not
+        # boot without it, so readiness must gate on it (c3 Start would serve-fail).
+        weights_companions=("dspark",),  # DSpark draft GGUF the compose mounts
         default_port=8031,
         kvcalc_key="SKIP",
         offload="n-cpu-moe",
@@ -1013,6 +1019,9 @@ COMPOSE_REGISTRY = {
         engine="llama-cpp-local", drafter="dspark", kv_format="fp16",
         tp=4, max_ctx=204800, max_num_seqs=1, mem_util=None,
         compose_path="models/deepseek-v4-flash-0731/llama-cpp/compose/multi4/unsloth-q8-kxl/offload.yml",
+        # DSpark is REQUIRED, not optional -- the compose passes -md and will not
+        # boot without it, so readiness must gate on it (c3 Start would serve-fail).
+        weights_companions=("dspark",),  # DSpark draft GGUF the compose mounts
         default_port=8032,
         kvcalc_key="SKIP",
         offload="n-cpu-moe",
