@@ -111,4 +111,69 @@ if bad:
     sys.exit(1)
 PY
 
+# `files:` scopes the fetch, and `verify_glob` must agree with it.
+#
+# An entry with no `files:` downloads the ENTIRE hf_repo. That is correct for a
+# whole-repo bucket, and catastrophic for one quant of a multi-quant repo — the
+# DeepSeek repo holds 13 quants / 1,537 GB, so the unscoped form would pull all
+# of it to serve one. Two entries sharing a local_subdir is the tell: they are
+# slices of one repo, so each MUST name its files or they fetch the same superset
+# into the same directory.
+#
+# And because `hf download --local-dir` PRESERVES repo folder structure, a file
+# in a repo subfolder lands under that subfolder — so verify_glob has to carry
+# the same prefix the files do. If the two ever drift, verification looks in a
+# directory the download never wrote to and reports a good pull as a failure.
+python3 - <<'PY'
+import collections, fnmatch, pathlib, sys, yaml
+
+
+def gmatch(name: str, pattern: str) -> bool:
+    """Glob semantics as the CONSUMERS apply them, not fnmatch's.
+
+    Both readers (`for f in $verify_glob` in bash, `Path.glob()` in c3) treat
+    `*` as NOT crossing a `/`. Plain fnmatch does cross it, so `*.gguf` would
+    falsely appear to match `UD-IQ2_XXS/x.gguf` and this guard would pass a
+    prefix drift it exists to catch. Match segment-wise instead.
+    """
+    n, p = name.split("/"), pattern.split("/")
+    return len(n) == len(p) and all(fnmatch.fnmatch(a, b) for a, b in zip(n, p))
+
+
+bad = []
+for f in sorted(pathlib.Path("scripts/lib/profiles/models").glob("*.yml")):
+    doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    # Only FETCHABLE entries can misfetch. An entry with no `hf_repo` is a local
+    # bucket placeholder (e.g. qwen3.6-27b::gguf) — it downloads nothing, so it
+    # neither needs a files: filter nor makes a shared subdir dangerous.
+    weights = {
+        k: m for k, m in (doc.get("weights") or {}).items()
+        if isinstance(m, dict) and m.get("hf_repo")
+    }
+
+    shared = collections.Counter(
+        str(m.get("local_subdir") or m.get("path") or "") for m in weights.values()
+    )
+    for key, meta in weights.items():
+        files = meta.get("files") or []
+        if isinstance(files, str):
+            files = [files]
+        subdir = str(meta.get("local_subdir") or meta.get("path") or "")
+
+        if not files and shared[subdir] > 1:
+            bad.append(f"  {f.name}::{key}  shares local_subdir '{subdir}' with "
+                       f"{shared[subdir] - 1} other entry(s) but declares no files: "
+                       f"— it would fetch the whole repo into a shared dir")
+            continue
+
+        glob = meta.get("verify_glob") or "*.safetensors"
+        if files and not any(gmatch(name, glob) for name in files):
+            bad.append(f"  {f.name}::{key}  verify_glob={glob} matches NONE of its "
+                       f"{len(files)} declared file(s) (e.g. {files[0]})")
+
+if bad:
+    print("files:/verify_glob inconsistency:", *bad, sep="\n", file=sys.stderr)
+    sys.exit(1)
+PY
+
 echo "test-model-weights-registry: ok"

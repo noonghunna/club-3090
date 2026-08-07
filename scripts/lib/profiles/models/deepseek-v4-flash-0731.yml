@@ -79,32 +79,56 @@ vram_sizing:
   drafter_dspark_mib: { cuda0: 9054, cuda1: 8104 }   # model + compute, both cards
 
 weights:
+  # ⚠️⚠️ THIS REPO HOLDS 13 QUANTS — 1,537 GB. `files:` is what scopes the fetch.
+  # With no `files:`, setup.sh runs `hf download <repo> --local-dir <subdir>` and
+  # pulls the WHOLE repo (every quant) — verified against the HF API 2026-08-07.
+  #
+  # ⚠️ And `--local-dir` PRESERVES repo folder structure (verified empirically,
+  # not assumed): a file at `UD-Q8_K_XL/x.gguf` lands at `<local_dir>/UD-Q8_K_XL/
+  # x.gguf`. So `local_subdir` must be the BUCKET and `files:` must carry the
+  # quant-folder prefix — pointing local_subdir at the quant dir would nest it
+  # twice (`…/UD-Q8_K_XL/UD-Q8_K_XL/`), which no compose points at.
+  # `path:` stays the QUANT dir: it is the physical weights location and keeps
+  # key-resolution precise (weights.py `_resolve_key`), while `local_subdir` is
+  # the download target. They are deliberately different here — don't "fix" it.
   unsloth-q8-kxl:
     path: deepseek-v4-flash-0731-gguf/UD-Q8_K_XL
-    local_subdir: deepseek-v4-flash-0731-gguf/UD-Q8_K_XL
+    local_subdir: deepseek-v4-flash-0731-gguf
     size_gb: 151
     format: gguf
     status: incubating
     hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
     shards: 5
+    files:
+      - UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf
+      - UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00002-of-00005.gguf
+      - UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00003-of-00005.gguf
+      - UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00004-of-00005.gguf
+      - UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00005-of-00005.gguf
     # ⚠️ REQUIRED on every GGUF entry — `verify_glob` defaults to `*.safetensors`,
     # which matches NOTHING here. Omitting it made c3 report the weights absent
     # while they sat on disk, and made setup.sh exit 1 after a successful 151 GB
     # download with "download may have failed" (weights.py:132, setup.sh:114).
-    verify_glob: "*.gguf"
+    # Globbed relative to `local_subdir`, so it carries the quant prefix too —
+    # which also makes each match a valid REPO path for the hash check.
+    verify_glob: "UD-Q8_K_XL/*.gguf"
     # MXFP4 experts (~91% of the file) + BF16 attention. ⚠️ The quant NAME does not
     # give you the byte size — 3264 MiB/layer is a MEASUREMENT, not a calculation
     # from "Q8". Every new quant needs measuring, not deriving.
     manual_note: "Quality tier. NO published perf/quality numbers — incubating. Ships 200K, NOT 262K: at 262K with the drafter attached it boots READY at 97.4% VRAM, survives a trivial decode, then dies on a ~15.7K-token prefill with CUDA OOM in cuMemCreate (reproduced 2026-08-06)."
   unsloth-iq2-xxs:
     path: deepseek-v4-flash-0731-gguf/UD-IQ2_XXS
-    local_subdir: deepseek-v4-flash-0731-gguf/UD-IQ2_XXS
+    local_subdir: deepseek-v4-flash-0731-gguf
     size_gb: 85
     format: gguf
     status: incubating
     hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
     shards: 3
-    verify_glob: "*.gguf"          # see the note on unsloth-q8-kxl — not optional
+    files:                          # see the note on unsloth-q8-kxl — without this
+      - UD-IQ2_XXS/DeepSeek-V4-Flash-0731-UD-IQ2_XXS-00001-of-00003.gguf   # the fetch
+      - UD-IQ2_XXS/DeepSeek-V4-Flash-0731-UD-IQ2_XXS-00002-of-00003.gguf   # is the
+      - UD-IQ2_XXS/DeepSeek-V4-Flash-0731-UD-IQ2_XXS-00003-of-00003.gguf   # whole repo
+    verify_glob: "UD-IQ2_XXS/*.gguf"
     manual_note: "Reach tier — substantially lower host-RAM requirement than Q8 (~86 vs ~146 GB worst case), which is what makes the model fit a constrained box. NO published perf/quality numbers — incubating. ⚠️ ~2.6-bit experts; quality is the open question on this tier."
   dspark:
     path: deepseek-v4-flash-0731-gguf/dspark
@@ -113,6 +137,15 @@ weights:
     format: gguf
     status: incubating
     hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
+    # ⚠️ The Q8_0 drafter we serve lives at the REPO ROOT, while the repo's
+    # `dspark/` FOLDER holds a different artifact (the BF16). Our local `dspark/`
+    # dir is therefore a root file placed into a folder of our own naming — the
+    # two `dspark` names are unrelated. Root files land flat under --local-dir
+    # (verified), so this yields `…-gguf/dspark/dspark-…-Q8_0.gguf`, which is
+    # exactly the `-md` path both composes pass. Unfiltered, the repo's own
+    # dspark/ would nest a BF16 at `…/dspark/dspark/` and serve nothing.
+    files:
+      - dspark-DeepSeek-V4-Flash-0731-Q8_0.gguf
     kind: draft
     verify_glob: "*.gguf"
     # ⚠️ REQUIRED, not optional — both shipped slugs pass `-md` and will not boot
