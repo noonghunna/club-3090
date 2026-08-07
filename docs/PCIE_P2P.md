@@ -699,6 +699,9 @@ From cross-rig data on this stack. ⚠️ **The gain is strongly card-dependent*
 | Path | Measured gain | Source |
 |---|---|---|
 | ⭐ **Dual 3090, P2P on-vs-off at fixed TP=2 with custom AR OFF IN BOTH ARMS** — the transport alone | **prefill @10K +14.4% · @90K +12.2% · TTFT −13%/−15% · decode INSIDE NOISE** | [#922](https://github.com/noonghunna/club-3090/issues/922) (@juslex) — the only row here that isolates the transport |
+| ⭐ **4×3090 TP=4, custom AR ON** (Qwen3.5-122B / Ling-3.0-Flash) | **prefill +74.7% / +84.9% · decode +7.7% / +8.9%** | [disc #921](https://github.com/noonghunna/club-3090/discussions/921) (@mgabor3141) — the transport gain SCALES with world size |
+| ⭐ **llama.cpp / ik-llama `-sm layer`** (DeepSeek-V4-Flash) | **decode +0.2% · prefill ~+1% — i.e. NOTHING** | [disc #921](https://github.com/noonghunna/club-3090/discussions/921) — layer split uses plain copies; there is no all-reduce to accelerate |
+| Dual 3090 TP=2, custom AR **ON** (our shipped default on a P2P rig) | **decode +12.5% narrative / +7.1% code** | [disc #903](https://github.com/noonghunna/club-3090/discussions/903) (@henrykrinkle01) |
 | `dual.yml` (fp8 KV) — patched P2P vs unpatched ⚠️ **custom AR ON** | **+2% narrative / +9% code** | [#91](https://github.com/noonghunna/club-3090/issues/91) |
 | DFlash / spec-decode path — patched P2P | **+19–22%** | [#95](https://github.com/noonghunna/club-3090/issues/95) |
 | **2× RTX 5090, P2P on-vs-off at fixed TP=2** (`qwen-35b-a3b-dual-nvfp4`, same slug, same sitting) | **decode +32.5% · prefill@90K +33.9%** (net, vs a pristine no-dwords system) — the isolated interconnect delta is **+36.9%**, of which ~3% is given back by the `NVreg` override the 50-series path requires. ⚠️ **Ratio is clean, absolutes are not** — that sitting's P2P-off baseline runs 17.7% below the same rig's own earlier measurement of the same slug (BENCHMARKS `⤷ P2P on-vs-off A/B`), so a cross-session read gives only ~+9%. Treat +32.5% as the interconnect delta, **not** as a promised upgrade gain | [#873](https://github.com/noonghunna/club-3090/issues/873) (@paulp83) |
@@ -710,14 +713,25 @@ mechanisms**, and they are not equally available:
 - **NCCL peer transport** — the reliable half. It is a **prefill lever**: ~**+12–14%** with TTFT down 13–15%,
   repeatable at CV ≤1%. It survives `--disable-custom-all-reduce`.
 - **vLLM's custom all-reduce kernel** — where the decode gains live (#91's +9% code, #773's +15%, #873's +32.5%).
-  **On a rig that must turn that kernel off, those numbers are unreachable** — with it neutralised in both arms,
-  decode sits inside run-to-run noise (#922).
+  With it **neutralised in both arms**, decode sits inside run-to-run noise (#922) — which is how we know the
+  decode gain is the *kernel*, not the transport. ⚠️ **But our composes AUTO-ENABLE it the moment P2P is
+  detected** (`detect_nvlink.sh` sets `_NVLINK_ENABLED=1` for `pcie_p2p`, and the compose then omits
+  `--disable-custom-all-reduce`), so on the SHIPPED path a P2P rig gets both halves: three independent rigs
+  measure **+7.7% to +12.5% decode** with the kernel on (disc #903, disc #921). An earlier revision of this
+  page said decode was "inside noise" without that qualifier — true only with the kernel forced off, and
+  misleading for anyone running our stack.
 
 ⚠️ **Do not quote the +32.5% as an expected upgrade gain.** Its no-P2P baseline was low (17.7%), and a cross-session
 re-read put the honest figure nearer **+9%**. Quote it, if at all, as an upper bound from one Blackwell pair.
 
 ⚠️ **And the kernel can be actively harmful**: on at least one Ampere rig it completed fast and returned **wrong
 output** with every indicator green (§7a). `--disable-custom-all-reduce` keeps the prefill win and avoids it.
+
+⚠️ **ENGINE MATTERS, and it decides whether this lever is worth anything to you.** Every figure above is
+vLLM **tensor-parallel**. On llama.cpp / ik-llama `-sm layer` the measured gain is **+0.2% decode / ~+1%
+prefill** — layer split forwards activations with plain copies, so there is no all-reduce for a peer path to
+accelerate. **If you serve only GGUF, patched P2P buys you nothing** and is not worth a DKMS rebuild on every
+driver bump.
 
 **Scale check:** at @10K the ladder reads no-P2P ~1253 → PCIe P2P **1434** → NVLink 1975 — so **PCIe P2P delivers
 roughly 30% of NVLink's prefill premium**, about what gen3 x8 should manage against an NV4 bridge.

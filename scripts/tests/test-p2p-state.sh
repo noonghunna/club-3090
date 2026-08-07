@@ -244,7 +244,9 @@ assert_contains "$out" "DKMS"          # the cost is stated, not just the gain
 # transport-only gain is PREFILL, so that is what the hint now leads with.
 assert_contains "$out" "PREFILL"
 assert_contains "$out" "14.4%"         # the transport-isolated measurement
-assert_contains "$out" "INSIDE"        # decode sits inside noise without custom AR
+assert_contains "$out" "AUTO-ENABLE"   # our default turns the kernel ON for P2P rigs — say so
+assert_contains "$out" "ENGINE MATTERS" # llama.cpp layer split gains ~nothing (disc #921)
+assert_contains "$out" "UNSETTLED"     # the wrong-data cause is contested (#751 vs #922) — do not overclaim
 # ...and it must not sell a patched module without its sharpest edge.
 assert_contains "$out" "WRONG DATA"
 assert_contains "$out" "disable-custom-all-reduce"
