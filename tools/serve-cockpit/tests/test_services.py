@@ -4104,13 +4104,35 @@ class TestServeOverrides:
         assert d["ENGINE"] == "vllm-stable"              # only parsing gives this
         assert d["SPEC_DRAFTER"] == "MTP n=3"            # real drafter, not "on"
 
+    def test_every_registry_drafter_has_a_spec_token(self):
+        """No shipped drafter may fall through to the generic "spec" fallback.
+
+        _spec_token() pattern-matches the drafter id, so a NEW method (dspark was the
+        case) renders as the literal string "spec" in the catalog — technically not
+        wrong, but it tells the user nothing and looks like a bug. Catch it here rather
+        than in a screenshot.
+        """
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts/lib/profiles"))
+        from compose_registry import COMPOSE_REGISTRY
+        from club3090_cockpit.app import _spec_token
+
+        generic = sorted({
+            (e.get("drafter") or "")
+            for e in COMPOSE_REGISTRY.values()
+            if (e.get("drafter") or "") and _spec_token(e.get("drafter")) == "spec"
+        })
+        assert not generic, f"drafters with no _spec_token mapping: {generic}"
+
     def test_engine_kv_formats_is_engine_specific(self):
         repo_root = Path(__file__).resolve().parents[3]
         cd = CockpitData(repo_root, runner=full_runner())
         vk = cd.engine_kv_formats("vllm-stable")
         assert "fp8_e5m2" in vk and "int8_per_token_head" in vk
         # a totally different engine → a totally different KV family
-        assert cd.engine_kv_formats("llama-cpp-mainline") == ["q4_0", "q5_0", "q8_0", "k8v4"]
+        # fp16 is llama.cpp's default KV (no -ctk/-ctv); added to the engine profile in
+        # #905 for the DeepSeek-Flash CPU-offload slugs, which serve on it.
+        assert cd.engine_kv_formats("llama-cpp-mainline") == ["fp16", "q4_0", "q5_0", "q8_0", "k8v4"]
         # the editor's KV options come from the engine, not a generic list
         assert cd.serve_override_defaults("vllm/dual", "org/Foo")["KV_OPTIONS"] == vk
 

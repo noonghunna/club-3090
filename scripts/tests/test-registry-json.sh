@@ -85,7 +85,7 @@ VARIANT_KEYS = {
     "act8_capable",
     # c3 catalog offload column: weight-offload backend — None (resident, the
     # default) / "uva" / "n-cpu-moe" / "prefetch".
-    "offload",
+    "offload", "host_ram_gb",
 }
 v0 = d["variants"][0]
 need(set(v0.keys()) == VARIANT_KEYS,

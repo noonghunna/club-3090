@@ -4906,6 +4906,9 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         # Weight-offload backend (catalog offload column) — same pattern;
         # "" when the contract didn't carry it (resident/older emit) → shows "—".
         object.__setattr__(row, "offload", str(d.get("offload") or ""))
+        # Minimum host RAM for offload slugs (hard gate). Kept as int|None rather than
+        # str so the column can render "—" for resident slugs without a magic string.
+        object.__setattr__(row, "host_ram_gb", d.get("host_ram_gb"))
         object.__setattr__(row, "chat_template", str(d.get("chat_template") or "native"))
         # W4A8-int8-activation capability (c3 serve-confirm checkbox, #609).
         object.__setattr__(row, "act8_capable", bool(d.get("act8_capable")))

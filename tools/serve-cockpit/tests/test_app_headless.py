@@ -10093,7 +10093,12 @@ class TestProfileTemplateDerivation:
         # Exactly one option per (family, topology); 7 distinct groups today.
         pairs = {(o.topology, o.label.split(" / ")[0]) for o in opts}
         assert len(opts) == len(pairs), "duplicate (family, topology) representative"
-        assert len(opts) == 7, f"expected 7 reps, got {len(opts)}: {[o.slug for o in opts]}"
+        # 8 since #905: the DeepSeek-Flash slugs created a NEW (llamacpp, multi4)
+        # group, whose only member is incubating. That is rule (d) working as
+        # designed — an entirely non-functional group still gets a representative
+        # (cf. the (vllm, multi4) and (beellama, dual) precedents named in the
+        # profile_templates docstring); the custom-slug escape hatch reaches the rest.
+        assert len(opts) == 8, f"expected 8 reps, got {len(opts)}: {[o.slug for o in opts]}"
 
         # The 1-card rig default must be FUNCTIONAL + non-incubating — ideally the
         # registry's curated single default (vllm/minimal).

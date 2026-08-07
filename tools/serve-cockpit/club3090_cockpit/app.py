@@ -240,6 +240,16 @@ def _act_label(e: "CatalogEntry") -> str:
     return (getattr(e.row, "act_format", "") or "") or "—"
 
 
+def _host_ram_label(e: "CatalogEntry") -> str:
+    """Minimum HOST RAM for a weight-offload slug, from the registry ``host_ram_gb``
+    facet. This is the number that decides whether a user can run the slug AT ALL —
+    below it preflight refuses — so it belongs in the catalog next to VRAM, not buried
+    in status_note prose where the user only meets it at launch refusal. "—" for
+    VRAM-resident slugs, which have nothing to warn about."""
+    v = getattr(e.row, "host_ram_gb", None)
+    return f"{v} GB" if v else "—"
+
+
 def _offload_label(e: "CatalogEntry") -> str:
     """Weight-offload backend for the catalog offload column — the registry
     ``offload`` facet (emitted like ``act_format``): "uva" (vLLM demand-paged
@@ -264,6 +274,7 @@ _CATALOG_COLUMNS: "list[tuple[str, str]]" = [
     ("kv", "kv"),
     ("act", "act"),
     ("offload", "offload"),
+    ("host_ram", "host RAM"),
     ("spec", "spec"),
     ("ctx", "ctx"),
     ("tps", "TPS (rig)"),
@@ -324,6 +335,11 @@ def _spec_token(drafter: str) -> str:
         return ""
     if "dflash" in dr:
         return "DFlash"
+    if "dspark" in dr:
+        # Like DFlash, DSpark is ALWAYS an external drafter — the DeepSeek-V4-Flash
+        # GGUF carries no embedded nextn head (unsloth's conversion drops it), so there
+        # is no built-in-vs-external split to disambiguate and it needs no suffix.
+        return "DSpark"
     if "ngram" in dr:
         return "ngram"
     if "assistant" in dr:      # gemma *-it-assistant → spec_method mtp_assistant
@@ -1199,6 +1215,7 @@ class CatalogPane(Container):
                 "kv": _kv_label(e),
                 "act": _act_label(e),
                 "offload": _offload_label(e),
+                "host_ram": _host_ram_label(e),
                 "spec": _spec_label(e),
                 "ctx": e.ctx_label or "—",
                 "tps": tps,

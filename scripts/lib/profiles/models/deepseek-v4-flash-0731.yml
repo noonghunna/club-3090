@@ -100,6 +100,25 @@ weights:
     hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
     shards: 3
     manual_note: "Reach tier — substantially lower host-RAM requirement than Q8 (~86 vs ~146 GB worst case), which is what makes the model fit a constrained box. NO published perf/quality numbers — incubating. ⚠️ ~2.6-bit experts; quality is the open question on this tier."
+  dspark:
+    path: deepseek-v4-flash-0731-gguf/dspark
+    local_subdir: deepseek-v4-flash-0731-gguf/dspark
+    size_gb: 11
+    format: gguf
+    status: incubating
+    hf_repo: unsloth/DeepSeek-V4-Flash-0731-GGUF
+    kind: draft
+    verify_glob: "*.gguf"
+    # ⚠️ REQUIRED, not optional — both shipped slugs pass `-md` and will not boot
+    # without it. The main GGUF carries NO embedded nextn/MTP head (unsloth's
+    # conversion drops it; verified 0 nextn tensors across all 5 shards), so
+    # self-speculation is impossible and DSpark is the ONLY speculative path.
+    # ⚠️ Declared HERE as a weights entry with `kind: draft`, NOT under a
+    # `drafters:` block — nothing in the downloader reads that key, so a drafter
+    # declared there is silently never fetched and the guided path yields a model
+    # that cannot start.
+    # Runtime landed in ggml-org#25784; present in server-cuda-b10236, ABSENT in
+    # b9967, so the engine pin is a hard floor.
   # IQ4_NL is on disk but DELIBERATELY NOT a slug (plan D6): slower than Q8 on
   # decode AND slower than IQ2 on prefill, at an intermediate RAM cost — dominated
   # in every workload. Kept for the quality ladder only.
@@ -108,17 +127,3 @@ weights:
   # performance leader. That config can never be a slug (unmerged expert cache +
   # local patches). On stock upstream + DSpark + residency — the shipping regime —
   # IQ4 is dominated. Both readings are correct for their engine.
-
-drafters:
-  dspark:
-    path: deepseek-v4-flash-0731-gguf/dspark/dspark-DeepSeek-V4-Flash-0731-Q8_0.gguf
-    size_gb: 11
-    spec_type: draft-dspark
-    n_max: 5
-    # Runtime landed in ggml-org#25784 ("DeepseekV4 MTP + DSpark", merged 2026-08-02).
-    # VERIFIED present in server-cuda-b10236 (2 `dspark` hits in libllama.so, and
-    # `llama-server --help` advertises it); ABSENT in b9967.
-    # ⚠️ The GGUF carries NO embedded nextn/MTP head — unsloth's conversion dropped it
-    # (verified: 0 nextn-family tensors across all 5 shards), so self-spec is impossible
-    # and DSpark is the only speculative path.
-    requires_engine_min: server-cuda-b10236

@@ -68,6 +68,12 @@ def _entry(
     # PCIe); "prefetch" = vLLM bulk layer prefetch. Surfaced as the c3 catalog
     # "offload" column. First used by the Laguna 118B-MoE offload slugs.
     offload=None,
+    # Minimum HOST RAM in GB for a weight-offload slug — the worst case (all experts
+    # on CPU). This is a HARD GATE, not a recommendation: below it the box thrashes or
+    # OOMs, and preflight_cpu_offload_ram() REFUSES. Surfaced as the c3 catalog
+    # "host RAM" column so a user sees it BEFORE selecting a slug, rather than
+    # discovering it at launch refusal. None = fully VRAM-resident, nothing to warn about.
+    host_ram_gb=None,
     chat_template="native",
     tp,
     max_ctx,
@@ -123,6 +129,7 @@ def _entry(
         "act_format": act_format,
         "act8_capable": act8_capable,
         "offload": offload,
+        "host_ram_gb": host_ram_gb,
         "chat_template": chat_template,
         "tp": tp,
         "pp": 1,
@@ -977,6 +984,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/deepseek-v4-flash-0731/llama-cpp/compose/dual/unsloth-q8-kxl/offload.yml",
         default_port=8030,
         kvcalc_key="SKIP",
+        offload="n-cpu-moe",
+        host_ram_gb=146,
         required_sm=8.6,
         status="incubating",
         status_note="A 284B MoE on 2x24 GB. QUALITY TIER of the two DeepSeek-Flash offload slugs. Stock upstream b10236, zero patches. Three levers compose: CPU expert offload (137 GiB of routed experts in host RAM) + partial residency (bundles pinned back onto the GPUs, sized by the launcher from DETECTED free VRAM) + the DSpark drafter. HARD GATE: ~146 GB host RAM worst case -- preflight REFUSES below it. Ships 200K, NOT 262K: at 262K with the drafter it boots READY at 97.4% VRAM, passes a trivial decode, then dies on a ~15.7K-token prefill (CUDA OOM in cuMemCreate, reproduced 2026-08-06). NO PERFORMANCE OR QUALITY NUMBERS ARE PUBLISHED -- incubating; a canonical bench and the 8-pack are both owed. Validated operationally only: boot + a 14,011-token prefill probe + verify-full all checks passed.",
@@ -990,6 +999,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/deepseek-v4-flash-0731/llama-cpp/compose/dual/unsloth-iq2-xxs/offload.yml",
         default_port=8031,
         kvcalc_key="SKIP",
+        offload="n-cpu-moe",
+        host_ram_gb=86,
         required_sm=8.6,
         status="incubating",
         status_note="REACH TIER of the two DeepSeek-Flash offload slugs: ~86 GB host RAM worst case vs the Q8 tier's ~146 GB, which is what makes a 284B model fit a constrained box. Stock upstream b10236, zero patches; same three levers (offload + launcher-sized residency + DSpark). ~2.6-bit experts. Scoped to dual 24 GB by design. NO PERFORMANCE OR QUALITY NUMBERS ARE PUBLISHED -- incubating; canonical bench and 8-pack both owed, and quality is the open question on a quant this low. Validated operationally only: boot + a 14,011-token prefill probe + verify-full all checks passed.",
@@ -1004,6 +1015,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/deepseek-v4-flash-0731/llama-cpp/compose/multi4/unsloth-q8-kxl/offload.yml",
         default_port=8032,
         kvcalc_key="SKIP",
+        offload="n-cpu-moe",
+        host_ram_gb=146,
         required_sm=8.6,
         status="incubating",
         status_note="4-card QUALITY tier. NEVER BOOTED BY US -- authored from measured 2-card data plus the ~0.55 residency calibration; every number is an ESTIMATE until a 4-card owner runs it. The argument is NOT throughput: every layer pinned to a GPU is a layer NOT in host RAM, so host RAM FALLS with card count -- ~113 GB (est.) at 4x24 GB vs ~140 GB at 2x24. 128 GB is a very common host config, which the 2-card Q8 slug EXCLUDES and this one FITS, so multi4 is what puts the quality tier inside a mainstream RAM budget. Residency should also be at its best here (~23% of expert traffic on GPU vs 4.7% on two cards). No IQ2 multi slug: on four cards Q8 itself drops into a 128 GB budget, so a low-bit tier is not needed to fit.",

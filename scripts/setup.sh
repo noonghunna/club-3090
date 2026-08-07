@@ -68,6 +68,7 @@ usage() {
   echo "  qwen3.6-35b-a3b"
   echo "  gemma-4-31b"
   echo "  gemma-4-26b-a4b"
+  echo "  deepseek-v4-flash-0731"
   echo ""
   echo "Exact catalog entry fetch: WEIGHT_KEY=<registry-key> $0 <model-name>"
 }
@@ -76,6 +77,7 @@ model_label() {
   case "$1" in
     qwen3.6-27b) echo "Qwen 3.6 27B" ;;
     qwen3.6-35b-a3b) echo "Qwen 3.6 35B-A3B" ;;
+    deepseek-v4-flash-0731) echo "DeepSeek-V4-Flash-0731 (284B MoE, CPU offload)" ;;
     gemma-4-31b) echo "Gemma 4 31B" ;;
     gemma-4-26b-a4b) echo "Gemma 4 26B-A4B" ;;
     diffusiongemma-26b-a4b) echo "DiffusionGemma 26B-A4B (dLLM)" ;;
@@ -213,6 +215,16 @@ case "${MODEL_NAME}" in
   qwen3.6-35b-a3b)
     PRIMARY_WEIGHT_KEY="qwen3.6-35b-a3b:autoround-int4"
     ;;
+  deepseek-v4-flash-0731)
+    # Defaults to the IQ2 REACH tier (~85 GB on disk, ~86 GB host RAM) rather than
+    # Q8 (~151 GB / ~146 GB host RAM): the reach tier is the one most rigs can
+    # actually run, and a wrong guess here costs the user a 151 GB download.
+    # Q8 instead:  WEIGHT_KEY=deepseek-v4-flash-0731:unsloth-q8-kxl scripts/setup.sh deepseek-v4-flash-0731
+    PRIMARY_WEIGHT_KEY="deepseek-v4-flash-0731:unsloth-iq2-xxs"
+    # ⚠️ NOT optional: both slugs pass -md and will not boot without the drafter.
+    # The main GGUF has no embedded nextn head, so DSpark is the only spec path.
+    ALWAYS_DRAFT_KEY="deepseek-v4-flash-0731:dspark"
+    ;;
   gemma-4-31b)
     PRIMARY_WEIGHT_KEY="gemma-4-31b:autoround-int4"
     ALWAYS_DRAFT_KEY="gemma-4-31b:assistant"
@@ -236,7 +248,7 @@ case "${MODEL_NAME}" in
     # the WEIGHT_KEY override below sets it.
     if [[ -z "${WEIGHT_KEY:-}" ]]; then
       echo "ERROR: unsupported model '${MODEL_NAME}'."
-      echo "Supported: qwen3.6-27b, qwen3.6-35b-a3b, gemma-4-31b, gemma-4-26b-a4b, diffusiongemma-26b-a4b"
+      echo "Supported: qwen3.6-27b, qwen3.6-35b-a3b, gemma-4-31b, gemma-4-26b-a4b, diffusiongemma-26b-a4b, deepseek-v4-flash-0731"
       echo "(To add a new model, extend the model dispatch in scripts/setup.sh and profiles/models/*.yml,"
       echo " or pass WEIGHT_KEY=<model>:<variant> to fetch an exact catalog entry directly.)"
       exit 1
