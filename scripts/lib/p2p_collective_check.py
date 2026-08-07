@@ -41,6 +41,7 @@ EXIT CODES
 """
 
 import os
+import time
 import signal
 import subprocess
 import sys
@@ -150,6 +151,46 @@ def verdict(a, b):
     return (f"  ARM A errored ({a}) — see output above.", EXIT_INCONCLUSIVE)
 
 
+
+def peer_bandwidth(gpu_a=0, gpu_b=1, mib=256, reps=5):
+    """Peer vs host-staged D2D bandwidth — a SIZING aid, never a health signal.
+
+    ⚠️ This deliberately sits BELOW the verdict and cannot change it. A rig can hit
+    full peer bandwidth and still return WRONG DATA from collectives — juslex
+    measured exactly that (club-3090#922: 6.60 GB/s peer, bytes verified, and every
+    request came back garbage). The whole premise of this script is that copy-based
+    tests cannot validate NCCL, so a number produced here must never read as a pass.
+
+    What it IS good for: deciding whether enabling P2P is worth the DKMS burden on
+    YOUR hardware, and checking our "~30% of NVLink's prefill premium" claim locally
+    instead of taking it on faith.
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
+            return None
+        n = mib * 1024 * 1024 // 4
+        src = torch.empty(n, dtype=torch.float32, device=f"cuda:{gpu_a}")
+        dst = torch.empty(n, dtype=torch.float32, device=f"cuda:{gpu_b}")
+        host = torch.empty(n, dtype=torch.float32, device="cpu", pin_memory=True)
+        nbytes = src.numel() * src.element_size()
+
+        def timed(fn_):
+            fn_(); torch.cuda.synchronize()                       # warm, excluded
+            best = 0.0
+            for _ in range(reps):
+                t0 = time.perf_counter(); fn_(); torch.cuda.synchronize()
+                gbs = nbytes / (time.perf_counter() - t0) / 1e9
+                best = max(best, gbs)                             # best-of, not mean:
+            return best                                           # noise here is one-sided
+
+        direct = timed(lambda: dst.copy_(src))
+        staged = timed(lambda: (host.copy_(src), dst.copy_(host)))
+        return direct, staged
+    except Exception:
+        return None                                               # never break the verdict
+
+
 def _sh(cmd):
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=30).stdout.strip()
@@ -195,6 +236,22 @@ def main():
         print("  transfer, so it can ride completion-time flushing. NCCL's producer and consumer")
         print("  kernels stay resident and must observe each other's writes mid-flight. Any")
         print("  copy-then-sync test therefore passes on a mapping where NCCL cannot work.")
+    bw = peer_bandwidth()
+    if bw:
+        direct, staged = bw
+        ratio = direct / staged if staged > 0 else 0
+        print()
+        print(f"  bandwidth (256 MiB D2D, best of 5) : peer {direct:.2f} GB/s   "
+              f"host-staged {staged:.2f} GB/s   ({ratio:.2f}x)")
+        if ratio >= 1.5:
+            print("    → the peer path is materially faster here; P2P is worth having")
+        elif ratio >= 1.05:
+            print("    → modest gain; weigh it against rebuilding a DKMS module every driver bump")
+        else:
+            print("    → NO peer advantage measured — transfers are not taking the peer path")
+        print("    ⚠️ THROUGHPUT IS NOT A CORRECTNESS SIGNAL. A rig can reach full peer bandwidth")
+        print("       and still return wrong data (#922). The VERDICT above is the only health")
+        print("       claim on this page; this number only tells you whether it is worth enabling.")
     print()
     return rc
 
