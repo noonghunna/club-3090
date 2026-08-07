@@ -238,7 +238,16 @@ out="$(hint)"
 assert_contains "$out" "§5"
 assert_contains "$out" "CNS"
 assert_contains "$out" "DKMS"          # the cost is stated, not just the gain
-assert_contains "$out" "+2% narrative" # honest expected gain, so users can decline
+# The advisory must state the gain HONESTLY so a user can decline. This used to
+# assert "+2% narrative" — a custom-all-reduce-dependent decode figure that is
+# unreachable on any rig which has to disable that kernel (#922). The reliable,
+# transport-only gain is PREFILL, so that is what the hint now leads with.
+assert_contains "$out" "PREFILL"
+assert_contains "$out" "14.4%"         # the transport-isolated measurement
+assert_contains "$out" "INSIDE"        # decode sits inside noise without custom AR
+# ...and it must not sell a patched module without its sharpest edge.
+assert_contains "$out" "WRONG DATA"
+assert_contains "$out" "disable-custom-all-reduce"
 
 # (d) BAR1 unreported by the driver -> fail open to the driver-gate message
 mk_smi "$L2" "$TOPO_PHB" "$P2P_CNS" ""

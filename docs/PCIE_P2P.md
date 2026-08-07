@@ -698,13 +698,29 @@ From cross-rig data on this stack. ⚠️ **The gain is strongly card-dependent*
 
 | Path | Measured gain | Source |
 |---|---|---|
-| `dual.yml` (fp8 KV) — patched P2P vs unpatched | **+2% narrative / +9% code** | [#91](https://github.com/noonghunna/club-3090/issues/91) |
+| ⭐ **Dual 3090, P2P on-vs-off at fixed TP=2 with custom AR OFF IN BOTH ARMS** — the transport alone | **prefill @10K +14.4% · @90K +12.2% · TTFT −13%/−15% · decode INSIDE NOISE** | [#922](https://github.com/noonghunna/club-3090/issues/922) (@juslex) — the only row here that isolates the transport |
+| `dual.yml` (fp8 KV) — patched P2P vs unpatched ⚠️ **custom AR ON** | **+2% narrative / +9% code** | [#91](https://github.com/noonghunna/club-3090/issues/91) |
 | DFlash / spec-decode path — patched P2P | **+19–22%** | [#95](https://github.com/noonghunna/club-3090/issues/95) |
 | **2× RTX 5090, P2P on-vs-off at fixed TP=2** (`qwen-35b-a3b-dual-nvfp4`, same slug, same sitting) | **decode +32.5% · prefill@90K +33.9%** (net, vs a pristine no-dwords system) — the isolated interconnect delta is **+36.9%**, of which ~3% is given back by the `NVreg` override the 50-series path requires. ⚠️ **Ratio is clean, absolutes are not** — that sitting's P2P-off baseline runs 17.7% below the same rig's own earlier measurement of the same slug (BENCHMARKS `⤷ P2P on-vs-off A/B`), so a cross-session read gives only ~+9%. Treat +32.5% as the interconnect delta, **not** as a promised upgrade gain | [#873](https://github.com/noonghunna/club-3090/issues/873) (@paulp83) |
 | NVLink hardware — workload-shaped (same-host A/B) | **decode +3–5% · prefill/long-ctx +35–49%** | [#698](https://github.com/noonghunna/club-3090/issues/698) — supersedes the flat ~+15% from [#77](https://github.com/noonghunna/club-3090/issues/77) (older v7.72.2 image) |
 
-**Translation:** code / spec-decode workloads see a real lift (the K+1 cross-card verify is bandwidth-bound, so it benefits most); narrative decode barely moves. For most users the stock no-P2P PCIe path is already perfectly fine — **P2P is an enthusiast tuning lever, not a requirement.**
+**Translation — read the custom-AR column first.** The decode gains in this table come from **two different
+mechanisms**, and they are not equally available:
 
+- **NCCL peer transport** — the reliable half. It is a **prefill lever**: ~**+12–14%** with TTFT down 13–15%,
+  repeatable at CV ≤1%. It survives `--disable-custom-all-reduce`.
+- **vLLM's custom all-reduce kernel** — where the decode gains live (#91's +9% code, #773's +15%, #873's +32.5%).
+  **On a rig that must turn that kernel off, those numbers are unreachable** — with it neutralised in both arms,
+  decode sits inside run-to-run noise (#922).
+
+⚠️ **Do not quote the +32.5% as an expected upgrade gain.** Its no-P2P baseline was low (17.7%), and a cross-session
+re-read put the honest figure nearer **+9%**. Quote it, if at all, as an upper bound from one Blackwell pair.
+
+⚠️ **And the kernel can be actively harmful**: on at least one Ampere rig it completed fast and returned **wrong
+output** with every indicator green (§7a). `--disable-custom-all-reduce` keeps the prefill win and avoids it.
+
+**Scale check:** at @10K the ladder reads no-P2P ~1253 → PCIe P2P **1434** → NVLink 1975 — so **PCIe P2P delivers
+roughly 30% of NVLink's prefill premium**, about what gen3 x8 should manage against an NV4 bridge.
 ⚠️ **These are DUAL-card measurements — do not extrapolate them to 3+ GPUs.** At world_size > 2 without NVLink, **vLLM force-disables its custom all-reduce kernel** (its gate queries NVML for NVLink and never consults peer access — [#786](https://github.com/noonghunna/club-3090/issues/786)), so whatever P2P is worth at TP=4 arrives **through NCCL peer transfers only** — a lower ceiling than the dual-card custom-kernel path above. An earlier revision claimed the gain "grows with GPU count"; that was a projection, not a measurement, and stays withdrawn. **UPDATE 2026-07-30 — a measured multi-GPU A/B now exists, on ONE rig:** [disc #773](https://github.com/noonghunna/club-3090/discussions/773) (4× 3090, patched P2P, vLLM 0.25.1, MTP n=3, 220 W, one sitting) reports TP=2 → TP=4 as **prefill +55% @10K / +62% @90K, TTFT −38% @90K, decode +4.0% prose / −2.6% code**. Read it as *four cards read faster; they do not write faster* — the win is prefill and TTFT, and the decode column is inside run-to-run noise. It is one rig, one sitting, and it is a **TP-scaling** A/B (2 vs 4 cards, P2P on throughout), **not** a P2P-on-vs-off A/B at fixed TP. **That A/B now exists — see the Blackwell row below.** So: do not extrapolate "P2P scales with GPU count" from it, and do not cite the decode figures as a P2P result.
 
 ---

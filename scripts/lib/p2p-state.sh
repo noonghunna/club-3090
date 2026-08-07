@@ -299,7 +299,10 @@ p2p_opportunity_hint() {
   fi
 
   if p2p_reports_cns; then
-    echo "ℹ interconnect: ${count} GPUs on a P2P-capable layout (same root complex) with peer access OFF — \`topo -p2p\` reports CNS, which is the stock driver refusing P2P on GeForce cards rather than a hardware limit. A patched kernel module can unlock it: gain is strongly card-dependent: +2% narrative / +9% code measured on dual 3090 (#91/#295), but +32% decode on a dual 5090 (#873), so code and spec-decode workloads gain and narrative decode barely moves. It is an optional enthusiast lever, and it ships as a custom DKMS module you rebuild on every driver bump. If you want it: docs/PCIE_P2P.md §5."
+    echo "ℹ interconnect: ${count} GPUs on a P2P-capable layout (same root complex) with peer access OFF — \`topo -p2p\` reports CNS, which is the stock driver refusing P2P on GeForce cards rather than a hardware limit. A patched kernel module can unlock it."
+      echo "  What it reliably buys: PREFILL. Measured +14.4% @10K / +12.2% @90K on dual 3090 with the transport isolated (#922) — repeatable, CV <=1%. DECODE is the unreliable half: it lives in vLLM's custom all-reduce kernel, and with that kernel neutralised the decode delta sits INSIDE run-to-run noise. Older decode figures here (+9% code, +32% on a 5090) were measured with the custom kernel ON and do NOT transfer to a rig that has to turn it off."
+      echo "  ⚠️ It can also return WRONG DATA. On at least one Ampere rig the custom all-reduce over a patched peer path completed fast and emitted garbage on every request, with every indicator green and a plausible TPS (#922). \`--disable-custom-all-reduce\` avoids it and keeps the prefill win. Read real generated output before trusting any verdict line."
+      echo "  It is an optional enthusiast lever shipped as a custom DKMS module you rebuild on every driver bump. If you want it: docs/PCIE_P2P.md §5 (setup) and §7a (failure modes)."
   fi
 }
 
