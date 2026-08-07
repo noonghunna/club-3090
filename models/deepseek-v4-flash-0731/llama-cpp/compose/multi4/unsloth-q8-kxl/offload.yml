@@ -72,7 +72,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-q8-multi4}"
     restart: unless-stopped
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${PORT:-8032}:${PORT:-8032}"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8032}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     shm_size: "16g"
@@ -102,7 +102,7 @@ services:
       - '--host'
       - '0.0.0.0'
       - '--port'
-      - '${PORT:-8032}'
+      - '8080'
       - '--alias'
       - 'deepseek-v4-flash'
       - '-np'
