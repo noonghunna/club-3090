@@ -902,6 +902,29 @@ _preflight_compose_model_dir() {
 # over, and `switch.sh` validated *Qwen's* files while launching DeepSeek. That
 # is how paulp83 got three container restarts and a cryptic in-container
 # "failed to open GGUF file" instead of one clear "weights missing" (#913).
+# _preflight_escapes_mount <mount_root> <file> — true when <file> is reachable on
+# the HOST only by following a symlink out of <mount_root>.
+#
+# ⚠️ THE HOST AND THE CONTAINER DISAGREE, AND THE HOST IS THE OPTIMISTIC ONE.
+# `[[ -f ]]` follows symlinks, so a model dir symlinked onto another disk reads as
+# PRESENT here — while a Docker bind mount does NOT follow links that leave the
+# mounted tree, so the container gets "No such file or directory" and the server
+# exits. Preflight then looks like it passed and the failure surfaces as a cryptic
+# in-container error, which is exactly the confusion this guard exists to prevent.
+#
+# Not exotic: these weights are 85-151 GB, so the users most likely to run them are
+# the ones whose model disk filled up and who symlinked a model dir elsewhere. This
+# rig does precisely that, and it is how the trap was found (2026-08-07).
+_preflight_escapes_mount() {
+  local root="$1" file="$2" rroot rfile
+  command -v realpath >/dev/null 2>&1 || return 1     # cannot tell -> do not cry wolf
+  rroot="$(realpath -m "$root" 2>/dev/null)"  || return 1
+  rfile="$(realpath -m "$file" 2>/dev/null)"  || return 1
+  [[ -n "$rroot" && -n "$rfile" ]] || return 1
+  [[ "$rfile" == "$rroot"/* ]] && return 1            # stays inside the mount: fine
+  return 0                                            # escapes: container will not see it
+}
+
 _preflight_compose_flag_paths() {
   local flags="$1"
   shift
@@ -1148,6 +1171,7 @@ preflight_compose_deps() {
     | sed -E 's/^[[:space:]]*file:[[:space:]]*//' || true)
 
   local missing=()
+  local escaped=()
 
   # Engine detection: llama.cpp composes mount ${MODEL_DIR}:/models and pass
   # `-m /models/<path>` or `--model /models/<path>`; vLLM composes mount
@@ -1202,16 +1226,22 @@ preflight_compose_deps() {
     for path in "${gguf_paths[@]}"; do
       if [[ ! -f "${model_dir}/${path}" ]]; then
         missing+=("${model_dir}/${path} (llama.cpp GGUF weights)")
+      else
+        _preflight_escapes_mount "$model_dir" "${model_dir}/${path}" && escaped+=("${model_dir}/${path}")
       fi
     done
     for path in "${draft_paths[@]}"; do
       if [[ ! -f "${model_dir}/${path}" ]]; then
         missing+=("${model_dir}/${path} (speculative drafter GGUF)")
+      else
+        _preflight_escapes_mount "$model_dir" "${model_dir}/${path}" && escaped+=("${model_dir}/${path}")
       fi
     done
     for path in "${mmproj_paths[@]}"; do
       if [[ ! -f "${model_dir}/${path}" ]]; then
         missing+=("${model_dir}/${path} (vision projector)")
+      else
+        _preflight_escapes_mount "$model_dir" "${model_dir}/${path}" && escaped+=("${model_dir}/${path}")
       fi
     done
   else
@@ -1247,6 +1277,30 @@ preflight_compose_deps() {
         missing+=("${model_dir}/${path} (MODEL_DIR volume path)")
       fi
     done < <(grep -hoE '\$\{MODEL_DIR[^}]*\}/[^"[:space:]]+' "${compose_files[@]}" || true)
+  fi
+
+  # Present on the host, unreachable from the container. Reported SEPARATELY from
+  # `missing`, because the fix is completely different: the bytes are already
+  # downloaded and telling the user to fetch them again would be wrong.
+  if [[ ${#escaped[@]} -gt 0 ]]; then
+    echo "[preflight] ERROR: compose '$compose_file' points at files that exist on the host" >&2
+    echo "            but resolve OUTSIDE \$MODEL_DIR through a symlink:" >&2
+    local _e
+    for _e in "${escaped[@]}"; do
+      echo "[preflight]   ${_e}" >&2
+      echo "[preflight]     -> $(realpath -m "$_e" 2>/dev/null)" >&2
+    done
+    echo "[preflight]" >&2
+    echo "[preflight] A Docker bind mount does NOT follow symlinks that leave the mounted" >&2
+    echo "[preflight] tree, so the container sees a dangling link and the server exits with" >&2
+    echo "[preflight] \"failed to open GGUF file (No such file or directory)\". The weights" >&2
+    echo "[preflight] are fine — do NOT re-download them." >&2
+    echo "[preflight]" >&2
+    echo "[preflight] Fix (either one):" >&2
+    echo "[preflight]   MODEL_DIR=<the directory the symlink points into> bash scripts/switch.sh ..." >&2
+    echo "[preflight]   or replace the symlink with a real directory / bind mount under \$MODEL_DIR" >&2
+    echo "[preflight] Skip this check:  PREFLIGHT_NO_COMPOSE_DEPS=1 bash scripts/switch.sh ..." >&2
+    return 1
   fi
 
   if [[ ${#missing[@]} -eq 0 ]]; then
