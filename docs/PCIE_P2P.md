@@ -728,10 +728,29 @@ re-read put the honest figure nearer **+9%**. Quote it, if at all, as an upper b
 output** with every indicator green (§7a). `--disable-custom-all-reduce` keeps the prefill win and avoids it.
 
 ⚠️ **ENGINE MATTERS, and it decides whether this lever is worth anything to you.** Every figure above is
-vLLM **tensor-parallel**. On llama.cpp / ik-llama `-sm layer` the measured gain is **+0.2% decode / ~+1%
-prefill** — layer split forwards activations with plain copies, so there is no all-reduce for a peer path to
-accelerate. **If you serve only GGUF, patched P2P buys you nothing** and is not worth a DKMS rebuild on every
-driver bump.
+vLLM **tensor-parallel**. On the **shipped llama.cpp image, patched P2P buys essentially nothing at any split
+mode** — and there are *two* independent reasons, which is why the result holds more broadly than you would
+expect:
+
+| split mode | measured | why |
+|---|---|---|
+| `-sm layer` / PP | +0.2% decode · ~+1% prefill (disc #921) | activations forwarded with **plain copies** — there is no all-reduce to accelerate |
+| `-sm tensor` (TP=2) | ~noise: 61.5→64.2 narrative, 73.5→72.2 code, prefill 1313→1346 (disc #903) | there *is* an all-reduce, but **the ggml-org image is built WITHOUT NCCL** |
+
+The second is the load-bearing one, because it defeats the obvious workaround. The image logs it plainly at
+boot:
+
+```
+NCCL not compiled in; falling back to internal AllReduce.
+Recompile with -DGGML_CUDA_NCCL=ON for best multi-GPU performance.
+```
+
+Verified independently: `ghcr.io/ggml-org/llama.cpp:server-cuda-b10236` contains **zero NCCL symbols and no
+NCCL linkage**. That internal fallback does not use the peer path, so switching to tensor split does not
+rescue the gain.
+
+**If you serve only GGUF, patched P2P is not worth a DKMS rebuild on every driver bump** — unless you are
+also prepared to rebuild llama.cpp with `-DGGML_CUDA_NCCL=ON`, which nobody has yet measured.
 
 **Scale check:** at @10K the ladder reads no-P2P ~1253 → PCIe P2P **1434** → NVLink 1975 — so **PCIe P2P delivers
 roughly 30% of NVLink's prefill premium**, about what gen3 x8 should manage against an NV4 bridge.
