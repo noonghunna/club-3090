@@ -450,14 +450,57 @@ cd "${ROOT_DIR}"
 # shellcheck source=preflight.sh
 source "${ROOT_DIR}/scripts/preflight.sh"
 
-# Required disk: model is ~14 GB on disk; 25 GB gives buffer for download
-# temp files + safetensors + tokenizer/config. Add ~3 GB if also pulling
-# the DFlash draft (~1.75 GB packed + buffer for download tempfiles).
-if [[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]]; then
-  PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-28}"
-else
-  PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-25}"
-fi
+# Required disk — derived from what this run will actually FETCH.
+#
+# This used to be a hardcoded 25 GB (28 with a DFlash draft), sized when
+# setup.sh served exactly one ~14 GB model. That constant is wrong in both
+# directions once the catalog holds large weights, and the under-gate is the
+# dangerous one:
+#
+#   too LOW  — DeepSeek-Flash IQ2 is 85 GiB and Q8 is 151 GiB. A user with
+#              30 GB free PASSES the gate, then runs out mid-download. The
+#              check gives false assurance exactly where it matters most.
+#   too HIGH — with the weights already on disk nothing needs fetching, yet
+#              the gate still demanded 25 GB and hard-exited (found by
+#              actually running setup.sh, 2026-08-07).
+#
+# So: sum `size_gb` over the keys this run would download, counting only the
+# ones NOT already present, and add headroom for download temp files. An
+# explicit PREFLIGHT_DISK_GB still wins — it is the documented escape hatch.
+_disk_need_gb() {
+  local total=0 key subdir size present
+  for key in "$@"; do
+    [[ -n "$key" ]] || continue
+    # Subshell: don't let one entry's WEIGHT_* leak into the next iteration.
+    read -r size subdir < <(
+      env_lines="$(python3 "${ROOT_DIR}/scripts/lib/profiles/weights.py" entry "$key" 2>/dev/null)" || exit 0
+      eval "$env_lines"
+      printf '%s %s\n' "${WEIGHT_SIZE_GB:-0}" "${WEIGHT_VERIFY_GLOB:-}|${WEIGHT_SUBDIR:-}"
+    )
+    [[ -n "${size:-}" ]] || continue
+    local glob="${subdir%%|*}" dir="${subdir##*|}"
+    # Already on disk -> costs nothing. Same presence test the verifier uses,
+    # so "present" here means the same thing it means at verify time.
+    present=0
+    if [[ -n "$dir" && -d "${MODEL_DIR}/${dir}" ]]; then
+      # shellcheck disable=SC2086  # glob must stay unquoted to expand
+      compgen -G "${MODEL_DIR}/${dir}/${glob}" >/dev/null 2>&1 && present=1
+    fi
+    [[ "$present" == "1" ]] && continue
+    total=$(( total + ${size%%.*} ))
+  done
+  # Headroom for partial-download temp files, plus a floor so a fully-present
+  # re-run still refuses to proceed on a volume with nothing left at all.
+  if [[ "$total" -gt 0 ]]; then
+    echo $(( total + 10 ))
+  else
+    echo 5
+  fi
+}
+
+_DISK_KEYS=("${PRIMARY_WEIGHT_KEY:-}" "${ALWAYS_DRAFT_KEY:-}")
+[[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]] && _DISK_KEYS+=("${MODEL_NAME}:dflash")
+PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-$(_disk_need_gb "${_DISK_KEYS[@]}")}"
 
 echo "[preflight] checking environment..."
 # docker is soft-warn for setup.sh — this script only fetches genesis + models,
@@ -848,6 +891,19 @@ fi
 # refactored 2026-05-03 to vendor the two files in-repo, fixing #37.)
 
 # Per-model "next steps" — different composes / served-model-name / port between models.
+#
+# ⚠️ Initialise every SAMPLE_* here. This case has no default arm, so a model
+# without one left these UNBOUND and `set -u` killed the script on the final
+# echo — AFTER a fully successful download and verify, so the user saw exit 1
+# on a run that had actually worked. (DeepSeek-Flash hit exactly this; found by
+# running setup.sh for real, 2026-08-07.) Empty is the honest value: the echo
+# block below degrades to a generic hint rather than printing a wrong one.
+SAMPLE_CONTAINER=""
+SAMPLE_COMPOSE_FLAGS_DUAL=""
+SAMPLE_PORT=""
+SAMPLE_MODEL_NAME=""
+SAMPLE_LAUNCH_HINT=""
+NEXT_STEPS_NOTE=""
 SETUP_MODEL_DISPLAY="$(model_label "${MODEL_NAME}")"
 case "${MODEL_NAME}" in
   qwen3.6-27b)
@@ -895,16 +951,39 @@ case "${MODEL_NAME}" in
     NEXT_STEPS_NOTE="Preview variants:
   bash scripts/switch.sh vllm/qwen35-preview"
     ;;
+  deepseek-v4-flash-0731)
+    # llama.cpp only — there is no vLLM compose for this model, so the generic
+    # "single-card vLLM" line below MUST be overridden or it prints a path that
+    # does not exist. Defaults track the IQ2 reach tier (setup.sh's default
+    # weight key); the Q8 sibling serves on 8030.
+    SAMPLE_CONTAINER="llama-cpp-deepseek-flash-iq2"
+    SAMPLE_COMPOSE_FLAGS_DUAL=""
+    SAMPLE_PORT="8031"
+    SAMPLE_MODEL_NAME="deepseek-v4-flash"
+    SAMPLE_LAUNCH_HINT="  bash scripts/switch.sh --force llamacpp/deepseek-flash-dual-iq2"
+    NEXT_STEPS_NOTE="🐣 incubating — launch needs --force (non-functional by default).
+  Quality tier instead (needs ~146 GB host RAM vs ~86 GB, serves on 8030):
+  bash scripts/switch.sh --force llamacpp/deepseek-flash-dual-q8
+  Expect 8-10 min to load (--no-mmap, and the weights are large)."
+    ;;
 esac
 
 echo "[setup] ✓ ${SETUP_MODEL_DISPLAY} downloaded."
 echo "[setup] Next: bash scripts/launch.sh"
 echo ""
-echo "Next — single-card vLLM (default):"
-if [[ "${MODEL_NAME}" == "gemma-4-31b" ]]; then
+# A model arm may set SAMPLE_LAUNCH_HINT to override the launch line. Required
+# for models with no vLLM compose — the generic form below would otherwise print
+# a `models/<model>/vllm/compose` path that does not exist.
+if [[ -n "${SAMPLE_LAUNCH_HINT:-}" ]]; then
+  echo "Next — launch it:"
+  echo "${SAMPLE_LAUNCH_HINT}"
+  echo "  docker logs -f ${SAMPLE_CONTAINER}"
+elif [[ "${MODEL_NAME}" == "gemma-4-31b" ]]; then
+  echo "Next — single-card vLLM (default):"
   echo "  bash scripts/switch.sh vllm/gemma-31b-dual"
   echo "  docker logs -f ${SAMPLE_CONTAINER}"
 else
+  echo "Next — single-card vLLM (default):"
   echo "  cd models/${MODEL_NAME}/vllm/compose && docker compose up -d"
   echo "  docker logs -f ${SAMPLE_CONTAINER}"
 fi

@@ -130,6 +130,11 @@ def _recipe(model_id: str, variant: str) -> dict[str, str]:
         "WEIGHT_SUBDIR": str(meta.get("local_subdir") or meta.get("path") or ""),
         "WEIGHT_FILES": " ".join(str(f) for f in files),
         "WEIGHT_VERIFY_GLOB": str(meta.get("verify_glob") or "*.safetensors"),
+        # Declared on-disk footprint in GiB. setup.sh sizes its disk preflight
+        # from this instead of a fixed constant — a hardcoded requirement is
+        # simultaneously too small for a 151 GiB model (it passes, then the
+        # download fills the volume) and too large when nothing needs fetching.
+        "WEIGHT_SIZE_GB": str(meta.get("size_gb") or ""),
         "WEIGHT_SETUP_MODEL": model_id,
         "WEIGHT_SETUP_ENV": setup_env,
         "WEIGHT_MANUAL_NOTE": str(meta.get("manual_note") or ""),
