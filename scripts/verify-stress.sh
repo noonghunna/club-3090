@@ -62,6 +62,12 @@
 #   PREFILL_TARGET_CHARS   Tool-response prefill payload size in chars
 #                          (default: 100000 ≈ 25K tokens; set higher to
 #                          push closer to the cliff under investigation).
+#   STRESS_REASONING_TIMEOUT_S  Client timeout (s) for probe 6's reasoning-
+#                          heavy request (default: 600). Raise on slow-decode
+#                          configs (CPU-offload MoE, big models at low TPS) —
+#                          8192 reasoning tokens at ~12 tok/s needs ~700s+,
+#                          so the default times out a HEALTHY server there.
+#                          Same pattern as verify-full's VERIFY_LONG_TIMEOUT.
 #   CEILING_FRACTION       Fraction of n_ctx to target for the top ceiling
 #                          rung (default: 0.92). Lower to test a safer fill.
 #   CEILING_STEP_TOKENS    Token increment between ceiling ladder rungs
@@ -886,7 +892,7 @@ body = {
 with open(os.environ['REQ_FILE'], 'w') as f:
     json.dump(body, f)
 PYEOF
-  http_code="$(curl -sS -o "${resp_file}" -w "%{http_code}" --max-time 600 \
+  http_code="$(curl -sS -o "${resp_file}" -w "%{http_code}" --max-time "${STRESS_REASONING_TIMEOUT_S:-600}" \
     -H "Content-Type: application/json" -X POST \
     -d "@${req_file}" "${URL}/v1/chat/completions" 2>/dev/null || echo "000")"
   rm -f "$req_file"
