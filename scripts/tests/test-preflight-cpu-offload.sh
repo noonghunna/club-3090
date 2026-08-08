@@ -183,6 +183,20 @@ command grep -q "WARN" <<<"$w" \
   && bad "sane 1-bundle pin wrongly warned" \
   || ok "sane pin stays silent"
 
+# the boot line must SAY what was pinned and who decided it — three community
+# debugging rounds (#931 twice, the multi4 first boot) needed docker-inspect
+# forensics to answer exactly this
+w="$(PATH="$stub:$PATH" resolve_offload_residency "$Q8" 2>&1 >/dev/null)"
+command grep -q "card0: auto 1 bundles (blk 0)" <<<"$w" \
+  && command grep -q "card1: auto 1 bundles (blk 42)" <<<"$w" \
+  && ok "boot line reports auto residency per card" \
+  || bad "no auto-residency boot line (got: $w)"
+w="$(export OT_G0='blk\.(0|1|2|3)\.ffn_(gate|up|down)_exps\.weight=CUDA0'
+     PATH="$stub:$PATH" resolve_offload_residency "$Q8" 2>&1 >/dev/null)"
+command grep -q "card0: USER pin, 4 bundles" <<<"$w" \
+  && ok "boot line marks a user pin as USER" \
+  || bad "user pin not marked in the boot line (got: $w)"
+
 # the gate must SUBTRACT the grant: worst-case 999999 minus 6528 MiB -> ~999993
 printf '# CPU-Offload-Host-RAM-GB: 999999\n# CPU-Offload-Bundle-MiB: 3264\n# CPU-Offload-MoE-Layers: 43\n# CPU-Offload-First-MoE-Layer: 0\n# CPU-Offload-GPU-Reserve-MiB: 18000\nservices:\n  x:\n    command: >-\n      -ot a=CPU\n' > "$tmp"
 msg="$(PATH="$stub:$PATH" preflight_cpu_offload_ram "$tmp" 2>&1)"

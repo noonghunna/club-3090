@@ -473,7 +473,7 @@ resolve_offload_residency() {
   (( n >= 2 )) || return 0
 
   local per_card=$(( layers / n ))
-  local i fit rule var
+  local i fit rule var applied=""
   for (( i=0; i<n; i++ )); do
     # An explicit OT_G<i> from the user/env ALWAYS WINS and is never clobbered —
     # same contract as THREADS (resolve_offload_threads). This is the supported
@@ -497,14 +497,26 @@ resolve_offload_residency() {
         echo "            bundle sizes differ per quant tier; a layer count sized for one tier over-pins another)." >&2
         echo "            Expect a boot OOM; reduce the pin." >&2
       fi
+      applied="${applied}${applied:+ · }card${i}: USER pin, ${ucount} bundles"
       continue
     fi
     fit="$(_offload_fit_count "${totals[i]}" "$reserve" "$bundle" "$per_card")"
-    (( fit < 1 )) && continue                     # leave this card's no-op default
+    if (( fit < 1 )); then                        # leave this card's no-op default
+      applied="${applied}${applied:+ · }card${i}: none (0 fit)"
+      continue
+    fi
     rule="$(_offload_layers_for_card "$i" "$n" "$first" "$layers" "$fit")"
-    [[ -z "$rule" ]] && continue
+    if [[ -z "$rule" ]]; then
+      applied="${applied}${applied:+ · }card${i}: none (0 fit)"
+      continue
+    fi
     export "OT_G${i}=blk\.(${rule})\.ffn_(gate|up|down)_exps\.weight=CUDA${i}"
+    applied="${applied}${applied:+ · }card${i}: auto ${fit} bundles (blk ${rule})"
   done
+  # Say what will actually be pinned and WHO decided it. Three community
+  # debugging rounds in two days (#931 twice, milano's multi4 boot) needed
+  # docker-inspect forensics to answer exactly this — one boot line ends that.
+  [[ -n "$applied" ]] && echo "[residency] ${applied}" >&2
   return 0
 }
 
