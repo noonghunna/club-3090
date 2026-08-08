@@ -429,6 +429,26 @@ _offload_layers_for_card() {
   printf '%s' "$rule"
 }
 
+# _offload_rule_layer_count <ot_rule>
+#
+# Prints the number of layers named in an OT_G-style rule's `blk\.(a|b|c)\.`
+# group; 0 if the rule doesn't have that shape. 0-on-unparseable is the safe
+# direction: a malformed user rule most likely matches nothing at boot, so the
+# RAM gate should price that card at worst case, not at what the user intended.
+_offload_rule_layer_count() {
+  local rule="$1" group
+  case "$rule" in
+    *'blk\.('*')'*) ;;
+    *) printf '0'; return 0 ;;
+  esac
+  group="${rule#*'blk\.('}"
+  group="${group%%')'*}"
+  [[ -z "$group" ]] && { printf '0'; return 0; }
+  local -a lays
+  IFS='|' read -ra lays <<<"$group"
+  printf '%s' "${#lays[@]}"
+}
+
 resolve_offload_residency() {
   local compose_file="$1"
   [[ -f "$compose_file" ]] || return 0
@@ -459,11 +479,26 @@ resolve_offload_residency() {
     # same contract as THREADS (resolve_offload_threads). This is the supported
     # way to pin more residency than the calibrated sizer grants (the 0.55 was
     # calibrated on 24 GB cards and under-fills larger ones — club-3090 #931).
-    # ⚠️ RAM-gate interaction: the gate subtracts the AUTO grant. A user pinning
-    # MORE layers needs LESS host RAM than gated (conservative, fine); pinning
-    # FEWER on a RAM-tight box could under-gate — exotic, accepted.
+    # The RAM gate prices the user's ACTUAL pin (offload_residency_grant_mib
+    # counts the rule's layers), so the two stay coherent.
     var="OT_G${i}"
-    [[ -n "${!var:-}" ]] && continue
+    if [[ -n "${!var:-}" ]]; then
+      # Sanity: a pin that exceeds even the card's NAIVE free space (total minus
+      # reserve — the OPTIMISTIC bound; true usable is ~half of it) is a certain
+      # boot OOM. Warn loudly, don't block: the override exists to out-judge us.
+      # First community hit: 8/card of Q8's 3264 MiB bundles — an IQ2-sized
+      # recipe applied to the fat quant (#931).
+      local ucount upin_mib
+      ucount="$(_offload_rule_layer_count "${!var}")"
+      upin_mib=$(( ucount * bundle ))
+      if (( upin_mib > totals[i] - reserve )); then
+        echo "[residency] WARN: OT_G${i} pins ${ucount} bundles = ~$(( upin_mib / 1024 )) GiB of experts, but card ${i}" >&2
+        echo "            has only ~$(( (totals[i] > reserve ? totals[i] - reserve : 0) / 1024 )) GiB beyond the reserve (bundle=${bundle} MiB on THIS quant —" >&2
+        echo "            bundle sizes differ per quant tier; a layer count sized for one tier over-pins another)." >&2
+        echo "            Expect a boot OOM; reduce the pin." >&2
+      fi
+      continue
+    fi
     fit="$(_offload_fit_count "${totals[i]}" "$reserve" "$bundle" "$per_card")"
     (( fit < 1 )) && continue                     # leave this card's no-op default
     rule="$(_offload_layers_for_card "$i" "$n" "$first" "$layers" "$fit")"
@@ -511,9 +546,20 @@ offload_residency_grant_mib() {
   (( n >= 2 )) || { printf '0'; return 0; }
 
   local per_card=$(( layers / n ))
-  local i fit rule total_mib=0
+  local i fit rule total_mib=0 var ucount
   local -a lays
   for (( i=0; i<n; i++ )); do
+    # A user-set OT_G<i> is what will ACTUALLY be pinned (the injector never
+    # clobbers it) — price ITS layer count, not the auto fit, so the gate and
+    # the boot describe the same config. First hit in the wild: a 123 GB box
+    # gated on the auto grant (~12 GB) while the user was pinning 4x that
+    # (#931). Unparseable user rule counts 0 = worst case, the safe direction.
+    var="OT_G${i}"
+    if [[ -n "${!var:-}" ]]; then
+      ucount="$(_offload_rule_layer_count "${!var}")"
+      total_mib=$(( total_mib + ucount * bundle ))
+      continue
+    fi
     fit="$(_offload_fit_count "${totals[i]}" "$reserve" "$bundle" "$per_card")"
     (( fit < 1 )) && continue
     rule="$(_offload_layers_for_card "$i" "$n" "$first" "$layers" "$fit")"

@@ -136,11 +136,52 @@ _mkstub '24576\n24576\n'
 # pin more residency than the calibrated sizer grants — #931), and the OTHER
 # card's slot must still be auto-sized
 ( export OT_G0='blk\.(0|1|2|3)\.ffn_(gate|up|down)_exps\.weight=CUDA0'
-  PATH="$stub:$PATH" resolve_offload_residency "$Q8"
+  PATH="$stub:$PATH" resolve_offload_residency "$Q8" 2>/dev/null
   [[ "$OT_G0" == 'blk\.(0|1|2|3)\.ffn_(gate|up|down)_exps\.weight=CUDA0' ]] \
     && [[ "${OT_G1:-}" == 'blk\.(42)\.ffn_(gate|up|down)_exps\.weight=CUDA1' ]] ) \
   && ok "user OT_G0 wins; OT_G1 still auto-sized" \
   || bad "user OT_G override was clobbered (or blocked the other card's auto-size)"
+
+# ---- user pins and the RAM gate must describe the SAME config (#931: paul's ----
+# ---- Q8 attempt was gated on the auto ~12 GB while pinning 4x that)         ----
+
+declare -F _offload_rule_layer_count >/dev/null 2>&1 && ok "_offload_rule_layer_count defined" \
+  || bad "_offload_rule_layer_count missing"
+[[ "$(_offload_rule_layer_count 'blk\.(0|1|2|3|4|5|6|7)\.ffn_(gate|up|down)_exps\.weight=CUDA0')" == "8" ]] \
+  && ok "rule parser: 8-layer rule -> 8" || bad "rule parser miscounted an 8-layer rule"
+[[ "$(_offload_rule_layer_count 'blk\.(42)\.ffn_(gate|up|down)_exps\.weight=CUDA1')" == "1" ]] \
+  && ok "rule parser: single layer -> 1" || bad "rule parser miscounted a 1-layer rule"
+[[ "$(_offload_rule_layer_count 'not-an-ot-rule')" == "0" ]] \
+  && ok "rule parser: garbage -> 0 (worst case, safe)" || bad "rule parser did not zero on garbage"
+
+# gate prices the user's ACTUAL pin: 4+4 layers = 8x3264 = 26112 MiB -> ~25 GB
+# subtracted from the 999999 worst case
+g="$(export OT_G0='blk\.(0|1|2|3)\.ffn_(gate|up|down)_exps\.weight=CUDA0' \
+            OT_G1='blk\.(42|41|40|39)\.ffn_(gate|up|down)_exps\.weight=CUDA1'
+     PATH="$stub:$PATH" offload_residency_grant_mib "$Q8")"
+[[ "$g" == "26112" ]] && ok "grant follows user pins (8 layers = 26112 MiB, auto would say 6528)" \
+  || bad "grant '$g' ignored user pins (expected 26112)"
+printf '# CPU-Offload-Host-RAM-GB: 999999\n# CPU-Offload-Bundle-MiB: 3264\n# CPU-Offload-MoE-Layers: 43\n# CPU-Offload-First-MoE-Layer: 0\n# CPU-Offload-GPU-Reserve-MiB: 18000\nservices:\n  x:\n    command: >-\n      -ot a=CPU\n' > "$tmp"
+msg="$(export OT_G0='blk\.(0|1|2|3)\.ffn_(gate|up|down)_exps\.weight=CUDA0' \
+              OT_G1='blk\.(42|41|40|39)\.ffn_(gate|up|down)_exps\.weight=CUDA1'
+       PATH="$stub:$PATH" preflight_cpu_offload_ram "$tmp" 2>&1)"
+command grep -q "999974" <<<"$msg" \
+  && ok "gate subtracts the USER grant (999999 - 25 GB)" \
+  || bad "gate did not price the user pin (no 999974 in: $(head -1 <<<"$msg"))"
+
+# an over-pin beyond even the card's naive free space must WARN (certain OOM —
+# e.g. an IQ2-sized 8/card recipe applied to Q8's 3264 MiB bundles), and a sane
+# pin must stay silent
+w="$(export OT_G0='blk\.(0|1|2|3|4|5|6|7)\.ffn_(gate|up|down)_exps\.weight=CUDA0'
+     PATH="$stub:$PATH" resolve_offload_residency "$Q8" 2>&1 >/dev/null)"
+command grep -q "WARN: OT_G0 pins 8" <<<"$w" \
+  && ok "over-pin (8x3264 on a 24 GB card) warns of certain OOM" \
+  || bad "no WARN for a pin that cannot fit the card"
+w="$(export OT_G0='blk\.(0)\.ffn_(gate|up|down)_exps\.weight=CUDA0'
+     PATH="$stub:$PATH" resolve_offload_residency "$Q8" 2>&1 >/dev/null)"
+command grep -q "WARN" <<<"$w" \
+  && bad "sane 1-bundle pin wrongly warned" \
+  || ok "sane pin stays silent"
 
 # the gate must SUBTRACT the grant: worst-case 999999 minus 6528 MiB -> ~999993
 printf '# CPU-Offload-Host-RAM-GB: 999999\n# CPU-Offload-Bundle-MiB: 3264\n# CPU-Offload-MoE-Layers: 43\n# CPU-Offload-First-MoE-Layer: 0\n# CPU-Offload-GPU-Reserve-MiB: 18000\nservices:\n  x:\n    command: >-\n      -ot a=CPU\n' > "$tmp"
