@@ -1745,7 +1745,8 @@ class TestServiceStart:
         assert plan.cmd == [
             "docker", "compose", "-f",
             "services/litellm/docker-compose.yml", "-p", "litellm", "up", "-d"]
-        assert plan.requires_reconcile is True
+        # litellm is a non-GPU web service → skips the reconcile gate
+        assert plan.requires_reconcile is False
         assert plan.kind == "service-up"
 
     def test_env_file_included_when_present(self, tmp_path):
@@ -1761,6 +1762,12 @@ class TestServiceStart:
         (d / "docker-compose.yaml").write_text("services: {}\n")
         plan = CockpitData(tmp_path).service_start("x")
         assert "services/x/docker-compose.yaml" in plan.cmd
+
+    def test_gpu_service_requires_reconcile(self, tmp_path):
+        """comfyui is a GPU holder → reconcile is required."""
+        _seed_service_dirs(tmp_path, ["comfyui"])
+        plan = CockpitData(tmp_path).service_start("comfyui")
+        assert plan.requires_reconcile is True
 
 
 class TestComfyuiImagePresent:
