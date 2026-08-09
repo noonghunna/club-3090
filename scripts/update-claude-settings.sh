@@ -1,21 +1,32 @@
 #!/usr/bin/env bash
-# Auto-detect the running club-3090 endpoint and update Claude Code settings.
-#
-# Used as a `before-turn` hook in ~/.claude/settings.json so Claude Code
-# always points at the correct port and model name, regardless of which
-# compose you switched to.
+# Auto-detect the running club-3090 endpoint and emit export lines.
 #
 # Usage:
-#   bash scripts/update-claude-settings.sh
+#   eval "$(bash scripts/update-claude-settings.sh)"   # in shell profile or alias
+#   bash scripts/update-claude-settings.sh 2>/dev/null  # silent: just set env vars
+#   bash scripts/update-claude-settings.sh 2>&1         # dry-run: see diagnostics + exports
 #
-# Exit 0 on success (settings updated or already correct).
+# Stdout:  export lines only (safe to eval)
+# Stderr:  diagnostic lines prefixed with [claude-settings]
+#
+# Exit 0 on success (exports printed or already correct).
 # Exit 0 with no-op message if no club-3090 container is running.
+#
+# This script is designed to be `eval`'d — stdout contains only valid shell.
+# No files are written. No settings.json is touched.
 
 set -euo pipefail
 
+# Python UTF-8 mode — required for locale safety (CLAUDE.md file-encoding rule)
+export PYTHONUTF8="${PYTHONUTF8:-1}"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SETTINGS_FILE="${HOME}/.claude/settings.json"
+
+# --- Diagnostic helper: diagnostics go to stderr so eval is safe ----------
+log() {
+  echo "[claude-settings] $*" >&2
+}
 
 # --- Find the running club-3090 container ---------------------------------
 # Look for containers with names matching our convention (vllm-*, llamacpp-*,
@@ -35,7 +46,7 @@ done < <(docker ps --filter 'status=running' \
   | head -1 || true)
 
 if [[ -z "$CONTAINER_ID" ]]; then
-  echo "[claude-settings] No club-3090 container running. Settings unchanged."
+  log "No club-3090 container running."
   exit 0
 fi
 
@@ -47,7 +58,7 @@ PORT_BINDING=$(docker ps --filter "id=${CONTAINER_ID}" \
 HOST_PORT=$(echo "$PORT_BINDING" | sed -n 's/^[^:]*:\([0-9]*\)->.*/\1/p' | head -1)
 
 if [[ -z "$HOST_PORT" ]]; then
-  echo "[claude-settings] Could not parse port from binding: ${PORT_BINDING}"
+  log "Could not parse port from binding: ${PORT_BINDING}"
   exit 0
 fi
 
@@ -62,9 +73,7 @@ fi
 # specific model ID (longest). vLLM registers multiple aliases (e.g.,
 # qwen3.6-27b, qwen3.6-27b-autoround, qwen3.6-27b-nvfp4).
 #
-# Retry with backoff because the engine may still be booting when the
-# SessionStart hook fires. Don't write settings until the endpoint is
-# healthy — leave last-good values intact.
+# Retry with backoff because the engine may still be booting.
 MODEL_NAME=""
 
 BASE_URL="http://${HOST_IP}:${HOST_PORT}"
@@ -108,11 +117,25 @@ if [[ -z "$MODEL_NAME" ]]; then
 fi
 
 if [[ -z "$MODEL_NAME" ]]; then
-  echo "[claude-settings] Could not detect model name for ${CONTAINER_NAME}. Settings unchanged."
+  log "Could not detect model name for ${CONTAINER_NAME}."
   exit 0
 fi
 
-# --- Update settings.json -------------------------------------------------
-python3 "$ROOT_DIR/scripts/update-claude-settings.py" "$SETTINGS_FILE" "$BASE_URL" "$MODEL_NAME"
+# --- Read current values from the environment (not from a file) -----------
+CURRENT_URL="${ANTHROPIC_BASE_URL:-}"
+CURRENT_MODEL="${ANTHROPIC_MODEL:-}"
+
+# --- Emit export lines to stdout (safe to eval — idempotent) ----------------
+if [[ "$CURRENT_URL" != "$BASE_URL" ]]; then
+  log "URL: ${CURRENT_URL:-'(none)'} → ${BASE_URL}"
+fi
+if [[ "$CURRENT_MODEL" != "$MODEL_NAME" ]]; then
+  log "Model: ${CURRENT_MODEL:-'(none)'} → ${MODEL_NAME}"
+else
+  log "Already correct: ${BASE_URL} / ${MODEL_NAME}"
+fi
+
+echo "export ANTHROPIC_BASE_URL=\"${BASE_URL}\""
+echo "export ANTHROPIC_MODEL=\"${MODEL_NAME}\""
 
 exit 0
