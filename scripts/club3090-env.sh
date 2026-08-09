@@ -2,9 +2,9 @@
 # Auto-detect the running club-3090 endpoint and emit export lines.
 #
 # Usage:
-#   eval "$(bash scripts/update-claude-settings.sh)"   # in shell profile or alias
-#   bash scripts/update-claude-settings.sh 2>/dev/null  # silent: just set env vars
-#   bash scripts/update-claude-settings.sh 2>&1         # dry-run: see diagnostics + exports
+#   eval "$(bash scripts/club3090-env.sh)"   # in shell profile or alias
+#   bash scripts/club3090-env.sh 2>/dev/null  # silent: just set env vars
+#   bash scripts/club3090-env.sh 2>&1         # dry-run: see diagnostics + exports
 #
 # Stdout:  export lines only (safe to eval)
 # Stderr:  diagnostic lines prefixed with [claude-settings]

@@ -1,4 +1,4 @@
-# Claude Code Auto-Settings
+# club3090-env — point Claude Code at the running endpoint
 
 > Switch club-3090 composes without touching `settings.json` again.
 
@@ -8,7 +8,7 @@ When you switch composes with `switch.sh`, every config changes the port **and**
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  User runs: eval "$(bash scripts/update-claude-settings.sh)" │
+│  User runs: eval "$(bash scripts/club3090-env.sh)" │
 │       ↓                                                      │
 │  1. docker ps → finds running club-3090 container            │
 │  2. Extract host port from port binding                      │
@@ -41,7 +41,7 @@ Detection chain (first match wins):
 Add this line to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
-alias club3090-env='eval "$(bash /path/to/club-3090/scripts/update-claude-settings.sh)"'
+alias club3090-env='eval "$(bash /path/to/club-3090/scripts/club3090-env.sh)"'
 ```
 
 > Replace `/path/to/club-3090` with the **absolute** path to your club-3090 checkout.
@@ -53,7 +53,7 @@ That's it. No `settings.json` editing. No hooks. No Python dependency for the wr
 If you prefer the detection to run automatically on every new terminal, put this directly in your shell profile instead of an alias:
 
 ```bash
-eval "$(bash /path/to/club-3090/scripts/update-claude-settings.sh)" 2>/dev/null || true
+eval "$(bash /path/to/club-3090/scripts/club3090-env.sh)" 2>/dev/null || true
 ```
 
 The `2>/dev/null || true` suppresses the "no container running" message on terminals where nothing is booted yet.
@@ -89,10 +89,10 @@ club3090-env      # picks up the new port + model
 
 **Dry-run (see what would be set without applying):**
 ```bash
-bash scripts/update-claude-settings.sh
+bash scripts/club3090-env.sh
 # Shows [claude-settings] lines + export lines
 # Pipe to grep to see just the diagnostics:
-bash scripts/update-claude-settings.sh | grep '^\[claude-settings\]'
+bash scripts/club3090-env.sh | grep '^\[claude-settings\]'
 ```
 
 ## Configuration
@@ -112,7 +112,7 @@ If your model runs on another machine (not `localhost`), the script detects the 
 
 **"Could not parse port from binding"** — The port binding format was unexpected. Check with `docker ps --filter name=<container>` and verify it shows `IP:PORT->INT_PORT/protocol`.
 
-**"Could not detect model name"** — The `/v1/models` endpoint didn't respond after 5 retries and fallbacks failed. The engine may still be booting. Wait a minute and run the script manually: `bash scripts/update-claude-settings.sh`.
+**"Could not detect model name"** — The `/v1/models` endpoint didn't respond after 5 retries and fallbacks failed. The engine may still be booting. Wait a minute and run the script manually: `bash scripts/club3090-env.sh`.
 
 **API error on first start, works on second** — This is normal if your engine takes >20s to boot (large models, cold load). The retry loop covers most cases, but if the engine is exceptionally slow, run the script manually once the engine is ready.
 
@@ -120,5 +120,5 @@ If your model runs on another machine (not `localhost`), the script detects the 
 
 | File | Purpose |
 |---|---|
-| `scripts/update-claude-settings.sh` | Shell entry point — detects container, port, model; emits export lines |
-| `claude-auto-settings.md` | This file |
+| `scripts/club3090-env.sh` | Shell entry point — detects container, port, model; emits export lines |
+| `club3090-env.md` | This file |
