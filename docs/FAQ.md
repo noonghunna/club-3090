@@ -36,17 +36,35 @@ The composes don't currently inject Ada-specific FP8-native-compute defaults —
 
 ### Can I use a 5090?
 
-Yes — and the 32 GB envelope unlocks single-card configs the 3090 can't fit. Cross-rig measurements:
+Yes — the 32 GB envelope unlocks single-card configs the 3090 can't fit, and the Blackwell sm_120 Tensor Cores add native FP4 compute (the first consumer arch where 4-bit is a hardware feature, not just storage). Cross-rig measurements:
 
 - @apnar Gemma 4 31B `dual.yml`-shape forced TP=1: **159.67 / 215.10 TPS** (+46% narr / +51% code over 2× 3090 TP=2 on the same model)
 - @apnar Gemma 4 31B `dual-dflash.yml` forced TP=1: **150.40 / 261.06 TPS**
 - @efschu Qwen3.6-27B `dual-dflash.yml`-shape forced TP=1: **126.53 / 200.11 TPS** (highest single-card code TPS on the matrix)
+- @paulp83 Qwen3.6-27B NVFP4 dual TP=2 at 262K: **168.0 / 215.7 decode TPS**, 91% NIAH at 240K, soak PASS (#849, 2026-08-02) — first full gate on native FP4
 
-The 32 GB headroom clears Ampere boot OOMs — e.g. Gemma 4 single-card configs that don't fit on 24 GB. Vendored Marlin patches we ship for sm_86 edge cases are no-ops on Blackwell (vLLM auto-selects CUTLASS Machete on SM 9.0+); you can ignore them.
+**What works on Blackwell (sm_120):**
 
-`models/gemma-4-26b-a4b/vllm/compose/dual/docker-compose.yml` (Intel AutoRound INT4) currently `boot fail (SM86)` because Marlin can't handle the `moe_intermediate_size=704` K-dim alignment — SM 9.0+ has CUTLASS Machete which can. A 5090 / Pro 6000 should boot it cleanly; please report numbers if you try.
+- **AutoRound INT4 / AWQ / GPTQ** — same as every other arch, fully validated. The Marlin pad overlay we retired (upstream #45295 in v0.24.0+) was an sm_86-only fix; Blackwell uses CUTLASS Machete natively.
+- **NVFP4 weights** — native Tensor Core path on all Blackwell. We ship `vllm/qwen-27b-single-nvfp4` (single-card, ⚠️ Production w/ caveats) and `vllm/qwen-27b-dual-nvfp4` (dual TP=2, ⚠️ Production w/ caveats) for Qwen3.6-27B. Both require sm_9.0+ — sub-9.0 cards run them via the slower Marlin W4A16 fallback.
+- **FP8 weights** — native on sm_89+ via DeepGEMM. FP8 KV is storage-only on consumer Blackwell (no FA3 or trtllm-gen FMHA build for sm_120), same as Ada and Ampere.
+- **32 GB headroom** — clears Ampere boot OOMs (e.g. Gemma 4 single-card configs that don't fit on 24 GB).
 
-The composes don't currently use Blackwell-specific paths (FP4 quant, FP8 native attention compute) — tracked in [#246](https://github.com/noonghunna/club-3090/issues/246). Numbers from your rig are valuable: use the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template.
+**What doesn't work on stock vLLM (and workarounds):**
+
+- **NVFP4 KV** crashes on stock vLLM (#43562) — the trtllm-gen FP4 FMHA has no sm_120 build. A community FA2+XQA route reaches real FP4 KV on patched images (#44851, #49011, #46329), measured at 1.6× the fp8 KV pool with no decode cost — but it requires a locally patched image and a V-scale write fix. Stay on `fp8_e4m3` KV for stock pins.
+- **MTP × hybrid-GDN spec-decode** has an open crash class (#50021) that hits on 5090 across NVFP4 and W4A8 alike. Mitigation: `SPEC=off` (disables the MTP drafter). v0.26.0 predates the fix.
+- **SymmMem communicator** explicitly rejects sm_120 — falls back to PYNCCL. No functional impact on our PCIe-only topologies.
+- **DeepGEMM** has no FP4 recipe on consumer Blackwell (sm_120/121) — `VLLM_USE_DEEP_GEMM=0` may be needed for some fp8 paths.
+
+**Known failure modes on dual 5090:**
+
+- NVFP4 compose exit 137 during inference — Marlin GEMM `aten::empty` allocation failure inside compiled graph (likely NVFP4 + Marlin kernel incompatibility on sm_120).
+- W4A8 soak test VRAM exhaustion — both cards saturated (32 GB each), engine crash mid-decode. Only ~1.8 GB free per GPU after boot.
+
+**The 5090 is a first-class hardware profile** (`rtx-5090`) in the launcher — it gets its own envelope, concurrency ceiling, and P2P handling. The `dual/nvfp4/mtp.yml` compose was authored blind (on the sm_86 maintainer rig via Marlin fallback) and community-validated on 2× 5090 in August 2026.
+
+The composes don't currently auto-select Blackwell-specific FP4 compute paths on stock pins — the FA2+XQA route and #46329 remain patch-image experiments. Track upstream issues: [#43562](https://github.com/vllm-project/vllm/issues/43562), [#46329](https://github.com/vllm-project/vllm/issues/46329), [#50021](https://github.com/vllm-project/vllm/issues/50021) + [`UPSTREAM.md`](UPSTREAM.md). Numbers from your rig are valuable: use the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template.
 
 ### Do I need NVLink?
 
