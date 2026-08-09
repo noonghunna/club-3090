@@ -113,7 +113,7 @@ class DeriveResult:
     confidence: Optional[Confidence] = None
     generic_dense_eligible: Optional[bool] = None
     spec: Optional[dict[str, Any]] = None
-    profile: Optional[dict[str, Any]] = None
+    profile: Optional[dict[str, Any]] = None: Optional[dict[str, Any]] = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
