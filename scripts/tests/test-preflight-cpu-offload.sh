@@ -87,18 +87,35 @@ preflight_cpu_offload_ram "$tmp" >/dev/null 2>&1 \
 # ---- gate subtracts what THIS rig's VRAM will hold — clort81's #909 report) ----
 
 # shared fit arithmetic must reproduce the MEASURED resident counts, or the gate
-# and the boot disagree about placement (the 0.55 calibration is load-bearing)
+# and the boot disagree about placement. The model is ADDITIVE (#931):
+#   fit = (free − reserve_adjusted − margin) / bundle, margin default 1024,
+# where reserve_adjusted = compose reserve (+768 first-card extra on card 0,
+# added by the CALLER). Args here are (free, reserve_adjusted, bundle, cap).
 declare -F _offload_fit_count >/dev/null 2>&1 && ok "_offload_fit_count defined" \
   || bad "_offload_fit_count missing"
 [[ "$(_offload_fit_count 24576 18000 3264 21)" == "1" ]] \
-  && ok "fit: Q8 dual 2x24 -> 1/card (measured 2 total)" || bad "fit arithmetic drifted (Q8 dual)"
-[[ "$(_offload_fit_count 24576 14000 1840 21)" == "3" ]] \
-  && ok "fit: IQ2 dual 2x24 -> 3/card (measured 6 total)" || bad "fit arithmetic drifted (IQ2 dual)"
-[[ "$(_offload_fit_count 24576 12000 3264 10)" == "2" ]] \
-  && ok "fit: Q8 multi4 4x24 -> 2/card (@milano's boot)" || bad "fit arithmetic drifted (multi4)"
-[[ "$(_offload_fit_count 16384 12000 3264 10)" == "0" ]] \
-  && ok "fit: 4x16 GB -> 0 bundles (the under-gate shape a pre-baked header missed)" \
-  || bad "4x16 GB should fit ZERO bundles"
+  && ok "fit: Q8 dual 24 GB card -> 1 (measured)" || bad "fit arithmetic drifted (Q8 dual)"
+[[ "$(_offload_fit_count 24576 18768 3264 21)" == "1" ]] \
+  && ok "fit: Q8 dual 24 GB CARD 0 (+extra) -> still 1" || bad "fit drifted (Q8 card 0)"
+[[ "$(_offload_fit_count 24576 16500 1840 21)" == "3" ]] \
+  && ok "fit: IQ2 dual 24 GB card -> 3 (measured 6 total)" || bad "fit arithmetic drifted (IQ2 dual)"
+[[ "$(_offload_fit_count 24576 14500 3264 10)" == "2" ]] \
+  && ok "fit: Q8 multi4 24 GB card -> 2 (@milano's boot)" || bad "fit arithmetic drifted (multi4)"
+[[ "$(_offload_fit_count 16384 14500 3264 10)" == "0" ]] \
+  && ok "fit: 16 GB card -> 0 bundles (the under-gate shape a pre-baked header missed)" \
+  || bad "16 GB card should fit ZERO bundles"
+# ⭐ the #931 calibration points — 32 GB cards must NOT under-fill (old ×0.55
+# left ~6 GB idle, −19% decode) and card 0 must NOT over-fill (8/8 died at
+# 556 MiB free on a ~90K prefill; 7+8 survived a full 188K ladder at 896 MiB)
+[[ "$(_offload_fit_count 32500 16500 1840 21)" == "8" ]] \
+  && ok "fit: IQ2 32 GB bare card -> 8 (#931 GPU1, field-validated)" \
+  || bad "32 GB bare card should fit 8 bundles"
+[[ "$(_offload_fit_count 32500 17268 1840 21)" == "7" ]] \
+  && ok "fit: IQ2 32 GB CARD 0 (+extra) -> 7 (#931 — the 8/8 death config must not return)" \
+  || bad "32 GB card 0 should fit 7 bundles, not 8"
+[[ "$(RESIDENCY_MARGIN_MB=4096 _offload_fit_count 24576 16500 1840 21)" == "2" ]] \
+  && ok "fit: RESIDENCY_MARGIN_MB env widens the margin (4096 -> 2 bundles)" \
+  || bad "RESIDENCY_MARGIN_MB override not respected"
 
 # deterministic VRAM via a stubbed nvidia-smi — the test must not depend on the
 # rig it runs on (or on having GPUs at all)
@@ -131,6 +148,18 @@ _mkstub '24576\n24576\n'
     && [[ "${OT_G1:-}" == 'blk\.(42)\.ffn_(gate|up|down)_exps\.weight=CUDA1' ]] ) \
   && ok "injector: 2x24 Q8 pins blk.0->CUDA0 + blk.42->CUDA1 (outer-edge)" \
   || bad "injector OT_G rules drifted from the known-good 2x24 placement"
+
+# ⭐ #931 end-to-end: on 2x32 GB the IQ2 sizer must go ASYMMETRIC from IDENTICAL
+# free readings — 7 on card 0 (first-card extra prices the larger drafter half +
+# compute buffer), 8 on card 1 — matching the field-validated recipe (blk 0-6 /
+# blk 35-42). The symmetric 8/8 it replaces died at 556 MiB free at ~90K depth.
+_mkstub '32500\n32500\n'
+w="$(unset OT_G0 OT_G1; PATH="$stub:$PATH" resolve_offload_residency "$IQ2" 2>&1 >/dev/null)"
+command grep -q "card0: auto 7 bundles (blk 0|1|2|3|4|5|6)" <<<"$w" \
+  && command grep -q "card1: auto 8 bundles (blk 42|41|40|39|38|37|36|35)" <<<"$w" \
+  && ok "sizer: 2x32 GB IQ2 -> asymmetric 7+8, outer-edge layers (#931 field-validated)" \
+  || bad "2x32 GB IQ2 expected 7+8 asymmetric, got: $w"
+_mkstub '24576\n24576\n'   # restore the 2x24 stub for the legs below
 
 # an explicit OT_G<i> from the user must NEVER be clobbered (the supported way to
 # pin more residency than the calibrated sizer grants — #931), and the OTHER

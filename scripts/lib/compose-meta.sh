@@ -364,11 +364,26 @@ compose_hw_model_status() {
 # because the right count is card-dependent — a 24 GB-tuned regex either wastes VRAM
 # on a 32 GB card or OOMs a smaller one.
 #
-# ⚠️ THE 0.55 CALIBRATION IS LOAD-BEARING. Naive free-VRAM ÷ bundle-size
-#    OVERESTIMATES BY ~2x because it ignores the compute-buffer reserve (measured
-#    3948+3697 MiB at -ub 4096, plus ~8-9 GB more when the DSpark drafter attaches).
-#    Predicted 4 layers for Q8 on 2x24 GB; measured 2. Predicted 11 for IQ2; measured 6.
-#    Shipping the naive number hands users a config that dies on first prefill.
+# ⚠️ THE FIT MODEL IS ADDITIVE, CALIBRATED FROM FIELD FAILURES — NOT a fraction.
+#    fit = (FREE_i − reserve − first_card_extra[i==0] − margin) / bundle
+#    An earlier ×0.55 multiplicative guard was correct on the 24 GB cards it was
+#    calibrated on and left ~6 GB/card idle on 32 GB cards (community-measured:
+#    worth +19% decode — #931). The overhead it absorbed is ADDITIVE (dense split
+#    + drafter half + compute buffers + KV don't scale with card size), so the
+#    model now subtracts it explicitly:
+#      reserve           per-compose header (true per-card engine cost)
+#      first_card_extra  card 0 carries the larger drafter half + compute buffer
+#                        (measured 660 MiB on 2x5090; default 768)
+#      margin            deep-prefill spike headroom. #931 brackets it: a card at
+#                        556 MiB free DIED on a ~90K prefill; 896 MiB survived a
+#                        full 188K NIAH ladder. Default 1024 (RESIDENCY_MARGIN_MB).
+#    Sizing from FREE (not total) makes desktops / other consumers fall out
+#    automatically and yields per-card asymmetric counts (7+8 on #931's rig) with
+#    zero special-casing. Calibration points this must keep reproducing:
+#    Q8-dual 1/card + IQ2-dual 3/card on 2x24 GB · IQ2 7 (desktop) + 8 (bare) on
+#    2x32 GB (#931) · Q8-multi4 2/card on 4x24 GB (milano) · 0 on 16 GB cards.
+#    The grant is floor-conservative: a borderline card may get one bundle fewer
+#    than a hand-tuned pin — OT_G<i> overrides exist for exactly that.
 #
 # ⚠️ A LAYER'S EXPERTS MUST SIT ON THE CARD OWNING ITS DENSE TENSORS, or every token
 #    pays a cross-PCIe hop. With `-sm layer` over N cards, layer i lives on card
@@ -379,19 +394,22 @@ compose_hw_model_status() {
 # the config that runs anywhere.
 # ---------------------------------------------------------------------------
 
-# _offload_fit_count <total_mib> <reserve_mib> <bundle_mib> <per_card_cap>
+# _offload_fit_count <free_mib> <reserve_mib> <bundle_mib> <per_card_cap>
 #
 # The per-card fit arithmetic, extracted so the residency INJECTOR and the RAM
 # GATE (offload_residency_grant_mib → preflight_cpu_offload_ram) can never
-# disagree about how many bundles a card holds. The 0.55 calibration lives HERE
-# and nowhere else.
+# disagree about how many bundles a card holds. The additive model lives HERE
+# and nowhere else. <free_mib> is the card's DETECTED free VRAM; <reserve_mib>
+# is the caller-adjusted per-card engine cost (first-card extra already added).
+# RESIDENCY_MARGIN_MB (default 1024) is the deep-prefill spike headroom — #931
+# measured the bracket: 556 MiB free died at ~90K, 896 MiB survived 188K.
 _offload_fit_count() {
-  local total="$1" reserve="$2" bundle="$3" per_card="$4"
-  local free=$(( total - reserve ))
-  (( free < 0 )) && free=0
-  # Calibrated, not naive: raw free/bundle overestimates ~2x because it ignores the
-  # compute reserve and the drafter. Verified against measured counts.
-  local fit=$(( free * 55 / 100 / bundle ))
+  local free="$1" reserve="$2" bundle="$3" per_card="$4"
+  local margin="${RESIDENCY_MARGIN_MB:-1024}"
+  [[ "$margin" =~ ^[0-9]+$ ]] || margin=1024
+  local avail=$(( free - reserve - margin ))
+  (( avail < 0 )) && avail=0
+  local fit=$(( avail / bundle ))
   (( fit > per_card )) && fit=$per_card
   printf '%s' "$fit"
 }
@@ -465,42 +483,44 @@ resolve_offload_residency() {
   # gets fewer resident layers than we think we granted and host RAM errs UNSAFE.
   local first; first="$(compose_meta_get "$compose_file" cpu-offload-first-moe-layer || true)"
   [[ "$first" =~ ^[0-9]+$ ]] || first=0
+  local extra; extra="$(compose_meta_get "$compose_file" cpu-offload-first-card-extra-mib || true)"
+  [[ "$extra" =~ ^[0-9]+$ ]] || extra=768
 
-  local -a totals=()
-  while read -r m; do [[ "$m" =~ ^[0-9]+$ ]] && totals+=("$m"); done \
-    < <(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null)
-  local n="${#totals[@]}"
+  local -a frees=()
+  while read -r m; do [[ "$m" =~ ^[0-9]+$ ]] && frees+=("$m"); done \
+    < <(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null)
+  local n="${#frees[@]}"
   (( n >= 2 )) || return 0
 
   local per_card=$(( layers / n ))
-  local i fit rule var applied=""
+  local i fit rule var applied="" res_i
   for (( i=0; i<n; i++ )); do
+    res_i=$(( reserve + (i == 0 ? extra : 0) ))
     # An explicit OT_G<i> from the user/env ALWAYS WINS and is never clobbered —
     # same contract as THREADS (resolve_offload_threads). This is the supported
-    # way to pin more residency than the calibrated sizer grants (the 0.55 was
-    # calibrated on 24 GB cards and under-fills larger ones — club-3090 #931).
-    # The RAM gate prices the user's ACTUAL pin (offload_residency_grant_mib
-    # counts the rule's layers), so the two stay coherent.
+    # way to pin more residency than the sizer grants (the grant is deliberately
+    # floor-conservative — club-3090 #931). The RAM gate prices the user's
+    # ACTUAL pin (offload_residency_grant_mib counts the rule's layers), so the
+    # two stay coherent.
     var="OT_G${i}"
     if [[ -n "${!var:-}" ]]; then
-      # Sanity: a pin that exceeds even the card's NAIVE free space (total minus
-      # reserve — the OPTIMISTIC bound; true usable is ~half of it) is a certain
-      # boot OOM. Warn loudly, don't block: the override exists to out-judge us.
-      # First community hit: 8/card of Q8's 3264 MiB bundles — an IQ2-sized
-      # recipe applied to the fat quant (#931).
+      # Sanity: a pin that exceeds the card's free space beyond the engine
+      # reserve is a certain boot OOM. Warn loudly, don't block: the override
+      # exists to out-judge us. First community hit: 8/card of Q8's 3264 MiB
+      # bundles — an IQ2-sized recipe applied to the fat quant (#931).
       local ucount upin_mib
       ucount="$(_offload_rule_layer_count "${!var}")"
       upin_mib=$(( ucount * bundle ))
-      if (( upin_mib > totals[i] - reserve )); then
+      if (( upin_mib > frees[i] - res_i )); then
         echo "[residency] WARN: OT_G${i} pins ${ucount} bundles = ~$(( upin_mib / 1024 )) GiB of experts, but card ${i}" >&2
-        echo "            has only ~$(( (totals[i] > reserve ? totals[i] - reserve : 0) / 1024 )) GiB beyond the reserve (bundle=${bundle} MiB on THIS quant —" >&2
+        echo "            has only ~$(( (frees[i] > res_i ? frees[i] - res_i : 0) / 1024 )) GiB free beyond the reserve (bundle=${bundle} MiB on THIS quant —" >&2
         echo "            bundle sizes differ per quant tier; a layer count sized for one tier over-pins another)." >&2
         echo "            Expect a boot OOM; reduce the pin." >&2
       fi
       applied="${applied}${applied:+ · }card${i}: USER pin, ${ucount} bundles"
       continue
     fi
-    fit="$(_offload_fit_count "${totals[i]}" "$reserve" "$bundle" "$per_card")"
+    fit="$(_offload_fit_count "${frees[i]}" "$res_i" "$bundle" "$per_card")"
     if (( fit < 1 )); then                        # leave this card's no-op default
       applied="${applied}${applied:+ · }card${i}: none (0 fit)"
       continue
@@ -549,18 +569,21 @@ offload_residency_grant_mib() {
   [[ "$reserve" =~ ^[0-9]+$ ]] || reserve=18000
   local first; first="$(compose_meta_get "$compose_file" cpu-offload-first-moe-layer || true)"
   [[ "$first" =~ ^[0-9]+$ ]] || first=0
+  local extra; extra="$(compose_meta_get "$compose_file" cpu-offload-first-card-extra-mib || true)"
+  [[ "$extra" =~ ^[0-9]+$ ]] || extra=768
 
-  local -a totals=()
+  local -a frees=()
   local m
-  while read -r m; do [[ "$m" =~ ^[0-9]+$ ]] && totals+=("$m"); done \
-    < <(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null)
-  local n="${#totals[@]}"
+  while read -r m; do [[ "$m" =~ ^[0-9]+$ ]] && frees+=("$m"); done \
+    < <(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null)
+  local n="${#frees[@]}"
   (( n >= 2 )) || { printf '0'; return 0; }
 
   local per_card=$(( layers / n ))
-  local i fit rule total_mib=0 var ucount
+  local i fit rule total_mib=0 var ucount res_i
   local -a lays
   for (( i=0; i<n; i++ )); do
+    res_i=$(( reserve + (i == 0 ? extra : 0) ))
     # A user-set OT_G<i> is what will ACTUALLY be pinned (the injector never
     # clobbers it) — price ITS layer count, not the auto fit, so the gate and
     # the boot describe the same config. First hit in the wild: a 123 GB box
@@ -572,7 +595,7 @@ offload_residency_grant_mib() {
       total_mib=$(( total_mib + ucount * bundle ))
       continue
     fi
-    fit="$(_offload_fit_count "${totals[i]}" "$reserve" "$bundle" "$per_card")"
+    fit="$(_offload_fit_count "${frees[i]}" "$res_i" "$bundle" "$per_card")"
     (( fit < 1 )) && continue
     rule="$(_offload_layers_for_card "$i" "$n" "$first" "$layers" "$fit")"
     [[ -z "$rule" ]] && continue

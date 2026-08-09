@@ -61,11 +61,14 @@
 #   0 = no dense prefix on this model (all 43 layers are MoE). Models WITH one
 #   (Laguna=1, Inkling=2) must set it: a residency rule naming a dense layer
 #   silently matches nothing, so fewer layers land resident than we granted.
-# CPU-Offload-GPU-Reserve-MiB: 14000
-#   Inputs for resolve_offload_residency(). The RESERVE is what the naive
-#   free-VRAM/bundle arithmetic forgets: dense stack + compute reserve + drafter.
-#   A ~0.55 calibration is applied on top — naive sizing overestimates ~2x and
-#   would hand users a config that dies on its first prefill.
+# CPU-Offload-GPU-Reserve-MiB: 16500
+#   Inputs for resolve_offload_residency(). RESERVE = this compose's true
+#   per-card engine cost (dense split + drafter half + compute buffers + KV).
+#   Sizing is additive from DETECTED FREE VRAM (#931 recalibration):
+#     fit = (free − reserve − first-card-extra − margin) / bundle
+#   16500 (was 14000 in the ×0.55 era) reproduces every measured point: 3/card
+#   on 2x24 GB, and the field-validated 7+8 asymmetric on 2x32 GB (#931 —
+#   engine cost measured 16543 MiB on the bare card, 17201 on card 0).
 # ===========================================================================
 
 services:
