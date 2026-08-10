@@ -4,6 +4,8 @@
 
 When you switch composes with `switch.sh`, every config changes the port **and** the model name. This tool auto-detects the running endpoint and prints `export` lines so your shell always points Claude Code at the right model — zero manual editing.
 
+> **Important Claude Code setup:** For Claude Code to pick up the shell environment variables (`ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL`), your `~/.claude/settings.json` file must **not** have hardcoded `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` in its `env` section. The `env` section should **only** contain `ANTHROPIC_API_KEY: "dummy"` to prevent authentication errors, while allowing the shell environment variables to provide the URL and model name.
+
 ## How it works
 
 ```
@@ -33,6 +35,57 @@ Detection chain (first match wins):
 
 - Docker running, with a club-3090 container active
 - `curl` in PATH
+
+## Claude Code configuration
+
+For the `club3090-env.sh` script to work with Claude Code, you must ensure that `~/.claude/settings.json` is configured to allow shell environment variables to provide `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL`.
+
+### Required `settings.json` setup
+
+Your `~/.claude/settings.json` `env` section should **only** contain `ANTHROPIC_API_KEY: "dummy"`. It should **not** contain hardcoded `ANTHROPIC_BASE_URL` or `ANTHROPIC_MODEL` values:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_API_KEY": "dummy"
+  },
+  ...
+}
+```
+
+**Why this is required:**
+
+1. Claude Code reads the `env` section in `~/.claude/settings.json` first. If `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` are present there, it will use those hardcoded values and **ignore** the shell environment variables set by `club3090-env.sh`.
+2. The `ANTHROPIC_API_KEY: "dummy"` value is required to prevent Claude Code from trying to authenticate with the real Anthropic API (which causes a "no logged in" error when working with local endpoints).
+3. With only `ANTHROPIC_API_KEY: "dummy"` in the `env` section, Claude Code will:
+   - Use `ANTHROPIC_API_KEY: "dummy"` from `settings.json` (preventing authentication errors)
+   - Pick up `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` from your shell environment variables (set automatically by your `.bashrc` via the `club3090-env.sh` script)
+
+### How to fix if you have hardcoded values
+
+If your `~/.claude/settings.json` currently has an `env` section like this:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:8000",
+    "ANTHROPIC_API_KEY": "dummy",
+    "ANTHROPIC_MODEL": "your-model-name"
+  },
+  ...
+}
+```
+
+Remove the `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` lines, leaving only:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_API_KEY": "dummy"
+  },
+  ...
+}
+```
 
 ## Install
 
