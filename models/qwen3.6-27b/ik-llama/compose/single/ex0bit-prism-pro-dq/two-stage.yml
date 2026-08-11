@@ -7,7 +7,10 @@
 #   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard
 #   Vision:    embedded tower preserved in the GGUF; this preset is tuned for text-first use
 #   Default ctx: 200000
-#   Status:    🧪 EVAL ONLY — PRISM-PRO-DQ single-card two-stage lane
+#   Status:    🗑️ Deprecated
+#   Caveats:   provider retired 2026-08-11 — Ex0bit quants removed from the rig to reclaim disk; weights no longer held locally and the slug has had no first-party validation since it was authored.
+#              Registry entry is RETAINED (deprecated != deleted) so launch-compat
+#              and pull-gate assertions on its hardware fields stay meaningful.
 #   Best for:  Code-heavy testing of Ex0bit's PRISM-PRO-DQ GGUF on the two-stage ik-llama path.
 # ---------------------------------------------------------------------------
 # Qwen3.6-27B-PRISM-PRO-DQ on ik_llama.cpp — single 3090, dynamic-quant GGUF

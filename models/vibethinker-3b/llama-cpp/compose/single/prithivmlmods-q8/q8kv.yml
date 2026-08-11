@@ -10,7 +10,10 @@
 #   Template:  native (GGUF-embedded) via --jinja
 #   Max ctx:   131072 (full native)
 #   Genesis:   N/A — llama.cpp engine
-#   Status:    🐣 Incubating  (pre-experimental — hidden from `switch.sh --list`; see `--list --all`)
+#   Status:    🗑️ Deprecated
+#   Caveats:   provider retired 2026-08-11 — VibeThinker-3B withdrawn from the catalog and its weights removed to reclaim disk.
+#              Registry entry is RETAINED (deprecated != deleted) so launch-compat
+#              and pull-gate assertions on its hardware fields stay meaningful.
 #   Engine-profile: llama-cpp-local
 #   Quality:   tool-free packs (benchlocal, temp 0.6, 2026-06-16, thinking-ON = the model's only
 #              real mode). Reasoning/math: gsm-symbolic-30 30/30 (100%) · reasonmath-15 12/15 (80%).

@@ -497,7 +497,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/pi-reasoning-q4km/mtp.yml",
         default_port=8063,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="Qwen3.6-27B-MTP-pi-reasoning (bytkim — 'Pi-style' reasoning-supervised CODING/terminal-agent fine-tune of Qwen3.6-27B) Q4_K_M GGUF + EMBEDDED MTP head (--spec-type draft-mtp, n=2) + q4_0/q4_0 KV, single 3090, reasoning-ON, on MAINLINE llama.cpp (server-cuda-b9246, PR #22673). Launch with --force (experimental). CONFIG FOLLOWS THE MODEL CARD: temp 1.0 / top-p 0.95 / top-k 0 / min-p 0 (NOT the stack's 0.6/20), reasoning ON, q4_0/q4_0 KV. Card recommends MTP n=3; on-rig A/B found n=2 marginally faster (within noise) — kept n=2, MTP_DRAFT_N_MAX=3 matches the card. Card notes presence-penalty 1.5 for DIRECT/instruct (REASONING=off) mode. CONTEXT (measured 2026-06-17): 200K-alloc fills ~188K usable with correct needle recall (22.7 GB / ~1.8 GB free); decode ~23 t/s at ~188K depth. Do NOT alloc 262K — FA scratch grows with alloc, so 262K OOMs at ~176K (LESS usable than 200K); full 262K usable is beellama-only. Author TESTED only 128K, so 128-188K is engine-proven but past the card's validated window (CTX_SIZE=131072 for strict compliance). FULL REBENCH-FULL VALIDATED 2026-06-18 (--with-8pack-thinking=both): bench @370W NARRATIVE 47.4/47.9, CODE 54.2/55.3 wall/decode, PP 1030 tok/s (n=5, CV<2%); @230W cap 28.5/32.9 (mainline -42% 370->230W — power-sensitive). verify-stress 8/8 (NIAH recall to 183K @ 91% of the 200K pool). 8-pack 104/150 think-off / 106/150 think-on (cohort: carnice 110, ik 107, qwopus 103). soak PASS (0 MiB growth, 0/100 silent-empty, p50 54.5, 102% retention). The MTP head is NOT weaker than base: a matched-power A/B (230W) put it DEAD-EVEN with base Qwen3.6-27B MTP (73% vs 72% accept, identical decode), and 47.9/55.3 @370W is ~on par with base 50.3/58.9 (within ~5% on canonical prompts). Verbose even thinking-off (a few deterministic-pack misses were finish_reason=length truncations — give it generous max_tokens). MTP gives ~+43% over no-MTP. Mainline llama.cpp = no patches, follows upstream.",
     ),
 
@@ -509,7 +509,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ex0bit-prism-pro-dq/mtp.yml",
         default_port=8020,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     "ik-llama/prism-pro-dq-long": _entry(
@@ -519,7 +519,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ex0bit-prism-pro-dq/long.yml",
         default_port=8052,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     "ik-llama/prism-pro-dq-two-stage": _entry(
@@ -529,7 +529,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ex0bit-prism-pro-dq/two-stage.yml",
         default_port=8020,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     "ik-llama/prism-pro-dq-dual": _entry(
@@ -539,7 +539,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/dual/ex0bit-prism-pro-dq/mtp.yml",
         default_port=8053,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     "ik-llama/prism-pro-dq-dual-vision": _entry(
@@ -550,7 +550,7 @@ COMPOSE_REGISTRY = {
         weights_companions=("gguf_mmproj_f16",),  # mmproj vision projector the compose mounts
         default_port=8010,
         kvcalc_key="SKIP",
-        status="experimental",
+        status="deprecated",
         status_note="PRISM-PRO-DQ community dynamic-quant GGUF — eval-only, not yet validated.",
     ),
     # Qwen3.6-35B-A3B APEX-MTP (mudler MoE GGUF — Compact + Quality) — community-experimental, ik-llama.
@@ -571,7 +571,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/byteshape-iq4xs/mtp.yml",
         default_port=8058,
         kvcalc_key="SKIP",
-        status="caveats",
+        status="deprecated",
         status_note="byteshape IQ4_XS 4.19bpw MoE GGUF (embedded MTP head) — community intake from PR #293 (@Rhonstin). Single-card 35B-A3B, q4_0 KV + --fit → 262K. First-party validated 2026-06-02 on 1× 3090: verify-full all-pass, verify-stress 8/8 (NIAH→240K, no Cliff), bench n=5 (narrative 113/116 · code 129/137 wall/decode TPS, CV<2.3%), 8-pack 110/150 (≈ author's 111/150), soak-continuous PASS (0 err, 0 VRAM growth, 0/25 silent-empty). Caveat: single-rig; agent packs modest (hermes 55%, cli 42%) as typical for the class. Intake fixes vs #293: image cu13, port 8058.",
     ),
     "ik-llama/apex-mtp-compact-long": _entry(
@@ -1230,7 +1230,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/vibethinker-3b/vllm/compose/single/bf16/fp8.yml",
         default_port=8074,
         kvcalc_key="SKIP",
-        status="incubating",
+        status="deprecated",
         status_note="VibeThinker-3B (WeiboAI) — bf16 Qwen2 dense verifiable-reasoning model (SFT+RL fine-tune of Qwen2.5-Coder-3B) on a single 3090, vLLM v0.22.0 (vllm-stable). bf16 weights (~5.8 GB) + fp8_e5m2 KV (storage-only A/B'd 2026-06-16 — math/code answers identical to bf16 KV; halves cache, quality-neutral). full 131072 ctx, ~110 TPS. Single-concurrency sized: max_num_seqs=1 + mem_util 0.40 → ~9.8 GB total (174K-token / 1.33x KV pool, full 131K kept), freeing ~14 GB to co-reside with a 27B; ~9.8 GB is near the floor (5.8 GB bf16 weights immovable). Output quality is temp-governed not mem-governed: temp 0.6 coherent, the card's temp 1.0 is unstable on short prompts (degenerate loops) — overridable via TEMP. fp8 WEIGHTS rejected (break this quant-sensitive 3B: non-terminating empty output). Sampling per the tech report: temp 1.0 / top_p 0.95 / top_k -1. Live-validated 2026-06-16: serves clean, correct reasoning + code (verify-full output-quality + thinking-mode PASS); --reasoning-parser qwen3 splits <think> blocks correctly. ⚠️ ALWAYS-REASONING: it emits a <think> trace before every answer with NO way to disable it (system prompt / /no_think ignored; authors document no controls). Omit max_tokens (vLLM's large default → reasons briefly then answers) or set generously (8K-40K; authors use up to 40960); a small explicit max_tokens truncates mid-reason with no answer. NO tool-calling (emits bare JSON not <tool_call>; authors don't support it — intentionally unwired). Consequence: FAILS verify-full's fixed-small-budget checks (basic 30 / streaming 120 / tool 200-256 tok) → 5/9 — a harness-vs-always-reasoning mismatch, NOT a serving defect. Stays 🐣 incubating: does not pass the standard functional gate; math/code/STEM reasoning only, not general/agentic.",
     ),
     "llamacpp/vibethinker-3b-single": _entry(
@@ -1240,7 +1240,7 @@ COMPOSE_REGISTRY = {
         compose_path="models/vibethinker-3b/llama-cpp/compose/single/prithivmlmods-q8/q8kv.yml",
         default_port=8075,
         kvcalc_key="SKIP",
-        status="incubating",
+        status="deprecated",
         status_note="VibeThinker-3B (WeiboAI) — prithivMLmods Q8_0 GGUF on a single 3090, mainline llama.cpp (server-cuda). Q8 weights + q8_0/q8_0 KV, full 131072 ctx, -b 4096 -ub 2048. The PERFORMANCE-MAX VibeThinker path: live-validated 2026-06-16 ~166 TPS decode (vs ~110 vLLM bf16), prefill ~6,630 tok/s (-b 4096/-ub 2048 = +20% over 2048/512; -ub is the lever, -b 8192 adds nothing), ~6.2 GB at full 131K (3.3 GB Q8 + ~2.6 GB q8_0 KV), CV 0.1%, stable at temp 0.6 AND 1.0. KEY: llama.cpp Q8_0 is near-lossless → quality INTACT, where vLLM's fp8 weight-quant broke this quant-sensitive 3B (non-terminating empty output) — so on llama.cpp you get the quantization win with no quality cost. NO MTP head in this GGUF (plain qwen2 conversion) → no self-spec-dec (not needed at this speed). Reasoning: emits <think>...</think> but llama.cpp's deepseek parser does NOT split it (Qwen2.5 template doesn't declare reasoning) → trace stays inline in content (answer after </think> clean). ⚠️ ALWAYS-REASONING + NO tool-calling → FAILS verify-full's fixed-small-budget + tool checks (5/9, same as the vLLM sibling) — by design, not a serving defect. 🐣 incubating: math/code/STEM reasoning specialist, not general/agentic. Better-performing sibling to vllm/vibethinker-3b-single. Tool-free quality (benchlocal, temp 0.6, 2026-06-16, thinking-ON): gsm-symbolic-30 30/30 (100%), reasonmath-15 12/15 (80%); one-shot coding (sandbox executes, no tool-calls) humaneval-plus-30 29/30 (97%) + lcb-v6-30 25/30 (83%, 2 losses=token_limit on hardest); instructfollow-15 15/15 (100%), structoutput-15 12/15 (80%), dataextract-15 6/15 (40%). The packs' thinking-OFF defaults had zeroed dataextract / capped structoutput at 60% via token_limit truncation (always-reasoning vs bounded budget); --enable-thinking restores them. dataextract's residual 40% is genuine — full config sweep {temp 0/0.6/1.0 x budget 16K/32K} all land 27-40% (0.6 is the sweet spot; greedy and 1.0 both = 27%), same value-mismatch + type-coercion failures → config can NOT recover it; valid JSON, field-level extraction errors (reasoning specialist, not an extractor). Sweep also validates the compose default temp 0.6 (beats 0 and 1.0). toolcall/hermes/cli N/A (no tool-calling).",
     ),
 }

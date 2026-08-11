@@ -17,26 +17,10 @@
 #              128-188K is engine-proven but past the card's validated window. Full 262K usable
 #              needs beellama's unified KV (slower). CTX_SIZE=131072 for strict card-compliance.
 #   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    🧪 EXPERIMENTAL — FULL rebench-full VALIDATED 2026-06-18 (--with-8pack-thinking=both).
-#              Mainline b9246 loads the embedded MTP head clean. Bench @370W (n=5, CV<2%): NARRATIVE
-#              47.4/47.9 · CODE 54.2/55.3 wall/decode · PP 1030 tok/s; @230W cap 28.5/32.9 (mainline
-#              -42% 370->230W — power-sensitive). verify-stress 8/8 (NIAH→183K). 8-pack 104/150
-#              think-off · 106/150 think-on (cohort: carnice 110, ik 107, qwopus 103). soak PASS
-#              (0 growth, 0/100 silent-empty, p50 54.5, 102% retention). The MTP head is NOT weaker
-#              than base: a matched-power A/B (230W) put it DEAD-EVEN with base Qwen3.6-27B MTP
-#              (73% vs 72% accept, identical decode); 47.9/55.3 @370W ~on par with base 50.3/58.9
-#              (within ~5% on canonical prompts). MTP gives ~+43% over no-MTP.
-#   Caveats:   (1) POWER-SENSITIVE: the 47.9/55.3 headline is @370W; the rig's default 230W cap gives
-#                  ~28.5/32.9 (not comparable to 370W BENCHMARKS rows unless matched). Stays 🧪 /
-#                  --force as a community GGUF; quality is fully validated above.
-#                  Launch requires --force.
-#              (2) ships 200K-alloc → ~188K usable (MEASURED, needle-recalled), but that is past
-#                  the author's 128K tested window — retrieval works to ~188K, full generative
-#                  quality >128K is unverified (CTX_SIZE=131072 for the strict card window). The
-#                  full 262K usable is beellama-only (unified KV, ~25% slower); mainline OOMs
-#                  at ~176K if you alloc 262K — keep CTX_SIZE<=200000.
-#              (3) Defaults to reasoning ON (this is a reasoning fine-tune); flip REASONING=off
-#                  for plain/agentic use. Decode is ~identical thinking on vs off.
+#   Status:    🗑️ Deprecated
+#   Caveats:   provider retired 2026-08-11 — bytkim fine-tune never downloaded to this rig and is withdrawn from the catalog.
+#              Registry entry is RETAINED (deprecated != deleted) so launch-compat
+#              and pull-gate assertions on its hardware fields stay meaningful.
 #   Engine-profile: llama-cpp-local
 #   Best for:  single-card Pi-style coding / terminal agents (repo work, debugging, tool-heavy) —
 #              ~29 prose / ~33 code decode TPS (short-prompt) + MTP, ~188K usable context

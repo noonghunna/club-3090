@@ -7,7 +7,10 @@
 #   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard
 #   Vision:    NO
 #   Default ctx: 196608
-#   Status:    🧪 EVAL ONLY — PRISM-PRO-DQ dual-card text lane
+#   Status:    🗑️ Deprecated
+#   Caveats:   provider retired 2026-08-11 — Ex0bit quants removed from the rig to reclaim disk; weights no longer held locally and the slug has had no first-party validation since it was authored.
+#              Registry entry is RETAINED (deprecated != deleted) so launch-compat
+#              and pull-gate assertions on its hardware fields stay meaningful.
 #   Best for:  Text-first dual-card PRISM serving when you want extra context
 #              headroom without the multimodal overhead of the vision lane.
 # ---------------------------------------------------------------------------

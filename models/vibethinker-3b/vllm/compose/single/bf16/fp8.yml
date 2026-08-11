@@ -10,12 +10,10 @@
 #   Vision:    no (text-only)
 #   Max ctx:   131072 (full native; RL-trained at a 64K window) — fits a 24 GB card with room
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific; VibeThinker is Qwen2 dense
-#   Status:    🐣 Incubating  (pre-experimental — hidden from `switch.sh --list`; see `--list --all`)
-#   Caveats:   Does NOT pass the standard functional gate (verify-full 5/9): an always-reasoning
-#              model (emits <think> before every answer, no way to disable) that FAILS fixed-small-
-#              budget checks + has NO tool-calling. Niche math/code/STEM reasoning specialist, not a
-#              general/agentic serve. temp 1.0 (card default) is unstable on short prompts — TEMP=0.6
-#              is steadier. Kept in the catalog for the co-resident-reasoner experiment (#403-adjacent).
+#   Status:    🗑️ Deprecated
+#   Caveats:   model withdrawn 2026-08-11 — VibeThinker-3B removed from the catalog; bf16 safetensors deleted from the rig to reclaim disk.
+#              Registry entry is RETAINED (deprecated != deleted) so launch-compat
+#              and pull-gate assertions on its hardware fields stay meaningful.
 #   Best for:  single-card verifiable reasoning — competition math / coding / STEM
 #              (AIME, LiveCodeBench, LeetCode). NOT an open-domain-knowledge or
 #              prose model (the authors say so) — pick a larger general model for that.
