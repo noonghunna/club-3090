@@ -1,0 +1,38 @@
+schema_version: 1
+id: rtx-a6000
+display_name: NVIDIA RTX A6000
+sm: 8.6
+vram_gb: 48
+arch: ampere-workstation
+mem_util_safe: 0.95
+supported_kv_formats:
+  - bf16
+  - fp16
+  - fp8_e5m2
+  - turboquant_3bit_nc
+  - int8_per_token_head
+  - q4_0
+  - q5_0
+  - q8_0
+  - k8v4
+kv_format_default:
+  long_context: turboquant_3bit_nc
+  multi_stream: int8_per_token_head
+  balanced: fp8_e5m2
+cudagraph: full
+driver_pin_recommended:
+  min: "580.0"
+  notes: "CUDA 13 vLLM nightlies require a 580.x-class NVIDIA driver."
+nvlink_capable: true
+power_cap_w_optimal: 300
+power_cap_w_max: 300
+notes: >-
+  GA102 / SM 8.6 — same compute capability as RTX 3090 and A5000, but 48 GB.
+  Added 2026-08-11 after a community report of 2x A6000 running the DeepSeek-V4-Flash
+  offload composes. ⚠️ The doubled VRAM is what matters for the launch-compat layer:
+  it is the first supported class ABOVE the 24 GB reference the moe-cache reserve was
+  tuned on, so `_moe_cache_env` scales MOE_RESERVE_MB here (48 GB x 0.0625 = 3072 MB)
+  via a ratio-preserving heuristic that NO BOOT HAS EXERCISED. Treat that value as a
+  starting point, not a tuned optimum — sweep on wall-clock and pin MOE_RESERVE_MB
+  explicitly. No first-party A6000 hardware; every field below sm/vram is inherited
+  from the A5000 sibling.

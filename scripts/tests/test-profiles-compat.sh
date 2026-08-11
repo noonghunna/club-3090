@@ -32,7 +32,7 @@ run_test() {
 run_test "load_profiles parses all profile groups" <<'PY'
 from scripts.lib.profiles.compat import load_profiles
 p = load_profiles()
-assert len(p.hardware) == 10  # +dgx-spark (#576 follow-up)
+assert len(p.hardware) == 11  # +dgx-spark (#576 follow-up), +rtx-a6000 (#948 thread)
 assert len(p.models) == 16   # +qwen-agentworld-35b-a3b
 assert len(p.workloads) == 5
 assert len(p.engines) == 14
