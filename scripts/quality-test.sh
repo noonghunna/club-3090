@@ -658,6 +658,72 @@ except Exception:
   fi
 fi
 
+# ---- hermes container-reachability preflight (#960) --------------------------
+# hermesagent-20 is the ONE pack with network_isolated=False: the SANDBOX container
+# calls the model endpoint, not the runner. When the endpoint is loopback-bound,
+# BENCHLOCAL_HERMES_RESOLVE_LOCALHOST=1 (set above) correctly rewrites the URL to
+# host.docker.internal — but a server listening only on 127.0.0.1 is not on the
+# docker bridge, so every scenario is refused.
+#
+# That failure is DANGEROUS because it is plausible: 20 x `server_error` reads as a
+# model or pack problem, and the TOTAL silently counts 20 infrastructure failures as
+# model failures (a "150-scenario" score that is really 130 — 101/150 = 67% reported
+# where the valid subset was 101/130 = 78%). The other two sandboxed packs are
+# network_isolated=True and score fine, so it does not even look like networking.
+#
+# Probe it in ~2s instead. Only runs when hermes could actually be in the selection
+# AND the loopback rewrite is active.
+if [[ "${BENCHLOCAL_HERMES_RESOLVE_LOCALHOST:-}" == "1" && "$NO_SANDBOX" != "1" ]] \
+   && { [[ -z "$PACK" && ( "$MODE" == "--full" || "$SANDBOXED_ONLY" == "1" ) ]] \
+        || [[ "$PACK" == "hermesagent-20" ]] \
+        || command grep -qE '^hermesagent-20/' <<<"${_sel_lines:-}"; }; then
+  _q_port="${URL##*:}"; _q_port="${_q_port%%/*}"
+  [[ "$_q_port" =~ ^[0-9]+$ ]] || _q_port=""
+  if [[ -n "$_q_port" ]] && command -v docker >/dev/null 2>&1; then
+    _q_reach=""
+    # Prefer a direct probe from a throwaway container — that is exactly the path
+    # the sandbox will take. Any small image with a fetcher works; try what is
+    # already local before pulling anything.
+    for _img in curlimages/curl:latest alpine:latest busybox:latest; do
+      docker image inspect "$_img" >/dev/null 2>&1 || continue
+      case "$_img" in
+        curlimages/curl:*) _q_cmd=(curl -sf -m 10 "http://host.docker.internal:${_q_port}/v1/models") ;;
+        alpine:*)          _q_cmd=(sh -c "wget -q -T 10 -O /dev/null http://host.docker.internal:${_q_port}/v1/models") ;;
+        *)                 _q_cmd=(wget -q -T 10 -O /dev/null "http://host.docker.internal:${_q_port}/v1/models") ;;
+      esac
+      if docker run --rm --add-host=host.docker.internal:host-gateway "$_img" "${_q_cmd[@]}" >/dev/null 2>&1; then
+        _q_reach=ok
+      else
+        _q_reach=fail
+      fi
+      break
+    done
+    # No suitable image cached → fall back to a host-side bind check, which catches
+    # the exact failure mode (listening on loopback only) without pulling anything.
+    if [[ -z "$_q_reach" ]] && command -v ss >/dev/null 2>&1; then
+      if ss -ltn 2>/dev/null | command grep -qE "LISTEN.*(0\.0\.0\.0|\*|\[::\]):${_q_port}\b"; then
+        _q_reach=ok
+      elif ss -ltn 2>/dev/null | command grep -qE "LISTEN.*(127\.0\.0\.1|\[::1\]):${_q_port}\b"; then
+        _q_reach=fail
+      fi
+    fi
+    if [[ "$_q_reach" == "fail" ]]; then
+      echo "[quality-test] ✗ endpoint is NOT reachable from a container — hermesagent-20 would return 20 silent server_errors" >&2
+      echo "               (and those 20 would be counted as MODEL failures in the TOTAL)" >&2
+      echo "               The server on port ${_q_port} appears bound to loopback only." >&2
+      echo "               Fix: bind it to 0.0.0.0 — the shipped composes already do" >&2
+      echo "                    (\${BIND_HOST:-0.0.0.0}); a hand-rolled 'llama-server --host 127.0.0.1' does not." >&2
+      echo "               Bypass (scores will be wrong): --no-sandbox, or unset BENCHLOCAL_HERMES_RESOLVE_LOCALHOST." >&2
+      exit 2
+    elif [[ "$_q_reach" == "ok" ]]; then
+      echo "[quality-test] endpoint reachable from a container — hermes sandbox can reach the model ✓" >&2
+    else
+      echo "[quality-test] ⚠  could not verify container reachability (no cached probe image, no ss)." >&2
+      echo "               If hermesagent-20 returns 20 server_errors, this is the first thing to check (#960)." >&2
+    fi
+  fi
+fi
+
 # ---- run benchlocal-cli ------------------------------------------------------
 
 RESULTS_DIR="${ROOT_DIR}/results/quality"
