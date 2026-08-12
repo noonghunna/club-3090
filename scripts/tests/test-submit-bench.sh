@@ -585,13 +585,22 @@ fi
 
 # The repo's own BENCHMARKS.md must be refused outright, so a bare GH_MOCK run
 # can never mutate tracked history.
-if out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="${ROOT_DIR}/BENCHMARKS.md" \
+#
+# ⚠️ Compare the file against ITSELF across the run (sha256 before/after), NOT via
+# `git diff` (#961). `git diff` reports any working-tree difference, so it cannot
+# tell "the test mutated this file" from "the file was already dirty when the test
+# started" — and adding a model to the catalog REQUIRES editing BENCHMARKS.md while
+# a catalog-shape change REQUIRES the full suite, so the natural workflow tripped a
+# false failure claiming data loss. Same pattern already used for $bench_stub above.
+repo_bench="${ROOT_DIR}/BENCHMARKS.md"
+repo_bench_before="$(sha256sum < "$repo_bench")"
+if out="$(GH_MOCK=1 GH_MOCK_USER=octocat BENCHMARKS_FILE="$repo_bench" \
           bash scripts/submit-bench.sh --tag "$tag" --auto-submit --as-pr 2>&1)"; then
   echo "ASSERTION FAILED: insert into the repo's own BENCHMARKS.md was allowed" >&2
   exit 1
 fi
 assert_contains "$out" "refusing to insert into the repo's own BENCHMARKS.md"
-if ! git diff --quiet -- BENCHMARKS.md; then
+if [[ "$(sha256sum < "$repo_bench")" != "$repo_bench_before" ]]; then
   echo "ASSERTION FAILED: BENCHMARKS.md was modified by the test" >&2
   exit 1
 fi
