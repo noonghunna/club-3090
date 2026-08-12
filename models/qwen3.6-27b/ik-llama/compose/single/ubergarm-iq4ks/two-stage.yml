@@ -22,15 +22,16 @@
 #              agentic use right at the ceiling, set CTX_SIZE=180224 (~1.4 GB
 #              margin) or 163840 (~1.9 GB). The ngram stage's 0.6 GB per-step
 #              checkpoint is what costs the top slice vs MTP-only's clean 200K.
-#   Status:    ✅ Production — code-optimized single-card pick (sits alongside iq4ks-mtp.yml,
-#              the balanced/long-ctx ⭐). Tuned + validated on 1× 3090 @ 370 W
-#              (2026-05-24). ngram n_max swept {2,3,4,5,8,16}: code decode is an
-#              inverted-U peaking at n_max=4. At (ngram 4, MTP 3): code 97.8 TPS
-#              vs 72.4 for MTP-only (iq4ks-mtp.yml) = +35%; narrative ~tie
-#              (59 vs 60). Spec-dec is lossless: 8-pack 98/150 == MTP-only's
-#              100/150 and aider-polyglot 16/30 == MTP-only's 19/30, both within
-#              noise; verify-full all green. Same 200K ctx as iq4ks-mtp, ~0.8 GB
-#              leaner at idle. Use this for code; iq4ks-mtp for balanced/prose.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Retired 2026-08-12 to keep the single-card ik-llama variant set
+#              lean — NOT because it regressed. Its measured result stands
+#              (code decode ~97.8 vs 72.4 MTP-only, +35%; 8-pack 98/150 ≈ tie).
+#              The surface consolidates onto iq4ks-mtp.yml, which REMAINS
+#              production and the shipped single-card default (~18–20% faster
+#              than llamacpp/mtp at matched 370 W — discussions/184).
+#              ⚠ NO weights are reclaimed: all three ubergarm-iq4ks slugs share
+#              one GGUF, still in use by iq4ks-mtp. Still launchable by name
+#              with --force, and visible in c3 via --all.
 #   Best for:  Code-heavy agentic workloads where context has repeated patterns
 #              (refactoring, test generation, boilerplate, import blocks).
 # ---------------------------------------------------------------------------

@@ -7,7 +7,14 @@
 #   KV:        q4_0 K + q4_0 V + -khad/-vhad Hadamard
 #   Vision:    NO
 #   Default ctx: 200000
-#   Status:    🧪 EVAL ONLY — single-card APEX compact bring-up lane
+#   Status:    🗑️ Deprecated
+#   Caveats:   Superseded by later quants; no production role remains. Weights
+#              reclaimed. ⚠️ NOTE both mudler-apex-compact and
+#              mudler-apex-quality resolve to the SAME path
+#              (qwen3.6-35b-a3b-gguf/mudler-apex-mtp) — neither is
+#              independently deletable, which is why all four slugs retire
+#              together. Still launchable by name with --force, and visible in
+#              c3 via --all.
 #   Best for:  Fast single-card testing of mudler's APEX-MTP compact MoE GGUF
 #              on the ik-llama path when the 23.5 GB Quality file is too tight
 #              for a practical 24 GB single-card context budget.

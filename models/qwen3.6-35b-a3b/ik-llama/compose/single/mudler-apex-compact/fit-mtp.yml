@@ -7,13 +7,17 @@
 #   KV:        q8_0 K + q5_0 V (asymmetric, K-high/V-low) + -khad/-vhad
 #   Vision:    NO
 #   Default ctx: 196608
-#   Status:    ✅ Production — captures @laurimyllari's --fit + asymmetric-KV
-#              config (discussion #241) on top of the APEX I-Compact GGUF.
-#              All gates clean: verify-full 8/8, verify-stress 8/8 (incl. 180K
-#              NIAH), bench n=5 (CV 1.5-3.0%), soak-continuous PASS (0 errors,
-#              0 silent_empty, 0 VRAM growth, 100% retention), full quality
-#              measured post-fix.
-#   Caveats:   3090 power-sensitive: numbers below at 370 W; expect lower at 230 W.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Superseded by later quants. ⚠️ This slug was PRODUCTION (its three
+#              mudler siblings were already experimental), so retiring it IS a
+#              user-visible change — it leaves `--list` and now needs --force.
+#              It was not a DEFAULTS target, and no functional mudler slug
+#              remains. Weights reclaimed. ⚠️ NOTE both mudler-apex-compact and
+#              mudler-apex-quality resolve to the SAME path
+#              (qwen3.6-35b-a3b-gguf/mudler-apex-mtp) — neither is
+#              independently deletable, which is why all four slugs retire
+#              together. Still launchable by name with --force, and visible in
+#              c3 via --all.
 #   Quality:   toolcall-15 14/15 (93%) · instructfollow-15 15/15 (100%) ·
 #              structoutput-15 14/15 (93%) · dataextract-15 11/15 (73%) ·
 #              reasonmath-15 12/15 (80%) · bugfind-15 10/15 (67%) ·

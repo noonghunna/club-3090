@@ -17,9 +17,16 @@
 #              ceiling (~160K) sits below the text profile's 200K, and shrinking images
 #              does NOT raise it (180K still OOMs at fill) — gated by KV + fill-time
 #              runtime overhead, not the image-encode buffer.
-#   Status:    ✅ Production — config validated 2026-05-25 (full verify-stress [8/8]
-#              at the 160K + 1M-px default; graduated from EVAL #402). switch.sh /
-#              compose_registry wiring tracked as a follow-up. Sibling of iq4ks-mtp.yml.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Retired 2026-08-12 to keep the single-card ik-llama variant set
+#              lean — NOT because it regressed. Its measured result stands
+#              (verify-stress 8/8 @ 160K + 1M-px, recalls to 147K, vision
+#              functional). The surface consolidates onto iq4ks-mtp.yml, which
+#              REMAINS production and the shipped single-card default. For
+#              single-card vision use llamacpp/mtp-vision (150K).
+#              ⚠ NO weights are reclaimed: all three ubergarm-iq4ks slugs share
+#              one GGUF, still in use by iq4ks-mtp. Still launchable by name
+#              with --force, and visible in c3 via --all.
 #   Best for:  Multimodal chat / screenshot-debugging on ik_llama IQ4_KS.
 # ---------------------------------------------------------------------------
 # This is the VISION sibling of iq4ks-mtp.yml. Everything matches that file

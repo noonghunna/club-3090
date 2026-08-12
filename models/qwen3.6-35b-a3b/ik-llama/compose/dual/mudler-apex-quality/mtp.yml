@@ -7,7 +7,14 @@
 #   KV:        q8_0 K + q8_0 V
 #   Vision:    NO
 #   Default ctx: 196608
-#   Status:    🧪 EVAL ONLY — dual-card APEX quality bring-up lane
+#   Status:    🗑️ Deprecated
+#   Caveats:   Superseded by later quants; no production role remains. Weights
+#              reclaimed. ⚠️ NOTE both mudler-apex-compact and
+#              mudler-apex-quality resolve to the SAME path
+#              (qwen3.6-35b-a3b-gguf/mudler-apex-mtp) — neither is
+#              independently deletable, which is why all four slugs retire
+#              together. Still launchable by name with --force, and visible in
+#              c3 via --all.
 #   Best for:  Long-context dual-card MoE testing of mudler's APEX-MTP Quality
 #              GGUF on the ik-llama path while keeping full-context q8 KV on the
 #              paired 3090 rig.

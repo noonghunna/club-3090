@@ -409,6 +409,8 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
     ),
     "ik-llama/iq4ks-mtp-vision": _entry(
+        status="deprecated",
+        status_note="Retired 2026-08-12: consolidating the single-card ik-llama surface onto ik-llama/iq4ks-mtp, which STAYS production and remains the shipped single-card default (~18-20% faster decode than llamacpp/mtp at matched 370 W, verified by a set-and-readback power-cap A/B -- discussions/184). This variant was validated and is not broken; it is retired to keep the variant set lean per the compose conventions. NOTE: NO disk is reclaimed -- all three ubergarm-iq4ks slugs share ONE weights file, still in use by ik-llama/iq4ks-mtp. Entry KEPT (deprecated != deleted) so the slug resolves and the launch-compat tests keep asserting on its hardware fields. Launchable with --force; c3 --all.",
         model="qwen3.6-27b", weights_variant="ubergarm-iq4ks", workload="vision-coding", chat_template="froggeric",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=163840, max_num_seqs=1, mem_util=None,
@@ -418,6 +420,8 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
     ),
     "ik-llama/iq4ks-two-stage": _entry(
+        status="deprecated",
+        status_note="Retired 2026-08-12: consolidating the single-card ik-llama surface onto ik-llama/iq4ks-mtp, which STAYS production and remains the shipped single-card default (~18-20% faster decode than llamacpp/mtp at matched 370 W, verified by a set-and-readback power-cap A/B -- discussions/184). This variant was validated and is not broken; it is retired to keep the variant set lean per the compose conventions. NOTE: NO disk is reclaimed -- all three ubergarm-iq4ks slugs share ONE weights file, still in use by ik-llama/iq4ks-mtp. Entry KEPT (deprecated != deleted) so the slug resolves and the launch-compat tests keep asserting on its hardware fields. Launchable with --force; c3 --all.",
         model="qwen3.6-27b", weights_variant="ubergarm-iq4ks", workload="fast-chat",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
@@ -561,8 +565,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/mudler-apex-compact/mtp.yml",
         default_port=8054,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="APEX-MTP community MoE GGUF — eval-only bring-up lane, not yet validated.",
+        status="deprecated",
+        status_note="Retired 2026-08-12: superseded by later quants, no production role; was already 'experimental' (hidden from --list, --force to launch), so this is a status change with no new user-visible restriction. Weights reclaimed (17 GB). WARNING: mudler-apex-compact and mudler-apex-quality resolve to the SAME path (qwen3.6-35b-a3b-gguf/mudler-apex-mtp), so neither was independently deletable -- all three slugs retire together. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     "ik-llama/byteshape-iq4xs-mtp": _entry(
         model="qwen3.6-35b-a3b", weights_variant="byteshape-iq4xs", workload="fast-chat",
@@ -581,8 +585,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/mudler-apex-compact/long.yml",
         default_port=8056,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="APEX-MTP community MoE GGUF — eval-only bring-up lane, not yet validated.",
+        status="deprecated",
+        status_note="Retired 2026-08-12: superseded by later quants, no production role; was already 'experimental' (hidden from --list, --force to launch), so this is a status change with no new user-visible restriction. Weights reclaimed (17 GB). WARNING: mudler-apex-compact and mudler-apex-quality resolve to the SAME path (qwen3.6-35b-a3b-gguf/mudler-apex-mtp), so neither was independently deletable -- all three slugs retire together. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     # @laurimyllari's --fit + asymmetric q8_0(K)/q5_0(V) KV config from
     # discussion #241, retuned + measured on 1× 3090. +7% narr / +4% code
@@ -595,6 +599,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/single/mudler-apex-compact/fit-mtp.yml",
         default_port=8057,
         kvcalc_key="SKIP",
+        status="deprecated",
+        status_note="Retired 2026-08-12: consolidating the mudler-apex surface. ATTENTION this slug was PRODUCTION (not experimental like its three siblings), so this IS a user-visible change: it leaves --list and now needs --force. It is not a DEFAULTS target, and no functional mudler slug remains. Superseded by later quants. WARNING all four mudler slugs resolve to the SAME weights path (qwen3.6-35b-a3b-gguf/mudler-apex-mtp) -- none was independently deletable, which is why they retire together and why the 17 GB is only reclaimable now. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     "ik-llama/apex-mtp-quality-dual": _entry(
         model="qwen3.6-35b-a3b", weights_variant="mudler-apex-quality", workload="long-ctx-single",
@@ -603,8 +609,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-35b-a3b/ik-llama/compose/dual/mudler-apex-quality/mtp.yml",
         default_port=8055,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="APEX-MTP community MoE GGUF — eval-only bring-up lane, not yet validated.",
+        status="deprecated",
+        status_note="Retired 2026-08-12: superseded by later quants, no production role; was already 'experimental' (hidden from --list, --force to launch), so this is a status change with no new user-visible restriction. Weights reclaimed (17 GB). WARNING: mudler-apex-compact and mudler-apex-quality resolve to the SAME path (qwen3.6-35b-a3b-gguf/mudler-apex-mtp), so neither was independently deletable -- all three slugs retire together. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     "llamacpp/hauhaucs-35ba3b-dual": _entry(
         model="qwen3.6-35b-a3b", weights_variant="morikomorizz-q6kp", workload="fast-chat",

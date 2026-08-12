@@ -7,7 +7,14 @@
 #   KV:        q8_0 K + q8_0 V + -khad/-vhad Hadamard
 #   Vision:    NO
 #   Default ctx: 262144
-#   Status:    🧪 EVAL ONLY — single-card APEX compact long-context lane
+#   Status:    🗑️ Deprecated
+#   Caveats:   Superseded by later quants; no production role remains. Weights
+#              reclaimed. ⚠️ NOTE both mudler-apex-compact and
+#              mudler-apex-quality resolve to the SAME path
+#              (qwen3.6-35b-a3b-gguf/mudler-apex-mtp) — neither is
+#              independently deletable, which is why all four slugs retire
+#              together. Still launchable by name with --force, and visible in
+#              c3 via --all.
 #   Best for:  Great single-card APEX throughput while still stretching the fit
 #              path toward the largest stable context that stayed fast here.
 # ---------------------------------------------------------------------------
