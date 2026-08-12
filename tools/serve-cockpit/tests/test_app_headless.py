@@ -1237,6 +1237,11 @@ class TestCatalogWired:
             assert pane._downloaded_only is False
             assert "v/absent" in {e.slug for e in pane._filtered_entries()}
             assert pane._absent_hidden_count() == 0
+            # ...but the count is still reported while OFF, because that is what
+            # makes the toggle discoverable: the hint renders in BOTH states, the
+            # same way [h] is only findable via its own always-on hint.  An OFF
+            # [w] with nothing on screen cannot be learned about at all.
+            assert pane._absent_count_in_pool() == 1   # v/absent (dep-absent is [h]-hidden)
 
             # ON — only the known-missing row goes.
             pane.toggle_downloaded_only()
@@ -1259,6 +1264,8 @@ class TestCatalogWired:
             pane.toggle_deprecated()
             assert pane._downloaded_only is False
             assert len(pane._filtered_entries()) == 5   # dep-absent hidden by [h]
+            assert pane._absent_hidden_count() == 0     # hiding nothing again
+            assert pane._absent_count_in_pool() == 1    # ...but still advertised
 
     @pytest.mark.asyncio
     async def test_catalog_multiword_filter_is_and(self):

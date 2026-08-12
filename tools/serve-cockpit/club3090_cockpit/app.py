@@ -1249,12 +1249,21 @@ class CatalogPane(Container):
         # [w] gets its OWN hint, not a third bit in the [h] list: it is a
         # separate toggle, so folding it in would tell the user to press h to
         # reveal rows that only w can bring back (#963).
-        abs_n = self._absent_hidden_count()
+        #
+        # The hint renders in BOTH states, which is what makes the toggle
+        # discoverable at all — [h] gets this for free (it always has deprecated
+        # rows to report), but an OFF [w] with nothing on screen is invisible:
+        # there is no way to learn the filter exists without already knowing.
+        #   OFF → "+N not on disk — w"   (an invitation to narrow)
+        #   ON  → "downloaded only (+N hidden) — w"  (state + how to undo)
+        abs_n = self._absent_count_in_pool()
         if self._downloaded_only:
             dep_note += (
                 f"  ·  [dim]downloaded only (+{abs_n} not on disk hidden) — w[/dim]"
                 if abs_n else "  ·  [dim]downloaded only — w[/dim]"
             )
+        elif abs_n:
+            dep_note += f"  ·  [dim]+{abs_n} not on disk — w[/dim]"
         if self._filter or self._model_filter:
             tail = f"  ·  filter: {self._filter!r}" if self._filter else ""
             status_label.update(
@@ -1459,11 +1468,14 @@ class CatalogPane(Container):
         return (getattr(e, "weights_state", "") or "") == WEIGHTS_ABSENT
 
     def _absent_hidden_count(self) -> int:
-        """How many not-downloaded slugs [w] is currently hiding (0 when off).
-        Counted over the SAME pool the filter narrows — i.e. excluding rows
-        already hidden by [h] — so the two hints never double-count one row."""
-        if not self._downloaded_only:
-            return 0
+        """How many not-downloaded slugs [w] is currently HIDING (0 when off)."""
+        return self._absent_count_in_pool() if self._downloaded_only else 0
+
+    def _absent_count_in_pool(self) -> int:
+        """How many not-downloaded slugs are in the [h]-filtered pool, regardless
+        of whether [w] is on.  Counted over the SAME pool the filter narrows — i.e.
+        excluding rows already hidden by [h] — so the two hints never double-count
+        one row.  Drives the hint in BOTH states (see _render_rows)."""
         pool = (
             self._entries
             if self._show_deprecated
