@@ -53,6 +53,16 @@
 #                262K is a deliberate choice, not the model's ceiling.
 #              • Needs ~120 GB of HOST RAM (routed experts live in CPU memory).
 #              • Load takes several minutes (--no-mmap).
+#   Quality:   toolcall-15 12/15 · instructfollow-15 12/15 · structoutput-15 14/15
+#              · dataextract-15 13/15 · reasonmath-15 12/15 · bugfind-15 14/15
+#              · hermesagent-20 9/20 · cli-40 24/40
+#              = 110/150 reasoning-OFF (pass@3 121/150)
+#              Reasoning-ON leg: 115/150 (pass@3 125/150) at the default effort 0.9.
+#              ⚠️ Sampling = the MODEL's (temp 1.0 / top_p 1.0 / min_p 0.0), not canonical.
+#              ⚠️ Reasoning is +5 pass@1 / +4 pass@3 overall but NOT uniform: toolcall
+#                 12->11 (-2 pass@3) and hermesagent 9->7 pass@1 with pass@3 IDENTICAL
+#                 at 12/20. Tool-calling workloads: use reasoning_effort "none".
+#              (--full, packs v1.0.x, benchlocal-cli post-#131, repeat=1, 2026-08-12)
 #   Best for:  Long-context and agentic Inkling serving once the engine gate
 #              clears — sub-linear TTFT growth to 30K accumulated context.
 # ---------------------------------------------------------------------------
