@@ -72,13 +72,37 @@
 #   0 = no dense prefix on this model (all 43 layers are MoE). Models WITH one
 #   (Laguna=1, Inkling=2) must set it: a residency rule naming a dense layer
 #   silently matches nothing, so fewer layers land resident than we granted.
-# CPU-Offload-GPU-Reserve-MiB: 18000
-#   Inputs for resolve_offload_residency(). RESERVE = this compose's true
-#   per-card engine cost (dense split + drafter half + compute buffers + KV).
-#   Sizing is additive from DETECTED FREE VRAM (#931 recalibration):
-#     fit = (free − reserve − first-card-extra − margin) / bundle
-#   This value survived the re-derivation unchanged (grants 1/card on 2x24 GB,
-#   the field-validated count). No ×0.55 is applied any more.
+# CPU-Offload-GPU-Reserve-MiB: 11432
+# CPU-Offload-Draft-Reserve-MiB: 8154
+# CPU-Offload-First-Card-Extra-MiB: 444
+#   Inputs for resolve_offload_residency(). Sizing is additive from DETECTED
+#   FREE VRAM (#931 recalibration):
+#     fit = (free − reserve − draft-reserve − first-card-extra − margin) / bundle
+#
+#   ⚠️ RECALIBRATED 2026-08-12 FROM MEASUREMENT (#953). The previous single
+#   constant was 18000, documented as covering "dense split + drafter half +
+#   compute buffers + KV". It could not: the drafter loads AFTER the launcher
+#   resolves residency, so free VRAM is read before ~8-9 GB of draft model
+#   allocates. Measured on 2x3090 (this compose, same session, only residency
+#   varied):
+#     grant 0+0 (forced): 20030 / 19586 MiB used   <- TRUE per-card cost
+#     grant 1+1 (as shipped): 23280 / 22838 used, 845 / 1287 free
+#     delta 3250 / 3252 vs a 3264 MiB bundle -> the bundles DID place
+#   So the grant was honoured, and the failure was quieter than "experts stay on
+#   CPU": card 0 ended at 845 MiB free, BELOW the 1024 MiB margin the model is
+#   meant to guarantee and below the 896 MiB that survived a 188K prefill ladder
+#   in #931 (556 MiB died at ~90K). The sizer was silently spending its own
+#   safety margin, which is a deep-prefill OOM risk on exactly the config whose
+#   header already documents a 262K prefill OOM.
+#
+#   The three terms now mean what they say and reproduce the measurement:
+#     reserve      11432  drafter-FREE per-card base (dense split + buffers + KV)
+#     draft        8154   the smaller drafter half (card 1)
+#     first-card   444    card 0's measured excess (20030 − 19586)
+#   -> grants 0 on card 0, 1 on card 1 on 2x24 GB. Asymmetric because card 1
+#      carries the smaller drafter half and takes no first-card extra; a fix that
+#      simply zeroed residency whenever a drafter is present would leave card 1's
+#      bundle on the table.
 # ===========================================================================
 
 services:

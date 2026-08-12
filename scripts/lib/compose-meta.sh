@@ -371,9 +371,22 @@ compose_hw_model_status() {
 #    worth +19% decode — #931). The overhead it absorbed is ADDITIVE (dense split
 #    + drafter half + compute buffers + KV don't scale with card size), so the
 #    model now subtracts it explicitly:
-#      reserve           per-compose header (true per-card engine cost)
+#      reserve           per-compose header (true per-card engine cost, DRAFTER-FREE)
+#      draft_reserve     per-card VRAM the DRAFT MODEL will take (default 0 — see below)
 #      first_card_extra  card 0 carries the larger drafter half + compute buffer
 #                        (measured 660 MiB on 2x5090; default 768)
+#
+#    ⚠️ WHY draft_reserve IS ITS OWN TERM (#953). `reserve` is a STATIC per-compose
+#    constant, and it used to be documented as already covering the "drafter half".
+#    It cannot: the drafter loads AFTER this resolves, so FREE_i is read before the
+#    draft model allocates, and a static number set before that cost was measured
+#    silently understates it. On DeepSeek-Flash-Q8 (2x24 GB) the constant said
+#    18000 MiB while the true per-card cost measured 19586-20028 — which is exactly
+#    enough to flip fit from 0 to 1 on card 0. The sizer then granted a bundle the
+#    engine could not place, and the experts silently stayed on CPU while the RAM
+#    gate priced a bundle that never landed.
+#    Defaults to 0, so every compose WITHOUT the header is bit-identical to before
+#    and the #931 calibration points keep reproducing untouched.
 #      margin            deep-prefill spike headroom. #931 brackets it: a card at
 #                        556 MiB free DIED on a ~90K prefill; 896 MiB survived a
 #                        full 188K NIAH ladder. Default 1024 (RESIDENCY_MARGIN_MB).
@@ -485,6 +498,14 @@ resolve_offload_residency() {
   [[ "$first" =~ ^[0-9]+$ ]] || first=0
   local extra; extra="$(compose_meta_get "$compose_file" cpu-offload-first-card-extra-mib || true)"
   [[ "$extra" =~ ^[0-9]+$ ]] || extra=768
+  # Per-card DRAFT-MODEL VRAM (#953). 0 when absent => no behaviour change for any
+  # compose that does not declare it. Overridable for A/B via RESIDENCY_DRAFT_MB.
+  local draft; draft="$(compose_meta_get "$compose_file" cpu-offload-draft-reserve-mib || true)"
+  [[ "$draft" =~ ^[0-9]+$ ]] || draft=0
+  # ⚠️ plain `if`, NOT `[[ ]] && assign`: the latter returns non-zero when the
+  # condition is false, and every caller runs under `set -e` — that aborts the
+  # launcher mid-resolve. Same trap documented in preflight.sh.
+  if [[ "${RESIDENCY_DRAFT_MB:-}" =~ ^[0-9]+$ ]]; then draft="$RESIDENCY_DRAFT_MB"; fi
 
   local -a frees=()
   while read -r m; do [[ "$m" =~ ^[0-9]+$ ]] && frees+=("$m"); done \
@@ -495,7 +516,7 @@ resolve_offload_residency() {
   local per_card=$(( layers / n ))
   local i fit rule var applied="" res_i
   for (( i=0; i<n; i++ )); do
-    res_i=$(( reserve + (i == 0 ? extra : 0) ))
+    res_i=$(( reserve + draft + (i == 0 ? extra : 0) ))
     # An explicit OT_G<i> from the user/env ALWAYS WINS and is never clobbered —
     # same contract as THREADS (resolve_offload_threads). This is the supported
     # way to pin more residency than the sizer grants (the grant is deliberately
@@ -571,6 +592,14 @@ offload_residency_grant_mib() {
   [[ "$first" =~ ^[0-9]+$ ]] || first=0
   local extra; extra="$(compose_meta_get "$compose_file" cpu-offload-first-card-extra-mib || true)"
   [[ "$extra" =~ ^[0-9]+$ ]] || extra=768
+  # Per-card DRAFT-MODEL VRAM (#953). 0 when absent => no behaviour change for any
+  # compose that does not declare it. Overridable for A/B via RESIDENCY_DRAFT_MB.
+  local draft; draft="$(compose_meta_get "$compose_file" cpu-offload-draft-reserve-mib || true)"
+  [[ "$draft" =~ ^[0-9]+$ ]] || draft=0
+  # ⚠️ plain `if`, NOT `[[ ]] && assign`: the latter returns non-zero when the
+  # condition is false, and every caller runs under `set -e` — that aborts the
+  # launcher mid-resolve. Same trap documented in preflight.sh.
+  if [[ "${RESIDENCY_DRAFT_MB:-}" =~ ^[0-9]+$ ]]; then draft="$RESIDENCY_DRAFT_MB"; fi
 
   local -a frees=()
   local m
@@ -583,7 +612,7 @@ offload_residency_grant_mib() {
   local i fit rule total_mib=0 var ucount res_i
   local -a lays
   for (( i=0; i<n; i++ )); do
-    res_i=$(( reserve + (i == 0 ? extra : 0) ))
+    res_i=$(( reserve + draft + (i == 0 ? extra : 0) ))
     # A user-set OT_G<i> is what will ACTUALLY be pinned (the injector never
     # clobbers it) — price ITS layer count, not the auto fit, so the gate and
     # the boot describe the same config. First hit in the wild: a 123 GB box
