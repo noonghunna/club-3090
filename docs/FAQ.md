@@ -307,7 +307,7 @@ Two takeaways: **(1) K is the sensitive cache** — keep K higher and starve V (
 **On this stack:** the llama.cpp / ik_llama composes default to `q4_0` (max context — the per-token loss is small *on average*, but meaningful on the tail for structured output). If you serve **coding / agent / tool-calling** traffic, bump quality with the `KV_TYPE` override (shell env wins over `.env`):
 
 ```bash
-KV_TYPE=q5_0 bash scripts/switch.sh llamacpp/mtp     # ~93% tail vs q4_0's ~89%, at some context cost
+KV_TYPE=q5_0 bash scripts/switch.sh --force llamacpp/mtp     # ~93% tail vs q4_0's ~89%, at some context cost
 ```
 
 On vLLM, `turboquant_3bit_nc` is the long-context default; where context allows, prefer `fp8_e5m2` (≈ q8-tier tail) via `KV_CACHE_DTYPE`.

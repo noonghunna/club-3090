@@ -57,7 +57,7 @@ Honest read on when this repo is the right answer and when it isn't. We have a r
 | Model file location | wherever you download | `models-cache/` by default, override via `MODEL_DIR` |
 | Flags | full control | full control (compose forwards every llama-server flag) |
 | Vision setup | manual mmproj path | mmproj wired into compose |
-| Recipe sharing | "here are my exact flags" → comment with config | `bash scripts/switch.sh llamacpp/default` |
+| Recipe sharing | "here are my exact flags" → comment with config | `bash scripts/switch.sh vllm/minimal` (`llamacpp/default` retired 2026-08-12) |
 
 **Pick raw llama.cpp if:** you're already a llama.cpp committer, you need a specific PR branch, you don't trust Docker, or your platform isn't supported by the official image.
 

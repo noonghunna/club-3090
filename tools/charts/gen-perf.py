@@ -3,6 +3,10 @@
 Outputs (in docs/img/):
   performance.svg + .png        — all 10 configs (single + dual), used by top README
   performance-single.svg + .png — 6 single-card configs, used by docs/SINGLE_CARD.md
+
+  † = slug RETIRED 2026-08-12 (needs --force). The measurement is real and kept as
+  the historical record; the marker stops the chart from reading as a current
+  recommendation. See docs/SINGLE_CARD.md for what actually runs today.
   performance-dual.svg + .png   — 4 dual-card configs, used by docs/DUAL_CARD.md
 
 Source data: results/v0.20-migration/*.summary (post-migration n=5 benches).
@@ -42,9 +46,9 @@ configs_all = [
     ("tools-text",          53.32,  69.66, "single-vllm",       "75K fp8 IDE-agent"),
     ("bounded-thinking",    49.77,  65.80, "single-vllm",       "180K structured-CoT"),
     ("minimal",             32.41,  32.56, "single-vllm",       "no spec-dec"),
-    ("llamacpp/mtp",        51.28,  59.72, "single-llama",      "131K Q4_K_M + MTP"),
-    ("llamacpp/mtp-vision", 56.52,  66.17, "single-llama",      "49K Q4_K_M + MTP + vision"),
-    ("llamacpp/default",    21.22,  20.79, "single-llama",      "262K Q3_K_XL + vision"),
+    ("llamacpp/mtp †",      51.28,  59.72, "single-llama",      "131K Q4_K_M + MTP"),
+    ("llamacpp/mtp-vision †", 56.52, 66.17, "single-llama",     "49K Q4_K_M + MTP + vision"),
+    ("llamacpp/default †",  21.22,  20.79, "single-llama",      "262K Q3_K_XL + vision"),
     ("llama.cpp+ngram",     22.04,  26.11, "single-llama",      "32K Q4_K_M + ngram-mod"),
     ("Luce DFlash*",        40.00,  71.65, "single-luce-watch", "65K TQ3, greedy"),
     ("dual.yml",            69.05,  88.58, "dual-vllm",         "262K + vision"),
@@ -153,6 +157,11 @@ def make_chart(configs, out_stem, title_subject, figsize):
     if any(g == "single-luce-watch" for g in groups):
         substrate_parts.append("Luce DFlash dflash@f12a87c (greedy only)")
     substrate_parts.append("RTX 3090 sm_86, PCIe-only, 230W")
+    # † marks slugs RETIRED 2026-08-12 (launchable with --force). Folded into the
+    # existing substrate line rather than added as another text row: extra rows
+    # re-flow tight_layout and squeeze the axes until the group headers collide.
+    if any("†" in str(l) for l in labels):
+        substrate_parts.append("† = retired 2026-08-12, --force to launch")
     ax.text(0.5, legend_y - 0.02,
             "Substrate: " + "  •  ".join(substrate_parts),
             transform=ax.transAxes, ha="center", va="top", fontsize=7.5, color="#555", style="italic")

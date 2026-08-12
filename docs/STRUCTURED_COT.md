@@ -142,7 +142,8 @@ llama.cpp has a sibling structured-CoT compose for users who want the GGUF/MTP p
 
 ```bash
 cd /path/to/club-3090
-bash scripts/switch.sh llamacpp/bounded-thinking
+# ⚠️ RETIRED 2026-08-12 — needs --force (hidden from --list, no longer a recommended path)
+bash scripts/switch.sh --force llamacpp/bounded-thinking
 # Or directly:
 cd models/qwen3.6-27b/llama-cpp/compose
 docker compose -f single/autoround-int4/bounded-thinking.yml up -d

@@ -1,26 +1,29 @@
 # ik_llama.cpp — the advanced-quant engine
 
-> ## ⚠️⚠️ ENGINE RETIREMENT NOTICE — 2026-08-12: no FUNCTIONAL ik-llama slug remains
+> ## 📜 Status: no functional ik-llama slug remains (2026-08-12)
 >
-> `ik-llama/iq4ks-mtp` — this engine's last functional slug — was **retired 2026-08-12**, following
-> `iq4ks-mtp-vision` and `iq4ks-two-stage` earlier the same day. The remaining ik-llama slugs
-> (`ornith9b-single`, `ornith35b-dual`) are `experimental`, i.e. also non-functional.
+> **This page is now a reference document, not a recommendation.**
 >
-> Consequently **`ik-llama` was removed from every `ENGINE_PREFERENCE` walk** — it can no longer
-> resolve a curated default on any topology. Same precedent as the beellama retirement (2026-07-27).
+> `ik-llama/iq4ks-mtp` — the engine's last functional slug — was retired 2026-08-12, following `iq4ks-mtp-vision` and `iq4ks-two-stage` earlier the same day, when the single-card qwen surface consolidated onto vLLM. The remaining slugs (`ornith9b-single`, `ornith35b-dual`) are `experimental`, i.e. also non-functional.
 >
-> Every ik-llama slug stays **launchable by name with `--force`** and visible in c3 via `--all`; the
-> engine profile and image pin are untouched. This is a removal from *automatic recommendation*, not
-> a deletion — and it reverses the moment a functional ik-llama slug ships.
+> Consequently **`ik-llama` was removed from every `ENGINE_PREFERENCE` walk** — it can no longer resolve a curated default on any topology. Same treatment as the beellama retirement (2026-07-27).
 >
-> **The performance findings below remain accurate and are deliberately preserved** — in particular
-> that IQ4_KS measured ~18–20% faster than `llamacpp/mtp` at matched 370 W. The engine was not retired
-> for being slow; its qwen slugs were retired when the single-card surface consolidated onto vLLM.
+> | | |
+> |---|---|
+> | Slugs still launchable | ✅ all of them, by name, with `--force` |
+> | Visible in c3 | ✅ via `--all` |
+> | Engine profile + image pin | ✅ untouched (`ghcr.io/ikawrakow/ik-llama-cpp`, digest-pinned `cu13-server`) |
+> | Resolves a default | ❌ removed from all three walks |
+> | `ik-llama/default` | ❌ now errors — the token also left `engine_set()` |
+>
+> ⭐ **The engine was not retired for being slow, and the numbers below are not deprecated.** IQ4_KS measured **~18–20% faster** than `llamacpp/mtp` at matched 370 W, quality-tied, ~0.5–0.8 GB leaner — verified by a power-cap-controlled A/B after an earlier "tie" result was traced to a wrong-engine measurement. That finding stands and is the reason this page is kept rather than archived. Its qwen slugs went when the *catalog surface* consolidated, which is a different decision from a performance verdict.
+>
+> **Reversal is cheap:** ship one functional ik-llama slug and it re-enters the walks. Everything below stays accurate for anyone running these configs via `--force`.
 
 
 **Role on this stack:** the engine you reach for when you want **newer, higher-quality-per-bit quants** than mainline llama.cpp ships — specifically the **IQK imatrix family** (`IQ4_KS`, `IQ5_KS`, …) that exists *only* in this fork. It's a llama.cpp fork (ikawrakow), so it inherits llama.cpp's cliff-immune memory model and broad hardware support, then adds a co-designed quant + kernel stack on top.
 
-> **In one line:** llama.cpp's robustness + fork-exclusive IQK quants + fused CUDA kernels → **MTP, clean to 262K on one card, quality on par with `llamacpp/mtp`** (8-pack 103 vs 102), at a **~0.5–0.8 GB leaner VRAM footprint**. It's also **~18–20% faster** than `llamacpp/mtp` on decode TPS at matched 370 W (~60 narr / ~69 code vs ~50 / ~58 on a 3090) — so it's the faster *and* leaner single-card path. The trade is a second engine to maintain + the IQK quant. Full matched-power write-up: [discussions/184](https://github.com/noonghunna/club-3090/discussions/184).
+> **In one line** (as measured — see the status box above for what is currently launchable): llama.cpp's robustness + fork-exclusive IQK quants + fused CUDA kernels → **MTP, clean to 262K on one card, quality on par with `llamacpp/mtp`** (8-pack 103 vs 102), at a **~0.5–0.8 GB leaner VRAM footprint**. It's also **~18–20% faster** than `llamacpp/mtp` on decode TPS at matched 370 W (~60 narr / ~69 code vs ~50 / ~58 on a 3090) — so it's the faster *and* leaner single-card path. The trade is a second engine to maintain + the IQK quant. Full matched-power write-up: [discussions/184](https://github.com/noonghunna/club-3090/discussions/184).
 
 For *what the quants actually are* and how IQK compares to k-quants / i-quants / AWQ, see **[../QUANTIZATION.md](../QUANTIZATION.md)**. For the cross-engine overview see **[../INFERENCE_ENGINES.md](../INFERENCE_ENGINES.md)**.
 
@@ -96,8 +99,8 @@ hf download ubergarm/Qwen3.6-27B-GGUF Qwen3.6-27B-MTP-IQ4_KS.gguf \
 
 Easiest — via the variant wizard / `switch.sh` (these two are registered):
 ```bash
-bash scripts/switch.sh ik-llama/iq4ks-mtp          # text, 262K
-bash scripts/switch.sh ik-llama/iq4ks-mtp-vision   # + mmproj (vision), 160K
+bash scripts/switch.sh --force ik-llama/iq4ks-mtp          # text, 262K
+bash scripts/switch.sh --force ik-llama/iq4ks-mtp-vision   # + mmproj (vision), 160K
 ```
 
 Or directly via compose:

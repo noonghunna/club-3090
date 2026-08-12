@@ -1,32 +1,36 @@
 # Single 3090 — what fits, how to run it
 
-> ## ⚠️⚠️ RETIREMENT NOTICE — 2026-08-12: this page's recommendations are out of date
->
-> **Every llama.cpp and ik-llama single-card `qwen3.6-27b` slug was retired on 2026-08-12** —
-> `llamacpp/default`, `llamacpp/mtp`, `llamacpp/mtp-vision`, `llamacpp/bounded-thinking` and
-> `ik-llama/iq4ks-mtp`. They remain launchable with `--force` and visible in c3 via `--all`, but they
-> are **no longer recommended, no longer in `switch.sh --list`, and no longer resolvable as a default**.
->
-> **The only FUNCTIONAL single-card qwen3.6-27b path is now `vllm/minimal`.** ⚠️ That is a genuine
-> capability drop, not a like-for-like swap:
->
-> | | retired path | `vllm/minimal` |
-> |---|---|---|
-> | max ctx | **200K** | **32K** |
-> | vision | ✅ `llamacpp/mtp-vision` @150K | ❌ none |
-> | decode | ~60 / ~72 TPS (ik) · ~50 / ~58 (llamacpp) | ~32 / ~33 TPS |
->
-> `qwen3.6-27b` was also removed from `RECOMMENDED_DEFAULT_MODELS`, so a bare `launch.sh` no longer
-> auto-selects it on a single card.
->
-> **Everything below this banner still describes the retired configs.** The measurements are real and
-> are kept as the historical record — treat the *recommendations* as superseded, not the numbers.
-> The deeper rewrite of this page is tracked separately.
-
-
 You have **one RTX 3090 (24 GB VRAM)**. This page is the front door for picking a config and knowing what to expect. The model-specific deep dives (quants, Genesis patches, engine internals) live elsewhere — links at the bottom.
 
 > **Model not in the configs below / want any HF safetensors repo?** → [`docs/PULL.md`](PULL.md): `scripts/pull.sh` evaluates any model against the KV math (honest, no download) and boots it if it passes. The curated configs on this page are the measured path; both work.
+
+## What actually runs on one 3090 today
+
+**Restructured 2026-08-12.** Every llama.cpp and ik-llama single-card slug was retired that day, and `ik-llama` left every recommendation walk. Those configs are still launchable with `--force` and their measurements are preserved further down — but they are no longer what this page recommends.
+
+On a **single RTX 3090 (sm 8.6)** the functional catalog is now three slugs, all vLLM:
+
+| Model | Slug | Max ctx | Vision | Status |
+|---|---|--:|---|---|
+| **Gemma-4-12B** ⭐ long-context pick | `vllm/gemma-12b-single-int8-mtp` | **256K** | multimodal arch, served text-only | ⚠️ caveats |
+| **Gemma-4-26B-A4B** | `vllm/gemma-26ba4b-single` | **176K** | off | ⚠️ caveats |
+| **Qwen3.6-27B** | `vllm/minimal` | **32K** | ❌ none | ✅ production |
+
+⭐ **If you have one 3090 and need long context, you no longer run Qwen — you run Gemma-4-12B.** That is the single biggest change on this page. Qwen3.6-27B's single-card ceiling went from 200K to **32K**, and its vision path is gone.
+
+⚠️ **Two NVFP4 single-card slugs exist and are NOT usable here.** `vllm/qwen-27b-single-nvfp4` (64K) and `vllm/qwen-35b-a3b-single-nvfp4` (128K) both declare `required_sm=9.0`; a 3090 is **sm 8.6**, so the launcher and c3 correctly treat them as hardware-incompatible. They are for Hopper/Blackwell single-card rigs, not this page's hardware.
+
+### ⛔ The Cliff-2 escape is gone
+
+This matters more than the context numbers. Single-card **vLLM is unsafe for accumulating-context agent traffic** — Cliff 2b, validated 2026-05-03, hits at **~21–26K accumulated tokens** across 4–5 turns. The previous guidance routed that workload to `llamacpp/default` precisely because llama.cpp has no such cliff.
+
+**`vllm/minimal` is single-card vLLM.** So on one card there is now **no cliff-immune path for Qwen3.6-27B**. If your workload is hermes / openhands / OpenCode / Cline / Roo / OpenClaw / Aider / Cursor with retained context, the honest answers are:
+
+1. **Two cards** — `vllm/dual` (TP=2 escapes the cliff). See [DUAL_CARD.md](DUAL_CARD.md).
+2. **A different model** — the Gemma single-card slugs above are not Qwen3-Next and do not carry the DeltaNet GDN cliff.
+3. **`--force` a retired llama.cpp slug** — `bash scripts/switch.sh --force llamacpp/default`. It still works and is still cliff-immune; it is simply no longer recommended or maintained as a default.
+
+That third option is a real escape hatch, not a formality — but it is unsupported, so it is listed last.
 
 ---
 
@@ -41,7 +45,9 @@ Symptoms users report: "performance degrades after ~20 turns", "throughput drops
 | Have | Run | Why it works |
 |---|---|---|
 | 2× 3090 (any topology, NVLink optional) | `bash scripts/switch.sh vllm/dual` | TP=2 splits the failing kernel's working set across both cards. Validated PASS at v2 continuous soak; 111+ TPS p50 decode. |
-| 1× 3090 only | `bash scripts/switch.sh llamacpp/default` | Different engine, different GDN kernel, different memory allocator. Cliff doesn't exist on this path. 200K context, ~51 / 60 TPS (Q4_K_M + MTP) — slower decode but cliff-immune. |
+| 1× 3090 only — **a different model** | `bash scripts/switch.sh vllm/gemma-12b-single-int8-mtp` | Gemma-4 is not Qwen3-Next: no DeltaNet GDN kernel, so this cliff does not exist on it. **256K** single-card. The straightforward answer if the workload does not specifically need Qwen. |
+| 1× 3090 only — **must be Qwen** | `bash scripts/switch.sh --force llamacpp/default` | ⚠️ **RETIRED 2026-08-12** — needs `--force`, is hidden from `--list`, and is no longer maintained as a default. It still works and is still cliff-immune (different engine, different GDN kernel, different allocator; 200K, ~51 / 60 TPS). Listed because it is a genuine escape hatch, not because it is supported. |
+| 1× 3090 only — supported Qwen path | `bash scripts/switch.sh vllm/minimal` | ⛔ **Does NOT escape the cliff** — this IS single-card vLLM. 32K ctx, no vision. Safe only for workloads that do not accumulate context. |
 
 Neither acceptable? Two single-card vLLM mitigations: (a) cap session context at <15K via app-layer rolling summarization, OR (b) accept periodic engine restarts. **Mem-util tuning, MTP-off, and `max-num-batched-tokens` adjustments do not close it** — all tested. The cliff is in `chunk_gated_delta_rule_fwd`'s simultaneous live-tensor set (~500 MiB at T=4128) which doesn't fit alongside accumulated KV + model + workspace on a 24 GB card.
 
@@ -53,13 +59,13 @@ For workloads that **don't** accumulate context across turns (single-shot RAG, s
 
 ---
 
-## TL;DR — pick by workload
+## 📜 Historical — the retired single-card lineup (measurements preserved)
 
 > ⛔ **The four vLLM rows below are struck through — they're pinned to a purged vLLM nightly ([#167](https://github.com/noonghunna/club-3090/issues/167)) and won't boot until the next Genesis-compatible pin lands.** Until then, use the **llama.cpp / ik_llama** rows — they work today and are cliff-immune. (`minimal.yml` is Genesis-free and *can* still run on a current image via `VLLM_IMAGE=vllm/vllm-openai:latest`.)
 
-> 💡 **Simplest vs fastest (single-card):** `llamacpp/default` (mainline Q4_K_M, clean upstream image) is the no-friction pick; **`ik-llama/iq4ks-mtp` is ~18–20% faster + leanest VRAM** (separate fork + IQK quant) for max single-card speed. Both are cliff-immune — see [#184](https://github.com/noonghunna/club-3090/discussions/184).
+> 🎯 **Don't want to choose?** `bash scripts/switch.sh qwen3.6-27b/default` resolves the single-card default automatically — since 2026-08-12 that is **`vllm/minimal`** (`ENGINE_PREFERENCE[single]` is now `llamacpp > vllm`; `ik-llama` was removed from every walk when its last functional slug was retired, and llama.cpp has no functional single-card qwen slug left, so the walk falls through to vLLM). ⚠️ `qwen3.6-27b` was also dropped from `RECOMMENDED_DEFAULT_MODELS`, so a bare `bash scripts/launch.sh` no longer auto-selects it on one card. Pin your own with `--set-default <slug>`; see the [FAQ](FAQ.md#how-do-i-set-my-own-default-config).
 >
-> 🎯 **Don't want to choose?** `bash scripts/switch.sh qwen3.6-27b/default` (or a bare `bash scripts/launch.sh`) resolves the **blessed single-card default automatically** — on one 3090 that's **`ik-llama/iq4ks-mtp` (fastest + leanest)**, with **`llamacpp/default` as the cliff-immune alternative** (this is the `single` order in `ENGINE_PREFERENCE`: `ik-llama > llama.cpp > vllm`; `beellama` was retired 2026-07-27 — Anbeeld #98 won't-fix, all its slugs deprecated). Pin your own with `--set-default <slug>`; see the [FAQ](FAQ.md#how-do-i-set-my-own-default-config).
+> 📜 **The table below is a historical record.** Every row in it is either blocked (#167) or retired (2026-08-12). The numbers were really measured and are kept for the audit trail — but for what to actually run, use the three-slug table at the top of this page.
 
 | What you're doing | Compose | Max ctx | Narr / Code TPS | VRAM (24 GB / card) |
 |---|---|---|---|---|
@@ -124,7 +130,9 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
 ## Pick a config
 
-> ⛔ **The three vLLM configs immediately below — `long-vision`, `long-text`, `long-text-no-mtp` — are blocked on [#167](https://github.com/noonghunna/club-3090/issues/167)** and won't boot until the next Genesis-compatible pin lands. **Use the llama.cpp / ik_llama configs further down** (they work today and are cliff-immune); the vLLM entries are kept here for when the pin returns.
+> 📜 **This whole section is historical as of 2026-08-12.** The three vLLM configs below are blocked on [#167](https://github.com/noonghunna/club-3090/issues/167); the llama.cpp and ik_llama configs below them were **retired** and now need `--force`. Nothing here is a current recommendation.
+>
+> **For what to run today, see [What actually runs on one 3090 today](#what-actually-runs-on-one-3090-today) at the top.** The per-config detail below is kept because the measurements, VRAM figures and tuning rationale are real and still inform anyone using these configs via `--force`.
 
 ### ⛔ Long ctx + vision — `long-vision.yml` _(vLLM — blocked #167)_
 
@@ -144,41 +152,41 @@ For the cross-card TP=2 picture, see [`DUAL_CARD.md`](DUAL_CARD.md).
 
 200K + no vision + TQ3 KV + DS layout + MTP **off** + same v7.69 patch stack + local vllm#35975 backport at mem-util 0.95. **60K single-prompt PASS @ 537s wall** (HTTP 200, recall correct). Decode is slower without spec-decode (~33 narr / ~40 code TPS estimated; canonical bench pending). Use only when steady-state TPS isn't the priority and you need the extra KV headroom.
 
-### Bulletproof / no cliffs — `llamacpp/default` ⭐
+### 📜 RETIRED — Bulletproof / no cliffs — `llamacpp/default` _(needs `--force`)_
 
 **Workload:** production service for unpredictable users. Inputs that might be 5K or might be 200K. Tool returns that might be 1K or might be 50K. Anywhere "predictable behavior" beats "peak TPS."
 
-`bash scripts/switch.sh llamacpp/default` (alias of `llamacpp/mtp`, collapsed 2026-05-22). Q4_K_M MTP GGUF (`unsloth/Qwen3.6-27B-MTP-GGUF`) + q4_0 KV + MTP `n=2` at **200K** (max-safe — fills cleanly with ~1.1 GB margin; 262K *boots* but walls ~125K, see [`docs/CLIFFS.md`](CLIFFS.md)). No vision — use `llamacpp/mtp-vision` for multimodal. Different attention library entirely (ggml-cuda, not FA2) → no Cliff 1 mechanism, no Cliff 2 mechanism. **~52 / 61 TPS** — slower than vLLM dual but cliff-immune. Quant family validated by [Benjamin Marie's Kaitchup eval](https://kaitchup.substack.com/p/summary-of-qwen36-gguf-evals-updating).
+`bash scripts/switch.sh --force llamacpp/default` (alias of `llamacpp/mtp`, collapsed 2026-05-22). Q4_K_M MTP GGUF (`unsloth/Qwen3.6-27B-MTP-GGUF`) + q4_0 KV + MTP `n=2` at **200K** (max-safe — fills cleanly with ~1.1 GB margin; 262K *boots* but walls ~125K, see [`docs/CLIFFS.md`](CLIFFS.md)). No vision — use `llamacpp/mtp-vision` for multimodal. Different attention library entirely (ggml-cuda, not FA2) → no Cliff 1 mechanism, no Cliff 2 mechanism. **~52 / 61 TPS** — slower than vLLM dual but cliff-immune. Quant family validated by [Benjamin Marie's Kaitchup eval](https://kaitchup.substack.com/p/summary-of-qwen36-gguf-evals-updating).
 
-### llama.cpp + MTP, fast + long ctx — `llamacpp/mtp` ⭐
+### 📜 RETIRED — llama.cpp + MTP, fast + long ctx — `llamacpp/mtp` _(needs `--force`)_
 
 **Workload:** IDE agents (opencode, Cline), Hermes, multi-turn agentic. The single-card sweet spot for "fast enough + plenty of context + bulletproof."
 
-`bash scripts/switch.sh llamacpp/mtp`. Q4_K_M MTP-enabled GGUF (`unsloth/Qwen3.6-27B-MTP-GGUF`) + q4_0 KV + MTP `n=2` + `-ub 1024`. Mainline llama.cpp build 9235 (PR #22673 MTP merged). **~51 narr / ~60 code TPS** — ~2.5× faster than `llamacpp/default`, only marginally slower than vLLM single-card paths *and* without the cliffs. **Quality 102/150 (68%) on the 8-pack matrix beats every Qwen vLLM dual config in [#119](https://github.com/noonghunna/club-3090/discussions/119)**; **aider-polyglot 17/30 exactly matches Qwen vLLM bf16 dual on half the hardware**. **Verify-stress 7/7** including 60K + 91K needle recall — the Cliff 2 narrative is **config-driven, not architectural**: at this config the model walks past 91K cleanly on a single 3090. No vision (mmproj cost trades against KV pool); for multimodal, use `llamacpp/mtp-vision` below.
+`bash scripts/switch.sh --force llamacpp/mtp`. Q4_K_M MTP-enabled GGUF (`unsloth/Qwen3.6-27B-MTP-GGUF`) + q4_0 KV + MTP `n=2` + `-ub 1024`. Mainline llama.cpp build 9235 (PR #22673 MTP merged). **~51 narr / ~60 code TPS** — ~2.5× faster than `llamacpp/default`, only marginally slower than vLLM single-card paths *and* without the cliffs. **Quality 102/150 (68%) on the 8-pack matrix beats every Qwen vLLM dual config in [#119](https://github.com/noonghunna/club-3090/discussions/119)**; **aider-polyglot 17/30 exactly matches Qwen vLLM bf16 dual on half the hardware**. **Verify-stress 7/7** including 60K + 91K needle recall — the Cliff 2 narrative is **config-driven, not architectural**: at this config the model walks past 91K cleanly on a single 3090. No vision (mmproj cost trades against KV pool); for multimodal, use `llamacpp/mtp-vision` below.
 
-### llama.cpp + MTP + vision — `llamacpp/mtp-vision`
+### 📜 RETIRED — llama.cpp + MTP + vision — `llamacpp/mtp-vision` _(needs `--force`; was the ONLY single-card vision path)_
 
 **Workload:** multimodal chat, screenshot-debugging, vision-aware code review, UI-screenshot agents. The first stack profile combining MTP + vision on a single 3090 (the older "strip mmproj when MTP" rule was obsolete on build 9235 — sweep-verified 2026-05-19).
 
-`bash scripts/switch.sh llamacpp/mtp-vision`. Same Q4_K_M MTP GGUF + q4_0 KV + MTP `n=2` + `-ub 1024`, **with `--mmproj mmproj-F16.gguf` mounted**. Ctx 49K is the **speed-optimal** default (vision overhead trades against KV pool). **~57 narr / ~66 code TPS** (text path), vision overhead paid once at image-encode, not per decoded token. Verify-stress 7/7 at this config.
+`bash scripts/switch.sh --force llamacpp/mtp-vision`. Same Q4_K_M MTP GGUF + q4_0 KV + MTP `n=2` + `-ub 1024`, **with `--mmproj mmproj-F16.gguf` mounted**. Ctx 49K is the **speed-optimal** default (vision overhead trades against KV pool). **~57 narr / ~66 code TPS** (text path), vision overhead paid once at image-encode, not per decoded token. Verify-stress 7/7 at this config.
 
 > **Need more context for agentic vision workloads?** Drop `-ub 1024 → 512` and you can push ctx to **192K** with full cliff coverage (verify-stress 7/7 incl. 91K needle), at the cost of ~10% TPS:
 > ```bash
-> UBATCH_SIZE=512 CTX_SIZE=196608 bash scripts/switch.sh llamacpp/mtp-vision
+> UBATCH_SIZE=512 CTX_SIZE=196608 bash scripts/switch.sh --force llamacpp/mtp-vision
 > ```
 > Sweep data + reasoning in [`models/qwen3.6-27b/llama-cpp/README.md`](../models/qwen3.6-27b/llama-cpp/README.md#speed-vs-context--pick-your-trade-off). Surfaced 2026-05-20 by @JensJN in [#170](https://github.com/noonghunna/club-3090/discussions/170).
 
-### ik_llama + IQ4_KS + MTP — `iq4ks-mtp.yml` ⭐
+### 📜 RETIRED — ik_llama + IQ4_KS + MTP — `iq4ks-mtp.yml` _(needs `--force`)_
 
 **Workload:** best quality-per-bit GGUF on a single 3090. Same cliff-immunity as llama.cpp (same ggml memory model), but with fork-exclusive IQK imatrix quants that beat mainline Q4_K_M on perplexity.
 
 ubergarm `Qwen3.6-27B-MTP-IQ4_KS.gguf` (IQK imatrix quant, built-in MTP head) + q4_0 KV + `-khad`/`-vhad` (Hadamard K+V cache transforms) + MTP `n=2` + `--merge-qkv` + `--parallel-tool-calls` (ik-exclusive). **200K context** (max-safe default; native max 262K) on one 3090. At matched 370 W it's **~18–20% faster than `llamacpp/mtp`** on TPS (~60 narr / ~69 code vs ~50 / ~58), quality-tied (8-pack 103 vs 102), and **~0.5–0.8 GB leaner** — the faster *and* leaner single-card path. (A 2026-05-22 "tie" was a wrong-engine measurement artifact — corrected 2026-05-23 via a power-cap-controlled A/B, [#184](https://github.com/noonghunna/club-3090/discussions/184).) Engine: `ghcr.io/ikawrakow/ik-llama-cpp` (digest-pinned `cu13-server` build). See [`docs/engines/IK_LLAMA.md`](engines/IK_LLAMA.md) for the full deep dive.
 
-### ik_llama + IQ4_KS + MTP + vision — `iq4ks-mtp-vision.yml`
+### 📜 RETIRED — ik_llama + IQ4_KS + MTP + vision — `iq4ks-mtp-vision.yml` _(needs `--force`)_
 
 Same as above with `--mmproj mmproj-F16.gguf` mounted for multimodal input. 160K context (vision tower trades against KV pool).
 
-### ik_llama + two-stage spec-dec — `iq4ks-two-stage.yml` ⭐
+### 📜 RETIRED — ik_llama + two-stage spec-dec — `iq4ks-two-stage.yml` _(needs `--force`)_
 
 **Workload:** code-heavy agentic workloads where context has repeated patterns (refactoring, test generation, boilerplate).
 
@@ -238,7 +246,7 @@ Track in [`docs/UPSTREAM.md`](UPSTREAM.md#luce-dflash-luce-orglucebox-hub).
 |---|---|---|
 | 4 concurrent streams at 262K + vision | KV pool too small for 4 × full ctx | TP=2 (see DUAL_CARD.md) |
 | Peak code TPS (>100 TPS on quicksort prompt) | DFlash N=5 needs head_size=256 + non-causal — vLLM head-dim split | TP=2 + DFlash |
-| Single-prompt >60K tokens on vLLM | Cliff 2 (DeltaNet GDN forward), no fix yet | TP=2 OR llama.cpp 200K (different engine) |
+| Single-prompt >60K tokens on Qwen3.6-27B | Cliff 2 (DeltaNet GDN forward), no fix yet | TP=2 (`vllm/dual`), OR a non-Qwen3-Next model (`vllm/gemma-12b-single-int8-mtp`, 256K), OR `--force llamacpp/default` (retired 2026-08-12, still cliff-immune) |
 
 ---
 
@@ -280,8 +288,8 @@ Each variant ships a **distinct default `container_name`** (`llamacpp/mtp` → `
 
 ```bash
 # text workhorse on :8020 + vision variant on :8030, side by side
-bash scripts/switch.sh llamacpp/mtp
-ESTATE_PORT=8030 bash scripts/switch.sh llamacpp/mtp-vision
+bash scripts/switch.sh --force llamacpp/mtp
+ESTATE_PORT=8030 bash scripts/switch.sh --force llamacpp/mtp-vision
 ```
 
 (Whether both fit depends on your VRAM envelope — two full-context single-card servers won't co-reside on one 24 GB card; drop `CTX_SIZE` on one, or use this across two cards.)
@@ -315,8 +323,15 @@ bash scripts/switch.sh --list              # show all variants
 
 ## Models supported on single 3090
 
-- **[Qwen3.6-27B](../models/qwen3.6-27b/)** — primary model. Quant choices, Genesis patches, engine internals all in the model directory.
-- More models coming. As they're added, this section will list which single-card configs each one supports.
+| Model | Single-card slug | Max ctx | Notes |
+|---|---|--:|---|
+| **[Gemma-4-12B](../models/gemma-4-12b/)** ⭐ | `vllm/gemma-12b-single-int8-mtp` | **256K** | The long-context single-card pick. Not Qwen3-Next → no GDN cliff. |
+| **[Gemma-4-26B-A4B](../models/gemma-4-26b-a4b/)** | `vllm/gemma-26ba4b-single` | 176K | Needs the vendored PR #40391 per-token-head-KV overlay. |
+| **[Qwen3.6-27B](../models/qwen3.6-27b/)** | `vllm/minimal` | 32K | ⚠️ 32K only, no vision, and single-card vLLM → Cliff 2b applies. Its 200K llama.cpp / ik-llama paths were retired 2026-08-12. |
+
+⚠️ **NVFP4 single-card slugs require `sm 9.0`** and are unusable on a 3090 (sm 8.6): `vllm/qwen-27b-single-nvfp4`, `vllm/qwen-35b-a3b-single-nvfp4`.
+
+Models with **no** functional single-card config: `qwen3.6-40b-deckard`, `tess-4-27b`, `deepseek-v4-flash-0731`, `inkling-small` (dual/multi only) — and `gemma-4-31b`, whose single-card default was removed 2026-05-31.
 
 ---
 
