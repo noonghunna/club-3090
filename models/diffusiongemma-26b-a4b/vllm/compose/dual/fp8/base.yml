@@ -8,9 +8,16 @@
 #   Vision:    no (text diffusion)
 #   Max ctx:   262144 (NIAH retrieval validated to ~250K)
 #   Genesis:   N/A — Genesis is Qwen3-Next-specific
-#   Status:    🧪 Experimental — runs on STOCK vllm/vllm-openai:v0.24.0 (arch native #45163) +
-#              3 vendored Ampere/TP fix-mounts; under active validation, eager-only.
-#              Launch needs --force (non-functional status).
+#   Status:    🗑️ Deprecated
+#   Caveats:   Retired 2026-08-12 (maintainer decision) — superseded, no
+#              production role. Was already 🧪 Experimental (hidden from --list,
+#              --force to launch), so no NEW user-visible restriction. Sole slug
+#              for diffusiongemma-26b-a4b and no DEFAULTS row, so nothing else
+#              moves. Its fp8 weights resolve to their OWN path
+#              (diffusiongemma-26b-a4b-it-fp8-dynamic, 25.3 GB) — the shared
+#              'fp8' variant NAME is not a shared path, so they are
+#              independently reclaimable.
+#              Still launchable by name with --force, and visible in c3 via --all.
 #   Quality:   8-pack 100/150 (67%) — toolcall 13/15 · instructfollow 13-15/15 ·
 #              structoutput 14/15 · dataextract 10/15 · reasonmath 11/15 ·
 #              bugfind 11/15 · hermesagent-20 14/20 (agentic tool-use works) ·

@@ -8,7 +8,19 @@
 #   Vision:    no
 #   Template:  native GGUF + --jinja + --reasoning on --reasoning-format deepseek
 #   Max ctx:   200000 default (@ -ub 512, same max-safe fill profile as mtp.yml)
-#   Status:    🧪 Experimental — new structured-CoT port; live grammar + MTP validation pending
+#   Status:    🗑️ Deprecated
+#   Caveats:   Retired 2026-08-12 (maintainer decision) — consolidating the
+#              single-card qwen3.6-27b surface onto vLLM. NOT a regression
+#              report: this config's measured results stand.
+#              ⚠️ This removes capability. With every llama.cpp + ik-llama
+#              single-card qwen slug retired, single-card qwen3.6-27b drops to
+#              vllm/minimal: 200K → 32K ctx, single-card vision (mtp-vision
+#              @150K) → none, ~60/72 → ~32/33 TPS. Both DEFAULTS rows
+#              (llamacpp/single, ik-llama/single) were REMOVED, not repointed —
+#              no functional sibling remains in either engine — and
+#              qwen3.6-27b left RECOMMENDED_DEFAULT_MODELS so a bare launch.sh
+#              no longer auto-lands single-card users on a debugging baseline.
+#              Still launchable by name with --force, and visible in c3 via --all.
 #   Engine-profile: llama-cpp-local
 #   Best for:  bounded-thinking coding/reasoning workloads on the llama.cpp
 #              engine that boots today. Client sends a per-request GBNF grammar.

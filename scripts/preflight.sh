@@ -265,8 +265,14 @@ _preflight_hardware_suggestions() {
     echo "[preflight]   - Single 24 GB card: no functional Gemma-4-31B single config (beellama retired 2026-07-27) — nearest: bash scripts/switch.sh vllm/gemma-12b-single-int8-mtp (12B), or run the 31B dual" >&2
     echo "[preflight]   - On 2x 24 GB cards, use:  bash scripts/switch.sh vllm/gemma-31b-dual" >&2
   fi
-  echo "[preflight]   - On a single 24 GB card, start with:  bash scripts/switch.sh beellama/dflash  (single-card default)" >&2
-  echo "[preflight]   - For maximum compatibility, use:  bash scripts/switch.sh llamacpp/default" >&2
+  # ⚠️ Both suggestions here were stale/dead and are repointed 2026-08-12:
+  #   - beellama/dflash: the beellama engine was RETIRED 2026-07-27 (all 10 slugs
+  #     deprecated) — this line had been advertising a --force-only slug as "the
+  #     single-card default" ever since. Pre-existing bug, fixed here.
+  #   - llamacpp/default: deprecated 2026-08-12 with every other llama.cpp +
+  #     ik-llama single-card qwen slug.
+  # vllm/minimal is now the only FUNCTIONAL single-card qwen path (32K, no vision).
+  echo "[preflight]   - On a single 24 GB card, start with:  bash scripts/switch.sh vllm/minimal  (single-card default; 32K ctx, no vision)" >&2
   echo "[preflight]   - Explicit bypass:  bash scripts/switch.sh --force ${variant:-<variant>}" >&2
 }
 

@@ -873,18 +873,24 @@ profile_filter_candidates() {
 suggest_default_variant() {
   local cards="${#CARD_INDICES[@]}"
   if [[ "$MODEL_NAME" == "qwen3.6-27b" ]]; then
+    # ⚠️ 2026-08-12: every llama.cpp + ik-llama single-card qwen slug is deprecated,
+    # so there is no functional llamacpp suggestion left to make here — suggesting
+    # one would hand the user a slug that needs --force. Fall through to vLLM.
     if [[ "$ENGINE" == "llamacpp" ]] || { ! model_has_engine "$MODEL_NAME" "vllm" && model_has_engine "$MODEL_NAME" "llamacpp"; }; then
-      echo "llamacpp/default"
+      echo "vllm/minimal"
     elif (( cards >= 4 )); then
       echo "vllm/dual4"
     elif (( cards >= 2 )); then
       echo "vllm/dual"
     else
-      # Single card: llamacpp/default is the recommended path — full 262K, cliff-immune,
-      # and no purged-nightly dependency. The old vllm/long-text suggestion is dead
-      # (#167 image purge + single-card Cliff 2b); vLLM single-card users can still pick
-      # vllm/tools-text explicitly.
-      echo "llamacpp/default"
+      # Single card: vllm/minimal, as of the 2026-08-12 retirement of every
+      # llama.cpp + ik-llama single-card qwen slug. ⚠️ This is a genuine downgrade
+      # from the llamacpp/default it replaces (32K vs 200K ctx, no vision, ~32 vs
+      # ~50 TPS) — it is the only FUNCTIONAL single-card qwen path left, not a
+      # like-for-like substitute. Revisit if a long-context single-card qwen slug
+      # returns. (Earlier history: the vllm/long-text suggestion died with the #167
+      # image purge + single-card Cliff 2b.)
+      echo "vllm/minimal"
     fi
   elif [[ "$MODEL_NAME" == "qwen3.6-40b-deckard" ]]; then
     # Deckard: only one compose (dual llama.cpp MTP). Dual-only (31 GB > 24 GB).

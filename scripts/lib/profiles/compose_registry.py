@@ -365,6 +365,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp.yml",
         default_port=8020,
         kvcalc_key="SKIP",
+        status="deprecated",
+        status_note="Retired 2026-08-12 (maintainer decision): consolidating the single-card qwen3.6-27b surface onto vLLM. NOT a regression report -- this slug's measured results stand. WARNING this retirement REMOVES capability: with all llama.cpp + ik-llama single-card qwen slugs gone, single-card qwen3.6-27b drops from 200K ctx (and 150K vision via llamacpp/mtp-vision) to vllm/minimal at 32K with NO vision, ~32/33 TPS vs ~60/72. Both DEFAULTS rows (llamacpp/single, ik-llama/single) are REMOVED, not repointed -- no functional sibling remains in either engine -- and qwen3.6-27b is dropped from RECOMMENDED_DEFAULT_MODELS so a bare launch.sh no longer auto-lands single-card users on a debugging baseline. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     "llamacpp/mtp": _entry(
         model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="fast-chat", chat_template="froggeric",
@@ -373,6 +375,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp.yml",
         default_port=8020,
         kvcalc_key="SKIP",
+        status="deprecated",
+        status_note="Retired 2026-08-12 (maintainer decision): consolidating the single-card qwen3.6-27b surface onto vLLM. NOT a regression report -- this slug's measured results stand. WARNING this retirement REMOVES capability: with all llama.cpp + ik-llama single-card qwen slugs gone, single-card qwen3.6-27b drops from 200K ctx (and 150K vision via llamacpp/mtp-vision) to vllm/minimal at 32K with NO vision, ~32/33 TPS vs ~60/72. Both DEFAULTS rows (llamacpp/single, ik-llama/single) are REMOVED, not repointed -- no functional sibling remains in either engine -- and qwen3.6-27b is dropped from RECOMMENDED_DEFAULT_MODELS so a bare launch.sh no longer auto-lands single-card users on a debugging baseline. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     "llamacpp/bounded-thinking": _entry(
         model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="tool-heavy",
@@ -381,8 +385,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/bounded-thinking.yml",
         default_port=8020,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="New structured-CoT port; live grammar + MTP validation pending.",
+        status="deprecated",
+        status_note="Retired 2026-08-12 (maintainer decision): consolidating the single-card qwen3.6-27b surface onto vLLM. NOT a regression report -- this slug's measured results stand. WARNING this retirement REMOVES capability: with all llama.cpp + ik-llama single-card qwen slugs gone, single-card qwen3.6-27b drops from 200K ctx (and 150K vision via llamacpp/mtp-vision) to vllm/minimal at 32K with NO vision, ~32/33 TPS vs ~60/72. Both DEFAULTS rows (llamacpp/single, ik-llama/single) are REMOVED, not repointed -- no functional sibling remains in either engine -- and qwen3.6-27b is dropped from RECOMMENDED_DEFAULT_MODELS so a bare launch.sh no longer auto-lands single-card users on a debugging baseline. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     "llamacpp/mtp-vision": _entry(
         model="qwen3.6-27b", weights_variant="unsloth-q4km", workload="vision-coding", chat_template="froggeric",
@@ -394,6 +398,8 @@ COMPOSE_REGISTRY = {
         weights_companions=("gguf_mmproj_f16",),  # mmproj vision projector the compose mounts
         default_port=8020,
         kvcalc_key="SKIP",
+        status="deprecated",
+        status_note="Retired 2026-08-12 (maintainer decision): consolidating the single-card qwen3.6-27b surface onto vLLM. NOT a regression report -- this slug's measured results stand. WARNING this retirement REMOVES capability: with all llama.cpp + ik-llama single-card qwen slugs gone, single-card qwen3.6-27b drops from 200K ctx (and 150K vision via llamacpp/mtp-vision) to vllm/minimal at 32K with NO vision, ~32/33 TPS vs ~60/72. Both DEFAULTS rows (llamacpp/single, ik-llama/single) are REMOVED, not repointed -- no functional sibling remains in either engine -- and qwen3.6-27b is dropped from RECOMMENDED_DEFAULT_MODELS so a bare launch.sh no longer auto-lands single-card users on a debugging baseline. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
 
     # ik_llama.cpp — IQ4_KS (ubergarm). Same engine family as llamacpp, but the
@@ -407,6 +413,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-27b/ik-llama/compose/single/ubergarm-iq4ks/mtp.yml",
         default_port=8020,
         kvcalc_key="SKIP",
+        status="deprecated",
+        status_note="Retired 2026-08-12 (maintainer decision): consolidating the single-card qwen3.6-27b surface onto vLLM. NOT a regression report -- this slug's measured results stand. WARNING this retirement REMOVES capability: with all llama.cpp + ik-llama single-card qwen slugs gone, single-card qwen3.6-27b drops from 200K ctx (and 150K vision via llamacpp/mtp-vision) to vllm/minimal at 32K with NO vision, ~32/33 TPS vs ~60/72. Both DEFAULTS rows (llamacpp/single, ik-llama/single) are REMOVED, not repointed -- no functional sibling remains in either engine -- and qwen3.6-27b is dropped from RECOMMENDED_DEFAULT_MODELS so a bare launch.sh no longer auto-lands single-card users on a debugging baseline. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     "ik-llama/iq4ks-mtp-vision": _entry(
         status="deprecated",
@@ -883,8 +891,8 @@ COMPOSE_REGISTRY = {
         compose_path="models/diffusiongemma-26b-a4b/vllm/compose/dual/fp8/base.yml",
         default_port=8042,
         kvcalc_key="SKIP",
-        status="experimental",
-        status_note="DiffusionGemma dLLM (vLLM's first) on Ampere via the OFFICIAL vllm/vllm-openai:gemma image (digest-pinned; dgemma arch baked in) + 3 bind-mounted Ampere/TP fixes (marlin-K-pad x2 + diffusion_gemma TP-vocab/dtype) — NOT in :gemma since vLLM tests H100/TP=1. Eager-only, gemma4 tool+reasoning parsers. 262K (NIAH->250K), 8-pack 100/150 (5-pack 84%), ~177/180 TPS typical (peak ~1100 low-entropy). max_new_tokens lifted 256->16384 (the model self-terminates ~1.2-1.8K words; no one-shot 10K). Experimental: visible in --list (NA), launch needs --force. Supersedes the 123-file sideload (PR #358); re-pin+rebase the 3 fixes if :gemma is re-pushed. 2026-06-11.",
+        status="deprecated",
+        status_note="Retired 2026-08-12 (maintainer decision): superseded, no production role. Was already 'experimental' (hidden from --list, --force to launch), so no new user-visible restriction. Sole slug for model diffusiongemma-26b-a4b, no DEFAULTS row, and its fp8 weights resolve to their OWN path (diffusiongemma-26b-a4b-it-fp8-dynamic, 25.3 GB) -- the shared 'fp8' variant NAME is not a shared path, so those weights are independently reclaimable. Entry KEPT (deprecated != deleted). Launchable with --force; c3 --all.",
     ),
     # DEFAULTS: intentionally NOT added — 'experimental' is non-functional, so it
     # degrades out of the curated <model>/default walk; reachable only by explicit
@@ -1287,8 +1295,21 @@ COMPOSE_REGISTRY = {
 DEFAULTS = {
     ("qwen3.6-27b", "vllm", "single"): "vllm/minimal",
     ("qwen3.6-27b", "vllm", "dual"): "vllm/dual",
-    ("qwen3.6-27b", "llamacpp", "single"): "llamacpp/default",
-    ("qwen3.6-27b", "ik-llama", "single"): "ik-llama/iq4ks-mtp",
+    # ("qwen3.6-27b", "llamacpp", "single") and ("qwen3.6-27b", "ik-llama", "single")
+    # REMOVED 2026-08-12 — every llama.cpp and ik-llama single-card qwen slug was
+    # deprecated (maintainer decision: consolidate single-card qwen onto vLLM), so
+    # NEITHER engine has a functional target left. Per the deprecation checklist the
+    # rows are REMOVED rather than repointed: the direct `<engine>/default` lookup
+    # does NOT status-filter, so leaving them would hand users a deprecated slug.
+    # Both now error loudly ("no default for model=qwen3.6-27b engine=…"), which is
+    # the intended degradation. The curated `<model>/default` walk DOES filter, so
+    # ENGINE_PREFERENCE[single] = [ik-llama, llamacpp, vllm] falls through to
+    # vllm/minimal.
+    # ⚠️ That is a real capability drop, not a like-for-like move: 200K → 32K ctx,
+    # single-card vision (llamacpp/mtp-vision @150K) → none, ~60/72 → ~32/33 TPS.
+    # qwen3.6-27b is dropped from RECOMMENDED_DEFAULT_MODELS in the same change so a
+    # bare `launch.sh` does not silently land single-card users on vllm/minimal,
+    # whose own header calls it a debugging baseline / 20 GB Ampere fallback.
     # No vLLM single-card Gemma default: fp8 KV is hardware-impossible on Ampere
     # sm_86 (vllm/gemma-mtp-tp1 deprecated 2026-05-31) and no bf16 single compose
     # ships. Single-card Gemma → beellama/gemma-dflash (the curated walk picks it).
@@ -1330,7 +1351,13 @@ DEFAULTS = {
 #   - New models are NOT auto-added. Adding a model touches nothing here;
 #     promote one explicitly only when desired.
 #   - Order within the (short) list = the tiebreak for "first installed".
-RECOMMENDED_DEFAULT_MODELS = ["qwen3.6-27b", "gemma-4-31b"]
+# ⚠️ qwen3.6-27b REMOVED 2026-08-12 (was first). With all its llama.cpp + ik-llama
+# single-card slugs deprecated, its single-card `<model>/default` resolves to
+# vllm/minimal — 32K ctx, no vision, a self-described debugging baseline. Leaving it
+# first here would make that the bare-`launch.sh` landing spot on any single-card rig.
+# It stays fully runnable by name; it is just no longer auto-selected. Revisit if a
+# functional long-context single-card qwen slug returns.
+RECOMMENDED_DEFAULT_MODELS = ["gemma-4-31b"]
 
 # Which engine wins, per detected topology, when resolving `<model>/default`
 # with no user pin. The resolver walks this list in order and picks the FIRST
@@ -1349,10 +1376,17 @@ RECOMMENDED_DEFAULT_MODELS = ["qwen3.6-27b", "gemma-4-31b"]
 # slugs deprecated — Anbeeld #98 won't-fix upstream DFlash VRAM regression;
 # pin v0.3.2-preview unmaintained). Slugs stay launchable by name with --force.
 # Re-add if the llama-cpp-mainline migration ever revives a beellama build.
+# ⚠️ `ik-llama` REMOVED from every walk 2026-08-12 — same precedent as beellama
+# (2026-07-27). Its last FUNCTIONAL slug was ik-llama/iq4ks-mtp; with that
+# deprecated, every remaining ik-llama slug is non-functional (the ornith pair is
+# `experimental`), so the engine can never resolve a curated default and was pure
+# dead weight at the head of the single-card walk. Its slugs stay launchable by
+# name with --force and visible in c3 via --all — this only removes it from
+# automatic recommendation. Re-add it the moment a functional ik-llama slug ships.
 ENGINE_PREFERENCE = {
-    "single": ["ik-llama", "llamacpp", "vllm"],
-    "dual": ["vllm", "ik-llama", "llamacpp"],
-    "multi": ["vllm", "ik-llama", "llamacpp"],
+    "single": ["llamacpp", "vllm"],
+    "dual": ["vllm", "llamacpp"],
+    "multi": ["vllm", "llamacpp"],
 }
 
 

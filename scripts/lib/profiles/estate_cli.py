@@ -785,7 +785,9 @@ def wizard_instance(slot: int, gpus: list[GpuInfo], existing: InstanceSpec | Non
     print("[estate] Available composes:")
     for name, entry in sorted(COMPOSE_REGISTRY.items()):
         print(f"  {name:28s} model={entry['model']} tp={entry['tp']} port={entry['default_port']}")
-    default_compose = existing.compose_name if existing else "llamacpp/default"
+    # llamacpp/default was deprecated 2026-08-12 (all single-card qwen llama.cpp +
+    # ik-llama slugs retired); vllm/minimal is the functional single-card fallback.
+    default_compose = existing.compose_name if existing else "vllm/minimal"
     compose = prompt_default("Compose", default_compose)
     if compose not in COMPOSE_REGISTRY:
         raise EstateCliError(f"unknown compose `{compose}`")

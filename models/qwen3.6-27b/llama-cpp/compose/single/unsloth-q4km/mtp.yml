@@ -10,7 +10,19 @@
 #   Max ctx:   200000 default (@ -ub 512, fills ~183K w/ ~1.1 GB margin); 262144 boots but
 #              walls ~125K (FA scratch at fill — see CTX_SIZE note); 131072 = faster prefill @ -ub 1024
 #   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    ✅ Production
+#   Status:    🗑️ Deprecated
+#   Caveats:   Retired 2026-08-12 (maintainer decision) — consolidating the
+#              single-card qwen3.6-27b surface onto vLLM. NOT a regression
+#              report: this config's measured results stand.
+#              ⚠️ This removes capability. With every llama.cpp + ik-llama
+#              single-card qwen slug retired, single-card qwen3.6-27b drops to
+#              vllm/minimal: 200K → 32K ctx, single-card vision (mtp-vision
+#              @150K) → none, ~60/72 → ~32/33 TPS. Both DEFAULTS rows
+#              (llamacpp/single, ik-llama/single) were REMOVED, not repointed —
+#              no functional sibling remains in either engine — and
+#              qwen3.6-27b left RECOMMENDED_DEFAULT_MODELS so a bare launch.sh
+#              no longer auto-lands single-card users on a debugging baseline.
+#              Still launchable by name with --force, and visible in c3 via --all.
 #   Engine-profile: llama-cpp-local
 #   Best for:  IDE agents, opencode, Hermes, long-multi-turn agentic — the
 #              speed + ctx workhorse. ~51 narr / ~60 code TPS, 7/7 verify-stress

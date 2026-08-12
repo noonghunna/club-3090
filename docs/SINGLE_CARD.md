@@ -1,5 +1,29 @@
 # Single 3090 — what fits, how to run it
 
+> ## ⚠️⚠️ RETIREMENT NOTICE — 2026-08-12: this page's recommendations are out of date
+>
+> **Every llama.cpp and ik-llama single-card `qwen3.6-27b` slug was retired on 2026-08-12** —
+> `llamacpp/default`, `llamacpp/mtp`, `llamacpp/mtp-vision`, `llamacpp/bounded-thinking` and
+> `ik-llama/iq4ks-mtp`. They remain launchable with `--force` and visible in c3 via `--all`, but they
+> are **no longer recommended, no longer in `switch.sh --list`, and no longer resolvable as a default**.
+>
+> **The only FUNCTIONAL single-card qwen3.6-27b path is now `vllm/minimal`.** ⚠️ That is a genuine
+> capability drop, not a like-for-like swap:
+>
+> | | retired path | `vllm/minimal` |
+> |---|---|---|
+> | max ctx | **200K** | **32K** |
+> | vision | ✅ `llamacpp/mtp-vision` @150K | ❌ none |
+> | decode | ~60 / ~72 TPS (ik) · ~50 / ~58 (llamacpp) | ~32 / ~33 TPS |
+>
+> `qwen3.6-27b` was also removed from `RECOMMENDED_DEFAULT_MODELS`, so a bare `launch.sh` no longer
+> auto-selects it on a single card.
+>
+> **Everything below this banner still describes the retired configs.** The measurements are real and
+> are kept as the historical record — treat the *recommendations* as superseded, not the numbers.
+> The deeper rewrite of this page is tracked separately.
+
+
 You have **one RTX 3090 (24 GB VRAM)**. This page is the front door for picking a config and knowing what to expect. The model-specific deep dives (quants, Genesis patches, engine internals) live elsewhere — links at the bottom.
 
 > **Model not in the configs below / want any HF safetensors repo?** → [`docs/PULL.md`](PULL.md): `scripts/pull.sh` evaluates any model against the KV math (honest, no download) and boots it if it passes. The curated configs on this page are the measured path; both work.

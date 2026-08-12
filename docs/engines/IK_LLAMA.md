@@ -1,5 +1,23 @@
 # ik_llama.cpp — the advanced-quant engine
 
+> ## ⚠️⚠️ ENGINE RETIREMENT NOTICE — 2026-08-12: no FUNCTIONAL ik-llama slug remains
+>
+> `ik-llama/iq4ks-mtp` — this engine's last functional slug — was **retired 2026-08-12**, following
+> `iq4ks-mtp-vision` and `iq4ks-two-stage` earlier the same day. The remaining ik-llama slugs
+> (`ornith9b-single`, `ornith35b-dual`) are `experimental`, i.e. also non-functional.
+>
+> Consequently **`ik-llama` was removed from every `ENGINE_PREFERENCE` walk** — it can no longer
+> resolve a curated default on any topology. Same precedent as the beellama retirement (2026-07-27).
+>
+> Every ik-llama slug stays **launchable by name with `--force`** and visible in c3 via `--all`; the
+> engine profile and image pin are untouched. This is a removal from *automatic recommendation*, not
+> a deletion — and it reverses the moment a functional ik-llama slug ships.
+>
+> **The performance findings below remain accurate and are deliberately preserved** — in particular
+> that IQ4_KS measured ~18–20% faster than `llamacpp/mtp` at matched 370 W. The engine was not retired
+> for being slow; its qwen slugs were retired when the single-card surface consolidated onto vLLM.
+
+
 **Role on this stack:** the engine you reach for when you want **newer, higher-quality-per-bit quants** than mainline llama.cpp ships — specifically the **IQK imatrix family** (`IQ4_KS`, `IQ5_KS`, …) that exists *only* in this fork. It's a llama.cpp fork (ikawrakow), so it inherits llama.cpp's cliff-immune memory model and broad hardware support, then adds a co-designed quant + kernel stack on top.
 
 > **In one line:** llama.cpp's robustness + fork-exclusive IQK quants + fused CUDA kernels → **MTP, clean to 262K on one card, quality on par with `llamacpp/mtp`** (8-pack 103 vs 102), at a **~0.5–0.8 GB leaner VRAM footprint**. It's also **~18–20% faster** than `llamacpp/mtp` on decode TPS at matched 370 W (~60 narr / ~69 code vs ~50 / ~58 on a 3090) — so it's the faster *and* leaner single-card path. The trade is a second engine to maintain + the IQK quant. Full matched-power write-up: [discussions/184](https://github.com/noonghunna/club-3090/discussions/184).

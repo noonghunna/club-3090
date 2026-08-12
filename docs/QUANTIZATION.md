@@ -24,11 +24,11 @@ GGUF is the llama.cpp-family weight format. Roughly in order of quality-per-bit 
 | Family | Examples | Calibrated? | Where | Notes |
 |---|---|---|---|---|
 | **Legacy** | `Q4_0`, `Q4_1`, `Q5_0`, `Q8_0` | ❌ | mainline | Simple round-to-nearest, one scale/block. `Q8_0` is still a great near-lossless choice; the low-bit legacy ones are superseded. |
-| **K-quants** | `Q3_K_M`, **`Q4_K_M`**, `Q5_K_M`, `Q6_K` | ❌ (data-free) | mainline | Mixed precision per tensor-type + 2-level block scales. The mainstream default. **`Q4_K_M` is what our shipped `llamacpp/mtp` runs.** Good, but data-free — no calibration. |
+| **K-quants** | `Q3_K_M`, **`Q4_K_M`**, `Q5_K_M`, `Q6_K` | ❌ (data-free) | mainline | Mixed precision per tensor-type + 2-level block scales. The mainstream default. **`Q4_K_M` is what `llamacpp/mtp` ran** (retired 2026-08-12 — `--force` only). Good, but data-free — no calibration. |
 | **i-quants** | `IQ2_XXS` … `IQ3_M`, `IQ4_XS` | ✅ imatrix | mainline | Non-linear lattice codebooks + importance matrix. Clearly better quality-per-bit than k-quants, *especially below 4 bpw*. Slightly slower dequant than k-quants. |
 | **IQK quants** ⭐ | **`IQ4_KS`**, `IQ5_KS`, `IQ4_K`, `IQ2_K` … | ✅ imatrix | **[ik_llama.cpp](engines/IK_LLAMA.md) only** | Refined grids + imatrix + **kernels co-designed for those grids**. Best quality-per-bit in the GGUF world *and* fast (the dequant path is hand-tuned). Fork-exclusive. |
 
-**The progression that matters:** `Q4_K_M` (data-free) → `IQ4_XS` (imatrix, mainline) → `IQ4_KS` (imatrix + co-designed kernels, ik fork). Each step is better quality at similar bpw. Our shipped `llamacpp/mtp` is at the *first* rung (`Q4_K_M`); the [ik_llama track](engines/IK_LLAMA.md) is at the *last* (`IQ4_KS`).
+**The progression that matters:** `Q4_K_M` (data-free) → `IQ4_XS` (imatrix, mainline) → `IQ4_KS` (imatrix + co-designed kernels, ik fork). Each step is better quality at similar bpw. `llamacpp/mtp` sat at the *first* rung (`Q4_K_M`) and the [ik_llama track](engines/IK_LLAMA.md) at the *last* (`IQ4_KS`) — ⚠️ both retired 2026-08-12, so neither ships as a recommended single-card path today.
 
 ---
 

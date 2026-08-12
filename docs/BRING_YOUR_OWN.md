@@ -66,8 +66,9 @@ Copy the one closest to your target engine + topology as a starting point:
 
 | Engine | Single-GPU starting point | Dual-GPU starting point |
 |---|---|---|
-| ik-llama | `ik-llama/iq4ks-mtp` | `ik-llama/apex-mtp-quality-dual` |
-| llama.cpp | `llamacpp/mtp` | (multi-GPU via `--list --all`) |
+| ik-llama | ⚠️ none functional (all slugs `--force` only since 2026-08-12) | ⚠️ none functional |
+| llama.cpp | ⚠️ none functional single-card since 2026-08-12 | `llamacpp/tess-dual-mtp` |
+| vLLM | `vllm/minimal` | `vllm/dual` |
 | beellama | `beellama/dflash` | `beellama/qwen-dflash-dual` |
 
 Then point it at your weights and boot directly — no registry or profile entry

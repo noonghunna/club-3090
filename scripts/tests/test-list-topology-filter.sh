@@ -44,7 +44,7 @@ assert_not_contains() {
 # Count rows whose slug column matches a topology by grepping for the
 # topology's compose-file path segment in the *visible* listing. We assert on
 # slugs we know are bound to each topology in the shipped registry.
-SINGLE_SLUG="ik-llama/iq4ks-mtp"      # single
+SINGLE_SLUG="vllm/minimal"            # single (ik-llama/iq4ks-mtp retired 2026-08-12)
 DUAL_SLUG="vllm/dual"                 # dual
 # NOTE: multi4 vLLM tier is empty post-#327 (dual4 + dual4-dflash archived); no MULTI_SLUG to assert.
 

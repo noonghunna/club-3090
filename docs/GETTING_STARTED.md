@@ -13,7 +13,7 @@ cd club-3090
 bash scripts/setup.sh qwen3.6-27b
 
 # 3. Boot the default config for this model on your hardware
-#    (auto-picks: single-card → ik-llama/iq4ks-mtp; dual → vllm/dual)
+#    (auto-picks: single-card → vllm/minimal; dual → vllm/dual)
 bash scripts/launch.sh --variant qwen3.6-27b/default
 
 # 4. Test it

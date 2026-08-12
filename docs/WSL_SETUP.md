@@ -166,8 +166,8 @@ Two WSL2-specific failure modes, both fixed on the **Windows** side, both docume
 Then it's the normal [Quick start](../README.md#quick-start). On a single 24 GB card under WSL2, the **llama.cpp / ik_llama** paths are the most forgiving (no prefill cliffs, smaller VRAM footprint):
 
 ```bash
-bash scripts/launch.sh --variant ik-llama/iq4ks-mtp   # single-card, leanest VRAM — fits WSL2 at defaults
-bash scripts/launch.sh --variant llamacpp/default     # single-card, cliff-immune (drop CTX_SIZE if tight)
+bash scripts/launch.sh --variant vllm/minimal         # single-card qwen — the only functional path since 2026-08-12 (32K, no vision)
+# ⚠️ RETIRED 2026-08-12 (--force only): ik-llama/iq4ks-mtp (leanest VRAM), llamacpp/default (cliff-immune)
 bash scripts/launch.sh --variant vllm/dual            # 2 cards — WSL2 overhead is noise at TP=2
 ```
 
@@ -243,7 +243,7 @@ You still do steps **1–3** (WSL + driver/passthrough + `.wslconfig` RAM) and *
 
 | Hardware | Recommended | Why |
 |---|---|---|
-| 1× 24 GB (3090/4090) | `ik-llama/iq4ks-mtp` (GGUF) | Leanest VRAM — fits at defaults despite the ~1.3 GiB overhead; no prefill cliffs |
+| 1× 24 GB (3090/4090) | `vllm/minimal` | ⚠️ `ik-llama/iq4ks-mtp` (leanest VRAM, no prefill cliffs) was RETIRED 2026-08-12 → `--force` only. `vllm/minimal` is the functional path (32K, no vision). |
 | 1× 24 GB, want vLLM | `vllm/single` + `GPU_MEMORY_UTILIZATION=0.94` `.env` | Full feature stack; needs the WSL2 VRAM + TDR tuning (steps 8–9) |
 | 2× 24 GB | `vllm/dual` | TP=2; the ~1.3 GiB overhead is noise at ~17 GB/card |
 

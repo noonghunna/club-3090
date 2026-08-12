@@ -36,9 +36,9 @@ bash scripts/launch.sh
 #      bash scripts/launch.sh --variant qwen3.6-27b/default # YOUR default for this model
 #    Or skip the wizard with an explicit config:
 #      bash scripts/launch.sh --variant beellama/dflash     # single-card BLESSED default — code-fast (~100 code / 50 narr TPS), DFlash spec-dec (⚠️ unofficial multi-arch image; sm_89/120 unvalidated — see docs/INFERENCE_ENGINES.md)
-#      bash scripts/launch.sh --variant ik-llama/iq4ks-mtp  # single-card BALANCED alt — ~63/69 TPS, 200K ctx + vision, leanest VRAM (ik_llama IQK quant)
-#      bash scripts/launch.sh --variant llamacpp/default    # single-card cliff-immune ALT — 200K @ -ub 512, ~51/60 TPS
-#      bash scripts/launch.sh --variant llamacpp/mtp-vision # single-card 49K + MTP + vision
+#      bash scripts/launch.sh --variant vllm/minimal       # single-card qwen — the ONLY functional path since 2026-08-12 (32K ctx, no vision, ~32/33 TPS)
+#      # ⚠️ RETIRED 2026-08-12 (all --force-only now): ik-llama/iq4ks-mtp (200K + vision, ~63/69 TPS),
+#      #    llamacpp/default (200K, cliff-immune), llamacpp/mtp-vision. See docs/SINGLE_CARD.md banner.
 #      bash scripts/launch.sh --variant vllm/dual           # dual-card 262K + vision (vLLM single-card paths blocked on #167)
 #    Or partial flags (wizard fills the rest):
 #      bash scripts/launch.sh --model qwen3.6-27b --gpus 0,1
@@ -48,7 +48,7 @@ bash scripts/launch.sh
 #      bash scripts/switch.sh --list          # runnable here
 #      bash scripts/switch.sh --list --all    # everything
 #    Pin your own default so bare `launch.sh` goes straight there:
-#      bash scripts/switch.sh --set-default ik-llama/iq4ks-mtp   # e.g. prefer the balanced ik-llama path over the beellama default; clear: --clear-default qwen3.6-27b
+#      bash scripts/switch.sh --set-default vllm/dual            # e.g. pin a dual-card default; clear: --clear-default qwen3.6-27b
 
 # 4. Sanity test (launcher already printed this curl)
 curl -sf http://localhost:8020/v1/chat/completions \
@@ -82,7 +82,7 @@ c3                                              # launch  (also: python -m club3
 
 **First run:** press **`S`** → set your **Model Dir** (where weights download) + **HuggingFace token** → **`Ctrl+S`** to save; then **`r`** to browse the catalog and serve one. **`c3 --lean`** (or **`[C]`** in-app) hides the producer lane for a consumer-only view. After a `git pull`, re-run the install to pick up new deps + UI changes. Full keybindings + details → [`tools/serve-cockpit/`](tools/serve-cockpit/).
 
-> ⚠️ **Single-card long-context note:** Cliff 2 (GDN prefill OOM at >~50K single-prompt) is **open** on 24 GB single-card vLLM. Genesis v7.72.2 PN59 was intended as the fix but doesn't engage on chunked-prefill. **Workarounds:** [`vllm/dual`](docs/DUAL_CARD.md) (TP=2 escapes it) or [`llamacpp/default`](docs/SINGLE_CARD.md#bulletproof-no-cliffs) (different engine, no cliff). Full diagnosis at [`docs/CLIFFS.md`](docs/CLIFFS.md).
+> ⚠️ **Single-card long-context note:** Cliff 2 (GDN prefill OOM at >~50K single-prompt) is **open** on 24 GB single-card vLLM. Genesis v7.72.2 PN59 was intended as the fix but doesn't engage on chunked-prefill. **Workarounds:** [`vllm/dual`](docs/DUAL_CARD.md) (TP=2 escapes it). ⚠️ The former single-card escape `llamacpp/default` was **retired 2026-08-12** (`--force` only) — on one card there is no longer a cliff-immune qwen path. Full diagnosis at [`docs/CLIFFS.md`](docs/CLIFFS.md).
 
 ---
 

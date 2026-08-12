@@ -24,10 +24,10 @@ vLLM Genesis patches work cleanly on Ada.
 
 **Watch out for the context derate.** A 24 GB 4090 carries more idle desktop + driver VRAM than a headless 3090, so single-card context ceilings land **~15–20% lower**. Observed: `long-text.yml` 180K → 90K, ik two-stage 200K → 160K, `dual-dflash-noviz` 200K → 180K. Start below the 3090 number and verify with `verify-stress.sh` (watch its ceiling VRAM-margin line).
 
-**⚠ UPDATE 2026-07-27: `beellama/dflash` is no longer the default — the beellama engine is retired** (all its slugs deprecated; Anbeeld closed the DFlash VRAM-regression report #98 as won't-fix, and the pin was unmaintained). The single-card walk now resolves to `ik-llama/iq4ks-mtp` automatically, which also takes the Ada gibberish below off the default path. Historical context: beellama's DFlash speculative path returns gibberish (`//////`) on sm_89 — reproduced on a 4090 in [#693](https://github.com/noonghunna/club-3090/issues/693) (the same weights serve fine under mainline llama.cpp and ik-llama on the same rig, so it's the DFlash path, not your setup). Until it's fixed, use **`ik-llama/iq4ks-mtp`** (keeps spec-dec via MTP, which works on Ada) or **`llamacpp/default`**, and pin your choice so `launch.sh` doesn't re-select the broken default:
+**⚠ UPDATE 2026-07-27: `beellama/dflash` is no longer the default — the beellama engine is retired** (all its slugs deprecated; Anbeeld closed the DFlash VRAM-regression report #98 as won't-fix, and the pin was unmaintained). ⚠️ **Superseded 2026-08-12:** `ik-llama/iq4ks-mtp` has itself been retired, along with every llama.cpp single-card qwen slug. The single-card walk now resolves to **`vllm/minimal`** (32K ctx, no vision). The Ada gibberish below is still off the default path. Historical context: beellama's DFlash speculative path returns gibberish (`//////`) on sm_89 — reproduced on a 4090 in [#693](https://github.com/noonghunna/club-3090/issues/693) (the same weights serve fine under mainline llama.cpp and ik-llama on the same rig, so it's the DFlash path, not your setup). Until it's fixed, use **`ik-llama/iq4ks-mtp`** (keeps spec-dec via MTP, which works on Ada) or **`llamacpp/default`**, and pin your choice so `launch.sh` doesn't re-select the broken default:
 
 ```bash
-./scripts/switch.sh --set-default ik-llama/iq4ks-mtp
+./scripts/switch.sh --set-default vllm/minimal   # ik-llama/iq4ks-mtp retired 2026-08-12
 ```
 
 Tracking + status: the beellama row in [`UPSTREAM.md`](UPSTREAM.md).
@@ -387,7 +387,7 @@ There are **two layers of "default"**, with different owners:
 | `<engine>/default` (e.g. `vllm/default`) | the repo's recommended config for that engine, on the detected topology | club-3090 (changes by PR) |
 | `<model>/default` (e.g. `qwen3.6-27b/default`) | **your** preferred way to run that model | **you** (`--set-default`) |
 
-By default `<model>/default` resolves to the *curated* pick — the first engine in `ENGINE_PREFERENCE` for your topology that has a healthy config (single-card Qwen → `ik-llama/iq4ks-mtp`; dual → `vllm/dual`). To make it resolve to **your** choice instead, pin a slug:
+By default `<model>/default` resolves to the *curated* pick — the first engine in `ENGINE_PREFERENCE` for your topology that has a healthy config (single-card Qwen → **`vllm/minimal`** since the 2026-08-12 retirements; dual → `vllm/dual`). To make it resolve to **your** choice instead, pin a slug:
 
 ```bash
 bash scripts/switch.sh --set-default vllm/dual-turbo   # pin (writes .env)
@@ -541,7 +541,7 @@ For a one-off bump: `GENESIS_PIN=<new-commit-sha> bash scripts/setup.sh qwen3.6-
 
 ### My hermes / openhands / OpenCode / Cline / OpenClaw / Cursor session OOMs after a few turns. What do I do?
 
-**Short answer:** route to `bash scripts/switch.sh vllm/dual` (if you have 2× 3090s) or `bash scripts/switch.sh llamacpp/default` (if 1× only). Single-card vLLM is **not safe** for accumulating-context multi-turn agent traffic on Qwen3.6-27B. We validated this 2026-05-03 across all six shipped single-card vLLM composes; only TP=2 and llama.cpp survive cleanly.
+**Short answer:** route to `bash scripts/switch.sh vllm/dual` (if you have 2× 3090s). ⚠️ **The single-card escape is gone as of 2026-08-12** — `llamacpp/default` and every other llama.cpp / ik-llama single-card qwen slug was retired (`--force` only), so on one card there is no longer a cliff-immune qwen path; `vllm/minimal` is functional but is single-card vLLM, which this answer warns about. Single-card vLLM is **not safe** for accumulating-context multi-turn agent traffic on Qwen3.6-27B. We validated this 2026-05-03 across all six shipped single-card vLLM composes; only TP=2 and llama.cpp survive cleanly.
 
 Symptoms users report: "performance degrades after 20 turns", "throughput drops to 0", "engine becomes unresponsive at ~30K tokens", "OOM after 4-5 turns of hermes", `chunk_fwd_o → torch.empty_like(v) → CUDA OOM`. All same root cause — Cliff 2b in [`docs/CLIFFS.md`](CLIFFS.md). Hardware-physical limit; not a tuning issue.
 
@@ -561,9 +561,12 @@ Symptoms users report: "performance degrades after 20 turns", "throughput drops 
 bash scripts/switch.sh vllm/dual    # 111+ TPS p50, 0 errors, 0 MiB growth across 5 sessions
 
 # 1× 3090 — different engine, different kernels, different allocator
-bash scripts/switch.sh llamacpp/default      # 21 TPS, 262K context, cliff-immune, vision
-bash scripts/switch.sh llamacpp/mtp          # ~60 code TPS, 131K, MTP, 7/7 verify-stress (incl. 91K needle)
-bash scripts/switch.sh llamacpp/mtp-vision   # ~66 code TPS, 49K + vision (multimodal MTP — drop UBATCH_SIZE to 512 + raise CTX_SIZE to 196608 if you need long ctx; see SINGLE_CARD.md)
+# ⚠️ ALL THREE RETIRED 2026-08-12 — `--force` only, not in `--list`. Kept for reference:
+bash scripts/switch.sh --force llamacpp/default      # 21 TPS, 262K context, cliff-immune, vision
+bash scripts/switch.sh --force llamacpp/mtp          # ~60 code TPS, 131K, MTP, 7/7 verify-stress (incl. 91K needle)
+bash scripts/switch.sh --force llamacpp/mtp-vision   # ~66 code TPS, 49K + vision
+# Functional single-card qwen path today:
+bash scripts/switch.sh vllm/minimal                  # 32K ctx, no vision, ~32/33 TPS
 ```
 
 **Want to verify your rig hits the same class:**

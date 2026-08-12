@@ -27,8 +27,19 @@
 #              the ceiling; 210K fills 193K leaving 863 MB — both under the 1024 MB
 #              agent-safety margin. 200000 (≈1131 MB at ceiling) is the safe default. -ub 512 @ 262144
 #              → 21.5 GB if you need the extra ~1 GB back.
-#   Status:    ✅ Production (advanced-quant track, #180). In the wizard +
-#              `bash scripts/switch.sh ik-llama/iq4ks-mtp`.
+#   Status:    🗑️ Deprecated
+#   Caveats:   Retired 2026-08-12 (maintainer decision) — consolidating the
+#              single-card qwen3.6-27b surface onto vLLM. NOT a regression
+#              report: this config's measured results stand.
+#              ⚠️ This removes capability. With every llama.cpp + ik-llama
+#              single-card qwen slug retired, single-card qwen3.6-27b drops to
+#              vllm/minimal: 200K → 32K ctx, single-card vision (mtp-vision
+#              @150K) → none, ~60/72 → ~32/33 TPS. Both DEFAULTS rows
+#              (llamacpp/single, ik-llama/single) were REMOVED, not repointed —
+#              no functional sibling remains in either engine — and
+#              qwen3.6-27b left RECOMMENDED_DEFAULT_MODELS so a bare launch.sh
+#              no longer auto-lands single-card users on a debugging baseline.
+#              Still launchable by name with --force, and visible in c3 via --all.
 #   Perf:      ~18-20% FASTER decode TPS than shipped llamacpp/mtp Q4_K_M
 #              (~60 narr / ~69 code vs ~50/58, at set-and-readback matched 370 W
 #              same card), quality-tied (8-pack 103 vs 102), AND ~0.5-0.8 GB

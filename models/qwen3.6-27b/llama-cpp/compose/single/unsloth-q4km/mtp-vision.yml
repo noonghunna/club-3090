@@ -8,7 +8,19 @@
 #   Vision:    YES (mmproj-F16 mounted — multimodal input enabled)
 #   Max ctx:   150000 (150K) default @ 1M-px images. Higher OOMs at fill — see below.
 #   Genesis:   N/A — llama.cpp engine
-#   Status:    ✅ Production
+#   Status:    🗑️ Deprecated
+#   Caveats:   Retired 2026-08-12 (maintainer decision) — consolidating the
+#              single-card qwen3.6-27b surface onto vLLM. NOT a regression
+#              report: this config's measured results stand.
+#              ⚠️ This removes capability. With every llama.cpp + ik-llama
+#              single-card qwen slug retired, single-card qwen3.6-27b drops to
+#              vllm/minimal: 200K → 32K ctx, single-card vision (mtp-vision
+#              @150K) → none, ~60/72 → ~32/33 TPS. Both DEFAULTS rows
+#              (llamacpp/single, ik-llama/single) were REMOVED, not repointed —
+#              no functional sibling remains in either engine — and
+#              qwen3.6-27b left RECOMMENDED_DEFAULT_MODELS so a bare launch.sh
+#              no longer auto-lands single-card users on a debugging baseline.
+#              Still launchable by name with --force, and visible in c3 via --all.
 #   Engine-profile: llama-cpp-local
 #   Best for:  Multimodal chat, screenshot-debugging, vision-aware code review.
 #              ~51/60 TPS text + vision overhead paid once at image-encode.
