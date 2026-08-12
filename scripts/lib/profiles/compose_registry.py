@@ -1007,6 +1007,37 @@ COMPOSE_REGISTRY = {
     # no model for it). required_sm 8.6 so 3090/4090/5090 all qualify; the 4090/5090
     # paths are INFERRED from the image's arch list, never booted here.
     # No DEFAULTS row on purpose: incubating is excluded from the curated walk.
+    "llamacpp-club3090/inkling-small-dual-iq4xs-moecache": _entry(
+        model="inkling-small", weights_variant="unsloth-ud-iq4xs", workload="long-ctx-single",
+        engine="llamacpp-club3090-v1.1", drafter=None, kv_format="fp16",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml",
+        default_port=8084,
+        kvcalc_key="SKIP",
+        offload="n-cpu-moe",
+        # Load-bearing: gates the launch-compat MOE_RESERVE_MB injection.
+        moe_cache=True,
+        host_ram_gb=120,
+        required_sm=8.6,
+        status="experimental",
+        status_note="Validated 2026-08-12 on the fork branch at 262K: verify-full 9/9, soak-continuous PASS (0 MiB growth, 0/25 silent-empty), decode 32.01 narrative / 31.15 code, prefill FLAT 401.6@10K -> 385.7@90K, agentic context 31.4x -> TTFT 4.8x (sub-linear). Expert cache 76-78% hits on ~6,908 resident slots (67.5% of 10,240 routed experts) -- a HIGHER rate than DeepSeek's ~57%, because inkling's resident non-expert weights are only 5.1 GB, leaving more VRAM for the pool. iSWA (7 full-attention + 35 windowed layers) keeps KV to 7.5 GB even at 262K. ⚠️ TTFT at depth is the real cost: 225 s for an 87K prompt -- 262K is a CAPACITY number, not a serving latency. 1M does not fit: KV allocates, but the prefill compute buffer wants 9,450 MiB on device 0. ⏸️ UPSTREAM-GATED on ggml-org#25731: the `inkling` arch is not in mainline, so the published llamacpp-club3090 digest CANNOT load this model (`unknown model architecture: 'inkling'`). Runs only on a self-built fork of stack/club3090-moecachev1.1 until the PR merges and the engine is rebuilt. ⚠️ ATTRIBUTION: the expert cache is leloch's (RFC ggml-org#24528); the arch is @danielhanchen's PR, vendored — we maintain neither. ⚠️ REASONING IS ON BY DEFAULT at effort 0.9: this model reads `reasoning_effort`, NOT `enable_thinking`, and ignores the latter silently — a client sending a small max_tokens without setting effort gets an empty answer and no error. ⚠️ Sampling should be Unsloth's temp 1.0/top_p 1.0/min_p 0.0, not the canonical Qwen values, for any quality work. ⚠️ QUALITY UNTESTED -- no 8-pack. ⚠️ Decode figures are a LOWER BOUND: the expert cache was still filling after 25 soak turns (+49% session 1->5), so short runs understate steady state.",
+        category="frontier",
+    ),
+    "llamacpp-club3090/inkling-small-multi4-iq4xs-moecache": _entry(
+        model="inkling-small", weights_variant="unsloth-ud-iq4xs", workload="long-ctx-single",
+        engine="llamacpp-club3090-v1.1", drafter=None, kv_format="fp16",
+        tp=4, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/inkling-small/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/moecache.yml",
+        default_port=8085,
+        kvcalc_key="SKIP",
+        offload="n-cpu-moe",
+        moe_cache=True,
+        host_ram_gb=120,
+        required_sm=8.6,
+        status="experimental",
+        status_note="⚠️⚠️ NEVER BOOTED -- every constant is INHERITED from the validated dual slug (same precedent as the DeepSeek multi4 sibling), and RESERVE_MB/ADMIT_AFTER were derived from a measured compute-buffer swing on 2x24 GB, so they are topology-specific and probably wrong here. Re-derive before trusting any number. HYPOTHESIS worth testing: on this model hit rate tracks spatial coverage (dual = 67.5% of 10,240 routed experts at 76-78% hits), so doubling the pool budget could approach saturation -- but compute buffers and the layer split also change, and this rig has no NVLink. ⏸️ UPSTREAM-GATED on ggml-org#25731: the `inkling` arch is not in mainline, so the published llamacpp-club3090 digest CANNOT load this model (`unknown model architecture: 'inkling'`). Runs only on a self-built fork of stack/club3090-moecachev1.1 until the PR merges and the engine is rebuilt. ⚠️ ATTRIBUTION: the expert cache is leloch's (RFC ggml-org#24528); the arch is @danielhanchen's PR, vendored — we maintain neither. ⚠️ REASONING IS ON BY DEFAULT at effort 0.9: this model reads `reasoning_effort`, NOT `enable_thinking`, and ignores the latter silently — a client sending a small max_tokens without setting effort gets an empty answer and no error. ⚠️ Sampling should be Unsloth's temp 1.0/top_p 1.0/min_p 0.0, not the canonical Qwen values, for any quality work. ⚠️ QUALITY UNTESTED -- no 8-pack. ⚠️ Decode figures are a LOWER BOUND: the expert cache was still filling after 25 soak turns (+49% session 1->5), so short runs understate steady state.",
+        category="frontier",
+    ),
     "llamacpp-club3090/deepseek-flash-multi4-q8-moecache": _entry(
         model="deepseek-v4-flash-0731", weights_variant="unsloth-q8-kxl", workload="long-ctx-single",
         engine="llamacpp-club3090", drafter="dspark", kv_format="fp16",

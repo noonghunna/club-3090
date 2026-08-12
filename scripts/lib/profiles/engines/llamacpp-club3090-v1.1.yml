@@ -1,0 +1,92 @@
+schema_version: 1
+id: llamacpp-club3090-v1.1
+display_name: llama.cpp club-3090 test-bed v1.1 (MoE expert cache + vendored Inkling arch)
+type: llama.cpp
+stability: experimental
+install:
+  method: docker_image
+  # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
+  # Built 2026-08-12 from noonghunna/llama.cpp @ stack/club3090-moecachev1.1
+  # (461e7bae4) with the SAME recipe as the v1 image — CUDA 12.8.1 base,
+  # CMAKE_CUDA_ARCHITECTURES="86;89;120", `server` target. Package is PRIVATE.
+  spec: ghcr.io/noonghunna/llamacpp-club3090@sha256:55f434244cc28d4af99f9fbefdd338b9409dc567d532e7b23bbc7d37f16680f4
+
+# ---------------------------------------------------------------------------
+# WHY A SECOND PROFILE RATHER THAN A REPOINT
+#
+# This image is v1 PLUS a vendored third-party draft (ggml-org#25731, the
+# Inkling architecture). DeepSeek gains nothing from it, so its slugs keep the
+# v1 digest they were validated on and are not re-pinned onto a build whose
+# only justification is another model. That also keeps a released artifact from
+# silently inheriting someone's unmerged PR.
+#
+# ⛔ DROP TRIGGER — this profile is TEMPORARY. When #25731 lands in mainline:
+#   1. drop `vendor/inkling-pr25731`, rebase the engine branch onto a master
+#      that already has `inkling` (the mmvq.cu conflict disappears),
+#   2. rebuild + re-pin the ORIGINAL `llamacpp-club3090` profile,
+#   3. repoint both inkling slugs back to it,
+#   4. DELETE this file.
+# Tracked in docs/UPSTREAM.md.
+#
+# ⚠️ The version tracks OUR ENGINE BUILD, not the cache implementation.
+# v1.1 = leloch's cache v1 + vendored arch support. leloch's own cache v2 is a
+# different axis entirely (stack/moe-cache-v2) — do not read the number as one.
+# ---------------------------------------------------------------------------
+
+# The expert cache gates itself on Ampere (moe_cache_cc_ampere). Below that the
+# feature is simply absent, and there is no degraded path, so no fallback_sm.
+min_sm: 8.6
+supported_model_families:
+  - inkling-moe           # Inkling-Small (arch inkling, 2 dense + 40 MoE, iSWA 7 full / 35 windowed)
+  # ⚠️ deepseek4-moe is INTENTIONALLY ABSENT. This binary runs DeepSeek correctly
+  # — validated 2026-08-12: verify-full all-pass, cache allocates, decode
+  # 21.4-21.6 t/s vs 21.91 on the v1 image (~2%, within noise). It is omitted so
+  # the resolver cannot quietly migrate DeepSeek's slugs onto a build they were
+  # not shipped on. Add it only with a deliberate decision.
+features:
+  moe_expert_cache: true  # --moe-cache: hot CPU-resident experts held in spare VRAM
+supported_kv_formats:
+  - fp16                  # ⚠️ fp16 is FORCED on inkling, not chosen — see below
+# ⚠️ KV QUANTISATION IS UNAVAILABLE on the inkling arch in this build, and both
+# failures live in the vendored draft (so both are re-test triggers, not facts):
+#   -ctk q8_0 -ctv q8_0 → explicit arch gate. llama-context.cpp: "quantized V
+#     forces the dense path, which transposes V - invalid for a block-quantized
+#     tensor" (LLM_ARCH_INKLING).
+#   -ctk q8_0 alone     → clears the gate, then the graph allocator requests
+#     ~196 GB for a compute buffer and the boot dies.
+supported_drafters: []    # inkling ships no MTP head; no converted external drafter yet
+supported_weight_formats:
+  - gguf
+required_overlays: []
+vendored_overlays: []
+required_genesis: false
+
+notes: >
+  TEMPORARY SIBLING of `llamacpp-club3090`, identical to it except for one thing:
+  it also carries @danielhanchen's Inkling architecture PR (ggml-org#25731,
+  vendored, unmerged). It exists so the inkling slugs have an engine to point at
+  without re-pinning DeepSeek onto a build it gains nothing from. Everything in
+  the v1 profile's notes applies here — the expert cache is leloch's work, tuning
+  is 2x24 GB specific, do NOT set GGML_OP_OFFLOAD_MIN_BATCH, sm 89/120 are built
+  but unvalidated. Validated on this exact binary 2026-08-12: Inkling verify-full
+  9/9, verify-stress 8 probes + 6 ceiling rungs to 240,549 tok, soak-continuous
+  PASS, 8-pack 110/150 off and 115/150 on. AND DeepSeek re-checked because the
+  merge conflict sat on its expert-cache gate path — verify-full all-pass, cache
+  allocates, decode 21.4-21.6 t/s vs 21.91 on v1 (within noise). Delete this
+  profile when #25731 merges.
+
+feature_provenance:
+  moe_expert_cache:
+    author: leloch
+    source: https://github.com/leloch/llama.cpp
+    upstream: https://github.com/ggml-org/llama.cpp/discussions/24528
+    status: unmerged
+  inkling_architecture:
+    author: danielhanchen
+    upstream: https://github.com/ggml-org/llama.cpp/pull/25731
+    status: unmerged-draft-vendored
+  moe_cache_parallel_scatter: { author: club-3090, status: offered-to-author }
+  moe_cache_d2h_overlap:      { author: club-3090, status: offered-to-author }
+  moe_cache_nobudget_warn:    { author: club-3090, status: offered-to-author }
+  moe_cache_bypass_warn_split: { author: club-3090, status: offered-to-author }
+  topk_runtime_batch:         { author: club-3090, status: interim }

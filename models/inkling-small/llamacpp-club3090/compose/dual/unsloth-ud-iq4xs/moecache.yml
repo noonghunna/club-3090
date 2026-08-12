@@ -1,0 +1,168 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Inkling-Small (263B MoE, Thinking Machines — unsloth UD-IQ4_XS,
+#              119 GB across 4 shards. ⚠️ MIXED expert precision: iq3_s +
+#              iq4_xs + q6_K, which the cache allocates as THREE pools per card)
+#   Engine:    llamacpp-club3090-v1.1 (fork: leloch's MoE expert cache + our
+#              L1/L3/E ports and bypass warn-split, PLUS vendored ggml-org#25731
+#              for the inkling arch — a separate pin from the v1 engine)
+#   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
+#   Drafter:   none — the GGUF carries no MTP head and no drafter is converted
+#   KV:        fp16 (llama.cpp default — iSWA keeps it to 7.5 GB even at 262K)
+#   Vision:    no (upstream model is multimodal; this GGUF ships no mmproj)
+#   Max ctx:   262144
+#   Genesis:   N/A — llama.cpp engine
+#   Status:    🧪 Experimental
+#   Caveats:   • ⏸️ VENDORS AN UNMERGED UPSTREAM PR. The `inkling` architecture
+#                is NOT in llama.cpp mainline — it lives in the open draft
+#                ggml-org/llama.cpp#25731, vendored into the engine this slug
+#                pins (`llamacpp-club3090-v1.1`). Stock llama.cpp fails with
+#                `unknown model architecture: 'inkling'`. When #25731 merges the
+#                vendored copy is dropped and this repoints to the v1 engine.
+#              • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
+#                (github.com/leloch/llama.cpp, RFC ggml-org#24528). This slug
+#                packages it. The inkling arch is @danielhanchen's PR, vendored,
+#                not ours — we maintain neither.
+#              • ⚠️ REASONING IS ON BY DEFAULT at effort 0.9. This model reads
+#                `reasoning_effort` (none/minimal/low/medium/high/xhigh/max, or a
+#                float 0.0-0.99) — NOT `enable_thinking`, which it IGNORES
+#                SILENTLY. A client sending a small max_tokens without setting
+#                effort gets an EMPTY answer and no error. Set it explicitly:
+#                  {"reasoning_effort": "none",
+#                   "chat_template_kwargs": {"reasoning_effort": "none"}}
+#                Both are needed: llama.cpp parses the top-level parameter but
+#                only maps the value "none", onto a variable this template does
+#                not read, so the kwargs copy is what actually lands.
+#              • ⚠️ SAMPLING: Unsloth specifies temp 1.0 / top_p 1.0 / min_p 0.0
+#                for this model, NOT the stack-canonical Qwen 0.6/0.95. The
+#                bench numbers below were taken at the canonical setting (which
+#                is throughput-safe); any QUALITY work must use the model's own.
+#              • ⚠️ QUALITY IS UNTESTED. No 8-pack has been run.
+#              • Length-dependent logit scaling engages above 128K context
+#                (`log_scaling_n_floor`), so behaviour at 8K does not
+#                extrapolate to 512K. Do not A/B across that boundary.
+#              • ⚠️ COLD-START TAX, and it is LONG: the expert cache was still
+#                filling after 25 turns of soak (+49% decode session 1 → 5).
+#                Never benchmark early requests, and treat any short-run decode
+#                figure on this config as a LOWER BOUND.
+#              • Tuning is 2×24 GB SPECIFIC (RESERVE_MB=1536, ADMIT_AFTER=64,
+#                inherited from the DeepSeek derivation on this topology).
+#                Re-derive for any other card count or VRAM size.
+#              • 1M context does NOT fit: the KV allocates fine, but the prefill
+#                compute buffer wants 9,450 MiB on device 0 and the boot dies.
+#                262K is a deliberate choice, not the model's ceiling.
+#              • Needs ~120 GB of HOST RAM (routed experts live in CPU memory).
+#              • Load takes several minutes (--no-mmap).
+#   Best for:  Long-context and agentic Inkling serving once the engine gate
+#              clears — sub-linear TTFT growth to 30K accumulated context.
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS
+#   Inkling-Small is the SECOND architecture proven on the club-3090 expert
+#   cache, and the evidence the engine is not a DeepSeek-only curiosity. On this
+#   config the cache reaches a HIGHER hit rate than DeepSeek does — 76-78% vs
+#   ~57% — because inkling's resident non-expert weights are tiny (5.1 GB across
+#   both cards), leaving far more VRAM for the pool: ~6,908 expert slots against
+#   DeepSeek's ~5,300, i.e. 67.5% spatial coverage vs 48.1%.
+#
+#   Measured 2026-08-12 on the reference rig, 262K, no drafter, thinking-off:
+#     decode        32.01 t/s narrative · 31.15 t/s code
+#     prefill       401.6 t/s @10K · 385.7 t/s @90K  (essentially FLAT with depth)
+#     TTFT          ~766 ms short-prompt
+#     verify-full   9/9 · soak-continuous PASS (0 MiB growth, 0/25 silent-empty)
+#     agentic       context 31.4x -> TTFT 4.8x (sub-linear), decode 26-34 t/s
+#
+#   ⚠️ Those decode figures are a canonical-bench measurement and therefore a
+#   LOWER BOUND — see the cold-start caveat. The soak reached 41.88 t/s
+#   session-mean and was still climbing.
+#
+#   ⚠️ TTFT at depth is the real cost: 225 s for an 87K prompt. 262K is a
+#   CAPACITY number, not a serving latency.
+#
+#   The engine is published as `llamacpp-club3090-v1.1` (digest sha256:55f43424…),
+#   built from `stack/club3090-moecachev1.1`. DeepSeek's slugs deliberately stay
+#   on the v1 digest they were validated on — but the v1.1 binary was checked
+#   against DeepSeek anyway, since the merge conflict sat on its expert-cache
+#   gate path: verify-full all-pass, decode 21.4-21.6 t/s vs 21.91 on v1.
+# ---------------------------------------------------------------------------
+services:
+  llama-cpp-inkling-small-iq4xs-moecache:
+    # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
+    # Built 2026-08-12 from stack/club3090-moecachev1.1 — the published engine
+    # branch PLUS vendored #25731. A SEPARATE profile from the v1 image on
+    # purpose: DeepSeek keeps the digest it was validated on and is not re-pinned
+    # onto a build whose only justification is this model. ⛔ Both collapse back
+    # into one when #25731 merges — see engines/llamacpp-club3090-v1.1.yml.
+    image: ${LLAMACPP_CLUB3090_V11_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:55f434244cc28d4af99f9fbefdd338b9409dc567d532e7b23bbc7d37f16680f4}
+    container_name: ${ESTATE_CONTAINER:-llama-cpp-inkling-small-iq4xs-moecache}
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8084}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    environment:
+      # Expert-cache tuning — inherited from the 2×24 GB DeepSeek derivation.
+      - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
+      - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-0,1}']
+              capabilities: [gpu]
+    # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
+    # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a
+    # folded string. The list form skips shell parsing, so the regex survives
+    # byte-for-byte.
+    command:
+      - '-m'
+      - '/models/inkling-small-gguf/UD-IQ4_XS/Inkling-Small-UD-IQ4_XS-00001-of-00004.gguf'
+      - '--host'
+      - '0.0.0.0'
+      - '--port'
+      - '8080'
+      - '--alias'
+      - 'inkling-small'
+      - '-np'
+      - '1'
+      - '-c'
+      - '${CTX:-262144}'
+      - '-ngl'
+      - '99'
+      - '-sm'
+      - 'layer'
+      - '-ts'
+      - '1,1'
+      - '-fa'
+      - 'on'
+      # ⚠️ SINGLE -ot with comma-separated rules. Mainline DEPRECATES repeated
+      # -ot and honours ONLY THE LAST occurrence (#948/#949). All routed experts
+      # to CPU; the cache decides residency dynamically. NOTE the 2 SHARED
+      # experts are `_shexp` and do NOT match this regex — they stay GPU-resident
+      # by design, which is correct: every token uses them.
+      - '-ot'
+      - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
+      # ⚠️ The bare-compose default is deliberately conservative. Under the
+      # launchers THREADS is injected; llama.cpp's own default collapses
+      # CPU-offload decode by ~31%, so never leave this to the engine.
+      - '-t'
+      - '${THREADS:-8}'
+      - '-ub'
+      - '${UBATCH:-2048}'
+      - '-b'
+      - '${UBATCH:-2048}'
+      - '--cache-prompt'
+      - '--no-mmap'
+      - '--moe-cache'
+      - '${MOE_CACHE:-auto}'
+      # ⚠️ LOAD-BEARING: `--fit` silently overrides -ngl and places layers itself,
+      # after which the cache reports "kept stock placement" and no-ops. Whenever
+      # -ot is deciding placement, --fit must be off.
+      - '--fit'
+      - 'off'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 900s
