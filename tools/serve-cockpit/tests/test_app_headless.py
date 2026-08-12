@@ -1191,6 +1191,76 @@ class TestCatalogWired:
             assert single.topology == "single"
 
     @pytest.mark.asyncio
+    async def test_catalog_downloaded_only_filter(self):
+        """#963: [w] narrows the catalog to slugs whose weights are on disk.
+
+        The predicate hides ONLY `absent`.  `partial` and `downloading` have
+        bytes on disk (and a half-finished download is exactly what you want to
+        see), and `unknown` means "couldn't tell" — usually a self-grabbed GGUF
+        that IS present — so hiding those would make rows silently vanish."""
+        from club3090_cockpit.data import (
+            CatalogEntry as _CE,
+            WEIGHTS_ABSENT, WEIGHTS_PRESENT, WEIGHTS_PARTIAL,
+            WEIGHTS_UNKNOWN, WEIGHTS_DOWNLOADING,
+        )
+        from club3090_tui_core import VariantRow as _VR
+
+        def _entry(slug: str, weights_state: str, status: str = "production") -> _CE:
+            cp = "models/m/vllm/compose/dual/q/base.yml"
+            return _CE(
+                row=_VR(
+                    slug=slug, switch_engine="vllm", launch_engine="vllm",
+                    compose_dir=cp.rsplit("/", 1)[0], file="base.yml", port=8000,
+                    model="m", engine="vllm-stable", kvcalc_key="m:dual",
+                    container="c", compose_path=cp, status=status,
+                    ctx_label="262K", status_note="",
+                ),
+                weights_state=weights_state,
+            )
+
+        present = _entry("v/present", WEIGHTS_PRESENT)
+        absent = _entry("v/absent", WEIGHTS_ABSENT)
+        partial = _entry("v/partial", WEIGHTS_PARTIAL)
+        unknown = _entry("v/unknown", WEIGHTS_UNKNOWN)
+        downloading = _entry("v/downloading", WEIGHTS_DOWNLOADING)
+        dep_absent = _entry("v/dep-absent", WEIGHTS_ABSENT, status="deprecated")
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate(
+                [present, absent, partial, unknown, downloading, dep_absent], None
+            )
+
+            # OFF by default — the catalog still answers "what COULD I run?".
+            assert pane._downloaded_only is False
+            assert "v/absent" in {e.slug for e in pane._filtered_entries()}
+            assert pane._absent_hidden_count() == 0
+
+            # ON — only the known-missing row goes.
+            pane.toggle_downloaded_only()
+            got = {e.slug for e in pane._filtered_entries()}
+            assert got == {"v/present", "v/partial", "v/unknown", "v/downloading"}
+            # dep-absent was ALREADY hidden by [h]; it must not be double-counted.
+            assert pane._absent_hidden_count() == 1
+
+            # [w] and [h] are independent and AND-combine: revealing deprecated
+            # must NOT bring back a deprecated row whose weights are absent.
+            pane.toggle_deprecated()
+            got = {e.slug for e in pane._filtered_entries()}
+            assert "v/dep-absent" not in got
+            assert got == {"v/present", "v/partial", "v/unknown", "v/downloading"}
+            # now both absent rows are in the [w] pool → counted.
+            assert pane._absent_hidden_count() == 2
+
+            # toggling back restores everything (idempotent).
+            pane.toggle_downloaded_only()
+            pane.toggle_deprecated()
+            assert pane._downloaded_only is False
+            assert len(pane._filtered_entries()) == 5   # dep-absent hidden by [h]
+
+    @pytest.mark.asyncio
     async def test_catalog_multiword_filter_is_and(self):
         """Round-4 CHANGE 2: a multi-word filter ("gemma dual") is AND-of-substrings
         across the searchable text (slug + topology + engine + model + status +
