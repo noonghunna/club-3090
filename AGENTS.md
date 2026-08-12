@@ -41,7 +41,11 @@ When filing a fresh upstream issue from this work:
 ## Conventions on this repo
 
 ### Bench protocol
-3 warm + 5 measured runs. Canonical prompts: 800-word essay (narrative, max_tokens=1000) + quicksort code (max_tokens=800). `temperature=0.6, top_p=0.95, top_k=20`. Capture both wall-time TPS and engine-internal `gen throughput` from logs. **Always capture per-card peak VRAM** alongside TPS.
+3 warm + 5 measured runs. Canonical prompts: 800-word essay (narrative, max_tokens=1000) + quicksort code (max_tokens=800). Sampler: **`temperature=0.6, top_p=0.95, top_k=20, min_p=0.0`** — all four are sent EXPLICITLY by `bench.sh`, and it prints them at start (`[bench] sampler: …`).
+
+> ⚠️ **Why all four, explicitly (#962):** until 2026-08-12 only `temperature` and `top_p` were sent, so `top_k`/`min_p` fell through to **per-engine defaults** — llama.cpp applies `top_k 40 / min_p 0.05`, vLLM `top_k` off / `min_p 0`. The "canonical" protocol therefore resolved *differently on each engine*, which defeats the cross-engine `BENCHMARKS.md` table it exists for, and matched its own documentation on neither. Throughput is essentially sampler-insensitive at fixed `max_tokens`, so historical TPS rows remain comparable — but **quality-shaped results measured before this change were taken under different sampling** and should not be diffed against post-change runs. Override for sampler A/Bs with `BENCH_TEMP` / `BENCH_TOP_P` / `BENCH_TOP_K` / `BENCH_MIN_P`.
+
+Capture both wall-time TPS and engine-internal `gen throughput` from logs. **Always capture per-card peak VRAM** alongside TPS.
 
 ### Genesis opt-in env vars
 **Status (2026-07-06): no shipped compose currently enables Genesis** — the Genesis-pinned production paths were retired (their composes live under `compose/_archive/`). The guidance below stays because it applies verbatim if a Genesis-pinned compose is reintroduced, and the incident it encodes is the canonical example of why behavioral patches need repro-gating.

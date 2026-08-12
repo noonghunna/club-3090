@@ -689,6 +689,35 @@ FORCE = int(FORCE)   # >0: force EXACTLY this many output tokens (max+min+ignore
 # ENDPOINT=chat (default) keeps the historical /v1/chat/completions path with the
 # model's template applied. ENDPOINT=completion drives raw /v1/completions with NO
 # template — for base models, and for isolating template overhead on a chat model.
+# --- canonical sampler (#962) -----------------------------------------------
+# AGENTS.md defines the bench protocol as temperature=0.6, top_p=0.95, top_k=20.
+# Historically only the first two were SENT, so top_k and min_p fell through to
+# per-engine defaults — and those differ: llama.cpp applies top_k 40 / min_p 0.05,
+# vLLM top_k off / min_p 0. A "canonical" protocol that resolves differently per
+# engine cannot do the one job it exists for (cross-engine BENCHMARKS.md rows).
+#
+# All four are now sent explicitly. min_p is pinned to 0.0 — the protocol never
+# mentions it, and 0.0 means "no min_p floor", which is the neutral reading.
+# ⚠️ This CHANGES llama.cpp's effective sampling (top_k 40 -> 20, min_p 0.05 -> 0.0).
+# Throughput is essentially sampler-insensitive at fixed max_tokens, so historical
+# TPS rows stay comparable; anything QUALITY-shaped measured before this change was
+# taken under different sampling and should not be diffed against post-change runs.
+# Override per-run for sampler A/Bs (BENCH_TEMP / BENCH_TOP_P / BENCH_TOP_K /
+# BENCH_MIN_P); the effective values are printed at startup so a run is never
+# ambiguous about what it sampled with.
+def _envf(name, default):
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return float(default)
+
+SAMPLER = {
+    "temperature": _envf("BENCH_TEMP", 0.6),
+    "top_p": _envf("BENCH_TOP_P", 0.95),
+    "top_k": int(_envf("BENCH_TOP_K", 20)),
+    "min_p": _envf("BENCH_MIN_P", 0.0),
+}
+
 ENDPOINT_MODE = os.environ.get("BENCH_ENDPOINT", "chat")
 PHASE_FILE = os.environ.get("BENCH_PHASE_FILE", "")
 SUMMARY_JSON = os.environ.get("BENCH_SUMMARY_JSON", "")
@@ -696,7 +725,7 @@ try:
     SHORT_EOS_FRAC = float(os.environ.get("BENCH_SHORT_EOS_FRAC", "0.25"))
 except ValueError:
     SHORT_EOS_FRAC = 0.25
-SUMMARY = {"shapes": {}, "endpoint": ENDPOINT_MODE}
+SUMMARY = {"shapes": {}, "endpoint": ENDPOINT_MODE, "sampler": dict(SAMPLER)}
 
 
 def progress(msg):
@@ -708,6 +737,19 @@ def progress(msg):
     for anything parsing it."""
     sys.stderr.write(msg + "\n")
     sys.stderr.flush()
+
+
+def announce_sampler():
+    """Print the EFFECTIVE sampler once (#962).
+
+    The bug this closes was invisible precisely because nothing echoed what the
+    bench sampled with — the only way to find out was to read the engine's own
+    boot log. A run should never be ambiguous about that after the fact.
+    """
+    progress("[bench] sampler: " + "  ".join(
+        f"{k}={v}" for k, v in (
+            ("temperature", SAMPLER["temperature"]), ("top_p", SAMPLER["top_p"]),
+            ("top_k", SAMPLER["top_k"]), ("min_p", SAMPLER["min_p"]))))
 
 
 def _log_lines():
@@ -801,8 +843,9 @@ def run_once(prompt, max_tokens):
     req_body = {
         "model": MODEL,
         "max_tokens": mt,
-        "temperature": 0.6,
-        "top_p": 0.95,
+        # Canonical sampler, sent in FULL so the effective values do not depend on
+        # engine defaults (#962). See the SAMPLER block above.
+        **SAMPLER,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
@@ -1299,6 +1342,8 @@ def run_prefill_probe():
                 "prefill_tps_cv": ((s.stdev(pps) / _pm * 100) if len(pps) > 1 and _pm > 0 else 0.0),
                 "ttft_mean_ms": s.mean(ttfts) * 1000,
             }
+
+announce_sampler()
 
 if ONLY in ("both", "narr"):
     run_set("narrative", PROMPT_NARR, MAX_NARR)
