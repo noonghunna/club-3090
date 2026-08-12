@@ -384,8 +384,22 @@ if [[ "$PP" == "1" || "$ENGINE_KIND" == "llamacpp" ]]; then
   PP_MODE="fallback"
 fi
 
+# Which request field turns reasoning off is model-specific, and an unrecognised
+# one is silently ignored — the model then reasons at full effort and the run
+# measures reasoning-heavy generation while reporting itself as thinking-off.
+# See preflight.sh::preflight_detect_thinking_control.
+if declare -F preflight_detect_thinking_control >/dev/null; then
+  preflight_detect_thinking_control
+else
+  THINK_CONTROL="enable_thinking"
+  THINK_OFF_KW='{"enable_thinking": false}'; THINK_ON_KW='{"enable_thinking": true}'
+  THINK_OFF_EFFORT=''; THINK_ON_EFFORT=''
+fi
 if [[ "$ENABLE_THINKING" == "1" ]]; then
-  echo "[bench] thinking: enabled (request chat_template_kwargs.enable_thinking=true)" >&2
+  export BENCH_THINK_KW="$THINK_ON_KW"  BENCH_THINK_EFFORT="$THINK_ON_EFFORT"
+  echo "[bench] thinking: enabled (${THINK_CONTROL} → ${THINK_ON_KW})" >&2
+else
+  export BENCH_THINK_KW="$THINK_OFF_KW" BENCH_THINK_EFFORT="$THINK_OFF_EFFORT"
 fi
 
 if [[ "${BENCH_MOCK:-0}" == "1" ]]; then
@@ -487,7 +501,17 @@ sys.exit(0 if walk(obj) else 1)
 }
 
 if [[ "$ENABLE_THINKING" != "1" ]] && server_reasoning_on; then
-  echo "[bench] WARN: server appears to have reasoning enabled, but bench requests send enable_thinking=false. Use ENABLE_THINKING=1 for reasoning-on TPS." >&2
+  echo "[bench] WARN: server appears to have reasoning enabled, but bench requests send thinking-off. Use ENABLE_THINKING=1 for reasoning-on TPS." >&2
+fi
+# server_reasoning_on() is blind twice over: it needs a docker CONTAINER (so a
+# bare-metal llama-server is skipped entirely) and it looks for an explicit
+# `--reasoning on` flag, which a model that reasons BY DEFAULT never needs. Both
+# were true on Inkling-Small 2026-08-12 — the run measured reasoning-on
+# generation, reported itself thinking-off, and this guard never fired. The
+# detected control closes that gap: no switch means reasoning cannot be turned
+# off at all, whatever the flags say.
+if [[ "$ENABLE_THINKING" != "1" && "${THINK_CONTROL:-}" == none* ]]; then
+  echo "[bench] WARN: no reasoning off-switch detected for this model — a thinking-off run is NOT possible and these numbers include reasoning tokens. Set VERIFY_THINK_OFF='{\"<key>\": <value>}' if the template uses a switch this harness doesn't know." >&2
 fi
 
 # ===========================================================================
@@ -654,6 +678,11 @@ WARMUPS = int(WARMUPS); RUNS = int(RUNS); QUIET = int(QUIET) == 1
 MAX_NARR = int(MAX_NARR); MAX_CODE = int(MAX_CODE)
 PP_FALLBACK_TOKENS = int(PP_FALLBACK_TOKENS); PP_MAX_TOKENS = int(PP_MAX_TOKENS)
 ENABLE_THINKING = ENABLE_THINKING == "1"
+try:
+    THINK_KW = json.loads(os.environ.get("BENCH_THINK_KW") or "")
+except Exception:
+    THINK_KW = {"enable_thinking": ENABLE_THINKING}
+THINK_EFFORT = os.environ.get("BENCH_THINK_EFFORT") or ""
 FORCE = int(FORCE)   # >0: force EXACTLY this many output tokens (max+min+ignore_eos)
 
 # --- capture-layer plumbing (all optional; absent => historical behaviour) ---
@@ -786,7 +815,17 @@ def run_once(prompt, max_tokens):
         path = "/v1/completions"
     else:
         req_body["messages"] = [{"role": "user", "content": prompt}]
-        req_body["chat_template_kwargs"] = {"enable_thinking": ENABLE_THINKING}
+        # The reasoning switch is resolved by the shell (preflight.sh
+        # ::preflight_detect_thinking_control) and handed over as final JSON,
+        # because WHICH key works is model-specific and an unrecognised one is
+        # silently ignored — which would make a "thinking off" run silently
+        # measure reasoning-heavy generation.
+        req_body["chat_template_kwargs"] = THINK_KW
+        if THINK_EFFORT:
+            # The OpenAI-standard top-level parameter, sent alongside for
+            # engines that implement it (llama.cpp currently does not forward it
+            # into the template — see the preflight.sh block header).
+            req_body["reasoning_effort"] = THINK_EFFORT
         path = "/v1/chat/completions"
     if FORCE > 0:
         req_body["min_tokens"] = FORCE

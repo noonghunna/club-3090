@@ -36,6 +36,19 @@
 #   SKIP_TOOLS   Set to 1 to skip the tool-call test entirely (useful when
 #                running against the default config which is known to fail
 #                tool calls — see README "Known issue" section).
+#   VERIFY_THINK_OFF / VERIFY_THINK_ON
+#                Raw JSON objects for chat_template_kwargs, overriding the
+#                auto-detected reasoning switch. Example for a model whose
+#                template uses an effort dial rather than a boolean:
+#                  VERIFY_THINK_OFF='{"reasoning_effort": "none"}'
+#                Auto-detection handles the known families — set these only for
+#                a template this harness does not recognise. Setting one also
+#                suppresses the matching top-level OpenAI `reasoning_effort`
+#                parameter, so an override fully specifies the request.
+#   VERIFY_TOK_SCALE
+#                Multiplier for the two short scored checks' token budgets.
+#                Applied ONLY when no reasoning off-switch was detected
+#                (default 64); models with a working switch are unaffected.
 #
 # Optional flag:
 #   --bench      After all correctness checks pass, run scripts/bench.sh
@@ -111,6 +124,39 @@ detect_engine() {
 }
 ENGINE_KIND="$(detect_engine)"
 
+# ---- Thinking-control detection -----------------------------------------
+# WHICH chat_template_kwargs key controls reasoning is model-specific, and an
+# unrecognised one is silently ignored. Detection lives in preflight.sh so the
+# whole script layer shares one implementation; see the block header there for
+# the failure mode and the escaping rule. Sets THINK_CONTROL / THINK_OFF_KW /
+# THINK_ON_KW; override with VERIFY_THINK_OFF / VERIFY_THINK_ON.
+if declare -F preflight_detect_thinking_control >/dev/null; then
+  THINK_PROBE=1   # functional check: one extra request is harmless, coverage matters
+  preflight_detect_thinking_control
+else
+  # preflight.sh not found — keep the historical request shape.
+  THINK_CONTROL="enable_thinking"
+  THINK_OFF_KW='{"enable_thinking": false}'
+  THINK_ON_KW='{"enable_thinking": true}'
+  THINK_OFF_STD=''; THINK_ON_STD=''
+fi
+
+# Token budgets AND request timeouts for the two short scored checks. An
+# always-reasoning model whose switch this harness doesn't know needs room for
+# the preamble as well as the answer — and raising the budget alone is a trap,
+# because the extra tokens take extra wall-clock and the curl caps (30s/45s)
+# would then fire instead. Scale both together. Every model with a detected
+# switch is unaffected: the multiplier is 1 and the timeouts are unchanged.
+TOK_SCALE=1
+[[ "$THINK_CONTROL" == none* ]] && TOK_SCALE="${VERIFY_TOK_SCALE:-64}"
+MT_BASIC=$(( 30 * TOK_SCALE ))
+MT_STREAM=$(( 120 * TOK_SCALE ))
+if (( TOK_SCALE > 1 )); then
+  TMO_BASIC=300; TMO_STREAM=300
+else
+  TMO_BASIC=30;  TMO_STREAM=45
+fi
+
 FAILED=0
 run_check() {
   local label="$1"; shift
@@ -119,6 +165,7 @@ run_check() {
 
 echo "Running FULL functional test against ${URL}"
 echo "  model=${MODEL}  container=${CONTAINER}  engine=${ENGINE_KIND}"
+echo "  thinking-control=${THINK_CONTROL}  off=${THINK_OFF_KW}  on=${THINK_ON_KW}"
 echo ""
 
 # --------------------------------------------------------------------
@@ -201,7 +248,7 @@ curl -sf -m 180 "${URL}/v1/chat/completions" \
     \"messages\": [{\"role\": \"user\", \"content\": \"ping\"}],
     \"max_tokens\": 1,
     \"temperature\": 0.0,
-    \"chat_template_kwargs\": {\"enable_thinking\": false}
+    ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
   }" >/dev/null 2>&1 && echo "[warmup] engine warm" || echo "[warmup] warmup request did not return in 180s — [3/9] will surface a real outage if present"
 
 # --------------------------------------------------------------------
@@ -210,14 +257,14 @@ curl -sf -m 180 "${URL}/v1/chat/completions" \
 check_basic() {
   echo "[3/9] Basic completion — capital of France ..."
   local resp
-  resp="$(curl -sf -m 30 "${URL}/v1/chat/completions" \
+  resp="$(curl -sf -m ${TMO_BASIC} "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "{
       \"model\": \"${MODEL}\",
       \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of France? One short sentence.\"}],
-      \"max_tokens\": 30,
+      \"max_tokens\": ${MT_BASIC},
       \"temperature\": 0.6,
-      \"chat_template_kwargs\": {\"enable_thinking\": false}
+      ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
     }")" || { fail "completion request failed" "Check docker logs ${CONTAINER}"; return 1; }
   local content
   content="$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'])" 2>/dev/null || true)"
@@ -247,7 +294,7 @@ check_tools() {
       \"messages\": [{\"role\": \"user\", \"content\": \"What is the weather in San Francisco? Use the get_weather tool.\"}],
       \"tools\": [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather for a city.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}}}],
       \"tool_choice\": \"auto\", \"max_tokens\": 200, \"temperature\": 0.3,
-      \"chat_template_kwargs\": {\"enable_thinking\": false}
+      ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
     }")" || { fail "tool-call request failed" "Check docker logs"; return 1; }
   local tool_calls
   tool_calls="$(echo "$resp" | python3 -c "
@@ -284,15 +331,15 @@ check_streaming() {
   echo "[5/9] Streaming (SSE) ..."
   # Collect streamed chunks for 15 seconds max
   local stream_out
-  stream_out="$(curl -sf -m 45 --no-buffer "${URL}/v1/chat/completions" \
+  stream_out="$(curl -sf -m ${TMO_STREAM} --no-buffer "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "{
       \"model\": \"${MODEL}\",
       \"messages\": [{\"role\": \"user\", \"content\": \"Write a three-sentence haiku about debugging.\"}],
-      \"max_tokens\": 120,
+      \"max_tokens\": ${MT_STREAM},
       \"temperature\": 0.6,
       \"stream\": true,
-      \"chat_template_kwargs\": {\"enable_thinking\": false}
+      ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
     }" 2>/dev/null)" || { fail "streaming request failed" "Check docker logs"; return 1; }
 
   local text chunks
@@ -357,7 +404,7 @@ check_streaming_tools() {
       \"tools\": [{\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"description\":\"Get weather for a city.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}}}],
       \"tool_choice\": \"auto\", \"max_tokens\": 256, \"temperature\": 0.3,
       \"stream\": true,
-      \"chat_template_kwargs\": {\"enable_thinking\": true}
+      ${THINK_ON_STD}\"chat_template_kwargs\": ${THINK_ON_KW}
     }" 2>/dev/null)" || { fail "streaming tool-call request failed" "Check docker logs"; return 1; }
   local verdict
   verdict="$(echo "$stream_out" | python3 -c "
@@ -409,7 +456,7 @@ check_thinking() {
       \"messages\": [{\"role\": \"user\", \"content\": \"What is 2+2? One-line answer.\"}],
       \"max_tokens\": 4000,
       \"temperature\": 0.3,
-      \"chat_template_kwargs\": {\"enable_thinking\": true}
+      ${THINK_ON_STD}\"chat_template_kwargs\": ${THINK_ON_KW}
     }")" || { fail "thinking request failed" "Check docker logs"; return 1; }
   local analyzed
   analyzed="$(echo "$resp" | python3 -c "
@@ -462,7 +509,7 @@ check_output_quality() {
       \"messages\": [{\"role\": \"user\", \"content\": \"Write a detailed 1500-word essay explaining how transformer attention works. Cover: query/key/value projections, scaled dot-product attention, softmax, multi-head attention, positional encodings, and a brief comparison with RNN-based attention.\"}],
       \"max_tokens\": 2000,
       \"temperature\": 0.6,
-      \"chat_template_kwargs\": {\"enable_thinking\": false}
+      ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
     }")" || { fail "output quality request failed" "Check docker logs ${CONTAINER}"; return 1; }
 
   local analysis
@@ -552,7 +599,7 @@ check_mtp_acceptance() {
       \"messages\": [{\"role\": \"user\", \"content\": \"Count from 1 to 80, one number per line.\"}],
       \"max_tokens\": 500,
       \"temperature\": 0.0,
-      \"chat_template_kwargs\": {\"enable_thinking\": false}
+      ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
     }" >/dev/null 2>&1 || { fail "metrics-trigger request failed" "Check docker logs"; return 1; }
   sleep 3  # let log line flush
 

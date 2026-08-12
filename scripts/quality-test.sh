@@ -758,6 +758,40 @@ if [[ "$NO_THINKING" == "1" ]]; then
   CLI_ARGS+=(--no-thinking)
   echo "[quality-test] thinking: disabled for every pack, ignoring per-pack defaults (non-canonical)"
 fi
+# ---- reasoning switch: benchlocal-cli only knows the Qwen key ---------------
+# benchlocal-cli builds its own request bodies and drives thinking via
+# chat_template_kwargs.enable_thinking. A model whose template reads a different
+# variable IGNORES that silently, so --no-thinking and --enable-thinking would
+# produce two IDENTICAL reasoning-on runs and the 8-pack would report a clean
+# off-vs-on comparison that never happened. Found on Inkling-Small 2026-08-12
+# (effort dial, default 0.9). Detect the real switch and hand it over through
+# --extra-body, which benchlocal-cli merges into every request body.
+#
+# Only injected when the model does NOT use the Qwen key, so runs on every
+# existing model stay byte-identical. Only injected when the arm is pinned
+# (--no-thinking / --enable-thinking): without a pin, packs choose per-pack, and
+# a single --extra-body would force one setting across all of them.
+if declare -F preflight_detect_thinking_control >/dev/null; then
+  preflight_detect_thinking_control "$URL" "$MODEL"
+fi
+if [[ "${THINK_CONTROL:-enable_thinking}" != enable_thinking* ]]; then
+  _tfrag=""
+  [[ "$NO_THINKING"     == "1" ]] && _tfrag="${THINK_FRAG_OFF:-}"
+  [[ "$ENABLE_THINKING" == "1" ]] && _tfrag="${THINK_FRAG_ON:-}"
+  if [[ -n "$_tfrag" ]]; then
+    if [[ -n "${EXTRA_BODY:-}" ]]; then
+      echo "[quality-test] WARN: EXTRA_BODY is already set — NOT injecting the reasoning switch (${THINK_CONTROL}). Merge '${_tfrag}' into it yourself or the thinking arm is a no-op." >&2
+    else
+      CLI_ARGS+=(--extra-body "$_tfrag")
+      echo "[quality-test] thinking switch: ${THINK_CONTROL} → --extra-body ${_tfrag}"
+      echo "[quality-test]   (benchlocal-cli's enable_thinking flag does not apply to this model)"
+    fi
+  else
+    echo "[quality-test] WARN: this model's reasoning switch is '${THINK_CONTROL:-unknown}', which benchlocal-cli's --enable-thinking/--no-thinking cannot drive." >&2
+    echo "[quality-test]   Packs will run at the model's DEFAULT reasoning level regardless of pack metadata." >&2
+    echo "[quality-test]   Pin the arm with --no-thinking or --enable-thinking so the correct switch is injected." >&2
+  fi
+fi
 if [[ -n "$THINKING_MAX_TOKENS" ]]; then
   CLI_ARGS+=(--thinking-max-tokens "$THINKING_MAX_TOKENS")
   echo "[quality-test] thinking max tokens: $THINKING_MAX_TOKENS (applies to thinking-enabled packs)"

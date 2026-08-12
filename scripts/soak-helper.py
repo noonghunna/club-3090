@@ -62,8 +62,23 @@ def base_req(model, messages, max_tokens, temp=0.4, thinking=False, tools=False)
     # `chat_template_kwargs.enable_thinking` is a Qwen3-family feature.
     # Other model families (Gemma 4, etc.) reject it with 400. Skip via:
     #   SOAK_NO_CHAT_TEMPLATE_KWARGS=1
+    #
+    # WHICH key controls reasoning is model-specific, and a family that uses a
+    # different one IGNORES this silently — no 400, no warning — so the model
+    # reasons at full effort for the whole soak while the run believes thinking
+    # is off. soak-test.sh resolves the real key via preflight.sh
+    # ::preflight_detect_thinking_control and exports it as final JSON.
     if os.environ.get("SOAK_NO_CHAT_TEMPLATE_KWARGS") != "1":
-        req["chat_template_kwargs"] = {"enable_thinking": thinking}
+        raw = os.environ.get("THINK_ON_KW" if thinking else "THINK_OFF_KW")
+        try:
+            req["chat_template_kwargs"] = (
+                json.loads(raw) if raw else {"enable_thinking": thinking})
+        except Exception:
+            req["chat_template_kwargs"] = {"enable_thinking": thinking}
+        # The OpenAI-standard top-level parameter, for engines that honour it.
+        effort = os.environ.get("THINK_ON_EFFORT" if thinking else "THINK_OFF_EFFORT")
+        if effort:
+            req["reasoning_effort"] = effort
     if tools:
         req["tools"] = TOOLS
         req["tool_choice"] = "auto"

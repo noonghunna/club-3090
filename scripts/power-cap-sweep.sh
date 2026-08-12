@@ -435,6 +435,22 @@ if [ -z "${CONTAINER:-}" ]; then
   CONTAINER="none"
 fi
 
+# Which request field turns reasoning off is model-specific and an unrecognised
+# one is silently ignored, so a sweep on such a model would compare power caps
+# against reasoning-heavy generation while reporting itself thinking-off. The
+# load generator below splats THINK_FRAG_OFF via its _think() helper.
+# See preflight.sh::preflight_detect_thinking_control.
+if [[ -f "$REPO_ROOT/scripts/preflight.sh" ]] && ! declare -F preflight_detect_thinking_control >/dev/null; then
+  # shellcheck source=preflight.sh
+  source "$REPO_ROOT/scripts/preflight.sh"
+fi
+if declare -F preflight_detect_thinking_control >/dev/null; then
+  preflight_detect_thinking_control "${URL:-}" "${MODEL:-}"
+fi
+export THINK_OFF_KW="${THINK_OFF_KW:-{\"enable_thinking\": false\}}"
+export THINK_ON_KW="${THINK_ON_KW:-{\"enable_thinking\": true\}}"
+export THINK_OFF_EFFORT="${THINK_OFF_EFFORT:-}" THINK_ON_EFFORT="${THINK_ON_EFFORT:-}"
+
 if [ -z "${URL:-}" ] || [ -z "${MODEL:-}" ]; then
   echo "[error] could not auto-detect a running URL + MODEL." >&2
   echo "[hint]  start a model server first (bash scripts/switch.sh <variant>)" >&2
@@ -512,6 +528,23 @@ bench_decode_single_request() {
 
   python3 - "$URL" "$MODEL" "$prompt" "$max_tokens" "$kind" "$phase" "$cap" "$log_file" <<'PY'
 import json
+
+# Reasoning switch resolved by the shell (see preflight.sh header) — WHICH key
+# works is model-specific and an unrecognised one is silently ignored. Returns
+# the payload fragment: the kwargs object plus, when the model uses an effort
+# dial, the OpenAI-standard top-level parameter alongside it.
+def _think(on=False):
+    import os as _o, json as _j
+    raw = _o.environ.get("THINK_ON_KW" if on else "THINK_OFF_KW")
+    try:
+        frag = {"chat_template_kwargs": _j.loads(raw) if raw else {"enable_thinking": on}}
+    except Exception:
+        frag = {"chat_template_kwargs": {"enable_thinking": on}}
+    eff = _o.environ.get("THINK_ON_EFFORT" if on else "THINK_OFF_EFFORT") or ""
+    if eff:
+        frag["reasoning_effort"] = eff
+    return frag
+
 import sys
 import time
 import urllib.request
@@ -525,7 +558,7 @@ body = json.dumps({
     "top_p": 0.95,
     "stream": True,
     "stream_options": {"include_usage": True},
-    "chat_template_kwargs": {"enable_thinking": False},
+    **_think(),
 }).encode()
 request = urllib.request.Request(
     f"{url}/v1/chat/completions",

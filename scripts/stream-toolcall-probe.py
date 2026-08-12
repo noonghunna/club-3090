@@ -31,6 +31,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import sys
 import urllib.request
 
@@ -93,8 +94,19 @@ def stream_request(url, model, messages, tool_choice, thinking, temperature, max
         "max_tokens": max_tokens,
     }
     if thinking:
-        # vLLM Qwen3 thinking gate.
-        body["chat_template_kwargs"] = {"enable_thinking": True}
+        # The thinking gate. WHICH key it is varies by model family and an
+        # unrecognised one is silently ignored, so the caller resolves it via
+        # preflight.sh::preflight_detect_thinking_control and exports the final
+        # JSON; the Qwen literal is the fallback when nothing was exported.
+        raw = os.environ.get("THINK_ON_KW")
+        try:
+            body["chat_template_kwargs"] = (
+                json.loads(raw) if raw else {"enable_thinking": True})
+        except Exception:
+            body["chat_template_kwargs"] = {"enable_thinking": True}
+        effort = os.environ.get("THINK_ON_EFFORT")
+        if effort:
+            body["reasoning_effort"] = effort
     req = urllib.request.Request(
         url.rstrip("/") + "/v1/chat/completions",
         data=json.dumps(body).encode(),

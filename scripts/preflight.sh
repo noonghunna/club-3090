@@ -1503,6 +1503,170 @@ except Exception:
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# Resolve WHICH chat_template_kwargs key controls reasoning on the served model.
+# Sets THINK_CONTROL / THINK_OFF_KW / THINK_ON_KW in the caller's scope.
+#
+# The key is NOT universal, and the whole script layer had the Qwen one baked in:
+#   Qwen3.x + most families → {"enable_thinking": false|true}
+#   Inkling (TML)           → {"reasoning_effort": "none"|"high"} — a DIAL
+#                             (none/minimal/low/medium/high/xhigh/max, or a
+#                             float), defaulting to 0.9 "high", NOT a boolean
+#   neither                 → {} (caller decides whether to add budget headroom)
+#
+# Why this exists (found on Inkling-Small 2026-08-12): an unrecognised kwarg is
+# silently IGNORED — no error, no warning. The model then reasons at full effort,
+# and a short-budget check spends its entire allowance on the reasoning preamble
+# before emitting a single content token. verify-full's [3/9] and [5/9] failed
+# structurally on such a model, reporting "Model may be loading badly or wrong
+# chat template" — sending you to debug a template that was in fact correct.
+#
+# ⚠️ Both switches must go in chat_template_kwargs. llama-server does NOT map the
+# top-level OpenAI-standard `reasoning_effort` request parameter into the
+# template; passing it there is silently ignored (measured, same session).
+#
+# ⚠️ THINK_*_KW hold FINAL JSON text, not backslash-escaped source. Callers
+# interpolate them into a double-quoted payload, and bash processes \" escapes
+# BEFORE parameter expansion — an escaped value reaches curl with its
+# backslashes intact and every request 400s.
+#
+# Detection order is deliberate: enable_thinking is checked FIRST so that a
+# template supporting both keeps the exact request shape it has today. This can
+# only add coverage, never change an existing model's result.
+#
+# No-ops when THINK_CONTROL is already set, or when there's no URL / curl /
+# python3 — callers keep working defaults. Overridden by VERIFY_THINK_OFF /
+# VERIFY_THINK_ON (plain JSON objects).
+_preflight_probe_thinking_key() {
+  # Echo the content length a trivial question returns under the given kwargs.
+  # A working off-switch answers in a few tokens; an ignored one burns the whole
+  # budget reasoning and returns empty content.
+  local url="$1" model="$2" kwargs="$3"
+  curl -sf -m 90 "${url%/}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"${model}\", \"messages\": [{\"role\": \"user\", \"content\": \"Say OK.\"}], \"max_tokens\": 24, \"temperature\": 0.0, \"chat_template_kwargs\": ${kwargs}}" 2>/dev/null \
+    | python3 -c "import sys,json; print(len((json.load(sys.stdin)['choices'][0]['message'].get('content') or '').strip()))" 2>/dev/null \
+    || echo 0
+}
+
+preflight_detect_thinking_control() {
+  [[ -n "${THINK_CONTROL:-}" ]] && return 0
+  local url="${1:-${URL:-}}"
+  local model="${2:-${MODEL:-}}"
+  THINK_CONTROL="enable_thinking"   # safe default = today's behaviour
+  if [[ -n "$url" ]] && command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    local tmpl
+    # 1. Exact — read the live chat template when the engine exposes it
+    #    (llama.cpp /props). Free, and needs no inference.
+    tmpl="$(curl -sf -m 5 "${url%/}/props" 2>/dev/null \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('chat_template') or '')" 2>/dev/null || true)"
+    if [[ -n "$tmpl" ]]; then
+      case "$tmpl" in
+        *enable_thinking*)  THINK_CONTROL="enable_thinking"  ;;
+        *reasoning_effort*) THINK_CONTROL="reasoning_effort" ;;
+        *)                  THINK_CONTROL="none"             ;;
+      esac
+    elif [[ "${THINK_PROBE:-0}" == "1" ]] && [[ -n "$model" ]] && curl -sf -m 5 "${url%/}/v1/models" >/dev/null 2>&1; then
+      # 2. Behavioural probe for engines that don't expose the template (vLLM,
+      #    SGLang). At most two tiny requests, and only when step 1 no-ops.
+      #
+      # ⚠️ OPT-IN via THINK_PROBE=1, and deliberately so: this fires REAL
+      # inference requests. Functional checks (verify / verify-full) opt in
+      # because one extra request is harmless there. MEASUREMENT scripts
+      # (bench, soak, power-cap-sweep, quality-test) must NOT, for two reasons:
+      # it puts uncontrolled requests on the server before warmup, and against
+      # a scripted/mocked endpoint it consumes responses the run expects —
+      # which is exactly how it broke the soak fixtures, silently shifting
+      # every turn's response by two.
+      #
+      # ⚠️ The /v1/models reachability gate above is load-bearing. The probe
+      # reads "empty content" as "this switch is ignored", and a request that
+      # never reached the server also returns empty — so without the gate an
+      # unreachable or still-warming endpoint is misread as "model has no
+      # reasoning switch", which both changes the request shape and (in
+      # verify-full) inflates token budgets by 64×. Unreachable must fall
+      # through to the safe default instead, and let the caller's own
+      # reachability check surface the real outage.
+      if [[ "$(_preflight_probe_thinking_key "$url" "$model" '{"enable_thinking": false}')" != "0" ]]; then
+        THINK_CONTROL="enable_thinking"
+      elif [[ "$(_preflight_probe_thinking_key "$url" "$model" '{"reasoning_effort": "none"}')" != "0" ]]; then
+        THINK_CONTROL="reasoning_effort"
+      else
+        THINK_CONTROL="none"
+      fi
+    fi
+  fi
+  # THINK_*_STD is the OpenAI-standard TOP-LEVEL parameter, emitted as a JSON
+  # fragment (trailing comma included) to sit alongside the kwargs object.
+  #
+  # `reasoning_effort` IS the standard, and Thinking Machines' own API takes it
+  # top-level (tinker-docs "compatible-apis/openai"): none/minimal/low/medium/
+  # high/xhigh or a float in [0.0, 0.99], default 0.9. We send it — but we
+  # cannot send it ALONE, because llama.cpp only half-implements it:
+  #
+  #   server-common.cpp: if (reasoning_effort == "none") inputs.enable_thinking = false;
+  #                      // other reasoning_effort values are model-specific and not yet handled
+  #
+  # i.e. the one handled value is mapped onto `enable_thinking`, a template
+  # variable this family does NOT read, and every other value is dropped
+  # silently. So on llama.cpp the chat_template_kwargs copy is what actually
+  # reaches the template. Sending both is verified non-conflicting (measured
+  # 2026-08-12: none → 10 tok / 0 reasoning; high → 45 tok / 152 chars) and
+  # makes the request correct on engines that DO implement the standard.
+  # Drop the kwargs fallback once llama.cpp forwards the value into the template.
+  # THINK_*_EFFORT are the same top-level value as a PLAIN string (empty when the
+  # model has no effort dial), for consumers that build their payload in Python
+  # rather than by string-splicing JSON — they set req["reasoning_effort"] from
+  # it directly instead of parsing the fragment above.
+  THINK_OFF_STD=''
+  THINK_ON_STD=''
+  THINK_OFF_EFFORT=''
+  THINK_ON_EFFORT=''
+  case "$THINK_CONTROL" in
+    reasoning_effort)
+      THINK_OFF_KW='{"reasoning_effort": "none"}'
+      THINK_ON_KW='{"reasoning_effort": "high"}'
+      THINK_OFF_STD='"reasoning_effort": "none", '
+      THINK_ON_STD='"reasoning_effort": "high", '
+      THINK_OFF_EFFORT='none'
+      THINK_ON_EFFORT='high' ;;
+    none)
+      THINK_OFF_KW='{}'
+      THINK_ON_KW='{}' ;;
+    *)
+      THINK_OFF_KW='{"enable_thinking": false}'
+      THINK_ON_KW='{"enable_thinking": true}' ;;
+  esac
+  # An explicit override is the full statement of intent — it replaces the
+  # detected kwargs AND suppresses the top-level fragment, so the two can't
+  # disagree in the same request.
+  [[ -n "${VERIFY_THINK_OFF:-}" ]] && { THINK_OFF_KW="${VERIFY_THINK_OFF}"; THINK_OFF_STD=''; THINK_OFF_EFFORT=''; THINK_CONTROL="${THINK_CONTROL} (off overridden)"; }
+  [[ -n "${VERIFY_THINK_ON:-}"  ]] && { THINK_ON_KW="${VERIFY_THINK_ON}";   THINK_ON_STD='';  THINK_ON_EFFORT='';  THINK_CONTROL="${THINK_CONTROL} (on overridden)"; }
+  # THINK_FRAG_* is the COMPLETE request fragment as one JSON object — the kwargs
+  # plus, when applicable, the top-level standard parameter. Python consumers
+  # splat it into their payload in a single uniform line:
+  #   **json.loads(os.environ.get("THINK_FRAG_OFF") or '{"chat_template_kwargs": {"enable_thinking": false}}')
+  # ⚠️ Build these with plain assignments, NEVER `X="$(cond && printf …)"`. Under
+  # `set -e` (every caller) a command substitution whose last command fails makes
+  # the ASSIGNMENT return non-zero, which aborts the function mid-way — leaving
+  # THINK_* half-set and taking the calling script down with it. That is not
+  # theoretical: it broke 10 test suites in one commit.
+  local _off_extra='' _on_extra=''
+  if [[ -n "$THINK_OFF_EFFORT" ]]; then _off_extra=", \"reasoning_effort\": \"${THINK_OFF_EFFORT}\""; fi
+  if [[ -n "$THINK_ON_EFFORT"  ]]; then _on_extra=", \"reasoning_effort\": \"${THINK_ON_EFFORT}\""; fi
+  THINK_FRAG_OFF="{\"chat_template_kwargs\": ${THINK_OFF_KW}${_off_extra}}"
+  THINK_FRAG_ON="{\"chat_template_kwargs\": ${THINK_ON_KW}${_on_extra}}"
+  # Announce ONLY when the answer is non-default. For every model that already
+  # used the Qwen key this function is now completely silent, so output-drift
+  # guards (test-soak-decode-basis compares stdout against origin/master) and
+  # anything else parsing these logs stay byte-identical. A surprising answer is
+  # worth a line; confirming the status quo is not.
+  if [[ "$THINK_CONTROL" != "enable_thinking" ]]; then
+    echo "[autodetect] thinking-control='${THINK_CONTROL}' off=${THINK_OFF_KW} (set VERIFY_THINK_OFF/ON to override)" >&2
+  fi
+  return 0
+}
+
 # ── #633 — ik-llama cu13/cu12 driver-aware image selection ────────────────────
 # The pinned cu13 ik-llama image has a CUDA 13.2 runtime; on a driver whose
 # supported CUDA < 13.2 the forward-compat path fails on GeForce (CUDA error

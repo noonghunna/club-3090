@@ -129,8 +129,37 @@ if [[ -z "$MODEL" ]]; then
   exit 1
 fi
 
+# Which request field controls reasoning is model-specific, and an unrecognised
+# one is silently ignored — the model then reasons at full effort while the run
+# reports itself thinking-off. Resolved once by preflight.sh
+# ::preflight_detect_thinking_control and exported as final JSON.
+if declare -F preflight_detect_thinking_control >/dev/null; then
+  preflight_detect_thinking_control
+else
+  THINK_OFF_KW='{"enable_thinking": false}'; THINK_ON_KW='{"enable_thinking": true}'
+  THINK_OFF_EFFORT=''; THINK_ON_EFFORT=''
+fi
+export THINK_OFF_KW THINK_ON_KW THINK_OFF_EFFORT THINK_ON_EFFORT
+
 python3 - "$URL" "$MODEL" "$SESSIONS" "$TURNS" "$QUIET" "$FIXTURE" << 'PYEOF'
 import json, os, sys, time, urllib.request, statistics as s, pathlib
+
+# Reasoning switch resolved by the shell (see preflight.sh header) — WHICH key
+# works is model-specific and an unrecognised one is silently ignored. Returns
+# the payload fragment: the kwargs object plus, when the model uses an effort
+# dial, the OpenAI-standard top-level parameter alongside it.
+def _think(on=False):
+    import os as _o, json as _j
+    raw = _o.environ.get("THINK_ON_KW" if on else "THINK_OFF_KW")
+    try:
+        frag = {"chat_template_kwargs": _j.loads(raw) if raw else {"enable_thinking": on}}
+    except Exception:
+        frag = {"chat_template_kwargs": {"enable_thinking": on}}
+    eff = _o.environ.get("THINK_ON_EFFORT" if on else "THINK_OFF_EFFORT") or ""
+    if eff:
+        frag["reasoning_effort"] = eff
+    return frag
+
 sys.stdout.reconfigure(line_buffering=True)  # flush after every \n
 
 URL, MODEL, SESSIONS, TURNS, QUIET, FIXTURE_PATH = sys.argv[1:7]
@@ -224,7 +253,7 @@ def run_turn(messages, fixture_turn, session_id, turn_idx):
         "temperature": 0.3,
         "stream": True,
         "stream_options": {"include_usage": True},
-        "chat_template_kwargs": {"enable_thinking": False},
+        **_think(),
     }).encode()
 
     req = urllib.request.Request(

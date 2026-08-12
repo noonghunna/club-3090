@@ -114,6 +114,20 @@ URL="${URL:-http://localhost:8020}"
 # literal below is only a last resort if detection no-ops (endpoint unreachable).
 declare -F preflight_autodetect_model >/dev/null && preflight_autodetect_model
 MODEL="${MODEL:-qwen3.6-27b}"
+
+# Which request field turns reasoning off is model-specific, and an unrecognised
+# one is silently ignored — a family using a different switch would reason at
+# full effort through the whole longctx ladder, blowing the tight token budgets
+# (the needle checks cap at 30 tokens) for reasons that look like recall
+# failures. See preflight.sh::preflight_detect_thinking_control. THINK_FRAG_*
+# is the complete request fragment, splatted by the python blocks below.
+if declare -F preflight_detect_thinking_control >/dev/null; then
+  preflight_detect_thinking_control
+else
+  THINK_FRAG_OFF='{"chat_template_kwargs": {"enable_thinking": false}}'
+  THINK_FRAG_ON='{"chat_template_kwargs": {"enable_thinking": true}}'
+fi
+export THINK_FRAG_OFF THINK_FRAG_ON
 CONTAINER="${CONTAINER:-vllm-qwen36-27b}"
 
 # Detect VLLM_ENFORCE_EAGER=1 in the running container's env. Eager-mode
@@ -382,7 +396,7 @@ req = {
     "messages": [{"role": "user", "content": content}],
     "max_tokens": 30,
     "temperature": 0.0,
-    "chat_template_kwargs": {"enable_thinking": False},
+    **json.loads(os.environ.get("THINK_FRAG_OFF") or '{"chat_template_kwargs": {"enable_thinking": false}}'),
 }
 with open(os.environ['SECRET_FILE'], 'w') as f:
     f.write(secret)
@@ -531,7 +545,7 @@ payload = {
     "tool_choice": "auto",
     "max_tokens": 500,
     "temperature": 0.6,
-    "chat_template_kwargs": {"enable_thinking": False},
+    **json.loads(os.environ.get("THINK_FRAG_OFF") or '{"chat_template_kwargs": {"enable_thinking": false}}'),
 }
 with open(os.environ['REQ_FILE'], 'w') as f:
     json.dump(payload, f)
@@ -548,7 +562,7 @@ EOF
     200)
       local content_len tc_count finish
       read -r content_len tc_count finish < <(python3 -c "
-import json
+import json, os
 try:
     d = json.load(open('${resp_file}'))
     msg = d['choices'][0]['message']
@@ -1238,7 +1252,7 @@ print(' '.join(str(r) for r in rungs))
   cal_req="$(mktemp --suffix=.json)"
   cal_result="$(mktemp --suffix=.json)"
   python3 -c "
-import json
+import json, os
 block = (
     'This section describes the history of computing in detail. '
     'Transistors were invented in 1947 at Bell Labs. The integrated circuit came a decade later. '
@@ -1249,7 +1263,7 @@ req = {
     'model': '${MODEL}',
     'messages': [{'role': 'user', 'content': block + '\n\nHi.'}],
     'max_tokens': 5, 'temperature': 0.0,
-    'chat_template_kwargs': {'enable_thinking': False},
+    **json.loads(os.environ.get('THINK_FRAG_OFF') or '{\"chat_template_kwargs\": {\"enable_thinking\": false}}'),
 }
 with open('${cal_req}', 'w') as f:
     json.dump(req, f)
@@ -1322,7 +1336,7 @@ req = {
     "messages": [{"role": "user", "content": content}],
     "max_tokens": 30,
     "temperature": 0.0,
-    "chat_template_kwargs": {"enable_thinking": False},
+    **json.loads(os.environ.get("THINK_FRAG_OFF") or '{"chat_template_kwargs": {"enable_thinking": false}}'),
 }
 with open(os.environ['SECRET_FILE'], 'w') as f:
     f.write(secret)

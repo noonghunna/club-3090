@@ -353,6 +353,23 @@ curl -sf -m 10 "${ENDPOINT}/v1/models" -o "$MODELS_JSON" \
   || die "no response from ${ENDPOINT}/v1/models"
 MODEL="${MODEL:-$(python3 "$HELPER" model "$MODELS_JSON")}"
 
+# Which request field turns reasoning off is model-specific, and an unrecognised
+# one is silently ignored — so a family that uses a different switch would reason
+# at full effort for the ENTIRE soak while the run reports itself thinking-off.
+# Resolve it once here and hand soak-helper.py the final JSON via the
+# environment. See preflight.sh::preflight_detect_thinking_control.
+if [[ -f "${REPO_ROOT}/scripts/preflight.sh" ]]; then
+  # shellcheck source=preflight.sh
+  source "${REPO_ROOT}/scripts/preflight.sh"
+fi
+if declare -F preflight_detect_thinking_control >/dev/null; then
+  preflight_detect_thinking_control "$ENDPOINT" "$MODEL"
+else
+  THINK_OFF_KW='{"enable_thinking": false}'; THINK_ON_KW='{"enable_thinking": true}'
+  THINK_OFF_EFFORT=''; THINK_ON_EFFORT=''
+fi
+export THINK_OFF_KW THINK_ON_KW THINK_OFF_EFFORT THINK_ON_EFFORT
+
 TURN_LOG="${SOAK_OUTPUT}/turn-log.csv"
 GPU_LOG="${SOAK_OUTPUT}/gpu-log.csv"
 SUMMARY_MD="${SOAK_OUTPUT}/summary.md"
