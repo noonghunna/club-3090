@@ -1903,8 +1903,20 @@ preflight_cpu_offload_ram() {
     echo "            It cannot run here." >&2
     echo "            This is a hard gate, not a tuning knob: below it the box thrashes or OOMs." >&2
     echo "            Fix: use a lower-bit tier (the IQ2 slug needs ~86 GB), add RAM, or pick a" >&2
-    echo "            model that fits VRAM. On a 4-card rig the same model needs LESS host RAM," >&2
-    echo "            because residency moves expert bytes onto the GPUs." >&2
+    echo "            model that fits VRAM." >&2
+    # ⚠️ "more cards => less host RAM" holds ONLY for composes that can pin expert
+    # bundles back onto the GPUs, i.e. ones carrying the residency headers. The
+    # moe-cache composes pin NOTHING (their -ot is an unconditional =CPU catch-all;
+    # the expert cache is a VRAM-side copy, so the CPU master buffer stays whole).
+    # Printing the hint there sends a RAM-short user shopping for GPUs that cannot
+    # help. Key off the same header the sizer uses, not the model name.
+    if [[ "$(compose_meta_get "$compose_file" cpu-offload-bundle-mib || true)" =~ ^[0-9]+$ ]]; then
+      echo "            On a rig with more cards the same model needs LESS host RAM, because" >&2
+      echo "            residency moves expert bytes onto the GPUs." >&2
+    else
+      echo "            NOTE: more GPUs will NOT lower this compose's host-RAM need — it keeps" >&2
+      echo "            every expert on the CPU regardless of card count." >&2
+    fi
     return 1
   fi
   if (( avail_gb < need_gb )); then

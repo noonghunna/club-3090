@@ -37,7 +37,14 @@
 #                expert pool fills. Do not benchmark it.
 #              • `-devd none` is LOAD-BEARING: with the drafter GPU-resident the
 #                cache records ZERO hits (shared-draft device-list reorder).
-#              • Needs ~140 GB of HOST RAM. Hard gate.
+#              • Needs ~156 GB of HOST RAM — a HARD gate, and it does NOT fall
+#                with card count the way the stock multi4 slug's does: that one
+#                pins expert bundles back onto the GPUs, this one keeps all 43
+#                layers on CPU unconditionally and adds the 10.1 GiB drafter to
+#                host memory as well. A 128 GB box CANNOT run this slug — use
+#                the stock 4-card offload slug (llamacpp/deepseek-flash-multi4-q8)
+#                instead, ~120 GB on a real 4×24. Arithmetic in the
+#                CPU-Offload-Host-RAM-GB block below.
 #   Best for:  Decode-heavy DeepSeek serving on 4 cards — PENDING VALIDATION. ⭐
 # ---------------------------------------------------------------------------
 # WHY THIS EXISTS
@@ -48,6 +55,33 @@
 #   rates has repeatedly been SLOWER. Treat the dual numbers as a hypothesis
 #   for this topology, not a prediction.
 # ---------------------------------------------------------------------------
+#
+# CPU-Offload-Host-RAM-GB: 156
+#   ⚠️ IDENTICAL to the dual moe-cache sibling, and that is the POINT: unlike
+#   the stock multi4 slug, host RAM here does NOT fall with card count. The
+#   stock slug pins expert bundles back onto the GPUs (that is what takes it
+#   from ~146 to ~120 on a real 4×24); this compose's `-ot` is an unconditional
+#   all-experts→CPU catch-all, so all 43 layers stay in host memory on any
+#   number of cards. More cards buy a bigger expert-cache POOL, not a smaller
+#   CPU buffer — the cache is a VRAM-side COPY and the master stays allocated.
+#   MEASURED (2×3090 boot log; the buffer is card-count-independent, `--no-mmap`):
+#       experts    141362.00 MiB   load_tensors: CUDA_Host model buffer size
+#     + drafter     10386.28 MiB   `-devd none` -> DSpark lives in host memory
+#     = pinned     151748.28 MiB = 148.19 GiB   <- the HARD floor
+#     + ~8 GiB     process overhead (CUDA_Host compute/output buffers, CPU FFN
+#                  scratch, CUDA host allocations) — the same constant both
+#                  stock headers carry (141362 MiB→146, 80268 MiB→86).
+#     = 156.
+#   ⚠️ HARD floor, not a recommendation. `--no-mmap` makes the loader
+#   `cudaMallocHost` the whole offloaded set: pinned pages are non-evictable and
+#   cannot be oversubscribed, so a short box does not degrade — it dies inside
+#   `cudaMallocHost`, which presents as "loads the model into RAM, then fails to
+#   load". A 4-card/128 GB owner wants the stock multi4 offload slug instead.
+#   ⚠️ NO residency headers here, DELIBERATELY — there are no ${OT_G*} slots in
+#   the `-ot` below, so nothing is ever pinned back and the gate must NOT
+#   subtract a grant. offload_residency_grant_mib() returns 0 without
+#   CPU-Offload-Bundle-MiB, which is the correct answer for this compose.
+# ===========================================================================
 services:
   llama-cpp-deepseek-flash-q8-moecache-multi4:
     # Digest-pinned, not tag-pinned (#940 precedent). Engine profile is authoritative.

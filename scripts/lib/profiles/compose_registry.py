@@ -1062,7 +1062,13 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
         offload="n-cpu-moe",
         moe_cache=True,
-        host_ram_gb=146,
+        # Nominal == the compose header's worst case (156), unlike the stock
+        # multi4 slug where nominal (120) is below the header (146). There is no
+        # residency to subtract here: the `-ot` is an unconditional
+        # all-experts->CPU catch-all with no OT_G* slots, so host RAM does NOT
+        # fall with card count. +10 over the stock sibling is the `-devd none`
+        # drafter (10386.28 MiB) living in host memory instead of VRAM.
+        host_ram_gb=156,
         required_sm=8.6,
         status="experimental",
         status_note="4-card sibling of the dual moe-cache slug. ⚠️ NOT VALIDATED ON ANY RIG — the reference rig has 2 cards, so nothing here has been booted; it ships on the same basis as the stock multi4 slug (off-rig provenance). ⚠️⚠️ THE TUNING IS INHERITED, NOT DERIVED: RESERVE_MB=1536 and -ub 2048 were measured on 2x24 GB against a MEASURED 1,128 MiB compute-buffer swing. On 4 cards the per-card free VRAM, the swing, and the pool/compute balance all differ, and the knee is SHARP (on 2x24 GB the neighbouring reserve value was ~11% slower). Re-derive before trusting: boot with -lv 4 + GGML_CUDA_MOE_CACHE_STATS=50, read the compute-buffer swing, set RESERVE above it, then sweep on WALL-CLOCK (never on hit rate — three times on this stack a config improved every cache counter and got slower). The launch-compat layer raises MOE_RESERVE_MB on cards >24 GB via _moe_cache_env, which covers capacity but not topology. ⚠️ ATTRIBUTION: the expert cache is leloch's work (RFC ggml-org#24528), unmerged in mainline. ⚠️ QUALITY UNTESTED on any topology. Do NOT set GGML_OP_OFFLOAD_MIN_BATCH — at 2 it silently stops the cache allocating (4.2x throughput loss, measured).",
@@ -1082,7 +1088,10 @@ COMPOSE_REGISTRY = {
         # Load-bearing: gates the launch-compat MOE_RESERVE_MB injection
         # (_moe_cache_env). Without it a 96 GB card inherits a 24 GB reserve.
         moe_cache=True,
-        host_ram_gb=146,
+        # 156, NOT the stock sibling's 146: `-devd none` moves the 10386.28 MiB
+        # DSpark drafter off the GPU and into host memory, and this compose pins
+        # no expert bundles back (no OT_G* slots), so nominal == worst case.
+        host_ram_gb=156,
         required_sm=8.6,
         status="experimental",
         status_note="The stock Q8 slug keeps a 10.4 GiB DSpark drafter on the GPU and caches nothing, idling ~9.3 GB of VRAM. This reallocates that: drafter to host (-devd none), ~5,159 experts (~47% of 11,008) resident in VRAM via leloch's expert cache. Measured 2026-08-10, same session vs the stock slug, canonical prompts at temp 0: decode 18.34 -> 23.64 narrative and 23.51 -> 27.01 code (~+29%/+15%), prefill 436 -> ~355 @10K (~-19%), cache hit rate ~56%. The published IMAGE runs ~4% under the local binary (CUDA 12.8 vs 13.2) -- image numbers are the honest ones. ⚠️ ATTRIBUTION: the expert cache is leloch's work (RFC ggml-org#24528), unmerged in mainline; this slug packages it. ⚠️ EXPERIMENTAL: QUALITY IS UNTESTED -- no 8-pack has been run, and both the cache and the CPU drafter sit on the generation path; no soak, no 3-boot. ⚠️ COLD-START TAX: the first request after boot is slow (~50-75 s for 900 tok) while the pool fills -- never benchmark request 1. ⚠️ Tuning is 2x24 GB specific (RESERVE_MB=1536 from a measured 1,128 MiB compute-buffer swing; 1024 was ~11% SLOWER despite a bigger pool and higher hit rate). Do NOT set GGML_OP_OFFLOAD_MIN_BATCH: at 2 it silently stops the cache allocating and costs 4.2x throughput.",

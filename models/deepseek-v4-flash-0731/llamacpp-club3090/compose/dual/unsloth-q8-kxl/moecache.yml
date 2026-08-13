@@ -42,7 +42,11 @@
 #                at 262K with a GPU-resident drafter), but costs ~8% decode and
 #                445 expert slots, and this model is PREFILL-BOUND at depth.
 #                Set CTX=262144 only if you genuinely need it.
-#              • Needs ~140 GB of HOST RAM (experts live in CPU memory). Hard gate.
+#              • Needs ~156 GB of HOST RAM — a HARD gate, and ~10 GB MORE than
+#                the stock Q8 slug because `-devd none` moves the 10.1 GiB
+#                drafter off the GPU and into host memory. preflight REFUSES
+#                below it; see the CPU-Offload-Host-RAM-GB block near the
+#                bottom of this header for the measured arithmetic.
 #              • Load takes ~8-10 min (--no-mmap).
 #   Quality:   toolcall-15 13/15 (87%) · instructfollow-15 15/15 (100%)
 #              · structoutput-15 14/15 (93%) · dataextract-15 12/15 (80%)
@@ -69,6 +73,35 @@
 #   are DIAGNOSTICS ONLY — three times on this stack a config improved every
 #   cache counter and got slower. Tune on wall-clock.
 # ---------------------------------------------------------------------------
+#
+# CPU-Offload-Host-RAM-GB: 156
+#   ⚠️ HIGHER than the stock Q8 sibling's 146, and the delta IS THE DRAFTER:
+#   `-devd none` puts the DSpark model in HOST memory where the stock slug keeps
+#   it in VRAM. Same weights, different host bill — do not copy 146 over.
+#   MEASURED (2×3090, `--no-mmap`, all 43 expert layers → CPU):
+#       experts    141362.00 MiB   load_tensors: CUDA_Host model buffer size
+#     + drafter     10386.28 MiB   same line, second model (CPU-pinned)
+#     = pinned     151748.28 MiB = 148.19 GiB   <- the HARD floor
+#     + ~8 GiB     process overhead: CUDA_Host compute/output buffers, CPU FFN
+#                  scratch, CUDA host allocations. Measured on this model as
+#                  147 GiB used vs 138.05 GiB pinned; it is also the constant
+#                  both stock headers already carry (141362 MiB→146, 80268→86).
+#     = 156.
+#   ⚠️ HARD floor, not a recommendation. `--no-mmap` makes the loader
+#   `cudaMallocHost` the whole offloaded set: pinned pages are non-evictable and
+#   cannot be oversubscribed, so a short box does not degrade — it dies inside
+#   `cudaMallocHost`, which presents as "loads the model into RAM, then fails to
+#   load". With mmap the same bytes would be file-backed and evictable, and this
+#   number would be a recommendation instead.
+#   ⚠️ NO residency headers here, DELIBERATELY. This compose's `-ot` is an
+#   unconditional all-experts→CPU catch-all with no ${OT_G*} slots, so the
+#   launcher never pins bundles back onto the GPUs and the gate must NOT
+#   subtract a grant — offload_residency_grant_mib() returns 0 without
+#   CPU-Offload-Bundle-MiB, which is the correct answer here. Adding those
+#   headers would under-gate every rig. And the expert cache does not help:
+#   it is a VRAM-side COPY, so the CPU master buffer stays fully allocated
+#   (the 141362 MiB line above is from a cache-ENABLED boot).
+# ===========================================================================
 services:
   llama-cpp-deepseek-flash-q8-moecache:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).

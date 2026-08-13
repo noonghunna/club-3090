@@ -30,11 +30,18 @@ done
 Q8=models/deepseek-v4-flash-0731/llama-cpp/compose/dual/unsloth-q8-kxl/offload.yml
 IQ2=models/deepseek-v4-flash-0731/llama-cpp/compose/dual/unsloth-iq2-xxs/offload.yml
 M4=models/deepseek-v4-flash-0731/llama-cpp/compose/multi4/unsloth-q8-kxl/offload.yml
+# The FORK (moe-cache) siblings. They are offload composes too, and they shipped
+# for five days with NO CPU-Offload-Host-RAM-GB header at all -- so the RAM gate
+# early-returned on the two slugs with the LARGEST host footprint in the catalog
+# (they also hold the drafter in host RAM). A 128 GB owner got a raw
+# cudaMallocHost failure instead of our refusal. Every list below includes them.
+FORK_Q8=models/deepseek-v4-flash-0731/llamacpp-club3090/compose/dual/unsloth-q8-kxl/moecache.yml
+FORK_M4=models/deepseek-v4-flash-0731/llamacpp-club3090/compose/multi4/unsloth-q8-kxl/moecache.yml
 NONOFF=models/tess-4-27b/llama-cpp/compose/dual/migtissera-q4km/mtp.yml
 
 # ---- detector ----
-for f in "$Q8" "$IQ2" "$M4"; do
-  is_cpu_offload_compose "$f" && ok "detects offload: $(basename "$(dirname "$f")")" \
+for f in "$Q8" "$IQ2" "$M4" "$FORK_Q8" "$FORK_M4"; do
+  is_cpu_offload_compose "$f" && ok "detects offload: $(basename "$(dirname "$f")")/$(basename "$f")" \
     || bad "MISSED offload compose $f"
 done
 is_cpu_offload_compose "$NONOFF" && bad "FALSE POSITIVE on a non-offload compose" \
@@ -70,9 +77,12 @@ command grep -qE "85%|305" <<<"$msg" \
   && ok "refusal cites the measurement" || bad "refusal has no evidence"
 
 # ---- RAM guard ----
-for f in "$Q8" "$IQ2" "$M4"; do
+# ⚠️ EVERY offload compose must declare the header. Without it the gate silently
+# early-returns -- the failure mode is INVISIBLE (no warning, just no refusal),
+# which is exactly how the two moe-cache slugs shipped ungated.
+for f in "$Q8" "$IQ2" "$M4" "$FORK_Q8" "$FORK_M4"; do
   v="$(compose_meta_get "$f" cpu-offload-host-ram-gb || true)"
-  [[ "$v" =~ ^[0-9]+$ ]] && ok "declares CPU-Offload-Host-RAM-GB=$v" \
+  [[ "$v" =~ ^[0-9]+$ ]] && ok "declares CPU-Offload-Host-RAM-GB=$v ($(basename "$(dirname "$f")")/$(basename "$f"))" \
     || bad "$f missing/invalid CPU-Offload-Host-RAM-GB"
 done
 preflight_cpu_offload_ram "$NONOFF" >/dev/null 2>&1 \
@@ -82,6 +92,20 @@ preflight_cpu_offload_ram "$NONOFF" >/dev/null 2>&1 \
 printf '# CPU-Offload-Host-RAM-GB: 999999\nservices:\n  x:\n    command: >-\n      -ot a=CPU\n' > "$tmp"
 preflight_cpu_offload_ram "$tmp" >/dev/null 2>&1 \
   && bad "impossible RAM requirement was NOT refused" || ok "impossible RAM requirement refused"
+
+# ⚠️ the refusal's "buy more cards" hint must be TRUE for the compose it prints on.
+# It only holds where residency can pin bundles back onto the GPUs — i.e. where the
+# bundle header exists. On an all-experts-on-CPU compose (the moe-cache slugs) more
+# GPUs change nothing, and telling a RAM-short user otherwise sends them shopping.
+msg="$(preflight_cpu_offload_ram "$tmp" 2>&1)"
+command grep -q "more GPUs will NOT lower" <<<"$msg" \
+  && ok "refusal without a bundle header says more GPUs will NOT help" \
+  || bad "no-residency refusal still promises more cards will help: $msg"
+printf '# CPU-Offload-Host-RAM-GB: 999999\n# CPU-Offload-Bundle-MiB: 3264\n# CPU-Offload-MoE-Layers: 43\nservices:\n  x:\n    command: >-\n      -ot a=CPU\n' > "$tmp"
+msg="$(preflight_cpu_offload_ram "$tmp" 2>&1)"
+command grep -q "needs LESS host RAM" <<<"$msg" \
+  && ok "refusal WITH a bundle header keeps the more-cards hint" \
+  || bad "residency-capable refusal lost the more-cards hint: $msg"
 
 # ---- residency-aware RAM gate (the header is the ALL-on-CPU worst case; the ----
 # ---- gate subtracts what THIS rig's VRAM will hold — clort81's #909 report) ----
@@ -242,14 +266,48 @@ m4_hdr="$(compose_meta_get "$M4" cpu-offload-host-ram-gb)"
   && ok "dual-Q8 and multi4-Q8 headers agree ($q8_hdr GB — same quant, same worst case)" \
   || bad "Q8 headers diverge (dual=$q8_hdr multi4=$m4_hdr): residency was pre-baked into one"
 
+# same again for the fork pair: same quant, same all-on-CPU `-ot`, same CPU
+# drafter, and the CUDA_Host buffer is card-count-independent.
+fq8_hdr="$(compose_meta_get "$FORK_Q8" cpu-offload-host-ram-gb)"
+fm4_hdr="$(compose_meta_get "$FORK_M4" cpu-offload-host-ram-gb)"
+[[ "$fq8_hdr" == "$fm4_hdr" ]] \
+  && ok "fork dual and fork multi4 headers agree ($fq8_hdr GB)" \
+  || bad "fork headers diverge (dual=$fq8_hdr multi4=$fm4_hdr)"
+
+# ⭐ the fork slugs must ask for MORE than the stock ones on the same weights.
+# `-devd none` puts the 10386.28 MiB DSpark model in HOST memory (the stock slug
+# keeps it in VRAM), so a header merely COPIED from the stock sibling under-gates
+# by ~10 GB. That copy is what shipped in the registry before this guard existed.
+(( fq8_hdr > q8_hdr )) \
+  && ok "fork Q8 header ($fq8_hdr) > stock Q8 header ($q8_hdr) — the CPU drafter is charged" \
+  || bad "fork Q8 header ($fq8_hdr) does not exceed stock ($q8_hdr): the -devd none drafter is not charged"
+
+# ⚠️ and they must carry NO residency headers. The fork composes' `-ot` is an
+# unconditional all-experts->CPU catch-all with no ${OT_G*} slots, so nothing is
+# ever pinned back onto the GPUs. Declaring CPU-Offload-Bundle-MiB would make the
+# gate SUBTRACT a grant that never materialises -- under-gating every rig.
+for f in "$FORK_Q8" "$FORK_M4"; do
+  b="$(compose_meta_get "$f" cpu-offload-bundle-mib || true)"
+  [[ -z "$b" ]] && ok "$(basename "$(dirname "$f")")/moecache.yml declares no bundle header (grant must stay 0)" \
+    || bad "$f declares CPU-Offload-Bundle-MiB=$b but has no OT_G* slots — the gate would under-gate"
+  command grep -q 'OT_G[0-9]' "$f" \
+    && bad "$f now has OT_G* slots — it needs the residency headers after all" \
+    || ok "$(basename "$(dirname "$f")")/moecache.yml has no OT_G* slots (all experts stay on CPU)"
+done
+
 # registry host_ram_gb is the NOMINAL display figure and must never exceed the
 # header's worst case (nominal = worst case minus residency, on any topology)
+# ⚠️ every deepseek-flash slug carrying host_ram_gb MUST map to a compose here.
+# The `*-moecache` slugs used to fall through the `*)` arm and go UNCHECKED,
+# which is how they kept a copied 146 while their compose needed ~10 GB more.
 while IFS='|' read -r slug reg_gb; do
   case "$slug" in
+    *dual-q8-moecache)   f="$FORK_Q8" ;;
+    *multi4-q8-moecache) f="$FORK_M4" ;;
     *dual-q8)   f="$Q8" ;;
     *dual-iq2)  f="$IQ2" ;;
     *multi4-q8) f="$M4" ;;
-    *) continue ;;
+    *) bad "$slug has host_ram_gb but no compose mapping in this test"; continue ;;
   esac
   hdr="$(compose_meta_get "$f" cpu-offload-host-ram-gb)"
   [[ "$reg_gb" =~ ^[0-9]+$ && "$reg_gb" -le "$hdr" ]] \
@@ -277,7 +335,7 @@ declare -F resolve_offload_threads >/dev/null 2>&1 && ok "resolve_offload_thread
   && ok "no-op on a non-offload compose" || bad "set THREADS on a non-offload compose"
 # the bare-compose fallback must be LOW, not the reference rig's number: over-subscribing
 # measured -69% vs under-subscribing -9.6%, so err low when the core count is unknown.
-for f in "$Q8" "$IQ2" "$M4"; do
+for f in "$Q8" "$IQ2" "$M4" "$FORK_Q8" "$FORK_M4"; do
   fb="$(command grep -oE 'THREADS:-[0-9]+' "$f" | command grep -oE '[0-9]+' | head -1)"
   [[ -n "$fb" && "$fb" -le 8 ]] && ok "$(basename "$(dirname "$f")"): safe THREADS fallback ($fb)" \
     || bad "$(basename "$(dirname "$f")"): THREADS fallback '$fb' is too high for an unknown rig"
