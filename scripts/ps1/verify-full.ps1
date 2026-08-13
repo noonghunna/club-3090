@@ -73,9 +73,9 @@ function Detect-Engine {
         return "llamacpp"
     } catch {}
     try {
-        $fp = nco ((Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
+        $fp = nco ((Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -ContentType 'application/json' -Body (@{
             model = $Model; messages = @(@{ role = "user"; content = "hi" }); max_tokens = 1
-        } | ConvertTo-Json -Depth 10 | ConvertFrom-Json).system_fingerprint) ""
+        } | ConvertTo-Json -Depth 10) | ConvertFrom-Json).system_fingerprint) ""
         if ($fp -match '^vllm-') { return "vllm" }
         if ($fp -match '^sglang-') { return "sglang" }
     } catch {}
@@ -139,10 +139,10 @@ if ($ENGINE_KIND -in @("llamacpp", "sglang")) {
 Write-Log "[warmup] priming engine (cold cudagraph/JIT, up to 180s, not scored) ..."
 $warmupOk = $false
 try {
-    $null = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 180 -Body @{
+    $null = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 180 -ContentType 'application/json' -Body (@{
         model = $Model; messages = @(@{ role = "user"; content = "ping" }); max_tokens = 1
         temperature = 0.0; chat_template_kwargs = @{ enable_thinking = $false }
-    } | ConvertTo-Json -Depth 10 -ErrorAction Stop
+    } | ConvertTo-Json -Depth 10 -ErrorAction Stop)
     Write-Log "[warmup] engine warm"
     $warmupOk = $true
 } catch {
@@ -154,10 +154,10 @@ try {
 # ---------------------------------------------------------------------------
 Write-Log "[3/9] Basic completion - capital of France ..."
 try {
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -ContentType 'application/json' -Body (@{
         model = $Model; messages = @(@{ role = "user"; content = "What is the capital of France? One short sentence." });
         max_tokens = 30; temperature = 0.6; chat_template_kwargs = @{ enable_thinking = $false }
-    } | ConvertTo-Json -Depth 10 -ErrorAction Stop
+    } | ConvertTo-Json -Depth 10 -ErrorAction Stop)
     $content = nco $resp.choices[0].message.content ""
     if ($content -match '(?i)Paris') {
         Pass "reply contains 'Paris'"
@@ -179,7 +179,7 @@ if ($env:SKIP_TOOLS -eq "1") {
     Skip "SKIP_TOOLS=1 (expected for default config - see README Known issue)"
 } else {
     try {
-        $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
+        $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -ContentType 'application/json' -Body (@{
             model = $Model; messages = @(@{ role = "user"; content = "What is the weather in San Francisco? Use the get_weather tool." });
             tools = @( @{ type = "function"; function = @{
                 name = "get_weather"; description = "Get weather for a city.";
@@ -187,7 +187,7 @@ if ($env:SKIP_TOOLS -eq "1") {
             }} );
             tool_choice = "auto"; max_tokens = 200; temperature = 0.3;
             chat_template_kwargs = @{ enable_thinking = $false }
-        } | ConvertTo-Json -Depth 10 -ErrorAction Stop
+        } | ConvertTo-Json -Depth 10 -ErrorAction Stop)
 
         $msg = $resp.choices[0].message
         $toolCalls = $msg.tool_calls
@@ -334,11 +334,11 @@ if ($env:SKIP_TOOLS -eq "1") {
 # ---------------------------------------------------------------------------
 Write-Log "[7/9] Thinking / reasoning mode ..."
 try {
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -ContentType 'application/json' -Body (@{
         model = $Model; messages = @(@{ role = "user"; content = "What is 2+2? One-line answer." });
         max_tokens = 4000; temperature = 0.3;
         chat_template_kwargs = @{ enable_thinking = $true }
-    } | ConvertTo-Json -Depth 10 -ErrorAction Stop
+    } | ConvertTo-Json -Depth 10 -ErrorAction Stop)
 
     $msg = $resp.choices[0].message
     $reasoning = nco (nco $msg.reasoning $msg.reasoning_content) ""
@@ -374,11 +374,11 @@ try {
 # ---------------------------------------------------------------------------
 Write-Log "[8/9] Output quality / cascade detection (2K-token completion) ..."
 try {
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -ContentType 'application/json' -Body (@{
         model = $Model; messages = @(@{ role = "user"; content = "Write a detailed 1500-word essay explaining how transformer attention works. Cover: query/key/value projections, scaled dot-product attention, softmax, multi-head attention, positional encodings, and a brief comparison with RNN-based attention." });
         max_tokens = 2000; temperature = 0.6;
         chat_template_kwargs = @{ enable_thinking = $false }
-    } | ConvertTo-Json -Depth 10 -ErrorAction Stop
+    } | ConvertTo-Json -Depth 10 -ErrorAction Stop)
 
     $content = nco $resp.choices[0].message.content ""
     $finish = nco $resp.choices[0].finish_reason "n/a"
@@ -441,11 +441,11 @@ if ($ENGINE_KIND -in @("llamacpp", "sglang")) {
     Skip "container '$Container' not found (CONTAINER=none for host endpoints)"
 } else {
     try {
-        $null = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
+        $null = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -ContentType 'application/json' -Body (@{
             model = $Model; messages = @(@{ role = "user"; content = "Count from 1 to 80, one number per line." });
             max_tokens = 500; temperature = 0.0;
             chat_template_kwargs = @{ enable_thinking = $false }
-        } | ConvertTo-Json -Depth 10 -ErrorAction Stop
+        } | ConvertTo-Json -Depth 10 -ErrorAction Stop)
     } catch {
         Fail "metrics-trigger request failed" "Check docker logs"
         $FAILED++
