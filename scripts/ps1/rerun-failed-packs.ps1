@@ -62,10 +62,10 @@ trap { Remove-Item $SelFile -ErrorAction SilentlyContinue }
 
 $RerunJson = "$ResultJson.rerun.json"
 
-# Run quality-test.ps1 with the failed scenarios
-$QtScript = Join-Path $PSScriptRoot "quality-test.ps1"
+# Run quality-full.ps1 with the failed scenarios
+$QtScript = Join-Path $PSScriptRoot "quality-full.ps1"
 if (-not (Test-Path $QtScript)) {
-    Write-Error "quality-test.ps1 not found at $QtScript"
+    Write-Error "quality-full.ps1 not found at $QtScript"
     exit 1
 }
 

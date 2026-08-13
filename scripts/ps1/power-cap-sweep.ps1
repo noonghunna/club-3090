@@ -210,19 +210,43 @@ foreach ($cap in $capList) {
     $narrTps = 0; $codeTps = 0; $combinedW = 0; $maxTemp = 0; $smClk = 0; $memClk = 0
 
     if ($LoadMode -eq "decode-single") {
-        # Run bench.sh for this cap
-        $benchScript = Join-Path $RepoRoot "scripts/bench.sh"
-        if (Test-Path $benchScript) {
-            Log "Running bench.sh at ${cap}W..."
+        # Try PowerShell-native bench-full.ps1 first (Windows-native, no WSL required)
+        $psBenchScript = Join-Path $ScriptPath "bench-full.ps1"
+        $benchRan = $false
+
+        if (Test-Path $psBenchScript) {
+            Log "Running bench-full.ps1 at ${cap}W (Windows-native)..."
             try {
-                # TODO: This calls bash scripts/bench.sh — breaks "Windows-native, no WSL".
-                # Full rewrite to PowerShell is needed for proper Windows support.
-                $benchOutput = bash "$benchScript" --save-json "$logFile" 2>&1
-                # Parse TPS from output (simplified)
-                $match = $benchOutput | Select-String -Pattern 'prefill tok/s.*mean=([0-9.]+)'
-                if ($match) { $narrTps = [double]$match.Matches[0].Groups[1].Value }
+                $benchArgs = @("-Url", $Url, "-Model", $Model, "-Container", $Container)
+                $null = & $psBenchScript @benchArgs 2>&1 | Tee-Object -FilePath $logFile
+                $benchRan = $true
+                # Parse TPS from bench-full output (look for prefill tok/s mean=)
+                if (Test-Path $logFile) {
+                    $benchOutput = Get-Content $logFile -Raw
+                    $match = $benchOutput | Select-String -Pattern 'prefill tok/s.*mean=([0-9.]+)'
+                    if ($match) { $narrTps = [double]$match.Matches[0].Groups[1].Value }
+                    $match2 = $benchOutput | Select-String -Pattern 'code.*prefill tok/s.*mean=([0-9.]+)'
+                    if ($match2) { $codeTps = [double]$match2.Matches[0].Groups[1].Value }
+                }
             } catch {
-                Log "WARN: bench.sh failed for cap $cap"
+                Log "WARN: bench-full.ps1 failed for cap $cap : $($_.Exception.Message)"
+            }
+        }
+
+        # Fallback: try bash scripts/bench.sh if PowerShell version not available
+        if (-not $benchRan) {
+            $benchScript = Join-Path $RepoRoot "scripts/bench.sh"
+            if (Test-Path $benchScript) {
+                Log "Falling back to bench.sh at ${cap}W (requires WSL/Git Bash)..."
+                try {
+                    $benchOutput = bash "$benchScript" --save-json "$logFile" 2>&1
+                    $match = $benchOutput | Select-String -Pattern 'prefill tok/s.*mean=([0-9.]+)'
+                    if ($match) { $narrTps = [double]$match.Matches[0].Groups[1].Value }
+                } catch {
+                    Log "WARN: bench.sh also failed for cap $cap : $($_.Exception.Message)"
+                }
+            } else {
+                Log "WARN: no benchmark script found (tried bench-full.ps1 and scripts/bench.sh) - skipping benchmark at ${cap}W"
             }
         }
     } elseif ($LoadMode -eq "prefill-heavy") {

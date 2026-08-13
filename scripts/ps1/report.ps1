@@ -46,7 +46,7 @@ $SCRIPTS_ROOT = Split-Path $SCRIPTS_DIR -Parent
 
 $Url = if ($Url) { $Url } elseif ($env:URL) { $env:URL } else { "http://localhost:8010" }
 $Model = if ($Model) { $Model } elseif ($env:MODEL) { $env:MODEL } else { $DETECTED_MODEL }
-$Container = if ($Container) { $Container } elseif ($env:CONTAINER) { $env:CONTAINER } else { "vllm-qwen36-27b" }
+$Container = if ($Container) { $Container } elseif ($env:CONTAINER) { $env:CONTAINER } else { "vllm-8010" }
 
 $REDACT = -not $NoRedact
 $TIMESTAMP = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -88,9 +88,9 @@ try {
 } catch {}
 if ($EngineKind -eq "unknown") {
     try {
-        $fp = (Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body @{
+        $fp = (Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -ContentType 'application/json' -Body (@{
             model = $Model; messages = @(@{ role = "user"; content = "hi" }); max_tokens = 1
-        } | ConvertTo-Json -Compress | ConvertFrom-Json -ErrorAction Stop)
+        } | ConvertTo-Json -Depth 10) | ConvertFrom-Json -ErrorAction Stop)
         if ($fp -and $fp.system_fingerprint) { $fpStr = $fp.system_fingerprint } else { $fpStr = "" }
         if ($fpStr -match '^vllm-') { $EngineKind = "vllm" }
         elseif ($fp -match '^sglang-') { $EngineKind = "sglang" }
@@ -321,7 +321,7 @@ function Write-TerminalReport {
 # Upload mode: generate markdown report
 # ---------------------------------------------------------------------------
 function Write-UploadReport {
-    $RESULTS_DIR = if ($env:RESULTS_DIR) { $env:RESULTS_DIR } else { Join-Path $SCRIPTS_DIR "ps1-results" }
+    $RESULTS_DIR = if ($env:RESULTS_DIR) { $env:RESULTS_DIR } else { Join-Path $SCRIPTS_ROOT "ps1-results" }
     $MARKDOWN_FILE = Join-Path $RESULTS_DIR "report-$TIMESTAMP.md"
 
     # PS5.1 workaround: [char]45 avoids parser treating '-' as unary minus

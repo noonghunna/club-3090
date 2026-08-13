@@ -20,7 +20,7 @@
 # Env:
 #   URL          API base. Default: http://localhost:8010
 #   MODEL        Served model name. Default: auto-detected
-#   CONTAINER    Docker container name for log scraping. Default: vllm-qwen36-27b
+#   CONTAINER    Docker container name for log scraping. Default: vllm-8010
 
 param(
     [switch]$Watch,
@@ -40,7 +40,7 @@ $ROOT_DIR = Split-Path (Split-Path $MyInvocation.MyCommand.Path -Parent) -Parent
 
 $URL = if ($env:URL) { $env:URL } else { "http://localhost:8010" }
 $MODEL = if ($env:MODEL) { $env:MODEL } else { $DETECTED_MODEL }
-$CONTAINER = if ($env:CONTAINER) { $env:CONTAINER } else { "vllm-qwen36-27b" }
+$CONTAINER = if ($env:CONTAINER) { $env:CONTAINER } else { "vllm-8010" }
 
 function Show-Check { Write-Host "  [1/4] Server reachable on /v1/models ..." }
 function Pass-Check { Write-Host "  [OK] $args" -ForegroundColor Green }

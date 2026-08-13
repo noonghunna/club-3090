@@ -249,7 +249,7 @@ function Get-ScriptList {
             ,@{ Name = "Arch A/B"; Script = "arch-ab.ps1"; Runner = "powershell"; Desc = "Architecture A/B comparison" }
         )
         "Quality" = @(
-            @{ Name = "Quality Test"; Script = "quality-test.ps1"; Runner = "powershell"; Desc = "Quality testing with sandboxed packs" }
+            @{ Name = "Quality Full"; Script = "quality-full.ps1"; Runner = "powershell"; Desc = "Quality testing with sandboxed packs" }
             ,@{ Name = "Quality Baseline"; Script = "quality-baseline.ps1"; Runner = "powershell"; Desc = "Quality baseline comparison" }
             ,@{ Name = "Rerun Failed"; Script = "rerun-failed-packs.ps1"; Runner = "powershell"; Desc = "Re-test failed quality scenarios" }
         )

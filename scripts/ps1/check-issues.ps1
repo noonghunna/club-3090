@@ -1,30 +1,28 @@
 # check-issues.ps1 — scan all ps1 files for common PS5.1 compatibility issues
-
-$FailList = @(
-    "arch-ab.ps1", "beellama-pin-bump.ps1",
-    "catalog-baseline.ps1", "detect_nvlink.ps1",
-    "power-cap-sweep.ps1", "quality-baseline.ps1", "rebench-full.ps1",
-    "rerun-failed-packs.ps1", "run-benchmarks.ps1", "verify-full.ps1", "verify-stress.ps1"
-)
+# Dynamically discovers all .ps1 files in the script directory
 
 $Dir = $PSScriptRoot
+$ps1Files = Get-ChildItem -Path $Dir -Filter "*.ps1" | Select-Object -ExpandProperty Name
 
-foreach ($name in $FailList) {
+# Known problematic patterns to flag
+$issuesFound = @()
+
+foreach ($name in $ps1Files) {
     $path = Join-Path $Dir $name
     if (-not (Test-Path $path)) { continue }
     $content = Get-Content $path -Raw -Encoding UTF8
 
     # Check for ${var:pattern} syntax (not standard PS5.1)
-    $braceColon = $false
+    $hasBraceColon = $false
     foreach ($line in $content -split "`n") {
         if ($line -match '\$\{[^}]+:') {
             Write-Host "${name}: dollar-brace-colon pattern found: $($line.Trim())"
-            $braceColon = $true
+            $hasBraceColon = $true
             break
         }
     }
 
-    # Check for /dev/null
+    # Check for /dev/null (Unix path, not valid in Windows PowerShell)
     $devNull = 0
     foreach ($line in $content -split "`n") {
         $devNull += ($line -split '/dev/null').Count - 1
@@ -55,6 +53,21 @@ foreach ($name in $FailList) {
     if ($subshell -gt 0) {
         Write-Host "${name}: bash-dbl-paren arithmetic subshell occurrences: $subshell"
     }
+
+    # Check for bash-style $() command substitution that might be problematic
+    # PowerShell uses backticks for subexpression, not $()
+    # Note: $() IS valid in PS5.1 for subexpression, so we only flag bash-specific patterns
+    $bashPatterns = @()
+    foreach ($line in $content -split "`n") {
+        if ($line -match '^\s*echo\s') { $bashPatterns += "echo (use Write-Host or Write-Output)" }
+        if ($line -match '^\s*export\s') { $bashPatterns += "export (use `$env: in PS)" }
+        if ($line -match '^\s*local\s') { $bashPatterns += "local keyword (not valid in PS)" }
+        if ($line -match '^\s*function\s+\w+\s*\(\s*\)\s*\{') { $bashPatterns += "bash-style function () { } (use function Name in PS)" }
+    }
+    if ($bashPatterns.Count -gt 0) {
+        $uniquePatterns = $bashPatterns | Select-Object -Unique
+        Write-Host "${name}: potential bash patterns found: $($uniquePatterns -join ', ')"
+    }
 }
 
-Write-Host "Check complete."
+Write-Host "Check complete. Scanned $($ps1Files.Count) files."

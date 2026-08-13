@@ -16,7 +16,7 @@
 # Env vars:
 #   URL                Endpoint. Default: http://localhost:8010
 #   MODEL              Served model name. Default: auto-detected
-#   CONTAINER          Container for log scraping. Default: vllm-qwen36-27b
+#   CONTAINER          Container for log scraping. Default: vllm-8010
 #   RUNS               Measured runs per prompt. Default: 5
 #   WARMUPS            Warm-up runs (shared across both). Default: 3
 #   PROMPT_NARR        Override narrative prompt
@@ -75,7 +75,7 @@ $QUICK = [int]$env:QUICK
 # Defaults
 if (-not $URL) { $URL = "http://localhost:8010" }
 if (-not $MODEL) { $MODEL = $DETECTED_MODEL }
-if (-not $CONTAINER) { $CONTAINER = "vllm-qwen36-27b" }
+if (-not $CONTAINER) { $CONTAINER = "vllm-8010" }
 if (-not $RUNS) { $RUNS = 5 }
 if (-not $WARMUPS) { $WARMUPS = 3 }
 if (-not $MAX_TOKENS_NARR) { $MAX_TOKENS_NARR = 1000 }

@@ -52,7 +52,7 @@ if (-not $Model) {
         $Model = $resp.data[0].id
     } catch { $Model = $DETECTED_MODEL }
 }
-if (-not $Container) { $Container = "vllm-qwen36-27b" }
+if (-not $Container) { $Container = "vllm-8010" }
 
 $FAILED = 0
 $ENGINE_KIND = "unknown"

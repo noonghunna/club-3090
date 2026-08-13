@@ -60,7 +60,7 @@ if (-not $Model) {
         $Model = $resp.data[0].id
     } catch { $Model = $DETECTED_MODEL }
 }
-if (-not $Container) { $Container = "vllm-qwen36-27b" }
+if (-not $Container) { $Container = "vllm-8010" }
 
 $FAILED = 0
 $ENGINE_KIND = "unknown"
@@ -75,9 +75,9 @@ function Skip { param($Msg); Write-Log "  [SKIP] $Msg"; $Checks += @{ name = $Ms
 function Detect-Engine {
     try { $null = Invoke-RestMethod -Uri "$Url/props" -TimeoutSec 3 -ErrorAction Stop; return "llamacpp" } catch {}
     try {
-        $fp = (Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body @{
+        $fp = (Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -ContentType 'application/json' -Body (@{
             model = $Model; messages = @(@{ role = "user"; content = "hi" }); max_tokens = 1
-        } | ConvertTo-Json -Compress | ConvertFrom-Json -ErrorAction Stop)
+        } | ConvertTo-Json -Depth 10) | ConvertFrom-Json -ErrorAction Stop)
         $fp = nco $fp ""
         if ($fp -match '^vllm-') { return "vllm" }
         if ($fp -match '^sglang-') { return "sglang" }
@@ -96,7 +96,8 @@ else { $LOG_CMD = "check your engine's stdout/stderr or container logs" }
 # Eager mode detection (affects timeouts)
 $EAGER = 0
 try {
-    if (Get-Command docker -ErrorAction SilentlyContinue) {
+    $dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+    if ($dockerCmd -and (Test-Path $dockerCmd.Source)) {
         $eager = docker inspect "$Container" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>$null | Select-String '^VLLM_ENFORCE_EAGER=1$'
         if ($eager) { $EAGER = 1 }
     }
@@ -399,7 +400,7 @@ try {
         chat_template_kwargs = @{ enable_thinking = $false }
     } | ConvertTo-Json -Compress
 
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body $payload -TimeoutSec 30 -ErrorAction Stop
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -ContentType 'application/json' -Body $payload -TimeoutSec 30 -ErrorAction Stop
     $content = nco $resp.choices[0].message.content ""
     $finish = nco $resp.choices[0].finish_reason "n/a"
 
@@ -454,7 +455,7 @@ try {
         chat_template_kwargs = @{ enable_thinking = $false }
     } | ConvertTo-Json -Compress
 
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body $payload -TimeoutSec 60 -ErrorAction Stop
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -ContentType 'application/json' -Body $payload -TimeoutSec 60 -ErrorAction Stop
     $content = nco $resp.choices[0].message.content ""
     $finish = nco $resp.choices[0].finish_reason "n/a"
 
@@ -500,7 +501,7 @@ Explanation: The subarray [4,-1,2,1] has the largest sum = 6.
         chat_template_kwargs = @{ enable_thinking = $false }
     } | ConvertTo-Json -Compress
 
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body $payload -TimeoutSec 60 -ErrorAction Stop
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -ContentType 'application/json' -Body $payload -TimeoutSec 60 -ErrorAction Stop
     $content = nco $resp.choices[0].message.content ""
     $finish = nco $resp.choices[0].finish_reason "n/a"
 
@@ -538,7 +539,7 @@ Provide a step-by-step reasoning process, then give your solution in Python with
         chat_template_kwargs = @{ enable_thinking = $true }
     } | ConvertTo-Json -Compress
 
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body $payload -TimeoutSec 300 -ErrorAction Stop
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -ContentType 'application/json' -Body $payload -TimeoutSec 300 -ErrorAction Stop
     $msg = $resp.choices[0].message
     $reasoning = if ($msg.reasoning -eq $null) { $msg.reasoning_content } else { $msg.reasoning }; if (-not $reasoning) { $reasoning = "" }
     $content = if ($msg.content -ne $null) { $msg.content } else { "" }
@@ -633,9 +634,9 @@ if ($env:SKIP_CEILING -eq "1") { Skip "SKIP_CEILING=1" }
 else {
     try { $deployedMax = (Invoke-RestMethod -Uri "$Url/v1/models" -TimeoutSec 5 -ErrorAction Stop).data[0].max_model_len; if (-not $deployedMax) { $deployedMax = 0 } } catch { $deployedMax = 262144 }
 
-    $ceilingFraction = [double](if ($env:CEILING_FRACTION -eq $null) { 0.92 } else { $env:CEILING_FRACTION })
-    $ceilingStep = [int](if ($env:CEILING_STEP_TOKENS -eq $null) { 30000 } else { $env:CEILING_STEP_TOKENS })
-    $ceilingStart = [int](if ($env:CEILING_START_TOKENS -eq $null) { 95000 } else { $env:CEILING_START_TOKENS })
+    $ceilingFraction = if ($null -eq $env:CEILING_FRACTION -or $env:CEILING_FRACTION -eq "") { 0.92 } else { [double]$env:CEILING_FRACTION }
+    $ceilingStep = if ($null -eq $env:CEILING_STEP_TOKENS -or $env:CEILING_STEP_TOKENS -eq "") { 30000 } else { [int]$env:CEILING_STEP_TOKENS }
+    $ceilingStart = if ($null -eq $env:CEILING_START_TOKENS -or $env:CEILING_START_TOKENS -eq "") { 95000 } else { [int]$env:CEILING_START_TOKENS }
     $maxCeiling = [Math]::Floor($deployedMax * $ceilingFraction)
 
     if ($ceilingStart -gt $maxCeiling) {
