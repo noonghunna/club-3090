@@ -122,7 +122,7 @@ function Get-StatusIcon {
 # Animation helpers ----------------------------------------------------------
 function Show-Progress {
     param([string]$Message, [switch]$NoAnim)
-    if ($NoAnim -or $NoAnimation) {
+    if ($NoAnim) {
         Write-Host ""
         Write-Host "  $Message" -ForegroundColor Cyan
         return
@@ -174,11 +174,11 @@ function Invoke-Script {
 
     try {
         if ($Runner -eq "pwsh") {
-            $output = & $ScriptPath @Args 2>&1 | Out-String
+            $output = & $ScriptPath @($Args.Split(' ') | Where-Object { $_ }) 2>&1 | Out-String
             $exitCode = $LASTEXITCODE
         }
         elseif ($Runner -eq "powershell") {
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Args *>&1 | Out-String
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @($Args.Split(' ') | Where-Object { $_ }) *>&1 | Out-String
             $exitCode = $LASTEXITCODE
         }
         elseif ($Runner -eq "bash") {

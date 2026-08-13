@@ -44,8 +44,6 @@ $ROOT = Split-Path $ROOT -Parent
 $Checks = @()
 
 if (-not $Url) {
-    $preflight = Join-Path $ROOT "scripts\preflight.ps1"
-    if (Test-Path $preflight) { . $preflight }
     $Url = nco $env:URL "http://localhost:8010"
 }
 if (-not $Model) {

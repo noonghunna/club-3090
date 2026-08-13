@@ -450,7 +450,7 @@ function New-SoakRequest {
 # ---------------------------------------------------------------------------
 # Main soak loop
 # ---------------------------------------------------------------------------
-$START_SECONDS = $SECONDS
+$START_EPOCH = [int](Get-Date -UFormat %s)
 $BOOT_VRAM_MIB = $null
 $BASELINE_SESSION = 0
 $TURNS_RUN = 0
@@ -481,7 +481,7 @@ foreach ($session in 1..$SOAK_SESSIONS) {
 
     foreach ($turn in 1..$SOAK_TURNS) {
         # Timeout check
-        if (($SECONDS - $START_SECONDS) -ge $SOAK_TIMEOUT_S) {
+        if ((([int](Get-Date -UFormat %s)) - $START_EPOCH) -ge $SOAK_TIMEOUT_S) {
             $TIMED_OUT = 1
             Log "timeout reached before session=${session} turn=${turn}"
             break
