@@ -177,6 +177,10 @@ function Invoke-Script {
             $output = & $ScriptPath @Args 2>&1 | Out-String
             $exitCode = $LASTEXITCODE
         }
+        elseif ($Runner -eq "powershell") {
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Args 2>&1 | Out-String
+            $exitCode = $LASTEXITCODE
+        }
         elseif ($Runner -eq "bash") {
             $bashPath = Get-Command bash -ErrorAction SilentlyContinue
             if ($bashPath) {

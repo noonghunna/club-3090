@@ -76,7 +76,7 @@ function Run-Phase {
         $fullArgs = $Args
         if ($Tag) { $fullArgs += " --tag $Tag" }
         
-        $result = & powershell -NoProfile -ExecutionPolicy Bypass -File $scriptPath @($fullArgs.Split(' ') | Where-Object { $_ }) 2>&1
+        $result = & powershell -NoProfile -ExecutionPolicy Bypass -File $scriptPath @($fullArgs.Split(' ') | Where-Object { $_ }) *>&1
         Write-Host $result
         Write-Host ""
         Write-Host "[done] $Phase" -ForegroundColor Green
@@ -89,7 +89,7 @@ function Run-Phase {
 Run-Phase "verify-full" "verify-full.ps1" ""
 
 # Phase 1: Bench
-Run-Phase "bench" "bench.ps1" ""
+Run-Phase "bench" "bench-full.ps1" ""
 
 # Phase 2: Verify-stress
 Run-Phase "verify-stress" "verify-stress.ps1" ""
