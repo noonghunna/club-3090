@@ -249,8 +249,8 @@ function Get-ScriptList {
             ,@{ Name = "Arch A/B"; Script = "arch-ab.ps1"; Runner = "powershell"; Desc = "Architecture A/B comparison" }
         )
         "Quality" = @(
-            @{ Name = "Quality Full"; Script = "quality-full.ps1"; Runner = "powershell"; Desc = "Quality testing with sandboxed packs" }
-            ,@{ Name = "Quality Baseline"; Script = "quality-baseline.ps1"; Runner = "powershell"; Desc = "Quality baseline comparison" }
+            @{ Name = "Quality"; Script = "quality.ps1"; Runner = "powershell"; Desc = "Quick quality test (2 packs, ~5-10 min)" }
+            ,@{ Name = "Quality Full"; Script = "quality-full.ps1"; Runner = "powershell"; Desc = "Full quality test (8 packs, ~25-40 min)" }
             ,@{ Name = "Rerun Failed"; Script = "rerun-failed-packs.ps1"; Runner = "powershell"; Desc = "Re-test failed quality scenarios" }
         )
         "Submission" = @(
@@ -551,7 +551,7 @@ function Main {
             Write-Host "  [6] Soak Test (VRAM, TPS retention)" -ForegroundColor White
             Write-Host "  [7] Advanced (concurrency, power-cap)" -ForegroundColor White
             Write-Host "  [8] Specialized (agentic, arch-ab)" -ForegroundColor White
-            Write-Host "  [9] Quality (test, baseline, rerun-failed)" -ForegroundColor White
+            Write-Host "  [9] Quality (quick, full, rerun-failed)" -ForegroundColor White
             Write-Host "  [10] Submission (rebench, submit)" -ForegroundColor White
             Write-Host "  [11] Reporting (report, catalog)" -ForegroundColor White
             Write-Host "  [12] Tools (check-syntax, check-issues)" -ForegroundColor White

@@ -50,8 +50,8 @@ Set-Location $RepoRoot
 function Log { param($Msg) Write-Host "[$ScriptName] $Msg" }
 function Die { param($Msg); Write-Error "[$ScriptName] ERROR: $Msg"; exit 1 }
 
-# Defaults
-$mode = "--medium"
+# Defaults: quality-full defaults to --full; quality (wrapper) passes -Quick
+$mode = "--full"
 if ($Quick) { $mode = "--quick" }
 elseif ($Full) { $mode = "--full" }
 elseif ($Reasoning) { $mode = "--reasoning" }
@@ -154,7 +154,13 @@ try {
 }
 
 # Build benchlocal-cli command — always include --endpoint and --model
-$cmdArgs = @($mode, "--endpoint", $url, "--model", $model)
+# Also always save JSON results to ps1-results/quality/
+$qualityDir = Join-Path $RepoRoot "ps1-results/quality"
+New-Item -ItemType Directory -Force -Path $qualityDir | Out-Null
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$defaultSaveJson = Join-Path $qualityDir "quality-${timestamp}.json"
+
+$cmdArgs = @($mode, "--endpoint", $url, "--model", $model, "--save-json", $defaultSaveJson)
 
 if ($Pack) { $cmdArgs += "--pack"; $cmdArgs += $Pack }
 if ($Scenario) { foreach ($s in $Scenario) { $cmdArgs += "--scenario"; $cmdArgs += $s } }
