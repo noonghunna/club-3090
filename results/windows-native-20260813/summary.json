@@ -1,0 +1,47 @@
+{
+  "tag": "windows-native-20260813",
+  "date": "2026-08-13",
+  "status": "complete",
+  "stack": {
+    "os": "Windows 11",
+    "vllm": "0.26+",
+    "nccl": "nccl-windows (SystemPanic)",
+    "cuda": "13.3",
+    "pytorch": "2.11+cu12x",
+    "python": "3.12",
+    "gpus": "2x RTX 3090 PCIe (no NVLink)"
+  },
+  "model": "qwen3.6-35b-a3b-autoround-int4",
+  "serve": {
+    "tp": 2,
+    "port": 8010,
+    "max_model_len": 262144,
+    "gpu_mem_util": 0.7,
+    "kv_cache_dtype": "fp8_e4m3",
+    "disable_custom_all_reduce": true,
+    "chat_template": "v3",
+    "enable_thinking": false
+  },
+  "results": {
+    "NARRATIVE": {
+      "prompt_chars": 65,
+      "tokens": 1000,
+      "n": 5,
+      "wall_tps_mean": 70.79,
+      "wall_tps_std": 1.92,
+      "wall_tps_cv": 2.7,
+      "decode_tps_mean": 71.96,
+      "ttft_ms_mean": 229
+    },
+    "CODE": {
+      "prompt_chars": 78,
+      "tokens": "298-579",
+      "n": 5,
+      "wall_tps_mean": 69.22,
+      "wall_tps_std": 1.75,
+      "wall_tps_cv": 2.5,
+      "decode_tps_mean": 71.89,
+      "ttft_ms_mean": 207
+    }
+  }
+}

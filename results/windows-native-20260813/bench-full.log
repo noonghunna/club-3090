@@ -1,0 +1,49 @@
+
+========== NARRATIVE (prompt=65 chars, max_tokens=1000) ==========
+=== warmups (3) ===
+  warm-1     wall= 15.28s  ttft= 487ms  toks=1000  wall_TPS= 65.44  decode_TPS=  67.6
+  warm-2     wall= 14.86s  ttft= 272ms  toks=1000  wall_TPS= 67.29  decode_TPS= 68.55
+  warm-3     wall= 14.39s  ttft= 244ms  toks=1000  wall_TPS=  69.5  decode_TPS=  70.7
+
+=== measured (5) ===
+  run-1      wall= 14.64s  ttft= 188ms  toks=1000  wall_TPS= 68.32  decode_TPS=  69.2
+[bench] NARRATIVE run 1/5: 1000 tok in 14.6s (68.32 wall TPS (no decode window), ttft 188ms)
+  run-2      wall= 13.83s  ttft= 195ms  toks=1000  wall_TPS=  72.3  decode_TPS= 73.33
+[bench] NARRATIVE run 2/5: 1000 tok in 13.8s (72.30 wall TPS (no decode window), ttft 195ms)
+  run-3      wall= 14.11s  ttft= 246ms  toks=1000  wall_TPS= 70.88  decode_TPS= 72.14
+[bench] NARRATIVE run 3/5: 1000 tok in 14.1s (70.88 wall TPS (no decode window), ttft 246ms)
+  run-4      wall= 13.62s  ttft= 252ms  toks=1000  wall_TPS= 73.41  decode_TPS=  74.8
+[bench] NARRATIVE run 4/5: 1000 tok in 13.6s (73.41 wall TPS (no decode window), ttft 252ms)
+  run-5      wall= 14.48s  ttft= 264ms  toks=1000  wall_TPS= 69.04  decode_TPS= 70.32
+[bench] NARRATIVE run 5/5: 1000 tok in 14.5s (69.04 wall TPS (no decode window), ttft 264ms)
+
+=== summary [NARRATIVE] (n=5) ===
+  wall_TPS       mean=70.79   std=1.92   CV=2.7%   min=68.32   max=73.41
+  decode_TPS     mean=71.96   std=2.01   CV=2.8%   min=69.2   max=74.8
+  TTFT           mean=229ms  std=31ms  min=188ms  max=264ms
+
+========== CODE (prompt=78 chars, max_tokens=800) ==========
+=== warmups (3) ===
+  warm-1     wall=  5.11s  ttft= 190ms  toks= 372  wall_TPS= 72.85  decode_TPS= 75.66
+  warm-2     wall=  4.76s  ttft= 195ms  toks= 329  wall_TPS= 69.17  decode_TPS= 72.13
+  warm-3     wall=  5.08s  ttft= 237ms  toks= 355  wall_TPS= 69.88  decode_TPS=  73.3
+
+=== measured (5) ===
+  run-1      wall=  5.45s  ttft= 212ms  toks= 387  wall_TPS= 70.95  decode_TPS= 73.83
+[bench] CODE run 1/5: 387 tok in 5.5s (70.95 wall TPS (no decode window), ttft 212ms)
+  run-2      wall=  8.16s  ttft= 209ms  toks= 579  wall_TPS= 70.98  decode_TPS= 72.85
+[bench] CODE run 2/5: 579 tok in 8.2s (70.98 wall TPS (no decode window), ttft 209ms)
+  run-3      wall=  4.98s  ttft= 216ms  toks= 330  wall_TPS= 66.21  decode_TPS= 69.21
+[bench] CODE run 3/5: 330 tok in 5s (66.21 wall TPS (no decode window), ttft 216ms)
+  run-4      wall=  6.26s  ttft= 201ms  toks= 433  wall_TPS=  69.2  decode_TPS=  71.5
+[bench] CODE run 4/5: 433 tok in 6.3s (69.20 wall TPS (no decode window), ttft 201ms)
+  run-5      wall=  4.33s  ttft= 199ms  toks= 298  wall_TPS= 68.77  decode_TPS= 72.08
+[bench] CODE run 5/5: 298 tok in 4.3s (68.77 wall TPS (no decode window), ttft 199ms)
+
+=== summary [CODE] (n=5) ===
+  wall_TPS       mean=69.22   std=1.75   CV=2.5%   min=66.21   max=70.98
+  decode_TPS     mean=71.89   std=1.55   CV=2.2%   min=69.21   max=73.83
+  TTFT           mean=207ms  std=7ms  min=199ms  max=216ms
+
+bench.ps1 complete.
+To save results: scripts/bench.ps1 | tee bench-20260813-092351.log
