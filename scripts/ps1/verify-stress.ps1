@@ -538,10 +538,10 @@ Provide a step-by-step reasoning process, then give your solution in Python with
         chat_template_kwargs = @{ enable_thinking = $true }
     } | ConvertTo-Json -Compress
 
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body $payload -TimeoutSec 120 -ErrorAction Stop
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body $payload -TimeoutSec 300 -ErrorAction Stop
     $msg = $resp.choices[0].message
     $reasoning = if ($msg.reasoning -eq $null) { $msg.reasoning_content } else { $msg.reasoning }; if (-not $reasoning) { $reasoning = "" }
-    $content = if ($1) { $1 } else { "" }
+    $content = if ($msg.content -ne $null) { $msg.content } else { "" }
     $finish = if ($resp.choices[0].finish_reason) { $resp.choices[0].finish_reason } else { "n/a" }
 
     $rLen = $reasoning.Length

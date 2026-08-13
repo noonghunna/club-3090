@@ -138,7 +138,7 @@ switch ($NvlinkMode) {
 # Apply environment overrides
 if ($_NvlinkEnabled -eq 1) {
     $env:NCCL_P2P_LEVEL = $_P2PLevel
-    if ($env:PSModulePath) { $null = Remove-ItemEnv -Name "NCCL_P2P_DISABLE" -ErrorAction SilentlyContinue }
+    if ($env:PSModulePath) { $null = Remove-Item env:NCCL_P2P_DISABLE -ErrorAction SilentlyContinue }
     # Strip expandable_segments
     $alloc = if ($env:PYTORCH_CUDA_ALLOC_CONF) { $env:PYTORCH_CUDA_ALLOC_CONF } else { "max_split_size_mb:512" }
     $alloc = ($alloc -replace '(^|,)expandable_segments:[^,]*', '').TrimStart(',').TrimEnd(',')

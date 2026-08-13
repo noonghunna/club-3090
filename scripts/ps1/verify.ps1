@@ -15,10 +15,10 @@
 # Usage:
 #   scripts/verify.ps1
 #   scripts/verify.ps1 --watch          # refresh every 5s (Ctrl-C to stop)
-#   $env:URL="http://localhost:8030"; scripts/verify.ps1
+#   $env:URL="http://localhost:8010"; scripts/verify.ps1
 #
 # Env:
-#   URL          API base. Default: http://localhost:8020
+#   URL          API base. Default: http://localhost:8010
 #   MODEL        Served model name. Default: auto-detected
 #   CONTAINER    Docker container name for log scraping. Default: vllm-qwen36-27b
 
@@ -39,7 +39,7 @@ $env:PYTHONUTF8 = "1"
 $ROOT_DIR = Split-Path (Split-Path $MyInvocation.MyCommand.Path -Parent) -Parent
 
 $URL = if ($env:URL) { $env:URL } else { "http://localhost:8010" }
-$MODEL = if ($env:MODEL) { $env:MODEL } else { "qwen-8010" }
+$MODEL = if ($env:MODEL) { $env:MODEL } else { $DETECTED_MODEL }
 $CONTAINER = if ($env:CONTAINER) { $env:CONTAINER } else { "vllm-qwen36-27b" }
 
 function Show-Check { Write-Host "  [1/4] Server reachable on /v1/models ..." }

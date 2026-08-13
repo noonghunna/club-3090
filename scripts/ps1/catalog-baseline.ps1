@@ -55,6 +55,9 @@ if ($FromBundle) {
         New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
         $extractCmd = "tar xzf `"$FromBundle`" -C $tmpDir"
         Invoke-Expression $extractCmd 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Die "tar extraction failed (exit code $LASTEXITCODE)"
+        }
         $tmpDir
     }
 

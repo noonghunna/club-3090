@@ -64,7 +64,7 @@ if ($Capture) {
         Log "(dry-run) would run: .\$($qtScript -replace '\.ps1$','') $($cmd -join ' ')"
         exit 0
     }
-    & $qtScript @cmd 2>&1
+    & $qtScript @cmd *>&1
 } else {
     if (-not (Test-Path $baselineFile)) {
         Write-Error "no baseline for slug='$Slug' mode='$Mode':"
@@ -80,5 +80,5 @@ if ($Capture) {
         Log "(dry-run) would run: .\$($qtScript -replace '\.ps1$','') $($cmd -join ' ')"
         exit 0
     }
-    & $qtScript @cmd 2>&1
+    & $qtScript @cmd *>&1
 }

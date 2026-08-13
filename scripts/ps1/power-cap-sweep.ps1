@@ -206,7 +206,7 @@ foreach ($cap in $capList) {
     }
 
     # Run benchmark for this cap
-    $logFile = "/tmp/power-cap-${cap}w.log"
+    $logFile = "$env:TEMP\power-cap-${cap}w.log"
     $narrTps = 0; $codeTps = 0; $combinedW = 0; $maxTemp = 0; $smClk = 0; $memClk = 0
 
     if ($LoadMode -eq "decode-single") {
@@ -215,6 +215,8 @@ foreach ($cap in $capList) {
         if (Test-Path $benchScript) {
             Log "Running bench.sh at ${cap}W..."
             try {
+                # TODO: This calls bash scripts/bench.sh — breaks "Windows-native, no WSL".
+                # Full rewrite to PowerShell is needed for proper Windows support.
                 $benchOutput = bash "$benchScript" --save-json "$logFile" 2>&1
                 # Parse TPS from output (simplified)
                 $match = $benchOutput | Select-String -Pattern 'prefill tok/s.*mean=([0-9.]+)'

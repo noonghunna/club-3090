@@ -20,14 +20,15 @@ function Get-Model {
 
     # 3. Probe the server
     try {
-        $resp = Invoke-RestMethod -Uri "http://localhost:8010/v1/models" -TimeoutSec 5
+        $resp = Invoke-RestMethod -Uri "http://localhost:8010/v1/models" -TimeoutSec 15
         $model = $resp.data[0].id
         @{ model = $model } | ConvertTo-Json | Set-Content $MODEL_CACHE
         return $model
     } catch {}
 
-    # 4. Last resort fallback
-    return "qwen-8010"
+    # 4. Last resort fallback — FAIL LOUDLY instead of returning a fake id
+    Write-Error "model detection failed: env MODEL not set, cache missing, and /v1/models probe failed"
+    throw "model detection failed"
 }
 
 $DETECTED_MODEL = Get-Model

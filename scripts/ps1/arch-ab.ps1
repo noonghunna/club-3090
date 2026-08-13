@@ -116,7 +116,7 @@ foreach ($arm in $ArmList) {
 
     $rebenchScript = Join-Path $ScriptPath "rebench-full.ps1"
     if (Test-Path $rebenchScript) {
-        & $rebenchScript @rbArgs 2>&1
+        & $rebenchScript @rbArgs *>&1
         Log "Phase $arm complete"
     } else {
         Log "rebench-full.ps1 not found - phase skipped"

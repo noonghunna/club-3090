@@ -73,7 +73,7 @@ function Detect-Engine {
         return "llamacpp"
     } catch {}
     try {
-        $fp = nco ((Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body @{
+        $fp = nco ((Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
             model = $Model; messages = @(@{ role = "user"; content = "hi" }); max_tokens = 1
         } | ConvertTo-Json -Compress | ConvertFrom-Json).system_fingerprint) ""
         if ($fp -match '^vllm-') { return "vllm" }
@@ -154,7 +154,7 @@ try {
 # ---------------------------------------------------------------------------
 Write-Log "[3/9] Basic completion - capital of France ..."
 try {
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body @{
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
         model = $Model; messages = @(@{ role = "user"; content = "What is the capital of France? One short sentence." });
         max_tokens = 30; temperature = 0.6; chat_template_kwargs = @{ enable_thinking = $false }
     } | ConvertTo-Json -Compress -ErrorAction Stop
@@ -179,7 +179,7 @@ if ($env:SKIP_TOOLS -eq "1") {
     Skip "SKIP_TOOLS=1 (expected for default config - see README Known issue)"
 } else {
     try {
-        $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body @{
+        $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
             model = $Model; messages = @(@{ role = "user"; content = "What is the weather in San Francisco? Use the get_weather tool." });
             tools = @( @{ type = "function"; function = @{
                 name = "get_weather"; description = "Get weather for a city.";
@@ -334,7 +334,7 @@ if ($env:SKIP_TOOLS -eq "1") {
 # ---------------------------------------------------------------------------
 Write-Log "[7/9] Thinking / reasoning mode ..."
 try {
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body @{
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
         model = $Model; messages = @(@{ role = "user"; content = "What is 2+2? One-line answer." });
         max_tokens = 4000; temperature = 0.3;
         chat_template_kwargs = @{ enable_thinking = $true }
@@ -374,7 +374,7 @@ try {
 # ---------------------------------------------------------------------------
 Write-Log "[8/9] Output quality / cascade detection (2K-token completion) ..."
 try {
-    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body @{
+    $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
         model = $Model; messages = @(@{ role = "user"; content = "Write a detailed 1500-word essay explaining how transformer attention works. Cover: query/key/value projections, scaled dot-product attention, softmax, multi-head attention, positional encodings, and a brief comparison with RNN-based attention." });
         max_tokens = 2000; temperature = 0.6;
         chat_template_kwargs = @{ enable_thinking = $false }
@@ -441,7 +441,7 @@ if ($ENGINE_KIND -in @("llamacpp", "sglang")) {
     Skip "container '$Container' not found (CONTAINER=none for host endpoints)"
 } else {
     try {
-        $null = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -Body @{
+        $null = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
             model = $Model; messages = @(@{ role = "user"; content = "Count from 1 to 80, one number per line." });
             max_tokens = 500; temperature = 0.0;
             chat_template_kwargs = @{ enable_thinking = $false }
@@ -518,7 +518,7 @@ if ($Bench -and $FAILED -eq 0) {
     $env:URL = $Url
     $env:MODEL = $Model
     $env:CONTAINER = $Container
-    & "$scriptDir\bench.ps1"
+    & "$scriptDir\bench-full.ps1"
 }
 
 exit $FAILED

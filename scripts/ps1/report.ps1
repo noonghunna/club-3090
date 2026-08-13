@@ -83,7 +83,7 @@ function Redact {
 # ---------------------------------------------------------------------------
 $EngineKind = "unknown"
 try {
-    $null = Invoke-RestMethod -Uri "$Url/props" -TimeoutSec 3 -ErrorAction Stop
+    $null = Invoke-RestMethod -Uri "$Url/props" -TimeoutSec 15 -ErrorAction Stop
     $EngineKind = "llamacpp"
 } catch {}
 if ($EngineKind -eq "unknown") {
@@ -130,7 +130,7 @@ function Write-TerminalReport {
     Write-Host "[1] Engine liveness probe ..."
     $engineAlive = $false
     try {
-        $null = Invoke-RestMethod -Uri "$Url/v1/models" -TimeoutSec 5 -ErrorAction Stop
+        $null = Invoke-RestMethod -Uri "$Url/v1/models" -TimeoutSec 15 -ErrorAction Stop
         $engineAlive = $true
         Pass "engine reachable at $Url/v1/models"
     } catch {

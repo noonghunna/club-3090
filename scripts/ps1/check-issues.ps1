@@ -7,7 +7,7 @@ $FailList = @(
     "rerun-failed-packs.ps1", "run-benchmarks.ps1", "verify-full.ps1", "verify-stress.ps1"
 )
 
-$Dir = "G:/scripts/ps1"
+$Dir = $PSScriptRoot
 
 foreach ($name in $FailList) {
     $path = Join-Path $Dir $name

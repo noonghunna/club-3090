@@ -60,9 +60,9 @@ function Get-ExpertCacheCensus {
     param([string]$Endpoint)
     $census = @{}
 
-    $metrics = Invoke-HttpGet -Url "$Endpoint/metrics" -TimeoutSec 5
+    $metrics = Invoke-HttpGet -Url "$Endpoint/metrics" -TimeoutSec 15
     if (-not $metrics.success) {
-        $metrics = Invoke-HttpGet -Url "$Endpoint/v1/metrics" -TimeoutSec 5
+        $metrics = Invoke-HttpGet -Url "$Endpoint/v1/metrics" -TimeoutSec 15
     }
 
     if ($metrics.success -and $metrics.body) {
@@ -97,9 +97,9 @@ function Get-ExpertCacheCounters {
     param([string]$Endpoint)
     $counters = @{}
 
-    $metrics = Invoke-HttpGet -Url "$Endpoint/metrics" -TimeoutSec 5
+    $metrics = Invoke-HttpGet -Url "$Endpoint/metrics" -TimeoutSec 15
     if (-not $metrics.success) {
-        $metrics = Invoke-HttpGet -Url "$Endpoint/v1/metrics" -TimeoutSec 5
+        $metrics = Invoke-HttpGet -Url "$Endpoint/v1/metrics" -TimeoutSec 15
     }
 
     if ($metrics.success -and $metrics.body) {
@@ -134,9 +134,9 @@ function Get-SpecDecodingMetrics {
     param([string]$Endpoint)
     $metrics = @{}
 
-    $data = Invoke-HttpGet -Url "$Endpoint/metrics" -TimeoutSec 5
+    $data = Invoke-HttpGet -Url "$Endpoint/metrics" -TimeoutSec 15
     if (-not $data.success) {
-        $data = Invoke-HttpGet -Url "$Endpoint/v1/metrics" -TimeoutSec 5
+        $data = Invoke-HttpGet -Url "$Endpoint/v1/metrics" -TimeoutSec 15
     }
 
     if ($data.success -and $data.body) {
@@ -193,9 +193,9 @@ function Get-BypassCounter {
     param([string]$Endpoint)
     $count = 0
 
-    $data = Invoke-HttpGet -Url "$Endpoint/metrics" -TimeoutSec 5
+    $data = Invoke-HttpGet -Url "$Endpoint/metrics" -TimeoutSec 15
     if (-not $data.success) {
-        $data = Invoke-HttpGet -Url "$Endpoint/v1/metrics" -TimeoutSec 5
+        $data = Invoke-HttpGet -Url "$Endpoint/v1/metrics" -TimeoutSec 15
     }
 
     if ($data.success -and $data.body) {
@@ -219,7 +219,7 @@ function Get-ConfigFingerprint {
         moe_cache_env = $false
     }
 
-    $models = Invoke-HttpGet -Url "$Endpoint/v1/models" -TimeoutSec 5
+    $models = Invoke-HttpGet -Url "$Endpoint/v1/models" -TimeoutSec 15
     if ($models.success -and $models.body) {
         try {
             $modelData = $models.body | ConvertFrom-Json
@@ -273,9 +273,9 @@ function Get-Status {
         reason = ""
     }
 
-    $health = Invoke-HttpGet -Url "$Endpoint/v1/health" -TimeoutSec 5
+    $health = Invoke-HttpGet -Url "$Endpoint/v1/health" -TimeoutSec 15
     if (-not $health.success) {
-        $health = Invoke-HttpGet -Url "$Endpoint/health" -TimeoutSec 5
+        $health = Invoke-HttpGet -Url "$Endpoint/health" -TimeoutSec 15
     }
 
     if (-not $health.success) {

@@ -234,9 +234,21 @@ if ($AsPr) {
         }
     }
     git push -u origin $Branch 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "git push to origin failed (exit code $LASTEXITCODE)"
+        exit 1
+    }
     $prUrl = gh pr create -t "$PrTitle" -F $BodyFile 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "gh pr create failed (exit code $LASTEXITCODE)"
+        exit 1
+    }
     Log "Opened PR: $prUrl"
 } else {
     $issueUrl = gh issue create -t "$IssueTitle" -F $BodyFile -l bench-contribution 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "gh issue create failed (exit code $LASTEXITCODE)"
+        exit 1
+    }
     Log "Opened issue: $issueUrl"
 }

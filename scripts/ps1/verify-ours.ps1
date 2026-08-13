@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $pass = 0
 $fail = 0
 $files = @(
-    "arch-ab.ps1", "beellama-pin-bump.ps1", "bench-agentic.ps1", "bench.ps1",
+    "arch-ab.ps1", "beellama-pin-bump.ps1", "bench-agentic.ps1", "bench-full.ps1",
     "capture.ps1", "catalog-baseline.ps1", "concurrency-probe.ps1", "detect_nvlink.ps1",
     "engine-pin-bump.ps1", "health.ps1", "launcher.ps1", "power-cap-sweep.ps1",
     "quality-baseline.ps1", "quality-test.ps1", "rebench-full.ps1", "rebench-runtime.ps1",

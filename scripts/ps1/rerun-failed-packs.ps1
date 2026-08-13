@@ -73,7 +73,7 @@ $CmdArgs = @("--scenarios-file", $SelFile, $modeFlag, "--previous-result", $Resu
 if ($ExtraArgs) { $CmdArgs += $ExtraArgs }
 
 Write-Host "[$ScriptName] running: .\$($QtScript -replace '\.ps1$','') $($CmdArgs -join ' ')"
-& $QtScript @CmdArgs 2>&1
+& $QtScript @CmdArgs *>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "quality-test exited with code $LASTEXITCODE"
 }

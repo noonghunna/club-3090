@@ -10,10 +10,10 @@
 # Usage:
 #   scripts/health.ps1
 #   scripts/health.ps1 --watch          # refresh every 5s (Ctrl-C to stop)
-#   $env:URL="http://localhost:8030"; scripts/health.ps1
+#   $env:URL="http://localhost:8010"; scripts/health.ps1
 #
 # Env:
-#   URL          API base. Default: http://localhost:8020
+#   URL          API base. Default: http://localhost:8010
 #   CONTAINER    Target a specific named container instead of auto-matching.
 #                Default: unset -> auto-match any recognized engine-prefix
 #                container (vllm-/llama-cpp-/ik-llama-/sglang-/beellama-).
@@ -191,7 +191,7 @@ function Run-Health {
                     }
                     if ($vals.Count -gt 0) {
                         $avg = ($vals | Measure-Object -Average).Average
-                        $csv = ($vals | ForEach-Object { $_ } | Join-String -Separator ",")
+                        $csv = ($vals -join ",")
                         Write-OK "MTP/Spec-decode: AL last 5 = $avg  ($csv)"
                     }
                 } else {
@@ -246,5 +246,6 @@ if ($Watch) {
         Start-Sleep -Seconds $WATCH_INTERVAL
     }
 } else {
-    Run-Health
+    $result = Run-Health
+    if (-not $result) { exit 1 }
 }

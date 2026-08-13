@@ -39,15 +39,7 @@ if (-not (Test-Path $FixturePath)) {
     exit 1
 }
 
-# Auto-detect endpoint
-if ($Url -eq "http://localhost:8010") {
-    try {
-        $models = Invoke-RestMethod -Uri "$Url/v1/models" -TimeoutSec 5 -ErrorAction SilentlyContinue
-        if ($models -and $models.data -and $models.data.Count -gt 0) {
-            $Url = $Url  # keep it
-        }
-    } catch { }
-}
+# Endpoint already set from param/env defaults above — no-op auto-detect removed.
 
 # Auto-detect model
 if (-not $Model) {

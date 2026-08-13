@@ -39,7 +39,7 @@ $Container = ""
 
 # Try to detect from running containers
 try {
-    $models = Invoke-RestMethod -Uri "$Url/v1/models" -TimeoutSec 5 -ErrorAction SilentlyContinue
+    $models = Invoke-RestMethod -Uri "$Url/v1/models" -TimeoutSec 15 -ErrorAction SilentlyContinue
     if ($models -and $models.data -and $models.data.Count -gt 0) {
         $Model = $models.data[0].id
     }
@@ -104,7 +104,7 @@ foreach ($phase in $SkipList) {
             if ($DryRun) {
                 Log "  [dry-run] would run: .\$($Scripts[$phase]) $($args -join ' ')"
             } else {
-                & $scriptFile @args 2>&1
+                & $scriptFile @args *>&1
                 if ($LASTEXITCODE -ne 0) {
                     Log "Phase $phase exited with code $LASTEXITCODE"
                 }

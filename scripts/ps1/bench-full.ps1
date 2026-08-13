@@ -14,7 +14,7 @@
 #   $env:FORCE_TOKENS=4000; scripts/bench.ps1   # fixed 4000-tok output
 #
 # Env vars:
-#   URL                Endpoint. Default: http://localhost:8020
+#   URL                Endpoint. Default: http://localhost:8010
 #   MODEL              Served model name. Default: auto-detected
 #   CONTAINER          Container for log scraping. Default: vllm-qwen36-27b
 #   RUNS               Measured runs per prompt. Default: 5
@@ -74,7 +74,7 @@ $QUICK = [int]$env:QUICK
 
 # Defaults
 if (-not $URL) { $URL = "http://localhost:8010" }
-if (-not $MODEL) { $MODEL = "qwen-8010" }
+if (-not $MODEL) { $MODEL = $DETECTED_MODEL }
 if (-not $CONTAINER) { $CONTAINER = "vllm-qwen36-27b" }
 if (-not $RUNS) { $RUNS = 5 }
 if (-not $WARMUPS) { $WARMUPS = 3 }
@@ -155,7 +155,6 @@ function Invoke-BenchRun {
             } else {
                 "{0:N2} wall TPS (no decode window)" -f $result.wallTPS
             }
-            $rate = ("{0:N2} wall TPS (no decode window)" -f $result.wallTPS)
             $runLabel = "${Label} run $($i+1)/$RUNS"
             $toksInfo = "$($result.completionTokens) tok in $([math]::Round($result.wall,1))s"
             $perfInfo = "($rate, ttft $([math]::Round($result.ttft*1000))ms)"
