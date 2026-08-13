@@ -75,7 +75,7 @@ function Detect-Engine {
     try {
         $fp = nco ((Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
             model = $Model; messages = @(@{ role = "user"; content = "hi" }); max_tokens = 1
-        } | ConvertTo-Json -Compress | ConvertFrom-Json).system_fingerprint) ""
+        } | ConvertTo-Json -Depth 10 | ConvertFrom-Json).system_fingerprint) ""
         if ($fp -match '^vllm-') { return "vllm" }
         if ($fp -match '^sglang-') { return "sglang" }
     } catch {}
@@ -142,7 +142,7 @@ try {
     $null = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 180 -Body @{
         model = $Model; messages = @(@{ role = "user"; content = "ping" }); max_tokens = 1
         temperature = 0.0; chat_template_kwargs = @{ enable_thinking = $false }
-    } | ConvertTo-Json -Compress -ErrorAction Stop
+    } | ConvertTo-Json -Depth 10 -ErrorAction Stop
     Write-Log "[warmup] engine warm"
     $warmupOk = $true
 } catch {
@@ -157,7 +157,7 @@ try {
     $resp = Invoke-RestMethod -Uri "$Url/v1/chat/completions" -Method POST -TimeoutSec 300 -Body @{
         model = $Model; messages = @(@{ role = "user"; content = "What is the capital of France? One short sentence." });
         max_tokens = 30; temperature = 0.6; chat_template_kwargs = @{ enable_thinking = $false }
-    } | ConvertTo-Json -Compress -ErrorAction Stop
+    } | ConvertTo-Json -Depth 10 -ErrorAction Stop
     $content = nco $resp.choices[0].message.content ""
     if ($content -match '(?i)Paris') {
         Pass "reply contains 'Paris'"
@@ -187,7 +187,7 @@ if ($env:SKIP_TOOLS -eq "1") {
             }} );
             tool_choice = "auto"; max_tokens = 200; temperature = 0.3;
             chat_template_kwargs = @{ enable_thinking = $false }
-        } | ConvertTo-Json -Compress -ErrorAction Stop
+        } | ConvertTo-Json -Depth 10 -ErrorAction Stop
 
         $msg = $resp.choices[0].message
         $toolCalls = $msg.tool_calls
@@ -204,11 +204,11 @@ if ($env:SKIP_TOOLS -eq "1") {
             if ($hasWeather) {
                 Pass "tool_calls[] populated with get_weather"
             } else {
-                Fail "unexpected tool_calls structure" "Raw: $($resp | ConvertTo-Json -Compress)"
+                Fail "unexpected tool_calls structure" "Raw: $($resp | ConvertTo-Json -Depth 10)"
                 $FAILED++
             }
         } else {
-            Fail "no tool_calls in response" "Raw: $($resp | ConvertTo-Json -Compress)"
+            Fail "no tool_calls in response" "Raw: $($resp | ConvertTo-Json -Depth 10)"
             $FAILED++
         }
     } catch {
@@ -226,7 +226,7 @@ try {
         model = $Model; messages = @(@{ role = "user"; content = "Write a three-sentence haiku about debugging." });
         max_tokens = 120; temperature = 0.6; stream = $true;
         chat_template_kwargs = @{ enable_thinking = $false }
-    } | ConvertTo-Json -Compress
+    } | ConvertTo-Json -Depth 10
 
     $webClient = New-Object System.Net.WebClient
     $webClient.Headers.Add("Content-Type", "application/json")
@@ -282,7 +282,7 @@ if ($env:SKIP_TOOLS -eq "1") {
             }} );
             tool_choice = "auto"; max_tokens = 256; temperature = 0.3; stream = $true;
             chat_template_kwargs = @{ enable_thinking = $true }
-        } | ConvertTo-Json -Compress
+        } | ConvertTo-Json -Depth 10
 
         $webClient = New-Object System.Net.WebClient
         $webClient.Headers.Add("Content-Type", "application/json")
@@ -338,7 +338,7 @@ try {
         model = $Model; messages = @(@{ role = "user"; content = "What is 2+2? One-line answer." });
         max_tokens = 4000; temperature = 0.3;
         chat_template_kwargs = @{ enable_thinking = $true }
-    } | ConvertTo-Json -Compress -ErrorAction Stop
+    } | ConvertTo-Json -Depth 10 -ErrorAction Stop
 
     $msg = $resp.choices[0].message
     $reasoning = nco (nco $msg.reasoning $msg.reasoning_content) ""
@@ -378,7 +378,7 @@ try {
         model = $Model; messages = @(@{ role = "user"; content = "Write a detailed 1500-word essay explaining how transformer attention works. Cover: query/key/value projections, scaled dot-product attention, softmax, multi-head attention, positional encodings, and a brief comparison with RNN-based attention." });
         max_tokens = 2000; temperature = 0.6;
         chat_template_kwargs = @{ enable_thinking = $false }
-    } | ConvertTo-Json -Compress -ErrorAction Stop
+    } | ConvertTo-Json -Depth 10 -ErrorAction Stop
 
     $content = nco $resp.choices[0].message.content ""
     $finish = nco $resp.choices[0].finish_reason "n/a"
@@ -445,7 +445,7 @@ if ($ENGINE_KIND -in @("llamacpp", "sglang")) {
             model = $Model; messages = @(@{ role = "user"; content = "Count from 1 to 80, one number per line." });
             max_tokens = 500; temperature = 0.0;
             chat_template_kwargs = @{ enable_thinking = $false }
-        } | ConvertTo-Json -Compress -ErrorAction Stop
+        } | ConvertTo-Json -Depth 10 -ErrorAction Stop
     } catch {
         Fail "metrics-trigger request failed" "Check docker logs"
         $FAILED++
@@ -513,7 +513,7 @@ $summary | ConvertTo-Json -Depth 5 | Out-File -FilePath (Join-Path $RUN_DIR "sum
 # ---------------------------------------------------------------------------
 if ($Bench -and $FAILED -eq 0) {
     Write-Log ""
-    Write-Log "  --bench: running scripts/bench.ps1"
+    Write-Log "  --bench: running scripts/bench-full.ps1"
     $scriptDir = Join-Path $ROOT "scripts"
     $env:URL = $Url
     $env:MODEL = $Model

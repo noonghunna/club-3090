@@ -1,7 +1,7 @@
 # check-issues.ps1 — scan all ps1 files for common PS5.1 compatibility issues
 
 $FailList = @(
-    "arch-ab.ps1", "beellama-pin-bump.ps1", "bench.ps1",
+    "arch-ab.ps1", "beellama-pin-bump.ps1",
     "catalog-baseline.ps1", "detect_nvlink.ps1",
     "power-cap-sweep.ps1", "quality-baseline.ps1", "rebench-full.ps1",
     "rerun-failed-packs.ps1", "run-benchmarks.ps1", "verify-full.ps1", "verify-stress.ps1"

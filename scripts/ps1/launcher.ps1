@@ -178,7 +178,7 @@ function Invoke-Script {
             $exitCode = $LASTEXITCODE
         }
         elseif ($Runner -eq "powershell") {
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Args 2>&1 | Out-String
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Args *>&1 | Out-String
             $exitCode = $LASTEXITCODE
         }
         elseif ($Runner -eq "bash") {

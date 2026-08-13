@@ -75,7 +75,7 @@ Log "Phases to run: $($SkipList -join ', ')"
 $ScriptPath = $PSScriptRoot
 $Scripts = @{
     "verify-full" = "verify-full.ps1"
-    "bench" = "bench.ps1"
+    "bench" = "bench-full.ps1"
     "bench-agentic" = "bench-agentic.ps1"
     "concurrency-probe" = "concurrency-probe.ps1"
     "verify-stress" = "verify-stress.ps1"
