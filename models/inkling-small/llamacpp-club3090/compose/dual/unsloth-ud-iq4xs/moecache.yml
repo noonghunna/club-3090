@@ -51,7 +51,14 @@
 #              • 1M context does NOT fit: the KV allocates fine, but the prefill
 #                compute buffer wants 9,450 MiB on device 0 and the boot dies.
 #                262K is a deliberate choice, not the model's ceiling.
-#              • Needs ~120 GB of HOST RAM (routed experts live in CPU memory).
+#              • Needs ~121 GB of HOST RAM — a HARD gate, not a recommendation.
+#                The expert cache does NOT reduce it: the cache is a VRAM-side
+#                COPY and the CPU master buffer stays fully allocated, so more
+#                (or bigger) GPUs buy hit rate, never host RAM. If you are host-RAM
+#                bound, use the `residency.yml` sibling instead — it PINS expert
+#                bundles into VRAM and the requirement falls with card size.
+#                preflight REFUSES below it; arithmetic in the
+#                CPU-Offload-Host-RAM-GB block near the bottom of this header.
 #              • Load takes several minutes (--no-mmap).
 #   Quality:   toolcall-15 12/15 · instructfollow-15 12/15 · structoutput-15 14/15
 #              · dataextract-15 13/15 · reasonmath-15 12/15 · bugfind-15 14/15
@@ -94,6 +101,48 @@
 #   against DeepSeek anyway, since the merge conflict sat on its expert-cache
 #   gate path: verify-full all-pass, decode 21.4-21.6 t/s vs 21.91 on v1.
 # ---------------------------------------------------------------------------
+# SIBLING VARIANTS in this directory — pick on HOST RAM first, speed second:
+#
+#   | variant          | expert placement            | host RAM | picked when          |
+#   |------------------|-----------------------------|----------|----------------------|
+#   | moecache.yml     | ALL routed experts on CPU,  | ~121 GB  | ≥128 GB host RAM     |
+#   | (this file)      | cache holds VRAM COPIES     | (fixed)  | ⭐ validated config  |
+#   | residency.yml    | expert bundles PINNED into  | 121 GB   | host-RAM bound, or   |
+#   |                  | VRAM, remainder on CPU      | minus    | >24 GB cards         |
+#   |                  |                             | residency|                      |
+#
+#   The distinction is COPY vs MIGRATE, and it is the whole story: this file's
+#   cache never shrinks the CPU master buffer, `residency.yml`'s `-ot ...=CUDA*`
+#   rules do. On 2×32 GB the sizer pins ~39 GiB of experts, taking the host need
+#   from 121 GB to ~83 GB (club-3090 #978).
+# ---------------------------------------------------------------------------
+#
+# CPU-Offload-Host-RAM-GB: 121
+#   MEASURED (2×3090, `--no-mmap`, all 40 routed-expert layers → CPU, 262K/ub2048;
+#   the buffer is cache- and card-count-independent):
+#       CUDA_Host model buffer   116354.33 MiB = 113.63 GiB   <- the HARD floor
+#     + ~8 GiB   process overhead: the 1,098.86 MiB CUDA_Host compute buffer,
+#                CPU FFN scratch and CUDA host allocations. Same constant the
+#                DeepSeek headers carry (141362 MiB→156 incl. drafter, 80268→86).
+#     = 121.
+#   ⚠️ The 116,354.33 MiB is NOT just the experts. It decomposes exactly as
+#   115,520.00 MiB of routed expert bundles + 834.33 MiB of `token_embd.weight`
+#   (Q8_0), which llama.cpp keeps host-side whatever `-ngl` says. Residency can
+#   move the first term and never the second — see `residency.yml`.
+#   ⚠️ HARD floor, not a recommendation. `--no-mmap` makes the loader
+#   `cudaMallocHost` the whole offloaded set: pinned pages are non-evictable and
+#   cannot be oversubscribed, so a short box does not degrade — it dies inside
+#   the allocation, which presents as "loads the model into RAM, then the
+#   container is OOM-killed" (club-3090 #978: a 123 GB desktop froze outright,
+#   and the RAM gate could not refuse because this header did not exist).
+#   ⚠️ NO residency headers here, DELIBERATELY. This compose's `-ot` is an
+#   unconditional all-experts→CPU catch-all with no ${OT_G*} slots, so the
+#   launcher never pins bundles back onto the GPUs and the gate must NOT
+#   subtract a grant — offload_residency_grant_mib() returns 0 without
+#   CPU-Offload-Bundle-MiB, which is the correct answer here. Adding those
+#   headers would under-gate every rig. `residency.yml` is the compose that
+#   legitimately carries them.
+# ===========================================================================
 services:
   llama-cpp-inkling-small-iq4xs-moecache:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).

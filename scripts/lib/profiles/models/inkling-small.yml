@@ -65,10 +65,30 @@ offload_residency:
     # derive one from "IQ4_XS" — the quant name does not give you the byte size.
     expert_bundle_uniform: false
     expert_types_kib: { iq3_s: 3520, iq4_xs: 4352, q6_K: 6720 }
-    # ⚠️ NOT YET MEASURED: per-layer bundle sizes (the DeepSeek file has these
-    # from tensor-offset deltas; the equivalent pass has not been run here).
-    # Until it is, host-RAM guards must use the totals below, not per-layer math.
-    routed_total_gib: 113.5      # 118.7 GiB total − 5.1 GiB GPU-resident
+    # ⭐ MEASURED 2026-08-14 (#978), read from the GGUF tensor table by summing
+    # `blk.N.ffn_(gate|up|down)_exps.weight` per layer — the pass the previous
+    # revision of this block recorded as "NOT YET MEASURED". Two layers are
+    # OUTLIERS because the Dynamic quant spends q6_K on the model's tail:
+    expert_bundle_mib: 2848                # modal — 38 of the 40 MoE layers
+    per_layer_mib_default: 2848
+    per_layer_mib_overrides: { 40: 3440, 41: 3856 }
+    first_moe_layer: 2                     # 2 dense blocks precede the MoE stack
+    # ⚠️⚠️ THE OUTLIERS ARE AT THE TOP OF THE STACK, WHICH IS EXACTLY WHERE THE
+    # LAST CARD'S RESIDENCY SELECTION STARTS. _offload_layers_for_card() counts
+    # DOWN from the top of the window for the last card, so a residency window
+    # that includes blk.40/41 hands that card the two biggest bundles first while
+    # the scalar gate prices them at 2848 — over-pinning it by 1,600 MiB. The
+    # residency compose therefore declares a window of 38 (blk.2-39), not 40.
+    # Any guard doing per-layer math must respect these overrides.
+    # ⚠️ 113.5 CORRECTED to 112.8 (#978). The old figure was derived as
+    # "118.7 total − 5.1 GPU-resident" and over-counted, because 834.33 MiB of
+    # `token_embd.weight` (Q8_0) is NEITHER routed-expert NOR GPU-resident:
+    # llama.cpp keeps it host-side whatever -ngl says. Measured decomposition of
+    # the CUDA_Host model buffer (116,354.33 MiB at zero residency):
+    #     115,520.00 MiB routed expert bundles  = 112.81 GiB
+    #   +     834.33 MiB token_embd.weight
+    routed_total_gib: 112.8      # 40 layers: 38x2848 + 3440 + 3856 MiB
+    host_pinned_non_expert_mib: 834          # token_embd — no -ot rule moves it
     dense_gpu_gib: 5.0           # measured: CUDA0 2,495 + CUDA1 2,642 MiB
 
 # ---------------------------------------------------------------------------

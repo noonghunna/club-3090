@@ -51,7 +51,15 @@
 #              • 1M context does NOT fit: the KV allocates fine, but the prefill
 #                compute buffer wants 9,450 MiB on device 0 and the boot dies.
 #                262K is a deliberate choice, not the model's ceiling.
-#              • Needs ~120 GB of HOST RAM (routed experts live in CPU memory).
+#              • Needs ~121 GB of HOST RAM — a HARD gate, and it does NOT fall
+#                with card count. All 40 routed-expert layers stay on CPU on any
+#                number of cards; more cards buy a bigger expert-cache POOL, not
+#                a smaller CPU buffer, because the cache is a VRAM-side COPY.
+#                preflight REFUSES below it; arithmetic in the
+#                CPU-Offload-Host-RAM-GB block near the bottom of this header.
+#                A host-RAM-bound owner wants the dual `residency.yml` instead,
+#                which PINS bundles into VRAM (no 4-card sibling of it exists —
+#                the reference rig has 2 cards, so nothing 4-card is derivable).
 #              • Load takes several minutes (--no-mmap).
 #              • ⚠️⚠️ NOTHING IN THIS FILE WAS MEASURED ON 4 CARDS. Every number,
 #                and every tuning constant, is INHERITED from the validated dual
@@ -112,6 +120,34 @@
 #   against DeepSeek anyway, since the merge conflict sat on its expert-cache
 #   gate path: verify-full all-pass, decode 21.4-21.6 t/s vs 21.91 on v1.
 # ---------------------------------------------------------------------------
+#
+# CPU-Offload-Host-RAM-GB: 121
+#   ⚠️ IDENTICAL to the dual moe-cache sibling, and that is the POINT: host RAM
+#   here does NOT fall with card count. This compose's `-ot` is an unconditional
+#   all-experts→CPU catch-all, so all 40 routed-expert layers stay in host memory
+#   on any number of cards; the extra VRAM buys expert-cache POOL SLOTS, which
+#   are COPIES, while the CPU master buffer stays whole. (Contrast the DeepSeek
+#   stock multi4 slug, whose need genuinely falls with card count — that one pins
+#   expert bundles back onto the GPUs.)
+#   MEASURED (2×3090 boot log; the buffer is card-count-independent, `--no-mmap`):
+#       CUDA_Host model buffer   116354.33 MiB = 113.63 GiB   <- the HARD floor
+#                                = 115,520.00 MiB routed expert bundles
+#                                + 834.33 MiB `token_embd.weight` (Q8_0), which
+#                                  llama.cpp keeps host-side whatever -ngl says
+#     + ~8 GiB   process overhead (1,098.86 MiB CUDA_Host compute buffer, CPU FFN
+#                scratch, CUDA host allocations) — the same constant the DeepSeek
+#                headers carry.
+#     = 121.
+#   ⚠️ HARD floor, not a recommendation. `--no-mmap` makes the loader
+#   `cudaMallocHost` the whole offloaded set: pinned pages are non-evictable and
+#   cannot be oversubscribed, so a short box does not degrade — it dies inside
+#   the allocation, which presents as "loads the model into RAM, then the
+#   container is OOM-killed" (club-3090 #978).
+#   ⚠️ NO residency headers here, DELIBERATELY — there are no ${OT_G*} slots in
+#   the `-ot` below, so nothing is ever pinned back and the gate must NOT
+#   subtract a grant. offload_residency_grant_mib() returns 0 without
+#   CPU-Offload-Bundle-MiB, which is the correct answer for this compose.
+# ===========================================================================
 services:
   llama-cpp-inkling-small-iq4xs-moecache-multi4:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).

@@ -1,0 +1,305 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Inkling-Small (263B MoE, Thinking Machines — unsloth UD-IQ4_XS,
+#              119 GB across 4 shards. ⚠️ MIXED expert precision: iq3_s +
+#              iq4_xs + q6_K, which makes a single scalar bundle size only
+#              approximately true — see the residency block below)
+#   Engine:    llamacpp-club3090-v1.1 (fork: leloch's MoE expert cache + our
+#              L1/L3/E ports and bypass warn-split, PLUS vendored ggml-org#25731
+#              for the inkling arch — a separate pin from the v1 engine)
+#   Topology:  Dual GPU PCIe (layer-split -ts 1,1, no NVLink)
+#   Drafter:   none — the GGUF carries no MTP head and no drafter is converted
+#   KV:        fp16 (llama.cpp default — iSWA keeps it to 7.5 GB even at 262K)
+#   Vision:    no (upstream model is multimodal; this GGUF ships no mmproj)
+#   Max ctx:   262144
+#   Genesis:   N/A — llama.cpp engine
+#   Status:    🧪 Experimental
+#   Caveats:   • ⚠️⚠️ THE RESIDENCY CONSTANTS ARE DERIVED, NOT FIELD-VALIDATED
+#                ON >24 GB CARDS. `CPU-Offload-GPU-Reserve-MiB` and the bundle
+#                size below are MEASURED on 2×24 GB (see the block near the
+#                bottom of this header), and the 2×24 GB grant was booted. The
+#                32 GB / 4-card projections in this header are ARITHMETIC from
+#                those measurements — the reference rig has 2× 24 GB cards
+#                permanently, so a bigger-card grant cannot be booted here.
+#                Treat any non-24 GB number as a starting point to validate.
+#              • ⚠️ PICK THIS ONLY IF YOU ARE HOST-RAM BOUND. Where
+#                `moecache.yml` runs, it is FASTER — measured, not assumed:
+#                same session, same rig, same 300-token prompt, 3 warm-up + 3
+#                measured requests each, this config plateaued at 20.35 t/s
+#                while the cache config was at 25.25 t/s AND STILL CLIMBING
+#                (23.80 → 25.36 → 26.60 across its three measured runs, against
+#                a published canonical 32.01 t/s). The gap is therefore ≥+24%
+#                and understated. Pinning whole layers buys perfect locality on
+#                a FEW layers; the cache spreads slots across ALL 40 by expert
+#                popularity and reaches 76-78% hits. The trade is HOST RAM, not
+#                throughput. See "WHY THIS EXISTS".
+#              • ⏸️ VENDORS AN UNMERGED UPSTREAM PR. The `inkling` architecture
+#                is NOT in llama.cpp mainline — it lives in the open draft
+#                ggml-org/llama.cpp#25731, vendored into the engine this slug
+#                pins (`llamacpp-club3090-v1.1`). Stock llama.cpp fails with
+#                `unknown model architecture: 'inkling'`. When #25731 merges the
+#                vendored copy is dropped and this repoints to the v1 engine.
+#              • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
+#                (github.com/leloch/llama.cpp, RFC ggml-org#24528). This slug
+#                packages it. The inkling arch is @danielhanchen's PR, vendored,
+#                not ours — we maintain neither.
+#              • ⚠️ REASONING IS ON BY DEFAULT at effort 0.9. This model reads
+#                `reasoning_effort` (none/minimal/low/medium/high/xhigh/max, or a
+#                float 0.0-0.99) — NOT `enable_thinking`, which it IGNORES
+#                SILENTLY. A client sending a small max_tokens without setting
+#                effort gets an EMPTY answer and no error. Set it explicitly:
+#                  {"reasoning_effort": "none",
+#                   "chat_template_kwargs": {"reasoning_effort": "none"}}
+#                Both are needed: llama.cpp parses the top-level parameter but
+#                only maps the value "none", onto a variable this template does
+#                not read, so the kwargs copy is what actually lands.
+#              • ⚠️ SAMPLING: Unsloth specifies temp 1.0 / top_p 1.0 / min_p 0.0
+#                for this model, NOT the stack-canonical Qwen 0.6/0.95.
+#              • ⚠️ QUALITY IS UNTESTED on this variant. No 8-pack has been run.
+#                The weights are identical to `moecache.yml`, so its 8-pack is
+#                the best available evidence — but placement is not quality-
+#                neutral until shown to be, so do not quote it as this slug's.
+#              • Length-dependent logit scaling engages above 128K context
+#                (`log_scaling_n_floor`), so behaviour at 8K does not
+#                extrapolate to 512K. Do not A/B across that boundary.
+#              • Needs ~121 GB of HOST RAM MINUS whatever residency pins onto
+#                YOUR cards — 99 GB on 2×24 GB, ~83 GB on 2×32 GB. preflight
+#                computes the rig-specific number and REFUSES below it.
+#              • Load takes several minutes (--no-mmap).
+#              • 1M context does NOT fit: the KV allocates fine, but the prefill
+#                compute buffer wants 9,450 MiB on device 0 and the boot dies.
+#                262K is a deliberate choice, not the model's ceiling.
+#   Best for:  Inkling on a rig that cannot afford 121 GB of host RAM. ⭐
+# ---------------------------------------------------------------------------
+# SIBLING VARIANTS in this directory — pick on HOST RAM first, speed second:
+#
+#   | variant          | expert placement            | host RAM | picked when          |
+#   |------------------|-----------------------------|----------|----------------------|
+#   | moecache.yml     | ALL routed experts on CPU,  | ~121 GB  | ≥128 GB host RAM     |
+#   |                  | cache holds VRAM COPIES     | (fixed)  | ⭐ validated config  |
+#   | residency.yml    | expert bundles PINNED into  | 121 GB   | host-RAM bound, or   |
+#   | (this file)      | VRAM, remainder on CPU      | minus    | >24 GB cards         |
+#   |                  |                             | residency|                      |
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS
+#   COPY vs MIGRATE. `moecache.yml`'s expert cache is a VRAM-side COPY of hot
+#   experts: the CPU master buffer stays fully allocated, so the host-RAM bill is
+#   121 GB no matter how much VRAM you own. A 128 GB desktop therefore cannot run
+#   it at all — it OOM-kills during load and can take the desktop with it
+#   (club-3090 #978, dual 32 GB cards + 128 GB host).
+#
+#   `-ot ...=CUDA<i>` rules MIGRATE instead: an expert bundle named by a device
+#   rule is loaded straight onto that card and never allocated host-side. Host
+#   RAM then falls, one bundle at a time, with the VRAM you can spare:
+#
+#     2×24 GB  4 bundles/card  =  22.25 GiB pinned  ->  99 GB host   (BOOTED)
+#     2×32 GB  7 bundles/card  =  38.94 GiB pinned  ->  83 GB host   (derived)
+#
+#   MEASURED on 2× 24 GB, this compose vs the cache sibling, same session:
+#     CUDA_Host model buffer   116354.33 -> 93570.33 MiB   (−22784.00, EXACTLY
+#                                                           the 8 bundles granted)
+#     peak process RSS             115.39 ->    93.14 GiB
+#     free VRAM after boot                    1525 / 1483 MiB   (margin intact)
+#   The buffer delta is exact, not approximate: because the residency window
+#   excludes the two oversized tail bundles, every pinned layer is 2848 MiB and
+#   the gate's subtraction matches the engine's allocation byte for byte.
+#
+#   ⚠️ THIS IS A MEMORY TRADE, NOT A SPEED WIN — MEASURED. Both mechanisms
+#   compete for the same free VRAM, and on this model the cache uses it better:
+#   76-78% hit rate at 67.5% spatial coverage, because expert popularity is
+#   skewed and the cache follows it across ALL 40 layers. Residency instead makes
+#   a HANDFUL of layers perfectly local and leaves the rest fully remote. A
+#   same-session probe (3 warm-up + 3 measured, 300-token prompt, canonical
+#   sampling) put this config at a FLAT 20.35 t/s — it converges immediately,
+#   having nothing to warm — against 25.25 t/s for the cache config, which was
+#   still climbing on its last run (26.60) toward its published 32.01 t/s.
+#   ⚠️ That is a PROBE, not a canonical bench: N=3 per arm, one prompt, one leg.
+#   It settles the DIRECTION and a lower bound on the gap, nothing finer.
+#   Where both fit, prefer `moecache.yml`.
+#
+#   ⭐ TUNE THE PIN TO YOUR HOST RAM, NOT TO THE MAXIMUM. The sizer is a
+#   floor-conservative maximiser: it pins as many bundles as fit. If your host
+#   RAM is merely tight rather than short, pin the MINIMUM that clears the gate
+#   and leave the rest of the VRAM to the cache, which will spend it better.
+#   OT_G<i> is an explicit override and the launcher NEVER clobbers it — and the
+#   RAM gate prices your ACTUAL pin, so the two stay coherent:
+#
+#     OT_G0='blk\.(2|3)\.ffn_(gate|up|down)_exps\.weight=CUDA0' \
+#     OT_G1='blk\.(39|38)\.ffn_(gate|up|down)_exps\.weight=CUDA1' \
+#       bash scripts/launch.sh llamacpp-club3090/inkling-small-dual-iq4xs-residency
+#
+#   Setting BOTH to a rule matching no layer (blk.99999) degrades this compose to
+#   exactly `moecache.yml`'s behaviour — which is also what a bare
+#   `docker compose up` does, since the defaults below match nothing.
+#
+# ⚠️ -ot IS FIRST-MATCH-WINS. The two device rules MUST precede the catch-all
+#    =CPU rule. Reverse them and every expert silently lands on CPU: no error,
+#    no warning, just a config that quietly isn't what it claims to be.
+#
+# ⚠️ THE RESIDENCY RULES ARE INJECTED, NOT HARDCODED. OT_G0/OT_G1 are resolved by
+#    launch.sh / switch.sh from DETECTED free VRAM. The defaults below
+#    deliberately match NO layer (blk.99999), so a bare `docker compose up`
+#    degrades to all-experts-CPU — the config that runs anywhere — rather than to
+#    one that OOMs.
+# ---------------------------------------------------------------------------
+#
+# CPU-Offload-Host-RAM-GB: 121
+#   ⚠️ MUST stay the ALL-experts-on-CPU worst case — preflight_cpu_offload_ram()
+#   subtracts this rig's detected residency grant itself (offload_residency_grant_mib),
+#   so pre-baking expected residency here would DOUBLE-COUNT it and under-gate.
+#   On a real 2×24 the gate computes 99; on 2×32 it computes 83.
+#   MEASURED (2× 24 GB, `--no-mmap`, zero residency, 262K/ub2048):
+#       CUDA_Host model buffer   116354.33 MiB = 113.63 GiB   <- the HARD floor
+#     + ~8 GiB   process overhead (1,098.86 MiB CUDA_Host compute buffer, CPU FFN
+#                scratch, CUDA host allocations) — the same constant the DeepSeek
+#                headers carry (141362 MiB→156 incl. drafter, 80268 MiB→86).
+#     = 121.
+#   ⚠️ 834.33 MiB OF THAT CAN NEVER BE MIGRATED. The 116,354.33 MiB decomposes as
+#   115,520.00 MiB of routed expert bundles + 834.33 MiB of `token_embd.weight`
+#   (Q8_0), which llama.cpp keeps host-side whatever `-ngl` says and no `-ot` rule
+#   moves. Residency therefore has a floor of ~8-9 GB even with every bundle
+#   pinned; it does not converge to zero.
+#   ⚠️ Hard floor, not a recommendation: `--no-mmap` makes the loader
+#   `cudaMallocHost` the offloaded set, and pinned pages are non-evictable, so a
+#   short box does not degrade — it dies inside the allocation (#978).
+#
+# CPU-Offload-Bundle-MiB: 2848
+#   One MoE layer's routed-expert bundle: `ffn_(gate|up|down)_exps.weight` summed
+#   per layer, read from the GGUF tensor table, NOT derived from the quant name.
+#   ⚠️ The quant is Unsloth *Dynamic* and is NOT uniform. 38 of the 40 MoE layers
+#   are exactly 2848 MiB (iq3_s + iq4_xs); the last two are OUTLIERS:
+#       blk.2 … blk.39   2848 MiB   (38 layers)  <- the residency window
+#       blk.40           3440 MiB   (iq3_s + q6_K)
+#       blk.41           3856 MiB   (iq4_xs + q6_K)
+#   A single scalar cannot describe all three, which is why the window below
+#   excludes blk.40/41 rather than averaging over them.
+#
+# CPU-Offload-MoE-Layers: 38
+# CPU-Offload-First-MoE-Layer: 2
+#   ⚠️⚠️ READ THIS PAIR AS "THE RESIDENCY-ELIGIBLE WINDOW", NOT "the MoE layer
+#   count". The model has 42 blocks = 2 dense + 40 MoE (`dense_block_count = 2`),
+#   so the first MoE layer is 2 — a rule naming a dense layer silently matches
+#   NOTHING, and the host-RAM gate would then subtract a bundle that never landed.
+#   The window is 38, not 40, ON PURPOSE: _offload_layers_for_card() gives the LAST
+#   card outer-edge selection counting DOWN from the top of the window, so a window
+#   of 40 would make card 1 pick blk.41 and blk.40 FIRST — precisely the two
+#   oversized bundles. The gate would price them at 2848 each while the card
+#   actually spends 3856 + 3440, over-pinning that card by 1,600 MiB and eating
+#   the deep-prefill margin (on 2×32 GB it lands at ~856 MiB free, below the
+#   896 MiB that survived a 188K ladder in #931). Excluding the two tail layers
+#   costs 7,296 MiB of eligible residency — 6.3% of the routed set — and buys
+#   EXACT gate arithmetic on every card size. Do not "fix" this to 40.
+#   ⭐ The window also keeps every pin on the card that owns the layer's dense
+#   tensors, with no special-casing: per_card = 38/2 = 19 caps card 0 at blk.2-20
+#   and card 1 at blk.21-39, and `-sm layer` over 42 blocks splits at exactly
+#   0-20 / 21-41. A pin on the wrong card costs a cross-PCIe hop per token.
+#
+# CPU-Offload-GPU-Reserve-MiB: 9758
+# CPU-Offload-First-Card-Extra-MiB: 0
+#   Inputs for resolve_offload_residency(). Sizing is additive from DETECTED
+#   FREE VRAM: fit = (free − reserve − first-card-extra − margin) / bundle.
+#   MEASURED on 2× 24 GB with residency FORCED TO ZERO and the cache OFF — the
+#   same protocol #953 used to recalibrate DeepSeek — at 262K / -ub 2048:
+#       card 0   9116 MiB used   (model 2495.34 + KV 3262.00 + compute 2802.00)
+#       card 1   9758 MiB used   (model 2641.83 + KV 4256.00 + compute 2304.27)
+#   A trivial decode after load added 0 MiB on both cards: there is no
+#   first-decode top-up on this model, everything lands at boot.
+#   ⚠️ CARD 1 IS THE EXPENSIVE ONE HERE — the INVERSE of DeepSeek, and why
+#   first-card-extra is 0 rather than the 768 default. iSWA gives this model 7
+#   full-attention layers among 42; the -ts 1,1 split puts 3 of them on card 0
+#   (3072 MiB KV) and 4 on card 1 (4096 MiB), and that ~1 GB swamps card 0's
+#   larger compute buffer. resolve_offload_residency() has no "last-card extra"
+#   knob, so `reserve` carries the LARGER of the two per-card costs and `extra`
+#   is 0. Card 0 is then charged 642 MiB it does not spend — under-granting is
+#   the safe direction, and OT_G0 exists to out-judge us.
+#   ⚠️ NO CPU-Offload-Draft-Reserve-MiB: this slug loads no drafter (no -md, no
+#   -devd). Absent means 0, which is the correct answer here.
+#   Grants this produces (free VRAM measured at 24123 MiB/card on 2× 24 GB):
+#       2×24 GB   (24123 − 9758 − 1024) / 2848 = 4 bundles/card   BOOTED, serves
+#       2×32 GB   (~32150 − 9758 − 1024) / 2848 = 7 bundles/card  DERIVED
+# ===========================================================================
+services:
+  llama-cpp-inkling-small-iq4xs-residency:
+    # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
+    # Same image as the moecache sibling — the arch needs vendored #25731 either
+    # way, so there is no mainline option for this model. ⛔ Both collapse back
+    # into the v1 engine when #25731 merges — see engines/llamacpp-club3090-v1.1.yml.
+    image: ${LLAMACPP_CLUB3090_V11_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:55f434244cc28d4af99f9fbefdd338b9409dc567d532e7b23bbc7d37f16680f4}
+    container_name: ${ESTATE_CONTAINER:-llama-cpp-inkling-small-iq4xs-residency}
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8086}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    environment:
+      # Expert-cache tuning — inherited from the 2×24 GB DeepSeek derivation.
+      # ⚠️ On THIS compose the cache is a REMAINDER consumer, not the primary
+      # mechanism: residency is allocated first (at model load) and the pools are
+      # sized from what is left. With a full pin there may be too little left for
+      # even one slab, and that is fine — pin less if you want the cache back.
+      - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
+      - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-0,1}']
+              capabilities: [gpu]
+    # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
+    # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a
+    # folded string. The list form skips shell parsing, so the regex — and any
+    # injected OT_G* value — survives byte-for-byte.
+    command:
+      - '-m'
+      - '/models/inkling-small-gguf/UD-IQ4_XS/Inkling-Small-UD-IQ4_XS-00001-of-00004.gguf'
+      - '--host'
+      - '0.0.0.0'
+      - '--port'
+      - '8080'
+      - '--alias'
+      - 'inkling-small'
+      - '-np'
+      - '1'
+      - '-c'
+      - '${CTX:-262144}'
+      - '-ngl'
+      - '99'
+      - '-sm'
+      - 'layer'
+      - '-ts'
+      - '1,1'
+      - '-fa'
+      - 'on'
+      # ⚠️ SINGLE -ot with comma-separated rules. Mainline DEPRECATES repeated
+      # -ot and honours ONLY THE LAST occurrence (#948/#949). FIRST MATCH WINS,
+      # so the two ${OT_G*} device slots MUST stay ahead of the =CPU catch-all.
+      # NOTE the 2 SHARED experts are `_shexp` and do NOT match any of these
+      # rules — they stay GPU-resident by design, which is correct: every token
+      # uses them.
+      - '-ot'
+      - '${OT_G0:-blk\.99999\.ffn_(gate|up|down)_exps\.weight=CUDA0},${OT_G1:-blk\.99999\.ffn_(gate|up|down)_exps\.weight=CUDA1},blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
+      # ⚠️ The bare-compose default is deliberately conservative. Under the
+      # launchers THREADS is injected; llama.cpp's own default collapses
+      # CPU-offload decode by ~31%, so never leave this to the engine.
+      - '-t'
+      - '${THREADS:-8}'
+      - '-ub'
+      - '${UBATCH:-2048}'
+      - '-b'
+      - '${UBATCH:-2048}'
+      - '--cache-prompt'
+      - '--no-mmap'
+      - '--moe-cache'
+      - '${MOE_CACHE:-auto}'
+      # ⚠️ LOAD-BEARING: `--fit` silently overrides -ngl and places layers itself,
+      # after which the cache reports "kept stock placement" and no-ops. Whenever
+      # -ot is deciding placement, --fit must be off.
+      - '--fit'
+      - 'off'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 900s

@@ -1031,10 +1031,48 @@ COMPOSE_REGISTRY = {
         offload="n-cpu-moe",
         # Load-bearing: gates the launch-compat MOE_RESERVE_MB injection.
         moe_cache=True,
-        host_ram_gb=120,
+        # Nominal == the compose header's worst case (121). There is no residency
+        # to subtract on this slug: the `-ot` is an unconditional all-experts->CPU
+        # catch-all with no OT_G* slots, so host RAM does NOT fall with card count
+        # or card size -- the expert cache is a VRAM-side COPY and the CPU master
+        # buffer stays whole. MEASURED CUDA_Host model buffer 116354.33 MiB
+        # (= 115520.00 experts + 834.33 token_embd) = 113.63 GiB, +8 overhead.
+        # The `-residency` sibling is the slug whose need falls with VRAM.
+        host_ram_gb=121,
         required_sm=8.6,
         status="experimental",
         status_note="Validated 2026-08-12 on the fork branch at 262K: verify-full 9/9, soak-continuous PASS (0 MiB growth, 0/25 silent-empty), decode 32.01 narrative / 31.15 code, prefill FLAT 401.6@10K -> 385.7@90K, agentic context 31.4x -> TTFT 4.8x (sub-linear). Expert cache 76-78% hits on ~6,908 resident slots (67.5% of 10,240 routed experts) -- a HIGHER rate than DeepSeek's ~57%, because inkling's resident non-expert weights are only 5.1 GB, leaving more VRAM for the pool. iSWA (7 full-attention + 35 windowed layers) keeps KV to 7.5 GB even at 262K. ⚠️ TTFT at depth is the real cost: 225 s for an 87K prompt -- 262K is a CAPACITY number, not a serving latency. 1M does not fit: KV allocates, but the prefill compute buffer wants 9,450 MiB on device 0. ⏸️ UPSTREAM-GATED on ggml-org#25731: the `inkling` arch is not in mainline, so the published llamacpp-club3090 digest CANNOT load this model (`unknown model architecture: 'inkling'`). Runs only on a self-built fork of stack/club3090-moecachev1.1 until the PR merges and the engine is rebuilt. ⚠️ ATTRIBUTION: the expert cache is leloch's (RFC ggml-org#24528); the arch is @danielhanchen's PR, vendored — we maintain neither. ⚠️ REASONING IS ON BY DEFAULT at effort 0.9: this model reads `reasoning_effort`, NOT `enable_thinking`, and ignores the latter silently — a client sending a small max_tokens without setting effort gets an empty answer and no error. ⚠️ Sampling should be Unsloth's temp 1.0/top_p 1.0/min_p 0.0, not the canonical Qwen values, for any quality work. ⚠️ QUALITY UNTESTED -- no 8-pack. ⚠️ Decode figures are a LOWER BOUND: the expert cache was still filling after 25 soak turns (+49% session 1->5), so short runs understate steady state.",
+        category="frontier",
+    ),
+    # ── The STATIC-RESIDENCY sibling of the dual moe-cache slug (#978). Same
+    # weights, same engine, opposite memory mechanism: `-ot ...=CUDA*` rules MIGRATE
+    # expert bundles into VRAM instead of COPYING them there, so host RAM falls with
+    # card size where the cache slug's never does. Ships because a 128 GB / 2x32 GB
+    # owner cannot run the cache slug at all -- it OOM-killed during load and froze
+    # his desktop. It is a MEMORY trade, not a speed win: prefer the cache slug on
+    # any rig that can feed it.
+    "llamacpp-club3090/inkling-small-dual-iq4xs-residency": _entry(
+        model="inkling-small", weights_variant="unsloth-ud-iq4xs", workload="long-ctx-single",
+        engine="llamacpp-club3090-v1.1", drafter=None, kv_format="fp16",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
+        compose_path="models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/residency.yml",
+        default_port=8086,
+        kvcalc_key="SKIP",
+        offload="n-cpu-moe",
+        # Load-bearing: gates the launch-compat MOE_RESERVE_MB injection. The cache
+        # is still ON here, but as a REMAINDER consumer -- residency allocates first.
+        moe_cache=True,
+        # NOMINAL, not worst case: the compose header's 121 is the all-experts-on-CPU
+        # figure the gate starts from, and 99 is what it computes after subtracting
+        # the residency grant on 2x24 GB -- the smallest topology this slug supports,
+        # hence the HIGHEST realistic need. Bigger cards go lower (2x32 GB -> ~83,
+        # derived). Do NOT raise this to 121: that would hide the entire point of the
+        # slug in the catalog. Do NOT lower it to the 32 GB figure either -- nominal
+        # must not undershoot what a supported rig actually needs.
+        host_ram_gb=99,
+        required_sm=8.6,
+        status="experimental",
+        status_note="⭐ THE HOST-RAM-BOUND OPTION for Inkling: `-ot ...=CUDA*` residency rules MIGRATE expert bundles into VRAM (the moe-cache slug only COPIES them, so its 121 GB host bill is fixed no matter how much VRAM you own). Host need falls with card size: 99 GB on 2x24 GB (BOOTED on the reference rig -- CUDA_Host model buffer 116354.33 -> 93570.33 MiB, exactly the 4+4 bundles the sizer granted; verify-full not yet run), ~83 GB on 2x32 GB (DERIVED, not booted -- the reference rig has 2x24 GB permanently). ⚠️ THIS IS A MEMORY TRADE, NOT A SPEED WIN, and that is MEASURED: a same-session probe (2x24 GB, 3 warm-up + 3 measured, one 300-token prompt, canonical sampling) put this config at a FLAT 20.35 t/s against 25.25 t/s for the cache sibling, which was STILL CLIMBING on its last run (23.80 -> 25.36 -> 26.60) toward its published canonical 32.01 t/s -- so >=+24% and understated. Residency converges instantly (nothing to warm) but makes only a handful of layers local; the cache follows expert popularity across ALL 40 layers and reaches 76-78% hits at 67.5% coverage. ⚠️ That is a PROBE (N=3/arm, one prompt, one leg) -- it settles direction and a lower bound, not a benchmark row. On a rig that can feed the cache slug, use the cache slug. ⭐ The pin is TUNABLE and the sizer is a maximiser: OT_G0/OT_G1 overrides are never clobbered and the RAM gate prices your ACTUAL pin, so pin the MINIMUM that clears your host RAM and leave the rest to the cache. With both overrides set to a no-match rule this degrades to exactly the moe-cache slug. ⚠️ The residency constants are MEASURED on 2x24 GB (reserve 9758 MiB from a zero-residency cache-off boot; bundle 2848 MiB from the GGUF tensor table) -- every >24 GB projection is ARITHMETIC from those, not a boot. ⚠️ CPU-Offload-MoE-Layers is 38, not the model's 40, ON PURPOSE: blk.40/41 carry oversized mixed-precision bundles (3440/3856 MiB vs 2848) and the last card's outer-edge selection would pick exactly those two first, over-pinning it by 1600 MiB while the gate priced them at 2848. Do not 'fix' it to 40 -- see the compose header. ⏸️ UPSTREAM-GATED on ggml-org#25731 exactly like its sibling: the `inkling` arch is not in mainline, so the published llamacpp-club3090 digest CANNOT load this model. ⚠️ ATTRIBUTION: the expert cache is leloch's (RFC ggml-org#24528); the arch is @danielhanchen's PR, vendored -- we maintain neither. ⚠️ REASONING IS ON BY DEFAULT at effort 0.9: this model reads `reasoning_effort`, NOT `enable_thinking`, and ignores the latter silently. ⚠️ QUALITY UNTESTED on this placement -- the weights are identical to the moe-cache slug but no 8-pack has been run against this config, so do not quote its scores as this slug's.",
         category="frontier",
     ),
     "llamacpp-club3090/inkling-small-multi4-iq4xs-moecache": _entry(
@@ -1046,7 +1084,10 @@ COMPOSE_REGISTRY = {
         kvcalc_key="SKIP",
         offload="n-cpu-moe",
         moe_cache=True,
-        host_ram_gb=120,
+        # Same 121 as the dual sibling, deliberately: the all-experts->CPU `-ot`
+        # is card-count-independent, so 4 cards do NOT lower the host need (they
+        # only buy cache pool slots, which are copies). Do not "scale" this down.
+        host_ram_gb=121,
         required_sm=8.6,
         status="experimental",
         status_note="⚠️⚠️ NEVER BOOTED -- every constant is INHERITED from the validated dual slug (same precedent as the DeepSeek multi4 sibling), and RESERVE_MB/ADMIT_AFTER were derived from a measured compute-buffer swing on 2x24 GB, so they are topology-specific and probably wrong here. Re-derive before trusting any number. HYPOTHESIS worth testing: on this model hit rate tracks spatial coverage (dual = 67.5% of 10,240 routed experts at 76-78% hits), so doubling the pool budget could approach saturation -- but compute buffers and the layer split also change, and this rig has no NVLink. ⏸️ UPSTREAM-GATED on ggml-org#25731: the `inkling` arch is not in mainline, so the published llamacpp-club3090 digest CANNOT load this model (`unknown model architecture: 'inkling'`). Runs only on a self-built fork of stack/club3090-moecachev1.1 until the PR merges and the engine is rebuilt. ⚠️ ATTRIBUTION: the expert cache is leloch's (RFC ggml-org#24528); the arch is @danielhanchen's PR, vendored — we maintain neither. ⚠️ REASONING IS ON BY DEFAULT at effort 0.9: this model reads `reasoning_effort`, NOT `enable_thinking`, and ignores the latter silently — a client sending a small max_tokens without setting effort gets an empty answer and no error. ⚠️ Sampling should be Unsloth's temp 1.0/top_p 1.0/min_p 0.0, not the canonical Qwen values, for any quality work. ⚠️ QUALITY UNTESTED -- no 8-pack. ⚠️ Decode figures are a LOWER BOUND: the expert cache was still filling after 25 soak turns (+49% session 1->5), so short runs understate steady state.",
