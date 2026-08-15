@@ -81,11 +81,17 @@
 #   | llamacpp/qwen38-27b-single-iq4nl | 1     | llama.cpp | IQ4_NL 16.3 GB   | q8_0 | 131072  | draft-mtp |
 #   | llamacpp/qwen38-27b-dual-q8kxl   | 2     | llama.cpp | UD-Q8_K_XL 31.5G | q8_0 | 262144  | draft-mtp |
 #   | vllm/qwen38-27b-dual-max  (THIS) | 2     | vLLM      | official FP8 31G | fp8  | 262144  | MTP n=3   |
-#   | vllm/qwen38-27b-multi4-max        | 4     | vLLM      | official FP8 31G | fp8  | 262144  | MTP n=3   |
-#   | vllm/qwen38-27b-multi8-max       | 8     | vLLM      | official FP8 31G | fp8  | 262144  | MTP n=3   |
+#   | vllm/qwen38-27b-multi4-max        | 4     | vLLM      | official FP8 31G | bf16 | 262144  | MTP n=3   |
+#   | vllm/qwen38-27b-multi8-max       | 8     | vLLM      | official FP8 31G | bf16 | 262144  | MTP n=3   |
 #
-# All FIVE are 🐣 Incubating. `vllm/qwen38-27b-multi4-max` is the SAME serving
-# config at TP=4 — this dual is its on-rig proxy (the reference rig has 2 cards).
+# All FIVE are 🐣 Incubating. ⚠️ THIS DUAL IS NO LONGER A CLEAN PROXY FOR THE
+# MULTIS. It used to be described as "the same serving config at TP=4"; since
+# 2026-08-15 the 4- and 8-card composes run **bf16 KV** while this one stays
+# **fp8 e4m3**, because only TP>=4 has the per-card headroom (weights ~7.2 GiB/card
+# at TP=4 and ~3.6 at TP=8, vs ~14.4 here — a 16.00 GiB bf16 pool does not fit
+# beside them on 2 cards). So numbers measured here transfer on topology but NOT
+# on KV: pool size, concurrency and any KV-sensitive quality result differ by
+# construction. Everything else — weights, template, MTP n=3, max ctx — is shared.
 #
 # ---------------------------------------------------------------------------
 # ARCHITECTURE (read from THIS checkpoint's config.json, 2026-08-14):

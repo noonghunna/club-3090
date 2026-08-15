@@ -5,9 +5,18 @@
 #   Topology:  Quad 3090 PCIe (TP=4, no NVLink; NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (built-in — the checkpoint ships mtp.safetensors and
 #              text_config.mtp_num_hidden_layers=1). SPEC=off disables it.
-#   KV:        fp8 -> e4m3 (1 byte/token/elem; scale=1.0 — weight-only checkpoint,
-#              and vLLM disables calculate_kv_scales on this hybrid family).
-#              NOT fp8_e5m2 — hard-rejected against an fp8 checkpoint.
+#   KV:        bf16 (unquantized — `--kv-cache-dtype auto` inherits the pinned
+#              `--dtype bfloat16`). ⚠️ DIVERGES FROM THE DUAL SIBLING, which stays
+#              fp8 e4m3. This is deliberate, not drift: KV bytes/token DOUBLE
+#              (32,768 -> 65,536 B/token, 8.00 -> 16.00 GiB at 262K, ~2.00 ->
+#              ~4.00 GiB/card at TP=4), and only the 4- and 8-card topologies have
+#              the headroom to pay it — weights fall to ~7.2 GiB/card at TP=4 vs
+#              ~14.4 at TP=2, so this lands at ~11.2 GiB/card of 24 where the dual
+#              would sit at ~22.4. Unquantized KV removes the fp8-KV accuracy
+#              question entirely; the cost is pool size, i.e. concurrency.
+#              (vLLM has no literal `fp16` value for --kv-cache-dtype; `auto`
+#              following a bf16 model dtype IS the 16-bit KV path, and matches
+#              `kv_format="bf16"` in the registry.)
 #   Vision:    base is a full VLM (vision tower + preprocessors ship in the repo,
 #              and the FP8 quant SKIPS the vision tower) — UNTESTED on this serve.
 #   Template:  native — the repo's own chat_template.jinja. NOT froggeric.
@@ -71,12 +80,17 @@
 #   | llamacpp/qwen38-27b-single-iq4nl | 1     | llama.cpp | IQ4_NL 16.3 GB   | q8_0 | 131072  | draft-mtp |
 #   | llamacpp/qwen38-27b-dual-q8kxl   | 2     | llama.cpp | UD-Q8_K_XL 31.5G | q8_0 | 262144  | draft-mtp |
 #   | vllm/qwen38-27b-dual-max         | 2     | vLLM      | official FP8 31G | fp8  | 262144  | MTP n=3   |
-#   | vllm/qwen38-27b-multi4-max (THIS) | 4     | vLLM      | official FP8 31G | fp8  | 262144  | MTP n=3   |
-#   | vllm/qwen38-27b-multi8-max       | 8     | vLLM      | official FP8 31G | fp8  | 262144  | MTP n=3   |
+#   | vllm/qwen38-27b-multi4-max (THIS) | 4     | vLLM      | official FP8 31G | bf16 | 262144  | MTP n=3   |
+#   | vllm/qwen38-27b-multi8-max       | 8     | vLLM      | official FP8 31G | bf16 | 262144  | MTP n=3   |
 #
-# All FIVE are 🐣 Incubating. THIS FILE IS THE dual/fp8/mtp.yml SIBLING WITH TWO
-# LINES CHANGED — `--tensor-parallel-size` and the required gpu-count. Keep them
-# in lockstep: a change to one that is not mirrored is a bug, not a variant.
+# All FIVE are 🐣 Incubating. THIS FILE IS THE dual/fp8/mtp.yml SIBLING WITH THREE
+# LINES CHANGED — `--tensor-parallel-size`, the required gpu-count, and
+# `--kv-cache-dtype` (bf16 here vs fp8 on the dual). The first two are mechanical
+# and MUST stay in lockstep: a change to one that is not mirrored is a bug, not a
+# variant. ⚠️ The KV line is the ONE sanctioned divergence — it is a topology
+# consequence (per-card weights fall far enough at TP>=4 to afford unquantized KV),
+# so do NOT "fix" it back into lockstep, and do NOT propagate it to the dual, where
+# ~14.4 GiB/card of weights leaves no room for a 8.00 GiB pool.
 #
 # ---------------------------------------------------------------------------
 # WHAT THE 4TH AND 3RD CARD ACTUALLY BUY (structural, NOT measured here):
@@ -96,9 +110,12 @@
 #   `models/qwen3.8-27b/vllm/compose/dual/fp8/mtp.yml` for the full write-up:
 #   the 16-growing / 48-linear hybrid split (naive 64-layer KV math overestimates
 #   the pool ~4x), the dense-not-MoE confirmation from the tensor table, the
-#   32,768 B/token fp8 KV figure (8.00 GiB at 262K, ~2.00 GiB/card at TP=4), the
 #   30.9 GB decimal / 28.8 GiB weights unit trap, why fp8_e5m2 is rejected, and
 #   why the froggeric template that the qwen3.6/Tess composes pin is WRONG here.
+#   ⚠️ ONE FIGURE DOES NOT CARRY OVER: the dual documents 32,768 B/token fp8 KV
+#   (8.00 GiB at 262K). This compose runs bf16 KV, so DOUBLE it — 65,536 B/token,
+#   16.00 GiB at 262K, ~4.00 GiB/card at TP=4. Every derived pool/concurrency
+#   number in the dual's write-up halves here.
 #
 # ⚠️ AMPERE REALITY — FP8 WEIGHTS ARE A MEMORY WIN, NOT A DECODE WIN:
 #   RTX 3090 is Ampere sm_86 with NO native FP8 compute. vLLM serves these
@@ -298,9 +315,13 @@ services:
       - "${MAX_NUM_SEQS:-2}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
-      # fp8 == e4m3 here. NOT fp8_e5m2 — hard-rejected with fp8 checkpoints.
+      # `auto` follows --dtype above, so this is bf16 KV — 2 bytes/token/elem,
+      # DOUBLE the fp8 e4m3 the dual sibling runs. Deliberate: TP=4 drops weights
+      # to ~7.2 GiB/card, which affords the bigger pool (see the KV: header block).
+      # To go back to fp8 KV set KV_CACHE_DTYPE=fp8 — that is e4m3 here, and NOT
+      # fp8_e5m2, which is hard-rejected against an fp8 checkpoint.
       - --kv-cache-dtype
-      - "${KV_CACHE_DTYPE:-fp8}"
+      - "${KV_CACHE_DTYPE:-auto}"
       - --trust-remote-code
       # No --chat-template: the model dir's own chat_template.jinja is used.
       - --reasoning-parser
