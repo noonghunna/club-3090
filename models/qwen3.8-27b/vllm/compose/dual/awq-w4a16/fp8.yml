@@ -1,0 +1,519 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B AWQ W4A16 (barrydeen, llm-compressor W4A16_ASYM g128,
+#              compressed-tensors/pack-quantized — 27.8 GB. 4-BIT ONLY WHERE IT
+#              COUNTS: 256 Linear modules (16 full-attn layers x 4 proj + 64 MLP
+#              x 3) are int4; the 48 GDN linear_attn.*, the whole visual.* tower,
+#              mtp.* and embed/norm stay BF16.)
+#   Topology:  Dual 3090 PCIe (TP=2, NVLink auto-detected via NVLINK_MODE)
+#   Drafter:   MTP n=3 built-in (SPEC_N override). The checkpoint embeds mtp.*
+#              at BF16 -- the export pattern that WORKS for spec-decode.
+#              ENABLED after soaking vllm#50021 clean on this pin (120/120
+#              agent-shaped requests, 0 Xid) -- see MEASURED below.
+#   KV:        fp8 -> e4m3 (1 byte/token; scale=1.0). NOT fp8_e5m2 — hard-rejected
+#              against fp8 checkpoints ("fp8_e5m2 kv-cache is not supported with
+#              fp8 checkpoints"). Do not "simplify" it.
+#   Vision:    model is natively VL-capable — UNTESTED on this stack
+#   Max ctx:   262144 (PROJECTED, not measured — see the KV projection below)
+#   Genesis:   N/A — Genesis is Qwen3-Next-specific (this is qwen3_5)
+#   Status:    🧪 Experimental
+#   Caveats:   NOTHING HERE IS MEASURED. Authored 2026-08-14, the day the weights
+#              landed on HF; no boot, no verify-full, no bench, no soak, no
+#              quality pack has been run against this compose on any rig. Every
+#              number below is PROJECTED from the architecturally-identical
+#              vllm/qwen-27b-dual-max (same 64-layer / 16-full-attn / 4-KV-head /
+#              256-head-dim geometry, same official-Qwen layer-split FP8 layout,
+#              1.2 GB smaller). Treat it as a starting point to validate, not a
+#              recommendation. Specifically unvalidated:
+#              • Boot itself. vLLM registers the qwen3_5 arch from v0.17.0 and
+#                the family (qwen35-dense) is live-validated on this pin via
+#                Tess-4-27B — but the model card wants transformers >= 5.8.0 and
+#                the pinned image may ship older. If boot fails on the arch or on
+#                a transformers version, that is the first thing to check.
+#              • 262K max-model-len + max_num_seqs=2 — now BOOT-CONFIRMED at util
+#                0.90 (KV pool 303,535 tok, 1.16x concurrency, 20.5 GiB/card idle
+#                / 22,245 MiB peak under bench) and re-raised to 0.92 on that
+#                measurement. Depth behaviour is still unproven: no verify-stress
+#                ladder, no soak. If it OOMs at depth, drop MAX_MODEL_LEN first,
+#                then util back to 0.90.
+#              • The chat template is PATCHED, not stock — and the stock one is
+#                genuinely broken. Qwen3.8's ladder is low/medium/xhigh with NO
+#                `high`, and its template raise_exception()s on anything else, so
+#                a client sending the OpenAI/Anthropic-standard `high` gets HTTP
+#                500 while /v1/models still reports healthy. Confirmed live
+#                2026-08-14 on /v1/messages?beta=true. This compose mounts the
+#                model's own template with a 6-line `high` -> `xhigh` alias
+#                (patches.yml: qwen38-reasoning-effort-template). The REST of the
+#                template is still unvetted — verify-full step 6 remains the gate.
+#              • Vision. Never exercised. Text-only is what the projection covers.
+#              • The sampler block is the stack canonical (0.6/0.95/20/0.0), NOT
+#                cross-checked against this model's generation_config.json.
+#              • ⚠️ MTP x hybrid-GDN wild write — vllm#50021 is OPEN upstream, and
+#                it is WHY THE DRAFTER IS OFF. But be precise about the scope,
+#                because the tracker's wording predates this engine channel:
+#                  - THIS COMPOSE IS NOT EXPOSED. The faulty read sits behind
+#                    Triton's `IS_SPEC_DECODING` (= `num_accepted_tokens_ptr is
+#                    not None`). Spec-off compiles the branch out entirely, so
+#                    running as shipped there is NOTHING to hit. The compose is
+#                    the mitigation, not a victim of the bug.
+#                  - THE REPO'S EVIDENCE IS v0.25.1-SPECIFIC AND DOES NOT
+#                    TRANSFER TO v0.27.1. docs/UPSTREAM.md cites the unbounded
+#                    load "verified live in our pin" at
+#                    `fla/ops/fused_sigmoid_gating.py:106`. On v0.27.1 the `fla`
+#                    package is NOT INSTALLED AT ALL and that file does not
+#                    exist; the kernels were internalised into
+#                    vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+#                    (verified in the running image 2026-08-15).
+#                  - AT LEAST ONE DOCUMENTED FAILURE MODE IS ALREADY FIXED HERE:
+#                    mamba_ssm.py does `init_token_idx = tl.maximum(num_accepted
+#                    - 1, 0)`, which closes precisely the "zero accepted count
+#                    yields i_t == -1" case the tracker describes.
+#                  - STILL UNVERIFIED: whether the Qwen GDN fused-recurrent
+#                    callee bounds the UPPER end (an oversized count). Not
+#                    proven either way — traced to the call site, not into the
+#                    kernel.
+#                So the honest position for turning MTP ON *on this channel* is
+#                "materially less risky than the v0.25.1-era caveat implies, and
+#                not proven safe" — it wants an empirical soak (the upstream
+#                repro faulted at 7-10 agent-shaped requests), not an assumption
+#                in either direction. Re-test trigger + history: docs/UPSTREAM.md.
+#   Best for:  the DECODE-SPEED candidate for Qwen3.8 on 2x 24 GB, and the A/B
+#              partner to dual/fp8/mtp.yml. Same topology, ctx and KV, and
+#              template as that slug so the ONLY variable is the weight format.
+#              ⚠️ SIZE IS A TRAP HERE: 27.8 GB total, essentially identical to
+#              FP8's 27.78 — "4-bit" does NOT mean half the memory on this
+#              export. It should still decode faster, because total size is the
+#              wrong metric: the ~7 GB vision tower is never read during text
+#              generation, and the FFN bulk (the dominant parameter mass) really
+#              is halved vs FP8. On Ampere this runs native Marlin WNA16 instead
+#              of FP8's MarlinFP8 W8A16. Author claims 85-95 tok/s on 2x 3090 /
+#              vLLM 0.26.0 WITH MTP at 67.1% accept — unverified, self-declared
+#              "no formal benchmark suite has been run", and we run MTP OFF, so
+#              treat it as a hypothesis to bench, not a number to quote.
+# ---------------------------------------------------------------------------
+# Dual RTX 3090 — Qwen3.8-27B FP8, first catalog cut (vllm/qwen38-27b-dual-fp8).
+#
+# WHY FP8 AND NOT SOMETHING SMALLER: on 2026-08-14 the official FP8 export was
+# the only 27B artifact that both fits 2x 24 GB and comes from Qwen themselves.
+# The BF16 source is 55.6 GB (does not fit). NVFP4 exports exist but are all
+# hours-old community uploads. No AutoRound / AWQ W4A16 export existed at all —
+# and that is the format the Tess-4-27B work found BEST on Ampere (native Marlin
+# WNA16 + a working MTP head, 73.5/108.2 TPS). WATCH FOR ONE: when a W4A16 lands,
+# it is likely to beat this compose on both speed and VRAM, because on Ampere
+# sm_86 FP8 weights buy MEMORY, not decode — sm_86 has no native FP8 compute, so
+# these weights execute through the Marlin W8A16 kernel. On consumer Blackwell
+# (5090+) the launcher's DeepGEMM handling gives real FP8 GEMM instead.
+#
+# KV PROJECTION (arithmetic, not measurement). KV lives on the 16 FULL-ATTENTION
+# layers only — the other 48 are Gated DeltaNet and carry recurrent state, not a
+# growing cache. Naive 64-layer math overestimates ~4x.
+#   per_token = 16 layers x 4 kv_heads x 256 head_dim x 2 (K,V) x 1 byte (fp8)
+#             = 32,768 bytes/token
+# That formula reproduces the MEASURED vllm/qwen-27b-dual-max row (295K-token
+# pool -> 9.67 GB total -> 4.83 GB/card; 14.5 weights + 4.83 KV + ~2.1 overhead
+# = the 21.4 GB/card it actually peaked at), which is the only reason it is
+# quoted here. Qwen3.8's FP8 artifact is 27.78 GB vs that sibling's 29 GB, so
+# ~13.9 GB/card of weights — roughly 0.6 GB/card MORE headroom, before whatever
+# the vision tower costs. Hence util 0.90 rather than the sibling's 0.92: this
+# model adds a vision tower the projection does not account for, and the GDN
+# activation peak is un-profiled upstream (vllm#44209).
+#
+# DUAL-CARD TOPOLOGY, AS MEASURED ON THE REFERENCE RIG (2026-08-14):
+#   - Cards are MIXED: RTX 3090 Ti (GPU0) + RTX 3090 (GPU1), both sm_86, so the
+#     arch is homogeneous and TP=2 is valid (contrast the 5090+3090Ti mixed-arch
+#     crash class, #762). Under TP lockstep the SLOWER card gates the pair.
+#   - `nvidia-smi topo -m` = PHB (same NUMA node, via the PCIe host bridge).
+#   - `nvidia-smi topo -p2p r` = **GNS — peer-to-peer NOT supported** between
+#     these two. NCCL_P2P_DISABLE=1 below is therefore CORRECT, not merely a
+#     conservative default. Do NOT "optimise" it to 0 on this rig.
+#   - Link width is **x8 of a possible x16** (gen trains up under load; bench saw
+#     7.1 GB/s prefill peak). Half-width all-reduce is physical and not tunable.
+#     Decode all-reduce is latency- not bandwidth-bound, so it costs less than the
+#     raw number suggests, but it is why this pair will not match an x16 rig.
+#   - ⚠️ POWER CAPS GATE DECODE. Observed 260 W (3090 Ti, max 450) and 250 W
+#     (3090, max 400) — the 3090 sitting at the hardware profile's *prefill* cap,
+#     under its 290 W decode optimum. The repo's own 3090 measurement is -42% TPS
+#     from 370 W -> 230 W, so this is first-order. Raise with
+#     `sudo nvidia-smi -i 1 -pl 350 && sudo nvidia-smi -i 0 -pl 400` and re-bench;
+#     any TPS figure recorded here MUST state the caps it was taken under.
+#   - ⚠️ HOST RAM is 29.7 GiB and bench's swap check FAILED (560 MiB of the
+#     serving process paged out). Every TPS number taken in that state is
+#     formally suspect — bench says so itself. Fix before trusting an A/B.
+#
+# MEASURED SO FAR (spec-off, util 0.90, caps 260/250 W, swap-check FAILING —
+# so these are indicative, NOT a BENCHMARKS-grade row):
+#   - decode 47.37 TPS narrative (n=5, CV 0.2%), wall 46.98, TTFT 81 ms
+#   - prefill 1,673 tok/s @10K · 1,320 tok/s @90K
+#   - KV pool 303,535 tok -> back-solved 33,536 B/token vs the 32,768 predicted
+#     above (+2.3%, inside the +/-10% gate) — the architecture facts are CONFIRMED.
+#   - For scale: the qwen3.6-27b fp8 sibling does ~69 narrative WITH MTP n=3.
+#     69/47.4 = 1.46x, which is about what an ~80%-accept drafter buys. The gap
+#     is the missing drafter, not a misconfiguration.
+#
+# FIRST-BOOT ORDER (what to try, in order, if it does not come up):
+#   1. Boot as shipped. Capture: `docker logs <c> 2>&1 | grep -iE "kv cache|model
+#      length|gpu memory|allocated"`. Back-solve per_token_bytes against the
+#      formula above — if it comes out ~4x larger, the growing-layer count is
+#      wrong; ~2x, suspect K=V tying.
+#   2. OOM at boot -> lower MAX_MODEL_LEN (131072 first), NOT util.
+#   3. Arch/transformers rejection -> check the pinned image actually registers
+#      qwen3_5 (docker run --rm --entrypoint python3 <image> -c "from
+#      vllm.model_executor.models.registry import ModelRegistry;
+#      print(ModelRegistry.get_supported_archs())").
+#   4. Only once it is stable: try GPU_MEMORY_UTILIZATION=0.92 + the sibling's
+#      max_num_seqs=2 to recover pool, and consider SPEC_N (read the #50021
+#      caveat first — the drafter is off for a reason).
+#
+# Deliberately NOT enabled (each is a variable this first cut refuses to mix in):
+#   - (Prefix caching WAS off here; flipped ON 2026-08-15 together with the
+#     vendored vllm#48375 mount above, which is what makes it safe on a hybrid
+#     GDN model — without that overlay the cache-peek path hits the vllm#43559
+#     corruption class. Opt back out with
+#     PREFIX_CACHE_ARG=--no-enable-prefix-caching. NOTE this costs the compose
+#     its strictly-overlay-free status: #48375 IS an engine-code install_script,
+#     unlike the data-only chat-template mount.)
+#   - The MTP drafter. See the #50021 caveat.
+#   - The froggeric chat-template pin. Wrong model generation — see Caveats.
+#
+# SAMPLER = the model card's INSTRUCT row (temp 0.7 / top_p 0.80 / top_k 20 /
+# min_p 0.0 / presence_penalty 1.5), matching the sibling FP8 compose rather
+# than the stack's Qwen3.6 defaults (0.6/0.95). This compose ships thinking OFF,
+# which is the row that applies. ⚠️ The sampler does NOT follow the reasoning
+# flag: enabling thinking without also setting TEMP=1.0 TOP_P=0.95
+# PRESENCE_PENALTY=0.0 is a silent mismatch. bench.sh sends its own canonical
+# sampler, so BENCHMARKS rows stay comparable across models.
+#     (We DO mount a minimally-patched copy of this model's own template.)
+#
+# Sibling composes (models/qwen3.8-27b/):
+#   - vllm/compose/dual/fp8/mtp.yml — official FP8, vllm/qwen38-27b-dual-max,
+#     port 8091, on the vllm-stable (v0.25.1) pin. THE ACCURACY TIER; this
+#     compose is the SPEED tier. The weight-format A/B below was measured on
+#     this rig against an equivalent FP8 configuration.
+#   - llama-cpp/compose/{single/unsloth-iq4nl,dual/unsloth-q8kxl}/q8kv.yml —
+#     the GGUF tiers.
+# Closest validated relatives, both worth diffing against:
+#   - models/qwen3.6-27b/vllm/compose/dual/fp8/mtp.yml   (same FP8 layout, ⚠️ prod)
+#   - models/tess-4-27b/vllm/compose/dual/leaderboard-w4a16/fp8-mtp.yml (same
+#     qwen3_5 hybrid family, ⚠️ prod)
+#
+# Run:
+#   cd <repo>/models/qwen3.8-27b/vllm/compose
+#   docker compose -f dual/awq-w4a16/fp8.yml up -d
+# ===========================================================================
+#
+# ===========================  MEASURED  =====================================
+# Reference rig: RTX 3090 Ti + RTX 3090 (both sm_86), PCIe PHB x8, P2P NOT
+# supported (topo -p2p = GNS -> NCCL_P2P_DISABLE=1 here is CORRECT, not merely
+# conservative). vLLM v0.27.1, TP=2, 262144 ctx, fp8_e4m3 KV, prefix caching ON
+# (vendored vllm#48375), FlashInfer sampler ON, POWER CAPS 250 W (3090 Ti) /
+# 270 W (3090). ALL figures 2026-08-15.
+#
+# --- MTP n=3 vs spec-off (AWQ weights, single variable) --------------------
+#   decode narrative     50.55 -> 80.24 TPS   +58.7%
+#   decode code          48.90 -> 102.42 TPS  +109.5%
+#   prefill @10K       1776.4 -> 1740.7 tok/s  -2%
+#   prefill @90K       1407.7 -> 1383.1 tok/s  -2%
+#   peak free/card      782 MiB -> 1,018 MiB   (util 0.98 -> 0.94; see below)
+#
+# --- weight-format A/B, spec-off, util 0.95, prefix OFF --------------------
+#   metric                 FP8            AWQ W4A16      delta
+#   decode narrative       46.21 TPS      47.13 TPS      +2.0%
+#   decode code            45.83 TPS      47.49 TPS      +3.6%
+#   prefill @10K           1666.6 tok/s   1776.4 tok/s   +6.6%
+#   KV pool                378,652 tok    424,642 tok    +12.1%
+#   The FP8 arm ran with ~650 MB swapped out -> read that delta as an UPPER
+#   bound. THE 4-BIT DECODE WIN DID NOT MATERIALISE (predicted ~1.5x from a
+#   bandwidth roofline): this export quantizes only 256 Linear modules and
+#   leaves all 48 GDN linear_attn.* at BF16, read every token, swamping the
+#   halved FFN. A Tess-style ~17 GB recipe would be the one that moves decode.
+#
+# --- prefix caching (vendored vllm#48375 applied at boot) ------------------
+#   12,612-token prefix repeated: cold 7,428 ms (1,698 tok/s) -> warm 90 ms
+#   (140,345 tok/s) = 82x TTFT reduction. Novel-prompt control 6,987 ms cold
+#   confirms the warm hits are real caching. bench.sh CANNOT see this (it
+#   cache-busts prefill prompts by design).
+#
+# --- FlashInfer sampler A/B (spec-off) ------------------------------------
+#   ON (default) 50.55 narr / 48.90 code ; =0 gives 48.51 / 47.51 (-4.0/-2.8%).
+#   qwen3.6's `VLLM_USE_FLASHINFER_SAMPLER=0` does NOT transfer -- it exists
+#   there because WITH MTP sampling routes through the rejection-sampler path.
+#   Left unset (ON). The env stays as an A/B knob, not a default.
+#
+# --- vllm#50021 (MTP x hybrid-GDN) : SOAKED CLEAN ON THIS PIN --------------
+#   120 agent-shaped multi-turn requests, ~7.4K prompt tokens/turn, context
+#   growing within each of 12 sessions: 120 ok / 0 fail / 5.1 min,
+#   RestartCount=0, ZERO "unspecified launch failure", ZERO illegal-address,
+#   ZERO Xid in dmesg or nvidia-smi. The upstream repro faults at 7-10 such
+#   requests. Code audit agrees: on v0.27.1 the `fla` package is NOT installed,
+#   fused_sigmoid_gating.py (the file docs/UPSTREAM.md cites as verified) does
+#   not exist, kernels were internalised into mamba/gdn/qwen_gdn_linear_attn.py,
+#   and mamba_ssm.py already clamps the negative case via
+#   `tl.maximum(num_accepted - 1, 0)`. LIMIT OF THE EVIDENCE: 120 requests at
+#   ~7.4K ctx over 5 min -- NOT a 262K-depth or hour-long soak, and the upper
+#   -bound case in the Qwen GDN callee was not audited. Strong, not proof.
+#   First-party AMPERE datapoint (all prior reports are 5090/4090).
+#
+# --- VRAM / util ----------------------------------------------------------
+#   util 0.98 spec-off  -> peak free 782 / 802 MiB  (the ~800 MiB target)
+#   util 0.98 WITH MTP  -> OOM at the prefill-90k segment (plain
+#     torch.OutOfMemoryError, NOT a GDN fault: no Xid, exit 0, 1 restart).
+#     MTP needs its own headroom, so THIS compose runs 0.94.
+#   util 0.94 WITH MTP  -> peak free 1,018 / 1,038 MiB, full bench survived,
+#     RestartCount=0, KV pool 347,084 tok / 1.32x at 262K.
+#   ⚠️ Peaks measured at <=90K of context, NOT at the 262K ceiling. The GDN
+#   activation peak is un-profiled upstream (vllm#44209). If anything OOMs at
+#   depth, lower THIS slug's mem_util -- do not touch the card-wide ceiling,
+#   which stays 0.95 and still clamps every other model. These two slugs opt
+#   out per-entry via `mem_util_unclamped=True`.
+#
+#
+# --- util x max_num_seqs SWEEP (2026-08-15, AWQ+MTP, caps 250/270 W) -------
+#   Each row: boot, read the KV pool, drive 4 concurrent 12K-prompt/900-token
+#   requests, record PEAK VRAM per card. All arms RestartCount=0.
+#
+#     util  seqs   KV pool    conc@262K   free-at-load (GPU0/GPU1)
+#     0.95    2    360,264      1.37x        778 / 798 MiB   <- SHIPPED (~800 target)
+#     0.96    2    373,445      1.42x        558 / 578 MiB   (overshoots)
+#     0.95    4    358,800      1.37x        760 / 780 MiB
+#     0.95    8    354,406      1.35x        756 / 776 MiB
+#     0.95   16    344,155      1.31x        752 / 772 MiB
+#
+#   TWO THINGS THIS SETTLES:
+#   1. util 0.95 is the answer for the MTP config, not 0.98. MTP needs ~1 GB of
+#      its own headroom (at 0.98 + MTP the engine OOMs at prefill-90k), and 0.96
+#      already overshoots the 800 MiB target down to ~570.
+#   2. The cost of concurrency lands on the KV POOL, not the margin: free VRAM
+#      barely moves across seqs (778 -> 752 MiB) while the pool drops 360,264 ->
+#      344,155. The cost is also NON-LINEAR -- 2->4 costs 0.4%, 4->8 costs 1.2%,
+#      8->16 costs 2.9% -- because vLLM widens the cudagraph capture set
+#      ([1,2,4] at seqs=2; [1..128], 19 sizes, at seqs=16). At vLLM's DEFAULT
+#      seqs=1024 that set explodes to 51 sizes and profiling alone OOMs a 24 GB
+#      card before the KV pool is even allocated -- which is what killed an
+#      attempt to reproduce the model card's config.
+#
+#   WHY seqs=2 SHIPS (maintainer decision 2026-08-15), even though 8 costs only
+#   1.6% of pool: max_num_seqs is NOT the binding constraint here -- THE POOL IS.
+#   At the full 262K the pool supports ~1.35 sessions, i.e. it CANNOT hold two
+#   full-depth sequences. If sessions genuinely grow to 262K, admitting 8 of them
+#   does not add throughput; it guarantees vLLM V1 preempts by RECOMPUTE, and a
+#   preempted 262K session costs a ~190 s re-prefill on resume (at the measured
+#   ~1,383 tok/s @90K) -- with prefix caching unable to help, because the evicted
+#   blocks are exactly the ones the pool needed. Queueing is far cheaper than
+#   recompute-thrash. seqs=8 would only be right for SHORT agent turns (~12
+#   concurrent at 30K); for a 262K-configured workload, 2 is the honest setting.
+#   NOTE max_model_len is a CEILING, not a reservation -- vLLM allocates KV
+#   blocks as tokens actually arrive -- so this only bites when sessions really
+#   do run deep. (The original seqs-is-not-binding reasoning: -- the pool is. At the
+#   full 262K you get ~1.35x regardless, i.e. you can never run two full-depth
+#   sessions. seqs should therefore match realistic session DEPTH against the
+#   pool: 354K tokens feeds ~1.3 sessions at 262K, ~3.9 at 90K, ~12 at 30K, ~35
+#   at 10K. 8 costs only 1.6% of pool versus 2, covers agent-shaped concurrency,
+#   and stays clear of the capture-set explosion. Raise it only if your sessions
+#   are short; there is no point setting it above what the pool can feed, and
+#   requests over the limit queue -- which is correct behaviour, not an error.)
+#
+#   --- SHIPPED SETTINGS, both slugs (all figures measured, seqs=2) ---------
+#     slug                         util  seqs  drafter   KV pool   conc   free/card
+#     vllm/qwen38-27b-dual-awq     0.95   2    MTP n=3   360,264  1.37x  778/798 MiB
+#     vllm/qwen38-27b-dual-fp8     0.98   2    none      402,255  1.53x  992/972 MiB
+#
+#   The two utils differ because MTP costs ~1 GB of its own headroom: at 0.98
+#   WITH MTP the engine OOMs at the prefill-90k segment (plain
+#   torch.OutOfMemoryError, no Xid). The AWQ slug therefore lands the ~800 MiB
+#   target at 0.95; the spec-off FP8 slug lands it at 0.98 and in fact keeps a
+#   little more (992/972). Pushing FP8 to ~0.985 would hit 800 exactly but buys
+#   only ~1.2% more pool, and this slug's 262K-DEPTH peak is unmeasured, so the
+#   margin is left where it is.
+#
+# ⚠️ POWER CAPS DOMINATE. Same FP8 config, only the 3090 Ti's cap changed:
+#   200 W -> 31.75 TPS ; 250 W -> 46.21 TPS. +45% decode for 50 W on ONE card.
+#   rtx-3090-ti.yml ships power_cap_w_optimal: 200, a PERF-PER-WATT figure that
+#   costs about a third of throughput -- NOT a performance recommendation.
+#   Every TPS number here is only meaningful beside its caps.
+#
+# ⚠️ HOST RAM. 29.7 GiB at vm.swappiness=60; bench repeatedly reported ~560-650
+#   MB of the SERVING PROCESS paged out and flags such runs "suspect". Set
+#   vm.swappiness=10 before treating any figure here as final.
+#
+# The author's card claim (85-95 tok/s, 2x 3090, vLLM 0.26.0, 67.1% accept) is
+# now essentially REPRODUCED with MTP on: 80.2 narrative / 102.4 code.
+# ===========================================================================
+# Hardware metadata (parsed by scripts/preflight.sh):
+# Requires-min-vram-gb: 24
+# Engine-profile: vllm-stable-v0271
+# Requires-min-gpu-count: 2
+# Tensor-parallel: 2
+services:
+  vllm-qwen38-27b-dual-awq:
+    # Pinned to a vLLM STABLE release (immutable, #407); the launchers inject the
+    # engine-profile image over this default (#254). Overlay-free by design.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-dual-awq}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8094}}:8000"
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # torch.compile + Triton kernel caches — first boot warms (~60-90 sec);
+      # subsequent boots reuse cached graphs. Engine-level, shared across topologies.
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+      # NVLink auto-detection — runs inside container at boot.
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # Vendored vllm#48375 (MambaManager drop_eagle_block) — SHARED from the
+      # qwen3.6-27b tree (same hybrid GDN family). REQUIRED for prefix caching on
+      # this architecture: without it the hybrid cache-peek path hits the
+      # vllm#43559 corruption class. Applied at boot by the entrypoint below.
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      # club-3090 patched chat template: the model's OWN template, plus a 6-line
+      # alias mapping reasoning_effort `high` -> `xhigh`. Qwen3.8 renamed the
+      # conventional top rung, so the stock template raise_exception()s on the
+      # OpenAI/Anthropic-standard value and returns HTTP 500 while /v1/models
+      # still reports healthy. Hit live 2026-08-14 via the Anthropic-compatible
+      # /v1/messages endpoint. See patches.yml qwen38-reasoning-effort-template
+      # + the PROVENANCE.md next to the jinja.
+      - ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/etc/qwen38-reasoning-effort-template.jinja:ro
+      # NOTE: zero vLLM SOURCE overlays, deliberately — the template above is a
+      # data-only chat_template mount, not an engine-code patch, so the
+      # vllm-stable overlay-free contract (CONTRACT-5) is intact. No pr48375
+      # (prefix caching is off). Add mounts only with a reason + a patches.yml row.
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
+      # CUDA-level GPU mask (#610) — UUID form is renumbering-proof and is what
+      # CDI runtimes honor. Unset → absent (no masking).
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      # Opt-in transfer check: VLLM_SKIP_P2P_CHECK=0 makes vLLM PROVE peer access
+      # by moving bytes. Bare passthrough — absent unless set. docs/PCIE_P2P.md §7.
+      - VLLM_SKIP_P2P_CHECK
+      - NCCL_CUMEM_ENABLE=0
+      # Safe PCIe default; rigs with working P2P set NCCL_P2P_DISABLE=0.
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - OMP_NUM_THREADS=1
+      # FlashInfer sampler: bare passthrough, ABSENT unless set. qwen3.6 hardcodes
+      # =0 because WITH MTP active sampling routes through the rejection-sampler
+      # path where the FlashInfer kernel adds overhead. This compose is spec-OFF,
+      # so that rationale does not transfer - left as an A/B knob, not a default.
+      - VLLM_USE_FLASHINFER_SAMPLER
+      # DeepGEMM (vLLM's fp8-GEMM path) is built for Hopper + datacenter
+      # Blackwell. Consumer Blackwell (5090 / PRO 6000 / GB10, sm_120/121) has no
+      # recipe and hard-fails "recipe not found" at boot (disc #571). The
+      # launchers auto-inject VLLM_USE_DEEP_GEMM=0 there; raw `docker compose`
+      # users on those cards must set it themselves. LOAD-BEARING on this compose
+      # — these are FP8 weights, so the fp8-GEMM path is actually reached.
+      - VLLM_USE_DEEP_GEMM
+      # expandable_segments:True crashes boot on some setups (likely cuMemMap
+      # path). Known: NVLink (PR #31), WSL2 single-card 3090 Ti.
+      # Override via .env: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+    shm_size: "16gb"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    entrypoint:
+      - bash
+      - -c
+      - |
+        # VLLM_ENFORCE_EAGER=1 in compose/.env disables CUDA graphs — use on
+        # hardware where Cliff 2 GDN activation spikes occur at runtime
+        # (~50-65K active context tokens). Costs ~20-30% TPS for stability.
+        # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
+        source /etc/club3090/detect_nvlink.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
+        else
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@"
+        fi
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.8-27b-awq-w4a16
+      - --served-model-name
+      - qwen3.8-27b
+      - qwen3.8-27b-awq
+      # NO --quantization flag: compressed-tensors AUTO-DETECTS from the
+      # checkpoint's quantization_config, and the model card's own serve command
+      # omits it too. Forcing it is how the Tess NVFP4 slug got bitten
+      # ("quant AUTO-DETECTS, do NOT pass --quantization modelopt").
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --pipeline-parallel-size
+      - "${PP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      # 0.96 — MEASURED AND DELIBERATELY TIGHT (maintainer target: ~800 MiB free
+      # per card). Idle tracks util almost exactly 1:1 on this pair (0.90 -> 20,956
+      # MiB, 0.92 -> 21,432 MiB) and bench peak ran +1,289 MiB over idle, giving
+      # free_at_peak ~= 24564*(1-util) - 122; 0.96 solves that to ~800 MiB.
+      # The GDN activation overshoot (vllm#44209) is SMALL on this model — 137 MiB
+      # above budget at 0.90, versus the ~2,860 MiB that forced a 5090 rig down to
+      # 0.85 (#849) — which is what makes this headroom safe to spend here and
+      # would NOT be safe to copy onto another model.
+      # ⚠️ This grows the KV POOL (context + concurrency), NOT decode speed.
+      # ⚠️ Bench peak is NOT the worst case: a 240K-depth verify-stress ladder or a
+      # soak can allocate above it, and neither has been run. If anything OOMs at
+      # depth, step back to 0.92 (~1.8 GiB free) before touching MAX_MODEL_LEN.
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-2}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      # MUST be `fp8` (= e4m3, scale=1.0). `fp8_e5m2` is scale-free and is
+      # HARD-REJECTED against fp8 checkpoints. Do not "simplify" this.
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8}"
+      - --trust-remote-code
+      # Patched-native template (see volumes): the model's own, with `high`
+      # aliased to `xhigh`. NOT the froggeric pin the qwen3.6/Tess composes
+      # carry — that is a Qwen3.6-generation fix and knows nothing of this
+      # generation's reasoning_effort kwarg.
+      - --chat-template
+      - /etc/qwen38-reasoning-effort-template.jinja
+      - --reasoning-parser
+      - qwen3
+      # Qwen3.8 enables thinking by DEFAULT; this restores the stack convention of
+      # opt-in reasoning. Per-request override via chat_template_kwargs, which on
+      # this generation also accepts {"reasoning_effort": "low"|"medium"|"xhigh"}.
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      # Prefix caching OFF by default — this compose vendors no #48375 overlay.
+      # Read the "Deliberately NOT enabled" note before flipping it.
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
+      - --enable-chunked-prefill
+      # Built-in MTP head (the checkpoint embeds mtp.*, kept at BF16 by this
+      # export -- the pattern that WORKS for spec-decode; contrast the Tess NVFP4
+      # that 4-bit'd mtp.fc and got 0% accept, club #662).
+      # ENABLED 2026-08-15 after re-auditing vllm#50021 against the RUNNING
+      # v0.27.1 image rather than the v0.25.1-era tracker row: the `fla` package
+      # is not installed here, fused_sigmoid_gating.py does not exist, the
+      # kernels were internalised into mamba/gdn/qwen_gdn_linear_attn.py, and
+      # mamba_ssm.py already clamps the negative case with
+      # `tl.maximum(num_accepted - 1, 0)`. Validated by a sustained
+      # agent-shaped soak on this rig (see the MEASURED block above) -- the
+      # upstream repro faulted at 7-10 such requests.
+      # Turn off with SPEC_N=0? NO -- vLLM has no n=0; comment the two lines out.
+      - --speculative-config
+      - '{"method":"mtp","num_speculative_tokens":${SPEC_N:-3}}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-${TEMPERATURE:-0.7}},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

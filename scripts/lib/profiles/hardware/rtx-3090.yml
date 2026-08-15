@@ -4,6 +4,12 @@ display_name: NVIDIA RTX 3090
 sm: 8.6
 vram_gb: 24
 arch: ampere-consumer
+# Card-wide SAFETY CEILING. The launcher (_mem_util_env) clamps DOWNWARD only,
+# so this never raises a compose -- it only stops one asking for more than the
+# card can safely give. Deliberately left at 0.95: a slug that has MEASURED a
+# tighter margin opts out per-entry via `mem_util_unclamped=True` in
+# compose_registry, which is auditable per model, rather than by loosening the
+# ceiling for every model that shares this card.
 mem_util_safe: 0.95
 supported_kv_formats:
   - bf16

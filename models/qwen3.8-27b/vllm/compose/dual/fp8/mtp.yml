@@ -307,9 +307,18 @@ services:
       # subsequent boots reuse the compiled graphs.
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
-      # NO chat-template mount. This model serves its OWN chat_template.jinja
-      # from the model dir — see "Chat template" in the header for why the
-      # froggeric override that the qwen3.6/Tess composes carry is WRONG here.
+      # Chat template: the model's OWN, with a SIX-LINE alias added. The
+      # froggeric override the qwen3.6/Tess composes carry is still WRONG here
+      # (wrong generation) — but the stock 3.8 template is not usable as-is
+      # either: Qwen renamed the top reasoning rung, so its ladder is
+      # low/medium/xhigh with NO `high`, and the template raise_exception()s on
+      # anything else. A client sending the OpenAI/Anthropic-standard `high`
+      # therefore gets HTTP 500 while /v1/models still returns 200 — observed
+      # live on this rig through vLLM's Anthropic-compatible
+      # POST /v1/messages?beta=true. The override aliases high -> xhigh and
+      # changes nothing else. Data-only mount, so this compose stays
+      # overlay-equivalent. See patches.yml qwen38-reasoning-effort-template.
+      - ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/etc/qwen38-reasoning-effort-template.jinja:ro
       # NVLink auto-detection — runs inside the container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       # Vendored vllm#48375 (MambaManager drop_eagle_block) — SHARED from the
@@ -423,7 +432,11 @@ services:
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8}"
       - --trust-remote-code
-      # No --chat-template: the model dir's own chat_template.jinja is used.
+      # Patched-native template (see volumes): the model's own chat_template.jinja
+      # plus a `high` -> `xhigh` reasoning_effort alias, without which any client
+      # using the standard OpenAI/Anthropic rung names gets HTTP 500.
+      - --chat-template
+      - /etc/qwen38-reasoning-effort-template.jinja
       - --reasoning-parser
       - qwen3
       # Stack-wide default: thinking OFF. On this model that ALSO suppresses the

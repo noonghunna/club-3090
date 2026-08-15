@@ -387,6 +387,65 @@ Migtissera's Qwen3.5-based dense 27B instruct/agentic fine-tune (`migtissera/Tes
 
 ---
 
+## Qwen3.8-27B
+
+First measured TPS for this model on the stack. The catalog itself landed in #990 with no
+performance numbers claimed; these come from the AWQ speed tier added alongside it.
+
+All rows: 2× RTX 3090 (3090 Ti + 3090, sm_86), PCIe **x8**, **P2P unsupported** (`topo -p2p` = GNS,
+so `NCCL_P2P_DISABLE=1` is correct here rather than merely conservative), TP=2, 262144 ctx,
+`fp8_e4m3` KV, prefix caching ON, `max_num_seqs=2`, **power caps 250 W / 270 W**, 2026-08-15.
+
+| Compose | Engine | Drafter | util | Narr / Code TPS | PP tok/s | KV pool | Free VRAM/card | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `dual/awq-w4a16/fp8.yml` ⭐ | v0.27.1 | **MTP n=3** | 0.95 | **80.2 / 102.4** | 1741 @10K · 1383 @90K | 360,264 (1.37×) | 778 / 798 MiB | The speed tier. |
+| `dual/awq-w4a16/fp8.yml` | v0.27.1 | spec-off | 0.98 | 50.6 / 48.9 | 1776 @10K · 1408 @90K | 462,518 (1.76×) | 782 / 802 MiB | MTP is worth **+58.7% / +109.5%**. |
+| equivalent FP8 config | v0.27.1 | spec-off | 0.98 | 46.2 / 45.8 | 1667 @10K · 1324 @90K | 402,255 (1.53×) | 992 / 972 MiB | Weight-format A/B control. |
+
+⚠️ **Every row has a FAILING bench swap-check** (~560–650 MB of the serving process paged out;
+29.7 GiB host at `vm.swappiness=60`). `bench.sh` itself calls such runs "suspect". Indicative, not
+BENCHMARKS-grade, until the host is fixed.
+
+### What these numbers teach
+
+- **Power caps dominate.** Same config, only the 3090 Ti's cap changed: **200 W → 31.75 TPS**,
+  **250 W → 46.21 TPS** — **+45% decode for 50 W on one card**. `rtx-3090-ti.yml` ships
+  `power_cap_w_optimal: 200`, which is a *perf-per-watt* figure and costs about a third of
+  throughput. Quote caps beside any TPS figure for this rig.
+- **"4-bit" does not halve anything here.** The AWQ export is 27.76 GB against FP8's 27.78 GB: it
+  quantizes only 256 Linear modules (16 full-attn × 4 proj + 64 MLP × 3) and leaves all 48 GDN
+  `linear_attn.*`, the vision tower, `mtp.*` and embed/norm at BF16. **Spec-off it is only +2–4%
+  over FP8**, against ~1.5× predicted from a bandwidth roofline — those 48 BF16 layers are read
+  every token. It earns its place through MTP, not through being 4-bit.
+- **Prefix caching is the biggest PP lever, and `bench.sh` cannot see it** (it cache-busts prefill
+  prompts by design). Measured directly on a repeated 12,612-token prefix: cold **7,428 ms** → warm
+  **90 ms** = **82× TTFT reduction**, with a novel-prompt control at 6,987 ms confirming real caching.
+- **`VLLM_USE_FLASHINFER_SAMPLER=0` does not transfer from qwen3.6.** Spec-off it *costs* 4.0% / 2.8%.
+  It exists there because *with MTP* sampling routes through the rejection-sampler path.
+- **MTP needs ~1 GB of its own VRAM headroom.** At util 0.98 with MTP the engine OOMs at the
+  prefill-90k segment — a plain `torch.OutOfMemoryError`, no Xid, **not** a GDN fault. 0.95 survives.
+- **`max_num_seqs` is not the binding constraint — the pool is.** At full 262K the pool holds ~1.37
+  sessions, so it cannot fit two full-depth sequences; admitting more just guarantees recompute
+  preemption (~190 s re-prefill per resume). A `seqs=8` arm measured 354,406 tok / 1.35× / 756-776 MiB
+  and is right only for short (~30K) turns. `max_model_len` is a **ceiling, not a reservation**.
+
+### vllm#50021 — soaked clean on v0.27.1 (first Ampere datapoint)
+
+The AWQ slug ships **MTP on**, which the tracker's caveat would forbid. That caveat is
+**v0.25.1-specific**: on v0.27.1 the `fla` package is not installed, `fused_sigmoid_gating.py` (the
+file `docs/UPSTREAM.md` cites as "verified live in our pin") does not exist, the kernels moved into
+`mamba/gdn/qwen_gdn_linear_attn.py`, and `mamba_ssm.py` already clamps the negative case with
+`tl.maximum(num_accepted - 1, 0)`. The read also sits behind `IS_SPEC_DECODING`, so any spec-off
+compose has zero exposure by construction.
+
+Empirically: **120 agent-shaped multi-turn requests** (~7.4K prompt tokens/turn, growing context)
+→ **120 ok / 0 fail**, `RestartCount=0`, zero unspecified-launch-failure, zero illegal-address, zero
+Xid. The upstream repro faults at **7–10** such requests.
+
+**Limit:** 120 requests at ~7.4K ctx over 5 minutes — not a 262K-depth or hour-long soak, and the
+upper-bound case in the Qwen GDN callee was not audited. Strong evidence, not proof, and it does
+**not** clear the v0.25.1 pin the sibling slugs run on.
+
 ## ThinkingCap-Qwen3.6-27B
 
 LeaderboardModel1's ThinkingCap — a **Qwen3.6-27B (qwen3_5) VL reasoning fine-tune**, AutoRound W4A16, served **W4A8** (int8 activations via `VLLM_MARLIN_INPUT_DTYPE=int8` + the shared `qwen-w4a8-int8-act` patches). Same `qwen35-dense` hybrid (48 linear + 16 full-attn, 64 total) + **working built-in MTP head** as Tess (`mtp.fc`@BF16). Vision-capable base, shipped **text-only**.

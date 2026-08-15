@@ -309,6 +309,41 @@ patches:
       drop_when: "upstream Qwen ships a corrected default chat template and the pinned engines bundle it, OR the override is re-vendored (the same drift_guard must clear the next re-vendor)"
     status: verified
 
+  - id: qwen38-reasoning-effort-template
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-max
+          - vllm/qwen38-27b-dual-awq
+        reason: "Qwen3.8 renamed the conventional top reasoning rung: its ladder is low/medium/xhigh with NO `high`, and the stock template raise_exception()s on any other value. Both OpenAI and Anthropic use low/medium/high, so a generic client sending the standard top rung gets a Jinja TemplateError surfaced as HTTP 500 -- while /v1/models still returns 200 and the model is demonstrably healthy, which makes the endpoint look up while every thinking-mode chat request fails. Observed live on the reference rig 2026-08-15 through vLLM's Anthropic-compatible POST /v1/messages?beta=true, i.e. the exact surface a drop-in Claude-API client talks to. The override is the model's OWN template plus a 6-line alias mapping high -> xhigh; everything else is byte-identical, so the model card's documented xhigh/medium/low behaviour is unchanged. Load-bearing for any agent/tool client that does not know Qwen3.8's private vocabulary."
+        evidence: "models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/PROVENANCE.md (carries the regenerable diff against the shipped template)"
+    delivery:               # DEPRECATED/READ-ONLY (test-only) -- see header
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: chat_template
+    delivery_spec:
+      jinja: models/qwen3.8-27b/vllm/patches/qwen38-reasoning-effort-template/chat_template.jinja
+      mounted_at: /etc/qwen38-reasoning-effort-template.jinja
+      mount_mode: ro
+      invoke: "--chat-template /etc/qwen38-reasoning-effort-template.jinja"
+      wired_at: [volumes, command]
+      note: "Data-only chat_template mount -- NOT an engine-code overlay, so the engines' overlay-free status is unaffected."
+    drift_guard:
+      kind: behavioral
+      check: "A thinking-mode chat request carrying reasoning_effort='high' must return HTTP 200 (not a 500 TemplateError) with the template mounted, and low/medium/xhigh must keep their stock behaviour; re-diff the jinja against models-cache/qwen3.8-27b-fp8/chat_template.jinja after any weights re-pull, since a silent upstream template re-push is the drift this guards. Any behavioral/TPS comparison the guard performs MUST use the SELF-CONTAINED symmetric restart+settle protocol: identical `docker restart <container>` on BOTH arms -> wait for /v1/models healthy -> fixed 60s settle -> >=3 bench.sh runs/arm -> compare the GRAND MEAN of the SAME canonical bench segment (NARRATIVE 800-word essay + CODE; never mix segments, never a single run); flag ONLY a deterministic regression reproduced across ALL 3 runs. (An asymmetric-restart harness fabricated a phantom -7% on #150; a non-symmetric guard flaps and gets ignored.)"
+      on_fail: capability-degraded   # serves on the stock template, 500-ing every reasoning_effort=high request
+    capability: chat-template-override
+    foundational: false
+    upstream:
+      ref: "Qwen/Qwen3.8-27B-FP8 chat_template.jinja (fetched 2026-08-14); no upstream Qwen issue filed yet"
+      status: local-vendored
+      drop_when: "upstream Qwen accepts `high` as an alias for `xhigh`, OR vLLM's Anthropic router stops forwarding a `high` it cannot know is unsupported. Re-vendor from the model dir if Qwen ships a corrected template and re-run the drift guard."
+    status: verified
+
   - id: vllm-pr48375-mamba-drop-eagle-block
     # qwen3.8-27b added 2026-08-14: its two vLLM "max" composes ship the SAME
     # MTP + prefix-caching pair on the same Qwen3-Next hybrid family, and mount

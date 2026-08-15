@@ -1,0 +1,45 @@
+schema_version: 1
+id: vllm-stable-v0271
+display_name: vLLM stable v0.27.1 (overlay-free, qwen3.8 channel)
+type: vllm
+stability: stable
+install:
+  method: docker_image
+  spec: vllm/vllm-openai:v0.27.1
+min_sm: 7.5
+supported_model_families:
+  - dense
+  - qwen3-next-hybrid
+  - qwen35-dense     # Qwen3.8-27B (qwen3_5 hybrid VLM) — the reason this channel exists.
+                     # LIVE-VALIDATED on v0.25.1 first (arch resolves as
+                     # Qwen3_5ForConditionalGeneration, KV pool back-solve within
+                     # +2.3% of formula); this channel re-validates on v0.27.1.
+features:
+  int8_per_token_head: true
+  turboquant_3bit_nc: false
+  marlin_pad_sub_tile_n: false
+  qwen3_coder_tool_parser: false
+supported_kv_formats:
+  - bf16
+  - fp16
+  - fp8_e4m3
+  - fp8_e5m2
+  - int8_per_token_head
+supported_drafters:
+  - mtp
+  - mtp_assistant
+supported_weight_formats:
+  - bf16
+  - fp16
+  - autoround
+  - awq
+  - gptq
+  - compressed-tensors    # barrydeen AWQ W4A16_ASYM pack-quantized (qwen3.8-27b awq-w4a16)
+  - fp8                   # official Qwen layer-split e4m3 — Marlin W8A16 on Ampere sm_86
+  - modelopt
+required_overlays: []
+# OVERLAY-FREE BY DESIGN, exactly like `vllm-stable` — the CONTRACT-5 property is
+# preserved so this channel could serve as a derived-emission base if ever needed.
+vendored_overlays: []
+required_genesis: false
+notes: "NARROW CHANNEL, not a stack-wide bump. Created 2026-08-15 to carry ONLY the qwen3.8-27b slugs on vLLM v0.27.1 (published 2026-08-11, four releases ahead of the v0.25.1 that `vllm-stable` pins). Deliberately a separate engine profile rather than bumping `vllm-stable`: that shared profile carries 27 slugs across 25 files including the qwen3.6-27b dual DEFAULT and the Gemma composes, and AGENTS.md requires a verify-full + bench re-run per affected compose before a pin moves. This channel moves ONE model, which can actually be re-validated. ⚠️ DOES NOT FIX vllm#50021 — the GDN/KDA spec-decode bound-check PR is still OPEN (verified against the GitHub API 2026-08-15: state=open, merged=false, head a303cf19), and the v0.27.1 release notes mention only 'Support quantized DSpark Markov heads (#50424)'. So MTP stays OFF on this channel too; do not read a newer pin as permission to enable the drafter. FOLD-BACK: when `vllm-stable` bumps past v0.27.1 on its own schedule, retire this profile and point the qwen3.8 slugs back at it (the ADDING_MODELS coherence rule: 'when an RC graduates, fold it back into vllm-stable and retire the channel'). Bump `install.spec` here, never the engine id."

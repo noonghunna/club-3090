@@ -277,6 +277,12 @@ def _mem_util_env(profiles, variant: str, gpu_spec: str) -> dict[str, str]:
     entry = COMPOSE_REGISTRY.get(variant)
     if not entry:
         return {}
+    if entry.get("mem_util_unclamped"):
+        # Per-slug opt-out: this compose MEASURED its own peak headroom on the
+        # target card and deliberately runs a tighter margin than the card-wide
+        # ceiling. Scoped to one slug and auditable in the registry, which is why
+        # it exists instead of raising mem_util_safe for every model on the card.
+        return {}
     compose_gmu = entry.get("mem_util")  # the compose's default --gpu-memory-utilization
     if not isinstance(compose_gmu, (int, float)):
         return {}
