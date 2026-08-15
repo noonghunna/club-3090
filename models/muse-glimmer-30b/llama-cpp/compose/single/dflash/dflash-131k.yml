@@ -1,0 +1,62 @@
+# Muse Glimmer 30B — llama.cpp DFlash reference config
+# Validated on: RTX 3090 (sm_86), WSL2 + native Windows, llama.cpp build 10349
+
+profiles:
+  dflash-131k:
+    description: "Daily driver — DFlash spec-decode + vision + tool calling at 131K"
+    alias: muse-glimmer
+    ctx_size: 131072
+    gpu_layers: 99
+    flash_attn: "on"
+    jinja: true
+    parallel: 1
+    mlock: true
+    spec_type: draft-dflash
+    spec_draft_n_max: 15
+    temp: 1.0
+    top_p: 0.95
+    top_k: 64
+    reasoning_budget: 2048
+    chat_template_kwargs: '{"reasoning_strength":"high"}'
+    measured_tps: "47.3 long / 67.1 short (post-sweep, DFlash on)"
+    vram_gb: 20.9
+    notes:
+      - "DFlash adds +10-25% over no-draft for ~2 GB VRAM cost"
+      - "Draft acceptance: 0.14, mean length 3.16"
+      - "reasoning_strength=low gives ~2x speed (99.7 vs 53.3 t/s) without quality loss"
+      - "NEVER quantize draft KV (--spec-draft-type-k/v q4_0 collapses acceptance)"
+      - "--jinja is REQUIRED for tool calling + reasoning routing"
+
+model:
+  weights: muse-glimmer-30B-kquant-17gb.gguf
+  weights_size_gb: 17
+  dflash_drafter: dflash-kquant.gguf
+  dflash_size_gb: 2
+  mmproj: mmproj-muse-glimmer.gguf
+  mmproj_size_gb: 1.8
+  architecture: "Dense 30B (2B ViT perceiver + 28B decoder), GQA 32Q/2KV, SWA 2048, native 131K ctx"
+  source: "Meta Superintelligence Lab (Apache 2.0)"
+
+runtime:
+  binary: llama-server
+  build: "10349 (commit 62bf73d25)"
+  platform: wsl2-or-windows-native
+  gpu: "RTX 3090 (sm_86, 24576 MiB)"
+
+server:
+  host: 127.0.0.1
+  port: 18080
+  no_webui: true
+  metrics: true
+
+features:
+  tool_calling: "Native (no parser/proxy). finish_reason=tool_calls with parsed JSON args."
+  vision: "Fits alongside DFlash (22.6 GB total)."
+  multi_turn_cache: "Automatic in-slot KV reuse. ~220ms per follow-up turn."
+
+dflash_caveats:
+  works_on:
+    - "Muse Glimmer 30B (dense + SWA = high drafter accuracy)"
+  does_not_work_on:
+    - "Qwen3.6-27B via BeeLlama (tool marker suppression → 97→27 t/s regression)"
+    - "vLLM/SGLang (DFlash requires BF16 weights, ~54 GB, doesn't fit 24 GB)"

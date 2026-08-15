@@ -1,0 +1,133 @@
+# Qwen3.8-27B — llama.cpp native Windows reference configs
+# Validated on: RTX 3090 (sm_86), Windows 10, llama.cpp b10435 CUDA 13
+# These are NOT Docker Compose files — they document exact llama-server.exe invocations.
+
+profiles:
+  mtp-170k:
+    description: "Speed-first daily — MTP spec-decode + vision"
+    alias: qwen3.8-27b-mtp-q4xl-170k
+    ctx_size: 174080
+    gpu_layers: 99
+    flash_attn: "on"
+    cache_type_k: q4_0
+    cache_type_v: q4_0
+    batch_size: 2048
+    ubatch_size: 512
+    mlock: true
+    parallel: 1
+    spec_type: draft-mtp
+    spec_draft_n_max: 2
+    reasoning: "off"
+    temp: 0.7
+    top_p: 0.8
+    top_k: 20
+    presence_penalty: 1.5
+    repeat_penalty: 1.0
+    measured_tps: "40-44 decode @ 170K + MTP + vision"
+    vram_gb: 24.0
+    notes:
+      - "MTP draft KV must stay f16 (do NOT quantize)"
+      - "ubatch 512 is critical — default 1024 saturates VRAM and collapses decode to ~10 t/s"
+      - "170K + MTP + vision is the ceiling on 24 GB"
+
+  max-262k:
+    description: "Max context — no MTP, for long single-shot RAG/codebase analysis"
+    alias: qwen3.8-27b-ud-q4xl-262k
+    ctx_size: 262144
+    gpu_layers: 99
+    flash_attn: "on"
+    cache_type_k: q4_0
+    cache_type_v: q4_0
+    batch_size: 512
+    ubatch_size: 128
+    mlock: true
+    parallel: 1
+    spec_type: none
+    reasoning: "off"
+    temp: 0.7
+    top_p: 0.8
+    top_k: 20
+    presence_penalty: 1.5
+    repeat_penalty: 1.0
+    measured_tps: "30-33 decode @ 262K + vision"
+    vram_gb: 24.0
+    notes:
+      - "Native architecture max context"
+      - "ubatch 128 keeps activation buffer small at 262K"
+
+  think-262k:
+    description: "Reasoning mode — complex analysis, architecture decisions"
+    alias: qwen3.8-27b-think-ud-q4xl-262k
+    ctx_size: 262144
+    gpu_layers: 99
+    flash_attn: "on"
+    cache_type_k: q4_0
+    cache_type_v: q4_0
+    batch_size: 256
+    ubatch_size: 64
+    mlock: true
+    parallel: 1
+    spec_type: none
+    reasoning: "on"
+    reasoning_format: deepseek
+    reasoning_budget: 4096
+    temp: 1.0
+    top_p: 0.95
+    top_k: 20
+    presence_penalty: 0.0
+    repeat_penalty: 1.0
+    estimated_tps: "20-25 (reasoning budget consumes throughput; not separately benched)"
+    vram_gb: 24.0
+    notes:
+      - "Per-request override: chat_template_kwargs enable_thinking=false for direct answers"
+
+  balanced-128k:
+    description: "General daily — comfortable headroom, no MTP"
+    alias: qwen3.8-27b-ud-q4xl-128k
+    ctx_size: 131072
+    gpu_layers: 99
+    flash_attn: "on"
+    cache_type_k: q4_0
+    cache_type_v: q4_0
+    batch_size: 512
+    ubatch_size: 128
+    mlock: true
+    parallel: 1
+    spec_type: none
+    reasoning: "off"
+    temp: 0.7
+    top_p: 0.8
+    top_k: 20
+    presence_penalty: 1.5
+    repeat_penalty: 1.0
+    estimated_tps: "33-36 decode @ 128K + vision (interpolated between mtp-170k and max-262k)"
+    vram_gb: 22.0
+
+model:
+  weights: Qwen3.8-27B-UD-Q4_K_XL.gguf
+  weights_size_gib: 16.69
+  mmproj: mmproj-Qwen3.8-27B-Q8_0.gguf
+  mmproj_size_gb: 0.9
+  source: "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF"
+  architecture: "Qwen3-Next hybrid (GDN + full attention), dense 27B, native 262K ctx, MTP head embedded"
+
+runtime:
+  binary: llama-server.exe
+  build: b10435
+  cuda: "13"
+  platform: windows-native
+  gpu: "RTX 3090 (sm_86, 24576 MiB)"
+  os: "Windows 10"
+
+server:
+  host: 0.0.0.0
+  port: 18080
+  no_ui: true
+  metrics: true
+  slots: true
+  timeout: 3600
+
+windows_notes:
+  mlock: "Pins model pages in RAM. Without it, Windows evicts pages under pressure and decode drops from ~40 to ~10 t/s."
+  parallel_1: "Default auto=4 slots multiplies KV by 4. On 24 GB, only parallel=1 works at high context."
+  gpu_layers_99: "Hardcode 99. Using auto + --fit on causes a confusing 'failed to fit params' log and skips fit logic."
