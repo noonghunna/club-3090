@@ -1,0 +1,91 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B (bartowski IQ4_KS GGUF)
+#   Engine:    llama.cpp (mainline server-cuda)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=3 (built-in multi-token prediction)
+#   KV:        q4_0 K + q4_0 V
+#   Vision:    no (mmproj NOT mounted - for vision, see iq4ks-vision.yml)
+#   Max ctx:   200000 default (@ -ub 512)
+#   Status:    incubating - unbenchmarked on 3090
+#   Engine-profile: llama-cpp-local
+#   Best for:  Long-context text workloads on a single 24 GB card.
+# ---------------------------------------------------------------------------
+# Qwen3.8-27B on llama.cpp - single 3090, IQ4_KS, no vision.
+#
+# Qwen3.8-27B is a next-gen 27B model from the Qwen team. It uses a mixed
+# architecture with DeltaNet (linear attention) blocks and gated attention,
+# similar to Qwen3.6-27B but with architectural refinements.
+#
+# Weights source: bartowski/Qwen3.8-27B-GGUF
+#   IQ4_KS - ~14.8 GB, best quality/size ratio for 24 GB cards
+#   (unsloth/Qwen3.8-27B-GGUF also ships IQ4_KS with Dynamic V3.0 MTP -
+#    swap the GGUF path if you prefer unsloth's quant)
+#
+# VRAM budget on 24 GB (IQ4_KS):
+#   weights (IQ4_KS):            ~14.8 GB
+#   KV at 200K (q4_0 K+V):        ~6.0 GB
+#   MTP draft head + overhead:    ~0.5 GB
+#   total:                       ~21.3 GB
+#   headroom:                    ~2.7 GB for prompt + activation peaks
+#
+# Quick start:
+#   1. Get the GGUF:
+#        hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_KS.gguf \
+#          --local-dir $MODEL_DIR/qwen3.8-27b-gguf/iq4ks
+#   2. From this directory:
+#        MODEL_DIR=/your/models/dir docker compose -f iq4ks.yml up -d
+#   3. curl http://localhost:8020/v1/models  -> should list the model.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR              host dir to mount as /models
+#   GGUF_FILE              path under /models  (default: qwen3.8-27b-gguf/iq4ks/Qwen3.8-27B-IQ4_KS.gguf)
+#   CTX_SIZE               KV pool size        (default: 200000)
+#   BATCH_SIZE             llama.cpp -b        (default: 1024)
+#   UBATCH_SIZE            llama.cpp -ub       (default: 512)
+#   KV_TYPE                K and V quant type  (default: q4_0)
+#   NP                     parallel slots      (default: 1)
+#   MTP_DRAFT_N_MAX        MTP draft tokens    (default: 3)
+#   REASONING              thinking gate       (default: off)
+#   REASONING_FORMAT       reasoning routing   (default: deepseek)
+#   PORT                   host port           (default: 8020)
+#   CUDA_VISIBLE_DEVICES   which GPU to use    (default: 0)
+
+services:
+  llama-cpp-qwen38-27b-iq4ks:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b10236}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen38-27b-iq4ks}"
+    restart: unless-stopped
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8020}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/iq4ks/Qwen3.8-27B-IQ4_KS.gguf}
+      -c ${CTX_SIZE:-200000}
+      -b ${BATCH_SIZE:-1024}
+      -ub ${UBATCH_SIZE:-512}
+      -ngl 99
+      -fa on
+      --cache-type-k ${KV_TYPE:-q4_0}
+      --cache-type-v ${KV_TYPE:-q4_0}
+      -np ${NP:-1}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${MTP_DRAFT_N_MAX:-3}
+      --jinja
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.6}}
+      --top-p ${TOP_P:-0.95}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}"]
+              capabilities: [compute, utility]

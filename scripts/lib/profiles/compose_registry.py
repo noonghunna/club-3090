@@ -1193,6 +1193,30 @@ COMPOSE_REGISTRY = {
         category="frontier",
     ),
 
+    # Qwen3.8-27B — llama.cpp single 3090 (bartowski IQ4_KS, MTP n=3).
+    # Incubating: unbenchmarked on 3090. Vision variant at iq4ks-vision.
+    "llamacpp/qwen38-27b-iq4ks": _entry(
+        model="qwen3.8-27b", weights_variant="bartowski-iq4ks", workload="fast-chat",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.8-27b/llama-cpp/compose/single/iq4ks.yml",
+        default_port=8020,
+        kvcalc_key="SKIP",
+        status="incubating",
+        status_note="Qwen3.8-27B (bartowski IQ4_KS GGUF, ~14.8 GB) on llama.cpp single 3090. MTP n=3, q4_0 KV, 200K ctx. Incubating — unbenchmarked. Vision variant at llamacpp/qwen38-27b-iq4ks-vision.",
+    ),
+    "llamacpp/qwen38-27b-iq4ks-vision": _entry(
+        model="qwen3.8-27b", weights_variant="bartowski-iq4ks", workload="vision-coding",
+        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
+        tp=1, max_ctx=150000, max_num_seqs=1, mem_util=None,
+        compose_path="models/qwen3.8-27b/llama-cpp/compose/single/iq4ks-vision.yml",
+        weights_companions=("gguf_mmproj_bf16",),  # mmproj vision projector the compose mounts
+        default_port=8020,
+        kvcalc_key="SKIP",
+        status="incubating",
+        status_note="Qwen3.8-27B (bartowski IQ4_KS + mmproj-BF16) on llama.cpp single 3090, multimodal. 150K ctx (vision overhead eats ~50K headroom). Incubating — unbenchmarked.",
+    ),
+
     "llamacpp/tess-dual-mtp": _entry(
         model="tess-4-27b", weights_variant="migtissera-q4km", workload="fast-chat",
         engine="llama-cpp-local", drafter="tess-mtp-gguf", kv_format="q4_0",
@@ -1384,6 +1408,8 @@ DEFAULTS = {
     # Remove this row (slug stays launchable by name) to keep the GGUF default.
     ("tess-4-27b", "vllm", "dual"): "vllm/tess-dual-w4a16",
     ("thinkingcap-27b", "vllm", "dual"): "vllm/thinkingcap-dual-w4a8",
+    # Qwen3.8-27B: llama.cpp single-card default (incubating, unbenchmarked).
+    ("qwen3.8-27b", "llamacpp", "single"): "llamacpp/qwen38-27b-iq4ks",
 }
 
 
