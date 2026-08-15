@@ -12,7 +12,7 @@ If you have one or two RTX 3090s and want to run modern LLMs at home, in a homel
 
 ## Quick start
 
-> 🪟 **On Windows?** These steps assume Linux/macOS. Set up **WSL2** first → **[docs/WSL_SETUP.md](docs/WSL_SETUP.md)** (start-to-finish). Native Windows runs only the *upstream* llama.cpp binary — none of this repo's tooling.
+> 🪟 **On Windows?** Two paths: **[WSL2 + Docker](docs/WSL_SETUP.md)** (full tooling) or **[Native Windows llama.cpp](docs/WINDOWS_NATIVE.md)** (no WSL2, no Docker — just `llama-server.exe` + GGUF). The native path is validated for production agentic workloads on single 3090s (see [`models/qwen3.8-27b/`](models/qwen3.8-27b/README.md)).
 
 ```bash
 # 1. Clone the repo
@@ -125,7 +125,9 @@ Each hardware page lists every supported model with the working composes for tha
 | Model | Status | Card counts | Engines | Highlights |
 |---|---|---|---|---|
 | **[Qwen3.6-27B](models/qwen3.6-27b/)** | Production-ready ⭐ | 1× / 2× 3090 | vLLM ✅ · llama.cpp ✅ · ik_llama ✅ | Vision · tools · MTP n=3 · up to 262K ctx · vLLM dual = 89/127 TPS · llama.cpp single = 200K max-safe, no prefill cliffs · ik_llama IQ4_KS = ~60/69 TPS (fastest single-card) |
+| **[Qwen3.8-27B](models/qwen3.8-27b/)** | Community-validated (Windows native) | 1× 3090 | llama.cpp ✅ (native Windows + WSL2) | **Newest Qwen dense** · native 262K ctx · MTP n=2 · vision + tools integrated at full ctx · **~40-44 t/s @ 170K MTP** / ~30-33 t/s @ 262K · UD-Q4_K_XL quant · no WSL2/Docker required ([`docs/WINDOWS_NATIVE.md`](docs/WINDOWS_NATIVE.md)) |
 | **[Gemma 4 31B](models/gemma-4-31b/)** | Production-ready | 1× ¹ / 2× 3090 | vLLM ✅ (dual) · llama.cpp ⚠️ (community fork; mainline blocked on FA hdim=512) | Vision · tools · MTP n=3 (Google official drafter) **OR** DFlash n=7 (z-lab drafter) · up to 262K ctx via INT8 PTH KV (PR [#40391](https://github.com/vllm-project/vllm/pull/40391) vendored) · MTP dual = 106/141 TPS at 32K, 95/126 at 262K · DFlash dual = 105/177 TPS at 32K (code-optimal) · single-card: no functional config since the beellama retirement (2026-07-27 — engine deprecated; historical: 47/88 TPS via beellama DFlash, [discussion #239](https://github.com/noonghunna/club-3090/discussions/239)) |
+| **[Muse Glimmer 30B](models/muse-glimmer-30b/)** | Community-validated | 1× 3090 | llama.cpp ✅ (WSL2 + native Windows) | **Meta Superintelligence Lab** · dense 30B (SWA+GQA) · DFlash n=15 · **47 t/s @ 131K** (post-sweep) · native tool calling + vision · reasoning strength tunable per-request · no WSL2 required |
 | **[Qwen3.6 35B-A3B](models/qwen3.6-35b-a3b/)** | Production-ready (ik-llama single-card · vLLM dual) | 1× / 2× 3090 | vLLM ✅ · ik_llama ✅ · llama.cpp ✅ (mainline runs it — see `docs/HARDWARE.md`; ik_llama is the shipped single-card path) | **MoE (256 experts × 8 active, ~3 B active params)** · vision · tools · **ik_llama `fit-mtp.yml` single-card (Mudler APEX I-Compact)** = 103/149 TPS at 196K, hermes 11/20 + aider 12/30 + cli 12/40 ([PR #243](https://github.com/noonghunna/club-3090/pull/243)) · ik_llama `byteshape-iq4xs` single-card = 113/129 TPS at full 262K, 110/150 8-pack ([PR #293](https://github.com/noonghunna/club-3090/pull/293)) · vLLM dual = 178/174 TPS at 262K + vision (v0.22.0 stable; MTP net-negative on this MoE at TP=2) |
 | **[Gemma 4 26B-A4B](models/gemma-4-26b-a4b/)** | Production via AWQ (Intel AutoRound INT4 blocked on Ampere) | 2× 3090 ² | vLLM ✅ (AWQ overlay) · llama.cpp ❌ | **MoE (128 experts × 8 active, ~4 B active params)** · vision · tools · AWQ dual = **139/139 TPS at 32K**, CV 0.2% / 0.0% |
 
