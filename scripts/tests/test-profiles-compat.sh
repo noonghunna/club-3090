@@ -33,7 +33,7 @@ run_test "load_profiles parses all profile groups" <<'PY'
 from scripts.lib.profiles.compat import load_profiles
 p = load_profiles()
 assert len(p.hardware) == 11  # +dgx-spark (#576 follow-up), +rtx-a6000 (#948 thread)
-assert len(p.models) == 17   # +inkling-small
+assert len(p.models) == 18   # +inkling-small, +qwen3.8-27b
 assert len(p.workloads) == 5
 assert len(p.engines) == 15   # +llamacpp-club3090-v1.1
 assert len(p.drafters) == 16  # +dspark
@@ -341,6 +341,40 @@ assert "constraints_passed" in d and "constraints_failed" in d and "constraints_
 assert isinstance(d["elapsed_ms"], float)
 PY
 
+run_test "canonical scenarios cover every registry tp" <<'PY'
+# THE UNIFICATION GUARD (added 2026-08-15).
+# CANONICAL_SCENARIOS is a hand-written enumeration; COMPOSE_REGISTRY grows
+# independently. When vllm/qwen38-27b-multi8-max (tp=8) landed, the largest
+# scenario was 4x -- so the self-test below reported 'no fitting canonical
+# scenario' for a slug that diagnose-profile.sh passed at 15/16. The slug was
+# fine; the scenario list simply could not describe an 8-card host.
+#
+# That failure mode is silent and MISLEADING (it reads as a broken compose), so
+# assert coverage directly: every distinct tp in the registry must have at least
+# one canonical scenario with that many GPUs.
+#
+# NOTE: diagnose_profile_cli.py deliberately does NOT read CANONICAL_SCENARIOS --
+# it synthesises a scenario from the entry's own world size. The two answer
+# different questions ('fits some real host' vs 'fits the host it implies'), so
+# they are kept consistent by THIS test rather than by merging them.
+from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+from scripts.lib.profiles.canonical_scenarios import CANONICAL_SCENARIOS
+
+sizes = {len(sc['hardware']) for sc in CANONICAL_SCENARIOS}
+needed = {}
+for name, e in COMPOSE_REGISTRY.items():
+    tp = e.get('tp') if isinstance(e, dict) else getattr(e, 'tp', None)
+    if tp:
+        needed.setdefault(int(tp), []).append(name)
+missing = {tp: slugs for tp, slugs in needed.items() if tp not in sizes}
+for tp in sorted(needed):
+    print(f"  tp={tp}: {len(needed[tp])} slug(s) -> canonical scenario " + ("MISSING" if tp in missing else "ok"))
+assert not missing, (
+    'registry uses tp values with no canonical scenario of that size: '
+    + '; '.join(f"tp={tp} ({', '.join(sorted(s)[:3])})" for tp, s in sorted(missing.items()))
+    + ' -- add a scenario to canonical_scenarios.py'
+)
+PY
 run_test "self-test: all registry entries fit canonical scenarios" <<'PY'
 from scripts.lib.profiles.compat import load_profiles, from_compose_name, calibration_status
 from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY

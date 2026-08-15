@@ -966,6 +966,31 @@ case "${MODEL_NAME}" in
   bash scripts/switch.sh --force llamacpp/deepseek-flash-dual-q8
   Expect 8-10 min to load (--no-mmap, and the weights are large)."
     ;;
+  qwen3.8-27b)
+    # The generic "single-card vLLM" line below MUST be overridden (the #914 class).
+    # ⚠️ NOTE 2026-08-14: vLLM composes NOW EXIST for this model —
+    # vllm/qwen38-27b-dual-max and vllm/qwen38-27b-multi4-max. The override is STILL
+    # correct, but for a different reason than originally written: both vLLM slugs are
+    # DUAL/MULTI-card and 🐣 Incubating, so a single-card next-step line must not point
+    # at them. Only the old "no vLLM compose exists" rationale was stale.
+    # Reached via WEIGHT_KEY=qwen3.8-27b:<variant>: this model is deliberately
+    # NOT in the picker / dispatch / "Supported:" lists above, because both its
+    # slugs are 🐣 incubating and nothing has booted — advertising it in the
+    # front-door picker would contradict that status. Defaults track the
+    # single-card IQ4_NL tier; the dual UD-Q8_K_XL sibling serves on 8087.
+    SAMPLE_CONTAINER="llama-cpp-qwen38-27b-single"
+    SAMPLE_COMPOSE_FLAGS_DUAL=""
+    SAMPLE_PORT="8086"
+    SAMPLE_MODEL_NAME="qwen3.8-27b"
+    SAMPLE_LAUNCH_HINT="  bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4nl"
+    NEXT_STEPS_NOTE="🐣 incubating — launch needs --force (non-functional by default), and
+  both slugs are hidden from 'switch.sh --list' (reveal with --list --all).
+  NOTHING HAS BOOTED: no verify-full, no bench, no measured context ceiling.
+  Dual-card max-context tier instead (needs BOTH 3090s — 31.5 GB of weights
+  does not fit one card; serves on 8087):
+  WEIGHT_KEY=qwen3.8-27b:unsloth-q8kxl bash scripts/setup.sh qwen3.8-27b
+  bash scripts/switch.sh --force llamacpp/qwen38-27b-dual-q8kxl"
+    ;;
 esac
 
 echo "[setup] ✓ ${SETUP_MODEL_DISPLAY} downloaded."

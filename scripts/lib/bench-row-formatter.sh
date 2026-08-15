@@ -196,7 +196,7 @@ def compose_display(compose_path: str, served: str) -> str:
     parts = path.split("/")
     base = parts[-1] if parts else path
     parent = parts[-2] if len(parts) >= 2 else ""
-    if parent in {"dual", "multi4"} and not base.startswith(f"{parent}-"):
+    if (parent == "dual" or re.fullmatch(r"multi[1-9][0-9]*", parent)) and not base.startswith(f"{parent}-"):
         return f"{parent}-{base}"
     return base
 
@@ -365,8 +365,11 @@ def section_name(compose_path: str, served: str, tp: str, container: str) -> str
     path = compose_path.replace("\\", "/")
     if "llama-cpp" in path or "llama-cpp" in container:
         return "Single-card (1× RTX 3090) — llama.cpp"
-    if "/multi4/" in path or tp == "4":
-        return "Quad-card (4× RTX 3090, TP=4)"
+    m = re.search(r"/multi([1-9][0-9]*)/", path)
+    if m or (tp or "").isdigit() and int(tp) > 2:
+        n = m.group(1) if m else tp
+        label = {"4": "Quad"}.get(n, f"{n}x")
+        return f"{label}-card ({n}× RTX 3090, TP={n})"
     if "/dual/" in path or tp == "2":
         return "Dual-card (2× RTX 3090, TP=2)"
     return "Single-card (1× RTX 3090) — vLLM"

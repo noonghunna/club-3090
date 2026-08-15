@@ -1,0 +1,166 @@
+schema_version: 1
+id: qwen3.8-27b
+display_name: Qwen 3.8 27B
+family: qwen35-dense
+# Qwen/Qwen3.8-27B — architectures: ["Qwen3_5ForConditionalGeneration"],
+# model_type: qwen3_5 (text_config.model_type: qwen3_5_text). Same arch CLASS as
+# Tess-4-27B, hence the same `qwen35-dense` family tag ("dense" = non-MoE in this
+# repo's tag vocabulary; the ATTENTION is hybrid). Chosen over
+# `qwen3-next-hybrid` (qwen3.6-27b's tag) because the tag tracks the registered
+# arch class (qwen35 / Qwen3_5For…), not the marketing version. Both tags are
+# already in llama-cpp-local.supported_model_families, so the choice does not
+# change what loads — only what the catalog claims.
+#
+# ⚠️ HYBRID ATTENTION, not uniform GQA. config.json declares layer_types as
+# linear_attention x64 PLUS full_attention_interval: 4 — the interval is what
+# governs: every 4th layer is full attention => 16 full-attention (KV-growing)
+# layers + 48 linear-attention (DeltaNet-style, recurrent-state) layers.
+# The attn fields below describe the 16 FULL-ATTENTION layers ONLY. Naive
+# 64-layer KV math overestimates the pool ~4x — the same trap documented for
+# Tess-4-27B and Qwen3.6-27B. See docs/KV_MATH.md "General KV cache formula".
+#
+# NOT MoE: config.json carries no num_experts / num_experts_per_tok, so the MoE
+# block is deliberately absent (all params resident, dense FFN).
+hidden_size: 5120
+num_hidden_layers: 64
+num_attn_layers: 16          # derived: 64 / full_attention_interval(4)
+num_gdn_layers: 48           # derived: 64 - 16 (linear_attention layers)
+num_attn_heads: 24
+num_kv_heads: 4
+head_dim_attn: 256           # config.json text_config.head_dim
+intermediate_size: 17408
+linear_num_k_heads: 16       # config.json text_config.linear_num_key_heads
+linear_num_v_heads: 48       # config.json text_config.linear_num_value_heads
+# FILLED IN 2026-08-14 from the FP8 safetensors repo's own config.json, exactly as
+# the earlier "fill them in when the safetensors repo is pulled" note asked. These
+# are READ, not copied from the Qwen3.6 profile — they happen to match it, which is
+# a finding rather than an assumption. They only feed the DeltaNet recurrent-state
+# term (single-digit MB — see KV_MATH.md).
+linear_k_head_dim: 128       # config.json text_config.linear_key_head_dim
+linear_v_head_dim: 128       # config.json text_config.linear_value_head_dim
+linear_conv_kernel_dim: 4    # config.json text_config.linear_conv_kernel_dim
+max_ctx_supported: 262144    # config.json text_config.max_position_embeddings
+# Qwen3-Next-family convention: K and V are stored separately. NOT read from
+# config.json (it is not a config field) and NOT yet confirmed against a boot
+# log — nothing has booted. If a first boot reports a KV pool 2x smaller than the
+# formula predicts, this is the field to flip (see ADDING_MODELS.md Step 5).
+attention_k_eq_v: false
+# HYBRID (KV on 16 of 64 layers) — tools/kv-calc.py has no hybrid model for this
+# family, exactly as for tess-4-27b. C12 (KV projection) is skipped; ALL FOUR
+# shipped slugs (2 llama.cpp + 2 vLLM) carry kvcalc_key="SKIP" anyway — the vLLM
+# pair deliberately so, matching the qwen3.6-27b fp8 tier, because kv-calc cannot
+# model this attention layout and a prediction row would be fiction.
+kv_calc_supported: false
+# ⚠️ MODEL-level capability, NOT a per-slug promise. FLIPPED false -> true
+# 2026-08-14 when the official FP8 safetensors variant was added: that checkpoint
+# carries the vision tower IN-REPO (the FP8 quant explicitly SKIPS every
+# visual.blocks.* module) together with preprocessor_config.json and
+# video_preprocessor_config.json, so vLLM can serve images/video from it with no
+# separate projector download. Per variant, as of today:
+#   fp8            -> vision-capable (tower + preprocessors present). ⚠️ NEVER
+#                     EXERCISED: no image or video request has been served.
+#   unsloth-iq4nl  -> TEXT-ONLY: the GGUF repo's mmproj-{BF16,F16}.gguf were not
+#   unsloth-q8kxl     pulled, so neither llama.cpp compose mounts a projector.
+#                     Enabling vision there still needs a third download plus a
+#                     `kind: mmproj` weights entry and a `-vision.yml` compose
+#                     (see the qwen3.6-27b gguf_mmproj_f16 entry for the shape).
+vision_capable: true
+weights:
+  unsloth-iq4nl:
+    path: qwen3.8-27b-gguf/unsloth-iq4nl
+    local_subdir: qwen3.8-27b-gguf/unsloth-iq4nl
+    size_gb: 16.3
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/Qwen3.8-27B-GGUF
+    # REQUIRED, not optional: unsloth/Qwen3.8-27B-GGUF is a MULTI-QUANT bucket.
+    # Without `files:` the fetch is the WHOLE repo (ADDING_MODELS.md "Two silent
+    # traps"). The artifact sits at the repo ROOT, so it lands flat in
+    # local_subdir and needs no subfolder prefix.
+    files:
+      - Qwen3.8-27B-IQ4_NL.gguf
+    engine: llama-cpp
+    kind: gguf
+    # REQUIRED on GGUF: the schema default is "*.safetensors", which matches
+    # nothing here and makes c3 report PARTIAL / setup.sh report "download may
+    # have failed" on a complete, correct pull.
+    verify_glob: "*.gguf"
+    manual_note: "Unsloth imatrix IQ4_NL (apache-2.0). Single-3090 tier — drives llamacpp/qwen38-27b-single-iq4nl. LANDED on this rig 2026-08-14: 16,337,628,128 bytes = 16.33 GB decimal = 15.22 GiB. size_gb above is the decimal figure (what the setup.sh disk gate wants); the VRAM budget in the compose uses the 15.22 GiB. ⚠️ Size confirmed, CONTENTS NOT independently hash-verified and the file has never been loaded by any engine. Text-only: the sibling mmproj-{BF16,F16}.gguf projectors in the same repo were NOT fetched."
+  unsloth-q8kxl:
+    path: qwen3.8-27b-gguf/unsloth-q8kxl
+    local_subdir: qwen3.8-27b-gguf/unsloth-q8kxl
+    size_gb: 31.5
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/Qwen3.8-27B-GGUF
+    files:
+      - Qwen3.8-27B-UD-Q8_K_XL.gguf
+    engine: llama-cpp
+    kind: gguf
+    verify_glob: "*.gguf"
+    manual_note: "Unsloth Dynamic UD-Q8_K_XL (apache-2.0). Dual-3090 max-context tier — drives llamacpp/qwen38-27b-dual-q8kxl (31.5 GB needs both cards; layer-split -sm layer -ts 1,1). ⚠️ size_gb is the HF model-page figure — the download was STILL IN FLIGHT when this entry was authored (2026-08-14), so nothing on this rig has confirmed it. If the landed file differs materially, re-derive the compose's VRAM budget: the IQ4_NL sibling's page figure (16.3) was decimal GB and the real GiB was 15.22, i.e. ~7% smaller than a naive GiB read. Text-only (no mmproj fetched)."
+  # Official Qwen FP8 release — the safetensors/vLLM tier, added 2026-08-14.
+  # NO `files:` filter ON PURPOSE: Qwen/Qwen3.8-27B-FP8 is a SINGLE-artifact repo
+  # (one quant), not a multi-quant bucket, and serving needs the whole thing —
+  # 64 layers-N.safetensors + outside.safetensors + mtp.safetensors + tokenizer
+  # + both preprocessor configs. A whole-repo fetch is the correct scope here,
+  # and this entry's local_subdir is unique, so it cannot collide with a sibling
+  # slice (the case test-model-weights-registry guards). Contrast the two GGUF
+  # entries above, which MUST scope their fetch: they share one multi-quant repo.
+  fp8:
+    path: qwen3.8-27b-fp8
+    local_subdir: qwen3.8-27b-fp8
+    size_gb: 30.9
+    format: fp8
+    status: experimental
+    hf_repo: Qwen/Qwen3.8-27B-FP8
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "Official Qwen3.8-27B FP8 release (apache-2.0): quant_method fp8, fmt e4m3, activation_scheme dynamic, weight_block_size [128,128] (BLOCK-wise, weight_scale_inv tensors) — byte-shaped identically to the qwen3.6-27b `fp8` entry, which is what licenses reusing that tier's serving shape. Layer-split safetensors (layers-0..63 + outside.safetensors for embed/lm_head) plus an EMBEDDED MTP head (mtp.safetensors, text_config.mtp_num_hidden_layers=1) — verified in the repo's crc32 manifest, not inferred from the repo name. Drives the 'max' tier: vllm/qwen38-27b-dual-max (TP=2) + vllm/qwen38-27b-multi4-max (TP=4). FULL VLM: modules_to_not_convert excludes every visual.blocks.* so the vision tower stays higher-precision, and preprocessor_config.json + video_preprocessor_config.json ship in-repo — no separate projector needed (unlike the GGUF siblings). ⚠️ On Ampere sm_86 there is NO native FP8 compute: these weights run weight-only via the Marlin FP8 kernel (W8A16) — a memory/fidelity win, NOT a decode win. size_gb 30.9 is DECIMAL GB (= 28.75 GiB for VRAM budgeting — the ~7% unit trap the IQ4_NL sibling already demonstrated); the setup.sh disk gate wants the decimal figure. DOWNLOAD COMPLETE + MEASURED on this rig 2026-08-14: 66 safetensors totalling 30,866,866,928 bytes = 30.87 GB decimal = 28.75 GiB, at repo revision 017b9c7af6b5689d5dd426a76e0bc077eb5ca20a (== current HEAD). ⭐ That byte count is EXACTLY equal to the qwen3.6-27b fp8 checkpoint's (same 66-file layout, same total, distinct md5s) — identical architecture and quant layout, so the VRAM budget transfers 1:1. INTEGRITY: all 66 safetensors CRC32-verify against the repo's own crc32.txt. ⚠️ THREE non-weight files do NOT match that manifest — chat_template.jinja, generation_config.json, tokenizer_config.json — while all three parse/render correctly; the manifest is almost certainly stale relative to the repo's same-day updates (its sibling safetensors-md5sum.txt shipped EMPTY, so the publisher's manifest tooling is demonstrably unreliable here). Weights are trustworthy; do not treat that mismatch as download corruption without re-checking against a fresh manifest. ⚠️ NOTHING has ever loaded this checkpoint in any engine. Pull: WEIGHT_KEY=qwen3.8-27b:fp8 bash scripts/setup.sh qwen3.8-27b."
+default_weight_variant: unsloth-iq4nl
+# No MTP / draft artifact exists for this model on this stack: the source repo is
+# unsloth/Qwen3.8-27B-GGUF (NOT a -MTP-GGUF build), neither pulled quant carries
+# an embedded nextn head we have verified, and no matched external drafter GGUF
+# was fetched. An entry here that names a drafter YAML we don't ship would raise
+# CrossReferenceError at load_profiles() time, so this stays empty until a real
+# drafter is validated for this model.
+compatible_drafters: []
+# ⚠️ valid_tp is a VALIDITY list (will vLLM run this shard?), NOT a cleanliness
+# list (does KV divide evenly?). Those two diverge past TP=4 on this model and
+# conflating them is what made this list wrong until 2026-08-15.
+#
+# What vLLM v0.25.1 ACTUALLY enforces (read from the pinned image, not inferred):
+#   config/model.py:1212  `if total_num_attention_heads % tensor_parallel_size != 0` -> reject
+#   config/model.py:1318  KV heads: "We will replicate the KV heads in the case where
+#                         the number of KV heads is smaller than the tensor parallel
+#                         size so each GPU has at least one KV head."
+#                         `return max(1, total_num_kv_heads // tensor_parallel_size)`
+# There is NO divisibility assertion on KV heads anywhere in config/model.py or
+# config/parallel.py. So the binding constraint is ATTENTION heads (24 here), not
+# KV heads (4).
+#
+#   24 attn heads % TP:  1 ✅  2 ✅  4 ✅  8 ✅   |  3 ❌ 5 ❌ 6 ❌ 7 ❌
+#
+# TP=8 ADDED 2026-08-15 with vllm/qwen38-27b-multi8-max. ⚠️ VALID IS NOT THE SAME
+# AS GOOD: at TP=8, 4 KV heads < 8 ranks, so KV heads REPLICATE across rank pairs —
+# per-card KV stays at roughly the TP=4 figure (~2.00 GiB @262K) instead of halving
+# again, and only the WEIGHTS take the full 8-way split. The 8-card gain over 4 is
+# weight headroom bought with more all-reduce traffic. Whether it is a net win is
+# UNMEASURED; the compose header says so too.
+#
+# TP=4 was added 2026-08-14 alongside vllm/qwen38-27b-multi4-max. Neither the 4-
+# nor the 8-card entry is a claim that it has RUN: the reference rig has two 3090s,
+# so both are community-validated by design. Removing them would make the compat
+# gate reject those slugs outright (fits() C2), so the "never booted" caveat lives
+# in the slug status (🐣 incubating) and the compose header, not in this list.
+#
+# ⚠️ qwen3.6-27b carries the same [1,2,4] with the same "divides cleanly" reasoning
+# and the same 4 KV heads / 24 attn heads. If a multi8 slug is ever wanted there,
+# it needs the same correction — this was a stack-wide conflation, not a typo here.
+valid_tp:
+  - 1
+  - 2
+  - 4
+  - 8
+requires_genesis: false
