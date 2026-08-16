@@ -42,8 +42,11 @@
 #                  same growing-attention geometry and same weight footprint,
 #                  NIAH-fills to ~240K of its allocated 262K. Expect a comparable
 #                  or worse gap here until a ladder proves otherwise.
-#                - ENGINE COMPATIBILITY UNPROVEN: the v0.25.1 pin predates this
-#                  model. The Qwen3_5ForConditionalGeneration arch IS served on this
+#                - ENGINE COMPATIBILITY: ⚠️ the "pin predates the model" concern is
+#                  GONE as of the v0.27.1 bump — Qwen3.8-27B published 2026-08-05,
+#                  v0.27.1 on 2026-08-11 — and sibling qwen3.8 slugs (dual-fast,
+#                  dual-nvfp4) BOOT on it, verify-full 9/9. What is still unproven is
+#                  THESE fp8 slugs, which have never booted on any pin. The Qwen3_5ForConditionalGeneration arch IS served on this
 #                  pin (qwen3.6-27b FP8, Tess-4-27B), and the quantization_config is
 #                  byte-shaped identically to qwen3.6-27b-FP8 — but "should load" is
 #                  an inference, not an observation.

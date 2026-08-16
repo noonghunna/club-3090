@@ -77,7 +77,9 @@
 #   Pro 96 GB all take 262144 on the sibling.
 #
 # ⚠️ MTP is exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in the
-#   v0.25.1 pin) — mitigate with SPEC_N=0. On the 3.6 sibling the ORIGINAL OOM
+#   v0.27.1 pin — re-verified 2026-08-16 at its NEW path,
+#   vllm/third_party/flash_linear_attention/; the old fla/ path now false-negatives)
+#   — mitigate with SPEC_N=0. On the 3.6 sibling the ORIGINAL OOM
 #   root-caused to MTP, not context: the draft head + cudagraphs + GDN prefill
 #   scratch is what did not fit. Lower MAX_MODEL_LEN before blaming ctx.
 # ⚠️ THIS SLUG HAS NEVER BOOTED, and cannot on the reference rig — 24 GB is

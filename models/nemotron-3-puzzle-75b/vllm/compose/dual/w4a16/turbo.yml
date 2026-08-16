@@ -74,7 +74,7 @@
 services:
   vllm-nemotron-puzzle-75b:
     # vLLM STABLE. NemotronHPuzzleForCausalLM registered since v0.24.0 (#706) and carried in
-    # v0.25.x. Pinned to the vllm-stable engine spec (v0.25.1) so the direct-`docker compose`
+    # v0.25.x. Pinned to the vllm-stable engine spec (v0.27.1 since 2026-08-16) so the direct-`docker compose`
     # default matches the launcher-injected image — the NVFP4 multi4 sibling already runs v0.25.1
     # (TheFuzy's 4-card validation, #716) and Marlin csrc is byte-identical v0.24.0->v0.25.1.
     # Bumped v0.24.0->v0.25.1 2026-07-21 (image-drift fix; smoke-boot re-confirmed the W4A16 dual

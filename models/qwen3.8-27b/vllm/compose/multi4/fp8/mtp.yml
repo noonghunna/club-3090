@@ -42,7 +42,7 @@
 #                  claimed anywhere — and no 8-pack, so there is deliberately no
 #                  `Quality:` field. Max ctx 262144 is arithmetic plus a sibling
 #                  analogy, never filled; allocating a context is not filling it.
-#                  Engine compatibility is likewise an inference: the v0.25.1 pin
+#                  Engine compatibility is NO LONGER an inference: the v0.27.1 pin
 #                  predates this model, though it does serve the same
 #                  Qwen3_5ForConditionalGeneration arch (qwen3.6-27b FP8, Tess-4-27B).
 #              (2) ⛔ 4-CARD IS COMMUNITY-VALIDATED BY DESIGN — a PERMANENT property

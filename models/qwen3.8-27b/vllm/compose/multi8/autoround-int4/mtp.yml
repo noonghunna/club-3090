@@ -86,8 +86,12 @@
 #      (vLLM #43562 / TRT-LLM #10241).
 #   4. 32 GB and mem_util_safe 0.96 mean the memory values here are conservative
 #      on that class — they are calibrated to 24 GB Ampere.
-# ⚠️ MTP is exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in the
-#    v0.25.1 pin). Mitigate with SPEC_N=0. See docs/UPSTREAM.md.
+# ⚠️ MTP is exposed to OPEN vllm#50021 (GDN spec-decode wild write) — RE-VERIFIED
+#    LIVE IN THE v0.27.1 PIN 2026-08-16. ⚠️ The old check path is now a FALSE
+#    NEGATIVE: v0.27.1 vendored flash-linear-attention into vllm, so
+#    `fla/ops/fused_sigmoid_gating.py` returns NOT FOUND — which reads as "fixed".
+#    The kernel moved to vllm/third_party/flash_linear_attention/ops/ and Site 1 is
+#    byte-identical at the same line 106. Mitigate with SPEC_N=0. docs/UPSTREAM.md.
 # ⚠️⚠️ NOTHING ON THIS SLUG HAS EVER BOOTED, and that is PERMANENT: the
 #   reference rig has exactly two 3090s. The on-rig proxy is
 #   vllm/qwen38-27b-dual-fast (same config at TP=2) — its numbers transfer on
