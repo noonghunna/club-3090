@@ -7,6 +7,9 @@ standalone.
 
 from __future__ import annotations
 
+from textual.app import App, ComposeResult
+from textual.widgets import Label, RichLog
+
 from club3090_tui_core.widgets.live_pane import LivePane
 
 
@@ -52,3 +55,69 @@ class TestLivePaneTailBuffer:
         assert LivePane()._placeholder == "Ready."
         assert LivePane(placeholder="")._placeholder == ""
         assert LivePane(placeholder="logs stream here")._placeholder == "logs stream here"
+
+
+class _Host(App):
+    """Minimal host so the RichLog is mounted (scroll-follow needs layout)."""
+
+    CSS = "LivePane { width: 1fr; height: 1fr; }"
+
+    def compose(self) -> ComposeResult:
+        yield LivePane(id="lp")
+
+
+class TestLivePaneScrollFollow:
+    async def test_scrolling_up_disables_auto_follow(self):
+        async with _Host().run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            lp = pilot.app.query_one("#lp", LivePane)
+            log = pilot.app.query_one("#live-log", RichLog)
+            for i in range(40):
+                lp.append_line(f"line {i}")
+                await pilot.pause()
+            assert lp._follow is True
+            log.scroll_up(immediate=True, animate=False)
+            await pilot.pause()
+            assert lp._follow is False
+            assert log.auto_scroll is False  # write() must stop auto-scrolling too
+
+    async def test_scrolling_to_bottom_re_enables(self):
+        async with _Host().run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            lp = pilot.app.query_one("#lp", LivePane)
+            log = pilot.app.query_one("#live-log", RichLog)
+            for i in range(40):
+                lp.append_line(f"line {i}")
+                await pilot.pause()
+            log.scroll_up(immediate=True, animate=False)
+            await pilot.pause()
+            assert lp._follow is False
+            log.scroll_end(immediate=True, animate=False)
+            await pilot.pause()
+            assert lp._follow is True
+            assert log.auto_scroll is True
+
+    async def test_append_while_scrolled_up_does_not_move_offset(self):
+        async with _Host().run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            lp = pilot.app.query_one("#lp", LivePane)
+            log = pilot.app.query_one("#live-log", RichLog)
+            for i in range(40):
+                lp.append_line(f"line {i}")
+                await pilot.pause()
+            log.scroll_up(immediate=True, animate=False)
+            await pilot.pause()
+            before = log.scroll_y
+            lp.append_line("line 40")
+            await pilot.pause()
+            assert log.scroll_y == before  # reading history is not yanked away
+
+    async def test_set_title_updates_live_title_label(self):
+        lp = LivePane()
+        lp.set_title("whatever")  # unmounted — must not raise
+        async with _Host().run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            lp = pilot.app.query_one("#lp", LivePane)
+            lp.set_title("Live  ●  [bold]following[/bold]")
+            title = pilot.app.query_one(".live-title", Label)
+            assert title.content == "Live  ●  [bold]following[/bold]"
