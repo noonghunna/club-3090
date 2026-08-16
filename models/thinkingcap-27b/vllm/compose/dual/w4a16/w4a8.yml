@@ -92,7 +92,7 @@
 # Tensor-parallel: 2
 services:
   vllm-thinkingcap-27b-dual-w4a8:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-thinkingcap-27b-dual-w4a8}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

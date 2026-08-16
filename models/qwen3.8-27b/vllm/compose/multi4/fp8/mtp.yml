@@ -191,7 +191,7 @@ services:
     # nightlies; the #407 pin-drift fix). The launchers resolve the real image
     # from the `vllm-stable` engine profile and inject it over this default,
     # so this literal only bites a raw `docker compose` invocation (#254).
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-multi4-max}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

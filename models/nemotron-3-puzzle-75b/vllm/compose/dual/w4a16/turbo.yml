@@ -79,7 +79,7 @@ services:
     # (TheFuzy's 4-card validation, #716) and Marlin csrc is byte-identical v0.24.0->v0.25.1.
     # Bumped v0.24.0->v0.25.1 2026-07-21 (image-drift fix; smoke-boot re-confirmed the W4A16 dual
     # path boots coherent on v0.25.1). Override with VLLM_IMAGE=... for a specific nightly.
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-nemotron-puzzle-75b-dual-w4a16}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

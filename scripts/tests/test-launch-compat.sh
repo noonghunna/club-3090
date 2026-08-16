@@ -113,7 +113,7 @@ fi
 assert_contains "$out" "install.spec is not a docker image"
 
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell)"
-assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.25.1"
+assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.27.1"
 
 
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/gemma-int8-mtp --format shell)"
@@ -147,7 +147,7 @@ out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell 
 assert_not_contains "$out" "KV_CACHE_DTYPE"
 # unmapped card -> degrade to compose defaults, never an error
 out="$(python3 "$HELPER" resolve-variant-pin --variant vllm/dual --format shell --gpu-spec "0|Weird GPU|8192|7.0")"
-assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.25.1"
+assert_contains "$out" "VLLM_IMAGE=vllm/vllm-openai:v0.27.1"
 assert_not_contains "$out" "KV_CACHE_DTYPE"
 echo "  ok: #246 arch-aware KV injection matrix (8 cases)"
 
@@ -214,7 +214,7 @@ echo "  ok: fp8/NVFP4 DeepGEMM disable (5090/Ada down · Hopper keep · non-fp8 
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"
-  assert_contains "$out" "image: vllm/vllm-openai:v0.25.1"
+  assert_contains "$out" "image: vllm/vllm-openai:v0.27.1"
 
   out="$(VLLM_NIGHTLY_SHA="$CLEAN_SHA" VLLM_IMAGE=vllm/vllm-openai:latest docker compose -f "$ROOT_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml" config 2>/dev/null)"
   assert_contains "$out" "image: vllm/vllm-openai:latest"
@@ -230,7 +230,7 @@ print(clean["VLLM_IMAGE"])
 print(gemma["VLLM_IMAGE"])
 PY
 )"
-assert_contains "$out" "vllm/vllm-openai:v0.25.1"   # clean (vllm/dual → vllm-stable) bumped to v0.25.1
+assert_contains "$out" "vllm/vllm-openai:v0.27.1"   # clean (vllm/dual → vllm-stable) bumped to v0.27.1
 assert_contains "$out" "vllm/vllm-openai:v0.22.0"   # gemma (vllm/gemma-int8-mtp → vllm-gemma-stable) stays v0.22.0
 
 # --- #809: decode_granularity travels from the profile YAML to the launchers --

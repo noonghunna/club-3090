@@ -83,7 +83,7 @@
 # ===========================================================================
 services:
   vllm-qwen38-27b-single-nvfp4:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-single-nvfp4}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     shm_size: "16gb"

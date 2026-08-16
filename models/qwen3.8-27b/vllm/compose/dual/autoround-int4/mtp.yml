@@ -111,7 +111,7 @@
 # ===========================================================================
 services:
   vllm-qwen38-27b-dual-fast:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-dual-fast}"
     # Repo contract (test-compose-restart-policy): every shipped vLLM compose uses
     # the reboot-surviving knob so launch.sh-as-a-service returns after a reboot.
