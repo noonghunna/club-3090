@@ -2,7 +2,8 @@
 # Profile (at-a-glance):
 #   Model:     Qwen3.8-27B (Avuja AutoRound INT4 — 4-bit, group 128, sym,
 #              packing auto_round:auto_gptq; 18.23 GiB. Vision tower and MTP
-#              head both ship UNQUANTIZED at bf16.)
+#              head both ship UNQUANTIZED at bf16.) Served **W4A8** — int8
+#              activations ON by default (W4A8=0 for W4A16).
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink; NVLINK_MODE=auto detects)
 #   Drafter:   MTP n=4 built-in (SPEC_N override; SPEC_N=0 disables)
 #   KV:        fp8 -> e4m3 (KV_CACHE_DTYPE override)
@@ -32,24 +33,33 @@
 #   ⭐ No instability at n=4/5/6 (restarts=0, no crash signatures). The 3.6
 #      family's "n>=4 unstable / n=6-8 regress" guidance did NOT reproduce here.
 #
-# W4A8 (int8 activations) is an OPT-IN KNOB, not the default — same pattern as
-# the qwen3.6 fast tier. The patches are mounted and are a NO-OP until you set
-# VLLM_MARLIN_INPUT_DTYPE=int8. Measured on this checkpoint: +41.8% prefill /
-# -28.6% TTFT@10K, but -8% decode on BOTH prompt shapes, verify-full 9/9 either
-# way. ⚠️ That decode regression does NOT match the qwen3.6 tier's W4A8 result
-# (+50% prefill, decode ~neutral) — treat "decode is free" as a 3.6 finding that
-# did not transfer. It works here because this checkpoint is auto-round-packed
-# [k/8,n], which is what the vendored negscale fold assumes; a compressed-tensors
-# pack-quantized checkpoint hard-fails that fold (LEARNINGS.md 2026-08-16).
+# ⭐ W4A8 (int8 activations) IS THE SHIPPED DEFAULT since 2026-08-16 — set W4A8=0
+# for the W4A16 path. Measured on this checkpoint, MTP OFF, single variable:
+# +41.8% prefill / -28.6% TTFT@10K, and -8% decode on BOTH prompt shapes;
+# verify-full 9/9 either way.
+#   ⚠️ THE DECODE COST IS REAL AND IS NOW ON BY DEFAULT. It does NOT match the
+#      qwen3.6 tier's W4A8 result (+50% prefill, decode ~neutral) — treat
+#      "decode is free" as a 3.6 finding that did NOT transfer to 3.8.
+#   ⭐ WHY DEFAULT IT ANYWAY: the -8% was measured with the DRAFTER OFF, and the
+#      n-sweep that chose n=4 ran entirely UNDER W4A8. So W4A8 + n=4 — this
+#      config — is the combination that was actually benched (76.40 narrative /
+#      105.60 code), while W4A16 + n=4 has never been measured at all.
+#      Defaulting to int8 makes the shipped default the TESTED path.
+#      ⚠️ The int8-vs-16bit delta UNDER MTP is still unmeasured; -8% is the
+#         MTP-off figure and should not be quoted for this config.
+#   It works here only because this checkpoint is auto-round-packed [k/8,n],
+#   which is what the vendored negscale fold assumes; a compressed-tensors
+#   pack-quantized checkpoint hard-fails that fold (LEARNINGS.md 2026-08-16).
 #
-# ⚠️⚠️ CONCURRENCY vs THE DRAFTER — the one measured conflict on 24 GB cards.
+# ⚠️⚠️ CONCURRENCY vs THE DRAFTER — the measured conflict, now ON THE DEFAULT PATH.
 #   At MAX_NUM_SEQS=2 with 16K prompts, MTP n=4 **UNDER W4A8** pushed peak VRAM to
 #   23,872 MiB/card — 1.75 GB OVER the 0.90 budget — and requests began failing
 #   while ~535K KV tokens sat free. SPEC_N=0 at the same concurrency ran clean.
-#   ⚠️ That failure was measured with int8 activations ON. The SHIPPED default
-#      here is W4A16, where it has NOT been reproduced (or ruled out).
-#   → If you enable W4A8 (VLLM_MARLIN_INPUT_DTYPE=int8), drop MAX_NUM_SEQS to 1
-#     or set SPEC_N=0. The two do not coexist on 24 GB.
+#   ⭐ W4A8 used to be opt-in, so this was a warning for people who turned it on.
+#      It is now the DEFAULT, which is why MAX_NUM_SEQS ships at **1** rather than
+#      2 — shipping N=2 would ship the measured failure.
+#   → For concurrency, set SPEC_N=0 (or W4A8=0) and then raise MAX_NUM_SEQS. The
+#     drafter and multi-stream do not coexist under int8 on 24 GB.
 #   → The drafter also costs ~13% of the KV pool (652,346 -> 567,737 tokens).
 #
 # ⚠️ GPU_MEMORY_UTILIZATION IS 0.90 HERE, NOT THE TIER'S 0.92 — DELIBERATE, AND
@@ -147,13 +157,19 @@ services:
       - OMP_NUM_THREADS=1
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
       - SPEC_N=${SPEC_N:-4}
-      # OPT-IN W4A8 — BARE PASS-THROUGH, NOT `${VAR:-}`.
-      # ⚠️ `- VLLM_MARLIN_INPUT_DTYPE=${VLLM_MARLIN_INPUT_DTYPE:-}` sets the var to
-      # the EMPTY STRING rather than leaving it unset, and vLLM validates it:
+      # ⭐ W4A8 (int8 activations) SHIPS ON — set W4A8=0 for the W4A16 path.
+      - W4A8=${W4A8:-1}
+      # ⚠️⚠️ WHY A SEPARATE BOOLEAN INSTEAD OF `${VLLM_MARLIN_INPUT_DTYPE:-int8}`:
+      # vLLM VALIDATES this variable against a closed set and raises on anything
+      # else — INCLUDING THE EMPTY STRING:
       #   ValueError: Invalid value '' for VLLM_MARLIN_INPUT_DTYPE.
       #                Valid options: ['int8', 'fp8'].
-      # That kills every worker at load_model, so the W4A16 DEFAULT path never
-      # boots. Bare `- VAR` passes it through only when the host has it set.
+      # (verified against the pinned image, 2026-08-16). So there is NO value that
+      # means "off" — only ABSENCE means off. A `${VAR:-int8}` default would make
+      # W4A16 unreachable: every attempt to disable it would either re-substitute
+      # int8 or kill every worker at load_model. Hence W4A8=0/1 gates whether the
+      # var is exported at all, and this stays a BARE pass-through so an explicit
+      # host value still wins.
       - VLLM_MARLIN_INPUT_DTYPE
     entrypoint:
       - bash
@@ -161,9 +177,17 @@ services:
       - |
         set -e
         source /etc/club3090/detect_nvlink.sh
+        # ⚠️ THIS MUST RUN BEFORE install.sh, NOT AFTER. install.sh only hard-FAILS
+        # on a patch-apply error when VLLM_MARLIN_INPUT_DTYPE is already set; if we
+        # exported it afterwards, a failed patch would downgrade to a WARNING and we
+        # would serve a HALF-WIRED int8 config — the exact thing that guard exists
+        # to prevent.
+        if [ -z "$${VLLM_MARLIN_INPUT_DTYPE:-}" ] && [ "$${W4A8:-1}" != "0" ]; then
+          export VLLM_MARLIN_INPUT_DTYPE=int8
+        fi
         bash /etc/club3090/w4a8/install.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
-        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>}"
+        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         SPEC=""
         if [ "$${SPEC_N:-4}" -gt 0 ] 2>/dev/null; then
           SPEC="--speculative-config {\"method\":\"mtp\",\"num_speculative_tokens\":$${SPEC_N:-4}}"
@@ -191,7 +215,10 @@ services:
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.90}"
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-2}"
+      # ⚠️ 1, NOT 2 — see the CONCURRENCY vs THE DRAFTER block in the header.
+      # W4A8 + MTP n=4 at N=2 is the combination that OOM'd on 24 GB cards, and
+      # W4A8 is now the shipped default, so N=2 would ship a measured failure.
+      - "${MAX_NUM_SEQS:-1}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       - --kv-cache-dtype
