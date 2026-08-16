@@ -9,9 +9,16 @@
 #              is weight-only, no k_scale/v_scale tensors, and vLLM disables
 #              calculate_kv_scales on this hybrid family). NOT fp8_e5m2 — that is
 #              hard-rejected against an fp8 checkpoint. See "KV choice" below.
-#   Vision:    base is a full VLM (vision_config + preprocessor_config.json +
-#              video_preprocessor_config.json ship in this repo, and the FP8 quant
-#              deliberately SKIPS the vision tower) — but UNTESTED on this serve.
+#   Vision:    ✅ WORKING — image + video INPUT, no extra flags (measured 2026-08-16).
+#              INPUT ONLY: it consumes media and emits TEXT. No image/video
+#              generation — the arch has no VAE/UNet/diffusion head.
+#              Image: colour+layout described correctly at temp 0 (red/blue/green
+#              discriminated, ~66-70 prompt tokens). Video: 3.25s clip, correct
+#              temporal order + the blended transition frame. Smoke test only —
+#              no vision quality gate, no resolution/duration limits explored.
+#              Video cost ~72.7 tok/s @256x256 (36 tok/frame at default fps=2),
+#              scaling with pixel count: 23 @128px, 263 @512px, 583 @768px.
+#              So ~61 min of 256x256 video fits the 262144 window; ~17 min @512px.
 #   Template:  native — the repo's own chat_template.jinja. NOT froggeric.
 #              ⚠️ This is a deliberate break from the qwen3.6-27b composes; see
 #              "Chat template" below. The 3.8 template is a DIFFERENT program.
@@ -74,25 +81,11 @@
 #              the 4-card vllm/qwen38-27b-multi4-max. NOT yet recommendable for
 #              anything — see Caveats.
 # ---------------------------------------------------------------------------
-# Sibling composes for this model:
-#
-#   | Slug                             | Cards | Engine    | Weights          | KV   | Max ctx | Drafter   |
-#   |----------------------------------|-------|-----------|------------------|------|---------|-----------|
-#   | llamacpp/qwen38-27b-single-iq4nl | 1     | llama.cpp | IQ4_NL 16.3 GB   | q8_0 | 131072  | draft-mtp |
-#   | llamacpp/qwen38-27b-dual-q8kxl   | 2     | llama.cpp | UD-Q8_K_XL 31.5G | q8_0 | 262144  | draft-mtp |
-#   | vllm/qwen38-27b-dual-max  (THIS) | 2     | vLLM      | official FP8 31G | fp8  | 262144  | MTP n=3   |
-#   | vllm/qwen38-27b-multi4-max        | 4     | vLLM      | official FP8 31G | bf16 | 262144  | MTP n=3   |
-#   | vllm/qwen38-27b-multi8-max       | 8     | vLLM      | official FP8 31G | bf16 | 262144  | MTP n=3   |
-#
-# All FIVE are 🐣 Incubating. ⚠️ THIS DUAL IS NO LONGER A CLEAN PROXY FOR THE
-# MULTIS. It used to be described as "the same serving config at TP=4"; since
-# 2026-08-15 the 4- and 8-card composes run **bf16 KV** while this one stays
-# **fp8 e4m3**, because only TP>=4 has the per-card headroom (weights ~7.2 GiB/card
-# at TP=4 and ~3.6 at TP=8, vs ~14.4 here — a 16.00 GiB bf16 pool does not fit
-# beside them on 2 cards). So numbers measured here transfer on topology but NOT
-# on KV: pool size, concurrency and any KV-sensitive quality result differ by
-# construction. Everything else — weights, template, MTP n=3, max ctx — is shared.
-#
+# Siblings: 5 slugs for this model (2 llama.cpp, 3 vLLM) — see
+# `switch.sh --list --all` or the registry. ⚠️ This dual is NOT a clean proxy
+# for the multis: since 2026-08-15 they run bf16 KV and this runs fp8 e4m3, so
+# pool size / concurrency / KV-sensitive results do not transfer. Rationale in
+# the registry status_note (not duplicated here).
 # ---------------------------------------------------------------------------
 # ARCHITECTURE (read from THIS checkpoint's config.json, 2026-08-14):
 #   architectures: ["Qwen3_5ForConditionalGeneration"], model_type: qwen3_5,
@@ -139,47 +132,27 @@
 #   Hopper / consumer Blackwell the native FP8 GEMM path is real (the launchers
 #   inject VLLM_USE_DEEP_GEMM=0 on sm_120/121, where DeepGEMM has no recipe).
 #
-# CONTEXT BUDGET (COMPUTED — no boot has confirmed a single line of this):
-#   KV, per docs/KV_MATH.md "General KV cache formula", over the 16 GROWING
-#   layers only (NOT 64), K and V stored separately:
-#     per_token_elems = 16 growing x 4 kv_heads x 256 head_dim x 2 tensors
-#                     = 32,768 elements/token
-#     fp8/e4m3 = 1 B/elem -> 32,768 B/token
-#       -> 262,144 ctx = 8.00 GiB total, 4.00 GiB per card at TP=2
+# CONTEXT BUDGET (COMPUTED — no boot has confirmed it):
+#   KV over the 16 GROWING layers only (not 64), K+V separate — docs/KV_MATH.md:
+#     16 x 4 kv_heads x 256 head_dim x 2 = 32,768 elems/token; fp8 = 32,768 B/token
+#     -> 262,144 ctx = 8.00 GiB total = 4.00 GiB/card at TP=2
+#   Weights 28.75 GiB (~14.4 GiB/card at TP=2). ⚠️ UNIT TRAP: the HF page quotes
+#   DECIMAL GB (30.87); the VRAM-relevant GiB figure is ~7% smaller. Download
+#   provenance + CRC32 status: the model profile. Why 262144 is the right ship:
+#   the registry status_note.
+#   ⚠️ Margin is tight and unverified — the first boot is the test. If it OOMs at
+#   KV init the levers in order are MAX_MODEL_LEN=196608 -> GPU_MEMORY_UTILIZATION
+#   -> MAX_NUM_BATCHED_TOKENS=4096.
+#   ⚠️ tools/kv-calc.py cannot model this hybrid (kvcalc_key="SKIP") — no
+#   prediction row, and don't add one without a real boot log.
 #
-#   Weights: MEASURED on disk 2026-08-14 after the download completed — 66
-#   safetensors totalling 30,866,866,928 bytes = 30.87 GB decimal = 28.75 GiB,
-#   i.e. ~14.4 GiB/card at TP=2. Repo revision 017b9c7a (== current HEAD).
-#   ⚠️ UNIT TRAP (it has bitten the GGUF siblings): the HF page figure is DECIMAL
-#   GB; the VRAM-relevant number is the GiB one, ~7% smaller.
-#   INTEGRITY: all 66 safetensors CRC32-verify against the repo's crc32.txt.
-#   ⚠️ THREE non-weight files do NOT match that manifest — chat_template.jinja,
-#   generation_config.json, tokenizer_config.json — though all three parse and
-#   render correctly. Most likely a stale publisher manifest (the sibling
-#   safetensors-md5sum.txt shipped EMPTY), not a bad download. Worth re-checking
-#   if the template ever misbehaves, but the file ON DISK is what vLLM loads and
-#   it is the file the "Chat template" analysis below was written against.
-#
-#   The anchor for shipping 262144 is NOT arithmetic alone — it is that
-#   qwen3.6-27b-FP8 measures 30,866,866,928 bytes on this same disk, the SAME
-#   total to the byte (66 files, distinct md5s — identical architecture and quant
-#   layout, not a duplicate directory), with IDENTICAL KV geometry, and boots +
-#   serves 262144 at TP=2 / util 0.92 / max_num_seqs 2 / fp8 e4m3 KV on this
-#   exact pin and rig. That tier reports ~21.4 GB/card and a KV pool ~1.13x the
-#   addressable context — i.e. it is TIGHT but real. Expect the same margin here.
-#
-#   ⚠️ Because the margin is tight and unverified, the first boot is the test.
-#   If it OOMs at KV init, the levers in order are: MAX_MODEL_LEN=196608 ->
-#   GPU_MEMORY_UTILIZATION down -> MAX_NUM_BATCHED_TOKENS=4096.
-#   ⚠️ tools/kv-calc.py CANNOT model this hybrid (kv_calc_supported: false in the
-#   model profile, kvcalc_key="SKIP" on both registry entries) — do not expect a
-#   prediction row, and do not add one without a real boot log.
-#
-#   NOT TAKEN — the model card documents a YaRN extension to 1,000,000 tokens
-#   (VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 + an --hf-overrides rope_parameters block).
-#   Irrelevant on 24 GB cards: at 32,768 B/token the KV alone would be ~30.5 GiB
-#   at 1M, on top of ~28.8 GiB of weights. 262144 is not our ceiling because the
-#   model stops there — it is where the VRAM stops. Don't reach for the override.
+#   YARN NOT TAKEN. The card documents a YaRN extension to 1M
+#   (VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 + an --hf-overrides rope block). Measured
+#   2026-08-16: at factor 4.0 (1,048,576) KV alone is 32.00 GiB = 16.00 GiB/card
+#   at TP=2, which with weights is 25.12 GiB/card — over a 24 GB card BEFORE
+#   cudagraphs/activations. It fits only at TP>=4 (12.56 GiB/card) — and KV heads
+#   REPLICATE past TP=4, so TP=8 buys weights, not context. 262144 is where the
+#   VRAM stops, not where the model stops.
 #
 # KV CHOICE — why `fp8` and specifically why NOT `fp8_e5m2`:
 #   `--kv-cache-dtype fp8` resolves to e4m3 and routes attention to FlashInfer.

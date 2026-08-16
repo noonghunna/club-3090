@@ -5,7 +5,16 @@
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink; NVLINK_MODE=auto)
 #   Drafter:   MTP n=3 built-in (SPEC_N override; SPEC_N=0 disables)
 #   KV:        fp8 -> e4m3 (KV_CACHE_DTYPE override)
-#   Vision:    tower present — UNTESTED, ships text-only
+#   Vision:    ✅ WORKING — image + video INPUT, no extra flags (measured 2026-08-16).
+#              INPUT ONLY: it consumes media and emits TEXT. No image/video
+#              generation — the arch has no VAE/UNet/diffusion head.
+#              Image: colour+layout described correctly at temp 0 (red/blue/green
+#              discriminated, ~66-70 prompt tokens). Video: 3.25s clip, correct
+#              temporal order + the blended transition frame. Smoke test only —
+#              no vision quality gate, no resolution/duration limits explored.
+#              Video cost ~72.7 tok/s @256x256 (36 tok/frame at default fps=2),
+#              scaling with pixel count: 23 @128px, 263 @512px, 583 @768px.
+#              So ~61 min of 256x256 video fits the 262144 window; ~17 min @512px.
 #   Template:  native — the repo's own chat_template.jinja. NOT froggeric.
 #   Max ctx:   262144
 #   Genesis:   none

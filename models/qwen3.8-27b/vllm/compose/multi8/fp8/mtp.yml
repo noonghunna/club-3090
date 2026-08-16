@@ -19,8 +19,16 @@
 #              (vLLM has no literal `fp16` value for --kv-cache-dtype; `auto`
 #              following a bf16 model dtype IS the 16-bit KV path, and matches
 #              `kv_format="bf16"` in the registry.)
-#   Vision:    base is a full VLM (vision tower + preprocessors ship in the repo,
-#              and the FP8 quant SKIPS the vision tower) — UNTESTED on this serve.
+#   Vision:    ✅ WORKING — image + video INPUT, no extra flags (measured 2026-08-16).
+#              INPUT ONLY: it consumes media and emits TEXT. No image/video
+#              generation — the arch has no VAE/UNet/diffusion head.
+#              Image: colour+layout described correctly at temp 0 (red/blue/green
+#              discriminated, ~66-70 prompt tokens). Video: 3.25s clip, correct
+#              temporal order + the blended transition frame. Smoke test only —
+#              no vision quality gate, no resolution/duration limits explored.
+#              Video cost ~72.7 tok/s @256x256 (36 tok/frame at default fps=2),
+#              scaling with pixel count: 23 @128px, 263 @512px, 583 @768px.
+#              So ~61 min of 256x256 video fits the 262144 window; ~17 min @512px.
 #   Template:  native — the repo's own chat_template.jinja. NOT froggeric.
 #              See the dual sibling's "Chat template" section for the full diff.
 #   Max ctx:   262144 — the architectural ceiling. COMPUTED + inherited, never
@@ -75,24 +83,11 @@
 #              and concurrency, not single-stream decode. NOT yet recommendable for
 #              anything; see Caveats.
 # ---------------------------------------------------------------------------
-# Sibling composes for this model:
-#
-#   | Slug                             | Cards | Engine    | Weights          | KV   | Max ctx | Drafter   |
-#   |----------------------------------|-------|-----------|------------------|------|---------|-----------|
-#   | llamacpp/qwen38-27b-single-iq4nl | 1     | llama.cpp | IQ4_NL 16.3 GB   | q8_0 | 131072  | draft-mtp |
-#   | llamacpp/qwen38-27b-dual-q8kxl   | 2     | llama.cpp | UD-Q8_K_XL 31.5G | q8_0 | 262144  | draft-mtp |
-#   | vllm/qwen38-27b-dual-max         | 2     | vLLM      | official FP8 31G | fp8  | 262144  | MTP n=3   |
-#   | vllm/qwen38-27b-multi4-max       | 4     | vLLM      | official FP8 31G | bf16 | 262144  | MTP n=3   |
-#   | vllm/qwen38-27b-multi8-max (THIS)| 8     | vLLM      | official FP8 31G | bf16 | 262144  | MTP n=3   |
-#
-# All FIVE are 🐣 Incubating. THIS FILE IS THE multi4/fp8/mtp.yml SIBLING WITH THREE
-# LINES CHANGED — `--tensor-parallel-size`, the required gpu-count, and the port. Keep them
-# in lockstep: a change to one that is not mirrored is a bug, not a variant.
-# ⚠️ KV is NOT one of the three: multi4 and multi8 BOTH run bf16, so they stay
-# mirrored on that line. It is the DUAL that differs (fp8 e4m3) — deliberately, on
-# headroom grounds. Mirror KV changes between the two multis; do not propagate
-# either one to the dual without redoing its per-card budget.
-#
+# Siblings: 5 slugs for this model (2 llama.cpp, 3 vLLM) — see
+# `switch.sh --list --all` or the registry. ⚠️ This dual is NOT a clean proxy
+# for the multis: since 2026-08-15 they run bf16 KV and this runs fp8 e4m3, so
+# pool size / concurrency / KV-sensitive results do not transfer. Rationale in
+# the registry status_note (not duplicated here).
 # ---------------------------------------------------------------------------
 # WHAT 8 CARDS ACTUALLY BUY (structural, NOT measured here):
 #   The weights are ~28.8 GiB total whatever the split, so TP=8 does not unlock
