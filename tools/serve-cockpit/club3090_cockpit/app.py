@@ -10604,10 +10604,70 @@ class CockpitApp(App):
 
     @work(group="container-logs", exclusive=True)
     async def _log_follow_poll(self) -> None:
-        """One follow tick — the read + anchor dedupe lands in Task 4.  The
-        guards already make a disarmed/paused tick a no-op."""
+        """One follow tick: re-read the tail, append only the NEW lines
+        (tinted), resync if the anchor is gone.  Guards in order — any miss
+        is a no-op (the mode stays armed; see the spec's stopped-row rule)."""
         if not self._log_follow_armed or self._log_follow_paused:
             return
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
+            return
+        if self._active_drill_tab() != "drill-tab-logs":
+            return
+        con = self._selected_container()
+        if con is None:
+            return
+        # Local liveness check (from the periodic estate poll — no extra
+        # docker call).  A stopped selection no-ops while armed (browsing to
+        # a different stopped row keeps the mode armed; follow resumes when
+        # the next running row is selected) — EXCEPT when the container that
+        # was being followed itself stopped: the live indicator would lie
+        # about a dead container, so note + disarm.
+        if self._is_stopped_service(con):
+            if con.name == self._log_follow_name:
+                self._log_follow_death_note(con.name)
+                self._log_follow_disarm()
+            return
+        try:
+            live = self.query_one("#drill-logs", LivePane)
+        except Exception:
+            return
+        res = await self._data.container_logs(con.name, tail=200)
+        if res.get("error"):
+            live.append_line(f"[dim]follow stopped: {res['error']}[/dim]", buffer=False)
+            self._log_follow_disarm()
+            return
+        lines = res.get("lines", [])
+        if not lines:
+            return  # quiet container — keep the anchor, append nothing
+        # The anchor must belong to THIS container: navigation re-snapshots +
+        # rebases, but a lost race falls back to a full resync ("a new look
+        # at the tail" — normal color, the same semantic as a snapshot).
+        if con.name != self._log_follow_name or self._log_follow_anchor is None:
+            live.clear_log()
+            for ln in lines:
+                live.append_line(ln)
+            self._log_follow_anchor = lines[-1]
+            self._log_follow_name = con.name
+            return
+        anchor = self._log_follow_anchor
+        idx = -1
+        for j in range(len(lines) - 1, -1, -1):  # LAST occurrence
+            if lines[j] == anchor:
+                idx = j
+                break
+        if idx < 0:
+            # Anchor missing (≥200 new lines / restart / in-place progress-bar
+            # line) — resync.
+            live.clear_log()
+            for ln in lines:
+                live.append_line(ln)
+        else:
+            # Only the lines after the anchor are new — tinted (brighter
+            # default foreground).  Display-only: LivePane's [Y]-copy buffer
+            # strips the markup (Text.from_markup(...).plain).
+            for ln in lines[idx + 1:]:
+                live.append_line(f"[bold]{ln}[/bold]")
+        self._log_follow_anchor = lines[-1]
 
     def action_s_key(self) -> None:
         """[s] is context-sensitive:
@@ -10708,6 +10768,13 @@ class CockpitApp(App):
             return
         for ln in res.get("lines", []):
             live.append_line(ln)
+        # Follow-awareness: while armed, EVERY successful full-tail render
+        # rebases the anchor + name — the arm snapshot, navigation snapshots
+        # (row-highlight → _load_active_drill_tab), and a manual [l] while
+        # following (= a natural "resync now"; polling continues untouched).
+        if self._log_follow_armed:
+            self._log_follow_anchor = res.get("lines")[-1] if res.get("lines") else None
+            self._log_follow_name = name
 
     def action_container_rm(self) -> None:
         """[X] on the merged mode's Containers tab: reconcile-gated `docker rm
