@@ -212,15 +212,26 @@ services:
       # matching the vLLM composes. INERT under the shipped `--reasoning off`:
       # the template only reads reasoning_effort inside
       # `if enable_thinking is undefined or true`, and --reasoning off passes
-      # enable_thinking:false (verified live via /apply-template WITH tools --
-      # without tools the template never emits the instruction at all, so a
-      # no-tools probe proves nothing).
+      # enable_thinking:false.
       # ⚠️ low is an ACTIVE instruction: 'Keep your thinking brief and focused,
       # moving directly to the conclusion without unnecessary elaboration.' It is
       # not "less of medium" -- medium has no branch and injects nothing. xhigh
       # appends 'think carefully, validate key assumptions...', which is what
       # collides with cli-40's flat 300s per-model-call cap on these sub-55 tok/s
-      # configs. ⚠️ xhigh|medium|low ONLY -- `high` RAISES at render.
+      # configs.
+      # ⚠️⚠️ THIS ENGINE DIVERGES FROM vLLM ON `high` -- read before setting it.
+      # The unsloth GGUF's EMBEDDED template (read from the GGUF kv 2026-08-16;
+      # byte-identical in UD-Q8_K_XL and IQ4_NL) carries a branch the HF
+      # safetensors template does NOT:
+      #     {%- if resolved_reasoning_effort == 'high' %}
+      #         {%- set resolved_reasoning_effort = 'xhigh' %}
+      # So here `high` SILENTLY becomes xhigh -- the slowest, most token-hungry
+      # level, and the one that collides with the 300s cap above -- whereas the
+      # vLLM path RAISES on it. Setting REASONING_EFFORT=high on this engine
+      # gets you the opposite of what the name suggests, with no error.
+      # ⚠️ This corrects two claims previously in this header: `high` does NOT
+      # raise on this path, and the template DOES emit the instruction with no
+      # tools present (it has a no-tools else-branch at template line ~90).
       - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-low}"}}
       - CUDA_VISIBLE_DEVICES=${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}
     # ⚠ -np 1 is intentional on a single 24 GB card — do NOT raise it to
