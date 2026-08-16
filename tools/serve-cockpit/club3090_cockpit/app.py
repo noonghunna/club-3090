@@ -9521,6 +9521,10 @@ class CockpitApp(App):
         except Exception:
             pass
         self._active_mode = index
+        if index != 0:
+            # Leaving the merged mode — log-follow can only be armed in mode 0;
+            # disarm on leave (no background polling; re-entry starts in OFF).
+            self._log_follow_disarm()
         # Refresh the footer so bindings shown/hidden update immediately.
         self._sync_footer_labels()
         self.refresh_bindings()
@@ -10489,10 +10493,120 @@ class CockpitApp(App):
         self.stream_container_logs(con.name)
 
     def action_container_follow(self) -> None:
-        """[f] on the Containers tab: arm/pause/resume the live log tail
-        (full arm/pause/resume logic lands with the tick; the context guard
-        matches l/t)."""
+        """[f] on the Containers tab — the log-follow toggle.
+
+        off → following: arm — activate the Logs drill, take the
+        `--tail 200` snapshot, start the 2s poll (armed/name are set BEFORE
+        the snapshot so the snapshot path's anchor rebase applies).
+        following → paused: stop the timer; anchor/name survive so the
+        resume can pick up incrementally (paused is NOT the same as off).
+        paused → following: one immediate incremental poll + restart."""
         if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
+            return
+        if self._log_follow_armed and self._log_follow_paused:
+            self._log_follow_resume()
+            return
+        if self._log_follow_armed:
+            self._log_follow_pause()
+            return
+        con = self._selected_container()
+        if con is None:
+            self.notify("No container selected.", title="Logs", severity="warning", timeout=3)
+            return
+        if self._is_stopped_service(con):
+            self.notify(f"{con.name} is not running.", title="Logs", severity="warning", timeout=3)
+            return
+        try:
+            tabs = self.query_one("#drill-tabs", TabbedContent)
+            tabs.active = "drill-tab-logs"
+        except Exception:
+            pass
+        self._log_follow_armed = True
+        self._log_follow_paused = False
+        self._log_follow_name = con.name
+        self.stream_container_logs(con.name)  # snapshot — rebases the anchor (Task 4)
+        self._log_follow_timer = self.set_interval(_LOG_FOLLOW_PERIOD, self._log_follow_tick)
+        self._set_log_follow_title()
+        self.notify("Log follow armed — [f] to pause", title="Logs", timeout=3)
+
+    def _log_follow_pause(self) -> None:
+        """following → paused: stop the timer (anchor/name kept)."""
+        timer = self._log_follow_timer
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:
+                pass
+        self._log_follow_timer = None
+        self._log_follow_paused = True
+        self._set_log_follow_title()
+        try:
+            live = self.query_one("#drill-logs", LivePane)
+            # Display-only note — never enters the [Y]-copy tail.
+            live.append_line("[dim]follow paused[/dim]", buffer=False)
+        except Exception:
+            pass
+
+    def _log_follow_resume(self) -> None:
+        """paused → following: one immediate incremental poll against the
+        stored anchor (quiet log → no change; lines emitted during the pause
+        arrive tinted), then restart the interval.  (Task 4's poll makes the
+        immediate call meaningful; until then it is a guarded no-op.)"""
+        self._log_follow_paused = False
+        self._log_follow_tick()
+        self._log_follow_timer = self.set_interval(_LOG_FOLLOW_PERIOD, self._log_follow_tick)
+        self._set_log_follow_title()
+
+    def _log_follow_disarm(self) -> None:
+        """Stop the follow and forget it: timer stopped, both flags cleared,
+        anchor/name cleared, title back to `Live` (re-entry starts in OFF)."""
+        timer = self._log_follow_timer
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:
+                pass
+        self._log_follow_timer = None
+        self._log_follow_armed = False
+        self._log_follow_paused = False
+        self._log_follow_anchor = None
+        self._log_follow_name = ""
+        self._set_log_follow_title()
+
+    def _log_follow_death_note(self, name: str) -> None:
+        """Display-only note for the followed container dying mid-follow."""
+        try:
+            live = self.query_one("#drill-logs", LivePane)
+            live.append_line(f"[dim]▸ {name} — stopped · follow stopped[/dim]", buffer=False)
+        except Exception:
+            pass
+
+    def _set_log_follow_title(self) -> None:
+        """#drill-logs' pane title: `Live` (off) · `Live  ●  following` ·
+        `Live  …  paused` (dim).  This pane never calls set_run_header, so
+        update_elapsed_timer never fights it."""
+        try:
+            pane = self.query_one("#drill-logs", LivePane)
+        except Exception:
+            return
+        if self._log_follow_armed:
+            if self._log_follow_paused:
+                pane.set_title("Live  …  [dim]paused[/dim]")
+            else:
+                pane.set_title("Live  ●  following")
+        else:
+            pane.set_title("Live")
+
+    def _log_follow_tick(self) -> None:
+        """Sync interval callback → @work coroutine (same exclusive group as
+        the snapshot, so a tick and a manual [l] can never interleave)."""
+        self._log_follow_poll()
+
+    @work(group="container-logs", exclusive=True)
+    async def _log_follow_poll(self) -> None:
+        """One follow tick — the read + anchor dedupe lands in Task 4.  The
+        guards already make a disarmed/paused tick a no-op."""
+        if not self._log_follow_armed or self._log_follow_paused:
             return
 
     def action_s_key(self) -> None:
@@ -11741,6 +11855,10 @@ class CockpitApp(App):
         # Strip the Textual internal prefix if present.
         _PREFIX = "--content-tab-"
         tab_id = raw_tab_id[len(_PREFIX):] if raw_tab_id.startswith(_PREFIX) else raw_tab_id
+        if tab_id != "tab-containers":
+            # Leaving the Containers tab — disarm the log-follow (no background
+            # polling).  No-op when the follow is already off (e.g. mode-1 tabs).
+            self._log_follow_disarm()
         # N9 — entering ② Serve re-arms it from the cached ① Bring fit-check so the
         # resolved target is shown WITHOUT re-entering ① Bring (the pipeline flows).
         if tab_id == "tab-serve":

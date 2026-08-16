@@ -6391,6 +6391,109 @@ class TestContainerLogFollow:
             hint = app.query_one("#containers-hint", Label)
             assert "[f] follow" in hint.content
 
+    async def test_f_arms_follow(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True
+            assert app._log_follow_paused is False
+            assert app._log_follow_timer is not None
+            assert app._log_follow_name == "vllm-qwen36-27b-dual"
+            title = app.query_one("#drill-logs", LivePane).query_one(".live-title", Label)
+            assert title.content == "Live  ●  following"
+
+    async def test_f_with_no_selection_warns_and_stays_off(self):
+        # Default responses: docker ps empty → no selectable running row.
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            await pilot.pause()
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._log_follow_armed is False
+            assert app._log_follow_timer is None
+
+    async def test_f_pauses_follow(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True  # paused is NOT off
+            calls_before = len(runner.calls)
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._log_follow_armed is True
+            assert app._log_follow_paused is True
+            assert app._log_follow_timer is None
+            # A tick while paused performs NO read.
+            app._log_follow_tick()
+            await _settle(pilot)
+            assert len(runner.calls) == calls_before
+            title = app.query_one("#drill-logs", LivePane).query_one(".live-title", Label)
+            assert title.content == "Live  …  [dim]paused[/dim]"
+            # The 'follow paused' note is display-only — never in the [Y] tail.
+            pane = app.query_one("#drill-logs", LivePane)
+            assert "follow paused" not in pane.tail_text()
+
+    async def test_follow_disarms_on_operate_tab_leave(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
+            await pilot.pause()
+            assert app._log_follow_armed is False
+            assert app._log_follow_paused is False
+            assert app._log_follow_timer is None
+            assert app._log_follow_anchor is None
+            title = app.query_one("#drill-logs", LivePane).query_one(".live-title", Label)
+            assert title.content == "Live"
+
+    async def test_follow_disarms_on_mode_switch(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True
+            await pilot.press("2")  # Bring & Validate lane
+            await pilot.pause()
+            assert app._log_follow_armed is False
+            assert app._log_follow_timer is None
+
 
 class TestEscClosesFilter:
     """Esc closes an open filter Input + refocuses the table (it was a dead key
