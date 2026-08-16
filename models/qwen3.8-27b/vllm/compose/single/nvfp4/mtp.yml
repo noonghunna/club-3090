@@ -1,0 +1,186 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B NVFP4 (RadixArk, modelopt MIXED — 193 module groups
+#              at W4-float/A4-float + 208 at W8-float/A8-float; 20.44 GiB)
+#   Topology:  Single card (TP=1)
+#   Drafter:   MTP n=3 built-in (SPEC_N override; SPEC_N=0 disables)
+#   KV:        fp8 -> e4m3 (KV_CACHE_DTYPE override)
+#   Vision:    tower present — UNTESTED, ships text-only
+#   Template:  native — the repo's own chat_template.jinja. NOT froggeric.
+#   Max ctx:   65536 — NOT the architectural ceiling; see the VRAM note
+#   Genesis:   none
+#   Status:    🧪 Experimental
+#   Caveats:   NEVER BOOTED — and NOT bootable on the reference rig (24 GB < the
+#              32 GB floor below). The sibling dual-nvfp4 slug boots and passes
+#              verify-full 9/9, which validates everything the two SHARE (weight
+#              load, modelopt quant path, native template, qwen3 parsers, MTP
+#              wiring) — it says nothing about whether THIS config fits.
+#   Best for:  32 GB+ single card; on 24 GB it will not fit
+# ---------------------------------------------------------------------------
+# ⚠️⚠️ READ THIS BEFORE EXPECTING A SPEEDUP ON AMPERE.
+#   The 4-bit ACTIVATIONS in this checkpoint (193 W4/A4 groups) CANNOT EXECUTE
+#   on sm_86 — there are no FP4 tensor cores. vLLM serves the weights through
+#   the Marlin W4A16 fallback and upcasts activations to 16 bit, whatever the
+#   config declares. The 3.6 NVFP4 sibling records "no speed edge vs AutoRound"
+#   and "on Ampere the AutoRound tier serves this model faster".
+#   → On 2x 3090 this slug is a COMPATIBILITY path, not a performance one. If
+#     you want throughput on Ampere, use vllm/qwen38-27b-dual-fast (AutoRound
+#     INT4, ~9.1 GiB/card, verify-full 9/9, MTP accept 3.12).
+#   → Its real case is Blackwell (sm_120+), where the A4 groups execute.
+#   ⭐ Kernel selection is AUTOMATIC and per-card: one compose, FP4 compute on
+#     Blackwell, Marlin W4A16 on Ampere. Nothing here selects it and nothing
+#     can override it.
+#
+# ⚠️ NVFP4 *KV* IS A DIFFERENT STORY AND IS NOT AVAILABLE — do not "upgrade"
+#   KV_CACHE_DTYPE to nvfp4. It routes to a trtllm-gen FP4 FMHA kernel built
+#   only for DATACENTER Blackwell (sm_100/103); on CONSUMER Blackwell (sm_120)
+#   there is no FMHA build and it crashes (vLLM #43562 / TRT-LLM #10241). No
+#   hardware class in this catalog lists nvfp4 KV, and unlike weights there is
+#   NO runtime fallback: launch_compat C5 refuses the boot outright. fp8_e4m3
+#   is the FP4-era KV here — same choice as all six 3.6/Tess nvfp4 slugs.
+#
+# ⚠️⚠️ 32 GB IS A FLOOR, NOT A RECOMMENDATION — THIS DOES NOT FIT 24 GB.
+#   20.44 GiB of weights leaves ~3 GB on a 24 GB card for KV pool + cudagraphs
+#   + GDN prefill scratch, and the 3.6 sibling records the same shape needing
+#   >24 GB REGARDLESS of how far ctx is dropped. On a 3090 expect an OOM at KV
+#   init — that is the config being honest, not a bug. Use the dual slug (TP=2
+#   halves weights to ~10.2 GiB/card) or the AutoRound tier instead.
+#   Target class: 5090 32 GB (primary) / RTX 6000 Pro / H100 / GB10.
+#
+#   ⭐ WHY 65536 AND 0.85, NOT the dual's 262144 / 0.90 — this is the 3.6
+#   sibling's community-swept resolution, and the two checkpoints are the same
+#   size (3.6 NVFP4 = 21.9 GB ≈ 20.4 GiB; this one = 20.44 GiB), so its ceiling
+#   ladder is a defensible prior rather than a guess:
+#     · 65K + util 0.85 + MTP  — the fits-anywhere default. Two 5090s confirmed
+#       (#613 @guybrush01, #617 @paulp83): verify-stress all-pass, ~1.4 GB free.
+#     · 98K + MTP              — OOMed on a DESKTOP 5090 (#613). The KV
+#       reservation left no room for the draft head + cudagraphs + GDN scratch.
+#     · 98K + MTP, HEADLESS    — PASSES (#617): verify-stress all-pass, NIAH
+#       clean to 91K. 100K is the boot-fit edge. Freeing the display's VRAM is
+#       what moves it, so the ceiling is a VRAM-budget property, not a ctx one.
+#     · SPEC_N=0               — trades MTP for ctx (81K/98K on the sibling).
+#   ⚠️ Those are the SIBLING's measurements on the SIBLING's checkpoint. Nothing
+#   on this ladder has been re-measured for 3.8, and 3.8 is a different
+#   architecture mix (193 W4/A4 + 208 W8/A8 groups vs 3.6's NVFP4-FFN +
+#   FP8-attention split). Treat 65K as the only value with a claim behind it and
+#   raise MAX_MODEL_LEN empirically — headroom first, MTP acceptance second.
+#   Bigger cards raise it by env: GB10 128 GB unified / H100 80 GB / RTX 6000
+#   Pro 96 GB all take 262144 on the sibling.
+#
+# ⚠️ MTP is exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in the
+#   v0.25.1 pin) — mitigate with SPEC_N=0. On the 3.6 sibling the ORIGINAL OOM
+#   root-caused to MTP, not context: the draft head + cudagraphs + GDN prefill
+#   scratch is what did not fit. Lower MAX_MODEL_LEN before blaming ctx.
+# ⚠️ THIS SLUG HAS NEVER BOOTED, and cannot on the reference rig — 24 GB is
+#   below the floor above, so there is no "just try it" here. What HAS run is
+#   the sibling dual-nvfp4 on 2x sm_86 (2026-08-16, verify-full 9/9, MTP accept
+#   3.07): same checkpoint, same quant path, same template and parsers, twice
+#   the VRAM. That result de-risks everything except the fit.
+#   And it was still the WEIGHT-ONLY FALLBACK ("no native support for FP4",
+#   marlin.py:34) — no boot anywhere has exercised the FP4 path this quant
+#   exists for. First Blackwell boot IS the validation, and for THIS slug it is
+#   also the first boot of any kind — report via numbers-from-your-rig.
+# ===========================================================================
+services:
+  vllm-qwen38-27b-single-nvfp4:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-single-nvfp4}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    shm_size: "16gb"
+    ipc: host
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8098}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - VLLM_SKIP_P2P_CHECK
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
+      - OMP_NUM_THREADS=1
+      # DeepGEMM: no recipe on consumer Blackwell (5090 / PRO 6000 / GB10,
+      # sm_120/121) — the launchers auto-inject VLLM_USE_DEEP_GEMM=0 there
+      # (disc #571/#580, NVFP4 follow-up #613). THIS BARE PASS-THROUGH LINE IS
+      # REQUIRED: without it docker-compose drops the injected value and those
+      # users hit the fp8-GEMM "recipe not found" boot crash. Guarded by
+      # scripts/tests/test-deepgemm-fp8-parity.sh — which caught its absence here.
+      # Raw `docker compose` users on those cards must set it themselves.
+      - VLLM_USE_DEEP_GEMM
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - SPEC_N=${SPEC_N:-3}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        source /etc/club3090/detect_nvlink.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
+        SPEC=""
+        if [ "$${SPEC_N:-3}" -gt 0 ] 2>/dev/null; then
+          SPEC="--speculative-config {\"method\":\"mtp\",\"num_speculative_tokens\":$${SPEC_N:-3}}"
+          echo "[mtp] SPEC_N=$${SPEC_N:-3}"
+        else
+          echo "[mtp] SPEC_N=0 -> no speculative decoding"
+        fi
+        AR=""
+        [ "$${_NVLINK_ENABLED:-0}" = "1" ] || AR="--disable-custom-all-reduce"
+        exec vllm serve $$AR $$SPEC "$$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.8-27b-nvfp4
+      - --served-model-name
+      - qwen3.8-27b
+      # Explicit, matching the 3.6 nvfp4 sibling: this checkpoint is modelopt
+      # (quantization_config.quant_method), not compressed-tensors.
+      - --quantization
+      - modelopt
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-1}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-65536}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.85}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
+      - --trust-remote-code
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
+      - --enable-chunked-prefill
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": ${ENABLE_THINKING:-false}}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-0.7},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
