@@ -197,6 +197,18 @@ services:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     environment:
+      # ⭐ Default reasoning effort = medium when thinking is on (2026-08-16),
+      # matching the vLLM composes. INERT under the shipped `--reasoning off`:
+      # the template only reads reasoning_effort inside
+      # `if enable_thinking is undefined or true`, and --reasoning off passes
+      # enable_thinking:false (verified live via /apply-template WITH tools --
+      # without tools the template never emits the instruction at all, so a
+      # no-tools probe proves nothing).
+      # ⚠️ medium injects NO instruction: the template branches on xhigh and low
+      # only. xhigh appends 'think carefully, validate key assumptions...', which
+      # is what collides with cli-40's flat 300s per-model-call cap on these
+      # sub-55 tok/s configs. ⚠️ xhigh|medium|low ONLY -- `high` RAISES at render.
+      - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-medium}"}}
       - CUDA_VISIBLE_DEVICES=${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0,1}}
     # ⚠ -np 1 is intentional — one decode stream. Extra slots divide throughput
     #   and each takes its own slice of the KV pool, shrinking the per-slot ctx.
