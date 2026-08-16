@@ -6425,7 +6425,7 @@ class TestContainerLogFollow:
             assert app._log_follow_timer is not None
             assert app._log_follow_name == "vllm-qwen36-27b-dual"
             title = app.query_one("#drill-logs", LivePane).query_one(".live-title", Label)
-            assert title.content == "Live  ●  following"
+            assert title.content == "Live  [green]●  following[/green]"
 
     async def test_f_with_no_selection_warns_and_stays_off(self):
         # Default responses: docker ps empty → no selectable running row.
@@ -6463,7 +6463,7 @@ class TestContainerLogFollow:
             await _settle(pilot)
             assert len(runner.calls) == calls_before
             title = app.query_one("#drill-logs", LivePane).query_one(".live-title", Label)
-            assert title.content == "Live  …  [dim]paused[/dim]"
+            assert title.content == "Live  [yellow]…  paused[/yellow]"
             # The 'follow paused' note is display-only — never in the [Y] tail.
             pane = app.query_one("#drill-logs", LivePane)
             assert "follow paused" not in pane.tail_text()
@@ -6593,10 +6593,10 @@ class TestContainerLogFollow:
             await _settle(pilot)
             pane = app.query_one("#drill-logs", LivePane)
             # Tinted markup on screen for the tick lines ONLY…
-            assert "[bold]L4[/bold]" in written and "[bold]L5[/bold]" in written
+            assert "[underline]L4[/underline]" in written and "[underline]L5[/underline]" in written
             # …and the [Y]-copy tail is unmarked plain text either way.
             text = pane.tail_text()
-            assert "[bold]" not in text and "L4" in text and "L5" in text
+            assert "[underline]" not in text and "L4" in text and "L5" in text
 
     async def test_navigation_to_another_container_rebases(self):
         class _PerNameLogsRunner(FakeRunner):
@@ -6744,8 +6744,13 @@ class TestContainerLogFollow:
             assert app._log_follow_paused is False
             assert app._log_follow_timer is not None
             assert len(runner.calls) == calls_before + 1
-            text = app.query_one("#drill-logs", LivePane).tail_text()
+            pane = app.query_one("#drill-logs", LivePane)
+            text = pane.tail_text()
             assert text.count("L4") == 1 and text.count("L5") == 1  # pause-window lines arrived
+            # The 'follow resumed' note is display-only — never in the [Y] tail.
+            assert "follow resumed" not in text
+            title = pane.query_one(".live-title", Label)
+            assert title.content == "Live  [green]●  following[/green]"
 
 
 class TestEscClosesFilter:

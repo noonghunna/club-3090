@@ -10542,17 +10542,23 @@ class CockpitApp(App):
         self._set_log_follow_title()
         try:
             live = self.query_one("#drill-logs", LivePane)
-            # Display-only note — never enters the [Y]-copy tail.
-            live.append_line("[dim]follow paused[/dim]", buffer=False)
+            # Display-only note — never enters the [Y]-copy tail.  Yellow
+            # (intermediate-state color) so the paused state reads at a glance.
+            live.append_line("[yellow]follow paused — press f to resume[/yellow]", buffer=False)
         except Exception:
             pass
 
     def _log_follow_resume(self) -> None:
         """paused → following: one immediate incremental poll against the
         stored anchor (quiet log → no change; lines emitted during the pause
-        arrive tinted), then restart the interval.  (Task 4's poll makes the
-        immediate call meaningful; until then it is a guarded no-op.)"""
+        arrive tinted), then restart the interval."""
         self._log_follow_paused = False
+        try:
+            live = self.query_one("#drill-logs", LivePane)
+            # Display-only note — never enters the [Y]-copy tail.
+            live.append_line("[green]follow resumed[/green]", buffer=False)
+        except Exception:
+            pass
         self._log_follow_tick()
         self._log_follow_timer = self.set_interval(_LOG_FOLLOW_PERIOD, self._log_follow_tick)
         self._set_log_follow_title()
@@ -10582,8 +10588,10 @@ class CockpitApp(App):
             pass
 
     def _set_log_follow_title(self) -> None:
-        """#drill-logs' pane title: `Live` (off) · `Live  ●  following` ·
-        `Live  …  paused` (dim).  This pane never calls set_run_header, so
+        """#drill-logs' pane title: `Live` (off) · `Live  ●  following`
+        (green) · `Live  …  paused` (yellow) — the state colors follow the
+        rig's running/intermediate conventions so the follow state reads at a
+        glance.  This pane never calls set_run_header, so
         update_elapsed_timer never fights it."""
         try:
             pane = self.query_one("#drill-logs", LivePane)
@@ -10591,9 +10599,9 @@ class CockpitApp(App):
             return
         if self._log_follow_armed:
             if self._log_follow_paused:
-                pane.set_title("Live  …  [dim]paused[/dim]")
+                pane.set_title("Live  [yellow]…  paused[/yellow]")
             else:
-                pane.set_title("Live  ●  following")
+                pane.set_title("Live  [green]●  following[/green]")
         else:
             pane.set_title("Live")
 
@@ -10666,7 +10674,7 @@ class CockpitApp(App):
             # default foreground).  Display-only: LivePane's [Y]-copy buffer
             # strips the markup (Text.from_markup(...).plain).
             for ln in lines[idx + 1:]:
-                live.append_line(f"[bold]{ln}[/bold]")
+                live.append_line(f"[underline]{ln}[/underline]")
         self._log_follow_anchor = lines[-1]
 
     def action_s_key(self) -> None:
