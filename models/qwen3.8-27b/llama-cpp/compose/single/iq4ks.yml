@@ -1,6 +1,6 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.8-27B (bartowski IQ4_KS GGUF)
+#   Model:     Qwen3.8-27B (4-bit GGUF; default file is IQ4_NL — no IQ4_KS for this arch)
 #   Engine:    llama.cpp (mainline server-cuda)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   MTP n=3 (built-in multi-token prediction)
@@ -11,27 +11,30 @@
 #   Engine-profile: llama-cpp-local
 #   Best for:  Long-context text workloads on a single 24 GB card.
 # ---------------------------------------------------------------------------
-# Qwen3.8-27B on llama.cpp - single 3090, IQ4_KS, no vision.
+# Qwen3.8-27B on llama.cpp - single 3090, 4-bit (default IQ4_NL), no vision.
 #
 # Qwen3.8-27B is a next-gen 27B model from the Qwen team. It uses a mixed
 # architecture with DeltaNet (linear attention) blocks and gated attention,
 # similar to Qwen3.6-27B but with architectural refinements.
 #
-# Weights source: bartowski/Qwen3.8-27B-GGUF
-#   IQ4_KS - ~14.8 GB, best quality/size ratio for 24 GB cards
-#   (unsloth/Qwen3.8-27B-GGUF also ships IQ4_KS with Dynamic V3.0 MTP -
-#    swap the GGUF path if you prefer unsloth's quant)
+# Weights source: bartowski/Qwen3.8-27B-GGUF (no IQ4_KS for this arch)
+#   IQ4_NL - ~16.3 GB, 4-bit with the largest super-block; fits 200K on 24 GB
+#   Q4_K_M - ~17.8 GB, bench-validated on 3090 (63/72 TPS @ 131K + vision, 2026-08-16)
+#            but 200K OOMs with it -> override CTX_SIZE=131072
+#   (unsloth/Qwen3.8-27B-GGUF Q4_K_M + f16 mmproj is the bench rig's quant)
 #
-# VRAM budget on 24 GB (IQ4_KS):
-#   weights (IQ4_KS):            ~14.8 GB
-#   KV at 200K (q4_0 K+V):        ~6.0 GB
+# VRAM budget on 24 GB (IQ4_NL):
+#   weights (IQ4_NL):            ~16.3 GB
+#   KV at 200K (q4_0 K+V):        ~3.7 GB (18 KB/token: 16 attn layers x 4 KV heads x 256 x 2)
 #   MTP draft head + overhead:    ~0.5 GB
-#   total:                       ~21.3 GB
-#   headroom:                    ~2.7 GB for prompt + activation peaks
+#   total:                       ~21 GB
+#   headroom:                    ~2-3 GB for prompt + activation peaks
+#   NOTE: with Q4_K_M weights (17.8 GB) this 200K ctx OOMs at fill -
+#         bench-validated rig runs CTX_SIZE=131072 (see models/qwen3.8-27b/README.md)
 #
 # Quick start:
 #   1. Get the GGUF:
-#        hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_KS.gguf \
+#        hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_NL.gguf \
 #          --local-dir $MODEL_DIR/qwen3.8-27b-gguf/iq4ks
 #   2. From this directory:
 #        MODEL_DIR=/your/models/dir docker compose -f iq4ks.yml up -d
@@ -39,7 +42,7 @@
 #
 # Override defaults via .env or shell:
 #   MODEL_DIR              host dir to mount as /models
-#   GGUF_FILE              path under /models  (default: qwen3.8-27b-gguf/iq4ks/Qwen3.8-27B-IQ4_KS.gguf)
+#   GGUF_FILE              path under /models  (default: qwen3.8-27b-gguf/Qwen3.8-27B-IQ4_NL.gguf)
 #   CTX_SIZE               KV pool size        (default: 200000)
 #   BATCH_SIZE             llama.cpp -b        (default: 1024)
 #   UBATCH_SIZE            llama.cpp -ub       (default: 512)
@@ -63,7 +66,7 @@ services:
     command: >-
       --host 0.0.0.0
       --port 8080
-      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/iq4ks/Qwen3.8-27B-IQ4_KS.gguf}
+      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/Qwen3.8-27B-IQ4_NL.gguf}
       -c ${CTX_SIZE:-200000}
       -b ${BATCH_SIZE:-1024}
       -ub ${UBATCH_SIZE:-512}

@@ -27,8 +27,8 @@ curl http://localhost:8020/v1/models
 
 | Config | Path | Vision | Context | Notes |
 |---|---|---|---|---|
-| `iq4ks` | `llama-cpp/compose/single/iq4ks.yml` | no | 200K | Text-only, max context |
-| `iq4ks-vision` | `llama-cpp/compose/single/iq4ks-vision.yml` | yes | 150K | Multimodal @ 1M-px default |
+| `iq4ks` | `llama-cpp/compose/single/iq4ks.yml` | no | 200K | Text-only; **200K requires IQ4_NL weights** — OOMs with Q4_K_M (see Benchmarks) |
+| `iq4ks-vision` | `llama-cpp/compose/single/iq4ks-vision.yml` | yes | 150K | Multimodal @ 1M-px default; bench rig ran 131K with Q4_K_M |
 
 ## Weights sources
 
@@ -38,21 +38,24 @@ Broad quant selection. The configs above default to **IQ4_KS** (~14.8 GB).
 
 | Quant | Size | Quality |
 |---|---|---|
-| `IQ4_KS` | ~14.8 GB | **Recommended** - best quality/size for 24 GB |
-| `IQ4_NL` | ~15.6 GB | Nearly identical quality, slightly larger |
-| `Q4_K_M` | ~16.9 GB | Well-tested, slightly larger |
-| `Q8_0` | ~27.8 GB | Near-FP8 - may OOM with large context on 24 GB |
+| `IQ4_NL` | ~16.3 GB | **Recommended** - 4-bit with largest super-block; fits 200K ctx on 24 GB (untested — see Benchmarks) |
+| `Q4_K_M` | ~17.8 GB | **Bench-validated on this rig** — 63/72 TPS @ 131K + vision (see Benchmarks); 200K OOMs |
+| `Q8_0` | ~29.1 GB | Near-lossless — does not fit 24 GB with context |
 
-### unsloth/Qwen3.8-27B-GGUF (alternative)
+> ⚠️ **No IQ4_KS in this repo.** Qwen3.8's hybrid DeltaNet/attention arch ships
+> without an IQ4_KS from bartowski (IQK quants for this arch are IQ2_XS→IQ4_NL
+> and IQ4_XS only). The `iq4ks*.yml` names are a quant-label placeholder for
+> "4-bit" — the compose's effective default is IQ4_NL.
 
-Unsloth Dynamic V3.0 architecture - state-of-the-art 4-bit quant with native MTP.
+### unsloth/Qwen3.8-27B-GGUF (alternative — bench-validated)
+
+Unsloth Dynamic V3.0 architecture with native MTP. **The rig behind the
+BENCHMARKS row below ran unsloth `Q4_K_M` (17.7 GB) + `mmproj-Qwen3.8-27B-f16.gguf`.**
 
 | Quant | Size |
 |---|---|
-| `IQ4_KS` | ~15.0 GB |
-| `IQ4_NL` | ~15.6 GB |
-| `Q3_K_M` | ~12.9 GB |
-| `Q3_K_S` | ~11.7 GB |
+| `Q4_K_M` | ~17.8 GB (bench rig) |
+| `Q3_K_M` / `Q3_K_S` | ~13 / ~12 GB (tighter fit, smaller ctx headroom) |
 
 To use unsloth weights, override the path at launch:
 ```bash
@@ -72,15 +75,20 @@ Qwen3.8-27B uses a mixed architecture:
 
 ## VRAM on 24 GB (RTX 3090)
 
-| Component | Size |
-|---|---|
-| IQ4_KS weights | ~14.8 GB |
-| KV cache (200K, q4_0) | ~6.0 GB |
-| MTP overhead | ~0.5 GB |
-| **Total (text-only)** | **~21.3 GB** |
-| mmproj BF16 | ~0.9 GB |
-| Image buffers | ~0.5 GB |
-| **Total (vision)** | **~22.7 GB** |
+Measured facts (bench rig, unsloth Q4_K_M + mmproj-F16, q4_0 KV, `-c 131072`):
+boot ≈ **22 GB**. KV cost is 16 gated-attention layers × 4 KV heads × 256 × 2
+= 32 768 elems/token ≈ **18 KB/token** at q4_0 → 131K ≈ 2.4 GB, 200K ≈ 3.7 GB.
+
+| Config | Weights | KV | Fits 24 GB? |
+|---|---:|---:|---|
+| Q4_K_M + mmproj @ 131K | 17.8 + 0.93 | ~2.4 | ✅ **measured, 22 GB boot** |
+| Q4_K_M + mmproj @ 200K | 17.8 + 0.93 | ~3.7 | ❌ **~22.4+ GB → OOM** |
+| IQ4_NL @ 200K | ~16.3 | ~3.7 | ⚠️ ~21 GB — should fit, **untested** |
+| IQ4_NL + mmproj @ 150K | ~16.3 + 0.93 | ~2.7 | ⚠️ ~20 GB — should fit, **untested** |
+
+**The 200K default in the text compose is unvalidated** — it only works with
+IQ4_NL weights and needs a fill-ladder verification before graduating the
+compose out of incubating.
 
 ## Troubleshooting
 

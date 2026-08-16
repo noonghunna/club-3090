@@ -1,6 +1,6 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.8-27B (bartowski IQ4_KS GGUF + mmproj-BF16)
+#   Model:     Qwen3.8-27B (4-bit GGUF + mmproj; default IQ4_NL)
 #   Engine:    llama.cpp (mainline server-cuda)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   MTP n=3 (built-in multi-token prediction)
@@ -11,7 +11,7 @@
 #   Engine-profile: llama-cpp-local
 #   Best for:  Multimodal chat, screenshot-debugging, vision-aware code review.
 # ---------------------------------------------------------------------------
-# Qwen3.8-27B on llama.cpp - single 3090, IQ4_KS + vision.
+# Qwen3.8-27B on llama.cpp - single 3090, 4-bit (default IQ4_NL) + vision.
 #
 # Vision overhead (mmproj BF16 projector + image encode buffers) consumes
 # ~1.7 GB, so the safe context ceiling drops from 200K -> 150K.
@@ -23,8 +23,10 @@
 #   mmproj-BF16.gguf - identical BF16 projector, same size
 #   (swap the GGUF + mmproj paths if using unsloth weights)
 #
-# VRAM budget on 24 GB (IQ4_KS + vision):
-#   weights (IQ4_KS):              ~14.8 GB
+# VRAM budget on 24 GB (IQ4_NL + vision); bench rig: Q4_K_M @ 131K:
+#   weights (IQ4_NL):              ~16.3 GB
+#   NOTE: bench rig used Q4_K_M (17.8 GB) at CTX_SIZE=131072; 200K-class ctx with
+#         Q4_K_M OOMs. 150K + IQ4_NL + mmproj should fit (~20 GB) — untested.
 #   KV at 150K (q4_0 K+V):         ~5.0 GB
 #   mmproj BF16 (vision projector): ~0.9 GB
 #   MTP draft head + overhead:      ~0.5 GB
@@ -34,7 +36,7 @@
 #
 # Quick start:
 #   1. Get the GGUF + mmproj:
-#        hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_KS.gguf \
+#        hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_NL.gguf \
 #          --local-dir $MODEL_DIR/qwen3.8-27b-gguf/iq4ks
 #        hf download bartowski/Qwen3.8-27B-GGUF mmproj-Qwen3.8-27B-bf16.gguf \
 #          --local-dir $MODEL_DIR/qwen3.8-27b-gguf
@@ -44,7 +46,7 @@
 #
 # Override defaults via .env or shell:
 #   MODEL_DIR              host dir to mount as /models
-#   GGUF_FILE              path under /models  (default: qwen3.8-27b-gguf/iq4ks/Qwen3.8-27B-IQ4_KS.gguf)
+#   GGUF_FILE              path under /models  (default: qwen3.8-27b-gguf/Qwen3.8-27B-IQ4_NL.gguf)
 #   MMPROJ_FILE            path under /models  (default: qwen3.8-27b-gguf/mmproj-Qwen3.8-27B-bf16.gguf)
 #   IMAGE_MIN_TOKENS       min tokens / image  (default: 1024)
 #   IMAGE_MAX_TOKENS       max tokens / image  (default: 1024 = ~1M px)
@@ -71,7 +73,7 @@ services:
     command: >-
       --host 0.0.0.0
       --port 8080
-      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/iq4ks/Qwen3.8-27B-IQ4_KS.gguf}
+      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/Qwen3.8-27B-IQ4_NL.gguf}
       --mmproj /models/${MMPROJ_FILE:-qwen3.8-27b-gguf/mmproj-Qwen3.8-27B-bf16.gguf}
       --image-min-tokens ${IMAGE_MIN_TOKENS:-1024}
       --image-max-tokens ${IMAGE_MAX_TOKENS:-1024}
