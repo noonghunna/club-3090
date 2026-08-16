@@ -3285,7 +3285,7 @@ class OperateContainersPane(Container):
                 yield Static("[dim]highlight a container (move cursor) to load its config[/dim]", id="drill-config")
         yield Label(
             "[dim]move cursor or \\[l]/\\[t] to load detail · \\[l] logs   \\[t] top   "
-            "\\[s] restart · start if stopped (gated)   \\[x] stop (gated)   "
+            "\\[f] follow   \\[s] restart · start if stopped (gated)   \\[x] stop (gated)   "
             "\\[X] rm (reconcile-gated)[/dim]",
             id="containers-hint",
         )
@@ -6706,6 +6706,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("power_cap", "Power cap…", "Orchestration — power-cap menu: default 230W / clear / custom W (gated)"),
     ("power_cap_sweep", "Power cap sweep", "Doctor — sweep power caps + bench at each (gated)"),
     ("container_logs", "Container logs", "Containers — stream the selected container's logs"),
+    ("container_follow", "Container log follow", "Containers — [f] arm/pause the live log tail for the selected container"),
     ("doctor_rerun", "Re-run Doctor health", "Doctor — re-run the live health read (read-only)"),
     ("doctor_verify", "Verify serving", "Doctor — send a test query to the model (verify.sh · read)"),
     ("doctor_verify_full", "Verify-full battery", "Doctor — functional battery (verify-full.sh · ~1-2 min · read)"),
@@ -6794,6 +6795,10 @@ class CockpitCommands(Provider):
 
 # ── Main application ──────────────────────────────────────────────────────────────
 
+# Containers log-follow ([f]) — docker-logs poll cadence while armed.  2s is
+# imperceptible for a log tail and keeps the read-runner calls cheap.
+_LOG_FOLLOW_PERIOD = 2.0
+
 
 class CockpitApp(App):
     """club3090 serve cockpit — both modes (Run & Operate · Bring & Validate) wired to the live data layer."""
@@ -6868,6 +6873,8 @@ class CockpitApp(App):
         # rewritten by `_sync_footer_labels`.  show=True so check_action can surface
         # it when the action is live (phase 1.3).
         Binding("l", "container_logs", "Logs", show=False),
+        # [f] = log-follow toggle (Containers tab).  The modal force-start 'f' lives on the staged-write modal screen, which owns its keys — no conflict.
+        Binding("f", "container_follow", "Follow", show=False),
         Binding("s", "s_key", "Restart / Submit", show=True),
         Binding("x", "container_stop", "Stop", show=False),
         Binding("X", "container_rm", "Remove", show=False),
@@ -7096,6 +7103,7 @@ class CockpitApp(App):
         "doctor_verify_full": ({0}, {"tab-doctor"}),
         # Merged mode 0 · Containers tab
         "container_logs":   ({0}, {"tab-containers"}),
+        "container_follow": ({0}, {"tab-containers"}),
         # [s] is handled by a DEDICATED branch in check_action (FIX 2) — Containers
         # (restart) on mode 0 + the lane's ④ Measure (submit) on mode 1 — so it is
         # NOT listed here (the old `({0, 1}, None)` entry was over-broad: it showed
@@ -7434,6 +7442,17 @@ class CockpitApp(App):
         self._c3_log_enabled = False
         self._c3_log_env_override = False
         self._active_mode = 0  # 0=Run & Operate (merged) · 1=Bring & Validate
+        # Containers log-follow ([f]) — three states: off / following / paused.
+        #   _log_follow_armed   True in BOTH following and paused
+        #   _log_follow_paused  True only in paused
+        #   _log_follow_timer   set_interval handle (None while paused)
+        #   _log_follow_anchor  last displayed line of the current tail (dedupe)
+        #   _log_follow_name    container the anchor belongs to
+        self._log_follow_armed = False
+        self._log_follow_paused = False
+        self._log_follow_timer = None
+        self._log_follow_anchor: Optional[str] = None
+        self._log_follow_name = ""
         # Cache the last-loaded variants so detect/match + containers can match
         # running engines back to registry slugs.
         self._variants: list[VariantRow] = []
@@ -10468,6 +10487,13 @@ class CockpitApp(App):
         except Exception:
             pass
         self.stream_container_logs(con.name)
+
+    def action_container_follow(self) -> None:
+        """[f] on the Containers tab: arm/pause/resume the live log tail
+        (full arm/pause/resume logic lands with the tick; the context guard
+        matches l/t)."""
+        if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
+            return
 
     def action_s_key(self) -> None:
         """[s] is context-sensitive:

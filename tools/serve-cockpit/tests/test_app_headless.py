@@ -35,6 +35,7 @@ from textual.widgets._footer import FooterKey
 from textual.widgets._tabbed_content import ContentTabs
 
 from club3090_tui_core.detect import GpuInfo, ServingTarget
+from club3090_tui_core.widgets.live_pane import LivePane
 
 from club3090_cockpit.app import (
     CockpitApp,
@@ -6366,6 +6367,29 @@ class TestContainerClampDoesNotAutoloadDrill:
                     and other in " ".join(c)
                     for c in runner.calls
                 ), f"a drill spuriously loaded for {other}: {runner.calls}"
+
+
+class TestContainerLogFollow:
+    """[f] log-follow (live tail) — spec docs/superpowers/specs/2026-08-16-c3-container-log-follow-design.md.
+
+    Ticks are driven by direct app._log_follow_tick() calls — no real 2s waits."""
+
+    async def test_follow_binding_gated_to_containers_tab(self):
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)  # lands on Orchestration
+            assert app.check_action("container_follow", ()) is False
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await pilot.pause()
+            assert app.check_action("container_follow", ()) is True
+
+    async def test_containers_hint_mentions_follow(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            hint = app.query_one("#containers-hint", Label)
+            assert "[f] follow" in hint.content
 
 
 class TestEscClosesFilter:
