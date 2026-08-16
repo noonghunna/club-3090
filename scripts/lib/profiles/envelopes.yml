@@ -72,6 +72,45 @@ envelopes:
         date: 2026-07-05
         note: "operational cap, not the raw pool ceiling (see basis). 2x RTX PRO 6000 Blackwell, NVLink-bridged. No PRO 6000 on this rig — a concurrency-soak refines this and upgrades it to validated."
 
+  # --- Qwen3.8-27B FAST tier (Avuja AutoRound INT4) ---------------------------
+  # ⚠️ NOT kv-calc-derived. tools/kv-calc.py CANNOT model this hybrid
+  # (kv_calc_supported: false; both vLLM entries carry kvcalc_key="SKIP"),
+  # because only 16 of 64 layers grow KV. Scaled from a MEASURED pool instead:
+  # 652,346 tok @262K on 2x RTX 3090 (TP=2, util 0.90, fp8 KV), which pins the
+  # per-card residual (activations+graphs) at ~2.5 GiB. Values are 75% of the
+  # arithmetic ceiling — margin, because nothing has been soaked on this card
+  # class and the reference rig cannot soak it.
+
+  vllm/qwen38-27b-dual-fast:
+    rtx-a6000:
+      max_num_seqs: 5          # 2 -> 5 concurrent full-262K sessions on 2x48 GB
+      compose_default: 2
+      computed:
+        basis: "scaled from the MEASURED 3090 pool, not kv-calc: 48 GB x 0.90 = 43.2 GiB/card claimed, minus 9.1 GiB/card weights (18.23 GiB INT4 at TP=2) minus ~2.5 GiB/card residual = ~31.6 GiB/card pool = ~63 GiB total = ~2.07M tok = 7.9 full-262K sessions; seeded at 75%."
+        target_ctx: 262144
+        date: 2026-08-16
+        note: "A6000 is the SAME sm_86 GA102 as the 3090, so the compute path is identical and only the 48 GB changes. The dual compose ships mem_util 0.90 (not the tier's 0.92) because MTP n=4 OOM'd a 24 GB card on a transient prefill peak; on 48 GB that is far looser and the profile's mem_util_safe 0.95 would raise this further -- envelope injection covers max_num_seqs ONLY, so mem_util is not lifted here. UNVALIDATED: no A6000 on the reference rig."
+
+  vllm/qwen38-27b-multi4-fast:
+    rtx-a6000:
+      max_num_seqs: 13         # 2 -> 13 concurrent full-262K sessions on 4x48 GB
+      compose_default: 2
+      computed:
+        basis: "same method as the dual row: ~4.6 GiB/card weights at TP=4 leaves ~36.1 GiB/card pool = ~144 GiB total = ~4.73M tok = 18.1 full-262K sessions; seeded at 75%."
+        target_ctx: 262144
+        date: 2026-08-16
+        note: "UNVALIDATED and UNVALIDATABLE here -- 4-card is community-validated by design. Projection only."
+
+  vllm/qwen38-27b-multi8-fast:
+    rtx-a6000:
+      max_num_seqs: 14         # 2 -> 14 on 8x48 GB -- NOT double the multi4 row
+      compose_default: 2
+      computed:
+        basis: "~2.3 GiB/card weights at TP=8 leaves ~38.4 GiB/card, but num_kv_heads=4 < 8 so KV heads REPLICATE across rank pairs: the effective pool is ~4x per-card, NOT 8x. ~154 GiB total = ~5.03M tok = 19.2 full-262K sessions; seeded at 75%."
+        target_ctx: 262144
+        date: 2026-08-16
+        note: "⚠️ The near-parity with the multi4 row is REAL, not a copy-paste error -- KV-head replication caps the 8-card gain to weight headroom only. UNVALIDATED and UNVALIDATABLE here."
+
   vllm/minimal:
     rtx-5090:
       max_num_seqs: 9          # 1 -> 9 concurrent full-32K sessions on 1x32 GB
