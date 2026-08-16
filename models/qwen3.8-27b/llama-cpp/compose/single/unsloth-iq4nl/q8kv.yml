@@ -208,18 +208,20 @@ services:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     environment:
-      # ⭐ Default reasoning effort = medium when thinking is on (2026-08-16),
+      # ⭐ Default reasoning effort = low when thinking is on (2026-08-16),
       # matching the vLLM composes. INERT under the shipped `--reasoning off`:
       # the template only reads reasoning_effort inside
       # `if enable_thinking is undefined or true`, and --reasoning off passes
       # enable_thinking:false (verified live via /apply-template WITH tools --
       # without tools the template never emits the instruction at all, so a
       # no-tools probe proves nothing).
-      # ⚠️ medium injects NO instruction: the template branches on xhigh and low
-      # only. xhigh appends 'think carefully, validate key assumptions...', which
-      # is what collides with cli-40's flat 300s per-model-call cap on these
-      # sub-55 tok/s configs. ⚠️ xhigh|medium|low ONLY -- `high` RAISES at render.
-      - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-medium}"}}
+      # ⚠️ low is an ACTIVE instruction: 'Keep your thinking brief and focused,
+      # moving directly to the conclusion without unnecessary elaboration.' It is
+      # not "less of medium" -- medium has no branch and injects nothing. xhigh
+      # appends 'think carefully, validate key assumptions...', which is what
+      # collides with cli-40's flat 300s per-model-call cap on these sub-55 tok/s
+      # configs. ⚠️ xhigh|medium|low ONLY -- `high` RAISES at render.
+      - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-low}"}}
       - CUDA_VISIBLE_DEVICES=${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}
     # ⚠ -np 1 is intentional on a single 24 GB card — do NOT raise it to
     #   "parallelize". One GPU is compute-bound: extra slots divide its

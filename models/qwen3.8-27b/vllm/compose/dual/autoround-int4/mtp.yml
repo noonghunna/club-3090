@@ -245,19 +245,22 @@ services:
       - --tool-call-parser
       - qwen3_coder
       - --default-chat-template-kwargs
-      # ⭐ reasoning_effort default = medium (2026-08-16). It is a PER-REQUEST OpenAI
+      # ⭐ reasoning_effort default = low (2026-08-16). It is a PER-REQUEST OpenAI
       # control, so this is only the fallback for callers that send nothing — any
       # agent still picks its own level per request.
       # ⚠️ INERT while enable_thinking is false (the shipped default): the template
       # only reads reasoning_effort inside `if enable_thinking is undefined or true`.
       # It takes effect the moment ENABLE_THINKING=true.
-      # ⚠️ medium is NOT a middle setting — the template has branches for xhigh and
-      # low ONLY, so medium injects NO instruction at all (the un-nudged baseline).
-      # xhigh actively adds "think carefully, validate assumptions, consider
-      # alternatives", which is what makes it slow and timeout-prone.
+      # ⚠️ low is an ACTIVE instruction, not "less of medium" — it injects
+      # "Keep your thinking brief and focused, moving directly to the conclusion
+      # without unnecessary elaboration." The three levels are NOT a scale with a
+      # middle: medium has NO branch and injects nothing (the un-nudged baseline),
+      # xhigh adds "think carefully, validate assumptions, consider alternatives"
+      # which is what makes it slow and timeout-prone. REASONING_EFFORT=medium if
+      # you want the model un-nudged rather than pushed toward brevity.
       # ⚠️ Valid values are xhigh | medium | low. Anything else RAISES at template
       # render (`high` included — it does NOT silently remap).
-      - '{"enable_thinking": ${ENABLE_THINKING:-false}, "reasoning_effort": "${REASONING_EFFORT:-medium}"}'
+      - '{"enable_thinking": ${ENABLE_THINKING:-false}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
       # Sampler follows the Qwen3.8 MODEL CARD Instruct row (thinking ships off).
       - --override-generation-config
       - '{"temperature":${TEMP:-0.7},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5}}'
