@@ -61,7 +61,7 @@
 
 services:
   llama-cpp-qwen38-27b-iq4ks-vision:
-    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b10236}
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b9246}
     container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen38-27b-iq4ks-vision}"
     restart: unless-stopped
     ports:

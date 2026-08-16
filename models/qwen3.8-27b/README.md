@@ -54,15 +54,13 @@ Unsloth Dynamic V3.0 architecture - state-of-the-art 4-bit quant with native MTP
 | `Q3_K_M` | ~12.9 GB |
 | `Q3_K_S` | ~11.7 GB |
 
-To use unsloth weights, swap the GGUF path in the compose:
-```yaml
--m /models/qwen3.8-27b-gguf/unsloth/Qwen3.8-27B-IQ4_KS.gguf
-```
-And download the Unsloth mmproj:
+To use unsloth weights, override the path at launch:
 ```bash
-hf download unsloth/Qwen3.8-27B-GGUF mmproj-BF16.gguf \
-  --local-dir $MODEL_DIR/qwen3.8-27b-gguf
+GGUF_FILE=qwen3.8-27b-gguf/unsloth/Qwen3.8-27B-IQ4_KS.gguf \
+  MODEL_DIR=/path/to/models docker compose -f llama-cpp/compose/single/iq4ks.yml up -d
 ```
+(Download unsloth weights into `$MODEL_DIR/qwen3.8-27b-gguf/unsloth/` first.
+For the vision compose, also set `MMPROJ_FILE=` if unsloth's projector name differs.)
 
 ## Architecture
 

@@ -25,6 +25,7 @@ fi
 
 # ── Config ──────────────────────────────────────────────────────────────────
 REPO="noonghunna/club-3090"
+FORK_REPO="ajmendez/club-3090"
 BRANCH="qwen3.8-27b-llama-cpp-iq4ks"
 BASE="master"
 HEAD="${HEAD:-qwen3.8-27b-llama-cpp-iq4ks}"
@@ -120,7 +121,7 @@ if [ -z "${GITHUB_TOKEN:-}" ] || [ "$DRY_RUN" = true ]; then
   echo "Base:        $BASE"
   echo "Title:       $TITLE"
   echo ""
-  echo "PR URL:      https://github.com/$REPO/compare/$BASE...$HEAD"
+  echo "PR URL:      https://github.com/$REPO/compare/$FORK_REPO:$HEAD...$BASE?quickstart=1"
   echo ""
   echo "── PR Body (copy-paste into GitHub PR) ──"
   echo "$PR_BODY"
