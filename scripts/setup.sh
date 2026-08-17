@@ -67,6 +67,7 @@ usage() {
   echo "  qwen3.6-27b"
   echo "  qwen3.6-35b-a3b"
   echo "  gemma-4-31b"
+  echo "  qwen3.8-27b"
   echo "  gemma-4-26b-a4b"
   echo "  deepseek-v4-flash-0731"
   echo ""
@@ -215,6 +216,19 @@ case "${MODEL_NAME}" in
   qwen3.6-35b-a3b)
     PRIMARY_WEIGHT_KEY="qwen3.6-35b-a3b:autoround-int4"
     ;;
+  qwen3.8-27b)
+    # Defaults to the fp8 "max accuracy" tier — what DUAL_CARD.md leads with, and the
+    # only qwen3.8 config with measured numbers (67.4 / 85.8 tok/s, verify-full PASS,
+    # 2026-08-17). DUAL-card: 30.9 GB of weights do not fit one 24 GB card.
+    # Single card: WEIGHT_KEY=qwen3.8-27b:unsloth-iq4nl (131K, llama.cpp).
+    #
+    # Excluded from this dispatch until 2026-08-17 on the grounds that "both its slugs
+    # are incubating and nothing has booted". All three parts expired: 10 slugs exist,
+    # 6 are experimental, and dual-max booted + verify-full + benched. The docs had
+    # meanwhile been rewritten to lead with it, so users were sent to a model that
+    # setup.sh refused BY NAME (Discord, 2026-08-17). Re-check if statuses regress.
+    PRIMARY_WEIGHT_KEY="qwen3.8-27b:fp8"
+    ;;
   deepseek-v4-flash-0731)
     # Defaults to the IQ2 REACH tier (~85 GB on disk, ~86 GB host RAM) rather than
     # Q8 (~151 GB / ~146 GB host RAM): the reach tier is the one most rigs can
@@ -248,7 +262,7 @@ case "${MODEL_NAME}" in
     # the WEIGHT_KEY override below sets it.
     if [[ -z "${WEIGHT_KEY:-}" ]]; then
       echo "ERROR: unsupported model '${MODEL_NAME}'."
-      echo "Supported: qwen3.6-27b, qwen3.6-35b-a3b, gemma-4-31b, gemma-4-26b-a4b, diffusiongemma-26b-a4b, deepseek-v4-flash-0731"
+      echo "Supported: qwen3.6-27b, qwen3.6-35b-a3b, qwen3.8-27b, gemma-4-31b, gemma-4-26b-a4b, diffusiongemma-26b-a4b, deepseek-v4-flash-0731"
       echo "(To add a new model, extend the model dispatch in scripts/setup.sh and profiles/models/*.yml,"
       echo " or pass WEIGHT_KEY=<model>:<variant> to fetch an exact catalog entry directly.)"
       exit 1
@@ -973,19 +987,20 @@ case "${MODEL_NAME}" in
     # correct, but for a different reason than originally written: both vLLM slugs are
     # DUAL/MULTI-card and 🐣 Incubating, so a single-card next-step line must not point
     # at them. Only the old "no vLLM compose exists" rationale was stale.
-    # Reached via WEIGHT_KEY=qwen3.8-27b:<variant>: this model is deliberately
-    # NOT in the picker / dispatch / "Supported:" lists above, because both its
-    # slugs are 🐣 incubating and nothing has booted — advertising it in the
-    # front-door picker would contradict that status. Defaults track the
-    # single-card IQ4_NL tier; the dual UD-Q8_K_XL sibling serves on 8087.
+    # ⚠️ 2026-08-17: this model IS now in the dispatch + "Supported:" lists — the
+    # old exclusion rationale expired (see the dispatch arm above). The sample lines
+    # below still track the SINGLE-card IQ4_NL tier because they advertise a one-card
+    # next step; the dispatch default is the dual-card fp8 tier (serves on 8091).
     SAMPLE_CONTAINER="llama-cpp-qwen38-27b-single"
     SAMPLE_COMPOSE_FLAGS_DUAL=""
     SAMPLE_PORT="8086"
     SAMPLE_MODEL_NAME="qwen3.8-27b"
     SAMPLE_LAUNCH_HINT="  bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4nl"
-    NEXT_STEPS_NOTE="🐣 incubating — launch needs --force (non-functional by default), and
-  both slugs are hidden from 'switch.sh --list' (reveal with --list --all).
-  NOTHING HAS BOOTED: no verify-full, no bench, no measured context ceiling.
+    NEXT_STEPS_NOTE="🧪/🐣 — every qwen3.8 slug needs --force; the incubating ones are
+  also hidden from 'switch.sh --list' (reveal with --list --all).
+  MEASURED (dual fp8, 2026-08-17): vllm/qwen38-27b-dual-max on 2x 3090 — 67.4 narr /
+  85.8 code tok/s, verify-full PASS. Still ungated: no verify-stress, no NIAH fill
+  depth, no soak, no quality run.
   Dual-card max-context tier instead (needs BOTH 3090s — 31.5 GB of weights
   does not fit one card; serves on 8087):
   WEIGHT_KEY=qwen3.8-27b:unsloth-q8kxl bash scripts/setup.sh qwen3.8-27b
