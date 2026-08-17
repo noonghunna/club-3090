@@ -83,7 +83,7 @@ All five are actively developed. ktransformers is positioned as research but pro
 | **INT8 per-token-head** | ⚠️ ([PR #40391](https://github.com/vllm-project/vllm/pull/40391) for hybrid pages) | ❌ | ✅ | ⚠️ | ✅ |
 | **Q4_0 (4.5 bit)** | ❌ | ✅ | ❌ | ❌ | ✅ |
 | **Q8_0 (8.5 bit)** | ❌ | ✅ | ❌ | ❌ | ✅ |
-| **TurboQuant 3-bit (TQ3)** | ✅ via Genesis | ✅ ([PR #21089](https://github.com/ggml-org/llama.cpp/pull/21089) WIP) | ⚠️ Same kernel bug as vLLM PR #40361 | ❌ | 🟡 [Issue #1509](https://github.com/ikawrakow/ik_llama.cpp/issues/1509) — CPU complete + CUDA written, awaiting merge |
+| **TurboQuant 3-bit (TQ3)** | 🗑️ retired here | ✅ ([PR #21089](https://github.com/ggml-org/llama.cpp/pull/21089) WIP) | ⚠️ Same kernel bug as vLLM PR #40361 | ❌ | 🟡 [Issue #1509](https://github.com/ikawrakow/ik_llama.cpp/issues/1509) — CPU complete + CUDA written, awaiting merge |
 | **2-bit KV** | ✅ ([PR #38479](https://github.com/vllm-project/vllm/pull/38479)) | ❌ | ❌ | ❌ | ❌ |
 | **CPU KV offload** | ✅ pluggable policies ([PR #37160](https://github.com/vllm-project/vllm/pull/37160)) | ⚠️ via mmap | ✅ Decode Radix Cache (v0.5.11) | N/A | ⚠️ via mmap |
 | **Disk KV offload** | ✅ FlexKV ([PR #34328](https://github.com/vllm-project/vllm/pull/34328)) + LMCache | ⚠️ | ⚠️ | ❌ | ⚠️ |
@@ -193,7 +193,7 @@ All five are actively developed. ktransformers is positioned as research but pro
 | Model family | vLLM | llama.cpp | SGLang | ktransformers | ik_llama.cpp |
 |---|---|---|---|---|---|
 | **Qwen3.5 / Qwen3.6 (incl. 80B-A3B)** | ✅ | ✅ | ✅ Day-0 (Qwen3.6 v0.5.11) | ✅ | ✅ |
-| **Qwen3-Next family (DeltaNet hybrid)** | ✅ via Genesis patches | ✅ | ✅ | ⚠️ | ✅ |
+| **Qwen3-Next family (DeltaNet hybrid)** | ✅ stock | ✅ | ✅ | ⚠️ | ✅ |
 | **Gemma 4 / Gemma-4 31B** | ✅ + MTP ([PR #41745](https://github.com/vllm-project/vllm/pull/41745)) + DFlash ([PR #41703](https://github.com/vllm-project/vllm/pull/41703)) | ✅ via mmproj | ✅ Day-0 | ⚠️ | ✅ via mmproj |
 | **DeepSeek V3 / R1 / V4-Flash** | ✅ | ✅ | ✅ + TRT-LLM NSA (3-5× on Blackwell) | ✅ Native (kt-kernel MXFP4 for V4-Flash) | ✅ |
 | **Kimi-K2.5 / K2.6** | ✅ tool parser ([PR #37438](https://github.com/vllm-project/vllm/pull/37438)) | ✅ | ✅ Day-0 K2.6 (v0.5.11) | ✅ | ✅ |
@@ -253,7 +253,7 @@ Q1: Does the model fit your VRAM at desired quant?
 
 | Model | Daily driver | Reason |
 |---|---|---|
-| **Qwen3.6-27B** (dense hybrid, fits VRAM) | **vLLM** + Genesis patches | Multi-tenant, full feature set, Cliff 1/2 closed on TP=2 |
+| **Qwen3.6-27B** (dense hybrid, fits VRAM) | **vLLM** (stock) | Multi-tenant, full feature set, Cliff 1/2 closed on TP=2 |
 | **Qwen3.6-27B** (single-card no-cliffs path) | **llama.cpp** | Different memory model; no Cliff 2b under multi-turn |
 | **Qwen3.6-27B** (single-card with MTP, no PR-branch building) | **ik_llama.cpp** | MTP merged on main — get the ~+34% TPS lift without rebuilding from PR #22673 |
 | **Gemma 4 31B** (dual-card) | **vLLM** + MTP/DFlash overlays | Best spec-decode story, vision support |
@@ -268,9 +268,9 @@ Q1: Does the model fit your VRAM at desired quant?
 ## Honest gaps / what each *isn't* great at
 
 ### vLLM
-- **Single-card cliffs on Qwen3-Next**: Cliff 2 / Cliff 2b on long-ctx single-card (24 GB) — see [docs/CLIFFS.md](CLIFFS.md). Mitigated by Genesis but not fully closed.
+- **Single-card cliffs on Qwen3-Next**: Cliff 2 / Cliff 2b on long-ctx single-card (24 GB) — see [docs/CLIFFS.md](CLIFFS.md). Mitigated on TP=2 but not fully closed.
 - **Layer-uniform CPU offload only** (no router-aware MoE caching).
-- **Patch-heavy for Qwen3-Next family** — needs Genesis-vllm-patches for production-grade behavior.
+- **Qwen3-Next needs a current vLLM** — the fixes that used to require a third-party patch tree are upstream now; an old pin will misbehave.
 
 ### llama.cpp
 - **Single-stream-only on dense models** (parallel slots exist but TP/EP are limited).
@@ -339,7 +339,7 @@ Honest gaps:
 | **qwen3coder `<tool_call>`-in-prose silent SSE** | ⚫ Local sidecar (issue #72) | N/A | ⚫ Same root cause | N/A | N/A |
 | **Per-token-head KV on hybrid pages** | 🟡 [PR #40391](https://github.com/vllm-project/vllm/pull/40391) | N/A | 🟡 | N/A | N/A |
 | **Workspace lock strictness (vLLM 0.20)** | 🟢 [PR #39226](https://github.com/vllm-project/vllm/pull/39226) merged | N/A | N/A | N/A | N/A |
-| **TurboQuant CPU + CUDA** | 🟢 ✅ via Genesis | 🟡 [PR #21089](https://github.com/ggml-org/llama.cpp/pull/21089) (CPU first; CUDA no PR) | 🟡 ⚠️ Same kernel bug as PR #40361 | ❌ | 🟡 [Issue #1509](https://github.com/ikawrakow/ik_llama.cpp/issues/1509) — CPU complete + CUDA written, awaiting validation/merge |
+| **TurboQuant CPU + CUDA** | 🗑️ retired here | 🟡 [PR #21089](https://github.com/ggml-org/llama.cpp/pull/21089) (CPU first; CUDA no PR) | 🟡 ⚠️ Same kernel bug as PR #40361 | ❌ | 🟡 [Issue #1509](https://github.com/ikawrakow/ik_llama.cpp/issues/1509) — CPU complete + CUDA written, awaiting validation/merge |
 | **MTP merged on llama.cpp family** | N/A | 🟢 ✅ [PR #22673](https://github.com/ggml-org/llama.cpp/pull/22673) merged 2026-05-16 | N/A | N/A | 🟢 ✅ **Merged on main** (Qwen + GLM-4.x) + two-stage ngram+MTP |
 
 🟢 Landed / 🟡 Open / 🔴 Blocked / ⚫ Local workaround
@@ -353,7 +353,6 @@ Honest gaps:
 - **SGLang**: [GitHub releases](https://github.com/sgl-project/sglang/releases) (v0.5.11, May 5 2026)
 - **ktransformers**: [GitHub releases](https://github.com/kvcache-ai/ktransformers/releases) (v0.6.2, May 3 2026) + [docs site](https://ktransformers.net/en/docs)
 - **ik_llama.cpp**: [GitHub repo](https://github.com/ikawrakow/ik_llama.cpp) (rolling main, no tagged releases) + [Discussion #258](https://github.com/ikawrakow/ik_llama.cpp/discussions/258) (vs llama.cpp / ktransformers positioning) + [Issue #1509](https://github.com/ikawrakow/ik_llama.cpp/issues/1509) (TurboQuant ready-for-review)
-- **Genesis-vllm-patches** (Qwen3-Next ergonomics layer): [GitHub](https://github.com/Sandermage/genesis-vllm-patches)
 - **LMCache** (CPU+disk-tier KV connector for vLLM): [GitHub](https://github.com/LMCache/LMCache)
 - **Cross-rig anchors on club-3090's hardware**: [BENCHMARKS.md](../BENCHMARKS.md), [disc #86](https://github.com/noonghunna/club-3090/discussions/86)
 

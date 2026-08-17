@@ -141,6 +141,17 @@ The pad-sub-tile-n fix for AutoRound W4A16 at TP=2 is vendored in-repo and auto-
 
 ---
 
+---
+
+## Keeping up
+
+Slugs, defaults and measured numbers move faster than this page. For the latest:
+
+- 📣 **[Announcements](https://github.com/noonghunna/club-3090/discussions/categories/announcements)** — new models and tiers land here first, with the numbers and the caveats. Recent: [Qwen3.8-27B](https://github.com/noonghunna/club-3090/discussions/993) · [the fast + NVFP4 tier](https://github.com/noonghunna/club-3090/discussions/1024).
+- 💬 **[Discord](https://discord.gg/gzdfjhj5yN)** — synchronous Q&A, hardware questions, what people are actually running.
+- 📋 **[Discussions](https://github.com/noonghunna/club-3090/discussions)** — cross-rig benchmark drops and "should I tune X" threads, searchable.
+- ⚙️ **`bash scripts/switch.sh --list`** — the authoritative slug matrix for *your* machine. Always more current than any hand-written table, including the ones above.
+
 ## Deep dives
 
 - **[MULTI_CARD.md](MULTI_CARD.md)** — 3+ GPUs: replicate-vs-TP, valid TP values, deriving your own config.

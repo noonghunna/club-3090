@@ -60,7 +60,7 @@ bash scripts/bench.sh
 bash scripts/switch.sh vllm/dual          # for example
 bash scripts/switch.sh --list             # every launchable variant (--all to include retired)
 
-# 7. Keep your install up-to-date as the stack moves (Genesis pin bumps,
+# 7. Keep your install up-to-date as the stack moves (engine pin bumps,
 #    new compose variants, vendored patch updates):
 bash scripts/update.sh
 ```
@@ -81,7 +81,7 @@ c3                                              # launch  (also: python -m club3
 
 **First run:** press **`S`** → set your **Model Dir** (where weights download) + **HuggingFace token** → **`Ctrl+S`** to save; then **`r`** to browse the catalog and serve one. **`c3 --lean`** (or **`[C]`** in-app) hides the producer lane for a consumer-only view. After a `git pull`, re-run the install to pick up new deps + UI changes. Full keybindings + details → [`tools/serve-cockpit/`](tools/serve-cockpit/).
 
-> ⚠️ **Single-card long-context note:** Cliff 2 (GDN prefill OOM at >~50K single-prompt) is **open** on 24 GB single-card vLLM. Genesis v7.72.2 PN59 was intended as the fix but doesn't engage on chunked-prefill. **Workarounds:** [`vllm/dual`](docs/DUAL_CARD.md) (TP=2 escapes it). ⚠️ The former single-card escape `llamacpp/default` was **retired 2026-08-12** (`--force` only) — on one card there is no longer a cliff-immune qwen path. Full diagnosis at [`docs/CLIFFS.md`](docs/CLIFFS.md).
+> ⚠️ **Single-card long-context note:** Cliff 2 (GDN prefill OOM at >~50K single-prompt) is **open** on 24 GB single-card vLLM. **Workarounds:** [`vllm/dual`](docs/DUAL_CARD.md) (TP=2 escapes it). ⚠️ The former single-card escape `llamacpp/default` was **retired 2026-08-12** (`--force` only) — on one card there is no longer a cliff-immune qwen path. Full diagnosis at [`docs/CLIFFS.md`](docs/CLIFFS.md).
 
 ---
 
@@ -115,7 +115,7 @@ c3                                              # launch  (also: python -m club3
 | **A model not in the supported list** / any HF safetensors repo | [`docs/PULL.md`](docs/PULL.md) — universal `pull` flow: evaluate against the KV math, honest about confidence |
 | Considering self-host vs cloud APIs | [`docs/COMPARISONS.md`](docs/COMPARISONS.md) — cost crossover + when each wins |
 
-Each hardware page lists every supported model with the working composes for that card count, plus measured TPS and per-workload pitfalls. Model-specific deep dives (quants, Genesis patches, engine internals) live under [`models/<name>/`](models/).
+Each hardware page lists every supported model with the working composes for that card count, plus measured TPS and per-workload pitfalls. Model-specific deep dives (quants, engine internals) live under [`models/<name>/`](models/).
 
 ---
 
@@ -218,7 +218,7 @@ bash scripts/switch.sh --force llamacpp/default
 #    Set MODEL_DIR to wherever your weights live; -f points at the compose.
 #    Layout: models/<model>/<engine>/compose/<topology>/<quant>/<serving>.yml
 
-# single-card llama.cpp (cliff-immune fallback; no nightly/Genesis dependency) — serves on :8020
+# single-card llama.cpp (cliff-immune fallback, --force only) — serves on :8020
 MODEL_DIR=/path/to/models docker compose \
   -f models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp.yml up -d
 
@@ -266,12 +266,12 @@ club-3090/
 ├── models/
 │   └── qwen3.6-27b/                       all Qwen3.6-27B-specific stuff
 │       ├── README.md                      model overview + variants + recommendations
-│       ├── INTERNALS.md                   engineering rationale (Genesis, Marlin pad, DFlash, upstream tracker)
+│       ├── INTERNALS.md                   engineering rationale (Marlin pad, DFlash, upstream tracker)
 │       ├── CHANGELOG.md                   model-specific dated history
 │       ├── vllm/
 │       │   ├── README.md                  "vLLM recipes for Qwen3.6-27B"
 │       │   ├── compose/<topology>/<quant>/  compose files (e.g. dual/autoround-int4/fp8-mtp.yml)
-│       │   └── patches/                   tolist_cudagraph + Marlin pad README + Genesis pointer
+│       │   └── patches/                   tolist_cudagraph + Marlin pad README
 │       ├── llama-cpp/
 │       │   ├── README.md                  "llama.cpp composes for Qwen3.6-27B"
 │       │   └── compose/single/unsloth-q4km/ mtp.yml + mtp-vision.yml + bounded-thinking.yml
@@ -280,12 +280,12 @@ club-3090/
 │       └── sglang/
 │           └── README.md                  blocked status — what would unblock it on this model
 ├── scripts/                               shared, model-aware
-│   ├── setup.sh                           bash setup.sh <model> → preflight + downloads + verifies + Genesis
+│   ├── setup.sh                           bash setup.sh <model> → preflight + downloads + verifies
 │   ├── launch.sh                          interactive wizard: model → GPUs → KV projection → boots compose + verifies
 │   ├── switch.sh                          stateless variant switcher (bring down old, up new)
-│   ├── update.sh                          one-shot upgrade: git pull + re-pin Genesis + re-vendor patches
+│   ├── update.sh                          one-shot upgrade: git pull + re-vendor patches
 │   ├── health.sh                          runtime health probe (KV %, MTP AL, recent TPS, errors)
-│   ├── preflight.sh                       sourceable lib: docker / GPU / disk / repo-drift / Genesis-pin checks
+│   ├── preflight.sh                       sourceable lib: docker / GPU / disk / repo-drift checks
 │   ├── verify.sh                          quick smoke test (engine-aware via env)
 │   ├── verify-full.sh                     fast functional test (8 checks, ~1-2 min)
 │   ├── verify-stress.sh                   boundary-case stress test (longctx ladder + tool prefill OOM, ~5-10 min)
@@ -370,7 +370,7 @@ The stack stands on a lot of shoulders:
 
 - **Qwen team** ([@Alibaba_Qwen](https://huggingface.co/Qwen)) — for the base models and the MTP head architecture
 - **[Lorbus](https://huggingface.co/Lorbus/Qwen3.6-27B-int4-AutoRound)** — for the AutoRound INT4 quant with preserved BF16 `mtp.fc` (the model this whole stack runs on)
-- **[Sandermage](https://github.com/Sandermage/genesis-vllm-patches)** — Genesis patch tree for TurboQuant + hybrid models on consumer Ampere; root-causing #40880 and shipping the v7.14 fix
+- **[Sandermage](https://github.com/Sandermage)** — root-caused vllm#40880 (MTP × TurboQuant cudagraph capture) and shipped the fix that made spec-decode work on consumer Ampere. The patch tree it shipped in is no longer used here, but the diagnosis stands and is upstream at [vllm#40914](https://github.com/vllm-project/vllm/pull/40914).
 - **[vibhavagarwal5](https://github.com/vllm-project/vllm/pull/38479)** — TurboQuant landing PR + tracking issue #40069
 - **[vLLM project](https://github.com/vllm-project/vllm)** — the engine + active maintenance
 - **[llama.cpp](https://github.com/ggerganov/llama.cpp)** — the alternative engine path

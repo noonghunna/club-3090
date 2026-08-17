@@ -196,7 +196,7 @@ Independent of the weight quant, you can quantize the **KV cache** — this is w
 | `fp8_e4m3` | 8 | vLLM | Same bytes as e5m2; **better numeric precision** (more mantissa). Availability depends on the model/loader/backend route, not SM alone. Verified on Ampere sm_86 through FlashInfer with Qwen-AgentWorld AWQ on stock vLLM v0.25.1; other non-FP8-weight models can still route to Triton and reject sm_86. ⚠️ **Storage-only on consumer GPUs** — native FP8 *attention* compute needs FA3 (Hopper) or trtllm-gen FMHA (datacenter Blackwell). Launcher-injected on sm_89+ since [#246](https://github.com/noonghunna/club-3090/issues/246); `KV_CACHE_DTYPE=` overrides. Full arch matrix: [DTYPE_MATRIX](DTYPE_MATRIX.md). |
 | `nvfp4` | 4 | vLLM ≥ v0.24.0 | **DATACENTER Blackwell only (sm_100/103)** FP4 KV. The trtllm-gen FP4 FMHA has no consumer-Blackwell (sm_120/121) build → **crashes on RTX 5090s** despite their FP4 hardware ([vLLM #43562](https://github.com/vllm-project/vllm/issues/43562) / [TRT-LLM #10241](https://github.com/NVIDIA/TensorRT-LLM/issues/10241); confirmed disc #571). NVFP4 *weights* work on consumer; only KV doesn't. Consumer answer = `fp8_e4m3`. |
 | **`int8_per_token_head`** | 8 | vLLM | ~1 byte/tok like fp8; **native in stock v0.22.0** for standard models (Gemma-4 needs the #40391 overlay). Use it when the exact compressed-tensors model/image rejects FP8 KV; it is not a blanket requirement for every compressed-tensors checkpoint. |
-| **TQ3 (TurboQuant)** | 3 | vLLM (Genesis) | 3-bit KV — beats fp8 on long-context memory; powers our `dual-turbo`. See [TQ3_MTP_GENESIS.md](TQ3_MTP_GENESIS.md) + [CLIFFS.md](CLIFFS.md). |
+| **TQ3 (TurboQuant)** | 3 | 🗑️ retired here | 3-bit KV. Beat fp8 on long-context memory, but the composes using it are archived and no shipped slug offers it. Kept for reference. [CLIFFS.md](CLIFFS.md). |
 | `-khad` (modifier) | — | **ik only** | Hadamard transform on the K-cache → recovers accuracy lost to KV quantization, so you keep quality at q4_0/q8_0. |
 
 > ⚠️ **Do not infer FP8-KV support from `compressed-tensors` alone.** Some checkpoints/pins reject it with `ValueError: … not supported with fp8 checkpoints`; use `int8_per_token_head` there. Stock vLLM v0.25.1 is more permissive for at least Qwen-AgentWorld AWQ: E4M3 and E5M2 both booted and completed on sm_86, and E4M3 passed the full 262K stress/quality/soak gate. Test the exact model and image. Full picker + the Gemma-4 #40391 caveat: [DTYPE_MATRIX](DTYPE_MATRIX.md).
@@ -248,5 +248,5 @@ So IQK is a deliberate "I'll run the fork to get the better quant" choice — wh
 - [engines/IK_LLAMA.md](engines/IK_LLAMA.md) — the engine that unlocks IQK
 - [INFERENCE_ENGINES.md](INFERENCE_ENGINES.md) — engine comparison
 - [DTYPE_MATRIX.md](DTYPE_MATRIX.md) — compute/KV dtype matrix
-- [CLIFFS.md](CLIFFS.md) + [TQ3_MTP_GENESIS.md](TQ3_MTP_GENESIS.md) — KV-cache quant deep-dives
+- [CLIFFS.md](CLIFFS.md) — prefill-cliff mechanisms and KV-cache interaction
 - [BENCHMARKS.md](../BENCHMARKS.md) — measured quality + TPS per quant/engine

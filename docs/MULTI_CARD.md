@@ -104,8 +104,19 @@ On awkward counts, pick the **best-connected** pair or quad, not the first N. In
 |---|---|---|--:|--:|---|
 | `vllm/qwen-27b-multi-fast` ⭐ | AutoRound INT4 | fp8 e4m3 | 262144 | 8014 | The primary 4-card config. Cross-rig: 74.76 / 90.83 TPS (@ryanmpelletier, all-x16). |
 | `vllm/qwen-27b-multi-max` | FP8 | fp8 e4m3 | 262144 | 8015 | Highest weight fidelity. Cross-rig: 74.10 / 91.30 (@ryanmpelletier) · 79.23 / 101.61 (@MoppelMat). |
-| `vllm/qwen38-27b-multi4-max` | official FP8 | bf16 | 262144 | 8092 | 🐣 Qwen3.8. **Never booted on any card count** — first community boot IS the validation. |
-| `vllm/qwen38-27b-multi4-fast` | AutoRound INT4 | fp8 e4m3 | 262144 | 8096 | 🧪 Qwen3.8. Never booted. |
+| `vllm/qwen38-27b-multi4-max` | official FP8 | bf16 | 262144 | 8092 | 🐣 Qwen3.8. **Never booted on 4 cards** — first community boot IS the validation. |
+| `vllm/qwen38-27b-multi4-fast` | AutoRound INT4 + int8 act | fp8 e4m3 | 262144 | 8096 | 🧪 Qwen3.8. Never booted on 4 cards. |
+
+### TP=8 slugs (never booted, anywhere)
+
+| Slug | Weights | KV | Max ctx | Port | Notes |
+|---|---|---|--:|--:|---|
+| `vllm/qwen38-27b-multi8-max` | official FP8 | bf16 | 262144 | 8093 | 🐣 `--force`, hidden from `--list` |
+| `vllm/qwen38-27b-multi8-fast` | AutoRound INT4 + int8 act | fp8 e4m3 | 262144 | 8097 | 🧪 `--force` |
+
+⚠️ **TP=8 is not the same shard shape as TP=2/4.** With 4 KV heads, vLLM **replicates** them across rank pairs rather than splitting, so per-card KV stays at roughly the TP=4 figure — only the **weights** take the full 8-way split (~3.6 GiB/card vs ~7.2 at TP=4). The 8-card gain over 4 is weight headroom, bought with more all-reduce on a PCIe bus. On the qwen3.6 equivalent, single-stream decode was already ~flat from 2 → 4. Expect flat or worse; expect nothing quantitative until someone measures it.
+
+The Qwen3.8 dual-card tier **has** been measured — `vllm/qwen38-27b-dual-max` at 67.4 / 85.8 TPS, [DUAL_CARD.md](DUAL_CARD.md). Its numbers transfer on topology but **not** on pool size or concurrency: since 2026-08-15 the multi slugs run bf16 KV while the dual runs fp8 e4m3.
 
 ⚠️ **Both qwen3.6 multi slugs are exposed to open [vllm#50021](https://github.com/vllm-project/vllm/pull/50021)** — a GDN spec-decode wild write that kills workers under sustained agent traffic. Mitigate with `SPEC=off`. Every measured row: [`BENCHMARKS.md`](../BENCHMARKS.md).
 
@@ -158,6 +169,17 @@ bash scripts/report.sh --full     # ~35 min, redacted, paste-ready
 Report via the `numbers-from-your-rig` issue template.
 
 ---
+
+---
+
+## Keeping up
+
+Slugs, defaults and measured numbers move faster than this page. For the latest:
+
+- 📣 **[Announcements](https://github.com/noonghunna/club-3090/discussions/categories/announcements)** — new models and tiers land here first, with the numbers and the caveats. Recent: [Qwen3.8-27B](https://github.com/noonghunna/club-3090/discussions/993) · [the fast + NVFP4 tier](https://github.com/noonghunna/club-3090/discussions/1024).
+- 💬 **[Discord](https://discord.gg/gzdfjhj5yN)** — synchronous Q&A, hardware questions, what people are actually running.
+- 📋 **[Discussions](https://github.com/noonghunna/club-3090/discussions)** — cross-rig benchmark drops and "should I tune X" threads, searchable.
+- ⚙️ **`bash scripts/switch.sh --list`** — the authoritative slug matrix for *your* machine. Always more current than any hand-written table, including the ones above.
 
 ## See also
 

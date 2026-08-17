@@ -79,7 +79,7 @@ Plain-language definitions for terms used throughout the docs. Roughly grouped b
 | **vLLM** | A production-grade GPU LLM inference engine. Open source, NVIDIA-focused. Powers many cloud inference services. |
 | **llama.cpp** | A lightweight CPU-and-GPU inference engine. Works on every platform. Smaller binary, less feature-rich than vLLM. |
 | **SGLang** | A high-throughput serving engine with RadixAttention prefix sharing. Often beats vLLM on multi-tenant aggregate. |
-| **Genesis patches** | [Sandermage's vLLM monkey-patch tree](https://github.com/Sandermage/genesis-vllm-patches) that fixes several Qwen3-Next bugs at runtime. We mount it into vLLM's site-packages. |
+| **Genesis patches** 🗑️ | A third-party vLLM patch tree this stack used through mid-2026 to fix Qwen3-Next bugs. **No shipped compose enables it any more** — kept in the glossary only so older discussions and CHANGELOG entries stay readable. The one finding that outlived it is upstream at [vllm#40914](https://github.com/vllm-project/vllm/pull/40914). Anything at runtime. We mount it into vLLM's site-packages. |
 | **Cudagraph** | A CUDA optimization that records GPU operation sequences and replays them. Faster than dispatching ops individually. |
 | **OpenAI API** | The HTTP API spec (`/v1/chat/completions`, etc.) used by ChatGPT, Claude (via proxy), and many OSS chat tools. We serve this on `localhost:8020` (single-card) or `localhost:8010` (dual-card). |
 

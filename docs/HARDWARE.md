@@ -26,7 +26,7 @@ The recipes are written against 3090 specifically but should work on:
 | **2× RTX 3080 modded 20 GB** | 20 GB / card (40 GB combined) | sm_86 | **Tested 2026-05-02 by [@troymroberts](https://github.com/troymroberts) ([#25](https://github.com/noonghunna/club-3090/discussions/25#discussioncomment-16787782))** at 200W/card power limit. `dual.yml` (TQ k8v4 KV + MTP K=3) boots at full 262K target with `gpu-memory-utilization=0.82` (down from shipped 0.95 — see note below). Available KV pool 5.2 GB/card, max concurrency 1.43×. verify-full 10/10 pass; bench 49 TPS wall single-stream, 210 TPS aggregate at n=8. First published SM86 / 40 GB combined data point outside the 3090 family. |
 | RTX 4090 | 24 GB | sm_89 | Should work; ~30% faster decode (newer SMs); same memory characteristics |
 | RTX 5090 | 32 GB | sm_120 | Untested; more VRAM relaxes the prefill cliffs but kernel paths might differ |
-| RTX A5000 | 24 GB | sm_86 | **Sander's PROD class** for [genesis-vllm-patches](https://github.com/Sandermage/genesis-vllm-patches). Identical SM and VRAM to 3090; should run identically. |
+| RTX A5000 | 24 GB | sm_86 | Identical SM and VRAM to 3090; should run identically. |
 | RTX A6000 | 48 GB | sm_86 | Should work; double VRAM lets you skip the cliff workarounds (use Sandermage's reference defaults) |
 | H100 SXM | 80 GB | sm_90 | Different beast; flash-attn 3 paths available; not what these recipes target |
 
