@@ -17,6 +17,9 @@ Start here if you want to run a model.
 | Doc | What it is |
 |---|---|
 | [`GETTING_STARTED.md`](GETTING_STARTED.md) | **Start here — 5-minute clone-to-curl path.** No decisions, no menus. |
+| [`LOCAL_AI_PRIMER.md`](LOCAL_AI_PRIMER.md) | New to local AI? Plain-English guide to hardware, engines and quantization before you pick anything. |
+| [`GLOSSARY.md`](GLOSSARY.md) | TPS, KV cache, MTP, TP, prefill vs decode — every term the other pages assume. |
+| [`WSL_SETUP.md`](WSL_SETUP.md) | Windows — running the stack on WSL2 from scratch. |
 | [`SINGLE_CARD.md`](SINGLE_CARD.md) | 1× RTX 3090 — workload → curated config → quick start. |
 | [`DUAL_CARD.md`](DUAL_CARD.md) | 2× RTX 3090 (PCIe / NVLink auto-detected) — workload → config → quick start. |
 | [`MULTI_CARD.md`](MULTI_CARD.md) | 3+ GPUs — TP scaling math, derivation from `dual.yml`, valid TP values. |
