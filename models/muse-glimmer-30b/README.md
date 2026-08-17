@@ -2,7 +2,7 @@
 
 Config for running **Meta's Muse Glimmer 30B** (dense, SWA+GQA, native vision + tool calling) on a single RTX 3090 with DFlash speculative decoding.
 
-> Single-rig data: RTX 3090 (sm_86, 24 GB), WSL2 Ubuntu (llama.cpp build 10349, commit 62bf73d25). Also runs on native Windows with equivalent performance. Measured 2026-08-11.
+> Single-rig data: RTX 3090 (sm_86, 24 GB), WSL2 Ubuntu (llama.cpp build 10349, commit 62bf73d25). Measured 2026-08-11. Full verify-full / verify-stress / bench gate not run — see [CHANGELOG](CHANGELOG.md).
 
 ---
 
@@ -40,7 +40,7 @@ llama-server \
   --chat-template-kwargs '{"reasoning_strength":"high"}'
 ```
 
-### Measured performance (RTX 3090, verified 2026-08-11)
+### Measured performance (RTX 3090, 2026-08-11)
 
 | Metric | Value | Notes |
 |--------|-------|-------|
@@ -52,13 +52,13 @@ llama-server \
 | Decode (DFlash on, short) | **44.3 t/s** @ 114K ctx | |
 | Decode (DFlash off, long) | 35.5 t/s | DFlash adds +10–25% |
 | Draft acceptance | 0.14 (179/1245 accepted) | Mean draft length: 3.16 tokens |
-| Post-sweep (with `--no-webui`) | **47.3 t/s long / 67.1 short** | ~20.8 GB VRAM |
+| Post-tuning (with `--no-webui`) | **47.3 t/s long / 67.1 short** | ~20.8 GB VRAM |
 
 ### Reasoning behavior
 
 - Default: `reasoning_strength=high`, routed to `message.reasoning_content`
 - Per-request control: `"chat_template_kwargs": {"reasoning_strength": "low|medium|high|xhigh"}`
-- `low` ≈ 2× faster (99.7 vs 53.3 t/s on coding) without losing correctness
+- `low` ≈ 2× faster (99.7 vs 53.3 t/s on coding) with no observed quality regression in testing
 - `--reasoning off` is a no-op for this template (always thinks, just less)
 - `--reasoning-budget 2048` caps thinking per step; guarantees content from `max_tokens >= 512`
 
@@ -89,7 +89,7 @@ On BeeLlama's fork, long agent prompts with tool-style output trigger:
 ```
 raw tool marker observed ... suppressing DFlash
 ```
-This forces full prompt re-processing and drops from ~97 t/s (clean generation) to ~27 t/s (agent loops). Do not use DFlash for agentic workloads on Qwen3.6/BeeLlama.
+This forces full prompt re-processing and drops from ~97 t/s (clean generation) to ~27 t/s (agent loops). Do not use DFlash for agentic workloads on Qwen3.6/BeeLlama. See the [qwen3.6-27b CHANGELOG](../qwen3.6-27b/CHANGELOG.md) for the BeeLlama retirement context.
 
 ### vLLM/SGLang: DFlash only works with BF16 weights
 
@@ -99,7 +99,7 @@ DFlash in vLLM/SGLang requires BF16 model weights (~54 GB for 30B). Does not fit
 
 ## Gotchas
 
-1. **Never quantize the draft KV.** `--spec-draft-type-k/v q4_0` (or `-ctkd`/`-ctvd`) collapses DFlash acceptance to near-zero. Upstream issue #25725; fix #25823 confirmed present in build 10349. Keep draft KV at f16 (default).
+1. **Never quantize the draft KV.** `--spec-draft-type-k/v q4_0` (or `-ctkd`/`-ctvd`) collapses DFlash acceptance to near-zero. Upstream [llama.cpp#25725](https://github.com/ggml-org/llama.cpp/issues/25725); fix [#25823](https://github.com/ggml-org/llama.cpp/pull/25823) confirmed present in build 10349. Keep draft KV at f16 (default).
 
 2. **`--jinja` is required.** Muse Glimmer's chat template uses Jinja2 syntax. Without `--jinja`, tool calling and reasoning routing break silently.
 
@@ -130,4 +130,10 @@ DFlash in vLLM/SGLang requires BF16 model weights (~54 GB for 30B). Does not fit
 
 - **llama.cpp:** build 10349 (commit 62bf73d25), CUDA, WSL2 Ubuntu
 - **GPU:** NVIDIA GeForce RTX 3090, 24576 MiB
-- **OS:** Windows 10 host + WSL2 (or native Windows with equivalent binary)
+- **OS:** Windows 10 host + WSL2
+
+## See also
+
+- [`docs/CLIFFS.md`](../../docs/CLIFFS.md) — prefill cliff mechanisms (adjacent to the draft-KV quantization issue)
+- [`models/qwen3.8-27b/`](../qwen3.8-27b/) — Qwen 3.8 on this stack (MTP path, higher context)
+- [`docs/WSL_SETUP.md`](../../docs/WSL_SETUP.md) — WSL2 environment setup

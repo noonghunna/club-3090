@@ -11,9 +11,9 @@ Added llama.cpp configs for Qwen 3.8 27B on a single RTX 3090, validated on nati
 
 **Not yet run (N/A justifications):**
 - verify-full.sh / verify-stress.sh: N/A — native Windows path has no Docker container to smoke-test; configs validated by sustained agentic use (Hermes Agent multi-turn tool calling, long-context RAG) over multiple days.
-- SOAK_MODE=continuous: N/A — same reason; however, the configs have been running continuously for 7+ days as a production agent backend without degradation.
+- SOAK_MODE=continuous: N/A — same reason; however, the configs have been running continuously for 7+ days as a production agent backend without observed degradation.
 - bench.sh canonical run: N/A — script targets Docker containers. Numbers above are streaming decode measurements from `/metrics` during real workloads (n>50 requests per profile).
-- BENCHMARKS row: deferred to maintainer review (single-rig data; happy to re-run with their harness if desired).
+- BENCHMARKS row: deferred pending maintainer review (single-rig data; can re-run with the repo harness on request).
 
 **Key findings:**
 - `--mlock` is critical on native Windows (without it, decode drops from ~40 to ~10 t/s under RAM pressure)

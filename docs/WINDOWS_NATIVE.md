@@ -10,7 +10,7 @@ Reference notes for running `llama-server.exe` directly on native Windows. Cover
 
 ### `--mlock`
 
-Pins model pages in physical RAM so the OS cannot evict them under memory pressure. Without it, sustained mixed usage (browser + IDE + inference) causes decode to drop from ~40 t/s to ~10–15 t/s as pages get paged out. With `--mlock`, performance is stable indefinitely.
+Pins model pages in physical RAM so the OS cannot evict them under memory pressure. Without it, sustained mixed usage (browser + IDE + inference) causes decode to drop from ~40 t/s to ~10–15 t/s as pages get paged out. With `--mlock`, performance stays stable across extended sessions.
 
 Cost: the model's RAM footprint becomes permanent. On 32 GB with a ~17 GB model, you have ~11 GB for everything else. Fine for a dedicated inference box; tight if you're also running Chrome + VS Code.
 

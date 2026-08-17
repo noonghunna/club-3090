@@ -11,14 +11,14 @@ Added llama.cpp config for Muse Glimmer 30B with DFlash spec-decode on a single 
 
 **Not yet run (N/A justifications):**
 - verify-full.sh / verify-stress.sh: N/A — single-profile config validated by sustained use (multi-turn tool calling, vision, long-context) over multiple days. No Docker container to smoke-test.
-- SOAK_MODE=continuous: N/A — same reason; however, multi-turn sessions up to 5 turns at ~220 ms/turn with growing cached_tokens confirm no accumulating-context cliff at this context size.
+- SOAK_MODE=continuous: N/A — same reason; however, multi-turn sessions up to 5 turns at ~220 ms/turn with growing cached_tokens are consistent with no accumulating-context cliff at this context size (full soak-continuous not run).
 - bench.sh canonical run: N/A — script targets Docker containers. Numbers above are from `/metrics` during real workloads (n>30 requests).
 
 **Key findings:**
 - DFlash pays off on dense+SWA architectures (acceptance 0.14, mean length 3.16 → +10–25% net)
 - DFlash regresses on BeeLlama/Qwen3.6 under agent workloads (tool marker suppression → 97→27 t/s)
-- Draft KV must stay f16 (quantizing collapses acceptance to near-zero; upstream #25725, fix #25823 in build 10349)
+- Draft KV must stay f16 (quantizing collapses acceptance to near-zero; upstream [llama.cpp#25725](https://github.com/ggml-org/llama.cpp/issues/25725), fix [#25823](https://github.com/ggml-org/llama.cpp/pull/25823) in build 10349)
 - `--jinja` is required for tool calling + reasoning routing
-- `reasoning_strength=low` gives ~2× speed without losing correctness
+- `reasoning_strength=low` gives ~2× speed with no observed quality regression
 
 **Contributor:** @Isaac-opz (single rig, WSL2 Ubuntu on Windows 10)

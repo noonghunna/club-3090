@@ -1,8 +1,8 @@
 # Qwen3.8-27B on llama.cpp — single RTX 3090
 
-Configs for running **Qwen 3.8 27B** (dense, hybrid GDN+FA, native vision + MTP) on a single RTX 3090 (24 GB VRAM) with llama.cpp. Validated on both native Windows and WSL2.
+Configs for running **Qwen 3.8 27B** (dense, hybrid GDN+FA, native vision + MTP) on a single RTX 3090 (24 GB VRAM) with llama.cpp.
 
-> Single-rig data: RTX 3090 (sm_86, 230W cap), Ryzen 5 5600G, 32 GB DDR4, Windows 10, llama.cpp build **b10435** (CUDA 13). Numbers are streaming decode TPS with vision loaded.
+> Single-rig data: RTX 3090 (sm_86, 230W cap), Ryzen 5 5600G, 32 GB DDR4, Windows 10, llama.cpp build **b10435** (CUDA 13). Numbers are streaming decode TPS with vision loaded. Full verify-full / verify-stress / bench gate not run (non-Docker path) — see [CHANGELOG](CHANGELOG.md).
 
 ---
 
@@ -171,7 +171,7 @@ llama-server.exe ^
 
 ## Comparison with Qwen3.6-27B (same hardware)
 
-| Metric | Qwen3.6-27B (club-3090 baseline) | Qwen3.8-27B (this page) |
+| Metric | Qwen3.6-27B (llama.cpp baseline) | Qwen3.8-27B (this page, llama.cpp) |
 |--------|----------------------------------|------------------------|
 | Quant | Q4_K_M / IQ4_KS | UD-Q4_K_XL (dynamic) |
 | Max ctx (single 3090) | 200K (llamacpp/mtp, retired) | **262K** (native max) |
@@ -179,7 +179,7 @@ llama-server.exe ^
 | Max ctx speed (no MTP) | ~33/40 TPS @ 200K | ~30–33 t/s @ 262K |
 | Vision | Separate config (160K, slower) | Integrated at full ctx |
 
-The speed delta vs. Qwen3.6 is expected: UD-Q4_K_XL is a slightly larger quant than Q4_K_M, and the 3.8 architecture has more GDN layers. The context gain (+62K) and integrated vision are the trade-off.
+The speed delta vs. Qwen3.6 is consistent with UD-Q4_K_XL being a larger quant than Q4_K_M and the 3.8 architecture having more GDN layers. The context gain (+62K) and integrated vision are the trade-off.
 
 ---
 
@@ -204,3 +204,9 @@ The speed delta vs. Qwen3.6 is expected: UD-Q4_K_XL is a slightly larger quant t
 - **GPU:** NVIDIA GeForce RTX 3090, 24576 MiB, driver 610.88
 - **OS:** Windows 10 (native; WSL2 available but not used for inference)
 - **RAM:** 32 GB DDR4 (model pages pinned via `--mlock`)
+
+## See also
+
+- [`docs/WINDOWS_NATIVE.md`](../../docs/WINDOWS_NATIVE.md) — platform reference for native Windows llama.cpp
+- [`docs/CLIFFS.md`](../../docs/CLIFFS.md) — vLLM prefill cliffs (the ubatch mechanism is the same)
+- [`models/qwen3.6-27b/`](../qwen3.6-27b/) — previous Qwen dense on this stack
