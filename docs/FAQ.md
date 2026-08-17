@@ -223,6 +223,46 @@ Look at the [TPS chart](../README.md#measured-tps-at-a-glance) — single-card v
 2. Wrong compose for your prompt shape (use the `tq3-mtp.yml` 48K single-card default for chat — don't pick `long-vision.yml` if you don't need 198K)
 3. Genesis tree drift — `git pull origin main` between bench runs can change AL by ±15%. We pin to commit `bf667c7` for this reason.
 
+### My TPS is ~5× lower than the table and there is no error — what happened?
+
+You are almost certainly running a **speculative-decoding compose whose draft model was never
+downloaded.** vLLM does not fail in this case: it **silently falls back to baseline decode** and
+serves normally, just far slower. Reported by
+[@lolren in #18](https://github.com/noonghunna/club-3090/discussions/18#discussioncomment-16787831),
+where a DFlash compose ran at ~25 TPS instead of ~125.
+
+```bash
+# Fetch the draft model the compose expects, then reboot the slug:
+WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
+```
+
+Confirm the drafter actually attached — the boot log names it, and an accept-length line appears
+once it has served traffic:
+
+```bash
+docker logs <container> 2>&1 | grep -iE 'speculative|draft|acceptance'
+```
+
+⚠️ This failure mode is **generic to any external-drafter config**, not specific to one compose:
+a missing draft model produces a working server at a fraction of the advertised throughput with no
+error anywhere. If your numbers are off by a large multiple and nothing is logged, check this first.
+
+### Which sampler values matter, and which one will silently ruin output?
+
+Every Qwen3.6-27B compose ships `temperature 0.6 · top_p 0.95 · top_k 20 · min_p 0.0` — Qwen's own
+precise-coding profile, and also the MTP-accept-sweep winner (a tighter distribution raises draft
+acceptance). For long agentic *reasoning*, the card's general-task profile is `temperature 1.0`
+(same top_p/top_k/min_p) — set `TEMP=1.0` or send it per-request.
+
+⚠️⚠️ **`min_p` must stay `0.0` in every mode.** A non-zero min-p floor (e.g. `0.75`) collapses the
+distribution and **traps reasoning models in repetition loops**. It looks like a reasonable quality
+knob and it is not — never set it.
+
+Best practice is to let the agent/harness set temperature per task rather than relying on the server
+default: a coding agent, a planning loop and a summarizer each want different sampling, and only the
+calling harness knows which is running. The compose default is a coding-biased fallback for clients
+that send nothing.
+
 ### My TPS dropped after switching to 198K context. Why?
 
 It shouldn't, much — we measured 50.93 TPS narr at 192K vs 50.53 at 32K (within variance) on `long-vision.yml` pre-fix; the new 198K + 0.98 config is in the same range. If it dropped a lot, you're probably actually decoding *into* a long ctx (not just having KV pool reserved). Loaded-context decode is 2-4× cold short-prompt decode on any LLM. The TPS chart number is short-prompt cold; loaded numbers are in [BENCHMARKS.md](https://github.com/noonghunna/club-3090/blob/master/CHANGELOG.md).

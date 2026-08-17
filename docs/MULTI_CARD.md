@@ -115,12 +115,18 @@ own compose when the shipped `multi4` composes aren't your topology.
 
 ---
 
-## Replication vs tensor-parallel — the fork this page used to ignore
+## ⭐ Decide this first: replicate, or tensor-parallel?
+
+> **If you only read one section of this page, read this one.** Getting it wrong
+> costs up to **3.4×** aggregate throughput, and no amount of TP tuning further
+> down recovers it.
 
 Everything else on this page reasons in the **TP dimension**: how do I split one
 model across N cards? For **aggregate** throughput that is frequently the wrong
 question. If the model fits on one card, running **N independent instances**
 beats splitting it N ways — by a lot.
+
+**The rule: latency wants max TP, throughput wants max instances.**
 
 Measured by [@alesha-pro](https://github.com/noonghunna/club-3090/discussions/773)
 on 4× 3090 PCIe, all arms matched at 220 W, peak aggregate tok/s

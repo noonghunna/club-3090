@@ -424,6 +424,20 @@ This is model-specific but the **shapes apply across hybrid-attention models** (
 - **Single 3090 (24 GB):** Cliff 1 (~25K-token tool prefills, FFN intermediate buffer) closed across all shipped variants since 2026-04-30 PM. **⚠️ Cliff 2 (~50-60K single prompts, DeltaNet GDN forward) regressed under Genesis v7.72.2** — PN59 streaming-GDN was advertised as the structural fix but doesn't engage on the chunked-prefill code path that 24 GB single-card configs are forced to take (`--max-num-batched-tokens 4128` populates `chunk_indices`/`chunk_offsets` which PN59's eligibility check rejects). `long-text.yml` / `long-text-no-mtp.yml` / `long-vision.yml` may OOM at >50K single-prompt context. Filed at [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22), pending Sander review. **Workarounds**: `dual.yml` / `dual-turbo.yml` (TP=2 escapes the cliff), or `llamacpp/default` (different engine, no Cliff 2). [See `docs/CLIFFS.md` for the full diagnostic.](CLIFFS.md)
 - **Dual 3090 (48 GB combined):** TP=2 splits activation memory across cards. Cliffs are not active failure modes.
 
+### ⚠️ Peak VRAM ≠ idle VRAM — the "it booted fine, then OOM'd" trap
+
+`nvidia-smi` at boot shows **weights + KV pool reservation**. It does **not** show peak.
+**Peak adds activation buffers during prefill — typically +500–1500 MiB.**
+
+So a card sitting at 23.5 / 24 GB after a clean boot has only ~500 MiB of headroom, which is not
+enough for the 138 MiB-class buffer a long-context prefill allocates. The server starts, serves
+short prompts happily, and dies on the first big one.
+
+**Fix:** drop `--gpu-memory-utilization` by `0.03` and re-boot. That is usually the whole
+intervention — you are buying back activation headroom, not context.
+
+Judge headroom from a **loaded** card, never an idle one.
+
 For visualization of how VRAM splits across single + dual configs, see [vram-budget-combined.svg](img/vram-budget-combined.svg) (or per-page: [single](img/vram-budget-single.svg) · [dual](img/vram-budget-dual.svg)).
 
 ---
