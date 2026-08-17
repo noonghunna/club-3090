@@ -973,6 +973,21 @@ export_variant_engine_pin() {
   fi
 }
 
+# Trim a status_note for terminal display. Registry notes are maintainer-facing and
+# long by design (median ~920 chars, worst case 6,116) — dumping a whole one into a
+# user's terminal buries the message it is attached to. Show the opening, cap at
+# ~240 chars, and point at the full text.
+#   Reported via #1036: a --force launch printed ~6 KB of notes ABOVE the real
+#   failure, which was a missing weight shard.
+_note_brief() {
+  local n="${1:-}"
+  [[ -n "$n" ]] || return 0
+  if (( ${#n} <= 240 )); then printf '%s' "$n"; return 0; fi
+  local cut="${n:0:240}"
+  cut="${cut% *}"
+  printf '%s… [truncated — full note: bash scripts/switch.sh --list --all]' "$cut"
+}
+
 status_gate() {
   # Lifecycle gate (PR-A health flag). production → launch silently;
   # caveats → launch with a one-line notice; the (NA) set
@@ -984,17 +999,17 @@ status_gate() {
     production)
       ;;
     caveats)
-      echo "[switch] NOTE: '${v}' is ⚠️ production-with-caveats.${note:+  ${note}}"
+      echo "[switch] NOTE: '${v}' is ⚠️ production-with-caveats.${note:+  $(_note_brief "${note}")}"
       ;;
     *)
       if [[ "${FORCE:-0}" != "1" ]]; then
-        echo "[switch] ERROR: '${v}' is (NA: ${status}) — not a reliable config.${note:+  ${note}}" >&2
+        echo "[switch] ERROR: '${v}' is (NA: ${status}) — not a reliable config.${note:+  $(_note_brief "${note}")}" >&2
         echo "[switch]        It is surfaced for visibility, but won't launch without an explicit override." >&2
         echo "[switch]        Re-run with --force if you know what you're doing:" >&2
         echo "[switch]          bash scripts/switch.sh --force ${v}" >&2
         exit 1
       fi
-      echo "[switch] WARNING: forcing (NA: ${status}) variant '${v}'.${note:+  ${note}}"
+      echo "[switch] WARNING: forcing (NA: ${status}) variant '${v}'.${note:+  $(_note_brief "${note}")}"
       ;;
   esac
 }
