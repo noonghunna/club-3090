@@ -286,6 +286,13 @@ class LivePane(Static):
         except Exception:
             pass
 
+    @property
+    def at_bottom(self) -> bool:
+        """Whether the user is at the tail (scroll-follow on).  Hosts gate
+        tail-specific rendering on this (e.g. c3's log-follow highlight,
+        which only makes sense at the tail)."""
+        return self._follow
+
     def append_line(self, line: str, buffer: bool = True) -> None:
         """Append a raw log line.  ``buffer=False`` writes display-only lines
         (idle/stopped notes) that must NOT appear in the [Y]-copy tail."""

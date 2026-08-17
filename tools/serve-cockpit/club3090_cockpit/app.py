@@ -60,6 +60,7 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    RichLog,
     Select,
     Static,
     Switch,
@@ -6798,6 +6799,10 @@ class CockpitCommands(Provider):
 # Containers log-follow ([f]) — docker-logs poll cadence while armed.  2s is
 # imperceptible for a log tail and keeps the read-runner calls cheap.
 _LOG_FOLLOW_PERIOD = 2.0
+# Display-model cap for the follow pane — mirrors LivePane's own 2000-line
+# [Y]-copy buffer cap so a log-spammy container can't grow the model without
+# bound (the pane re-render trims to this too).
+_LOG_FOLLOW_ENTRIES_MAX = 2000
 
 
 class CockpitApp(App):
@@ -7448,11 +7453,18 @@ class CockpitApp(App):
         #   _log_follow_timer   set_interval handle (None while paused)
         #   _log_follow_anchor  last displayed line of the current tail (dedupe)
         #   _log_follow_name    container the anchor belongs to
+        #   _log_follow_entries the follow pane's display model: (kind, text)
+        #       with kind "line" (plain, in the [Y] copy) / "fresh" (the
+        #       LATEST tick's lines — underlined) / "note" (state note,
+        #       display-only).  Each tick promotes fresh→line, so the
+        #       underline tracks only the newest batch; the pane is
+        #       re-rendered from this while the user sits at the tail.
         self._log_follow_armed = False
         self._log_follow_paused = False
         self._log_follow_timer = None
         self._log_follow_anchor: Optional[str] = None
         self._log_follow_name = ""
+        self._log_follow_entries: list[tuple[str, str]] = []
         # Cache the last-loaded variants so detect/match + containers can match
         # running engines back to registry slugs.
         self._variants: list[VariantRow] = []
@@ -10540,25 +10552,17 @@ class CockpitApp(App):
         self._log_follow_timer = None
         self._log_follow_paused = True
         self._set_log_follow_title()
-        try:
-            live = self.query_one("#drill-logs", LivePane)
-            # Display-only note — never enters the [Y]-copy tail.  Yellow
-            # (intermediate-state color) so the paused state reads at a glance.
-            live.append_line("[yellow]follow paused — press f to resume[/yellow]", buffer=False)
-        except Exception:
-            pass
+        # Yellow (intermediate-state color) so the paused state reads at a
+        # glance.  Recorded in the display model so a resume-tick re-render
+        # re-emits it instead of dropping it.
+        self._log_follow_note("[yellow]follow paused — press f to resume[/yellow]")
 
     def _log_follow_resume(self) -> None:
         """paused → following: one immediate incremental poll against the
         stored anchor (quiet log → no change; lines emitted during the pause
         arrive tinted), then restart the interval."""
         self._log_follow_paused = False
-        try:
-            live = self.query_one("#drill-logs", LivePane)
-            # Display-only note — never enters the [Y]-copy tail.
-            live.append_line("[green]follow resumed[/green]", buffer=False)
-        except Exception:
-            pass
+        self._log_follow_note("[green]follow resumed[/green]")
         self._log_follow_tick()
         self._log_follow_timer = self.set_interval(_LOG_FOLLOW_PERIOD, self._log_follow_tick)
         self._set_log_follow_title()
@@ -10577,6 +10581,7 @@ class CockpitApp(App):
         self._log_follow_paused = False
         self._log_follow_anchor = None
         self._log_follow_name = ""
+        self._log_follow_entries = []
         self._set_log_follow_title()
 
     def _log_follow_death_note(self, name: str) -> None:
@@ -10586,6 +10591,37 @@ class CockpitApp(App):
             live.append_line(f"[dim]▸ {name} — stopped · follow stopped[/dim]", buffer=False)
         except Exception:
             pass
+
+    def _log_follow_note(self, text: str) -> None:
+        """Display-only state note in #drill-logs — recorded in the display
+        model too, so a follow-tick re-render re-emits it in place instead of
+        dropping it (never enters the [Y]-copy tail)."""
+        try:
+            live = self.query_one("#drill-logs", LivePane)
+            live.append_line(text, buffer=False)
+        except Exception:
+            return
+        self._log_follow_entries.append(("note", text))
+
+    def _log_follow_rerender(self, pane: LivePane) -> None:
+        """Re-render #drill-logs from _log_follow_entries: plain history, the
+        LATEST tick's lines underlined, state notes in place.  RichLog is
+        append-only, so 'the previous batch loses its underline' can only
+        mean a rewrite; when the user is reading history (not at the tail)
+        the scroll offset is restored so the rewrite doesn't yank them."""
+        log = pane.query_one("#live-log", RichLog)
+        at_bottom = pane.at_bottom
+        y = log.scroll_y if not at_bottom else 0.0
+        pane.clear_log()
+        for kind, text in self._log_follow_entries:
+            if kind == "fresh":
+                pane.append_line(f"[underline]{text}[/underline]")
+            elif kind == "note":
+                pane.append_line(text, buffer=False)
+            else:
+                pane.append_line(text)
+        if not at_bottom:
+            log.scroll_to(0, y, immediate=True, animate=False)
 
     def _set_log_follow_title(self) -> None:
         """#drill-logs' pane title: `Live` (off) · `Live  ●  following`
@@ -10612,9 +10648,11 @@ class CockpitApp(App):
 
     @work(group="container-logs", exclusive=True)
     async def _log_follow_poll(self) -> None:
-        """One follow tick: re-read the tail, append only the NEW lines
-        (tinted), resync if the anchor is gone.  Guards in order — any miss
-        is a no-op (the mode stays armed; see the spec's stopped-row rule)."""
+        """One follow tick: re-read the tail, show only the NEW lines
+        underlined (the previous batch drops back to plain — the pane is
+        re-rendered from the display model while the user is at the tail),
+        resync if the anchor is gone.  Guards in order — any miss is a no-op
+        (the mode stays armed; see the spec's stopped-row rule)."""
         if not self._log_follow_armed or self._log_follow_paused:
             return
         if self._active_mode != 0 or self._active_operate_tab() != "tab-containers":
@@ -10654,6 +10692,7 @@ class CockpitApp(App):
             live.clear_log()
             for ln in lines:
                 live.append_line(ln)
+            self._log_follow_entries = [("line", ln) for ln in lines]
             self._log_follow_anchor = lines[-1]
             self._log_follow_name = con.name
             return
@@ -10669,12 +10708,29 @@ class CockpitApp(App):
             live.clear_log()
             for ln in lines:
                 live.append_line(ln)
+            self._log_follow_entries = [("line", ln) for ln in lines]
         else:
-            # Only the lines after the anchor are new — tinted (brighter
-            # default foreground).  Display-only: LivePane's [Y]-copy buffer
-            # strips the markup (Text.from_markup(...).plain).
-            for ln in lines[idx + 1:]:
-                live.append_line(f"[underline]{ln}[/underline]")
+            new = lines[idx + 1 :]
+            if not new:
+                return  # same tail as the last read — the underline stays put
+            # The underline tracks ONLY the newest batch: earlier "fresh"
+            # lines drop back to plain, the new ones take the underline
+            # (display-only: LivePane's [Y]-copy buffer strips the markup).
+            self._log_follow_entries = [
+                ("line", t) if k == "fresh" else (k, t)
+                for k, t in self._log_follow_entries
+            ]
+            self._log_follow_entries.extend(("fresh", ln) for ln in new)
+            if len(self._log_follow_entries) > _LOG_FOLLOW_ENTRIES_MAX:
+                del self._log_follow_entries[: -_LOG_FOLLOW_ENTRIES_MAX]
+            if live.at_bottom:
+                self._log_follow_rerender(live)
+            else:
+                # Reading history — append the new lines plain (the highlight
+                # is a tail affordance); the next at-tail tick re-renders with
+                # the underline on the right lines.
+                for ln in new:
+                    live.append_line(ln)
         self._log_follow_anchor = lines[-1]
 
     def action_s_key(self) -> None:
@@ -10773,16 +10829,28 @@ class CockpitApp(App):
             return
         if res.get("error"):
             live.append_line(f"[red]logs unavailable:[/red] {res['error']}")
+            if self._log_follow_armed:
+                # Mirror the pane so a follow-tick re-render keeps the error
+                # line (and doesn't resurrect stale tail content).
+                self._log_follow_entries = [
+                    ("line", f"[dim]$ docker logs --tail 200 {name}[/dim]"),
+                    ("line", f"[red]logs unavailable:[/red] {res['error']}"),
+                ]
             return
         for ln in res.get("lines", []):
             live.append_line(ln)
         # Follow-awareness: while armed, EVERY successful full-tail render
         # rebases the anchor + name — the arm snapshot, navigation snapshots
         # (row-highlight → _load_active_drill_tab), and a manual [l] while
-        # following (= a natural "resync now"; polling continues untouched).
+        # following (= a natural "resync now"; polling continues untouched) —
+        # and mirrors the pane's content (command prompt + tail) in the
+        # display model so the next tick's re-render matches the [Y] copy.
         if self._log_follow_armed:
             self._log_follow_anchor = res.get("lines")[-1] if res.get("lines") else None
             self._log_follow_name = name
+            self._log_follow_entries = [
+                ("line", f"[dim]$ docker logs --tail 200 {name}[/dim]")
+            ] + [("line", ln) for ln in res.get("lines", [])]
 
     def action_container_rm(self) -> None:
         """[X] on the merged mode's Containers tab: reconcile-gated `docker rm

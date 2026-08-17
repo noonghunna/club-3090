@@ -97,6 +97,23 @@ class TestLivePaneScrollFollow:
             assert lp._follow is True
             assert log.auto_scroll is True
 
+    async def test_at_bottom_property_tracks_follow(self):
+        async with _Host().run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            lp = pilot.app.query_one("#lp", LivePane)
+            log = pilot.app.query_one("#live-log", RichLog)
+            assert lp.at_bottom is True
+            for i in range(40):
+                lp.append_line(f"line {i}")
+                await pilot.pause()
+            assert lp.at_bottom is True
+            log.scroll_up(immediate=True, animate=False)
+            await pilot.pause()
+            assert lp.at_bottom is False
+            log.scroll_end(immediate=True, animate=False)
+            await pilot.pause()
+            assert lp.at_bottom is True
+
     async def test_append_while_scrolled_up_does_not_move_offset(self):
         async with _Host().run_test(size=(80, 24)) as pilot:
             await pilot.pause()

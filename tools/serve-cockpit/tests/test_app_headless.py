@@ -6598,6 +6598,123 @@ class TestContainerLogFollow:
             text = pane.tail_text()
             assert "[underline]" not in text and "L4" in text and "L5" in text
 
+    async def test_tick_underline_tracks_only_newest_batch(self):
+        # Moving highlight: when a 2nd tick arrives, the 1st tick's
+        # underlined lines drop back to plain and only the newest lines
+        # keep the underline (the pane is re-rendered from the model).
+        runner = TestContainerLogFollow._StepLogsRunner(
+            ["L1\nL2\nL3\n", "L1\nL2\nL3\nL4\nL5\n", "L1\nL2\nL3\nL4\nL5\nL6\nL7\n"]
+        )
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            written: list[str] = []
+            log = app.query_one("#drill-logs", LivePane).query_one("#live-log", RichLog)
+            real_write = log.write
+
+            def spy(content, *a, **kw):
+                written.append(str(content))
+                return real_write(content, *a, **kw)
+
+            log.write = spy
+            app._log_follow_tick()  # L4/L5 new
+            await _settle(pilot)
+            app._log_follow_tick()  # L6/L7 new — L4/L5 must lose the underline
+            await _settle(pilot)
+            # Each re-render starts with the command prompt — isolate the last.
+            starts = [i for i, w in enumerate(written) if "$ docker logs" in w]
+            assert len(starts) == 2, f"expected two re-renders, saw {len(starts)}"
+            last_batch = written[starts[-1] :]
+            assert "[underline]L6[/underline]" in last_batch
+            assert "[underline]L7[/underline]" in last_batch
+            assert "[underline]L4[/underline]" not in last_batch
+            assert "[underline]L5[/underline]" not in last_batch
+            assert "L4" in last_batch  # still on screen, plain now
+            # No content duplication from the re-renders.
+            text = app.query_one("#drill-logs", LivePane).tail_text()
+            for ln in ("L1", "L2", "L3", "L4", "L5", "L6", "L7"):
+                assert text.count(ln) == 1
+
+    async def test_state_notes_survive_rerender(self):
+        # The pause/resume notes live in the display model — the resume-tick
+        # re-render re-emits them in chronological order, and they stay out
+        # of the [Y] copy.
+        runner = TestContainerLogFollow._StepLogsRunner(["L1\nL2\nL3\n", "L1\nL2\nL3\nL4\nL5\n"])
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            await pilot.press("f")  # pause
+            await pilot.pause()
+            written: list[str] = []
+            log = app.query_one("#drill-logs", LivePane).query_one("#live-log", RichLog)
+            real_write = log.write
+
+            def spy(content, *a, **kw):
+                written.append(str(content))
+                return real_write(content, *a, **kw)
+
+            log.write = spy
+            await pilot.press("f")  # resume → immediate tick → re-render
+            await _settle(pilot)
+            starts = [i for i, w in enumerate(written) if "$ docker logs" in w]
+            assert starts, "resume-tick re-render did not rewrite the pane"
+            last_batch = written[starts[-1] :]
+            i_paused = last_batch.index("[yellow]follow paused — press f to resume[/yellow]")
+            i_resumed = last_batch.index("[green]follow resumed[/green]")
+            i_l4 = last_batch.index("[underline]L4[/underline]")
+            assert i_paused < i_resumed < i_l4  # chronological: notes, then fresh lines
+            text = app.query_one("#drill-logs", LivePane).tail_text()
+            assert "follow paused" not in text and "follow resumed" not in text
+
+    async def test_tick_scrolled_up_appends_plain(self):
+        # Reading history: a tick appends the new lines plain (no underline,
+        # no rewrite) — the moving highlight is a tail affordance.
+        base = "".join(f"K{i:03d}\n" for i in range(60))
+        runner = TestContainerLogFollow._StepLogsRunner(
+            [base, base + "K060\nK061\n", base + "K060\nK061\nK062\n"]
+        )
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            app._log_follow_tick()  # K060/K061 new — re-render at the tail
+            await _settle(pilot)
+            pane = app.query_one("#drill-logs", LivePane)
+            log = pane.query_one("#live-log", RichLog)
+            log.scroll_up(immediate=True, animate=False)
+            await pilot.pause()
+            assert pane.at_bottom is False
+            written: list[str] = []
+            real_write = log.write
+
+            def spy(content, *a, **kw):
+                written.append(str(content))
+                return real_write(content, *a, **kw)
+
+            log.write = spy
+            app._log_follow_tick()  # K062 new
+            await _settle(pilot)
+            assert written == ["K062"]  # plain append only — no rewrite, no tint
+            text = pane.tail_text()
+            assert text.count("K062") == 1 and "[underline]" not in text
+
     async def test_navigation_to_another_container_rebases(self):
         class _PerNameLogsRunner(FakeRunner):
             """docker logs keyed by the container name in the command."""
