@@ -5,9 +5,9 @@ Next-gen 27B model from the Qwen team with refined DeltaNet architecture.
 ## Quick start
 
 ```bash
-# 1. Download weights (~15GB)
-hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_KS.gguf \
-  --local-dir $MODEL_DIR/qwen3.8-27b-gguf/iq4ks
+# 1. Download weights (~16 GB — IQ4_NL is the 4-bit default; no IQ4_KS for this arch)
+hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_NL.gguf \
+  --local-dir $MODEL_DIR/qwen3.8-27b-gguf
 
 # 2. (Optional) Download vision projector
 hf download bartowski/Qwen3.8-27B-GGUF mmproj-Qwen3.8-27B-bf16.gguf \
@@ -34,7 +34,7 @@ curl http://localhost:8020/v1/models
 
 ### bartowski/Qwen3.8-27B-GGUF (default)
 
-Broad quant selection. The configs above default to **IQ4_KS** (~14.8 GB).
+Four-bit default is **IQ4_NL** (see the note below — this arch has no IQ4_KS).
 
 | Quant | Size | Quality |
 |---|---|---|
@@ -59,7 +59,7 @@ BENCHMARKS row below ran unsloth `Q4_K_M` (17.7 GB) + `mmproj-Qwen3.8-27B-f16.gg
 
 To use unsloth weights, override the path at launch:
 ```bash
-GGUF_FILE=qwen3.8-27b-gguf/unsloth/Qwen3.8-27B-IQ4_KS.gguf \
+GGUF_FILE=qwen3.8-27b-gguf/unsloth/Qwen3.8-27B-Q4_K_M.gguf \
   MODEL_DIR=/path/to/models docker compose -f llama-cpp/compose/single/iq4ks.yml up -d
 ```
 (Download unsloth weights into `$MODEL_DIR/qwen3.8-27b-gguf/unsloth/` first.

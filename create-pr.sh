@@ -29,7 +29,7 @@ FORK_REPO="ajmendez/club-3090"
 BRANCH="qwen3.8-27b-llama-cpp-iq4ks"
 BASE="master"
 HEAD="${HEAD:-qwen3.8-27b-llama-cpp-iq4ks}"
-TITLE="add: Qwen3.8-27B llama.cpp single-card configs (IQ4_KS/NL)"
+TITLE="add: Qwen3.8-27B llama.cpp single-card configs (4-bit, IQ4_NL default)"
 
 # ── PR Body ──────────────────────────────────────────────────────────────────
 PR_BODY='
