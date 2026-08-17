@@ -57,7 +57,7 @@ On 20 GB cards (modded 3080) the cudagraph-profiling overhead is a meaningful sl
 **4090s with attached display — env-override the compose defaults.** Some 4090 rigs land at ~23.5 GB usable VRAM with X server + driver overhead, vs the headless 3090s the composes are calibrated for. Boot may fail with `No available memory for the cache blocks` at default `max-model-len`. Cross-rig data: @laurimyllari's 4090 single-card on `long-text.yml` needed `MAX_MODEL_LEN=90000` (down from 180K default) to fit cleanly ([disc #62](../../../noonghunna/club-3090/discussions/62) / [issue #71](../../../noonghunna/club-3090/issues/71)). **Newer driver shrinks the budget the same way even on a headless 3090:** @sethbrasile's controlled 9-run matrix on a headless 3090 with driver 595.71.05 / CUDA 13.2 capped `long-text.yml` at `MAX_MODEL_LEN=105000` — the newer driver's activation-profile reserve measured ~2.87 GiB vs ~1.5 GiB on the bare-metal reference rig, shrinking the KV pool by the difference ([issue #149](../../../noonghunna/club-3090/issues/149)). On a newer-driver 3090, start at `MAX_MODEL_LEN=105000` rather than the 180K default. Pattern:
 
 ```bash
-MAX_MODEL_LEN=90000 bash scripts/switch.sh vllm/long-text
+MAX_MODEL_LEN=32768 GPU_MEMORY_UTILIZATION=0.85 bash scripts/switch.sh vllm/minimal
 ```
 
 Same `MAX_MODEL_LEN` / `GPU_MEMORY_UTILIZATION` env overrides apply for any setup running vLLM alongside other GPU consumers on the same card. See [SINGLE_CARD.md "Running alongside a desktop"](SINGLE_CARD.md#running-alongside-a-desktop--sub-24-gb-usable-vram) for safe ranges.

@@ -61,9 +61,10 @@ Use these rules when you touch anything that changes version, branch, overlay se
 | You changed… | Tests that catch incoherence |
 |---|---|
 | Engine pin (`install.spec`) | `test-launch-compat` · `test-compose-image-drift` · `test-diagnose-profile` |
-| Deprecated an engine / compose | `test-compose-status-drift` · `test-switch-registry-parity` · `test-launch-registry-parity` |
+| Deprecated an engine / compose | `test-compose-status-drift` · `test-switch-registry-parity` · `test-launch-registry-parity` · **`test-docs-slugs-resolve`** (docs may still tell users to run the slug you just retired) |
 | Added / changed a patch or overlay | `test-patch-attribution` · `test-compose-image-drift` |
 | Added a model / new `(model, engine, KV)` combo | `test-profiles-compat` · `test-patch-attribution` · `test-compose-registry-disk` |
+| Renamed / removed a slug, or edited a documented command | **`test-docs-slugs-resolve`** — asserts every slug named in a `switch.sh`/`launch.sh` command exists, and that non-functional ones carry `--force` |
 
 ## Workflow at a glance
 
