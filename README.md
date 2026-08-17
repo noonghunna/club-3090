@@ -376,6 +376,8 @@ The stack stands on a lot of shoulders:
 - **[llama.cpp](https://github.com/ggerganov/llama.cpp)** — the alternative engine path
 - **[Luce z-lab](https://github.com/luce-spec)** — DFlash N=5 draft model for Qwen3.6-27B
 - **Intel AutoRound** — quantization framework
+- **[@paulp83](https://github.com/paulp83)** — the Blackwell reference rig. First full gate on native FP4 (Qwen3.6-27B NVFP4 TP=2 @262K: 168.0 / 215.7 decode, 91% NIAH at 240K, soak PASS), first NVFP4 validation on the 35B-A3B MoE, first Blackwell DiffusionGemma and Nemotron-75B runs, and the only **mixed-architecture** numbers anyone has contributed (5090 + 3090 Ti in one box) — a rig class we could not otherwise characterise.
+- **[@henrykrinkle01](https://github.com/henrykrinkle01)** — raised the bar on how we *report* quality, not just what we measure. The [Results Card](docs/RESULTS_CARD.md) v2 quality table — per-pack dispersion and p50/p95 latency — is his format, adopted wholesale from [#770](https://github.com/noonghunna/club-3090/issues/770). Also the first cross-rig 8-pack on Qwen3.6-27B and still the only one running **both reasoning modes on one rig, one day, with repeats**, the finding that cli-40 variance is mode-dependent, and the custom-all-reduce-ON measurement on a working-P2P rig.
 - **All cross-rig contributors** — [@ampersandru](https://github.com/ampersandru), [@walmis](https://github.com/walmis), [@3dluvr](https://github.com/3dluvr), and the Reddit / X local-LLM community for benchmark data and bug reports.
 
 ---
