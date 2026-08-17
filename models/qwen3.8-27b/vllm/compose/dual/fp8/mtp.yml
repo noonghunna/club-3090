@@ -26,15 +26,21 @@
 #              COMPUTED to fit + inherited from the byte-for-byte-comparable
 #              qwen3.6-27b FP8 tier. NEVER MEASURED HERE. See "Context budget".
 #   Genesis:   none — intentionally Genesis-free
-#   Status:    🐣 Incubating
-#   Caveats:   NOTHING HAS BOOTED. Authored 2026-08-14; the weights have since
-#              landed and CRC-verified, but no engine has ever loaded them, so
-#              zero RUNTIME evidence exists for anything below.
-#              Specifically unvalidated on Qwen3.8-27B:
-#                - never launched — no boot log, no served token, no VRAM reading
-#                - no verify-full (0/8), no verify-stress, no NIAH, no soak
-#                - no bench: NO TPS / TTFT / accept-length number is claimed anywhere
-#                - no quality run (8-pack not executed in either reasoning mode).
+#   Status:    🧪 Experimental
+#   Caveats:   ✅ BOOTED + verify-full PASS on the reference rig (2× 3090) 2026-08-17.
+#              Promoted 🐣 → 🧪 per this compose's own gate ("clean boot + verify-full").
+#              MEASURED 2026-08-17, stock vllm/vllm-openai:v0.27.1, 3 warm + 5 measured:
+#                - decode 67.39 narr (CV 1.5%) / 85.75 code (CV 3.5%) tok/s
+#                - TTFT 152 ms · prefill 1165.8 @10K / 941.5 @90K tok/s
+#                - KV pool 270,930 tok @262144 (1.03× concurrency) · VRAM peak
+#                  45,816 MiB total (~22.4 GiB/card) · MTP acceptance 2.62 at n=3
+#              ⚠️ STILL UNGATED for ⚠️/✅ — do NOT promote further without:
+#                - verify-stress / NIAH fill depth (262144 is ALLOCATED, not filled;
+#                  the 3.6 sibling fills to ~240K of its 262K — expect the same or worse)
+#                - soak-continuous, and an 8-pack in either reasoning mode
+#              ⚠️ MTP exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in
+#              this pin). Now that it HAS run, absence of a crash in one bench is not
+#              evidence of safety — the exposure is structural. Mitigate with SPEC=off.
 #                  There is deliberately NO `Quality:` field on this compose —
 #                  the qwen3.6 tier's 109/150 is ITS number, not this model's.
 #                - Max ctx 262144 is ARITHMETIC + a sibling analogy, never filled.
