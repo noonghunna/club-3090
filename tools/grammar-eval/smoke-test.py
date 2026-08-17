@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -17,7 +18,12 @@ import urllib.request
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_GRAMMAR = REPO_ROOT / "tools/grammar-eval/holiday-tagline.gbnf"
-STRUCTURED_COT_DIR = pathlib.Path("/home/wasif/structured-cot")
+# Override with STRUCTURED_COT_DIR=/path/to/structured-cot. The default is
+# ~/structured-cot so this works on any machine; it used to be a hardcoded
+# absolute path from the author's box, which leaked a username into a public repo.
+STRUCTURED_COT_DIR = pathlib.Path(
+    os.environ.get("STRUCTURED_COT_DIR", pathlib.Path.home() / "structured-cot")
+)
 
 HOLIDAY_SYSTEM = (
     "You are an expert Python programmer. Think only inside the required "
