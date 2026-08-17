@@ -94,7 +94,7 @@ For the single-card picture, see [`SINGLE_CARD.md`](SINGLE_CARD.md).
 
 **Workload:** anything. Chat, tool agents, vision, mixed-modal. The recommended default for 2× 3090.
 
-> 🎯 **Don't want to name a slug?** `bash scripts/switch.sh qwen3.6-27b/default` (or a bare `bash scripts/launch.sh`) resolves the blessed dual-card default automatically — on 2× 3090 that's **`vllm/dual`** (the `dual` order in `ENGINE_PREFERENCE` is `vllm > ik-llama > llama.cpp`). Prefer a different config (e.g. `vllm/dual-turbo` for multi-tenant)? Pin it once with `bash scripts/switch.sh --set-default vllm/dual-turbo` and bare launches go straight there — see the [FAQ](FAQ.md#how-do-i-set-my-own-default-config).
+> 🎯 **Don't want to name a slug?** `bash scripts/switch.sh qwen3.6-27b/default` (or a bare `bash scripts/launch.sh`) resolves the blessed dual-card default automatically — on 2× 3090 that's **`vllm/dual`** (the `dual` order in `ENGINE_PREFERENCE` is `vllm > ik-llama > llama.cpp`). Prefer a different config (e.g. `vllm/qwen-35b-a3b-dual` for multi-tenant / agent fleets)? Pin it once with `bash scripts/switch.sh --set-default vllm/qwen-35b-a3b-dual` and bare launches go straight there — see the [FAQ](FAQ.md#how-do-i-set-my-own-default-config).
 
 262K context, fp8 KV, MTP n=3, 2 streams, vision tower active. **Genesis-less by design** — fp8 KV doesn't trigger the cudagraph bug (#40880) that drove Genesis's existence on single-card. Pure vLLM nightly path. Tool calls work via `--tool-call-parser qwen3_coder` + `--enable-auto-tool-choice`. All `verify-stress.sh` checks pass clean.
 
@@ -209,19 +209,18 @@ bash scripts/setup.sh qwen3.6-27b
 bash scripts/launch.sh
 
 # 3. Or skip the wizard:
-bash scripts/launch.sh --variant vllm/dual              # general default
-bash scripts/launch.sh --variant vllm/dual-turbo        # 4 streams
-bash scripts/launch.sh --variant vllm/dual-dflash       # peak code + vision
-bash scripts/launch.sh --variant vllm/dual-dflash-noviz # peak code, no vision
+bash scripts/launch.sh --variant vllm/dual                 # general default        :8010
+bash scripts/launch.sh --variant vllm/qwen-27b-dual-max    # max accuracy (FP8)     :8013
+bash scripts/launch.sh --variant vllm/qwen-35b-a3b-dual    # concurrency / agents   :8051
 
-# 4. Sanity test
-curl -sf http://localhost:8020/v1/chat/completions \
+# 4. Sanity test — port matches the slug you booted (see the table above)
+curl -sf http://localhost:8010/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"qwen3.6-27b","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":200}'
 
 # 5. Switch later without re-running setup
-bash scripts/switch.sh vllm/dual-dflash    # for example
-bash scripts/switch.sh --list              # show all variants
+bash scripts/switch.sh vllm/qwen-27b-dual-max   # for example
+bash scripts/switch.sh --list                   # show all variants (--all to include retired)
 ```
 
 ---

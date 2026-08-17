@@ -306,8 +306,10 @@ bash scripts/setup.sh qwen3.6-27b
 bash scripts/launch.sh
 
 # 3. Or skip the wizard:
-bash scripts/launch.sh --variant ik-llama/iq4ks-mtp   # single-card default (MTP, fastest + leanest)
-bash scripts/launch.sh --variant llamacpp/default  # easy mode
+bash scripts/launch.sh --variant qwen3.6-27b/default  # resolves to vllm/minimal
+bash scripts/launch.sh --variant vllm/minimal         # same thing, named explicitly (32K, no vision)
+# Retired-but-working single-card slugs need --force (see the table at the top of this page):
+#   bash scripts/switch.sh --force llamacpp/default    # 200K, cliff-immune, unmaintained
 
 # 4. Sanity test
 curl -sf http://localhost:8020/v1/chat/completions \
@@ -315,8 +317,8 @@ curl -sf http://localhost:8020/v1/chat/completions \
   -d '{"model":"qwen3.6-27b","messages":[{"role":"user","content":"Capital of France?"}],"max_tokens":200}'
 
 # 5. Switch later without re-running setup
-bash scripts/switch.sh vllm/long-vision    # for example
-bash scripts/switch.sh --list              # show all variants
+bash scripts/switch.sh vllm/minimal        # for example
+bash scripts/switch.sh --list              # show all variants (--all to include retired)
 ```
 
 ---

@@ -180,7 +180,7 @@ for a subset.
 
 | Class | What it means | Example | Recommended |
 |---|---|---|---|
-| `single_card` | 1 GPU detected | 1x RTX 3090 | Use the largest single-card compose that fits (`vllm/default`, `vllm/long-text`, `llamacpp/default`). |
+| `single_card` | 1 GPU detected | 1x RTX 3090 | Run `bash scripts/switch.sh qwen3.6-27b/default` (resolves to `vllm/minimal`). See [SINGLE_CARD.md](SINGLE_CARD.md). |
 | `homogeneous` | All cards have matched VRAM and matched SM | 2x RTX 3090 | TP=N is the optimal default; use the shipped `vllm/dual*` (2-card) or `vllm/qwen-27b-multi-*` (4-card) composes. |
 | `vram_matched_compute_mismatched` | Same VRAM, different compute tier | RTX 3090 + RTX 4090 | TP=N works correctly, but faster cards wait at NCCL allreduce. Estate planner is better for multi-model workloads. |
 | `vram_mismatched` | Different VRAM sizes | RTX 3060 12 GB + RTX 3090 24 GB | Prefer llama.cpp `--tensor-split`, manual PP=N experiments, or estate planner. Avoid TP=N across the full mismatched set. |
@@ -220,30 +220,35 @@ card runs its own model at full speed.
 
 ## Valid TP values for Qwen3.6-27B
 
-vLLM's tensor parallelism splits attention heads across cards. The TP
-value must divide both the attention head count AND the KV head count
-cleanly. Qwen3.6-27B has:
+vLLM asserts that the **attention** head count divides the TP size. KV heads
+do not have to divide it — when there are fewer KV heads than ranks, vLLM
+**replicates** them. Qwen3.6-27B and Qwen3.8-27B are identical here
+(`config.json` → `text_config`):
 
-- **80 attention heads** (factors: 1, 2, 4, 5, 8, 10, 16, 20, 40, 80)
-- **5 KV heads** (factors: 1, 5)
+- **24 attention heads** (factors: 1, 2, 3, 4, 6, 8, 12, 24) — this is the binding constraint
+- **4 KV heads** — shard cleanly to TP=4, then replicate above it
+- head_dim 256
 
-The intersection — TP values that work — is **1, 2, 4, 5, 8, 10**. So:
+Valid TP values are therefore **1, 2, 4, 8** (and 12, 24 on datacenter boards):
 
-| GPUs | Valid TP | Notes |
-|---|---|---|
-| 1 | TP=1 | Standard single-card. See [SINGLE_CARD.md](SINGLE_CARD.md). |
-| 2 | TP=2 | Standard dual. See [DUAL_CARD.md](DUAL_CARD.md). |
-| **3** | **TP=2 only** | TP=3 would split 5 KV heads as 5/3 = 1.67 per card — vLLM errors at boot. **Use TP=2 with 1 idle card** (set `CUDA_VISIBLE_DEVICES=0,1`), or run 2 single-card stacks on different ports. |
-| **4** | **TP=4** | Each card gets 20 attention heads + 1.25 KV heads — vLLM splits with replication for fractional KV (handled internally). Production-viable if your rig has the slots + power + cooling. |
-| **5** | **TP=5** | Theoretically valid (1 KV head per card, 16 attention heads per card). Unusual rig count; not common. |
-| **6 or 7** | **TP=4 or TP=5 + spare cards** | TP=6/7 don't divide head count. Use TP=4 (idle 2-3 cards) or TP=5 (idle 1-2 cards). |
-| **8** | **TP=8** | Datacenter-class. Each card gets 10 attention heads, splits KV heads via vLLM's internal handling. |
-| **10** | **TP=10** | Server-class. Production-viable on data-center boards. |
+| GPUs | Valid TP | Attn heads/card | KV heads/card | Notes |
+|---|---|--:|---|---|
+| 1 | TP=1 | 24 | 4 | Standard single-card. See [SINGLE_CARD.md](SINGLE_CARD.md). |
+| 2 | TP=2 | 12 | 2 | Standard dual. See [DUAL_CARD.md](DUAL_CARD.md). |
+| **3** | **TP=2 only** | — | — | 24 ÷ 3 = 8 attention heads is fine, but **4 KV heads across 3 ranks neither divides nor replicates evenly** — vLLM errors at boot. **Use TP=2 with 1 idle card** (`CUDA_VISIBLE_DEVICES=0,1`), or run 2 single-card stacks on different ports. |
+| **4** | **TP=4** | 6 | 1 | The shipped multi-card tier. Production-viable if your rig has the slots + power + cooling. |
+| **5** | **TP=4 + 1 idle** | — | — | ⚠️ **TP=5 does NOT work** — 24 ÷ 5 is not an integer. |
+| **6 or 7** | **TP=4 + spare cards** | — | — | Neither divides 24 evenly alongside the KV constraint. Use TP=4 and leave the extras idle. |
+| **8** | **TP=8** | 3 | replicated ×2 | Each card holds 3 attention heads; the 4 KV heads replicate, so **per-card KV stays at the TP=4 figure** and only weights shard 8-way. |
+| **10** | **TP=8 + 2 idle** | — | — | ⚠️ **TP=10 does NOT work** — 24 ÷ 10 is not an integer. |
 
-**Critical: TP=3, TP=6, TP=7, TP=9 do NOT work.** vLLM errors at boot
+**Critical: TP=3, 5, 6, 7, 9, 10 do NOT work.** vLLM errors at boot
 ("number of attention heads must be divisible by tensor parallel size").
 If you have an awkward GPU count, use the next-lower valid TP and leave
 the extras idle, or run separate stacks on different ports.
+
+> ⚠️ Because KV heads replicate above TP=4, **going from 4 to 8 cards does not
+> shrink per-card KV** — it only shards weights further. Budget accordingly.
 
 ### Picking which cards to use on awkward counts
 

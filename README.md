@@ -35,11 +35,9 @@ bash scripts/launch.sh
 #    Or let the resolver pick for your model + hardware (.env pin ‖ curated default):
 #      bash scripts/launch.sh --variant qwen3.6-27b/default # YOUR default for this model
 #    Or skip the wizard with an explicit config:
-#      bash scripts/launch.sh --variant beellama/dflash     # single-card BLESSED default — code-fast (~100 code / 50 narr TPS), DFlash spec-dec (⚠️ unofficial multi-arch image; sm_89/120 unvalidated — see docs/INFERENCE_ENGINES.md)
-#      bash scripts/launch.sh --variant vllm/minimal       # single-card qwen — the ONLY functional path since 2026-08-12 (32K ctx, no vision, ~32/33 TPS)
-#      # ⚠️ RETIRED 2026-08-12 (all --force-only now): ik-llama/iq4ks-mtp (200K + vision, ~63/69 TPS),
-#      #    llamacpp/default (200K, cliff-immune), llamacpp/mtp-vision. See docs/SINGLE_CARD.md banner.
-#      bash scripts/launch.sh --variant vllm/dual           # dual-card 262K + vision (vLLM single-card paths blocked on #167)
+#      bash scripts/launch.sh --variant vllm/minimal        # single-card qwen (32K ctx, no vision, ~32/33 TPS)
+#      bash scripts/launch.sh --variant vllm/dual           # dual-card 262K + vision
+#    Retired single-card slugs still launch with --force; see docs/SINGLE_CARD.md "Escape hatches".
 #    Or partial flags (wizard fills the rest):
 #      bash scripts/launch.sh --model qwen3.6-27b --gpus 0,1
 #      bash scripts/launch.sh --tp 2 --pp 1               # override vLLM parallelism
@@ -59,7 +57,8 @@ curl -sf http://localhost:8020/v1/chat/completions \
 bash scripts/bench.sh
 
 # 6. Switch later without re-clicking through the wizard:
-bash scripts/switch.sh vllm/long-vision   # for example
+bash scripts/switch.sh vllm/dual          # for example
+bash scripts/switch.sh --list             # every launchable variant (--all to include retired)
 
 # 7. Keep your install up-to-date as the stack moves (Genesis pin bumps,
 #    new compose variants, vendored patch updates):
