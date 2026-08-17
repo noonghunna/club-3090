@@ -27,6 +27,17 @@ cd "$ROOT_DIR"
 # topology rank, not weights on disk.
 export MODEL_DIR="${MODEL_DIR:-/mnt/models/huggingface}"
 
+# A per-model default pin (CLUB3090_DEFAULT_<MODELID>) makes the Defaults view print
+# that slug by name — including the "your pin <slug> was ignored" note a topology-
+# mismatched pin produces — which trips the assertions below on correct behavior.
+# Exporting empty beats the .env file because switch.sh's loader tests `+x`.
+while IFS= read -r pin_key; do
+  export "${pin_key}="
+done < <(
+  compgen -v | grep '^CLUB3090_DEFAULT_' || true   # no match must not abort the subshell
+  [[ -f "$ROOT_DIR/.env" ]] && sed -n 's/^[[:space:]]*\(CLUB3090_DEFAULT_[A-Za-z0-9_]*\)=.*/\1/p' "$ROOT_DIR/.env"
+)
+
 SWITCH="$ROOT_DIR/scripts/switch.sh"
 
 fail=0
