@@ -32,8 +32,7 @@ HEAD="${HEAD:-qwen3.8-27b-llama-cpp-iq4ks}"
 TITLE="add: Qwen3.8-27B llama.cpp single-card configs (4-bit, IQ4_NL default)"
 
 # ── PR Body ──────────────────────────────────────────────────────────────────
-PR_BODY='
-## Summary
+PR_BODY='## Summary
 
 Add Qwen3.8-27B support for single RTX 3090 via llama.cpp, following the same
 pattern as existing models (qwen3.6-27b unsloth-q4km, tess-4-27b, etc.).
@@ -80,20 +79,22 @@ default path is measured. No power-cap A/B, verify-stress, or 8-pack yet.
 
 ## Cross-links
 
-- Closes #
-- Related upstream:
+- Self-referential update to [#988](https://github.com/noonghunna/club-3090/pull/988) (this PR): fixes the "bartowski does not ship `Qwen3.8-27B-IQ4_KS.gguf`" flag in the [opening comment](https://github.com/noonghunna/club-3090/pull/988#issuecomment-5304383592) — default is now IQ4_NL, with the measured BENCHMARKS row and the rig-vs-compose drift documented.
+- Related upstream: the rig behind the BENCHMARKS row is the onyx-rx single-3090 stack (Q4_K_M + mmproj-F16 @ 131K).
 
 ---
 
-## Files changed (5 files, +313 lines)
+## Files changed (7 files)
 
-| File | Type | Lines |
+| File | Type | Notes |
 |---|---|---|
-| `models/qwen3.8-27b/README.md` | new | +93 |
-| `models/qwen3.8-27b/llama-cpp/compose/single/iq4ks.yml` | new | +91 |
-| `models/qwen3.8-27b/llama-cpp/compose/single/iq4ks-vision.yml` | new | +102 |
-| `scripts/lib/profiles/compose_registry.py` | modified | +24 |
-| `README.md` | modified | +1 |
+| `models/qwen3.8-27b/README.md` | new | model card — quant options, VRAM table, no-IQ4_KS flag |
+| `models/qwen3.8-27b/llama-cpp/compose/single/iq4ks.yml` | new | text-only, IQ4_NL default, 200K |
+| `models/qwen3.8-27b/llama-cpp/compose/single/iq4ks-vision.yml` | new | multimodal, 150K, mmproj |
+| `BENCHMARKS.md` | modified | +1 row — first single-3090 Qwen3.8-27B data point (63.2/71.9) |
+| `scripts/lib/profiles/compose_registry.py` | modified | +2 incubating slugs (`llamacpp/qwen38-27b-iq4ks[-vision]`) |
+| `README.md` | modified | supported-models table row |
+| `create-pr.sh` | new | this PR-creation helper (fork:head compare URL, embedded body) |
 
 ## Weights sources
 
@@ -117,9 +118,7 @@ Key findings:
 - **Simplicity:** Clean, no over-engineering. Matches Andrej guidelines — minimal,
   honest about incubating status, no speculative code.
 - **Conventions:** Follows repo patterns. Only gap: no CHANGELOG.md (acceptable for
-  incubating, noted for follow-up).
-'
-
+  incubating, noted for follow-up).'
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 # Parse args
