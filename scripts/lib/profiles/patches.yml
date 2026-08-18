@@ -360,6 +360,48 @@ patches:
       status: local-vendored
       drop_when: "vllm#48375 merges upstream AND the vllm-stable pin moves past it -> remove the 6 compose mounts + entrypoint calls + the patch dir; retire this row (re-run the #710 probe protocol on the new pin first)."
 
+  - id: vllm-flashinfer-decode-pin
+    # qwen3.8-27b (2026-08-18): the dual-fast slug (W4A8 + MTP n=4 + fp8 KV +
+    # prefix caching, the hybrid GDN family) crashed the engine in ~15s at
+    # MAX_NUM_SEQS>=4 with the drafter on — NVRM Xid 31 VIRT_READ (FAULT_PDE,
+    # unmapped page), both TP ranks. Prior mitigations were SPEC_N=0 (kill the
+    # drafter) or MAX_NUM_SEQS=1 (no concurrency). This patch fixes the crash at
+    # full async speed so MAX_NUM_SEQS=4 is reachable. Root cause is the
+    # FlashInfer stale-plan async-copy race (vllm#40756 thread, 2026-08-17).
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin/install.sh
+      - models/qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin/patch_flashinfer_decode_pin.py
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-fast
+        reason: "The dual-fast config (W4A8 + MTP n=4 + fp8 KV + prefix caching) is the exact repro: FlashInfer plan() reuses one PINNED host buffer per wrapper and copies it out async; the MTP drafter re-plans the DECODE wrapper K-1x/step, so a stale plan feeds the split-KV merge (PersistentVariableLengthMergeStatesKernel) a garbage row -> Xid 31 at an unmapped VA. Needs >=4 genuinely concurrent in-flight MTP requests to lose the race (c<=3 and SPEC_N=0 never crash). Unpinning the flashinfer decode.py workspace buffer forces a synchronous plan copy per step and closes the window. Validated v0.27.1 / flashinfer 0.6.16.post3 / 2x RTX 3090 SM86: c=4 survives 425s clean (120s OK=126 + 300s OK=345, ERR=0, 0 new Xid) at full async speed; decode.py alone is necessary+sufficient (A/B: prefill/sparse/pod unpin without decode.py still crashed). Perf-neutral at c=1 (all deltas within CV)."
+        evidence: "models/qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin/README.md; vllm-project/vllm#40756 (thread comments 2026-08-17, brasrox retraction + sempai SM86 corroboration)"
+    delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin/install.sh
+      mounted_at: /etc/club3090/flashinfer-decode-pin
+      invoke: "bash /etc/club3090/flashinfer-decode-pin/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Idempotent, marker-gated; no-ops if flashinfer is not installed (a non-FlashInfer backend config boots clean); hard-fails (exit 2) on drift (a pin_memory outside a workspace buffer) so the compose refuses a half-patched state. Flips pin_memory=True->False on the flashinfer decode.py workspace buffer (decode-only by default; FI_PINQ_LIB_ALL=1 for the validated full mirror). Inert on the SPEC_N=0 path — the race needs the drafter to re-plan the decode wrapper. This patch bounds the CRASH, not VRAM: the separate W4A8 16K-prompt OOM that ships MAX_NUM_SEQS=1 is a different constraint and is NOT changed here."
+    drift_guard:
+      kind: boot
+      check: "Entrypoint runs install.sh before serve; boot log contains '[flashinfer-decode-pin] decode.py: 4 pin_memory True->False (py_compile OK)' (first boot) or '[flashinfer-decode-pin] decode.py: already patched' (warm layer). Drift -> '[flashinfer-decode-pin] ERROR' + non-zero exit -> container refuses to serve (never a silent half-wire)."
+      on_fail: boot-refused
+    status: verified
+    capability: mtp-concurrency-safety
+    foundational: false
+    upstream:
+      ref: "vllm-project/vllm#40756 (FlashInfer GDN/MTP illegal memory access; the 2026-08-17 thread comments identify the stale-plan async-copy race — this vendors the decode.py unpin)"
+      status: open
+      drop_when: "flashinfer lands a fix for the pinned-buffer plan reuse (pin_memory=False on the decode wrapper, or an explicit sync guard on the async copy-out) AND the pin moves past it -> remove the compose mount + entrypoint call + this patch dir; retire this row."
+
   - id: qwen-w4a8-int8-act
     model: [qwen3.6-27b, thinkingcap-27b]
     files:
