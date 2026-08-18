@@ -130,7 +130,7 @@ run_probe() {
   TPS_FLOOR="$TPS_FLOOR" RETENTION_MIN="$RETENTION_MIN" VALIDATE="$VALIDATE" \
   python3 - <<'PY'
 import concurrent.futures as cf
-import json, os, statistics, subprocess, time, urllib.request
+import json, os, re, statistics, subprocess, time, urllib.request
 
 URL=os.environ["URL"]; MODEL=os.environ["MODEL"]; N=int(os.environ["CONCURRENCY"])
 ROUNDS=int(os.environ["ROUNDS"]); PTOK=int(os.environ["PROMPT_TOKENS"])
@@ -145,6 +145,37 @@ BLOCK=("This section describes the history of computing in detail. Transistors "
 def prompt(stream, rnd):  # ~0.23 tok/char; unique salt per stream -> no prefix-cache free ride
     reps=int(PTOK/(len(BLOCK)*0.23))+1
     return f"[probe s{stream} r{rnd}] "+BLOCK*reps+"\nWrite a detailed multi-paragraph summary."
+
+def pct(xs, q):
+    # p50 alone describes NO ACTUAL USER once requests queue: with Running:9 /
+    # Waiting:55 the admitted streams see a short TTFT and the queued ones wait
+    # several batches, so the median lands between the two populations. The tail
+    # is also why `aggregate` (divided by the round WALL, set by the slowest
+    # stream) comes in below N x median per-stream.
+    if not xs: return 0.0
+    ss=sorted(xs)
+    return ss[min(len(ss)-1, int(q*len(ss)))]
+
+def engine_stats():
+    # vLLM logs "Running: N reqs, Waiting: M reqs" and a prefix-cache hit rate.
+    # Running is the concurrency the scheduler ACTUALLY admits, which can be far
+    # below max_num_seqs when --max-num-batched-tokens caps the per-step budget:
+    # a sweep rung labelled N=64 may only ever run ~10 wide. Reporting the label
+    # without this reads as a concurrency measurement when it is a queue-depth one.
+    if not CONTAINER: return (None, None, None)
+    try:
+        out=subprocess.run(["docker","logs","--tail","400",CONTAINER],
+                           capture_output=True,text=True,timeout=20,
+                           encoding="utf-8",errors="replace")
+        txt=(out.stdout or "")+(out.stderr or "")
+    except Exception:
+        return (None, None, None)
+    run=wait=hit=None
+    for m in re.finditer(r"Running:\s*(\d+)\s*reqs?,\s*Waiting:\s*(\d+)\s*reqs?", txt):
+        run, wait = int(m.group(1)), int(m.group(2))
+    for m in re.finditer(r"[Pp]refix cache hit rate:\s*([0-9.]+)", txt):
+        hit = float(m.group(1))
+    return (run, wait, hit)
 
 def vram_used_mb():
     try:
@@ -192,9 +223,11 @@ def one(stream, rnd):
     except Exception as e:
         return {"ok":False,"toks":0,"silent":False,"err":str(e)[:80],"dt":time.time()-t0,"ttft":None,"tps":0.0}
 
-print(f"\n{'round':>5} {'done':>7} {'silent':>7} {'errors':>7} {'vram_MB':>8} {'agg_t/s':>8} {'per-strm':>9} {'ttft_ms':>8} {'pf_t/s':>7}")
+print(f"\n{'round':>5} {'done':>7} {'silent':>7} {'errors':>7} {'vram_MB':>8} {'agg_t/s':>8} {'per-strm':>9} {'ttft_ms':>8} {'pf_t/s':>7}"
+      f" {'ttft_p95':>9} {'tps_p05':>8} {'run/wait':>10} {'pfxhit':>6}")
 vram0=vram_used_mb()
 vram_by_round=[]; mtps_by_round=[]; agg_by_round=[]; ttft_by_round=[]; pf_by_round=[]; bad=0; err_rounds=0
+ttft_p95_by_round=[]; tps_p05_by_round=[]; run_by_round=[]; wait_by_round=[]; hit_by_round=[]
 for rnd in range(1,ROUNDS+1):
     t0=time.time()
     with cf.ThreadPoolExecutor(max_workers=N) as ex:
@@ -213,7 +246,14 @@ for rnd in range(1,ROUNDS+1):
     ttft_med=statistics.median(ttfts) if ttfts else 0.0
     pf=(PTOK/ttft_med) if ttft_med>0 else 0.0
     ttft_by_round.append(ttft_med); pf_by_round.append(pf)
-    print(f"{rnd:>5} {done:>4}/{N:<2} {silent:>7} {errs:>7} {v:>8} {agg:>8.1f} {mtps:>9.1f} {ttft_med*1000:>8.0f} {pf:>7.0f}")
+    # TAIL, not just p50 — see pct() for why the median misleads under queueing.
+    ttft_p95=pct(ttfts,0.95); tps_p05=pct(tps_ok,0.05)
+    ttft_p95_by_round.append(ttft_p95); tps_p05_by_round.append(tps_p05)
+    run,wait,hit=engine_stats()
+    run_by_round.append(run); wait_by_round.append(wait); hit_by_round.append(hit)
+    print(f"{rnd:>5} {done:>4}/{N:<2} {silent:>7} {errs:>7} {v:>8} {agg:>8.1f} {mtps:>9.1f} {ttft_med*1000:>8.0f} {pf:>7.0f}"
+          f" {ttft_p95*1000:>9.0f} {tps_p05:>8.1f} {('-' if run is None else run):>4}/{('-' if wait is None else wait):<5}"
+          f" {('-' if hit is None else f'{hit:.1f}'):>6}")
     if done<N or silent or errs: bad+=1
     if errs: err_rounds+=1
 
@@ -261,6 +301,18 @@ steady_ttft=ttft_by_round[-1] if ttft_by_round else 0.0
 steady_pf=pf_by_round[-1] if pf_by_round else 0.0
 print(f"  concurrent prefill: steady TTFT {steady_ttft*1000:.0f} ms (median of {N} streams) "
       f"· ~{steady_pf:.0f} tok/s/stream derived @ {PTOK}-tok prompts")
+s_p95=ttft_p95_by_round[-1] if ttft_p95_by_round else 0.0
+s_p05=tps_p05_by_round[-1] if tps_p05_by_round else 0.0
+s_run=run_by_round[-1] if run_by_round else None
+s_wait=wait_by_round[-1] if wait_by_round else None
+s_hit=hit_by_round[-1] if hit_by_round else None
+print(f"  tail: TTFT p95 {s_p95*1000:.0f} ms (vs p50 {steady_ttft*1000:.0f}) "
+      f"· slowest-decile stream {s_p05:.1f} tok/s (vs median {report_tps:.1f})")
+if s_run is not None:
+    admitted = "" if s_run>=N else f"  ** engine admitted {s_run} of {N} requested — the rest QUEUED **"
+    print(f"  engine: running {s_run} · waiting {s_wait}"
+          + (f" · prefix-cache hit {s_hit:.1f}%" if s_hit is not None else "")
+          + admitted)
 flags=[]
 if not clean_fit: flags.append("fit")
 if TPS_FLOOR>0 and not floor_ok: flags.append("tps-floor")
@@ -273,7 +325,10 @@ if PASS:
 # machine-readable line for SWEEP parsing
 print(f"RESULT N={N} clean={int(clean_fit)} pass={int(PASS)} mps_tps={report_tps:.2f} "
       f"agg_tps={report_agg:.2f} retention={retention:.3f} leak={leak} vram_peak={vram_peak} floor_ok={int(floor_ok)} "
-      f"ttft_ms={steady_ttft*1000:.0f} pf_tps={steady_pf:.1f}")
+      f"ttft_ms={steady_ttft*1000:.0f} pf_tps={steady_pf:.1f} "
+      f"ttft_p95_ms={s_p95*1000:.0f} tps_p05={s_p05:.2f} "
+      f"running={'-' if s_run is None else s_run} waiting={'-' if s_wait is None else s_wait} "
+      f"prefix_hit={'-' if s_hit is None else f'{s_hit:.1f}'}")
 raise SystemExit(0 if PASS else 1)
 PY
 }

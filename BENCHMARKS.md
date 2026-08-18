@@ -347,6 +347,20 @@ Tested via `URL=http://localhost:8004 MODEL=luce-dflash bash scripts/verify-stre
 
 ---
 
+## Qwen3.8-27B
+
+Dense 27B, Qwen3-Next hybrid (16 full-attention + 48 linear-attention layers, 24 attention heads / 4 KV heads, head_dim 256, 262144 architectural ceiling). Same arch shape as Qwen3.6-27B, different checkpoint. Embedded MTP head. Native chat template (NOT froggeric).
+
+### Dual-card (2× RTX 3090, TP=2) — vLLM
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `dual/fp8/mtp.yml` (`vllm/qwen38-27b-dual-max`, MTP n=3) | @noonghunna (2× 3090, PCIe) | fp8 e4m3 | 262144 | **67.39 / 85.75** (CV 1.5% / 3.5%) | 1165.8 @10K · 941.5 @90K | 45,816 MiB total (~22.4 GiB/card) | 2026-08-17 | 🧪 Experimental. **FIRST BOOT + first numbers for this model on this stack.** Stock `vllm/vllm-openai:v0.27.1`, 3 warm + 5 measured, canonical sampler. **verify-full PASS** (8 scored; Genesis check skipped — compose is Genesis-free). TTFT 152 ms. KV pool **270,930 tok @262144 = 1.03× concurrency** (tight — the header projected ~1.13× from the 3.6 sibling). MTP acceptance **2.62** at n=3. ⚠️ The trailing `SpecDecoding` log lines read *"acceptance length 4.00"* — that is a 3-token idle-window artifact at 0.03 tok/s, **not** the serving figure. ⚠️ 262144 is **ALLOCATED, not filled** — no NIAH ladder run; the 3.6 sibling fills to ~240K of its 262K, expect the same or worse. **Not gated for ⚠️/✅**: no verify-stress, no soak, no 8-pack. ⚠️ MTP exposed to OPEN [vllm#50021](https://github.com/vllm-project/vllm/pull/50021) — mitigate with `SPEC=off`. |
+
+⚠️ **Do not diff these against the Qwen3.6-27B rows.** Different checkpoint, different sampler defaults (this tier follows the 3.8 model card's Instruct row), and cross-session TPS comparison is invalid on this rig — single boots swing ~5 TPS on the code leg, which is wider than most tier gaps. Same-session A/B only.
+
+---
+
 ## Qwen3.6-40B-Deckard
 
 Dense 40B uncensored community merge of Qwen3.6 (DavidAU Opus-Deckard). Q6_K GGUF with a BF16 MTP head injected by PiehSoft (`PiehSoft/Qwen3.6-40B-Deckard-MTP-Q6_K`). Arch is `qwen35-dense` (standard GQA, 97 layers) per the GGUF header — not a Qwen3-Next hybrid. Dual 3090 only (31 GB > 24 GB). llama.cpp mainline, immutable pin `server-cuda-b9570`.

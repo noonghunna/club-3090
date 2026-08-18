@@ -5,7 +5,7 @@
 #   Drafter:   none (no spec-decode — simplest path)
 #   KV:        fp8_e4m3 (no TQ3 to avoid cudagraph cascade bugs)
 #   Vision:    no
-#   Max ctx:   65K (mem-util 0.95)
+#   Max ctx:   32K (MAX_MODEL_LEN default 32768; raise it explicitly if headroom allows)
 #   Genesis:   none — bare vLLM, isolation control
 #   Status:    ✅ Production
 #   Best for:  Debugging baseline / 20 GB Ampere fallback when TQ3 paths
@@ -17,11 +17,15 @@
 #   - You want the simplest possible stack (fewer moving parts to debug)
 #   - You don't need MTP / spec-decode speedup
 #   - You're OK with ~32 TPS instead of the ~50-70 TPS of the spec-decode variants
-#   - You want vision + tool calls to "just work" without any patches
+#   - You want tool calls to "just work" without any patches
 #
-# Trade-off vs the default `docker-compose.yml`:
-#   - This: no MTP, no Genesis → 32/33 TPS narr/code, 32K ctx, vision ✓, tools ✓
-#   - Default: MTP + Genesis P65 + TQ3 KV → 51/68 TPS, 48K ctx, vision ✓, tools ✓
+# What you get: no MTP, no Genesis → ~32/33 TPS narr/code, 32K ctx, tools ✓,
+# no vision (matches the `Vision: no` schema line above — vLLM single-card
+# vision on this model is blocked by #167).
+#
+# ⚠️ This block previously claimed 65K ctx and `vision ✓`, and compared against a
+# "MTP + Genesis P65 + TQ3 KV" default that no longer exists (Genesis retired
+# stack-wide 2026-07-06; the TQ3 composes are in `compose/_archive/`).
 #
 # This file exists because community feedback (predecessor repo issue #1)
 # showed users sometimes hit the spec-decode tool-call cascade by booting
@@ -38,7 +42,7 @@
 # Tensor-parallel: 1
 services:
   vllm-qwen36-27b-minimal:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen36-27b-minimal}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

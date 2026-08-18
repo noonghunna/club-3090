@@ -22,14 +22,19 @@ bash "$S" beellama-local sometag >/dev/null 2>&1; [[ $? -eq 2 ]] || fail "digest
 set -e
 
 # 3. --check against the real repo: exits 0, plans the engine yml, writes nothing
+# ⚠️ The write-check SNAPSHOTS the file around the --check call. It used to assert
+# `git diff --quiet` on it, which conflates "the script wrote to this file" with
+# "the working tree is dirty for ANY reason" — so it red-flagged every engine-pin
+# bump PR while the (legitimate, intended) spec: edit was still uncommitted. The
+# snapshot measures what the assertion actually means and works in a dirty tree.
+ENGINE_YML="$ROOT_DIR/scripts/lib/profiles/engines/vllm-stable.yml"
+before_hash="$(md5sum "$ENGINE_YML" | awk '{print $1}')"
 out="$(bash "$S" vllm-stable v999.0.0-guardtest --check 2>&1)" || fail "--check should exit 0"
 command grep -q "would edit" <<<"$out" || fail "--check output should say 'would edit'"
 command grep -q "engines/vllm-stable.yml" <<<"$out" || fail "--check should plan the engine yml"
 command grep -q "v999.0.0-guardtest" <<<"$out" || fail "--check should show the new tag"
-if command -v git >/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  git -C "$ROOT_DIR" diff --quiet -- scripts/lib/profiles/engines/vllm-stable.yml \
-    || fail "--check must not modify the engine yml"
-fi
+after_hash="$(md5sum "$ENGINE_YML" | awk '{print $1}')"
+[[ "$before_hash" == "$after_hash" ]] || fail "--check must not modify the engine yml" 
 
 # 4. write mode against a synthetic fixture root
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

@@ -45,7 +45,7 @@
 # Requires-sm: 7.5+
 services:
   vllm-qwen-agentworld-35b-a3b-dual:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.25.1}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen-agentworld-35b-a3b-dual}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:

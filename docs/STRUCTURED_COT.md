@@ -66,7 +66,7 @@ After the Phase 3 grammar A/B (2026-05-04, full HE+ 164 + LCB v6 50, 5 grammars 
 On vLLM, we ship one compose, with the DeepSeek scratchpad as the recommended grammar:
 
 ```bash
-bash scripts/switch.sh vllm/bounded-thinking
+bash scripts/switch.sh vllm/dual        # 🗑️ vllm/bounded-thinking is archived; any vLLM slug works
 # Then send requests with:
 #   extra_body={"structured_outputs": {"grammar": <deepseek-scratchpad GBNF>}}
 ```
@@ -91,7 +91,7 @@ The combined-accuracy spread is within noise (87.4% / 86.9% / 86.4% over 214 pro
 
 ```bash
 cd /path/to/club-3090
-bash scripts/switch.sh vllm/bounded-thinking
+bash scripts/switch.sh vllm/dual        # 🗑️ vllm/bounded-thinking is archived; any vLLM slug works
 # Or directly:
 cd models/qwen3.6-27b/vllm/compose
 docker compose -f single/autoround-int4/bounded-thinking.yml up -d

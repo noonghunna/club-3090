@@ -20,7 +20,7 @@ Yes. The 4090 (Ada, sm_89) is strictly better than 3090 (Ampere, sm_86) for ever
 - @laurimyllari Qwen3.6-35B-A3B ik `--fit` (Mudler APEX I-Compact): **205 / 256 TPS** ([discussion #241](https://github.com/noonghunna/club-3090/discussions/241))
 - @laurimyllari Qwen3.6-27B `ik-llama/iq4ks-two-stage`: **82.5 / 120.9 TPS** (+39% narr / +24% code over 3090)
 
-vLLM Genesis patches work cleanly on Ada.
+vLLM works cleanly on Ada.
 
 **Watch out for the context derate.** A 24 GB 4090 carries more idle desktop + driver VRAM than a headless 3090, so single-card context ceilings land **~15–20% lower**. Observed: `long-text.yml` 180K → 90K, ik two-stage 200K → 160K, `dual-dflash-noviz` 200K → 180K. Start below the 3090 number and verify with `verify-stress.sh` (watch its ceiling VRAM-margin line).
 
@@ -174,7 +174,7 @@ You can run Ollama against an Unsloth GGUF manually, but at that point you've re
 ### Why not LM Studio?
 
 LM Studio is GUI-driven and great for hobbyist use. We ship CLI/Docker because:
-- Reproducibility — pinned image SHAs + Genesis commit make exact bench runs across machines possible
+- Reproducibility — pinned image SHAs make exact bench runs across machines possible
 - Headless deployment — homelab racks, dev backends
 - Tool-call extraction across both engines on this exact model is non-trivial; LM Studio's defaults haven't been validated
 
@@ -221,7 +221,47 @@ The **text encoder.** Image models bundle a big one — FLUX.1 → T5-XXL (~5–
 Look at the [TPS chart](../README.md#measured-tps-at-a-glance) — single-card vLLM is 51-55 TPS narrative / 67-70 code at 48K, which beats most consumer-3090 numbers we've seen reported. If you're seeing materially lower, the most common causes are:
 1. Power cap < 230 W (this rig benches at 230 W; 280 W gives ~+5%, 350 W ~+10%)
 2. Wrong compose for your prompt shape (use the `tq3-mtp.yml` 48K single-card default for chat — don't pick `long-vision.yml` if you don't need 198K)
-3. Genesis tree drift — `git pull origin main` between bench runs can change AL by ±15%. We pin to commit `bf667c7` for this reason.
+3. Engine-pin drift — bumping the vLLM pin between bench runs can move acceptance length. Pin the engine and re-bench both arms in the same session.
+
+### My TPS is ~5× lower than the table and there is no error — what happened?
+
+You are almost certainly running a **speculative-decoding compose whose draft model was never
+downloaded.** vLLM does not fail in this case: it **silently falls back to baseline decode** and
+serves normally, just far slower. Reported by
+[@lolren in #18](https://github.com/noonghunna/club-3090/discussions/18#discussioncomment-16787831),
+where a DFlash compose ran at ~25 TPS instead of ~125.
+
+```bash
+# Fetch the draft model the compose expects, then reboot the slug:
+WITH_DFLASH_DRAFT=1 bash scripts/setup.sh qwen3.6-27b
+```
+
+Confirm the drafter actually attached — the boot log names it, and an accept-length line appears
+once it has served traffic:
+
+```bash
+docker logs <container> 2>&1 | grep -iE 'speculative|draft|acceptance'
+```
+
+⚠️ This failure mode is **generic to any external-drafter config**, not specific to one compose:
+a missing draft model produces a working server at a fraction of the advertised throughput with no
+error anywhere. If your numbers are off by a large multiple and nothing is logged, check this first.
+
+### Which sampler values matter, and which one will silently ruin output?
+
+Every Qwen3.6-27B compose ships `temperature 0.6 · top_p 0.95 · top_k 20 · min_p 0.0` — Qwen's own
+precise-coding profile, and also the MTP-accept-sweep winner (a tighter distribution raises draft
+acceptance). For long agentic *reasoning*, the card's general-task profile is `temperature 1.0`
+(same top_p/top_k/min_p) — set `TEMP=1.0` or send it per-request.
+
+⚠️⚠️ **`min_p` must stay `0.0` in every mode.** A non-zero min-p floor (e.g. `0.75`) collapses the
+distribution and **traps reasoning models in repetition loops**. It looks like a reasonable quality
+knob and it is not — never set it.
+
+Best practice is to let the agent/harness set temperature per task rather than relying on the server
+default: a coding agent, a planning loop and a summarizer each want different sampling, and only the
+calling harness knows which is running. The compose default is a coding-biased fallback for clients
+that send nothing.
 
 ### My TPS dropped after switching to 198K context. Why?
 
@@ -230,7 +270,7 @@ It shouldn't, much — we measured 50.93 TPS narr at 192K vs 50.53 at 32K (withi
 ### What's a "prefill cliff"?
 
 VRAM-related OOM during prompt processing on single-card vLLM. Two cliffs documented:
-- **Cliff 1** — historical: FFN intermediate buffer (`SiluAndMul` output, 138 MiB at `max_num_batched_tokens=4128 × intermediate_size=17408 × 2 bytes`) fresh-allocated per layer. Plus a related FA2 softmax_lse cap-leak ([Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011)). **Closed on every shipped vLLM single-card variant** as of 2026-04-30 PM: `tools-text.yml` via Genesis PN8 (frees ~900 MiB on FP8 path); `long-vision.yml` and `long-text.yml` via the PN12 anchor sidecar (PR #13 to Sandermage's repo) plus a local P104 FA softmax_lse clamp. Full diagnostic: [docs/CLIFFS.md](CLIFFS.md).
+- **Cliff 1** — historical: FFN intermediate buffer (`SiluAndMul` output, 138 MiB at `max_num_batched_tokens=4128 × intermediate_size=17408 × 2 bytes`) fresh-allocated per layer. Plus a related FA2 softmax_lse cap-leak ([Dao-AILab/flash-attention#1011](https://github.com/Dao-AILab/flash-attention/issues/1011)). **Closed as of 2026-04-30 PM** on the variants that shipped at the time, via a mix of upstream fixes and a since-retired patch tree. The composes named in that fix history are archived; the mechanism writeup is what carries forward. Full diagnostic: [docs/CLIFFS.md](CLIFFS.md).
 - **Cliff 2** — DeltaNet GDN forward OOM at ~50-60K single-prompt regardless of mem-util. ⚠️ **Regressed under Genesis v7.72.2** (2026-05-05): PN59 streaming-GDN was advertised as the structural fix but doesn't engage on the chunked-prefill code path 24 GB single-card configs are forced to take. `long-text.yml` / `long-text-no-mtp.yml` / `long-vision.yml` may OOM at >50K single-prompt context. Filed at [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22) with reproducer + 4 fix proposals; pending Sander review. **Workarounds**: dual-card TP=2 (`dual.yml` / `dual-turbo.yml` — verified at 237K) or llama.cpp single-card (262K, different engine, no Cliff 2b). Tracked in [UPSTREAM.md](UPSTREAM.md).
 
 For the full deep dive — empirical bisection, root-cause walk-through, who-can-fix-it landscape, and what we could do at any difficulty level — see [docs/CLIFFS.md](CLIFFS.md).
@@ -241,9 +281,6 @@ Sandermage's K+1 verify routing PR for TurboQuant spec-decode. We tested a local
 
 The working paths today are `dual/autoround-int4/tq3-nomtp.yml` without Genesis, or Genesis-backed TQ+MTP with P67/P67b. Treat #40914 as adjacent upstream work, not a shippable closure for this stack.
 
-### What's PN8?
-
-A Genesis patch (`GENESIS_ENABLE_PN8_MTP_DRAFT_ONLINE_QUANT=1`) added in v7.62.x — backport of vllm#40849 that makes the MTP draft head inherit the target model's online-quant config. We measured ~800-900 MiB freed on the FP8+MTP single-card path (`tools-text.yml`), which **closes Cliff 1 there**. No-op on TQ3 paths. Enabled by default in `tools-text.yml` since 2026-04-29; opt-in elsewhere via the env var if you want to test.
 
 ### INT8 PTH gives me 150 TPS single-stream but doesn't scale with concurrency — is that a bug?
 
@@ -254,7 +291,9 @@ This shows up clearly in the head-to-head matrix on dual-3090:
 - **INT8 PTH** (`dual/autoround-int4/int8.yml`) — 85 narr / 121 code TPS single-stream, 605K KV pool / 2.31× concurrency at 262K, p50 decode TPS stays near baseline at concurrency (no aggregate lift)
 - **fp8 default** (`dual/autoround-int4/fp8-mtp.yml`) — lower per-stream but scales to ~9× concurrency at 262K, aggregate throughput goes up almost linearly with stream count
 
-So pick by workload: INT8 PTH if you want max single-stream TPS and don't need many concurrent users; fp8 if you want aggregate throughput across many streams. If you want **both** — high single-stream *and* high concurrency on the same compose — the answer is the Genesis-backed TQ3+MTP path (`dual/autoround-int4/tq3-mtp-genesis.yml`): 89 / 119 narr / code TPS single-stream + 1.22M KV pool / 4.66× concurrency on the same PCIe dual-3090 rig (~5pp quality cost vs INT8 PTH on the 150-scenario quality suite, within noise on aider-polyglot-30 — see [docs/TQ3_MTP_GENESIS.md](TQ3_MTP_GENESIS.md) for the full writeup). This is also why `dual/autoround-int4/turbo.yml` (4-stream production variant) ships TQ3+MTP rather than INT8 PTH — INT8 PTH wouldn't scale across the 4 concurrent streams.
+So pick by workload: INT8 PTH if you want max single-stream TPS and don't need many concurrent users; fp8 if you want aggregate throughput across many streams.
+
+⚠️ **The TQ3 + MTP path that used to be the "both" answer is retired.** It reached 89 / 119 TPS single-stream *and* a 1.22M KV pool (4.66× concurrency) on a PCIe dual-3090, but it depended on a third-party patch tree that is no longer used here, and its composes are in `compose/_archive/`. For high concurrency today, use `vllm/qwen-35b-a3b-dual` — the MoE holds flat to N=16 where the dense 27B knees at N=2.
 
 If your numbers on the same compose look different from ours by >15%, the most likely sources of the gap are: power cap (370W vs 290W = ~10-15%), vLLM nightly (pre-#41434 was ~15% slower on Qwen3-Next due to GPU↔CPU syncs in attention), Genesis patches loaded vs not (~10-15% via P67 + PN12 + PN25 on Qwen3-Next), MTP `n` value, or the prompt shape. Run `bash scripts/rebench-full.sh` to capture the canonical 5-phase numbers and we can compare apples-to-apples — see the [Numbers from your rig](https://github.com/noonghunna/club-3090/issues/new?template=numbers-from-your-rig.yml) issue template to share them back.
 
@@ -346,7 +385,7 @@ Two parts: *what's available* and *what happens if I don't have it yet.*
 
 ```bash
 bash scripts/launch.sh --variant vllm/dual      # boots + runs verify-full.sh
-bash scripts/switch.sh vllm/long-vision          # stateless: down the old, up the new
+bash scripts/switch.sh vllm/qwen-27b-dual-max    # stateless: down the old, up the new
 ```
 
 `launch.sh` wraps `switch.sh` and then `verify-full.sh`; `switch.sh` is the bare down-old/up-new if you just want the swap.
@@ -390,7 +429,7 @@ There are **two layers of "default"**, with different owners:
 By default `<model>/default` resolves to the *curated* pick — the first engine in `ENGINE_PREFERENCE` for your topology that has a healthy config (single-card Qwen → **`vllm/minimal`** since the 2026-08-12 retirements; dual → `vllm/dual`). To make it resolve to **your** choice instead, pin a slug:
 
 ```bash
-bash scripts/switch.sh --set-default vllm/dual-turbo   # pin (writes .env)
+bash scripts/switch.sh --set-default vllm/qwen-27b-dual-max   # pin (writes .env)
 bash scripts/switch.sh --clear-default qwen3.6-27b      # remove the pin
 bash scripts/switch.sh --defaults                       # show what each model resolves to + pin vs curated
 ```
@@ -437,7 +476,7 @@ Flags:
 
 You'll usually find out you're behind before you ask: `launch.sh` and `switch.sh` both run `preflight_repo_drift` at boot, which soft-warns when your local HEAD is behind `origin/master`, with the commit count + last-fetch age + the one-line fix. Opt out via `PREFLIGHT_NO_FETCH=1` for offline rigs.
 
-If your *Genesis tree* (not the repo) is out of sync — the pin in `setup.sh` moved but you didn't re-run setup — `preflight_genesis_pin` warns separately and tells you to run `setup.sh`. That was the failure mode behind [#32](https://github.com/noonghunna/club-3090/issues/32) and wispborne's `_register_op_once` crash.
+⚠️ Historically a second drift mode existed — a vendored patch tree pinned separately from the repo, which produced wispborne's `_register_op_once` crash ([#32](https://github.com/noonghunna/club-3090/issues/32)). That tree is retired and no shipped compose loads it, so `update.sh` is now the only sync you need.
 
 ### How do I run fully offline / air-gapped (no Hugging Face access)?
 
@@ -529,15 +568,6 @@ The [bug report template](https://github.com/noonghunna/club-3090/issues/new?tem
 
 Each captures hardware, GPU details (incl. power caps), container state, Genesis patch status, KV pool sizing, and engine config in one paste. Skipping these means the first reply will just ask for them, costing you a round-trip.
 
-### How do I bump Genesis to a newer commit?
-
-That's only for testing a newer Genesis than what master ships — the normal "keep up with the stack" path is `bash scripts/update.sh` (covered above), which picks up whatever pin master currently declares.
-
-For a one-off bump: `GENESIS_PIN=<new-commit-sha> bash scripts/setup.sh qwen3.6-27b` and re-run `bash scripts/verify-full.sh` to confirm tools still work. Don't bump in production without re-running the verify suite — Genesis releases sometimes change spec-verify routing in ways that affect tool-call extraction.
-
----
-
-## Troubleshooting
 
 ### My hermes / openhands / OpenCode / Cline / OpenClaw / Cursor session OOMs after a few turns. What do I do?
 
@@ -582,7 +612,7 @@ SOAK_MODE=continuous SOAK_SESSIONS=5 SOAK_TURNS=5 \
 
 **What's in flight:** Genesis sidecar streaming refactor of `chunk_gated_delta_rule_fwd` being filed with Sandermage. ETA 2-4 weeks if accepted. Check [#41](https://github.com/noonghunna/club-3090/issues/41) for the canonical fix-tracking thread.
 
-**Why this happens** (one-paragraph): the GDN forward kernel holds ~500 MiB of simultaneous intermediate tensors at T=4128 prefill chunks. With accumulated multi-turn KV cache (~5 GiB at 25K context) + model weights (14 GiB) + MTP draft (5 GiB) + other workspace, the per-card peak exceeds the 24 GiB ceiling. The fix is rewriting the kernel to stream those intermediates segment-by-segment instead of holding them simultaneously — that's upstream work in `vllm/model_executor/layers/fla/ops/` or via Genesis sidecar. Detailed mechanism analysis in [`docs/CLIFFS.md`](CLIFFS.md) "Why TP=2 escapes" and "Why llama.cpp escapes" sections.
+**Why this happens** (one-paragraph): the GDN forward kernel holds ~500 MiB of simultaneous intermediate tensors at T=4128 prefill chunks. With accumulated multi-turn KV cache (~5 GiB at 25K context) + model weights (14 GiB) + MTP draft (5 GiB) + other workspace, the per-card peak exceeds the 24 GiB ceiling. The fix is rewriting the kernel to stream those intermediates segment-by-segment instead of holding them simultaneously — that's upstream work in `vllm/model_executor/layers/fla/ops/`. Detailed mechanism analysis in [`docs/CLIFFS.md`](CLIFFS.md) "Why TP=2 escapes" and "Why llama.cpp escapes" sections.
 
 ### Random crashes under sustained load on an AMD platform (Threadripper / Ryzen / EPYC)?
 
@@ -603,112 +633,61 @@ simplest variant first. Each step adds **one variable** on top of the
 previous; if step N works and step N+1 fails, the new variable is the
 cause.
 
-| Step | Variant | Adds | Tests |
+| Step | Slug | Adds | Isolates |
 |---|---|---|---|
-| 1 | `vllm/minimal` | base vLLM, nothing else | hardware, driver, Docker, NVIDIA Container Toolkit, model files |
-| 2 | `vllm/tools-text` | + Genesis + MTP K=3 + fp8 KV | Genesis patch tree + MTP spec-decode + fp8 KV path |
-| 3 | `vllm/long-text` | + TQ3 KV + 180K context | TurboQuant + long-ctx + production single-card stack |
-| 4 | `vllm/dual` | + TP=2, **removes Genesis** | TP=2 NCCL + multi-GPU memory split (single-card layer no longer in scope) |
-| 5 | `vllm/dual-turbo` | + TQ3 + Genesis on TP=2 | full multi-card stack |
+| 1 | `vllm/minimal` | base vLLM, nothing else — 32K, fp8 KV, no drafter | hardware, driver, Docker, NVIDIA Container Toolkit, model files |
+| 2 | `vllm/dual` | + TP=2, + MTP n=3, + 262K | NCCL across cards, the multi-GPU memory split, spec-decode |
+| 3 | `vllm/qwen-27b-dual-max` | + FP8 weights instead of INT4 | the weight-quant path (Marlin W8A16 vs W4A16) |
+| 4 | `vllm/qwen-35b-a3b-dual` | + a different architecture (MoE) | whether the fault is Qwen3-Next/DeltaNet-specific |
+
+⚠️ **This ladder was rebuilt 2026-08-17.** It previously stepped through `vllm/tools-text`,
+`vllm/long-text` and `vllm/dual-turbo` — all three are archived and none exist in the registry, so
+steps 2, 3 and 5 could not be run as written.
 
 **At-a-glance:** if you're single-card-only, run steps 1-3. If you're
 dual-card and step 3 fails, the bug is in single-card; if step 3 works
 but step 4 fails, it's TP=2 NCCL specifically; if step 4 works but step
 5 fails, it's the TQ3-on-TP=2-with-Genesis intersection.
 
-**Step 1 — `vllm/minimal` (32K + fp8 + no Genesis + no spec-decode)**
+**Run each step, in order, and stop at the first failure.**
 
 ```bash
-bash scripts/launch.sh --variant vllm/minimal
+# 1 — base vLLM. Nothing but weights + the engine.
+bash scripts/switch.sh vllm/minimal
+bash scripts/verify-full.sh
 ```
-
-Tests: hardware, driver, Docker, NVIDIA Container Toolkit, model files,
-base vLLM. Strips out everything that could be the cause.
-
-- ✅ Boots cleanly → your stack is fundamentally sound. Continue to step 2.
-- ❌ Fails — the issue is fundamental (driver mismatch, model files
-  missing or corrupt, container runtime, base vLLM image). Fix at this
-  layer before trying anything else. Symptom-match against the table
-  below or run `bash scripts/report.sh --verify > my-rig.md` and file a bug.
-
-**Step 2 — `vllm/tools-text` (75K + fp8 + MTP + Genesis)**
+Fails here → the fault is below the stack: driver, Docker, NVIDIA Container Toolkit,
+model files, or VRAM. Nothing club-3090-specific is in play yet.
 
 ```bash
-bash scripts/switch.sh vllm/tools-text
-```
-
-Adds: Genesis patches + MTP K=3 spec-decode. Still fp8 KV (no TQ3 yet).
-
-- ✅ Boots cleanly → Genesis + MTP layer is sound. Continue to step 3.
-- ❌ Fails — narrow to Genesis or MTP specifically. Most common gap:
-  on-disk Genesis tree at `models/qwen3.6-27b/vllm/patches/genesis/`
-  out of sync with `GENESIS_PIN` in `scripts/setup.sh`. Re-run
-  `bash scripts/setup.sh qwen3.6-27b` to refresh the tree.
-
-**Step 3 — `vllm/long-text` (180K + TQ3 + MTP + full Genesis)**
-
-```bash
-bash scripts/switch.sh vllm/long-text
-```
-
-Adds: TurboQuant 3-bit KV + long-context handling. This is the
-production-target single-card config.
-
-- ✅ Boots cleanly → single-card stack fully validated. If you only
-  need single-card, stop here — this is what we ship as the IDE-agent
-  default.
-- ❌ Fails — narrow to TQ3 or long-context specifically. If `tools-text`
-  worked but `long-text` doesn't, the issue is in TQ3 KV setup, GDN
-  cliff envelope (>60K single prompts hit the hardware wall on 24 GB),
-  or Cliff 1 mech B compile-path (closed since v7.66 + PN25 — confirm
-  Genesis tree is at v7.69 = `2db18df`).
-
-**Step 4 — `vllm/dual` (262K + fp8 + TP=2 + 2 streams, Genesis-less)**
-
-For dual-card users only. `dual.yml` is **intentionally Genesis-less**
-(per its YAML header) — fp8 KV + TP=2 doesn't trigger the cudagraph
-bug class Genesis was built to patch.
-
-```bash
+# 2 — TP=2 + MTP + full context (skip if you have one card)
 bash scripts/switch.sh vllm/dual
+bash scripts/verify-full.sh && bash scripts/verify-stress.sh
 ```
-
-Adds: TP=2 NCCL coordination + multi-GPU memory split. Removes Genesis.
-
-- ✅ Boots cleanly with steps 1-3 also passing → TP=2 path works. If
-  `long-text` (single-card with Genesis) AND `dual` (TP=2 without
-  Genesis) both work but `dual-turbo` (TP=2 + TQ3 + Genesis) doesn't,
-  the bug is specifically in the TQ3-on-TP=2-with-Genesis intersection.
-- ❌ Fails despite step 3 working — the issue is in TP=2 NCCL
-  coordination or multi-GPU memory budget. WSL2 is the most common
-  trigger here (its vGPU layer adds memory accounting wrinkles that
-  bare-metal Linux doesn't have); native Linux + 2× 3090 PCIe is
-  well-tested. If you're on WSL2 and hitting this, native Linux or
-  switching to single-card `long-text` is the off-ramp.
-
-**Step 5 — `vllm/dual-turbo` (262K + TQ3 + TP=2 + 4 streams, full Genesis)**
+Step 1 passes, 2 fails → it's NCCL across cards, the multi-GPU memory split, or
+spec-decode. Isolate the drafter with `SPEC_N=0`; if that fixes it you are looking at
+[vllm#50021](https://github.com/vllm-project/vllm/pull/50021).
 
 ```bash
-bash scripts/switch.sh vllm/dual-turbo
+# 3 — same topology, different weight quant
+bash scripts/switch.sh vllm/qwen-27b-dual-max
+bash scripts/verify-full.sh
 ```
+2 passes, 3 fails → the weight-quant path. `dual` is AutoRound INT4 (Marlin W4A16),
+`dual-max` is FP8 (Marlin W8A16), everything else matched.
 
-Adds: TQ3 KV + Genesis on top of TP=2 + 4-stream concurrency.
+```bash
+# 4 — different architecture entirely
+bash scripts/switch.sh vllm/qwen-35b-a3b-dual
+bash scripts/verify-full.sh
+```
+1–3 pass and 4 also fails → not Qwen3-Next-specific; suspect your rig or the engine
+pin. 1–3 fail but 4 passes → it *is* the Qwen3-Next / DeltaNet hybrid path, which is
+where the cliffs and the GDN spec-decode bug live. See [`CLIFFS.md`](CLIFFS.md).
 
-- ✅ Boots and verify-stress passes → full dual-card stack validated.
-- ❌ Fails despite steps 3 and 4 working — the bug is specifically in
-  the multi-card TQ3+Genesis intersection. File a bug with
-  `bash scripts/report.sh --full > my-rig.md` output; this is a narrow
-  surface we'd want to debug carefully and the full pass (verify + stress
-  + soak + bench) gives us everything to triage in one paste.
+Include the step number in any issue you open — it tells us which layer to look at and
+usually saves a full round trip.
 
-## Why this works for both single and dual-card users
-
-The first 3 steps isolate stack layers (base → Genesis+MTP+fp8 →
-TQ3+long-ctx). Steps 4-5 add TP=2 surface separately. A user on dual
-hardware who's hitting issues should still run steps 1-3 on a single
-card first — it's the only way to tell apart "issue in single-card
-stack that also breaks dual" from "issue specific to TP=2 NCCL /
-multi-GPU coordination."
 
 ## Quick recognition guide for common failure modes
 

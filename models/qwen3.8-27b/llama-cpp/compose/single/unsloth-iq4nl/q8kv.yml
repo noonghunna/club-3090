@@ -1,0 +1,351 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B (Unsloth imatrix IQ4_NL GGUF, 16.3 GB)
+#   Engine:    llama.cpp (mainline server-cuda-b10236 — the shared llama-cpp-local pin)
+#   Topology:  Single 3090 (TP=1)
+#   Drafter:   MTP n=2 built-in (--spec-type draft-mtp; the head is EMBEDDED in this GGUF)
+#              ⚠️ n=2 is the house default for Qwen 27B on llama.cpp, NOT measured for 3.8.
+#   KV:        q8_0 K + q8_0 V (serving-grade KV floor — see "KV choice" below)
+#   Vision:    no (base is VL-capable; mmproj NOT fetched, NOT mounted — text-only ship)
+#   Template:  native (GGUF-embedded) via --jinja
+#   Max ctx:   131072 — ⭐ MEASURED 2026-08-15, not computed. Boots + verify-full
+#              EXIT=0 at 131072; 196608 and 262144 BOTH FAIL to allocate.
+#              The previous header claimed a computed ~203K alloc ceiling with
+#              131072 as a conservative ship value — that ceiling is REFUTED;
+#              131072 is the real one. See the ladder in KV BUDGET below.
+#   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
+#   Status:    🐣 Incubating
+#   Caveats:   NOTHING HAS BOOTED. Authored 2026-08-14 while the weights were still
+#              downloading; zero runtime evidence exists for any claim below.
+#              Specifically unvalidated:
+#                - never launched — no boot, no `docker logs`, no served token
+#                - no verify-full (0/8), no verify-stress, no NIAH, no soak
+#                - no bench: NO TPS / TTFT / prefill number is claimed anywhere
+#                - no quality run (8-pack not executed in either reasoning mode)
+#                - Max ctx 131072 is DERIVED FROM ARITHMETIC (docs/KV_MATH.md
+#                  formula + the qwen3.6-27b single-card anchor), never filled.
+#                  llama.cpp allocating a context is NOT the same as filling it —
+#                  this exact model family has a documented alloc-vs-fill gap
+#                  (qwen3.6-27b: 262144 boots, walls ~125K). Treat 131072 as an
+#                  allocation request, not a proven fill depth.
+#                - ENGINE COMPATIBILITY UNPROVEN: the b10236 pin predates this
+#                  model. The `qwen35` arch it should convert to is served here
+#                  (Tess-4-27B, Deckard-40B), but that this specific GGUF loads on
+#                  this specific build is an inference, not an observation.
+#                - the hybrid 16/64 growing-layer split (which the whole KV budget
+#                  rests on) is read from config.json, not back-solved from a boot log
+#                - sampler now follows the MODEL CARD (instruct row: temp 0.7,
+#                  top_p 0.80, presence_penalty 1.5) — corrected 2026-08-14
+#              Promote to 🧪 only after a clean boot + verify-full; to ⚠️/✅ only
+#              after the full gate (verify-stress + bench + soak + quality).
+#   Engine-profile: llama-cpp-local
+#   Best for:  single-3090 long-context text — the one-card tier of the Qwen3.8-27B
+#              pair. NOT yet recommendable for anything; see Caveats.
+# ---------------------------------------------------------------------------
+# Sibling composes for this model (both 🐣 Incubating, both text-only, both built-in MTP n=2):
+#
+#   | Slug                                | Card(s) | Weights          | KV   | Max ctx | Notes                        |
+#   |-------------------------------------|---------|------------------|------|---------|------------------------------|
+#   | llamacpp/qwen38-27b-single-iq4nl    | 1x 3090 | IQ4_NL 16.3 GB   | q8_0 | 131072  | THIS file — fits one card    |
+#   | llamacpp/qwen38-27b-dual-q8kxl      | 2x 3090 | UD-Q8_K_XL 31.5G | q8_0 | 262144  | max ctx + max weight fidelity |
+#
+# Pick this one when you have a single 3090 free, or want to keep card 1 for
+# another service. Pick the dual when you want full 262K and near-lossless weights.
+#
+# ---------------------------------------------------------------------------
+# Qwen3.8-27B on llama.cpp — single 3090, IQ4_NL weights, q8_0 KV, 131K ctx.
+#
+# ARCHITECTURE (config.json — Qwen3_5ForConditionalGeneration / model_type qwen3_5):
+# a HYBRID, not uniform GQA. 64 layers, `full_attention_interval: 4` => 16
+# full-attention (KV-growing) layers + 48 linear-attention (DeltaNet-style
+# recurrent) layers. Non-MoE. This is the same hybrid lineage as Qwen3.6-27B and
+# Tess-4-27B; do NOT reason about it with dense-attention KV math.
+#
+# KV BUDGET (docs/KV_MATH.md "General KV cache formula" — 16 GROWING layers, not 64):
+#   per_token_bytes = num_growing_layers x num_kv_heads x head_dim x k_v_tensors x bpe
+#                   = 16 x 4 x 256 x 2 x bpe = 32,768 x bpe
+#   q8_0 (34 B per 32-element block = 1.0625 B/elem) -> 34,816 B/token
+#     -> 131,072 ctx = 4.25 GiB     (this compose)
+#     -> ~203,066 ctx = the computed alloc ceiling on 24 GB (see below)
+#   For reference: q4_0 would be 18,432 B/token (2.25 GiB @131K) — half the cache,
+#   below the stack's serving KV bar. See "KV choice".
+#
+#   Per-card budget on 24 GiB. The WEIGHTS figure is measured off disk; every
+#   other line is COMPUTED:
+#     usable after CUDA context + fragmentation (~0.6):   23.40 GiB
+#     IQ4_NL weights — MEASURED 2026-08-14, 16,337,628,128
+#       bytes on disk (= 16.33 GB decimal):                15.22 GiB
+#     q8_0 K+V @131,072:                                    4.25 GiB
+#     compute/graph buffers @ -ub 512 (anchored on the
+#       qwen3.6-27b single-card config, identical 16/4/256
+#       growing geometry, where the same terms back-solve
+#       to ~1.87 GiB at -ub 512 / 200K):                   ~1.60 GiB
+#     ------------------------------------------------------------
+#     projected total:                                     21.07 GiB
+#     projected headroom:                                  ~2.33 GiB
+#
+# ============================================================================
+# ⭐ MEASURED 2026-08-15 — THE CEILING ABOVE WAS WRONG. Ladder on this rig:
+#
+#     131,072  ✅ BOOTS. 21,444 MiB used, 3,132 MiB free. verify-full EXIT=0.
+#              (projection said 21.07 GiB total; actual 20.94 GiB — the TOTAL
+#               at this ctx was accurate to ~0.13 GiB.)
+#     196,608  ⛔ FAILS. `failed to allocate compute pp buffers`
+#              (cudaMalloc 260.02 MiB on device 0)
+#     262,144  ⛔ FAILS. `failed to allocate buffer for rs cache`
+#              (cudaMalloc 448.88 MiB on device 0)
+#
+#   So the shipped 131,072 is now MEASURED, not computed. The "~203,066 computed
+#   alloc ceiling" above is REFUTED — do not restore it.
+#
+# ⚠️⚠️ WHY THE PROJECTION OVERSHOT — two errors, both worth carrying to the
+# sibling composes that use this same arithmetic (dual q8kxl, and the
+# Tess-4-27B / Deckard-40B headers it was copied from):
+#
+#   1. COMPUTE/GRAPH IS NOT CONSTANT. The budget treats it as a fixed ~1.60 GiB
+#      anchored at -ub 512. It SCALES WITH CONTEXT: at 196,608 the prefill
+#      compute buffer is what ran out, not KV. A constant term cannot predict a
+#      ceiling.
+#   2. RECURRENT STATE IS MISSING ENTIRELY. This is a HYBRID: 48 of the 64 layers
+#      are DeltaNet linear-attention and carry an `rs cache` that the KV formula
+#      (correctly, for KV) does not count. At 262,144 that is the buffer that
+#      failed. KV-only math therefore UNDER-PREDICTS total context memory on any
+#      DeltaNet hybrid.
+#
+#   Net effect: "projected headroom" from KV-only math is an OVERESTIMATE here.
+#   It happened to land at 131K because both omitted terms are small at that
+#   context; it diverges as ctx grows, which is precisely where a ceiling lives.
+#
+# ⚠️ AND NOTE tools/kv-calc.py CANNOT ANSWER THIS. It models vLLM semantics,
+#   where the KV pool is ELASTIC — its own output says "requested KV pool
+#   (8.6 GB) > available (2.2 GB) — vLLM will cap to 2.2 GB", i.e. vLLM degrades
+#   concurrency instead of failing. llama.cpp does NOT cap: it allocates the full
+#   -c up front and HARD-FAILS. That is why every llama.cpp/ik-llama registry
+#   entry carries kvcalc_key="SKIP" by convention. There is no computed ceiling
+#   for a llama.cpp slug — it must be measured with a boot ladder.
+# ============================================================================
+#
+#   ⚠️ Note the unit trap that produced that 15.22: the HF model page says
+#   "16.3 GB", which is DECIMAL GB. Read naively as GiB it overstates the VRAM
+#   cost by ~1.1 GiB. The weights profile's `size_gb: 16.3` is deliberately the
+#   decimal figure (the setup.sh disk gate wants the larger number); this budget
+#   deliberately uses the GiB one.
+#
+#   Solving the same budget for ctx gives ~203,066 tokens of q8_0 KV — and at
+#   163840 the headroom is still ~1.27 GiB. We ship 131072 anyway, deliberately:
+#   (a) the 1.6 GiB buffer term is borrowed from a sibling model, not measured
+#   here, and (b) on this exact family an allocation that boots is NOT an
+#   allocation that fills (qwen3.6-27b's 262144 boots and walls ~125K on the FA
+#   scratch). 163840 — or higher — is the obvious first thing to try, but only
+#   after a verify-stress NIAH ladder proves the fill depth on a real boot.
+#
+# KV CHOICE — why q8_0 and not q4_0:
+#   Stack policy is a q8_0-grade KV for anything that serves; sub-q8 KV is a speed
+#   exhibit, never a shipping default (q4_0 KV KLD is ~5.75x worse than q8_0 and
+#   has never been depth-validated on this family). q8_0 costs exactly 2x the
+#   cache of q4_0 here, which is what caps this card at 131K instead of ~260K.
+#   That trade is intentional. If you specifically want a long-context speed
+#   exhibit, KV_TYPE=q4_0 CTX_SIZE=262144 is the knob — not the shipped default.
+#
+# BUILT-IN MTP DRAFTER: this GGUF EMBEDS a nextn head. Verified 2026-08-14 by reading
+# the tensor table directly: blk.64.nextn.{eh_proj,enorm,hnorm,shared_head_norm}, plus
+# metadata qwen35.nextn_predict_layers=1 and qwen35.block_count=65 (= 64 model layers
+# + 1 nextn layer). Driven with `--spec-type draft-mtp` (mainline PR #22673) at
+# n=2 — no separate drafter file is fetched or mounted.
+#
+# ⚠️ THIS WAS INITIALLY GOT WRONG, and the mistake is worth recording. The first
+# authoring pass wrote "NO DRAFTER", reasoning that the repo is `Qwen3.8-27B-GGUF`
+# rather than a `-MTP-GGUF` build — which is how unsloth splits it for 3.6. That
+# inference is FALSE for 3.8: the head ships inside the standard build. REPO NAMING
+# IS NOT EVIDENCE ABOUT HEAD PRESENCE — only the tensor table is.
+#
+# n=2 matches the qwen3.6-27b and deckard llama.cpp composes (deckard measured 2 as
+# its sweet spot on a 40B). It is UNMEASURED for this model. MTP_DRAFT_N_MAX=0
+# disables drafting; sweep the value once there is a bench to sweep against.
+#
+# VISION: the base carries a vision_config and the GGUF repo ships
+# mmproj-{BF16,F16}.gguf — NEITHER was downloaded. This compose is text-only and
+# mounts no projector. Vision needs a third pull, a `kind: mmproj` weights entry,
+# and a `-vision.yml` sibling.
+#
+# Override defaults via .env or shell:
+#   MODEL_DIR        host dir mounted as /models  (default: ../../../../../../models-cache)
+#   GGUF_FILE        path under /models  (default: qwen3.8-27b-gguf/unsloth-iq4nl/Qwen3.8-27B-IQ4_NL.gguf)
+#   CTX_SIZE         KV pool size        (default: 131072 — computed, see budget above;
+#                    the computed ceiling is ~203K, 163840 is the sensible first
+#                    step up AFTER a NIAH ladder, not before)
+#   BATCH_SIZE       llama.cpp -b        (default: 4096)
+#   UBATCH_SIZE      llama.cpp -ub       (default: 512 — the conservative value; the
+#                    qwen3.6-27b single-card lesson is that -ub is the tight-headroom
+#                    lever, 2048 fails its boundary matrix. Try 1024 for prefill only
+#                    after this config has passed verify-stress at -ub 512.)
+#   KV_TYPE          K and V quant type  (default: q8_0 — serving grade; see KV CHOICE)
+#   NP               parallel slots      (default: 1 — see the -np note below)
+#   SERVED_NAME      --alias value       (default: qwen3.8-27b)
+#   REASONING        thinking gate       (default: off — stack-wide policy)
+#   REASONING_FORMAT reasoning routing   (default: deepseek — hygiene)
+#   TEMP/TOP_P/TOP_K/MIN_P               (defaults: 0.6 / 0.95 / 20 / 0.0 — the stack's
+#                    Qwen sampler. NOT verified against this model's card.)
+#   REPEAT_PENALTY   anti-loop           (default: 1.0)
+#   PORT             host port           (default: 8086)
+#   CUDA_VISIBLE_DEVICES  which GPU      (default: 0 — leaves GPU 1 free)
+#   LLAMACPP_IMAGE   engine image        (default: the llama-cpp-local pin; the
+#                    launchers inject the engine-profile spec and override this)
+#
+# Quick start (weights first — see scripts/setup.sh / the c3 Download action):
+#   WEIGHT_KEY=qwen3.8-27b:unsloth-iq4nl bash scripts/setup.sh qwen3.8-27b
+#   bash scripts/launch.sh --variant llamacpp/qwen38-27b-single-iq4nl --force
+#   (--force is REQUIRED: 🐣 Incubating slugs are launch-gated and hidden from
+#    `switch.sh --list`; reveal with `--list --all`.)
+
+services:
+  llama-cpp-qwen38-27b-single:
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b10236}
+    container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen38-27b-single}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8086}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    environment:
+      # ⭐ Default reasoning effort = low when thinking is on (2026-08-16),
+      # matching the vLLM composes. INERT under the shipped `--reasoning off`:
+      # the template only reads reasoning_effort inside
+      # `if enable_thinking is undefined or true`, and --reasoning off passes
+      # enable_thinking:false.
+      # ⚠️ low is an ACTIVE instruction: 'Keep your thinking brief and focused,
+      # moving directly to the conclusion without unnecessary elaboration.' It is
+      # not "less of medium" -- medium has no branch and injects nothing. xhigh
+      # appends 'think carefully, validate key assumptions...', which is what
+      # collides with cli-40's flat 300s per-model-call cap on these sub-55 tok/s
+      # configs.
+      # ⚠️⚠️ THIS ENGINE DIVERGES FROM vLLM ON `high` -- read before setting it.
+      # The unsloth GGUF's EMBEDDED template (read from the GGUF kv 2026-08-16;
+      # byte-identical in UD-Q8_K_XL and IQ4_NL) carries a branch the HF
+      # safetensors template does NOT:
+      #     {%- if resolved_reasoning_effort == 'high' %}
+      #         {%- set resolved_reasoning_effort = 'xhigh' %}
+      # So here `high` SILENTLY becomes xhigh -- the slowest, most token-hungry
+      # level, and the one that collides with the 300s cap above -- whereas the
+      # vLLM path RAISES on it. Setting REASONING_EFFORT=high on this engine
+      # gets you the opposite of what the name suggests, with no error.
+      # ⚠️ This corrects two claims previously in this header: `high` does NOT
+      # raise on this path, and the template DOES emit the instruction with no
+      # tools present (it has a no-tools else-branch at template line ~90).
+      - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-low}"}}
+      - CUDA_VISIBLE_DEVICES=${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}
+    # ⚠ -np 1 is intentional on a single 24 GB card — do NOT raise it to
+    #   "parallelize". One GPU is compute-bound: extra slots divide its
+    #   throughput rather than multiplying it, and each slot takes its own
+    #   slice of the KV pool, so -np 2 halves the per-slot context.
+    # ⚠️ BUILT-IN MTP — the head is EMBEDDED in this GGUF, verified by reading the tensor
+    #   table (blk.64.nextn.{eh_proj,enorm,hnorm,shared_head_norm}, plus metadata
+    #   qwen35.nextn_predict_layers=1 and qwen35.block_count=65 = 64 layers + the nextn layer).
+    #   No separate drafter file is fetched or mounted.
+    #   ⚠️ Do NOT infer head presence from the REPO NAME. unsloth ships a separate
+    #   `Qwen3.6-27B-MTP-GGUF` for 3.6, so the absent `-MTP` suffix on the 3.8 repo reads as
+    #   "no head" and is WRONG — 3.8 bakes it into the standard build. The first authoring pass
+    #   made exactly that inference and shipped `Drafter: none`. Only the tensor table is evidence.
+    #   n=2 matches the qwen3.6-27b and deckard llama.cpp composes; UNMEASURED for this model.
+    #   MTP_DRAFT_N_MAX=0 disables it; sweep it once there is a bench.
+    # ⚠️ Comments CANNOT live inside the `command: >-` folded scalar below — every line there is
+    #   part of one command string, and a `#` line becomes literal argv text
+    #   ('invalid command line string' at compose parse). Keep notes above this key.
+    # SAMPLER — from the Qwen3.8-27B model card. THIS COMPOSE SHIPS INSTRUCT (NON-THINKING).
+    #   Qwen publishes two sets and they differ in every value that matters:
+    #     Instruct / non-thinking (SHIPPED HERE) : temp 0.7, top_p 0.80, top_k 20, min_p 0.0,
+    #                                             presence_penalty 1.5, repetition_penalty 1.0
+    #     Thinking                               : temp 1.0, top_p 0.95, top_k 20, min_p 0.0,
+    #                                             presence_penalty 0.0, repetition_penalty 1.0
+    #   `--reasoning off` and the instruct sampler are set TOGETHER below. Compose cannot branch,
+    #   so if you flip REASONING=on you MUST also set TEMP=1.0 TOP_P=0.95 PRESENCE_PENALTY=0.0
+    #   — the sampler does NOT follow the reasoning flag, and mismatching them is silent.
+    #   ⚠️ presence_penalty=1.5 is prescribed by the card for THIS mode specifically, to curb
+    #   endless repetition; under thinking it must be 0.0 instead, or the reasoning trace's
+    #   natural repetition gets penalised. The two values move in OPPOSITE directions between
+    #   modes — never carry one across. (The first authoring pass omitted it entirely; llama.cpp
+    #   defaults it to 0.0.) Qwen notes 0-2 is the usable band and >2 degrades quality.
+    #   ⚠️ Thinking-off is the stack default for Qwen and is a deliberate policy, not an oversight.
+    #   ⚠️ These are SERVING defaults only. scripts/bench.sh sends its own fixed canonical sampler
+    #   (temp 0.6 / top_p 0.95 / top_k 20 / min_p 0.0) on every request so BENCHMARKS.md rows stay
+    #   comparable across models and engines — a bench number is NOT evidence about these values.
+    # PER-REQUEST OVERRIDES — verified live on this build (b10236) 2026-08-14, not inferred:
+    #   * Client sends NO sampler       -> the server's CLI defaults above apply.
+    #   * Client sends sampler fields   -> the REQUEST wins (two temperature:0 calls returned
+    #                                      byte-identical text while the server default was 0.6).
+    #   * Client sends
+    #       "chat_template_kwargs": {"enable_thinking": true}
+    #                                   -> thinking is enabled FOR THAT REQUEST even though the
+    #                                      server runs --reasoning off; the trace lands in
+    #                                      message.reasoning_content and the answer in
+    #                                      message.content (--reasoning-format deepseek).
+    #
+    #   ⚠️ THE TWO KNOBS ARE INDEPENDENT — this is the trap. Enabling thinking per-request does
+    #   NOT change the sampler: the request inherits the INSTRUCT values above, including
+    #   presence_penalty 1.5, which the card prescribes only for non-thinking and which actively
+    #   penalises a reasoning trace's natural repetition. An agent that wants thinking must send
+    #   the thinking sampler in the SAME request:
+    #
+    #     {"messages": [...],
+    #      "chat_template_kwargs": {"enable_thinking": true},
+    #      "temperature": 1.0, "top_p": 0.95, "top_k": 20,
+    #      "min_p": 0.0, "presence_penalty": 0.0}
+    #
+    #   ⇒ No separate thinking slug is needed, and no reboot: a caller opts in per request. That
+    #   is why this compose ships one mode rather than a sibling `thinking.yml`.
+    # ⭐ ONE-KNOB THINKING MODE:  THINKING=1  flips reasoning AND the whole sampler together.
+    #   Without it you get the card's INSTRUCT row (the flags above). With it, the trailing
+    #   ${THINKING:+...} line appends the card's THINKING row, and llama.cpp takes the LAST value
+    #   of a repeated flag — so `THINKING=1` alone is sufficient and correct. top_k/min_p/
+    #   repeat-penalty are identical across both modes, so they are not repeated.
+    #
+    #   Precedence is preserved: an explicit TEMP/TOP_P/PRESENCE_PENALTY survives THINKING,
+    #   because the appended values are themselves ${VAR:-default}. Verified 2026-08-14:
+    #     (unset)              -> --temp 0.7
+    #     THINKING=1           -> --temp 0.7 ... --temp 1.0        (thinking wins)
+    #     THINKING=1 TEMP=0.42 -> --temp 0.42 ... --temp 0.42      (user wins)
+    #
+    #   ⚠️⚠️ RE-TEST TRIGGER — THIS RESTS ON DEPRECATED UPSTREAM BEHAVIOUR.
+    #   b10236 warns: "DEPRECATED: argument '--temp' specified multiple times, use
+    #   comma-separated values instead (only last value will be used)". Last-wins is what makes
+    #   this work. If a future llama.cpp pin DROPS last-wins, the likely failure is NOT an error
+    #   — it is silently taking the FIRST value, i.e. thinking mode running the INSTRUCT sampler
+    #   with presence_penalty 1.5, which actively penalises the reasoning trace. That is a silent
+    #   quality bug, not a crash.
+    #   ⇒ ON EVERY llama-cpp-local PIN BUMP, re-run this one-liner before trusting the compose:
+    #       docker run --rm --entrypoint /app/llama-server <new-image> \
+    #         -m /nonexistent.gguf --temp 0.11 --temp 0.99 2>&1 | grep -i 'multiple times'
+    #     Expect the DEPRECATED/last-value warning. If it is gone, verify last-wins still holds
+    #     (or convert this to a sibling thinking.yml compose, which needs no such guarantee).
+    command: >-
+      --host 0.0.0.0
+      --port 8080
+      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/unsloth-iq4nl/Qwen3.8-27B-IQ4_NL.gguf}
+      --alias ${SERVED_NAME:-qwen3.8-27b}
+      -c ${CTX_SIZE:-131072}
+      -b ${BATCH_SIZE:-4096}
+      -ub ${UBATCH_SIZE:-512}
+      -ngl 99
+      -fa on
+      --cache-type-k ${KV_TYPE:-q8_0}
+      --cache-type-v ${KV_TYPE:-q8_0}
+      -np ${NP:-1}
+      --spec-type draft-mtp
+      --spec-draft-n-max ${MTP_DRAFT_N_MAX:-2}
+      --jinja
+      --reasoning ${REASONING:-off}
+      --reasoning-format ${REASONING_FORMAT:-deepseek}
+      --temp ${TEMP:-${TEMPERATURE:-0.7}}
+      --top-p ${TOP_P:-0.80}
+      --top-k ${TOP_K:-20}
+      --min-p ${MIN_P:-0.0}
+      --presence-penalty ${PRESENCE_PENALTY:-1.5}
+      --repeat-penalty ${REPEAT_PENALTY:-1.0}
+      ${THINKING:+--reasoning ${REASONING:-on} --temp ${TEMP:-${TEMPERATURE:-1.0}} --top-p ${TOP_P:-0.95} --presence-penalty ${PRESENCE_PENALTY:-0.0}}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

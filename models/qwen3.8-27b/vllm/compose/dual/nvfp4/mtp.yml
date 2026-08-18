@@ -1,0 +1,191 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B NVFP4 (RadixArk, modelopt MIXED — 193 module groups
+#              at W4-float/A4-float + 208 at W8-float/A8-float; 20.44 GiB)
+#   Topology:  Dual 3090 PCIe (TP=2, no NVLink; NVLINK_MODE=auto)
+#   Drafter:   MTP n=3 built-in (SPEC_N override; SPEC_N=0 disables)
+#   KV:        fp8 -> e4m3 (KV_CACHE_DTYPE override)
+#   Vision:    ✅ WORKING — image + video INPUT, no extra flags (measured 2026-08-16).
+#              INPUT ONLY: it consumes media and emits TEXT. No image/video
+#              generation — the arch has no VAE/UNet/diffusion head.
+#              Image: colour+layout described correctly at temp 0 (red/blue/green
+#              discriminated, ~66-70 prompt tokens). Video: 3.25s clip, correct
+#              temporal order + the blended transition frame. Smoke test only —
+#              no vision quality gate, no resolution/duration limits explored.
+#              Video cost ~72.7 tok/s @256x256 (36 tok/frame at default fps=2),
+#              scaling with pixel count: 23 @128px, 263 @512px, 583 @768px.
+#              So ~61 min of 256x256 video fits the 262144 window; ~17 min @512px.
+#   Template:  native — the repo's own chat_template.jinja. NOT froggeric.
+#   Max ctx:   262144
+#   Genesis:   none
+#   Status:    🧪 Experimental
+#   Caveats:   FALLBACK-ONLY VALIDATION. Boots + serves on 2x sm_86, but through
+#              the Marlin W4A16 fallback — the FP4 path this quant exists for is
+#              UNEXERCISED. No Blackwell boot yet. See the arch note below.
+#   Best for:  2-card NVFP4 — Blackwell for FP4 compute, Ampere for compatibility
+# ---------------------------------------------------------------------------
+# ⚠️⚠️ READ THIS BEFORE EXPECTING A SPEEDUP ON AMPERE.
+#   The 4-bit ACTIVATIONS in this checkpoint (193 W4/A4 groups) CANNOT EXECUTE
+#   on sm_86 — there are no FP4 tensor cores. vLLM serves the weights through
+#   the Marlin W4A16 fallback and upcasts activations to 16 bit, whatever the
+#   config declares. The 3.6 NVFP4 sibling records "no speed edge vs AutoRound"
+#   and "on Ampere the AutoRound tier serves this model faster".
+#   → On 2x 3090 this slug is a COMPATIBILITY path, not a performance one. If
+#     you want throughput on Ampere, use vllm/qwen38-27b-dual-fast (AutoRound
+#     INT4, ~9.1 GiB/card, verify-full 9/9, MTP accept 3.12).
+#   → Its real case is Blackwell (sm_120+), where the A4 groups execute.
+#   ⭐ Kernel selection is AUTOMATIC and per-card: one compose, FP4 compute on
+#     Blackwell, Marlin W4A16 on Ampere. Nothing here selects it and nothing
+#     can override it.
+#
+# ⚠️ NVFP4 *KV* IS A DIFFERENT STORY AND IS NOT AVAILABLE — do not "upgrade"
+#   KV_CACHE_DTYPE to nvfp4. It routes to a trtllm-gen FP4 FMHA kernel built
+#   only for DATACENTER Blackwell (sm_100/103); on CONSUMER Blackwell (sm_120)
+#   there is no FMHA build and it crashes (vLLM #43562 / TRT-LLM #10241). No
+#   hardware class in this catalog lists nvfp4 KV, and unlike weights there is
+#   NO runtime fallback: launch_compat C5 refuses the boot outright. fp8_e4m3
+#   is the FP4-era KV here — same choice as all six 3.6/Tess nvfp4 slugs.
+#
+# At TP=2 the weights halve to ~10.2 GiB/card, which is what makes 262144
+#   reachable where the single-card config caps at 65536.
+#
+# ⚠️ MTP is exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in the
+#   v0.27.1 pin — re-verified 2026-08-16 at its NEW path,
+#   vllm/third_party/flash_linear_attention/; the old fla/ path now false-negatives)
+#   — mitigate with SPEC_N=0. On the 3.6 sibling the ORIGINAL OOM
+#   root-caused to MTP, not context: the draft head + cudagraphs + GDN prefill
+#   scratch is what did not fit. Lower MAX_MODEL_LEN before blaming ctx.
+# ✅ FALLBACK BOOT VALIDATED 2026-08-16 (reference rig, 2x 3090 sm_86, stock
+#   v0.25.1, restarts=0): serving in 285s · KV pool 518,430 tok @ 262144 ctx
+#   (1.98x concurrency) · 21,226 / 21,206 MiB per card · verify-full 9/9 ·
+#   MTP acceptance 3.07. Defaults below are the ones that produced that.
+#   ⚠️ THIS DOES NOT VALIDATE NVFP4. The boot log says so itself, twice:
+#       marlin_utils_fp8.py:112  "GPU does not have native support for FP8"
+#       marlin.py:34             "GPU does not have native support for FP4"
+#     So what passed is the WEIGHT-ONLY FALLBACK — the W4/A4 groups were
+#     upcast, and the numbers above are Marlin W4A16 numbers wearing an NVFP4
+#     checkpoint. Nothing here is evidence about FP4 compute, and no TPS is
+#     quoted for exactly that reason. Deliberately NOT benched: a fallback TPS
+#     row in BENCHMARKS.md would be read as an NVFP4 result.
+#   First BLACKWELL boot is the real validation — report via
+#   numbers-from-your-rig. Wanted: sm_120 TPS vs the AutoRound tier, and
+#   whether MTP survives at 262144 once the A4 groups actually execute.
+# ===========================================================================
+services:
+  vllm-qwen38-27b-dual-nvfp4:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-dual-nvfp4}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    shm_size: "16gb"
+    ipc: host
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8100}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - VLLM_SKIP_P2P_CHECK
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
+      - OMP_NUM_THREADS=1
+      # DeepGEMM: no recipe on consumer Blackwell (5090 / PRO 6000 / GB10,
+      # sm_120/121) — the launchers auto-inject VLLM_USE_DEEP_GEMM=0 there
+      # (disc #571/#580, NVFP4 follow-up #613). THIS BARE PASS-THROUGH LINE IS
+      # REQUIRED: without it docker-compose drops the injected value and those
+      # users hit the fp8-GEMM "recipe not found" boot crash. Guarded by
+      # scripts/tests/test-deepgemm-fp8-parity.sh — which caught its absence here.
+      # Raw `docker compose` users on those cards must set it themselves.
+      - VLLM_USE_DEEP_GEMM
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - SPEC_N=${SPEC_N:-3}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        source /etc/club3090/detect_nvlink.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
+        SPEC=""
+        if [ "$${SPEC_N:-3}" -gt 0 ] 2>/dev/null; then
+          SPEC="--speculative-config {\"method\":\"mtp\",\"num_speculative_tokens\":$${SPEC_N:-3}}"
+          echo "[mtp] SPEC_N=$${SPEC_N:-3}"
+        else
+          echo "[mtp] SPEC_N=0 -> no speculative decoding"
+        fi
+        AR=""
+        [ "$${_NVLINK_ENABLED:-0}" = "1" ] || AR="--disable-custom-all-reduce"
+        exec vllm serve $$AR $$SPEC "$$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.8-27b-nvfp4
+      - --served-model-name
+      - qwen3.8-27b
+      # Explicit, matching the 3.6 nvfp4 sibling: this checkpoint is modelopt
+      # (quantization_config.quant_method), not compressed-tensors.
+      - --quantization
+      - modelopt
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.90}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-2}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
+      - --trust-remote-code
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
+      - --enable-chunked-prefill
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --default-chat-template-kwargs
+      # ⭐ reasoning_effort default = low (2026-08-16). It is a PER-REQUEST OpenAI
+      # control, so this is only the fallback for callers that send nothing — any
+      # agent still picks its own level per request.
+      # ⚠️ INERT while enable_thinking is false (the shipped default): the template
+      # only reads reasoning_effort inside `if enable_thinking is undefined or true`.
+      # It takes effect the moment ENABLE_THINKING=true.
+      # ⚠️ low is an ACTIVE instruction, not "less of medium" — it injects
+      # "Keep your thinking brief and focused, moving directly to the conclusion
+      # without unnecessary elaboration." The three levels are NOT a scale with a
+      # middle: medium has NO branch and injects nothing (the un-nudged baseline),
+      # xhigh adds "think carefully, validate assumptions, consider alternatives"
+      # which is what makes it slow and timeout-prone. REASONING_EFFORT=medium if
+      # you want the model un-nudged rather than pushed toward brevity.
+      # ⚠️ Valid values are xhigh | medium | low. Anything else RAISES at template
+      # render (`high` included — it does NOT silently remap).
+      - '{"enable_thinking": ${ENABLE_THINKING:-false}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-0.7},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

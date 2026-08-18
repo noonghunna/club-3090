@@ -150,7 +150,7 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
-### Reasoning mode (vLLM with Genesis only)
+### Reasoning mode (vLLM)
 
 ```python
 resp = client.chat.completions.create(
@@ -332,7 +332,7 @@ In the Cline settings panel:
 - **API Key:** `sk-local` (any non-empty string)
 - **Model ID:** `qwen3.6-27b`
 
-Cline sends large tool returns (file reads, web fetches) up to ~25K tokens. As of 2026-05-02 PM (Genesis v7.69 dev tip + vllm#35975 backport), `vllm/long-text` (180K balanced + MTP K=3) handles these cleanly — 33K AND 50K tool-prefill stress PASS, and **60K single-prompt prefill PASS** (the Cliff 2 wall closed at 60K). For one-shot prompts beyond 60K, switch to `llamacpp/default` (262K vanilla, slower), `llamacpp/mtp` (131K + MTP, ~60 code TPS, single-card, 7/7 verify-stress incl. 91K needle), or `dual-turbo.yml` (262K + 4 streams). See [docs/SINGLE_CARD.md](SINGLE_CARD.md), [docs/CLIFFS.md](CLIFFS.md), and the [VRAM diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs).
+Cline sends large tool returns (file reads, web fetches) up to ~25K tokens. As of 2026-05-02 PM, `vllm/long-text` (180K balanced + MTP K=3) handles these cleanly — 33K AND 50K tool-prefill stress PASS, and **60K single-prompt prefill PASS** (the Cliff 2 wall closed at 60K). For one-shot prompts beyond 60K, switch to `llamacpp/default` (262K vanilla, slower), `llamacpp/mtp` (131K + MTP, ~60 code TPS, single-card, 7/7 verify-stress incl. 91K needle), or `dual-turbo.yml` (262K + 4 streams). See [docs/SINGLE_CARD.md](SINGLE_CARD.md), [docs/CLIFFS.md](CLIFFS.md), and the [VRAM diagram](../models/qwen3.6-27b/README.md#vram-allocation-across-configs).
 
 ### Cursor
 

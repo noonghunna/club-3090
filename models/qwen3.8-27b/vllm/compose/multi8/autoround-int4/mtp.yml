@@ -1,0 +1,244 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B (Avuja AutoRound INT4 — 4-bit, group 128, sym,
+#              packing auto_round:auto_gptq; 18.23 GiB. Vision tower and MTP
+#              head both ship UNQUANTIZED at bf16.) Served **W4A8** — int8
+#              activations ON by default (W4A8=0 for W4A16).
+#   Topology:  Eight 3090 PCIe (TP=8, no NVLink)
+#   Drafter:   MTP n=4 built-in (SPEC_N override; SPEC_N=0 disables)
+#   KV:        fp8 -> e4m3 (KV_CACHE_DTYPE override)
+#   Vision:    ✅ WORKING — image + video INPUT, no extra flags (measured 2026-08-16).
+#              INPUT ONLY: it consumes media and emits TEXT. No image/video
+#              generation — the arch has no VAE/UNet/diffusion head.
+#              Image: colour+layout described correctly at temp 0 (red/blue/green
+#              discriminated, ~66-70 prompt tokens). Video: 3.25s clip, correct
+#              temporal order + the blended transition frame. Smoke test only —
+#              no vision quality gate, no resolution/duration limits explored.
+#              Video cost ~72.7 tok/s @256x256 (36 tok/frame at default fps=2),
+#              scaling with pixel count: 23 @128px, 263 @512px, 583 @768px.
+#              So ~61 min of 256x256 video fits the 262144 window; ~17 min @512px.
+#   Template:  native — the repo's own chat_template.jinja. NOT froggeric.
+#   Max ctx:   262144 — architectural ceiling, NOT measured on this checkpoint
+#   Genesis:   none
+#   Status:    🧪 Experimental
+#   Best for:  8-card INT4 — maximum weight headroom; expect flat decode vs TP=4
+# ---------------------------------------------------------------------------
+# THE "FAST" TIER — the INT4 counterpart to the official-FP8 "max" tier.
+# Weights are ~9.1 GiB/card at TP=2 against FP8's ~14.4, and that difference is
+# the whole point: it buys KV pool and concurrency headroom, not decode speed.
+#
+# ⭐ WHY n=4 — measured on THIS checkpoint 2026-08-16 (W4A8, 262K, one boot/rung):
+#   n:        0      1      2      3     [4]     5      6
+#   narr:  62.59  52.66  66.63  66.67  76.40  73.70  71.11
+#   code:  57.45  64.15  80.63  84.53 105.60 106.14 107.54
+#   AL:        —   1.94   2.71   3.35   3.90   4.31   4.70
+#   n=4 is the knee: code banks +83.8% there and adds only +0.5%/+1.3% over two
+#   further depths, while narrative peaks at 4 and declines after.
+#   ⚠️ n=1 is WORSE than no drafter on narrative (-15.9%) — shallow speculation
+#      is not a safe fallback on this model.
+#   ⚠️ ACCEPTANCE LENGTH NEVER TURNS (rises to 4.70 at n=6 while throughput
+#      flattens). Do NOT re-tune this from AL — it would pick n=6.
+#   ⚠️ Prompt shape dominates: at n=4, code +83.8% vs narrative +22.1%.
+#   ⭐ No instability at n=4/5/6 (restarts=0, no crash signatures). The 3.6
+#      family's "n>=4 unstable / n=6-8 regress" guidance did NOT reproduce here.
+#
+# ⭐ W4A8 (int8 activations) IS THE SHIPPED DEFAULT since 2026-08-16 — set W4A8=0
+# for the W4A16 path. Measured on the DUAL (this slug has never booted; see the
+# community-validated note above), MTP OFF, single variable: +41.8% prefill /
+# -28.6% TTFT@10K, and -8% decode on BOTH prompt shapes; verify-full 9/9 either way.
+#   ⚠️ THE DECODE COST IS REAL AND IS NOW ON BY DEFAULT, and it does NOT match the
+#      qwen3.6 tier's W4A8 result (+50% prefill, decode ~neutral) — "decode is
+#      free" is a 3.6 finding that did NOT transfer to 3.8.
+#   ⭐ WHY DEFAULT IT ANYWAY: the -8% was measured with the DRAFTER OFF, and the
+#      n-sweep that chose n=4 ran entirely UNDER W4A8 — so W4A8 + n=4 is the
+#      combination that was actually benched, while W4A16 + n=4 never was.
+#      ⚠️ The int8-vs-16bit delta UNDER MTP remains unmeasured.
+#   It works only because this checkpoint is auto-round-packed [k/8,n], which is
+#   what the vendored negscale fold assumes; a compressed-tensors pack-quantized
+#   checkpoint hard-fails that fold (LEARNINGS.md 2026-08-16).
+#   ⚠️ MAX_NUM_SEQS stays at 2 here while the dual dropped to 1: the dual's cap is
+#      the W4A8 + n=4 OOM on 24 GB cards, and at TP=4/8 weights fall far enough
+#      that the headroom should be ample — but THAT IS UNTESTED. If you hit it,
+#      lower MAX_NUM_SEQS or set SPEC_N=0 (or W4A8=0) and report it.
+#
+# ⚠️⚠️ The dual sibling caps MAX_NUM_SEQS at 1 because MTP n=4 OOM'd at N=2 on 24 GB cards. At TP=8 weights fall to ~2.3 GiB/card, so the headroom that caused it is far larger and MAX_NUM_SEQS defaults to 2 — but THIS IS UNTESTED: no 8-card host exists on the reference rig. If you hit the same OOM, drop MAX_NUM_SEQS or set SPEC_N=0, and please report it.
+#
+#
+# ⚠️⚠️ CONSUMER BLACKWELL (5090, sm_120) — READ BEFORE RUNNING THIS THERE.
+#   The compute path differs from Ampere, and one recorded failure hits the
+#   SPEC_N=4 default directly:
+#   1. ⚠️ MTP DEPTH: the thinkingcap W4A8 tier records "n=5 dies within 1-2
+#      sessions, n=4 EVENTUALLY; n=3 and n=0 are stable — hit on 3 rigs incl.
+#      2x 5090" (#838/#758, very likely OPEN vllm#50021). It appears after
+#      MINUTES OF AGENT-SHAPED TRAFFIC, not at boot. ⚠️ Our n=4 knee was found
+#      in SHORT benches on 24 GB AMPERE — that cannot have observed this fault,
+#      so "no instability at n>=4" means "not in a 5-minute bench here", NOT
+#      "safe at depth". On Blackwell, or for sustained agent traffic anywhere,
+#      run SPEC_N=0 (or SPEC_N=3) until vllm#50021 lands in the pin.
+#      ⚠️ Lower n cuts FREQUENCY, not exposure — #838 crashed at n=3.
+#   2. ⚠️ DeepGEMM has NO sm_120/121 recipe and hard-fails "recipe not found" at
+#      boot. The LAUNCHERS inject VLLM_USE_DEEP_GEMM=0 for that card class —
+#      running this by bare `docker compose` on a 5090 SKIPS that injection.
+#      Use switch.sh / launch.sh there, or set it yourself.
+#   3. fp8_e4m3 KV (this compose's default) is correct for sm_120. Do NOT switch
+#      to nvfp4 KV: on consumer Blackwell it routes to a trtllm-gen FP4 FMHA
+#      kernel built only for datacenter Blackwell (sm_100/103) and crashes
+#      (vLLM #43562 / TRT-LLM #10241).
+#   4. 32 GB and mem_util_safe 0.96 mean the memory values here are conservative
+#      on that class — they are calibrated to 24 GB Ampere.
+# ⚠️ MTP is exposed to OPEN vllm#50021 (GDN spec-decode wild write) — RE-VERIFIED
+#    LIVE IN THE v0.27.1 PIN 2026-08-16. ⚠️ The old check path is now a FALSE
+#    NEGATIVE: v0.27.1 vendored flash-linear-attention into vllm, so
+#    `fla/ops/fused_sigmoid_gating.py` returns NOT FOUND — which reads as "fixed".
+#    The kernel moved to vllm/third_party/flash_linear_attention/ops/ and Site 1 is
+#    byte-identical at the same line 106. Mitigate with SPEC_N=0. docs/UPSTREAM.md.
+# ⚠️⚠️ NOTHING ON THIS SLUG HAS EVER BOOTED, and that is PERMANENT: the
+#   reference rig has exactly two 3090s. The on-rig proxy is
+#   vllm/qwen38-27b-dual-fast (same config at TP=2) — its numbers transfer on
+#   topology only. First community boot IS the validation.
+# ⚠️ GPU_MEMORY_UTILIZATION is 0.95 here vs the dual's 0.90. Rationale: weights
+#   fall far enough per card that the transient prefill peak which OOM'd the dual
+#   has ample room, and prefill shards N ways. ⚠️ UNVALIDATABLE ON THIS RIG — if
+#   you hit an OOM at high concurrency or long prefill, lower this first, then
+#   MAX_NUM_SEQS, then set SPEC_N=0. Please report it either way.
+# ===========================================================================
+services:
+  vllm-qwen38-27b-multi8-fast:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-multi8-fast}"
+    # Repo contract (test-compose-restart-policy): every shipped vLLM compose uses
+    # the reboot-surviving knob so launch.sh-as-a-service returns after a reboot.
+    # ⚠️ WHEN DEBUGGING A BOOT FAILURE SET CLUB3090_RESTART=no. Under
+    # `unless-stopped` a failing container restart-loops and reports "Up 1 second"
+    # forever, which reads as "still booting" rather than "crashed" — that cost a
+    # 61-restart loop here on 2026-08-15 before anyone checked
+    # `docker inspect --format '{{.RestartCount}}'`. RestartCount is the tell.
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    shm_size: "16gb"
+    ipc: host
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8097}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      # W4A8 int8-activation patches — NO-OP unless VLLM_MARLIN_INPUT_DTYPE=int8.
+      - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
+      # Lets the MTP drafter attach on this hybrid (mamba/eagle block drop).
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-auto}
+      - VLLM_SKIP_P2P_CHECK
+      - NCCL_CUMEM_ENABLE=0
+      - NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+      - SPEC_N=${SPEC_N:-4}
+      # ⭐ W4A8 (int8 activations) SHIPS ON — set W4A8=0 for the W4A16 path.
+      - W4A8=${W4A8:-1}
+      # ⚠️⚠️ WHY A SEPARATE BOOLEAN INSTEAD OF `${VLLM_MARLIN_INPUT_DTYPE:-int8}`:
+      # vLLM VALIDATES this variable against a closed set and raises on anything
+      # else — INCLUDING THE EMPTY STRING:
+      #   ValueError: Invalid value '' for VLLM_MARLIN_INPUT_DTYPE.
+      #                Valid options: ['int8', 'fp8'].
+      # (verified against the pinned image, 2026-08-16). So there is NO value that
+      # means "off" — only ABSENCE means off. A `${VAR:-int8}` default would make
+      # W4A16 unreachable. Hence W4A8=0/1 gates whether the var is exported at
+      # all, and this stays a BARE pass-through so an explicit host value wins.
+      - VLLM_MARLIN_INPUT_DTYPE
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        source /etc/club3090/detect_nvlink.sh
+        # ⚠️ THIS MUST RUN BEFORE install.sh, NOT AFTER. install.sh only hard-FAILS
+        # on a patch-apply error when VLLM_MARLIN_INPUT_DTYPE is already set; if we
+        # exported it afterwards, a failed patch would downgrade to a WARNING and we
+        # would serve a HALF-WIRED int8 config.
+        if [ -z "$${VLLM_MARLIN_INPUT_DTYPE:-}" ] && [ "$${W4A8:-1}" != "0" ]; then
+          export VLLM_MARLIN_INPUT_DTYPE=int8
+        fi
+        bash /etc/club3090/w4a8/install.sh
+        bash /etc/club3090/pr48375/install.sh || exit 1
+        echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
+        SPEC=""
+        if [ "$${SPEC_N:-4}" -gt 0 ] 2>/dev/null; then
+          SPEC="--speculative-config {\"method\":\"mtp\",\"num_speculative_tokens\":$${SPEC_N:-4}}"
+          echo "[mtp] SPEC_N=$${SPEC_N:-4}"
+        else
+          echo "[mtp] SPEC_N=0 -> no speculative decoding"
+        fi
+        AR=""
+        [ "$${_NVLINK_ENABLED:-0}" = "1" ] || AR="--disable-custom-all-reduce"
+        exec vllm serve $$AR $$SPEC "$$@"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.8-27b-autoround-int4
+      - --served-model-name
+      - qwen3.8-27b
+      - --quantization
+      - auto_round
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-8}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.95}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-2}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-fp8_e4m3}"
+      - --trust-remote-code
+      - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
+      - --enable-chunked-prefill
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --default-chat-template-kwargs
+      # ⭐ reasoning_effort default = low (2026-08-16). It is a PER-REQUEST OpenAI
+      # control, so this is only the fallback for callers that send nothing — any
+      # agent still picks its own level per request.
+      # ⚠️ INERT while enable_thinking is false (the shipped default): the template
+      # only reads reasoning_effort inside `if enable_thinking is undefined or true`.
+      # It takes effect the moment ENABLE_THINKING=true.
+      # ⚠️ low is an ACTIVE instruction, not "less of medium" — it injects
+      # "Keep your thinking brief and focused, moving directly to the conclusion
+      # without unnecessary elaboration." The three levels are NOT a scale with a
+      # middle: medium has NO branch and injects nothing (the un-nudged baseline),
+      # xhigh adds "think carefully, validate assumptions, consider alternatives"
+      # which is what makes it slow and timeout-prone. REASONING_EFFORT=medium if
+      # you want the model un-nudged rather than pushed toward brevity.
+      # ⚠️ Valid values are xhigh | medium | low. Anything else RAISES at template
+      # render (`high` included — it does NOT silently remap).
+      - '{"enable_thinking": ${ENABLE_THINKING:-false}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
+      # Sampler follows the Qwen3.8 MODEL CARD Instruct row (thinking ships off).
+      - --override-generation-config
+      - '{"temperature":${TEMP:-0.7},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

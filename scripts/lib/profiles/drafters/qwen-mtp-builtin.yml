@@ -1,11 +1,17 @@
 schema_version: 1
 id: qwen-mtp-builtin
-display_name: Qwen 3.6 built-in MTP head
+display_name: Qwen built-in MTP head
 spec_method: mtp
 model_compat:
   - qwen3.6-27b
   - qwen3.6-35b-a3b
   - qwen3.6-40b-deckard
+  # Qwen3.8-27B added 2026-08-14. The head is embedded in BOTH the unsloth GGUFs
+  # (blk.64.nextn.*, qwen35.nextn_predict_layers=1, block_count=65) and the official
+  # FP8 checkpoint (mtp.safetensors) — verified by reading the GGUF tensor table, not
+  # inferred from the repo name (unsloth ships a separate -MTP-GGUF repo for 3.6, so
+  # the absent suffix on the 3.8 repo is misleading).
+  - qwen3.8-27b
 n_default: 3
 n_max: 3
 download: false

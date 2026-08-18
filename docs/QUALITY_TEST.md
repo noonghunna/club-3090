@@ -1,6 +1,6 @@
 # Quality testing on club-3090
 
-Operational tests (`verify` / `verify-full` / `verify-stress` / `bench` / `soak-test`) tell you whether a compose **serves** correctly. They don't tell you whether the model **behaves** correctly — whether tool calls land on the right functions, whether instruction-follow constraints hold, whether structured-output stays valid JSON. A compose can pass every operational layer and still ship with degraded behavioral quality from quantization drift or a Genesis env-var flip.
+Operational tests (`verify` / `verify-full` / `verify-stress` / `bench` / `soak-test`) tell you whether a compose **serves** correctly. They don't tell you whether the model **behaves** correctly — whether tool calls land on the right functions, whether instruction-follow constraints hold, whether structured-output stays valid JSON. A compose can pass every operational layer and still ship with degraded behavioral quality from quantization drift, a sampler mismatch, or an engine pin bump.
 
 `scripts/quality-test.sh` closes this gap. It wraps [`benchlocal-cli`](https://github.com/noonghunna/benchlocal-cli) — a CLI port of [BenchLocal](https://github.com/stevibe/BenchLocal) bench packs — and runs verifier-backed scenarios against the running compose endpoint.
 
@@ -23,7 +23,7 @@ Five **deterministic** packs (verifier-backed, no LLM-as-judge — these run wit
 
 | Pack | Dimension | Why it matters for club-3090 users |
 |---|---|---|
-| **ToolCall-15** | Tool selection + argument correctness | IDE-agent traffic (Cline / OpenCode / Cursor) is 100% tool calls. Genesis env flips like P68/P69 cause silent-empty regressions that die here. |
+| **ToolCall-15** | Tool selection + argument correctness | IDE-agent traffic (Cline / OpenCode / Cursor) is 100% tool calls. Server-side request rewriting (tool_choice overrides, injected reminder text) causes silent tool-call degradation that operational tests never see|
 | **InstructFollow-15** | Constraint-heavy instruction compliance | Catches "ignore the format constraint" drift from cudagraph mode changes or sampling tweaks. |
 | **StructOutput-15** | JSON / YAML / markdown structure validity | Bounded-thinking, JSON tool args, FSM-constrained reasoning. |
 | **ReasonMath-15** | Numeric reasoning | Code-reasoning correctness; Q4-quant drift surfaces here first. |
@@ -86,6 +86,74 @@ pip install -e /path/to/benchlocal-cli
 > similar, `--pack aider-polyglot-30` ~25–30 min) otherwise go dark for the
 > whole duration with no signal whether anything is wrong mid-run. Pass
 > `--no-progress` (or `PROGRESS=0`) for CI / log-volume-sensitive contexts.
+
+## ⭐ The canonical two-leg run
+
+This is the recipe every announcement quotes and the one to copy if you're producing a number
+anyone else will read. Substitute your slug.
+
+⚠️ **Each leg needs its OWN boot, in both directions.** The container persists between runs, so going
+*back* to instruct after a thinking run needs a reboot too. Skip it and the "instruct" leg is
+silently a second thinking leg — both arms score alike and the A/B reads as a clean null. benchlocal
+flags it: per-pack `thinking_validity` in the saved JSON, or `--strict-thinking` for a CI exit code.
+
+```bash
+# ---- leg A: instruct (the shipped default — no env vars) ----
+bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
+bash scripts/quality-test.sh --full --no-thinking --sampling-from-server \
+  --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600
+
+# ---- leg B: thinking (all FOUR vars on the boot, or you run reasoning with INSTRUCT sampling) ----
+ENABLE_THINKING=true TEMP=1.0 TOP_P=0.95 PRESENCE_PENALTY=0.0 \
+  bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
+REASONING_EFFORT=low BENCHLOCAL_MODEL_TURN_TIMEOUT=900 \
+bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server \
+  --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600
+```
+
+⚠️ **`ENABLE_THINKING` flips the chat template only — the sampler does NOT follow it.** Miss the three
+sampler vars and you run reasoning at `presence_penalty 1.5`, which the Qwen3.8 card warns causes
+language mixing. Tracked in [#1014](https://github.com/noonghunna/club-3090/issues/1014); when that
+lands this collapses to one variable.
+
+**Why each flag** — none is decoration; each exists because its absence produced a wrong number:
+
+| Flag | Why |
+|---|---|
+| `--sampling-from-server` | Uses the compose's card-correct sampler instead of the pack's `temperature=0`. Without it you measure **greedy decoding, not the shipped config**. |
+| `--max-tokens 4096` | The ~1024 default silently truncates long answers into `token_limit` failures that look like wrong answers. |
+| `--thinking-max-tokens 16384` | The thinking arm needs the headroom. |
+| `--timeout-per-case 600` | 16,384 tokens takes real wall-clock. Too tight a cap produces `timeout` rows that read as content misses. |
+| `REASONING_EFFORT=` | Env only — forwarded as the per-request OpenAI `reasoning_effort`. The qwen3.8 composes default to `low` server-side since #1029; pin it anyway so the run records what it measured. ⚠️ Effort is **not** comparable across runs. ⚠️ `high` **raises** on vLLM — only `xhigh`/`medium`/`low` exist. |
+| `--repeat 3` | Add it for anything you'll quote. With `--sampling-from-server` both legs are sampled, so single draws aren't quotable. |
+
+⚠️⚠️ **Read the failure modes before reading the score.** `timeout` and `token_limit` are **harness
+artifacts**; only `verifier_fail` / `wrong_answer` are the model. A score that looks catastrophic is
+usually a budget that was too small. And benchlocal retries **model verdicts** 3× by default but
+**does not retry timeouts** — so a `timeout` row is a single sample against a clock.
+
+### Operational health is a separate pass — don't conflate them
+
+Behavioural quality (above) and operational health split cleanly. Run one of each and you've covered
+everything with nothing run twice:
+
+```bash
+bash scripts/report.sh --full     # ~43 min: verify + stress + soak + bench + agentic, redacted
+```
+
+⚠️ **Don't pair `rebench-full.sh` with `report.sh --full`** — rebench re-runs the same operational
+gates, so it *replaces* that command rather than complementing it. Pick by goal: `rebench-full
+--with-8pack-thinking=both` for one synthesized `REPORT.md` (quant A/B, BENCHMARKS row); the two-pass
+split above for the paste-ready cross-rig bundle.
+
+⚠️ **Long runs: redirect to a file, never pipe through `tail`/`head`/`grep`.** A pipe buffers until
+the process exits, so a `--full` run piped to `tail` is a ~2 h black box with no live `[N/M]`
+progress and nothing readable if you interrupt it. Do
+`bash scripts/quality-test.sh --full … > run.log 2>&1` and `tail -f` the file.
+
+---
+
+## Other invocations
 
 ```bash
 # default --medium against the auto-detected running compose
@@ -474,11 +542,11 @@ For the full pipeline architecture + JSONL pack format, read [benchlocal-cli's d
 
 ## Filing quality regressions
 
-If `quality-test.sh` shows a meaningful regression (e.g., ToolCall-15 drops from 14/15 to 8/15 after a Genesis pin bump), file an issue with:
+If `quality-test.sh` shows a meaningful regression (e.g., ToolCall-15 drops from 14/15 to 8/15 after an engine pin bump), file an issue with:
 
-1. The compose name + the change that triggered it (Genesis pin bump? new quant? cudagraph mode?)
+1. The compose name + the change that triggered it (engine pin bump? new quant? cudagraph mode?)
 2. The full JSON output from `results/quality/`
 3. The pre-change baseline JSON for diff
-4. Output of `bash scripts/report.sh --bench` for context (vLLM image SHA, Genesis commit, hardware)
+4. Output of `bash scripts/report.sh --bench` for context (vLLM image SHA, hardware)
 
 The JSON blobs include enough per-scenario detail to reproduce specific failing scenarios via `benchlocal-cli reproduce` (post-v0.2 subcommand) for upstream debugging.

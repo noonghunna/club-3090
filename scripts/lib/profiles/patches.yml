@@ -204,6 +204,11 @@ patches:
     status: verified
 
   - id: qwen-vllm-pr41800-truncate-prompt-tokens
+    deprecated_on: "2026-08-16"
+    deprecation_reason: "vllm#41800 MERGED upstream and verified present in the
+      vllm-stable v0.27.1 pin (compare v0.27.1...<merge_sha> = behind). The engine
+      now handles truncate_prompt_tokens natively, so the vendored delta is dead
+      weight. Was already wired to no compose (load_bearing_when.composes: null)."
     model: [qwen3.6-27b]
     files:
       - models/qwen3.6-27b/vllm/patches/vllm-pr41800-truncate-prompt-tokens
@@ -310,7 +315,10 @@ patches:
     status: verified
 
   - id: vllm-pr48375-mamba-drop-eagle-block
-    model: [qwen3.6-27b, qwen3.6-35b-a3b, tess-4-27b]
+    # qwen3.8-27b added 2026-08-14: its two vLLM "max" composes ship the SAME
+    # MTP + prefix-caching pair on the same Qwen3-Next hybrid family, and mount
+    # this patch dir from the qwen3.6-27b tree exactly as tess-4-27b does.
+    model: [qwen3.6-27b, qwen3.6-35b-a3b, tess-4-27b, qwen3.8-27b]
     files:
       - models/qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block/install.sh
       - models/qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block/patch_mamba_drop_eagle_block.py
@@ -323,6 +331,8 @@ patches:
           - vllm/qwen-27b-multi-fast
           - vllm/qwen-27b-multi-max
           - vllm/tess-dual-w4a16
+          - vllm/qwen38-27b-dual-max
+          - vllm/qwen38-27b-multi4-max
         reason: "Vendored upstream fix vllm#48375 for vllm#43559 (MTP x prefix-caching corrupts recurrent-state KV on Qwen3-Next hybrids; ~20% acc drop reproduced upstream on 35B-A3B): MambaManager.find_longest_cache_hit receives drop_eagle_block but silently ignores it, so the final matched page's Mamba/GDN state snapshot may reflect draft tokens verification later rejected. The 9-line fix lowers the hit-search ceiling by one page. ACTIVE by default since 2026-07-17: the same PR flipped the pair-capable composes back to --enable-prefix-caching (the #720 off-default cost 7.4x TTFT on long prefixes per kevinb361's production data, and the pair-clean evidence stack is now: upstream repro+fix+tests, kevin's 7-day production at 89.5% hit rate on v0.25.x, our 6-arm probe matrix). Opt-out: PREFIX_CACHE_ARG=--no-enable-prefix-caching makes the patched path dormant again. On-rig validation 2026-07-17: no-harm on both hybrid families (27B + 35B-A3B, MTP n=3 + prefix-ON: 12/12 post-agent tool-call probes clean per arm with prefix_cache_hits_total asserted; accept-len 3.2-3.9 intact; ~5% fewer hit tokens = the by-design one-block reduction). Full 6-arm matrix: club-3090#710."
         evidence: "models/qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block/README.md; club-3090#710; docs/UPSTREAM.md #43559/#48375 row"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -337,7 +347,7 @@ patches:
       invoke: "bash /etc/club3090/pr48375/install.sh"
       invoked_before: vllm-serve
       wired_at: [volumes, entrypoint]
-      note: "Idempotent, anchor-based (class MambaManager + the max_num_blocks line; anchors verified byte-stable on v0.25.1). Failure policy: anchor drift -> boot REFUSED (exit 1 in entrypoint) - never a silent half-wire, because a user who flipped PREFIX_CACHE_ARG on a re-pinned image would otherwise serve the vulnerable path while the compose claims the fix. Wired ONLY on the pair-capable composes (ship an actual --speculative-config MTP arg + the PREFIX_CACHE_ARG seam): the 5 qwen MTP composes + tess w4a16 (seam added with the wiring). The seam-only no-MTP composes (35b-a3b trio, minimal, dual/nvfp4-mtp) are NOT wired - prefix-cache-alone is clean (the corruption needs the PAIR)."
+      note: "Idempotent, anchor-based (class MambaManager + the max_num_blocks line; anchors verified byte-stable on v0.25.1 AND v0.27.1 - re-verified 2026-08-16 by running install.sh inside the v0.27.1 image and diffing MambaManager.find_longest_cache_hit: stock still references drop_eagle_block ONLY in the signature, never in the body, so vllm#43559 is LIVE on v0.27.1 and this patch is still required). Failure policy: anchor drift -> boot REFUSED (exit 1 in entrypoint) - never a silent half-wire, because a user who flipped PREFIX_CACHE_ARG on a re-pinned image would otherwise serve the vulnerable path while the compose claims the fix. Wired ONLY on the pair-capable composes (ship an actual --speculative-config MTP arg + the PREFIX_CACHE_ARG seam): the 5 qwen MTP composes + tess w4a16 (seam added with the wiring). The seam-only no-MTP composes (35b-a3b trio, minimal, dual/nvfp4-mtp) are NOT wired - prefix-cache-alone is clean (the corruption needs the PAIR)."
     drift_guard:
       kind: boot
       check: "Entrypoint runs install.sh before serve; boot log contains '[pr48375] applied' (first boot) or '[pr48375] already patched' (warm layer). Anchor drift -> '[pr48375] REFUSE' + container exit 1 (never serves). Runtime (prefix caching is the DEFAULT on these composes since 2026-07-17): post-agent held-prefix tool-call probes stay clean AND vllm:prefix_cache_hits_total grows (the #710 probe-validity rule)."
@@ -376,7 +386,7 @@ patches:
       invoke: "bash /etc/club3090/w4a8/install.sh"
       invoked_before: vllm-serve
       wired_at: [volumes, entrypoint]
-      note: "Idempotent, anchor-based (anchors byte-stable v0.24.0 & v0.25.1), and a NO-OP without the env. Failure policy: anchors drifted + env SET → boot refused (never a silent half-wire); env unset → warn and serve stock. SCOPE: DENSE autoround-int4 (positive-sym int4) composes ONLY — dual/minimal/multi-fast. NOT the 35b-a3b MoE autoround (dual/preview-single): its experts go through a SEPARATE path — inc get_moe_method drops input_dtype (Bug A analog) AND the fold does not reach AutoGPTQMoEMethod.process_weights (Bug B analog); stock v0.25.1 HAS the MoE int8 GEMM (marlin_moe.py) so it is tractable but needs two more patch sites + a validation boot (open follow-up). NOT wired on fp8 (dual-max: vLLM RuntimeError 'Marlin W8A8 not supported') or nvfp4 (single/dual-nvfp4: RuntimeError 'NVFP4 weight + INT8/FP8 activation is not supported' at marlin_utils_fp4.py — FP4 is float, can't widen losslessly to int8). Those composes omit the env passthrough, so the knob can't even reach them."
+      note: "Idempotent, anchor-based (anchors byte-stable v0.24.0, v0.25.1 & v0.27.1 - re-verified 2026-08-16 inside the v0.27.1 image: stock has ZERO input_dtype occurrences in inc_wna16_linear.py, so vllm#48904 is LIVE and both bugs (#48904/#48905 still OPEN issues) still need this patch; now doubly load-bearing since qwen3.8-27b fast ships W4A8 by DEFAULT (#1008)), and a NO-OP without the env. Failure policy: anchors drifted + env SET → boot refused (never a silent half-wire); env unset → warn and serve stock. SCOPE: DENSE autoround-int4 (positive-sym int4) composes ONLY — dual/minimal/multi-fast. NOT the 35b-a3b MoE autoround (dual/preview-single): its experts go through a SEPARATE path — inc get_moe_method drops input_dtype (Bug A analog) AND the fold does not reach AutoGPTQMoEMethod.process_weights (Bug B analog); stock v0.25.1 HAS the MoE int8 GEMM (marlin_moe.py) so it is tractable but needs two more patch sites + a validation boot (open follow-up). NOT wired on fp8 (dual-max: vLLM RuntimeError 'Marlin W8A8 not supported') or nvfp4 (single/dual-nvfp4: RuntimeError 'NVFP4 weight + INT8/FP8 activation is not supported' at marlin_utils_fp4.py — FP4 is float, can't widen losslessly to int8). Those composes omit the env passthrough, so the knob can't even reach them."
     drift_guard:
       kind: behavioral
       check: "With VLLM_MARLIN_INPUT_DTYPE=int8 on the autoround ckpt: boot logs the single fold warning, prefill gains >=30% vs the same compose without the env, and completions stay coherent (logprob sanity: 'capital of Italy is' -> ' Rome' at > -1.0). Without the env: byte-identical serving behavior to the unpatched image (the no-op guarantee)."

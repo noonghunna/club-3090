@@ -15,6 +15,7 @@ cd "$ROOT_DIR"
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
 python3 - <<'PY'
+import re
 from pathlib import Path
 
 from scripts.lib.profiles.compat import load_profiles
@@ -34,8 +35,8 @@ def check(cond, msg):
         print(f"FAIL: {msg}")
         failures.append(msg)
 
-check(len(COMPOSE_REGISTRY) == 78, f"registry has 78 entries (got {len(COMPOSE_REGISTRY)})")
-check(len(disk_paths) == 79, f"disk has 79 compose files (got {len(disk_paths)})")
+check(len(COMPOSE_REGISTRY) == 88, f"registry has 88 entries (got {len(COMPOSE_REGISTRY)})")
+check(len(disk_paths) == 89, f"disk has 89 compose files (got {len(disk_paths)})")
 check(registry_paths <= disk_paths, "all registry compose_path values exist on disk")
 parked_disk_only = disk_paths - registry_paths
 # Disk-only (non-registry) composes allowed: parked SGLang archives, plus the experimental
@@ -64,7 +65,13 @@ for name, entry in sorted(COMPOSE_REGISTRY.items()):
     except (ValueError, IndexError):
         check(False, f"{name}: path follows compose/<topology>/<quant>/<file>.yml")
         continue
-    check(topology in {"single", "dual", "multi4"}, f"{name}: topology segment valid")
+    # `multi<N>` is the documented convention (compose_registry.py: "single . dual .
+    # multi4 . multiN") — N varies (3/4/5/6/8), so match the SHAPE, not a literal
+    # set. A hardcoded {"multi4"} silently rejected the first multi8 slug.
+    check(
+        topology in {"single", "dual"} or re.fullmatch(r"multi[1-9][0-9]*", topology or ""),
+        f"{name}: topology segment valid",
+    )
     check(filename.endswith(".yml"), f"{name}: compose filename is .yml")
     check(quant_slug == entry["weights_variant"], f"{name}: quant slug matches weights_variant")
     model = profiles.models[entry["model"]]

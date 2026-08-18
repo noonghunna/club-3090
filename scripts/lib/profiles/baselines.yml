@@ -220,6 +220,29 @@ baselines:
     submitted_by: "noonghunna"
     tier: local
 
+  vllm/qwen38-27b-dual-fast:
+    narr_tps: 72.4
+    code_tps: 105.0
+    prefill_tps:
+      10k: 1780.5
+      90k: 1308.1
+    ttft_ms: 149
+    date: 2026-08-16
+    engine_pin: vllm/vllm-openai:v0.27.1
+    rig: 2x3090-pcie
+    power_cap_w:
+    - 370
+    - 420
+    submitted_by: noonghunna
+    tier: local
+    quality_env:
+      harness: "bench.sh 3 warm + 5 measured on the SHIPPED config (W4A8 default,
+        MTP n=4, max_num_seqs=1, fp8 KV @262144). \u26a0 narr_tps is the mean of a
+        67.7-77.1 spread (13.9%) -- single-stream decode swings with MTP acceptance
+        on this family, so treat it as indicative, not a 5%-resolving figure.
+        code_tps CV 2.7%, prefill CV 0.1% are the tight ones. quality_8pk and
+        ctx_validated deliberately ABSENT: the 8-pack and a NIAH ladder have never
+        been run on this slug."
   vllm/qwen-35b-a3b-dual:
     # BENCHMARKS.md promotion row (#259, decode 182.3/182.3; NIAH-clean 240K).
     # Measured on v0.22.0; the slug now pins v0.24.0 (fast/max-tier era) →

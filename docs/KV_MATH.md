@@ -106,7 +106,7 @@ For hybrid architectures (DeltaNet, SWA), only the **growing** attention layers 
 | `int8_per_token_head` (PR #40391) | ~1.01 | Per-token-head scale adds ~1% overhead; Ampere-friendly |
 | `k8v4` | 0.75 | Mixed precision |
 | `q4_0` | ~0.56 | Includes packed-quant overhead |
-| `turboquant_3bit_nc` (TQ3) | ~0.425 | Genesis-supplied; cheapest KV format on this stack |
+| `turboquant_3bit_nc` (TQ3) 🗑️ | ~0.425 | Cheapest KV format measured here, but **no shipped slug offers it** — its composes are archived. Reference only. |
 | `nvfp4` | ~0.56 (**projected**) | 4-bit elements + fp8 block scale per 16 (9/16 B). **DATACENTER Blackwell only (sm_100/103)** — the trtllm-gen FP4 FMHA has no consumer (sm_120/121) build, so it crashes on 5090s ([vLLM #43562](https://github.com/vllm-project/vllm/issues/43562)). No measured boot on this stack. kv-calc carries mirrored-fp8 coefs until a datacenter-Blackwell boot calibrates them |
 
 **Note on Ampere**: `fp8_e4m3` is NOT supported by the Triton kernel on sm_86 (3090/3090-Ti/A5000). Use `fp8_e5m2` (engine-level fallback) or `int8_per_token_head` (vendored via PR #42102). On sm_89+ the launchers inject `fp8_e4m3` automatically for the #246 pilot slugs. See [DTYPE_MATRIX.md](DTYPE_MATRIX.md).
@@ -174,7 +174,7 @@ Headline numbers for the four shipping models, computed from each per-model form
 - **Gemma 4 26B-A4B vs 31B**: ~16× smaller per-token growing KV thanks to asymmetric KV head counts (2 global vs 16). At 200K context + fp8 + TP=2, growing KV per card is ~512 MB for the MoE vs ~8 GB for the 31B. Long-context serving on 24 GB Ampere is dramatically cheaper.
 - **Qwen 3.6 35B-A3B vs 27B**: ~3.2× smaller per token (10 growing layers × 2 KV heads vs 16 × 4). The MoE shifts the bottleneck from KV to weights + activation.
 - **Sliding-window KV** for Gemma models is **fixed** (not per-token): ~50 MB total (26B-A4B) / ~200 MB total (31B) at bf16. Excluded from per-token math but included in the per-model deep sections.
-- **TQ3 (Genesis) only applies to Qwen-family** (DeltaNet kernel dependency); **INT8 PTH (PR #40391/#42102) is the long-context unlock for Gemma family on Ampere**.
+- **TQ3 (retired here) only applied to Qwen-family** (DeltaNet kernel dependency); **INT8 PTH (PR #40391/#42102) is the long-context unlock for Gemma family on Ampere**.
 
 ## Model architecture summary
 
@@ -635,7 +635,7 @@ Gemma 4 26B-A4B is a Gemma 4 MoE (`model_type: gemma4`, `architectures: Gemma4Fo
 - **MoE: 128 experts, 8 active per token** (`top_k_experts: 8` in config)
 - `moe_intermediate_size: 704`
 - Multimodal: `vision_config` + `audio_config` token IDs + image/video token IDs present
-- **Does NOT require Genesis** (Gemma 4 family has no DeltaNet quirks)
+- **No patch tree required** (Gemma 4 family has no DeltaNet quirks)
 - Active params: ~4B; total params: 26B
 
 ### 1. Model weights

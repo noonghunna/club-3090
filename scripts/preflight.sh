@@ -1101,7 +1101,18 @@ _preflight_print_weight_hints() {
       echo "[preflight]     or: MODEL_DIR=${model_dir} ${setup_cmd}" >&2
     fi
     if [[ -n "${WEIGHT_MANUAL_NOTE:-}" ]]; then
-      echo "[preflight]     note: ${WEIGHT_MANUAL_NOTE}" >&2
+        # Trim for terminal display. These notes are maintainer-facing and long by
+        # design (median 554 chars, worst 2,273) — dumping one whole buries the
+        # "Fix:" lines directly above it, which are what the user needs. Same class
+        # as the switch.sh status_note dump fixed in #1041; reported on Discord
+        # 2026-08-17, where a missing-weights preflight printed ~2.3 KB of note.
+        _wmn="${WEIGHT_MANUAL_NOTE}"
+        if (( ${#_wmn} > 220 )); then
+          _wmn="${_wmn:0:220}"
+          _wmn="${_wmn% *}… [truncated — full note: scripts/lib/profiles/models/*.yml]"
+        fi
+        echo "[preflight]     note: ${_wmn}" >&2
+        unset _wmn
     fi
   done < <(_preflight_weight_hint_keys "$model_dir" "$@")
 

@@ -26,7 +26,7 @@ The recipes are written against 3090 specifically but should work on:
 | **2× RTX 3080 modded 20 GB** | 20 GB / card (40 GB combined) | sm_86 | **Tested 2026-05-02 by [@troymroberts](https://github.com/troymroberts) ([#25](https://github.com/noonghunna/club-3090/discussions/25#discussioncomment-16787782))** at 200W/card power limit. `dual.yml` (TQ k8v4 KV + MTP K=3) boots at full 262K target with `gpu-memory-utilization=0.82` (down from shipped 0.95 — see note below). Available KV pool 5.2 GB/card, max concurrency 1.43×. verify-full 10/10 pass; bench 49 TPS wall single-stream, 210 TPS aggregate at n=8. First published SM86 / 40 GB combined data point outside the 3090 family. |
 | RTX 4090 | 24 GB | sm_89 | Should work; ~30% faster decode (newer SMs); same memory characteristics |
 | RTX 5090 | 32 GB | sm_120 | Untested; more VRAM relaxes the prefill cliffs but kernel paths might differ |
-| RTX A5000 | 24 GB | sm_86 | **Sander's PROD class** for [genesis-vllm-patches](https://github.com/Sandermage/genesis-vllm-patches). Identical SM and VRAM to 3090; should run identically. |
+| RTX A5000 | 24 GB | sm_86 | Identical SM and VRAM to 3090; should run identically. |
 | RTX A6000 | 48 GB | sm_86 | Should work; double VRAM lets you skip the cliff workarounds (use Sandermage's reference defaults) |
 | H100 SXM | 80 GB | sm_90 | Different beast; flash-attn 3 paths available; not what these recipes target |
 
@@ -57,7 +57,7 @@ On 20 GB cards (modded 3080) the cudagraph-profiling overhead is a meaningful sl
 **4090s with attached display — env-override the compose defaults.** Some 4090 rigs land at ~23.5 GB usable VRAM with X server + driver overhead, vs the headless 3090s the composes are calibrated for. Boot may fail with `No available memory for the cache blocks` at default `max-model-len`. Cross-rig data: @laurimyllari's 4090 single-card on `long-text.yml` needed `MAX_MODEL_LEN=90000` (down from 180K default) to fit cleanly ([disc #62](../../../noonghunna/club-3090/discussions/62) / [issue #71](../../../noonghunna/club-3090/issues/71)). **Newer driver shrinks the budget the same way even on a headless 3090:** @sethbrasile's controlled 9-run matrix on a headless 3090 with driver 595.71.05 / CUDA 13.2 capped `long-text.yml` at `MAX_MODEL_LEN=105000` — the newer driver's activation-profile reserve measured ~2.87 GiB vs ~1.5 GiB on the bare-metal reference rig, shrinking the KV pool by the difference ([issue #149](../../../noonghunna/club-3090/issues/149)). On a newer-driver 3090, start at `MAX_MODEL_LEN=105000` rather than the 180K default. Pattern:
 
 ```bash
-MAX_MODEL_LEN=90000 bash scripts/switch.sh vllm/long-text
+MAX_MODEL_LEN=32768 GPU_MEMORY_UTILIZATION=0.85 bash scripts/switch.sh vllm/minimal
 ```
 
 Same `MAX_MODEL_LEN` / `GPU_MEMORY_UTILIZATION` env overrides apply for any setup running vLLM alongside other GPU consumers on the same card. See [SINGLE_CARD.md "Running alongside a desktop"](SINGLE_CARD.md#running-alongside-a-desktop--sub-24-gb-usable-vram) for safe ranges.
@@ -423,6 +423,20 @@ This is model-specific but the **shapes apply across hybrid-attention models** (
 
 - **Single 3090 (24 GB):** Cliff 1 (~25K-token tool prefills, FFN intermediate buffer) closed across all shipped variants since 2026-04-30 PM. **⚠️ Cliff 2 (~50-60K single prompts, DeltaNet GDN forward) regressed under Genesis v7.72.2** — PN59 streaming-GDN was advertised as the structural fix but doesn't engage on the chunked-prefill code path that 24 GB single-card configs are forced to take (`--max-num-batched-tokens 4128` populates `chunk_indices`/`chunk_offsets` which PN59's eligibility check rejects). `long-text.yml` / `long-text-no-mtp.yml` / `long-vision.yml` may OOM at >50K single-prompt context. Filed at [Sandermage/genesis-vllm-patches#22](https://github.com/Sandermage/genesis-vllm-patches/issues/22), pending Sander review. **Workarounds**: `dual.yml` / `dual-turbo.yml` (TP=2 escapes the cliff), or `llamacpp/default` (different engine, no Cliff 2). [See `docs/CLIFFS.md` for the full diagnostic.](CLIFFS.md)
 - **Dual 3090 (48 GB combined):** TP=2 splits activation memory across cards. Cliffs are not active failure modes.
+
+### ⚠️ Peak VRAM ≠ idle VRAM — the "it booted fine, then OOM'd" trap
+
+`nvidia-smi` at boot shows **weights + KV pool reservation**. It does **not** show peak.
+**Peak adds activation buffers during prefill — typically +500–1500 MiB.**
+
+So a card sitting at 23.5 / 24 GB after a clean boot has only ~500 MiB of headroom, which is not
+enough for the 138 MiB-class buffer a long-context prefill allocates. The server starts, serves
+short prompts happily, and dies on the first big one.
+
+**Fix:** drop `--gpu-memory-utilization` by `0.03` and re-boot. That is usually the whole
+intervention — you are buying back activation headroom, not context.
+
+Judge headroom from a **loaded** card, never an idle one.
 
 For visualization of how VRAM splits across single + dual configs, see [vram-budget-combined.svg](img/vram-budget-combined.svg) (or per-page: [single](img/vram-budget-single.svg) · [dual](img/vram-budget-dual.svg)).
 

@@ -372,7 +372,7 @@ When future composes want to detect the host GPU and pick an optimal path, here'
 
 This stack codifies the NVIDIA half of that tree today via `scripts/switch.sh` + the `models/<model>/<engine>/compose/` tree. Cross-vendor routing is a future-direction item — happy to entertain PRs that add `compose/intel/` or `compose/amd/` paths once we have benchmark numbers from those rigs to ground them in.
 
-**Ecosystem maturity caveat (mid-2026)**: NVIDIA's stack (vLLM + Marlin + Genesis + TensorRT-LLM + cuDNN) has 2-3 years more polish than AMD ROCm or Intel oneAPI. Expect day-zero kernel coverage on NVIDIA for new model architectures, and 1-3 month lag on AMD/Intel for the same models to reach equivalent throughput. For mission-critical inference, NVIDIA stays the default; for cost-sensitive or vendor-diversification scenarios, the Instinct (MI300X+) and Battlemage paths are increasingly viable.
+**Ecosystem maturity caveat (mid-2026)**: NVIDIA's stack (vLLM + Marlin + TensorRT-LLM + cuDNN) has 2-3 years more polish than AMD ROCm or Intel oneAPI. Expect day-zero kernel coverage on NVIDIA for new model architectures, and 1-3 month lag on AMD/Intel for the same models to reach equivalent throughput. For mission-critical inference, NVIDIA stays the default; for cost-sensitive or vendor-diversification scenarios, the Instinct (MI300X+) and Battlemage paths are increasingly viable.
 
 ---
 
@@ -385,7 +385,7 @@ What to ship as the default for each GPU class, given the matrix above:
 | **Pascal (10x0)** | FP16 only — no INT8 TC | FP16 | none (vLLM unsupported, CC<7.5) | llama.cpp only |
 | **Volta (V100)** | FP16 — no BF16 TC, weak INT8 | FP16 | none | llama.cpp — see [@efschu's V100 bench](../BENCHMARKS.md#qwen36-27b) |
 | **Turing (T4, 20-series)** | INT8 native; GPTQ INT4 via Marlin works | FP16 / INT8 | n-gram only | not a primary target |
-| **Ampere consumer (3090/3080/3060)** ⭐ | **AutoRound INT4** | **TQ3 (Genesis) / INT8 PTH / fp8** | **MTP n=3** + Genesis P67 | `dual/autoround-int4/turbo.yml`, `dual/autoround-int4/tq3-mtp-genesis.yml`, `single/autoround-int4/long-text.yml` — primary target of this stack |
+| **Ampere consumer (3090/3080/3060)** ⭐ | **AutoRound INT4** | **INT8 PTH / fp8** | **MTP n=3** | `dual/autoround-int4/turbo.yml`, `dual/autoround-int4/tq3-mtp-genesis.yml`, `single/autoround-int4/long-text.yml` — primary target of this stack |
 | **Ampere DC (A100)** | AutoRound INT4 or FP16 | TQ3 / fp8 | MTP n=3 | Same composes as 3090, more VRAM headroom |
 | **Ada (4090 / L40)** | AutoRound INT4 **OR** FP8 weights (native FP8 GEMM on sm_89) | **INT8-PTH** (native INT8 TC) / TQ3 for a compute win; `fp8_e4m3` = storage-only (≡e5m2, launcher-injected #246, precision not speed) | MTP n=3 / DFlash | FP8 KV here is **storage-only** — no FA3 (Hopper-only); the arch win is FP8 *weights*, not FP8 KV |
 | **Hopper (H100/H200)** | FP8 weights (FBGEMM/INC) | **fp8 (HW transformer engine)** | MTP / DFlash | Not a primary target — these cards are usually already running their own optimised stacks |
@@ -398,7 +398,7 @@ The starred row (Ampere consumer) is the actual target of this stack; everything
 
 ## How to detect your GPU's capabilities at runtime
 
-The Genesis patch stack already encodes most of this — the guard functions in `models/qwen3.6-27b/vllm/patches/genesis/vllm/_genesis/guards.py` give you the runtime answer:
+⚠️ The per-arch guard helpers below live in a retired third-party patch tree (`models/qwen3.6-27b/vllm/patches/genesis/`) that no shipped compose loads. Kept as a worked reference for the detection logic, not as an import you should make. They give you the runtime answer:
 
 ```python
 import vllm._genesis.guards as g
@@ -422,7 +422,7 @@ For the same info outside Python, `nvidia-smi --query-gpu=compute_cap --format=c
 
 **FP8 on Ada vs Hopper.** Both have FP8 Tensor Cores. The numerical formats (E4M3 + E5M2) are the same. The difference is peak throughput: Hopper's transformer engine has higher FP8 TFLOPS/clock and on-die format-conversion units that Ada doesn't. For Qwen3.6-27B inference, the practical difference between Ada and Hopper FP8 KV is in the single-digit-% range — both are real hardware paths, both meaningfully faster than Ampere's software emulation.
 
-**Blackwell consumer vs Blackwell datacenter.** Genesis treats them as one family for has_native_fp8 / has_native_fp4 purposes, but different regimes for kernel tuning. Per club-3090#51 (apnar 2026-05-04): fp8_e4m3 + 96K ctx on RTX 5090 regressed 2-6% TPS vs fp8_e5m2 + 48K — vLLM's Blackwell e4m3 codepath is newly added and undertuned. Use e5m2 on consumer Blackwell until the pin catches up. Sm_120 also surfaced a `CUDAGraphMode.FULL_AND_PIECEWISE not supported with spec-decode for FlashInferBackend` issue — Genesis ships P100 patch (PR #41127 backport) for this.
+**Blackwell consumer vs Blackwell datacenter.** Treat them as one family for has_native_fp8 / has_native_fp4 purposes, but different regimes for kernel tuning. Per club-3090#51 (apnar 2026-05-04): fp8_e4m3 + 96K ctx on RTX 5090 regressed 2-6% TPS vs fp8_e5m2 + 48K — vLLM's Blackwell e4m3 codepath is newly added and undertuned. Use e5m2 on consumer Blackwell until the pin catches up. Sm_120 also surfaced a `CUDAGraphMode.FULL_AND_PIECEWISE not supported with spec-decode for FlashInferBackend` issue — Genesis ships P100 patch (PR #41127 backport) for this.
 
 **NVFP4 on RTX 5090 today.** The hardware supports it. vLLM's NVFP4 quant kernels are landing in 2026-05/06 nightlies but aren't broadly used yet — most public 27-31B weight artifacts are still INT4 (AutoRound/AWQ/GPTQ), not NVFP4. Once NVFP4-quantized weight artifacts ship for Qwen3.6 / Gemma 4 / etc., Blackwell consumer rigs gain a meaningful TPS lift on top of FP8.
 
@@ -476,5 +476,5 @@ For inference workloads, NVFP4 is usually preferred when both are available. MXF
 - [OCP Microscaling Formats v1.0](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf) — community standard for MXFP4/6/8
 
 **This repo**:
-- **Genesis guards** — `models/qwen3.6-27b/vllm/patches/genesis/vllm/_genesis/guards.py` encodes the runtime per-arch feature detection
+- **Per-arch guard reference** (retired tree, not loaded) — `models/qwen3.6-27b/vllm/patches/genesis/vllm/_genesis/guards.py` encodes the runtime per-arch feature detection
 - **club-3090 cross-rig data** — [BENCHMARKS.md](../BENCHMARKS.md) measures these matrices in practice (3090 / 4090 / 5090 / V100 / A5000 / mixed-arch eGPU)

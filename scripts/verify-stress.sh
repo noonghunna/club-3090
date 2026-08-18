@@ -152,12 +152,34 @@ fi
 
 pass() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 fail() { printf "  \033[31m✗\033[0m %s\n" "$1"; printf "    \033[33m→\033[0m %s\n" "$2"; return 1; }
-skip() { printf "  \033[33m⊘\033[0m %s (skipped)\n" "$1"; }
+_SKIPPED=0
+skip() { printf "  \033[33m⊘\033[0m %s (skipped)\n" "$1"; _SKIPPED=1; }
 
 FAILED=0
+# The summary is split into two verdicts because this script answers two
+# DIFFERENT questions and they carry different weight (#1017):
+#   BOUNDARY — does the deployed config survive its edges (tool-prefill OOM,
+#              agent shapes, reasoning-heavy, VRAM ceiling)? Unambiguous.
+#   RECALL   — does the needle come back at depth? Real, but measured against a
+#              haystack built from ONE repeated block (~0.03% unique content at
+#              380K), so it establishes ADDRESSABILITY, not retrieval quality,
+#              and must not be quoted next to published NIAH/RULER scores.
+# One green line for both let a uniform-haystack pass read as "recall validated".
+_RECALL_CHECKS=" longctx longctx_large ceiling_ladder "
+RECALL_RUN=0;   RECALL_FAIL=0
+BOUND_RUN=0;    BOUND_FAIL=0
 run_check() {
   local label="$1"; shift
-  if "$@"; then :; else FAILED=$((FAILED + 1)); fi
+  local rc=0
+  _SKIPPED=0
+  if "$@"; then :; else rc=1; FAILED=$((FAILED + 1)); fi
+  if [[ "$_SKIPPED" == "1" ]]; then return 0; fi   # skipped checks count in neither bucket
+  if [[ "$_RECALL_CHECKS" == *" $label "* ]]; then
+    RECALL_RUN=$((RECALL_RUN + 1)); [[ "$rc" == "1" ]] && RECALL_FAIL=$((RECALL_FAIL + 1))
+  else
+    BOUND_RUN=$((BOUND_RUN + 1));  [[ "$rc" == "1" ]] && BOUND_FAIL=$((BOUND_FAIL + 1))
+  fi
+  return 0
 }
 
 # ---- Engine detection (parallel to verify-full.sh::detect_engine, see #87) ---
@@ -1525,6 +1547,21 @@ EOF
 run_check "ceiling_ladder" check_ceiling_ladder
 ensure_engine_alive "probe 8 (ceiling ladder)" || true
 
+echo ""
+_c_ok=$'\033[32m'; _c_bad=$'\033[31m'; _c_dim=$'\033[2m'; _c_off=$'\033[0m'
+_b_col="$_c_ok"; [[ "$BOUND_FAIL"  == "0" ]] || _b_col="$_c_bad"
+_r_col="$_c_ok"; [[ "$RECALL_FAIL" == "0" ]] || _r_col="$_c_bad"
+if [[ "$BOUND_RUN" != "0" ]]; then
+  printf "  %sboundary checks%s  %d/%d passed  %s(tool-prefill OOM, agent shapes, reasoning-heavy, VRAM ceiling)%s\n" \
+    "$_b_col" "$_c_off" "$((BOUND_RUN - BOUND_FAIL))" "$BOUND_RUN" "$_c_dim" "$_c_off"
+fi
+if [[ "$RECALL_RUN" != "0" ]]; then
+  printf "  %srecall ladder%s    %d/%d passed  %s(uniform-haystack: ADDRESSABILITY, not retrieval%s\n" \
+    "$_r_col" "$_c_off" "$((RECALL_RUN - RECALL_FAIL))" "$RECALL_RUN" "$_c_dim" "$_c_off"
+  printf "                     %squality — do not quote beside NIAH/RULER scores. #1017)%s\n" "$_c_dim" "$_c_off"
+else
+  printf "  %srecall ladder%s    skipped (SKIP_LONGCTX / SKIP_CEILING)%s\n" "$_c_dim" "$_c_off" "$_c_off"
+fi
 echo ""
 if [[ "$FAILED" == "0" ]]; then
   printf "\033[32mAll stress / boundary checks passed.\033[0m KV-cache and prefill paths are sound for the deployed config.\n"
