@@ -4,6 +4,7 @@
 #   Engine:    vLLM (vllm/vllm-openai:gemma4-unified — Gemma-4 arch-preview image)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   assistant external drafter, n=4 default (google/gemma-4-12B-it-assistant ~0.5B)
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        bf16 / auto — single kv-dtype (gemma4-unified has no fp8/INT8-PTH path)
 #   Vision:    yes (gemma4_unified is multimodal; served text-only here)
 #   Max ctx:   256K (262144) — MTP fits the FULL ctx on one card (KV pool ~310K tok,
@@ -48,6 +49,10 @@ services:
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
     environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
       # (#610): launch.sh --gpus exports GPU UUIDs here. CDI runtimes (NixOS,
@@ -78,7 +83,27 @@ services:
       - /bin/bash
       - -c
       - |
-        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@"
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 4); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-4}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"model\":\"/root/.cache/huggingface/${SPEC_MODEL_SUBDIR:-gemma-4-12b-it-assistant}\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] drafter ON - draft-model ${SPEC_MODEL_SUBDIR:-gemma-4-12b-it-assistant} n=$$_spec_n" >&2
+        else
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
+        fi
+        exec vllm serve ${VLLM_ENFORCE_EAGER:+--enforce-eager} "$@" "$${SPEC_ARGS[@]}"
       - --
     command:
       - --model
@@ -99,8 +124,6 @@ services:
       - "${GPU_MEMORY_UTILIZATION:-0.92}"
       - --max-num-seqs
       - "${MAX_NUM_SEQS:-4}"
-      - --speculative-config
-      - '{"model":"/root/.cache/huggingface/${SPEC_MODEL_SUBDIR:-gemma-4-12b-it-assistant}","num_speculative_tokens":${SPEC_N:-4}}'
       - --trust-remote-code
       - --enable-auto-tool-choice
       - --tool-call-parser

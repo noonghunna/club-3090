@@ -178,14 +178,47 @@ def _gate_spec_via_entrypoint(svc: dict) -> None:
         out.append(cmd[i])
         i += 1
     if spec_val is None:
+        # Since 2026-08-18 the shipped composes already lift the drafter into a
+        # SPEC_N-gated entrypoint, so `command` carries nothing to find — and that
+        # entrypoint ALSO carries NVLink detection and patch installs. Rebuilding
+        # it from scratch (the branch below) would silently drop those, so patch
+        # the existing script in place instead: parameterize the method for the
+        # c3 ② Serve editor and let DRAFTER_N feed the existing SPEC_N default.
+        ep = list(svc.get("entrypoint") or [])
+        idx = next((i for i, x in enumerate(ep)
+                    if isinstance(x, str) and "--speculative-config" in x), None)
+        if idx is None:
+            return
+        script_in = ep[idx]
+        mm = re.search(r'\\?"method\\?"\s*:\s*\\?"([a-z0-9_]+)', script_in)
+        d_method = mm.group(1) if mm else "mtp"
+        script_in = re.sub(
+            r'(\\?"method\\?"\s*:\s*\\?")' + re.escape(d_method),
+            lambda m: m.group(1) + "$${DRAFTER_METHOD:-" + d_method + "}",
+            script_in, count=1)
+        script_in = script_in.replace('_spec_n="$${SPEC_N:-',
+                                      '_spec_n="$${SPEC_N:-$${DRAFTER_N:-', 1)
+        if '$${DRAFTER_N:-' in script_in:            # close the extra brace we opened
+            script_in = re.sub(r'(_spec_n="\$\$\{SPEC_N:-\$\$\{DRAFTER_N:-[^"]*?)"',
+                               r'\1}"', script_in, count=1)
+        ep[idx] = script_in
+        svc["entrypoint"] = ep
+        env_list = list(svc.get("environment") or [])
+        for e in ("SPEC", "SPEC_N", "DRAFTER_METHOD", "DRAFTER_N"):
+            if not any(str(x).split("=", 1)[0] == e for x in env_list):
+                env_list.append(e)
+        svc["environment"] = env_list
+        svc["command"] = out
         return
-    mm = re.search(r'"method"\s*:\s*"([a-z0-9_]+)"', spec_val or "")
+    mm = re.search(r'\\?"method\\?"\s*:\s*\\?"([a-z0-9_]+)', spec_val or "")
     nn = re.search(r'"num_speculative_tokens"\s*:\s*(\d+)', spec_val or "")
+    if nn is None and ep_text:                       # depth lives in _spec_n="${SPEC_N:-N}"
+        nn = re.search(r'_spec_n="\$*\{SPEC_N:-\$*\{?[A-Za-z_]*:?-?(\d+)', ep_text)
     d_method = mm.group(1) if mm else "mtp"
     d_n = nn.group(1) if nn else "3"
     svc["command"] = out
     env_list = list(svc.get("environment") or [])
-    for e in ("SPEC", "DRAFTER_METHOD", "DRAFTER_N"):
+    for e in ("SPEC", "SPEC_N", "DRAFTER_METHOD", "DRAFTER_N"):
         if e not in env_list:
             env_list.append(e)
     svc["environment"] = env_list
@@ -193,15 +226,22 @@ def _gate_spec_via_entrypoint(svc: dict) -> None:
     # printf builds the JSON so the method/n substitute cleanly — no quote-in-YAML
     # escaping hell.  ${DRAFTER_METHOD}/${DRAFTER_N} default to the sibling's.
     script = (
-        "# SPEC=off drops the drafter; DRAFTER_METHOD/DRAFTER_N select the type\n"
-        "# (defaults = the sibling's).  Toggled/selected by the c3 ② Serve editor.\n"
+        "# Same drafter contract as every shipped compose: SPEC_N=<n> sets depth,\n"
+        "# SPEC_N=0 (or SPEC=off) disables. DRAFTER_METHOD/DRAFTER_N additionally\n"
+        "# select the drafter type for the c3 ② Serve editor (defaults = sibling's).\n"
         "SPEC_ARGS=()\n"
-        'if [ "$${SPEC:-on}" != "off" ]; then\n'
+        '_spec_n="$${SPEC_N:-$${DRAFTER_N:-' + d_n + '}}"\n'
+        'case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac\n'
+        'case "$$_spec_n" in ""|*[!0-9]*)\n'
+        '  echo "[brought] SPEC_N=\'$$_spec_n\' is not a non-negative integer." >&2\n'
+        "  exit 1 ;;\n"
+        "esac\n"
+        'if [ "$$_spec_n" -gt 0 ]; then\n'
         "  _cfg=$$(printf '{\"method\":\"%s\",\"num_speculative_tokens\":%s}' "
-        '"$${DRAFTER_METHOD:-' + d_method + '}" "$${DRAFTER_N:-' + d_n + '}")\n'
+        '"$${DRAFTER_METHOD:-' + d_method + '}" "$$_spec_n")\n'
         '  SPEC_ARGS=(--speculative-config "$$_cfg")\n'
         "else\n"
-        '  echo "[brought] SPEC=off — drafter disabled (no spec-dec)" >&2\n'
+        '  echo "[brought] drafter disabled (SPEC_N=0 / SPEC=off)" >&2\n'
         "fi\n"
         'exec vllm serve "$$@" "$${SPEC_ARGS[@]}"'
     )

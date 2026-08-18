@@ -22,8 +22,10 @@
 #     REFUSES rather than emit a fake flat curve — reboot-per-n via
 #     `MTP_DRAFT_N_MAX=<n> bash scripts/switch.sh <slug>` is the fallback.
 #   vLLM — reboot per n (vLLM has no per-request draft-depth knob):
-#     `SPEC_N_MAX=<n> switch.sh <slug>` per arm; `SPEC=off` for the n=0
-#     baseline arm. Slower (~5-8 min/arm, boot-dominated).
+#     `SPEC_N=<n> switch.sh <slug>` for EVERY arm, n=0 included — since
+#     2026-08-18 every drafter-shipping compose honours the same knob, so the
+#     baseline arm no longer needs a different variable. Slower (~5-8 min/arm,
+#     boot-dominated).
 #
 # Usage:
 #   SLUG=llamacpp/tess-dual-mtp SWEEP_N="0 1 2 3 4" bash scripts/spec-sweep.sh
@@ -101,7 +103,7 @@ echo "[spec-sweep] engine=$ENGINE_FAMILY url=$URL n in { $SWEEP_N } gens=$GENS x
 if [[ "$SWEEP_DRY" == "1" ]]; then
   for n in $SWEEP_N; do
     if [[ "$ENGINE_FAMILY" == "vllm" ]]; then
-      echo "[sweep:dry] would: $( [[ "$n" == "0" ]] && echo "SPEC=off" || echo "SPEC_N_MAX=$n" ) switch.sh $SLUG -> measure n=$n"
+      echo "[sweep:dry] would: SPEC_N=$n switch.sh $SLUG -> measure n=$n"
     else
       echo "[sweep:dry] would: per-request speculative.n_max=$n against $URL (no reboot)"
     fi
@@ -171,10 +173,12 @@ _measure_llamacpp_rebooted_arm() {
   local med acc="—"
   med="$(printf '%s\n' "${tps_list[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}')"
   if [[ "$n" == "0" && $dn_tot -gt 0 ]]; then
-    # The compose ignored SPEC=off (drafter hardcoded, e.g. tess mtp.yml) —
-    # this "baseline" is actually spec-ON. Mark it rather than lie.
+    # The compose ignored SPEC_N=0 — this "baseline" is actually spec-ON.
+    # Mark it rather than lie. Since 2026-08-18 every shipped compose honours
+    # the knob (test-spec-toggle-contract enforces it), so reaching this means
+    # either a hand-edited compose or a genuine regression in that gate.
     acc="SPEC-OFF-IGNORED"
-    echo "  ⚠ n=0 arm INVALID: drafter still active after SPEC=off (compose lacks a SPEC gate) — baseline requires a SPEC-gated compose"
+    echo "  ⚠ n=0 arm INVALID: drafter still active after SPEC_N=0 — run scripts/tests/test-spec-toggle-contract.sh"
   elif [[ "$n" != "0" && $dn_tot -gt 0 ]]; then
     acc="$(awk -v a="$da_tot" -v d="$dn_tot" 'BEGIN{printf "%.2f", a/d}')"
   fi
@@ -232,6 +236,11 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
     echo "[spec-sweep] per-request speculative NOT honored (probe draft_n: n1=$p1 n4=$p4) — falling back to reboot-per-arm (llama.cpp boots are ~15s, still quick)"
     for n in $SWEEP_N; do
       if [[ "$n" == "0" ]]; then
+        # ⚠️ KNOWN GAP: no llama.cpp compose gates on SPEC, so this does NOT
+        # disable the drafter — the n=0 arm boots spec-ON and the acceptance
+        # guard below marks it INVALID. The vLLM family was unified on SPEC_N
+        # 2026-08-18; the llama.cpp family (MTP_DRAFT_N_MAX / --spec-draft-model)
+        # still needs the same treatment. Left as-is rather than guessed at.
         echo "[spec-sweep] boot $SLUG SPEC=off…"
         SPEC=off bash scripts/switch.sh "$SLUG" >/dev/null
       else
@@ -254,13 +263,8 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
 else
   # --- vLLM: reboot per arm ----------------------------------------------------
   for n in $SWEEP_N; do
-    if [[ "$n" == "0" ]]; then
-      echo "[spec-sweep] boot $SLUG SPEC=off…"
-      SPEC=off bash scripts/switch.sh "$SLUG" >/dev/null
-    else
-      echo "[spec-sweep] boot $SLUG SPEC_N_MAX=$n…"
-      SPEC_N_MAX="$n" bash scripts/switch.sh "$SLUG" >/dev/null
-    fi
+    echo "[spec-sweep] boot $SLUG SPEC_N=$n…"
+    SPEC_N="$n" bash scripts/switch.sh "$SLUG" >/dev/null
     ready=0
     for _ in $(seq 1 240); do curl -sf -m 3 "$URL/v1/models" >/dev/null 2>&1 && { ready=1; break; }; sleep 3; done
     [[ "$ready" == "1" ]] || { echo "  n=$n: boot not ready — skipping"; continue; }

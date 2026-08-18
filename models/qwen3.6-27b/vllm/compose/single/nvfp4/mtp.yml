@@ -11,6 +11,7 @@
 #              config needs >24 GB VRAM regardless.
 #   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized;
 #              SPEC=off disables it — tight-RAM / spec-dec-fails mitigation, #617)
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        fp8 → e4m3 at scale=1.0 (hf_quant_config DECLARES FP8 KV but
 #              ships NO k_scale/v_scale tensors — index-verified 2026-07-06;
 #              hybrid disables calculate_kv_scales → the #594-tied regime).
@@ -137,6 +138,10 @@ services:
       # bugs. See docs/UPSTREAM.md "Community templates / model assets".
       - ../../../patches/froggeric-chat-template/chat_template.jinja:/etc/qwen-froggeric-chat-template.jinja:ro
     environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
       # (#610): launch.sh --gpus exports GPU UUIDs here. CDI runtimes (NixOS,
@@ -159,7 +164,6 @@ services:
       # set via `SPEC=off bash scripts/switch.sh …` or compose/.env). The
       # mitigation for tight system-RAM rigs (laptop / consumer 5090) where the
       # extra draft-model load OOMs during boot (#617). Default = MTP on.
-      - SPEC
       # ⚠️ WSL/WDDM: set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False.
       # Expandable segments use CUDA VMM (cuMemCreate/cuMemMap), unsupported
       # under WDDM — every boot dies with "RuntimeError: CUDA driver error:
@@ -189,11 +193,25 @@ services:
         # MTP draft-model load OOM'd during boot; the MTP-off 35B booted fine on
         # the same rig). Default on (spec-dec active). Also honors
         # VLLM_ENFORCE_EAGER=1 (Cliff-2 mitigation at >50K single-prompt).
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 3); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-3}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
         SPEC_ARGS=()
-        if [ "$${SPEC:-on}" != "off" ]; then
-          SPEC_ARGS=(--speculative-config '{"method":"mtp","num_speculative_tokens":3}')
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
         else
-          echo "[nvfp4] SPEC=off — MTP drafter disabled (loads lighter; no spec-dec)" >&2
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi
         exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}"
       - --

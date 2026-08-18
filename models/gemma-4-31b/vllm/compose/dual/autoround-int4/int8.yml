@@ -3,6 +3,7 @@
 #   Model:     Gemma 4 31B (Intel AutoRound INT4)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=4 (Google's official `gemma-4-31B-it-assistant`, BF16 0.5B)
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        int8_per_token_head (1 byte/token, via vendored PR #40391 overlay)
 #   Vision:    yes
 #   Max ctx:   262K native default (dual-card max-ctx rule) @ 4-stream cap; INT8 PTH pool ~2× BF16
@@ -151,6 +152,11 @@ services:
       #     minimal overlay surface. Tracked in docs/UPSTREAM.md (re-test trigger:
       #     streaming multi-tool-call regression).
     environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+      - SPEC_N_MAX=${SPEC_N_MAX:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
       # (#610): launch.sh --gpus exports GPU UUIDs here. CDI runtimes (NixOS,
@@ -195,10 +201,30 @@ services:
         bash /etc/club3090/pr42006/install.sh
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
-          exec vllm serve "$$@"
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 4); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-$${SPEC_N_MAX:-4}}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"model\":\"/root/.cache/huggingface/gemma-4-31b-it-assistant\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] drafter ON - draft-model gemma-4-31b-it-assistant n=$$_spec_n" >&2
         else
-          exec vllm serve --disable-custom-all-reduce "$$@"
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
+        fi
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$$@" "$${SPEC_ARGS[@]}"
+        else
+          exec vllm serve --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}"
         fi
       - --
     command:
@@ -270,5 +296,3 @@ services:
       # qwen3.6-27b/vllm/compose/dual/autoround-int4/int8.yml (Qwen's built-in MTP caps at
       # n=3 architecturally, so the canonical apples-to-apples bench uses
       # SPEC_N_MAX=3 here).
-      - --speculative-config
-      - '{"model":"/root/.cache/huggingface/gemma-4-31b-it-assistant","num_speculative_tokens":${SPEC_N_MAX:-4}}'

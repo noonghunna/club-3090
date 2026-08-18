@@ -3,6 +3,7 @@
 #   Model:     Qwen3.6-27B FP8 (official e4m3, embedded mtp head)
 #   Topology:  Dual 3090 (TP=2, NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (built-in) — survives LMCache, acceptance ~83%
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        int8_per_token_head (1 byte/token) + LMCache tiered prefix cache
 #                (GPU → L1 CPU RAM → optional L2 disk)
 #   Vision:    yes
@@ -114,6 +115,10 @@ services:
       # NVLink auto-detection — runs inside container at boot (same path as dual-max).
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
     environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
       # (#610): launch.sh --gpus exports GPU UUIDs here. CDI runtimes (NixOS,
@@ -182,10 +187,30 @@ services:
         fi
         lmcache server "$${LM_ARGS[@]}" &
         sleep 6
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
-          exec vllm serve "$$@"
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 3); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-3}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
         else
-          exec vllm serve --disable-custom-all-reduce "$$@"
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
+        fi
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$$@" "$${SPEC_ARGS[@]}"
+        else
+          exec vllm serve --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}"
         fi
       - --
     command:
@@ -212,8 +237,6 @@ services:
       - "${KV_CACHE_DTYPE:-int8_per_token_head}"
       - --mamba-cache-mode
       - align
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":3}'
       - --enable-prefix-caching
       - --kv-transfer-config
       - '{"kv_connector":"LMCacheMPConnector","kv_role":"kv_both"}'

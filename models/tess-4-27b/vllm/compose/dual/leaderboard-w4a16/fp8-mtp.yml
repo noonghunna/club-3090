@@ -16,6 +16,7 @@
 #              and n=3 is unbenched here. SPEC_N=5 restores the benched config.
 #              DFlash alternative is upstream-blocked on this hybrid family
 #              (vllm#40898 — mixed layer_types).
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        fp8_e4m3 (validated); prefix caching ON by default (#736 —
 #              vllm#48375 vendored; Tess is a qwen3_5 HYBRID, 48 linear + 16
 #              full attention; hybrid prefix caching via mamba align mode)
@@ -107,6 +108,10 @@ services:
       # off; protects PREFIX_CACHE_ARG users. See patches.yml.
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
     environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — see #610; UUID form is renumbering-proof and is
       # what CDI runtimes honor. Unset → absent (no masking).
@@ -146,10 +151,30 @@ services:
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
-          exec vllm serve "$$@"
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 3); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-3}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
         else
-          exec vllm serve --disable-custom-all-reduce "$$@"
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
+        fi
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve "$$@" "$${SPEC_ARGS[@]}"
+        else
+          exec vllm serve --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}"
         fi
       - --
     command:
@@ -196,8 +221,6 @@ services:
       # n=5 WAS the measured knee, but the default is now 3 — see the
       # precautionary #758 note in the header. n=6/8 REGRESS. SPEC_N=0 is NOT
       # supported here — comment the block out to run spec-off.
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":${SPEC_N:-3}}'
       - --override-generation-config
       - '{"temperature":${TEMP:-${TEMPERATURE:-0.6}},"top_p":${TOP_P:-0.95},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
       - --host

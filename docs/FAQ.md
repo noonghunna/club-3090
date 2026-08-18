@@ -82,6 +82,31 @@ Depends on the arch. The short version:
 
 Full hardware-acceleration matrix (which dtypes/quants run on Tensor Cores natively vs in software, per GPU class) at [DTYPE_MATRIX.md](DTYPE_MATRIX.md), including the weight-only vs weight+activation axis and the NVFP4 / MXFP4 / FP6 Blackwell additions.
 
+### How do I turn the speculative-decoding drafter off?
+
+`SPEC_N=0`, on every compose that ships a drafter:
+
+```bash
+SPEC_N=0 bash scripts/switch.sh vllm/dual    # drafter off
+SPEC_N=6 bash scripts/switch.sh vllm/dual    # depth 6 instead of this compose's default
+```
+
+`SPEC=off` does the same thing and is kept as an alias, so older notes and
+existing `.env` files keep working. A non-numeric `SPEC_N` is a hard boot error
+rather than a silent fall back to "off" — a typo can never quietly leave the
+drafter running, nor quietly disable it.
+
+This is worth stating plainly because turning the drafter off is the documented
+mitigation for [vllm#50021](https://github.com/vllm-project/vllm/pull/50021), and
+until 2026-08-18 the knob was **not** uniform: some composes read `SPEC`, some
+`SPEC_N`, some `SPEC_N_MAX` or `NUM_SPEC_TOKENS`, and ten hardcoded the drafter
+with no runtime escape at all — their header told you to delete a line from the
+YAML. Applying the wrong variable produced a healthy-looking server with the
+drafter still running. `scripts/tests/test-spec-toggle-contract.sh` enforces the
+single contract now, by running each entrypoint and inspecting the argv the
+engine would actually receive.
+
+
 ### What is the W4A8 knob and should I turn it on?
 
 `VLLM_MARLIN_INPUT_DTYPE=int8` on the Qwen vLLM composes (`vllm/dual`, `vllm/minimal`) runs

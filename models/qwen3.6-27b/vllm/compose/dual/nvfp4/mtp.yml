@@ -10,6 +10,7 @@
 #              2x 3090 sm_86 2026-07-11, ~20% slower than the AutoRound tier).
 #   Drafter:   MTP n=3 (built-in — the checkpoint keeps mtp.* unquantized;
 #              SPEC=off disables it — tight-RAM / spec-dec-fails mitigation, #617)
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        fp8 → e4m3 (this checkpoint BAKES FP8 KV scales — modelopt
 #              kv_cache_quant_algo=FP8 — unlike our weight-only fp8 tier which
 #              NVFP4 *KV* not used ON A STOCK PIN (vllm#43562 = no trtllm-gen
@@ -178,6 +179,10 @@ services:
       # NVLink auto-detection — runs inside container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
     environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection
       # (#610): launch.sh --gpus exports GPU UUIDs here. CDI runtimes (NixOS,
@@ -211,7 +216,6 @@ services:
       # SPEC=off disables the built-in MTP drafter at boot (bare passthrough;
       # tight-RAM / spec-dec-fails mitigation, #617). Default = MTP on.
       # ⚠️ SPEC=off is ALSO the mitigation for vllm#50021 (see Caveats).
-      - SPEC
       # Optional per-card KV-pool pin (bytes). Unset = stock auto-sizing.
       # See the entrypoint note + Max ctx header block (#838 / vllm#44209).
       - KV_CACHE_MEMORY_BYTES
@@ -246,12 +250,6 @@ services:
         # (unverified on Blackwell — report either way).
         # SPEC=off drops the built-in MTP drafter (--speculative-config) — the
         # tight-system-RAM mitigation (#617), matching the single-nvfp4 toggle.
-        SPEC_ARGS=()
-        if [ "$${SPEC:-on}" != "off" ]; then
-          SPEC_ARGS=(--speculative-config '{"method":"mtp","num_speculative_tokens":3}')
-        else
-          echo "[nvfp4] SPEC=off — MTP drafter disabled (loads lighter; no spec-dec)" >&2
-        fi
         # KV_CACHE_MEMORY_BYTES pins the KV pool per card instead of letting
         # vLLM size it from free memory (#838). vLLM does NOT derive the pool
         # from max_model_len × max_num_seqs, so a 262K/2-seq config can be
@@ -266,6 +264,26 @@ services:
         fi
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 3); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-3}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
+        else
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
+        fi
         if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${KV_ARGS[@]}"
         else

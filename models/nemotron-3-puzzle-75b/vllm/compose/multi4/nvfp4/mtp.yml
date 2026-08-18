@@ -4,6 +4,7 @@
 #              Mamba2-Transformer Hybrid LatentMoE, 512 routed experts + 1 shared)
 #   Topology:  Quad 3090 PCIe (TP=4, no NVLink — auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (NVIDIA's built-in MTP head — the accelerated path from the card)
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        two separate caches (hybrid model):
 #              • Attention layers → fp8_e4m3 (checkpoint declares this scheme; vLLM
 #                auto-selects it, made explicit via --kv-cache-dtype fp8). Storage-only on Ampere.
@@ -91,6 +92,11 @@ services:
       # NVLink auto-detection — runs inside container at boot (sets _NVLINK_ENABLED).
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
     environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+      - NUM_SPEC_TOKENS=${NUM_SPEC_TOKENS:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       - CUDA_VISIBLE_DEVICES
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -128,10 +134,30 @@ services:
         # (the common 4×3090 case) custom all-reduce is disabled — NVLink-assumed
         # allreduce paths break on PCIe.
         source /etc/club3090/detect_nvlink.sh
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@"
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 3); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-$${NUM_SPEC_TOKENS:-3}}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
         else
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@"
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
+        fi
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}"
+        else
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}"
         fi
       - --
     command:
@@ -148,8 +174,6 @@ services:
       - --async-scheduling
       # --- MTP speculative decoding (NVIDIA's accelerated path). Comment out the two lines
       # below to run without MTP (no-drafter fallback) if MTP misbehaves on Ampere. ---
-      - --speculative-config
-      - '{"method":"mtp","num_speculative_tokens":${NUM_SPEC_TOKENS:-3}}'
       # --- Mamba2 SSM state cache (NOT the attention KV cache) ---
       # float16 + stochastic rounding is NVIDIA's precision-preserving recurrent-state
       # config. Do NOT lower this to fp8 — SSM state accumulates recurrently and is

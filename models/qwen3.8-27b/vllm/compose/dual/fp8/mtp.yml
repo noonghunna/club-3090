@@ -5,6 +5,7 @@
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink; NVLink auto-detected via NVLINK_MODE)
 #   Drafter:   MTP n=3 (built-in — the checkpoint ships mtp.safetensors and
 #              text_config.mtp_num_hidden_layers=1). SPEC=off disables it.
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
 #   KV:        fp8 -> e4m3 (1 byte/token/elem; runs at scale=1.0 — the checkpoint
 #              is weight-only, no k_scale/v_scale tensors, and vLLM disables
 #              calculate_kv_scales on this hybrid family). NOT fp8_e5m2 — that is
@@ -308,6 +309,10 @@ services:
       # half-wiring it. See patches.yml.
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
     environment:
+      # Drafter toggle — docker only forwards what is declared here. The DEFAULT
+      # lives in the entrypoint, not in these lines, so it cannot drift.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection (#610).
       # CDI runtimes (NixOS, nvidia-ctk cdi) IGNORE NVIDIA_VISIBLE_DEVICES, so
@@ -348,7 +353,6 @@ services:
       # mitigation for vllm#50021 (see the Caveats / Upstream-risk header) and
       # the fallback if the head turns out net-negative on this model, as the
       # built-in head is on the 35B-A3B MoE sibling. Bare passthrough; default on.
-      - SPEC
       # expandable_segments:True crashes boot on some setups (cuMemMap path):
       # known on NVLink rigs and WSL2/WDDM. Override via .env:
       # PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
@@ -369,16 +373,29 @@ services:
         # VLLM_ENFORCE_EAGER=1 in .env disables CUDA graphs — the mitigation if
         # you see mid-generation hangs at depth on this hybrid family. Costs
         # ~20-30% TPS in exchange for stability. UNTESTED on this model.
-        # SPEC=off drops the built-in MTP drafter — the vllm#50021 mitigation.
-        SPEC_ARGS=()
-        if [ "$${SPEC:-on}" != "off" ]; then
-          SPEC_ARGS=(--speculative-config '{"method":"mtp","num_speculative_tokens":3}')
-        else
-          echo "[qwen38] SPEC=off — built-in MTP drafter disabled (no spec-dec)" >&2
-        fi
         # NVLink auto-detection (sets NCCL env vars, _NVLINK_ENABLED).
         source /etc/club3090/detect_nvlink.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth (this compose defaults to 3); SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Turning the drafter off is the documented mitigation for vllm#50021 and must
+        # never require editing this file. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-3}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"mtp\",\"num_speculative_tokens\":$$_spec_n}")
+          echo "[spec] drafter ON - mtp n=$$_spec_n" >&2
+        else
+          echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
+        fi
         if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
           exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}"
         else
