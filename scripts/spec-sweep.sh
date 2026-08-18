@@ -20,7 +20,7 @@
 #     A capability probe guards this: if the server ignores the field
 #     (timings.draft_n missing or identical across differing n), the sweep
 #     REFUSES rather than emit a fake flat curve — reboot-per-n via
-#     `MTP_DRAFT_N_MAX=<n> bash scripts/switch.sh <slug>` is the fallback.
+#     `SPEC_N=<n> bash scripts/switch.sh <slug>` is the fallback.
 #   vLLM — reboot per n (vLLM has no per-request draft-depth knob):
 #     `SPEC_N=<n> switch.sh <slug>` for EVERY arm, n=0 included — since
 #     2026-08-18 every drafter-shipping compose honours the same knob, so the
@@ -235,18 +235,12 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
   elif [[ -n "$SLUG" ]]; then
     echo "[spec-sweep] per-request speculative NOT honored (probe draft_n: n1=$p1 n4=$p4) — falling back to reboot-per-arm (llama.cpp boots are ~15s, still quick)"
     for n in $SWEEP_N; do
-      if [[ "$n" == "0" ]]; then
-        # ⚠️ KNOWN GAP: no llama.cpp compose gates on SPEC, so this does NOT
-        # disable the drafter — the n=0 arm boots spec-ON and the acceptance
-        # guard below marks it INVALID. The vLLM family was unified on SPEC_N
-        # 2026-08-18; the llama.cpp family (MTP_DRAFT_N_MAX / --spec-draft-model)
-        # still needs the same treatment. Left as-is rather than guessed at.
-        echo "[spec-sweep] boot $SLUG SPEC=off…"
-        SPEC=off bash scripts/switch.sh "$SLUG" >/dev/null
-      else
-        echo "[spec-sweep] boot $SLUG MTP_DRAFT_N_MAX=$n…"
-        MTP_DRAFT_N_MAX="$n" bash scripts/switch.sh "$SLUG" >/dev/null
-      fi
+      # One knob for every arm, n=0 included — the llama.cpp family was unified
+      # on SPEC_N 2026-08-18 (#1049), so the baseline arm no longer needs a
+      # different variable, and SPEC_N=0 genuinely REMOVES the drafter flags
+      # rather than passing n-max=0 (which leaves the draft context allocated).
+      echo "[spec-sweep] boot $SLUG SPEC_N=$n…"
+      SPEC_N="$n" bash scripts/switch.sh "$SLUG" >/dev/null
       ready=0
       for _ in $(seq 1 90); do curl -sf -m 3 "$URL/v1/models" >/dev/null 2>&1 && { ready=1; break; }; sleep 2; done
       [[ "$ready" == "1" ]] || { echo "  n=$n: boot not ready — skipping"; continue; }

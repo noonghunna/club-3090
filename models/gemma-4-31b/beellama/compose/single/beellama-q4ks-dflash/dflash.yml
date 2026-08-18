@@ -4,6 +4,8 @@
 #   Engine:    beellama.cpp (Anbeeld llama.cpp fork — DFlash spec-dec + SWA windowed KV)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   DFlash (--spec-type dflash, Anbeeld DFlash-IQ4_XS GGUF, adaptive draft-max)
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
+#              (removes the flags — n-max=0 would leave the draft context allocated)
 #   KV:        q5_0 K + q4_1 V (Anbeeld's long-ctx precision default)
 #   Vision:    no (mmproj NOT mounted; for vision pass MMPROJ_FILE + --mmproj — CPU-offloaded)
 #   Template:  native (GGUF-embedded) via --jinja
@@ -114,6 +116,48 @@ services:
     # server target ENTRYPOINT is /app/llama-server — args only below.
     # ⚠ -np 1 is intentional on a single 24 GB card — DFlash is single-slot by
     #   default and extra slots divide a compute-bound GPU's throughput.
+    environment:
+      # Drafter toggle - docker forwards only what is declared here.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+    # The image ENTRYPOINT is ["/app/llama-server"] on every engine we ship
+    # (mainline, ik-llama, beellama, llamacpp-club3090 — all verified). This
+    # wrapper is equivalent to it plus the drafter toggle.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth; SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Disabling REMOVES the drafter flags rather than passing n=0. At
+        # --spec-draft-n-max 0 llama.cpp sets drafting=false but still builds the
+        # draft context (server-context.cpp), and still loads an external draft
+        # model when one is named -- so the memory stays spent. Removing the
+        # flags is the only clean off. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-1}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        if [ "$$_spec_n" -gt 0 ]; then
+          echo "[spec] drafter ON (SPEC_N=$$_spec_n)" >&2
+          exec /app/llama-server "$$@"
+        fi
+        ARGS=(); _skip=0
+        for _a in "$$@"; do
+          if [ "$$_skip" = 1 ]; then _skip=0; continue; fi
+          case "$$_a" in
+            --spec-type|--spec-draft-model|--spec-draft-n-max|--spec-draft-n-min|-md|--model-draft) _skip=1; continue ;;
+          esac
+          ARGS+=("$$_a")
+        done
+        echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - drafter flags removed" >&2
+        exec /app/llama-server "$${ARGS[@]}"
+      - --
     command: >-
       --host 0.0.0.0
       --port 8080

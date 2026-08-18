@@ -96,15 +96,26 @@ existing `.env` files keep working. A non-numeric `SPEC_N` is a hard boot error
 rather than a silent fall back to "off" — a typo can never quietly leave the
 drafter running, nor quietly disable it.
 
+It works on **every engine** — vLLM, mainline llama.cpp, ik-llama, beellama and
+llamacpp-club3090 — despite each using a different drafter grammar underneath.
+
+On the llama.cpp side `SPEC_N=0` **removes** the drafter flags rather than setting
+the count to zero, and that distinction is worth real memory: llama.cpp at
+`--spec-draft-n-max 0` stops drafting but still builds the draft context (and still
+loads an external draft GGUF when one is named). Measured on
+`llamacpp/qwen38-27b-single-iq4nl`, 1× 3090: **21,444 MiB with the drafter on vs
+20,174 MiB with `SPEC_N=0`** — 1,270 MiB that zeroing the count would have left
+allocated.
+
 This is worth stating plainly because turning the drafter off is the documented
 mitigation for [vllm#50021](https://github.com/vllm-project/vllm/pull/50021), and
-until 2026-08-18 the knob was **not** uniform: some composes read `SPEC`, some
-`SPEC_N`, some `SPEC_N_MAX` or `NUM_SPEC_TOKENS`, and ten hardcoded the drafter
-with no runtime escape at all — their header told you to delete a line from the
-YAML. Applying the wrong variable produced a healthy-looking server with the
-drafter still running. `scripts/tests/test-spec-toggle-contract.sh` enforces the
-single contract now, by running each entrypoint and inspecting the argv the
-engine would actually receive.
+until 2026-08-18 the knob was **not** uniform: composes read `SPEC`, `SPEC_N`,
+`SPEC_N_MAX`, `NUM_SPEC_TOKENS`, `MTP_DRAFT_N_MAX` or `DRAFT_N_MAX` depending on
+vintage, and ten hardcoded the drafter with no runtime escape at all — their header
+told you to delete a line from the YAML. Applying the wrong variable produced a
+healthy-looking server with the drafter still running.
+`scripts/tests/test-spec-toggle-contract.sh` enforces the single contract now, by
+running each entrypoint and inspecting the argv the engine would actually receive.
 
 
 ### What is the W4A8 knob and should I turn it on?

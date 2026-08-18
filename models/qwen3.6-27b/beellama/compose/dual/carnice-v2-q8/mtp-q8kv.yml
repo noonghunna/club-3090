@@ -6,6 +6,8 @@
 #   Topology:  Dual 3090 (layer-split, -ts 0.55,0.45)
 #   Drafter:   MTP (--spec-type draft-mtp, embedded head — NO separate draft model).
 #              n_max=1 default (the head is mtp_num_hidden_layers=1); n=2 = +13% opt-in (see Caveats).
+#              Toggle: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables
+#              (removes the flags — n-max=0 would leave the draft context allocated)
 #   KV:        q8_0 K + q8_0 V (standard quantized KV — high fidelity; chosen over kvarn6 after a
 #              measured A/B, see "Why q8_0 not kvarn6").
 #   Vision:    no (text-only fine-tune; no mmproj)
@@ -77,12 +79,54 @@ services:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     # server target ENTRYPOINT is /app/llama-server — args only below.
+    environment:
+      # Drafter toggle - docker forwards only what is declared here.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+    # The image ENTRYPOINT is ["/app/llama-server"] on every engine we ship
+    # (mainline, ik-llama, beellama, llamacpp-club3090 — all verified). This
+    # wrapper is equivalent to it plus the drafter toggle.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # -- Drafter toggle: the same contract on every club-3090 compose --------
+        #   SPEC_N=<n>  drafter depth; SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Disabling REMOVES the drafter flags rather than passing n=0. At
+        # --spec-draft-n-max 0 llama.cpp sets drafting=false but still builds the
+        # draft context (server-context.cpp), and still loads an external draft
+        # model when one is named -- so the memory stays spent. Removing the
+        # flags is the only clean off. A non-numeric SPEC_N is a hard error, so a
+        # typo can never masquerade as a silent "drafter off".
+        _spec_n="$${SPEC_N:-1}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 1 ;;
+        esac
+        if [ "$$_spec_n" -gt 0 ]; then
+          echo "[spec] drafter ON (SPEC_N=$$_spec_n)" >&2
+          exec /app/llama-server "$$@"
+        fi
+        ARGS=(); _skip=0
+        for _a in "$$@"; do
+          if [ "$$_skip" = 1 ]; then _skip=0; continue; fi
+          case "$$_a" in
+            --spec-type|--spec-draft-model|--spec-draft-n-max|--spec-draft-n-min|-md|--model-draft) _skip=1; continue ;;
+          esac
+          ARGS+=("$$_a")
+        done
+        echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - drafter flags removed" >&2
+        exec /app/llama-server "$${ARGS[@]}"
+      - --
     command: >-
       --host 0.0.0.0
       --port 8080
       -m /models/${GGUF_FILE:-carnice-v2-27b-gguf/stuchapin-q8/Carnice-V2-27B-Q8_0-mtp.gguf}
       --spec-type draft-mtp
-      --spec-draft-n-max ${DRAFT_N_MAX:-1}
+      --spec-draft-n-max ${SPEC_N:-${DRAFT_N_MAX:-1}}
       -ngl all
       --split-mode ${SPLIT_MODE:-layer}
       --main-gpu ${MAIN_GPU:-0}

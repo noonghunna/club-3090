@@ -33,10 +33,10 @@
 # under bash with `vllm` replaced by a stub that prints its argv, and inspects
 # the argv the engine would actually have received. No GPU, no weights, no image.
 
-# SCOPE: vLLM only. `--speculative-config` is a vLLM flag; SGLang
-# (--speculative-algorithm) and llama.cpp (--spec-draft-model / MTP_DRAFT_N_MAX)
-# have their own drafter knobs and are NOT covered. The llama.cpp family has the
-# same class of bug, tracked separately.
+# SCOPE: vLLM (`--speculative-config`) and the llama.cpp lineage (mainline,
+# ik-llama, beellama, llamacpp-club3090 — `--spec-type` / `--spec-draft-model` /
+# `--spec-draft-n-max` / `-md`). SGLang (--speculative-algorithm) is not covered;
+# its two composes ship no drafter today.
 
 set -euo pipefail
 export PYTHONUTF8="${PYTHONUTF8:-1}"
@@ -49,7 +49,13 @@ import json, os, pathlib, re, subprocess, sys, tempfile
 
 root = pathlib.Path(sys.argv[1])
 
-FLAG = "--speculative-config"
+FLAG = "--speculative-config"                      # vLLM
+# llama.cpp lineage: four grammars (mainline `--spec-type draft-mtp
+# --spec-draft-n-max N`, ik-llama `--spec-type mtp:n_max=N,...`, beellama
+# `--spec-type dflash` + external GGUF, deepseek `-md <path>`). All that matters
+# for the contract is that NONE of them survive SPEC_N=0.
+LC_FLAGS = ("--spec-type", "--spec-draft-model", "--spec-draft-n-max",
+            "--spec-draft-n-min", "-md", "--model-draft")
 
 
 def _interp(v, env):
@@ -127,6 +133,26 @@ def entrypoint_of(text):
 
 
 def command_of(text, env):
+    """`command:` as a list, or as a folded/literal scalar that docker splits."""
+    lines = text.split("\n")
+    for i, l in enumerate(lines):
+        m = re.match(r"^(\s*)command:\s*(>-|>|\||\|-)\s*$", l)
+        if not m:
+            continue
+        ind = len(m.group(1))
+        j, buf = i + 1, []
+        while j < len(lines):
+            cur = lines[j]
+            if cur.strip() and (len(cur) - len(cur.lstrip())) <= ind:
+                break
+            buf.append(cur.strip())
+            j += 1
+        import shlex
+        return shlex.split(_interp(" ".join(buf), env))
+    return _command_list(text, env)
+
+
+def _command_list(text, env):
     lines, args = text.split("\n"), []
     for i, l in enumerate(lines):
         if not re.match(r"^\s*command:\s*$", l):
@@ -161,6 +187,10 @@ def argv_under(text, env):
                       "to `- |` block form (every shipped vLLM compose uses that)")
     with tempfile.TemporaryDirectory() as d:
         dp = pathlib.Path(d)
+        (dp / "app").mkdir(exist_ok=True)
+        srv = dp / "app" / "llama-server"
+        srv.write_text('#!/bin/bash\nfor a in "$@"; do printf "ARG:%s\\n" "$a"; done\nexit 0\n')
+        srv.chmod(0o755)
         stub = dp / "vllm"
         stub.write_text('#!/bin/bash\nfor a in "$@"; do printf "ARG:%s\\n" "$a"; done\nexit 0\n')
         stub.chmod(0o755)
@@ -172,7 +202,9 @@ def argv_under(text, env):
             (etc / sub).mkdir(parents=True, exist_ok=True)
             (etc / sub / "install.sh").write_text("#!/bin/bash\nexit 0\n")
         script = dp / "ep.sh"
-        script.write_text(body.replace("$$", "$").replace("/etc/club3090", str(etc)))
+        script.write_text(body.replace("$$", "$")
+                              .replace("/etc/club3090", str(etc))
+                              .replace("/app/llama-server", str(srv)))
         # only what the compose declares crosses into the container
         e = {k: v for k, v in os.environ.items() if not k.startswith(("SPEC", "NUM_SPEC"))}
         e.update(container_env(text, env)); e["PATH"] = f"{d}:{os.environ['PATH']}"
@@ -217,6 +249,28 @@ def payload_problem(args):
     if not ({"method", "model"} & set(obj)):
         return f"--speculative-config names neither a method nor a draft model: {p!r}"
     return None
+
+
+def lc_drafter_args(args):
+    return [a for a in (args or []) if a in LC_FLAGS]
+
+
+def check_llamacpp(text, label, sink):
+    """Same contract, llama.cpp lineage: SPEC_N=0 must REMOVE the drafter flags.
+    Zeroing the count is not enough — llama.cpp still builds the draft context
+    (and still loads an external draft model) at --spec-draft-n-max 0."""
+    base, err = argv_under(text, {})
+    if base is None:
+        sink.append(f"{label}: {err}"); return
+    if not lc_drafter_args(base):
+        sink.append(f"{label}: ships drafter flags but the default resolves to none")
+        return
+    for env, desc in [({"SPEC_N": "0"}, "SPEC_N=0"), ({"SPEC": "off"}, "SPEC=off")]:
+        a, _ = argv_under(text, env)
+        left = lc_drafter_args(a)
+        if left:
+            sink.append(f"{label}: {desc} does not disable the drafter — "
+                        f"{' '.join(sorted(set(left)))} still passed to the engine")
 
 
 def check(text, label, sink):
@@ -335,10 +389,14 @@ for f in sorted(root.glob("models/*/*/compose/**/*.yml")):
     if "_archive" in str(f):
         continue
     text = f.read_text(encoding="utf-8")
-    if not any(FLAG in l and not l.lstrip().startswith("#") for l in text.split("\n")):
-        continue
-    checked += 1
-    check(text, str(f.relative_to(root)), errors)
+    live = [l for l in text.split("\n") if not l.lstrip().startswith("#")]
+    if any(FLAG in l for l in live):
+        checked += 1
+        check(text, str(f.relative_to(root)), errors)
+    elif any(re.search(r"(?<![\w-])" + re.escape(fl) + r"(?![\w-])", l)
+             for l in live for fl in LC_FLAGS):
+        checked += 1
+        check_llamacpp(text, str(f.relative_to(root)), errors)
 
 if errors:
     print("test-spec-toggle-contract: FAIL")
