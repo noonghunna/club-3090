@@ -35,7 +35,7 @@
 # Quick start:
 #   1. Get the GGUF:
 #        hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_NL.gguf \
-#          --local-dir $MODEL_DIR/qwen3.8-27b-gguf/iq4ks
+#          --local-dir $MODEL_DIR/qwen3.8-27b-gguf
 #   2. From this directory:
 #        MODEL_DIR=/your/models/dir docker compose -f iq4ks.yml up -d
 #   3. curl http://localhost:8020/v1/models  -> should list the model.

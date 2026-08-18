@@ -1211,7 +1211,7 @@ COMPOSE_REGISTRY = {
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=150000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.8-27b/llama-cpp/compose/single/iq4ks-vision.yml",
-        weights_companions=("gguf_mmproj_bf16",),  # mmproj vision projector the compose mounts
+        weights_companions=("gguf_mmproj_f16",),  # mmproj vision projector the compose mounts
         default_port=8020,
         kvcalc_key="SKIP",
         status="incubating",

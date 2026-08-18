@@ -37,7 +37,7 @@
 # Quick start:
 #   1. Get the GGUF + mmproj:
 #        hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_NL.gguf \
-#          --local-dir $MODEL_DIR/qwen3.8-27b-gguf/iq4ks
+#          --local-dir $MODEL_DIR/qwen3.8-27b-gguf
 #        hf download bartowski/Qwen3.8-27B-GGUF mmproj-Qwen3.8-27B-bf16.gguf \
 #          --local-dir $MODEL_DIR/qwen3.8-27b-gguf
 #   2. From this directory:

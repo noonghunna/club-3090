@@ -1,0 +1,71 @@
+schema_version: 1
+id: qwen3.8-27b
+display_name: Qwen3.8 27B
+# Gated-DeltaNet/attention hybrid, same layout as qwen3.6-27b: 64 layers =
+# 48 linear-attention (GDN) + 16 full-attention. Architecture constants below are
+# taken from Qwen/Qwen3.8-27B config.json -> text_config (model_type qwen3_5_text);
+# the GGUF exposes this arch as `qwen35`, which is mainline-llama.cpp-only.
+# kv_calc_supported is false to match the compose_registry entries' kvcalc_key="SKIP" —
+# the constants are accurate but KV projections have not been validated against
+# measured VRAM for this model yet. Flip to true once a calibration run confirms them.
+family: qwen3-next-hybrid
+hidden_size: 5120
+intermediate_size: 17408
+num_hidden_layers: 64
+num_gdn_layers: 48
+num_attn_layers: 16
+num_attn_heads: 24
+num_kv_heads: 4
+head_dim_attn: 256
+linear_num_v_heads: 48
+linear_num_k_heads: 16
+linear_v_head_dim: 128
+linear_k_head_dim: 128
+linear_conv_kernel_dim: 4
+mtp_num_hidden_layers: 1
+attn_output_gate: true
+max_ctx_supported: 262144
+attention_k_eq_v: false
+kv_calc_supported: false
+vision_capable: true
+weights:
+  bartowski-iq4nl:
+    path: qwen3.8-27b-gguf
+    local_subdir: qwen3.8-27b-gguf
+    size_gb: 16.3
+    format: gguf
+    status: incubating
+    hf_repo: bartowski/Qwen3.8-27B-GGUF
+    files:
+      - Qwen3.8-27B-IQ4_NL.gguf
+    engine: llama-cpp
+    kind: gguf
+    verify_glob: "*.gguf"
+    manual_note: "bartowski GGUF, IQ4_NL (~16,325,830,240 bytes) — this arch's hybrid DeltaNet/attention layout has no IQ4_KS from bartowski (IQK quants run IQ2_XS through IQ4_NL, plus IQ4_XS); IQ4_NL is the 4-bit default referenced by the compose_registry `bartowski-iq4nl` slugs. Shipped compose default (200K ctx) has been downloaded but never booted/benched on this rig — see models/qwen3.8-27b/README.md."
+  bartowski-q4km:
+    path: qwen3.8-27b-gguf
+    local_subdir: qwen3.8-27b-gguf
+    size_gb: 17.8
+    format: gguf
+    status: incubating
+    hf_repo: bartowski/Qwen3.8-27B-GGUF
+    files:
+      - Qwen3.8-27B-Q4_K_M.gguf
+    engine: llama-cpp
+    kind: gguf
+    verify_glob: "*.gguf"
+    manual_note: "Q4_K_M (~17,772,537,440 bytes). This is the configuration bench-validated on this rig (unsloth's build of the same quant, + mmproj-Qwen3.8-27B-f16.gguf, q4_0 KV, -c 131072, single RTX 3090 @ 370W). Canonical bench 2026-08-17 at 370W: 57.83 narr / 68.50 code wall TPS, TTFT 154/150 ms — see BENCHMARKS.md. bartowski listed as primary hf_repo per catalog convention; unsloth/Qwen3.8-27B-GGUF is the alternate the bench rig actually pulled from."
+  gguf_mmproj_f16:
+    path: qwen3.8-27b-gguf
+    local_subdir: qwen3.8-27b-gguf
+    size_gb: 0.93
+    format: gguf
+    status: incubating
+    hf_repo: bartowski/Qwen3.8-27B-GGUF
+    files:
+      - mmproj-Qwen3.8-27B-f16.gguf
+    engine: llama-cpp
+    kind: mmproj
+    verify_glob: "*.gguf"
+    manual_note: "F16 vision projector (927,607,008 bytes) — the companion the bench-validated Q4_K_M rig actually mounted, and the key referenced by the `weights_companions=(\"gguf_mmproj_f16\",)` vision-coding registry entry. A BF16 variant also exists in the same repo (mmproj-Qwen3.8-27B-bf16.gguf, 931,145,952 bytes) and is what the shipped iq4ks-vision compose defaults to, but that pairing is unbenched — see models/qwen3.8-27b/README.md."
+default_weight_variant: bartowski-iq4nl

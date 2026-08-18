@@ -90,6 +90,37 @@ boot ≈ **22 GB**. KV cost is 16 gated-attention layers × 4 KV heads × 256 ×
 IQ4_NL weights and needs a fill-ladder verification before graduating the
 compose out of incubating.
 
+## What's working
+
+- **llama.cpp single-card boot, with and without vision** - bench-validated
+  config is unsloth `Q4_K_M` weights + `mmproj-Qwen3.8-27B-f16.gguf`, q4_0 KV,
+  `-c 131072`, MTP `--spec-draft-n-max 2`, single RTX 3090 @ 370 W.
+- **MTP spec-decode** on the bench-validated config above.
+- **Vision** via the `-vision` compose variant, tested at the bench-validated
+  context, not at the compose's higher default.
+
+## What's not working today
+
+- **The compose files' shipped default** - IQ4_NL weights @ 200K ctx, MTP
+  n_max 3, `mmproj-Qwen3.8-27B-bf16.gguf` - has been **downloaded to the host
+  but never booted or benchmarked**. Treat it as unvalidated until it's run
+  through the same fill-ladder as the Q4_K_M path.
+- **No IQ4_KS for this architecture** (see Weights sources above) - the
+  `iq4ks*.yml` compose names are placeholder labels, not literal IQ4_KS
+  quants.
+- **200K context end-to-end** - only the Q4_K_M @ 131K + vision path has been
+  measured on this rig; the IQ4_NL @ 200K path is untested (see VRAM table
+  above).
+
+## See also
+
+- [BENCHMARKS.md](../../BENCHMARKS.md) - measured TPS / TTFT for the
+  bench-validated config on this rig.
+- [`llama-cpp/compose/single/iq4ks.yml`](llama-cpp/compose/single/iq4ks.yml) -
+  text-only compose.
+- [`llama-cpp/compose/single/iq4ks-vision.yml`](llama-cpp/compose/single/iq4ks-vision.yml)
+  - vision compose.
+
 ## Troubleshooting
 
 **OOM at boot?** Lower `CTX_SIZE` (e.g. `CTX_SIZE=131072`) or try `UBATCH_SIZE=1024`.
