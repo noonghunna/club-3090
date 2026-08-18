@@ -46,6 +46,76 @@ fraction of RSS rather than any nonzero `VmSwap`. Happy to open a separate PR.
 byte-verified, but that path has **never been booted**, so `iq4ks.yml` stays
 incubating until it is measured.
 
+## Power-cap comparison (370 W vs 420 W)
+
+**Only the 370 W arm is measured.** The 420 W arm is deliberately left blank rather
+than filled with the numbers this rig produced on 2026-08-16, because those are not
+comparable — see the confound note below.
+
+| | 370 W (measured) | 420 W (pending) |
+|---|---|---|
+| Cap / default | 370 W (user-capped; card default is 420 W) | 420 W (stock) |
+| Draw under load | ~360 W @ 100% util, 72 °C | — |
+| Narrative wall / decode TPS | **58.05 / 58.57** (n=5, CV 2.9%) | — |
+| Code wall / decode TPS | **68.38 / 69.78** (n=5, CV 1.5%) | — |
+| TTFT narr / code | 150 / 148 ms | — |
+| PP tok/s @10K / @90K | 1265 / 911 | — |
+| Peak VRAM | 22440 MiB | — |
+| Derived tok/J (narr / code decode) | ~0.163 / ~0.194 | — |
+
+`tok/J` is derived from a **single spot sample** of `power.draw` (360.07 W at 100%
+util), not an integrated energy measurement — treat it as indicative only.
+
+### Why the existing 420 W figure is not usable here
+
+This rig has a 420 W data point (63.2 / 71.9 wall TPS, 2026-08-16), but comparing it
+against the 370 W row above would confound **three** variables at once:
+
+1. **Protocol.** That run used `max_tokens=200` on short prompts; canonical
+   `bench.sh` uses 1000 (narrative) / 800 (code). Shorter generations weight
+   fixed per-request overhead far more heavily.
+2. **Metric.** Its headline `~+25%` compared this rig's *wall* TPS against the
+   reference's *decode* TPS.
+3. **Build.** It was recorded against `server-cuda-b9246`; the 370 W run is on the
+   currently-pinned mainline image.
+
+A power delta cannot be separated from those. Any number quoted from it would be
+unattributable, so it is excluded.
+
+### What a valid A/B requires
+
+Same weights, ctx, KV type, MTP setting, engine build, and **the same warm engine
+instance** — with `power.limit` as the only variable, exactly as the swap A/B in the
+Benchmarks section above was run. Concretely:
+
+```sh
+# 420 W arm (stock default). Needs root; there is no passwordless sudo on this rig.
+sudo nvidia-smi -pl 420
+cd <repo>
+CONTAINER=none URL=http://localhost:8020 MODEL=onyx-qwen38-27b bash scripts/bench.sh
+
+# restore the capped arm and confirm reproducibility
+sudo nvidia-smi -pl 370
+CONTAINER=none URL=http://localhost:8020 MODEL=onyx-qwen38-27b bash scripts/bench.sh
+```
+
+Quiesce other clients first — this box shares one `-np 1` slot, and concurrent load
+costs ~28% median TPS, which would swamp the power effect being measured.
+
+For the fuller efficiency curve the repo already has the right tool:
+`sudo bash scripts/power-cap-sweep.sh --cooling air --load-mode decode-concurrent
+--concurrency auto --bench-runs 3` (keep the default `--step-size 10`; larger steps
+are too coarse for the efficiency knee). That is the artifact worth contributing for
+a 3090 anchor, and it is a follow-up rather than a blocker for this PR.
+
+### Why this matters beyond curiosity
+
+The repo's canonical Qwen3.6-27B reference (50.27 / 58.92) is a **370 W**
+measurement, and one sibling profile records a **−42% swing from 370 W to 230 W** on
+mainline llama.cpp. Power is therefore a first-class variable for any cross-row
+comparison in `BENCHMARKS.md`, not a footnote — which is precisely why the
+2026-08-16 row's 420 W-measured-but-370 W-annotated state was worth correcting.
+
 ## Verification
 
 - [X] **Profile header complete** — both compose files have `# Profile (at-a-glance):`
@@ -75,8 +145,9 @@ incubating until it is measured.
   container name; this run used `CONTAINER=none` against a host endpoint.
 - **Quality 8-pack**: N/A for this run — `benchlocal-cli` is not installed on the
   rig, so `quality-test.sh` could not run. Not a blocker for an incubating model.
-- **Power-cap A/B**: not run. The single 370 W point is measured and verified;
-  a sweep needs `sudo power-cap-sweep.sh` and is left for a follow-up.
+- **Power-cap A/B**: 370 W arm measured, 420 W arm pending — see the
+  "Power-cap comparison" section above for why the existing 420 W figure is not
+  comparable and what a valid A/B requires. Needs root; no passwordless sudo here.
 - **CHANGELOG**: deferred until the model graduates from incubating, at which
   point the IQ4_NL default path will also have been measured.
 
