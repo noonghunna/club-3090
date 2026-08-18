@@ -66,6 +66,24 @@ kv_calc_supported: false
 #                     (see the qwen3.6-27b gguf_mmproj_f16 entry for the shape).
 vision_capable: true
 weights:
+  bartowski-q4km:
+    path: qwen3.8-27b-gguf/bartowski-q4km
+    local_subdir: qwen3.8-27b-gguf/bartowski-q4km
+    size_gb: 17.8
+    format: gguf
+    status: experimental
+    hf_repo: bartowski/Qwen3.8-27B-GGUF
+    # bartowski, NOT unsloth -- verified by byte size. bartowski
+    # Qwen3.8-27B-Q4_K_M.gguf = 17,772,537,440 B, which is what is on the bench
+    # rig; unsloth ships a 17,106,775,008 B file under the same name. The two are
+    # NOT interchangeable, and earlier revisions of this PR misattributed the rig
+    # weights to unsloth.
+    files:
+      - Qwen3.8-27B-Q4_K_M.gguf
+    engine: llama-cpp
+    kind: gguf
+    verify_glob: "*.gguf"
+    manual_note: "Q4_K_M (17,772,537,440 bytes, bartowski). The configuration actually bench-validated and served on the reference rig: q4_0/q4_0 KV, -c 131072, -b 1024 -ub 1024, MTP n=2, paired with gguf_mmproj_f16. Canonical bench at 370 W: 58.05/68.38 wall TPS, verify-stress 8/8, NIAH fill to 120,320 tok."
   gguf_mmproj_f16:
     path: qwen3.8-27b-gguf/mmproj
     local_subdir: qwen3.8-27b-gguf/mmproj

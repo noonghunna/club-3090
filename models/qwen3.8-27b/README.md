@@ -10,14 +10,14 @@ hf download bartowski/Qwen3.8-27B-GGUF Qwen3.8-27B-IQ4_NL.gguf \
   --local-dir $MODEL_DIR/qwen3.8-27b-gguf
 
 # 2. (Optional) Download vision projector
-hf download bartowski/Qwen3.8-27B-GGUF mmproj-Qwen3.8-27B-bf16.gguf \
-  --local-dir $MODEL_DIR/qwen3.8-27b-gguf
+hf download bartowski/Qwen3.8-27B-GGUF mmproj-Qwen3.8-27B-f16.gguf \
+  --local-dir $MODEL_DIR/qwen3.8-27b-gguf/mmproj
 
-# 3. Launch (text-only)
-MODEL_DIR=/path/to/models docker compose -f llama-cpp/compose/single/iq4ks.yml up -d
+# 3. Launch (with vision) - defaults equal the benched config
+MODEL_DIR=/path/to/models docker compose -f llama-cpp/compose/single/bartowski-q4km/q4kv-vision.yml up -d
 
-# 4. Launch (with vision)
-MODEL_DIR=/path/to/models docker compose -f llama-cpp/compose/single/iq4ks-vision.yml up -d
+# For text-only, use the upstream compose:
+#   docker compose -f llama-cpp/compose/single/unsloth-iq4nl/q8kv.yml up -d
 
 # 5. Test
 curl http://localhost:8020/v1/models
@@ -27,8 +27,8 @@ curl http://localhost:8020/v1/models
 
 | Config | Path | Vision | Context | Notes |
 |---|---|---|---|---|
-| `iq4ks` | `llama-cpp/compose/single/iq4ks.yml` | no | 200K | Text-only; **200K requires IQ4_NL weights** — OOMs with Q4_K_M (see Benchmarks) |
-| `iq4ks-vision` | `llama-cpp/compose/single/iq4ks-vision.yml` | yes | 150K | Multimodal @ 1M-px default; bench rig ran 131K with Q4_K_M |
+| `bartowski-q4km/q4kv-vision` | `llama-cpp/compose/single/bartowski-q4km/q4kv-vision.yml` | **yes** | **131K** | Multimodal. Defaults equal the benched config: bartowski Q4_K_M + mmproj-F16, q4_0 KV, MTP n=2. NIAH-filled to 120,320 tok (91%) |
+| `unsloth-iq4nl/q8kv` (upstream) | `llama-cpp/compose/single/unsloth-iq4nl/q8kv.yml` | no | 131K | Text-only, shipped by upstream master — not part of this PR |
 
 ## Weights sources
 
@@ -60,10 +60,12 @@ BENCHMARKS row below ran unsloth `Q4_K_M` (17.7 GB) + `mmproj-Qwen3.8-27B-f16.gg
 To use unsloth weights, override the path at launch:
 ```bash
 GGUF_FILE=qwen3.8-27b-gguf/unsloth/Qwen3.8-27B-Q4_K_M.gguf \
-  MODEL_DIR=/path/to/models docker compose -f llama-cpp/compose/single/iq4ks.yml up -d
+  MODEL_DIR=/path/to/models docker compose -f llama-cpp/compose/single/bartowski-q4km/q4kv-vision.yml up -d
 ```
-(Download unsloth weights into `$MODEL_DIR/qwen3.8-27b-gguf/unsloth/` first.
-For the vision compose, also set `MMPROJ_FILE=` if unsloth's projector name differs.)
+(Download unsloth weights into `$MODEL_DIR/qwen3.8-27b-gguf/unsloth/` first. Note
+unsloth's Q4_K_M is a **different file**: 17,106,775,008 B vs bartowski's
+17,772,537,440 B. Its projectors are also named differently (`mmproj-F16.gguf`,
+927,607,488 B), so set `MMPROJ_FILE=` too. Only the bartowski pairing is benched.)
 
 ## Architecture
 
@@ -116,10 +118,9 @@ compose out of incubating.
 
 - [BENCHMARKS.md](../../BENCHMARKS.md) - measured TPS / TTFT for the
   bench-validated config on this rig.
-- [`llama-cpp/compose/single/iq4ks.yml`](llama-cpp/compose/single/iq4ks.yml) -
-  text-only compose.
-- [`llama-cpp/compose/single/iq4ks-vision.yml`](llama-cpp/compose/single/iq4ks-vision.yml)
-  - vision compose.
+- [`llama-cpp/compose/single/bartowski-q4km/q4kv-vision.yml`](llama-cpp/compose/single/bartowski-q4km/q4kv-vision.yml) - the vision compose added by this PR.
+- `llama-cpp/compose/single/unsloth-iq4nl/q8kv.yml` - upstream's text-only
+  single-3090 compose (not part of this PR).
 
 ## Troubleshooting
 

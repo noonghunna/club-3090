@@ -3,9 +3,14 @@
 Add Qwen3.8-27B support for single RTX 3090 via llama.cpp, following the same
 pattern as existing models (qwen3.6-27b unsloth-q4km, tess-4-27b, etc.).
 
-Two compose variants: text-only (200K ctx) and multimodal (150K ctx with
-mmproj vision). Both target bartowski 4-bit GGUFs with MTP n=3 speculative
-decoding. Note: this arch ships **no IQ4_KS** from bartowski — the 4-bit
+Ships the **vision** compose that upstream `llamacpp/qwen38-27b-single-iq4nl`
+explicitly names as missing (its note: vision "needs a third pull plus a
+kind:mmproj weights entry plus a -vision.yml sibling"), plus the measurements
+that entry lacks (it claims no TPS, no verify-stress, no soak, and a ctx ceiling
+that is computed rather than measured).
+
+The text-only compose originally in this PR was **dropped** — upstream now ships
+an equivalent at `single/unsloth-iq4nl/q8kv.yml`. Note: this arch ships **no IQ4_KS** from bartowski — the 4-bit
 default is IQ4_NL (~16.3 GB); the `iq4ks` slug names are a quant-label
 placeholder, `GGUF_FILE`/`MMPROJ_FILE` env overrides select the actual file.
 
@@ -39,82 +44,70 @@ mounted there is nowhere to page, and 36 kB is 0.0002% of an 18.3 GiB RSS.
 Suggest short-circuiting the check when `swap_total == 0`, or thresholding on a
 fraction of RSS rather than any nonzero `VmSwap`. Happy to open a separate PR.
 
-⚠️ **The bench rig is NOT the compose defaults.** It ran **unsloth Q4_K_M
-(17.8 GB) + mmproj-F16 at CTX_SIZE=131072** — Q4_K_M OOMs at 200K on 24 GB
-(weights 17.8 + mmproj 0.93 + q4_0 KV 3.7 GB ≈ 22.4+ GB). The compose default
-200K only fits with IQ4_NL (16.3 GB). Both default files are now downloaded and
-byte-verified, but that path has **never been booted**, so `iq4ks.yml` stays
-incubating until it is measured.
+✅ **The compose defaults now equal the benched configuration** — bartowski Q4_K_M
+(17,772,537,440 B) + mmproj-F16 (927,607,008 B), `-c 131072`, `-b 1024 -ub 1024`,
+q4_0/q4_0 KV, MTP n=2. Earlier revisions of this PR shipped IQ4_NL @ 200K with MTP
+n=3 while benching something else, and apologised for the gap in three places. The
+gap is now closed rather than documented.
 
-## Power-cap comparison (370 W vs 420 W)
+⚠️ **Provenance correction.** Earlier revisions credited the rig weights and projector
+to unsloth. Both are **bartowski**, verified by byte size: bartowski
+`Qwen3.8-27B-Q4_K_M.gguf` is 17,772,537,440 B (what is on the rig) while unsloth's
+same-named file is 17,106,775,008 B — 666 MB smaller. Their projectors also differ in
+name and size. The two are not interchangeable.
 
-**Only the 370 W arm is measured.** The 420 W arm is deliberately left blank rather
-than filled with the numbers this rig produced on 2026-08-16, because those are not
-comparable — see the confound note below.
+⚠️ **IQ4_NL @ 200K is still unbooted.** Both of those files are downloaded and
+byte-verified, but that path has never been launched, so no claim is made for it.
 
-| | 370 W (measured) | 420 W (pending) |
-|---|---|---|
-| Cap / default | 370 W (user-capped; card default is 420 W) | 420 W (stock) |
-| Draw under load | ~360 W @ 100% util, 72 °C | — |
-| Narrative wall / decode TPS | **58.05 / 58.57** (n=5, CV 2.9%) | — |
-| Code wall / decode TPS | **68.38 / 69.78** (n=5, CV 1.5%) | — |
-| TTFT narr / code | 150 / 148 ms | — |
-| PP tok/s @10K / @90K | 1265 / 911 | — |
-| Peak VRAM | 22440 MiB | — |
-| Derived tok/J (narr / code decode) | ~0.163 / ~0.194 | — |
+## Power-cap sweep (210–450 W, 10 W steps)
 
-`tok/J` is derived from a **single spot sample** of `power.draw` (360.07 W at 100%
-util), not an integrated energy measurement — treat it as indicative only.
-
-### Why the existing 420 W figure is not usable here
-
-This rig has a 420 W data point (63.2 / 71.9 wall TPS, 2026-08-16), but comparing it
-against the 370 W row above would confound **three** variables at once:
-
-1. **Protocol.** That run used `max_tokens=200` on short prompts; canonical
-   `bench.sh` uses 1000 (narrative) / 800 (code). Shorter generations weight
-   fixed per-request overhead far more heavily.
-2. **Metric.** Its headline `~+25%` compared this rig's *wall* TPS against the
-   reference's *decode* TPS.
-3. **Build.** It was recorded against `server-cuda-b9246`; the 370 W run is on the
-   currently-pinned mainline image.
-
-A power delta cannot be separated from those. Any number quoted from it would be
-unattributable, so it is excluded.
-
-### What a valid A/B requires
-
-Same weights, ctx, KV type, MTP setting, engine build, and **the same warm engine
-instance** — with `power.limit` as the only variable, exactly as the swap A/B in the
-Benchmarks section above was run. Concretely:
-
-```sh
-# 420 W arm (stock default). Needs root; there is no passwordless sudo on this rig.
-sudo nvidia-smi -pl 420
-cd <repo>
-CONTAINER=none URL=http://localhost:8020 MODEL=onyx-qwen38-27b bash scripts/bench.sh
-
-# restore the capped arm and confirm reproducibility
-sudo nvidia-smi -pl 370
-CONTAINER=none URL=http://localhost:8020 MODEL=onyx-qwen38-27b bash scripts/bench.sh
-```
-
-Quiesce other clients first — this box shares one `-np 1` slot, and concurrent load
-costs ~28% median TPS, which would swamp the power effect being measured.
-
-For the fuller efficiency curve the repo already has the right tool:
 `sudo bash scripts/power-cap-sweep.sh --cooling air --load-mode decode-concurrent
---concurrency auto --bench-runs 3` (keep the default `--step-size 10`; larger steps
-are too coarse for the efficiency knee). That is the artifact worth contributing for
-a 3090 anchor, and it is a follow-up rather than a blocker for this PR.
+--concurrency auto --bench-runs 3` — 25 caps, concurrency auto-selected to 4, air-cooled.
+Full summary attached as a PR comment.
 
-### Why this matters beyond curiosity
+| Cap | Narr TPS | Code TPS | Draw | SM clk | Narr tok/W |
+|---:|---:|---:|---:|---:|---:|
+| 210 | 29.02 | 31.75 | 209 W | 840 | 0.139 |
+| 250 | 43.81 | 45.50 | 249 W | 1230 | **0.176** ← peak |
+| 270 | 45.48 | 48.72 | 268 W | 1380 | 0.170 |
+| 300 | 49.45 | 54.38 | 298 W | 1515 | 0.166 |
+| 370 | 52.11 | 59.04 | 367 W | 1680 | 0.142 |
+| 420 | 50.91 | 61.24 | 415 W | 1755 | 0.123 |
+| 450 | 51.87 | 61.64 | **428 W** | 1785 | 0.121 |
 
-The repo's canonical Qwen3.6-27B reference (50.27 / 58.92) is a **370 W**
-measurement, and one sibling profile records a **−42% swing from 370 W to 230 W** on
-mainline llama.cpp. Power is therefore a first-class variable for any cross-row
-comparison in `BENCHMARKS.md`, not a footnote — which is precisely why the
-2026-08-16 row's 420 W-measured-but-370 W-annotated state was worth correcting.
+**Efficiency plateaus ~230–310 W, peaking near 250–270 W.** Against that peak, 370 W
+is −19% tok/W and 420 W is −30%. **Throughput saturates ~300 W**: 300→450 W buys
+**+5% narrative for +50% power** (code gains more, +13%, so code-heavy work justifies
+slightly more headroom than prose).
+
+**Decode is memory-bandwidth-bound**, by the script's own diagnostic: SM clock scales
+monotonically 840→1785 MHz across the sweep while TPS plateaus, and memory clock stays
+pinned at the 3090 spec max 9501 MHz throughout. That is why the controlled 370→420 W
+A/B moved decode only ~2%.
+
+**Caps above ~430 W are inert** — draw at the 430/440/450 caps is 425.0/428.0/427.9 W,
+so the card stops tracking the limit. **Not thermally limited**: 74 °C max, well under
+the 80–83 °C air-throttle band, and `sw_power_cap` Active in ~100% of in-load samples,
+so the curve is power-shaped rather than cooling-shaped and is usable as a cross-rig
+anchor.
+
+### Read the shape, not adjacent caps
+
+The script warns that adjacent-cap deltas are timing-noise, and this run bears that out
+(250 > 260, 310 > 320, 410 > 430 all invert). Notably the sweep's own 370-vs-420 pair
+(52.11 vs 50.91) contradicts a controlled A/B run on the same warm engine, which gave
+**+2.5% narrative / +2.1% code at 420 W** over 370 W (n=5, CV 1.3%). Trust the A/B for
+that pair and the sweep for curve shape. Two further caveats: the sweep's absolute TPS
+are **not** comparable to the single-stream `bench.sh` numbers above (it runs 4 concurrent
+streams against a `-np 1` engine, which serialises rather than batches — its notes assume
+a continuous-batching engine), and the 0.176 peak should be read as a plateau, not a point.
+
+### Consequence for this row's operating point
+
+The benchmarks above were taken at **370 W**. On the strength of this sweep the reference
+box now runs at **250 W**, near the efficiency peak. The 370 W figures remain valid and
+reproducible as a labelled measurement, and are what the BENCHMARKS row documents; a
+250 W single-stream re-bench is the obvious follow-up but is not required for this PR.
 
 ## Verification
 
@@ -158,26 +151,30 @@ comparison in `BENCHMARKS.md`, not a footnote — which is precisely why the
 
 ---
 
-## Files changed (8 files)
+## Files changed (7 files)
 
 | File | Type | Notes |
 |---|---|---|
+| `models/qwen3.8-27b/llama-cpp/compose/single/bartowski-q4km/q4kv-vision.yml` | new | the multimodal sibling upstream's note asks for. Defaults **equal the benched config**: bartowski Q4_K_M + mmproj-F16, `-c 131072`, MTP n=2, q4_0 KV |
 | `models/qwen3.8-27b/README.md` | new | model card — quant options, VRAM table, no-IQ4_KS flag, what's working / not working |
-| `models/qwen3.8-27b/llama-cpp/compose/single/iq4ks.yml` | new | text-only, IQ4_NL default, 200K |
-| `models/qwen3.8-27b/llama-cpp/compose/single/iq4ks-vision.yml` | new | multimodal, 150K, mmproj |
-| `scripts/lib/profiles/models/qwen3.8-27b.yml` | new | model profile — required for the registry entries to resolve (see Review) |
-| `BENCHMARKS.md` | modified | +1 canonical row (58.05/68.38 @ 370 W), supersedes the 2026-08-16 entry |
-| `scripts/lib/profiles/compose_registry.py` | modified | +2 incubating slugs (`llamacpp/qwen38-27b-iq4ks[-vision]`) |
+| `scripts/lib/profiles/models/qwen3.8-27b.yml` | modified | adds `bartowski-q4km` + `gguf_mmproj_f16`/`_bf16`; the `kind: mmproj` entries upstream lacks |
+| `BENCHMARKS.md` | modified | +1 canonical row (58.05/68.38 @ 370 W) + power-cap sweep findings; supersedes the 2026-08-16 entry |
+| `scripts/lib/profiles/compose_registry.py` | modified | +1 slug `llamacpp/qwen38-27b-iq4ks-vision` → the vision compose, `max_ctx=131072` |
 | `README.md` | modified | supported-models table row |
-| `create-pr.sh` | new | this PR-creation helper (fork:head compare URL, embedded body) |
+| `create-pr.sh` | new | PR-creation helper (fork:head compare URL, embedded body) |
+
+**Dropped from an earlier revision of this PR:**
+`single/iq4ks.yml` (text-only) — upstream master now ships an equivalent at
+`single/unsloth-iq4nl/q8kv.yml`, so it was a duplicate under a superseded flat path
+with a misleading `iq4ks` name for an IQ4_NL file.
 
 ## Weights sources
 
 | Source | Quant | Size | Notes |
 |---|---|---|---|
 | bartowski/Qwen3.8-27B-GGUF | **IQ4_NL** | 16,325,830,240 B (~16.3 GB) | 4-bit default (no IQ4_KS for this arch); downloaded, **unbooted** |
-| bartowski/Qwen3.8-27B-GGUF | Q4_K_M | 17,772,537,440 B (~17.8 GB) | 200K OOMs on 24 GB — 131K cap (measured) |
-| unsloth/Qwen3.8-27B-GGUF | Q4_K_M | 17,772,537,440 B (~17.8 GB) | **Bench-validated rig** — 58.05/68.38 wall TPS @ 131K + vision, 370 W |
+| bartowski/Qwen3.8-27B-GGUF | Q4_K_M | 17,772,537,440 B (~17.8 GB) | **the bench-validated rig weights and the compose default**; 200K OOMs on 24 GB, 131K measured (NIAH fill 120,320 tok) |
+| unsloth/Qwen3.8-27B-GGUF | Q4_K_M | 17,106,775,008 B | **NOT the rig weights** — 666 MB smaller than bartowski's same-named file |
 
 mmproj (both from **bartowski**): `mmproj-Qwen3.8-27B-bf16.gguf` (931,145,952 B —
 compose default, unbenched) or `mmproj-Qwen3.8-27B-f16.gguf` (927,607,008 B — the

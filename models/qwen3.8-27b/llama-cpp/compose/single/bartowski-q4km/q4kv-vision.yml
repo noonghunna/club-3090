@@ -7,7 +7,7 @@
 #   KV:        q4_0 K + q4_0 V
 #   Vision:    YES (mmproj mounted - multimodal input enabled)
 #   Max ctx:   150000 default @ 1M-px (vision overhead eats ~50K headroom)
-#   Status:    incubating - unbenchmarked on 3090
+#   Status:    incubating - BENCHED on 1x 3090 @ 370 W (see BENCHMARKS.md)
 #   Engine-profile: llama-cpp-local
 #   Best for:  Multimodal chat, screenshot-debugging, vision-aware code review.
 # ---------------------------------------------------------------------------
@@ -46,16 +46,16 @@
 #
 # Override defaults via .env or shell:
 #   MODEL_DIR              host dir to mount as /models
-#   GGUF_FILE              path under /models  (default: qwen3.8-27b-gguf/Qwen3.8-27B-IQ4_NL.gguf)
-#   MMPROJ_FILE            path under /models  (default: qwen3.8-27b-gguf/mmproj-Qwen3.8-27B-bf16.gguf)
+#   GGUF_FILE              path under /models  (default: qwen3.8-27b-gguf/bartowski-q4km/Qwen3.8-27B-Q4_K_M.gguf)
+#   MMPROJ_FILE            path under /models  (default: qwen3.8-27b-gguf/mmproj/mmproj-Qwen3.8-27B-f16.gguf)
 #   IMAGE_MIN_TOKENS       min tokens / image  (default: 1024)
 #   IMAGE_MAX_TOKENS       max tokens / image  (default: 1024 = ~1M px)
-#   CTX_SIZE               KV pool size        (default: 150000)
+#   CTX_SIZE               KV pool size        (default: 131072 -- measured NIAH fill 120,320 tok = 91%)
 #   BATCH_SIZE             llama.cpp -b        (default: 1024)
 #   UBATCH_SIZE            llama.cpp -ub       (default: 512)
 #   KV_TYPE                K and V quant type  (default: q4_0)
 #   NP                     parallel slots      (default: 1)
-#   MTP_DRAFT_N_MAX        MTP draft tokens    (default: 3)
+#   MTP_DRAFT_N_MAX        MTP draft tokens    (default: 2)
 #   REASONING              thinking gate       (default: off)
 #   REASONING_FORMAT       reasoning routing   (default: deepseek)
 #   PORT                   host port           (default: 8020)
@@ -73,11 +73,11 @@ services:
     command: >-
       --host 0.0.0.0
       --port 8080
-      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/Qwen3.8-27B-IQ4_NL.gguf}
-      --mmproj /models/${MMPROJ_FILE:-qwen3.8-27b-gguf/mmproj-Qwen3.8-27B-bf16.gguf}
+      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/bartowski-q4km/Qwen3.8-27B-Q4_K_M.gguf}
+      --mmproj /models/${MMPROJ_FILE:-qwen3.8-27b-gguf/mmproj/mmproj-Qwen3.8-27B-f16.gguf}
       --image-min-tokens ${IMAGE_MIN_TOKENS:-1024}
       --image-max-tokens ${IMAGE_MAX_TOKENS:-1024}
-      -c ${CTX_SIZE:-150000}
+      -c ${CTX_SIZE:-131072}
       -b ${BATCH_SIZE:-1024}
       -ub ${UBATCH_SIZE:-512}
       -ngl 99
@@ -86,7 +86,7 @@ services:
       --cache-type-v ${KV_TYPE:-q4_0}
       -np ${NP:-1}
       --spec-type draft-mtp
-      --spec-draft-n-max ${MTP_DRAFT_N_MAX:-3}
+      --spec-draft-n-max ${MTP_DRAFT_N_MAX:-2}
       --jinja
       --reasoning ${REASONING:-off}
       --reasoning-format ${REASONING_FORMAT:-deepseek}

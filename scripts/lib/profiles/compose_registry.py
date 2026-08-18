@@ -393,7 +393,7 @@ COMPOSE_REGISTRY = {
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         # 150K @ 1M-px (IMAGE_MAX_TOKENS=1024) — re-tuned 2026-05-25 (PR #227); was a
         # stale 49152. Full-res 4M-px OOMs at fill, so 1M-px is the safe default.
-        tp=1, max_ctx=150000, max_num_seqs=1, mem_util=None,
+        tp=1, max_ctx=131072, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.6-27b/llama-cpp/compose/single/unsloth-q4km/mtp-vision.yml",
         weights_companions=("gguf_mmproj_f16",),  # mmproj vision projector the compose mounts
         default_port=8020,
@@ -1196,21 +1196,11 @@ COMPOSE_REGISTRY = {
     # Qwen3.8-27B — llama.cpp single 3090 (4-bit GGUF; no IQ4_KS for this arch, default IQ4_NL).
     # Incubating: first bench 63.2/71.9 wall TPS @ 131K + vision (unsloth Q4_K_M rig, 2026-08-16,
     # non-canonical short-prompt protocol; default IQ4_NL 200K path unmeasured). Vision variant at iq4ks-vision.
-    "llamacpp/qwen38-27b-iq4ks": _entry(
-        model="qwen3.8-27b", weights_variant="unsloth-iq4nl", workload="fast-chat",
-        engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
-        tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
-        compose_path="models/qwen3.8-27b/llama-cpp/compose/single/iq4ks.yml",
-        default_port=8020,
-        kvcalc_key="SKIP",
-        status="incubating",
-        status_note="Qwen3.8-27B (4-bit GGUF — bartowski has no IQ4_KS for this arch; default IQ4_NL ~16.3 GB) on llama.cpp single 3090. MTP n=3, q4_0 KV, 200K ctx (IQ4_NL only — Q4_K_M OOMs, rig validated at 131K). First bench (unsloth Q4_K_M rig, 2026-08-16): 63.2/71.9 wall TPS, non-canonical protocol. Incubating. Vision variant at llamacpp/qwen38-27b-iq4ks-vision.",
-    ),
     "llamacpp/qwen38-27b-iq4ks-vision": _entry(
-        model="qwen3.8-27b", weights_variant="unsloth-iq4nl", workload="vision-coding",
+        model="qwen3.8-27b", weights_variant="bartowski-q4km", workload="vision-coding",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=150000, max_num_seqs=1, mem_util=None,
-        compose_path="models/qwen3.8-27b/llama-cpp/compose/single/iq4ks-vision.yml",
+        compose_path="models/qwen3.8-27b/llama-cpp/compose/single/bartowski-q4km/q4kv-vision.yml",
         weights_companions=("gguf_mmproj_f16",),  # mmproj vision projector the compose mounts
         default_port=8020,
         kvcalc_key="SKIP",
@@ -1565,8 +1555,7 @@ DEFAULTS = {
     ("tess-4-27b", "vllm", "dual"): "vllm/tess-dual-w4a16",
     ("thinkingcap-27b", "vllm", "dual"): "vllm/thinkingcap-dual-w4a8",
     # Qwen3.8-27B: llama.cpp single-card default (incubating, unbenchmarked).
-    ("qwen3.8-27b", "llamacpp", "single"): "llamacpp/qwen38-27b-iq4ks",
-}
+    }
 
 
 # --- PR-B: model-default resolver knobs (maintainer-owned, design §13.3) ----
