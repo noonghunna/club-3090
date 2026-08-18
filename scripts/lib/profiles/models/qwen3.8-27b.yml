@@ -66,6 +66,36 @@ kv_calc_supported: false
 #                     (see the qwen3.6-27b gguf_mmproj_f16 entry for the shape).
 vision_capable: true
 weights:
+  gguf_mmproj_f16:
+    path: qwen3.8-27b-gguf/mmproj
+    local_subdir: qwen3.8-27b-gguf/mmproj
+    size_gb: 0.93
+    format: gguf
+    status: experimental
+    hf_repo: bartowski/Qwen3.8-27B-GGUF
+    # bartowski, NOT unsloth: the two repos ship DIFFERENT projector artifacts
+    # (unsloth mmproj-F16.gguf = 927,607,488 B vs bartowski
+    # mmproj-Qwen3.8-27B-f16.gguf = 927,607,008 B). The 927,607,008 B file is the
+    # one the vision bench actually mounted, so that is what is declared here.
+    files:
+      - mmproj-Qwen3.8-27B-f16.gguf
+    engine: llama-cpp
+    kind: mmproj
+    verify_glob: "*.gguf"
+    manual_note: "F16 vision projector (927,607,008 bytes) for the VL-capable base. Closes the gap named in the llamacpp/qwen38-27b-single-iq4nl note: vision needs a third pull, a kind:mmproj weights entry, and a -vision.yml sibling. Bench-validated on 1x 3090 @ 370 W alongside Q4_K_M at -c 131072."
+  gguf_mmproj_bf16:
+    path: qwen3.8-27b-gguf/mmproj
+    local_subdir: qwen3.8-27b-gguf/mmproj
+    size_gb: 0.93
+    format: gguf
+    status: experimental
+    hf_repo: bartowski/Qwen3.8-27B-GGUF
+    files:
+      - mmproj-Qwen3.8-27B-bf16.gguf
+    engine: llama-cpp
+    kind: mmproj
+    verify_glob: "*.gguf"
+    manual_note: "BF16 vision projector (931,145,952 bytes) — the alternate the vision compose currently defaults to. UNBENCHED; the f16 sibling is the validated pairing."
   unsloth-iq4nl:
     path: qwen3.8-27b-gguf/unsloth-iq4nl
     local_subdir: qwen3.8-27b-gguf/unsloth-iq4nl

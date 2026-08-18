@@ -1197,7 +1197,7 @@ COMPOSE_REGISTRY = {
     # Incubating: first bench 63.2/71.9 wall TPS @ 131K + vision (unsloth Q4_K_M rig, 2026-08-16,
     # non-canonical short-prompt protocol; default IQ4_NL 200K path unmeasured). Vision variant at iq4ks-vision.
     "llamacpp/qwen38-27b-iq4ks": _entry(
-        model="qwen3.8-27b", weights_variant="bartowski-iq4nl", workload="fast-chat",
+        model="qwen3.8-27b", weights_variant="unsloth-iq4nl", workload="fast-chat",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=200000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.8-27b/llama-cpp/compose/single/iq4ks.yml",
@@ -1207,7 +1207,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B (4-bit GGUF — bartowski has no IQ4_KS for this arch; default IQ4_NL ~16.3 GB) on llama.cpp single 3090. MTP n=3, q4_0 KV, 200K ctx (IQ4_NL only — Q4_K_M OOMs, rig validated at 131K). First bench (unsloth Q4_K_M rig, 2026-08-16): 63.2/71.9 wall TPS, non-canonical protocol. Incubating. Vision variant at llamacpp/qwen38-27b-iq4ks-vision.",
     ),
     "llamacpp/qwen38-27b-iq4ks-vision": _entry(
-        model="qwen3.8-27b", weights_variant="bartowski-iq4nl", workload="vision-coding",
+        model="qwen3.8-27b", weights_variant="unsloth-iq4nl", workload="vision-coding",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=150000, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.8-27b/llama-cpp/compose/single/iq4ks-vision.yml",
