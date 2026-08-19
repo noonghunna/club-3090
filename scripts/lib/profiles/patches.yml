@@ -360,6 +360,46 @@ patches:
       status: local-vendored
       drop_when: "vllm#48375 merges upstream AND the vllm-stable pin moves past it -> remove the 6 compose mounts + entrypoint calls + the patch dir; retire this row (re-run the #710 probe protocol on the new pin first)."
 
+  - id: vllm-gdn-mtp-async-spec-order
+    # club-3090's OWN fix (NOT an upstream PR) for the GDN+MTP async wild-write
+    # race: our #1052 / upstream #52873 + the #50021 thread. Shared from the
+    # qwen3.6-27b tree like pr48375. Wired on qwen3.8 dual-fast only for now
+    # (the slug it was validated on); broader MTP-compose rollout is a separate
+    # maintainer decision (the fix is engine-wide in gpu_model_runner.py).
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order/install.sh
+      - models/qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order/patch_gdn_mtp_async_spec_order.py
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-fast
+        reason: "Our own 2-line fix for the async wild-write crash (club-3090#1052 / vllm#52873 + the vllm#50021 thread): on a Qwen3-Next hybrid with MTP + prefix caching + async scheduling (vLLM v0.27.1 default), gpu_model_runner.py::synchronize_input_prep waits prepare_inputs_event (recorded BEFORE the forward + spec-decode fused-align postprocess) but not num_accepted_tokens_event (recorded AFTER it), so the next step's _update_states block-table mutation raced the still-in-flight postprocess -> stale state-block index -> wild GPU write (CUDA illegal access / Xid 31 VIRT_WRITE) within 6-13k generated tokens of agent traffic. The fix also waits the postprocess event, closing the write-after-read window; it relocates a wait align-mode already did later, so TPS is neutral. Distinct from vllm#50021 (its in-kernel bounds do NOT fix this - built its head, crashed 2/2) and from vllm#43559/#48375. On-rig validation 2026-08-19 (reference 2x3090, v0.27.1): async-ON survived 3/3 boots to 33-36k generated tokens each (crossing ctx 32k + a compaction) where 5/5 unpatched arms died 6-13k; real delivery path confirmed (switch.sh -> compose mount -> entrypoint install.sh logs '[gdn-async-order] applied'); bench 79.1 narr / 108.5 code / 1756 prefill >= baseline. Does NOT address the separate acceptance-collapse bug (vllm#52873 / Bug A)."
+        evidence: "models/qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order/README.md; club-3090#1052; vllm#52873; docs/UPSTREAM.md"
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order/install.sh
+      mounted_at: /etc/club3090/gdn-async-order
+      invoke: "bash /etc/club3090/gdn-async-order/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Idempotent, anchor-based (def synchronize_input_prep + the prepare_inputs_event.synchronize() line). MARKER is a unique comment string (the executable num_accepted_tokens_event.synchronize() call already exists elsewhere in the file, so it can NOT be the idempotency marker). Failure policy: anchor drift -> boot REFUSED (exit 1 in entrypoint), never a silent half-wire. Wired ONLY on vllm/qwen38-27b-dual-fast (the validated slug); the fix is engine-wide so it is safe on every MTP compose, but broader wiring is a separate maintainer decision. No-op without spec decode (the guarded event is None) and without async scheduling (the whole method is a no-op)."
+    drift_guard:
+      kind: boot
+      check: "Entrypoint runs install.sh before serve; boot log contains '[gdn-async-order] applied' (first boot) or '[gdn-async-order] already patched' (warm layer). Anchor drift -> '[gdn-async-order] REFUSE' + container exit 1 (never serves). Behavioral: async-ON + MTP + prefix-caching survives an agent-shaped soak past ~15k generated tokens with no CUDA illegal-access / Xid 31 (5/5 unpatched died 6-13k)."
+      on_fail: boot-refused
+    status: verified
+    capability: gdn-mtp-async-crash-safety
+    foundational: false
+    upstream:
+      ref: "OURS - not yet filed upstream. Diagnosis + reproducer posted on vllm#50021 (comment) and vllm#52873; the crash is the async half, distinct from #50021's in-kernel bounds. club-3090#1052."
+      status: local-vendored
+      drop_when: "an upstream fix for this async race lands AND the vllm-stable pin moves past it (re-run the drift_guard on the new pin, then delete the mount + entrypoint call + this entry). If we file it upstream, change upstream.status to open-rebased-local with the PR link."
+
   - id: qwen-w4a8-int8-act
     model: [qwen3.6-27b, thinkingcap-27b]
     files:

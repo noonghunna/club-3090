@@ -152,6 +152,10 @@ services:
       - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
       # Lets the MTP drafter attach on this hybrid (mamba/eagle block drop).
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      # club-3090 GDN+MTP async spec-order fix — closes the async wild-write race
+      # (our #1052 / upstream #52873 + #50021 thread). Ours, not an upstream PR;
+      # validated 3/3 boots on the reference 2×3090. Anchor drift → boot refused.
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
@@ -204,6 +208,7 @@ services:
         fi
         bash /etc/club3090/w4a8/install.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
+        bash /etc/club3090/gdn-async-order/install.sh || exit 1
         echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""
         [ "$${_NVLINK_ENABLED:-0}" = "1" ] || AR="--disable-custom-all-reduce"
