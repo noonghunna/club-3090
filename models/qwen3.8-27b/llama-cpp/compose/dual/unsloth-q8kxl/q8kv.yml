@@ -49,11 +49,11 @@
 #
 #   | Slug                                | Card(s) | Weights          | KV   | Max ctx | Notes                        |
 #   |-------------------------------------|---------|------------------|------|---------|------------------------------|
-#   | llamacpp/qwen38-27b-single-iq4nl    | 1x 3090 | IQ4_NL 16.3 GB   | q8_0 | 131072  | fits one card                |
+#   | llamacpp/qwen38-27b-single-iq4xs    | 1x 3090 | UD-IQ4_XS 14.3G  | q8_0 | 131072  | fits one card                |
 #   | llamacpp/qwen38-27b-dual-q8kxl      | 2x 3090 | UD-Q8_K_XL 31.5G | q8_0 | 262144  | THIS file — max ctx + fidelity |
 #
 # Dual is not optional here: 31.5 GB of weights does not fit a 24 GB card. Both
-# cards are consumed. If you need one card free, use the single IQ4_NL sibling.
+# cards are consumed. If you need one card free, use the single UD-IQ4_XS sibling.
 #
 # ---------------------------------------------------------------------------
 # Qwen3.8-27B on llama.cpp — dual 3090, UD-Q8_K_XL weights, q8_0 KV, full 262K.
@@ -215,7 +215,8 @@ services:
       # configs.
       # ⚠️⚠️ THIS ENGINE DIVERGES FROM vLLM ON `high` -- read before setting it.
       # The unsloth GGUF's EMBEDDED template (read from the GGUF kv 2026-08-16;
-      # byte-identical in UD-Q8_K_XL and IQ4_NL) carries a branch the HF
+      # byte-identical in UD-Q8_K_XL and IQ4_NL, and present in UD-IQ4_XS too —
+      # checked 2026-08-19) carries a branch the HF
       # safetensors template does NOT:
       #     {%- if resolved_reasoning_effort == 'high' %}
       #         {%- set resolved_reasoning_effort = 'xhigh' %}

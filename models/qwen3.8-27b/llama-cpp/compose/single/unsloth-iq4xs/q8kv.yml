@@ -1,6 +1,6 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.8-27B (Unsloth imatrix IQ4_NL GGUF, 16.3 GB)
+#   Model:     Qwen3.8-27B (Unsloth Dynamic UD-IQ4_XS GGUF, 14.3 GB)
 #   Engine:    llama.cpp (mainline server-cuda-b10236 — the shared llama-cpp-local pin)
 #   Topology:  Single 3090 (TP=1)
 #   Drafter:   MTP n=2 built-in (--spec-type draft-mtp; the head is EMBEDDED in this GGUF)
@@ -17,29 +17,39 @@
 #              131072 is the real one. See the ladder in KV BUDGET below.
 #   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
 #   Status:    🐣 Incubating
-#   Caveats:   NOTHING HAS BOOTED. Authored 2026-08-14 while the weights were still
-#              downloading; zero runtime evidence exists for any claim below.
-#              Specifically unvalidated:
-#                - never launched — no boot, no `docker logs`, no served token
-#                - no verify-full (0/8), no verify-stress, no NIAH, no soak
+#   Caveats:   The IQ4_NL artifact of this slug booted + verify-full EXIT=0 on
+#              2026-08-14/15 (the MEASURED ladder below). 2026-08-19 RE-QUANT:
+#              unsloth removed IQ4_NL from the upstream repo, so this compose now
+#              points at UD-IQ4_XS.
+#              ✅ NEW ARTIFACT BOOTED 2026-08-19 on a 5090 (32 GB): launches via
+#              switch.sh --force, serves coherently, verify-full PASS (all
+#              functional checks; the two ⊘ skips are vLLM-only) and verify-stress
+#              PASS (boundary 5/5 + recall ladder 3/3). The ceiling ladder FILLED
+#              to 120,320 tok (91% of n_ctx=131072) with VRAM free holding flat at
+#              12,207 MB (Δ 0 across the ladder) — the 131K config is fillable,
+#              not just allocated, on this quant. /v1/models confirms the landed
+#              file: size 14,241,849,344 B, ftype IQ4_XS 4.25 bpw, n_ctx 131072,
+#              n_ctx_train 262144. MTP engages on this artifact — the container
+#              log shows 'creating MTP draft context against the target model'
+#              against the UD-IQ4_XS file, drafter ON, draft acceptance 0.66–0.92
+#              on the large-sample tasks (mean len ~2.3–2.8).
+#              STILL unvalidated for UD-IQ4_XS:
 #                - no bench: NO TPS / TTFT / prefill number is claimed anywhere
-#                - no quality run (8-pack not executed in either reasoning mode)
-#                - Max ctx 131072 is DERIVED FROM ARITHMETIC (docs/KV_MATH.md
-#                  formula + the qwen3.6-27b single-card anchor), never filled.
-#                  llama.cpp allocating a context is NOT the same as filling it —
-#                  this exact model family has a documented alloc-vs-fill gap
-#                  (qwen3.6-27b: 262144 boots, walls ~125K). Treat 131072 as an
-#                  allocation request, not a proven fill depth.
-#                - ENGINE COMPATIBILITY UNPROVEN: the b10236 pin predates this
-#                  model. The `qwen35` arch it should convert to is served here
-#                  (Tess-4-27B, Deckard-40B), but that this specific GGUF loads on
-#                  this specific build is an inference, not an observation.
+#                - no soak, no quality run (8-pack not executed in either mode)
+#                - the 5090 boot is a FAVORABLE proxy (32 GB > the 24 GB target):
+#                  it proves the artifact is valid, but the 24 GB fit remains the
+#                  budget-math claim below, not a 5090 observation.
+#                - Max ctx 131072 was MEASURED on the IQ4_NL artifact. The new
+#                  quant frees ~1.95 GiB, so the 196,608/262,144 failures below
+#                  may not hold — but they are UNVERIFIED on this quant. Do not
+#                  raise CTX_SIZE on the strength of the freed headroom; re-run
+#                  the ladder first.
 #                - the hybrid 16/64 growing-layer split (which the whole KV budget
 #                  rests on) is read from config.json, not back-solved from a boot log
-#                - sampler now follows the MODEL CARD (instruct row: temp 0.7,
-#                  top_p 0.80, presence_penalty 1.5) — corrected 2026-08-14
-#              Promote to 🧪 only after a clean boot + verify-full; to ⚠️/✅ only
-#              after the full gate (verify-stress + bench + soak + quality).
+#                - sampler follows the MODEL CARD (instruct row: temp 0.7,
+#                  top_p 0.80, presence_penalty 1.5)
+#              Promote to 🧪 on a clean boot + verify-full (now met on the new
+#              artifact); to ⚠️/✅ only after the full gate (bench + soak + quality).
 #   Engine-profile: llama-cpp-local
 #   Best for:  single-3090 long-context text — the one-card tier of the Qwen3.8-27B
 #              pair. NOT yet recommendable for anything; see Caveats.
@@ -48,14 +58,14 @@
 #
 #   | Slug                                | Card(s) | Weights          | KV   | Max ctx | Notes                        |
 #   |-------------------------------------|---------|------------------|------|---------|------------------------------|
-#   | llamacpp/qwen38-27b-single-iq4nl    | 1x 3090 | IQ4_NL 16.3 GB   | q8_0 | 131072  | THIS file — fits one card    |
+#   | llamacpp/qwen38-27b-single-iq4xs    | 1x 3090 | UD-IQ4_XS 14.3G  | q8_0 | 131072  | THIS file — fits one card    |
 #   | llamacpp/qwen38-27b-dual-q8kxl      | 2x 3090 | UD-Q8_K_XL 31.5G | q8_0 | 262144  | max ctx + max weight fidelity |
 #
 # Pick this one when you have a single 3090 free, or want to keep card 1 for
 # another service. Pick the dual when you want full 262K and near-lossless weights.
 #
 # ---------------------------------------------------------------------------
-# Qwen3.8-27B on llama.cpp — single 3090, IQ4_NL weights, q8_0 KV, 131K ctx.
+# Qwen3.8-27B on llama.cpp — single 3090, UD-IQ4_XS weights, q8_0 KV, 131K ctx.
 #
 # ARCHITECTURE (config.json — Qwen3_5ForConditionalGeneration / model_type qwen3_5):
 # a HYBRID, not uniform GQA. 64 layers, `full_attention_interval: 4` => 16
@@ -72,19 +82,19 @@
 #   For reference: q4_0 would be 18,432 B/token (2.25 GiB @131K) — half the cache,
 #   below the stack's serving KV bar. See "KV choice".
 #
-#   Per-card budget on 24 GiB. The WEIGHTS figure is measured off disk; every
-#   other line is COMPUTED:
+#   Per-card budget on 24 GiB. The WEIGHTS figure is the HF API byte count
+#   (the file has not landed on this rig yet); every other line is COMPUTED:
 #     usable after CUDA context + fragmentation (~0.6):   23.40 GiB
-#     IQ4_NL weights — MEASURED 2026-08-14, 16,337,628,128
-#       bytes on disk (= 16.33 GB decimal):                15.22 GiB
+#     UD-IQ4_XS weights — HF API 2026-08-19, 14,252,845,984
+#       bytes (= 14.25 GB decimal):                       13.27 GiB
 #     q8_0 K+V @131,072:                                    4.25 GiB
 #     compute/graph buffers @ -ub 512 (anchored on the
 #       qwen3.6-27b single-card config, identical 16/4/256
 #       growing geometry, where the same terms back-solve
 #       to ~1.87 GiB at -ub 512 / 200K):                   ~1.60 GiB
 #     ------------------------------------------------------------
-#     projected total:                                     21.07 GiB
-#     projected headroom:                                  ~2.33 GiB
+#     projected total:                                     19.12 GiB
+#     projected headroom:                                  ~4.28 GiB
 #
 # ============================================================================
 # ⭐ MEASURED 2026-08-15 — THE CEILING ABOVE WAS WRONG. Ladder on this rig:
@@ -99,6 +109,13 @@
 #
 #   So the shipped 131,072 is now MEASURED, not computed. The "~203,066 computed
 #   alloc ceiling" above is REFUTED — do not restore it.
+#
+#   ⚠️ RE-QUANT 2026-08-19 — every number in this ladder was measured on the
+#   IQ4_NL artifact (15.22 GiB). unsloth has since REMOVED IQ4_NL from the
+#   upstream repo; this compose now points at UD-IQ4_XS (13.27 GiB, ~1.95 GiB
+#   lighter). The 131,072 boot is expected to come in ~1.95 GiB lower, and
+#   196,608 may now fit — but NEITHER is verified on the new quant. Do not raise
+#   CTX_SIZE on the strength of the freed headroom; re-run this ladder first.
 #
 # ⚠️⚠️ WHY THE PROJECTION OVERSHOT — two errors, both worth carrying to the
 # sibling composes that use this same arithmetic (dual q8kxl, and the
@@ -127,14 +144,17 @@
 #   for a llama.cpp slug — it must be measured with a boot ladder.
 # ============================================================================
 #
-#   ⚠️ Note the unit trap that produced that 15.22: the HF model page says
-#   "16.3 GB", which is DECIMAL GB. Read naively as GiB it overstates the VRAM
-#   cost by ~1.1 GiB. The weights profile's `size_gb: 16.3` is deliberately the
+#   ⚠️ Note the unit trap that produced that 13.27: the HF model page says
+#   "14.3 GB", which is DECIMAL GB. Read naively as GiB it overstates the VRAM
+#   cost by ~1.0 GiB. The weights profile's `size_gb: 14.3` is deliberately the
 #   decimal figure (the setup.sh disk gate wants the larger number); this budget
 #   deliberately uses the GiB one.
 #
-#   Solving the same budget for ctx gives ~203,066 tokens of q8_0 KV — and at
-#   163840 the headroom is still ~1.27 GiB. We ship 131072 anyway, deliberately:
+#   Solving the same budget for ctx with the lighter UD-IQ4_XS weights gives
+#   ~263,000 tokens of q8_0 KV — nominally past the 262,144 architectural max.
+#   That is NOT a green light: the two terms that refuted 196,608/262,144 on
+#   IQ4_NL (ctx-scaling compute buffers + the rs cache) are not in this budget,
+#   and they grow with ctx. We ship 131072 anyway, deliberately:
 #   (a) the 1.6 GiB buffer term is borrowed from a sibling model, not measured
 #   here, and (b) on this exact family an allocation that boots is NOT an
 #   allocation that fills (qwen3.6-27b's 262144 boots and walls ~125K on the FA
@@ -149,9 +169,10 @@
 #   That trade is intentional. If you specifically want a long-context speed
 #   exhibit, KV_TYPE=q4_0 CTX_SIZE=262144 is the knob — not the shipped default.
 #
-# BUILT-IN MTP DRAFTER: this GGUF EMBEDS a nextn head. Verified 2026-08-14 by reading
-# the tensor table directly: blk.64.nextn.{eh_proj,enorm,hnorm,shared_head_norm}, plus
-# metadata qwen35.nextn_predict_layers=1 and qwen35.block_count=65 (= 64 model layers
+# BUILT-IN MTP DRAFTER: this GGUF EMBEDS a nextn head. Verified 2026-08-14
+# (IQ4_NL) and 2026-08-19 (UD-IQ4_XS) by reading the tensor table directly:
+# blk.64.nextn.{eh_proj,enorm,hnorm,shared_head_norm}, plus metadata
+# qwen35.nextn_predict_layers=1 and qwen35.block_count=65 (= 64 model layers
 # + 1 nextn layer). Driven with `--spec-type draft-mtp` (mainline PR #22673) at
 # n=2 — no separate drafter file is fetched or mounted.
 #
@@ -172,7 +193,7 @@
 #
 # Override defaults via .env or shell:
 #   MODEL_DIR        host dir mounted as /models  (default: ../../../../../../models-cache)
-#   GGUF_FILE        path under /models  (default: qwen3.8-27b-gguf/unsloth-iq4nl/Qwen3.8-27B-IQ4_NL.gguf)
+#   GGUF_FILE        path under /models  (default: qwen3.8-27b-gguf/unsloth-iq4xs/Qwen3.8-27B-UD-IQ4_XS.gguf)
 #   CTX_SIZE         KV pool size        (default: 131072 — computed, see budget above;
 #                    the computed ceiling is ~203K, 163840 is the sensible first
 #                    step up AFTER a NIAH ladder, not before)
@@ -195,8 +216,8 @@
 #                    launchers inject the engine-profile spec and override this)
 #
 # Quick start (weights first — see scripts/setup.sh / the c3 Download action):
-#   WEIGHT_KEY=qwen3.8-27b:unsloth-iq4nl bash scripts/setup.sh qwen3.8-27b
-#   bash scripts/launch.sh --variant llamacpp/qwen38-27b-single-iq4nl --force
+#   WEIGHT_KEY=qwen3.8-27b:unsloth-iq4xs bash scripts/setup.sh qwen3.8-27b
+#   bash scripts/launch.sh --variant llamacpp/qwen38-27b-single-iq4xs --force
 #   (--force is REQUIRED: 🐣 Incubating slugs are launch-gated and hidden from
 #    `switch.sh --list`; reveal with `--list --all`.)
 
@@ -226,7 +247,8 @@ services:
       # configs.
       # ⚠️⚠️ THIS ENGINE DIVERGES FROM vLLM ON `high` -- read before setting it.
       # The unsloth GGUF's EMBEDDED template (read from the GGUF kv 2026-08-16;
-      # byte-identical in UD-Q8_K_XL and IQ4_NL) carries a branch the HF
+      # byte-identical in UD-Q8_K_XL and IQ4_NL, and present in UD-IQ4_XS too —
+      # checked 2026-08-19) carries a branch the HF
       # safetensors template does NOT:
       #     {%- if resolved_reasoning_effort == 'high' %}
       #         {%- set resolved_reasoning_effort = 'xhigh' %}
@@ -363,7 +385,7 @@ services:
     command: >-
       --host 0.0.0.0
       --port 8080
-      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/unsloth-iq4nl/Qwen3.8-27B-IQ4_NL.gguf}
+      -m /models/${GGUF_FILE:-qwen3.8-27b-gguf/unsloth-iq4xs/Qwen3.8-27B-UD-IQ4_XS.gguf}
       --alias ${SERVED_NAME:-qwen3.8-27b}
       -c ${CTX_SIZE:-131072}
       -b ${BATCH_SIZE:-4096}
