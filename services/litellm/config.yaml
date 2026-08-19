@@ -31,6 +31,25 @@ model_list:
       api_base: http://host.docker.internal:8010/v1
       api_key: EMPTY
 
+  # Qwen 3.8 27B — dual-max fp8 KV + MTP n=3, 262K. Started by
+  # club3090-vllm-dual.service (drop-in zzzz-qwen38-27b-fp8-current.conf) →
+  # vllm-qwen38-27b-dual-max at :8091, which is a registry default_port for this
+  # model. Serves TWO ids: the neutral primary below + the quant alias after it.
+  # Added 2026-08-19 (#1062): the scene moved here during the dual-max promotion
+  # but the gateway was never told, so every client got a deterministic 400.
+  - model_name: qwen3.8-27b
+    litellm_params:
+      model: openai/qwen3.8-27b
+      api_base: http://host.docker.internal:8091/v1
+      api_key: EMPTY
+
+  # Quant-specific alias (same container, second --served-model-name).
+  - model_name: qwen3.8-27b-fp8
+    litellm_params:
+      model: openai/qwen3.8-27b-fp8
+      api_base: http://host.docker.internal:8091/v1
+      api_key: EMPTY
+
   # Agents-A1 — InternScience 35B agentic MoE (⚠️ caveats; the agentic thinking-ON
   # specialist). Launched via `switch.sh vllm/agents-a1-dual` → vllm-agents-a1-dual
   # at :8072 (own port — never share a sibling's; see the slug-masquerade note).
