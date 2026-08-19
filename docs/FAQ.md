@@ -362,7 +362,7 @@ Why: the A3B MoE has **3B active params** (cheap decode → the batching knee si
 
 Three caveats: aggregate numbers are **summed across streams** — a single request never sees them (per-stream *falls* as N rises); at long agent contexts throughput becomes **prefill-bound** (end-to-end generated tok/s is nearly flat in N — batching buys utilization/latency-hiding, not more generated tokens); and for agents run **thinking-OFF** (tool-call accuracy) and mind Cliff 2 on single-card vLLM (`docs/CLIFFS.md`).
 
-Measure your own rig: `SWEEP="2 4 8 16" SLUG=<slug> URL=http://localhost:<port> bash scripts/concurrency-probe.sh` — reboots per N, reports per-stream + aggregate + the knee.
+Measure your own rig (live server, no reboot): `bash scripts/concurrency-probe.sh --sweep`. That walks N × ctx (1K–32K, clipped to your KV pool and served slots), early-stops a ctx row when a rung fails, and prints a club-3090 card. The older reboot-per-N envelope knee is still `SWEEP="2 4 8 16" SLUG=<slug> URL=http://localhost:<port> bash scripts/concurrency-probe.sh`.
 
 ### Which KV-cache quant should I use? (`q4_0` / `q5_0` / `turbo3` / `fp8`)
 
