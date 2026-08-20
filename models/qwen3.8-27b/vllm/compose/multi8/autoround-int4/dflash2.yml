@@ -15,9 +15,9 @@
 #              per-card KV stays ~the TP=4 figure; only weights take the full split.
 #   Vision:    ✅ tower present (input-only); untested.
 #   Template:  native — the repo's own chat_template.jinja.
-#   Max ctx:   204800 (~200K) — the dual-ultrafast MEASURED bf16/FA2 ceiling; higher
-#              TP MAY fit more (KV splits further) but that is UNMEASURED. Held at
-#              200K for tier identity.
+#   Max ctx:   262144 (full arch max) — at TP=8 bf16 KV splits/frees enough that
+#              the full 262K fits (the dual's ~200K ceiling is a 2-card bf16 limit,
+#              not the tier's). UNMEASURED here (community-validated).
 #   Genesis:   none
 #   Status:    🧪 Experimental
 #   Best for:  ⭐ ULTRAFAST decode at TP=8 (community-validated).
@@ -165,7 +165,7 @@ services:
       - --tensor-parallel-size
       - "${TP:-8}"
       - --max-model-len
-      - "${MAX_MODEL_LEN:-204800}"
+      - "${MAX_MODEL_LEN:-262144}"
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.95}"
       - --max-num-seqs

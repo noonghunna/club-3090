@@ -4146,7 +4146,7 @@ class TestServeOverrides:
     def test_engine_drafters_and_options(self):
         repo_root = Path(__file__).resolve().parents[3]
         cd = CockpitData(repo_root, runner=full_runner())
-        assert cd.engine_drafters("vllm-stable") == ["mtp", "mtp_assistant"]
+        assert cd.engine_drafters("vllm-stable") == ["mtp", "mtp_assistant", "dflash"]
         assert "dflash" in cd.engine_drafters("beellama-local")
         d = cd.serve_override_defaults("vllm/dual", "org/Foo")
         assert d["DRAFTER_OPTIONS"] == ["mtp", "mtp_assistant"]   # engine-driven

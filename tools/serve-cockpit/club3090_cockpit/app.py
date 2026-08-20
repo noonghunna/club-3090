@@ -333,6 +333,8 @@ def _spec_token(drafter: str) -> str:
     dr = (drafter or "").strip().lower()
     if not dr:
         return ""
+    if "dflash2" in dr:       # DFlash2 external block-drafter (must precede the
+        return "DFlash2"          # generic dflash check — "dflash2" contains "dflash")
     if "dflash" in dr:
         return "DFlash"
     if "dspark" in dr:
