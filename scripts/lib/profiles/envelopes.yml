@@ -72,7 +72,7 @@ envelopes:
         date: 2026-07-05
         note: "operational cap, not the raw pool ceiling (see basis). 2x RTX PRO 6000 Blackwell, NVLink-bridged. No PRO 6000 on this rig — a concurrency-soak refines this and upgrades it to validated."
 
-  # --- Qwen3.8-27B FAST tier (Avuja AutoRound INT4) ---------------------------
+  # --- Qwen3.8-27B FAST tier (Frozenlock AutoRound INT4) ---------------------------
   # ⚠️ NOT kv-calc-derived. tools/kv-calc.py CANNOT model this hybrid
   # (kv_calc_supported: false; both vLLM entries carry kvcalc_key="SKIP"),
   # because only 16 of 64 layers grow KV. Scaled from a MEASURED pool instead:
