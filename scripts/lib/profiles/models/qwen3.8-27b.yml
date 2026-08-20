@@ -156,6 +156,28 @@ weights:
     kind: draft
     verify_glob: "*.safetensors"
     setup_env: WITH_DFLASH_DRAFT=1
+  # F16 multimodal projector — the mmproj companion of the VISION slug
+  # (llamacpp/qwen38-27b-single-iq4xs-vision). Quant-INDEPENDENT: one F16 tower
+  # for every llama.cpp GGUF quant of this model, so it lands at the SHARED gguf
+  # level (local_subdir = qwen3.8-27b-gguf), NOT inside a quant subdir. Vision is
+  # OPT-IN: WITH_VISION=1 fetches it (setup.sh CLI), and c3's Download passes it
+  # via the vision slug's weights_companions. The text slugs never fetch it.
+  gguf_mmproj_f16:
+    path: qwen3.8-27b-gguf
+    local_subdir: qwen3.8-27b-gguf
+    size_gb: 0.93
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/Qwen3.8-27B-GGUF
+    # REQUIRED: multi-quant bucket. Without `files:` the fetch is the WHOLE repo
+    # (every quant). The projector sits at the repo ROOT, so it lands flat.
+    files:
+      - mmproj-F16.gguf
+    engine: llama-cpp
+    kind: mmproj
+    verify_glob: "*.gguf"
+    setup_env: WITH_VISION=1
+    manual_note: "Unsloth F16 multimodal projector (928 MB / 927,607,488 B) for Qwen3.8-27B VL — pairs with ANY llama.cpp GGUF quant of this model. Downloaded + boot-verified 2026-08-20: llama-server loads it as 'multimodal model', image recognition correct (blue-circle + red-7 probe). Text decode is projector-free (bench parity with the text-only slug: 61.1 narr / 72.6 code). Drives llamacpp/qwen38-27b-single-iq4xs-vision (q4_0 KV + 262K + vision). Sibling mmproj-BF16.gguf (931 MB) NOT fetched — F16 is the standard tower precision, fine on Ampere."
 
 default_weight_variant: unsloth-iq4xs
 # Validated drafters for this model (each names a drafters/<id>.yml we ship):
