@@ -1139,21 +1139,27 @@ class TestCatalogWired:
             assert entry.measurement.source == "baseline"
 
     @pytest.mark.asyncio
-    async def test_catalog_stale_baseline_dagger(self):
-        """Catalog-baselines slice 1 — a baseline measured on an OLDER engine
-        pin renders the † staleness marker on its TPS cell + the status-line
-        legend (re-bench owed); a current-pin row stays unmarked."""
+    async def test_catalog_perf_columns_are_per_rig(self):
+        """Per-rig honesty (slice 2c): the TPS/8pk columns show THIS RIG's own
+        measured numbers, or a run-bench nudge when the rig hasn't measured the
+        slug — NEVER the shipped baseline (which stays the detail-panel reference).
+        The fixture ships baselines but no on-rig corpus records, so every row
+        must render the nudge, and the baseline numbers must NOT leak into the
+        column."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             tbl = app.query_one("#catalog-table", DataTable)
             rows = [" ".join(str(c) for c in tbl.get_row_at(r)) for r in range(tbl.row_count)]
-            ik_row = next(r for r in rows if "iq4ks-mtp" in r)     # stale fixture row
-            dual_row = next(r for r in rows if "vllm/dual" in r)   # fresh fixture row
-            assert "†" in ik_row
-            assert "†" not in dual_row
+            ik_row = next(r for r in rows if "iq4ks-mtp" in r)
+            dual_row = next(r for r in rows if "vllm/dual" in r)
+            # No on-rig record for either → the column shows the ⏵ bench nudge,
+            # and the shipped baseline numbers (60/72, 174/42) must NOT appear.
+            assert "bench" in ik_row and "bench" in dual_row
+            assert "60/72" not in ik_row
+            assert "174/42" not in dual_row
             status = str(app.query_one("#catalog-status", Label).render())
-            assert "older engine pin" in status
+            assert "not measured on this rig" in status
 
     @pytest.mark.asyncio
     async def test_catalog_ik_llama_fit_is_skip(self):
@@ -1495,23 +1501,24 @@ class TestCatalogWired:
         assert "\\[D]" in _byo_result_text(res, weights_present=False, downloading=False)
 
     @pytest.mark.asyncio
-    async def test_catalog_submission_legend_in_status_line(self):
-        """When any loaded row's numbers came from a community submission
-        (measurement.submission_rig set → ⑂-marked TPS cell), the catalog status
-        line carries the ⑂ legend so the marker is decodable in-place; without
-        one, no legend."""
+    async def test_catalog_submissions_stay_out_of_the_perf_column(self):
+        """Per-rig (slice 2c): a community submission on the baseline (another
+        rig) no longer surfaces in the catalog perf column or a status-line
+        legend — the column is THIS RIG's own numbers, so a submission-only slug
+        shows the run-bench nudge. Submissions live in the slug detail panel."""
         entry = self._label_entry("autoround-int4")
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             pane = app.query_one("#catalog-pane", CatalogPane)
-            pane.populate([entry], None)
-            status = str(app.query_one("#catalog-status", Label).render())
-            assert "⑂" not in status
             object.__setattr__(entry.measurement, "submission_rig", "2x5090")
             pane.populate([entry], None)
             status = str(app.query_one("#catalog-status", Label).render())
-            assert "⑂" in status and "community-submitted" in status
+            assert "⑂" not in status                        # no submission legend
+            tbl = app.query_one("#catalog-table", DataTable)
+            row = " ".join(str(c) for c in tbl.get_row_at(0))
+            assert "⑂" not in row                           # submission not in the column
+            assert "bench" in row                           # shows the per-rig nudge instead
 
     @pytest.mark.asyncio
     async def test_catalog_hides_hw_incompatible_by_default_and_h_reveals(self):
@@ -10175,7 +10182,7 @@ class TestProfileTemplateDerivation:
         # designed — an entirely non-functional group still gets a representative
         # (cf. the (vllm, multi4) and (beellama, dual) precedents named in the
         # profile_templates docstring); the custom-slug escape hatch reaches the rest.
-        assert len(opts) == 8, f"expected 8 reps, got {len(opts)}: {[o.slug for o in opts]}"
+        assert len(opts) == 9, f"expected 9 reps, got {len(opts)}: {[o.slug for o in opts]}"
 
         # The 1-card rig default must be FUNCTIONAL + non-incubating — ideally the
         # registry's curated single default (vllm/minimal).

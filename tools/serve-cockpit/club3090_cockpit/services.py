@@ -1181,6 +1181,8 @@ class CockpitData:
                 decode = next(iter(by_ctx.values()), None)
                 lm = LocalMeasured(
                     decode_tps=decode,
+                    narr_tps=ext.get("narr_tps"),
+                    code_tps=ext.get("code_tps"),
                     quality_8pk=ext.get("quality_8pk"),
                     quality_8pk_think_on=ext.get("quality_8pk_think_on"),
                     engine_pin=r.get("engine_pin"),

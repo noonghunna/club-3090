@@ -181,6 +181,8 @@ class BenchMetrics:
     """
 
     decode_tps: Optional[float] = None      # mean decode_TPS (model decode rate)
+    narr_tps: Optional[float] = None        # narrative-prompt decode mean (first summary block)
+    code_tps: Optional[float] = None        # code-prompt decode mean (last summary block)
     wall_tps: Optional[float] = None        # mean wall_TPS (user-perceived)
     ttft_s: Optional[float] = None          # mean TTFT, seconds
     prefill_tps: Optional[float] = None     # mean PP tok/s (prompt-processing)
@@ -248,6 +250,15 @@ def parse_bench_output(text: str) -> BenchMetrics:
             # a measured record => the summary section the producer keys off is
             # absent / unparseable (bench-output drift). build_record fails loud.
             m.decode_summary_blocks = len(matches)
+            # slice 2c: narr/code split. bench.sh runs narrative first, code last,
+            # so two blocks => [narr, code]; a single block (ONLY=narr/code) is
+            # treated as code (the headline throughput). decode_tps stays the
+            # last block (code) for the frozen-schema/optimizer path.
+            if len(matches) >= 2:
+                m.narr_tps = _f(matches[0])
+                m.code_tps = _f(matches[-1])
+            elif matches:
+                m.code_tps = _f(matches[-1])
 
     # TTFT summary line:  TTFT          mean=   120ms  std= ...
     ttft = re.findall(r"^\s*TTFT\s+mean=\s*([0-9.]+)ms", text, re.MULTILINE)
@@ -471,6 +482,9 @@ def build_record(
             "Candidates for optimizer Lock-criteria #6 schema-typing pass."
         ),
         "decode_tps_by_ctx": decode_tps_by_ctx,
+        # slice 2c: narr/code decode split for the per-rig "yours" catalog columns.
+        "narr_tps": bench_metrics.narr_tps,
+        "code_tps": bench_metrics.code_tps,
         "prefill_tps": bench_metrics.prefill_tps,
         "ttft_s": bench_metrics.ttft_s,
         "wall_tps": bench_metrics.wall_tps,

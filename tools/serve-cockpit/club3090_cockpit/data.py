@@ -448,10 +448,28 @@ class LocalMeasured:
     quality extensions and the pin the run measured on."""
 
     decode_tps: Optional[float] = None
+    narr_tps: Optional[float] = None     # slice 2c: narrative-prompt decode mean
+    code_tps: Optional[float] = None     # slice 2c: code-prompt decode mean
     quality_8pk: Optional[str] = None
     quality_8pk_think_on: Optional[str] = None
     engine_pin: Optional[str] = None
     date: str = ""                       # _recorded_at date, else file-mtime date
+
+    @property
+    def tps_label(self) -> str:
+        """narr/code, mirroring Measurement.tps_label. Falls back to the single
+        canonical-short decode_tps as the code figure when the narr/code split
+        is absent (older records / ONLY= runs)."""
+        code = self.code_tps if self.code_tps is not None else self.decode_tps
+        if self.narr_tps is None and code is None:
+            return "—"
+        n = f"{self.narr_tps:.0f}" if self.narr_tps is not None else "—"
+        c = f"{code:.0f}" if code is not None else "—"
+        return f"{n}/{c}"
+
+    @property
+    def quality_label(self) -> str:
+        return self.quality_8pk or "—"
 
 
 # ── Estate / Scene / Container / Doctor ─────────────────────────────────────────
