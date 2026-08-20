@@ -1413,11 +1413,11 @@ COMPOSE_REGISTRY = {
     # NO DEFAULTS rows and NOT added to RECOMMENDED_DEFAULT_MODELS — incubating is
     # excluded from the curated walk by design, and an `<engine>/default` row would
     # hand users a never-booted config through the non-status-filtering direct lookup.
-    "vllm/qwen38-27b-dual-huihui-fp8": _entry(
-        model="qwen3.8-27b", weights_variant="huihui-fp8", workload="long-ctx-single", chat_template="native",
+    "vllm/qwen38-27b-dual-abliterated-fp8": _entry(
+        model="qwen3.8-27b", weights_variant="abliterated-fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
-        compose_path="models/qwen3.8-27b/vllm/compose/dual/huihui-fp8/mtp.yml",
+        compose_path="models/qwen3.8-27b/vllm/compose/dual/abliterated-fp8/mtp.yml",
         default_port=8091,
         kvcalc_key="SKIP",
         status="incubating",

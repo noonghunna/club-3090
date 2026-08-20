@@ -102,7 +102,7 @@ weights:
   # Community Huihui abliterated native-FP8 derivative.
   # Kept as a separate weight key and switch profile; it does not replace
   # or modify the official Qwen3.8 FP8 tier.
-  huihui-fp8:
+  abliterated-fp8:
     path: Huihui-Qwen3.8-27B-abliterated-FP8
     local_subdir: Huihui-Qwen3.8-27B-abliterated-FP8
     size_gb: 30.9

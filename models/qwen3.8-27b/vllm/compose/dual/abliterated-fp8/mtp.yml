@@ -1,4 +1,4 @@
-# Qwen3.8-27B Huihui abliterated native FP8 — dual RTX 3090 (TP=2)
+# Qwen3.8-27B Huihui abliterated FP8 — dual RTX 3090 (TP=2)
 # Source: munekazu/Huihui-Qwen3.8-27B-abliterated-FP8
 # Engine: stock vllm/vllm-openai:v0.27.1; no GGUF plugin.
 # Quant: FP8 e4m3, dynamic activations, 128x128 blocks; embedded MTP layer.
@@ -17,13 +17,13 @@
 # Abliteration changes behavior; it is not itself a speed optimization.
 
 services:
-  vllm-qwen38-27b-dual-huihui-fp8:
+  vllm-qwen38-27b-dual-abliterated-fp8:
     # Pinned to a vLLM STABLE release (immutable — never purged, unlike
     # nightlies; the #407 pin-drift fix). The launchers resolve the real image
     # from the `vllm-stable` engine profile and inject it over this default,
     # so this literal only bites a raw `docker compose` invocation (#254).
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
-    container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-dual-huihui-fp8}"
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-dual-abliterated-fp8}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8091}}:8000"
@@ -143,7 +143,7 @@ services:
       - --model
       - /root/.cache/huggingface/Huihui-Qwen3.8-27B-abliterated-FP8
       - --served-model-name
-      - qwen3.8-27b-huihui-fp8
+      - qwen3.8-27b-abliterated-fp8
       - --quantization
       - fp8
       - --dtype
