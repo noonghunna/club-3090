@@ -140,6 +140,22 @@ weights:
     kind: main
     verify_glob: "*.safetensors"
     manual_note: "RadixArk NVFP4 (quant_method modelopt, MIXED precision: 2 config groups -- 193 module groups at W4-float/A4-float and 208 at W8-float/A8-float, ignore=2). 20.44 GiB / 21.95 GB decimal, 22 files. Built-in MTP head present (mtp_num_hidden_layers=1). ⚠️⚠️ THE 4-BIT ACTIVATIONS ARE UNREACHABLE ON AMPERE: sm_86 has no FP4 tensor cores, so vLLM serves this weight-only through the Marlin W4A16 fallback and upcasts activations to 16-bit regardless of what the checkpoint declares. The 3.6 sibling records 'no speed edge vs AutoRound' and 'on Ampere the AutoRound tier serves this model faster' -- so on 2x 3090 this is a COMPATIBILITY path, not a performance one. Its real case is Blackwell (sm_120+), where the A4 groups can actually execute. ⚠️ NVFP4 *KV* is a separate matter and is NOT usable on consumer Blackwell: it routes to a trtllm-gen FP4 FMHA kernel built only for datacenter Blackwell (sm_100/103) and crashes (vLLM #43562 / TRT-LLM #10241) -- no hardware class in this catalog lists nvfp4 KV, and launch_compat C5 refuses rather than falling back. fp8_e4m3 is the FP4-era KV here, as on the 3.6 nvfp4 slugs. Chosen over huginnfork/Qwen3.8-27B-NVFP4A16 (uniform W4/A16, ignore=519, 28.9 GiB -- heavier than the official FP8 and no Blackwell upside) and over unsloth/Qwen3.8-27B-NVFP4 (compressed-tensors mixed-precision, 21.8 GiB, only 5 config groups)."
+  # DFlash2 external drafter (syv-ai) — REQUIRED by the 12 super*/ultra* DFlash2
+  # slugs (kind: draft, not a target). Shared across BOTH int4 and fp8 targets:
+  # the drafter is base-arch-keyed (5120/248320), not target-quant-specific.
+  # Fetch with WITH_DFLASH_DRAFT=1 (setup.sh). local_subdir matches the compose
+  # DRAFTER path (/root/.cache/huggingface/qwen3.8-27b-dflash2-w4a16).
+  dflash2:
+    path: qwen3.8-27b-dflash2-w4a16
+    local_subdir: qwen3.8-27b-dflash2-w4a16
+    size_gb: 1.2
+    format: compressed-tensors
+    status: experimental
+    hf_repo: syvai/Qwen3.8-27B-DFlash2-W4A16
+    engine: vllm
+    kind: draft
+    verify_glob: "*.safetensors"
+    setup_env: WITH_DFLASH_DRAFT=1
 
 default_weight_variant: unsloth-iq4xs
 # Validated drafters for this model (each names a drafters/<id>.yml we ship):

@@ -18,7 +18,9 @@
 #     reported UNVERIFIED and EXCLUDED from the verified count — "verified"
 #     never attaches to a size-only check (#857)
 #   - downloads the always-required drafter (Gemma 4: MTP "assistant"; Qwen3.6:
-#     no always-required drafter — DFlash is optional via WITH_DFLASH_DRAFT=1)
+#     no always-required drafter — DFlash is optional via WITH_DFLASH_DRAFT=1;
+#     Qwen3.8: DFlash2 optional via WITH_DFLASH_DRAFT=1 — REQUIRED by the 12
+#     super*/ultra* slugs, so set it when serving those)
 #
 # Env vars (optional):
 #   MODEL_DIR           Where to place model weights. Default: <repo>/models-cache
@@ -228,6 +230,8 @@ case "${MODEL_NAME}" in
     # meanwhile been rewritten to lead with it, so users were sent to a model that
     # setup.sh refused BY NAME (Discord, 2026-08-17). Re-check if statuses regress.
     PRIMARY_WEIGHT_KEY="qwen3.8-27b:fp8"
+    # DFlash2 drafter for the 12 super*/ultra* slugs (WITH_DFLASH_DRAFT=1).
+    DFLASH_KEY="qwen3.8-27b:dflash2"
     ;;
   deepseek-v4-flash-0731)
     # Defaults to the IQ2 REACH tier (~85 GB on disk, ~86 GB host RAM) rather than
@@ -513,7 +517,7 @@ _disk_need_gb() {
 }
 
 _DISK_KEYS=("${PRIMARY_WEIGHT_KEY:-}" "${ALWAYS_DRAFT_KEY:-}")
-[[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]] && _DISK_KEYS+=("${MODEL_NAME}:dflash")
+[[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]] && _DISK_KEYS+=("${DFLASH_KEY:-${MODEL_NAME}:dflash}")
 PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-$(_disk_need_gb "${_DISK_KEYS[@]}")}"
 
 echo "[preflight] checking environment..."
