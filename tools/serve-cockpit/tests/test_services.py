@@ -4149,7 +4149,7 @@ class TestServeOverrides:
         assert cd.engine_drafters("vllm-stable") == ["mtp", "mtp_assistant", "dflash"]
         assert "dflash" in cd.engine_drafters("beellama-local")
         d = cd.serve_override_defaults("vllm/dual", "org/Foo")
-        assert d["DRAFTER_OPTIONS"] == ["mtp", "mtp_assistant"]   # engine-driven
+        assert d["DRAFTER_OPTIONS"] == ["mtp", "mtp_assistant", "dflash"]   # engine-driven
         assert d["SPEC_METHOD"] == "mtp" and d["SPEC_N"] == "3"
 
 

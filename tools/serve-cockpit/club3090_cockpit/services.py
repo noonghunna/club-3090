@@ -3024,10 +3024,13 @@ class CockpitData:
                         out[var] = m.group(1).strip().strip('"')
                 # Real drafter for the SPEC label ("on" is uninformative): parse the
                 # sibling's --speculative-config method + num_speculative_tokens.
-                sm = _re.search(r'"method"\s*:\s*"([a-z0-9_]+)"', txt)
+                sm = _re.search(r'\\?"method\\?"\s*:\s*\\?"([a-z0-9_]+)\\?"', txt)
                 if sm:
                     method = sm.group(1)
-                    nm = _re.search(r'"num_speculative_tokens"\s*:\s*(\d+)', txt)
+                    nm = _re.search(r'\\?"num_speculative_tokens\\?"\s*:\s*(\d+)', txt)
+                    if not nm:   # entrypoint-built configs use a $$_spec_n var; the
+                        # real default n lives in ${SPEC_N:-<n>}.
+                        nm = _re.search(r'\$\{SPEC_N:-(\d+)\}', txt)
                     out["SPEC_METHOD"] = method                    # raw, e.g. "mtp"
                     out["SPEC_N"] = nm.group(1) if nm else ""
                     out["SPEC_DRAFTER"] = (
