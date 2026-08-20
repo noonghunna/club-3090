@@ -1806,6 +1806,14 @@ def bench_row_from_corpus_record(rec: dict[str, Any]) -> Optional[BenchRow]:
     usable TPS (an honest empty corpus row would mislead the explorer)."""
     if not isinstance(rec, dict):
         return None
+    # Only a REAL user bench (bench.sh / rebench-full → result_class
+    # "bench-measured") backs the explorer/detail bars. The compose-optimizer
+    # writes `boot-fit-measured` boot-fit probes (synthetic ~475 TPS) into the
+    # same corpus dir and they would OVERRIDE the BENCHMARKS.md row for their
+    # (model, engine, topology) key — the same leak that showed 475 in the
+    # catalog column. Drop anything that is not a user bench.
+    if (rec.get("result_class") or "").strip().lower() != "bench-measured":
+        return None
     ext = rec.get("measured_extensions") or {}
     ladder = ext.get("decode_tps_by_ctx") or {}
     decode = None

@@ -606,6 +606,14 @@ def _build_arg_parser():
         "slug. Ignored if --tag is given; exits cleanly if nothing matches.",
     )
     p.add_argument(
+        "--serving-url",
+        default=None,
+        help="The URL this run actually benched (e.g. http://localhost:8086). With "
+        "--resolve-serving, a name-matched container must ALSO publish this URL's "
+        "port, else the record is NOT attributed — stops a test benching a fake "
+        "server from poisoning the corpus with the live container's fingerprint.",
+    )
+    p.add_argument(
         "--bench-output",
         type=Path,
         default=None,
@@ -653,14 +661,69 @@ def _build_arg_parser():
         default=None,
         help='8-pack thinking-ON headline, e.g. "110/150" (extension field).',
     )
+    # Generic escape hatch for the non-bench scripts (#249 wiring): each of
+    # spec-sweep / power-cap-sweep / concurrency-probe / soak / verify-* /
+    # bench-agentic measures a DIFFERENT metric shape (a per-N curve, a
+    # per-watt curve, a ctx ceiling, …) that has no dedicated flag. Rather than
+    # accrete one flag per script, they pass their metric as a JSON blob into
+    # the EXTENSIBLE measured_extensions namespace (see build_record's
+    # measured_extensions "_note"): --extension KEY=JSON, repeatable. The frozen
+    # schema fields are untouched; a bad JSON value fails loud (return 2) so a
+    # calling script's bug can't silently write a malformed record.
+    p.add_argument(
+        "--extension",
+        action="append",
+        default=[],
+        metavar="KEY=JSON",
+        help="Add KEY=<json-value> under measured_extensions (repeatable). The "
+        "value is parsed as JSON; a parse error is a hard error. For the #249 "
+        "non-bench scripts that carry a bespoke metric shape (e.g. "
+        "tps_by_spec_n, tps_by_power_cap, concurrency_by_n, ctx_validated).",
+    )
     return p
 
 
-def resolve_serving_tag() -> Optional[str]:
+def _url_port(url: Optional[str]) -> Optional[str]:
+    """Extract the host port from a benched URL (http://host:PORT/…). None if
+    absent (a bare http://host with no explicit port — the emit then falls back
+    to name-only matching, unchanged behaviour)."""
+    import re
+
+    m = re.search(r"://[^/:]+:(\d+)\b", url or "")
+    return m.group(1) if m else None
+
+
+def _container_host_ports(cname: str) -> set:
+    """The set of published HOST ports for a running container (`docker port`).
+    Empty on any failure — a bench genuinely hitting the container still matches
+    by name if we can't read its ports (fail-open on the read, not on the guard)."""
+    import re
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["docker", "port", cname], capture_output=True, text=True, timeout=10
+        )
+    except Exception:
+        return set()
+    if r.returncode != 0:
+        return set()
+    # lines like "8080/tcp -> 0.0.0.0:8086"
+    return set(re.findall(r"->\s*[0-9.]+:(\d+)", r.stdout))
+
+
+def resolve_serving_tag(serving_url: Optional[str] = None) -> Optional[str]:
     """Resolve the compose_registry tag of a currently-serving container by EXACT
     container-name match (never port/substring — the same rule rebench-full uses).
     Returns the slug, or None if docker is unavailable / nothing matches. Lets
-    bench.sh / quality-test.sh emit a per-rig record without knowing the slug."""
+    bench.sh / quality-test.sh emit a per-rig record without knowing the slug.
+
+    ⚠️ URL GUARD: when ``serving_url`` carries an explicit port, a name-matched
+    container ALSO has to publish that port — otherwise the run did NOT hit this
+    container (a test benching a fake server on a random port, with a real
+    container up) and attributing a record to it would poison the per-rig corpus
+    (the 2026-08-20 ~475-TPS pollution). No serving_url / no port in it → the old
+    name-only behaviour, unchanged. Ports we cannot read → fail-open (name match)."""
     import re
     import subprocess
 
@@ -678,7 +741,8 @@ def resolve_serving_tag() -> Optional[str]:
         ).stdout.split()
     except Exception:
         return None
-    norm = {n.replace("_", "-") for n in names}
+    norm_map = {n.replace("_", "-"): n for n in names}  # normalized -> real name
+    want_port = _url_port(serving_url)
     for slug, entry in COMPOSE_REGISTRY.items():
         try:
             txt = (_REPO_ROOT / entry["compose_path"]).read_text(
@@ -689,8 +753,17 @@ def resolve_serving_tag() -> Optional[str]:
         m = re.search(
             r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt
         )
-        if m and m.group(1).replace("_", "-") in norm:
-            return slug
+        if not m:
+            continue
+        key = m.group(1).replace("_", "-")
+        if key not in norm_map:
+            continue
+        if want_port is not None:
+            host_ports = _container_host_ports(norm_map[key])
+            # host_ports empty == unreadable -> fail-open (name match stands).
+            if host_ports and want_port not in host_ports:
+                continue
+        return slug
     return None
 
 
@@ -752,7 +825,7 @@ def main(argv=None) -> int:
     args = _build_arg_parser().parse_args(argv)
 
     if not args.tag and args.resolve_serving:
-        args.tag = resolve_serving_tag()
+        args.tag = resolve_serving_tag(args.serving_url)
         if not args.tag:
             print(
                 "[measurement_record] no serving container matched a registry slug "
@@ -802,6 +875,39 @@ def main(argv=None) -> int:
         record["measured_extensions"]["quality_8pk"] = args.quality_8pk
     if args.quality_8pk_think_on:
         record["measured_extensions"]["quality_8pk_think_on"] = args.quality_8pk_think_on
+
+    # Generic --extension KEY=JSON (#249 non-bench scripts). Split on the FIRST
+    # '=' so a JSON value containing '=' survives. Refuse a blank key or a value
+    # that is not valid JSON — a malformed extension is a caller bug, and a
+    # silently-dropped metric is exactly the hollow-record failure this producer
+    # exists to prevent. The reserved structural keys stay off-limits so a stray
+    # --extension can't overwrite the namespace's own bookkeeping.
+    _RESERVED_EXT = {"_note", "conditions_fingerprint"}
+    for item in args.extension:
+        key, sep, raw = item.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            print(
+                f"[measurement_record] ERROR: --extension must be KEY=JSON (got {item!r}).",
+                file=sys.stderr,
+            )
+            return 2
+        if key in _RESERVED_EXT:
+            print(
+                f"[measurement_record] ERROR: --extension key {key!r} is reserved.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            value = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            print(
+                f"[measurement_record] ERROR: --extension {key} value is not valid "
+                f"JSON: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        record["measured_extensions"][key] = value
 
     # Surface soft-gap warnings so a partial record is never silently accepted.
     for w in record.get("parse_warnings", []):

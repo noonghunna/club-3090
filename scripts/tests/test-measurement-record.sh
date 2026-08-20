@@ -265,3 +265,49 @@ if failures:
     sys.exit(1)
 print("PASS test-measurement-record (all assertions)")
 PY
+
+# --- (l) CLI --extension KEY=JSON (#249 non-bench-script wiring) --------------
+# The spec-sweep / power-cap-sweep / concurrency-probe / soak / verify-* /
+# bench-agentic records ride a bespoke metric through --extension into the
+# measured_extensions namespace with a NON-measured result_class. Hermetic:
+# --tag (no docker), --bench-output /dev/null, --print-only (no write).
+MR="$ROOT_DIR/scripts/lib/profiles/measurement_record.py"
+TAG="ik-llama/iq4ks-mtp"
+
+out="$(python3 "$MR" --tag "$TAG" --result-class sweep-only --bench-output /dev/null \
+        --extension 'tps_by_spec_n={"by_n":{"2":{"tps":48.2}}}' \
+        --extension 'sweet_spot={"n":"2"}' --print-only 2>/dev/null)" \
+  || { echo "FAIL (l): --extension print-only exited nonzero"; exit 1; }
+echo "$out" | python3 -c '
+import json, sys
+r = json.load(sys.stdin)
+e = r["measured_extensions"]
+assert r["result_class"] == "sweep-only", r["result_class"]
+assert e["tps_by_spec_n"]["by_n"]["2"]["tps"] == 48.2, e["tps_by_spec_n"]
+assert e["sweet_spot"]["n"] == "2", e["sweet_spot"]
+assert "_note" in e, "namespace bookkeeping clobbered"
+' || { echo "FAIL (l): --extension did not land under measured_extensions"; exit 1; }
+
+# A non-measured result_class + empty /dev/null bench output must NOT fail loud
+# (this is exactly the path all 7 non-bench scripts use).
+python3 "$MR" --tag "$TAG" --result-class verify-only --bench-output /dev/null \
+  --smoke-status pass --print-only >/dev/null 2>&1 \
+  || { echo "FAIL (l): non-measured result_class wrongly failed on empty bench"; exit 1; }
+
+# Malformed extension JSON fails loud (rc 2) — a caller bug must never write a
+# malformed record silently.
+if python3 "$MR" --tag "$TAG" --result-class sweep-only --bench-output /dev/null \
+     --extension 'bad={not json' --print-only >/dev/null 2>&1; then
+  echo "FAIL (l): malformed --extension JSON did NOT fail loud"; exit 1
+fi
+# A reserved namespace key is refused.
+if python3 "$MR" --tag "$TAG" --result-class sweep-only --bench-output /dev/null \
+     --extension '_note=123' --print-only >/dev/null 2>&1; then
+  echo "FAIL (l): reserved --extension key was accepted"; exit 1
+fi
+# A missing '=' is refused.
+if python3 "$MR" --tag "$TAG" --result-class sweep-only --bench-output /dev/null \
+     --extension 'noeq' --print-only >/dev/null 2>&1; then
+  echo "FAIL (l): --extension without '=' was accepted"; exit 1
+fi
+echo "PASS test-measurement-record (l: --extension CLI)"

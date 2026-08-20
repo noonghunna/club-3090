@@ -936,7 +936,7 @@ PYQ
       _qt_flag=(--quality-8pk "${_qt_score}")
     fi
     python3 "${ROOT_DIR}/scripts/lib/profiles/measurement_record.py" \
-      --resolve-serving --bench-output /dev/null --result-class quality-only \
+      --resolve-serving --serving-url "$URL" --bench-output /dev/null --result-class quality-only \
       "${_qt_flag[@]}" >/dev/null 2>&1 || true
   fi
 fi

@@ -4136,6 +4136,7 @@ class TestMeasureVsBarData:
             "engine_id": "vllm-stable",
             "topology": "dual",
             "max_model_len": 262144,
+            "result_class": "bench-measured",
             "measured_extensions": {
                 "decode_tps_by_ctx": {"canonical-short": 45.0},
                 "wall_tps": 200.0,
@@ -10291,6 +10292,7 @@ class TestCatalogPreview:
         corpus.mkdir(parents=True)
         (corpus / "vllm-dual__test.jsonl").write_text(json.dumps({
             "_tag": "vllm/dual", "_recorded_at": "2026-07-04T12:00:00Z",
+            "result_class": "bench-measured",
             "engine_pin": "vllm/vllm-openai:v0.24.0",
             "measured_extensions": {"decode_tps_by_ctx": {"canonical-short": 172.4},
                                      "quality_8pk": "108/150"},

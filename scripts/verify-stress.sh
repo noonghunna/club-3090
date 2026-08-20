@@ -104,6 +104,18 @@ set -euo pipefail
 # Auto-detect running container + port (URL/CONTAINER env vars still win).
 # See scripts/preflight.sh::preflight_autodetect_endpoint.
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# --- per-rig #249 record: self-tee stdout so the ceiling-ladder line (the ctx
+# ceiling this stress run validates) can be parsed at the end for the corpus
+# record. VERIFY_STRESS_RECORD=0 skips. An unmatched / bare-metal run skips the
+# emit cleanly. Failure here never fails the stress run.
+VERIFY_STRESS_RECORD="${VERIFY_STRESS_RECORD:-1}"
+_VS_REC_LOG=""
+if [[ "${VERIFY_STRESS_RECORD}" == "1" ]] && command -v python3 >/dev/null 2>&1; then
+  _VS_REC_LOG="$(mktemp 2>/dev/null || echo "/tmp/verify-stress-rec.$$.log")"
+  exec > >(tee -a "${_VS_REC_LOG}")
+fi
+
 if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   # shellcheck source=preflight.sh
   source "${ROOT_DIR}/scripts/preflight.sh"
@@ -1568,4 +1580,53 @@ if [[ "$FAILED" == "0" ]]; then
 else
   printf "\033[31m%d stress check(s) failed.\033[0m See hints above.\n" "$FAILED"
 fi
+
+# --- per-rig #249 record: stress pass/fail + the validated ctx ceiling --------
+# The ceiling-ladder pass/fail line carries the deepest fillable tokens + n_ctx;
+# the recall ladder (RECALL_RUN/RECALL_FAIL, global) says whether addressability
+# was validated cleanly at depth. result_class stress-only (no TPS). Never fails
+# the stress run (|| true).
+if [[ -n "${_VS_REC_LOG:-}" && -f "${_VS_REC_LOG}" ]]; then
+  sync 2>/dev/null || true
+  sleep 0.4   # let the tee subprocess flush the ceiling-ladder line before we read it
+  _vs_status="pass"; [[ "$FAILED" == "0" ]] || _vs_status="fail"
+  _vs_ext="$(VS_LOG="${_VS_REC_LOG}" VS_RECALL_RUN="${RECALL_RUN:-0}" VS_RECALL_FAIL="${RECALL_FAIL:-0}" \
+    python3 - <<'PY' 2>/dev/null || true
+import json, os, re
+try:
+    txt = open(os.environ["VS_LOG"], encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(0)
+# Deepest validated ctx from the ceiling-ladder line (color codes tolerated).
+tok = n_ctx = pct = None
+mt = re.search(r"ceiling ladder:.*?(?:fillable to|passed up to|filled up to|rejected above)\s*([0-9]+)\s*tok", txt)
+if mt:
+    tok = int(mt.group(1))
+mn = re.search(r"ceiling ladder:.*?n_ctx=([0-9]+)", txt)
+if mn:
+    n_ctx = int(mn.group(1))
+mp = re.search(r"ceiling ladder:.*?\(([0-9]+)% of n_ctx=", txt)
+if mp:
+    pct = int(mp.group(1))
+rr = int(os.environ.get("VS_RECALL_RUN") or 0)
+rf = int(os.environ.get("VS_RECALL_FAIL") or 0)
+if rr > 0 and rf == 0 and tok:
+    niah = f"clean@{round(tok/1000)}K"
+else:
+    niah = "allocation-only"
+out = {"tokens": tok, "niah": niah, "pct_of_n_ctx": pct, "n_ctx": n_ctx,
+       "recall_run": rr, "recall_fail": rf}
+print(json.dumps({k: v for k, v in out.items() if v is not None}, separators=(",", ":")))
+PY
+)"
+  _vs_flag=(--extension "stress={\"status\":\"${_vs_status}\",\"failed_checks\":${FAILED}}")
+  if [[ -n "$_vs_ext" && "$_vs_ext" != "{}" ]]; then
+    _vs_flag+=(--extension "ctx_validated=${_vs_ext}")
+  fi
+  python3 "${ROOT_DIR}/scripts/lib/profiles/measurement_record.py" \
+    --resolve-serving --serving-url "$URL" --bench-output /dev/null --result-class stress-only \
+    "${_vs_flag[@]}" >/dev/null 2>&1 || true
+  rm -f "${_VS_REC_LOG}"
+fi
+
 exit "$FAILED"

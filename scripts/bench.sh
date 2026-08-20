@@ -2027,10 +2027,15 @@ fi
 # served container -> registry slug + auto-detects the fingerprint; an unmatched
 # or bare-metal run skips cleanly. Records are append-only history; c3 shows the
 # newest per slug. Failure here never fails the bench.
-if [[ -n "${_BENCH_REC_LOG:-}" && -f "${_BENCH_REC_LOG}" && "${QUICK:-0}" != "1" ]]; then
+# ⚠️ Skip under BENCH_MOCK: mock runs emit synthetic ~475 TPS output, and
+# test-bench-capture.sh drives bench.sh under BENCH_MOCK many times — with a live
+# container present, --resolve-serving would match and write a hollow mock record
+# into the real per-rig corpus (they surfaced in c3 once tagged bench-measured).
+if [[ -n "${_BENCH_REC_LOG:-}" && -f "${_BENCH_REC_LOG}" && "${QUICK:-0}" != "1" && -z "${BENCH_MOCK:-}" ]]; then
   sync 2>/dev/null || true
   sleep 0.4   # let the tee subprocess flush the summary block before we read it
   python3 "${ROOT_DIR}/scripts/lib/profiles/measurement_record.py" \
-    --resolve-serving --bench-output "${_BENCH_REC_LOG}" >/dev/null 2>&1 || true
+    --resolve-serving --serving-url "$URL" --result-class bench-measured \
+    --bench-output "${_BENCH_REC_LOG}" >/dev/null 2>&1 || true
   rm -f "${_BENCH_REC_LOG}"
 fi

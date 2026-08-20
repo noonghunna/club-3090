@@ -1186,7 +1186,19 @@ class CockpitData:
                 by_ctx = ext.get("decode_tps_by_ctx") or {}
                 decode = next(iter(by_ctx.values()), None)
                 date = stamp[:10] if stamp else _dt.date.fromtimestamp(mtime).isoformat()
-                if decode is not None or ext.get("narr_tps") is not None or ext.get("code_tps") is not None:
+                # Only a REAL user-facing bench (bench.sh / rebench-full →
+                # result_class "bench-measured") may drive the perf columns. The
+                # compose-optimizer writes `boot-fit-measured` boot-fit probes
+                # (degenerate ttft ~1ms, synthetic ~475 TPS) into the SAME dir;
+                # those are internal fit checks, not the rig's bench, and must
+                # never surface here (they were showing as the slug's TPS).
+                rc = (r.get("result_class") or "").strip().lower()
+                has_tps = (
+                    decode is not None
+                    or ext.get("narr_tps") is not None
+                    or ext.get("code_tps") is not None
+                )
+                if rc == "bench-measured" and has_tps:
                     if slug not in tps_best or ts > tps_best[slug][0]:
                         tps_best[slug] = (ts, {
                             "decode_tps": decode, "narr_tps": ext.get("narr_tps"),

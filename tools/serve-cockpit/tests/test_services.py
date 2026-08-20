@@ -587,20 +587,33 @@ class TestLoadCatalog:
         corpus = tmp_path / "results" / "measurement-records"
         corpus.mkdir(parents=True)
         older = {"_tag": "vllm/dual", "_recorded_at": "2026-07-01T10:00:00Z",
+                 "result_class": "bench-measured",
                  "engine_pin": "vllm/vllm-openai:v0.22.0",
                  "measured_extensions": {"decode_tps_by_ctx": {"canonical-short": 170.0},
                                           "quality_8pk": "100/150"}}
         newer = {"_tag": "vllm/dual", "_recorded_at": "2026-07-04T10:00:00Z",
+                 "result_class": "bench-measured",
                  "engine_pin": "vllm/vllm-openai:v0.24.0",
                  "measured_extensions": {"decode_tps_by_ctx": {"canonical-short": 174.5},
                                           "quality_8pk": "109/150",
                                           "quality_8pk_think_on": "111/150"}}
+        # Negative control: the compose-optimizer writes `boot-fit-measured`
+        # boot-fit probes (degenerate synthetic TPS) into the SAME corpus dir.
+        # Even though this one is NEWEST, it must NOT win the perf column — only
+        # a real user bench (`bench-measured`) may. (Regression: c3 showed 475.)
+        optimizer_scratch = {"_tag": "vllm/dual", "_recorded_at": "2026-07-09T10:00:00Z",
+                 "result_class": "boot-fit-measured",
+                 "engine_pin": "vllm/vllm-openai:v0.24.0",
+                 "measured_extensions": {"decode_tps_by_ctx": {"canonical-short": 475.0},
+                                          "narr_tps": 475.0, "code_tps": 476.0}}
         (corpus / "vllm-dual__aaaa.jsonl").write_text(
             json.dumps(older) + "\nnot-json\n" + json.dumps(newer) + "\n"
+            + json.dumps(optimizer_scratch) + "\n"
         )
         cd = CockpitData(tmp_path, runner=full_runner())
         local = cd.local_measurements()
         lm = local["vllm/dual"]
+        # 174.5 (newest BENCH), never 475 (newer optimizer scratch) — the fix.
         assert lm.decode_tps == 174.5 and lm.quality_8pk == "109/150"
         assert lm.quality_8pk_think_on == "111/150"
         assert lm.engine_pin == "vllm/vllm-openai:v0.24.0"
@@ -2943,7 +2956,7 @@ CORPUS_RECORD = {
     "max_model_len": 262144,
     "max_num_seqs": 2,
     "mem_util": 0.92,
-    "result_class": "boot-fit-measured",
+    "result_class": "bench-measured",
     "provenance": {"source": "measured", "n_obs": 1, "last_confirmed": "2026-06-16"},
     "measured_extensions": {
         "decode_tps_by_ctx": {"canonical-short": 44.02},
