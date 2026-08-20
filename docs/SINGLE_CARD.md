@@ -11,14 +11,14 @@ You have **one RTX 3090 (24 GB VRAM)**. This page gets you to a running config a
 | **Gemma-4-12B** ⭐ long-context pick | `vllm/gemma-12b-single-int8-mtp` | **256K** | multimodal arch, served text-only | ⚠️ caveats |
 | **Gemma-4-26B-A4B** | `vllm/gemma-26ba4b-single` | **176K** | off | ⚠️ caveats |
 | **Qwen3.6-27B** | `vllm/minimal` | **32K** | ❌ none | ✅ production |
-| **Qwen3.8-27B** 🆕 | `llamacpp/qwen38-27b-single-iq4nl` | **131K** | ❌ none | 🐣 `--force`, hidden from `--list` |
+| **Qwen3.8-27B** 🆕 | `llamacpp/qwen38-27b-single-iq4xs` | **131K** | ❌ none | 🐣 `--force`, hidden from `--list` |
 
 ⭐ **Need long context on one card? Run Gemma-4-12B, not Qwen3.6.** Qwen3.6-27B's single-card ceiling is 32K with no vision — its 200K llama.cpp / ik-llama routes were retired 2026-08-12 (still launchable, see [Escape hatches](#escape-hatches)).
 
-🆕 **Qwen3.8-27B does have a single-card path** — `llamacpp/qwen38-27b-single-iq4nl` (unsloth IQ4_NL + q8_0 KV, 131K, port 8086). It's `🐣 incubating`: hidden from `switch.sh --list`, launch with `--force`, and **unbenched on one card**. The model's measured numbers are all dual-card — see [DUAL_CARD.md](DUAL_CARD.md) and the [announcement](https://github.com/noonghunna/club-3090/discussions/1024).
+🆕 **Qwen3.8-27B does have a single-card path** — `llamacpp/qwen38-27b-single-iq4xs` (unsloth UD-IQ4_XS + q8_0 KV, 131K, port 8086). It's `🐣 incubating`: hidden from `switch.sh --list`, launch with `--force`, and **unbenched on one card**. The model's measured numbers are all dual-card — see [DUAL_CARD.md](DUAL_CARD.md) and the [announcement](https://github.com/noonghunna/club-3090/discussions/1024).
 
 ```bash
-bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4nl
+bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4xs
 ```
 
 ⚠️ **Three NVFP4 single-card slugs exist and none run on a 3090.** `vllm/qwen-27b-single-nvfp4` and `vllm/qwen-35b-a3b-single-nvfp4` declare `required_sm=9.0` (a 3090 is **sm 8.6**); `vllm/qwen38-27b-single-nvfp4` (64K, port 8098) needs a **32 GB** card and has never booted anywhere. All three are for Hopper / Blackwell / 32 GB-class hardware.
@@ -80,7 +80,7 @@ Guided 5-minute version, no decisions: [`GETTING_STARTED.md`](GETTING_STARTED.md
 | 4 concurrent streams at 262K + vision | KV pool too small for 4 × full ctx | TP=2 → [DUAL_CARD.md](DUAL_CARD.md) |
 | Peak code TPS (>100 on the quicksort prompt) | DFlash needs `head_size=256` + non-causal; vLLM splits the head dim | TP=2 + DFlash |
 | Single prompt >60K tokens on Qwen3.6-27B | Cliff 2 (DeltaNet GDN forward) | TP=2 (`vllm/dual`), a non-Qwen3-Next model (`vllm/gemma-12b-single-int8-mtp`, 256K), or `--force llamacpp/default` |
-| Qwen3.8-27B on **vLLM**, or at 262K | FP8 weights + a 262K KV pool don't fit 24 GB | 2 cards → [DUAL_CARD.md](DUAL_CARD.md). One card gets the llama.cpp IQ4_NL route at 131K. |
+| Qwen3.8-27B on **vLLM**, or at 262K | FP8 weights + a 262K KV pool don't fit 24 GB | 2 cards → [DUAL_CARD.md](DUAL_CARD.md). One card gets the llama.cpp UD-IQ4_XS route at 131K. |
 
 ---
 

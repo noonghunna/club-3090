@@ -220,7 +220,7 @@ case "${MODEL_NAME}" in
     # Defaults to the fp8 "max accuracy" tier — what DUAL_CARD.md leads with, and the
     # only qwen3.8 config with measured numbers (67.4 / 85.8 tok/s, verify-full PASS,
     # 2026-08-17). DUAL-card: 30.9 GB of weights do not fit one 24 GB card.
-    # Single card: WEIGHT_KEY=qwen3.8-27b:unsloth-iq4nl (131K, llama.cpp).
+    # Single card: WEIGHT_KEY=qwen3.8-27b:unsloth-iq4xs (131K, llama.cpp).
     #
     # Excluded from this dispatch until 2026-08-17 on the grounds that "both its slugs
     # are incubating and nothing has booted". All three parts expired: 10 slugs exist,
@@ -989,13 +989,13 @@ case "${MODEL_NAME}" in
     # at them. Only the old "no vLLM compose exists" rationale was stale.
     # ⚠️ 2026-08-17: this model IS now in the dispatch + "Supported:" lists — the
     # old exclusion rationale expired (see the dispatch arm above). The sample lines
-    # below still track the SINGLE-card IQ4_NL tier because they advertise a one-card
+    # below still track the SINGLE-card UD-IQ4_XS tier because they advertise a one-card
     # next step; the dispatch default is the dual-card fp8 tier (serves on 8091).
     SAMPLE_CONTAINER="llama-cpp-qwen38-27b-single"
     SAMPLE_COMPOSE_FLAGS_DUAL=""
     SAMPLE_PORT="8086"
     SAMPLE_MODEL_NAME="qwen3.8-27b"
-    SAMPLE_LAUNCH_HINT="  bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4nl"
+    SAMPLE_LAUNCH_HINT="  bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4xs"
     NEXT_STEPS_NOTE="🧪/🐣 — every qwen3.8 slug needs --force; the incubating ones are
   also hidden from 'switch.sh --list' (reveal with --list --all).
   MEASURED (dual fp8, 2026-08-17): vllm/qwen38-27b-dual-max on 2x 3090 — 67.4 narr /
