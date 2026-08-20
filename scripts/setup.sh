@@ -39,6 +39,11 @@
 #                       2026-04-26; bench numbers in DUAL_CARD.md were
 #                       measured against that snapshot. AL improvements
 #                       expected when z-lab tags training-complete.
+#   WITH_VISION         Set to 1 to ALSO download the F16 mmproj vision projector
+#                       when the model registers one (qwen3.8-27b: the companion of
+#                       the llamacpp/qwen38-27b-single-iq4xs slug, which ships
+#                       q4/262K/vision). Default: 0. c3's Download pulls it via the
+#                       slug's weights_companions regardless.
 #   PREFLIGHT_DISK_GB   Required free space at MODEL_DIR (default: 25, or
 #                       28 if WITH_DFLASH_DRAFT=1)
 #

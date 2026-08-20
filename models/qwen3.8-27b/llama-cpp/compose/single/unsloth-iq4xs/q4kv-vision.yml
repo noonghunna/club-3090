@@ -27,11 +27,12 @@
 #                  tower; the F16 projector is decode-free on text (bench parity
 #                  with the text sibling) but image-encode adds a transient VRAM
 #                  spike at inference, not just at load.
-#              (3) 262K is ALLOCATED, not FILLED — no NIAH ladder at this ctx on
-#                  this quant. Allocation that boots is NOT allocation that fills
-#                  on this family (the q8 sibling documents 262144 walling on the
-#                  rs-cache buffer). Do not quote a usable-context claim until a
-#                  verify-stress NIAH ladder runs here.
+#              (3) 262K NIAH-validated clean to 240,635 tok (91% of n_ctx) on
+#                  2026-08-20 (verify-stress ceiling ladder, STRESS_FAST: 2 rungs
+#                  + boundary 5/5 + recall 2/2, VRAM Δ0). ⚠️ This is ADDRESSABILITY
+#                  on a uniform haystack, NOT retrieval quality (#1017) — do not
+#                  quote it beside real NIAH/RULER scores. Full-fidelity retrieval
+#                  NIAH + the fine ladder past 240K still unrun.
 #              Promote to 🧪/⚠️ only after bench + verify-stress NIAH + soak. q4 KV
 #              keeps this off ✅ Production permanently (floor policy).
 #   Engine-profile: llama-cpp-local

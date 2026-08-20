@@ -102,8 +102,9 @@ llamacpp-club3090 — despite each using a different drafter grammar underneath.
 On the llama.cpp side `SPEC_N=0` **removes** the drafter flags rather than setting
 the count to zero, and that distinction is worth real memory: llama.cpp at
 `--spec-draft-n-max 0` stops drafting but still builds the draft context (and still
-loads an external draft GGUF when one is named). Measured on
-`llamacpp/qwen38-27b-single-iq4xs` (measured on its IQ4_NL artifact, 2026-08-15), 1× 3090: **21,444 MiB with the drafter on vs
+loads an external draft GGUF when one is named). Measured 2026-08-15 on Qwen3.8-27B
+at 131K / q8_0 KV (the then-shipped IQ4_NL artifact — the `llamacpp/qwen38-27b-single-iq4xs`
+slug now ships q4_0 / 262K / vision), 1× 3090: **21,444 MiB with the drafter on vs
 20,174 MiB with `SPEC_N=0`** — 1,270 MiB that zeroing the count would have left
 allocated.
 

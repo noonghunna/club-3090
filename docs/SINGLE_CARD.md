@@ -11,11 +11,11 @@ You have **one RTX 3090 (24 GB VRAM)**. This page gets you to a running config a
 | **Gemma-4-12B** ⭐ long-context pick | `vllm/gemma-12b-single-int8-mtp` | **256K** | multimodal arch, served text-only | ⚠️ caveats |
 | **Gemma-4-26B-A4B** | `vllm/gemma-26ba4b-single` | **176K** | off | ⚠️ caveats |
 | **Qwen3.6-27B** | `vllm/minimal` | **32K** | ❌ none | ✅ production |
-| **Qwen3.8-27B** 🆕 | `llamacpp/qwen38-27b-single-iq4xs` | **131K** | ❌ none | 🐣 `--force`, hidden from `--list` |
+| **Qwen3.8-27B** 🆕 | `llamacpp/qwen38-27b-single-iq4xs` | **262K** | ✅ yes (mmproj-F16) | 🐣 `--force`, hidden from `--list` |
 
 ⭐ **Need long context on one card? Run Gemma-4-12B, not Qwen3.6.** Qwen3.6-27B's single-card ceiling is 32K with no vision — its 200K llama.cpp / ik-llama routes were retired 2026-08-12 (still launchable, see [Escape hatches](#escape-hatches)).
 
-🆕 **Qwen3.8-27B does have a single-card path** — `llamacpp/qwen38-27b-single-iq4xs` (unsloth UD-IQ4_XS + q8_0 KV, 131K, port 8086). It's `🐣 incubating`: hidden from `switch.sh --list`, launch with `--force`, and **unbenched on one card**. The model's measured numbers are all dual-card — see [DUAL_CARD.md](DUAL_CARD.md) and the [announcement](https://github.com/noonghunna/club-3090/discussions/1024).
+🆕 **Qwen3.8-27B does have a single-card path** — `llamacpp/qwen38-27b-single-iq4xs` (unsloth UD-IQ4_XS + **q4_0 KV, 262K ctx, F16 vision projector**, port 8086). The q4_0 KV halving is what fits full context *and* the projector on one 24 GB card — a "max everything on one card" config. It's `🐣 incubating`: hidden from `switch.sh --list`, launch with `--force`. Measured 1× 3090 2026-08-20: boots + fits 22.3 GiB, verify-full PASS, image recognition correct, NIAH clean to 240,635 tok (91% of 262K), decode **61.6 narr / 71.3 code**. ⚠️ **q4_0 KV is below the stack serving floor** (a max-ctx/vision exhibit, not serving-grade); for serving-grade q8_0 KV at 131K, override `KV_TYPE=q8_0 CTX_SIZE=131072` on the same compose. See [DUAL_CARD.md](DUAL_CARD.md) and the [announcement](https://github.com/noonghunna/club-3090/discussions/1024).
 
 ```bash
 bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4xs
