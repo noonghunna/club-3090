@@ -911,5 +911,35 @@ if [[ -f "$JSON_OUT" ]]; then
   echo "  benchlocal-cli inspect ${JSON_OUT} --mode timeout           # filter by failure type"
 fi
 
+# --- emit the per-rig #249 quality record (c3's per-rig "8pk" column reads
+# results/measurement-records/*.jsonl). QUALITY_RECORD=0 skips. Emits whatever
+# total the run produced (P/T — /150 on --full, /75 on --medium, etc.); a later
+# quality run's score supersedes in c3 (append-only history kept). resolve-serving
+# maps the served container -> slug; unmatched/bare-metal runs skip cleanly. This
+# writes a quality-ONLY record (no TPS) that MERGES with the bench TPS record.
+if [[ "${QUALITY_RECORD:-1}" == "1" && -f "${JSON_OUT:-}" ]] && command -v python3 >/dev/null 2>&1; then
+  _qt_score="$(python3 - "$JSON_OUT" <<'PYQ' 2>/dev/null
+import json, sys
+try:
+    q = json.load(open(sys.argv[1]))
+    p = sum(int(x.get("passed") or 0) for x in q.get("packs") or [])
+    t = sum(int(x.get("total") or 0) for x in q.get("packs") or [])
+    print(f"{p}/{t}" if t else "")
+except Exception:
+    print("")
+PYQ
+)"
+  if [[ -n "${_qt_score}" ]]; then
+    if [[ "${ENABLE_THINKING:-0}" == "1" ]]; then
+      _qt_flag=(--quality-8pk-think-on "${_qt_score}")
+    else
+      _qt_flag=(--quality-8pk "${_qt_score}")
+    fi
+    python3 "${ROOT_DIR}/scripts/lib/profiles/measurement_record.py" \
+      --resolve-serving --bench-output /dev/null --result-class quality-only \
+      "${_qt_flag[@]}" >/dev/null 2>&1 || true
+  fi
+fi
+
 echo
 exit "$RC"

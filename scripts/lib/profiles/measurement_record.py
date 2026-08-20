@@ -593,7 +593,18 @@ def _build_arg_parser():
             "bench OUTPUT, writes a per-rig gitignored record. No GPU required."
         ),
     )
-    p.add_argument("--tag", required=True, help="compose_registry tag, e.g. ik-llama/iq4ks-mtp")
+    p.add_argument(
+        "--tag",
+        default=None,
+        help="compose_registry tag, e.g. ik-llama/iq4ks-mtp. Omit with --resolve-serving.",
+    )
+    p.add_argument(
+        "--resolve-serving",
+        action="store_true",
+        help="Resolve --tag from the currently-serving container (EXACT "
+        "container-name match), so bench.sh / quality-test.sh need not know the "
+        "slug. Ignored if --tag is given; exits cleanly if nothing matches.",
+    )
     p.add_argument(
         "--bench-output",
         type=Path,
@@ -645,10 +656,122 @@ def _build_arg_parser():
     return p
 
 
+def resolve_serving_tag() -> Optional[str]:
+    """Resolve the compose_registry tag of a currently-serving container by EXACT
+    container-name match (never port/substring — the same rule rebench-full uses).
+    Returns the slug, or None if docker is unavailable / nothing matches. Lets
+    bench.sh / quality-test.sh emit a per-rig record without knowing the slug."""
+    import re
+    import subprocess
+
+    try:
+        from .compose_registry import COMPOSE_REGISTRY
+    except ImportError:  # direct-script invocation
+        import sys as _sys
+
+        _sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+    try:
+        names = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.split()
+    except Exception:
+        return None
+    norm = {n.replace("_", "-") for n in names}
+    for slug, entry in COMPOSE_REGISTRY.items():
+        try:
+            txt = (_REPO_ROOT / entry["compose_path"]).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            continue
+        m = re.search(
+            r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt
+        )
+        if m and m.group(1).replace("_", "-") in norm:
+            return slug
+    return None
+
+
+def _detect_serving_fingerprint(tag: str):
+    """Best-effort (engine_pin, hardware, power_cap_w) for a serving slug, from
+    docker inspect + nvidia-smi. Any field is None if undetectable — the record
+    stays valid (fingerprint fields are optional)."""
+    import re
+    import subprocess
+
+    engine_pin = hardware = power_cap = None
+    try:
+        from .compose_registry import COMPOSE_REGISTRY
+    except ImportError:
+        from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+    try:
+        entry = COMPOSE_REGISTRY.get(tag) or {}
+        txt = (_REPO_ROOT / entry["compose_path"]).read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt)
+        cname = m.group(1) if m else None
+        if cname:
+            img = subprocess.run(
+                ["docker", "inspect", cname, "--format", "{{.Config.Image}}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if img.returncode == 0 and img.stdout.strip():
+                engine_pin = img.stdout.strip()
+    except Exception:
+        pass
+    try:
+        smi = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,power.limit", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if smi.returncode == 0 and smi.stdout.strip():
+            first = smi.stdout.strip().splitlines()[0].split(",")
+            name = first[0].strip().lower()
+            for needle, cls in (
+                ("3090 ti", "rtx-3090-ti"), ("3090", "rtx-3090"), ("5090", "rtx-5090"),
+                ("4090", "rtx-4090"), ("a5000", "a5000"), ("a100", "a100"), ("h100", "h100"),
+                ("3060", "rtx-3060-12gb"),
+            ):
+                if needle in name:
+                    hardware = cls
+                    break
+            if len(first) > 1:
+                try:
+                    power_cap = float(first[1].strip())
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return engine_pin, hardware, power_cap
+
+
 def main(argv=None) -> int:
     import sys
 
     args = _build_arg_parser().parse_args(argv)
+
+    if not args.tag and args.resolve_serving:
+        args.tag = resolve_serving_tag()
+        if not args.tag:
+            print(
+                "[measurement_record] no serving container matched a registry slug "
+                "— skipping record (not an error).",
+                file=sys.stderr,
+            )
+            return 0
+        # Auto-fill the fingerprint the scripts don't pass, so bench.sh /
+        # quality-test.sh stay thin and records match rebench-full's shape.
+        fp_pin, fp_hw, fp_cap = _detect_serving_fingerprint(args.tag)
+        if args.engine_pin is None:
+            args.engine_pin = fp_pin
+        if args.hardware is None:
+            args.hardware = fp_hw
+        if args.power_cap_w is None:
+            args.power_cap_w = fp_cap
+    if not args.tag:
+        print("[measurement_record] ERROR: --tag or --resolve-serving required.", file=sys.stderr)
+        return 2
 
     if args.bench_output is not None:
         text = args.bench_output.read_text(encoding="utf-8")

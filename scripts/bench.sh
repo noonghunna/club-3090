@@ -295,6 +295,17 @@ fi
 # The measurement heredoc shells out to the lib for the #817 PP plausibility gate,
 # so it needs the path even when the capture layer itself is off (CAPTURE=0).
 export BENCH_CAPTURE_LIB="${ROOT_DIR}/scripts/lib/capture.sh"
+
+# --- per-rig #249 record: self-tee stdout so we can emit a corpus record at the
+# end (c3's per-rig "TPS (rig)" column reads results/measurement-records/*.jsonl).
+# BENCH_RECORD=0 skips it. resolve-serving maps the running container -> registry
+# slug; a bare-metal / unmatched / --quick run just skips cleanly (no error).
+BENCH_RECORD="${BENCH_RECORD:-1}"
+_BENCH_REC_LOG=""
+if [[ "${BENCH_RECORD}" == "1" ]] && command -v python3 >/dev/null 2>&1; then
+  _BENCH_REC_LOG="$(mktemp 2>/dev/null || echo "/tmp/bench-rec.$$.log")"
+  exec > >(tee -a "${_BENCH_REC_LOG}")
+fi
 # Interconnect state (#805). The SAME lib report.sh sources — the two surfaces
 # must never disagree about whether P2P was engaged for a given run, and a
 # second copy of the classifier here is exactly how they would drift.
@@ -2009,4 +2020,17 @@ if [[ "$QUICK" == "1" ]]; then
   echo "  no prefill anchor. Not a BENCHMARKS.md row. For any comparison that needed a"
   echo "  reboot, run >=2 BOOTS per arm — --quick cut the within-boot samples, not the"
   echo "  between-boot variance. Drop --quick for the canonical protocol."
+fi
+
+# --- emit the per-rig #249 record from THIS run's captured output -------------
+# Skipped for --quick (not a canonical measurement). resolve-serving maps the
+# served container -> registry slug + auto-detects the fingerprint; an unmatched
+# or bare-metal run skips cleanly. Records are append-only history; c3 shows the
+# newest per slug. Failure here never fails the bench.
+if [[ -n "${_BENCH_REC_LOG:-}" && -f "${_BENCH_REC_LOG}" && "${QUICK:-0}" != "1" ]]; then
+  sync 2>/dev/null || true
+  sleep 0.4   # let the tee subprocess flush the summary block before we read it
+  python3 "${ROOT_DIR}/scripts/lib/profiles/measurement_record.py" \
+    --resolve-serving --bench-output "${_BENCH_REC_LOG}" >/dev/null 2>&1 || true
+  rm -f "${_BENCH_REC_LOG}"
 fi

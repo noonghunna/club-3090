@@ -1156,7 +1156,13 @@ class CockpitData:
             return {}
         import datetime as _dt
 
-        best: dict[str, tuple[float, LocalMeasured]] = {}
+        # Per-field NEWEST merge (slice 2c). bench.sh emits a TPS-only record and
+        # quality-test.sh a quality-only record, so a slug's newest TPS and newest
+        # 8pk can live in DIFFERENT records. Show the latest of EACH: running bench
+        # 3× → the 3rd run's TPS wins (older ones stay in the append-only corpus);
+        # a later quality-test run adds its 8pk without clobbering the TPS.
+        tps_best: dict[str, tuple[float, dict]] = {}
+        q_best: dict[str, tuple[float, dict]] = {}
         for f in sorted(base.glob("*.jsonl")):
             try:
                 mtime = f.stat().st_mtime
@@ -1179,19 +1185,35 @@ class CockpitData:
                 ext = r.get("measured_extensions") or {}
                 by_ctx = ext.get("decode_tps_by_ctx") or {}
                 decode = next(iter(by_ctx.values()), None)
-                lm = LocalMeasured(
-                    decode_tps=decode,
-                    narr_tps=ext.get("narr_tps"),
-                    code_tps=ext.get("code_tps"),
-                    quality_8pk=ext.get("quality_8pk"),
-                    quality_8pk_think_on=ext.get("quality_8pk_think_on"),
-                    engine_pin=r.get("engine_pin"),
-                    date=(stamp[:10] if stamp
-                          else _dt.date.fromtimestamp(mtime).isoformat()),
-                )
-                if slug not in best or ts > best[slug][0]:
-                    best[slug] = (ts, lm)
-        return {s: lm for s, (ts, lm) in best.items()}
+                date = stamp[:10] if stamp else _dt.date.fromtimestamp(mtime).isoformat()
+                if decode is not None or ext.get("narr_tps") is not None or ext.get("code_tps") is not None:
+                    if slug not in tps_best or ts > tps_best[slug][0]:
+                        tps_best[slug] = (ts, {
+                            "decode_tps": decode, "narr_tps": ext.get("narr_tps"),
+                            "code_tps": ext.get("code_tps"),
+                            "engine_pin": r.get("engine_pin"), "date": date,
+                        })
+                if ext.get("quality_8pk") or ext.get("quality_8pk_think_on"):
+                    if slug not in q_best or ts > q_best[slug][0]:
+                        q_best[slug] = (ts, {
+                            "quality_8pk": ext.get("quality_8pk"),
+                            "quality_8pk_think_on": ext.get("quality_8pk_think_on"),
+                            "engine_pin": r.get("engine_pin"), "date": date,
+                        })
+        out: dict[str, LocalMeasured] = {}
+        for slug in set(tps_best) | set(q_best):
+            t = tps_best.get(slug, (0.0, {}))[1]
+            q = q_best.get(slug, (0.0, {}))[1]
+            out[slug] = LocalMeasured(
+                decode_tps=t.get("decode_tps"),
+                narr_tps=t.get("narr_tps"),
+                code_tps=t.get("code_tps"),
+                quality_8pk=q.get("quality_8pk"),
+                quality_8pk_think_on=q.get("quality_8pk_think_on"),
+                engine_pin=t.get("engine_pin") or q.get("engine_pin"),
+                date=max(t.get("date", ""), q.get("date", "")),
+            )
+        return out
 
     def _read_benchmarks_md(self) -> str:
         path = self.repo_root / "BENCHMARKS.md"
