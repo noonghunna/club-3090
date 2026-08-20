@@ -1,8 +1,13 @@
 # ===========================================================================
 # Profile (at-a-glance):
-#   Model:     Qwen3.8-27B (Avuja AutoRound INT4 — 4-bit, group 128, sym,
-#              packing auto_round:auto_gptq; 18.23 GiB. Vision tower and MTP
-#              head both ship UNQUANTIZED at bf16.) Served **W4A8** — int8
+#   Model:     Qwen3.8-27B (Frozenlock AutoRound INT4 — 4-bit, group 128, sym,
+#              packing auto_round:auto_gptq; ~18 GiB. Vision tower is bf16;
+#              the MTP head is QUANTIZED. ⭐ Replaced the Avuja export
+#              2026-08-20 (club-3090#1052) — Avuja's built-in MTP drafter
+#              collapsed to 0% acceptance at ~14.5k gen; Frozenlock runs
+#              clean past 22-24k (verify-full 8/9, bench narr ~75 / code
+#              ~103 ≈ Avuja, MTP accept-len 3.48-5.0). Avuja preserved on
+#              disk as qwen3.8-27b-autoround-int4-avuja.) Served **W4A8** — int8
 #              activations ON by default (W4A8=0 for W4A16).
 #   Topology:  Quad 3090 PCIe (TP=4, no NVLink)
 #   Drafter:   MTP n=4 built-in (SPEC_N override; SPEC_N=0 disables)

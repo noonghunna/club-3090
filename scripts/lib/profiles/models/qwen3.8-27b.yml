@@ -121,14 +121,14 @@ weights:
   autoround-int4:
     path: qwen3.8-27b-autoround-int4
     local_subdir: qwen3.8-27b-autoround-int4
-    size_gb: 19.6
+    size_gb: 19.0
     format: autoround
     status: experimental
-    hf_repo: Avuja/Qwen3.8-27B-int4-AutoRound
+    hf_repo: Frozenlock/Qwen3.8-27B-int4-AutoRound
     engine: vllm
     kind: main
     verify_glob: "*.safetensors"
-    manual_note: "Community AutoRound INT4 (quant_method auto-round, 4-bit, group_size 128, sym=true, packing auto_round:auto_gptq). 18.23 GiB / 19.6 GB decimal; 22/22 files size-verified against the HF manifest 2026-08-16. Drives the FAST tier (vllm/qwen38-27b-{dual,multi4,multi8}-fast) opposite the official-FP8 MAX tier: ~9.1 GiB/card at TP=2 vs FP8's ~14.4, which is where the larger KV pool comes from. VISION: tower present and UNQUANTIZED (bf16) -- never served. MTP: head present and UNQUANTIZED (bf16, model_extra_tensors.safetensors), unlike the Lorbus/ThinkingCap AutoRound class whose block_name_to_quantize includes mtp.layers. Depth swept 2026-08-16 -> knee at n=4 (+22.1% narrative / +83.8% code vs no drafter); n=1 is WORSE than no drafter; acceptance length rises monotonically to n=6 so it CANNOT be used to pick depth. W4A8 (int8 activations) works on this checkpoint (+41.8% prefill / -8% decode, verify-full 9/9 both arms) because it is auto-round-packed [k/8,n], which is what the vendored negscale fold assumes -- a compressed-tensors pack-quantized sibling ([n,k/8]) hard-fails that fold. Full detail: learnings/qwen3.8-27b.md."
+    manual_note: "Community AutoRound INT4, Frozenlock export (quant_method auto-round, 4-bit, group_size 128, sym=true, auto-round-packed [k/8,n]). ~19.0 GB decimal. Drives the FAST tier (vllm/qwen38-27b-{dual,multi4,multi8}-fast) opposite the official-FP8 MAX tier. ⭐ REPLACED the prior Avuja/Qwen3.8-27B-int4-AutoRound export 2026-08-20 (club-3090#1052): Avuja’s checkpoint permanently collapsed the built-in MTP drafter to 0% acceptance at ~14.5k cumulative gen tokens; Frozenlock (SAME core recipe, different export) runs the drafter clean past 22-24k in BOTH W4A8 and W4A16 (verify-full 8/9, bench narr ~74.9 / code ~103.5 TPS, MTP accept-len 3.48-5.0, coherent). Distinct from the SEPARATE vllm#50021 GDN spec-decode wild-write crash (still live). ⚠ Unlike Avuja this export QUANTIZES the MTP head (not bf16). ⚠⚠ INHERITED-FROM-AVUJA, NOT re-measured on Frozenlock (re-run before quoting as Frozenlock numbers): the n=4 depth knee (+22.1% narr / +83.8% code; n=1 worse than no drafter), the W4A8 +41.8%-prefill/-8%-decode A/B, verify-full 9/9 both arms. W4A8 (int8 activations) works because it is auto-round-packed [k/8,n], what the vendored negscale fold assumes. VISION tower present (bf16), never served. Full detail: learnings/qwen3.8-27b.md."
   nvfp4:
     path: qwen3.8-27b-nvfp4
     local_subdir: qwen3.8-27b-nvfp4
