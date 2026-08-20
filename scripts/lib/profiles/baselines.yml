@@ -243,6 +243,87 @@ baselines:
         code_tps CV 2.7%, prefill CV 0.1% are the tight ones. quality_8pk and
         ctx_validated deliberately ABSENT: the 8-pack and a NIAH ladder have never
         been run on this slug."
+  vllm/qwen38-27b-dual-superfast:
+    narr_tps: 74.1
+    code_tps: 135.4
+    prefill_tps:
+      10k: 1834.0
+      90k: 1356.0
+    ttft_ms: 152
+    date: 2026-08-20
+    engine_pin: vllm/vllm-openai:v0.27.1
+    rig: 2x3090-pcie
+    power_cap_w:
+    - 370
+    submitted_by: noonghunna
+    tier: local
+    quality_env:
+      harness: "bench.sh 3 warm + 5 measured on the shipped config (int4 Frozenlock,
+        DFlash2 n=7, fp8 KV @262144, W4A8). verify-full 9/9. narr CV 4.7%, code CV
+        6.1%. quality_8pk and ctx_validated deliberately ABSENT: the 8-pack and a
+        NIAH ladder have not been run on this slug."
+  vllm/qwen38-27b-dual-ultrafast:
+    narr_tps: 128.3
+    code_tps: 231.5
+    prefill_tps:
+      10k: 1325.4
+      90k: 1016.6
+    ttft_ms: 118
+    date: 2026-08-20
+    engine_pin: vllm/vllm-openai:v0.27.1
+    rig: 2x3090-pcie
+    power_cap_w:
+    - 370
+    submitted_by: noonghunna
+    tier: local
+    quality_env:
+      harness: "bench.sh 3 warm + 5 measured on the shipped config (int4 Frozenlock,
+        DFlash2 n=7, bf16 KV + FLASH_ATTN @204800, W4A16). verify-full 9/9. narr CV
+        3.3%, code CV 2.8%. quality_8pk and ctx_validated deliberately ABSENT: the
+        8-pack and a NIAH ladder have not been run on this slug."
+  vllm/qwen38-27b-dual-supermax:
+    narr_tps: 68.7
+    code_tps: 130.2
+    prefill_tps:
+      10k: 1249.7
+      90k: 1035.5
+    ttft_ms: 152
+    date: 2026-08-20
+    engine_pin: vllm/vllm-openai:v0.27.1
+    rig: 2x3090-pcie
+    power_cap_w:
+    - 370
+    submitted_by: noonghunna
+    tier: local
+    ctx_validated:
+      tokens: 147456
+      niah: allocation-only
+    quality_env:
+      harness: "bench.sh 3 warm + 5 measured on the shipped config (official FP8,
+        DFlash2 n=7, fp8 KV @147456, FlashInfer). verify-full 9/9, accept-len 3.18.
+        Dual ctx-capped at 144K (DFlash2 drafter + big fp8 weights); multi4/8 keep
+        262K. quality_8pk ABSENT: the 8-pack has not been run on this slug."
+  vllm/qwen38-27b-dual-ultramax:
+    narr_tps: 90.7
+    code_tps: 174.1
+    prefill_tps:
+      10k: 1206.1
+    ttft_ms: 140
+    date: 2026-08-20
+    engine_pin: vllm/vllm-openai:v0.27.1
+    rig: 2x3090-pcie
+    power_cap_w:
+    - 370
+    submitted_by: noonghunna
+    tier: local
+    ctx_validated:
+      tokens: 65536
+      niah: allocation-only
+    quality_env:
+      harness: "bench.sh 3 warm + 5 measured on the shipped config (official FP8,
+        DFlash2 n=7, bf16 KV + FLASH_ATTN @65536). verify-full 9/9, accept-len 3.39.
+        Dual ctx-capped at 64K (bf16 KV 2x fp8 + big fp8 weights); multi4/8 more.
+        quality_8pk ABSENT: the 8-pack has not been run on this slug."
   vllm/qwen-35b-a3b-dual:
     # BENCHMARKS.md promotion row (#259, decode 182.3/182.3; NIAH-clean 240K).
     # Measured on v0.22.0; the slug now pins v0.24.0 (fast/max-tier era) →
