@@ -46,6 +46,10 @@ supported_kv_formats:
 supported_drafters:
   - mtp
   - mtp_assistant
+  # dflash: external DFlash/DFlash2 block-drafters (spec_method=dflash). Provided
+  # by the vendored vLLM PR#52816 backport (patches.yml: vllm-dflash2-backport),
+  # mounted on the qwen3.8 *-ultrafast composes; not in the stock image.
+  - dflash
 supported_weight_formats:
   - bf16
   - fp16

@@ -360,6 +360,45 @@ patches:
       status: local-vendored
       drop_when: "vllm#48375 merges upstream AND the vllm-stable pin moves past it -> remove the 6 compose mounts + entrypoint calls + the patch dir; retire this row (re-run the #710 probe protocol on the new pin first)."
 
+  - id: vllm-dflash2-backport
+    # DFlash2 external-drafter support: the v0.27.1 BACKPORT of upstream
+    # vllm-project/vllm#52816 ("[Spec Decode] DFlash2: local convolution +
+    # candidate selector"). ⚠️ ATTRIBUTION: the backport is syv-ai's
+    # (github.com/syv-ai/qwen38-27b-rtx3090), NOT ours — we vendor it verbatim.
+    # Adds the DFlash2DraftModel architecture so the external block-drafter serves
+    # via --speculative-config method=dflash. Wired on the qwen3.8 ULTRAFAST slugs.
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-dflash2-backport
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-ultrafast
+          - vllm/qwen38-27b-multi4-ultrafast
+          - vllm/qwen38-27b-multi8-ultrafast
+        reason: "Without the backport, vLLM v0.27.1 cannot resolve the DFlash2DraftModel architecture in the drafter checkpoint (syvai/Qwen3.8-27B-DFlash2-W4A16), so --speculative-config method=dflash fails to load and the ULTRAFAST tier cannot boot. The backport adds qwen3_dflash2.py + the v1 DFlash2 speculator (grouped dynamic depthwise conv + candidate selector) and routes to the V2 Model Runner. An external block-drafter, so it entirely sidesteps the built-in-MTP acceptance collapse (club-3090#1052 / vllm#52873). On-rig validation 2026-08-20 (reference 2x3090, v0.27.1, Frozenlock target): boot resolves 'DFlash2DraftModel' + 'Model Runner V2' + 'Capturing model for DFlash2 speculator'; verify-full 9/9 (accept-len 3.74); bench 132 narr / 227 code TPS; collapse soak clean to 21k gen with 0 crashes."
+        evidence: "models/qwen3.8-27b/vllm/patches/vllm-dflash2-backport/README.md; vllm#52816; learnings/qwen3.8-27b.md"
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-dflash2-backport/install.sh
+      mounted_at: /etc/club3090/dflash2
+      invoke: "bash /etc/club3090/dflash2/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Idempotent: install.sh first runs patch_topk_4arg_compat.py (adds the optional ignored 4th param to apply_top_k_top_p that the backport passes on v0.27.1), then applies dflash2-backport.patch via _check_applied.py guard + `patch -p1 --forward`. Already-applied -> skip. Apply failure -> exit 1 (boot REFUSED, never serves unpatched while the compose claims DFlash2 support). The backport is syv-ai's; we deliver the minimal diff, not a baked image."
+    drift_guard:
+      kind: boot
+      check: "Entrypoint runs install.sh before serve; boot log '[dflash2] applied vLLM PR#52816 backport (DFlash2DraftModel)' (first boot) or '[dflash2] PR#52816 backport already present -- skipping' (warm). Apply failure -> '[dflash2] FAILED to apply' + container exit 1. Behavioral: boot resolves architecture 'DFlash2DraftModel' + 'Model Runner V2'; verify-full MTP-acceptance check passes (accept-len >= 2)."
+      on_fail: boot-refused
+    upstream:
+      ref: "vllm-project/vllm#52816"
+      status: "open"
+      drop_when: "vLLM merges #52816 (DFlash2DraftModel + candidate selector) AND the vllm-stable pin moves past it -> remove the 3 dflash2 compose mounts + entrypoint calls + retire this row and the patch dir."
+    status: verified
   - id: vllm-gdn-mtp-async-spec-order
     # club-3090's OWN fix (NOT an upstream PR) for the GDN+MTP async wild-write
     # race: our #1052 / upstream #52873 + the #50021 thread. Shared from the

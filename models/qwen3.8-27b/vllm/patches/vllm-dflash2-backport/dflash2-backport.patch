@@ -1,0 +1,995 @@
+DFlash2 speculative decoding on vLLM 0.27.1 (single-user SPEC=dflash2).
+
+Backport of vLLM PR #52816 ("[Spec Decode] DFlash2: local convolution + candidate
+selector", SubSir, Aug 2026) onto 0.27.1, plus the pieces of vLLM main it silently relies
+on and what our stack needs:
+  - PR: DFlash2DraftModel (model_executor/models/qwen3_dflash2.py: grouped dynamic
+    convolutions + candidate selector), the V2-runner DFlash2Speculator
+    (v1/worker/gpu/spec_decode/dflash2/), registry + use_v2_model_runner hooks,
+    is_causal precedence in _dflash_layer_causal (the DFlash2 config is top-level
+    is_causal=false with all-sliding layer_types; without this hunk the drafter runs
+    causal).
+  - main: sample_idx_mapping sentinel -1 (DFlash2's kernels test req_state >= 0;
+    with 0.27.1's zero-init the CUDA-graph capture would scatter every padding row into
+    request slot 0 and poison its proposal distribution); DFlash prepare-inputs kernel
+    hardening (rejected-suffix context rows and null-block entries of a sliding-window
+    block table no longer write draft KV into physical block 0; seq_lens clamp);
+    DFlash reserves K draft slots per request (not K-1); NaN guards before the
+    rejection sampler's argmax.
+  - 0.27.1 caches temperature-APPLIED draft logits (main caches pre-temperature and
+    divides on load), so the selector walk stores scores/temperature — without this the
+    lossless verify would use softmax(scores) while the draft sampled from
+    softmax(scores/T) for 0 < T != 1.
+  - our stack: the draft shares the target's int8-Marlin lm_head, so compute_candidates
+    accepts any quant_method with apply() (2-D input); the context-KV precompute
+    dequantizes k/v rows from a W4A16 (compressed-tensors) qkv_proj so the drafter itself
+    can be requantized (fetch_dflash2.py / drafter/quant_dflash2.py); flashinfer.top_k
+    falls back to torch.topk if its JIT build fails (VLLM_DFLASH2_TORCH_TOPK=1 forces
+    torch.topk); the V2 sampler passes k_max so patches/sampler-small-topk-fast-softmax's
+    sort-free small-k top-k/top-p path is used under the V2 runner too; the selector
+    walk applies the request's top-k/top-p to its 16-candidate proposal and caches the
+    truncated q (the DFlash2 analogue of the MTP draft truncation; lossless;
+    VLLM_DFLASH2_DRAFT_TOPK_TOPP=0 disables), with the model runner handing the
+    sampling-state buffers to the speculator.
+
+Apply from the installed vllm package directory, after the other patches:
+  patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/dflash2-backport.patch
+
+Written against vLLM 0.27.1 (requires patches/sampler-small-topk-fast-softmax.patch for
+the k_max argument). Reapply after upgrades.
+
+--- a/config/vllm.py
++++ b/config/vllm.py
+@@ -599,6 +599,12 @@
+         if self._dflash_needs_multi_kv_group():
+             return True
+ 
++        # The DFlash2 candidate selector exists only in the V2 speculator. On V1
++        # the same checkpoint drafts through DFlashProposer, which never calls
++        # it, so the draft degrades to DFlash1 silently. Force V2 as for dspark.
++        if self._is_dflash2_draft():
++            return True
++
+         if self.model_config is not None and self.model_config.is_diffusion:
+             return True
+ 
+@@ -622,6 +628,17 @@
+ 
+         return True
+ 
++    def _is_dflash2_draft(self) -> bool:
++        """Whether the DFlash draft is a DFlash2 one, by the architecture the
++        speculator selects on (v1/worker/gpu/spec_decode/__init__.py)."""
++        spec = self.speculative_config
++        if spec is None or spec.method != "dflash":
++            return False
++        draft_config = getattr(spec, "draft_model_config", None)
++        if draft_config is None:
++            return False
++        return "DFlash2DraftModel" in (draft_config.architectures or [])
++
+     def _dflash_needs_multi_kv_group(self) -> bool:
+         """Whether a DFlash draft mixes sliding-window and full attention."""
+         spec = self.speculative_config
+--- a/config/speculative.py
++++ b/config/speculative.py
+@@ -1361,6 +1361,9 @@
+         when drafting.
+         """
+         slots_per_req = 0  # for serial non-draft-model methods, no change needed
++        if self.method == "dflash":
++            # DFlash uses one bonus query followed by K mask queries (vLLM main).
++            return self.num_speculative_tokens
+         if self.parallel_drafting:
+             # For parallel drafting, we need one new slot per 'masked' token
+             slots_per_req = self.num_speculative_tokens - 1
+--- a/model_executor/models/qwen3_dflash.py
++++ b/model_executor/models/qwen3_dflash.py
+@@ -56,10 +56,13 @@
+ 
+ 
+ def _dflash_layer_causal(config: Qwen3Config, layer_idx: int) -> bool:
+-    """``dflash_config.causal`` overrides all layers; else only SWA layers causal."""
++    """Resolve explicit causality before falling back to legacy layer defaults."""
++    is_causal = getattr(config, "is_causal", None)
++    if is_causal is not None:
++        return bool(is_causal)
+     override = (getattr(config, "dflash_config", None) or {}).get("causal")
+     if override is not None:
+-        return override
++        return bool(override)
+     layer_types = getattr(config, "layer_types", None)
+     return bool(layer_types) and layer_types[layer_idx] == _SLIDING_ATTENTION
+ 
+@@ -342,8 +345,31 @@
+         return hidden_states, residual
+ 
+ 
++def _dense_kv_rows(attn: nn.Module) -> torch.Tensor:
++    """Rows [q_size:] of the qkv projection as a dense bf16 matrix. For a compressed-tensors
++    W4A16/W8A16 (pack-quantized, symmetric, group) qkv_proj this is called from load_weights,
++    i.e. before the Marlin repack, so weight_packed/weight_scale are still in the plain
++    checkpoint layout and can be dequantized here."""
++    qkv = attn.qkv_proj
++    w = getattr(qkv, "weight", None)
++    if w is not None and w.dim() == 2:
++        return w[attn.q_size :]
++    packed, scale = qkv.weight_packed, qkv.weight_scale
++    # (weight_shape holds only the last-loaded shard of a fused qkv; use the tensors.)
++    out_f, in_f = int(packed.shape[0]), int(qkv.input_size)
++    bits = 32 * packed.shape[1] // in_f
++    from compressed_tensors.compressors.pack_quantized.base import unpack_from_int32
++    q = unpack_from_int32(packed.data, bits, torch.Size([out_f, in_f]), packed_dim=1)
++    group = in_f // scale.shape[1]
++    dense = (q.to(torch.float32).reshape(out_f, in_f // group, group)
++             * scale.to(torch.float32)[..., None]).reshape(out_f, in_f)
++    return dense.to(scale.dtype if scale.dtype.is_floating_point else torch.bfloat16)[attn.q_size :]
++
++
+ @support_torch_compile
+ class DFlashQwen3Model(nn.Module):
++    decoder_layer_cls = DFlashQwen3DecoderLayer
++
+     hf_to_vllm_mapper = WeightsMapper(
+         orig_to_new_substr={"midlayer.": "layers.0."},
+         orig_to_new_stacked={
+@@ -397,7 +423,7 @@
+ 
+         self.layers = nn.ModuleList(
+             [
+-                DFlashQwen3DecoderLayer(
++                self.decoder_layer_cls(
+                     current_vllm_config,
+                     config=self.config,
+                     layer_idx=layer_idx,
+@@ -445,7 +471,7 @@
+         self._hidden_norm_weight = self.hidden_norm.weight.data
+ 
+         # KV projection weights: [num_layers * 2 * kv_size, hidden_size]
+-        kv_weights = [a.qkv_proj.weight[a.q_size :] for a in layers_attn]
++        kv_weights = [_dense_kv_rows(a) for a in layers_attn]
+         self._fused_kv_weight = torch.cat(kv_weights, dim=0)
+         if has_bias:
+             kv_biases = [a.qkv_proj.bias[a.q_size :] for a in layers_attn]
+@@ -662,6 +688,8 @@
+ 
+ 
+ class DFlashQwen3ForCausalLM(Qwen3ForCausalLM):
++    model_cls = DFlashQwen3Model
++
+     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
+         nn.Module.__init__(self)
+         self.draft_model_config = vllm_config.speculative_config.draft_model_config
+@@ -671,7 +699,7 @@
+         target_layer_num = vllm_config.model_config.get_num_layers(
+             vllm_config.parallel_config
+         )
+-        self.model = DFlashQwen3Model(
++        self.model = self.model_cls(
+             vllm_config=vllm_config,
+             prefix=maybe_prefix(prefix, "model"),
+             start_layer_id=target_layer_num,
+--- a/model_executor/models/registry.py
++++ b/model_executor/models/registry.py
+@@ -614,6 +614,7 @@
+     "EagleLlama4ForCausalLM": ("llama4_eagle", "EagleLlama4ForCausalLM"),
+     "EagleMiniCPMForCausalLM": ("minicpm_eagle", "EagleMiniCPMForCausalLM"),
+     "DFlashDraftModel": ("qwen3_dflash", "DFlashQwen3ForCausalLM"),
++    "DFlash2DraftModel": ("qwen3_dflash2", "DFlash2Qwen3ForCausalLM"),
+     "DSparkDraftModel": ("vllm.models.deepseek_v4", "DSparkDeepseekV4ForCausalLM"),
+     "Qwen3DSparkModel": ("qwen3_dspark", "Qwen3DSparkForCausalLM"),
+     "K3DSparkModel": (
+--- a/v1/worker/gpu/model_runner.py
++++ b/v1/worker/gpu/model_runner.py
+@@ -368,6 +368,9 @@
+                     self.speculative_config,
+                     self.device,
+                 )
++            if self.speculator is not None and hasattr(self.speculator, "set_sampling_states"):
++                # DFlash2 truncates its proposal to the request's top-k/top-p.
++                self.speculator.set_sampling_states(self.sampler.sampling_states)
+             self.prompt_logprobs_worker = PromptLogprobsWorker(
+                 self.max_num_reqs,
+                 logprobs_mode=self.model_config.logprobs_mode,
+--- a/v1/worker/gpu/spec_decode/__init__.py
++++ b/v1/worker/gpu/spec_decode/__init__.py
+@@ -9,6 +9,12 @@
+     speculative_config = vllm_config.speculative_config
+     assert speculative_config is not None
+     if speculative_config.method == "dflash":
++        if "DFlash2DraftModel" in speculative_config.draft_model_config.architectures:
++            from vllm.v1.worker.gpu.spec_decode.dflash2.speculator import (
++                DFlash2Speculator,
++            )
++
++            return DFlash2Speculator(vllm_config, device)
+         from vllm.v1.worker.gpu.spec_decode.dflash.speculator import (
+             DFlashSpeculator,
+         )
+--- a/v1/worker/gpu/spec_decode/dflash/speculator.py
++++ b/v1/worker/gpu/spec_decode/dflash/speculator.py
+@@ -84,8 +84,9 @@
+         self.sample_pos = torch.zeros(
+             max_num_sampled_tokens, dtype=torch.int64, device=device
+         )
+-        self.sample_idx_mapping = torch.zeros(
+-            max_num_sampled_tokens, dtype=torch.int32, device=device
++        # -1 = inert row (DFlash2's kernels test req_state >= 0); padded to -1 per step anyway
++        self.sample_idx_mapping = torch.full(
++            (max_num_sampled_tokens,), -1, dtype=torch.int32, device=device
+         )
+         # [0, 1, ..., N-1, 0, 1, ..., N-1, ...] -> the per-token column index into
+         # draft_logits[req, step, :].
+@@ -139,7 +140,7 @@
+         # dummy runs from being baked into the captured graph.
+         self.sample_indices.zero_()
+         self.sample_pos.zero_()
+-        self.sample_idx_mapping.zero_()
++        self.sample_idx_mapping.fill_(-1)
+         assert self.query_cudagraph_manager is not None
+         self.query_cudagraph_manager.capture(
+             self._generate_draft,
+@@ -521,6 +522,7 @@
+ 
+     num_rejected = tl.load(num_rejected_ptr + req_idx)
+     valid_ctx_end = ctx_end - num_rejected
++    num_valid_ctx = valid_ctx_end - ctx_start
+ 
+     num_sampled = tl.load(num_sampled_ptr + req_idx)
+     if num_sampled > 0:
+@@ -534,20 +536,29 @@
+ 
+     j = block_idx * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+     is_ctx = j < num_ctx
+-    is_query = (j >= num_ctx) & (j < num_ctx + num_query_per_req)
+-    query_off = j - num_ctx
++    is_valid_ctx = j < num_valid_ctx
++    is_query = (j >= num_valid_ctx) & (j < num_valid_ctx + num_query_per_req)
++    query_off = j - num_valid_ctx
+ 
+     # --- Context positions / slots ---
+     ctx_pos_idx = ctx_start + tl.where(is_ctx, j, 0)
+-    ctx_pos = tl.load(target_positions_ptr + ctx_pos_idx, mask=is_ctx, other=0)
++    ctx_pos = tl.load(target_positions_ptr + ctx_pos_idx, mask=is_valid_ctx, other=0)
+     ctx_block_num = ctx_pos // block_size
+     ctx_block_num = tl.minimum(ctx_block_num, block_table_stride - 1)
+     ctx_block_id = tl.load(
+         block_table_ptr + req_idx * block_table_stride + ctx_block_num,
+-        mask=is_ctx,
++        mask=is_valid_ctx,
+         other=0,
+     ).to(tl.int64)
+-    ctx_slot = ctx_block_id * block_size + (ctx_pos % block_size)
++    # Block 0 is the null block. Old sliding-window context positions can map
++    # to it after eviction; rejected suffix rows are invalid context as well.
++    # Neither kind of row may write draft KV into physical block 0. (vLLM main)
++    ctx_resident = is_valid_ctx & (ctx_block_id != 0)
++    ctx_slot = tl.where(
++        ctx_resident,
++        ctx_block_id * block_size + (ctx_pos % block_size),
++        PAD_SLOT_ID,
++    )
+     tl.store(out_context_positions_ptr + ctx_start + j, ctx_pos, mask=is_ctx)
+     tl.store(out_context_slot_mapping_ptr + ctx_start + j, ctx_slot, mask=is_ctx)
+ 
+@@ -564,7 +575,14 @@
+         mask=is_query,
+         other=0,
+     ).to(tl.int64)
+-    q_slot = q_block_id * block_size + (query_pos % block_size)
++    # A null block is never a writable cache slot (sliding-window block tables
++    # contain evicted/global padding entries). (vLLM main)
++    q_resident = is_query & (q_block_id != 0)
++    q_slot = tl.where(
++        q_resident,
++        q_block_id * block_size + (query_pos % block_size),
++        PAD_SLOT_ID,
++    )
+ 
+     tl.store(out_input_ids_ptr + query_idx, input_id, mask=is_query)
+     clamped_query_pos = tl.minimum(query_pos, max_model_len - 1)
+@@ -589,7 +607,10 @@
+         # seq_lens is the absolute sequence length the draft attention
+         # reads up to (context + query), not just the count of accepted
+         # tokens this step.
+-        tl.store(out_seq_lens_ptr + req_idx, last_valid_pos + 1 + num_query_per_req)
++        tl.store(
++            out_seq_lens_ptr + req_idx,
++            tl.minimum(last_valid_pos + 1 + num_query_per_req, max_model_len),
++        )
+         # Copy sampling state.
+         tl.store(
+             out_temperature_ptr + req_state_idx,
+--- a/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
++++ b/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
+@@ -108,6 +108,7 @@
+         mask=blocks_mask,
+         other=float("-inf"),
+     )
++    local_max = tl.where(local_max != local_max, float("-inf"), local_max)
+     max_block_idx = tl.argmax(local_max, axis=0)
+     return tl.load(
+         target_local_argmax_ptr + logit_idx * target_local_argmax_stride + max_block_idx
+@@ -849,6 +850,9 @@
+         mask=mask,
+         other=float("-inf"),
+     )
++    resampled_local_max = tl.where(
++        resampled_local_max != resampled_local_max, float("-inf"), resampled_local_max
++    )
+     resampled_max_block_idx = tl.argmax(resampled_local_max, axis=0)
+     resampled = tl.load(
+         resampled_local_argmax_ptr
+--- a/v1/worker/gpu/sample/states.py
++++ b/v1/worker/gpu/sample/states.py
+@@ -109,7 +109,14 @@
+         top_k, top_p = self.get_top_k_top_p(expanded_idx_mapping, idx_mapping_np)
+         if top_k is None and top_p is None:
+             return logits
+-        return apply_top_k_top_p(logits, top_k, top_p)
++        return apply_top_k_top_p(logits, top_k, top_p, self.top_k_max(idx_mapping_np))
++
++    def top_k_max(self, idx_mapping_np: np.ndarray) -> int | None:
++        # Largest top_k in the batch (host-side), for the sort-free small-k path.
++        ks = self.top_k.np[idx_mapping_np]
++        if ks.size == 0 or np.any(ks == self.vocab_size):
++            return None
++        return int(ks.max())
+ 
+     def any_greedy(self, idx_mapping_np: np.ndarray) -> bool:
+         return bool(np.any(self.temperature.np[idx_mapping_np] == 0.0))
+--- a/v1/worker/gpu/sample/sampler.py
++++ b/v1/worker/gpu/sample/sampler.py
+@@ -251,7 +251,10 @@
+         if use_flashinfer:
+             sampled = flashinfer_sample(processed_logits, top_k, top_p).to(torch.int64)
+         else:
+-            processed_logits = apply_top_k_top_p(processed_logits, top_k, top_p)
++            processed_logits = apply_top_k_top_p(
++                processed_logits, top_k, top_p,
++                self.sampling_states.top_k_max(idx_mapping_np),
++            )
+             sampled = gumbel_sample(
+                 processed_logits,
+                 expanded_idx_mapping,
+--- /dev/null
++++ b/model_executor/models/qwen3_dflash2.py
+@@ -0,0 +1,366 @@
++import os
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from collections.abc import Callable
++from functools import cache
++
++import torch
++import torch.nn.functional as F
++from torch import nn
++
++from vllm.compilation.decorators import support_torch_compile
++from vllm.config import CacheConfig, VllmConfig
++from vllm.distributed import (
++    get_tensor_model_parallel_world_size,
++    tensor_model_parallel_all_gather,
++)
++from vllm.logger import init_logger
++from vllm.model_executor.layers.linear import ReplicatedLinear
++from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
++from vllm.model_executor.layers.vocab_parallel_embedding import (
++    UnquantizedEmbeddingMethod,
++)
++from vllm.platforms import current_platform
++from vllm.utils.flashinfer import has_flashinfer
++
++from .qwen3_dflash import (
++    DFlashQwen3DecoderLayer,
++    DFlashQwen3ForCausalLM,
++    DFlashQwen3Model,
++)
++from .utils import maybe_prefix
++
++logger = init_logger(__name__)
++
++
++@cache
++def _flashinfer_topk() -> Callable[..., tuple[torch.Tensor, torch.Tensor]] | None:
++    """FlashInfer's radix top-k, or None for torch.topk.
++
++    This top-k spans the vocabulary and is the selector's largest single cost,
++    where the radix kernel is about twice torch.topk.
++    """
++    if not current_platform.is_cuda():
++        return None
++    if not has_flashinfer():
++        logger.info_once(
++            "flashinfer is unavailable; the DFlash2 selector uses torch.topk, "
++            "at roughly half the speed."
++        )
++        return None
++    if os.environ.get("VLLM_DFLASH2_TORCH_TOPK", "0") == "1":
++        return None
++    try:
++        from flashinfer import top_k
++    except Exception as e:  # noqa: BLE001
++        logger.info_once("flashinfer.top_k import failed (%s); using torch.topk", e)
++        return None
++    return top_k
++
++
++_TOPK_BROKEN = False
++
++
++def _topk(scores: torch.Tensor, k: int) -> tuple[torch.Tensor, torch.Tensor]:
++    global _TOPK_BROKEN
++    impl = None if _TOPK_BROKEN else _flashinfer_topk()
++    if impl is None or not scores.is_cuda:
++        return torch.topk(scores, k, dim=-1)
++    try:
++        return impl(scores, k, sorted=True, deterministic=True)
++    except Exception as e:  # noqa: BLE001  (JIT build failure, unsupported arch, ...)
++        _TOPK_BROKEN = True
++        logger.warning_once("flashinfer.top_k failed (%s); falling back to torch.topk", e)
++        return torch.topk(scores, k, dim=-1)
++
++
++def _grouped_conv(
++    hidden_states: torch.Tensor,
++    delta: torch.Tensor,
++    base: torch.Tensor,
++    block_size: int,
++    num_groups: int,
++    group_size: int,
++    taps: int,
++) -> torch.Tensor:
++    blocks = hidden_states.unflatten(-1, (num_groups, group_size))
++    coefficients = base.view(1, taps, num_groups, group_size) + delta.unsqueeze(-1)
++    output = coefficients[:, 0] * blocks
++    position = torch.arange(hidden_states.shape[0], device=hidden_states.device)
++    if block_size & (block_size - 1) == 0:
++        position = position & (block_size - 1)
++    else:
++        position = position % block_size
++    for tap in range(1, taps):
++        shifted = F.pad(blocks[:-tap], (0, 0, 0, 0, tap, 0))
++        output += coefficients[:, tap] * shifted * (position >= tap).view(-1, 1, 1)
++    return output.flatten(-2)
++
++
++class DFlashGroupedConv(nn.Module):
++    def __init__(
++        self,
++        hidden_size: int,
++        taps: int,
++        group_size: int,
++        block_size: int,
++        params_dtype: torch.dtype,
++        prefix: str,
++    ) -> None:
++        super().__init__()
++        if hidden_size % group_size:
++            raise ValueError(
++                f"conv_group_size={group_size} must divide hidden_size={hidden_size}."
++            )
++        self.block_size = block_size
++        self.taps = taps
++        self.group_size = group_size
++        self.num_groups = hidden_size // group_size
++        self.base_kernel = nn.Parameter(
++            torch.empty(2, taps, hidden_size, dtype=params_dtype),
++            requires_grad=False,
++        )
++        self.kernel_projection = ReplicatedLinear(
++            hidden_size,
++            2 * taps * self.num_groups,
++            bias=False,
++            params_dtype=params_dtype,
++            quant_config=None,
++            prefix=maybe_prefix(prefix, "kernel_projection"),
++            return_bias=False,
++        )
++
++    def _convolve(
++        self, hidden_states: torch.Tensor, delta: torch.Tensor, side: int
++    ) -> torch.Tensor:
++        return _grouped_conv(
++            hidden_states,
++            delta,
++            self.base_kernel[side],
++            self.block_size,
++            self.num_groups,
++            self.group_size,
++            self.taps,
++        )
++
++    def prepare(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
++        coefficients = self.kernel_projection(hidden_states).reshape(
++            hidden_states.shape[0], 2, self.taps, self.num_groups
++        )
++        return self._convolve(hidden_states, coefficients[:, 0], 0), coefficients[:, 1]
++
++    def finish(
++        self, hidden_states: torch.Tensor, coefficients: torch.Tensor
++    ) -> torch.Tensor:
++        return self._convolve(hidden_states, coefficients, 1)
++
++
++class DFlash2Qwen3DecoderLayer(DFlashQwen3DecoderLayer):
++    def __init__(
++        self,
++        vllm_config: VllmConfig,
++        *,
++        config,
++        layer_idx: int,
++        cache_config: CacheConfig | None = None,
++        quant_config: QuantizationConfig | None = None,
++        prefix: str = "",
++    ) -> None:
++        super().__init__(
++            vllm_config,
++            config=config,
++            layer_idx=layer_idx,
++            cache_config=cache_config,
++            quant_config=quant_config,
++            prefix=prefix,
++        )
++        draft_config = config.dflash_config
++        speculative_config = vllm_config.speculative_config
++        assert speculative_config is not None
++        conv_args = dict(
++            hidden_size=config.hidden_size,
++            taps=int(draft_config["conv_kernel_size"]),
++            group_size=int(draft_config["conv_group_size"]),
++            # Query tokens per request: the bonus token plus the mask tokens.
++            block_size=1 + speculative_config.num_speculative_tokens,
++            params_dtype=vllm_config.model_config.dtype,
++        )
++        self.attention_conv = DFlashGroupedConv(
++            **conv_args, prefix=maybe_prefix(prefix, "attention_conv")
++        )
++        self.mlp_conv = DFlashGroupedConv(
++            **conv_args, prefix=maybe_prefix(prefix, "mlp_conv")
++        )
++
++    def forward(
++        self,
++        positions: torch.Tensor,
++        hidden_states: torch.Tensor,
++        residual: torch.Tensor | None,
++    ) -> tuple[torch.Tensor, torch.Tensor]:
++        if residual is None:
++            residual = hidden_states
++            hidden_states = self.input_layernorm(hidden_states)
++        else:
++            hidden_states, residual = self.input_layernorm(hidden_states, residual)
++
++        hidden_states, coefficients = self.attention_conv.prepare(hidden_states)
++        hidden_states = self.self_attn(positions=positions, hidden_states=hidden_states)
++        hidden_states = self.attention_conv.finish(hidden_states, coefficients)
++
++        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
++        hidden_states, coefficients = self.mlp_conv.prepare(hidden_states)
++        hidden_states = self.mlp(hidden_states)
++        hidden_states = self.mlp_conv.finish(hidden_states, coefficients)
++        return hidden_states, residual
++
++
++def _score_edges(
++    predecessor_table: torch.Tensor,
++    successor_table: torch.Tensor,
++    candidate_ids: torch.Tensor,
++    unary_logits: torch.Tensor,
++    hidden: torch.Tensor,
++    anchor_token_ids: torch.Tensor,
++    top_k: int,
++) -> torch.Tensor:
++    successors = successor_table[candidate_ids]
++    predecessor_ids = torch.cat(
++        (
++            anchor_token_ids[:, None, None].expand(-1, 1, top_k),
++            candidate_ids[:, :-1],
++        ),
++        dim=1,
++    )
++    predecessors = predecessor_table[predecessor_ids]
++    return unary_logits[:, :, None] + torch.einsum(
++        "blpr,blcr->blpc", predecessors * hidden[:, :, None], successors
++    )
++
++
++@support_torch_compile
++class CandidateSelector(nn.Module):
++    def __init__(
++        self,
++        hidden_size: int,
++        vocab_size: int,
++        rank: int,
++        top_k: int,
++        params_dtype: torch.dtype,
++        prefix: str,
++    ) -> None:
++        super().__init__()
++        self.top_k = top_k
++        self.predecessor_codebook = nn.Parameter(
++            torch.empty(vocab_size, rank, dtype=params_dtype), requires_grad=False
++        )
++        self.successor_codebook = nn.Parameter(
++            torch.empty(vocab_size, rank, dtype=params_dtype), requires_grad=False
++        )
++        self.hidden_projection = ReplicatedLinear(
++            hidden_size,
++            rank,
++            bias=False,
++            params_dtype=params_dtype,
++            quant_config=None,
++            prefix=maybe_prefix(prefix, "hidden_projection"),
++            return_bias=False,
++        )
++
++    def forward(
++        self,
++        candidate_ids: torch.Tensor,
++        unary_logits: torch.Tensor,
++        hidden_states: torch.Tensor,
++        anchor_token_ids: torch.Tensor,
++    ) -> torch.Tensor:
++        hidden = self.hidden_projection(hidden_states)
++        return _score_edges(
++            self.predecessor_codebook,
++            self.successor_codebook,
++            candidate_ids,
++            unary_logits,
++            hidden,
++            anchor_token_ids,
++            self.top_k,
++        )
++
++
++class DFlash2Qwen3Model(DFlashQwen3Model):
++    decoder_layer_cls = DFlash2Qwen3DecoderLayer
++
++    def __init__(
++        self,
++        *,
++        vllm_config: VllmConfig,
++        start_layer_id: int = 0,
++        prefix: str = "",
++    ) -> None:
++        super().__init__(
++            vllm_config=vllm_config,
++            start_layer_id=start_layer_id,
++            prefix=prefix,
++        )
++        draft_config = self.config.dflash_config
++        self.input_embedding_scale = float(
++            draft_config.get("input_embedding_scale", 1.0)
++        )
++        self.candidate_selector = CandidateSelector(
++            hidden_size=self.config.hidden_size,
++            vocab_size=self.config.vocab_size,
++            rank=int(draft_config["selector_rank"]),
++            top_k=int(draft_config["selector_top_k"]),
++            params_dtype=vllm_config.model_config.dtype,
++            prefix=maybe_prefix(prefix, "candidate_selector"),
++        )
++
++    def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
++        return super().embed_input_ids(input_ids) * self.input_embedding_scale
++
++
++class DFlash2Qwen3ForCausalLM(DFlashQwen3ForCausalLM):
++    model_cls = DFlash2Qwen3Model
++
++    def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
++        super().__init__(vllm_config=vllm_config, prefix=prefix)
++        draft_config = self.config.dflash_config
++        self.output_multiplier = float(draft_config.get("output_multiplier", 1.0))
++        softcap = float(draft_config.get("final_logit_softcapping") or 0.0)
++        self.final_logit_softcapping = softcap if softcap > 0 else None
++
++    def compute_candidates(
++        self, hidden_states: torch.Tensor
++    ) -> tuple[torch.Tensor, torch.Tensor]:
++        qm = self.lm_head.quant_method
++        if not (isinstance(qm, UnquantizedEmbeddingMethod) or hasattr(qm, "apply")):
++            raise ValueError(
++                "DFlash2 requires an unquantized target LM head for candidate TopK."
++            )
++
++        selector = self.model.candidate_selector
++        # The draft shares the target lm_head, which may be a quantized (Marlin)
++        # ParallelLMHead here; its apply() wants a 2-D input.
++        shp = hidden_states.shape
++        logits = qm.apply(self.lm_head, hidden_states.reshape(-1, shp[-1]), bias=None)
++        logits = logits.reshape(*shp[:-1], -1)
++        num_pad = self.lm_head.shard_indices.num_org_vocab_padding
++        if num_pad > 0:
++            logits[..., -num_pad:] = -float("inf")
++        values, ids = _topk(logits, selector.top_k)
++        ids = ids.to(torch.int64) + self.lm_head.shard_indices.org_vocab_start_index
++
++        if get_tensor_model_parallel_world_size() > 1:
++            values = tensor_model_parallel_all_gather(values, dim=-1)
++            ids = tensor_model_parallel_all_gather(ids, dim=-1)
++            values, selected = _topk(values, selector.top_k)
++            ids = ids.gather(-1, selected)
++
++        values = values.float() * self.output_multiplier
++        if self.final_logit_softcapping is not None:
++            cap = self.final_logit_softcapping
++            values = torch.tanh(values / cap) * cap
++        return ids, values
++
++
++EntryClass = DFlash2Qwen3ForCausalLM
+--- /dev/null
++++ b/v1/worker/gpu/spec_decode/dflash2/__init__.py
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+--- /dev/null
++++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
+@@ -0,0 +1,264 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++import os
++from typing import Any
++
++import torch
++
++from vllm.config import VllmConfig
++from vllm.config.compilation import CUDAGraphMode
++from vllm.triton_utils import tl, tldevice, triton
++from vllm.v1.worker.gpu.sample.gumbel import tl_rand32, tl_rand64
++from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
++
++
++@triton.jit
++def _selector_walk_kernel(
++    scores_ptr,
++    candidate_ptr,
++    sample_pos_ptr,
++    req_state_ptr,
++    temperature_ptr,
++    seeds_ptr,
++    tokens_ptr,
++    realized_scores_ptr,
++    req_top_p_ptr,
++    req_top_k_ptr,
++    num_steps: tl.constexpr,
++    top_k: tl.constexpr,
++    BLOCK_K: tl.constexpr,
++    USE_FP64: tl.constexpr,
++    TRUNCATE: tl.constexpr,
++):
++    row = tl.program_id(0)
++    offsets = tl.arange(0, BLOCK_K)
++    mask = offsets < top_k
++    req_state = tl.load(req_state_ptr + row * num_steps)
++    valid = req_state >= 0
++    temperature = tl.load(temperature_ptr + req_state, mask=valid, other=0.0)
++    seed = tl.load(seeds_ptr + req_state, mask=valid, other=0)
++    if TRUNCATE:
++        req_top_p = tl.load(req_top_p_ptr + req_state, mask=valid, other=1.0)
++        req_top_k = tl.load(req_top_k_ptr + req_state, mask=valid, other=BLOCK_K)
++    previous = 0
++    for step in range(num_steps):
++        flat = row * num_steps + step
++        score_base = (flat * top_k + previous) * top_k
++        scores = tl.load(
++            scores_ptr + score_base + offsets,
++            mask=mask & valid,
++            other=float("-inf"),
++        ).to(tl.float32)
++        candidate_base = flat * top_k
++        candidates = tl.load(
++            candidate_ptr + candidate_base + offsets,
++            mask=mask & valid,
++            other=0,
++        )
++
++        if temperature == 0.0:
++            best = tl.max(scores, axis=0)
++            index = tl.min(tl.where(scores == best, offsets, BLOCK_K), axis=0)
++            realized = scores
++        else:
++            t_scores = scores / temperature
++            if TRUNCATE:
++                # Apply the request's top-k/top-p to the proposal distribution over the
++                # candidates (the verify truncates the target the same way, so mass the
++                # draft puts outside that support is a guaranteed rejection). The
++                # truncated, renormalized q is what gets cached, so the verify stays
++                # lossless. Rank-based: 16 candidates, all in registers.
++                mx = tl.max(t_scores, axis=0)
++                pr = tl.exp(t_scores - mx)
++                pr = pr / tl.sum(pr, axis=0)
++                gt = t_scores[None, :] > t_scores[:, None]
++                rank = tl.sum(gt.to(tl.int32), axis=1)
++                mass_before = tl.sum(tl.where(gt, pr[None, :], 0.0), axis=1)
++                keep = mask & (rank < req_top_k) & (mass_before < req_top_p)
++                t_scores = tl.where(keep, t_scores, -float("inf"))
++            position = tl.load(sample_pos_ptr + flat) - 1
++            gumbel_seed = tl.randint(seed, position)
++            if USE_FP64:
++                uniform = tl_rand64(gumbel_seed, candidates, includes_zero=False)
++                noise = -tl.log(-tl.log(uniform))
++            else:
++                uniform = tl_rand32(gumbel_seed, candidates, includes_zero=False)
++                noise = -tl.log(-tldevice.log1p(-uniform))
++            sampled_scores = tl.where(mask, t_scores + noise, -float("inf"))
++            best = tl.max(sampled_scores, axis=0)
++            index = tl.min(tl.where(sampled_scores == best, offsets, BLOCK_K), axis=0)
++            realized = t_scores
++
++        # vLLM 0.27.1 caches temperature-APPLIED draft logits (its rejection sampler
++        # reads them as-is); upstream main divides on load instead. With TRUNCATE the
++        # cached row is the truncated q (-inf outside the kept support).
++        tl.store(
++            realized_scores_ptr + candidate_base + offsets,
++            realized,
++            mask=mask & valid,
++        )
++        token = tl.load(candidate_ptr + candidate_base + index, mask=valid, other=0)
++        tl.store(tokens_ptr + flat, token, mask=valid)
++        previous = index
++
++
++@triton.jit
++def _cache_draft_logits_kernel(
++    draft_logits_ptr,
++    cached_candidate_ptr,
++    candidate_ptr,
++    scores_ptr,
++    req_state_ptr,
++    draft_logits_stride_0,
++    draft_logits_stride_1,
++    num_steps: tl.constexpr,
++    top_k: tl.constexpr,
++    BLOCK_K: tl.constexpr,
++):
++    flat = tl.program_id(0)
++    req_state = tl.load(req_state_ptr + flat)
++    step = flat % num_steps
++    offsets = tl.arange(0, BLOCK_K)
++    mask = (req_state >= 0) & (offsets < top_k)
++    candidate_base = flat * top_k
++    cache_base = (req_state * num_steps + step) * top_k
++    old_token_ids = tl.load(cached_candidate_ptr + cache_base + offsets, mask=mask)
++    logits_base = (
++        draft_logits_ptr
++        + req_state * draft_logits_stride_0
++        + step * draft_logits_stride_1
++    )
++    tl.store(logits_base + old_token_ids, -float("inf"), mask=mask)
++    token_ids = tl.load(candidate_ptr + candidate_base + offsets, mask=mask)
++    scores = tl.load(scores_ptr + candidate_base + offsets, mask=mask)
++    tl.store(logits_base + token_ids, scores, mask=mask)
++    tl.store(cached_candidate_ptr + cache_base + offsets, token_ids, mask=mask)
++
++
++class DFlash2Speculator(DFlashSpeculator):
++    _speculator_name = "DFlash2"
++
++    def __init__(self, vllm_config: VllmConfig, device: torch.device):
++        super().__init__(vllm_config, device)
++        draft_config = self.draft_model_config.hf_config.dflash_config
++        self.selector_top_k = int(draft_config["selector_top_k"])
++        self._anchor_indices = (
++            torch.arange(self.max_num_reqs, dtype=torch.int64, device=device)
++            * self.num_query_per_req
++        )
++        self._selector_tokens = torch.empty_like(self.draft_tokens)
++        self._selector_scores = torch.empty(
++            self.max_num_reqs,
++            self.num_speculative_steps,
++            self.selector_top_k,
++            dtype=torch.float32,
++            device=device,
++        )
++        # The selector samples a probabilistic path for non-greedy requests, so
++        # rejection sampling always needs the realized proposal distribution.
++        self.draft_logits = torch.full(
++            (
++                self.max_num_reqs,
++                self.num_speculative_steps,
++                self.vocab_size,
++            ),
++            -float("inf"),
++            dtype=torch.float32,
++            device=device,
++        )
++        self._cached_candidate_ids = torch.zeros(
++            self._selector_scores.shape, dtype=torch.int64, device=device
++        )
++        # Request top_p/top_k buffers ([max_num_reqs], indexed by request state), handed
++        # over by the model runner; VLLM_DFLASH2_DRAFT_TOPK_TOPP=0 disables the truncation.
++        self._req_top_p: torch.Tensor | None = None
++        self._req_top_k: torch.Tensor | None = None
++        self._truncate = os.environ.get("VLLM_DFLASH2_DRAFT_TOPK_TOPP", "1") == "1"
++
++    def set_sampling_states(self, sampling_states) -> None:
++        self._req_top_p = sampling_states.top_p.gpu
++        self._req_top_k = sampling_states.top_k.gpu
++
++    def _sample_path(
++        self,
++        candidate_ids: torch.Tensor,
++        scores: torch.Tensor,
++        num_reqs: int,
++    ) -> None:
++        block_k = triton.next_power_of_2(self.selector_top_k)
++        truncate = self._truncate and self._req_top_p is not None
++        _selector_walk_kernel[(num_reqs,)](
++            scores.contiguous(),
++            candidate_ids.contiguous(),
++            self.sample_pos,
++            self.sample_idx_mapping,
++            self.temperature,
++            self.seeds,
++            self._selector_tokens,
++            self._selector_scores,
++            self._req_top_p if truncate else self.temperature,
++            self._req_top_k if truncate else self.sample_idx_mapping,
++            num_steps=self.num_speculative_steps,
++            top_k=self.selector_top_k,
++            BLOCK_K=block_k,
++            USE_FP64=self.use_fp64_gumbel,
++            TRUNCATE=truncate,
++            num_warps=1,
++        )
++
++    def _cache_draft_logits(self, candidate_ids: torch.Tensor, num_sample: int) -> None:
++        draft_logits = self.draft_logits
++        assert draft_logits is not None
++        block_k = triton.next_power_of_2(self.selector_top_k)
++        _cache_draft_logits_kernel[(num_sample,)](
++            draft_logits,
++            self._cached_candidate_ids,
++            candidate_ids,
++            self._selector_scores,
++            self.sample_idx_mapping,
++            draft_logits.stride(0),
++            draft_logits.stride(1),
++            num_steps=self.num_speculative_steps,
++            top_k=self.selector_top_k,
++            BLOCK_K=block_k,
++            num_warps=1,
++        )
++
++    def _generate_draft(
++        self,
++        num_reqs: int,
++        num_tokens_padded: int,
++        attn_metadata: dict[str, Any] | None,
++        slot_mappings: dict[str, torch.Tensor] | None,
++        num_tokens_across_dp: torch.Tensor | None,
++        cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
++    ) -> None:
++        last_hidden_states = self._run_model(
++            num_tokens_padded,
++            attn_metadata,
++            slot_mappings,
++            num_tokens_across_dp,
++            cudagraph_runtime_mode,
++        )
++        num_sample = num_reqs * self.num_speculative_steps
++        hidden_states = last_hidden_states[self.sample_indices[:num_sample]].view(
++            num_reqs, self.num_speculative_steps, -1
++        )
++        candidate_ids, unary_logits = self.model.compute_candidates(
++            hidden_states.flatten(0, 1)
++        )
++        candidate_ids = candidate_ids.view(
++            num_reqs, self.num_speculative_steps, self.selector_top_k
++        )
++        unary_logits = unary_logits.view_as(candidate_ids)
++        anchor_token_ids = self.input_buffers.input_ids[self._anchor_indices[:num_reqs]]
++        scores = self.model.model.candidate_selector(
++            candidate_ids,
++            unary_logits,
++            hidden_states,
++            anchor_token_ids,
++        )
++        self._sample_path(candidate_ids, scores, num_reqs)
++        self._cache_draft_logits(candidate_ids, num_sample)
++        self.draft_tokens[:num_reqs].copy_(self._selector_tokens[:num_reqs])

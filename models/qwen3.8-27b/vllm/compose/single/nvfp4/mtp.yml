@@ -97,6 +97,7 @@ services:
   vllm-qwen38-27b-single-nvfp4:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-single-nvfp4}"
+    user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     shm_size: "16gb"
     ipc: host
@@ -146,6 +147,7 @@ services:
       - bash
       - -c
       - |
+        umask 0002
         set -e
         source /etc/club3090/detect_nvlink.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
