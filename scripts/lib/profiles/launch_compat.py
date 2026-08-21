@@ -29,7 +29,7 @@ from scripts.lib.profiles.compat import (  # noqa: E402
     load_profiles,
     to_compose_name,
 )
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY  # noqa: E402
+from scripts.lib.profiles.compose_registry import get_registry  # noqa: E402
 
 
 class LaunchCompatError(Exception):
@@ -274,7 +274,7 @@ def _mem_util_env(profiles, variant: str, gpu_spec: str) -> dict[str, str]:
         return {}
     if os.environ.get("GPU_MEMORY_UTILIZATION"):
         return {}  # explicit user pin always wins
-    entry = COMPOSE_REGISTRY.get(variant)
+    entry = get_registry().get(variant)
     if not entry:
         return {}
     compose_gmu = entry.get("mem_util")  # the compose's default --gpu-memory-utilization
@@ -357,7 +357,7 @@ def resolve_engine_pin(profiles, engine_id: str) -> dict[str, str]:
 
 
 def resolve_variant_pin(profiles, variant: str, gpu_spec: str = "") -> dict[str, str]:
-    entry = COMPOSE_REGISTRY.get(variant)
+    entry = get_registry().get(variant)
     if not entry:
         raise ProfileError(f"unknown compose variant `{variant}`")
     exports = resolve_engine_pin(profiles, entry["engine"])
@@ -540,7 +540,7 @@ def command_filter_candidates(args: argparse.Namespace) -> int:
     variant_names = [name for name in args.variants.split(",") if name]
 
     for name in variant_names:
-        entry = COMPOSE_REGISTRY.get(name)
+        entry = get_registry().get(name)
         if not entry or entry["model"] != args.model:
             continue
         if args.workload and entry["workload"] != args.workload:
@@ -587,7 +587,7 @@ def command_filter_candidates(args: argparse.Namespace) -> int:
 def command_validate_variant(args: argparse.Namespace) -> int:
     _quiet_compat_logger()
     profiles = load_profiles()
-    entry = COMPOSE_REGISTRY.get(args.variant)
+    entry = get_registry().get(args.variant)
     if not entry:
         raise LaunchCompatError(f"unknown compose variant `{args.variant}`")
 

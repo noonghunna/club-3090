@@ -25,7 +25,7 @@ from scripts.lib.profiles.compat import (  # noqa: E402
     load_profiles,
     to_compose_name,
 )
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY  # noqa: E402
+from scripts.lib.profiles.compose_registry import get_registry  # noqa: E402
 from scripts.lib.profiles.launch_compat import resolve_engine_pin  # noqa: E402
 
 
@@ -66,7 +66,7 @@ def marker(ok: bool) -> str:
 
 def print_available_composes() -> None:
     print("  available composes:")
-    for name in sorted(COMPOSE_REGISTRY):
+    for name in sorted(get_registry()):
         print(f"    - {name}")
     if COMPOSE_ALIASES:
         print("  aliases:")
@@ -342,13 +342,13 @@ def command_diagnose(args: argparse.Namespace) -> int:
     scenario = "unknown"
     print("[1/6] Compose registry entry exists")
     if compose_name:
-        if compose_name not in COMPOSE_REGISTRY:
+        if compose_name not in get_registry():
             print(f"  ✗ {compose_name} not found")
             print_available_composes()
             print("")
             print("Triage summary: RED")
             return 3
-        entry = COMPOSE_REGISTRY[compose_name]
+        entry = get_registry()[compose_name]
         print(
             f"  ✓ {compose_name} found "
             f"(model={entry['model']}, workload={entry['workload']}, engine={entry['engine']})"
@@ -409,7 +409,7 @@ def command_diagnose(args: argparse.Namespace) -> int:
     if free_form:
         resolved_compose = resolve_free_form_compose(args, profiles, fast_result, nvlink_active)
         if resolved_compose:
-            entry = COMPOSE_REGISTRY[resolved_compose]
+            entry = get_registry()[resolved_compose]
 
     print("")
     print("[5/6] Calibration freshness")

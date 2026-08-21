@@ -68,9 +68,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # package-relative when imported as scripts.lib.profiles.measurement_record
-    from .compose_registry import COMPOSE_REGISTRY
+    from .compose_registry import get_registry
 except ImportError:  # pragma: no cover - direct-script fallback
-    from compose_registry import COMPOSE_REGISTRY  # type: ignore
+    from compose_registry import get_registry  # type: ignore
 
 
 # Repo root = three parents up from this file (scripts/lib/profiles/ -> repo).
@@ -381,7 +381,7 @@ def build_record(
     Genuinely-optional/unknowable optimizer fields (``objective``,
     ``confidence_tier``, ...) stay ``None`` — that is not a gap.
     """
-    entry = COMPOSE_REGISTRY[tag]
+    entry = get_registry()[tag]
     parse_warnings: list[str] = []
 
     model_slug = entry["model"]
@@ -728,12 +728,12 @@ def resolve_serving_tag(serving_url: Optional[str] = None) -> Optional[str]:
     import subprocess
 
     try:
-        from .compose_registry import COMPOSE_REGISTRY
+        from .compose_registry import get_registry
     except ImportError:  # direct-script invocation
         import sys as _sys
 
         _sys.path.insert(0, str(_REPO_ROOT))
-        from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+        from scripts.lib.profiles.compose_registry import get_registry
     try:
         names = subprocess.run(
             ["docker", "ps", "--format", "{{.Names}}"],
@@ -743,7 +743,7 @@ def resolve_serving_tag(serving_url: Optional[str] = None) -> Optional[str]:
         return None
     norm_map = {n.replace("_", "-"): n for n in names}  # normalized -> real name
     want_port = _url_port(serving_url)
-    for slug, entry in COMPOSE_REGISTRY.items():
+    for slug, entry in get_registry().items():
         try:
             txt = (_REPO_ROOT / entry["compose_path"]).read_text(
                 encoding="utf-8", errors="replace"
@@ -776,11 +776,11 @@ def _detect_serving_fingerprint(tag: str):
 
     engine_pin = hardware = power_cap = None
     try:
-        from .compose_registry import COMPOSE_REGISTRY
+        from .compose_registry import get_registry
     except ImportError:
-        from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+        from scripts.lib.profiles.compose_registry import get_registry
     try:
-        entry = COMPOSE_REGISTRY.get(tag) or {}
+        entry = get_registry().get(tag) or {}
         txt = (_REPO_ROOT / entry["compose_path"]).read_text(encoding="utf-8", errors="replace")
         m = re.search(r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt)
         cname = m.group(1) if m else None

@@ -173,9 +173,9 @@ def compose_display(compose_path: str, served: str) -> str:
     path = rel(compose_path).replace("\\", "/")
     try:
         sys.path.insert(0, str(ROOT))
-        from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY, DEFAULTS
+        from scripts.lib.profiles.compose_registry import DEFAULTS, get_registry
 
-        by_path = {entry["compose_path"]: (key, entry) for key, entry in COMPOSE_REGISTRY.items()}
+        by_path = {entry["compose_path"]: (key, entry) for key, entry in get_registry().items()}
         hit = by_path.get(path)
         if hit is not None:
             _key, entry = hit
@@ -183,7 +183,7 @@ def compose_display(compose_path: str, served: str) -> str:
             topology = parts[parts.index("compose") + 1]
             engine_dir = parts[parts.index(entry["model"]) + 1]
             default_key = DEFAULTS.get((entry["model"], engine_dir, topology))
-            if default_key and COMPOSE_REGISTRY[default_key]["compose_path"] == path:
+            if default_key and get_registry()[default_key]["compose_path"] == path:
                 return f"{engine_dir}/default" if topology == "single" else f"{engine_dir}/{topology}/default"
             quant = parts[parts.index("compose") + 2]
             base = Path(path).stem

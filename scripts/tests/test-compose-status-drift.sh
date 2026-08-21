@@ -27,9 +27,9 @@ python3 - <<'PY'
 from pathlib import Path
 
 from scripts.lib.profiles.compose_registry import (
-    COMPOSE_REGISTRY,
     STATUS_VALUES,
     compose_header_status,
+    get_registry,
 )
 
 failures = []
@@ -45,7 +45,9 @@ def check(cond, msg):
 
 enum = set(STATUS_VALUES)
 
-for key, entry in sorted(COMPOSE_REGISTRY.items()):
+# C4-rev: merged view — a LOCAL layer entry's compose header is drift-checked
+# exactly like a core one.
+for key, entry in sorted(get_registry().items()):
     status = entry.get("status")
     # (a) registry status in the enum.
     check(status in enum, f"{key}: registry status {status!r} in enum")

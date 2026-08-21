@@ -4,6 +4,9 @@ The registry intentionally mirrors the shipped compose files. It is not a
 generator and it does not attempt to normalize away historical variants.
 """
 
+import json
+from pathlib import Path
+
 # Slug lifecycle / availability statuses — the canonical health flag.
 #
 # These are the registry-side equivalent of the compose `Status:` header enum
@@ -1672,6 +1675,112 @@ DEFAULTS = {
 }
 
 
+# --- C4-rev: the gitignored LOCAL layer (community-added models) --------------
+#
+# Community users add models WITHOUT touching any core catalog file. A local
+# model lives under scripts/lib/profiles-local/ (gitignored except its README):
+#   models.d/<id>.yml        ModelProfile YAML (same schema as models/)
+#   composes/<id>/...        the compose files
+#   registry.local.json      plain-dict registry entries ({slug: _entry-kwargs})
+#
+# get_registry() below is the SINGLE merged view every runtime consumer reads
+# (launch / switch / diagnose / emit / estate / cockpit). The local layer can
+# NEVER leak into DEFAULTS / ENGINE_PREFERENCE / RECOMMENDED_DEFAULT_MODELS —
+# those stay core-only, so a local entry can never become a curated default.
+
+LOCAL_LAYER_DIR_REL = "scripts/lib/profiles-local"
+LOCAL_REGISTRY_REL = "scripts/lib/profiles-local/registry.local.json"
+# The slug namespace every LOCAL entry lives under (promote.py --layer local
+# enforces it at write time; the loader refuses anything else).
+LOCAL_SLUG_PREFIX = "local/"
+
+
+class LocalRegistryError(Exception):
+    """The local layer exists but is unusable (bad JSON / shape / collision).
+
+    Raised LOUDLY on purpose: a broken local layer must never silently shrink
+    or shadow the curated catalog — launchers surface the error and exit."""
+
+
+def local_layer_root():
+    """The repo root this registry module was imported FROM.
+
+    Resolved from __file__ so a THROWAWAY copy of the repo (promote.py --root
+    / tests / a user checkout) sees ITS OWN local layer, not another's."""
+    return Path(__file__).resolve().parents[3]
+
+
+def load_local_registry(root=None):
+    """Read registry.local.json → {slug: entry-dict} ({} when no local layer).
+
+    Plain-dict entries (the JSON form of _entry kwargs) are wrapped through
+    _entry(**kwargs) so a local row carries EXACTLY the same shape + defaults
+    as a core row. ANY problem — unreadable JSON, a non-object, an unknown
+    kwarg, a bad status, a slug outside the `local/` namespace, or a slug /
+    model-id colliding with a core row (or another local row) — raises
+    LocalRegistryError. Loud, never a silent partial catalog."""
+    root = Path(root) if root is not None else local_layer_root()
+    path = root / LOCAL_REGISTRY_REL
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise LocalRegistryError(
+            f"{path}: unreadable registry.local.json: {exc}"
+        ) from exc
+    if not isinstance(raw, dict) or not all(isinstance(v, dict) for v in raw.values()):
+        raise LocalRegistryError(
+            f"{path}: expected a JSON object of {{slug: {{_entry kwargs}}}}"
+        )
+    core_slugs = set(COMPOSE_REGISTRY)
+    core_models = {e.get("model") for e in COMPOSE_REGISTRY.values()}
+    local: dict = {}
+    local_models: set = set()
+    for slug, kwargs in raw.items():
+        if not slug.startswith(LOCAL_SLUG_PREFIX):
+            raise LocalRegistryError(
+                f"{path}: local slug {slug!r} must live under the "
+                f"{LOCAL_SLUG_PREFIX!r} namespace"
+            )
+        if slug in core_slugs or slug in local:
+            raise LocalRegistryError(f"{path}: local slug collides: {slug!r}")
+        model = kwargs.get("model")
+        if model in core_models:
+            raise LocalRegistryError(
+                f"{path}: local model id {model!r} collides with a core model"
+            )
+        if model in local_models:
+            raise LocalRegistryError(f"{path}: duplicate local model id {model!r}")
+        try:
+            entry = _entry(**kwargs)
+        except TypeError as exc:
+            raise LocalRegistryError(
+                f"{path}: local entry {slug!r} has bad _entry kwargs: {exc}"
+            ) from exc
+        except ValueError as exc:
+            raise LocalRegistryError(f"{path}: local entry {slug!r}: {exc}") from exc
+        local[slug] = entry
+        local_models.add(model)
+    return local
+
+
+def get_registry(root=None):
+    """The SINGLE merged catalog view: core COMPOSE_REGISTRY + the local layer.
+
+    With no local layer present this IS COMPOSE_REGISTRY (the identical object
+    — zero behavior change on a pristine checkout). Slug lookups at runtime
+    read THIS; DEFAULTS / ENGINE_PREFERENCE / RECOMMENDED_DEFAULT_MODELS stay
+    core-only. Raises LocalRegistryError when a present local layer is broken —
+    a half-working catalog is worse than a loud failure."""
+    local = load_local_registry(root)
+    if not local:
+        return COMPOSE_REGISTRY
+    merged = dict(COMPOSE_REGISTRY)
+    merged.update(local)
+    return merged
+
+
 # --- PR-B: model-default resolver knobs (maintainer-owned, design §13.3) ----
 #
 # Two curated tables drive the `<model>/default` resolver. They are maintainer
@@ -1785,7 +1894,7 @@ def default_arch_gated(slug, detected_sm):
     """
     if not detected_sm:
         return False
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     if not entry:
         return False
     allow = entry.get("default_arch_allow")
@@ -1806,7 +1915,7 @@ def _functional_default(model, engine, topology, detected_sm=None):
     slug = DEFAULTS.get((model, engine, topology))
     if not slug:
         return None
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     if entry is None:
         return None
     if entry.get("status", "production") not in FUNCTIONAL_STATUSES:
@@ -1853,9 +1962,8 @@ def model_default_pin_key(model):
 
 def model_of_slug(slug):
     """The model-id a slug belongs to, or None if the slug is unknown."""
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     return entry.get("model") if entry else None
-
 
 def slug_topology(slug):
     """The topology family a slug serves, derived from its compose_path.
@@ -1863,7 +1971,7 @@ def slug_topology(slug):
     compose_path is `models/<model>/<engine>/compose/<topology>/<quant>/...`.
     Returns `single`/`dual`/`multi` (the ENGINE_PREFERENCE family) or None.
     """
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     if not entry:
         return None
     cp = entry.get("compose_path", "")

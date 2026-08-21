@@ -110,9 +110,9 @@ def load_drafter(root: Path, drafter_id: str) -> dict:
 def get_registry(root: Path) -> dict:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
-    from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY  # noqa: E402
+    from scripts.lib.profiles.compose_registry import get_registry  # noqa: E402
 
-    return COMPOSE_REGISTRY
+    return get_registry()
 
 
 # --------------------------------------------------------------------------

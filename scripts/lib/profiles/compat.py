@@ -21,7 +21,11 @@ try:
 except ImportError as exc:  # pragma: no cover - exercised only on missing dep
     raise RuntimeError("scripts.lib.profiles.compat requires PyYAML; install python3-yaml or pip install pyyaml") from exc
 
-from .compose_registry import COMPOSE_REGISTRY
+# C4-rev: the curated-catalog cross-ref VALIDATION loop below iterates
+# COMPOSE_REGISTRY (CORE-ONLY — a local entry references a models.d profile and
+# is validated when diagnosed, not here). Runtime slug consumers use
+# compose_registry.get_registry() instead.
+from .compose_registry import COMPOSE_REGISTRY, get_registry
 
 
 SUPPORTED_SCHEMA_VERSIONS = {1}
@@ -334,8 +338,13 @@ class EstateResult:
 def _check_schema(path: Path, data: dict[str, Any]) -> None:
     version = data.get("schema_version")
     if version not in SUPPORTED_SCHEMA_VERSIONS:
+        _rel = (
+            path.relative_to(PROFILE_ROOT)
+            if path.is_relative_to(PROFILE_ROOT)
+            else path
+        )
         msg = (
-            f"{path.relative_to(PROFILE_ROOT)} has unsupported schema_version={version}. "
+            f"{_rel} has unsupported schema_version={version}. "
             "Upgrade club-3090 profile tooling or pin older profiles."
         )
         _logger().error(msg)
@@ -351,7 +360,10 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         log.error("failed to load %s: %s", path, exc)
         raise ProfileError(f"failed to load {path}: {exc}") from exc
     _check_schema(path, data)
-    log.debug("loaded %s", path.relative_to(PROFILE_ROOT))
+    log.debug(
+        "loaded %s",
+        path.relative_to(PROFILE_ROOT) if path.is_relative_to(PROFILE_ROOT) else path,
+    )
     return data
 
 
@@ -592,7 +604,7 @@ def _validate_cross_refs(profiles: Profiles) -> None:
             if compose not in COMPOSE_REGISTRY:
                 failures.append(f"calibration/{cal.model}.yml references unknown compose `{compose}`")
 
-    for name, entry in COMPOSE_REGISTRY.items():
+    for name, entry in get_registry().items():
         for field_name, table in (
             ("model", profiles.models),
             ("workload", profiles.workloads),
@@ -628,7 +640,15 @@ def load_profiles(root: Path = PROFILE_ROOT) -> Profiles:
     root = Path(root)
     profiles = Profiles(
         hardware=_load_dir(root, "hardware", _hardware),
-        models=_load_dir(root, "models", _model),
+        models={
+            **_load_dir(root, "models", _model),
+            # C4-rev: merge the gitignored LOCAL layer's models.d profiles so
+            # every profile consumer (diagnose-profile, the weights catalog,
+            # registry-emit's model facet) sees community models. Local model
+            # ids are collision-checked by the registry loader, and a local
+            # profile SHADOWING a core id is impossible by that check.
+            **_load_local_models(root),
+        },
         workloads=_load_dir(root, "workloads", _workload),
         engines=_load_dir(root, "engines", _engine),
         drafters=_load_dir(root, "drafters", _drafter),
@@ -654,6 +674,18 @@ def load_profiles(root: Path = PROFILE_ROOT) -> Profiles:
     log.info("  calibration rows: %s", cal_counts)
     log.info("  compose_registry entries: %d", len(COMPOSE_REGISTRY))
     return profiles
+
+
+def _load_local_models(root: Path) -> dict[str, Any]:
+    """C4-rev: the LOCAL layer's model profiles (scripts/lib/profiles-local/models.d/).
+
+    Loaded with the SAME schema/factory as core models; an invalid local
+    profile raises loudly like a broken core one (a half-loaded catalog is
+    worse than a failure). Absent layer → {} (pristine checkout unchanged)."""
+    local_dir = Path(root).parent / "profiles-local" / "models.d"
+    if not local_dir.is_dir():
+        return {}
+    return _load_dir(local_dir, ".", _model)
 
 
 def _cudagraph_mode(hardware: list[HardwareProfile]) -> Optional[str]:
@@ -1102,10 +1134,11 @@ def from_compose_name(
     project_vram: bool = True,
 ) -> FitsResult:
     profiles = profiles or load_profiles()
-    if name not in COMPOSE_REGISTRY:
+    _reg = get_registry()
+    if name not in _reg:
         return FitsResult(
             valid=False,
-            reasons=[f"unknown compose `{name}`. Available composes: {', '.join(COMPOSE_REGISTRY)}"],
+            reasons=[f"unknown compose `{name}`. Available composes: {', '.join(_reg)}"],
             diagnostics={
                 "constraints_evaluated": [],
                 "constraints_passed": [],
@@ -1115,7 +1148,7 @@ def from_compose_name(
                 "elapsed_ms": 0.0,
             },
         )
-    entry = COMPOSE_REGISTRY[name]
+    entry = _reg[name]
     drafter = profiles.drafters[entry["drafter"]] if entry.get("drafter") else None
     result = fits(
         hardware=hardware,
@@ -1184,7 +1217,7 @@ def to_compose_name(
 
 
 def calibration_status(profiles: Profiles, compose_name: str, hardware: list[HardwareProfile], max_ctx: Optional[int] = None) -> tuple[str, Optional[dict[str, Any]]]:
-    entry = COMPOSE_REGISTRY.get(compose_name)
+    entry = get_registry().get(compose_name)
     if not entry:
         return "predicted", None
     cal = profiles.calibration.get(entry["model"])
@@ -1274,7 +1307,7 @@ def validate_estate(
 
     e3_failures = []
     for inst in instances:
-        entry = COMPOSE_REGISTRY.get(inst.compose_name, {})
+        entry = get_registry().get(inst.compose_name, {})
         if not entry.get("requires_nvlink"):
             continue
         pair = tuple(sorted(inst.gpu_indices))

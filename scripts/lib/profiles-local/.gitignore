@@ -1,0 +1,5 @@
+# The local layer's STRUCTURE is committed (this README + this .gitignore);
+# its CONTENTS are per-checkout and never committed.
+*
+!README.md
+!.gitignore

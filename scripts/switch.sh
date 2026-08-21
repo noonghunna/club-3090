@@ -603,13 +603,13 @@ from pathlib import Path
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from scripts.lib.profiles.compose_registry import (  # noqa: E402
-    COMPOSE_REGISTRY,
+    get_registry,
     model_of_slug,
     slug_topology,
 )
 
 slug = sys.argv[2]
-entry = COMPOSE_REGISTRY.get(slug)
+entry = get_registry().get(slug)
 if entry is None:
     print(f"unknown slug {slug!r} — run: scripts/switch.sh --list", file=sys.stderr)
     raise SystemExit(1)
