@@ -47,7 +47,7 @@ Run any of these with `bash scripts/switch.sh <slug>`, or `bash scripts/launch.s
 |---|---|--:|--:|---|
 | **Gemma-4-31B** | `vllm/gemma-31b-dual` | 224K | 8032 | QAT-AWQ-int4 + bf16 KV, overlay-free. Dual-only on 24 GB — single-card OOMs regardless of KV format. |
 | **Qwen3.6-35B-A3B** ⭐ concurrency | `vllm/qwen-35b-a3b-dual` | 262K | 8051 | ✅ production. **The multi-agent pick** — flat to N=16 streams where the dense 27B knees at N=2. |
-| **Tess-4-27B** | `llamacpp/tess-dual-mtp` | 262K | 8020 | ✅ production. |
+| **Tess-4-27B** | `llamacpp/tess-dual-mtp` | 262K | 8115 | ✅ production. |
 | **Qwen-AgentWorld-35B-A3B** | `vllm/qwen-agentworld-35b-a3b-dual-awq-int4` | 262K | 8080 | ✅ production. |
 
 Everything launchable: `bash scripts/switch.sh --list` (`--all` includes retired).

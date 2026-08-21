@@ -34,9 +34,11 @@ from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY as R
 # Pre-existing cross-model collisions, tracked for a separate port-hygiene PR.
 # Burn these down and DELETE them from here — the gate fails if a listed port
 # stops colliding, so a stale entry can't hide.
-#   8020 — vllm/minimal (qwen3.6-27b) + llamacpp/tess-dual-mtp (tess-4-27b)
-#   8032 — vllm/gemma-31b-dual (gemma-4-31b) + deepseek-flash-multi4 (deepseek-v4-flash)
-ALLOW = {8020, 8032}
+# (Empty — the two pre-existing cross-model collisions were resolved in this
+#  port-hygiene PR: tess-dual-mtp -> 8115, deepseek-flash-multi4 -> 8116. Re-add a
+#  port here only as a *tracked* temporary exception for a NEW pre-existing overlap;
+#  the gate fails if a listed port no longer collides.)
+ALLOW = set()
 
 byport = collections.defaultdict(list)
 for slug, e in R.items():
