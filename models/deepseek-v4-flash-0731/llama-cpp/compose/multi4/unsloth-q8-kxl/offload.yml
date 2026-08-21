@@ -96,7 +96,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-q8-multi4}"
     restart: unless-stopped
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8032}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8116}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     shm_size: "16g"
@@ -202,7 +202,7 @@ services:
       - '--fit'
       - 'off'
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:-8032}/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:-8116}/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 40

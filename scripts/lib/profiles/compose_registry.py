@@ -1099,7 +1099,7 @@ COMPOSE_REGISTRY = {
         tp=4, max_ctx=204800, max_num_seqs=1, mem_util=None,
         compose_path="models/deepseek-v4-flash-0731/llamacpp-club3090/compose/multi4/unsloth-q8-kxl/moecache.yml",
         weights_companions=("dspark",),
-        default_port=8032,
+        default_port=8116,
         kvcalc_key="SKIP",
         offload="n-cpu-moe",
         moe_cache=True,
@@ -1183,7 +1183,7 @@ COMPOSE_REGISTRY = {
         # DSpark is REQUIRED, not optional -- the compose passes -md and will not
         # boot without it, so readiness must gate on it (c3 Start would serve-fail).
         weights_companions=("dspark",),  # DSpark draft GGUF the compose mounts
-        default_port=8032,
+        default_port=8116,
         kvcalc_key="SKIP",
         offload="n-cpu-moe",
         host_ram_gb=120,
@@ -1198,7 +1198,7 @@ COMPOSE_REGISTRY = {
         engine="llama-cpp-local", drafter="tess-mtp-gguf", kv_format="q4_0",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
         compose_path="models/tess-4-27b/llama-cpp/compose/dual/migtissera-q4km/mtp.yml",
-        default_port=8020,
+        default_port=8115,
         kvcalc_key="SKIP",
         status="production",
         status_note="Tess-4-27B (migtissera Q4_K_M GGUF, 16 GB) — Qwen3.5-based dense 27B instruct/agentic fine-tune on dual 3090 llama.cpp. Arch qwen35-dense (dense = non-MoE; HYBRID attention, 48 linear + 16 full — corrected 2026-07-11) — same family as Deckard-40B. EXTERNAL MTP n=2 (separate mtp-*.gguf draft via --spec-draft-model, spec_method mtp_gguf) — first external-draft compose in the catalog. q4_0 KV, 262K ctx. Live-validated 2026-07-09 on server-cuda-b9246: decode ~52 narrative / 68 code tok/s (TTFT 233 ms), prefill ~1.3K tok/s; verify-stress 8/8 (NIAH ladder clean to 240,634 tok = 91% of 262K, ~5.9 GB free at deepest fill); soak-continuous PASS (0 err, 0/100 silent-empty, p50 66.4 tok/s, 96.3% retention). Quality (benchlocal --full): core 8-pack 115/150 (77%) think-off, 118/150 (79%) think-on — ties-to-edges the qwen3.6-27b dual-max reference (109) and LEADS the agentic packs (hermesagent 15/20 vs 9, cli-40 25/40 vs 20). PROMOTED caveats->production 2026-07-12: the streaming+thinking finish=length caveat does NOT reproduce on the shipped b9967 + 16K-reasoning-budget config (3/3 clean incl. parallel 2-tool) and the shipped-config quality refresh passed both modes (OFF 116 / ON 117 single-draw, no pack regression). Trades ~1/2 the qwen-dual throughput for a quality tie/edge + vision-capable base + smaller footprint (~12.7+17.2 GB layer-split vs ~22 GB/card TP=2).",
