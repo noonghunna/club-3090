@@ -369,3 +369,44 @@ class TestHscrollSmooth:
             await pilot.press("shift+left")
             await pilot.pause(0.6)
             assert table.scroll_x < table.max_scroll_x - 5
+
+
+class TestArrowPaging:
+    """←/→ on the catalog table page horizontally (animated) instead of the
+    invisible one-cell column-crawl; horizontal wheel handlers page too."""
+
+    @pytest.mark.asyncio
+    async def test_arrow_right_pages_horizontally(self):
+        app, _, _ = make_app(responses=c6_responses())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            table = app.query_one("#catalog-table")
+            if table.max_scroll_x <= 20:
+                pytest.skip("no horizontal overflow at this size")
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("right")
+            await pilot.pause(0.6)
+            assert table.scroll_x > 20, "←/→ must page, not column-crawl"
+
+    @pytest.mark.asyncio
+    async def test_wheel_handlers_page(self):
+        app, _, _ = make_app(responses=c6_responses())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            table = app.query_one("#catalog-table")
+            if table.max_scroll_x <= 20:
+                pytest.skip("no horizontal overflow at this size")
+            await pilot.press("down")
+            await pilot.pause()
+
+            class _E:
+                def stop(self): ...
+                def prevent_default(self): ...
+
+            await table._on_mouse_scroll_right(_E())
+            await pilot.pause(0.6)
+            assert table.scroll_x > 20
+            await table._on_mouse_scroll_left(_E())
+            await pilot.pause(0.6)
+            assert table.scroll_x < 20

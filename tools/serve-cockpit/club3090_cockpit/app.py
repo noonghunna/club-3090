@@ -52,7 +52,7 @@ from textual.containers import (
     VerticalScroll,
     ScrollableContainer,
 )
-from typing import NamedTuple, Optional
+from typing import Any, NamedTuple, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -821,7 +821,7 @@ class HelpScreen(ModalScreen):
     # The producer Bring & Validate lane section — rendered ONLY on producer.
     _LANE_SECTION = """\
 [bold]Bring & Validate[/bold] (producer lane — the ① → ⑤ pipeline)
-  ① Bring:   fit-check an HF model   [cyan]s[/cyan] Continue → ② Serve (weights on disk)   [cyan]D[/cyan] download weights
+  ① Bring:   [cyan]f[/cyan] search HF (fills the repo field)   fit-check an HF model   [cyan]s[/cyan] Continue → ② Serve (weights on disk)   [cyan]D[/cyan] download weights
   ② Serve:   [cyan]⏎[/cyan]/[cyan]g[/cyan] serve untested (Route-C = your weights · else catalog reproduction)
   ③ Gate:    [cyan]⏎[/cyan] launch validation step (gated)   [cyan]F[/cyan] full battery report.sh --full (~43-min · confirm · uses serving model)
   ④ Measure: [cyan]⏎[/cyan] open report   [cyan]m[/cyan] vs catalog bar (read)   [cyan]s[/cyan] submit to localmaxxing (gated · never auto)
@@ -958,6 +958,35 @@ class CatalogTable(DataTable):
     opens the model-info popup ([i] twin).  Serving stays keyboard-first
     (⏎ / [s] / buttons).  Clicks on non-highlighted rows keep the stock
     move-cursor behavior."""
+    # Row-cursor mode makes stock ←/→ a column-crawl with no visible effect
+    # (one invisible cell per press — the "slow horizontal scroll" complaint).
+    # Rebind them to the SAME animated page-scroll as shift+←/→; the whole-row
+    # highlight loses nothing. Subclass BINDINGS replace the stock key map for
+    # these keys (most-derived wins), ↑/↓ row navigation is untouched.
+    BINDINGS = [
+        Binding("right", "page_right", "Scroll ▶", show=False),
+        Binding("left", "page_left", "Scroll ◀", show=False),
+    ]
+
+    def action_page_right(self) -> None:
+        self.app._hscroll(1)
+
+    def action_page_left(self) -> None:
+        self.app._hscroll(-1)
+
+    async def _on_mouse_scroll_right(self, event) -> None:
+        """Horizontal trackpad/touchpad pan (terminals that deliver it — bare
+        ghostty does, zellij's passthrough is unreliable): animated page-scroll.
+        prevent_default() halts the MRO walk so the stock handler (which would
+        ignore the event anyway) doesn't also run."""
+        event.stop()
+        event.prevent_default()
+        self.app._hscroll(1)
+
+    async def _on_mouse_scroll_left(self, event) -> None:
+        event.stop()
+        event.prevent_default()
+        self.app._hscroll(-1)
 
     class HighlightClicked(Message):
         """A click landed on the currently-highlighted row (inspect intent)."""
@@ -2051,6 +2080,191 @@ class ModelInfoScreen(_CopyableModal, ModalScreen):
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()
+
+
+
+def _hf_fmt_count(n: Any) -> str:
+    """Compact download/like counts for the search table (1234567 → 1.2M)."""
+    try:
+        n = int(n or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
+class SearchHFScreen(ModalScreen):
+    """[f] — search Hugging Face for a repo, then fill the ① Bring field.
+
+    Discovery front-end for ① Bring: type terms, ⏎ searches, ⏎ on a result
+    row (or the Fill button) dismisses returning the repo id; Esc dismisses
+    returning None.  Modal rule: dismissal returns DATA and never touches the
+    panes — the app-side callback fills ``#lane-bring-url-input`` and
+    refocuses it.  The modal does NO network I/O itself: the query goes
+    through the CockpitData Runner seam (``hf_search`` →
+    ``scripts/lib/profiles/hf_search.py``).  A failed search notifies and
+    leaves manual entry exactly as it was."""
+
+    DEFAULT_CSS = """
+    SearchHFScreen {
+        align: center middle;
+    }
+    SearchHFScreen > Vertical {
+        width: 96;
+        height: auto;
+        max-height: 85%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    SearchHFScreen .hf-search-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    SearchHFScreen #hf-search-table {
+        height: 1fr;
+        min-height: 8;
+        margin-top: 1;
+    }
+    SearchHFScreen .hf-search-hint {
+        color: $text-muted;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("f", "dismiss", "Close"),
+        # Non-priority: the search Input consumes ⏎ (Input.Submitted → search)
+        # and the results DataTable consumes ⏎ (RowSelected) first — this only
+        # fires when focus is elsewhere, where "pick the highlighted row" is a
+        # safe no-op with a nudge.
+        Binding("enter", "pick", "Fill repo", show=True),
+        Binding("Y", "app.copy_context", "Copy", show=True),
+    ]
+
+    def __init__(self, data: "CockpitData", **kwargs):
+        super().__init__(**kwargs)
+        self._data = data
+        self._row_ids: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Search Hugging Face", classes="hf-search-title")
+            yield Input(
+                placeholder="org/Model or keywords — ⏎ to search",
+                id="hf-search-input",
+            )
+            yield Static("", id="hf-search-status")
+            yield DataTable(id="hf-search-table")
+            with Horizontal(classes="hf-search-actions"):
+                yield Button("Fill repo", id="hf-search-fill-btn", variant="primary")
+            yield Static(
+                "[dim]⏎ search · ⏎ on a row fills the ① Bring repo field · Esc close[/dim]",
+                classes="hf-search-hint",
+            )
+
+    def on_mount(self) -> None:
+        table = self.query_one("#hf-search-table", DataTable)
+        table.cursor_type = "row"
+        table.add_columns("model", "downloads", "likes", "updated", "fmt")
+        self.query_one("#hf-search-input", Input).focus()
+
+    @work(exclusive=True, group="hf-search")
+    async def run_search(self, query: str) -> None:
+        """The search worker: status line → Runner-seam query → table rows."""
+        query = (query or "").strip()
+        status = self.query_one("#hf-search-status", Static)
+        if not query:
+            status.update("[yellow]Type a search term first.[/yellow]")
+            return
+        status.update(
+            f"[dim]Searching Hugging Face for[/dim] [cyan]{query}[/cyan] [dim]…[/dim]"
+        )
+        rows, err = await self._data.hf_search(query, limit=20)
+        # The modal may have been dismissed while the search ran.
+        try:
+            if self.app.screen is not self:
+                return
+        except Exception:
+            pass
+        if err:
+            status.update("")
+            self.app.notify(
+                f"HF search failed: {err}", title="Search HF", severity="error", timeout=5
+            )
+            return
+        table = self.query_one("#hf-search-table", DataTable)
+        table.clear()
+        self._row_ids = []
+        for r in rows:
+            rid = str(r.get("id") or "")
+            self._row_ids.append(rid)
+            fmt = "/".join(
+                f for f in (
+                    "safetensors" if r.get("safetensors") else "",
+                    "GGUF" if r.get("gguf") else "",
+                ) if f
+            )
+            table.add_row(
+                rid,
+                _hf_fmt_count(r.get("downloads")),
+                _hf_fmt_count(r.get("likes")),
+                (str(r.get("last_modified") or "")[:10] or "—"),
+                fmt or "—",
+            )
+        if rows:
+            status.update(
+                f"[dim]{len(rows)} result(s) — ⏎ on a row fills the repo field"
+                " · GGUF rows pre-warn route-G[/dim]"
+            )
+            table.focus()
+        else:
+            status.update(
+                "[yellow]No results — refine the query, or type the repo manually.[/yellow]"
+            )
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "hf-search-input":
+            self.run_search(event.value)
+
+    def _selected_repo(self) -> Optional[str]:
+        if not self._row_ids:
+            return None
+        try:
+            row = self.query_one("#hf-search-table", DataTable).cursor_row
+        except Exception:
+            return None
+        return self._row_ids[row] if 0 <= row < len(self._row_ids) else None
+
+    def action_pick(self) -> None:
+        """⏎ / [Fill repo] — dismiss returning the highlighted repo id."""
+        repo = self._selected_repo()
+        if repo:
+            self.dismiss(repo)
+        else:
+            self.app.notify(
+                "No result selected — search first.",
+                title="Search HF",
+                severity="warning",
+                timeout=3,
+            )
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        # ⏎ on a focused results row (the DataTable consumes the key first).
+        self.action_pick()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "hf-search-fill-btn":
+            self.action_pick()
+
+    def action_dismiss(self) -> None:
+        """Esc / f — dismiss returning None (no pane is ever touched)."""
+        self.dismiss(None)
 
 
 
@@ -5770,6 +5984,10 @@ class LaneBringPane(Container):
         width: 13;
         margin-left: 1;
     }
+    LaneBringPane #lane-bring-search-btn {
+        width: auto;
+        margin-right: 1;
+    }
     LaneBringPane #lane-bring-gguf-select {
         width: 36;
     }
@@ -5844,6 +6062,9 @@ class LaneBringPane(Container):
                     )
                 with Vertical(classes="funnel-field"):
                     yield Label(" ", classes="funnel-field-title")
+                    yield Button(
+                        "Search HF", id="lane-bring-search-btn", classes="lane-bring-search-btn"
+                    )
                     yield Button(
                         "Inspect", id="lane-bring-inspect-btn", variant="primary"
                     )
@@ -7156,13 +7377,14 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("measure_vs_bar", "Compare vs catalog bar (④ Measure)", "Producer lane — read · flags protocol"),
     ("evaluate_target", "Evaluate running target (preview)", "Producer lane — c3t evaluate (mock this phase)"),
     ("promote_catalog", "Promotion scaffold preview (⑤)", "Producer lane — preview only, no catalog write yet"),
+    ("search_hf", "Search Hugging Face repos (① Bring)", "Producer lane — search HF and fill the repo field ([f])"),
 )
 
 # The producer-only subset — kept in sync with ``CockpitApp._PRODUCER_ONLY`` (a
 # guard test asserts the two agree).  Used to FILTER the palette on consumer.
 _PALETTE_PRODUCER_ONLY: frozenset[str] = frozenset({
-    "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-    "measure_vs_bar",
+    "search_hf", "mode_validate", "promote_catalog", "evaluate_target",
+    "serve_untested", "measure_vs_bar",
 })
 
 # Single source of truth: each mode-level tab → the CSS id of its PRIMARY content
@@ -7343,6 +7565,10 @@ class CockpitApp(App):
         # (same duplicate-key + check_action pattern as the modal's k=stop /
         # k=cancel_download).
         Binding("k", "bring_cancel_download", "Cancel download", show=True),
+        # ① Bring HF search front-end ([f]) — opens SearchHFScreen; a picked
+        # result fills the repo field.  Context-gated to mode 1 · tab-bring via
+        # _CONTEXT_KEYS (show=False like the other lane verbs — taught by Help).
+        Binding("f", "search_hf", "Search HF", show=False),
         # R3b-2 — producer lane: the ~43-min FULL validation battery
         # (report.sh --full) — confirm-gated, bg-streamed, producer-only, uses the
         # serving model (claims no GPU); NEVER auto-fired.
@@ -7512,6 +7738,7 @@ class CockpitApp(App):
         # Producer Bring & Validate lane (mode 1 in the 2-mode merge).  Both
         # producer-gated (hidden on the lean surface).
         "promote_catalog":  ({1}, None),          # Bring & Validate lane (⑤ Promote)
+        "search_hf":        ({1}, {"tab-bring"}),  # ① Bring — [f] HF repo search
         "evaluate_target":  ({1}, None),          # Bring & Validate lane (the c3t hook)
         "serve_untested":   ({1}, {"tab-serve"}), # Bring & Validate lane (② Serve)
         # [m] vs-bar on ④ Measure (tab-evidence); [F] full battery on the lane's
@@ -7570,13 +7797,13 @@ class CockpitApp(App):
     #   surface too.
     #   Lane-resident producer verbs: [v] evaluate_target + [serve_untested]
     #   (② Serve) + [P] promote_catalog (⑤ Promote) + [m] measure_vs_bar
-    #   (④ Measure).
+    #   + [f] search_hf (① Bring).
     #   NOT producer-only: [F] full_report — Batch 3 surfaced the ~43-min battery
     #   on the consumer Operate · Doctor too (context-gated to tab-doctor + the
     #   lane's ③ Gate tab-run), so it must stay reachable on the lean surface.
     _PRODUCER_ONLY: frozenset[str] = frozenset({
-        "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-        "measure_vs_bar",
+        "search_hf", "mode_validate", "promote_catalog", "evaluate_target",
+        "serve_untested", "measure_vs_bar",
     })
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -9381,6 +9608,26 @@ class CockpitApp(App):
             pass
         self.notify(f"Cancelled download of {repo}.", title="Download", timeout=3)
         self._sync_jobs_chip()
+
+    def action_search_hf(self) -> None:
+        """[f] / "Search HF" — the ① Bring HF repo search front-end.  Opens
+        SearchHFScreen; a picked repo id fills #lane-bring-url-input and
+        refocuses it (manual entry is never touched on Esc or on failure).
+        Context-gated to mode 1 · tab-bring (check_action + this guard)."""
+        if self._active_mode != 1 or self._active_validate_tab() != "tab-bring":
+            return
+
+        def _fill(repo: Optional[str]) -> None:
+            if not repo:
+                return
+            try:
+                inp = self.query_one("#lane-bring-url-input", Input)
+            except Exception:
+                return
+            inp.value = repo
+            inp.focus()
+
+        self.push_screen(SearchHFScreen(self._data), _fill)
 
     def action_new_bring(self) -> None:
         """Phase 3 — Ctrl+n: clear ①/② funnel state and start over (no disk wipe)."""
@@ -12580,6 +12827,8 @@ class CockpitApp(App):
             self._trigger_lane_bring()
         elif bid == "lane-bring-inspect-btn":
             self._trigger_lane_inspect()
+        elif bid == "lane-bring-search-btn":
+            self.action_search_hf()
         elif bid == "lane-bring-continue-btn":
             self._bring_advance_to_serve()
         elif bid == "lane-serve-btn":
