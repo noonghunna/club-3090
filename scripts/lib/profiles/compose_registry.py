@@ -132,6 +132,21 @@ def _entry(
     # instead of parsing the compose file (parse stays the fallback). Leave
     # None for existing entries — the compose remains the source of truth.
     served_name=None,
+    # True when this slug is the model's LAN-gateway scene: scripts/lib/
+    # litellm-emit.sh derives its route in services/litellm/config.yaml from
+    # THIS entry (#1078). Eligibility is EXPLICIT, never inferred — a slug is
+    # gateway-flagged by PR only when its port is the one gateway clients
+    # should hit (the curated-default walk among gateway=True entries picks
+    # the canonical one per model; see litellm-emit.sh). Default False: an
+    # unflagged catalog never leaks onto the gateway.
+    gateway=False,
+    # Extra OpenAI served-names this slug answers to BEYOND its primary
+    # served_name — each is emitted as an additional gateway model_name on the
+    # SAME route (same upstream port), not as a separate backend (#1073).
+    # Mechanism only today: no core entry sets aliases yet; the synthetic
+    # fixture in test-litellm-generate.sh covers the emission. Order matters
+    # (it is the emitted route order after the primary name).
+    serve_aliases=(),
     category=None,
     weights_companions=None,
 ):
@@ -171,6 +186,11 @@ def _entry(
         # The serve-cockpit Download action fetches these alongside the core so the
         # slug actually serves.  Bare keys, scoped to this entry's model.
         "weights_companions": list(weights_companions or []),
+        # LAN-gateway eligibility (#1078) + extra served-names on the same
+        # route (#1073). Always present (like moe_cache) so consumers can
+        # .get() without shape forks between core and local entries.
+        "gateway": bool(gateway),
+        "serve_aliases": list(serve_aliases),
     }
     if recommended_engine_features:
         entry["recommended_engine_features"] = list(recommended_engine_features)
@@ -254,6 +274,10 @@ COMPOSE_REGISTRY = {
         status="caveats",
         default_port=8010,
         kvcalc_key="qwen3.6-27b:dual",
+        # The LAN-gateway scene for qwen3.6-27b (#1078): the curated dual
+        # default every 27b scene on :8010 fronts (shared-primary note in
+        # services/litellm/config.yaml).
+        gateway=True,
     ),
 
     # --- Qwen "fast" / "max accuracy" tiers (2026-06-07) -----------------------
@@ -1431,6 +1455,10 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.8-27b/vllm/compose/dual/fp8/mtp.yml",
         default_port=8091,
         kvcalc_key="SKIP",
+        # The LAN-gateway scene for qwen3.8-27b (#1062/#1078): the dual-max
+        # slug on :8091, which serves BOTH its names (qwen3.8-27b +
+        # qwen3.8-27b-fp8) — litellm-emit.sh emits one route per served-name.
+        gateway=True,
         status="experimental",
         status_note="Qwen3.8-27B 'max accuracy' tier, 2-card: official Qwen/Qwen3.8-27B-FP8 weights (e4m3, dynamic act scale, weight_block_size [128,128], embedded mtp.safetensors head) + fp8/e4m3 KV + MTP n=3, TP=2 @262144, vLLM stable pin. ✅ BOOTED + verify-full PASS on the reference 2x3090 2026-08-17 (8 scored checks; Genesis check skipped — this compose is Genesis-free by design), promoted incubating -> experimental per its own gate. MEASURED same day on stock vllm/vllm-openai:v0.27.1, 3 warm + 5 measured: decode 67.39 narr (CV 1.5%) / 85.75 code (CV 3.5%) tok/s, TTFT 152 ms, prefill 1165.8 @10K / 941.5 @90K tok/s, KV pool 270,930 tok @262144 = 1.03x concurrency, VRAM peak 45,816 MiB total (~22.4 GiB/card), MTP acceptance 2.62 at n=3. ⚠️ The trailing SpecDecoding log lines read 'acceptance length 4.00' — that is a 3-token idle-window artifact at 0.03 tok/s, NOT the serving figure; use 2.62. ⚠️ STILL UNGATED for caveats/production: no verify-stress, no NIAH fill depth (262144 is ALLOCATED not FILLED — the 3.6 sibling fills to ~240K of its 262K, expect the same or worse), no soak-continuous, no 8-pack in either reasoning mode. ⚠️ HISTORICAL NOTE, corrected 2026-08-17: this entry previously read 'NOTHING HAS BOOTED — authored 2026-08-14' while the vllm/qwen38-27b-multi8-max entry simultaneously stated that this slug 'HAS booted and passed verify-full on the reference 2x3090 2026-08-17, with a canonical bench (67.39 narr / 85.75 code tok/s, MTP accept 2.62) — see BENCHMARKS.md'. The registry contradicted itself and the pessimistic side was the one users saw; discussion #993's 'boots + verify-full' claim was correct. The weights have since landed and been measured (66 safetensors = 30,866,866,928 bytes = 30.87 GB decimal / 28.75 GiB, repo revision 017b9c7a == current HEAD, all 66 CRC32-clean against the repo's crc32.txt; three non-weight files — chat_template.jinja, generation_config.json, tokenizer_config.json — do NOT match that manifest but parse fine, almost certainly a stale publisher manifest given its sibling safetensors-md5sum.txt shipped empty). Unvalidated as of 2026-08-17: verify-stress / NIAH / soak / 8-pack (bench and verify-full are DONE, see above). NO TPS, TTFT, accept-length or quality number is claimed anywhere, and the compose deliberately carries no `Quality:` field — the qwen3.6-27b tier's 109/150 is ITS number. What IS verified, from the checkpoint on disk: the architecture matches qwen3.6-27b-FP8 field for field (64 layers, layer_types = 16 full_attention + 48 linear_attention, 4 KV heads, head_dim 256, vocab 248320, max_position 262144, mtp_num_hidden_layers 1, linear k/v head_dim 128, conv_kernel 4), the FFN is DENSE (layer-0 tensor table shows mlp.gate_proj/up_proj/down_proj at 17408, no experts — the mlp.gate / shared_expert_gate names in modules_to_not_convert are export-template artifacts), the vision tower is present and explicitly EXCLUDED from the FP8 quant (preprocessor_config.json + video_preprocessor_config.json ship in-repo, so vision needs no separate projector — but no image request has ever been served), and quantization_config is the same shape as the 3.6 FP8 checkpoint that already loads on this exact pin. The 262144 ceiling is COMPUTED plus a sibling analogy, never filled: KV over the 16 GROWING layers only = 16 x 4 x 256 x 2 = 32,768 elem/token, at fp8 = 32,768 B/token = 8.00 GiB @262K (4.00 GiB/card at TP=2); weights measured at 30.87 GB decimal = 28.75 GiB (~14.4 GiB/card) — and qwen3.6-27b-FP8 measures 30,866,866,928 bytes, the SAME total to the byte (66 files, distinct md5s, so identical arch + quant layout rather than a duplicate dir), with identical KV geometry, and boots 262144 at TP=2 / util 0.92 / 2 seqs on this rig, reporting ~21.4 GB/card and a KV pool only ~1.13x the addressable context, i.e. TIGHT. Allocating is not filling: that 3.6 tier NIAH-fills to ~240K of its 262K; expect the same or worse here. If the first boot OOMs at KV init the levers in order are MAX_MODEL_LEN=196608, then GPU_MEMORY_UTILIZATION, then MAX_NUM_BATCHED_TOKENS=4096. ALSO UNPROVEN: that this checkpoint loads on the v0.25.1 pin at all — the pin predates the model, though it serves the same Qwen3_5ForConditionalGeneration arch (qwen3.6-27b FP8, Tess-4-27B). And a present MTP head is not a working one: accept rate is unmeasured, and on the 35B-A3B MoE sibling the BUILT-IN head is net-negative (-51%) where an external drafter is +49%. KV is fp8 (= e4m3) at scale=1.0 — the checkpoint is weight-only and vLLM disables calculate_kv_scales on Qwen3-Next hybrids; ⚠️ fp8_e5m2 is HARD-REJECTED against an fp8 checkpoint, do not 'simplify' to it. int8-PTH deliberately not offered (TRITON_ATTN-only; decode craters with depth on this family). Chat template is NATIVE, not froggeric — see the block comment above. SAMPLER follows the MODEL CARD, not the stack's Qwen3.6 defaults: the card publishes one row per reasoning mode, and since this compose ships thinking OFF it ships the Instruct row (temp 0.7 / top_p 0.80 / top_k 20 / min_p 0.0 / presence_penalty 1.5 / repetition_penalty 1.0) rather than the usual 0.6/0.95. ⚠️ The sampler does NOT follow the reasoning flag — enabling thinking without also setting TEMP=1.0 TOP_P=0.95 PRESENCE_PENALTY=0.0 is a silent mismatch. Serving defaults only; bench.sh sends its own canonical sampler, so BENCHMARKS rows stay comparable. ⚠️ MTP drafter exposed to OPEN vllm#50021 (GDN spec-decode wild write, quant/topology/depth-independent, live in this pin; v0.26.0 predates the fix). This model has never run so it has never been observed to crash — absence of evidence, not evidence of absence; the exposure is structural. Mitigate with SPEC=off (the compose reads it). Detail + re-test trigger: docs/UPSTREAM.md. Launch requires --force (experimental); VISIBLE in switch.sh --list. Promote to ⚠️/✅ only after verify-stress + soak + 8-pack. Also the on-rig proxy for vllm/qwen38-27b-multi4-max (@ TP=4) — ⚠️ but no longer a clean one: since 2026-08-15 both multi slugs run bf16 KV while this stays fp8 e4m3, so KV-sensitive results (pool size, concurrency) do not transfer in either direction.",
     ),
