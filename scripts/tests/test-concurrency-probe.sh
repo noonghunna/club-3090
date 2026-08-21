@@ -5,6 +5,9 @@
 # without one: syntax, SWEEP-needs-SLUG, SWEEP_DRY reboot plans, --sweep dry
 # plans (no SLUG, no reboot), planner clips, and the card renderer.
 set -euo pipefail
+
+# Force Python UTF-8 mode (PEP 540) before the first python3 call (#779).
+export PYTHONUTF8="${PYTHONUTF8:-1}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROBE="$ROOT_DIR/scripts/concurrency-probe.sh"
 LIB="$ROOT_DIR/scripts/lib/concurrency_probe.py"
