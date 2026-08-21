@@ -7,11 +7,12 @@ Requires PyYAML. On Debian/Ubuntu this is usually available from
 from __future__ import annotations
 
 import json
+import difflib
 import logging
 import os
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as dataclass_fields
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -45,6 +46,13 @@ class UnsupportedSchemaVersionError(ProfileError):
 
 class CrossReferenceError(ProfileError):
     """Raised when a profile references a missing profile id."""
+
+
+class UnknownProfileKeyError(ProfileError):
+    """Raised when a profile YAML declares a key the profile schema does not
+    know (the silent-typo class: `verify_glb` next to `verify_glob` would
+    otherwise be dropped on the floor by the ``data.get(...)`` factories and
+    nothing would ever say so)."""
 
 
 class TopologyClass(str, Enum):
@@ -335,6 +343,155 @@ class EstateResult:
     diagnostics: dict[str, Any]
 
 
+# ---------------------------------------------------------------------------
+# Strict profile-key validation
+#
+# Every profile factory below reads its YAML through ``data.get(...)`` — a
+# typo'd key (``verify_glb`` next to ``verify_glob``, ``weights_alias`` next
+# to ``weights_aliases``) is silently dropped and nothing ever says so. These
+# allowlists close that class: each profile group declares the exact set of
+# keys it accepts, and any unknown key fails LOUDLY at load time, naming the
+# file, the offending key(s), and the closest valid key when one is obvious.
+#
+# Allowlists are derived from the dataclass fields PLUS keys legitimately
+# present in the shipped catalog today (audited across all of
+# scripts/lib/profiles/{models,hardware,engines,drafters,workloads,calibration}
+# and profiles-local/models.d). Adding a field to a dataclass is NOT enough —
+# extend the matching *_EXTRA_KEYS set here or the loader will reject the new
+# key. That friction is the point.
+# ---------------------------------------------------------------------------
+
+
+def _dataclass_keys(cls) -> set[str]:
+    return {f.name for f in dataclass_fields(cls)}
+
+
+# ModelProfile fields plus audited catalog extras:
+#   setup            — setup.sh dispatch policy consumed by weights.py
+#                      (--primary/--dflash/--vision/... aliases; see
+#                      _SETUP_KEYS below)
+#   num_shared_experts, moe_layers — MoE sizing metadata (deepseek-v4-flash,
+#                      inkling-small) read by ops tooling alongside the
+#                      dataclass fields
+#   offload_residency, vram_sizing — per-variant CPU-offload / VRAM sizing
+#                      tables (deepseek-v4-flash, inkling-small); consumed as
+#                      raw YAML by compose-meta.sh's residency gate
+#   attn_full_layers, attn_swa_layers, swa_window — legacy aliases of
+#                      num_full_attn_layers / num_sliding_attn_layers /
+#                      sliding_window kept for inkling-small history
+#   description, manual_note — free-text annotations accepted on any model
+_MODEL_EXTRA_KEYS = {
+    "setup",
+    "description",
+    "manual_note",
+    "num_shared_experts",
+    "moe_layers",
+    "offload_residency",
+    "vram_sizing",
+    "attn_full_layers",
+    "attn_swa_layers",
+    "swa_window",
+}
+MODEL_PROFILE_KEYS = _dataclass_keys(ModelProfile) | _MODEL_EXTRA_KEYS
+
+# Keys allowed inside a weights.<variant> dict. This is the verify_glob
+# silent-typo class: a misspelled verify_glob silently disabled download
+# verification. hf_repos is injected by _normalize_weights post-validation,
+# but shipped variants declare it explicitly too.
+WEIGHTS_VARIANT_KEYS = {
+    "path",
+    "local_subdir",
+    "size_gb",
+    "format",
+    "status",
+    "hf_repo",
+    "hf_repos",
+    "engine",
+    "kind",
+    "verify_glob",
+    "shards",
+    "files",
+    "revision",
+    "manual_note",
+    "setup_weights_key",
+    "setup_env",
+    "act8_capable",
+    "quant_label",
+}
+
+# Keys allowed inside a model's `setup:` dispatch-policy dict (consumed by
+# weights.py's catalog derivation for setup.sh).
+SETUP_KEYS = {
+    "primary",
+    "weights_aliases",
+    "alias_extras",
+    "alias_resets_genesis",
+    "always_draft",
+    "assistant_draft",
+    "dflash",
+    "vision",
+    "prism_eagle3",
+}
+
+HARDWARE_PROFILE_KEYS = _dataclass_keys(HardwareProfile)
+WORKLOAD_PROFILE_KEYS = _dataclass_keys(WorkloadProfile)
+ENGINE_PROFILE_KEYS = _dataclass_keys(EngineProfile)
+# DrafterProfile fields plus keys generate_compose.py reads from the RAW
+# drafter YAML (bypassing this module's factories).
+DRAFTER_PROFILE_KEYS = _dataclass_keys(DrafterProfile) | {
+    "local_model_path",
+    "requires_engine_min",
+    "speculative_config_template",
+}
+CALIBRATION_PROFILE_KEYS = _dataclass_keys(CalibrationProfile)
+
+
+def _closest_key(key: str, allowed: set[str]) -> str:
+    match = difflib.get_close_matches(key, allowed, n=1)
+    return f" (closest valid key: `{match[0]}`)" if match else ""
+
+
+def _check_profile_keys(
+    path: Path,
+    data: dict[str, Any],
+    allowed: set[str],
+    nested: dict[str, tuple[Any, set[str]]] | None = None,
+) -> None:
+    """Fail LOUDLY on unknown keys in a profile YAML (CrossReferenceError
+    style: load-time, names the file). ``nested`` maps a label like
+    ``weights.<variant>`` to (sub-dict, its own allowlist) so typo'd keys one
+    level down are caught with the same rigor."""
+    top_failures = [
+        f"unknown top-level key `{key}`{_closest_key(key, allowed)}"
+        for key in sorted(set(data) - allowed)
+    ]
+    nested_failures: dict[str, list[str]] = {}
+    for label, (sub, sub_allowed) in (nested or {}).items():
+        if not isinstance(sub, dict):
+            continue
+        for key in sorted(set(sub) - sub_allowed):
+            nested_failures.setdefault(label, []).append(
+                f"{label}: unknown key `{key}`{_closest_key(key, sub_allowed)}")
+    if not top_failures and not nested_failures:
+        return
+    rel = (
+        path.relative_to(PROFILE_ROOT)
+        if path.is_relative_to(PROFILE_ROOT)
+        else path
+    )
+    lines = top_failures + [f for v in nested_failures.values() for f in v]
+    msg = f"{rel} declares unknown profile key(s):\n  " + "\n  ".join(lines)
+    if top_failures:
+        msg += f"\n  Valid top-level keys: {', '.join(sorted(allowed))}"
+    for label, sub_allowed in (
+        (label, spec[1]) for label, spec in (nested or {}).items()
+        if label in nested_failures
+    ):
+        msg += f"\n  Valid keys in {label}: {', '.join(sorted(sub_allowed))}"
+    _logger().error(msg)
+    raise UnknownProfileKeyError(msg)
+
+
 def _check_schema(path: Path, data: dict[str, Any]) -> None:
     version = data.get("schema_version")
     if version not in SUPPORTED_SCHEMA_VERSIONS:
@@ -371,12 +528,13 @@ def _load_dir(root: Path, subdir: str, factory) -> dict[str, Any]:
     out = {}
     for path in sorted((root / subdir).glob("*.yml")):
         data = _load_yaml(path)
-        profile = factory(data)
+        profile = factory(data, path)
         out[profile.id if hasattr(profile, "id") else profile.model] = profile
     return out
 
 
-def _hardware(data: dict[str, Any]) -> HardwareProfile:
+def _hardware(data: dict[str, Any], path: Path) -> HardwareProfile:
+    _check_profile_keys(path, data, HARDWARE_PROFILE_KEYS)
     return HardwareProfile(
         schema_version=data["schema_version"],
         id=data["id"],
@@ -417,7 +575,19 @@ def _normalize_weights(raw: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _model(data: dict[str, Any]) -> ModelProfile:
+def _model(data: dict[str, Any], path: Path) -> ModelProfile:
+    # Nested gates: every weights.<variant> dict against its own allowlist
+    # (the verify_glob silent-typo class) and the setup: dispatch policy
+    # against SETUP_KEYS.
+    weights = data.get("weights") or {}
+    nested: dict[str, tuple[Any, set[str]]] = {
+        f"weights.{variant}": (meta, WEIGHTS_VARIANT_KEYS)
+        for variant, meta in weights.items()
+        if isinstance(meta, dict)
+    }
+    if data.get("setup") is not None:
+        nested["setup"] = (data["setup"], SETUP_KEYS)
+    _check_profile_keys(path, data, MODEL_PROFILE_KEYS, nested)
     return ModelProfile(
         schema_version=data["schema_version"],
         id=data["id"],
@@ -477,7 +647,8 @@ def _decode_granularity(data: dict[str, Any]) -> str:
     return value
 
 
-def _workload(data: dict[str, Any]) -> WorkloadProfile:
+def _workload(data: dict[str, Any], path: Path) -> WorkloadProfile:
+    _check_profile_keys(path, data, WORKLOAD_PROFILE_KEYS)
     return WorkloadProfile(
         schema_version=data["schema_version"],
         id=data["id"],
@@ -489,7 +660,8 @@ def _workload(data: dict[str, Any]) -> WorkloadProfile:
     )
 
 
-def _engine(data: dict[str, Any]) -> EngineProfile:
+def _engine(data: dict[str, Any], path: Path) -> EngineProfile:
+    _check_profile_keys(path, data, ENGINE_PROFILE_KEYS)
     return EngineProfile(
         schema_version=data["schema_version"],
         id=data["id"],
@@ -512,7 +684,8 @@ def _engine(data: dict[str, Any]) -> EngineProfile:
     )
 
 
-def _drafter(data: dict[str, Any]) -> DrafterProfile:
+def _drafter(data: dict[str, Any], path: Path) -> DrafterProfile:
+    _check_profile_keys(path, data, DRAFTER_PROFILE_KEYS)
     return DrafterProfile(
         schema_version=data["schema_version"],
         id=data["id"],
@@ -528,7 +701,8 @@ def _drafter(data: dict[str, Any]) -> DrafterProfile:
     )
 
 
-def _calibration(data: dict[str, Any]) -> CalibrationProfile:
+def _calibration(data: dict[str, Any], path: Path) -> CalibrationProfile:
+    _check_profile_keys(path, data, CALIBRATION_PROFILE_KEYS)
     return CalibrationProfile(
         schema_version=data["schema_version"],
         model=data["model"],
