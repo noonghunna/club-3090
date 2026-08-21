@@ -42,6 +42,9 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #     FInput+classify+dedup with a mock gh returning "no existing issue"
 #     -> opens exactly one issue with a valid bounded label set + a body
 #     7-tuple that round-trips (parse back == effective_dedup_tuple).
+#     (#1009) the leg selects ONLY schema==1 bundles — foreign-schema
+#     leftovers in the shared .pull-captures/ dir are skipped, keeping
+#     a second suite run in the same tree green.
 #   * import-time safety: importing dedup then kv-calc --calibration is
 #     still Overall: 22/22 (100%).
 
@@ -622,28 +625,79 @@ check(_clg2.failure_class is FailureClass.UNKNOWN
 #    issue" -> opens exactly one issue with a valid bounded label set + a
 #    body 7-tuple that round-trips. NO real gh.
 # ===========================================================================
-real_root = root / ".pull-captures"
-real_dirs: list[Path] = []
-if real_root.is_dir():
-    for slug_dir in sorted(real_root.iterdir()):
+def _select_schema1_bundles(caps_root):
+    """Select the schema==1 bundles under a .pull-captures root (#1009).
+
+    `.pull-captures/` is SHARED gitignored runtime state: other producers
+    (e.g. the CONTRACT-1.1 gate emitter writes schema==2 gate-only
+    bundles) legitimately leave bundles there that the STRICT schema==1
+    reader must refuse. Selecting only the bundles this leg can read
+    keeps every real capture on disk for debugging AND makes the leg
+    order-independent (a second suite run in the same tree stays green).
+    Returns (schema1_dirs, skipped_names).
+    """
+    found: list[Path] = []
+    skipped: list[str] = []
+    if not caps_root.is_dir():
+        return found, skipped
+    for slug_dir in sorted(caps_root.iterdir()):
         if not slug_dir.is_dir() or slug_dir.name.startswith("_"):
             continue
         for ts_dir in sorted(slug_dir.iterdir()):
-            if ts_dir.is_dir() and (ts_dir / "manifest.json").is_file():
-                real_dirs.append(ts_dir)
+            if not (ts_dir.is_dir()
+                    and (ts_dir / "manifest.json").is_file()):
+                continue
+            try:
+                m = json.loads(
+                    (ts_dir / "manifest.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                skipped.append(ts_dir.name)
+                continue
+            if m.get("schema") == 1:
+                found.append(ts_dir)
+            else:
+                skipped.append(ts_dir.name)
+    return found, skipped
+
+
+# Self-check on SYNTHETIC state (never repo-root .pull-captures/): the
+# selector keeps a schema==1 bundle and skips a schema==2 gate leftover —
+# the exact #1009 second-run regression, asserted directly.
+_sel_root = tmp / "sel-real"
+_sel_s1 = _sel_root / "capslug" / "ts-cap"
+_sel_s1.mkdir(parents=True)
+(_sel_s1 / "manifest.json").write_text(json.dumps({"schema": 1}),
+                                       encoding="utf-8")
+_sel_s2 = _sel_root / "gateslug" / "ts-gate"
+_sel_s2.mkdir(parents=True)
+(_sel_s2 / "manifest.json").write_text(json.dumps({"schema": 2}),
+                                       encoding="utf-8")
+_sel_dirs, _sel_skipped = _select_schema1_bundles(_sel_root)
+check(_sel_dirs == [_sel_s1] and _sel_skipped == ["ts-gate"],
+      "#1009: real-data selector keeps schema==1, skips schema==2 "
+      f"gate leftovers (got {_sel_dirs}, skipped {_sel_skipped})")
+
+real_root = root / ".pull-captures"
+real_dirs, foreign_dirs = _select_schema1_bundles(real_root)
+if foreign_dirs:
+    print(f"real-data: skipped {len(foreign_dirs)} non-schema-1 "
+          f".pull-captures/ bundle(s) {foreign_dirs} (#1009: shared "
+          f"runtime state; left untouched on disk)")
 
 # `.pull-captures/` is gitignored runtime state — populated only after a
 # real on-rig pull, ALWAYS absent on a fresh clone / in CI / after cleanup.
 # The real-data invariant is that any captures present round-trip; their
 # EXISTENCE is not a CI precondition. Skip (never fail) when absent; the
-# round-trip assertions below run on whatever IS present.
+# round-trip assertions below run on whatever IS present (schema==1
+# bundles only — #1009: foreign-schema leftovers are skipped above).
 if real_dirs:
     print(f"real-data: round-tripping {len(real_dirs)} on-disk "
           f".pull-captures/ bundle(s)")
 else:
-    print("real-data: SKIP — no on-disk .pull-captures/ corpus "
-          "(gitignored runtime state; expected absent in CI / fresh "
-          "clone). Round-trip assertions run only on present bundles.")
+    print("real-data: SKIP — no readable schema==1 .pull-captures/ "
+          "bundle (gitignored runtime state; expected absent in CI / "
+          "fresh clone). Round-trip assertions run only on present "
+          "bundles.")
 
 for rd in real_dirs:
     rfi = read_capture_bundle(rd)
