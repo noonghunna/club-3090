@@ -13,7 +13,8 @@
 # troubleshooting section.
 #
 # Env vars (optional):
-#   URL          Override endpoint. Default: http://localhost:8020
+#   URL          Override endpoint. Default: registry-derived for qwen3.6-27b
+#                (curated DEFAULTS walk; currently :8020)
 #   MODEL        Served model name. Default: qwen3.6-27b
 #   CONTAINER    Docker container name for log scraping. Default: vllm-qwen36-27b
 
@@ -36,7 +37,17 @@ if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
   source "${ROOT_DIR}/scripts/preflight.sh"
   preflight_autodetect_endpoint
 fi
-URL="${URL:-http://localhost:8020}"
+# Default endpoint follows the registry's curated DEFAULTS walk for qwen3.6-27b
+# instead of a hand-maintained :8020/:8010 literal that drifts from the catalog.
+# The trailing literal is only a last resort when the registry can't be consulted.
+_DEFAULT_ENDPOINT_PORT=""
+if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
+  # shellcheck source=lib/registry-lookup.sh
+  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
+  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
+  _DEFAULT_ENDPOINT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
+fi
+URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
 # Resolve the served model from /v1/models when MODEL is unset (#372). The qwen
 # literal below is only a last resort if detection no-ops (endpoint unreachable).
 declare -F preflight_autodetect_model >/dev/null && preflight_autodetect_model

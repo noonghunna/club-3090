@@ -26,9 +26,10 @@
 #   bash scripts/concurrency-probe.sh --sweep         # live N×ctx matrix + card
 #   SWEEP="4 8 12 16" SLUG=vllm/minimal TPS_FLOOR=15 bash scripts/concurrency-probe.sh
 #
-# Env: URL (default http://localhost:8010) · MODEL (auto) · CONTAINER (auto for
-#   VRAM) · CONCURRENCY (default: served max-num-seqs, else 2) · ROUNDS (5;
-#   --sweep defaults to 3) · PROMPT_TOKENS (16000) · GEN_TOKENS (256) ·
+# Env: URL (default registry-derived for qwen3.6-27b, currently :8020) · MODEL
+#   (auto) · CONTAINER (auto for VRAM) · CONCURRENCY (default: served
+#   max-num-seqs, else 2) · ROUNDS (5; --sweep defaults to 3) ·
+#   PROMPT_TOKENS (16000) · GEN_TOKENS (256) ·
 #   VRAM_GROWTH_MB (200) · REQ_TIMEOUT (600).
 #   Validation knobs: VALIDATE (0) · TARGET_CTX (auto from --max-model-len) ·
 #   TPS_FLOOR (0 = report-only) · RETENTION_MIN (0.98) ·
@@ -62,7 +63,7 @@ concurrency-probe.sh — concurrent-stream fit + throughput matrix
                                                  reboot-per-N envelope knee
 
 --sweep flags (all optional; clipped to the live server):
-  --url URL          default http://localhost:8010
+  --url URL          default registry-derived for qwen3.6-27b (currently :8020)
   --ctx 1k,4k,8k,16k,32k
   --n 1,2,4,8,16,32
   --budget 15m       stop the matrix and print a partial card
@@ -76,7 +77,18 @@ EOF
 
 MATRIX=0
 N_LIST_EXPLICIT=0
-URL="${URL:-http://localhost:8010}"
+# Default endpoint follows the registry's curated DEFAULTS walk for qwen3.6-27b
+# — the SAME source bench/verify derive their defaults from — instead of this
+# probe's lone :8010 literal. The trailing literal is only a last resort when
+# the registry can't be consulted.
+_DEFAULT_ENDPOINT_PORT=""
+if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
+  # shellcheck source=lib/registry-lookup.sh
+  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
+  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
+  _DEFAULT_ENDPOINT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
+fi
+URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
 PROMPT_TOKENS="${PROMPT_TOKENS:-16000}"
 GEN_TOKENS="${GEN_TOKENS:-256}"
 VRAM_GROWTH_MB="${VRAM_GROWTH_MB:-200}"

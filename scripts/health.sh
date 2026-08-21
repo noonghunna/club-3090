@@ -16,7 +16,8 @@
 #   URL=http://localhost:8030 bash scripts/health.sh
 #
 # Env:
-#   URL          API base. Default: http://localhost:8020
+#   URL          API base. Default: registry-derived for qwen3.6-27b (curated
+#                DEFAULTS walk; currently :8020)
 #   CONTAINER    Target a specific named container instead of auto-matching.
 #                Default: unset → auto-match any recognized engine-prefix
 #                container (vllm-/llama-cpp-/ik-llama-/sglang-/beellama-).
@@ -34,7 +35,18 @@ set -uo pipefail
 # processes and nested scripts inherit it. Guarded by test-locale-utf8.sh.
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 
-URL="${URL:-http://localhost:8020}"
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Default endpoint follows the registry's curated DEFAULTS walk for qwen3.6-27b
+# instead of a hand-maintained :8020/:8010 literal that drifts from the catalog.
+# The trailing literal is only a last resort when the registry can't be consulted.
+_DEFAULT_ENDPOINT_PORT=""
+if [[ -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
+  # shellcheck source=lib/registry-lookup.sh
+  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
+  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
+  _DEFAULT_ENDPOINT_PORT="$(registry_lookup_default_port qwen3.6-27b 2>/dev/null || true)"
+fi
+URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
 CONTAINER="${CONTAINER:-}"
 LOG_LINES="${LOG_LINES:-200}"
 WATCH_INTERVAL="${WATCH_INTERVAL:-5}"
