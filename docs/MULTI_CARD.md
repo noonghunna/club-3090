@@ -105,7 +105,7 @@ On awkward counts, pick the **best-connected** pair or quad, not the first N. In
 | `vllm/qwen-27b-multi-fast` ⭐ | AutoRound INT4 | fp8 e4m3 | 262144 | 8014 | The primary 4-card config. Cross-rig: 74.76 / 90.83 TPS (@ryanmpelletier, all-x16). |
 | `vllm/qwen-27b-multi-max` | FP8 | fp8 e4m3 | 262144 | 8015 | Highest weight fidelity. Cross-rig: 74.10 / 91.30 (@ryanmpelletier) · 79.23 / 101.61 (@MoppelMat). |
 | `vllm/qwen38-27b-multi4-max` | official FP8 | bf16 | 262144 | 8092 | 🐣 Qwen3.8. **Never booted on 4 cards** — first community boot IS the validation. |
-| `vllm/qwen38-27b-multi4-fast` | AutoRound INT4 + int8 act | fp8 e4m3 | 262144 | 8096 | 🧪 Qwen3.8. Never booted on 4 cards. |
+| `vllm/qwen38-27b-multi4-fast` | AutoRound INT4 + int8 act | fp8 e4m3 | 262144 | 8114 | 🧪 Qwen3.8. Never booted on 4 cards. |
 
 ### TP=8 slugs (never booted, anywhere)
 

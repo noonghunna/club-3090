@@ -448,10 +448,28 @@ class LocalMeasured:
     quality extensions and the pin the run measured on."""
 
     decode_tps: Optional[float] = None
+    narr_tps: Optional[float] = None     # slice 2c: narrative-prompt decode mean
+    code_tps: Optional[float] = None     # slice 2c: code-prompt decode mean
     quality_8pk: Optional[str] = None
     quality_8pk_think_on: Optional[str] = None
     engine_pin: Optional[str] = None
     date: str = ""                       # _recorded_at date, else file-mtime date
+
+    @property
+    def tps_label(self) -> str:
+        """narr/code, mirroring Measurement.tps_label. Falls back to the single
+        canonical-short decode_tps as the code figure when the narr/code split
+        is absent (older records / ONLY= runs)."""
+        code = self.code_tps if self.code_tps is not None else self.decode_tps
+        if self.narr_tps is None and code is None:
+            return "—"
+        n = f"{self.narr_tps:.0f}" if self.narr_tps is not None else "—"
+        c = f"{code:.0f}" if code is not None else "—"
+        return f"{n}/{c}"
+
+    @property
+    def quality_label(self) -> str:
+        return self.quality_8pk or "—"
 
 
 # ── Estate / Scene / Container / Doctor ─────────────────────────────────────────
@@ -1787,6 +1805,14 @@ def bench_row_from_corpus_record(rec: dict[str, Any]) -> Optional[BenchRow]:
     the row shows a representative pair.  Returns None for a record with no
     usable TPS (an honest empty corpus row would mislead the explorer)."""
     if not isinstance(rec, dict):
+        return None
+    # Only a REAL user bench (bench.sh / rebench-full → result_class
+    # "bench-measured") backs the explorer/detail bars. The compose-optimizer
+    # writes `boot-fit-measured` boot-fit probes (synthetic ~475 TPS) into the
+    # same corpus dir and they would OVERRIDE the BENCHMARKS.md row for their
+    # (model, engine, topology) key — the same leak that showed 475 in the
+    # catalog column. Drop anything that is not a user bench.
+    if (rec.get("result_class") or "").strip().lower() != "bench-measured":
         return None
     ext = rec.get("measured_extensions") or {}
     ladder = ext.get("decode_tps_by_ctx") or {}

@@ -181,6 +181,8 @@ class BenchMetrics:
     """
 
     decode_tps: Optional[float] = None      # mean decode_TPS (model decode rate)
+    narr_tps: Optional[float] = None        # narrative-prompt decode mean (first summary block)
+    code_tps: Optional[float] = None        # code-prompt decode mean (last summary block)
     wall_tps: Optional[float] = None        # mean wall_TPS (user-perceived)
     ttft_s: Optional[float] = None          # mean TTFT, seconds
     prefill_tps: Optional[float] = None     # mean PP tok/s (prompt-processing)
@@ -248,6 +250,15 @@ def parse_bench_output(text: str) -> BenchMetrics:
             # a measured record => the summary section the producer keys off is
             # absent / unparseable (bench-output drift). build_record fails loud.
             m.decode_summary_blocks = len(matches)
+            # slice 2c: narr/code split. bench.sh runs narrative first, code last,
+            # so two blocks => [narr, code]; a single block (ONLY=narr/code) is
+            # treated as code (the headline throughput). decode_tps stays the
+            # last block (code) for the frozen-schema/optimizer path.
+            if len(matches) >= 2:
+                m.narr_tps = _f(matches[0])
+                m.code_tps = _f(matches[-1])
+            elif matches:
+                m.code_tps = _f(matches[-1])
 
     # TTFT summary line:  TTFT          mean=   120ms  std= ...
     ttft = re.findall(r"^\s*TTFT\s+mean=\s*([0-9.]+)ms", text, re.MULTILINE)
@@ -471,6 +482,9 @@ def build_record(
             "Candidates for optimizer Lock-criteria #6 schema-typing pass."
         ),
         "decode_tps_by_ctx": decode_tps_by_ctx,
+        # slice 2c: narr/code decode split for the per-rig "yours" catalog columns.
+        "narr_tps": bench_metrics.narr_tps,
+        "code_tps": bench_metrics.code_tps,
         "prefill_tps": bench_metrics.prefill_tps,
         "ttft_s": bench_metrics.ttft_s,
         "wall_tps": bench_metrics.wall_tps,
@@ -579,7 +593,26 @@ def _build_arg_parser():
             "bench OUTPUT, writes a per-rig gitignored record. No GPU required."
         ),
     )
-    p.add_argument("--tag", required=True, help="compose_registry tag, e.g. ik-llama/iq4ks-mtp")
+    p.add_argument(
+        "--tag",
+        default=None,
+        help="compose_registry tag, e.g. ik-llama/iq4ks-mtp. Omit with --resolve-serving.",
+    )
+    p.add_argument(
+        "--resolve-serving",
+        action="store_true",
+        help="Resolve --tag from the currently-serving container (EXACT "
+        "container-name match), so bench.sh / quality-test.sh need not know the "
+        "slug. Ignored if --tag is given; exits cleanly if nothing matches.",
+    )
+    p.add_argument(
+        "--serving-url",
+        default=None,
+        help="The URL this run actually benched (e.g. http://localhost:8086). With "
+        "--resolve-serving, a name-matched container must ALSO publish this URL's "
+        "port, else the record is NOT attributed — stops a test benching a fake "
+        "server from poisoning the corpus with the live container's fingerprint.",
+    )
     p.add_argument(
         "--bench-output",
         type=Path,
@@ -628,13 +661,190 @@ def _build_arg_parser():
         default=None,
         help='8-pack thinking-ON headline, e.g. "110/150" (extension field).',
     )
+    # Generic escape hatch for the non-bench scripts (#249 wiring): each of
+    # spec-sweep / power-cap-sweep / concurrency-probe / soak / verify-* /
+    # bench-agentic measures a DIFFERENT metric shape (a per-N curve, a
+    # per-watt curve, a ctx ceiling, …) that has no dedicated flag. Rather than
+    # accrete one flag per script, they pass their metric as a JSON blob into
+    # the EXTENSIBLE measured_extensions namespace (see build_record's
+    # measured_extensions "_note"): --extension KEY=JSON, repeatable. The frozen
+    # schema fields are untouched; a bad JSON value fails loud (return 2) so a
+    # calling script's bug can't silently write a malformed record.
+    p.add_argument(
+        "--extension",
+        action="append",
+        default=[],
+        metavar="KEY=JSON",
+        help="Add KEY=<json-value> under measured_extensions (repeatable). The "
+        "value is parsed as JSON; a parse error is a hard error. For the #249 "
+        "non-bench scripts that carry a bespoke metric shape (e.g. "
+        "tps_by_spec_n, tps_by_power_cap, concurrency_by_n, ctx_validated).",
+    )
     return p
+
+
+def _url_port(url: Optional[str]) -> Optional[str]:
+    """Extract the host port from a benched URL (http://host:PORT/…). None if
+    absent (a bare http://host with no explicit port — the emit then falls back
+    to name-only matching, unchanged behaviour)."""
+    import re
+
+    m = re.search(r"://[^/:]+:(\d+)\b", url or "")
+    return m.group(1) if m else None
+
+
+def _container_host_ports(cname: str) -> set:
+    """The set of published HOST ports for a running container (`docker port`).
+    Empty on any failure — a bench genuinely hitting the container still matches
+    by name if we can't read its ports (fail-open on the read, not on the guard)."""
+    import re
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["docker", "port", cname], capture_output=True, text=True, timeout=10
+        )
+    except Exception:
+        return set()
+    if r.returncode != 0:
+        return set()
+    # lines like "8080/tcp -> 0.0.0.0:8086"
+    return set(re.findall(r"->\s*[0-9.]+:(\d+)", r.stdout))
+
+
+def resolve_serving_tag(serving_url: Optional[str] = None) -> Optional[str]:
+    """Resolve the compose_registry tag of a currently-serving container by EXACT
+    container-name match (never port/substring — the same rule rebench-full uses).
+    Returns the slug, or None if docker is unavailable / nothing matches. Lets
+    bench.sh / quality-test.sh emit a per-rig record without knowing the slug.
+
+    ⚠️ URL GUARD: when ``serving_url`` carries an explicit port, a name-matched
+    container ALSO has to publish that port — otherwise the run did NOT hit this
+    container (a test benching a fake server on a random port, with a real
+    container up) and attributing a record to it would poison the per-rig corpus
+    (the 2026-08-20 ~475-TPS pollution). No serving_url / no port in it → the old
+    name-only behaviour, unchanged. Ports we cannot read → fail-open (name match)."""
+    import re
+    import subprocess
+
+    try:
+        from .compose_registry import COMPOSE_REGISTRY
+    except ImportError:  # direct-script invocation
+        import sys as _sys
+
+        _sys.path.insert(0, str(_REPO_ROOT))
+        from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+    try:
+        names = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.split()
+    except Exception:
+        return None
+    norm_map = {n.replace("_", "-"): n for n in names}  # normalized -> real name
+    want_port = _url_port(serving_url)
+    for slug, entry in COMPOSE_REGISTRY.items():
+        try:
+            txt = (_REPO_ROOT / entry["compose_path"]).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            continue
+        m = re.search(
+            r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt
+        )
+        if not m:
+            continue
+        key = m.group(1).replace("_", "-")
+        if key not in norm_map:
+            continue
+        if want_port is not None:
+            host_ports = _container_host_ports(norm_map[key])
+            # host_ports empty == unreadable -> fail-open (name match stands).
+            if host_ports and want_port not in host_ports:
+                continue
+        return slug
+    return None
+
+
+def _detect_serving_fingerprint(tag: str):
+    """Best-effort (engine_pin, hardware, power_cap_w) for a serving slug, from
+    docker inspect + nvidia-smi. Any field is None if undetectable — the record
+    stays valid (fingerprint fields are optional)."""
+    import re
+    import subprocess
+
+    engine_pin = hardware = power_cap = None
+    try:
+        from .compose_registry import COMPOSE_REGISTRY
+    except ImportError:
+        from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+    try:
+        entry = COMPOSE_REGISTRY.get(tag) or {}
+        txt = (_REPO_ROOT / entry["compose_path"]).read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'container_name:\s*"?(?:\$\{[^:}]*:-)?([A-Za-z0-9._-]+)\}?"?', txt)
+        cname = m.group(1) if m else None
+        if cname:
+            img = subprocess.run(
+                ["docker", "inspect", cname, "--format", "{{.Config.Image}}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if img.returncode == 0 and img.stdout.strip():
+                engine_pin = img.stdout.strip()
+    except Exception:
+        pass
+    try:
+        smi = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,power.limit", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if smi.returncode == 0 and smi.stdout.strip():
+            first = smi.stdout.strip().splitlines()[0].split(",")
+            name = first[0].strip().lower()
+            for needle, cls in (
+                ("3090 ti", "rtx-3090-ti"), ("3090", "rtx-3090"), ("5090", "rtx-5090"),
+                ("4090", "rtx-4090"), ("a5000", "a5000"), ("a100", "a100"), ("h100", "h100"),
+                ("3060", "rtx-3060-12gb"),
+            ):
+                if needle in name:
+                    hardware = cls
+                    break
+            if len(first) > 1:
+                try:
+                    power_cap = float(first[1].strip())
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return engine_pin, hardware, power_cap
 
 
 def main(argv=None) -> int:
     import sys
 
     args = _build_arg_parser().parse_args(argv)
+
+    if not args.tag and args.resolve_serving:
+        args.tag = resolve_serving_tag(args.serving_url)
+        if not args.tag:
+            print(
+                "[measurement_record] no serving container matched a registry slug "
+                "— skipping record (not an error).",
+                file=sys.stderr,
+            )
+            return 0
+        # Auto-fill the fingerprint the scripts don't pass, so bench.sh /
+        # quality-test.sh stay thin and records match rebench-full's shape.
+        fp_pin, fp_hw, fp_cap = _detect_serving_fingerprint(args.tag)
+        if args.engine_pin is None:
+            args.engine_pin = fp_pin
+        if args.hardware is None:
+            args.hardware = fp_hw
+        if args.power_cap_w is None:
+            args.power_cap_w = fp_cap
+    if not args.tag:
+        print("[measurement_record] ERROR: --tag or --resolve-serving required.", file=sys.stderr)
+        return 2
 
     if args.bench_output is not None:
         text = args.bench_output.read_text(encoding="utf-8")
@@ -665,6 +875,39 @@ def main(argv=None) -> int:
         record["measured_extensions"]["quality_8pk"] = args.quality_8pk
     if args.quality_8pk_think_on:
         record["measured_extensions"]["quality_8pk_think_on"] = args.quality_8pk_think_on
+
+    # Generic --extension KEY=JSON (#249 non-bench scripts). Split on the FIRST
+    # '=' so a JSON value containing '=' survives. Refuse a blank key or a value
+    # that is not valid JSON — a malformed extension is a caller bug, and a
+    # silently-dropped metric is exactly the hollow-record failure this producer
+    # exists to prevent. The reserved structural keys stay off-limits so a stray
+    # --extension can't overwrite the namespace's own bookkeeping.
+    _RESERVED_EXT = {"_note", "conditions_fingerprint"}
+    for item in args.extension:
+        key, sep, raw = item.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            print(
+                f"[measurement_record] ERROR: --extension must be KEY=JSON (got {item!r}).",
+                file=sys.stderr,
+            )
+            return 2
+        if key in _RESERVED_EXT:
+            print(
+                f"[measurement_record] ERROR: --extension key {key!r} is reserved.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            value = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            print(
+                f"[measurement_record] ERROR: --extension {key} value is not valid "
+                f"JSON: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        record["measured_extensions"][key] = value
 
     # Surface soft-gap warnings so a partial record is never silently accepted.
     for w in record.get("parse_warnings", []):

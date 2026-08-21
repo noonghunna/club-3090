@@ -1,0 +1,28 @@
+schema_version: 1
+id: syvai-qwen38-dflash2
+display_name: syv-ai Qwen3.8-27B DFlash2 (W4A16)
+spec_method: dflash
+model_compat:
+  - qwen3.8-27b
+n_default: 7
+n_max: 15
+download:
+  hf_repo: syvai/Qwen3.8-27B-DFlash2-W4A16
+  size_gb: 1.2
+  format: compressed-tensors
+vram_footprint_gb: 1.2
+status: experimental
+# External DFlash2 block-drafter (vLLM PR #52816, "DFlash2: local convolution +
+# candidate selector"). The DFlash2DraftModel arch is provided by the vendored
+# backport at models/qwen3.8-27b/vllm/patches/vllm-dflash2-backport (syv-ai's
+# v0.27.1 backport — attribution: theirs). spec_method stays `dflash`; the arch
+# resolved from the drafter checkpoint (DFlash2DraftModel) is what selects the V2
+# Model Runner. The drafter ships no embeddings/lm_head — it shares the target's,
+# so the target lm_head must stay bf16 (our autoround-int4 target satisfies this).
+# Grounded against the on-disk drafter used by
+# models/qwen3.8-27b/vllm/compose/{dual,multi4,multi8}/autoround-int4/dflash2.yml
+# (/mnt/models/huggingface/qwen3.8-27b-dflash2-w4a16). Card mandates bf16 KV +
+# FLASH_ATTN (the drafter's block attention is non-causal); fp8 KV routes off
+# FLASH_ATTN on Ampere (sm_86) and pays ~40% decode — see learnings/qwen3.8-27b.md.
+speculative_config_template: '{"method":"dflash","model":"{LOCAL_MODEL_PATH}","num_speculative_tokens":{N}}'
+local_model_path: /root/.cache/huggingface/qwen3.8-27b-dflash2-w4a16

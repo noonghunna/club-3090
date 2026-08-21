@@ -213,7 +213,11 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
   curl -sf -m 5 "$URL/v1/models" >/dev/null || {
     if [[ -n "$SLUG" ]]; then
       echo "[spec-sweep] no server at $URL — booting $SLUG once…"
-      bash scripts/switch.sh "$SLUG" >/dev/null
+      # --force: the sweep deliberately targets the user-named SLUG, which may be
+      # status-gated (incubating/experimental). Without it switch.sh REFUSES a
+      # gated slug and, under set -e, spec-sweep dies AFTER switch.sh has torn the
+      # old container down — leaving the endpoint offline (found 2026-08-20).
+      bash scripts/switch.sh --force "$SLUG" >/dev/null
       for _ in $(seq 1 90); do curl -sf -m 3 "$URL/v1/models" >/dev/null 2>&1 && break; sleep 2; done
       curl -sf -m 5 "$URL/v1/models" >/dev/null || { echo "boot failed" >&2; exit 1; }
     else
@@ -234,13 +238,17 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
     for n in $SWEEP_N; do _measure_llamacpp_arm "$n"; done
   elif [[ -n "$SLUG" ]]; then
     echo "[spec-sweep] per-request speculative NOT honored (probe draft_n: n1=$p1 n4=$p4) — falling back to reboot-per-arm (llama.cpp boots are ~15s, still quick)"
+    # Guarantee the container returns to the slug's default config even if a
+    # measurement dies mid-loop — a reboot-per-arm sweep leaves it in an arm-state
+    # (or, on a boot failure, down). --force so a gated slug can be relaunched.
+    trap 'bash scripts/switch.sh --force "$SLUG" >/dev/null 2>&1 || true' EXIT
     for n in $SWEEP_N; do
       # One knob for every arm, n=0 included — the llama.cpp family was unified
       # on SPEC_N 2026-08-18 (#1049), so the baseline arm no longer needs a
       # different variable, and SPEC_N=0 genuinely REMOVES the drafter flags
       # rather than passing n-max=0 (which leaves the draft context allocated).
       echo "[spec-sweep] boot $SLUG SPEC_N=$n…"
-      SPEC_N="$n" bash scripts/switch.sh "$SLUG" >/dev/null
+      SPEC_N="$n" bash scripts/switch.sh --force "$SLUG" >/dev/null
       ready=0
       for _ in $(seq 1 90); do curl -sf -m 3 "$URL/v1/models" >/dev/null 2>&1 && { ready=1; break; }; sleep 2; done
       [[ "$ready" == "1" ]] || { echo "  n=$n: boot not ready — skipping"; continue; }
@@ -249,22 +257,32 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
       _measure_llamacpp_rebooted_arm "$n"
     done
     echo "[spec-sweep] restoring the slug's default boot config…"
-    bash scripts/switch.sh "$SLUG" >/dev/null 2>&1 || true
+    bash scripts/switch.sh --force "$SLUG" >/dev/null 2>&1 || true
+    trap - EXIT   # clean restore done; don't double-fire the safety trap
   else
     echo "[spec-sweep] REFUSING: per-request speculative not honored (draft_n: n1=$p1 n4=$p4) and no SLUG to reboot with — pass SLUG=<registry slug> for the reboot-per-arm fallback." >&2
     exit 3
   fi
 else
   # --- vLLM: reboot per arm ----------------------------------------------------
+  # --force + restore-on-exit trap (same rationale as the llama.cpp reboot path
+  # above): a status-gated slug (experimental/incubating) would otherwise be
+  # REFUSED by switch.sh AFTER the old container is torn down, and set -e would
+  # kill the sweep leaving the endpoint offline. Found 2026-08-20 fixing the
+  # llama.cpp path; the vLLM path had the identical hole.
+  trap 'bash scripts/switch.sh --force "$SLUG" >/dev/null 2>&1 || true' EXIT
   for n in $SWEEP_N; do
     echo "[spec-sweep] boot $SLUG SPEC_N=$n…"
-    SPEC_N="$n" bash scripts/switch.sh "$SLUG" >/dev/null
+    SPEC_N="$n" bash scripts/switch.sh --force "$SLUG" >/dev/null
     ready=0
     for _ in $(seq 1 240); do curl -sf -m 3 "$URL/v1/models" >/dev/null 2>&1 && { ready=1; break; }; sleep 3; done
     [[ "$ready" == "1" ]] || { echo "  n=$n: boot not ready — skipping"; continue; }
     _detect_model
     _measure_vllm_arm "$n"
   done
+  echo "[spec-sweep] restoring the slug's default boot config…"
+  bash scripts/switch.sh --force "$SLUG" >/dev/null 2>&1 || true
+  trap - EXIT
 fi
 
 # --- summary + sweet spot ------------------------------------------------------
@@ -280,3 +298,39 @@ done
 echo "  sweet spot: n=$best_n ($best_tps tok/s)$( [[ "$best_n" == "0" ]] && echo ' — the DRAFTER IS NET-NEGATIVE on this serve (spec-off wins)' )"
 # machine-readable
 for r in "${RESULTS[@]}"; do IFS='|' read -r n tps acc <<<"$r"; echo "RESULT n=$n tps=$tps accept=$acc"; done
+
+# --- per-rig #249 record: the spec-N draft-depth curve (no canonical bench TPS,
+# so a sweep-only record with the curve under measured_extensions). resolve-serving
+# maps the running container -> registry slug + fingerprint; unmatched/bare-metal
+# skips cleanly. SPEC_SWEEP_RECORD=0 skips. Never fails the sweep (|| true).
+if [[ "${SPEC_SWEEP_RECORD:-1}" == "1" && "${#RESULTS[@]}" -gt 0 ]] && command -v python3 >/dev/null 2>&1; then
+  _ss_ext="$(BEST_N="$best_n" BEST_TPS="$best_tps" python3 - "${RESULTS[@]}" <<'PY' 2>/dev/null || true
+import json, os, sys
+by_n = {}
+for r in sys.argv[1:]:
+    parts = r.split("|")
+    if len(parts) != 3:
+        continue
+    n, tps, acc = parts
+    try:
+        tps_v = float(tps)
+    except (TypeError, ValueError):
+        tps_v = None
+    try:
+        acc_v = float(acc)
+    except (TypeError, ValueError):
+        acc_v = acc if acc not in ("", "—") else None
+    by_n[str(n)] = {"tps": tps_v, "accept": acc_v}
+if by_n:
+    print(json.dumps({"by_n": by_n,
+                      "sweet_spot": {"n": os.environ.get("BEST_N") or None,
+                                     "tps": float(os.environ["BEST_TPS"]) if os.environ.get("BEST_TPS") else None}},
+                     separators=(",", ":")))
+PY
+)"
+  if [[ -n "$_ss_ext" ]]; then
+    python3 "$ROOT_DIR/scripts/lib/profiles/measurement_record.py" \
+      --resolve-serving --serving-url "$URL" --bench-output /dev/null --result-class sweep-only \
+      --extension "tps_by_spec_n=${_ss_ext}" >/dev/null 2>&1 || true
+  fi
+fi

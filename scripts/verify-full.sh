@@ -654,4 +654,17 @@ if [[ "$RUN_BENCH" == "1" && "$FAILED" == "0" ]]; then
     bash "${SCRIPT_DIR}/bench.sh"
 fi
 
+# --- per-rig #249 record: a functional (smoke) record, no TPS -----------------
+# verify-full is the functional check — it maps cleanly onto smoke_status.
+# resolve-serving maps the served container -> registry slug + auto-detects the
+# fingerprint; an unmatched / bare-metal run skips cleanly. VERIFY_FULL_RECORD=0
+# skips. Never fails the check (|| true).
+if [[ "${VERIFY_FULL_RECORD:-1}" == "1" ]] && command -v python3 >/dev/null 2>&1; then
+  _vf_status="pass"; [[ "$FAILED" == "0" ]] || _vf_status="fail"
+  _vf_ext="$(python3 -c 'import json,sys; print(json.dumps({"failed_checks": int(sys.argv[1])}))' "$FAILED" 2>/dev/null || echo '{}')"
+  python3 "${ROOT_DIR}/scripts/lib/profiles/measurement_record.py" \
+    --resolve-serving --serving-url "$URL" --bench-output /dev/null --result-class verify-only \
+    --smoke-status "$_vf_status" --extension "verify=${_vf_ext}" >/dev/null 2>&1 || true
+fi
+
 exit "$FAILED"

@@ -333,6 +333,8 @@ def _spec_token(drafter: str) -> str:
     dr = (drafter or "").strip().lower()
     if not dr:
         return ""
+    if "dflash2" in dr:       # DFlash2 external block-drafter (must precede the
+        return "DFlash2"          # generic dflash check — "dflash2" contains "dflash")
     if "dflash" in dr:
         return "DFlash"
     if "dspark" in dr:
@@ -1173,14 +1175,14 @@ class CatalogPane(Container):
         serving = (self._serving_slug or "").strip()
         prev_model: Optional[str] = None  # blank-on-repeat → the switch.sh --list grouped look
         for e in rows:
-            # Measured columns come from the SHIPPED BASELINE (registry-emit
-            # join) — the BENCHMARKS.md scrape is gone from the catalog path.
-            # Honesty marker: † = the row was measured on an OLDER engine pin
-            # than the slug currently runs (staleness guard §2.2; re-bench
-            # owed — full badge/overlay treatment lands in slice 2).
-            tps = e.measurement.tps_label
-            if e.measurement.stale is True and tps != "—":
-                tps = f"{tps}[yellow]†[/yellow]"
+            # Per-rig honesty: the perf columns (TPS / 8pk) show THIS RIG's OWN
+            # measured numbers — the #249 corpus written by the user's bench.sh /
+            # quality-test.sh — NOT the shipped baseline. "(rig)" must mean the
+            # user's rig, so it's blank + a run-bench nudge until they measure the
+            # slug here. The shipped baseline stays the labelled "bar" reference in
+            # the detail panel (e.measurement), never masquerading as the column.
+            lm = e.local_measurement
+            tps = lm.tps_label if lm is not None else "[dim]⏵ bench[/dim]"
             # N3: mark the live-serving row so the running model is visible at a
             # glance in Run.  Driven by the estate's matched_slug.
             slug_cell = e.slug
@@ -1223,7 +1225,10 @@ class CatalogPane(Container):
                 "spec": _spec_label(e),
                 "ctx": e.ctx_label or "—",
                 "tps": tps,
-                "8pk": e.measurement.quality_label,
+                # per-rig: the user's own 8-pack (from quality-test.sh → corpus).
+                # Blank until they run it here — a bench without quality still
+                # leaves this "—" (the tps nudge already prompts the bench).
+                "8pk": (lm.quality_label if (lm is not None and lm.quality_8pk) else "[dim]—[/dim]"),
                 "topo": e.topology,
                 "engine": e.engine,
                 "status": Text.from_markup(_status_glyph(e.status)),
@@ -1270,21 +1275,17 @@ class CatalogPane(Container):
                 f"{banner}{scope}{len(rows)} / {len(self._entries)} variants{tail}{dep_note}"
             )
         else:
-            stale_note = (
-                "  ([yellow]†[/yellow][dim] = measured on an older engine pin — re-bench owed[/dim])"
-                if self._has_stale_baseline()
-                else ""
-            )
-            # ⑂ legend — shown whenever any row's numbers come from a COMMUNITY
-            # SUBMISSION (rig-labelled, never the local bar) so the marker on the
-            # TPS cell is decodable without opening the slug detail card.
-            sub_note = (
-                "  ([dim]⑂ = community-submitted numbers (other rig) — not a local baseline[/dim])"
-                if self._has_submission_measurement()
-                else ""
+            # Per-rig honesty: the TPS/8pk columns are THIS RIG's own measured
+            # numbers. A "⏵ bench" cell means the rig hasn't measured that slug
+            # yet — run bench.sh / quality-test.sh to fill it. The shipped baseline
+            # "bar" (and any community submissions) live in the slug detail panel,
+            # not the column, so they never masquerade as this rig's numbers.
+            nudge_note = (
+                "  ([dim]⏵ bench = not measured on this rig yet — run bench.sh / "
+                "quality-test.sh[/dim])"
             )
             status_label.update(
-                f"{banner}{len(self._entries)} variants loaded from registry{stale_note}{sub_note}{dep_note}"
+                f"{banner}{len(self._entries)} variants loaded from registry{nudge_note}{dep_note}"
             )
 
         # #9/A8 — keep the preview strip in sync with the cursor after a (re-)render

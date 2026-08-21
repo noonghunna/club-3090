@@ -19,7 +19,7 @@ Run any of these with `bash scripts/switch.sh <slug>`, or `bash scripts/launch.s
 | Slug | Weights | KV | Max ctx | Narr / Code TPS | Port | State |
 |---|---|---|--:|---|--:|---|
 | `vllm/qwen38-27b-dual-max` ⭐ | official FP8 | fp8 e4m3 | 262144 | **67.4 / 85.8** | 8091 | 🧪 needs `--force` |
-| `vllm/qwen38-27b-dual-fast` | AutoRound INT4 + int8 act | fp8 e4m3 | 262144 | — | 8095 | 🧪 needs `--force` |
+| `vllm/qwen38-27b-dual-fast` | AutoRound INT4 + int8 act | fp8 e4m3 | 262144 | — | 8113 | 🧪 needs `--force` |
 | `vllm/qwen38-27b-dual-nvfp4` | NVFP4 | fp8 e4m3 | 262144 | — | 8100 | 🧪 needs `--force` |
 | `llamacpp/qwen38-27b-dual-q8kxl` | unsloth Q8_K_XL | q8_0 | 262144 | — | 8087 | 🐣 `--force`, `--list --all` |
 

@@ -211,6 +211,63 @@ _spec_fp() {
   echo "spec off"
 }
 
+# --- per-rig #249 record: self-tee stdout so the per-N `RESULT` lines (whichever
+# mode ran: matrix / reboot-knee / single-N) can be parsed at completion for the
+# corpus record. CONCURRENCY_PROBE_RECORD=0 skips. resolve-serving maps the
+# running container -> registry slug + fingerprint; unmatched runs skip cleanly.
+# Emit never fails the probe (|| true). Called explicitly at each mode's end (the
+# modes exit separately, and matrix mode installs its own EXIT trap).
+CONCURRENCY_PROBE_RECORD="${CONCURRENCY_PROBE_RECORD:-1}"
+_CP_REC_LOG=""
+if [[ "${CONCURRENCY_PROBE_RECORD}" == "1" ]] && command -v python3 >/dev/null 2>&1; then
+  _CP_REC_LOG="$(mktemp 2>/dev/null || echo "/tmp/cprobe-rec.$$.log")"
+  exec > >(tee -a "${_CP_REC_LOG}")
+fi
+_cp_emit() {  # args: [knee_n knee_tps knee_agg]
+  [[ -n "${_CP_REC_LOG:-}" && -f "${_CP_REC_LOG}" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  sync 2>/dev/null || true
+  sleep 0.4   # let the tee subprocess flush the RESULT lines before we read them
+  local ext
+  ext="$(CP_LOG="${_CP_REC_LOG}" CP_KNEE="${1:-}" CP_KNEE_TPS="${2:-}" CP_KNEE_AGG="${3:-}" \
+    python3 - <<'PY' 2>/dev/null || true
+import json, os, re
+try:
+    txt = open(os.environ["CP_LOG"], encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(0)
+cells = []
+for ln in txt.splitlines():
+    i = ln.find("RESULT ")
+    if i < 0:
+        continue
+    d = {}
+    for tok in ln[i + 7:].split():
+        if "=" in tok:
+            k, v = tok.split("=", 1)
+            d[k] = v
+    if d:
+        cells.append(d)
+if not cells:
+    raise SystemExit(0)
+out = {"cells": cells}
+kn = os.environ.get("CP_KNEE") or None
+if kn:
+    out["knee"] = {"n": kn,
+                   "per_stream_tps": os.environ.get("CP_KNEE_TPS") or None,
+                   "aggregate_tps": os.environ.get("CP_KNEE_AGG") or None}
+print(json.dumps(out, separators=(",", ":")))
+PY
+)"
+  if [[ -n "$ext" ]]; then
+    python3 "$ROOT_DIR/scripts/lib/profiles/measurement_record.py" \
+      --resolve-serving --serving-url "$URL" --bench-output /dev/null --result-class concurrency-only \
+      --extension "concurrency_by_n=${ext}" >/dev/null 2>&1 || true
+  fi
+  rm -f "${_CP_REC_LOG}"
+  _CP_REC_LOG=""
+}
+
 # CONCURRENCY defaults to the served slot count (the thing we're validating).
 # Detection order: vLLM container flag -> llama.cpp container flag -> /props.
 # A failed detection is FATAL (#818): the old silent CONCURRENCY=2 fallback
@@ -449,6 +506,7 @@ PY
   echo
   echo "[sweep] wrote ${base}.md  +  ${base}.json"
   rm -f "$rec_json"
+  _cp_emit
   exit 0
 fi
 
@@ -457,13 +515,18 @@ if [[ -n "$SWEEP" ]]; then
   # SLUG presence already validated up top, before environment probing.
   echo "[sweep] slug=$SLUG N in { $SWEEP } · floor=${TPS_FLOOR} tok/s/stream · reboots the server per N"
   knee=""; knee_tps=""; knee_agg=""; sweep_rows=""
+  # --force: SWEEP targets the user-named SLUG, which may be status-gated
+  # (experimental/incubating) — switch.sh refuses it without --force, AFTER tearing
+  # the old container down. Restore-on-exit trap returns the slug to its default
+  # config if a probe dies mid-sweep. (Same fix as spec-sweep, 2026-08-20.)
+  trap 'rm -f "${cells_jsonl:-}"; bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1 || true' EXIT
   for N in $SWEEP; do
     if [[ "$SWEEP_DRY" == "1" ]]; then
       echo "[sweep:dry] would: MAX_NUM_SEQS=$N switch.sh $SLUG  ->  wait ready  ->  probe N=$N"
       continue
     fi
     echo "[sweep] boot $SLUG @ MAX_NUM_SEQS=$N ..."
-    if ! MAX_NUM_SEQS="$N" bash "$ROOT_DIR/scripts/switch.sh" "$SLUG" >/dev/null 2>&1; then
+    if ! MAX_NUM_SEQS="$N" bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1; then
       echo "[sweep] N=$N: boot FAILED — skipping"; continue
     fi
     ready=0
@@ -506,6 +569,10 @@ if [[ -n "$SWEEP" ]]; then
   else
     echo "  no N met the bar — lower the sweep range or the target_ctx, or check the floor."
   fi
+  echo "[sweep] restoring $SLUG default boot config…"
+  bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1 || true
+  trap - EXIT
+  _cp_emit "$knee" "$knee_tps" "$knee_agg"
   exit 0
 fi
 
@@ -513,3 +580,4 @@ fi
 echo "[concurrency-probe] URL=$URL model=$MODEL N=$CONCURRENCY rounds=$ROUNDS prompt=${PROMPT_TOKENS}tok gen=${GEN_TOKENS}" \
      "$( [[ "$TPS_FLOOR" != "0" ]] && echo "floor=${TPS_FLOOR}" )"
 run_probe "$CONCURRENCY"
+_cp_emit

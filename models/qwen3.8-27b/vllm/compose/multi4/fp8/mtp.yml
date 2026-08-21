@@ -132,7 +132,7 @@
 #     compose default below, so bump the profile, not this line.
 #   - The vendored vllm#48375 install script, shared from the qwen3.6-27b tree.
 #
-# PORT — 8092, NOT 8089/8090. The qwen3.8 block starts at 8086/8087 (the GGUF
+# PORT — 8092, NOT 8088/8089. The qwen3.8 block starts at 8087/8090 (the GGUF
 #   siblings) but 8088 is SearXNG and 8090 is the AI-Studio director — both
 #   always-on support services on the reference rig, so a slug parked there
 #   collides with something already listening. 8091 (the dual sibling) and 8092
@@ -188,6 +188,7 @@ services:
     # so this literal only bites a raw `docker compose` invocation (#254).
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-multi4-max}"
+    user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8092}}:8000"
@@ -267,6 +268,7 @@ services:
       - bash
       - -c
       - |
+        umask 0002
         # VLLM_ENFORCE_EAGER=1 in .env disables CUDA graphs — the mitigation if
         # you see mid-generation hangs at depth on this hybrid family. Costs
         # ~20-30% TPS in exchange for stability. UNTESTED on this model.
@@ -326,6 +328,14 @@ services:
       - "${MAX_NUM_SEQS:-2}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      # Head-of-line-blocking mitigation (Zylone's vLLM tip; qwen3.6 dual-fast precedent).
+      # Interleaves a long prefill with concurrent decodes so a short/agentic request
+      # isn't starved. Valid range [block_size ~1600, max-num-batched-tokens 8192);
+      # 4096 = qwen3.6's measured 2.7x short-TTFT point (5.8x at 2048).
+      # ⚠️ INERT at max_num_seqs=1 (the shipped default) — preparatory for concurrency.
+      # LONG_PREFILL_TOKEN_THRESHOLD=0 disables.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-4096}"
       # `auto` follows --dtype above, so this is bf16 KV — 2 bytes/token/elem,
       # DOUBLE the fp8 e4m3 the dual sibling runs. Deliberate: TP=4 drops weights
       # to ~7.2 GiB/card, which affords the bigger pool (see the KV: header block).

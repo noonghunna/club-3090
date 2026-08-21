@@ -18,7 +18,9 @@
 #     reported UNVERIFIED and EXCLUDED from the verified count — "verified"
 #     never attaches to a size-only check (#857)
 #   - downloads the always-required drafter (Gemma 4: MTP "assistant"; Qwen3.6:
-#     no always-required drafter — DFlash is optional via WITH_DFLASH_DRAFT=1)
+#     no always-required drafter — DFlash is optional via WITH_DFLASH_DRAFT=1;
+#     Qwen3.8: DFlash2 optional via WITH_DFLASH_DRAFT=1 — REQUIRED by the 12
+#     super*/ultra* slugs, so set it when serving those)
 #
 # Env vars (optional):
 #   MODEL_DIR           Where to place model weights. Default: <repo>/models-cache
@@ -37,6 +39,11 @@
 #                       2026-04-26; bench numbers in DUAL_CARD.md were
 #                       measured against that snapshot. AL improvements
 #                       expected when z-lab tags training-complete.
+#   WITH_VISION         Set to 1 to ALSO download the F16 mmproj vision projector
+#                       when the model registers one (qwen3.8-27b: the companion of
+#                       the llamacpp/qwen38-27b-single-iq4xs slug, which ships
+#                       q4/262K/vision). Default: 0. c3's Download pulls it via the
+#                       slug's weights_companions regardless.
 #   PREFLIGHT_DISK_GB   Required free space at MODEL_DIR (default: 25, or
 #                       28 if WITH_DFLASH_DRAFT=1)
 #
@@ -198,6 +205,7 @@ fi
 # maps friendly setup knobs (MODEL_NAME, WEIGHTS, WITH_*) to profile keys.
 ALWAYS_DRAFT_KEY=""
 DFLASH_KEY=""
+VISION_KEY=""
 PRIMARY_WEIGHT_KEY=""
 EXTRA_WEIGHT_KEYS=()
 # Genesis is opt-in: nothing in the shipped catalog requires it anymore (its last
@@ -228,6 +236,12 @@ case "${MODEL_NAME}" in
     # meanwhile been rewritten to lead with it, so users were sent to a model that
     # setup.sh refused BY NAME (Discord, 2026-08-17). Re-check if statuses regress.
     PRIMARY_WEIGHT_KEY="qwen3.8-27b:fp8"
+    # DFlash2 drafter for the 12 super*/ultra* slugs (WITH_DFLASH_DRAFT=1).
+    DFLASH_KEY="qwen3.8-27b:dflash2"
+    # F16 mmproj vision projector — opt-in via WITH_VISION=1. Companion of the
+    # llamacpp/qwen38-27b-single-iq4xs slug (which now ships q4/262K/vision); c3's
+    # Download also pulls it via that slug's weights_companions.
+    VISION_KEY="qwen3.8-27b:gguf_mmproj_f16"
     ;;
   deepseek-v4-flash-0731)
     # Defaults to the IQ2 REACH tier (~85 GB on disk, ~86 GB host RAM) rather than
@@ -513,7 +527,9 @@ _disk_need_gb() {
 }
 
 _DISK_KEYS=("${PRIMARY_WEIGHT_KEY:-}" "${ALWAYS_DRAFT_KEY:-}")
-[[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]] && _DISK_KEYS+=("${MODEL_NAME}:dflash")
+[[ "${WITH_DFLASH_DRAFT:-0}" == "1" ]] && _DISK_KEYS+=("${DFLASH_KEY:-${MODEL_NAME}:dflash}")
+# WITH_VISION=1 opts into the mmproj projector (disk-gate it AND queue the download).
+[[ "${WITH_VISION:-0}" == "1" && -n "${VISION_KEY:-}" ]] && { _DISK_KEYS+=("${VISION_KEY}"); EXTRA_WEIGHT_KEYS+=("${VISION_KEY}"); }
 PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-$(_disk_need_gb "${_DISK_KEYS[@]}")}"
 
 echo "[preflight] checking environment..."
@@ -993,7 +1009,7 @@ case "${MODEL_NAME}" in
     # next step; the dispatch default is the dual-card fp8 tier (serves on 8091).
     SAMPLE_CONTAINER="llama-cpp-qwen38-27b-single"
     SAMPLE_COMPOSE_FLAGS_DUAL=""
-    SAMPLE_PORT="8086"
+    SAMPLE_PORT="8090"
     SAMPLE_MODEL_NAME="qwen3.8-27b"
     SAMPLE_LAUNCH_HINT="  bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4xs"
     NEXT_STEPS_NOTE="🧪/🐣 — every qwen3.8 slug needs --force; the incubating ones are

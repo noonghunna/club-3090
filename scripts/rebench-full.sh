@@ -684,6 +684,9 @@ try:
         hardware=hardware, engine_pin=engine_pin, power_cap_w=power_cap,
         smoke_status="pass",   # rebench aborts at step 0 unless verify-full passed
         soak_status=soak,
+        # A real user-facing bench — c3's perf columns accept ONLY this class,
+        # never the optimizer's default `boot-fit-measured` boot-fit probes.
+        result_class="bench-measured",
     )
     q_off = _quality(out_dir / "quality-full.json")
     q_on = _quality(out_dir / "quality-full-thinking.json")

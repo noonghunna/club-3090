@@ -42,6 +42,8 @@ ALIASES = {
     "qwen3.6-27b-nvfp4": ("qwen3.6-27b", "nvfp4"),
     "Qwen3.6-27B-NVFP4": ("qwen3.6-27b", "nvfp4"),
     "qwen3.6-27b-dflash": ("qwen3.6-27b", "dflash"),
+    "qwen3.8-27b-dflash2": ("qwen3.8-27b", "dflash2"),
+    "qwen3.8-27b-mmproj-f16": ("qwen3.8-27b", "gguf_mmproj_f16"),
     "qwen3.6-27b-prism-eagle3": ("qwen3.6-27b", "prism_eagle3"),
     "qwen3.6-27b-mtp-head": ("qwen3.6-27b", "mtp_head"),
     "qwen3.6-27b-gguf-q4km": ("qwen3.6-27b", "unsloth-q4km"),

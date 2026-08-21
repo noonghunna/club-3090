@@ -97,6 +97,7 @@ services:
   vllm-qwen38-27b-single-nvfp4:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-single-nvfp4}"
+    user: "0:${DOCKER_GID:-1000}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     shm_size: "16gb"
     ipc: host
@@ -146,6 +147,7 @@ services:
       - bash
       - -c
       - |
+        umask 0002
         set -e
         source /etc/club3090/detect_nvlink.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
@@ -194,6 +196,14 @@ services:
       - "${MAX_NUM_SEQS:-1}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      # Head-of-line-blocking mitigation (Zylone's vLLM tip; qwen3.6 dual-fast precedent).
+      # Interleaves a long prefill with concurrent decodes so a short/agentic request
+      # isn't starved. Valid range [block_size ~1600, max-num-batched-tokens 8192);
+      # 4096 = qwen3.6's measured 2.7x short-TTFT point (5.8x at 2048).
+      # ⚠️ INERT at max_num_seqs=1 (the shipped default) — preparatory for concurrency.
+      # LONG_PREFILL_TOKEN_THRESHOLD=0 disables.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-4096}"
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-fp8_e4m3}"
       - --trust-remote-code
