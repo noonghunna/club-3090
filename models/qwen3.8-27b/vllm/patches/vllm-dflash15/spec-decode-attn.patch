@@ -1,0 +1,337 @@
+Split-KV attention for speculative-decode batches on the FLASH_ATTN backend
+(vLLM 0.27.1, Ampere), with query-row tiling so the verify block can be longer
+than the drafter's.
+
+FlashAttention-2 only splits the KV sequence across thread blocks when a request
+has exactly one query token; with MTP (k+1 = 5 queries) a 24-head model gets 24
+blocks on the 3090's 82 SMs and each attention layer takes ~57 us for a 1.5k
+context. The Triton kernel in v1/attention/ops/spec_decode_attn.py gives every
+(request, kv-head, query tile) NUM_SEGMENTS blocks with an online-softmax partial
+and a combine step. Enabled with VLLM_SPEC_DECODE_ATTN=1 (bf16 KV cache only, no
+sliding window / softcap / alibi).
+
+The query rows of one request (q_len x G of them, G = query heads per kv head)
+are now split into tiles of BLOCK_M rows instead of having to fit in one, so the
+kernel is not capped at BLOCK_M // G query tokens. That cap is what made a verify
+block longer than the drafter's unaffordable: a 16-token block fell back to FA2
+and doubled the step at 25k context. Measured per attention layer, batch 1,
+25k-token context: 250 / 583 / 1,132 us at 8 / 16 / 32 query tokens, against
+FA2's 2,085 / 2,053 / 1,997 us. BLOCK_M is chosen to keep the tile count at 1
+where the register budget allows (128 rows with 8 warps), since every extra tile
+re-reads that request's KV segment.
+
+The partial buffers are allocated once, for VLLM_SPEC_DECODE_ATTN_QMAX query
+tokens (single-user/start_qwen.sh sets it from DFLASH_TOKENS). They must not grow
+afterwards: a captured CUDA graph holds their addresses, and a later reallocation
+- which is what happened as soon as a small prefill chunk asked for a longer
+block - leaves the captured decode graph reading freed memory.
+
+Apply from the repo root:
+  patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/spec-decode-attn.patch
+
+--- a/v1/attention/backends/flash_attn.py
++++ b/v1/attention/backends/flash_attn.py
+@@ -1038,6 +1038,37 @@
+                     )
+                     causal = not has_window
+
++                # syv patch: split-KV Triton attention for speculative-decode
++                # batches (1 < queries/request <= 10). FA2 does not split the KV
++                # sequence when max_seqlen_q > 1, leaving most SMs idle.
++                if (
++                    _spec_attn_enabled()
++                    and 1 < max_seqlen_q <= _spec_attn_qmax(self.num_heads // self.num_kv_heads)
++                    and not is_quantized_kv_cache(self.kv_cache_dtype)
++                    and (
++                        sliding_window_size is None
++                        or (sliding_window_size[0] < 0 and sliding_window_size[1] < 0)
++                    )
++                    and not self.logits_soft_cap
++                    and self.alibi_slopes is None
++                    and self.sinks is None
++                    and causal is True
++                    and mm_mask_mod is None
++                    and rswa_mask_mod_fn is None
++                ):
++                    _spec_attn_run(
++                        self,
++                        query[:num_actual_tokens],
++                        key_cache,
++                        value_cache,
++                        output[:num_actual_tokens],
++                        cu_seqlens_q,
++                        seqused_k,
++                        block_table,
++                        max_seqlen_q,
++                    )
++                    return output
++
+                 flash_attn_varlen_func(
+                     q=query[:num_actual_tokens],
+                     k=key_cache,
+@@ -1688,3 +1719,61 @@
+
+     # Merge prefix and suffix outputs, and store the result in output.
+     merge_attn_states(output, prefix_output, prefix_lse, suffix_output, suffix_lse)
++
++
++# ---- syv patch: split-KV spec-decode attention -------------------------------
++_SPEC_ATTN = {}
++
++
++def _spec_attn_enabled() -> bool:
++    import os
++
++    return os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1"
++
++
++_SPEC_ATTN_QMAX: int | None = None
++
++
++def _spec_attn_qmax(group: int) -> int:
++    # The kernel tiles the query rows itself, so the cap is on query tokens per request
++    # rather than on q_len * group (which used to stop a verify block longer than 10).
++    # It is fixed for the life of the server: the partial buffers are sized for it once,
++    # and a captured CUDA graph holds their addresses.
++    global _SPEC_ATTN_QMAX
++    if _SPEC_ATTN_QMAX is None:
++        import os
++
++        from vllm.config import get_current_vllm_config
++        from vllm.v1.attention.ops.spec_decode_attn import BLOCK_M, QMAX_TOKENS
++
++        n = 0
++        try:
++            spec = get_current_vllm_config().speculative_config
++            n = 1 + (spec.num_speculative_tokens if spec is not None else 0)
++        except Exception:
++            n = 0
++        n = int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", n or 0)) or n
++        _SPEC_ATTN_QMAX = min(QMAX_TOKENS, max(n, BLOCK_M // group))
++    return _SPEC_ATTN_QMAX
++
++
++def _spec_attn_run(impl, q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, max_seqlen_q):
++    from vllm.v1.attention.ops.spec_decode_attn import SpecDecodeAttention
++
++    key = (impl.num_heads, impl.head_size, q.device)
++    att = _SPEC_ATTN.get(key)
++    if att is None:
++        from vllm.config import get_current_vllm_config
++
++        try:
++            max_reqs = get_current_vllm_config().scheduler_config.max_num_seqs
++        except Exception:
++            max_reqs = 256
++        max_reqs = max(max_reqs, cu_seqlens_q.shape[0] - 1)
++        att = SpecDecodeAttention(
++            max_reqs, impl.num_heads, impl.head_size, q.device,
++            qmax=_spec_attn_qmax(impl.num_heads // impl.num_kv_heads),
++        )
++        _SPEC_ATTN[key] = att
++    att.run(q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, impl.scale,
++            cu_seqlens_q.shape[0] - 1, max_seqlen_q)
+--- a/v1/attention/ops/spec_decode_attn.py
++++ b/v1/attention/ops/spec_decode_attn.py
+@@ -0,0 +1,201 @@
++"""Split-KV paged attention for speculative-decode batches (a few query tokens per
++request, GQA), Triton.
++
++Neither vLLM's FlashAttention-2 path nor its Triton unified attention split the KV
++sequence across SMs when a request has more than one query token: with MTP k=4
++(5 queries) on a 24-head model that leaves 24 (FA) or ~8 (Triton) thread blocks on an
++82-SM RTX 3090 and the attention layer takes ~57 us for a 1.5k-token context.
++This kernel gives every (request, kv-head, query tile) NUM_SEGMENTS blocks, each
++computing an online-softmax partial over its slice of the KV cache for all its query
++rows at once (G = query heads per kv head), followed by a tiny combine kernel.
++
++Long blocks: the query rows of one request (q_len x G of them) are split into tiles of
++BLOCK_M rows, so the kernel is not capped at BLOCK_M // G query tokens. That cap is what
++made lookup-augmented drafting unaffordable past a block of 7 -- a 16-token verify fell
++back to FA2 and doubled the step at 25k context. Each tile re-reads the KV segment, so
++BLOCK_M is chosen to keep the tile count at 1 where the register budget allows.
++
++Layout matches vLLM's FLASH_ATTN backend: q [T, Hq, D], key/value cache
++[num_blocks, block_size, Hkv, D] (block_size any multiple of 16), block_table
++[num_reqs, max_blocks], seqused_k [num_reqs] = kv length including the new tokens,
++cu_seqlens_q [num_reqs + 1]. Query token i of a request sits at kv position
++seqused_k - q_len + i and attends causally.
++
++Restrictions: q_len <= QMAX_TOKENS per request, D a power of two <= 256, no sliding
++window / softcap / alibi.
++"""
++import os
++
++import torch
++import triton
++import triton.language as tl
++
++NUM_SEGMENTS = 16
++BLOCK_M = 64       # query rows (q_len * G) per program at the default register budget
++BLOCK_M_BIG = 128  # ... and with 8 warps, which keeps a 16-token block in one tile
++QMAX_TOKENS = 64   # query tokens per request the caller may ask for
++
++
++@triton.jit
++def _spec_attn_partial(
++    q_ptr, k_ptr, v_ptr, bt_ptr, seqused_ptr, cu_q_ptr,
++    part_o_ptr, part_m_ptr, part_l_ptr,
++    scale,
++    stride_qt, stride_qh,
++    stride_kb, stride_ks, stride_kh,
++    stride_vb, stride_vs, stride_vh,
++    stride_bt,
++    G: tl.constexpr, Hq: tl.constexpr, QMAX: tl.constexpr, D: tl.constexpr, BLOCK_SIZE: tl.constexpr,
++    BLOCK_M: tl.constexpr, TILE: tl.constexpr, NSEG: tl.constexpr, QT: tl.constexpr,
++    NTILE: tl.constexpr,
++):
++    pid = tl.program_id(0)
++    req = pid // NTILE
++    qtile = pid % NTILE
++    kvh = tl.program_id(1)
++    seg = tl.program_id(2)
++
++    q_start = tl.load(cu_q_ptr + req)
++    q_len = tl.load(cu_q_ptr + req + 1) - q_start
++    kv_len = tl.load(seqused_ptr + req)
++
++    # rows: r = i * G + g  -> query token qtile * QT + i (0..q_len-1), head kvh*G + g
++    r = tl.arange(0, BLOCK_M)
++    ri = qtile * QT + r // G
++    rg = r % G
++    row_ok = (r < QT * G) & (ri < q_len)
++    q_pos = kv_len - q_len + ri                      # kv position of each query row
++    d = tl.arange(0, D)
++    q_ptrs = q_ptr + (q_start + ri)[:, None] * stride_qt + (kvh * G + rg)[:, None] * stride_qh + d[None, :]
++    q = tl.load(q_ptrs, mask=row_ok[:, None], other=0.0)
++
++    # this segment's key range
++    tiles_total = (kv_len + TILE - 1) // TILE
++    tiles_per_seg = (tiles_total + NSEG - 1) // NSEG
++    t0 = seg * tiles_per_seg
++    t1 = tl.minimum(t0 + tiles_per_seg, tiles_total)
++
++    m_i = tl.full([BLOCK_M], float("-inf"), tl.float32)
++    l_i = tl.zeros([BLOCK_M], tl.float32)
++    acc = tl.zeros([BLOCK_M, D], tl.float32)
++    qs = (q * scale).to(tl.bfloat16)
++
++    for t in range(t0, t1):
++        pos = t * TILE + tl.arange(0, TILE)
++        k_ok = pos < kv_len
++        blk = tl.load(bt_ptr + req * stride_bt + pos // BLOCK_SIZE, mask=k_ok, other=0)
++        slot = pos % BLOCK_SIZE
++        k_ptrs = k_ptr + blk[:, None] * stride_kb + slot[:, None] * stride_ks + kvh * stride_kh + d[None, :]
++        v_ptrs = v_ptr + blk[:, None] * stride_vb + slot[:, None] * stride_vs + kvh * stride_vh + d[None, :]
++        k = tl.load(k_ptrs, mask=k_ok[:, None], other=0.0)
++        v = tl.load(v_ptrs, mask=k_ok[:, None], other=0.0)
++        s = tl.dot(qs, tl.trans(k)).to(tl.float32)            # [BLOCK_M, TILE]
++        allowed = k_ok[None, :] & (pos[None, :] <= q_pos[:, None]) & row_ok[:, None]
++        s = tl.where(allowed, s, float("-inf"))
++        m_new = tl.maximum(m_i, tl.max(s, 1))
++        m_safe = tl.where(m_new == float("-inf"), 0.0, m_new)
++        p = tl.exp(s - m_safe[:, None])
++        alpha = tl.exp(tl.where(m_i == float("-inf"), float("-inf"), m_i - m_safe))
++        l_i = l_i * alpha + tl.sum(p, 1)
++        acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v).to(tl.float32)
++        m_i = m_new
++
++    # store partials at flat index ((req*Hq + head)*QMAX + i)*NSEG + seg
++    hrow = kvh * G + rg
++    pidx = ((req * Hq + hrow) * QMAX + ri) * NSEG + seg
++    tl.store(part_o_ptr + pidx[:, None] * D + d[None, :], acc, mask=row_ok[:, None])
++    tl.store(part_m_ptr + pidx, m_i, mask=row_ok)
++    tl.store(part_l_ptr + pidx, l_i, mask=row_ok)
++
++
++@triton.jit
++def _spec_attn_combine(
++    part_o_ptr, part_m_ptr, part_l_ptr, out_ptr, cu_q_ptr,
++    stride_ot, stride_oh,
++    Hq: tl.constexpr, QMAX: tl.constexpr, D: tl.constexpr, NSEG: tl.constexpr,
++):
++    req = tl.program_id(0)
++    h = tl.program_id(1)
++    i = tl.program_id(2)
++    q_start = tl.load(cu_q_ptr + req)
++    q_len = tl.load(cu_q_ptr + req + 1) - q_start
++    if i < q_len:
++        base = ((req * Hq + h) * QMAX + i) * NSEG
++        segs = tl.arange(0, NSEG)
++        m = tl.load(part_m_ptr + base + segs)
++        l = tl.load(part_l_ptr + base + segs)
++        m_max = tl.max(m, 0)
++        m_max = tl.where(m_max == float("-inf"), 0.0, m_max)
++        w = tl.exp(m - m_max)                       # segments with -inf give 0
++        l_tot = tl.sum(l * w, 0)
++        d = tl.arange(0, D)
++        o = tl.load(part_o_ptr + (base + segs)[:, None] * D + d[None, :])   # [NSEG, D]
++        o = tl.sum(o * w[:, None], 0) / tl.maximum(l_tot, 1e-30)
++        tl.store(out_ptr + (q_start + i) * stride_ot + h * stride_oh + d, o.to(out_ptr.dtype.element_ty))
++
++
++class SpecDecodeAttention:
++    """Holds the partial buffers; call .run(...) per layer."""
++
++    def __init__(self, max_num_reqs, num_heads, head_dim, device, qmax,
++                 num_segments=NUM_SEGMENTS):
++        # The partial buffers are allocated once, for the longest query block the caller
++        # will ever pass (qmax): a CUDA graph captures their addresses, so growing them
++        # later would leave the captured decode graph pointing at freed memory.
++        self.nseg = num_segments
++        self.qmax = qmax
++        self.max_num_reqs = max_num_reqs
++        self.num_heads = num_heads
++        self.head_dim = head_dim
++        self.device = device
++        n = max_num_reqs * num_heads * qmax * self.nseg
++        self.part_o = torch.empty(n, head_dim, dtype=torch.float32, device=device)
++        self.part_m = torch.empty(n, dtype=torch.float32, device=device)
++        self.part_l = torch.empty(n, dtype=torch.float32, device=device)
++
++    def _plan(self, q_len, G, D):
++        """(BLOCK_M, tokens per tile, tile count, warps). One tile is preferred: every
++        extra tile re-reads this request's KV segment."""
++        override = os.environ.get("VLLM_SPEC_ATTN_BLOCK_M")
++        rows = q_len * G
++        if override:
++            block_m = int(override)
++        elif rows <= 32:
++            block_m = 32
++        elif rows <= 64:
++            block_m = 64
++        else:
++            block_m = BLOCK_M_BIG
++        block_m = max(block_m, G if G > 1 else 1)
++        block_m = 1 << (block_m - 1).bit_length()
++        qt = max(1, block_m // G)
++        return block_m, qt, triton.cdiv(q_len, qt), 8 if block_m >= 128 else 4
++
++    def run(self, q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, scale, num_reqs, max_query_len):
++        Hq, D = q.shape[1], q.shape[2]
++        Hkv = key_cache.shape[2]
++        G = Hq // Hkv
++        assert max_query_len <= self.qmax, "too many query tokens per request for this kernel"
++        assert num_reqs <= self.max_num_reqs
++        # shared memory on sm86 is 99 KB: q tile + one K and one V tile + scores must fit
++        block_m, qt, ntile, warps = self._plan(max_query_len, G, D)
++        tile = 64 if (block_m <= 32 or D <= 128) else 32
++        grid = (num_reqs * ntile, Hkv, self.nseg)
++        _spec_attn_partial[grid](
++            q, key_cache, value_cache, block_table, seqused_k, cu_seqlens_q,
++            self.part_o, self.part_m, self.part_l,
++            scale,
++            q.stride(0), q.stride(1),
++            key_cache.stride(0), key_cache.stride(1), key_cache.stride(2),
++            value_cache.stride(0), value_cache.stride(1), value_cache.stride(2),
++            block_table.stride(0),
++            G=G, Hq=Hq, QMAX=self.qmax, D=D, BLOCK_SIZE=key_cache.shape[1], BLOCK_M=block_m,
++            TILE=tile, NSEG=self.nseg, QT=qt, NTILE=ntile,
++            num_warps=warps, num_stages=1,
++        )
++        _spec_attn_combine[(num_reqs, Hq, max_query_len)](
++            self.part_o, self.part_m, self.part_l, out, cu_seqlens_q,
++            out.stride(0), out.stride(1),
++            Hq=Hq, QMAX=self.qmax, D=D, NSEG=self.nseg, num_warps=4,
++        )
++        return out

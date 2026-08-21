@@ -2,6 +2,14 @@
 
 Dated history for Qwen3.8-27B configs in this repo. Append-only — add a new entry, don't rewrite past ones.
 
+## 2026-08-21 — Incubating DFLASH15 fast-target compose
+
+Added `vllm/qwen38-27b-dual-dflash15-fast`: a one-link HF copy of the optimized W4A16 target plus the external DFlash2 W4A16 drafter. It carries lookup-augmented DFlash2, split-KV FlashAttention, hybrid KV/CUDAGraph sizing, Ninja/CUDA-header mounts, the WSL2 UVA fallback and the max-context/single-stream envelope. The canonical defaults are 244,320 tokens at GPU util `.85`, `MAX_NUM_SEQS=1`, a 9,000,000,000-byte KV pool, CUDAGraph reserve 1900 MiB and capture size 16. The architectural ceiling is 262K and would likely need `.90` utilization, but one GPU drives the desktop on this rig; `.90` OOMs under soak, so 244,320 is the reproducible ceiling here. The v1 checkpoint intentionally retains MTP artifacts for exact reproduction; a headless v2 is a separate follow-up. Local evidence is approximately 105.94 narrative / 188.06 code decode TPS on 2x RTX 3090 WSL2; the upstream-image re-run measured ~93.69 / ~163.82 across two canonical benches, passed verify-full/stress and continuous soak, and is recorded in `BENCHMARKS.md`. Vision remains enabled (`language_model_only=false`); the post-change verify-full/stress runs passed, and a real base64 PNG request returned a coherent image description (HTTP 200). Full quality with thinking force-on scored **126/150 medium** and **131/150 low** at pass@1 (**133/150** and **138/150** at pass@3).
+
+## 2026-08-21 — MAX_NUM_SEQS=2 and scheduling controls (experimental)
+
+The DFLASH15 compose now exposes the upstream HOL controls (`--long-prefill-token-threshold=4096`, `--enable-chunked-prefill`) and the Qwen3.8 default chat/sampler controls (`enable_thinking=false`, `reasoning_effort=low`, instruct sampler override). A separate `MAX_NUM_SEQS=2` run on the same `.85`/244K pool measured **92.30 / 161.29 decode TPS**. The concurrency probe passed 5 rounds at 2×16K with **81.0 tok/s per stream**, 99.1% retention and 0 MiB post-warm growth (peak 41,958 MiB). The agentic ramp had 0 tool-call misses but showed the expected GDN/SSM recurrent-prefill growth: TTFT 1.31s → 9.26s from 1.5K → 35.4K accumulated tokens. The registry/default remains MAX_NUM_SEQS=1; this variant is not promoted to the full-context default.
+
 ## 2026-08-21 — DFlash2 super/ultra tiers benched (full matrix); iq4xs single-card slug; HOL flag
 
 **The DFlash2 tier hierarchy is measured.** All six dual slugs benched fresh, same session (canonical 3 warm + 5 measured, stock `vllm/vllm-openai:v0.27.1` + the vendored [`vllm-dflash2-backport`](vllm/patches/vllm-dflash2-backport/README.md) of [vllm#52816](https://github.com/vllm-project/vllm/pull/52816)). Decode TPS, narrative / **code**:

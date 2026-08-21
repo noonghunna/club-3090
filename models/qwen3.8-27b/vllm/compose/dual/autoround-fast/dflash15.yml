@@ -1,0 +1,162 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-27B-W4A16-AutoRound-fast (complete one-link HF repo,
+#              compressed-tensors INT4, group 128; MTP artifacts retained in v1)
+#   Topology:  Dual RTX 3090 PCIe x16/x4 (TP=2, no NVLink; WSL2)
+#   Drafter:   external syvai/Qwen3.8-27B-DFlash2-W4A16, DFlash2 n=15 + lookup
+#              (`VLLM_DFLASH2_LOOKUP=1`); SPEC=0 disables speculative decoding
+#   KV:        BF16 + FlashAttention; required for DFlash2 on Ampere
+#   Vision:    ✅ WORKING — native Qwen3.8 multimodal input; no image generation
+#              (`language_model_only=false`; real PNG probe returned HTTP 200)
+#   Template:  native Qwen3.8 chat template; not froggeric
+#   Max ctx:   244320 measured/reproducible; 262144 architectural ceiling
+#              (0.90 OOMs during soak here because one GPU drives the desktop)
+#   Genesis:   none — intentionally Genesis-free
+#   Status:    🐣 Incubating
+#   Quality:   low 131/150 pass@1, 138/150 pass@3; medium 126/150, 133/150
+#              (full thinking-on standard recipe, benchlocal-cli 0.9.9)
+#   Best for:  long-context, single-stream multimodal agent workloads on TP=2
+#   Caveats:   canonical util=.85, max seqs=1, KV pool=9,000,000,000 bytes,
+#              graph reserve=1900 MiB, capture=16; custom AR/P2P disabled.
+#              WSL UVA, hybrid KV/CUDAGraph, prefix-cache, race and DFlash patches
+#              apply at boot. MAX_NUM_SEQS=2 is experimental; v1 keeps MTP artifacts.
+# ---------------------------------------------------------------------------
+# Siblings: `dual/fp8/mtp.yml` (262K, fp8/MTP),
+#   `dual/autoround-int4/mtp.yml` (262K, INT4/MTP), and
+#   `dual/autoround-int4/dflash2.yml` (~200K, DFlash2 n=7). This profile trades
+#   the ultrafast tier's shorter BF16-KV context for DFLASH15 n=15 + vision.
+# ===========================================================================
+services:
+  vllm-qwen38-27b-dual-dflash15-fast:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
+    container_name: "${ESTATE_CONTAINER:-vllm-qwen38-27b-dual-dflash15-fast}"
+    user: "0:${DOCKER_GID:-1000}"
+    restart: ${CLUB3090_RESTART:-unless-stopped}
+    shm_size: "16gb"
+    ipc: host
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8113}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ${MODEL_DIR:-../../../../../../models-cache}:/root/.cache/huggingface
+      - ../../../patches/vllm-dflash2-backport:/etc/club3090/dflash2:ro
+      - ../../../patches/vllm-dflash15:/etc/club3090/dflash15:ro
+      - ../../../patches/vllm-wsl-uva:/etc/club3090/wsl-uva:ro
+      # Shared hybrid-prefix safety patch; source is registered centrally.
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      - ${NINJA_BIN:-/usr/bin/ninja}:/usr/local/bin/ninja:ro
+      - ${CUDA_HEADERS_DIR:-/usr/local/cuda/include}:/usr/local/cuda/include:ro
+      - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
+      - ../../../cache/triton:/root/.triton/cache
+    environment:
+      - SPEC_N=${SPEC_N:-15}
+      - SPEC=${SPEC:-}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-${OFFLINE:-0}}
+      - TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-${OFFLINE:-0}}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVLINK_MODE=${NVLINK_MODE:-force_off}
+      - NCCL_P2P_DISABLE=1
+      - NCCL_CUMEM_ENABLE=0
+      - VLLM_SKIP_P2P_CHECK=1
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
+      - VLLM_SPEC_DECODE_ATTN=1
+      - VLLM_SPEC_DECODE_ATTN_QMAX=${VLLM_SPEC_DECODE_ATTN_QMAX:-16}
+      - VLLM_V2_CUDAGRAPH_MEM_MIB=${VLLM_V2_CUDAGRAPH_MEM_MIB:-1900}
+      - VLLM_DFLASH2_LOOKUP=${VLLM_DFLASH2_LOOKUP:-1}
+      - VLLM_DFLASH2_LOOKUP_NMIN=${VLLM_DFLASH2_LOOKUP_NMIN:-6}
+      - VLLM_DFLASH2_LOOKUP_NMAX=${VLLM_DFLASH2_LOOKUP_NMAX:-12}
+      - VLLM_DFLASH2_LOOKUP_NSTRONG=${VLLM_DFLASH2_LOOKUP_NSTRONG:-6}
+      - VLLM_DFLASH2_LOOKUP_AGREE=${VLLM_DFLASH2_LOOKUP_AGREE:-0}
+      - VLLM_DFLASH2_LOOKUP_NMIN_TAIL=${VLLM_DFLASH2_LOOKUP_NMIN_TAIL:-4}
+      - VLLM_DFLASH2_LOOKUP_LONGMIN=${VLLM_DFLASH2_LOOKUP_LONGMIN:-6}
+      - VLLM_DFLASH2_LOOKUP_ADAPTIVE=${VLLM_DFLASH2_LOOKUP_ADAPTIVE:-1}
+      - VLLM_DFLASH2_LOOKUP_STICKY=${VLLM_DFLASH2_LOOKUP_STICKY:-3}
+      # Let DFlash2 use FlashInfer top-k; set =1 only for a compatibility fallback.
+      - VLLM_DFLASH2_TORCH_TOPK=${VLLM_DFLASH2_TORCH_TOPK:-0}
+      - VLLM_DFLASH2_DRAFT_TOPK_TOPP=${VLLM_DFLASH2_DRAFT_TOPK_TOPP:-1}
+      - OMP_NUM_THREADS=1
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:False}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        source /etc/club3090/detect_nvlink.sh
+        if ! awk -v util="$${GPU_MEMORY_UTILIZATION:-0.85}" 'BEGIN { exit !(util <= 0.85) }'; then
+          echo "[dflash15] GPU_MEMORY_UTILIZATION=$${GPU_MEMORY_UTILIZATION:-0.85} exceeds WSL hard limit 0.85" >&2
+          exit 2
+        fi
+        bash /etc/club3090/pr48375/install.sh
+        bash /etc/club3090/dflash2/install.sh
+        bash /etc/club3090/dflash15/install.sh
+        bash /etc/club3090/wsl-uva/install.sh
+        _spec_n="$${SPEC_N:-15}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$${_spec_n}" in ''|*[!0-9]*) echo "[spec] SPEC_N must be a non-negative integer" >&2; exit 1 ;; esac
+        SPEC_ARGS=()
+        if [ "$${_spec_n}" -gt 0 ]; then
+          SPEC_ARGS=(--speculative-config "{\"method\":\"dflash\",\"model\":\"/root/.cache/huggingface/qwen3.8-27b-dflash2-w4a16\",\"num_speculative_tokens\":$${_spec_n}}")
+          echo "[spec] DFlash2 external drafter ON; n=$${_spec_n}" >&2
+        else
+          echo "[spec] external drafter OFF" >&2
+        fi
+        exec vllm serve --disable-custom-all-reduce "$${@}" "$${SPEC_ARGS[@]}"
+      - --
+    command:
+      - --model
+      - /root/.cache/huggingface/qwen3.8-27b-autoround-fast
+      - --served-model-name
+      - qwen3.8-27b
+      - --dtype
+      - bfloat16
+      - --tensor-parallel-size
+      - "${TP:-2}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-244320}"
+      - --gpu-memory-utilization
+      - "${GPU_MEMORY_UTILIZATION:-0.85}"
+      - --max-num-seqs
+      - "${MAX_NUM_SEQS:-1}"
+      - --kv-cache-memory
+      - "${KV_CACHE_MEMORY:-9000000000}"
+      - --max-num-batched-tokens
+      - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-4096}"
+      - --kv-cache-dtype
+      - "${KV_CACHE_DTYPE:-bfloat16}"
+      - --mamba-ssm-cache-dtype
+      - "${MAMBA_SSM_CACHE_DTYPE:-float16}"
+      - --attention-backend
+      - "${ATTN_BACKEND:-FLASH_ATTN}"
+      - --enable-prefix-caching
+      - --enable-chunked-prefill
+      - --mamba-cache-mode
+      - align
+      - --no-async-scheduling
+      - --compilation-config
+      - '{"max_cudagraph_capture_size":${CG_MAX:-16},"custom_ops":["+rms_norm","+silu_and_mul"]}'
+      - --reasoning-parser
+      - qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": ${ENABLE_THINKING:-false}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
+      - --override-generation-config
+      - '{"temperature":${TEMP:-0.7},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5}}'
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"

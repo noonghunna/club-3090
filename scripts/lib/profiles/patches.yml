@@ -399,6 +399,79 @@ patches:
       status: "open"
       drop_when: "vLLM merges #52816 (DFlash2DraftModel + candidate selector) AND the vllm-stable pin moves past it -> remove the 3 dflash2 compose mounts + entrypoint calls + retire this row and the patch dir."
     status: verified
+  - id: vllm-dflash15
+    # DFLASH15 opt-in extensions for the optimized W4A16 target. These are
+    # intentionally separate from the upstream DFlash2 backport: lookup drafting,
+    # split-KV verification, hybrid KV/CUDAGraph sizing and the quantized embedding
+    # route are required by the complete autoround-fast target on v0.27.1.
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-dflash15
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-dflash15-fast
+        reason: "The DFLASH15 compose uses the complete W4A16 AutoRound-fast target and external DFlash2 n=15. The opt-in patch set enables lookup-augmented drafting, split-KV FlashAttention verification, hybrid KV/CUDAGraph sizing and compressed-tensors embeddings; without it the target or the canonical 244K envelope is not the tested profile."
+        evidence: "models/qwen3.8-27b/vllm/patches/vllm-dflash15/README.md; models/qwen3.8-27b/vllm/compose/dual/autoround-fast/README.md; BENCHMARKS.md#qwen38-27b"
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-dflash15/install.sh
+      mounted_at: /etc/club3090/dflash15
+      invoke: "bash /etc/club3090/dflash15/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Idempotent, fail-closed patch installer; anchor drift or apply failure refuses boot. Pinned to vllm/vllm-openai:v0.27.1."
+    drift_guard:
+      kind: boot
+      check: "Entrypoint logs each dflash15 patch as applied or already applied before vllm serve; apply/anchor failure exits non-zero."
+      on_fail: boot-refused
+    capability: dflash15-fast-path
+    foundational: false
+    upstream:
+      ref: "syv-ai/qwen38-27b-rtx3090 local DFlash2 lookup/split-KV sources"
+      status: local-vendored
+      drop_when: "upstream vLLM/DFlash2 support covers the lookup, split-KV and target embedding path on the pinned image; re-run the canonical 244K gates before removal."
+    status: verified
+
+  - id: vllm-wsl-uva
+    # WSL2-only fallback for vLLM host-UVA request buffers.
+    model: [qwen3.8-27b]
+    files:
+      - models/qwen3.8-27b/vllm/patches/vllm-wsl-uva
+    load_bearing_when:
+      - composes:
+          - vllm/qwen38-27b-dual-dflash15-fast
+        reason: "WSL2 on the reference host does not expose the native pinned host-UVA path reliably. The fallback mirrors request buffers to CUDA while native Linux keeps the stock UVA path."
+        evidence: "models/qwen3.8-27b/vllm/patches/vllm-wsl-uva/README.md; models/qwen3.8-27b/vllm/compose/dual/autoround-fast/dflash15.yml"
+    delivery:
+      dockerfile_bake: false
+      entrypoint_invoke: true
+      genesis: false
+    delivery_gaps: []
+    delivery_mechanism: install_script
+    delivery_spec:
+      script: models/qwen3.8-27b/vllm/patches/vllm-wsl-uva/install.sh
+      mounted_at: /etc/club3090/wsl-uva
+      invoke: "bash /etc/club3090/wsl-uva/install.sh"
+      invoked_before: vllm-serve
+      wired_at: [volumes, entrypoint]
+      note: "Idempotent constructor/copy fallback; native UVA remains unchanged when available."
+    drift_guard:
+      kind: boot
+      check: "Installer logs '[wsl-uva] installed' or the fallback-already-applied message before vllm serve; anchor drift exits non-zero."
+      on_fail: boot-refused
+    capability: wsl-uva-fallback
+    foundational: false
+    upstream:
+      ref: club-3090-local-wsl-uva-fallback
+      status: local-vendored
+      drop_when: "the pinned vLLM image provides a verified WSL2-safe UVA path; re-run boot and long-context gates before removal."
+    status: verified
+
   - id: vllm-gdn-mtp-async-spec-order
     # club-3090's OWN fix (NOT an upstream PR) for the GDN+MTP async wild-write
     # race: our #1052 / upstream #52873 + the #50021 thread. Shared from the

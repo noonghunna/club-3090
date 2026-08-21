@@ -1,0 +1,34 @@
+Route the token embedding table through vLLM's quantized-embedding path
+(CompressedTensorsEmbeddingWNA16Int). The kernel exists upstream; the qwen3_5
+model code just never passes quant_config to VocabParallelEmbedding. Two
+hunks: the main model, and the MTP draft module (without the second one,
+single-user mode crashes on load with "no parameter named
+'embed_tokens.weight_packed' in Qwen3_5MultiTokenPredictor").
+
+Apply from the installed vllm package directory:
+  patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/qwen3_5-embed-quant.patch
+
+Written against vLLM 0.27.1. Reapply after upgrades.
+
+--- a/model_executor/models/qwen3_5.py
++++ b/model_executor/models/qwen3_5.py
+@@ -243,6 +243,8 @@
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=self.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+
+         def get_layer(prefix: str):
+--- a/model_executor/models/qwen3_5_mtp.py
++++ b/model_executor/models/qwen3_5_mtp.py
+@@ -82,6 +82,8 @@
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=vllm_config.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+
+         # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is

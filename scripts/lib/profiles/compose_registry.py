@@ -1570,6 +1570,17 @@ COMPOSE_REGISTRY = {
         status="experimental",
         status_note='Qwen3.8-27B SUPERFAST tier (SPEED series), 8-card (TP=8): the FAST tier (int4 Frozenlock, fp8 KV, 262K) with MTP->DFlash2 (syvai W4A16 n=7, method=dflash). +~30%% code vs fast/MTP, collapse-immune (external drafter sidesteps #1052 / vllm#52873). fp8 KV -> FlashInfer. Measured on-rig (dual, 2026-08-20): verify-full 9/9, ~74 narr / ~139 code TPS. W4A8=1 (int8 acts). ⛔ COMMUNITY-VALIDATED BY DESIGN (2-GPU rig); on-rig proxy = the dual sibling, transfers on topology only. ⚠️ vllm#50021 exposure; SPEC_N=0 mitigates. --force.',
     ),
+    "vllm/qwen38-27b-dual-dflash15-fast": _entry(
+        model="qwen3.8-27b", weights_variant="autoround-fast", workload="long-ctx-single", chat_template="native",
+        engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="bf16",
+        tp=2, max_ctx=244320, max_num_seqs=1, mem_util=0.85,
+        compose_path="models/qwen3.8-27b/vllm/compose/dual/autoround-fast/dflash15.yml",
+        default_port=8113,
+        kvcalc_key="SKIP",
+        act_format="16bit", act8_capable=False,
+        status="incubating",
+        status_note="Canonical local DFLASH15 reproduction packaged for upstream review: complete one-link INT4 fast target + external DFlash2 W4A16 drafter, lookup augmentation, split-KV FlashAttention, hybrid KV/CUDAGraph sizing, no-async scheduling, native Ninja/CUDA headers and WSL compatibility patches. Defaults: util .85, max context 244,320, max seqs 1, KV pool 9,000,000,000 bytes, graph reserve 1900 MiB, capture 16. .90 OOMs under soak on this rig; MAX_NUM_SEQS=2 is a separate experimental variant; validated only at 2 concurrent ~16K streams, not at the 244K ceiling. Local evidence on WSL2/2x3090: ~105.94 narrative / ~188.06 code decode, acceptance ~5.45-5.72. Canonical smoke, bench, verify-full 9/9, verify-stress 8/8 to 224319 and continuous soak passed; promotion remains a maintainer decision. v2 headless target is intentionally not included here.",
+    ),
     "vllm/qwen38-27b-dual-ultrafast": _entry(
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="bf16",
