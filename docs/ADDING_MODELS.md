@@ -396,27 +396,37 @@ A registry entry isn't enough: every entry must **validate against the profile c
 **`<model>/default` resolves via `ENGINE_PREFERENCE` — add a `DEFAULTS` row per engine you ship.** Your new model is immediately runnable by name (`--model <id>` / `<id>/default`). For `<id>/default` to resolve cleanly on a given topology, that `(model, engine, topology)` must have a **functional** `DEFAULTS` entry (status `production`/`caveats` — a `preview`/`experimental`/`upstream-gated`/`deprecated` config is skipped, never auto-defaulted). The resolver walks `ENGINE_PREFERENCE[topology]` (single = `[beellama, ik-llama, llamacpp, vllm]`; dual/multi = `[vllm, ik-llama, llamacpp, beellama]`) and picks the first engine with a functional `DEFAULTS` slug, so:
 - Add a `DEFAULTS` row for **each engine × topology** you want `<model>/default` to cover. With no functional default at the detected topology the resolver emits a notice and falls back to the nearest-lower topology, else a clear "pick explicitly" message (it never crashes) — fine while a model is still validating, but the bare-launch UX wants at least one production row.
 - **`RECOMMENDED_DEFAULT_MODELS` is intentionally NOT auto-grown** — a new model is runnable + resolvable but is never the bare-`launch.sh` auto-default until you explicitly add its id to that shortlist. Leave it alone unless you mean to promote the model to a first-class default.
+- **Scoped check:** `bash scripts/preflight-add-model.sh <slug>` runs `diagnose-profile` plus the `test-profiles-compat` / registry-parity gate subset in one colored pass — use it while iterating so a compat miss surfaces in seconds, not at the end of the suite sweep.
+
 
 ## Step 4c — Wire the download front door (`scripts/setup.sh`), then RUN it
 
 Everything above makes the model *servable* once the weights are on disk. This step is how a user **gets** the weights — and it is the half that has historically shipped broken, because on the maintainer rig weights are placed by hand, so the path is never exercised.
 
-`setup.sh` carries **five hand-written per-model lists**. None is registry-derived, so nothing fails until a real user runs it:
+`setup.sh` is **registry-derived**. Its usage list, model labels, interactive picker, dispatch, `WEIGHTS=` aliases, and `"Supported: …"` error are all generated from `python3 scripts/lib/profiles/weights.py catalog --json` (the profile YAMLs), and its per-model "next steps" (container / port / served-model-name / `--force` hints) are derived from `scripts/lib/registry-emit.sh --json`. **A new `models/<id>.yml` gets its front door automatically — there are no per-model bash lists left to edit.** Parity is guarded by `scripts/tests/test-setup-registry-derived.sh`, so the lists can't quietly re-hardcode.
 
-| # | Where | What it sets |
-|---|---|---|
-| 1 | picker / usage text | the model id is offered at all |
-| 2 | `model_label` case | display name |
-| 3 | `"Supported: …"` error string | the id is accepted, not rejected outright |
-| 4 | dispatch case | `PRIMARY_WEIGHT_KEY`, plus `ALWAYS_DRAFT_KEY` if a drafter is mandatory |
-| 5 | `SAMPLE_*` "next steps" case | `SAMPLE_CONTAINER` / `SAMPLE_PORT` / `SAMPLE_MODEL_NAME` / `NEXT_STEPS_NOTE` — and `SAMPLE_LAUNCH_HINT` for any model **without a vLLM compose**, or the generic line prints a `models/<id>/vllm/compose` path that does not exist |
+The only setup work a new model can need is an optional `setup:` block in `scripts/lib/profiles/models/<id>.yml`. **Add it ONLY when the model's dispatch policy differs from the defaults** (default = primary is `default_weight_variant`, no aliases, no drafters). Block shape:
 
-Miss #1–4 and the model has **no front door at all**. Miss #5 and setup **exits 1 on a run that fully succeeded** (#914).
+```yaml
+setup:
+  primary: fp8                            # ONLY when setup.sh's default fetch must differ from default_weight_variant
+  weights_aliases: {gguf: unsloth-q4km}   # WEIGHTS=<alias> -> weight-variant key
+  alias_extras: {gguf: [gguf_mmproj_f16]} # EXTRA_WEIGHT_KEYS fetched alongside an alias primary
+  alias_resets_genesis: true              # a matching alias forces NEEDS_GENESIS=0 (GGUF paths never clone Genesis)
+  always_draft: dspark                    # mandatory drafter (fetched on every run)
+  assistant_draft: assistant              # WITH_ASSISTANT_DRAFT=1 target
+  dflash: dflash2                         # WITH_DFLASH_DRAFT=1 target
+  vision: gguf_mmproj_f16                 # WITH_VISION=1 target
+  prism_eagle3: prism_eagle3              # WITH_PRISM_EAGLE3=1 target
+```
 
-**Then run it for real:**
+Reference blocks: `qwen3.6-27b.yml` (aliases + extras + drafters), `qwen3.8-27b.yml` (primary override + dflash + vision), `deepseek-v4-flash-0731.yml` (primary override + always-draft), `gemma-4-31b.yml` / `gemma-4-26b-a4b.yml` (assistant + awq alias).
+
+**Then run the scoped preflight, and run the front door for real:**
 
 ```bash
-bash scripts/setup.sh <id>
+bash scripts/preflight-add-model.sh <slug>   # triage: diagnose-profile + 9 catalog gates + kv-calc --calibration
+bash scripts/setup.sh <id>                   # the ACTUAL front door — see below
 ```
 
 Hand-placing weights does **NOT** count, exactly as a hand `docker run` does not count for Step 5. If the weights are already local this is nearly free — it resolves, skips the fetch, and hash-verifies what is there. Confirm three things:
@@ -425,7 +435,7 @@ Hand-placing weights does **NOT** count, exactly as a hand `docker run` does not
 2. it exits **0**;
 3. the launch command it prints actually exists.
 
-> **Why this step exists.** Four defects shipped in a single day (#910, #911, #912, #914) — a verification that reported a good download as failed, a fetch that pulled 1,537 GB to serve 85 GB, a readiness check blind to a required drafter, and a disk gate that was a constant. Every one lived in the acquisition path. Every one was invisible to a compose-centric review, and the first was found by a user, not by us.
+> **Why this step exists.** Four defects shipped in a single day (#910, #911, #912, #914) — a verification that reported a good download as failed, a fetch that pulled 1,537 GB to serve 85 GB, a readiness check blind to a required drafter, and a disk gate that was a constant. Every one lived in the acquisition path. Every one was invisible to a compose-centric review, and the first was found by a user, not by us. The five hand-written per-model lists that let #914-class defects recur are gone — the registry is the single source, and the drift guard holds the line.
 
 ## Step 5 — Boot + verify-full + capture the boot log
 
@@ -505,11 +515,15 @@ If accuracy is poor, the activation coefficient in `tools/kv-calc.py` needs tuni
 ## Step 7 — Validate: per-compose triage + the FULL guard suite
 
 ```bash
-# Per-compose triage: registry → cross-ref → fits() vs canonical scenarios →
-# kv-calc projection → calibration freshness → vendored-overlay matching.
+# Scoped triage while iterating: diagnose-profile + the 9 catalog gates +
+# kv-calc --calibration, one colored pass/fail summary.
+bash scripts/preflight-add-model.sh <engine>/<your-variant>
+
+# Per-compose triage on its own: registry → cross-ref → fits() vs canonical
+# scenarios → kv-calc projection → calibration freshness → overlay matching.
 bash scripts/diagnose-profile.sh <engine>/<your-variant>
 
-# Run the WHOLE suite — not just the one test you think is relevant.
+# Then run the WHOLE suite — the preflight subset is triage, not authority.
 for t in scripts/tests/*.sh; do echo "== $t =="; bash "$t" >/tmp/$(basename "$t").log 2>&1 && echo "  PASS" || echo "  FAIL — see /tmp/$(basename "$t").log"; done
 ```
 
@@ -663,7 +677,7 @@ The most common catalog change (a new provider quant of a model we already serve
 2. **Compose** at `models/<id>/<engine>/compose/<topology>/<quant-slug>/<serving>.yml` — copy the nearest validated sibling; keep the `ESTATE_GPUS`/`ESTATE_PORT`/`ESTATE_CONTAINER` hooks; full profile header with honest `Status:`.
 3. **Registry `_entry`** — `default_port` == the compose `${PORT:-NNNN}` fallback (parity-tested); reuse the sibling `kvcalc_key` when weights size is within ~1 GB; no `DEFAULTS` row unless this is explicitly a default promotion. **If the compose mounts a drafter or projector, add `weights_companions=("<key>",)`.** `drafter=` is only a display label; `weights_companions` is what readiness reads, and without it the cockpit reports the model ready with the drafter missing and Start fails at boot (#912).
 4. **Count bumps** in `scripts/tests/test-compose-registry-disk.sh` (registry + disk).
-5. **`setup.sh` front door** — a new quant of an existing model usually needs no wiring, but if it changes the **default** weight key, update the dispatch case. Either way see [Step 4c](#step-4c--wire-the-download-front-door-scriptssetupsh-then-run-it) for the five per-model lists.
+5. **`setup.sh` front door** — a new quant of an existing model usually needs no wiring (the dispatch is registry-derived). Touch the model's `setup:` block only if this quant becomes the **default** fetch (`primary:`) or needs a `WEIGHTS=` alias. Either way see [Step 4c](#step-4c--wire-the-download-front-door-scriptssetupsh-then-run-it).
 6. **Run the FULL `scripts/tests/*.sh` suite** — a new slug IS a catalog-shape change; targeted guards are for scoped changes only. Baseline any failure against master before blaming (or excusing) your change.
 7. **`bash scripts/diagnose-profile.sh <slug>` → GREEN.**
 8. **Run the ACTUAL `bash scripts/setup.sh <id>`** — hand-placing weights does **NOT** count, exactly as a hand `docker run` does not count for step 9. This is the step whose absence let **four** separate defects ship in one day (#910, #911, #912, #914): every one lived in the acquisition path, and every one was invisible because the maintainer rig's weights had always been placed by hand. If the weights are already local the run is nearly free — it resolves, skips the fetch, and hash-verifies. Confirm: the resolved fetch names **only** the artifacts you want, it exits **0**, and the printed launch command actually exists.
@@ -696,6 +710,7 @@ When the new model is ready for review:
 - [ ] Boot log captured + reviewed against KV_MATH projections (per_token_bytes within 10% of formula)
 - [ ] `scripts/lib/profiles/calibration/<id>.yml` populated with ≥4 measured rows
 - [ ] `python3 tools/kv-calc.py --calibration` verdict accuracy ≥80% on this model
+- [ ] `bash scripts/preflight-add-model.sh <slug>` green (scoped triage: diagnose-profile + the 9 catalog gates + `kv-calc --calibration`) — the full suite above stays authoritative
 - [ ] `bash scripts/diagnose-profile.sh <slug>` GREEN
 - [ ] BENCHMARKS.md row added (TPS + ctx + VRAM + KV + drafter + AL + engine pin + date)
 - [ ] `learnings/<id>.md` populated per the canonical template

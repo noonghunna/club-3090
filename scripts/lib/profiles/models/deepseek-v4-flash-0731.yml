@@ -166,3 +166,15 @@ weights:
   # performance leader. That config can never be a slug (unmerged expert cache +
   # local patches). On stock upstream + DSpark + residency — the shipping regime —
   # IQ4 is dominated. Both readings are correct for their engine.
+
+# `setup:` — dispatch policy for scripts/setup.sh (contract C1); see
+# qwen3.6-27b.yml for the field reference. Only the non-default keys appear.
+setup:
+  # Default fetch is the IQ2 REACH tier (~85 GB on disk, ~86 GB host RAM) rather
+  # than the profile default Q8 (~151 GB / ~146 GB host RAM): the reach tier is
+  # the one most rigs can actually run, and a wrong guess here costs the user a
+  # 151 GB download. Q8 instead: WEIGHT_KEY=deepseek-v4-flash-0731:unsloth-q8-kxl.
+  primary: unsloth-iq2-xxs
+  # NOT optional: both slugs pass -md and will not boot without the drafter.
+  # The main GGUF has no embedded nextn head, so DSpark is the only spec path.
+  always_draft: dspark

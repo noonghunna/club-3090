@@ -209,6 +209,12 @@ def main(argv: list[str] | None = None) -> int:
     # itself against its configured model dir).  Pure profile read, no FS check.
     p_list = sub.add_parser("list")
     p_list.add_argument("--json", action="store_true")
+    # `catalog --json` — the setup.sh front door's single derivation source
+    # (contract C2): per model, the resolved default weight key plus the
+    # optional `setup:` dispatch policy from the profile YAML. Pure profile
+    # read — no FS checks, no network. Same _require_yaml contract as `list`.
+    p_catalog = sub.add_parser("catalog")
+    p_catalog.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     if args.cmd == "list":
@@ -235,6 +241,45 @@ def main(argv: list[str] | None = None) -> int:
                     }
                 )
         print(_json.dumps(rows))
+        return 0
+
+    if args.cmd == "catalog":
+        import json as _json
+
+        rows: list[dict[str, Any]] = []
+        for model_id, model in _load_models().items():
+            setup = model.get("setup") or {}
+            if not isinstance(setup, dict):
+                setup = {}
+            default_variant = model.get("default_weight_variant") or ""
+            primary = str(setup.get("primary") or default_variant)
+            weights = model.get("weights") or {}
+            default_meta = weights.get(default_variant)
+            rows.append(
+                {
+                    "id": model_id,
+                    "display_name": str(model.get("display_name") or model_id),
+                    "default_key": f"{model_id}:{primary}" if primary else "",
+                    "aliases": dict(setup.get("weights_aliases") or {}),
+                    "alias_extras": {
+                        k: [str(x) for x in (v or [])]
+                        for k, v in (setup.get("alias_extras") or {}).items()
+                    },
+                    # Historical arms in setup.sh's WEIGHTS= cases force
+                    # NEEDS_GENESIS=0 when an alias matches (GGUF/alt-quant
+                    # paths never need Genesis); encode that per model.
+                    "alias_resets_genesis": bool(setup.get("alias_resets_genesis")),
+                    "always_draft": str(setup.get("always_draft") or ""),
+                    "assistant_draft": str(setup.get("assistant_draft") or ""),
+                    "dflash": str(setup.get("dflash") or ""),
+                    "vision": str(setup.get("vision") or ""),
+                    "prism_eagle3": str(setup.get("prism_eagle3") or ""),
+                    "size_gb": (default_meta or {}).get("size_gb")
+                    if isinstance(default_meta, dict)
+                    else None,
+                }
+            )
+        print(_json.dumps({"models": rows}))
         return 0
 
     if args.cmd == "entry":

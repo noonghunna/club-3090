@@ -259,8 +259,9 @@ fi
 assert_contains "$out" "num_kv_heads does not divide TP=8"
 assert_contains "$out" "Valid TP values: 1 2 4"
 
-# TTY-backed no-arg setup supports the cosmetic but real "Both" choice by
-# dispatching through the positional path for both model families.
+# TTY-backed no-arg setup: the picker is DERIVED from the catalog — it lists
+# every model yml (not a hand-written pair) and dispatches the picked one
+# through the positional path.
 if ! command -v script >/dev/null 2>&1; then
   echo "ASSERTION FAILED: util-linux 'script' is required for TTY picker coverage" >&2
   exit 1
@@ -270,16 +271,38 @@ export MODEL_DIR="${TMP_DIR}/models"
 export PREFLIGHT_DISK_GB=0
 export SKIP_GENESIS=1
 export SKIP_MODEL=1
-out="$(printf '3\n' | script -qec "bash '${ROOT_DIR}/scripts/setup.sh'" /dev/null 2>&1)"
+first_model="$(python3 "${ROOT_DIR}/scripts/lib/profiles/weights.py" catalog --json \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["models"][0]["id"])')"
+out="$(printf '1\n' | script -qec "bash '${ROOT_DIR}/scripts/setup.sh'" /dev/null 2>&1)"
 assert_contains "$out" "[setup] Which model to download?"
-assert_contains "$out" "Both"
-assert_contains "$out" "[setup] downloading both supported models"
+assert_contains "$out" "${first_model}"
 skip_count="$(grep -c "\[model\]   SKIP_MODEL=1" <<< "$out" || true)"
-if [[ "$skip_count" != "2" ]]; then
-  echo "ASSERTION FAILED: expected Both choice to dispatch two model setup runs, got ${skip_count}" >&2
+if [[ "$skip_count" != "1" ]]; then
+  echo "ASSERTION FAILED: expected picker choice 1 to dispatch exactly one model setup run (${first_model}), got ${skip_count}" >&2
   echo "--- output ---" >&2
   echo "$out" >&2
   exit 1
+fi
+
+# `both` mode is derived from RECOMMENDED_DEFAULT_MODELS (first two entries).
+# With two or more entries it recurses over the pair; with fewer it fails fast
+# with a pointed message instead of a hardcoded model pair.
+both_count="$(python3 -c "
+import sys
+sys.path.insert(0, '${ROOT_DIR}/scripts/lib/profiles')
+from compose_registry import RECOMMENDED_DEFAULT_MODELS
+print(min(len(RECOMMENDED_DEFAULT_MODELS), 2))
+")"
+if [[ "$both_count" -ge 2 ]]; then
+  out="$(printf '99\n' | script -qec "bash '${ROOT_DIR}/scripts/setup.sh'" /dev/null 2>&1)"  # invalid choice rejected
+  assert_contains "$out" "! invalid"
+else
+  if out="$(bash "${ROOT_DIR}/scripts/setup.sh" both 2>&1)"; then
+    echo "ASSERTION FAILED: 'both' unexpectedly succeeded with ${both_count} RECOMMENDED_DEFAULT_MODELS entries" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  assert_contains "$out" "RECOMMENDED_DEFAULT_MODELS"
 fi
 
 echo "test-setup-picker: ok"

@@ -156,3 +156,15 @@ valid_tp:
   - 16
 requires_genesis: false
 
+
+# `setup:` — dispatch policy for scripts/setup.sh (contract C1); see
+# qwen3.6-27b.yml for the field reference. Only the non-default keys appear.
+setup:
+  # MTP "assistant" drafter is ALWAYS required (Gemma 4 has no other spec path).
+  always_draft: assistant
+  # WITH_DFLASH_DRAFT=1 target.
+  dflash: dflash
+  # WITH_ASSISTANT_DRAFT=1 target (same assistant key; explicit for the flag).
+  assistant_draft: assistant
+  weights_aliases:
+    awq: awq
