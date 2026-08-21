@@ -10313,18 +10313,23 @@ class CockpitApp(App):
 
     def _hscroll(self, direction: int) -> None:
         """shift+←/→ — page-scroll the active wide table horizontally (faster than
-        the per-column ←/→ cursor).  A no-op (silently) when nothing scrollable is
-        focused or under a modal."""
+        the per-column ←/→ cursor).  Animated (short ease-out) so repeated or
+        held keys GLIDE instead of teleporting; the animator retargets from the
+        current offset mid-glide, so key-repeat reads as one continuous scroll.
+        A no-op (silently) when nothing scrollable is focused or under a modal."""
         if len(self.screen_stack) > 1:
             return
         table = self._primary_list_for_active_tab()
         if table is None:
             return
         try:
+            # ~180ms ease-out: long enough to read as motion, short enough not
+            # to lag behind rapid repeats.  Honors TEXTUAL_ANIMATIONS=none.
+            kwargs: dict = dict(animate=True, duration=0.18, easing="out_cubic")
             if direction < 0:
-                table.scroll_page_left(animate=False)
+                table.scroll_page_left(**kwargs)
             else:
-                table.scroll_page_right(animate=False)
+                table.scroll_page_right(**kwargs)
         except Exception:
             pass
 

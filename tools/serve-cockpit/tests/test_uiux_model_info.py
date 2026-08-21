@@ -323,3 +323,49 @@ class TestClickSemantics:
             await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
+
+
+class TestHscrollSmooth:
+    """shift+←/→ horizontal page-scroll is ANIMATED (short ease-out) instead of
+    an abrupt teleport; held/repeated keys retarget mid-glide."""
+
+    @pytest.mark.asyncio
+    async def test_hscroll_uses_short_animated_ease(self):
+        app, _, _ = make_app(responses=c6_responses())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            table = app.query_one("#catalog-table")
+            captured = {}
+            orig = type(table).scroll_page_right
+
+            def spy(self, **kwargs):
+                captured.update(kwargs)
+                return orig(self, **kwargs)
+
+            type(table).scroll_page_right = spy
+            try:
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("shift+right")
+                await pilot.pause(0.5)
+            finally:
+                type(table).scroll_page_right = orig
+            assert captured.get("animate") is True, "page scroll must animate"
+            assert 0 < captured.get("duration", 1) <= 0.25, "glide must be short"
+
+    @pytest.mark.asyncio
+    async def test_hscroll_reaches_page_target_and_returns(self):
+        app, _, _ = make_app(responses=c6_responses())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            table = app.query_one("#catalog-table")
+            if table.max_scroll_x <= 0:
+                pytest.skip("no horizontal overflow at this size")
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("shift+right")
+            await pilot.pause(0.6)
+            assert abs(table.scroll_x - table.max_scroll_x) < 1.5
+            await pilot.press("shift+left")
+            await pilot.pause(0.6)
+            assert table.scroll_x < table.max_scroll_x - 5
