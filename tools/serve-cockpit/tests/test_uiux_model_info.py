@@ -266,3 +266,60 @@ class TestColumnsPickerBinding:
             await pilot.pause()
             assert isinstance(app.screen, CatalogColumnsScreen)
             await pilot.press("escape")
+
+
+class TestClickSemantics:
+    """Mouse click semantics on the catalog table (CatalogTable subclass).
+
+    Stock DataTable posts RowSelected when a click lands on the ALREADY-
+    highlighted row, and RowSelected routes to primary action (serve confirm)
+    — a mis-click trap for an inspect gesture. CatalogTable intercepts that
+    one case (HighlightClicked → model-info popup); everything else is stock.
+
+    Geometry: header row = y-offset 0, data row N = y-offset N+1. The fake
+    catalog has one variant, so data row 0 lives at offset y=1.
+    """
+
+    @pytest.mark.asyncio
+    async def test_fresh_row_click_selects_without_dialog(self):
+        app, _, _ = make_app(responses=c6_responses())
+        async with app.run_test(size=(140, 42)) as pilot:
+            await _settle(pilot)
+            table = app.query_one("#catalog-table")
+            assert table.row_count > 0
+            # move cursor OFF row 0, then click row 0 (fresh) -> select only
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.click(table, offset=(20, 1))
+            await pilot.pause()
+            assert type(app.screen).__name__ == "Screen"
+            assert table.cursor_row == 0
+
+    @pytest.mark.asyncio
+    async def test_same_row_click_opens_model_info_not_serve(self):
+        app, _, _ = make_app(responses=c6_responses())
+        async with app.run_test(size=(140, 42)) as pilot:
+            await _settle(pilot)
+            table = app.query_one("#catalog-table")
+            # First click normalizes the cursor column onto the clicked cell;
+            # the SECOND click on the now-highlighted row must open the
+            # model-info popup — NOT the serve confirm.
+            await pilot.click(table, offset=(20, 1))
+            await pilot.pause()
+            await pilot.click(table, offset=(20, 1))
+            await pilot.pause()
+            assert isinstance(app.screen, ModelInfoScreen)
+
+    @pytest.mark.asyncio
+    async def test_enter_still_routes_to_primary_action(self):
+        from club3090_cockpit.app import ConfirmActionScreen
+
+        app, _, _ = make_app(responses=c6_responses())
+        async with app.run_test(size=(140, 42)) as pilot:
+            await _settle(pilot)
+            table = app.query_one("#catalog-table")
+            await pilot.press("down")  # ensure keyboard cursor on the table
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)

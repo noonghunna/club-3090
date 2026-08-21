@@ -79,6 +79,9 @@ from textual.widgets import (
 # NESTED TabbedContent (e.g. the Containers drill Logs/Top/Config sub-tabs).
 from textual.widgets._tabbed_content import ContentSwitcher, ContentTabs
 from textual import work
+from textual.coordinate import Coordinate
+from textual.events import Click
+from textual.message import Message
 
 from rich.text import Text
 
@@ -912,7 +915,15 @@ class HelpScreen(ModalScreen):
             "[bold]Fit glyphs (local card)[/bold]",
             "",
             "  ● fits-clean   ◐ fits-constrained   ○ won't-fit   · skip / unknown",
-        ])
+            "",
+            "[bold]Mouse & copy[/bold]",
+            "",
+            "  click row = select + preview   double-click row = model info ([i])",
+            "  click column header = column picker ([|])",
+            "  [Y] copies the context-relevant text (OSC52 — needs an OSC52 terminal;",
+            "  works over SSH). To drag-select raw text, hold SHIFT while dragging —",
+            "  the terminal bypasses the app's mouse capture and selects natively.",
+         ])
         return "\n".join(parts)
 
     def compose(self) -> ComposeResult:
@@ -934,6 +945,54 @@ class HelpScreen(ModalScreen):
 # dropdown just narrows to one model.  The sentinel = "no scope" (all lanes show).
 _ALL_MODELS_VALUE = "__all_models__"
 _ALL_MODELS_LABEL = "All models"
+
+
+class CatalogTable(DataTable):
+    """Catalog DataTable whose click-on-ALREADY-highlighted-row inspects.
+
+    Stock DataTable posts RowSelected when a click lands on the highlighted
+    row, and the app routes RowSelected → primary action (⏎ = serve confirm).
+    For a mouse-driven "look at this row again" gesture that is a mis-click
+    trap: users clicking to inspect get a serve dialog.  This subclass
+    intercepts exactly that case and posts HighlightClicked instead; the app
+    opens the model-info popup ([i] twin).  Serving stays keyboard-first
+    (⏎ / [s] / buttons).  Clicks on non-highlighted rows keep the stock
+    move-cursor behavior."""
+
+    class HighlightClicked(Message):
+        """A click landed on the currently-highlighted row (inspect intent)."""
+
+        def __init__(self, table: "CatalogTable") -> None:
+            super().__init__()
+            self.table = table
+
+    async def _on_click(self, event: Click) -> None:
+        """Intercept ONLY the click-on-highlighted-row case.
+
+        ⚠️ Textual dispatches private `_on_click` handlers from EVERY class in
+        the MRO that defines one (message_pump._get_dispatch_methods has no
+        first-hit-wins for naming-convention handlers) — so calling super()
+        here would run the stock handler a SECOND time, whose highlight_click
+        check then sees the cursor we just moved and posts RowSelected (the
+        serve-confirm mis-click trap this class exists to fix).  Instead:
+        handle the highlight-click case and prevent_default() — which halts
+        the MRO walk before DataTable._on_click — and for every other case do
+        NOTHING so the stock handler runs untouched."""
+        meta = getattr(event.style, "meta", {}) or {}
+        if "row" not in meta or "column" not in meta:
+            return
+        if self.show_header and meta["row"] == -1:
+            return  # header clicks → stock HeaderSelected path
+        if not (self.show_cursor and self.cursor_type != "none"):
+            return
+        try:
+            clicked = Coordinate(int(meta["row"]), int(meta["column"]))
+        except Exception:
+            return
+        if clicked == self.cursor_coordinate:
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.HighlightClicked(self))
 
 
 class CatalogPane(Container):
@@ -1003,7 +1062,7 @@ class CatalogPane(Container):
             allow_blank=False,
         )
         yield Input(placeholder="filter slug / topology / engine / model / status… (space = AND)", id="catalog-filter")
-        table: DataTable = DataTable(id="catalog-table", zebra_stripes=True)
+        table: DataTable = CatalogTable(id="catalog-table", zebra_stripes=True)
         table.cursor_type = "row"
         yield table
         # #9/A8 — a compact preview strip for the highlighted row.  All LOCAL
@@ -5063,7 +5122,7 @@ class StudioSetupScreen(ModalScreen):
         self.dismiss()
 
 
-class PromoteScaffoldScreen(ModalScreen):
+class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
     """Preview the computed catalog-promotion scaffold (SCAFFOLD + GATE, C4-rev).
 
     Shows the ModelProfile YAML skeleton + the registry entry (a JSON block for
@@ -5127,6 +5186,7 @@ class PromoteScaffoldScreen(ModalScreen):
     BINDINGS = [
         Binding("enter", "stage_write", "Write LOCAL layer", show=True, priority=True),
         Binding("c", "stage_core", "WRITE CORE REGISTRY", show=True, priority=True),
+        Binding("y", "app.copy_context", "Copy YAML", show=True),
         Binding("escape", "dismiss", "Close"),
     ]
 
@@ -5136,6 +5196,12 @@ class PromoteScaffoldScreen(ModalScreen):
         # on_stage_write(layer, spec) — the app builds the ActionPlan for the
         # chosen layer with the user's inline edits applied.
         self._on_stage_write = on_stage_write
+        # [Y] copy payload: the raw (markup-free) YAML + registry entry.
+        if not getattr(scaffold, "error", ""):
+            self._copy_payload = (
+                f"# {scaffold.profile_path}\n{scaffold.profile_yaml}\n\n"
+                f"# {scaffold.registry_slug}\n{scaffold.registry_entry}\n"
+            )
 
     def compose(self) -> ComposeResult:
         s = self._scaffold
@@ -5411,7 +5477,7 @@ class OptimizeScreen(ModalScreen):
 # ── Producer lane ② Serve — untested-compose preview modal (R3b-1) ─────────────────
 
 
-class UntestedComposePreviewScreen(ModalScreen):
+class UntestedComposePreviewScreen(_CopyableModal, ModalScreen):
     """Preview a GENERATED compose VERBATIM, then confirm to serve it (② Serve).
 
     Used for the **catalog-reproduction** path (non–Route-C / no swap compose):
@@ -5460,6 +5526,7 @@ class UntestedComposePreviewScreen(ModalScreen):
     # _serve path).
     BINDINGS = [
         Binding("enter", "serve_untested", "Serve untested", show=True, priority=True),
+        Binding("y", "app.copy_context", "Copy compose", show=True),
         Binding("escape", "dismiss", "Close"),
     ]
 
@@ -5470,6 +5537,7 @@ class UntestedComposePreviewScreen(ModalScreen):
         self._compose_path = compose_path
         self._compose_yaml = compose_yaml
         self._on_serve = on_serve
+        self._copy_payload = compose_yaml  # [Y] — paste-ready generated compose
 
     def compose(self) -> ComposeResult:
         from rich.markup import escape
@@ -12193,6 +12261,16 @@ class CockpitApp(App):
             return
         if new_val != getattr(self, "_last_applied_profile_default", None):
             self._profile_user_touched = True
+
+    def on_catalog_table_highlight_clicked(self, event) -> None:
+        """Click (or double-click) on an ALREADY-highlighted catalog row →
+        model-info popup — the mouse twin of [i].  CatalogTable intercepts the
+        stock RowSelected-on-highlight-click (which used to fire the serve
+        confirm — a mis-click trap) and posts HighlightClicked instead."""
+        event.stop()
+        if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
+            return
+        self.action_model_info()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """DataTable emits RowSelected when the user presses Enter (select_cursor).
