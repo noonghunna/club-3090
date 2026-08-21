@@ -94,6 +94,22 @@ model_list:
       api_base: http://host.docker.internal:8199/v1
       api_key: EMPTY
 
+  # Local qwen3.8-27b (#1062) — the dual-max scene on :8091 serves BOTH served-names.
+  # ⚠️ Scene-dependent port: :8091 is the dual-max slug; other qwen3.8 slugs serve on their
+  # own registry default_port (dual-fast 8113, iq4xs 8090, …). The gateway lists one canonical
+  # port per model, same as every other local backend here.
+  - model_name: qwen3.8-27b
+    litellm_params:
+      model: openai/qwen3.8-27b
+      api_base: http://host.docker.internal:8091/v1
+      api_key: EMPTY
+
+  - model_name: qwen3.8-27b-fp8
+    litellm_params:
+      model: openai/qwen3.8-27b-fp8
+      api_base: http://host.docker.internal:8091/v1
+      api_key: EMPTY
+
   # === Cloud reference endpoint (DashScope MaaS workspace, OpenAI-compatible) ===
   # Qwen 3.8 Max Preview — first CLOUD reference for benchlocal-cli quality runs
   # (all prior references were local composes). Same endpoint pi uses.

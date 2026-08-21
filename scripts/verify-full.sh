@@ -104,16 +104,18 @@ detect_engine() {
   if curl -sf -m 3 "${URL}/props" >/dev/null 2>&1; then
     echo "llamacpp"; return 0
   fi
-  # Hint 2: vLLM's chat-completion response includes system_fingerprint
-  # like "vllm-0.20.2rc1.dev9+g01d4d1ad3-tp2-c9120464".
+  # Hint 2: the chat-completion response's system_fingerprint. vLLM emits
+  # "vllm-0.20.2rc1.dev9+g01d4d1ad3-tp2-c9120464"; llama-server emits its build
+  # string, e.g. "b10454-4df29be4f" (club-3090#1067).
   local fp
   fp="$(curl -sf -m 5 "${URL}/v1/chat/completions" \
     -H 'Content-Type: application/json' \
     -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}" 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('system_fingerprint','') or '')" 2>/dev/null)"
   case "$fp" in
-    vllm-*)   echo "vllm"; return 0 ;;
-    sglang-*) echo "sglang"; return 0 ;;
+    vllm-*)    echo "vllm"; return 0 ;;
+    sglang-*)  echo "sglang"; return 0 ;;
+    b[0-9]*)   echo "llamacpp"; return 0 ;;   # llama-server build str: b10454[-hash]
   esac
   # Hint 3: container name pattern as a fallback (cheap, no extra HTTP)
   case "$CONTAINER" in
@@ -122,7 +124,19 @@ detect_engine() {
   esac
   echo "unknown"
 }
-ENGINE_KIND="$(detect_engine)"
+
+# True only when $CONTAINER names a real Docker container. `--type container`
+# stops `docker inspect none` from matching Docker's built-in `none` *network*
+# object (exit 0 on any Docker host), which let host-build CONTAINER=none runs
+# slip past the "no container" guard into a phantom log lookup (club-3090#1067).
+container_is_real() {
+  [[ -n "${CONTAINER}" && "${CONTAINER}" != "none" ]] \
+    && docker inspect --type container "${CONTAINER}" >/dev/null 2>&1
+}
+
+# Respect an inherited ENGINE_KIND (host builds behind a proxy that hides /props
+# and use CONTAINER=none can't be auto-detected — club-3090#1067).
+ENGINE_KIND="${ENGINE_KIND:-$(detect_engine)}"
 
 # ---- Thinking-control detection -----------------------------------------
 # WHICH chat_template_kwargs key controls reasoning is model-specific, and an
@@ -199,7 +213,7 @@ check_patches() {
     skip "docker not in PATH (host engine build?)"
     return 0
   fi
-  if ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+  if ! container_is_real; then
     skip "container '${CONTAINER}' not found (host engine build? CONTAINER=none for host endpoints)"
     return 0
   fi
@@ -585,7 +599,7 @@ check_mtp_acceptance() {
     skip "docker not in PATH (host engine build? — see #87 for generalized harness work)"
     return 0
   fi
-  if ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+  if ! container_is_real; then
     skip "container '${CONTAINER}' not found (CONTAINER=none for host endpoints)"
     return 0
   fi

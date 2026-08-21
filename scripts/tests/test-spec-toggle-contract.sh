@@ -208,7 +208,19 @@ def argv_under(text, env):
         # only what the compose declares crosses into the container
         e = {k: v for k, v in os.environ.items() if not k.startswith(("SPEC", "NUM_SPEC"))}
         e.update(container_env(text, env)); e["PATH"] = f"{d}:{os.environ['PATH']}"
-        r = subprocess.run(["bash", str(script), "--", *command_of(text, env)],
+        # A drafter compose may verify its external draft GGUF exists before
+        # exec (deepseek moecache fail-loud, club-3090#1054). Stub any
+        # -md/--model-draft/--spec-draft-model path into the sandbox so the
+        # entrypoint reaches the engine stub and its argv stays inspectable —
+        # the contract asserts on flag PRESENCE, not the path value.
+        cmd = command_of(text, env)
+        for _i in range(len(cmd) - 1):
+            if cmd[_i] in ("-md", "--model-draft", "--spec-draft-model"):
+                _stub = dp / "draft" / pathlib.Path(cmd[_i + 1]).name
+                _stub.parent.mkdir(parents=True, exist_ok=True)
+                _stub.write_text("stub")
+                cmd[_i + 1] = str(_stub)
+        r = subprocess.run(["bash", str(script), "--", *cmd],
                            capture_output=True, text=True, env=e, timeout=60)
         args = [l[4:] for l in r.stdout.split("\n") if l.startswith("ARG:")]
         return (args or None), (r.stderr.strip()[-300:] or "no argv emitted")

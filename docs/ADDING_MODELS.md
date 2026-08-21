@@ -360,6 +360,16 @@ Look at what other models use:
 
 New models pick the next free 20-slot block (8050, 8070, ...). Wizard uses this as the suggested next-free port when planning estates.
 
+**LiteLLM gateway route (rig step — if the model should be reachable through the gateway).**
+LAN clients hit models through the LiteLLM gateway, not the raw vLLM/llama.cpp port. A model
+with no `services/litellm/config.yaml` entry returns a deterministic `400` through the gateway
+even while it serves fine directly (#1062). If this model should be gateway-reachable, add an
+entry pointing `api_base` at `http://host.docker.internal:<default_port>/v1`
+(`api_key: EMPTY`, matching the other local backends). `scripts/tests/test-litellm-ports-resolve.sh`
+gates that every local gateway port resolves to a real registry `default_port` — a stale/typo'd
+port fails the suite. (It does **not** yet assert the entry *exists*; adding it is the human step
+here. Deriving the whole config from the registry is the tracked follow-up (#1078).)
+
 ### Workload selection (5 options)
 
 | Workload | Use when |
@@ -704,6 +714,7 @@ When the new model is ready for review:
 - [ ] `scripts/lib/profiles/models/<id>.yml` lands with all required fields + `schema_version: 1`
 - [ ] At least one compose at `models/<id>/<engine>/compose/...` with `ESTATE_GPUS` + `ESTATE_PORT` + `ESTATE_CONTAINER` env hooks + sensible fallback defaults
 - [ ] COMPOSE_REGISTRY entries added with `default_port` (== compose `PORT` fallback) + `kvcalc_key`
+- [ ] **LiteLLM gateway route** — if gateway-reachable, `services/litellm/config.yaml` has an entry on its `default_port` (`test-litellm-ports-resolve.sh` gates the port resolves) — see Step 4 "Picking default_port" 
 - [ ] **Profile-catalog compat (Step 4b):** engine `supported_model_families` covers the family · hardware `supported_kv_formats` covers the KV format · any vendored chat-template registered in `patches.yml` · `test-compose-registry-disk` size-count bumped · `../` mount depth correct
 - [ ] The **full** `scripts/tests/*.sh` suite is green (or only pre-existing/env fails, baselined vs the last release tag)
 - [ ] `bash scripts/launch.sh --variant <slug>` boots cleanly + `verify-full.sh` 8/8 PASS

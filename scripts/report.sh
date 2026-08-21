@@ -57,7 +57,7 @@ DO_BENCH=0
 DO_AGENTIC=0
 DO_STUDIO=0
 REDACT=1
-CONTAINER=""
+CONTAINER="${CONTAINER:-}"
 # KV-calc calibration is scoped to the running model by default (#168). Set to 1
 # (flag or REPORT_FULL_CALIBRATION=1) to emit the full catalog-wide matrix.
 FULL_CALIBRATION="${REPORT_FULL_CALIBRATION:-0}"
@@ -918,7 +918,12 @@ case "${ENGINE_KIND:-}" in
     esac ;;
 esac
 
-if [[ -z "$CONTAINER" ]]; then
+if [[ "$CONTAINER" == "none" ]]; then
+  # Host engine build: no container to introspect. Docker ships a built-in
+  # network object named "none", so `docker inspect none` succeeds (exit 0) on
+  # any Docker host (club-3090#1067) — guard it so the body can't inspect a phantom.
+  echo "_Host engine build (CONTAINER=none) — no container to introspect; container-scoped probes skipped._"
+elif [[ -z "$CONTAINER" ]]; then
   echo "_No vLLM, llama.cpp, or estate container running. Start one with \`bash scripts/launch.sh\` and re-run for the full report._"
 else
   {

@@ -135,6 +135,26 @@ services:
           exit 1 ;;
         esac
         if [ "$$_spec_n" -gt 0 ]; then
+          # Fail loud if the external DSpark drafter GGUF is absent. This model
+          # has NO embedded MTP head, so DSpark is the ONLY speculative path --
+          # a missing file otherwise crash-loops llama-server on a cryptic
+          # "gguf_init_from_file ... No such file" (club-3090#1054). Find the
+          # -md/--model-draft path in argv and verify it exists before exec.
+          _draft=""; _want=0
+          for _a in "$$@"; do
+            if [ "$$_want" = 1 ]; then _draft="$$_a"; _want=0; continue; fi
+            case "$$_a" in -md|--model-draft|--spec-draft-model) _want=1 ;; esac
+          done
+          if [ -n "$$_draft" ] && [ ! -f "$$_draft" ]; then
+            echo "[spec] FATAL: external DSpark drafter not found:" >&2
+            echo "[spec]   $$_draft" >&2
+            echo "[spec] This slug REQUIRES the drafter (no embedded MTP head => no other spec path)." >&2
+            echo "[spec] Fix one of:" >&2
+            echo "[spec]   - download it: hf download unsloth/DeepSeek-V4-Flash-0731-GGUF \\" >&2
+            echo "[spec]       --include 'dspark/*Q8_0*' --local-dir <MODEL_DIR>/deepseek-v4-flash-0731-gguf" >&2
+            echo "[spec]   - or run drafter-off knowingly: SPEC_N=0 (accepts the lower no-spec TPS)" >&2
+            exit 1
+          fi
           echo "[spec] drafter ON (SPEC_N=$$_spec_n)" >&2
           exec /app/llama-server "$$@"
         fi
