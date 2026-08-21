@@ -4925,9 +4925,12 @@ class TestPromoteHookWired:
             assert isinstance(app.screen, PromoteScaffoldScreen)
             body = str(app.screen.query_one("#promote-body", Static).render())
             assert "schema_version: 1" in body
-            assert "_entry(" in body
+            # C4-rev: the LOCAL layer is the default target — the preview shows
+            # the registry.local.json JSON payload (not a core _entry row).
+            assert "local/" in body
+            assert "registry.local.json" in body
             assert "incubating" in body
-            assert "scripts/tests/*.sh" in body   # the gated guard suite
+            assert "scripts/tests/*.sh" in body   # authoritative-before-commit note
 
     @pytest.mark.asyncio
     async def test_promote_stage_write_is_gated_mock_only(self):
@@ -4945,12 +4948,28 @@ class TestPromoteHookWired:
             await pilot.press("P")
             await pilot.pause()
             assert isinstance(app.screen, PromoteScaffoldScreen)
+            # C4-rev gating: display_name + family are REQUIRED inline edits —
+            # staging stays disabled (and inert) until both are real values.
+            assert app.screen.query_one("#promote-stage-btn", Button).disabled is True
+            app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            app.screen.on_input_changed(None)
+            assert app.screen.query_one("#promote-stage-btn", Button).disabled is True
+            app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            app.screen.on_input_changed(None)
+            assert app.screen.query_one("#promote-stage-btn", Button).disabled is False
             # Stage the gated write — routes through ConfirmActionScreen.
             app.screen.query_one("#promote-stage-btn", Button).press()
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
             assert app.screen._plan.kind == "promote_catalog"
             assert app.screen._plan.requires_confirm is True
+            # C4-rev: layer default LOCAL + the spec rides in the child env.
+            assert "--layer local" in " ".join(app.screen._plan.cmd)
+            assert "C3_PROMOTE_SPEC" in (app.screen._plan.env or {})
+            _spec = json.loads(app.screen._plan.env["C3_PROMOTE_SPEC"])
+            assert _spec["display_name"] == "Qwen3 27B Abliterated"
+            assert _spec["family"] == "qwen3-dense"
+            assert _spec["registry_entry"]["slug"].startswith("local/")
             # Nothing executed yet — the write is mock-only and never auto-fired.
             assert wr.started == []
 
@@ -4968,7 +4987,44 @@ class TestPromoteHookWired:
             app.dispatch_action(sc.write_plan)
             await _settle(pilot)
             assert len(wr.started) == 1
-            assert "scripts/tests/*.sh" in " ".join(wr.started[0]["cmd"])
+            joined = " ".join(wr.started[0]["cmd"])
+            # C4-rev: the dispatched plan IS the layered write chain.
+            assert "promote.py" in joined and "--layer local" in joined
+            assert "preflight-add-model.sh" in joined
+
+    @pytest.mark.asyncio
+    async def test_promote_core_action_is_env_gated(self, monkeypatch):
+        """C4-rev: the WRITE CORE REGISTRY secondary action asserts the
+        maintainer gate IN THE SCREEN — without C3_ALLOW_CORE_PROMOTE=1 it
+        refuses (stays on the scaffold, notifies, stages nothing); with it, the
+        plan is built for the CORE layer and still routes through confirm."""
+        monkeypatch.delenv("C3_ALLOW_CORE_PROMOTE", raising=False)
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            assert isinstance(app.screen, PromoteScaffoldScreen)
+            app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            app.screen.on_input_changed(None)
+            # WITHOUT the flag: refused in-screen, nothing staged.
+            app.screen._stage_write(layer="core")
+            await pilot.pause()
+            assert isinstance(app.screen, PromoteScaffoldScreen)   # still open
+            assert wr.started == []
+            # WITH the flag: the core plan builds (promote.py re-asserts too).
+            monkeypatch.setenv("C3_ALLOW_CORE_PROMOTE", "1")
+            app.screen._stage_write(layer="core")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert "--layer core" in " ".join(app.screen._plan.cmd)
+            assert wr.started == []          # confirm gate not yet passed
 
 
 # ===========================================================================
@@ -9757,7 +9813,16 @@ class TestTier1PreviewModalEnterBindings:
             assert "stage_write" in actions
             assert actions["stage_write"].key == "enter"
             assert actions["stage_write"].show is True
-            # Footer-discoverable: stage_write reaches the modal footer.
+            # C4-rev: with the required edits UNFILLED the binding is gated OFF
+            # (check_action → False) — staging is inert until they are real.
+            assert not any(
+                v.binding.action == "stage_write" and v.binding.show
+                for v in scr.active_bindings.values()
+            )
+            scr.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            scr.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            scr.on_input_changed(None)
+            # Footer-discoverable once staging is possible.
             assert any(
                 v.binding.action == "stage_write" and v.binding.show
                 for v in scr.active_bindings.values()
@@ -9778,9 +9843,17 @@ class TestTier1PreviewModalEnterBindings:
             await pilot.press("P")
             await pilot.pause()
             assert isinstance(app.screen, PromoteScaffoldScreen)
+            # C4-rev: ⏎ is INERT until the required inline edits are filled.
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, PromoteScaffoldScreen)
+            app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            app.screen.on_input_changed(None)
             await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
+            assert "--layer local" in " ".join(app.screen._plan.cmd)
             assert app.screen._plan.kind == "promote_catalog"
             assert wr.started == []  # mock-only, never auto-fired
 

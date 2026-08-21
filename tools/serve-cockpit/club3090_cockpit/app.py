@@ -45,7 +45,13 @@ import dataclasses
 import logging
 import re
 from collections import OrderedDict
-from pathlib import Path
+from textual.containers import (
+    Container,
+    Horizontal,
+    Vertical,
+    VerticalScroll,
+    ScrollableContainer,
+)
 from typing import NamedTuple, Optional
 
 from textual.app import App, ComposeResult
@@ -770,12 +776,19 @@ class HelpScreen(ModalScreen):
     HelpScreen {
         align: center middle;
     }
+    /* Scrollable: one giant Static at height:auto clipped on <50-row terminals —
+       the box now takes a fixed fraction of the screen and the body SCROLLS
+       (content identical). */
     HelpScreen > Vertical {
         width: 76;
-        height: auto;
+        height: 85%;
+        max-height: 90%;
         border: thick $accent;
         background: $surface;
         padding: 1 2;
+    }
+    HelpScreen VerticalScroll {
+        height: 1fr;
     }
     HelpScreen .help-title {
         text-style: bold;
@@ -852,6 +865,7 @@ class HelpScreen(ModalScreen):
             "",
             "[bold]Run & Operate · Catalog[/bold]",
             "  [cyan]⏎[/cyan] serve selected slug (reconcile-gated confirm; F to Force the teardown)",
+            "  [cyan]e[/cyan] explain   [cyan]i[/cyan] model info (metadata popup for the selected slug)",
             "  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default",
             "  [cyan]O[/cyan] ▸ Optimize for my card [yellow](coming soon — v0.10.0)[/yellow]",
             "",
@@ -888,6 +902,7 @@ class HelpScreen(ModalScreen):
             "",
             "  ✅ production   [orange1]✔[/orange1] caveats   🧪 experimental",
             "  🐣 incubating  👀 preview   🚧 upstream-gated   🚫 deprecated",
+            "  [cyan]★[/cyan] registry default for this model × topology   👤 shape-match serving guess",
             "",
             "[bold]Spec Dec column[/bold] (default drafter)",
             "",
@@ -903,7 +918,8 @@ class HelpScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label("club3090 serve cockpit — Help", classes="help-title")
-            yield Static(self.help_text)
+            with VerticalScroll():
+                yield Static(self.help_text)
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()
@@ -1063,6 +1079,10 @@ class CatalogPane(Container):
         # is unset / missing) is prepended to the status line so the user is
         # prompted to set it ([S]).
         self._model_dir_note: str = ""
+        # Degraded-catalog notice (C6): a non-empty note means the --json emit
+        # failed but the raw-tab fallback still produced rows — they render with
+        # reduced columns and the reason shows as a yellow one-liner.
+        self._degraded_note: str = ""
 
     # ── Column picker (#724) ─────────────────────────────────────────────────
 
@@ -1133,16 +1153,21 @@ class CatalogPane(Container):
         status_label = self.query_one("#catalog-status", Label)
         table = self.query_one("#catalog-table", DataTable)
 
-        if error:
+        if error and not entries:
+            self._degraded_note = ""
             self._entries = []
             table.clear()
             status_label.update(f"[red]Catalog error:[/red] {error}")
             table.add_row(*(["—"] * len(self._visible_columns())))
             return
 
+        # Rows + a note = the degraded-catalog path: render the rows, surface
+        # the note (yellow) on the status line instead of failing the pane.
+        self._degraded_note = (error or "").strip() if entries else ""
         self._entries = list(entries)
         self._refresh_model_options()
         self._render_rows()
+
 
     def _refresh_model_options(self) -> None:
         """Refill the model-scope dropdown with the DISTINCT model names in
@@ -1173,6 +1198,16 @@ class CatalogPane(Container):
 
         rows = self._filtered_entries()
         serving = (self._serving_slug or "").strip()
+        # ★ default marker (C6): the registry's curated default slug(s) for each
+        # (model, topology) — from CockpitData.catalog_defaults (the --json
+        # `defaults` array).  A row whose slug is one of them gets a star.
+        try:
+            defaults = getattr(self.app._data, "catalog_defaults", None) or []
+        except Exception:
+            defaults = []
+        default_slugs = {
+            str(d.get("slug")) for d in defaults if isinstance(d, dict) and d.get("slug")
+        }
         prev_model: Optional[str] = None  # blank-on-repeat → the switch.sh --list grouped look
         for e in rows:
             # Per-rig honesty: the perf columns (TPS / 8pk) show THIS RIG's OWN
@@ -1186,6 +1221,9 @@ class CatalogPane(Container):
             # N3: mark the live-serving row so the running model is visible at a
             # glance in Run.  Driven by the estate's matched_slug.
             slug_cell = e.slug
+            is_default_row = e.slug in default_slugs
+            if is_default_row:
+                slug_cell = f"[cyan]★[/cyan] {slug_cell}"
             is_serving_row = bool(serving and e.slug == serving)
             if is_serving_row:
                 if (self._serving_confidence or "") == "shape":
@@ -1235,7 +1273,11 @@ class CatalogPane(Container):
             }
             table.add_row(*(cells[k] for k in self._visible_columns()))
 
-        banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
+        banner = ""
+        if self._degraded_note:
+            banner += f"[yellow]{self._degraded_note}[/yellow]  ·  "
+        if self._model_dir_note:
+            banner += f"[yellow]{self._model_dir_note}[/yellow]  ·  "
         # Surface an active model scope (dropdown) the same way the text filter is shown.
         scope = f"model: [cyan]{self._model_filter}[/cyan]  ·  " if self._model_filter else ""
         # [h] hint: N 🗑️ deprecated + M hardware-incompatible slugs hidden
@@ -1835,6 +1877,122 @@ class ExplainScreen(_CopyableModal, ModalScreen):
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()
+
+
+class ModelInfoScreen(_CopyableModal, ModalScreen):
+    """[i] — lightweight metadata popup for the focused catalog row.
+
+    Sibling of ExplainScreen but with ZERO I/O: every line is built from
+    data the cockpit already holds in memory (the CatalogEntry's row/fit/
+    measurement/weights join + the registry's model-profile metadata from
+    ``registry-emit.sh --json``).  Dismissal returns data (None) and never
+    touches the panes — the plain modal rule."""
+
+    DEFAULT_CSS = """
+    ModelInfoScreen {
+        align: center middle;
+    }
+    ModelInfoScreen > Vertical {
+        width: 76;
+        height: auto;
+        max-height: 80%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    ModelInfoScreen .model-info-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    ModelInfoScreen #model-info-body {
+        height: auto;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("i", "dismiss", "Close"),
+        Binding("Y", "app.copy_context", "Copy", show=True),
+    ]
+
+    def __init__(
+        self,
+        entry: "CatalogEntry",
+        model_profile: Optional[dict] = None,
+        *,
+        is_default: bool = False,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self._entry = entry
+        self._profile = model_profile if isinstance(model_profile, dict) else {}
+        self._is_default = bool(is_default)
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(f"Model info · {self._entry.slug}", classes="model-info-title")
+            yield Static("", id="model-info-body")
+
+    def on_mount(self) -> None:
+        self._rerender()
+
+    def _rerender(self) -> None:
+        e = self._entry
+        p = self._profile
+        lines: list[str] = []
+        display = str(p.get("display_name") or e.model or "—")
+        lines.append(f"  [bold]Model[/bold]   {display} [dim]({e.model})[/dim]")
+        family = str(p.get("family") or "—")
+        lines.append(f"  [bold]Family[/bold]  {family}")
+        apb = p.get("active_params_b")
+        apb_s = f"{float(apb):g}B active (MoE)" if apb is not None else "—"
+        lines.append(f"  [bold]Params[/bold]  {apb_s}")
+        vision = p.get("vision_capable")
+        vision_s = "yes" if vision else ("no" if vision is not None else "—")
+        lines.append(f"  [bold]Vision[/bold]  {vision_s}")
+        hf = p.get("hf_repo")
+        lines.append(f"  [bold]HF[/bold]      {hf or '—'}")
+        status = _status_glyph(e.status)
+        lines.append(f"  [bold]Status[/bold]  {status} {e.status or '—'}")
+        if e.status_note:
+            lines.append(f"  [bold]Caveat[/bold]  [yellow]{e.status_note}[/yellow]")
+        ws = e.weights_state or "unknown"
+        meta = e.weights
+        size_s = f"{meta.size_gb:g} GB" if meta is not None and meta.size_gb else "—"
+        lines.append(f"  [bold]Weights[/bold] {ws} · {size_s}")
+        comps = e.weights_companions
+        lines.append(
+            f"  [bold]Extras[/bold]  {', '.join(comps) if comps else '— (single artifact)'}"
+        )
+        fit = e.fit
+        fit_line = str(fit.verdict or "unknown")
+        if fit.vram_est_gb is not None:
+            fit_line += f"  ~{float(fit.vram_est_gb):.2f} GiB"
+            if fit.band_gb is not None:
+                fit_line += f" / {float(fit.band_gb):.1f} GiB band"
+        lines.append(f"  [bold]Fit[/bold]     {fit_line}")
+        m = e.measurement
+        bar = "—"
+        if m is not None and (m.narr_tps is not None or m.code_tps is not None):
+            bar = f"{m.tps_label} TPS · 8pk {m.quality_8pk or '—'}"
+            if m.date:
+                bar += f"  [dim]{m.date}[/dim]"
+        lines.append(f"  [bold]Baseline[/bold] {bar}")
+        if self._is_default:
+            lines.append("  [cyan]★[/cyan] registry default for this model × topology")
+        lines.append("")
+        lines.append("  [dim]Esc / i to close[/dim]")
+        body = self.query_one("#model-info-body", Static)
+        body.update("\n".join(lines))
+        # Markup-free copy payload for the global [Y] copy action.
+        self._copy_payload = "\n".join(
+            Text.from_markup(ln).plain for ln in lines[:-2]
+        )
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
 
 
 # Phase R-realign: the standalone Run · Bring-your-own tab (ByoPane) is REMOVED.
@@ -4906,13 +5064,18 @@ class StudioSetupScreen(ModalScreen):
 
 
 class PromoteScaffoldScreen(ModalScreen):
-    """Preview the computed catalog-promotion scaffold (SCAFFOLD + GATE).
+    """Preview the computed catalog-promotion scaffold (SCAFFOLD + GATE, C4-rev).
 
-    Shows the ModelProfile YAML skeleton + the compose_registry _entry(...) row
-    COMPUTED from the BYO arch facts + Evidence numbers, plus the guard suite the
-    gated write would run.  ``⏎`` stages the GATED write+guard ActionPlan — which
-    is MOCK-ONLY this phase (it writes into scripts/ + runs the guard suite, so it
-    NEVER auto-fires / executes live).  ``Esc`` just closes the preview."""
+    Shows the ModelProfile YAML skeleton + the registry entry (a JSON block for
+    the default LOCAL layer) COMPUTED from the BYO arch facts + Evidence
+    numbers.  The two facts the scaffold cannot know — ``display_name`` and
+    ``family`` — are REQUIRED inline edits (the stage buttons stay disabled
+    until both are filled with real values).  ``⏎`` stages the GATED write plan
+    for the LOCAL layer (the gitignored ``scripts/lib/profiles-local/``
+    community layer — no core file is touched); ``C`` is the distinctly-labeled
+    WRITE CORE REGISTRY secondary action, which additionally asserts the
+    maintainer gate ``C3_ALLOW_CORE_PROMOTE=1``.  Both route through the
+    standard confirm gate and NEVER auto-fire."""
 
     DEFAULT_CSS = """
     PromoteScaffoldScreen {
@@ -4934,6 +5097,20 @@ class PromoteScaffoldScreen(ModalScreen):
     PromoteScaffoldScreen #promote-scroll {
         height: 1fr;
     }
+    PromoteScaffoldScreen #promote-edits {
+        height: auto;
+        margin-top: 1;
+    }
+    PromoteScaffoldScreen #promote-edits Horizontal {
+        height: 3;
+    }
+    PromoteScaffoldScreen #promote-edits Label {
+        width: 16;
+        padding-top: 1;
+    }
+    PromoteScaffoldScreen #promote-edits Input {
+        width: 1fr;
+    }
     PromoteScaffoldScreen #promote-btn-row {
         height: 3;
         margin-top: 1;
@@ -4943,40 +5120,62 @@ class PromoteScaffoldScreen(ModalScreen):
     }
     """
 
-    # FIX 3 — the Enter verb is a DECLARED binding (was a raw on_key("enter")), so
-    # Help / binding-introspection advertise it.  NOTE this modal renders no Footer
-    # of its own — the visible affordance is the "Stage write" button label + body
-    # text; show=True just keeps the binding in active_bindings (Help parity).
-    # ``stage_write`` is gated in check_action on ``self._scaffold.computed``
-    # (mirroring the disabled stage button), so the key is inert when staging isn't
-    # possible.  priority=True so it wins over the focused button's own enter→press
-    # (both route through the SAME _stage_write path).
+    # FIX 3 — the Enter verb is a DECLARED binding (Help parity; this modal
+    # renders no Footer of its own).  ``stage_write`` is gated in check_action
+    # on computed + the required edits (mirroring the disabled stage button);
+    # priority=True so it wins over the focused button's own enter→press.
     BINDINGS = [
-        Binding("enter", "stage_write", "Stage write", show=True, priority=True),
+        Binding("enter", "stage_write", "Write LOCAL layer", show=True, priority=True),
+        Binding("c", "stage_core", "WRITE CORE REGISTRY", show=True, priority=True),
         Binding("escape", "dismiss", "Close"),
     ]
 
     def __init__(self, scaffold: PromoteScaffold, *, on_stage_write=None, **kwargs):
         super().__init__(**kwargs)
         self._scaffold = scaffold
+        # on_stage_write(layer, spec) — the app builds the ActionPlan for the
+        # chosen layer with the user's inline edits applied.
         self._on_stage_write = on_stage_write
 
     def compose(self) -> ComposeResult:
+        s = self._scaffold
+        badge = (
+            "[yellow]writes LOCAL layer (gitignored) — core is a separate gated action[/yellow]"
+            if s.layer == "local"
+            else "[red]MAINTAINER CORE WRITE — double-gated[/red]"
+        )
         with Vertical():
             yield Label(
-                f"⑤ Promotion Preview · "
-                f"{self._scaffold.model_id or self._scaffold.repo or '—'}  "
-                f"[yellow]preview only — no catalog write yet[/yellow]",
+                f"⑤ Promotion Preview · {s.model_id or s.repo or '—'}  {badge}",
                 classes="promote-title",
             )
             with ScrollableContainer(id="promote-scroll"):
                 yield Static(self._body_text(), id="promote-body")
+            with Vertical(id="promote-edits"):
+                with Horizontal():
+                    yield Label("display_name")
+                    yield Input(
+                        placeholder="REQUIRED — human-readable name",
+                        id="promote-display-input",
+                    )
+                with Horizontal():
+                    yield Label("family")
+                    yield Input(
+                        placeholder="REQUIRED — real family tag (not inferred)",
+                        id="promote-family-input",
+                    )
             with Horizontal(id="promote-btn-row"):
                 yield Button(
-                    "⏎ Preview scaffold (no write)",
+                    "⏎ Write LOCAL layer",
                     id="promote-stage-btn",
                     variant="warning",
-                    disabled=not self._scaffold.computed,
+                    disabled=not self._can_stage(),
+                )
+                yield Button(
+                    "WRITE CORE REGISTRY",
+                    id="promote-core-btn",
+                    variant="error",
+                    disabled=not self._can_stage(),
                 )
                 yield Button("Esc Close", id="promote-close-btn")
 
@@ -4988,13 +5187,13 @@ class PromoteScaffoldScreen(ModalScreen):
             return f"[red]cannot scaffold:[/red] {escape(s.error)}"
         lines: list[str] = []
         lines.append(
-            "[yellow]preview only — no catalog write yet[/yellow]"
+            "[dim]Design §3.5b — a SCAFFOLD + GATE, not a YAML IDE.  Arch dims are"
         )
         lines.append(
-            "[dim]Design §3.5b — a SCAFFOLD + GATE, not a YAML IDE.  COMPUTED from the[/dim]"
+            "[dim]auto-filled from the deriver facts; display_name + family are"
         )
         lines.append(
-            "[dim]BYO pull-gate arch facts + Evidence numbers.  Preview only this phase.[/dim]"
+            "[dim]required edits below.  The write runs diagnose + preflight after.[/dim]"
         )
         lines.append("")
         lines.append(f"  [bold]ModelProfile[/bold]  [cyan]{escape(s.profile_path)}[/cyan]")
@@ -5002,13 +5201,16 @@ class PromoteScaffoldScreen(ModalScreen):
         for ln in s.profile_yaml.splitlines():
             lines.append("    " + escape(ln))
         lines.append("")
-        lines.append("  [bold]compose_registry.py[/bold]  entry "
-                     f"[green]{escape(s.registry_slug)}[/green]")
+        target = "registry.local.json" if s.layer == "local" else "compose_registry.py"
+        lines.append(
+            f"  [bold]{escape(target)}[/bold]  entry "
+            f"[green]{escape(s.registry_slug)}[/green]"
+        )
         lines.append("")
         for ln in s.registry_entry.splitlines():
             lines.append("    " + escape(ln))
         lines.append("")
-        lines.append("  [bold]Guard suite[/bold] (the gated write would run, never auto):")
+        lines.append("  [bold]After the write[/bold] (chained, never auto):")
         lines.append("    [yellow]" + escape(" ".join(s.guard_suite_cmd)) + "[/yellow]")
         if s.notes:
             lines.append("")
@@ -5016,37 +5218,100 @@ class PromoteScaffoldScreen(ModalScreen):
             for n in s.notes:
                 lines.append(f"    • [dim]{escape(n)}[/dim]")
         lines.append("")
-        lines.append("  [dim]⏎ Stage the gated write+guard (MOCK-ONLY this phase) · Esc Close[/dim]")
+        lines.append(
+            "  [dim]⏎ Write LOCAL layer · C WRITE CORE REGISTRY "
+            "(needs C3_ALLOW_CORE_PROMOTE=1) · Esc Close[/dim]"
+        )
         return "\n".join(lines)
+
+    # ── Required inline edits ────────────────────────────────────────────────
+
+    def _edited_values(self) -> tuple[str, str]:
+        try:
+            display = self.query_one("#promote-display-input", Input).value.strip()
+            family = self.query_one("#promote-family-input", Input).value.strip()
+        except Exception:
+            return "", ""
+        return display, family
+
+    def _edits_valid(self) -> bool:
+        """Both required edits filled with REAL values (no leftover <...>
+        placeholder, no empty string) — the scaffold never fabricates."""
+        display, family = self._edited_values()
+        return bool(display) and "<" not in display and bool(family) and "<" not in family
+
+    def _can_stage(self) -> bool:
+        return bool(self._scaffold.computed) and self._edits_valid()
+
+    def _edited_spec(self) -> dict:
+        """The executor spec with the inline edits applied (a copy — the
+        scaffold's own spec stays the pristine preview source)."""
+        import copy
+
+        display, family = self._edited_values()
+        spec = copy.deepcopy(self._scaffold.spec or {})
+        spec["display_name"] = display
+        spec["family"] = family
+        return spec
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        # Enable/disable BOTH stage buttons live as the required edits fill.
+        try:
+            stage = self.query_one("#promote-stage-btn", Button)
+            core = self.query_one("#promote-core-btn", Button)
+        except Exception:
+            return
+        stage.disabled = not self._can_stage()
+        core.disabled = not self._can_stage()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "promote-stage-btn":
-            self._stage_write()
+            self._stage_write(layer="local")
+        elif event.button.id == "promote-core-btn":
+            self._stage_write(layer="core")
         elif event.button.id == "promote-close-btn":
             self.action_dismiss()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the ⏎ Stage-write binding on whether the scaffold computed — so the
-        footer only advertises it when staging is actually possible (mirrors the
-        disabled state of #promote-stage-btn)."""
+        """Gate the ⏎ binding on computed + the required edits (mirrors the
+        disabled stage buttons)."""
         if action == "stage_write":
-            return bool(self._scaffold.computed)
+            return self._can_stage()
         return True
 
     def action_stage_write(self) -> None:
-        """⏎ — stage the gated write+guard plan (only reachable when the scaffold
-        computed; check_action gates the binding otherwise).  Same path the
-        #promote-stage-btn press takes."""
-        if self._scaffold.computed:
-            self._stage_write()
+        """⏎ — stage the LOCAL-layer write plan (only reachable when staging is
+        possible; check_action gates the binding otherwise)."""
+        if self._can_stage():
+            self._stage_write(layer="local")
 
-    def _stage_write(self) -> None:
-        """Hand the GATED write+guard plan back to the app's confirm gate.  The
-        write is NEVER executed live this phase — it routes through the standard
-        ConfirmActionScreen (mock-only) and never auto-fires."""
+    def _stage_write(self, *, layer: str) -> None:
+        """Hand the GATED write plan for the chosen layer back to the app's
+        confirm gate.  The core action ASSERTS the maintainer env gate here —
+        promote.py re-asserts it independently (defense in depth).  The write
+        NEVER auto-fires; both routes go through ConfirmActionScreen."""
+        import os
+
+        if not self._can_stage():
+            return
+        if layer == "core" and os.environ.get("C3_ALLOW_CORE_PROMOTE") != "1":
+            self.notify(
+                "WRITE CORE REGISTRY is maintainer-gated: set C3_ALLOW_CORE_PROMOTE=1 "
+                "in the environment first (or use the default LOCAL layer).",
+                title="Promote",
+                severity="error",
+                timeout=6,
+            )
+            return
+        spec = self._edited_spec()
         self.app.pop_screen()
-        if self._on_stage_write is not None and self._scaffold.write_plan is not None:
-            self._on_stage_write(self._scaffold.write_plan)
+        if self._on_stage_write is not None:
+            self._on_stage_write(layer, spec)
+
+    def action_stage_core(self) -> None:
+        """C — the WRITE CORE REGISTRY secondary action (maintainer-gated; same
+        path the #promote-core-btn press takes)."""
+        self._stage_write(layer="core")
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()
@@ -6691,6 +6956,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     # Run & Operate · Catalog tab.
     ("primary_action", "Serve selected / primary action", "⏎ — serve the selected slug (reconcile-gated)"),
     ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
+    ("model_info", "Model info", "Catalog — metadata popup for the selected slug ([i])"),
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
     ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated slugs (hidden by default)"),
     ("toggle_catalog_downloaded", "Show only downloaded", "Catalog — narrow to slugs whose weights are already on disk"),
@@ -6811,8 +7077,9 @@ class CockpitApp(App):
         Binding("question_mark", "help", "Help", show=True),
         Binding("r", "refresh", "Refresh", show=True),
         # Sub-tab cycle — shown when the mode has sub-tabs (check_action gates).
-        # show=True so `]` surfaces in the footer on the producer lane (phase 1.3).
-        Binding("left_square_bracket", "prev_subtab", "Prev tab", show=False),
+        # Both brackets show=True so [ and ] are symmetric in the footer (the
+        # old show=False hid [ while ] was visible — an unexplained asymmetry).
+        Binding("left_square_bracket", "prev_subtab", "Prev tab", show=True),
         Binding("right_square_bracket", "next_subtab", "Next tab", show=True),
         # Arrow-key focus descent (keyboard-nav enhancement):
         #   [down] on the tab bar → descend INTO the active tab's primary list.
@@ -6854,6 +7121,8 @@ class CockpitApp(App):
         Binding("vertical_bar", "catalog_columns", "Columns", show=False),
         Binding("u", "copy_endpoint", "API URL", show=False),
         Binding("e", "explain", "Explain", show=False),
+        # [i] model-info popup (C6) — local-data metadata modal, sibling of Explain.
+        Binding("i", "model_info", "Model info", show=False),
         # 2-mode merge: [1] = merged Run & Operate, [2] = Bring & Validate lane.
         Binding("1", "mode_run", "Run & Operate", show=True),
         Binding("2", "mode_validate", "Bring & Validate", show=True),
@@ -7066,6 +7335,7 @@ class CockpitApp(App):
         # nothing is serving).
         "copy_endpoint":    ({0}, {"tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"}),
         "explain":          ({0}, {"tab-catalog"}),  # Catalog (guards inside action)
+        "model_info":       ({0}, {"tab-catalog"}),  # Catalog — [i] popup (guards inside action)
         "set_default":      ({0}, {"tab-catalog"}),  # Catalog
         "clear_default":    ({0}, {"tab-catalog"}),  # Catalog
         "optimize_card":    ({0}, {"tab-catalog"}),  # Catalog
@@ -7854,8 +8124,8 @@ class CockpitApp(App):
             pane = self.query_one("#catalog-pane", CatalogPane)
         except Exception:
             return
-        pane.populate(rows, error)          # instant first paint (stub fit/TPS)
-        if error or not rows:
+        pane.populate(rows, error)          # instant first paint (rows+error = degraded banner)
+        if not rows:
             return
         # Progressive enrichment — re-render after each phase (cursor preserved).
         # rows are the SAME CatalogEntry objects the pane holds, so in-place
@@ -10146,10 +10416,39 @@ class CockpitApp(App):
         except Exception:
             entry = None
         if entry is None:
+            self.notify(
+                "No slug selected.", title="Explain", severity="warning", timeout=3
+            )
             return
         # The screen loads its own detail + cross-rig on mount (so the body query
         # resolves against a fully-mounted modal — Fold 3 cross-rig fold included).
         self.push_screen(ExplainScreen(entry.slug, model=entry.model, engine=entry.engine))
+
+    def action_model_info(self) -> None:
+        """[i] — the local-data model-info popup for the selected catalog row
+        (merged mode 0 · Catalog tab).  Zero I/O: built from the CatalogEntry +
+        the registry's model-profile metadata already in memory."""
+        if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
+            return
+        try:
+            pane = self.query_one("#catalog-pane", CatalogPane)
+            entry = pane.selected_entry()
+        except Exception:
+            entry = None
+        if entry is None:
+            self.notify(
+                "No slug selected.", title="Model info", severity="warning", timeout=3
+            )
+            return
+        profile = (getattr(self._data, "catalog_models", None) or {}).get(entry.model)
+        try:
+            defaults = getattr(self._data, "catalog_defaults", None) or []
+            is_default = any(
+                isinstance(d, dict) and d.get("slug") == entry.slug for d in defaults
+            )
+        except Exception:
+            is_default = False
+        self.push_screen(ModelInfoScreen(entry, profile, is_default=is_default))
 
     def action_primary_action(self) -> None:
         """⏎ — context-specific per mode AND (in the merged mode 0) per tab.
@@ -10358,6 +10657,9 @@ class CockpitApp(App):
         except Exception:
             scene = None
         if scene is None:
+            self.notify(
+                "No scene selected.", title="Scene switch", severity="warning", timeout=3
+            )
             return
         # Studio guard — the studio scenes need the comfyui-local image; if it's
         # absent (setup-image-studio.sh not run), guide instead of a doomed switch.
@@ -10427,6 +10729,9 @@ class CockpitApp(App):
             return
         entry = self._selected_catalog_entry()
         if entry is None:
+            self.notify(
+                "No slug selected.", title="Set default", severity="warning", timeout=3
+            )
             return
         plan = self._data.set_default(entry.slug)
         self.push_screen(ConfirmActionScreen(plan))
@@ -10438,6 +10743,9 @@ class CockpitApp(App):
             return
         entry = self._selected_catalog_entry()
         if entry is None:
+            self.notify(
+                "No slug selected.", title="Clear default", severity="warning", timeout=3
+            )
             return
         plan = self._data.clear_default(entry.model)
         self.push_screen(ConfirmActionScreen(plan))
@@ -11572,10 +11880,11 @@ class CockpitApp(App):
         catalog-promotion scaffold (R3b-1 relocated it out of Run · Catalog).
 
         Design §3.5b — a SCAFFOLD + GATE, not a YAML IDE.  Computes a ModelProfile
-        YAML skeleton + a compose_registry row from the last BYO fit-check arch
-        facts + any measured Evidence numbers, and previews them.  The write into
-        scripts/ + the guard suite is the GATED write_plan on the scaffold —
-        MOCK-ONLY this phase, never auto-fired."""
+        YAML skeleton + a registry entry from the last BYO fit-check arch facts
+        (deriver facts auto-filled) + any measured Evidence numbers, and
+        previews them.  C4-rev: the write targets the LOCAL layer by default;
+        core is the screen's distinctly-labeled maintainer action.  The gated
+        write plan routes through the confirm gate — never auto-fired."""
         if self._active_mode != 1:
             return
         if self._last_byo is None:
@@ -11601,7 +11910,11 @@ class CockpitApp(App):
         self.push_screen(
             PromoteScaffoldScreen(
                 scaffold,
-                on_stage_write=lambda plan: self.push_screen(ConfirmActionScreen(plan)),
+                on_stage_write=lambda layer, spec: self.push_screen(
+                    ConfirmActionScreen(
+                        self._data.promote_write_plan(scaffold, layer=layer, spec=spec)
+                    )
+                ),
             )
         )
 

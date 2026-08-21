@@ -3888,38 +3888,64 @@ class TestPromoteScaffold:
             arch="Qwen3ForCausalLM", eligible=True, fit_verdict="fits-clean",
             route="C", sibling_slug="vllm/dual", quant_match="int4",
             drop_spec_config=True,
+            # C4-rev: deriver facts (threaded through ByoResult.facts).
+            facts={
+                "hidden_size": 5120, "num_hidden_layers": 64,
+                "num_attn_heads": 24, "num_kv_heads": 4,
+                "head_dim_attn": 256, "max_ctx_supported": 262144,
+                "weights_total_gb": 30.9, "valid_tp": [1, 2],
+            },
         )
         base.update(over)
         return ByoResult(**base)
 
-    def test_scaffold_computes_real_profile_and_registry_shapes(self):
+    def test_scaffold_defaults_to_local_layer_with_real_shapes(self):
         cd = CockpitData(ROOT, runner=full_runner())
         meas = Measurement(narr_tps=174.0, code_tps=42.0, quality_8pk="109/150", source="explain")
         sc = cd.promote_scaffold(byo=self._byo(), measurement=meas)
         assert sc.computed is True
-        # ModelProfile YAML — REAL schema keys (ADDING_MODELS.md).
-        assert "schema_version: 1" in sc.profile_yaml
+        # C4-rev: LOCAL layer by default — gitignored paths + local/ namespace.
+        assert sc.layer == "local"
+        assert sc.profile_path.startswith("scripts/lib/profiles-local/models.d/")
+        assert sc.registry_slug.startswith("local/")
+        assert sc.spec["compose"]["path"].startswith(
+            "scripts/lib/profiles-local/composes/"
+        )
+        # ModelProfile YAML — REAL canonical schema keys, arch dims AUTO-FILLED
+        # from the deriver facts (never fabricated when a fact is missing).
         assert sc.profile_yaml.startswith("schema_version: 1\n")
-        assert "\nweights:\n" in sc.profile_yaml            # weights MAP, not a list
+        assert "\nweights:\n" in sc.profile_yaml       # weights MAP, not a list
         assert "vision_capable:" in sc.profile_yaml
-        assert sc.profile_path.startswith("scripts/lib/profiles/models/")
-        # compose_registry _entry(...) row — REAL kwargs.
-        for kw in ("model=", "weights_variant=", "workload=", "engine=",
-                   "drafter=", "kv_format=", "tp=", "compose_path=",
-                   "default_port=", "kvcalc_key=", "status="):
-            assert kw in sc.registry_entry, kw
-        assert "_entry(" in sc.registry_entry
-        # New models START at incubating (ADDING_MODELS.md rule).
-        assert 'status="incubating"' in sc.registry_entry
+        assert "num_hidden_layers: 64" in sc.profile_yaml
+        assert "num_kv_heads: 4" in sc.profile_yaml
+        assert "max_ctx_supported: 262144" in sc.profile_yaml
+        assert "size_gb: 30.9" in sc.profile_yaml
+        # Registry entry preview — a JSON block for the local layer (the local
+        # registry is JSON, never a python-source edit).
+        entry = json.loads(sc.registry_entry)[sc.registry_slug]
+        assert entry["model"] == "qwen3-27b-abliterated"
+        assert entry["status"] == "incubating"          # NEW MODELS START HERE
+        assert entry["compose_path"] == sc.spec["compose"]["path"]
         # Measured Evidence numbers flow into the status_note.
-        assert "8-pack 109/150" in sc.registry_entry
+        assert "8-pack 109/150" in json.dumps(entry)
+        # The machine-readable spec carries the same entry.
+        assert sc.spec["registry_entry"]["slug"] == sc.registry_slug
+
+    def test_scaffold_keeps_placeholders_without_facts(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        sc = cd.promote_scaffold(byo=self._byo(facts={}))
+        assert sc.computed
+        # No fabricated numbers: missing facts stay REQUIRED placeholders.
+        assert "num_hidden_layers: <int>" in sc.profile_yaml
+        assert sc.spec["display_name"].startswith("<")
+        assert sc.spec["family"] == "<family-tag>"
 
     def test_scaffold_drops_drafter_when_byo_has_no_mtp_head(self):
         cd = CockpitData(ROOT, runner=full_runner())
         sc = cd.promote_scaffold(byo=self._byo(drop_spec_config=True))
-        assert "drafter=None" in sc.registry_entry
+        assert json.loads(sc.registry_entry)[sc.registry_slug]["drafter"] is None
 
-    def test_scaffold_write_plan_is_gated_mock_only(self):
+    def test_write_plan_chains_promote_diagnose_preflight(self):
         cd = CockpitData(ROOT, runner=full_runner())
         sc = cd.promote_scaffold(byo=self._byo())
         plan = sc.write_plan
@@ -3927,9 +3953,30 @@ class TestPromoteScaffold:
         assert plan.kind == "promote_catalog"
         assert plan.requires_confirm is True
         assert plan.requires_reconcile is False
-        # The gated action runs the guard suite; it does NOT auto-write scripts/.
+        joined = " ".join(plan.cmd)
+        # C4-rev cmd chain: promote.py && diagnose-profile.sh && preflight.
         assert plan.cmd[:2] == ["bash", "-c"]
-        assert "scripts/tests/*.sh" in " ".join(plan.cmd)
+        assert "promote.py --spec-env C3_PROMOTE_SPEC --layer local" in joined
+        assert f"bash scripts/diagnose-profile.sh {sc.registry_slug}" in joined
+        assert f"bash scripts/preflight-add-model.sh {sc.registry_slug}" in joined
+        # The spec rides in the child env (merged over os.environ at execution).
+        assert plan.env is not None and "C3_PROMOTE_SPEC" in plan.env
+        spec = json.loads(plan.env["C3_PROMOTE_SPEC"])
+        assert spec["model_id"] == sc.model_id
+        assert spec["registry_entry"]["slug"] == sc.registry_slug
+
+    def test_core_write_plan_rebases_to_curated_catalog(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        sc = cd.promote_scaffold(byo=self._byo())
+        plan = cd.promote_write_plan(sc, layer="core")
+        joined = " ".join(plan.cmd)
+        assert "--layer core" in joined
+        spec = json.loads(plan.env["C3_PROMOTE_SPEC"])
+        # Rebased OUT of the local namespace onto curated paths.
+        assert spec["registry_entry"]["slug"].startswith("vllm/")
+        assert spec["compose"]["path"].startswith("models/")
+        # The gate flag is NOT injected — it must exist in the user's env.
+        assert "C3_ALLOW_CORE_PROMOTE" not in (plan.env or {})
 
     @pytest.mark.asyncio
     async def test_promote_does_not_write_into_scripts_dir(self, tmp_path):

@@ -26,6 +26,9 @@ def _stub_registry(tmp_path: Path, slug: str, compose_rel: str, **entry_extra):
     profiles = ModuleType("scripts.lib.profiles")
     cr = ModuleType("scripts.lib.profiles.compose_registry")
     cr.COMPOSE_REGISTRY = fake_reg
+    # C4-rev: runtime consumers import the merged accessor — the stub exposes
+    # it as an identity over the stub registry.
+    cr.get_registry = lambda *a, **k: fake_reg
     sys.modules["scripts"] = scripts
     sys.modules["scripts.lib"] = lib
     sys.modules["scripts.lib.profiles"] = profiles

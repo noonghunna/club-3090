@@ -15,7 +15,9 @@ verdict, measured TPS / 8-pack, and provenance.
 
 from __future__ import annotations
 
+import json
 import re
+import zlib
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -731,12 +733,23 @@ class ByoResult:
     quant_match: Optional[str] = None
     drop_spec_config: bool = False
     error: str = ""
+    # C4-rev: deriver FACTS for the ⑤ Promote scaffold (generic-dense spec:
+    # num_hidden_layers / num_attn_heads / num_kv_heads / head_dim_attn /
+    # max_ctx_supported / weights_total_gb / valid_tp / vision hint). Empty when
+    # the fit-check produced no spec (tier-1 curated hits, route-G GGUF, errors)
+    # — the scaffold then keeps its <...> placeholders instead of fabricating.
+    facts: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, repo: str, profile_like: str, d: dict[str, Any] | None) -> "ByoResult":
         if not d:
             return cls(repo=repo, profile_like=profile_like, error="no output")
         swap = d.get("swap_path") or {}
+        # C4-rev: the deriver's generic-dense spec (pull.sh emits it under
+        # "spec" when present; services.byo_check enriches older output via the
+        # deriver probe). Absent → {} — placeholders stay placeholders.
+        spec = d.get("spec") or {}
+        facts = {k: v for k, v in spec.items() if v is not None} if isinstance(spec, dict) else {}
         return cls(
             repo=repo,
             profile_like=profile_like,
@@ -748,6 +761,7 @@ class ByoResult:
             sibling_slug=swap.get("sibling_slug"),
             quant_match=swap.get("quant_match"),
             drop_spec_config=bool(swap.get("drop_spec_config", False)),
+            facts=facts,
         )
 
 
@@ -1290,14 +1304,22 @@ class PromoteScaffold:
 
     model_id: str = ""
     repo: str = ""                       # the BYO HF repo this came from
-    profile_path: str = ""               # scripts/lib/profiles/models/<id>.yml
-    registry_slug: str = ""              # the proposed compose_registry key
+    profile_path: str = ""               # scripts/lib/profiles-local/models.d/<id>.yml (local)
+    registry_slug: str = ""              # the proposed registry key (local/… for the local layer)
     profile_yaml: str = ""               # the previewed ModelProfile YAML skeleton
-    registry_entry: str = ""             # the previewed _entry(...) row
-    guard_suite_cmd: list[str] = field(default_factory=list)  # for t in scripts/tests/*.sh
-    write_plan: Optional["ActionPlan"] = None   # the gated, mock-only write+guard action
+    registry_entry: str = ""             # the previewed entry (JSON block for local, _entry row for core)
+    guard_suite_cmd: list[str] = field(default_factory=list)  # diagnose + preflight chain
+    write_plan: Optional["ActionPlan"] = None   # the gated write+guard action
     notes: list[str] = field(default_factory=list)
     error: str = ""
+    # C4-rev: the write target layer. DEFAULT local — the gitignored
+    # scripts/lib/profiles-local/ community layer; "core" is the maintainer-only
+    # curated catalog (double-gated in the UI AND in promote.py).
+    layer: str = "local"
+    # The MACHINE-READABLE promote.py spec skeleton (C4-rev): everything the
+    # executor needs, with display_name/family left as "<...>" placeholders the
+    # PromoteScaffoldScreen requires inline edits for before staging.
+    spec: dict = field(default_factory=dict)
 
     @property
     def computed(self) -> bool:
@@ -2318,28 +2340,35 @@ def compute_promote_scaffold(
     measurement: Optional["Measurement"],
     model_id: str = "",
     sibling_compose_path: str = "",
+    compose_text: str = "",
+    layer: str = "local",
 ) -> "PromoteScaffold":
     """COMPUTE (never write) the catalog-promotion scaffold from facts the app
     already holds — the BYO pull-gate arch facts (``ByoResult``) + the Evidence
     measured numbers (``Measurement``).  Design §3.5b: a SCAFFOLD + GATE, not a
     YAML IDE.
 
-    Returns a ``PromoteScaffold`` carrying:
-      - the ``models/<id>.yml`` ModelProfile YAML skeleton (real schema keys:
-        ``schema_version`` / ``id`` / ``display_name`` / ``family`` / a ``weights``
-        MAP keyed by quant-slug / ``vision_capable`` — per ADDING_MODELS.md);
-      - the ``compose_registry.py`` ``_entry(...)`` row (real kwargs: ``model`` /
-        ``weights_variant`` / ``workload`` / ``engine`` / ``drafter`` /
-        ``kv_format`` / ``tp`` / ``max_ctx`` / ``compose_path`` / ``default_port`` /
-        ``kvcalc_key`` / ``status``);
-      - the guard-suite command (``for t in scripts/tests/*.sh; do bash "$t"; done``).
+    C4-rev: the scaffold targets the gitignored LOCAL layer by default
+    (``scripts/lib/profiles-local/`` — community-safe, never touches core); the
+    core catalog is a maintainer-gated secondary action (see
+    ``PromoteScaffoldScreen`` + ``promote_write_plan``).
 
-    New models START at ``status="incubating"`` (the ADDING_MODELS.md rule).  The
-    scaffold is a STARTING POINT the maintainer edits + validates — the field
-    values it can't know (exact arch dims, real family tag) are left as REQUIRED
-    `<...>` placeholders so the maintainer must fill them, never a fabricated
-    number.  The actual write + guard run is attached by the service layer as a
-    gated ``write_plan`` (mock-only this phase).
+    Returns a ``PromoteScaffold`` carrying:
+      - ``spec`` — the MACHINE-READABLE ``promote.py`` spec skeleton (the
+        executor's input), with arch dims AUTO-FILLED from the deriver facts
+        threaded through ``ByoResult.facts`` (num_hidden_layers /
+        num_attn_heads / num_kv_heads / head_dim_attn / max_ctx_supported /
+        weights_total_gb / vision hint);
+      - the ModelProfile YAML + registry-entry PREVIEWS rendered from that same
+        spec (JSON entry block for the local layer, ``_entry(...)`` row for core);
+      - the post-write validation chain (diagnose-profile.sh + the P2
+        preflight-add-model.sh gate).
+
+    New models START at ``status="incubating"`` (the ADDING_MODELS.md rule).
+    Facts the deriver does not know stay REQUIRED ``<...>`` placeholders —
+    ``display_name`` / ``family`` become required inline edits in
+    ``PromoteScaffoldScreen``; the rest fail loudly in the post-write
+    diagnose/preflight gates rather than being fabricated.
     """
     repo = getattr(byo, "repo", "") if byo else ""
     if byo is not None and getattr(byo, "error", ""):
@@ -2347,54 +2376,43 @@ def compute_promote_scaffold(
 
     mid = model_id or _slug_from_repo(repo)
     quant = _quant_slug_for_arch(byo)
-    arch = (getattr(byo, "arch", "") or "") if byo else ""
+    arch_name = (getattr(byo, "arch", "") or "") if byo else ""
     fit_verdict = (getattr(byo, "fit_verdict", "") or "") if byo else ""
     sibling = (getattr(byo, "sibling_slug", "") or "") if byo else ""
     drop_spec = bool(getattr(byo, "drop_spec_config", False)) if byo else False
+    facts = (getattr(byo, "facts", {}) or {}) if byo else {}
 
-    # Registry slug mirrors the path: <engine>/<model>-<topology>-<quant>.
+    # ── Deriver facts → arch dims (NEVER fabricated; missing ⇒ placeholder) ──
+    arch_spec: dict[str, Any] = {}
+    for key in (
+        "hidden_size", "num_hidden_layers", "num_attn_heads", "num_kv_heads",
+        "head_dim_attn", "max_ctx_supported",
+    ):
+        if facts.get(key) is not None:
+            arch_spec[key] = facts[key]
+    if facts.get("valid_tp"):
+        arch_spec["valid_tp"] = list(facts["valid_tp"])
+    weights_total_gb = facts.get("weights_total_gb")
+    vision_hint = facts.get("vision")
     short = mid.replace("qwen3.6-", "qwen-").replace("gemma-4-", "gemma-")
-    registry_slug = f"vllm/{short}-dual-{quant}"
-    profile_path = f"scripts/lib/profiles/models/{mid}.yml"
-    compose_path = (
-        sibling_compose_path
-        or f"models/{mid}/vllm/compose/dual/{quant}/base.yml"
-    )
+    if layer == "local":
+        registry_slug = f"local/{short}-dual-{quant}"
+        profile_path = f"scripts/lib/profiles-local/models.d/{mid}.yml"
+        compose_path = (
+            sibling_compose_path
+            or f"scripts/lib/profiles-local/composes/{mid}/vllm/compose/dual/{quant}/base.yml"
+        )
+    else:
+        registry_slug = f"vllm/{short}-dual-{quant}"
+        profile_path = f"scripts/lib/profiles/models/{mid}.yml"
+        compose_path = (
+            sibling_compose_path
+            or f"models/{mid}/vllm/compose/dual/{quant}/base.yml"
+        )
 
     # Measured numbers (Evidence) → the registry status_note + a BENCHMARKS hint.
     tps = measurement.tps_label if measurement else "—"
     q8 = (measurement.quality_8pk if measurement else "") or ""
-
-    profile_yaml = (
-        "schema_version: 1\n"
-        f"id: {mid}\n"
-        f"display_name: <Human-readable name — from {repo or '<repo>'}>\n"
-        "family: <family-tag>                    # REQUIRED — real tag "
-        "(qwen3-next-hybrid / gemma4-swa-dense / …), NOT inferred\n"
-        f"# arch reported by pull-gate: {arch or '<unknown>'} "
-        "— fill the FAMILY-SPECIFIC dims from config.json (see ADDING_MODELS.md)\n"
-        "# Architecture (drives kv-calc.py + fits()) — FAMILY-SPECIFIC keys:\n"
-        "num_hidden_layers: <int>\n"
-        "num_kv_heads: <int>\n"
-        "num_attention_heads: <int>\n"
-        "head_dim: <int>\n"
-        "max_position_embeddings: <int>\n"
-        "valid_tp: [1, 2]\n"
-        "weights:\n"
-        f"  {quant}:                                 # quant-slug == compose <quant>/ dir == weights_variant\n"
-        f"    path: {mid}-{quant}\n"
-        f"    local_subdir: {mid}-{quant}\n"
-        "    size_gb: <float>\n"
-        f"    format: {quant if quant != 'autoround-int4' else 'autoround'}\n"
-        "    status: incubating\n"
-        f"    hf_repo: {repo or '<Org/Repo>'}\n"
-        f"    engine: vllm\n"
-        "    kind: main\n"
-        "    verify_glob: \"*.safetensors\"\n"
-        f"default_weight_variant: {quant}\n"
-        "compatible_drafters: []\n"
-        "vision_capable: <bool>\n"
-    )
 
     note_bits: list[str] = []
     if fit_verdict:
@@ -2408,32 +2426,125 @@ def compute_promote_scaffold(
     note_bits.append("scaffolded from cockpit Promote-to-catalog — VALIDATE before promoting")
     status_note = "; ".join(note_bits)
 
-    registry_entry = (
-        f'    "{registry_slug}": _entry(\n'
-        f'        model="{mid}",\n'
-        f'        weights_variant="{quant}",\n'
-        f'        workload="long-ctx-single",\n'
-        f'        engine="vllm-stable",\n'
-        f'        drafter=None,'
-        + ("  # BYO fine-tune has no MTP head — drop --speculative-config\n" if drop_spec else "\n")
-        + f'        kv_format="fp8_e5m2",\n'
-        f'        tp=2, max_ctx=<int>, max_num_seqs=2, mem_util=0.92,\n'
-        f'        compose_path="{compose_path}",\n'
-        f'        default_port=<NNNN>,                       # MUST equal the compose ${{PORT:-NNNN}}\n'
-        f'        kvcalc_key="{mid}:dual",\n'
-        f'        status="incubating",                       # NEW MODELS START HERE\n'
-        f'        status_note="{status_note}",\n'
-        f'    ),\n'
+    # Registry-entry kwargs — CONCRETE wherever a fact or a safe structural
+    # default exists (the local registry is JSON: a `<int>` placeholder here
+    # would break every emitter). max_ctx falls back to the DERIVER'S OWN
+    # fallback (131072), never invented; the port lands in the documented local
+    # 202xx band, deterministic per model-id, and preflight's port-parity gate
+    # flags a real collision before anything ships.
+    max_ctx = int(arch_spec.get("max_ctx_supported") or 131072)
+    port = 20200 + (zlib.crc32(mid.encode("utf-8")) % 100)
+    entry_kwargs: dict[str, Any] = {
+        "model": mid,
+        "weights_variant": quant,
+        "workload": "long-ctx-single",
+        "engine": "vllm-stable",
+        "drafter": None,
+        "kv_format": "fp8_e5m2",
+        "tp": 2,
+        "max_ctx": max_ctx,
+        "max_num_seqs": 2,
+        "mem_util": 0.92,
+        "compose_path": compose_path,
+        "default_port": port,
+        "kvcalc_key": f"{mid}:dual",
+        "status": "incubating",
+        "status_note": status_note,
+    }
+
+    weights_meta: dict[str, Any] = {
+        "path": f"{mid}-{quant}",
+        "local_subdir": f"{mid}-{quant}",
+        "size_gb": round(float(weights_total_gb), 2) if weights_total_gb else "<float>",
+        "format": quant if quant != "autoround-int4" else "autoround",
+        "status": "incubating",
+        "hf_repo": repo or "<Org/Repo>",
+        "engine": "vllm",
+        "kind": "main",
+        "verify_glob": "*.safetensors",
+    }
+
+    spec: dict[str, Any] = {
+        "model_id": mid,
+        "display_name": f"<Human-readable name — from {repo or '<repo>'}>",
+        "family": "<family-tag>",
+        "arch": arch_spec,
+        "weights": {quant: weights_meta},
+        "default_weight_variant": quant,
+        "compatible_drafters": [],
+        "vision_capable": bool(vision_hint) if vision_hint is not None else None,
+        "compose": {"path": compose_path, "content": compose_text},
+        "registry_entry": {"slug": registry_slug, "kwargs": entry_kwargs},
+    }
+
+    # ── Previews, rendered FROM the spec (one source of truth) ───────────────
+    yaml_lines = [
+        "schema_version: 1",
+        f"id: {mid}",
+        f"display_name: {spec['display_name']}",
+        "family: <family-tag>                    # REQUIRED — real tag "
+        "(qwen3-next-hybrid / gemma4-swa-dense / …), NOT inferred",
+        f"# arch reported by pull-gate: {arch_name or '<unknown>'} — "
+        "deriver facts auto-filled below; fill FAMILY-SPECIFIC extras by hand",
+    ]
+    for key in ("hidden_size", "num_hidden_layers", "num_attn_heads", "num_kv_heads",
+                "head_dim_attn", "max_ctx_supported"):
+        yaml_lines.append(
+            f"{key}: {arch_spec[key]}" if key in arch_spec else f"{key}: <int>"
+        )
+    yaml_lines.append(
+        "valid_tp: " + json.dumps(arch_spec.get("valid_tp") or [1, 2])
     )
+    yaml_lines.append("weights:")
+    yaml_lines.extend(_spec_weights_yaml(quant, weights_meta))
+    yaml_lines.append(f"default_weight_variant: {quant}")
+    yaml_lines.append("compatible_drafters: []")
+    yaml_lines.append(
+        f"vision_capable: {str(bool(vision_hint)).lower()}"
+        if vision_hint is not None
+        else "vision_capable: <bool>"
+    )
+    profile_yaml = "\n".join(yaml_lines) + "\n"
+
+    if layer == "local":
+        # A full JSON object (the exact registry.local.json merge payload) so
+        # the preview IS the artifact content, byte-for-byte.
+        registry_entry = (
+            json.dumps({registry_slug: entry_kwargs}, indent=2, ensure_ascii=False)
+            + "\n"
+        )
+    else:
+        registry_entry = (
+            f'    "{registry_slug}": _entry(\n'
+            + "".join(
+                f"        {k}={_py_literal_entry(v)},\n" for k, v in entry_kwargs.items()
+            )
+            + "    ),\n"
+        )
 
     notes = [
-        "New models start at status='incubating' (ADDING_MODELS.md): hidden from "
-        "switch.sh --list, --force to launch; promote up the enum as it validates.",
-        "Fill every <...> placeholder from config.json + a boot log — the scaffold "
-        "never fabricates arch dims, ports, or sizes.",
-        "After writing: run the FULL guard suite (below) + author CalibrationData "
-        "for the vLLM entry, then verify-full / bench / soak / quality.",
+        "C4-rev: writes target the LOCAL layer (gitignored "
+        "scripts/lib/profiles-local/) — no core catalog file is touched."
+        if layer == "local"
+        else "CORE WRITE: maintainer-only — edits compose_registry.py; requires "
+        "C3_ALLOW_CORE_PROMOTE=1.",
+        "New models start at status='incubating': hidden from switch.sh --list, "
+        "--force to launch; promote up the enum as it validates.",
+        "Fill every remaining <...> placeholder (display_name + family are "
+        "required inline edits below) — the scaffold never fabricates.",
+        "After writing: diagnose-profile.sh + preflight-add-model.sh run "
+        "automatically; the FULL scripts/tests/*.sh suite remains authoritative "
+        "before any commit.",
     ]
+    if max_ctx == 131072 and "max_ctx_supported" not in arch_spec:
+        notes.append(
+            "max_ctx defaulted to the deriver's 131072 fallback (no config.json "
+            "fact) — raise it after reading the model's config."
+        )
+    notes.append(
+        f"default_port {port} is a deterministic LOCAL-band placeholder "
+        "(202xx) — preflight's port-parity gate flags a real collision."
+    )
     if drop_spec:
         notes.append("BYO swap_path flagged drop_spec_config — the row drops the drafter.")
 
@@ -2444,9 +2555,50 @@ def compute_promote_scaffold(
         registry_slug=registry_slug,
         profile_yaml=profile_yaml,
         registry_entry=registry_entry,
-        guard_suite_cmd=["bash", "-c", 'for t in scripts/tests/*.sh; do bash "$t"; done'],
+        guard_suite_cmd=[
+            "bash", "-c",
+            f"bash scripts/diagnose-profile.sh {registry_slug} "
+            f"&& bash scripts/preflight-add-model.sh {registry_slug}",
+        ],
         notes=notes,
+        layer=layer,
+        spec=spec,
     )
+
+
+def _py_literal_entry(v: Any) -> str:
+    """A Python literal for the core-layer _entry(...) preview row."""
+    if v is None:
+        return "None"
+    if isinstance(v, bool):
+        return "True" if v else "False"
+    if isinstance(v, str):
+        return repr(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(_py_literal_entry(x) for x in v) + "]"
+    return repr(v)
+
+
+def _spec_weights_yaml(quant: str, meta: dict[str, Any]) -> list[str]:
+    """The two-space-indented weights.<variant> block of the preview YAML."""
+    lines = [f"  {quant}:"]
+    for k, v in meta.items():
+        lines.append(f"    {k}: {json.dumps(v, ensure_ascii=False)}")
+    return lines
+
+
+def rebase_spec_to_core(spec: dict) -> dict:
+    """Rebase a LOCAL-layer promote spec onto the CORE catalog (maintainer
+    secondary action): engine-slug namespace + curated paths. Pure — returns a
+    copy; the local spec is untouched."""
+    mid = spec["model_id"]
+    quant = spec["default_weight_variant"]
+    short = mid.replace("qwen3.6-", "qwen-").replace("gemma-4-", "gemma-")
+    out = json.loads(json.dumps(spec))  # deep copy of a JSON-shaped dict
+    out["registry_entry"]["slug"] = f"vllm/{short}-dual-{quant}"
+    out["compose"]["path"] = f"models/{mid}/vllm/compose/dual/{quant}/base.yml"
+    out["registry_entry"]["kwargs"]["compose_path"] = out["compose"]["path"]
+    return out
 
 
 # ── UX Batch 5: estate-telemetry parse helpers (pure — fed canned stdout) ─────────

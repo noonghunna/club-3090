@@ -97,6 +97,7 @@ from .data import (
     bench_row_from_corpus_record,
     bench_rows_from_benchmarks_md,
     compute_promote_scaffold,
+    rebase_spec_to_core,
     measured_from_internal_json,
     measured_from_report_md,
     parse_compute_apps,
@@ -440,6 +441,11 @@ class CockpitData:
         # registry-recommended representative per (family, topology).  Refreshed
         # on each ``load_catalog_rows``; empty on the raw-tab fallback path.
         self.catalog_defaults: list[dict] = []
+        # Model-level metadata from the --json ``profiles.models`` section
+        # (display_name / family / active_params_b / vision_capable / hf_repo),
+        # keyed by model id — the model-info popup's local-data source.  Empty
+        # on the raw-tab fallback path (degraded catalog).
+        self.catalog_models: dict[str, dict] = {}
         self._runner: Runner = runner or RealRunner()
         self._logging_enabled = False
         self._detect_endpoint: DetectEndpointFn = detect_endpoint_fn or core_detect_endpoint
@@ -601,9 +607,16 @@ class CockpitData:
             # emitter has no `defaults` array, so the profile-template picker
             # degrades to the status floor (still functional-only).
             self.catalog_defaults = []
+            self.catalog_models = {}
             rows, ferr = await self._load_catalog_rows_fallback()
             if ferr:
                 return [], err
+            # The fallback saved the paint but LOST the --json-only facets
+            # (defaults, model metadata).  Surface WHY instead of silently
+            # degrading: the caller shows this note as a yellow banner while
+            # the reduced-column rows still render.
+            note = f"registry JSON emit failed, showing reduced columns: {err}"
+            return [CatalogEntry(row=r) for r in rows], note[:300]
         else:
             data = data or {}
             rows = [_variant_row_from_dict(d) for d in data.get("variants", [])]
@@ -611,7 +624,10 @@ class CockpitData:
             # the registry's own recommendation per (family, topology).
             d = data.get("defaults")
             self.catalog_defaults = list(d) if isinstance(d, list) else []
-
+            models = (data.get("profiles") or {}).get("models")
+            self.catalog_models = {
+                mid: m for mid, m in (models or {}).items() if isinstance(m, dict)
+            }
         return [CatalogEntry(row=r) for r in rows], None
 
     async def _load_catalog_rows_fallback(self) -> tuple[list[VariantRow], Optional[str]]:
@@ -1518,6 +1534,13 @@ class CockpitData:
         if data is None:
             return ByoResult(repo=repo, profile_like=profile_like, error=err or "no output")
         res = ByoResult.from_dict(repo, profile_like, data)
+        if not res.error and not res.facts:
+            # C4-rev: enrich with the deriver's generic-dense FACTS so ⑤ Promote
+            # can auto-fill the arch dims (pull.sh --json predates the "spec"
+            # block).  Best-effort: any failure keeps facts {} and the scaffold's
+            # <...> placeholders stay placeholders.  Read-only derive — no
+            # download, no write.
+            res.facts = await self._deriver_facts(repo)
         # The evaluate leg is safetensors-only BY DESIGN (the deriver's fit math
         # reads config.json), so a GGUF-only repo aborts `unsupported-format`
         # here even though route-G handles it first-class.  Intercept exactly
@@ -1549,6 +1572,49 @@ class CockpitData:
                 )
         return res
 
+    # C4-rev: read-only deriver probe — emits the generic-dense spec facts
+    # (num_hidden_layers / num_attn_heads / num_kv_heads / head_dim_attn /
+    # max_ctx_supported / weights_total_gb / valid_tp) + a coarse vision hint,
+    # as one JSON object on stdout.  Kept as a separate READ so pull.sh's
+    # --json contract stays byte-stable; a failure yields {} (placeholders).
+    _DERIVER_FACTS_SRC = r"""
+import json, sys
+sys.path.insert(0, ".")
+from scripts.lib.profiles import deriver as _D
+res = _D.derive(sys.argv[1])
+out = dict(res.spec or {})
+_p = res.profile or {}
+for _src, _dst in (
+    ("config_num_hidden_layers", "num_hidden_layers"),
+    ("config_num_attention_heads", "num_attn_heads"),
+    ("config_num_key_value_heads", "num_kv_heads"),
+):
+    out.setdefault(_dst, _p.get(_src))
+try:
+    _cfg, _e = _D._fetch_config_json(sys.argv[1], _D.HttpFetcher())
+    _c = _cfg or {}
+    _tc = _c.get("text_config") or {}
+    _arch = (_c.get("architectures") or [""])[0]
+    out["vision"] = bool(
+        _c.get("vision_config") or _tc.get("vision_config")
+        or "vision" in str(_arch).lower()
+    )
+except Exception:
+    pass
+print(json.dumps(out))
+"""
+
+    async def _deriver_facts(self, repo: str) -> dict:
+        """The deriver's spec facts for a repo, or {} on ANY failure."""
+        try:
+            data, _err = await self._run_json(
+                ["python3", "-c", self._DERIVER_FACTS_SRC, repo],
+                timeout=60.0,
+            )
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
     # GGUF-engine slug prefixes (the registry's engine path segment) — the
     # engines whose sibling composes route-G can clone.  vllm (safetensors)
     # is deliberately absent.
@@ -1577,8 +1643,8 @@ class CockpitData:
         """Card count for a registry slug from its compose path topology segment."""
         path = ""
         try:
-            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
-            entry = COMPOSE_REGISTRY.get(profile_like) or {}
+            from scripts.lib.profiles.compose_registry import get_registry
+            entry = get_registry().get(profile_like) or {}
             path = str(entry.get("compose_path") or "")
         except Exception:
             path = ""
@@ -1837,10 +1903,10 @@ class CockpitData:
         from pathlib import Path as _P
 
         try:
-            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+            from scripts.lib.profiles.compose_registry import get_registry
         except Exception as exc:
             return {"compose_path": "", "compose_yaml": "", "error": f"registry: {exc}"}
-        entry = COMPOSE_REGISTRY.get(profile_like)
+        entry = get_registry().get(profile_like)
         if entry is None:
             return {
                 "compose_path": "", "compose_yaml": "",
@@ -3049,8 +3115,8 @@ class CockpitData:
             import sys as _sys
             if str(self.repo_root) not in _sys.path:
                 _sys.path.insert(0, str(self.repo_root))   # cwd-independent import
-            from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
-            entry = COMPOSE_REGISTRY.get(profile_like)
+            from scripts.lib.profiles.compose_registry import get_registry
+            entry = get_registry().get(profile_like)
             if entry:
                 out["ENGINE"] = str(entry.get("engine", "") or "")
                 txt = (self.repo_root / entry["compose_path"]).read_text(encoding="utf-8")
@@ -4705,51 +4771,75 @@ class CockpitData:
         measurement: Optional[Measurement] = None,
         model_id: str = "",
         sibling_compose_path: str = "",
+        compose_text: str = "",
+        layer: str = "local",
     ) -> PromoteScaffold:
         """COMPUTE + PREVIEW the catalog-promotion scaffold (design §3.5b).
 
-        For a served/validated BYO model, compute a ModelProfile YAML skeleton +
-        a ``compose_registry.py`` ``_entry(...)`` row from facts the app already
-        holds (the BYO pull-gate arch facts in ``byo`` + the Evidence
-        ``measurement`` numbers), match the REAL shapes
-        (``scripts/lib/profiles/models/*.yml`` + ``_entry(...)`` +
-        ``docs/ADDING_MODELS.md``), and attach a GATED hand-off plan.
+        C4-rev: targets the gitignored LOCAL layer by default; ``layer="core"``
+        is the maintainer-gated secondary action.  The spec carries the deriver
+        facts threaded through ``ByoResult.facts`` (auto-filled arch dims);
+        ``display_name`` / ``family`` stay REQUIRED inline edits in
+        ``PromoteScaffoldScreen``.
 
-        In THIS phase: compute + preview ONLY.  The write-into-``scripts/`` + the
-        guard-suite run is the attached ``write_plan`` (built by
-        ``promote_write_plan``), which is MOCKED / never-executed and NEVER
-        auto-fires.  This method does NOT touch the filesystem."""
+        Compute + preview ONLY — this method does NOT touch the filesystem.
+        The gated write is the attached ``write_plan`` (built by
+        ``promote_write_plan``), which NEVER auto-fires."""
         scaffold = compute_promote_scaffold(
             byo=byo,
             measurement=measurement,
             model_id=model_id,
             sibling_compose_path=sibling_compose_path,
+            compose_text=compose_text,
+            layer=layer,
         )
         if scaffold.computed:
-            scaffold.write_plan = self.promote_write_plan(scaffold)
+            scaffold.write_plan = self.promote_write_plan(scaffold, layer=layer)
         return scaffold
 
-    def promote_write_plan(self, scaffold: PromoteScaffold) -> ActionPlan:
-        """Build the GATED, MOCK-ONLY write+guard ActionPlan for a scaffold.
+    def promote_write_plan(
+        self,
+        scaffold: PromoteScaffold,
+        *,
+        layer: str = "local",
+        spec: Optional[dict] = None,
+    ) -> ActionPlan:
+        """Build the GATED write+validate ActionPlan for a scaffold (C4-rev).
 
-        ⚠️  REPO MUTATION — NEVER auto-fired / executed this phase.  This would
-        (a) write the profile YAML + registry row into ``scripts/lib/profiles/``
-        and (b) run the guard suite (``for t in scripts/tests/*.sh``).  Because it
-        mutates ``scripts/`` (a repo write) it is built but NEVER executed live —
-        ``requires_confirm=True``; tests assert it is mock-only and never reaches
-        the write runner.  It does NOT claim a GPU → ``requires_reconcile=False``.
+        ⚠️  REPO MUTATION — NEVER auto-fired.  ``requires_confirm=True`` routes
+        it through ConfirmActionScreen; it does NOT claim a GPU →
+        ``requires_reconcile=False``.
 
-        The cmd is a guard-suite invocation as a PLACEHOLDER for the gated
-        action; the actual file-write is performed by the (future) promote tool,
-        not auto-written by the cockpit (do NOT auto-write into scripts/)."""
+        cmd (per plan): promote.py (the executor) && diagnose-profile.sh <slug>
+        && preflight-add-model.sh <slug> — the P2 preflight gate runs right
+        after the write.  The machine-readable spec rides in the child env as
+        ``C3_PROMOTE_SPEC`` (merged over os.environ by execute_action), so the
+        plan stays inspectable without a giant argv.
+
+        layer: "local" (default — the gitignored community layer) or "core"
+        (maintainer-only curated catalog).  Core does NOT inject
+        C3_ALLOW_CORE_PROMOTE — that flag must exist in the USER'S environment;
+        both the screen and promote.py assert it."""
+        base_spec = spec if spec is not None else dict(scaffold.spec or {})
+        if layer == "core":
+            base_spec = rebase_spec_to_core(base_spec)
+        slug = (base_spec.get("registry_entry") or {}).get("slug", "") or scaffold.registry_slug
+        promote_cmd = (
+            "python3 scripts/lib/profiles/promote.py "
+            f"--spec-env C3_PROMOTE_SPEC --layer {layer}"
+        )
+        post_cmd = (
+            f"bash scripts/diagnose-profile.sh {slug} "
+            f"&& bash scripts/preflight-add-model.sh {slug}"
+        )
         return ActionPlan(
             kind="promote_catalog",
-            cmd=list(scaffold.guard_suite_cmd)
-            or ["bash", "-c", 'for t in scripts/tests/*.sh; do bash "$t"; done'],
+            cmd=["bash", "-c", f"{promote_cmd} && {post_cmd}"],
+            env={"C3_PROMOTE_SPEC": json.dumps(base_spec, ensure_ascii=False)},
             description=(
-                f"promote {scaffold.model_id} → catalog "
-                f"(write {scaffold.profile_path} + registry {scaffold.registry_slug}, "
-                "then guard suite)"
+                f"promote {scaffold.model_id} → {layer.upper()} layer "
+                f"(write {scaffold.profile_path} + registry {slug}, "
+                "then diagnose + preflight)"
             ),
             requires_reconcile=False,    # no GPU contention — a repo write
             requires_confirm=True,       # repo mutation — confirm, never auto

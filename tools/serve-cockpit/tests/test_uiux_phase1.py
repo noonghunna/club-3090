@@ -209,7 +209,9 @@ class TestPhase14PromotePreview:
         assert sc.computed
         screen = PromoteScaffoldScreen(sc)
         body = screen._body_text()
-        assert "preview only" in body.lower() or "no catalog write" in body.lower()
+        # C4-rev honesty badge: the modal names its write target (LOCAL layer by
+        # default) + the gated core action instead of the old "preview only".
+        assert "write local layer" in body.lower() or "no catalog write" in body.lower()
 
     def test_help_promote_is_preview(self):
         from club3090_cockpit.app import HelpScreen

@@ -49,7 +49,11 @@ for _stream in (sys.stdout, sys.stderr):
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY, DEFAULTS  # noqa: E402
+from scripts.lib.profiles.compose_registry import DEFAULTS, get_registry  # noqa: E402
+
+# C4-rev: the MERGED catalog view (core + the gitignored scripts/lib/profiles-local/
+# layer). With no local layer this IS COMPOSE_REGISTRY — byte-identical output.
+REG = get_registry()
 
 
 def die(key: str, message: str) -> None:
@@ -129,7 +133,7 @@ def ctx_label(entry) -> str:
     return label
 
 
-for key, entry in COMPOSE_REGISTRY.items():
+for key, entry in REG.items():
     cp = entry["compose_path"]
     if "/compose/" not in cp:
         die(key, f"compose_path lacks /compose/: {cp}")
@@ -307,9 +311,9 @@ from pathlib import Path
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from scripts.lib.profiles.compose_registry import (  # noqa: E402
-    COMPOSE_REGISTRY,
     curated_default_target,
     default_arch_gated,
+    get_registry,
     model_of_slug,
     slug_topology,
 )
@@ -317,7 +321,7 @@ from scripts.lib.profiles.compose_registry import (  # noqa: E402
 slug, sm = sys.argv[2], sys.argv[3]
 if not default_arch_gated(slug, sm):
     raise SystemExit(0)
-entry = COMPOSE_REGISTRY.get(slug, {})
+entry = get_registry().get(slug, {})
 allow = ", ".join("sm_" + a for a in entry.get("default_arch_allow", []))
 model = model_of_slug(slug)
 alt = curated_default_target(model, slug_topology(slug) or "single", sm) if model else None
@@ -373,8 +377,8 @@ from pathlib import Path
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from scripts.lib.profiles.compose_registry import (  # noqa: E402
-    COMPOSE_REGISTRY,
     FUNCTIONAL_STATUSES,
+    get_registry,
     community_default_target,
     curated_default_target,
     model_of_slug,
@@ -397,7 +401,7 @@ family = _topology_family(topology)
 #    topology matches the detected one · it is NOT (NA). Any failure → warn +
 #    fall through to the curated path (never block a launch — §6).
 if pin_value:
-    entry = COMPOSE_REGISTRY.get(pin_value)
+    entry = get_registry().get(pin_value)
     if entry is None:
         warn(
             f"pinned default {pin_value!r} ({pin_key}) is not a known slug — "
@@ -533,7 +537,9 @@ sys.modules["_c3_tui_registry"] = _tui_registry
 _spec.loader.exec_module(_tui_registry)
 
 from scripts.lib.profiles.compat import load_profiles  # noqa: E402
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY, DEFAULTS  # noqa: E402
+from scripts.lib.profiles.compose_registry import DEFAULTS, get_registry  # noqa: E402
+# C4-rev: merged view (core + local layer); pristine checkout ⇒ identical output.
+REG = get_registry()
 from scripts.lib.profiles.launch_compat import ProfileError, resolve_variant_pin  # noqa: E402
 
 _tab_path = os.environ.get("REGISTRY_TAB_FILE", "")
@@ -668,32 +674,32 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # COMPOSE_REGISTRY so the cockpit's divergence badge compares the
             # probed running ctx against the slug's CONFIGURED ctx as an exact int,
             # never round-tripping through the colloquial ÷1000 label.
-            "configured_ctx": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("max_ctx"),
+            "configured_ctx": (REG.get(d["slug"], {}) or {}).get("max_ctx"),
             # KV-cache format from the registry (for the catalog KV column) —
             # int8_per_token_head / fp8_e4m3 / fp8_e5m2 / turboquant_3bit_nc / bf16 / q*.
-            "kv_format": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("kv_format"),
+            "kv_format": (REG.get(d["slug"], {}) or {}).get("kv_format"),
             # Activation compute format (for the catalog act column, #723) —
             # "16bit" default (fp16/bf16 per compose --dtype) / "int8" / "fp8".
-            "act_format": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("act_format"),
-            "chat_template": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("chat_template"),
+            "act_format": (REG.get(d["slug"], {}) or {}).get("act_format"),
+            "chat_template": (REG.get(d["slug"], {}) or {}).get("chat_template"),
             # W4A8-int8-activation capability (c3 serve-confirm checkbox, #609) —
             # True when the compose is wired + weights are positive-sym int4.
-            "act8_capable": bool((COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("act8_capable")),
+            "act8_capable": bool((REG.get(d["slug"], {}) or {}).get("act8_capable")),
             # Weight-offload backend (catalog "offload" column) — None = resident
             # (default) / "uva" / "n-cpu-moe" / "prefetch". Laguna 118B-MoE slugs.
-            "offload": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("offload"),
+            "offload": (REG.get(d["slug"], {}) or {}).get("offload"),
             # Minimum HOST RAM (GB) for weight-offload slugs — a HARD GATE, surfaced so
             # c3 can show it BEFORE selection rather than at launch refusal.
-            "host_ram_gb": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("host_ram_gb"),
+            "host_ram_gb": (REG.get(d["slug"], {}) or {}).get("host_ram_gb"),
             # Weights quant_label + FORMAT from the model profile (catalog
             # Weights column fallbacks) — see _weights_meta() above.
             "weights_quant_label": _weights_meta(
-                (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("model") or "",
-                (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("weights_variant") or "",
+                (REG.get(d["slug"], {}) or {}).get("model") or "",
+                (REG.get(d["slug"], {}) or {}).get("weights_variant") or "",
             )[0],
             "weights_format": _weights_meta(
-                (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("model") or "",
-                (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("weights_variant") or "",
+                (REG.get(d["slug"], {}) or {}).get("model") or "",
+                (REG.get(d["slug"], {}) or {}).get("weights_variant") or "",
             )[1],
             # Per-slug download artifacts BEYOND the core weights_variant — the
             # extra weight-variant keys (a DFlash draft / an mmproj vision
@@ -702,14 +708,14 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # actually serves; without them it reads "present" then fails to boot
             # for the missing companion.  Bare keys, scoped to the row's model.
             "weights_companions": list(
-                (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("weights_companions") or []
+                (REG.get(d["slug"], {}) or {}).get("weights_companions") or []
             ),
             # Drafter / vision facets (display + companion derivation): drafter is
             # the registry's per-slug spec-dec drafter id; vision is derived from
             # the vision-coding workload (there is no separate vision field).
-            "drafter": (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("drafter"),
+            "drafter": (REG.get(d["slug"], {}) or {}).get("drafter"),
             "vision": (
-                (COMPOSE_REGISTRY.get(d["slug"], {}) or {}).get("workload") == "vision-coding"
+                (REG.get(d["slug"], {}) or {}).get("workload") == "vision-coding"
             ),
             "status_note": d["status_note"],
             "source": "curated",
@@ -752,6 +758,12 @@ def _model(m):
     default_meta = m.weights.get(m.default_weight_variant) or {}
     return {
         "family": m.family,
+        # ModelProfile carries no description field today; emit None so the
+        # key stays stable across models.
+        "description": None,
+        "display_name": m.display_name,
+        "active_params_b": m.active_params_b,
+        "vision_capable": m.vision_capable,
         "valid_tp": list(m.valid_tp),
         "max_ctx": m.max_ctx_supported,
         "hf_repo": default_meta.get("hf_repo"),
