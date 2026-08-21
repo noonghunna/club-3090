@@ -578,6 +578,26 @@ def _compose_image_default(compose_path: str):
     m = _IMG_RE.search(txt)
     return m.group(1) if m else None
 
+# First `--served-model-name` argument in the compose — PLAIN-TEXT parse (no
+# yaml needed; same regex shape setup.sh's old grep used). The
+# `${VAR:-default}` env-fallback form unwraps to its default so consumers get
+# the name a stock `docker compose up` actually serves. None when the compose
+# sets no override (llama.cpp-family slugs serve under their default model id).
+_SERVED_RX = _re.compile(r"--served-model-name\s+(?:-\s+)?(\S+)")
+
+
+def _compose_served_name(compose_path: str):
+    try:
+        txt = (root / compose_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = _SERVED_RX.search(txt)
+    if not m:
+        return None
+    raw = m.group(1)
+    unwrapped = _re.fullmatch(r"\$\{[A-Z_0-9]+:-(.+)\}", raw)
+    return unwrapped.group(1) if unwrapped else raw
+
 
 def _current_pin(slug: str, compose_path: str):
     """The pin a launcher-started serve actually runs TODAY: the engine
@@ -666,6 +686,13 @@ for vr in _tui_registry.parse_variant_rows(tab):
             "engine": d["engine"],
             "kvcalc_key": d["kvcalc_key"],
             "container": d["container"],
+            # The name this slug's OpenAI API serves under (--served-model-name):
+            # a registry override (_entry served_name=) wins when set; otherwise
+            # parsed plain-text from the compose; None when neither applies.
+            "served_name": (
+                (REG.get(d["slug"], {}) or {}).get("served_name")
+                or _compose_served_name(d["compose_path"])
+            ),
             "compose_path": d["compose_path"],
             "status": d["status"],
             "ctx_label": d["ctx_label"],

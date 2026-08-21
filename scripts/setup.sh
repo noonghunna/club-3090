@@ -1087,14 +1087,17 @@ print(f"SAMPLE_CONTAINER={q(pick.get('container'))}")
 print(f"SAMPLE_PORT={q(pick.get('port'))}")
 print(f"SAMPLE_COMPOSE_PATH={q(pick.get('compose_path'))}")
 
-served = ""
-try:
-    with open(os.path.join(root, pick.get("compose_path") or ""), encoding="utf-8") as fh:
-        m = re.search(r"--served-model-name\s+(?:-\s+)?(\S+)", fh.read())
-    if m:
-        served = m.group(1)
-except OSError:
-    pass
+# served_name is a first-class registry fact now (registry-emit --json); the
+# direct compose grep below stays only as the fallback for a null field.
+served = pick.get("served_name") or ""
+if not served:
+    try:
+        with open(os.path.join(root, pick.get("compose_path") or ""), encoding="utf-8") as fh:
+            m = re.search(r"--served-model-name\s+(?:-\s+)?(\S+)", fh.read())
+        if m:
+            served = m.group(1)
+    except OSError:
+        pass
 print(f"SAMPLE_MODEL_NAME={q(served)}")
 
 force = status not in FUNCTIONAL

@@ -86,6 +86,10 @@ VARIANT_KEYS = {
     # c3 catalog offload column: weight-offload backend — None (resident, the
     # default) / "uva" / "n-cpu-moe" / "prefetch".
     "offload", "host_ram_gb",
+    # The name the slug's OpenAI API serves under (--served-model-name), emitted
+    # as a first-class fact: registry override wins, else plain-text compose
+    # parse, else None (llamacpp-family slugs).
+    "served_name",
 }
 v0 = d["variants"][0]
 need(set(v0.keys()) == VARIANT_KEYS,
@@ -100,6 +104,56 @@ need(v0["source"] == "curated", f"variant.source default must be 'curated' (got 
 # configured_ctx is an int (or None) — the exact registry max_ctx behind ctx_label.
 need(v0["configured_ctx"] is None or isinstance(v0["configured_ctx"], int),
      f"variant.configured_ctx must be int|None (got {type(v0['configured_ctx']).__name__})")
+
+# --- served_name: first-class emitted fact ------------------------------------
+# Precedence: a registry override (_entry served_name=) wins when set; otherwise
+# the compose's --served-model-name parsed PLAIN-TEXT (${VAR:-default} unwrapped
+# to its default); None when neither applies. Asserted against an INDEPENDENT
+# parse here so a parser drift on either side fails loudly.
+need(all("served_name" in v for v in d["variants"]),
+     "some variant is missing the served_name key")
+
+import re
+
+sys.path.insert(0, os.getcwd())
+from scripts.lib.profiles.compose_registry import get_registry
+
+_REG = get_registry()
+_SERVED_RX = re.compile(r"--served-model-name\s+(?:-\s+)?(\S+)")
+
+
+def _compose_served(compose_path):
+    try:
+        txt = Path(compose_path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = _SERVED_RX.search(txt)
+    if not m:
+        return None
+    raw = m.group(1)
+    unwrapped = re.fullmatch(r"\$\{[A-Z_0-9]+:-(.+)\}", raw)
+    return unwrapped.group(1) if unwrapped else raw
+
+
+for v in d["variants"]:
+    expected = (_REG.get(v["slug"], {}) or {}).get("served_name") \
+        or _compose_served(v["compose_path"])
+    need(v["served_name"] == expected,
+         f"{v['slug']}: served_name {v['served_name']!r} != expected {expected!r}")
+
+by_slug = {v["slug"]: v for v in d["variants"]}
+# Sample across engines: a stock vllm slug + the ${SERVED_NAME:-default}
+# env-fallback form (must unwrap to the default, not stay braced).
+need(by_slug.get("vllm/qwen38-27b-dual-fast", {}).get("served_name") == "qwen3.8-27b",
+     "vllm/qwen38-27b-dual-fast: served_name != qwen3.8-27b")
+need(by_slug.get("vllm/gemma-12b-dual-bf16-mtp", {}).get("served_name") == "gemma-4-12b",
+     "vllm/gemma-12b-dual-bf16-mtp: ${SERVED_NAME:-...} did not unwrap to gemma-4-12b")
+# Null-safe: composes with no --served-model-name (llama.cpp family) emit None,
+# never "" / "None" / a braced literal.
+nulls = [v for v in d["variants"] if v["served_name"] is None]
+need(nulls, "expected at least one null served_name (llamacpp-family slugs)")
+need(all(v["served_name"] not in ("", "None") for v in d["variants"]),
+     "a served_name degenerated to ''/'None' instead of a real value or null")
 
 # defaults
 DEFAULT_KEYS = {"model", "engine", "topology", "slug", "source"}

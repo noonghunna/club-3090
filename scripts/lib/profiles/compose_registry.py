@@ -127,6 +127,11 @@ def _entry(
     default_arch_allow=None,
     status="production",
     status_note=None,
+    # Data-first override for the emitted served_name fact: when set, the
+    # --json emit reports THIS as the slug's OpenAI-API --served-model-name
+    # instead of parsing the compose file (parse stays the fallback). Leave
+    # None for existing entries — the compose remains the source of truth.
+    served_name=None,
     category=None,
     weights_companions=None,
 ):
@@ -192,6 +197,8 @@ def _entry(
         entry["default_arch_allow"] = list(default_arch_allow)
     if category is not None:
         entry["category"] = category
+    if served_name is not None:
+        entry["served_name"] = served_name
     return entry
 
 
