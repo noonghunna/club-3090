@@ -2408,6 +2408,13 @@ class ConfirmActionScreen(ModalScreen):
         Binding("f", "force", "Force", show=True, priority=True),
         # W4A8 int8-activation opt-in (#609) — shown only for act8-capable serve slugs.
         Binding("a", "toggle_act8", "int8 acts", show=True),
+        # Tri-state thinking toggle (#1014 L3) — shown only for slugs whose
+        # registry row carries a 'thinking' sampler profile.  [t] cycles
+        # inherit → force-on → force-off; [r] resets the sampler to the card
+        # row (offered while thinking resolves ON).  Keys checked against this
+        # modal's existing set (enter/k/f/a/escape): t and r are free.
+        Binding("t", "cycle_thinking", "thinking", show=True),
+        Binding("r", "reset_sampler", "reset sampler", show=True),
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
@@ -2436,6 +2443,14 @@ class ConfirmActionScreen(ModalScreen):
             True if (_cap and self._act8_ships_int8())
             else _cap and self._act8_pref_default()
         )
+        # Tri-state thinking toggle (#1014 L3) — per-launch, SESSION-SCOPED.
+        # The .env pin precedent (switch.sh --set-default → CLUB3090_DEFAULT_<MODEL>)
+        # has no THINKING counterpart any resolver reads; writing
+        # CLUB3090_THINKING_<MODEL> anyway would be c3-only state switch.sh
+        # ignores, so the choice lives for THIS modal only and defaults to
+        # inherit (the entrypoint's own ENABLE_THINKING=false default).
+        self._thinking: str = "inherit"          # inherit | on | off
+        self._sampler_reset: bool = False        # [r] card-defaults pin (below)
 
     def _act8_ships_int8(self) -> bool:
         """True iff this slug SHIPS int8 activations (registry act_format ==
@@ -2486,6 +2501,179 @@ class ConfirmActionScreen(ModalScreen):
         if self._act8_ships_int8():
             return "inverted" if self._act8_gate_capable() else "fixed"
         return "optin"
+
+    # ── tri-state thinking toggle (#1014 L3) ──────────────────────────────────────
+    #
+    # For slugs whose registry row carries a 'thinking' sampler profile (L2),
+    # the serve-confirm offers inherit / force-on / force-off.  Injection rides
+    # the SAME env-prefix path as the int8 knob (#609): `env K=V bash
+    # scripts/switch.sh …` → compose passthrough (`- ENABLE_THINKING=${ENABLE_THINKING:-false}`)
+    # → the entrypoint picks the matching model-card sampler row (#984/#1014 L1).
+    #   inherit → NO env injected: the entrypoint's own default applies.
+    #   on      → ENABLE_THINKING=true  (thinking row: temp/top_p/presence).
+    #   off     → ENABLE_THINKING=false — EXPLICIT, per the #1010 lesson: if the
+    #             user's shell exports ENABLE_THINKING=true, inherit would ride
+    #             it in; force-off pins the instruct row regardless.
+    # No model ships think-default today, so "resolved thinking" == force-on;
+    # an inherit+think-default model would slot in here without shape change.
+
+    _THINKING_CYCLE = ("inherit", "on", "off")
+    # The sampler vars the qwen3.8 composes pass through and the entrypoint's
+    # `:=` row-defaults key on.  A non-empty value in the cockpit's OWN shell
+    # rides the passthrough and WINS over both card rows — that is the explicit
+    # override [r] clears.
+    _SAMPLER_OVR_VARS = ("TEMP", "TEMPERATURE", "TOP_P", "TOP_K", "PRESENCE_PENALTY")
+
+    def _thinking_profiles(self) -> Optional[dict]:
+        """The slug's 'thinking' sampler row from the registry (L2 emit join);
+        None when absent → no toggle rendered (#1014: profile-less slugs are
+        unchanged)."""
+        row = getattr(getattr(self._serve_ctx, "entry", None), "row", None)
+        prof = getattr(row, "sampler_profiles", None)
+        if not isinstance(prof, dict):
+            return None
+        trow = prof.get("thinking")
+        return trow if isinstance(trow, dict) and trow else None
+
+    def _thinking_capable(self) -> bool:
+        """True iff this is a START-mode serve of a slug WITH a thinking
+        profile.  STOP/download modes never offer launch knobs."""
+        ctx = self._serve_ctx
+        return bool(
+            ctx is not None
+            and ctx.mode == "start"
+            and ctx.entry is not None
+            and self._thinking_profiles() is not None
+        )
+
+    def _thinking_resolved_on(self) -> bool:
+        """True iff the RESOLVED mode is thinking.  No registry entry ships
+        think-default today, so this is force-on only; an inherit state on a
+        hypothetical think-default model would resolve here too."""
+        return self._thinking_capable() and (
+            self._thinking == "on"
+            or (self._thinking == "inherit" and self._ships_think_default())
+        )
+
+    @staticmethod
+    def _ships_think_default() -> bool:
+        """Whether any current registry entry defaults thinking ON: none do
+        (every shipped compose pins enable_thinking:false).  Kept as a named
+        seam so the resolved-mode predicate reads honestly."""
+        return False
+
+    def action_cycle_thinking(self) -> None:
+        """[t] → cycle inherit → force-on → force-off → inherit.  No-op where
+        the card binds no [t] (check_action hides the key there)."""
+        if not self._thinking_capable():
+            return
+        i = self._THINKING_CYCLE.index(self._thinking)
+        nxt = self._THINKING_CYCLE[(i + 1) % len(self._THINKING_CYCLE)]
+        self._thinking = nxt
+        if nxt != "on":
+            self._sampler_reset = False   # the reset line only shows while ON
+        self._render_serve_card()
+
+    def action_reset_sampler(self) -> None:
+        """[r] → pin the launch to the card's sampler row by clearing inherited
+        TEMP/TOP_P/PRESENCE overrides (offered while thinking resolves ON)."""
+        if not self._thinking_resolved_on():
+            return
+        self._sampler_reset = True
+        self._render_serve_card()
+
+    def _thinking_env_pairs(self) -> list[str]:
+        """ENABLE_THINKING pairs per toggle state: [] for inherit (no env — the
+        entrypoint's own false default applies), true/false for the forced
+        states (both EXPLICIT — see the #1010 note above)."""
+        if not self._thinking_capable():
+            return []
+        if self._thinking == "on":
+            return ["ENABLE_THINKING=true"]
+        if self._thinking == "off":
+            return ["ENABLE_THINKING=false"]
+        return []
+
+    def _sampler_overrides(self) -> dict:
+        """Non-empty sampler env INHERITED from the cockpit's own shell — these
+        ride the compose passthrough into the container and beat both card rows
+        (`:=` only fills unset/null).  {} when nothing is exported."""
+        if not self._thinking_capable():
+            return {}
+        import os as _os
+
+        out: dict = {}
+        for var in self._SAMPLER_OVR_VARS:
+            val = str(_os.environ.get(var, "") or "").strip()
+            if val:
+                out[var] = val
+        return out
+
+    def _sampler_reset_pairs(self) -> list[str]:
+        """Empty-string pins neutralising inherited sampler overrides for THIS
+        launch: compose passes `TEMP=` through as empty and the entrypoint's
+        `${TEMP:=…}` treats empty as null → the card row applies.  Only emitted
+        when the reset is armed AND something was actually inherited (pinning
+        empties with nothing inherited would just be noise)."""
+        ovr = self._sampler_overrides()
+        if not (self._sampler_reset and self._thinking_resolved_on() and ovr):
+            return []
+        return [f"{var}=" for var in ovr]
+
+    def _fmt_sampler_val(self, v: Any) -> str:
+        """Compact numeric for a card sampler cell ('1' / '0.95'); '?' when the
+        registry row carries something non-numeric (never fabricate)."""
+        try:
+            return f"{float(v):g}"
+        except (TypeError, ValueError):
+            return "?"
+
+    def _thinking_card_lines(self) -> list[str]:
+        """The serve-card lines for the thinking knob — pure over modal state,
+        so tests assert the rendered contract directly.  [] where the knob is
+        not offered (profile-less slug / non-START mode) → no toggle rendered."""
+        if not self._thinking_capable():
+            return []
+        prof = self._thinking_profiles() or {}
+        lines: list[str] = []
+        if self._thinking == "inherit":
+            lines.append(
+                "  [bold]thinking[/bold] [dim]inherit[/dim] — no env injected "
+                "(entrypoint default: off → instruct row) · [t] force-on"
+            )
+            return lines
+        if self._thinking == "on":
+            lines.append(
+                "  [bold]thinking[/bold] [green]FORCE-ON[/green] "
+                "([green]ENABLE_THINKING=true[/green]) · [t] cycle"
+            )
+            lines.append(
+                f"  [bold]sampler[/bold] thinking row: temp "
+                f"{self._fmt_sampler_val(prof.get('temperature'))} · top_p "
+                f"{self._fmt_sampler_val(prof.get('top_p'))} · presence "
+                f"{self._fmt_sampler_val(prof.get('presence_penalty'))}"
+                "  [dim](model card)[/dim]"
+            )
+            ovr = self._sampler_overrides()
+            if self._sampler_reset or not ovr:
+                lines.append(
+                    "  [bold]sampler[/bold] card defaults apply"
+                    + (" — inherited overrides cleared" if self._sampler_reset else "")
+                    + " · [r] reset to card defaults"
+                )
+            else:
+                shown = ", ".join(f"{k}={v}" for k, v in sorted(ovr.items()))
+                lines.append(
+                    "  [yellow]⚠ shell overrides beat the card row:[/yellow] "
+                    f"{shown} · [r] reset to card defaults"
+                )
+            return lines
+        lines.append(
+            "  [bold]thinking[/bold] FORCE-OFF "
+            "([yellow]ENABLE_THINKING=false[/yellow] — pins the instruct row even "
+            "if the shell exports true) · [t] cycle"
+        )
+        return lines
 
     # ── presentation predicates ───────────────────────────────────────────────────
 
@@ -2749,6 +2937,10 @@ class ConfirmActionScreen(ModalScreen):
                     "hardcodes [green]VLLM_MARLIN_INPUT_DTYPE=int8[/green], no launch "
                     f"knob ⚑{learn})"
                 )
+            # Tri-state thinking toggle (#1014 L3) — rendered ONLY for slugs
+            # whose registry row carries a 'thinking' sampler profile.
+            if self._thinking_capable():
+                lines.extend(self._thinking_card_lines())
             note = (entry.status_note or "").strip()
             if note:
                 lines.append(f"  [bold]caveat[/bold] [yellow]{note}[/yellow]")
@@ -2994,11 +3186,20 @@ class ConfirmActionScreen(ModalScreen):
             # the classic opt-in OR the inverted ship-int8 toggle (#609/#1010).
             if action == "toggle_act8":
                 return self._act8_mode() in ("optin", "inverted")
+            # Tri-state thinking toggle (#1014 L3): [t] only on a START-mode
+            # serve of a slug WITH a 'thinking' sampler profile; [r] only while
+            # the resolved mode is thinking (the reset line's home).
+            if action == "cycle_thinking":
+                return self._thinking_capable()
+            if action == "reset_sampler":
+                return self._thinking_resolved_on()
             # confirm/force never apply in serve mode.
             if action in ("confirm", "force"):
                 return False
             return True
         if action == "toggle_act8":
+            return False
+        if action in ("cycle_thinking", "reset_sampler"):
             return False
         if action == "confirm":
             return bool(resolved and rec.safe)
@@ -3096,15 +3297,30 @@ class ConfirmActionScreen(ModalScreen):
 
     def _commit(self, *, force: bool) -> None:
         plan = self._plan
-        # W4A8 (#609/#1010): when the toggle deviates from the slug's shipped
-        # default, inject its env into the serve cmd BEFORE the force re-issue
-        # (so _with_force still finds the switch.sh positional last).
-        pairs = self._act8_env_prefix() if plan.kind == "serve" else []
+        # Launch-knob env (#609/#1010 int8 · #1014 L3 thinking): when a toggle
+        # deviates from the slug's shipped default, inject its env into the
+        # serve cmd BEFORE the force re-issue (so _with_force still finds the
+        # switch.sh positional last).  All three sources share ONE `env …`
+        # prefix; _with_act8_env is idempotent per pair.
+        pairs: list[str] = []
+        tags: list[str] = []
+        if plan.kind == "serve":
+            act8 = self._act8_env_prefix()
+            if act8:
+                pairs += act8
+                tags.append("+int8-acts" if act8[0].startswith("VLLM_") else "-int8-acts")
+            think = self._thinking_env_pairs()
+            if think:
+                pairs += think
+                tags.append("+thinking" if think[0].endswith("true") else "-thinking")
+            reset = self._sampler_reset_pairs()
+            if reset:
+                pairs += reset
+                tags.append("card-defaults-sampler")
         if pairs:
-            tag = "+int8-acts" if pairs[0].startswith("VLLM_") else "-int8-acts"
             plan = ActionPlan(
                 kind=plan.kind, cmd=self._with_act8_env(plan.cmd, pairs),
-                description=plan.description + " " + tag,
+                description=plan.description + " " + " ".join(tags),
                 is_write=plan.is_write, requires_reconcile=plan.requires_reconcile,
                 force=plan.force, force_reason=plan.force_reason,
             )

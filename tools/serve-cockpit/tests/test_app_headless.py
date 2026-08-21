@@ -1099,6 +1099,185 @@ class TestNavNodesExist:
         assert broken._act8_gate_capable() is False
         assert broken._act8_mode() == "fixed"
 
+    # ── #1014 Layer 3: the tri-state thinking toggle ─────────────────────────────
+
+    _THINKING_PROFILES = {
+        "instruct": {"temperature": 0.7, "top_p": 0.80, "top_k": 20,
+                     "min_p": 0.0, "presence_penalty": 1.5,
+                     "repetition_penalty": 1.0},
+        "thinking": {"temperature": 1.0, "top_p": 0.95, "top_k": 20,
+                     "min_p": 0.0, "presence_penalty": 0.0,
+                     "repetition_penalty": 1.0},
+    }
+
+    def _thinking_modal(self, profiles="yes", mode="start", tmp_path=None):
+        """A ConfirmActionScreen built without mounting (the proven act8-test
+        pattern). ``profiles``: "yes" → thinking row present, None → absent."""
+        from club3090_cockpit.app import ConfirmActionScreen, ServeContext
+        from club3090_cockpit.data import ActionPlan, CatalogEntry
+        from club3090_cockpit.services import _variant_row_from_dict
+
+        d = {"slug": "vllm/qwen38-27b-dual-max", "port": 8010}
+        if profiles == "yes":
+            d["sampler_profiles"] = self._THINKING_PROFILES
+        row = _variant_row_from_dict(d)
+        m = ConfirmActionScreen.__new__(ConfirmActionScreen)
+        m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", d["slug"]])
+        m._serve_ctx = ServeContext(mode=mode, entry=CatalogEntry(row=row))
+        m._repo_root = tmp_path
+        m._act8_gate = None
+        m._act8_on = False
+        m._thinking = "inherit"
+        m._sampler_reset = False
+        m._reconcile = None
+        return m
+
+    def test_thinking_tri_state_cycle_and_env_per_state(self, tmp_path):
+        """#1014 L3: [t] cycles inherit → on → off → inherit; each state injects
+        exactly its env (inherit → NOTHING, on/off → EXPLICIT true/false per the
+        #1010 lesson), and the commit-composed cmd prepends it before switch.sh."""
+        from club3090_cockpit.app import ConfirmActionScreen
+
+        m = self._thinking_modal(tmp_path=tmp_path)
+        assert ConfirmActionScreen._THINKING_CYCLE == ("inherit", "on", "off")
+        assert m.check_action("cycle_thinking", ()) is True
+        assert m.check_action("reset_sampler", ()) is False   # inherit ≠ resolved-on
+
+        # inherit → no env at all (entrypoint's ENABLE_THINKING=false default)
+        assert m._thinking_env_pairs() == []
+
+        m.action_cycle_thinking()                              # → on
+        assert m._thinking == "on"
+        assert m._thinking_env_pairs() == ["ENABLE_THINKING=true"]
+        assert m.check_action("reset_sampler", ()) is True     # resolved-on offers [r]
+        cmd = m._with_act8_env(m._plan.cmd, m._thinking_env_pairs())
+        assert cmd[:3] == ["env", "ENABLE_THINKING=true", "bash"], cmd
+
+        m.action_cycle_thinking()                              # → off
+        assert m._thinking == "off" and m._sampler_reset is False
+        assert m._thinking_env_pairs() == ["ENABLE_THINKING=false"]
+        cmd2 = m._with_act8_env(m._plan.cmd, m._thinking_env_pairs())
+        assert cmd2[:3] == ["env", "ENABLE_THINKING=false", "bash"]
+
+        m.action_cycle_thinking()                              # → inherit
+        assert m._thinking == "inherit" and m._thinking_env_pairs() == []
+
+    def test_thinking_card_shows_resolved_sampler_row_when_on(self, tmp_path):
+        """#1014 L3: while the resolved mode is thinking, the card shows the
+        registry 'thinking' row (temp/top_p/presence) near the toggle; inherit
+        shows no sampler row; force-off pins the instruct row explicitly."""
+        m = self._thinking_modal(tmp_path=tmp_path)
+        inherit_lines = m._thinking_card_lines()
+        assert any("inherit" in ln and "[t]" in ln for ln in inherit_lines)
+        assert not any("temp" in ln for ln in inherit_lines)
+
+        m.action_cycle_thinking()   # → on
+        on_lines = "\n".join(m._thinking_card_lines())
+        assert "FORCE-ON" in on_lines and "ENABLE_THINKING=true" in on_lines
+        assert "temp 1 · top_p 0.95 · presence 0" in on_lines, on_lines
+        assert "model card" in on_lines and "[r] reset to card defaults" in on_lines
+
+        m.action_cycle_thinking()   # → off
+        off_lines = "\n".join(m._thinking_card_lines())
+        assert "FORCE-OFF" in off_lines and "ENABLE_THINKING=false" in off_lines
+
+    def test_thinking_no_toggle_without_profile_or_off_start(self, tmp_path):
+        """#1014 L3: slugs WITHOUT sampler_profiles render NO toggle (unchanged
+        behaviour); a profile slug in STOP mode offers no launch knob either.
+        Env stays empty even if the internal state were somehow left non-inherit."""
+        bare = self._thinking_modal(profiles=None, tmp_path=tmp_path)
+        assert bare._thinking_capable() is False
+        assert bare.check_action("cycle_thinking", ()) is False
+        assert bare.check_action("reset_sampler", ()) is False
+        bare.action_cycle_thinking()          # must be a no-op
+        assert bare._thinking == "inherit"
+        assert bare._thinking_env_pairs() == []
+        assert bare._sampler_overrides() == {}
+        assert bare._thinking_card_lines() == []
+
+        stop = self._thinking_modal(mode="stop", tmp_path=tmp_path)
+        assert stop._thinking_capable() is False
+        assert stop.check_action("cycle_thinking", ()) is False
+        assert stop._thinking_env_pairs() == []
+
+        # legacy (non-serve) modal never offers the thinking keys
+        legacy = ConfirmActionScreen.__new__(ConfirmActionScreen)
+        legacy._serve_ctx = None
+        legacy._reconcile = None
+        legacy._plan = None
+        legacy._thinking_capable = lambda: False
+        legacy._thinking_resolved_on = lambda: False
+        assert legacy.check_action("toggle_act8", ()) is False
+
+    def test_thinking_reset_to_card_defaults_clears_overrides(
+        self, tmp_path, monkeypatch
+    ):
+        """#1014 L3: inherited shell TEMP/TOP_P/PRESENCE overrides beat the card
+        rows (`:=` only fills unset/null); [r] pins them EMPTY for this launch —
+        compose passes '' through and the entrypoint treats empty as null, so
+        the card row applies.  With nothing inherited, [r] injects nothing."""
+        monkeypatch.setenv("TEMP", "0.33")
+        monkeypatch.setenv("PRESENCE_PENALTY", "0.9")
+        monkeypatch.delenv("TOP_P", raising=False)
+        monkeypatch.delenv("TOP_K", raising=False)
+        monkeypatch.delenv("TEMPERATURE", raising=False)
+        m = self._thinking_modal(tmp_path=tmp_path)
+        m.action_cycle_thinking()   # → on
+
+        ovr = m._sampler_overrides()
+        assert ovr == {"TEMP": "0.33", "PRESENCE_PENALTY": "0.9"}, ovr
+        warn = "\n".join(m._thinking_card_lines())
+        assert "shell overrides beat the card row" in warn and "TEMP=0.33" in warn
+
+        m.action_reset_sampler()
+        assert m._sampler_reset is True
+        assert sorted(m._sampler_reset_pairs()) == [
+            "PRESENCE_PENALTY=", "TEMP="
+        ], m._sampler_reset_pairs()
+        clear = "\n".join(m._thinking_card_lines())
+        assert "card defaults apply" in clear and "inherited overrides cleared" in clear
+
+        # cycling away from ON disarms both the reset and its pairs
+        m.action_cycle_thinking()   # → off
+        assert m._sampler_reset is False and m._sampler_reset_pairs() == []
+
+        # nothing inherited → reset armed but emits NO pairs (no noise)
+        monkeypatch.delenv("TEMP", raising=False)
+        monkeypatch.delenv("PRESENCE_PENALTY", raising=False)
+        clean = self._thinking_modal(tmp_path=tmp_path)
+        clean.action_cycle_thinking()
+        clean.action_reset_sampler()
+        assert clean._sampler_reset is True and clean._sampler_reset_pairs() == []
+
+    def test_thinking_row_plumbs_through_emit_contract(self):
+        """The L2 registry data reaches the modal through the REAL emit contract:
+        qwen38-27b vLLM slugs carry a numeric thinking row; single-row models
+        emit null.  Skips cleanly when the emitter isn't present."""
+        import subprocess
+        from pathlib import Path
+
+        from club3090_cockpit.services import _variant_row_from_dict
+
+        emitter = (
+            Path(__file__).resolve().parents[3] / "scripts" / "lib" / "registry-emit.sh"
+        )
+        if not emitter.exists():
+            pytest.skip("registry-emit.sh not present")
+        proc = subprocess.run(
+            ["bash", str(emitter), "--json"], capture_output=True, text=True,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr[-500:]
+        payload = json.loads(proc.stdout)
+        by_slug = {d["slug"]: _variant_row_from_dict(d) for d in payload["variants"]}
+        prof = getattr(by_slug["vllm/qwen38-27b-dual-max"], "sampler_profiles")
+        assert isinstance(prof, dict) and "thinking" in prof
+        trow = prof["thinking"]
+        for k in ("temperature", "top_p", "presence_penalty"):
+            assert isinstance(trow.get(k), (int, float)), (k, trow)
+        bare = getattr(by_slug["vllm/minimal"], "sampler_profiles")
+        assert bare is None
+
     @pytest.mark.asyncio
     async def test_benchmarks_tab_is_gone(self):
         """Fold 3 removed the standalone Validate · Benchmarks tab + its pane."""

@@ -86,6 +86,9 @@ VARIANT_KEYS = {
     # c3 catalog offload column: weight-offload backend — None (resident, the
     # default) / "uva" / "n-cpu-moe" / "prefetch".
     "offload", "host_ram_gb",
+    # Per-mode model-card sampler rows (#1014 L2→L3) — {"instruct": …,
+    # "thinking": …} when the card publishes them (qwen38-27b today), else null.
+    "sampler_profiles",
     # The name the slug's OpenAI API serves under (--served-model-name), emitted
     # as a first-class fact: registry override wins, else plain-text compose
     # parse, else None (llamacpp-family slugs).

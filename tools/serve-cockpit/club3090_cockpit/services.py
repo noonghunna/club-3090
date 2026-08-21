@@ -5069,6 +5069,12 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         object.__setattr__(row, "chat_template", str(d.get("chat_template") or "native"))
         # W4A8-int8-activation capability (c3 serve-confirm checkbox, #609).
         object.__setattr__(row, "act8_capable", bool(d.get("act8_capable")))
+        # Per-mode model-card sampler rows (#1014 L3 serve-confirm thinking
+        # toggle) — {"instruct": {…}, "thinking": {…}} when the emit carries
+        # them; None when absent (older emit / single-row models) → no toggle.
+        object.__setattr__(
+            row, "sampler_profiles", d.get("sampler_profiles") or None
+        )
         # Weights quant_label + FORMAT from the model profile (emit join) —
         # the catalog Weights column's fallbacks for weights_variant tokens that
         # carry no recognisable quant segment: quant_label is the explicit

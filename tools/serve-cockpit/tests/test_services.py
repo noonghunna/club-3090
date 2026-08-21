@@ -753,6 +753,29 @@ class TestLoadCatalog:
         assert getattr(bare, "vision") is False
         assert getattr(bare, "act_format") == ""  # older emit → column shows "—"
 
+    def test_variant_row_from_dict_attaches_sampler_profiles(self):
+        """#1014 L2→L3: the per-mode model-card sampler rows join at emit and
+        attach to the row (same pattern as the facets above) — the serve-confirm
+        thinking toggle gates on them.  Absent (older emit / single-row model)
+        → None → no toggle."""
+        profiles = {
+            "instruct": {"temperature": 0.7, "top_p": 0.8, "presence_penalty": 1.5},
+            "thinking": {"temperature": 1.0, "top_p": 0.95, "presence_penalty": 0.0},
+        }
+        row = _variant_row_from_dict({
+            "slug": "vllm/qwen38-27b-dual-max", "port": 8010,
+            "sampler_profiles": profiles,
+        })
+        assert getattr(row, "sampler_profiles") == profiles
+        # absent → None (never a missing-attr on older emits)
+        bare = _variant_row_from_dict({"slug": "x/y", "port": 1})
+        assert getattr(bare, "sampler_profiles") is None
+        # a null from the emit (json None) also degrades to None
+        nulled = _variant_row_from_dict({
+            "slug": "x/y", "port": 1, "sampler_profiles": None,
+        })
+        assert getattr(nulled, "sampler_profiles") is None
+
     @pytest.mark.asyncio
     async def test_run_weights_download_injects_companion_keys(self):
         """The download passes the slug's companions as a model-qualified

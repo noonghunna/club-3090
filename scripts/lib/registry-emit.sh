@@ -712,6 +712,11 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # W4A8-int8-activation capability (c3 serve-confirm checkbox, #609) —
             # True when the compose is wired + weights are positive-sym int4.
             "act8_capable": bool((REG.get(d["slug"], {}) or {}).get("act8_capable")),
+            # Per-mode model-card sampler rows (#1014 L2→L3) — the
+            # {"instruct": {…}, "thinking": {…}} dicts when the card publishes
+            # them (qwen3.8-27b today); null otherwise, so the c3 serve-confirm
+            # can gate its tri-state thinking toggle on REAL registry data.
+            "sampler_profiles": (REG.get(d["slug"], {}) or {}).get("sampler_profiles"),
             # Weight-offload backend (catalog "offload" column) — None = resident
             # (default) / "uva" / "n-cpu-moe" / "prefetch". Laguna 118B-MoE slugs.
             "offload": (REG.get(d["slug"], {}) or {}).get("offload"),
