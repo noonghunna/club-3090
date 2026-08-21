@@ -6590,9 +6590,10 @@ class TestSurfaceScaffold:
         # R3b-2: + [m] measure_vs_bar (④ Measure).
         # Batch 3: [F] full_report is NO LONGER producer-only — it's reachable on
         # the consumer Operate · Doctor (a consumer can run the full battery).
+        # HF-search front-end: + [f] search_hf (① Bring repo discovery).
         assert CockpitApp._PRODUCER_ONLY == frozenset({
             "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-            "measure_vs_bar",
+            "measure_vs_bar", "search_hf",
         })
 
     @pytest.mark.asyncio

@@ -1512,6 +1512,30 @@ class CockpitData:
             return ArtifactInventory(repo=repo, error=err or "no output")
         return ArtifactInventory.from_dict(data)
 
+    async def hf_search(self, query: str, limit: int = 20) -> tuple[list[dict], Optional[str]]:
+        """HF repo DISCOVERY for the ① Bring search front-end ([f] / the
+        "Search HF" button).  Same seam as ``bring_inspect``: the app never
+        does network I/O — the stdlib urllib CLI
+        ``scripts/lib/profiles/hf_search.py`` hits the hub's search API as a
+        subprocess and prints the JSON row contract.  Returns (rows, error);
+        an EMPTY list with no error is a valid "no results", NOT a failure."""
+        data, err = await self._run_json(
+            [
+                "python3",
+                "scripts/lib/profiles/hf_search.py",
+                query,
+                "--limit",
+                str(limit),
+                "--json",
+            ],
+            timeout=20.0,
+        )
+        if data is None:
+            return [], err or "no output"
+        if not isinstance(data, list):
+            return [], f"unexpected payload: expected a JSON array (got {type(data).__name__})"
+        return [r for r in data if isinstance(r, dict)], None
+
     async def byo_check(self, repo: str, profile_like: str) -> ByoResult:
         """pull.sh <repo> --profile-like <key> --dry-run --json.
 
