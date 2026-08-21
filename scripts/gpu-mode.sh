@@ -28,20 +28,52 @@ fi
 # Post-PR-A (<quant>/ layer): dual composes live under <topology>/<quant>/.
 # Point each var at the quant dir so `compose_at` cd's into it — mount-safe,
 # the same invocation switch.sh uses (project dir = compose-file dir).
-DUAL_27B_DIR="$CLUB3090_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4"
-GEMMA_DUAL_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/autoround-int4"
-GEMMA_31B_DUAL_DIR="$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/qat-awq-int4"   # current dual default (vllm/gemma-31b-dual); autoround-int4/int8.yml deprecated 07-02
+#
+# The dirs are REGISTRY-DERIVED (dirname of each slug's compose_path) so they
+# cannot drift from the catalog when a quant layout moves; the historical
+# literals remain as last-resort fallbacks for rigs where the registry can't
+# be consulted. Cost: one shared registry emit (~1s) per invocation, cached —
+# show_status's port lookups reuse the same cached file.
+if [ -f "$CLUB3090_DIR/scripts/lib/registry-lookup.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$CLUB3090_DIR/scripts/lib/registry-lookup.sh"
+fi
+REGISTRY_LOOKUP_ROOT="$CLUB3090_DIR"
+
+# _dir_from_registry <slug> <literal-fallback-dir> — dirname of the slug's
+# registered compose_path when that resolves to a real directory under the
+# repo, else the fallback verbatim.
+_dir_from_registry() {
+    local slug="$1" fallback="$2" rel=""
+    if declare -F registry_lookup_compose_path >/dev/null 2>&1; then
+        rel="$(registry_lookup_compose_path "$slug" 2>/dev/null || true)"
+        rel="${rel%/*}"   # strip the yml basename → quant dir ("yml" w/o slash fails the -d below)
+    fi
+    if [[ -n "$rel" && -d "$CLUB3090_DIR/$rel" ]]; then
+        printf '%s\n' "$CLUB3090_DIR/$rel"
+    else
+        printf '%s\n' "$fallback"
+    fi
+}
+
+DUAL_27B_DIR="$(_dir_from_registry vllm/dual "$CLUB3090_DIR/models/qwen3.6-27b/vllm/compose/dual/autoround-int4")"
+GEMMA_DUAL_DIR="$(_dir_from_registry vllm/gemma-bf16-mtp "$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/autoround-int4")"
+GEMMA_31B_DUAL_DIR="$(_dir_from_registry vllm/gemma-31b-dual "$CLUB3090_DIR/models/gemma-4-31b/vllm/compose/dual/qat-awq-int4")"   # current dual default (vllm/gemma-31b-dual); autoround-int4/int8.yml deprecated 07-02
+
 # Gemma 4 12B (gemma4_unified arch) — AutoRound INT8 weights + bf16 KV, single-card vLLM on
 # the EPHEMERAL vllm/vllm-openai:gemma4-unified arch-preview image (:8038, served gemma-4-12b-int8).
-GEMMA_12B_DIR="$CLUB3090_DIR/models/gemma-4-12b/vllm/compose/single/autoround-int8"
+GEMMA_12B_DIR="$(_dir_from_registry vllm/gemma-12b-single-int8-mtp "$CLUB3090_DIR/models/gemma-4-12b/vllm/compose/single/autoround-int8")"
+
 # Qwen3.6-35B-A3B MoE (3B active / 35B total) — AutoRound INT4 + fp8 KV, 262K + vision (TP=2).
-A3B_DUAL_DIR="$CLUB3090_DIR/models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4"
+A3B_DUAL_DIR="$(_dir_from_registry vllm/qwen-35b-a3b-dual "$CLUB3090_DIR/models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4")"
+
 # Qwen3.6-40B-Deckard: uncensored dense 40B, Q6_K GGUF + embedded MTP head,
 # layer-split across both cards (llama.cpp). Dual-only — see `gpu-mode deckard`.
-DECKARD_DIR="$CLUB3090_DIR/models/qwen3.6-40b-deckard/llama-cpp/compose/dual/piehsoft-q6k"
+DECKARD_DIR="$(_dir_from_registry llamacpp/deckard40B-dual-mtp "$CLUB3090_DIR/models/qwen3.6-40b-deckard/llama-cpp/compose/dual/piehsoft-q6k")"
+
 # DiffusionGemma 26B-A4B — vLLM's first dLLM (TP=2, official :gemma image + 3 fix-mounts).
 # Dual-only (both cards); served via the catalog slug vllm/diffusiongemma-dual (the dgemma scene was removed). 🧪
-DGEMMA_DIR="$CLUB3090_DIR/models/diffusiongemma-26b-a4b/vllm/compose/dual/fp8"
+DGEMMA_DIR="$(_dir_from_registry vllm/diffusiongemma-dual "$CLUB3090_DIR/models/diffusiongemma-26b-a4b/vllm/compose/dual/fp8")"
 # (gemma-4-12b chat brain retired from the studio 2026-06-23 — ai-studio uses the qwen
 #  director only. Weights kept on disk; gemma stays a core model via `gpu-mode gemma-31b`.)
 
@@ -383,24 +415,35 @@ show_status() {
     # disagree with itself. Also drops up to 9 redundant 2s-timeout curls on
     # a rig where nothing is serving (the guard used to re-probe everything).
     local _endpoint_up=0
-    # Check ports in priority order: 8010, 8012, 8020, 11434, 4000
-    if curl -sf -m 2 http://localhost:8010/v1/models >/dev/null 2>&1; then
-        _endpoint_up=1
-        local m
-        m=$(curl -sf -m 2 http://localhost:8010/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} 27b-dual-mtp @ :8010    → ${m:-unknown} (MTP n=3 + fp8 + 262K + vision)"
+    # LLM probe ports are REGISTRY-DERIVED (slug → port via the shared lookup
+    # helper; the constants block above already paid the one cached emit), so a
+    # port move in the catalog updates status automatically. Literal fallbacks
+    # preserve today's behavior when the registry can't be consulted. Deferred
+    # sites need semantic decisions first: :8013 is labelled dflash-noviz but
+    # the registry maps that port to vllm/qwen-27b-dual-max; :8030/:8032 are
+    # multi-slug ports; :8090/:8188/:4000 are infra, not registry variants.
+    local p_27b_dual=8010 p_a3b_dual=8051 p_llamacpp=8020 p_gemma12b=8038
+    local p_qat=8033 p_thinkingcap=8099 p_deckard=8199
+    if declare -F registry_lookup_port >/dev/null 2>&1; then
+        p_27b_dual="$(registry_lookup_port vllm/dual 2>/dev/null || printf %s 8010)"
+        p_a3b_dual="$(registry_lookup_port vllm/qwen-35b-a3b-dual 2>/dev/null || printf %s 8051)"
+        p_llamacpp="$(registry_lookup_port llamacpp/default 2>/dev/null || printf %s 8020)"
+        p_gemma12b="$(registry_lookup_port vllm/gemma-12b-single-int8-mtp 2>/dev/null || printf %s 8038)"
+        p_qat="$(registry_lookup_port vllm/gemma-31b-qat-w4a16-dual 2>/dev/null || printf %s 8033)"
+        p_thinkingcap="$(registry_lookup_port vllm/thinkingcap-dual-w4a8 2>/dev/null || printf %s 8099)"
+        p_deckard="$(registry_lookup_port llamacpp/deckard40B-dual-mtp 2>/dev/null || printf %s 8199)"
     fi
-    if curl -sf -m 2 http://localhost:8051/v1/models >/dev/null 2>&1; then
+    if curl -sf -m 2 "http://localhost:${p_27b_dual}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
         local m
-        m=$(curl -sf -m 2 http://localhost:8051/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} 35b-a3b-dual @ :8051    → ${m:-unknown} (MoE 3B/35B + fp8 + 262K + vision)"
+        m=$(curl -sf -m 2 "http://localhost:${p_27b_dual}/v1/models" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} 27b-dual-mtp @ :${p_27b_dual}    → ${m:-unknown} (MTP n=3 + fp8 + 262K + vision)"
     fi
-    if curl -sf -m 2 http://localhost:8012/v1/models >/dev/null 2>&1; then
+    if curl -sf -m 2 "http://localhost:${p_a3b_dual}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
         local m
-        m=$(curl -sf -m 2 http://localhost:8012/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} 27b-dflash @ :8012      → ${m:-unknown} (DFlash N=5 + 185K + vision)"
+        m=$(curl -sf -m 2 "http://localhost:${p_a3b_dual}/v1/models" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} 35b-a3b-dual @ :${p_a3b_dual}    → ${m:-unknown} (MoE 3B/35B + fp8 + 262K + vision)"
     fi
     if curl -sf -m 2 http://localhost:8013/v1/models >/dev/null 2>&1; then
         _endpoint_up=1
@@ -408,21 +451,15 @@ show_status() {
         m=$(curl -sf -m 2 http://localhost:8013/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
         echo -e "  ${GREEN}▶${NC} 27b-dflash-noviz @ :8013 → ${m:-unknown} (DFlash N=5 + 200K, no vision)"
     fi
-    if curl -sf -m 2 http://localhost:8011/v1/models >/dev/null 2>&1; then
-        _endpoint_up=1
-        local m
-        m=$(curl -sf -m 2 http://localhost:8011/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} 27b-turbo @ :8011       → ${m:-unknown} (TurboQuant_3bit_nc + MTP n=3 + v7.14, 4-stream concurrency)"
-    fi
     # :8020 = llama.cpp single-card. llamacpp/default + llamacpp/mtp share the
     # base container llama-cpp-qwen36-27b (same compose, collapsed 2026-05-22);
     # llamacpp/mtp-vision now defaults to llama-cpp-qwen36-27b-vision (#169).
     # All still match the llama-cpp-* prefix used for detection below.
-    if curl -sf -m 2 http://localhost:8020/v1/models >/dev/null 2>&1; then
+    if curl -sf -m 2 "http://localhost:${p_llamacpp}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
         local m
-        m=$(curl -sf -m 2 http://localhost:8020/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} llamacpp/single @ :8020 → ${m:-unknown} (llama.cpp single-card)"
+        m=$(curl -sf -m 2 "http://localhost:${p_llamacpp}/v1/models" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} llamacpp/single @ :${p_llamacpp} → ${m:-unknown} (llama.cpp single-card)"
     fi
     if curl -sf -m 2 http://localhost:8030/v1/models >/dev/null 2>&1; then
         _endpoint_up=1
@@ -444,29 +481,29 @@ show_status() {
         m=$(curl -sf -m 2 http://localhost:8032/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
         echo -e "  ${GREEN}▶${NC} gemma-int8 @ :8032        → ${m:-unknown} (INT8 PTH KV)"
     fi
-    if curl -sf -m 2 http://localhost:8038/v1/models >/dev/null 2>&1; then
+    if curl -sf -m 2 "http://localhost:${p_gemma12b}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
         local m
-        m=$(curl -sf -m 2 http://localhost:8038/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} gemma-12b @ :8038        → ${m:-unknown} (gemma4_unified, INT8 + bf16 KV + MTP, single card)"
+        m=$(curl -sf -m 2 "http://localhost:${p_gemma12b}/v1/models" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} gemma-12b @ :${p_gemma12b}        → ${m:-unknown} (gemma4_unified, INT8 + bf16 KV + MTP, single card)"
     fi
-    if curl -sf -m 2 http://localhost:8033/v1/models >/dev/null 2>&1; then
+    if curl -sf -m 2 "http://localhost:${p_qat}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
         local m
-        m=$(curl -sf -m 2 http://localhost:8033/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} gemma-qat @ :8033        → ${m:-unknown} (QAT W4A16 + INT8 PTH KV)"
+        m=$(curl -sf -m 2 "http://localhost:${p_qat}/v1/models" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} gemma-qat @ :${p_qat}        → ${m:-unknown} (QAT W4A16 + INT8 PTH KV)"
     fi
-    if curl -sf -m 2 http://localhost:8099/v1/models >/dev/null 2>&1; then
+    if curl -sf -m 2 "http://localhost:${p_thinkingcap}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
         local m
-        m=$(curl -sf -m 2 http://localhost:8099/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} thinkingcap @ :8099      → ${m:-unknown} (AutoRound W4A16 served W4A8 + built-in MTP + 262K)"
+        m=$(curl -sf -m 2 "http://localhost:${p_thinkingcap}/v1/models" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} thinkingcap @ :${p_thinkingcap}      → ${m:-unknown} (AutoRound W4A16 served W4A8 + built-in MTP + 262K)"
     fi
-    if curl -sf -m 2 http://localhost:8199/v1/models >/dev/null 2>&1; then
+    if curl -sf -m 2 "http://localhost:${p_deckard}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
         local m
-        m=$(curl -sf -m 2 http://localhost:8199/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} deckard @ :8199          → ${m:-unknown} (llama.cpp Q6_K + MTP, dual)"
+        m=$(curl -sf -m 2 "http://localhost:${p_deckard}/v1/models" | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
+        echo -e "  ${GREEN}▶${NC} deckard @ :${p_deckard}          → ${m:-unknown} (llama.cpp Q6_K + MTP, dual)"
     fi
     if curl -sf -m 2 http://localhost:8090/v1/models >/dev/null 2>&1; then
         _endpoint_up=1

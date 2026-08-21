@@ -140,6 +140,17 @@ else
   THINK_FRAG_ON='{"chat_template_kwargs": {"enable_thinking": true}}'
 fi
 export THINK_FRAG_OFF THINK_FRAG_ON
+if [[ -z "${CONTAINER:-}" && -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
+  # The old literal default 'vllm-qwen36-27b' matches NO registry container, so
+  # the EAGER-mode docker inspect below silently no-op'd on an undetected
+  # endpoint. Default to the MODEL's curated-default slug container instead
+  # (qwen3.6-27b → vllm/minimal → vllm-qwen36-27b-minimal); the dead literal
+  # stays only as a last-resort fallback when the registry can't be consulted.
+  # shellcheck source=lib/registry-lookup.sh
+  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
+  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
+  CONTAINER="$(registry_lookup_default_container "$MODEL" 2>/dev/null || true)"
+fi
 CONTAINER="${CONTAINER:-vllm-qwen36-27b}"
 
 # Detect VLLM_ENFORCE_EAGER=1 in the running container's env. Eager-mode

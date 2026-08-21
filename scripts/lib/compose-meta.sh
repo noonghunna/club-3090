@@ -312,24 +312,53 @@ compose_hw_compose_eligible() {
   [[ "$status" == ok\|* ]]
 }
 
+# _compose_meta_registry_file <repo_root> <slug> <fallback-abs-path>
+#
+# Absolute path of SLUG's registered compose (registry_lookup_compose_path)
+# when the registry resolves AND the file exists on disk; else FALLBACK
+# verbatim. Used by compose_hw_model_status so its probe composes cannot drift
+# from the catalog.
+_compose_meta_registry_file() {
+  local rel=""
+  if declare -F registry_lookup_compose_path >/dev/null 2>&1; then
+    rel="$(registry_lookup_compose_path "$2" 2>/dev/null || true)"
+  fi
+  if [[ -n "$rel" && -f "$1/$rel" ]]; then
+    printf '%s\n' "$1/$rel"
+  else
+    printf '%s\n' "$3"
+  fi
+}
+
 compose_hw_model_status() {
   local repo_root="$1"
   local model="$2"
   local candidates=()
   local friendly_need=""
 
+  # Registry-first candidate resolution, sourced LAZILY: compose-meta.sh is
+  # pulled in by switch.sh / preflight.sh / setup.sh, and none of those should
+  # pay the ~1s registry emit unless THIS display path actually runs. The
+  # literals below stay as fallbacks when the registry can't be consulted.
+  if ! declare -F registry_lookup_compose_path >/dev/null 2>&1 \
+     && [[ -f "${repo_root}/scripts/lib/registry-lookup.sh" ]]; then
+    # shellcheck source=registry-lookup.sh
+    source "${repo_root}/scripts/lib/registry-lookup.sh"
+  fi
+  REGISTRY_LOOKUP_ROOT="${repo_root}"
+
   case "$model" in
     qwen3.6-27b)
       candidates=(
-        "${repo_root}/models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml"
+        "$(_compose_meta_registry_file "$repo_root" vllm/minimal "${repo_root}/models/qwen3.6-27b/vllm/compose/single/autoround-int4/minimal.yml")"
       )
       friendly_need="needs 20 GB+ VRAM (24 GB recommended)"
       ;;
     gemma-4-31b)
       candidates=(
-        "${repo_root}/models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml"
-        "${repo_root}/models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml"
-        "${repo_root}/models/gemma-4-31b/vllm/compose/single/autoround-int4/fp8-mtp.yml"
+        "$(_compose_meta_registry_file "$repo_root" vllm/gemma-bf16-mtp "${repo_root}/models/gemma-4-31b/vllm/compose/dual/autoround-int4/bf16-mtp.yml")"
+        "$(_compose_meta_registry_file "$repo_root" vllm/gemma-int8-mtp "${repo_root}/models/gemma-4-31b/vllm/compose/dual/autoround-int4/int8.yml")"
+        "$(_compose_meta_registry_file "$repo_root" vllm/gemma-mtp-tp1 "${repo_root}/models/gemma-4-31b/vllm/compose/single/autoround-int4/fp8-mtp.yml")"
       )
       friendly_need="needs 32 GB+ on single card OR 2× 24 GB"
       ;;

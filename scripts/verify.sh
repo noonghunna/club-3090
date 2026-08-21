@@ -41,6 +41,17 @@ URL="${URL:-http://localhost:8020}"
 # literal below is only a last resort if detection no-ops (endpoint unreachable).
 declare -F preflight_autodetect_model >/dev/null && preflight_autodetect_model
 MODEL="${MODEL:-qwen3.6-27b}"
+if [[ -z "${CONTAINER:-}" && -f "${ROOT_DIR}/scripts/lib/registry-lookup.sh" ]]; then
+  # The old literal default 'vllm-qwen36-27b' matches NO registry container, so
+  # container-coupled checks silently no-op'd on an undetected endpoint. Default
+  # to the MODEL's curated-default slug container instead (qwen3.6-27b →
+  # vllm/minimal → vllm-qwen36-27b-minimal); the dead literal stays only as a
+  # last-resort fallback when the registry can't be consulted.
+  # shellcheck source=lib/registry-lookup.sh
+  source "${ROOT_DIR}/scripts/lib/registry-lookup.sh"
+  REGISTRY_LOOKUP_ROOT="${ROOT_DIR}"
+  CONTAINER="$(registry_lookup_default_container "$MODEL" 2>/dev/null || true)"
+fi
 CONTAINER="${CONTAINER:-vllm-qwen36-27b}"
 
 # Which chat_template_kwargs key turns reasoning off is model-specific, and an
