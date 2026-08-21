@@ -136,7 +136,7 @@
 #     compose default below, so bump the profile, not this line.
 #   - The vendored vllm#48375 install script, shared from the qwen3.6-27b tree.
 #
-# PORT — 8092, NOT 8089/8090. The qwen3.8 block starts at 8086/8087 (the GGUF
+# PORT — 8092, NOT 8088/8089. The qwen3.8 block starts at 8087/8090 (the GGUF
 #   siblings) but 8088 is SearXNG and 8090 is the AI-Studio director — both
 #   always-on support services on the reference rig, so a slug parked there
 #   collides with something already listening. 8091 (the dual sibling) and 8092

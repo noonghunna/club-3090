@@ -1009,7 +1009,7 @@ case "${MODEL_NAME}" in
     # next step; the dispatch default is the dual-card fp8 tier (serves on 8091).
     SAMPLE_CONTAINER="llama-cpp-qwen38-27b-single"
     SAMPLE_COMPOSE_FLAGS_DUAL=""
-    SAMPLE_PORT="8086"
+    SAMPLE_PORT="8090"
     SAMPLE_MODEL_NAME="qwen3.8-27b"
     SAMPLE_LAUNCH_HINT="  bash scripts/switch.sh --force llamacpp/qwen38-27b-single-iq4xs"
     NEXT_STEPS_NOTE="🧪/🐣 — every qwen3.8 slug needs --force; the incubating ones are

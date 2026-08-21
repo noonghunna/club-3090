@@ -117,7 +117,7 @@
 #   SERVED_NAME      --alias value       (default: qwen3.8-27b)
 #   REASONING        thinking gate       (default: off — stack-wide policy)
 #   TEMP/TOP_P/TOP_K/MIN_P               (defaults: card INSTRUCT row — 0.7 / 0.80 / 20 / 0.0)
-#   PORT             host port           (default: 8086)
+#   PORT             host port           (default: 8090)
 #   CUDA_VISIBLE_DEVICES  which GPU      (default: 0 — leaves GPU 1 free)
 #   LLAMACPP_IMAGE   engine image        (default: the llama-cpp-local pin)
 #
@@ -133,7 +133,7 @@ services:
     container_name: "${ESTATE_CONTAINER:-llama-cpp-qwen38-27b-single}"
     restart: ${CLUB3090_RESTART:-unless-stopped}
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8086}}:8080"
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8090}}:8080"
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     environment:

@@ -211,7 +211,7 @@
 #   - The vendored vllm#48375 install script, shared from the qwen3.6-27b tree
 #     (same hybrid family) — see the volumes block + patches.yml.
 #
-# PORT — 8091, NOT the 8088 you would expect from the 8086/8087 GGUF siblings.
+# PORT — 8091, NOT the 8088 you would expect from the 8087/8090 GGUF siblings.
 #   8088 is SearXNG and 8090 is the AI-Studio director: both are ALWAYS-ON
 #   support services on the reference rig (docs/ARCHITECTURE.md "Services"), so
 #   a slug parked there collides at boot with something that is already

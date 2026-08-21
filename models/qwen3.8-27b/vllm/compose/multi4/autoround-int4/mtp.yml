@@ -124,7 +124,7 @@ services:
     shm_size: "16gb"
     ipc: host
     ports:
-      - "${BIND_HOST:-0.0.0.0}:${PORT:-8096}:8000"
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-8114}:8000"
     deploy:
       resources:
         reservations:
