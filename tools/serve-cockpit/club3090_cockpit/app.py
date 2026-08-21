@@ -7118,7 +7118,7 @@ class CockpitApp(App):
         # #963 — [w] narrow the catalog to slugs whose weights are already on disk.
         Binding("w", "toggle_catalog_downloaded", "Downloaded", show=False),
         # #724 — [|] catalog column picker (show/hide + reorder, persisted).
-        Binding("vertical_bar", "catalog_columns", "Columns", show=False),
+        Binding("vertical_line", "catalog_columns", "Columns", show=False),
         Binding("u", "copy_endpoint", "API URL", show=False),
         Binding("e", "explain", "Explain", show=False),
         # [i] model-info popup (C6) — local-data metadata modal, sibling of Explain.

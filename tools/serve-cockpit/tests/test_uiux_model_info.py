@@ -241,3 +241,28 @@ class TestHelpScrollAndFooter:
             if action in ("prev_subtab", "next_subtab"):
                 shows[action] = bool(getattr(b, "show", True))
         assert shows == {"prev_subtab": True, "next_subtab": True}
+
+
+class TestColumnsPickerBinding:
+    def test_pipe_binding_uses_valid_key_name(self):
+        """Regression: the [|] columns picker was bound to 'vertical_bar', which
+        is not a Textual key name (Textual 8.x names '|' 'vertical_line') — the
+        key was silently dead since #724; only header-click worked."""
+        from club3090_cockpit.app import CockpitApp
+
+        names = [b.key for b in CockpitApp.BINDINGS if getattr(b, "action", "") == "catalog_columns"]
+        assert names == ["vertical_line"]
+
+    @pytest.mark.asyncio
+    async def test_pipe_opens_columns_picker(self):
+        from textual.containers import VerticalScroll
+
+        from club3090_cockpit.app import CatalogColumnsScreen
+
+        app, _, _ = make_app(responses=c6_responses())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("|")
+            await pilot.pause()
+            assert isinstance(app.screen, CatalogColumnsScreen)
+            await pilot.press("escape")
