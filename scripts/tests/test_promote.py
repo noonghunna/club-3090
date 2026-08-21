@@ -246,6 +246,9 @@ class TestCoreGate:
         assert "my-model" not in (
             root / "scripts/lib/profiles/compose_registry.py"
         ).read_text()
+        assert "my-model" not in (
+            root / "scripts/lib/profiles/registry.yaml"
+        ).read_text()
 
     def test_core_with_flag_writes_curated_catalog(self, root):
         res = _run_cli(
@@ -258,11 +261,24 @@ class TestCoreGate:
         assert res.returncode == 0, res.stderr + res.stdout
         assert "PROMOTE_OK vllm/my-model-dual-autoround-int4" in res.stdout
         assert (root / "scripts/lib/profiles/models/my-model.yml").exists()
-        reg = (root / "scripts/lib/profiles/compose_registry.py").read_text()
-        assert '"vllm/my-model-dual-autoround-int4": _entry(' in reg
-        # And it still imports.
+        # The entry lands in registry.yaml (DATA), and compose_registry.py —
+        # now a loader shim with no entry rows — is NOT touched.
+        reg_yaml = (
+            root / "scripts/lib/profiles/registry.yaml"
+        ).read_text(encoding="utf-8")
+        assert "vllm/my-model-dual-autoround-int4:" in reg_yaml
+        assert "my-model" not in (
+            root / "scripts/lib/profiles/compose_registry.py"
+        ).read_text()
+        # And the mutated catalog still imports + carries the slug.
         chk = subprocess.run(
-            [sys.executable, "-c", "import scripts.lib.profiles.compose_registry"],
+            [
+                sys.executable,
+                "-c",
+                "from scripts.lib.profiles.compose_registry import get_registry;"
+                "e = get_registry()['vllm/my-model-dual-autoround-int4'];"
+                "assert e['model'] == 'my-model' and e['pp'] == 1",
+            ],
             cwd=str(root),
             capture_output=True,
             text=True,

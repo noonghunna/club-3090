@@ -1,12 +1,12 @@
 # Adding a model to the club-3090 stack
 
-End-to-end workflow for onboarding a new model into club-3090's **central registry** — `scripts/lib/profiles/compose_registry.py` (the single source of truth) plus the profile / engine / drafter / calibration YAMLs it points at. Registering a model here is what makes it a first-class catalog citizen: **`launch.sh` and `switch.sh` both resolve it by slug** (both are registry-derived — you never edit the launchers), the VRAM/KV projection (`kv-calc`) knows it, and the guard tests cover it. Pairs with [KV_MATH.md](KV_MATH.md) (math reference) and [ARCHITECTURE.md](ARCHITECTURE.md) (current stack state).
+End-to-end workflow for onboarding a new model into club-3090's **central registry** — `scripts/lib/profiles/registry.yaml` (the catalog DATA; `compose_registry.py` is its loader + API surface) plus the profile / engine / drafter / calibration YAMLs it points at. Registering a model here is what makes it a first-class catalog citizen: **`launch.sh` and `switch.sh` both resolve it by slug** (both are registry-derived — you never edit the launchers), the VRAM/KV projection (`kv-calc`) knows it, and the guard tests cover it. Pairs with [KV_MATH.md](KV_MATH.md) (math reference) and [ARCHITECTURE.md](ARCHITECTURE.md) (current stack state).
 
 > **Adding a model? Three paths — pick the lightest that fits:**
 >
 > 1. **Serve any safetensors repo locally (no catalog).** `scripts/pull.sh <org/Model> --profile-like vllm/minimal --dry-run` evaluates *any* safetensors HF repo against this stack's KV math (no download) and tells you whether it fits + at what confidence; drop `--dry-run` and add `--yes` to download + generate a minimal compose + boot. vLLM / safetensors only. See [PULL.md](PULL.md).
 > 2. **Run your own GGUF locally (no catalog).** `pull.sh` doesn't take GGUF — use the [local-GGUF recipe](#run-a-local-gguf-without-the-catalog) below (copy an existing compose, 3 steps, llama.cpp / ik-llama).
-> 3. **Promote a model into the curated catalog — i.e. register it in the central `compose_registry.py`** — *this page*. The heavier task: validated composes, a registry entry per compose (the SoT that `launch.sh`/`switch.sh` derive from — this is what makes the model callable by slug), profile-compat coverage, calibration anchors, real benchmarks, per-model gotchas. The high-confidence backbone — **not** a prerequisite for serving.
+> 3. **Promote a model into the curated catalog — i.e. register it in the central registry (`scripts/lib/profiles/registry.yaml`)** — *this page*. The heavier task: validated composes, a registry entry per compose (the SoT that `launch.sh`/`switch.sh` derive from — this is what makes the model callable by slug), profile-compat coverage, calibration anchors, real benchmarks, per-model gotchas. The high-confidence backbone — **not** a prerequisite for serving.
 >
 > Paths 1–2 (serve + **tune** + **validate** your own model without the catalog) are walked end-to-end in [BRING_YOUR_OWN.md](BRING_YOUR_OWN.md) — start there if you're not yet cataloging. This page is the promotion step *after* you've validated a config there.
 
@@ -22,7 +22,7 @@ Want to serve a GGUF you grabbed yourself (a community quant, your own conversio
    Copy it **outside the repo tree** (e.g. `/tmp/my-model.yml`) so you don't have to re-figure the `../` mount depth, point its `--model` / `GGUF_FILE` default at your `.gguf`, and tune `CTX_SIZE`, `KV_TYPE` (`q4_0` = max ctx · `q8_0` = higher fidelity, ~half the ctx), container name + port.
 3. **Boot it directly:** `MODEL_DIR=/mnt/models/huggingface docker compose -f /tmp/my-model.yml up`.
 
-No `compose_registry.py` entry, no profile YAML, no calibration. You give up `launch.sh`/`switch.sh` discovery, the VRAM projection, and the guard tests — but you get a one-off local serve in minutes. When you want it discoverable + measured, do the full workflow below.
+No registry entry, no profile YAML, no calibration. You give up `launch.sh`/`switch.sh` discovery, the VRAM projection, and the guard tests — but you get a one-off local serve in minutes. When you want it discoverable + measured, do the full workflow below.
 
 ## When to add a new model vs a new quant of an existing one
 
@@ -276,7 +276,7 @@ Place at `models/<model-id>/<engine>/compose/<topology>/<quant-slug>/<serving>.y
   - **Workload-tuned** variants (a use-case tuning — different ctx/sampling, *not* a feature delta) keep a descriptive name: `long-text.yml`, `tools-text.yml`, `bounded-thinking.yml`, `minimal.yml`. Recognized exception, orthogonal to the feature stack.
   - Never `docker-compose.yml` or `default.yml` — defaults are registry pointers (`DEFAULTS`).
   - **Grandfathered (do NOT rename):** files predating this stay as-is (e.g. `bf16.yml` for a default-KV variant, `turbo.yml`, `two-stage.yml`) — renaming re-paths the registry `compose_path` for pure churn. New composes only.
-- **Registry slug (the key in `compose_registry.py`)** — for **new** models, compose it to mirror the path: **`<engine>/<model>-<topology>-<quant>[-<feature>]`** (the path components `<model>/<engine>/<topology>/<quant>/<serving>` flattened with hyphens, engine first). Make it self-descriptive — reading the slug should tell you the model, card count, quant, and serving stack.
+- **Registry slug (the `entries:` key in `scripts/lib/profiles/registry.yaml`)** — for **new** models, compose it to mirror the path: **`<engine>/<model>-<topology>-<quant>[-<feature>]`** (the path components `<model>/<engine>/<topology>/<quant>/<serving>` flattened with hyphens, engine first). Make it self-descriptive — reading the slug should tell you the model, card count, quant, and serving stack.
   - `<engine>` — slug prefix from the rule above: `vllm` / `llamacpp` / `ik-llama` / `beellama`.
   - `<model>` — short model id: `gemma-12b`, `qwen-35b-a3b`.
   - `<topology>` — `single` / `dual` / `multi4`.
@@ -318,35 +318,42 @@ Fallback defaults preserve single-mode boot. The estate orchestrator overrides p
 - GGUF path under `/mnt/models/huggingface/<id>-gguf/`
 - `--ctx-size`, `--n-gpu-layers`, `--parallel`
 
-## Step 4 — Add COMPOSE_REGISTRY entries
+## Step 4 — Add registry entries (registry.yaml)
 
-In `scripts/lib/profiles/compose_registry.py`, add one entry per compose. Use the `_entry(...)` helper that's already defined:
+The catalog is DATA: entries live in `scripts/lib/profiles/registry.yaml`
+(`compose_registry.py` is its loader + API surface). Add one entry per
+compose under `entries:` — each row is the `_entry(**kwargs)` argument map
+(the same shape `profiles-local/registry.local.json` uses; `pp` and
+`gpu_assignment_mode` are derived, never written):
 
-```python
-COMPOSE_REGISTRY = {
-    # ... existing entries ...
-    "vllm/<model-slug>": _entry(
-        model="<model-id>",                          # matches models/<id>.yml
-        weights_variant="autoround-int4",            # the quant-slug (weights map key == compose <quant>/ dir)
-        workload="long-ctx-single",                  # one of the 5 workload IDs
-        engine="vllm-stable",                        # matches engines/<id>.yml (and its supported_model_families!)
-        drafter="qwen-mtp-builtin",                  # or None
-        kv_format="fp8_e5m2",                        # must be in the hardware profile's supported_kv_formats
-        tp=2,
-        max_ctx=180000,
-        max_num_seqs=1,
-        mem_util=0.92,
-        compose_path="models/<model-id>/vllm/compose/dual/autoround-int4/<serving>.yml",
-        default_port=8040,                           # MUST equal the compose's ${PORT:-NNNN} fallback (parity test)
-        kvcalc_key="<model-id>:dual",                # vLLM: "<model>:<kvcalc-profile>"; llama.cpp/ik-llama/beellama: "SKIP"
-        required_engine_features=[],                 # only when the compose needs an engine capability gate
-        status="incubating",                         # NEW MODELS START HERE. production|caveats|experimental|incubating|preview|upstream-gated|deprecated
-                                                     #   maps to the compose header ✅/⚠️/🧪/🐣/👁️/⏸️/🗑️ (test-compose-status-drift checks both match)
-                                                     #   incubating = hidden from `switch.sh --list` (see --all), --force to launch; promote as it validates
-        status_note=None,                            # REQUIRED non-None string when status is caveats/preview/upstream-gated/deprecated
-    ),
-}
+```yaml
+entries:
+  # ... existing entries ...
+  vllm/<model-slug>:
+    model: <model-id>                  # matches models/<id>.yml
+    weights_variant: autoround-int4    # the quant-slug (weights map key == compose <quant>/ dir)
+    workload: long-ctx-single          # one of the 5 workload IDs
+    engine: vllm-stable                # matches engines/<id>.yml (and its supported_model_families!)
+    drafter: qwen-mtp-builtin          # or null
+    kv_format: fp8_e5m2                # must be in the hardware profile's supported_kv_formats
+    tp: 2
+    max_ctx: 180000
+    max_num_seqs: 1
+    mem_util: 0.92
+    compose_path: models/<model-id>/vllm/compose/dual/autoround-int4/<serving>.yml
+    default_port: 8040                 # MUST equal the compose's ${PORT:-NNNN} fallback (parity test)
+    kvcalc_key: "<model-id>:dual"      # vLLM: "<model>:<kvcalc-profile>"; llama.cpp/ik-llama/beellama: "SKIP"
+    required_engine_features: []       # only when the compose needs an engine capability gate
+    status: incubating                 # NEW MODELS START HERE. production|caveats|experimental|incubating|preview|upstream-gated|deprecated
+                                       #   maps to the compose header ✅/⚠️/🧪/🐣/👁️/⏸️/🗑️ (test-compose-status-drift checks both match)
+                                       #   incubating = hidden from `switch.sh --list` (see --all), --force to launch; promote as it validates
+    status_note: null                  # REQUIRED non-null string when status is caveats/preview/upstream-gated/deprecated
 ```
+
+After ANY hand edit, prove the file still round-trips:
+`python3 scripts/lib/profiles/migrate_registry_to_yaml.py --check` (also
+guarded by `test-registry-yaml-roundtrip`). `promote.py --layer core` does
+this merge mechanically.
 
 **llama.cpp-family entries (`llamacpp/…`, `beellama/…`, `ik-llama/…`):** the slug prefix is `llamacpp` / `beellama` / `ik-llama` — **NOT** the `llama-cpp` filesystem dir. Use `drafter=None` for no spec-dec (don't invent a `"none"` string sentinel unless an existing profile uses one), `kvcalc_key="SKIP"` (kv-calc doesn't model these engines), and mirror an existing row (`beellama/gemma-dflash`, a qwen `llamacpp/*`) for the engine-specific fields. **Registry entry ≠ default:** do NOT add a `DEFAULTS` row for an `experimental` / `preview` / `upstream-gated` entry unless the change is explicitly a default promotion — `<model>/default` intentionally skips non-functional statuses.
 
@@ -401,11 +408,11 @@ A registry entry isn't enough: every entry must **validate against the profile c
 - **Parity guard engine allowlist** — `test-switch-registry-parity.sh` scans a per-engine, per-topology allowlist (e.g. single-card `vllm`/`llama-cpp`/`ik-llama`). Adding a *first-class single-card* variant for an engine not in that scan (e.g. single-card `beellama`) may require extending the test's scan, or it'll miss/false-fail the new surface.
 - **`+1 ../` mount depth** — composes live at `<topology>/<quant>/<serving>.yml`, one level deeper than the old flat layout, so relative mounts need an extra `../` (e.g. `${MODEL_DIR:-../../../../../../models-cache}`, 6× for `single/<quant>/`). `test-compose-mounts-resolve` catches a wrong depth.
 
-**Launchers are registry-derived (since v0.8.x) — do NOT edit `launch.sh`/`switch.sh`.** Adding the registry entry makes the variant launchable automatically; `<engine>/default` and `<engine>/<topology>/default` resolve via the registry's `DEFAULTS` map (topology-autodetect). Promoting a new default = one line in `DEFAULTS`, never a `default.yml` file.
+**Launchers are registry-derived (since v0.8.x) — do NOT edit `launch.sh`/`switch.sh`.** Adding the registry entry makes the variant launchable automatically; `<engine>/default` and `<engine>/<topology>/default` resolve via the registry's `defaults:` map (topology-autodetect). Promoting a new default = one line under `defaults:` in `registry.yaml`, never a `default.yml` file.
 
-**`<model>/default` resolves via `ENGINE_PREFERENCE` — add a `DEFAULTS` row per engine you ship.** Your new model is immediately runnable by name (`--model <id>` / `<id>/default`). For `<id>/default` to resolve cleanly on a given topology, that `(model, engine, topology)` must have a **functional** `DEFAULTS` entry (status `production`/`caveats` — a `preview`/`experimental`/`upstream-gated`/`deprecated` config is skipped, never auto-defaulted). The resolver walks `ENGINE_PREFERENCE[topology]` (single = `[beellama, ik-llama, llamacpp, vllm]`; dual/multi = `[vllm, ik-llama, llamacpp, beellama]`) and picks the first engine with a functional `DEFAULTS` slug, so:
-- Add a `DEFAULTS` row for **each engine × topology** you want `<model>/default` to cover. With no functional default at the detected topology the resolver emits a notice and falls back to the nearest-lower topology, else a clear "pick explicitly" message (it never crashes) — fine while a model is still validating, but the bare-launch UX wants at least one production row.
-- **`RECOMMENDED_DEFAULT_MODELS` is intentionally NOT auto-grown** — a new model is runnable + resolvable but is never the bare-`launch.sh` auto-default until you explicitly add its id to that shortlist. Leave it alone unless you mean to promote the model to a first-class default.
+**`<model>/default` resolves via `engine_preference:` — add a `defaults:` row per engine you ship.** Your new model is immediately runnable by name (`--model <id>` / `<id>/default`). For `<id>/default` to resolve cleanly on a given topology, that `(model, engine, topology)` must have a **functional** `defaults:` row (status `production`/`caveats` — a `preview`/`experimental`/`upstream-gated`/`deprecated` config is skipped, never auto-defaulted). The resolver walks `engine_preference:` (single = `[llamacpp, vllm]`; dual/multi = `[vllm, llamacpp]`) and picks the first engine with a functional default slug, so:
+- Add a `defaults:` row for **each engine × topology** you want `<model>/default` to cover. With no functional default at the detected topology the resolver emits a notice and falls back to the nearest-lower topology, else a clear "pick explicitly" message (it never crashes) — fine while a model is still validating, but the bare-launch UX wants at least one production row.
+- **`recommended_default_models:` is intentionally NOT auto-grown** — a new model is runnable + resolvable but is never the bare-`launch.sh` auto-default until you explicitly add its id to that shortlist. Leave it alone unless you mean to promote the model to a first-class default.
 - **Scoped check:** `bash scripts/preflight-add-model.sh <slug>` runs `diagnose-profile` plus the `test-profiles-compat` / registry-parity gate subset in one colored pass — use it while iterating so a compat miss surfaces in seconds, not at the end of the suite sweep.
 
 
