@@ -995,46 +995,109 @@ class TestNavNodesExist:
         saved = M.load_settings().get("catalog_columns")
         assert saved == {"order": default, "hidden": []}
 
-    def test_act8_serve_toggle(self):
-        """#609: the W4A8 int8-activation opt-in on the serve-confirm modal —
-        shown + wired only for act8-capable START slugs, injects the env, hidden
-        elsewhere. Tests the modal's logic directly (no app mount needed)."""
+    def test_act8_serve_toggle(self, tmp_path):
+        """#609/#1010: the W4A8 int8-activation knob on the serve-confirm modal —
+        shown + wired only where [a] is bound (classic opt-in OR inverted
+        ship-int8), injects the right env per slug class, hidden elsewhere.
+        Tests the modal's logic directly (no app mount needed)."""
         from club3090_cockpit.app import ConfirmActionScreen, ServeContext
         from club3090_cockpit.data import ActionPlan, CatalogEntry
         from club3090_cockpit.services import _variant_row_from_dict
 
-        def modal(act8, mode="start"):
-            row = _variant_row_from_dict({"slug": "vllm/dual", "port": 8010, "act8_capable": act8})
+        def modal(act8, act_format="", mode="start"):
+            row = _variant_row_from_dict({
+                "slug": "vllm/x", "port": 8010, "act8_capable": act8,
+                "act_format": act_format,
+            })
             ctx = ServeContext(mode=mode, entry=CatalogEntry(row=row))
             m = ConfirmActionScreen.__new__(ConfirmActionScreen)
-            m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", "vllm/dual"])
+            m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", "vllm/x"])
             m._serve_ctx = ctx
+            m._repo_root = tmp_path
+            m._act8_gate = None
             m._act8_on = False
             m._reconcile = None
             return m
 
-        # capable START slug → toggle available + gated ON
+        # ── opt-in class (#609, unchanged): 16bit + capable ──────────────────
         cap = modal(True)
-        assert cap._act8_capable() is True
+        assert cap._act8_mode() == "optin"
         assert cap.check_action("toggle_act8", ()) is True
-        # env attaches (idempotent, prepended before switch.sh)
+        # env attaches only when ON (idempotent, prepended before switch.sh)
+        assert cap._act8_env_prefix() == []
         cap._act8_on = True
-        inj = cap._with_act8_env(cap._plan.cmd)
+        inj = cap._with_act8_env(cap._plan.cmd, cap._act8_env_prefix())
         assert inj[:2] == ["env", "VLLM_MARLIN_INPUT_DTYPE=int8"]
-        assert cap._with_act8_env(inj) == inj  # idempotent
+        assert cap._with_act8_env(inj, cap._act8_env_prefix()) == inj  # idempotent
 
-        # NON-capable slug → toggle hidden, capability False
+        # NON-capable slug → no knob at all
         nocap = modal(False)
-        assert nocap._act8_capable() is False
+        assert nocap._act8_mode() == "none"
         assert nocap.check_action("toggle_act8", ()) is False
-
         # capable but STOP mode (not a launch) → not offered
         stop = modal(True, mode="stop")
         assert stop._act8_capable() is False
 
-        # row facet plumbs through from the emit contract
-        assert getattr(_variant_row_from_dict({"slug": "x", "port": 1, "act8_capable": True}), "act8_capable") is True
-        assert getattr(_variant_row_from_dict({"slug": "x", "port": 1}), "act8_capable") is False
+        # row facets plumb through from the emit contract
+        r = _variant_row_from_dict({"slug": "x", "port": 1, "act8_capable": True})
+        assert getattr(r, "act8_capable") is True and getattr(r, "act_format") == ""
+        r2 = _variant_row_from_dict({"slug": "x", "port": 1, "act_format": "int8"})
+        assert getattr(r2, "act_format") == "int8"
+
+    def test_act8_ship_int8_toggle(self, tmp_path):
+        """#1010: slugs that SHIP int8 (act_format == "int8") must not offer the
+        backwards 'enable' opt-in. With the #1008 W4A8 gate in the compose the
+        toggle renders INVERTED (ON default, [a] disable → env W4A8=0); with a
+        hardcoded dtype it renders as a FIXED property line (no [a] binding)."""
+        from club3090_cockpit.app import ConfirmActionScreen, ServeContext
+        from club3090_cockpit.data import ActionPlan, CatalogEntry
+        from club3090_cockpit.services import _variant_row_from_dict
+
+        GATED = "# comment\n- W4A8=${W4A8:-1}\n- VLLM_MARLIN_INPUT_DTYPE\n"
+        HARDCODED = "- VLLM_MARLIN_INPUT_DTYPE=int8\n"
+
+        def modal(compose):
+            d = tmp_path / "models" / "m"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "compose.yml").write_text(compose)
+            row = _variant_row_from_dict({
+                "slug": "vllm/ship-int8", "port": 8010,
+                "act8_capable": True, "act_format": "int8",
+                "compose_path": "models/m/compose.yml",
+            })
+            m = ConfirmActionScreen.__new__(ConfirmActionScreen)
+            m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", "vllm/ship-int8"])
+            m._serve_ctx = ServeContext(mode="start", entry=CatalogEntry(row=row))
+            m._repo_root = tmp_path
+            m._act8_gate = None
+            m._act8_on = True   # the shipped-default state
+            m._reconcile = None
+            return m
+
+        # gated compose → inverted toggle: ON by default, [a] offered,
+        # OFF injects W4A8=0, ON injects nothing (the slug already ships int8)
+        inv = modal(GATED)
+        assert inv._act8_mode() == "inverted"
+        assert inv.check_action("toggle_act8", ()) is True
+        assert inv._act8_env_prefix() == []
+        inv._act8_on = False
+        assert inv._act8_env_prefix() == ["W4A8=0"]
+        off = inv._with_act8_env(inv._plan.cmd, inv._act8_env_prefix())
+        assert off[:3] == ["env", "W4A8=0", "bash"]
+
+        # hardcoded compose → FIXED property: no [a], never any env injected
+        fix = modal(HARDCODED)
+        assert fix._act8_mode() == "fixed"
+        assert fix.check_action("toggle_act8", ()) is False
+        fix._act8_on = False
+        assert fix._act8_env_prefix() == []
+
+        # unreadable compose degrades to FIXED (conservative: no broken toggle)
+        broken = modal(GATED)
+        broken._repo_root = tmp_path / "nonexistent"
+        broken._act8_gate = None
+        assert broken._act8_gate_capable() is False
+        assert broken._act8_mode() == "fixed"
 
     @pytest.mark.asyncio
     async def test_benchmarks_tab_is_gone(self):

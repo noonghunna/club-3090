@@ -2197,7 +2197,8 @@ class ConfirmActionScreen(ModalScreen):
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
-    def __init__(self, plan: ActionPlan, *, on_confirm=None, serve_ctx=None, **kwargs):
+    def __init__(self, plan: ActionPlan, *, on_confirm=None, serve_ctx=None,
+                 repo_root=None, **kwargs):
         super().__init__(**kwargs)
         self._plan = plan
         self._reconcile: Optional[ReconcileResult] = None
@@ -2209,10 +2210,68 @@ class ConfirmActionScreen(ModalScreen):
         self._on_confirm = on_confirm
         # The state-aware SERVE context (None → the legacy Confirm/Force modal).
         self._serve_ctx: Optional[ServeContext] = serve_ctx
-        # W4A8 int8-activation opt-in (#609) — a per-launch toggle ([a]) shown only
-        # for act8-capable slugs. Default from the "prefer_int8_activations" Settings
-        # pref (else OFF). When ON, the serve cmd gets VLLM_MARLIN_INPUT_DTYPE=int8.
-        self._act8_on: bool = self._act8_capable() and self._act8_pref_default()
+        # Repo tree root (for reading the slug's compose at render time, #1010).
+        self._repo_root = repo_root
+        self._act8_gate: Optional[bool] = None   # memoized compose-gate sniff
+        # W4A8 int8-activation toggle (#609; #1010 split) — a per-launch [a] shown
+        # only for act8-capable slugs. Opt-in slugs (act_format 16bit) default from
+        # the "prefer_int8_activations" Settings pref; ship-int8 slugs default ON
+        # (int8 IS the shipped state). Env semantics live in _act8_env_prefix.
+        _cap = self._act8_capable()
+        self._act8_on: bool = (
+            True if (_cap and self._act8_ships_int8())
+            else _cap and self._act8_pref_default()
+        )
+
+    def _act8_ships_int8(self) -> bool:
+        """True iff this slug SHIPS int8 activations (registry act_format ==
+        "int8", #1010) — the serve-default already carries VLLM_MARLIN_INPUT_DTYPE,
+        so an 'enable' opt-in would be a no-op labelled backwards."""
+        row = getattr(getattr(self._serve_ctx, "entry", None), "row", None)
+        return str(getattr(row, "act_format", "") or "") == "int8"
+
+    def _act8_gate_capable(self) -> bool:
+        """True iff the slug's compose wires the #1008 `W4A8=${W4A8:-…}` gate,
+        i.e. OFF is expressible as an env var. Absence of VLLM_MARLIN_INPUT_DTYPE
+        is the only 'off' (vLLM validates it against {int8, fp8}, empty string
+        included), so a ship-int8 slug whose compose hardcodes the dtype instead
+        renders int8 as a FIXED property. Sniffs the compose once off the repo
+        tree; unreadable/unknown → False."""
+        if self._act8_gate is None:
+            self._act8_gate = False
+            rel = str(
+                getattr(
+                    getattr(getattr(self._serve_ctx, "entry", None), "row", None),
+                    "compose_path",
+                    "",
+                )
+                or ""
+            )
+            if self._repo_root is not None and rel:
+                from pathlib import Path as _Path
+
+                try:
+                    text = (_Path(self._repo_root) / rel).read_text(
+                        encoding="utf-8"
+                    )
+                except OSError:
+                    text = ""
+                # The #1008 gate shape: a `- W4A8=${W4A8:…}` env assignment.
+                self._act8_gate = bool(re.search(r"(?m)^\s*-\s*W4A8=\$\{W4A8:", text))
+        return self._act8_gate
+
+    def _act8_mode(self) -> str:
+        """Which card line + env semantics this slug's int8 knob uses (#1010):
+        "optin"    act_format 16bit + capable → the classic enable toggle (#609);
+        "inverted" ships int8 AND carries the W4A8 gate → ON by default, OFF
+                   injects W4A8=0;
+        "fixed"    ships int8, hardcoded compose → property line, no [a] binding;
+        "none"     no knob (not capable / not a START launch)."""
+        if not self._act8_capable():
+            return "none"
+        if self._act8_ships_int8():
+            return "inverted" if self._act8_gate_capable() else "fixed"
+        return "optin"
 
     # ── presentation predicates ───────────────────────────────────────────────────
 
@@ -2436,19 +2495,46 @@ class ConfirmActionScreen(ModalScreen):
                     f"{req_s} (Hopper/Blackwell class){got_s}. "
                     "[yellow]Serving here will NOT boot.[/yellow]"
                 )
-            # W4A8 int8-activation opt-in (#609) — only for act8-capable slugs.
-            if self._act8_capable():
+            # int8-activation knob (#609/#1010) — three shapes by slug class:
+            # "optin" (16bit + capable, the classic enable), "inverted" (ships
+            # int8 + W4A8 gate → ON default, [a] disables via W4A8=0), "fixed"
+            # (ships int8, hardcoded compose → property line, no binding).
+            # Figures are per-model and drift — pointed at the learnings note
+            # instead of a hardcoded % that goes stale (#1010).
+            mode = self._act8_mode()
+            _model = str(getattr(entry.row, "model", "") or "")
+            learn = f" · figures in learnings/{_model}.md" if _model else ""
+            if mode == "optin":
                 if self._act8_on:
                     lines.append(
                         "  [bold]int8 acts[/bold] [green]ON[/green] "
-                        "([green]VLLM_MARLIN_INPUT_DTYPE=int8[/green] — ~+50% prefill, "
-                        "quality-tied ⚑) · [a] toggle"
+                        "([green]VLLM_MARLIN_INPUT_DTYPE=int8[/green] — W4A8 prefill "
+                        f"win, quality-tied ⚑{learn}) · [a] toggle"
                     )
                 else:
                     lines.append(
                         "  [bold]int8 acts[/bold] [dim]off[/dim] "
-                        "(W4A8 int8 activations — ~+50% prefill ⚑ experimental) · [a] enable"
+                        f"(W4A8 int8 activations ⚑ experimental{learn}) · [a] enable"
                     )
+            elif mode == "inverted":
+                if self._act8_on:
+                    lines.append(
+                        "  [bold]int8 acts[/bold] [green]ON[/green] "
+                        "(shipped default — W4A8 int8 activations, quality-tied ⚑"
+                        f"{learn}) · [a] disable"
+                    )
+                else:
+                    lines.append(
+                        "  [bold]int8 acts[/bold] [dim]off[/dim] "
+                        "(W4A16 via [green]W4A8=0[/green] — gives up the int8 prefill "
+                        f"win{learn}) · [a] enable"
+                    )
+            elif mode == "fixed":
+                lines.append(
+                    "  [bold]int8 acts[/bold] [green]ON[/green] (shipped — compose "
+                    "hardcodes [green]VLLM_MARLIN_INPUT_DTYPE=int8[/green], no launch "
+                    f"knob ⚑{learn})"
+                )
             note = (entry.status_note or "").strip()
             if note:
                 lines.append(f"  [bold]caveat[/bold] [yellow]{note}[/yellow]")
@@ -2690,9 +2776,10 @@ class ConfirmActionScreen(ModalScreen):
                 return bool(resolved and mode == "stop")
             if action == "start":
                 return bool(resolved and mode == "start")
-            # W4A8 int8-activation toggle — only for act8-capable START slugs.
+            # W4A8 int8-activation toggle — only where the card binds [a]:
+            # the classic opt-in OR the inverted ship-int8 toggle (#609/#1010).
             if action == "toggle_act8":
-                return self._act8_capable()
+                return self._act8_mode() in ("optin", "inverted")
             # confirm/force never apply in serve mode.
             if action in ("confirm", "force"):
                 return False
@@ -2763,32 +2850,47 @@ class ConfirmActionScreen(ModalScreen):
         self.app.cancel_download(ctx.entry.slug)  # type: ignore[attr-defined]
 
     def action_toggle_act8(self) -> None:
-        """[a] → flip the W4A8 int8-activation opt-in (#609). No-op for slugs that
-        aren't act8-capable (check_action hides the key there)."""
-        if not self._act8_capable():
+        """[a] → flip the int8-activation toggle (#609/#1010). No-op where the
+        card shows no binding (check_action hides the key there)."""
+        if self._act8_mode() not in ("optin", "inverted"):
             return
         self._act8_on = not self._act8_on
         self._render_serve_card()   # reflect ON/OFF in the card
 
     @staticmethod
-    def _with_act8_env(cmd: list[str]) -> list[str]:
-        """Prepend `env VLLM_MARLIN_INPUT_DTYPE=int8` to a serve cmd (#609). switch.sh
-        runs `docker compose`, which reads the env for the compose's bare
-        `- VLLM_MARLIN_INPUT_DTYPE` passthrough → int8 activations in the container.
-        Idempotent."""
-        if "VLLM_MARLIN_INPUT_DTYPE=int8" in cmd:
+    def _with_act8_env(cmd: list[str], pairs: list[str]) -> list[str]:
+        """Prepend `env K=V …` to a serve cmd (#609/#1010). switch.sh runs
+        `docker compose`, which reads the env for the compose's passthrough
+        variables (`- VLLM_MARLIN_INPUT_DTYPE`, `- W4A8=${W4A8:-1}`) → the
+        container boots with them. Idempotent per pair."""
+        if all(p in cmd for p in pairs):
             return cmd
-        return ["env", "VLLM_MARLIN_INPUT_DTYPE=int8", *cmd]
+        return ["env", *pairs, *cmd]
+
+    def _act8_env_prefix(self) -> list[str]:
+        """Env pairs to inject per the toggle state (#609/#1010): opt-in ON →
+        VLLM_MARLIN_INPUT_DTYPE=int8; ship-int8 OFF → W4A8=0 (the #1008 gate —
+        absence of the dtype var can't turn int8 OFF on a slug that defaults it,
+        and vLLM rejects any explicit non-{int8,fp8} value). [] → launch with
+        the slug's own shipped defaults."""
+        mode = self._act8_mode()
+        if mode == "optin" and self._act8_on:
+            return ["VLLM_MARLIN_INPUT_DTYPE=int8"]
+        if mode == "inverted" and not self._act8_on:
+            return ["W4A8=0"]
+        return []
 
     def _commit(self, *, force: bool) -> None:
         plan = self._plan
-        # W4A8 (#609): when the int8-activation opt-in is ON for an act8-capable
-        # slug, inject the env into the serve cmd BEFORE the force re-issue (so
-        # _with_force still finds the switch.sh positional last).
-        if self._act8_on and self._act8_capable() and plan.kind == "serve":
+        # W4A8 (#609/#1010): when the toggle deviates from the slug's shipped
+        # default, inject its env into the serve cmd BEFORE the force re-issue
+        # (so _with_force still finds the switch.sh positional last).
+        pairs = self._act8_env_prefix() if plan.kind == "serve" else []
+        if pairs:
+            tag = "+int8-acts" if pairs[0].startswith("VLLM_") else "-int8-acts"
             plan = ActionPlan(
-                kind=plan.kind, cmd=self._with_act8_env(plan.cmd),
-                description=plan.description + " +int8-acts",
+                kind=plan.kind, cmd=self._with_act8_env(plan.cmd, pairs),
+                description=plan.description + " " + tag,
                 is_write=plan.is_write, requires_reconcile=plan.requires_reconcile,
                 force=plan.force, force_reason=plan.force_reason,
             )
@@ -10656,7 +10758,11 @@ class CockpitApp(App):
         self._staged_entry = entry
         plan = self._data.serve(entry.slug)  # gated, NOT --force
         self.push_screen(
-            ConfirmActionScreen(plan, serve_ctx=self._serve_context_for(entry))
+            ConfirmActionScreen(
+                plan,
+                serve_ctx=self._serve_context_for(entry),
+                repo_root=self._repo_root,   # for the #1010 compose gate sniff
+            )
         )
 
     def _serve_context_for(self, entry: CatalogEntry) -> ServeContext:
