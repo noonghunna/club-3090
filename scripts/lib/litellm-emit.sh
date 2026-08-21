@@ -35,10 +35,16 @@
 #                 per name on the same api_base. An _entry served_name=
 #                 override wins as the primary name.
 #
-# #1073 mechanism: _entry(serve_aliases=(...)) emits each extra name as an
-# additional model_name on the SAME route (same upstream port). No core entry
-# sets aliases yet — mechanism + synthetic-fixture test only
-# (scripts/tests/test-litellm-generate.sh).
+# Served-name sources: _entry served_name override → registry-emit's fact →
+# compose parse (--served-model-name list OR llama.cpp --alias, list/inline
+# forms). #1073: _entry(serve_aliases=(...)) emits each extra name as an
+# additional model_name on the SAME route (same upstream port) — now used by
+# vllm/gemma-31b-dual for the gemma-4-31b-autoround back-compat alias.
+#
+# Status annotation: a canonical scene whose registry status is NOT in
+# FUNCTIONAL_STATUSES (production/caveats) still emits — gateway clients hit
+# whatever is serving — but its model_name line carries `# status: <status>`
+# so operators see the --force gate at a glance.
 #
 # Region contract: everything between the BEGIN/END GENERATED markers is
 # machine-owned and rewritten wholesale. Everything else in config.yaml —
@@ -70,6 +76,7 @@ export LITELLM_EMIT_CHECK="$CHECK"
 python3 - "$ROOT_DIR" <<'PY'
 import difflib
 import json
+import shlex
 import os
 import re
 import subprocess
@@ -81,6 +88,7 @@ root = Path(sys.argv[1]).resolve()
 from scripts.lib.profiles.compose_registry import (
     curated_default_target,
     get_registry,
+    FUNCTIONAL_STATUSES,
 )
 
 CFG = Path(os.environ.get("LITELLM_CONFIG", "services/litellm/config.yaml"))
@@ -133,37 +141,62 @@ def canonical_slug(model, entries):
         f"flag exactly one slug gateway=True"
     )
 
-
 def compose_served_names(compose_path):
-    """ALL --served-model-name values in the compose, in order (the dual-max
-    dual-name case). Plain-text parse, same shape as registry-emit's
-    _compose_served_name but collecting the whole list; ${VAR:-default}
-    unwrapped. Empty when the compose sets no override."""
+    """ALL OpenAI-visible served names in the compose, in order.
+
+    vLLM composes declare them via --served-model-name; the llama.cpp-family
+    composes use --alias (identical wire semantics: the name the /v1 API
+    reports). Both flags parse inline (`--alias ${SERVED_NAME:-deckard-40b}`,
+    one name per token) and in list form (`- '--alias'` + one `- value` per
+    line); ${VAR:-default} unwrapped, shell quotes stripped. Header/comment
+    prose that merely MENTIONS a flag never matches — only real command tokens
+    do. Empty when the compose sets neither."""
     try:
         lines = (root / compose_path).read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
+
+    def clean(tok):
+        unwrapped = re.fullmatch(r"\$\{[A-Z_0-9]+:-(.+)\}", tok)
+        return _unquote(unwrapped.group(1) if unwrapped else tok)
+
     for i, ln in enumerate(lines):
-        if "--served-model-name" not in ln:
+        if ln.lstrip().startswith("#"):
+            continue  # header prose ("SERVED_NAME --alias value …") is not a flag
+        try:
+            toks = shlex.split(ln, comments=True)
+        except ValueError:
             continue
-        rest = ln.split("--served-model-name", 1)[1].split("#", 1)[0].strip()
-        names = rest.split() if rest else []
-        j = i + 1
-        while not rest and j < len(lines):
-            m = re.match(r"\s*-\s*(\S+)\s*$", lines[j])
-            if not m:
-                break
-            tok = m.group(1)
-            if tok.startswith("-"):
-                break  # next flag → end of the name list
-            unwrapped = re.fullmatch(r"\$\{[A-Z_0-9]+:-(.+)\}", tok)
-            names.append(unwrapped.group(1) if unwrapped else tok)
-            j += 1
-        return names
+        for pos, tok in enumerate(toks):
+            if tok not in ("--served-model-name", "--alias"):
+                continue
+            inline = [clean(t) for t in toks[pos + 1:] if t != "-"]
+            if inline:
+                return inline
+            names = []  # list form: one `- value` per following line
+            for nxt in lines[i + 1:]:
+                if nxt.lstrip().startswith("#"):
+                    continue
+                m = re.match(r"\s*-\s*(\S+)\s*$", nxt)
+                if not m:
+                    break
+                val = clean(m.group(1))
+                if val.startswith("-"):
+                    break  # next flag (quotes stripped) → end of the name list
+                names.append(val)
+            if tok == "--alias":
+                names = names[:1]  # llama.cpp --alias takes exactly ONE name
+            return names
     return []
 
 
-routes = []  # (model, port, name) — sorted + deduped before emission
+def _unquote(tok):
+    """Strip one layer of shell quoting (`'deepseek-v4-flash'` → deepseek…)."""
+    m = re.fullmatch(r"'(.*)'|\"(.*)\"", tok)
+    if m:
+        return m.group(1) or m.group(2) or ""
+    return tok
+routes = []  # (model, port, name, status) — sorted + deduped before emission
 for model in sorted(gw_by_model):
     entries = gw_by_model[model]
     slug = canonical_slug(model, entries)
@@ -189,11 +222,10 @@ for model in sorted(gw_by_model):
         sys.exit(
             f"litellm-emit: {slug} is gateway=True but no served-name is "
             f"derivable (no _entry served_name override, no --served-model-name "
-            f"in {entry['compose_path']}) — a gateway route needs a name"
+            f"or --alias in {entry['compose_path']}) — a gateway route needs a name"
         )
     for n in names:
-        routes.append((model, port, n))
-
+        routes.append((model, port, n, entry.get("status", "production")))
 seen = set()
 deduped = []
 for r in sorted(routes, key=lambda t: (t[0], t[1], t[2])):
@@ -203,9 +235,15 @@ for r in sorted(routes, key=lambda t: (t[0], t[1], t[2])):
     deduped.append(r)
 
 chunks = []
-for _model, port, name in deduped:
+for _model, port, name, status in deduped:
+    head = f"  - model_name: {name}"
+    # Non-functional scene (experimental/incubating/…: --force to launch)?
+    # Still emit — gateway clients hit whatever is serving — but annotate the
+    # route line so operators see the gate at a glance.
+    if status not in FUNCTIONAL_STATUSES:
+        head += f"  # status: {status}"
     chunks.append("\n".join([
-        f"  - model_name: {name}",
+        head,
         "    litellm_params:",
         f"      model: openai/{name}",
         f"      api_base: http://host.docker.internal:{port}/v1",

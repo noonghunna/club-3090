@@ -741,6 +741,10 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/vllm/compose/dual/qat-awq-int4/base.yml",
         default_port=8032,
         kvcalc_key="gemma-4-31b:gemma-dual",
+        # Wave-2 gateway flip: absorbs the hand-written :8032 routes (the shared
+        # primary + the back-compat alias) into the generated LOCAL block.
+        gateway=True,
+        serve_aliases=("gemma-4-31b-autoround",),
         status="caveats",
         status_note="Gemma-4-31B cyankiwi QAT-AWQ-INT4 (compressed-tensors, lm_head bf16), dual TP=2 BF16 KV @224K, stock vLLM v0.24.0 OVERLAY-FREE — the consolidation 31b (folds onto vllm-stable, retires the 31b's vllm-gemma-stable dependence). BF16 (not int8-PTH): on v0.24.0 int8-PTH allocates 262K but SILENTLY craters recall past ~32K (needs #40391, open/conflicting upstream — verified 2026-07-01, both cyankiwi + w4a16 crater identically; the SAME cyankiwi weights on v0.22.0+#40391 recall clean to 112K+). bf16 KV is overlay-free + no cliff. rebench-full VALIDATED 2026-07-02 @0.95/229376: verify-full 9/9 (tools+streaming-tool-calls+reasoning clean, MTP-off), verify-stress ALL 5 ceiling rungs to 210K (91%) with healthy VRAM margin 1162MB>1024 (the 0.97/245K thin-margin flag is resolved at 0.95/224K), bench decode ~59 TPS (CV 0.1%, TTFT 69ms), soak PASS (0 err · 0 MiB growth · 0/100 silent · p50 58.7 · 99.6% retention). tie_weights dodged (lm_head excluded), gemma4 tool+reasoning parsers native (#45588). CAVEATS: (1) MTP DISABLED — Gemma-4 MTP×tool-calling broken on v0.24.0 (vLLM #39043; #42006 closed-unmerged); (2) ~224K ceiling (bf16 ~2×/tok vs int8-PTH's 262K) — int8-PTH+#40391 (262K) returns free when #40391 merges. Supersedes gemma-int8-mtp/gemma-bf16-mtp/qat-w4a16 for v0.24.0. 8-pack deferred (maintainer call).",
     ),
@@ -798,6 +802,9 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-12b/vllm/compose/single/autoround-int8/mtp.yml",
         default_port=8038,
         kvcalc_key="gemma-4-12b:gemma-single-int8-mtp",
+        # Wave-2 gateway flip: absorbs the hand-written gemma-4-12b-int8 route
+        # (:8038) into the generated LOCAL block.
+        gateway=True,
         status="caveats",
         status_note="Gemma-4-12B Intel AutoRound INT8 (W8A16) + assistant external drafter (n=4) single 3090 on the gemma4_unified arch-preview image. ⚠️ Production w/ caveats: validated 2026-06-04 (bench + 256K NIAH + 8-pack 105/150 + soak PASS). MTP fits the full 262144 (drafter resident, KV pool ~310K tok, 1.18x at 262K, ~20.7 GB). n-sweep code-gen: n=4 117 TPS / accept_len 3.67 (n=5 122.5 code-max via SPEC_N=5) vs ~50 no-MTP. 8-pack on par with the bf16 dual's 94/150 (INT8≈bf16). bf16 KV only. CAVEAT: ephemeral arch-preview image (0.1.dev) — pin a digest; promotes to Production on a STABLE vLLM gemma4_unified release.",
     ),
@@ -978,6 +985,9 @@ COMPOSE_REGISTRY = {
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4/fp8.yml",
         default_port=8051,
+        # Wave-2 gateway flip: absorbs the hand-written qwen3.6-35b-a3b-autoround
+        # route (:8051) into the generated LOCAL block.
+        gateway=True,
         kvcalc_key="qwen3.6-35b-a3b:qwen-35b-a3b-dual",
     ),
 
@@ -1070,6 +1080,9 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-40b-deckard/llama-cpp/compose/dual/piehsoft-q6k/mtp.yml",
         default_port=8199,
         kvcalc_key="SKIP",
+        # Wave-2 gateway flip: absorbs the hand-written deckard-40b route (:8199)
+        # into the generated LOCAL block.
+        gateway=True,
         status="production",
         status_note="Dense 40B uncensored Qwen3.6 merge (Q6_K MTP GGUF, 31 GB) on dual 3090 llama.cpp. Arch CONFIRMED qwen35-dense (standard GQA, 97 layers) from the GGUF header. MTP n=2 sweet spot (~41.6 tok/s, 0.81 accept). 128K ctx ceiling @q8_0 KV (192K OOMs). Dual-only. verify-full 8/8, verify-stress 8/8, 8-pack 105/150 (MTP off==on, spec-dec lossless), soak-continuous PASS (0 MiB growth, 0/25 silent-empty). First uncensored + first dual-llama.cpp compose in the catalog.",
         category="uncensored",
@@ -1217,6 +1230,12 @@ COMPOSE_REGISTRY = {
         host_ram_gb=146,
         required_sm=8.6,
         status="incubating",
+        # Wave-2 gateway flip: absorbs the hand-written deepseek-v4-flash route
+        # (:8030) into the generated LOCAL block. Incubating (--force to launch)
+        # is deliberately still emitted: gateway clients hit whatever is serving,
+        # and the emitter annotates the route `# status: incubating` so operators
+        # can see the gate.
+        gateway=True,
         status_note="A 284B MoE on 2x24 GB. QUALITY TIER of the two DeepSeek-Flash offload slugs. Stock upstream b10236, zero patches. Three levers compose: CPU expert offload (137 GiB of routed experts in host RAM) + partial residency (bundles pinned back onto the GPUs, sized by the launcher from DETECTED free VRAM) + the DSpark drafter. HARD GATE: ~146 GB host RAM worst case -- preflight REFUSES below it. Ships 200K, NOT 262K: at 262K with the drafter it boots READY at 97.4% VRAM, passes a trivial decode, then dies on a ~15.7K-token prefill (CUDA OOM in cuMemCreate, reproduced 2026-08-06). CANONICAL BENCH PUBLISHED 2026-08-09 (BENCHMARKS.md row 2, reference 2x3090, 3-boot medians): decode 17.1 narrative / 26.9 code at canonical sampling, prefill 369 @10K / 287 @90K, TTFT 169 ms; greedy-replay 35.2. The 8-pack is still owed -- stays incubating until quality lands.",
         category="frontier",
     ),
