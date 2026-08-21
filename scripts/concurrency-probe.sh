@@ -515,13 +515,18 @@ if [[ -n "$SWEEP" ]]; then
   # SLUG presence already validated up top, before environment probing.
   echo "[sweep] slug=$SLUG N in { $SWEEP } · floor=${TPS_FLOOR} tok/s/stream · reboots the server per N"
   knee=""; knee_tps=""; knee_agg=""; sweep_rows=""
+  # --force: SWEEP targets the user-named SLUG, which may be status-gated
+  # (experimental/incubating) — switch.sh refuses it without --force, AFTER tearing
+  # the old container down. Restore-on-exit trap returns the slug to its default
+  # config if a probe dies mid-sweep. (Same fix as spec-sweep, 2026-08-20.)
+  trap 'rm -f "${cells_jsonl:-}"; bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1 || true' EXIT
   for N in $SWEEP; do
     if [[ "$SWEEP_DRY" == "1" ]]; then
       echo "[sweep:dry] would: MAX_NUM_SEQS=$N switch.sh $SLUG  ->  wait ready  ->  probe N=$N"
       continue
     fi
     echo "[sweep] boot $SLUG @ MAX_NUM_SEQS=$N ..."
-    if ! MAX_NUM_SEQS="$N" bash "$ROOT_DIR/scripts/switch.sh" "$SLUG" >/dev/null 2>&1; then
+    if ! MAX_NUM_SEQS="$N" bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1; then
       echo "[sweep] N=$N: boot FAILED — skipping"; continue
     fi
     ready=0
@@ -564,6 +569,9 @@ if [[ -n "$SWEEP" ]]; then
   else
     echo "  no N met the bar — lower the sweep range or the target_ctx, or check the floor."
   fi
+  echo "[sweep] restoring $SLUG default boot config…"
+  bash "$ROOT_DIR/scripts/switch.sh" --force "$SLUG" >/dev/null 2>&1 || true
+  trap - EXIT
   _cp_emit "$knee" "$knee_tps" "$knee_agg"
   exit 0
 fi
