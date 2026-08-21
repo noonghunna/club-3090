@@ -265,15 +265,24 @@ if [[ "$ENGINE_FAMILY" == "llamacpp" ]]; then
   fi
 else
   # --- vLLM: reboot per arm ----------------------------------------------------
+  # --force + restore-on-exit trap (same rationale as the llama.cpp reboot path
+  # above): a status-gated slug (experimental/incubating) would otherwise be
+  # REFUSED by switch.sh AFTER the old container is torn down, and set -e would
+  # kill the sweep leaving the endpoint offline. Found 2026-08-20 fixing the
+  # llama.cpp path; the vLLM path had the identical hole.
+  trap 'bash scripts/switch.sh --force "$SLUG" >/dev/null 2>&1 || true' EXIT
   for n in $SWEEP_N; do
     echo "[spec-sweep] boot $SLUG SPEC_N=$n…"
-    SPEC_N="$n" bash scripts/switch.sh "$SLUG" >/dev/null
+    SPEC_N="$n" bash scripts/switch.sh --force "$SLUG" >/dev/null
     ready=0
     for _ in $(seq 1 240); do curl -sf -m 3 "$URL/v1/models" >/dev/null 2>&1 && { ready=1; break; }; sleep 3; done
     [[ "$ready" == "1" ]] || { echo "  n=$n: boot not ready — skipping"; continue; }
     _detect_model
     _measure_vllm_arm "$n"
   done
+  echo "[spec-sweep] restoring the slug's default boot config…"
+  bash scripts/switch.sh --force "$SLUG" >/dev/null 2>&1 || true
+  trap - EXIT
 fi
 
 # --- summary + sweet spot ------------------------------------------------------
