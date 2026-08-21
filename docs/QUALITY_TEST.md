@@ -103,18 +103,20 @@ bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
 bash scripts/quality-test.sh --full --no-thinking --sampling-from-server \
   --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600
 
-# ---- leg B: thinking (all FOUR vars on the boot, or you run reasoning with INSTRUCT sampling) ----
-ENABLE_THINKING=true TEMP=1.0 TOP_P=0.95 PRESENCE_PENALTY=0.0 \
-  bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
+# ---- leg B: thinking (one var — the compose derives the card's thinking
+#      sampler from it) ----
+ENABLE_THINKING=true bash scripts/switch.sh --force vllm/qwen38-27b-dual-fast
 REASONING_EFFORT=low BENCHLOCAL_MODEL_TURN_TIMEOUT=900 \
 bash scripts/quality-test.sh --full --enable-thinking --sampling-from-server \
   --max-tokens 4096 --thinking-max-tokens 16384 --timeout-per-case 600
 ```
 
-⚠️ **`ENABLE_THINKING` flips the chat template only — the sampler does NOT follow it.** Miss the three
-sampler vars and you run reasoning at `presence_penalty 1.5`, which the Qwen3.8 card warns causes
-language mixing. Tracked in [#1014](https://github.com/noonghunna/club-3090/issues/1014); when that
-lands this collapses to one variable.
+**`ENABLE_THINKING` now flips BOTH the chat template and the sampler on models with per-mode card
+rows (qwen3.8-27b)**: the compose entrypoint picks the matching model-card row (`:=` defaults, so an
+explicit `TEMP`/`TOP_P`/`PRESENCE_PENALTY` still wins). The old four-variable ritual is obsolete —
+[#1014](https://github.com/noonghunna/club-3090/issues/1014), guarded by
+`scripts/tests/test-compose-sampler-profiles.sh`. Single-row models are unaffected: there, setting
+the three sampler vars by hand remains the only way to change them.
 
 **Why each flag** — none is decoration; each exists because its absence produced a wrong number:
 

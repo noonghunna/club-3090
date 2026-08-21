@@ -147,27 +147,27 @@
 # SAMPLER — follows the Qwen3.8-27B MODEL CARD, identical to the dual sibling.
 #   Card rows: Thinking = temp 1.0 / top_p 0.95 / top_k 20 / min_p 0.0 /
 #   presence_penalty 0.0; Instruct = temp 0.7 / top_p 0.80 / top_k 20 /
-#   min_p 0.0 / presence_penalty 1.5. This compose ships thinking OFF, so it
-#   ships the INSTRUCT row. ⚠️ The sampler does NOT follow the reasoning flag —
-#   the two are set independently and mismatching them is SILENT. This deviates
-#   from the other Qwen composes on the stack (temp 0.6 / top_p 0.95, tuned on
-#   Qwen3.6): deliberate, because the card is the only evidence for 3.8.
+#   min_p 0.0 / presence_penalty 1.5. This compose ships thinking OFF, so its
+#   DEFAULT is the INSTRUCT row — but the sampler now FOLLOWS the reasoning
+#   flag: the entrypoint derives the card row from ENABLE_THINKING at boot
+#   (#1014), so the mode and the sampler can no longer mismatch silently. This
+#   deviates from the other Qwen composes on the stack (temp 0.6 / top_p 0.95,
+#   tuned on Qwen3.6): deliberate, because the card is the only evidence for 3.8.
 #   ⚠️ SERVING defaults only — scripts/bench.sh sends its own canonical sampler.
 #
-# ⭐ THINKING MODE — set all four together:
-#     ENABLE_THINKING=true TEMP=1.0 TOP_P=0.95 PRESENCE_PENALTY=0.0 \
-#       bash scripts/switch.sh --force vllm/qwen38-27b-multi8-max
-#   (top_k 20 / min_p 0.0 / repetition_penalty 1.0 are identical in both card
-#   rows, so they need no override.) Per-request thinking works without any of
-#   this — send chat_template_kwargs {"enable_thinking": true} plus the thinking
-#   sampler; --reasoning-parser qwen3 is already on, so <think> is routed to
-#   reasoning_content either way.
-#
-#   ⚠️ Four vars, not the llama.cpp siblings' single THINKING=1 — same reason as
-#   the dual sibling: exec-form arg LIST + single-JSON payload flags, and compose
-#   interpolation has no if/else (`${THINKING:-x}` expands to THINKING's own
-#   VALUE when set, so the last-wins append trick is inexpressible). See
-#   club-3090 #984 for the real fix.
+# ⭐ THINKING MODE — one variable now:
+#     ENABLE_THINKING=true bash scripts/switch.sh --force vllm/qwen38-27b-multi8-max
+#   selects the card's THINKING row (temp 1.0 / top_p 0.95 / presence 0.0). An
+#   explicit TEMP / TOP_P / PRESENCE_PENALTY still beats both rows (`:=`
+#   defaults in the entrypoint); top_k 20 / min_p 0.0 / repetition_penalty 1.0
+#   are identical across rows and stay mode-independent. Per-request thinking
+#   needs none of this — send chat_template_kwargs {"enable_thinking": true}
+#   plus a per-request sampler; --reasoning-parser qwen3 is already on, so
+#   <think> is routed to reasoning_content either way.
+#   ⚠️ History: this used to demand the four-variable ritual because compose
+#   interpolation has no if/else; the fix (#984/#1014) moved the choice into the
+#   ENTRYPOINT, where bash exists — discussion #993's four-variable instructions
+#   are obsolete for this model.
 #
 # Quick start (weights first):
 #   WEIGHT_KEY=qwen3.8-27b:fp8 bash scripts/setup.sh qwen3.8-27b
@@ -217,6 +217,19 @@ services:
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
+      # interpolation, which has no if/else — derives --override-generation-config
+      # from the model-card row matching ENABLE_THINKING, so these must reach the
+      # container. Absent -> empty -> the entrypoint's `:=` row default applies;
+      # an explicit value crosses unchanged and still wins over both rows.
+      - ENABLE_THINKING=${ENABLE_THINKING:-false}
+      - TEMP=${TEMP:-}
+      - TEMPERATURE=${TEMPERATURE:-}
+      - TOP_P=${TOP_P:-}
+      - TOP_K=${TOP_K:-}
+      - MIN_P=${MIN_P:-}
+      - PRESENCE_PENALTY=${PRESENCE_PENALTY:-}
+      - REPEAT_PENALTY=${REPEAT_PENALTY:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection (#610).
       # CDI runtimes (NixOS, nvidia-ctk cdi) IGNORE NVIDIA_VISIBLE_DEVICES, so
@@ -301,10 +314,26 @@ services:
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}"
+        # -- Sampler follows the reasoning mode ----------------------------------
+        # The card publishes TWO sampler rows (see "SAMPLER" in the header);
+        # ENABLE_THINKING now selects the row — one variable instead of the
+        # four-variable ritual (#1014). `:=` defaults: an explicit TEMP /
+        # TOP_P / PRESENCE_PENALTY from .env or shell STILL WINS in both
+        # branches. top_k / min_p / repetition_penalty are identical across the
+        # rows and stay mode-independent.
+        _temp="$${TEMP:-$${TEMPERATURE:-}}"
+        if [ "$${ENABLE_THINKING:-false}" = "true" ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+          echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
         else
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}"
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+          echo "[sampler] instruct row (default): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+        fi
+        SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY},\"repetition_penalty\":$${REPEAT_PENALTY:-1.0}}")
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+        else
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
         fi
       - --
     command:
@@ -368,8 +397,9 @@ services:
       # Stack-wide default: thinking OFF. On this model that ALSO suppresses the
       # template's xhigh reasoning-effort preamble (it is gated on thinking).
       # ⭐ THINKING GATE — flip the server default with ENABLE_THINKING=true.
-      #   Pair it with the card's thinking sampler (see the header); the two are
-      #   independent and mismatching them is SILENT.
+      #   The card's matching sampler row follows AUTOMATICALLY now: the
+      #   entrypoint keys --override-generation-config off the same flag, so an
+      #   explicit TEMP/TOP_P/PRESENCE_PENALTY is the only way to deviate.
       - --default-chat-template-kwargs
       # ⭐ reasoning_effort default = low (2026-08-16). It is a PER-REQUEST OpenAI
       # control, so this is only the fallback for callers that send nothing — any
@@ -397,13 +427,10 @@ services:
       # Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
       - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
       - --enable-chunked-prefill
-      # SAMPLER = the model card's INSTRUCT row (this compose ships thinking
-      # OFF). ⚠️ The sampler does NOT follow ENABLE_THINKING — for thinking mode
-      # set all four together: ENABLE_THINKING=true TEMP=1.0 TOP_P=0.95
-      # PRESENCE_PENALTY=0.0. Mismatching them is silent.
-      # Both card rows + rationale in the "SAMPLER" header block above.
-      - --override-generation-config
-      - '{"temperature":${TEMP:-${TEMPERATURE:-0.7}},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      # SAMPLER moved INTO the entrypoint (#984/#1014): at boot it derives
+      # --override-generation-config from the model-card row matching
+      # ENABLE_THINKING (instruct by default; thinking when true); explicit
+      # TEMP/TOP_P/PRESENCE_PENALTY still win. Both rows: "SAMPLER" header above.
       - --host
       - 0.0.0.0
       - --port

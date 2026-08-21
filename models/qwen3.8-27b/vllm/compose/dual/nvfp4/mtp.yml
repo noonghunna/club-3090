@@ -100,6 +100,17 @@ services:
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
+      # interpolation, which has no if/else — derives --override-generation-config
+      # from the model-card row matching ENABLE_THINKING, so these must reach the
+      # container. Absent -> empty -> the entrypoint's `:=` row default applies;
+      # an explicit value crosses unchanged and still wins over both rows.
+      - ENABLE_THINKING=${ENABLE_THINKING:-false}
+      - TEMP=${TEMP:-}
+      - TOP_P=${TOP_P:-}
+      - TOP_K=${TOP_K:-}
+      - MIN_P=${MIN_P:-}
+      - PRESENCE_PENALTY=${PRESENCE_PENALTY:-}
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - CUDA_VISIBLE_DEVICES
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
@@ -152,7 +163,22 @@ services:
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi
-        exec vllm serve $$AR "$$@" "$${SPEC_ARGS[@]}"
+        # -- Sampler follows the reasoning mode ----------------------------------
+        # The card publishes TWO sampler rows (see the header); ENABLE_THINKING
+        # now selects the row — one variable instead of the four-variable ritual
+        # (#1014). `:=` defaults: an explicit TEMP / TOP_P / PRESENCE_PENALTY
+        # from .env or shell STILL WINS in both branches. top_k / min_p are
+        # identical across the rows and stay mode-independent.
+        _temp="$${TEMP:-}"
+        if [ "$${ENABLE_THINKING:-false}" = "true" ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+          echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+        else
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+          echo "[sampler] instruct row (default): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+        fi
+        SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY}}")
+        exec vllm serve $$AR "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
       - --
     command:
       - --model
@@ -210,8 +236,10 @@ services:
       # ⚠️ Valid values are xhigh | medium | low. Anything else RAISES at template
       # render (`high` included — it does NOT silently remap).
       - '{"enable_thinking": ${ENABLE_THINKING:-false}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
-      - --override-generation-config
-      - '{"temperature":${TEMP:-0.7},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5}}'
+      # SAMPLER moved INTO the entrypoint (#984/#1014): at boot it derives
+      # --override-generation-config from the model-card row matching
+      # ENABLE_THINKING (instruct by default; thinking when true); explicit
+      # TEMP/TOP_P/PRESENCE_PENALTY still win. Both rows: "SAMPLER" header above.
       - --host
       - 0.0.0.0
       - --port
