@@ -176,6 +176,14 @@ services:
       - "${MAX_NUM_SEQS:-2}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
+      # Head-of-line-blocking mitigation (Zylone's vLLM tip; qwen3.6 dual-fast precedent).
+      # Interleaves a long prefill with concurrent decodes so a short/agentic request
+      # isn't starved. Valid range [block_size ~1600, max-num-batched-tokens 8192);
+      # 4096 = qwen3.6's measured 2.7x short-TTFT point (5.8x at 2048).
+      # ⚠️ INERT at max_num_seqs=1 (the shipped default) — preparatory for concurrency.
+      # LONG_PREFILL_TOKEN_THRESHOLD=0 disables.
+      - --long-prefill-token-threshold
+      - "${LONG_PREFILL_TOKEN_THRESHOLD:-4096}"
       # `auto` follows --dtype above, so this is bf16 KV — 2 bytes/token/elem,
       # DOUBLE the fp8 e4m3 the dual sibling runs. Deliberate: TP=4 drops weights
       # to ~7.2 GiB/card, which affords the bigger pool (see the KV: header block).
