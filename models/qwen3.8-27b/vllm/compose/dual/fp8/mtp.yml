@@ -79,12 +79,15 @@
 #                Not quant-, topology- or depth-specific: hit on Ampere+Ada and on
 #                2× 5090 across NVFP4 AND W4A8 alike. The vendored pr48375 fixes
 #                vllm#43559 (corruption) and does NOT cover this fault.
-#                ⚠️ THIS MODEL HAS NEVER RUN, so it has never been OBSERVED to crash —
-#                that is absence of evidence, not evidence of absence. The exposure is
-#                structural (same hybrid-GDN kernel, MTP on) and carries over.
-#                MITIGATION: run the drafter off — SPEC=off. Lower n cuts frequency,
-#                NOT exposure (n=3 was called stable on one rig and crashed AT n=3 on
-#                another). Clears when #50021 merges and a pin bump inherits it;
+#                ⚠️ CONFIRMED IN PRODUCTION 2026-08-19 (@alexpolo1 #1059): crashed once
+#                on THIS slug (2× 3090, MTP n=3, 44 h uptime, from a HEALTHY state) —
+#                Xid 31 VIRT_WRITE both cards. Async scheduling is AUTO-ON for MTP here
+#                ('mtp' ∈ EagleModelTypes → the disable-guard doesn't fire, no warning),
+#                so the shipped default is MTP + prefix-cache + async — the #1052 combo.
+#                MITIGATIONS (two): (1) ASYNC_SCHED=off (--no-async-scheduling) —
+#                eliminates the crash at ~0% cost and KEEPS the drafter; (2) SPEC=off —
+#                drops the drafter. Lower n cuts frequency NOT exposure (crashed AT n=3).
+#                Clears when #50021 merges and a pin bump inherits it;
 #                v0.26.0 PREDATES the fix, so the queued bump inherits nothing here.
 #                Full detail, evidence stack + re-test trigger: docs/UPSTREAM.md.
 #   Best for:  max-weight-fidelity Qwen3.8-27B on 2 cards, and the on-rig proxy for
