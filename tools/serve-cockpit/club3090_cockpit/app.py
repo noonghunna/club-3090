@@ -102,6 +102,7 @@ from .data import (
     GATE_STEPS,
     Measurement,
     MeasureVsBar,
+    KvOption,
     OptimizerReport,
     PowerCapState,
     PromoteScaffold,
@@ -870,7 +871,7 @@ class HelpScreen(ModalScreen):
             "  [cyan]⏎[/cyan] serve selected slug (reconcile-gated confirm; F to Force the teardown)",
             "  [cyan]e[/cyan] explain   [cyan]i[/cyan] model info (metadata popup for the selected slug)",
             "  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default",
-            "  [cyan]O[/cyan] ▸ Optimize for my card [yellow](coming soon — v0.10.0)[/yellow]",
+            "  [cyan]O[/cyan] ▸ Optimize for my card (kv-calc recs, advisory)",
             "",
             "[bold]Run & Operate · Orchestration[/bold]",
             "  [cyan]⏎[/cyan] switch scene   [cyan]k[/cyan] stop THIS model   [cyan]b[/cyan] restart serving   [cyan]n[/cyan] switch model (→ Catalog tab)   (writes gated)",
@@ -5718,16 +5719,25 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
     BINDINGS = [
         Binding("enter", "stage_write", "Write LOCAL layer", show=True, priority=True),
         Binding("c", "stage_core", "WRITE CORE REGISTRY", show=True, priority=True),
+        # NOTE: deliberately NOT priority=True — unlike enter/c, ``e`` is a
+        # printable that MUST reach the display_name/family Inputs while they
+        # are focused (a priority binding would hijack typing it).
+        Binding("e", "export_pr", "Export PR bundle", show=True),
         Binding("y", "app.copy_context", "Copy YAML", show=True),
         Binding("escape", "dismiss", "Close"),
     ]
 
-    def __init__(self, scaffold: PromoteScaffold, *, on_stage_write=None, **kwargs):
+    def __init__(self, scaffold: PromoteScaffold, *, on_stage_write=None,
+                 on_export_pr=None, **kwargs):
         super().__init__(**kwargs)
         self._scaffold = scaffold
         # on_stage_write(layer, spec) — the app builds the ActionPlan for the
         # chosen layer with the user's inline edits applied.
         self._on_stage_write = on_stage_write
+        # on_export_pr(spec) — the community-loop completion: hand the edited
+        # spec to the app, which confirm-gates ``export_pr.py`` (the LOCAL →
+        # CORE PR-bundle translator).  Only meaningful for layer=="local".
+        self._on_export_pr = on_export_pr
         # [Y] copy payload: the raw (markup-free) YAML + registry entry.
         if not getattr(scaffold, "error", ""):
             self._copy_payload = (
@@ -5818,7 +5828,8 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
         lines.append("")
         lines.append(
             "  [dim]⏎ Write LOCAL layer · C WRITE CORE REGISTRY "
-            "(needs C3_ALLOW_CORE_PROMOTE=1) · Esc Close[/dim]"
+            "(needs C3_ALLOW_CORE_PROMOTE=1) · E Export as PR bundle "
+            "(local only) · Esc Close[/dim]"
         )
         return "\n".join(lines)
 
@@ -5871,10 +5882,16 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
             self.action_dismiss()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the ⏎ binding on computed + the required edits (mirrors the
-        disabled stage buttons)."""
+        """Gate ⏎ on computed + the required edits (mirrors the disabled stage
+        buttons); gate [E] CONTEXTUALLY — an entry is exportable ONLY when it
+        targets the LOCAL layer (a core write already IS the PR's content)."""
         if action == "stage_write":
             return self._can_stage()
+        if action == "export_pr":
+            return (
+                getattr(self._scaffold, "layer", "") == "local"
+                and bool(self._scaffold.computed)
+            )
         return True
 
     def action_stage_write(self) -> None:
@@ -5914,26 +5931,127 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
     def action_dismiss(self) -> None:
         self.app.pop_screen()
 
+    def action_export_pr(self) -> None:
+        """E — Export as PR bundle: run scripts/lib/profiles/export_pr.py via
+        the app's write-runner seam (confirm-gated there), producing the three
+        ready-to-commit CORE artifacts under an output dir.  Context-gated to
+        LOCAL-layer scaffolds by check_action; re-asserted here."""
+        if (
+            getattr(self._scaffold, "layer", "") != "local"
+            or not self._scaffold.computed
+        ):
+            return
+        spec = self._edited_spec()
+        self.app.pop_screen()
+        if self._on_export_pr is not None:
+            self._on_export_pr(spec)
 
-# ── Phase 5 · Optimize-for-my-card seam modal (DORMANT v0.10.0 — design §5.2) ──────
+
+class ExportPrBundleScreen(_CopyableModal, ModalScreen):
+    """Result of a confirmed ``export_pr.py`` run: the ready-to-commit CORE
+    PR bundle location.  [Y] copies the bundle root + artifact paths so the
+    contributor can paste them straight into their branch/PR flow."""
+
+    DEFAULT_CSS = """
+    ExportPrBundleScreen {
+        align: center middle;
+    }
+    ExportPrBundleScreen > Vertical {
+        width: 90;
+        max-width: 100%;
+        height: auto;
+        max-height: 70%;
+        border: thick $success;
+        background: $surface;
+        padding: 1 2;
+    }
+    ExportPrBundleScreen .export-title {
+        text-style: bold;
+        color: $success;
+        margin-bottom: 1;
+    }
+    ExportPrBundleScreen #export-body {
+        height: auto;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("Y", "app.copy_context", "Copy paths", show=True),
+    ]
+
+    def __init__(self, out_dir: str, *, lines: Optional[list[str]] = None, **kwargs):
+        super().__init__(**kwargs)
+        self._out_dir = out_dir
+        self._lines = list(lines or [])
+
+    def compose(self) -> ComposeResult:
+        from rich.markup import escape
+
+        with Vertical():
+            yield Label(
+                f"PR bundle exported · {escape(self._out_dir)}",
+                classes="export-title",
+            )
+            yield Static(self._body_text(), id="export-body")
+            yield Label(
+                "[dim][Y] copy bundle paths · Esc Close[/dim]",
+            )
+
+    def _body_text(self) -> str:
+        from rich.markup import escape
+
+        artifacts = [
+            "models/<id>.yml",
+            "models/<id>/<engine>/compose/<topology>/<quant>/<serving>.yml",
+            "compose_registry.patch  (the _entry kwargs + setup-block notes)",
+        ]
+        lines = ["  [bold]Ready-to-commit core layout:[/bold]"]
+        lines += [f"    [cyan]{self._out_dir}/{escape(a)}[/cyan]" for a in artifacts]
+        tail = [ln for ln in self._lines if ln.strip()][-8:]
+        if tail:
+            lines.append("")
+            lines.append("  [bold]export_pr.py output (tail):[/bold]")
+            lines += [f"    [dim]{escape(ln)}[/dim]" for ln in tail]
+        return "\n".join(lines)
+
+    def on_mount(self) -> None:
+        self._copy_payload = (
+            f"{self._out_dir}\n"
+            f"{self._out_dir}/models/\n"
+            f"{self._out_dir}/compose_registry.patch\n"
+        )
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
+
+# ── Phase 5 · Optimize-for-my-card — the kv-calc brain (design §5.2 seam 1, P4) ─────
 
 
 class OptimizeScreen(ModalScreen):
-    """The ▸ Optimize-for-my-card seam — DORMANT until the v0.10.0 optimizer lands.
+    """▸ Optimize-for-my-card — AWAKE: the brain is ``tools/kv-calc.py``.
 
-    On open it invokes the seam, which detects the optimizer's absence and shows
-    'optimizer not available (v0.10.0)'.  The honesty-gate rendering (boot-fit
-    predicted|measured · runtime soak-validated · confidence tier · cliff-class
-    --accept-runtime-risk) is built into ``set_report`` but stays dormant — it
-    renders ONLY once the engine reports ``available=True``.  Never fabricates
-    optimizer output."""
+    On open it runs (via the Runner seam) ``kv-calc --fit <slug> --card <card>
+    --json`` for the recommendation at the slug's own config, then one
+    ``--solve-max-ctx`` pricing per hardware-legal KV dtype (engine ∩ card
+    supported sets).  Renders the recommended max-model-len, projected VRAM ±
+    band, and the per-dtype option table; APPLY stages the SAME gated
+    ``switch.sh`` serve plan with MAX_MODEL_LEN / KV_CACHE_DTYPE riding
+    ``plan.env`` (the ② Serve override-editor mechanism — no new write path).
+
+    NEVER-repair spirit: every number is a kv-calc PREDICTION (±band), the
+    recs are advisory, and Apply routes through the reconcile-gated
+    ConfirmActionScreen — the user confirms.  Honesty: a kv-calc failure shows
+    an error card (no fake numbers); kvcalc_key=SKIP engines get an explicit
+    unsupported message."""
 
     DEFAULT_CSS = """
     OptimizeScreen {
         align: center middle;
     }
     OptimizeScreen > Vertical {
-        width: 80;
+        width: 84;
         height: auto;
         max-height: 80%;
         border: thick $accent;
@@ -5947,6 +6065,17 @@ class OptimizeScreen(ModalScreen):
     }
     OptimizeScreen #optimize-body {
         height: auto;
+        margin-bottom: 1;
+    }
+    OptimizeScreen .optimize-row {
+        height: auto;
+        align: left middle;
+    }
+    OptimizeScreen #optimize-kv {
+        width: 1fr;
+    }
+    OptimizeScreen #optimize-btn-note {
+        margin-left: 1;
     }
     """
 
@@ -5954,9 +6083,14 @@ class OptimizeScreen(ModalScreen):
         Binding("escape", "dismiss", "Close"),
     ]
 
-    def __init__(self, slug: str = "", **kwargs):
+    # Fit-vocabulary glyph per option verdict (same family as the catalog's).
+    _OPT_GLYPH = {"fits-clean": "●", "fits-constrained": "◐", "wont-fit": "○"}
+
+    def __init__(self, slug: str = "", entry: Optional[CatalogEntry] = None, **kwargs):
         super().__init__(**kwargs)
         self._slug = slug
+        self._entry = entry
+        self._report: Optional[OptimizerReport] = None
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -5964,43 +6098,127 @@ class OptimizeScreen(ModalScreen):
                 f"Optimize for my card{(' · ' + self._slug) if self._slug else ''}",
                 classes="optimize-title",
             )
-            yield Static("Querying the optimizer seam…", id="optimize-body")
+            yield Static("Querying kv-calc…", id="optimize-body")
+            with Horizontal(classes="optimize-row"):
+                yield Label("KV cache ", classes="optimize-kv-lbl")
+                yield Select([], id="optimize-kv", allow_blank=True, disabled=True)
+            with Horizontal(classes="optimize-row"):
+                yield Button(
+                    "Apply · stage tuned serve",
+                    id="optimize-apply",
+                    variant="warning",
+                    disabled=True,
+                )
+                yield Label(
+                    "[dim]advisory — confirm via the standard gate[/dim]",
+                    id="optimize-btn-note",
+                )
 
     def on_mount(self) -> None:
-        self.app.run_optimize_for_modal(self, self._slug)  # type: ignore[attr-defined]
+        self.app.run_optimize_for_modal(self, self._slug, self._entry)  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _gb(v: Optional[float]) -> str:
+        return f"{v:.1f}G" if v is not None else "—"
+
+    @staticmethod
+    def _ctx(v: Optional[int]) -> str:
+        return f"{v:,}" if v is not None else "—"
 
     def set_report(self, report: OptimizerReport) -> None:
+        self._report = report
         body = self.query_one("#optimize-body", Static)
+        sel = self.query_one("#optimize-kv", Select)
+        btn = self.query_one("#optimize-apply", Button)
         if not report.available:
-            # DORMANT seam — honest "not available", never a fabricated rec.
+            sel.disabled = True
+            btn.disabled = True
+            # Honest error / unsupported-engine card — never a fabricated rec.
             body.update(
-                f"  [yellow]{report.message}[/yellow]\n"
+                f"  [red]{report.message}[/red]\n"
                 "\n"
-                "  [dim]The per-card optimizer (recommend --optimize /\n"
-                "  generate_compose.py --optimize) lands in v0.10.0.  When it does,\n"
-                "  this seam will show its honesty gates:[/dim]\n"
-                "    [dim]· boot-fit  predicted | measured[/dim]\n"
-                "    [dim]· runtime   soak-validated | unvalidated[/dim]\n"
-                "    [dim]· confidence tier[/dim]\n"
-                "    [dim]· cliff-class recs require --accept-runtime-risk[/dim]\n"
-                "\n"
-                "  [dim]Esc to close[/dim]"
+                "  [dim]No recommendation is shown rather than a guessed one:\n"
+                "  this screen only renders real kv-calc output.[/dim]\n"
+                "\n  [dim]Esc to close[/dim]"
             )
             return
-        # Reserved — rendered only once the engine lands (dormant today).
-        risk = (
-            "  [red]cliff-class — requires --accept-runtime-risk[/red]\n"
-            if report.accept_runtime_risk_required
-            else ""
+
+        lines = [
+            f"  [bold]{report.slug}[/bold] · {report.engine or '—'} · card {report.card}",
+            "",
+            f"  [bold]Recommended max-model-len[/bold] "
+            f"[green]{self._ctx(report.recommended_max_ctx)}[/green]"
+            + (
+                f" at KV [green]{report.recommended_kv_format}[/green]"
+                if report.recommended_kv_format else ""
+            ),
+            f"  projected [bold]{self._gb(report.fit_vram_est_gb)}[/bold]/card "
+            f"± {self._gb(report.band_gb)}  "
+            f"[dim](kv-calc prediction, not a promise)[/dim]",
+            "",
+            "  [bold]KV dtype options (hardware-legal)[/bold]",
+        ]
+        for o in report.options:
+            glyph = self._OPT_GLYPH.get(o.verdict, "·")
+            if o.solved_max_ctx is None:
+                lines.append(f"  {glyph} {o.kv_format:<22} [red]unpriced: {o.note}[/red]")
+                continue
+            row = (
+                f"  {glyph} {o.kv_format:<22} ctx≤{self._ctx(o.solved_max_ctx):>9}   "
+                f"est {self._gb(o.vram_est_gb):>6}   headroom {self._gb(o.headroom_gb):>6}"
+            )
+            if o.note:
+                row += f"  [yellow]{o.note}[/yellow]"
+            lines.append(row)
+        if not report.options:
+            lines.append("  [dim](no per-dtype pricing — registry kvcalc_key not decomposable)[/dim]")
+        lines += [
+            "",
+            "  [dim]Pick a KV dtype → Apply stages switch.sh with MAX_MODEL_LEN /\n"
+            "  KV_CACHE_DTYPE overrides · Esc to close[/dim]",
+        ]
+        body.update("\n".join(lines))
+
+        priced = [(o.kv_format, o) for o in report.options if o.solved_max_ctx is not None]
+        if priced:
+            sel.set_options([
+                (f"{fmt} · ctx≤{self._ctx(o.solved_max_ctx)} · est {self._gb(o.vram_est_gb)}", fmt)
+                for fmt, o in priced
+            ])
+            default = report.recommended_kv_format or priced[0][0]
+            sel.value = default if default in [p[0] for p in priced] else priced[0][0]
+            sel.disabled = False
+        btn.disabled = False
+
+    def _selected_option(self) -> Optional["KvOption"]:
+        """The KV option row matching the dropdown selection (None → apply the
+        recommended ctx alone, keeping the compose's own dtype)."""
+        try:
+            fmt = self.query_one("#optimize-kv", Select).value
+        except Exception:
+            return None
+        if not fmt:
+            return None
+        for o in (self._report.options if self._report else []):
+            if o.kv_format == fmt and o.solved_max_ctx is not None:
+                return o
+        return None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != "optimize-apply" or not self._report:
+            return
+        if not self._report.available:
+            return
+        opt = self._selected_option()
+        plan = self.app._data.optimize_apply_plan(  # type: ignore[attr-defined]
+            self._slug,
+            max_model_len=(
+                opt.solved_max_ctx if opt else self._report.recommended_max_ctx
+            ),
+            kv_dtype=(opt.kv_format if opt else None),
         )
-        body.update(
-            f"  [bold]Recommended[/bold]  [green]{report.recommended_slug or '—'}[/green]\n"
-            f"  [bold]boot-fit[/bold]    {report.boot_fit or '—'}\n"
-            f"  [bold]runtime[/bold]     {report.runtime or '—'}\n"
-            f"  [bold]confidence[/bold]  {report.confidence or '—'}\n"
-            + risk
-            + "\n  [dim]Esc to close[/dim]"
-        )
+        # Standard gate — the user confirms; nothing auto-fires.
+        self.app.push_screen(ConfirmActionScreen(plan))  # type: ignore[attr-defined]
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()
@@ -7570,7 +7788,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("copy_endpoint", "Copy the serving API URL", "Run & Operate — copy http://<lan>:<port>/v1 for your agent/client (no auth by default)"),
     ("set_default", "Set default", "Catalog — pin the selected slug as model default"),
     ("clear_default", "Clear default", "Catalog — clear the model default pin"),
-    ("optimize_card", "Optimize for my card", "Catalog — v0.10.0 seam (not available yet)"),
+    ("optimize_card", "Optimize for my card", "Catalog — kv-calc recommendations (advisory, gated apply)"),
     # Run & Operate · Orchestration / Containers / Doctor tabs.
     ("serving_stop", "Stop this model", "Orchestration — stop JUST the serving container (gated)"),
     ("serving_restart", "Restart serving", "Orchestration — restart the serving container (gated)"),
@@ -7761,7 +7979,7 @@ class CockpitApp(App):
         # Phase 5 — the three v2 hooks:
         #   [v] Evaluate via c3t (mock this phase — label says so)
         #   [P] Promotion scaffold preview (no live catalog write this phase)
-        #   [O] Optimize for my card (dormant v0.10.0 seam)
+        #   [O] Optimize for my card (kv-calc brain; apply = gated stage)
         Binding("v", "evaluate_target", "Evaluate (preview)", show=False),
         Binding("P", "promote_catalog", "Scaffold preview", show=False),
         # R3b-1 — producer lane ② Serve: generate a compose + serve it untested
@@ -9538,12 +9756,21 @@ class CockpitApp(App):
         gguf_quant, gguf_gb = self._funnel_gguf_selection()
         if gguf_quant:
             cards = self._data.topology_cards_for_profile(profile_like)
+            # P3: GGUF header KV facts (on-disk pull dir, else a bounded
+            # range probe) — route-G scaffolds auto-fill arch dims instead of
+            # staying pure-template. {} on any failure → placeholders stay.
+            gguf_facts = await self._data.gguf_header_facts(
+                repo,
+                self._funnel_gguf_files(),
+                size_gb=gguf_gb,
+            )
             res = self._data.byo_check_gguf(
                 repo,
                 profile_like,
                 quant=gguf_quant,
                 size_gb=gguf_gb or 0.0,
                 card_vram_gb=24.0 * max(1, cards),
+                facts=gguf_facts,
             )
         else:
             res = await self._data.byo_check(repo, profile_like)
@@ -9757,6 +9984,20 @@ class CockpitApp(App):
             return str(q), None
         except Exception:
             return "", None
+
+    def _funnel_gguf_files(self) -> list[str]:
+        """Repo-relative ``.gguf`` file list for the ① Bring GGUF pick — the
+        main quant files ONLY (no mmproj / MTP companions). Feeds
+        ``gguf_header_facts`` (P3): exact-match local read / remote header
+        probe. Empty when this isn't a GGUF bring."""
+        quant, _ = self._funnel_gguf_selection()
+        inv = getattr(self, "_last_inventory", None)
+        if not quant or inv is None:
+            return []
+        for v in getattr(inv, "gguf_variants", []):
+            if v.quant == quant:
+                return [str(f) for f in getattr(v, "files", []) or []]
+        return []
 
     def _gguf_download_includes(self) -> list[str]:
         """hf-download ``--include`` patterns for the picked GGUF quant: the main
@@ -12557,6 +12798,12 @@ class CockpitApp(App):
                         self._data.promote_write_plan(scaffold, layer=layer, spec=spec)
                     )
                 ),
+                on_export_pr=lambda spec: self.push_screen(
+                    ConfirmActionScreen(
+                        self._data.export_pr_plan(spec),
+                        on_confirm=lambda p: self.run_export_pr_launch(p),
+                    )
+                ),
             )
         )
 
@@ -12576,26 +12823,81 @@ class CockpitApp(App):
                 return e.measurement
         return None
 
-    # ── Phase 5 · Hook 3: Optimize for my card (DORMANT v0.10.0 seam) ──────────────────
+    @work(group="export-pr", exclusive=True)
+    async def run_export_pr_launch(self, plan: Any) -> None:
+        """Run the CONFIRMED ``export_pr.py`` bundle export via the write-runner
+        seam (mocked in tests — conftest blocks the real spawn), streaming into
+        the Run LivePane; on completion push the copyable bundle-location
+        modal.  Claims no GPU."""
+        live = self._run_output_pane()
+        if live is not None:
+            live.clear_log()
+            live.append_line(
+                "[green]▶ exporting[/green] core PR bundle "
+                "(scripts/lib/profiles/export_pr.py · streams below)"
+            )
+        captured: list[str] = []
+
+        def _on_line(text: str) -> None:
+            captured.append(text)
+            if live is not None:
+                live.append_line(text)
+
+        state = await self._data.run_export_pr(plan, on_line=_on_line)
+        # The mock write runner returns a bare dict (no .done event); a real
+        # run resolves when its detached reader finishes.  Await when present.
+        done = getattr(state, "done", None)
+        if done is not None:
+            await done.wait()
+        out_dir = self._export_out_dir(plan, captured)
+        self.notify(
+            f"PR bundle written under {out_dir}",
+            title="Export PR",
+            severity="information",
+            timeout=5,
+        )
+        self.push_screen(ExportPrBundleScreen(out_dir, lines=captured))
+
+    @staticmethod
+    def _export_out_dir(plan: Any, captured: list[str]) -> str:
+        """The exported bundle root: the script's EXPORT_OK line when it ran,
+        else the plan's --out value, else the /tmp default."""
+        for ln in reversed(captured):
+            if "EXPORT_OK" in ln:
+                bits = ln.split("EXPORT_OK", 1)
+                if len(bits) == 2 and bits[1].strip():
+                    return bits[1].strip()
+        cmd = getattr(plan, "cmd", None) or []
+        joined = [str(c) for c in cmd]
+        if "--out" in joined:
+            i = joined.index("--out")
+            if i + 1 < len(joined):
+                return joined[i + 1]
+        return "/tmp"
+
+    # ── Phase 5 · Hook 3: Optimize for my card (kv-calc brain, P4) ──────────────────────
 
     def action_optimize_card(self) -> None:
-        """[O] in Run: open the (dormant) per-card optimizer seam.
+        """[O] in Run: open the per-card optimizer (the kv-calc brain).
 
-        The v0.10.0 optimizer does not exist yet — the modal shows 'optimizer not
-        available (v0.10.0)'.  Available from Run · Catalog (selected slug); falls
-        back to the last staged serve slug if no catalog row is selected."""
+        Available from Run · Catalog (selected slug); falls back to the last
+        staged serve slug if no catalog row is selected.  The selected/staged
+        CatalogEntry rides along so the brain can decompose the registry
+        kvcalc_key + check engine/hardware KV legality."""
         if self._active_mode != 0:
             return
-        entry = self._selected_catalog_entry()
-        slug = entry.slug if entry else (self._staged_entry.slug if self._staged_entry else "")
-        self.push_screen(OptimizeScreen(slug))
+        entry = self._selected_catalog_entry() or self._staged_entry
+        slug = entry.slug if entry else ""
+        self.push_screen(OptimizeScreen(slug, entry=entry))
 
     @work(group="optimize")
-    async def run_optimize_for_modal(self, screen: OptimizeScreen, slug: str) -> None:
-        """Invoke the dormant optimizer seam + push the verdict into the modal.
-        Detects the optimizer's absence → 'not available (v0.10.0)'; never
+    async def run_optimize_for_modal(
+        self, screen: OptimizeScreen, slug: str, entry: Optional[CatalogEntry] = None
+    ) -> None:
+        """Run the kv-calc brain via the data seam + push the verdict into the
+        modal.  A kv-calc failure renders an honest error card; never
         fabricates output."""
-        report = await self._data.optimize_for_card(slug=slug)
+        report = await self._data.optimize_for_card(slug=slug, entry=entry)
         try:
             screen.set_report(report)
         except Exception:

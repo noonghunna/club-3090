@@ -1326,37 +1326,57 @@ class PromoteScaffold:
         return bool(self.profile_yaml and self.registry_entry and not self.error)
 
 
-# ── Hook 3: Optimize for my card (DORMANT v0.10.0 seam — design §5.2 seam 1) ───────
+# ── Hook 3: Optimize for my card (kv-calc brain — design §5.2 seam 1, P4) ──────────
+
+
+@dataclass
+class KvOption:
+    """One hardware-legal KV dtype priced by kv-calc for a slug's topology.
+
+    Produced by ONE ``kv-calc.py --model M --compose C --kv-format F
+    --solve-max-ctx --json`` call per candidate format:
+      - ``solved_max_ctx`` — largest max_ctx that fits (the solver's answer);
+      - ``vram_est_gb``    — projected per-card VRAM at the slug's target ctx;
+      - ``headroom_gb``    — budget − projected at that ctx;
+      - ``verdict``        — kv-calc's raw verdict mapped to the fit vocabulary.
+    A price failure is carried HONESTLY in ``note`` with no numbers — never a
+    fabricated row."""
+
+    kv_format: str
+    solved_max_ctx: Optional[int] = None
+    vram_est_gb: Optional[float] = None
+    headroom_gb: Optional[float] = None
+    verdict: str = ""     # fits-clean | fits-constrained | wont-fit | ""
+    note: str = ""        # per-option error / caveat text ("" when clean)
 
 
 @dataclass
 class OptimizerReport:
-    """Result of the ▸ Optimize-for-my-card seam.
+    """Result of the ▸ Optimize-for-my-card seam — the kv-calc brain (P4).
 
-    The v0.10.0 optimizer (``recommend --optimize`` / ``generate_compose.py
-    --optimize``) does NOT exist yet — this is a DORMANT seam.  When invoked it
-    detects the optimizer's absence and reports ``available=False`` with the
-    honest ``'optimizer not available (v0.10.0)'`` message.  The honesty-gate
-    fields below are the INTERFACE reserved for when the engine lands; they stay
-    empty / ``None`` while dormant (never fabricated — design §5.2).
+    The brain is ``tools/kv-calc.py`` run via the Runner seam: one ``--fit
+    <slug> --card <card> --json`` verdict at the slug's own config (the
+    RECOMMENDED max-model-len + projected VRAM), then one ``--solve-max-ctx``
+    pricing per hardware-legal KV dtype (engine ∩ card supported sets).  All
+    numbers are kv-calc PREDICTIONS carrying ``band_gb`` of error — advisory
+    only; Apply routes through the standard reconcile-gated confirm.
 
-    Honesty gates (rendered only once the optimizer is live):
-      - ``boot_fit``        : 'predicted' | 'measured'  (boot-fit provenance)
-      - ``runtime``         : 'soak-validated' | 'unvalidated'  (runtime claim)
-      - ``confidence``      : a tier label (e.g. 'high' / 'cross-rig')
-      - ``cliff_class``     : a cliff-class config needs ``--accept-runtime-risk``
-      - ``accept_runtime_risk_required`` : True when the rec is cliff-class.
-    """
+    Honesty rules: a kv-calc failure renders an error card (``available=False``
+    + ``message``, no fake numbers); engines kv-calc can't price
+    (``kvcalc_key=SKIP``) get an explicit unsupported message; a per-option
+    pricing failure keeps its row with the error in ``KvOption.note``."""
 
     available: bool = False
-    message: str = "optimizer not available (v0.10.0)"
-    # Reserved honesty-gate interface (dormant — populated only when live):
-    recommended_slug: str = ""
-    boot_fit: str = ""                   # 'predicted' | 'measured'
-    runtime: str = ""                    # 'soak-validated' | 'unvalidated'
-    confidence: str = ""                 # confidence tier label
-    cliff_class: bool = False
-    accept_runtime_risk_required: bool = False
+    message: str = ""                     # honest error/unsupported text when not available
+    slug: str = ""
+    engine: str = ""
+    card: str = ""
+    # The recommendation: kv-calc --fit at the slug's OWN KV dtype/config.
+    recommended_kv_format: str = ""       # the slug's compose ${KV_CACHE_DTYPE:-…} default
+    recommended_max_ctx: Optional[int] = None   # --fit max_ctx (capacity ceiling)
+    fit_vram_est_gb: Optional[float] = None     # --fit vram_est_gb at the slug's config
+    band_gb: Optional[float] = None             # kv-calc ± error band on every number here
+    options: list[KvOption] = field(default_factory=list)
 
 
 # ── Parse helpers (pure) ─────────────────────────────────────────────────────────

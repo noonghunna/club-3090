@@ -251,6 +251,20 @@ FIT_JSON = json.dumps(
     {"verdict": "fits-clean", "vram_est_gb": 19.881, "band_gb": 1.5, "max_ctx": 262144}
 )
 
+# kv-calc --solve-max-ctx per-dtype pricing (the Optimize brain's option
+# calls) — REAL output shape, verified live on qwen3.6-27b dual.
+SOLVE_JSON = json.dumps(
+    {
+        "model": "qwen3.6-27b", "weights_gb": 8.75,
+        "kv_pool_requested_gb": 8.68, "kv_pool_actual_gb": 8.68,
+        "kv_pool_sliding_fixed_gb": 0.0, "activation_gb": 0.82,
+        "cudagraph_overhead_gb": 1.75, "drafter_gb": 0.0,
+        "total_gb": 19.997, "vram_gb": 24.0, "budget_gb": 22.8,
+        "pct_of_vram": 87.7, "verdict": "PASS", "notes": [],
+        "solved_max_ctx": 262144,
+    }
+)
+
 # kv-calc --fit-all batch (one call enriches the whole catalog's fit column).
 FIT_ALL_JSON = json.dumps(
     {
@@ -615,6 +629,8 @@ def fake_responses(**overrides) -> dict[str, RunResult]:
         "docker images -q": ok("sha256:abc123\n"),
         # Phase-4 reads:
         "diagnose-estate.sh --json": ok(DIAGNOSE_ESTATE_JSON),
+        # The Optimize brain's per-dtype pricing (one solve per legal format).
+        "--solve-max-ctx": ok(SOLVE_JSON),
         "diagnose-profile.sh": ok(DIAGNOSE_PROFILE_TEXT),
         "power-cap status": ok(POWER_CAP_STATUS),
         "docker top": ok(DOCKER_TOP),
@@ -678,6 +694,26 @@ def make_app(
     runner (e.g. FakeGenComposeRunner for the ② Serve generate path).
     """
     root = repo_root or FAKE_REPO_ROOT
+    # The Optimize brain reads engine/hardware KV-legality lists off the repo
+    # tree (stdlib yml scan) — seed the two tiny profile files it needs so the
+    # option table renders in tests.  (Idempotent; nothing else reads these.)
+    try:
+        eng = root / "scripts" / "lib" / "profiles" / "engines"
+        eng.mkdir(parents=True, exist_ok=True)
+        (eng / "vllm-stable.yml").write_text(
+            "supported_kv_formats:\n"
+            "  - bf16\n  - fp16\n  - fp8_e4m3\n  - fp8_e5m2\n"
+            "  - int8_per_token_head\n", encoding="utf-8")
+        hw = root / "scripts" / "lib" / "profiles" / "hardware"
+        hw.mkdir(parents=True, exist_ok=True)
+        # Ampere card: fp8_e4m3 NOT hardware-legal → dropped from the options.
+        (hw / "rtx-3090.yml").write_text(
+            "sm: 8.6\nvram_gb: 24\n"
+            "supported_kv_formats:\n"
+            "  - bf16\n  - fp16\n  - fp8_e5m2\n  - int8_per_token_head\n",
+            encoding="utf-8")
+    except OSError:
+        pass
     runner = runner or FakeRunner(responses or fake_responses())
     gpus = gpus if gpus is not None else [GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)]
     target = target if target is not None else ServingTarget(gpus=gpus)
@@ -5024,6 +5060,7 @@ class TestValidateNoLiveWriteOrNetwork:
 
 from club3090_cockpit.app import (  # noqa: E402
     PromoteScaffoldScreen,
+    ExportPrBundleScreen,
     OptimizeScreen,
     UntestedComposePreviewScreen,
     LaneBringPane,
@@ -5267,6 +5304,93 @@ class TestPromoteHookWired:
             assert isinstance(app.screen, ConfirmActionScreen)
             assert "--layer core" in " ".join(app.screen._plan.cmd)
             assert wr.started == []          # confirm gate not yet passed
+
+
+class TestExportPrBundle:
+    """Community-loop completion — [E] Export-as-PR-bundle on the Promote
+    scaffold: context-gated to LOCAL-layer entries, confirm-gated, and run
+    through the write-runner seam ONLY (never a live spawn)."""
+
+    @pytest.mark.asyncio
+    async def test_export_binding_is_context_gated_to_local_layer(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            sc = app.screen
+            assert isinstance(sc, PromoteScaffoldScreen)
+            # The default scaffold targets the LOCAL layer → exportable, and
+            # the [E] binding is advertised.
+            assert sc.check_action("export_pr", ()) is True
+            assert any(
+                b.action == "export_pr" for b in sc.BINDINGS
+            ), "the [E] binding must be declared on the scaffold"
+            # A CORE-layer scaffold is NOT exportable (it already IS core
+            # content) — the gate is contextual, not global.
+            sc._scaffold.layer = "core"
+            assert sc.check_action("export_pr", ()) is False
+
+    @pytest.mark.asyncio
+    async def test_export_opens_confirm_gate_with_spec_env(self):
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            sc = app.screen
+            assert isinstance(sc, PromoteScaffoldScreen)
+            sc.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            sc.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            sc.on_input_changed(None)
+            # The binding's action — same path pressing E takes once focus is
+            # off the inputs.
+            sc.action_export_pr()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            plan = app.screen._plan
+            assert plan.kind == "export_pr"
+            assert plan.requires_confirm is True
+            assert plan.requires_reconcile is False
+            joined = " ".join(plan.cmd)
+            assert "export_pr.py" in joined
+            assert "--spec-env" in joined and "C3_EXPORT_SPEC" in joined
+            spec = json.loads((plan.env or {})["C3_EXPORT_SPEC"])
+            assert spec["display_name"] == "Qwen3 27B Abliterated"
+            # Confirm gate not passed — nothing has been written or spawned.
+            assert wr.started == []
+
+    @pytest.mark.asyncio
+    async def test_export_dispatch_reaches_only_mock_runner_and_shows_bundle(self):
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            plan = app._data.export_pr_plan({"model_id": "my-model"},
+                                            out_dir="/tmp/pr-bundle-test")
+            # The confirmed commit path (ConfirmActionScreen on_confirm).
+            app.run_export_pr_launch(plan)
+            await _settle(pilot)
+            assert len(wr.started) == 1
+            started = wr.started[0]
+            assert started["run_type"] == "export_pr"
+            assert "export_pr.py" in " ".join(started["cmd"])
+            assert "--out" in started["cmd"]
+            # The copyable bundle-location modal shows the output dir.
+            assert isinstance(app.screen, ExportPrBundleScreen)
+            assert "/tmp/pr-bundle-test" in str(app.screen._out_dir)
+            payload = app.screen.copyable_text()
+            assert "/tmp/pr-bundle-test" in payload
+            assert "compose_registry.patch" in payload
 
 
 # ===========================================================================
@@ -5574,21 +5698,93 @@ class TestLaneHelpSurfaceThreadedR3b1:
             assert app.screen._surface == "producer"
 
 
-class TestOptimizeHookWired:
-    """Hook 3 — ▸ Optimize for my card: DORMANT v0.10.0 seam (no-op)."""
+class TestOptimizeBrain:
+    """Hook 3 — ▸ Optimize for my card: the kv-calc brain (P4).
+
+    The modal renders REAL canned kv-calc output (FIT_JSON + one
+    --solve-max-ctx pricing per legal dtype); Apply stages the SAME gated
+    switch.sh serve with the overrides riding plan.env.  Failures render an
+    honest error card; kvcalc_key=SKIP engines get an explicit message."""
+
+    async def _open_optimize(self, pilot, app, row: int = 0) -> None:
+        app.query_one("#catalog-table", DataTable).move_cursor(row=row)
+        await pilot.press("O")          # ▸ Optimize for my card
+        await _settle(pilot)
 
     @pytest.mark.asyncio
-    async def test_optimize_shows_not_available_message(self):
-        app, _, _ = make_app()
+    async def test_optimize_renders_recommendations_and_options(self):
+        app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # From Run · Catalog with a selected slug.
-            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
-            await pilot.press("O")          # ▸ Optimize for my card
-            await _settle(pilot)
+            await self._open_optimize(pilot, app)
             assert isinstance(app.screen, OptimizeScreen)
             body = str(app.screen.query_one("#optimize-body", Static).render())
-            assert "optimizer not available (v0.10.0)" in body
+            assert "Recommended max-model-len" in body
+            assert "262,144" in body                       # FIT_JSON max_ctx
+            assert "19.9G" in body and "1.5G" in body      # est ± band
+            assert "KV dtype options (hardware-legal)" in body
+            for fmt in ("bf16", "fp16", "fp8_e5m2", "int8_per_token_head"):
+                assert fmt in body                         # SOLVE_JSON-priced rows
+            sel = app.screen.query_one("#optimize-kv", Select)
+            btn = app.screen.query_one("#optimize-apply", Button)
+            assert sel.disabled is False and btn.disabled is False
+            # Interface: exactly ONE --fit + N --solve-max-ctx via the Runner seam.
+            fit_calls = [c for c in runner.calls if "--fit " in " ".join(c)]
+            solve_calls = [c for c in runner.calls if "--solve-max-ctx" in c]
+            assert len(fit_calls) == 1 and len(solve_calls) >= 4
+
+    @pytest.mark.asyncio
+    async def test_apply_stages_gated_serve_with_env_overrides(self):
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await self._open_optimize(pilot, app)
+            await pilot.click("#optimize-apply")
+            await pilot.pause()
+            # The APPLY action opens the STANDARD confirm gate (advisory rec,
+            # user confirms) — nothing has fired yet.
+            assert isinstance(app.screen, ConfirmActionScreen)
+            plan = app.screen._plan
+            assert plan.kind == "serve"
+            assert plan.cmd == ["bash", "scripts/switch.sh", "vllm/dual"]
+            assert plan.env["MAX_MODEL_LEN"] == "262144"
+            assert plan.env["KV_CACHE_DTYPE"] in (
+                "bf16", "fp16", "fp8_e5m2", "int8_per_token_head")
+            assert plan.requires_confirm is True and plan.requires_reconcile is True
+            wr_started = wr.started
+            assert wr_started == []
+
+    @pytest.mark.asyncio
+    async def test_kvcalc_failure_shows_error_card_no_numbers(self):
+        responses = {
+            k: v for k, v in fake_responses().items() if not k.startswith("kv-calc")
+        }
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await self._open_optimize(pilot, app)
+            assert isinstance(app.screen, OptimizeScreen)
+            body = str(app.screen.query_one("#optimize-body", Static).render())
+            assert "kv-calc failed" in body                 # honest error card
+            assert "Recommended max-model-len" not in body  # no fabricated numbers
+            assert app.screen.query_one("#optimize-apply", Button).disabled is True
+
+    @pytest.mark.asyncio
+    async def test_skip_engine_gets_explicit_unsupported_message(self):
+        app, runner, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # Row 1 = ik-llama/iq4ks-mtp (kvcalc_key SKIP) in REGISTRY_JSON.
+            await self._open_optimize(pilot, app, row=1)
+            assert isinstance(app.screen, OptimizeScreen)
+            body = str(app.screen.query_one("#optimize-body", Static).render())
+            assert "kvcalc_key=SKIP" in body
+            assert "Recommended max-model-len" not in body
+            assert app.screen.query_one("#optimize-apply", Button).disabled is True
+            # The SKIP check short-circuits BEFORE any kv-calc call.
+            assert all("kv-calc.py" not in " ".join(c) for c in runner.calls
+                       if "--fit " in " ".join(c))
 
     @pytest.mark.asyncio
     async def test_optimize_is_a_noop_no_write(self):
@@ -5596,10 +5792,8 @@ class TestOptimizeHookWired:
         app, _, _ = make_app(write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
-            await pilot.press("O")
-            await _settle(pilot)
-            # A no-op seam: a modal, but never a write / launch.
+            await self._open_optimize(pilot, app)
+            # Browsing recommendations never writes / launches.
             assert isinstance(app.screen, OptimizeScreen)
             assert wr.started == []
 
@@ -5621,7 +5815,7 @@ class TestOptimizeHookWired:
             await _settle(pilot)
             assert isinstance(app.screen, OptimizeScreen)
             body = str(app.screen.query_one("#optimize-body", Static).render())
-            assert "v0.10.0" in body
+            assert "Recommended max-model-len" in body
 
 
 class TestPhase5NoLiveEffect:

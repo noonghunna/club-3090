@@ -68,6 +68,7 @@ from .data import (
     GATE_STEPS,
     GpuCompApp,
     GpuConflict,
+    KvOption,
     LocalMeasured,
     Measurement,
     MeasuredNumbers,
@@ -431,7 +432,16 @@ class CockpitData:
         # 'scripts'" (and fit-check's topology detection silently degrades).
         # 2026-07-09 dogfood — previously only one call site guarded this.
         import sys as _sys
-        if str(self.repo_root) not in _sys.path:
+        # ⚠️ Only insert roots that actually provide the module tree:
+        # scripts/lib/profiles is a REGULAR package (__init__.py), so the first
+        # sys.path entry containing it pins resolution exclusively. Inserting a
+        # tmp fixture root shadows the real tree and every later
+        # `scripts.lib.profiles.*` import dies with ModuleNotFoundError
+        # (surfaced by Wave-3 tests constructing CockpitData(tmp_path) early).
+        if (
+            str(self.repo_root) not in _sys.path
+            and (self.repo_root / "scripts" / "lib" / "profiles" / "__init__.py").exists()
+        ):
             _sys.path.insert(0, str(self.repo_root))
         self.card = card
         # FIX 2 — the registry's top-level ``defaults`` array (curated
@@ -1691,6 +1701,7 @@ print(json.dumps(out))
         card_vram_gb: Optional[float] = None,
         companion_gb: float = 0.0,
         per_card_gb: float = 24.0,
+        facts: Optional[dict] = None,
     ) -> ByoResult:
         """Phase 4 route-G: GGUF fit without the vLLM/safetensors deriver.
 
@@ -1698,7 +1709,11 @@ print(json.dumps(out))
         mtp draft).  Budget = ``card_vram_gb`` if given, else
         ``per_card_gb × topology_cards(profile_like)`` so dual/multi siblings
         are judged against combined VRAM (not always one 24 GB card).
-        """
+
+        ``facts`` (P3): GGUF header KV facts from :meth:`gguf_header_facts` —
+        threaded onto ``ByoResult.facts`` so the ⑤ Promote scaffold auto-fills
+        arch dims instead of staying pure-template. None values are dropped,
+        mirroring ``ByoResult.from_dict``."""
         if not quant:
             return ByoResult(
                 repo=repo, profile_like=profile_like,
@@ -1746,8 +1761,75 @@ print(json.dumps(out))
             sibling_slug=profile_like if eligible else None,
             quant_match=quant,
             drop_spec_config=False,
+            # P3: GGUF header KV facts (arch dims + provenance) for the ⑤
+            # Promote scaffold; {} keeps every placeholder as-is.
+            facts={
+                k: v for k, v in (facts or {}).items() if v is not None
+            },
             error="",
         )
+
+    async def gguf_header_facts(
+        self,
+        repo: str,
+        files: list[str],
+        *,
+        size_gb: Optional[float] = None,
+    ) -> dict:
+        """P3: GGUF header KV facts for a brought repo — the route-G fix so
+        ⑤ Promote stops dead-ending pure-template on GGUF-only repos.
+
+        Resolution order: an on-disk ``.gguf`` in the CONTRACT-2 pull dir
+        (post-[D]: exact repo-relative match first, else any non-mmproj
+        ``*.gguf``), else a bounded HTTP range probe of the repo's first
+        listed file via the deriver (pre-[D]; header-only, never a full
+        download). Any failure → ``{}`` — the scaffold keeps its ``<...>``
+        placeholders instead of fabricating."""
+        import asyncio
+        import os
+
+        try:
+            # Inside the try: an unresolvable `scripts` package must degrade
+            # to {} (placeholders stay), never raise out of the fit-check.
+            from scripts.lib.profiles import deriver as _deriver
+
+            d = self.bring_pull_dir(repo)
+            # 1) exact repo-relative match (the picked quant's own files)
+            for rel in files:
+                p = d / str(rel)
+                if p.is_file():
+                    facts = await asyncio.to_thread(
+                        _deriver.gguf_facts_from_file,
+                        str(p), model_id=repo, weight_gb=size_gb,
+                    )
+                    if facts:
+                        return facts
+            # 2) any non-mmproj GGUF already on disk (multi-part: shard 1)
+            if d.is_dir():
+                local = sorted(
+                    p for p in d.rglob("*.gguf")
+                    if not p.name.lower().startswith("mmproj")
+                )
+                if local:
+                    facts = await asyncio.to_thread(
+                        _deriver.gguf_facts_from_file,
+                        str(local[0]), model_id=repo, weight_gb=size_gb,
+                    )
+                    if facts:
+                        return facts
+            # 3) remote: bounded range probe of the first listed repo file
+            if files:
+                facts = await asyncio.to_thread(
+                    _deriver.gguf_facts_from_repo,
+                    repo, str(files[0]), _deriver.default_probe_fetcher(),
+                    os.environ.get("HF_TOKEN") or None,
+                    model_id=repo, weight_gb=size_gb,
+                )
+                if facts:
+                    return facts
+        except Exception:
+            pass
+        return {}
 
     @staticmethod
     def _normalize_compose_command(raw) -> list:
@@ -3137,7 +3219,10 @@ print(json.dumps(out))
         }
         try:
             import sys as _sys
-            if str(self.repo_root) not in _sys.path:
+            if (
+                str(self.repo_root) not in _sys.path
+                and (self.repo_root / "scripts" / "lib" / "profiles" / "__init__.py").exists()
+            ):
                 _sys.path.insert(0, str(self.repo_root))   # cwd-independent import
             from scripts.lib.profiles.compose_registry import get_registry
             entry = get_registry().get(profile_like)
@@ -4869,42 +4954,274 @@ print(json.dumps(out))
             requires_confirm=True,       # repo mutation — confirm, never auto
         )
 
-    # ── Hook 3: Optimize for my card — DORMANT v0.10.0 seam (design §5.2 seam 1) ────
+    # ── C4-followup · Export a LOCAL entry as a ready CORE PR bundle ────────────
+
+    def export_pr_plan(self, spec: dict, *, out_dir: Optional[str] = None) -> ActionPlan:
+        """Build the GATED ActionPlan for ``export_pr.py`` — translate an
+        already-promoted LOCAL-layer model into the three ready-to-commit CORE
+        artifacts (models/<id>.yml · core-layout compose · compose_registry
+        patch), written ONLY under ``out_dir``.
+
+        ⚠️  Repo-tree-adjacent write — NEVER auto-fired:
+        ``requires_confirm=True`` routes it through ConfirmActionScreen; it
+        claims no GPU → ``requires_reconcile=False``.  The spec rides in the
+        child env as ``C3_EXPORT_SPEC`` (same pattern as C3_PROMOTE_SPEC); the
+        script reads the LOCAL layer from disk off ``spec.model_id``."""
+        mid = str((spec or {}).get("model_id") or "")
+        cmd = [
+            "python3", "scripts/lib/profiles/export_pr.py",
+            "--spec-env", "C3_EXPORT_SPEC",
+        ]
+        if out_dir:
+            cmd += ["--out", out_dir]
+        return ActionPlan(
+            kind="export_pr",
+            cmd=cmd,
+            env={"C3_EXPORT_SPEC": json.dumps(spec or {}, ensure_ascii=False)},
+            description=(
+                f"export {mid or 'local model'} as a core PR bundle "
+                f"(writes {out_dir or '/tmp'} only)"
+            ),
+            requires_reconcile=False,    # no GPU contention — a bundle write
+            requires_confirm=True,       # filesystem write — confirm, never auto
+        )
+
+    async def run_export_pr(
+        self,
+        plan: ActionPlan,
+        *,
+        on_line: Optional[Callable[[str], None]] = None,
+    ) -> Any:
+        """Run the confirmed export through the WRITE-runner seam, streamed.
+        In tests this is the FakeWriteRunner; live it is blocked by conftest."""
+        import os as _os
+
+        env = dict(_os.environ)
+        env.update(plan.env or {})
+        return await self._start_raw_logged(
+            self._write_runner,
+            plan.cmd,
+            env=env,
+            run_type=plan.kind,
+            parser=None,
+            on_line=on_line,
+        )
+
+
+    # ── Hook 3: Optimize for my card — the kv-calc brain (design §5.2 seam 1, P4) ───
+    # kv-calc interface used (all via the read Runner seam, cwd repo root):
+    #   python3 tools/kv-calc.py --fit <slug> --card <card> --json
+    #       → {verdict, vram_est_gb, band_gb, max_ctx} at the slug's OWN config.
+    #   python3 tools/kv-calc.py --model <m> --compose <c> --kv-format <f>
+    #       --solve-max-ctx [--max-ctx <target>] --json [--vram <gb>]
+    #       → prediction at target ctx + solved_max_ctx (the fit ceiling).
+    # The (model, compose) pair is the slug's registry ``kvcalc_key``
+    # ("<model>:<compose>", e.g. "qwen3.6-27b:dual"); legality of a KV dtype =
+    # engine ``supported_kv_formats`` ∩ hardware-profile ``supported_kv_formats``.
+
+    # kv-calc raw predict() verdict → the cockpit fit vocabulary (mirrors
+    # kv-calc's own _RAW_VERDICT_MAP).
+    _KV_VERDICT_MAP = {"PASS": "fits-clean", "TIGHT": "fits-constrained", "FAIL": "wont-fit"}
+
+    def hardware_profile(self, card: str) -> dict:
+        """Stdlib parse of ``scripts/lib/profiles/hardware/<card>.yml`` → the
+        card facts the optimizer needs: ``supported_kv_formats`` (the
+        hardware-legal KV set) + ``vram_gb``.  Empty when unreadable — callers
+        then fall back to engine-declared formats and omit ``--vram``."""
+        out: dict = {"supported_kv_formats": [], "vram_gb": None}
+        if not card:
+            return out
+        p = self.repo_root / "scripts" / "lib" / "profiles" / "hardware" / f"{card}.yml"
+        try:
+            grab = False
+            for ln in p.read_text(encoding="utf-8").splitlines():
+                st = ln.strip()
+                if st.startswith("vram_gb:"):
+                    try:
+                        out["vram_gb"] = float(st.split(":", 1)[1].strip())
+                    except ValueError:
+                        pass
+                    continue
+                if st.startswith("supported_kv_formats:"):
+                    grab = True
+                    continue
+                if grab:
+                    if st.startswith("- "):
+                        out["supported_kv_formats"].append(
+                            st[2:].split("#", 1)[0].strip())
+                    elif st and not st.startswith("#"):
+                        break   # dedented → end of the list block
+        except OSError:
+            pass
+        return out
+
+    def _slug_kv_default(self, compose_path: str) -> str:
+        """The slug's own KV dtype: its compose's ``${KV_CACHE_DTYPE:-default}``
+        knob (same read serve_override_defaults does).  "" when unresolvable."""
+        if not compose_path:
+            return ""
+        try:
+            txt = (self.repo_root / compose_path).read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        m = re.search(r"\$\{KV_CACHE_DTYPE:-([^}]+)\}", txt)
+        return m.group(1).strip().strip('"') if m else ""
 
     async def optimize_for_card(
-        self, *, slug: str = "", card: Optional[str] = None
+        self,
+        *,
+        slug: str = "",
+        entry: Optional[CatalogEntry] = None,
+        card: Optional[str] = None,
     ) -> OptimizerReport:
-        """The ▸ Optimize-for-my-card seam — DORMANT until v0.10.0 (design §5.2).
+        """The ▸ Optimize-for-my-card brain — kv-calc via the Runner seam.
 
-        The optimizer (``recommend --optimize`` / ``generate_compose.py
-        --optimize``) does NOT exist yet.  This detects its absence and returns an
-        ``OptimizerReport(available=False, message='optimizer not available
-        (v0.10.0)')`` — it NEVER fabricates optimizer output.  The honesty-gate
-        fields on the report (boot-fit predicted|measured · runtime
-        soak-validated · confidence tier · cliff-class --accept-runtime-risk) are
-        the reserved INTERFACE, rendered only once the engine lands.
-
-        Absence is detected via the read runner probing for the optimizer's
-        ``--optimize`` flag; any non-zero / missing result keeps the seam
-        dormant.  Until the engine exists this is, in practice, always
-        unavailable."""
-        # Probe for the optimizer flag.  When it lands it will print a JSON
-        # OptimizerReport on `recommend --optimize --json`; until then the probe
-        # returns non-zero / empty and we stay honestly dormant.
-        try:
-            res = await self._runner.run(
-                ["bash", "scripts/recommend.sh", "--optimize", "--probe"],
-                cwd=str(self.repo_root),
-                timeout=15.0,
+        One ``--fit <slug>`` verdict (recommended max-model-len + projected VRAM
+        at the slug's own KV dtype), then one ``--solve-max-ctx`` pricing per
+        hardware-legal KV dtype option.  NEVER fabricates: a failed / unparsable
+        kv-calc call → ``available=False`` with the error; a SKIP-engine slug
+        (kvcalc_key=SKIP — ik/llama composes) → an explicit unsupported
+        message; one broken option keeps its row with the error in ``note``."""
+        c = card or self.card
+        rep = OptimizerReport(slug=slug, card=c, engine=(entry.engine if entry else ""))
+        if not slug:
+            rep.message = "no catalog slug selected — open Optimize from Run · Catalog"
+            return rep
+        if entry is not None and (entry.row.kvcalc_key or "").upper() == "SKIP":
+            rep.message = (
+                f"kv-calc does not price {slug} (kvcalc_key=SKIP — this engine/"
+                f"compose has no vLLM KV model) — no recommendation available"
             )
-        except Exception:
-            return OptimizerReport(available=False)
-        if not res.ok or "optimize" not in (res.stdout or "").lower():
-            # No optimizer engine → dormant.  Do NOT fabricate a recommendation.
-            return OptimizerReport(available=False)
-        # (Reserved) — when the engine lands, parse its JSON honesty-gate output
-        # here.  Until then this branch is unreachable; keep the seam honest.
-        return OptimizerReport(available=False)
+            return rep
+
+        # 1) Base verdict at the slug's own config (--fit resolves model +
+        #    topology + KV format from the registry itself).
+        cmd = ["python3", "tools/kv-calc.py", "--fit", slug, "--json", "--card", c]
+        try:
+            fit, err = await self._run_json(cmd, timeout=30.0)
+        except Exception as exc:
+            fit, err = None, str(exc)
+        if fit is None:
+            rep.message = f"kv-calc failed for {slug}: {err}"
+            return rep
+        if fit.get("error") or str(fit.get("verdict", "")) == "unknown":
+            rep.message = (
+                f"kv-calc could not price {slug}: "
+                f"{fit.get('error') or 'unknown verdict'}"
+            )
+            return rep
+        rep.available = True
+        rep.recommended_max_ctx = int(fit["max_ctx"]) if fit.get("max_ctx") is not None else None
+        try:
+            rep.fit_vram_est_gb = float(fit.get("vram_est_gb"))
+        except (TypeError, ValueError):
+            rep.fit_vram_est_gb = None
+        try:
+            rep.band_gb = float(fit.get("band_gb"))
+        except (TypeError, ValueError):
+            rep.band_gb = None
+        rep.recommended_kv_format = self._slug_kv_default(
+            getattr(getattr(entry, "row", None), "compose_path", "") if entry else ""
+        )
+
+        # 2) Per-dtype options — only when the registry kvcalc_key decomposes to
+        #    (model, compose) so kv-calc can re-price each legal format.
+        key = (getattr(getattr(entry, "row", None), "kvcalc_key", "") or "") if entry else ""
+        model, sep, compose = key.partition(":")
+        if not (sep and model and compose):
+            return rep   # fit-only report; no fabricated per-dtype rows
+        hw = self.hardware_profile(c)
+        engine_formats = self.engine_kv_formats(rep.engine)
+        legal = [
+            f for f in engine_formats
+            if not hw["supported_kv_formats"] or f in hw["supported_kv_formats"]
+        ]
+        if not legal:
+            return rep
+        target_ctx = (
+            getattr(entry, "configured_ctx", None) if entry else None
+        ) or rep.recommended_max_ctx
+        rep.options = list(await asyncio.gather(*(
+            self._price_kv_option(model, compose, fmt, target_ctx, hw["vram_gb"])
+            for fmt in legal
+        )))
+        return rep
+
+    async def _price_kv_option(
+        self,
+        model: str,
+        compose: str,
+        kv_format: str,
+        target_ctx: Optional[int],
+        vram_gb: Optional[float],
+    ) -> KvOption:
+        """Price ONE KV dtype for a (model, compose) topology via kv-calc
+        --solve-max-ctx.  A failure returns an honest note-row, never numbers."""
+        cmd = [
+            "python3", "tools/kv-calc.py",
+            "--model", model, "--compose", compose,
+            "--kv-format", kv_format, "--solve-max-ctx", "--json",
+        ]
+        if vram_gb:
+            cmd += ["--vram", f"{vram_gb:g}"]
+        if target_ctx:
+            cmd += ["--max-ctx", str(int(target_ctx))]
+        try:
+            data, err = await self._run_json(cmd, timeout=30.0)
+        except Exception as exc:
+            data, err = None, str(exc)
+        if data is None:
+            return KvOption(kv_format=kv_format, note=f"kv-calc failed: {err}")
+        if data.get("error"):
+            return KvOption(kv_format=kv_format, note=str(data["error"]))
+        headroom: Optional[float] = None
+        total: Optional[float] = None
+        try:
+            total = float(data.get("total_gb"))
+            budget = float(data.get("budget_gb"))
+            headroom = budget - total
+        except (TypeError, ValueError):
+            pass
+        notes = "; ".join(str(n) for n in (data.get("notes") or []) if str(n).strip())
+        solved = data.get("solved_max_ctx")
+        return KvOption(
+            kv_format=kv_format,
+            solved_max_ctx=int(solved) if solved is not None else None,
+            vram_est_gb=total,
+            headroom_gb=headroom,
+            verdict=self._KV_VERDICT_MAP.get(str(data.get("verdict", "")).upper(), ""),
+            note=notes,
+        )
+
+    def optimize_apply_plan(
+        self,
+        slug: str,
+        *,
+        max_model_len: Optional[int] = None,
+        kv_dtype: Optional[str] = None,
+    ) -> ActionPlan:
+        """Stage the tuned serve for ``slug`` — the Optimize APPLY action.
+
+        The SAME gated ``switch.sh <slug>`` serve plan the Catalog uses, with
+        the kv-calc overrides riding ``plan.env`` (merged over os.environ by
+        execute_action, exactly like the ② Serve override editor's values —
+        they interpolate into the compose's ``${MAX_MODEL_LEN}`` /
+        ``${KV_CACHE_DTYPE}``).  No new write path; recommendations stay
+        ADVISORY: requires_confirm=True routes through ConfirmActionScreen."""
+        env: dict[str, str] = {}
+        if max_model_len:
+            env["MAX_MODEL_LEN"] = str(int(max_model_len))
+        if kv_dtype:
+            env["KV_CACHE_DTYPE"] = str(kv_dtype)
+        tuned = ", ".join(f"{k}={v}" for k, v in sorted(env.items())) or "no changes"
+        return ActionPlan(
+            kind="serve",
+            cmd=["bash", "scripts/switch.sh", slug],
+            description=f"switch.sh {slug} · kv-calc tuned ({tuned}) — advisory rec",
+            requires_reconcile=True,
+            requires_confirm=True,
+            env=env,
+        )
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────────
