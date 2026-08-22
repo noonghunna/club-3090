@@ -1096,7 +1096,6 @@ up_variant() {
   fi
 
   # Pre-up sanity:
-  #  - genesis_pin: warn if on-disk Genesis tree differs from GENESIS_PIN in setup.sh
   #  - repo_drift: warn if local HEAD is behind origin/master
   #  - compose_deps: HARD error if compose mounts a model dir that doesn't exist on host
   #    (catches the "you didn't WITH_DFLASH_DRAFT=1 then tried dual-dflash-noviz" case;
@@ -1105,7 +1104,6 @@ up_variant() {
   if [[ -f "${ROOT_DIR}/scripts/preflight.sh" ]]; then
     # shellcheck source=preflight.sh
     source "${ROOT_DIR}/scripts/preflight.sh"
-    preflight_genesis_pin "${ROOT_DIR}" || true
     preflight_repo_drift "${ROOT_DIR}" || true
     preflight_compose_deps "${full_dir}/${file}" || exit 1
     if [[ "$eng" == "vllm" ]]; then

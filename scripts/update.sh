@@ -6,8 +6,8 @@
 #   1. Refuses to run on a dirty tree — commit or stash your local edits first.
 #   2. Bails on a non-master branch (forks / contributors should pull manually).
 #   3. git pull --ff-only origin master  (no merge commits, no rebase ambiguity)
-#   4. bash scripts/setup.sh <model>     (re-pins Genesis, re-vendors Marlin —
-#                                          idempotent, fast on second run)
+#   4. bash scripts/setup.sh <model>     (re-fetches missing weights — idempotent,
+#                                          fast on second run)
 #   5. Tells you to restart whatever variant you had running.
 #
 # What this does NOT do:
@@ -124,7 +124,7 @@ fi
 
 # --- 6. re-run setup.sh ---
 echo ""
-echo "[update] re-running setup.sh ${MODEL} (re-pins Genesis, re-vendors Marlin)..."
+echo "[update] re-running setup.sh ${MODEL} (re-fetches missing weights)..."
 echo ""
 run bash "${ROOT_DIR}/scripts/setup.sh" "$MODEL"
 
@@ -135,7 +135,7 @@ echo ""
 running=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(vllm-qwen36-27b|llama-cpp-qwen36-27b)' | head -1 || true)
 if [[ -n "$running" ]]; then
   echo "[update] A club-3090 container is currently running: ${running}"
-  echo "[update] To pick up the latest config + Genesis tree, restart it:"
+  echo "[update] To pick up the latest config, restart it:"
   echo "[update]   bash scripts/switch.sh <variant>"
   echo "[update] (Use 'bash scripts/switch.sh --list' to see available variants.)"
 else

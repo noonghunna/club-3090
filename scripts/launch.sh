@@ -210,7 +210,6 @@ if [[ $SKIP_PREFLIGHT -eq 0 ]]; then
   preflight_gpu 1  || exit 1
   preflight_gpu_idle
   preflight_running
-  preflight_genesis_pin "${ROOT_DIR}"
   preflight_repo_drift "${ROOT_DIR}"
   echo "[preflight] ok."
   echo ""

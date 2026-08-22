@@ -334,10 +334,6 @@ setup:
   # the F16 mmproj projector next to the Q4_K_M MTP GGUF).
   alias_extras:
     gguf: [gguf_mmproj_f16]
-  # Every old alias arm forced NEEDS_GENESIS=0: GGUF / alt-quant paths are
-  # overlay-free and never clone Genesis, even if the user exported
-  # NEEDS_GENESIS=1 for a TQ3 revival alongside a non-default WEIGHTS.
-  alias_resets_genesis: true
   # WITH_DFLASH_DRAFT=1 target.
   dflash: dflash
   # WITH_PRISM_EAGLE3=1 target.

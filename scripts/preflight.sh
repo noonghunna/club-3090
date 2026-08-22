@@ -10,7 +10,6 @@
 #   preflight_disk <path> <gb>— free space at path covers <gb> gigabytes
 #   preflight_gpu_idle        — warn if GPUs have significant VRAM already in use
 #   preflight_running         — warn if a club-3090 container is already up
-#   preflight_genesis_pin     — warn if on-disk Genesis tree differs from setup.sh's pin
 #   preflight_repo_drift      — warn if local HEAD is behind origin/master
 #   preflight_compose_hardware— check compose VRAM/GPU-count/SM metadata
 #
@@ -717,56 +716,9 @@ preflight_running() {
   return 0
 }
 
-# preflight_genesis_pin — warn if scripts/setup.sh's declared GENESIS_PIN
-# differs from the on-disk Genesis tree HEAD. This catches the
-# "user pulled the repo but didn't re-run setup.sh" failure mode where
-# vLLM boots against an outdated Genesis tree (mysterious patch failures
-# at runtime). Sourceable; soft-warning only — caller decides whether
-# to abort. Returns 0 always; emits a [preflight] WARN line on mismatch.
-preflight_genesis_pin() {
-  local repo_root="${1:-${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
-  local setup_script="${repo_root}/scripts/setup.sh"
-  local genesis_dir="${repo_root}/models/qwen3.6-27b/vllm/patches/genesis"
-
-  # If setup.sh isn't here we're in a weird state — skip silently.
-  [[ -f "$setup_script" ]] || return 0
-  # If Genesis hasn't been cloned yet, this isn't a mismatch — it's a
-  # missing-setup case. Skip; setup.sh will handle it on first run.
-  [[ -d "${genesis_dir}/.git" ]] || return 0
-
-  # Parse `GENESIS_PIN="${GENESIS_PIN:-<default>}"` to extract the default.
-  local declared_pin
-  declared_pin=$(grep -E '^GENESIS_PIN=' "$setup_script" 2>/dev/null | head -1 \
-    | sed -E 's/.*:-([^}]+)\}.*/\1/; t; s/.*=//' \
-    | tr -d '"' | tr -d "'")
-  [[ -z "$declared_pin" ]] && return 0
-
-  # Get on-disk HEAD short SHA (matches setup.sh's `git rev-parse --short HEAD`).
-  local ondisk_pin
-  ondisk_pin=$(cd "$genesis_dir" && git rev-parse --short HEAD 2>/dev/null)
-  [[ -z "$ondisk_pin" ]] && return 0
-
-  # Compare. setup.sh declares short-form pins (e.g. 2db18df); on-disk
-  # short SHA from git rev-parse --short matches that form. If declared
-  # pin is full-length, take its prefix matching ondisk's length.
-  local declared_short="${declared_pin:0:${#ondisk_pin}}"
-
-  if [[ "$declared_short" != "$ondisk_pin" ]]; then
-    echo "[preflight] WARN:  Genesis tree out of sync with setup.sh's declared pin." >&2
-    echo "[preflight]          declared (scripts/setup.sh): ${declared_pin}" >&2
-    echo "[preflight]          on-disk (genesis/.git HEAD): ${ondisk_pin}" >&2
-    echo "[preflight]        This usually means you pulled latest club-3090 but" >&2
-    echo "[preflight]        didn't re-run setup.sh. vLLM may boot against an" >&2
-    echo "[preflight]        outdated Genesis tree, causing mysterious patch" >&2
-    echo "[preflight]        failures at runtime (see #32 for an example)." >&2
-    echo "[preflight]        Fix:  bash scripts/setup.sh qwen3.6-27b" >&2
-  fi
-  return 0
-}
-
 # preflight_repo_drift — warn if local HEAD is behind origin/master.
 # Catches the most common stale-setup pattern: user cloned weeks ago, master
-# has moved (Genesis pin bumps, compose changes, vendored patch updates),
+# has moved (compose changes, vendored patch updates, engine pin bumps),
 # they re-run their compose, hit a stale config, and file an issue we
 # already solved on master.
 #
@@ -825,7 +777,6 @@ preflight_repo_drift() {
 
   echo "[preflight] WARN:  Your club-3090 checkout is ${behind} commit(s) behind origin/master." >&2
   [[ -n "$age_str" ]] && echo "[preflight]          (last origin fetch: ${age_str})" >&2
-  echo "[preflight]        Master may have new configs, patches, or Genesis pin bumps." >&2
   echo "[preflight]        Easy upgrade:  bash scripts/update.sh" >&2
   echo "[preflight]        (Will refuse if you have local edits — commit or stash first.)" >&2
   echo "[preflight]        Skip this check:  PREFLIGHT_NO_FETCH=1 bash scripts/launch.sh" >&2

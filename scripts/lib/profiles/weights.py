@@ -265,10 +265,6 @@ def main(argv: list[str] | None = None) -> int:
                         k: [str(x) for x in (v or [])]
                         for k, v in (setup.get("alias_extras") or {}).items()
                     },
-                    # Historical arms in setup.sh's WEIGHTS= cases force
-                    # NEEDS_GENESIS=0 when an alias matches (GGUF/alt-quant
-                    # paths never need Genesis); encode that per model.
-                    "alias_resets_genesis": bool(setup.get("alias_resets_genesis")),
                     "always_draft": str(setup.get("always_draft") or ""),
                     "assistant_draft": str(setup.get("assistant_draft") or ""),
                     "dflash": str(setup.get("dflash") or ""),

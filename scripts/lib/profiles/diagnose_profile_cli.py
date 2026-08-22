@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -76,14 +75,6 @@ def print_available_composes() -> None:
 
 def normalize_compose_name(name: str) -> str:
     return COMPOSE_ALIASES.get(name, name)
-
-
-def setup_genesis_pin() -> str | None:
-    path = REPO_ROOT / "scripts/setup.sh"
-    if not path.exists():
-        return None
-    match = re.search(r'^GENESIS_PIN="\$\{GENESIS_PIN:-(.+?)\}"', path.read_text(encoding="utf-8"), re.M)
-    return match.group(1) if match else None
 
 
 def hardware_for_entry(entry: dict[str, Any], profiles) -> tuple[list, bool, str]:
@@ -281,13 +272,6 @@ def print_overlays(engine) -> bool:
         else:
             print(f"  ✗ {overlay_id}: source path not found")
             ok = False
-
-    if engine.required_genesis:
-        setup_pin = setup_genesis_pin()
-        suffix = f" (setup.sh GENESIS_PIN={setup_pin})" if setup_pin else ""
-        print(f"  ✓ Genesis pin: {engine.genesis_pin or 'unspecified'}{suffix}")
-    else:
-        print("  ✓ Genesis: not required")
     return ok
 
 

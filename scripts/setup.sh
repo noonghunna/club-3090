@@ -10,9 +10,6 @@
 # files, and local subdirectories live in those same YAMLs.
 #
 # What it does (per supported model):
-#   - clones Sandermage/genesis-vllm-patches into models/<model>/vllm/patches/genesis
-#     (vLLM-only; skip with SKIP_GENESIS=1 if you only need llama.cpp / SGLang;
-#     Gemma 4 doesn't fetch Genesis at all yet)
 #   - downloads model weights into $MODEL_DIR with SHA256 verification against
 #     the hub's published x-linked-etag (no-redirect resolve HEAD via
 #     scripts/lib/profiles/hf_fetch.py). A file the hub publishes no hash for is
@@ -27,12 +24,10 @@
 #   MODEL_DIR           Where to place model weights. Default: <repo>/models-cache
 #   WEIGHTS             'autoround' (default, vLLM INT4) or 'gguf' (llama.cpp /
 #                       ik_llama). gguf fetches the Q4_K_M MTP GGUF + mmproj for
-#                       the llamacpp/* + ik-llama/* composes (qwen3.6-27b only),
-#                       and skips Genesis. Use this if you're serving via
-#                       llama.cpp/ik_llama rather than vLLM.
-#   HF_TOKEN            HF token (public models, usually unnecessary)
+#                       the llamacpp/* + ik-llama/* composes (qwen3.6-27b only).
+#                       Use this if you're serving via llama.cpp/ik_llama rather than vLLM.
 #   SKIP_MODEL          Set to 1 to skip the model download step
-#   SKIP_GENESIS        Set to 1 to skip cloning Genesis patches
+#   HF_TOKEN            HF token (public models, usually unnecessary)
 #   WITH_DFLASH_DRAFT   Set to 1 to ALSO download the model family's DFlash
 #                       drafter when one is registered in profiles/models/*.yml.
 #                       Default: 0.
@@ -342,15 +337,8 @@ PRIMARY_WEIGHT_KEY=""
 EXTRA_WEIGHT_KEYS=()
 SETUP_ASSISTANT_DRAFT=""
 SETUP_SUPPORTED_WEIGHTS="autoround"
-SETUP_ALIAS_RESETS_GENESIS=0
 declare -A SETUP_ALIAS=()
 declare -A SETUP_ALIAS_EXTRAS=()
-# Genesis is opt-in: nothing in the shipped catalog requires it anymore (its last
-# unique feature on this stack — turboquant_3bit_nc KV — is now provided by beellama
-# KVarN; #182). The clone only fires if a user explicitly sets NEEDS_GENESIS=1 (e.g.
-# to revive an archived TQ3 compose). No dispatch arm flips it on; the only place
-# it is ever forced OFF is a matching WEIGHTS= alias (see below).
-NEEDS_GENESIS="${NEEDS_GENESIS:-0}"
 
 # Resolve MODEL_NAME's dispatch policy from the catalog.
 _setup_found=0
@@ -386,7 +374,6 @@ for alias, extras in (m.get("alias_extras") or {}).items():
     print(f"SETUP_ALIAS_EXTRAS[{q(alias)}]={q(' '.join(model + ':' + x for x in extras))}")
 aliases = sorted((m.get("aliases") or {}))
 print(f"SETUP_SUPPORTED_WEIGHTS={q(' '.join(['autoround'] + aliases))}")
-print(f"SETUP_ALIAS_RESETS_GENESIS={1 if m.get('alias_resets_genesis') else 0}")
 PY
 )"
 
@@ -426,11 +413,6 @@ elif [[ -n "${SETUP_ALIAS[${WEIGHTS}]:-}" ]]; then
     read -ra _alias_extras <<< "${SETUP_ALIAS_EXTRAS[${WEIGHTS}]}"
     EXTRA_WEIGHT_KEYS+=("${_alias_extras[@]}")
   fi
-  # The old alias arms forced NEEDS_GENESIS=0: GGUF / alt-quant paths are
-  # overlay-free and never clone Genesis, even when the user exported
-  # NEEDS_GENESIS=1 alongside a non-default WEIGHTS. Encoded per model as
-  # `alias_resets_genesis` (qwen3.6-27b only — its GGUF aliases).
-  [[ "${SETUP_ALIAS_RESETS_GENESIS}" == "1" ]] && NEEDS_GENESIS=0
 else
   echo "ERROR: WEIGHTS='${WEIGHTS}' not recognized for ${MODEL_NAME} (supported: ${SETUP_SUPPORTED_WEIGHTS})." >&2
   echo "       Use WEIGHT_KEY=<model>:<variant> for exact catalog entries." >&2
@@ -458,7 +440,6 @@ if [[ "${SETUP_DUMP_KEYS:-0}" == "1" ]]; then
   echo "vision=${VISION_KEY}"
   echo "prism_eagle3=${PRISM_EAGLE3_KEY}"
   echo "extras=${EXTRA_WEIGHT_KEYS[*]:-}"
-  echo "needs_genesis=${NEEDS_GENESIS}"
   exit 0
 fi
 
@@ -559,7 +540,6 @@ if [[ "${SETUP_BOTH_MODE:-0}" == "1" ]]; then
   echo "[setup] Next: bash scripts/launch.sh"
   exit 0
 fi
-GENESIS_DIR="${ROOT_DIR}/models/${MODEL_NAME}/vllm/patches/genesis"
 
 cd "${ROOT_DIR}"
 
@@ -625,12 +605,12 @@ _DISK_KEYS=("${PRIMARY_WEIGHT_KEY:-}" "${ALWAYS_DRAFT_KEY:-}")
 PREFLIGHT_DISK_GB="${PREFLIGHT_DISK_GB:-$(_disk_need_gb "${_DISK_KEYS[@]}")}"
 
 echo "[preflight] checking environment..."
-# docker is soft-warn for setup.sh — this script only fetches genesis + models,
-# no docker invocations until you actually `docker compose up` later. Hard-failing
-# blocks non-docker container-runtime users (microk8s / podman / k8s / manual)
-# from running setup at all (club-3090 disc #48). launch.sh keeps the hard check
+# docker is soft-warn for setup.sh — this script only fetches models, no docker
+# invocations until you actually `docker compose up` later. Hard-failing blocks
+# non-docker container-runtime users (microk8s / podman / k8s / manual) from
+# running setup at all (club-3090 disc #48). launch.sh keeps the hard check
 # because it actually invokes docker.
-preflight_docker || echo "[preflight] WARN:  docker unavailable — setup will continue (genesis + model fetch don't need docker), but you'll need a working container runtime before 'docker compose up'."
+preflight_docker || echo "[preflight] WARN:  docker unavailable — setup will continue (model fetch doesn't need docker), but you'll need a working container runtime before 'docker compose up'."
 preflight_gpu 1  || exit 1
 preflight_disk "${MODEL_DIR}" "${PREFLIGHT_DISK_GB}" || exit 1
 preflight_hf_token  # soft-warn only; downloads will surface the hard failure
@@ -678,57 +658,11 @@ need() {
     exit 1
   }
 }
-need git
 need curl
 need sha256sum
 
 echo "Setup root:   ${ROOT_DIR}"
 echo "Model dir:    ${MODEL_DIR}"
-
-# ---------- Genesis patches (opt-in only) ----------
-# Genesis is no longer fetched by default. No shipped compose requires it: its one
-# unique feature on this stack — turboquant_3bit_nc KV — is now covered by beellama
-# KVarN, and the Genesis-anchored vLLM engines were deprecated when the catalog moved
-# to stock vllm/vllm-openai:v0.22.0 (their TQ3/Genesis composes live in compose/_archive/).
-# We are not reviving Genesis in the near term (#182).
-#
-# The pin below is retained ONLY for an explicit revival: running
-#   NEEDS_GENESIS=1 bash scripts/setup.sh qwen3.6-27b
-# clones Sandermage's tree at this commit so an archived TQ3 compose can be brought back.
-# Bumping it is parked on Sander's next *stable* Genesis tag (the in-flight memory-rework
-# WIP supersedes the 7b9fd319 skeleton); any bump requires re-running verify-stress.sh
-# against the revived compose. Override with GENESIS_PIN=<ref> if reviving against another.
-GENESIS_PIN="${GENESIS_PIN:-7b9fd319}"
-
-if [[ "${NEEDS_GENESIS:-1}" != "1" ]]; then
-  echo "[genesis] ${MODEL_NAME} doesn't use Genesis — skipping clone."
-elif [[ "${SKIP_GENESIS:-0}" != "1" ]]; then
-  if [[ -d "${GENESIS_DIR}/.git" ]]; then
-    echo "[genesis] Already cloned at ${GENESIS_DIR} — fetching + checking out ${GENESIS_PIN} ..."
-    (cd "${GENESIS_DIR}" && git fetch origin && git checkout "${GENESIS_PIN}" 2>&1 | tail -3)
-  else
-    echo "[genesis] Cloning Sandermage/genesis-vllm-patches at ${GENESIS_PIN} ..."
-    # Full clone (commit SHAs aren't reachable via --branch + --depth 1).
-    git clone https://github.com/Sandermage/genesis-vllm-patches.git "${GENESIS_DIR}"
-    (cd "${GENESIS_DIR}" && git checkout "${GENESIS_PIN}")
-  fi
-
-  # v7.14+ layout sanity check
-  if [[ ! -d "${GENESIS_DIR}/vllm/_genesis" ]]; then
-    echo "ERROR: genesis tree at ${GENESIS_PIN} missing vllm/_genesis package." >&2
-    echo "       Re-run with GENESIS_PIN=<other-ref> to try a different version." >&2
-    exit 1
-  fi
-  echo "[genesis] Pinned to ${GENESIS_PIN} ($(cd "${GENESIS_DIR}" && git rev-parse --short HEAD))"
-
-  # v7.69 ships PN25 + PN30 + PN34 directly (Sander's accept-and-fold of our
-  # cross-rig sidecars). Local patch_pn25_genesis_register_fix.py +
-  # patch_pn30_dst_shaped_temp_fix.py + patch_workspace_lock_disable.py are
-  # now redundant. Sidecar Python files retained in vllm/patches/ for
-  # rollback if any v7.69 patch regresses on your config.
-else
-  echo "[genesis] SKIP_GENESIS=1 — not cloning."
-fi
 
 # ---------- Model download ----------
 if [[ "${SKIP_MODEL:-0}" == "1" ]]; then
@@ -970,7 +904,6 @@ for extra_key in "${EXTRA_WEIGHT_KEYS[@]}"; do
 done
 
 echo ""
-[[ -d "${GENESIS_DIR}/.git" ]] && echo "          Genesis pinned at ${GENESIS_PIN} ($(cd "${GENESIS_DIR}" && git rev-parse --short HEAD))."
 echo ""
 
 # ---------- Optional / companion draft models ----------

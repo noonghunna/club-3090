@@ -425,7 +425,6 @@ SETUP_KEYS = {
     "primary",
     "weights_aliases",
     "alias_extras",
-    "alias_resets_genesis",
     "always_draft",
     "assistant_draft",
     "dflash",

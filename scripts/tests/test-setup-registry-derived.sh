@@ -82,9 +82,6 @@ for id in "${CATALOG_IDS[@]}"; do
     [[ "${actual}" == "${expected}" ]] \
       || fail "${id}: ${field} key drifted (${actual} != ${expected})"
   done
-  # Default WEIGHTS=autoround resolves to the same primary key.
-  [[ "$(dump_value "${dump}" needs_genesis)" == "0" ]] \
-    || fail "${id}: NEEDS_GENESIS must stay opt-in (default 0)"
 done
 
 # --- 4. every registered WEIGHTS= alias resolves to its catalog variant ------
@@ -109,26 +106,6 @@ while IFS=$'\t' read -r id alias variant extras; do
   [[ "${actual_extras}" == "${extras}" ]] \
     || fail "${id}: WEIGHTS=${alias} extras drifted ('${actual_extras}' != '${extras}')"
 done <<< "${alias_rows}"
-
-# --- 5. alias_resets_genesis: a matching alias forces NEEDS_GENESIS=0 --------
-for id in "${CATALOG_IDS[@]}"; do
-  resets="$(catalog_field "${id}" alias_resets_genesis)"
-  first_alias="$(python3 -c '
-import json, sys
-m = next(x for x in json.loads(sys.stdin.read())["models"] if x["id"] == sys.argv[1])
-a = sorted((m.get("aliases") or {}))
-print(a[0] if a else "")
-' "${id}" < <(python3 "${WEIGHTS_READER}" catalog --json))"
-  [[ -n "${first_alias}" ]] || continue
-  dump="$(NEEDS_GENESIS=1 dump_keys "${id}" "WEIGHTS=${first_alias}")"
-  if [[ "${resets}" == "true" ]]; then
-    [[ "$(dump_value "${dump}" needs_genesis)" == "0" ]] \
-      || fail "${id}: alias_resets_genesis=true but WEIGHTS=${first_alias} left NEEDS_GENESIS=1"
-  else
-    [[ "$(dump_value "${dump}" needs_genesis)" == "1" ]] \
-      || fail "${id}: alias_resets_genesis=false but WEIGHTS=${first_alias} clobbered NEEDS_GENESIS"
-  fi
-done
 
 # --- 6. WITH_ASSISTANT_DRAFT honors assistant_draft, errors otherwise --------
 for id in "${CATALOG_IDS[@]}"; do
