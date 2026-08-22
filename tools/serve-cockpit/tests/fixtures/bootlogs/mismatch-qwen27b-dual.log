@@ -1,0 +1,6 @@
+INFO 08-22 09:12:40 engine.py: Started engine process with PID 31337
+INFO 08-22 09:12:44 config.py: tensor_parallel_size=2, pipeline_parallel_size=1
+INFO 08-22 09:12:44 config.py: max_num_seqs=2, max_model_len=262144
+INFO 08-22 09:12:52 gpu_worker.py: model weights take 13.62 GiB; non_torch_memory 0.87 GiB
+INFO 08-22 09:12:53 gpu_worker.py: Available KV cache / card = 2.50 GiB
+INFO 08-22 09:12:54 api_server.py: Uvicorn running on http://0.0.0.0:8000

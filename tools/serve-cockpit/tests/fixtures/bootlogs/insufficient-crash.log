@@ -1,0 +1,6 @@
+INFO 08-22 03:02:11 engine.py: Started engine process with PID 5150
+INFO 08-22 03:02:15 config.py: tensor_parallel_size=2, pipeline_parallel_size=1
+INFO 08-22 03:02:15 config.py: max_num_seqs=2, max_model_len=262144
+INFO 08-22 03:02:18 gpu_worker.py: Loading safetensors checkpoint shards: 100%|██████████| 8/8
+ERROR 08-22 03:02:24 core.py: EngineCore hit an exception: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 96.00 MiB. GPU 0 has a capacity of 24.0 GiB which is fully used
+INFO 08-22 03:02:25 core_client.py: EngineCore failed to start — exiting

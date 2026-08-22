@@ -824,7 +824,7 @@ class HelpScreen(ModalScreen):
 [bold]Bring & Validate[/bold] (producer lane — the ① → ⑤ pipeline)
   ① Bring:   [cyan]f[/cyan] search HF (fills the repo field)   fit-check an HF model   [cyan]s[/cyan] Continue → ② Serve (weights on disk)   [cyan]D[/cyan] download weights
   ② Serve:   [cyan]⏎[/cyan]/[cyan]g[/cyan] serve untested (Route-C = your weights · else catalog reproduction)
-  ③ Gate:    [cyan]⏎[/cyan] launch validation step (gated)   [cyan]F[/cyan] full battery report.sh --full (~43-min · confirm · uses serving model)
+  ③ Gate:    [cyan]⏎[/cyan] launch validation step (gated)   [cyan]F[/cyan] full battery report.sh --full (~43-min · confirm · uses serving model)   [cyan]K[/cyan] boot-log KV back-solve vs kv-calc (read)
   ④ Measure: [cyan]⏎[/cyan] open report   [cyan]m[/cyan] vs catalog bar (read)   [cyan]s[/cyan] submit to localmaxxing (gated · never auto)
   ⑤ Promotion Preview: [cyan]P[/cyan] scaffold preview [yellow](preview only — no catalog write yet)[/yellow]
   [cyan]v[/cyan] ▸ Evaluate via c3t [yellow](preview / mock this phase)[/yellow]
@@ -1968,6 +1968,166 @@ class ExplainScreen(_CopyableModal, ModalScreen):
         self.app.pop_screen()
 
 
+# ── Boot-log KV back-solve modal (producer ③ Gate · [K]) ───────────────────────
+
+
+def _bootlog_verdict_lines(res: dict) -> tuple[list[str], str]:
+    """Build the boot-log back-solve verdict card: (markup lines, plain copy).
+
+    Pure render of the ``CockpitData.bootlog_solve`` result.  Honest failures
+    (no container / docker unavailable / solver error) render the reason —
+    numbers are NEVER fabricated; an ``insufficient-log`` report lists exactly
+    which fields the log (or registry) could not supply."""
+    report = res.get("report") or {}
+    if not res.get("ok") or not isinstance(report, dict) or not report:
+        first = f"[red]unavailable:[/red] {res.get('message') or 'no report'}"
+        lines = [
+            first,
+            "",
+            "[dim]The back-solve needs a serving catalog slug + its live container "
+            "(docker logs). Nothing was guessed — fix the target and press K again.[/dim]",
+        ]
+        return lines, Text.from_markup(first).plain
+
+    verdict = str(report.get("verdict", "insufficient-log"))
+    glyph, color = {
+        "match": ("✓", "green"),
+        "half": ("⚠", "yellow"),
+        "mismatch": ("✗", "red"),
+    }.get(verdict, ("·", "yellow"))
+
+    def num(v: Any) -> str:
+        return f"{v:,.2f}" if isinstance(v, (int, float)) else "—"
+
+    src = report.get("field_sources") or {}
+    lines = [f"[bold {color}]{glyph} {verdict.upper()}[/bold {color}]", ""]
+    lines += [
+        f"  measured  per-token KV (TP1-equiv): {num(report.get('measured_per_token_bytes_tp1'))} B/tok"
+        f"   (per-card {num(report.get('measured_per_token_bytes'))})",
+        f"  predicted per-token KV (TP1-equiv): {num(report.get('predicted_per_token_bytes_tp1'))} B/tok"
+        f"   (per-card {num(report.get('predicted_per_token_bytes'))})",
+        f"  ratio: {num(report.get('ratio'))}  [dim](±10% → match · ~2× → K=V tying)[/dim]",
+        "",
+        f"  pool: Available KV cache / card = {num(report.get('available_kv_gib'))} GiB"
+        + (f" · {report.get('kv_pool_tokens'):,} tokens" if report.get("kv_pool_tokens") else ""),
+        f"  config: max_ctx {report.get('max_ctx') or '—'} · max_num_seqs "
+        f"{report.get('max_num_seqs') or '—'} · TP {report.get('tp') or '—'}"
+        f"  [dim]({'/'.join(v for v in src.values() if v) or 'no source'})[/dim]",
+    ]
+    bits = [report.get("solve_path"), report.get("kv_format"), report.get("model")]
+    if any(bits):
+        lines.append(
+            "  solve: " + " · ".join(str(b) for b in bits if b)
+            + f"  [dim]({report.get('slug', '')})[/dim]"
+        )
+    cause = report.get("suspected_cause")
+    if cause:
+        lines += ["", f"  [bold]suspected cause:[/bold] {cause}"]
+    missing = report.get("missing_fields") or []
+    if missing:
+        lines += ["", "  [yellow]fields not in the log (never guessed):[/yellow]"]
+        lines += [f"    - {m}" for m in missing]
+    ev = report.get("evidence") or {}
+    ev_lines = [
+        v for v in (
+            ev.get("available_kv_line"), ev.get("pool_tokens_line"),
+            ev.get("model_length_line"), ev.get("max_num_seqs_line"),
+            ev.get("tensor_parallel_line"),
+        ) if v
+    ]
+    if ev_lines:
+        lines += ["", "  [dim]evidence from the boot log:[/dim]"]
+        lines += [f"    [dim]{ln}[/dim]" for ln in ev_lines]
+    plain = "\n".join(Text.from_markup(ln).plain for ln in lines)
+    return lines, plain
+
+
+class BootlogSolveScreen(_CopyableModal, ModalScreen):
+    """[K] — the ADDING_MODELS.md Step-5 boot-log back-solve, automated.
+
+    READ-only: the app worker (``run_bootlog_solve``) pulls the serving
+    container's boot log (docker logs via the runner seam) and classifies the
+    measured per-token KV bytes against the kv-calc prediction — match / half
+    (K=V tying suspect) / mismatch (growing-layer miscount suspect) /
+    insufficient-log.  Honest failures render as such; numbers are never
+    guessed.  [Y] copies the card for the calibration write-up."""
+
+    DEFAULT_CSS = """
+    BootlogSolveScreen {
+        align: center middle;
+    }
+    BootlogSolveScreen > Vertical {
+        width: 92;
+        height: 70%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    BootlogSolveScreen .bootlog-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    BootlogSolveScreen #bootlog-scroll {
+        height: 1fr;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("Y", "app.copy_context", "Copy", show=True),
+    ]
+
+    def __init__(self, title: str, slug: str, container: str, **kwargs):
+        super().__init__(**kwargs)
+        self._title = title
+        self.slug = slug
+        self.container = container
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(self._title, classes="bootlog-title")
+            with ScrollableContainer(id="bootlog-scroll"):
+                yield Static(
+                    "[dim]reading docker logs + back-solving against kv-calc…[/dim]",
+                    id="bootlog-body",
+                )
+            yield Label(
+                "[dim]Esc to close · [cyan]Y[/cyan] copies the verdict card[/dim]"
+            )
+
+    def set_result(self, res: dict) -> None:
+        """Render the service result into the card (called by the app worker).
+
+        The worker can finish BEFORE this screen finishes mounting (fake
+        runners answer in ~0 ms), so if the body widget isn't queryable yet
+        the result is stashed and on_mount applies it — the placeholder is
+        never left on screen."""
+        self._pending_result = res
+        try:
+            self._apply_result(res)
+        except Exception:
+            pass  # not mounted yet — on_mount applies the stashed result
+
+    _pending_result: dict | None = None
+
+    def on_mount(self) -> None:
+        if getattr(self, "_pending_result", None) is not None:
+            try:
+                self._apply_result(self._pending_result)
+            except Exception:
+                pass
+
+    def _apply_result(self, res: dict) -> None:
+        body = self.query_one("#bootlog-body", Static)
+        lines, plain = _bootlog_verdict_lines(res)
+        body.update("\n".join(lines))
+        self._copy_payload = plain
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
+
 class ModelInfoScreen(_CopyableModal, ModalScreen):
     """[i] — lightweight metadata popup for the focused catalog row.
 
@@ -2412,10 +2572,14 @@ class ConfirmActionScreen(ModalScreen):
         # Tri-state thinking toggle (#1014 L3) — shown only for slugs whose
         # registry row carries a 'thinking' sampler profile.  [t] cycles
         # inherit → force-on → force-off; [r] resets the sampler to the card
-        # row (offered while thinking resolves ON).  Keys checked against this
-        # modal's existing set (enter/k/f/a/escape): t and r are free.
+        # row (offered while thinking resolves ON); [T] persists the CURRENT
+        # choice as the model's .env default (#1014 follow-up — the pin
+        # switch.sh resolves into ENABLE_THINKING on later launches).  Keys
+        # checked against this modal's existing set (enter/k/f/a/escape):
+        # t, r and shift-t are free.
         Binding("t", "cycle_thinking", "thinking", show=True),
         Binding("r", "reset_sampler", "reset sampler", show=True),
+        Binding("T", "persist_thinking", "save as default", show=True),
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
@@ -2444,12 +2608,12 @@ class ConfirmActionScreen(ModalScreen):
             True if (_cap and self._act8_ships_int8())
             else _cap and self._act8_pref_default()
         )
-        # Tri-state thinking toggle (#1014 L3) — per-launch, SESSION-SCOPED.
-        # The .env pin precedent (switch.sh --set-default → CLUB3090_DEFAULT_<MODEL>)
-        # has no THINKING counterpart any resolver reads; writing
-        # CLUB3090_THINKING_<MODEL> anyway would be c3-only state switch.sh
-        # ignores, so the choice lives for THIS modal only and defaults to
-        # inherit (the entrypoint's own ENABLE_THINKING=false default).
+        # Tri-state thinking toggle (#1014 L3) — per-launch choice, defaulting
+        # to inherit (the entrypoint's own ENABLE_THINKING=false default).
+        # [T] can PERSIST the choice as CLUB3090_THINKING_<MODEL> in the repo
+        # .env (the --set-default mechanism); switch.sh resolves that pin into
+        # ENABLE_THINKING=true/false on every later launch of the model
+        # (#1014 follow-up), so the persistence outlives this session.
         self._thinking: str = "inherit"          # inherit | on | off
         self._sampler_reset: bool = False        # [r] card-defaults pin (below)
 
@@ -2583,6 +2747,91 @@ class ConfirmActionScreen(ModalScreen):
         self._sampler_reset = True
         self._render_serve_card()
 
+    # ── persisted thinking pin (#1014 follow-up) ────────────────────────────────
+    #
+    # [T] writes the CURRENT tri-state choice as CLUB3090_THINKING_<MODEL> into
+    # the repo .env — the same write --set-default performs for
+    # CLUB3090_DEFAULT_<MODEL> (switch.sh env_set_key: upsert, all other lines
+    # preserved). switch.sh's launch path reads the pin back and injects
+    # ENABLE_THINKING accordingly, so the modal choice survives the session.
+
+    def _thinking_model(self) -> str:
+        """The MODEL-id this serve belongs to (the pin is per-model, like
+        --set-default — not per-slug)."""
+        row = getattr(getattr(self._serve_ctx, "entry", None), "row", None)
+        return str(getattr(row, "model", "") or "")
+
+    def _thinking_pin_key(self) -> str:
+        """CLUB3090_THINKING_<MODELID uppercased, non-alnum→_> — mirrors
+        compose_registry.model_thinking_pin_key, which switch.sh resolves the
+        pin with (qwen3.6-27b → CLUB3090_THINKING_QWEN3_6_27B)."""
+        suffix = "".join(c if c.isalnum() else "_" for c in self._thinking_model()).upper()
+        return f"CLUB3090_THINKING_{suffix}"
+
+    def _repo_env_set_key(self, key: str, value: str) -> bool:
+        """Upsert KEY=VALUE in <repo>/.env — the Python mirror of switch.sh's
+        env_set_key (--set-default's write path): replace any existing
+        assignment for KEY (with or without ``export``), else append; every
+        other line is preserved; the file is created when absent.  False when
+        there is no repo root to write to."""
+        from pathlib import Path as _Path
+
+        if self._repo_root is None:
+            return False
+        envf = _Path(self._repo_root) / ".env"
+        lines: list[str] = []
+        if envf.is_file():
+            try:
+                lines = envf.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+        pat = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}=")
+        kept = [ln for ln in lines if not pat.match(ln)]
+        kept.append(f"{key}={value}")
+        try:
+            envf.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        except OSError:
+            return False
+        return True
+
+    def _thinking_persisted(self) -> str:
+        """The model's persisted thinking pin read back from <repo>/.env:
+        'on' | 'off' | '' (absent/unreadable/unparseable → treated as none).
+        Tolerant of an optional ``export`` prefix and CRLF, matching switch.sh's
+        loader."""
+        from pathlib import Path as _Path
+
+        key = self._thinking_pin_key()
+        if not key.startswith("CLUB3090_THINKING_") or self._repo_root is None:
+            return ""
+        try:
+            text = (_Path(self._repo_root) / ".env").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            return ""
+        prefix = f"{key}="
+        for raw in text.splitlines():
+            line = raw.strip().rstrip("\r")
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            if not line.startswith(prefix):
+                continue
+            val = line[len(prefix):].strip().strip('"').strip("'").lower()
+            return val if val in ("on", "off") else ""
+        return ""
+
+    def action_persist_thinking(self) -> None:
+        """[T] → persist the CURRENT thinking choice as the model's default
+        (#1014 follow-up).  inherit offers nothing to persist (check_action
+        hides the key); on/off upsert the pin and refresh the card so the
+        persisted line reflects the new value.  A no-op when the repo root is
+        unknown — never a silent fake success."""
+        if not self._thinking_capable() or self._thinking not in ("on", "off"):
+            return
+        if self._repo_env_set_key(self._thinking_pin_key(), self._thinking):
+            self._render_serve_card()
+
     def _thinking_env_pairs(self) -> list[str]:
         """ENABLE_THINKING pairs per toggle state: [] for inherit (no env — the
         entrypoint's own false default applies), true/false for the forced
@@ -2632,7 +2881,9 @@ class ConfirmActionScreen(ModalScreen):
     def _thinking_card_lines(self) -> list[str]:
         """The serve-card lines for the thinking knob — pure over modal state,
         so tests assert the rendered contract directly.  [] where the knob is
-        not offered (profile-less slug / non-START mode) → no toggle rendered."""
+        not offered (profile-less slug / non-START mode) → no toggle rendered.
+        The trailing line surfaces the PERSISTED pin (#1014 follow-up) read
+        back from the repo .env when readable."""
         if not self._thinking_capable():
             return []
         prof = self._thinking_profiles() or {}
@@ -2642,8 +2893,7 @@ class ConfirmActionScreen(ModalScreen):
                 "  [bold]thinking[/bold] [dim]inherit[/dim] — no env injected "
                 "(entrypoint default: off → instruct row) · [t] force-on"
             )
-            return lines
-        if self._thinking == "on":
+        elif self._thinking == "on":
             lines.append(
                 "  [bold]thinking[/bold] [green]FORCE-ON[/green] "
                 "([green]ENABLE_THINKING=true[/green]) · [t] cycle"
@@ -2668,12 +2918,22 @@ class ConfirmActionScreen(ModalScreen):
                     "  [yellow]⚠ shell overrides beat the card row:[/yellow] "
                     f"{shown} · [r] reset to card defaults"
                 )
-            return lines
-        lines.append(
-            "  [bold]thinking[/bold] FORCE-OFF "
-            "([yellow]ENABLE_THINKING=false[/yellow] — pins the instruct row even "
-            "if the shell exports true) · [t] cycle"
+        else:
+            lines.append(
+                "  [bold]thinking[/bold] FORCE-OFF "
+                "([yellow]ENABLE_THINKING=false[/yellow] — pins the instruct row even "
+                "if the shell exports true) · [t] cycle"
+            )
+        # Persisted default (#1014 follow-up) — what switch.sh will resolve on
+        # later launches. inherit has nothing to save ([T] is gated off there).
+        persisted = self._thinking_persisted()
+        disp = persisted if persisted else "none"
+        suffix = (
+            f" · [T] save '{self._thinking}' as default"
+            if self._thinking != "inherit"
+            else ""
         )
+        lines.append(f"  [dim]persisted default: {disp} ({self._thinking_pin_key()}){suffix}[/dim]")
         return lines
 
     # ── presentation predicates ───────────────────────────────────────────────────
@@ -3194,13 +3454,17 @@ class ConfirmActionScreen(ModalScreen):
                 return self._thinking_capable()
             if action == "reset_sampler":
                 return self._thinking_resolved_on()
+            # [T] persists the CURRENT choice — nothing to persist at inherit
+            # (and per the acceptance contract it neither writes nor removes).
+            if action == "persist_thinking":
+                return self._thinking_capable() and self._thinking != "inherit"
             # confirm/force never apply in serve mode.
             if action in ("confirm", "force"):
                 return False
             return True
         if action == "toggle_act8":
             return False
-        if action in ("cycle_thinking", "reset_sampler"):
+        if action in ("cycle_thinking", "reset_sampler", "persist_thinking"):
             return False
         if action == "confirm":
             return bool(resolved and rec.safe)
@@ -7802,6 +8066,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("doctor_verify", "Verify serving", "Doctor — send a test query to the model (verify.sh · read)"),
     ("doctor_verify_full", "Verify-full battery", "Doctor — functional battery (verify-full.sh · ~1-2 min · read)"),
     ("full_report", "Full system report (report.sh --full)", "Doctor / ③ Gate — ~43-min battery (uses the serving GPUs · gated)"),
+    ("bootlog_solve", "Boot-log KV back-solve", "③ Gate — classify the serving container's boot log vs the kv-calc prediction ([K] · read)"),
     # Share-back (consumer-resident — NOT producer-gated).
     ("rig_report", "Rig report", "Paste-ready rig/bench snapshot (read · no network)"),
     ("submit_bench", "Submit bench", "Submit the latest benched result (gated · never auto)"),
@@ -7818,7 +8083,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
 # guard test asserts the two agree).  Used to FILTER the palette on consumer.
 _PALETTE_PRODUCER_ONLY: frozenset[str] = frozenset({
     "search_hf", "mode_validate", "promote_catalog", "evaluate_target",
-    "serve_untested", "measure_vs_bar",
+    "serve_untested", "measure_vs_bar", "bootlog_solve",
 })
 
 # Single source of truth: each mode-level tab → the CSS id of its PRIMARY content
@@ -8008,6 +8273,10 @@ class CockpitApp(App):
         # serving model (claims no GPU); NEVER auto-fired.
         Binding("F", "full_report", "Full report", show=False),
         # Phase R / R2b — consumer share-back affordances (NOT producer-gated):
+        # P4 Step-5 — producer lane ③ Gate: back-solve the serving container's
+        # boot log against kv-calc (READ — docker logs + the bootlog_solve.py
+        # --json contract; renders a verdict card in BootlogSolveScreen).
+        Binding("K", "bootlog_solve", "KV back-solve", show=False),
         #   [R] rig report (READ · paste-ready)     — Run + Operate
         #   [B] submit bench (OUTWARD write · gated) — Operate
         #   [!] report a problem (READ · paste-ready, surfaced at a failed serve)
@@ -8181,6 +8450,8 @@ class CockpitApp(App):
         "measure_vs_bar":   ({1}, {"tab-evidence"}),
         "full_report":      ({0, 1}, {"tab-doctor", "tab-run"}),
         # Merged mode 0 · Orchestration tab
+        # [K] KV back-solve on the lane's ③ Gate (tab-run) — producer-only.
+        "bootlog_solve":    ({1}, {"tab-run"}),
         "estate_off":       ({0}, {"tab-orchestration"}),
         "new_pod":      ({0}, {"tab-orchestration"}),
         "power_cap":        ({0}, {"tab-orchestration"}),
@@ -8237,7 +8508,7 @@ class CockpitApp(App):
     #   lane's ③ Gate tab-run), so it must stay reachable on the lean surface.
     _PRODUCER_ONLY: frozenset[str] = frozenset({
         "search_hf", "mode_validate", "promote_catalog", "evaluate_target",
-        "serve_untested", "measure_vs_bar",
+        "serve_untested", "measure_vs_bar", "bootlog_solve",
     })
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -12009,6 +12280,52 @@ class CockpitApp(App):
         finally:
             self._full_report_running = False
             self._sync_jobs_chip()
+
+    # ── P4 Step-5 · Boot-log KV back-solve (READ verdict card) ──────────────────
+
+    def action_bootlog_solve(self) -> None:
+        """[K] in the lane's ③ Gate: back-solve the serving container's boot log
+        against kv-calc (ADDING_MODELS.md Step 5, automated).
+
+        READ-only — docker logs + the ``bootlog_solve.py --json`` contract; no
+        confirm gate, no GPU claim, never auto-fired elsewhere.  Needs a
+        matched catalog slug + its live container; without either it notifies
+        honestly instead of guessing."""
+        if self._active_mode != 1 or self._active_validate_tab() != "tab-run":
+            return
+        state = self._last_estate_state
+        slug = ((getattr(state, "matched_slug", "") or "").strip()) or None
+        con = self._serving_container()
+        if con is None or not slug:
+            self.notify(
+                "No matched serving model — the KV back-solve needs a live "
+                "catalog slug + its container (nothing is guessed).",
+                title="KV back-solve",
+                severity="warning",
+                timeout=4,
+            )
+            return
+        screen = BootlogSolveScreen(
+            f"Boot-log KV back-solve · {slug}", slug, con.name
+        )
+        self.push_screen(screen)
+        # The screen mounts a 'reading…' placeholder; the worker fills it via
+        # set_result when the docker-logs + solver legs come back.
+        self.run_bootlog_solve(screen)
+
+    @work(group="bootlog-solve")
+    async def run_bootlog_solve(self, screen: "BootlogSolveScreen") -> None:
+        """Load the boot-log back-solve for the modal's (slug, container) — a
+        READ via CockpitData.bootlog_solve; renders whatever came back,
+        including honest failures."""
+        try:
+            res = await self._data.bootlog_solve(slug=screen.slug, container=screen.container)
+        except Exception as exc:  # pragma: no cover - defensive
+            res = {"ok": False, "message": f"back-solve failed: {exc}", "report": None}
+        try:
+            screen.set_result(res)
+        except Exception:
+            pass
 
     # ── Phase R / R2b · Consumer share-back (READ paste-ready + outward submit) ────
 

@@ -2461,6 +2461,76 @@ print(json.dumps(out))
             return {"lines": [], "error": (res.stderr.strip()[:200] or f"rc={res.returncode}")}
         return {"lines": lines, "error": None}
 
+    # ── READ: boot-log KV back-solve (ADDING_MODELS.md Step 5, automated) ─────────
+
+    async def bootlog_solve(
+        self, *, slug: Optional[str] = None, container: Optional[str] = None, tail: int = 4000
+    ) -> dict[str, Any]:
+        """Back-solve the serving container's boot log against kv-calc (READ).
+
+        Two legs, both through the injected read runner (tests stay
+        subprocess-free):
+          1. ``docker logs --tail <N> <container>`` via ``container_logs`` —
+             the live boot log;
+          2. ``scripts/lib/profiles/bootlog_solve.py --slug <slug> --json`` —
+             parse + classify vs the kv-calc prediction (the same --json
+             subprocess contract as ``kv-calc --fit``; the packaged TUI never
+             imports repo internals).
+
+        Returns ``{"ok": bool, "container", "slug", "message", "report"}``.
+        Honest failures — no container, no slug, docker unavailable, solver
+        garbage — return ``ok=False`` with the reason; the report itself
+        carries ``verdict="insufficient-log"`` when the LOG lacks fields.
+        NEVER guesses."""
+        if not container:
+            return {
+                "ok": False, "container": None, "slug": slug,
+                "message": "no serving container resolved — boot-log back-solve needs a live container",
+                "report": None,
+            }
+        if not slug:
+            return {
+                "ok": False, "container": container, "slug": None,
+                "message": "no catalog slug matched — the back-solve prices curated slugs only",
+                "report": None,
+            }
+        res = await self.container_logs(container, tail=tail)
+        if res.get("error"):
+            return {
+                "ok": False, "container": container, "slug": slug,
+                "message": f"docker logs unavailable: {res['error']}",
+                "report": None,
+            }
+        lines = res.get("lines") or []
+        import tempfile
+
+        fd, path = tempfile.mkstemp(prefix="c3-bootlog-", suffix=".log")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
+                fh.write("\n".join(lines))
+            report, err = await self._run_json(
+                [
+                    "python3", "scripts/lib/profiles/bootlog_solve.py",
+                    "--slug", slug, "--log-file", path, "--json",
+                ],
+                timeout=30.0,
+            )
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:  # pragma: no cover - defensive
+                pass
+        if report is None:
+            return {
+                "ok": False, "container": container, "slug": slug,
+                "message": f"boot-log back-solve failed: {err}",
+                "report": None,
+            }
+        if isinstance(report, dict):
+            report.setdefault("slug", slug)
+            report["container"] = container
+        return {"ok": True, "container": container, "slug": slug, "message": "", "report": report}
+
     async def gpu_info(self) -> "list[GpuInfo]":
         """Docker-FREE per-card GPU read (nvidia-smi only) — for the cockpit's fast GPU
         rail refresh, decoupled from the heavy docker+host estate batch (estate_state /

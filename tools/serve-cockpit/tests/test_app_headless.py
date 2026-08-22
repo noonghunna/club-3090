@@ -1153,7 +1153,8 @@ class TestNavNodesExist:
         from club3090_cockpit.data import ActionPlan, CatalogEntry
         from club3090_cockpit.services import _variant_row_from_dict
 
-        d = {"slug": "vllm/qwen38-27b-dual-max", "port": 8010}
+        d = {"slug": "vllm/qwen38-27b-dual-max", "port": 8010,
+             "model": "qwen3.8-27b"}
         if profiles == "yes":
             d["sampler_profiles"] = self._THINKING_PROFILES
         row = _variant_row_from_dict(d)
@@ -1284,6 +1285,84 @@ class TestNavNodesExist:
         clean.action_cycle_thinking()
         clean.action_reset_sampler()
         assert clean._sampler_reset is True and clean._sampler_reset_pairs() == []
+
+    def test_thinking_persist_writes_pin_and_upserts(self, tmp_path):
+        """#1014 follow-up: [T] persists the CURRENT choice as
+        CLUB3090_THINKING_<MODEL> in <repo>/.env through the --set-default
+        write semantics (upsert — any existing assignment for the key, with or
+        without an `export` prefix, is replaced; every other line survives),
+        and the card's persisted line reads the value back."""
+        m = self._thinking_modal(tmp_path=tmp_path)
+        (tmp_path / ".env").write_text("FOO=bar\nKEEP=1\n", encoding="utf-8")
+        assert m.check_action("persist_thinking", ()) is False   # inherit: nothing to save
+        m.action_cycle_thinking()                                # → on
+        assert m.check_action("persist_thinking", ()) is True
+        m.action_persist_thinking()
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert "FOO=bar\n" in text and "KEEP=1\n" in text
+        assert "CLUB3090_THINKING_QWEN3_8_27B=on\n" in text, text
+        assert "persisted default: on (CLUB3090_THINKING_QWEN3_8_27B)" \
+            in "\n".join(m._thinking_card_lines())
+
+        # Re-persist at a different state → upsert, never duplicate lines.
+        m.action_cycle_thinking()                                # → off
+        m.action_persist_thinking()
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert text.count("CLUB3090_THINKING_QWEN3_8_27B=") == 1
+        assert "CLUB3090_THINKING_QWEN3_8_27B=off\n" in text, text
+
+        # An `export `-prefixed pin (switch.sh loader tolerance) is replaced too.
+        (tmp_path / ".env").write_text(
+            "export CLUB3090_THINKING_QWEN3_8_27B=on\nKEEP=1\n", encoding="utf-8"
+        )
+        m.action_persist_thinking()                              # still off
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert "export CLUB3090_THINKING" not in text
+        assert "CLUB3090_THINKING_QWEN3_8_27B=off" in text and "KEEP=1" in text
+
+    def test_thinking_persist_inherit_neither_writes_nor_removes(self, tmp_path):
+        """#1014 follow-up acceptance: at inherit the persist action writes
+        nothing AND removes nothing — .env stays byte-identical."""
+        m = self._thinking_modal(tmp_path=tmp_path)
+        envf = tmp_path / ".env"
+        envf.write_text("export CLUB3090_THINKING_QWEN3_8_27B=on\nKEEP=1\n", encoding="utf-8")
+        before = envf.read_text(encoding="utf-8")
+        assert m._thinking == "inherit"
+        assert m.check_action("persist_thinking", ()) is False
+        m.action_persist_thinking()          # gated no-op
+        assert envf.read_text(encoding="utf-8") == before
+
+    def test_thinking_persist_gates_and_card_surfaces_pin(self, tmp_path):
+        """[T] is offered only where [t] is AND a choice exists (start + profile
+        + non-inherit); the card shows the persisted value when .env is
+        readable ('none' when absent) and degrades silently when it is not."""
+        bare = self._thinking_modal(profiles=None, tmp_path=tmp_path)
+        assert bare.check_action("persist_thinking", ()) is False
+        stop = self._thinking_modal(mode="stop", tmp_path=tmp_path)
+        assert stop.check_action("persist_thinking", ()) is False
+
+        m = self._thinking_modal(tmp_path=tmp_path)
+        lines = "\n".join(m._thinking_card_lines())
+        assert "persisted default: none (CLUB3090_THINKING_QWEN3_8_27B)" in lines
+        (tmp_path / ".env").write_text(
+            "CLUB3090_THINKING_QWEN3_8_27B=on\n", encoding="utf-8"
+        )
+        assert "persisted default: on (CLUB3090_THINKING_QWEN3_8_27B)" \
+            in "\n".join(m._thinking_card_lines())
+
+        # Unreadable/absent repo root → treated as none; persist is a safe no-op.
+        noroot = self._thinking_modal()
+        assert noroot._thinking_persisted() == ""
+        noroot.action_cycle_thinking()
+        noroot.action_persist_thinking()     # must not raise, must not write
+        # The legacy (non-serve) modal never offers the persist key either.
+        from club3090_cockpit.app import ConfirmActionScreen
+
+        legacy = ConfirmActionScreen.__new__(ConfirmActionScreen)
+        legacy._serve_ctx = None
+        legacy._reconcile = None
+        legacy._plan = None
+        assert legacy.check_action("persist_thinking", ()) is False
 
     def test_thinking_row_plumbs_through_emit_contract(self):
         """The L2 registry data reaches the modal through the REAL emit contract:
@@ -6964,9 +7043,10 @@ class TestSurfaceScaffold:
         # Batch 3: [F] full_report is NO LONGER producer-only — it's reachable on
         # the consumer Operate · Doctor (a consumer can run the full battery).
         # HF-search front-end: + [f] search_hf (① Bring repo discovery).
+        # Boot-log back-solve: + [k] bootlog_solve (③ Gate Step-5 automation).
         assert CockpitApp._PRODUCER_ONLY == frozenset({
             "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-            "measure_vs_bar", "search_hf",
+            "measure_vs_bar", "search_hf", "bootlog_solve",
         })
 
     @pytest.mark.asyncio
