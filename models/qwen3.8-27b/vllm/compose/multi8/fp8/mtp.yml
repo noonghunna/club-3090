@@ -30,7 +30,8 @@
 #              Video cost ~72.7 tok/s @256x256 (36 tok/frame at default fps=2),
 #              scaling with pixel count: 23 @128px, 263 @512px, 583 @768px.
 #              So ~61 min of 256x256 video fits the 262144 window; ~17 min @512px.
-#   Template:  native — the repo's own chat_template.jinja. NOT froggeric.
+#   Template:  native + club-3090 alias — the model's own chat_template.jinja
+#              with `high` remapped to `medium` (patches/qwen38-reasoning-effort-template)
 #              See the dual sibling's "Chat template" section for the full diff.
 #   Max ctx:   262144 — the architectural ceiling. COMPUTED + inherited, never
 #              measured on this model at ANY topology.
@@ -225,10 +226,27 @@ services:
       # subsequent boots reuse the compiled graphs.
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
-      # NO chat-template mount — this model serves its OWN chat_template.jinja
-      # from the model dir. See the dual sibling's "Chat template" section.
+      # The only chat-template mount here is the model's OWN template plus the
+      # club-3090 `high` -> `medium` alias (below) — NOT froggeric. See the dual
+      # sibling's "Chat template" section.
       # NVLink auto-detection — runs inside the container at boot.
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
+      # Chat template: the model's OWN, plus seven lines mapping the standard
+      # OpenAI/Anthropic rung `high` onto `medium`. Qwen3.8's ladder is
+      # low/medium/xhigh with NO `high`, and the stock template
+      # raise_exception()s on anything else, so a client sending the standard top
+      # rung gets HTTP 500 while /v1/models still returns 200. Observed live via
+      # /v1/messages?beta=true.
+      # ⭐ MOUNTED OVER the checkpoint's own chat_template.jinja: vLLM auto-loads
+      # the template from the model dir, so this needs NO --chat-template arg
+      # (the same wiring style as the carnice override -- see patches.yml).
+      # That is deliberate, not incidental: upstream edits the args list
+      # constantly (11 commits touched these composes in the last 7 days), and
+      # every edit there collides with an inserted flag. The volumes block is
+      # quiet by comparison, so wiring here is what keeps this patch rebasable.
+      # DATA-ONLY mount, not an engine-code overlay, so the engine's overlay-free
+      # contract is unaffected. See patches.yml qwen38-reasoning-effort-template.
+      - ../../../patches/qwen38-reasoning-effort-template/chat_template.jinja:/root/.cache/huggingface/qwen3.8-27b-fp8/chat_template.jinja:ro
       # Vendored vllm#48375 (MambaManager drop_eagle_block) — SHARED from the
       # qwen3.6-27b tree (same Qwen3-Next hybrid family). Load-bearing because
       # this compose ships BOTH MTP and prefix caching, the pair vllm#43559
@@ -423,7 +441,6 @@ services:
       - --kv-cache-dtype
       - "${KV_CACHE_DTYPE:-auto}"
       - --trust-remote-code
-      # No --chat-template: the model dir's own chat_template.jinja is used.
       - --reasoning-parser
       - qwen3
       # Stack-wide default: thinking OFF. On this model that ALSO suppresses the
@@ -446,8 +463,13 @@ services:
       # xhigh adds "think carefully, validate assumptions, consider alternatives"
       # which is what makes it slow and timeout-prone. REASONING_EFFORT=medium if
       # you want the model un-nudged rather than pushed toward brevity.
-      # ⚠️ Valid values are xhigh | medium | low. Anything else RAISES at template
-      # render (`high` included — it does NOT silently remap).
+      # ⚠️ Valid values are xhigh | medium | low, plus `high`, which THIS REPO
+      # maps onto MEDIUM via the patched chat template mounted above. Upstream
+      # Qwen has no `high` rung and its stock template RAISES on it; the mapping
+      # is the whole point of that mount. medium is the UN-NUDGED baseline (no
+      # branch, no injected preamble), deliberately NOT xhigh — a client sending
+      # the standard top rung gets the neutral setting, not the slowest one.
+      # Anything OUTSIDE that set still RAISES at template render (HTTP 400).
       - '{"enable_thinking": ${ENABLE_THINKING:-true}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
       - --enable-auto-tool-choice
       - --tool-call-parser
