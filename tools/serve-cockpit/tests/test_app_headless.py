@@ -30,11 +30,12 @@ from typing import Any, Optional
 
 import pytest
 
-from textual.widgets import Button, DataTable, Input, Select, Static, Switch, TabbedContent, TabPane, Label, Tabs
+from textual.widgets import Button, DataTable, Input, RichLog, Select, Static, Switch, TabbedContent, TabPane, Label, Tabs
 from textual.widgets._footer import FooterKey
 from textual.widgets._tabbed_content import ContentTabs
 
 from club3090_tui_core.detect import GpuInfo, ServingTarget
+from club3090_tui_core.widgets.live_pane import LivePane
 
 from club3090_cockpit.app import (
     CockpitApp,
@@ -7307,6 +7308,507 @@ class TestContainerClampDoesNotAutoloadDrill:
                     and other in " ".join(c)
                     for c in runner.calls
                 ), f"a drill spuriously loaded for {other}: {runner.calls}"
+
+
+class TestContainerLogFollow:
+    """[f] log-follow (live tail) — spec docs/superpowers/specs/2026-08-16-c3-container-log-follow-design.md.
+
+    Ticks are driven by direct app._log_follow_tick() calls — no real 2s waits."""
+
+    class _StepLogsRunner(FakeRunner):
+        """docker logs responses step through a list of tails: first call gets
+        the first tail, every later call gets the last (steady state)."""
+
+        def __init__(self, tails):
+            super().__init__(fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)}))
+            self._tails = list(tails)
+
+        async def run(self, cmd, *, cwd, timeout=30.0):
+            joined = " ".join(cmd)
+            if "docker logs" in joined:
+                self.calls.append(list(cmd))
+                tail = self._tails.pop(0) if len(self._tails) > 1 else self._tails[0]
+                return ok(tail)
+            return await super().run(cmd, cwd=cwd, timeout=timeout)
+
+    async def test_follow_binding_gated_to_containers_tab(self):
+        responses = fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)})
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)  # lands on Orchestration
+            assert app.check_action("container_follow", ()) is False
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-containers"
+            await pilot.pause()
+            assert app.check_action("container_follow", ()) is True
+
+    async def test_containers_hint_mentions_follow(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            hint = app.query_one("#containers-hint", Label)
+            assert "[f] follow" in hint.content
+
+    async def test_f_arms_follow(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True
+            assert app._log_follow_paused is False
+            assert app._log_follow_timer is not None
+            assert app._log_follow_name == "vllm-qwen36-27b-dual"
+            title = app.query_one("#drill-logs", LivePane).query_one(".live-title", Label)
+            assert title.content == "Live  [green]●  following[/green]"
+
+    async def test_f_with_no_selection_warns_and_stays_off(self):
+        # Default responses: docker ps empty → no selectable running row.
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            await pilot.pause()
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._log_follow_armed is False
+            assert app._log_follow_timer is None
+
+    async def test_f_pauses_follow(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True  # paused is NOT off
+            calls_before = len(runner.calls)
+            await pilot.press("f")
+            await pilot.pause()
+            assert app._log_follow_armed is True
+            assert app._log_follow_paused is True
+            assert app._log_follow_timer is None
+            # A tick while paused performs NO read.
+            app._log_follow_tick()
+            await _settle(pilot)
+            assert len(runner.calls) == calls_before
+            title = app.query_one("#drill-logs", LivePane).query_one(".live-title", Label)
+            assert title.content == "Live  [yellow]…  paused[/yellow]"
+            # The 'follow paused' note is display-only — never in the [Y] tail.
+            pane = app.query_one("#drill-logs", LivePane)
+            assert "follow paused" not in pane.tail_text()
+
+    async def test_follow_disarms_on_operate_tab_leave(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-orchestration"
+            await pilot.pause()
+            assert app._log_follow_armed is False
+            assert app._log_follow_paused is False
+            assert app._log_follow_timer is None
+            assert app._log_follow_anchor is None
+            title = app.query_one("#drill-logs", LivePane).query_one(".live-title", Label)
+            assert title.content == "Live"
+
+    async def test_follow_disarms_on_mode_switch(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True
+            await pilot.press("2")  # Bring & Validate lane
+            await pilot.pause()
+            assert app._log_follow_armed is False
+            assert app._log_follow_timer is None
+
+    async def test_tick_appends_only_new_lines(self):
+        runner = TestContainerLogFollow._StepLogsRunner(["L1\nL2\nL3\n", "L1\nL2\nL3\nL4\nL5\n"])
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_anchor == "L3"  # snapshot rebased the anchor
+            calls_before = len(runner.calls)
+            app._log_follow_tick()
+            await _settle(pilot)
+            assert len(runner.calls) == calls_before + 1  # exactly one docker-logs read
+            text = app.query_one("#drill-logs", LivePane).tail_text()
+            assert text.count("L4") == 1 and text.count("L5") == 1
+            assert "L1" in text  # snapshot lines kept — no resync
+
+    async def test_tick_quiet_log_appends_nothing(self):
+        runner = TestContainerLogFollow._StepLogsRunner(["L1\nL2\nL3\n"])
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            calls_before = len(runner.calls)
+            app._log_follow_tick()
+            await _settle(pilot)
+            assert len(runner.calls) == calls_before + 1
+            text = app.query_one("#drill-logs", LivePane).tail_text()
+            assert text.count("L3") == 1  # nothing appended on the same tail
+
+    async def test_tick_anchor_missing_resyncs(self):
+        # The tail scrolled past 200 lines: the anchor line is gone → clear +
+        # full fresh tail in normal color (no duplicated tail content).
+        runner = TestContainerLogFollow._StepLogsRunner(["L1\nL2\nL3\n", "L4\nL5\nL6\n"])
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            app._log_follow_tick()
+            await _settle(pilot)
+            pane = app.query_one("#drill-logs", LivePane)
+            text = pane.tail_text()
+            assert "L1" not in text and "L2" not in text  # old tail cleared
+            assert text.count("L4") == 1 and text.count("L6") == 1  # fresh tail, once each
+            assert app._log_follow_anchor == "L6"
+
+    async def test_tick_tints_only_new_lines_and_copy_stays_clean(self):
+        runner = TestContainerLogFollow._StepLogsRunner(["L1\nL2\nL3\n", "L1\nL2\nL3\nL4\nL5\n"])
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            written: list[str] = []
+            log = app.query_one("#drill-logs", LivePane).query_one("#live-log", RichLog)
+            real_write = log.write
+
+            def spy(content, *a, **kw):
+                written.append(str(content))
+                return real_write(content, *a, **kw)
+
+            log.write = spy
+            app._log_follow_tick()
+            await _settle(pilot)
+            pane = app.query_one("#drill-logs", LivePane)
+            # Tinted markup on screen for the tick lines ONLY…
+            assert "[underline]L4[/underline]" in written and "[underline]L5[/underline]" in written
+            # …and the [Y]-copy tail is unmarked plain text either way.
+            text = pane.tail_text()
+            assert "[underline]" not in text and "L4" in text and "L5" in text
+
+    async def test_tick_underline_tracks_only_newest_batch(self):
+        # Moving highlight: when a 2nd tick arrives, the 1st tick's
+        # underlined lines drop back to plain and only the newest lines
+        # keep the underline (the pane is re-rendered from the model).
+        runner = TestContainerLogFollow._StepLogsRunner(
+            ["L1\nL2\nL3\n", "L1\nL2\nL3\nL4\nL5\n", "L1\nL2\nL3\nL4\nL5\nL6\nL7\n"]
+        )
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            written: list[str] = []
+            log = app.query_one("#drill-logs", LivePane).query_one("#live-log", RichLog)
+            real_write = log.write
+
+            def spy(content, *a, **kw):
+                written.append(str(content))
+                return real_write(content, *a, **kw)
+
+            log.write = spy
+            app._log_follow_tick()  # L4/L5 new
+            await _settle(pilot)
+            app._log_follow_tick()  # L6/L7 new — L4/L5 must lose the underline
+            await _settle(pilot)
+            # Each re-render starts with the command prompt — isolate the last.
+            starts = [i for i, w in enumerate(written) if "$ docker logs" in w]
+            assert len(starts) == 2, f"expected two re-renders, saw {len(starts)}"
+            last_batch = written[starts[-1] :]
+            assert "[underline]L6[/underline]" in last_batch
+            assert "[underline]L7[/underline]" in last_batch
+            assert "[underline]L4[/underline]" not in last_batch
+            assert "[underline]L5[/underline]" not in last_batch
+            assert "L4" in last_batch  # still on screen, plain now
+            # No content duplication from the re-renders.
+            text = app.query_one("#drill-logs", LivePane).tail_text()
+            for ln in ("L1", "L2", "L3", "L4", "L5", "L6", "L7"):
+                assert text.count(ln) == 1
+
+    async def test_state_notes_survive_rerender(self):
+        # The pause/resume notes live in the display model — the resume-tick
+        # re-render re-emits them in chronological order, and they stay out
+        # of the [Y] copy.
+        runner = TestContainerLogFollow._StepLogsRunner(["L1\nL2\nL3\n", "L1\nL2\nL3\nL4\nL5\n"])
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            await pilot.press("f")  # pause
+            await pilot.pause()
+            written: list[str] = []
+            log = app.query_one("#drill-logs", LivePane).query_one("#live-log", RichLog)
+            real_write = log.write
+
+            def spy(content, *a, **kw):
+                written.append(str(content))
+                return real_write(content, *a, **kw)
+
+            log.write = spy
+            await pilot.press("f")  # resume → immediate tick → re-render
+            await _settle(pilot)
+            starts = [i for i, w in enumerate(written) if "$ docker logs" in w]
+            assert starts, "resume-tick re-render did not rewrite the pane"
+            last_batch = written[starts[-1] :]
+            i_paused = last_batch.index("[yellow]follow paused — press f to resume[/yellow]")
+            i_resumed = last_batch.index("[green]follow resumed[/green]")
+            i_l4 = last_batch.index("[underline]L4[/underline]")
+            assert i_paused < i_resumed < i_l4  # chronological: notes, then fresh lines
+            text = app.query_one("#drill-logs", LivePane).tail_text()
+            assert "follow paused" not in text and "follow resumed" not in text
+
+    async def test_tick_scrolled_up_appends_plain(self):
+        # Reading history: a tick appends the new lines plain (no underline,
+        # no rewrite) — the moving highlight is a tail affordance.
+        base = "".join(f"K{i:03d}\n" for i in range(60))
+        runner = TestContainerLogFollow._StepLogsRunner(
+            [base, base + "K060\nK061\n", base + "K060\nK061\nK062\n"]
+        )
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            app._log_follow_tick()  # K060/K061 new — re-render at the tail
+            await _settle(pilot)
+            pane = app.query_one("#drill-logs", LivePane)
+            log = pane.query_one("#live-log", RichLog)
+            log.scroll_up(immediate=True, animate=False)
+            await pilot.pause()
+            assert pane.at_bottom is False
+            written: list[str] = []
+            real_write = log.write
+
+            def spy(content, *a, **kw):
+                written.append(str(content))
+                return real_write(content, *a, **kw)
+
+            log.write = spy
+            app._log_follow_tick()  # K062 new
+            await _settle(pilot)
+            assert written == ["K062"]  # plain append only — no rewrite, no tint
+            text = pane.tail_text()
+            assert text.count("K062") == 1 and "[underline]" not in text
+
+    async def test_navigation_to_another_container_rebases(self):
+        class _PerNameLogsRunner(FakeRunner):
+            """docker logs keyed by the container name in the command."""
+
+            def __init__(self, by_name):
+                super().__init__(fake_responses(**{"docker ps": ok(DOCKER_PS_TWO)}))
+                self._by_name = by_name
+
+            async def run(self, cmd, *, cwd, timeout=30.0):
+                joined = " ".join(cmd)
+                if "docker logs" in joined:
+                    self.calls.append(list(cmd))
+                    for name, tail in self._by_name.items():
+                        if name in joined:
+                            return ok(tail)
+                    return ok("")
+                return await super().run(cmd, cwd=cwd, timeout=timeout)
+
+        runner = _PerNameLogsRunner(
+            {
+                "vllm-qwen36-27b-dual": "A1\nA2\n",
+                "vllm-gemma-4-31b-dual": "B1\nB2\n",
+            }
+        )
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            pane.query_one("#containers-table", DataTable).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_anchor == "A2"
+            # User browses to the other running engine → navigation snapshot
+            # (existing path) re-snapshots AND rebases the anchor.
+            pane.query_one("#containers-table", DataTable).move_cursor(row=1)
+            await pilot.pause(0.35)  # let the 0.25s drill-debounce timer fire
+            await _settle(pilot)
+            assert app._log_follow_anchor == "B2"
+            assert app._log_follow_name == "vllm-gemma-4-31b-dual"
+            text = app.query_one("#drill-logs", LivePane).tail_text()
+            assert "A1" not in text and "B1" in text
+            # A tick now streams the NEW container's tail (quiet → nothing new).
+            app._log_follow_tick()
+            await _settle(pilot)
+            assert app.query_one("#drill-logs", LivePane).tail_text().count("B2") == 1
+
+    async def test_followed_container_stops_notes_and_disarms(self):
+        responses = fake_responses(
+            **{"docker ps": ok(DOCKER_PS_ENGINE), "docker logs": ok("L1\nL2\nL3\n")}
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            pane.query_one("#containers-table", DataTable).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True
+            # The followed container itself stopped (estate poll would surface
+            # this; simulate by flipping the live row's status).
+            pane._containers[0].status = "stopped"
+            app._log_follow_tick()
+            await _settle(pilot)
+            assert app._log_follow_armed is False
+            assert app._log_follow_timer is None
+            assert app._log_follow_anchor is None
+
+    async def test_browsing_to_other_stopped_row_stays_armed(self):
+        responses = fake_responses(
+            **{
+                "docker ps": ok(DOCKER_PS_TWO),
+                "docker container ls -a": ok("studio-step-voice\n"),
+                "docker logs": ok("L1\nL2\nL3\n"),
+            }
+        )
+        app, _, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            pane = app.query_one("#operate-containers-pane", OperateContainersPane)
+            pane.query_one("#containers-table", DataTable).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            assert app._log_follow_armed is True
+            assert app._log_follow_name == "vllm-qwen36-27b-dual"
+            # Browse to a DIFFERENT stopped row (the studio stack row).
+            stopped = [c for c in pane._containers if c.status == "stopped"]
+            assert stopped, "test setup: expected a stopped studio row"
+            idx = [c.name for c in pane._containers].index(stopped[0].name)
+            pane.query_one("#containers-table", DataTable).move_cursor(row=idx)
+            await _settle(pilot)
+            app._log_follow_tick()
+            await _settle(pilot)
+            assert app._log_follow_armed is True  # mode stays armed, tick no-ops
+            assert app._log_follow_timer is not None
+            assert app._log_follow_name == "vllm-qwen36-27b-dual"
+
+    async def test_follow_runner_error_notes_and_disarms(self):
+        class _ErrLogsRunner(FakeRunner):
+            def __init__(self):
+                super().__init__(fake_responses(**{"docker ps": ok(DOCKER_PS_ENGINE)}))
+
+            async def run(self, cmd, *, cwd, timeout=30.0):
+                joined = " ".join(cmd)
+                if "docker logs" in joined:
+                    self.calls.append(list(cmd))
+                    return RunResult(returncode=1, stdout="", stderr="No such container: x")
+                return await super().run(cmd, cwd=cwd, timeout=timeout)
+
+        app, _, _ = make_app(runner=_ErrLogsRunner())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")
+            await _settle(pilot)
+            app._log_follow_tick()
+            await _settle(pilot)
+            assert app._log_follow_armed is False
+            assert app._log_follow_timer is None
+            # The 'follow stopped' note is display-only.
+            assert "follow stopped" not in app.query_one("#drill-logs", LivePane).tail_text()
+
+    async def test_f_resumes_with_immediate_incremental_poll(self):
+        runner = TestContainerLogFollow._StepLogsRunner(["L1\nL2\nL3\n", "L1\nL2\nL3\nL4\nL5\n"])
+        app, runner, _ = make_app(runner=runner)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot, tab="tab-containers")
+            app.query_one("#operate-containers-pane", OperateContainersPane).query_one(
+                "#containers-table", DataTable
+            ).move_cursor(row=0)
+            await pilot.pause()
+            await pilot.press("f")  # arm — snapshot L1-L3
+            await _settle(pilot)
+            await pilot.press("f")  # pause
+            await pilot.pause()
+            calls_before = len(runner.calls)
+            await pilot.press("f")  # resume → ONE immediate incremental poll
+            await _settle(pilot)
+            assert app._log_follow_paused is False
+            assert app._log_follow_timer is not None
+            assert len(runner.calls) == calls_before + 1
+            pane = app.query_one("#drill-logs", LivePane)
+            text = pane.tail_text()
+            assert text.count("L4") == 1 and text.count("L5") == 1  # pause-window lines arrived
+            # The 'follow resumed' note is display-only — never in the [Y] tail.
+            assert "follow resumed" not in text
+            title = pane.query_one(".live-title", Label)
+            assert title.content == "Live  [green]●  following[/green]"
 
 
 class TestEscClosesFilter:

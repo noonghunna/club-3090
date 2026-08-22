@@ -62,6 +62,7 @@ own location; override with **`C3_REPO_ROOT=/path/to/club-3090`** if you install
 | `⏎` | primary action for the focused row (serve / start / download / confirm) |
 | `k` | stop a service / cancel a download |
 | `f` | force-start (experimental — skips the fit gate) |
+| `f` | Containers — log follow: arm/pause the live log tail for the selected container (Containers tab only; inside the staged-write modal `f` = force-start, which shadows app keys) |
 | `r` | refresh the catalog (re-reads the registry) |
 | `S` | settings — set Model Dir + HF token (`Ctrl+S` saves) |
 | `N` | new pod — Operate · Orchestration: compose a model + GPU set (fit-checked, gated) |

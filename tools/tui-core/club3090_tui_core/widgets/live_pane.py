@@ -262,6 +262,36 @@ class LivePane(Static):
         if self._placeholder:
             log = self.query_one("#live-log", RichLog)
             log.write(f"[dim]{self._placeholder}[/dim]")
+        self._attach_scroll_follow()
+
+    def _attach_scroll_follow(self) -> None:
+        """Tail-reader scroll-follow (standard `tail -f` UX, for EVERY
+        LivePane consumer): user scroll away from the bottom turns
+        auto-follow OFF (history stays readable while new lines stream in);
+        scroll back to the bottom turns it ON.  Gated on BOTH the append-time
+        scroll_end flag and RichLog's own auto_scroll var (which otherwise
+        yanks the pane to the end on every write regardless)."""
+        try:
+            log = self.query_one("#live-log", RichLog)
+            log.watch(log, "scroll_y", self._on_log_scrolled, init=True)
+        except Exception:
+            pass
+
+    def _on_log_scrolled(self, y: float) -> None:
+        try:
+            log = self.query_one("#live-log", RichLog)
+            at_bottom = y + log.region.height >= log.virtual_size.height - 0.5
+            self._follow = at_bottom
+            log.auto_scroll = at_bottom
+        except Exception:
+            pass
+
+    @property
+    def at_bottom(self) -> bool:
+        """Whether the user is at the tail (scroll-follow on).  Hosts gate
+        tail-specific rendering on this (e.g. c3's log-follow highlight,
+        which only makes sense at the tail)."""
+        return self._follow
 
     def append_line(self, line: str, buffer: bool = True) -> None:
         """Append a raw log line.  ``buffer=False`` writes display-only lines
@@ -277,6 +307,7 @@ class LivePane(Static):
                 del self._raw_lines[: self._RAW_LINES_MAX // 2]
         try:
             log = self.query_one("#live-log", RichLog)
+            log.auto_scroll = self._follow
             log.write(line)
             if self._follow:
                 log.scroll_end(animate=False)
@@ -304,6 +335,14 @@ class LivePane(Static):
             log.clear()
             header = self.query_one("#structured-header", StructuredHeader)
             header.clear()
+        except Exception:
+            pass
+
+    def set_title(self, text: str) -> None:
+        """Update the pane's .live-title label (Rich markup allowed).  Hosts
+        use this for status indicators (e.g. c3's log-follow `● following`)."""
+        try:
+            self.query_one(".live-title", Label).update(text)
         except Exception:
             pass
 
