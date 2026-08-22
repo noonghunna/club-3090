@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -107,6 +108,36 @@ class FakeRunner:
 
 def ok(stdout: str) -> RunResult:
     return RunResult(returncode=0, stdout=stdout, stderr="")
+
+
+def _model_spec():
+    """ModelSpec M3 — the typed, provenance-labeled deriver spec the promote
+    scaffold consumes (mirrors the old plain facts dict of TestPromoteScaffold)."""
+    import sys
+
+    # Pin the REAL repo tree ahead of any fake `scripts` tree an earlier test
+    # left on sys.path (same conditional re-pin TestBringDownloadSeam does).
+    root = str(Path(__file__).resolve().parents[3])
+    if not sys.path or sys.path[0] != root:
+        sys.path.insert(0, root)
+    from scripts.lib.profiles.model_spec import Fact, ModelSpec
+    return ModelSpec(
+        model_slug="unsloth/Qwen3-27B-abliterated",
+        arch="Qwen3ForCausalLM",
+        confidence="estimated-lower-bound",
+        hidden_size=Fact(5120, "derived", "config.json:hidden_size"),
+        num_hidden_layers=Fact(64, "derived", "config.json:num_hidden_layers"),
+        num_attn_heads=Fact(24, "derived", "config.json:num_attention_heads"),
+        num_kv_heads=Fact(4, "derived", "config.json:num_key_value_heads"),
+        head_dim_attn=Fact(256, "derived", "config.json:head_dim"),
+        max_ctx_supported=Fact(
+            262144, "derived", "config.json:max_position_embeddings"
+        ),
+        valid_tp=(1, 2),
+        weights_total_gb=Fact(
+            30.9, "derived", "safetensors:selected-blobs-sum"
+        ),
+    )
 
 
 def make_detect(target: ServingTarget):
@@ -3943,13 +3974,9 @@ class TestPromoteScaffold:
             arch="Qwen3ForCausalLM", eligible=True, fit_verdict="fits-clean",
             route="C", sibling_slug="vllm/dual", quant_match="int4",
             drop_spec_config=True,
-            # C4-rev: deriver facts (threaded through ByoResult.facts).
-            facts={
-                "hidden_size": 5120, "num_hidden_layers": 64,
-                "num_attn_heads": 24, "num_kv_heads": 4,
-                "head_dim_attn": 256, "max_ctx_supported": 262144,
-                "weights_total_gb": 30.9, "valid_tp": [1, 2],
-            },
+            # C4-rev / ModelSpec M3: deriver facts threaded through
+            # ByoResult.facts as a TYPED, provenance-labeled ModelSpec.
+            facts=_model_spec(),
         )
         base.update(over)
         return ByoResult(**base)
@@ -3988,7 +4015,7 @@ class TestPromoteScaffold:
 
     def test_scaffold_keeps_placeholders_without_facts(self):
         cd = CockpitData(ROOT, runner=full_runner())
-        sc = cd.promote_scaffold(byo=self._byo(facts={}))
+        sc = cd.promote_scaffold(byo=self._byo(facts=None))
         assert sc.computed
         # No fabricated numbers: missing facts stay REQUIRED placeholders.
         assert "num_hidden_layers: <int>" in sc.profile_yaml

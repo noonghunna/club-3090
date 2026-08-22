@@ -14,10 +14,14 @@ Public API (stable for P3/P4):
     #   res: DeriveResult
     #     .error           -> DeriverError | None  (stratum-1 structured error)
     #     .tier1           -> Tier1Match | None     (curated lookup hit)
-    #     .confidence      -> Confidence enum
-    #     .generic_dense_eligible -> bool | None
     #     .spec            -> dict | None   (kv-calc generic-dense spec shape)
     #     .profile         -> dict | None   (derived ModelProfile-shaped dict)
+    #     .model_spec      -> ModelSpec      (typed, provenance-labeled view;
+    #                                          ModelSpec proposal §4 M1/M2)
+    #
+    # Subprocess contract (c3 BYO promote facts):
+    #   python3 -m scripts.lib.profiles.deriver --spec-json <org/Model>
+    # prints res.model_spec.to_dict() as one JSON object.
 
 P2 ONLY classifies. The stratum-5 `no-fit-model` abort, `[C0]`/`[C2a]`/`[C1]`
 and the orchestrator are P3/P4 — this module never raises a traceback for a
@@ -115,6 +119,16 @@ class DeriveResult:
     spec: Optional[dict[str, Any]] = None
     profile: Optional[dict[str, Any]] = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def model_spec(self) -> "ModelSpec":
+        """The typed, provenance-labeled view of this result (ModelSpec
+        proposal §4 M1).  A pure function of spec/profile/tier1 — every value
+        carries a Fact(source); fallback defaults stay labeled "fallback".
+        Imported lazily: model_spec is stdlib-only and imports nothing back."""
+        from .model_spec import ModelSpec
+
+        return ModelSpec.from_derive_result(self)
 
 
 # ---------------------------------------------------------------------------
@@ -1365,6 +1379,21 @@ def derive(
         # --speculative-config, instead of the old blanket "fine-tune → no MTP"
         # drop that silently served head-preserving fine-tunes MTP-off.
         "has_mtp_head": detect_mtp_head(config or {}, api or {}),
+        # ModelSpec M2 (additive): the raw config.json values the spec's
+        # head_dim / max_ctx_supported derive from, so
+        # ModelSpec.from_derive_result can label a Fact's EXACT source — and
+        # label the 131072 max_ctx default "fallback" instead of card truth.
+        # Additive keys only; no existing field changes.
+        "config_head_dim": _int(config or {}, "head_dim"),
+        "config_max_position_embeddings": _int(config or {}, "max_position_embeddings"),
+        # ModelSpec M2 (additive): the vision heuristic MOVES INTO the deriver
+        # proper (was: services._DERIVER_FACTS_SRC re-fetching config.json a
+        # second time).  Same substring + vision_config logic, one fetch.
+        "vision": bool(
+            (config or {}).get("vision_config")
+            or ((config or {}).get("text_config") or {}).get("vision_config")
+            or "vision" in str(arch).lower()
+        ),
     }
     res.diagnostics["resolution"] = "derived"
 
@@ -1378,20 +1407,34 @@ def derive(
 
 
 # ---------------------------------------------------------------------------
-# CLI — stage-1 INSPECT for the Bring funnel (c3 subprocess + standalone use)
+# CLI — stage-1 INSPECT + typed ModelSpec emission for the Bring funnel
 #   python3 scripts/lib/profiles/deriver.py --inventory <org/Model> [--json]
+#   python3 -m scripts.lib.profiles.deriver --spec-json <org/Model>
 # ---------------------------------------------------------------------------
 def _cli(argv: list[str]) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(
-        prog="deriver", description="Bring-funnel stage-1 INSPECT (artifact inventory)"
+        prog="deriver",
+        description="Bring-funnel stage-1 INSPECT + typed ModelSpec emission",
+    )
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--inventory", action="store_true",
+        help="emit the artifact inventory (Bring funnel stage-1)",
+    )
+    mode.add_argument(
+        "--spec-json", action="store_true",
+        help="derive the repo and emit the typed ModelSpec as one JSON object "
+        "(provenance-labeled dims; the c3 BYO promote-facts contract)",
     )
     ap.add_argument("repo", help="HF repo slug, e.g. org/Model")
-    ap.add_argument("--inventory", action="store_true", required=True,
-                    help="emit the artifact inventory (the only CLI mode)")
     ap.add_argument("--json", action="store_true", help="JSON output (default: pretty)")
     ns = ap.parse_args(argv)
+    if ns.spec_json:
+        res = derive(ns.repo)
+        print(json.dumps(res.model_spec.to_dict()))
+        return 0 if res.error is None else 1
     inv = inspect_repo(ns.repo)
     if ns.json:
         print(json.dumps(inv))

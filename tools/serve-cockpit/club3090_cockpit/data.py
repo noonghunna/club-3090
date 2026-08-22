@@ -19,9 +19,11 @@ import json
 import re
 import zlib
 from dataclasses import dataclass, field
-from typing import Any, Optional
-
+from typing import Any, Optional, TYPE_CHECKING
 from club3090_tui_core.registry import VariantRow
+
+if TYPE_CHECKING:  # pragma: no cover - annotations only
+    from scripts.lib.profiles.model_spec import ModelSpec
 
 # ── Fit verdict ───────────────────────────────────────────────────────────────
 
@@ -717,6 +719,22 @@ class ArtifactInventory:
         )
 
 
+def _plain_spec_to_model_spec(
+    spec: dict[str, Any], *, model_slug: str = ""
+) -> Optional["ModelSpec"]:
+    """ModelSpec M3: retype a legacy pull-gate plain spec dict into the typed
+    ModelSpec (conservative provenance; see ModelSpec.from_plain_spec).
+    Lazy import: model_spec is stdlib-only but lives in scripts.lib.profiles,
+    which is only importable once the repo root is on sys.path."""
+    if not spec:
+        return None
+    try:
+        from scripts.lib.profiles.model_spec import ModelSpec
+    except Exception:  # pragma: no cover - unresolvable scripts tree
+        return None
+    return ModelSpec.from_plain_spec(spec, model_slug=model_slug)
+
+
 @dataclass
 class ByoResult:
     """Result of pull.sh --profile-like <repo> --dry-run --json."""
@@ -733,23 +751,24 @@ class ByoResult:
     quant_match: Optional[str] = None
     drop_spec_config: bool = False
     error: str = ""
-    # C4-rev: deriver FACTS for the ⑤ Promote scaffold (generic-dense spec:
-    # num_hidden_layers / num_attn_heads / num_kv_heads / head_dim_attn /
-    # max_ctx_supported / weights_total_gb / valid_tp / vision hint). Empty when
-    # the fit-check produced no spec (tier-1 curated hits, route-G GGUF, errors)
+    # C4-rev / ModelSpec M3: the deriver's TYPED, provenance-labeled spec for
+    # the ⑤ Promote scaffold (hidden_size / num_hidden_layers / num_attn_heads
+    # / num_kv_heads / head_dim_attn / max_ctx_supported / weights_total_gb /
+    # valid_tp / vision_capable — each a Fact with source). None when the
+    # fit-check produced no spec (tier-1 curated hits, route-G GGUF, errors)
     # — the scaffold then keeps its <...> placeholders instead of fabricating.
-    facts: dict[str, Any] = field(default_factory=dict)
+    facts: Optional["ModelSpec"] = None
 
     @classmethod
     def from_dict(cls, repo: str, profile_like: str, d: dict[str, Any] | None) -> "ByoResult":
         if not d:
             return cls(repo=repo, profile_like=profile_like, error="no output")
         swap = d.get("swap_path") or {}
-        # C4-rev: the deriver's generic-dense spec (pull.sh emits it under
-        # "spec" when present; services.byo_check enriches older output via the
-        # deriver probe). Absent → {} — placeholders stay placeholders.
-        spec = d.get("spec") or {}
-        facts = {k: v for k, v in spec.items() if v is not None} if isinstance(spec, dict) else {}
+        # C4-rev: pull.sh may emit its generic-dense spec under "spec" (values
+        # only — no provenance); ModelSpec.from_plain_spec retypes it
+        # conservatively. Absent/empty → None — placeholders stay placeholders.
+        raw_spec = d.get("spec") if isinstance(d.get("spec"), dict) else {}
+        facts = _plain_spec_to_model_spec(raw_spec or {}, model_slug=repo)
         return cls(
             repo=repo,
             profile_like=profile_like,
@@ -2401,20 +2420,25 @@ def compute_promote_scaffold(
     fit_verdict = (getattr(byo, "fit_verdict", "") or "") if byo else ""
     sibling = (getattr(byo, "sibling_slug", "") or "") if byo else ""
     drop_spec = bool(getattr(byo, "drop_spec_config", False)) if byo else False
-    facts = (getattr(byo, "facts", {}) or {}) if byo else {}
+    mspec = (getattr(byo, "facts", None)) if byo else None  # typed ModelSpec
 
-    # ── Deriver facts → arch dims (NEVER fabricated; missing ⇒ placeholder) ──
+    # ── Deriver facts → arch dims (ModelSpec M3: attribute reads, never
+    # fabricated; a missing/None Fact ⇒ placeholder) ──
     arch_spec: dict[str, Any] = {}
     for key in (
         "hidden_size", "num_hidden_layers", "num_attn_heads", "num_kv_heads",
         "head_dim_attn", "max_ctx_supported",
     ):
-        if facts.get(key) is not None:
-            arch_spec[key] = facts[key]
-    if facts.get("valid_tp"):
-        arch_spec["valid_tp"] = list(facts["valid_tp"])
-    weights_total_gb = facts.get("weights_total_gb")
-    vision_hint = facts.get("vision")
+        f = getattr(mspec, key, None)
+        if f is not None and f.value is not None:
+            arch_spec[key] = f.value
+    vt = tuple(getattr(mspec, "valid_tp", ()) or ())
+    if vt:
+        arch_spec["valid_tp"] = list(vt)
+    _wtg = getattr(mspec, "weights_total_gb", None)
+    weights_total_gb = _wtg.value if _wtg is not None else None
+    _vis = getattr(mspec, "vision_capable", None)
+    vision_hint = _vis.value if _vis is not None else None
     short = mid.replace("qwen3.6-", "qwen-").replace("gemma-4-", "gemma-")
     if layer == "local":
         registry_slug = f"local/{short}-dual-{quant}"

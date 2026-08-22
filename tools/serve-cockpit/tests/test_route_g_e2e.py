@@ -153,27 +153,34 @@ def test_route_g_all_legs_end_to_end(tmp_path: Path, monkeypatch):
     assert data.bring_weights_present(REPO) is True
 
     # ── Leg 2: FIT — header facts off the real bytes, then byo_check_gguf ──
-    facts = asyncio.run(
+    # ModelSpec M3: gguf_header_facts returns the TYPED, provenance-labeled
+    # spec (every Fact sourced "gguf-header:<arch>.<kv>", provenance
+    # "derived-estimate").
+    mspec = asyncio.run(
         data.gguf_header_facts(REPO, [GGUF_NAME], size_gb=variant["size_gb"])
     )
-    assert facts, "header facts must come from the on-disk fixture"
-    assert facts["facts_provenance"] == "gguf-header"
-    assert facts["confidence"] == "estimated-lower-bound"
-    assert facts["num_hidden_layers"] == 32
-    assert facts["hidden_size"] == 4096
-    assert facts["num_attn_heads"] == 32
-    assert facts["num_kv_heads"] == 8
-    assert facts["head_dim_attn"] == 128
-    assert facts["max_ctx_supported"] == 131072
+    assert mspec, "header facts must come from the on-disk fixture"
+    assert mspec.confidence == "estimated-lower-bound"
+    assert mspec.num_hidden_layers.value == 32
+    assert mspec.hidden_size.value == 4096
+    assert mspec.num_attn_heads.value == 32
+    assert mspec.num_kv_heads.value == 8
+    assert mspec.head_dim_attn.value == 128
+    assert mspec.max_ctx_supported.value == 131072
     # weights_total_gb is the LEG-1 inventory number, threaded through.
-    assert facts["weights_total_gb"] == variant["size_gb"]
+    assert mspec.weights_total_gb.value == variant["size_gb"]
+    for dim in ("hidden_size", "num_hidden_layers", "num_attn_heads",
+                "num_kv_heads", "head_dim_attn", "max_ctx_supported"):
+        f = getattr(mspec, dim)
+        assert f.provenance == "derived-estimate"
+        assert f.source.startswith("gguf-header:llama."), dim
 
     byo = data.byo_check_gguf(
         REPO,
         SIBLING,
         quant=variant["quant"],
         size_gb=variant["size_gb"],
-        facts=facts,
+        spec=mspec,
     )
     assert byo.error == ""
     assert byo.arch == "gguf"
@@ -184,8 +191,8 @@ def test_route_g_all_legs_end_to_end(tmp_path: Path, monkeypatch):
     assert byo.fit_verdict == "fits-clean"
     assert "48 GiB (dual)" in byo.note  # budget from the stub sibling's topology
     # HANDOFF 2→3: the header-derived dims ride ON the result.
-    assert byo.facts.get("num_hidden_layers") == 32
-    assert byo.facts.get("head_dim_attn") == 128
+    assert byo.facts.num_hidden_layers.value == 32
+    assert byo.facts.head_dim_attn.value == 128
 
     # ── Leg 3: SCAFFOLD — compute_promote_scaffold fills the arch dims ──
     compose_text = (

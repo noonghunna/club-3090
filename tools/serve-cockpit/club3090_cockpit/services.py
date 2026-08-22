@@ -1569,12 +1569,12 @@ class CockpitData:
             return ByoResult(repo=repo, profile_like=profile_like, error=err or "no output")
         res = ByoResult.from_dict(repo, profile_like, data)
         if not res.error and not res.facts:
-            # C4-rev: enrich with the deriver's generic-dense FACTS so ⑤ Promote
-            # can auto-fill the arch dims (pull.sh --json predates the "spec"
-            # block).  Best-effort: any failure keeps facts {} and the scaffold's
-            # <...> placeholders stay placeholders.  Read-only derive — no
-            # download, no write.
-            res.facts = await self._deriver_facts(repo)
+            # C4-rev / ModelSpec M2–M3: enrich with the deriver's TYPED,
+            # provenance-labeled ModelSpec so ⑤ Promote can auto-fill the arch
+            # dims.  Best-effort: any failure keeps facts None and the
+            # scaffold's <...> placeholders stay placeholders.  Read-only
+            # derive — no download, no write.
+            res.facts = await self._deriver_spec(repo)
         # The evaluate leg is safetensors-only BY DESIGN (the deriver's fit math
         # reads config.json), so a GGUF-only repo aborts `unsupported-format`
         # here even though route-G handles it first-class.  Intercept exactly
@@ -1606,48 +1606,30 @@ class CockpitData:
                 )
         return res
 
-    # C4-rev: read-only deriver probe — emits the generic-dense spec facts
-    # (num_hidden_layers / num_attn_heads / num_kv_heads / head_dim_attn /
-    # max_ctx_supported / weights_total_gb / valid_tp) + a coarse vision hint,
-    # as one JSON object on stdout.  Kept as a separate READ so pull.sh's
-    # --json contract stays byte-stable; a failure yields {} (placeholders).
-    _DERIVER_FACTS_SRC = r"""
-import json, sys
-sys.path.insert(0, ".")
-from scripts.lib.profiles import deriver as _D
-res = _D.derive(sys.argv[1])
-out = dict(res.spec or {})
-_p = res.profile or {}
-for _src, _dst in (
-    ("config_num_hidden_layers", "num_hidden_layers"),
-    ("config_num_attention_heads", "num_attn_heads"),
-    ("config_num_key_value_heads", "num_kv_heads"),
-):
-    out.setdefault(_dst, _p.get(_src))
-try:
-    _cfg, _e = _D._fetch_config_json(sys.argv[1], _D.HttpFetcher())
-    _c = _cfg or {}
-    _tc = _c.get("text_config") or {}
-    _arch = (_c.get("architectures") or [""])[0]
-    out["vision"] = bool(
-        _c.get("vision_config") or _tc.get("vision_config")
-        or "vision" in str(_arch).lower()
-    )
-except Exception:
-    pass
-print(json.dumps(out))
-"""
-
-    async def _deriver_facts(self, repo: str) -> dict:
-        """The deriver's spec facts for a repo, or {} on ANY failure."""
+    # C4-rev / ModelSpec M2: read-only deriver probe — emits the TYPED
+    # ModelSpec (provenance-labeled dims: config.json facts vs the 131072
+    # fallback vs GGUF-header estimates) as one JSON object on stdout via the
+    # deriver's own `--spec-json` flag.  Replaces the old hand-rolled rename
+    # table (`_DERIVER_FACTS_SRC`) AND its second config.json fetch — the
+    # vision heuristic now lives in the deriver proper.  A failure yields None
+    # (placeholders).
+    async def _deriver_spec(self, repo: str) -> Optional["ModelSpec"]:
+        """The repo's typed ModelSpec, or None on ANY failure."""
         try:
             data, _err = await self._run_json(
-                ["python3", "-c", self._DERIVER_FACTS_SRC, repo],
+                [
+                    "python3", "-m", "scripts.lib.profiles.deriver",
+                    "--spec-json", repo,
+                ],
                 timeout=60.0,
             )
+            if isinstance(data, dict):
+                from scripts.lib.profiles.model_spec import ModelSpec
+
+                return ModelSpec.from_dict(data)
         except Exception:
-            return {}
-        return data if isinstance(data, dict) else {}
+            pass
+        return None
 
     # GGUF-engine slug prefixes (the registry's engine path segment) — the
     # engines whose sibling composes route-G can clone.  vllm (safetensors)
@@ -1701,7 +1683,7 @@ print(json.dumps(out))
         card_vram_gb: Optional[float] = None,
         companion_gb: float = 0.0,
         per_card_gb: float = 24.0,
-        facts: Optional[dict] = None,
+        spec: Optional["ModelSpec"] = None,
     ) -> ByoResult:
         """Phase 4 route-G: GGUF fit without the vLLM/safetensors deriver.
 
@@ -1710,10 +1692,10 @@ print(json.dumps(out))
         ``per_card_gb × topology_cards(profile_like)`` so dual/multi siblings
         are judged against combined VRAM (not always one 24 GB card).
 
-        ``facts`` (P3): GGUF header KV facts from :meth:`gguf_header_facts` —
-        threaded onto ``ByoResult.facts`` so the ⑤ Promote scaffold auto-fills
-        arch dims instead of staying pure-template. None values are dropped,
-        mirroring ``ByoResult.from_dict``."""
+        ``spec`` (P3 / ModelSpec M3): the typed GGUF header ModelSpec from
+        :meth:`gguf_header_facts` — threaded onto ``ByoResult.facts`` so the
+        ⑤ Promote scaffold auto-fills arch dims instead of staying
+        pure-template. None keeps every placeholder as-is."""
         if not quant:
             return ByoResult(
                 repo=repo, profile_like=profile_like,
@@ -1761,11 +1743,9 @@ print(json.dumps(out))
             sibling_slug=profile_like if eligible else None,
             quant_match=quant,
             drop_spec_config=False,
-            # P3: GGUF header KV facts (arch dims + provenance) for the ⑤
-            # Promote scaffold; {} keeps every placeholder as-is.
-            facts={
-                k: v for k, v in (facts or {}).items() if v is not None
-            },
+            # P3 / ModelSpec M3: GGUF header dims (provenance-labeled) for
+            # the ⑤ Promote scaffold; None keeps every placeholder as-is.
+            facts=spec,
             error="",
         )
 
@@ -1775,22 +1755,29 @@ print(json.dumps(out))
         files: list[str],
         *,
         size_gb: Optional[float] = None,
-    ) -> dict:
-        """P3: GGUF header KV facts for a brought repo — the route-G fix so
-        ⑤ Promote stops dead-ending pure-template on GGUF-only repos.
+    ) -> Optional["ModelSpec"]:
+        """P3 / ModelSpec M3: the GGUF header KV facts for a brought repo as a
+        TYPED, provenance-labeled ModelSpec (``gguf-header:<arch>.<kv>``
+        sources) — the route-G fix so ⑤ Promote stops dead-ending
+        pure-template on GGUF-only repos.
 
         Resolution order: an on-disk ``.gguf`` in the CONTRACT-2 pull dir
         (post-[D]: exact repo-relative match first, else any non-mmproj
         ``*.gguf``), else a bounded HTTP range probe of the repo's first
         listed file via the deriver (pre-[D]; header-only, never a full
-        download). Any failure → ``{}`` — the scaffold keeps its ``<...>``
+        download). Any failure → ``None`` — the scaffold keeps its ``<...>``
         placeholders instead of fabricating."""
         import asyncio
         import os
 
+        from scripts.lib.profiles.model_spec import ModelSpec
+
+        def _spec(facts: Optional[dict]) -> Optional["ModelSpec"]:
+            return ModelSpec.from_gguf_facts(facts) if facts else None
+
         try:
             # Inside the try: an unresolvable `scripts` package must degrade
-            # to {} (placeholders stay), never raise out of the fit-check.
+            # to None (placeholders stay), never raise out of the fit-check.
             from scripts.lib.profiles import deriver as _deriver
 
             d = self.bring_pull_dir(repo)
@@ -1798,12 +1785,12 @@ print(json.dumps(out))
             for rel in files:
                 p = d / str(rel)
                 if p.is_file():
-                    facts = await asyncio.to_thread(
+                    s = _spec(await asyncio.to_thread(
                         _deriver.gguf_facts_from_file,
                         str(p), model_id=repo, weight_gb=size_gb,
-                    )
-                    if facts:
-                        return facts
+                    ))
+                    if s:
+                        return s
             # 2) any non-mmproj GGUF already on disk (multi-part: shard 1)
             if d.is_dir():
                 local = sorted(
@@ -1811,25 +1798,25 @@ print(json.dumps(out))
                     if not p.name.lower().startswith("mmproj")
                 )
                 if local:
-                    facts = await asyncio.to_thread(
+                    s = _spec(await asyncio.to_thread(
                         _deriver.gguf_facts_from_file,
                         str(local[0]), model_id=repo, weight_gb=size_gb,
-                    )
-                    if facts:
-                        return facts
+                    ))
+                    if s:
+                        return s
             # 3) remote: bounded range probe of the first listed repo file
             if files:
-                facts = await asyncio.to_thread(
+                s = _spec(await asyncio.to_thread(
                     _deriver.gguf_facts_from_repo,
                     repo, str(files[0]), _deriver.default_probe_fetcher(),
                     os.environ.get("HF_TOKEN") or None,
                     model_id=repo, weight_gb=size_gb,
-                )
-                if facts:
-                    return facts
+                ))
+                if s:
+                    return s
         except Exception:
             pass
-        return {}
+        return None
 
     @staticmethod
     def _normalize_compose_command(raw) -> list:

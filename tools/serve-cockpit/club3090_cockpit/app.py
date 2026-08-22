@@ -10482,9 +10482,10 @@ class CockpitApp(App):
         gguf_quant, gguf_gb = self._funnel_gguf_selection()
         if gguf_quant:
             cards = self._data.topology_cards_for_profile(profile_like)
-            # P3: GGUF header KV facts (on-disk pull dir, else a bounded
-            # range probe) — route-G scaffolds auto-fill arch dims instead of
-            # staying pure-template. {} on any failure → placeholders stay.
+            # P3 / ModelSpec M3: the typed GGUF header spec (on-disk pull
+            # dir, else a bounded range probe) — route-G scaffolds auto-fill
+            # arch dims instead of staying pure-template. None on any
+            # failure → placeholders stay.
             gguf_facts = await self._data.gguf_header_facts(
                 repo,
                 self._funnel_gguf_files(),
@@ -10496,7 +10497,7 @@ class CockpitApp(App):
                 quant=gguf_quant,
                 size_gb=gguf_gb or 0.0,
                 card_vram_gb=24.0 * max(1, cards),
-                facts=gguf_facts,
+                spec=gguf_facts,
             )
         else:
             res = await self._data.byo_check(repo, profile_like)
