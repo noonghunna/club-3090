@@ -138,6 +138,27 @@ OPTIONS (extra)
                    (finish_reason=length) before emitting its final answer; the
                    thinking arm still uses --thinking-max-tokens if that is set.
                    Also settable via MAX_TOKENS env.
+  --retry-runaways
+                   Forward to benchlocal-cli --retry-runaways: ALSO retry
+                   timeout / token_limit runaway failures. **Default OFF** —
+                   benchlocal retries model verdicts 3x but never runaways,
+                   because each attempt is a full generation. Opt in when
+                   slow-rig `timeout` rows (a single sample against a clock,
+                   not a model verdict) are polluting the score (#1023).
+  --strict-thinking
+                   Forward to benchlocal-cli --strict-thinking: exit code 4
+                   when the thinking-validity check finds a contaminated arm
+                   (e.g. the "no-thinking" leg secretly reasoned). CI-friendly;
+                   pair with the canonical two-leg run in docs/QUALITY_TEST.md.
+  --report FORMAT  Forward to benchlocal-cli --report: emit the paste-ready
+  --report-out PATH  Results Card v2 report, e.g. --report md --report-out card.md.
+  --               Everything after `--` is forwarded VERBATIM to
+                   `benchlocal-cli run` — appended after the wrapper's own
+                   args, so pass-through flags can override wrapper ones.
+                   Escape hatch for benchlocal-cli flags the wrapper doesn't
+                   name (--model-turn-timeout, --timeout-ceiling-s,
+                   --negative-control, ...):
+                     bash scripts/quality-test.sh --full -- --retry-runaways --report md
 
 ENV VARS
   URL              Endpoint base URL (default: auto-detected via preflight,
@@ -173,6 +194,9 @@ EXAMPLES
   bash scripts/quality-test.sh --pack toolcall-15       # just the tool-call pack
   bash scripts/quality-test.sh --pack aider-polyglot-30 --timeout-per-case 3600
   URL=http://localhost:8030 bash scripts/quality-test.sh # against a different port
+  bash scripts/quality-test.sh --full --no-thinking -- --retry-runaways --strict-thinking
+                                       # 8-pack, pass benchlocal-cli flags the wrapper
+                                       # doesn't name (everything after `--`)
 
 INSTALL benchlocal-cli (one-time)
   pip install git+https://github.com/noonghunna/benchlocal-cli.git
@@ -265,6 +289,15 @@ MODE_EXPLICIT=0
 # and added to the reachability probe below. Falls back to BENCHLOCAL_API_KEY so
 # either env works. Local composes leave it empty and behave exactly as before.
 API_KEY="${API_KEY:-${BENCHLOCAL_API_KEY:-}}"
+# #1023/#987: promoted first-class flags (help + validation below).
+RETRY_RUNAWAYS=0
+STRICT_THINKING=0
+REPORT=""
+REPORT_OUT=""
+# `--` pass-through: everything after `--` is forwarded verbatim to
+# `benchlocal-cli run`. Closes ALL unnamed benchlocal flags at once and cannot
+# drift as benchlocal grows.
+PASSTHROUGH=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -419,6 +452,38 @@ while [[ $# -gt 0 ]]; do
       PROGRESS=0
       shift
       ;;
+    --retry-runaways)
+      RETRY_RUNAWAYS=1
+      shift
+      ;;
+    --strict-thinking)
+      STRICT_THINKING=1
+      shift
+      ;;
+    --report)
+      REPORT="${2:-}"
+      if [[ -z "$REPORT" ]]; then
+        echo "✗ --report requires a format (e.g. md)" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --report-out)
+      REPORT_OUT="${2:-}"
+      if [[ -z "$REPORT_OUT" ]]; then
+        echo "✗ --report-out requires a path" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --)
+      # #1023/#987 pass-through: forward everything after `--` VERBATIM to
+      # `benchlocal-cli run`. One arm closes all unnamed benchlocal flags at
+      # once and cannot drift as benchlocal grows.
+      shift
+      PASSTHROUGH=("$@")
+      break
+      ;;
     -h|--help)
       usage
       exit 0
@@ -426,6 +491,8 @@ while [[ $# -gt 0 ]]; do
     *)
       echo "✗ unknown argument: $1" >&2
       echo "  run 'bash scripts/quality-test.sh --help' for usage." >&2
+      echo "  benchlocal-cli flags the wrapper doesn't name go after '--':" >&2
+      echo "    bash scripts/quality-test.sh --full -- $1" >&2
       exit 2
       ;;
   esac
@@ -435,6 +502,12 @@ done
 
 if [[ "$ENABLE_THINKING" == "1" && "$NO_THINKING" == "1" ]]; then
   echo "✗ --enable-thinking and --no-thinking are mutually exclusive (force thinking on OR off, not both)" >&2
+  exit 2
+fi
+
+# --report-out writes the Results Card; without --report there is no card to write.
+if [[ -n "$REPORT_OUT" && -z "$REPORT" ]]; then
+  echo "✗ --report-out requires --report (e.g. --report md --report-out card.md)" >&2
   exit 2
 fi
 
@@ -873,6 +946,29 @@ fi
 if [[ -n "$API_KEY" ]]; then
   CLI_ARGS+=(--api-key "$API_KEY")
   echo "[quality-test] api-key: set (cloud/proxy endpoint auth)"
+fi
+# #1023/#987 promoted first-class flags.
+if [[ "$RETRY_RUNAWAYS" == "1" ]]; then
+  CLI_ARGS+=(--retry-runaways)
+  echo "[quality-test] retry-runaways: ON (timeout/token-limit runaways retried too; default off — each attempt is a full generation)"
+fi
+if [[ "$STRICT_THINKING" == "1" ]]; then
+  CLI_ARGS+=(--strict-thinking)
+  echo "[quality-test] strict-thinking: ON (exit code 4 on a thinking-validity failure)"
+fi
+if [[ -n "$REPORT" ]]; then
+  CLI_ARGS+=(--report "$REPORT")
+  echo "[quality-test] report: Results Card v2 ($REPORT)"
+fi
+if [[ -n "$REPORT_OUT" ]]; then
+  CLI_ARGS+=(--report-out "$REPORT_OUT")
+  echo "[quality-test] report-out: $REPORT_OUT"
+fi
+# `--` pass-through goes LAST so pass-through flags can override wrapper ones
+# (argparse-style CLIs let the last occurrence win).
+if [[ ${#PASSTHROUGH[@]} -gt 0 ]]; then
+  CLI_ARGS+=("${PASSTHROUGH[@]}")
+  echo "[quality-test] pass-through (${#PASSTHROUGH[@]} arg(s)): ${PASSTHROUGH[*]}"
 fi
 
 # Run; capture exit code so we can also try to emit the compact one-liner

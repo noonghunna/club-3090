@@ -87,6 +87,32 @@ pip install -e /path/to/benchlocal-cli
 > whole duration with no signal whether anything is wrong mid-run. Pass
 > `--no-progress` (or `PROGRESS=0`) for CI / log-volume-sensitive contexts.
 
+## Pass-through (`--`) and promoted flags
+
+The wrapper names the flags it adds logic to (modes, pack sets, thinking,
+sampling, timeout). **Everything else benchlocal-cli supports goes after `--`**
+and is forwarded verbatim — appended after the wrapper's own args, so a
+pass-through flag can override a wrapper one:
+
+```bash
+# any benchlocal-cli run flag the wrapper doesn't name:
+bash scripts/quality-test.sh --full --no-thinking -- --model-turn-timeout 900 --timeout-ceiling-s 1200
+```
+
+Three of benchlocal's flags are promoted to first-class wrapper flags (help
+text + validation), per maintainer decision in [#1023](https://github.com/noonghunna/club-3090/issues/1023)/[#987](https://github.com/noonghunna/club-3090/issues/987):
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--retry-runaways` | **off (opt-in)** | Also retry `timeout` / `token_limit` runaway failures. benchlocal retries model verdicts 3× but never runaways — each attempt is a full generation. Opt in when slow-rig `timeout` rows (a single sample against a clock, not a model verdict) are polluting the score. |
+| `--strict-thinking` | off | Exit code 4 when the thinking-validity check finds a contaminated arm (e.g. the "no-thinking" leg secretly reasoned). CI-friendly; pairs with the canonical two-leg run above. |
+| `--report FMT` + `--report-out PATH` | off | Emit benchlocal's paste-ready Results Card v2 report instead of relying on the compact one-liner: `--report md --report-out card.md`. |
+
+The drift is guarded: every flag named for `quality-test.sh` in this doc or
+CLAUDE.md must be either forwarded by the wrapper or appear after `--`
+(`scripts/tests/test-quality-passthrough.sh`). If you document a new flag in a
+wrapper invocation, wire it or route it through `--`.
+
 ## ⭐ The canonical two-leg run
 
 This is the recipe every announcement quotes and the one to copy if you're producing a number
@@ -133,6 +159,8 @@ the three sampler vars by hand remains the only way to change them.
 artifacts**; only `verifier_fail` / `wrong_answer` are the model. A score that looks catastrophic is
 usually a budget that was too small. And benchlocal retries **model verdicts** 3× by default but
 **does not retry timeouts** — so a `timeout` row is a single sample against a clock.
+Opt into runaway retries with **`--retry-runaways`** (default off; each attempt is a
+full generation) when the clock, not the model, is the suspect.
 
 ### Operational health is a separate pass — don't conflate them
 
@@ -249,9 +277,7 @@ URL=https://your-endpoint/v1 API_KEY="$YOUR_KEY" MODEL=your-model-id \
 
 **Match the thinking state explicitly.** Most managed endpoints ignore the vLLM-side `chat_template_kwargs.enable_thinking` field — use the provider's native controls. The `cli-40` / `hermesagent-20` adapters send Qwen-compatible `enable_thinking` + `thinking_budget` automatically; for a thinking-only endpoint the off arm is `enable_thinking=true` clamped to `thinking_budget=1`. DashScope **rejects** `enable_thinking=false`, so its off arm uses that clamp (worked example below). Run **both** arms for a fair comparison and verify the saved request payloads.
 
-**Sandboxed agentic packs over a remote endpoint** work (HermesAgent-20 calls your endpoint over the network from inside its sandbox) but need the sandbox images built and are less battle-tested remotely than the deterministic packs — land the 5 deterministic packs first, then add the sandboxed three. `BENCHLOCAL_HERMES_RESOLVE_LOCALHOST` is irrelevant for a genuinely remote URL (it only rewrites `localhost` for the in-sandbox agent).
-
-**Pacing + spend.** Set `--request-delay <sec>` (env `BENCHLOCAL_REQUEST_DELAY`) to stay under the endpoint's RPM ceiling, and `--max-total-tokens <N>` as a cost ceiling (the agentic packs spend the most). 429s auto-retry (`--max-transient-retries`, default 3) — see [benchlocal-cli #106](https://github.com/noonghunna/benchlocal-cli/issues/106) for the minute-window backoff caveat.
+**Pacing + spend.** Pass `-- --request-delay <sec>` (env `BENCHLOCAL_REQUEST_DELAY`) to stay under the endpoint's RPM ceiling, and `-- --max-total-tokens <N>` as a cost ceiling (the agentic packs spend the most) — both are benchlocal-cli flags the wrapper reaches via the [`--` pass-through](#pass-through---and-promoted-flags). 429s auto-retry (`--max-transient-retries`, default 3) — see [benchlocal-cli #106](https://github.com/noonghunna/benchlocal-cli/issues/106) for the minute-window backoff caveat.
 
 ### Worked example — Qwen3.8-Max-Preview (DashScope)
 
@@ -385,7 +411,7 @@ The breakdown is **terminal-only** — `quality-test.sh` does not tee it to a lo
 `quality-test.sh` forwards to `benchlocal-cli`, which sizes each scenario's timeout automatically — you rarely need to set one. Precedence (highest wins):
 
 1. **Manual** — `--timeout-per-case N` (or `TIMEOUT_PER_CASE=N`): used verbatim.
-2. **Auto-scaling (default)** — the budget scales by the endpoint's measured decode speed and, for thinking-on runs, by the thinking-token budget. A one-shot startup probe measures the rig's decode TPS (and fails fast if the endpoint is unreachable, rather than hanging). The scaling deliberately **over-budgets** — a timeout is a safety ceiling, not a target — which is what keeps thinking-on packs from spuriously timing out. Exact formula + flags (`--measured-tps` / `--reference-tps` / `--retry-on-timeout`): [benchlocal-cli README → Per-case timeouts](https://github.com/noonghunna/benchlocal-cli#per-case-timeouts).
+2. **Auto-scaling (default)** — the budget scales by the endpoint's measured decode speed and, for thinking-on runs, by the thinking-token budget. A one-shot startup probe measures the rig's decode TPS (and fails fast if the endpoint is unreachable, rather than hanging). The scaling deliberately **over-budgets** — a timeout is a safety ceiling, not a target — which is what keeps thinking-on packs from spuriously timing out. Exact formula + tuning flags (`--measured-tps` / `--reference-tps` / `--retry-on-timeout` — reach them through the [`--` pass-through](#pass-through---and-promoted-flags)): [benchlocal-cli README → Per-case timeouts](https://github.com/noonghunna/benchlocal-cli#per-case-timeouts).
 3. **Static default** — the pack's built-in `default_max_seconds`.
 
 **Don't hand-set `--timeout-per-case` to "fix" a slow run** unless you've confirmed the auto-probe measured wrong — the over-budget is intentional.
