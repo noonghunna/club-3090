@@ -1,6 +1,7 @@
 schema_version: 1
 id: tess-4-27b
 display_name: Tess 4 27B
+description: Migtissera's Qwen3.5-based dense-27B agentic fine-tune sharing the 48-linear/16-full-attention hybrid of Qwen3.6-27B, served text-only with an external-GGUF MTP draft head.
 family: qwen35-dense
 # Migtissera's Tess-4-27B — a Qwen3.5-based dense 27B instruct/agentic fine-tune.
 # Arch: qwen35 — ⚠️ CORRECTED 2026-07-11: this is a HYBRID (48 linear_attention

@@ -1,6 +1,7 @@
 schema_version: 1
 id: nemotron-3-puzzle-75b
 display_name: Nemotron-3 Puzzle 75B-A9B (hybrid Mamba2+attn MoE)
+description: NVIDIA Mamba2-attention hybrid LatentMoE (75.3B total, 9.3B active, 512 routed experts); the quad-3090 flagship via NVFP4 at TP=4, with the community W4A16 sibling fitting TP=2.
 family: nemotron-h-puzzle-moe
 hidden_size: 4096
 num_hidden_layers: 88

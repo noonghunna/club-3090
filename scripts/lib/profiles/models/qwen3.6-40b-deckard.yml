@@ -1,6 +1,7 @@
 schema_version: 1
 id: qwen3.6-40b-deckard
 display_name: Qwen 3.6 40B Deckard
+description: Uncensored DavidAU Opus-Deckard dense-40B frankenmerge of Qwen3.6 — standard GQA uniform across all 97 layers, served dual-card from the PiehSoft Q6_K GGUF with its injected BF16 MTP head.
 family: qwen35-dense
 # Dense 40B uncensored community frankenmerge (DavidAU's Opus-Deckard, Qwen3.6-VL
 # base). Arch CONFIRMED from the GGUF header (general.architecture=qwen35):

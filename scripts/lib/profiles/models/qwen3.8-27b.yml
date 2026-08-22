@@ -1,6 +1,7 @@
 schema_version: 1
 id: qwen3.8-27b
 display_name: Qwen 3.8 27B
+description: Dense 27B Qwen3.5-class hybrid (16 full-attention + 48 linear-attention layers, embedded MTP, full VLM) at 262K ctx; exploratory candidate primary across llama.cpp and vLLM tiers.
 family: qwen35-dense
 # Qwen/Qwen3.8-27B — architectures: ["Qwen3_5ForConditionalGeneration"],
 # model_type: qwen3_5 (text_config.model_type: qwen3_5_text). Same arch CLASS as

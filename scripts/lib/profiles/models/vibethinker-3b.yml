@@ -1,6 +1,7 @@
 schema_version: 1
 id: vibethinker-3b
 display_name: VibeThinker-3B
+description: WeiboAI verifiable-reasoning fine-tune of Qwen2.5-Coder-3B — a tiny dense model that runs the full 131K native context on one card with headroom, emitting Qwen-style think blocks.
 # WeiboAI verifiable-reasoning fine-tune (SFT+RL) of Qwen2.5-Coder-3B.
 # Standard Qwen2 dense decoder, GQA (16 attn heads / 2 KV heads), SWA disabled.
 # Emits Qwen-style <think>...</think> reasoning blocks → served with --reasoning-parser qwen3.

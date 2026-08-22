@@ -1,6 +1,7 @@
 schema_version: 1
 id: qwen3.6-27b
 display_name: Qwen 3.6 27B
+description: Qwen3-Next DeltaNet-hybrid 27B VLM with a built-in MTP head and 262K ctx; the stack primary for coding and long-context serving.
 family: qwen3-next-hybrid
 hidden_size: 5120
 num_hidden_layers: 64

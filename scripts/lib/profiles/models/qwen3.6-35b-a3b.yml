@@ -1,6 +1,7 @@
 schema_version: 1
 id: qwen3.6-35b-a3b
 display_name: Qwen 3.6 35B-A3B (MoE)
+description: Qwen3-Next MoE (35B total, ~3B active, DeltaNet-hybrid attention, built-in MTP, vision-capable) at 262K ctx; the stack primary for high-throughput MoE serving.
 family: qwen3-next-moe
 hidden_size: 2048
 num_hidden_layers: 40

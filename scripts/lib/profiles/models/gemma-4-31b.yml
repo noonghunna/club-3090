@@ -1,6 +1,7 @@
 schema_version: 1
 id: gemma-4-31b
 display_name: Gemma 4 31B
+description: Dense 31B multimodal Gemma 4 with hybrid SWA KV (10 full-attention of 60 layers) and 262K ctx; AutoRound INT4 default with the always-required assistant MTP drafter.
 family: gemma4-swa-dense
 hidden_size: 5376
 intermediate_size: 21504

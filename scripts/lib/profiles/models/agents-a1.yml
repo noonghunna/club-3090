@@ -1,6 +1,7 @@
 schema_version: 1
 id: agents-a1
 display_name: Agents-A1 (InternScience 35B agentic MoE)
+description: InternScience's agentic-coding 35B-A3B MoE on the Qwen3-Next architecture — geometry identical to qwen3.6-35b-a3b but with no MTP head, so it serves drafter-free from the official FP8-dynamic checkpoint.
 family: qwen3-next-moe
 # Geometry verified byte-identical to qwen3.6-35b-a3b from the checkpoint's
 # config.json (2026-07-03): InternScience builds on the Qwen3-Next MoE

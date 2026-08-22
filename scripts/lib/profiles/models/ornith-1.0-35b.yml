@@ -1,6 +1,7 @@
 schema_version: 1
 id: ornith-1.0-35b
 display_name: Ornith 1.0 35B (DeepReinforce, MoE)
+description: DeepReinforce agentic-coding RL fine-tune of Qwen3.6-35B-A3B — same MoE-hybrid geometry but no MTP head and text-only, run dual-card from the Q8_0 GGUF with opt-in ngram speculation.
 family: qwen3-next-moe
 # DeepReinforce agentic-coding RL fine-tune of Qwen3.6-35B-A3B — SAME architecture
 # (arch=qwen35moe, confirmed from the GGUF header). Qwen3-Next MoE hybrid: 40 layers,

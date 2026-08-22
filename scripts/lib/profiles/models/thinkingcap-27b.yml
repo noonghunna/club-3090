@@ -1,6 +1,7 @@
 schema_version: 1
 id: thinkingcap-27b
 display_name: ThinkingCap Qwen3.6-27B
+description: ThinkingCap reasoning fine-tune of Qwen3.6-27B — same qwen35-dense hybrid arch, vision-capable but served text-only, AutoRound W4A16 weights served W4A8 with a working built-in MTP head.
 family: qwen35-dense
 # LeaderboardModel1's ThinkingCap — a Qwen3.6-27B (qwen3_5) VL reasoning fine-tune,
 # AutoRound W4A16 quantized. Arch is the SAME hybrid as Tess-4-27B: 48 linear_attention

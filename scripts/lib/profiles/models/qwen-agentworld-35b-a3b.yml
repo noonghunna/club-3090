@@ -1,6 +1,7 @@
 schema_version: 1
 id: qwen-agentworld-35b-a3b
 display_name: Qwen-AgentWorld 35B-A3B (language world model)
+description: Qwen's language world-model fine-tune of Qwen3.5-35B-A3B-Base that predicts the next environment state from agent actions — same calibrated MoE-hybrid geometry, drafter-free AWQ INT4 production compose.
 family: qwen3-next-moe
 # Geometry from cyankiwi/Qwen-AgentWorld-35B-A3B-AWQ-INT4 config.json at
 # revision 76b26bbd88c6819e7623357a49275154fe420a64. The model is a specialized

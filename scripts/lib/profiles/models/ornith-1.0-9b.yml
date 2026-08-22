@@ -1,6 +1,7 @@
 schema_version: 1
 id: ornith-1.0-9b
 display_name: Ornith 1.0 9B (DeepReinforce)
+description: DeepReinforce agentic-coding RL fine-tune of a 9B Qwen3-Next dense-FFN hybrid (8 full-attention + 24 GDN layers) covering the lean single-card 262K long-context niche with drafter-free ngram.
 family: qwen3-next-hybrid
 # DeepReinforce agentic-coding RL fine-tune. Arch CONFIRMED from the GGUF header
 # (general.architecture=qwen35): a Qwen3-Next DENSE-FFN HYBRID — NOT MoE, but NOT

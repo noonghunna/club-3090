@@ -790,9 +790,9 @@ def _model(m):
     default_meta = m.weights.get(m.default_weight_variant) or {}
     return {
         "family": m.family,
-        # ModelProfile carries no description field today; emit None so the
-        # key stays stable across models.
-        "description": None,
+        # description now lives on ModelProfile (strict loader); emit None when
+        # a profile omits it so the key stays stable across models.
+        "description": (m.description or None),
         "display_name": m.display_name,
         "active_params_b": m.active_params_b,
         "vision_capable": m.vision_capable,

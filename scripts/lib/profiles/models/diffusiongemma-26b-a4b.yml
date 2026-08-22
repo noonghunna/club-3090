@@ -1,6 +1,7 @@
 schema_version: 1
 id: diffusiongemma-26b-a4b
 display_name: DiffusionGemma 26B-A4B (discrete-diffusion dLLM)
+description: Discrete-diffusion dLLM on a Gemma4-SWA-MoE backbone that denoises whole 256-token canvases in parallel, so canvas-granularity decode makes wall_TPS the only valid throughput figure.
 # Gemma4-SWA-MoE backbone (structurally identical to gemma-4-26b-a4b) PLUS
 # block-diffusion decode (canvas_length=256, max_denoising_steps=48): denoises a
 # whole block in parallel via bidirectional attention. vLLM's first dLLM (blog

@@ -1,6 +1,7 @@
 schema_version: 1
 id: gemma-4-12b
 display_name: Gemma 4 12B (unified)
+description: Dense 12B Gemma 4 unified with hybrid SWA KV (8 full-attention of 48 layers) reaching the full 256K via the upstream p-RoPE config fix; single-card default plus the assistant MTP drafter.
 family: gemma4-unified
 hidden_size: 3840
 intermediate_size: 15360

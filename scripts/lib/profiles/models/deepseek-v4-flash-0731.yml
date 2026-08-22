@@ -1,6 +1,7 @@
 schema_version: 1
 id: deepseek-v4-flash-0731
 display_name: DeepSeek-V4-Flash-0731 (284B MoE)
+description: 284B DeepSeek4 MoE (256 routed experts top-6, MLA single-KV-head attention) served on two 3090s via CPU expert offload, 1M native ctx shipped at 200K with a mandatory DSpark drafter.
 family: deepseek4-moe
 # Arch: `deepseek4`. 43 layers, ALL of them MoE (no dense prefix) — 256 routed
 # experts top-6 plus 1 shared expert per layer. MLA + compressors + DSA indexer.

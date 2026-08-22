@@ -1,6 +1,7 @@
 schema_version: 1
 id: inkling-small
 display_name: Inkling-Small (263B MoE, Thinking Machines)
+description: 263B Thinking Machines conv-hybrid MoE (256 routed + 2 shared experts, iSWA 7-full/35-windowed layers) served by CPU expert offload on the club3090 engine, shipping 262K with no drafter.
 family: inkling-moe
 # Arch: `inkling`. 42 blocks — `dense_block_count = 2`, so 2 dense + 40 MoE.
 # 256 routed experts top-6 PLUS 2 shared experts per layer (DeepSeek has 1).

@@ -165,6 +165,7 @@ class ModelProfile:
     schema_version: int
     id: str
     display_name: str
+    description: str
     family: str
     hidden_size: int
     num_hidden_layers: int
@@ -591,6 +592,7 @@ def _model(data: dict[str, Any], path: Path) -> ModelProfile:
         schema_version=data["schema_version"],
         id=data["id"],
         display_name=data["display_name"],
+        description=data.get("description", ""),
         family=data["family"],
         hidden_size=int(data["hidden_size"]),
         intermediate_size=data.get("intermediate_size"),

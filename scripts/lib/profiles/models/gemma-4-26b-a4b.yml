@@ -1,6 +1,7 @@
 schema_version: 1
 id: gemma-4-26b-a4b
 display_name: Gemma 4 26B-A4B (MoE)
+description: Gemma 4 MoE (26B total, ~4B active, 128 experts top-8) with asymmetric sliding/global KV heads and vision-plus-audio input; secondary MoE served AWQ INT4 with the external assistant MTP drafter.
 family: gemma4-swa-moe
 hidden_size: 2816
 intermediate_size: 2112
