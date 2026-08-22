@@ -193,7 +193,11 @@ Every compose starts with a `Profile (at-a-glance)` block declaring the (Model, 
 #   Quality:   <OPTIONAL — populated by `bash scripts/quality-test.sh --medium`>
 #                e.g. "ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%)
 #                      · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%)
-#                      (--medium, packs v1.0.x, 2026-05-09)"
+#                      (--medium, thinking OFF, sampling=server, validity=valid,
+#                      packs tc1.0.1·if1.0.0·so1.1.0·de1.2.0·rm1.0.0, 2026-05-09)"
+#                Paste the wrapper-generated line VERBATIM — it carries explicit
+#                per-pack versions (#981). Never hand-write a `packs v1.0.x`
+#                wildcard: the eight packs span six distinct versions.
 #   Best for:  <one short phrase — what workload this serves; ⭐ for canonical>
 # ---------------------------------------------------------------------------
 # (existing free-form description continues below)

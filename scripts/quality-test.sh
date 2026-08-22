@@ -152,6 +152,15 @@ OPTIONS (extra)
                    pair with the canonical two-leg run in docs/QUALITY_TEST.md.
   --report FORMAT  Forward to benchlocal-cli --report: emit the paste-ready
   --report-out PATH  Results Card v2 report, e.g. --report md --report-out card.md.
+  --both-modes     Run BOTH reasoning legs back-to-back (#983A): first
+                   --no-thinking, then --enable-thinking — each pinned to
+                   --sampling-from-server unless already requested, so the
+                   compose's per-mode sampler rows stay the single source of
+                   truth and the legs differ only in the thinking gate.
+                   With --report-out PATH, each leg writes its own card:
+                   PATH.thinking-off.ext and PATH.thinking-on.ext. Exit code is
+                   the worst leg's. Mutually exclusive with --enable-thinking,
+                   --no-thinking, --resume (it drives those itself).
   --               Everything after `--` is forwarded VERBATIM to
                    `benchlocal-cli run` — appended after the wrapper's own
                    args, so pass-through flags can override wrapper ones.
@@ -178,6 +187,9 @@ ENV VARS
   NO_THINKING     Set to 1 to force thinking off for every pack via
                    benchlocal-cli --no-thinking. Mutually exclusive with
                    ENABLE_THINKING. Default: 0.
+  BOTH_MODES      Set to 1 to run both reasoning legs (--no-thinking then
+                  --enable-thinking) in one invocation. --both-modes is
+                  equivalent.
   THINKING_MAX_TOKENS
                    Optional thinking budget passed through to benchlocal-cli.
                    Applies only to packs whose thinking gate resolves on.
@@ -206,7 +218,8 @@ INSTALL benchlocal-cli (one-time)
 OUTPUT
   - Markdown table to stdout (paste-ready for BENCHMARKS quality rows)
   - JSON blob to results/quality/quality-<timestamp>.json (full detail)
-  - Compact one-liner for the compose `Quality:` profile field
+  - Compact one-liner for the compose `Quality:` profile field, stamped with
+    per-pack versions and run provenance (#981/#983E)
 
 EOF
 }
@@ -259,6 +272,11 @@ if [[ -n "${TIMEOUT_PER_CASE:-}" ]]; then
 fi
 
 # ---- arg parsing -------------------------------------------------------------
+# Snapshot of the raw argv BEFORE parsing — #983A `--both-modes` re-execs the
+# wrapper once per reasoning leg with this argv (minus --both-modes/--report-out)
+# plus the leg's thinking flag, so every preflight reruns per leg exactly as it
+# would if an operator rebooted between legs by hand.
+ORIG_ARGS=("$@")
 
 MODE="--medium"   # default
 PACK=""
@@ -294,6 +312,7 @@ RETRY_RUNAWAYS=0
 STRICT_THINKING=0
 REPORT=""
 REPORT_OUT=""
+BOTH_MODES="${BOTH_MODES:-0}"
 # `--` pass-through: everything after `--` is forwarded verbatim to
 # `benchlocal-cli run`. Closes ALL unnamed benchlocal flags at once and cannot
 # drift as benchlocal grows.
@@ -476,6 +495,10 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
+    --both-modes)
+      BOTH_MODES=1
+      shift
+      ;;
     --)
       # #1023/#987 pass-through: forward everything after `--` VERBATIM to
       # `benchlocal-cli run`. One arm closes all unnamed benchlocal flags at
@@ -509,6 +532,19 @@ fi
 if [[ -n "$REPORT_OUT" && -z "$REPORT" ]]; then
   echo "✗ --report-out requires --report (e.g. --report md --report-out card.md)" >&2
   exit 2
+fi
+
+# #983A: --both-modes drives both reasoning legs itself — a hand-picked
+# thinking flag would fork leg 2's config and defeat the orchestration.
+if [[ "$BOTH_MODES" == "1" ]]; then
+  _both_conflicts=()
+  if [[ "$ENABLE_THINKING" == "1" ]]; then _both_conflicts+=(--enable-thinking); fi
+  if [[ "$NO_THINKING" == "1" ]]; then _both_conflicts+=(--no-thinking); fi
+  if [[ -n "$RESUME" ]]; then _both_conflicts+=(--resume); fi
+  if [[ ${#_both_conflicts[@]} -gt 0 ]]; then
+    echo "✗ --both-modes runs the no-thinking leg then the enable-thinking leg itself; drop: ${_both_conflicts[*]}" >&2
+    exit 2
+  fi
 fi
 
 # --resume restores pack-set/selection/thinking/sampling/timeout from the saved
@@ -552,6 +588,59 @@ fi
 if [[ "$LIST_PACKS" == "1" ]]; then
   benchlocal-cli list
   exit 0
+fi
+
+# ---- #983A: --both-modes orchestration ---------------------------------------
+# Two legs around the existing single-run path:
+#   leg 1: --no-thinking  → leg 2: --enable-thinking
+# Each leg is pinned to --sampling-from-server unless already requested (#983C):
+# the compose encodes the model card's sampler rows per mode, so it stays the
+# single source of truth and the legs differ ONLY in the thinking gate. Cards
+# are namespaced per leg (<report-out>.thinking-off/on.<ext>) so both survive;
+# exit code is the worst leg's. Implemented as a self re-exec with ORIG_ARGS so
+# endpoint autodetect / hermes env / sandbox preflight all rerun per leg.
+if [[ "$BOTH_MODES" == "1" && -z "${QUALITY_BOTH_LEG:-}" ]]; then
+  export QUALITY_BOTH_LEG=1
+  _pre=(); _post=(); _in_post=0; _leg_report_out=""
+  _argc=${#ORIG_ARGS[@]}
+  _idx=0
+  while [[ $_idx -lt $_argc ]]; do
+    _a="${ORIG_ARGS[$_idx]}"
+    if [[ "$_a" == "--" ]]; then _in_post=1; _idx=$((_idx+1)); continue; fi
+    if [[ "$_a" == "--both-modes" ]]; then _idx=$((_idx+1)); continue; fi
+    if [[ "$_a" == "--report-out" ]]; then
+      _leg_report_out="${ORIG_ARGS[$((_idx+1))]:-}"
+      _idx=$((_idx+2))
+      continue
+    fi
+    if [[ "$_in_post" == "1" ]]; then _post+=("$_a"); else _pre+=("$_a"); fi
+    _idx=$((_idx+1))
+  done
+  _overall_rc=0
+  _leg_no=0
+  for _leg in no-thinking enable-thinking; do
+    _leg_no=$((_leg_no+1))
+    if [[ "$_leg" == "no-thinking" ]]; then _tag="thinking-off"; _label="OFF"; else _tag="thinking-on"; _label="ON"; fi
+    echo "[quality-test] --both-modes: leg ${_leg_no}/2 — ${_leg} (thinking ${_label})"
+    _leg_args=("${_pre[@]+"${_pre[@]}"}" "--${_leg}")
+    if [[ "$SAMPLING_FROM_SERVER" != "1" ]]; then _leg_args+=(--sampling-from-server); fi
+    if [[ -n "$_leg_report_out" && -n "$REPORT" ]]; then
+      _sp="$(dirname -- "$_leg_report_out")"
+      _bn="$(basename -- "$_leg_report_out")"
+      if [[ "$_bn" == *.* && "$_bn" != .* ]]; then
+        _leg_args+=("--report-out" "${_sp}/${_bn%.*}.${_tag}.${_bn##*.}")
+      else
+        _leg_args+=("--report-out" "${_sp}/${_bn}.${_tag}")
+      fi
+    fi
+    if [[ ${#_post[@]} -gt 0 ]]; then _leg_args+=("--" "${_post[@]}"); fi
+    _leg_rc=0
+    BOTH_MODES=0 bash "${ROOT_DIR}/scripts/quality-test.sh" "${_leg_args[@]}" || _leg_rc=$?
+    if [[ $_leg_rc -gt $_overall_rc ]]; then _overall_rc=$_leg_rc; fi
+    echo "[quality-test] --both-modes: leg ${_leg_no}/2 (${_label}) exited ${_leg_rc}"
+  done
+  echo "[quality-test] --both-modes: both legs complete; worst exit code ${_overall_rc}"
+  exit "$_overall_rc"
 fi
 
 # Reachability probe. Local composes answer 200 on /v1/models; authenticated
@@ -992,6 +1081,7 @@ with open(path) as f:
 date = datetime.date.today().isoformat()
 mode_short = mode.lstrip("-")
 parts = []
+versions = []
 for p in d.get("packs", []):
     if p.get("status") == "stubbed" and p.get("total", 0) == 0:
         continue
@@ -1000,12 +1090,59 @@ for p in d.get("packs", []):
     pt = p["total"]
     pct = round(100 * p["score"]) if pt else 0
     parts.append(f"{pid} {pa}/{pt} ({pct}%)")
-suffix = f" (--{mode_short}, {date})"
+    # #981: per-pack version provenance — the same responses score 4/15 or 9/15
+    # on dataextract depending only on pack version, so a Quality: line without
+    # versions is untraceable. Compact id per #983E (tc·if·so·de·rm·bf·hm·cli);
+    # unknown packs fall back to their full id. Old schema-v1 JSONs without a
+    # version field omit the stamp rather than inventing one.
+    ver = p.get("version")
+    if ver:
+        base = pid.split("-", 1)[0]
+        short = {"toolcall": "tc", "instructfollow": "if", "structoutput": "so",
+                 "dataextract": "de", "reasonmath": "rm", "bugfind": "bf",
+                 "hermesagent": "hm", "cli": "cli"}.get(base, base)
+        versions.append(f"{short}{ver}")
+
+# Provenance suffix (#983E): mode, thinking gate, sampling source, thinking
+# validity, pack versions, date. Each stamp appears only when the results JSON
+# actually carries it — a missing field stays missing instead of lying.
+suffix_parts = [f"--{mode_short}"]
+tm = d.get("thinking_mode")
+if tm == "force-on":
+    suffix_parts.append("thinking ON")
+elif tm == "force-off":
+    suffix_parts.append("thinking OFF")
+if d.get("sampling_source") == "server":
+    suffix_parts.append("sampling=server")
+validity = d.get("thinking_validity") or {}
+if validity:
+    statuses = {o.get("status") for o in validity.values()}
+    suffix_parts.append("validity=valid" if statuses <= {"ok"} else "validity=CONTAMINATED")
+if versions:
+    suffix_parts.append("packs " + "·".join(versions))
+suffix_parts.append(date)
+suffix = f" ({', '.join(suffix_parts)})"
 if parts:
     print("Quality:   " + " · ".join(parts) + suffix)
 else:
     print("Quality:   (no scoreable packs ran)")
 PYEOF
+fi
+
+# ---- Results Card v2 pointer (#987/#981/#983E) --------------------------------
+# The card carries per-pack versions, latency and variance that the one-liner
+# deliberately compresses away. Point at wherever it landed so it is actually
+# read instead of scrolled past.
+if [[ -n "$REPORT" && -f "$JSON_OUT" ]]; then
+  if [[ -n "$REPORT_OUT" ]]; then
+    if [[ -f "$REPORT_OUT" ]]; then
+      echo "[quality-test] Results Card v2 → ${REPORT_OUT}"
+    else
+      echo "[quality-test] WARN: --report-out ${REPORT_OUT} was not written (benchlocal-cli exit ${RC})" >&2
+    fi
+  else
+    echo "[quality-test] Results Card v2 printed above (--report md). Re-run with --report-out PATH to save it."
+  fi
 fi
 
 # ---- pointer: where to read failure reasons --------------------------------

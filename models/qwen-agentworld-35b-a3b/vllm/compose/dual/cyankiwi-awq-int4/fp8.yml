@@ -13,7 +13,7 @@
 #   Genesis:   N/A — no Genesis patches on this stock vLLM path
 #   Status:    ✅ Production
 #   Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 15/15 (100%)
-#              (--quick, thinking ON, packs v1.0.x, 2026-08-03)
+#              (--quick, thinking ON, 2026-08-03)  # pack versions not recorded pre-#981
 #   Best for:  Concurrent full-context environment simulation across seven domains
 # ---------------------------------------------------------------------------
 # First and only Qwen-AgentWorld compose. It uses the checkpoint-native template,

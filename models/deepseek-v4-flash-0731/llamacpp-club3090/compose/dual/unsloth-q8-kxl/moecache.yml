@@ -54,7 +54,7 @@
 #              · structoutput-15 14/15 (93%) · dataextract-15 12/15 (80%)
 #              · reasonmath-15 14/15 (93%) · bugfind-15 15/15 (100%)
 #              · hermesagent-20 14/20 (70%) · cli-40 31/40 (78%)
-#              = 128/150 reasoning-ON  (--full, packs v1.0.x, 2026-08-11)
+#              = 128/150 reasoning-ON  (--full, 2026-08-11)  # pack versions not recorded pre-#981
 #              Reasoning-OFF leg: 122/150. repeat=1 per arm.
 #              ⚠️ NO stock-engine comparison arm — this shows the output is
 #              sound, NOT that the expert cache is quality-neutral.

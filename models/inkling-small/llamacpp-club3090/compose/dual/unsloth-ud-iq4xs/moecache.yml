@@ -69,7 +69,7 @@
 #              ⚠️ Reasoning is +5 pass@1 / +4 pass@3 overall but NOT uniform: toolcall
 #                 12->11 (-2 pass@3) and hermesagent 9->7 pass@1 with pass@3 IDENTICAL
 #                 at 12/20. Tool-calling workloads: use reasoning_effort "none".
-#              (--full, packs v1.0.x, benchlocal-cli post-#131, repeat=1, 2026-08-12)
+#              (--full, benchlocal-cli post-#131, repeat=1, 2026-08-12)  # pack versions not recorded pre-#981
 #   Best for:  Long-context and agentic Inkling serving once the engine gate
 #              clears — sub-linear TTFT growth to 30K accumulated context.
 # ---------------------------------------------------------------------------

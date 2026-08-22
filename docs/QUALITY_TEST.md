@@ -249,7 +249,7 @@ Failure breakdown:
 ==========================================================================
 Quality: line for compose schema field (paste into compose YAML header):
 ==========================================================================
-Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%) · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%) · ReasonMath-15 11/15 (73%) (--medium, packs v1.0.x, 2026-05-09)
+Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%) · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%) · ReasonMath-15 11/15 (73%) (--medium, thinking OFF, sampling=server, validity=valid, packs tc1.0.1·if1.0.0·so1.1.0·de1.2.0·rm1.0.0, 2026-05-09)
 ```
 
 ## Cloud / proxy endpoints
@@ -483,11 +483,22 @@ Each compose's `Profile` header (per [`AGENTS.md`](../AGENTS.md)) can carry an o
 #   Topology:  Dual 3090 PCIe (TP=2, no NVLink)
 #   ...
 #   Status:    ✅ Production
-#   Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%) · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%) (--medium, packs v1.0.x, 2026-05-09)
+#   Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%) · StructOutput-15 15/15 (100%) · DataExtract-15 12/15 (80%) (--medium, thinking OFF, sampling=server, validity=valid, packs tc1.0.1·if1.0.0·so1.1.0·de1.2.0·rm1.0.0, 2026-05-09)
 #   Best for:  General-purpose dual-card vision + tools + long-ctx default ⭐
 ```
 
-The line documents what the compose was tested on. Cross-rig contributors running quality-test.sh against the same compose can paste their numbers as a sibling row in BENCHMARKS.md.
+The line documents what the compose was tested on — **against which pack versions** (#981). The same model responses score 4/15 or 9/15 on DataExtract depending only on the pack version, so a number without version provenance is untraceable. quality-test.sh generates the line from the results JSON at end of run: paste it VERBATIM. Each stamp appears only when the JSON carries it:
+
+| Stamp | Meaning |
+|---|---|
+| `thinking OFF / ON` | reasoning gate forced off/on for every pack (absent = pack defaults) |
+| `sampling=server` | `--sampling-from-server`: sampling inherited from the serving config (absent = canonical pack-default temp=0) |
+| `validity=valid / CONTAMINATED` | #126 thinking-validity check: CONTAMINATED means a requested arm did not reason as asked — do not trust that leg |
+| `packs tc1.0.1·if1.0.0·…` | exact per-pack versions, compact ids (`tc`=toolcall-15, `if`=instructfollow-15, `so`=structoutput-15, `de`=dataextract-15, `rm`=reasonmath-15, `bf`=bugfind-15, `hm`=hermesagent-20, `cli`=cli-40) |
+
+Never hand-write a `packs v1.0.x` wildcard — the eight packs span six distinct versions. For richer provenance (per-pack latency p50/p95, variance under `--repeat`, benchlocal-cli version), pass `--report md --report-out card.md` and link the generated Results Card v2 next to the Quality line.
+
+**Supported two-leg workflow (#983):** run thinking OFF and ON with `--both-modes`, or by hand with `--no-thinking --sampling-from-server` then `--enable-thinking --sampling-from-server`. The compose is the single source of truth for per-mode sampler rows (the `ENABLE_THINKING=1` env/flag couples the request-level gate to the serving config's sampler block); never pass explicit sampler numbers (`--temperature` etc.) — they duplicate the model card into a second place that drifts, and leg A vs leg B must differ ONLY in the thinking gate to be a valid A/B.
 
 Compact format (one line) so the schema header doesn't bloat. Full per-scenario detail lives in the JSON saved by quality-test.sh, which can be diffed against past runs for regression tracking.
 
