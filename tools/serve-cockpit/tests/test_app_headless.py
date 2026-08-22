@@ -2158,6 +2158,148 @@ class TestCatalogWired:
             assert isinstance(app.screen, ExplainScreen)
 
 
+class TestRigPerfColumns:
+    """c3 — the TPS (rig) / 8pk (rig) columns render THIS RIG's own measured
+    numbers with the shipped baseline demoted to a dim reference tail, and the
+    ⏵ run bench nudge when the rig hasn't measured the slug."""
+
+    # -- pure cell-render rules (no app boot) -------------------------------
+
+    @staticmethod
+    def _entry(lm, bar):
+        from types import SimpleNamespace
+        return SimpleNamespace(local_measurement=lm, measurement=bar)
+
+    def test_rig_numbers_with_dim_baseline_reference(self):
+        """Rule 1 — a rig record with TPS + 8pk renders '<n> ▸ rig' with the
+        shipped baseline as a dim '(<bar> base)' tail in BOTH columns."""
+        from club3090_cockpit.app import _rig_tps_cell, _rig_8pk_cell
+        from club3090_cockpit.data import LocalMeasured, Measurement
+
+        e = self._entry(
+            LocalMeasured(narr_tps=72.3, code_tps=120.0, quality_8pk="100/150"),
+            Measurement(narr_tps=174.0, code_tps=42.0, quality_8pk="109/150",
+                        source="baseline"),
+        )
+        assert _rig_tps_cell(e) == "72/120 ▸ rig [dim](174/42 base)[/dim]"
+        assert _rig_8pk_cell(e) == "100/150 ▸ rig [dim](109/150 base)[/dim]"
+
+    def test_no_rig_record_renders_run_bench_nudge(self):
+        """Rule 3 — baseline-only rows keep the nudge render; the shipped
+        baseline NEVER masquerades as a column number."""
+        from club3090_cockpit.app import _rig_tps_cell, _rig_8pk_cell
+        from club3090_cockpit.data import Measurement
+
+        e = self._entry(
+            None,
+            Measurement(narr_tps=174.0, code_tps=42.0, quality_8pk="109/150",
+                        source="baseline"),
+        )
+        assert _rig_tps_cell(e) == "[dim]⏵ run bench[/dim]"
+        assert _rig_8pk_cell(e) == "[dim]⏵ run bench[/dim]"
+
+    def test_tps_only_rig_record_leaves_honest_8pk_dash(self):
+        """A bench without the quality battery: rig TPS renders, 8pk stays '—'."""
+        from club3090_cockpit.app import _rig_tps_cell, _rig_8pk_cell
+        from club3090_cockpit.data import LocalMeasured, Measurement
+
+        e = self._entry(
+            LocalMeasured(decode_tps=88.0),
+            Measurement(narr_tps=174.0, code_tps=42.0, quality_8pk="109/150",
+                        source="baseline"),
+        )
+        assert _rig_tps_cell(e) == "—/88 ▸ rig [dim](174/42 base)[/dim]"
+        assert _rig_8pk_cell(e) == "[dim]—[/dim]"
+
+    def test_quality_only_rig_record_nudges_tps(self):
+        """A quality-only record has no rig TPS → the TPS cell nudges, 8pk
+        renders the rig pack."""
+        from club3090_cockpit.app import _rig_tps_cell, _rig_8pk_cell
+        from club3090_cockpit.data import LocalMeasured, Measurement
+
+        e = self._entry(
+            LocalMeasured(quality_8pk="95/150"),
+            Measurement(narr_tps=174.0, code_tps=42.0, quality_8pk="109/150",
+                        source="baseline"),
+        )
+        assert _rig_tps_cell(e) == "[dim]⏵ run bench[/dim]"
+        assert _rig_8pk_cell(e) == "95/150 ▸ rig [dim](109/150 base)[/dim]"
+
+    def test_submission_bar_is_never_labelled_base(self):
+        """The dim 'base' reference is the SHIPPED baseline only — a cross-rig
+        submission (source 'submission') must not be presented as 'base'."""
+        from club3090_cockpit.app import _rig_tps_cell
+        from club3090_cockpit.data import LocalMeasured, Measurement
+
+        e = self._entry(
+            LocalMeasured(narr_tps=72.0, code_tps=120.0),
+            Measurement(narr_tps=200.0, code_tps=60.0, source="submission",
+                        submission_rig="@elsewhere"),
+        )
+        cell = _rig_tps_cell(e)
+        assert cell == "72/120 ▸ rig"
+        assert "base" not in cell
+
+    # -- wired render (full app, seeded corpus) -----------------------------
+        assert cell == "72/120 ▸ rig"
+    @pytest.mark.asyncio
+    async def test_catalog_row_renders_rig_numbers_over_base(self, tmp_path):
+        """End-to-end: a seeded corpus record flips vllm/dual's row to the rig
+        numbers over the dim baseline reference; the unmeasured ik row keeps
+        the ⏵ run bench nudge and never shows '▸ rig'."""
+        recdir = tmp_path / "results" / "measurement-records"
+        recdir.mkdir(parents=True, exist_ok=True)
+        rec = {
+            "_tag": "vllm/dual",
+            "_recorded_at": "2026-08-01T10:00:00Z",
+            "result_class": "bench-measured",
+            "measured_extensions": {
+                "decode_tps_by_ctx": {"canonical-short": 120.0},
+                "quality_8pk": "100/150",
+            },
+        }
+        (recdir / "dual.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
+        app, _, _ = make_app(repo_root=tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            tbl = app.query_one("#catalog-table", DataTable)
+            rows = [" ".join(str(c) for c in tbl.get_row_at(r)) for r in range(tbl.row_count)]
+            dual_row = next(r for r in rows if "vllm/dual" in r)
+            ik_row = next(r for r in rows if "iq4ks-mtp" in r)
+            # Rig numbers + the dim shipped-baseline reference, same cell.
+            assert "—/120 ▸ rig [dim](174/42 base)[/dim]" in dual_row
+            assert "100/150 ▸ rig [dim](109/150 base)[/dim]" in dual_row
+            # Unmeasured slug: nudge only, no rig marker, no baseline leak.
+            assert "⏵ run bench" in ik_row
+            assert "▸ rig" not in ik_row
+            assert "60/72" not in ik_row
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert "⏵ run bench = not measured on this rig" in status
+
+    @pytest.mark.asyncio
+    async def test_catalog_rig_cells_render_visibly(self, tmp_path):
+        """The rig-over-base cell renders VISIBLY on screen (DataTable clips
+        multi-line cells at row height 1, so the reference must ride the same
+        line): the compositor's visible text carries both the rig number and
+        the dim base reference."""
+        recdir = tmp_path / "results" / "measurement-records"
+        recdir.mkdir(parents=True, exist_ok=True)
+        rec = {
+            "_tag": "vllm/dual",
+            "_recorded_at": "2026-08-01T10:00:00Z",
+            "result_class": "bench-measured",
+            "measured_extensions": {"decode_tps_by_ctx": {"canonical-short": 120.0}},
+        }
+        (recdir / "dual.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
+        app, _, _ = make_app(repo_root=tmp_path)
+        async with app.run_test(size=(160, 44)) as pilot:
+            await _settle(pilot)
+            strips = app.screen._compositor.render_strips()
+            text = "\n".join(s.text for s in strips)
+            assert "▸ rig" in text
+            assert "174/42 base" in text
+
+
 # ===========================================================================
 # Bring-an-arbitrary-repo fit-check — 2-mode merge removed the standalone Run · BYO
 # tab; the producer lane's ① Bring (LaneBringPane) is now the SINGLE entry point.
@@ -2861,6 +3003,55 @@ async def test_scene_preview_shows_all_services_no_clip():
         # the #scene-preview rule carries no max-height cap (box auto-grows to fit)
         preview_rule = OperateOrchPane.DEFAULT_CSS.split("#scene-preview")[1].split("}")[0]
         assert "max-height" not in preview_rule
+
+
+class TestRailKvPool:
+    """c3 — the estate rail card shows the serving target's KV pool from the
+    SAME poll (doctor.kv_pool_pct, parsed by health.sh), honestly '—' when the
+    poll couldn't read it.  The per-GPU VRAM bars above it stay untouched."""
+
+    @staticmethod
+    def _state(kv_pct):
+        from club3090_cockpit.data import DoctorRead
+        return EstateState(
+            gpus=[GpuInfo(index=0, mem_used_mib=12 * 1024, mem_total_mib=24 * 1024)],
+            doctor=DoctorRead(reachable=True, serving=True, kv_pool_pct=kv_pct,
+                              summary="serving" if kv_pct is not None else "reachable"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_rail_shows_kv_pool_when_reported(self):
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            rail = app.query_one("#rail-status", RailStatus)
+            rail.update_from_state(self._state(34), as_of="")
+            txt = str(rail.render())
+            assert "kv pool 34%" in txt
+            # The VRAM bars still render above it.
+            assert "GPU0 12/24G" in txt
+
+    @pytest.mark.asyncio
+    async def test_rail_kv_pool_dash_when_unknown(self):
+        """No KV read in the poll (engine down / non-vLLM / no log line) → an
+        honest '—', never a fabricated percentage."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            rail = app.query_one("#rail-status", RailStatus)
+            rail.update_from_state(self._state(None), as_of="")
+            assert "kv pool —" in str(rail.render())
+
+    @pytest.mark.asyncio
+    async def test_rail_kv_pool_flows_from_estate_poll(self):
+        """The wired path: HEALTH_SERVING's KV line parsed into doctor.kv_pool_pct
+        reaches the rail through load_estate → update_from_state."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            txt = str(app.query_one("#rail-status", RailStatus).render())
+            # HEALTH_SERVING carries "KV pool 61%" → the rail shows it.
+            assert "kv pool 61%" in txt
 
 
 @pytest.mark.asyncio
@@ -6379,6 +6570,113 @@ class TestModalKeyCapture:
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, OptimizeScreen)
+
+
+class TestAccidentalQGuard:
+    """Accidental-q protection: [q] quits instantly when IDLE (unchanged), but
+    while a download or serve/boot action is ACTIVE it routes through the same
+    ConfirmActionScreen gate every other verb uses — Confirm proceeds (exits),
+    Esc/Cancel stays."""
+
+    @staticmethod
+    def _dl_entry(slug="vllm/qwen-27b-dual-max"):
+        from club3090_cockpit.data import (
+            CatalogEntry,
+            WeightsMeta,
+            WEIGHTS_DOWNLOADING,
+            VariantRow,
+        )
+
+        e = CatalogEntry(row=VariantRow(
+            slug=slug, switch_engine="vllm", launch_engine="vllm", compose_dir="x",
+            file="mtp.yml", port=8013, model="qwen3.6-27b", engine="vllm-stable",
+            kvcalc_key="SKIP", container="c",
+            compose_path="models/qwen3.6-27b/vllm/compose/dual/fp8/mtp.yml",
+            status="experimental", ctx_label="262K", status_note=""))
+        e.weights_state = WEIGHTS_DOWNLOADING
+        e.download_pct = 37
+        e.weights = WeightsMeta(
+            model="qwen3.6-27b", variant="fp8", subdir="qwen3.6-27b-fp8",
+            hf_repo="Some/Repo", size_gb=29.0, verify_glob="*.safetensors")
+        return e
+
+    @pytest.mark.asyncio
+    async def test_idle_q_quits_instantly(self):
+        """Idle cockpit: [q] must quit immediately — no confirm modal."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await pilot.press("q")
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmActionScreen)
+            assert not app.is_running, "idle q must quit instantly"
+
+    @pytest.mark.asyncio
+    async def test_active_download_q_shows_confirm_not_quit(self):
+        """An in-flight catalog download makes [q] open the confirm modal — the
+        app must NOT quit on the first press."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            e = self._dl_entry()
+            app._active_downloads()[e.slug] = {"entry": e, "meta": e.weights, "pct": 37}
+            assert app._work_in_flight()
+            await pilot.press("q")
+            await pilot.pause()
+            assert app.is_running, "active-download q must NOT quit outright"
+            assert isinstance(app.screen, ConfirmActionScreen)
+
+    @pytest.mark.asyncio
+    async def test_pending_serve_boot_q_shows_confirm_not_quit(self):
+        """A serve still booting (pending-serve watcher armed) gates [q] too."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app._pending_serve_slug = "vllm/dual"   # watcher armed mid-boot
+            assert app._work_in_flight()
+            await pilot.press("q")
+            await pilot.pause()
+            assert app.is_running, "mid-boot q must NOT quit outright"
+            assert isinstance(app.screen, ConfirmActionScreen)
+
+    @pytest.mark.asyncio
+    async def test_active_download_confirm_proceeds_and_exits(self):
+        """⏎ on the quit-confirm modal proceeds: the app exits — and NOTHING is
+        dispatched to the gated executor (the quit plan executes nothing)."""
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            e = self._dl_entry()
+            app._active_downloads()[e.slug] = {"entry": e, "meta": e.weights, "pct": 37}
+            await pilot.press("q")
+            await _settle(pilot)
+            assert isinstance(app.screen, ConfirmActionScreen)
+            # requires_reconcile=False → the gate reports clear immediately.
+            screen = app.screen
+            assert screen._reconcile is not None and screen._reconcile.safe
+            await pilot.press("enter")
+            await pilot.pause()
+            assert not app.is_running, "confirmed quit must proceed"
+            assert wr.started == [], "quit must never dispatch a write"
+
+    @pytest.mark.asyncio
+    async def test_active_download_dismiss_stays_running(self):
+        """Esc on the quit-confirm modal dismisses it — the app stays up with the
+        download still tracked."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            e = self._dl_entry()
+            app._active_downloads()[e.slug] = {"entry": e, "meta": e.weights, "pct": 37}
+            await pilot.press("q")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfirmActionScreen)
+            assert app.is_running, "dismissed quit must stay running"
+            assert e.slug in app._active_downloads()
 
 
 class TestSubtabCycling:

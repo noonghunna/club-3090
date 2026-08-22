@@ -268,6 +268,45 @@ def _offload_label(e: "CatalogEntry") -> str:
     return (getattr(e.row, "offload", "") or "") or "—"
 
 
+def _rig_tps_cell(e: "CatalogEntry") -> str:
+    """c3 — the TPS (rig) catalog cell: THIS RIG's own measured TPS (the #249
+    corpus written by bench.sh / rebench-full), with the shipped baseline kept
+    as a DIM, clearly-labelled parenthetical.  Render rules:
+      1. rig record WITH a TPS number → ``"<tps> ▸ rig (<bar> base)"``;
+      2. rig record WITHOUT a TPS (quality-only run) → the ⏵ run bench nudge;
+      3. NO rig record (baseline-only row) → the nudge, unchanged in spirit —
+         the shipped baseline never masquerades as a rig number in the column
+         (it stays the labelled "base" reference + the detail-panel "bar").
+    One LINE per cell — DataTable clips multi-line cells at row height 1, so a
+    stacked reference would render invisibly.
+    """
+    lm = e.local_measurement
+    if lm is None or lm.tps_label == "—":
+        return "[dim]⏵ run bench[/dim]"
+    cell = f"{lm.tps_label} ▸ rig"
+    bar = getattr(e, "measurement", None)
+    if bar is not None and bar.source == "baseline" and bar.tps_label not in ("", "—"):
+        cell += f" [dim]({bar.tps_label} base)[/dim]"
+    return cell
+
+
+def _rig_8pk_cell(e: "CatalogEntry") -> str:
+    """c3 — the 8pk (rig) catalog cell: the same per-rig contract as
+    :func:`_rig_tps_cell` for the quality 8-pack.  A bench that ran without the
+    quality battery leaves an honest "—" (no pack was measured here), never a
+    fabricated pass count."""
+    lm = e.local_measurement
+    if lm is None:
+        return "[dim]⏵ run bench[/dim]"
+    if not lm.quality_8pk:
+        return "[dim]—[/dim]"
+    cell = f"{lm.quality_8pk} ▸ rig"
+    bar = getattr(e, "measurement", None)
+    if bar is not None and bar.source == "baseline" and bar.quality_8pk:
+        cell += f" [dim]({bar.quality_label} base)[/dim]"
+    return cell
+
+
 # ── Catalog column picker (#724) ─────────────────────────────────────────────
 # The CANONICAL catalog column set — the ONE source for the header build, the
 # row-cell build and the [|] columns picker.  (key, header) pairs in DEFAULT
@@ -1299,14 +1338,14 @@ class CatalogPane(Container):
         }
         prev_model: Optional[str] = None  # blank-on-repeat → the switch.sh --list grouped look
         for e in rows:
-            # Per-rig honesty: the perf columns (TPS / 8pk) show THIS RIG's OWN
-            # measured numbers — the #249 corpus written by the user's bench.sh /
-            # quality-test.sh — NOT the shipped baseline. "(rig)" must mean the
-            # user's rig, so it's blank + a run-bench nudge until they measure the
-            # slug here. The shipped baseline stays the labelled "bar" reference in
-            # the detail panel (e.measurement), never masquerading as the column.
-            lm = e.local_measurement
-            tps = lm.tps_label if lm is not None else "[dim]⏵ bench[/dim]"
+            # Per-rig honesty (c3): the perf columns (TPS / 8pk) show THIS RIG's
+            # OWN measured numbers — the #249 corpus written by the user's
+            # bench.sh / quality-test.sh — with the shipped baseline demoted to
+            # a dim, labelled reference line ("… base"). "(rig)" must mean the
+            # user's rig, so an unmeasured slug renders the ⏵ run bench nudge;
+            # baseline-only rows keep that nudge render — the baseline never
+            # masquerades as a column number.
+            tps = _rig_tps_cell(e)
             # N3: mark the live-serving row so the running model is visible at a
             # glance in Run.  Driven by the estate's matched_slug.
             slug_cell = e.slug
@@ -1352,10 +1391,10 @@ class CatalogPane(Container):
                 "spec": _spec_label(e),
                 "ctx": e.ctx_label or "—",
                 "tps": tps,
-                # per-rig: the user's own 8-pack (from quality-test.sh → corpus).
-                # Blank until they run it here — a bench without quality still
-                # leaves this "—" (the tps nudge already prompts the bench).
-                "8pk": (lm.quality_label if (lm is not None and lm.quality_8pk) else "[dim]—[/dim]"),
+                # per-rig: the user's own 8-pack (from quality-test.sh → corpus)
+                # over a dim baseline reference; "—" when their bench ran
+                # without the quality battery.
+                "8pk": _rig_8pk_cell(e),
                 "topo": e.topology,
                 "engine": e.engine,
                 "status": Text.from_markup(_status_glyph(e.status)),
@@ -1407,13 +1446,14 @@ class CatalogPane(Container):
             )
         else:
             # Per-rig honesty: the TPS/8pk columns are THIS RIG's own measured
-            # numbers. A "⏵ bench" cell means the rig hasn't measured that slug
-            # yet — run bench.sh / quality-test.sh to fill it. The shipped baseline
-            # "bar" (and any community submissions) live in the slug detail panel,
-            # not the column, so they never masquerade as this rig's numbers.
+            # numbers. A "⏵ run bench" cell means the rig hasn't measured that
+            # slug yet — run bench.sh / quality-test.sh to fill it. The shipped
+            # baseline "bar" appears only as a dim "base" reference UNDER the
+            # user's numbers, and lives in full in the slug detail panel — it
+            # never masquerades as this rig's number.
             nudge_note = (
-                "  ([dim]⏵ bench = not measured on this rig yet — run bench.sh / "
-                "quality-test.sh[/dim])"
+                "  ([dim]⏵ run bench = not measured on this rig yet — run "
+                "bench.sh / quality-test.sh[/dim])"
             )
             status_label.update(
                 f"{banner}{len(self._entries)} variants loaded from registry{nudge_note}{dep_note}"
@@ -7679,6 +7719,15 @@ class RailStatus(Static):
             color = "green" if pct < 80 else "yellow" if pct < 95 else "red"
             bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * (10 - filled)}[/dim]"
             lines.append(f"{bar} GPU{i} {used:.0f}/{total:.0f}G")
+        # c3 estate bar: the serving target's KV pool, from the SAME estate
+        # poll (health.sh parses the engine log's "GPU KV cache usage" line →
+        # doctor.kv_pool_pct).  Honest "—" when the poll couldn't read it
+        # (engine down / non-vLLM / no recent log line) — never a guess.
+        dr = state.doctor
+        if dr.kv_pool_pct is not None:
+            lines.append(f"[dim]kv pool {dr.kv_pool_pct}%[/dim]")
+        else:
+            lines.append("[dim]kv pool —[/dim]")
         lines.append("")
         if state.matched_slug:
             # F9: a port/substring registry match is a SHAPE guess, not a verified
@@ -7696,7 +7745,6 @@ class RailStatus(Static):
                 lines.append(f"model   {state.matched_slug}")
         elif state.target is not None and getattr(state.target, "model", ""):
             lines.append(f"model   {state.target.model}")
-        dr = state.doctor
         if dr.reachable:
             glyph = "[green]●[/green]" if dr.serving else "[yellow]○[/yellow]"
             lines.append(f"{glyph} {dr.summary}")
@@ -11869,6 +11917,44 @@ class CockpitApp(App):
     def action_help(self) -> None:
         # Thread the surface so the consumer help OMITS the producer lane (R3b-1).
         self.push_screen(HelpScreen(surface=self._surface))
+
+    # ── Accidental-q guard ──────────────────────────────────────────────────────
+    #
+    # [q] quits instantly when the cockpit is IDLE (unchanged).  While WORK is in
+    # flight — a weights download (catalog or ① Bring, either tracker or the
+    # disk-truth pull.sh lock) or a serve/boot still resolving (the pending-serve
+    # watcher armed) — an accidental q could orphan a 20 GB fetch or hide a boot
+    # mid-flight, so q routes through the SAME confirm modal every other gated
+    # verb uses (ConfirmActionScreen; the app's established confirm-gate
+    # pattern).  The quit plan claims no GPU and executes NOTHING:
+    # ``requires_reconcile=False`` makes the gate report clear immediately, and
+    # the on_confirm callback exits directly — dispatch_action is never reached.
+    # Ctrl+C is untouched (Textual's own handler).
+
+    def _work_in_flight(self) -> bool:
+        """True while a download or serve/boot action is ACTIVE — i.e. quitting
+        right now would need a confirmation."""
+        if self._active_downloads():
+            return True
+        if self._active_bring_download() or self._bring_disk_download()[1] is not None:
+            return True
+        return bool(self._pending_serve_slug) or bool(self._pending_serve_generated)
+
+    def action_quit(self) -> None:
+        """[q] Quit — instant when idle, confirm-gated while work is in flight."""
+        if self._work_in_flight():
+            self.push_screen(ConfirmActionScreen(
+                ActionPlan(
+                    kind="quit",
+                    cmd=[],
+                    description="Quit the cockpit (work still in flight)",
+                    is_write=False,
+                    requires_reconcile=False,
+                ),
+                on_confirm=lambda _plan: self.exit(),
+            ))
+            return
+        self.exit()
 
     # ── Default-pin management (Run · Catalog) ──────────────────────────────────
 
