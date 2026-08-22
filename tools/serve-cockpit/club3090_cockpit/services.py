@@ -431,7 +431,15 @@ class CockpitData:
         # 'scripts'" (and fit-check's topology detection silently degrades).
         # 2026-07-09 dogfood — previously only one call site guarded this.
         import sys as _sys
-        if str(self.repo_root) not in _sys.path:
+        # ⚠️ Only insert roots that actually provide the module tree:
+        # scripts/lib/profiles is a REGULAR package (__init__.py), so the first
+        # sys.path entry containing it pins resolution exclusively — inserting a
+        # tmp fixture root shadows the real tree and poisons every later
+        # `scripts.lib.profiles.*` import (full-suite contamination).
+        if (
+            str(self.repo_root) not in _sys.path
+            and (self.repo_root / "scripts" / "lib" / "profiles" / "__init__.py").exists()
+        ):
             _sys.path.insert(0, str(self.repo_root))
         self.card = card
         # FIX 2 — the registry's top-level ``defaults`` array (curated
@@ -3113,8 +3121,15 @@ print(json.dumps(out))
         }
         try:
             import sys as _sys
-            if str(self.repo_root) not in _sys.path:
-                _sys.path.insert(0, str(self.repo_root))   # cwd-independent import
+            if (
+                str(self.repo_root) not in _sys.path
+                and (
+                    self.repo_root / "scripts" / "lib" / "profiles" / "__init__.py"
+                ).exists()
+            ):
+                _sys.path.insert(
+                    0, str(self.repo_root)
+                )   # cwd-independent import
             from scripts.lib.profiles.compose_registry import get_registry
             entry = get_registry().get(profile_like)
             if entry:
@@ -4843,6 +4858,35 @@ print(json.dumps(out))
             ),
             requires_reconcile=False,    # no GPU contention — a repo write
             requires_confirm=True,       # repo mutation — confirm, never auto
+        )
+
+    def export_pr_plan(self, spec: dict, *, out_dir: Optional[str] = None) -> ActionPlan:
+        """Build the GATED ActionPlan for ``export_pr.py`` — translate an
+        already-promoted LOCAL-layer model into the three ready-to-commit CORE
+        artifacts (models/<id>.yml · core-layout compose tree · the registry
+        ENTRY FILE ``registry-entry.yaml`` + canonical merge command), written
+        ONLY under ``out_dir`` (default /tmp).  LOCAL-layer models only: a CORE
+        model already IS core content.  The spec rides in the child env as
+        ``C3_EXPORT_SPEC`` (merged over os.environ by execute_action); the plan
+        claims no GPU and NEVER auto-fires."""
+        mid = (spec or {}).get("model_id", "?")
+        cmd = [
+            "python3", "scripts/lib/profiles/export_pr.py",
+            "--spec-env", "C3_EXPORT_SPEC",
+        ]
+        if out_dir:
+            cmd += ["--out", out_dir]
+        return ActionPlan(
+            kind="export_pr",
+            cmd=cmd,
+            env={"C3_EXPORT_SPEC": json.dumps(spec or {}, ensure_ascii=False)},
+            description=(
+                f"export PR bundle for {mid} (models/<id>.yml + compose tree "
+                "+ registry-entry.yaml), written ONLY under "
+                f"{out_dir or '/tmp'}"
+            ),
+            requires_reconcile=False,    # no GPU contention — writes under --out
+            requires_confirm=True,       # runs a script — confirm, never auto
         )
 
     # ── Hook 3: Optimize for my card — DORMANT v0.10.0 seam (design §5.2 seam 1) ────

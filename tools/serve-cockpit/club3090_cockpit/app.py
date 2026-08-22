@@ -5288,16 +5288,22 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
     BINDINGS = [
         Binding("enter", "stage_write", "Write LOCAL layer", show=True, priority=True),
         Binding("c", "stage_core", "WRITE CORE REGISTRY", show=True, priority=True),
+        Binding("e", "export_pr", "Export PR bundle", show=True),
         Binding("y", "app.copy_context", "Copy YAML", show=True),
         Binding("escape", "dismiss", "Close"),
     ]
 
-    def __init__(self, scaffold: PromoteScaffold, *, on_stage_write=None, **kwargs):
+    def __init__(self, scaffold: PromoteScaffold, *, on_stage_write=None,
+                 on_export_pr=None, **kwargs):
         super().__init__(**kwargs)
         self._scaffold = scaffold
         # on_stage_write(layer, spec) — the app builds the ActionPlan for the
         # chosen layer with the user's inline edits applied.
         self._on_stage_write = on_stage_write
+        # on_export_pr(spec) — the community-loop completion: hand the edited
+        # spec to the app, which confirm-gates ``export_pr.py`` (the LOCAL →
+        # CORE PR-bundle translator).  Only meaningful for layer=="local".
+        self._on_export_pr = on_export_pr
         # [Y] copy payload: the raw (markup-free) YAML + registry entry.
         if not getattr(scaffold, "error", ""):
             self._copy_payload = (
@@ -5442,9 +5448,15 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Gate the ⏎ binding on computed + the required edits (mirrors the
-        disabled stage buttons)."""
+        disabled stage buttons).  [E] export is additionally LOCAL-only: a CORE
+        scaffold already IS core content — there is nothing to export."""
         if action == "stage_write":
             return self._can_stage()
+        if action == "export_pr":
+            return (
+                getattr(self._scaffold, "layer", "") == "local"
+                and bool(self._scaffold.computed)
+            )
         return True
 
     def action_stage_write(self) -> None:
@@ -5452,6 +5464,18 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
         possible; check_action gates the binding otherwise)."""
         if self._can_stage():
             self._stage_write(layer="local")
+
+    def action_export_pr(self) -> None:
+        """E — Export as PR bundle: stage the ``export_pr.py`` plan through the
+        app's confirm gate (never auto-fires; writes only under --out).
+        Context-gated to LOCAL-layer scaffolds by check_action; re-asserted
+        here."""
+        if getattr(self._scaffold, "layer", "") != "local" or not self._can_stage():
+            return
+        spec = self._edited_spec()
+        self.app.pop_screen()
+        if self._on_export_pr is not None:
+            self._on_export_pr(spec)
 
     def _stage_write(self, *, layer: str) -> None:
         """Hand the GATED write plan for the chosen layer back to the app's
@@ -12093,6 +12117,12 @@ class CockpitApp(App):
                     ConfirmActionScreen(
                         self._data.promote_write_plan(scaffold, layer=layer, spec=spec)
                     )
+                ),
+                # [E] Export PR bundle — the community-loop completion: the
+                # edited LOCAL-layer spec confirm-gates export_pr.py (writes
+                # ONLY under --out; never auto-fires).
+                on_export_pr=lambda spec: self.push_screen(
+                    ConfirmActionScreen(self._data.export_pr_plan(spec))
                 ),
             )
         )

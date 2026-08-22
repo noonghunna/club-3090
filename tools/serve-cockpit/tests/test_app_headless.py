@@ -5089,6 +5089,70 @@ class TestPromoteHookWired:
             assert "--layer core" in " ".join(app.screen._plan.cmd)
             assert wr.started == []          # confirm gate not yet passed
 
+    @pytest.mark.asyncio
+    async def test_export_pr_binding_is_local_only_and_confirm_gated(self):
+        """[E] Export PR bundle — the community-loop completion.  The binding
+        is declared on the LOCAL-layer scaffold, context-gated OFF for CORE
+        (a core scaffold already IS core content), and the staged plan routes
+        through the standard confirm gate without ever auto-firing."""
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            sc = app.screen
+            assert isinstance(sc, PromoteScaffoldScreen)
+            # The [E] binding is advertised.
+            assert sc.check_action("export_pr", ()) is True
+            assert any(
+                b.action == "export_pr" for b in sc.BINDINGS
+            ), "the [E] binding must be declared on the scaffold"
+            # A CORE-layer scaffold is NOT exportable (it already IS core
+            # content) — the gate is contextual, not global.
+            sc._scaffold.layer = "core"
+            assert sc.check_action("export_pr", ()) is False
+
+    @pytest.mark.asyncio
+    async def test_export_opens_confirm_gate_with_spec_env(self):
+        """Pressing [E] pops the scaffold and opens the confirm gate over the
+        export_pr plan: export_pr.py + --spec-env C3_EXPORT_SPEC carrying the
+        edited spec; nothing executes until confirmed."""
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            sc = app.screen
+            sc.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            sc.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            sc.on_input_changed(None)
+            # off the inputs.
+            sc.action_export_pr()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            plan = app.screen._plan
+            assert plan.kind == "export_pr"
+            assert plan.requires_confirm is True
+            assert plan.requires_reconcile is False
+            joined = " ".join(plan.cmd)
+            assert "export_pr.py" in joined
+            assert "--spec-env" in joined and "C3_EXPORT_SPEC" in joined
+            spec = json.loads((plan.env or {})["C3_EXPORT_SPEC"])
+            assert spec["display_name"] == "Qwen3 27B Abliterated"
+            assert spec["family"] == "qwen3-dense"
+            # Nothing executed yet — the write is mock-only, never auto-fired.
+            assert wr.started == []
+
 
 # ===========================================================================
 # PHASE R / R3b-1 — the Bring & Validate producer lane (ordered ①→⑤ pipeline)

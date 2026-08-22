@@ -319,16 +319,22 @@ def full_runner(**overrides) -> FakeRunner:
 
 class TestScriptsImportable:
     def test_init_puts_repo_root_on_sys_path(self, tmp_path):
-        """route-G/C ② Serve emit does `from scripts.lib.profiles...`; c3 runs from
-        tools/serve-cockpit/ so the repo root ISN'T on sys.path by default. __init__
-        must add it, else serve dies "No module named 'scripts'" (2026-07-09)."""
+        """Only roots that PROVIDE scripts/lib/profiles get inserted: the dir is
+        a REGULAR package, so a bare tmp root inserted first pins resolution and
+        poisons every later scripts.lib.profiles.* import suite-wide."""
         import sys
-        assert str(tmp_path) not in sys.path
+
+        seeded = tmp_path / "scripts" / "lib" / "profiles"
+        seeded.mkdir(parents=True)
+        (seeded / "__init__.py").write_text("")
         CockpitData(tmp_path, runner=full_runner())
-        assert str(tmp_path) in sys.path
+        assert str(tmp_path) in sys.path  # provides the tree -> inserted
 
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        CockpitData(bare, runner=full_runner())
+        assert str(bare) not in sys.path  # no module tree -> NOT inserted
 
-class TestParseHelpers:
     def test_strip_ansi(self):
         assert strip_ansi("\x1b[0;32m✓\x1b[0m serving") == "✓ serving"
 
@@ -3977,6 +3983,25 @@ class TestPromoteScaffold:
         assert spec["compose"]["path"].startswith("models/")
         # The gate flag is NOT injected — it must exist in the user's env.
         assert "C3_ALLOW_CORE_PROMOTE" not in (plan.env or {})
+
+    def test_export_pr_plan_is_gated_mock_only(self):
+        """The community-loop completion: the [E] Export PR bundle plan runs
+        ``export_pr.py`` with the spec in the child env, claims no GPU, and
+        NEVER auto-fires (confirm-gated)."""
+        cd = CockpitData(ROOT, runner=full_runner())
+        sc = cd.promote_scaffold(byo=self._byo())
+        plan = cd.export_pr_plan({"model_id": sc.model_id})
+        assert plan.kind == "export_pr"
+        assert plan.requires_confirm is True
+        assert plan.requires_reconcile is False
+        joined = " ".join(plan.cmd)
+        assert "export_pr.py" in joined
+        assert "--spec-env C3_EXPORT_SPEC" in joined
+        spec = json.loads((plan.env or {})["C3_EXPORT_SPEC"])
+        assert spec["model_id"] == sc.model_id
+        # An explicit --out lands in the cmd (default /tmp does not).
+        plan2 = cd.export_pr_plan({"model_id": sc.model_id}, out_dir="/tmp/b")
+        assert "--out /tmp/b" in " ".join(plan2.cmd)
 
     @pytest.mark.asyncio
     async def test_promote_does_not_write_into_scripts_dir(self, tmp_path):
