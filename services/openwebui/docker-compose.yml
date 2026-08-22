@@ -51,9 +51,11 @@ services:
       #
       # ⚠️ PersistentConfig: on an EXISTING volume the stored config WINS — re-run
       # scripts/setup-ai-studio.sh or set these in Admin → Settings → Connections.
-      # (setup-ai-studio.sh still registers per-port connections and drops :4000;
-      # until it is updated, existing volumes keep the old wiring.) Backends are
-      # no-auth on localhost, so the key is a placeholder.
+      # (setup-ai-studio.sh migrates legacy volumes to this same wiring: it
+      # registers :4000 + the unrouted :8090 director and drops the pre-collapse
+      # per-port connections; it also honors OWUI_OPENAI_API_BASE_URLS and stays
+      # out of the way when the override is set.) Backends are no-auth on
+      # localhost, so the key is a placeholder.
       - "OPENAI_API_BASE_URLS=${OWUI_OPENAI_API_BASE_URLS:-http://host.docker.internal:4000/v1;http://host.docker.internal:8090/v1}"
       # ⚠️ COUNT MUST MATCH *_URLS above — positional, ;-separated pairs. Nothing
       # validates this, so a backend added to one list and not the other silently
