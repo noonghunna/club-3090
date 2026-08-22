@@ -54,6 +54,23 @@ def save_settings(settings: dict) -> None:
         pass
 
 
+def first_run_seen() -> bool:
+    """Whether the first-run guide was dismissed with "Skip — I know what I'm
+    doing" (``first_run_seen`` in c3-settings.json).  Tolerant like
+    :func:`load_settings` — anything but an explicit ``true`` reads as unseen."""
+    return load_settings().get("first_run_seen") is True
+
+
+def save_first_run_seen() -> None:
+    """Persist the first-run seen-flag (MERGE — every other persisted setting is
+    preserved).  Best-effort like :func:`save_settings`; idempotent."""
+    s = load_settings()
+    if s.get("first_run_seen") is True:
+        return
+    s["first_run_seen"] = True
+    save_settings(s)
+
+
 def apply_persisted_settings(app, environ) -> None:
     """Apply MODEL_DIR / HF_TOKEN / C3_LOG to the app before run().
 
@@ -79,6 +96,12 @@ def apply_persisted_settings(app, environ) -> None:
     cols = s.get("catalog_columns")
     if isinstance(cols, dict):
         app.catalog_columns_pref = cols
+    # Catalog sort ([s] cycle): the persisted last sort mode — applied via an
+    # app attribute the same way (CatalogPane sanitizes on mount; unknown /
+    # malformed values degrade to the group-by-model default).
+    srt = s.get("catalog_sort")
+    if isinstance(srt, str) and srt:
+        app.catalog_sort_pref = srt
     # Master logging: strict C3_LOG=1|0 shell override wins for this launch.
     # Invalid/absent values fall back to the persisted boolean, default OFF.
     from .session_logging import env_log_override

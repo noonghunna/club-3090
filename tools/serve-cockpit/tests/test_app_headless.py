@@ -10636,9 +10636,10 @@ class TestTier1PrimaryActionAndSKeyHonesty:
             assert app.check_action("doctor_rerun", ()) is False
 
     @pytest.mark.asyncio
-    async def test_s_key_gated_to_containers_only_in_mode0(self):
-        """[s] is valid on Containers (restart) but NOT on Catalog / Orchestration /
-        Doctor — the over-broad ({0,1}, None) gate is gone."""
+    async def test_s_key_gated_to_containers_and_catalog_in_mode0(self):
+        """[s] is valid on Containers (restart) AND on Catalog (sort cycle —
+        the [s] cycle verb); NOT on Orchestration / Doctor — the over-broad
+        ({0,1}, None) gate is gone."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
@@ -10646,7 +10647,10 @@ class TestTier1PrimaryActionAndSKeyHonesty:
             tc.active = "tab-containers"
             await pilot.pause()
             assert app.check_action("s_key", ()) is True
-            for tab in ("tab-catalog", "tab-orchestration", "tab-doctor"):
+            tc.active = "tab-catalog"
+            await pilot.pause()
+            assert app.check_action("s_key", ()) is True  # sort cycle lives here
+            for tab in ("tab-orchestration", "tab-doctor"):
                 tc.active = tab
                 await pilot.pause()
                 assert app.check_action("s_key", ()) is False, tab
@@ -12788,3 +12792,182 @@ class TestAdaptiveEstatePoll:
         assert st.gpus == ["g0", "g1"] and calls == [st]
         bound([])                          # empty read → keep last bars (no-op)
         assert st.gpus == ["g0", "g1"]
+
+
+class TestCatalogSort:
+    """[s] on Catalog cycles the sort: group-by-model (default) → TPS ↓ →
+    GB ↑ → ctx ↓ → back.  Sorting applies AFTER the filter; the model-cell
+    blank-on-repeat grouping renders ONLY in the default mode (sorted rows rank
+    globally, so every row must keep its model identity); the choice persists
+    to c3-settings.json ("catalog_sort") and seeds the next launch."""
+
+    @staticmethod
+    def _entry(slug: str, model: str, *, tps=None, gb=None, ctx_label="262K"):
+        from club3090_cockpit.data import (
+            CatalogEntry as _CE,
+            LocalMeasured as _LM,
+            WeightsMeta as _WM,
+        )
+        from club3090_tui_core import VariantRow as _VR
+
+        cp = f"models/{model}/vllm/compose/dual/q/base.yml"
+        return _CE(
+            row=_VR(
+                slug=slug, switch_engine="vllm", launch_engine="vllm",
+                compose_dir=cp.rsplit("/", 1)[0], file="base.yml", port=8000,
+                model=model, engine="vllm-stable", kvcalc_key=f"{model}:dual",
+                container="c", compose_path=cp, status="production",
+                ctx_label=ctx_label, status_note="",
+            ),
+            # The TPS sort ranks THIS RIG's own measured number (what the
+            # column shows) — code_tps only mirrors an ONLY= corpus record.
+            local_measurement=_LM(code_tps=float(tps)) if tps is not None else None,
+            weights=_WM(size_gb=float(gb)) if gb is not None else None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_cycle_order_and_status_line(self):
+        """The [s] cycle order + the 'sort:' status segment: shown in every
+        non-default mode with the right direction glyph, absent on default."""
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            status = str(app.query_one("#catalog-status", Label).render())
+            assert pane._sort_mode == "model"
+            assert "sort:" not in status  # default needs no announcement
+
+            expected = [("tps", "sort: TPS ↓"), ("gb", "sort: GB ↑"),
+                        ("ctx", "sort: ctx ↓"), ("model", None)]
+            for mode, label in expected:
+                await pilot.press("s")   # through the REAL key routing
+                await pilot.pause()
+                assert pane._sort_mode == mode
+                status = str(app.query_one("#catalog-status", Label).render())
+                if label is None:
+                    assert "sort:" not in status
+                else:
+                    assert label in status
+
+    @pytest.mark.asyncio
+    async def test_sorted_render_keeps_model_identity(self):
+        """Blank-on-repeat model cells ONLY in the group-by-model default; a
+        sorted mode shows EVERY row's model name (a global ranking would
+        otherwise strip interleaved rows of their identity)."""
+        from textual.widgets import DataTable
+
+        entries = [
+            self._entry("mA/slow", "mA", tps=10.0),
+            self._entry("mA/fast", "mA", tps=90.0),
+            self._entry("mB/mid", "mB", tps=50.0),
+        ]
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate(entries, None)
+            table = app.query_one("#catalog-table", DataTable)
+
+            def model_cells():
+                # Cells carry the [cyan] model-name markup — strip it.
+                return [
+                    str(table.get_row_at(r)[0])
+                    .replace("[cyan]", "").replace("[/cyan]", "")
+                    for r in range(table.row_count)
+                ]
+
+            # Default: grouped — mA header once, repeat blanked.
+            assert [c for c in model_cells() if c] == ["mA", "mB"]
+
+            # TPS ↓: global ranking; every row names its model.
+            pane.cycle_sort()
+            assert [e.slug for e in pane._filtered_entries()] == [
+                "mA/fast", "mB/mid", "mA/slow",
+            ]
+            assert model_cells() == ["mA", "mB", "mA"]
+
+    @pytest.mark.asyncio
+    async def test_sort_applies_after_filter(self):
+        """Filtering narrows FIRST; the active sort then orders the survivors —
+        never resurrects filtered-out rows, never mixes pools."""
+        from textual.widgets import DataTable
+
+        entries = [
+            self._entry("gemma/dual", "gemma-4-31b", tps=30.0),
+            self._entry("gemma/single", "gemma-4-31b", tps=80.0),
+            self._entry("qwen/dual", "qwen3-27b", tps=10.0),
+            self._entry("qwen/fast", "qwen3-27b", tps=100.0),
+        ]
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate(entries, None)
+            pane.cycle_sort()          # → TPS ↓
+            # NOTE: "dual" would match EVERY row here — the topology token is
+            # derived from the compose path, which all four share.  Filter on
+            # the model name instead: narrows to the two gemma lanes FIRST,
+            # then the active TPS ↓ sort orders them (80 > 30).
+            pane.set_filter("gemma")
+            got = [e.slug for e in pane._filtered_entries()]
+            assert got == ["gemma/single", "gemma/dual"]
+            table = app.query_one("#catalog-table", DataTable)
+            assert table.row_count == 2
+            # The RENDERED table agrees (slug is visible column index 1).
+            assert [str(table.get_row_at(r)[1]) for r in range(table.row_count)] == [
+                "gemma/single", "gemma/dual",
+            ]
+
+    @pytest.mark.asyncio
+    async def test_gb_and_ctx_directions_and_unknowns_sink(self):
+        """GB ↑ ascends; ctx ↓ descends; rows with NO value for the active key
+        sink to the bottom regardless of direction."""
+        entries = [
+            self._entry("big/no-ctx", "m", gb=64.0, ctx_label=""),
+            self._entry("m/small", "m", gb=16.0, ctx_label="131K"),
+            self._entry("m/big-ctx", "m", gb=32.0, ctx_label="262K"),
+        ]
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.populate(entries, None)
+            pane.cycle_sort(); pane.cycle_sort()      # → GB ↑
+            assert [e.slug for e in pane._filtered_entries()] == [
+                "m/small", "m/big-ctx", "big/no-ctx",
+            ]
+            pane.cycle_sort()                          # → ctx ↓
+            assert [e.slug for e in pane._filtered_entries()] == [
+                "m/big-ctx", "m/small", "big/no-ctx",
+            ]
+
+    @pytest.mark.asyncio
+    async def test_persistence_round_trip(self, monkeypatch, tmp_path):
+        """cycle_sort writes "catalog_sort" to c3-settings.json (alongside the
+        column prefs), and apply_persisted_settings seeds the NEXT launch's
+        pane with it.  C3_CONFIG_DIR isolated so nothing real is touched."""
+        monkeypatch.setenv("C3_CONFIG_DIR", str(tmp_path))
+        from club3090_cockpit import __main__ as M
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#catalog-pane", CatalogPane)
+            pane.cycle_sort()
+        assert M.load_settings()["catalog_sort"] == "tps"
+
+        # Next launch: apply_persisted_settings → the pane MOUNTS sorted.
+        app2, _, _ = make_app()
+        M.apply_persisted_settings(app2, {})
+        async with app2.run_test(size=(120, 40)):
+            pane2 = app2.query_one("#catalog-pane", CatalogPane)
+            assert pane2._sort_mode == "tps"
+            assert pane2._sort_label() == "TPS ↓"
+        # A corrupt persisted value degrades to the group-by-model default.
+        s = M.load_settings()
+        s["catalog_sort"] = "bogus"
+        M.save_settings(s)
+        app3, _, _ = make_app()
+        M.apply_persisted_settings(app3, {})
+        async with app3.run_test(size=(120, 40)):
+            assert app3.query_one("#catalog-pane", CatalogPane)._sort_mode == "model"

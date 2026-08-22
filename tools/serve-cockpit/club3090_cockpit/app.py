@@ -307,6 +307,34 @@ def _rig_8pk_cell(e: "CatalogEntry") -> str:
     return cell
 
 
+def _sort_tps_value(e: "CatalogEntry") -> Optional[float]:
+    """Numeric TPS for the [s] sort — the SAME per-rig number the TPS column
+    shows (the #249 corpus via local_measurement), as the mean of the present
+    narr/code figures.  None when this rig hasn't measured the slug (the ⏵ run
+    bench row): a sort never ranks a number the row doesn't display."""
+    lm = getattr(e, "local_measurement", None)
+    if lm is None:
+        return None
+    code = lm.code_tps if lm.code_tps is not None else lm.decode_tps
+    vals = [v for v in (lm.narr_tps, code) if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _sort_gb_value(e: "CatalogEntry") -> Optional[float]:
+    """Numeric weights size for the [s] sort — the joined WeightsMeta.size_gb
+    behind the GB column; None when unjoined ("—")."""
+    return getattr(getattr(e, "weights", None), "size_gb", None)
+
+
+def _sort_ctx_value(e: "CatalogEntry") -> Optional[int]:
+    """Configured ctx for the [s] sort — the exact registry int when the emit
+    carried it, else the compact label parsed back ("262K" → 262000); None
+    when neither parses."""
+    if e.configured_ctx is not None:
+        return e.configured_ctx
+    return parse_ctx_label(e.ctx_label)
+
+
 # ── Catalog column picker (#724) ─────────────────────────────────────────────
 # The CANONICAL catalog column set — the ONE source for the header build, the
 # row-cell build and the [|] columns picker.  (key, header) pairs in DEFAULT
@@ -334,6 +362,25 @@ _CATALOG_COLUMNS: "list[tuple[str, str]]" = [
 ]
 _CATALOG_HEADERS = dict(_CATALOG_COLUMNS)
 _CATALOG_PINNED = {"slug"}  # identity — never hideable
+_CATALOG_SORTS: "list[tuple[str, str]]" = [
+    # The [s] catalog sort cycle, in order.  "model" is the DEFAULT — the
+    # stable group-by-model registry view (switch.sh --list look); the other
+    # modes rank GLOBALLY across models.  The label is what the status line
+    # shows while the mode is active ("sort: TPS ↓").
+    ("model", ""),
+    ("tps", "TPS ↓"),
+    ("gb", "GB ↑"),
+    ("ctx", "ctx ↓"),
+]
+_CATALOG_SORT_KEYS = {k for k, _ in _CATALOG_SORTS}
+
+
+def _sanitize_catalog_sort(saved: Any) -> str:
+    """Normalise a persisted ``catalog_sort`` value (a bare key string) into a
+    safe mode: anything unknown / malformed → the group-by-model default."""
+    key = saved.get("sort") if isinstance(saved, dict) else saved
+    key = str(key or "")
+    return key if key in _CATALOG_SORT_KEYS else "model"
 
 
 def _sanitize_catalog_columns(saved: Any) -> tuple[list[str], set[str]]:
@@ -1145,7 +1192,7 @@ class CatalogPane(Container):
         )
         yield Label(
             "[dim]\\[\\\\] model   \\[/] filter   \\[⏎] serve   \\[e] explain   "
-            "\\[d] set-default   \\[D] clear-default   \\[|] columns[/dim]",
+            "\\[d] set-default   \\[D] clear-default   \\[s] sort   \\[|] columns[/dim]",
             id="catalog-hint",
         )
 
@@ -1191,6 +1238,13 @@ class CatalogPane(Container):
         # OFF by default so the catalog still answers "what COULD I run?" — this
         # is opt-in for "what can I run right now, without a download?".
         self._downloaded_only: bool = False
+        # [s] sort cycle: group-by-model (default) → TPS ↓ → GB ↑ → ctx ↓.
+        # Seeded from the persisted "catalog_sort" pref (same launch plumbing
+        # as the [|] picker's "catalog_columns" — an app attribute the pane
+        # reads on mount, so a directly-constructed app starts canonical).
+        self._sort_mode: str = _sanitize_catalog_sort(
+            getattr(self.app, "catalog_sort_pref", None)
+        )
         # Distinct model names (registry order) backing the dropdown — refreshed on load.
         self._models: list[str] = []
         # N3: the slug currently live-serving (from the estate's matched_slug),
@@ -1263,6 +1317,55 @@ class CatalogPane(Container):
         """Clicking the catalog table header opens the columns picker (#724)."""
         if getattr(getattr(event, "data_table", None), "id", "") == "catalog-table":
             self.open_columns_picker()
+
+    # ── Sort cycle ([s]) ──────────────────────────────────────────────────────
+
+    def _sorted_entries(self, entries: list[CatalogEntry]) -> list[CatalogEntry]:
+        """Order the (already FILTERED) rows per the [s] cycle's active mode.
+        "model" → the default stable group-by-model registry view; the measured
+        modes rank GLOBALLY across models (a ranking, not a grouping).  Rows
+        with no value for the active key (unmeasured / unjoined weights) sink
+        to the bottom regardless of direction — an unknown is never "fastest"
+        nor "smallest".  The sort is stable, so ties keep registry order."""
+        if self._sort_mode == "model":
+            return self._grouped_by_model(entries)
+        keyf = {
+            "tps": _sort_tps_value,
+            "gb": _sort_gb_value,
+            "ctx": _sort_ctx_value,
+        }[self._sort_mode]
+        reverse = self._sort_mode in ("tps", "ctx")
+        present = [e for e in entries if keyf(e) is not None]
+        absent = [e for e in entries if keyf(e) is None]
+        return sorted(present, key=keyf, reverse=reverse) + absent
+
+    def _sort_label(self) -> str:
+        """The status-line label for the active sort mode ("" on the default)."""
+        return dict(_CATALOG_SORTS).get(self._sort_mode, "")
+
+    def cycle_sort(self) -> None:
+        """[s] on Catalog — group-by-model (default) → TPS ↓ → GB ↑ → ctx ↓
+        → back.  Persists the choice ("catalog_sort" in c3-settings.json, the
+        same pattern as the [|] picker's "catalog_columns") and re-renders with
+        the cursor preserved."""
+        keys = [k for k, _ in _CATALOG_SORTS]
+        self._sort_mode = keys[(keys.index(self._sort_mode) + 1) % len(keys)]
+        try:
+            setattr(self.app, "catalog_sort_pref", self._sort_mode)  # in-session remounts
+        except Exception:
+            pass
+        try:
+            from .__main__ import load_settings, save_settings
+
+            s = load_settings()
+            s["catalog_sort"] = self._sort_mode
+            save_settings(s)
+        except Exception:
+            pass
+        try:
+            self.refresh_enriched()  # cursor-preserving re-render
+        except Exception:
+            self._render_rows()
 
     def set_model_dir_note(self, note: str) -> None:
         """Set/clear the model-dir banner (e.g. '⚠ model dir not found — [S]')."""
@@ -1367,10 +1470,16 @@ class CatalogPane(Container):
                 dg = _weights_glyph(e)
                 if dg:
                     slug_cell = f"{dg} {e.slug}"
-            # Model cell — shown on the FIRST row of each model group only (rows are
-            # grouped by model, registry order), blank on the repeats → the
-            # switch.sh --list "model header, then its slugs" look.
-            model_cell = f"[cyan]{e.model}[/cyan]" if e.model != prev_model else ""
+            # Model cell — in the DEFAULT group-by-model mode it shows on the
+            # FIRST row of each model group only (rows are grouped by model,
+            # registry order), blank on the repeats → the switch.sh --list
+            # "model header, then its slugs" look.  In a sorted ([s]) mode rows
+            # rank globally across models, so blank-on-repeat would strip most
+            # rows of their identity — every row names its model there.
+            if self._sort_mode == "model":
+                model_cell = f"[cyan]{e.model}[/cyan]" if e.model != prev_model else ""
+            else:
+                model_cell = f"[cyan]{e.model}[/cyan]"
             prev_model = e.model
             # The fit glyph is NO LONGER a Catalog column (it moved into the serve
             # confirm pop-up — see ConfirmActionScreen._render_serve_card).  Fit is
@@ -1439,10 +1548,17 @@ class CatalogPane(Container):
             )
         elif abs_n:
             dep_note += f"  ·  [dim]+{abs_n} not on disk — w[/dim]"
+        # [s] sort state: shown ONLY when a non-default mode is active (the
+        # default group-by-model view needs no announcement), same visibility
+        # rule as the filter tail below.
+        sort_note = (
+            f"  ·  [dim]sort: {self._sort_label()}[/dim]"
+            if self._sort_mode != "model" else ""
+        )
         if self._filter or self._model_filter:
             tail = f"  ·  filter: {self._filter!r}" if self._filter else ""
             status_label.update(
-                f"{banner}{scope}{len(rows)} / {len(self._entries)} variants{tail}{dep_note}"
+                f"{banner}{scope}{len(rows)} / {len(self._entries)} variants{tail}{sort_note}{dep_note}"
             )
         else:
             # Per-rig honesty: the TPS/8pk columns are THIS RIG's own measured
@@ -1456,7 +1572,7 @@ class CatalogPane(Container):
                 "bench.sh / quality-test.sh[/dim])"
             )
             status_label.update(
-                f"{banner}{len(self._entries)} variants loaded from registry{nudge_note}{dep_note}"
+                f"{banner}{len(self._entries)} variants loaded from registry{nudge_note}{sort_note}{dep_note}"
             )
 
         # #9/A8 — keep the preview strip in sync with the cursor after a (re-)render
@@ -1559,8 +1675,11 @@ class CatalogPane(Container):
             if self._model_filter
             else pool
         )
+        # The [s] sort applies AFTER filtering (and after the model scope):
+        # _sorted_entries dispatches on the active mode — the group-by-model
+        # default here, a global ranking in the TPS / GB / ctx modes.
         if not self._filter:
-            return self._grouped_by_model(base)
+            return self._sorted_entries(base)
         # Multi-word filter is AND-of-substrings: split the query on whitespace and
         # keep a row only when EVERY term is a (case-insensitive) substring of the
         # row's searchable text.  A single word reduces to the old contiguous
@@ -1568,7 +1687,7 @@ class CatalogPane(Container):
         # before, when the whole query was tested as one contiguous substring).
         terms = self._filter.lower().split()
         if not terms:
-            return self._grouped_by_model(base)
+            return self._sorted_entries(base)
         out: list[CatalogEntry] = []
         for e in base:
             # Search across EVERYTHING the table can display (#724 cell set +
@@ -1594,7 +1713,7 @@ class CatalogPane(Container):
             ]).lower()
             if all(t in hay for t in terms):
                 out.append(e)
-        return self._grouped_by_model(out)
+        return self._sorted_entries(out)
 
     def _grouped_by_model(self, entries: list[CatalogEntry]) -> list[CatalogEntry]:
         """Stable group-by-model: a model's lanes sit together, models in registry
@@ -5959,6 +6078,158 @@ class StudioSetupScreen(ModalScreen):
         self.dismiss()
 
 
+
+# ── First-run guide (fresh-rig onboarding overlay) ───────────────────────────────
+
+
+class FirstRunScreen(ModalScreen):
+    """One-time first-run welcome for a FRESH rig (no weights on disk, no local
+    measurements): a dismissable 3-step guide — ① pick a model (the SAME
+    hw-aware profile-template options the ① Bring setup picker derives, top 3
+    functional fits for the detected GPUs) → ② Download → ③ Launch.
+
+    THIN BY DESIGN: every step routes to an EXISTING app action — [d] →
+    ``CockpitApp.start_download`` (the same disk-checked streamed setup.sh
+    WEIGHT_KEY worker as [D]), [l] → the SAME reconcile-gated ConfirmActionScreen
+    ⏎ on a catalog row opens.  Zero new write paths.  [s] "Skip — I know what
+    I'm doing" persists ``first_run_seen`` in c3-settings.json so the overlay
+    never nags again; plain Esc just closes it for this session."""
+
+    AUTO_FOCUS = None   # nothing focused on open → the priority keys fire
+
+    BINDINGS = [
+        Binding("1", "pick_one", "Pick 1", show=False, priority=True),
+        Binding("2", "pick_two", "Pick 2", show=False, priority=True),
+        Binding("3", "pick_three", "Pick 3", show=False, priority=True),
+        Binding("d", "download", "Download weights", show=True, priority=True),
+        Binding("l", "launch", "Launch", show=True, priority=True),
+        Binding("enter", "launch", "Launch", show=False, priority=True),
+        Binding("s", "skip", "Skip — I know what I'm doing", show=True, priority=True),
+        Binding("question_mark", "help", "Help", show=True),
+        Binding("escape", "dismiss", "Close", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    FirstRunScreen { align: center middle; }
+    FirstRunScreen #first-run-card {
+        width: 92; max-width: 90%; height: auto; max-height: 80%;
+        border: round $primary; background: $surface; padding: 1 2;
+    }
+    FirstRunScreen #first-run-title { text-style: bold; color: $accent; margin-bottom: 1; }
+    FirstRunScreen #first-run-foot { margin-top: 1; color: $text-muted; }
+    """
+
+    def __init__(
+        self,
+        options: "list[ProfileOption]",
+        *,
+        recommended: Optional[str] = None,
+        gpu_count: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+        self._options = list(options)[:3]
+        self._recommended = recommended
+        self._gpu_count = gpu_count
+        # Pre-select the hw-aware recommendation when it is among the shown fits.
+        self._sel = 0
+        if recommended:
+            for i, o in enumerate(self._options):
+                if o.slug == recommended:
+                    self._sel = i
+                    break
+
+    def compose(self) -> ComposeResult:
+        with Container(id="first-run-card"):
+            yield Label(
+                "Welcome — get a model serving in 3 steps", id="first-run-title"
+            )
+            yield Static(self._body_text(), id="first-run-body")
+            yield Label(self._foot_text(), id="first-run-foot")
+
+    def _body_text(self) -> str:
+        gpus = f"{self._gpu_count} GPU" if self._gpu_count else "your"
+        plural = "s" if self._gpu_count and self._gpu_count != 1 else ""
+        lines: list[str] = [
+            f"Fresh rig detected ({gpus} card{plural}, no weights downloaded yet).",
+            "",
+        ]
+        for i, o in enumerate(self._options):
+            mark = "[cyan]▶[/cyan]" if i == self._sel else " "
+            rec = (
+                "  [green]★ best fit for your GPUs[/green]"
+                if o.slug == self._recommended else ""
+            )
+            lines.append(f" {mark} [{i + 1}] {o.label}{rec}")
+        lines += [
+            "",
+            " [cyan]1 · Pick[/cyan]     keys [1-3] choose the model above.",
+            " [cyan]2 · Download[/cyan] [d] — fetch its weights (resumable; the normal [D] action).",
+            " [cyan]3 · Launch[/cyan]   [l] — the usual reconcile-gated serve confirm.",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _foot_text() -> str:
+        return (
+            "[cyan]1-3[/cyan] pick · [cyan]d[/cyan] download · [cyan]l[/cyan] launch · "
+            "[cyan]s[/cyan] skip — I know what I'm doing · [cyan]?[/cyan] help · "
+            "[cyan]esc[/cyan] close"
+        )
+
+    def _selected_slug(self) -> Optional[str]:
+        if not self._options:
+            return None
+        return self._options[min(self._sel, len(self._options) - 1)].slug
+
+    def _pick(self, idx: int) -> None:
+        if 0 <= idx < len(self._options):
+            self._sel = idx
+            try:
+                self.query_one("#first-run-body", Static).update(self._body_text())
+            except Exception:
+                pass
+
+    def action_pick_one(self) -> None:
+        self._pick(0)
+
+    def action_pick_two(self) -> None:
+        self._pick(1)
+
+    def action_pick_three(self) -> None:
+        self._pick(2)
+
+    def action_download(self) -> None:
+        """② Download — route to the EXISTING download action for the pick."""
+        slug = self._selected_slug()
+        if slug is None:
+            return
+        self.dismiss()
+        self.app.first_run_download(slug)  # type: ignore[attr-defined]
+
+    def action_launch(self) -> None:
+        """③ Launch — deep-link the EXISTING reconcile-gated serve confirm."""
+        slug = self._selected_slug()
+        if slug is None:
+            return
+        self.dismiss()
+        self.app.first_run_launch(slug)  # type: ignore[attr-defined]
+
+    def action_skip(self) -> None:
+        """'Skip — I know what I'm doing' — persist the seen-flag so the guide
+        NEVER nags again (c3-settings.json, merged — other keys preserved)."""
+        from .__main__ import save_first_run_seen
+
+        save_first_run_seen()
+        self.dismiss()
+
+    def action_help(self) -> None:
+        """[?] pointer — the standard help overlay opens OVER this guide."""
+        try:
+            self.app.action_help()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
 class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
     """Preview the computed catalog-promotion scaffold (SCAFFOLD + GATE, C4-rev).
 
@@ -8700,7 +8971,8 @@ class CockpitApp(App):
         # and the Bring & Validate lane's ④ Measure stage (submit-to-localmaxxing).
         if action == "s_key":
             if self._active_mode == 0:
-                return self._current_subtab() == "tab-containers"
+                # Containers (docker restart) + Catalog ([s] sort cycle)
+                return self._current_subtab() in ("tab-containers", "tab-catalog")
             if self._active_mode == 1:
                 # ① Bring (advance → ② Serve) + ④ Measure (submit-to-localmaxxing)
                 return self._active_validate_tab() in ("tab-bring", "tab-evidence")
@@ -8820,6 +9092,8 @@ class CockpitApp(App):
         s_label = "Restart / Submit"
         if self._active_mode == 0 and self._current_subtab() == "tab-containers":
             s_label = "Restart"
+        elif self._active_mode == 0 and self._current_subtab() == "tab-catalog":
+            s_label = "Sort"
         elif self._active_mode == 1:
             vtab = self._active_validate_tab()
             if vtab == "tab-bring":
@@ -9299,6 +9573,108 @@ class CockpitApp(App):
         mdir = self._data.weights_model_dir()
         note = "" if _Path(mdir).is_dir() else f"⚠ model dir not found ({mdir}) — press [S] to set it"
         pane.set_model_dir_note(note)
+        # First-run guide (fresh-rig onboarding): AFTER the weights join, an
+        # all-absent catalog + no local measurements → the ONE-TIME dismissable
+        # overlay.  Never blocks, never re-fires within a session; best-effort.
+        try:
+            self._maybe_first_run(rows)
+        except Exception:
+            pass
+
+
+    # ── First-run guide (fresh-rig onboarding overlay) ──────────────────────────
+
+    def _first_run_fresh(self, entries: "list[CatalogEntry]") -> bool:
+        """Fresh-rig detection via the EXISTING weights_state join: at least one
+        slug's weights are ABSENT and NONE are on disk (present / partial /
+        downloading), plus no local measurement corpus (results/
+        measurement-records/ empty — this rig has never benched anything).
+
+        An all-UNKNOWN catalog (the weights index failed or is empty) can't tell
+        → NO trigger (this also keeps hermetic tests without a canned weights.py
+        response trigger-free)."""
+        states = [(getattr(e, "weights_state", "") or "") for e in entries]
+        if WEIGHTS_ABSENT not in states:
+            return False
+        if any(
+            s in (WEIGHTS_PRESENT, WEIGHTS_PARTIAL, WEIGHTS_DOWNLOADING)
+            for s in states
+        ):
+            return False
+        try:
+            if self._data.local_measurements():
+                return False
+        except Exception:
+            pass
+        return True
+
+    def _first_run_options(self) -> "list[ProfileOption]":
+        """The guide's model picks — the SAME hw-aware profile-template options
+        the ① Bring setup picker derives (profile_templates over the loaded
+        variants + the registry's curated defaults), floored to FUNCTIONAL
+        slugs, rig-topology-first, top 3."""
+        defaults = list(getattr(self._data, "catalog_defaults", None) or [])
+        options = [
+            o for o in profile_templates(self._variants or [], defaults)
+            if _status_is_functional(o.status)
+        ]
+        n = self._known_gpu_count()
+        want = {1: "single", 2: "dual"}.get(n or 0)
+        options.sort(key=lambda o: 0 if o.topology == want else 1)  # stable
+        return options[:3]
+
+    def _maybe_first_run(self, entries: "list[CatalogEntry]") -> None:
+        """Show the one-time first-run guide when the rig looks fresh.  Guards:
+        once per app instance, main screen only, persisted skip-flag honored,
+        fresh-state detection passed, and at least one functional pick exists."""
+        if getattr(self, "_first_run_shown", False):
+            return
+        try:
+            if len(self.screen_stack) > 1:
+                return
+        except Exception:
+            return
+        from .__main__ import first_run_seen
+
+        if first_run_seen():
+            return
+        if not self._first_run_fresh(entries):
+            return
+        options = self._first_run_options()
+        if not options:
+            return
+        self._first_run_shown = True
+        n = self._known_gpu_count()
+        recommended = default_profile_template(options, n or 2)
+        self.push_screen(
+            FirstRunScreen(options, recommended=recommended, gpu_count=n)
+        )
+
+    def _first_run_entry(self, slug: str) -> Optional[CatalogEntry]:
+        """The rendered catalog entry for a first-run pick (None when gone)."""
+        try:
+            pane = self.query_one("#catalog-pane", CatalogPane)
+        except Exception:
+            return None
+        for e in pane._entries:
+            if e.slug == slug:
+                return e
+        return None
+
+    def first_run_download(self, slug: str) -> None:
+        """Guide step ② — route to the EXISTING download action (start_download:
+        the same disk pre-check + streamed setup.sh WEIGHT_KEY worker as [D];
+        its own notify covers a manual-only slug / full disk)."""
+        entry = self._first_run_entry(slug)
+        if entry is not None:
+            self.start_download(entry)
+
+    def first_run_launch(self, slug: str) -> None:
+        """Guide step ③ — deep-link the EXISTING reconcile-gated serve confirm
+        (the SAME ConfirmActionScreen ⏎ on the catalog row opens)."""
+        entry = self._first_run_entry(slug)
+        if entry is not None:
+            self._serve_confirm_for(entry)
 
     # ── Download UX · fetch a slug's weights (setup.sh WEIGHT_KEY=…, streamed) ────────
 
@@ -11778,6 +12154,15 @@ class CockpitApp(App):
             entry = None
         if entry is None:
             return
+        self._serve_confirm_for(entry)
+
+    def _serve_confirm_for(self, entry: CatalogEntry) -> None:
+        """Stage ``entry`` and open the reconcile-gated serve confirm — the ONE
+        path ⏎ on the catalog row AND the first-run Launch step both use.  The
+        serve ActionPlan goes through the SAME ConfirmActionScreen →
+        run_reconcile_for_modal → dispatch_action gate as every other
+        GPU-mutating write; on confirm the boot streams into the re-homed
+        LivePane (#serve-live) below the tabs."""
         self._staged_entry = entry
         plan = self._data.serve(entry.slug)  # gated, NOT --force
         self.push_screen(
@@ -12020,10 +12405,17 @@ class CockpitApp(App):
 
     def action_s_key(self) -> None:
         """[s] is context-sensitive:
+          - merged mode 0 · Catalog    : cycle the catalog sort ([s] cycle).
           - merged mode 0 · Containers : gated `docker restart <name>`.
           - Bring & Validate · ① Bring  : advance to the armed ② Serve (weights on disk).
           - Bring & Validate · ④ Measure : gated submit-to-localmaxxing for the tag.
         Other contexts ignore it."""
+        if self._active_mode == 0 and self._current_subtab() == "tab-catalog":
+            try:
+                self.query_one("#catalog-pane", CatalogPane).cycle_sort()
+            except Exception:
+                pass
+            return
         if self._active_mode == 1:
             tab = self._active_validate_tab()
             if tab == "tab-bring":
