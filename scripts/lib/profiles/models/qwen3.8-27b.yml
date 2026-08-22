@@ -99,6 +99,21 @@ weights:
     kind: gguf
     verify_glob: "*.gguf"
     manual_note: "Unsloth Dynamic UD-Q8_K_XL (apache-2.0). Dual-3090 max-context tier — drives llamacpp/qwen38-27b-dual-q8kxl (31.5 GB needs both cards; layer-split -sm layer -ts 1,1). ⚠️ size_gb is the HF model-page figure — the download was STILL IN FLIGHT when this entry was authored (2026-08-14), so nothing on this rig has confirmed it. If the landed file differs materially, re-derive the compose's VRAM budget: the IQ4_NL sibling's page figure (16.3) was decimal GB and the real GiB was 15.22, i.e. ~7% smaller than a naive GiB read. Text-only (no mmproj fetched)."
+  # Community Huihui abliterated native-FP8 derivative.
+  # Kept as a separate weight key and switch profile; it does not replace
+  # or modify the official Qwen3.8 FP8 tier.
+  abliterated-fp8:
+    path: Huihui-Qwen3.8-27B-abliterated-FP8
+    local_subdir: Huihui-Qwen3.8-27B-abliterated-FP8
+    size_gb: 30.9
+    format: fp8
+    status: experimental
+    hf_repo: munekazu/Huihui-Qwen3.8-27B-abliterated-FP8
+    engine: vllm
+    kind: main
+    verify_glob: "*.safetensors"
+    manual_note: "Community Huihui abliterated Qwen3.8-27B native FP8 checkpoint: e4m3 dynamic activations, 128x128 weight blocks, 262144 context ceiling, and one embedded MTP layer. Abliteration is a behavior modification, not a performance optimization."
+
   # Official Qwen FP8 release — the safetensors/vLLM tier, added 2026-08-14.
   # NO `files:` filter ON PURPOSE: Qwen/Qwen3.8-27B-FP8 is a SINGLE-artifact repo
   # (one quant), not a multi-quant bucket, and serving needs the whole thing —

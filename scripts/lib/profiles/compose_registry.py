@@ -1414,6 +1414,17 @@ COMPOSE_REGISTRY = {
     # NO DEFAULTS rows and NOT added to RECOMMENDED_DEFAULT_MODELS — incubating is
     # excluded from the curated walk by design, and an `<engine>/default` row would
     # hand users a never-booted config through the non-status-filtering direct lookup.
+    "vllm/qwen38-27b-dual-abliterated-fp8": _entry(
+        model="qwen3.8-27b", weights_variant="abliterated-fp8", workload="long-ctx-single", chat_template="native",
+        engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
+        compose_path="models/qwen3.8-27b/vllm/compose/dual/abliterated-fp8/mtp.yml",
+        default_port=8091,
+        kvcalc_key="SKIP",
+        status="incubating",
+        status_note="Community Huihui abliterated Qwen3.8-27B native FP8 profile for 2x RTX 3090: TP=2, fp8 KV, 262144 context ceiling, prefix caching and chunked prefill enabled. MTP is available through SPEC_N but defaults off for the first stability tests. Abliteration changes behavior, not expected serving speed. BOOTED on 2x RTX 3090 and basic chat/thinking=false passed. Canonical club bench at SPEC_N=3/MAX_NUM_SEQS=2 measured 67.34 narrative and 87.80 code decode tok/s, with 1553.21 tok/s prefill at 10K and 1202.60 tok/s at 90K. SPEC_N=2/MAX_NUM_SEQS=8 measured 261.56 aggregate output tok/s for 8x 1024-input/512-output requests, 94.71% draft acceptance, and 0 failures. MAX_NUM_SEQS=32 entered a restart loop during initialization and is unvalidated. Still incubating pending verify-full, long-context fill, and soak testing.",
+    ),
+
     "vllm/qwen38-27b-dual-max": _entry(
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
