@@ -449,7 +449,7 @@ show_status() {
         _endpoint_up=1
         local m
         m=$(curl -sf -m 2 http://localhost:8013/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} 27b-dflash-noviz @ :8013 → ${m:-unknown} (DFlash N=5 + 200K, no vision)"
+        echo -e "  ${GREEN}▶${NC} 27b-dual-max @ :8013 → ${m:-unknown} (max-tier dual + fp8 + 262K)"
     fi
     # :8020 = llama.cpp single-card. llamacpp/default + llamacpp/mtp share the
     # base container llama-cpp-qwen36-27b (same compose, collapsed 2026-05-22);
@@ -465,13 +465,15 @@ show_status() {
         _endpoint_up=1
         local m container engine_tag
         m=$(curl -sf -m 2 http://localhost:8030/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        # Detect engine via container name on the port (was hardcoded to "gemma-mtp"
-        # / Gemma description; post-v0.8.3, llamacpp/mtp-vision also lands on :8030).
-        container=$(sudo docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | awk '/:8030->/ {print $1; exit}')
-        if [[ "$container" == llama-cpp-* ]]; then
-            engine_tag="llamacpp/mtp-vision @ :8030 → ${m:-unknown} (Q4_K_M + MTP + vision, 49K)"
-        else
+        # Multi-slug port (registry): vllm/gemma-bf16-mtp, llamacpp/deepseek-*
+        # and llamacpp/mtp-vision all land here. The SERVED model ids are the
+        # truth — disambiguate on them, not on container names.
+        if [[ "$m" == *deepseek* ]]; then
+            engine_tag="deepseek-flash-q8 @ :8030   → ${m:-unknown} (DeepSeek-V4-Flash Q8 + DSpark, incubating)"
+        elif [[ "$m" == *gemma* ]]; then
             engine_tag="gemma-mtp @ :8030          → ${m:-unknown} (Gemma 4 31B + MTP n=3 + bf16 KV + 32K)"
+        else
+            engine_tag="llamacpp/mtp-vision @ :8030 → ${m:-unknown} (Q4_K_M + MTP + vision, 49K)"
         fi
         echo -e "  ${GREEN}▶${NC} $engine_tag"
     fi
@@ -479,7 +481,11 @@ show_status() {
         _endpoint_up=1
         local m
         m=$(curl -sf -m 2 http://localhost:8032/v1/models | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(x['id'] for x in d.get('data',[])))" 2>/dev/null)
-        echo -e "  ${GREEN}▶${NC} gemma-int8 @ :8032        → ${m:-unknown} (INT8 PTH KV)"
+        if [[ "$m" == *int8* || "$m" == *12b* ]]; then
+            echo -e "  ${GREEN}▶${NC} gemma-int8-mtp @ :8032    → ${m:-unknown} (INT8 PTH KV + MTP)"
+        else
+            echo -e "  ${GREEN}▶${NC} gemma-31b-dual @ :8032    → ${m:-unknown} (QAT W4A16 + bf16 KV @224K)"
+        fi
     fi
     if curl -sf -m 2 "http://localhost:${p_gemma12b}/v1/models" >/dev/null 2>&1; then
         _endpoint_up=1
