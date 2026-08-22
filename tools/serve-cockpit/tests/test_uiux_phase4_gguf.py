@@ -430,3 +430,137 @@ class TestEmbeddedMtp:
         out = data._rewrite_gguf_command(
             ["-m", "/old.gguf"], model_mount="/models/b.gguf", embedded_mtp=False)
         assert "--spec-type" not in out and "--spec-draft-model" not in out
+
+
+class TestGgufHeaderFactsThreading:
+    """P3 — GGUF header KV facts: route-G ⑤ Promote stops dead-ending
+    pure-template. Synthetic in-test GGUF bytes only; NO live network."""
+
+    @staticmethod
+    def _gguf_bytes() -> bytes:
+        import struct as _s
+
+        def st(x: str) -> bytes:
+            b = x.encode()
+            return _s.pack("<Q", len(b)) + b
+
+        kv = [
+            ("general.architecture", 8, None, "llama"),
+            ("general.name", 8, None, "Synth-7B"),
+            ("general.file_type", 4, 15, None),
+            ("llama.block_count", 4, 32, None),
+            ("llama.embedding_length", 10, 4096, None),
+            ("llama.attention.head_count", 10, 32, None),
+            ("llama.attention.head_count_kv", 10, 8, None),
+            ("llama.context_length", 10, 131072, None),
+        ]
+        out = b"GGUF" + _s.pack("<I", 3) + _s.pack("<Q", 291) + _s.pack("<Q", len(kv))
+        for key, vt, num, sval in kv:
+            out += st(key) + _s.pack("<I", vt)
+            out += (
+                st(sval) if vt == 8 else _s.pack(
+                    "<I" if vt == 4 else "<Q", num)
+            )
+        return out
+
+    @staticmethod
+    def _gguf_facts() -> dict:
+        return {
+            "model_id": "org/Synth-7B-GGUF",
+            "arch": "llama",
+            "hidden_size": 4096,
+            "num_hidden_layers": 32,
+            "num_attn_heads": 32,
+            "num_kv_heads": 8,
+            "head_dim_attn": 128,
+            "max_ctx_supported": 131072,
+            "weights_total_gb": 4.2,
+            "valid_tp": [1, 2],
+            "confidence": "estimated-lower-bound",
+            "facts_provenance": "gguf-header",
+        }
+
+    def test_byo_check_gguf_threads_header_facts(self, tmp_path: Path):
+        data = CockpitData(tmp_path)
+        facts = self._gguf_facts()
+        res = data.byo_check_gguf(
+            "org/Synth-7B-GGUF", "llama-cpp/q4km",
+            quant="Q4_K_M", size_gb=4.2, card_vram_gb=24.0, facts=facts,
+        )
+        assert res.facts.get("num_hidden_layers") == 32
+        assert res.facts.get("num_kv_heads") == 8
+        assert res.facts.get("facts_provenance") == "gguf-header"
+
+    def test_byo_check_gguf_drops_none_facts(self, tmp_path: Path):
+        data = CockpitData(tmp_path)
+        res = data.byo_check_gguf(
+            "org/M", "llama-cpp/q4km", quant="Q4_K_M", size_gb=1.0,
+            facts={"hidden_size": None, "arch": "llama"},
+        )
+        assert "hidden_size" not in res.facts and res.facts["arch"] == "llama"
+
+    def test_byo_check_gguf_without_facts_stays_empty(self, tmp_path: Path):
+        data = CockpitData(tmp_path)
+        res = data.byo_check_gguf(
+            "org/M", "llama-cpp/q4km", quant="Q4_K_M", size_gb=1.0)
+        assert res.facts == {}
+
+    def test_gguf_header_facts_reads_local_pull_dir(self, tmp_path, monkeypatch):
+        import asyncio
+
+        # _stub_registry (other tests in this file) leaks fake `scripts.*`
+        # modules into sys.modules — evict them so the REAL deriver imports.
+        import sys
+
+        for m in [k for k in sys.modules if k == "scripts" or k.startswith("scripts.")]:
+            sys.modules.pop(m, None)
+        # The deriver import resolves against the REAL repo root (CockpitData
+        # gets tmp_path here); the pull dir itself comes from $HF_HOME.
+        monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
+        monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+        pull = tmp_path / "hf" / "club3090" / "pulls" / "org-synth-7b-gguf"
+        pull.mkdir(parents=True)
+        (pull / "Synth-7B-Q4_K_M.gguf").write_bytes(self._gguf_bytes())
+        data = CockpitData(tmp_path)
+        facts = asyncio.run(data.gguf_header_facts(
+            "org/Synth-7B-GGUF", ["Synth-7B-Q4_K_M.gguf"], size_gb=4.2))
+        assert facts["num_hidden_layers"] == 32
+        assert facts["hidden_size"] == 4096
+        assert facts["num_kv_heads"] == 8
+        assert facts["max_ctx_supported"] == 131072
+        assert facts["weights_total_gb"] == 4.2
+        assert facts["confidence"] == "estimated-lower-bound"
+        assert facts["facts_provenance"] == "gguf-header"
+
+    def test_gguf_header_facts_empty_when_nothing_probeable(
+        self, tmp_path, monkeypatch,
+    ):
+        """No local file AND no listed repo files → {} (never raises, never
+        fabricates); the scaffold keeps its placeholders."""
+        import asyncio
+
+        monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+        (tmp_path / "hf" / "club3090" / "pulls" / "org-x-gguf").mkdir(parents=True)
+        data = CockpitData(tmp_path)
+        assert asyncio.run(data.gguf_header_facts("org/X-GGUF", [])) == {}
+
+    def test_scaffold_autofills_arch_dims_from_gguf_facts(self):
+        from club3090_cockpit.data import ByoResult, compute_promote_scaffold
+
+        byo = ByoResult(
+            repo="org/Synth-7B-GGUF", profile_like="llama-cpp/q4km",
+            arch="gguf", eligible=True, fit_verdict="fits-clean",
+            route="G", sibling_slug="llama-cpp/q4km", quant_match="Q4_K_M",
+            facts=self._gguf_facts(),
+        )
+        sc = compute_promote_scaffold(byo=byo, measurement=None)
+        assert not sc.error
+        # Auto-filled — NOT <int> placeholders (the pre-P3 dead-end).
+        for key, val in (("hidden_size", 4096), ("num_hidden_layers", 32),
+                         ("num_attn_heads", 32), ("num_kv_heads", 8),
+                         ("head_dim_attn", 128), ("max_ctx_supported", 131072)):
+            assert f"{key}: {val}" in sc.profile_yaml, key
+        assert "<int>" not in sc.profile_yaml
+        assert sc.spec["arch"]["valid_tp"] == [1, 2]
+        # Human-required fields stay placeholders — never fabricated.
+        assert "family: <family-tag>" in sc.profile_yaml
