@@ -269,10 +269,13 @@ def compose_header_status(text):
     return None
 
 # Qwen3.8-27B per-mode sampler rows (#984/#1014), transcribed from the model
-# card's "Best Practices" table. Every qwen3.8-27b vLLM entry shares this object
-# (same card, same rows); the composes' entrypoints derive their shipped default
-# from the instruct row and flip to thinking on ENABLE_THINKING=true, and
-# test-compose-sampler-profiles.sh asserts compose ↔ registry agreement.
+# card's "Best Practices" table. Every qwen3.8-27b entry with per-mode sampling
+# shares this object (same card, same rows): the vLLM composes derive their
+# shipped default from the instruct row and flip to thinking on
+# ENABLE_THINKING=true; the llama.cpp composes couple the same rows via the
+# THINKING=1 ${THINKING:+...} argv tail (llama-server takes --temp/--top-p/
+# --presence-penalty directly). test-compose-sampler-profiles.sh asserts
+# compose ↔ registry agreement in both argv dialects.
 QWEN38_27B_SAMPLER_PROFILES = {
     "instruct": {
         "temperature": 0.7, "top_p": 0.80, "top_k": 20, "min_p": 0.0,
@@ -1447,6 +1450,7 @@ COMPOSE_REGISTRY = {
     # from the curated walk by design, and a `<engine>/default` row would hand users an
     # unbooted config through the non-status-filtering direct lookup.
     "llamacpp/qwen38-27b-single-iq4xs": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="unsloth-iq4xs", workload="vision-coding",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=262144, max_num_seqs=1, mem_util=None,
@@ -1458,10 +1462,11 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B UD-IQ4_XS GGUF + F16 mmproj on a single 3090 (llama-cpp-local, b10236). q4_0/q4_0 KV @262144 + VISION, built-in MTP n=2 (--spec-type draft-mtp). ⭐ MAX-EVERYTHING single-card config (maintainer decision 2026-08-20): the q4_0 KV (BELOW the stack q8 serving floor) is the mechanism that fits full 262K ctx AND the F16 projector on one 24 GB card. For serving-grade q8_0 KV (131K) override KV_TYPE=q8_0 CTX_SIZE=131072 on this compose (q8@131K + vision, decode-free). ✅ VALIDATED 2026-08-20 (single 3090, GPU0, this exact compose): boots + fits 22,290 MiB load / 22,332 MiB peak under image-encode (~2.2 GiB headroom); verify-full PASS (all functional checks; the 2 skips are vLLM-only); image recognition CORRECT (blue-circle + red-7 probe); n_ctx_slot=262144, 'multimodal model' loaded; text decode projector-free (bench parity w/ the q8 text config, 61.7 narr / 72.7 code). CAVEATS: (1) q4_0 KV KLD ~5.75x worse than q8_0, NEVER depth-validated on this DeltaNet hybrid family — a max-ctx/vision exhibit, not serving-grade; (2) vision untested beyond one image probe — a large/high-res image at 262K encodes into far more tokens and could OOM the thin ~2.2 GiB margin (set IMAGE_MIN_TOKENS with budget in mind); (3) 262K NIAH-clean to 240,635 tok (91%) 2026-08-20 (addressability via verify-stress FAST; full-fidelity retrieval NIAH + fine ladder past 240K still unrun). Precedent: qwen3.6-27b's mtp-vision also ran q4_0 KV. Launch --force (incubating; hidden from switch.sh --list). Promote to 🧪/⚠️ only after a q4-config bench + verify-stress NIAH + soak; q4 KV keeps it off ✅ permanently (floor policy).",
     ),
     "llamacpp/qwen38-27b-dual-q8kxl": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="unsloth-q8kxl", workload="long-ctx-single",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
-        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.8-27b/llama-cpp/compose/dual/unsloth-q8kxl/q8kv.yml",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
         default_port=8087,
         kvcalc_key="SKIP",
         status="incubating",
@@ -2055,14 +2060,31 @@ def community_default_target(model, topology, hw_class=None):  # noqa: ARG001
     return None
 
 
+def _model_pin_suffix(model):
+    """Shared `<MODELID uppercased, non-alnum→_>` suffix for the per-model .env
+    pin keys, e.g. qwen3.6-27b → QWEN3_6_27B."""
+    return "".join(c if c.isalnum() else "_" for c in model).upper()
+
+
 def model_default_pin_key(model):
     """The .env key for a per-model user pin (design §13.2).
 
     `CLUB3090_DEFAULT_<MODELID uppercased, non-alnum→_>`, e.g.
     qwen3.6-27b → CLUB3090_DEFAULT_QWEN3_6_27B.
     """
-    suffix = "".join(c if c.isalnum() else "_" for c in model).upper()
-    return f"CLUB3090_DEFAULT_{suffix}"
+    return f"CLUB3090_DEFAULT_{_model_pin_suffix(model)}"
+
+
+def model_thinking_pin_key(model):
+    """The .env key for a per-model THINKING pin (#1014 follow-up).
+
+    Same normalization as :func:`model_default_pin_key`:
+    `CLUB3090_THINKING_<MODELID uppercased, non-alnum→_>`, e.g.
+    qwen3.6-27b → CLUB3090_THINKING_QWEN3_6_27B. Values are the tri-state
+    vocabulary on|off|inherit; switch.sh resolves it into the launch env
+    (on/off → ENABLE_THINKING=true/false, inherit → nothing).
+    """
+    return f"CLUB3090_THINKING_{_model_pin_suffix(model)}"
 
 
 def model_of_slug(slug):

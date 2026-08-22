@@ -4,24 +4,37 @@
 #
 # Models whose card publishes PER-MODE sampler rows carry them in the registry
 # as `_entry(sampler_profiles={"instruct": {...}, "thinking": {...}})` (today:
-# qwen3.8-27b). Their composes must DERIVE the sampler from that data instead of
-# hardcoding a third copy: the entrypoint picks the row matching
-# ENABLE_THINKING (`:=` defaults, so an explicit user env still wins).
+# qwen3.8-27b, on vLLM AND llama.cpp). Their composes must DERIVE the sampler
+# from that data instead of hardcoding a third copy: vLLM composes pick the row
+# matching ENABLE_THINKING, llama.cpp composes couple it via THINKING=1 and a
+# ${THINKING:+...} argv tail (`:=` defaults either way, so an explicit user env
+# still wins).
 #
 # ⭐ This also retires discussion #993's four-variable ritual — for any model
-# covered here (sampler_profiles present), `ENABLE_THINKING=true` alone now
-# selects the card's thinking sampler. Setting TEMP/TOP_P/PRESENCE_PENALTY by
-# hand is redundant (harmless, they still win), and the docs saying otherwise
-# are stale.
-#
+# covered here (sampler_profiles present), `ENABLE_THINKING=true` (vLLM) or
+# `THINKING=1` (llama.cpp) alone now selects the card's thinking sampler.
+# Setting TEMP/TOP_P/PRESENCE_PENALTY by hand is redundant (harmless, they
+# still win), and the docs saying otherwise are stale.
+
 # Checks, for every registry entry WITH sampler_profiles:
 #   (a) shape: exactly instruct+thinking rows, numeric sampler fields,
 #       instruct != thinking (a per-mode registry that isn't per-mode is noise);
 #   (b) the compose RENDERED with no env ships the card's INSTRUCT row;
-#   (c) the compose RENDERED with ENABLE_THINKING=true ships the THINKING row;
-#   (d) explicit TEMP/TOP_P/PRESENCE_PENALTY beat both rows (`:=` contract).
-# Rendering runs each compose's real entrypoint under bash with `vllm` stubbed
-# (the test-spec-toggle-contract.sh harness): no GPU, no weights, no image.
+#   (c) the compose RENDERED with ENABLE_THINKING=true (vLLM) / THINKING=1
+#       (llama.cpp) ships the THINKING row;
+#   (d) explicit TEMP/TOP_P/PRESENCE_PENALTY beat both rows (`:=` contract,
+#       and last-flag-wins on the llama.cpp tail).
+# Rendering runs each compose's real entrypoint under bash with the engine
+# stubbed — two argv dialects, picked per compose:
+#   vLLM      — `vllm` on PATH; the sampler arrives as one
+#               --override-generation-config JSON blob.
+#   llama.cpp — /app/llama-server (the image ENTRYPOINT every llama.cpp
+#               engine we ship uses); the sampler arrives as --temp/--top-p/
+#               --top-k/--min-p/--presence-penalty/--repeat-penalty argv.
+#               THINKING=1 flips modes via a ${THINKING:+...} command tail +
+#               llama.cpp's deprecated LAST-FLAG-WINS parsing (the compose
+#               headers pin this to the b10236 pin; re-test on bump).
+# No GPU, no weights, no image.
 #
 # And for every entry WITHOUT sampler_profiles:
 #   (e) untouched — its compose keeps a STATIC sampler (or none): the command
@@ -66,15 +79,33 @@ def check(cond, msg):
 # --- compose-rendering harness (borrowed from test-spec-toggle-contract.sh) --
 
 def _interp(v, env):
-    """docker compose interpolation: $$ is a literal $, ${VAR:-default} resolves."""
+    """docker compose interpolation: `$$` is a literal `$`, `${VAR:-default}`
+    resolves (defaults may NEST, e.g. ${TEMP:-${TEMPERATURE:-0.7}}), and
+    `${VAR:+alt}` expands to alt only when VAR is set non-empty — the form the
+    llama.cpp composes use for their THINKING=1 argv tail."""
     out, i = [], 0
     while i < len(v):
         if v[i:i + 2] == "$$":
             out.append("$"); i += 2; continue
-        m = re.match(r"\$\{([A-Za-z_]\w*)(?::-([^}]*))?\}", v[i:])
-        if m:
-            val = env.get(m.group(1)) or (m.group(2) if m.group(2) is not None else "")
-            out.append(val); i += m.end(); continue
+        if v[i:i + 2] == "${":
+            depth, j = 1, i + 2
+            while j < len(v) and depth:
+                if v[j:j + 2] == "${":
+                    depth += 1; j += 2
+                elif v[j] == "}":
+                    depth -= 1; j += 1
+                else:
+                    j += 1
+            m = re.match(r"([A-Za-z_]\w*)(:-|:\+)?", v[i + 2:j - 1])
+            name, op = m.group(1), m.group(2)
+            rest = v[i + 2 + m.end():j - 1]
+            val = env.get(name)
+            if op == ":+":
+                if val:
+                    out.append(_interp(rest, env))
+            else:                                     # plain or :- default
+                out.append(val if val else (_interp(rest, env) if rest else ""))
+            i = j; continue
         out.append(v[i]); i += 1
     return "".join(out)
 
@@ -159,15 +190,42 @@ def _command_list(text, env):
     return args
 
 
+def _command_scalar(text, env):
+    """The `command: >-` folded-scalar form (llama.cpp composes): one command
+    string, interpolated then word-split. Comments can't live inside the
+    scalar, so every body line is real argv text."""
+    lines = text.split("\n")
+    for i, l in enumerate(lines):
+        m = re.match(r"^(\s*)command:\s*>-\s*$", l)
+        if not m:
+            continue
+        ind = len(m.group(1))
+        parts = []
+        for cur in lines[i + 1:]:
+            if cur.strip() and (len(cur) - len(cur.lstrip())) <= ind:
+                break
+            if cur.strip():
+                parts.append(cur.strip())
+        return shlex.split(_interp(" ".join(parts), env))
+    return None
+
+
 def argv_under(text, env):
-    """Run the compose's entrypoint with `vllm` stubbed, under the env docker
-    would actually give the container; return the argv list."""
+    """Run the compose's entrypoint with its engine stubbed (`vllm` on PATH for
+    vLLM composes, /app/llama-server for llama.cpp ones — both print ARG: per
+    argv), under the env docker would actually give the container; return the
+    argv list."""
     body = entrypoint_of(text)
     if body is None:
         return None, "no block-scalar entrypoint"
+    llama = "/app/llama-server" in body
     with tempfile.TemporaryDirectory() as d:
         dp = pathlib.Path(d)
-        stub = dp / "vllm"
+        if llama:
+            stub = dp / "app" / "llama-server"
+            stub.parent.mkdir(parents=True)
+        else:
+            stub = dp / "vllm"
         stub.write_text('#!/bin/bash\nfor a in "$@"; do printf "ARG:%s\\n" "$a"; done\nexit 0\n')
         stub.chmod(0o755)
         etc = dp / "etc" / "club3090"
@@ -177,29 +235,53 @@ def argv_under(text, env):
             (etc / sub).mkdir(parents=True, exist_ok=True)
             (etc / sub / "install.sh").write_text("#!/bin/bash\nexit 0\n")
         script = dp / "ep.sh"
-        script.write_text(body.replace("$$", "$").replace("/etc/club3090", str(etc)))
+        script.write_text(body.replace("$$", "$")
+                          .replace("/etc/club3090", str(etc))
+                          .replace("/app/llama-server", str(stub)))
         e = {k: v for k, v in os.environ.items()
-             if not k.startswith(("SPEC", "NUM_SPEC", "ENABLE_THINKING", "TEMP",
-                                  "TEMPERATURE", "TOP_P", "TOP_K", "MIN_P",
+             if not k.startswith(("SPEC", "NUM_SPEC", "ENABLE_THINKING", "THINKING",
+                                  "TEMP", "TEMPERATURE", "TOP_P", "TOP_K", "MIN_P",
                                   "PRESENCE_PENALTY", "REPEAT_PENALTY"))}
         e.update(container_env(text, env))
         e["PATH"] = f"{dp}:{os.environ['PATH']}"
-        cmd = _command_list(text, env)
+        cmd = _command_scalar(text, env) if llama else _command_list(text, env)
         r = subprocess.run(["bash", str(script), "--", *cmd],
                            capture_output=True, text=True, env=e, timeout=60)
         args = [l[4:] for l in r.stdout.split("\n") if l.startswith("ARG:")]
         return (args or None), r.stderr.strip()[-300:]
 
 
-def sampler_payload(args):
-    """The --override-generation-config value the engine would receive, or None."""
-    if not args or "--override-generation-config" not in args:
+LLAMA_SAMPLER_FLAGS = {
+    "--temp": "temperature", "--top-p": "top_p", "--top-k": "top_k",
+    "--min-p": "min_p", "--presence-penalty": "presence_penalty",
+    "--repeat-penalty": "repetition_penalty",
+}
+
+
+def sampler_payload(args, llama=False):
+    """The sampler the engine would receive, or None. vLLM: the
+    --override-generation-config JSON blob. llama.cpp: the LAST value of each
+    repeated sampler flag (the deprecated last-flag-wins parsing the compose
+    headers pin to the b10236 image pin)."""
+    if not args:
         return None
-    i = args.index("--override-generation-config")
-    try:
-        return json.loads(args[i + 1])
-    except Exception as exc:
-        return {"<invalid json>": str(exc)}
+    if not llama:
+        if "--override-generation-config" not in args:
+            return None
+        i = args.index("--override-generation-config")
+        try:
+            return json.loads(args[i + 1])
+        except Exception as exc:
+            return {"<invalid json>": str(exc)}
+    payload, i = {}, 0
+    while i < len(args):
+        field = LLAMA_SAMPLER_FLAGS.get(args[i])
+        if field and i + 1 < len(args):
+            payload[field] = float(args[i + 1])
+            i += 2
+        else:
+            i += 1
+    return payload or None
 
 
 FIELDS = ("temperature", "top_p", "top_k", "min_p",
@@ -221,10 +303,15 @@ def rows_agree(payload, row):
 registry = get_registry()
 with_profiles = {k: e for k, e in registry.items() if e.get("sampler_profiles")}
 without_profiles = {k: e for k, e in registry.items() if not e.get("sampler_profiles")}
-check(len(with_profiles) >= 20,
-      f"qwen3.8-27b vLLM entries expose sampler_profiles (got {len(with_profiles)})")
-check(all(k.startswith("vllm/qwen38-27b-") for k in with_profiles),
-      "only qwen3.8-27b vLLM slugs carry sampler_profiles today")
+llama_with = {k for k in with_profiles if k.startswith("llamacpp/")}
+vllm_with = {k for k in with_profiles if k.startswith("vllm/")}
+check(len(vllm_with) >= 20,
+      f"qwen3.8-27b vLLM entries expose sampler_profiles (got {len(vllm_with)})")
+check(llama_with == {"llamacpp/qwen38-27b-single-iq4xs",
+                     "llamacpp/qwen38-27b-dual-q8kxl"},
+      f"both llama.cpp qwen3.8 slugs gained sampler_profiles (got {sorted(llama_with)})")
+check(all(k.split("/", 1)[1].startswith("qwen38-27b-") for k in with_profiles),
+      "only qwen3.8-27b slugs carry sampler_profiles today")
 
 for slug, entry in sorted(with_profiles.items()):
     profiles = entry["sampler_profiles"]
@@ -240,21 +327,27 @@ for slug, entry in sorted(with_profiles.items()):
 
     text = pathlib.Path(entry["compose_path"]).read_text(encoding="utf-8")
 
+    # Argv dialect: llama.cpp composes exec /app/llama-server (image ENTRYPOINT)
+    # and take the sampler as flags; THINKING=1 drives their ${THINKING:+...}
+    # tail. vLLM composes exec `vllm` and flip on ENABLE_THINKING=true.
+    llama = entry.get("engine") == "llama-cpp-local"
+    mode_env = {"THINKING": "1"} if llama else {"ENABLE_THINKING": "true"}
+    mode_label = "THINKING=1" if llama else "ENABLE_THINKING=true"
+
     d_args, d_err = argv_under(text, {})
-    d_row = sampler_payload(d_args)
+    d_row = sampler_payload(d_args, llama=llama)
     check(rows_agree(d_row, profiles["instruct"]),
           f"{slug}: default render ships the INSTRUCT row (got {d_row}; {d_err})")
 
-    t_args, t_err = argv_under(text, {"ENABLE_THINKING": "true"})
-    t_row = sampler_payload(t_args)
+    t_args, t_err = argv_under(text, mode_env)
+    t_row = sampler_payload(t_args, llama=llama)
     check(rows_agree(t_row, profiles["thinking"]),
-          f"{slug}: ENABLE_THINKING=true ships the THINKING row (got {t_row}; {t_err})")
+          f"{slug}: {mode_label} ships the THINKING row (got {t_row}; {t_err})")
 
     x_args, x_err = argv_under(text, {
-        "ENABLE_THINKING": "true", "TEMP": "0.42", "TOP_P": "0.5",
-        "PRESENCE_PENALTY": "0.1",
+        **mode_env, "TEMP": "0.42", "TOP_P": "0.5", "PRESENCE_PENALTY": "0.1",
     })
-    x_row = sampler_payload(x_args)
+    x_row = sampler_payload(x_args, llama=llama)
     check(bool(x_row) and float(x_row.get("temperature", -1)) == 0.42
           and float(x_row.get("top_p", -1)) == 0.5
           and float(x_row.get("presence_penalty", -1)) == 0.1,

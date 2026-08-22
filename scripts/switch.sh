@@ -67,6 +67,9 @@
 #   FORCE           Set to 1 to skip hardware/free-VRAM preflight
 #   READY_URL       Default: http://localhost:8020/v1/models
 #   READY_TIMEOUT   Default: 600 (seconds — longer for cold cudagraph capture)
+#   CLUB3090_THINKING_<MODEL>  .env pin (on|off|inherit) → ENABLE_THINKING at
+#                 launch (#1014 follow-up; set it from the serve-confirm [T]).
+#                 An ENABLE_THINKING exported in the shell wins over the pin.
 
 set -euo pipefail
 
@@ -312,6 +315,69 @@ PY_CLEARKEY
   fi
   exit 0
 }
+
+# --- #1014 follow-up: persisted per-model THINKING pin (.env) ----------------
+#
+# The serve-confirm modal's [T] persists the tri-state thinking choice as
+# CLUB3090_THINKING_<MODEL> in .env (same mechanism --set-default uses for
+# CLUB3090_DEFAULT_<MODEL>). This side makes that pin REAL: when resolving the
+# serve env for a launch we read it and inject ENABLE_THINKING accordingly.
+
+# Echo the .env pin key for a model's thinking default — normalization identical
+# to model_default_pin_key (compose_registry.model_thinking_pin_key).
+thinking_pin_key_for() {
+  local model="$1"
+  python3 - "$ROOT_DIR" "$model" <<'PY_THINKKEY'
+import sys
+from pathlib import Path
+root = Path(sys.argv[1]); sys.path.insert(0, str(root))
+from scripts.lib.profiles.compose_registry import model_thinking_pin_key  # noqa: E402
+print(model_thinking_pin_key(sys.argv[2]))
+PY_THINKKEY
+}
+
+# Resolve a model's persisted thinking state to on | off | inherit. Reads the
+# ALREADY-LOADED environment (switch.sh loads .env above; shell-env-wins per
+# #425). Unknown/empty values degrade to inherit (the entrypoint default).
+thinking_pin_state() {
+  local model="$1" key val
+  key="$(thinking_pin_key_for "$model")" || { printf 'inherit'; return 0; }
+  val="${!key:-}"
+  case "${val,,}" in
+    on)  printf 'on' ;;
+    off) printf 'off' ;;
+    *)   printf 'inherit' ;;
+  esac
+}
+
+# Apply the persisted pin to the LAUNCH env right before compose up:
+#   on      → ENABLE_THINKING=true (explicit — beats the passthrough default)
+#   off     → ENABLE_THINKING=false (explicit, per the #1010 lesson)
+#   inherit → nothing injected.
+# An ENABLE_THINKING already present in the SHELL wins (#425 precedence): the
+# .env pin is file-tier defaulting, never a shell override.
+apply_thinking_pin_env() {
+  local variant="$1" eng dir file model state key
+  IFS='|' read -r eng dir file <<< "${VARIANTS[$variant]:-}"
+  # dir = models/<model>/<engine>/compose → model is field 2 (list_variants).
+  IFS=/ read -ra _tp <<< "${dir:-}"
+  model="${_tp[1]:-}"
+  [[ -n "$model" ]] || return 0
+  state="$(thinking_pin_state "$model")"
+  case "$state" in
+    on|off)
+      if [[ -n "${ENABLE_THINKING+x}" ]]; then
+        echo "[switch] thinking pin '${state}' for ${model} ignored — shell exported ENABLE_THINKING=${ENABLE_THINKING} wins (#425)."
+        return 0
+      fi
+      if [[ "$state" == on ]]; then ENABLE_THINKING=true; else ENABLE_THINKING=false; fi
+      export ENABLE_THINKING
+      key="$(thinking_pin_key_for "$model")"
+      echo "[switch] thinking pinned ${state} for ${model} (${key} in .env) → ENABLE_THINKING=${ENABLE_THINKING}."
+      ;;
+  esac
+}
+
 
 # Map a registry status word to the marker shown in --list and to launch
 # gating. `production` → unmarked; `caveats` → "(caveats)"; the (NA) set
@@ -1071,6 +1137,7 @@ up_variant() {
   echo "[switch] bringing up: ${v}  (${dir}/${file})"
   export_variant_engine_pin "$v"
   preflight_ik_llama_image "$v"   # #633 — cu12 fallback on <13.2 drivers (unless pinned)
+  apply_thinking_pin_env "$v"     # #1014 follow-up — persisted CLUB3090_THINKING_<MODEL> → ENABLE_THINKING
   (cd "${full_dir}" && ${COMPOSE_BIN} -f "${file}" up -d --remove-orphans)
 }
 
