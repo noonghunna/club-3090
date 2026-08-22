@@ -238,11 +238,16 @@ def test_route_g_all_legs_end_to_end(tmp_path: Path, monkeypatch):
 
     # ── Leg 4: PROMOTE — the real CLI against a throwaway repo root ──
     root = tmp_path / "throwaway-repo"
+    # ignore_patterns must cover boot residue: real rigs accumulate
+    # models/*/vllm/cache/torch_compile/... (root-owned container writes)
+    # that both explode copytree on permission and are irrelevant to the
+    # registry under test.
+    _copy_ignore = shutil.ignore_patterns("__pycache__", "cache", "*.log")
     for rel in ("scripts/lib", "tools/tui-core", "models"):
         shutil.copytree(
             REPO_ROOT / rel,
             root / rel,
-            ignore=shutil.ignore_patterns("__pycache__"),
+            ignore=_copy_ignore,
         )
     # Deterministic local layer: drop any dev-time registry.local.json so the
     # post-write get_registry assertion sees ONLY this promotion.
