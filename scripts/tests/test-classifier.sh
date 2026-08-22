@@ -39,6 +39,9 @@ export PYTHONUTF8="${PYTHONUTF8:-1}"
 #   * tier seam: F2 only ever emits TIER2 / NONE_UNKNOWN, never TIER1.
 #   * REAL on-disk .pull-captures/ bundle (a success/`partial`): classify
 #     returns a valid enum and does NOT misclassify as a fileable failure.
+#     (#1009) the leg selects ONLY schema==1 bundles — foreign-schema
+#     leftovers in the shared .pull-captures/ dir are skipped, keeping
+#     a second suite run in the same tree green.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -656,15 +659,64 @@ check(isinstance(_s1, BaseCaptureBundle),
 # REAL on-disk .pull-captures/ bundle (a success/`partial`): classify
 # returns a valid enum and does NOT misclassify as a fileable failure.
 # ---------------------------------------------------------------------------
-real_root = root / ".pull-captures"
-real_dirs: list[Path] = []
-if real_root.is_dir():
-    for slug_dir in sorted(real_root.iterdir()):
+def _select_schema1_bundles(caps_root):
+    """Select the schema==1 bundles under a .pull-captures root (#1009).
+
+    `.pull-captures/` is SHARED gitignored runtime state: other producers
+    (e.g. the CONTRACT-1.1 gate emitter writes schema==2 gate-only
+    bundles) legitimately leave bundles there that the STRICT schema==1
+    reader must refuse. Selecting only the bundles this leg can read
+    keeps every real capture on disk for debugging AND makes the leg
+    order-independent (a second suite run in the same tree stays green).
+    Returns (schema1_dirs, skipped_names).
+    """
+    found: list[Path] = []
+    skipped: list[str] = []
+    if not caps_root.is_dir():
+        return found, skipped
+    for slug_dir in sorted(caps_root.iterdir()):
         if not slug_dir.is_dir() or slug_dir.name.startswith("_"):
             continue
         for ts_dir in sorted(slug_dir.iterdir()):
-            if ts_dir.is_dir() and (ts_dir / "manifest.json").is_file():
-                real_dirs.append(ts_dir)
+            if not (ts_dir.is_dir()
+                    and (ts_dir / "manifest.json").is_file()):
+                continue
+            try:
+                m = json.loads(
+                    (ts_dir / "manifest.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                skipped.append(ts_dir.name)
+                continue
+            if m.get("schema") == 1:
+                found.append(ts_dir)
+            else:
+                skipped.append(ts_dir.name)
+    return found, skipped
+
+
+# Self-check on SYNTHETIC state (never repo-root .pull-captures/): the
+# selector keeps a schema==1 bundle and skips a schema==2 gate leftover —
+# the exact #1009 second-run regression, asserted directly.
+_sel_root = tmp / "sel-real"
+_sel_s1 = _sel_root / "capslug" / "ts-cap"
+_sel_s1.mkdir(parents=True)
+(_sel_s1 / "manifest.json").write_text(json.dumps({"schema": 1}),
+                                       encoding="utf-8")
+_sel_s2 = _sel_root / "gateslug" / "ts-gate"
+_sel_s2.mkdir(parents=True)
+(_sel_s2 / "manifest.json").write_text(json.dumps({"schema": 2}),
+                                       encoding="utf-8")
+_sel_dirs, _sel_skipped = _select_schema1_bundles(_sel_root)
+check(_sel_dirs == [_sel_s1] and _sel_skipped == ["ts-gate"],
+      "#1009: real-data selector keeps schema==1, skips schema==2 "
+      f"gate leftovers (got {_sel_dirs}, skipped {_sel_skipped})")
+
+real_root = root / ".pull-captures"
+real_dirs, foreign_dirs = _select_schema1_bundles(real_root)
+if foreign_dirs:
+    print(f"real-data: skipped {len(foreign_dirs)} non-schema-1 "
+          f".pull-captures/ bundle(s) {foreign_dirs} (#1009: shared "
+          f"runtime state; left untouched on disk)")
 
 if not real_dirs:
     print("SKIP: no real on-disk .pull-captures/ bundle (graceful)")

@@ -39,7 +39,7 @@ from scripts.lib.profiles.compat import (  # noqa: E402
     load_profiles,
     validate_estate,
 )
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY  # noqa: E402
+from scripts.lib.profiles.compose_registry import get_registry  # noqa: E402
 from scripts.lib.profiles.launch_compat import _hardware_id_from_gpu, resolve_engine_pin  # noqa: E402
 
 
@@ -415,7 +415,7 @@ def persist_default_estate_source(path: Path, data: dict[str, Any], instances: l
 
 
 def compose_abs_path(compose_name: str) -> Path:
-    entry = COMPOSE_REGISTRY.get(compose_name)
+    entry = get_registry().get(compose_name)
     if not entry:
         raise EstateCliError(f"unknown compose `{compose_name}`")
     path = REPO_ROOT / entry["compose_path"]
@@ -443,7 +443,7 @@ def compose_env(inst: InstanceSpec) -> dict[str, str]:
             "PORT": str(inst.port),
         }
     )
-    entry = COMPOSE_REGISTRY.get(inst.compose_name)
+    entry = get_registry().get(inst.compose_name)
     if entry:
         profiles = load_profiles()
         engine = profiles.engines[entry["engine"]]
@@ -783,15 +783,15 @@ def parse_gpus_reply(reply: str) -> tuple[int, ...]:
 def wizard_instance(slot: int, gpus: list[GpuInfo], existing: InstanceSpec | None, claimed: set[int], used_ports: set[int]) -> InstanceSpec:
     print("")
     print("[estate] Available composes:")
-    for name, entry in sorted(COMPOSE_REGISTRY.items()):
+    for name, entry in sorted(get_registry().items()):
         print(f"  {name:28s} model={entry['model']} tp={entry['tp']} port={entry['default_port']}")
     # llamacpp/default was deprecated 2026-08-12 (all single-card qwen llama.cpp +
     # ik-llama slugs retired); vllm/minimal is the functional single-card fallback.
     default_compose = existing.compose_name if existing else "vllm/minimal"
     compose = prompt_default("Compose", default_compose)
-    if compose not in COMPOSE_REGISTRY:
+    if compose not in get_registry():
         raise EstateCliError(f"unknown compose `{compose}`")
-    entry = COMPOSE_REGISTRY[compose]
+    entry = get_registry()[compose]
     tp = int(entry["tp"])
     default_gpus = default_gpu_block(tp, claimed, gpus, existing.gpu_indices if existing else None)
     gpu_reply = prompt_default("GPU indices", ",".join(str(gpu) for gpu in default_gpus))
@@ -891,7 +891,7 @@ def diagnose_payload(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         checks["schema"] = {"ok": False, "error": str(exc)}
         return payload, 2
 
-    missing = [inst.compose_name for inst in instances if inst.compose_name not in COMPOSE_REGISTRY]
+    missing = [inst.compose_name for inst in instances if inst.compose_name not in get_registry()]
     checks["registry"] = {
         "ok": not missing,
         "missing": missing,
@@ -972,8 +972,8 @@ def command_diagnose(args: argparse.Namespace) -> int:
         print(f"  ✗ {exc}")
         return 2
 
-    missing = [inst.compose_name for inst in instances if inst.compose_name not in COMPOSE_REGISTRY]
-    print("[2/6] Each instance compose exists in COMPOSE_REGISTRY")
+    missing = [inst.compose_name for inst in instances if inst.compose_name not in get_registry()]
+    print("[2/6] Each instance compose exists in get_registry()")
     if missing:
         for compose in missing:
             print(f"  ✗ {compose} missing from registry")
@@ -1035,7 +1035,7 @@ def report_state_payload(args: argparse.Namespace) -> tuple[dict[str, Any], int]
             "engines": len(profiles.engines),
             "drafters": len(profiles.drafters),
         },
-        "compose_registry_entries": len(COMPOSE_REGISTRY),
+        "compose_registry_entries": len(get_registry()),
         "canonical_scenarios": len(CANONICAL_SCENARIOS),
         "calibration": {model: len(cal.rows) for model, cal in sorted(profiles.calibration.items())},
         "active_estate": None,
@@ -1113,7 +1113,7 @@ def command_report_state(args: argparse.Namespace) -> int:
         f"{len(profiles.workloads)} workloads, {len(profiles.engines)} engines, "
         f"{len(profiles.drafters)} drafters"
     )
-    print(f"- **Compose registry:** {len(COMPOSE_REGISTRY)} entries")
+    print(f"- **Compose registry:** {len(get_registry())} entries")
     print(f"- **Canonical scenarios:** {len(CANONICAL_SCENARIOS)}")
     if profiles.calibration:
         print("- **Calibration:**")
@@ -1182,7 +1182,7 @@ def fit_slug_on_gpuset(slug: str, gpu_infos: list[GpuInfo]) -> dict:
       - homogeneous, count==TP -> the common path.
     Returns {verdict, card, note, ...kv-calc fields}. kvcalc_key=SKIP slugs
     (ik/llama) skip pricing with verdict 'skip'."""
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     if not entry:
         raise EstateCliError(f"unknown slug `{slug}`")
     tp = int(entry.get("tp") or 1)
@@ -1234,7 +1234,7 @@ def command_create(args: argparse.Namespace) -> int:
         gpu_indices = [int(x) for x in str(args.gpus).split(",") if str(x).strip() != ""]
         if not gpu_indices:
             raise EstateCliError("--gpus must list at least one index, e.g. --gpus 1,2")
-        if COMPOSE_REGISTRY.get(args.slug) is None:
+        if get_registry().get(args.slug) is None:
             raise EstateCliError(f"unknown slug `{args.slug}` — see `switch.sh --list`")
         # Existing estate (or a fresh doc).
         if path.exists():
@@ -1251,7 +1251,7 @@ def command_create(args: argparse.Namespace) -> int:
             raise EstateCliError(f"slug `{args.slug}` does not fit the selected GPU(s): {reason}")
         # Port: explicit, else the registry default nudged off collisions.
         used_ports = {inst.port for inst in instances}
-        entry = COMPOSE_REGISTRY[args.slug]
+        entry = get_registry()[args.slug]
         port = int(args.port) if args.port else default_port(int(entry["default_port"]), len(instances), used_ports)
         new_inst = InstanceSpec(name=args.name, compose_name=args.slug, gpu_indices=tuple(gpu_indices), port=port)
         # ONE validation path: the whole set (GPU collision, port collision, per-instance fits).

@@ -793,6 +793,281 @@ def probe_safetensors_dtype(
 
 
 # ---------------------------------------------------------------------------
+# GGUF header KV probe (P3, ModelSpec proposal §3 option 1) — stdlib `struct`
+# only, NO llama.cpp dependency. GGUF v2/v3 little-endian layout (public
+# spec): magic "GGUF" | u32 version | u64 tensor_count | u64 metadata_kv_count,
+# then kv_count records of  u64 key_len + key bytes | u32 value_type | value.
+# Value types: 0 u8 · 1 i8 · 2 u16 · 3 i16 · 4 u32 · 5 i32 · 6 f32 · 7 bool ·
+#              8 string · 9 array(u32 elem_type, u64 count, elems) ·
+#              10 u64 · 11 i64 · 12 f64.
+# Every converter writes the arch hyper-params ({arch}.block_count …) BEFORE
+# the big tokenizer arrays, so a bounded first-bytes read sees them — the same
+# assumption services._gguf_nextn_predict_layers already relies on.
+# ---------------------------------------------------------------------------
+_GGUF_MAGIC = b"GGUF"
+_GGUF_SCALAR_SIZES = {
+    0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8,
+}
+_GGUF_SCALAR_FMTS = {
+    0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
+    6: "<f", 10: "<Q", 11: "<q", 12: "<d",
+}
+# Remote probe budget: one range-GET of the header's first MiB. The arch KVs
+# sit up front; the vocab/tokenizer arrays that can push a full header past
+# this come later and are simply reported as `truncated`.
+_GGUF_REMOTE_PROBE_BYTES = 1 * 1024 * 1024
+# Local reads stream the real file, but stay capped — mirrors the safetensors
+# 16 MiB header ceiling (_MAX_HEADER_BYTES).
+_GGUF_LOCAL_PROBE_BYTES = _MAX_HEADER_BYTES
+
+# general.file_type (llama.cpp LLAMA_FTYPE enum) → quant label. Stable values
+# 0-26; anything newer/unknown → None and the caller falls back to the
+# basename quant regex the inventory already applies (_GGUF_QUANT_RE).
+_GGUF_FILE_TYPES = {
+    0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 7: "Q8_0", 8: "Q5_0", 9: "Q5_1",
+    10: "Q2_K", 11: "Q3_K_S", 12: "Q3_K_M", 13: "Q3_K_L", 14: "Q4_K_S",
+    15: "Q4_K_M", 16: "Q5_K_S", 17: "Q5_K_M", 18: "Q6_K", 19: "IQ2_XXS",
+    20: "IQ2_XS", 21: "Q2_K_S", 22: "IQ3_XS", 23: "IQ3_XXS", 24: "IQ1_S",
+    25: "IQ4_NL", 26: "IQ4_XS",
+}
+
+
+class _GgufTruncated(Exception):
+    """Input ended mid-record — the caller decides whether the KVs parsed so
+    far suffice (remote bounded probes routinely end here)."""
+
+
+def _gguf_read_value(rd: Callable[[int], Optional[bytes]], vt: int) -> Any:
+    if vt in _GGUF_SCALAR_SIZES:
+        b = rd(_GGUF_SCALAR_SIZES[vt])
+        if vt == 7:
+            return bool(b[0])
+        return struct.unpack(_GGUF_SCALAR_FMTS[vt], b)[0]
+    if vt == 8:
+        (n,) = struct.unpack("<Q", rd(8))
+        return rd(n).decode("utf-8", "replace")
+    if vt == 9:
+        (et,) = struct.unpack("<I", rd(4))
+        (cnt,) = struct.unpack("<Q", rd(8))
+        if et == 8 or et in _GGUF_SCALAR_SIZES:
+            return [_gguf_read_value(rd, et) for _ in range(cnt)]
+        raise ValueError(f"gguf: unsupported array elem type {et}")
+    raise ValueError(f"gguf: unsupported value type {vt}")
+
+
+def parse_gguf_header(src: Callable[[int], Optional[bytes]]) -> Optional[dict]:
+    """Parse a GGUF v2/v3 header from `src`, an exact-read callback returning
+    None or a SHORT bytes when input is exhausted.
+
+    Returns {"version", "tensor_count", "kv_count", "kv": dict, "truncated"}.
+    `truncated` marks an input that ended before kv_count records were read
+    (expected for the remote bounded probe). Not-GGUF / unsupported version /
+    nothing parseable at all → None.
+    """
+    out: dict[str, Any] = {
+        "version": None, "tensor_count": None, "kv_count": 0,
+        "kv": {}, "truncated": False,
+    }
+
+    def rd(n: int) -> bytes:
+        b = src(n)
+        if b is None or len(b) < n:
+            raise _GgufTruncated()
+        return b
+
+    try:
+        if rd(4) != _GGUF_MAGIC:
+            return None
+        (version,) = struct.unpack("<I", rd(4))
+        if version < 2 or version > 3:
+            return None
+        (tensor_count,) = struct.unpack("<Q", rd(8))
+        (kv_count,) = struct.unpack("<Q", rd(8))
+        out.update(version=version, tensor_count=tensor_count, kv_count=kv_count)
+        kv: dict[str, Any] = out["kv"]
+        for _ in range(kv_count):
+            (kl,) = struct.unpack("<Q", rd(8))
+            key = rd(kl).decode("utf-8", "replace")
+            (vt,) = struct.unpack("<I", rd(4))
+            kv[key] = _gguf_read_value(rd, vt)
+    except _GgufTruncated:
+        out["truncated"] = True
+    except Exception:
+        # Malformed record after a valid prologue → keep what parsed; garbage
+        # from byte zero → None (caller treats as no-probe-result).
+        return out if out["version"] is not None else None
+    return out
+
+
+def read_gguf_header(path: str) -> Optional[dict]:
+    """Local .gguf header parse (bounded at _GGUF_LOCAL_PROBE_BYTES)."""
+    remaining = [_GGUF_LOCAL_PROBE_BYTES]
+    try:
+        f = open(path, "rb")  # noqa: SIM115 - closed in finally below
+    except OSError:
+        return None
+    try:
+        def src(n: int) -> Optional[bytes]:
+            if remaining[0] <= 0:
+                return None
+            n = min(n, remaining[0])
+            remaining[0] -= n
+            return f.read(n)
+
+        return parse_gguf_header(src)
+    finally:
+        f.close()
+
+
+def probe_gguf_header(
+    slug: str,
+    weight_file: str,
+    fetcher: HttpFetcher,
+    hf_token: Optional[str],
+) -> Optional[dict]:
+    """Range-bounded REMOTE GGUF header probe — mirrors probe_safetensors_
+    dtype's discipline: ONE range-GET of the first _GGUF_REMOTE_PROBE_BYTES,
+    never a full-file download. Any failure/malformed → None."""
+    url = f"{_HF_RESOLVE}/{slug}/resolve/main/{weight_file}"
+    try:
+        r = fetcher.get(
+            url,
+            headers=_auth_headers(hf_token),
+            range_=(0, _GGUF_REMOTE_PROBE_BYTES - 1),
+        )
+    except NetworkError:
+        return None
+    if r.status not in (200, 206) or not r.body:
+        return None
+    pos = [0]
+
+    def src(n: int) -> Optional[bytes]:
+        b = r.body[pos[0]:pos[0] + n]
+        pos[0] += n
+        return b  # short slice at the buffer end → truncated
+
+    return parse_gguf_header(src)
+
+
+def gguf_spec_facts(
+    header: dict,
+    *,
+    model_id: str = "",
+    weight_gb: Optional[float] = None,
+) -> Optional[dict]:
+    """Map GGUF header KVs into the deriver's spec-facts shape — the SAME key
+    set `_build_generic_dense_spec` emits so every downstream consumer
+    (`ByoResult.facts` → `compute_promote_scaffold`) works unchanged — plus
+    additive provenance/confidence metadata.
+
+    Confidence language mirrors docs/PULL.md tiers: header facts are machine-
+    derived from the artifact, NOT a curated calibration anchor →
+    `estimated-lower-bound`. Provenance on every mapped dim: `gguf-header`.
+
+    Returns None when `general.architecture` is absent — the dims are
+    arch-keyed, so without it nothing maps honestly."""
+    kv: dict = header.get("kv") or {}
+    arch = kv.get("general.architecture")
+    if not isinstance(arch, str) or not arch:
+        return None
+
+    def num(*keys: str) -> Optional[Any]:
+        for k in keys:
+            v = kv.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return v
+        return None
+
+    def scalar(key: str) -> tuple[Optional[Any], bool]:
+        """A header value that is a per-layer ARRAY (real-world: laguna's
+        attention.head_count alternates 48/72 across hybrid layers). A uniform
+        array collapses losslessly; a VARIABLE one is not representable in the
+        generic-dense facts shape → None + a recorded flag (never averaged)."""
+        v = kv.get(key)
+        if isinstance(v, list):
+            if v and all(x == v[0] for x in v):
+                return (v[0] if isinstance(v[0], (int, float)) else None), False
+            return None, True
+        return (v if isinstance(v, (int, float)) and not isinstance(v, bool)
+                else None), False
+
+    hidden = num(f"{arch}.embedding_length")
+    layers = num(f"{arch}.block_count")
+    heads, heads_variable = scalar(f"{arch}.attention.head_count")
+    kv_heads, kv_heads_variable = scalar(f"{arch}.attention.head_count_kv")
+    # GGUF convention: attention.head_count_kv is OMITTED for plain MHA
+    # (K heads == V heads) — assuming equality there is lossless, not a guess.
+    kv_heads_assumed_equal = kv_heads is None and heads is not None
+    if kv_heads_assumed_equal:
+        kv_heads = heads
+    head_dim, _ = scalar(f"{arch}.attention.key_length")
+    if head_dim is None and hidden and heads and hidden % heads == 0:
+        head_dim = hidden // heads
+    ctx = num(f"{arch}.context_length")
+    ft = num("general.file_type")
+    return {
+        "model_id": model_id,
+        # No config.json exists for a GGUF repo → family/display stay human
+        # placeholders downstream; we never fabricate them from the header.
+        "model_family": None,
+        "arch": arch,
+        "hidden_size": hidden,
+        "num_hidden_layers": layers,
+        "num_attn_heads": heads,
+        "num_kv_heads": kv_heads,
+        "head_dim_attn": head_dim,
+        "max_ctx_supported": ctx,
+        "weights_total_gb": weight_gb,
+        "valid_tp": [1, 2],
+        # ── provenance / confidence metadata (additive; consumers pick the
+        # keys they know — compute_promote_scaffold ignores these) ──
+        "confidence": Confidence.ESTIMATED_LOWER_BOUND.value,
+        "facts_provenance": "gguf-header",
+        "gguf": {
+            "version": header.get("version"),
+            "general_name": kv.get("general.name") or None,
+            "file_type": ft if isinstance(ft, int) else None,
+            "quant_label": (
+                _GGUF_FILE_TYPES.get(ft) if isinstance(ft, int) else None
+            ),
+            "quantization_version": num("general.quantization_version"),
+            "kv_heads_assumed_equal": kv_heads_assumed_equal,
+            # Per-layer head-count arrays (hybrid attention): a uniform array
+            # was collapsed; a variable one left num_attn_heads/num_kv_heads
+            # None — surfaced here so the placeholder isn't a silent drop.
+            "head_count_variable": heads_variable or kv_heads_variable,
+            # ⚠️ informational ONLY: converters routinely leave file_type at
+            # the ORIGINAL conversion type, not the shipped requant (real rig:
+            # a Q4_K_M file reporting file_type 7/Q8_0). The basename quant
+            # regex (_GGUF_QUANT_RE) stays authoritative for the label.
+            "truncated": bool(header.get("truncated")),
+        },
+    }
+
+
+def gguf_facts_from_file(
+    path: str, *, model_id: str = "", weight_gb: Optional[float] = None
+) -> Optional[dict]:
+    """Spec-facts from a local .gguf path (header read only)."""
+    h = read_gguf_header(path)
+    return gguf_spec_facts(h, model_id=model_id, weight_gb=weight_gb) if h else None
+
+
+def gguf_facts_from_repo(
+    slug: str,
+    weight_file: str,
+    fetcher: HttpFetcher,
+    hf_token: Optional[str],
+    *,
+    model_id: str = "",
+    weight_gb: Optional[float] = None,
+) -> Optional[dict]:
+    """Spec-facts from a remote repo file via the bounded range probe."""
+    h = probe_gguf_header(slug, weight_file, fetcher, hf_token)
+    return gguf_spec_facts(h, model_id=model_id, weight_gb=weight_gb) if h else None
+
+
+# ---------------------------------------------------------------------------
 # Quant / dtype chain + effective bits-per-weight
 # ---------------------------------------------------------------------------
 _DTYPE_BPW = {

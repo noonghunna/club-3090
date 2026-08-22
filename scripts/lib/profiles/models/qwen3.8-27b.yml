@@ -228,3 +228,19 @@ valid_tp:
   - 4
   - 8
 requires_genesis: false
+
+# `setup:` — dispatch policy for scripts/setup.sh (contract C1); see
+# qwen3.6-27b.yml for the field reference. Only the non-default keys appear.
+setup:
+  # setup.sh's default fetch is the fp8 "max accuracy" tier — what DUAL_CARD.md
+  # leads with and the only qwen3.8 config with measured numbers (67.4 / 85.8
+  # tok/s, verify-full PASS, 2026-08-17) — NOT the profile default
+  # (unsloth-iq4xs GGUF). DUAL-card: 30.9 GB of weights do not fit one 24 GB
+  # card. Single card: WEIGHT_KEY=qwen3.8-27b:unsloth-iq4xs.
+  primary: fp8
+  # DFlash2 drafter for the 12 super*/ultra* slugs (WITH_DFLASH_DRAFT=1).
+  dflash: dflash2
+  # F16 mmproj vision projector (WITH_VISION=1) — companion of the
+  # llamacpp/qwen38-27b-single-iq4xs slug; c3's Download also pulls it via that
+  # slug's weights_companions.
+  vision: gguf_mmproj_f16

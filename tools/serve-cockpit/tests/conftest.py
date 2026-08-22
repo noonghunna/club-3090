@@ -33,6 +33,15 @@ import pytest
 os.environ.setdefault("C3_SKIP_DOWNLOAD_PREFLIGHT", "1")
 os.environ.setdefault("C3_CONFIG_DIR", tempfile.mkdtemp(prefix="c3-tests-config-"))
 
+
+def pytest_configure(config):
+    """Register the opt-in live-network marker (test_uiux_hf_search.py)."""
+    config.addinivalue_line(
+        "markers",
+        "live_network: touches the live Hugging Face API — skipped unless "
+        "CLUB3090_LIVE_NETWORK=1",
+    )
+
 from club3090_tui_core.runner import SubprocessRunner
 from club3090_cockpit.services import RealRunner
 

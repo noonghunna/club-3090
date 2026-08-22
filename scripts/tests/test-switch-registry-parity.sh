@@ -20,9 +20,10 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+# C4-rev: merged view — LOCAL layer slugs must be switch-launchable too.
+from scripts.lib.profiles.compose_registry import get_registry
 
-for key, entry in COMPOSE_REGISTRY.items():
+for key, entry in get_registry().items():
     engine_prefix = key.split("/", 1)[0]
     engine = "llamacpp" if engine_prefix == "llamacpp" else engine_prefix
     cp = entry["compose_path"]
@@ -76,9 +77,9 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+from scripts.lib.profiles.compose_registry import get_registry
 
-registered_paths = {entry["compose_path"] for entry in COMPOSE_REGISTRY.values()}
+registered_paths = {entry["compose_path"] for entry in get_registry().values()}
 for engine in ("vllm", "llama-cpp", "ik-llama", "beellama"):
     for path in sorted(root.glob(f"models/*/{engine}/compose/single/*/*.yml")):
         rel = path.relative_to(root).as_posix()

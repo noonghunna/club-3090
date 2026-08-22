@@ -45,8 +45,14 @@ import dataclasses
 import logging
 import re
 from collections import OrderedDict
-from pathlib import Path
-from typing import NamedTuple, Optional
+from textual.containers import (
+    Container,
+    Horizontal,
+    Vertical,
+    VerticalScroll,
+    ScrollableContainer,
+)
+from typing import Any, NamedTuple, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -73,6 +79,9 @@ from textual.widgets import (
 # NESTED TabbedContent (e.g. the Containers drill Logs/Top/Config sub-tabs).
 from textual.widgets._tabbed_content import ContentSwitcher, ContentTabs
 from textual import work
+from textual.coordinate import Coordinate
+from textual.events import Click
+from textual.message import Message
 
 from rich.text import Text
 
@@ -93,6 +102,7 @@ from .data import (
     GATE_STEPS,
     Measurement,
     MeasureVsBar,
+    KvOption,
     OptimizerReport,
     PowerCapState,
     PromoteScaffold,
@@ -770,12 +780,19 @@ class HelpScreen(ModalScreen):
     HelpScreen {
         align: center middle;
     }
+    /* Scrollable: one giant Static at height:auto clipped on <50-row terminals —
+       the box now takes a fixed fraction of the screen and the body SCROLLS
+       (content identical). */
     HelpScreen > Vertical {
         width: 76;
-        height: auto;
+        height: 85%;
+        max-height: 90%;
         border: thick $accent;
         background: $surface;
         padding: 1 2;
+    }
+    HelpScreen VerticalScroll {
+        height: 1fr;
     }
     HelpScreen .help-title {
         text-style: bold;
@@ -805,9 +822,9 @@ class HelpScreen(ModalScreen):
     # The producer Bring & Validate lane section — rendered ONLY on producer.
     _LANE_SECTION = """\
 [bold]Bring & Validate[/bold] (producer lane — the ① → ⑤ pipeline)
-  ① Bring:   fit-check an HF model   [cyan]s[/cyan] Continue → ② Serve (weights on disk)   [cyan]D[/cyan] download weights
+  ① Bring:   [cyan]f[/cyan] search HF (fills the repo field)   fit-check an HF model   [cyan]s[/cyan] Continue → ② Serve (weights on disk)   [cyan]D[/cyan] download weights
   ② Serve:   [cyan]⏎[/cyan]/[cyan]g[/cyan] serve untested (Route-C = your weights · else catalog reproduction)
-  ③ Gate:    [cyan]⏎[/cyan] launch validation step (gated)   [cyan]F[/cyan] full battery report.sh --full (~43-min · confirm · uses serving model)
+  ③ Gate:    [cyan]⏎[/cyan] launch validation step (gated)   [cyan]F[/cyan] full battery report.sh --full (~43-min · confirm · uses serving model)   [cyan]K[/cyan] boot-log KV back-solve vs kv-calc (read)
   ④ Measure: [cyan]⏎[/cyan] open report   [cyan]m[/cyan] vs catalog bar (read)   [cyan]s[/cyan] submit to localmaxxing (gated · never auto)
   ⑤ Promotion Preview: [cyan]P[/cyan] scaffold preview [yellow](preview only — no catalog write yet)[/yellow]
   [cyan]v[/cyan] ▸ Evaluate via c3t [yellow](preview / mock this phase)[/yellow]
@@ -852,8 +869,9 @@ class HelpScreen(ModalScreen):
             "",
             "[bold]Run & Operate · Catalog[/bold]",
             "  [cyan]⏎[/cyan] serve selected slug (reconcile-gated confirm; F to Force the teardown)",
+            "  [cyan]e[/cyan] explain   [cyan]i[/cyan] model info (metadata popup for the selected slug)",
             "  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default",
-            "  [cyan]O[/cyan] ▸ Optimize for my card [yellow](coming soon — v0.10.0)[/yellow]",
+            "  [cyan]O[/cyan] ▸ Optimize for my card (kv-calc recs, advisory)",
             "",
             "[bold]Run & Operate · Orchestration[/bold]",
             "  [cyan]⏎[/cyan] switch scene   [cyan]k[/cyan] stop THIS model   [cyan]b[/cyan] restart serving   [cyan]n[/cyan] switch model (→ Catalog tab)   (writes gated)",
@@ -888,6 +906,7 @@ class HelpScreen(ModalScreen):
             "",
             "  ✅ production   [orange1]✔[/orange1] caveats   🧪 experimental",
             "  🐣 incubating  👀 preview   🚧 upstream-gated   🚫 deprecated",
+            "  [cyan]★[/cyan] registry default for this model × topology   👤 shape-match serving guess",
             "",
             "[bold]Spec Dec column[/bold] (default drafter)",
             "",
@@ -897,13 +916,22 @@ class HelpScreen(ModalScreen):
             "[bold]Fit glyphs (local card)[/bold]",
             "",
             "  ● fits-clean   ◐ fits-constrained   ○ won't-fit   · skip / unknown",
-        ])
+            "",
+            "[bold]Mouse & copy[/bold]",
+            "",
+            "  click row = select + preview   double-click row = model info ([i])",
+            "  click column header = column picker ([|])",
+            "  [Y] copies the context-relevant text (OSC52 — needs an OSC52 terminal;",
+            "  works over SSH). To drag-select raw text, hold SHIFT while dragging —",
+            "  the terminal bypasses the app's mouse capture and selects natively.",
+         ])
         return "\n".join(parts)
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label("club3090 serve cockpit — Help", classes="help-title")
-            yield Static(self.help_text)
+            with VerticalScroll():
+                yield Static(self.help_text)
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()
@@ -918,6 +946,83 @@ class HelpScreen(ModalScreen):
 # dropdown just narrows to one model.  The sentinel = "no scope" (all lanes show).
 _ALL_MODELS_VALUE = "__all_models__"
 _ALL_MODELS_LABEL = "All models"
+
+
+class CatalogTable(DataTable):
+    """Catalog DataTable whose click-on-ALREADY-highlighted-row inspects.
+
+    Stock DataTable posts RowSelected when a click lands on the highlighted
+    row, and the app routes RowSelected → primary action (⏎ = serve confirm).
+    For a mouse-driven "look at this row again" gesture that is a mis-click
+    trap: users clicking to inspect get a serve dialog.  This subclass
+    intercepts exactly that case and posts HighlightClicked instead; the app
+    opens the model-info popup ([i] twin).  Serving stays keyboard-first
+    (⏎ / [s] / buttons).  Clicks on non-highlighted rows keep the stock
+    move-cursor behavior."""
+    # Row-cursor mode makes stock ←/→ a column-crawl with no visible effect
+    # (one invisible cell per press — the "slow horizontal scroll" complaint).
+    # Rebind them to the SAME animated page-scroll as shift+←/→; the whole-row
+    # highlight loses nothing. Subclass BINDINGS replace the stock key map for
+    # these keys (most-derived wins), ↑/↓ row navigation is untouched.
+    BINDINGS = [
+        Binding("right", "page_right", "Scroll ▶", show=False),
+        Binding("left", "page_left", "Scroll ◀", show=False),
+    ]
+
+    def action_page_right(self) -> None:
+        self.app._hscroll(1)
+
+    def action_page_left(self) -> None:
+        self.app._hscroll(-1)
+
+    async def _on_mouse_scroll_right(self, event) -> None:
+        """Horizontal trackpad/touchpad pan (terminals that deliver it — bare
+        ghostty does, zellij's passthrough is unreliable): animated page-scroll.
+        prevent_default() halts the MRO walk so the stock handler (which would
+        ignore the event anyway) doesn't also run."""
+        event.stop()
+        event.prevent_default()
+        self.app._hscroll(1)
+
+    async def _on_mouse_scroll_left(self, event) -> None:
+        event.stop()
+        event.prevent_default()
+        self.app._hscroll(-1)
+
+    class HighlightClicked(Message):
+        """A click landed on the currently-highlighted row (inspect intent)."""
+
+        def __init__(self, table: "CatalogTable") -> None:
+            super().__init__()
+            self.table = table
+
+    async def _on_click(self, event: Click) -> None:
+        """Intercept ONLY the click-on-highlighted-row case.
+
+        ⚠️ Textual dispatches private `_on_click` handlers from EVERY class in
+        the MRO that defines one (message_pump._get_dispatch_methods has no
+        first-hit-wins for naming-convention handlers) — so calling super()
+        here would run the stock handler a SECOND time, whose highlight_click
+        check then sees the cursor we just moved and posts RowSelected (the
+        serve-confirm mis-click trap this class exists to fix).  Instead:
+        handle the highlight-click case and prevent_default() — which halts
+        the MRO walk before DataTable._on_click — and for every other case do
+        NOTHING so the stock handler runs untouched."""
+        meta = getattr(event.style, "meta", {}) or {}
+        if "row" not in meta or "column" not in meta:
+            return
+        if self.show_header and meta["row"] == -1:
+            return  # header clicks → stock HeaderSelected path
+        if not (self.show_cursor and self.cursor_type != "none"):
+            return
+        try:
+            clicked = Coordinate(int(meta["row"]), int(meta["column"]))
+        except Exception:
+            return
+        if clicked == self.cursor_coordinate:
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.HighlightClicked(self))
 
 
 class CatalogPane(Container):
@@ -987,7 +1092,7 @@ class CatalogPane(Container):
             allow_blank=False,
         )
         yield Input(placeholder="filter slug / topology / engine / model / status… (space = AND)", id="catalog-filter")
-        table: DataTable = DataTable(id="catalog-table", zebra_stripes=True)
+        table: DataTable = CatalogTable(id="catalog-table", zebra_stripes=True)
         table.cursor_type = "row"
         yield table
         # #9/A8 — a compact preview strip for the highlighted row.  All LOCAL
@@ -1063,6 +1168,10 @@ class CatalogPane(Container):
         # is unset / missing) is prepended to the status line so the user is
         # prompted to set it ([S]).
         self._model_dir_note: str = ""
+        # Degraded-catalog notice (C6): a non-empty note means the --json emit
+        # failed but the raw-tab fallback still produced rows — they render with
+        # reduced columns and the reason shows as a yellow one-liner.
+        self._degraded_note: str = ""
 
     # ── Column picker (#724) ─────────────────────────────────────────────────
 
@@ -1133,16 +1242,21 @@ class CatalogPane(Container):
         status_label = self.query_one("#catalog-status", Label)
         table = self.query_one("#catalog-table", DataTable)
 
-        if error:
+        if error and not entries:
+            self._degraded_note = ""
             self._entries = []
             table.clear()
             status_label.update(f"[red]Catalog error:[/red] {error}")
             table.add_row(*(["—"] * len(self._visible_columns())))
             return
 
+        # Rows + a note = the degraded-catalog path: render the rows, surface
+        # the note (yellow) on the status line instead of failing the pane.
+        self._degraded_note = (error or "").strip() if entries else ""
         self._entries = list(entries)
         self._refresh_model_options()
         self._render_rows()
+
 
     def _refresh_model_options(self) -> None:
         """Refill the model-scope dropdown with the DISTINCT model names in
@@ -1173,6 +1287,16 @@ class CatalogPane(Container):
 
         rows = self._filtered_entries()
         serving = (self._serving_slug or "").strip()
+        # ★ default marker (C6): the registry's curated default slug(s) for each
+        # (model, topology) — from CockpitData.catalog_defaults (the --json
+        # `defaults` array).  A row whose slug is one of them gets a star.
+        try:
+            defaults = getattr(self.app._data, "catalog_defaults", None) or []
+        except Exception:
+            defaults = []
+        default_slugs = {
+            str(d.get("slug")) for d in defaults if isinstance(d, dict) and d.get("slug")
+        }
         prev_model: Optional[str] = None  # blank-on-repeat → the switch.sh --list grouped look
         for e in rows:
             # Per-rig honesty: the perf columns (TPS / 8pk) show THIS RIG's OWN
@@ -1186,6 +1310,9 @@ class CatalogPane(Container):
             # N3: mark the live-serving row so the running model is visible at a
             # glance in Run.  Driven by the estate's matched_slug.
             slug_cell = e.slug
+            is_default_row = e.slug in default_slugs
+            if is_default_row:
+                slug_cell = f"[cyan]★[/cyan] {slug_cell}"
             is_serving_row = bool(serving and e.slug == serving)
             if is_serving_row:
                 if (self._serving_confidence or "") == "shape":
@@ -1235,7 +1362,11 @@ class CatalogPane(Container):
             }
             table.add_row(*(cells[k] for k in self._visible_columns()))
 
-        banner = f"[yellow]{self._model_dir_note}[/yellow]  ·  " if self._model_dir_note else ""
+        banner = ""
+        if self._degraded_note:
+            banner += f"[yellow]{self._degraded_note}[/yellow]  ·  "
+        if self._model_dir_note:
+            banner += f"[yellow]{self._model_dir_note}[/yellow]  ·  "
         # Surface an active model scope (dropdown) the same way the text filter is shown.
         scope = f"model: [cyan]{self._model_filter}[/cyan]  ·  " if self._model_filter else ""
         # [h] hint: N 🗑️ deprecated + M hardware-incompatible slugs hidden
@@ -1837,6 +1968,467 @@ class ExplainScreen(_CopyableModal, ModalScreen):
         self.app.pop_screen()
 
 
+# ── Boot-log KV back-solve modal (producer ③ Gate · [K]) ───────────────────────
+
+
+def _bootlog_verdict_lines(res: dict) -> tuple[list[str], str]:
+    """Build the boot-log back-solve verdict card: (markup lines, plain copy).
+
+    Pure render of the ``CockpitData.bootlog_solve`` result.  Honest failures
+    (no container / docker unavailable / solver error) render the reason —
+    numbers are NEVER fabricated; an ``insufficient-log`` report lists exactly
+    which fields the log (or registry) could not supply."""
+    report = res.get("report") or {}
+    if not res.get("ok") or not isinstance(report, dict) or not report:
+        first = f"[red]unavailable:[/red] {res.get('message') or 'no report'}"
+        lines = [
+            first,
+            "",
+            "[dim]The back-solve needs a serving catalog slug + its live container "
+            "(docker logs). Nothing was guessed — fix the target and press K again.[/dim]",
+        ]
+        return lines, Text.from_markup(first).plain
+
+    verdict = str(report.get("verdict", "insufficient-log"))
+    glyph, color = {
+        "match": ("✓", "green"),
+        "half": ("⚠", "yellow"),
+        "mismatch": ("✗", "red"),
+    }.get(verdict, ("·", "yellow"))
+
+    def num(v: Any) -> str:
+        return f"{v:,.2f}" if isinstance(v, (int, float)) else "—"
+
+    src = report.get("field_sources") or {}
+    lines = [f"[bold {color}]{glyph} {verdict.upper()}[/bold {color}]", ""]
+    lines += [
+        f"  measured  per-token KV (TP1-equiv): {num(report.get('measured_per_token_bytes_tp1'))} B/tok"
+        f"   (per-card {num(report.get('measured_per_token_bytes'))})",
+        f"  predicted per-token KV (TP1-equiv): {num(report.get('predicted_per_token_bytes_tp1'))} B/tok"
+        f"   (per-card {num(report.get('predicted_per_token_bytes'))})",
+        f"  ratio: {num(report.get('ratio'))}  [dim](±10% → match · ~2× → K=V tying)[/dim]",
+        "",
+        f"  pool: Available KV cache / card = {num(report.get('available_kv_gib'))} GiB"
+        + (f" · {report.get('kv_pool_tokens'):,} tokens" if report.get("kv_pool_tokens") else ""),
+        f"  config: max_ctx {report.get('max_ctx') or '—'} · max_num_seqs "
+        f"{report.get('max_num_seqs') or '—'} · TP {report.get('tp') or '—'}"
+        f"  [dim]({'/'.join(v for v in src.values() if v) or 'no source'})[/dim]",
+    ]
+    bits = [report.get("solve_path"), report.get("kv_format"), report.get("model")]
+    if any(bits):
+        lines.append(
+            "  solve: " + " · ".join(str(b) for b in bits if b)
+            + f"  [dim]({report.get('slug', '')})[/dim]"
+        )
+    cause = report.get("suspected_cause")
+    if cause:
+        lines += ["", f"  [bold]suspected cause:[/bold] {cause}"]
+    missing = report.get("missing_fields") or []
+    if missing:
+        lines += ["", "  [yellow]fields not in the log (never guessed):[/yellow]"]
+        lines += [f"    - {m}" for m in missing]
+    ev = report.get("evidence") or {}
+    ev_lines = [
+        v for v in (
+            ev.get("available_kv_line"), ev.get("pool_tokens_line"),
+            ev.get("model_length_line"), ev.get("max_num_seqs_line"),
+            ev.get("tensor_parallel_line"),
+        ) if v
+    ]
+    if ev_lines:
+        lines += ["", "  [dim]evidence from the boot log:[/dim]"]
+        lines += [f"    [dim]{ln}[/dim]" for ln in ev_lines]
+    plain = "\n".join(Text.from_markup(ln).plain for ln in lines)
+    return lines, plain
+
+
+class BootlogSolveScreen(_CopyableModal, ModalScreen):
+    """[K] — the ADDING_MODELS.md Step-5 boot-log back-solve, automated.
+
+    READ-only: the app worker (``run_bootlog_solve``) pulls the serving
+    container's boot log (docker logs via the runner seam) and classifies the
+    measured per-token KV bytes against the kv-calc prediction — match / half
+    (K=V tying suspect) / mismatch (growing-layer miscount suspect) /
+    insufficient-log.  Honest failures render as such; numbers are never
+    guessed.  [Y] copies the card for the calibration write-up."""
+
+    DEFAULT_CSS = """
+    BootlogSolveScreen {
+        align: center middle;
+    }
+    BootlogSolveScreen > Vertical {
+        width: 92;
+        height: 70%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    BootlogSolveScreen .bootlog-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    BootlogSolveScreen #bootlog-scroll {
+        height: 1fr;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("Y", "app.copy_context", "Copy", show=True),
+    ]
+
+    def __init__(self, title: str, slug: str, container: str, **kwargs):
+        super().__init__(**kwargs)
+        self._title = title
+        self.slug = slug
+        self.container = container
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(self._title, classes="bootlog-title")
+            with ScrollableContainer(id="bootlog-scroll"):
+                yield Static(
+                    "[dim]reading docker logs + back-solving against kv-calc…[/dim]",
+                    id="bootlog-body",
+                )
+            yield Label(
+                "[dim]Esc to close · [cyan]Y[/cyan] copies the verdict card[/dim]"
+            )
+
+    def set_result(self, res: dict) -> None:
+        """Render the service result into the card (called by the app worker).
+
+        The worker can finish BEFORE this screen finishes mounting (fake
+        runners answer in ~0 ms), so if the body widget isn't queryable yet
+        the result is stashed and on_mount applies it — the placeholder is
+        never left on screen."""
+        self._pending_result = res
+        try:
+            self._apply_result(res)
+        except Exception:
+            pass  # not mounted yet — on_mount applies the stashed result
+
+    _pending_result: dict | None = None
+
+    def on_mount(self) -> None:
+        if getattr(self, "_pending_result", None) is not None:
+            try:
+                self._apply_result(self._pending_result)
+            except Exception:
+                pass
+
+    def _apply_result(self, res: dict) -> None:
+        body = self.query_one("#bootlog-body", Static)
+        lines, plain = _bootlog_verdict_lines(res)
+        body.update("\n".join(lines))
+        self._copy_payload = plain
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
+
+class ModelInfoScreen(_CopyableModal, ModalScreen):
+    """[i] — lightweight metadata popup for the focused catalog row.
+
+    Sibling of ExplainScreen but with ZERO I/O: every line is built from
+    data the cockpit already holds in memory (the CatalogEntry's row/fit/
+    measurement/weights join + the registry's model-profile metadata from
+    ``registry-emit.sh --json``).  Dismissal returns data (None) and never
+    touches the panes — the plain modal rule."""
+
+    DEFAULT_CSS = """
+    ModelInfoScreen {
+        align: center middle;
+    }
+    ModelInfoScreen > Vertical {
+        width: 76;
+        height: auto;
+        max-height: 80%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    ModelInfoScreen .model-info-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    ModelInfoScreen #model-info-body {
+        height: auto;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("i", "dismiss", "Close"),
+        Binding("Y", "app.copy_context", "Copy", show=True),
+    ]
+
+    def __init__(
+        self,
+        entry: "CatalogEntry",
+        model_profile: Optional[dict] = None,
+        *,
+        is_default: bool = False,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self._entry = entry
+        self._profile = model_profile if isinstance(model_profile, dict) else {}
+        self._is_default = bool(is_default)
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(f"Model info · {self._entry.slug}", classes="model-info-title")
+            yield Static("", id="model-info-body")
+
+    def on_mount(self) -> None:
+        self._rerender()
+
+    def _rerender(self) -> None:
+        e = self._entry
+        p = self._profile
+        lines: list[str] = []
+        display = str(p.get("display_name") or e.model or "—")
+        lines.append(f"  [bold]Model[/bold]   {display} [dim]({e.model})[/dim]")
+        family = str(p.get("family") or "—")
+        lines.append(f"  [bold]Family[/bold]  {family}")
+        apb = p.get("active_params_b")
+        apb_s = f"{float(apb):g}B active (MoE)" if apb is not None else "—"
+        lines.append(f"  [bold]Params[/bold]  {apb_s}")
+        vision = p.get("vision_capable")
+        vision_s = "yes" if vision else ("no" if vision is not None else "—")
+        lines.append(f"  [bold]Vision[/bold]  {vision_s}")
+        hf = p.get("hf_repo")
+        lines.append(f"  [bold]HF[/bold]      {hf or '—'}")
+        status = _status_glyph(e.status)
+        lines.append(f"  [bold]Status[/bold]  {status} {e.status or '—'}")
+        if e.status_note:
+            lines.append(f"  [bold]Caveat[/bold]  [yellow]{e.status_note}[/yellow]")
+        ws = e.weights_state or "unknown"
+        meta = e.weights
+        size_s = f"{meta.size_gb:g} GB" if meta is not None and meta.size_gb else "—"
+        lines.append(f"  [bold]Weights[/bold] {ws} · {size_s}")
+        comps = e.weights_companions
+        lines.append(
+            f"  [bold]Extras[/bold]  {', '.join(comps) if comps else '— (single artifact)'}"
+        )
+        fit = e.fit
+        fit_line = str(fit.verdict or "unknown")
+        if fit.vram_est_gb is not None:
+            fit_line += f"  ~{float(fit.vram_est_gb):.2f} GiB"
+            if fit.band_gb is not None:
+                fit_line += f" / {float(fit.band_gb):.1f} GiB band"
+        lines.append(f"  [bold]Fit[/bold]     {fit_line}")
+        m = e.measurement
+        bar = "—"
+        if m is not None and (m.narr_tps is not None or m.code_tps is not None):
+            bar = f"{m.tps_label} TPS · 8pk {m.quality_8pk or '—'}"
+            if m.date:
+                bar += f"  [dim]{m.date}[/dim]"
+        lines.append(f"  [bold]Baseline[/bold] {bar}")
+        if self._is_default:
+            lines.append("  [cyan]★[/cyan] registry default for this model × topology")
+        lines.append("")
+        lines.append("  [dim]Esc / i to close[/dim]")
+        body = self.query_one("#model-info-body", Static)
+        body.update("\n".join(lines))
+        # Markup-free copy payload for the global [Y] copy action.
+        self._copy_payload = "\n".join(
+            Text.from_markup(ln).plain for ln in lines[:-2]
+        )
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
+
+
+def _hf_fmt_count(n: Any) -> str:
+    """Compact download/like counts for the search table (1234567 → 1.2M)."""
+    try:
+        n = int(n or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
+class SearchHFScreen(ModalScreen):
+    """[f] — search Hugging Face for a repo, then fill the ① Bring field.
+
+    Discovery front-end for ① Bring: type terms, ⏎ searches, ⏎ on a result
+    row (or the Fill button) dismisses returning the repo id; Esc dismisses
+    returning None.  Modal rule: dismissal returns DATA and never touches the
+    panes — the app-side callback fills ``#lane-bring-url-input`` and
+    refocuses it.  The modal does NO network I/O itself: the query goes
+    through the CockpitData Runner seam (``hf_search`` →
+    ``scripts/lib/profiles/hf_search.py``).  A failed search notifies and
+    leaves manual entry exactly as it was."""
+
+    DEFAULT_CSS = """
+    SearchHFScreen {
+        align: center middle;
+    }
+    SearchHFScreen > Vertical {
+        width: 96;
+        height: auto;
+        max-height: 85%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    SearchHFScreen .hf-search-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    SearchHFScreen #hf-search-table {
+        height: 1fr;
+        min-height: 8;
+        margin-top: 1;
+    }
+    SearchHFScreen .hf-search-hint {
+        color: $text-muted;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("f", "dismiss", "Close"),
+        # Non-priority: the search Input consumes ⏎ (Input.Submitted → search)
+        # and the results DataTable consumes ⏎ (RowSelected) first — this only
+        # fires when focus is elsewhere, where "pick the highlighted row" is a
+        # safe no-op with a nudge.
+        Binding("enter", "pick", "Fill repo", show=True),
+        Binding("Y", "app.copy_context", "Copy", show=True),
+    ]
+
+    def __init__(self, data: "CockpitData", **kwargs):
+        super().__init__(**kwargs)
+        self._data = data
+        self._row_ids: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Search Hugging Face", classes="hf-search-title")
+            yield Input(
+                placeholder="org/Model or keywords — ⏎ to search",
+                id="hf-search-input",
+            )
+            yield Static("", id="hf-search-status")
+            yield DataTable(id="hf-search-table")
+            with Horizontal(classes="hf-search-actions"):
+                yield Button("Fill repo", id="hf-search-fill-btn", variant="primary")
+            yield Static(
+                "[dim]⏎ search · ⏎ on a row fills the ① Bring repo field · Esc close[/dim]",
+                classes="hf-search-hint",
+            )
+
+    def on_mount(self) -> None:
+        table = self.query_one("#hf-search-table", DataTable)
+        table.cursor_type = "row"
+        table.add_columns("model", "downloads", "likes", "updated", "fmt")
+        self.query_one("#hf-search-input", Input).focus()
+
+    @work(exclusive=True, group="hf-search")
+    async def run_search(self, query: str) -> None:
+        """The search worker: status line → Runner-seam query → table rows."""
+        query = (query or "").strip()
+        status = self.query_one("#hf-search-status", Static)
+        if not query:
+            status.update("[yellow]Type a search term first.[/yellow]")
+            return
+        status.update(
+            f"[dim]Searching Hugging Face for[/dim] [cyan]{query}[/cyan] [dim]…[/dim]"
+        )
+        rows, err = await self._data.hf_search(query, limit=20)
+        # The modal may have been dismissed while the search ran.
+        try:
+            if self.app.screen is not self:
+                return
+        except Exception:
+            pass
+        if err:
+            status.update("")
+            self.app.notify(
+                f"HF search failed: {err}", title="Search HF", severity="error", timeout=5
+            )
+            return
+        table = self.query_one("#hf-search-table", DataTable)
+        table.clear()
+        self._row_ids = []
+        for r in rows:
+            rid = str(r.get("id") or "")
+            self._row_ids.append(rid)
+            fmt = "/".join(
+                f for f in (
+                    "safetensors" if r.get("safetensors") else "",
+                    "GGUF" if r.get("gguf") else "",
+                ) if f
+            )
+            table.add_row(
+                rid,
+                _hf_fmt_count(r.get("downloads")),
+                _hf_fmt_count(r.get("likes")),
+                (str(r.get("last_modified") or "")[:10] or "—"),
+                fmt or "—",
+            )
+        if rows:
+            status.update(
+                f"[dim]{len(rows)} result(s) — ⏎ on a row fills the repo field"
+                " · GGUF rows pre-warn route-G[/dim]"
+            )
+            table.focus()
+        else:
+            status.update(
+                "[yellow]No results — refine the query, or type the repo manually.[/yellow]"
+            )
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "hf-search-input":
+            self.run_search(event.value)
+
+    def _selected_repo(self) -> Optional[str]:
+        if not self._row_ids:
+            return None
+        try:
+            row = self.query_one("#hf-search-table", DataTable).cursor_row
+        except Exception:
+            return None
+        return self._row_ids[row] if 0 <= row < len(self._row_ids) else None
+
+    def action_pick(self) -> None:
+        """⏎ / [Fill repo] — dismiss returning the highlighted repo id."""
+        repo = self._selected_repo()
+        if repo:
+            self.dismiss(repo)
+        else:
+            self.app.notify(
+                "No result selected — search first.",
+                title="Search HF",
+                severity="warning",
+                timeout=3,
+            )
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        # ⏎ on a focused results row (the DataTable consumes the key first).
+        self.action_pick()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "hf-search-fill-btn":
+            self.action_pick()
+
+    def action_dismiss(self) -> None:
+        """Esc / f — dismiss returning None (no pane is ever touched)."""
+        self.dismiss(None)
+
+
+
 # Phase R-realign: the standalone Run · Bring-your-own tab (ByoPane) is REMOVED.
 # The producer lane's ① Bring (LaneBringPane, defined below) is now the SINGLE
 # bring-an-arbitrary-repo entry point.  The underlying ``byo_check`` data method +
@@ -1977,10 +2569,22 @@ class ConfirmActionScreen(ModalScreen):
         Binding("f", "force", "Force", show=True, priority=True),
         # W4A8 int8-activation opt-in (#609) — shown only for act8-capable serve slugs.
         Binding("a", "toggle_act8", "int8 acts", show=True),
+        # Tri-state thinking toggle (#1014 L3) — shown only for slugs whose
+        # registry row carries a 'thinking' sampler profile.  [t] cycles
+        # inherit → force-on → force-off; [r] resets the sampler to the card
+        # row (offered while thinking resolves ON); [T] persists the CURRENT
+        # choice as the model's .env default (#1014 follow-up — the pin
+        # switch.sh resolves into ENABLE_THINKING on later launches).  Keys
+        # checked against this modal's existing set (enter/k/f/a/escape):
+        # t, r and shift-t are free.
+        Binding("t", "cycle_thinking", "thinking", show=True),
+        Binding("r", "reset_sampler", "reset sampler", show=True),
+        Binding("T", "persist_thinking", "save as default", show=True),
         Binding("escape", "cancel", "Cancel", show=True),
     ]
 
-    def __init__(self, plan: ActionPlan, *, on_confirm=None, serve_ctx=None, **kwargs):
+    def __init__(self, plan: ActionPlan, *, on_confirm=None, serve_ctx=None,
+                 repo_root=None, **kwargs):
         super().__init__(**kwargs)
         self._plan = plan
         self._reconcile: Optional[ReconcileResult] = None
@@ -1992,10 +2596,345 @@ class ConfirmActionScreen(ModalScreen):
         self._on_confirm = on_confirm
         # The state-aware SERVE context (None → the legacy Confirm/Force modal).
         self._serve_ctx: Optional[ServeContext] = serve_ctx
-        # W4A8 int8-activation opt-in (#609) — a per-launch toggle ([a]) shown only
-        # for act8-capable slugs. Default from the "prefer_int8_activations" Settings
-        # pref (else OFF). When ON, the serve cmd gets VLLM_MARLIN_INPUT_DTYPE=int8.
-        self._act8_on: bool = self._act8_capable() and self._act8_pref_default()
+        # Repo tree root (for reading the slug's compose at render time, #1010).
+        self._repo_root = repo_root
+        self._act8_gate: Optional[bool] = None   # memoized compose-gate sniff
+        # W4A8 int8-activation toggle (#609; #1010 split) — a per-launch [a] shown
+        # only for act8-capable slugs. Opt-in slugs (act_format 16bit) default from
+        # the "prefer_int8_activations" Settings pref; ship-int8 slugs default ON
+        # (int8 IS the shipped state). Env semantics live in _act8_env_prefix.
+        _cap = self._act8_capable()
+        self._act8_on: bool = (
+            True if (_cap and self._act8_ships_int8())
+            else _cap and self._act8_pref_default()
+        )
+        # Tri-state thinking toggle (#1014 L3) — per-launch choice, defaulting
+        # to inherit (the entrypoint's own ENABLE_THINKING=false default).
+        # [T] can PERSIST the choice as CLUB3090_THINKING_<MODEL> in the repo
+        # .env (the --set-default mechanism); switch.sh resolves that pin into
+        # ENABLE_THINKING=true/false on every later launch of the model
+        # (#1014 follow-up), so the persistence outlives this session.
+        self._thinking: str = "inherit"          # inherit | on | off
+        self._sampler_reset: bool = False        # [r] card-defaults pin (below)
+
+    def _act8_ships_int8(self) -> bool:
+        """True iff this slug SHIPS int8 activations (registry act_format ==
+        "int8", #1010) — the serve-default already carries VLLM_MARLIN_INPUT_DTYPE,
+        so an 'enable' opt-in would be a no-op labelled backwards."""
+        row = getattr(getattr(self._serve_ctx, "entry", None), "row", None)
+        return str(getattr(row, "act_format", "") or "") == "int8"
+
+    def _act8_gate_capable(self) -> bool:
+        """True iff the slug's compose wires the #1008 `W4A8=${W4A8:-…}` gate,
+        i.e. OFF is expressible as an env var. Absence of VLLM_MARLIN_INPUT_DTYPE
+        is the only 'off' (vLLM validates it against {int8, fp8}, empty string
+        included), so a ship-int8 slug whose compose hardcodes the dtype instead
+        renders int8 as a FIXED property. Sniffs the compose once off the repo
+        tree; unreadable/unknown → False."""
+        if self._act8_gate is None:
+            self._act8_gate = False
+            rel = str(
+                getattr(
+                    getattr(getattr(self._serve_ctx, "entry", None), "row", None),
+                    "compose_path",
+                    "",
+                )
+                or ""
+            )
+            if self._repo_root is not None and rel:
+                from pathlib import Path as _Path
+
+                try:
+                    text = (_Path(self._repo_root) / rel).read_text(
+                        encoding="utf-8"
+                    )
+                except OSError:
+                    text = ""
+                # The #1008 gate shape: a `- W4A8=${W4A8:…}` env assignment.
+                self._act8_gate = bool(re.search(r"(?m)^\s*-\s*W4A8=\$\{W4A8:", text))
+        return self._act8_gate
+
+    def _act8_mode(self) -> str:
+        """Which card line + env semantics this slug's int8 knob uses (#1010):
+        "optin"    act_format 16bit + capable → the classic enable toggle (#609);
+        "inverted" ships int8 AND carries the W4A8 gate → ON by default, OFF
+                   injects W4A8=0;
+        "fixed"    ships int8, hardcoded compose → property line, no [a] binding;
+        "none"     no knob (not capable / not a START launch)."""
+        if not self._act8_capable():
+            return "none"
+        if self._act8_ships_int8():
+            return "inverted" if self._act8_gate_capable() else "fixed"
+        return "optin"
+
+    # ── tri-state thinking toggle (#1014 L3) ──────────────────────────────────────
+    #
+    # For slugs whose registry row carries a 'thinking' sampler profile (L2),
+    # the serve-confirm offers inherit / force-on / force-off.  Injection rides
+    # the SAME env-prefix path as the int8 knob (#609): `env K=V bash
+    # scripts/switch.sh …` → compose passthrough (`- ENABLE_THINKING=${ENABLE_THINKING:-false}`)
+    # → the entrypoint picks the matching model-card sampler row (#984/#1014 L1).
+    #   inherit → NO env injected: the entrypoint's own default applies.
+    #   on      → ENABLE_THINKING=true  (thinking row: temp/top_p/presence).
+    #   off     → ENABLE_THINKING=false — EXPLICIT, per the #1010 lesson: if the
+    #             user's shell exports ENABLE_THINKING=true, inherit would ride
+    #             it in; force-off pins the instruct row regardless.
+    # No model ships think-default today, so "resolved thinking" == force-on;
+    # an inherit+think-default model would slot in here without shape change.
+
+    _THINKING_CYCLE = ("inherit", "on", "off")
+    # The sampler vars the qwen3.8 composes pass through and the entrypoint's
+    # `:=` row-defaults key on.  A non-empty value in the cockpit's OWN shell
+    # rides the passthrough and WINS over both card rows — that is the explicit
+    # override [r] clears.
+    _SAMPLER_OVR_VARS = ("TEMP", "TEMPERATURE", "TOP_P", "TOP_K", "PRESENCE_PENALTY")
+
+    def _thinking_profiles(self) -> Optional[dict]:
+        """The slug's 'thinking' sampler row from the registry (L2 emit join);
+        None when absent → no toggle rendered (#1014: profile-less slugs are
+        unchanged)."""
+        row = getattr(getattr(self._serve_ctx, "entry", None), "row", None)
+        prof = getattr(row, "sampler_profiles", None)
+        if not isinstance(prof, dict):
+            return None
+        trow = prof.get("thinking")
+        return trow if isinstance(trow, dict) and trow else None
+
+    def _thinking_capable(self) -> bool:
+        """True iff this is a START-mode serve of a slug WITH a thinking
+        profile.  STOP/download modes never offer launch knobs."""
+        ctx = self._serve_ctx
+        return bool(
+            ctx is not None
+            and ctx.mode == "start"
+            and ctx.entry is not None
+            and self._thinking_profiles() is not None
+        )
+
+    def _thinking_resolved_on(self) -> bool:
+        """True iff the RESOLVED mode is thinking.  No registry entry ships
+        think-default today, so this is force-on only; an inherit state on a
+        hypothetical think-default model would resolve here too."""
+        return self._thinking_capable() and (
+            self._thinking == "on"
+            or (self._thinking == "inherit" and self._ships_think_default())
+        )
+
+    @staticmethod
+    def _ships_think_default() -> bool:
+        """Whether any current registry entry defaults thinking ON: none do
+        (every shipped compose pins enable_thinking:false).  Kept as a named
+        seam so the resolved-mode predicate reads honestly."""
+        return False
+
+    def action_cycle_thinking(self) -> None:
+        """[t] → cycle inherit → force-on → force-off → inherit.  No-op where
+        the card binds no [t] (check_action hides the key there)."""
+        if not self._thinking_capable():
+            return
+        i = self._THINKING_CYCLE.index(self._thinking)
+        nxt = self._THINKING_CYCLE[(i + 1) % len(self._THINKING_CYCLE)]
+        self._thinking = nxt
+        if nxt != "on":
+            self._sampler_reset = False   # the reset line only shows while ON
+        self._render_serve_card()
+
+    def action_reset_sampler(self) -> None:
+        """[r] → pin the launch to the card's sampler row by clearing inherited
+        TEMP/TOP_P/PRESENCE overrides (offered while thinking resolves ON)."""
+        if not self._thinking_resolved_on():
+            return
+        self._sampler_reset = True
+        self._render_serve_card()
+
+    # ── persisted thinking pin (#1014 follow-up) ────────────────────────────────
+    #
+    # [T] writes the CURRENT tri-state choice as CLUB3090_THINKING_<MODEL> into
+    # the repo .env — the same write --set-default performs for
+    # CLUB3090_DEFAULT_<MODEL> (switch.sh env_set_key: upsert, all other lines
+    # preserved). switch.sh's launch path reads the pin back and injects
+    # ENABLE_THINKING accordingly, so the modal choice survives the session.
+
+    def _thinking_model(self) -> str:
+        """The MODEL-id this serve belongs to (the pin is per-model, like
+        --set-default — not per-slug)."""
+        row = getattr(getattr(self._serve_ctx, "entry", None), "row", None)
+        return str(getattr(row, "model", "") or "")
+
+    def _thinking_pin_key(self) -> str:
+        """CLUB3090_THINKING_<MODELID uppercased, non-alnum→_> — mirrors
+        compose_registry.model_thinking_pin_key, which switch.sh resolves the
+        pin with (qwen3.6-27b → CLUB3090_THINKING_QWEN3_6_27B)."""
+        suffix = "".join(c if c.isalnum() else "_" for c in self._thinking_model()).upper()
+        return f"CLUB3090_THINKING_{suffix}"
+
+    def _repo_env_set_key(self, key: str, value: str) -> bool:
+        """Upsert KEY=VALUE in <repo>/.env — the Python mirror of switch.sh's
+        env_set_key (--set-default's write path): replace any existing
+        assignment for KEY (with or without ``export``), else append; every
+        other line is preserved; the file is created when absent.  False when
+        there is no repo root to write to."""
+        from pathlib import Path as _Path
+
+        if self._repo_root is None:
+            return False
+        envf = _Path(self._repo_root) / ".env"
+        lines: list[str] = []
+        if envf.is_file():
+            try:
+                lines = envf.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                lines = []
+        pat = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}=")
+        kept = [ln for ln in lines if not pat.match(ln)]
+        kept.append(f"{key}={value}")
+        try:
+            envf.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        except OSError:
+            return False
+        return True
+
+    def _thinking_persisted(self) -> str:
+        """The model's persisted thinking pin read back from <repo>/.env:
+        'on' | 'off' | '' (absent/unreadable/unparseable → treated as none).
+        Tolerant of an optional ``export`` prefix and CRLF, matching switch.sh's
+        loader."""
+        from pathlib import Path as _Path
+
+        key = self._thinking_pin_key()
+        if not key.startswith("CLUB3090_THINKING_") or self._repo_root is None:
+            return ""
+        try:
+            text = (_Path(self._repo_root) / ".env").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            return ""
+        prefix = f"{key}="
+        for raw in text.splitlines():
+            line = raw.strip().rstrip("\r")
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            if not line.startswith(prefix):
+                continue
+            val = line[len(prefix):].strip().strip('"').strip("'").lower()
+            return val if val in ("on", "off") else ""
+        return ""
+
+    def action_persist_thinking(self) -> None:
+        """[T] → persist the CURRENT thinking choice as the model's default
+        (#1014 follow-up).  inherit offers nothing to persist (check_action
+        hides the key); on/off upsert the pin and refresh the card so the
+        persisted line reflects the new value.  A no-op when the repo root is
+        unknown — never a silent fake success."""
+        if not self._thinking_capable() or self._thinking not in ("on", "off"):
+            return
+        if self._repo_env_set_key(self._thinking_pin_key(), self._thinking):
+            self._render_serve_card()
+
+    def _thinking_env_pairs(self) -> list[str]:
+        """ENABLE_THINKING pairs per toggle state: [] for inherit (no env — the
+        entrypoint's own false default applies), true/false for the forced
+        states (both EXPLICIT — see the #1010 note above)."""
+        if not self._thinking_capable():
+            return []
+        if self._thinking == "on":
+            return ["ENABLE_THINKING=true"]
+        if self._thinking == "off":
+            return ["ENABLE_THINKING=false"]
+        return []
+
+    def _sampler_overrides(self) -> dict:
+        """Non-empty sampler env INHERITED from the cockpit's own shell — these
+        ride the compose passthrough into the container and beat both card rows
+        (`:=` only fills unset/null).  {} when nothing is exported."""
+        if not self._thinking_capable():
+            return {}
+        import os as _os
+
+        out: dict = {}
+        for var in self._SAMPLER_OVR_VARS:
+            val = str(_os.environ.get(var, "") or "").strip()
+            if val:
+                out[var] = val
+        return out
+
+    def _sampler_reset_pairs(self) -> list[str]:
+        """Empty-string pins neutralising inherited sampler overrides for THIS
+        launch: compose passes `TEMP=` through as empty and the entrypoint's
+        `${TEMP:=…}` treats empty as null → the card row applies.  Only emitted
+        when the reset is armed AND something was actually inherited (pinning
+        empties with nothing inherited would just be noise)."""
+        ovr = self._sampler_overrides()
+        if not (self._sampler_reset and self._thinking_resolved_on() and ovr):
+            return []
+        return [f"{var}=" for var in ovr]
+
+    def _fmt_sampler_val(self, v: Any) -> str:
+        """Compact numeric for a card sampler cell ('1' / '0.95'); '?' when the
+        registry row carries something non-numeric (never fabricate)."""
+        try:
+            return f"{float(v):g}"
+        except (TypeError, ValueError):
+            return "?"
+
+    def _thinking_card_lines(self) -> list[str]:
+        """The serve-card lines for the thinking knob — pure over modal state,
+        so tests assert the rendered contract directly.  [] where the knob is
+        not offered (profile-less slug / non-START mode) → no toggle rendered.
+        The trailing line surfaces the PERSISTED pin (#1014 follow-up) read
+        back from the repo .env when readable."""
+        if not self._thinking_capable():
+            return []
+        prof = self._thinking_profiles() or {}
+        lines: list[str] = []
+        if self._thinking == "inherit":
+            lines.append(
+                "  [bold]thinking[/bold] [dim]inherit[/dim] — no env injected "
+                "(entrypoint default: off → instruct row) · [t] force-on"
+            )
+        elif self._thinking == "on":
+            lines.append(
+                "  [bold]thinking[/bold] [green]FORCE-ON[/green] "
+                "([green]ENABLE_THINKING=true[/green]) · [t] cycle"
+            )
+            lines.append(
+                f"  [bold]sampler[/bold] thinking row: temp "
+                f"{self._fmt_sampler_val(prof.get('temperature'))} · top_p "
+                f"{self._fmt_sampler_val(prof.get('top_p'))} · presence "
+                f"{self._fmt_sampler_val(prof.get('presence_penalty'))}"
+                "  [dim](model card)[/dim]"
+            )
+            ovr = self._sampler_overrides()
+            if self._sampler_reset or not ovr:
+                lines.append(
+                    "  [bold]sampler[/bold] card defaults apply"
+                    + (" — inherited overrides cleared" if self._sampler_reset else "")
+                    + " · [r] reset to card defaults"
+                )
+            else:
+                shown = ", ".join(f"{k}={v}" for k, v in sorted(ovr.items()))
+                lines.append(
+                    "  [yellow]⚠ shell overrides beat the card row:[/yellow] "
+                    f"{shown} · [r] reset to card defaults"
+                )
+        else:
+            lines.append(
+                "  [bold]thinking[/bold] FORCE-OFF "
+                "([yellow]ENABLE_THINKING=false[/yellow] — pins the instruct row even "
+                "if the shell exports true) · [t] cycle"
+            )
+        # Persisted default (#1014 follow-up) — what switch.sh will resolve on
+        # later launches. inherit has nothing to save ([T] is gated off there).
+        persisted = self._thinking_persisted()
+        disp = persisted if persisted else "none"
+        suffix = (
+            f" · [T] save '{self._thinking}' as default"
+            if self._thinking != "inherit"
+            else ""
+        )
+        lines.append(f"  [dim]persisted default: {disp} ({self._thinking_pin_key()}){suffix}[/dim]")
+        return lines
 
     # ── presentation predicates ───────────────────────────────────────────────────
 
@@ -2219,19 +3158,50 @@ class ConfirmActionScreen(ModalScreen):
                     f"{req_s} (Hopper/Blackwell class){got_s}. "
                     "[yellow]Serving here will NOT boot.[/yellow]"
                 )
-            # W4A8 int8-activation opt-in (#609) — only for act8-capable slugs.
-            if self._act8_capable():
+            # int8-activation knob (#609/#1010) — three shapes by slug class:
+            # "optin" (16bit + capable, the classic enable), "inverted" (ships
+            # int8 + W4A8 gate → ON default, [a] disables via W4A8=0), "fixed"
+            # (ships int8, hardcoded compose → property line, no binding).
+            # Figures are per-model and drift — pointed at the learnings note
+            # instead of a hardcoded % that goes stale (#1010).
+            mode = self._act8_mode()
+            _model = str(getattr(entry.row, "model", "") or "")
+            learn = f" · figures in learnings/{_model}.md" if _model else ""
+            if mode == "optin":
                 if self._act8_on:
                     lines.append(
                         "  [bold]int8 acts[/bold] [green]ON[/green] "
-                        "([green]VLLM_MARLIN_INPUT_DTYPE=int8[/green] — ~+50% prefill, "
-                        "quality-tied ⚑) · [a] toggle"
+                        "([green]VLLM_MARLIN_INPUT_DTYPE=int8[/green] — W4A8 prefill "
+                        f"win, quality-tied ⚑{learn}) · [a] toggle"
                     )
                 else:
                     lines.append(
                         "  [bold]int8 acts[/bold] [dim]off[/dim] "
-                        "(W4A8 int8 activations — ~+50% prefill ⚑ experimental) · [a] enable"
+                        f"(W4A8 int8 activations ⚑ experimental{learn}) · [a] enable"
                     )
+            elif mode == "inverted":
+                if self._act8_on:
+                    lines.append(
+                        "  [bold]int8 acts[/bold] [green]ON[/green] "
+                        "(shipped default — W4A8 int8 activations, quality-tied ⚑"
+                        f"{learn}) · [a] disable"
+                    )
+                else:
+                    lines.append(
+                        "  [bold]int8 acts[/bold] [dim]off[/dim] "
+                        "(W4A16 via [green]W4A8=0[/green] — gives up the int8 prefill "
+                        f"win{learn}) · [a] enable"
+                    )
+            elif mode == "fixed":
+                lines.append(
+                    "  [bold]int8 acts[/bold] [green]ON[/green] (shipped — compose "
+                    "hardcodes [green]VLLM_MARLIN_INPUT_DTYPE=int8[/green], no launch "
+                    f"knob ⚑{learn})"
+                )
+            # Tri-state thinking toggle (#1014 L3) — rendered ONLY for slugs
+            # whose registry row carries a 'thinking' sampler profile.
+            if self._thinking_capable():
+                lines.extend(self._thinking_card_lines())
             note = (entry.status_note or "").strip()
             if note:
                 lines.append(f"  [bold]caveat[/bold] [yellow]{note}[/yellow]")
@@ -2473,14 +3443,28 @@ class ConfirmActionScreen(ModalScreen):
                 return bool(resolved and mode == "stop")
             if action == "start":
                 return bool(resolved and mode == "start")
-            # W4A8 int8-activation toggle — only for act8-capable START slugs.
+            # W4A8 int8-activation toggle — only where the card binds [a]:
+            # the classic opt-in OR the inverted ship-int8 toggle (#609/#1010).
             if action == "toggle_act8":
-                return self._act8_capable()
+                return self._act8_mode() in ("optin", "inverted")
+            # Tri-state thinking toggle (#1014 L3): [t] only on a START-mode
+            # serve of a slug WITH a 'thinking' sampler profile; [r] only while
+            # the resolved mode is thinking (the reset line's home).
+            if action == "cycle_thinking":
+                return self._thinking_capable()
+            if action == "reset_sampler":
+                return self._thinking_resolved_on()
+            # [T] persists the CURRENT choice — nothing to persist at inherit
+            # (and per the acceptance contract it neither writes nor removes).
+            if action == "persist_thinking":
+                return self._thinking_capable() and self._thinking != "inherit"
             # confirm/force never apply in serve mode.
             if action in ("confirm", "force"):
                 return False
             return True
         if action == "toggle_act8":
+            return False
+        if action in ("cycle_thinking", "reset_sampler", "persist_thinking"):
             return False
         if action == "confirm":
             return bool(resolved and rec.safe)
@@ -2546,32 +3530,62 @@ class ConfirmActionScreen(ModalScreen):
         self.app.cancel_download(ctx.entry.slug)  # type: ignore[attr-defined]
 
     def action_toggle_act8(self) -> None:
-        """[a] → flip the W4A8 int8-activation opt-in (#609). No-op for slugs that
-        aren't act8-capable (check_action hides the key there)."""
-        if not self._act8_capable():
+        """[a] → flip the int8-activation toggle (#609/#1010). No-op where the
+        card shows no binding (check_action hides the key there)."""
+        if self._act8_mode() not in ("optin", "inverted"):
             return
         self._act8_on = not self._act8_on
         self._render_serve_card()   # reflect ON/OFF in the card
 
     @staticmethod
-    def _with_act8_env(cmd: list[str]) -> list[str]:
-        """Prepend `env VLLM_MARLIN_INPUT_DTYPE=int8` to a serve cmd (#609). switch.sh
-        runs `docker compose`, which reads the env for the compose's bare
-        `- VLLM_MARLIN_INPUT_DTYPE` passthrough → int8 activations in the container.
-        Idempotent."""
-        if "VLLM_MARLIN_INPUT_DTYPE=int8" in cmd:
+    def _with_act8_env(cmd: list[str], pairs: list[str]) -> list[str]:
+        """Prepend `env K=V …` to a serve cmd (#609/#1010). switch.sh runs
+        `docker compose`, which reads the env for the compose's passthrough
+        variables (`- VLLM_MARLIN_INPUT_DTYPE`, `- W4A8=${W4A8:-1}`) → the
+        container boots with them. Idempotent per pair."""
+        if all(p in cmd for p in pairs):
             return cmd
-        return ["env", "VLLM_MARLIN_INPUT_DTYPE=int8", *cmd]
+        return ["env", *pairs, *cmd]
+
+    def _act8_env_prefix(self) -> list[str]:
+        """Env pairs to inject per the toggle state (#609/#1010): opt-in ON →
+        VLLM_MARLIN_INPUT_DTYPE=int8; ship-int8 OFF → W4A8=0 (the #1008 gate —
+        absence of the dtype var can't turn int8 OFF on a slug that defaults it,
+        and vLLM rejects any explicit non-{int8,fp8} value). [] → launch with
+        the slug's own shipped defaults."""
+        mode = self._act8_mode()
+        if mode == "optin" and self._act8_on:
+            return ["VLLM_MARLIN_INPUT_DTYPE=int8"]
+        if mode == "inverted" and not self._act8_on:
+            return ["W4A8=0"]
+        return []
 
     def _commit(self, *, force: bool) -> None:
         plan = self._plan
-        # W4A8 (#609): when the int8-activation opt-in is ON for an act8-capable
-        # slug, inject the env into the serve cmd BEFORE the force re-issue (so
-        # _with_force still finds the switch.sh positional last).
-        if self._act8_on and self._act8_capable() and plan.kind == "serve":
+        # Launch-knob env (#609/#1010 int8 · #1014 L3 thinking): when a toggle
+        # deviates from the slug's shipped default, inject its env into the
+        # serve cmd BEFORE the force re-issue (so _with_force still finds the
+        # switch.sh positional last).  All three sources share ONE `env …`
+        # prefix; _with_act8_env is idempotent per pair.
+        pairs: list[str] = []
+        tags: list[str] = []
+        if plan.kind == "serve":
+            act8 = self._act8_env_prefix()
+            if act8:
+                pairs += act8
+                tags.append("+int8-acts" if act8[0].startswith("VLLM_") else "-int8-acts")
+            think = self._thinking_env_pairs()
+            if think:
+                pairs += think
+                tags.append("+thinking" if think[0].endswith("true") else "-thinking")
+            reset = self._sampler_reset_pairs()
+            if reset:
+                pairs += reset
+                tags.append("card-defaults-sampler")
+        if pairs:
             plan = ActionPlan(
-                kind=plan.kind, cmd=self._with_act8_env(plan.cmd),
-                description=plan.description + " +int8-acts",
+                kind=plan.kind, cmd=self._with_act8_env(plan.cmd, pairs),
+                description=plan.description + " " + " ".join(tags),
                 is_write=plan.is_write, requires_reconcile=plan.requires_reconcile,
                 force=plan.force, force_reason=plan.force_reason,
             )
@@ -4905,14 +5919,19 @@ class StudioSetupScreen(ModalScreen):
         self.dismiss()
 
 
-class PromoteScaffoldScreen(ModalScreen):
-    """Preview the computed catalog-promotion scaffold (SCAFFOLD + GATE).
+class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
+    """Preview the computed catalog-promotion scaffold (SCAFFOLD + GATE, C4-rev).
 
-    Shows the ModelProfile YAML skeleton + the compose_registry _entry(...) row
-    COMPUTED from the BYO arch facts + Evidence numbers, plus the guard suite the
-    gated write would run.  ``⏎`` stages the GATED write+guard ActionPlan — which
-    is MOCK-ONLY this phase (it writes into scripts/ + runs the guard suite, so it
-    NEVER auto-fires / executes live).  ``Esc`` just closes the preview."""
+    Shows the ModelProfile YAML skeleton + the registry entry (a JSON block for
+    the default LOCAL layer) COMPUTED from the BYO arch facts + Evidence
+    numbers.  The two facts the scaffold cannot know — ``display_name`` and
+    ``family`` — are REQUIRED inline edits (the stage buttons stay disabled
+    until both are filled with real values).  ``⏎`` stages the GATED write plan
+    for the LOCAL layer (the gitignored ``scripts/lib/profiles-local/``
+    community layer — no core file is touched); ``C`` is the distinctly-labeled
+    WRITE CORE REGISTRY secondary action, which additionally asserts the
+    maintainer gate ``C3_ALLOW_CORE_PROMOTE=1``.  Both route through the
+    standard confirm gate and NEVER auto-fire."""
 
     DEFAULT_CSS = """
     PromoteScaffoldScreen {
@@ -4934,6 +5953,20 @@ class PromoteScaffoldScreen(ModalScreen):
     PromoteScaffoldScreen #promote-scroll {
         height: 1fr;
     }
+    PromoteScaffoldScreen #promote-edits {
+        height: auto;
+        margin-top: 1;
+    }
+    PromoteScaffoldScreen #promote-edits Horizontal {
+        height: 3;
+    }
+    PromoteScaffoldScreen #promote-edits Label {
+        width: 16;
+        padding-top: 1;
+    }
+    PromoteScaffoldScreen #promote-edits Input {
+        width: 1fr;
+    }
     PromoteScaffoldScreen #promote-btn-row {
         height: 3;
         margin-top: 1;
@@ -4943,40 +5976,78 @@ class PromoteScaffoldScreen(ModalScreen):
     }
     """
 
-    # FIX 3 — the Enter verb is a DECLARED binding (was a raw on_key("enter")), so
-    # Help / binding-introspection advertise it.  NOTE this modal renders no Footer
-    # of its own — the visible affordance is the "Stage write" button label + body
-    # text; show=True just keeps the binding in active_bindings (Help parity).
-    # ``stage_write`` is gated in check_action on ``self._scaffold.computed``
-    # (mirroring the disabled stage button), so the key is inert when staging isn't
-    # possible.  priority=True so it wins over the focused button's own enter→press
-    # (both route through the SAME _stage_write path).
+    # FIX 3 — the Enter verb is a DECLARED binding (Help parity; this modal
+    # renders no Footer of its own).  ``stage_write`` is gated in check_action
+    # on computed + the required edits (mirroring the disabled stage button);
+    # priority=True so it wins over the focused button's own enter→press.
     BINDINGS = [
-        Binding("enter", "stage_write", "Stage write", show=True, priority=True),
+        Binding("enter", "stage_write", "Write LOCAL layer", show=True, priority=True),
+        Binding("c", "stage_core", "WRITE CORE REGISTRY", show=True, priority=True),
+        # NOTE: deliberately NOT priority=True — unlike enter/c, ``e`` is a
+        # printable that MUST reach the display_name/family Inputs while they
+        # are focused (a priority binding would hijack typing it).
+        Binding("e", "export_pr", "Export PR bundle", show=True),
+        Binding("y", "app.copy_context", "Copy YAML", show=True),
         Binding("escape", "dismiss", "Close"),
     ]
 
-    def __init__(self, scaffold: PromoteScaffold, *, on_stage_write=None, **kwargs):
+    def __init__(self, scaffold: PromoteScaffold, *, on_stage_write=None,
+                 on_export_pr=None, **kwargs):
         super().__init__(**kwargs)
         self._scaffold = scaffold
+        # on_stage_write(layer, spec) — the app builds the ActionPlan for the
+        # chosen layer with the user's inline edits applied.
         self._on_stage_write = on_stage_write
+        # on_export_pr(spec) — the community-loop completion: hand the edited
+        # spec to the app, which confirm-gates ``export_pr.py`` (the LOCAL →
+        # CORE PR-bundle translator).  Only meaningful for layer=="local".
+        self._on_export_pr = on_export_pr
+        # [Y] copy payload: the raw (markup-free) YAML + registry entry.
+        if not getattr(scaffold, "error", ""):
+            self._copy_payload = (
+                f"# {scaffold.profile_path}\n{scaffold.profile_yaml}\n\n"
+                f"# {scaffold.registry_slug}\n{scaffold.registry_entry}\n"
+            )
 
     def compose(self) -> ComposeResult:
+        s = self._scaffold
+        badge = (
+            "[yellow]writes LOCAL layer (gitignored) — core is a separate gated action[/yellow]"
+            if s.layer == "local"
+            else "[red]MAINTAINER CORE WRITE — double-gated[/red]"
+        )
         with Vertical():
             yield Label(
-                f"⑤ Promotion Preview · "
-                f"{self._scaffold.model_id or self._scaffold.repo or '—'}  "
-                f"[yellow]preview only — no catalog write yet[/yellow]",
+                f"⑤ Promotion Preview · {s.model_id or s.repo or '—'}  {badge}",
                 classes="promote-title",
             )
             with ScrollableContainer(id="promote-scroll"):
                 yield Static(self._body_text(), id="promote-body")
+            with Vertical(id="promote-edits"):
+                with Horizontal():
+                    yield Label("display_name")
+                    yield Input(
+                        placeholder="REQUIRED — human-readable name",
+                        id="promote-display-input",
+                    )
+                with Horizontal():
+                    yield Label("family")
+                    yield Input(
+                        placeholder="REQUIRED — real family tag (not inferred)",
+                        id="promote-family-input",
+                    )
             with Horizontal(id="promote-btn-row"):
                 yield Button(
-                    "⏎ Preview scaffold (no write)",
+                    "⏎ Write LOCAL layer",
                     id="promote-stage-btn",
                     variant="warning",
-                    disabled=not self._scaffold.computed,
+                    disabled=not self._can_stage(),
+                )
+                yield Button(
+                    "WRITE CORE REGISTRY",
+                    id="promote-core-btn",
+                    variant="error",
+                    disabled=not self._can_stage(),
                 )
                 yield Button("Esc Close", id="promote-close-btn")
 
@@ -4988,13 +6059,13 @@ class PromoteScaffoldScreen(ModalScreen):
             return f"[red]cannot scaffold:[/red] {escape(s.error)}"
         lines: list[str] = []
         lines.append(
-            "[yellow]preview only — no catalog write yet[/yellow]"
+            "[dim]Design §3.5b — a SCAFFOLD + GATE, not a YAML IDE.  Arch dims are"
         )
         lines.append(
-            "[dim]Design §3.5b — a SCAFFOLD + GATE, not a YAML IDE.  COMPUTED from the[/dim]"
+            "[dim]auto-filled from the deriver facts; display_name + family are"
         )
         lines.append(
-            "[dim]BYO pull-gate arch facts + Evidence numbers.  Preview only this phase.[/dim]"
+            "[dim]required edits below.  The write runs diagnose + preflight after.[/dim]"
         )
         lines.append("")
         lines.append(f"  [bold]ModelProfile[/bold]  [cyan]{escape(s.profile_path)}[/cyan]")
@@ -5002,13 +6073,16 @@ class PromoteScaffoldScreen(ModalScreen):
         for ln in s.profile_yaml.splitlines():
             lines.append("    " + escape(ln))
         lines.append("")
-        lines.append("  [bold]compose_registry.py[/bold]  entry "
-                     f"[green]{escape(s.registry_slug)}[/green]")
+        target = "registry.local.json" if s.layer == "local" else "compose_registry.py"
+        lines.append(
+            f"  [bold]{escape(target)}[/bold]  entry "
+            f"[green]{escape(s.registry_slug)}[/green]"
+        )
         lines.append("")
         for ln in s.registry_entry.splitlines():
             lines.append("    " + escape(ln))
         lines.append("")
-        lines.append("  [bold]Guard suite[/bold] (the gated write would run, never auto):")
+        lines.append("  [bold]After the write[/bold] (chained, never auto):")
         lines.append("    [yellow]" + escape(" ".join(s.guard_suite_cmd)) + "[/yellow]")
         if s.notes:
             lines.append("")
@@ -5016,61 +6090,232 @@ class PromoteScaffoldScreen(ModalScreen):
             for n in s.notes:
                 lines.append(f"    • [dim]{escape(n)}[/dim]")
         lines.append("")
-        lines.append("  [dim]⏎ Stage the gated write+guard (MOCK-ONLY this phase) · Esc Close[/dim]")
+        lines.append(
+            "  [dim]⏎ Write LOCAL layer · C WRITE CORE REGISTRY "
+            "(needs C3_ALLOW_CORE_PROMOTE=1) · E Export as PR bundle "
+            "(local only) · Esc Close[/dim]"
+        )
         return "\n".join(lines)
+
+    # ── Required inline edits ────────────────────────────────────────────────
+
+    def _edited_values(self) -> tuple[str, str]:
+        try:
+            display = self.query_one("#promote-display-input", Input).value.strip()
+            family = self.query_one("#promote-family-input", Input).value.strip()
+        except Exception:
+            return "", ""
+        return display, family
+
+    def _edits_valid(self) -> bool:
+        """Both required edits filled with REAL values (no leftover <...>
+        placeholder, no empty string) — the scaffold never fabricates."""
+        display, family = self._edited_values()
+        return bool(display) and "<" not in display and bool(family) and "<" not in family
+
+    def _can_stage(self) -> bool:
+        return bool(self._scaffold.computed) and self._edits_valid()
+
+    def _edited_spec(self) -> dict:
+        """The executor spec with the inline edits applied (a copy — the
+        scaffold's own spec stays the pristine preview source)."""
+        import copy
+
+        display, family = self._edited_values()
+        spec = copy.deepcopy(self._scaffold.spec or {})
+        spec["display_name"] = display
+        spec["family"] = family
+        return spec
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        # Enable/disable BOTH stage buttons live as the required edits fill.
+        try:
+            stage = self.query_one("#promote-stage-btn", Button)
+            core = self.query_one("#promote-core-btn", Button)
+        except Exception:
+            return
+        stage.disabled = not self._can_stage()
+        core.disabled = not self._can_stage()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "promote-stage-btn":
-            self._stage_write()
+            self._stage_write(layer="local")
+        elif event.button.id == "promote-core-btn":
+            self._stage_write(layer="core")
         elif event.button.id == "promote-close-btn":
             self.action_dismiss()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Gate the ⏎ Stage-write binding on whether the scaffold computed — so the
-        footer only advertises it when staging is actually possible (mirrors the
-        disabled state of #promote-stage-btn)."""
+        """Gate ⏎ on computed + the required edits (mirrors the disabled stage
+        buttons); gate [E] CONTEXTUALLY — an entry is exportable ONLY when it
+        targets the LOCAL layer (a core write already IS the PR's content)."""
         if action == "stage_write":
-            return bool(self._scaffold.computed)
+            return self._can_stage()
+        if action == "export_pr":
+            return (
+                getattr(self._scaffold, "layer", "") == "local"
+                and bool(self._scaffold.computed)
+            )
         return True
 
     def action_stage_write(self) -> None:
-        """⏎ — stage the gated write+guard plan (only reachable when the scaffold
-        computed; check_action gates the binding otherwise).  Same path the
-        #promote-stage-btn press takes."""
-        if self._scaffold.computed:
-            self._stage_write()
+        """⏎ — stage the LOCAL-layer write plan (only reachable when staging is
+        possible; check_action gates the binding otherwise)."""
+        if self._can_stage():
+            self._stage_write(layer="local")
 
-    def _stage_write(self) -> None:
-        """Hand the GATED write+guard plan back to the app's confirm gate.  The
-        write is NEVER executed live this phase — it routes through the standard
-        ConfirmActionScreen (mock-only) and never auto-fires."""
+    def _stage_write(self, *, layer: str) -> None:
+        """Hand the GATED write plan for the chosen layer back to the app's
+        confirm gate.  The core action ASSERTS the maintainer env gate here —
+        promote.py re-asserts it independently (defense in depth).  The write
+        NEVER auto-fires; both routes go through ConfirmActionScreen."""
+        import os
+
+        if not self._can_stage():
+            return
+        if layer == "core" and os.environ.get("C3_ALLOW_CORE_PROMOTE") != "1":
+            self.notify(
+                "WRITE CORE REGISTRY is maintainer-gated: set C3_ALLOW_CORE_PROMOTE=1 "
+                "in the environment first (or use the default LOCAL layer).",
+                title="Promote",
+                severity="error",
+                timeout=6,
+            )
+            return
+        spec = self._edited_spec()
         self.app.pop_screen()
-        if self._on_stage_write is not None and self._scaffold.write_plan is not None:
-            self._on_stage_write(self._scaffold.write_plan)
+        if self._on_stage_write is not None:
+            self._on_stage_write(layer, spec)
+
+    def action_stage_core(self) -> None:
+        """C — the WRITE CORE REGISTRY secondary action (maintainer-gated; same
+        path the #promote-core-btn press takes)."""
+        self._stage_write(layer="core")
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
+    def action_export_pr(self) -> None:
+        """E — Export as PR bundle: run scripts/lib/profiles/export_pr.py via
+        the app's write-runner seam (confirm-gated there), producing the three
+        ready-to-commit CORE artifacts under an output dir.  Context-gated to
+        LOCAL-layer scaffolds by check_action; re-asserted here."""
+        if (
+            getattr(self._scaffold, "layer", "") != "local"
+            or not self._scaffold.computed
+        ):
+            return
+        spec = self._edited_spec()
+        self.app.pop_screen()
+        if self._on_export_pr is not None:
+            self._on_export_pr(spec)
+
+
+class ExportPrBundleScreen(_CopyableModal, ModalScreen):
+    """Result of a confirmed ``export_pr.py`` run: the ready-to-commit CORE
+    PR bundle location.  [Y] copies the bundle root + artifact paths so the
+    contributor can paste them straight into their branch/PR flow."""
+
+    DEFAULT_CSS = """
+    ExportPrBundleScreen {
+        align: center middle;
+    }
+    ExportPrBundleScreen > Vertical {
+        width: 90;
+        max-width: 100%;
+        height: auto;
+        max-height: 70%;
+        border: thick $success;
+        background: $surface;
+        padding: 1 2;
+    }
+    ExportPrBundleScreen .export-title {
+        text-style: bold;
+        color: $success;
+        margin-bottom: 1;
+    }
+    ExportPrBundleScreen #export-body {
+        height: auto;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("Y", "app.copy_context", "Copy paths", show=True),
+    ]
+
+    def __init__(self, out_dir: str, *, lines: Optional[list[str]] = None, **kwargs):
+        super().__init__(**kwargs)
+        self._out_dir = out_dir
+        self._lines = list(lines or [])
+
+    def compose(self) -> ComposeResult:
+        from rich.markup import escape
+
+        with Vertical():
+            yield Label(
+                f"PR bundle exported · {escape(self._out_dir)}",
+                classes="export-title",
+            )
+            yield Static(self._body_text(), id="export-body")
+            yield Label(
+                "[dim][Y] copy bundle paths · Esc Close[/dim]",
+            )
+
+    def _body_text(self) -> str:
+        from rich.markup import escape
+
+        artifacts = [
+            "models/<id>.yml",
+            "models/<id>/<engine>/compose/<topology>/<quant>/<serving>.yml",
+            "compose_registry.patch  (the _entry kwargs + setup-block notes)",
+        ]
+        lines = ["  [bold]Ready-to-commit core layout:[/bold]"]
+        lines += [f"    [cyan]{self._out_dir}/{escape(a)}[/cyan]" for a in artifacts]
+        tail = [ln for ln in self._lines if ln.strip()][-8:]
+        if tail:
+            lines.append("")
+            lines.append("  [bold]export_pr.py output (tail):[/bold]")
+            lines += [f"    [dim]{escape(ln)}[/dim]" for ln in tail]
+        return "\n".join(lines)
+
+    def on_mount(self) -> None:
+        self._copy_payload = (
+            f"{self._out_dir}\n"
+            f"{self._out_dir}/models/\n"
+            f"{self._out_dir}/compose_registry.patch\n"
+        )
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()
 
 
-# ── Phase 5 · Optimize-for-my-card seam modal (DORMANT v0.10.0 — design §5.2) ──────
+# ── Phase 5 · Optimize-for-my-card — the kv-calc brain (design §5.2 seam 1, P4) ─────
 
 
 class OptimizeScreen(ModalScreen):
-    """The ▸ Optimize-for-my-card seam — DORMANT until the v0.10.0 optimizer lands.
+    """▸ Optimize-for-my-card — AWAKE: the brain is ``tools/kv-calc.py``.
 
-    On open it invokes the seam, which detects the optimizer's absence and shows
-    'optimizer not available (v0.10.0)'.  The honesty-gate rendering (boot-fit
-    predicted|measured · runtime soak-validated · confidence tier · cliff-class
-    --accept-runtime-risk) is built into ``set_report`` but stays dormant — it
-    renders ONLY once the engine reports ``available=True``.  Never fabricates
-    optimizer output."""
+    On open it runs (via the Runner seam) ``kv-calc --fit <slug> --card <card>
+    --json`` for the recommendation at the slug's own config, then one
+    ``--solve-max-ctx`` pricing per hardware-legal KV dtype (engine ∩ card
+    supported sets).  Renders the recommended max-model-len, projected VRAM ±
+    band, and the per-dtype option table; APPLY stages the SAME gated
+    ``switch.sh`` serve plan with MAX_MODEL_LEN / KV_CACHE_DTYPE riding
+    ``plan.env`` (the ② Serve override-editor mechanism — no new write path).
+
+    NEVER-repair spirit: every number is a kv-calc PREDICTION (±band), the
+    recs are advisory, and Apply routes through the reconcile-gated
+    ConfirmActionScreen — the user confirms.  Honesty: a kv-calc failure shows
+    an error card (no fake numbers); kvcalc_key=SKIP engines get an explicit
+    unsupported message."""
 
     DEFAULT_CSS = """
     OptimizeScreen {
         align: center middle;
     }
     OptimizeScreen > Vertical {
-        width: 80;
+        width: 84;
         height: auto;
         max-height: 80%;
         border: thick $accent;
@@ -5084,6 +6329,17 @@ class OptimizeScreen(ModalScreen):
     }
     OptimizeScreen #optimize-body {
         height: auto;
+        margin-bottom: 1;
+    }
+    OptimizeScreen .optimize-row {
+        height: auto;
+        align: left middle;
+    }
+    OptimizeScreen #optimize-kv {
+        width: 1fr;
+    }
+    OptimizeScreen #optimize-btn-note {
+        margin-left: 1;
     }
     """
 
@@ -5091,9 +6347,14 @@ class OptimizeScreen(ModalScreen):
         Binding("escape", "dismiss", "Close"),
     ]
 
-    def __init__(self, slug: str = "", **kwargs):
+    # Fit-vocabulary glyph per option verdict (same family as the catalog's).
+    _OPT_GLYPH = {"fits-clean": "●", "fits-constrained": "◐", "wont-fit": "○"}
+
+    def __init__(self, slug: str = "", entry: Optional[CatalogEntry] = None, **kwargs):
         super().__init__(**kwargs)
         self._slug = slug
+        self._entry = entry
+        self._report: Optional[OptimizerReport] = None
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -5101,43 +6362,127 @@ class OptimizeScreen(ModalScreen):
                 f"Optimize for my card{(' · ' + self._slug) if self._slug else ''}",
                 classes="optimize-title",
             )
-            yield Static("Querying the optimizer seam…", id="optimize-body")
+            yield Static("Querying kv-calc…", id="optimize-body")
+            with Horizontal(classes="optimize-row"):
+                yield Label("KV cache ", classes="optimize-kv-lbl")
+                yield Select([], id="optimize-kv", allow_blank=True, disabled=True)
+            with Horizontal(classes="optimize-row"):
+                yield Button(
+                    "Apply · stage tuned serve",
+                    id="optimize-apply",
+                    variant="warning",
+                    disabled=True,
+                )
+                yield Label(
+                    "[dim]advisory — confirm via the standard gate[/dim]",
+                    id="optimize-btn-note",
+                )
 
     def on_mount(self) -> None:
-        self.app.run_optimize_for_modal(self, self._slug)  # type: ignore[attr-defined]
+        self.app.run_optimize_for_modal(self, self._slug, self._entry)  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _gb(v: Optional[float]) -> str:
+        return f"{v:.1f}G" if v is not None else "—"
+
+    @staticmethod
+    def _ctx(v: Optional[int]) -> str:
+        return f"{v:,}" if v is not None else "—"
 
     def set_report(self, report: OptimizerReport) -> None:
+        self._report = report
         body = self.query_one("#optimize-body", Static)
+        sel = self.query_one("#optimize-kv", Select)
+        btn = self.query_one("#optimize-apply", Button)
         if not report.available:
-            # DORMANT seam — honest "not available", never a fabricated rec.
+            sel.disabled = True
+            btn.disabled = True
+            # Honest error / unsupported-engine card — never a fabricated rec.
             body.update(
-                f"  [yellow]{report.message}[/yellow]\n"
+                f"  [red]{report.message}[/red]\n"
                 "\n"
-                "  [dim]The per-card optimizer (recommend --optimize /\n"
-                "  generate_compose.py --optimize) lands in v0.10.0.  When it does,\n"
-                "  this seam will show its honesty gates:[/dim]\n"
-                "    [dim]· boot-fit  predicted | measured[/dim]\n"
-                "    [dim]· runtime   soak-validated | unvalidated[/dim]\n"
-                "    [dim]· confidence tier[/dim]\n"
-                "    [dim]· cliff-class recs require --accept-runtime-risk[/dim]\n"
-                "\n"
-                "  [dim]Esc to close[/dim]"
+                "  [dim]No recommendation is shown rather than a guessed one:\n"
+                "  this screen only renders real kv-calc output.[/dim]\n"
+                "\n  [dim]Esc to close[/dim]"
             )
             return
-        # Reserved — rendered only once the engine lands (dormant today).
-        risk = (
-            "  [red]cliff-class — requires --accept-runtime-risk[/red]\n"
-            if report.accept_runtime_risk_required
-            else ""
+
+        lines = [
+            f"  [bold]{report.slug}[/bold] · {report.engine or '—'} · card {report.card}",
+            "",
+            f"  [bold]Recommended max-model-len[/bold] "
+            f"[green]{self._ctx(report.recommended_max_ctx)}[/green]"
+            + (
+                f" at KV [green]{report.recommended_kv_format}[/green]"
+                if report.recommended_kv_format else ""
+            ),
+            f"  projected [bold]{self._gb(report.fit_vram_est_gb)}[/bold]/card "
+            f"± {self._gb(report.band_gb)}  "
+            f"[dim](kv-calc prediction, not a promise)[/dim]",
+            "",
+            "  [bold]KV dtype options (hardware-legal)[/bold]",
+        ]
+        for o in report.options:
+            glyph = self._OPT_GLYPH.get(o.verdict, "·")
+            if o.solved_max_ctx is None:
+                lines.append(f"  {glyph} {o.kv_format:<22} [red]unpriced: {o.note}[/red]")
+                continue
+            row = (
+                f"  {glyph} {o.kv_format:<22} ctx≤{self._ctx(o.solved_max_ctx):>9}   "
+                f"est {self._gb(o.vram_est_gb):>6}   headroom {self._gb(o.headroom_gb):>6}"
+            )
+            if o.note:
+                row += f"  [yellow]{o.note}[/yellow]"
+            lines.append(row)
+        if not report.options:
+            lines.append("  [dim](no per-dtype pricing — registry kvcalc_key not decomposable)[/dim]")
+        lines += [
+            "",
+            "  [dim]Pick a KV dtype → Apply stages switch.sh with MAX_MODEL_LEN /\n"
+            "  KV_CACHE_DTYPE overrides · Esc to close[/dim]",
+        ]
+        body.update("\n".join(lines))
+
+        priced = [(o.kv_format, o) for o in report.options if o.solved_max_ctx is not None]
+        if priced:
+            sel.set_options([
+                (f"{fmt} · ctx≤{self._ctx(o.solved_max_ctx)} · est {self._gb(o.vram_est_gb)}", fmt)
+                for fmt, o in priced
+            ])
+            default = report.recommended_kv_format or priced[0][0]
+            sel.value = default if default in [p[0] for p in priced] else priced[0][0]
+            sel.disabled = False
+        btn.disabled = False
+
+    def _selected_option(self) -> Optional["KvOption"]:
+        """The KV option row matching the dropdown selection (None → apply the
+        recommended ctx alone, keeping the compose's own dtype)."""
+        try:
+            fmt = self.query_one("#optimize-kv", Select).value
+        except Exception:
+            return None
+        if not fmt:
+            return None
+        for o in (self._report.options if self._report else []):
+            if o.kv_format == fmt and o.solved_max_ctx is not None:
+                return o
+        return None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != "optimize-apply" or not self._report:
+            return
+        if not self._report.available:
+            return
+        opt = self._selected_option()
+        plan = self.app._data.optimize_apply_plan(  # type: ignore[attr-defined]
+            self._slug,
+            max_model_len=(
+                opt.solved_max_ctx if opt else self._report.recommended_max_ctx
+            ),
+            kv_dtype=(opt.kv_format if opt else None),
         )
-        body.update(
-            f"  [bold]Recommended[/bold]  [green]{report.recommended_slug or '—'}[/green]\n"
-            f"  [bold]boot-fit[/bold]    {report.boot_fit or '—'}\n"
-            f"  [bold]runtime[/bold]     {report.runtime or '—'}\n"
-            f"  [bold]confidence[/bold]  {report.confidence or '—'}\n"
-            + risk
-            + "\n  [dim]Esc to close[/dim]"
-        )
+        # Standard gate — the user confirms; nothing auto-fires.
+        self.app.push_screen(ConfirmActionScreen(plan))  # type: ignore[attr-defined]
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()
@@ -5146,7 +6491,7 @@ class OptimizeScreen(ModalScreen):
 # ── Producer lane ② Serve — untested-compose preview modal (R3b-1) ─────────────────
 
 
-class UntestedComposePreviewScreen(ModalScreen):
+class UntestedComposePreviewScreen(_CopyableModal, ModalScreen):
     """Preview a GENERATED compose VERBATIM, then confirm to serve it (② Serve).
 
     Used for the **catalog-reproduction** path (non–Route-C / no swap compose):
@@ -5195,6 +6540,7 @@ class UntestedComposePreviewScreen(ModalScreen):
     # _serve path).
     BINDINGS = [
         Binding("enter", "serve_untested", "Serve untested", show=True, priority=True),
+        Binding("y", "app.copy_context", "Copy compose", show=True),
         Binding("escape", "dismiss", "Close"),
     ]
 
@@ -5205,6 +6551,7 @@ class UntestedComposePreviewScreen(ModalScreen):
         self._compose_path = compose_path
         self._compose_yaml = compose_yaml
         self._on_serve = on_serve
+        self._copy_payload = compose_yaml  # [Y] — paste-ready generated compose
 
     def compose(self) -> ComposeResult:
         from rich.markup import escape
@@ -5335,6 +6682,10 @@ class LaneBringPane(Container):
         width: 13;
         margin-left: 1;
     }
+    LaneBringPane #lane-bring-search-btn {
+        width: auto;
+        margin-right: 1;
+    }
     LaneBringPane #lane-bring-gguf-select {
         width: 36;
     }
@@ -5409,6 +6760,9 @@ class LaneBringPane(Container):
                     )
                 with Vertical(classes="funnel-field"):
                     yield Label(" ", classes="funnel-field-title")
+                    yield Button(
+                        "Search HF", id="lane-bring-search-btn", classes="lane-bring-search-btn"
+                    )
                     yield Button(
                         "Inspect", id="lane-bring-inspect-btn", variant="primary"
                     )
@@ -6691,13 +8045,14 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     # Run & Operate · Catalog tab.
     ("primary_action", "Serve selected / primary action", "⏎ — serve the selected slug (reconcile-gated)"),
     ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
+    ("model_info", "Model info", "Catalog — metadata popup for the selected slug ([i])"),
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
     ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated slugs (hidden by default)"),
     ("toggle_catalog_downloaded", "Show only downloaded", "Catalog — narrow to slugs whose weights are already on disk"),
     ("copy_endpoint", "Copy the serving API URL", "Run & Operate — copy http://<lan>:<port>/v1 for your agent/client (no auth by default)"),
     ("set_default", "Set default", "Catalog — pin the selected slug as model default"),
     ("clear_default", "Clear default", "Catalog — clear the model default pin"),
-    ("optimize_card", "Optimize for my card", "Catalog — v0.10.0 seam (not available yet)"),
+    ("optimize_card", "Optimize for my card", "Catalog — kv-calc recommendations (advisory, gated apply)"),
     # Run & Operate · Orchestration / Containers / Doctor tabs.
     ("serving_stop", "Stop this model", "Orchestration — stop JUST the serving container (gated)"),
     ("serving_restart", "Restart serving", "Orchestration — restart the serving container (gated)"),
@@ -6711,6 +8066,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("doctor_verify", "Verify serving", "Doctor — send a test query to the model (verify.sh · read)"),
     ("doctor_verify_full", "Verify-full battery", "Doctor — functional battery (verify-full.sh · ~1-2 min · read)"),
     ("full_report", "Full system report (report.sh --full)", "Doctor / ③ Gate — ~43-min battery (uses the serving GPUs · gated)"),
+    ("bootlog_solve", "Boot-log KV back-solve", "③ Gate — classify the serving container's boot log vs the kv-calc prediction ([K] · read)"),
     # Share-back (consumer-resident — NOT producer-gated).
     ("rig_report", "Rig report", "Paste-ready rig/bench snapshot (read · no network)"),
     ("submit_bench", "Submit bench", "Submit the latest benched result (gated · never auto)"),
@@ -6720,13 +8076,14 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("measure_vs_bar", "Compare vs catalog bar (④ Measure)", "Producer lane — read · flags protocol"),
     ("evaluate_target", "Evaluate running target (preview)", "Producer lane — c3t evaluate (mock this phase)"),
     ("promote_catalog", "Promotion scaffold preview (⑤)", "Producer lane — preview only, no catalog write yet"),
+    ("search_hf", "Search Hugging Face repos (① Bring)", "Producer lane — search HF and fill the repo field ([f])"),
 )
 
 # The producer-only subset — kept in sync with ``CockpitApp._PRODUCER_ONLY`` (a
 # guard test asserts the two agree).  Used to FILTER the palette on consumer.
 _PALETTE_PRODUCER_ONLY: frozenset[str] = frozenset({
-    "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-    "measure_vs_bar",
+    "search_hf", "mode_validate", "promote_catalog", "evaluate_target",
+    "serve_untested", "measure_vs_bar", "bootlog_solve",
 })
 
 # Single source of truth: each mode-level tab → the CSS id of its PRIMARY content
@@ -6811,8 +8168,9 @@ class CockpitApp(App):
         Binding("question_mark", "help", "Help", show=True),
         Binding("r", "refresh", "Refresh", show=True),
         # Sub-tab cycle — shown when the mode has sub-tabs (check_action gates).
-        # show=True so `]` surfaces in the footer on the producer lane (phase 1.3).
-        Binding("left_square_bracket", "prev_subtab", "Prev tab", show=False),
+        # Both brackets show=True so [ and ] are symmetric in the footer (the
+        # old show=False hid [ while ] was visible — an unexplained asymmetry).
+        Binding("left_square_bracket", "prev_subtab", "Prev tab", show=True),
         Binding("right_square_bracket", "next_subtab", "Next tab", show=True),
         # Arrow-key focus descent (keyboard-nav enhancement):
         #   [down] on the tab bar → descend INTO the active tab's primary list.
@@ -6851,9 +8209,11 @@ class CockpitApp(App):
         # #963 — [w] narrow the catalog to slugs whose weights are already on disk.
         Binding("w", "toggle_catalog_downloaded", "Downloaded", show=False),
         # #724 — [|] catalog column picker (show/hide + reorder, persisted).
-        Binding("vertical_bar", "catalog_columns", "Columns", show=False),
+        Binding("vertical_line", "catalog_columns", "Columns", show=False),
         Binding("u", "copy_endpoint", "API URL", show=False),
         Binding("e", "explain", "Explain", show=False),
+        # [i] model-info popup (C6) — local-data metadata modal, sibling of Explain.
+        Binding("i", "model_info", "Model info", show=False),
         # 2-mode merge: [1] = merged Run & Operate, [2] = Bring & Validate lane.
         Binding("1", "mode_run", "Run & Operate", show=True),
         Binding("2", "mode_validate", "Bring & Validate", show=True),
@@ -6884,7 +8244,7 @@ class CockpitApp(App):
         # Phase 5 — the three v2 hooks:
         #   [v] Evaluate via c3t (mock this phase — label says so)
         #   [P] Promotion scaffold preview (no live catalog write this phase)
-        #   [O] Optimize for my card (dormant v0.10.0 seam)
+        #   [O] Optimize for my card (kv-calc brain; apply = gated stage)
         Binding("v", "evaluate_target", "Evaluate (preview)", show=False),
         Binding("P", "promote_catalog", "Scaffold preview", show=False),
         # R3b-1 — producer lane ② Serve: generate a compose + serve it untested
@@ -6904,11 +8264,19 @@ class CockpitApp(App):
         # (same duplicate-key + check_action pattern as the modal's k=stop /
         # k=cancel_download).
         Binding("k", "bring_cancel_download", "Cancel download", show=True),
+        # ① Bring HF search front-end ([f]) — opens SearchHFScreen; a picked
+        # result fills the repo field.  Context-gated to mode 1 · tab-bring via
+        # _CONTEXT_KEYS (show=False like the other lane verbs — taught by Help).
+        Binding("f", "search_hf", "Search HF", show=False),
         # R3b-2 — producer lane: the ~43-min FULL validation battery
         # (report.sh --full) — confirm-gated, bg-streamed, producer-only, uses the
         # serving model (claims no GPU); NEVER auto-fired.
         Binding("F", "full_report", "Full report", show=False),
         # Phase R / R2b — consumer share-back affordances (NOT producer-gated):
+        # P4 Step-5 — producer lane ③ Gate: back-solve the serving container's
+        # boot log against kv-calc (READ — docker logs + the bootlog_solve.py
+        # --json contract; renders a verdict card in BootlogSolveScreen).
+        Binding("K", "bootlog_solve", "KV back-solve", show=False),
         #   [R] rig report (READ · paste-ready)     — Run + Operate
         #   [B] submit bench (OUTWARD write · gated) — Operate
         #   [!] report a problem (READ · paste-ready, surfaced at a failed serve)
@@ -7066,12 +8434,14 @@ class CockpitApp(App):
         # nothing is serving).
         "copy_endpoint":    ({0}, {"tab-catalog", "tab-orchestration", "tab-containers", "tab-doctor"}),
         "explain":          ({0}, {"tab-catalog"}),  # Catalog (guards inside action)
+        "model_info":       ({0}, {"tab-catalog"}),  # Catalog — [i] popup (guards inside action)
         "set_default":      ({0}, {"tab-catalog"}),  # Catalog
         "clear_default":    ({0}, {"tab-catalog"}),  # Catalog
         "optimize_card":    ({0}, {"tab-catalog"}),  # Catalog
         # Producer Bring & Validate lane (mode 1 in the 2-mode merge).  Both
         # producer-gated (hidden on the lean surface).
         "promote_catalog":  ({1}, None),          # Bring & Validate lane (⑤ Promote)
+        "search_hf":        ({1}, {"tab-bring"}),  # ① Bring — [f] HF repo search
         "evaluate_target":  ({1}, None),          # Bring & Validate lane (the c3t hook)
         "serve_untested":   ({1}, {"tab-serve"}), # Bring & Validate lane (② Serve)
         # [m] vs-bar on ④ Measure (tab-evidence); [F] full battery on the lane's
@@ -7080,6 +8450,8 @@ class CockpitApp(App):
         "measure_vs_bar":   ({1}, {"tab-evidence"}),
         "full_report":      ({0, 1}, {"tab-doctor", "tab-run"}),
         # Merged mode 0 · Orchestration tab
+        # [K] KV back-solve on the lane's ③ Gate (tab-run) — producer-only.
+        "bootlog_solve":    ({1}, {"tab-run"}),
         "estate_off":       ({0}, {"tab-orchestration"}),
         "new_pod":      ({0}, {"tab-orchestration"}),
         "power_cap":        ({0}, {"tab-orchestration"}),
@@ -7130,13 +8502,13 @@ class CockpitApp(App):
     #   surface too.
     #   Lane-resident producer verbs: [v] evaluate_target + [serve_untested]
     #   (② Serve) + [P] promote_catalog (⑤ Promote) + [m] measure_vs_bar
-    #   (④ Measure).
+    #   + [f] search_hf (① Bring).
     #   NOT producer-only: [F] full_report — Batch 3 surfaced the ~43-min battery
     #   on the consumer Operate · Doctor too (context-gated to tab-doctor + the
     #   lane's ③ Gate tab-run), so it must stay reachable on the lean surface.
     _PRODUCER_ONLY: frozenset[str] = frozenset({
-        "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-        "measure_vs_bar",
+        "search_hf", "mode_validate", "promote_catalog", "evaluate_target",
+        "serve_untested", "measure_vs_bar", "bootlog_solve",
     })
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -7854,8 +9226,8 @@ class CockpitApp(App):
             pane = self.query_one("#catalog-pane", CatalogPane)
         except Exception:
             return
-        pane.populate(rows, error)          # instant first paint (stub fit/TPS)
-        if error or not rows:
+        pane.populate(rows, error)          # instant first paint (rows+error = degraded banner)
+        if not rows:
             return
         # Progressive enrichment — re-render after each phase (cursor preserved).
         # rows are the SAME CatalogEntry objects the pane holds, so in-place
@@ -8655,12 +10027,21 @@ class CockpitApp(App):
         gguf_quant, gguf_gb = self._funnel_gguf_selection()
         if gguf_quant:
             cards = self._data.topology_cards_for_profile(profile_like)
+            # P3: GGUF header KV facts (on-disk pull dir, else a bounded
+            # range probe) — route-G scaffolds auto-fill arch dims instead of
+            # staying pure-template. {} on any failure → placeholders stay.
+            gguf_facts = await self._data.gguf_header_facts(
+                repo,
+                self._funnel_gguf_files(),
+                size_gb=gguf_gb,
+            )
             res = self._data.byo_check_gguf(
                 repo,
                 profile_like,
                 quant=gguf_quant,
                 size_gb=gguf_gb or 0.0,
                 card_vram_gb=24.0 * max(1, cards),
+                facts=gguf_facts,
             )
         else:
             res = await self._data.byo_check(repo, profile_like)
@@ -8875,6 +10256,20 @@ class CockpitApp(App):
         except Exception:
             return "", None
 
+    def _funnel_gguf_files(self) -> list[str]:
+        """Repo-relative ``.gguf`` file list for the ① Bring GGUF pick — the
+        main quant files ONLY (no mmproj / MTP companions). Feeds
+        ``gguf_header_facts`` (P3): exact-match local read / remote header
+        probe. Empty when this isn't a GGUF bring."""
+        quant, _ = self._funnel_gguf_selection()
+        inv = getattr(self, "_last_inventory", None)
+        if not quant or inv is None:
+            return []
+        for v in getattr(inv, "gguf_variants", []):
+            if v.quant == quant:
+                return [str(f) for f in getattr(v, "files", []) or []]
+        return []
+
     def _gguf_download_includes(self) -> list[str]:
         """hf-download ``--include`` patterns for the picked GGUF quant: the main
         quant file(s) + the vision mmproj + a quant-matched external MTP drafter (if
@@ -8941,6 +10336,26 @@ class CockpitApp(App):
             pass
         self.notify(f"Cancelled download of {repo}.", title="Download", timeout=3)
         self._sync_jobs_chip()
+
+    def action_search_hf(self) -> None:
+        """[f] / "Search HF" — the ① Bring HF repo search front-end.  Opens
+        SearchHFScreen; a picked repo id fills #lane-bring-url-input and
+        refocuses it (manual entry is never touched on Esc or on failure).
+        Context-gated to mode 1 · tab-bring (check_action + this guard)."""
+        if self._active_mode != 1 or self._active_validate_tab() != "tab-bring":
+            return
+
+        def _fill(repo: Optional[str]) -> None:
+            if not repo:
+                return
+            try:
+                inp = self.query_one("#lane-bring-url-input", Input)
+            except Exception:
+                return
+            inp.value = repo
+            inp.focus()
+
+        self.push_screen(SearchHFScreen(self._data), _fill)
 
     def action_new_bring(self) -> None:
         """Phase 3 — Ctrl+n: clear ①/② funnel state and start over (no disk wipe)."""
@@ -9975,18 +11390,23 @@ class CockpitApp(App):
 
     def _hscroll(self, direction: int) -> None:
         """shift+←/→ — page-scroll the active wide table horizontally (faster than
-        the per-column ←/→ cursor).  A no-op (silently) when nothing scrollable is
-        focused or under a modal."""
+        the per-column ←/→ cursor).  Animated (short ease-out) so repeated or
+        held keys GLIDE instead of teleporting; the animator retargets from the
+        current offset mid-glide, so key-repeat reads as one continuous scroll.
+        A no-op (silently) when nothing scrollable is focused or under a modal."""
         if len(self.screen_stack) > 1:
             return
         table = self._primary_list_for_active_tab()
         if table is None:
             return
         try:
+            # ~180ms ease-out: long enough to read as motion, short enough not
+            # to lag behind rapid repeats.  Honors TEXTUAL_ANIMATIONS=none.
+            kwargs: dict = dict(animate=True, duration=0.18, easing="out_cubic")
             if direction < 0:
-                table.scroll_page_left(animate=False)
+                table.scroll_page_left(**kwargs)
             else:
-                table.scroll_page_right(animate=False)
+                table.scroll_page_right(**kwargs)
         except Exception:
             pass
 
@@ -10146,10 +11566,39 @@ class CockpitApp(App):
         except Exception:
             entry = None
         if entry is None:
+            self.notify(
+                "No slug selected.", title="Explain", severity="warning", timeout=3
+            )
             return
         # The screen loads its own detail + cross-rig on mount (so the body query
         # resolves against a fully-mounted modal — Fold 3 cross-rig fold included).
         self.push_screen(ExplainScreen(entry.slug, model=entry.model, engine=entry.engine))
+
+    def action_model_info(self) -> None:
+        """[i] — the local-data model-info popup for the selected catalog row
+        (merged mode 0 · Catalog tab).  Zero I/O: built from the CatalogEntry +
+        the registry's model-profile metadata already in memory."""
+        if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
+            return
+        try:
+            pane = self.query_one("#catalog-pane", CatalogPane)
+            entry = pane.selected_entry()
+        except Exception:
+            entry = None
+        if entry is None:
+            self.notify(
+                "No slug selected.", title="Model info", severity="warning", timeout=3
+            )
+            return
+        profile = (getattr(self._data, "catalog_models", None) or {}).get(entry.model)
+        try:
+            defaults = getattr(self._data, "catalog_defaults", None) or []
+            is_default = any(
+                isinstance(d, dict) and d.get("slug") == entry.slug for d in defaults
+            )
+        except Exception:
+            is_default = False
+        self.push_screen(ModelInfoScreen(entry, profile, is_default=is_default))
 
     def action_primary_action(self) -> None:
         """⏎ — context-specific per mode AND (in the merged mode 0) per tab.
@@ -10284,7 +11733,11 @@ class CockpitApp(App):
         self._staged_entry = entry
         plan = self._data.serve(entry.slug)  # gated, NOT --force
         self.push_screen(
-            ConfirmActionScreen(plan, serve_ctx=self._serve_context_for(entry))
+            ConfirmActionScreen(
+                plan,
+                serve_ctx=self._serve_context_for(entry),
+                repo_root=self._repo_root,   # for the #1010 compose gate sniff
+            )
         )
 
     def _serve_context_for(self, entry: CatalogEntry) -> ServeContext:
@@ -10358,6 +11811,9 @@ class CockpitApp(App):
         except Exception:
             scene = None
         if scene is None:
+            self.notify(
+                "No scene selected.", title="Scene switch", severity="warning", timeout=3
+            )
             return
         # Studio guard — the studio scenes need the comfyui-local image; if it's
         # absent (setup-image-studio.sh not run), guide instead of a doomed switch.
@@ -10427,6 +11883,9 @@ class CockpitApp(App):
             return
         entry = self._selected_catalog_entry()
         if entry is None:
+            self.notify(
+                "No slug selected.", title="Set default", severity="warning", timeout=3
+            )
             return
         plan = self._data.set_default(entry.slug)
         self.push_screen(ConfirmActionScreen(plan))
@@ -10438,6 +11897,9 @@ class CockpitApp(App):
             return
         entry = self._selected_catalog_entry()
         if entry is None:
+            self.notify(
+                "No slug selected.", title="Clear default", severity="warning", timeout=3
+            )
             return
         plan = self._data.clear_default(entry.model)
         self.push_screen(ConfirmActionScreen(plan))
@@ -10818,6 +12280,52 @@ class CockpitApp(App):
         finally:
             self._full_report_running = False
             self._sync_jobs_chip()
+
+    # ── P4 Step-5 · Boot-log KV back-solve (READ verdict card) ──────────────────
+
+    def action_bootlog_solve(self) -> None:
+        """[K] in the lane's ③ Gate: back-solve the serving container's boot log
+        against kv-calc (ADDING_MODELS.md Step 5, automated).
+
+        READ-only — docker logs + the ``bootlog_solve.py --json`` contract; no
+        confirm gate, no GPU claim, never auto-fired elsewhere.  Needs a
+        matched catalog slug + its live container; without either it notifies
+        honestly instead of guessing."""
+        if self._active_mode != 1 or self._active_validate_tab() != "tab-run":
+            return
+        state = self._last_estate_state
+        slug = ((getattr(state, "matched_slug", "") or "").strip()) or None
+        con = self._serving_container()
+        if con is None or not slug:
+            self.notify(
+                "No matched serving model — the KV back-solve needs a live "
+                "catalog slug + its container (nothing is guessed).",
+                title="KV back-solve",
+                severity="warning",
+                timeout=4,
+            )
+            return
+        screen = BootlogSolveScreen(
+            f"Boot-log KV back-solve · {slug}", slug, con.name
+        )
+        self.push_screen(screen)
+        # The screen mounts a 'reading…' placeholder; the worker fills it via
+        # set_result when the docker-logs + solver legs come back.
+        self.run_bootlog_solve(screen)
+
+    @work(group="bootlog-solve")
+    async def run_bootlog_solve(self, screen: "BootlogSolveScreen") -> None:
+        """Load the boot-log back-solve for the modal's (slug, container) — a
+        READ via CockpitData.bootlog_solve; renders whatever came back,
+        including honest failures."""
+        try:
+            res = await self._data.bootlog_solve(slug=screen.slug, container=screen.container)
+        except Exception as exc:  # pragma: no cover - defensive
+            res = {"ok": False, "message": f"back-solve failed: {exc}", "report": None}
+        try:
+            screen.set_result(res)
+        except Exception:
+            pass
 
     # ── Phase R / R2b · Consumer share-back (READ paste-ready + outward submit) ────
 
@@ -11572,10 +13080,11 @@ class CockpitApp(App):
         catalog-promotion scaffold (R3b-1 relocated it out of Run · Catalog).
 
         Design §3.5b — a SCAFFOLD + GATE, not a YAML IDE.  Computes a ModelProfile
-        YAML skeleton + a compose_registry row from the last BYO fit-check arch
-        facts + any measured Evidence numbers, and previews them.  The write into
-        scripts/ + the guard suite is the GATED write_plan on the scaffold —
-        MOCK-ONLY this phase, never auto-fired."""
+        YAML skeleton + a registry entry from the last BYO fit-check arch facts
+        (deriver facts auto-filled) + any measured Evidence numbers, and
+        previews them.  C4-rev: the write targets the LOCAL layer by default;
+        core is the screen's distinctly-labeled maintainer action.  The gated
+        write plan routes through the confirm gate — never auto-fired."""
         if self._active_mode != 1:
             return
         if self._last_byo is None:
@@ -11601,7 +13110,17 @@ class CockpitApp(App):
         self.push_screen(
             PromoteScaffoldScreen(
                 scaffold,
-                on_stage_write=lambda plan: self.push_screen(ConfirmActionScreen(plan)),
+                on_stage_write=lambda layer, spec: self.push_screen(
+                    ConfirmActionScreen(
+                        self._data.promote_write_plan(scaffold, layer=layer, spec=spec)
+                    )
+                ),
+                on_export_pr=lambda spec: self.push_screen(
+                    ConfirmActionScreen(
+                        self._data.export_pr_plan(spec),
+                        on_confirm=lambda p: self.run_export_pr_launch(p),
+                    )
+                ),
             )
         )
 
@@ -11621,26 +13140,81 @@ class CockpitApp(App):
                 return e.measurement
         return None
 
-    # ── Phase 5 · Hook 3: Optimize for my card (DORMANT v0.10.0 seam) ──────────────────
+    @work(group="export-pr", exclusive=True)
+    async def run_export_pr_launch(self, plan: Any) -> None:
+        """Run the CONFIRMED ``export_pr.py`` bundle export via the write-runner
+        seam (mocked in tests — conftest blocks the real spawn), streaming into
+        the Run LivePane; on completion push the copyable bundle-location
+        modal.  Claims no GPU."""
+        live = self._run_output_pane()
+        if live is not None:
+            live.clear_log()
+            live.append_line(
+                "[green]▶ exporting[/green] core PR bundle "
+                "(scripts/lib/profiles/export_pr.py · streams below)"
+            )
+        captured: list[str] = []
+
+        def _on_line(text: str) -> None:
+            captured.append(text)
+            if live is not None:
+                live.append_line(text)
+
+        state = await self._data.run_export_pr(plan, on_line=_on_line)
+        # The mock write runner returns a bare dict (no .done event); a real
+        # run resolves when its detached reader finishes.  Await when present.
+        done = getattr(state, "done", None)
+        if done is not None:
+            await done.wait()
+        out_dir = self._export_out_dir(plan, captured)
+        self.notify(
+            f"PR bundle written under {out_dir}",
+            title="Export PR",
+            severity="information",
+            timeout=5,
+        )
+        self.push_screen(ExportPrBundleScreen(out_dir, lines=captured))
+
+    @staticmethod
+    def _export_out_dir(plan: Any, captured: list[str]) -> str:
+        """The exported bundle root: the script's EXPORT_OK line when it ran,
+        else the plan's --out value, else the /tmp default."""
+        for ln in reversed(captured):
+            if "EXPORT_OK" in ln:
+                bits = ln.split("EXPORT_OK", 1)
+                if len(bits) == 2 and bits[1].strip():
+                    return bits[1].strip()
+        cmd = getattr(plan, "cmd", None) or []
+        joined = [str(c) for c in cmd]
+        if "--out" in joined:
+            i = joined.index("--out")
+            if i + 1 < len(joined):
+                return joined[i + 1]
+        return "/tmp"
+
+    # ── Phase 5 · Hook 3: Optimize for my card (kv-calc brain, P4) ──────────────────────
 
     def action_optimize_card(self) -> None:
-        """[O] in Run: open the (dormant) per-card optimizer seam.
+        """[O] in Run: open the per-card optimizer (the kv-calc brain).
 
-        The v0.10.0 optimizer does not exist yet — the modal shows 'optimizer not
-        available (v0.10.0)'.  Available from Run · Catalog (selected slug); falls
-        back to the last staged serve slug if no catalog row is selected."""
+        Available from Run · Catalog (selected slug); falls back to the last
+        staged serve slug if no catalog row is selected.  The selected/staged
+        CatalogEntry rides along so the brain can decompose the registry
+        kvcalc_key + check engine/hardware KV legality."""
         if self._active_mode != 0:
             return
-        entry = self._selected_catalog_entry()
-        slug = entry.slug if entry else (self._staged_entry.slug if self._staged_entry else "")
-        self.push_screen(OptimizeScreen(slug))
+        entry = self._selected_catalog_entry() or self._staged_entry
+        slug = entry.slug if entry else ""
+        self.push_screen(OptimizeScreen(slug, entry=entry))
 
     @work(group="optimize")
-    async def run_optimize_for_modal(self, screen: OptimizeScreen, slug: str) -> None:
-        """Invoke the dormant optimizer seam + push the verdict into the modal.
-        Detects the optimizer's absence → 'not available (v0.10.0)'; never
+    async def run_optimize_for_modal(
+        self, screen: OptimizeScreen, slug: str, entry: Optional[CatalogEntry] = None
+    ) -> None:
+        """Run the kv-calc brain via the data seam + push the verdict into the
+        modal.  A kv-calc failure renders an honest error card; never
         fabricates output."""
-        report = await self._data.optimize_for_card(slug=slug)
+        report = await self._data.optimize_for_card(slug=slug, entry=entry)
         try:
             screen.set_report(report)
         except Exception:
@@ -11881,6 +13455,16 @@ class CockpitApp(App):
         if new_val != getattr(self, "_last_applied_profile_default", None):
             self._profile_user_touched = True
 
+    def on_catalog_table_highlight_clicked(self, event) -> None:
+        """Click (or double-click) on an ALREADY-highlighted catalog row →
+        model-info popup — the mouse twin of [i].  CatalogTable intercepts the
+        stock RowSelected-on-highlight-click (which used to fire the serve
+        confirm — a mis-click trap) and posts HighlightClicked instead."""
+        event.stop()
+        if self._active_mode != 0 or self._current_subtab() != "tab-catalog":
+            return
+        self.action_model_info()
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """DataTable emits RowSelected when the user presses Enter (select_cursor).
         Route it to the app's primary action so focusing a DataTable doesn't break
@@ -12078,6 +13662,8 @@ class CockpitApp(App):
             self._trigger_lane_bring()
         elif bid == "lane-bring-inspect-btn":
             self._trigger_lane_inspect()
+        elif bid == "lane-bring-search-btn":
+            self.action_search_hf()
         elif bid == "lane-bring-continue-btn":
             self._bring_advance_to_serve()
         elif bid == "lane-serve-btn":

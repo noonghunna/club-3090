@@ -251,6 +251,20 @@ FIT_JSON = json.dumps(
     {"verdict": "fits-clean", "vram_est_gb": 19.881, "band_gb": 1.5, "max_ctx": 262144}
 )
 
+# kv-calc --solve-max-ctx per-dtype pricing (the Optimize brain's option
+# calls) — REAL output shape, verified live on qwen3.6-27b dual.
+SOLVE_JSON = json.dumps(
+    {
+        "model": "qwen3.6-27b", "weights_gb": 8.75,
+        "kv_pool_requested_gb": 8.68, "kv_pool_actual_gb": 8.68,
+        "kv_pool_sliding_fixed_gb": 0.0, "activation_gb": 0.82,
+        "cudagraph_overhead_gb": 1.75, "drafter_gb": 0.0,
+        "total_gb": 19.997, "vram_gb": 24.0, "budget_gb": 22.8,
+        "pct_of_vram": 87.7, "verdict": "PASS", "notes": [],
+        "solved_max_ctx": 262144,
+    }
+)
+
 # kv-calc --fit-all batch (one call enriches the whole catalog's fit column).
 FIT_ALL_JSON = json.dumps(
     {
@@ -615,6 +629,8 @@ def fake_responses(**overrides) -> dict[str, RunResult]:
         "docker images -q": ok("sha256:abc123\n"),
         # Phase-4 reads:
         "diagnose-estate.sh --json": ok(DIAGNOSE_ESTATE_JSON),
+        # The Optimize brain's per-dtype pricing (one solve per legal format).
+        "--solve-max-ctx": ok(SOLVE_JSON),
         "diagnose-profile.sh": ok(DIAGNOSE_PROFILE_TEXT),
         "power-cap status": ok(POWER_CAP_STATUS),
         "docker top": ok(DOCKER_TOP),
@@ -678,6 +694,26 @@ def make_app(
     runner (e.g. FakeGenComposeRunner for the ② Serve generate path).
     """
     root = repo_root or FAKE_REPO_ROOT
+    # The Optimize brain reads engine/hardware KV-legality lists off the repo
+    # tree (stdlib yml scan) — seed the two tiny profile files it needs so the
+    # option table renders in tests.  (Idempotent; nothing else reads these.)
+    try:
+        eng = root / "scripts" / "lib" / "profiles" / "engines"
+        eng.mkdir(parents=True, exist_ok=True)
+        (eng / "vllm-stable.yml").write_text(
+            "supported_kv_formats:\n"
+            "  - bf16\n  - fp16\n  - fp8_e4m3\n  - fp8_e5m2\n"
+            "  - int8_per_token_head\n", encoding="utf-8")
+        hw = root / "scripts" / "lib" / "profiles" / "hardware"
+        hw.mkdir(parents=True, exist_ok=True)
+        # Ampere card: fp8_e4m3 NOT hardware-legal → dropped from the options.
+        (hw / "rtx-3090.yml").write_text(
+            "sm: 8.6\nvram_gb: 24\n"
+            "supported_kv_formats:\n"
+            "  - bf16\n  - fp16\n  - fp8_e5m2\n  - int8_per_token_head\n",
+            encoding="utf-8")
+    except OSError:
+        pass
     runner = runner or FakeRunner(responses or fake_responses())
     gpus = gpus if gpus is not None else [GpuInfo(index=0, mem_used_mib=1), GpuInfo(index=1, mem_used_mib=1)]
     target = target if target is not None else ServingTarget(gpus=gpus)
@@ -995,46 +1031,367 @@ class TestNavNodesExist:
         saved = M.load_settings().get("catalog_columns")
         assert saved == {"order": default, "hidden": []}
 
-    def test_act8_serve_toggle(self):
-        """#609: the W4A8 int8-activation opt-in on the serve-confirm modal —
-        shown + wired only for act8-capable START slugs, injects the env, hidden
-        elsewhere. Tests the modal's logic directly (no app mount needed)."""
+    def test_act8_serve_toggle(self, tmp_path):
+        """#609/#1010: the W4A8 int8-activation knob on the serve-confirm modal —
+        shown + wired only where [a] is bound (classic opt-in OR inverted
+        ship-int8), injects the right env per slug class, hidden elsewhere.
+        Tests the modal's logic directly (no app mount needed)."""
         from club3090_cockpit.app import ConfirmActionScreen, ServeContext
         from club3090_cockpit.data import ActionPlan, CatalogEntry
         from club3090_cockpit.services import _variant_row_from_dict
 
-        def modal(act8, mode="start"):
-            row = _variant_row_from_dict({"slug": "vllm/dual", "port": 8010, "act8_capable": act8})
+        def modal(act8, act_format="", mode="start"):
+            row = _variant_row_from_dict({
+                "slug": "vllm/x", "port": 8010, "act8_capable": act8,
+                "act_format": act_format,
+            })
             ctx = ServeContext(mode=mode, entry=CatalogEntry(row=row))
             m = ConfirmActionScreen.__new__(ConfirmActionScreen)
-            m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", "vllm/dual"])
+            m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", "vllm/x"])
             m._serve_ctx = ctx
+            m._repo_root = tmp_path
+            m._act8_gate = None
             m._act8_on = False
             m._reconcile = None
             return m
 
-        # capable START slug → toggle available + gated ON
+        # ── opt-in class (#609, unchanged): 16bit + capable ──────────────────
         cap = modal(True)
-        assert cap._act8_capable() is True
+        assert cap._act8_mode() == "optin"
         assert cap.check_action("toggle_act8", ()) is True
-        # env attaches (idempotent, prepended before switch.sh)
+        # env attaches only when ON (idempotent, prepended before switch.sh)
+        assert cap._act8_env_prefix() == []
         cap._act8_on = True
-        inj = cap._with_act8_env(cap._plan.cmd)
+        inj = cap._with_act8_env(cap._plan.cmd, cap._act8_env_prefix())
         assert inj[:2] == ["env", "VLLM_MARLIN_INPUT_DTYPE=int8"]
-        assert cap._with_act8_env(inj) == inj  # idempotent
+        assert cap._with_act8_env(inj, cap._act8_env_prefix()) == inj  # idempotent
 
-        # NON-capable slug → toggle hidden, capability False
+        # NON-capable slug → no knob at all
         nocap = modal(False)
-        assert nocap._act8_capable() is False
+        assert nocap._act8_mode() == "none"
         assert nocap.check_action("toggle_act8", ()) is False
-
         # capable but STOP mode (not a launch) → not offered
         stop = modal(True, mode="stop")
         assert stop._act8_capable() is False
 
-        # row facet plumbs through from the emit contract
-        assert getattr(_variant_row_from_dict({"slug": "x", "port": 1, "act8_capable": True}), "act8_capable") is True
-        assert getattr(_variant_row_from_dict({"slug": "x", "port": 1}), "act8_capable") is False
+        # row facets plumb through from the emit contract
+        r = _variant_row_from_dict({"slug": "x", "port": 1, "act8_capable": True})
+        assert getattr(r, "act8_capable") is True and getattr(r, "act_format") == ""
+        r2 = _variant_row_from_dict({"slug": "x", "port": 1, "act_format": "int8"})
+        assert getattr(r2, "act_format") == "int8"
+
+    def test_act8_ship_int8_toggle(self, tmp_path):
+        """#1010: slugs that SHIP int8 (act_format == "int8") must not offer the
+        backwards 'enable' opt-in. With the #1008 W4A8 gate in the compose the
+        toggle renders INVERTED (ON default, [a] disable → env W4A8=0); with a
+        hardcoded dtype it renders as a FIXED property line (no [a] binding)."""
+        from club3090_cockpit.app import ConfirmActionScreen, ServeContext
+        from club3090_cockpit.data import ActionPlan, CatalogEntry
+        from club3090_cockpit.services import _variant_row_from_dict
+
+        GATED = "# comment\n- W4A8=${W4A8:-1}\n- VLLM_MARLIN_INPUT_DTYPE\n"
+        HARDCODED = "- VLLM_MARLIN_INPUT_DTYPE=int8\n"
+
+        def modal(compose):
+            d = tmp_path / "models" / "m"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "compose.yml").write_text(compose)
+            row = _variant_row_from_dict({
+                "slug": "vllm/ship-int8", "port": 8010,
+                "act8_capable": True, "act_format": "int8",
+                "compose_path": "models/m/compose.yml",
+            })
+            m = ConfirmActionScreen.__new__(ConfirmActionScreen)
+            m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", "vllm/ship-int8"])
+            m._serve_ctx = ServeContext(mode="start", entry=CatalogEntry(row=row))
+            m._repo_root = tmp_path
+            m._act8_gate = None
+            m._act8_on = True   # the shipped-default state
+            m._reconcile = None
+            return m
+
+        # gated compose → inverted toggle: ON by default, [a] offered,
+        # OFF injects W4A8=0, ON injects nothing (the slug already ships int8)
+        inv = modal(GATED)
+        assert inv._act8_mode() == "inverted"
+        assert inv.check_action("toggle_act8", ()) is True
+        assert inv._act8_env_prefix() == []
+        inv._act8_on = False
+        assert inv._act8_env_prefix() == ["W4A8=0"]
+        off = inv._with_act8_env(inv._plan.cmd, inv._act8_env_prefix())
+        assert off[:3] == ["env", "W4A8=0", "bash"]
+
+        # hardcoded compose → FIXED property: no [a], never any env injected
+        fix = modal(HARDCODED)
+        assert fix._act8_mode() == "fixed"
+        assert fix.check_action("toggle_act8", ()) is False
+        fix._act8_on = False
+        assert fix._act8_env_prefix() == []
+
+        # unreadable compose degrades to FIXED (conservative: no broken toggle)
+        broken = modal(GATED)
+        broken._repo_root = tmp_path / "nonexistent"
+        broken._act8_gate = None
+        assert broken._act8_gate_capable() is False
+        assert broken._act8_mode() == "fixed"
+
+    # ── #1014 Layer 3: the tri-state thinking toggle ─────────────────────────────
+
+    _THINKING_PROFILES = {
+        "instruct": {"temperature": 0.7, "top_p": 0.80, "top_k": 20,
+                     "min_p": 0.0, "presence_penalty": 1.5,
+                     "repetition_penalty": 1.0},
+        "thinking": {"temperature": 1.0, "top_p": 0.95, "top_k": 20,
+                     "min_p": 0.0, "presence_penalty": 0.0,
+                     "repetition_penalty": 1.0},
+    }
+
+    def _thinking_modal(self, profiles="yes", mode="start", tmp_path=None):
+        """A ConfirmActionScreen built without mounting (the proven act8-test
+        pattern). ``profiles``: "yes" → thinking row present, None → absent."""
+        from club3090_cockpit.app import ConfirmActionScreen, ServeContext
+        from club3090_cockpit.data import ActionPlan, CatalogEntry
+        from club3090_cockpit.services import _variant_row_from_dict
+
+        d = {"slug": "vllm/qwen38-27b-dual-max", "port": 8010,
+             "model": "qwen3.8-27b"}
+        if profiles == "yes":
+            d["sampler_profiles"] = self._THINKING_PROFILES
+        row = _variant_row_from_dict(d)
+        m = ConfirmActionScreen.__new__(ConfirmActionScreen)
+        m._plan = ActionPlan(kind="serve", cmd=["bash", "scripts/switch.sh", d["slug"]])
+        m._serve_ctx = ServeContext(mode=mode, entry=CatalogEntry(row=row))
+        m._repo_root = tmp_path
+        m._act8_gate = None
+        m._act8_on = False
+        m._thinking = "inherit"
+        m._sampler_reset = False
+        m._reconcile = None
+        return m
+
+    def test_thinking_tri_state_cycle_and_env_per_state(self, tmp_path):
+        """#1014 L3: [t] cycles inherit → on → off → inherit; each state injects
+        exactly its env (inherit → NOTHING, on/off → EXPLICIT true/false per the
+        #1010 lesson), and the commit-composed cmd prepends it before switch.sh."""
+        from club3090_cockpit.app import ConfirmActionScreen
+
+        m = self._thinking_modal(tmp_path=tmp_path)
+        assert ConfirmActionScreen._THINKING_CYCLE == ("inherit", "on", "off")
+        assert m.check_action("cycle_thinking", ()) is True
+        assert m.check_action("reset_sampler", ()) is False   # inherit ≠ resolved-on
+
+        # inherit → no env at all (entrypoint's ENABLE_THINKING=false default)
+        assert m._thinking_env_pairs() == []
+
+        m.action_cycle_thinking()                              # → on
+        assert m._thinking == "on"
+        assert m._thinking_env_pairs() == ["ENABLE_THINKING=true"]
+        assert m.check_action("reset_sampler", ()) is True     # resolved-on offers [r]
+        cmd = m._with_act8_env(m._plan.cmd, m._thinking_env_pairs())
+        assert cmd[:3] == ["env", "ENABLE_THINKING=true", "bash"], cmd
+
+        m.action_cycle_thinking()                              # → off
+        assert m._thinking == "off" and m._sampler_reset is False
+        assert m._thinking_env_pairs() == ["ENABLE_THINKING=false"]
+        cmd2 = m._with_act8_env(m._plan.cmd, m._thinking_env_pairs())
+        assert cmd2[:3] == ["env", "ENABLE_THINKING=false", "bash"]
+
+        m.action_cycle_thinking()                              # → inherit
+        assert m._thinking == "inherit" and m._thinking_env_pairs() == []
+
+    def test_thinking_card_shows_resolved_sampler_row_when_on(self, tmp_path):
+        """#1014 L3: while the resolved mode is thinking, the card shows the
+        registry 'thinking' row (temp/top_p/presence) near the toggle; inherit
+        shows no sampler row; force-off pins the instruct row explicitly."""
+        m = self._thinking_modal(tmp_path=tmp_path)
+        inherit_lines = m._thinking_card_lines()
+        assert any("inherit" in ln and "[t]" in ln for ln in inherit_lines)
+        assert not any("temp" in ln for ln in inherit_lines)
+
+        m.action_cycle_thinking()   # → on
+        on_lines = "\n".join(m._thinking_card_lines())
+        assert "FORCE-ON" in on_lines and "ENABLE_THINKING=true" in on_lines
+        assert "temp 1 · top_p 0.95 · presence 0" in on_lines, on_lines
+        assert "model card" in on_lines and "[r] reset to card defaults" in on_lines
+
+        m.action_cycle_thinking()   # → off
+        off_lines = "\n".join(m._thinking_card_lines())
+        assert "FORCE-OFF" in off_lines and "ENABLE_THINKING=false" in off_lines
+
+    def test_thinking_no_toggle_without_profile_or_off_start(self, tmp_path):
+        """#1014 L3: slugs WITHOUT sampler_profiles render NO toggle (unchanged
+        behaviour); a profile slug in STOP mode offers no launch knob either.
+        Env stays empty even if the internal state were somehow left non-inherit."""
+        bare = self._thinking_modal(profiles=None, tmp_path=tmp_path)
+        assert bare._thinking_capable() is False
+        assert bare.check_action("cycle_thinking", ()) is False
+        assert bare.check_action("reset_sampler", ()) is False
+        bare.action_cycle_thinking()          # must be a no-op
+        assert bare._thinking == "inherit"
+        assert bare._thinking_env_pairs() == []
+        assert bare._sampler_overrides() == {}
+        assert bare._thinking_card_lines() == []
+
+        stop = self._thinking_modal(mode="stop", tmp_path=tmp_path)
+        assert stop._thinking_capable() is False
+        assert stop.check_action("cycle_thinking", ()) is False
+        assert stop._thinking_env_pairs() == []
+
+        # legacy (non-serve) modal never offers the thinking keys
+        legacy = ConfirmActionScreen.__new__(ConfirmActionScreen)
+        legacy._serve_ctx = None
+        legacy._reconcile = None
+        legacy._plan = None
+        legacy._thinking_capable = lambda: False
+        legacy._thinking_resolved_on = lambda: False
+        assert legacy.check_action("toggle_act8", ()) is False
+
+    def test_thinking_reset_to_card_defaults_clears_overrides(
+        self, tmp_path, monkeypatch
+    ):
+        """#1014 L3: inherited shell TEMP/TOP_P/PRESENCE overrides beat the card
+        rows (`:=` only fills unset/null); [r] pins them EMPTY for this launch —
+        compose passes '' through and the entrypoint treats empty as null, so
+        the card row applies.  With nothing inherited, [r] injects nothing."""
+        monkeypatch.setenv("TEMP", "0.33")
+        monkeypatch.setenv("PRESENCE_PENALTY", "0.9")
+        monkeypatch.delenv("TOP_P", raising=False)
+        monkeypatch.delenv("TOP_K", raising=False)
+        monkeypatch.delenv("TEMPERATURE", raising=False)
+        m = self._thinking_modal(tmp_path=tmp_path)
+        m.action_cycle_thinking()   # → on
+
+        ovr = m._sampler_overrides()
+        assert ovr == {"TEMP": "0.33", "PRESENCE_PENALTY": "0.9"}, ovr
+        warn = "\n".join(m._thinking_card_lines())
+        assert "shell overrides beat the card row" in warn and "TEMP=0.33" in warn
+
+        m.action_reset_sampler()
+        assert m._sampler_reset is True
+        assert sorted(m._sampler_reset_pairs()) == [
+            "PRESENCE_PENALTY=", "TEMP="
+        ], m._sampler_reset_pairs()
+        clear = "\n".join(m._thinking_card_lines())
+        assert "card defaults apply" in clear and "inherited overrides cleared" in clear
+
+        # cycling away from ON disarms both the reset and its pairs
+        m.action_cycle_thinking()   # → off
+        assert m._sampler_reset is False and m._sampler_reset_pairs() == []
+
+        # nothing inherited → reset armed but emits NO pairs (no noise)
+        monkeypatch.delenv("TEMP", raising=False)
+        monkeypatch.delenv("PRESENCE_PENALTY", raising=False)
+        clean = self._thinking_modal(tmp_path=tmp_path)
+        clean.action_cycle_thinking()
+        clean.action_reset_sampler()
+        assert clean._sampler_reset is True and clean._sampler_reset_pairs() == []
+
+    def test_thinking_persist_writes_pin_and_upserts(self, tmp_path):
+        """#1014 follow-up: [T] persists the CURRENT choice as
+        CLUB3090_THINKING_<MODEL> in <repo>/.env through the --set-default
+        write semantics (upsert — any existing assignment for the key, with or
+        without an `export` prefix, is replaced; every other line survives),
+        and the card's persisted line reads the value back."""
+        m = self._thinking_modal(tmp_path=tmp_path)
+        (tmp_path / ".env").write_text("FOO=bar\nKEEP=1\n", encoding="utf-8")
+        assert m.check_action("persist_thinking", ()) is False   # inherit: nothing to save
+        m.action_cycle_thinking()                                # → on
+        assert m.check_action("persist_thinking", ()) is True
+        m.action_persist_thinking()
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert "FOO=bar\n" in text and "KEEP=1\n" in text
+        assert "CLUB3090_THINKING_QWEN3_8_27B=on\n" in text, text
+        assert "persisted default: on (CLUB3090_THINKING_QWEN3_8_27B)" \
+            in "\n".join(m._thinking_card_lines())
+
+        # Re-persist at a different state → upsert, never duplicate lines.
+        m.action_cycle_thinking()                                # → off
+        m.action_persist_thinking()
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert text.count("CLUB3090_THINKING_QWEN3_8_27B=") == 1
+        assert "CLUB3090_THINKING_QWEN3_8_27B=off\n" in text, text
+
+        # An `export `-prefixed pin (switch.sh loader tolerance) is replaced too.
+        (tmp_path / ".env").write_text(
+            "export CLUB3090_THINKING_QWEN3_8_27B=on\nKEEP=1\n", encoding="utf-8"
+        )
+        m.action_persist_thinking()                              # still off
+        text = (tmp_path / ".env").read_text(encoding="utf-8")
+        assert "export CLUB3090_THINKING" not in text
+        assert "CLUB3090_THINKING_QWEN3_8_27B=off" in text and "KEEP=1" in text
+
+    def test_thinking_persist_inherit_neither_writes_nor_removes(self, tmp_path):
+        """#1014 follow-up acceptance: at inherit the persist action writes
+        nothing AND removes nothing — .env stays byte-identical."""
+        m = self._thinking_modal(tmp_path=tmp_path)
+        envf = tmp_path / ".env"
+        envf.write_text("export CLUB3090_THINKING_QWEN3_8_27B=on\nKEEP=1\n", encoding="utf-8")
+        before = envf.read_text(encoding="utf-8")
+        assert m._thinking == "inherit"
+        assert m.check_action("persist_thinking", ()) is False
+        m.action_persist_thinking()          # gated no-op
+        assert envf.read_text(encoding="utf-8") == before
+
+    def test_thinking_persist_gates_and_card_surfaces_pin(self, tmp_path):
+        """[T] is offered only where [t] is AND a choice exists (start + profile
+        + non-inherit); the card shows the persisted value when .env is
+        readable ('none' when absent) and degrades silently when it is not."""
+        bare = self._thinking_modal(profiles=None, tmp_path=tmp_path)
+        assert bare.check_action("persist_thinking", ()) is False
+        stop = self._thinking_modal(mode="stop", tmp_path=tmp_path)
+        assert stop.check_action("persist_thinking", ()) is False
+
+        m = self._thinking_modal(tmp_path=tmp_path)
+        lines = "\n".join(m._thinking_card_lines())
+        assert "persisted default: none (CLUB3090_THINKING_QWEN3_8_27B)" in lines
+        (tmp_path / ".env").write_text(
+            "CLUB3090_THINKING_QWEN3_8_27B=on\n", encoding="utf-8"
+        )
+        assert "persisted default: on (CLUB3090_THINKING_QWEN3_8_27B)" \
+            in "\n".join(m._thinking_card_lines())
+
+        # Unreadable/absent repo root → treated as none; persist is a safe no-op.
+        noroot = self._thinking_modal()
+        assert noroot._thinking_persisted() == ""
+        noroot.action_cycle_thinking()
+        noroot.action_persist_thinking()     # must not raise, must not write
+        # The legacy (non-serve) modal never offers the persist key either.
+        from club3090_cockpit.app import ConfirmActionScreen
+
+        legacy = ConfirmActionScreen.__new__(ConfirmActionScreen)
+        legacy._serve_ctx = None
+        legacy._reconcile = None
+        legacy._plan = None
+        assert legacy.check_action("persist_thinking", ()) is False
+
+    def test_thinking_row_plumbs_through_emit_contract(self):
+        """The L2 registry data reaches the modal through the REAL emit contract:
+        qwen38-27b vLLM slugs carry a numeric thinking row; single-row models
+        emit null.  Skips cleanly when the emitter isn't present."""
+        import subprocess
+        from pathlib import Path
+
+        from club3090_cockpit.services import _variant_row_from_dict
+
+        emitter = (
+            Path(__file__).resolve().parents[3] / "scripts" / "lib" / "registry-emit.sh"
+        )
+        if not emitter.exists():
+            pytest.skip("registry-emit.sh not present")
+        proc = subprocess.run(
+            ["bash", str(emitter), "--json"], capture_output=True, text=True,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr[-500:]
+        payload = json.loads(proc.stdout)
+        by_slug = {d["slug"]: _variant_row_from_dict(d) for d in payload["variants"]}
+        prof = getattr(by_slug["vllm/qwen38-27b-dual-max"], "sampler_profiles")
+        assert isinstance(prof, dict) and "thinking" in prof
+        trow = prof["thinking"]
+        for k in ("temperature", "top_p", "presence_penalty"):
+            assert isinstance(trow.get(k), (int, float)), (k, trow)
+        bare = getattr(by_slug["vllm/minimal"], "sampler_profiles")
+        assert bare is None
 
     @pytest.mark.asyncio
     async def test_benchmarks_tab_is_gone(self):
@@ -4782,6 +5139,7 @@ class TestValidateNoLiveWriteOrNetwork:
 
 from club3090_cockpit.app import (  # noqa: E402
     PromoteScaffoldScreen,
+    ExportPrBundleScreen,
     OptimizeScreen,
     UntestedComposePreviewScreen,
     LaneBringPane,
@@ -4925,9 +5283,12 @@ class TestPromoteHookWired:
             assert isinstance(app.screen, PromoteScaffoldScreen)
             body = str(app.screen.query_one("#promote-body", Static).render())
             assert "schema_version: 1" in body
-            assert "_entry(" in body
+            # C4-rev: the LOCAL layer is the default target — the preview shows
+            # the registry.local.json JSON payload (not a core _entry row).
+            assert "local/" in body
+            assert "registry.local.json" in body
             assert "incubating" in body
-            assert "scripts/tests/*.sh" in body   # the gated guard suite
+            assert "scripts/tests/*.sh" in body   # authoritative-before-commit note
 
     @pytest.mark.asyncio
     async def test_promote_stage_write_is_gated_mock_only(self):
@@ -4945,12 +5306,28 @@ class TestPromoteHookWired:
             await pilot.press("P")
             await pilot.pause()
             assert isinstance(app.screen, PromoteScaffoldScreen)
+            # C4-rev gating: display_name + family are REQUIRED inline edits —
+            # staging stays disabled (and inert) until both are real values.
+            assert app.screen.query_one("#promote-stage-btn", Button).disabled is True
+            app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            app.screen.on_input_changed(None)
+            assert app.screen.query_one("#promote-stage-btn", Button).disabled is True
+            app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            app.screen.on_input_changed(None)
+            assert app.screen.query_one("#promote-stage-btn", Button).disabled is False
             # Stage the gated write — routes through ConfirmActionScreen.
             app.screen.query_one("#promote-stage-btn", Button).press()
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
             assert app.screen._plan.kind == "promote_catalog"
             assert app.screen._plan.requires_confirm is True
+            # C4-rev: layer default LOCAL + the spec rides in the child env.
+            assert "--layer local" in " ".join(app.screen._plan.cmd)
+            assert "C3_PROMOTE_SPEC" in (app.screen._plan.env or {})
+            _spec = json.loads(app.screen._plan.env["C3_PROMOTE_SPEC"])
+            assert _spec["display_name"] == "Qwen3 27B Abliterated"
+            assert _spec["family"] == "qwen3-dense"
+            assert _spec["registry_entry"]["slug"].startswith("local/")
             # Nothing executed yet — the write is mock-only and never auto-fired.
             assert wr.started == []
 
@@ -4968,7 +5345,131 @@ class TestPromoteHookWired:
             app.dispatch_action(sc.write_plan)
             await _settle(pilot)
             assert len(wr.started) == 1
-            assert "scripts/tests/*.sh" in " ".join(wr.started[0]["cmd"])
+            joined = " ".join(wr.started[0]["cmd"])
+            # C4-rev: the dispatched plan IS the layered write chain.
+            assert "promote.py" in joined and "--layer local" in joined
+            assert "preflight-add-model.sh" in joined
+
+    @pytest.mark.asyncio
+    async def test_promote_core_action_is_env_gated(self, monkeypatch):
+        """C4-rev: the WRITE CORE REGISTRY secondary action asserts the
+        maintainer gate IN THE SCREEN — without C3_ALLOW_CORE_PROMOTE=1 it
+        refuses (stays on the scaffold, notifies, stages nothing); with it, the
+        plan is built for the CORE layer and still routes through confirm."""
+        monkeypatch.delenv("C3_ALLOW_CORE_PROMOTE", raising=False)
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            assert isinstance(app.screen, PromoteScaffoldScreen)
+            app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            app.screen.on_input_changed(None)
+            # WITHOUT the flag: refused in-screen, nothing staged.
+            app.screen._stage_write(layer="core")
+            await pilot.pause()
+            assert isinstance(app.screen, PromoteScaffoldScreen)   # still open
+            assert wr.started == []
+            # WITH the flag: the core plan builds (promote.py re-asserts too).
+            monkeypatch.setenv("C3_ALLOW_CORE_PROMOTE", "1")
+            app.screen._stage_write(layer="core")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            assert "--layer core" in " ".join(app.screen._plan.cmd)
+            assert wr.started == []          # confirm gate not yet passed
+
+
+class TestExportPrBundle:
+    """Community-loop completion — [E] Export-as-PR-bundle on the Promote
+    scaffold: context-gated to LOCAL-layer entries, confirm-gated, and run
+    through the write-runner seam ONLY (never a live spawn)."""
+
+    @pytest.mark.asyncio
+    async def test_export_binding_is_context_gated_to_local_layer(self):
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            sc = app.screen
+            assert isinstance(sc, PromoteScaffoldScreen)
+            # The default scaffold targets the LOCAL layer → exportable, and
+            # the [E] binding is advertised.
+            assert sc.check_action("export_pr", ()) is True
+            assert any(
+                b.action == "export_pr" for b in sc.BINDINGS
+            ), "the [E] binding must be declared on the scaffold"
+            # A CORE-layer scaffold is NOT exportable (it already IS core
+            # content) — the gate is contextual, not global.
+            sc._scaffold.layer = "core"
+            assert sc.check_action("export_pr", ()) is False
+
+    @pytest.mark.asyncio
+    async def test_export_opens_confirm_gate_with_spec_env(self):
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            sc = app.screen
+            assert isinstance(sc, PromoteScaffoldScreen)
+            sc.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            sc.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            sc.on_input_changed(None)
+            # The binding's action — same path pressing E takes once focus is
+            # off the inputs.
+            sc.action_export_pr()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            plan = app.screen._plan
+            assert plan.kind == "export_pr"
+            assert plan.requires_confirm is True
+            assert plan.requires_reconcile is False
+            joined = " ".join(plan.cmd)
+            assert "export_pr.py" in joined
+            assert "--spec-env" in joined and "C3_EXPORT_SPEC" in joined
+            spec = json.loads((plan.env or {})["C3_EXPORT_SPEC"])
+            assert spec["display_name"] == "Qwen3 27B Abliterated"
+            # Confirm gate not passed — nothing has been written or spawned.
+            assert wr.started == []
+
+    @pytest.mark.asyncio
+    async def test_export_dispatch_reaches_only_mock_runner_and_shows_bundle(self):
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            plan = app._data.export_pr_plan({"model_id": "my-model"},
+                                            out_dir="/tmp/pr-bundle-test")
+            # The confirmed commit path (ConfirmActionScreen on_confirm).
+            app.run_export_pr_launch(plan)
+            await _settle(pilot)
+            assert len(wr.started) == 1
+            started = wr.started[0]
+            assert started["run_type"] == "export_pr"
+            assert "export_pr.py" in " ".join(started["cmd"])
+            assert "--out" in started["cmd"]
+            # The copyable bundle-location modal shows the output dir.
+            assert isinstance(app.screen, ExportPrBundleScreen)
+            assert "/tmp/pr-bundle-test" in str(app.screen._out_dir)
+            payload = app.screen.copyable_text()
+            assert "/tmp/pr-bundle-test" in payload
+            assert "compose_registry.patch" in payload
 
 
 # ===========================================================================
@@ -5276,21 +5777,93 @@ class TestLaneHelpSurfaceThreadedR3b1:
             assert app.screen._surface == "producer"
 
 
-class TestOptimizeHookWired:
-    """Hook 3 — ▸ Optimize for my card: DORMANT v0.10.0 seam (no-op)."""
+class TestOptimizeBrain:
+    """Hook 3 — ▸ Optimize for my card: the kv-calc brain (P4).
+
+    The modal renders REAL canned kv-calc output (FIT_JSON + one
+    --solve-max-ctx pricing per legal dtype); Apply stages the SAME gated
+    switch.sh serve with the overrides riding plan.env.  Failures render an
+    honest error card; kvcalc_key=SKIP engines get an explicit message."""
+
+    async def _open_optimize(self, pilot, app, row: int = 0) -> None:
+        app.query_one("#catalog-table", DataTable).move_cursor(row=row)
+        await pilot.press("O")          # ▸ Optimize for my card
+        await _settle(pilot)
 
     @pytest.mark.asyncio
-    async def test_optimize_shows_not_available_message(self):
-        app, _, _ = make_app()
+    async def test_optimize_renders_recommendations_and_options(self):
+        app, runner, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            # From Run · Catalog with a selected slug.
-            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
-            await pilot.press("O")          # ▸ Optimize for my card
-            await _settle(pilot)
+            await self._open_optimize(pilot, app)
             assert isinstance(app.screen, OptimizeScreen)
             body = str(app.screen.query_one("#optimize-body", Static).render())
-            assert "optimizer not available (v0.10.0)" in body
+            assert "Recommended max-model-len" in body
+            assert "262,144" in body                       # FIT_JSON max_ctx
+            assert "19.9G" in body and "1.5G" in body      # est ± band
+            assert "KV dtype options (hardware-legal)" in body
+            for fmt in ("bf16", "fp16", "fp8_e5m2", "int8_per_token_head"):
+                assert fmt in body                         # SOLVE_JSON-priced rows
+            sel = app.screen.query_one("#optimize-kv", Select)
+            btn = app.screen.query_one("#optimize-apply", Button)
+            assert sel.disabled is False and btn.disabled is False
+            # Interface: exactly ONE --fit + N --solve-max-ctx via the Runner seam.
+            fit_calls = [c for c in runner.calls if "--fit " in " ".join(c)]
+            solve_calls = [c for c in runner.calls if "--solve-max-ctx" in c]
+            assert len(fit_calls) == 1 and len(solve_calls) >= 4
+
+    @pytest.mark.asyncio
+    async def test_apply_stages_gated_serve_with_env_overrides(self):
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await self._open_optimize(pilot, app)
+            await pilot.click("#optimize-apply")
+            await pilot.pause()
+            # The APPLY action opens the STANDARD confirm gate (advisory rec,
+            # user confirms) — nothing has fired yet.
+            assert isinstance(app.screen, ConfirmActionScreen)
+            plan = app.screen._plan
+            assert plan.kind == "serve"
+            assert plan.cmd == ["bash", "scripts/switch.sh", "vllm/dual"]
+            assert plan.env["MAX_MODEL_LEN"] == "262144"
+            assert plan.env["KV_CACHE_DTYPE"] in (
+                "bf16", "fp16", "fp8_e5m2", "int8_per_token_head")
+            assert plan.requires_confirm is True and plan.requires_reconcile is True
+            wr_started = wr.started
+            assert wr_started == []
+
+    @pytest.mark.asyncio
+    async def test_kvcalc_failure_shows_error_card_no_numbers(self):
+        responses = {
+            k: v for k, v in fake_responses().items() if not k.startswith("kv-calc")
+        }
+        app, runner, _ = make_app(responses=responses)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await self._open_optimize(pilot, app)
+            assert isinstance(app.screen, OptimizeScreen)
+            body = str(app.screen.query_one("#optimize-body", Static).render())
+            assert "kv-calc failed" in body                 # honest error card
+            assert "Recommended max-model-len" not in body  # no fabricated numbers
+            assert app.screen.query_one("#optimize-apply", Button).disabled is True
+
+    @pytest.mark.asyncio
+    async def test_skip_engine_gets_explicit_unsupported_message(self):
+        app, runner, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # Row 1 = ik-llama/iq4ks-mtp (kvcalc_key SKIP) in REGISTRY_JSON.
+            await self._open_optimize(pilot, app, row=1)
+            assert isinstance(app.screen, OptimizeScreen)
+            body = str(app.screen.query_one("#optimize-body", Static).render())
+            assert "kvcalc_key=SKIP" in body
+            assert "Recommended max-model-len" not in body
+            assert app.screen.query_one("#optimize-apply", Button).disabled is True
+            # The SKIP check short-circuits BEFORE any kv-calc call.
+            assert all("kv-calc.py" not in " ".join(c) for c in runner.calls
+                       if "--fit " in " ".join(c))
 
     @pytest.mark.asyncio
     async def test_optimize_is_a_noop_no_write(self):
@@ -5298,10 +5871,8 @@ class TestOptimizeHookWired:
         app, _, _ = make_app(write_runner=wr)
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
-            app.query_one("#catalog-table", DataTable).move_cursor(row=0)
-            await pilot.press("O")
-            await _settle(pilot)
-            # A no-op seam: a modal, but never a write / launch.
+            await self._open_optimize(pilot, app)
+            # Browsing recommendations never writes / launches.
             assert isinstance(app.screen, OptimizeScreen)
             assert wr.started == []
 
@@ -5323,7 +5894,7 @@ class TestOptimizeHookWired:
             await _settle(pilot)
             assert isinstance(app.screen, OptimizeScreen)
             body = str(app.screen.query_one("#optimize-body", Static).render())
-            assert "v0.10.0" in body
+            assert "Recommended max-model-len" in body
 
 
 class TestPhase5NoLiveEffect:
@@ -6471,9 +7042,11 @@ class TestSurfaceScaffold:
         # R3b-2: + [m] measure_vs_bar (④ Measure).
         # Batch 3: [F] full_report is NO LONGER producer-only — it's reachable on
         # the consumer Operate · Doctor (a consumer can run the full battery).
+        # HF-search front-end: + [f] search_hf (① Bring repo discovery).
+        # Boot-log back-solve: + [k] bootlog_solve (③ Gate Step-5 automation).
         assert CockpitApp._PRODUCER_ONLY == frozenset({
             "mode_validate", "promote_catalog", "evaluate_target", "serve_untested",
-            "measure_vs_bar",
+            "measure_vs_bar", "search_hf", "bootlog_solve",
         })
 
     @pytest.mark.asyncio
@@ -9757,7 +10330,16 @@ class TestTier1PreviewModalEnterBindings:
             assert "stage_write" in actions
             assert actions["stage_write"].key == "enter"
             assert actions["stage_write"].show is True
-            # Footer-discoverable: stage_write reaches the modal footer.
+            # C4-rev: with the required edits UNFILLED the binding is gated OFF
+            # (check_action → False) — staging is inert until they are real.
+            assert not any(
+                v.binding.action == "stage_write" and v.binding.show
+                for v in scr.active_bindings.values()
+            )
+            scr.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            scr.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            scr.on_input_changed(None)
+            # Footer-discoverable once staging is possible.
             assert any(
                 v.binding.action == "stage_write" and v.binding.show
                 for v in scr.active_bindings.values()
@@ -9778,9 +10360,17 @@ class TestTier1PreviewModalEnterBindings:
             await pilot.press("P")
             await pilot.pause()
             assert isinstance(app.screen, PromoteScaffoldScreen)
+            # C4-rev: ⏎ is INERT until the required inline edits are filled.
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, PromoteScaffoldScreen)
+            app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            app.screen.on_input_changed(None)
             await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
+            assert "--layer local" in " ".join(app.screen._plan.cmd)
             assert app.screen._plan.kind == "promote_catalog"
             assert wr.started == []  # mock-only, never auto-fired
 

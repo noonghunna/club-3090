@@ -83,4 +83,61 @@ for d in ComfyUI models input output user pip-cache; do
 done
 [ -d "$TMP/models" ] || fail "MODEL_DIR not pre-created"
 
+# --- 4b gateway-first wiring (openwebui → LiteLLM collapse follow-up) --------
+# The OWUI_REGISTER_BIN / OWUI_UNREGISTER_BIN hooks let us assert exactly which
+# connections a default run wires: :4000 gateway + :8090 director registered,
+# the pre-collapse per-port direct connections unregistered, :4000 NEVER
+# unregistered, and an OWUI_OPENAI_API_BASE_URLS override left untouched.
+cat > "$TMP/fake-owui-register.sh" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP/owui-register-calls"
+exit 0
+SH
+cat > "$TMP/fake-owui-unregister.sh" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP/owui-unregister-calls"
+exit 0
+SH
+chmod +x "$TMP/fake-owui-register.sh" "$TMP/fake-owui-unregister.sh"
+
+# Scenario A: default run → gateway-first registration output.
+out="$(PATH="$TMP/bin:$PATH" \
+  SKIP_BUILD=1 SKIP_DOWNLOAD=1 SKIP_PIPE=1 SKIP_DISK_CHECK=1 \
+  ASSUME_YES=1 LANIP=127.0.0.1 MODEL_DIR="$TMP/models" C3_PATHS_NO_ENV=1 \
+  GPU_MODE_BIN="$TMP/fake-gpu-mode.sh" \
+  OWUI_REGISTER_BIN="$TMP/fake-owui-register.sh" \
+  OWUI_UNREGISTER_BIN="$TMP/fake-owui-unregister.sh" \
+  bash "$ROOT_DIR/scripts/setup-ai-studio.sh" 2>&1)" || fail "setup exited non-zero without SKIP_OWUI_WIRING:
+$out"
+
+grep -q "gateway-first" <<<"$out" || fail "wiring banner missing:
+$out"
+[ -f "$TMP/owui-register-calls" ] || fail "owui-register was never invoked"
+grep -qx "4000" "$TMP/owui-register-calls" || fail ":4000 gateway not registered: $(cat "$TMP/owui-register-calls")"
+grep -qx "8090" "$TMP/owui-register-calls" || fail ":8090 director not registered: $(cat "$TMP/owui-register-calls")"
+[ ! -e "$TMP/owui-unregister-calls" ] && fail "no unregisters happened" || true
+for port in 8010 8051 8032 8038 8199; do
+  grep -qx "$port" "$TMP/owui-unregister-calls" || fail "per-port connection :$port not dropped: $(cat "$TMP/owui-unregister-calls")"
+done
+grep -qx "4000" "$TMP/owui-unregister-calls" && fail ":4000 was unregistered — setup must not fight the gateway topology"
+echo "  ✓ default wiring registers :4000 + :8090 and drops legacy per-port connections"
+
+# Scenario B: OWUI_OPENAI_API_BASE_URLS override → setup stays out of the way.
+rm -f "$TMP/owui-register-calls" "$TMP/owui-unregister-calls"
+out="$(PATH="$TMP/bin:$PATH" \
+  SKIP_BUILD=1 SKIP_DOWNLOAD=1 SKIP_PIPE=1 SKIP_DISK_CHECK=1 \
+  ASSUME_YES=1 LANIP=127.0.0.1 MODEL_DIR="$TMP/models" C3_PATHS_NO_ENV=1 \
+  GPU_MODE_BIN="$TMP/fake-gpu-mode.sh" \
+  OWUI_REGISTER_BIN="$TMP/fake-owui-register.sh" \
+  OWUI_UNREGISTER_BIN="$TMP/fake-owui-unregister.sh" \
+  OWUI_OPENAI_API_BASE_URLS="http://host.docker.internal:8010/v1" \
+  bash "$ROOT_DIR/scripts/setup-ai-studio.sh" 2>&1)" || fail "setup exited non-zero under the override:
+$out"
+
+grep -q "OWUI_OPENAI_API_BASE_URLS set" <<<"$out" || fail "override notice missing:
+$out"
+[ ! -e "$TMP/owui-register-calls" ] || fail "override run still registered connections: $(cat "$TMP/owui-register-calls")"
+[ ! -e "$TMP/owui-unregister-calls" ] || fail "override run still unregistered connections: $(cat "$TMP/owui-unregister-calls")"
+echo "  ✓ OWUI_OPENAI_API_BASE_URLS override leaves stored connections untouched"
+
 echo "test-setup-ai-studio-skip-path: ok"

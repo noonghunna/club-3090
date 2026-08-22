@@ -4,6 +4,9 @@ The registry intentionally mirrors the shipped compose files. It is not a
 generator and it does not attempt to normalize away historical variants.
 """
 
+import json
+from pathlib import Path
+
 # Slug lifecycle / availability statuses — the canonical health flag.
 #
 # These are the registry-side equivalent of the compose `Status:` header enum
@@ -124,6 +127,37 @@ def _entry(
     default_arch_allow=None,
     status="production",
     status_note=None,
+    # Data-first override for the emitted served_name fact: when set, the
+    # --json emit reports THIS as the slug's OpenAI-API --served-model-name
+    # instead of parsing the compose file (parse stays the fallback). Leave
+    # None for existing entries — the compose remains the source of truth.
+    served_name=None,
+    # True when this slug is the model's LAN-gateway scene: scripts/lib/
+    # litellm-emit.sh derives its route in services/litellm/config.yaml from
+    # THIS entry (#1078). Eligibility is EXPLICIT, never inferred — a slug is
+    # gateway-flagged by PR only when its port is the one gateway clients
+    # should hit (the curated-default walk among gateway=True entries picks
+    # the canonical one per model; see litellm-emit.sh). Default False: an
+    # unflagged catalog never leaks onto the gateway.
+    gateway=False,
+    # Extra OpenAI served-names this slug answers to BEYOND its primary
+    # served_name — each is emitted as an additional gateway model_name on the
+    # SAME route (same upstream port), not as a separate backend (#1073).
+    # Mechanism only today: no core entry sets aliases yet; the synthetic
+    # fixture in test-litellm-generate.sh covers the emission. Order matters
+    # (it is the emitted route order after the primary name).
+    serve_aliases=(),
+    # Per-reasoning-mode sampler rows from the MODEL CARD (#984/#1014), for
+    # models that publish one row per mode: {"instruct": {...}, "thinking":
+    # {...}} with temperature/top_p/top_k/min_p/presence_penalty/
+    # repetition_penalty. None (the default) = single-row model, the compose's
+    # static sampler is the only truth. When set, the compose entrypoint derives
+    # its shipped default from the INSTRUCT row and flips to THINKING on
+    # ENABLE_THINKING=true; test-compose-sampler-profiles.sh asserts the compose
+    # can never drift from this data. Adding a key here is the allowlist gate:
+    # local-layer rows go through _entry(**kwargs) too, so an unknown sampler
+    # kwarg fails loudly (LocalRegistryError), never silently.
+    sampler_profiles=None,
     category=None,
     weights_companions=None,
 ):
@@ -163,6 +197,11 @@ def _entry(
         # The serve-cockpit Download action fetches these alongside the core so the
         # slug actually serves.  Bare keys, scoped to this entry's model.
         "weights_companions": list(weights_companions or []),
+        # LAN-gateway eligibility (#1078) + extra served-names on the same
+        # route (#1073). Always present (like moe_cache) so consumers can
+        # .get() without shape forks between core and local entries.
+        "gateway": bool(gateway),
+        "serve_aliases": list(serve_aliases),
     }
     if recommended_engine_features:
         entry["recommended_engine_features"] = list(recommended_engine_features)
@@ -189,6 +228,12 @@ def _entry(
         entry["default_arch_allow"] = list(default_arch_allow)
     if category is not None:
         entry["category"] = category
+    if served_name is not None:
+        entry["served_name"] = served_name
+    if sampler_profiles is not None:
+        entry["sampler_profiles"] = {
+            mode: dict(row) for mode, row in sampler_profiles.items()
+        }
     return entry
 
 
@@ -223,6 +268,25 @@ def compose_header_status(text):
             return None
     return None
 
+# Qwen3.8-27B per-mode sampler rows (#984/#1014), transcribed from the model
+# card's "Best Practices" table. Every qwen3.8-27b entry with per-mode sampling
+# shares this object (same card, same rows): the vLLM composes derive their
+# shipped default from the instruct row and flip to thinking on
+# ENABLE_THINKING=true; the llama.cpp composes couple the same rows via the
+# THINKING=1 ${THINKING:+...} argv tail (llama-server takes --temp/--top-p/
+# --presence-penalty directly). test-compose-sampler-profiles.sh asserts
+# compose ↔ registry agreement in both argv dialects.
+QWEN38_27B_SAMPLER_PROFILES = {
+    "instruct": {
+        "temperature": 0.7, "top_p": 0.80, "top_k": 20, "min_p": 0.0,
+        "presence_penalty": 1.5, "repetition_penalty": 1.0,
+    },
+    "thinking": {
+        "temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0,
+        "presence_penalty": 0.0, "repetition_penalty": 1.0,
+    },
+}
+
 
 COMPOSE_REGISTRY = {
     # Qwen 3.6 27B, vLLM single-card.
@@ -244,6 +308,10 @@ COMPOSE_REGISTRY = {
         status="caveats",
         default_port=8010,
         kvcalc_key="qwen3.6-27b:dual",
+        # The LAN-gateway scene for qwen3.6-27b (#1078): the curated dual
+        # default every 27b scene on :8010 fronts (shared-primary note in
+        # services/litellm/config.yaml).
+        gateway=True,
     ),
 
     # --- Qwen "fast" / "max accuracy" tiers (2026-06-07) -----------------------
@@ -676,6 +744,10 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-31b/vllm/compose/dual/qat-awq-int4/base.yml",
         default_port=8032,
         kvcalc_key="gemma-4-31b:gemma-dual",
+        # Wave-2 gateway flip: absorbs the hand-written :8032 routes (the shared
+        # primary + the back-compat alias) into the generated LOCAL block.
+        gateway=True,
+        serve_aliases=("gemma-4-31b-autoround",),
         status="caveats",
         status_note="Gemma-4-31B cyankiwi QAT-AWQ-INT4 (compressed-tensors, lm_head bf16), dual TP=2 BF16 KV @224K, stock vLLM v0.24.0 OVERLAY-FREE — the consolidation 31b (folds onto vllm-stable, retires the 31b's vllm-gemma-stable dependence). BF16 (not int8-PTH): on v0.24.0 int8-PTH allocates 262K but SILENTLY craters recall past ~32K (needs #40391, open/conflicting upstream — verified 2026-07-01, both cyankiwi + w4a16 crater identically; the SAME cyankiwi weights on v0.22.0+#40391 recall clean to 112K+). bf16 KV is overlay-free + no cliff. rebench-full VALIDATED 2026-07-02 @0.95/229376: verify-full 9/9 (tools+streaming-tool-calls+reasoning clean, MTP-off), verify-stress ALL 5 ceiling rungs to 210K (91%) with healthy VRAM margin 1162MB>1024 (the 0.97/245K thin-margin flag is resolved at 0.95/224K), bench decode ~59 TPS (CV 0.1%, TTFT 69ms), soak PASS (0 err · 0 MiB growth · 0/100 silent · p50 58.7 · 99.6% retention). tie_weights dodged (lm_head excluded), gemma4 tool+reasoning parsers native (#45588). CAVEATS: (1) MTP DISABLED — Gemma-4 MTP×tool-calling broken on v0.24.0 (vLLM #39043; #42006 closed-unmerged); (2) ~224K ceiling (bf16 ~2×/tok vs int8-PTH's 262K) — int8-PTH+#40391 (262K) returns free when #40391 merges. Supersedes gemma-int8-mtp/gemma-bf16-mtp/qat-w4a16 for v0.24.0. 8-pack deferred (maintainer call).",
     ),
@@ -733,6 +805,9 @@ COMPOSE_REGISTRY = {
         compose_path="models/gemma-4-12b/vllm/compose/single/autoround-int8/mtp.yml",
         default_port=8038,
         kvcalc_key="gemma-4-12b:gemma-single-int8-mtp",
+        # Wave-2 gateway flip: absorbs the hand-written gemma-4-12b-int8 route
+        # (:8038) into the generated LOCAL block.
+        gateway=True,
         status="caveats",
         status_note="Gemma-4-12B Intel AutoRound INT8 (W8A16) + assistant external drafter (n=4) single 3090 on the gemma4_unified arch-preview image. ⚠️ Production w/ caveats: validated 2026-06-04 (bench + 256K NIAH + 8-pack 105/150 + soak PASS). MTP fits the full 262144 (drafter resident, KV pool ~310K tok, 1.18x at 262K, ~20.7 GB). n-sweep code-gen: n=4 117 TPS / accept_len 3.67 (n=5 122.5 code-max via SPEC_N=5) vs ~50 no-MTP. 8-pack on par with the bf16 dual's 94/150 (INT8≈bf16). bf16 KV only. CAVEAT: ephemeral arch-preview image (0.1.dev) — pin a digest; promotes to Production on a STABLE vLLM gemma4_unified release.",
     ),
@@ -913,6 +988,9 @@ COMPOSE_REGISTRY = {
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.92,
         compose_path="models/qwen3.6-35b-a3b/vllm/compose/dual/autoround-int4/fp8.yml",
         default_port=8051,
+        # Wave-2 gateway flip: absorbs the hand-written qwen3.6-35b-a3b-autoround
+        # route (:8051) into the generated LOCAL block.
+        gateway=True,
         kvcalc_key="qwen3.6-35b-a3b:qwen-35b-a3b-dual",
     ),
 
@@ -1005,6 +1083,9 @@ COMPOSE_REGISTRY = {
         compose_path="models/qwen3.6-40b-deckard/llama-cpp/compose/dual/piehsoft-q6k/mtp.yml",
         default_port=8199,
         kvcalc_key="SKIP",
+        # Wave-2 gateway flip: absorbs the hand-written deckard-40b route (:8199)
+        # into the generated LOCAL block.
+        gateway=True,
         status="production",
         status_note="Dense 40B uncensored Qwen3.6 merge (Q6_K MTP GGUF, 31 GB) on dual 3090 llama.cpp. Arch CONFIRMED qwen35-dense (standard GQA, 97 layers) from the GGUF header. MTP n=2 sweet spot (~41.6 tok/s, 0.81 accept). 128K ctx ceiling @q8_0 KV (192K OOMs). Dual-only. verify-full 8/8, verify-stress 8/8, 8-pack 105/150 (MTP off==on, spec-dec lossless), soak-continuous PASS (0 MiB growth, 0/25 silent-empty). First uncensored + first dual-llama.cpp compose in the catalog.",
         category="uncensored",
@@ -1152,6 +1233,12 @@ COMPOSE_REGISTRY = {
         host_ram_gb=146,
         required_sm=8.6,
         status="incubating",
+        # Wave-2 gateway flip: absorbs the hand-written deepseek-v4-flash route
+        # (:8030) into the generated LOCAL block. Incubating (--force to launch)
+        # is deliberately still emitted: gateway clients hit whatever is serving,
+        # and the emitter annotates the route `# status: incubating` so operators
+        # can see the gate.
+        gateway=True,
         status_note="A 284B MoE on 2x24 GB. QUALITY TIER of the two DeepSeek-Flash offload slugs. Stock upstream b10236, zero patches. Three levers compose: CPU expert offload (137 GiB of routed experts in host RAM) + partial residency (bundles pinned back onto the GPUs, sized by the launcher from DETECTED free VRAM) + the DSpark drafter. HARD GATE: ~146 GB host RAM worst case -- preflight REFUSES below it. Ships 200K, NOT 262K: at 262K with the drafter it boots READY at 97.4% VRAM, passes a trivial decode, then dies on a ~15.7K-token prefill (CUDA OOM in cuMemCreate, reproduced 2026-08-06). CANONICAL BENCH PUBLISHED 2026-08-09 (BENCHMARKS.md row 2, reference 2x3090, 3-boot medians): decode 17.1 narrative / 26.9 code at canonical sampling, prefill 369 @10K / 287 @90K, TTFT 169 ms; greedy-replay 35.2. The 8-pack is still owed -- stays incubating until quality lands.",
         category="frontier",
     ),
@@ -1363,6 +1450,7 @@ COMPOSE_REGISTRY = {
     # from the curated walk by design, and a `<engine>/default` row would hand users an
     # unbooted config through the non-status-filtering direct lookup.
     "llamacpp/qwen38-27b-single-iq4xs": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="unsloth-iq4xs", workload="vision-coding",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q4_0",
         tp=1, max_ctx=262144, max_num_seqs=1, mem_util=None,
@@ -1374,10 +1462,11 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B UD-IQ4_XS GGUF + F16 mmproj on a single 3090 (llama-cpp-local, b10236). q4_0/q4_0 KV @262144 + VISION, built-in MTP n=2 (--spec-type draft-mtp). ⭐ MAX-EVERYTHING single-card config (maintainer decision 2026-08-20): the q4_0 KV (BELOW the stack q8 serving floor) is the mechanism that fits full 262K ctx AND the F16 projector on one 24 GB card. For serving-grade q8_0 KV (131K) override KV_TYPE=q8_0 CTX_SIZE=131072 on this compose (q8@131K + vision, decode-free). ✅ VALIDATED 2026-08-20 (single 3090, GPU0, this exact compose): boots + fits 22,290 MiB load / 22,332 MiB peak under image-encode (~2.2 GiB headroom); verify-full PASS (all functional checks; the 2 skips are vLLM-only); image recognition CORRECT (blue-circle + red-7 probe); n_ctx_slot=262144, 'multimodal model' loaded; text decode projector-free (bench parity w/ the q8 text config, 61.7 narr / 72.7 code). CAVEATS: (1) q4_0 KV KLD ~5.75x worse than q8_0, NEVER depth-validated on this DeltaNet hybrid family — a max-ctx/vision exhibit, not serving-grade; (2) vision untested beyond one image probe — a large/high-res image at 262K encodes into far more tokens and could OOM the thin ~2.2 GiB margin (set IMAGE_MIN_TOKENS with budget in mind); (3) 262K NIAH-clean to 240,635 tok (91%) 2026-08-20 (addressability via verify-stress FAST; full-fidelity retrieval NIAH + fine ladder past 240K still unrun). Precedent: qwen3.6-27b's mtp-vision also ran q4_0 KV. Launch --force (incubating; hidden from switch.sh --list). Promote to 🧪/⚠️ only after a q4-config bench + verify-stress NIAH + soak; q4 KV keeps it off ✅ permanently (floor policy).",
     ),
     "llamacpp/qwen38-27b-dual-q8kxl": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="unsloth-q8kxl", workload="long-ctx-single",
         engine="llama-cpp-local", drafter="qwen-mtp-builtin", kv_format="q8_0",
-        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
         compose_path="models/qwen3.8-27b/llama-cpp/compose/dual/unsloth-q8kxl/q8kv.yml",
+        tp=2, max_ctx=262144, max_num_seqs=1, mem_util=None,
         default_port=8087,
         kvcalc_key="SKIP",
         status="incubating",
@@ -1415,16 +1504,22 @@ COMPOSE_REGISTRY = {
     # excluded from the curated walk by design, and an `<engine>/default` row would
     # hand users a never-booted config through the non-status-filtering direct lookup.
     "vllm/qwen38-27b-dual-max": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
         compose_path="models/qwen3.8-27b/vllm/compose/dual/fp8/mtp.yml",
         default_port=8091,
         kvcalc_key="SKIP",
+        # The LAN-gateway scene for qwen3.8-27b (#1062/#1078): the dual-max
+        # slug on :8091, which serves BOTH its names (qwen3.8-27b +
+        # qwen3.8-27b-fp8) — litellm-emit.sh emits one route per served-name.
+        gateway=True,
         status="experimental",
         status_note="Qwen3.8-27B 'max accuracy' tier, 2-card: official Qwen/Qwen3.8-27B-FP8 weights (e4m3, dynamic act scale, weight_block_size [128,128], embedded mtp.safetensors head) + fp8/e4m3 KV + MTP n=3, TP=2 @262144, vLLM stable pin. ✅ BOOTED + verify-full PASS on the reference 2x3090 2026-08-17 (8 scored checks; Genesis check skipped — this compose is Genesis-free by design), promoted incubating -> experimental per its own gate. MEASURED same day on stock vllm/vllm-openai:v0.27.1, 3 warm + 5 measured: decode 67.39 narr (CV 1.5%) / 85.75 code (CV 3.5%) tok/s, TTFT 152 ms, prefill 1165.8 @10K / 941.5 @90K tok/s, KV pool 270,930 tok @262144 = 1.03x concurrency, VRAM peak 45,816 MiB total (~22.4 GiB/card), MTP acceptance 2.62 at n=3. ⚠️ The trailing SpecDecoding log lines read 'acceptance length 4.00' — that is a 3-token idle-window artifact at 0.03 tok/s, NOT the serving figure; use 2.62. ⚠️ STILL UNGATED for caveats/production: no verify-stress, no NIAH fill depth (262144 is ALLOCATED not FILLED — the 3.6 sibling fills to ~240K of its 262K, expect the same or worse), no soak-continuous, no 8-pack in either reasoning mode. ⚠️ HISTORICAL NOTE, corrected 2026-08-17: this entry previously read 'NOTHING HAS BOOTED — authored 2026-08-14' while the vllm/qwen38-27b-multi8-max entry simultaneously stated that this slug 'HAS booted and passed verify-full on the reference 2x3090 2026-08-17, with a canonical bench (67.39 narr / 85.75 code tok/s, MTP accept 2.62) — see BENCHMARKS.md'. The registry contradicted itself and the pessimistic side was the one users saw; discussion #993's 'boots + verify-full' claim was correct. The weights have since landed and been measured (66 safetensors = 30,866,866,928 bytes = 30.87 GB decimal / 28.75 GiB, repo revision 017b9c7a == current HEAD, all 66 CRC32-clean against the repo's crc32.txt; three non-weight files — chat_template.jinja, generation_config.json, tokenizer_config.json — do NOT match that manifest but parse fine, almost certainly a stale publisher manifest given its sibling safetensors-md5sum.txt shipped empty). Unvalidated as of 2026-08-17: verify-stress / NIAH / soak / 8-pack (bench and verify-full are DONE, see above). NO TPS, TTFT, accept-length or quality number is claimed anywhere, and the compose deliberately carries no `Quality:` field — the qwen3.6-27b tier's 109/150 is ITS number. What IS verified, from the checkpoint on disk: the architecture matches qwen3.6-27b-FP8 field for field (64 layers, layer_types = 16 full_attention + 48 linear_attention, 4 KV heads, head_dim 256, vocab 248320, max_position 262144, mtp_num_hidden_layers 1, linear k/v head_dim 128, conv_kernel 4), the FFN is DENSE (layer-0 tensor table shows mlp.gate_proj/up_proj/down_proj at 17408, no experts — the mlp.gate / shared_expert_gate names in modules_to_not_convert are export-template artifacts), the vision tower is present and explicitly EXCLUDED from the FP8 quant (preprocessor_config.json + video_preprocessor_config.json ship in-repo, so vision needs no separate projector — but no image request has ever been served), and quantization_config is the same shape as the 3.6 FP8 checkpoint that already loads on this exact pin. The 262144 ceiling is COMPUTED plus a sibling analogy, never filled: KV over the 16 GROWING layers only = 16 x 4 x 256 x 2 = 32,768 elem/token, at fp8 = 32,768 B/token = 8.00 GiB @262K (4.00 GiB/card at TP=2); weights measured at 30.87 GB decimal = 28.75 GiB (~14.4 GiB/card) — and qwen3.6-27b-FP8 measures 30,866,866,928 bytes, the SAME total to the byte (66 files, distinct md5s, so identical arch + quant layout rather than a duplicate dir), with identical KV geometry, and boots 262144 at TP=2 / util 0.92 / 2 seqs on this rig, reporting ~21.4 GB/card and a KV pool only ~1.13x the addressable context, i.e. TIGHT. Allocating is not filling: that 3.6 tier NIAH-fills to ~240K of its 262K; expect the same or worse here. If the first boot OOMs at KV init the levers in order are MAX_MODEL_LEN=196608, then GPU_MEMORY_UTILIZATION, then MAX_NUM_BATCHED_TOKENS=4096. ALSO UNPROVEN: that this checkpoint loads on the v0.25.1 pin at all — the pin predates the model, though it serves the same Qwen3_5ForConditionalGeneration arch (qwen3.6-27b FP8, Tess-4-27B). And a present MTP head is not a working one: accept rate is unmeasured, and on the 35B-A3B MoE sibling the BUILT-IN head is net-negative (-51%) where an external drafter is +49%. KV is fp8 (= e4m3) at scale=1.0 — the checkpoint is weight-only and vLLM disables calculate_kv_scales on Qwen3-Next hybrids; ⚠️ fp8_e5m2 is HARD-REJECTED against an fp8 checkpoint, do not 'simplify' to it. int8-PTH deliberately not offered (TRITON_ATTN-only; decode craters with depth on this family). Chat template is NATIVE, not froggeric — see the block comment above. SAMPLER follows the MODEL CARD, not the stack's Qwen3.6 defaults: the card publishes one row per reasoning mode, and since this compose ships thinking OFF it ships the Instruct row (temp 0.7 / top_p 0.80 / top_k 20 / min_p 0.0 / presence_penalty 1.5 / repetition_penalty 1.0) rather than the usual 0.6/0.95. ⚠️ The sampler does NOT follow the reasoning flag — enabling thinking without also setting TEMP=1.0 TOP_P=0.95 PRESENCE_PENALTY=0.0 is a silent mismatch. Serving defaults only; bench.sh sends its own canonical sampler, so BENCHMARKS rows stay comparable. ⚠️ MTP drafter exposed to OPEN vllm#50021 (GDN spec-decode wild write, quant/topology/depth-independent, live in this pin; v0.26.0 predates the fix). This model has never run so it has never been observed to crash — absence of evidence, not evidence of absence; the exposure is structural. Mitigate with SPEC=off (the compose reads it). Detail + re-test trigger: docs/UPSTREAM.md. Launch requires --force (experimental); VISIBLE in switch.sh --list. Promote to ⚠️/✅ only after verify-stress + soak + 8-pack. Also the on-rig proxy for vllm/qwen38-27b-multi4-max (@ TP=4) — ⚠️ but no longer a clean one: since 2026-08-15 both multi slugs run bf16 KV while this stays fp8 e4m3, so KV-sensitive results (pool size, concurrency) do not transfer in either direction.",
     ),
     "vllm/qwen38-27b-multi4-max": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="bf16",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
@@ -1435,6 +1530,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B 'max accuracy' tier, 4-card (TP=4): official Qwen/Qwen3.8-27B-FP8 weights + bf16 KV + MTP n=3 @262144. Identical to vllm/qwen38-27b-dual-max apart from --tensor-parallel-size, the required gpu-count, and --kv-cache-dtype; keep the first two in lockstep. ⚠️ KV DELIBERATELY DIVERGES from the dual (2026-08-15): this runs bf16 (--kv-cache-dtype auto over the pinned --dtype bfloat16) where the dual runs fp8 e4m3, because only TP>=4 has the per-card headroom — weights fall to ~7.2 GiB/card here vs ~14.4 on the dual, so a 16.00 GiB bf16 pool fits (~4.00 GiB/card) where it would not on 2 cards. Do not 'restore lockstep' by reverting it, and do not propagate it to the dual. TWO independent reasons this is incubating, and only the first is closable. (1) NOTHING HAS BOOTED on any card count — authored 2026-08-14; the weights have since landed and verified (30.87 GB / 28.75 GiB, all 66 safetensors CRC32-clean) but no engine has ever loaded them; no verify-full (0/8), no verify-stress / NIAH / soak / bench / 8-pack, NO TPS number claimed, no `Quality:` field, and the 262144 ceiling is arithmetic plus a qwen3.6-27b analogy rather than a measured fill depth. Engine compatibility is likewise inferred: the v0.25.1 pin predates this model. (2) ⛔ 4-CARD IS COMMUNITY-VALIDATED BY DESIGN and that is PERMANENT, not a TODO: the maintainer rig has exactly two 3090s, so TP=4 can never boot here and should never be filed as pending work. The on-rig proxy is vllm/qwen38-27b-dual-max, which is the same serving config at TP=2 EXCEPT for KV (it runs fp8 e4m3, this runs bf16) — so its numbers transfer on topology but NOT on pool size, concurrency, or any KV-sensitive quality result — and everything TP=4-specific (NCCL across 4 PCIe cards, the 4-way shard, the larger KV pool) is validated by whoever first runs it on 4 cards; that first community boot IS the validation. num_kv_heads=4 divides evenly by 4, so the shard is valid on paper. What TP=4 buys is headroom, not context: 262144 is already the architectural ceiling and the dual is projected to reach it, so the 4 cards convert ~14.4 GiB/card of weights into ~7.2, leaving far more room for KV pool and concurrency — on the qwen3.6-27b equivalent, single-stream decode was ~flat from 2 to 4 cards and the pool is what grew. Expect that shape, expect nothing quantitative. PCIe-only with no NVLink means more ranks = more all-reduce on a slow bus; custom all-reduce stays disabled in the entrypoint. Everything else (dense-not-MoE confirmation, the 16-growing-layer KV math — but DOUBLED for bf16: 65,536 B/token = 16.00 GiB @262K, ~4.00 GiB/card at TP=4, where the dual's note states the fp8 figure of 32,768 B/token, the 30.9 GB decimal / 28.8 GiB unit trap, why fp8_e5m2 is rejected, why the chat template is NATIVE and not froggeric, the MODEL-CARD sampler — Instruct row, temp 0.7 / top_p 0.80 / presence_penalty 1.5, because thinking ships off — and the built-in-MTP caveat) matches the dual sibling's note verbatim. ⚠️ MTP drafter exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in this pin; v0.26.0 predates the fix) — structural exposure inherited from the hybrid-GDN family, never observed here because nothing has run. Mitigate with SPEC=off. Detail + re-test trigger: docs/UPSTREAM.md. Launch requires --force (incubating); hidden from switch.sh --list. Promote to 🧪 only after a clean boot + verify-full on a real 4-card host.",
     ),
     "vllm/qwen38-27b-multi8-max": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="bf16",
         tp=8, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
@@ -1445,6 +1541,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B 'max accuracy' tier, 8-card (TP=8): same serving config as vllm/qwen38-27b-multi4-max with three lines changed — --tensor-parallel-size, the Requires-min-gpu-count header, and the port. ⚠️⚠️ TP=8 IS NOT THE SAME SHARD SHAPE AS TP=2/TP=4 AND DOES NOT SCALE THE SAME WAY: this model has num_kv_heads=4, which divides cleanly by 2 and by 4 but NOT by 8. At TP=8 vLLM REPLICATES KV heads across rank pairs rather than splitting them, so per-card KV stays at roughly the TP=4 figure (~4.00 GiB @262K at this compose's bf16 KV), NOT half of it. Only the WEIGHTS take the full 8-way split (~3.6 GiB/card vs ~7.2 at TP=4). So the 8-card gain over 4 is weight headroom only, bought with more all-reduce traffic on a PCIe bus with no NVLink — and on the qwen3.6-27b equivalent single-stream decode was ALREADY ~flat from 2 cards to 4. Expect flat-or-worse decode; expect nothing quantitative until measured. (1) NOTHING HAS BOOTED on any card count — the weights are on disk and CRC32-verified (66 safetensors, 30.87 GB decimal / 28.75 GiB, revision 017b9c7a) but no engine has loaded them; no verify-full, no bench, no 8-pack, no Quality: field, and 262144 is arithmetic plus a sibling analogy rather than a measured fill. (2) ⛔ 8-CARD IS COMMUNITY-VALIDATED BY DESIGN and that is PERMANENT, not a TODO: the maintainer rig has exactly two 3090s, so TP=8 can never boot here and must never be filed as pending work. The on-rig proxy is vllm/qwen38-27b-dual-max (TP=2, which HAS booted and passed verify-full on the reference 2x3090 2026-08-17, with a canonical bench (67.39 narr / 85.75 code tok/s, MTP accept 2.62) — see BENCHMARKS.md) — but it runs fp8 e4m3 KV where this runs bf16 (--kv-cache-dtype auto), a deliberate 2026-08-15 divergence on headroom grounds, so its pool/concurrency numbers do NOT transfer. Everything TP=8-specific — NCCL across 8 PCIe cards, the 8-way weight shard, KV-head replication — is validated by whoever first runs it on 8 cards; that first community boot IS the validation. Report via numbers-from-your-rig. P2P is NOT hardcoded: scripts/detect_nvlink.sh (NVLINK_MODE=auto) probes the interconnect and, when it finds a fast one, exports NCCL_P2P_LEVEL and UNSETS the compose's NCCL_P2P_DISABLE default — so an 8-card host with working P2P picks it up automatically. ⚠️ A 'topo -p2p OK' line reports a grant, not a working transfer; prove it with a real transfer check. ⚠️ MTP drafter exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in this pin); mitigate with SPEC=off. Detail: docs/UPSTREAM.md. Launch requires --force (incubating); hidden from switch.sh --list. Promote to 🧪 only after a clean boot + verify-full on a real 8-card host. Everything else (dense-not-MoE, the 16-growing-layer KV math, the decimal/GiB unit trap, why fp8_e5m2 is rejected, the NATIVE chat template, the MODEL-CARD sampler) matches the multi4 sibling verbatim.",
     ),
     "vllm/qwen38-27b-dual-supermax": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="fp8_e4m3",
         tp=2, max_ctx=147456, max_num_seqs=1, mem_util=0.92,
@@ -1455,6 +1552,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B SUPERMAX tier (FIDELITY series), 2-card (TP=2): the MAX tier (official FP8, fp8 KV) with MTP->DFlash2 (syvai W4A16 n=7). Collapse-immune. fp8 target lm_head/embed are bf16 (drafter shares them; drafter is base-arch-keyed 5120/248320 -> valid on both int4 & fp8). Output fidelity = the fp8 TARGET's; drafter only affects accept-len. MEASURED on-rig 2026-08-20: the DFlash2 drafter ate ~2.6 GiB vs the MTP max tier, so fp8 KV caps at ~163K on 2 cards -> ships 147456 (144K); util>0.92 recovers some but 262K needs ~0.99 util (unsafe). multi4/8 keep 262K. ⚠️ vllm#50021; SPEC_N=0 mitigates. --force.",
     ),
     "vllm/qwen38-27b-multi4-supermax": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="fp8_e4m3",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
@@ -1465,6 +1563,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B SUPERMAX tier (FIDELITY series), 4-card (TP=4): the MAX tier (official FP8, fp8 KV) with MTP->DFlash2 (syvai W4A16 n=7). Collapse-immune. fp8 target lm_head/embed are bf16 (drafter shares them; drafter is base-arch-keyed 5120/248320 -> valid on both int4 & fp8). Output fidelity = the fp8 TARGET's; drafter only affects accept-len. 262K fits (fp8 weights split ~7.2 GiB/card).  ⛔ COMMUNITY-VALIDATED BY DESIGN (2-GPU rig); on-rig proxy = the dual sibling, transfers on topology only. ⚠️ vllm#50021; SPEC_N=0 mitigates. --force.",
     ),
     "vllm/qwen38-27b-multi8-supermax": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="fp8_e4m3",
         tp=8, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
@@ -1475,6 +1574,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B SUPERMAX tier (FIDELITY series), 8-card (TP=8): the MAX tier (official FP8, fp8 KV) with MTP->DFlash2 (syvai W4A16 n=7). Collapse-immune. fp8 target lm_head/embed are bf16 (drafter shares them; drafter is base-arch-keyed 5120/248320 -> valid on both int4 & fp8). Output fidelity = the fp8 TARGET's; drafter only affects accept-len. 262K fits (weights ~3.6 GiB/card).  ⛔ COMMUNITY-VALIDATED BY DESIGN (2-GPU rig); on-rig proxy = the dual sibling, transfers on topology only. ⚠️ vllm#50021; SPEC_N=0 mitigates. --force.",
     ),
     "vllm/qwen38-27b-dual-ultramax": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="bf16",
         tp=2, max_ctx=65536, max_num_seqs=1, mem_util=0.92,
@@ -1485,6 +1585,7 @@ COMPOSE_REGISTRY = {
         status_note='Qwen3.8-27B ULTRAMAX tier (FIDELITY series), 2-card (TP=2): the MAX tier (official FP8) with DFlash2 on the bf16/FLASH_ATTN fast path (fidelity counterpart to ultrafast). Fastest decode on fp8 weights but bf16 KV + big fp8 weights cap ctx. MEASURED on-rig 2026-08-20: bf16 KV pool ~75.6K tokens on 2 cards (bf16 KV is 2x fp8 + big fp8 weights) -> ships 65536 (64K). For long ctx use supermax (144K) or max (262K); ultramax dual is the max-decode short-ctx fidelity config. multi4/8 keep 262K. ⚠️ vllm#50021; SPEC_N=0 mitigates. --force.',
     ),
     "vllm/qwen38-27b-multi4-ultramax": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="bf16",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
@@ -1495,6 +1596,7 @@ COMPOSE_REGISTRY = {
         status_note='Qwen3.8-27B ULTRAMAX tier (FIDELITY series), 4-card (TP=4): the MAX tier (official FP8) with DFlash2 on the bf16/FLASH_ATTN fast path (fidelity counterpart to ultrafast). Fastest decode on fp8 weights but bf16 KV + big fp8 weights cap ctx. bf16 KV @262K at TP=4 (weights split).  ⛔ COMMUNITY-VALIDATED BY DESIGN (2-GPU rig); on-rig proxy = the dual sibling, transfers on topology only. ⚠️ vllm#50021; SPEC_N=0 mitigates. --force.',
     ),
     "vllm/qwen38-27b-multi8-ultramax": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="fp8", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="bf16",
         tp=8, max_ctx=262144, max_num_seqs=2, mem_util=0.92,
@@ -1505,6 +1607,7 @@ COMPOSE_REGISTRY = {
         status_note='Qwen3.8-27B ULTRAMAX tier (FIDELITY series), 8-card (TP=8): the MAX tier (official FP8) with DFlash2 on the bf16/FLASH_ATTN fast path (fidelity counterpart to ultrafast). Fastest decode on fp8 weights but bf16 KV + big fp8 weights cap ctx. bf16 KV @262K at TP=8.  ⛔ COMMUNITY-VALIDATED BY DESIGN (2-GPU rig); on-rig proxy = the dual sibling, transfers on topology only. ⚠️ vllm#50021; SPEC_N=0 mitigates. --force.',
     ),
     "vllm/qwen38-27b-dual-fast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.90,
@@ -1516,6 +1619,7 @@ COMPOSE_REGISTRY = {
         status_note="⭐ CHECKPOINT SWAPPED Avuja → Frozenlock/Qwen3.8-27B-int4-AutoRound 2026-08-20 (club-3090#1052): the Avuja export permanently collapsed the built-in MTP drafter to 0% acceptance at ~14.5k gen; Frozenlock (SAME auto-round 4/g128/sym recipe, different export) runs clean past 22-24k in BOTH W4A8 and W4A16 — verify-full 8/9, bench narr ~74.9 / code ~103.5 TPS, MTP accept-len 3.48-5.0, coherent. Distinct from the SEPARATE vllm#50021 crash (still live). ⚠️⚠️ THE MEASURED NUMBERS BELOW (W4A16/W4A8 benches, the n=4 depth knee, verify-full 9/9) were taken on the PRIOR AVUJA export and are INHERITED — NOT re-measured on Frozenlock; re-run before quoting as Frozenlock figures. Avuja preserved on disk as qwen3.8-27b-autoround-int4-avuja. — Qwen3.8-27B FAST tier, 2-card (TP=2), MTP n=4, fp8 KV @262144. MEASURED on this checkpoint at TP=2 (2026-08-15/16, vLLM v0.25.1, 3 warm + 5 measured, one boot per arm): W4A16 no-MTP 65.87 narrative / 61.05 code / 1219.51 prefill@10K; W4A8 no-MTP 60.54 / 56.29 / 1728.92 (+41.8% prefill, -28.6% TTFT@10K, but -8% decode BOTH shapes); verify-full 9/9 on both arms; KV pool 652,346 tok @262K (2.49x). MTP depth swept under W4A8 -> knee at n=4: narrative 62.59(n=0)->76.40(n=4) +22.1%, code 57.45->105.60 +83.8%, accept length 1.94->3.90. n=1 is WORSE than no drafter (-15.9% narrative). Acceptance length rises monotonically to 4.70 at n=6 while throughput flattens, so it CANNOT be used to pick depth. No instability at n=4/5/6 (restarts=0) -- the 3.6 family's n>=4 warning did NOT reproduce. ⭐ THE SHIPPED DEFAULT IS NOW THE MEASURED PATH: int8 activations became the default 2026-08-16, and since the depth sweep ran under W4A8, W4A8 + n=4 is the combination that was actually benched (76.40 narrative / 105.60 code). ⚠️ The int8-vs-16bit delta UNDER MTP is still unmeasured -- the -8% decode figure is MTP-off and must not be quoted for this config. ⚠️⚠️ MTP n=4 IS SINGLE-STREAM ON 24 GB CARDS: at MAX_NUM_SEQS=2 with 16K prompts the drafter pushed peak VRAM to 23,872 MiB/card -- 1.75 GB OVER the 0.90 budget -- and requests failed while ~535K KV tokens sat free; SPEC_N=0 at the same concurrency runs clean. The drafter also costs ~13% of the KV pool (652,346 -> 567,737). max_num_seqs therefore ships at 1, and since W4A8 is now the DEFAULT rather than an opt-in, that cap is mandatory rather than advisory. For concurrent serving set SPEC_N=0 and raise it: measured ceiling ~49 tok/s aggregate at 10K ctx, usable to N=8 by a 10 tok/s per-stream floor or N=4 end-to-end; beyond that the engine queues rather than serves (logged Running:9 / Waiting:55 at a rung launched with max_num_seqs=64). Community AutoRound INT4 (auto-round, 4-bit, g128, sym, 18.23 GiB) -- the FAST tier opposite the official-FP8 MAX tier; ~9.1 GiB/card at TP=2 vs FP8's ~14.4, which is where the larger KV pool comes from. W4A8 (int8 activations) IS THE SHIPPED DEFAULT since 2026-08-16 (W4A8=0 restores W4A16); the vendored patches are wired at boot -- it works only because the checkpoint is auto-round-packed [k/8,n], which is what the vendored negscale fold assumes; a compressed-tensors sibling hard-fails it. VISION untested (tower present, unquantized). MTP head is QUANTIZED on the Frozenlock export (Avuja's was bf16). ⚠️ MTP exposed to OPEN vllm#50021 -- mitigate with SPEC_N=0. Launch requires --force (experimental). Detail: learnings/qwen3.8-27b.md + BENCHMARKS.md.",
     ),
     "vllm/qwen38-27b-multi4-fast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.95,
@@ -1527,6 +1631,7 @@ COMPOSE_REGISTRY = {
         status_note="⭐ CHECKPOINT SWAPPED Avuja → Frozenlock/Qwen3.8-27B-int4-AutoRound 2026-08-20 (club-3090#1052): the Avuja export permanently collapsed the built-in MTP drafter to 0% acceptance at ~14.5k gen; Frozenlock (SAME auto-round 4/g128/sym recipe, different export) runs clean past 22-24k in BOTH W4A8 and W4A16 — verify-full 8/9, bench narr ~74.9 / code ~103.5 TPS, MTP accept-len 3.48-5.0, coherent. Distinct from the SEPARATE vllm#50021 crash (still live). ⚠️⚠️ THE MEASURED NUMBERS BELOW (W4A16/W4A8 benches, the n=4 depth knee, verify-full 9/9) were taken on the PRIOR AVUJA export and are INHERITED — NOT re-measured on Frozenlock; re-run before quoting as Frozenlock figures. Avuja preserved on disk as qwen3.8-27b-autoround-int4-avuja. — Qwen3.8-27B FAST tier, 4-card (TP=4), MTP n=4, fp8 KV @262144. ⛔ 4-CARD IS COMMUNITY-VALIDATED BY DESIGN and that is PERMANENT: the maintainer rig has exactly two 3090s, so TP=4 can never boot here and must never be filed as pending work. NOTHING on this slug has booted. The on-rig proxy is vllm/qwen38-27b-dual-fast (same config at TP=2), whose numbers are in its status_note -- but they transfer on topology only. num_kv_heads=4 divides evenly by 4; ⚠️ at TP=8 it does NOT divide, so KV heads REPLICATE and per-card KV stays at roughly the TP=4 figure while only the weights take the full split (~4.6 GiB/card). ⚠️ max_num_seqs ships at 2 here rather than the dual's 1: the dual is capped because MTP n=4 OOM'd at N=2 on 24 GB UNDER W4A8, which is now the default, and at TP=4 weights fall far enough that the headroom should be ample -- but THAT IS UNTESTED. If you hit the same OOM, lower max_num_seqs or set SPEC_N=0 and report it. Community AutoRound INT4 (auto-round, 4-bit, g128, sym, 18.23 GiB) -- the FAST tier opposite the official-FP8 MAX tier; ~9.1 GiB/card at TP=2 vs FP8's ~14.4, which is where the larger KV pool comes from. W4A8 (int8 activations) IS THE SHIPPED DEFAULT since 2026-08-16 (W4A8=0 restores W4A16); the vendored patches are wired at boot -- it works only because the checkpoint is auto-round-packed [k/8,n], which is what the vendored negscale fold assumes; a compressed-tensors sibling hard-fails it. VISION untested (tower present, unquantized). MTP head is QUANTIZED on the Frozenlock export (Avuja's was bf16). ⚠️ MTP exposed to OPEN vllm#50021 -- mitigate with SPEC_N=0. Launch requires --force (experimental). Detail: learnings/qwen3.8-27b.md + BENCHMARKS.md.",
     ),
     "vllm/qwen38-27b-multi8-fast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=8, max_ctx=262144, max_num_seqs=2, mem_util=0.95,
@@ -1538,6 +1643,7 @@ COMPOSE_REGISTRY = {
         status_note="⭐ CHECKPOINT SWAPPED Avuja → Frozenlock/Qwen3.8-27B-int4-AutoRound 2026-08-20 (club-3090#1052): the Avuja export permanently collapsed the built-in MTP drafter to 0% acceptance at ~14.5k gen; Frozenlock (SAME auto-round 4/g128/sym recipe, different export) runs clean past 22-24k in BOTH W4A8 and W4A16 — verify-full 8/9, bench narr ~74.9 / code ~103.5 TPS, MTP accept-len 3.48-5.0, coherent. Distinct from the SEPARATE vllm#50021 crash (still live). ⚠️⚠️ THE MEASURED NUMBERS BELOW (W4A16/W4A8 benches, the n=4 depth knee, verify-full 9/9) were taken on the PRIOR AVUJA export and are INHERITED — NOT re-measured on Frozenlock; re-run before quoting as Frozenlock figures. Avuja preserved on disk as qwen3.8-27b-autoround-int4-avuja. — Qwen3.8-27B FAST tier, 8-card (TP=8), MTP n=4, fp8 KV @262144. ⛔ 8-CARD IS COMMUNITY-VALIDATED BY DESIGN and that is PERMANENT: the maintainer rig has exactly two 3090s, so TP=8 can never boot here and must never be filed as pending work. NOTHING on this slug has booted. The on-rig proxy is vllm/qwen38-27b-dual-fast (same config at TP=2), whose numbers are in its status_note -- but they transfer on topology only. num_kv_heads=4 divides evenly by 4; ⚠️ at TP=8 it does NOT divide, so KV heads REPLICATE and per-card KV stays at roughly the TP=4 figure while only the weights take the full split (~2.3 GiB/card). ⚠️ max_num_seqs ships at 2 here rather than the dual's 1: the dual is capped because MTP n=4 OOM'd at N=2 on 24 GB UNDER W4A8, which is now the default, and at TP=8 weights fall far enough that the headroom should be ample -- but THAT IS UNTESTED. If you hit the same OOM, lower max_num_seqs or set SPEC_N=0 and report it. Community AutoRound INT4 (auto-round, 4-bit, g128, sym, 18.23 GiB) -- the FAST tier opposite the official-FP8 MAX tier; ~9.1 GiB/card at TP=2 vs FP8's ~14.4, which is where the larger KV pool comes from. W4A8 (int8 activations) IS THE SHIPPED DEFAULT since 2026-08-16 (W4A8=0 restores W4A16); the vendored patches are wired at boot -- it works only because the checkpoint is auto-round-packed [k/8,n], which is what the vendored negscale fold assumes; a compressed-tensors sibling hard-fails it. VISION untested (tower present, unquantized). MTP head is QUANTIZED on the Frozenlock export (Avuja's was bf16). ⚠️ MTP exposed to OPEN vllm#50021 -- mitigate with SPEC_N=0. Launch requires --force (experimental). Detail: learnings/qwen3.8-27b.md + BENCHMARKS.md.",
     ),
     "vllm/qwen38-27b-dual-superfast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=1, mem_util=0.9,
@@ -1549,6 +1655,7 @@ COMPOSE_REGISTRY = {
         status_note='Qwen3.8-27B SUPERFAST tier (SPEED series), 2-card (TP=2): the FAST tier (int4 Frozenlock, fp8 KV, 262K) with MTP->DFlash2 (syvai W4A16 n=7, method=dflash). +~30%% code vs fast/MTP, collapse-immune (external drafter sidesteps #1052 / vllm#52873). fp8 KV -> FlashInfer. Measured on-rig (dual, 2026-08-20): verify-full 9/9, ~74 narr / ~139 code TPS. W4A8=1 (int8 acts). ⚠️ vllm#50021 exposure; SPEC_N=0 mitigates. --force.',
     ),
     "vllm/qwen38-27b-multi4-superfast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="fp8_e4m3",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.95,
@@ -1560,6 +1667,7 @@ COMPOSE_REGISTRY = {
         status_note='Qwen3.8-27B SUPERFAST tier (SPEED series), 4-card (TP=4): the FAST tier (int4 Frozenlock, fp8 KV, 262K) with MTP->DFlash2 (syvai W4A16 n=7, method=dflash). +~30%% code vs fast/MTP, collapse-immune (external drafter sidesteps #1052 / vllm#52873). fp8 KV -> FlashInfer. Measured on-rig (dual, 2026-08-20): verify-full 9/9, ~74 narr / ~139 code TPS. W4A8=1 (int8 acts). ⛔ COMMUNITY-VALIDATED BY DESIGN (2-GPU rig); on-rig proxy = the dual sibling, transfers on topology only. ⚠️ vllm#50021 exposure; SPEC_N=0 mitigates. --force.',
     ),
     "vllm/qwen38-27b-multi8-superfast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="fp8_e4m3",
         tp=8, max_ctx=262144, max_num_seqs=2, mem_util=0.95,
@@ -1571,6 +1679,7 @@ COMPOSE_REGISTRY = {
         status_note='Qwen3.8-27B SUPERFAST tier (SPEED series), 8-card (TP=8): the FAST tier (int4 Frozenlock, fp8 KV, 262K) with MTP->DFlash2 (syvai W4A16 n=7, method=dflash). +~30%% code vs fast/MTP, collapse-immune (external drafter sidesteps #1052 / vllm#52873). fp8 KV -> FlashInfer. Measured on-rig (dual, 2026-08-20): verify-full 9/9, ~74 narr / ~139 code TPS. W4A8=1 (int8 acts). ⛔ COMMUNITY-VALIDATED BY DESIGN (2-GPU rig); on-rig proxy = the dual sibling, transfers on topology only. ⚠️ vllm#50021 exposure; SPEC_N=0 mitigates. --force.',
     ),
     "vllm/qwen38-27b-dual-ultrafast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="bf16",
         tp=2, max_ctx=204800, max_num_seqs=1, mem_util=0.90,
@@ -1582,6 +1691,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B ULTRAFAST tier, 2-card (TP=2): DFlash2 EXTERNAL block-drafter n=7 (syv-ai W4A16, syvai-qwen38-dflash2), bf16 KV + FLASH_ATTN @204800. The throughput tier vs the FAST/MTP tier: MEASURED on the Frozenlock checkpoint 2026-08-20 (3 warm + 5 measured, one boot) at 132 narrative / 227 code TPS -- ~2x the fast tier's code (106) and +74% narrative (76). verify-full 9/9; collapse soak clean to 21k gen, 0 crashes -- the external drafter structurally sidesteps the built-in-MTP acceptance collapse (#1052 / vllm#52873) that killed the Avuja checkpoint ~14.5k. ⭐ WHY bf16 KV + FLASH_ATTN, and why 204800 not 262144: the DFlash2 drafter's block attention is non-causal and needs FLASH_ATTN, which on Ampere sm_86 accepts ONLY bf16/fp16 KV (flash_attn_supports_kv_cache_dtype('fp8_e4m3')=False; fp8-in-kernel is FA3/Hopper-only). fp8 KV would force FlashInfer and cost ~40% decode (measured 74/138). bf16 KV is 2x fp8, so the ceiling is ~213K tokens (KV pool 212,977 @204800, 20.4 GiB/card) -- this GDN hybrid caches KV on only its full-attn layers, which is why 200K fits on bf16. For the full 262K arch max use the fast/MTP/fp8 tier. max_num_seqs=1 (single-stream: drafter + 24 GB has no room for a 2nd stream; SPEC_N=0 to raise it). W4A16 here (W4A8=0 default; W4A8=1 unvalidated with this drafter on FA2). Target=Frozenlock autoround-int4 (lm_head bf16, which the drafter requires -- it shares the target's embeddings/lm_head). ⚠️ Spec-decode exposed to OPEN vllm#50021; soak was crash-free but treat as 'not observed', not immune; SPEC_N=0 mitigates. ⚠️ No NIAH@200K / 8-pack / n-sweep past n=7. Launch requires --force. Detail: learnings/qwen3.8-27b.md + BENCHMARKS.md.",
     ),
     "vllm/qwen38-27b-multi4-ultrafast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="bf16",
         tp=4, max_ctx=262144, max_num_seqs=2, mem_util=0.95,
@@ -1593,6 +1703,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B ULTRAFAST tier, 4-card (TP=4): DFlash2 EXTERNAL block-drafter n=7 (syvai-qwen38-dflash2), bf16 KV + FLASH_ATTN @262144. ⛔ 4-CARD IS COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so TP=4 can never boot here and must never be filed as pending work. NOTHING on this slug has booted. On-rig proxy = vllm/qwen38-27b-dual-ultrafast (same config at TP=2, 132 narr / 227 code TPS) -- transfers on TOPOLOGY ONLY. num_kv_heads=4 divides evenly by 4. ⚠️ max_num_seqs=2 here vs the dual's 1: at TP=4 weights fall (~4.6 GiB/card) so the drafter + 2 streams SHOULD fit -- UNTESTED. OOM -> lower it or SPEC_N=0. bf16 KV + FLASH_ATTN is mandatory (non-causal drafter block attn; fp8 KV would force FlashInfer, ~40% decode tax -- see the dual note). W4A16 (W4A8=0). ⚠️ Spec-decode exposed to OPEN vllm#50021; SPEC_N=0 mitigates. Launch requires --force. Detail: learnings/qwen3.8-27b.md.",
     ),
     "vllm/qwen38-27b-multi8-ultrafast": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="autoround-int4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="syvai-qwen38-dflash2", kv_format="bf16",
         tp=8, max_ctx=262144, max_num_seqs=2, mem_util=0.95,
@@ -1604,6 +1715,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B ULTRAFAST tier, 8-card (TP=8): DFlash2 EXTERNAL block-drafter n=7 (syvai-qwen38-dflash2), bf16 KV + FLASH_ATTN @262144. ⛔ 8-CARD IS COMMUNITY-VALIDATED BY DESIGN and PERMANENT: the maintainer rig has exactly two 3090s, so TP=8 can never boot here and must never be filed as pending work. NOTHING on this slug has booted. On-rig proxy = vllm/qwen38-27b-dual-ultrafast (same config at TP=2, 132 narr / 227 code TPS) -- transfers on TOPOLOGY ONLY. num_kv_heads=4 does NOT divide by 8 -> KV heads REPLICATE, per-card KV ~the TP=4 figure while only weights take the full split. ⚠️ max_num_seqs=2 here vs the dual's 1: at TP=8 weights fall (~2.3 GiB/card) so the drafter + 2 streams SHOULD fit -- UNTESTED. OOM -> lower it or SPEC_N=0. bf16 KV + FLASH_ATTN is mandatory (non-causal drafter block attn; fp8 KV would force FlashInfer, ~40% decode tax -- see the dual note). W4A16 (W4A8=0). ⚠️ Spec-decode exposed to OPEN vllm#50021; SPEC_N=0 mitigates. Launch requires --force. Detail: learnings/qwen3.8-27b.md.",
     ),
     "vllm/qwen38-27b-single-nvfp4": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="nvfp4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=1, max_ctx=65536, max_num_seqs=1, mem_util=0.85,
@@ -1614,6 +1726,7 @@ COMPOSE_REGISTRY = {
         status_note="Qwen3.8-27B NVFP4, SINGLE card. ⚠️⚠️ DOES NOT FIT 24 GB: 20.44 GiB of weights leaves ~3 GB for KV pool + cudagraphs + GDN prefill scratch, and the 3.6 sibling records the same shape needing >24 GB REGARDLESS. Defaults mirror that resolution -- MAX_MODEL_LEN 65536 and mem_util 0.85, NOT the dual's 262144/0.90. Target class is a 32 GB+ card (5090 / RTX 6000 Pro / H100); on a 3090 expect an OOM at KV init, which is the config being honest rather than broken. RadixArk NVFP4 (modelopt MIXED: 193 module groups at W4-float/A4-float + 208 at W8-float/A8-float, ignore=2; 20.44 GiB, 22 files). ⚠️⚠️ THE 4-BIT ACTIVATIONS CANNOT EXECUTE ON AMPERE -- sm_86 has no FP4 tensor cores, so vLLM serves this weight-only via the Marlin W4A16 fallback and upcasts activations to 16-bit whatever the checkpoint declares. The 3.6 NVFP4 sibling records 'no speed edge vs AutoRound' and 'on Ampere the AutoRound tier serves this model faster', so on 2x 3090 this is a COMPATIBILITY path; for throughput on Ampere use vllm/qwen38-27b-dual-fast (AutoRound INT4, verify-full 9/9, MTP accept 3.12). Its real case is Blackwell (sm_120+) where the A4 groups execute. ⭐ Kernel selection is AUTOMATIC per card -- one compose gives FP4 compute on Blackwell and Marlin W4A16 on Ampere; nothing selects or overrides it. ⚠️ NVFP4 *KV* is NOT available and has NO fallback: it routes to a trtllm-gen FP4 FMHA kernel built only for datacenter Blackwell (sm_100/103) and crashes on consumer sm_120 (vLLM #43562 / TRT-LLM #10241); no hardware class lists nvfp4 KV and launch_compat C5 REFUSES rather than downgrading -- fp8_e4m3 is the FP4-era KV here, as on all six 3.6/Tess nvfp4 slugs. ⚠️ MTP exposed to OPEN vllm#50021; mitigate with SPEC_N=0. On the 3.6 sibling the original OOM root-caused to MTP (draft head + cudagraphs + GDN prefill scratch), NOT context. ⚠️ NOTHING HAS BOOTED: authored on a 2x sm_86 rig where even a green boot would exercise only the fallback, not the FP4 path this quant exists for. First Blackwell boot IS the validation. Launch requires --force (experimental). Detail: learnings/qwen3.8-27b.md.",
     ),
     "vllm/qwen38-27b-dual-nvfp4": _entry(
+        sampler_profiles=QWEN38_27B_SAMPLER_PROFILES,
         model="qwen3.8-27b", weights_variant="nvfp4", workload="long-ctx-single", chat_template="native",
         engine="vllm-stable", drafter="qwen-mtp-builtin", kv_format="fp8_e4m3",
         tp=2, max_ctx=262144, max_num_seqs=2, mem_util=0.90,
@@ -1670,6 +1783,112 @@ DEFAULTS = {
     ("tess-4-27b", "vllm", "dual"): "vllm/tess-dual-w4a16",
     ("thinkingcap-27b", "vllm", "dual"): "vllm/thinkingcap-dual-w4a8",
 }
+
+
+# --- C4-rev: the gitignored LOCAL layer (community-added models) --------------
+#
+# Community users add models WITHOUT touching any core catalog file. A local
+# model lives under scripts/lib/profiles-local/ (gitignored except its README):
+#   models.d/<id>.yml        ModelProfile YAML (same schema as models/)
+#   composes/<id>/...        the compose files
+#   registry.local.json      plain-dict registry entries ({slug: _entry-kwargs})
+#
+# get_registry() below is the SINGLE merged view every runtime consumer reads
+# (launch / switch / diagnose / emit / estate / cockpit). The local layer can
+# NEVER leak into DEFAULTS / ENGINE_PREFERENCE / RECOMMENDED_DEFAULT_MODELS —
+# those stay core-only, so a local entry can never become a curated default.
+
+LOCAL_LAYER_DIR_REL = "scripts/lib/profiles-local"
+LOCAL_REGISTRY_REL = "scripts/lib/profiles-local/registry.local.json"
+# The slug namespace every LOCAL entry lives under (promote.py --layer local
+# enforces it at write time; the loader refuses anything else).
+LOCAL_SLUG_PREFIX = "local/"
+
+
+class LocalRegistryError(Exception):
+    """The local layer exists but is unusable (bad JSON / shape / collision).
+
+    Raised LOUDLY on purpose: a broken local layer must never silently shrink
+    or shadow the curated catalog — launchers surface the error and exit."""
+
+
+def local_layer_root():
+    """The repo root this registry module was imported FROM.
+
+    Resolved from __file__ so a THROWAWAY copy of the repo (promote.py --root
+    / tests / a user checkout) sees ITS OWN local layer, not another's."""
+    return Path(__file__).resolve().parents[3]
+
+
+def load_local_registry(root=None):
+    """Read registry.local.json → {slug: entry-dict} ({} when no local layer).
+
+    Plain-dict entries (the JSON form of _entry kwargs) are wrapped through
+    _entry(**kwargs) so a local row carries EXACTLY the same shape + defaults
+    as a core row. ANY problem — unreadable JSON, a non-object, an unknown
+    kwarg, a bad status, a slug outside the `local/` namespace, or a slug /
+    model-id colliding with a core row (or another local row) — raises
+    LocalRegistryError. Loud, never a silent partial catalog."""
+    root = Path(root) if root is not None else local_layer_root()
+    path = root / LOCAL_REGISTRY_REL
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise LocalRegistryError(
+            f"{path}: unreadable registry.local.json: {exc}"
+        ) from exc
+    if not isinstance(raw, dict) or not all(isinstance(v, dict) for v in raw.values()):
+        raise LocalRegistryError(
+            f"{path}: expected a JSON object of {{slug: {{_entry kwargs}}}}"
+        )
+    core_slugs = set(COMPOSE_REGISTRY)
+    core_models = {e.get("model") for e in COMPOSE_REGISTRY.values()}
+    local: dict = {}
+    local_models: set = set()
+    for slug, kwargs in raw.items():
+        if not slug.startswith(LOCAL_SLUG_PREFIX):
+            raise LocalRegistryError(
+                f"{path}: local slug {slug!r} must live under the "
+                f"{LOCAL_SLUG_PREFIX!r} namespace"
+            )
+        if slug in core_slugs or slug in local:
+            raise LocalRegistryError(f"{path}: local slug collides: {slug!r}")
+        model = kwargs.get("model")
+        if model in core_models:
+            raise LocalRegistryError(
+                f"{path}: local model id {model!r} collides with a core model"
+            )
+        if model in local_models:
+            raise LocalRegistryError(f"{path}: duplicate local model id {model!r}")
+        try:
+            entry = _entry(**kwargs)
+        except TypeError as exc:
+            raise LocalRegistryError(
+                f"{path}: local entry {slug!r} has bad _entry kwargs: {exc}"
+            ) from exc
+        except ValueError as exc:
+            raise LocalRegistryError(f"{path}: local entry {slug!r}: {exc}") from exc
+        local[slug] = entry
+        local_models.add(model)
+    return local
+
+
+def get_registry(root=None):
+    """The SINGLE merged catalog view: core COMPOSE_REGISTRY + the local layer.
+
+    With no local layer present this IS COMPOSE_REGISTRY (the identical object
+    — zero behavior change on a pristine checkout). Slug lookups at runtime
+    read THIS; DEFAULTS / ENGINE_PREFERENCE / RECOMMENDED_DEFAULT_MODELS stay
+    core-only. Raises LocalRegistryError when a present local layer is broken —
+    a half-working catalog is worse than a loud failure."""
+    local = load_local_registry(root)
+    if not local:
+        return COMPOSE_REGISTRY
+    merged = dict(COMPOSE_REGISTRY)
+    merged.update(local)
+    return merged
 
 
 # --- PR-B: model-default resolver knobs (maintainer-owned, design §13.3) ----
@@ -1785,7 +2004,7 @@ def default_arch_gated(slug, detected_sm):
     """
     if not detected_sm:
         return False
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     if not entry:
         return False
     allow = entry.get("default_arch_allow")
@@ -1806,7 +2025,7 @@ def _functional_default(model, engine, topology, detected_sm=None):
     slug = DEFAULTS.get((model, engine, topology))
     if not slug:
         return None
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     if entry is None:
         return None
     if entry.get("status", "production") not in FUNCTIONAL_STATUSES:
@@ -1841,21 +2060,37 @@ def community_default_target(model, topology, hw_class=None):  # noqa: ARG001
     return None
 
 
+def _model_pin_suffix(model):
+    """Shared `<MODELID uppercased, non-alnum→_>` suffix for the per-model .env
+    pin keys, e.g. qwen3.6-27b → QWEN3_6_27B."""
+    return "".join(c if c.isalnum() else "_" for c in model).upper()
+
+
 def model_default_pin_key(model):
     """The .env key for a per-model user pin (design §13.2).
 
     `CLUB3090_DEFAULT_<MODELID uppercased, non-alnum→_>`, e.g.
     qwen3.6-27b → CLUB3090_DEFAULT_QWEN3_6_27B.
     """
-    suffix = "".join(c if c.isalnum() else "_" for c in model).upper()
-    return f"CLUB3090_DEFAULT_{suffix}"
+    return f"CLUB3090_DEFAULT_{_model_pin_suffix(model)}"
+
+
+def model_thinking_pin_key(model):
+    """The .env key for a per-model THINKING pin (#1014 follow-up).
+
+    Same normalization as :func:`model_default_pin_key`:
+    `CLUB3090_THINKING_<MODELID uppercased, non-alnum→_>`, e.g.
+    qwen3.6-27b → CLUB3090_THINKING_QWEN3_6_27B. Values are the tri-state
+    vocabulary on|off|inherit; switch.sh resolves it into the launch env
+    (on/off → ENABLE_THINKING=true/false, inherit → nothing).
+    """
+    return f"CLUB3090_THINKING_{_model_pin_suffix(model)}"
 
 
 def model_of_slug(slug):
     """The model-id a slug belongs to, or None if the slug is unknown."""
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     return entry.get("model") if entry else None
-
 
 def slug_topology(slug):
     """The topology family a slug serves, derived from its compose_path.
@@ -1863,7 +2098,7 @@ def slug_topology(slug):
     compose_path is `models/<model>/<engine>/compose/<topology>/<quant>/...`.
     Returns `single`/`dual`/`multi` (the ENGINE_PREFERENCE family) or None.
     """
-    entry = COMPOSE_REGISTRY.get(slug)
+    entry = get_registry().get(slug)
     if not entry:
         return None
     cp = entry.get("compose_path", "")

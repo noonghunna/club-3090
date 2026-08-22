@@ -1,0 +1,9 @@
+INFO 08-21 10:00:01 engine.py: Started engine process with PID 42
+INFO 08-21 10:00:04 gpu_worker.py: Constructing vLLM worker (vllm v0.22.0)
+INFO 08-21 10:00:04 config.py: tensor_parallel_size=2, pipeline_parallel_size=1
+INFO 08-21 10:00:04 config.py: max_num_seqs=2, max_model_len=262144
+INFO 08-21 10:00:11 gpu_worker.py: model weights take 13.62 GiB; non_torch_memory 0.87 GiB; torch_memory 1.24 GiB; memory_usage 0.03 GiB
+INFO 08-21 10:00:12 gpu_worker.py: Available KV cache / card = 8.00 GiB
+INFO 08-21 10:00:12 gpu_worker.py: GPU KV cache size: 524,288 tokens
+INFO 08-21 10:00:12 gpu_runner.py: Maximum concurrency for 262144 tokens per request: 2.00x
+INFO 08-21 10:00:13 api_server.py: Uvicorn running on http://0.0.0.0:8000

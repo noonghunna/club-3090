@@ -60,6 +60,19 @@ services:
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
+      # interpolation, which has no if/else — derives --override-generation-config
+      # from the model-card row matching ENABLE_THINKING, so these must reach the
+      # container. Absent -> empty -> the entrypoint's `:=` row default applies;
+      # an explicit value crosses unchanged and still wins over both rows.
+      - ENABLE_THINKING=${ENABLE_THINKING:-false}
+      - TEMP=${TEMP:-}
+      - TEMPERATURE=${TEMPERATURE:-}
+      - TOP_P=${TOP_P:-}
+      - TOP_K=${TOP_K:-}
+      - MIN_P=${MIN_P:-}
+      - PRESENCE_PENALTY=${PRESENCE_PENALTY:-}
+      - REPEAT_PENALTY=${REPEAT_PENALTY:-}
       - NVIDIA_VISIBLE_DEVICES=${ESTATE_GPUS:-${NVIDIA_VISIBLE_DEVICES:-all}}
       # CUDA-level GPU mask — the runtime-agnostic half of GPU selection (#610).
       # CDI runtimes (NixOS, nvidia-ctk cdi) IGNORE NVIDIA_VISIBLE_DEVICES, so
@@ -146,10 +159,26 @@ services:
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off)" >&2
         fi
-        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}"
+        # -- Sampler follows the reasoning mode ----------------------------------
+        # The card publishes TWO sampler rows (see "SAMPLER" in the header);
+        # ENABLE_THINKING now selects the row — one variable instead of the
+        # four-variable ritual (#1014). `:=` defaults: an explicit TEMP /
+        # TOP_P / PRESENCE_PENALTY from .env or shell STILL WINS in both
+        # branches. top_k / min_p / repetition_penalty are identical across the
+        # rows and stay mode-independent.
+        _temp="$${TEMP:-$${TEMPERATURE:-}}"
+        if [ "$${ENABLE_THINKING:-false}" = "true" ]; then
+          : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
+          echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
         else
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}"
+          : "$${_temp:=0.7}" "$${TOP_P:=0.80}" "$${PRESENCE_PENALTY:=1.5}"
+          echo "[sampler] instruct row (default): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
+        fi
+        SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY},\"repetition_penalty\":$${REPEAT_PENALTY:-1.0}}")
+        if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+        else
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
         fi
       - --
     command:
@@ -196,8 +225,10 @@ services:
       # Callers opt in per-request; the server default below is "low", so send
       # "reasoning_effort":"medium" (un-nudged) or "xhigh" (deliberate) to override.
       # ⭐ THINKING GATE — flip the server default with ENABLE_THINKING=true.
-      #   Pair it with the card's thinking sampler (see the THINKING MODE block
-      #   in the header); the two are independent and mismatching them is SILENT.
+      #   The card's matching sampler row follows AUTOMATICALLY now: the
+      #   entrypoint keys --override-generation-config off the same flag, so an
+      #   explicit TEMP/TOP_P/PRESENCE_PENALTY is the only way to deviate. See
+      #   the SAMPLER header block.
       - --default-chat-template-kwargs
       # ⭐ reasoning_effort default = low (2026-08-16). It is a PER-REQUEST OpenAI
       # control, so this is only the fallback for callers that send nothing — any
@@ -228,15 +259,10 @@ services:
       # Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
       - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
       - --enable-chunked-prefill
-      # SAMPLER = the model card's INSTRUCT row, because this compose ships
-      # thinking OFF. ⚠️ The sampler does NOT follow ENABLE_THINKING: the two are
-      # independent and mismatching them is SILENT. For thinking mode set all
-      # four together — ENABLE_THINKING=true TEMP=1.0 TOP_P=0.95
-      # PRESENCE_PENALTY=0.0 (top_k/min_p/repetition are identical in both rows,
-      # so they need no override). Full rationale + both rows in the "SAMPLER"
-      # header block above.
-      - --override-generation-config
-      - '{"temperature":${TEMP:-${TEMPERATURE:-0.7}},"top_p":${TOP_P:-0.80},"top_k":${TOP_K:-20},"min_p":${MIN_P:-0.0},"presence_penalty":${PRESENCE_PENALTY:-1.5},"repetition_penalty":${REPEAT_PENALTY:-1.0}}'
+      # SAMPLER moved INTO the entrypoint (#984/#1014): at boot it derives
+      # --override-generation-config from the model-card row matching
+      # ENABLE_THINKING (instruct by default; thinking when true); explicit
+      # TEMP/TOP_P/PRESENCE_PENALTY still win. Both rows: "SAMPLER" header above.
       - --host
       - 0.0.0.0
       - --port

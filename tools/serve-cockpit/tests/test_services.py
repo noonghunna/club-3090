@@ -186,6 +186,21 @@ FIT_JSON = json.dumps(
     {"verdict": "fits-clean", "vram_est_gb": 19.881, "band_gb": 1.5, "max_ctx": 262144}
 )
 
+# kv-calc --model M --compose C --kv-format F --solve-max-ctx --json shape
+# (REAL output fields, verified live on qwen3.6-27b dual): prediction at the
+# requested ctx + solved_max_ctx (the fit ceiling).  The Optimize brain calls
+# this once per hardware-legal KV dtype.
+SOLVE_JSON = json.dumps(
+    {
+        "model": "qwen3.6-27b", "weights_gb": 8.75,
+        "kv_pool_requested_gb": 8.68, "kv_pool_actual_gb": 8.68,
+        "kv_pool_sliding_fixed_gb": 0.0, "activation_gb": 0.82,
+        "cudagraph_overhead_gb": 1.75, "drafter_gb": 0.0,
+        "total_gb": 19.997, "vram_gb": 24.0, "budget_gb": 22.8,
+        "pct_of_vram": 87.7, "verdict": "PASS", "notes": [],
+        "solved_max_ctx": 262144,
+    }
+)
 # kv-calc --fit-all --json shape: {card, card_vram_gb, variants:{slug: verdict}}.
 # The catalog fit column is enriched from ONE --fit-all call (not N --fit calls);
 # non-vLLM (kvcalc_key SKIP) slugs come back as {"verdict": "skip"}.
@@ -304,6 +319,7 @@ def full_runner(**overrides) -> FakeRunner:
         "gpu-mode.sh --list-modes --json": ok(SCENES_JSON),
         "pull.sh": ok(PULL_JSON),
         "estate_cli.py report-state --json": ok(ESTATE_REPORT_FREE),
+        "--solve-max-ctx": ok(SOLVE_JSON),
         "health.sh": ok(HEALTH_DOWN),
         "docker ps": ok(DOCKER_PS_EMPTY),
         "docker images -q": ok("sha256:abc123\n"),  # comfyui-local present by default
@@ -321,11 +337,27 @@ class TestScriptsImportable:
     def test_init_puts_repo_root_on_sys_path(self, tmp_path):
         """route-G/C ② Serve emit does `from scripts.lib.profiles...`; c3 runs from
         tools/serve-cockpit/ so the repo root ISN'T on sys.path by default. __init__
-        must add it, else serve dies "No module named 'scripts'" (2026-07-09)."""
+        must add it, else serve dies "No module named 'scripts'" (2026-07-09).
+
+        Wave-3 contract update: only roots that actually PROVIDE the module tree
+        are inserted. scripts/lib/profiles is a REGULAR package, so the first
+        sys.path entry containing it pins resolution exclusively — inserting a
+        bare tmp root shadows the real tree and poisons every later
+        `scripts.lib.profiles.*` import (the full-suite contamination this test
+        used to cause)."""
         import sys
-        assert str(tmp_path) not in sys.path
+
+        seeded = tmp_path / "scripts" / "lib" / "profiles"
+        seeded.mkdir(parents=True)
+        (seeded / "__init__.py").write_text("")
+        before = set(sys.path)
         CockpitData(tmp_path, runner=full_runner())
-        assert str(tmp_path) in sys.path
+        assert str(tmp_path) in sys.path  # provides the tree -> inserted
+
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        CockpitData(bare, runner=full_runner())
+        assert str(bare) not in sys.path  # no module tree -> NOT inserted
 
 
 class TestParseHelpers:
@@ -752,6 +784,29 @@ class TestLoadCatalog:
         assert getattr(bare, "weights_companions") == []
         assert getattr(bare, "vision") is False
         assert getattr(bare, "act_format") == ""  # older emit → column shows "—"
+
+    def test_variant_row_from_dict_attaches_sampler_profiles(self):
+        """#1014 L2→L3: the per-mode model-card sampler rows join at emit and
+        attach to the row (same pattern as the facets above) — the serve-confirm
+        thinking toggle gates on them.  Absent (older emit / single-row model)
+        → None → no toggle."""
+        profiles = {
+            "instruct": {"temperature": 0.7, "top_p": 0.8, "presence_penalty": 1.5},
+            "thinking": {"temperature": 1.0, "top_p": 0.95, "presence_penalty": 0.0},
+        }
+        row = _variant_row_from_dict({
+            "slug": "vllm/qwen38-27b-dual-max", "port": 8010,
+            "sampler_profiles": profiles,
+        })
+        assert getattr(row, "sampler_profiles") == profiles
+        # absent → None (never a missing-attr on older emits)
+        bare = _variant_row_from_dict({"slug": "x/y", "port": 1})
+        assert getattr(bare, "sampler_profiles") is None
+        # a null from the emit (json None) also degrades to None
+        nulled = _variant_row_from_dict({
+            "slug": "x/y", "port": 1, "sampler_profiles": None,
+        })
+        assert getattr(nulled, "sampler_profiles") is None
 
     @pytest.mark.asyncio
     async def test_run_weights_download_injects_companion_keys(self):
@@ -3888,38 +3943,64 @@ class TestPromoteScaffold:
             arch="Qwen3ForCausalLM", eligible=True, fit_verdict="fits-clean",
             route="C", sibling_slug="vllm/dual", quant_match="int4",
             drop_spec_config=True,
+            # C4-rev: deriver facts (threaded through ByoResult.facts).
+            facts={
+                "hidden_size": 5120, "num_hidden_layers": 64,
+                "num_attn_heads": 24, "num_kv_heads": 4,
+                "head_dim_attn": 256, "max_ctx_supported": 262144,
+                "weights_total_gb": 30.9, "valid_tp": [1, 2],
+            },
         )
         base.update(over)
         return ByoResult(**base)
 
-    def test_scaffold_computes_real_profile_and_registry_shapes(self):
+    def test_scaffold_defaults_to_local_layer_with_real_shapes(self):
         cd = CockpitData(ROOT, runner=full_runner())
         meas = Measurement(narr_tps=174.0, code_tps=42.0, quality_8pk="109/150", source="explain")
         sc = cd.promote_scaffold(byo=self._byo(), measurement=meas)
         assert sc.computed is True
-        # ModelProfile YAML — REAL schema keys (ADDING_MODELS.md).
-        assert "schema_version: 1" in sc.profile_yaml
+        # C4-rev: LOCAL layer by default — gitignored paths + local/ namespace.
+        assert sc.layer == "local"
+        assert sc.profile_path.startswith("scripts/lib/profiles-local/models.d/")
+        assert sc.registry_slug.startswith("local/")
+        assert sc.spec["compose"]["path"].startswith(
+            "scripts/lib/profiles-local/composes/"
+        )
+        # ModelProfile YAML — REAL canonical schema keys, arch dims AUTO-FILLED
+        # from the deriver facts (never fabricated when a fact is missing).
         assert sc.profile_yaml.startswith("schema_version: 1\n")
-        assert "\nweights:\n" in sc.profile_yaml            # weights MAP, not a list
+        assert "\nweights:\n" in sc.profile_yaml       # weights MAP, not a list
         assert "vision_capable:" in sc.profile_yaml
-        assert sc.profile_path.startswith("scripts/lib/profiles/models/")
-        # compose_registry _entry(...) row — REAL kwargs.
-        for kw in ("model=", "weights_variant=", "workload=", "engine=",
-                   "drafter=", "kv_format=", "tp=", "compose_path=",
-                   "default_port=", "kvcalc_key=", "status="):
-            assert kw in sc.registry_entry, kw
-        assert "_entry(" in sc.registry_entry
-        # New models START at incubating (ADDING_MODELS.md rule).
-        assert 'status="incubating"' in sc.registry_entry
+        assert "num_hidden_layers: 64" in sc.profile_yaml
+        assert "num_kv_heads: 4" in sc.profile_yaml
+        assert "max_ctx_supported: 262144" in sc.profile_yaml
+        assert "size_gb: 30.9" in sc.profile_yaml
+        # Registry entry preview — a JSON block for the local layer (the local
+        # registry is JSON, never a python-source edit).
+        entry = json.loads(sc.registry_entry)[sc.registry_slug]
+        assert entry["model"] == "qwen3-27b-abliterated"
+        assert entry["status"] == "incubating"          # NEW MODELS START HERE
+        assert entry["compose_path"] == sc.spec["compose"]["path"]
         # Measured Evidence numbers flow into the status_note.
-        assert "8-pack 109/150" in sc.registry_entry
+        assert "8-pack 109/150" in json.dumps(entry)
+        # The machine-readable spec carries the same entry.
+        assert sc.spec["registry_entry"]["slug"] == sc.registry_slug
+
+    def test_scaffold_keeps_placeholders_without_facts(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        sc = cd.promote_scaffold(byo=self._byo(facts={}))
+        assert sc.computed
+        # No fabricated numbers: missing facts stay REQUIRED placeholders.
+        assert "num_hidden_layers: <int>" in sc.profile_yaml
+        assert sc.spec["display_name"].startswith("<")
+        assert sc.spec["family"] == "<family-tag>"
 
     def test_scaffold_drops_drafter_when_byo_has_no_mtp_head(self):
         cd = CockpitData(ROOT, runner=full_runner())
         sc = cd.promote_scaffold(byo=self._byo(drop_spec_config=True))
-        assert "drafter=None" in sc.registry_entry
+        assert json.loads(sc.registry_entry)[sc.registry_slug]["drafter"] is None
 
-    def test_scaffold_write_plan_is_gated_mock_only(self):
+    def test_write_plan_chains_promote_diagnose_preflight(self):
         cd = CockpitData(ROOT, runner=full_runner())
         sc = cd.promote_scaffold(byo=self._byo())
         plan = sc.write_plan
@@ -3927,9 +4008,30 @@ class TestPromoteScaffold:
         assert plan.kind == "promote_catalog"
         assert plan.requires_confirm is True
         assert plan.requires_reconcile is False
-        # The gated action runs the guard suite; it does NOT auto-write scripts/.
+        joined = " ".join(plan.cmd)
+        # C4-rev cmd chain: promote.py && diagnose-profile.sh && preflight.
         assert plan.cmd[:2] == ["bash", "-c"]
-        assert "scripts/tests/*.sh" in " ".join(plan.cmd)
+        assert "promote.py --spec-env C3_PROMOTE_SPEC --layer local" in joined
+        assert f"bash scripts/diagnose-profile.sh {sc.registry_slug}" in joined
+        assert f"bash scripts/preflight-add-model.sh {sc.registry_slug}" in joined
+        # The spec rides in the child env (merged over os.environ at execution).
+        assert plan.env is not None and "C3_PROMOTE_SPEC" in plan.env
+        spec = json.loads(plan.env["C3_PROMOTE_SPEC"])
+        assert spec["model_id"] == sc.model_id
+        assert spec["registry_entry"]["slug"] == sc.registry_slug
+
+    def test_core_write_plan_rebases_to_curated_catalog(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        sc = cd.promote_scaffold(byo=self._byo())
+        plan = cd.promote_write_plan(sc, layer="core")
+        joined = " ".join(plan.cmd)
+        assert "--layer core" in joined
+        spec = json.loads(plan.env["C3_PROMOTE_SPEC"])
+        # Rebased OUT of the local namespace onto curated paths.
+        assert spec["registry_entry"]["slug"].startswith("vllm/")
+        assert spec["compose"]["path"].startswith("models/")
+        # The gate flag is NOT injected — it must exist in the user's env.
+        assert "C3_ALLOW_CORE_PROMOTE" not in (plan.env or {})
 
     @pytest.mark.asyncio
     async def test_promote_does_not_write_into_scripts_dir(self, tmp_path):
@@ -3957,32 +4059,139 @@ class TestPromoteScaffold:
         assert sc.write_plan is None             # nothing to stage on a failed scaffold
 
 
-class TestOptimizeSeam:
-    """Hook 3 — ▸ Optimize for my card: DORMANT v0.10.0 seam (no-op)."""
+class TestOptimizeBrain:
+    """Hook 3 — ▸ Optimize for my card: the kv-calc brain (P4).
+
+    The brain runs kv-calc via the FakeRunner: one ``--fit <slug>`` verdict +
+    one ``--solve-max-ctx`` pricing per hardware-legal KV dtype.  Honesty
+    contract: failures render error cards, SKIP engines get an explicit
+    unsupported message, and nothing is ever fabricated."""
+
+    @staticmethod
+    def _entry(kvcalc_key="qwen3.6-27b:dual", engine="vllm-stable",
+               compose_path="models/qwen3.6-27b/vllm/compose/dual/autoround-int4/fp8-mtp.yml",
+               configured_ctx=262144):
+        from club3090_cockpit.data import CatalogEntry
+        from club3090_tui_core import VariantRow
+        return CatalogEntry(row=VariantRow(
+            slug="vllm/dual", switch_engine="vllm", launch_engine="vllm",
+            compose_dir=compose_path.rsplit("/", 1)[0],
+            file=compose_path.rsplit("/", 1)[-1],
+            port=8010, model="qwen3.6-27b", engine=engine, kvcalc_key=kvcalc_key,
+            container="c", compose_path=compose_path, status="production",
+            ctx_label="262K", status_note="", configured_ctx=configured_ctx))
+
+    @staticmethod
+    def _seed_repo(tmp_path):
+        """Seed the profile files legality/compose-default reads touch: engine
+        KV list, hardware KV list + VRAM, the slug compose's ${KV_CACHE_DTYPE}."""
+        eng = tmp_path / "scripts" / "lib" / "profiles" / "engines"
+        eng.mkdir(parents=True)
+        (eng / "vllm-stable.yml").write_text(
+            "supported_kv_formats:\n"
+            "  - bf16\n  - fp16\n  - fp8_e4m3\n  - fp8_e5m2\n"
+            "  - int8_per_token_head\n",
+            encoding="utf-8")
+        hw = tmp_path / "scripts" / "lib" / "profiles" / "hardware"
+        hw.mkdir(parents=True)
+        # Ampere card: fp8_e4m3 NOT hardware-supported → must drop from options.
+        (hw / "rtx-3090.yml").write_text(
+            "sm: 8.6\nvram_gb: 24\n"
+            "supported_kv_formats:\n"
+            "  - bf16\n  - fp16\n  - fp8_e5m2\n  - int8_per_token_head\n",
+            encoding="utf-8")
+        compose = tmp_path / "models" / "qwen3.6-27b" / "vllm" / "compose" \
+            / "dual" / "autoround-int4"
+        compose.mkdir(parents=True)
+        (compose / "fp8-mtp.yml").write_text(
+            'environment:\n  - KV_CACHE_DTYPE=${KV_CACHE_DTYPE:-fp8_e5m2}\n',
+            encoding="utf-8")
+        return tmp_path
 
     @pytest.mark.asyncio
-    async def test_optimizer_is_not_available_v0_10_0(self):
+    async def test_brain_prices_recommendations_and_legal_options(self, tmp_path):
+        root = self._seed_repo(tmp_path)
+        cd = CockpitData(root, runner=full_runner())
+        rep = await cd.optimize_for_card(slug="vllm/dual", entry=self._entry())
+        assert rep.available is True
+        assert rep.recommended_max_ctx == 262144
+        assert rep.fit_vram_est_gb == 19.881 and rep.band_gb == 1.5
+        assert rep.recommended_kv_format == "fp8_e5m2"     # from the compose knob
+        # Hardware-legal ONLY: engine's fp8_e4m3 dropped by the rtx-3090 set.
+        assert [o.kv_format for o in rep.options] == [
+            "bf16", "fp16", "fp8_e5m2", "int8_per_token_head"]
+        for o in rep.options:
+            assert o.solved_max_ctx == 262144              # SOLVE_JSON ceiling
+            assert o.vram_est_gb == 19.997
+            assert o.headroom_gb == pytest.approx(22.8 - 19.997)
+            assert o.verdict == "fits-clean"               # PASS → fits vocabulary
+        # Interface: --fit carries the card; each solve prices the kvcalc_key
+        # topology with the card's VRAM at the slug's configured ctx.
+        fit_calls = [c for c in cd._runner.calls if "--fit " in " ".join(c)]
+        solve_calls = [c for c in cd._runner.calls if "--solve-max-ctx" in c]
+        assert len(fit_calls) == 1 and "--card rtx-3090" in " ".join(fit_calls[0])
+        assert len(solve_calls) == 4
+        j = " ".join(solve_calls[0])
+        assert "--model qwen3.6-27b --compose dual" in j
+        assert "--vram 24" in j and "--max-ctx 262144" in j
+
+    @pytest.mark.asyncio
+    async def test_skip_engine_gets_explicit_unsupported_message(self):
+        e = self._entry(kvcalc_key="SKIP", engine="ik-llama")
         cd = CockpitData(ROOT, runner=full_runner())
-        report = await cd.optimize_for_card(slug="vllm/dual")
-        assert report.available is False
-        assert report.message == "optimizer not available (v0.10.0)"
-        # No fabricated recommendation / honesty gates while dormant.
-        assert report.recommended_slug == ""
-        assert report.boot_fit == "" and report.runtime == ""
-        assert report.confidence == ""
-        assert report.accept_runtime_risk_required is False
+        rep = await cd.optimize_for_card(slug="ik-llama/iq4ks-mtp", entry=e)
+        assert rep.available is False
+        assert "kvcalc_key=SKIP" in rep.message
+        assert rep.options == [] and rep.recommended_max_ctx is None
 
     @pytest.mark.asyncio
-    async def test_optimizer_does_not_fabricate_even_if_probe_errors(self):
-        """A probe error keeps the seam honestly dormant (never invents output)."""
-        async def boom(cmd, *, cwd, timeout=30.0):
-            raise RuntimeError("no such script")
-        runner = full_runner()
-        runner.run = boom  # type: ignore[assignment]
+    async def test_kvcalc_failure_renders_honest_error_no_numbers(self):
+        runner = full_runner(**{"kv-calc.py --fit": RunResult(
+            returncode=1, stdout="", stderr="boom")})
         cd = CockpitData(ROOT, runner=runner)
-        report = await cd.optimize_for_card()
-        assert report.available is False
-        assert "v0.10.0" in report.message
+        rep = await cd.optimize_for_card(slug="vllm/dual", entry=self._entry())
+        assert rep.available is False
+        assert "kv-calc failed for vllm/dual" in rep.message
+        assert rep.recommended_max_ctx is None and rep.options == []
+
+    @pytest.mark.asyncio
+    async def test_unknown_verdict_is_an_error_not_a_recommendation(self):
+        runner = full_runner(**{"kv-calc.py --fit": ok(json.dumps(
+            {"verdict": "unknown", "error": "unrecognized --card 'x'"}) )})
+        cd = CockpitData(ROOT, runner=runner)
+        rep = await cd.optimize_for_card(slug="vllm/dual", entry=self._entry())
+        assert rep.available is False
+        assert "unrecognized --card" in rep.message
+
+    @pytest.mark.asyncio
+    async def test_option_pricing_failure_keeps_honest_note_row(self, tmp_path):
+        root = self._seed_repo(tmp_path)
+        runner = full_runner()   # solve key present — remove it to force failure
+        del runner.responses["--solve-max-ctx"]   # no solve key → per-option failure
+        cd = CockpitData(root, runner=runner)
+        rep = await cd.optimize_for_card(slug="vllm/dual", entry=self._entry())
+        assert rep.available is True                    # the --fit rec still lives
+        assert len(rep.options) == 4
+        for o in rep.options:
+            assert o.solved_max_ctx is None             # no fabricated numbers…
+            assert "kv-calc failed" in o.note           # …the error rides instead
+
+    def test_apply_plan_stages_gated_serve_with_env_overrides(self):
+        cd = CockpitData(ROOT, runner=full_runner())
+        plan = cd.optimize_apply_plan(
+            "vllm/dual", max_model_len=196608, kv_dtype="int8_per_token_head")
+        assert plan.kind == "serve"
+        assert plan.cmd == ["bash", "scripts/switch.sh", "vllm/dual"]
+        # Overrides ride plan.env (merged over os.environ by execute_action —
+        # the SAME mechanism as the ② Serve override editor).  No new write path.
+        assert plan.env == {"MAX_MODEL_LEN": "196608",
+                            "KV_CACHE_DTYPE": "int8_per_token_head"}
+        assert plan.requires_confirm is True            # advisory — user confirms
+        assert plan.requires_reconcile is True          # claims the GPU
+        # Partial applies: ctx-only keeps the compose's own dtype.
+        ctx_only = cd.optimize_apply_plan("vllm/dual", max_model_len=131072)
+        assert ctx_only.env == {"MAX_MODEL_LEN": "131072"}
+        assert "KV_CACHE_DTYPE" not in ctx_only.env
 
 
 # ── EstateState.api_booting (engine-agnostic mid-boot signal) ─────────────────────

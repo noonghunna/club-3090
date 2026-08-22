@@ -180,20 +180,48 @@ else
     echo "  (SKIP_PIPE set — install later: bash services/studio/push-pipe-to-owui.sh)"
 fi
 
-# --- 4b. Wire the LLM catalog into OWUI as per-backend connections -----------
-# OWUI hides models from an UNREACHABLE connection, so pointing it straight at each
-# model's own port (instead of the always-up LiteLLM :4000 gateway) makes the chat
-# picker scene-accurate: a model shows only while its gpu-mode scene is serving.
-# Both helpers are idempotent + no-op when OWUI is down or the connection already
-# (does not) exist — safe to re-run. Served names match the catalog (model IDs unchanged).
+# --- 4b. Wire the model catalog into OWUI through the LiteLLM gateway --------
+# Post-collapse topology (matches the compose default in
+# services/openwebui/docker-compose.yml): Open WebUI routes model traffic
+# through the always-up LiteLLM gateway (:4000), which fronts every
+# gateway-routed scene (27b :8010 · 35b-a3b :8051 · gemma-31b :8032 ·
+# gemma-12b :8038 · deckard :8199). The ai-studio director (:8090) has NO
+# gateway route (not gateway-flagged), so it stays a direct backend — the
+# only non-gateway connection this script still registers.
+#
+# Legacy-volume caveat: OWUI stores connections in its DB (PersistentConfig),
+# so an EXISTING volume keeps whatever wiring an older setup run wrote
+# (per-port direct connections, :4000 dropped). This step migrates it:
+# register :4000 + :8090, drop the now-redundant gateway-routed per-port
+# entries so each model isn't listed twice in the picker. On a fresh volume
+# the compose env already provides the same two connections and the
+# unregisters are no-ops — the end state is identical either way.
+#
+# Rollback symmetry: the compose honors OWUI_OPENAI_API_BASE_URLS(+_KEYS) to
+# restore legacy per-port backends; when that override is set here we mirror
+# it and leave the stored connections untouched instead of re-imposing the
+# gateway wiring on top of a deliberately pinned list.
+#
+# Testability hook (mirrors GPU_MODE_BIN above): the register/unregister
+# helpers are overridable so the regression test can assert the wiring
+# without docker/OWUI. All helpers are idempotent + no-op when OWUI is down
+# or the connection already (does not) exist — safe to re-run.
+OWUI_REGISTER_BIN="${OWUI_REGISTER_BIN:-$REPO_DIR/scripts/lib/owui-register.sh}"
+OWUI_UNREGISTER_BIN="${OWUI_UNREGISTER_BIN:-$REPO_DIR/scripts/lib/owui-unregister.sh}"
 if [ -z "${SKIP_OWUI_WIRING:-}" ]; then
-    say "── Wiring the LLM catalog into Open WebUI (per-backend, scene-accurate) ──"
-    for port in 8090 8010 8051 8032 8038 8199; do
-        bash "$REPO_DIR/scripts/lib/owui-register.sh" "$port" || true
-    done
-    # Drop the legacy LiteLLM :4000 gateway connection — it lists every catalog model
-    # regardless of which scene is up (the masking this per-backend wiring replaces).
-    bash "$REPO_DIR/scripts/lib/owui-unregister.sh" 4000 || true
+    if [ -n "${OWUI_OPENAI_API_BASE_URLS:-}" ]; then
+        echo "  (OWUI_OPENAI_API_BASE_URLS set — leaving OWUI connections as-is)"
+    else
+        say "── Wiring the LLM catalog into Open WebUI (gateway-first) ──"
+        bash "$OWUI_REGISTER_BIN" 4000 || true
+        # Director: no gateway route → stays a direct backend (see above).
+        bash "$OWUI_REGISTER_BIN" 8090 || true
+        # Drop the per-port direct connections PRE-collapse runs of this script
+        # wrote: every one of these scenes is gateway-routed now.
+        for port in 8010 8051 8032 8038 8199; do
+            bash "$OWUI_UNREGISTER_BIN" "$port" || true
+        done
+    fi
 else
     echo "  (SKIP_OWUI_WIRING set — leaving OWUI connections as-is)"
 fi

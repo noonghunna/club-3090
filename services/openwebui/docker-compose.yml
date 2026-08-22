@@ -22,28 +22,45 @@ services:
       # FRESH volume; on an existing volume set it in Admin → Settings → Images instead.
       - ./imagegen.env
     environment:
-      # Chat models — bootstrap one connection PER BACKEND on a FRESH volume (PersistentConfig),
-      # pointing OWUI straight at each model's own port rather than at the LiteLLM gateway. OWUI
-      # hides models from an UNREACHABLE connection, so each model appears in the picker only while
-      # its gpu-mode scene is actually serving — scene-accurate, no listing dead routes. (Going via
-      # LiteLLM :4000 instead would always list every catalog model, since the gateway is always up;
-      # that masking is exactly what this avoids. LiteLLM stays running for other clients — it just
-      # leaves OWUI's picker.) Served names match the catalog, so model IDs are unchanged:
-      #   :8090 = ai-studio qwen director (uncensored prompt crafter; studio lanes call it internally,
-      #           and it doubles as a general chat model). Up only in the ai-studio scene.
-      #   :8010 = qwen3.6-27b     (gpu-mode qwen27b)
-      #   :8051 = qwen3.6-35b-a3b-autoround (gpu-mode qwen35b-a3b)
-      #   :8032 = gemma-4-31b     (gpu-mode gemma-31b)
-      #   :8038 = gemma-4-12b-int8          (gpu-mode gemma12b)
-      #   :8199 = deckard-40b               (gpu-mode deckard)
-      # Plural *_URLS / *_KEYS are ;-separated. On an EXISTING volume the stored config wins — re-run
-      # scripts/setup-ai-studio.sh (it registers these + drops a stale :4000) or set them in
-      # Admin → Settings → Connections. Backends are no-auth on localhost, so the key is a placeholder.
-      - OPENAI_API_BASE_URLS=http://host.docker.internal:8090/v1;http://host.docker.internal:8030/v1;http://host.docker.internal:8010/v1;http://host.docker.internal:8051/v1;http://host.docker.internal:8032/v1;http://host.docker.internal:8038/v1;http://host.docker.internal:8199/v1
+      # Chat models — ONE connection to the LiteLLM gateway (:4000) instead of one
+      # per model port. The gateway fronts every model-serving scene that is
+      # gateway-routed in services/litellm/config.yaml (generated from the
+      # compose_registry gateway=True flags):
+      #   qwen3.6-27b (:8010) · deepseek-v4-flash (:8030) · qwen3.6-35b-a3b (:8051)
+      #   gemma-4-31b (:8032) · gemma-4-12b-int8 (:8038) · deckard-40b (:8199)
+      # The ai-studio director (:8090, llamacpp/qwen38-27b-single-iq4xs) has NO
+      # gateway route (incubating, not gateway-flagged), so it stays a direct
+      # backend — collapsing it too would silently drop it from the picker.
+      #
+      # Reachability: the openwebui and litellm compose files are SEPARATE compose
+      # projects with no shared network, so the `litellm` service DNS name does
+      # NOT resolve from open-webui. host.docker.internal:4000 does — litellm
+      # publishes 4000 on the host and this compose already maps
+      # host.docker.internal (extra_hosts below), the same path every backend
+      # here has always used.
+      #
+      # ⚠️ Behavior change vs per-port backends: the gateway is always up, so OWUI
+      # now lists EVERY catalog model (including the cloud reference routes)
+      # instead of only the models whose gpu-mode scene is currently serving.
+      # Requests to a scene that is down fail at the gateway rather than
+      # disappearing from the picker.
+      #
+      # Override / rollback: set OWUI_OPENAI_API_BASE_URLS + OWUI_OPENAI_API_KEYS
+      # (repo .env via --env-file, or host env) to the old per-port lists to
+      # restore pre-collapse behavior without editing this file.
+      #
+      # ⚠️ PersistentConfig: on an EXISTING volume the stored config WINS — re-run
+      # scripts/setup-ai-studio.sh or set these in Admin → Settings → Connections.
+      # (setup-ai-studio.sh migrates legacy volumes to this same wiring: it
+      # registers :4000 + the unrouted :8090 director and drops the pre-collapse
+      # per-port connections; it also honors OWUI_OPENAI_API_BASE_URLS and stays
+      # out of the way when the override is set.) Backends are no-auth on
+      # localhost, so the key is a placeholder.
+      - "OPENAI_API_BASE_URLS=${OWUI_OPENAI_API_BASE_URLS:-http://host.docker.internal:4000/v1;http://host.docker.internal:8090/v1}"
       # ⚠️ COUNT MUST MATCH *_URLS above — positional, ;-separated pairs. Nothing
       # validates this, so a backend added to one list and not the other silently
       # leaves that entry unpaired.
-      - OPENAI_API_KEYS=sk-noauth;sk-noauth;sk-noauth;sk-noauth;sk-noauth;sk-noauth;sk-noauth
+      - "OPENAI_API_KEYS=${OWUI_OPENAI_API_KEYS:-sk-noauth;sk-noauth}"
       # Ollama removed from the stack 2026-06-22 — disable the API so OWUI doesn't
       # probe a dead :11434 on boot (chat routes through the OpenAI API above).
       - ENABLE_OLLAMA_API=false

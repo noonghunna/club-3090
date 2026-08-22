@@ -315,3 +315,30 @@ valid_tp:
 # route to vllm-nightly-clean, TQ3 composes route to vllm-nightly-mtp.
 requires_genesis: false
 
+
+# `setup:` — dispatch policy for scripts/setup.sh (contract C1). setup.sh
+# derives its entire front door from `weights.py catalog --json`; this block
+# only names the keys where this model differs from the defaults
+# (primary = default_weight_variant, no aliases, no drafters). Absent block =
+# pure-default policy.
+setup:
+  # WEIGHTS=<alias> -> weight-variant key. `autoround` needs no entry: it is
+  # the default variant. These five mirror the old hand-written WEIGHTS= arms.
+  weights_aliases:
+    gguf: unsloth-q4km
+    iq4ks: ubergarm-iq4ks
+    fp8: fp8
+    qwopus-coder: qwopus-coder-mtp-q5km
+    carnice-v2: carnice-v2-q5km
+  # EXTRA_WEIGHT_KEYS fetched alongside an alias primary (old gguf arm pulled
+  # the F16 mmproj projector next to the Q4_K_M MTP GGUF).
+  alias_extras:
+    gguf: [gguf_mmproj_f16]
+  # Every old alias arm forced NEEDS_GENESIS=0: GGUF / alt-quant paths are
+  # overlay-free and never clone Genesis, even if the user exported
+  # NEEDS_GENESIS=1 for a TQ3 revival alongside a non-default WEIGHTS.
+  alias_resets_genesis: true
+  # WITH_DFLASH_DRAFT=1 target.
+  dflash: dflash
+  # WITH_PRISM_EAGLE3=1 target.
+  prism_eagle3: prism_eagle3

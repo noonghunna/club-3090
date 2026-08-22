@@ -29,7 +29,10 @@ export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
 python3 - <<'PY'
 import sys, collections
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY as R
+# C4-rev: merged view — LOCAL layer ports are conflict-checked against core.
+from scripts.lib.profiles.compose_registry import get_registry
+
+R = get_registry()
 
 # Pre-existing cross-model collisions, tracked for a separate port-hygiene PR.
 # Burn these down and DELETE them from here — the gate fails if a listed port

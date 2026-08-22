@@ -79,3 +79,14 @@ requires_genesis: false               # Gemma 4 family doesn't need Genesis (no 
 # actively ship the drafter on. Calibration corpus is empty (both slugs
 # kvcalc_key=SKIP) pending the #464 rebench anchor; projections stay directional.
 kv_calc_supported: true
+
+# `setup:` — dispatch policy for scripts/setup.sh (contract C1); see
+# qwen3.6-27b.yml for the field reference. Only the non-default keys appear.
+setup:
+  # setup.sh's default fetch is the autoround-int4-mixed tier, not the profile
+  # default (awq).
+  primary: autoround-int4-mixed
+  # WITH_ASSISTANT_DRAFT=1 target — fetch the MTP assistant if using awq-mtp.
+  assistant_draft: assistant
+  weights_aliases:
+    awq: awq

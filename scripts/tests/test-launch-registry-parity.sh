@@ -25,7 +25,8 @@ import yaml
 
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
-from scripts.lib.profiles.compose_registry import COMPOSE_REGISTRY
+# C4-rev: merged view — LOCAL layer slugs must be launch-launchable too.
+from scripts.lib.profiles.compose_registry import get_registry
 
 
 def launch_engine(key):
@@ -44,7 +45,7 @@ def container(path):
         return m.group(1) if m else raw
     return ''
 
-for key, entry in COMPOSE_REGISTRY.items():
+for key, entry in get_registry().items():
     q = shlex.quote(key)
     print(f"REG_MODEL[{q}]={shlex.quote(str(entry['model']))}")
     print(f"REG_ENGINE[{q}]={shlex.quote(launch_engine(key))}")
