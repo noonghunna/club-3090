@@ -11,11 +11,17 @@ translated to the CORE layout per docs/ADDING_MODELS.md:
 
     <out>/models/<id>.yml                                    the ModelProfile
     <out>/models/<id>/<engine>/compose/<topology>/<quant>/<serving>.yml
-    <out>/compose_registry.patch   unified diff adding the ``_entry(...)`` row(s)
-                                   to COMPOSE_REGISTRY + the ``setup:`` block notes
+    <out>/registry-entry.yaml     the registry ENTRY FILE — the ``entries:``
+                                  map (slug → _entry kwargs) in exactly the
+                                  registry.yaml DATA subset, headed by the
+                                  canonical merge command
 
-The contributor copies ``models/…`` into their branch verbatim and applies the
-patch; nothing in THIS repo is touched (the export writes only under ``--out``).
+The catalog is DATA now (registry.yaml; compose_registry.py is the loader
+shim), so artifact 3 is an entry FILE, not a source patch: the contributor
+copies ``models/…`` into their branch verbatim and merges the entry with the
+documented promote-style command (``load_registry_data`` + ``dump_registry_yaml``
+canonical rewrite — the same path promote.py --layer core uses); nothing in
+THIS repo is touched (the export writes only under ``--out``).
 
 Refusals (exit 3, nothing written) fire when the local id lacks REQUIRED core
 fields — the checks a maintainer would bounce the PR for: a real
@@ -38,7 +44,7 @@ from typing import Any, Optional
 # Repo-root default: this file lives at <root>/scripts/lib/profiles/export_pr.py.
 _DEFAULT_ROOT = Path(__file__).resolve().parents[3]
 
-_REG_REL = "scripts/lib/profiles/compose_registry.py"
+_REGISTRY_YAML_REL = "scripts/lib/profiles/registry.yaml"
 _LOCAL_DIR_REL = "scripts/lib/profiles-local"
 _LOCAL_MODELS_REL = f"{_LOCAL_DIR_REL}/models.d"
 _LOCAL_COMPOSES_REL = f"{_LOCAL_DIR_REL}/composes"
@@ -68,24 +74,23 @@ def _info(msg: str) -> None:
     print(f"[export-pr] {msg}")
 
 
-def _py_literal(v: Any) -> str:
-    """JSON-sourced value → Python literal for the _entry(...) row (same type
-    set as the registry kwargs carry)."""
-    if v is None:
-        return "None"
-    if isinstance(v, bool):
-        return "True" if v else "False"
-    if isinstance(v, str):
-        return repr(v)
-    if isinstance(v, list):
-        return "[" + ", ".join(_py_literal(x) for x in v) + "]"
-    return repr(v)
-
-
 def _is_real_str(v: Any) -> bool:
     """A filled-in human value — not empty, not a leftover ``<...>`` scaffold
     placeholder."""
     return isinstance(v, str) and bool(v.strip()) and "<" not in v
+
+
+def registry_module(root: Path):
+    """Import the TARGET repo's compose_registry (the loader surface) — used
+    BOTH for the ``_entry`` dry-wrap validation and for rendering the entry
+    file with the loader's own YAML-subset emitters (never a second writer
+    that can drift)."""
+    sys.path.insert(0, str(root))
+    try:
+        import scripts.lib.profiles.compose_registry as reg_mod  # noqa: E402
+    except Exception as exc:  # pragma: no cover - import failure surfaced later
+        raise Refusal(f"compose_registry.py did not import: {exc}")
+    return reg_mod
 
 
 def load_local_state(root: Path, mid: str) -> dict:
@@ -229,27 +234,19 @@ def completeness_gaps(root: Path, state: dict) -> list[str]:
                 "(kv-calc projection; llama-family may omit it → SKIP)"
             )
 
-    # ── Dry-wrap the TRANSLATED kwargs exactly like compose_registry will —
-    # a kwarg missing from _entry's signature (e.g. `drafter`) or rejected by
-    # its validation refuses HERE, before any bundle is written.
+    # ── Dry-wrap the TRANSLATED kwargs exactly like the loader will — a kwarg
+    # missing from _entry's signature (e.g. `pp`) or rejected by its
+    # validation refuses HERE, before any bundle is written.
     if not gaps:
+        reg_mod = registry_module(root)
         for e in state["entries"]:
             t = translated_entry(state, e)
-            sys.path.insert(0, str(root))
             try:
-                from scripts.lib.profiles.compose_registry import (  # noqa: E402
-                    _entry,
-                )
-
-                _entry(**t["kwargs"])
+                reg_mod._entry(**t["kwargs"])
             except TypeError as exc:
                 gaps.append(f"{e['slug']}: not valid _entry kwargs: {exc}")
             except ValueError as exc:
                 gaps.append(f"{e['slug']}: rejected by _entry: {exc}")
-            except Exception as exc:  # import failure of the registry itself
-                gaps.append(
-                    f"{e['slug']}: compose_registry.py did not import: {exc}"
-                )
     return gaps
 
 
@@ -286,75 +283,67 @@ def translated_entry(state: dict, entry: dict) -> dict:
     return {"slug": core_slug, "kwargs": kw}
 
 
-def render_entry_blocks(translated: list[dict], mid: str) -> list[str]:
-    """The inserted source lines: setup-block notes + one _entry(...) row per
-    translated entry (comments are valid inside the COMPOSE_REGISTRY literal)."""
+_MERGE_SNIPPET = (
+    "import sys; from pathlib import Path; "
+    "from scripts.lib.profiles.compose_registry import ("
+    "load_registry_data, parse_registry_text, dump_registry_yaml, _entry, "
+    "_DERIVED_ENTRY_KEYS); "
+    "reg = Path('scripts/lib/profiles/registry.yaml'); "
+    "d = load_registry_data(reg); "
+    "new = parse_registry_text(Path(sys.argv[1]).read_text(encoding='utf-8'), "
+    "source=sys.argv[1])['entries']; "
+    "clash = sorted(set(new) & set(d['entries'])); "
+    "assert not clash, f'slug collision: {clash}'; "
+    "d['entries'].update({slug: {k: v for k, v in _entry(**kw).items() "
+    "if k not in _DERIVED_ENTRY_KEYS} for slug, kw in new.items()}); "
+    "tmp = reg.with_name(reg.name + '.tmp'); "
+    "tmp.write_text(dump_registry_yaml(d), encoding='utf-8'); tmp.replace(reg)"
+)
+
+
+def render_registry_entry_yaml(reg_mod, translated: list[dict], mid: str) -> str:
+    """The registry ENTRY FILE: setup-block notes + the canonical merge
+    command (comments are valid registry.yaml DATA) + one ``entries:`` row per
+    translated entry, emitted with the LOADER'S OWN dump helpers so the file
+    is byte-style identical to what dump_registry_yaml writes — the stdlib
+    reader can never fail to re-parse it."""
     lines = [
-        f"    # ── Community PR import: {mid} (exported from the LOCAL layer) ──",
-        "    # Setup-block notes (scripts/lib/profiles/models/"
+        f"# ── Community PR import: {mid} (exported from the LOCAL layer) ──",
+        "#",
+        "# Merge this ENTRY FILE into scripts/lib/profiles/registry.yaml on your",
+        "# PR branch. The catalog is DATA — never hand-edit and never patch",
+        "# compose_registry.py (it is the loader shim). Canonical merge, from",
+        "# your PR-branch repo root (parse → validate through _entry →",
+        "# canonical dump_registry_yaml rewrite — promote.py's own path):",
+        "#",
+        f"#   python3 -c \"{_MERGE_SNIPPET}\" <path to this registry-entry.yaml>",
+        "#",
+        "# Then prove the merged catalog still loads:",
+        "#",
+        "#   python3 scripts/lib/profiles/migrate_registry_to_yaml.py --check",
+        "#",
+        "# Setup-block notes (scripts/lib/profiles/models/"
         f"{mid}.yml `setup:`):",
-        "    #   * ships NO setup: block — the default dispatch policy applies",
-        "    #     (primary fetch = default_weight_variant, no aliases/drafters).",
-        "    #     Add one ONLY if the fetch policy differs (ADDING_MODELS.md "
-        "Step 4c).",
-        "    #   * NEW MODELS START AT status=\"incubating\" (hidden from "
-        "`switch.sh --list`,",
-        "    #     --force to launch) — promote up the enum as the FULL gate "
-        "clears.",
-        "    #   * vLLM rows: author calibration/<id>.yml after 4+ measured "
-        "boots and",
-        "    #     bump test-compose-registry-disk.sh's catalog count for every "
-        "compose added.",
-        "    #   * Gateway-reachable? Add services/litellm/config.yaml route → "
-        ":<default_port>",
-        "    #     (test-litellm-ports-resolve.sh gates the port).",
+        "#   * ships NO setup: block — the default dispatch policy applies",
+        "#     (primary fetch = default_weight_variant, no aliases/drafters).",
+        "#     Add one ONLY if the fetch policy differs "
+        "(ADDING_MODELS.md Step 4c).",
+        "#   * NEW MODELS START AT status=\"incubating\" (hidden from switch.sh",
+        "#     --list, --force to launch) — promote up the enum as the FULL",
+        "#     gate clears.",
+        "#   * vLLM rows: author calibration/<id>.yml after 4+ measured boots",
+        "#     and bump test-compose-registry-disk.sh's catalog count for every",
+        "#     compose added.",
+        "#   * Gateway-reachable? Add services/litellm/config.yaml route → ",
+        "#     <default_port> (test-litellm-ports-resolve.sh gates the port).",
+        "",
+        "entries:",
     ]
     for t in translated:
-        lines.append(f'    "{t["slug"]}": _entry(')
+        lines.append(f"  {reg_mod._yaml_key(t['slug'])}:")
         for k, v in t["kwargs"].items():
-            lines.append(f"        {k}={_py_literal(v)},")
-        lines.append("    ),")
-    return lines
-
-
-def render_registry_patch(root: Path, translated: list[dict], mid: str) -> str:
-    """A git-applyable unified diff inserting the entry block(s) immediately
-    BEFORE the closing brace of the COMPOSE_REGISTRY dict literal."""
-    reg_abs = root / _REG_REL
-    try:
-        text = reg_abs.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise Refusal(f"cannot read {_REG_REL}: {exc}")
-    src = text.splitlines()
-    start = next(
-        (i for i, ln in enumerate(src) if ln.startswith("COMPOSE_REGISTRY = {")),
-        None,
-    )
-    if start is None:
-        raise Refusal(f"no COMPOSE_REGISTRY = {{ anchor in {_REG_REL}")
-    close = next(
-        (i for i in range(start + 1, len(src)) if src[i].startswith("}")), None
-    )
-    if close is None:
-        raise Refusal(f"no closing brace for COMPOSE_REGISTRY in {_REG_REL}")
-    added = render_entry_blocks(translated, mid)
-    # Context BEFORE and AFTER the insertion point.  Trailing context is NOT
-    # optional: git apply rejects a hunk that ends on added lines (a pure
-    # append) — the closing-brace line is always there, so the hunk is
-    # conventionally well-formed.
-    n_before = min(3, close - start - 1)
-    before = src[close - n_before:close]
-    after = src[close:close + 3]
-    old_len = n_before + len(after)
-    new_len = old_len + len(added)
-    ctx_start = close - n_before + 1  # 1-based
-    hunks = [f"@@ -{ctx_start},{old_len} +{ctx_start},{new_len} @@"]
-    hunks += [f" {ln}" for ln in before]
-    hunks += [f"+{ln}" for ln in added]
-    hunks += [f" {ln}" for ln in after]
-    return (
-        f"--- a/{_REG_REL}\n+++ b/{_REG_REL}\n" + "\n".join(hunks) + "\n"
-    )
+            reg_mod._dump_node(lines, k, v, 4)
+    return "\n".join(lines) + "\n"
 
 
 def plan_lines(out: Path, state: dict, translated: list[dict]) -> list[str]:
@@ -365,12 +354,12 @@ def plan_lines(out: Path, state: dict, translated: list[dict]) -> list[str]:
     ]
     for t in translated:
         lines.append(f"  write {out / t['kwargs']['compose_path']}")
-    lines.append(f"  write {out / 'compose_registry.patch'}")
+    lines.append(f"  write {out / 'registry-entry.yaml'}")
     for t in translated:
         lines.append(f"  entry: {t['slug']}  port {t['kwargs'].get('default_port')}"
                      f"  status {t['kwargs'].get('status')}")
-    lines.append("  NOTHING in this repo is touched — copy models/ + apply the "
-                 "patch on your PR branch.")
+    lines.append("  NOTHING in this repo is touched — copy models/ + merge "
+                 "registry-entry.yaml on your PR branch (command inside the file).")
     return lines
 
 
@@ -397,8 +386,9 @@ def export(root: Path, out: Path, state: dict) -> list[Path]:
             len("models/"):]
         _write(Path(t["kwargs"]["compose_path"]),
                src.read_text(encoding="utf-8"))
-    _write(Path("compose_registry.patch"),
-           render_registry_patch(root, translated, mid))
+    _write(Path("registry-entry.yaml"),
+           render_registry_entry_yaml(
+               registry_module(root), translated, mid))
     return written
 
 
@@ -408,7 +398,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         description=(
             "Export a validated profiles-LOCAL model as a ready-to-commit "
             "CORE PR bundle (models/<id>.yml + core-layout compose + "
-            "compose_registry.patch). Writes ONLY under --out."
+            "registry-entry.yaml). Writes ONLY under --out."
         ),
     )
     g = ap.add_mutually_exclusive_group(required=True)
@@ -473,9 +463,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     export(root, out, state)
-    _info(f"bundle ready: copy {out}/models/ onto your PR branch, apply "
-          f"{out / 'compose_registry.patch'}, then run the full suite "
-          "(docs/ADDING_MODELS.md Steps 4b–7).")
+    _info(f"bundle ready: copy {out}/models/ onto your PR branch, merge "
+          f"{out / 'registry-entry.yaml'} with the canonical command inside it, "
+          "then run the full suite (docs/ADDING_MODELS.md Steps 4b–7).")
     print(f"EXPORT_OK {out}")
     return 0
 

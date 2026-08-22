@@ -5,6 +5,13 @@ Runs the CLI as a SUBPROCESS against a throwaway repo copy (the same harness
 as test_promote.py): a synthetic profiles-local/ layer is seeded in tmp, the
 bundle lands under a second tmp dir, and NOTHING inside the repo root may be
 touched by an export.
+
+registry-as-data branch: artifact 3 is a registry ENTRY FILE
+(``registry-entry.yaml`` — the ``entries:`` map in exactly the registry.yaml
+DATA subset), NOT a compose_registry.py source patch.  The real-merge proof
+merges the exported entry into a tmp copy of THIS branch's registry.yaml via
+the loader's own load → update → dump_registry_yaml path (what promote.py
+--layer core does) and loads the result through ``get_registry()``.
 """
 
 from __future__ import annotations
@@ -21,7 +28,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-# compose_registry.py text is read for the patch context.
+# The throwaway repo needs everything the compose_registry import + the merge
+# proof (get_registry()) need: the whole lib tree (loader shim + registry.yaml).
 _COPY_TREES = ("scripts/lib",)
 
 
@@ -42,10 +50,12 @@ def root(tmp_path):
 
 MID = "my-model"
 QUANT = "autoround-int4"
+CORE_SLUG = f"vllm/{MID}-dual-{QUANT}"
 LOCAL_SLUG = f"local/{MID}-dual-{QUANT}"
 LOCAL_COMPOSE_REL = (
     f"scripts/lib/profiles-local/composes/{MID}/vllm/compose/dual/{QUANT}/base.yml"
 )
+CORE_COMPOSE_REL = f"models/{MID}/vllm/compose/dual/{QUANT}/base.yml"
 
 COMPOSE_TEXT = (
     "# Profile (at-a-glance):\n"
@@ -111,7 +121,8 @@ def _entry_kwargs() -> dict:
 
 
 def _seed_local(root: Path, *, profile_text=None, entry_kwargs=None):
-    """Seed the gitignored LOCAL layer exactly as c3 ⑤ Promote writes it."""
+    """Seed the gitignored LOCAL layer exactly as promote.py --layer local
+    writes it."""
     (root / "scripts/lib/profiles-local/models.d").mkdir(parents=True, exist_ok=True)
     (root / "scripts/lib/profiles-local/models.d" / f"{MID}.yml").write_text(
         profile_text or _profile_text(), encoding="utf-8"
@@ -140,8 +151,6 @@ def _spec_file(root: Path) -> Path:
     return f
 
 
-
-
 def _run_cli(root, out, *extra, env_extra=None):
     env = dict(os.environ)
     env.pop("C3_ALLOW_CORE_PROMOTE", None)
@@ -163,6 +172,26 @@ def _run_cli(root, out, *extra, env_extra=None):
     )
 
 
+def _merge_entry_file(repo: Path, entry_yaml: Path):
+    """The contributor step: run the CANONICAL merge command exactly as
+    documented inside registry-entry.yaml — parse the entry file with the
+    loader's own reader, refuse slug collisions, merge + rewrite registry.yaml
+    canonically (the same load → update → dump_registry_yaml rewrite promote.py
+    --layer core performs)."""
+    import re
+
+    text = entry_yaml.read_text(encoding="utf-8")
+    m = re.search(r'^#\s+python3 -c "(.+)"', text, re.MULTILINE)
+    assert m, "registry-entry.yaml must carry the canonical python3 -c merge"
+    return subprocess.run(
+        [sys.executable, "-c", m.group(1), str(entry_yaml)],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+    )
+
+
+
 class TestHappyPath:
     def test_exports_three_core_artifacts(self, root, tmp_path):
         _seed_local(root)
@@ -178,32 +207,92 @@ class TestHappyPath:
 
         # Artifact 2 — the compose, translated to the CORE layout path
         # (profiles-local/composes/<rest> → models/<rest>).
-        comp = out / "models" / MID / "vllm/compose/dual" / QUANT / "base.yml"
+        comp = out / CORE_COMPOSE_REL
         assert comp.exists(), sorted(p.relative_to(out) for p in out.rglob("*"))
         assert comp.read_text(encoding="utf-8") == COMPOSE_TEXT
 
-        # Artifact 3 — the compose_registry patch: core slug namespace
-        # (local/ stripped → engine prefix), translated compose_path, the
-        # _entry kwargs, and the setup-block notes.
-        patch = out / "compose_registry.patch"
-        assert patch.exists()
-        text = patch.read_text(encoding="utf-8")
-        assert "--- a/scripts/lib/profiles/compose_registry.py" in text
-        assert "+    \"vllm/%s-dual-%s\": _entry(" % (MID, QUANT) in text
-        assert f'"compose_path": ' in text or "compose_path=" in text
-        assert f'"models/{MID}/vllm/compose/dual/{QUANT}/base.yml"' in text.replace(
-            "'", '"'
-        ) or f"models/{MID}/vllm/compose/dual/{QUANT}/base.yml" in text
+        # Artifact 3 — the registry ENTRY FILE: the core slug namespace
+        # (local/ stripped → engine prefix), the TRANSLATED compose_path, and
+        # the setup-block notes + canonical merge command as comments.
+        entry = out / "registry-entry.yaml"
+        assert entry.exists()
+        text = entry.read_text(encoding="utf-8")
+        assert f"{CORE_SLUG}:" in text
+        assert f"compose_path: {CORE_COMPOSE_REL}" in text
         assert LOCAL_COMPOSE_REL not in text      # no LOCAL path leaks
         assert "setup:" in text                   # setup-block notes present
         assert "incubating" in text               # status guidance present
-        # The patch must be APPLYABLE against a real checkout — "ready to
-        # commit" means git apply --check passes, not merely that it parses.
-        applied = subprocess.run(
-            ["git", "apply", "--check", str(patch)],
+        assert "dump_registry_yaml" in text       # canonical merge command named
+        # The entry file is in EXACTLY the registry.yaml DATA subset — the
+        # branch's own stdlib parser reads it without guessing.
+        sys.path.insert(0, str(root))
+        from scripts.lib.profiles.compose_registry import parse_registry_text
+
+        parsed = parse_registry_text(text, source="registry-entry.yaml")
+        kw = parsed["entries"][CORE_SLUG]
+        assert kw["model"] == MID and kw["default_port"] == 20242
+        assert kw["mem_util"] == 0.92 and kw["drafter"] is None
+
+    def test_entry_file_merges_and_get_registry_loads_it(self, root, tmp_path):
+        """REAL MERGE PROOF: the exported entry merges into a tmp copy of THIS
+        branch's registry.yaml via the documented canonical command, and the
+        merged catalog loads through get_registry() carrying the new slug."""
+        _seed_local(root)
+        out = tmp_path / "bundle"
+        res = _run_cli(root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+
+        merged = _merge_entry_file(root, out / "registry-entry.yaml")
+        assert merged.returncode == 0, merged.stderr + merged.stdout
+        # registry.yaml carries the row; the loader shim is untouched.
+        reg_text = (root / "scripts/lib/profiles/registry.yaml").read_text()
+        assert f"{CORE_SLUG}:" in reg_text
+        assert MID not in (root / "scripts/lib/profiles/compose_registry.py").read_text()
+
+        # The mutated catalog imports + carries the new slug (fresh process,
+        # cwd = the tmp repo → ITS OWN registry.yaml).
+        # A PR branch carries ONLY models/ + the merged registry entry — the
+        # gitignored LOCAL layer stays behind (and its ids must not collide
+        # with core once promoted).
+        shutil.rmtree(root / "scripts/lib/profiles-local")
+
+        # The mutated catalog imports + carries the new slug (fresh process,
+        # cwd = the tmp repo → ITS OWN registry.yaml).
+        chk = subprocess.run(
+            [
+                sys.executable, "-c",
+                "from scripts.lib.profiles.compose_registry import get_registry;"
+                f"e = get_registry()['{CORE_SLUG}'];"
+                "assert e['model'] == 'my-model' and e['pp'] == 1;"
+                "assert e['kvcalc_key'] == 'my-model:dual';"
+                "assert e['status'] == 'incubating'",
+            ],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+        )
+        assert chk.returncode == 0, chk.stderr
+
+        # And the canonical post-edit gate passes on the merged catalog.
+        mig = subprocess.run(
+            [sys.executable,
+             "scripts/lib/profiles/migrate_registry_to_yaml.py", "--check"],
             cwd=str(root), capture_output=True, text=True,
         )
-        assert applied.returncode == 0, applied.stdout + applied.stderr
+        assert mig.returncode == 0, mig.stderr + mig.stdout
+
+    def test_merge_refuses_slug_collision(self, root, tmp_path):
+        """Merging twice must refuse loudly (promote.py semantics) — never
+        silently overwrite an existing curated slug."""
+        _seed_local(root)
+        out = tmp_path / "bundle"
+        res = _run_cli(root, out)
+        assert res.returncode == 0, res.stderr + res.stdout
+        first = _merge_entry_file(root, out / "registry-entry.yaml")
+        assert first.returncode == 0, first.stderr
+        again = _merge_entry_file(root, out / "registry-entry.yaml")
+        assert again.returncode != 0
+        assert "slug collision" in again.stderr
 
     def test_export_touches_nothing_inside_the_repo(self, root, tmp_path):
         _seed_local(root)
@@ -220,8 +309,8 @@ class TestHappyPath:
         res = _run_cli(root, out)
         assert res.returncode == 0, res.stderr
         after = _snap()
-        # registry.local.json is READ, never rewritten; compose_registry.py is
-        # only diffed, never edited.
+        # registry.local.json is READ, never rewritten; registry.yaml /
+        # compose_registry.py are never edited by the export itself.
         changed = {k for k in after if before.get(k) != after[k]}
         assert not changed, changed
 
@@ -239,10 +328,10 @@ class TestHappyPath:
         out = tmp_path / "bundle"
         res = _run_cli(root, out)
         assert res.returncode == 0, res.stderr + res.stdout
-        patch = (out / "compose_registry.patch").read_text(encoding="utf-8")
-        assert "kvcalc_key='SKIP'" in patch or 'kvcalc_key="SKIP"' in patch
+        text = (out / "registry-entry.yaml").read_text(encoding="utf-8")
+        assert "kvcalc_key: SKIP" in text
         # llama.cpp FILESYSTEM dir → llamacpp slug prefix (ADDING_MODELS Step 3).
-        assert f"+    \"llamacpp/{MID}-dual-{QUANT}\": _entry(" in patch
+        assert f"llamacpp/{MID}-dual-{QUANT}:" in text
         assert (out / "models" / MID / "llama-cpp/compose/single"
                 / "unsloth-q4km/base.yml").exists()
 

@@ -5024,20 +5024,16 @@ print(json.dumps(out))
             requires_confirm=True,       # repo mutation — confirm, never auto
         )
 
-    # ── C4-followup · Export a LOCAL entry as a ready CORE PR bundle ────────────
-
     def export_pr_plan(self, spec: dict, *, out_dir: Optional[str] = None) -> ActionPlan:
         """Build the GATED ActionPlan for ``export_pr.py`` — translate an
         already-promoted LOCAL-layer model into the three ready-to-commit CORE
-        artifacts (models/<id>.yml · core-layout compose · compose_registry
-        patch), written ONLY under ``out_dir``.
-
-        ⚠️  Repo-tree-adjacent write — NEVER auto-fired:
-        ``requires_confirm=True`` routes it through ConfirmActionScreen; it
-        claims no GPU → ``requires_reconcile=False``.  The spec rides in the
-        child env as ``C3_EXPORT_SPEC`` (same pattern as C3_PROMOTE_SPEC); the
-        script reads the LOCAL layer from disk off ``spec.model_id``."""
-        mid = str((spec or {}).get("model_id") or "")
+        artifacts (models/<id>.yml · core-layout compose tree · the registry
+        ENTRY FILE ``registry-entry.yaml`` + canonical merge command), written
+        ONLY under ``out_dir`` (default /tmp).  LOCAL-layer models only: a CORE
+        model already IS core content.  The spec rides in the child env as
+        ``C3_EXPORT_SPEC`` (merged over os.environ by execute_action); the plan
+        claims no GPU and NEVER auto-fires."""
+        mid = (spec or {}).get("model_id", "?")
         cmd = [
             "python3", "scripts/lib/profiles/export_pr.py",
             "--spec-env", "C3_EXPORT_SPEC",
@@ -5049,11 +5045,12 @@ print(json.dumps(out))
             cmd=cmd,
             env={"C3_EXPORT_SPEC": json.dumps(spec or {}, ensure_ascii=False)},
             description=(
-                f"export {mid or 'local model'} as a core PR bundle "
-                f"(writes {out_dir or '/tmp'} only)"
+                f"export PR bundle for {mid} (models/<id>.yml + compose tree "
+                "+ registry-entry.yaml), written ONLY under "
+                f"{out_dir or '/tmp'}"
             ),
-            requires_reconcile=False,    # no GPU contention — a bundle write
-            requires_confirm=True,       # filesystem write — confirm, never auto
+            requires_reconcile=False,    # no GPU contention — writes under --out
+            requires_confirm=True,       # runs a script — confirm, never auto
         )
 
     async def run_export_pr(

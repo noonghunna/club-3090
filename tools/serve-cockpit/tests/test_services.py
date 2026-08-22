@@ -4033,6 +4033,25 @@ class TestPromoteScaffold:
         # The gate flag is NOT injected — it must exist in the user's env.
         assert "C3_ALLOW_CORE_PROMOTE" not in (plan.env or {})
 
+    def test_export_pr_plan_is_gated_mock_only(self):
+        """The community-loop completion: the [E] Export PR bundle plan runs
+        ``export_pr.py`` with the spec in the child env, claims no GPU, and
+        NEVER auto-fires (confirm-gated)."""
+        cd = CockpitData(ROOT, runner=full_runner())
+        sc = cd.promote_scaffold(byo=self._byo())
+        plan = cd.export_pr_plan({"model_id": sc.model_id})
+        assert plan.kind == "export_pr"
+        assert plan.requires_confirm is True
+        assert plan.requires_reconcile is False
+        joined = " ".join(plan.cmd)
+        assert "export_pr.py" in joined
+        assert "--spec-env C3_EXPORT_SPEC" in joined
+        spec = json.loads((plan.env or {})["C3_EXPORT_SPEC"])
+        assert spec["model_id"] == sc.model_id
+        # An explicit --out lands in the cmd (default /tmp does not).
+        plan2 = cd.export_pr_plan({"model_id": sc.model_id}, out_dir="/tmp/b")
+        assert "--out /tmp/b" in " ".join(plan2.cmd)
+
     @pytest.mark.asyncio
     async def test_promote_does_not_write_into_scripts_dir(self, tmp_path):
         """Computing + previewing the scaffold touches NO files under scripts/.

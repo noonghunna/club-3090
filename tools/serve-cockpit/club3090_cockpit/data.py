@@ -1296,9 +1296,10 @@ class PromoteScaffold:
     NEVER auto-fires.
 
     Shapes match reality (verified against ``scripts/lib/profiles/models/*.yml``
-    + ``compose_registry.py`` ``_entry(...)`` + ``docs/ADDING_MODELS.md``):
+    + the ``registry.yaml`` entry schema + ``docs/ADDING_MODELS.md``):
       - ``profile_yaml``   — the ``models/<id>.yml`` ModelProfile skeleton;
-      - ``registry_entry`` — the ``compose_registry.py`` ``_entry(...)`` row;
+      - ``registry_entry`` — the registry entry row (JSON block for local,
+        YAML mapping for core — both are the same ``_entry(**kwargs)`` shape);
       - new models START at ``status="incubating"`` (ADDING_MODELS.md rule).
     """
 
@@ -1307,7 +1308,7 @@ class PromoteScaffold:
     profile_path: str = ""               # scripts/lib/profiles-local/models.d/<id>.yml (local)
     registry_slug: str = ""              # the proposed registry key (local/… for the local layer)
     profile_yaml: str = ""               # the previewed ModelProfile YAML skeleton
-    registry_entry: str = ""             # the previewed entry (JSON block for local, _entry row for core)
+    registry_entry: str = ""             # the previewed entry (JSON block for local, YAML mapping for core)
     guard_suite_cmd: list[str] = field(default_factory=list)  # diagnose + preflight chain
     write_plan: Optional["ActionPlan"] = None   # the gated write+guard action
     notes: list[str] = field(default_factory=list)
@@ -2535,18 +2536,17 @@ def compute_promote_scaffold(
         )
     else:
         registry_entry = (
-            f'    "{registry_slug}": _entry(\n'
+            f'  "{registry_slug}":\n'
             + "".join(
-                f"        {k}={_py_literal_entry(v)},\n" for k, v in entry_kwargs.items()
+                f"    {k}: {_yaml_scalar_entry(v)}\n" for k, v in entry_kwargs.items()
             )
-            + "    ),\n"
         )
 
     notes = [
         "C4-rev: writes target the LOCAL layer (gitignored "
         "scripts/lib/profiles-local/) — no core catalog file is touched."
         if layer == "local"
-        else "CORE WRITE: maintainer-only — edits compose_registry.py; requires "
+        else "CORE WRITE: maintainer-only — merges into registry.yaml; requires "
         "C3_ALLOW_CORE_PROMOTE=1.",
         "New models start at status='incubating': hidden from switch.sh --list, "
         "--force to launch; promote up the enum as it validates.",
@@ -2586,16 +2586,20 @@ def compute_promote_scaffold(
     )
 
 
-def _py_literal_entry(v: Any) -> str:
-    """A Python literal for the core-layer _entry(...) preview row."""
+def _yaml_scalar_entry(v: Any) -> str:
+    """A registry.yaml scalar for the core-layer entry preview (the catalog
+    row is DATA now — the same `_entry(**kwargs)` map shape the local JSON
+    layer uses; strings quoted unless plain-safe, mirroring the loader)."""
     if v is None:
-        return "None"
+        return "null"
     if isinstance(v, bool):
-        return "True" if v else "False"
+        return "true" if v else "false"
     if isinstance(v, str):
-        return repr(v)
+        if v == "" or v != v.strip() or any(c in v for c in ":#{}[],\t") or v[0] in "-?:[]{}&*!|>'\"%@`":
+            return json.dumps(v, ensure_ascii=False)
+        return v
     if isinstance(v, list):
-        return "[" + ", ".join(_py_literal_entry(x) for x in v) + "]"
+        return "[" + ", ".join(_yaml_scalar_entry(x) for x in v) + "]"
     return repr(v)
 
 

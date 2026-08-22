@@ -73,6 +73,7 @@ from typing import Any, Optional
 _DEFAULT_ROOT = Path(__file__).resolve().parents[3]
 
 _REGISTRY_REL = "scripts/lib/profiles/compose_registry.py"
+_REGISTRY_YAML_REL = "scripts/lib/profiles/registry.yaml"
 _MODELS_DIR_REL = "scripts/lib/profiles/models"
 _EMIT_REL = "scripts/lib/registry-emit.sh"
 
@@ -109,20 +110,6 @@ def _info(msg: str) -> None:
     print(f"[promote] {msg}")
 
 
-def _py_literal(v: Any) -> str:
-    """Render a JSON-sourced value as a Python literal for the _entry(...) row.
-
-    Handles exactly the types the registry kwargs carry (str/int/float/bool/
-    None/list-of-scalars) — repr() of those IS a valid Python literal."""
-    if v is None:
-        return "None"
-    if isinstance(v, bool):
-        return "True" if v else "False"
-    if isinstance(v, str):
-        return repr(v)
-    if isinstance(v, list):
-        return "[" + ", ".join(_py_literal(x) for x in v) + "]"
-    return repr(v)
 
 
 def _yaml_scalar(v: Any) -> str:
@@ -222,15 +209,6 @@ def render_profile_yaml(spec: dict) -> str:
     return header + "\n".join(_yaml_dump(root)) + "\n"
 
 
-def render_registry_entry(spec: dict) -> str:
-    """The ``"<slug>": _entry(...),`` source block for compose_registry.py."""
-    slug = spec["registry_entry"]["slug"]
-    kwargs = spec["registry_entry"]["kwargs"]
-    lines = [f'    "{slug}": _entry(']
-    for k, v in kwargs.items():
-        lines.append(f"        {k}={_py_literal(v)},")
-    lines.append("    ),")
-    return "\n".join(lines) + "\n"
 
 
 def _import_compose_registry(root: Path, *, merged: bool):
@@ -267,28 +245,37 @@ def _load_local_raw(root: Path) -> dict:
     return raw
 
 
-def _insert_registry_entry(root: Path, block: str) -> int:
-    """Anchored textual insert: the new entry goes immediately BEFORE the
-    closing brace of the COMPOSE_REGISTRY dict literal. Returns the line number
-    the block starts at (1-based)."""
-    reg_path = root / _REGISTRY_REL
-    text = reg_path.read_text(encoding="utf-8")
-    lines = text.splitlines(keepends=True)
-    start = next((i for i, ln in enumerate(lines) if ln.startswith("COMPOSE_REGISTRY = {")), None)
-    if start is None:
-        raise InternalError(f"no COMPOSE_REGISTRY = {{ anchor in {_REGISTRY_REL}")
-    close = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("}")), None)
-    if close is None:
-        raise InternalError(f"no closing brace for COMPOSE_REGISTRY in {_REGISTRY_REL}")
-    # The preceding entry must end with a comma so the dict stays valid.
-    j = close - 1
-    while j > start and not lines[j].strip():
-        j -= 1
-    if not lines[j].rstrip().endswith(","):
-        lines[j] = lines[j].rstrip("\n").rstrip().rstrip(",") + ",\n"
-    lines.insert(close, block)
-    reg_path.write_text("".join(lines), encoding="utf-8")
-    return close + 1
+def _append_registry_entry(root: Path, slug: str, kwargs: dict) -> None:
+    """Merge the new entry into <root>'s registry.yaml (canonical rewrite).
+
+    The old CORE path did an anchored textual insert into compose_registry.py
+    — fragile by construction (brace anchors, comma repair, source parsing).
+    Now: load the DATA file through the module's own reader, append the
+    `_entry(**kwargs)` row, re-dump with the ONE shared deterministic writer,
+    and atomically replace (temp sibling + os.replace — a failed encode can
+    never truncate the catalog). Import-time validation of the result happens
+    in the post-write checks; a kwargs problem surfaces THERE as exit 2."""
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from scripts.lib.profiles.compose_registry import (  # noqa: E402
+            dump_registry_yaml,
+            load_registry_data,
+        )
+    except Exception as exc:
+        raise InternalError(f"compose_registry.py does not import: {exc}")
+    path = root / _REGISTRY_YAML_REL
+    data = load_registry_data(path)
+    if slug in data["entries"]:
+        raise Refusal(f"registry slug already exists in {_REGISTRY_YAML_REL}: {slug}")
+    data["entries"][slug] = dict(kwargs)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(dump_registry_yaml(data), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        raise InternalError(f"could not rewrite {_REGISTRY_YAML_REL}: {exc}")
 
 
 def _run(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess:
@@ -301,7 +288,7 @@ def _post_write_checks(root: Path, spec: dict, profile_path: Path) -> None:
     slug = spec["registry_entry"]["slug"]
     mid = spec["model_id"]
     rollback_hint = (
-        f"revert with git: git checkout -- {_REGISTRY_REL}"
+        f"revert with git: git checkout -- {_REGISTRY_YAML_REL}"
         if spec.get("_layer") == "core"
         else f"delete the written files ({_LOCAL_DIR_REL}/…)"
     )
@@ -513,7 +500,7 @@ def plan_lines(root: Path, spec: dict) -> list[str]:
         f"plan (layer CORE — maintainer, root {root}):",
         f"  write {_MODELS_DIR_REL}/{mid}.yml",
         f"  write {spec['compose']['path']}",
-        f"  insert _entry into {_REGISTRY_REL} before COMPOSE_REGISTRY's closing brace",
+        f"  merge entry into {_REGISTRY_YAML_REL} (canonical rewrite — no source edit)",
         f"  slug: {slug}  model: {mid}  variant: {spec['default_weight_variant']}",
         "  then: import-sanity + registry-emit.sh --json re-check",
         "  NO ROLLBACK — git is the rollback (dry-run writes nothing).",
@@ -579,12 +566,14 @@ def _write_core(root: Path, spec: dict) -> tuple[Path, Path]:
     except OSError as exc:
         raise InternalError(f"could not write {compose_abs}: {exc}")
 
-    # ── Write 3/3: the anchored _entry insert ───────────────────────────────
+    # ── Write 3/3: the registry.yaml entry merge (data, not source) ─────────
     try:
-        at = _insert_registry_entry(root, render_registry_entry(spec))
-        _info(f"inserted _entry into {_REGISTRY_REL} at line {at}")
+        _append_registry_entry(
+            root, spec["registry_entry"]["slug"], spec["registry_entry"]["kwargs"]
+        )
+        _info(f"merged entry into {_REGISTRY_YAML_REL}")
     except OSError as exc:
-        raise InternalError(f"could not rewrite {_REGISTRY_REL}: {exc}")
+        raise InternalError(f"could not rewrite {_REGISTRY_YAML_REL}: {exc}")
     return profile_path, compose_abs
 
 
