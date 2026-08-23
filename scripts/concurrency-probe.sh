@@ -35,6 +35,10 @@
 #   TPS_FLOOR (0 = report-only) · RETENTION_MIN (0.98) ·
 #   SWEEP ("" = single-N) · SLUG (required for SWEEP) · SWEEP_DRY (0) ·
 #   BOOT_TIMEOUT (360).
+#   Live --sweep warm-up gate (opt-in): WARMUP (0) — when 1, wait for the
+#   server + fire warm-up gens before the ladder (a rung fired at a cold /
+#   not-ready engine reads as a spurious crash); WARMUP_TIMEOUT (900) ·
+#   WARMUP_REQS (3).
 #   --sweep knobs: CTX_SWEEP (1k 4k 8k 16k 32k) · N_LIST (1 2 4 8 16 32) ·
 #   KV_TOKENS (0 = auto from vLLM logs) · N_MAX · CTX_MAX · WALL_BUDGET (15m) ·
 #   EARLY_STOP (1) · CACHE (shared) · SHARE_FRAC (0.75).
@@ -329,8 +333,53 @@ run_probe() {
   python3 "$PROBE_PY"
 }
 
+# --- opt-in readiness + warm-up gate for the live --sweep path ----------------
+# OFF by default (WARMUP=0) so CI / runs against an already-warm server aren't
+# slowed. Set WARMUP=1 when you boot an engine and immediately sweep: cold vLLM
+# needs minutes to load weights + capture CUDA graphs, and a rung fired before
+# it is ready reads as a spurious crash. Waits for /v1/models, re-resolves the
+# served model (the top-of-script autodetect may have fallen back to the default
+# when nothing was serving yet), then fires a few warm-up generations. Returns
+# non-zero only if the server never comes up within WARMUP_TIMEOUT.
+warmup_gate() {
+  [[ "${WARMUP:-0}" == "1" ]] || return 0
+  local timeout="${WARMUP_TIMEOUT:-900}" reqs="${WARMUP_REQS:-3}"
+  echo "[sweep] WARMUP: waiting up to ${timeout}s for ${URL} ..." >&2
+  local ready=0 waited=0
+  for _ in $(seq 1 $(( timeout / 2 )) ); do
+    if curl -s -m 3 "${URL}/v1/models" >/dev/null 2>&1; then ready=1; break; fi
+    sleep 2; waited=$(( waited + 2 ))
+  done
+  if [[ "$ready" != "1" ]]; then
+    echo "[sweep] WARMUP: not ready in ${timeout}s — aborting sweep" >&2
+    return 1
+  fi
+  echo "[sweep] WARMUP: server up after ~${waited}s" >&2
+  # Re-resolve the served model now that the server answers (skip if pinned).
+  if [[ -z "$MODEL_PINNED" ]]; then
+    local det
+    det="$(curl -s -m 5 "${URL}/v1/models" 2>/dev/null \
+      | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+    if [[ -n "$det" && "$det" != "$MODEL" ]]; then
+      echo "[sweep] WARMUP: served model re-resolved: $det (was: $MODEL)" >&2
+      MODEL="$det"
+    fi
+  fi
+  # Fire warm-up generations to trigger CUDA-graph capture before timing starts.
+  local ok=0 i
+  for i in $(seq 1 "$reqs"); do
+    if curl -s -m 120 "${URL}/v1/chat/completions" \
+         -H 'content-type: application/json' \
+         -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"warmup\"}],\"max_tokens\":8}" \
+         >/dev/null 2>&1; then ok=$(( ok + 1 )); fi
+  done
+  echo "[sweep] WARMUP: ${ok}/${reqs} warm-up requests ok" >&2
+  return 0
+}
+
 # --- --sweep: live N×ctx matrix, no reboot ------------------------------------
 if [[ "$MATRIX" == "1" ]]; then
+  if [[ "$SWEEP_DRY" != "1" ]]; then warmup_gate || exit 1; fi
   slots="$(_detect_slots || true)"
   slots_src="undetected"
   if [[ -n "$(_served_seqs || true)" ]]; then slots_src="container max-num-seqs"
