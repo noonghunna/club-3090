@@ -24,9 +24,12 @@ from scripts.lib.profiles import deriver as D  # noqa: E402
 from scripts.lib.profiles.model_spec import (  # noqa: E402
     MODEL_SPEC_VERSION,
     Fact,
+    HybridGdnFacts,
+    MlaFacts,
     ModelSpec,
     MoEFacts,
     MtpFacts,
+    SwaFacts,
 )
 
 
@@ -85,6 +88,16 @@ def _derive_result(*, eligible=True, config=None, tier1=None, error=None) -> D.D
                 "num_experts", "num_local_experts", "num_experts_per_tok",
                 "top_k_experts", "moe_intermediate_size",
                 "num_shared_experts", "n_shared_experts",
+                # M5 slice-2: raw FAMILY keys — exactly what
+                # deriver.derive() now emits into res.profile.
+                "linear_num_key_heads", "linear_num_value_heads",
+                "linear_key_head_dim", "linear_value_head_dim",
+                "linear_conv_kernel_dim", "conv_kernel",
+                "layer_types", "full_attention_interval",
+                "sliding_window", "sliding_window_pattern",
+                "global_head_dim", "head_dim_sliding",
+                "num_global_key_value_heads",
+                "kv_lora_rank", "qk_nope_head_dim", "qk_rope_head_dim",
             )
         },
         "vision": False,
@@ -524,3 +537,322 @@ class TestMoeSerializationAndValidation:
 
     def test_dense_spec_validate_unchanged(self):
         assert ModelSpec.from_derive_result(_derive_result()).validate() == []
+
+
+# ---------------------------------------------------------------------------
+# M5 slice-2: the family extractors — GDN/DeltaNet (qwen3-next), SWA (gemma),
+# MLA latent (deepseek2) + documented dLLM no-extraction.  Same contract as
+# the MoE slice: per-Fact provenance, all-None ⇒ slot stays None.
+# ---------------------------------------------------------------------------
+class TestGdnConfigPath:
+    def test_dense_config_has_no_gdn(self):
+        s = ModelSpec.from_derive_result(_derive_result())
+        assert s.hybrid_gdn is None
+
+    def _gdn_result(self, **cfg_over) -> ModelSpec:
+        return ModelSpec.from_derive_result(
+            _derive_result(eligible=False, config=_config(**cfg_over))
+        )
+
+    def test_qwen3_next_layer_types_split_labeled_with_source(self):
+        lt = ["linear_attention"] * 30 + ["full_attention"] * 10
+        s = self._gdn_result(
+            layer_types=lt,
+            linear_num_key_heads=16, linear_num_value_heads=32,
+            linear_key_head_dim=128, linear_value_head_dim=128,
+            linear_conv_kernel_dim=4,
+        )
+        g = s.hybrid_gdn
+        assert g.linear_num_k_heads == Fact(16, "derived", "config.json:linear_num_key_heads")
+        assert g.linear_num_v_heads == Fact(32, "derived", "config.json:linear_num_value_heads")
+        assert g.linear_k_head_dim == Fact(128, "derived", "config.json:linear_key_head_dim")
+        assert g.linear_v_head_dim == Fact(128, "derived", "config.json:linear_value_head_dim")
+        assert g.linear_conv_kernel_dim == Fact(4, "derived", "config.json:linear_conv_kernel_dim")
+        assert g.num_gdn_layers == Fact(30, "derived", "config.json:layer_types")
+        assert g.num_attn_layers == Fact(10, "derived", "config.json:layer_types")
+        assert g.summary() == "30 GDN / 10 full-attn layers"
+
+    def test_conv_kernel_alias_records_the_key_actually_found(self):
+        s = self._gdn_result(linear_num_key_heads=16, conv_kernel=4)
+        assert s.hybrid_gdn.linear_conv_kernel_dim == Fact(
+            4, "derived", "config.json:conv_kernel"
+        )
+
+    def test_interval_derived_split_is_labeled_estimate(self):
+        """No layer_types ⇒ the full/linear split is arithmetic off
+        full_attention_interval — derived-estimate, never card truth."""
+        s = self._gdn_result(
+            num_hidden_layers=48, full_attention_interval=4,
+            linear_num_key_heads=16,
+        )
+        est_src = "config.json:num_hidden_layers÷full_attention_interval"
+        assert s.hybrid_gdn.num_attn_layers == Fact(12, "derived-estimate", est_src)
+        assert s.hybrid_gdn.num_gdn_layers == Fact(36, "derived-estimate", est_src)
+
+    def test_interval_alone_never_fabricates_a_hybrid(self):
+        """full_attention_interval WITHOUT any linear-attn key ⇒ no block —
+        a split nobody's config claims is not invented."""
+        s = self._gdn_result(num_hidden_layers=48, full_attention_interval=4)
+        assert s.hybrid_gdn is None
+
+
+class TestGdnGgufPath:
+    @staticmethod
+    def _facts(**kv_over) -> dict:
+        kv = {
+            "general.architecture": "qwen3next",
+            "qwen3next.embedding_length": 2048,
+            "qwen3next.block_count": 48,
+        }
+        kv.update(kv_over)
+        return D.gguf_spec_facts({"version": 3, "kv": kv}, model_id="org/M")
+
+    def test_ssm_kvs_map_with_gguf_header_provenance(self):
+        facts = self._facts(
+            **{
+                "qwen3next.ssm.group_count": 16,
+                "qwen3next.ssm.time_step_rank": 32,
+                "qwen3next.ssm.state_size": 128,
+                "qwen3next.ssm.conv_kernel": 4,
+                "qwen3next.ssm.inner_size": 4096,
+                "qwen3next.full_attention_interval": 4,
+            }
+        )
+        s = ModelSpec.from_gguf_facts(facts)
+        g = s.hybrid_gdn
+        assert g.linear_num_k_heads == Fact(
+            16, "derived-estimate", "gguf-header:qwen3next.ssm.group_count"
+        )
+        assert g.linear_num_v_heads.source.endswith("ssm.time_step_rank")
+        assert g.linear_k_head_dim.value == 128
+        # inner_size // time_step_rank — the derivation path IS the source.
+        assert g.linear_v_head_dim == Fact(
+            128, "derived-estimate",
+            "gguf-header:qwen3next.ssm.inner_size//qwen3next.ssm.time_step_rank",
+        )
+        assert g.linear_conv_kernel_dim.value == 4
+        assert g.summary() == "36 GDN / 12 full-attn layers"
+
+    def test_dense_header_has_no_gdn_block(self):
+        s = ModelSpec.from_gguf_facts(self._facts())
+        assert s.hybrid_gdn is None
+        assert "hybrid_gdn" not in self._facts()
+
+
+class TestSwaConfigPath:
+    def _swa_result(self, **cfg_over) -> ModelSpec:
+        return ModelSpec.from_derive_result(
+            _derive_result(eligible=False, config=_config(**cfg_over))
+        )
+
+    def test_gemma_layer_types_split_and_window(self):
+        lt = ["sliding_attention"] * 25 + ["full_attention"] * 5
+        s = self._swa_result(
+            layer_types=lt, sliding_window=1024,
+            head_dim=256, global_head_dim=512,
+            num_global_key_value_heads=2,
+        )
+        w = s.swa
+        assert w.sliding_window == Fact(1024, "derived", "config.json:sliding_window")
+        assert w.num_full_attn_layers == Fact(5, "derived", "config.json:layer_types")
+        assert w.num_sliding_attn_layers == Fact(25, "derived", "config.json:layer_types")
+        # Gemma4 naming: with global_head_dim present, plain head_dim IS the
+        # sliding-layer dim (upstream converter contract).
+        assert w.head_dim_sliding == Fact(256, "derived", "config.json:head_dim")
+        assert w.global_head_dim == Fact(512, "derived", "config.json:global_head_dim")
+        assert w.num_global_kv_heads == Fact(
+            2, "derived", "config.json:num_global_key_value_heads"
+        )
+        assert w.summary() == (
+            "1024-token window · 5 full / 25 sliding layers"
+        )
+
+    def test_uniform_head_dim_is_never_relabeled_sliding(self):
+        """sliding_window alone does NOT make head_dim a sliding-only dim."""
+        s = self._swa_result(sliding_window=512, head_dim=128)
+        assert s.swa.head_dim_sliding is None
+        assert s.swa.global_head_dim is None
+        assert s.swa.sliding_window.value == 512
+
+    def test_legacy_int_pattern_is_a_derived_estimate(self):
+        s = self._swa_result(
+            num_hidden_layers=30, sliding_window_pattern=6, sliding_window=1024,
+        )
+        est_src = "config.json:num_hidden_layers÷sliding_window_pattern"
+        assert s.swa.num_full_attn_layers == Fact(5, "derived-estimate", est_src)
+        assert s.swa.num_sliding_attn_layers == Fact(25, "derived-estimate", est_src)
+
+
+class TestSwaGgufPath:
+    @staticmethod
+    def _facts(**kv_over) -> dict:
+        pattern = [False] + [True] * 5          # every 6th layer global
+        kv = {
+            "general.architecture": "gemma4",
+            "gemma4.embedding_length": 3840,
+            "gemma4.block_count": 30,
+            "gemma4.attention.sliding_window": 1024,
+            "gemma4.attention.sliding_window_pattern": pattern * 5,
+            "gemma4.attention.key_length": 512,       # gemma4: GLOBAL dim
+            "gemma4.attention.key_length_swa": 256,
+            "gemma4.attention.head_count_kv": [2, 8, 8, 8, 8, 8] * 5,
+        }
+        kv.update(kv_over)
+        return D.gguf_spec_facts({"version": 3, "kv": kv}, model_id="org/G")
+
+    def test_pattern_array_counts_and_asymmetric_global_kv(self):
+        s = ModelSpec.from_gguf_facts(self._facts())
+        w = s.swa
+        assert w.sliding_window == Fact(
+            1024, "derived-estimate", "gguf-header:gemma4.attention.sliding_window"
+        )
+        src = "gguf-header:gemma4.attention.sliding_window_pattern"
+        assert w.num_full_attn_layers == Fact(5, "derived-estimate", src)
+        assert w.num_sliding_attn_layers == Fact(25, "derived-estimate", src)
+        assert w.global_head_dim.value == 512
+        assert w.head_dim_sliding.value == 256
+        assert w.num_global_kv_heads == Fact(
+            2, "derived-estimate",
+            "gguf-header:gemma4.attention.head_count_kv×sliding_window_pattern",
+        )
+
+    def test_plain_llama_header_has_no_swa_block(self):
+        kv = {
+            "general.architecture": "llama",
+            "llama.embedding_length": 4096,
+            "llama.block_count": 32,
+        }
+        facts = D.gguf_spec_facts({"version": 3, "kv": kv}, model_id="x")
+        assert "swa" not in facts
+        assert ModelSpec.from_gguf_facts(facts).swa is None
+
+
+class TestMlaConfigPath:
+    def _mla_result(self, **cfg_over) -> ModelSpec:
+        return ModelSpec.from_derive_result(
+            _derive_result(eligible=False, config=_config(**cfg_over))
+        )
+
+    def test_deepseek_latent_facts_extracted_verbatim(self):
+        s = self._mla_result(
+            kv_lora_rank=512, qk_nope_head_dim=128, qk_rope_head_dim=64,
+        )
+        m = s.mla
+        assert m.kv_lora_rank == Fact(512, "derived", "config.json:kv_lora_rank")
+        assert m.qk_nope_head_dim == Fact(128, "derived", "config.json:qk_nope_head_dim")
+        assert m.qk_rope_head_dim == Fact(64, "derived", "config.json:qk_rope_head_dim")
+        assert m.summary() == "latent rank 512 · qk 128+64(RoPE)"
+
+    def test_mla_never_touches_core_head_counts(self):
+        """The single-latent-KV geometry must NOT leak into num_kv_heads /
+        head counts — the core dims stay exactly what config.json says
+        (here: the dense fixture's 32/8), never derived from the latent."""
+        s = self._mla_result(
+            kv_lora_rank=512, qk_nope_head_dim=128, qk_rope_head_dim=64,
+        )
+        assert s.mla is not None
+        assert s.num_attn_heads == Fact(32, "derived", "config.json:num_attention_heads")
+        assert s.num_kv_heads == Fact(8, "derived", "config.json:num_key_value_heads")
+
+
+class TestMlaGgufPath:
+    @staticmethod
+    def _facts(**kv_over) -> dict:
+        kv = {
+            "general.architecture": "deepseek2",
+            "deepseek2.block_count": 60,
+        }
+        kv.update(kv_over)
+        return D.gguf_spec_facts({"version": 3, "kv": kv}, model_id="org/D")
+
+    def test_deepseek2_kvs_map_with_derivation_provenance(self):
+        facts = self._facts(
+            **{
+                "deepseek2.attention.kv_lora_rank": 512,
+                "deepseek2.rope.dimension_count": 64,
+                "deepseek2.attention.key_length_mla": 192,
+            }
+        )
+        s = ModelSpec.from_gguf_facts(facts)
+        m = s.mla
+        assert m.kv_lora_rank == Fact(
+            512, "derived-estimate", "gguf-header:deepseek2.attention.kv_lora_rank"
+        )
+        assert m.qk_rope_head_dim == Fact(
+            64, "derived-estimate", "gguf-header:deepseek2.rope.dimension_count"
+        )
+        # qk_nope = key_length_mla − rope.dimension_count (labeled estimate).
+        assert m.qk_nope_head_dim == Fact(
+            128, "derived-estimate",
+            "gguf-header:deepseek2.attention.key_length_mla"
+            "-deepseek2.rope.dimension_count",
+        )
+
+    def test_rope_alone_is_not_mla_evidence(self):
+        """rope.dimension_count exists on EVERY RoPE arch — without
+        kv_lora_rank it must not fabricate an MLA block."""
+        facts = self._facts(**{"deepseek2.rope.dimension_count": 64})
+        assert "mla" not in facts
+        assert ModelSpec.from_gguf_facts(facts).mla is None
+
+
+class TestDllmNoExtraction:
+    def test_no_dllm_extractor_exists_by_design(self):
+        """dLLM families (diffusiongemma): decode granularity / canvas size
+        are serving POLICY, not config.json geometry — there is deliberately
+        no DllmFacts block to attach (documented no-extraction)."""
+        import scripts.lib.profiles.model_spec as ms_mod
+
+        assert not hasattr(ms_mod, "DllmFacts")
+        res = _derive_result(eligible=False, config=_config(
+            architectures=["DiffusionGemmaForCausalLM"],
+        ))
+        s = ModelSpec.from_derive_result(res)
+        assert s.hybrid_gdn is None and s.swa is None and s.mla is None
+
+    def _family_spec(self) -> ModelSpec:
+        return ModelSpec.from_derive_result(_derive_result(
+            eligible=False,
+            config=_config(
+                # Coherent hybrid: 36 GDN + 12 full-attn over 48 layers.
+                layer_types=["linear_attention"] * 36 + ["full_attention"] * 12,
+                linear_num_key_heads=16, linear_num_value_heads=32,
+                sliding_window=1024, global_head_dim=512,
+                kv_lora_rank=512, qk_rope_head_dim=64,
+                num_hidden_layers=48,
+            ),
+        ))
+
+    def test_round_trip_lossless_through_real_json(self):
+        s = self._family_spec()
+        s2 = ModelSpec.from_dict(json.loads(json.dumps(s.to_dict())))
+        assert s2 == s
+        assert s2.hybrid_gdn.linear_num_k_heads.value == 16
+        assert s2.swa.sliding_window.value == 1024
+        assert s2.mla.kv_lora_rank.value == 512
+
+    def test_validate_flags_nonpositive_family_fact(self):
+        for blk in (
+            HybridGdnFacts(linear_num_k_heads=Fact(-1, "derived", "x")),
+            SwaFacts(sliding_window=Fact(0, "derived", "x")),
+            MlaFacts(qk_rope_head_dim=Fact(-64, "derived", "x")),
+        ):
+            spec = ModelSpec(hybrid_gdn=blk if isinstance(blk, HybridGdnFacts) else None,
+                             swa=blk if isinstance(blk, SwaFacts) else None,
+                             mla=blk if isinstance(blk, MlaFacts) else None)
+            issues = spec.validate()
+            assert issues and issues[0].startswith(("hybrid_gdn.", "swa.", "mla."))
+
+    def test_validate_warns_when_family_split_ignores_total_layers(self):
+        s = ModelSpec(
+            num_hidden_layers=Fact(48, "derived", "x"),
+            hybrid_gdn=HybridGdnFacts(
+                num_gdn_layers=Fact(30, "derived", "y"),
+                num_attn_layers=Fact(10, "derived", "z"),
+            ),
+        )
+        issues = s.validate()
+        assert any(i.startswith("warn:") and "hybrid_gdn" in i for i in issues)
+
+    def test_validate_clean_on_consistent_family_spec(self):
+        assert self._family_spec().validate() == []

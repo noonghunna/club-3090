@@ -2448,6 +2448,22 @@ def compute_promote_scaffold(
         _mf = getattr(_moe, _fact_name, None) if _moe is not None else None
         if _mf is not None and _mf.value is not None:
             arch_spec[_moe_key] = _mf.value
+    # ── Family facts (ModelSpec M5 slice-2): GDN-hybrid and SWA keys ARE
+    # canonical compat.ModelProfile fields, so they flow into arch_spec like
+    # the MoE trio above.  A non-family spec keeps every slot None ⇒ nothing
+    # is added (byte-for-byte unchanged scaffold).
+    for _slot, _fam_keys in (
+        ("hybrid_gdn", ("num_gdn_layers", "num_attn_layers", "linear_num_k_heads",
+                        "linear_num_v_heads", "linear_k_head_dim",
+                        "linear_v_head_dim", "linear_conv_kernel_dim")),
+        ("swa", ("sliding_window", "num_full_attn_layers", "num_sliding_attn_layers",
+                 "head_dim_sliding", "global_head_dim", "num_global_kv_heads")),
+    ):
+        _blk = getattr(mspec, _slot, None)
+        for _fk in _fam_keys:
+            _ff = getattr(_blk, _fk, None) if _blk is not None else None
+            if _ff is not None and _ff.value is not None:
+                arch_spec[_fk] = _ff.value
     _wtg = getattr(mspec, "weights_total_gb", None)
     weights_total_gb = _wtg.value if _wtg is not None else None
     _vis = getattr(mspec, "vision_capable", None)
@@ -2564,6 +2580,51 @@ def compute_promote_scaffold(
                          "moe_intermediate_size"):
             if _moe_key in arch_spec:
                 yaml_lines.append(f"{_moe_key}: {arch_spec[_moe_key]}")
+    # ── M5 slice-2: family blocks render like the experts block — an
+    # auto-filled summary comment + the canonical ModelProfile keys.  MLA
+    # stays COMMENT-ONLY: its latent-geometry fields have NO
+    # compat.ModelProfile YAML key yet, and inventing one here would break
+    # strict-loader parity (compat.py friction is the point — proposal §5
+    # rule 4).  Non-family specs never enter these branches.
+    for _slot, _label, _fam_keys in (
+        ("hybrid_gdn", "GDN/DeltaNet hybrid",
+         ("num_gdn_layers", "num_attn_layers", "linear_num_k_heads",
+          "linear_num_v_heads", "linear_k_head_dim", "linear_v_head_dim",
+          "linear_conv_kernel_dim")),
+        ("swa", "sliding-window attention",
+         ("sliding_window", "num_full_attn_layers", "num_sliding_attn_layers",
+          "head_dim_sliding", "global_head_dim", "num_global_kv_heads")),
+    ):
+        _blk = getattr(mspec, _slot, None)
+        if _blk is None:
+            continue
+        _first_src = next(
+            (
+                getattr(_blk, _fk).source
+                for _fk in _fam_keys
+                if getattr(_blk, _fk) is not None
+            ),
+            None,
+        )
+        if _first_src is None:
+            continue
+        _summary = _blk.summary()
+        yaml_lines.append(
+            f"# {_label} (auto-filled from {_first_src})"
+            + (f": {_summary}" if _summary else "")
+        )
+        for _fk in _fam_keys:
+            if _fk in arch_spec:
+                yaml_lines.append(f"{_fk}: {arch_spec[_fk]}")
+    _mla = getattr(mspec, "mla", None)
+    if _mla is not None and _mla.summary():
+        yaml_lines.append(
+            f"# multi-head latent attention (auto-filled): {_mla.summary()}"
+        )
+        yaml_lines.append(
+            "# MLA latent geometry is NOT head counts — no ModelProfile YAML "
+            "keys yet; wire by hand after compat.py extends its allowlist."
+        )
     yaml_lines.append(
         "valid_tp: " + json.dumps(arch_spec.get("valid_tp") or [1, 2])
     )

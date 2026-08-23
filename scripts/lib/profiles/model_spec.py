@@ -25,6 +25,13 @@ Design: local://modelspec-proposal.md (ModelSpecDesign wave-3 proposal,
       ``shared_experts`` / ``moe_intermediate_size``) plus
       :meth:`MoEFacts.summary` for the "N routed / K active (+S shared)"
       one-liner.
+  M5 slice-2  the family extractors: ``hybrid_gdn`` (:class:`HybridGdnFacts`
+      — qwen3-next linear-attn dims + full-vs-linear layer split),
+      ``swa`` (:class:`SwaFacts` — gemma sliding-window split) and ``mla``
+      (:class:`MlaFacts` — deepseek2 single-latent-KV, never fabricated into
+      head counts).  dLLM families deliberately get NO extractor — decode
+      granularity / canvas size are policy, not geometry (see the note above
+      :class:`MlaFacts`).
 
 Design rules (proposal §1):
 - Every machine-filled value carries PROVENANCE.  A fallback default (e.g.
@@ -107,22 +114,152 @@ class MoEFacts:
             out += f" (+{self.shared_experts.value} shared)"
         return out
 
-    @classmethod
-    def _from_dict(cls, d: dict[str, Any]) -> "MoEFacts":
-        """Inverse of the flattened to_dict shape — nested Fact dicts are
-        rebuilt as real Facts."""
-        kw: dict[str, Any] = {}
-        for f in fields(cls):
-            if f.name not in d:
-                continue
-            u = d[f.name]
-            kw[f.name] = (
-                Fact(u["value"], u["provenance"], u["source"])
-                if isinstance(u, dict)
-                and {"value", "provenance", "source"} <= set(u)
-                else u
+
+
+def _fact_block_from_dict(cls: type, d: dict[str, Any]) -> Any:
+    """Rebuild a frozen facts-block dataclass from its flattened ``to_dict``
+    shape — nested Fact dicts become real Facts (the JSON boundary across
+    the deriver subprocess stays lossless)."""
+    kw: dict[str, Any] = {}
+    for f in fields(cls):
+        if f.name not in d:
+            continue
+        u = d[f.name]
+        kw[f.name] = (
+            Fact(u["value"], u["provenance"], u["source"])
+            if isinstance(u, dict)
+            and {"value", "provenance", "source"} <= set(u)
+            else u
+        )
+    return cls(**kw)
+
+
+@dataclass(frozen=True)
+class HybridGdnFacts:
+    """Qwen3-Next-style gated-delta-net hybrid (Table C extractor — M5
+    slice-2): the linear-attention head geometry plus the full-vs-linear
+    LAYER split.  Every present value is a full ``Fact`` naming the config /
+    GGUF key actually found; a non-hybrid model carries ``hybrid_gdn=None``
+    on the spec — an all-None block is never attached."""
+
+    #: DeltaNet key heads — config ``linear_num_key_heads``;
+    #: GGUF ``<arch>.ssm.group_count``
+    linear_num_k_heads: Optional[Fact] = None
+    #: DeltaNet value heads — config ``linear_num_value_heads``;
+    #: GGUF ``<arch>.ssm.time_step_rank``
+    linear_num_v_heads: Optional[Fact] = None
+    #: DeltaNet key-head depth — config ``linear_key_head_dim``;
+    #: GGUF ``<arch>.ssm.state_size``
+    linear_k_head_dim: Optional[Fact] = None
+    #: DeltaNet value-head depth — config ``linear_value_head_dim``; GGUF
+    #: derived ``inner_size // time_step_rank`` (derived-estimate)
+    linear_v_head_dim: Optional[Fact] = None
+    #: short-conv width — config ``linear_conv_kernel_dim`` ‖
+    #: ``conv_kernel``; GGUF ``<arch>.ssm.conv_kernel``
+    linear_conv_kernel_dim: Optional[Fact] = None
+    #: recurrent (GDN/DeltaNet) layer count — counted from
+    #: ``layer_types``, else derived from ``full_attention_interval``
+    num_gdn_layers: Optional[Fact] = None
+    #: full-attention layer count — same sources as num_gdn_layers
+    num_attn_layers: Optional[Fact] = None
+
+    def summary(self) -> str:
+        """The scaffold's one-liner: "30 GDN / 10 full-attn layers"
+        (degrades gracefully when the split is unknown)."""
+        parts: list[str] = []
+        if self.num_gdn_layers is not None:
+            parts.append(f"{self.num_gdn_layers.value} GDN")
+        if self.num_attn_layers is not None:
+            parts.append(f"{self.num_attn_layers.value} full-attn")
+        return " / ".join(parts) + " layers" if parts else ""
+
+
+@dataclass(frozen=True)
+class SwaFacts:
+    """Sliding-window attention split (gemma — Table C extractor, M5
+    slice-2): window width, the global-vs-sliding layer counts and — where a
+    release exposes them — per-class head dims / the asymmetric global KV
+    count.  A uniform-attention model carries ``swa=None``."""
+
+    #: window width — config ``sliding_window``;
+    #: GGUF ``<arch>.attention.sliding_window``
+    sliding_window: Optional[Fact] = None
+    #: global-layer count — counted from ``layer_types`` / GGUF
+    #: ``attention.sliding_window_pattern`` array / legacy int pattern
+    num_full_attn_layers: Optional[Fact] = None
+    #: sliding-layer count — same sources
+    num_sliding_attn_layers: Optional[Fact] = None
+    #: sliding-layer head dim — config ``head_dim_sliding``, else
+    #: ``head_dim`` ONLY when a global/sliding split is independently
+    #: evidenced (a plain uniform ``head_dim`` is never relabeled);
+    #: GGUF ``<arch>.attention.key_length_swa``
+    head_dim_sliding: Optional[Fact] = None
+    #: global-layer head dim — config ``global_head_dim``; GGUF
+    #: ``attention.key_length`` (gemma4's converter writes the GLOBAL dim
+    #: there — gated on sliding evidence so it never leaks to other arches)
+    global_head_dim: Optional[Fact] = None
+    #: global-layer KV heads when asymmetric (gemma-4-26b-a4b: 8 sliding /
+    #: 2 global) — config ``num_global_key_value_heads`` / GGUF aligned
+    #: ``head_count_kv`` × ``sliding_window_pattern`` arrays.  Never
+    #: fabricated when the header carries only a collapsed scalar.
+    num_global_kv_heads: Optional[Fact] = None
+
+    def summary(self) -> str:
+        """The scaffold's one-liner: "1024-token window · 5 full / 25
+        sliding layers" (each part drops out independently)."""
+        parts: list[str] = []
+        if self.sliding_window is not None:
+            parts.append(f"{self.sliding_window.value}-token window")
+        if (
+            self.num_full_attn_layers is not None
+            and self.num_sliding_attn_layers is not None
+        ):
+            parts.append(
+                f"{self.num_full_attn_layers.value} full / "
+                f"{self.num_sliding_attn_layers.value} sliding layers"
             )
-        return cls(**kw)
+        return " · ".join(parts)
+
+
+@dataclass(frozen=True)
+class MlaFacts:
+    """Multi-head latent attention (deepseek2 — Table C extractor, M5
+    slice-2): ONE compressed KV latent shared by every query head.  These
+    are LATENT-geometry Facts — deliberately NEVER fabricated into
+    ``num_kv_heads``/head counts (a deepseek2 GGUF converts to MQA with one
+    KV group; that conversion artifact is not model geometry)."""
+
+    #: compressed-KV latent rank — config/GGUF ``kv_lora_rank``
+    kv_lora_rank: Optional[Fact] = None
+    #: non-positional query-key head depth — config ``qk_nope_head_dim``;
+    #: GGUF derived ``key_length_mla − rope.dimension_count``
+    qk_nope_head_dim: Optional[Fact] = None
+    #: RoPE-shared head depth — config ``qk_rope_head_dim``;
+    #: GGUF ``<arch>.rope.dimension_count`` (the deepseek2 converter writes
+    #: exactly that value there)
+    qk_rope_head_dim: Optional[Fact] = None
+
+    def summary(self) -> str:
+        """The scaffold's one-liner: "latent rank 512 · qk 128+64(RoPE)"."""
+        parts: list[str] = []
+        nope = self.qk_nope_head_dim.value if self.qk_nope_head_dim else None
+        rope = self.qk_rope_head_dim.value if self.qk_rope_head_dim else None
+        if self.kv_lora_rank is not None:
+            parts.append(f"latent rank {self.kv_lora_rank.value}")
+        if nope is not None and rope is not None:
+            parts.append(f"qk {nope}+{rope}(RoPE)")
+        elif nope is not None:
+            parts.append(f"qk_nope {nope}")
+        elif rope is not None:
+            parts.append(f"qk_rope {rope}")
+        return " · ".join(parts)
+
+
+# ── dLLM (diffusiongemma): documented NO-EXTRACTION (M5 slice-2).  Diffusion-LM
+# configs expose NO structural geometry beyond the standard dense dims — decode
+# granularity / canvas size are serving POLICY (proposal §2 marks them human).
+# An empty DllmFacts would fabricate structure config.json does not carry, so
+# there is deliberately none: those scaffold lines stay hand-fill placeholders.
 
 
 @dataclass(frozen=True)
@@ -138,6 +275,19 @@ class GgufFacts:
     kv_heads_assumed_equal: bool = False
     head_count_variable: bool = False
     truncated: bool = False
+
+
+#: The named facts-block slots (ModelSpec field name → block type).  Drives
+#: the generic serialization/validation branches below — a new M5 extractor
+#: registers here and inherits to_dict/from_dict/validate for free.
+_FACT_BLOCKS: dict[str, type] = {
+    "moe": MoEFacts,
+    "mtp": MtpFacts,
+    "gguf": GgufFacts,
+    "hybrid_gdn": HybridGdnFacts,
+    "swa": SwaFacts,
+    "mla": MlaFacts,
+}
 
 
 @dataclass(frozen=True)
@@ -172,6 +322,9 @@ class ModelSpec:
     # ── family-specific extension sets (Table C — M5 fills these) ────────────
     moe: Optional[MoEFacts] = None  # MoE routing (M5 slice-1 extractor)
     mtp: Optional[MtpFacts] = None
+    hybrid_gdn: Optional[HybridGdnFacts] = None  # qwen3-next GDN/DeltaNet (M5 slice-2)
+    swa: Optional[SwaFacts] = None  # gemma sliding-window split (M5 slice-2)
+    mla: Optional[MlaFacts] = None  # deepseek2 single-latent-KV (M5 slice-2)
     gguf: Optional[GgufFacts] = None  # header-probe provenance (route-G)
 
     # ── behavior ─────────────────────────────────────────────────────────────
@@ -228,18 +381,29 @@ class ModelSpec:
             )
         if not self.valid_tp or not all(t in (1, 2) for t in self.valid_tp):
             issues.append(f"valid_tp: policy default is a subset of [1, 2], got {self.valid_tp!r}")
-        moe = self.moe
-        if moe is not None:
-            for name in ("num_experts", "experts_per_tok", "shared_experts",
-                         "moe_intermediate_size"):
-                mf = getattr(moe, name)
-                if mf is not None and (
+        # Family fact-blocks (Table C): every ATTACHED Fact must be a
+        # positive int — a wrong-typed value is a bug, absence stays None.
+        for blk_name in _FACT_BLOCKS:
+            blk = getattr(self, blk_name)
+            if blk is None:
+                continue
+            for bf in fields(blk):
+                mf = getattr(blk, bf.name)
+                # Only Fact-carrying fields are checked here — metadata
+                # blocks (gguf) / presence flags (mtp.has_head) hold plain
+                # values that are not positive-int geometry.
+                if not isinstance(mf, Fact):
+                    continue
+                if (
                     not isinstance(mf.value, int)
                     or isinstance(mf.value, bool) or mf.value <= 0
                 ):
                     issues.append(
-                        f"moe.{name}: expected a positive int, got {mf.value!r}"
+                        f"{blk_name}.{bf.name}: expected a positive int, "
+                        f"got {mf.value!r}"
                     )
+        moe = self.moe
+        if moe is not None:
             n_exp, k_act = moe.num_experts, moe.experts_per_tok
             if (
                 n_exp is not None and k_act is not None
@@ -250,6 +414,26 @@ class ModelSpec:
                     f"warn: moe.experts_per_tok ({k_act.value}) > "
                     f"moe.num_experts ({n_exp.value}) — impossible routing, verify"
                 )
+        # Layer-split coherence: the family counts should sum to the total.
+        nl = self.num_hidden_layers
+        if nl is not None and isinstance(nl.value, int) and not isinstance(nl.value, bool):
+            for blk_name, a_name, b_name in (
+                ("hybrid_gdn", "num_gdn_layers", "num_attn_layers"),
+                ("swa", "num_full_attn_layers", "num_sliding_attn_layers"),
+            ):
+                blk = getattr(self, blk_name)
+                pa = getattr(blk, a_name, None) if blk is not None else None
+                pb = getattr(blk, b_name, None) if blk is not None else None
+                if (
+                    pa is not None and pb is not None
+                    and isinstance(pa.value, int) and isinstance(pb.value, int)
+                    and pa.value + pb.value != nl.value
+                ):
+                    issues.append(
+                        f"warn: {blk_name}.{a_name} + {b_name} "
+                        f"({pa.value} + {pb.value}) != num_hidden_layers "
+                        f"({nl.value}) — verify"
+                    )
         return issues
 
     # ── serialization (the deriver subprocess boundary is JSON) ──────────────
@@ -263,10 +447,11 @@ class ModelSpec:
                     "provenance": v.provenance,
                     "source": v.source,
                 }
-            elif isinstance(v, (MoEFacts, MtpFacts, GgufFacts)):
-                # MoEFacts fields are themselves Facts — flatten each with the
-                # value/provenance/source shape so the JSON boundary stays
-                # lossless (from_dict reconstructs via MoEFacts(**v)).
+            elif isinstance(v, tuple(_FACT_BLOCKS.values())):
+                # Facts-block fields are themselves Facts (or plain metadata)
+                # — flatten each with the value/provenance/source shape so
+                # the JSON boundary stays lossless (from_dict rebuilds via
+                # _fact_block_from_dict).
                 out[f.name] = {
                     g: (
                         {"value": fv.value, "provenance": fv.provenance,
@@ -302,12 +487,8 @@ class ModelSpec:
                 kw[f.name] = tuple(v or ())
             elif isinstance(v, dict) and {"value", "provenance", "source"} <= set(v):
                 kw[f.name] = Fact(v["value"], v["provenance"], v["source"])
-            elif f.name == "mtp" and isinstance(v, dict):
-                kw[f.name] = MtpFacts(**v)
-            elif f.name == "gguf" and isinstance(v, dict):
-                kw[f.name] = GgufFacts(**v)
-            elif f.name == "moe" and isinstance(v, dict):
-                kw[f.name] = MoEFacts._from_dict(v)
+            elif f.name in _FACT_BLOCKS and isinstance(v, dict):
+                kw[f.name] = _fact_block_from_dict(_FACT_BLOCKS[f.name], v)
             else:
                 kw[f.name] = v
         return cls(**kw)
@@ -401,6 +582,112 @@ class ModelSpec:
         )
         if moe == MoEFacts():
             moe = None
+
+        # ── Family extractors (Table C, M5 slice-2): GDN/DeltaNet hybrid,
+        # SWA split, MLA latent.  The SAME alias-pair discipline as the MoE
+        # block above: each Fact names the key ACTUALLY found, and an
+        # all-None block is never attached.  dLLM families (diffusiongemma)
+        # deliberately get NO extractor — decode granularity / canvas size
+        # are policy, not geometry (see the module note above MlaFacts).
+        cfg_fact = moe_fact  # identical rule: first PRESENT alias wins
+
+        lt_raw = profile.get("config_layer_types")
+        ltypes = [str(t) for t in lt_raw] if isinstance(lt_raw, list) else []
+        n_full_lt = sum(t == "full_attention" for t in ltypes)
+        n_layers_v = spec.get("num_hidden_layers")
+        if n_layers_v is None:
+            n_layers_v = profile.get("config_num_hidden_layers")
+
+        # Layer splits: EXACT when config.json ships ``layer_types``
+        # (counted); otherwise derived from the family's interval/pattern
+        # key and labeled derived-estimate (it is arithmetic, not a fact).
+        gdn_split: tuple[Optional[Fact], Optional[Fact]] = (None, None)
+        swa_split: tuple[Optional[Fact], Optional[Fact]] = (None, None)
+        if ltypes:
+            split_src = f"{src_prefix}:layer_types"
+            n_lin = sum(t in ("linear_attention", "gated_deltanet") for t in ltypes)
+            n_slide = sum(
+                t in ("sliding_attention", "sliding_window") for t in ltypes
+            )
+            if n_lin and n_full_lt:
+                gdn_split = (
+                    Fact(n_lin, prov, split_src),
+                    Fact(n_full_lt, prov, split_src),
+                )
+            if n_slide and n_full_lt:
+                swa_split = (
+                    Fact(n_full_lt, prov, split_src),
+                    Fact(n_slide, prov, split_src),
+                )
+
+        _k_h = cfg_fact("linear_num_key_heads")
+        _v_h = cfg_fact("linear_num_value_heads")
+        _k_d = cfg_fact("linear_key_head_dim")
+        _v_d = cfg_fact("linear_value_head_dim")
+        _conv = cfg_fact("linear_conv_kernel_dim", "conv_kernel")
+        iv = profile.get("config_full_attention_interval")
+        if gdn_split == (None, None) and any((_k_h, _v_h, _k_d, _v_d, _conv)) \
+                and isinstance(iv, int) and not isinstance(iv, bool) and iv > 0 \
+                and isinstance(n_layers_v, int) and not isinstance(n_layers_v, bool) \
+                and n_layers_v > 0:
+            est = f"{src_prefix}:num_hidden_layers÷full_attention_interval"
+            n_attn = n_layers_v // iv
+            gdn_split = (
+                Fact(n_layers_v - n_attn, "derived-estimate", est),
+                Fact(n_attn, "derived-estimate", est),
+            )
+
+        gdn = HybridGdnFacts(
+            linear_num_k_heads=_k_h,
+            linear_num_v_heads=_v_h,
+            linear_k_head_dim=_k_d,
+            linear_v_head_dim=_v_d,
+            linear_conv_kernel_dim=_conv,
+            num_gdn_layers=gdn_split[0],
+            num_attn_layers=gdn_split[1],
+        )
+        if gdn == HybridGdnFacts():
+            gdn = None
+
+        window = cfg_fact("sliding_window")
+        global_hd = cfg_fact("global_head_dim")
+        pw = profile.get("config_sliding_window_pattern")
+        if swa_split == (None, None) and isinstance(pw, int) \
+                and not isinstance(pw, bool) and pw > 1 \
+                and isinstance(n_layers_v, int) and not isinstance(n_layers_v, bool) \
+                and n_layers_v > 0:
+            est = f"{src_prefix}:num_hidden_layers÷sliding_window_pattern"
+            n_glob = n_layers_v // pw
+            swa_split = (
+                Fact(n_glob, "derived-estimate", est),
+                Fact(n_layers_v - n_glob, "derived-estimate", est),
+            )
+        # Gemma4 naming (upstream converter contract): when a per-class
+        # global dim exists, the plain ``head_dim`` IS the sliding-layer
+        # dim.  Without that split evidence a uniform head_dim is NEVER
+        # relabeled as sliding-only.
+        slide_hd = cfg_fact("head_dim_sliding") or (
+            cfg_fact("head_dim")
+            if (global_hd is not None or swa_split[0] is not None) else None
+        )
+        swa = SwaFacts(
+            sliding_window=window,
+            num_full_attn_layers=swa_split[0],
+            num_sliding_attn_layers=swa_split[1],
+            head_dim_sliding=slide_hd,
+            global_head_dim=global_hd,
+            num_global_kv_heads=cfg_fact("num_global_key_value_heads"),
+        )
+        if swa == SwaFacts():
+            swa = None
+
+        mla = MlaFacts(
+            kv_lora_rank=cfg_fact("kv_lora_rank"),
+            qk_nope_head_dim=cfg_fact("qk_nope_head_dim"),
+            qk_rope_head_dim=cfg_fact("qk_rope_head_dim"),
+        )
+        if mla == MlaFacts():
+            mla = None
         return cls(
             spec_version=MODEL_SPEC_VERSION,
             model_slug=slug,
@@ -439,6 +726,9 @@ class ModelSpec:
                                        "hf-api:siblings"),
             mtp=MtpFacts(has_head=bool(profile.get("has_mtp_head"))),
             moe=moe,
+            hybrid_gdn=gdn,
+            swa=swa,
+            mla=mla,
         )
 
     @classmethod
@@ -470,6 +760,26 @@ class ModelSpec:
             MoEFacts(num_experts=moe_n, experts_per_tok=moe_k)
             if (moe_n is not None or moe_k is not None) else None
         )
+
+        # M5 slice-2: family blocks ride the facts dict as {field: {value,
+        # kv}} maps (gguf_spec_facts emits them ONLY when the header carries
+        # the family's KVs).  Each entry becomes a derived-estimate Fact with
+        # a gguf-header:<kv> source; absent ⇒ slot None.
+        def fam_block(name: str, blk_cls: Any) -> Any:
+            entries = facts.get(name)
+            if not isinstance(entries, dict):
+                return None
+            kw = {
+                k: Fact(e["value"], "derived-estimate", f"gguf-header:{e['kv']}")
+                for k, e in entries.items()
+                if isinstance(e, dict) and {"value", "kv"} <= set(e)
+                and e.get("value") is not None
+            }
+            return blk_cls(**kw) if kw else None
+
+        gdn = fam_block("hybrid_gdn", HybridGdnFacts)
+        swa = fam_block("swa", SwaFacts)
+        mla = fam_block("mla", MlaFacts)
         return cls(
             spec_version=MODEL_SPEC_VERSION,
             model_slug=str(facts.get("model_id") or ""),
@@ -484,6 +794,9 @@ class ModelSpec:
             num_kv_heads=f("num_kv_heads", kv_src),
             head_dim_attn=f("head_dim_attn", "attention.key_length"),
             max_ctx_supported=f("max_ctx_supported", "context_length"),
+            hybrid_gdn=gdn,
+            swa=swa,
+            mla=mla,
             valid_tp=tuple(facts.get("valid_tp") or (1, 2)),
             weights_total_gb=f("weights_total_gb", "file-size"),
             mtp=MtpFacts(has_head=bool(facts.get("has_mtp_head"))),

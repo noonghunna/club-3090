@@ -1021,6 +1021,115 @@ def gguf_spec_facts(
     # M5 MoE extractor (llama.cpp naming): expert_count / expert_used_count.
     experts = num(f"{arch}.expert_count")
     experts_used = num(f"{arch}.expert_used_count")
+    # ── M5 slice-2 FAMILY KVs (llama.cpp naming, verified against upstream
+    # conversion/{qwen,gemma,deepseek}.py).  Each entry records the EXACT
+    # header KV it came from ("kv"); derived entries name their derivation
+    # path in "kv".  Blocks stay ABSENT unless the header actually carries
+    # the family's KVs — a dense header adds nothing.
+    family_blocks: dict[str, dict[str, dict[str, Any]]] = {}
+
+    # GDN/DeltaNet hybrid (qwen3next): the converter maps the linear-attn
+    # config onto its SSM KVs.
+    _gdn: dict[str, dict[str, Any]] = {}
+    for _fld, _kvname in (
+        ("linear_num_k_heads", f"{arch}.ssm.group_count"),
+        ("linear_num_v_heads", f"{arch}.ssm.time_step_rank"),
+        ("linear_k_head_dim", f"{arch}.ssm.state_size"),
+        ("linear_conv_kernel_dim", f"{arch}.ssm.conv_kernel"),
+    ):
+        _v = num(_kvname)
+        if _v is not None:
+            _gdn[_fld] = {"value": _v, "kv": _kvname}
+    _tsr = num(f"{arch}.ssm.time_step_rank")
+    _inner = num(f"{arch}.ssm.inner_size")
+    if _inner is not None and _tsr and _inner % _tsr == 0:
+        _gdn["linear_v_head_dim"] = {
+            "value": _inner // _tsr,
+            "kv": f"{arch}.ssm.inner_size//{arch}.ssm.time_step_rank",
+        }
+    _faiv = num(f"{arch}.full_attention_interval")
+    if _faiv and layers and layers > 0:
+        _n_attn = max(layers // _faiv, 0)
+        _src = f"{arch}.block_count÷{arch}.full_attention_interval"
+        _gdn["num_attn_layers"] = {"value": _n_attn, "kv": _src}
+        _gdn["num_gdn_layers"] = {"value": layers - _n_attn, "kv": _src}
+    if _gdn:
+        family_blocks["hybrid_gdn"] = _gdn
+
+    # Sliding-window attention (gemma/gemma4): window scalar + per-layer
+    # bool pattern array + per-class head dims (+ asymmetric global KV
+    # heads when the aligned head_count_kv array carries them).
+    _swa: dict[str, dict[str, Any]] = {}
+    _win = num(f"{arch}.attention.sliding_window")
+    if _win is not None:
+        _swa["sliding_window"] = {
+            "value": _win, "kv": f"{arch}.attention.sliding_window",
+        }
+    _pat = kv.get(f"{arch}.attention.sliding_window_pattern")
+    # The converter writes a per-layer BOOL array; GGUF int8 round-trips
+    # may surface 0/1 ints — both accepted (bool IS an int).
+    _pat_arr = isinstance(_pat, list) and bool(_pat) and all(
+        isinstance(x, int) for x in _pat
+    )
+    if _pat_arr:
+        assert isinstance(_pat, list)
+        _n_swa_l = sum(1 for x in _pat if x)
+        _src = f"{arch}.attention.sliding_window_pattern"
+        _swa["num_sliding_attn_layers"] = {"value": _n_swa_l, "kv": _src}
+        _swa["num_full_attn_layers"] = {"value": len(_pat) - _n_swa_l, "kv": _src}
+    _kl_swa = num(f"{arch}.attention.key_length_swa")
+    _kl = num(f"{arch}.attention.key_length")
+    if _kl_swa is not None:
+        _swa["head_dim_sliding"] = {
+            "value": _kl_swa, "kv": f"{arch}.attention.key_length_swa",
+        }
+    if _kl is not None and (_kl_swa is not None or _pat_arr or _win is not None):
+        # gemma4's converter writes the GLOBAL head dim into key_length —
+        # gated on sliding evidence so it never leaks onto other arches.
+        _swa["global_head_dim"] = {
+            "value": _kl,
+            "kv": f"{arch}.attention.key_length (gemma4: GLOBAL dim)",
+        }
+    _hckv = kv.get(f"{arch}.attention.head_count_kv")
+    if (
+        _pat_arr and isinstance(_pat, list) and isinstance(_hckv, list)
+        and len(_hckv) == len(_pat)
+        and all(isinstance(x, int) and not isinstance(x, bool) for x in _hckv)
+    ):
+        _glob = sorted({v for p, v in zip(_pat, _hckv) if not p})
+        _slide = sorted({v for p, v in zip(_pat, _hckv) if p})
+        if len(_glob) == 1 and _glob != _slide:
+            _swa["num_global_kv_heads"] = {
+                "value": _glob[0],
+                "kv": f"{arch}.attention.head_count_kv×sliding_window_pattern",
+            }
+    if _swa:
+        family_blocks["swa"] = _swa
+
+    # MLA single-latent-KV (deepseek2): GATED on kv_lora_rank — rope.
+    # dimension_count alone is generic-RoPE, not MLA evidence.  qk_nope is
+    # arithmetic off key_length_mla (labeled derived-estimate); the latent
+    # rank is NEVER turned into head counts here.
+    _klr = num(f"{arch}.attention.kv_lora_rank")
+    if _klr is not None:
+        _mla: dict[str, dict[str, Any]] = {
+            "kv_lora_rank": {
+                "value": _klr, "kv": f"{arch}.attention.kv_lora_rank",
+            },
+        }
+        _rope_d = num(f"{arch}.rope.dimension_count")
+        if _rope_d is not None:
+            # deepseek2's converter writes exactly qk_rope_head_dim there.
+            _mla["qk_rope_head_dim"] = {
+                "value": _rope_d, "kv": f"{arch}.rope.dimension_count",
+            }
+        _klm = num(f"{arch}.attention.key_length_mla")
+        if _klm is not None and _rope_d is not None and _klm > _rope_d:
+            _mla["qk_nope_head_dim"] = {
+                "value": _klm - _rope_d,
+                "kv": f"{arch}.attention.key_length_mla-{arch}.rope.dimension_count",
+            }
+        family_blocks["mla"] = _mla
     ft = num("general.file_type")
     return {
         "model_id": model_id,
@@ -1040,6 +1149,11 @@ def gguf_spec_facts(
         # with provenance "gguf-header:<arch>.<kv>".
         "num_experts": experts,
         "experts_per_tok": experts_used,
+        # M5 slice-2: family blocks ({field: {value, kv}} each) — present
+        # ONLY when the header carries the family's KVs.  ModelSpec.
+        # from_gguf_facts turns them into the typed hybrid_gdn/swa/mla
+        # slots with gguf-header:<kv> provenance; absent ⇒ slot None.
+        **family_blocks,
         "weights_total_gb": weight_gb,
         "valid_tp": [1, 2],
         # ── provenance / confidence metadata (additive; consumers pick the
@@ -1408,6 +1522,31 @@ def derive(
         "config_moe_intermediate_size": _int(config or {}, "moe_intermediate_size"),
         "config_num_shared_experts": _int(config or {}, "num_shared_experts"),
         "config_n_shared_experts": _int(config or {}, "n_shared_experts"),
+        # ModelSpec M5 slice-2 (additive): the raw FAMILY keys (proposal §2
+        # Table C) — GDN/DeltaNet (qwen3-next), SWA (gemma) and MLA
+        # (deepseek2) alias pairs verbatim; layer_types rides as a validated
+        # str-list (or None).  ModelSpec.from_derive_result resolves them
+        # into the typed family blocks; all None on other families ⇒ the
+        # slot stays None.  No existing field changes.
+        "config_linear_num_key_heads": _int(config or {}, "linear_num_key_heads"),
+        "config_linear_num_value_heads": _int(config or {}, "linear_num_value_heads"),
+        "config_linear_key_head_dim": _int(config or {}, "linear_key_head_dim"),
+        "config_linear_value_head_dim": _int(config or {}, "linear_value_head_dim"),
+        "config_linear_conv_kernel_dim": _int(config or {}, "linear_conv_kernel_dim"),
+        "config_conv_kernel": _int(config or {}, "conv_kernel"),
+        "config_layer_types": (
+            _lt if isinstance(
+                _lt := (config or {}).get("layer_types"), list
+            ) and all(isinstance(x, str) for x in _lt) else None
+        ),
+        "config_full_attention_interval": _int(config or {}, "full_attention_interval"),
+        "config_sliding_window": _int(config or {}, "sliding_window"),
+        "config_sliding_window_pattern": _int(config or {}, "sliding_window_pattern"),
+        "config_global_head_dim": _int(config or {}, "global_head_dim"),
+        "config_num_global_key_value_heads": _int(config or {}, "num_global_key_value_heads"),
+        "config_kv_lora_rank": _int(config or {}, "kv_lora_rank"),
+        "config_qk_nope_head_dim": _int(config or {}, "qk_nope_head_dim"),
+        "config_qk_rope_head_dim": _int(config or {}, "qk_rope_head_dim"),
         # ModelSpec M2 (additive): the vision heuristic MOVES INTO the deriver
         # proper (was: services._DERIVER_FACTS_SRC re-fetching config.json a
         # second time).  Same substring + vision_config logic, one fetch.
