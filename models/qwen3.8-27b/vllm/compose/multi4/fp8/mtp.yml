@@ -413,6 +413,16 @@ services:
       # Opt out: PREFIX_CACHE_ARG=--no-enable-prefix-caching
       - "${PREFIX_CACHE_ARG:---enable-prefix-caching}"
       - --enable-chunked-prefill
+      # ⭐ mamba-align prefix caching (2026-08-23, A/B validated on dual-fast MTP):
+      # makes the DeltaNet/SSM state prefix-cacheable → cuts BETWEEN-TURN TTFT
+      # 15-38% on agent traffic (bench-agentic), flatter TTFT-vs-ctx growth
+      # (6.8x vs 9.7x); decode-neutral, soak PASS (0 leak). ⚠️ align mode is
+      # upstream-EXPERIMENTAL + adds ~100ms cold-start TTFT (precopy JIT). Disable
+      # with MAMBA_CACHE_MODE=none. pmu is inert unless align is active.
+      - --mamba-cache-mode
+      - "${MAMBA_CACHE_MODE:-align}"
+      - --prefix-match-unit
+      - "${PREFIX_MATCH_UNIT:-16}"
       # SAMPLER moved INTO the entrypoint (#984/#1014): at boot it derives
       # --override-generation-config from the model-card row matching
       # ENABLE_THINKING (instruct by default; thinking when true); explicit
