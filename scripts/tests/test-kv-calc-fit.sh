@@ -134,7 +134,9 @@ except Exception as exc:  # noqa: BLE001
 # ---------------------------------------------------------------------------
 for label, fit_arg, card_arg in (
     ("unknown slug/model", "definitely-not-a-real-slug", "rtx3090"),
-    ("non-vLLM slug (kvcalc SKIP)", "beellama/dflash", "rtx3090"),
+    # llama.cpp slugs with a kvcalc_key are NOW priceable (llama projection);
+    # the unknown fixture must be a slug that is STILL kvcalc_key=SKIP.
+    ("non-priced slug (kvcalc SKIP)", "beellama/carnice-v2-dual-q8-mtp", "rtx3090"),
     ("unrecognized card", "vllm/dual", "frobnicator-9000"),
 ):
     rc_u, out_u, err_u = run_fit("--fit", fit_arg, "--card", card_arg, "--json")
@@ -174,8 +176,8 @@ if parsed_a:
           f"(e) vllm/dual has a real verdict in the batch (got {variants.get('vllm/dual')!r})")
     check(variants.get("vllm/dual") == json.loads(out),
           "(e) batch vllm/dual == per-slug --fit (one pricing path)")
-    check(variants.get("beellama/dflash", {}).get("verdict") == "skip",
-          f"(e) non-vLLM beellama/dflash → skip (got {variants.get('beellama/dflash')!r})")
+    check(variants.get("beellama/carnice-v2-dual-q8-mtp", {}).get("verdict") == "skip",
+          f"(e) non-priced dual llama slug → skip (got {variants.get('beellama/carnice-v2-dual-q8-mtp')!r})")
     check(all(isinstance(v, dict) and isinstance(v.get("verdict"), str)
               for v in variants.values()),
           "(e) every variant value carries a verdict string")

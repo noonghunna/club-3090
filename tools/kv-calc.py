@@ -46,10 +46,11 @@ Usage:
 """
 
 import argparse
-import math
 import json
 import logging
+import math
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -156,6 +157,225 @@ QWEN36_35B_A3B = MODEL_SPECS["qwen3.6-35b-a3b"]
 GEMMA4_31B = MODEL_SPECS["gemma-4-31b"]
 GEMMA4_26B_A4B = MODEL_SPECS["gemma-4-26b-a4b"]
 GEMMA4_12B = MODEL_SPECS["gemma-4-12b"]
+
+
+# =============================================================================
+# llama.cpp projection (GGUF / llama-server family)
+# =============================================================================
+# Unlike vLLM, llama.cpp has no gpu_memory_utilization budget and no elastic,
+# capping KV pool: `-c` (CTX_SIZE) sizes the context and the cache FILLS as
+# sequences grow — when VRAM runs out mid-fill the server OOMs (docs/CLIFFS.md).
+# The projection is therefore a straight fixed-footprint sum:
+#
+#   VRAM ≈ weights_on_gpu(ngl fraction)
+#        + KV(ctx × kv_bpe(kv_type) × kv_heads × head_dim × growing_layers_gpu
+#              × 2)                                   # K and V stored separately
+#        + compute buffer (documented heuristic, scales with -ub and hidden)
+#        + runtime overhead (CUDA context + llama-server baseline)
+#        + drafter head (embedded MTP head, or an external DFlash GGUF)
+#
+# KV bpe is bytes per ELEMENT (one head dim of one head), from the GGUF block
+# layouts: q8_0 = 34 B / 32 el ≈ 1.06, q4_0 = 18 B / 32 el ≈ 0.57,
+# q5_0 = 22 B / 32 el ≈ 0.69. Only the KV-GROWING layers count — for the
+# qwen3-next DeltaNet hybrid that is num_attn_layers (16 of 64 on the 27B);
+# the GDN layers hold a fixed per-sequence state, not ctx-linear KV.
+LLAMA_KV_BYTES = {
+    "f16":    2.0,
+    "fp16":   2.0,
+    "bf16":   2.0,
+    "q8_0":   1.0625,   # 34 B block / 32 el
+    "q6_k":   0.8203,   # 210 B super-block / 256 el
+    "q5_1":   0.75,     # 24 B block / 32 el
+    "q5_0":   0.6875,   # 22 B block / 32 el
+    "q4_1":   0.6875,   # 22 B block / 32 el
+    "q4_0":   0.5625,   # 18 B block / 32 el
+    "iq4_xs": 0.5625,   # ~4.25 bpw + scales ≈ q4_0 density
+    "iq4_ks": 0.5625,   # ~4.25 bpw + scales ≈ q4_0 density
+    # beellama KVarN-4: variable-width KV quant with ~4-bit storage density.
+    # No public block layout — priced at q4_0 density (estimate; predictions
+    # carry a note).
+    "kvarn4": 0.5625,
+}
+
+# ---- Documented heuristic constants ----------------------------------------
+LLAMACPP_RUNTIME_OVERHEAD_GB = 0.45     # CUDA context + llama-server baseline
+# Graph scratch at the reference point (-ub 512, hidden 4096). Scales linearly
+# with UBATCH_SIZE and with hidden_size — see _llamacpp_compute_buffer_gb.
+LLAMACPP_COMPUTE_BUFFER_BASE_GB = 0.55
+LLAMACPP_MTP_HEAD_GB = 0.30             # embedded MTP draft head in the GGUF
+
+# bits-per-weight (incl. block-scale overhead) for estimating GGUF footprints
+# of variants whose profile YAML carries size_gb: variable. Anchored on the
+# documented Q4_K_M row (~17.0 GB for the 27B — mtp.yml VRAM-budget header).
+LLAMA_GGUF_BPW = {
+    "q8_0": 8.5, "q6_k": 6.56, "q5_k_m": 5.69, "q5_k_s": 5.13,
+    "q4_k_m": 4.85, "q4_k_s": 4.58, "iq4_xs": 4.25, "iq4_ks": 4.25,
+}
+_QUANT_TOKEN_RE = re.compile(
+    r"i?q[2-8](?:_[a-z0-9]+)+|iq[24](?:_[a-z0-9]+)+", re.IGNORECASE)
+_PARAMS_B_RE = re.compile(r"(\d+(?:\.\d+)?)b", re.IGNORECASE)
+
+
+def _gguf_quant_token(name: str) -> Optional[str]:
+    """Longest quant token embedded in a GGUF variant/file name."""
+    tokens = [t.lower() for t in _QUANT_TOKEN_RE.findall(name or "")]
+    return max(tokens, key=len) if tokens else None
+
+
+def _llama_params_b(model_id: str) -> float:
+    """Nominal parameter count (billions) parsed from the model id ('27b')."""
+    m = _PARAMS_B_RE.search(model_id or "")
+    if not m:
+        raise ValueError(f"cannot infer parameter count from model id {model_id!r}")
+    return float(m.group(1))
+
+
+def build_llama_spec(model) -> dict:
+    """Build a llama.cpp projection spec from a ModelProfile.
+
+    Dims come from the SAME profile YAML the vLLM specs use; the KV-GROWING
+    layer count is num_attn_layers when the profile declares one (hybrid GDN
+    families), else num_hidden_layers (dense GGUF models).
+    """
+    num_layers = int(model.num_hidden_layers)
+    growing = getattr(model, "num_attn_layers", None)
+    growing = int(growing) if growing else num_layers
+    return {
+        "model_id": model.id,
+        "model_family": "llamacpp-dense",
+        "hidden_size": int(model.hidden_size),
+        "num_hidden_layers": num_layers,
+        "num_growing_layers": growing,
+        "num_kv_heads": int(model.num_kv_heads),
+        "head_dim_attn": int(model.head_dim_attn),
+        "max_ctx_supported": int(model.max_ctx_supported),
+    }
+
+
+def llama_weights_gb(model, weights_variant: str, model_id: str) -> float:
+    """GGUF weights footprint for a registry weights_variant.
+
+    Numeric profile size_gb wins; `variable` sizes are estimated as
+    params_b × bpw / 8 from the quant token embedded in the variant name.
+    """
+    w = model.weights[weights_variant]
+    value = w["size_gb"]
+    if isinstance(value, (int, float)):
+        return float(value)
+    token = _gguf_quant_token(weights_variant) or _gguf_quant_token(
+        " ".join(w.get("files") or []))
+    if token is None or token not in LLAMA_GGUF_BPW:
+        raise ValueError(
+            f"no numeric size and no known quant token for GGUF variant "
+            f"{weights_variant!r} ({model_id})")
+    return _llama_params_b(model_id) * LLAMA_GGUF_BPW[token] / 8.0
+
+
+def _llamacpp_compute_buffer_gb(hidden_size: int, ubatch: int) -> float:
+    """Compute/graph buffer heuristic: linear in -ub and hidden_size,
+    normalized to 0.55 GB at (-ub 512, hidden 4096)."""
+    return (
+        LLAMACPP_COMPUTE_BUFFER_BASE_GB
+        * (ubatch / 512.0)
+        * (hidden_size / 4096.0)
+    )
+
+
+def predict_llamacpp(
+    spec,
+    kv_type="q4_0",
+    max_ctx=131072,
+    n_gpu_layers=99,
+    ubatch=512,
+    vram_gb=24,
+    drafter_gb=0.0,
+) -> Prediction:
+    """Predict single-card VRAM for a llama.cpp (GGUF) serve.
+
+    No mem-util budget and no pool capping (that is vLLM behavior): the sum
+    either fits within the card's VRAM or it does not. Verdicts reuse the
+    estimator's ±1.5 GB band:
+      total ≤ budget − band → PASS   (fits-clean)
+      total ≤ budget        → TIGHT  (fits-constrained; margin < band)
+      otherwise             → FAIL   (wont-fit)
+    """
+    if kv_type not in LLAMA_KV_BYTES:
+        raise ValueError(
+            f"unknown llama.cpp KV type {kv_type!r} (known: {sorted(LLAMA_KV_BYTES)})")
+    bpe = LLAMA_KV_BYTES[kv_type]
+    layers_gpu = min(int(n_gpu_layers), spec["num_hidden_layers"])
+    frac = layers_gpu / spec["num_hidden_layers"]
+
+    weights_gb = spec["weights_gb"] * frac
+    growing_layers_gpu = spec["num_growing_layers"] * frac
+    kv_bytes = (
+        max_ctx * growing_layers_gpu * spec["num_kv_heads"]
+        * spec["head_dim_attn"] * 2 * bpe          # ×2: K and V stored separately
+    )
+    kv_gb = kv_bytes / 1e9
+    compute_gb = _llamacpp_compute_buffer_gb(spec["hidden_size"], ubatch)
+
+    total_gb = weights_gb + kv_gb + compute_gb + LLAMACPP_RUNTIME_OVERHEAD_GB + drafter_gb
+    budget_gb = float(vram_gb)
+    pct = 100 * total_gb / budget_gb if budget_gb > 0 else 999.0
+
+    notes = []
+    if total_gb <= budget_gb - FIT_BAND_GB:
+        verdict = "PASS"
+    elif total_gb <= budget_gb:
+        verdict = "TIGHT"
+        notes.append(
+            f"projected {total_gb:.1f} GB is within the ±{FIT_BAND_GB:g} GB band of the "
+            f"{budget_gb:g} GB card — llama.cpp will NOT cap like vLLM; expect an OOM at "
+            f"fill if the real footprint lands above the estimate"
+        )
+    else:
+        verdict = "FAIL"
+        notes.append(
+            f"projected {total_gb:.1f} GB exceeds the {budget_gb:g} GB card by "
+            f"{total_gb - budget_gb:.1f} GB — lower CTX_SIZE, drop to a smaller GGUF, "
+            f"or reduce -ngl to offload layers to CPU"
+        )
+    if kv_type == "kvarn4":
+        notes.append("kvarn4 KV priced at q4_0 density (estimate — no public block layout)")
+
+    return Prediction(
+        model=spec["model_id"],
+        weights_gb=weights_gb,
+        kv_pool_requested_gb=kv_gb,
+        kv_pool_actual_gb=kv_gb,       # no capping: fixed-footprint engine
+        kv_pool_sliding_fixed_gb=0.0,
+        activation_gb=compute_gb,
+        cudagraph_overhead_gb=LLAMACPP_RUNTIME_OVERHEAD_GB,
+        drafter_gb=drafter_gb,
+        total_gb=total_gb,
+        vram_gb=budget_gb,
+        budget_gb=budget_gb,
+        pct_of_vram=pct,
+        verdict=verdict,
+        notes=notes,
+    )
+
+
+def solve_max_ctx_llama(spec, kv_type, n_gpu_layers=99, ubatch=512,
+                        vram_gb=24, drafter_gb=0.0):
+    """Binary search for the largest ctx that keeps the llama verdict at
+    PASS or TIGHT (same contract as solve_max_ctx)."""
+    lo, hi = 1024, spec.get("max_ctx_supported", 262144)
+    best = 0
+    while lo <= hi:
+        mid = ((lo + hi) // 2 // 1024) * 1024
+        if mid == 0:
+            break
+        p = predict_llamacpp(
+            spec, kv_type=kv_type, max_ctx=mid, n_gpu_layers=n_gpu_layers,
+            ubatch=ubatch, vram_gb=vram_gb, drafter_gb=drafter_gb)
+        if p.verdict in ("PASS", "TIGHT"):
+            best = mid
+            lo = mid + 1024
+        else:
+            hi = mid - 1024
+    return best
 
 
 # =============================================================================
@@ -1476,10 +1696,11 @@ def _resolve_card_vram_gb(card: Optional[str]) -> Optional[float]:
 
 
 def _resolve_fit_slug(target: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Resolve a `--fit` argument to a priceable vLLM registry slug.
+    """Resolve a `--fit` argument to a priceable registry slug.
 
-    Accepts either a registry slug (e.g. `vllm/dual`) or a bare model id
-    (e.g. `qwen3.6-27b` → its curated default, preferring dual then single).
+    Accepts either a registry slug (e.g. `vllm/dual`, `llamacpp/mtp`) or a
+    bare model id (e.g. `qwen3.6-27b` → its curated default, preferring dual
+    then single).
 
     Returns (slug, model_id, error). On success error is None; on failure
     slug/model_id are None and error explains why (so the caller emits an
@@ -1508,19 +1729,56 @@ def _resolve_fit_slug(target: str) -> tuple[Optional[str], Optional[str], Option
             for s, e in COMPOSE_REGISTRY.items():
                 if e.get("model") == target and s.startswith("vllm/") and e.get("kvcalc_key") not in (None, "SKIP"):
                     slug = s
-                    break
         if slug is None:
-            return None, target, f"no vLLM (kv-calc priceable) compose for model {target!r}"
+            return None, target, f"no priceable (vLLM/llama.cpp) compose for model {target!r}"
         model_id = target
     else:
         return None, None, f"unknown slug/model {target!r} (not a registry slug or catalogued model)"
-
     entry = COMPOSE_REGISTRY[slug]
     if entry.get("kvcalc_key") in (None, "SKIP"):
-        return None, model_id, f"slug {slug!r} is not vLLM (kv-calc prices vLLM only; engine sets kvcalc_key=SKIP)"
-    if model_id not in MODEL_SPECS:
+        return None, model_id, f"slug {slug!r} is not kv-calc priceable (kvcalc_key=SKIP)"
+    # llama.cpp-family slugs price through build_llama_spec (profile-YAML dims
+    # + GGUF variant size), so they do NOT need a vLLM MODEL_SPECS entry.
+    if "llama" not in str(entry.get("engine", "")) and model_id not in MODEL_SPECS:
         return None, model_id, f"model {model_id!r} has no calibrated kv-calc spec (not in MODEL_SPECS)"
     return slug, model_id, None
+
+
+def _fit_verdict_llama(slug: str, model_id: str, vram: float) -> dict:
+    """llama.cpp-family pricing for --fit. Reuses the llama.cpp projection
+    (predict_llamacpp / solve_max_ctx_llama); knobs come from the registry
+    entry — max_ctx is the compose CTX_SIZE default, kv_format the KV_TYPE,
+    n-gpu-layers defaults to 99 (all layers on GPU). Verdict vocabulary and
+    result shape are IDENTICAL to the vLLM path so c3 renders unchanged."""
+    try:
+        entry = COMPOSE_REGISTRY[slug]
+        model = PROFILES.models[model_id]
+        spec = build_llama_spec(model)
+        spec["weights_gb"] = llama_weights_gb(model, entry["weights_variant"], model_id)
+        kv_type = entry["kv_format"]
+        if kv_type not in LLAMA_KV_BYTES:
+            raise ValueError(
+                f"KV type {kv_type!r} has no llama.cpp bpe mapping")
+        drafter_gb = 0.0
+        drafter = PROFILES.drafters[entry["drafter"]] if entry.get("drafter") else None
+        if drafter is not None:
+            if getattr(drafter, "spec_method", None) == "dflash":
+                drafter_gb = float(drafter.vram_footprint_gb)
+            else:
+                drafter_gb = LLAMACPP_MTP_HEAD_GB
+        pred = predict_llamacpp(
+            spec, kv_type=kv_type, max_ctx=entry["max_ctx"],
+            vram_gb=vram, drafter_gb=drafter_gb)
+        max_ctx_fit = solve_max_ctx_llama(
+            spec, kv_type=kv_type, vram_gb=vram, drafter_gb=drafter_gb)
+    except Exception as exc:
+        return {"verdict": "unknown", "error": f"pricing {slug!r} failed: {exc}"}
+    return {
+        "verdict": _RAW_VERDICT_MAP[pred.verdict],
+        "vram_est_gb": round(pred.total_gb, 4),
+        "band_gb": FIT_BAND_GB,
+        "max_ctx": int(max_ctx_fit),
+    }
 
 
 def fit_verdict(target: str, card: Optional[str], vram_default: float) -> dict:
@@ -1576,6 +1834,11 @@ def fit_verdict(target: str, card: Optional[str], vram_default: float) -> dict:
                 "card_sm": _card_sm,
                 "error": f"requires sm >= {float(_req_sm):g} (this card is sm_{_card_sm:g})",
             }
+
+    # llama.cpp-family slugs (llamacpp/*, ik-llama/*, beellama/*) price through
+    # the llama.cpp projection (fixed-footprint engine, no mem-util budget).
+    if "llama" in str(_entry_reg.get("engine", "")):
+        return _fit_verdict_llama(slug, model_id, vram)
 
     try:
         spec = MODEL_SPECS[model_id]
