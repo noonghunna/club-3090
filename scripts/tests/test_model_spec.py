@@ -25,6 +25,7 @@ from scripts.lib.profiles.model_spec import (  # noqa: E402
     MODEL_SPEC_VERSION,
     Fact,
     ModelSpec,
+    MoEFacts,
     MtpFacts,
 )
 
@@ -76,6 +77,16 @@ def _derive_result(*, eligible=True, config=None, tier1=None, error=None) -> D.D
         "config_num_key_value_heads": config["num_key_value_heads"],
         "config_head_dim": config.get("head_dim"),
         "config_max_position_embeddings": config.get("max_position_embeddings"),
+        # ModelSpec M5 (additive): raw MoE alias keys — exactly what
+        # deriver.derive() now emits into res.profile.
+        **{
+            f"config_{k}": config.get(k)
+            for k in (
+                "num_experts", "num_local_experts", "num_experts_per_tok",
+                "top_k_experts", "moe_intermediate_size",
+                "num_shared_experts", "n_shared_experts",
+            )
+        },
         "vision": False,
         "has_mtp_head": False,
         **({} if tier1 is None else {
@@ -399,3 +410,117 @@ class TestScaffoldRoundTrip:
     def test_derive_result_property_builds_the_same_spec(self):
         res = _derive_result()
         assert res.model_spec == ModelSpec.from_derive_result(res)
+
+
+# ---------------------------------------------------------------------------
+# M5 slice-1: the MoE extractor (config.json alias pairs + GGUF expert KVs)
+# ---------------------------------------------------------------------------
+class TestMoeConfigPath:
+    def test_dense_config_has_no_moe(self):
+        """The default fixture is dense — spec.moe stays None and an all-None
+        MoEFacts is never attached (proposal: absent ⇒ placeholders)."""
+        s = ModelSpec.from_derive_result(_derive_result())
+        assert s.moe is None
+
+    def _moe_result(self, **cfg_over) -> ModelSpec:
+        return ModelSpec.from_derive_result(
+            _derive_result(eligible=False, config=_config(**cfg_over))
+        )
+
+    def test_qwen_style_alias_pair_labeled_with_actual_key(self):
+        s = self._moe_result(
+            num_experts=128, num_experts_per_tok=8,
+            moe_intermediate_size=1536,
+        )
+        assert s.moe.num_experts == Fact(128, "derived", "config.json:num_experts")
+        assert s.moe.experts_per_tok == Fact(
+            8, "derived", "config.json:num_experts_per_tok"
+        )
+        assert s.moe.moe_intermediate_size == Fact(
+            1536, "derived", "config.json:moe_intermediate_size"
+        )
+        assert s.moe.shared_experts is None      # never fabricated from widths
+
+    def test_deepseek_style_aliases_record_the_alias_actually_found(self):
+        s = self._moe_result(
+            num_local_experts=256, top_k_experts=8, n_shared_experts=2,
+        )
+        assert s.moe.num_experts.source == "config.json:num_local_experts"
+        assert s.moe.experts_per_tok.source == "config.json:top_k_experts"
+        assert s.moe.shared_experts == Fact(2, "derived", "config.json:n_shared_experts")
+        assert s.moe.summary() == "256 routed / 8 active (+2 shared)"
+
+    def test_summary_degrades_gracefully(self):
+        s = self._moe_result(num_experts=64)
+        assert s.moe.summary() == "64 routed"
+
+    def test_partial_facts_still_attach(self):
+        """Only some routing keys present ⇒ attach what IS known."""
+        s = self._moe_result(moe_intermediate_size=1024)
+        assert s.moe == MoEFacts(
+            moe_intermediate_size=Fact(1024, "derived", "config.json:moe_intermediate_size")
+        )
+
+
+class TestMoeGgufPath:
+    @staticmethod
+    def _facts(**kv_over) -> dict:
+        kv = {
+            "general.architecture": "qwen3moe",
+            "qwen3moe.embedding_length": 4096,
+            "qwen3moe.block_count": 48,
+        }
+        kv.update(kv_over)
+        return D.gguf_spec_facts({"version": 3, "kv": kv}, model_id="org/M")
+
+    def test_expert_kvs_map_with_gguf_header_provenance(self):
+        facts = self._facts(
+            **{"qwen3moe.expert_count": 128, "qwen3moe.expert_used_count": 8}
+        )
+        assert facts["num_experts"] == 128 and facts["experts_per_tok"] == 8
+        s = ModelSpec.from_gguf_facts(facts)
+        assert s.moe.num_experts == Fact(
+            128, "derived-estimate", "gguf-header:qwen3moe.expert_count"
+        )
+        assert s.moe.experts_per_tok.provenance == "derived-estimate"
+        assert s.moe.experts_per_tok.source == "gguf-header:qwen3moe.expert_used_count"
+        assert s.moe.summary() == "128 routed / 8 active"
+
+    def test_dense_header_has_no_moe(self):
+        s = ModelSpec.from_gguf_facts(self._facts())
+        assert s.moe is None
+        facts = self._facts()
+        assert facts["num_experts"] is None and facts["experts_per_tok"] is None
+
+
+class TestMoeSerializationAndValidation:
+    def _moe_spec(self) -> ModelSpec:
+        return ModelSpec.from_derive_result(_derive_result(
+            eligible=False,
+            config=_config(num_local_experts=64, num_experts_per_tok=6,
+                           n_shared_experts=1),
+        ))
+
+    def test_round_trip_lossless_through_real_json(self):
+        s = self._moe_spec()
+        s2 = ModelSpec.from_dict(json.loads(json.dumps(s.to_dict())))
+        assert s2 == s
+        assert s2.moe.shared_experts.value == 1
+
+    def test_validate_flags_nonpositive_expert_int(self):
+        s = ModelSpec(moe=MoEFacts(
+            num_experts=Fact(0, "derived", "x"),
+        ))
+        assert any("moe.num_experts" in i and "warn:" not in i
+                   for i in s.validate())
+
+    def test_validate_warns_on_more_active_than_routed(self):
+        s = ModelSpec(moe=MoEFacts(
+            num_experts=Fact(8, "derived", "x"),
+            experts_per_tok=Fact(16, "derived", "y"),
+        ))
+        issues = s.validate()
+        assert any(i.startswith("warn:") and "experts_per_tok" in i for i in issues)
+
+    def test_dense_spec_validate_unchanged(self):
+        assert ModelSpec.from_derive_result(_derive_result()).validate() == []

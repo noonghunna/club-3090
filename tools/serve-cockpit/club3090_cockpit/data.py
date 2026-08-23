@@ -2435,9 +2435,23 @@ def compute_promote_scaffold(
     vt = tuple(getattr(mspec, "valid_tp", ()) or ())
     if vt:
         arch_spec["valid_tp"] = list(vt)
+    # ── MoE routing facts (ModelSpec M5 slice-1): routed/active expert counts
+    # flow into arch_spec alongside the core dims so both the preview AND the
+    # promote.py spec skeleton carry them.  A dense model's spec has
+    # facts.moe=None ⇒ this adds nothing (byte-for-byte unchanged scaffold).
+    _moe = getattr(mspec, "moe", None)
+    for _moe_key, _fact_name in (
+        ("num_experts", "num_experts"),
+        ("num_experts_per_tok", "experts_per_tok"),
+        ("moe_intermediate_size", "moe_intermediate_size"),
+    ):
+        _mf = getattr(_moe, _fact_name, None) if _moe is not None else None
+        if _mf is not None and _mf.value is not None:
+            arch_spec[_moe_key] = _mf.value
     _wtg = getattr(mspec, "weights_total_gb", None)
     weights_total_gb = _wtg.value if _wtg is not None else None
     _vis = getattr(mspec, "vision_capable", None)
+    _moe = getattr(mspec, "moe", None)  # rendered into the preview below
     vision_hint = _vis.value if _vis is not None else None
     short = mid.replace("qwen3.6-", "qwen-").replace("gemma-4-", "gemma-")
     if layer == "local":
@@ -2537,6 +2551,19 @@ def compute_promote_scaffold(
         yaml_lines.append(
             f"{key}: {arch_spec[key]}" if key in arch_spec else f"{key}: <int>"
         )
+    if _moe is not None and getattr(_moe, "num_experts", None) is not None:
+        # M5: MoE families get an explicit auto-filled experts block instead
+        # of the generic hand-fill placeholder.  Dense specs never enter this
+        # branch — their preview is byte-for-byte unchanged.  The shared
+        # expert count has no ModelProfile YAML key, so it rides the comment.
+        yaml_lines.append(
+            f"# experts (auto-filled from {_moe.num_experts.source}): "
+            f"{_moe.summary()}"
+        )
+        for _moe_key in ("num_experts", "num_experts_per_tok",
+                         "moe_intermediate_size"):
+            if _moe_key in arch_spec:
+                yaml_lines.append(f"{_moe_key}: {arch_spec[_moe_key]}")
     yaml_lines.append(
         "valid_tp: " + json.dumps(arch_spec.get("valid_tp") or [1, 2])
     )

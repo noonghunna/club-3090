@@ -3,7 +3,7 @@ geometry (the "one vocabulary" bridge between the deriver, the c3 BYO funnel,
 the promote scaffold and the strict profile loader).
 
 Design: local://modelspec-proposal.md (ModelSpecDesign wave-3 proposal,
-§1 shape / §2 field tables / §5 versioning).  M1–M3 slice:
+§1 shape / §2 field tables / §5 versioning).  Landed slices:
 
   M1  this module: ``Fact`` + ``ModelSpec`` (stdlib-only: dataclasses/typing —
       NO PyYAML, NO compose_registry import; safe to import from the deriver's
@@ -15,6 +15,16 @@ Design: local://modelspec-proposal.md (ModelSpecDesign wave-3 proposal,
   M3  ``ByoResult.facts`` becomes a typed ``ModelSpec`` and
       ``compute_promote_scaffold`` reads attributes instead of ``.get()``
       chains (placeholder logic unchanged).
+
+  M5  family extractors land additively — first slice: ``MoEFacts`` (MoE
+      routing from config.json alias pairs + GGUF ``expert_count`` /
+      ``expert_used_count``), consumed by the promote scaffold's auto-filled
+      ``experts`` line.  Public surface for downstream tools (kv-calc):
+      ``ModelSpec.moe: Optional[MoEFacts]`` whose four fields are each an
+      ``Optional[Fact]`` (``num_experts`` / ``experts_per_tok`` /
+      ``shared_experts`` / ``moe_intermediate_size``) plus
+      :meth:`MoEFacts.summary` for the "N routed / K active (+S shared)"
+      one-liner.
 
 Design rules (proposal §1):
 - Every machine-filled value carries PROVENANCE.  A fallback default (e.g.
@@ -62,6 +72,58 @@ class MtpFacts:
 
     has_head: bool
 
+@dataclass(frozen=True)
+class MoEFacts:
+    """Mixture-of-experts routing (Table C extractor — M5 first slice).
+    Every present value is a full ``Fact``: the alias pair ACTUALLY found in
+    config.json (``num_local_experts`` vs ``num_experts``, …) is the recorded
+    source, never silently normalized.  A dense model carries ``moe=None``
+    on the spec — an all-None MoEFacts is never attached."""
+
+    #: routed experts — config ``num_local_experts`` ‖ ``num_experts``;
+    #: GGUF ``<arch>.expert_count``
+    num_experts: Optional[Fact] = None
+    #: active experts per token — config ``num_experts_per_tok`` ‖
+    #: ``top_k_experts``; GGUF ``<arch>.expert_used_count``
+    experts_per_tok: Optional[Fact] = None
+    #: shared (always-on) expert count — config ``num_shared_experts`` ‖
+    #: ``n_shared_experts``.  None also when a family declares only
+    #: ``shared_expert_intermediate_size`` (a width is not a count — never
+    #: fabricated).
+    shared_experts: Optional[Fact] = None
+    #: per-routed-expert FFN width — config ``moe_intermediate_size``
+    moe_intermediate_size: Optional[Fact] = None
+
+    def summary(self) -> str:
+        """The scaffold's one-line form: "128 routed / 8 active (+1 shared)"
+        (degrades gracefully when only some facts are present)."""
+        parts: list[str] = []
+        if self.num_experts is not None:
+            parts.append(f"{self.num_experts.value} routed")
+        if self.experts_per_tok is not None:
+            parts.append(f"{self.experts_per_tok.value} active")
+        out = " / ".join(parts)
+        if self.shared_experts is not None:
+            out += f" (+{self.shared_experts.value} shared)"
+        return out
+
+    @classmethod
+    def _from_dict(cls, d: dict[str, Any]) -> "MoEFacts":
+        """Inverse of the flattened to_dict shape — nested Fact dicts are
+        rebuilt as real Facts."""
+        kw: dict[str, Any] = {}
+        for f in fields(cls):
+            if f.name not in d:
+                continue
+            u = d[f.name]
+            kw[f.name] = (
+                Fact(u["value"], u["provenance"], u["source"])
+                if isinstance(u, dict)
+                and {"value", "provenance", "source"} <= set(u)
+                else u
+            )
+        return cls(**kw)
+
 
 @dataclass(frozen=True)
 class GgufFacts:
@@ -108,6 +170,7 @@ class ModelSpec:
     selected_weight_files: Optional[Fact] = None  # verify_glob/shards/files hints
 
     # ── family-specific extension sets (Table C — M5 fills these) ────────────
+    moe: Optional[MoEFacts] = None  # MoE routing (M5 slice-1 extractor)
     mtp: Optional[MtpFacts] = None
     gguf: Optional[GgufFacts] = None  # header-probe provenance (route-G)
 
@@ -165,6 +228,28 @@ class ModelSpec:
             )
         if not self.valid_tp or not all(t in (1, 2) for t in self.valid_tp):
             issues.append(f"valid_tp: policy default is a subset of [1, 2], got {self.valid_tp!r}")
+        moe = self.moe
+        if moe is not None:
+            for name in ("num_experts", "experts_per_tok", "shared_experts",
+                         "moe_intermediate_size"):
+                mf = getattr(moe, name)
+                if mf is not None and (
+                    not isinstance(mf.value, int)
+                    or isinstance(mf.value, bool) or mf.value <= 0
+                ):
+                    issues.append(
+                        f"moe.{name}: expected a positive int, got {mf.value!r}"
+                    )
+            n_exp, k_act = moe.num_experts, moe.experts_per_tok
+            if (
+                n_exp is not None and k_act is not None
+                and isinstance(n_exp.value, int) and isinstance(k_act.value, int)
+                and k_act.value > n_exp.value
+            ):
+                issues.append(
+                    f"warn: moe.experts_per_tok ({k_act.value}) > "
+                    f"moe.num_experts ({n_exp.value}) — impossible routing, verify"
+                )
         return issues
 
     # ── serialization (the deriver subprocess boundary is JSON) ──────────────
@@ -178,9 +263,18 @@ class ModelSpec:
                     "provenance": v.provenance,
                     "source": v.source,
                 }
-            elif isinstance(v, (MtpFacts, GgufFacts)):
-                out[f.name] = {g: getattr(v, g) for g in
-                               (x.name for x in fields(v))}
+            elif isinstance(v, (MoEFacts, MtpFacts, GgufFacts)):
+                # MoEFacts fields are themselves Facts — flatten each with the
+                # value/provenance/source shape so the JSON boundary stays
+                # lossless (from_dict reconstructs via MoEFacts(**v)).
+                out[f.name] = {
+                    g: (
+                        {"value": fv.value, "provenance": fv.provenance,
+                         "source": fv.source}
+                        if isinstance(fv := getattr(v, g), Fact) else fv
+                    )
+                    for g in (x.name for x in fields(v))
+                }
             elif isinstance(v, tuple):
                 out[f.name] = list(v)
             else:
@@ -212,6 +306,8 @@ class ModelSpec:
                 kw[f.name] = MtpFacts(**v)
             elif f.name == "gguf" and isinstance(v, dict):
                 kw[f.name] = GgufFacts(**v)
+            elif f.name == "moe" and isinstance(v, dict):
+                kw[f.name] = MoEFacts._from_dict(v)
             else:
                 kw[f.name] = v
         return cls(**kw)
@@ -284,6 +380,27 @@ class ModelSpec:
             else:
                 max_ctx = Fact(mc, "fallback", "default:max_position_embeddings‖131072")
 
+        # MoE routing (Table C, M5 slice-1): the deriver threads config.json's
+        # raw alias keys through as ``config_<key>`` profile entries — resolve
+        # the alias pairs HERE so each Fact's source names the key that was
+        # actually present ("config.json:num_local_experts" vs
+        # "config.json:num_experts").  All-None ⇒ dense config ⇒ spec.moe
+        # stays None (never attach an empty MoEFacts).
+        def moe_fact(*alias_keys: str) -> Optional[Fact]:
+            for k in alias_keys:
+                v = profile.get(f"config_{k}")
+                if v is not None:
+                    return Fact(v, prov, f"{src_prefix}:{k}")
+            return None
+
+        moe = MoEFacts(
+            num_experts=moe_fact("num_local_experts", "num_experts"),
+            experts_per_tok=moe_fact("num_experts_per_tok", "top_k_experts"),
+            shared_experts=moe_fact("num_shared_experts", "n_shared_experts"),
+            moe_intermediate_size=moe_fact("moe_intermediate_size"),
+        )
+        if moe == MoEFacts():
+            moe = None
         return cls(
             spec_version=MODEL_SPEC_VERSION,
             model_slug=slug,
@@ -321,6 +438,7 @@ class ModelSpec:
             selected_weight_files=fact(profile.get("selected_weight_files"), "derived",
                                        "hf-api:siblings"),
             mtp=MtpFacts(has_head=bool(profile.get("has_mtp_head"))),
+            moe=moe,
         )
 
     @classmethod
@@ -345,6 +463,13 @@ class ModelSpec:
         kv_src = "attention.head_count_kv"
         if g.get("kv_heads_assumed_equal"):
             kv_src = "attention.head_count (kv omitted ⇒ MHA equality)"
+        moe_n = f("num_experts", "expert_count")
+        moe_k = f("experts_per_tok", "expert_used_count")
+        # A dense header carries neither expert KV ⇒ spec.moe stays None.
+        moe = (
+            MoEFacts(num_experts=moe_n, experts_per_tok=moe_k)
+            if (moe_n is not None or moe_k is not None) else None
+        )
         return cls(
             spec_version=MODEL_SPEC_VERSION,
             model_slug=str(facts.get("model_id") or ""),
@@ -362,6 +487,7 @@ class ModelSpec:
             valid_tp=tuple(facts.get("valid_tp") or (1, 2)),
             weights_total_gb=f("weights_total_gb", "file-size"),
             mtp=MtpFacts(has_head=bool(facts.get("has_mtp_head"))),
+            moe=moe,
             gguf=GgufFacts(
                 version=g.get("version"),
                 general_name=g.get("general_name"),

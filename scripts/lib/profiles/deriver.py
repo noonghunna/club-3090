@@ -1018,6 +1018,9 @@ def gguf_spec_facts(
     if head_dim is None and hidden and heads and hidden % heads == 0:
         head_dim = hidden // heads
     ctx = num(f"{arch}.context_length")
+    # M5 MoE extractor (llama.cpp naming): expert_count / expert_used_count.
+    experts = num(f"{arch}.expert_count")
+    experts_used = num(f"{arch}.expert_used_count")
     ft = num("general.file_type")
     return {
         "model_id": model_id,
@@ -1031,6 +1034,12 @@ def gguf_spec_facts(
         "num_kv_heads": kv_heads,
         "head_dim_attn": head_dim,
         "max_ctx_supported": ctx,
+        # M5 MoE extractor (llama.cpp naming): these KVs exist only on MoE
+        # arches — a dense header omits both and the mapped spec stays None.
+        # ModelSpec.from_gguf_facts maps them to num_experts / experts_per_tok
+        # with provenance "gguf-header:<arch>.<kv>".
+        "num_experts": experts,
+        "experts_per_tok": experts_used,
         "weights_total_gb": weight_gb,
         "valid_tp": [1, 2],
         # ── provenance / confidence metadata (additive; consumers pick the
@@ -1386,6 +1395,19 @@ def derive(
         # Additive keys only; no existing field changes.
         "config_head_dim": _int(config or {}, "head_dim"),
         "config_max_position_embeddings": _int(config or {}, "max_position_embeddings"),
+        # ModelSpec M5 (additive): the raw MoE routing keys (proposal §2
+        # Table C), verbatim incl. the family alias pairs —
+        # ModelSpec.from_derive_result resolves each pair and labels the Fact
+        # with the key that was ACTUALLY present
+        # ("config.json:num_local_experts" vs "config.json:num_experts").
+        # All None on a dense config ⇒ spec.moe stays None; no field changes.
+        "config_num_experts": _int(config or {}, "num_experts"),
+        "config_num_local_experts": _int(config or {}, "num_local_experts"),
+        "config_num_experts_per_tok": _int(config or {}, "num_experts_per_tok"),
+        "config_top_k_experts": _int(config or {}, "top_k_experts"),
+        "config_moe_intermediate_size": _int(config or {}, "moe_intermediate_size"),
+        "config_num_shared_experts": _int(config or {}, "num_shared_experts"),
+        "config_n_shared_experts": _int(config or {}, "n_shared_experts"),
         # ModelSpec M2 (additive): the vision heuristic MOVES INTO the deriver
         # proper (was: services._DERIVER_FACTS_SRC re-fetching config.json a
         # second time).  Same substring + vision_config logic, one fetch.

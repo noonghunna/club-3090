@@ -600,3 +600,65 @@ class TestGgufHeaderFactsThreading:
         assert sc.spec["arch"]["valid_tp"] == [1, 2]
         # Human-required fields stay placeholders — never fabricated.
         assert "family: <family-tag>" in sc.profile_yaml
+
+    def test_scaffold_renders_experts_line_for_moe_facts(self):
+        """ModelSpec M5: a MoE spec renders an explicit auto-filled experts
+        block (summary comment + canonical ModelProfile keys) instead of the
+        generic hand-fill placeholder."""
+        from club3090_cockpit.data import ByoResult, compute_promote_scaffold
+
+        facts = self._model_spec_cls().from_gguf_facts({
+            "model_id": "org/Synth-MoE-GGUF",
+            "arch": "qwen3moe",
+            "hidden_size": 4096,
+            "num_hidden_layers": 48,
+            "num_attn_heads": 32,
+            "num_kv_heads": 8,
+            "head_dim_attn": 128,
+            "max_ctx_supported": 131072,
+            "weights_total_gb": 4.2,
+            "valid_tp": [1, 2],
+            "confidence": "estimated-lower-bound",
+            "facts_provenance": "gguf-header",
+            # M5: the GGUF expert KVs gguf_spec_facts maps (llama.cpp naming).
+            "num_experts": 128,
+            "experts_per_tok": 8,
+        })
+        from scripts.lib.profiles.model_spec import Fact
+        assert facts.moe.num_experts == Fact(
+            128, "derived-estimate", "gguf-header:qwen3moe.expert_count"
+        )
+        byo = ByoResult(
+            repo="org/Synth-MoE-GGUF", profile_like="llama-cpp/q4km",
+            arch="gguf", eligible=True, fit_verdict="fits-clean",
+            route="G", sibling_slug="llama-cpp/q4km", quant_match="Q4_K_M",
+            facts=facts,
+        )
+        sc = compute_promote_scaffold(byo=byo, measurement=None)
+        assert not sc.error
+        assert (
+            "# experts (auto-filled from gguf-header:qwen3moe.expert_count): "
+            "128 routed / 8 active"
+        ) in sc.profile_yaml
+        assert "num_experts: 128" in sc.profile_yaml
+        assert "num_experts_per_tok: 8" in sc.profile_yaml
+        # The keys ride the spec skeleton too — additive for promote.py's
+        # renderer (arch_spec extras are ignored by the fixed key list).
+        assert sc.spec["arch"]["num_experts"] == 128
+        assert sc.spec["arch"]["num_experts_per_tok"] == 8
+
+    def test_scaffold_without_moe_facts_has_no_experts_line(self):
+        """Dense specs are byte-for-byte unchanged — no experts line, no
+        expert keys anywhere in the preview or the spec skeleton."""
+        from club3090_cockpit.data import ByoResult, compute_promote_scaffold
+
+        byo = ByoResult(
+            repo="org/Synth-7B-GGUF", profile_like="llama-cpp/q4km",
+            arch="gguf", eligible=True, fit_verdict="fits-clean",
+            route="G", sibling_slug="llama-cpp/q4km", quant_match="Q4_K_M",
+            facts=self._gguf_spec(),
+        )
+        sc = compute_promote_scaffold(byo=byo, measurement=None)
+        assert not sc.error
+        assert "experts" not in sc.profile_yaml
+        assert "num_experts" not in sc.spec["arch"]
