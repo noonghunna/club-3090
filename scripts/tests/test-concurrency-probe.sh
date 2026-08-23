@@ -136,4 +136,23 @@ kv="$(python3 -c 'import sys; sys.path.insert(0,"'"$ROOT_DIR"'/scripts/lib"); fr
 [[ "$kv" == "210000" ]] || fail "parse_kv_tokens_text, got $kv"
 echo "  ✓ KV log parse"
 
+# 10. Live --sweep warm-up gate (WARMUP) — opt-in, dry-run skips it, default is
+#     silent, and a non-dry sweep against an unreachable server aborts BEFORE
+#     slot detection (fails closed instead of sweeping a dead engine). All
+#     offline: point at a dead port; the gate needs no live server to prove.
+out="$(WARMUP=1 URL=http://127.0.0.1:1 bash "$PROBE" --sweep --dry --n 1 2>&1)"
+command grep -q "WARMUP" <<<"$out" && fail "WARMUP=1 + --dry must not fire the gate (dry precedence)"
+set +e
+out="$(URL=http://127.0.0.1:1 MODEL=x bash "$PROBE" --sweep --n 1 2>&1)"; rc=$?
+set -e
+command grep -q "WARMUP" <<<"$out" && fail "gate must stay silent when WARMUP is unset (default off)"
+set +e
+out="$(WARMUP=1 WARMUP_TIMEOUT=2 URL=http://127.0.0.1:1 MODEL=x bash "$PROBE" --sweep --n 1 2>&1)"; rc=$?
+set -e
+[[ "$rc" == "1" ]] || fail "WARMUP=1 against unreachable server should exit 1, got $rc"
+command grep -q "WARMUP: waiting" <<<"$out" || fail "gate should announce it is waiting"
+command grep -q "not ready" <<<"$out" || fail "gate should report the not-ready abort"
+command grep -q "FATAL: --sweep cannot detect" <<<"$out" && fail "gate must abort BEFORE slot detection"
+echo "  ✓ --sweep WARMUP gate: opt-in, dry-skips, default-silent, fails closed"
+
 echo "test-concurrency-probe: ok"
