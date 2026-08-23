@@ -68,6 +68,7 @@ services:
       # (our #1052 / upstream #52873 + #50021 thread). Ours, not an upstream PR;
       # validated 3/3 boots on the reference 2×3090. Anchor drift → boot refused.
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
+      - ../../../patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
       # DFlash2 external-drafter support — vLLM PR#52816 backport (syv-ai). Adds
       # DFlash2DraftModel; refuses boot on apply failure.
       - ../../../patches/vllm-dflash2-backport:/etc/club3090/dflash2:ro
@@ -136,6 +137,7 @@ services:
         bash /etc/club3090/w4a8/install.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
         bash /etc/club3090/gdn-async-order/install.sh || exit 1
+        FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
         bash /etc/club3090/dflash2/install.sh || exit 1
         echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""

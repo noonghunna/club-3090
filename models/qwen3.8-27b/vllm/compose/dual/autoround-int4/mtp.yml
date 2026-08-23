@@ -66,15 +66,19 @@
 #   which is what the vendored negscale fold assumes; a compressed-tensors
 #   pack-quantized checkpoint hard-fails that fold (LEARNINGS.md 2026-08-16).
 #
-# ⚠️⚠️ CONCURRENCY vs THE DRAFTER — the measured conflict, now ON THE DEFAULT PATH.
-#   At MAX_NUM_SEQS=2 with 16K prompts, MTP n=4 **UNDER W4A8** pushed peak VRAM to
-#   23,872 MiB/card — 1.75 GB OVER the 0.90 budget — and requests began failing
-#   while ~535K KV tokens sat free. SPEC_N=0 at the same concurrency ran clean.
-#   ⭐ W4A8 used to be opt-in, so this was a warning for people who turned it on.
-#      It is now the DEFAULT, which is why MAX_NUM_SEQS ships at **1** rather than
-#      2 — shipping N=2 would ship the measured failure.
-#   → For concurrency, set SPEC_N=0 (or W4A8=0) and then raise MAX_NUM_SEQS. The
-#     drafter and multi-stream do not coexist under int8 on 24 GB.
+# ⚠️ CONCURRENCY — the ENGINE CRASH is fixed; a VRAM caveat remains for LONG ctx.
+#   MTP-under-concurrency used to CRASH the engine (Xid 31): the #40756 FlashInfer
+#   decode-plan race + the async wild-write. Both are now closed by the patches
+#   wired below (vllm-flashinfer-decode-pin + vllm-gdn-mtp-async-spec-order), so
+#   MAX_NUM_SEQS now DEFAULTS to **8** (was 1). Validated 2026-08-23 (2x3090,
+#   v0.27.1): clean to C=32 at ~1K-tok prompts, MTP accept ~2.8; spec-decode wins
+#   per-stream latency to ~C=8, batch aggregate peaks with SPEC_N=0 (~306 tok/s).
+#   ⚠️ SEPARATE, STILL-REAL LIMIT — VRAM, NOT the crash, and the patches do NOT
+#     change it: at 16K-tok prompts MTP n=4 UNDER W4A8 hit 23,872 MiB/card (1.75 GB
+#     over the 0.90 budget) already at N=2. Many LONG-context concurrent streams
+#     can still OOM. seqs=8 is validated at short/moderate context only.
+#   → If you OOM under long-context concurrency: lower MAX_NUM_SEQS, or SPEC_N=0
+#     (drops the drafter → ~+27% batch aggregate anyway), or W4A8=0.
 #   → The drafter also costs ~13% of the KV pool (652,346 -> 567,737 tokens).
 #
 # ⚠️ GPU_MEMORY_UTILIZATION IS 0.90 HERE, NOT THE TIER'S 0.92 — DELIBERATE, AND
@@ -288,7 +292,7 @@ services:
       # ⚠️ 1, NOT 2 — see the CONCURRENCY vs THE DRAFTER block in the header.
       # W4A8 + MTP n=4 at N=2 is the combination that OOM'd on 24 GB cards, and
       # W4A8 is now the shipped default, so N=2 would ship a measured failure.
-      - "${MAX_NUM_SEQS:-1}"
+      - "${MAX_NUM_SEQS:-8}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       # Head-of-line-blocking mitigation (Zylone's vLLM tip; qwen3.6 dual-fast precedent).

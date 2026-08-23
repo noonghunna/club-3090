@@ -62,12 +62,14 @@
 #   It works only because this checkpoint is auto-round-packed [k/8,n], which is
 #   what the vendored negscale fold assumes; a compressed-tensors pack-quantized
 #   checkpoint hard-fails that fold (LEARNINGS.md 2026-08-16).
-#   ⚠️ MAX_NUM_SEQS stays at 2 here while the dual dropped to 1: the dual's cap is
-#      the W4A8 + n=4 OOM on 24 GB cards, and at TP=4/8 weights fall far enough
-#      that the headroom should be ample — but THAT IS UNTESTED. If you hit it,
-#      lower MAX_NUM_SEQS or set SPEC_N=0 (or W4A8=0) and report it.
+#   ⚠️ MAX_NUM_SEQS defaults to 8 (was 2): the MTP-under-concurrency ENGINE CRASH
+#      is fixed by the patches wired below; the dual sibling is validated crash-
+#      clean to C=32 at short ctx (2026-08-23). UNTESTED here (no 4/8-card host on
+#      the reference rig — community-validated by transfer). SEPARATE VRAM limit,
+#      unchanged by the patches: many LONG-context streams can still OOM (W4A8 +
+#      n=4); if so, lower MAX_NUM_SEQS or SPEC_N=0 (or W4A8=0) and report it.
 #
-# ⚠️⚠️ The dual sibling caps MAX_NUM_SEQS at 1 because MTP n=4 OOM'd at N=2 on 24 GB cards. At TP=8 weights fall to ~2.3 GiB/card, so the headroom that caused it is far larger and MAX_NUM_SEQS defaults to 2 — but THIS IS UNTESTED: no 8-card host exists on the reference rig. If you hit the same OOM, drop MAX_NUM_SEQS or set SPEC_N=0, and please report it.
+# ⚠️⚠️ MAX_NUM_SEQS defaults to 8 (was 2): the MTP-under-concurrency ENGINE CRASH (#40756 FlashInfer decode-plan race + the async wild-write) is now fixed by vllm-flashinfer-decode-pin + vllm-gdn-mtp-async-spec-order (wired below); the dual sibling is validated crash-clean to C=32 at ~1K-tok prompts (2026-08-23). At TP=8 weights fall to ~2.3 GiB/card so per-card headroom exceeds the dual — but THIS IS UNTESTED: no 8-card host exists on the reference rig (community-validated by transfer). SEPARATE VRAM limit unchanged by the patches: many LONG-context concurrent streams can still OOM (W4A8 + n=4). If you hit it, drop MAX_NUM_SEQS or set SPEC_N=0, and please report it.
 #
 #
 # ⚠️⚠️ CONSUMER BLACKWELL (5090, sm_120) — READ BEFORE RUNNING THIS THERE.
@@ -138,6 +140,8 @@ services:
       - ../../../../../qwen3.6-27b/vllm/patches/w4a8-int8-act:/etc/club3090/w4a8:ro
       # Lets the MTP drafter attach on this hybrid (mamba/eagle block drop).
       - ../../../../../qwen3.6-27b/vllm/patches/vllm-pr48375-mamba-drop-eagle-block:/etc/club3090/pr48375:ro
+      - ../../../../../qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order:/etc/club3090/gdn-async-order:ro
+      - ../../../patches/vllm-flashinfer-decode-pin:/etc/club3090/flashinfer-decode-pin:ro
       - ../../../../../../scripts/detect_nvlink.sh:/etc/club3090/detect_nvlink.sh:ro
       - ../../../cache/torch_compile:/root/.cache/vllm/torch_compile_cache
       - ../../../cache/triton:/root/.triton/cache
@@ -199,6 +203,8 @@ services:
         fi
         bash /etc/club3090/w4a8/install.sh
         bash /etc/club3090/pr48375/install.sh || exit 1
+        bash /etc/club3090/gdn-async-order/install.sh || exit 1
+        FI_PINQ_LIB_ALL="${FI_PINQ_LIB_ALL:-0}" bash /etc/club3090/flashinfer-decode-pin/install.sh || exit 1
         echo "[w4a8] VLLM_MARLIN_INPUT_DTYPE=$${VLLM_MARLIN_INPUT_DTYPE:-<unset -> W4A16>} (W4A8=$${W4A8:-1})"
         AR=""
         [ "$${_NVLINK_ENABLED:-0}" = "1" ] || AR="--disable-custom-all-reduce"
@@ -255,7 +261,7 @@ services:
       - --gpu-memory-utilization
       - "${GPU_MEMORY_UTILIZATION:-0.95}"
       - --max-num-seqs
-      - "${MAX_NUM_SEQS:-2}"
+      - "${MAX_NUM_SEQS:-8}"
       - --max-num-batched-tokens
       - "${MAX_NUM_BATCHED_TOKENS:-8192}"
       # Head-of-line-blocking mitigation (Zylone's vLLM tip; qwen3.6 dual-fast precedent).

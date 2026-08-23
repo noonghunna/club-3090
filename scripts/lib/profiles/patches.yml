@@ -414,6 +414,8 @@ patches:
     load_bearing_when:
       - composes:
           - vllm/qwen38-27b-dual-fast
+          - vllm/qwen38-27b-multi4-fast
+          - vllm/qwen38-27b-multi8-fast
         reason: "The dual-fast config (W4A8 + MTP n=4 + fp8 KV + prefix caching) is the exact repro: FlashInfer plan() reuses one PINNED host buffer per wrapper and copies it out async; the MTP drafter re-plans the DECODE wrapper K-1x/step, so a stale plan feeds the split-KV merge (PersistentVariableLengthMergeStatesKernel) a garbage row -> Xid 31 at an unmapped VA. Needs >=4 genuinely concurrent in-flight MTP requests to lose the race (c<=3 and SPEC_N=0 never crash). Unpinning the flashinfer decode.py workspace buffer forces a synchronous plan copy per step and closes the window. Validated v0.27.1 / flashinfer 0.6.16.post3 / 2x RTX 3090 SM86: c=4 survives 425s clean (120s OK=126 + 300s OK=345, ERR=0, 0 new Xid) at full async speed; decode.py alone is necessary+sufficient (A/B: prefill/sparse/pod unpin without decode.py still crashed). Perf-neutral at c=1 (all deltas within CV)."
         evidence: "models/qwen3.8-27b/vllm/patches/vllm-flashinfer-decode-pin/README.md; vllm-project/vllm#40756 (thread comments 2026-08-17, brasrox retraction + sempai SM86 corroboration)"
     delivery:               # DEPRECATED/READ-ONLY (test-only) — see header
@@ -453,6 +455,8 @@ patches:
     load_bearing_when:
       - composes:
           - vllm/qwen38-27b-dual-fast
+          - vllm/qwen38-27b-multi4-fast
+          - vllm/qwen38-27b-multi8-fast
         reason: "Our own 2-line fix for the async wild-write crash (club-3090#1052 / vllm#52873 + the vllm#50021 thread): on a Qwen3-Next hybrid with MTP + prefix caching + async scheduling (vLLM v0.27.1 default), gpu_model_runner.py::synchronize_input_prep waits prepare_inputs_event (recorded BEFORE the forward + spec-decode fused-align postprocess) but not num_accepted_tokens_event (recorded AFTER it), so the next step's _update_states block-table mutation raced the still-in-flight postprocess -> stale state-block index -> wild GPU write (CUDA illegal access / Xid 31 VIRT_WRITE) within 6-13k generated tokens of agent traffic. The fix also waits the postprocess event, closing the write-after-read window; it relocates a wait align-mode already did later, so TPS is neutral. Distinct from vllm#50021 (its in-kernel bounds do NOT fix this - built its head, crashed 2/2) and from vllm#43559/#48375. On-rig validation 2026-08-19 (reference 2x3090, v0.27.1): async-ON survived 3/3 boots to 33-36k generated tokens each (crossing ctx 32k + a compaction) where 5/5 unpatched arms died 6-13k; real delivery path confirmed (switch.sh -> compose mount -> entrypoint install.sh logs '[gdn-async-order] applied'); bench 79.1 narr / 108.5 code / 1756 prefill >= baseline. Does NOT address the separate acceptance-collapse bug (vllm#52873 / Bug A)."
         evidence: "models/qwen3.6-27b/vllm/patches/vllm-gdn-mtp-async-spec-order/README.md; club-3090#1052; vllm#52873; docs/UPSTREAM.md"
     delivery:
