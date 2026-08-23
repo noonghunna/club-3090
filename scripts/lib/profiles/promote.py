@@ -577,6 +577,26 @@ def _write_core(root: Path, spec: dict) -> tuple[Path, Path]:
     return profile_path, compose_abs
 
 
+
+
+def _apply_model_spec(spec: dict) -> dict:
+    """M4 — a typed ModelSpec (``spec_version: 1`` under ``model_spec``) is the
+    CANONICAL arch source: its Fact values override the loose ``arch`` dict.
+    Legacy loose-only specs pass through untouched (from_plain_spec semantics
+    stay available to callers).  Same-directory import: this script runs as
+    ``python3 scripts/lib/profiles/promote.py``, so its dir is on sys.path."""
+    ms_raw = spec.get("model_spec")
+    if not isinstance(ms_raw, dict):
+        return spec
+    import model_spec as _ms
+    ms = _ms.ModelSpec.from_dict(ms_raw)
+    arch = spec.setdefault("arch", {})
+    arch.update(ms.arch_dims())
+    if spec.get("vision_capable") is None and ms.vision_capable is not None:
+        spec["vision_capable"] = bool(ms.vision_capable.value)
+    return spec
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="promote.py",
@@ -608,6 +628,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             spec = json.loads(raw_spec)
         else:
             spec = json.loads(Path(args.spec_file).read_text(encoding="utf-8"))
+        spec = _apply_model_spec(spec)
         spec = validate_spec(spec, root, args.layer)
     except Refusal as exc:
         print(f"[promote] REFUSED: {exc}", file=sys.stderr)

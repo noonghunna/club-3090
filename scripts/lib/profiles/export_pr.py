@@ -392,6 +392,26 @@ def export(root: Path, out: Path, state: dict) -> list[Path]:
     return written
 
 
+
+
+def _apply_model_spec(spec: dict) -> dict:
+    """M4 — a typed ModelSpec (``spec_version: 1`` under ``model_spec``) is the
+    CANONICAL arch source: its Fact values override the loose ``arch`` dict.
+    Legacy loose-only specs pass through untouched (from_plain_spec semantics
+    stay available to callers).  Same-directory import: this script runs as
+    ``python3 scripts/lib/profiles/promote.py``, so its dir is on sys.path."""
+    ms_raw = spec.get("model_spec")
+    if not isinstance(ms_raw, dict):
+        return spec
+    import model_spec as _ms
+    ms = _ms.ModelSpec.from_dict(ms_raw)
+    arch = spec.setdefault("arch", {})
+    arch.update(ms.arch_dims())
+    if spec.get("vision_capable") is None and ms.vision_capable is not None:
+        spec["vision_capable"] = bool(ms.vision_capable.value)
+    return spec
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="export_pr.py",
@@ -426,8 +446,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             spec = json.loads(raw_spec)
         else:
             spec = json.loads(Path(args.spec_file).read_text(encoding="utf-8"))
-        if not isinstance(spec, dict):
-            raise Refusal("spec is not a JSON object")
+
+            spec = _apply_model_spec(spec)
+            if not isinstance(spec, dict):
+                raise Refusal("spec is not a JSON object")
         mid = spec.get("model_id")
         if not isinstance(mid, str) or not _MODEL_ID_RE.match(mid or ""):
             raise Refusal(
