@@ -28,6 +28,11 @@
 #              qwen3.6-27b FP8 tier. NEVER MEASURED HERE. See "Context budget".
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    🧪 Experimental
+# ⚠️ #1096 (accumulated-ctx decode cliff): in long multi-turn agentic, decode collapses to
+#    single-block emission — ~12k accumulated ctx for DFlash2 (SPEC_N depth does NOT move it,
+#    n=3≡n=7) / ~17-21k for MTP; SEVERE on Ampere (~4 tok/s), milder on Blackwell. Drafter TYPE,
+#    not depth, sets the floor. Interim: MTP tier (higher cliff) or SPEC_N=0 for sustained >~20k.
+#    Real fix pending upstream ReplaySSM (vllm#49887 GDN-spec / vllm#50172). NOT immune to this.
 #   Caveats:   ✅ BOOTED + verify-full PASS on the reference rig (2× 3090) 2026-08-17.
 #              Promoted 🐣 → 🧪 per this compose's own gate ("clean boot + verify-full").
 #              MEASURED 2026-08-17, stock vllm/vllm-openai:v0.27.1, 3 warm + 5 measured:

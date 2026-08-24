@@ -18,6 +18,11 @@
 #              bf16 KV can't fit 262K here (needs ~10.93 GiB vs ~9.1 available).
 #   Genesis:   none
 #   Status:    🧪 Experimental
+# ⚠️ #1096 (accumulated-ctx decode cliff): in long multi-turn agentic, decode collapses to
+#    single-block emission — ~12k accumulated ctx for DFlash2 (SPEC_N depth does NOT move it,
+#    n=3≡n=7) / ~17-21k for MTP; SEVERE on Ampere (~4 tok/s), milder on Blackwell. Drafter TYPE,
+#    not depth, sets the floor. Interim: MTP tier (higher cliff) or SPEC_N=0 for sustained >~20k.
+#    Real fix pending upstream ReplaySSM (vllm#49887 GDN-spec / vllm#50172). NOT immune to this.
 #   Best for:  ⭐ ULTRAFAST decode — the throughput tier (~227 code / ~132 narr TPS).
 # ---------------------------------------------------------------------------
 # THE "ULTRAFAST" TIER — DFlash2 external drafter on the INT4 target.

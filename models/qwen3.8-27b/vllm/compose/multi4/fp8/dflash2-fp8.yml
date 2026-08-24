@@ -17,10 +17,15 @@
 #   Max ctx:   262144 (fp8 KV fits the full arch max).
 #   Genesis:   none
 #   Status:    🧪 Experimental
+# ⚠️ #1096 (accumulated-ctx decode cliff): in long multi-turn agentic, decode collapses to
+#    single-block emission — ~12k accumulated ctx for DFlash2 (SPEC_N depth does NOT move it,
+#    n=3≡n=7) / ~17-21k for MTP; SEVERE on Ampere (~4 tok/s), milder on Blackwell. Drafter TYPE,
+#    not depth, sets the floor. Interim: MTP tier (higher cliff) or SPEC_N=0 for sustained >~20k.
+#    Real fix pending upstream ReplaySSM (vllm#49887 GDN-spec / vllm#50172). NOT immune to this.
 #   Best for:  DFlash2 on the MAX/fidelity envelope — full 262K + concurrency.
 # ---------------------------------------------------------------------------
-# SUPERMAX = the MAX tier (official FP8, fp8 KV, 262K) with MTP → DFlash2. Collapse-
-# immune (external drafter). vs ultramax (bf16/FA2): supermax keeps full 262K + fp8
+# SUPERMAX = the MAX tier (official FP8, fp8 KV, 262K) with MTP → DFlash2. Immune to the #52873
+# acceptance-collapse (external drafter), NOT the #1096 ctx cliff (see below). vs ultramax (bf16/FA2): supermax keeps full 262K + fp8
 # concurrency; ultramax trades ctx for the FA2 fast path. Boot-validate on dual
 # before quoting numbers. ⚠️ Spec-decode exposed to OPEN vllm#50021; SPEC_N=0
 # mitigates. Launch --force.

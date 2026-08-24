@@ -14,6 +14,11 @@
 #              KV fits LESS than the int4 ultrafast's ~200K. Set from the KV pool.)
 #   Genesis:   none
 #   Status:    🧪 Experimental
+# ⚠️ #1096 (accumulated-ctx decode cliff): in long multi-turn agentic, decode collapses to
+#    single-block emission — ~12k accumulated ctx for DFlash2 (SPEC_N depth does NOT move it,
+#    n=3≡n=7) / ~17-21k for MTP; SEVERE on Ampere (~4 tok/s), milder on Blackwell. Drafter TYPE,
+#    not depth, sets the floor. Interim: MTP tier (higher cliff) or SPEC_N=0 for sustained >~20k.
+#    Real fix pending upstream ReplaySSM (vllm#49887 GDN-spec / vllm#50172). NOT immune to this.
 #   Best for:  MAX decode on the fidelity weights — FA2 fast path (sacrifices ctx).
 # ---------------------------------------------------------------------------
 # ULTRAMAX = the MAX tier (official FP8) with DFlash2 on the bf16/FLASH_ATTN fast

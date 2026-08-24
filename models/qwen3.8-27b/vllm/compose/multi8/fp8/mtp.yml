@@ -36,6 +36,11 @@
 #              measured on this model at ANY topology.
 #   Genesis:   none — intentionally Genesis-free
 #   Status:    🐣 Incubating
+# ⚠️ #1096 (accumulated-ctx decode cliff): in long multi-turn agentic, decode collapses to
+#    single-block emission — ~12k accumulated ctx for DFlash2 (SPEC_N depth does NOT move it,
+#    n=3≡n=7) / ~17-21k for MTP; SEVERE on Ampere (~4 tok/s), milder on Blackwell. Drafter TYPE,
+#    not depth, sets the floor. Interim: MTP tier (higher cliff) or SPEC_N=0 for sustained >~20k.
+#    Real fix pending upstream ReplaySSM (vllm#49887 GDN-spec / vllm#50172). NOT immune to this.
 #   Caveats:   TWO independent reasons, and neither is a TODO that this rig can close.
 #              (1) NOTHING HAS BOOTED, on any card count. Authored 2026-08-14; the
 #                  weights have since landed and verified (30.87 GB / 28.75 GiB,

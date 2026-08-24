@@ -27,6 +27,11 @@
 #   Max ctx:   262144 — architectural ceiling, NOT measured on this checkpoint
 #   Genesis:   none
 #   Status:    🧪 Experimental
+# ⚠️ #1096 (accumulated-ctx decode cliff): in long multi-turn agentic, decode collapses to
+#    single-block emission — ~12k accumulated ctx for DFlash2 (SPEC_N depth does NOT move it,
+#    n=3≡n=7) / ~17-21k for MTP; SEVERE on Ampere (~4 tok/s), milder on Blackwell. Drafter TYPE,
+#    not depth, sets the floor. Interim: MTP tier (higher cliff) or SPEC_N=0 for sustained >~20k.
+#    Real fix pending upstream ReplaySSM (vllm#49887 GDN-spec / vllm#50172). NOT immune to this.
 #   Best for:  4-card INT4 — KV pool and concurrency headroom, not single-stream speed
 # ---------------------------------------------------------------------------
 # THE "FAST" TIER — the INT4 counterpart to the official-FP8 "max" tier.

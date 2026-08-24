@@ -20,6 +20,11 @@
 #   Max ctx:   262144
 #   Genesis:   none
 #   Status:    🧪 Experimental
+# ⚠️ #1096 (accumulated-ctx decode cliff): in long multi-turn agentic, decode collapses to
+#    single-block emission — ~12k accumulated ctx for DFlash2 (SPEC_N depth does NOT move it,
+#    n=3≡n=7) / ~17-21k for MTP; SEVERE on Ampere (~4 tok/s), milder on Blackwell. Drafter TYPE,
+#    not depth, sets the floor. Interim: MTP tier (higher cliff) or SPEC_N=0 for sustained >~20k.
+#    Real fix pending upstream ReplaySSM (vllm#49887 GDN-spec / vllm#50172). NOT immune to this.
 #   Caveats:   FALLBACK-ONLY VALIDATION. Boots + serves on 2x sm_86, but through
 #              the Marlin W4A16 fallback — the FP4 path this quant exists for is
 #              UNEXERCISED. No Blackwell boot yet. See the arch note below.
