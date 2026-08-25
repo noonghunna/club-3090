@@ -67,6 +67,12 @@
 #   FORCE           Set to 1 to skip hardware/free-VRAM preflight
 #   READY_URL       Default: http://localhost:8020/v1/models
 #   READY_TIMEOUT   Default: 600 (seconds — longer for cold cudagraph capture)
+#   READY_PROBE     Default: 1. After /v1/models answers, send ONE max_tokens=1
+#                 completion and require it to succeed before declaring ready
+#                 (#1100) — proves the engine can GENERATE, not just that its
+#                 port is bound, and warms the moe-cache expert pool (allocated
+#                 on first inference). Set 0 to skip.
+#   READY_PROBE_TIMEOUT  Default: 90 (seconds) — hard cap on that one probe.
 #   CLUB3090_THINKING_<MODEL>  .env pin (on|off|inherit) → ENABLE_THINKING at
 #                 launch (#1014 follow-up; set it from the serve-confirm [T]).
 #                 An ENABLE_THINKING exported in the shell wins over the pin.
@@ -1150,12 +1156,104 @@ resolve_ready_url() {
   READY_URL="http://localhost:${port}/v1/models"
 }
 
+ready_probe() {
+  # #1100 — ONE bounded generation call, so "✓ ready" means the engine can
+  # actually produce a token, not merely that its HTTP port is bound.
+  #
+  # Why /v1/models is not enough:
+  #   * it answers the moment the server binds — before a single token has been
+  #     generated, so a server that binds but cannot generate reads as ready and
+  #     the failure only surfaces in the user's first real request;
+  #   * on the moe-cache slugs the expert pool is allocated on the FIRST
+  #     INFERENCE, not at load (~4.9 GB on GPU0). "Ready" therefore meant a cold
+  #     cache, and whatever ran next paid pool allocation inside its own first
+  #     measured request.
+  #
+  # Degrades gracefully — only a dead/erroring server fails the boot:
+  #   transport failure or timeout → FAIL (bound, but cannot serve)
+  #   HTTP 5xx (except 501)        → FAIL (accepted the request, then broke)
+  #   HTTP 4xx / 501 / odd shape   → WARN (different completion shape, missing
+  #                                  chat template, … — NOT a boot failure)
+  # Opt out with READY_PROBE=0; bound it with READY_PROBE_TIMEOUT (default 90s).
+  local container="$1" served="$2"
+  local base body code rc probe_s started snippet has_choices
+  if [[ "${READY_PROBE:-1}" == "0" ]]; then
+    echo "[switch]   generation probe skipped (READY_PROBE=0)"
+    return 0
+  fi
+  if [[ -z "$served" ]]; then
+    echo "[switch] ⚠ generation probe skipped — could not resolve the served model id from ${READY_URL}" >&2
+    return 0
+  fi
+  # http://host:port/v1/models[/] → http://host:port/v1 (a READY_URL override
+  # that is not a /v1/models URL just yields a 404 → WARN, never a false fail).
+  base="${READY_URL%/}"; base="${base%/models}"
+  # Minimal JSON escaping of the served id (it came out of JSON, but never hand
+  # it back unescaped).
+  local served_esc="${served//\\/\\\\}"; served_esc="${served_esc//\"/\\\"}"
+  body="$(mktemp)"
+  started=$SECONDS
+  code="$(curl -s -o "$body" -w '%{http_code}' --max-time "${READY_PROBE_TIMEOUT:-90}" \
+    -X POST "${base}/chat/completions" \
+    -H 'Content-Type: application/json' \
+    -d "{\"model\":\"${served_esc}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1,\"temperature\":0,\"stream\":false}" \
+    2>/dev/null)" && rc=0 || rc=$?
+  probe_s=$((SECONDS - started))
+  snippet="$(head -c 200 "$body" 2>/dev/null | tr '\n' ' ' || true)"
+  has_choices=0
+  # `if`, not `A && B` — under `set -e` a failing AND-list at statement level
+  # exits the shell.
+  if command grep -q '"choices"' "$body" 2>/dev/null; then has_choices=1; fi
+  rm -f "$body"
+
+  if [[ $rc -ne 0 ]]; then
+    echo "[switch] ERROR: server answered /v1/models but could not generate — the completion" >&2
+    echo "[switch]        probe failed after ${probe_s}s (curl exit ${rc}; cap ${READY_PROBE_TIMEOUT:-90}s)." >&2
+    echo "[switch]        Last 30 log lines:" >&2
+    docker logs --tail 30 "$container" 2>&1 | sed 's/^/[switch]   | /' >&2
+    echo "[switch]        Full logs:  docker logs ${container}" >&2
+    echo "[switch]        Slow-but-healthy engine? raise READY_PROBE_TIMEOUT, or READY_PROBE=0 to skip." >&2
+    return 1
+  fi
+
+  case "$code" in
+    2*)
+      if [[ $has_choices -eq 1 ]]; then
+        echo "[switch]   generation probe ok — 1 token in ${probe_s}s (model: ${served})"
+      else
+        echo "[switch] ⚠ generation probe: HTTP ${code} but no choices[] in the reply — treating as ok." >&2
+        echo "[switch]   ${snippet}" >&2
+      fi
+      return 0
+      ;;
+    501|4*)
+      echo "[switch] ⚠ generation probe skipped — endpoint answered HTTP ${code} on ${base}/chat/completions" >&2
+      echo "[switch]   (different completion shape or missing chat template — NOT a boot failure)" >&2
+      echo "[switch]   ${snippet}" >&2
+      return 0
+      ;;
+    5*)
+      echo "[switch] ERROR: server answered /v1/models but FAILED to generate (HTTP ${code})." >&2
+      echo "[switch]        ${snippet}" >&2
+      echo "[switch]        Last 30 log lines:" >&2
+      docker logs --tail 30 "$container" 2>&1 | sed 's/^/[switch]   | /' >&2
+      echo "[switch]        Full logs:  docker logs ${container}" >&2
+      echo "[switch]        Set READY_PROBE=0 to skip this probe if the engine is known-good." >&2
+      return 1
+      ;;
+    *)
+      echo "[switch] ⚠ generation probe inconclusive (HTTP '${code}') — treating as ok." >&2
+      return 0
+      ;;
+  esac
+}
+
 wait_ready() {
   # Find the container we just brought up so we can detect crashes mid-boot
   # AND surface stage progress markers from its logs while we wait.
   local container
   container="${VARIANT_CONTAINER[$VARIANT]:-}"
-  if [[ -z "$container" ]] || ! docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq -- "$container"; then
+  if [[ -z "$container" ]] || ! docker ps --format '{{.Names}}' 2>/dev/null | command grep -Fxq -- "$container"; then
     # Compose started but no container is up — almost always a syntax error
     # or env-var issue caught before vLLM even started.
     echo "[switch] ERROR: no container running after 'compose up' — boot failed before vLLM started." >&2
@@ -1165,15 +1263,39 @@ wait_ready() {
 
   echo "[switch] waiting for ${READY_URL} (container=${container}, timeout ${READY_TIMEOUT}s)..."
   local elapsed=0 step=4 last_marker=""
+  # #1099 — baseline the restart counter. Under a restart policy (`restart:
+  # unless-stopped`, which most composes set) docker reports
+  # `.State.Running == true` for a container that is crash-looping, so the old
+  # Running-based check never fired and a boot-guard rejection polled a dead
+  # endpoint for the full READY_TIMEOUT. Baseline instead of assuming 0: `up -d`
+  # can leave an already-running container in place with a non-zero count.
+  local restarts_at_start
+  restarts_at_start="$(docker inspect -f '{{.RestartCount}}' "$container" 2>/dev/null || true)"
+  [[ "$restarts_at_start" =~ ^[0-9]+$ ]] || restarts_at_start=0
+
   until curl -sf -o /dev/null --max-time 3 "${READY_URL}"; do
-    # CRASH DETECTION: if the container died, dump tail and exit fast — don't
-    # silently burn through the full timeout on a dead server.
-    local state
-    state=$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo missing)
-    if [[ "$state" != "true" ]]; then
+    # CRASH DETECTION: if the container died OR is crash-looping, dump the tail
+    # and exit fast — don't silently burn through the full timeout on a server
+    # that is never coming up.
+    local state restarts dead=""
+    state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
+    [[ -n "$state" ]] || state="missing"
+    restarts="$(docker inspect -f '{{.RestartCount}}' "$container" 2>/dev/null || true)"
+    [[ "$restarts" =~ ^[0-9]+$ ]] || restarts="$restarts_at_start"
+    if [[ "$state" != "running" ]]; then
+      # exited / dead / restarting / paused / missing — `restarting` is the one
+      # the old .State.Running check could never see.
+      dead="state=${state}"
+    elif [[ "$restarts" -gt "$restarts_at_start" ]]; then
+      # A crash-loop reads `running` in the brief window between two restarts,
+      # so the counter is what makes it visible at an arbitrary sample point.
+      # For a boot-guard rejection even ONE restart means it won't come up.
+      dead="crash-looping (restarts ${restarts_at_start}→${restarts}, state=${state})"
+    fi
+    if [[ -n "$dead" ]]; then
       local exit_code
-      exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$container" 2>/dev/null || echo "?")
-      echo "[switch] ERROR: container '${container}' is no longer running (state=${state}, exit=${exit_code})." >&2
+      exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$container" 2>/dev/null || echo '?')"
+      echo "[switch] ERROR: container '${container}' is not coming up (${dead}, exit=${exit_code})." >&2
       echo "[switch]        Last 30 log lines:" >&2
       docker logs --tail 30 "$container" 2>&1 | sed 's/^/[switch]   | /' >&2
       echo "[switch]        Full logs:  docker logs ${container}" >&2
@@ -1183,13 +1305,16 @@ wait_ready() {
     sleep $step
     elapsed=$((elapsed + step))
 
-    # PROGRESS SIGNAL: surface boot-stage markers so users see WHAT vLLM is
-    # doing, not just that it's "still waiting". The grep is selective — one
-    # line per phase transition, not raw log streaming.
+    # PROGRESS SIGNAL: surface boot-stage markers so users see WHAT the engine
+    # is doing, not just that it's "still waiting". The grep is selective — one
+    # line per phase transition, not raw log streaming. Both engine families are
+    # covered (#1099): vLLM first, then llama.cpp / ik-llama, which emit none of
+    # vLLM's strings and used to show a bare elapsed counter — on exactly the
+    # engines with the longest load times.
     local marker
-    marker=$(docker logs --tail 50 "$container" 2>&1 | grep -oE \
-      'Genesis Results: .* applied|Resolved architecture: \w+|Loading weights|Compilation finished|Memory profiling|Capturing CUDA graphs|Application startup complete' \
-      | tail -1 || true)
+    marker="$(docker logs --tail 50 "$container" 2>&1 | command grep -oE \
+      'Genesis Results: .* applied|Resolved architecture: \w+|Loading weights|Compilation finished|Memory profiling|Capturing CUDA graphs|Application startup complete|load_model: loading model|common_memory_breakdown_print|\[moe-cache\] enabled: first pool allocated|model loaded|listening on http://[^[:space:]]+' \
+      | tail -1 || true)"
     if [[ -n "$marker" && "$marker" != "$last_marker" ]]; then
       echo "[switch]   ${elapsed}s — ${marker}"
       last_marker="$marker"
@@ -1203,7 +1328,7 @@ wait_ready() {
       exit 1
     fi
   done
-  echo "[switch] ✓ ready (${elapsed}s)"
+
   # F3 (CLI parity with c3's serving card): print the USABLE endpoint — the LAN
   # URL an agent/client should point at, the served model id, and the auth
   # status. LANIP's source of truth is the repo .env (#512, loaded above; shell
@@ -1217,8 +1342,16 @@ wait_ready() {
   fi
   _lanip="${_lanip:-localhost}"
   _port="${READY_URL#*://}"; _port="${_port#*:}"; _port="${_port%%/*}"
+  # Resolved BEFORE the ready line now: the generation probe needs the served id
+  # too, and it must come from the endpoint — never a hardcoded name.
   _served="$(curl -sf --max-time 3 "${READY_URL}" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0]["id"])' 2>/dev/null || true)"
+
+  # #1100 — prove generation works (and warm the moe-cache expert pool) before
+  # claiming ready. Only a dead/erroring server fails here; see ready_probe().
+  ready_probe "$container" "$_served" || exit 1
+
+  echo "[switch] ✓ ready (${elapsed}s)"
   echo "[switch] ▶ API:  http://${_lanip}:${_port}/v1   (model: ${_served:-?} · OpenAI-compatible · no auth)"
 }
 
