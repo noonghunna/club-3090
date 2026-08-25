@@ -419,6 +419,35 @@ def run_probe():
     ROUNDS = int(os.environ["ROUNDS"])
     PTOK = int(os.environ["PROMPT_TOKENS"])
     GTOK = int(os.environ["GEN_TOKENS"])
+    # Sampler. Defaults to GREEDY -- what this probe has always sent, and what
+    # knee-finding wants: determinism collapses run-to-run variance (the greedy A/B
+    # on this rig spreads 0.2% against 21-27% for sampled decode).
+    # WARNING: greedy is NOT comparable to bench.sh. On a spec-dec model it roughly
+    # doubles draft acceptance (0.466 canonical vs ~0.96 greedy on this carrier), so
+    # a greedy per-stream tok/s must never be tabled beside a canonical bench.sh
+    # decode_TPS. Set these to bench.sh's canonical 0.6 / 0.95 / 20 / 0.0 when the
+    # two need to be directly comparable. Names match bench.sh deliberately.
+    def _envf(name, default):
+        v = os.environ.get(name)
+        try:
+            return float(v) if v not in (None, "") else float(default)
+        except ValueError:
+            return float(default)
+
+    TEMP = _envf("BENCH_TEMP", 0.0)
+    TOP_P = _envf("BENCH_TOP_P", 1.0)
+    TOP_K = int(_envf("BENCH_TOP_K", 0))
+    MIN_P = _envf("BENCH_MIN_P", 0.0)
+    print(
+        "[concurrency-probe] sampler: "
+        f"temperature={TEMP}  top_p={TOP_P}  top_k={TOP_K}  min_p={MIN_P}"
+        + (
+            "  (greedy default -- NOT comparable to bench.sh)"
+            if TEMP == 0.0
+            else "  (sampled -- comparable to bench.sh if these are its canonical values)"
+        ),
+        flush=True,
+    )
     GROWTH = int(os.environ["VRAM_GROWTH_MB"])
     REQ_TIMEOUT = float(os.environ["REQ_TIMEOUT"])
     TPS_FLOOR = float(os.environ["TPS_FLOOR"])
@@ -445,7 +474,10 @@ def run_probe():
             {
                 "model": MODEL,
                 "max_tokens": GTOK,
-                "temperature": 0.0,
+                "temperature": TEMP,
+                "top_p": TOP_P,
+                "top_k": TOP_K,
+                "min_p": MIN_P,
                 "stream": True,
                 "stream_options": {"include_usage": True},
                 "messages": [{"role": "user", "content": prompt(stream, rnd)}],

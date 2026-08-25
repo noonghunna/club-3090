@@ -95,6 +95,15 @@ fi
 URL="${URL:-http://localhost:${_DEFAULT_ENDPOINT_PORT:-8020}}"
 PROMPT_TOKENS="${PROMPT_TOKENS:-16000}"
 GEN_TOKENS="${GEN_TOKENS:-256}"
+# Sampler, names matching bench.sh. Default GREEDY -- unchanged probe behaviour and
+# what knee-finding wants (determinism). Set to bench.sh's canonical
+# 0.6 / 0.95 / 20 / 0.0 to make per-stream tok/s comparable with a bench.sh run;
+# greedy roughly doubles draft acceptance on a spec-dec model, so by default the
+# two are NOT comparable.
+BENCH_TEMP="${BENCH_TEMP:-0.0}"
+BENCH_TOP_P="${BENCH_TOP_P:-1.0}"
+BENCH_TOP_K="${BENCH_TOP_K:-0}"
+BENCH_MIN_P="${BENCH_MIN_P:-0.0}"
 VRAM_GROWTH_MB="${VRAM_GROWTH_MB:-200}"
 REQ_TIMEOUT="${REQ_TIMEOUT:-600}"
 TPS_FLOOR="${TPS_FLOOR:-0}"
@@ -330,6 +339,8 @@ run_probe() {
   VRAM_GROWTH_MB="$VRAM_GROWTH_MB" REQ_TIMEOUT="$REQ_TIMEOUT" \
   TPS_FLOOR="$TPS_FLOOR" RETENTION_MIN="$RETENTION_MIN" VALIDATE="$VALIDATE" \
   CACHE="$CACHE" SHARE_FRAC="$SHARE_FRAC" UNIQUE_MIN="$UNIQUE_MIN" \
+    BENCH_TEMP="$BENCH_TEMP" BENCH_TOP_P="$BENCH_TOP_P" \
+    BENCH_TOP_K="$BENCH_TOP_K" BENCH_MIN_P="$BENCH_MIN_P" \
   python3 "$PROBE_PY"
 }
 
