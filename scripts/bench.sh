@@ -1609,7 +1609,57 @@ print(f"{sum(xs)/len(xs):.2f}" if xs else "")
     if [[ -s "$CAP_WORK/counters1" ]]; then
       [[ -s "$CAP_WORK/counters0" ]] || : > "$CAP_WORK/counters0"
       if _mar="$(cap_marginal_rates "$CAP_WORK/counters0" "$CAP_WORK/counters1" 2>/dev/null)"; then
-        echo "  hit rate, per device (MARGINAL = across the measured window only):"
+        # ⚠️ ABSENCE OF MEASUREMENT IS NOT A MEASURED ZERO. If lookups did not
+        # ADVANCE across the bench window, this run produced no cache data and
+        # the cumulative column is from some OTHER session -- print the cause,
+        # not a number. Two real ways to land here, both seen in the wild
+        # (club-3090 #1105/#1106):
+        #   1. GGML_CUDA_MOE_CACHE_STATS unset -> engine `stats_every` is 0
+        #      (moe-cache.cu:169) and the `stats_every > 0` gate (:2795) means
+        #      NO `hits=` line is ever emitted. Not gated on log verbosity.
+        #   2. A DEAD SESSION's line is still in the docker log (an earlier boot,
+        #      or a crash-looped container). The parser takes the LAST `hits=`
+        #      line, which can predate this boot entirely -- #1106 rendered
+        #      `cumulative=0.0% admission=12` from an early session whose
+        #      container had exited hours before the bench ran.
+        # Rendering either as `cumulative=0.0% dhits=0 dlookups=0` reads as "the
+        # cache did nothing", and that misread has now cost two community reports
+        # and one of our own sessions.
+        _dlk="$(printf '%s\n' "$_mar" | awk '{
+          for (i = 1; i <= NF; i++) if ($i ~ /^dlookups=/) { split($i, a, "="); t += a[2] }
+        } END { print t + 0 }')"
+        if [[ "${_dlk:-0}" -eq 0 ]]; then
+          # ⚠️ Deliberately does NOT set CAP_CACHE_OK=0. That flips the status to
+          # CACHE_DISABLED (cap_status_classify: want==1 && got!=1), which ASSERTS
+          # the cache is off when all we know is that we did not measure it — the
+          # same absence-reported-as-data error this branch exists to prevent.
+          echo "  hit rate: ⚠ NO MEASUREMENT IN THIS RUN — lookups did not advance across the bench window."
+          echo "            The cache may be fine; this run simply did not measure it. Do NOT read"
+          echo "            the numbers below as a hit rate of zero."
+          # TWO independent conditions, BOTH required. Measured on a live 2-arm boot
+          # 2026-08-26 (one variable): STATS=200 at default verbosity produced ZERO
+          # `[moe-cache]` lines of any kind; STATS=200 + verbosity 4 produced 228
+          # lines / 211 stats lines. MOE_CACHE_LOG is GGML_LOG_INFO, which the
+          # server's verbosity threshold drops below 4 — so STATS alone is inert.
+          _st="$(cap_proc_env GGML_CUDA_MOE_CACHE_STATS 2>/dev/null || true)"
+          [[ -z "$_st" ]] && _st="$(printenv GGML_CUDA_MOE_CACHE_STATS 2>/dev/null || true)"
+          _vb="$(cap_proc_env LLAMA_ARG_LOG_VERBOSITY 2>/dev/null || true)"
+          [[ -z "$_vb" ]] && _vb="$(printenv LLAMA_ARG_LOG_VERBOSITY 2>/dev/null || true)"
+          if [[ -z "$_st" || "$_st" == "0" ]] || [[ -z "$_vb" || "$_vb" -lt 4 ]] 2>/dev/null; then
+            echo "            likely cause: cache telemetry needs BOTH knobs; this run had"
+            echo "                          GGML_CUDA_MOE_CACHE_STATS=${_st:-<unset>} and LLAMA_ARG_LOG_VERBOSITY=${_vb:-<unset>}."
+            echo "                          STATS<=0 emits no stats line (stats_every defaults to 0);"
+            echo "                          verbosity <4 drops EVERY [moe-cache] line at the log filter."
+            echo "            Fix: re-boot with MOE_STATS=200 AND LLAMA_ARG_LOG_VERBOSITY=4."
+          else
+            echo "            likely cause: the parsed counters predate this boot (stale session in the"
+            echo "                          docker log), or the cache was never consulted."
+            echo "            Fix: restart the container before benching so the log carries one session."
+          fi
+          echo "    raw (UNSCOPED — may belong to another session):"
+        else
+          echo "  hit rate, per device (MARGINAL = across the measured window only):"
+        fi
         while IFS= read -r _l; do [[ -n "$_l" ]] && echo "    ${_l}"; done <<< "$_mar"
         echo "    note: the CUMULATIVE column embeds the cold-fill phase and is NOT"
         echo "          boot-comparable — a BIGGER pool shows a LOWER cumulative rate on"

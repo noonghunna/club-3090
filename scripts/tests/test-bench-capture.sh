@@ -237,6 +237,76 @@ for ln in t.splitlines():
 PY
 echo "  ✓ marginal rate derived per device, and disagrees with cumulative (48/58 vs 19/23)"
 
+# --- ABSENCE OF MEASUREMENT != a measured zero (club-3090 #1105/#1106) --------
+# Two field reports rendered `cumulative=0.0% dhits=0 dlookups=0` and were read
+# (by us) as "the cache did nothing". Both were actually NO-MEASUREMENT runs:
+#   #1106 the parsed `hits=` line came from a session whose container had EXITED
+#         HOURS EARLIER — the counters never moved during the bench.
+#   #1105 the cache never allocated at all.
+# The engine's own comment names the class: "an ABSENCE OF MEASUREMENT reported
+# as data". Guard both halves.
+#
+CF_STATS="$ROOT_DIR/models/deepseek-v4-flash-0731/llamacpp-club3090/compose/dual/unsloth-q8-kxl/moecache.yml"
+# NEGATIVE CONTROL FIRST: identical snapshots => lookups do not advance.
+cat > "$TMP/stale0.kv" <<'EOF'
+CUDA0 hits=0 total=12 evictions=0 skips=0 admission=12 fill_fail=0 dispatch_fail=0 collect_fail=0
+EOF
+cp "$TMP/stale0.kv" "$TMP/stale1.kv"
+stale=$(cap_marginal_rates "$TMP/stale0.kv" "$TMP/stale1.kv")   || fail "marginal derivation must still succeed on a stale pair"
+command grep -q 'dlookups=0' <<<"$stale"   || fail "a stale (non-advancing) counter pair must report dlookups=0, got: $stale"
+# The renderer's decision hinges on summed dlookups — assert the arithmetic the
+# guard in bench.sh performs, so a change to the field name breaks HERE.
+dlk=$(printf '%s\n' "$stale" | awk '{
+  for (i = 1; i <= NF; i++) if ($i ~ /^dlookups=/) { split($i, a, "="); t += a[2] }
+} END { print t + 0 }')
+[[ "$dlk" == "0" ]] || fail "summed dlookups on a stale pair must be 0, got: $dlk"
+
+# POSITIVE CONTROL: an advancing pair must NOT trip the guard, or the warning
+# would fire on every healthy run and be trained away as noise.
+dlk_live=$(printf '%s\n' "$mar" | awk '{
+  for (i = 1; i <= NF; i++) if ($i ~ /^dlookups=/) { split($i, a, "="); t += a[2] }
+} END { print t + 0 }')
+[[ "$dlk_live" -gt 0 ]] || fail "the LIVE fixture must advance lookups, got: $dlk_live"
+
+# bench.sh must actually branch on it, and must not print a rate headline when
+# there is no measurement.
+command grep -q 'NO MEASUREMENT IN THIS RUN' "$ROOT_DIR/scripts/bench.sh"   || fail "bench.sh lost the no-measurement branch"
+command grep -q 'UNSCOPED — may belong to another session' "$ROOT_DIR/scripts/bench.sh"   || fail "bench.sh must label unscoped counters rather than presenting them as this run's"
+command grep -q 'MOE_STATS=200 AND LLAMA_ARG_LOG_VERBOSITY=4' "$ROOT_DIR/scripts/bench.sh" || fail "bench.sh must name BOTH knobs - STATS alone emits nothing (measured 2026-08-26: STATS=200 at default verbosity gave 0 [moe-cache] lines)"
+# The branch must NOT assert CACHE_DISABLED from an absence. cap_status_classify
+# turns cache_ok=0 into that status, which claims the cache is OFF when all we
+# know is that this run did not measure it - the same error the branch prevents.
+# Assert the CODE, not the comment: scan the no-measurement branch BODY for a
+# live CAP_CACHE_OK=0. Grepping the explanatory comment would pass even if the
+# assignment came back — a gate guarding prose instead of behaviour.
+python3 - "$ROOT_DIR/scripts/bench.sh" <<'PYEOF' || fail "the no-measurement branch must not flip CAP_CACHE_OK (it renders as CACHE_DISABLED, asserting the cache is OFF when it was merely unmeasured)"
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+i = src.index("NO MEASUREMENT IN THIS RUN")
+start = src.rindex('if [[ "${_dlk:-0}" -eq 0 ]]; then', 0, i)
+body = src[start:src.index("raw (UNSCOPED", i)]
+live = [l for l in body.splitlines()
+        if "CAP_CACHE_OK=0" in l and not l.lstrip().startswith("#")]
+sys.exit(1 if live else 0)
+PYEOF
+# And the compose must document the co-requirement, or the next reader re-runs
+# the same dead-feature boot we just did.
+command grep -q 'THIS VAR ALONE IS NOT ENOUGH' "$CF_STATS" || fail "moecache.yml must document that verbosity 4 is ALSO required"
+echo "  ✓ no-measurement guard: stale pair flagged, live pair untouched, bench.sh branches"
+
+# --- the compose must be ABLE to deliver the telemetry ------------------------
+# Root cause of the whole class: the var was absent from `environment:`, so docker
+# never forwarded it and NO caller could switch the instrument on. A regex over
+# the compose is the only cheap guard — the delivery path is docker's, not ours.
+CF="$ROOT_DIR/models/deepseek-v4-flash-0731/llamacpp-club3090/compose/dual/unsloth-q8-kxl/moecache.yml"
+if [[ -f "$CF" ]]; then
+  command grep -qE '^\s+- GGML_CUDA_MOE_CACHE_STATS' "$CF"     || fail "moecache.yml must declare GGML_CUDA_MOE_CACHE_STATS — undeclared vars are NOT forwarded by docker"
+  # Non-empty default required: engine `stats_every` defaults to 0, so a bare
+  # passthrough would leave every community report with no telemetry again.
+  command grep -qE '^\s+- GGML_CUDA_MOE_CACHE_STATS=\$\{MOE_STATS:-[1-9][0-9]*\}' "$CF"     || fail "GGML_CUDA_MOE_CACHE_STATS needs a NON-ZERO default (stats_every defaults to 0 = silent)"
+  echo "  ✓ compose declares the stats var with a non-zero default (delivery path exists)"
+fi
+
 # --- health counters: all-zero is the pass condition (item 3c) ---------------
 [[ "$(cap_health_verdict "$TMP/c0")" == PASS* ]] || fail "clean counters should PASS"
 v=$(cap_health_verdict "$TMP/c1")

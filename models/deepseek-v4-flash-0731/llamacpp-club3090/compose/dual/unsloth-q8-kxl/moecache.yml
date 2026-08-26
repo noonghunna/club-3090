@@ -141,6 +141,30 @@ services:
       # Expert-cache tuning — every value MEASURED on 2×24 GB, see Caveats.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+      # Cache hit/miss telemetry. DEFAULT ON (emit every N collect calls per
+      # device) because without it the engine's `stats_every` is 0 and NO
+      # `CUDA<n> hits=…` line is ever produced — see moe-cache.cu:169 (default 0)
+      # and :2795 (`stats_every > 0` gate). It is NOT gated on log verbosity.
+      # ⚠️ This var was previously ABSENT from this block entirely, so docker
+      # never forwarded it and the value was unreachable through the shipped
+      # slug no matter what the caller exported. Every community bench filed
+      # against this compose therefore carried zero cache telemetry, and
+      # bench.sh rendered that absence as a measured `0.0% dhits=0 dlookups=0`
+      # — indistinguishable from "the cache did nothing" (club-3090 #1105/#1106).
+      # ⚠️⚠️ THIS VAR ALONE IS NOT ENOUGH — telemetry needs BOTH knobs. Measured
+      # on a live 2-arm boot 2026-08-26 with one variable between the arms:
+      #   STATS=200, default verbosity -> 0 `[moe-cache]` lines of ANY kind
+      #   STATS=200, LLAMA_ARG_LOG_VERBOSITY=4 -> 228 lines / 211 stats lines
+      # MOE_CACHE_LOG is GGML_LOG_INFO (moe-cache.cu:46) and the server's verbosity
+      # threshold drops it below 4, so without `-lv 4` the whole cache subsystem is
+      # silent. Verbosity is left to the caller (bare passthrough below) because 4
+      # is loud for a serving deployment — but a bench/report run wanting cache
+      # numbers MUST set it. bench.sh now says so when the counters do not advance.
+      # Set MOE_STATS=0 to silence the stats line.
+      # ✅ The `=${VAR:-N}` form is SAFE here (unlike the bare-passthrough vars
+      # below): `moe_cache_env_i64` rejects unset AND empty (`!text || !text[0]`,
+      # moe-cache.cu:509) before parsing, so it cannot hit the atoi("")==0 trap.
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-200}
       # Prefill expert-prefetch (v1.2 default ON, worth +14.5% prefill) and log
       # verbosity. ⚠️ BARE PASS-THROUGH FORM ON PURPOSE — do NOT rewrite these as
       # `- GGML_EXPERT_PREFETCH=${PREFETCH:-}`. The engine tests
