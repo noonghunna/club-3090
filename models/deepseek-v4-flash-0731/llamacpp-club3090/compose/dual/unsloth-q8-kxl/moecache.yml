@@ -160,11 +160,14 @@ services:
       # silent. Verbosity is left to the caller (bare passthrough below) because 4
       # is loud for a serving deployment — but a bench/report run wanting cache
       # numbers MUST set it. bench.sh now says so when the counters do not advance.
-      # Set MOE_STATS=0 to silence the stats line.
+      # ⚠️ DEFAULT IS 0 (OFF) — telemetry is OPT-IN so instrumentation does not run
+      # when nothing reads it. Set MOE_STATS=200 (plus LLAMA_ARG_LOG_VERBOSITY=4)
+      # for a bench/report run. NOTE: the shipped v1.2 engine does not gate its
+      # bypass counters, so on it this knob controls EMISSION only.
       # ✅ The `=${VAR:-N}` form is SAFE here (unlike the bare-passthrough vars
       # below): `moe_cache_env_i64` rejects unset AND empty (`!text || !text[0]`,
       # moe-cache.cu:509) before parsing, so it cannot hit the atoi("")==0 trap.
-      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-200}
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
       # Prefill expert-prefetch (v1.2 default ON, worth +14.5% prefill) and log
       # verbosity. ⚠️ BARE PASS-THROUGH FORM ON PURPOSE — do NOT rewrite these as
       # `- GGML_EXPERT_PREFETCH=${PREFETCH:-}`. The engine tests

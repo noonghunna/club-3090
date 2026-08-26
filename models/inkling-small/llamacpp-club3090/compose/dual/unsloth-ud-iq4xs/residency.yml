@@ -239,6 +239,29 @@ services:
       # even one slab, and that is fine — pin less if you want the cache back.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+      # Cache hit/miss telemetry. Needs BOTH knobs — measured on a live 2-arm boot
+      # 2026-08-26: STATS alone at default verbosity emitted 0 `[moe-cache]` lines of
+      # ANY kind; STATS + verbosity 4 emitted 228. `stats_every` defaults to 0
+      # (moe-cache.cu:169, gate at :2795) and MOE_CACHE_LOG is GGML_LOG_INFO, which the
+      # server's verbosity threshold drops below 4.
+      # ⚠️ Both were previously ABSENT here, so docker forwarded neither and NO caller
+      # could switch telemetry on (club-3090 #1105/#1106 were filed with no usable
+      # cache data for exactly this reason).
+      # `=${VAR:-N}` is safe for STATS: moe_cache_env_i64 rejects unset AND empty
+      # before parsing (moe-cache.cu:509), so it cannot hit the atoi("")==0 trap.
+      # ⚠️ DEFAULT IS 0 (OFF) — telemetry is OPT-IN, on principle rather than on a
+      # measured cost: instrumentation should not run when nothing reads it.
+      # ⛔ An earlier version of this comment claimed the counters cost ~6% decode.
+      # That is RETRACTED (2026-08-26). Two A/B runs could not support it — the
+      # SHIPPED image itself measured 20.05 then 18.36 narrative TPS across runs
+      # with no code change, so run-to-run variance swamps the effect. Arithmetic
+      # agrees: ~175 bypassed nodes per bench x ~4 atomics is ~1e-4 % of wall time.
+      # The shipped v1.2 engine does NOT gate these counters at all, so on it this
+      # knob controls EMISSION only.
+      # Turn it on for a bench/report run: MOE_STATS=200 LLAMA_ARG_LOG_VERBOSITY=4.
+      # Verbosity stays BARE (caller-owned): 4 is loud for a serving deployment.
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
+      - LLAMA_ARG_LOG_VERBOSITY
     deploy:
       resources:
         reservations:

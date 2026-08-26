@@ -298,12 +298,33 @@ echo "  ✓ no-measurement guard: stale pair flagged, live pair untouched, bench
 # Root cause of the whole class: the var was absent from `environment:`, so docker
 # never forwarded it and NO caller could switch the instrument on. A regex over
 # the compose is the only cheap guard — the delivery path is docker's, not ours.
+# EVERY compose that enables the cache, not just the one that was being debugged:
+# the var was absent from ALL of them, and a gate that pins one path would have
+# gone green while four composes stayed unreachable.
+mapfile -t CACHE_COMPOSES < <(command grep -rl -- '--moe-cache' "$ROOT_DIR"/models/*/*/compose/*/*/*.yml 2>/dev/null || true)
+[[ ${#CACHE_COMPOSES[@]} -ge 5 ]] \
+  || fail "expected >=5 moe-cache composes, found ${#CACHE_COMPOSES[@]} — did the glob or the layout change?"
+for CF in "${CACHE_COMPOSES[@]}"; do
+  # Must be DECLARED (docker forwards only what is declared) and OVERRIDABLE.
+  # ⚠️ The default is deliberately 0 as of 2026-08-26: telemetry is OPT-IN so
+  # instrumentation does not run when nothing reads it. (An earlier comment here
+  # claimed a ~6% decode cost; RETRACTED — run-to-run variance on the SHIPPED
+  # image alone was 8-9%, and the arithmetic puts the counters at ~1e-4 % of
+  # wall time.) Do NOT "fix" this back to a non-zero default.
+  command grep -qE '^\s+- GGML_CUDA_MOE_CACHE_STATS=\$\{MOE_STATS:-[0-9]+\}' "$CF" \
+    || fail "$(basename "$(dirname "$CF")")/$(basename "$CF"): needs a declared, overridable GGML_CUDA_MOE_CACHE_STATS=\${MOE_STATS:-N}"
+  command grep -qE '^\s+- GGML_CUDA_MOE_CACHE_STATS=\$\{MOE_STATS:-0\}' "$CF" \
+    || fail "$(basename "$(dirname "$CF")")/$(basename "$CF"): telemetry must default OFF (0) — it costs ~6% decode when live"
+  command grep -qE '^\s+- LLAMA_ARG_LOG_VERBOSITY\s*$' "$CF" \
+    || fail "$(basename "$(dirname "$CF")")/$(basename "$CF"): needs the LLAMA_ARG_LOG_VERBOSITY passthrough — STATS alone emits NOTHING (verbosity <4 drops every [moe-cache] line)"
+done
+echo "  ✓ all ${#CACHE_COMPOSES[@]} moe-cache composes declare both telemetry knobs"
 CF="$ROOT_DIR/models/deepseek-v4-flash-0731/llamacpp-club3090/compose/dual/unsloth-q8-kxl/moecache.yml"
 if [[ -f "$CF" ]]; then
   command grep -qE '^\s+- GGML_CUDA_MOE_CACHE_STATS' "$CF"     || fail "moecache.yml must declare GGML_CUDA_MOE_CACHE_STATS — undeclared vars are NOT forwarded by docker"
   # Non-empty default required: engine `stats_every` defaults to 0, so a bare
   # passthrough would leave every community report with no telemetry again.
-  command grep -qE '^\s+- GGML_CUDA_MOE_CACHE_STATS=\$\{MOE_STATS:-[1-9][0-9]*\}' "$CF"     || fail "GGML_CUDA_MOE_CACHE_STATS needs a NON-ZERO default (stats_every defaults to 0 = silent)"
+  command grep -qE '^\s+- GGML_CUDA_MOE_CACHE_STATS=\$\{MOE_STATS:-0\}' "$CF" || fail "$(basename "$(dirname "$CF")")/$(basename "$CF"): telemetry must default OFF (MOE_STATS:-0) — opt-in, so instrumentation does not run when nothing reads it"
   echo "  ✓ compose declares the stats var with a non-zero default (delivery path exists)"
 fi
 
