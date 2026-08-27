@@ -47,6 +47,14 @@
 #                count is a diagnostic, not a decode predictor. `UBATCH=2048`
 #                restores the old trade; 8192 is NOT better (prefill saturates
 #                at +18.0%, decode −30% as the pool is squeezed).
+#                ⚠️ **"Post-prefetch" is UNVERIFIED against the pinned image**
+#                (flagged 2026-08-27, not silently rewritten). The digest pinned
+#                below does NOT contain the prefetch ring — see the
+#                GGML_EXPERT_PREFETCH block. So either the phrase means
+#                "chronologically after the prefetch program" (measurement stands
+#                as a production number) or "with prefetch active" (in which case
+#                it describes a build we do not serve). Re-derive the ub trade on
+#                whatever image is actually pinned before quoting it as current.
 #              • 262144 boots and serves here (unlike the stock slug, which OOMs
 #                at 262K with a GPU-resident drafter), but costs ~8% decode and
 #                445 expert slots, and this model is PREFILL-BOUND at depth.
@@ -168,8 +176,28 @@ services:
       # below): `moe_cache_env_i64` rejects unset AND empty (`!text || !text[0]`,
       # moe-cache.cu:509) before parsing, so it cannot hit the atoi("")==0 trap.
       - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
-      # Prefill expert-prefetch (v1.2 default ON, worth +14.5% prefill) and log
-      # verbosity. ⚠️ BARE PASS-THROUGH FORM ON PURPOSE — do NOT rewrite these as
+      # Prefill expert-prefetch and log verbosity.
+      #
+      # ⛔⛔ INERT ON THE CURRENTLY PINNED IMAGE — corrected 2026-08-27.
+      # This block used to read "v1.2 default ON, worth +14.5% prefill". That
+      # describes the `stack/club3090-moecachev1.2` BRANCH, which was never built
+      # or published. The pinned digest above (`sha256:17824d44…`) carries
+      # `org.opencontainers.image.revision=e0a208949` — a commit BEFORE the
+      # prefetch work was composed — so the ring is not in the binary and this
+      # knob currently does NOTHING. Verified two ways: the label, and boot logs
+      # showing `fusion=` but no `full-fusion=` and zero prefetch-ring lines.
+      # Six deltas are absent from production for the same reason (prefetch,
+      # events at n_copies==1, prefetch default-ON, buun's three-tensor FFN
+      # fusion, the max-batch bypass counter, the vendored Inkling PR).
+      # Tracked in the maintainer's local artifact ledger and v1.4 rebase plan.
+      #
+      # ✅ KEEP THE DECLARATIONS ANYWAY. They cost nothing, and the moment a
+      # digest built from a branch that carries the prefetch work is pinned
+      # (planned for v1.4.0), they become live with the correct default. The
+      # numbers below are real — they were measured on such a build, not on the
+      # image pinned here: +14.5% on the v1.2 base / +15.0% isolated.
+      #
+      # ⚠️ BARE PASS-THROUGH FORM ON PURPOSE — do NOT rewrite these as
       # `- GGML_EXPERT_PREFETCH=${PREFETCH:-}`. The engine tests
       # `if (on && atoi(on) == 0) return nullptr;` (expert-prefetch.cu:126) and
       # atoi("") == 0, so an empty-string default would set the var to "" and
