@@ -42,17 +42,17 @@
 #                             an ABSOLUTE ~24-32, not a fraction of your core count.
 #                             On a 32c rig, nproc/2=16 measured ~20% SLOWER than 28.
 #                             Sweep 24-32 and keep the wall-clock winner.
-#     2. EXPERT_PREFETCH=1    Cross-ubatch expert prefetch. MEASURED TRADE on the
-#                             DeepSeek sibling: prefill +14.5%, decode −9%
-#                             (−8.5% at N=1, −11% at N=2). Allocates a staging ring
-#                             of 2 × 1088 MiB PER DEVICE, which is why it is off by
-#                             default on 2×24 GB.
-#                             ⚠️ The decode cost is NOT VRAM-mediated — in the control
-#                             the ring shrank the pool 27% yet hit rate ROSE while
-#                             throughput fell 9%. So more cards make the ring
-#                             AFFORDABLE, they do NOT refund its decode cost.
-#                             ⭐ Worth it if you are PREFILL-bound (this model is:
-#                             337 s TTFT on a 93K prompt), not if you are chatting.
+#     2. EXPERT_PREFETCH=1    ⛔ NOT A RECOMMENDATION — its prefill gain is WITHDRAWN.
+#                             The "+14.5%/+15.0% prefill" was measured on `0cdd9f283`,
+#                             a build MISSING A REQUIRED SYNCHRONISATION — part of the
+#                             gain may BE the absent sync. Unquotable until re-measured
+#                             on `ce8743a05` (moecache-engine-playbook.md §6).
+#                             The COST is not withdrawn: −9% decode (−8.5% N=1,
+#                             −11% N=2) and a 2,176 MiB ring on the FIRST CUDA device,
+#                             allocated LAZILY on the first prefill — AFTER the pool is
+#                             sized from free-minus-reserve, so nothing budgets for it.
+#                             Pinned OFF stack-wide (maintainer decision 2026-08-28).
+#                             ⇒ an experiment to MEASURE, not a knob to turn on.
 #     3. MOE_RESERVE_MB=<n>   Default 1536, derived against a MEASURED 1,128 MiB
 #                             compute-buffer swing on 2×24 GB. Your swing differs.
 #                             Too low is NOT an OOM — it is slower (1024 measured
