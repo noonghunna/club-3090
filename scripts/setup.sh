@@ -815,7 +815,8 @@ _verify_downloaded_files() {
   # Pin the etag lookup to the same revision we downloaded (#319). Empty -> main
   # HEAD; a stale pin would otherwise etag-check against a newer HEAD and FAIL.
   local revision="${4:-main}"
-  local fail=0 verified=0 unverified=0 total=0
+  local fail=0 verified=0 unverified=0 total=0 skipped=0
+  local _mk _sz _mt _prev
   local f meta expected exp_size actual local_size
 
   echo "[verify]  Checking SHA256 of every ${verify_glob} against the hub's published"
@@ -849,10 +850,34 @@ _verify_downloaded_files() {
       unverified=$((unverified + 1))
       continue
     fi
+    # ── marker-based skip ────────────────────────────────────────────────
+    # Re-hashing every file on every run costs minutes of pure disk read on a
+    # 157 GB model even when nothing was fetched. Skip ONLY when all four of
+    # (expected-sha, size, mtime, revision) match what was recorded at the last
+    # PASSING verify of THIS file.
+    # ⚠️ Deliberately NOT a bare "verified" flag — the incident this function
+    # exists for was a run that TRUSTED such a flag. The hub's expected sha is
+    # re-fetched every run (above), so an upstream change moves it; any local
+    # mutation moves size or mtime. Either way we fall through and re-hash.
+    # FORCE_VERIFY=1 bypasses the skip entirely.
+    _mk="${MODEL_DIR}/${subdir}/.setup-verified.tsv"
+    _sz="$(stat -c '%s' "$f" 2>/dev/null || echo '?')"
+    _mt="$(stat -c '%Y' "$f" 2>/dev/null || echo '?')"
+    if [[ "${FORCE_VERIFY:-0}" != "1" && -f "$_mk" ]]; then
+      _prev="$(awk -F'\t' -v n="$f" '$5==n {print $1"|"$2"|"$3"|"$4}' "$_mk" 2>/dev/null | tail -1)"
+      if [[ -n "$_prev" && "$_prev" == "${expected}|${_sz}|${_mt}|${revision}" ]]; then
+        printf "  %-50s SKIP  (unchanged since last verify)\n" "$f"
+        skipped=$((skipped + 1))
+        continue
+      fi
+    fi
     actual="$(sha256sum "$f" | awk '{print $1}')"
     if [[ "$expected" == "$actual" ]]; then
       printf "  %-50s OK\n" "$f"
       verified=$((verified + 1))
+      # Record ONLY on a pass, and only for a file we actually hashed.
+      printf '%s\t%s\t%s\t%s\t%s\n' "$expected" "$_sz" "$_mt" "$revision" "$f" \
+        >> "$_mk" 2>/dev/null || true
     else
       printf "  %-50s FAIL  exp=%.12s  act=%.12s\n" "$f" "$expected" "$actual"
       fail=$((fail + 1))
@@ -874,6 +899,12 @@ _verify_downloaded_files() {
   # never be able to read "N file(s) SHA-verified" and conclude N == total when
   # it does not.
   echo "[done]    ${verified}/${total} file(s) SHA-verified in ${subdir}."
+  if [[ "$skipped" != "0" ]]; then
+    echo "[verify]  ${skipped}/${total} file(s) SKIPPED — expected-sha + size + mtime +"
+    echo "            revision all unchanged since their last PASSING verify, so they"
+    echo "            were NOT re-hashed this run. This is a skip, not a verification."
+    echo "            Force a full re-hash with: FORCE_VERIFY=1"
+  fi
   if [[ "$unverified" != "0" ]]; then
     echo "[verify]  ⚠ ${unverified}/${total} file(s) UNVERIFIED — the hub published no sha256 for them,"
     echo "            so nothing checked their contents (a size match is not a verification)."
