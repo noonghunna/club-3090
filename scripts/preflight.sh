@@ -1632,6 +1632,18 @@ _preflight_probe_thinking_key() {
     || echo 0
 }
 
+_preflight_probe_thinking_reasoning_both() {
+  # Same as the sibling below, but ALSO sends the TOP-LEVEL `reasoning_effort`
+  # field alongside the kwargs — i.e. the exact shape verify-full builds from
+  # THINK_OFF_STD + THINK_OFF_KW. Exists to detect models where the two DISAGREE.
+  local url="$1" model="$2" kwargs="$3" effort="$4"
+  curl -sf -m 90 "${url%/}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"${model}\", \"messages\": [{\"role\": \"user\", \"content\": \"Say OK.\"}], \"max_tokens\": 96, \"reasoning_effort\": \"${effort}\", \"chat_template_kwargs\": ${kwargs}}" 2>/dev/null \
+    | python3 -c "import sys,json; print(len((json.load(sys.stdin)['choices'][0]['message'].get('reasoning_content') or '')))" 2>/dev/null \
+    || echo 0
+}
+
 _preflight_probe_thinking_reasoning() {
   # Echo the REASONING length a trivial question returns under the given kwargs.
   # The sibling probe measures CONTENT — right for proving a value turns thinking
@@ -1819,7 +1831,29 @@ preflight_detect_thinking_control() {
       THINK_OFF_STD="\"reasoning_effort\": \"${_eoff}\", "
       THINK_ON_STD="\"reasoning_effort\": \"${_eon}\", "
       THINK_OFF_EFFORT="${_eoff}"
-      THINK_ON_EFFORT="${_eon}" ;;
+      THINK_ON_EFFORT="${_eon}"
+      # ⚠️⚠️ DOES THE TOP-LEVEL FIELD DEFEAT THE KWARG? Probe, never assume.
+      # Some models read `reasoning_effort` from the CHAT TEMPLATE and ignore
+      # `enable_thinking` — which is what llama.cpp translates the TOP-LEVEL
+      # field into (server-common.cpp). On those, sending BOTH makes the
+      # top-level one win and the kwarg never takes effect, so a caller that
+      # believes it disabled thinking gets a reasoning-only reply.
+      # MEASURED on Inkling-Small 2026-08-29 (identical prompt, 30-tok budget):
+      #     kwarg only      ->   0 ch reasoning, correct content
+      #     top-level only  -> 132 ch reasoning, EMPTY content
+      #     BOTH            -> 132 ch reasoning, EMPTY content  (== top-level)
+      # verify-full sends BOTH, so [3]/[5] failed on a healthy model.
+      # Keep the top-level fragment ONLY where it does no harm.
+      if [[ -n "${url:-}" && -n "${model:-}" ]]; then
+        local _r_kw _r_both
+        _r_kw="$(_preflight_probe_thinking_reasoning "$url" "$model" "$THINK_OFF_KW")"
+        _r_both="$(_preflight_probe_thinking_reasoning_both "$url" "$model" "$THINK_OFF_KW" "$_eoff")"
+        if [[ "$_r_kw" =~ ^[0-9]+$ && "$_r_both" =~ ^[0-9]+$ ]] \
+           && (( _r_kw < 20 )) && (( _r_both >= 20 )); then
+          THINK_OFF_STD=''
+          THINK_PAYLOAD_NOTE="kwargs-only (top-level field defeats the kwarg: ${_r_kw}ch vs ${_r_both}ch)"
+        fi
+      fi ;;
     none)
       THINK_OFF_KW='{}'
       THINK_ON_KW='{}' ;;

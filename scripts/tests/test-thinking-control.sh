@@ -101,7 +101,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/props":
-            if MODE.startswith("props:") or MODE.startswith("props-ignore:") or MODE.startswith("props-lowonly:") or MODE.startswith("props-xhigh:"):
+            if MODE.split(":", 1)[0] in ("props", "props-ignore", "props-lowonly", "props-xhigh", "props-defeat", "props-agree"):
                 return self._send(200, {"chat_template": MODE.split(":", 1)[1]})
             return self._send(404, {"error": "not found"})
         if self.path.endswith("/v1/models"):
@@ -115,6 +115,25 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             body = {}
         content = "OK"
+        if MODE.startswith("props-defeat:"):
+            # Inkling-shaped: the model reads reasoning_effort from the TEMPLATE
+            # kwarg and IGNORES the top-level field. When BOTH are sent the
+            # top-level one wins, so thinking is NOT suppressed.
+            kw = body.get("chat_template_kwargs") or {}
+            top = body.get("reasoning_effort")
+            off_by_kwarg = (kw.get("reasoning_effort") in ("none", "low", "minimal", "medium"))
+            defeated = top is not None
+            rc = "" if (off_by_kwarg and not defeated) else ("thinking " * 30)
+            return self._send(200, {"choices": [{"message": {"content": "OK", "reasoning_content": rc},
+                                    "finish_reason": "stop"}]})
+        if MODE.startswith("props-agree:"):
+            # GLM-shaped: top-level and kwarg agree; sending both is harmless.
+            kw = body.get("chat_template_kwargs") or {}
+            top = body.get("reasoning_effort")
+            eff = kw.get("reasoning_effort") or top
+            rc = "" if eff in ("none", "low", "minimal", "medium") else ("thinking " * 30)
+            return self._send(200, {"choices": [{"message": {"content": "OK", "reasoning_content": rc},
+                                    "finish_reason": "stop"}]})
         if MODE.startswith("props-xhigh:"):
             kw = body.get("chat_template_kwargs") or {}
             eff = kw.get("reasoning_effort")
@@ -305,4 +324,18 @@ expect "9. env override wins + suppresses std param" "http://127.0.0.1:${PORT}" 
   VERIFY_THINK_OFF='{"enable_thinking": false}'
 
 echo ""
+# --- off-payload SHAPE (2026-08-29) ------------------------------------------
+# Detecting the right FIELD is not enough: some models read reasoning_effort from
+# the chat template and ignore the top-level field, and when BOTH are sent the
+# top-level one WINS — so a caller that believes it disabled thinking gets a
+# reasoning-only reply. verify-full sends both, which failed [3]/[5] on a healthy
+# Inkling-Small. Preflight now PROBES the shape; these lock both directions.
+echo "--- off-payload shape"
+start_mock 'props-defeat:Effort: {{ reasoning_effort }}'
+expect "17. top-level DEFEATS kwarg → std param dropped" "http://127.0.0.1:${PORT}" \
+       "reasoning_effort|${KW_EFFORT}|"
+start_mock 'props-agree:Effort: {{ reasoning_effort }}'
+expect "18. top-level AGREES with kwarg → std param kept" "http://127.0.0.1:${PORT}" \
+       "reasoning_effort|${KW_EFFORT}|${STD_EFFORT}"
+
 echo "test-thinking-control: ${PASS} assertions passed"
