@@ -167,6 +167,17 @@ services:
       # Expert-cache tuning — inherited from the 2×24 GB DeepSeek derivation.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+      # ⛔ PREFETCH OFF BY DEFAULT — maintainer decision 2026-08-28.
+      # The engine defaults it ON, but on this rig it costs 2176 MiB (2 x 1088) on the FIRST
+      # CUDA device only, allocated LAZILY on the first prefill -- AFTER the moe-cache pool has
+      # already been sized from free-minus-reserve. Nothing budgets for it, so it lands on the
+      # tighter card as pure extra pressure. For scale: that is more than TWICE the entire KV
+      # cost of this compose's 204800 context (~1035 MiB), i.e. ~430K tokens of headroom.
+      # Its only measured justification (+14.5%/+15.0% prefill) was taken on a build carrying
+      # the n_copies==1 scheduler race fixed in ce8743a05, so it is WITHDRAWN pending re-measure.
+      # ⚠️ Explicit `=0`, not a bare passthrough: bare would inherit the engine default (ON).
+      # Re-enable only with a number from a post-ce8743a05 A/B. See moecache-engine-playbook.md.
+      - GGML_EXPERT_PREFETCH=${EXPERT_PREFETCH:-0}
       # Cache hit/miss telemetry. Needs BOTH knobs — measured on a live 2-arm boot
       # 2026-08-26: STATS alone at default verbosity emitted 0 `[moe-cache]` lines of
       # ANY kind; STATS + verbosity 4 emitted 228. `stats_every` defaults to 0
