@@ -45,6 +45,14 @@ features:
   moe_expert_cache: true  # --moe-cache: hot CPU-resident experts held in spare VRAM
 supported_kv_formats:
   - fp16
+  - q8_0                  # Added 2026-08-29 WITH boot evidence, not by assumption:
+                          # qwen3.8-flash-next @204800 boots, serves and answers
+                          # correctly on `--cache-type-k/v q8_0`. MEASURED KV -47%,
+                          # expert-cache slots 9,435 -> 12,437 (+31.8%), decode
+                          # neutral, cards balanced. Requires `-fa on` (quantised KV
+                          # needs flash-attention on this engine).
+                          # ⚠️ q8_0 is the SERVING-GRADE FLOOR on this stack — do not
+                          # extend this list below it for a serving slug.
 supported_drafters:
   - dflash                  # DFlash2 external draft GGUF via `--spec-type draft-dflash`
                             # (drafters/anbeeld-glm53-dflash2.yml, SHIPPED default n=3 on CUDA1)
