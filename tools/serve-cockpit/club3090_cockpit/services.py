@@ -227,6 +227,28 @@ class Runner(Protocol):
     ) -> RunResult: ...
 
 
+async def _reap(proc: Any) -> None:
+    """Kill and await a subprocess so its transport is closed while the loop lives.
+
+    Idempotent and never raises: called from exception paths, where a second
+    failure would mask the original one. A process that already exited raises
+    ProcessLookupError from kill() -- that is the success case, not an error.
+    """
+    if proc is None:
+        return
+    try:
+        if proc.returncode is None:
+            proc.kill()
+    except (ProcessLookupError, AttributeError):
+        pass
+    except Exception:
+        pass
+    try:
+        await proc.wait()
+    except Exception:
+        pass
+
+
 class RealRunner:
     """Production runner — actually shells out (READ contracts only)."""
 
@@ -251,10 +273,20 @@ class RealRunner:
                 stderr=err.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
+            # `wait_for` cancels communicate() but does NOT touch the CHILD. Without
+            # reaping it here the process keeps running and its transport stays
+            # alive; when `proc` is later GC'd -- at interpreter shutdown, AFTER the
+            # loop is closed -- BaseSubprocessTransport.__del__ calls loop.call_soon
+            # and raises "RuntimeError: Event loop is closed" as an ignored exception
+            # on quit. One orphan per timed-out probe, across 26 call sites.
+            await _reap(proc)
             result = RunResult(returncode=-1, stdout="", stderr="timeout", timed_out=True)
         except FileNotFoundError as exc:
             result = RunResult(returncode=127, stdout="", stderr=str(exc))
         except Exception as exc:  # pragma: no cover - defensive
+            # Same reasoning as the timeout arm: if the failure happened after the
+            # child was spawned, it must still be reaped.
+            await _reap(locals().get("proc"))
             result = RunResult(returncode=-1, stdout="", stderr=str(exc))
         if log is not None:
             log.complete_result(result)
