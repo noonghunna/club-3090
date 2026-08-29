@@ -53,6 +53,12 @@ model_list:
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
 
+  - model_name: glm-5.3-flash  # status: incubating
+    litellm_params:
+      model: openai/glm-5.3-flash
+      api_base: http://host.docker.internal:8119/v1
+      api_key: EMPTY
+
   - model_name: qwen3.6-27b
     litellm_params:
       model: openai/qwen3.6-27b

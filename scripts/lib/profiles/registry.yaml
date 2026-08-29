@@ -1817,6 +1817,102 @@ entries:
     serve_aliases: []
     required_sm: 8.6
     category: frontier
+  llamacpp-club3090/glm53-flash-dual-iq4xs-moecache:
+    model: glm-5.3-flash
+    weights_variant: unsloth-ud-iq4xs
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: anbeeld-glm53-dflash2
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 142
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8119
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "🧪 Validated 2026-08-29 on llamacpp-club3090-v1.5 (rc0): verify-full 8/9 -- the one failure is [8] output-quality under reasoning_effort=max, a HARNESS budget artefact (2000 tokens spent reasoning), fixed in verify-full by scaling MT_QUALITY with the thinking allowance; the same check PASSES at reasoning_effort=low with 9,875 chars. bench.sh canonical: decode 13.95 narrative (CV 2.8%) / 17.71 code (CV 4.5%), prefill 386.7@10K (CV 0.7%) / 279.8@90K (CV 2.3%). ⚠️ TTFT@93K is ~338 s -- the practical ceiling for deep-context agent work, and the number to optimise against rather than decode. Vision 4/4 on ground truth (mmproj-F16, clip projector glm5next). DFlash2 drafter on CUDA1 n=3: acceptance 0.533, mean accepted length 2.60, per-position (0.760, 0.512, 0.331) -- placement measured +18.4% code vs host, and depth past 3 is DESTRUCTIVE (n=5 -8.9%, n=7 -27.9%). ⚠️ Decode TPS is THINKING-INCLUSIVE and length-sensitive: the same config reads 13.95 over 1,000 tokens and 17.71 over 800. Compare only equal completion lengths. Shipped z.ai vendor serving config (temperature 1 / top_p 0.95 / reasoning_effort max / clear_thinking false / max_tokens 65536) + vision. ⚠️⚠️ THINKING CANNOT BE DISABLED: z.ai docs state GLM-5.3-FLASH uses forced thinking and thinking.type=disabled RETURNS AN ERROR; the working control is reasoning_effort (max|high|low, `low` is 5.3/5.3-Flash-only) and `none` is NOT valid -- silently ignored. Measured: low -> 0 ch reasoning, max -> ~1,170 ch. NOT a graded dial -- `high` lands beside `low`, not between. Per-request overrides BEAT this server default (verified both via chat_template_kwargs and the top-level OpenAI field), which is the intended split: serving ships vendor, agents dial per request. ⚠️ Expert pool 2,143 slots (CUDA0 iq3_s 763 + iq4_xs 395; CUDA1 iq3_s 921 + iq4_xs 64) at RESERVE_MB=1536 -- read at LLAMA_ARG_LOG_VERBOSITY=4 and SUMMED per device; a single pool's used=N/N counter under-reports ~4x. ⚠️ QUALITY UNTESTED at any quant -- no 8-pack has been run on this model."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: true
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi4-iq4xs-moecache:
+    model: glm-5.3-flash
+    weights_variant: unsloth-ud-iq4xs
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: anbeeld-glm53-dflash2
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 142
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8120
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "🐣 NEVER BOOTED -- this rig has 2 GPUs, so 4-card topologies are COMMUNITY-VALIDATED BY DESIGN; 'never booted here' is a permanent property, not a TODO. ⚠️⚠️ ALL TUNING IS INHERITED FROM THE DUAL SLUG, NOT DERIVED FOR 4 CARDS: RESERVE_MB=1536, -ub/-b 4096, SPEC_N=3, DRAFT_DEVICE=CUDA1 and MMPROJ_DEVICE=CUDA0 were every one measured on 2x24 GB. Re-derive before trusting them. ⚠️ `-ot` force-disables pipeline parallelism (silently), so prefill is GPU-asymmetric -- measured GPU0 67.6% SM vs GPU1 26.6% on 2 cards -- and the waste scales WITH card count. Do NOT size a 4-card deployment by extrapolating single-card prefill throughput. See docs/ADDING_MODELS.md M1-M10 and learnings/moe-cache-engine.md section 11. Shipped z.ai vendor serving config (temperature 1 / top_p 0.95 / reasoning_effort max / clear_thinking false / max_tokens 65536) + vision. ⚠️⚠️ THINKING CANNOT BE DISABLED: z.ai docs state GLM-5.3-FLASH uses forced thinking and thinking.type=disabled RETURNS AN ERROR; the working control is reasoning_effort (max|high|low, `low` is 5.3/5.3-Flash-only) and `none` is NOT valid -- silently ignored. Measured: low -> 0 ch reasoning, max -> ~1,170 ch. NOT a graded dial -- `high` lands beside `low`, not between. Per-request overrides BEAT this server default (verified both via chat_template_kwargs and the top-level OpenAI field), which is the intended split: serving ships vendor, agents dial per request. ⚠️ Expert pool 2,143 slots (CUDA0 iq3_s 763 + iq4_xs 395; CUDA1 iq3_s 921 + iq4_xs 64) at RESERVE_MB=1536 -- read at LLAMA_ARG_LOG_VERBOSITY=4 and SUMMED per device; a single pool's used=N/N counter under-reports ~4x. ⚠️ QUALITY UNTESTED at any quant -- no 8-pack has been run on this model."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi8-iq4xs-moecache:
+    model: glm-5.3-flash
+    weights_variant: unsloth-ud-iq4xs
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: anbeeld-glm53-dflash2
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 142
+    chat_template: native
+    tp: 8
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi8/unsloth-ud-iq4xs/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8121
+    kvcalc_key: SKIP
+    status: incubating
+    status_note: "🐣 NEVER BOOTED -- this rig has 2 GPUs, so 8-card topologies are COMMUNITY-VALIDATED BY DESIGN; 'never booted here' is a permanent property, not a TODO. ⚠️⚠️ ALL TUNING IS INHERITED FROM THE DUAL SLUG, NOT DERIVED FOR 8 CARDS: RESERVE_MB=1536, -ub/-b 4096, SPEC_N=3, DRAFT_DEVICE=CUDA1 and MMPROJ_DEVICE=CUDA0 were every one measured on 2x24 GB. Re-derive before trusting them. ⚠️ `-ot` force-disables pipeline parallelism (silently), so prefill is GPU-asymmetric -- measured GPU0 67.6% SM vs GPU1 26.6% on 2 cards -- and the waste scales WITH card count. Do NOT size a 8-card deployment by extrapolating single-card prefill throughput. See docs/ADDING_MODELS.md M1-M10 and learnings/moe-cache-engine.md section 11. Shipped z.ai vendor serving config (temperature 1 / top_p 0.95 / reasoning_effort max / clear_thinking false / max_tokens 65536) + vision. ⚠️⚠️ THINKING CANNOT BE DISABLED: z.ai docs state GLM-5.3-FLASH uses forced thinking and thinking.type=disabled RETURNS AN ERROR; the working control is reasoning_effort (max|high|low, `low` is 5.3/5.3-Flash-only) and `none` is NOT valid -- silently ignored. Measured: low -> 0 ch reasoning, max -> ~1,170 ch. NOT a graded dial -- `high` lands beside `low`, not between. Per-request overrides BEAT this server default (verified both via chat_template_kwargs and the top-level OpenAI field), which is the intended split: serving ships vendor, agents dial per request. ⚠️ Expert pool 2,143 slots (CUDA0 iq3_s 763 + iq4_xs 395; CUDA1 iq3_s 921 + iq4_xs 64) at RESERVE_MB=1536 -- read at LLAMA_ARG_LOG_VERBOSITY=4 and SUMMED per device; a single pool's used=N/N counter under-reports ~4x. ⚠️ QUALITY UNTESTED at any quant -- no 8-pack has been run on this model."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
   llamacpp-club3090/deepseek-flash-multi4-q8-moecache:
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl

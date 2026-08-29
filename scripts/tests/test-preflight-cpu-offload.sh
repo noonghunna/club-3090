@@ -47,6 +47,9 @@ INK_M4=models/inkling-small/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/mo
 # and the one Inkling compose that legitimately DOES carry the bundle headers.
 # Its presence is why the no-residency-headers assertions below are per-file.
 INK_RES=models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/residency.yml
+GLM_DUAL=models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml
+GLM_M4=models/glm-5.3-flash/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/moecache.yml
+GLM_M8=models/glm-5.3-flash/llamacpp-club3090/compose/multi8/unsloth-ud-iq4xs/moecache.yml
 NONOFF=models/tess-4-27b/llama-cpp/compose/dual/migtissera-q4km/mtp.yml
 
 # ---- detector ----
@@ -402,6 +405,14 @@ while IFS='|' read -r slug reg_gb; do
   case "$slug" in
     *dual-q8-moecache)      f="$FORK_Q8" ;;
     *multi4-q8-moecache)    f="$FORK_M4" ;;
+    # ⚠️ MODEL-QUALIFIED, and these MUST come BEFORE the bare *-iq4xs-moecache arms.
+    # Those are suffix-matched and silently claimed GLM's slugs the moment a second
+    # iq4xs-moecache model existed — comparing GLM's registry figure against
+    # INKLING's header (121) and failing for a reason unrelated to GLM. Any future
+    # model sharing this suffix needs its own arm here too.
+    *glm53-flash-dual-iq4xs-moecache)   f="$GLM_DUAL" ;;
+    *glm53-flash-multi4-iq4xs-moecache) f="$GLM_M4" ;;
+    *glm53-flash-multi8-iq4xs-moecache) f="$GLM_M8" ;;
     *dual-iq4xs-moecache)   f="$INK_CACHE" ;;
     *multi4-iq4xs-moecache) f="$INK_M4" ;;
     *dual-iq4xs-residency)  f="$INK_RES" ;;
