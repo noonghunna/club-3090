@@ -30,6 +30,11 @@ supported_model_families:
                           # ⚠️ must match models/glm-5.3-flash.yml `family:` EXACTLY —
                           # the resolver gates on it, and `glm5next` (the ARCH name)
                           # is not the FAMILY tag.
+  - qwen4exp              # Qwen3.8-Flash-Next (MoE, 1:3 hybrid, PLE n-gram)
+                          # Added 2026-08-29 WITH the compose+slugs, not before —
+                          # the family tag was deliberately withheld until a
+                          # compose existed for the resolver to point at.
+                          # ⚠️ must match models/qwen3.8-flash-next.yml `family:`.
   # ⚠️ deepseek4-moe and inkling-moe are INTENTIONALLY ABSENT so the resolver
   # cannot quietly migrate their slugs onto a build they were not shipped on.
   # ⚠️ qwen4exp (Qwen3.8-Flash-Next, vendored #27742) IS validated on this binary

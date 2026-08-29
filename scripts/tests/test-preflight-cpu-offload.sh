@@ -50,6 +50,9 @@ INK_RES=models/inkling-small/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/res
 GLM_DUAL=models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq4xs/moecache.yml
 GLM_M4=models/glm-5.3-flash/llamacpp-club3090/compose/multi4/unsloth-ud-iq4xs/moecache.yml
 GLM_M8=models/glm-5.3-flash/llamacpp-club3090/compose/multi8/unsloth-ud-iq4xs/moecache.yml
+QWN_DUAL=models/qwen3.8-flash-next/llamacpp-club3090/compose/dual/unsloth-ud-q4kxl/moecache.yml
+QWN_M4=models/qwen3.8-flash-next/llamacpp-club3090/compose/multi4/unsloth-ud-q4kxl/moecache.yml
+QWN_M8=models/qwen3.8-flash-next/llamacpp-club3090/compose/multi8/unsloth-ud-q4kxl/moecache.yml
 NONOFF=models/tess-4-27b/llama-cpp/compose/dual/migtissera-q4km/mtp.yml
 
 # ---- detector ----
@@ -410,6 +413,9 @@ while IFS='|' read -r slug reg_gb; do
     # iq4xs-moecache model existed — comparing GLM's registry figure against
     # INKLING's header (121) and failing for a reason unrelated to GLM. Any future
     # model sharing this suffix needs its own arm here too.
+    *qwen38-flash-next-dual-q4kxl-moecache)   f="$QWN_DUAL" ;;
+    *qwen38-flash-next-multi4-q4kxl-moecache) f="$QWN_M4" ;;
+    *qwen38-flash-next-multi8-q4kxl-moecache) f="$QWN_M8" ;;
     *glm53-flash-dual-iq4xs-moecache)   f="$GLM_DUAL" ;;
     *glm53-flash-multi4-iq4xs-moecache) f="$GLM_M4" ;;
     *glm53-flash-multi8-iq4xs-moecache) f="$GLM_M8" ;;

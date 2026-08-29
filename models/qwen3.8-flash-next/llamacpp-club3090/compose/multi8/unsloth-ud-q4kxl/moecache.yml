@@ -1,0 +1,332 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     Qwen3.8-Flash-Next (arch `qwen4exp`, unsloth UD-Q4_K_XL —
+#              105 GB across 4 shards). Read from the GGUF, not a card:
+#              48 blocks · 512 experts top-10 (ffn 640) + 1 shared ·
+#              24 attn heads / 2 KV heads / head_dim 256 · DSA indexer
+#              (4 heads, k=128, top_k 2048) · hyper-connections (4, low-rank
+#              320) · per-layer embeddings (PLE, 160/layer) · 262144 native.
+#              ⭐ KV GROWS ON ONLY 12 OF 48 BLOCKS (`full_attention_interval=4`,
+#              indices 3,7,11…). `attention.compress_ratios` is a 48-entry array
+#              confirming it. Sizing KV off block_count over-predicts the pool 4x.
+#   Engine:    llamacpp-club3090 v1.5-rc0 (leloch's MoE expert cache + our L1/L3/E
+#              ports + vendored ggml-org/llama.cpp#27742 for `qwen4exp`)
+#   Topology:  8× CUDA (layer-split -ts 1,1,1,1,1,1,1,1, no NVLink)
+#   Drafter:   NONE. This GGUF carries no MTP head (`nextn_predict_layers` absent).
+#              An MTP conversion is pending upstream PR #27836; until it merges
+#              there is nothing to draft with, so this compose ships NO drafter
+#              machinery at all.
+#   KV:        q8_0 (KV_TYPE, needs -fa on). MEASURED: KV −47%, cache slots
+#              +31.8%, decode neutral vs fp16. q8 is the serving-grade floor.
+#   Thinking:  ✅ ON by default (template: `enable_thinking` undefined ⇒ true).
+#              Disable per request with chat_template_kwargs {enable_thinking:false}.
+#              REASONING_EFFORT is per-request, not a compose flag. Valid values
+#              are ONLY xhigh (default) | medium | low — anything else RAISES.
+#              ⚠️⚠️ `high` is SILENTLY REMAPPED TO xhigh by the template, so a
+#              "high" request costs full xhigh reasoning. Read from the GGUF's
+#              own chat_template, not a model card.
+#   Vision:    ✅ yes — mmproj-F16 (0.9 GB). Validated 8/8 on ground truth
+#              2026-08-28; costs the expert pool nothing measurable.
+#   Max ctx:   204800 shipped. 262144 is the model's NATIVE figure and boots,
+#              but 204800 is what was benched and what the pool was sized for.
+#   Genesis:   N/A — llama.cpp engine
+#   Status:    🐣 Incubating — ⚠️ NEVER BOOTED (this rig has 2 GPUs)
+# CPU-Offload-Host-RAM-GB: 110
+#   ⤷ ALL-on-CPU worst case, from the 105 GB of weights + headroom. Registry
+#     `host_ram_gb` is the NOMINAL figure and must stay <= this.
+#   Best for:  long-context MoE serving on the moe-cache engine; fastest model
+#              on this stack as of 2026-08-29 (expert byte-size, not quant).
+#   Caveats:
+#     • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
+#       (github.com/leloch/llama.cpp, RFC ggml-org#24528). This slug
+#       packages it; it does not originate it. The `qwen4exp` arch is
+#       @danielhanchen's PR #27742, vendored. We maintain neither.
+#     • UNMERGED ENGINE **and** UNMERGED ARCH. Stock llama.cpp cannot
+#       load this model — mainline has zero hits for `qwen4exp`. This
+#       slug pins a fork image; it cannot be reproduced with stock.
+#     • ⭐⭐ `--no-mmap` IS REQUIRED AND CORRECT — do NOT remove it.
+#       ⚠️ LEARNINGS.md's header index still carries the DISPROVEN
+#       "corrupts this model" claim. Rationale + the real cause:
+#       learnings/qwen3.8-flash-next.md.
+#     • QUALITY IS UNTESTED. No 8-pack has been run at any context.
+#       Stays 🐣 until an 8-pack + soak-continuous pass.
+#     • ⚠️ COLD-START TAX: the first request after boot is slow while
+#       the expert pool fills. Do not benchmark it.
+#     • ⚠️ Expert BYTE-SIZE (900–1,700 KiB here) is the master variable
+#       for residency, not the quant name.
+#       See learnings/moe-cache-engine.md section 2.
+#     • ⚠️⚠️ NEVER BOOTED — this rig has TWO GPUs, so 8-card topologies are
+#       COMMUNITY-VALIDATED BY DESIGN; a permanent property, NOT a TODO.
+#     • ⛔ EVERY NUMBER HERE WAS MEASURED ON 2×24 GB and is INHERITED. Pools
+#       WILL differ at 8 cards — re-derive before quoting anything.
+#     • ⭐ `-ot ...=CPU` DISABLES PIPELINE PARALLELISM (learnings/
+#       moe-cache-engine.md section 11); costs more the more cards you add.
+#     • Prefetch is pinned OFF (see the GGML_EXPERT_PREFETCH block).
+#   ── TUNING FOR YOUR RIG (8 CARDS) — every default came from 2×24 GB ──
+#     1. TENSOR_SPLIT (1,1,1,1,1,1,1,1) · 2. MOE_RESERVE_MB (1536, GLOBAL not per-device)
+#     3. THREADS (28 on the 32c ref host; nproc/2 if unset, a FLOOR)
+#     4. CTX (204800) · 5. UBATCH (4096) · 6. MMPROJ_DEVICE (none = host)
+#     7. KV_TYPE (q8_0) — q8 is the serving-grade floor, never go below.
+#   ⚠️ Measure ONE knob at a time against wall-clock, ≥3 runs per arm.
+#
+#   Sampling:  the card publishes TWO rows; this compose SHIPS THE INSTRUCT ROW.
+#     instruct (DEFAULT)  temp 0.7 · top_p 0.80 · top_k 20 · min_p 0.0 · presence 1.5
+#     thinking            temp 1.0 · top_p 0.95 · top_k 20 · min_p 0.0 · presence 0.0
+#     THINKING=1 selects the thinking row and `--reasoning on`; explicit
+#     TEMP/TOP_P/PRESENCE_PENALTY still win over both rows.
+#     Rows are DERIVED from the registry's sampler_profiles, not a third copy.
+#     ⚠️ The GGUF's general.sampling.* (1.0/0.95/20) is the THINKING row only —
+#     do NOT quote it as a mode-agnostic default.
+#     ⚠️ bench.sh pins the STACK PROTOCOL sampler (temp 0.6/top_p 0.95/top_k 20)
+#     for cross-engine comparability. Fine for TPS; QUALITY runs must use 1.0.
+# ===========================================================================
+services:
+  llama-cpp-qwen38-flash-next-q4kxl-moecache-multi8:
+    # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
+    # The engine profile is authoritative for this pin; keep them in step.
+    # Built 2026-08-10 from stack/club3090-moe-cache @ e0a208949, CUDA arch 86;89;120.
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
+    container_name: ${ESTATE_CONTAINER:-llama-cpp-qwen38-flash-next-q4kxl-moecache-multi8}
+    restart: unless-stopped
+    # Reap orphaned children. Without this, a wedged llama-server becomes a
+    # <defunct> PID 1 child that docker CANNOT kill ("PID N is zombie and can
+    # not be killed. Use the --init option"), and it keeps holding GPU memory
+    # AND ~117 GB of host RAM — after which preflight correctly refuses every
+    # later boot ("needs ~156 GB; only 39 GB AVAILABLE"). Cost 8 of 9 A/B arms
+    # on 2026-08-25 before it was diagnosed.
+    init: true
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8124}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    environment:
+      # Drafter toggle - docker forwards only what is declared here.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+      # Expert-cache tuning — every value MEASURED on 2×24 GB, see Caveats.
+      - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
+      - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+      # Cache hit/miss telemetry. DEFAULT ON (emit every N collect calls per
+      # device) because without it the engine's `stats_every` is 0 and NO
+      # `CUDA<n> hits=…` line is ever produced — see moe-cache.cu:169 (default 0)
+      # and :2795 (`stats_every > 0` gate). It is NOT gated on log verbosity.
+      # ⚠️ Docker forwards ONLY what `environment:` declares. Dropping this var
+      # renders telemetry as a measured `0.0% dhits=0 dlookups=0`, which is
+      # indistinguishable from "the cache did nothing" (club-3090 #1105/#1106).
+      # ⚠️⚠️ THIS VAR ALONE IS NOT ENOUGH — telemetry needs BOTH knobs. Measured
+      # on a live 2-arm boot 2026-08-26 with one variable between the arms:
+      #   STATS=200, default verbosity -> 0 `[moe-cache]` lines of ANY kind
+      #   STATS=200, LLAMA_ARG_LOG_VERBOSITY=4 -> 228 lines / 211 stats lines
+      # MOE_CACHE_LOG is GGML_LOG_INFO (moe-cache.cu:46) and the server's verbosity
+      # threshold drops it below 4, so without `-lv 4` the whole cache subsystem is
+      # silent. Verbosity is left to the caller (bare passthrough below) because 4
+      # is loud for a serving deployment — but a bench/report run wanting cache
+      # numbers MUST set it. bench.sh now says so when the counters do not advance.
+      # ⚠️ DEFAULT IS 0 (OFF) — telemetry is OPT-IN so instrumentation does not run
+      # when nothing reads it. Set MOE_STATS=200 (plus LLAMA_ARG_LOG_VERBOSITY=4)
+      # for a bench/report run. NOTE: the shipped v1.2 engine does not gate its
+      # bypass counters, so on it this knob controls EMISSION only.
+      # ✅ The `=${VAR:-N}` form is SAFE here (unlike the bare-passthrough vars
+      # below): `moe_cache_env_i64` rejects unset AND empty (`!text || !text[0]`,
+      # moe-cache.cu:509) before parsing, so it cannot hit the atoi("")==0 trap.
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
+      # Prefill expert-prefetch and log verbosity.
+      #
+      # ⛔ PINNED OFF — maintainer decision 2026-08-28. Two independent reasons:
+      #   1. Its "+14.5% / +15.0% prefill" justification is WITHDRAWN — measured on
+      #      a build carrying the n_copies==1 scheduler race (fixed in ce8743a05).
+      #      Unquotable until re-measured (moecache-engine-playbook.md section 6).
+      #   2. The COST is not withdrawn: a 2,176 MiB ring on the FIRST CUDA device
+      #      only, allocated LAZILY on first prefill — AFTER the pool is sized from
+      #      free-minus-reserve, so nothing budgets for it.
+      # ⚠️ INERT on the currently pinned digest regardless (revision e0a208949
+      #    predates the prefetch work). Declarations kept: they cost nothing and
+      #    go live when a digest carrying it is pinned.
+      #
+      # ⚠️⚠️ NEVER rewrite the bare var as `- GGML_EXPERT_PREFETCH_SLOTS=${X:-}`.
+      #    The engine tests `atoi(on) == 0` (expert-prefetch.cu:126) and atoi("")
+      #    == 0, so an empty default SILENTLY DISABLES it. Bare form leaves it
+      #    UNSET unless the caller exports it — the only spelling that is honest.
+      #   LLAMA_ARG_LOG_VERBOSITY=4  resolved pools + moe-cache statistics
+      - GGML_EXPERT_PREFETCH=${EXPERT_PREFETCH:-0}
+      - GGML_EXPERT_PREFETCH_SLOTS
+      - LLAMA_ARG_LOG_VERBOSITY
+      # Prefix reuse via KV shifting (default 0 = OFF). The between-turn TTFT
+      # lever for agent traffic — the llama.cpp analogue of the vLLM
+      # mamba-align work on the qwen3.8 MTP composes (#1093), though a
+      # different mechanism (KV shift, not SSM-state alignment).
+      # ⚠️ The server force-disables it when the memory layout cannot shift
+      # (server-context.cpp: "cache_reuse is not supported by this context")
+      # — MLA + SWA is a plausible refusal case, so CHECK THE BOOT LOG rather
+      # than assuming it engaged.
+      - LLAMA_ARG_CACHE_REUSE
+      # Thread count. Resolved in the entrypoint (see [threads]) because a
+      # fixed compose default cannot be right on two different rigs.
+      - THREADS
+      # ⚠️ BARE FORM ON PURPOSE — `- VAR=${X:-}` would forward an EMPTY string and
+      # defeat the `${VAR:-default}` fallbacks in the entrypoint above.
+      - THINKING
+      - REASONING
+      - REPEAT_PENALTY
+      - TEMP
+      - TOP_P
+      - TOP_K
+      - MIN_P
+      - PRESENCE_PENALTY
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-0,1,2,3,4,5,6,7}']
+              capabilities: [gpu]
+    # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
+    # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a
+    # folded string. The list form skips shell parsing, so the regex survives
+    # byte-for-byte.
+    # The image ENTRYPOINT is ["/app/llama-server"] on every engine we ship
+    # (mainline, ik-llama, beellama, llamacpp-club3090 — all verified). This
+    # wrapper is equivalent to it plus the drafter toggle.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # No drafter machinery by design: qwen4exp has NO MTP head in this
+        # GGUF (`nextn_predict_layers` absent) and no external drafter exists.
+        # Engine support is an open draft PR (ggml-org/llama.cpp#27836).
+        # n-gram spec-dec needs no drafter file (runtime spec type, not a flag
+        # in this file) — see learnings/qwen3.8-flash-next.md before adding one.
+        # -- Threads ------------------------------------------------------------
+        # llama.cpp's own default collapses CPU-offload decode (-31% measured on
+        # this workload), and the old `-t ${THREADS:-8}` compose default was worse
+        # still for anyone running `docker compose` directly. Resolve here instead:
+        # THREADS if the caller set it, else nproc/2 -- which MATCHES what the
+        # launcher already computes (scripts/lib/compose-meta.sh
+        # resolve_offload_threads), so the two paths agree instead of diverging.
+        # ⚠️ nproc/2 is a floor, NOT the optimum: on the 32c/8-channel reference
+        # host `-t 28` measured ~20% faster than the launcher's nproc/2=16, which
+        # is why .env pins 28 there. Under the launcher THREADS is always already
+        # set, so this branch only serves direct-compose users.
+        # Exported as LLAMA_ARG_THREADS -- the `-t` flag is therefore NOT in the
+        # command list; adding one back would override this (CLI beats env).
+        if [ -n "$${THREADS:-}" ]; then
+          export LLAMA_ARG_THREADS="$${THREADS}"
+          echo "[threads] -t $${LLAMA_ARG_THREADS} (THREADS set explicitly)" >&2
+        else
+          # Default 28, NOT nproc/2. The comment above already records nproc/2 as a
+          # FLOOR rather than the optimum (~20% slower at 16 vs 28 on the 32c host)
+          # — but leaving it as the FALLBACK hands that penalty to every
+          # direct-compose user who never sets THREADS. The good zone is an
+          # ABSOLUTE ~24-32, so pin the measured value; THREADS still overrides.
+          export LLAMA_ARG_THREADS="28"
+          echo "[threads] -t $${LLAMA_ARG_THREADS} (pinned default; set THREADS to override)" >&2
+        fi
+
+        # ⚠️ DEFAULT 0: THIS MODEL HAS NO DRAFTER. The GGUF carries no MTP head
+        # (`nextn_predict_layers` absent) and no external drafter exists for
+        # -- Sampler + thinking mode ---------------------------------------
+        # The card publishes TWO rows; they live in the registry as
+        # `sampler_profiles` and are DERIVED here, not hardcoded as a third copy
+        # (test-compose-sampler-profiles enforces that).
+        # THIS COMPOSE SHIPS INSTRUCT as the default, matching qwen3.8-27b: the
+        # template would otherwise default enable_thinking=true AND
+        # reasoning_effort=xhigh, which is very expensive for serving.
+        # THINKING=1 selects the thinking row (llama.cpp dialect — the vLLM
+        # composes use the ENABLE_THINKING spelling). Explicit TEMP/TOP_P/PRESENCE_PENALTY
+        # still win in BOTH branches.
+        # ⚠️ `--reasoning off` is what passes enable_thinking:false to the
+        #    template; it is the engine-supported control, not a kwargs hack.
+        if [ -n "$${THINKING:-}" ] && [ "$${THINKING}" != "0" ]; then
+          _reason="$${REASONING:-on}"
+          _temp="$${TEMP:-1.0}"; _topp="$${TOP_P:-0.95}"; _pres="$${PRESENCE_PENALTY:-0.0}"
+          echo "[sampler] thinking row (THINKING=$${THINKING}): temp=$$_temp top_p=$$_topp presence=$$_pres" >&2
+        else
+          _reason="$${REASONING:-off}"
+          _temp="$${TEMP:-0.7}"; _topp="$${TOP_P:-0.80}"; _pres="$${PRESENCE_PENALTY:-1.5}"
+          echo "[sampler] instruct row (default): temp=$$_temp top_p=$$_topp presence=$$_pres" >&2
+        fi
+        exec /app/llama-server \
+          --reasoning "$$_reason" \
+          --temp "$$_temp" --top-p "$$_topp" --top-k "$${TOP_K:-20}" \
+          --min-p "$${MIN_P:-0.0}" --presence-penalty "$$_pres" \
+          --repeat-penalty "$${REPEAT_PENALTY:-1.0}" \
+          "$$@"
+      - --
+    command:
+      - '-m'
+      - '/models/qwen3.8-flash-next-gguf/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf'
+      - '--host'
+      - '0.0.0.0'
+      - '--port'
+      - '8080'
+      - '--alias'
+      - 'qwen3.8-flash-next'
+      - '-np'
+      - '1'
+      - '-c'
+      - '${CTX:-204800}'   # ⚠️ PROVISIONAL — model ceiling is 262144; not yet fitted on this rig
+      - '-ngl'
+      - '99'
+      - '-sm'
+      - 'layer'
+      - '-ts'
+      - '${TENSOR_SPLIT:-1,1,1,1,1,1,1,1}'
+      - '-fa'
+      - 'on'
+      # ⭐ q8_0 KV (adopted 2026-08-29). MEASURED on this model: KV −47%,
+      # expert-cache slots +31.8%, decode NEUTRAL — a pure residency/context win.
+      # ⚠️ Requires -fa on (above); quantised KV needs flash-attention here.
+      # q8_0 is the SERVING-GRADE FLOOR on this stack — never go below it for a
+      # serving slug (sub-q8 is a speed exhibit only).
+      - '--cache-type-k'
+      - '${KV_TYPE:-q8_0}'
+      - '--cache-type-v'
+      - '${KV_TYPE:-q8_0}'
+      # ⚠️ SINGLE -ot with comma-separated rules. Current mainline DEPRECATES
+      # repeated -ot and honours ONLY THE LAST occurrence — passing it three
+      # times silently drops the GPU pins. All experts to CPU here; the cache
+      # decides residency dynamically, so static pins are counter-productive.
+      - '-ot'
+      - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
+      - '-ub'
+      - '${UBATCH:-4096}'
+      - '-b'
+      - '${UBATCH:-4096}'
+      - '--cache-prompt'
+      # ⭐⭐ REQUIRED — pins the offloaded set. Do NOT remove.
+      # learnings/qwen3.8-flash-next.md carries the why.
+      - '--no-mmap'
+      # Drafter on the HOST — load-bearing, see Caveats.
+      # ── Vision (mmproj) ─────────────────────────────────────────────────
+      # Validated 8/8 on ground truth 2026-08-28. Projector provenance:
+      # `clip.projector_type = qwen3vl_merger` -> PROJECTOR_TYPE_QWEN3VL. There is
+      # NO PROJECTOR_TYPE_QWEN4EXP — vision works by REUSING the Qwen3VL path, so a
+      # future change there affects this model. The mmproj declares 27 deepstack
+      # layers; the engine has deepstack support. Model side: ple.image_token_id.
+      #
+      # ⚠️ MEASURE PROJECTOR COST IN VRAM, NEVER IN SLOTS. `granted` is computed
+      #    free-minus-reserve BEFORE the projector loads, so it is identical either
+      #    way and cannot detect the cost. At 204800 the projector costs ~1,114 MiB
+      #    on its device and ZERO slots (9,435 both ways).
+      #
+      # MMPROJ_DEVICE: `none` (default) = encoder in host RAM; CPU-encode cost is
+      # paid only on image requests. ⛔ Do NOT put it on a card that carries pool
+      # or KV — it loads AFTER the pool is sized, so nothing budgets for it, and
+      # on-GPU placement left only 830 MiB of CUDA0 headroom with a drafter active
+      # (a latent OOM on the first image request).
+      # MMPROJ_DEVICE=CUDA0 restores the older on-GPU placement.
+      # Numbers + validation: BENCHMARKS.md -> Qwen3.8-Flash-Next.
+      - '--mmproj'
+      - '${MMPROJ:-/models/qwen3.8-flash-next-gguf/mmproj/mmproj-F16.gguf}'
+      - '-mmdev'
+      - '${MMPROJ_DEVICE:-none}'
+      - '--moe-cache'
+      - '${MOE_CACHE:-auto}'
+      - '--fit'
+      - 'off'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 900s

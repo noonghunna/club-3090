@@ -33,7 +33,7 @@ run_test "load_profiles parses all profile groups" <<'PY'
 from scripts.lib.profiles.compat import load_profiles
 p = load_profiles()
 assert len(p.hardware) == 11  # +dgx-spark (#576 follow-up), +rtx-a6000 (#948 thread)
-assert len(p.models) == 19   # +inkling-small, +qwen3.8-27b, +glm-5.3-flash
+assert len(p.models) == 20   # +inkling-small, +qwen3.8-27b, +glm-5.3-flash, +qwen3.8-flash-next
 assert len(p.workloads) == 5
 assert len(p.engines) == 16   # +llamacpp-club3090-v1.1, +llamacpp-club3090-v1.5
 assert len(p.drafters) == 18  # +syvai-qwen38-dflash2, +anbeeld-glm53-dflash2
@@ -510,7 +510,7 @@ PY
 run_test "strict keys: every shipped profile group loads under validation" <<'PY'
 from scripts.lib.profiles.compat import load_profiles
 p = load_profiles()  # raises UnknownProfileKeyError on any unknown key
-assert len(p.models) == 19
+assert len(p.models) == 20
 PY
 
 run_test "strict keys: typo'd top-level model key fails naming file + closest key" <<'PY'

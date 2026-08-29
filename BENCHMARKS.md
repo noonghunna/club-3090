@@ -553,6 +553,20 @@ First-pass numbers for the two MoE models onboarded in v0.7.3. **Preview** track
 
 ---
 
+## Qwen3.8-Flash-Next (MoE via CPU expert offload — 🧪 experimental)
+
+Expert-offloaded MoE on the [`llamacpp-club3090`](docs/engines/LLAMACPP_CLUB3090.md) moe-cache engine, **v1.5-rc0**. First vision-capable expert-offloaded MoE on this stack. ⚠️ **No registry slug yet** — launched via `docker compose -f models/qwen3.8-flash-next/llamacpp-club3090/compose/dual/unsloth-ud-q4kxl/moecache.yml`, not `switch.sh`. Mixed-type quant (q4_K / q5_1 / q8_0 / q5_K) ⇒ **3–4 pools per device; slot counts must be summed per device, never read from one `pool[0]` line**.
+
+| Compose | Rig | KV | Max ctx | Narr / Code TPS | PP tok/s | Peak VRAM | Date | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `dual/unsloth-ud-q4kxl/moecache.yml` (no slug) | @noonghunna (2× 3090, PCIe) | fp16 | **204800** | **39.28 / 38.57** (CV 0.8% / 1.8%) | **749.09** @10K (CV 0.2%) | ~45,250 MiB total (~22.1 GB/card) | 2026-08-29 | ⭐ **SHIPPING config, canonical protocol** (3 warm + 5 measured). ⚠️⚠️ **MEASURED BEFORE THE SAMPLER WAS PINNED (2026-08-29)** — at bench time the compose pinned no sampler, so `presence_penalty` fell through to the engine default 0.0. The compose now ships the card's INSTRUCT row (`presence_penalty 1.5`), and `bench.sh` does NOT send that field, so it inherits the server value. ⇒ These decode numbers are **not reproducible against the current compose** without `PRESENCE_PENALTY=0.0`; re-bench before quoting them as current. TTFT ~415 ms; cache marginal hits 61.1% / 55.9%; total pool slots **9,435**. **verify-full 9/9** (MTP check skipped — vLLM-log-format-specific). **bench-agentic** 2×12 turns to 35,254 prompt tok: TTFT grew **8.0× vs 25.1× context (sub-linear)**, decode 27.7–44 TPS, no cliff in the 21–26K band. **Vision 4/4** on ground truth. ⛔ 262144 boots but the pool collapses to 802/1,026 MiB — paper ceiling, do not ship. |
+| — same, **`-mmdev none` (new default 2026-08-29)** | @noonghunna (2× 3090) | fp16 | 204800 | not re-run | not re-run | **22,608 / 22,638 MiB** (was 23,722 / 22,638) | 2026-08-29 | **Projector moved to host RAM.** Near-controlled A/B (spec-dec OFF both arms, only `-mmdev` differing): GPU0 **−1,114 MiB**, GPU1 **byte-identical**, total slots **9,435 → 9,435 (zero cost)**, vision still **4/4** (`CLIP using CPU backend`). ⭐ Reason is headroom, not speed: with a drafter active GPU0 had **830 MiB** free and the 0.9 GB encoder loads *after* the pool is sized, so nothing budgets for it — a latent OOM on the first image request. Post-change 1,968 MiB idle / 1,626 MiB under agentic load. |
+| — same, **`ngram-mod` n_max=8 n_min=1 n_match=24** | @noonghunna (2× 3090) | fp16 | 204800 | ⚠️ **not canonical** — harness runs, 1 boot/arm | — | +~34 MiB vs control | 2026-08-29 | ⚠️ **Not a canonical 3+5 row; do not quote as a headline.** Repeated-context (warmed on the measured prompt): **36.36 → 59.76 (+64%)**, fire 2.7%, acceptance 95.1%. **Held-out prompts (first exposure): 23.88 → 23.58 (−1.3%, noise)**, fire **5.4%**, acceptance 87.5%. ⇒ gain is **cache-residency dependent, not acceptance dependent**. Prose neutral across all arms (36.95–39.15 band, unresolvable at 1 boot/arm). ⛔ **Defaults are harmful**: stock n_max=64 measured **−7.6%**, and `--spec-draft-n-max` binds **none** of the ngram types. `ngram-map-k` 0.9% fire (no benefit); `ngram-simple` **never drafted** (0/6044). |
+
+⚠️ **Owed before this model can move off 🧪:** registry entry + multi4/multi8 rows, verify-stress, soak-continuous, 8-pack quality. `n_match` 16–24 unexplored (gates ngram fire rate).
+
+---
+
 ## Ornith-1.0 (DeepReinforce agentic-coding fine-tunes — 🧪 experimental)
 
 DeepReinforce agentic-coding RL fine-tunes of the Qwen3-Next family (`qwen35` 9B dense-hybrid · `qwen35moe` 35B-A3B). Both land **in-band with the base Qwen** on general capability — the fine-tune's value, where any, is coding (the 35B edges the base on aider; the 9B is a footprint play). ik_llama GGUF, drafter-free ngram, full 262K.

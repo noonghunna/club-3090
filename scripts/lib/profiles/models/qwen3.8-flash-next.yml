@@ -1,0 +1,130 @@
+schema_version: 1
+id: qwen3.8-flash-next
+display_name: Qwen3.8-Flash-Next (MoE, Qwen)
+description: Qwen3.8-Flash-Next — sparse MoE (512 routed experts top-10 + 1 shared) on a 1:3 hybrid where only every 4th block grows KV, plus a 51.2B-address hashed n-gram PLE; served by CPU expert offload on the club3090 moe-cache engine at 205K with vision.
+family: qwen4exp
+
+# ---------------------------------------------------------------------------
+# Every value below was read from the GGUF metadata (`qwen4exp.*` keys, shard 1 of
+# unsloth UD-Q4_K_XL, 2026-08-29) — NOT from a model card.
+# ---------------------------------------------------------------------------
+hidden_size: 2560                # qwen4exp.embedding_length
+num_hidden_layers: 48            # qwen4exp.block_count
+
+# ⚠️⚠️ THE KV-GROWING SPLIT IS 12 OF 48 — same class of trap as GLM's 12-of-46.
+# `qwen4exp.full_attention_interval` = 4, and `attention.compress_ratios` is a
+# 48-entry array that is 0 except at indices 3, 7, 11 … (value 4) — i.e. every
+# 4th block is full attention, the rest are linear/recurrent.
+#     attention (KV-growing), 12 layers: 3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47
+#     recurrent (no KV),      36 layers: everything else
+# Sizing KV off `num_hidden_layers` (48) over-predicts the pool ~4×.
+num_attn_layers: 12              # KV-growing
+num_gdn_layers: 36               # linear/recurrent, no KV
+linear_conv_kernel_dim: 4        # qwen4exp.ssm.conv_kernel
+
+num_attn_heads: 24               # qwen4exp.attention.head_count
+num_kv_heads: 2                  # qwen4exp.attention.head_count_kv — plain GQA, NO MLA
+head_dim_attn: 256               # attention.key_length == attention.value_length == 256
+attention_k_eq_v: true           # 256 == 256
+max_ctx_supported: 262144        # qwen4exp.context_length — we SHIP 204800, see weights note
+
+# MoE
+num_experts: 512                 # qwen4exp.expert_count
+num_experts_per_tok: 10          # qwen4exp.expert_used_count
+moe_intermediate_size: 640       # qwen4exp.expert_feed_forward_length
+shared_expert_intermediate_size: 640   # qwen4exp.expert_shared_feed_forward_length
+
+# ⛔ NO MTP HEAD. `qwen4exp.nextn_predict_layers` is ABSENT from this GGUF (verified,
+# not assumed). Engine support for one is an OPEN DRAFT PR (ggml-org/llama.cpp#27836);
+# a 4.14 GB Q8_0 head shard + graft script exists (jlkivey/...-MTP-PR27836-GGUF) but
+# neither is wired here. Do not set this key speculatively.
+mtp_num_hidden_layers: 0
+vision_capable: true             # mmproj-F16.gguf, clip.projector_type = qwen3vl_merger — validated 4/4 2026-08-29
+
+# ⚠️ kv-calc has no model for a per-layer hybrid where 36/48 layers grow no KV, nor
+# for the PLE n-gram path. Same call as glm5next / deepseek4-moe / inkling-moe:
+# every slug sets kvcalc_key="SKIP". Flagged so nobody wires it up by reflex.
+kv_calc_supported: false
+
+valid_tp: [2, 4, 8]
+# ⛔ EMPTY BY EVIDENCE, not by omission: no external drafter exists for qwen4exp and
+# the model ships no MTP head. n-gram drafting needs NO drafter file — it is a
+# runtime `--spec-type`, not a compatible_drafters entry. See the ngram section in
+# learnings/qwen3.8-flash-next.md before adding anything here.
+compatible_drafters: []
+requires_genesis: false
+
+# ---------------------------------------------------------------------------
+# CPU-offload residency.
+# ⚠️ ROUTED-EXPERTS-ONLY: the `-ot` regex matches `ffn_(gate|up|down)_exps.weight`;
+# the shared expert is `_shexp` — a different tensor name — so it stays GPU-resident.
+#
+# ⚠️⚠️ NOT UNIFORM. Despite the "UD-Q4_K_XL" label this Unsloth *Dynamic* quant mixes
+# FOUR expert tensor types, which the cache allocates as SEPARATE POOLS PER CARD
+# (measured at LLAMA_ARG_LOG_VERBOSITY=4, 2026-08-29 — the quant NAME does not give
+# you the byte size):
+#     q4_K    900 KiB/expert-matrix   ← dominant
+#     q5_K  1,100 KiB
+#     q5_1  1,200 KiB
+#     q8_0  1,700 KiB
+#
+# ⭐ Expert GEOMETRY is why this model's residency is EXCELLENT: one expert's
+# `ffn_up` is 2560 × 640 = 1,638,400 weights, versus 8,388,608 on GLM-5.3-Flash —
+# 5.1× smaller, so ~4.4× the slots at similar pool MiB. This is the master variable,
+# not the quant. See learnings/moe-cache-engine.md §2 and §2b.
+#
+# MEASURED pool at MOE_RESERVE_MB=1536, ctx 204800 (2026-08-29):
+#     CUDA0  q4_K 3,044 + q5_1 1,490 + q8_0 128            = 4,662 slots (4,633 MiB)
+#     CUDA1  q4_K 2,955 + q5_1 1,329 + q8_0 305 + q5_K 184 = 4,773 slots (4,857 MiB)
+#                                                    total = 9,435 slots
+# ⚠️ A device holds MULTIPLE pools (3 on CUDA0, 4 on CUDA1) and the slots must be
+# SUMMED. Reading one pool's `used=N/N` as the device total under-reports badly.
+# ---------------------------------------------------------------------------
+
+weights:
+  unsloth-ud-q4kxl:
+    path: qwen3.8-flash-next-gguf/UD-Q4_K_XL
+    local_subdir: qwen3.8-flash-next-gguf
+    size_gb: 105
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/Qwen3.8-Flash-Next-GGUF
+    shards: 4
+    # ⚠️ `--local-dir` preserves repo folder structure, so `local_subdir` is the
+    # BUCKET and `files:`/`verify_glob` carry the quant-folder prefix.
+    files:
+      - UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+      - UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf
+      - UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf
+      - UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf
+    # ⚠️ REQUIRED on every GGUF entry — the default `*.safetensors` matches NOTHING.
+    verify_glob: "UD-Q4_K_XL/*.gguf"
+    manual_note: "🧪 EXPERIMENTAL — the `qwen4exp` architecture is NOT in llama.cpp mainline (vendored PR ggml-org#27742). Served via `llamacpp-club3090-v1.5`. Ships 204800, NOT the 262144 the model declares: 262144 also boots but the expert pool COLLAPSES to 802/1,026 MiB (~95% loss) — a paper ceiling, do not ship it. ⭐ Fastest model on this stack as of 2026-08-29 (39.28 narr / 38.57 code canonical) and the reason is expert byte-size, not quant. ⚠️ `--no-mmap` is REQUIRED (pins the offloaded set); the older claim that it corrupts this model was pre-`ce8743a05` and is INVALID. ⚠️ QUALITY UNTESTED — no 8-pack has been run."
+  mmproj-f16:
+    path: qwen3.8-flash-next-gguf/mmproj
+    # ⚠️ REPO-ROOT artifact (sits beside the quant DIRECTORIES, not inside one), so
+    # it lands flat in its own local_subdir and the glob carries no prefix.
+    local_subdir: qwen3.8-flash-next-gguf/mmproj
+    size_gb: 0.9
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/Qwen3.8-Flash-Next-GGUF
+    kind: mmproj
+    files:
+      - mmproj-F16.gguf
+    verify_glob: "*.gguf"
+    manual_note: "Vision projector. ⚠️ `clip.projector_type = qwen3vl_merger` -> PROJECTOR_TYPE_QWEN3VL: there is NO PROJECTOR_TYPE_QWEN4EXP, vision works by REUSING the Qwen3VL path, so a future change there affects this model. Declares 27 deepstack layers. Validated 4/4 on ground truth 2026-08-29, both with the projector on CUDA0 and (since the default flip) on the HOST. ⭐ Shipped `-mmdev none`: the encoder costs ~1,114 MiB on CUDA0 and is allocated AFTER the moe-cache pool is sized, so nothing budgets for it — on-GPU placement left only 830 MiB headroom with a drafter active, a latent OOM on the first image request. Host placement costs ZERO cache slots."
+
+default_weight_variant: unsloth-ud-q4kxl
+
+# ---------------------------------------------------------------------------
+# setup.sh dispatch.
+#   always_draft : ABSENT BY DESIGN — no drafter exists for this architecture.
+#   vision       : opt-in via WITH_VISION=1. ⚠️ The shipped compose mounts the
+#                  projector by default, so WITH_VISION=1 is effectively REQUIRED
+#                  for a vision-capable boot; the entrypoint degrades to text-only
+#                  rather than dying when the file is absent.
+# ---------------------------------------------------------------------------
+setup:
+  primary: unsloth-ud-q4kxl
+  vision: mmproj-f16

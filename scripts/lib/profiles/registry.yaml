@@ -1913,6 +1913,144 @@ entries:
     serve_aliases: []
     required_sm: 8.6
     category: frontier
+  llamacpp-club3090/qwen38-flash-next-dual-q4kxl-moecache:
+    model: qwen3.8-flash-next
+    weights_variant: unsloth-ud-q4kxl
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: null
+    kv_format: q8_0
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/qwen3.8-flash-next/llamacpp-club3090/compose/dual/unsloth-ud-q4kxl/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8122
+    kvcalc_key: SKIP
+    sampler_profiles:
+      instruct:
+        temperature: 0.7
+        top_p: 0.8
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 1.5
+        repetition_penalty: 1.0
+      thinking:
+        temperature: 1.0
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 0.0
+        repetition_penalty: 1.0
+    status: incubating
+    status_note: "🧪 Validated 2026-08-29 on llamacpp-club3090-v1.5 (rc0): verify-full 10/10 (the MTP check skips -- it is vLLM-log-format-specific), bench-agentic 2x12 turns to 35,254 prompt tok with TTFT growing 8.0x against 25.1x context (SUB-LINEAR) and decode 27.7-44 TPS with no cliff in the 21-26K band, vision 4/4 on ground truth. bench.sh canonical: decode 39.28 narrative (CV 0.8%) / 38.57 code (CV 1.8%), prefill 749.09@10K (CV 0.2%), TTFT ~415 ms -- the FASTEST model on this stack as of this date, and the reason is expert BYTE-SIZE (1,638,400 weights per ffn_up vs GLM's 8,388,608), not the quant. Expert pool 9,435 slots (CUDA0 q4_K 3,044 + q5_1 1,490 + q8_0 128; CUDA1 q4_K 2,955 + q5_1 1,329 + q8_0 305 + q5_K 184) at MOE_RESERVE_MB=1536 -- read at LLAMA_ARG_LOG_VERBOSITY=4 and SUMMED per device; this quant makes 3-4 pools PER CARD and one pool's used=N/N under-reports badly. ⭐ Projector ships on the HOST (-mmdev none, default since 2026-08-29): on CUDA0 it cost 1,114 MiB and is allocated AFTER the pool is sized, leaving only 830 MiB headroom with a drafter active -- a latent OOM on the first image request. Host placement costs ZERO cache slots (9,435 either way) and GPU1 was byte-identical across the A/B. ⛔ NO DRAFTER EXISTS: no MTP head in the GGUF (nextn_predict_layers ABSENT, verified) and no external drafter for qwen4exp; engine support is an OPEN DRAFT PR (ggml-org/llama.cpp#27836). n-gram drafting needs no drafter file and IS available: ngram-mod at n_max=8 measured +64% on REPEATED context but -1.3% (noise) on held-out prompts -- the gain is cache-residency dependent, not acceptance dependent, so it is NOT enabled by default. ⛔ Its DEFAULTS are harmful (n_max=64 measured -7.6%) and --spec-draft-n-max binds NONE of the ngram types. ⚠️ Ships 204800, NOT the declared 262144 -- that boots but collapses the pool to 802/1,026 MiB. ⚠️ QUALITY UNTESTED -- no 8-pack has been run on this model."
+    weights_companions:
+      - mmproj-f16
+    gateway: true
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/qwen38-flash-next-multi4-q4kxl-moecache:
+    model: qwen3.8-flash-next
+    weights_variant: unsloth-ud-q4kxl
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: null
+    kv_format: q8_0
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/qwen3.8-flash-next/llamacpp-club3090/compose/multi4/unsloth-ud-q4kxl/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8123
+    kvcalc_key: SKIP
+    sampler_profiles:
+      instruct:
+        temperature: 0.7
+        top_p: 0.8
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 1.5
+        repetition_penalty: 1.0
+      thinking:
+        temperature: 1.0
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 0.0
+        repetition_penalty: 1.0
+    status: incubating
+    status_note: "🐣 NEVER BOOTED -- this rig has 2 GPUs, so 4-card topologies are COMMUNITY-VALIDATED BY DESIGN; 'never booted here' is a permanent property, NOT a TODO. Derived mechanically from the VALIDATED dual sibling by a 5-line delta (service key, container_name, port, device_ids, -ts); everything else is byte-identical, verified by diff. ⛔ CONSTANTS ARE INHERITED, NOT MEASURED: MOE_RESERVE_MB (1536), -ub/-b and CTX (204800) were derived against 2x24 GB, and moe-cache `granted` is computed per device as free-minus-reserve, so per-card pools WILL differ at 4 cards -- re-derive before quoting any number. ⭐ The thing to measure first on real hardware: `-ot ...=CPU` DISABLES pipeline parallelism (learnings/moe-cache-engine.md section 11), and that costs more the more cards you add. ✅ Unlike GLM's multi4, the projector is on the HOST (-mmdev none) so this does NOT inherit the card-0 pinning hazard where the projector lands on the card carrying pool + KV."
+    weights_companions:
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/qwen38-flash-next-multi8-q4kxl-moecache:
+    model: qwen3.8-flash-next
+    weights_variant: unsloth-ud-q4kxl
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: null
+    kv_format: q8_0
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 8
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/qwen3.8-flash-next/llamacpp-club3090/compose/multi8/unsloth-ud-q4kxl/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8124
+    kvcalc_key: SKIP
+    sampler_profiles:
+      instruct:
+        temperature: 0.7
+        top_p: 0.8
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 1.5
+        repetition_penalty: 1.0
+      thinking:
+        temperature: 1.0
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 0.0
+        repetition_penalty: 1.0
+    status: incubating
+    status_note: "🐣 NEVER BOOTED -- this rig has 2 GPUs, so 8-card topologies are COMMUNITY-VALIDATED BY DESIGN; 'never booted here' is a permanent property, NOT a TODO. Derived mechanically from the VALIDATED dual sibling by a 5-line delta (service key, container_name, port, device_ids, -ts); everything else is byte-identical, verified by diff. ⛔ CONSTANTS ARE INHERITED, NOT MEASURED: MOE_RESERVE_MB (1536), -ub/-b and CTX (204800) were derived against 2x24 GB, and moe-cache `granted` is computed per device as free-minus-reserve, so per-card pools WILL differ at 8 cards -- re-derive before quoting any number. ⭐ The thing to measure first on real hardware: `-ot ...=CPU` DISABLES pipeline parallelism (learnings/moe-cache-engine.md section 11), and that costs more the more cards you add. ✅ Unlike GLM's multi8, the projector is on the HOST (-mmdev none) so this does NOT inherit the card-0 pinning hazard where the projector lands on the card carrying pool + KV."
+    weights_companions:
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
   llamacpp-club3090/deepseek-flash-multi4-q8-moecache:
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
