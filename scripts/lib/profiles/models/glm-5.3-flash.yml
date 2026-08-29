@@ -105,6 +105,25 @@ weights:
     # here, and both consumers then blame the weights (#910/#911).
     verify_glob: "UD-IQ4_XS/*.gguf"
     manual_note: "🧪 EXPERIMENTAL — the `glm5next` architecture is NOT in llama.cpp mainline (vendored PR ggml-org#27754, chosen over rival #27752 on GGUF-key evidence; #27752 was evaluated and REVERTED because it caps context at ~32K). Served via the dedicated engine `llamacpp-club3090-v1.5`. Ships 204800, NOT the 1M the model declares: 262144 also boots but costs ~10% decode and halves the expert pool. ⚠️⚠️ THINKING CANNOT BE DISABLED — z.ai docs state GLM-5.3 and GLM-5.3-FLASH use forced thinking and `thinking.type: disabled` RETURNS AN ERROR. The working control is `reasoning_effort` (max | high | low; `low` is 5.3/5.3-Flash-only), and `none` is NOT a valid value — it is silently ignored. Measured: low → 0 ch reasoning, max → ~1,170 ch. ⚠️ NOT a graded dial — `high` measured beside `low`, not between low and max. ⚠️ Vendor sampling is temperature 1, top_p 0.95, reasoning_effort max, thinking.clear_thinking FALSE, max_tokens default 65536 — the compose ships exactly that. ⚠️ QUALITY UNTESTED at any quant — no 8-pack has been run on this model."
+  unsloth-ud-iq3xxs:
+    path: glm-5.3-flash-gguf/UD-IQ3_XXS
+    # ⚠️ local_subdir is the BUCKET; `files:`/`verify_glob` carry the quant-folder
+    # prefix. Pointing local_subdir at the quant dir NESTS IT TWICE — which is
+    # exactly what happened on the 2026-08-29 pull (UD-IQ3_XXS/UD-IQ3_XXS/*.gguf,
+    # corrected by hand). Same trap the iq4xs entry documents.
+    local_subdir: glm-5.3-flash-gguf
+    size_gb: 121
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    shards: 4
+    files:
+      - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00001-of-00004.gguf
+      - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00002-of-00004.gguf
+      - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00003-of-00004.gguf
+      - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00004-of-00004.gguf
+    verify_glob: "UD-IQ3_XXS/*.gguf"
+    manual_note: "🧪 EXPERIMENTAL — smaller sibling of UD-IQ4_XS, 113 GiB vs 146.1. ⭐ Point is RESIDENCY, not size on disk: expert byte-size is the master variable (learnings/moe-cache-engine.md section 2). MEASURED from this GGUF's tensor table per-expert-matrix over expert_count=288 — iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 KiB vs IQ4_XS's 3,867 = 24% smaller. ⚠️ Shard 1 is METADATA-ONLY (9.4 MB, tensor_count 0) like the iq4xs sibling — a probe reading shard 1 for tensors finds nothing and that is NOT a broken download. ⚠️ QUALITY AT IQ3 IS UNTESTED; a smaller quant is not free."
   dflash2-q4km:
     path: glm-5.3-flash-gguf/dflash2
     # ⚠️ REPO-ROOT artifact (the Anbeeld repo has no subfolder), so it lands FLAT and

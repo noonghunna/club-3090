@@ -1,0 +1,498 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     GLM-5.3-Flash (320.76B MoE, arch `glm5next`, unsloth UD-IQ3_XXS —
+#              113 GiB across 4 shards)
+#   Engine:    llamacpp-club3090 v1.5-rc0 (fork: leloch's MoE expert cache v2 + our
+#              L1/L3/E ports + vendored ggml-org/llama.cpp#27754 for `glm5next`)
+#   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
+#   Drafter:   ✅ DFlash2 Q4_K_M external (0.70 GB) — ON GPU1, depth n=3
+#              MEASURED 2026-08-29: +18.4% on CODE, −2.0% on prose.
+#              Toggle: SPEC_N=<n> depth (default 3); SPEC_N=0 disables.
+#              Placement: DRAFT_DEVICE (default CUDA1) — see Caveats, host is −11%.
+#   KV:        fp16 (llama.cpp default — MLA keeps it compact)
+#   Thinking:  ⛔ cannot be turned off via thinking.type (vendor: errors on this
+#              model). ✅ Controlled by reasoning_effort instead.
+#              REASONING_EFFORT   low (default) = thinking effectively OFF
+#                                 max           = full thinking (vendor default)
+#                                 ⚠️ `high` measured next to `low`, NOT between —
+#                                    two-position switch, not a graded dial.
+#              REASONING_FORMAT   deepseek (default) — thoughts -> reasoning_content
+#              CLEAR_THINKING     true (default) — do NOT replay prior turns'
+#                                 reasoning into the prompt. This GGUF's template
+#                                 defaults it to FALSE (preserve), which is the
+#                                 inverse of the vendor's omitted-default and cost
+#                                 439 vs 38 prompt tokens on a single prior turn.
+#   Vision:    ✅ yes — mmproj-F16.gguf (1.13 GB), projector `glm5next`.
+#              Engine support verified in clip.cpp/mtmd-image.cpp before wiring.
+#   Max ctx:   204800 default — MEASURED + prefill-validated. 262144 also works;
+#              204800 is chosen for CACHE HEADROOM, see Caveats
+#   Genesis:   N/A — llama.cpp engine
+# CPU-Offload-Host-RAM-GB: 114
+#   ⤷ ALL-on-CPU worst case. Grounded: UD-IQ3_XXS is 113 GiB of weights (vs the
+#     IQ4_XS sibling's 146.1 GiB). ⚠️ The serving RSS below was MEASURED on
+#     IQ4_XS and is INHERITED — re-measure on this quant before quoting it.
+#     Registry `host_ram_gb` must stay <= this. Old IQ4_XS grounding text:
+#     measured serving RSS with experts offloaded was 141.5 GiB (bench 2026-08-29).
+#     Registry `host_ram_gb: 142` is the NOMINAL figure and must stay <= this.
+#   Status:    🧪 Experimental — NEVER BOOTED. Copied from the VALIDATED
+#              unsloth-ud-iq4xs sibling 2026-08-29; only the weights path,
+#              shard count (5 -> 4), identity and port differ.
+#   ⭐ WHY THIS QUANT: smaller experts = more cache slots at the same pool
+#      MiB — the master residency variable (learnings/moe-cache-engine.md
+#      section 2). MEASURED from THIS GGUF's tensor table (not the quant
+#      name), per-expert-matrix over expert_count=288:
+#          iq2_s   2,624 KiB  x82  (63.6%)   <- dominant
+#          iq3_s   3,520 KiB  x41  (31.8%)
+#          iq4_xs  4,352 KiB  x 3
+#          q2_K    2,688 KiB  x 2 · q3_K 3,520 KiB x1
+#      weighted average 2,957 KiB vs IQ4_XS's 3,867 -> 24% smaller.
+#      MEASURED on first boot 2026-08-29 (dual, LLAMA_ARG_LOG_VERBOSITY=4,
+#      slots SUMMED per device):
+#          CUDA0  iq2_s 1,252 + iq3_s 627 + iq4_xs 96 = 1,975 slots (5,771 MiB)
+#          CUDA1  iq2_s 1,410 + iq3_s  96            = 1,506 slots (3,943 MiB)
+#          TOTAL 3,481 slots  vs IQ4_XS's 2,143  ->  +62.4%
+#      ⭐ The pool is SMALLER in MiB (9,714 vs 10,874) yet holds far more
+#      experts — the whole gain is expert byte-size. It also BEAT the ~31%
+#      predicted from the 24% average shrink, because the realised pools are
+#      more iq2_s-dominated than the whole-model average implies. Read slots
+#      from the boot log; never compute them from a quant label.
+#      ⚠️ CARDS ARE IMBALANCED: VRAM 22,604 / 23,850 (delta 1,246 MiB) leaves
+#      only ~726 MiB of CUDA1 headroom — tighter than the 830 MiB that made
+#      Qwen's on-GPU projector a latent OOM. Vision here is on the HOST
+#      (-mmdev none), which is what keeps this survivable. Watch it.
+#      ⚠️ Quality at IQ3 is STILL UNTESTED — coherent on a one-word probe is
+#      not a quality result. No verify-full, no bench, no 8-pack.
+#   Status:    🐣 Incubating
+#   Best for:  long-context MoE serving experiments on the moe-cache engine
+#   Caveats:
+#     • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
+#       (github.com/leloch/llama.cpp, RFC ggml-org#24528). This slug packages
+#       it; it does not originate it.
+#     • ⛔ REQUIRES THE v1.4 ENGINE. `glm5next` arrives via vendored
+#       ggml-org/llama.cpp#27754 (open draft, @danielhanchen). The v1.2 digest
+#       shipped by the DeepSeek sibling CANNOT load these weights at all — this
+#       is not a tuning difference, it is a hard architecture gap. Do not
+#       repoint this image at a pre-v1.4 digest.
+#     • ⚠️ #27754 vs #27752 — two rival PRs implement `glm5next` under the SAME
+#       arch name. Unsloth's GGUF writes `glm5next.expert_shared_feed_forward_length`
+#       and only #27754's converter emits it, so #27752 cannot read these
+#       weights. If #27752 wins upstream, Unsloth re-converts and both the
+#       vendored branch and the 146 GiB download become re-work.
+#     • ✅ MAX CTX MEASURED 2026-08-28 by ladder — every rung booted AND served
+#       a real prefill. Totals across both cards:
+#         ctx      KV        compute     pool       slots  resid  prefill
+#         32,768     528 MiB   7,682 MiB  27,296 MiB  7,126  ~19%  —
+#        204,800   3,300 MiB  20,883 MiB  11,310 MiB  2,891   ~8%  68,286 tok ok
+#        262,144   4,224 MiB  25,700 MiB   5,537 MiB  1,369   3.6% 87,401 tok ok
+#       ⭐⭐ THERE IS NO HARD CONTEXT WALL HERE — THERE IS A CLIFF. VRAM sits at
+#       22.6 GB/card at EVERY rung: it never nears OOM, because the expert pool
+#       is elastic (free-minus-reserve) and simply absorbs whatever context
+#       takes. Higher contexts keep BOOTING; what degrades is the cache.
+#       ⚠️ So a boot-only test reports success right up until the pool hits zero
+#       and CANNOT find the usable ceiling — only a decode bench can.
+#       ⚠️⚠️ KV IS NOT THE BINDING CONSTRAINT — the COMPUTE BUFFER is. KV scales
+#       linearly and stays small (MLA is compact); the compute buffer TRIPLED
+#       (7,682 -> 25,700 MiB) and is what evicts the expert cache. Almost
+#       certainly the DSA sparse indexer (indexer.top_k = 2048) sizing its
+#       workspace against context.
+#       ⇒ 262144 costs ~81% of the expert pool vs 32768; 204800 costs ~59%.
+#       Quote that cost alongside any context claim; "262K works" alone is
+#       misleading. The advertised 1,048,576 remains UNFITTED — do not quote it.
+#       ⚠️ WHY 204800 AND NOT 262144 (the max that boots): at 262144 the cache
+#       THRASHES. Measured 2026-08-28 at ctx=262144:
+#         CUDA0 hits 17.6% used 504/504 evictions 65,323
+#         CUDA1 hits 18.9% used 865/865 evictions 104,601
+#       Every slot occupied with ~170k evictions = a working set that does not
+#       fit, refilled over PCIe. Decode was 13.89 narrative / 13.67 code tok/s.
+#       204800 doubles the pool (5,537 -> 11,310 MiB, 1,369 -> 2,891 slots), and
+#       matches the DeepSeek sibling's context so their rows are comparable.
+#       ⚠️ Hit rate tracked slot count almost exactly in the cross-model check
+#       (GLM had 30% of DeepSeek's slots and 29% of its hit rate), which is why
+#       slots — not MiB — is the number to reason about.
+#     • ✅ DRAFTER MEASURED AND SHIPPING (2026-08-29). DFlash2 Q4_K_M, on GPU1,
+#       depth 3. Canonical bench.sh, GLM @204800, one variable per arm:
+#         set          no-spec        drafter→CPU      drafter→GPU1
+#         narrative    15.76 (0.2%)   13.99  −11.2%    15.45   −2.0%
+#         code         15.40 (0.7%)   14.88   −3.4%    18.23  +18.4%  ⭐
+#         cache hits   23.0/19.8%     21.4/18.7%       22.1/20.6%
+#       ⚠️ Prose is a WASH within noise (drafter CV 4.8% vs baseline 0.2%), not a
+#       clear loss. Code's +18.4% is solid. Prefill is −5.1% with the drafter.
+#     • ⭐ WHY GPU1 AND NOT THE HOST — placement is worth 21 POINTS on code.
+#       GLM decode is CPU-BOUND (host ~78%, GPU SM 10–18% idle, PCIe 8.7%). With
+#       `-ot …exps=CPU` a cache MISS is an expert FFN computed ON THE CPU, so
+#       `-devd none` makes speculation pay CPU to save CPU. `-devd CUDA1` spends
+#       idle GPU instead. ⇒ On an expert-offloaded MoE, pin the drafter to a GPU.
+#       ⚠️ This is the OPPOSITE of the DeepSeek sibling's `-devd none`, whose
+#       caveat (GPU drafter ⇒ zero cache hits) did NOT reproduce here: hits held
+#       at 21.7–22.1%. That caveat may be stale; re-test before copying it.
+#     • ⭐ WHY n=3 AND NOT DEEPER — n-sweep on GPU1, code decode:
+#         n=3 → 18.23 ⭐   n=5 → 16.61 (−8.9%)   n=7 → 11.10 (−27.9%)
+#       Mean accepted length is INVARIANT at ~3 regardless of the cap; raising
+#       n_max only inflates drafts the CPU-resident target must still verify.
+#       ⚠️ Acceptance RATE falls 53%→33% from n=3→n=7 as a DENOMINATOR effect —
+#       do not read that as worse drafting, and do not tune on it.
+#       ⚠️ SHALLOWER than the DeepSeek sibling's SPEC_N=5. Do not share defaults.
+#     • ⛔ BUILT-IN MTP (block 45) IS NOT USABLE. It binds on PR #27752 (unused
+#       tensors 29→0, acceptance 0.558) but the draft context loads a FULL 148 GB
+#       model copy; with --no-mmap + -devd none that needs ~285 GB RAM against
+#       196 GB → kernel OOM-kill. #27752 also caps GLM at ~32K (compute buffer
+#       55,138 MiB @205K). Reverted; this slug vendors #27754.
+#     • ⚠️ moe-cache RESERVE_MB / ADMIT_AFTER below are INHERITED from the
+#       DeepSeek sibling and are NOT measured on GLM. They were derived from a
+#       compute-buffer swing measured on a DIFFERENT model. Re-derive before
+#       quoting any tuned number for this slug.
+#     • ⚠️ QUALITY UNTESTED. No 8-pack, no soak. Both the cache and the drafter
+#       touch the generation path. Stays 🐣 until verify-full + bench + quality.
+#     • ⚠️ COLD-START TAX: the first request after boot is slow while the expert
+#       pool fills. Do not benchmark the first request.
+#     • ⚠️ MODEL_DIR must point at the root CONTAINING `glm-5.3-flash-gguf`.
+#       On this rig that is `/mnt/models/huggingface` — NOT `/opt/ai/models`,
+#       where the DeepSeek sibling's weights live. The two roots differ.
+#
+#   Sampling (for bench/quality runs):
+#     temperature 1.0 · top_p 0.95
+#     ✅ VENDOR DEFAULT, confirmed 2026-08-28 from THREE sources: (1)
+#     generation_config.json on zai-org/GLM-5.3 AND zai-org/GLM-5.3-Flash,
+#     (2) the GGUF's own general.sampling.temp / general.sampling.top_p,
+#     (3) the card's HLE/BabyVision eval settings.
+#     ⚠️ Do NOT quote the README's per-benchmark numbers as a default — they
+#     vary (top_p=1.0 for NL2Repo/Terminal-Bench; temp=0.95 for DeepSWE).
+#     ⚠️ bench.sh pins the STACK PROTOCOL sampler (temp 0.6/top_p 0.95/top_k 20)
+#     for cross-engine comparability. Fine for TPS; QUALITY runs must use
+#     temp 1.0 / top_p 0.95.
+# ---------------------------------------------------------------------------
+
+services:
+  llama-cpp-glm53-flash-iq3xxs-moecache:
+    # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
+    # v1.4-rc2, built 2026-08-28 from stack/club3090-moecachev1.4-models,
+    # carrying vendored #27754. See the engine-gap caveat above.
+    # ⚠️ v1.5-rc0 is LOCAL-ONLY (not yet pushed to ghcr), so this pins the TAG, not a
+    # registry digest. Repin to a digest once published — the releases ledger requires
+    # digest-level identity. Local image id: sha256:1c228a52b819…
+    # Built from stack/club3090-moecachev1.5 @ 7104d5f4e, CUDA arch 86;89;120,
+    # GGML_BACKEND_DL=ON, CPU_ALL_VARIANTS=ON. image.revision=7104d5f4e.
+    # ⛔ DFlash2 REQUIRES this engine — rc2 (sha256:bf2776f7…) fails the drafter with
+    #    `done_getting_tensors: expected 81, got 58`. Rollback digest: sha256:bf2776f7…
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
+    container_name: ${ESTATE_CONTAINER:-llama-cpp-glm53-flash-iq3xxs-moecache}
+    restart: unless-stopped
+    # Reap orphaned children. Without this a wedged llama-server becomes a
+    # <defunct> PID 1 child holding GPU + host RAM.
+    # ⚠️ NOT A CURE — measured 2026-08-28: a compose WITH `init: true` still
+    # wedged 3× in one session ("did not receive an exit event") with an
+    # unreaped <defunct> holding ~21 GB VRAM. Recovery is
+    # `kill -9 $(docker inspect <c> --format '{{.State.Pid}}')`, not
+    # `docker rm -f`. See LEARNINGS.md 2026-08-28.
+    init: true
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8125}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    environment:
+      # Drafter toggle - docker forwards only what is declared here.
+      - SPEC_N=${SPEC_N:-}
+      - SPEC=${SPEC:-}
+      # Expert-cache tuning — ⚠️ INHERITED from the DeepSeek sibling, NOT
+      # measured on GLM. See Caveats.
+      - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
+      - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+      # Cache hit/miss telemetry. Needs BOTH this AND LLAMA_ARG_LOG_VERBOSITY=4
+      # — the moe-cache log line is GGML_LOG_INFO and the server's verbosity
+      # threshold drops it below 4, so without `-lv 4` the whole cache subsystem
+      # is silent and bench.sh renders the absence as a measured 0.0% hit rate.
+      # DEFAULT 0 (OFF): telemetry is opt-in. Set MOE_STATS=200 for a bench run.
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
+      # Prefill expert-prefetch. PINNED OFF: it allocates a staging ring
+      # (2 x 1088 MiB measured on the sibling) that competes with the expert
+      # pool and with context headroom. Stack decision 2026-08-27.
+      - GGML_EXPERT_PREFETCH=${EXPERT_PREFETCH:-0}
+      # Bare passthrough — forwarded ONLY if the caller sets it. Never write
+      # `=${VAR:-}`: docker would set it EMPTY, which is not the same as unset.
+      - LLAMA_ARG_LOG_VERBOSITY
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-0,1}']
+              capabilities: [gpu]
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # -- Drafter toggle -------------------------------------------------
+        #   SPEC_N=<n>  drafter depth; SPEC_N=0 disables
+        #   SPEC=off    back-compat alias for SPEC_N=0
+        # Disabling REMOVES the drafter flags rather than passing n=0: at
+        # --spec-draft-n-max 0 llama.cpp sets drafting=false but still builds
+        # the draft context and loads the draft model, so the memory stays
+        # spent. A non-numeric SPEC_N is a hard error, so a typo can never
+        # masquerade as a silent "drafter off".
+        #
+        # -- Threads --------------------------------------------------------
+        # Default 28, NOT nproc/2. llama.cpp's own default collapses CPU-offload
+        # decode, and on this 32c/8-channel host `-t 28` measured ~20% faster
+        # than nproc/2=16. 28 is also the value GLM bring-up was validated at
+        # (2026-08-27). ⚠️ This DIFFERS from the launcher's resolve_offload_threads
+        # (nproc/2) — deliberate, and the reason it is pinned here explicitly.
+        if [ -n "$${THREADS:-}" ]; then
+          export LLAMA_ARG_THREADS="$${THREADS}"
+          echo "[threads] -t $${LLAMA_ARG_THREADS} (THREADS set explicitly)" >&2
+        else
+          export LLAMA_ARG_THREADS=28
+          echo "[threads] -t 28 (slug default; validated for GLM bring-up)" >&2
+        fi
+
+        # ── vision projector guard ──────────────────────────────────────────
+        # setup.sh fetches the projector only under WITH_VISION=1 (there is no
+        # "always" slot for one), but this compose mounts it unconditionally. Without
+        # this guard a setup run without that flag produces a server that dies on a
+        # missing file. Degrade to TEXT-ONLY instead, loudly.
+        _mmproj="$${MMPROJ:-/models/glm-5.3-flash-gguf/mmproj/mmproj-F16.gguf}"
+        if [ ! -f "$$_mmproj" ]; then
+          echo "[vision] projector NOT FOUND at $$_mmproj — serving TEXT-ONLY." >&2
+          echo "[vision] fetch it with: WITH_VISION=1 bash scripts/setup.sh glm-5.3-flash" >&2
+          ARGS=(); _skip=0
+          for a in "$$@"; do
+            if [ "$$_skip" = 1 ]; then _skip=0; continue; fi
+            case "$$a" in --mmproj|-mmdev|--mmproj-device) _skip=1; continue ;; esac
+            ARGS+=("$$a")
+          done
+          set -- "$${ARGS[@]}"
+        fi
+        _spec_n="$${SPEC_N:-3}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in
+          ""|*[!0-9]*)
+            echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+            echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+            exit 1 ;;
+        esac
+
+        if [ "$$_spec_n" -gt 0 ]; then
+          # Fail loud if the external DFlash2 drafter GGUF is absent. The
+          # model's OWN block-45 MTP head is not wired by #27754, so this
+          # external drafter is the ONLY speculative path — a missing file
+          # otherwise crash-loops on a cryptic gguf_init_from_file error.
+          _draft=""; _want=0
+          for _a in "$$@"; do
+            if [ "$$_want" = 1 ]; then _draft="$$_a"; _want=0; continue; fi
+            case "$$_a" in -md|--model-draft|--spec-draft-model) _want=1 ;; esac
+          done
+          if [ -n "$$_draft" ] && [ ! -f "$$_draft" ]; then
+            echo "[spec] FATAL: external DFlash2 drafter not found:" >&2
+            echo "[spec]   $$_draft" >&2
+            echo "[spec] This slug REQUIRES it (block-45 MTP is unwired => no other spec path)." >&2
+            echo "[spec] Fix one of:" >&2
+            echo "[spec]   - download it: /opt/ai/hf-download.sh Anbeeld/GLM-5.3-Flash-DFlash2-GGUF \\" >&2
+            echo "[spec]       <MODEL_DIR>/glm-5.3-flash-gguf/dflash2 GLM-5.3-Flash-DFlash2-Q4_K_M.gguf" >&2
+            echo "[spec]   - or run drafter-off knowingly: SPEC_N=0" >&2
+            exit 1
+          fi
+          echo "[spec] drafter ON (SPEC_N=$$_spec_n)" >&2
+          exec /app/llama-server "$$@"
+        fi
+
+        ARGS=(); _skip=0
+        for _a in "$$@"; do
+          if [ "$$_skip" = 1 ]; then _skip=0; continue; fi
+          case "$$_a" in
+            --spec-type|--spec-draft-model|--spec-draft-n-max|--spec-draft-n-min|-md|--model-draft|-devd|--spec-draft-device) _skip=1; continue ;;
+          esac
+          ARGS+=("$$_a")
+        done
+        echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - drafter flags removed" >&2
+        exec /app/llama-server "$${ARGS[@]}"
+      - --
+    # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
+    # Compose's command-line parser REJECTS `(gate|up|down)` inside a folded
+    # string. The list form skips shell parsing so the regex survives verbatim.
+    command:
+      - '-m'
+      - '/models/glm-5.3-flash-gguf/UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00001-of-00004.gguf'
+      - '--host'
+      - '0.0.0.0'
+      - '--port'
+      - '8080'
+      - '--alias'
+      - 'glm-5.3-flash'
+      - '-np'
+      - '1'
+      - '-c'
+      - '${CTX:-204800}'
+      - '-ngl'
+      - '99'
+      - '-sm'
+      - 'layer'
+      - '-ts'
+      - '1,1'
+      - '-fa'
+      - 'on'
+      # ⚠️ SINGLE -ot with comma-separated rules. Current mainline DEPRECATES
+      # repeated -ot and honours ONLY THE LAST occurrence.
+      # ✅ Stock regex is CORRECT for glm5next — verified 2026-08-27 against the
+      # real tensor list: it matches the three routed expert tensors, and
+      # correctly EXCLUDES `*_shexp` (the single shared expert, which fires every
+      # token) and `ffn_gate_inp` (the router). Blocks 0-2 are dense
+      # (leading_dense_block_count=3) and carry no `*_exps` tensors at all, so
+      # they simply do not match — correct by construction, no special case.
+      - '-ot'
+      - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
+      - '-ub'
+      - '${UBATCH:-4096}'
+      - '-b'
+      - '${UBATCH:-4096}'
+      - '--cache-prompt'
+      # --no-mmap: with -ot ...=CPU the offloaded experts must be resident, not
+      # page-cache-backed. Validated for GLM 2026-08-28 (two runs, both correct
+      # and terminating) — GLM is NOT affected by the --no-mmap defect that
+      # blocks Qwen3.8-Flash-Next.
+      - '--no-mmap'
+      - '-md'
+      - '/models/glm-5.3-flash-gguf/dflash2/GLM-5.3-Flash-DFlash2-Q4_K_M.gguf'
+      # ✅ VERIFIED 2026-08-28 from the drafter GGUF's own metadata
+      # (general.architecture = `dflash`): draft-dflash IS the right spec-type.
+      # INERT at SPEC_N=0 — the entrypoint strips these flags. See Caveats for
+      # why the drafter cannot load at all on this engine.
+      - '--spec-type'
+      - 'draft-dflash'
+      - '--spec-draft-n-max'
+      - '${SPEC_N:-3}'
+      # Drafter device. Default CUDA1 (GPU1) — MEASURED best 2026-08-29: on GPU
+      # +18.4% code vs host, and placement was worth 21 points between arms.
+      # ⚠️ Takes a device NAME, not an index: `CUDA1` is valid, `1` is NOT.
+      # `none` puts it on the host (the DeepSeek sibling's choice, −11% here).
+      # ⚠️ `CUDA0` HAS NEVER BEEN TESTED — the A/B was CUDA1 vs host only. Since the
+      #    vision projector moved to host (2026-08-29), GPU0 has ~1,974 MiB free while
+      #    GPU1 — carrying this 665 MiB drafter — has ~464 MiB. The drafter is on the
+      #    TIGHTER card, and tight headroom measured SLOWER on the DeepSeek sibling.
+      #    CUDA1 stays the default because it is MEASURED; CUDA0 is a hypothesis.
+      # See Caveats
+      # — this is the one knob worth A/B-ing first on this slug.
+      - '-devd'
+      - '${DRAFT_DEVICE:-CUDA1}'
+      # ── Vision (mmproj) ─────────────────────────────────────────────────
+      # ✅ GLM-5.3-Flash IS multimodal.
+      #    mmproj: unsloth/GLM-5.3-Flash-GGUF `mmproj-F16.gguf`, 1,128,047,200 B,
+      #    hash-verified. clip.projector_type = `glm5next`.
+      #    Engine support confirmed in v1.5 source BEFORE wiring: clip.cpp has the
+      #    PROJECTOR_TYPE_GLM5NEXT graph builder and mtmd-image.cpp ships a
+      #    dedicated preprocessor (smart_resize + get_geometry).
+      #    ⚠️ MMPROJ= (empty) does NOT disable vision: `${MMPROJ:-default}` uses the
+      #       default for EMPTY as well as unset, so it boots with vision anyway.
+      #       There is no --no-mmproj flag in this build. To serve text-only, point
+      #       MMPROJ at a different compose or strip the flag in the entrypoint the
+      #       way SPEC_N does. Verified 2026-08-29 — an A/B using MMPROJ= as its
+      #       "vision off" arm is measuring the SAME config twice.
+      - '--mmproj'
+      - '${MMPROJ:-/models/glm-5.3-flash-gguf/mmproj/mmproj-F16.gguf}'
+      # ⚖️ Projector placement. DEFAULT `none` = HOST RAM (2026-08-29 decision).
+      #    A/B MEASURED at LLAMA_ARG_LOG_VERBOSITY=4, vendor config, 205K:
+      #      CUDA0 (on GPU) : 2,143 slots | GPU0 23,620 MiB | vision 4/4 | img 46.4 s
+      #      none  (on host): 2,225 slots | GPU0 22,602 MiB | vision 4/4 | img 21.0 s
+      #                        +82 slots (+3.8%), −1,018 MiB, correctness unchanged
+      #    ⭐ WHY host is the default: the benefit is PERMANENT (slots + VRAM, paid on
+      #    every token of every request) while the cost — CPU image encoding — is paid
+      #    ONLY on image requests, which are rare on this text-dominant profile. A
+      #    resident GB that earns its keep occasionally is the wrong default here.
+      #    ⚠️ The 21.0 vs 46.4 s image wall is NOT attributable: n=1 per arm with
+      #    reasoning_effort=max, so wall time is dominated by reasoning length, not
+      #    encoding. It is FAVOURABLE, not proof. Isolated test (effort=low, n>=3) owed.
+      #    ⚠️ Freeing this memory does NOT enlarge the pool budget: `granted` is
+      #    computed as free−reserve BEFORE the projector loads (both arms granted
+      #    4,850/6,024 MiB). The +82 slots arrived as a new q6_K pool — 538 MiB at
+      #    6,720 KiB/expert. ⚠️ Never project slot counts from an AVERAGE expert
+      #    size on a MIXED-type quant — it over-predicts ~3x.
+      #    MMPROJ_DEVICE=CUDA0 / CUDA1 puts it back on that GPU.
+      # ⚠️ Uses -mmdev (VALUE-taking), NOT a ${VAR:+...} conditional — the latter
+      #    renders an EMPTY ARG ("") when unset, handing llama-server a stray argv
+      #    element. Same class as the `- VAR=${X:-}` empty-passthrough trap.
+      #    MMPROJ_DEVICE=none -> host RAM · CUDA0/CUDA1 -> that GPU.
+      #    Default CUDA0: explicit rather than the engine's "auto", and GPU0 is the
+      #    natural home since the DFlash2 drafter already sits on CUDA1.
+      - '-mmdev'
+      - '${MMPROJ_DEVICE:-none}'
+      # ── Sampler (vendor-published) ──────────────────────────────────────
+      # z.ai GLM-5.3-Flash guide: temperature 1, top_p 0.95. Previously UNSET here,
+      # so llama.cpp's own defaults leaked in — the stack-wide "bench never sends
+      # top_k/min_p" trap. These are server DEFAULTS; per-request values still win.
+      # Default output length. z.ai concept-param: max_tokens default 65536 for
+      # current models, GLM-5.3-Flash max output 128K, "no less than 1024".
+      # ⚠️ WITHOUT this llama.cpp uses n_predict = -1 = NO LIMIT, so a client that
+      #    omits max_tokens can generate until the 204800 context fills — hours, on a
+      #    model that ALWAYS thinks. This is a DEFAULT, not a cap: server-context.cpp
+      #    "the per-request limit takes priority over the global one"
+      #    (n_predict != -1 ? task.params.n_predict : params_base.n_predict), so a
+      #    client asking for the full 128K still gets it.
+      - '-n'
+      - '${MAX_TOKENS:-65536}'
+      - '--temp'
+      - '${TEMP:-1.0}'
+      - '--top-p'
+      - '${TOP_P:-0.95}'
+      # ── Thinking / reasoning policy ─────────────────────────────────────
+      # ⛔ thinking.type=disabled is NOT available. Vendor docs (z.ai "Deep
+      #    Thinking"): "GLM-5.3 and GLM-5.3-FLASH no longer support disabling
+      #    thinking (an error will occur if thinking.type is set to disabled)".
+      # ✅ But reasoning_effort IS the working control. Valid values for this
+      #    family: max (vendor default) | high | low  (low is 5.3/5.3-FLASH only).
+      #    ⚠️ `none` is NOT a valid value — it is SILENTLY IGNORED, so a probe
+      #    using it will wrongly conclude the knob is inert.
+      #    MEASURED 2026-08-29, "explain why the sky is blue", n=3, temp 1.0/top_p .95:
+      #      baseline (no kwarg) : reasoning 1167 ch / content 531 ch
+      #      low                 : reasoning    0 ch / content 442 ch  <- effectively OFF
+      #      high                : reasoning   11 ch / content 485 ch  <- see caveat
+      #      max                 : reasoning 1184 ch / content 500 ch  <- == baseline
+      #      top-level low       : reasoning    4 ch / content 429 ch  (both paths work)
+      #    ⚠️ NOT a graded dial: `high` lands next to `low`, not between low and
+      #    max. Treat as a two-position switch (low=off, max=on); `high` is
+      #    under-sampled (n=3) and nobody should rely on it yet.
+      # ⭐ DEFAULT = VENDOR-RECOMMENDED (decision 2026-08-29). The z.ai
+      #    GLM-5.3-Flash guide publishes: temperature 1, top_p 0.95,
+      #    reasoning_effort MAX, thinking.clear_thinking FALSE. We follow it.
+      #    ⚠️ This DEVIATES from the stack-wide thinking-OFF default (and from
+      #    the qwen3.8-27b sibling's reasoning_effort:low) — deliberately, because
+      #    GLM-5.3-Flash is a forced-thinking reasoning model with NO quality
+      #    baseline measured on this stack, so overriding its vendor config would
+      #    trade unmeasured quality for speed.
+      #    Speed knobs, if an agentic deployment needs them:
+      #      REASONING_EFFORT=low   -> ~0 reasoning tokens (measured: 0 ch vs 1167)
+      #      CLEAR_THINKING=true    -> do not replay prior turns' reasoning
+      #                                (measured: 38 vs 439 prompt tokens, 11.5x)
+      #    ⚠️ Both cost quality that has NOT been measured. Run the 8-pack in both
+      #    modes before treating either as better than vendor default.
+      # ⚠️ Per-request overrides still work and BEAT this server default, so a
+      #    client sending reasoning_effort:max gets thinking regardless.
+      - '--reasoning-effort'
+      - '${REASONING_EFFORT:-max}'
+      # Route thoughts to message.reasoning_content (never inline in content).
+      - '--reasoning-format'
+      - '${REASONING_FORMAT:-deepseek}'
+      # ✅ What DOES work is not paying for it twice. This GGUF's template sets
+      #    `clear_thinking = false` when undefined = PRESERVED thinking, so
+      #    EVERY prior turn's <think> block is replayed into the prompt.
+      #    ⚠️ Do NOT read this off the generic Thinking-Mode page — the
+      #    MODEL-SPECIFIC z.ai guide for
+      #    GLM-5.3-Flash recommends `clear_thinking: false` explicitly, so the
+      #    template default is CORRECT and matches the vendor.
+      #    MEASURED 2026-08-29, one prior turn carrying ~2,000 ch of reasoning:
+      #      default (clear_thinking=false) : 439 prompt tokens
+      #      clear_thinking=true            :  38 prompt tokens   (11.5x fewer)
+      #      clear_thinking=false (control) : 439                 (knob confirmed)
+      #    It compounds per turn, so an agentic session pays it repeatedly.
+      # Override with CLEAR_THINKING=false to restore preserved reasoning (better
+      # multi-turn reasoning continuity, much larger prompts).
+      - '--chat-template-kwargs'
+      - '{"clear_thinking": ${CLEAR_THINKING:-false}}'
+      - '--moe-cache'
+      - '${MOE_CACHE:-auto}'
+      - '--fit'
+      - 'off'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      # 146 GiB across 5 shards with --no-mmap; bring-up measured 4:03 to load.
+      start_period: 900s

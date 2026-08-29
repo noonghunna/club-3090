@@ -1979,6 +1979,105 @@ entries:
     serve_aliases: []
     required_sm: 8.6
     category: frontier
+  llamacpp-club3090/glm53-flash-dual-iq3xxs-moecache:
+    model: glm-5.3-flash
+    weights_variant: unsloth-ud-iq3xxs
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/dual/unsloth-ud-iq3xxs/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8125
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL — NEVER BOOTED. Copied from the VALIDATED unsloth-ud-iq4xs sibling 2026-08-29; the non-comment delta is 4 lines (service key, container_name, port, weights path + shard count 5->4). ⭐ The POINT is residency: expert byte-size is the master variable, and this quant's experts are 24% smaller — MEASURED from the GGUF tensor table per-expert-matrix over expert_count=288: iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 vs IQ4_XS's 3,867. ⭐ MEASURED on first boot 2026-08-29 (dual, slots SUMMED per device): CUDA0 1,975 + CUDA1 1,506 = 3,481 slots vs IQ4_XS's 2,143 = +62.4%, in a SMALLER pool (9,714 vs 10,874 MiB) — the whole gain is expert byte-size, and it beat the ~31% predicted from the 24% average shrink because the realised pools are more iq2_s-dominated than the model-wide average. Coherent on a one-word probe. ⚠️ CARDS IMBALANCED: 22,604 / 23,850 MiB leaves ~726 MiB CUDA1 headroom. ⚠️ host_ram_gb 110 is nominal against the compose's 114 worst case (113 GiB of weights); the IQ4_XS serving-RSS measurement does NOT transfer. ⚠️ QUALITY AT IQ3 IS UNTESTED — no verify-full, no bench, no 8-pack on this quant."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi4-iq3xxs-moecache:
+    model: glm-5.3-flash
+    weights_variant: unsloth-ud-iq3xxs
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi4/unsloth-ud-iq3xxs/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8126
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL — NEVER BOOTED. Copied from the VALIDATED unsloth-ud-iq4xs sibling 2026-08-29; the non-comment delta is 4 lines (service key, container_name, port, weights path + shard count 5->4). ⭐ The POINT is residency: expert byte-size is the master variable, and this quant's experts are 24% smaller — MEASURED from the GGUF tensor table per-expert-matrix over expert_count=288: iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 vs IQ4_XS's 3,867. ⭐ MEASURED on first boot 2026-08-29 (dual, slots SUMMED per device): CUDA0 1,975 + CUDA1 1,506 = 3,481 slots vs IQ4_XS's 2,143 = +62.4%, in a SMALLER pool (9,714 vs 10,874 MiB) — the whole gain is expert byte-size, and it beat the ~31% predicted from the 24% average shrink because the realised pools are more iq2_s-dominated than the model-wide average. Coherent on a one-word probe. ⚠️ CARDS IMBALANCED: 22,604 / 23,850 MiB leaves ~726 MiB CUDA1 headroom. ⚠️ host_ram_gb 110 is nominal against the compose's 114 worst case (113 GiB of weights); the IQ4_XS serving-RSS measurement does NOT transfer. ⚠️ QUALITY AT IQ3 IS UNTESTED — no verify-full, no bench, no 8-pack on this quant."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/glm53-flash-multi8-iq3xxs-moecache:
+    model: glm-5.3-flash
+    weights_variant: unsloth-ud-iq3xxs
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.5
+    drafter: anbeeld-glm53-dflash2
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 110
+    chat_template: native
+    tp: 8
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/glm-5.3-flash/llamacpp-club3090/compose/multi8/unsloth-ud-iq3xxs/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8127
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "🧪 EXPERIMENTAL — NEVER BOOTED. Copied from the VALIDATED unsloth-ud-iq4xs sibling 2026-08-29; the non-comment delta is 4 lines (service key, container_name, port, weights path + shard count 5->4). ⭐ The POINT is residency: expert byte-size is the master variable, and this quant's experts are 24% smaller — MEASURED from the GGUF tensor table per-expert-matrix over expert_count=288: iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 vs IQ4_XS's 3,867. ⭐ MEASURED on first boot 2026-08-29 (dual, slots SUMMED per device): CUDA0 1,975 + CUDA1 1,506 = 3,481 slots vs IQ4_XS's 2,143 = +62.4%, in a SMALLER pool (9,714 vs 10,874 MiB) — the whole gain is expert byte-size, and it beat the ~31% predicted from the 24% average shrink because the realised pools are more iq2_s-dominated than the model-wide average. Coherent on a one-word probe. ⚠️ CARDS IMBALANCED: 22,604 / 23,850 MiB leaves ~726 MiB CUDA1 headroom. ⚠️ host_ram_gb 110 is nominal against the compose's 114 worst case (113 GiB of weights); the IQ4_XS serving-RSS measurement does NOT transfer. ⚠️ QUALITY AT IQ3 IS UNTESTED — no verify-full, no bench, no 8-pack on this quant."
+    weights_companions:
+      - dflash2-q4km
+      - mmproj-f16
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
   llamacpp-club3090/qwen38-flash-next-dual-q4kxl-moecache:
     model: qwen3.8-flash-next
     weights_variant: unsloth-ud-q4kxl
