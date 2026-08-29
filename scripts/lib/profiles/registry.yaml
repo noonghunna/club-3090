@@ -1791,7 +1791,7 @@ entries:
     model: inkling-small
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
-    engine: llamacpp-club3090-v1.1
+    engine: llamacpp-club3090-v1.5
     drafter: null
     spec_method: null
     kv_format: fp16
@@ -1822,7 +1822,7 @@ entries:
     model: inkling-small
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
-    engine: llamacpp-club3090-v1.1
+    engine: llamacpp-club3090-v1.5
     drafter: null
     spec_method: null
     kv_format: fp16
@@ -1853,7 +1853,7 @@ entries:
     model: inkling-small
     weights_variant: unsloth-ud-iq4xs
     workload: long-ctx-single
-    engine: llamacpp-club3090-v1.1
+    engine: llamacpp-club3090-v1.5
     drafter: null
     spec_method: null
     kv_format: fp16

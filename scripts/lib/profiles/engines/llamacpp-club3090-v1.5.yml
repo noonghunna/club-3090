@@ -44,13 +44,19 @@ supported_model_families:
                           # moe-cache pools on both cards. Its BENCHMARKS rows
                           # were measured on the OLD engine and are annotated as
                           # needing a re-baseline.
-  # ⚠️ inkling-moe is STILL ABSENT, and NOT for want of engine support (#25731 is
-  # vendored in this build). Its composes define NO `entrypoint:`, so they inherit
-  # the image default — which on v1.5 is `/app/tools.sh`, a dispatcher that rejects
-  # the `-m …` argv they pass (`Unknown command: -m`, crash-loop). MEASURED
-  # 2026-08-29. DeepSeek survived the same swap only because its compose defines
-  # its own entrypoint and never touches the image default. inkling can be added
-  # once its composes carry an explicit entrypoint AND are re-validated here.
+  - inkling-moe          # Inkling-Small (bailingmoe2). MIGRATED here 2026-08-29
+                          # after verify-full 10/10 on this binary. Needed TWO
+                          # fixes beyond the pin, both found by testing:
+                          #  1. its composes defined NO `entrypoint:`, so they
+                          #     inherited the image default — /app/tools.sh on
+                          #     v1.5, a dispatcher that rejects `-m` (crash-loop).
+                          #     They now carry an explicit entrypoint, as DeepSeek
+                          #     already did, which is why DeepSeek swapped clean.
+                          #  2. preflight sent the top-level `reasoning_effort`
+                          #     ALONGSIDE the template kwarg; this model reads the
+                          #     kwarg and ignores `enable_thinking`, so the
+                          #     top-level one won and thinking never turned off.
+                          #     preflight now probes the payload shape.
 
 features:
   moe_expert_cache: true  # --moe-cache: hot CPU-resident experts held in spare VRAM

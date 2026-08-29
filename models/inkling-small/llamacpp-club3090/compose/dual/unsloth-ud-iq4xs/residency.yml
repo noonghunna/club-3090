@@ -224,7 +224,13 @@ services:
     # Same image as the moecache sibling — the arch needs vendored #25731 either
     # way, so there is no mainline option for this model. ⛔ Both collapse back
     # into the v1 engine when #25731 merges — see engines/llamacpp-club3090-v1.1.yml.
-    image: ${LLAMACPP_CLUB3090_V11_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:55f434244cc28d4af99f9fbefdd338b9409dc567d532e7b23bbc7d37f16680f4}
+    # MIGRATED v1.1 -> v1.5 2026-08-29 (revision 7104d5f4e, base b10675).
+    # Validated on THIS binary first: verify-full 10/10, moe-cache pools on
+    # both cards. Needed TWO changes beyond the pin — an explicit entrypoint
+    # (v1.5's image default is /app/tools.sh, which rejects `-m`) and the
+    # preflight off-payload fix (top-level reasoning_effort was defeating the
+    # template kwarg). Ledger: /opt/ai/moecache-releases.md.
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-inkling-small-iq4xs-residency}
     restart: unless-stopped
     ports:
@@ -284,7 +290,44 @@ services:
     # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a
     # folded string. The list form skips shell parsing, so the regex — and any
     # injected OT_G* value — survives byte-for-byte.
+    # ── Explicit entrypoint (added 2026-08-29) ──────────────────────────────
+    # WHY: without this the compose inherits the IMAGE's default entrypoint, which
+    # silently couples it to one engine build. v1.1's default runs the server
+    # directly; v1.5's is `/app/tools.sh`, a DISPATCHER that rejects the `-m …`
+    # argv below — MEASURED 2026-08-29: `Unknown command: -m`, container crash-loop.
+    # DeepSeek survived the same engine swap untouched precisely because its
+    # compose defines its own entrypoint. Pinning it here makes this file portable
+    # across images instead of dependent on one image's default.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        exec /app/llama-server "$$@"
+      - --
     command:
+      # ── Sampler + reasoning effort (vendor: unsloth.ai/docs/models/inkling) ──
+      # Sampling: the card gives ONE row for all modes (no thinking/instruct
+      # split, unlike qwen3.8/glm-5.3) — temp 1.0, top_p 1.0 (disabled), min_p 0.0.
+      # ⚠️ These were previously UNSET, so llama.cpp's own defaults applied
+      # (top_k 40 / min_p 0.05) — NOT the vendor row.
+      - '--temp'
+      - '${TEMP:-1.0}'
+      - '--top-p'
+      - '${TOP_P:-1.0}'
+      - '--min-p'
+      - '${MIN_P:-0.0}'
+      # Reasoning effort. ⚠️⚠️ THIS MODEL READS `reasoning_effort` FROM THE CHAT
+      # TEMPLATE, NOT `enable_thinking` — it ignores the latter SILENTLY, and the
+      # top-level OpenAI `reasoning_effort` field does NOT reach it either
+      # (MEASURED 2026-08-29: `reasoning_effort: none` still produced 204 chars of
+      # reasoning). The template kwarg below is the vendor's documented control.
+      # Levels: none(0) low(0.2) medium(0.7) high(0.9) xhigh(0.99) max(0.99).
+      # SHIPPED `low`: reasoning stays ON (the vendor default behaviour — this
+      # model has no instruct mode) but at 0.2 instead of the vendor's 0.9, because
+      # 0.9 spends a large share of a short reply's budget on thinking. Agents dial
+      # up per request. Set REASONING_EFFORT to override.
+      - '--chat-template-kwargs'
+      - '{"reasoning_effort":"${REASONING_EFFORT:-low}"}'
       - '-m'
       - '/models/inkling-small-gguf/UD-IQ4_XS/Inkling-Small-UD-IQ4_XS-00001-of-00004.gguf'
       - '--host'
