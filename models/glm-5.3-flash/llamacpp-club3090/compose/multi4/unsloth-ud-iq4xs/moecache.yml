@@ -68,8 +68,9 @@
 #     6. TENSOR_SPLIT=<list>  Default even. Set explicitly for heterogeneous cards.
 #     7. DRAFT_DEVICE=<dev>   Default CUDA1. On 4 cards try other indices, or
 #                             `none` for host. Placement was worth 21 points on 2.
-#     8. MMPROJ_DEVICE=<dev>  Default CUDA0, or `none` to put the vision projector in
-#                             host RAM (frees ~1 GB VRAM; measured +82 slots on 2).
+#     8. MMPROJ_DEVICE=<dev>  Default `none` (host RAM). ⛔ Only move it onto a
+#                             card that carries neither pool nor KV — it loads
+#                             AFTER the pool is sized, so nothing budgets for it.
 #     9. SPEC_N=<n>           Default 3. ⭐ Mean accepted length measured 2.60 against
 #                             n_max=3 — the drafter is landing nearly everything it
 #                             proposes, so a DEEPER draft may pay on faster cards.
@@ -413,9 +414,7 @@ services:
       - '-devd'
       - '${DRAFT_DEVICE:-CUDA1}'
       # ── Vision (mmproj) ─────────────────────────────────────────────────
-      # ✅ ENABLED 2026-08-29. GLM-5.3-Flash IS multimodal; an earlier revision of
-      #    this header said "Vision: no", which recorded what we had DOWNLOADED,
-      #    not what the model supports.
+      # ✅ GLM-5.3-Flash IS multimodal.
       #    mmproj: unsloth/GLM-5.3-Flash-GGUF `mmproj-F16.gguf`, 1,128,047,200 B,
       #    hash-verified. clip.projector_type = `glm5next`.
       #    Engine support confirmed in v1.5 source BEFORE wiring: clip.cpp has the
@@ -444,13 +443,12 @@ services:
       #    ⚠️ Freeing this memory does NOT enlarge the pool budget: `granted` is
       #    computed as free−reserve BEFORE the projector loads (both arms granted
       #    4,850/6,024 MiB). The +82 slots arrived as a new q6_K pool — 538 MiB at
-      #    6,720 KiB/expert. An earlier "+260 slots (~50%)" projection was WRONG by
-      #    ~3x because it used the ~4.3 MiB AVERAGE expert size on a MIXED-type quant.
+      #    6,720 KiB/expert. ⚠️ Never project slot counts from an AVERAGE expert
+      #    size on a MIXED-type quant — it over-predicts ~3x.
       #    MMPROJ_DEVICE=CUDA0 / CUDA1 puts it back on that GPU.
-      # ⚠️ Uses -mmdev (VALUE-taking), NOT the ${MMPROJ_DEVICE:+--no-mmproj-offload}
-      #    conditional an earlier revision had: that renders an EMPTY ARG ("") when
-      #    unset, handing llama-server a stray argv element. Same class as the
-      #    `- VAR=${X:-}` empty-passthrough trap. A value-taking flag cannot do it.
+      # ⚠️ Uses -mmdev (VALUE-taking), NOT a ${VAR:+...} conditional — the latter
+      #    renders an EMPTY ARG ("") when unset, handing llama-server a stray argv
+      #    element. Same class as the `- VAR=${X:-}` empty-passthrough trap.
       #    MMPROJ_DEVICE=none -> host RAM · CUDA0/CUDA1 -> that GPU.
       #    Default CUDA0: explicit rather than the engine's "auto", and GPU0 is the
       #    natural home since the DFlash2 drafter already sits on CUDA1.
@@ -480,8 +478,8 @@ services:
       #    thinking (an error will occur if thinking.type is set to disabled)".
       # ✅ But reasoning_effort IS the working control. Valid values for this
       #    family: max (vendor default) | high | low  (low is 5.3/5.3-FLASH only).
-      #    ⚠️ `none` is NOT a valid value — it is silently ignored (an earlier
-      #    4-arm probe using `none` wrongly concluded the knob was inert).
+      #    ⚠️ `none` is NOT a valid value — it is SILENTLY IGNORED, so a probe
+      #    using it will wrongly conclude the knob is inert.
       #    MEASURED 2026-08-29, "explain why the sky is blue", n=3, temp 1.0/top_p .95:
       #      baseline (no kwarg) : reasoning 1167 ch / content 531 ch
       #      low                 : reasoning    0 ch / content 442 ch  <- effectively OFF
@@ -515,9 +513,8 @@ services:
       # ✅ What DOES work is not paying for it twice. This GGUF's template sets
       #    `clear_thinking = false` when undefined = PRESERVED thinking, so
       #    EVERY prior turn's <think> block is replayed into the prompt.
-      #    ⚠️ CORRECTION 2026-08-29: an earlier revision called this "the inverse
-      #    of the vendor default" and treated it as a bug. WRONG — that came from
-      #    the generic Thinking-Mode page. The MODEL-SPECIFIC z.ai guide for
+      #    ⚠️ Do NOT read this off the generic Thinking-Mode page — the
+      #    MODEL-SPECIFIC z.ai guide for
       #    GLM-5.3-Flash recommends `clear_thinking: false` explicitly, so the
       #    template default is CORRECT and matches the vendor.
       #    MEASURED 2026-08-29, one prior turn carrying ~2,000 ch of reasoning:
