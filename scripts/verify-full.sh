@@ -208,7 +208,7 @@ echo ""
 # 1. Server reachable
 # --------------------------------------------------------------------
 check_server() {
-  echo "[1/9] Server reachable on /v1/models ..."
+  echo "[1/10] Server reachable on /v1/models ..."
   if curl -sf -m 5 "${URL}/v1/models" >/dev/null 2>&1; then
     pass "server is serving"
   else
@@ -222,7 +222,7 @@ run_check "server" check_server
 # 2. Genesis patches applied
 # --------------------------------------------------------------------
 check_patches() {
-  echo "[2/9] Genesis patches applied ..."
+  echo "[2/10] Genesis patches applied ..."
   # Genesis is a vLLM-only patcher. Skip cleanly on other engines instead of
   # leaving the user wondering whether "no Genesis marker" means a real
   # problem or a category error.
@@ -271,11 +271,11 @@ run_check "patches" check_patches
 # Cold-start warmup (not a scored check)
 # --------------------------------------------------------------------
 # The first real inference after a multi-minute boot pays cudagraph/JIT
-# compile for that shape. Without this, [3/9] (a 30s-capped request) is the
+# compile for that shape. Without this, [3/10] (a 30s-capped request) is the
 # one that eats the cold start and false-fails while every later check passes
 # on the now-warm engine. Fire one discard-result request with a generous cap
 # so all *scored* checks reflect warm-engine behavior. Failure here is
-# non-fatal (a real outage still surfaces on [3/9]).
+# non-fatal (a real outage still surfaces on [3/10]).
 echo "[warmup] priming engine (cold cudagraph/JIT, up to 180s, not scored) ..."
 curl -sf -m 180 "${URL}/v1/chat/completions" \
   -H "Content-Type: application/json" \
@@ -285,13 +285,13 @@ curl -sf -m 180 "${URL}/v1/chat/completions" \
     \"max_tokens\": 1,
     \"temperature\": 0.0,
     ${THINK_OFF_STD}\"chat_template_kwargs\": ${THINK_OFF_KW}
-  }" >/dev/null 2>&1 && echo "[warmup] engine warm" || echo "[warmup] warmup request did not return in 180s — [3/9] will surface a real outage if present"
+  }" >/dev/null 2>&1 && echo "[warmup] engine warm" || echo "[warmup] warmup request did not return in 180s — [3/10] will surface a real outage if present"
 
 # --------------------------------------------------------------------
 # 3. Basic completion — Paris sanity
 # --------------------------------------------------------------------
 check_basic() {
-  echo "[3/9] Basic completion — capital of France ..."
+  echo "[3/10] Basic completion — capital of France ..."
   local resp
   resp="$(curl -sf -m ${TMO_BASIC} "${URL}/v1/chat/completions" \
     -H "Content-Type: application/json" \
@@ -317,7 +317,7 @@ run_check "basic" check_basic
 # 4. Tool calling
 # --------------------------------------------------------------------
 check_tools() {
-  echo "[4/9] Tool calling ..."
+  echo "[4/10] Tool calling ..."
   if [[ "${SKIP_TOOLS:-0}" == "1" ]]; then
     skip "SKIP_TOOLS=1 (expected for default config — see README Known issue)"
     return 0
@@ -364,7 +364,7 @@ run_check "tools" check_tools
 # 5. Streaming — SSE chunks add up to coherent text
 # --------------------------------------------------------------------
 check_streaming() {
-  echo "[5/9] Streaming (SSE) ..."
+  echo "[5/10] Streaming (SSE) ..."
   # Collect streamed chunks for 15 seconds max
   local stream_out
   stream_out="$(curl -sf -m ${TMO_STREAM} --no-buffer "${URL}/v1/chat/completions" \
@@ -426,7 +426,7 @@ run_check "streaming" check_streaming
 #    tool_choice=required + MTP is a known-open drop — vLLM#39598, see UPSTREAM.md.
 # --------------------------------------------------------------------
 check_streaming_tools() {
-  echo "[6/9] Streaming tool-calls (thinking-on) ..."
+  echo "[6/10] Streaming tool-calls (thinking-on) ..."
   if [[ "${SKIP_TOOLS:-0}" == "1" ]]; then
     skip "SKIP_TOOLS=1 (expected for default config — see README Known issue)"
     return 0
@@ -482,7 +482,7 @@ run_check "streaming_tools" check_streaming_tools
 # 6. Thinking mode — reasoning + content both populated
 # --------------------------------------------------------------------
 check_thinking() {
-  echo "[7/9] Thinking / reasoning mode ..."
+  echo "[7/10] Thinking / reasoning mode ..."
   local resp
   # enable_thinking: true (Qwen3 default). Math problem that needs visible reasoning.
   resp="$(curl -sf -m 120 "${URL}/v1/chat/completions" \
@@ -533,7 +533,7 @@ run_check "thinking" check_thinking
 #    and for repetitive degeneracy (stale-draft / sampling collapse).
 # --------------------------------------------------------------------
 check_output_quality() {
-  echo "[8/9] Output quality / cascade detection (2K-token completion) ..."
+  echo "[8/10] Output quality / cascade detection (2K-token completion) ..."
   local resp
   # ⚠️ Scaled, not fixed: a 2K-token generation on a CPU-OFFLOAD slug runs at
   # ~10-23 t/s, so it needs 200-400s — DeepSeek-V4-Flash measured 217s and the
@@ -602,7 +602,7 @@ run_check "output_quality" check_output_quality
 #     measured floor when a shallower drafter is independently throughput-positive.
 # --------------------------------------------------------------------
 check_mtp_acceptance() {
-  echo "[9/9] MTP acceptance length threshold ..."
+  echo "[9/10] MTP acceptance length threshold ..."
   # Spec-decode metrics extraction is engine-specific:
   #   vLLM emits "SpecDecoding metrics: Mean acceptance length: N.NN" to stdout
   #   llama.cpp llama-server doesn't emit a "Mean acceptance length" line; spec
@@ -672,6 +672,107 @@ check_mtp_acceptance() {
   fi
 }
 run_check "mtp" check_mtp_acceptance
+
+# ── [10/10] Vision / multimodal ───────────────────────────────────────────────
+# Capability-PROBED, not inferred from compose/registry: a model configured for
+# vision that is not actually serving it is exactly the failure worth catching
+# (this check exists because a -mmdev default change could not be validated by
+# any existing gate). Scoring reuses the 4-fact ground truth already trusted on
+# this stack. Partial credit FAILS: 1-3/4 is the corruption signature.
+check_vision() {
+  echo "[10/10] Vision / multimodal (image ground truth) ..."
+  local asset="${VERIFY_VISION_ASSET:-${ROOT_DIR}/scripts/assets/vision-test.png}"
+  if [[ ! -f "$asset" ]]; then
+    skip "no vision asset at ${asset} (set VERIFY_VISION_ASSET=/path/to.png)"
+    return 0
+  fi
+
+  # Was vision INTENDED? Container-gated. Lets us turn a silent skip into a fail
+  # when an mmproj is loaded but the image path does not work.
+  local intended=0
+  if container_is_real && command -v docker >/dev/null 2>&1; then
+    if docker logs "${CONTAINER}" 2>&1 | grep -qiE "loaded multimodal model|clip_ctx:|mmproj"; then
+      intended=1
+    fi
+  fi
+
+  local b64
+  b64="$(python3 -c 'import base64,sys; sys.stdout.write(base64.b64encode(open(sys.argv[1],"rb").read()).decode())' "$asset" 2>/dev/null)"
+  if [[ -z "$b64" ]]; then skip "could not base64-encode ${asset}"; return 0; fi
+
+  local resp
+  resp="$(curl -s -m "${VERIFY_LONG_TIMEOUT:-180}" "${URL}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"model\": \"${MODEL}\",
+      \"max_tokens\": 400,
+      \"temperature\": 0.0,
+      \"messages\": [{\"role\": \"user\", \"content\": [
+        {\"type\": \"text\", \"text\": \"List every shape in this image with its colour, and read any number shown. Be literal and brief.\"},
+        {\"type\": \"image_url\", \"image_url\": {\"url\": \"data:image/png;base64,${b64}\"}}]}]
+    }" 2>/dev/null)"
+
+  local verdict
+  verdict="$(printf '%s' "$resp" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("ERR|unparseable response"); raise SystemExit
+if isinstance(d, dict) and d.get("error"):
+    msg = json.dumps(d["error"])[:200]
+    print("NOVISION|" + msg); raise SystemExit
+try:
+    c = (d.get("choices", [{}])[0].get("message", {}) or {}).get("content") or ""
+except Exception:
+    c = ""
+if not c.strip():
+    print("ERR|empty content"); raise SystemExit
+t = c.lower()
+facts = {
+    "red circle":     ("red" in t and ("circle" in t or "ellipse" in t)),
+    "blue square":    ("blue" in t and ("square" in t or "rectangle" in t)),
+    "green triangle": ("green" in t and "triangle" in t),
+    "47":             ("47" in t),
+}
+missed = [k for k, v in facts.items() if not v]
+print("SCORE|%d|%s" % (sum(facts.values()), ",".join(missed) if missed else "-"))
+' 2>/dev/null)"
+
+  local kind="${verdict%%|*}"
+  local rest="${verdict#*|}"
+  case "$kind" in
+    NOVISION)
+      if [[ "$intended" == "1" ]]; then
+        fail "server rejected an image request but an mmproj IS loaded: ${rest}" \
+             "Vision is configured but not serving. Check -mmdev / --mmproj and the clip_ctx line."
+        return 1
+      fi
+      skip "endpoint is not multimodal (${rest})"
+      return 0 ;;
+    SCORE)
+      local score="${rest%%|*}" missed="${rest#*|}"
+      if [[ "$score" == "4" ]]; then
+        pass "vision 4/4 on ground truth"
+        return 0
+      fi
+      if [[ "$score" == "0" && "$intended" == "0" ]]; then
+        skip "0/4 and no mmproj detected — endpoint likely text-only"
+        return 0
+      fi
+      fail "vision ${score}/4 — missed: ${missed}" \
+           "Partial vision indicates a broken projector or wrong mmproj for this model."
+      return 1 ;;
+    *)
+      if [[ "$intended" == "1" ]]; then
+        fail "vision request failed (${rest}) while an mmproj is loaded" "Check server logs."
+        return 1
+      fi
+      skip "vision probe inconclusive (${rest})"
+      return 0 ;;
+  esac
+}
+run_check "vision" check_vision
 
 echo ""
 if [[ "$FAILED" == "0" ]]; then
