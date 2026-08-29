@@ -2124,7 +2124,7 @@ entries:
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
     workload: long-ctx-single
-    engine: llamacpp-club3090
+    engine: llamacpp-club3090-v1.5
     drafter: dspark
     spec_method: null
     kv_format: fp16
@@ -2156,7 +2156,7 @@ entries:
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
     workload: long-ctx-single
-    engine: llamacpp-club3090
+    engine: llamacpp-club3090-v1.5
     drafter: dspark
     spec_method: null
     kv_format: fp16

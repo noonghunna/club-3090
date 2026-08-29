@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     DeepSeek-V4-Flash-0731 (284B MoE, unsloth UD-Q8_K_XL — MXFP4
 #              experts + BF16 attention, 151 GB across 5 shards)
-#   Engine:    llamacpp-club3090 (fork: leloch's MoE expert cache v2 + our L1/L3/E
+#   Engine:    llamacpp-club3090-v1.5 (fork: leloch's MoE expert cache v2 + our L1/L3/E
 #              ports, bypass warn-split, and multi-row top-k batching)
 #   Topology:  4× CUDA (layer-split -ts 1,1,1,1)
 #   Drafter:   DSpark n=5 external, PINNED TO CPU (-devd none)
@@ -87,8 +87,13 @@
 services:
   llama-cpp-deepseek-flash-q8-moecache-multi4:
     # Digest-pinned, not tag-pinned (#940 precedent). Engine profile is authoritative.
-    # Built 2026-08-10 from stack/club3090-moe-cache @ e0a208949, CUDA arch 86;89;120.
-    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:17824d4483dbd60c297613bddf130f25e739d3edc7e633e4d973edc4e2165649}
+    # MIGRATED TO v1.5 2026-08-29: image.revision=7104d5f4e,
+    # version=moecachev1.5-rc0, built from stack/club3090-moecachev1.5 on
+    # mainline base b10675. Previously sha256:17824d44 (revision e0a208949).
+    # Validated on this binary BEFORE the switch: shipped compose booted with
+    # the revision asserted, verify-full 10/10, dspark acceptance 0.41-0.73,
+    # moe-cache pools on both cards. Ledger: /opt/ai/moecache-releases.md.
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-q8-moecache-multi4}
     restart: unless-stopped
     ports:
@@ -119,7 +124,7 @@ services:
       # SHIPPED image itself measured 20.05 then 18.36 narrative TPS across runs
       # with no code change, so run-to-run variance swamps the effect. Arithmetic
       # agrees: ~175 bypassed nodes per bench x ~4 atomics is ~1e-4 % of wall time.
-      # The shipped v1.2 engine does NOT gate these counters at all, so on it this
+      # The old v1.2-era engine did NOT gate these counters; UNVERIFIED on v1.5, so this
       # knob controls EMISSION only.
       # Turn it on for a bench/report run: MOE_STATS=200 LLAMA_ARG_LOG_VERBOSITY=4.
       # Verbosity stays BARE (caller-owned): 4 is loud for a serving deployment.

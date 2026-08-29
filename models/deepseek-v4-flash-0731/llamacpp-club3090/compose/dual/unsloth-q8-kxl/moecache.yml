@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     DeepSeek-V4-Flash-0731 (284B MoE, unsloth UD-Q8_K_XL — MXFP4
 #              experts + BF16 attention, 151 GB across 5 shards)
-#   Engine:    llamacpp-club3090 (fork: leloch's MoE expert cache v2 + our L1/L3/E
+#   Engine:    llamacpp-club3090-v1.5 (fork: leloch's MoE expert cache v2 + our L1/L3/E
 #              ports, bypass warn-split, and multi-row top-k batching)
 #   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
 #   Drafter:   DSpark n=5 external, PINNED TO CPU (-devd none) — see Caveats
@@ -127,8 +127,13 @@ services:
   llama-cpp-deepseek-flash-q8-moecache:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile is authoritative for this pin; keep them in step.
-    # Built 2026-08-10 from stack/club3090-moe-cache @ e0a208949, CUDA arch 86;89;120.
-    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:17824d4483dbd60c297613bddf130f25e739d3edc7e633e4d973edc4e2165649}
+    # MIGRATED TO v1.5 2026-08-29: image.revision=7104d5f4e,
+    # version=moecachev1.5-rc0, built from stack/club3090-moecachev1.5 on
+    # mainline base b10675. Previously sha256:17824d44 (revision e0a208949).
+    # Validated on this binary BEFORE the switch: shipped compose booted with
+    # the revision asserted, verify-full 10/10, dspark acceptance 0.41-0.73,
+    # moe-cache pools on both cards. Ledger: /opt/ai/moecache-releases.md.
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-q8-moecache}
     restart: unless-stopped
     # Reap orphaned children. Without this, a wedged llama-server becomes a
@@ -170,32 +175,28 @@ services:
       # numbers MUST set it. bench.sh now says so when the counters do not advance.
       # ⚠️ DEFAULT IS 0 (OFF) — telemetry is OPT-IN so instrumentation does not run
       # when nothing reads it. Set MOE_STATS=200 (plus LLAMA_ARG_LOG_VERBOSITY=4)
-      # for a bench/report run. NOTE: the shipped v1.2 engine does not gate its
-      # bypass counters, so on it this knob controls EMISSION only.
+      # for a bench/report run. ⚠️ The counter-gating behaviour was characterised
+      # on the old v1.2-era image; it has NOT been re-checked on v1.5.
       # ✅ The `=${VAR:-N}` form is SAFE here (unlike the bare-passthrough vars
       # below): `moe_cache_env_i64` rejects unset AND empty (`!text || !text[0]`,
       # moe-cache.cu:509) before parsing, so it cannot hit the atoi("")==0 trap.
       - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
       # Prefill expert-prefetch and log verbosity.
       #
-      # ⛔⛔ INERT ON THE CURRENTLY PINNED IMAGE — corrected 2026-08-27.
-      # This block used to read "v1.2 default ON, worth +14.5% prefill". That
-      # describes the `stack/club3090-moecachev1.2` BRANCH, which was never built
-      # or published. The pinned digest above (`sha256:17824d44…`) carries
-      # `org.opencontainers.image.revision=e0a208949` — a commit BEFORE the
-      # prefetch work was composed — so the ring is not in the binary and this
-      # knob currently does NOTHING. Verified two ways: the label, and boot logs
-      # showing `fusion=` but no `full-fusion=` and zero prefetch-ring lines.
-      # Six deltas are absent from production for the same reason (prefetch,
-      # events at n_copies==1, prefetch default-ON, buun's three-tensor FFN
-      # fusion, the max-batch bypass counter, the vendored Inkling PR).
-      # Tracked in the maintainer's local artifact ledger and v1.4 rebase plan.
+      # ⚠️ STATUS ON THIS PIN IS UNVERIFIED — rewritten 2026-08-29 with the v1.5
+      # migration. The previous text said the knob was INERT because the pinned
+      # digest (sha256:17824d44 / revision e0a208949) predated the prefetch work.
+      # That digest is no longer pinned here: this compose now runs v1.5-rc0
+      # (7104d5f4e, base b10675), and whether the ring exists in THAT binary has
+      # not been checked. A ring WAS observed on rc2 — but rc2 is the ROLLBACK
+      # digest (bf2776f7), not rc0, so it does not settle this.
       #
-      # ✅ KEEP THE DECLARATIONS ANYWAY. They cost nothing, and the moment a
-      # digest built from a branch that carries the prefetch work is pinned
-      # (planned for v1.4.0), they become live with the correct default. The
-      # numbers below are real — they were measured on such a build, not on the
-      # image pinned here: +14.5% on the v1.2 base / +15.0% isolated.
+      # ⛔ The "+14.5% / +15.0% prefill" justification is WITHDRAWN regardless: it
+      # was measured on a build carrying the n_copies==1 scheduler race (fixed in
+      # ce8743a05) and is unquotable until re-measured
+      # (moecache-engine-playbook.md section 6). The COST is not withdrawn — a
+      # 2,176 MiB ring on the FIRST CUDA device only, allocated lazily on first
+      # prefill AFTER the pool is sized, so nothing budgets for it.
       #
       # ⚠️ BARE PASS-THROUGH FORM ON PURPOSE — do NOT rewrite these as
       # `- GGML_EXPERT_PREFETCH=${PREFETCH:-}`. The engine tests

@@ -35,25 +35,22 @@ supported_model_families:
                           # the family tag was deliberately withheld until a
                           # compose existed for the resolver to point at.
                           # ⚠️ must match models/qwen3.8-flash-next.yml `family:`.
-  # ⚠️ deepseek4-moe and inkling-moe are ABSENT so the resolver cannot quietly
-  # migrate their slugs onto this build. NOTE the original wording said they were
-  # 'never validated on' it — that is no longer accurate for DeepSeek:
-  #   • moecache-releases.md records DeepSeek-V4-Flash @204800 validated on THIS
-  #     binary (dspark acceptance 0.484, tensor placement byte-identical);
-  #   • re-confirmed 2026-08-29 on the rig: booted the shipped dual q8 moecache
-  #     compose with LLAMACPP_CLUB3090_IMAGE pinned here (revision asserted
-  #     7104d5f4e), verify-full 10/10, dspark acceptance 0.41-0.73, pools on
-  #     both cards.
-  # They stay absent because MIGRATING is a separate change under the engine-pin
-  # checklist, not because the binary cannot run them: their BENCHMARKS rows were
-  # measured on sha256:17824d44 and would need re-baselining, and the launchers
-  # INJECT this profile's image over each compose's own `image:` line, so migrated
-  # composes would still claim the old digest in their headers until updated.
-  #
-  # ⚠️ qwen4exp (Qwen3.8-Flash-Next) IS validated on this binary — 32K correctness,
-  # 205K bench, vision 8/8 — and now HAS composes + registry entries, which is why
-  # it is listed above. Its arch support is UPSTREAM in the b10675 base (#27742
-  # merged as 6c84c7d5); the vendor was DROPPED, so do not call it a vendored delta.
+  - deepseek4-moe         # DeepSeek-V4-Flash-0731 (284B MoE, CPU expert offload)
+                          # MIGRATED here 2026-08-29 from `llamacpp-club3090`
+                          # (sha256:17824d44 / e0a208949). Added only AFTER the
+                          # shipped dual q8 moecache compose was booted against
+                          # THIS digest with image.revision asserted 7104d5f4e:
+                          # verify-full 10/10, dspark acceptance 0.41-0.73,
+                          # moe-cache pools on both cards. Its BENCHMARKS rows
+                          # were measured on the OLD engine and are annotated as
+                          # needing a re-baseline.
+  # ⚠️ inkling-moe is STILL ABSENT, and NOT for want of engine support (#25731 is
+  # vendored in this build). Its composes define NO `entrypoint:`, so they inherit
+  # the image default — which on v1.5 is `/app/tools.sh`, a dispatcher that rejects
+  # the `-m …` argv they pass (`Unknown command: -m`, crash-loop). MEASURED
+  # 2026-08-29. DeepSeek survived the same swap only because its compose defines
+  # its own entrypoint and never touches the image default. inkling can be added
+  # once its composes carry an explicit entrypoint AND are re-validated here.
 
 features:
   moe_expert_cache: true  # --moe-cache: hot CPU-resident experts held in spare VRAM
@@ -68,6 +65,12 @@ supported_kv_formats:
                           # ⚠️ q8_0 is the SERVING-GRADE FLOOR on this stack — do not
                           # extend this list below it for a serving slug.
 supported_drafters:
+  - dspark                # DeepSeek-V4-Flash external DSpark drafter. Declared with the
+                          # v1.5 migration 2026-08-29, backed by a measurement on THIS
+                          # binary: acceptance 0.41-0.73 (mean accepted len 3.07-4.67)
+                          # during a verify-full run. Engine support must be DECLARED —
+                          # compat C7 gates on it — never implied by a compose that
+                          # happens to pass the flag.
   - ngram-mod             # runtime spec-type, needs NO drafter GGUF (qwen3.8-flash-next
                           # ships it ON by default at n_max=8). Listed here because this
                           # field holds spec_method VALUES, not drafter ids.
