@@ -1919,6 +1919,10 @@ entries:
     workload: long-ctx-single
     engine: llamacpp-club3090-v1.5
     drafter: null
+    # ngram-mod needs NO drafter file — a runtime spec-type, which is why
+    # `drafter` stays null. Surfaced separately so the catalog does not
+    # print '—' while speculation is actually running.
+    spec_method: ngram-mod
     kv_format: q8_0
     act_format: 16bit
     act8_capable: false
@@ -1965,6 +1969,10 @@ entries:
     workload: long-ctx-single
     engine: llamacpp-club3090-v1.5
     drafter: null
+    # ngram-mod needs NO drafter file — a runtime spec-type, which is why
+    # `drafter` stays null. Surfaced separately so the catalog does not
+    # print '—' while speculation is actually running.
+    spec_method: ngram-mod
     kv_format: q8_0
     act_format: 16bit
     act8_capable: false
@@ -2011,6 +2019,10 @@ entries:
     workload: long-ctx-single
     engine: llamacpp-club3090-v1.5
     drafter: null
+    # ngram-mod needs NO drafter file — a runtime spec-type, which is why
+    # `drafter` stays null. Surfaced separately so the catalog does not
+    # print '—' while speculation is actually running.
+    spec_method: ngram-mod
     kv_format: q8_0
     act_format: 16bit
     act8_capable: false

@@ -12,6 +12,11 @@
 #   Engine:    llamacpp-club3090 v1.5-rc0 (leloch's MoE expert cache + our L1/L3/E
 #              ports + vendored ggml-org/llama.cpp#27742 for `qwen4exp`)
 #   Topology:  4× CUDA (layer-split -ts 1,1,1,1, no NVLink)
+#   Spec-dec:  ✅ ngram-mod ON by default (n_max=8 n_min=1 n_match=24).
+#              NO drafter file needed — a runtime spec-type. MEASURED at the
+#              shipped -np 1: +64% repeated context, −1.3% (noise) cold,
+#              ~34 MiB VRAM. SPEC_N=<n> depth; SPEC_N=0 / SPEC=off disables.
+#              ⛔ Stock depth (n_max=64) measured −7.6% — never use it.
 #   Drafter:   NONE. This GGUF carries no MTP head (`nextn_predict_layers` absent).
 #              An MTP conversion is pending upstream PR #27836; until it merges
 #              there is nothing to draft with, so this compose ships NO drafter
@@ -61,12 +66,14 @@
 #       WILL differ at 4 cards — re-derive before quoting anything.
 #     • ⭐ `-ot ...=CPU` DISABLES PIPELINE PARALLELISM (learnings/
 #       moe-cache-engine.md section 11); costs more the more cards you add.
+#     • ⚠️ ngram-mod's +64% was measured at -np 1 on 2 cards. Spec-dec on CPU
+#       offload is single-stream-sensitive — re-measure before raising -np.
 #     • Prefetch is pinned OFF (see the GGML_EXPERT_PREFETCH block).
 #   ── TUNING FOR YOUR RIG (4 CARDS) — every default came from 2×24 GB ──
 #     1. TENSOR_SPLIT (1,1,1,1) · 2. MOE_RESERVE_MB (1536, GLOBAL not per-device)
-#     3. THREADS (28 on the 32c ref host; nproc/2 if unset, a FLOOR)
-#     4. CTX (204800) · 5. UBATCH (4096) · 6. MMPROJ_DEVICE (none = host)
-#     7. KV_TYPE (q8_0) — q8 is the serving-grade floor, never go below.
+#     3. THREADS (28 on the 32c ref host) · 4. CTX (204800) · 5. UBATCH (4096)
+#     6. MMPROJ_DEVICE (none = host) · 7. KV_TYPE (q8_0, serving-grade floor)
+#     8. SPEC_N (8 = ngram-mod depth; 0 disables) — stock 64 measured −7.6%
 #   ⚠️ Measure ONE knob at a time against wall-clock, ≥3 runs per arm.
 #
 #   Sampling:  the card publishes TWO rows; this compose SHIPS THE INSTRUCT ROW.
@@ -166,6 +173,10 @@ services:
       # ⚠️ BARE FORM ON PURPOSE — `- VAR=${X:-}` would forward an EMPTY string and
       # defeat the `${VAR:-default}` fallbacks in the entrypoint above.
       - THINKING
+      - SPEC
+      - SPEC_N
+      - NGRAM_N_MIN
+      - NGRAM_N_MATCH
       - REASONING
       - REPEAT_PENALTY
       - TEMP
@@ -245,7 +256,40 @@ services:
           _temp="$${TEMP:-0.7}"; _topp="$${TOP_P:-0.80}"; _pres="$${PRESENCE_PENALTY:-1.5}"
           echo "[sampler] instruct row (default): temp=$$_temp top_p=$$_topp presence=$$_pres" >&2
         fi
+        # -- Speculative decoding: ngram-mod, ON by default ------------------
+        # Needs NO drafter file — a runtime spec-type, not a -md path. MEASURED
+        # on this model at the shipped -np 1: +64% on REPEATED context, −1.3%
+        # (noise) on first exposure, ~34 MiB VRAM. The gain is cache-residency
+        # dependent, so it pays on multi-turn work over one file and costs
+        # nothing measurable on cold traffic.
+        # ⛔ NEVER use the stock depth. ngram-mod's OWN default is n_max=64 /
+        #   n_min=48 (tuned for dense GPU-resident models); at 64 it measured
+        #   −7.6% here because a wide verify batch unions the expert set and
+        #   every non-resident expert becomes a CPU-side FFN.
+        # ⚠️ `--spec-draft-n-max` binds NONE of the ngram types — each reads its
+        #   own nested struct. A wrong flag is a SILENT no-op that still yields a
+        #   plausible number. Assert it in /proc/<pid>/cmdline before benching.
+        # Contract (same on every club-3090 compose): SPEC_N=<n> depth,
+        # SPEC_N=0 / SPEC=off REMOVES the flags rather than passing n=0.
+        _spec_n="$${SPEC_N:-8}"
+        case "$${SPEC:-}" in off|OFF|Off|false|no|0) _spec_n=0 ;; esac
+        case "$$_spec_n" in ""|*[!0-9]*)
+          echo "[spec] SPEC_N='$$_spec_n' is not a non-negative integer." >&2
+          echo "[spec] Fix: SPEC_N=<n> sets depth; SPEC_N=0 (or SPEC=off) disables." >&2
+          exit 64 ;;
+        esac
+        SPEC_ARGS=()
+        if [ "$$_spec_n" -gt 0 ]; then
+          SPEC_ARGS=(--spec-type ngram-mod
+                     --spec-ngram-mod-n-max "$$_spec_n"
+                     --spec-ngram-mod-n-min "$${NGRAM_N_MIN:-1}"
+                     --spec-ngram-mod-n-match "$${NGRAM_N_MATCH:-24}")
+          echo "[spec] ngram-mod ON (n_max=$$_spec_n n_min=$${NGRAM_N_MIN:-1} n_match=$${NGRAM_N_MATCH:-24})" >&2
+        else
+          echo "[spec] ngram-mod OFF (SPEC_N=0 / SPEC=off) - flags removed" >&2
+        fi
         exec /app/llama-server \
+          "$${SPEC_ARGS[@]}" \
           --reasoning "$$_reason" \
           --temp "$$_temp" --top-p "$$_topp" --top-k "$${TOP_K:-20}" \
           --min-p "$${MIN_P:-0.0}" --presence-penalty "$$_pres" \

@@ -54,6 +54,9 @@ supported_kv_formats:
                           # ⚠️ q8_0 is the SERVING-GRADE FLOOR on this stack — do not
                           # extend this list below it for a serving slug.
 supported_drafters:
+  - ngram-mod             # runtime spec-type, needs NO drafter GGUF (qwen3.8-flash-next
+                          # ships it ON by default at n_max=8). Listed here because this
+                          # field holds spec_method VALUES, not drafter ids.
   - dflash                  # DFlash2 external draft GGUF via `--spec-type draft-dflash`
                             # (drafters/anbeeld-glm53-dflash2.yml, SHIPPED default n=3 on CUDA1)
   # ⚠️ THIS FIELD HOLDS spec_method VALUES, NOT DRAFTER IDs, and it is a GATE:

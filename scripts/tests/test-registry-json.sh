@@ -72,7 +72,7 @@ VARIANT_KEYS = {
     "slug", "switch_engine", "launch_engine", "compose_dir", "file", "port",
     "model", "engine", "kvcalc_key", "container", "compose_path", "status",
     "ctx_label", "configured_ctx", "status_note", "source",
-    "weights_companions", "drafter", "vision", "baseline",
+    "weights_companions", "drafter", "spec_method", "vision", "baseline",
     # c3 catalog Weights/KV columns (#600): registry kv_format + the model
     # profile's weights format / explicit quant_label joins.
     "kv_format", "weights_format", "weights_quant_label",

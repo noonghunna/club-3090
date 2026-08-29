@@ -165,6 +165,10 @@ def _entry(
     # local-layer rows go through _entry(**kwargs) too, so an unknown sampler
     # kwarg fails loudly (LocalRegistryError), never silently.
     sampler_profiles=None,
+    # Speculation that needs NO drafter GGUF (the ngram-* runtime spec-types).
+    # Those slugs keep `drafter=None` by design, so consumers deriving a label
+    # from `drafter` alone would report 'no speculation' while it is running.
+    spec_method=None,
     category=None,
     weights_companions=None,
 ):
@@ -178,6 +182,7 @@ def _entry(
         "workload": workload,
         "engine": engine,
         "drafter": drafter,
+        "spec_method": spec_method,
         "kv_format": kv_format,
         "act_format": act_format,
         "act8_capable": act8_capable,

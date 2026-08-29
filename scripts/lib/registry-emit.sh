@@ -746,6 +746,11 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # the registry's per-slug spec-dec drafter id; vision is derived from
             # the vision-coding workload (there is no separate vision field).
             "drafter": (REG.get(d["slug"], {}) or {}).get("drafter"),
+            # spec_method: speculation that needs NO drafter GGUF (the ngram-*
+            # runtime spec-types). Those slugs keep `drafter: null` by design, so
+            # a drafter-derived label alone would print "none" while speculation
+            # is actually running.
+            "spec_method": (REG.get(d["slug"], {}) or {}).get("spec_method"),
             "vision": (
                 (REG.get(d["slug"], {}) or {}).get("workload") == "vision-coding"
             ),
