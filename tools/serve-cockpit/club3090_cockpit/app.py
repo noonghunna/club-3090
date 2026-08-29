@@ -262,11 +262,37 @@ def _host_ram_label(e: "CatalogEntry") -> str:
 
 
 def _offload_label(e: "CatalogEntry") -> str:
-    """Weight-offload backend for the catalog offload column — the registry
-    ``offload`` facet (emitted like ``act_format``): "uva" (vLLM demand-paged
-    expert offload) / "n-cpu-moe" (llama.cpp CPU-computed) / "prefetch"; "—" for
-    a fully-resident slug (the default) or when the contract didn't carry it."""
-    return (getattr(e.row, "offload", "") or "") or "—"
+    """Catalog offload column: how expert weights are PLACED, in one word.
+
+    Shows the axis that actually differs between CPU-offload slugs:
+
+      * ``static``   — the compose STATICALLY PINS expert bundles into VRAM:
+                       it declares the residency contract (CPU-Offload-Bundle-MiB
+                       + MoE-Layers + GPU-Reserve-MiB) and carries ``OT_G`` slots
+                       that the launcher fills in at boot. Registry ``offload``
+                       == "residency".
+      * ``dynamic``  — no static pinning; expert placement is left to the engine
+                       (the moe-cache moves them at runtime where enabled).
+
+    ⚠️ NOT derived from ``moe_cache``. That agrees for 13 of 14 slugs and is
+    WRONG on the one that matters: inkling-small-dual-iq4xs-residency pins
+    statically AND runs the cache, so a cache-derived label called the stack's
+    only hand-tuned residency config "dynamic".
+
+    ⚠️ This deliberately does NOT show the registry ``offload`` value. That
+    field records whether the compose is RESIDENCY-CAPABLE ("residency" =
+    declares CPU-Offload-Bundle-MiB, so the launcher injects OT_G pin rules;
+    "tensor-override" = plain -ot) — a real distinction, but every CPU-offload
+    compose on this stack passes ``-ot``, so surfacing the mechanism here
+    distinguished nothing while hiding the cache axis entirely.
+
+    Non-CPU-offload backends ("uva" / "prefetch") still render their own value.
+    "—" for a fully-resident slug or when the contract didn't carry it.
+    """
+    raw = (getattr(e.row, "offload", "") or "")
+    if raw in ("residency", "tensor-override"):
+        return "static" if raw == "residency" else "dynamic"
+    return raw or "—"
 
 
 def _rig_tps_cell(e: "CatalogEntry") -> str:

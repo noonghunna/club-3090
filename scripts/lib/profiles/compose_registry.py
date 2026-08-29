@@ -73,7 +73,16 @@ def _entry(
     # Weight-offload backend when the slug serves a model too large to fit VRAM
     # by paging expert/layer weights to host RAM. None = fully resident (the
     # default — every existing slug). "uva" = vLLM zero-copy demand-paged expert
-    # offload (GPU computes, weights stream over PCIe); "n-cpu-moe" = llama.cpp
+    # offload (GPU computes, weights stream over PCIe); "residency" = llama.cpp
+    # CPU expert offload on a RESIDENCY-CAPABLE compose (declares
+    # CPU-Offload-Bundle-MiB, so the launcher injects OT_G pin rules);
+    # "tensor-override" = plain -ot with no residency injection.
+    # ⚠️ BOTH pass -ot. The former value "n-cpu-moe" implied a --n-cpu-moe flag
+    # that NO compose on this stack has ever used, and that name caused a real
+    # misdiagnosis (the field read as drifted when it was correct). Renamed
+    # 2026-08-29. This field is the RESIDENCY axis; `moe_cache` is the DYNAMIC
+    # axis; they are orthogonal.
+    # llama.cpp
     # CPU-computed expert offload (weights stay in RAM, only activations cross
     # PCIe); "prefetch" = vLLM bulk layer prefetch. Surfaced as the c3 catalog
     # "offload" column. First used by the Laguna 118B-MoE offload slugs.

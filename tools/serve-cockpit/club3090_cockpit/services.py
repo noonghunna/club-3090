@@ -5456,6 +5456,10 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         comp = d.get("weights_companions") or []
         object.__setattr__(row, "weights_companions", [str(c) for c in comp])
         object.__setattr__(row, "drafter", str(d.get("drafter") or ""))
+        # Drafter-less speculation (the ngram-* runtime spec-types keep
+        # `drafter` null BY DESIGN) — without this the Spec Dec column shows
+        # "—" while speculation is running.
+        object.__setattr__(row, "spec_method", str(d.get("spec_method") or ""))
         object.__setattr__(row, "vision", bool(d.get("vision")))
         # KV-cache format from the registry (catalog KV column) — attached same
         # as the facets above; "" when the contract didn't carry it.
@@ -5466,6 +5470,10 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         # Weight-offload backend (catalog offload column) — same pattern;
         # "" when the contract didn't carry it (resident/older emit) → shows "—".
         object.__setattr__(row, "offload", str(d.get("offload") or ""))
+        # DYNAMIC expert-cache axis, orthogonal to `offload` (which is the
+        # residency-capability axis). The offload COLUMN renders static/dynamic
+        # from this; without it every CPU-offload slug reads "static".
+        object.__setattr__(row, "moe_cache", bool(d.get("moe_cache")))
         # Minimum host RAM for offload slugs (hard gate). Kept as int|None rather than
         # str so the column can render "—" for resident slugs without a magic string.
         object.__setattr__(row, "host_ram_gb", d.get("host_ram_gb"))
