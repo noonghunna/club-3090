@@ -354,7 +354,15 @@ PP_FALLBACK_TOKENS="${PP_FALLBACK_TOKENS:-10000}"
 PP_MAX_TOKENS="${PP_MAX_TOKENS:-16}"
 PREFILL_PROBE="${PREFILL_PROBE:-1}"
 PREFILL_DEPTHS="${PREFILL_DEPTHS:-10000,90000}"
-PREFILL_RUNS="${PREFILL_RUNS:-3}"
+# Measured runs per prefill depth. SCALAR (all depths) or CSV aligned with
+# PREFILL_DEPTHS. Default "3,1" — the depths differ ~13x in cost and the deep leg
+# dominates total bench wall-clock:
+#   10K  ~26 s/run,    measured CV 0.6%  -> 3 runs cost 78 s, buy a real CV
+#   90K  ~5.5 min/run, measured CV 2.3%  -> 3 runs cost ~16.5 min, most of the bench
+# A CSV shorter than the depth list reuses its LAST value; a malformed entry falls
+# back to 1 rather than aborting a long run.
+# ⚠️ n=1 gives no CV for that depth — state it when quoting a single-run number.
+PREFILL_RUNS="${PREFILL_RUNS:-3,1}"
 # The probe knobs reach the python heredoc via the environment (the argv tuple
 # is full); export them here.
 export PREFILL_PROBE PREFILL_DEPTHS PREFILL_RUNS
@@ -1291,12 +1299,24 @@ def run_prefill_probe():
     anchor calibration (agreement certifies the ladder's whole depth curve).
     A depth the served context can't hold is SKIPPED with a note."""
     depths = [int(x) for x in os.environ.get("PREFILL_DEPTHS", "10000,90000").split(",") if x.strip()]
-    n = max(1, int(os.environ.get("PREFILL_RUNS", "3")))
+    _parts = [x.strip() for x in os.environ.get("PREFILL_RUNS", "3,1").split(",") if x.strip()]
+
+    def _runs_for(idx):
+        """Runs for depth #idx. CSV shorter than depths reuses the last value;
+        a malformed entry degrades to 1 instead of killing a long run."""
+        if not _parts:
+            return 1
+        tok = _parts[idx] if idx < len(_parts) else _parts[-1]
+        try:
+            return max(1, int(tok))
+        except ValueError:
+            return 1
 
     def salt():
         return "".join(random.choices(string.ascii_lowercase, k=8))
 
-    for target in depths:
+    for _di, target in enumerate(depths):
+        n = _runs_for(_di)
         label = f"prefill-{target // 1000}k"
         print(
             f"\n========== {label.upper()} (target={target} prompt tokens, "
