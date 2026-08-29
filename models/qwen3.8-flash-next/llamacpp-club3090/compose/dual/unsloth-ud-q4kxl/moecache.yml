@@ -10,7 +10,8 @@
 #              indices 3,7,11…). `attention.compress_ratios` is a 48-entry array
 #              confirming it. Sizing KV off block_count over-predicts the pool 4x.
 #   Engine:    llamacpp-club3090 v1.5-rc0 (leloch's MoE expert cache + our L1/L3/E
-#              ports + vendored ggml-org/llama.cpp#27742 for `qwen4exp`)
+#              ports; `qwen4exp` is UPSTREAM in the b10675 base, not vendored
+#              (ggml-org/llama.cpp#27742 merged as 6c84c7d5 — vendor DROPPED))
 #   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
 #   Spec-dec:  ✅ ngram-mod ON by default (n_max=8 n_min=1 n_match=24).
 #              NO drafter file needed — a runtime spec-type. MEASURED at the
@@ -45,7 +46,8 @@
 #     • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
 #       (github.com/leloch/llama.cpp, RFC ggml-org#24528). This slug
 #       packages it; it does not originate it. The `qwen4exp` arch is
-#       @danielhanchen's PR #27742, vendored. We maintain neither.
+#       @danielhanchen's PR #27742, which MERGED upstream (6c84c7d5) and is in
+#       this image's b10675 base — no longer a vendored delta. We maintain neither.
 #     • UNMERGED ENGINE **and** UNMERGED ARCH. Stock llama.cpp cannot
 #       load this model — mainline has zero hits for `qwen4exp`. This
 #       slug pins a fork image; it cannot be reproduced with stock.
@@ -76,7 +78,14 @@ services:
   llama-cpp-qwen38-flash-next-q4kxl-moecache:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile is authoritative for this pin; keep them in step.
-    # Built 2026-08-10 from stack/club3090-moe-cache @ e0a208949, CUDA arch 86;89;120.
+    # This digest is v1.5-rc0: image.revision=7104d5f4e, version=moecachev1.5-rc0,
+    # built 2026-08-29 from stack/club3090-moecachev1.5 on mainline base b10675.
+    # ⚠️ CORRECTED 2026-08-29: this line previously claimed e0a208949 /
+    #    stack/club3090-moe-cache — that is the OLD sha256:17824d44 image (still
+    #    pinned by the DeepSeek slugs), NOT what this compose runs. Verify with
+    #    `docker image inspect <digest> --format '{{index .Config.Labels
+    #    "org.opencontainers.image.revision"}}'`. Authoritative digest ledger:
+    #    /opt/ai/moecache-releases.md.
     image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-qwen38-flash-next-q4kxl-moecache}
     restart: unless-stopped
@@ -131,9 +140,12 @@ services:
       #   2. The COST is not withdrawn: a 2,176 MiB ring on the FIRST CUDA device
       #      only, allocated LAZILY on first prefill — AFTER the pool is sized from
       #      free-minus-reserve, so nothing budgets for it.
-      # ⚠️ INERT on the currently pinned digest regardless (revision e0a208949
-      #    predates the prefetch work). Declarations kept: they cost nothing and
-      #    go live when a digest carrying it is pinned.
+      # ⚠️ Whether the ring exists on THIS pin is UNVERIFIED. The old claim
+      #    ("inert — revision e0a208949 predates the prefetch work") described the
+      #    superseded sha256:17824d44 image, not this one. A prefetch ring WAS
+      #    observed on rc2, but rc2 is the ROLLBACK digest (bf2776f7), not rc0.
+      #    Either way the knob is pinned OFF by policy, so behaviour is unchanged;
+      #    do not restate the inert claim without re-checking the running image.
       #
       # ⚠️⚠️ NEVER rewrite the bare var as `- GGML_EXPERT_PREFETCH_SLOTS=${X:-}`.
       #    The engine tests `atoi(on) == 0` (expert-prefetch.cu:126) and atoi("")

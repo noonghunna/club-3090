@@ -99,7 +99,7 @@ weights:
       - UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf
     # ⚠️ REQUIRED on every GGUF entry — the default `*.safetensors` matches NOTHING.
     verify_glob: "UD-Q4_K_XL/*.gguf"
-    manual_note: "🧪 EXPERIMENTAL — the `qwen4exp` architecture is NOT in llama.cpp mainline (vendored PR ggml-org#27742). Served via `llamacpp-club3090-v1.5`. Ships 204800, NOT the 262144 the model declares: 262144 also boots but the expert pool COLLAPSES to 802/1,026 MiB (~95% loss) — a paper ceiling, do not ship it. ⭐ Fastest model on this stack as of 2026-08-29 (39.28 narr / 38.57 code canonical) and the reason is expert byte-size, not quant. ⚠️ `--no-mmap` is REQUIRED (pins the offloaded set); the older claim that it corrupts this model was pre-`ce8743a05` and is INVALID. ⚠️ QUALITY UNTESTED — no 8-pack has been run."
+    manual_note: "🧪 EXPERIMENTAL — the `qwen4exp` architecture reached mainline via ggml-org/llama.cpp#27742 (merged 6c84c7d5) and is in the engine's b10675 base — it is NO LONGER a vendored delta, though stock llama.cpp OLDER than b10675 still cannot load it. Served via `llamacpp-club3090-v1.5`. Ships 204800, NOT the 262144 the model declares: 262144 also boots but the expert pool COLLAPSES to 802/1,026 MiB (~95% loss) — a paper ceiling, do not ship it. ⭐ Fastest model on this stack as of 2026-08-29 (39.28 narr / 38.57 code canonical) and the reason is expert byte-size, not quant. ⚠️ `--no-mmap` is REQUIRED (pins the offloaded set); the older claim that it corrupts this model was pre-`ce8743a05` and is INVALID. ⚠️ QUALITY UNTESTED — no 8-pack has been run."
   mmproj-f16:
     path: qwen3.8-flash-next-gguf/mmproj
     # ⚠️ REPO-ROOT artifact (sits beside the quant DIRECTORIES, not inside one), so

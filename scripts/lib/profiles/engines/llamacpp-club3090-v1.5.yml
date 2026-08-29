@@ -35,12 +35,26 @@ supported_model_families:
                           # the family tag was deliberately withheld until a
                           # compose existed for the resolver to point at.
                           # ⚠️ must match models/qwen3.8-flash-next.yml `family:`.
-  # ⚠️ deepseek4-moe and inkling-moe are INTENTIONALLY ABSENT so the resolver
-  # cannot quietly migrate their slugs onto a build they were not shipped on.
-  # ⚠️ qwen4exp (Qwen3.8-Flash-Next, vendored #27742) IS validated on this binary
-  # — 32K correctness, 205K bench, vision 8/8 — but has NO compose or registry
-  # entry in-tree yet, so listing it here would advertise a path that does not
-  # exist. Add it WITH the compose, not before.
+  # ⚠️ deepseek4-moe and inkling-moe are ABSENT so the resolver cannot quietly
+  # migrate their slugs onto this build. NOTE the original wording said they were
+  # 'never validated on' it — that is no longer accurate for DeepSeek:
+  #   • moecache-releases.md records DeepSeek-V4-Flash @204800 validated on THIS
+  #     binary (dspark acceptance 0.484, tensor placement byte-identical);
+  #   • re-confirmed 2026-08-29 on the rig: booted the shipped dual q8 moecache
+  #     compose with LLAMACPP_CLUB3090_IMAGE pinned here (revision asserted
+  #     7104d5f4e), verify-full 10/10, dspark acceptance 0.41-0.73, pools on
+  #     both cards.
+  # They stay absent because MIGRATING is a separate change under the engine-pin
+  # checklist, not because the binary cannot run them: their BENCHMARKS rows were
+  # measured on sha256:17824d44 and would need re-baselining, and the launchers
+  # INJECT this profile's image over each compose's own `image:` line, so migrated
+  # composes would still claim the old digest in their headers until updated.
+  #
+  # ⚠️ qwen4exp (Qwen3.8-Flash-Next) IS validated on this binary — 32K correctness,
+  # 205K bench, vision 8/8 — and now HAS composes + registry entries, which is why
+  # it is listed above. Its arch support is UPSTREAM in the b10675 base (#27742
+  # merged as 6c84c7d5); the vendor was DROPPED, so do not call it a vendored delta.
+
 features:
   moe_expert_cache: true  # --moe-cache: hot CPU-resident experts held in spare VRAM
 supported_kv_formats:
