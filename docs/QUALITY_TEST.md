@@ -254,7 +254,7 @@ Quality:   ToolCall-15 14/15 (93%) · InstructFollow-15 13/15 (87%) · StructOut
 
 ## Cloud / proxy endpoints
 
-`quality-test.sh` runs the same 8-pack against any **cloud or proxied OpenAI-compatible endpoint** — a managed API (DashScope, OpenRouter, together, DeepInfra), a router, or your own hosted model — for a like-for-like local-vs-cloud comparison (identical prompts, identical verifiers). Cloud support shipped in [#746](https://github.com/noonghunna/club-3090/pull/746); the underlying knobs live in [benchlocal-cli → Running against a cloud / managed endpoint](https://github.com/noonghunna/benchlocal-cli#running-against-a-cloud--managed-endpoint).
+`quality-test.sh` runs the same 8-pack against any **cloud or proxied OpenAI-compatible endpoint** — a managed API (DashScope, OpenRouter, OrcaRouter, together, DeepInfra), a router, or your own hosted model — for a like-for-like local-vs-cloud comparison (identical prompts, identical verifiers). Cloud support shipped in [#746](https://github.com/noonghunna/club-3090/pull/746); the underlying knobs live in [benchlocal-cli → Running against a cloud / managed endpoint](https://github.com/noonghunna/benchlocal-cli#running-against-a-cloud--managed-endpoint).
 
 Three env vars (or flags) point the wrapper at a remote endpoint:
 
@@ -289,6 +289,18 @@ URL=http://localhost:4000 API_KEY="$LITELLM_KEY" MODEL=qwen3.8-max \
   bash scripts/quality-test.sh --full --enable-thinking --save-json qwen38max-on.json
 URL=http://localhost:4000 API_KEY="$LITELLM_KEY" MODEL=qwen3.8-max-nothink \
   bash scripts/quality-test.sh --full --no-thinking --save-json qwen38max-off.json
+```
+
+### Worked example — OrcaRouter (AI gateway)
+
+A second named cloud reference ([services/litellm/config.yaml](../services/litellm/config.yaml)): `orcarouter-auto` and `orcarouter-fusion-flash` route through the same LiteLLM proxy to [OrcaRouter](https://www.orcarouter.ai) (`https://api.orcarouter.ai/v1`). Unlike DashScope's single upstream, the gateway exposes a provider/model namespace — `orcarouter/auto` picks a model dynamically, `orcarouter/fusion-flash` is a fixed model id — so both a routing and a concrete model are available for like-for-like comparison. No `rpm`/`tpm` pacing is set: no rate limits are prescribed to us. The key comes from `ORCAROUTER_API_KEY` (see `services/litellm/docker-compose.yml`).
+
+```bash
+# via the proxy routes (services/litellm/config.yaml)
+URL=http://localhost:4000 API_KEY="$LITELLM_KEY" MODEL=orcarouter-auto \
+  bash scripts/quality-test.sh --full --enable-thinking --save-json orca-on.json
+URL=http://localhost:4000 API_KEY="$LITELLM_KEY" MODEL=orcarouter-fusion-flash \
+  bash scripts/quality-test.sh --full --no-thinking --save-json orca-off.json
 ```
 
 ## Scenario-level probes (selection, incremental, resume)
