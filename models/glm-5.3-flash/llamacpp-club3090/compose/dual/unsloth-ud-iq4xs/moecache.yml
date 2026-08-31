@@ -179,6 +179,10 @@ services:
       # Bare passthrough — forwarded ONLY if the caller sets it. Never write
       # `=${VAR:-}`: docker would set it EMPTY, which is not the same as unset.
       - LLAMA_ARG_LOG_VERBOSITY
+      # Decode thread count. The entrypoint branches on THREADS but docker only
+      # forwards what is declared here, so without this line `-t` was pinned to
+      # the slug default and every THREADS= sweep silently measured one value.
+      - THREADS
     deploy:
       resources:
         reservations:
