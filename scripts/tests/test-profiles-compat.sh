@@ -35,7 +35,7 @@ p = load_profiles()
 assert len(p.hardware) == 11  # +dgx-spark (#576 follow-up), +rtx-a6000 (#948 thread)
 assert len(p.models) == 20   # +inkling-small, +qwen3.8-27b, +glm-5.3-flash, +qwen3.8-flash-next
 assert len(p.workloads) == 5
-assert len(p.engines) == 16   # +llamacpp-club3090-v1.1, +llamacpp-club3090-v1.5
+assert len(p.engines) == 17   # +llamacpp-club3090-v1.1, -v1.5, -v1.6
 assert len(p.drafters) == 18  # +syvai-qwen38-dflash2, +anbeeld-glm53-dflash2
 assert len(p.calibration) == 6
 PY
