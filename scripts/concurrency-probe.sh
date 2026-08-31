@@ -408,6 +408,22 @@ if [[ "$MATRIX" == "1" ]]; then
     exit 2
   fi
 
+  # ⚠️ A server with fewer slots than the requested concurrency does NOT batch — the
+  # extra streams QUEUE, so the run measures queuing latency and reports it as a
+  # concurrency curve. Silent, and it reads as flat/negative scaling.
+  # (Shipped offload composes hardcoded `-np 1` until 2026-08-31; they now honour
+  # NPARALLEL, so raise it to at least the highest N you intend to probe.)
+  if [[ -n "$slots" ]]; then
+    _max_n="$(printf '%s' "$N_LIST" | tr ', ' '\n\n' | sort -n | tail -1)"
+    if [[ -n "$_max_n" ]] && [[ "$_max_n" -gt "$slots" ]] 2>/dev/null; then
+      echo "[concurrency-probe] WARNING: server has ${slots} slot(s) (${slots_src}) but N goes up to ${_max_n}." >&2
+      echo "[concurrency-probe]   Streams beyond ${slots} QUEUE rather than batch — the curve above N=${slots}" >&2
+      echo "[concurrency-probe]   measures queuing, NOT concurrency." >&2
+      echo "[concurrency-probe]   Fix: reboot the compose with NPARALLEL=${_max_n}. Note -np splits -c into" >&2
+      echo "[concurrency-probe]   ctx/N per slot, so pool and compute buffer change — re-measure, do not reuse rows." >&2
+    fi
+  fi
+
   export CTX_SWEEP N_LIST GEN_TOKENS KV_TOKENS N_MAX CTX_MAX
   export SERVED_SLOTS="${slots:-}" SERVED_MAX_LEN="${max_len:-}"
   cache_label="$CACHE"
