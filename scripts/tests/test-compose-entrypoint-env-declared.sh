@@ -5,8 +5,8 @@
 # THE CLASS: docker forwards ONLY what `environment:` declares. An entrypoint that
 # branches on `$${FOO}` when FOO is undeclared reads an ALWAYS-EMPTY value, so the
 # knob is inert while the compose still documents it. Nothing errors; the surface
-# looks correct. Four instances found so far (THREADS, -np/NPARALLEL,
-# shmem_enabled, VLLM_ENFORCE_EAGER) — see club-3090-todo.md 2026-08-30/31.
+# looks correct. Five instances found (THREADS, -np/NPARALLEL, shmem_enabled,
+# VLLM_ENFORCE_EAGER, MMPROJ) — see club-3090-todo.md 2026-08-30/31. All fixed.
 #
 # ⚠️ Declaring it as `- FOO=${FOO:-}` does NOT fix it: that sets FOO to the EMPTY
 # STRING, which differs from unset and, for numeric knobs, atoi("") == 0 silently
@@ -22,14 +22,10 @@ import io,re,subprocess,sys
 # Known-broken, tracked, NOT yet fixed. This is a DEBT REGISTER, not an excuse
 # list: each entry must name the bug. Shrink it; never grow it silently.
 KNOWN = {
-    # 15 vLLM composes: `$${VLLM_ENFORCE_EAGER:+--enforce-eager}` never fires because
-    # the var is undeclared. The header telling users to set it "in compose/.env" is
-    # also wrong — .env feeds compose interpolation, not container env.
-    "VLLM_ENFORCE_EAGER",
-    # GLM moecache: the entrypoint's projector-existence check reads
-    # `$${MMPROJ:-<default>}` while the command arg uses compose-level
-    # `${MMPROJ:-<default>}`. Override MMPROJ and the guard tests the WRONG path.
-    "MMPROJ",
+    # EMPTY — and it must stay that way. Every occurrence found on 2026-08-31 was
+    # fixed rather than registered: THREADS (6 GLM), VLLM_ENFORCE_EAGER (18 vLLM),
+    # MMPROJ (6 GLM). If you are about to add an entry here, fix the compose
+    # instead; a register with entries means a documented knob is inert in prod.
 }
 RUNTIME = {"PATH","HOME","HOSTNAME","LD_LIBRARY_PATH","PWD","IFS"}
 

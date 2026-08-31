@@ -288,6 +288,11 @@ services:
       # forwards what is declared here, so without this line `-t` was pinned to
       # the slug default and every THREADS= sweep silently measured one value.
       - THREADS
+      # Vision projector path. ⚠️ Declared so the entrypoint's existence CHECK and the
+      # `--mmproj` command arg resolve the SAME value. Undeclared, the check read the
+      # built-in default while the arg honoured the override, so pointing MMPROJ at a
+      # different projector validated the wrong file. Fixed 2026-08-31.
+      - MMPROJ
     deploy:
       resources:
         reservations:
