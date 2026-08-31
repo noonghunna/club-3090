@@ -363,9 +363,23 @@ PREFILL_DEPTHS="${PREFILL_DEPTHS:-10000,90000}"
 # back to 1 rather than aborting a long run.
 # ⚠️ n=1 gives no CV for that depth — state it when quoting a single-run number.
 PREFILL_RUNS="${PREFILL_RUNS:-3,1}"
+# Completion length for the MEASURED prefill runs, which doubles as the
+# DECODE-AT-DEPTH leg. 0 disables (falls back to PP_MAX_TOKENS).
+#
+# ⭐ WHY (2026-08-31): bench.sh had five legs and none measured DECODE against a
+# deep KV cache — decode was sampled only at shallow context, and the deep legs
+# measure PREFILL. That blind spot made a two-boot A/B of the glm5next indexer key
+# cache (upstream 0069971) report "no reproducible benefit"; a decode-at-depth
+# probe on the same two builds then measured +47% at 44K and +70% at 87K, because
+# the commit's entire effect is a per-cached-token DECODE term.
+#
+# Nearly free: TTFT — and so `prefill tok/s` — does not depend on how many tokens
+# follow the first, so a longer completion costs only the generation (~10-16 s at
+# depth), not a second prefill.
+DEPTH_DECODE_TOKENS="${DEPTH_DECODE_TOKENS:-128}"
 # The probe knobs reach the python heredoc via the environment (the argv tuple
 # is full); export them here.
-export PREFILL_PROBE PREFILL_DEPTHS PREFILL_RUNS
+export PREFILL_PROBE PREFILL_DEPTHS PREFILL_RUNS DEPTH_DECODE_TOKENS
 ENABLE_THINKING="${ENABLE_THINKING:-0}"
 FORCE_TOKENS="${FORCE_TOKENS:-0}"
 # --- decode-granularity knobs (#809) ----------------------------------------
@@ -1344,10 +1358,26 @@ def run_prefill_probe():
             print(f"  warm-1     FAIL: {e}")
         print(f"\n=== measured ({n}) ===")
         pps, ttfts, ptoks_seen = [], [], []
+        dtps = []          # decode-at-depth: the leg this probe used to discard
         phase_t0 = phase_start()
+        try:
+            _depth_toks = int(os.environ.get("DEPTH_DECODE_TOKENS", "128"))
+        except ValueError:
+            _depth_toks = 128
+        _gen_cap = _depth_toks if _depth_toks > 0 else PP_MAX_TOKENS
         for i in range(n):
             try:
-                w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt()), PP_MAX_TOKENS)
+                w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt()), _gen_cap)
+                # ⚠️ Do NOT reuse decode_window() here. Its degeneracy test is the
+                # RATIO dt < 5% of wall, which assumes decode is essentially the
+                # whole wall — true for a short prompt, FALSE at depth where prefill
+                # dominates: at 87K that is ~9 s of decode against ~350 s of wall,
+                # so every honest deep measurement would be discarded as
+                # "unmeasurable". At depth the only degenerate case is a
+                # non-existent window, so test that absolutely.
+                _dt = w - t
+                if _depth_toks > 0 and _k > 1 and _dt > 0.25:
+                    dtps.append(_k / _dt)
                 pp, ttft, line = fmt_pp(f"run-{i+1}", w, t, ptoks)
                 if not QUIET:
                     print(line)
@@ -1365,6 +1395,12 @@ def run_prefill_probe():
             # prompt_tokens/TTFT = the CLIENT-OBSERVED rate (includes
             # tokenization + transfer + scheduling) — the user-truth number.
             print(stats("prefill tok/s", pps))
+            if dtps:
+                # The number the five original legs could not produce: generation
+                # rate with the KV cache already this deep. Compare across builds at
+                # MATCHED depth. NOT comparable to the narrative/code decode_TPS
+                # above, which is measured at shallow context.
+                print(stats(f"decode tok/s @ {label.replace('prefill-','')} depth", dtps))
             print(
                 f"  TTFT          mean={s.mean(ttfts)*1000:6.0f}ms  "
                 f"std={(s.stdev(ttfts)*1000 if len(ttfts) > 1 else 0):5.0f}ms  "
@@ -1394,6 +1430,8 @@ def run_prefill_probe():
                 "prefill_tps_mean": _pm,
                 "prefill_tps_cv": ((s.stdev(pps) / _pm * 100) if len(pps) > 1 and _pm > 0 else 0.0),
                 "ttft_mean_ms": s.mean(ttfts) * 1000,
+                "decode_at_depth_tps_mean": (s.mean(dtps) if dtps else None),
+                "decode_at_depth_n": len(dtps),
             }
 
 announce_sampler()
@@ -1886,6 +1924,7 @@ for name, v in d.get("shapes", {}).items():
     [[ "$ENDPOINT" != "chat" ]]     && _envnote+="ENDPOINT=${ENDPOINT} "
     [[ "$ONLY" != "both" ]]         && _envnote+="ONLY=${ONLY} "
     [[ "$PREFILL_DEPTHS" != "10000,90000" ]] && _envnote+="PREFILL_DEPTHS=${PREFILL_DEPTHS} "
+    [[ "$DEPTH_DECODE_TOKENS" != "128" ]] && _envnote+="DEPTH_DECODE_TOKENS=${DEPTH_DECODE_TOKENS} "
     [[ -n "${SERVER_LOG:-}" ]]      && _envnote+="SERVER_LOG=<set> "
     card_kv "$CARD_REC" proto.env "${_envnote:-}"
     card_kv "$CARD_REC" gpu.vram_idle    "${CAP_VRAM_IDLE:-}"
