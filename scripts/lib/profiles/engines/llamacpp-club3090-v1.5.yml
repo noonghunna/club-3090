@@ -105,8 +105,13 @@ notes: >
   🧪 rc0 — PUBLISHED IS NOT VALIDATED. test-moe-cache, soak-continuous and the
   quality 8-pack have NOT been run on this binary. What HAS been measured (2026-08-29,
   GLM-5.3-Flash UD-IQ4_XS, 2x3090, 204800 ctx, vendor serving config + vision):
-  verify-full 8/9 (the one failure is the thinking check under reasoning_effort=low,
-  correct for that setting); decode 13.95 narrative / 17.71 code; prefill 386.7@10K,
+  verify-full 8/9 — the one failure is the thinking check. ⚠️ ATTRIBUTION CORRECTED
+  2026-08-31: this said "correct for reasoning_effort=low", but the compose default is `max`,
+  so that explanation described a config that never shipped. The check fails on v1.5 AND v1.6
+  alike (not a regression); the real cause is unexamined — the model returns a legitimately
+  brief reasoning on that prompt, while thinking demonstrably engages elsewhere (~180 ch
+  measured on a trivial prompt, 2026-08-31); decode 13.95 narrative / 17.71 code; prefill
+  386.7@10K,
   279.8@90K; TTFT@93K ~338 s; expert pool 2,143 slots; DFlash2 acceptance 0.533,
   mean accepted length 2.60. Vision validated 4/4 on ground truth via the glm5next
   CLIP projector. ⚠️ Prefill is GPU-asymmetric because `-ot` force-disables

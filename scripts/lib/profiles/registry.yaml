@@ -2003,7 +2003,7 @@ entries:
     required_engine_features: []
     default_port: 8125
     kvcalc_key: SKIP
-    status: experimental
+    status: incubating
     status_note: "🧪 EXPERIMENTAL — NEVER BOOTED. Copied from the VALIDATED unsloth-ud-iq4xs sibling 2026-08-29; the non-comment delta is 4 lines (service key, container_name, port, weights path + shard count 5->4). ⭐ The POINT is residency: expert byte-size is the master variable, and this quant's experts are 24% smaller — MEASURED from the GGUF tensor table per-expert-matrix over expert_count=288: iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 vs IQ4_XS's 3,867. ⭐ MEASURED on first boot 2026-08-29 (dual, slots SUMMED per device): CUDA0 1,975 + CUDA1 1,506 = 3,481 slots vs IQ4_XS's 2,143 = +62.4%, in a SMALLER pool (9,714 vs 10,874 MiB) — the whole gain is expert byte-size, and it beat the ~31% predicted from the 24% average shrink because the realised pools are more iq2_s-dominated than the model-wide average. Coherent on a one-word probe. ⚠️ CARDS IMBALANCED: 22,604 / 23,850 MiB leaves ~726 MiB CUDA1 headroom. ⚠️ host_ram_gb 110 is nominal against the compose's 114 worst case (113 GiB of weights); the IQ4_XS serving-RSS measurement does NOT transfer. ⚠️ QUALITY AT IQ3 IS UNTESTED — no verify-full, no bench, no 8-pack on this quant."
     weights_companions:
       - dflash2-q4km
@@ -2036,7 +2036,7 @@ entries:
     required_engine_features: []
     default_port: 8126
     kvcalc_key: SKIP
-    status: experimental
+    status: incubating
     status_note: "🧪 EXPERIMENTAL — NEVER BOOTED. Copied from the VALIDATED unsloth-ud-iq4xs sibling 2026-08-29; the non-comment delta is 4 lines (service key, container_name, port, weights path + shard count 5->4). ⭐ The POINT is residency: expert byte-size is the master variable, and this quant's experts are 24% smaller — MEASURED from the GGUF tensor table per-expert-matrix over expert_count=288: iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 vs IQ4_XS's 3,867. ⭐ MEASURED on first boot 2026-08-29 (dual, slots SUMMED per device): CUDA0 1,975 + CUDA1 1,506 = 3,481 slots vs IQ4_XS's 2,143 = +62.4%, in a SMALLER pool (9,714 vs 10,874 MiB) — the whole gain is expert byte-size, and it beat the ~31% predicted from the 24% average shrink because the realised pools are more iq2_s-dominated than the model-wide average. Coherent on a one-word probe. ⚠️ CARDS IMBALANCED: 22,604 / 23,850 MiB leaves ~726 MiB CUDA1 headroom. ⚠️ host_ram_gb 110 is nominal against the compose's 114 worst case (113 GiB of weights); the IQ4_XS serving-RSS measurement does NOT transfer. ⚠️ QUALITY AT IQ3 IS UNTESTED — no verify-full, no bench, no 8-pack on this quant."
     weights_companions:
       - dflash2-q4km
@@ -2069,7 +2069,7 @@ entries:
     required_engine_features: []
     default_port: 8127
     kvcalc_key: SKIP
-    status: experimental
+    status: incubating
     status_note: "🧪 EXPERIMENTAL — NEVER BOOTED. Copied from the VALIDATED unsloth-ud-iq4xs sibling 2026-08-29; the non-comment delta is 4 lines (service key, container_name, port, weights path + shard count 5->4). ⭐ The POINT is residency: expert byte-size is the master variable, and this quant's experts are 24% smaller — MEASURED from the GGUF tensor table per-expert-matrix over expert_count=288: iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 vs IQ4_XS's 3,867. ⭐ MEASURED on first boot 2026-08-29 (dual, slots SUMMED per device): CUDA0 1,975 + CUDA1 1,506 = 3,481 slots vs IQ4_XS's 2,143 = +62.4%, in a SMALLER pool (9,714 vs 10,874 MiB) — the whole gain is expert byte-size, and it beat the ~31% predicted from the 24% average shrink because the realised pools are more iq2_s-dominated than the model-wide average. Coherent on a one-word probe. ⚠️ CARDS IMBALANCED: 22,604 / 23,850 MiB leaves ~726 MiB CUDA1 headroom. ⚠️ host_ram_gb 110 is nominal against the compose's 114 worst case (113 GiB of weights); the IQ4_XS serving-RSS measurement does NOT transfer. ⚠️ QUALITY AT IQ3 IS UNTESTED — no verify-full, no bench, no 8-pack on this quant."
     weights_companions:
       - dflash2-q4km

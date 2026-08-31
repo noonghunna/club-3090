@@ -13,8 +13,17 @@
 #   KV:        fp16 (llama.cpp default — MLA keeps it compact)
 #   Thinking:  ⛔ cannot be turned off via thinking.type (vendor: errors on this
 #              model). ✅ Controlled by reasoning_effort instead.
-#              REASONING_EFFORT   low (default) = thinking effectively OFF
-#                                 max           = full thinking (vendor default)
+#              REASONING_EFFORT   max (DEFAULT — matches the compose's
+#                                 `${REASONING_EFFORT:-max}`; the vendor default,
+#                                 kept because this is a forced-thinking model
+#                                 with no quality baseline measured here)
+#                                 low           = thinking effectively OFF
+#                                                 (measured 0 ch vs 1167)
+#              ⚠️ CORRECTED 2026-08-31: this block previously said `low (default)`,
+#                 which contradicted the command's `:-max`. Anything reasoning from
+#                 the old text — including the engine profile's note attributing the
+#                 verify-full thinking check to `reasoning_effort=low` — was reasoning
+#                 from a default that never shipped.
 #                                 ⚠️ `high` measured next to `low`, NOT between —
 #                                    two-position switch, not a graded dial.
 #              REASONING_FORMAT   deepseek (default) — thoughts -> reasoning_content
@@ -83,9 +92,12 @@
 #   ⚠️ Measure ONE knob at a time against wall-clock, ≥3 runs per arm. On 2×24 GB
 #   between-boot spread at identical config is ~0.5%, so a double-digit gap is a
 #   config difference, not noise.
-#   Status:    🧪 Experimental — NEVER BOOTED. Copied from the VALIDATED
-#              unsloth-ud-iq4xs sibling 2026-08-29; only the weights path,
-#              shard count (5 -> 4), identity and port differ.
+#   ⓘ Provenance: copied from the VALIDATED unsloth-ud-iq4xs sibling
+#              2026-08-29; only the weights path, shard count (5 -> 4),
+#              identity and port differ. (Was a second `Status:` line until
+#              2026-08-31 — two Status lines made the drift gate match the
+#              stale one and pass for the wrong reason. Boot state lives in
+#              `Caveats:`; the canonical Status is the 🐣 line below.)
 #   ⭐ WHY THIS QUANT: smaller experts = more cache slots at the same pool
 #      MiB — the master residency variable (learnings/moe-cache-engine.md
 #      section 2). MEASURED from THIS GGUF's tensor table (not the quant

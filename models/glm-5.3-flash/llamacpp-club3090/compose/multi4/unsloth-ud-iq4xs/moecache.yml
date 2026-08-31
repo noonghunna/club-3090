@@ -13,8 +13,17 @@
 #   KV:        fp16 (llama.cpp default — MLA keeps it compact)
 #   Thinking:  ⛔ cannot be turned off via thinking.type (vendor: errors on this
 #              model). ✅ Controlled by reasoning_effort instead.
-#              REASONING_EFFORT   low (default) = thinking effectively OFF
-#                                 max           = full thinking (vendor default)
+#              REASONING_EFFORT   max (DEFAULT — matches the compose's
+#                                 `${REASONING_EFFORT:-max}`; the vendor default,
+#                                 kept because this is a forced-thinking model
+#                                 with no quality baseline measured here)
+#                                 low           = thinking effectively OFF
+#                                                 (measured 0 ch vs 1167)
+#              ⚠️ CORRECTED 2026-08-31: this block previously said `low (default)`,
+#                 which contradicted the command's `:-max`. Anything reasoning from
+#                 the old text — including the engine profile's note attributing the
+#                 verify-full thinking check to `reasoning_effort=low` — was reasoning
+#                 from a default that never shipped.
 #                                 ⚠️ `high` measured next to `low`, NOT between —
 #                                    two-position switch, not a graded dial.
 #              REASONING_FORMAT   deepseek (default) — thoughts -> reasoning_content

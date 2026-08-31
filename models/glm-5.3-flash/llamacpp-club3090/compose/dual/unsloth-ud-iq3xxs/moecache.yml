@@ -12,8 +12,17 @@
 #   KV:        fp16 (llama.cpp default — MLA keeps it compact)
 #   Thinking:  ⛔ cannot be turned off via thinking.type (vendor: errors on this
 #              model). ✅ Controlled by reasoning_effort instead.
-#              REASONING_EFFORT   low (default) = thinking effectively OFF
-#                                 max           = full thinking (vendor default)
+#              REASONING_EFFORT   max (DEFAULT — matches the compose's
+#                                 `${REASONING_EFFORT:-max}`; the vendor default,
+#                                 kept because this is a forced-thinking model
+#                                 with no quality baseline measured here)
+#                                 low           = thinking effectively OFF
+#                                                 (measured 0 ch vs 1167)
+#              ⚠️ CORRECTED 2026-08-31: this block previously said `low (default)`,
+#                 which contradicted the command's `:-max`. Anything reasoning from
+#                 the old text — including the engine profile's note attributing the
+#                 verify-full thinking check to `reasoning_effort=low` — was reasoning
+#                 from a default that never shipped.
 #                                 ⚠️ `high` measured next to `low`, NOT between —
 #                                    two-position switch, not a graded dial.
 #              REASONING_FORMAT   deepseek (default) — thoughts -> reasoning_content
@@ -34,9 +43,18 @@
 #     Registry `host_ram_gb` must stay <= this. Old IQ4_XS grounding text:
 #     measured serving RSS with experts offloaded was 141.5 GiB (bench 2026-08-29).
 #     Registry `host_ram_gb: 142` is the NOMINAL figure and must stay <= this.
-#   Status:    🧪 Experimental — NEVER BOOTED. Copied from the VALIDATED
-#              unsloth-ud-iq4xs sibling 2026-08-29; only the weights path,
-#              shard count (5 -> 4), identity and port differ.
+#   Provenance: authored 2026-08-29 by copying the VALIDATED unsloth-ud-iq4xs
+#              sibling; only the weights path, shard count (5 -> 4), identity and
+#              port differ. ⭐ BOOTED AND VALIDATED SINCE — on moe-cache v1.6
+#              (image.revision d9cc8af98, 2026-08-31): expert offload, non-zero
+#              cache hits and correct terminating output in the same run, plus a
+#              retrieval gate at 8K/32K/64K (9/9). The earlier NEVER BOOTED note
+#              is retired.
+#   ⓘ Provenance: copied from the VALIDATED unsloth-ud-iq4xs sibling
+#              2026-08-29; only the weights path, shard count (5 -> 4),
+#              identity and port differ. Its original "NEVER BOOTED" note was
+#              removed 2026-08-31 — this slug has since been booted and benched
+#              extensively (BENCHMARKS GLM rows 4-9).
 #   ⭐ WHY THIS QUANT: smaller experts = more cache slots at the same pool
 #      MiB — the master residency variable (learnings/moe-cache-engine.md
 #      section 2). MEASURED from THIS GGUF's tensor table (not the quant
@@ -353,10 +371,27 @@ services:
       # they simply do not match — correct by construction, no special case.
       - '-ot'
       - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
+      # ⭐ -ub/-b 2048 here (the multi4/multi8 siblings stay 4096) — a MEASURED
+      # trade, not a default. Matched A/B on this compose, v1.6 engine
+      # (d9cc8af98), drafter on, only UBATCH differing, 2026-08-31:
+      #     decode   14.58 -> 18.12 narrative | 14.93 -> 18.47 code   (+24%)
+      #     prefill  415.44 -> 340.03 tok/s @10K                      (-18%)
+      #   (ranges non-overlapping on both decode legs; the ub4096 code arm is
+      #    3 runs not 5. Decode-at-10K-depth was too noisy to call, CV 23%/11%.)
+      # Mechanism is glm5next-specific: the kpool sparse-indexer masks
+      # (sel_mask/cand_mask, [n_kv, n_batch, 1, n_stream] F16) are ~44-45% of the
+      # compute buffer and scale with n_ubatch, so halving it returns VRAM to the
+      # moe-cache expert pool. qwen4exp has NO kpool -- do NOT copy this default
+      # onto the Qwen Flash composes; it is unmeasured there and the mechanism
+      # is absent.
+      # Crossover: 2048 wins while prompt < ~25x response tokens. That is the
+      # normal case here (REASONING_EFFORT=max => long thinking traces); the
+      # multi* siblings keep 4096 because long-context prefill dominates there.
+      # For bulk long-document prefill on this compose, override UBATCH=4096.
       - '-ub'
-      - '${UBATCH:-4096}'
+      - '${UBATCH:-2048}'
       - '-b'
-      - '${UBATCH:-4096}'
+      - '${UBATCH:-2048}'
       - '--cache-prompt'
       # --no-mmap: with -ot ...=CPU the offloaded experts must be resident, not
       # page-cache-backed. Validated for GLM 2026-08-28 (two runs, both correct
