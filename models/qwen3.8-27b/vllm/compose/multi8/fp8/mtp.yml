@@ -35,7 +35,7 @@
 #   Max ctx:   262144 — the architectural ceiling. COMPUTED + inherited, never
 #              measured on this model at ANY topology.
 #   Genesis:   none — intentionally Genesis-free
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 # ⚠️ #1096 (accumulated-ctx decode cliff): in long multi-turn agentic, decode collapses to
 #    single-block emission — ~12k accumulated ctx for DFlash2 (SPEC_N depth does NOT move it,
 #    n=3≡n=7) / ~17-21k for MTP; SEVERE on Ampere (~4 tok/s), milder on Blackwell. Drafter TYPE,

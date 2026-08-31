@@ -165,6 +165,10 @@ services:
     volumes:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     environment:
+      # Bare passthrough — docker forwards ONLY what is declared here, so without
+      # this line the entrypoint's THREADS branch can never fire and the knob is
+      # inert. Never write `- THREADS=${THREADS:-}`: that sets it EMPTY.
+      - THREADS
       # Expert-cache tuning — inherited from the 2×24 GB DeepSeek derivation.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
@@ -225,6 +229,23 @@ services:
       - /bin/bash
       - -c
       - |
+        # -- Threads -------------------------------------------------------------
+        # Resolved HERE, not as a `-t` CLI arg: CLI beats env, so a command-line -t
+        # silently overrides anything set below. PORTABLE DEFAULT = nproc/2, matching
+        # the launcher's resolve_offload_threads so both paths agree. The old `-t 8`
+        # was far below optimum on any capable host; nproc/2 is the safe choice when
+        # the operator's core count is unknown. ⚠️ Still a FLOOR, not the optimum --
+        # the useful zone is an ABSOLUTE ~24-32 threads. Set THREADS=<n> to tune.
+        if [ -n "$${THREADS:-}" ]; then
+          export LLAMA_ARG_THREADS="$${THREADS}"
+          echo "[threads] -t $${LLAMA_ARG_THREADS} (THREADS set explicitly)" >&2
+        else
+          _np=$$(nproc 2>/dev/null || echo 8)
+          _half=$$(( _np / 2 )); [ "$$_half" -lt 1 ] && _half=1
+          export LLAMA_ARG_THREADS="$$_half"
+          echo "[threads] -t $${LLAMA_ARG_THREADS} (auto = nproc/2, nproc=$$_np)" >&2
+        fi
+
         exec /app/llama-server "$$@"
       - --
     command:
@@ -286,8 +307,6 @@ services:
       # ⚠️ The bare-compose default is deliberately conservative. Under the
       # launchers THREADS is injected; llama.cpp's own default collapses
       # CPU-offload decode by ~31%, so never leave this to the engine.
-      - '-t'
-      - '${THREADS:-8}'
       - '-ub'
       - '${UBATCH:-2048}'
       - '-b'

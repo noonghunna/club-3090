@@ -2251,6 +2251,68 @@ entries:
     serve_aliases: []
     required_sm: 8.6
     category: frontier
+  llamacpp-club3090/deepseek-flash-vision-dual-q8-moecache:
+    model: deepseek-v4-flash-vision-exp
+    weights_variant: unsloth-ud-q8kxl
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: null
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 156
+    chat_template: native
+    tp: 2
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/deepseek-v4-flash-vision-exp/llamacpp-club3090/compose/dual/unsloth-ud-q8kxl/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8128
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "VALIDATED 2026-08-31 -- first boot PASSED. verify-full 10/10 (tool-calling, streaming tool-calls, thinking, 2K output quality). Booted in 100 s. Bench (3 warm + 5 measured, canonical sampler) at the SHIPPED default THREADS unset -> -t 16, DRAFTER-FREE: decode 22.94 narrative (CV 1.5%) / 21.29 code (CV 0.5%); prefill 407.3 @10K (CV 1.0%) and 343.9 @90K; decode-at-depth 20.82 @10K and 19.69 @90K -- only -14% shallow-to-90K, the v1.6 indexer key-cache showing on a second architecture; TTFT 157-173 ms short; moe-cache hit rate 63.1% / 60.2% per card; pool 5,360 slots of 11,008 experts (48.7%), single allocation. Expert bundle 3264 MiB/layer uniform, MXFP4, verified from the GGUF tensor table BEFORE download and confirmed live at boot. FLOOR NOT CEILING: 16 threads is ~20% below this rig's measured optimum of 28, and no drafter is mounted -- code decode is where that shows (0731 with DSpark records 27.01). NO VISION despite the model name: no mmproj published, no clip/vision metadata, zero vision tensors across all 1,328. Serves TEXT-ONLY. DRAFTER: none wired, but 0731's DSpark has an IDENTICAL tokenizer (gpt2, vocab 129,280, bos 0 / eos 1) -- acceptance against this checkpoint is UNMEASURED, so it is deliberately not mounted. QUALITY UNTESTED: no 8-pack, no soak. ATTRIBUTION: the expert cache is leloch's work (RFC ggml-org#24528), unmerged in mainline."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
+  llamacpp-club3090/deepseek-flash-vision-multi4-q8-moecache:
+    model: deepseek-v4-flash-vision-exp
+    weights_variant: unsloth-ud-q8kxl
+    workload: long-ctx-single
+    engine: llamacpp-club3090-v1.6
+    drafter: null
+    spec_method: null
+    kv_format: fp16
+    act_format: 16bit
+    act8_capable: false
+    offload: tensor-override
+    moe_cache: true
+    host_ram_gb: 156
+    chat_template: native
+    tp: 4
+    max_ctx: 204800
+    max_num_seqs: 1
+    mem_util: null
+    compose_path: models/deepseek-v4-flash-vision-exp/llamacpp-club3090/compose/multi4/unsloth-ud-q8kxl/moecache.yml
+    requires_nvlink: false
+    requires_homogeneous_arch: false
+    required_engine_features: []
+    default_port: 8129
+    kvcalc_key: SKIP
+    status: experimental
+    status_note: "NEVER BOOTED, permanently: this rig has exactly two GPUs, so 4-card topologies are COMMUNITY-VALIDATED BY DESIGN, not a pending TODO. The DUAL sibling passed verify-full 10/10 on 2026-08-31 (22.94 narrative / 21.29 code / 407.3 prefill@10K at -t 16, drafter-free), which validates the model+engine path but says NOTHING about 4-card VRAM, pool sizing or the -ot split -- all of that is inherited from the dual and must be re-derived. NO VISION despite the model name: no mmproj published, no clip/vision metadata, zero vision tensors across all 1,328. Serves TEXT-ONLY. DRAFTER: none wired; 0731's DSpark is tokenizer-identical (gpt2, 129,280) but its acceptance here is UNMEASURED. QUALITY UNTESTED. ATTRIBUTION: the expert cache is leloch's work (RFC ggml-org#24528), unmerged in mainline."
+    weights_companions: []
+    gateway: false
+    serve_aliases: []
+    required_sm: 8.6
+    category: frontier
   llamacpp-club3090/deepseek-flash-dual-q8-moecache:
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
@@ -2701,7 +2763,7 @@ entries:
     required_engine_features: []
     default_port: 8090
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "Qwen3.8-27B UD-IQ4_XS GGUF + F16 mmproj on a single 3090 (llama-cpp-local, b10236). q4_0/q4_0 KV @262144 + VISION, built-in MTP n=2 (--spec-type draft-mtp). ⭐ MAX-EVERYTHING single-card config (maintainer decision 2026-08-20): the q4_0 KV (BELOW the stack q8 serving floor) is the mechanism that fits full 262K ctx AND the F16 projector on one 24 GB card. For serving-grade q8_0 KV (131K) override KV_TYPE=q8_0 CTX_SIZE=131072 on this compose (q8@131K + vision, decode-free). ✅ VALIDATED 2026-08-20 (single 3090, GPU0, this exact compose): boots + fits 22,290 MiB load / 22,332 MiB peak under image-encode (~2.2 GiB headroom); verify-full PASS (all functional checks; the 2 skips are vLLM-only); image recognition CORRECT (blue-circle + red-7 probe); n_ctx_slot=262144, 'multimodal model' loaded; text decode projector-free (bench parity w/ the q8 text config, 61.7 narr / 72.7 code). CAVEATS: (1) q4_0 KV KLD ~5.75x worse than q8_0, NEVER depth-validated on this DeltaNet hybrid family — a max-ctx/vision exhibit, not serving-grade; (2) vision untested beyond one image probe — a large/high-res image at 262K encodes into far more tokens and could OOM the thin ~2.2 GiB margin (set IMAGE_MIN_TOKENS with budget in mind); (3) 262K NIAH-clean to 240,635 tok (91%) 2026-08-20 (addressability via verify-stress FAST; full-fidelity retrieval NIAH + fine ladder past 240K still unrun). Precedent: qwen3.6-27b's mtp-vision also ran q4_0 KV. Launch --force (incubating; hidden from switch.sh --list). Promote to 🧪/⚠️ only after a q4-config bench + verify-stress NIAH + soak; q4 KV keeps it off ✅ permanently (floor policy)."
     weights_companions:
       - gguf_mmproj_f16
@@ -2746,7 +2808,7 @@ entries:
     required_engine_features: []
     default_port: 8087
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "Qwen3.8-27B (Unsloth Dynamic UD-Q8_K_XL GGUF, 31.5 GB) on dual 3090 layer-split (-sm layer -ts 1,1 — PCIe-only, no NVLink, no cross-GPU all-reduce), mainline llama.cpp (llama-cpp-local pin, server-cuda-b10236). q8_0/q8_0 KV @262144 (the model's architectural max_position_embeddings, i.e. genuinely max context), -b 4096 -ub 512, built-in MTP n=2 (--spec-type draft-mtp), text-only. Dual is mandatory, not a preference: 31.5 GB of weights does not fit a 24 GB card. ⚠️ NOTHING HAS BOOTED — authored 2026-08-14 before the weights landed; the weights are now down and sha256-verified, but this slug has still never been launched. Unvalidated: never launched, verify-full 0/8 (not run), no verify-stress / NIAH / soak / bench / 8-pack, and NO TPS number is claimed. The 262144 ceiling is COMPUTED, not measured: 16 growing layers x 4 KV heads x 256 head_dim x 2 tensors = 32,768 elements/token, at q8_0 = 34,816 B/token = 8.50 GiB at 262K; against 47.40 GiB usable across both cards that is 31.50 (weights — the HF page figure, taken while the file was STILL DOWNLOADING and unconfirmed on this rig; almost certainly decimal GB, so the real GiB footprint is likely ~29.3 and the true headroom LARGER, since the IQ4_NL sibling's page '16.3 GB' landed as 15.22 GiB) + 8.50 (KV) + ~2.50 (buffers) = 42.50 GiB, ~4.90 GiB headroom (~21.25 of ~23.40 GiB per card under an even 32/32 layer split, which puts 8 of the 16 full-attention layers on each — evenness ASSUMED, not read off a boot). Allocating 262144 is NOT filling it: the Tess-4-27B dual, which has identical growing-attention geometry, allocates 262144 and NIAH-fills to ~240K (~91%) — expect a comparable or worse gap here until a ladder proves otherwise. ALSO UNPROVEN: that this GGUF loads on the b10236 pin at all — the pin predates the model. q8_0 KV is free here (q4_0 would save 4.25 GiB but buys no context, since 262144 is already the architectural ceiling) and pairing near-lossless UD-Q8_K_XL weights with a lossy KV would be an odd trade. Vision is OFF because the mmproj projectors in the same HF repo were not downloaded. Promote to 🧪 on a clean boot + verify-full; to ⚠️/✅ only after the full gate."
     weights_companions: []
     gateway: false
@@ -2834,7 +2896,7 @@ entries:
     required_engine_features: []
     default_port: 8092
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "Qwen3.8-27B 'max accuracy' tier, 4-card (TP=4): official Qwen/Qwen3.8-27B-FP8 weights + bf16 KV + MTP n=3 @262144. Identical to vllm/qwen38-27b-dual-max apart from --tensor-parallel-size, the required gpu-count, and --kv-cache-dtype; keep the first two in lockstep. ⚠️ KV DELIBERATELY DIVERGES from the dual (2026-08-15): this runs bf16 (--kv-cache-dtype auto over the pinned --dtype bfloat16) where the dual runs fp8 e4m3, because only TP>=4 has the per-card headroom — weights fall to ~7.2 GiB/card here vs ~14.4 on the dual, so a 16.00 GiB bf16 pool fits (~4.00 GiB/card) where it would not on 2 cards. Do not 'restore lockstep' by reverting it, and do not propagate it to the dual. TWO independent reasons this is incubating, and only the first is closable. (1) NOTHING HAS BOOTED on any card count — authored 2026-08-14; the weights have since landed and verified (30.87 GB / 28.75 GiB, all 66 safetensors CRC32-clean) but no engine has ever loaded them; no verify-full (0/8), no verify-stress / NIAH / soak / bench / 8-pack, NO TPS number claimed, no `Quality:` field, and the 262144 ceiling is arithmetic plus a qwen3.6-27b analogy rather than a measured fill depth. Engine compatibility is likewise inferred: the v0.25.1 pin predates this model. (2) ⛔ 4-CARD IS COMMUNITY-VALIDATED BY DESIGN and that is PERMANENT, not a TODO: the maintainer rig has exactly two 3090s, so TP=4 can never boot here and should never be filed as pending work. The on-rig proxy is vllm/qwen38-27b-dual-max, which is the same serving config at TP=2 EXCEPT for KV (it runs fp8 e4m3, this runs bf16) — so its numbers transfer on topology but NOT on pool size, concurrency, or any KV-sensitive quality result — and everything TP=4-specific (NCCL across 4 PCIe cards, the 4-way shard, the larger KV pool) is validated by whoever first runs it on 4 cards; that first community boot IS the validation. num_kv_heads=4 divides evenly by 4, so the shard is valid on paper. What TP=4 buys is headroom, not context: 262144 is already the architectural ceiling and the dual is projected to reach it, so the 4 cards convert ~14.4 GiB/card of weights into ~7.2, leaving far more room for KV pool and concurrency — on the qwen3.6-27b equivalent, single-stream decode was ~flat from 2 to 4 cards and the pool is what grew. Expect that shape, expect nothing quantitative. PCIe-only with no NVLink means more ranks = more all-reduce on a slow bus; custom all-reduce stays disabled in the entrypoint. Everything else (dense-not-MoE confirmation, the 16-growing-layer KV math — but DOUBLED for bf16: 65,536 B/token = 16.00 GiB @262K, ~4.00 GiB/card at TP=4, where the dual's note states the fp8 figure of 32,768 B/token, the 30.9 GB decimal / 28.8 GiB unit trap, why fp8_e5m2 is rejected, why the chat template is NATIVE and not froggeric, the MODEL-CARD sampler — Instruct row, temp 0.7 / top_p 0.80 / presence_penalty 1.5, because thinking ships off — and the built-in-MTP caveat) matches the dual sibling's note verbatim. ⚠️ MTP drafter exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in this pin; v0.26.0 predates the fix) — structural exposure inherited from the hybrid-GDN family, never observed here because nothing has run. Mitigate with SPEC=off. Detail + re-test trigger: docs/UPSTREAM.md. Launch requires --force (incubating); hidden from switch.sh --list. Promote to 🧪 only after a clean boot + verify-full on a real 4-card host."
     weights_companions: []
     gateway: false
@@ -2878,7 +2940,7 @@ entries:
     required_engine_features: []
     default_port: 8093
     kvcalc_key: SKIP
-    status: incubating
+    status: experimental
     status_note: "Qwen3.8-27B 'max accuracy' tier, 8-card (TP=8): same serving config as vllm/qwen38-27b-multi4-max with three lines changed — --tensor-parallel-size, the Requires-min-gpu-count header, and the port. ⚠️⚠️ TP=8 IS NOT THE SAME SHARD SHAPE AS TP=2/TP=4 AND DOES NOT SCALE THE SAME WAY: this model has num_kv_heads=4, which divides cleanly by 2 and by 4 but NOT by 8. At TP=8 vLLM REPLICATES KV heads across rank pairs rather than splitting them, so per-card KV stays at roughly the TP=4 figure (~4.00 GiB @262K at this compose's bf16 KV), NOT half of it. Only the WEIGHTS take the full 8-way split (~3.6 GiB/card vs ~7.2 at TP=4). So the 8-card gain over 4 is weight headroom only, bought with more all-reduce traffic on a PCIe bus with no NVLink — and on the qwen3.6-27b equivalent single-stream decode was ALREADY ~flat from 2 cards to 4. Expect flat-or-worse decode; expect nothing quantitative until measured. (1) NOTHING HAS BOOTED on any card count — the weights are on disk and CRC32-verified (66 safetensors, 30.87 GB decimal / 28.75 GiB, revision 017b9c7a) but no engine has loaded them; no verify-full, no bench, no 8-pack, no Quality: field, and 262144 is arithmetic plus a sibling analogy rather than a measured fill. (2) ⛔ 8-CARD IS COMMUNITY-VALIDATED BY DESIGN and that is PERMANENT, not a TODO: the maintainer rig has exactly two 3090s, so TP=8 can never boot here and must never be filed as pending work. The on-rig proxy is vllm/qwen38-27b-dual-max (TP=2, which HAS booted and passed verify-full on the reference 2x3090 2026-08-17, with a canonical bench (67.39 narr / 85.75 code tok/s, MTP accept 2.62) — see BENCHMARKS.md) — but it runs fp8 e4m3 KV where this runs bf16 (--kv-cache-dtype auto), a deliberate 2026-08-15 divergence on headroom grounds, so its pool/concurrency numbers do NOT transfer. Everything TP=8-specific — NCCL across 8 PCIe cards, the 8-way weight shard, KV-head replication — is validated by whoever first runs it on 8 cards; that first community boot IS the validation. Report via numbers-from-your-rig. P2P is NOT hardcoded: scripts/detect_nvlink.sh (NVLINK_MODE=auto) probes the interconnect and, when it finds a fast one, exports NCCL_P2P_LEVEL and UNSETS the compose's NCCL_P2P_DISABLE default — so an 8-card host with working P2P picks it up automatically. ⚠️ A 'topo -p2p OK' line reports a grant, not a working transfer; prove it with a real transfer check. ⚠️ MTP drafter exposed to OPEN vllm#50021 (GDN spec-decode wild write, live in this pin); mitigate with SPEC=off. Detail: docs/UPSTREAM.md. Launch requires --force (incubating); hidden from switch.sh --list. Promote to 🧪 only after a clean boot + verify-full on a real 8-card host. Everything else (dense-not-MoE, the 16-growing-layer KV math, the decimal/GiB unit trap, why fp8_e5m2 is rejected, the NATIVE chat template, the MODEL-CARD sampler) matches the multi4 sibling verbatim."
     weights_companions: []
     gateway: false
