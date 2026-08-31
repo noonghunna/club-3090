@@ -334,6 +334,31 @@ cap_moe_cache_config() {
 }
 
 # ---------------------------------------------------------------------------
+# VRAM breakdown — where the card's memory actually went
+# ---------------------------------------------------------------------------
+# Added 2026-08-31 after a DeepSeek-V4-Flash-Vision-Exp run where nvidia-smi read
+# 22,612 MiB/card and NOTHING in the bench output said what held it. Two facts
+# that only a breakdown surfaces:
+#   • `-devd none` (drafter on the HOST) still costs ~7.5 GiB of VRAM across two
+#     cards for the DRAFT CONTEXT. "On the host" is not "free".
+#   • The moe-cache pool GROWS after boot (5,814 -> 9,248 MiB on CUDA0 over three
+#     generations) until it hits the free-minus-reserve floor. A pool figure read
+#     at boot is a LOWER BOUND — quoting it understated the warmed pool by 42%.
+# One line per device. Components are llama.cpp-family; on other engines those
+# lines are absent and only the nvidia-smi total is reported.
+cap_vram_breakdown() {                 # $1=log
+  local log="${1:-}"
+  [[ -r "$log" ]] || return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  local _d
+  # resolve from BASH_SOURCE, never cwd: a wrong dir here would make the
+  # breakdown silently vanish from every run instead of failing loudly
+  _d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+  [[ -r "${_d}/vram_breakdown.py" ]] || return 1
+  PYTHONUTF8="${PYTHONUTF8:-1}" python3 "${_d}/vram_breakdown.py" "$log"
+}
+
+# ---------------------------------------------------------------------------
 # moe-cache log parsing — one python entry point, several modes
 # ---------------------------------------------------------------------------
 # Line shapes handled (both the fork's current census format and the older one):
