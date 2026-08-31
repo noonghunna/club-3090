@@ -167,14 +167,14 @@ services:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # v1.4-rc2, built 2026-08-28 from stack/club3090-moecachev1.4-models,
     # carrying vendored #27754. See the engine-gap caveat above.
-    # ⚠️ v1.5-rc0 is LOCAL-ONLY (not yet pushed to ghcr), so this pins the TAG, not a
-    # registry digest. Repin to a digest once published — the releases ledger requires
-    # digest-level identity. Local image id: sha256:1c228a52b819…
-    # Built from stack/club3090-moecachev1.5 @ 7104d5f4e, CUDA arch 86;89;120,
-    # GGML_BACKEND_DL=ON, CPU_ALL_VARIANTS=ON. image.revision=7104d5f4e.
+    # ⭐ v1.6-rc0 is PUSHED to ghcr and pinned by REGISTRY DIGEST, verified to
+    # resolve via `docker manifest inspect`. The releases ledger requires this
+    # digest-level identity. ROLLBACK digest: sha256:1c228a52… (v1.5-rc0).
+    # Built from stack/club3090-moecachev1.6 @ d9cc8af98, CUDA arch 86;89;120,
+    # GGML_BACKEND_DL=ON, CPU_ALL_VARIANTS=ON. image.revision=d9cc8af98 (asserted == branch tip).
     # ⛔ DFlash2 REQUIRES this engine — rc2 (sha256:bf2776f7…) fails the drafter with
     #    `done_getting_tensors: expected 81, got 58`. Rollback digest: sha256:bf2776f7…
-    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:69b833eea9266707cd9853fc8041348a59e2403a1e763822db5c2a46484db72b}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-glm53-flash-iq3xxs-moecache}
     restart: unless-stopped
     # Reap orphaned children. Without this a wedged llama-server becomes a

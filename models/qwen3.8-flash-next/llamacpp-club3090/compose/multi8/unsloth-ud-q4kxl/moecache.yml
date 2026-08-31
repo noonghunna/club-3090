@@ -93,7 +93,7 @@ services:
   llama-cpp-qwen38-flash-next-q4kxl-moecache-multi8:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile is authoritative for this pin; keep them in step.
-    # This digest is v1.5-rc0: image.revision=7104d5f4e, version=moecachev1.5-rc0,
+    # This digest is v1.5-rc0: image.revision=d9cc8af98 (asserted == branch tip), version=moecachev1.5-rc0,
     # built 2026-08-29 from stack/club3090-moecachev1.5 on mainline base b10675.
     # ⚠️ CORRECTED 2026-08-29: this line previously claimed e0a208949 /
     #    stack/club3090-moe-cache — that is the OLD sha256:17824d44 image (still
@@ -101,7 +101,7 @@ services:
     #    `docker image inspect <digest> --format '{{index .Config.Labels
     #    "org.opencontainers.image.revision"}}'`. Authoritative digest ledger:
     #    /opt/ai/moecache-releases.md.
-    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:69b833eea9266707cd9853fc8041348a59e2403a1e763822db5c2a46484db72b}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-qwen38-flash-next-q4kxl-moecache-multi8}
     restart: unless-stopped
     # Reap orphaned children. Without this, a wedged llama-server becomes a
