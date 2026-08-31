@@ -455,9 +455,13 @@ services:
       #    vision projector moved to host (2026-08-29), GPU0 has ~1,974 MiB free while
       #    GPU1 — carrying this 665 MiB drafter — has ~464 MiB. The drafter is on the
       #    TIGHTER card, and tight headroom measured SLOWER on the DeepSeek sibling.
-      #    CUDA1 stays the default because it is MEASURED; CUDA0 is a hypothesis.
+      #    CUDA1 stays the default because it is MEASURED; CUDA0 was a hypothesis.
+      # ⛔ CLOSED 2026-08-31 (maintainer): the drafter stays on CUDA1. Do not A/B
+      #    CUDA0 — the question is decided, not pending. Supporting datum from the
+      #    MTP evaluation the same day: a draft context lands almost entirely on
+      #    CUDA1 (−1,157 pool slots there vs −207 on CUDA0), so the asymmetry is a
+      #    property of where draft state goes, not a reason to move the drafter.
       # See Caveats
-      # — this is the one knob worth A/B-ing first on this slug.
       - '-devd'
       - '${DRAFT_DEVICE:-CUDA1}'
       # ── Vision (mmproj) ─────────────────────────────────────────────────
