@@ -12,7 +12,7 @@
 #              ⚠️ The q4@262K + projector COMBINATION is boot-verified for fit on
 #              this rig (see MEASURED below); NOT depth-validated (no NIAH/soak/8pk).
 #   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   THREE, all disclosed:
 #              (1) ⚠️ q4_0 KV is BELOW the stack serving floor. Stack policy is a
 #                  q8_0-grade KV for anything that serves; q4_0 KLD is ~5.75x worse

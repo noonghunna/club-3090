@@ -1556,6 +1556,14 @@ if (( CAP_ENABLED )); then
     fi
     while IFS= read -r _l; do [[ -n "$_l" ]] && echo "  ${_l} MiB (post-run)"; done \
       < <(cap_vram_per_device 2>/dev/null || true)
+    # Component split — added 2026-08-31. The triplet above says HOW MUCH VRAM is
+    # held; this says WHAT holds it, and the `unaccounted` term is the point: on a
+    # CPU-offload MoE with a drafter, ~7.5 GiB across two cards was DRAFT CONTEXT
+    # even with `-devd none` (drafter weights on the host). Nothing else surfaced it.
+    if _vsplit="$(cap_vram_breakdown "${CAP_LOG:-}" 2>/dev/null)" && [[ -n "$_vsplit" ]]; then
+      echo "  component split (MiB):"
+      printf '%s\n' "$_vsplit"
+    fi
   else
     cap_note_unavailable "VRAM triplet" "nvidia-smi not available"
   fi

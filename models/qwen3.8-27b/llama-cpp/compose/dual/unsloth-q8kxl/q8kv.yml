@@ -14,7 +14,7 @@
 #   Max ctx:   262144 — the ARCHITECTURAL ceiling (config.json
 #              max_position_embeddings); COMPUTED to fit, never measured
 #   Genesis:   N/A — llama.cpp engine; Genesis is vLLM/Qwen3-Next-specific
-#   Status:    🐣 Incubating
+#   Status:    🧪 Experimental
 #   Caveats:   NOTHING HAS BOOTED. Authored 2026-08-14 while the weights were still
 #              downloading; zero runtime evidence exists for any claim below.
 #              Specifically unvalidated:

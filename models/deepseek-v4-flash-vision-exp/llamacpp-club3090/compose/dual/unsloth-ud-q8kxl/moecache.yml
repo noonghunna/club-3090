@@ -1,0 +1,283 @@
+# ===========================================================================
+# Profile (at-a-glance):
+#   Model:     DeepSeek-V4-Flash-Vision-Exp (deepseek4 MoE, unsloth UD-Q8_K_XL —
+#              MXFP4 experts + BF16 attention, 161.9 GB across 5 shards)
+#   Engine:    llamacpp-club3090-v1.6 (fork: leloch's MoE expert cache v2 + our
+#              L1/L3/E ports, plus @danielhanchen's indexer key-cache commits)
+#   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
+#   Drafter:   none wired — DSpark 0731 is tokenizer-compatible, acceptance UNMEASURED
+#   KV:        fp16 (llama.cpp default — MLA + single KV head keep it small)
+#   Vision:    ⛔ NO — despite the model name. See Caveats.
+#   Max ctx:   204800  (1,048,576 native; rope original 65,536)
+#   Genesis:   N/A — llama.cpp engine
+#   Status:    🧪 Experimental
+#   Caveats:   • ⚠️⚠️ **"Vision" IS IN THE NAME BUT NOT IN THE WEIGHTS.** Gated
+#                2026-08-31 before download: the repo ships NO mmproj/projector
+#                file, the GGUF carries NO clip/vision metadata keys, and a scan
+#                of all 1,328 tensors across shards 2-5 found ZERO vision
+#                tensors (only `blk`, `output*`, `token_embd`). This serves
+#                TEXT-ONLY. If unsloth later publishes a projector, revisit.
+#              • ✅ VALIDATED 2026-08-31 — FIRST BOOT PASSED. verify-full 10/10
+#                (tool-calling, streaming tool-calls, thinking, 2K output quality,
+#                all clean). Booted in 100 s. Bench, canonical 3 warm + 5 measured,
+#                at the SHIPPED default (THREADS unset -> -t 16) and DRAFTER-FREE:
+#                  decode  22.94 narrative (CV 1.5%) · 21.29 code (CV 0.5%)
+#                  prefill 407.3 @10K (CV 1.0%) · 343.9 @90K
+#                  depth   20.82 @10K · 19.69 @90K  ⇒ only −14% shallow→90K
+#                  TTFT    157-173 ms short · hit rate 63.1% / 60.2% per card
+#                  pool    5,360 slots of 11,008 experts (48.7%), 1 allocation
+#                ⚠️ A FLOOR, not a ceiling: 16 threads is ~20% below this rig's
+#                measured optimum of 28, and no drafter was mounted. Code decode
+#                is the leg that shows it (0731 with DSpark records 27.01).
+#              • ⚠️ NO DRAFTER WIRED — but not because none can work. The 0731
+#                sibling's DSpark (`dspark-DeepSeek-V4-Flash-0731-Q8_0.gguf`,
+#                arch `dflash`) has an **IDENTICAL tokenizer** to this target:
+#                gpt2, vocab 129,280, bos 0 / eos 1, same special tokens
+#                (verified 2026-08-31 from both GGUFs). Same base model plus
+#                vision training, so it is a plausible drafter. What is NOT
+#                measured is ACCEPTANCE against this checkpoint — the drafter was
+#                trained on 0731's weights. Wire it with `-md` + `--spec-type
+#                draft-dspark` and read the acceptance rate before trusting it;
+#                the 0731 slug reports 0.41-0.73. Until then nothing is mounted
+#                and SPEC_N is absent rather than inert.
+#              • ⚠️ ATTRIBUTION: the MoE expert cache is **leloch's** work
+#                (github.com/leloch/llama.cpp, RFC ggml-org#24528). This slug
+#                packages it; it does not originate it.
+#              • UNMERGED ENGINE. The cache is not in mainline llama.cpp. This
+#                slug pins a fork image; it cannot be reproduced with stock.
+#              • QUALITY IS UNTESTED. No 8-pack, no soak, no verify-full.
+#              • ⚠️ COLD-START TAX: the FIRST request after boot is slow while
+#                the expert pool fills. Do not benchmark the first request.
+#              • Tuning is 2× 24 GB SPECIFIC and INHERITED from the 0731
+#                sibling — `RESERVE_MB=1536`, `-ub/-b 4096`. Re-derive
+#                before trusting any of them on other hardware.
+#              • `-t` defaults to **nproc/2**, matching the launcher so both
+#                paths agree. ⚠️ nproc/2 is a FLOOR, not the optimum — on our
+#                32c/8-channel reference host `-t 28` measured ~20% faster.
+#                That 28 lives in the OPERATOR's .env, deliberately NOT in the
+#                shipped default: pinning it would hand a 32-core-tuned value
+#                to every user and oversubscribe smaller boxes. Set THREADS=<n>;
+#                the useful zone is an ABSOLUTE ~24-32, not a fraction of cores.
+#   Best for:  long-context text on CPU-offload, when 0731's DSpark drafter is
+#              not wanted and a newer base is preferred
+# ---------------------------------------------------------------------------
+# Architecturally IDENTICAL to DeepSeek-V4-Flash-0731: arch `deepseek4`,
+# 43 blocks (all MoE, no dense prefix), 256 routed experts top-6 + 1 shared,
+# MLA with a single KV head, DSA indexer (64 heads). Verified from THIS GGUF's
+# metadata by HTTP range read, not assumed from the sibling.
+# ⚠️ `general.file_type = 38`; experts are ggml type 39 = **MXFP4**, IDENTICAL
+# to the UD-Q4_K_XL tier in the same repo. The Q4/Q8 in unsloth's names refers
+# to the NON-EXPERT path only (Q8_0 vs BF16 attention/dense) — which is why the
+# two tiers are only 4% apart in size. For a moe-cache rig this means the tier
+# choice does NOT change expert residency; it changes on-GPU dense bytes, and
+# BF16 dense COSTS pool slots under free-minus-reserve. Chosen deliberately.
+# ===========================================================================
+services:
+  llama-cpp-deepseek-flash-vision-q8-moecache:
+    # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
+    # The engine profile is authoritative for this pin; keep them in step.
+    # v1.6 (revision d9cc8af98, moecachev1.6-rc0): mainline base b10675 +
+    # leloch's expert cache + @danielhanchen's indexer key-cache commits.
+    # ⚠️ NO VALIDATION CLAIM FOR THIS SLUG. The sibling compose carries a
+    # boot+verify+acceptance line here; it was deliberately NOT carried over,
+    # because it was measured on deepseek-v4-flash-0731 with a drafter this slug
+    # does not ship. First boot 2026-08-31: verify-full 10/10 (see header). The release ledger
+    # records what the IMAGE was validated against — not this compose.
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:69b833eea9266707cd9853fc8041348a59e2403a1e763822db5c2a46484db72b}
+    container_name: ${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-vision-q8-moecache}
+    restart: unless-stopped
+    # Reap orphaned children. Without this, a wedged llama-server becomes a
+    # <defunct> PID 1 child that docker CANNOT kill ("PID N is zombie and can
+    # not be killed. Use the --init option"), and it keeps holding GPU memory
+    # AND ~117 GB of host RAM — after which preflight correctly refuses every
+    # later boot ("needs ~156 GB; only 39 GB AVAILABLE"). Cost 8 of 9 A/B arms
+    # on 2026-08-25 before it was diagnosed.
+    init: true
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${ESTATE_PORT:-${PORT:-8128}}:8080"
+    volumes:
+      - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
+    environment:
+      # Drafter toggle - docker forwards only what is declared here.
+      # Expert-cache tuning — every value MEASURED on 2×24 GB, see Caveats.
+      - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
+      - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+      # Cache hit/miss telemetry. DEFAULT ON (emit every N collect calls per
+      # device) because without it the engine's `stats_every` is 0 and NO
+      # `CUDA<n> hits=…` line is ever produced — see moe-cache.cu:169 (default 0)
+      # and :2795 (`stats_every > 0` gate). It is NOT gated on log verbosity.
+      # ⚠️ This var was previously ABSENT from this block entirely, so docker
+      # never forwarded it and the value was unreachable through the shipped
+      # slug no matter what the caller exported. Every community bench filed
+      # against this compose therefore carried zero cache telemetry, and
+      # bench.sh rendered that absence as a measured `0.0% dhits=0 dlookups=0`
+      # — indistinguishable from "the cache did nothing" (club-3090 #1105/#1106).
+      # ⚠️⚠️ THIS VAR ALONE IS NOT ENOUGH — telemetry needs BOTH knobs. Measured
+      # on a live 2-arm boot 2026-08-26 with one variable between the arms:
+      #   STATS=200, default verbosity -> 0 `[moe-cache]` lines of ANY kind
+      #   STATS=200, LLAMA_ARG_LOG_VERBOSITY=4 -> 228 lines / 211 stats lines
+      # MOE_CACHE_LOG is GGML_LOG_INFO (moe-cache.cu:46) and the server's verbosity
+      # threshold drops it below 4, so without `-lv 4` the whole cache subsystem is
+      # silent. Verbosity is left to the caller (bare passthrough below) because 4
+      # is loud for a serving deployment — but a bench/report run wanting cache
+      # numbers MUST set it. bench.sh now says so when the counters do not advance.
+      # ⚠️ DEFAULT IS 0 (OFF) — telemetry is OPT-IN so instrumentation does not run
+      # when nothing reads it. Set MOE_STATS=200 (plus LLAMA_ARG_LOG_VERBOSITY=4)
+      # for a bench/report run. ⚠️ The counter-gating behaviour was characterised
+      # on the old v1.2-era image; it has NOT been re-checked on v1.5.
+      # ✅ The `=${VAR:-N}` form is SAFE here (unlike the bare-passthrough vars
+      # below): `moe_cache_env_i64` rejects unset AND empty (`!text || !text[0]`,
+      # moe-cache.cu:509) before parsing, so it cannot hit the atoi("")==0 trap.
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
+      # Prefill expert-prefetch and log verbosity.
+      #
+      # ⚠️ STATUS ON THIS PIN IS UNVERIFIED — rewritten 2026-08-29 with the v1.5
+      # migration. The previous text said the knob was INERT because the pinned
+      # digest (sha256:17824d44 / revision e0a208949) predated the prefetch work.
+      # That digest is no longer pinned here: this compose now runs v1.5-rc0
+      # (7104d5f4e, base b10675), and whether the ring exists in THAT binary has
+      # not been checked. A ring WAS observed on rc2 — but rc2 is the ROLLBACK
+      # digest (bf2776f7), not rc0, so it does not settle this.
+      #
+      # ⛔ The "+14.5% / +15.0% prefill" justification is WITHDRAWN regardless: it
+      # was measured on a build carrying the n_copies==1 scheduler race (fixed in
+      # ce8743a05) and is unquotable until re-measured
+      # (moecache-engine-playbook.md section 6). The COST is not withdrawn — a
+      # 2,176 MiB ring on the FIRST CUDA device only, allocated lazily on first
+      # prefill AFTER the pool is sized, so nothing budgets for it.
+      #
+      # ⚠️ BARE PASS-THROUGH FORM ON PURPOSE — do NOT rewrite these as
+      # `- GGML_EXPERT_PREFETCH=${PREFETCH:-}`. The engine tests
+      # `if (on && atoi(on) == 0) return nullptr;` (expert-prefetch.cu:126) and
+      # atoi("") == 0, so an empty-string default would set the var to "" and
+      # SILENTLY DISABLE the prefetch for every user. Bare form leaves the var
+      # UNSET in the container unless the caller exports it, which is the only
+      # spelling that preserves default-ON.
+      #   GGML_EXPERT_PREFETCH=0  stock (no ring; frees ~484 CUDA0 cache slots)
+      #                       =2  BALLAST (ring allocated, every node declined) —
+      #                           the pool-matched control for mechanism A/Bs
+      #   LLAMA_ARG_LOG_VERBOSITY=4  resolved pools + moe-cache statistics
+      - GGML_EXPERT_PREFETCH
+      - GGML_EXPERT_PREFETCH_SLOTS
+      - LLAMA_ARG_LOG_VERBOSITY
+      # Prefix reuse via KV shifting (default 0 = OFF). The between-turn TTFT
+      # lever for agent traffic — the llama.cpp analogue of the vLLM
+      # mamba-align work on the qwen3.8 MTP composes (#1093), though a
+      # different mechanism (KV shift, not SSM-state alignment).
+      # ⚠️ The server force-disables it when the memory layout cannot shift
+      # (server-context.cpp: "cache_reuse is not supported by this context")
+      # — MLA + SWA is a plausible refusal case, so CHECK THE BOOT LOG rather
+      # than assuming it engaged.
+      - LLAMA_ARG_CACHE_REUSE
+      # Thread count. Resolved in the entrypoint (see [threads]) because a
+      # fixed compose default cannot be right on two different rigs.
+      - THREADS
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${ESTATE_GPUS:-0,1}']
+              capabilities: [gpu]
+    # ⚠️ LIST FORM, NOT a folded `command: >-` string — REQUIRED, not style.
+    # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a
+    # folded string. The list form skips shell parsing, so the regex survives
+    # byte-for-byte.
+    # The image ENTRYPOINT is ["/app/llama-server"] on every engine we ship
+    # (mainline, ik-llama, beellama, llamacpp-club3090 — all verified). This
+    # wrapper is equivalent to it plus the drafter toggle.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        # -- No drafter on this slug ---------------------------------------------
+        # The SPEC_N/SPEC toggle that every other club-3090 compose carries is
+        # deliberately ABSENT here: no drafter exists for DeepSeek-V4-Flash-Vision-Exp
+        # (0731's DSpark is built against THAT model), so the knob would be inert.
+        # Shipping an env var that does nothing is the exact defect
+        # test-spec-toggle-contract exists to catch -- so it is not shipped.
+        # `--spec-type ngram-mod` needs no drafter file and is the obvious candidate;
+        # unmeasured on deepseek4, so not enabled.
+        # -- Threads ------------------------------------------------------------
+        # llama.cpp's own default collapses CPU-offload decode (-31% measured on
+        # this workload), and the old `-t ${THREADS:-8}` compose default was worse
+        # still for anyone running `docker compose` directly. Resolve here instead:
+        # THREADS if the caller set it, else nproc/2 -- which MATCHES what the
+        # launcher already computes (scripts/lib/compose-meta.sh
+        # resolve_offload_threads), so the two paths agree instead of diverging.
+        # ⚠️ nproc/2 is a floor, NOT the optimum: on the 32c/8-channel reference
+        # host `-t 28` measured ~20% faster than the launcher's nproc/2=16, which
+        # is why .env pins 28 there. Under the launcher THREADS is always already
+        # set, so this branch only serves direct-compose users.
+        # Exported as LLAMA_ARG_THREADS -- the `-t` flag is therefore NOT in the
+        # command list; adding one back would override this (CLI beats env).
+        if [ -n "$${THREADS:-}" ]; then
+          export LLAMA_ARG_THREADS="$${THREADS}"
+          echo "[threads] -t $${LLAMA_ARG_THREADS} (THREADS set explicitly)" >&2
+        else
+          # PORTABLE DEFAULT = nproc/2, matching the launcher's resolve_offload_threads
+          # so both paths agree. ⚠️ nproc/2 is a FLOOR, not the optimum: on our 32c/
+          # 8-channel reference host `-t 28` measured ~20% faster than nproc/2=16. That
+          # 28 belongs in the OPERATOR's .env, NOT in the shipped default -- pinning it
+          # here handed a 32-core-tuned value to every user and oversubscribed smaller
+          # boxes. Set THREADS=<n> to tune; the useful zone is an ABSOLUTE ~24-32.
+          _np=$$(nproc 2>/dev/null || echo 8)
+          _half=$$(( _np / 2 )); [ "$$_half" -lt 1 ] && _half=1
+          export LLAMA_ARG_THREADS="$$_half"
+          echo "[threads] -t $${LLAMA_ARG_THREADS} (auto = nproc/2, nproc=$$_np; set THREADS to tune)" >&2
+        fi
+
+        exec /app/llama-server "$$@"
+      - --
+    command:
+      - '-m'
+      - '/models/deepseek-v4-flash-vision-exp-gguf/unsloth-ud-q8kxl/UD-Q8_K_XL/DeepSeek-V4-Flash-Vision-Exp-UD-Q8_K_XL-00001-of-00005.gguf'
+      - '--host'
+      - '0.0.0.0'
+      - '--port'
+      - '8080'
+      - '--alias'
+      - 'deepseek-v4-flash'
+      # Slots. ⚠️ `-np N` SPLITS `-c` into ctx/N per slot, so the pool and the
+      # compute buffer change with it — a concurrency A/B must re-measure, not
+      # reuse single-stream rows. Default 1 keeps shipped behaviour identical.
+      # ⚠️ LLAMA_ARG_N_PARALLEL cannot override this: common/arg.cpp applies env
+      #    BEFORE argv (~L783 vs ~L808), so the command line always wins.
+      - '-np'
+      - '${NPARALLEL:-1}'
+      - '-c'
+      - '${CTX:-204800}'
+      - '-ngl'
+      - '99'
+      - '-sm'
+      - 'layer'
+      - '-ts'
+      - '1,1'
+      - '-fa'
+      - 'on'
+      # ⚠️ SINGLE -ot with comma-separated rules. Current mainline DEPRECATES
+      # repeated -ot and honours ONLY THE LAST occurrence — passing it three
+      # times silently drops the GPU pins. All experts to CPU here; the cache
+      # decides residency dynamically, so static pins are counter-productive.
+      - '-ot'
+      - 'blk\.[0-9]+\.ffn_(gate|up|down)_exps\.weight=CPU'
+      - '-ub'
+      - '${UBATCH:-4096}'
+      - '-b'
+      - '${UBATCH:-4096}'
+      - '--cache-prompt'
+      - '--no-mmap'
+      # ⛔ NO DRAFTER. 0731's DSpark is built against THAT model and is not
+      #    known valid here, so nothing is mounted and SPEC_N is inert.
+      #    `--spec-type ngram-mod` needs no drafter file and is the obvious
+      #    candidate — UNMEASURED on deepseek4, so deliberately not enabled.
+      - '--moe-cache'
+      - '${MOE_CACHE:-auto}'
+      - '--fit'
+      - 'off'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 900s

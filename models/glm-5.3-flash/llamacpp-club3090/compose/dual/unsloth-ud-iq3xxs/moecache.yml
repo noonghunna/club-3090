@@ -267,8 +267,16 @@ services:
           export LLAMA_ARG_THREADS="$${THREADS}"
           echo "[threads] -t $${LLAMA_ARG_THREADS} (THREADS set explicitly)" >&2
         else
-          export LLAMA_ARG_THREADS=28
-          echo "[threads] -t 28 (slug default; validated for GLM bring-up)" >&2
+          # PORTABLE DEFAULT = nproc/2, matching the launcher's resolve_offload_threads
+          # so both paths agree. ⚠️ nproc/2 is a FLOOR, not the optimum: on our 32c/
+          # 8-channel reference host `-t 28` measured ~20% faster than nproc/2=16. That
+          # 28 belongs in the OPERATOR's .env, NOT in the shipped default -- pinning it
+          # here handed a 32-core-tuned value to every user and oversubscribed smaller
+          # boxes. Set THREADS=<n> to tune; the useful zone is an ABSOLUTE ~24-32.
+          _np=$$(nproc 2>/dev/null || echo 8)
+          _half=$$(( _np / 2 )); [ "$$_half" -lt 1 ] && _half=1
+          export LLAMA_ARG_THREADS="$$_half"
+          echo "[threads] -t $${LLAMA_ARG_THREADS} (auto = nproc/2, nproc=$$_np; set THREADS to tune)" >&2
         fi
 
         # ── vision projector guard ──────────────────────────────────────────

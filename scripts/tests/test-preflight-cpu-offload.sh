@@ -463,9 +463,20 @@ declare -F resolve_offload_threads >/dev/null 2>&1 && ok "resolve_offload_thread
 # the bare-compose fallback must be LOW, not the reference rig's number: over-subscribing
 # measured -69% vs under-subscribing -9.6%, so err low when the core count is unknown.
 for f in "$Q8" "$IQ2" "$M4" "$FORK_Q8" "$FORK_M4" "$INK_CACHE" "$INK_M4" "$INK_RES"; do
-  fb="$(command grep -oE 'THREADS:-[0-9]+' "$f" | command grep -oE '[0-9]+' | head -1)"
-  [[ -n "$fb" && "$fb" -le 8 ]] && ok "$(basename "$(dirname "$f")")/$(basename "$f"): safe THREADS fallback ($fb)" \
-    || bad "$(basename "$(dirname "$f")")/$(basename "$f"): THREADS fallback '$fb' is too high for an unknown rig"
+  # Two acceptable shapes, both safe on an unknown rig:
+  #   (a) entrypoint resolution to nproc/2  — the CURRENT convention (adapts to the host)
+  #   (b) a literal `THREADS:-N` with N <= 8 — the older bare-compose fallback
+  # A hardcoded high number (e.g. the reference rig's 28) is what this rejects:
+  # it over-subscribes a smaller box. CLI `-t` is separately forbidden because it
+  # beats the entrypoint env.
+  _lbl="$(basename "$(dirname "$f")")/$(basename "$f")"
+  if command grep -qE '_np / 2|nproc/2' "$f"; then
+    ok "$_lbl: resolves THREADS to nproc/2 in the entrypoint (portable)"
+  else
+    fb="$(command grep -oE 'THREADS:-[0-9]+' "$f" | command grep -oE '[0-9]+' | head -1)"
+    [[ -n "$fb" && "$fb" -le 8 ]] && ok "$_lbl: safe THREADS fallback ($fb)" \
+      || bad "$_lbl: THREADS fallback '$fb' is neither nproc/2 nor <=8 — unsafe on an unknown rig"
+  fi
 done
 
 # ---- wiring ----
