@@ -28,6 +28,16 @@ status: experimental
 # one fits on GPU1 and the expert cache still kept 21.7% hits with it resident.
 # ⚠️ `-devd` takes a device NAME (`CUDA1`); `1` is invalid and the engine rejects it.
 #
+# ⚠️⚠️ THE +18.4% / −2.0% FIGURES ABOVE ARE FROM v1.5 AND ARE STALE ON v1.6 (2026-08-31).
+# A single boot on the v1.6 engine read closer to **+11% code / −12% prose**. The drafter
+# did not change — the indexer-cache commits raised the no-drafter baseline, so the same
+# drafter buys less. The PLACEMENT conclusion (GPU1 over host) still holds and is what
+# this file exists to record; only the magnitudes moved. A re-measure was deliberately
+# DEFERRED by the maintainer 2026-08-31 — treat the numbers as directional, not current,
+# and do not quote them as v1.6 results. ⇒ The n-sweep is also due: n=3 was tuned against
+# a target the cache has since made materially faster, and verification cost is what
+# punishes depth.
+#
 # ⚠️⚠️ n_max=7 IS THE TESTED CEILING, NOT A RECOMMENDATION. Depth past 3 is
 # DESTRUCTIVE on this pairing — n-sweep 2026-08-29, code TPS:
 #     n=3 → 18.23 (shipped)   n=5 → 16.61 (−8.9%)   n=7 → 11.10 (−27.9%)
