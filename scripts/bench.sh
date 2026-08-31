@@ -890,11 +890,17 @@ def token_ratio():
     return ratio
 
 
-def run_once(prompt, max_tokens):
+def run_once(prompt, max_tokens, force=0):
     # FORCE>0: force EXACTLY FORCE output tokens (overrides the per-prompt cap) so the
     # model can't self-terminate early — required to measure sustained throughput at a
     # chosen output size on diffusion LMs (which stop ~1-2K words otherwise).
-    mt = FORCE if FORCE > 0 else max_tokens
+    # `force` is a PER-CALL floor with the same effect, used by the decode-at-depth
+    # leg. ⚠️ max_tokens is a CAP, not a floor: a terse model answers a depth probe in
+    # a handful of tokens and the decode window collapses (Qwen measured 0.04 s, which
+    # the degeneracy guard then discarded — the leg silently reported nothing). The
+    # global FORCE still wins so an explicit user override is never overridden.
+    _force = FORCE if FORCE > 0 else force
+    mt = _force if _force > 0 else max_tokens
     req_body = {
         "model": MODEL,
         "max_tokens": mt,
@@ -925,8 +931,11 @@ def run_once(prompt, max_tokens):
             # into the template — see the preflight.sh block header).
             req_body["reasoning_effort"] = THINK_EFFORT
         path = "/v1/chat/completions"
-    if FORCE > 0:
-        req_body["min_tokens"] = FORCE
+    if _force > 0:
+        # ignore_eos alone is what makes this work on llama.cpp (no min_tokens
+        # support there); vLLM honours both. Output past the natural stop is
+        # throwaway text — this is a throughput measurement, not a quality one.
+        req_body["min_tokens"] = _force
         req_body["ignore_eos"] = True
     body = json.dumps(req_body).encode()
     req = urllib.request.Request(f"{URL}{path}", data=body,
@@ -1367,7 +1376,7 @@ def run_prefill_probe():
         _gen_cap = _depth_toks if _depth_toks > 0 else PP_MAX_TOKENS
         for i in range(n):
             try:
-                w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt()), _gen_cap)
+                w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt()), _gen_cap, force=_depth_toks)
                 # ⚠️ Do NOT reuse decode_window() here. Its degeneracy test is the
                 # RATIO dt < 5% of wall, which assumes decode is essentially the
                 # whole wall — true for a short prompt, FALSE at depth where prefill
