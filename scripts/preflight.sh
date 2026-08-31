@@ -1632,6 +1632,32 @@ _preflight_probe_thinking_key() {
     || echo 0
 }
 
+_preflight_probe_thinking_reasoning_both() {
+  # Same as the sibling below, but ALSO sends the TOP-LEVEL `reasoning_effort`
+  # field alongside the kwargs — i.e. the exact shape verify-full builds from
+  # THINK_OFF_STD + THINK_OFF_KW. Exists to detect models where the two DISAGREE.
+  local url="$1" model="$2" kwargs="$3" effort="$4"
+  curl -sf -m 90 "${url%/}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"${model}\", \"messages\": [{\"role\": \"user\", \"content\": \"Say OK.\"}], \"max_tokens\": 96, \"reasoning_effort\": \"${effort}\", \"chat_template_kwargs\": ${kwargs}}" 2>/dev/null \
+    | python3 -c "import sys,json; print(len((json.load(sys.stdin)['choices'][0]['message'].get('reasoning_content') or '')))" 2>/dev/null \
+    || echo 0
+}
+
+_preflight_probe_thinking_reasoning() {
+  # Echo the REASONING length a trivial question returns under the given kwargs.
+  # The sibling probe measures CONTENT — right for proving a value turns thinking
+  # OFF, useless for proving one turns it ON. max_tokens stays tiny so a max-effort
+  # model cannot burn minutes here (GLM at effort=max reasons ~6,050 tokens on a
+  # real prompt; capped at 24 it just emits a preamble).
+  local url="$1" model="$2" kwargs="$3"
+  curl -sf -m 90 "${url%/}/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"${model}\", \"messages\": [{\"role\": \"user\", \"content\": \"Say OK.\"}], \"max_tokens\": 96, \"temperature\": 0.0, \"chat_template_kwargs\": ${kwargs}}" 2>/dev/null \
+    | python3 -c "import sys,json; print(len((json.load(sys.stdin)['choices'][0]['message'].get('reasoning_content') or '').strip()))" 2>/dev/null \
+    || echo 0
+}
+
 preflight_detect_thinking_control() {
   [[ -n "${THINK_CONTROL:-}" ]] && return 0
   local url="${1:-${URL:-}}"
@@ -1649,6 +1675,92 @@ preflight_detect_thinking_control() {
         *reasoning_effort*) THINK_CONTROL="reasoning_effort" ;;
         *)                  THINK_CONTROL="none"             ;;
       esac
+      # 1b. VERIFY the switch is HONOURED, not merely MENTIONED.
+      #
+      # The scan above proves a template NAMES a key. It does not prove the model
+      # OBEYS it, and those differ in practice:
+      #   - GLM-5.3-Flash (2026-08-29) names `reasoning_effort` but has FORCED
+      #     thinking (vendor: thinking.type=disabled is an ERROR on 5.3/5.3-FLASH).
+      #     The scan set THINK_CONTROL=reasoning_effort, so TOK_SCALE stayed 1 and
+      #     verify-full handed a forced-thinking model a 30-TOKEN budget. 4/9 failed
+      #     — [3] basic, [5] streaming, [7] thinking, [8] quality — every
+      #     empty-content failure being budget exhaustion, while tool-calling passed
+      #     TWICE. The engine was fine; the hint ("Model may be loading badly or
+      #     wrong chat template") pointed at the model. That is exactly the failure
+      #     this file's header describes, reached via the SCAN branch rather than
+      #     the probe branch it was written to cover.
+      #   - An unsupported ENUM VALUE fails the same silent way: `reasoning_effort:
+      #     none` is not valid for the GLM-5.3 family and is dropped without error.
+      #
+      # Same opt-in and the same load-bearing reachability gate as the probe branch
+      # below: MEASUREMENT scripts never reach this (THINK_PROBE unset), and an
+      # unreachable endpoint falls through to the scan's answer rather than being
+      # misread as "no switch" and inflating token budgets 64x.
+      #
+      # ASYMMETRIC ON PURPOSE: a switch that WORKS keeps the scan's control
+      # untouched, so every model passing today keeps its exact request shape
+      # (scenario 3's no-regression promise holds). Only a demonstrably-IGNORED
+      # switch is downgraded to `none` — which is what makes the caller widen its
+      # token budgets instead of blaming the model.
+      if [[ "$THINK_CONTROL" != "none" ]] && [[ "${THINK_PROBE:-0}" == "1" ]] \
+         && [[ -n "$model" ]] && curl -sf -m 5 "${url%/}/v1/models" >/dev/null 2>&1; then
+        local _off_probe_kw=""
+        case "$THINK_CONTROL" in
+          enable_thinking)  _off_probe_kw='{"enable_thinking": false}'   ;;
+          reasoning_effort) _off_probe_kw='{"reasoning_effort": "none"}' ;;
+        esac
+        if [[ -n "$_off_probe_kw" ]] \
+           && [[ "$(_preflight_probe_thinking_key "$url" "$model" "$_off_probe_kw")" == "0" ]]; then
+          # ⚠️ "this VALUE did not work" is NOT "this KEY does not exist" — the
+          # distinction caused a real misdiagnosis. `reasoning_effort: none` is
+          # INVALID on the GLM-5.3 family (vendor lists max|high|low only) and is
+          # silently ignored, so probing ONLY `none` declared GLM switch-less.
+          # Downstream that set THINK_OFF_KW={} — no switch on any check — and
+          # verify-full's [8] then spent its entire budget reasoning and failed with
+          # "empty completion", blaming the model rather than the probe value.
+          # So before giving up on an effort DIAL, try the other documented minimum.
+          # `low` is valid for GLM-5.3/5.3-Flash and is a listed level in llama.cpp's
+          # own --reasoning-effort help (minimal|low|medium|high|xhigh|max).
+          # ⚠️ WALK A LADDER, DO NOT HARDCODE A LEVEL. Valid levels differ per
+          # family and the dial is not always monotonic:
+          #   GLM-5.3       — `none` INVALID (max|high|low only); `high` measured
+          #                   beside `low` (11 ch vs 0), so `high` is NOT "on".
+          #   Qwen3.8-27B   — template FORCES xhigh and remaps high -> xhigh.
+          # llama.cpp's own --reasoning-effort help lists the level set:
+          #   minimal | low | medium | high | xhigh | max
+          # OFF ladder: first level that lets a 24-token reply produce CONTENT.
+          # ON  ladder: first level that produces REASONING.
+          # A model whose first candidate works is unaffected — the ladder stops there.
+          if [[ "$THINK_CONTROL" == "reasoning_effort" ]]; then
+            local _lvl
+            for _lvl in minimal low medium; do
+              if [[ "$(_preflight_probe_thinking_key "$url" "$model" "{\"reasoning_effort\": \"${_lvl}\"}")" != "0" ]]; then
+                THINK_EFFORT_OFF_VALUE="$_lvl"; break
+              fi
+            done
+            if [[ -z "${THINK_EFFORT_OFF_VALUE:-}" ]]; then
+              THINK_CONTROL="none"
+            else
+              # ⚠️ THE BAR MUST MATCH THE CONSUMER'S. verify-full [7] fails a level
+              # whose reasoning is <50 chars ("suspiciously short"). An earlier
+              # revision accepted ANY non-zero reasoning, so the ladder blessed
+              # GLM's `high` on ~11 chars and [7] then REJECTED the value the probe
+              # had just chosen — probe and check disagreeing about what "thinking
+              # is on" means. 50 is that consumer's threshold; the probe budget
+              # above is sized to clear it comfortably (96 tok >> 50 chars).
+              local _min_reasoning=50 _rlen
+              for _lvl in high xhigh max; do
+                _rlen="$(_preflight_probe_thinking_reasoning "$url" "$model" "{\"reasoning_effort\": \"${_lvl}\"}")"
+                if [[ "$_rlen" =~ ^[0-9]+$ ]] && (( _rlen >= _min_reasoning )); then
+                  THINK_EFFORT_ON_VALUE="$_lvl"; break
+                fi
+              done
+            fi
+          else
+            THINK_CONTROL="none"
+          fi
+        fi
+      fi
     elif [[ "${THINK_PROBE:-0}" == "1" ]] && [[ -n "$model" ]] && curl -sf -m 5 "${url%/}/v1/models" >/dev/null 2>&1; then
       # 2. Behavioural probe for engines that don't expose the template (vLLM,
       #    SGLang). At most two tiny requests, and only when step 1 no-ops.
@@ -1703,16 +1815,45 @@ preflight_detect_thinking_control() {
   # it directly instead of parsing the fragment above.
   THINK_OFF_STD=''
   THINK_ON_STD=''
+  THINK_EFFORT_OFF_VALUE="${THINK_EFFORT_OFF_VALUE:-}"
+  THINK_EFFORT_ON_VALUE="${THINK_EFFORT_ON_VALUE:-}"
   THINK_OFF_EFFORT=''
   THINK_ON_EFFORT=''
   case "$THINK_CONTROL" in
     reasoning_effort)
-      THINK_OFF_KW='{"reasoning_effort": "none"}'
-      THINK_ON_KW='{"reasoning_effort": "high"}'
-      THINK_OFF_STD='"reasoning_effort": "none", '
-      THINK_ON_STD='"reasoning_effort": "high", '
-      THINK_OFF_EFFORT='none'
-      THINK_ON_EFFORT='high' ;;
+      # The OFF value is whatever the probe PROVED works — `none` by default, `low`
+      # on families where `none` is not a valid level (GLM-5.3). Hardcoding `none`
+      # here is what silently disabled the switch on those models.
+      _eoff="${THINK_EFFORT_OFF_VALUE:-none}"
+      _eon="${THINK_EFFORT_ON_VALUE:-high}"
+      THINK_OFF_KW="{\"reasoning_effort\": \"${_eoff}\"}"
+      THINK_ON_KW="{\"reasoning_effort\": \"${_eon}\"}"
+      THINK_OFF_STD="\"reasoning_effort\": \"${_eoff}\", "
+      THINK_ON_STD="\"reasoning_effort\": \"${_eon}\", "
+      THINK_OFF_EFFORT="${_eoff}"
+      THINK_ON_EFFORT="${_eon}"
+      # ⚠️⚠️ DOES THE TOP-LEVEL FIELD DEFEAT THE KWARG? Probe, never assume.
+      # Some models read `reasoning_effort` from the CHAT TEMPLATE and ignore
+      # `enable_thinking` — which is what llama.cpp translates the TOP-LEVEL
+      # field into (server-common.cpp). On those, sending BOTH makes the
+      # top-level one win and the kwarg never takes effect, so a caller that
+      # believes it disabled thinking gets a reasoning-only reply.
+      # MEASURED on Inkling-Small 2026-08-29 (identical prompt, 30-tok budget):
+      #     kwarg only      ->   0 ch reasoning, correct content
+      #     top-level only  -> 132 ch reasoning, EMPTY content
+      #     BOTH            -> 132 ch reasoning, EMPTY content  (== top-level)
+      # verify-full sends BOTH, so [3]/[5] failed on a healthy model.
+      # Keep the top-level fragment ONLY where it does no harm.
+      if [[ -n "${url:-}" && -n "${model:-}" ]]; then
+        local _r_kw _r_both
+        _r_kw="$(_preflight_probe_thinking_reasoning "$url" "$model" "$THINK_OFF_KW")"
+        _r_both="$(_preflight_probe_thinking_reasoning_both "$url" "$model" "$THINK_OFF_KW" "$_eoff")"
+        if [[ "$_r_kw" =~ ^[0-9]+$ && "$_r_both" =~ ^[0-9]+$ ]] \
+           && (( _r_kw < 20 )) && (( _r_both >= 20 )); then
+          THINK_OFF_STD=''
+          THINK_PAYLOAD_NOTE="kwargs-only (top-level field defeats the kwarg: ${_r_kw}ch vs ${_r_both}ch)"
+        fi
+      fi ;;
     none)
       THINK_OFF_KW='{}'
       THINK_ON_KW='{}' ;;
@@ -1911,6 +2052,59 @@ preflight_offload_split_mode() {
       echo "[preflight] NOTE: mixed GPU memory sizes detected — residency is sized per device," >&2
       echo "            so asymmetric counts are expected and fine on --split-mode layer." >&2
     fi
+  fi
+  return 0
+}
+
+# preflight_offload_thp <compose_file>
+# WARN-ONLY hint: an offload compose on a host whose transparent hugepages do not
+# cover Shmem pays a first-token LATENCY cost.
+#
+# ⚠️ This is LATENCY, never throughput. Measured 2026-08-30 on GLM-5.3-Flash:
+# short-prompt TTFT ~593 -> ~262 ms (-56%), decode -0.2%, prefill +0.9%/-2.7%.
+# Wording that implies tok/s would be a false promise, so it does not.
+#
+# NEVER blocks: the rig runs correctly either way, and a hard failure over a
+# latency hint would be user-hostile. Scoped to offload composes only — it is
+# irrelevant to a GPU-resident model and would be pure noise there.
+preflight_offload_thp() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 0
+  is_cpu_offload_compose "$compose_file" || return 0   # not an offload compose -> no-op
+
+  # Resolve the lib via SCRIPT_DIR, but FALL BACK to this file's own directory.
+  # A caller with an unexpected SCRIPT_DIR would otherwise disable the check
+  # silently — the exact failure shape this guard exists to catch.
+  local lib="${SCRIPT_DIR:-}/lib/thp.sh"
+  if [[ ! -r "$lib" ]]; then
+    lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/thp.sh"
+  fi
+  [[ -r "$lib" ]] || return 0
+  # shellcheck source=/dev/null
+  . "$lib"
+
+  local shmem_knob cov
+  shmem_knob="$(thp_setting shmem_enabled)"
+  cov="$(thp_shmem_coverage_pct)"
+
+  # `shmem_enabled` is the knob that governs the experts. `enabled` is NOT a
+  # substitute and looking at it is how this gets misdiagnosed.
+  if [[ "$shmem_knob" == "never" ]]; then
+    echo "[preflight] WARN:  transparent_hugepage/shmem_enabled=never — CPU-offloaded experts will" >&2
+    echo "            run on 4 KiB pages. Costs FIRST-TOKEN LATENCY (measured -56% TTFT on short" >&2
+    echo "            prompts when fixed); throughput is unaffected, so this is not a tok/s issue." >&2
+    echo "            Fix: bash scripts/hugepages.sh --apply   # then RESTART the container" >&2
+    echo "            (already-mapped 4 KiB memory does not merge; verify with ShmemHugePages)" >&2
+    return 0
+  fi
+
+  # Coverage empty => no large Shmem resident => nothing to judge (not a finding).
+  if [[ -n "$cov" ]] && [[ "$cov" -lt 50 ]]; then
+    echo "[preflight] WARN:  hugepage coverage of Shmem is ${cov}% despite shmem_enabled=${shmem_knob}." >&2
+    echo "            The knob is set but the kernel could not supply huge pages — usually" >&2
+    echo "            fragmentation on a long-uptime host. Affects first-token latency only." >&2
+    echo "            Fix: restart the container; if it persists, compact memory before loading:" >&2
+    echo "            sync && echo 3 | sudo tee /proc/sys/vm/drop_caches && echo 1 | sudo tee /proc/sys/vm/compact_memory" >&2
   fi
   return 0
 }

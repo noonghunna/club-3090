@@ -244,7 +244,14 @@ def argv_under(text, env):
                                   "PRESENCE_PENALTY", "REPEAT_PENALTY"))}
         e.update(container_env(text, env))
         e["PATH"] = f"{dp}:{os.environ['PATH']}"
-        cmd = _command_scalar(text, env) if llama else _command_list(text, env)
+        # llama.cpp composes come in BOTH dialects: the folded `command: >-`
+        # form (qwen3.8-27b) and the LIST form (the moe-cache family — GLM,
+        # DeepSeek, qwen3.8-flash-next), which is used because comments cannot
+        # live inside a folded scalar. Try scalar first, fall back to list.
+        cmd = (_command_scalar(text, env) or _command_list(text, env)) if llama \
+              else _command_list(text, env)
+        if not cmd:
+            return None, 'no command: block (neither >- scalar nor list form)'
         r = subprocess.run(["bash", str(script), "--", *cmd],
                            capture_output=True, text=True, env=e, timeout=60)
         args = [l[4:] for l in r.stdout.split("\n") if l.startswith("ARG:")]
@@ -310,8 +317,9 @@ check(len(vllm_with) >= 20,
 check(llama_with == {"llamacpp/qwen38-27b-single-iq4xs",
                      "llamacpp/qwen38-27b-dual-q8kxl"},
       f"both llama.cpp qwen3.8 slugs gained sampler_profiles (got {sorted(llama_with)})")
-check(all(k.split("/", 1)[1].startswith("qwen38-27b-") for k in with_profiles),
-      "only qwen3.8-27b slugs carry sampler_profiles today")
+check(all(k.split("/", 1)[1].startswith(("qwen38-27b-", "qwen38-flash-next-"))
+          for k in with_profiles),
+      "only qwen3.8-27b / qwen3.8-flash-next slugs carry sampler_profiles today")
 
 for slug, entry in sorted(with_profiles.items()):
     profiles = entry["sampler_profiles"]
@@ -330,7 +338,11 @@ for slug, entry in sorted(with_profiles.items()):
     # Argv dialect: llama.cpp composes exec /app/llama-server (image ENTRYPOINT)
     # and take the sampler as flags; THINKING=1 drives their ${THINKING:+...}
     # tail. vLLM composes exec `vllm` and flip on ENABLE_THINKING=true.
-    llama = entry.get("engine") == "llama-cpp-local"
+    # Any llama.cpp engine, not just the one engine id: the moe-cache family
+    # ships `llamacpp-club3090-*`. Matching only "llama-cpp-local" silently
+    # routed those composes through the vLLM extractor, which looks for
+    # --override-generation-config and returned None for every check.
+    llama = str(entry.get("engine") or "").startswith(("llama-cpp", "llamacpp"))
     mode_env = {"THINKING": "1"} if llama else {"ENABLE_THINKING": "true"}
     mode_label = "THINKING=1" if llama else "ENABLE_THINKING=true"
 

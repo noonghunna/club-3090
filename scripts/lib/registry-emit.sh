@@ -718,7 +718,7 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # can gate its tri-state thinking toggle on REAL registry data.
             "sampler_profiles": (REG.get(d["slug"], {}) or {}).get("sampler_profiles"),
             # Weight-offload backend (catalog "offload" column) — None = resident
-            # (default) / "uva" / "n-cpu-moe" / "prefetch". Laguna 118B-MoE slugs.
+            # (default) / "uva" / "residency" / "tensor-override" / "prefetch".
             "offload": (REG.get(d["slug"], {}) or {}).get("offload"),
             # Minimum HOST RAM (GB) for weight-offload slugs — a HARD GATE, surfaced so
             # c3 can show it BEFORE selection rather than at launch refusal.
@@ -746,6 +746,17 @@ for vr in _tui_registry.parse_variant_rows(tab):
             # the registry's per-slug spec-dec drafter id; vision is derived from
             # the vision-coding workload (there is no separate vision field).
             "drafter": (REG.get(d["slug"], {}) or {}).get("drafter"),
+            # spec_method: speculation that needs NO drafter GGUF (the ngram-*
+            # runtime spec-types). Those slugs keep `drafter: null` by design, so
+            # a drafter-derived label alone would print "none" while speculation
+            # is actually running.
+            "spec_method": (REG.get(d["slug"], {}) or {}).get("spec_method"),
+            # moe_cache: the DYNAMIC axis — whether the GPU expert cache moves
+            # experts at runtime. Orthogonal to `offload` (which records whether
+            # the compose is residency-capable). Without this the catalog cannot
+            # tell a cached slug from an uncached one: deepseek-flash-dual-q8 and
+            # -q8-moecache rendered IDENTICALLY.
+            "moe_cache": bool((REG.get(d["slug"], {}) or {}).get("moe_cache")),
             "vision": (
                 (REG.get(d["slug"], {}) or {}).get("workload") == "vision-coding"
             ),

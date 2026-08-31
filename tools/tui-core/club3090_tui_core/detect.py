@@ -30,6 +30,34 @@ PORT_MAP_BROAD_RE = re.compile(
 )
 
 
+async def _reap(proc) -> None:
+    """Kill and await a subprocess so its transport closes while the loop still lives.
+
+    asyncio.wait_for cancels the COROUTINE, not the CHILD. Without this the process
+    keeps running with a live transport; when it is finally GC'd — at interpreter
+    shutdown, AFTER the loop is closed — BaseSubprocessTransport.__del__ calls
+    loop.call_soon() and raises "RuntimeError: Event loop is closed" as an ignored
+    exception on quit. These call sites POLL, so one orphan leaks per timeout.
+
+    Idempotent and never raises: it runs on exception paths where a second failure
+    would mask the original. An already-exited process raises ProcessLookupError
+    from kill() — that is the success case, not an error.
+    """
+    if proc is None:
+        return
+    try:
+        if proc.returncode is None:
+            proc.kill()
+    except (ProcessLookupError, AttributeError):
+        pass
+    except Exception:
+        pass
+    try:
+        await proc.wait()
+    except Exception:
+        pass
+
+
 @dataclass
 class GpuInfo:
     """Information about a single GPU."""
@@ -109,6 +137,7 @@ async def detect_endpoint(container_name: Optional[str] = None) -> ServingTarget
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
         lines = stdout.decode().strip().split("\n")
     except (asyncio.TimeoutError, FileNotFoundError, Exception):
+        await _reap(locals().get("proc"))
         target.health = "unreachable"
         return target
 
@@ -219,6 +248,7 @@ async def get_gpu_info() -> list[GpuInfo]:
                 ))
         return gpus
     except Exception:
+        await _reap(locals().get("proc"))
         return []
 
 

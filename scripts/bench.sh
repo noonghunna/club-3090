@@ -354,10 +354,32 @@ PP_FALLBACK_TOKENS="${PP_FALLBACK_TOKENS:-10000}"
 PP_MAX_TOKENS="${PP_MAX_TOKENS:-16}"
 PREFILL_PROBE="${PREFILL_PROBE:-1}"
 PREFILL_DEPTHS="${PREFILL_DEPTHS:-10000,90000}"
-PREFILL_RUNS="${PREFILL_RUNS:-3}"
+# Measured runs per prefill depth. SCALAR (all depths) or CSV aligned with
+# PREFILL_DEPTHS. Default "3,1" — the depths differ ~13x in cost and the deep leg
+# dominates total bench wall-clock:
+#   10K  ~26 s/run,    measured CV 0.6%  -> 3 runs cost 78 s, buy a real CV
+#   90K  ~5.5 min/run, measured CV 2.3%  -> 3 runs cost ~16.5 min, most of the bench
+# A CSV shorter than the depth list reuses its LAST value; a malformed entry falls
+# back to 1 rather than aborting a long run.
+# ⚠️ n=1 gives no CV for that depth — state it when quoting a single-run number.
+PREFILL_RUNS="${PREFILL_RUNS:-3,1}"
+# Completion length for the MEASURED prefill runs, which doubles as the
+# DECODE-AT-DEPTH leg. 0 disables (falls back to PP_MAX_TOKENS).
+#
+# ⭐ WHY (2026-08-31): bench.sh had five legs and none measured DECODE against a
+# deep KV cache — decode was sampled only at shallow context, and the deep legs
+# measure PREFILL. That blind spot made a two-boot A/B of the glm5next indexer key
+# cache (upstream 0069971) report "no reproducible benefit"; a decode-at-depth
+# probe on the same two builds then measured +47% at 44K and +70% at 87K, because
+# the commit's entire effect is a per-cached-token DECODE term.
+#
+# Nearly free: TTFT — and so `prefill tok/s` — does not depend on how many tokens
+# follow the first, so a longer completion costs only the generation (~10-16 s at
+# depth), not a second prefill.
+DEPTH_DECODE_TOKENS="${DEPTH_DECODE_TOKENS:-128}"
 # The probe knobs reach the python heredoc via the environment (the argv tuple
 # is full); export them here.
-export PREFILL_PROBE PREFILL_DEPTHS PREFILL_RUNS
+export PREFILL_PROBE PREFILL_DEPTHS PREFILL_RUNS DEPTH_DECODE_TOKENS
 ENABLE_THINKING="${ENABLE_THINKING:-0}"
 FORCE_TOKENS="${FORCE_TOKENS:-0}"
 # --- decode-granularity knobs (#809) ----------------------------------------
@@ -868,11 +890,17 @@ def token_ratio():
     return ratio
 
 
-def run_once(prompt, max_tokens):
+def run_once(prompt, max_tokens, force=0):
     # FORCE>0: force EXACTLY FORCE output tokens (overrides the per-prompt cap) so the
     # model can't self-terminate early — required to measure sustained throughput at a
     # chosen output size on diffusion LMs (which stop ~1-2K words otherwise).
-    mt = FORCE if FORCE > 0 else max_tokens
+    # `force` is a PER-CALL floor with the same effect, used by the decode-at-depth
+    # leg. ⚠️ max_tokens is a CAP, not a floor: a terse model answers a depth probe in
+    # a handful of tokens and the decode window collapses (Qwen measured 0.04 s, which
+    # the degeneracy guard then discarded — the leg silently reported nothing). The
+    # global FORCE still wins so an explicit user override is never overridden.
+    _force = FORCE if FORCE > 0 else force
+    mt = _force if _force > 0 else max_tokens
     req_body = {
         "model": MODEL,
         "max_tokens": mt,
@@ -903,8 +931,11 @@ def run_once(prompt, max_tokens):
             # into the template — see the preflight.sh block header).
             req_body["reasoning_effort"] = THINK_EFFORT
         path = "/v1/chat/completions"
-    if FORCE > 0:
-        req_body["min_tokens"] = FORCE
+    if _force > 0:
+        # ignore_eos alone is what makes this work on llama.cpp (no min_tokens
+        # support there); vLLM honours both. Output past the natural stop is
+        # throwaway text — this is a throughput measurement, not a quality one.
+        req_body["min_tokens"] = _force
         req_body["ignore_eos"] = True
     body = json.dumps(req_body).encode()
     req = urllib.request.Request(f"{URL}{path}", data=body,
@@ -1291,12 +1322,24 @@ def run_prefill_probe():
     anchor calibration (agreement certifies the ladder's whole depth curve).
     A depth the served context can't hold is SKIPPED with a note."""
     depths = [int(x) for x in os.environ.get("PREFILL_DEPTHS", "10000,90000").split(",") if x.strip()]
-    n = max(1, int(os.environ.get("PREFILL_RUNS", "3")))
+    _parts = [x.strip() for x in os.environ.get("PREFILL_RUNS", "3,1").split(",") if x.strip()]
+
+    def _runs_for(idx):
+        """Runs for depth #idx. CSV shorter than depths reuses the last value;
+        a malformed entry degrades to 1 instead of killing a long run."""
+        if not _parts:
+            return 1
+        tok = _parts[idx] if idx < len(_parts) else _parts[-1]
+        try:
+            return max(1, int(tok))
+        except ValueError:
+            return 1
 
     def salt():
         return "".join(random.choices(string.ascii_lowercase, k=8))
 
-    for target in depths:
+    for _di, target in enumerate(depths):
+        n = _runs_for(_di)
         label = f"prefill-{target // 1000}k"
         print(
             f"\n========== {label.upper()} (target={target} prompt tokens, "
@@ -1324,10 +1367,26 @@ def run_prefill_probe():
             print(f"  warm-1     FAIL: {e}")
         print(f"\n=== measured ({n}) ===")
         pps, ttfts, ptoks_seen = [], [], []
+        dtps = []          # decode-at-depth: the leg this probe used to discard
         phase_t0 = phase_start()
+        try:
+            _depth_toks = int(os.environ.get("DEPTH_DECODE_TOKENS", "128"))
+        except ValueError:
+            _depth_toks = 128
+        _gen_cap = _depth_toks if _depth_toks > 0 else PP_MAX_TOKENS
         for i in range(n):
             try:
-                w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt()), PP_MAX_TOKENS)
+                w, t, _k, ptoks = run_once(prefill_prompt(request_tokens, salt()), _gen_cap, force=_depth_toks)
+                # ⚠️ Do NOT reuse decode_window() here. Its degeneracy test is the
+                # RATIO dt < 5% of wall, which assumes decode is essentially the
+                # whole wall — true for a short prompt, FALSE at depth where prefill
+                # dominates: at 87K that is ~9 s of decode against ~350 s of wall,
+                # so every honest deep measurement would be discarded as
+                # "unmeasurable". At depth the only degenerate case is a
+                # non-existent window, so test that absolutely.
+                _dt = w - t
+                if _depth_toks > 0 and _k > 1 and _dt > 0.25:
+                    dtps.append(_k / _dt)
                 pp, ttft, line = fmt_pp(f"run-{i+1}", w, t, ptoks)
                 if not QUIET:
                     print(line)
@@ -1345,6 +1404,12 @@ def run_prefill_probe():
             # prompt_tokens/TTFT = the CLIENT-OBSERVED rate (includes
             # tokenization + transfer + scheduling) — the user-truth number.
             print(stats("prefill tok/s", pps))
+            if dtps:
+                # The number the five original legs could not produce: generation
+                # rate with the KV cache already this deep. Compare across builds at
+                # MATCHED depth. NOT comparable to the narrative/code decode_TPS
+                # above, which is measured at shallow context.
+                print(stats(f"decode tok/s @ {label.replace('prefill-','')} depth", dtps))
             print(
                 f"  TTFT          mean={s.mean(ttfts)*1000:6.0f}ms  "
                 f"std={(s.stdev(ttfts)*1000 if len(ttfts) > 1 else 0):5.0f}ms  "
@@ -1374,6 +1439,8 @@ def run_prefill_probe():
                 "prefill_tps_mean": _pm,
                 "prefill_tps_cv": ((s.stdev(pps) / _pm * 100) if len(pps) > 1 and _pm > 0 else 0.0),
                 "ttft_mean_ms": s.mean(ttfts) * 1000,
+                "decode_at_depth_tps_mean": (s.mean(dtps) if dtps else None),
+                "decode_at_depth_n": len(dtps),
             }
 
 announce_sampler()
@@ -1609,7 +1676,57 @@ print(f"{sum(xs)/len(xs):.2f}" if xs else "")
     if [[ -s "$CAP_WORK/counters1" ]]; then
       [[ -s "$CAP_WORK/counters0" ]] || : > "$CAP_WORK/counters0"
       if _mar="$(cap_marginal_rates "$CAP_WORK/counters0" "$CAP_WORK/counters1" 2>/dev/null)"; then
-        echo "  hit rate, per device (MARGINAL = across the measured window only):"
+        # ⚠️ ABSENCE OF MEASUREMENT IS NOT A MEASURED ZERO. If lookups did not
+        # ADVANCE across the bench window, this run produced no cache data and
+        # the cumulative column is from some OTHER session -- print the cause,
+        # not a number. Two real ways to land here, both seen in the wild
+        # (club-3090 #1105/#1106):
+        #   1. GGML_CUDA_MOE_CACHE_STATS unset -> engine `stats_every` is 0
+        #      (moe-cache.cu:169) and the `stats_every > 0` gate (:2795) means
+        #      NO `hits=` line is ever emitted. Not gated on log verbosity.
+        #   2. A DEAD SESSION's line is still in the docker log (an earlier boot,
+        #      or a crash-looped container). The parser takes the LAST `hits=`
+        #      line, which can predate this boot entirely -- #1106 rendered
+        #      `cumulative=0.0% admission=12` from an early session whose
+        #      container had exited hours before the bench ran.
+        # Rendering either as `cumulative=0.0% dhits=0 dlookups=0` reads as "the
+        # cache did nothing", and that misread has now cost two community reports
+        # and one of our own sessions.
+        _dlk="$(printf '%s\n' "$_mar" | awk '{
+          for (i = 1; i <= NF; i++) if ($i ~ /^dlookups=/) { split($i, a, "="); t += a[2] }
+        } END { print t + 0 }')"
+        if [[ "${_dlk:-0}" -eq 0 ]]; then
+          # ⚠️ Deliberately does NOT set CAP_CACHE_OK=0. That flips the status to
+          # CACHE_DISABLED (cap_status_classify: want==1 && got!=1), which ASSERTS
+          # the cache is off when all we know is that we did not measure it — the
+          # same absence-reported-as-data error this branch exists to prevent.
+          echo "  hit rate: ⚠ NO MEASUREMENT IN THIS RUN — lookups did not advance across the bench window."
+          echo "            The cache may be fine; this run simply did not measure it. Do NOT read"
+          echo "            the numbers below as a hit rate of zero."
+          # TWO independent conditions, BOTH required. Measured on a live 2-arm boot
+          # 2026-08-26 (one variable): STATS=200 at default verbosity produced ZERO
+          # `[moe-cache]` lines of any kind; STATS=200 + verbosity 4 produced 228
+          # lines / 211 stats lines. MOE_CACHE_LOG is GGML_LOG_INFO, which the
+          # server's verbosity threshold drops below 4 — so STATS alone is inert.
+          _st="$(cap_proc_env GGML_CUDA_MOE_CACHE_STATS 2>/dev/null || true)"
+          [[ -z "$_st" ]] && _st="$(printenv GGML_CUDA_MOE_CACHE_STATS 2>/dev/null || true)"
+          _vb="$(cap_proc_env LLAMA_ARG_LOG_VERBOSITY 2>/dev/null || true)"
+          [[ -z "$_vb" ]] && _vb="$(printenv LLAMA_ARG_LOG_VERBOSITY 2>/dev/null || true)"
+          if [[ -z "$_st" || "$_st" == "0" ]] || [[ -z "$_vb" || "$_vb" -lt 4 ]] 2>/dev/null; then
+            echo "            likely cause: cache telemetry needs BOTH knobs; this run had"
+            echo "                          GGML_CUDA_MOE_CACHE_STATS=${_st:-<unset>} and LLAMA_ARG_LOG_VERBOSITY=${_vb:-<unset>}."
+            echo "                          STATS<=0 emits no stats line (stats_every defaults to 0);"
+            echo "                          verbosity <4 drops EVERY [moe-cache] line at the log filter."
+            echo "            Fix: re-boot with MOE_STATS=200 AND LLAMA_ARG_LOG_VERBOSITY=4."
+          else
+            echo "            likely cause: the parsed counters predate this boot (stale session in the"
+            echo "                          docker log), or the cache was never consulted."
+            echo "            Fix: restart the container before benching so the log carries one session."
+          fi
+          echo "    raw (UNSCOPED — may belong to another session):"
+        else
+          echo "  hit rate, per device (MARGINAL = across the measured window only):"
+        fi
         while IFS= read -r _l; do [[ -n "$_l" ]] && echo "    ${_l}"; done <<< "$_mar"
         echo "    note: the CUMULATIVE column embeds the cold-fill phase and is NOT"
         echo "          boot-comparable — a BIGGER pool shows a LOWER cumulative rate on"
@@ -1816,6 +1933,7 @@ for name, v in d.get("shapes", {}).items():
     [[ "$ENDPOINT" != "chat" ]]     && _envnote+="ENDPOINT=${ENDPOINT} "
     [[ "$ONLY" != "both" ]]         && _envnote+="ONLY=${ONLY} "
     [[ "$PREFILL_DEPTHS" != "10000,90000" ]] && _envnote+="PREFILL_DEPTHS=${PREFILL_DEPTHS} "
+    [[ "$DEPTH_DECODE_TOKENS" != "128" ]] && _envnote+="DEPTH_DECODE_TOKENS=${DEPTH_DECODE_TOKENS} "
     [[ -n "${SERVER_LOG:-}" ]]      && _envnote+="SERVER_LOG=<set> "
     card_kv "$CARD_REC" proto.env "${_envnote:-}"
     card_kv "$CARD_REC" gpu.vram_idle    "${CAP_VRAM_IDLE:-}"

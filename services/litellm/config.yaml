@@ -53,6 +53,12 @@ model_list:
       api_base: http://host.docker.internal:8032/v1
       api_key: EMPTY
 
+  - model_name: glm-5.3-flash  # status: incubating
+    litellm_params:
+      model: openai/glm-5.3-flash
+      api_base: http://host.docker.internal:8119/v1
+      api_key: EMPTY
+
   - model_name: qwen3.6-27b
     litellm_params:
       model: openai/qwen3.6-27b
@@ -87,6 +93,12 @@ model_list:
     litellm_params:
       model: openai/qwen3.8-27b-fp8
       api_base: http://host.docker.internal:8091/v1
+      api_key: EMPTY
+
+  - model_name: qwen3.8-flash-next  # status: incubating
+    litellm_params:
+      model: openai/qwen3.8-flash-next
+      api_base: http://host.docker.internal:8122/v1
       api_key: EMPTY
 
   # === END GENERATED LOCAL BLOCK ===

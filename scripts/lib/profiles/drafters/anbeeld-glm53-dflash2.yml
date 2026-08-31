@@ -1,0 +1,53 @@
+schema_version: 1
+id: anbeeld-glm53-dflash2
+display_name: Anbeeld GLM-5.3-Flash DFlash2 draft GGUF
+spec_method: dflash
+model_compat:
+  - glm-5.3-flash
+engine_compat:
+  engine_type: llama.cpp
+n_default: 3
+n_max: 7
+download:
+  hf_repo: Anbeeld/GLM-5.3-Flash-DFlash2-GGUF
+  size_gb: 0.7
+vram_footprint_gb: 0.7
+status: experimental
+# Engaged via `--spec-draft-model <file> --spec-type draft-dflash`.
+# On-disk (grounded, not from the card):
+#   glm-5.3-flash-gguf/dflash2/GLM-5.3-Flash-DFlash2-Q4_K_M.gguf   697,017,248 B (0.70 GB)  ← SHIPPED
+#   glm-5.3-flash-gguf/dflash2/GLM-5.3-Flash-DFlash2-Q8_0.gguf   1,254,335,392 B (1.25 GB)
+#
+# ⭐ PLACEMENT IS THE BIG LEVER, and it is the OPPOSITE of the DeepSeek sibling.
+# MEASURED 2026-08-29 on 2×3090, GLM UD-IQ4_XS @204800:
+#     -devd CUDA1 (GPU1)  → +18.4% CODE, −2.0% prose   ← shipped default
+#     -devd none  (host)  → −11.2% narrative / −3.4% code
+# GLM decode is CPU-BOUND (host ~78%, GPU SM 16–18%), so a host drafter pays with
+# the one saturated resource. `dspark`'s mandatory `-devd none` does NOT generalise:
+# it was chosen for a 10.4 GiB drafter under different constraints. At 0.70 GB this
+# one fits on GPU1 and the expert cache still kept 21.7% hits with it resident.
+# ⚠️ `-devd` takes a device NAME (`CUDA1`); `1` is invalid and the engine rejects it.
+#
+# ⚠️⚠️ THE +18.4% / −2.0% FIGURES ABOVE ARE FROM v1.5 AND ARE STALE ON v1.6 (2026-08-31).
+# A single boot on the v1.6 engine read closer to **+11% code / −12% prose**. The drafter
+# did not change — the indexer-cache commits raised the no-drafter baseline, so the same
+# drafter buys less. The PLACEMENT conclusion (GPU1 over host) still holds and is what
+# this file exists to record; only the magnitudes moved. A re-measure was deliberately
+# DEFERRED by the maintainer 2026-08-31 — treat the numbers as directional, not current,
+# and do not quote them as v1.6 results. ⇒ The n-sweep is also due: n=3 was tuned against
+# a target the cache has since made materially faster, and verification cost is what
+# punishes depth.
+#
+# ⚠️⚠️ n_max=7 IS THE TESTED CEILING, NOT A RECOMMENDATION. Depth past 3 is
+# DESTRUCTIVE on this pairing — n-sweep 2026-08-29, code TPS:
+#     n=3 → 18.23 (shipped)   n=5 → 16.61 (−8.9%)   n=7 → 11.10 (−27.9%)
+# Do not raise n_default without re-sweeping.
+# ⭐ RE-TEST TRIGGER: acceptance measured 0.533 with mean accepted length 2.60
+# against n_max=3, per-position (0.760, 0.512, 0.331) — the drafter lands nearly
+# everything it is allowed to propose. When mean accepted length crowds the
+# ceiling that usually means the ceiling limits, yet n=5 measured WORSE here.
+# Both facts are real; the reconciliation is unexplained. Re-sweep on faster cards
+# before assuming either.
+#
+# ⚠️ Q8_0 variant is downloaded but UNBENCHED — Q4_K_M showed no acceptance deficit
+# worth spending VRAM on, so the larger one was never measured.

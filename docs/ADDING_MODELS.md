@@ -183,6 +183,34 @@ One compose per validated config at `models/<id>/<engine>/compose/<topology>/<qu
 
 Policy maps live beside the entries and are **core-only**: `DEFAULTS` (one functional row per `(model, engine, topology)` you want `<model>/default` to resolve), `ENGINE_PREFERENCE`, `RECOMMENDED_DEFAULT_MODELS`. Local-layer entries can never appear in them.
 
+## CONTRACT — moe-cache / CPU-offload models (extra gates)
+
+Applies to any model served with `-ot …ffn_(gate|up|down)_exps\.weight=CPU` on the
+`llamacpp-club3090` engines. These are gates only — the **mechanism** for every one lives in
+[`learnings/moe-cache-engine.md`](../../learnings/moe-cache-engine.md); do not restate it here.
+
+| # | Gate | Why it exists |
+|---|---|---|
+| M1 | `kv_calc_supported: false` in the model YAML **and** `kvcalc_key: "SKIP"` on every entry | kv-calc has no model for per-layer hybrids, MLA compression, or a DSA indexer budget. Precedent: `deepseek4-moe`, `inkling-moe`, `glm5next-moe` |
+| M2 | **The KV-growing layer count must be COUNTED, not assumed** | On hybrids `attention.head_count_kv` is a PER-LAYER ARRAY. GLM-5.3-Flash: 12 growing of 46 blocks — using `block_count` over-predicts the pool ~3.8× |
+| M3 | **Expert byte-size READ from the GGUF tensor table**, never inferred from the quant name | Unsloth *Dynamic* quants mix expert types (GLM UD-IQ4_XS carries five: `iq3_s`/`iq4_xs`/`q6_K`/`q3_K`/`q4_K`). "IQ4_XS" does not give you a byte size |
+| M4 | **Pool census captured at `LLAMA_ARG_LOG_VERBOSITY=4`, slots SUMMED per device** | `pool[i]` lines print at NO lower verbosity, and a device holds 2-3 pools. Reading one pool's `used=N/N` as the device total under-reported GLM ~4× (518 vs 2,143) |
+| M5 | **Drafter placement (`-devd`) MEASURED for this model, never inherited** | It inverts between models: DeepSeek needs `none` (host), GLM needs `CUDA1` (+18.4% code; host is −11%). Takes a device NAME — `1` is invalid |
+| M6 | `RESERVE_MB` **re-derived for this card's VRAM** | 1536 was derived against a MEASURED 1,128 MiB compute-buffer swing on 2×24 GB. Too low is NOT an OOM — it is *slower* |
+| M7 | **Never benchmark the first request after boot** | Cold-start pool fill. Steady state arrives after one generation |
+| M8 | **Tune on wall-clock; cache counters are diagnostics** | Hit rate is not the objective function — three independent sightings, incl. a 27%-smaller pool with a HIGHER hit rate and 9% LOWER throughput |
+| M9 | **New engine profile file when the image changes — never repoint an existing one** | The launchers resolve the image from `engines/<engine>.yml` and INJECT it, overriding the compose's `image:` line. Repointing silently migrates every model on that profile onto a build it was not validated on |
+| M10 | **Thinking control VERIFIED, not assumed** | A template that NAMES a switch may not honour it, and an unsupported enum value fails silently. `preflight_detect_thinking_control` probes behaviourally under `THINK_PROBE=1`; an unverified switch cost verify-full 4 false failures on GLM |
+| M11 | **Host THP verified by COVERAGE (`ShmemHugePages ÷ Shmem`), not by the knob** | Offloaded experts are CUDA pinned host memory, accounted as **Shmem** — so `transparent_hugepage/enabled` does nothing for them and `shmem_enabled` is the governing knob. Setting `enabled=always` alone LOOKS like it worked (AnonHugePages climbs, the heap) while the model stays on 4 KiB pages. ⚠️ **Latency only:** measured −56% short-prompt TTFT; decode and prefill are unchanged, so never quote it as tok/s. `scripts/hugepages.sh` checks and applies; `report.sh` captures it; `preflight` warns (never blocks). |
+
+⚠️ **Multi-shard GGUFs may ship a METADATA-ONLY shard 1** (GLM's is 9,429,859 B with
+`tensor_count = 0`; all tensors are in shards 2-5). A probe that reads shard 1 for tensor info
+finding nothing is **not** evidence of a broken download.
+
+⚠️ **`-ot` force-disables pipeline parallelism, silently** — so prefill is GPU-asymmetric and
+`n_copies`/TurboPrefill are unavailable. Do not plan prefill-overlap work on the assumption they
+exist; it was closed NO-GO. This is an engine property, not a per-model defect.
+
 ## GATES — which guard proves what
 
 | Guard | Proves |
@@ -221,6 +249,8 @@ Run the scoped triage via `bash scripts/preflight-add-model.sh <slug>`; the FULL
 3. ☐ First compose under `models/<id>/<engine>/compose/...` with ESTATE hooks + honest Status header
 4. ☐ Registry `_entry(...)` (+ `DEFAULTS` row per engine×topology ONLY when promoting a default)
 5. ☐ `bash scripts/preflight-add-model.sh <slug>` → GREEN
+5b. ☐ **moe-cache models only:** gates M1-M10 above cleared, and the pool census captured at
+    `LLAMA_ARG_LOG_VERBOSITY=4` with slots summed per device (record it in the `status_note`)
 6. ☐ Run `bash scripts/setup.sh <id>` FOR REAL (hand-placed weights don't count)
 7. ☐ Boot via `launch.sh --variant` → `verify-full.sh` → capture boot log → compare vs prediction
 8. ☐ Calibration rows (vLLM) + `kv-calc.py --calibration` ≥80%

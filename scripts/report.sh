@@ -412,6 +412,32 @@ section "CPU + RAM"
   else
     echo "- **Memory config:** not collected (\`dmidecode\` not installed)"
   fi
+
+  # Host memory POLICY. Load-bearing for cross-rig comparison of CPU-offload
+  # slugs: their experts live in Shmem (CUDA pinned host memory), so
+  # `shmem_enabled` — NOT `enabled` — governs whether they get huge pages.
+  # ⚠️ Report COVERAGE, not the setting: a knob reading `always` can still yield
+  # 0% under fragmentation, and `enabled=always` alone moves AnonHugePages (the
+  # heap) while the experts stay on 4 KiB pages. FIRST-TOKEN LATENCY only
+  # (measured -56% TTFT when fixed) — never a throughput claim.
+  if [[ -r /sys/kernel/mm/transparent_hugepage/enabled ]]; then
+    # shellcheck source=/dev/null
+    . "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/lib/thp.sh" 2>/dev/null || true
+    if declare -F thp_setting >/dev/null 2>&1; then
+      echo "- **THP policy:** enabled=$(thp_setting enabled) · shmem_enabled=$(thp_setting shmem_enabled) · defrag=$(thp_setting defrag)"
+      _sh="$(thp_meminfo_kib Shmem)"; _shp="$(thp_meminfo_kib ShmemHugePages)"
+      _anon="$(thp_meminfo_kib AnonHugePages)"; _pmd="$(thp_meminfo_kib ShmemPmdMapped)"
+      _cov="$(thp_shmem_coverage_pct)"
+      if [[ -n "$_cov" ]]; then
+        echo "- **THP coverage (Shmem):** ${_cov}% — ShmemHugePages $(( ${_shp:-0} / 1048576 )) GiB of Shmem $(( ${_sh:-0} / 1048576 )) GiB"
+        [[ "$_cov" -lt 50 ]] && echo "  - ⚠️ _Low coverage: CPU-offloaded experts are on 4 KiB pages. Costs first-token latency (~-56% TTFT when fixed); throughput is unaffected._"
+      else
+        echo "- **THP coverage (Shmem):** n/a — no large Shmem allocation resident (load a model to measure)"
+      fi
+      echo "- **THP detail:** ShmemPmdMapped ${_pmd:-?} kB · AnonHugePages ${_anon:-?} kB"
+      echo "  - _AnonHugePages is the process heap, NOT the experts — it climbs even when the model stays on 4 KiB pages._"
+    fi
+  fi
 } | redact
 
 # ---------------------------------------------------------------------------

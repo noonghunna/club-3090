@@ -154,8 +154,13 @@ services:
       - '8080'
       - '--alias'
       - 'deepseek-v4-flash'
+      # Slots. ⚠️ `-np N` SPLITS `-c` into ctx/N per slot, so the pool and the
+      # compute buffer change with it — a concurrency A/B must re-measure, not
+      # reuse single-stream rows. Default 1 keeps shipped behaviour identical.
+      # ⚠️ LLAMA_ARG_N_PARALLEL cannot override this: common/arg.cpp applies env
+      #    BEFORE argv (~L783 vs ~L808), so the command line always wins.
       - '-np'
-      - '1'
+      - '${NPARALLEL:-1}'
       - '-c'
       - '${CTX:-204800}'
       - '-ngl'

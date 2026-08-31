@@ -175,6 +175,11 @@ services:
       # (#617/#765 @seanyourhighness — cost five failed boots + a wrong
       # "the GPU is degraded" diagnosis.)
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
+      # CUDA-graph kill switch (Cliff-2 GDN spike mitigation). Bare passthrough —
+      # absent unless set. ⚠️ It was READ by the entrypoint but never DECLARED, so
+      # `$${VLLM_ENFORCE_EAGER:+--enforce-eager}` always expanded to nothing and the
+      # knob could not be turned on at all. Fixed 2026-08-31.
+      - VLLM_ENFORCE_EAGER
     shm_size: "16gb"
     ipc: host
     deploy:

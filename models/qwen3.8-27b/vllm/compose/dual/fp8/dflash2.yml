@@ -93,6 +93,11 @@ services:
       # Opt-in transfer check: VLLM_SKIP_P2P_CHECK=0 makes vLLM PROVE peer access
       # by moving bytes. Bare passthrough — absent unless set. docs/PCIE_P2P.md §7.
       - VLLM_SKIP_P2P_CHECK
+      # CUDA-graph kill switch (Cliff-2 GDN spike mitigation). Bare passthrough —
+      # absent unless set. ⚠️ It was READ by the entrypoint but never DECLARED, so
+      # `$${VLLM_ENFORCE_EAGER:+--enforce-eager}` always expanded to nothing and the
+      # knob could not be turned on at all. Fixed 2026-08-31.
+      - VLLM_ENFORCE_EAGER
       - NCCL_CUMEM_ENABLE=0
       # Safe PCIe-only default (the reference rig has no NVLink and no working
       # P2P). Rigs with proven working P2P set NCCL_P2P_DISABLE=0.

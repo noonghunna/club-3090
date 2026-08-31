@@ -1,0 +1,176 @@
+schema_version: 1
+id: glm-5.3-flash
+display_name: GLM-5.3-Flash (320.76B MoE, Z.ai)
+description: Z.ai GLM-5.3-Flash — 320.76B MoE (288 routed + 1 shared expert, top-8) on a 3:1 SSM/attention hybrid with MLA + a DSA sparse-attention indexer; served by CPU expert offload on the club3090 moe-cache engine, shipping 205K with a DFlash2 external drafter and vision.
+family: glm5next-moe
+
+# ---------------------------------------------------------------------------
+# Every value below was read from the GGUF metadata (`glm5next.*` keys, shard 1 of
+# unsloth UD-IQ4_XS, 2026-08-29) — NOT from a model card.
+# ---------------------------------------------------------------------------
+hidden_size: 4096                # glm5next.embedding_length
+num_hidden_layers: 46            # glm5next.block_count (3 leading dense, then MoE)
+intermediate_size: 12288         # glm5next.feed_forward_length (dense blocks)
+
+# ⚠️⚠️ THE KV-GROWING SPLIT IS 12 OF 46 — the single easiest way to get this model
+# wrong. `glm5next.attention.head_count_kv` is a PER-LAYER ARRAY of 46 entries whose
+# value is 1 on attention layers and 0 on the recurrent ones:
+#     attention (KV-growing), 12 layers: 3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 45
+#     recurrent/KDA (no KV),  34 layers: everything else
+# Sizing KV off `num_hidden_layers` (46) over-predicts the pool ~3.8×.
+num_attn_layers: 12              # KV-growing
+num_gdn_layers: 34               # linear/recurrent (KDA), no KV
+linear_conv_kernel_dim: 4        # glm5next.ssm.conv_kernel
+
+num_attn_heads: 64               # glm5next.attention.head_count
+num_kv_heads: 1                  # per-layer array value on attention layers — MLA compresses to one KV head (same shape as deepseek4-moe)
+head_dim_attn: 512               # attention.key_length == attention.value_length == 512
+attention_k_eq_v: true           # 512 == 512
+max_ctx_supported: 1048576       # glm5next.context_length — we SHIP 204800, see the weights note
+
+# MoE
+num_experts: 288                 # glm5next.expert_count
+num_experts_per_tok: 8           # glm5next.expert_used_count
+moe_intermediate_size: 2048      # glm5next.expert_feed_forward_length
+shared_expert_intermediate_size: 2048   # glm5next.expert_shared_feed_forward_length (expert_shared_count = 1)
+
+mtp_num_hidden_layers: 1         # glm5next.nextn_predict_layers
+vision_capable: true             # mmproj-F16.gguf, clip.projector_type = glm5next — validated 4/4 on ground truth 2026-08-29
+
+# ⚠️ kv-calc has no model for (a) a per-layer hybrid where 34/46 layers grow no KV,
+# (b) MLA compression (kv_lora_rank 512, q_lora_rank 1536, key/value_length_mla 256),
+# or (c) the DSA indexer's own budget (indexer.head_count 32, key_length 128,
+# top_k 2048, kpool 4). Every slug therefore sets kvcalc_key="SKIP". Same call as
+# deepseek4-moe and inkling-moe — flagged so nobody wires it up by reflex.
+kv_calc_supported: false
+
+valid_tp: [2, 4, 8]
+compatible_drafters:
+  - anbeeld-glm53-dflash2
+requires_genesis: false
+
+# ---------------------------------------------------------------------------
+# CPU-offload residency.
+# ⚠️ ROUTED-EXPERTS-ONLY, same rule as DeepSeek and inkling: the `-ot` regex matches
+# `ffn_(gate|up|down)_exps.weight`; the 1 SHARED expert is `_shexp` — a different
+# tensor name — so it stays GPU-resident by design.
+#
+# ⚠️⚠️ NOT UNIFORM. Despite the "UD-IQ4_XS" label this Unsloth *Dynamic* quant mixes
+# FIVE expert tensor types, which the cache allocates as separate pools per card.
+# MEASURED by summing the GGUF tensor table across all 4 tensor-bearing shards
+# (2026-08-29) — the quant NAME does not give you the byte size:
+#     iq3_s   3,520 KiB/expert-matrix   ×82 tensors (63.6%)   ← dominant
+#     iq4_xs  4,352 KiB                 ×41       (31.8%)
+#     q6_K    6,720 KiB                 × 3       ( 2.3%)
+#     q3_K    3,520 KiB                 × 2       ( 1.6%)
+#     q4_K    4,608 KiB                 × 1       ( 0.8%)
+#   weighted average 3,867 KiB per expert-matrix
+#
+# ⭐ Expert GEOMETRY, not quant, is why this model's residency is poor: one expert's
+# `ffn_up` is 4096 × 2048 = 8,388,608 weights, versus 1,638,400 on Qwen3.8-Flash-Next
+# — 5.1×. A smaller quant shifts the DISTRIBUTION across the types above; it does not
+# scale a single number. See learnings/moe-cache-engine.md §2b.
+#
+# MEASURED pool at RESERVE_MB=1536, ctx 204800, projector on CUDA0 (2026-08-29,
+# LLAMA_ARG_LOG_VERBOSITY=4 — the pool lines print at NO LOWER verbosity):
+#     CUDA0  iq3_s 763 + iq4_xs 395            = 1,158 slots (granted 4,850 MiB)
+#     CUDA1  iq3_s 921 + iq4_xs  64            =   985 slots (granted 6,024 MiB)
+#                                        total = 2,143 slots
+# ⚠️ A device holds MULTIPLE pools and the slots must be SUMMED. Reading one pool's
+# `used=N/N` counter as the device total under-reported this model ~4× for a while.
+# ---------------------------------------------------------------------------
+
+weights:
+  unsloth-ud-iq4xs:
+    path: glm-5.3-flash-gguf/UD-IQ4_XS
+    local_subdir: glm-5.3-flash-gguf
+    size_gb: 157
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    shards: 5
+    # ⚠️ `--local-dir` preserves repo folder structure, so `local_subdir` is the
+    # BUCKET and `files:`/`verify_glob` carry the quant-folder prefix — pointing
+    # local_subdir at the quant dir nests it twice.
+    # ⚠️ Shard 1 is METADATA-ONLY (9,429,859 B, tensor_count = 0); all tensors are
+    # in shards 2-5. A probe that reads shard 1 for tensor info finds nothing and
+    # is not evidence the download is broken.
+    files:
+      - UD-IQ4_XS/GLM-5.3-Flash-UD-IQ4_XS-00001-of-00005.gguf
+      - UD-IQ4_XS/GLM-5.3-Flash-UD-IQ4_XS-00002-of-00005.gguf
+      - UD-IQ4_XS/GLM-5.3-Flash-UD-IQ4_XS-00003-of-00005.gguf
+      - UD-IQ4_XS/GLM-5.3-Flash-UD-IQ4_XS-00004-of-00005.gguf
+      - UD-IQ4_XS/GLM-5.3-Flash-UD-IQ4_XS-00005-of-00005.gguf
+    # ⚠️ REQUIRED on every GGUF entry — the default `*.safetensors` matches NOTHING
+    # here, and both consumers then blame the weights (#910/#911).
+    verify_glob: "UD-IQ4_XS/*.gguf"
+    manual_note: "🧪 EXPERIMENTAL — the `glm5next` architecture is NOT in llama.cpp mainline (vendored PR ggml-org#27754, chosen over rival #27752 on GGUF-key evidence; #27752 was evaluated and REVERTED because it caps context at ~32K). Served via the dedicated engine `llamacpp-club3090-v1.5`. Ships 204800, NOT the 1M the model declares: 262144 also boots but costs ~10% decode and halves the expert pool. ⚠️⚠️ THINKING CANNOT BE DISABLED — z.ai docs state GLM-5.3 and GLM-5.3-FLASH use forced thinking and `thinking.type: disabled` RETURNS AN ERROR. The working control is `reasoning_effort` (max | high | low; `low` is 5.3/5.3-Flash-only), and `none` is NOT a valid value — it is silently ignored. Measured: low → 0 ch reasoning, max → ~1,170 ch. ⚠️ NOT a graded dial — `high` measured beside `low`, not between low and max. ⚠️ Vendor sampling is temperature 1, top_p 0.95, reasoning_effort max, thinking.clear_thinking FALSE, max_tokens default 65536 — the compose ships exactly that. ⚠️ QUALITY UNTESTED at any quant — no 8-pack has been run on this model."
+  unsloth-ud-iq3xxs:
+    path: glm-5.3-flash-gguf/UD-IQ3_XXS
+    # ⚠️ local_subdir is the BUCKET; `files:`/`verify_glob` carry the quant-folder
+    # prefix. Pointing local_subdir at the quant dir NESTS IT TWICE — which is
+    # exactly what happened on the 2026-08-29 pull (UD-IQ3_XXS/UD-IQ3_XXS/*.gguf,
+    # corrected by hand). Same trap the iq4xs entry documents.
+    local_subdir: glm-5.3-flash-gguf
+    size_gb: 121
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    shards: 4
+    files:
+      - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00001-of-00004.gguf
+      - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00002-of-00004.gguf
+      - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00003-of-00004.gguf
+      - UD-IQ3_XXS/GLM-5.3-Flash-UD-IQ3_XXS-00004-of-00004.gguf
+    verify_glob: "UD-IQ3_XXS/*.gguf"
+    manual_note: "🧪 EXPERIMENTAL — smaller sibling of UD-IQ4_XS, 113 GiB vs 146.1. ⭐ Point is RESIDENCY, not size on disk: expert byte-size is the master variable (learnings/moe-cache-engine.md section 2). MEASURED from this GGUF's tensor table per-expert-matrix over expert_count=288 — iq2_s 2,624 KiB x82 (63.6%, dominant), iq3_s 3,520 x41, iq4_xs 4,352 x3, q2_K 2,688 x2, q3_K 3,520 x1; weighted average 2,957 KiB vs IQ4_XS's 3,867 = 24% smaller. ⚠️ Shard 1 is METADATA-ONLY (9.4 MB, tensor_count 0) like the iq4xs sibling — a probe reading shard 1 for tensors finds nothing and that is NOT a broken download. ⚠️ QUALITY AT IQ3 IS UNTESTED; a smaller quant is not free."
+  dflash2-q4km:
+    path: glm-5.3-flash-gguf/dflash2
+    # ⚠️ REPO-ROOT artifact (the Anbeeld repo has no subfolder), so it lands FLAT and
+    # gets its OWN local_subdir — same shape as deepseek's dspark drafter. The glob is
+    # relative to local_subdir, so it carries NO prefix.
+    local_subdir: glm-5.3-flash-gguf/dflash2
+    size_gb: 0.7
+    format: gguf
+    status: experimental
+    hf_repo: Anbeeld/GLM-5.3-Flash-DFlash2-GGUF
+    kind: draft
+    files:
+      - GLM-5.3-Flash-DFlash2-Q4_K_M.gguf
+    verify_glob: "*.gguf"
+    manual_note: "External DFlash2 drafter, SHIPPED default on the GLM slugs at n=3 pinned to CUDA1. See drafters/anbeeld-glm53-dflash2.yml for the placement and depth measurements."
+  mmproj-f16:
+    path: glm-5.3-flash-gguf/mmproj
+    # ⚠️ REPO-ROOT artifact in the unsloth repo (mmproj-F16.gguf sits beside the quant
+    # DIRECTORIES, not inside one) — so it lands flat in its own local_subdir.
+    local_subdir: glm-5.3-flash-gguf/mmproj
+    size_gb: 1.13
+    format: gguf
+    status: experimental
+    hf_repo: unsloth/GLM-5.3-Flash-GGUF
+    kind: mmproj
+    files:
+      - mmproj-F16.gguf
+    verify_glob: "*.gguf"
+    manual_note: "Vision projector, clip.projector_type = `glm5next`. 1,128,047,200 B, hash-verified. Engine support confirmed in v1.5 source before wiring (clip.cpp PROJECTOR_TYPE_GLM5NEXT + mtmd-image.cpp preprocessor). Validated 4/4 on a ground-truth image 2026-08-29. ⚠️ zai-org/GLM-5.3-Flash ships NO mmproj — the unsloth GGUF repo is the source. A BF16 variant also exists (1.16 GB, unbenched)."
+
+default_weight_variant: unsloth-ud-iq4xs
+
+# ---------------------------------------------------------------------------
+# setup.sh dispatch. Without this block the catalog reports empty always_draft /
+# vision and `setup.sh glm-5.3-flash` fetches ONLY the 157 GB main weights — then
+# the compose fails on a drafter and projector that were never downloaded.
+#   always_draft : fetched UNCONDITIONALLY (setup.sh "required companion drafter")
+#                  and disk-gated. Correct here because the shipped compose mounts
+#                  the DFlash2 drafter by DEFAULT (SPEC_N=3); it is not opt-in.
+#   vision       : opt-in via WITH_VISION=1 — there is no "always" slot for a
+#                  projector. ⚠️ The shipped compose ALSO mounts the projector by
+#                  default, so `WITH_VISION=1` is effectively REQUIRED for a
+#                  vision-capable boot. The compose entrypoint degrades to
+#                  text-only rather than dying when the file is absent, so a
+#                  setup run WITHOUT the flag still yields a working server.
+# ---------------------------------------------------------------------------
+setup:
+  primary: unsloth-ud-iq4xs
+  always_draft: dflash2-q4km
+  vision: mmproj-f16

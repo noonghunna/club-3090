@@ -366,7 +366,15 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--base-url", default="http://localhost:8020/v1")
     p.add_argument("--model", default="qwen3.6-27b")
-    p.add_argument("--tokenizer", default="/opt/ai/github/qwen36-dual-3090/models/qwen3.6-27b-autoround-int4")
+    # Default is env-overridable and repo-relative: the previous hardcoded
+    # "/opt/ai/github/qwen36-dual-3090/..." was a maintainer-rig path (and named the
+    # pre-rename repo), so it resolved for nobody else. GRAMMAR_EVAL_TOKENIZER lets an
+    # operator point at their own weights without editing the script.
+    p.add_argument("--tokenizer",
+                   default=os.environ.get(
+                       "GRAMMAR_EVAL_TOKENIZER",
+                       str(pathlib.Path(__file__).resolve().parents[2]
+                           / "models-cache" / "qwen3.6-27b-autoround-int4")))
     p.add_argument("--structured-cot-dir", type=pathlib.Path, default=DEFAULT_STRUCTURED_COT_DIR)
     p.add_argument("--prior-results", type=pathlib.Path, default=DEFAULT_PRIOR)
     p.add_argument("--current-grammar", type=pathlib.Path, default=DEFAULT_CURRENT_GRAMMAR)

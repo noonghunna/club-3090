@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     DeepSeek-V4-Flash-0731 (284B MoE, unsloth UD-Q8_K_XL — MXFP4
 #              experts + BF16 attention, 151 GB across 5 shards)
-#   Engine:    llamacpp-club3090 (fork: leloch's MoE expert cache v2 + our L1/L3/E
+#   Engine:    llamacpp-club3090-v1.5 (fork: leloch's MoE expert cache v2 + our L1/L3/E
 #              ports, bypass warn-split, and multi-row top-k batching)
 #   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
 #   Drafter:   DSpark n=5 external, PINNED TO CPU (-devd none) — see Caveats
@@ -47,6 +47,14 @@
 #                count is a diagnostic, not a decode predictor. `UBATCH=2048`
 #                restores the old trade; 8192 is NOT better (prefill saturates
 #                at +18.0%, decode −30% as the pool is squeezed).
+#                ⚠️ **"Post-prefetch" is UNVERIFIED against the pinned image**
+#                (flagged 2026-08-27, not silently rewritten). The digest pinned
+#                below does NOT contain the prefetch ring — see the
+#                GGML_EXPERT_PREFETCH block. So either the phrase means
+#                "chronologically after the prefetch program" (measurement stands
+#                as a production number) or "with prefetch active" (in which case
+#                it describes a build we do not serve). Re-derive the ub trade on
+#                whatever image is actually pinned before quoting it as current.
 #              • 262144 boots and serves here (unlike the stock slug, which OOMs
 #                at 262K with a GPU-resident drafter), but costs ~8% decode and
 #                445 expert slots, and this model is PREFILL-BOUND at depth.
@@ -119,8 +127,13 @@ services:
   llama-cpp-deepseek-flash-q8-moecache:
     # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
     # The engine profile is authoritative for this pin; keep them in step.
-    # Built 2026-08-10 from stack/club3090-moe-cache @ e0a208949, CUDA arch 86;89;120.
-    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:17824d4483dbd60c297613bddf130f25e739d3edc7e633e4d973edc4e2165649}
+    # MIGRATED TO v1.5 2026-08-29: image.revision=7104d5f4e,
+    # version=moecachev1.5-rc0, built from stack/club3090-moecachev1.5 on
+    # mainline base b10675. Previously sha256:17824d44 (revision e0a208949).
+    # Validated on this binary BEFORE the switch: shipped compose booted with
+    # the revision asserted, verify-full 10/10, dspark acceptance 0.41-0.73,
+    # moe-cache pools on both cards. Ledger: /opt/ai/moecache-releases.md.
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-q8-moecache}
     restart: unless-stopped
     # Reap orphaned children. Without this, a wedged llama-server becomes a
@@ -141,8 +154,51 @@ services:
       # Expert-cache tuning — every value MEASURED on 2×24 GB, see Caveats.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
-      # Prefill expert-prefetch (v1.2 default ON, worth +14.5% prefill) and log
-      # verbosity. ⚠️ BARE PASS-THROUGH FORM ON PURPOSE — do NOT rewrite these as
+      # Cache hit/miss telemetry. DEFAULT ON (emit every N collect calls per
+      # device) because without it the engine's `stats_every` is 0 and NO
+      # `CUDA<n> hits=…` line is ever produced — see moe-cache.cu:169 (default 0)
+      # and :2795 (`stats_every > 0` gate). It is NOT gated on log verbosity.
+      # ⚠️ This var was previously ABSENT from this block entirely, so docker
+      # never forwarded it and the value was unreachable through the shipped
+      # slug no matter what the caller exported. Every community bench filed
+      # against this compose therefore carried zero cache telemetry, and
+      # bench.sh rendered that absence as a measured `0.0% dhits=0 dlookups=0`
+      # — indistinguishable from "the cache did nothing" (club-3090 #1105/#1106).
+      # ⚠️⚠️ THIS VAR ALONE IS NOT ENOUGH — telemetry needs BOTH knobs. Measured
+      # on a live 2-arm boot 2026-08-26 with one variable between the arms:
+      #   STATS=200, default verbosity -> 0 `[moe-cache]` lines of ANY kind
+      #   STATS=200, LLAMA_ARG_LOG_VERBOSITY=4 -> 228 lines / 211 stats lines
+      # MOE_CACHE_LOG is GGML_LOG_INFO (moe-cache.cu:46) and the server's verbosity
+      # threshold drops it below 4, so without `-lv 4` the whole cache subsystem is
+      # silent. Verbosity is left to the caller (bare passthrough below) because 4
+      # is loud for a serving deployment — but a bench/report run wanting cache
+      # numbers MUST set it. bench.sh now says so when the counters do not advance.
+      # ⚠️ DEFAULT IS 0 (OFF) — telemetry is OPT-IN so instrumentation does not run
+      # when nothing reads it. Set MOE_STATS=200 (plus LLAMA_ARG_LOG_VERBOSITY=4)
+      # for a bench/report run. ⚠️ The counter-gating behaviour was characterised
+      # on the old v1.2-era image; it has NOT been re-checked on v1.5.
+      # ✅ The `=${VAR:-N}` form is SAFE here (unlike the bare-passthrough vars
+      # below): `moe_cache_env_i64` rejects unset AND empty (`!text || !text[0]`,
+      # moe-cache.cu:509) before parsing, so it cannot hit the atoi("")==0 trap.
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
+      # Prefill expert-prefetch and log verbosity.
+      #
+      # ⚠️ STATUS ON THIS PIN IS UNVERIFIED — rewritten 2026-08-29 with the v1.5
+      # migration. The previous text said the knob was INERT because the pinned
+      # digest (sha256:17824d44 / revision e0a208949) predated the prefetch work.
+      # That digest is no longer pinned here: this compose now runs v1.5-rc0
+      # (7104d5f4e, base b10675), and whether the ring exists in THAT binary has
+      # not been checked. A ring WAS observed on rc2 — but rc2 is the ROLLBACK
+      # digest (bf2776f7), not rc0, so it does not settle this.
+      #
+      # ⛔ The "+14.5% / +15.0% prefill" justification is WITHDRAWN regardless: it
+      # was measured on a build carrying the n_copies==1 scheduler race (fixed in
+      # ce8743a05) and is unquotable until re-measured
+      # (moecache-engine-playbook.md section 6). The COST is not withdrawn — a
+      # 2,176 MiB ring on the FIRST CUDA device only, allocated lazily on first
+      # prefill AFTER the pool is sized, so nothing budgets for it.
+      #
+      # ⚠️ BARE PASS-THROUGH FORM ON PURPOSE — do NOT rewrite these as
       # `- GGML_EXPERT_PREFETCH=${PREFETCH:-}`. The engine tests
       # `if (on && atoi(on) == 0) return nullptr;` (expert-prefetch.cu:126) and
       # atoi("") == 0, so an empty-string default would set the var to "" and
@@ -269,8 +325,13 @@ services:
       - '8080'
       - '--alias'
       - 'deepseek-v4-flash'
+      # Slots. ⚠️ `-np N` SPLITS `-c` into ctx/N per slot, so the pool and the
+      # compute buffer change with it — a concurrency A/B must re-measure, not
+      # reuse single-stream rows. Default 1 keeps shipped behaviour identical.
+      # ⚠️ LLAMA_ARG_N_PARALLEL cannot override this: common/arg.cpp applies env
+      #    BEFORE argv (~L783 vs ~L808), so the command line always wins.
       - '-np'
-      - '1'
+      - '${NPARALLEL:-1}'
       - '-c'
       - '${CTX:-204800}'
       - '-ngl'

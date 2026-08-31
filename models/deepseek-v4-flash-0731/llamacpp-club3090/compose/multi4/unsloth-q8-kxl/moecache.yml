@@ -2,7 +2,7 @@
 # Profile (at-a-glance):
 #   Model:     DeepSeek-V4-Flash-0731 (284B MoE, unsloth UD-Q8_K_XL — MXFP4
 #              experts + BF16 attention, 151 GB across 5 shards)
-#   Engine:    llamacpp-club3090 (fork: leloch's MoE expert cache v2 + our L1/L3/E
+#   Engine:    llamacpp-club3090-v1.5 (fork: leloch's MoE expert cache v2 + our L1/L3/E
 #              ports, bypass warn-split, and multi-row top-k batching)
 #   Topology:  4× CUDA (layer-split -ts 1,1,1,1)
 #   Drafter:   DSpark n=5 external, PINNED TO CPU (-devd none)
@@ -87,8 +87,13 @@
 services:
   llama-cpp-deepseek-flash-q8-moecache-multi4:
     # Digest-pinned, not tag-pinned (#940 precedent). Engine profile is authoritative.
-    # Built 2026-08-10 from stack/club3090-moe-cache @ e0a208949, CUDA arch 86;89;120.
-    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:17824d4483dbd60c297613bddf130f25e739d3edc7e633e4d973edc4e2165649}
+    # MIGRATED TO v1.5 2026-08-29: image.revision=7104d5f4e,
+    # version=moecachev1.5-rc0, built from stack/club3090-moecachev1.5 on
+    # mainline base b10675. Previously sha256:17824d44 (revision e0a208949).
+    # Validated on this binary BEFORE the switch: shipped compose booted with
+    # the revision asserted, verify-full 10/10, dspark acceptance 0.41-0.73,
+    # moe-cache pools on both cards. Ledger: /opt/ai/moecache-releases.md.
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-deepseek-flash-q8-moecache-multi4}
     restart: unless-stopped
     ports:
@@ -102,6 +107,29 @@ services:
       # ⚠️ PLACEHOLDER VALUES inherited from the 2-card sibling. Re-derive.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+      # Cache hit/miss telemetry. Needs BOTH knobs — measured on a live 2-arm boot
+      # 2026-08-26: STATS alone at default verbosity emitted 0 `[moe-cache]` lines of
+      # ANY kind; STATS + verbosity 4 emitted 228. `stats_every` defaults to 0
+      # (moe-cache.cu:169, gate at :2795) and MOE_CACHE_LOG is GGML_LOG_INFO, which the
+      # server's verbosity threshold drops below 4.
+      # ⚠️ Both were previously ABSENT here, so docker forwarded neither and NO caller
+      # could switch telemetry on (club-3090 #1105/#1106 were filed with no usable
+      # cache data for exactly this reason).
+      # `=${VAR:-N}` is safe for STATS: moe_cache_env_i64 rejects unset AND empty
+      # before parsing (moe-cache.cu:509), so it cannot hit the atoi("")==0 trap.
+      # ⚠️ DEFAULT IS 0 (OFF) — telemetry is OPT-IN, on principle rather than on a
+      # measured cost: instrumentation should not run when nothing reads it.
+      # ⛔ An earlier version of this comment claimed the counters cost ~6% decode.
+      # That is RETRACTED (2026-08-26). Two A/B runs could not support it — the
+      # SHIPPED image itself measured 20.05 then 18.36 narrative TPS across runs
+      # with no code change, so run-to-run variance swamps the effect. Arithmetic
+      # agrees: ~175 bypassed nodes per bench x ~4 atomics is ~1e-4 % of wall time.
+      # The old v1.2-era engine did NOT gate these counters; UNVERIFIED on v1.5, so this
+      # knob controls EMISSION only.
+      # Turn it on for a bench/report run: MOE_STATS=200 LLAMA_ARG_LOG_VERBOSITY=4.
+      # Verbosity stays BARE (caller-owned): 4 is loud for a serving deployment.
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
+      - LLAMA_ARG_LOG_VERBOSITY
     deploy:
       resources:
         reservations:
@@ -178,8 +206,13 @@ services:
       - '8080'
       - '--alias'
       - 'deepseek-v4-flash'
+      # Slots. ⚠️ `-np N` SPLITS `-c` into ctx/N per slot, so the pool and the
+      # compute buffer change with it — a concurrency A/B must re-measure, not
+      # reuse single-stream rows. Default 1 keeps shipped behaviour identical.
+      # ⚠️ LLAMA_ARG_N_PARALLEL cannot override this: common/arg.cpp applies env
+      #    BEFORE argv (~L783 vs ~L808), so the command line always wins.
       - '-np'
-      - '1'
+      - '${NPARALLEL:-1}'
       - '-c'
       - '${CTX:-204800}'
       - '-ngl'

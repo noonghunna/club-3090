@@ -104,6 +104,11 @@ services:
       # moving bytes (report.sh reads the cache). Bare passthrough — absent unless set.
       # docs/PCIE_P2P.md §7.
       - VLLM_SKIP_P2P_CHECK
+      # CUDA-graph kill switch (Cliff-2 GDN spike mitigation). Bare passthrough —
+      # absent unless set. ⚠️ It was READ by the entrypoint but never DECLARED, so
+      # `$${VLLM_ENFORCE_EAGER:+--enforce-eager}` always expanded to nothing and the
+      # knob could not be turned on at all. Fixed 2026-08-31.
+      - VLLM_ENFORCE_EAGER
       - NCCL_CUMEM_ENABLE=0
       - NCCL_P2P_DISABLE=1
       - VLLM_NO_USAGE_STATS=1

@@ -1,0 +1,151 @@
+schema_version: 1
+id: llamacpp-club3090-v1.6
+display_name: llama.cpp club-3090 test-bed v1.6-rc0 (MoE expert cache + glm5next indexer key cache)
+type: llama.cpp
+stability: experimental
+install:
+  method: docker_image
+  # Digest-pinned, not tag-pinned: tags move, digests do not (#940 precedent).
+  # Built 2026-08-31 from stack/club3090-moecachev1.6 (d9cc8af98) — NO rebase this
+  # cycle; base is still v1.5's b10675. Recipe: .devops/cuda.Dockerfile,
+  # CUDA_VERSION=12.8.1, CUDA_DOCKER_ARCH="86;89;120", GGML_BACKEND_DL=ON,
+  # GGML_CPU_ALL_VARIANTS=ON, LLAMA_BUILD_TESTS=OFF, target `full`. Package is PRIVATE.
+  #
+  # DELTA vs v1.5: @danielhanchen's 0069971 (glm5next indexer pool key cache) +
+  # 5796547f3 (invalidate pooled keys when a shift splits a pool), both from
+  # ggml-org/llama.cpp#27754. Measured on GLM-5.3-Flash: decode +46.9% at 44K,
+  # +69.7% at 87K; depth falloff -48% -> -16%.
+  # ⚠️ The two are INSEPARABLE: 0069971 alone truncates output at depth (60 vs 128
+  # tokens at 87K, reproducible at temp 0). 5796547f3 removes it. Never take one.
+  # glm5next MTP (d07e71ede) is deliberately NOT included — it costs 17% of the
+  # expert pool and loses to the external DFlash2 drafter on both legs.
+  spec: ghcr.io/noonghunna/llamacpp-club3090@sha256:69b833eea9266707cd9853fc8041348a59e2403a1e763822db5c2a46484db72b
+
+# ---------------------------------------------------------------------------
+# WHY A FOURTH PROFILE RATHER THAN A REPOINT
+#
+# Same reasoning as v1.1 and v1.5. Editing an existing profile in place would
+# silently migrate models onto a build they were never validated on — and for v1.6
+# that is the live case: DeepSeek and Inkling stay on v1.5 by explicit decision
+# (2026-08-31), because only GLM-5.3-Flash and Qwen3.8-Flash-Next were booted and
+# gated on this artifact — and the launchers INJECT the engine profile's
+# image, OVERRIDING each compose's own `image:` line, so their headers would still
+# claim the old digest while running this one. A new file cannot do that.
+#
+# ⚠️ The version tracks OUR ENGINE BUILD, not the cache implementation.
+# ---------------------------------------------------------------------------
+
+min_sm: 8.6
+supported_model_families:
+  - glm5next-moe          # GLM-5.3-Flash (320.76B MoE, 3:1 SSM/MLA hybrid, DSA indexer)
+                          # ⚠️ must match models/glm-5.3-flash.yml `family:` EXACTLY —
+                          # the resolver gates on it, and `glm5next` (the ARCH name)
+                          # is not the FAMILY tag.
+  - qwen4exp              # Qwen3.8-Flash-Next (MoE, 1:3 hybrid, PLE n-gram)
+                          # Added 2026-08-29 WITH the compose+slugs, not before —
+                          # the family tag was deliberately withheld until a
+                          # compose existed for the resolver to point at.
+                          # ⚠️ must match models/qwen3.8-flash-next.yml `family:`.
+  - deepseek4-moe         # DeepSeek-V4-Flash-0731 (284B MoE, CPU expert offload)
+                          # MIGRATED here 2026-08-29 from `llamacpp-club3090`
+                          # (sha256:17824d44 / e0a208949). Added only AFTER the
+                          # shipped dual q8 moecache compose was booted against
+                          # THIS digest with image.revision asserted 7104d5f4e:
+                          # verify-full 10/10, dspark acceptance 0.41-0.73,
+                          # moe-cache pools on both cards. Its BENCHMARKS rows
+                          # were measured on the OLD engine and are annotated as
+                          # needing a re-baseline.
+  - inkling-moe          # Inkling-Small (bailingmoe2). MIGRATED here 2026-08-29
+                          # after verify-full 10/10 on this binary. Needed TWO
+                          # fixes beyond the pin, both found by testing:
+                          #  1. its composes defined NO `entrypoint:`, so they
+                          #     inherited the image default — /app/tools.sh on
+                          #     v1.5, a dispatcher that rejects `-m` (crash-loop).
+                          #     They now carry an explicit entrypoint, as DeepSeek
+                          #     already did, which is why DeepSeek swapped clean.
+                          #  2. preflight sent the top-level `reasoning_effort`
+                          #     ALONGSIDE the template kwarg; this model reads the
+                          #     kwarg and ignores `enable_thinking`, so the
+                          #     top-level one won and thinking never turned off.
+                          #     preflight now probes the payload shape.
+
+features:
+  moe_expert_cache: true  # --moe-cache: hot CPU-resident experts held in spare VRAM
+supported_kv_formats:
+  - fp16
+  - q8_0                  # Added 2026-08-29 WITH boot evidence, not by assumption:
+                          # qwen3.8-flash-next @204800 boots, serves and answers
+                          # correctly on `--cache-type-k/v q8_0`. MEASURED KV -47%,
+                          # expert-cache slots 9,435 -> 12,437 (+31.8%), decode
+                          # neutral, cards balanced. Requires `-fa on` (quantised KV
+                          # needs flash-attention on this engine).
+                          # ⚠️ q8_0 is the SERVING-GRADE FLOOR on this stack — do not
+                          # extend this list below it for a serving slug.
+supported_drafters:
+  - dspark                # DeepSeek-V4-Flash external DSpark drafter. Declared with the
+                          # v1.5 migration 2026-08-29, backed by a measurement on THIS
+                          # binary: acceptance 0.41-0.73 (mean accepted len 3.07-4.67)
+                          # during a verify-full run. Engine support must be DECLARED —
+                          # compat C7 gates on it — never implied by a compose that
+                          # happens to pass the flag.
+  - ngram-mod             # runtime spec-type, needs NO drafter GGUF (qwen3.8-flash-next
+                          # ships it ON by default at n_max=8). Listed here because this
+                          # field holds spec_method VALUES, not drafter ids.
+  - dflash                  # DFlash2 external draft GGUF via `--spec-type draft-dflash`
+                            # (drafters/anbeeld-glm53-dflash2.yml, SHIPPED default n=3 on CUDA1)
+  # ⚠️ THIS FIELD HOLDS spec_method VALUES, NOT DRAFTER IDs, and it is a GATE:
+  #     compat.py C7 → `if drafter.spec_method not in engine.supported_drafters: fail`
+  # Two earlier revisions got this wrong — first `[]` (reasoning that the list names
+  # profiles, which BLOCKED the shipped drafter), then the drafter's ID (still rejected,
+  # because the comparison is against `dflash`). Cross-check with beellama-local.yml,
+  # which lists `dflash` / `mtp` / `mtp_gguf`.
+supported_weight_formats:
+  - gguf
+required_overlays: []
+vendored_overlays: []
+  # ⚠️ EMPTY BY CONVENTION, matching llamacpp-club3090-v1.1 — which likewise vendors an
+  # unmerged arch PR (#25731) and declares []. This field expects an overlay with a real
+  # SOURCE PATH on disk; an entry without one fails diagnose-profile [6/6]
+  # ("source path not found"). The vendoring is BAKED INTO THE IMAGE, not applied as an
+  # overlay at boot, so it is described in `notes` + `feature_provenance` instead:
+  # glm5next support is ggml-org/llama.cpp#27754, chosen over rival #27752 on GGUF-key
+  # evidence — #27752 was evaluated and REVERTED because it caps GLM at ~32K context.
+required_genesis: false
+
+notes: >
+  🧪 rc0. ⚠️ EVERY MEASUREMENT HERE IS FROM THIS BINARY (d9cc8af98, 2026-08-31) —
+  nothing is inherited from v1.5. VALIDATED: test-moe-cache 44 cases in BOTH prefetch
+  states, 43 OK / 0 FAIL / 1 SKIP, per-case identical (host build; the image ships
+  LLAMA_BUILD_TESTS=OFF). GLM-5.3-Flash UD-IQ3_XXS dual and Qwen3.8-Flash-Next
+  UD-Q4_K_XL dual each booted on THIS artifact with image.revision asserted
+  d9cc8af98, showing -ot offload, NON-ZERO cache hits and correct TERMINATING output
+  (finish_reason=stop) in the SAME run. Symbol check with a negative control:
+  set_kpool_dirty present here, absent in v1.5. Retrieval-correctness gate at
+  8K/32K/64K across three prompt-cache paths 9/9, with v1.5 as a 9/9 control.
+  Headline vs v1.5: decode +46.9% at 44K, +69.7% at 87K; depth falloff -48% -> -16%.
+  ⛔ NOT RUN on this binary: soak-continuous, the quality 8-pack, verify-full, vision.
+  ⚠️ DeepSeek-V4-Flash and Inkling-Small were NOT booted on this build and
+  deliberately STAY on llamacpp-club3090-v1.5 (maintainer decision 2026-08-31) — do
+  not point them here without booting them first.
+  ⚠️ `-ot` force-disables pipeline parallelism, so prefill is GPU-asymmetric — an
+  engine property, not a defect; see learnings/moe-cache-engine.md section 11.
+  ⚠️ ATTRIBUTION: the expert cache is leloch's work (RFC ggml-org#24528); the glm5next
+  arch and both v1.6 deltas are @danielhanchen's (#27754) — we maintain neither, and
+  what we contribute upstream is measurement, not code.
+
+
+feature_provenance:
+  moe_expert_cache:
+    author: leloch
+    source: https://github.com/leloch/llama.cpp
+    upstream: https://github.com/ggml-org/llama.cpp/discussions/24528
+    status: unmerged
+  glm5next_architecture:
+    author: upstream-contributor
+    upstream: https://github.com/ggml-org/llama.cpp/pull/27754
+    status: unmerged-vendored
+  moe_cache_parallel_scatter: { author: club-3090, status: offered-to-author }
+  moe_cache_d2h_overlap:      { author: club-3090, status: offered-to-author }
+  moe_cache_nobudget_warn:    { author: club-3090, status: offered-to-author }
+  moe_cache_bypass_warn_split: { author: club-3090, status: offered-to-author }
+  topk_runtime_batch:         { author: club-3090, status: interim }

@@ -11641,7 +11641,12 @@ class TestProfileTemplateDerivation:
         # designed — an entirely non-functional group still gets a representative
         # (cf. the (vllm, multi4) and (beellama, dual) precedents named in the
         # profile_templates docstring); the custom-slug escape hatch reaches the rest.
-        assert len(opts) == 9, f"expected 9 reps, got {len(opts)}: {[o.slug for o in opts]}"
+        # 10 since 2026-08-29: the GLM-5.3-Flash slugs created a NEW
+        # (llamacpp-club3090, multi8) group — multi8 previously had only the vLLM
+        # representative (vllm/qwen38-27b-multi8-*). Same shape as the #905 note
+        # above: an entirely incubating group still gets a representative, which is
+        # rule (d) working as designed, not a regression.
+        assert len(opts) == 10, f"expected 10 reps, got {len(opts)}: {[o.slug for o in opts]}"
 
         # The 1-card rig default must be FUNCTIONAL + non-incubating — ideally the
         # registry's curated single default (vllm/minimal).

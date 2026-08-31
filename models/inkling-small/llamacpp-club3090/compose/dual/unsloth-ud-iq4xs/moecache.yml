@@ -151,7 +151,13 @@ services:
     # purpose: DeepSeek keeps the digest it was validated on and is not re-pinned
     # onto a build whose only justification is this model. ⛔ Both collapse back
     # into one when #25731 merges — see engines/llamacpp-club3090-v1.1.yml.
-    image: ${LLAMACPP_CLUB3090_V11_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:55f434244cc28d4af99f9fbefdd338b9409dc567d532e7b23bbc7d37f16680f4}
+    # MIGRATED v1.1 -> v1.5 2026-08-29 (revision 7104d5f4e, base b10675).
+    # Validated on THIS binary first: verify-full 10/10, moe-cache pools on
+    # both cards. Needed TWO changes beyond the pin — an explicit entrypoint
+    # (v1.5's image default is /app/tools.sh, which rejects `-m`) and the
+    # preflight off-payload fix (top-level reasoning_effort was defeating the
+    # template kwarg). Ledger: /opt/ai/moecache-releases.md.
+    image: ${LLAMACPP_CLUB3090_IMAGE:-ghcr.io/noonghunna/llamacpp-club3090@sha256:1c228a52b8193df26a3c7e8b497814739ca06ff34075a2a1ce02989210068210}
     container_name: ${ESTATE_CONTAINER:-llama-cpp-inkling-small-iq4xs-moecache}
     restart: unless-stopped
     ports:
@@ -162,6 +168,40 @@ services:
       # Expert-cache tuning — inherited from the 2×24 GB DeepSeek derivation.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
+      # ⛔ PREFETCH OFF BY DEFAULT — maintainer decision 2026-08-28.
+      # The engine defaults it ON, but on this rig it costs 2176 MiB (2 x 1088) on the FIRST
+      # CUDA device only, allocated LAZILY on the first prefill -- AFTER the moe-cache pool has
+      # already been sized from free-minus-reserve. Nothing budgets for it, so it lands on the
+      # tighter card as pure extra pressure. For scale: that is more than TWICE the entire KV
+      # cost of this compose's 204800 context (~1035 MiB), i.e. ~430K tokens of headroom.
+      # Its only measured justification (+14.5%/+15.0% prefill) was taken on a build carrying
+      # the n_copies==1 scheduler race fixed in ce8743a05, so it is WITHDRAWN pending re-measure.
+      # ⚠️ Explicit `=0`, not a bare passthrough: bare would inherit the engine default (ON).
+      # Re-enable only with a number from a post-ce8743a05 A/B. See moecache-engine-playbook.md.
+      - GGML_EXPERT_PREFETCH=${EXPERT_PREFETCH:-0}
+      # Cache hit/miss telemetry. Needs BOTH knobs — measured on a live 2-arm boot
+      # 2026-08-26: STATS alone at default verbosity emitted 0 `[moe-cache]` lines of
+      # ANY kind; STATS + verbosity 4 emitted 228. `stats_every` defaults to 0
+      # (moe-cache.cu:169, gate at :2795) and MOE_CACHE_LOG is GGML_LOG_INFO, which the
+      # server's verbosity threshold drops below 4.
+      # ⚠️ Both were previously ABSENT here, so docker forwarded neither and NO caller
+      # could switch telemetry on (club-3090 #1105/#1106 were filed with no usable
+      # cache data for exactly this reason).
+      # `=${VAR:-N}` is safe for STATS: moe_cache_env_i64 rejects unset AND empty
+      # before parsing (moe-cache.cu:509), so it cannot hit the atoi("")==0 trap.
+      # ⚠️ DEFAULT IS 0 (OFF) — telemetry is OPT-IN, on principle rather than on a
+      # measured cost: instrumentation should not run when nothing reads it.
+      # ⛔ An earlier version of this comment claimed the counters cost ~6% decode.
+      # That is RETRACTED (2026-08-26). Two A/B runs could not support it — the
+      # SHIPPED image itself measured 20.05 then 18.36 narrative TPS across runs
+      # with no code change, so run-to-run variance swamps the effect. Arithmetic
+      # agrees: ~175 bypassed nodes per bench x ~4 atomics is ~1e-4 % of wall time.
+      # The shipped v1.2 engine does NOT gate these counters at all, so on it this
+      # knob controls EMISSION only.
+      # Turn it on for a bench/report run: MOE_STATS=200 LLAMA_ARG_LOG_VERBOSITY=4.
+      # Verbosity stays BARE (caller-owned): 4 is loud for a serving deployment.
+      - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
+      - LLAMA_ARG_LOG_VERBOSITY
     deploy:
       resources:
         reservations:
@@ -173,7 +213,44 @@ services:
     # Docker Compose's command-line parser REJECTS `(gate|up|down)` inside a
     # folded string. The list form skips shell parsing, so the regex survives
     # byte-for-byte.
+    # ── Explicit entrypoint (added 2026-08-29) ──────────────────────────────
+    # WHY: without this the compose inherits the IMAGE's default entrypoint, which
+    # silently couples it to one engine build. v1.1's default runs the server
+    # directly; v1.5's is `/app/tools.sh`, a DISPATCHER that rejects the `-m …`
+    # argv below — MEASURED 2026-08-29: `Unknown command: -m`, container crash-loop.
+    # DeepSeek survived the same engine swap untouched precisely because its
+    # compose defines its own entrypoint. Pinning it here makes this file portable
+    # across images instead of dependent on one image's default.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        exec /app/llama-server "$$@"
+      - --
     command:
+      # ── Sampler + reasoning effort (vendor: unsloth.ai/docs/models/inkling) ──
+      # Sampling: the card gives ONE row for all modes (no thinking/instruct
+      # split, unlike qwen3.8/glm-5.3) — temp 1.0, top_p 1.0 (disabled), min_p 0.0.
+      # ⚠️ These were previously UNSET, so llama.cpp's own defaults applied
+      # (top_k 40 / min_p 0.05) — NOT the vendor row.
+      - '--temp'
+      - '${TEMP:-1.0}'
+      - '--top-p'
+      - '${TOP_P:-1.0}'
+      - '--min-p'
+      - '${MIN_P:-0.0}'
+      # Reasoning effort. ⚠️⚠️ THIS MODEL READS `reasoning_effort` FROM THE CHAT
+      # TEMPLATE, NOT `enable_thinking` — it ignores the latter SILENTLY, and the
+      # top-level OpenAI `reasoning_effort` field does NOT reach it either
+      # (MEASURED 2026-08-29: `reasoning_effort: none` still produced 204 chars of
+      # reasoning). The template kwarg below is the vendor's documented control.
+      # Levels: none(0) low(0.2) medium(0.7) high(0.9) xhigh(0.99) max(0.99).
+      # SHIPPED `low`: reasoning stays ON (the vendor default behaviour — this
+      # model has no instruct mode) but at 0.2 instead of the vendor's 0.9, because
+      # 0.9 spends a large share of a short reply's budget on thinking. Agents dial
+      # up per request. Set REASONING_EFFORT to override.
+      - '--chat-template-kwargs'
+      - '{"reasoning_effort":"${REASONING_EFFORT:-low}"}'
       - '-m'
       - '/models/inkling-small-gguf/UD-IQ4_XS/Inkling-Small-UD-IQ4_XS-00001-of-00004.gguf'
       - '--host'
@@ -182,8 +259,13 @@ services:
       - '8080'
       - '--alias'
       - 'inkling-small'
+      # Slots. ⚠️ `-np N` SPLITS `-c` into ctx/N per slot, so the pool and the
+      # compute buffer change with it — a concurrency A/B must re-measure, not
+      # reuse single-stream rows. Default 1 keeps shipped behaviour identical.
+      # ⚠️ LLAMA_ARG_N_PARALLEL cannot override this: common/arg.cpp applies env
+      #    BEFORE argv (~L783 vs ~L808), so the command line always wins.
       - '-np'
-      - '1'
+      - '${NPARALLEL:-1}'
       - '-c'
       - '${CTX:-262144}'
       - '-ngl'

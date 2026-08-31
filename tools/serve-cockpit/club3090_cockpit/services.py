@@ -227,6 +227,28 @@ class Runner(Protocol):
     ) -> RunResult: ...
 
 
+async def _reap(proc: Any) -> None:
+    """Kill and await a subprocess so its transport is closed while the loop lives.
+
+    Idempotent and never raises: called from exception paths, where a second
+    failure would mask the original one. A process that already exited raises
+    ProcessLookupError from kill() -- that is the success case, not an error.
+    """
+    if proc is None:
+        return
+    try:
+        if proc.returncode is None:
+            proc.kill()
+    except (ProcessLookupError, AttributeError):
+        pass
+    except Exception:
+        pass
+    try:
+        await proc.wait()
+    except Exception:
+        pass
+
+
 class RealRunner:
     """Production runner — actually shells out (READ contracts only)."""
 
@@ -251,10 +273,20 @@ class RealRunner:
                 stderr=err.decode("utf-8", errors="replace"),
             )
         except asyncio.TimeoutError:
+            # `wait_for` cancels communicate() but does NOT touch the CHILD. Without
+            # reaping it here the process keeps running and its transport stays
+            # alive; when `proc` is later GC'd -- at interpreter shutdown, AFTER the
+            # loop is closed -- BaseSubprocessTransport.__del__ calls loop.call_soon
+            # and raises "RuntimeError: Event loop is closed" as an ignored exception
+            # on quit. One orphan per timed-out probe, across 26 call sites.
+            await _reap(proc)
             result = RunResult(returncode=-1, stdout="", stderr="timeout", timed_out=True)
         except FileNotFoundError as exc:
             result = RunResult(returncode=127, stdout="", stderr=str(exc))
         except Exception as exc:  # pragma: no cover - defensive
+            # Same reasoning as the timeout arm: if the failure happened after the
+            # child was spawned, it must still be reaped.
+            await _reap(locals().get("proc"))
             result = RunResult(returncode=-1, stdout="", stderr=str(exc))
         if log is not None:
             log.complete_result(result)
@@ -5424,6 +5456,10 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         comp = d.get("weights_companions") or []
         object.__setattr__(row, "weights_companions", [str(c) for c in comp])
         object.__setattr__(row, "drafter", str(d.get("drafter") or ""))
+        # Drafter-less speculation (the ngram-* runtime spec-types keep
+        # `drafter` null BY DESIGN) — without this the Spec Dec column shows
+        # "—" while speculation is running.
+        object.__setattr__(row, "spec_method", str(d.get("spec_method") or ""))
         object.__setattr__(row, "vision", bool(d.get("vision")))
         # KV-cache format from the registry (catalog KV column) — attached same
         # as the facets above; "" when the contract didn't carry it.
@@ -5434,6 +5470,10 @@ def _variant_row_from_dict(d: dict[str, Any]) -> VariantRow:
         # Weight-offload backend (catalog offload column) — same pattern;
         # "" when the contract didn't carry it (resident/older emit) → shows "—".
         object.__setattr__(row, "offload", str(d.get("offload") or ""))
+        # DYNAMIC expert-cache axis, orthogonal to `offload` (which is the
+        # residency-capability axis). The offload COLUMN renders static/dynamic
+        # from this; without it every CPU-offload slug reads "static".
+        object.__setattr__(row, "moe_cache", bool(d.get("moe_cache")))
         # Minimum host RAM for offload slugs (hard gate). Kept as int|None rather than
         # str so the column can render "—" for resident slugs without a magic string.
         object.__setattr__(row, "host_ram_gb", d.get("host_ram_gb"))

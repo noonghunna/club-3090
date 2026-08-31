@@ -262,11 +262,37 @@ def _host_ram_label(e: "CatalogEntry") -> str:
 
 
 def _offload_label(e: "CatalogEntry") -> str:
-    """Weight-offload backend for the catalog offload column — the registry
-    ``offload`` facet (emitted like ``act_format``): "uva" (vLLM demand-paged
-    expert offload) / "n-cpu-moe" (llama.cpp CPU-computed) / "prefetch"; "—" for
-    a fully-resident slug (the default) or when the contract didn't carry it."""
-    return (getattr(e.row, "offload", "") or "") or "—"
+    """Catalog offload column: how expert weights are PLACED, in one word.
+
+    Shows the axis that actually differs between CPU-offload slugs:
+
+      * ``static``   — the compose STATICALLY PINS expert bundles into VRAM:
+                       it declares the residency contract (CPU-Offload-Bundle-MiB
+                       + MoE-Layers + GPU-Reserve-MiB) and carries ``OT_G`` slots
+                       that the launcher fills in at boot. Registry ``offload``
+                       == "residency".
+      * ``dynamic``  — no static pinning; expert placement is left to the engine
+                       (the moe-cache moves them at runtime where enabled).
+
+    ⚠️ NOT derived from ``moe_cache``. That agrees for 13 of 14 slugs and is
+    WRONG on the one that matters: inkling-small-dual-iq4xs-residency pins
+    statically AND runs the cache, so a cache-derived label called the stack's
+    only hand-tuned residency config "dynamic".
+
+    ⚠️ This deliberately does NOT show the registry ``offload`` value. That
+    field records whether the compose is RESIDENCY-CAPABLE ("residency" =
+    declares CPU-Offload-Bundle-MiB, so the launcher injects OT_G pin rules;
+    "tensor-override" = plain -ot) — a real distinction, but every CPU-offload
+    compose on this stack passes ``-ot``, so surfacing the mechanism here
+    distinguished nothing while hiding the cache axis entirely.
+
+    Non-CPU-offload backends ("uva" / "prefetch") still render their own value.
+    "—" for a fully-resident slug or when the contract didn't carry it.
+    """
+    raw = (getattr(e.row, "offload", "") or "")
+    if raw in ("residency", "tensor-override"):
+        return "static" if raw == "residency" else "dynamic"
+    return raw or "—"
 
 
 def _rig_tps_cell(e: "CatalogEntry") -> str:
@@ -425,11 +451,19 @@ def _sanitize_catalog_columns(saved: Any) -> tuple[list[str], set[str]]:
 # external assistant draft-model) — the "drafter type matters" distinction — not
 # a vague "ext".  The bare `MTP` = built-in head (the common qwen case).  The
 # slug detail card carries the full form (n= count + source).
-def _spec_token(drafter: str) -> str:
-    """Pure ``drafter``-id → compact spec-dec label.  '' when no drafter."""
+def _spec_token(drafter: str, spec_method: str = "") -> str:
+    """``drafter``-id (or drafter-less ``spec_method``) → compact spec-dec label.
+
+    ``spec_method`` exists because the ngram-* spec-types need NO drafter GGUF —
+    those slugs keep ``drafter`` null BY DESIGN, so deriving the label from the
+    drafter id alone printed "no speculation" while speculation was running.
+    """
     dr = (drafter or "").strip().lower()
     if not dr:
-        return ""
+        sm = (spec_method or "").strip().lower()
+        if sm.startswith("ngram"):
+            return "ngram"      # ngram-mod / -map-k / -simple / -cache
+        return sm.split("-")[0] if sm else ""
     if "dflash2" in dr:       # DFlash2 external block-drafter (must precede the
         return "DFlash2"          # generic dflash check — "dflash2" contains "dflash")
     if "dflash" in dr:
@@ -450,7 +484,8 @@ def _spec_token(drafter: str) -> str:
 
 def _spec_label(e: "CatalogEntry") -> str:
     """Compact spec-dec method token for the catalog Spec Dec column ('—' = none)."""
-    return _spec_token(getattr(e.row, "drafter", "")) or "—"
+    return _spec_token(getattr(e.row, "drafter", ""),
+                       getattr(e.row, "spec_method", "")) or "—"
 
 
 def _weights_glyph(e: CatalogEntry) -> str:
@@ -623,7 +658,8 @@ def funnel_slug_options(
         # topology/engine/quant but differing only by drafter (e.g. fp8-mtp vs a
         # no-drafter fp8) get disambiguated by `· MTP` instead of falling to the
         # serving-stem tail.  Skipped for no-drafter slugs (keeps them clean).
-        spec = _spec_token(getattr(row, "drafter", ""))
+        spec = _spec_token(getattr(row, "drafter", ""),
+                           getattr(row, "spec_method", ""))
         if spec:
             label = f"{label}  ·  {spec}"
         status = (getattr(row, "status", "") or "").strip().lower()
