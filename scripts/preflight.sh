@@ -2056,6 +2056,59 @@ preflight_offload_split_mode() {
   return 0
 }
 
+# preflight_offload_thp <compose_file>
+# WARN-ONLY hint: an offload compose on a host whose transparent hugepages do not
+# cover Shmem pays a first-token LATENCY cost.
+#
+# ⚠️ This is LATENCY, never throughput. Measured 2026-08-30 on GLM-5.3-Flash:
+# short-prompt TTFT ~593 -> ~262 ms (-56%), decode -0.2%, prefill +0.9%/-2.7%.
+# Wording that implies tok/s would be a false promise, so it does not.
+#
+# NEVER blocks: the rig runs correctly either way, and a hard failure over a
+# latency hint would be user-hostile. Scoped to offload composes only — it is
+# irrelevant to a GPU-resident model and would be pure noise there.
+preflight_offload_thp() {
+  local compose_file="$1"
+  [[ -f "$compose_file" ]] || return 0
+  is_cpu_offload_compose "$compose_file" || return 0   # not an offload compose -> no-op
+
+  # Resolve the lib via SCRIPT_DIR, but FALL BACK to this file's own directory.
+  # A caller with an unexpected SCRIPT_DIR would otherwise disable the check
+  # silently — the exact failure shape this guard exists to catch.
+  local lib="${SCRIPT_DIR:-}/lib/thp.sh"
+  if [[ ! -r "$lib" ]]; then
+    lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/thp.sh"
+  fi
+  [[ -r "$lib" ]] || return 0
+  # shellcheck source=/dev/null
+  . "$lib"
+
+  local shmem_knob cov
+  shmem_knob="$(thp_setting shmem_enabled)"
+  cov="$(thp_shmem_coverage_pct)"
+
+  # `shmem_enabled` is the knob that governs the experts. `enabled` is NOT a
+  # substitute and looking at it is how this gets misdiagnosed.
+  if [[ "$shmem_knob" == "never" ]]; then
+    echo "[preflight] WARN:  transparent_hugepage/shmem_enabled=never — CPU-offloaded experts will" >&2
+    echo "            run on 4 KiB pages. Costs FIRST-TOKEN LATENCY (measured -56% TTFT on short" >&2
+    echo "            prompts when fixed); throughput is unaffected, so this is not a tok/s issue." >&2
+    echo "            Fix: bash scripts/hugepages.sh --apply   # then RESTART the container" >&2
+    echo "            (already-mapped 4 KiB memory does not merge; verify with ShmemHugePages)" >&2
+    return 0
+  fi
+
+  # Coverage empty => no large Shmem resident => nothing to judge (not a finding).
+  if [[ -n "$cov" ]] && [[ "$cov" -lt 50 ]]; then
+    echo "[preflight] WARN:  hugepage coverage of Shmem is ${cov}% despite shmem_enabled=${shmem_knob}." >&2
+    echo "            The knob is set but the kernel could not supply huge pages — usually" >&2
+    echo "            fragmentation on a long-uptime host. Affects first-token latency only." >&2
+    echo "            Fix: restart the container; if it persists, compact memory before loading:" >&2
+    echo "            sync && echo 3 | sudo tee /proc/sys/vm/drop_caches && echo 1 | sudo tee /proc/sys/vm/compact_memory" >&2
+  fi
+  return 0
+}
+
 # preflight_cpu_offload_ram <compose_file>
 # Guards an offload compose against a host that cannot hold the experts.
 #

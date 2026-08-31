@@ -1132,6 +1132,8 @@ up_variant() {
     preflight_cpu_offload_ram "${full_dir}/${file}" || exit 1
     preflight_offload_split_mode "${full_dir}/${file}" || exit 1
     preflight_kv_format_hint "${full_dir}/${file}" || true
+    # WARN-only first-token-latency hint; never blocks a boot.
+    preflight_offload_thp "${full_dir}/${file}" || true
     # Single-card util-override guard — runs even under --force (the nvfp4 slug
     # launches with --force, and util=0.92 on one card OOMs the tool-prefill; #617).
     preflight_single_card_util "${full_dir}/${file}" "$v" || true

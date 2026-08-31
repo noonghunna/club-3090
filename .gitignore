@@ -76,3 +76,9 @@ results/*
 # worktree bookkeeping that is meaningless — and occasionally sensitive — to
 # anyone else. Listed explicitly because `git add -A` would otherwise sweep it in.
 .claude/
+
+# Editor/tooling backups — a .bak of a compose was committed once (GLM iq4xs,
+# 31441136) and then drifted 289 lines from the live file while looking authoritative.
+*.bak
+*.orig
+*.rej

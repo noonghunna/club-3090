@@ -88,7 +88,29 @@ The dimensions are **not independent**. Measuring a downstream one on an unsettl
 
 Sweep top-down, in stages, rather than one giant product. `PLAN=1` prints the staged sequence. The tool warns when a sweep inverts this order.
 
-### 3b. Repeat before you rank
+### 3b. Check the host's memory policy before you compare anything
+
+Offloaded experts are CUDA **pinned host memory**, which the kernel accounts as `Shmem` — not
+anonymous memory. So `transparent_hugepage/enabled` governs only the process heap, and
+**`shmem_enabled` is the knob that reaches the model**. On a default Ubuntu (`enabled=madvise`,
+`shmem_enabled=never`) a ~105 GiB working set runs on ~27M × 4 KiB pages against a ~2K-entry L2 TLB.
+
+```bash
+bash scripts/hugepages.sh            # check coverage (no root needed)
+bash scripts/hugepages.sh --apply    # set the knobs, then RESTART the container
+```
+
+⚠️ **Judge it by coverage, never by the setting.** `ShmemHugePages ÷ Shmem` is the only honest
+measure: a knob reading `always` can still yield 0% on a fragmented, long-uptime host. And
+`AnonHugePages` climbing is **not** evidence — that is the heap, not the experts. Reading the wrong
+counter is how we nearly recorded a false "hugepages don't help".
+
+⚠️ **This is a LATENCY effect, not throughput.** Measured on GLM-5.3-Flash: short-prompt TTFT
+~593 → ~262 ms (**−56%**), while decode was −0.2% and prefill +0.9%/−2.7% — i.e. noise. It matters
+for agentic/short-turn workloads and is irrelevant to a tok/s ranking. It is worth setting before a
+sweep mainly so your numbers are comparable to someone else's.
+
+### 3c. Repeat before you rank
 
 On the reference rig, **within a boot** the per-request decode rate is essentially noise-free (0.9% spread across four requests). **Between boots at identical config it is low single digits** — three consecutive boots of the same arm landed within 0.5% of each other (37.24 / 37.09 / 37.26 tok/s).
 
@@ -96,7 +118,7 @@ So a single boot can resolve a large effect, but it cannot resolve a small one, 
 
 > **What actually bites is not boot noise — it is a config difference you did not notice.** The 12–22% swings that motivated this section originally turned out to be an arm running with the expert cache silently disabled (§5a), not variance. Before attributing a gap to noise, check `status`, the pool lines, and §5's trap list. Noise on this rig is small; silent misconfiguration is not.
 
-### 3c. Workload shape flips the *sign* of speculative results
+### 3d. Workload shape flips the *sign* of speculative results
 
 | Shape | What it is | Speculation on the reference rig |
 |---|---|---|
