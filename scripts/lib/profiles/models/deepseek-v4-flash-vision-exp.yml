@@ -18,10 +18,17 @@ num_experts: 256               # n_expert
 num_experts_per_tok: 6         # n_expert_used
 num_shared_experts: 1
 max_ctx_supported: 1048576     # n_ctx_train — we SHIP 200K, see the weights notes
-vision_capable: false            # "Vision" IS IN THE NAME, NOT IN THE WEIGHTS. Gated
-                                 # 2026-08-31 BEFORE download: no mmproj in the repo, no
-                                 # clip/vision KV keys, and all 1,328 tensors across shards
-                                 # 2-5 are blk/output/token_embd -- zero vision tensors.
+vision_capable: false            # Correct for THIS GGUF, but note the REASON (corrected
+                                 # 2026-09-01; the earlier note here said the MODEL had no
+                                 # vision, which was WRONG). deepseek-ai/DeepSeek-V4-Flash-
+                                 # Vision-Exp IS a VLM: image-text-to-text, 263 vision
+                                 # tensors, full vision block in config.json. The unsloth
+                                 # GGUF carries ZERO of them, so llama-server returns
+                                 # "image input is not supported" -- text-only in practice.
+                                 # llama.cpp support is OPEN: ggml-org/llama.cpp#28133 adds
+                                 # the conversion that emits an mmproj; none on HF yet (23
+                                 # repos checked). Flip this when that merges + a re-convert
+                                 # is published. See docs/UPSTREAM.md.
 default_weight_variant: unsloth-ud-q8kxl
 valid_tp: [2, 4]
 compatible_drafters: []          # EMPTY PENDING MEASUREMENT, not by evidence: 0731's DSpark has an
