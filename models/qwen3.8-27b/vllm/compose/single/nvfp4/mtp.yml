@@ -133,7 +133,7 @@ services:
       # from the model-card row matching ENABLE_THINKING, so these must reach the
       # container. Absent -> empty -> the entrypoint's `:=` row default applies;
       # an explicit value crosses unchanged and still wins over both rows.
-      - ENABLE_THINKING=${ENABLE_THINKING:-false}
+      - ENABLE_THINKING=${ENABLE_THINKING:-true}
       - TEMP=${TEMP:-}
       - TOP_P=${TOP_P:-}
       - TOP_K=${TOP_K:-}
@@ -200,7 +200,7 @@ services:
         # from .env or shell STILL WINS in both branches. top_k / min_p are
         # identical across the rows and stay mode-independent.
         _temp="$${TEMP:-}"
-        if [ "$${ENABLE_THINKING:-false}" = "true" ]; then
+        if [ "$${ENABLE_THINKING:-true}" = "true" ]; then
           : "$${_temp:=1.0}" "$${TOP_P:=0.95}" "$${PRESENCE_PENALTY:=0.0}"
           echo "[sampler] thinking row (ENABLE_THINKING=true): temp=$$_temp top_p=$${TOP_P} presence=$${PRESENCE_PENALTY}" >&2
         else
@@ -263,9 +263,9 @@ services:
       # ⭐ reasoning_effort default = low (2026-08-16). It is a PER-REQUEST OpenAI
       # control, so this is only the fallback for callers that send nothing — any
       # agent still picks its own level per request.
-      # ⚠️ INERT while enable_thinking is false (the shipped default): the template
-      # only reads reasoning_effort inside `if enable_thinking is undefined or true`.
-      # It takes effect the moment ENABLE_THINKING=true.
+      # ⚠️ ACTIVE on every request since the 2026-09-01 thinking flip. The template
+      # only reads reasoning_effort inside `if enable_thinking is undefined or true`,
+      # so it goes INERT only under ENABLE_THINKING=false.
       # ⚠️ low is an ACTIVE instruction, not "less of medium" — it injects
       # "Keep your thinking brief and focused, moving directly to the conclusion
       # without unnecessary elaboration." The three levels are NOT a scale with a
@@ -275,10 +275,11 @@ services:
       # you want the model un-nudged rather than pushed toward brevity.
       # ⚠️ Valid values are xhigh | medium | low. Anything else RAISES at template
       # render (`high` included — it does NOT silently remap).
-      - '{"enable_thinking": ${ENABLE_THINKING:-false}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
+      - '{"enable_thinking": ${ENABLE_THINKING:-true}, "reasoning_effort": "${REASONING_EFFORT:-low}"}'
       # SAMPLER moved INTO the entrypoint (#984/#1014): at boot it derives
       # --override-generation-config from the model-card row matching
-      # ENABLE_THINKING (instruct by default; thinking when true); explicit
+      # ENABLE_THINKING (THINKING by default since 2026-09-01; instruct when
+      # false); explicit
       # TEMP/TOP_P/PRESENCE_PENALTY still win. Both rows: "SAMPLER" header above.
       - --host
       - 0.0.0.0

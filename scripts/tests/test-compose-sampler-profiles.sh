@@ -19,9 +19,12 @@
 # Checks, for every registry entry WITH sampler_profiles:
 #   (a) shape: exactly instruct+thinking rows, numeric sampler fields,
 #       instruct != thinking (a per-mode registry that isn't per-mode is noise);
-#   (b) the compose RENDERED with no env ships the card's INSTRUCT row;
-#   (c) the compose RENDERED with ENABLE_THINKING=true (vLLM) / THINKING=1
-#       (llama.cpp) ships the THINKING row;
+#   (b) the compose RENDERED with no env ships the row named by the registry's
+#       `sampler_default_mode` (absent = "instruct"; qwen3.8-27b = "thinking"
+#       since 2026-09-01);
+#   (c) the compose RENDERED with the OPT-IN knob for the other mode ships that
+#       other row — ENABLE_THINKING=true/false (vLLM), THINKING=1 / INSTRUCT=1
+#       (llama.cpp);
 #   (d) explicit TEMP/TOP_P/PRESENCE_PENALTY beat both rows (`:=` contract,
 #       and last-flag-wins on the llama.cpp tail).
 # Rendering runs each compose's real entrypoint under bash with the engine
@@ -240,6 +243,7 @@ def argv_under(text, env):
                           .replace("/app/llama-server", str(stub)))
         e = {k: v for k, v in os.environ.items()
              if not k.startswith(("SPEC", "NUM_SPEC", "ENABLE_THINKING", "THINKING",
+                             "INSTRUCT",
                                   "TEMP", "TEMPERATURE", "TOP_P", "TOP_K", "MIN_P",
                                   "PRESENCE_PENALTY", "REPEAT_PENALTY"))}
         e.update(container_env(text, env))
@@ -343,18 +347,41 @@ for slug, entry in sorted(with_profiles.items()):
     # routed those composes through the vLLM extractor, which looks for
     # --override-generation-config and returned None for every check.
     llama = str(entry.get("engine") or "").startswith(("llama-cpp", "llamacpp"))
-    mode_env = {"THINKING": "1"} if llama else {"ENABLE_THINKING": "true"}
-    mode_label = "THINKING=1" if llama else "ENABLE_THINKING=true"
+
+    # WHICH row the compose ships by default is registry POLICY, not something
+    # read back out of the compose — deriving the expectation from the same file
+    # that supplies the evidence would make an accidental flip self-approving.
+    # Absent key = "instruct" (the pre-2026-09-01 stack-wide default).
+    default_mode = entry.get("sampler_default_mode") or "instruct"
+    check(default_mode in ("instruct", "thinking"),
+          f"{slug}: sampler_default_mode is instruct|thinking (got {default_mode!r})")
+    if default_mode not in ("instruct", "thinking"):
+        continue
+    other_mode = "thinking" if default_mode == "instruct" else "instruct"
+
+    # The opt-IN knob is whichever one selects the NON-default row, so it flips
+    # with the policy: llama.cpp composes carry both ${THINKING:+...} and
+    # ${INSTRUCT:+...} argv tails, vLLM composes derive their row from
+    # ENABLE_THINKING at boot.
+    if llama:
+        mode_env = {"THINKING": "1"} if other_mode == "thinking" else {"INSTRUCT": "1"}
+        mode_label = "THINKING=1" if other_mode == "thinking" else "INSTRUCT=1"
+    else:
+        want = "true" if other_mode == "thinking" else "false"
+        mode_env = {"ENABLE_THINKING": want}
+        mode_label = f"ENABLE_THINKING={want}"
 
     d_args, d_err = argv_under(text, {})
     d_row = sampler_payload(d_args, llama=llama)
-    check(rows_agree(d_row, profiles["instruct"]),
-          f"{slug}: default render ships the INSTRUCT row (got {d_row}; {d_err})")
+    check(rows_agree(d_row, profiles[default_mode]),
+          f"{slug}: default render ships the {default_mode.upper()} row "
+          f"(got {d_row}; {d_err})")
 
     t_args, t_err = argv_under(text, mode_env)
     t_row = sampler_payload(t_args, llama=llama)
-    check(rows_agree(t_row, profiles["thinking"]),
-          f"{slug}: {mode_label} ships the THINKING row (got {t_row}; {t_err})")
+    check(rows_agree(t_row, profiles[other_mode]),
+          f"{slug}: {mode_label} ships the {other_mode.upper()} row "
+          f"(got {t_row}; {t_err})")
 
     x_args, x_err = argv_under(text, {
         **mode_env, "TEMP": "0.42", "TOP_P": "0.5", "PRESENCE_PENALTY": "0.1",

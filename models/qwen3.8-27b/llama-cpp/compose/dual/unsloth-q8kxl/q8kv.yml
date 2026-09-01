@@ -173,10 +173,13 @@
 #                    PCIe-only 3090s; row-split leans on cross-GPU traffic this
 #                    rig has no fast path for)
 #   SERVED_NAME      --alias value       (default: qwen3.8-27b)
-#   REASONING        thinking gate       (default: off — stack-wide policy)
+#   REASONING        thinking gate       (default: ON — 2026-09-01 flip; INSTRUCT=1 opts out)
 #   REASONING_FORMAT reasoning routing   (default: deepseek — hygiene)
-#   TEMP/TOP_P/TOP_K/MIN_P               (defaults: 0.6 / 0.95 / 20 / 0.0 — the stack's
-#                    Qwen sampler. NOT verified against this model's card.)
+#   TEMP/TOP_P/TOP_K/MIN_P               (defaults: 1.0 / 0.95 / 20 / 0.0 — the card's
+#                    THINKING row. The 0.6/0.95 stated here before 2026-09-01 was stale;
+#                    the command block never used those values.)
+#   INSTRUCT         one-knob opt-out    (unset by default; INSTRUCT=1 restores the card's
+#                    INSTRUCT row AND --reasoning off, together)
 #   REPEAT_PENALTY   anti-loop           (default: 1.0)
 #   PORT             host port           (default: 8087)
 #   CUDA_VISIBLE_DEVICES  which GPUs     (default: 0,1 — both cards)
@@ -203,8 +206,9 @@ services:
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
       # ⭐ Default reasoning effort = low when thinking is on (2026-08-16),
-      # matching the vLLM composes. INERT under the shipped `--reasoning off`:
-      # the template only reads reasoning_effort inside
+      # matching the vLLM composes. NOW ACTIVE on every request: thinking became
+      # the default 2026-09-01. It goes INERT only under INSTRUCT=1, because the
+      # template reads reasoning_effort inside
       # `if enable_thinking is undefined or true`, and --reasoning off passes
       # enable_thinking:false.
       # ⚠️ low is an ACTIVE instruction: 'Keep your thinking brief and focused,
@@ -244,21 +248,29 @@ services:
     # ⚠️ Comments CANNOT live inside the `command: >-` folded scalar below — every line there is
     #   part of one command string, and a `#` line becomes literal argv text
     #   ('invalid command line string' at compose parse). Keep notes above this key.
-    # SAMPLER — from the Qwen3.8-27B model card. THIS COMPOSE SHIPS INSTRUCT (NON-THINKING).
+    # SAMPLER — from the Qwen3.8-27B model card. THIS COMPOSE SHIPS THINKING (flipped 2026-09-01).
     #   Qwen publishes two sets and they differ in every value that matters:
-    #     Instruct / non-thinking (SHIPPED HERE) : temp 0.7, top_p 0.80, top_k 20, min_p 0.0,
-    #                                             presence_penalty 1.5, repetition_penalty 1.0
-    #     Thinking                               : temp 1.0, top_p 0.95, top_k 20, min_p 0.0,
+    #     Thinking (SHIPPED HERE)                : temp 1.0, top_p 0.95, top_k 20, min_p 0.0,
     #                                             presence_penalty 0.0, repetition_penalty 1.0
-    #   `--reasoning off` and the instruct sampler are set TOGETHER below. Compose cannot branch,
-    #   so if you flip REASONING=on you MUST also set TEMP=1.0 TOP_P=0.95 PRESENCE_PENALTY=0.0
-    #   — the sampler does NOT follow the reasoning flag, and mismatching them is silent.
+    #     Instruct / non-thinking (INSTRUCT=1)   : temp 0.7, top_p 0.80, top_k 20, min_p 0.0,
+    #                                             presence_penalty 1.5, repetition_penalty 1.0
+    #   `--reasoning on` and the thinking sampler are set TOGETHER below, and INSTRUCT=1 flips
+    #   BOTH back together. The sampler does NOT follow the reasoning flag on its own, so a bare
+    #   REASONING=off leaves the THINKING sampler in place — mismatching them is silent.
+    #   ⭐ WHY THINKING IS THE DEFAULT — a community request, backed by our own 8-pack (issue
+    #   #1027, dual 3090 fp8): instruct scored 120/150 pass@1, the WORST of the four modes
+    #   measured, against 135 (effort=low), 137 (xhigh), 129 (medium). The cost is latency,
+    #   2-6x per turn (cli-40 1.76s -> 8.27s; instructfollow-15 0.48s -> 3.09s) — though
+    #   reasonmath-15 got FASTER (5.26s -> 3.64s). Set INSTRUCT=1 when turn latency outweighs
+    #   accuracy. Those numbers are from the vLLM fp8 dual; this llama.cpp compose is UNMEASURED
+    #   on the 8-pack — the mode choice transfers, the scores do not.
     #   ⚠️ presence_penalty=1.5 is prescribed by the card for THIS mode specifically, to curb
     #   endless repetition; under thinking it must be 0.0 instead, or the reasoning trace's
     #   natural repetition gets penalised. The two values move in OPPOSITE directions between
     #   modes — never carry one across. (The first authoring pass omitted it entirely; llama.cpp
     #   defaults it to 0.0.) Qwen notes 0-2 is the usable band and >2 degrades quality.
-    #   ⚠️ Thinking-off is the stack default for Qwen and is a deliberate policy, not an oversight.
+    #   ⚠️ Thinking-ON is this model's default as of 2026-09-01, superseding the earlier
+    #   thinking-off policy announced in discussion #1024. Both were deliberate.
     #   ⚠️ These are SERVING defaults only. scripts/bench.sh sends its own fixed canonical sampler
     #   (temp 0.6 / top_p 0.95 / top_k 20 / min_p 0.0) on every request so BENCHMARKS.md rows stay
     #   comparable across models and engines — a bench number is NOT evidence about these values.
@@ -267,36 +279,42 @@ services:
     #   * Client sends sampler fields   -> the REQUEST wins (two temperature:0 calls returned
     #                                      byte-identical text while the server default was 0.6).
     #   * Client sends
-    #       "chat_template_kwargs": {"enable_thinking": true}
-    #                                   -> thinking is enabled FOR THAT REQUEST even though the
-    #                                      server runs --reasoning off; the trace lands in
-    #                                      message.reasoning_content and the answer in
+    #       "chat_template_kwargs": {"enable_thinking": false}
+    #                                   -> thinking is disabled FOR THAT REQUEST even though the
+    #                                      server runs --reasoning on. ⚠️ The direction verified
+    #                                      live on b10236 (2026-08-14) was the MIRROR of this one
+    #                                      (enable_thinking:true against a --reasoning off server);
+    #                                      same chat-template kwarg, but this direction is
+    #                                      UNVERIFIED on this build. With thinking on, the trace
+    #                                      lands in message.reasoning_content and the answer in
     #                                      message.content (--reasoning-format deepseek).
     #
-    #   ⚠️ THE TWO KNOBS ARE INDEPENDENT — this is the trap. Enabling thinking per-request does
-    #   NOT change the sampler: the request inherits the INSTRUCT values above, including
-    #   presence_penalty 1.5, which the card prescribes only for non-thinking and which actively
-    #   penalises a reasoning trace's natural repetition. An agent that wants thinking must send
-    #   the thinking sampler in the SAME request:
+    #   ⚠️ THE TWO KNOBS ARE INDEPENDENT — this is the trap, and the 2026-09-01 flip INVERTED
+    #   its direction. Disabling thinking per-request does NOT change the sampler: the request
+    #   inherits the THINKING values above, including presence_penalty 0.0, where the card
+    #   prescribes 1.5 for non-thinking to curb endless repetition. A client that wants instruct
+    #   must send the instruct sampler in the SAME request:
     #
     #     {"messages": [...],
-    #      "chat_template_kwargs": {"enable_thinking": true},
-    #      "temperature": 1.0, "top_p": 0.95, "top_k": 20,
-    #      "min_p": 0.0, "presence_penalty": 0.0}
+    #      "chat_template_kwargs": {"enable_thinking": false},
+    #      "temperature": 0.7, "top_p": 0.80, "top_k": 20,
+    #      "min_p": 0.0, "presence_penalty": 1.5}
     #
-    #   ⇒ No separate thinking slug is needed, and no reboot: a caller opts in per request. That
-    #   is why this compose ships one mode rather than a sibling `thinking.yml`.
-    # ⭐ ONE-KNOB THINKING MODE:  THINKING=1  flips reasoning AND the whole sampler together.
-    #   Without it you get the card's INSTRUCT row (the flags above). With it, the trailing
-    #   ${THINKING:+...} line appends the card's THINKING row, and llama.cpp takes the LAST value
-    #   of a repeated flag — so `THINKING=1` alone is sufficient and correct. top_k/min_p/
+    #   ⇒ No separate instruct slug is needed, and no reboot: a caller opts out per request. That
+    #   is why this compose ships one mode rather than a sibling `instruct.yml`.
+    # ⭐ ONE-KNOB INSTRUCT MODE:  INSTRUCT=1  flips reasoning AND the whole sampler back together.
+    #   Without it you get the card's THINKING row (the flags above). With it, the trailing
+    #   ${INSTRUCT:+...} line appends the card's INSTRUCT row, and llama.cpp takes the LAST value
+    #   of a repeated flag — so `INSTRUCT=1` alone is sufficient and correct. top_k/min_p/
     #   repeat-penalty are identical across both modes, so they are not repeated.
+    #   THINKING=1 is kept as a back-compat NO-OP — it re-asserts what is now already default.
+    #   ⚠️ Do not set both: INSTRUCT is appended last, so INSTRUCT=1 wins over THINKING=1.
     #
-    #   Precedence is preserved: an explicit TEMP/TOP_P/PRESENCE_PENALTY survives THINKING,
-    #   because the appended values are themselves ${VAR:-default}. Verified 2026-08-14:
-    #     (unset)              -> --temp 0.7
-    #     THINKING=1           -> --temp 0.7 ... --temp 1.0        (thinking wins)
-    #     THINKING=1 TEMP=0.42 -> --temp 0.42 ... --temp 0.42      (user wins)
+    #   Precedence is preserved: an explicit TEMP/TOP_P/PRESENCE_PENALTY survives INSTRUCT,
+    #   because the appended values are themselves ${VAR:-default}. Verified 2026-09-01:
+    #     (unset)              -> --temp 1.0
+    #     INSTRUCT=1           -> --temp 1.0 ... --temp 0.7       (instruct wins)
+    #     INSTRUCT=1 TEMP=0.42 -> --temp 0.42 ... --temp 0.42     (user wins)
     #
     #   ⚠️⚠️ RE-TEST TRIGGER — THIS RESTS ON DEPRECATED UPSTREAM BEHAVIOUR.
     #   b10236 warns: "DEPRECATED: argument '--temp' specified multiple times, use
@@ -366,15 +384,16 @@ services:
       --spec-type draft-mtp
       --spec-draft-n-max ${SPEC_N:-${MTP_DRAFT_N_MAX:-2}}
       --jinja
-      --reasoning ${REASONING:-off}
+      --reasoning ${REASONING:-on}
       --reasoning-format ${REASONING_FORMAT:-deepseek}
-      --temp ${TEMP:-${TEMPERATURE:-0.7}}
-      --top-p ${TOP_P:-0.80}
+      --temp ${TEMP:-${TEMPERATURE:-1.0}}
+      --top-p ${TOP_P:-0.95}
       --top-k ${TOP_K:-20}
       --min-p ${MIN_P:-0.0}
-      --presence-penalty ${PRESENCE_PENALTY:-1.5}
+      --presence-penalty ${PRESENCE_PENALTY:-0.0}
       --repeat-penalty ${REPEAT_PENALTY:-1.0}
       ${THINKING:+--reasoning ${REASONING:-on} --temp ${TEMP:-${TEMPERATURE:-1.0}} --top-p ${TOP_P:-0.95} --presence-penalty ${PRESENCE_PENALTY:-0.0}}
+      ${INSTRUCT:+--reasoning ${REASONING:-off} --temp ${TEMP:-${TEMPERATURE:-0.7}} --top-p ${TOP_P:-0.80} --presence-penalty ${PRESENCE_PENALTY:-1.5}}
     deploy:
       resources:
         reservations:
