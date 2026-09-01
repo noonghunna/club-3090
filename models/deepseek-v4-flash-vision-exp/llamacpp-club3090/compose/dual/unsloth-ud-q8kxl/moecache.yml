@@ -7,16 +7,23 @@
 #   Topology:  Dual 3090 PCIe (layer-split -ts 1,1, no NVLink)
 #   Drafter:   none wired — DSpark 0731 is tokenizer-compatible, acceptance UNMEASURED
 #   KV:        fp16 (llama.cpp default — MLA + single KV head keep it small)
-#   Vision:    ⛔ NO — despite the model name. See Caveats.
+#   Vision:    ⛔ not in THIS GGUF — the model has it, the conversion lost it
 #   Max ctx:   204800  (1,048,576 native; rope original 65,536)
 #   Genesis:   N/A — llama.cpp engine
 #   Status:    🧪 Experimental
-#   Caveats:   • ⚠️⚠️ **"Vision" IS IN THE NAME BUT NOT IN THE WEIGHTS.** Gated
-#                2026-08-31 before download: the repo ships NO mmproj/projector
-#                file, the GGUF carries NO clip/vision metadata keys, and a scan
-#                of all 1,328 tensors across shards 2-5 found ZERO vision
-#                tensors (only `blk`, `output*`, `token_embd`). This serves
-#                TEXT-ONLY. If unsloth later publishes a projector, revisit.
+#              • ⚠️ VISION: the MODEL has it; THIS GGUF does not. Corrected
+#                2026-09-01 after checking the source card — an earlier note here
+#                claimed the model had no vision, which was WRONG.
+#                deepseek-ai/DeepSeek-V4-Flash-Vision-Exp is `image-text-to-text`
+#                with 263 vision tensors and a full vision block in config.json
+#                (vision_dim 1024, vision_n_layers 32, vision_patch_size 14).
+#                The unsloth GGUF carries ZERO of them, so llama-server returns
+#                `image input is not supported` — text-only in practice.
+#                ⏸️ llama.cpp support is OPEN: ggml-org/llama.cpp#28133 (mtmd,
+#                opened 2026-09-01) adds the CONVERSION that emits an mmproj.
+#                No mmproj exists on HF yet — 23 repos checked, none has one,
+#                because the conversion cannot produce one until that merges.
+#                ⇒ Re-test trigger with a PR number, not a permanent property.
 #              • ✅ VALIDATED 2026-08-31 — FIRST BOOT PASSED. verify-full 10/10
 #                (tool-calling, streaming tool-calls, thinking, 2K output quality,
 #                all clean). Booted in 100 s. Bench, canonical 3 warm + 5 measured,
