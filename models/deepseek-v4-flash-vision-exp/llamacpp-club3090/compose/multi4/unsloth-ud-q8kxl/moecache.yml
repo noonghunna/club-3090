@@ -104,6 +104,19 @@ services:
       # Turn it on for a bench/report run: MOE_STATS=200 LLAMA_ARG_LOG_VERBOSITY=4.
       # Verbosity stays BARE (caller-owned): 4 is loud for a serving deployment.
       - GGML_CUDA_MOE_CACHE_STATS=${MOE_STATS:-0}
+      # Prefill expert-prefetch. PINNED OFF, matching the GLM/Qwen Flash siblings:
+      # it allocates a staging ring (2 x 1088 MiB measured) that competes with the
+      # expert pool and with context headroom. Stack decision 2026-08-27. A bare
+      # passthrough would leave it UNSET, which is not the same as off.
+      - GGML_EXPERT_PREFETCH=${EXPERT_PREFETCH:-0}
+      - GGML_EXPERT_PREFETCH_SLOTS
+      # cache_reuse can be REFUSED by the context (MLA + SWA is a plausible refusal
+      # case) — check the boot log rather than assuming it engaged.
+      - LLAMA_ARG_CACHE_REUSE
+      # Thread count. Resolved in the entrypoint (see [threads]). ⚠️ docker forwards
+      # ONLY what is declared here — without this line the entrypoint's THREADS
+      # branch can never fire and the knob is inert.
+      - THREADS
       - LLAMA_ARG_LOG_VERBOSITY
     deploy:
       resources:

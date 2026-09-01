@@ -157,7 +157,9 @@ services:
       #                       =2  BALLAST (ring allocated, every node declined) —
       #                           the pool-matched control for mechanism A/Bs
       #   LLAMA_ARG_LOG_VERBOSITY=4  resolved pools + moe-cache statistics
-      - GGML_EXPERT_PREFETCH
+      # PINNED OFF, matching the GLM/Qwen Flash siblings — a bare passthrough leaves
+      # it UNSET, which is not the same as off. Stack decision 2026-08-27.
+      - GGML_EXPERT_PREFETCH=${EXPERT_PREFETCH:-0}
       - GGML_EXPERT_PREFETCH_SLOTS
       - LLAMA_ARG_LOG_VERBOSITY
       # Prefix reuse via KV shifting (default 0 = OFF). The between-turn TTFT
