@@ -111,6 +111,17 @@ services:
       # var is exported at all, and this stays a BARE pass-through so an explicit
       # host value still wins.
       - VLLM_MARLIN_INPUT_DTYPE
+      # ⚠️⚠️ BARE pass-throughs — NEVER give these a `${VAR:-}` default. Compose would
+      # then set them to the EMPTY STRING, and vLLM crashes on both:
+      #   VLLM_LOG_STATS_INTERVAL="" -> float("") -> ValueError at startup (envs.py:836-838)
+      #   VLLM_CACHE_ROOT=""         -> compile cache resolves relative to CWD
+      # Bare form means docker forwards them ONLY when the host has them set, so
+      # these lines are inert for every normal boot.
+      # Probe use (fa2-fp8kv Session 1): VLLM_CACHE_ROOT=/tmp/vllm-cache-<arm>
+      # isolates each arm's torch.compile graph (the cache CANNOT key on W4A8);
+      # VLLM_LOG_STATS_INTERVAL=2.0 tightens the `Avg generation throughput` window.
+      - VLLM_CACHE_ROOT
+      - VLLM_LOG_STATS_INTERVAL
     entrypoint:
       - bash
       - -c
