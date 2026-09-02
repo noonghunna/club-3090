@@ -168,12 +168,22 @@ def _entry(
     # {...}} with temperature/top_p/top_k/min_p/presence_penalty/
     # repetition_penalty. None (the default) = single-row model, the compose's
     # static sampler is the only truth. When set, the compose entrypoint derives
-    # its shipped default from the INSTRUCT row and flips to THINKING on
-    # ENABLE_THINKING=true; test-compose-sampler-profiles.sh asserts the compose
-    # can never drift from this data. Adding a key here is the allowlist gate:
+    # its shipped default from `sampler_default_mode` (below) and flips to the
+    # OTHER row on the opt-in knob; test-compose-sampler-profiles.sh asserts the
+    # compose can never drift from this data. Adding a key here is the
+    # allowlist gate:
     # local-layer rows go through _entry(**kwargs) too, so an unknown sampler
     # kwarg fails loudly (LocalRegistryError), never silently.
     sampler_profiles=None,
+    # Which sampler_profiles row the compose ships when the user sets NO env:
+    # "instruct" (the default when omitted) or "thinking". This is POLICY, not a
+    # restatement of the compose — the gate renders the compose and asserts the
+    # resolved sampler equals THIS row, so an accidental flip of a compose
+    # default fails loudly rather than passing because expectation and evidence
+    # were read from the same file. qwen3.8-27b moved to "thinking" 2026-09-01
+    # (community request + issue #1027, where instruct scored worst of the four
+    # modes measured); qwen3.8-flash-next still ships "instruct".
+    sampler_default_mode=None,
     # Speculation that needs NO drafter GGUF (the ngram-* runtime spec-types).
     # Those slugs keep `drafter=None` by design, so consumers deriving a label
     # from `drafter` alone would report 'no speculation' while it is running.
@@ -255,6 +265,17 @@ def _entry(
         entry["sampler_profiles"] = {
             mode: dict(row) for mode, row in sampler_profiles.items()
         }
+        # Normalised here so every consumer sees an explicit mode and none has
+        # to re-implement the "absent means instruct" default.
+        _mode = sampler_default_mode or "instruct"
+        if _mode not in ("instruct", "thinking"):
+            raise ValueError(
+                "sampler_default_mode must be 'instruct' or 'thinking', "
+                f"got {sampler_default_mode!r}"
+            )
+        entry["sampler_default_mode"] = _mode
+    elif sampler_default_mode is not None:
+        raise ValueError("sampler_default_mode set without sampler_profiles")
     return entry
 
 

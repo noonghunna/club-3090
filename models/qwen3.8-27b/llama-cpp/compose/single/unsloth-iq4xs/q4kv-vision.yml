@@ -115,8 +115,10 @@
 #   IMAGE_MIN_TOKENS min image tokens    (unset by default; set 1024 for grounding)
 #   NP               parallel slots      (default: 1)
 #   SERVED_NAME      --alias value       (default: qwen3.8-27b)
-#   REASONING        thinking gate       (default: off — stack-wide policy)
-#   TEMP/TOP_P/TOP_K/MIN_P               (defaults: card INSTRUCT row — 0.7 / 0.80 / 20 / 0.0)
+#   REASONING        thinking gate       (default: ON — 2026-09-01 flip; INSTRUCT=1 opts out)
+#   INSTRUCT         one-knob opt-out    (unset by default; INSTRUCT=1 restores the card's
+#                                        INSTRUCT row AND --reasoning off, together)
+#   TEMP/TOP_P/TOP_K/MIN_P               (defaults: card THINKING row — 1.0 / 0.95 / 20 / 0.0)
 #   PORT             host port           (default: 8090)
 #   CUDA_VISIBLE_DEVICES  which GPU      (default: 0 — leaves GPU 1 free)
 #   LLAMACPP_IMAGE   engine image        (default: the llama-cpp-local pin)
@@ -140,18 +142,21 @@ services:
       # Drafter toggle - docker forwards only what is declared here.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
-      # Default reasoning effort = low when thinking is on; INERT under --reasoning off.
+      # Default reasoning effort = low; ACTIVE on every request since the 2026-09-01
+      # thinking flip. INERT only under INSTRUCT=1 (which passes enable_thinking:false).
       # (See the q8_0 sibling header for the full `high`->xhigh template trap on this engine.)
       - LLAMA_ARG_CHAT_TEMPLATE_KWARGS=${LLAMA_ARG_CHAT_TEMPLATE_KWARGS:-{"reasoning_effort":"${REASONING_EFFORT:-low}"}}
       - CUDA_VISIBLE_DEVICES=${ESTATE_GPUS:-${CUDA_VISIBLE_DEVICES:-0}}
     # ⚠ -np 1 is intentional on a single 24 GB card — extra slots divide throughput
     #   and each takes its own KV slice. The projector + 262K KV leave no room anyway.
     # ⚠️ BUILT-IN MTP — head EMBEDDED in this GGUF (blk.64.nextn.*). No drafter file mounted.
-    # ⚠️ SAMPLER ships the card's INSTRUCT (non-thinking) row: temp 0.7 / top_p 0.80 /
-    #   top_k 20 / min_p 0.0 / presence_penalty 1.5. THINKING=1 flips reasoning AND the
-    #   whole sampler together (last-wins on repeated flags — see the q8_0 sibling header
-    #   for the deprecated-behaviour re-test trigger on pin bumps). bench.sh sends its own
-    #   fixed canonical sampler regardless.
+    # ⚠️ SAMPLER ships the card's THINKING row: temp 1.0 / top_p 0.95 / top_k 20 /
+    #   min_p 0.0 / presence_penalty 0.0 (flipped 2026-09-01 — community request backed by
+    #   issue #1027, where instruct scored 120/150 pass@1, worst of four modes tested).
+    #   INSTRUCT=1 flips reasoning AND the whole sampler back together (last-wins on
+    #   repeated flags — see the q8_0 sibling header for the full rationale and the
+    #   deprecated-behaviour re-test trigger on pin bumps). THINKING=1 is now a back-compat
+    #   no-op. bench.sh sends its own fixed canonical sampler regardless.
     # ⚠️ Comments CANNOT live inside the `command: >-` folded scalar — keep notes above this key.
     # The image ENTRYPOINT is ["/app/llama-server"]; this wrapper adds the drafter toggle.
     entrypoint:
@@ -200,16 +205,17 @@ services:
       --spec-type draft-mtp
       --spec-draft-n-max ${SPEC_N:-${MTP_DRAFT_N_MAX:-2}}
       --jinja
-      --reasoning ${REASONING:-off}
+      --reasoning ${REASONING:-on}
       --reasoning-format ${REASONING_FORMAT:-deepseek}
-      --temp ${TEMP:-${TEMPERATURE:-0.7}}
-      --top-p ${TOP_P:-0.80}
+      --temp ${TEMP:-${TEMPERATURE:-1.0}}
+      --top-p ${TOP_P:-0.95}
       --top-k ${TOP_K:-20}
       --min-p ${MIN_P:-0.0}
-      --presence-penalty ${PRESENCE_PENALTY:-1.5}
+      --presence-penalty ${PRESENCE_PENALTY:-0.0}
       --repeat-penalty ${REPEAT_PENALTY:-1.0}
       ${IMAGE_MIN_TOKENS:+--image-min-tokens ${IMAGE_MIN_TOKENS}}
       ${THINKING:+--reasoning ${REASONING:-on} --temp ${TEMP:-${TEMPERATURE:-1.0}} --top-p ${TOP_P:-0.95} --presence-penalty ${PRESENCE_PENALTY:-0.0}}
+      ${INSTRUCT:+--reasoning ${REASONING:-off} --temp ${TEMP:-${TEMPERATURE:-0.7}} --top-p ${TOP_P:-0.80} --presence-penalty ${PRESENCE_PENALTY:-1.5}}
     deploy:
       resources:
         reservations:

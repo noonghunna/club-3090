@@ -2125,6 +2125,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: instruct
   llamacpp-club3090/qwen38-flash-next-multi4-q4kxl-moecache:
     model: qwen3.8-flash-next
     weights_variant: unsloth-ud-q4kxl
@@ -2172,6 +2173,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: instruct
   llamacpp-club3090/qwen38-flash-next-multi8-q4kxl-moecache:
     model: qwen3.8-flash-next
     weights_variant: unsloth-ud-q4kxl
@@ -2219,6 +2221,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: instruct
   llamacpp-club3090/deepseek-flash-multi4-q8-moecache:
     model: deepseek-v4-flash-0731
     weights_variant: unsloth-q8-kxl
@@ -2784,6 +2787,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   llamacpp/qwen38-27b-dual-q8kxl:
     model: qwen3.8-27b
     weights_variant: unsloth-q8kxl
@@ -2828,6 +2832,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-dual-max:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -2872,6 +2877,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-max:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -2916,6 +2922,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-max:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -2960,6 +2967,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-dual-supermax:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -3004,6 +3012,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-supermax:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -3048,6 +3057,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-supermax:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -3092,6 +3102,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-dual-ultramax:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -3136,6 +3147,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-ultramax:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -3180,6 +3192,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-ultramax:
     model: qwen3.8-27b
     weights_variant: fp8
@@ -3224,6 +3237,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-dual-fast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3268,6 +3282,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-fast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3312,6 +3327,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-fast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3356,6 +3372,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-dual-superfast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3400,6 +3417,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-superfast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3444,6 +3462,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-superfast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3488,6 +3507,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-dual-ultrafast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3532,6 +3552,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi4-ultrafast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3576,6 +3597,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-multi8-ultrafast:
     model: qwen3.8-27b
     weights_variant: autoround-int4
@@ -3620,6 +3642,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-single-nvfp4:
     model: qwen3.8-27b
     weights_variant: nvfp4
@@ -3664,6 +3687,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
   vllm/qwen38-27b-dual-nvfp4:
     model: qwen3.8-27b
     weights_variant: nvfp4
@@ -3708,6 +3732,7 @@ entries:
         min_p: 0.0
         presence_penalty: 0.0
         repetition_penalty: 1.0
+    sampler_default_mode: thinking
 
 defaults:
   qwen3.6-27b:
