@@ -97,6 +97,7 @@ c3                                              # launch  (also: python -m club3
 
 **New to local AI itself?** → [`docs/LOCAL_AI_PRIMER.md`](docs/LOCAL_AI_PRIMER.md) — plain-English: how hardware / engines / model sizes / quants fit together.
 **New here?** → [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) — 5-minute clone-to-curl path.
+**Want to run YOUR own model?** → [`docs/BRING_YOUR_OWN.md`](docs/BRING_YOUR_OWN.md) — serve, tune, validate, then catalog it in a **gitignored local layer** `git pull` can never clobber; one command turns it into a contribution PR when you're ready.
 **Already running, want to compare engines?** → [docs/engines/](docs/engines/)
 **Picking an engine** (vLLM / llama.cpp / ik_llama)? → [docs/INFERENCE_ENGINES.md](docs/INFERENCE_ENGINES.md)
 **Confused by quant names** (Q4_K_M vs IQ4_KS vs AWQ)? → [docs/QUANTIZATION.md](docs/QUANTIZATION.md)
