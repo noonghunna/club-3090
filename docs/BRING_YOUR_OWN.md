@@ -2,7 +2,7 @@
 
 You don't need to touch the curated catalog to serve and validate your own model
 on your rig. The same scripts that gate our shipped composes work on anything you
-serve. The arc is **serve → tune → validate → share**: bring it up, dial it in
+serve. The arc is **serve → tune → validate → catalog → share**: bring it up, dial it in
 with the fast loops, then run the full gate once it's settled.
 
 > **Prefer a guided flow?** The `c3` cockpit's producer lane fronts this same
@@ -246,7 +246,59 @@ Notes:
   cleanly; the `quality-test` wrapper already sets the localhost-resolve env so
   those packs can reach a host model.
 
-## 4. Share it / contribute it back
+## 4. Catalog it on your own rig — the LOCAL layer
+
+Serving by hand (§1) gets you a running model but not a *first-class* one: no
+`launch.sh` / `switch.sh --list` discovery, no VRAM projection, no guard coverage.
+You can have all of that **without touching a single tracked file**.
+
+```bash
+python3 scripts/lib/profiles/promote.py --spec-file <spec>.json     # --layer local is the DEFAULT
+bash    scripts/preflight-add-model.sh  local/<your-slug>           # diagnose-profile + 9 catalog guards
+```
+
+That writes `scripts/lib/profiles-local/` — `models.d/<id>.yml`, `composes/<id>/…`
+and `registry.local.json`, with slugs namespaced under `local/`. The directory is
+**gitignored** (everything except its README and `.gitignore`), so:
+
+- `git pull` and branch switches can **never** conflict with or overwrite your models;
+- nothing in the curated catalog is touched — delete the files to revert completely;
+- `get_registry()` merges your entries into the catalog every launcher reads, so
+  `switch.sh --list` and `launch.sh <slug>` just work;
+- a local entry can never become a *curated* default, and a broken local layer
+  fails loudly rather than silently shrinking the catalog.
+
+> **Guided equivalent:** c3's Bring & Validate lane, stage **⑤ Promote** — the
+> scaffold pre-fills every arch fact the deriver knows and you fill in
+> `display_name` + `family`. Its key line names all three destinations:
+> `⏎ Write LOCAL layer · C WRITE CORE REGISTRY (needs C3_ALLOW_CORE_PROMOTE=1) · E Export as PR bundle`.
+
+## 5. Share it / contribute it back
+
+**Turning your local model into a PR is one command.** `export_pr.py` reads the
+model you validated in §4 and emits a ready-to-commit bundle — the local layer is
+a **staging ground for a contribution, not a dead end**:
+
+```bash
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check          # validate only
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --out ./bundle   # write the bundle
+```
+
+You get `models/<id>.yml`, your compose translated to the **core** layout, and
+`registry-entry.yaml` (the `entries:` map in exactly the `registry.yaml` data
+subset, headed by the canonical merge command). It writes **only** under `--out`
+— nothing in the repo is touched — and it **refuses (exit 3)** when the model is
+missing what a maintainer would bounce the PR for: a real `display_name` /
+`family`, a well-formed weights map, complete registry kwargs, a vLLM
+`kvcalc_key`, and the compose's mandatory `Status:` header. Fix what it names,
+re-run, then open the PR with the bundle's contents.
+
+Writing the curated catalog **directly** is maintainer-only and double-gated
+(`promote.py --layer core` **plus** `C3_ALLOW_CORE_PROMOTE=1`). Note that gate is
+a plain environment variable and **`.env` is not read by these tools** — `export`
+it in your shell or pass it per-invocation.
+
+
 
 - Format your numbers with the [Results Card](RESULTS_CARD.md)
   (Serving · Quality · Takeaways).

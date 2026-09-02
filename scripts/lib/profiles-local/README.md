@@ -89,3 +89,26 @@ That writes all three artifacts above and prints `PROMOTE_OK <slug>`.
 Delete the file(s): `rm scripts/lib/profiles-local/models.d/<id>.yml`, the
 compose dir, and the JSON entry. There is nothing else to revert — no core file
 was ever touched.
+
+## Contributing a local model back to the club catalog
+
+The local layer is a **staging ground for a contribution, not a dead end.** Once
+your model is validated here, one command turns it into a ready-to-commit PR
+bundle — nothing in the repo is touched, output lands only under `--out`:
+
+```bash
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --check          # validate only, writes nothing
+python3 scripts/lib/profiles/export_pr.py --spec-file <spec>.json --out ./bundle   # write the bundle
+```
+
+The bundle contains `models/<id>.yml`, your compose translated to the **core**
+layout, and `registry-entry.yaml` (the `entries:` map in exactly the
+`registry.yaml` data subset, headed by its canonical merge command).
+
+`export_pr.py` **refuses (exit 3)** when the local model is missing what a
+maintainer would bounce the PR for — a real `display_name` / `family`, a
+well-formed weights map, complete registry-entry kwargs, a vLLM `kvcalc_key`, and
+the compose's mandatory `Status:` header. Fix what it names and re-run.
+
+In the cockpit this is the **`E` — Export as PR bundle** action on the same
+Promote screen (`⏎ Write LOCAL layer · C WRITE CORE REGISTRY · E Export as PR bundle`).

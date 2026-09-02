@@ -2,13 +2,14 @@
 
 End-to-end workflow for onboarding a new model into club-3090's **central registry** — `scripts/lib/profiles/compose_registry.py` (the single source of truth) plus the profile / engine / drafter / calibration YAMLs it points at. Registering a model here is what makes it a first-class catalog citizen: **`launch.sh` and `switch.sh` both resolve it by slug** (both are registry-derived — you never edit the launchers), the VRAM/KV projection (`kv-calc`) knows it, and the guard tests cover it. Pairs with [KV_MATH.md](KV_MATH.md) (math reference) and [ARCHITECTURE.md](ARCHITECTURE.md) (current stack state).
 
-> **Adding a model? Three paths — pick the lightest that fits:**
+> **Adding a model? Four paths — pick the lightest that fits:**
 >
 > 1. **Serve any safetensors repo locally (no catalog).** `scripts/pull.sh <org/Model> --profile-like vllm/minimal --dry-run` evaluates *any* safetensors HF repo against this stack's KV math (no download) and tells you whether it fits + at what confidence; drop `--dry-run` and add `--yes` to download + generate a minimal compose + boot. vLLM / safetensors only. See [PULL.md](PULL.md).
 > 2. **Run your own GGUF locally (no catalog).** `pull.sh` doesn't take GGUF — use the [local-GGUF recipe](#run-a-local-gguf-without-the-catalog) below (copy an existing compose, 3 steps, llama.cpp / ik-llama).
-> 3. **Promote a model into the curated catalog — i.e. register it in the central `compose_registry.py`** — *this page*. The heavier task: validated composes, a registry entry per compose (the SoT that `launch.sh`/`switch.sh` derive from), profile-compat coverage, calibration anchors, real benchmarks, per-model gotchas. The high-confidence backbone — **not** a prerequisite for serving.
+> 3. **Catalog it on YOUR rig — the LOCAL layer (no PR, nothing tracked).** `python3 scripts/lib/profiles/promote.py --spec-file <spec>` (`--layer local` is the default) writes the gitignored `scripts/lib/profiles-local/`, giving you `launch.sh`/`switch.sh` discovery, the VRAM projection and guard coverage **without** touching a tracked file — `git pull` can never clobber it. Ready to contribute it upstream later? `export_pr.py` turns it into a PR bundle. Walked end-to-end in [BRING_YOUR_OWN.md](BRING_YOUR_OWN.md) §4–§5.
+> 4. **Promote a model into the curated catalog — i.e. register it in the central `compose_registry.py`** — *this page*. The heavier task: validated composes, a registry entry per compose (the SoT that `launch.sh`/`switch.sh` derive from), profile-compat coverage, calibration anchors, real benchmarks, per-model gotchas. The high-confidence backbone — **not** a prerequisite for serving.
 >
-> Paths 1–2 (serve + **tune** + **validate** your own model without touching core files) are walked end-to-end in [BRING_YOUR_OWN.md](BRING_YOUR_OWN.md) — start there if you're not yet cataloging. This page is the promotion step *after* you've validated a config there.
+> Paths 1–3 (serve + **tune** + **validate** + **catalog** your own model without touching core files) are walked end-to-end in [BRING_YOUR_OWN.md](BRING_YOUR_OWN.md) — start there if you're not yet cataloging. This page is the promotion step *after* you've validated a config there.
 
 ## Run a local GGUF without the catalog
 
