@@ -232,7 +232,9 @@
 #   MODEL_DIR / PORT / TP / PP / MAX_MODEL_LEN / GPU_MEMORY_UTILIZATION /
 #   MAX_NUM_BATCHED_TOKENS / KV_CACHE_DTYPE / PREFIX_CACHE_ARG /
 #   TEMP TOP_P TOP_K MIN_P PRESENCE_PENALTY REPEAT_PENALTY
-#   SPEC=off                    -> drop the MTP drafter (the vllm#50021 mitigation)
+#   SPEC=off                    -> drop the MTP drafter (vllm#50021 mitigation 2)
+#   ASYNC_SCHED=off             -> --no-async-scheduling: vllm#50021 mitigation 1,
+#                                  keeps the drafter (measured 2026-09-02: ~0% cost)
 #   VLLM_USE_FLASHINFER_SAMPLER -> default 0 here; see the env block note
 #
 # SAMPLER — follows the Qwen3.8-27B MODEL CARD, not the stack's Qwen3.6 defaults.
@@ -319,6 +321,7 @@ services:
       # lives in the entrypoint, not in these lines, so it cannot drift.
       - SPEC_N=${SPEC_N:-}
       - SPEC=${SPEC:-}
+      - ASYNC_SCHED=${ASYNC_SCHED:-}
       # Sampler env passthrough (#984/#1014): the ENTRYPOINT — not compose
       # interpolation, which has no if/else — derives --override-generation-config
       # from the model-card row matching ENABLE_THINKING, so these must reach the
@@ -423,6 +426,14 @@ services:
         else
           echo "[spec] drafter OFF (SPEC_N=0 / SPEC=off) - no speculative decoding" >&2
         fi
+        # -- Async-scheduling toggle: vllm#50021 mitigation (1) from the header --
+        #   ASYNC_SCHED=off -> --no-async-scheduling. Keeps the drafter; closes the
+        #   MTP + prefix-cache + async combo that produced the 2026-08-19 Xid 31.
+        ASYNC_ARGS=()
+        case "$${ASYNC_SCHED:-}" in off|OFF|Off|false|no|0)
+          ASYNC_ARGS=(--no-async-scheduling)
+          echo "[async] async scheduling OFF (ASYNC_SCHED=off) - vllm#50021 mitigation, drafter kept" >&2 ;;
+        esac
         # -- Sampler follows the reasoning mode ----------------------------------
         # The card publishes TWO sampler rows (see "SAMPLER" in the header);
         # ENABLE_THINKING now selects the row — one variable instead of the
@@ -440,9 +451,9 @@ services:
         fi
         SAMPLER_ARGS=(--override-generation-config "{\"temperature\":$$_temp,\"top_p\":$${TOP_P},\"top_k\":$${TOP_K:-20},\"min_p\":$${MIN_P:-0.0},\"presence_penalty\":$${PRESENCE_PENALTY},\"repetition_penalty\":$${REPEAT_PENALTY:-1.0}}")
         if [ "$${_NVLINK_ENABLED:-0}" = "1" ]; then
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} "$$@" "$${SPEC_ARGS[@]}" "$${ASYNC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
         else
-          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
+          exec vllm serve $${VLLM_ENFORCE_EAGER:+--enforce-eager} --disable-custom-all-reduce "$$@" "$${SPEC_ARGS[@]}" "$${ASYNC_ARGS[@]}" "$${SAMPLER_ARGS[@]}"
         fi
       - --
     command:
