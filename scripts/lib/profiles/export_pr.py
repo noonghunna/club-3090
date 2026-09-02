@@ -437,6 +437,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     root = Path(args.root).resolve()
+    # #1142: same as promote.py — no shell wrapper sources .env for this tool, so
+    # honour it here too (real environment wins). Matters for --spec-env.
+    try:  # package context
+        from scripts.lib.profiles.repo_dotenv import apply_dotenv
+    except ImportError:  # direct-script context
+        from repo_dotenv import apply_dotenv
+    apply_dotenv(root)
     out = Path(args.out).resolve()
     try:
         if args.spec_env:
