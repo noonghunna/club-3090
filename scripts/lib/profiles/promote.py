@@ -91,6 +91,15 @@ _LOCAL_FORCED_STATUS = "incubating"
 # core must be present, or the core catalog is untouchable.
 _CORE_GATE_ENV = "C3_ALLOW_CORE_PROMOTE"
 
+# #1142: repo-root .env support. Kept as a dual import so this file works both as
+# a script (`python3 scripts/lib/profiles/promote.py` — own dir on sys.path) and
+# as a package module (`from scripts.lib.profiles import promote`, as the tests do).
+try:  # package context
+    from scripts.lib.profiles.repo_dotenv import apply_dotenv
+except ImportError:  # direct-script context
+    from repo_dotenv import apply_dotenv
+
+
 _MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*/[a-z0-9][a-z0-9._-]*$")
 
@@ -458,8 +467,9 @@ def validate_spec(spec: Any, root: Path, layer: str) -> dict:
     if os.environ.get(_CORE_GATE_ENV) != "1":
         raise Refusal(
             f"core-catalog writes are maintainer-gated: re-run with --layer core "
-            f"AND {_CORE_GATE_ENV}=1 in the environment (community users: use the "
-            f"default --layer local)"
+            f"AND {_CORE_GATE_ENV}=1 — exported in the shell OR set in the "
+            f"repo-root .env (both are read; the environment wins). Community "
+            f"users: use the default --layer local"
         )
     if slug.startswith(_LOCAL_SLUG_PREFIX):
         raise Refusal(
@@ -620,6 +630,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     root = Path(args.root).resolve()
+    # #1142: the shell launchers source <root>/.env, but these tools are invoked
+    # directly (no wrapper in scripts/ runs them), so a gate parked there used to
+    # be a SILENT no-op — no error, no effect. Fill UNSET keys from it, and say so
+    # when the maintainer gate is one of them: .env stops being silent BOTH ways.
+    _from_dotenv = apply_dotenv(root)
+    if _CORE_GATE_ENV in _from_dotenv:
+        print(f"[promote] {_CORE_GATE_ENV} read from {root}/.env "
+              f"(export it in the shell to override)", file=sys.stderr)
     try:
         if args.spec_env:
             raw_spec = os.environ.get(args.spec_env)

@@ -250,6 +250,48 @@ class TestCoreGate:
             root / "scripts/lib/profiles/registry.yaml"
         ).read_text()
 
+    # ── #1142: the repo-root .env must reach the gate ───────────────────────
+    #
+    # Before the fix these tools read only the real environment, so a maintainer
+    # putting C3_ALLOW_CORE_PROMOTE=1 in .env got a SILENT no-op: no error, no
+    # effect, and a core promote that kept refusing for no visible reason.
+
+    def test_core_gate_honoured_from_dotenv(self, root):
+        """.env alone satisfies the gate — and the tool SAYS where it came from."""
+        (root / ".env").write_text(
+            "# maintainer rig\nexport C3_ALLOW_CORE_PROMOTE=1\n", encoding="utf-8"
+        )
+        res = _run_cli(root, _spec(layer_local=False), "--layer", "core")
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert "PROMOTE_OK" in res.stdout
+        assert "read from" in res.stderr and "C3_ALLOW_CORE_PROMOTE" in res.stderr
+
+    def test_dotenv_does_not_override_the_real_environment(self, root):
+        """Environment WINS over .env — the shell-launcher precedence."""
+        (root / ".env").write_text("C3_ALLOW_CORE_PROMOTE=1\n", encoding="utf-8")
+        res = _run_cli(
+            root, _spec(layer_local=False), "--layer", "core",
+            env_extra={"C3_ALLOW_CORE_PROMOTE": "0"},
+        )
+        assert res.returncode == promote.EXIT_COLLISION
+        assert "maintainer-gated" in res.stderr
+
+    def test_dotenv_absent_or_malformed_still_refuses_cleanly(self, root):
+        """A junk .env must neither crash the tool nor open the gate."""
+        (root / ".env").write_text(
+            "not-a-pair\n\n#c\nC3_ALLOW_CORE_PROMOTE=0\n", encoding="utf-8"
+        )
+        res = _run_cli(root, _spec(layer_local=False), "--layer", "core")
+        assert res.returncode == promote.EXIT_COLLISION
+        assert "maintainer-gated" in res.stderr
+        assert "Traceback" not in res.stderr
+
+    def test_local_layer_needs_no_dotenv_and_stays_the_default(self, root):
+        """The safe path is unaffected by any of this."""
+        res = _run_cli(root, _spec())
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert "C3_ALLOW_CORE_PROMOTE" not in res.stderr
+
     def test_core_with_flag_writes_curated_catalog(self, root):
         res = _run_cli(
             root,
