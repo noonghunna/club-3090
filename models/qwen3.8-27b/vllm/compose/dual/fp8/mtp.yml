@@ -76,24 +76,49 @@
 #                "Upstream-risk" below and the docs/UPSTREAM.md row.
 #              Promote to 🧪 only after a clean boot + verify-full; to ⚠️/✅ only
 #              after the full gate (verify-stress + bench + soak + quality).
-#   Upstream-risk:  • ⚠️ MTP × hybrid-GDN wild write — vllm#50021, OPEN and LIVE IN THIS PIN.
-#                The GDN spec-decode path builds a state-block index from an UNBOUNDED
-#                accepted-token count; a zero/stale count dereferences a wild address →
-#                `CUDA error: unspecified launch failure` + Xid 13/31 and a dead worker,
-#                typically after minutes of agent-shaped traffic rather than at boot.
-#                Not quant-, topology- or depth-specific: hit on Ampere+Ada and on
-#                2× 5090 across NVFP4 AND W4A8 alike. The vendored pr48375 fixes
-#                vllm#43559 (corruption) and does NOT cover this fault.
-#                ⚠️ CONFIRMED IN PRODUCTION 2026-08-19 (@alexpolo1 #1059): crashed once
-#                on THIS slug (2× 3090, MTP n=3, 44 h uptime, from a HEALTHY state) —
-#                Xid 31 VIRT_WRITE both cards. Async scheduling is AUTO-ON for MTP here
-#                ('mtp' ∈ EagleModelTypes → the disable-guard doesn't fire, no warning),
-#                so the shipped default is MTP + prefix-cache + async — the #1052 combo.
-#                MITIGATIONS (two): (1) ASYNC_SCHED=off (--no-async-scheduling) —
-#                eliminates the crash at ~0% cost and KEEPS the drafter; (2) SPEC=off —
-#                drops the drafter. Lower n cuts frequency NOT exposure (crashed AT n=3).
-#                Clears when #50021 merges and a pin bump inherits it;
-#                v0.26.0 PREDATES the fix, so the queued bump inherits nothing here.
+#   Upstream-risk:  • ⚠️ MTP × hybrid-GDN wild write — TWO faults share this signature:
+#                one is PATCHED here, one (vllm#50021) is STILL LIVE IN THIS PIN.
+#                Symptom: `CUDA error: unspecified launch failure` / Xid 13/31 and a dead
+#                worker, after minutes of agent-shaped traffic rather than at boot. Not
+#                quant-, topology- or depth-specific: hit on Ampere+Ada and on 2× 5090
+#                across NVFP4 AND W4A8 alike. The vendored pr48375 fixes vllm#43559
+#                (corruption) and does NOT cover this fault.
+#                ⚠️ CONFIRMED IN PRODUCTION 2026-08-19 (@alexpolo1 #1059): crashed once on
+#                THIS slug (2× 3090, MTP n=3, 44 h uptime, from a HEALTHY state) — Xid 31
+#                VIRT_WRITE both cards. ⚠️ That boot was UNPATCHED: the fix below landed
+#                2026-08-23 (#1091), two days after the field report.
+#                Async scheduling is AUTO-ON for MTP here ('mtp' ∈ EagleModelTypes → the
+#                disable-guard doesn't fire, no warning), so the shipped combo is
+#                MTP + prefix-cache + async — the #1052 combo.
+#                ⚠️ TWO DISTINCT FAULTS share this signature — do not treat them as one:
+#                (a) a CROSS-STREAM RACE in `synchronize_input_prep`: the next step's
+#                    `_update_states` block-table mutation raced the still-in-flight
+#                    spec-decode postprocess → stale state-block index → wild write.
+#                    ✅ PATCHED HERE by `vllm-gdn-mtp-async-spec-order` (OURS, not
+#                    upstream), mounted + installed by the entrypoint before serve;
+#                    anchor drift makes the container REFUSE TO BOOT rather than serve
+#                    unpatched. Evidence: async-ON survived 3/3 boots to 33–36k generated
+#                    tokens (crossing ctx 32k + a compaction) where 5/5 unpatched arms
+#                    died at 6–13k; TPS neutral.
+#                (b) vllm#50021's UNBOUNDED `num_accepted`-derived index (Site 1,
+#                    `…/flash_linear_attention/ops/fused_sigmoid_gating.py:106`, re-verified
+#                    byte-identical on v0.27.1 2026-08-16). 🔴 STILL LIVE — open upstream,
+#                    NOT vendored. Our patch does NOT bound this index.
+#                ⚠️ CORRECTION (this block previously said otherwise): #50021 does NOT fix
+#                (a) — its in-kernel bounds were built and crashed 2/2. So a #50021 merge +
+#                pin bump clears (b) only, and never cleared (a). Conversely the shipped
+#                patch closes (a) and leaves (b) exposed. #1059's signature is consistent
+#                with EITHER; its attribution between them is NOT established.
+#                RESIDUAL — why this stays a caveat: (b) is unfixed; the fix for (a) is
+#                OURS, validated on the reference 2× 3090 only and NOT community-blessed;
+#                33–36k generated tokens is not the 44 h of production traffic that
+#                surfaced #1059; and neither addresses the separate acceptance-collapse
+#                bug (vllm#52873 / Bug A).
+#                FALLBACKS if it recurs: (1) ASYNC_SCHED=off (--no-async-scheduling) — keeps
+#                the drafter, wired 2026-09-02 (#1139, thanks @metaoutfitter; it was header
+#                prose only before that). Note it avoids (a) AND removes the async trigger
+#                path, but does not bound (b). (2) SPEC=off — drops the drafter, avoiding
+#                both. Lower n cuts frequency NOT exposure (crashed AT n=3).
 #                Full detail, evidence stack + re-test trigger: docs/UPSTREAM.md.
 #   Best for:  max-weight-fidelity Qwen3.8-27B on 2 cards, and the on-rig proxy for
 #              the 4-card vllm/qwen38-27b-multi4-max. NOT yet recommendable for
