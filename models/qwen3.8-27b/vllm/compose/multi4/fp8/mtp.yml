@@ -61,28 +61,46 @@
 #                  larger KV pool) is validated by whoever first runs it on 4 cards
 #                  — that first community boot IS the validation, not a confirmation
 #                  of ours. Report numbers via the `numbers-from-your-rig` template.
-#              • ⚠️ MTP × hybrid-GDN wild write — vllm#50021, OPEN and LIVE IN THIS PIN.
+#              • ⚠️ MTP × hybrid-GDN wild write — TWO faults share this signature: one is
+#                PATCHED here, one (vllm#50021) is STILL LIVE IN THIS PIN.
 #                Inherited exposure: Qwen3.8-27B is the same Qwen3-Next/DeltaNet
-#                hybrid-GDN family as qwen3.6-27b and Tess-4-27B, and the fault is an
-#                UNBOUNDED index in the shared GDN spec-decode path — quant-,
-#                topology- and depth-independent. See "Upstream-risk" below.
+#                hybrid-GDN family as qwen3.6-27b and Tess-4-27B, and the unpatched
+#                fault is an UNBOUNDED index in the shared GDN spec-decode path —
+#                quant-, topology- and depth-independent. See "Upstream-risk" below.
 #              Promote to 🧪 only after a clean boot + verify-full on a real 4-card
 #              host; to ⚠️/✅ only after the full gate there.
-#   Upstream-risk:  • ⚠️ MTP × hybrid-GDN wild write — vllm#50021, OPEN and LIVE IN THIS PIN.
-#                The GDN spec-decode path builds a state-block index from an UNBOUNDED
-#                accepted-token count; a zero/stale count dereferences a wild address →
-#                `CUDA error: unspecified launch failure` + Xid 13/31 and a dead worker,
-#                typically after minutes of agent-shaped traffic rather than at boot.
-#                Not quant-, topology- or depth-specific: hit on Ampere+Ada and on
-#                2× 5090 across NVFP4 AND W4A8 alike. The vendored pr48375 fixes
-#                vllm#43559 (corruption) and does NOT cover this fault.
-#                ⚠️ This model has never run, so it has never been OBSERVED to crash —
-#                absence of evidence, not evidence of absence. The exposure is
-#                structural (same hybrid-GDN kernel, MTP on) and carries over.
-#                MITIGATION: run the drafter off — SPEC=off. Lower n cuts frequency,
+#   Upstream-risk:  • ⚠️ MTP × hybrid-GDN wild write — TWO faults share this signature:
+#                one is PATCHED here, one (vllm#50021) is STILL LIVE IN THIS PIN.
+#                Symptom: `CUDA error: unspecified launch failure` + Xid 13/31 and a dead
+#                worker, after minutes of agent-shaped traffic rather than at boot. Not
+#                quant-, topology- or depth-specific: hit on Ampere+Ada and on 2× 5090
+#                across NVFP4 AND W4A8 alike. The vendored pr48375 fixes vllm#43559
+#                (corruption) and does NOT cover this fault.
+#                ⚠️ DO NOT TREAT THE TWO AS ONE:
+#                (a) a CROSS-STREAM RACE in `synchronize_input_prep` (the next step's
+#                    `_update_states` block-table mutation raced the still-in-flight
+#                    spec-decode postprocess → stale state-block index → wild write).
+#                    ✅ PATCHED HERE by `vllm-gdn-mtp-async-spec-order` (OURS, not
+#                    upstream), installed by the entrypoint before serve; anchor drift
+#                    makes the container REFUSE TO BOOT rather than serve unpatched.
+#                (b) vllm#50021's UNBOUNDED `num_accepted`-derived index (Site 1,
+#                    re-verified byte-identical on v0.27.1). 🔴 STILL LIVE — open
+#                    upstream, NOT vendored. The patch above does NOT bound it.
+#                ⚠️ CORRECTION (this block previously said otherwise): a #50021 merge +
+#                pin bump clears (b) ONLY. It never covered (a) — its in-kernel bounds
+#                were built and crashed 2/2.
+#                ⚠️ NEITHER the exposure NOR the fix has been observed on THIS topology:
+#                the model has never run here. Both carry over the same way — by shared
+#                kernel, not by measurement. The patch's evidence (3/3 boots to 33–36k
+#                generated tokens where 5/5 unpatched arms died at 6–13k) is from the
+#                reference 2× 3090; it is OURS, not community-blessed, and says nothing
+#                about a 4-/8-card NCCL topology.
+#                MITIGATION here: run the drafter off — SPEC=off. Lower n cuts frequency,
 #                NOT exposure (n=3 was called stable on one rig and crashed AT n=3 on
-#                another). Clears when #50021 merges and a pin bump inherits it;
-#                v0.26.0 PREDATES the fix. Detail + re-test trigger: docs/UPSTREAM.md.
+#                another). ⚠️ The `ASYNC_SCHED=off` fallback wired on the dual sibling
+#                (#1139) is NOT plumbed on this compose — do not copy that advice across.
+#                Neither addresses the separate acceptance-collapse bug (vllm#52873).
+#                Detail + re-test trigger: docs/UPSTREAM.md.
 #   Best for:  max-weight-fidelity Qwen3.8-27B on 4 cards — the topology buys KV pool
 #              and concurrency, not single-stream decode. NOT yet recommendable for
 #              anything; see Caveats.
