@@ -1780,16 +1780,34 @@ print(f"{sum(xs)/len(xs):.2f}" if xs else "")
         fi
         unset CAP_LINE_LIMIT
 
-        _ram=""; _ram_scope=""; _ram_arith=""; _ram_caveat=""
+        _ram=""; _ram_scope=""; _ram_arith=""; _ram_caveat=""; _ram_why=""
+        # #1137: `|| true` used to turn an un-derivable figure into an EMPTY string
+        # and then into a silently ABSENT report block — the caveat line vanished
+        # and the only downstream symptom was a test complaining the caveat TEXT
+        # was missing, pointing at formatting rather than at the empty input.
+        # Capture the reason instead, and print it below.
         if [[ -n "$_exp" ]] && (( _win_ok )) && (( _win_secs > 0 )) && (( _win_miss > 0 )); then
-          _ram="$(cap_ram_rd_mbps "$_win_miss" "$_exp" "$_win_secs" || true)"
+          _ram_errf="$(mktemp)"
+          _ram="$(cap_ram_rd_mbps "$_win_miss" "$_exp" "$_win_secs" 2>"$_ram_errf")" \
+            || _ram_why="$(cat "$_ram_errf" 2>/dev/null)"
+          rm -f "$_ram_errf"
           _ram_scope="(DECODE WINDOW)"
           _ram_arith="= ${_win_miss} misses x ${_exp} KiB / ${_win_secs}s of decode"
         elif [[ -n "$_exp" && -n "$_miss" && "${_miss:-0}" -gt 0 ]]; then
-          _ram="$(cap_ram_rd_mbps "$_miss" "$_exp" "$CAP_ELAPSED" || true)"
+          _ram_errf="$(mktemp)"
+          _ram="$(cap_ram_rd_mbps "$_miss" "$_exp" "$CAP_ELAPSED" 2>"$_ram_errf")" \
+            || _ram_why="$(cat "$_ram_errf" 2>/dev/null)"
+          rm -f "$_ram_errf"
           _ram_scope="(WHOLE RUN — diluted)"
           _ram_arith="= ${_miss} misses x ${_exp} KiB / ${CAP_ELAPSED}s"
           _ram_caveat="dilution"
+        else
+          _ram_why="inputs unavailable — expert_kib=${_exp:-<none>} win_miss=${_win_miss:-<none>} miss=${_miss:-<none>}"
+        fi
+        if [[ -z "$_ram" && -n "$_ram_why" ]]; then
+          # SAY SO. An absent derivation is a fact about the run, not a reason to
+          # print nothing — silence here is what made #1137 unreadable.
+          echo "  derived host-RAM read demand: NOT DERIVED — ${_ram_why}"
         fi
         if [[ -n "$_ram" ]]; then
           CAP_RAM_DEMAND="$_ram"

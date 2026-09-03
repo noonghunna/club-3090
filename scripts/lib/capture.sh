@@ -946,11 +946,27 @@ cap_swap_verdict() {
 # It is a LOWER BOUND on the miss path only (it ignores KV traffic, activations
 # and prefetch). Never present it as a measured bandwidth.
 cap_ram_rd_mbps() {
+  # Refusing to derive is CORRECT when an input cannot support it — but say WHICH
+  # input, on stderr, and use a distinct exit code (#1137). Callers used to write
+  # `|| true`, which turned "un-derivable" into an empty string and then into a
+  # silently ABSENT report block: the only downstream symptom was a test
+  # complaining the caveat TEXT was missing, which points at formatting instead
+  # of at the empty input that actually caused it.
+  #
+  #   exit 2  deliberate refusal — an input is zero/negative/non-numeric
+  #   exit 1  awk itself failed (missing, or an arithmetic fault)
   local misses="${1:-0}" expert_kib="${2:-0}" elapsed="${3:-0}"
+  local bad=()
+  [[ "$misses"     =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v v="$misses"     'BEGIN{exit !(v>0)}' || bad+=("misses=${misses:-<empty>}")
+  [[ "$expert_kib" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v v="$expert_kib" 'BEGIN{exit !(v>0)}' || bad+=("expert_kib=${expert_kib:-<empty>}")
+  [[ "$elapsed"    =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v v="$elapsed"    'BEGIN{exit !(v>0)}' || bad+=("elapsed=${elapsed:-<empty>}")
+  if (( ${#bad[@]} )); then
+    printf 'cap_ram_rd_mbps: cannot derive host-RAM read demand — %s\n' "${bad[*]}" >&2
+    return 2
+  fi
   awk -v m="$misses" -v k="$expert_kib" -v e="$elapsed" 'BEGIN{
-    if (m <= 0 || k <= 0 || e <= 0) exit 1
     printf "%.0f\n", m * k / 1024 / e
-  }'
+  }' || return 1
 }
 
 # cap_stream_triad_gbps [seconds] — item 9b. A ~3 s STREAM-triad ceiling on the

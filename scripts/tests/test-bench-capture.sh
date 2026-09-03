@@ -544,6 +544,13 @@ command grep -q 'status: OK' "$H" || fail "healthy run should classify OK: $(com
 command grep -q 'CUDA0 marginal=' "$H" || fail "per-device marginal rate missing from output"
 command grep -q 'CUDA1 marginal=' "$H" || fail "the CUDA0/CUDA1 split was averaged away — item 3d"
 command grep -q 'CUDA0 pools=' "$H" || fail "per-device pool census missing from output"
+# #1137: these are TWO different failures and used to produce one message. If the
+# derivation was skipped, say which input was empty — do not report it as missing
+# caveat TEXT, which points at formatting and hides the real cause.
+if command grep -q 'derived host-RAM read demand: NOT DERIVED' "$H"; then
+  fail "the RAM derivation was SKIPPED, so its caveat is legitimately absent: $(
+        command grep -m1 'NOT DERIVED' "$H")"
+fi
 command grep -q 'DERIVED, NOT A PERF COUNTER' "$H" \
   || fail "the derived RAM figure must carry its 'not a counter' caveat"
 command grep -q 'MARGINAL' "$H" || fail "the marginal-vs-cumulative caveat is missing"
