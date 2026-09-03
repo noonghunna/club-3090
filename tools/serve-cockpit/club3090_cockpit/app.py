@@ -946,6 +946,7 @@ class HelpScreen(ModalScreen):
     _LANE_SECTION = """\
 [bold]Bring & Validate[/bold] (producer lane — the ① → ⑤ pipeline)
   ① Bring:   [cyan]f[/cyan] search HF (fills the repo field)   fit-check an HF model   [cyan]s[/cyan] Continue → ② Serve (weights on disk)   [cyan]D[/cyan] download weights
+  ①ᴋ Bring:  paste a COMPOSE PATH (*.yml) instead of a repo → Route-K: serves YOUR file, ⑤ registers it (no download, no HF call)
   ② Serve:   [cyan]⏎[/cyan]/[cyan]g[/cyan] serve untested (Route-C = your weights · else catalog reproduction)
   ③ Gate:    [cyan]⏎[/cyan] launch validation step (gated)   [cyan]F[/cyan] full battery report.sh --full (~43-min · confirm · uses serving model)   [cyan]K[/cyan] boot-log KV back-solve vs kv-calc (read)
   ④ Measure: [cyan]⏎[/cyan] open report   [cyan]m[/cyan] vs catalog bar (read)   [cyan]s[/cyan] submit to localmaxxing (gated · never auto)
@@ -12159,7 +12160,13 @@ class CockpitApp(App):
         servable = bool(
             byo is not None
             and not getattr(byo, "error", "")
-            and (getattr(byo, "sibling_slug", "") or getattr(byo, "profile_like", ""))
+            and (
+                getattr(byo, "sibling_slug", "")
+                or getattr(byo, "profile_like", "")
+                # #1153 Route-K is servable BY ITSELF — the compose in hand is the
+                # thing served, so it needs no catalog sibling to reproduce.
+                or getattr(byo, "route", "") == "K"
+            )
         )
         if not servable:
             self.notify(
@@ -12167,7 +12174,14 @@ class CockpitApp(App):
                 title="② Serve", severity="warning", timeout=3,
             )
             return
-        if not self._data.bring_weights_present(getattr(byo, "repo", "")):
+        # #1153: Route-K brought its OWN compose, which points at its own weights.
+        # bring_weights_present only probes c3's pull dir (<HF_HOME>/club3090/pulls),
+        # so weights living anywhere else — /mnt/models/huggingface, the rig
+        # convention — read as "not on disk" and offer a re-download the user does
+        # not need. The probe is meaningless for a compose in hand; skip it.
+        if getattr(byo, "route", "") != "K" and not self._data.bring_weights_present(
+            getattr(byo, "repo", "")
+        ):
             self.notify(
                 "Weights not on disk yet — press [D] to download first.",
                 title="② Serve", severity="warning", timeout=4,
@@ -13489,9 +13503,90 @@ class CockpitApp(App):
             return
         profile = self._selected_profile_like("#lane-bring-profile-input")
         if not repo:
-            self.notify("Enter an HF repo (org/Model).", title="① Bring", severity="warning", timeout=3)
+            self.notify(
+                "Enter an HF repo (org/Model) — or the path to a compose you "
+                "already have.",
+                title="① Bring", severity="warning", timeout=4,
+            )
+            return
+        # #1153 Route-K: the most common BYOM position is "weights on disk +
+        # a working compose", and the funnel had no door for it. A value that
+        # looks like a compose FILE takes the K route; anything else is an HF
+        # repo exactly as before.
+        if self._looks_like_compose_path(repo):
+            self._bring_compose_in_hand(repo)
             return
         self.run_byo_check(repo, profile)
+
+    @staticmethod
+    def _looks_like_compose_path(value: str) -> bool:
+        """A compose path, not an HF repo (#1153). Deliberately narrow: it must
+        END in .yml/.yaml AND exist on disk. `org/Model` never matches, and a
+        typo'd path falls through to the HF check, whose error names the repo —
+        better than a confident 'file not found' about something that was never
+        meant to be a file."""
+        from pathlib import Path as _Path
+
+        v = (value or "").strip().strip('"').strip("'")
+        if not v.lower().endswith((".yml", ".yaml")):
+            return False
+        try:
+            return _Path(v).expanduser().is_file()
+        except OSError:
+            return False
+
+    def _bring_compose_in_hand(self, path: str) -> None:
+        """① Route-K — ingest a compose the user already wrote (#1153).
+
+        Reads what the compose mechanically states (engine/model/ctx/KV/tp/port)
+        and arms ② with it. No download, no HF call, no catalog reproduction: the
+        compose IS the thing that will be served, and later the thing ⑤ registers."""
+        from pathlib import Path as _Path
+
+        from club3090_cockpit.data import ByoResult, derive_compose_facts
+
+        p = _Path(path.strip().strip('"').strip("'")).expanduser()
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError as exc:
+            self.notify(f"Cannot read {p}: {exc}", title="① Bring",
+                        severity="error", timeout=6)
+            return
+        facts = derive_compose_facts(text, path=str(p))
+        if not facts.ok:
+            self.notify(
+                f"Not usable as a compose: {facts.error}",
+                title="① Bring", severity="error", timeout=6,
+            )
+            return
+        self._bring_swap_compose = str(p)
+        self._bring_compose_facts = facts
+        res = ByoResult(
+            repo=facts.served_name or p.stem,
+            profile_like="",
+            route="K",
+            arch=facts.engine,
+            eligible=True,
+            fit_verdict="compose in hand",
+            note=(
+                f"Route-K — your compose: {p.name} · engine {facts.engine or '?'}"
+                + (f" · ctx {facts.max_ctx}" if facts.max_ctx else "")
+                + (f" · KV {facts.kv_dtype}" if facts.kv_dtype else "")
+                + (f" · TP {facts.tp}" if facts.tp else "")
+                + (f" · port {facts.port}" if facts.port else "")
+                + ". ② Serve runs THIS file; ⑤ registers it."
+            ),
+        )
+        self._last_byo = res
+        try:
+            self.query_one("#lane-bring-pane", LaneBringPane).populate(res)
+        except Exception:
+            pass
+        self.notify(
+            f"Route-K: {p.name} read — ② Serve will run this compose.",
+            title="① Bring", timeout=5,
+        )
+        self._advance_to_serve()
 
     def action_serve_untested(self) -> None:
         """[g] / ⏎ in the Bring & Validate lane ② Serve: serve an untested
@@ -13532,8 +13627,11 @@ class CockpitApp(App):
         # the sibling compose (--model at the BROUGHT weights + MTP per the head),
         # serve THAT directly — not a reproduction of the sibling's own catalog
         # compose. This is the bring-your-own weight-swap, now wired.
+        # #1153 Route-K rides the branch Route-C already has: ② serves a compose
+        # path verbatim via `docker compose -f <path> up -d`. Nothing else in
+        # ②③④ changes — the gate and measure stages are endpoint-driven.
         swap_compose = getattr(self, "_bring_swap_compose", "")
-        if swap_compose and getattr(self._last_byo, "route", "") == "C":
+        if swap_compose and getattr(self._last_byo, "route", "") in ("C", "K"):
             self._serve_generated_compose(swap_compose)
             return
         # Route-C with the weights ALREADY on disk but no swap compose emitted yet
