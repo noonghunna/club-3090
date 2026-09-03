@@ -907,7 +907,10 @@ class HelpScreen(ModalScreen):
        the box now takes a fixed fraction of the screen and the body SCROLLS
        (content identical). */
     HelpScreen > Vertical {
-        width: 76;
+        /* Fixed 76 on ANY terminal: on a wide screen the help wrapped and lost
+           its indentation for no reason, on a narrow one it overflowed. */
+        width: 100;
+        max-width: 90%;
         height: 85%;
         max-height: 90%;
         border: thick $accent;
@@ -950,7 +953,7 @@ class HelpScreen(ModalScreen):
   ② Serve:   [cyan]⏎[/cyan]/[cyan]g[/cyan] serve untested (Route-C = your weights · else catalog reproduction)
   ③ Gate:    [cyan]⏎[/cyan] launch validation step (gated)   [cyan]F[/cyan] full battery report.sh --full (~43-min · confirm · uses serving model)   [cyan]K[/cyan] boot-log KV back-solve vs kv-calc (read)
   ④ Measure: [cyan]⏎[/cyan] open report   [cyan]m[/cyan] vs catalog bar (read)   [cyan]s[/cyan] submit to localmaxxing (gated · never auto)
-  ⑤ Promotion Preview: [cyan]P[/cyan] scaffold preview [yellow](preview only — no catalog write yet)[/yellow]
+  ⑤ Promote:  [cyan]P[/cyan] scaffold the registry entry — slug + port are yours to edit; ⏎ writes the LOCAL layer (confirm-gated)
   [cyan]v[/cyan] ▸ Evaluate via c3t [yellow](preview / mock this phase)[/yellow]
   [cyan]Ctrl+n[/cyan] New bring — clear ①/② state and start over
   Happy path: [cyan]2[/cyan] → paste repo → Inspect → Fit-check → [cyan]D[/cyan]? → [cyan]s[/cyan] → ⏎ Serve → ③ Gate → ④ Measure → [cyan]P[/cyan]
@@ -1004,7 +1007,7 @@ class HelpScreen(ModalScreen):
             "[bold]Run & Operate · Containers[/bold]",
             "  [cyan]l[/cyan] logs   [cyan]t[/cyan] top (read)   [cyan]s[/cyan] restart   [cyan]x[/cyan] stop   [cyan]X[/cyan] rm   (writes gated)",
             "[bold]Run & Operate · Doctor[/bold]  — is it serving correctly?",
-            "  [cyan]r[/cyan] health (read)   [cyan]v[/cyan] verify   [cyan]V[/cyan] verify-full   [cyan]R[/cyan] report   [cyan]F[/cyan] report --full   [cyan]w[/cyan] power-cap sweep (gated)",
+            "  [cyan]y[/cyan] health (read)   [cyan]v[/cyan] verify   [cyan]V[/cyan] verify-full   [cyan]R[/cyan] report   [cyan]F[/cyan] report --full   [cyan]w[/cyan] power-cap sweep (gated)",
         ]
         # Producer-only lane section — OMITTED on the lean surface (clean help).
         if producer:
@@ -1043,7 +1046,7 @@ class HelpScreen(ModalScreen):
             "",
             "[bold]Mouse & copy[/bold]",
             "",
-            "  click row = select + preview   double-click row = model info ([i])",
+            "  click row = select + preview   double-click row = model info (\\[i])",
             "  click column header = column picker ([|])",
             "  [Y] copies the context-relevant text (OSC52 — needs an OSC52 terminal;",
             "  works over SSH). To drag-select raw text, hold SHIFT while dragging —",
@@ -1229,7 +1232,7 @@ class CatalogPane(Container):
             id="catalog-preview",
         )
         yield Label(
-            "[dim]\\[\\\\] model   \\[/] filter   \\[⏎] serve   \\[e] explain   "
+            "[dim]\\[\\] model   \\[/] filter   \\[⏎] serve   \\[e] explain   "
             "\\[d] set-default   \\[D] clear-default   \\[s] sort   \\[|] columns[/dim]",
             id="catalog-hint",
         )
@@ -1297,7 +1300,7 @@ class CatalogPane(Container):
         self._free_gb_by_index: Optional[dict[int, float]] = None
         # Download UX banner: a non-empty note (set by the app when the model dir
         # is unset / missing) is prepended to the status line so the user is
-        # prompted to set it ([S]).
+        # prompted to set it (\\[S]).
         self._model_dir_note: str = ""
         # Degraded-catalog notice (C6): a non-empty note means the --json emit
         # failed but the raw-tab fallback still produced rows — they render with
@@ -2388,7 +2391,12 @@ class ModelInfoScreen(_CopyableModal, ModalScreen):
         p = self._profile
         lines: list[str] = []
         display = str(p.get("display_name") or e.model or "—")
-        lines.append(f"  [bold]Model[/bold]   {display} [dim]({e.model})[/dim]")
+        # "qwen3.6-27b (qwen3.6-27b)" — the id is only worth showing when it
+        # differs from the display name.
+        lines.append(
+            f"  [bold]Model[/bold]   {display}"
+            + (f" [dim]({e.model})[/dim]" if display != e.model else "")
+        )
         family = str(p.get("family") or "—")
         lines.append(f"  [bold]Family[/bold]  {family}")
         apb = p.get("active_params_b")
@@ -2505,24 +2513,34 @@ class SearchHFScreen(ModalScreen):
         Binding("Y", "app.copy_context", "Copy", show=True),
     ]
 
-    def __init__(self, data: "CockpitData", **kwargs):
+    def __init__(self, data: "CockpitData", initial_query: str = "", **kwargs):
         super().__init__(**kwargs)
         self._data = data
         self._row_ids: list[str] = []
+        # #1153: the modal used to open EMPTY even when ① already held a term,
+        # so the user retyped what they had just typed. Carry it in.
+        self._initial_query = (initial_query or "").strip()
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label("Search Hugging Face", classes="hf-search-title")
-            yield Input(
-                placeholder="org/Model or keywords — ⏎ to search",
-                id="hf-search-input",
-            )
+            # The search box had NO search button: the only way to run a query
+            # was ⏎, while the one button on screen ("Fill repo") did something
+            # else entirely and sat below the results. Put Search next to the
+            # thing it searches.
+            with Horizontal(classes="hf-search-query-row"):
+                yield Input(
+                    value=self._initial_query,
+                    placeholder="org/Model or keywords",
+                    id="hf-search-input",
+                )
+                yield Button("Search", id="hf-search-go-btn", variant="primary")
             yield Static("", id="hf-search-status")
             yield DataTable(id="hf-search-table")
             with Horizontal(classes="hf-search-actions"):
-                yield Button("Fill repo", id="hf-search-fill-btn", variant="primary")
+                yield Button("Use this model", id="hf-search-fill-btn")
             yield Static(
-                "[dim]⏎ search · ⏎ on a row fills the ① Bring repo field · Esc close[/dim]",
+                "[dim]⏎ in the box searches · ⏎ on a result row uses it · Esc close[/dim]",
                 classes="hf-search-hint",
             )
 
@@ -2531,6 +2549,11 @@ class SearchHFScreen(ModalScreen):
         table.cursor_type = "row"
         table.add_columns("model", "downloads", "likes", "updated", "fmt")
         self.query_one("#hf-search-input", Input).focus()
+        # Opening seeded and then waiting for ⏎ makes the user confirm a query
+        # they already typed — and when we open this panel FOR them (a bare term,
+        # or a failed inspect) there is nothing to confirm. Search on open.
+        if self._initial_query:
+            self.run_search(self._initial_query)
 
     @work(exclusive=True, group="hf-search")
     async def run_search(self, query: str) -> None:
@@ -2543,7 +2566,12 @@ class SearchHFScreen(ModalScreen):
         status.update(
             f"[dim]Searching Hugging Face for[/dim] [cyan]{query}[/cyan] [dim]…[/dim]"
         )
-        rows, err = await self._data.hf_search(query, limit=20)
+        # 20 was an arbitrary floor, not a constraint: the results table SCROLLS,
+        # so it is not bounded by panel height, and hf_search.py accepts up to
+        # _MAX_LIMIT=100 (the hub API's own page ceiling). Ask for the ceiling —
+        # a search that hides the model you wanted at rank 21 is a worse default
+        # than one row of scrolling.
+        rows, err = await self._data.hf_search(query, limit=100)
         # The modal may have been dismissed while the search ran.
         try:
             if self.app.screen is not self:
@@ -2577,8 +2605,8 @@ class SearchHFScreen(ModalScreen):
             )
         if rows:
             status.update(
-                f"[dim]{len(rows)} result(s) — ⏎ on a row fills the repo field"
-                " · GGUF rows pre-warn route-G[/dim]"
+                f"[dim]{len(rows)} result(s), best-downloaded first — scroll for "
+                f"more · ⏎ on a row uses it · GGUF rows pre-warn route-G[/dim]"
             )
             table.focus()
         else:
@@ -2617,7 +2645,12 @@ class SearchHFScreen(ModalScreen):
         self.action_pick()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "hf-search-fill-btn":
+        if event.button.id == "hf-search-go-btn":
+            try:
+                self.run_search(self.query_one("#hf-search-input", Input).value)
+            except Exception:
+                pass
+        elif event.button.id == "hf-search-fill-btn":
             self.action_pick()
 
     def action_dismiss(self) -> None:
@@ -4949,16 +4982,19 @@ class DoctorPane(Container):
         text-style: bold;
         margin-bottom: 1;
     }
+    /* Six cards at `padding: 1 2` + border + a title margin = 7 rows each for
+       two lines of content, so at 46 rows the last two cards AND the key hint
+       were below the fold — and ↓/PgDn did nothing because nothing had focus.
+       Trim the chrome; the cards still read as cards. */
     DoctorPane .doctor-card {
         border: solid $primary;
-        padding: 1 2;
+        padding: 0 1;
         margin-bottom: 1;
         height: auto;
     }
     DoctorPane .doctor-card-title {
         text-style: bold;
         color: $accent;
-        margin-bottom: 1;
     }
     DoctorPane #doctor-hint {
         color: $text-muted;
@@ -4967,6 +5003,14 @@ class DoctorPane(Container):
     """
 
     def compose(self) -> ComposeResult:
+        # #1153: a ScrollableContainer defaults to can_focus=True, so it sits in
+        # the Tab chain as a DEAD STOP — one extra Tab before every real control.
+        # Orchestration fixed this (orch_scroll) and the fix was never propagated.
+        # It still scrolls via its content and the mouse wheel.
+        # Doctor is the ONE exception to the non-focusable-scroll rule above: it
+        # has no table or list to Tab to — the scroll box IS the content, and
+        # without focus ↓/PgDn do nothing on a page that overflows at 46 rows.
+        # The lane panes keep can_focus=False because they have real controls.
         with ScrollableContainer(id="doctor-scroll"):
             yield Label(
                 "Doctor  [dim]— is the running model serving correctly?[/dim]",
@@ -5402,9 +5446,13 @@ class EvidenceReportScreen(_CopyableModal, ModalScreen):
             return
         # Render the markdown body verbatim (escape Rich markup so [..] in the
         # report text isn't parsed as a tag).
-        from rich.markup import escape
+        # It is Markdown — `# Rebench report`, `**150.0**`, `| Pack | passed |`
+        # were rendered as literal text with their syntax showing. Rich renders
+        # Markdown properly; escaping was only ever protecting against Rich
+        # markup in the body, which Markdown() also avoids.
+        from rich.markdown import Markdown
 
-        body.update(escape(report.body))
+        body.update(Markdown(report.body))
         self._copy_payload = report.body   # raw markdown (the [Y] copy target)
 
     def action_dismiss(self) -> None:
@@ -6367,7 +6415,7 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
         )
         with Vertical():
             yield Label(
-                f"⑤ Promotion Preview · {s.model_id or s.repo or '—'}  {badge}",
+                f"⑤ Promote · {s.model_id or s.repo or '—'}  {badge}",
                 classes="promote-title",
             )
             with ScrollableContainer(id="promote-scroll"):
@@ -6385,6 +6433,31 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
                         placeholder="REQUIRED — real family tag (not inferred)",
                         id="promote-family-input",
                     )
+                # #1153: the slug and the port were GENERATED and never shown —
+                # the user could not choose, could not avoid a collision, and
+                # only learned of one when promote.py refused. Pre-fill and let
+                # them edit; the taken-slug list sits underneath.
+                with Horizontal():
+                    yield Label("slug")
+                    yield Input(
+                        value=str((self._scaffold.spec.get("registry_entry") or {})
+                                  .get("slug", "") or ""),
+                        placeholder="local/<name>",
+                        id="promote-slug-input",
+                    )
+                with Horizontal():
+                    yield Label("port")
+                    yield Input(
+                        value=str(((self._scaffold.spec.get("registry_entry") or {})
+                                   .get("kwargs") or {}).get("default_port", "") or ""),
+                        placeholder="202xx for LOCAL models",
+                        id="promote-port-input",
+                    )
+                yield Static(self._taken_slugs_text(), id="promote-taken")
+            # The screen's bindings are all show=True, but without a Footer none
+            # of them render: e (export PR bundle), y (copy YAML) and c (write
+            # core) were reachable and completely undiscoverable.
+            yield Footer()
             with Horizontal(id="promote-btn-row"):
                 yield Button(
                     "⏎ Write LOCAL layer",
@@ -6448,6 +6521,17 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
 
     # ── Required inline edits ────────────────────────────────────────────────
 
+    def on_mount(self) -> None:
+        """Focus the first REQUIRED field, not the scroll box.
+
+        Both stage buttons stay disabled until display_name and family are
+        filled, so landing focus on a scroll container asked the user to Tab
+        into the only thing they can usefully do."""
+        try:
+            self.query_one("#promote-display-input", Input).focus()
+        except Exception:
+            pass
+
     def _edited_values(self) -> tuple[str, str]:
         try:
             display = self.query_one("#promote-display-input", Input).value.strip()
@@ -6474,7 +6558,33 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
         spec = copy.deepcopy(self._scaffold.spec or {})
         spec["display_name"] = display
         spec["family"] = family
+        # #1153: the slug/port the user actually chose — not the generated ones
+        entry = spec.setdefault("registry_entry", {})
+        kwargs = entry.setdefault("kwargs", {})
+        try:
+            slug = self.query_one("#promote-slug-input", Input).value.strip()
+            if slug:
+                entry["slug"] = slug
+            port = self.query_one("#promote-port-input", Input).value.strip()
+            if port.isdigit():
+                kwargs["default_port"] = int(port)
+        except Exception:
+            pass
         return spec
+
+    def _taken_slugs_text(self) -> str:
+        """Slugs already registered locally — shown so a collision is AVOIDED,
+        not discovered when promote.py refuses (#1153)."""
+        try:
+            from scripts.lib.profiles.compose_registry import load_local_registry
+
+            taken = sorted(load_local_registry() or {})
+        except Exception:
+            return ""
+        if not taken:
+            return "[dim]no local models registered yet[/dim]"
+        shown = ", ".join(taken[:6]) + ("…" if len(taken) > 6 else "")
+        return f"[dim]already taken: {shown}[/dim]"
 
     def on_input_changed(self, event: Input.Changed) -> None:
         # Enable/disable BOTH stage buttons live as the required edits fill.
@@ -7020,7 +7130,11 @@ class LaneBringPane(Container):
         margin-bottom: 1;
     }
     LaneBringPane #lane-bring-input-row {
-        height: 4;
+        /* was `height: 4` — exactly label(1) + input(3). When the action row
+           moved inside this container it was clipped out of existence: Textual
+           still reported valid button regions, so a region check said "visible"
+           while nothing drew. Size to content. */
+        height: auto;
         margin-bottom: 1;
     }
     LaneBringPane #lane-bring-stage2-row {
@@ -7040,14 +7154,33 @@ class LaneBringPane(Container):
     }
     LaneBringPane #lane-bring-url-input {
         width: 1fr;
+        /* The one editable control on this pane had NO border, while the
+           read-only #lane-bring-result-card below has `border: solid $primary`.
+           The result: the field looked like plain text and the card looked like
+           the field. Give the input the stronger affordance — it is the only
+           thing here you type into. */
+        border: tall $accent;
+    }
+    LaneBringPane #lane-bring-url-input:focus {
+        border: tall $success;
+    }
+    LaneBringPane #lane-bring-actions {
+        height: auto;
+        margin-top: 1;
     }
     LaneBringPane #lane-bring-inspect-btn {
-        width: 13;
-        margin-left: 1;
+        /* was width:14 with NO margin — below Button's min width, and it sat
+           flush against its neighbour so the two read as one control. */
+        width: 16;
+        margin-left: 2;
+    }
+    LaneBringPane #lane-bring-validate-compose-btn {
+        width: 20;
+        margin-left: 2;
     }
     LaneBringPane #lane-bring-search-btn {
         width: auto;
-        margin-right: 1;
+        margin-left: 2;
     }
     LaneBringPane #lane-bring-gguf-select {
         width: 36;
@@ -7110,24 +7243,43 @@ class LaneBringPane(Container):
     """
 
     def compose(self) -> ComposeResult:
-        yield Label("① Bring — inspect an HF model", id="lane-bring-heading")
+        yield Label(
+            "① Bring — inspect an HF model, or bring a compose you already have",
+            id="lane-bring-heading",
+        )
         # Phase 2: scrollable dense post-fit state; stage-2 stacks vertically so
         # GGUF + catalog config don't crush each other at ~100 cols.
-        with ScrollableContainer(id="lane-bring-scroll"):
-            with Horizontal(id="lane-bring-input-row"):
-                with Vertical(classes="funnel-field funnel-field-grow"):
-                    yield Label("HF repo", classes="funnel-field-title")
-                    yield Input(
-                        placeholder="org/Model  (e.g. unsloth/Qwen3-27B-abliterated-GGUF)",
-                        id="lane-bring-url-input",
-                    )
-                with Vertical(classes="funnel-field"):
-                    yield Label(" ", classes="funnel-field-title")
+        # #1153: a ScrollableContainer defaults to can_focus=True, so it sits in
+        # the Tab chain as a DEAD STOP — one extra Tab before every real control.
+        # Orchestration fixed this (orch_scroll) and the fix was never propagated.
+        # It still scrolls via its content and the mouse wheel.
+        bring_scroll = ScrollableContainer(id="lane-bring-scroll")
+        bring_scroll.can_focus = False
+        with bring_scroll:
+            # #1153: the actions used to live in a narrow column pinned to the
+            # RIGHT edge — at 100 cols they sat at x=77-98, stacked vertically,
+            # the third one ending two characters from the screen edge. They
+            # rendered and were still missed. Put the field first, then the
+            # choice directly under it, left-aligned, in reading order.
+            with Vertical(id="lane-bring-input-row"):
+                yield Label("HF repo or compose path", classes="funnel-field-title")
+                yield Input(
+                    placeholder="org/Model  (e.g. unsloth/Qwen3-27B-abliterated-GGUF)  — or a compose path",
+                    id="lane-bring-url-input",
+                )
+                # One field, TWO verbs: the field alone cannot say what you meant.
+                with Horizontal(id="lane-bring-actions"):
+                    # Search comes FIRST: you search to FIND a repo, then inspect
+                    # the one you found. The reverse order asked people to inspect
+                    # something they did not have yet.
                     yield Button(
-                        "Search HF", id="lane-bring-search-btn", classes="lane-bring-search-btn"
+                        "Search HF…", id="lane-bring-search-btn", classes="lane-bring-search-btn"
                     )
                     yield Button(
-                        "Inspect", id="lane-bring-inspect-btn", variant="primary"
+                        "Inspect HF", id="lane-bring-inspect-btn"
+                    )
+                    yield Button(
+                        "Validate compose", id="lane-bring-validate-compose-btn"
                     )
             # Stage 2/3 — HIDDEN until Inspect; Vertical stack (not cramped row).
             with Vertical(id="lane-bring-stage2-row", classes="funnel-hidden"):
@@ -7171,20 +7323,24 @@ class LaneBringPane(Container):
                     )
             # Verdict / next-action first after fit (phase 2 hierarchy).
             yield Static(
-                "[dim]Enter an HF repo and Inspect — metadata only, no download. "
-                "Fit-check unlocks ② Serve.[/dim]",
+                "[dim]Type an HF repo above, then [b]Inspect[/b] — metadata only, no "
+                "download. [b]Search HF…[/b] fills the field for you.\n"
+                "Already have a working compose? Paste its PATH instead "
+                "(*.yml): Route-K serves YOUR file, no download or HF call.[/dim]",
                 id="lane-bring-result-card",
             )
             yield Static("", id="lane-bring-weights-line", classes="funnel-hidden")
             yield Button(
-                "Continue → ② Serve  [s]",
+                # Rich reads "[s]" as a strikethrough tag and EATS it; the label
+                # rendered as "Continue → ② Serve  ". Escape the bracket.
+                "Continue → ② Serve  \\[s]",
                 id="lane-bring-continue-btn",
                 variant="success",
                 classes="funnel-hidden",
             )
             yield Static("", id="lane-bring-slug-card", classes="funnel-hidden")
             yield Label(
-                "[dim]next: enter an HF repo and press Inspect[/dim]",
+                "[dim]next: ⏎ Inspect  ·  [b]f[/b] Search HF  ·  a compose path takes Route-K straight to ② Serve[/dim]",
                 id="lane-bring-hint",
             )
 
@@ -7249,7 +7405,10 @@ class LaneBringPane(Container):
             )
         else:
             self.set_next_hint(
-                "[dim]next: pick a catalog config · Fit-check (⏎)[/dim]"
+                # This said "Fit-check (⏎)" while ⏎ in the Input re-ran INSPECT
+                # (a second HF call). Name the key that actually fit-checks.
+                "[dim]next: pick a catalog config below, then [b]Fit-check[/b] "
+                "(Tab to it, or ⏎ on the config)[/dim]"
             )
         gtitle = self.query_one("#lane-bring-gguf-title", Label)
         if inv.has_gguf:
@@ -7579,7 +7738,13 @@ class LaneServePane(Container):
         from textual.widgets import Collapsible
 
         # Phase 2 wireframe: target card → primary Serve → collapsed overrides → details.
-        with ScrollableContainer(id="lane-serve-scroll"):
+        # #1153: a ScrollableContainer defaults to can_focus=True, so it sits in
+        # the Tab chain as a DEAD STOP — one extra Tab before every real control.
+        # Orchestration fixed this (orch_scroll) and the fix was never propagated.
+        # It still scrolls via its content and the mouse wheel.
+        serve_scroll = ScrollableContainer(id="lane-serve-scroll")
+        serve_scroll.can_focus = False
+        with serve_scroll:
             yield Label(
                 "② Serve — arm from ① Bring, then serve untested",
                 id="lane-serve-heading",
@@ -7693,7 +7858,24 @@ class LaneServePane(Container):
         else:
             if ov_wrap is not None:
                 ov_wrap.add_class("funnel-hidden")
-        if route == "C" and sibling:
+        if route == "K":
+            # Route-K has no sibling_slug and no profile_like — it does not need
+            # one, the compose IS the target. Without this branch it fell to the
+            # final else, which HID the Serve button and said "no servable target
+            # yet" while ⏎ served the file correctly: the pane contradicted the
+            # action.
+            compose = getattr(self, "_route_k_compose", "") or "your compose"
+            heading.update("② Serve · your compose · 👤 untested")
+            lines = [
+                f"[green]Serving[/green]  [bold]{compose}[/bold]  "
+                "[dim]· 👤 untested[/dim]",
+                f"  [dim]runs THIS file verbatim"
+                + (f" · port {port_s}" if host_port else "")
+                + "[/dim]",
+                "  [dim]no catalog recipe involved — ⑤ registers this compose"
+                "[/dim]",
+            ]
+        elif route == "C" and sibling:
             heading.update("② Serve · 👤 untested")
             lines = [
                 f"[green]Serving[/green]  [bold]{brought}[/bold]  "
@@ -7842,7 +8024,7 @@ class LaneServePane(Container):
 
 
 class LanePromotePane(Container):
-    """⑤ Promotion Preview / Scaffold — checklist + scaffold action.
+    """⑤ Promote — checklist + the scaffold/write action.
 
     Hosts [P] / the Preview button → PromoteScaffoldScreen.  Write remains
     mock-only this phase (preview badge is persistent)."""
@@ -7889,13 +8071,19 @@ class LanePromotePane(Container):
     """
 
     def compose(self) -> ComposeResult:
-        with ScrollableContainer(id="lane-promote-scroll"):
+        # #1153: a ScrollableContainer defaults to can_focus=True, so it sits in
+        # the Tab chain as a DEAD STOP — one extra Tab before every real control.
+        # Orchestration fixed this (orch_scroll) and the fix was never propagated.
+        # It still scrolls via its content and the mouse wheel.
+        promote_scroll = ScrollableContainer(id="lane-promote-scroll")
+        promote_scroll.can_focus = False
+        with promote_scroll:
             yield Label(
-                "⑤ Promotion Preview / Scaffold",
+                "⑤ Promote — register this model",
                 id="lane-promote-heading",
             )
             yield Static(
-                "[yellow]preview only — no catalog write yet[/yellow]",
+                "[yellow]scaffold first — the write is confirm-gated[/yellow]",
                 id="lane-promote-badge",
             )
             yield Static(
@@ -7922,7 +8110,7 @@ class LanePromotePane(Container):
                     disabled=True,
                 )
             yield Label(
-                "[dim]\\[P] / button — preview only · no catalog write this phase[/dim]",
+                "[dim]\\[P] / button — scaffold, then ⏎ writes the LOCAL layer (confirm-gated)[/dim]",
                 id="lane-promote-hint",
             )
 
@@ -8409,14 +8597,14 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("mode_validate", "Bring & Validate mode", "Producer lane ① Bring → ⑤ Promote"),
     ("toggle_contribute", "Toggle lean view", "Hide / restore the Bring & Validate mode"),
     ("toggle_rail", "Toggle left rail", "Collapse / restore Modes + Estate rail"),
-    ("copy_context", "Copy current view", "Copy the highlighted slug / open report / selection to the clipboard ([Y])"),
-    ("settings", "Settings (model dir · HF token)", "Edit where weights download to + the HuggingFace token ([S])"),
+    ("copy_context", "Copy current view", "Copy the highlighted slug / open report / selection to the clipboard (\\[Y])"),
+    ("settings", "Settings (model dir · HF token)", "Edit where weights download to + the HuggingFace token (\\[S])"),
     ("refresh", "Refresh", "Re-read the live data layer for the active mode"),
     ("help", "Help", "Show the keybindings + phase help overlay"),
     # Run & Operate · Catalog tab.
     ("primary_action", "Serve selected / primary action", "⏎ — serve the selected slug (reconcile-gated)"),
     ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
-    ("model_info", "Model info", "Catalog — metadata popup for the selected slug ([i])"),
+    ("model_info", "Model info", "Catalog — metadata popup for the selected slug (\\[i])"),
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
     ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated slugs (hidden by default)"),
     ("toggle_catalog_downloaded", "Show only downloaded", "Catalog — narrow to slugs whose weights are already on disk"),
@@ -8438,7 +8626,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("doctor_verify", "Verify serving", "Doctor — send a test query to the model (verify.sh · read)"),
     ("doctor_verify_full", "Verify-full battery", "Doctor — functional battery (verify-full.sh · ~1-2 min · read)"),
     ("full_report", "Full system report (report.sh --full)", "Doctor / ③ Gate — ~43-min battery (uses the serving GPUs · gated)"),
-    ("bootlog_solve", "Boot-log KV back-solve", "③ Gate — classify the serving container's boot log vs the kv-calc prediction ([K] · read)"),
+    ("bootlog_solve", "Boot-log KV back-solve", "③ Gate — classify the serving container's boot log vs the kv-calc prediction (\\[K] · read)"),
     # Share-back (consumer-resident — NOT producer-gated).
     ("rig_report", "Rig report", "Paste-ready rig/bench snapshot (read · no network)"),
     ("submit_bench", "Submit bench", "Submit the latest benched result (gated · never auto)"),
@@ -8447,8 +8635,8 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("serve_untested", "Serve untested (② Serve)", "Producer lane — generate a compose + serve it untested"),
     ("measure_vs_bar", "Compare vs catalog bar (④ Measure)", "Producer lane — read · flags protocol"),
     ("evaluate_target", "Evaluate running target (preview)", "Producer lane — c3t evaluate (mock this phase)"),
-    ("promote_catalog", "Promotion scaffold preview (⑤)", "Producer lane — preview only, no catalog write yet"),
-    ("search_hf", "Search Hugging Face repos (① Bring)", "Producer lane — search HF and fill the repo field ([f])"),
+    ("promote_catalog", "Promote this model (⑤)", "Producer lane — scaffold the registry entry; the write is confirm-gated"),
+    ("search_hf", "Search Hugging Face repos (① Bring)", "Producer lane — search HF and fill the repo field (\\[f])"),
 )
 
 # The producer-only subset — kept in sync with ``CockpitApp._PRODUCER_ONLY`` (a
@@ -8472,6 +8660,13 @@ _TAB_PRIMARY_LIST: dict[str, str] = {
     "tab-evidence":      "#evidence-table",
     "tab-orchestration": "#scene-table",
     "tab-containers":    "#containers-table",
+}
+# Doctor deliberately has NO entry above: _TAB_PRIMARY_LIST is the map of primary
+# DATATABLES and is shared with the ↓ descend / ↑ ascend gates, which need a list.
+# Doctor's scroll container is focused on tab activation instead (see
+# on_tabbed_content_tab_activated) so ↓/PgDn work on its overflowing page.
+_TAB_FOCUS_FALLBACK: dict[str, str] = {
+    "tab-doctor": "#doctor-scroll",
 }
 
 
@@ -8524,7 +8719,7 @@ class CockpitCommands(Provider):
 
 # ── Main application ──────────────────────────────────────────────────────────────
 
-# Containers log-follow ([f]) — docker-logs poll cadence while armed.  2s is
+# Containers log-follow (\\[f]) — docker-logs poll cadence while armed.  2s is
 # imperceptible for a log tail and keeps the read-runner calls cheap.
 _LOG_FOLLOW_PERIOD = 2.0
 # Display-model cap for the follow pane — mirrors LivePane's own 2000-line
@@ -8537,7 +8732,10 @@ class CockpitApp(App):
     """club3090 serve cockpit — both modes (Run & Operate · Bring & Validate) wired to the live data layer."""
 
     TITLE = "club3090 cockpit"
-    SUB_TITLE = "wired"
+    # "wired" was a development artefact (it meant "the data layer is connected
+    # now"), shown to every user in the header forever. Say something the reader
+    # can use instead.
+    SUB_TITLE = "local LLM cockpit"
 
     # N6 — register the cockpit's action provider alongside Textual's built-in
     # system commands so Ctrl+P fuzzy-searches our verbs too.
@@ -8595,8 +8793,14 @@ class CockpitApp(App):
         # [i] model-info popup (C6) — local-data metadata modal, sibling of Explain.
         Binding("i", "model_info", "Model info", show=False),
         # 2-mode merge: [1] = merged Run & Operate, [2] = Bring & Validate lane.
-        Binding("1", "mode_run", "Run & Operate", show=True),
-        Binding("2", "mode_validate", "Bring & Validate", show=True),
+        # The footer renders global keys FIRST, so on a 100-120 col terminal the
+        # only keys that DIFFER per screen — the context ones (⏎, s, D, k, v) —
+        # were the ones clipped off the right edge. The Modes rail two inches to
+        # the left already teaches 1/2 permanently, so they do not need a second
+        # permanent home in the scarcest space on screen. Still bound, just not
+        # spending footer width.
+        Binding("1", "mode_run", "Run & Operate", show=False),
+        Binding("2", "mode_validate", "Bring & Validate", show=False),
         # Footer description is rewritten live by `_sync_footer_labels` (Fit-check /
         # Serve / Launch step / …) — "Select" is only the class default.
         Binding("enter", "primary_action", "Select", show=True),
@@ -8646,7 +8850,7 @@ class CockpitApp(App):
         # (same duplicate-key + check_action pattern as the modal's k=stop /
         # k=cancel_download).
         Binding("k", "bring_cancel_download", "Cancel download", show=True),
-        # ① Bring HF search front-end ([f]) — opens SearchHFScreen; a picked
+        # ① Bring HF search front-end (\\[f]) — opens SearchHFScreen; a picked
         # result fills the repo field.  Context-gated to mode 1 · tab-bring via
         # _CONTEXT_KEYS (show=False like the other lane verbs — taught by Help).
         Binding("f", "search_hf", "Search HF", show=False),
@@ -8700,11 +8904,29 @@ class CockpitApp(App):
     ]
 
     CSS = """
+    /* Keyboard focus on a Button was INVISIBLE app-wide — there was not a single
+       `Button:focus` rule, so tabbing between actions moved focus with no visual
+       change at all. The only button that looked different was whichever carried
+       `variant="primary"`, which reads as "the active one" and makes the rest
+       look inert. Give focus an unmistakable ring; it applies to every button in
+       the app, not just the lane. */
+    Button:focus {
+        border: tall $accent;
+        text-style: bold;
+    }
+
     /* Per-pane control/hint lines must stay WITHIN the viewport — a Label is
        `width: auto` (sizes to its content), so a long control hint runs off the
        right edge and pushes the page into horizontal scroll, hiding the controls.
        Constrain every hint to the available width so it WRAPS (all controls stay
        visible, no h-scroll).  An id selector beats Label's type-level default. */
+    /* #pod-view was the only block in Orchestration rendered flush-left while
+       every sibling line is indented 2 — a ragged edge the eye catches
+       immediately. */
+    #pod-view {
+        padding: 0 1;
+        margin: 0 1;
+    }
     #catalog-hint, #orch-hint, #containers-hint, #run-hint, #doctor-hint,
     #evidence-hint, #lane-bring-hint, #lane-serve-hint, #lane-promote-hint {
         width: 1fr;
@@ -8749,6 +8971,14 @@ class CockpitApp(App):
     }
     .mode-panel.active {
         display: block;
+    }
+    /* The TabbedContent had NO height rule, so its `1fr` children expanded to
+       the whole panel and pushed #serve-live to y=49 on a 46-row terminal — the
+       boot log was OFF-SCREEN at every height. You started a model, got a
+       4-second toast, and never saw whether it booted. Constrain the tabs so the
+       revealed log has somewhere to live. */
+    #operate-tabs {
+        height: 1fr;
     }
     /* Transient Run boot-output pane — hidden until a serve commits, then
        revealed (and given height) so the boot log streams below the catalog. */
@@ -9151,6 +9381,13 @@ class CockpitApp(App):
                 "tab-promote": "Scaffold preview",
             }.get(tab or "", "Select")
         self._relabel_binding("primary_action", enter_label)
+        # The Modes rail showed a STATIC "⏎ Run stage" on every lane stage while
+        # the real ⏎ was Fit-check / Serve / Launch step / Open report / Scaffold.
+        # The correct label is already computed right here — use it.
+        try:
+            self.query_one("#mode-action-hint", Label).update(f"⏎ {enter_label}")
+        except Exception:
+            pass
 
         # ── s (Continue / Submit / Restart) ───────────────────────────────────
         s_label = "Restart / Submit"
@@ -9193,7 +9430,7 @@ class CockpitApp(App):
         self._c3_log_enabled = False
         self._c3_log_env_override = False
         self._active_mode = 0  # 0=Run & Operate (merged) · 1=Bring & Validate
-        # Containers log-follow ([f]) — three states: off / following / paused.
+        # Containers log-follow (\\[f]) — three states: off / following / paused.
         #   _log_follow_armed   True in BOTH following and paused
         #   _log_follow_paused  True only in paused
         #   _log_follow_timer   set_interval handle (None while paused)
@@ -9397,7 +9634,7 @@ class CockpitApp(App):
                             yield ValidateRunPane(id="validate-run-pane")
                         with TabPane("④ Measure", id="tab-evidence"):
                             yield ValidateEvidencePane(id="validate-evidence-pane")
-                        with TabPane("⑤ Promotion Preview", id="tab-promote"):
+                        with TabPane("⑤ Promote", id="tab-promote"):
                             yield LanePromotePane(id="lane-promote-pane")
         # #5 — a Tab-traversable footer so keyboard users can reach the footer
         # affordances (in addition to the hotkeys).
@@ -10323,7 +10560,31 @@ class CockpitApp(App):
         except Exception:
             return
         if not repo:
-            self.notify("Enter an HF repo (org/Model).", title="① Bring", severity="warning", timeout=3)
+            self.notify(
+                "Enter an HF repo (org/Model) — or paste the path to a compose "
+                "you already have (*.yml).",
+                title="① Bring", severity="warning", timeout=4,
+            )
+            return
+        # #1153: either ① key must accept a compose. Inspect hits the HF API, so
+        # a pasted path would fail with an HF error about something that was
+        # never an HF repo — route it to Route-K exactly as the fit-check does.
+        if self._looks_like_path_shape(repo):
+            # path-SHAPED: validate it as a compose. If it does not exist the
+            # validator says so — far better than an HF lookup failing on
+            # something that was never an HF id.
+            self._validate_compose_in_field()
+            return
+        # A bare term ("deepseek") is NOT a repo id — HF ids are provider/model.
+        # Inspecting one is guaranteed to fail, so treat it as what it plainly
+        # is: a search. Opens the search panel seeded with what was typed.
+        if "/" not in repo.strip("/"):
+            self.notify(
+                f"'{repo}' is not a full repo id (provider/model) — searching "
+                f"Hugging Face instead.",
+                title="① Bring", timeout=4,
+            )
+            self.action_search_hf()
             return
         self.run_bring_inspect(repo)
 
@@ -10354,6 +10615,15 @@ class CockpitApp(App):
         )
         return profile_select_options(opts)
 
+    def _focus_if_present(self, selector: str) -> None:
+        """Focus a widget if it exists and is displayed; silent no-op otherwise."""
+        try:
+            w = self.query_one(selector)
+            if w.display:
+                w.focus()
+        except Exception:
+            pass
+
     def _reveal_funnel_slugs(
         self, artifact_format: str, artifact_gb: Optional[float]
     ) -> None:
@@ -10382,6 +10652,13 @@ class CockpitApp(App):
             # Dogfood r2 — the pre-selected recommendation's details show
             # immediately (updates ride on_select_changed thereafter).
             pane.show_slug_details(self._funnel_slug_details(rec) if rec else "")
+            # Focus what was just revealed. Without this the user Tabs past the
+            # three action buttons to reach the config Select they were just told
+            # to pick from — four keys to reach the one control the pane is
+            # asking about. Deferred: the widget is not visible this cycle.
+            self.call_after_refresh(
+                lambda: self._focus_if_present("#lane-bring-profile-input")
+            )
             # Bug A (2026-07-09): the §2b size floor can hide EVERY slug — a 54G
             # bf16 repo on a 48G rig — leaving only the ✎ sentinel with NO
             # explanation.  Surface an honest verdict, distinguishing "too big for
@@ -10485,6 +10762,15 @@ class CockpitApp(App):
         if lane_pane is not None:
             lane_pane.show_inventory(inv)
         if inv.error:
+            # A failed inspect used to be a dead end: the error rendered and the
+            # user was left holding a repo id that does not resolve. The next
+            # useful action is almost always "find the right one" — offer it.
+            self.notify(
+                f"Inspect failed for '{repo}'. Opening Hugging Face search — "
+                f"pick the right repo from the results.",
+                title="① Bring", severity="warning", timeout=6,
+            )
+            self.action_search_hf()
             return
         if inv.has_safetensors:
             # §2b-1: the safetensors set is the artifact — slugs reveal now.
@@ -10862,7 +11148,17 @@ class CockpitApp(App):
             inp.value = repo
             inp.focus()
 
-        self.push_screen(SearchHFScreen(self._data), _fill)
+        # #1153: the modal used to open EMPTY, so anything already typed had to
+        # be typed again. Seed it — unless the field holds a path, which is not
+        # a search term.
+        seed = ""
+        try:
+            v = self.query_one("#lane-bring-url-input", Input).value.strip()
+            if v and not self._looks_like_compose_path(v):
+                seed = v
+        except Exception:
+            pass
+        self.push_screen(SearchHFScreen(self._data, initial_query=seed), _fill)
 
     def action_new_bring(self) -> None:
         """Phase 3 — Ctrl+n: clear ①/② funnel state and start over (no disk wipe)."""
@@ -11547,6 +11843,15 @@ class CockpitApp(App):
         if self._surface != "producer":
             return
         self._switch_mode(1)
+        # Emphasise the verb that fits the field's CURRENT contents (empty on a
+        # fresh entry → Search), so the lane never opens with three
+        # identical-looking buttons and no hint where to start.
+        try:
+            self._sync_bring_action_emphasis(
+                self.query_one("#lane-bring-url-input", Input).value
+            )
+        except Exception:
+            pass
 
     def action_toggle_contribute(self) -> None:
         """[C] — the LEAN-view toggle (surface inversion).
@@ -12189,6 +12494,12 @@ class CockpitApp(App):
             return
         self._advance_to_serve()
 
+    def _bring_pane_ready(self) -> None:
+        """Initial action emphasis — before any keystroke the field is empty, so
+        Search is the recommended verb. Without this the pane opens with three
+        identical-looking buttons and no hint where to start."""
+        self._sync_bring_action_emphasis("")
+
     def _advance_to_serve(self) -> None:
         """Advance the Bring & Validate lane from ① Bring to the pre-armed
         ② Serve stage (⏎'s "proceed" after a successful fit-check).  ② Serve was
@@ -12206,6 +12517,16 @@ class CockpitApp(App):
             kind = None
         if kind is None:
             self.notify("No validation step selected.", title="Validate", severity="warning", timeout=3)
+            return
+        # ③ used to open a full confirm dialog with an empty target — "GPUs —",
+        # no model, no URL — and only fail once committed. Say so before the
+        # dialog, and name the step that produces a target.
+        if not (self._target_model or self._target_url):
+            self.notify(
+                "No serving model to validate — finish ② Serve (or start a "
+                "catalog slug from Run & Operate) first.",
+                title="③ Gate", severity="warning", timeout=6,
+            )
             return
         slug = self._target_slug or (self._staged_entry.slug if self._staged_entry else None)
         plan = self._data.validation_plan(
@@ -13513,10 +13834,43 @@ class CockpitApp(App):
         # a working compose", and the funnel had no door for it. A value that
         # looks like a compose FILE takes the K route; anything else is an HF
         # repo exactly as before.
-        if self._looks_like_compose_path(repo):
-            self._bring_compose_in_hand(repo)
+        if self._looks_like_path_shape(repo):
+            self._validate_compose_in_field()
+            return
+        if "/" not in repo.strip("/"):
+            self.notify(
+                f"'{repo}' is not a full repo id (provider/model) — searching "
+                f"Hugging Face instead.",
+                title="① Bring", timeout=4,
+            )
+            self.action_search_hf()
             return
         self.run_byo_check(repo, profile)
+
+    @staticmethod
+    def _looks_like_path_shape(value: str) -> bool:
+        """Does this LOOK like a filesystem path? (no disk access)
+
+        Separate from _looks_like_compose_path, which additionally requires the
+        file to EXIST — correct for deciding what to DO, wrong for deciding what
+        to EMPHASISE: while you are still typing `/mnt/models/foo.yml` the file
+        does not exist yet, so an existence test keeps pointing at "Inspect HF"
+        for something that is plainly not an HF id.
+
+        An HF repo id is `provider/model` — exactly ONE slash, no extension, no
+        leading / ~ or . — so any of these means "path":
+          · 2+ slashes            (/mnt/models/x.yml)
+          · a .yml/.yaml suffix   (compose.yml)
+          · a leading / ~ ./ ../
+        """
+        v = (value or "").strip().strip('"').strip("'")
+        if not v:
+            return False
+        if v.lower().endswith((".yml", ".yaml")):
+            return True
+        if v.startswith(("/", "~", "./", "../")):
+            return True
+        return v.strip("/").count("/") >= 2
 
     @staticmethod
     def _looks_like_compose_path(value: str) -> bool:
@@ -13534,6 +13888,47 @@ class CockpitApp(App):
             return _Path(v).expanduser().is_file()
         except OSError:
             return False
+
+    def _validate_compose_in_field(self) -> None:
+        """[Validate compose] on ① — the explicit compose verb (#1153).
+
+        Validation used to happen implicitly, with its result announced in a
+        TOAST: the weakest surface there is, gone in seconds and absent from the
+        pane a user is reading. Render what the compose actually states, and what
+        it does not, into the result card — then ② unlocks."""
+        try:
+            raw = self.query_one("#lane-bring-url-input", Input).value.strip()
+        except Exception:
+            return
+        if not raw:
+            self.notify(
+                "Paste the path to your compose file (*.yml) first.",
+                title="① Bring", severity="warning", timeout=4,
+            )
+            return
+        from pathlib import Path as _Path
+
+        p = _Path(raw.strip('"').strip("'")).expanduser()
+        if not p.is_file():
+            self._set_bring_card(
+                f"[red]Not a file:[/red] {p}\n"
+                "[dim]Paste a path to a compose YAML. For a HuggingFace model use "
+                "[b]Inspect HF[/b] instead.[/dim]"
+            )
+            return
+        if p.suffix.lower() not in (".yml", ".yaml"):
+            self._set_bring_card(
+                f"[red]Not a compose:[/red] {p.name} is not .yml/.yaml"
+            )
+            return
+        self._bring_compose_in_hand(str(p))
+
+    def _set_bring_card(self, markup: str) -> None:
+        """Write into ① Bring's result card — the surface the user is reading."""
+        try:
+            self.query_one("#lane-bring-result-card", Static).update(markup)
+        except Exception:
+            pass
 
     def _bring_compose_in_hand(self, path: str) -> None:
         """① Route-K — ingest a compose the user already wrote (#1153).
@@ -13582,10 +13977,33 @@ class CockpitApp(App):
             self.query_one("#lane-bring-pane", LaneBringPane).populate(res)
         except Exception:
             pass
+        # What it states, and what it does NOT — a validation that only says
+        # "ok" teaches nothing about what ⑤ will still have to ask for.
+        rows = [
+            ("engine", facts.engine), ("model", facts.model_path),
+            ("served name", facts.served_name), ("ctx", facts.max_ctx),
+            ("KV", facts.kv_dtype), ("TP", facts.tp), ("port", facts.port),
+        ]
+        got = "  ".join(f"[b]{k}[/b] {v}" for k, v in rows if v)
+        missing = [k for k, v in rows if not v]
+        card = (
+            f"[green]✓ compose validated[/green]  {p.name}\n{got}\n"
+            + (f"[dim]not stated in the compose: {', '.join(missing)} — "
+               f"⑤ Promote will ask.[/dim]\n" if missing else "")
+            + "[dim]② Serve runs THIS file. ⑤ Promote registers it "
+              "(you choose the slug + port there).[/dim]"
+        )
+        self._set_bring_card(card)
         self.notify(
-            f"Route-K: {p.name} read — ② Serve will run this compose.",
+            f"Route-K: {p.name} validated — ② Serve will run this compose.",
             title="① Bring", timeout=5,
         )
+        # ARM ② before jumping to it — otherwise the pane renders its
+        # "arm from ① Bring" empty state while the action serves fine.
+        try:
+            self._arm_serve_pane(res)
+        except Exception:
+            pass
         self._advance_to_serve()
 
     def action_serve_untested(self) -> None:
@@ -13801,7 +14219,18 @@ class CockpitApp(App):
                 or getattr(byo, "profile_like", "")
             )
             port = self._host_port_for_slug(slug)
-        self.query_one("#lane-serve-pane", LaneServePane).set_armed(
+        pane = self.query_one("#lane-serve-pane", LaneServePane)
+        # Route-K: the compose IS the target, so give the pane its filename and
+        # the port the file itself declares (not a catalog slug's).
+        if getattr(byo, "route", "") == "K":
+            facts = getattr(self, "_bring_compose_facts", None)
+            from pathlib import Path as _P
+            pane._route_k_compose = (
+                _P(getattr(self, "_bring_swap_compose", "") or "").name or "your compose"
+            )
+            if facts is not None and getattr(facts, "port", "").isdigit():
+                port = int(facts.port)
+        pane.set_armed(
             byo,
             self._armed_overrides_defaults(byo),
             host_port=port,
@@ -14015,6 +14444,23 @@ class CockpitApp(App):
         scaffold = self._data.promote_scaffold(
             byo=self._last_byo, measurement=meas, compose_text=compose_text,
         )
+        # #1153: for Route-K the compose ALREADY declares the port that will be
+        # served. The scaffold's deterministic 202xx value would register a
+        # different port than the thing actually running — a mismatch the user
+        # would only find at launch. The served file wins.
+        facts = getattr(self, "_bring_compose_facts", None)
+        if (
+            getattr(self._last_byo, "route", "") == "K"
+            and facts is not None
+            and getattr(facts, "port", "")
+            and scaffold.computed
+        ):
+            try:
+                kw = (scaffold.spec.setdefault("registry_entry", {})
+                      .setdefault("kwargs", {}))
+                kw["default_port"] = int(facts.port)
+            except (ValueError, AttributeError):
+                pass
         if not scaffold.computed:
             self.notify(
                 f"Cannot scaffold: {scaffold.error or 'incomplete BYO facts'}",
@@ -14310,11 +14756,17 @@ class CockpitApp(App):
         # their table as before.
         if isinstance(self.focused, Tabs):
             return
-        widget_id = _focus_map.get(tab_id, "")
+        widget_id = _focus_map.get(tab_id, "") or _TAB_FOCUS_FALLBACK.get(tab_id, "")
         if widget_id:
             def _do_focus() -> None:
+                # Query WITHOUT a type constraint.  This used to be
+                # `query_one(widget_id, DataTable)`, which raised for any
+                # non-DataTable target and was swallowed by the `except` — so the
+                # Doctor entry (#doctor-scroll, a focusable ScrollableContainer:
+                # the scroll box IS the content there) silently focused nothing
+                # and left ↓/PgDn dead on a page that overflows at 46 rows.
                 try:
-                    self.query_one(widget_id, DataTable).focus()
+                    self.query_one(widget_id).focus()
                 except Exception:
                     pass
                 # #3/NH1: the Containers tab is CALM on entry — focus the table
@@ -14398,6 +14850,15 @@ class CockpitApp(App):
                 custom.add_class("profile-custom-hidden")
         except Exception:
             pass
+        # Before the registry-derived default has been applied, any Changed is the
+        # initial-mount/placeholder seeding — not a user pick.
+        #
+        # This guard used to sit BELOW the detail-card update, so seeding the
+        # (hidden) Select painted a full catalog slug card — "vllm/dual · ✅
+        # production · ctx 262K · port 8010" — onto a blank ① Bring page before
+        # the user had typed anything, implying a selection they never made.
+        if not getattr(self, "_profile_default_applied", False):
+            return
         # Dogfood r2 — the detail card follows the selection (a custom-slug
         # sentinel has no catalog row → hide).
         try:
@@ -14408,10 +14869,6 @@ class CockpitApp(App):
                 pane.show_slug_details(self._funnel_slug_details(str(new_val)))
         except Exception:
             pass
-        # Before the registry-derived default has been applied, any Changed is the
-        # initial-mount/placeholder seeding — not a user pick.
-        if not getattr(self, "_profile_default_applied", False):
-            return
         # Blank / no-selection sentinel isn't a meaningful pick.
         if new_val is None or new_val is Select.BLANK:
             return
@@ -14627,6 +15084,8 @@ class CockpitApp(App):
             self._trigger_lane_inspect()
         elif bid == "lane-bring-search-btn":
             self.action_search_hf()
+        elif bid == "lane-bring-validate-compose-btn":
+            self._validate_compose_in_field()
         elif bid == "lane-bring-continue-btn":
             self._bring_advance_to_serve()
         elif bid == "lane-serve-btn":
@@ -14652,6 +15111,42 @@ class CockpitApp(App):
         if event.input.id == "catalog-filter":
             try:
                 self.query_one("#catalog-pane", CatalogPane).set_filter(event.value)
+            except Exception:
+                pass
+        elif event.input.id == "lane-bring-url-input":
+            self._sync_bring_action_emphasis(event.value)
+
+    def _sync_bring_action_emphasis(self, value: str = "") -> None:
+        """Point at the action that fits what is in the field.
+
+        The three ① actions used to differ in colour for a STATIC reason —
+        "Inspect HF" carried variant="primary" and the others did not — so the
+        emphasis said nothing about what you should do next, and read as "this
+        is the button that works". Keep all three VISIBLE (a hidden action is one
+        nobody learns exists) and move the emphasis instead:
+
+            empty / a bare term  -> Search HF…      (you must find it first)
+            provider/model       -> Inspect HF
+            a *.yml path         -> Validate compose
+        """
+        v = (value or "").strip()
+        if self._looks_like_path_shape(v):
+            # SHAPE, not existence — the emphasis must track what you are typing,
+            # not whether you have finished typing it.
+            want = "lane-bring-validate-compose-btn"
+        elif v and "/" in v.strip("/"):
+            want = "lane-bring-inspect-btn"
+        else:
+            want = "lane-bring-search-btn"
+        for bid in (
+            "lane-bring-search-btn",
+            "lane-bring-inspect-btn",
+            "lane-bring-validate-compose-btn",
+        ):
+            try:
+                self.query_one(f"#{bid}", Button).variant = (
+                    "primary" if bid == want else "default"
+                )
             except Exception:
                 pass
 

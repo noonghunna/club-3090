@@ -192,8 +192,13 @@ class TestPhase14PromotePreview:
                 app.query_one("#lane-promote-heading", Label).render()
             )
             badge = str(app.query_one("#lane-promote-badge", Static).render())
-            assert "Promotion Preview" in heading or "Scaffold" in heading
-            assert "preview only" in badge.lower() or "no catalog write" in badge.lower()
+            # The tab/heading is "⑤ Promote" (one word, like its four siblings
+            # and the README). The badge must still say the write is GATED —
+            # that invariant is the point of this test — but it no longer claims
+            # "no catalog write yet", which was false: [P] opens a screen whose
+            # ⏎ writes the LOCAL layer.
+            assert "Promote" in heading
+            assert "gated" in badge.lower() or "confirm" in badge.lower()
             prereqs = str(app.query_one("#lane-promote-prereqs", Static).render())
             assert "fit-checked" in prereqs
 
@@ -213,10 +218,17 @@ class TestPhase14PromotePreview:
         # default) + the gated core action instead of the old "preview only".
         assert "write local layer" in body.lower() or "no catalog write" in body.lower()
 
-    def test_help_promote_is_preview(self):
+    def test_help_promote_states_the_write_is_gated(self):
+        """Help must not promise "preview only" for a screen that writes.
+
+        Renamed from test_help_promote_is_preview: the old assertion locked in
+        copy that contradicted the modal — ⑤'s ⏎ writes the LOCAL layer. The
+        invariant worth keeping is that the write is CONFIRM-GATED and never
+        auto-fires, which is what the help now says."""
         from club3090_cockpit.app import HelpScreen
 
         h = HelpScreen(surface="producer")
-        t = h.help_text
-        assert "preview only" in t.lower() or "Promotion Preview" in t
+        t = h.help_text.lower()
+        assert "promote" in t
+        assert "confirm-gated" in t or "gated" in t
         assert "mock this phase" in t.lower() or "preview" in t.lower()

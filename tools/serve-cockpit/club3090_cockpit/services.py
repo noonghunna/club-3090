@@ -3464,11 +3464,20 @@ class CockpitData:
         )
 
     def estate_down(self) -> ActionPlan:
+        """Stop everything.
+
+        The reconcile gate lists running instances as COLLISIONS, so on any busy
+        rig "Stop all" opened with Confirm disabled and "press f to Stop anyway"
+        — the gate treating the very thing you asked to stop as a reason not to.
+        The targeted stop (`k`) already carries force + a reason for exactly this;
+        stop-all is the same case, so it says so up front and ⏎ commits."""
         return ActionPlan(
             kind="estate_down",
             cmd=["python3", "scripts/lib/profiles/estate_cli.py", "down"],
             description="estate_cli down",
             requires_reconcile=True,
+            force=True,
+            force_reason="stopping everything is the point — running instances are the target, not a collision",
         )
 
     def container_action(self, name: str, op: str) -> ActionPlan:
