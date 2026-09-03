@@ -43,7 +43,10 @@ def root(tmp_path):
         shutil.copytree(
             REPO / rel,
             repo / rel,
-            ignore=shutil.ignore_patterns("__pycache__"),
+            ignore=shutil.# #1142: skip root-owned container torch_compile caches under
+            # models/ — copytree dies on them (Permission denied) on any
+            # rig that has served a model. Pure build artifact.
+            ignore_patterns("__pycache__", "cache"),
         )
     return repo
 

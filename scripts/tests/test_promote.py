@@ -36,7 +36,12 @@ def root(tmp_path):
         shutil.copytree(
             REPO / rel,
             tmp_path / rel,
-            ignore=shutil.ignore_patterns("__pycache__"),
+            # #1142: `models/` accumulates ROOT-OWNED torch_compile caches written
+            # by containers, and copytree dies on them with Permission denied —
+            # taking every test in this file down on any rig that has served a
+            # model. They are pure build artifact (1 tracked file under those
+            # paths), so skip them.
+            ignore=shutil.ignore_patterns("__pycache__", "cache"),
         )
     return tmp_path
 
@@ -249,6 +254,30 @@ class TestCoreGate:
         assert "my-model" not in (
             root / "scripts/lib/profiles/registry.yaml"
         ).read_text()
+
+    # ── #1142 item 6: the written layer must be stated, and the default posed ──
+
+    def test_promote_ok_states_the_layer(self, root):
+        """PROMOTE_OK alone never said WHERE the model went."""
+        res = _run_cli(root, _spec())
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert "[layer=local]" in res.stdout, res.stdout
+
+    def test_core_write_states_the_layer_too(self, root):
+        res = _run_cli(
+            root, _spec(layer_local=False), "--layer", "core",
+            env_extra={"C3_ALLOW_CORE_PROMOTE": "1"},
+        )
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert "[layer=core]" in res.stdout, res.stdout
+
+    def test_no_confirm_when_stdin_is_not_a_tty(self, root):
+        """The confirm must never fire for scripts, CI or the cockpit — which
+        always passes --layer explicitly (services.py) and has its own gate."""
+        res = _run_cli(root, _spec())          # no --layer, stdin not a TTY
+        assert res.returncode == 0, res.stderr + res.stdout
+        assert "write the LOCAL layer?" not in res.stderr
+        assert "write the LOCAL layer?" not in res.stdout
 
     # ── BYOM ports must not land in the curated band ────────────────────────
     #
