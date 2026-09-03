@@ -65,6 +65,7 @@ import json
 import os
 import re
 import subprocess
+import zlib
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -461,6 +462,31 @@ def validate_spec(spec: Any, root: Path, layer: str) -> dict:
             raise Refusal(f"registry kwargs are not valid _entry kwargs: {exc}")
         except ValueError as exc:
             raise Refusal(f"registry kwargs rejected by _entry: {exc}")
+        # ── LOCAL: keep BYOM ports out of the curated band (#1142 follow-up) ──
+        # The curated catalog occupies 8010-8199. A local slug landing on one of
+        # those ports turns the repo's OWN test-compose-port-conflicts guard red
+        # on the user's checkout, and its remediation text invites reassigning
+        # "one side" — i.e. editing a curated entry they must never touch.
+        # Refuse the collision here and hand them the deterministic 202xx
+        # LOCAL-band port the c3 Promote scaffold already assigns, so the CLI and
+        # the cockpit agree on one convention.
+        want = kwargs.get("default_port")
+        if want is not None:
+            core_ports = {
+                e.get("default_port")
+                for e in _import_compose_registry(root, merged=False).values()
+            }
+            if want in core_ports:
+                suggested = 20200 + (zlib.crc32(mid.encode("utf-8")) % 100)
+                raise Refusal(
+                    f"default_port {want} is already used by the curated catalog. "
+                    f"LOCAL models live in the 202xx band so a `git pull` of new "
+                    f"curated slugs can never collide with yours — use {suggested} "
+                    f"(deterministic for model id {mid!r}; the same value c3's "
+                    f"Promote scaffold assigns) and set the compose's "
+                    f"${{PORT:-NNNN}} to match"
+                )
+
         return spec
 
     # ── layer == "core": maintainer-gated curated-catalog write ──────────────

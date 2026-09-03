@@ -250,6 +250,29 @@ class TestCoreGate:
             root / "scripts/lib/profiles/registry.yaml"
         ).read_text()
 
+    # ── BYOM ports must not land in the curated band ────────────────────────
+    #
+    # A local slug on a curated port turns the repo's OWN
+    # test-compose-port-conflicts guard red on the user's checkout, and its
+    # remediation text invites reassigning "one side" — i.e. editing a curated
+    # entry they must never touch. Refuse at promote time instead.
+
+    def test_local_port_in_curated_band_is_refused(self, root):
+        spec = _spec()
+        spec["registry_entry"]["kwargs"]["default_port"] = 8101  # dual-ultrafast
+        res = _run_cli(root, spec)
+        assert res.returncode == promote.EXIT_COLLISION, res.stdout + res.stderr
+        assert "already used by the curated catalog" in res.stderr
+        assert "202xx" in res.stderr
+        # it must NAME the deterministic replacement, not just complain
+        import zlib
+        assert str(20200 + (zlib.crc32(b"my-model") % 100)) in res.stderr
+        assert not (root / "scripts/lib/profiles-local/registry.local.json").exists()
+
+    def test_local_port_outside_the_curated_band_is_fine(self, root):
+        res = _run_cli(root, _spec())          # the fixture already uses 20242
+        assert res.returncode == 0, res.stderr + res.stdout
+
     # ── #1142: the repo-root .env must reach the gate ───────────────────────
     #
     # Before the fix these tools read only the real environment, so a maintainer

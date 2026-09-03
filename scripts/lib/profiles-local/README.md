@@ -90,6 +90,43 @@ Delete the file(s): `rm scripts/lib/profiles-local/models.d/<id>.yml`, the
 compose dir, and the JSON entry. There is nothing else to revert — no core file
 was ever touched.
 
+## Ports — the 202xx band
+
+The curated catalog occupies **8010–8199** and grows over time, so a local model
+parked there can collide with a slug that lands in a later `git pull` — and it turns
+the repo's own `test-compose-port-conflicts` guard red on *your* checkout, whose fix
+text invites editing a curated entry you should never touch.
+
+Local models use **202xx**: `20200 + crc32(model_id) % 100`, deterministic per model
+id. c3's Promote scaffold assigns it automatically; `promote.py` refuses a local port
+that is already curated and names the replacement. Keep the compose's
+`${PORT:-NNNN}` in step with the registry entry's `default_port`.
+
+## ⚠️ What can and cannot destroy this directory
+
+Everything here is **gitignored**, which makes it survive the operations that would
+otherwise clobber it. Measured on a real clone with a model registered here:
+
+| operation | your models |
+|---|---|
+| `git pull` | ✅ survive |
+| `git fetch` + **`git reset --hard`** | ✅ survive |
+| branch switch / `git checkout` | ✅ survive |
+| `git clean -fd` | ✅ survive |
+| `git stash -u` | ✅ survive |
+| **`git clean -xdf`** | ❌ **DELETED — no warning, no recovery** |
+
+**`git clean -xdf` is the one that bites.** It is the reflex command for "really clean
+this repo", and its `-x` removes *ignored* files — which is exactly what this directory
+is. `git clean -fd` (without `-x`) is safe; `-xdf` wipes every model you registered here.
+The same applies to `git stash --all`, which stashes ignored files too.
+
+**This directory is also not a backup.** It lives inside the checkout, and the layer is
+resolved from the repo root it was imported from — so a second clone has its own empty
+layer, and deleting or re-cloning this one loses everything in it. If a local model
+matters to you, keep a copy outside the tree; `export_pr.py --out <dir>` (below) writes a
+complete, portable bundle and is the easiest way to do that.
+
 ## Contributing a local model back to the club catalog
 
 The local layer is a **staging ground for a contribution, not a dead end.** Once

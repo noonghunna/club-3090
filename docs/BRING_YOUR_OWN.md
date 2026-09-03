@@ -268,6 +268,26 @@ and `registry.local.json`, with slugs namespaced under `local/`. The directory i
 - a local entry can never become a *curated* default, and a broken local layer
   fails loudly rather than silently shrinking the catalog.
 
+> **Ports: your models live in the 202xx band.** The curated catalog occupies
+> **8010–8199**, and it grows — so a local model parked in that range can collide
+> with a slug that arrives in a later `git pull`, and it turns the repo's own
+> `test-compose-port-conflicts` guard red on your checkout. `promote.py` refuses a
+> local port that is already curated and tells you the deterministic replacement
+> (`20200 + crc32(model_id) % 100`) — the same value c3's Promote scaffold assigns.
+> Set your compose's `${PORT:-NNNN}` to match.
+
+> ⚠️ **One command destroys this layer: `git clean -xdf`.** Your models here are
+> *gitignored*, which is what makes them survive `git pull`, a branch switch, and even
+> `git reset --hard` (all measured). But `-x` tells `git clean` to remove **ignored**
+> files too, so the reflex "really clean the repo" command deletes every model you
+> registered — silently, with no recovery. `git clean -fd` (no `-x`) is safe; so is
+> `git stash -u`, though `git stash --all` is not.
+>
+> ⚠️ **It is not a backup either.** The layer lives inside this checkout and is resolved
+> from the repo root it was imported from, so a second clone has its own empty layer and
+> re-cloning loses everything. `export_pr.py --out <dir>` (§5) writes a complete portable
+> bundle — the easiest way to keep a copy outside the tree.
+
 > **Guided equivalent:** c3's Bring & Validate lane, stage **⑤ Promote** — the
 > scaffold pre-fills every arch fact the deriver knows and you fill in
 > `display_name` + `family`. Its key line names all three destinations:
