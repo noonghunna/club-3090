@@ -4933,11 +4933,14 @@ class CockpitData:
         on_event: Optional[Callable[[Any], None]] = None,
         on_line: Optional[Callable[[str], None]] = None,
     ) -> Any:
-        """Launch c3t scoped to the SHARED ServingTarget, streamed (MOCK-ONLY).
+        """Launch c3t scoped to the SHARED ServingTarget, streamed.
 
-        ⚠️  WIRED-BUT-MOCK-ONLY.  c3t runs the post-boot evaluator against the
-        live serving model — heavy.  The write runner is NEVER executed live this
-        phase; conftest blocks the real spawn and tests inject a FakeWriteRunner.
+        ⚠️  THIS RUNS FOR REAL.  c3t is spawned through ``self._write_runner`` —
+        the production runner in a real session — and evaluates the live serving
+        model (heavy).  The previous "WIRED-BUT-MOCK-ONLY / never executed live"
+        note described only the TEST environment: conftest blocks the spawn and
+        tests inject a FakeWriteRunner, neither of which applies in production.
+        Callers must keep this behind the confirm gate.
 
         Scopes c3t to ``target`` by passing the endpoint/model/container through
         the child env (``C3T_REPO_ROOT`` + ``C3T_TARGET_*``) so the test-console
