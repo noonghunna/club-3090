@@ -273,6 +273,7 @@ OTHER_TOOL_OK = {
     "--in-place",                        # benchlocal-cli rescore
     "--dry-run",                         # quality-baseline.sh / report.sh
     "--clear-default", "--set-default", "--profile-like",       # switch.sh
+    "--spec-file",                       # promote.py / export_pr.py (#1143)
 }
 allowed = known | PASS_THROUGH_OK | OTHER_TOOL_OK
 
