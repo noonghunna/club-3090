@@ -2020,6 +2020,273 @@ class _CopyableModal:
         return self._copy_payload or ""
 
 
+# ── Compose viewer (READ) ────────────────────────────────────────────────────
+
+
+class ComposeViewScreen(_CopyableModal, ModalScreen):
+    """The compose behind whatever the user is looking at — READ-ONLY.
+
+    Catalog rows, container drills and lane stages all name a config the user has
+    only ever seen summarised. The serve confirm shows the CATALOG'S CLAIMS (ctx,
+    measured TPS, fit) — not the file — and a Route-K / generated serve shows the
+    docker command and nothing else, so the user commits a compose they have not
+    read and cannot reopen. This is that missing last look.
+
+    Two layers, in this order:
+      1. the `Profile (at-a-glance)` header + the mechanical facts derived from
+         the file (image / port / ctx / KV / TP), because the header is 15-40
+         lines of prose and `command:` sits ~100 lines down;
+      2. the raw YAML, pygments-highlighted via rich.syntax (present already —
+         no new dependency), wrapped so the page never scrolls sideways.
+
+    READ-ONLY BY DESIGN in this increment: no edit verb exists yet on any
+    provenance. The provenance line still states editability, because that is the
+    fact a reader needs before they go and change the file in their own editor —
+    and for a CURATED file the honest answer is "don't, it is git-tracked and
+    shared; a change here diverges your checkout from upstream".
+    """
+
+    DEFAULT_CSS = """
+    ComposeViewScreen {
+        align: center middle;
+    }
+    ComposeViewScreen > Vertical {
+        width: 92%;
+        max-width: 120;
+        height: 96%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    ComposeViewScreen .compose-title {
+        text-style: bold;
+        color: $accent;
+    }
+    ComposeViewScreen #compose-path {
+        color: $text-muted;
+    }
+    ComposeViewScreen #compose-provenance {
+        margin-bottom: 1;
+    }
+    ComposeViewScreen #compose-facts {
+        height: auto;
+        max-height: 12;
+        overflow-y: auto;
+        margin-bottom: 1;
+    }
+    ComposeViewScreen #compose-rule {
+        color: $text-muted;
+    }
+    ComposeViewScreen #compose-scroll {
+        height: 1fr;
+        border: solid $primary;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("c", "dismiss", "Close"),
+        Binding("h", "toggle_header", "Header", show=True),
+        Binding("Y", "app.copy_context", "Copy", show=True),
+    ]
+
+    # Provenance kind → the accent colour of its banner.
+    _KIND_STYLE = {
+        "curated":   "yellow",
+        "local":     "green",
+        "generated": "cyan",
+        "external":  "green",
+        "missing":   "red",
+    }
+
+    def __init__(self, path: str, *, title: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._path = path
+        self._title = title or "Compose"
+        self._show_header = True
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(f"Compose · {self._title}", classes="compose-title")
+            yield Static("", id="compose-path")
+            yield Static("", id="compose-provenance")
+            yield Static("", id="compose-facts")
+            yield Static("", id="compose-rule")
+            with ScrollableContainer(id="compose-scroll"):
+                yield Static("", id="compose-body")
+            yield Footer()
+
+    def on_mount(self) -> None:
+        # Size the facts strip to the TERMINAL, not a fixed 12 rows. On an 80x24
+        # the modal is ~21 rows, and a fixed strip plus the header lines pushed
+        # the YAML — the thing the viewer exists to show — entirely below the
+        # fold, reachable only by pressing [h]. A third of the height keeps both
+        # visible; the strip scrolls when the header is long.
+        try:
+            avail = int(self.app.size.height)
+            self.query_one("#compose-facts", Static).styles.max_height = max(
+                4, min(12, avail // 4)
+            )
+        except Exception:
+            pass
+        self._load()
+
+    def action_toggle_header(self) -> None:
+        """[h] hides the facts strip — more rows of YAML on a short terminal."""
+        self._show_header = not self._show_header
+        for wid in ("#compose-facts", "#compose-provenance", "#compose-path"):
+            try:
+                self.query_one(wid).display = self._show_header
+            except Exception:
+                pass
+
+    def _load(self) -> None:
+        from pathlib import Path
+
+        from club3090_cockpit.data import (
+            classify_compose_provenance,
+            derive_compose_facts,
+            parse_profile_header,
+        )
+
+        root = getattr(self.app, "_repo_root", None) or Path(".")
+        prov = classify_compose_provenance(self._path, root)
+        colour = self._KIND_STYLE.get(prov.kind, "white")
+        try:
+            self.query_one("#compose-path", Static).update(prov.rel or prov.path)
+            self.query_one("#compose-provenance", Static).update(
+                f"[{colour}]┃ {prov.reason}[/{colour}]"
+            )
+        except Exception:
+            pass
+
+        if prov.kind == "missing":
+            try:
+                self.query_one("#compose-body", Static).update(
+                    "[red]file not found[/red]"
+                )
+                self.query_one("#compose-facts", Static).update("")
+            except Exception:
+                pass
+            return
+
+        try:
+            text = Path(prov.path).read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            try:
+                self.query_one("#compose-body", Static).update(
+                    f"[red]could not read:[/red] {exc}"
+                )
+            except Exception:
+                pass
+            return
+
+        self._copy_payload = text   # [Y] copies the RAW file, not the rendering
+        facts = derive_compose_facts(text, prov.path)
+        header = parse_profile_header(text)
+        try:
+            self.query_one("#compose-facts", Static).update(
+                self._facts_markup(header, facts)
+            )
+            self.query_one("#compose-rule", Static).update(
+                f"── yaml · {len(text.splitlines())} lines · "
+                f"[dim]h header · Y copy · Esc close[/dim] ──"
+            )
+        except Exception:
+            pass
+
+        # rich.syntax gives pygments highlighting with no new dependency, and
+        # word_wrap keeps a long `volumes:` line inside the modal instead of
+        # forcing a horizontal scroll.
+        try:
+            from rich.syntax import Syntax
+
+            body = Syntax(
+                text, "yaml", line_numbers=True, word_wrap=True, theme="ansi_dark"
+            )
+        except Exception:
+            body = text
+        try:
+            self.query_one("#compose-body", Static).update(body)
+        except Exception:
+            pass
+
+    def _facts_markup(self, header, facts) -> str:
+        """The header fields first, then what the file mechanically states.
+
+        Status is rendered with the catalog's own glyph so one status means one
+        symbol app-wide, and a REQUIRED-but-missing Caveats line is called out —
+        that combination reds `test-compose-status-drift` on the user's checkout,
+        so it is worth seeing here rather than at commit time.
+        """
+        from rich.markup import escape
+
+        from club3090_cockpit.data import COMPOSE_STATUS_EMOJI
+
+        rows: list[str] = []
+        if header.present:
+            status = header.status_word
+            glyph = _STATUS_GLYPH.get(status, "") if status else ""
+            shown = header.fields.get("Status", "")
+            # We render the catalog's own glyph, so drop the header's leading
+            # emoji rather than printing two symbols for one status.
+            if glyph:
+                for emoji in COMPOSE_STATUS_EMOJI:
+                    if shown.startswith(emoji):
+                        shown = shown[len(emoji):].strip()
+                        break
+            rows.append(f"[bold]Status[/bold]    {glyph} {escape(shown)}".rstrip())
+            if header.caveats_missing:
+                rows.append(
+                    "[yellow]Caveats   ⚠ REQUIRED for this status — missing[/yellow]"
+                )
+
+        # The mechanical facts go HIGH — above the prose fields. "What will this
+        # actually run" is the question the viewer exists to answer, and a long
+        # multi-line Caveats (675 chars is real, and 84 of 112 composes carry one)
+        # would otherwise push port/ctx/image below the fold of the facts box.
+        def shown(value: str) -> str:
+            """`${MAX_MODEL_LEN:-262144}` reads as `262144 ($MAX_MODEL_LEN)`.
+
+            The token is faithful to the file, but a strip of raw `${VAR:-x}` is
+            unreadable at a glance — and the effective value IS the default
+            unless the user overrides it, which is exactly what the reader is
+            here to learn. The variable name is kept, dimmed, because it is how
+            they would override it."""
+            m = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*):-(.*)\}", value.strip())
+            if not m:
+                return f"[bold]{escape(value)}[/bold]"
+            var, default = m.group(1), m.group(2)
+            if not default:
+                return f"[dim]unset (${var})[/dim]"
+            return f"[bold]{escape(default)}[/bold] [dim](${var})[/dim]"
+
+        mech = []
+        for label, val in (
+            ("image", facts.image), ("port", facts.port), ("ctx", facts.max_ctx),
+            ("kv", facts.kv_dtype), ("tp", facts.tp), ("served-as", facts.served_name),
+        ):
+            if val:
+                mech.append(f"{label} {shown(str(val))}")
+        if mech:
+            rows.append("[dim]" + "  ·  ".join(mech) + "[/dim]")
+
+        if header.present:
+            # Caveats LAST: it is by far the longest field, so leading with it
+            # would bury everything else behind a scroll.
+            for key in ("Model", "Topology", "Drafter", "KV", "Vision",
+                        "Max ctx", "Genesis", "Best for", "Caveats"):
+                val = header.fields.get(key, "").strip()
+                if val:
+                    rows.append(f"[bold]{key}[/bold]{' ' * max(1, 10 - len(key))}{escape(val)}")
+        else:
+            rows.append("[dim]no `Profile (at-a-glance)` header in this file[/dim]")
+        return "\n".join(rows)
+
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
+
 # ── Explain detail modal ────────────────────────────────────────────────────────
 
 
@@ -8949,6 +9216,11 @@ class CockpitApp(App):
         Binding("N", "new_pod", "New pod", show=False),
         # Operate · Orchestration — power-cap menu (default / clear / custom W).
         Binding("c", "power_cap", "Power cap", show=False),
+        # [c] view the compose behind the focused thing. A SECOND `c`, gated to a
+        # disjoint (mode, tab) set from power_cap above — the same dual-binding
+        # idiom v/k/f/D/w already use. Orchestration keeps power-cap; everywhere
+        # a compose is identifiable, `c` opens it.
+        Binding("c", "view_compose", "View compose", show=False),
         # Operate · Doctor — power-cap sweep (heavy A/B bench; gated rig write).
         Binding("w", "power_cap_sweep", "Cap sweep", show=False),
         # Operate · Containers / Validate — context-sensitive read keys.
@@ -9193,6 +9465,10 @@ class CockpitApp(App):
         "estate_off":       ({0}, {"tab-orchestration"}),
         "new_pod":      ({0}, {"tab-orchestration"}),
         "power_cap":        ({0}, {"tab-orchestration"}),
+        # Disjoint from power_cap by construction: every tab here is one where a
+        # compose path is resolvable, and none of them is tab-orchestration.
+        "view_compose":     ({0, 1}, {"tab-catalog", "tab-containers",
+                                      "tab-bring", "tab-serve", "tab-promote"}),
         # power-cap sweep lives on Doctor now (a tuning/diagnostic bench, not a
         # live-estate control) — prune was removed from the cockpit entirely.
         "power_cap_sweep":  ({0}, {"tab-doctor"}),
@@ -12595,6 +12871,62 @@ class CockpitApp(App):
                 self._doctor_primary()
         elif self._active_mode == 1:
             self._validate_primary()
+
+    def action_view_compose(self) -> None:
+        """[c] — open the compose behind whatever is focused, READ-ONLY.
+
+        Resolves per surface rather than from one global: Catalog and Containers
+        name a catalog slug whose registry row carries `compose_path`; the lane
+        stages name the file the user brought or staged. When nothing here
+        resolves a path, say which surface has one instead of opening an empty
+        modal."""
+        path, title = self._compose_target_for_focus()
+        if not path:
+            self.notify(
+                "No compose to show here — open one from Catalog (a slug), "
+                "Containers (a running service), or a lane stage after ① Bring.",
+                title="Compose", severity="warning", timeout=5,
+            )
+            return
+        self.push_screen(ComposeViewScreen(path, title=title))
+
+    def _compose_target_for_focus(self) -> tuple[str, str]:
+        """(compose path, human title) for the focused surface — ("","") if none."""
+        from pathlib import Path as _P
+
+        mode = self._active_mode
+        tab = self._current_subtab() if mode == 0 else self._active_validate_tab()
+
+        if mode == 0 and tab == "tab-catalog":
+            try:
+                entry = self.query_one("#catalog-pane", CatalogPane).selected_entry()
+            except Exception:
+                entry = None
+            if entry is not None:
+                row = getattr(entry, "row", None)
+                path = getattr(row, "compose_path", "") or ""
+                if path:
+                    return path, getattr(entry, "slug", "") or _P(path).name
+            return "", ""
+
+        if mode == 0 and tab == "tab-containers":
+            con = self._selected_container()
+            slug = getattr(con, "slug", "") if con is not None else ""
+            if slug:
+                row = next(
+                    (v for v in self._variants if getattr(v, "slug", "") == slug), None
+                )
+                path = getattr(row, "compose_path", "") if row is not None else ""
+                if path:
+                    return path, slug
+            return "", ""
+
+        # Lane: the compose in hand (Route-K) or the one staged for ⑤.
+        if mode == 1:
+            brought = getattr(self, "_bring_swap_compose", "") or ""
+            if brought:
+                return brought, _P(brought).name
+        return "", ""
 
     def _doctor_primary(self) -> None:
         """⏎ on Operate · Doctor — run the SELECTED check.

@@ -710,22 +710,37 @@ def make_app(
     root = repo_root or FAKE_REPO_ROOT
     # The Optimize brain reads engine/hardware KV-legality lists off the repo
     # tree (stdlib yml scan) — seed the two tiny profile files it needs so the
-    # option table renders in tests.  (Idempotent; nothing else reads these.)
+    # option table renders in tests.
+    #
+    # ⚠️ NEVER OVERWRITE AN EXISTING FILE.  This block used to write
+    # unconditionally, and its "(Idempotent; nothing else reads these.)" claim was
+    # false on both counts: the real repo ships 77-line versions of both files
+    # that `engine_drafters` and the profile-compat layer read.  Any test passing
+    # `repo_root=<the real repo>` therefore TRUNCATED two tracked files to a
+    # 6-line stub — silently, since the writes are wrapped in `except OSError`.
+    # That is how test_services / test_route_g started failing: not from their
+    # own code, but because an unrelated test had clobbered the profile tree.
+    # Seeding a fake root still works (nothing is there yet); a real tree is left
+    # exactly as found.
     try:
         eng = root / "scripts" / "lib" / "profiles" / "engines"
         eng.mkdir(parents=True, exist_ok=True)
-        (eng / "vllm-stable.yml").write_text(
-            "supported_kv_formats:\n"
-            "  - bf16\n  - fp16\n  - fp8_e4m3\n  - fp8_e5m2\n"
-            "  - int8_per_token_head\n", encoding="utf-8")
+        stub = eng / "vllm-stable.yml"
+        if not stub.exists():
+            stub.write_text(
+                "supported_kv_formats:\n"
+                "  - bf16\n  - fp16\n  - fp8_e4m3\n  - fp8_e5m2\n"
+                "  - int8_per_token_head\n", encoding="utf-8")
         hw = root / "scripts" / "lib" / "profiles" / "hardware"
         hw.mkdir(parents=True, exist_ok=True)
         # Ampere card: fp8_e4m3 NOT hardware-legal → dropped from the options.
-        (hw / "rtx-3090.yml").write_text(
-            "sm: 8.6\nvram_gb: 24\n"
-            "supported_kv_formats:\n"
-            "  - bf16\n  - fp16\n  - fp8_e5m2\n  - int8_per_token_head\n",
-            encoding="utf-8")
+        hw_stub = hw / "rtx-3090.yml"
+        if not hw_stub.exists():
+            hw_stub.write_text(
+                "sm: 8.6\nvram_gb: 24\n"
+                "supported_kv_formats:\n"
+                "  - bf16\n  - fp16\n  - fp8_e5m2\n  - int8_per_token_head\n",
+                encoding="utf-8")
     except OSError:
         pass
     runner = runner or FakeRunner(responses or fake_responses())
@@ -10257,6 +10272,41 @@ class TestArrowKeyFocusDescent:
             await _settle(pilot)   # the focus call is deferred one refresh cycle
             focused = app.focused
             assert focused is not None and focused.id == "doctor-scroll"
+
+
+class TestMakeAppDoesNotClobberRealFiles:
+    """`make_app` seeds two profile stubs under its repo_root — it must NEVER
+    overwrite a file that already exists.
+
+    It used to write unconditionally, so any test handed `repo_root=<the real
+    checkout>` truncated `scripts/lib/profiles/engines/vllm-stable.yml` (77 lines)
+    and `hardware/rtx-3090.yml` to a 6-line stub. Tracked files, silently, with
+    the writes swallowed by `except OSError`. The visible symptom was unrelated
+    tests failing (`engine_drafters` returning []), which points the reader at
+    the wrong code entirely."""
+
+    def test_existing_profile_files_are_left_alone(self, tmp_path):
+        eng = tmp_path / "scripts" / "lib" / "profiles" / "engines"
+        hw = tmp_path / "scripts" / "lib" / "profiles" / "hardware"
+        eng.mkdir(parents=True)
+        hw.mkdir(parents=True)
+        real_eng = "id: vllm-stable\nsupported_drafters:\n  - mtp\n"
+        real_hw = "sm: 8.6\nvram_gb: 24\nreal: yes\n"
+        (eng / "vllm-stable.yml").write_text(real_eng, encoding="utf-8")
+        (hw / "rtx-3090.yml").write_text(real_hw, encoding="utf-8")
+
+        make_app(repo_root=tmp_path)
+
+        assert (eng / "vllm-stable.yml").read_text(encoding="utf-8") == real_eng
+        assert (hw / "rtx-3090.yml").read_text(encoding="utf-8") == real_hw
+
+    def test_absent_profile_files_are_still_seeded(self, tmp_path):
+        """The seeding itself must keep working on a bare fake root."""
+        make_app(repo_root=tmp_path)
+        eng = tmp_path / "scripts" / "lib" / "profiles" / "engines" / "vllm-stable.yml"
+        hw = tmp_path / "scripts" / "lib" / "profiles" / "hardware" / "rtx-3090.yml"
+        assert "supported_kv_formats" in eng.read_text(encoding="utf-8")
+        assert "sm: 8.6" in hw.read_text(encoding="utf-8")
 
 
 class TestDoctorKeyboardNav:
