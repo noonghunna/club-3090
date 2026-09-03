@@ -4361,6 +4361,26 @@ class TestCrossRigBenchmarksViaExplain:
 # ===========================================================================
 
 
+def _renderable_text(widget) -> str:
+    """Plain text of a widget's renderable — works for str AND rich renderables.
+
+    ``str(widget.render())`` is only readable when the renderable is a string.
+    Once a widget holds a rich object (the evidence report body is a
+    ``rich.markdown.Markdown``, so the report renders as real headings/tables
+    instead of literal ``#``/``**``), ``render()`` returns a ``RichVisual`` whose
+    ``str()`` is a repr — an assertion against it silently stops testing content
+    and passes on anything.  Rendering through a Console asserts what the USER
+    actually sees."""
+    from rich.console import Console
+
+    r = widget.render()
+    inner = getattr(r, "_renderable", None)
+    console = Console(width=200, no_color=True, legacy_windows=False)
+    with console.capture() as cap:
+        console.print(r if inner is None else inner)
+    return cap.get()
+
+
 class TestValidateEvidenceWired:
     @pytest.mark.asyncio
     async def test_evidence_list_populates_from_rebench_dir(self, tmp_path):
@@ -4389,7 +4409,7 @@ class TestValidateEvidenceWired:
             await pilot.press("enter")
             await _settle(pilot)
             assert isinstance(app.screen, EvidenceReportScreen)
-            body = str(app.screen.query_one("#evidence-report-body", Static).render())
+            body = _renderable_text(app.screen.query_one("#evidence-report-body", Static))
             assert "Rebench report" in body
 
     @pytest.mark.asyncio
@@ -5122,7 +5142,15 @@ class TestValidateRunWired:
             # is) — activate it explicitly.
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
-            app.query_one("#run-ladder-table", DataTable).move_cursor(row=0)  # verify-full
+            # ③ Gate now REFUSES to open a confirm dialog with an empty target
+            # (it used to render "GPUs —"/no model and fail only after commit).
+            # A real user reaches ③ with something serving; say so explicitly.
+            app._target_model = "qwen3.6-27b-autoround"
+            # Activating a tab no longer yanks focus off the tab bar, so focus
+            # the ladder the way [↓] does for the user.
+            t = app.query_one("#run-ladder-table", DataTable)
+            t.focus()
+            t.move_cursor(row=0)  # verify-full
             await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
@@ -5142,7 +5170,10 @@ class TestValidateRunWired:
             # R3b-1: activate ③ Gate (no longer the lane default tab).
             app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
             await pilot.pause()
-            app.query_one("#run-ladder-table", DataTable).move_cursor(row=2)  # bench
+            app._target_model = "qwen3.6-27b-autoround"   # ③ needs a target
+            t = app.query_one("#run-ladder-table", DataTable)
+            t.focus()
+            t.move_cursor(row=2)  # bench
             await pilot.press("enter")
             await _settle(pilot)
             screen = app.screen
@@ -5152,6 +5183,30 @@ class TestValidateRunWired:
             assert len(wr.started) == 1
             assert wr.started[0]["cmd"] == ["bash", "scripts/bench.sh"]
             assert wr.started[0]["run_type"] == "validation"
+
+    @pytest.mark.asyncio
+    async def test_run_enter_with_no_target_refuses_before_the_dialog(self):
+        """③ Gate must NOT open a confirm dialog it knows will fail.
+
+        Before this guard, ⏎ with nothing serving opened a full ConfirmActionScreen
+        showing "GPUs —" and an empty model/URL, and only reported the problem
+        after the user committed.  Now it declines up front and names the stage
+        that produces a target.  Mirrors the same precondition already enforced
+        for the agentic-curve launch."""
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("2")
+            await _settle(pilot)
+            app.query_one("#validate-tabs", TabbedContent).active = "tab-run"
+            await pilot.pause()
+            assert not app._target_model and not app._target_url
+            t = app.query_one("#run-ladder-table", DataTable)
+            t.focus()
+            t.move_cursor(row=0)
+            await pilot.press("enter")
+            await _settle(pilot)
+            # No dialog — still the base screen.
+            assert not isinstance(app.screen, ConfirmActionScreen)
 
     @pytest.mark.asyncio
     async def test_run_step_does_not_go_through_dispatch_action(self):
@@ -5544,6 +5599,39 @@ class TestPromoteHookWired:
                 assert "vllm/vllm-openai" in text
                 assert src == str(cpath)
             assert wr.started == []      # nothing executed
+
+    async def test_route_k_is_discoverable_and_works_on_plain_enter(self):
+        """#1153: Route-K was invisible — the field said "HF repo", the
+        placeholder said org/Model, both pane hints said "enter an HF repo", and
+        ⏎ went to Inspect, which calls the HF API and would have failed on a path.
+        A capability nothing surfaces is a capability nobody has."""
+        import tempfile as _tf
+        from pathlib import Path as _P
+
+        app, _, _ = make_app(write_runner=FakeWriteRunner(), surface="producer")
+        with _tf.TemporaryDirectory() as td:
+            cpath = _P(td) / "mine.yml"
+            cpath.write_text(
+                "services:\n  v:\n    image: vllm/vllm-openai:v0.27.1\n"
+                "    command:\n      - --model\n      - /mnt/models/huggingface/mine\n",
+                encoding="utf-8",
+            )
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _settle(pilot)
+                await pilot.press("2")
+                await _settle(pilot)
+                inp = app.query_one("#lane-bring-url-input", Input)
+                # the affordance must SAY so, not only the help overlay
+                assert "compose" in inp.placeholder.lower(), inp.placeholder
+                # plain ⏎ (which routes to Inspect → the HF API) must take Route-K
+                inp.value = str(cpath)
+                inp.focus()
+                await pilot.press("enter")
+                await _settle(pilot)
+                assert app._last_byo is not None
+                assert app._last_byo.route == "K", f"⏎ did not take Route-K: {app._last_byo.route}"
+                assert app._last_byo.error == ""
+                assert app._bring_swap_compose == str(cpath)
 
     async def test_route_k_only_triggers_on_a_real_compose_file(self):
         """An HF repo must never be mistaken for a path, and a bogus path must not
@@ -9790,20 +9878,24 @@ class TestFooterOutOfTabChain:
         displayed-binding change (a surface flip that un-gates the [2] Bring &
         Validate mode key) flips the signature and DOES recompose the footer, so
         the new key renders.  No footer focus is involved any more."""
-        app, _, _ = make_app(surface="consumer")  # lean: only [1] shown
+        # The genuine displayed-binding change used to be the surface flip
+        # un-gating [2].  The mode keys [1]/[2] are now show=False permanently
+        # (they cost scarce footer width on a 100-col terminal while the Modes
+        # rail already teaches them), so a surface flip changes NO displayed
+        # binding and could no longer exercise this.  A mode flip can: entering
+        # the lane un-gates [⏎], which the footer does display.  It is also the
+        # change a user actually makes.
+        app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             ff = app.query_one(FocusableFooter)
             sig_before = ff._last_binding_sig
-            # Sanity: '2' (Bring & Validate) is NOT shown on the lean surface.
-            assert "2" not in {k.key for k in ff.query(FooterKey)}
-            # Flip to the full surface → [2] (mode_validate) un-gates (show=True),
-            # so the footer signature genuinely changes and the footer recomposes.
-            app._surface = "producer"
-            app.refresh_bindings()
+            # Sanity: [⏎] is NOT displayed in mode 0 (no ⏎ primary on entry).
+            assert "enter" not in {k.key for k in ff.query(FooterKey)}
+            await pilot.press("2")   # → Bring & Validate, where ⏎ = fit-check
             await _settle(pilot)
+            assert "enter" in {k.key for k in ff.query(FooterKey)}
             assert ff._last_binding_sig != sig_before
-            assert "2" in {k.key for k in ff.query(FooterKey)}
 
 
 class TestFixBTabBarFocusStays:
@@ -10129,6 +10221,35 @@ class TestArrowKeyFocusDescent:
             await _settle(pilot)
             assert app._primary_list_for_active_tab() is None
             assert "tab-doctor" not in _TAB_PRIMARY_LIST
+
+    @pytest.mark.asyncio
+    async def test_doctor_entry_focuses_its_scroll_box(self):
+        """Entering Doctor focuses #doctor-scroll so ↓/PgDn scroll immediately.
+
+        Doctor has no table or list to Tab to — the scroll box IS the content, and
+        the page overflows at 46 rows, so without focus the arrow keys do nothing
+        and the rest of the report is unreachable without a mouse.  It is resolved
+        through _TAB_FOCUS_FALLBACK rather than _TAB_PRIMARY_LIST because that map
+        is shared with the ↓ descend / ↑ ascend gates, which require a DataTable.
+
+        Regression: the focus call was `query_one(widget_id, DataTable)`, whose
+        type constraint raised for the ScrollableContainer and was swallowed by a
+        bare `except` — so this focus silently did nothing at all."""
+        from club3090_cockpit.app import _TAB_FOCUS_FALLBACK
+
+        assert _TAB_FOCUS_FALLBACK.get("tab-doctor") == "#doctor-scroll"
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            # Focus must not be on the tab bar, or the "don't yank focus while
+            # browsing tabs" guard correctly declines to move it.
+            app.query_one("#catalog-table").focus()
+            await _settle(pilot)
+            app.query_one("#operate-tabs", TabbedContent).active = "tab-doctor"
+            await _settle(pilot)
+            await _settle(pilot)   # the focus call is deferred one refresh cycle
+            focused = app.focused
+            assert focused is not None and focused.id == "doctor-scroll"
 
 
 class TestSubtabCycleScopedToDirectPanes:
