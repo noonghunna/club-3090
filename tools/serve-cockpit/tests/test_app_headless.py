@@ -3271,12 +3271,45 @@ class TestBatch1OperateServingPanel:
 
     @pytest.mark.asyncio
     async def test_serving_panel_no_model(self):
-        # Default target has no model / no matching port → "no model serving".
+        """No target AND the endpoint is genuinely down → "no model serving".
+
+        The serving line and the Doctor line render one row apart from two
+        unreconciled sources: this one needs a registry SLUG match, Doctor's just
+        probes the port. So the "nothing is serving" line is only honest when the
+        endpoint is actually down — which this fixture makes explicit rather than
+        assuming."""
+        from club3090_cockpit.data import DoctorRead
+
         app, _, _ = make_app(target=ServingTarget())
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot)
+            pane = app.query_one("#operate-orch-pane", OperateOrchPane)
+            state = app._last_estate_state
+            assert state is not None
+            state.doctor = DoctorRead(reachable=False, serving=False)
+            pane._populate_serving(state)
+            await _settle(pilot)
             line = str(app.query_one("#serving-line", Static).render())
             assert "no model serving" in line.lower()
+
+    @pytest.mark.asyncio
+    async def test_serving_panel_never_contradicts_the_doctor_line(self):
+        """It must NOT say "no model serving" while Doctor says "● serving".
+
+        Both lines are visible at once. Anything served via
+        `docker compose -f <path>` — every Route-K and generated serve — has no
+        registry slug, so the estate detect finds nothing while health.sh plainly
+        sees the port. The default fixture reproduces exactly that, and used to
+        render "○ no model serving" directly above
+        "● serving · KV pool 61% · spec-dec firing"."""
+        app, _, _ = make_app(target=ServingTarget())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _enter_operate(pilot)
+            serving = str(app.query_one("#serving-line", Static).render()).lower()
+            doctor = str(app.query_one("#doctor-line", Static).render()).lower()
+            if "● serving" in doctor or "serving ·" in doctor:
+                assert "no model serving" not in serving, (serving, doctor)
+                assert "not a catalog slug" in serving
 
     @pytest.mark.asyncio
     async def test_pod_create_modal_collects_and_dismisses(self):
@@ -10309,6 +10342,46 @@ class TestMakeAppDoesNotClobberRealFiles:
         assert "sm: 8.6" in hw.read_text(encoding="utf-8")
 
 
+class TestPromotePrereqsScopedToBroughtModel:
+    """⑤'s ✓ marks must describe THIS model, not the rig.
+
+    served_ok was true if ANYTHING was serving, measured_ok if ANY rebench tag
+    existed on disk, gated_ok if ANY ladder step had passed this session against
+    ANY target. On a rig with history ⑤ opened showing three ticks for a model
+    that had earned none of them — and that display is what the user promotes on.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_different_serving_model_does_not_tick_served(self):
+        from club3090_cockpit.data import ByoResult
+
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            app._last_byo = ByoResult(repo="Qwen/Qwen3.8-Flash-Next", profile_like="vllm/minimal")
+            brought = app._brought_identity()
+            assert brought == "qwen38flashnext"
+            # An unrelated model is serving → NOT served.
+            assert app._identity_matches(brought, "glm-5.3-flash") is False
+            # The brought model is serving, however it is spelled → served.
+            assert app._identity_matches(brought, "qwen3.8-flash-next") is True
+            # A dated rebench tag for it still matches.
+            assert app._identity_matches(brought, "qwen38flashnext-20260903-1201") is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_identity_reads_as_not_done(self):
+        """When identity cannot be established the marks read ○, never ✓ —
+        under-claiming is recoverable, a false ✓ is not."""
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            assert app._last_byo is None
+            assert app._brought_identity() == ""
+            assert app._identity_matches("", "anything-at-all") is False
+            # A too-short identity must not match everything.
+            assert app._identity_matches("ab", "abcdef") is False
+
+
 class TestDoctorKeyboardNav:
     """Doctor is a LIST of runnable checks: ↑/↓ select, ⏎ runs the selection.
 
@@ -11662,14 +11735,30 @@ class TestTier1PrimaryActionAndSKeyHonesty:
 
     @pytest.mark.asyncio
     async def test_s_key_gated_to_bring_and_evidence_in_lane(self):
-        """In the Bring & Validate lane [s] is valid on ① Bring (advance → ②
-        Serve) and ④ Measure (submit), NOT on ② Serve / ③ Gate / ⑤ Promote."""
+        """In the Bring & Validate lane [s] is scoped to ① Bring (advance → ②
+        Serve) and ④ Measure (submit), NOT ② Serve / ③ Gate / ⑤ Promote.
+
+        ① additionally requires something SERVABLE. The tab scoping is what this
+        test was written for and still holds; the added condition is that a key
+        the footer offers is a key that works — ① used to advertise
+        "s Continue → ② Serve" on a lane that had never been fit-checked and
+        then answer "Fit-check a model first"."""
+        from club3090_cockpit.data import ByoResult
+
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             await pilot.press("2")
             await _settle(pilot)
             tc = app.query_one("#validate-tabs", TabbedContent)
+
+            # Nothing fit-checked yet → ① does NOT advertise [s].
+            tc.active = "tab-bring"
+            await pilot.pause()
+            assert app.check_action("s_key", ()) is False
+
+            # A servable fit-check turns it on.
+            app._last_byo = ByoResult(repo="org/M", profile_like="vllm/minimal")
             for tab in ("tab-bring", "tab-evidence"):
                 tc.active = tab
                 await pilot.pause()

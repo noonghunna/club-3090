@@ -4350,6 +4350,20 @@ class OperateOrchPane(Container):
         url = (getattr(tgt, "url", "") or "").strip()
         port = getattr(tgt, "host_port", 0) or 0
         if not (slug or model):
+            # Do NOT print the calm "nothing is serving" while the Doctor line one
+            # row below says "● serving". Both lines render side by side from two
+            # unreconciled sources: this one from the estate detect (needs a
+            # registry slug match), Doctor's from health.sh (just probes the
+            # port). Anything served via `docker compose -f <path>` — every
+            # Route-K and generated serve — has no slug, so detect finds nothing
+            # while the endpoint is plainly up. Say the honest thing instead.
+            dr = getattr(state, "doctor", None)
+            if dr is not None and getattr(dr, "reachable", False) and getattr(dr, "serving", False):
+                line.update(
+                    "[green]●[/green] serving — [dim]not a catalog slug "
+                    "(started outside c3, or a Route-K / generated compose)[/dim]"
+                )
+                return
             line.update("[dim]○ no model serving[/dim]")
             return
         parts: list[str] = []
@@ -8586,7 +8600,11 @@ class RailStatus(Static):
         "\n"
         "[dim]detecting…[/dim]\n"
         "\n"
-        "[dim]open the Orchestration tab to poll[/dim]"
+        # Was "open the Orchestration tab to poll" — untrue: the estate poll runs
+        # mode-wide within ~3 s of start (15 s startup burst) and on every mode-0
+        # entry, and this placeholder renders ON the Orchestration tab too. It
+        # told the user to do something that was already happening.
+        "[dim](first poll in a moment)[/dim]"
     )
 
     def __init__(self, **kwargs):
@@ -9684,8 +9702,13 @@ class CockpitApp(App):
                 # Containers (docker restart) + Catalog ([s] sort cycle)
                 return self._current_subtab() in ("tab-containers", "tab-catalog")
             if self._active_mode == 1:
-                # ① Bring (advance → ② Serve) + ④ Measure (submit-to-localmaxxing)
-                return self._active_validate_tab() in ("tab-bring", "tab-evidence")
+                # ① Bring (advance → ② Serve) + ④ Measure (submit-to-localmaxxing).
+                # ① is offered ONLY when something is actually servable — see
+                # _bring_is_servable for why the two used to disagree.
+                tab = self._active_validate_tab()
+                if tab == "tab-bring":
+                    return self._bring_is_servable()
+                return tab == "tab-evidence"
             return False
 
         # Sub-tab cycle keys: both modes have sub-tabs (merged 0 = 4 tabs; lane 1
@@ -9761,6 +9784,23 @@ class CockpitApp(App):
                 "tab-catalog", "tab-orchestration", "tab-doctor",
             )
         if self._active_mode == 1:
+            # Per-stage, not a blanket True. The lane used to advertise ⏎ on every
+            # stage and then refuse: ② Serve with nothing armed said "Run ① Bring
+            # fit-check first"; ⑤ Promote offered "⏎ Scaffold preview" while its
+            # Preview button was disabled and answered "No model to promote"; ③
+            # Gate opened a dialog with an empty target. Each of those is now
+            # gated on the same condition its handler checks.
+            tab = self._active_validate_tab()
+            if tab == "tab-bring":
+                return True                      # ⏎ = fit-check, always available
+            if tab == "tab-serve":
+                return self._bring_is_servable()
+            if tab == "tab-run":
+                return bool(self._target_model or self._target_url)
+            if tab == "tab-evidence":
+                return True                      # ⏎ = open report; empty list is a no-op
+            if tab == "tab-promote":
+                return self._last_byo is not None
             return True
         return False
 
@@ -12989,15 +13029,17 @@ class CockpitApp(App):
         elif tab == "tab-promote":
             self.action_promote_catalog()
 
-    def _bring_advance_to_serve(self) -> None:
-        """[s] on ① Bring — advance to the pre-armed ② Serve, but ONLY when the
-        fit-checked target is servable AND its weights are on disk.  ⏎ stays
-        fit-check; [s] is the explicit "proceed" (the reported "⏎ re-ran the
-        fit-check" fix — a dedicated key, not an overload).  Guards:
-          - no servable fit-check yet → ask the user to fit-check (⏎) first;
-          - weights absent → [D] download is the next step, not ② Serve."""
+    def _bring_is_servable(self) -> bool:
+        """Is there a fit-checked target ② Serve could actually take?
+
+        ONE predicate, read by both `check_action("s_key")` and
+        `_bring_advance_to_serve`. They used to disagree: the gate returned True
+        for ① Bring unconditionally, so the footer advertised "s Continue → ②
+        Serve" on a lane that had never been fit-checked, and pressing it only
+        then said "Fit-check a model first". A key the UI offers should be a key
+        that works."""
         byo = self._last_byo
-        servable = bool(
+        return bool(
             byo is not None
             and not getattr(byo, "error", "")
             and (
@@ -13008,7 +13050,16 @@ class CockpitApp(App):
                 or getattr(byo, "route", "") == "K"
             )
         )
-        if not servable:
+
+    def _bring_advance_to_serve(self) -> None:
+        """[s] on ① Bring — advance to the pre-armed ② Serve, but ONLY when the
+        fit-checked target is servable AND its weights are on disk.  ⏎ stays
+        fit-check; [s] is the explicit "proceed" (the reported "⏎ re-ran the
+        fit-check" fix — a dedicated key, not an overload).  Guards:
+          - no servable fit-check yet → ask the user to fit-check (⏎) first;
+          - weights absent → [D] download is the next step, not ② Serve."""
+        byo = self._last_byo
+        if not self._bring_is_servable():
             self.notify(
                 "Fit-check a model first (⏎ on ① Bring).",
                 title="② Serve", severity="warning", timeout=3,
@@ -14877,7 +14928,15 @@ class CockpitApp(App):
         if byo is not None and not getattr(byo, "error", ""):
             brought = (getattr(byo, "repo", "") or "").rsplit("/", 1)[-1]
         if url or model:
-            src = "from ② Serve" if brought else "Catalog"
+            # `brought` is truthy after ANY fit-check, so this used to claim
+            # "from ② Serve" while a completely unrelated catalog slug was the
+            # thing serving — mis-attributing the target's provenance on the one
+            # screen whose job is to say what is about to be validated. Claim ②
+            # only when the serving model actually IS the brought one.
+            from_serve = bool(
+                brought and self._identity_matches(self._norm_identity(brought), model or url)
+            )
+            src = "from ② Serve" if from_serve else "Catalog"
             who = model or slug or brought or "serving"
             pane.set_target_banner(
                 f"Target: [cyan]{who}[/cyan]  @  [green]{url or '—'}[/green]  "
@@ -14888,6 +14947,42 @@ class CockpitApp(App):
                 "[dim]Target: (no serving model yet — finish ② Serve or start a "
                 "catalog slug)[/dim]"
             )
+
+    @staticmethod
+    def _norm_identity(value: str) -> str:
+        """Lowercase alphanumeric core of a model name, for loose matching.
+
+        Served names, HF repo tails and rebench tags spell the same model
+        differently (`Qwen3.8-Flash-Next` / `qwen3.8-flash-next` /
+        `qwen38_flash_next-20260903`), so compare on the alphanumeric core."""
+        return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+    def _brought_identity(self) -> str:
+        """Normalised identity of the model ① Bring is holding, or ""."""
+        byo = self._last_byo
+        if byo is None:
+            return ""
+        repo = getattr(byo, "repo", "") or ""
+        tail = repo.rsplit("/", 1)[-1] if repo else ""
+        if not tail:
+            # Route-K brought a compose, not a repo — its served name is the
+            # only identity it has.
+            facts = getattr(self, "_bring_compose_facts", None)
+            tail = getattr(facts, "served_name", "") if facts is not None else ""
+        return self._norm_identity(tail)
+
+    def _identity_matches(self, brought: str, candidate: str) -> bool:
+        """Does `candidate` (a served name, URL or run tag) name the brought model?
+
+        Substring either way: a run tag carries a date suffix, and a served name
+        is often the repo tail with the quant dropped. Requires a non-trivial
+        `brought` so a short or empty identity cannot match everything."""
+        if not brought or len(brought) < 4:
+            return False
+        cand = self._norm_identity(candidate)
+        if not cand:
+            return False
+        return brought in cand or cand in brought
 
     def _refresh_promote_prereqs(self) -> None:
         """Phase 2 — ⑤ prerequisites checklist from live funnel state."""
@@ -14905,11 +15000,25 @@ class CockpitApp(App):
                 )
             except Exception:
                 weights_ok = False
-        served_ok = bool(self._target_url or self._target_model)
+        # ⚠️ These three used to be RIG-GLOBAL: served_ok was true if ANYTHING was
+        # serving, measured_ok if ANY rebench tag existed on the rig, gated_ok if
+        # ANY step had passed this session against ANY target. On a rig with
+        # history ⑤ therefore opened showing ✓ served / ✓ measured / ✓ gated for a
+        # model that had earned none of them — and that display is what the user
+        # promotes on. They are now scoped to the BROUGHT model, and when identity
+        # cannot be established they read ○ rather than ✓: under-claiming is
+        # recoverable, a false ✓ is not.
+        brought = self._brought_identity()
+        served_ok = bool(
+            brought
+            and self._identity_matches(brought, self._target_model or self._target_url)
+        )
         gated_ok = False
         try:
             run = self.query_one("#validate-run-pane", ValidateRunPane)
-            gated_ok = any(
+            # Same scoping: a ladder step gates whatever is SERVING, so a pass
+            # only speaks for the brought model when that is what is served.
+            gated_ok = served_ok and any(
                 st in ("passed", "warn")
                 for st in (getattr(run, "_outcomes", {}) or {}).values()
             )
@@ -14918,7 +15027,10 @@ class CockpitApp(App):
         measured_ok = False
         try:
             ev = self.query_one("#validate-evidence-pane", ValidateEvidencePane)
-            measured_ok = bool(getattr(ev, "_tags", None))
+            measured_ok = bool(brought) and any(
+                self._identity_matches(brought, getattr(t, "tag", ""))
+                for t in (getattr(ev, "_tags", None) or [])
+            )
         except Exception:
             pass
         pane.set_prereqs(
