@@ -9589,7 +9589,7 @@ class TestDoctorRerunAndRemediation:
             pane._render_health(DoctorRead(reachable=False))
             body = str(app.query_one("#doctor-health-body", Static).render())
             assert "not reachable" in body
-            assert "fix:" in body and "Run · Catalog" in body
+            assert "fix:" in body and "Run & Operate · Catalog" in body
 
 
 class TestA9GateLadderOutcome:
@@ -10132,16 +10132,23 @@ class TestArrowKeyFocusDescent:
     # ── No-op surfaces — Doctor (no primary list) ────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_doctor_tab_bar_down_is_a_noop(self):
-        """Doctor has no primary list → descend is a no-op (focus stays on the bar)."""
+    async def test_doctor_tab_bar_down_descends_into_the_check_list(self):
+        """[down] on Doctor's tab bar descends into its check list.
+
+        Was `test_doctor_tab_bar_down_is_a_noop`: Doctor had no primary DataTable,
+        so descend was gated off and focus stayed on the bar. Doctor's cards are
+        now ↑/↓-selectable and ⏎-runnable, so it has a list to descend INTO — it
+        resolves through _TAB_FOCUS_FALLBACK rather than _TAB_PRIMARY_LIST, which
+        stays DataTable-only for the ↑-ascend gate."""
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             await self._focus_tab_bar(pilot, "#operate-tabs", "tab-doctor")
             await pilot.press("down")
             await pilot.pause()
-            assert isinstance(app.focused, Tabs), \
-                f"down on Doctor's tab bar (no list) must stay on the bar, got {app.focused!r}"
+            await _settle(pilot)
+            assert app.focused is not None and app.focused.id == "doctor-scroll", \
+                f"down on Doctor's tab bar must reach its check list, got {app.focused!r}"
 
     # ── Modal invariant — arrows never steal focus to/from the tab bar ───────────
 
@@ -10250,6 +10257,159 @@ class TestArrowKeyFocusDescent:
             await _settle(pilot)   # the focus call is deferred one refresh cycle
             focused = app.focused
             assert focused is not None and focused.id == "doctor-scroll"
+
+
+class TestDoctorKeyboardNav:
+    """Doctor is a LIST of runnable checks: ↑/↓ select, ⏎ runs the selection.
+
+    Before this, Doctor was reachable only by hotkey — arrows scrolled and ⏎ did
+    nothing — so a user who did not already know v/V/R/F/w/y could read all six
+    cards and run none of them."""
+
+    @pytest.mark.asyncio
+    async def test_registry_matches_compose_order_both_ways(self):
+        """_DOCTOR_CHECKS must mirror the rendered card order exactly.
+
+        The registry drives navigation order, ⏎ dispatch AND the footer label, so
+        drift against `compose` would silently run the wrong check. Asserted in
+        both directions: no rendered card missing from the registry, no registry
+        row without a card, same sequence."""
+        from club3090_cockpit.app import _DOCTOR_CHECKS, DoctorPane
+
+        app, _, _ = make_app()
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            pane = app.query_one("#doctor-pane", DoctorPane)
+            rendered = [c.id for c in pane.query(".doctor-card")]
+            assert rendered == [row[0] for row in _DOCTOR_CHECKS]
+            # every action names a real handler on the app
+            for _cid, action, label in _DOCTOR_CHECKS:
+                assert hasattr(app, f"action_{action}"), action
+                assert label
+
+    async def _enter_doctor(self, app, pilot):
+        app.query_one("#catalog-table").focus()
+        await _settle(pilot)
+        app.query_one("#operate-tabs", TabbedContent).active = "tab-doctor"
+        await _settle(pilot)
+        await _settle(pilot)   # the focus call is deferred one refresh cycle
+
+    @pytest.mark.asyncio
+    async def test_arrows_move_the_selection_and_enter_runs_it(self):
+        from club3090_cockpit.app import _DOCTOR_CHECKS, DoctorPane
+
+        fired = []
+        app, _, _ = make_app(surface="producer")
+        for _cid, action, _lbl in _DOCTOR_CHECKS:
+            setattr(app, f"action_{action}", (lambda a=action: fired.append(a)))
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            await self._enter_doctor(app, pilot)
+            assert app.focused is not None and app.focused.id == "doctor-scroll"
+            pane = app.query_one("#doctor-pane", DoctorPane)
+            assert pane.selected_index == 0
+            await pilot.press("down")
+            await _settle(pilot)
+            assert pane.selected_index == 1
+            # ⏎ runs the SELECTED check, not a fixed one.
+            await pilot.press("enter")
+            await _settle(pilot)
+            assert fired == [_DOCTOR_CHECKS[1][1]]
+
+    @pytest.mark.asyncio
+    async def test_selection_is_clamped_not_wrapped(self):
+        """Holding ↓ must not land on `report --full` (~43 min, uses the serving
+        GPUs) or the power-cap sweep by wrapping around from the top."""
+        from club3090_cockpit.app import _DOCTOR_CHECKS, DoctorPane
+
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            await self._enter_doctor(app, pilot)
+            pane = app.query_one("#doctor-pane", DoctorPane)
+            for _ in range(len(_DOCTOR_CHECKS) + 4):
+                await pilot.press("down")
+            await _settle(pilot)
+            assert pane.selected_index == len(_DOCTOR_CHECKS) - 1
+            await pilot.press("down")
+            await _settle(pilot)
+            assert pane.selected_index == len(_DOCTOR_CHECKS) - 1
+
+    @pytest.mark.asyncio
+    async def test_up_at_first_check_ascends_to_the_tab_bar(self):
+        """Mirrors what a primary DataTable at cursor row 0 does. Doctor is not a
+        DataTable, so the priority ascend binding is gated off and this widget has
+        to offer the affordance itself."""
+        from club3090_cockpit.app import DoctorPane
+
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            await self._enter_doctor(app, pilot)
+            assert app.query_one("#doctor-pane", DoctorPane).selected_index == 0
+            await pilot.press("up")
+            await _settle(pilot)
+            assert isinstance(app.focused, Tabs)
+
+    @pytest.mark.asyncio
+    async def test_down_from_the_tab_bar_descends_into_the_list(self):
+        """[down] on the tab bar reaches Doctor's list. It resolves through
+        _TAB_FOCUS_FALLBACK because Doctor has no primary DataTable."""
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            tc = app.query_one("#operate-tabs", TabbedContent)
+            tc.active = "tab-doctor"
+            await _settle(pilot)
+            bar = app._active_tab_bar()
+            assert bar is not None
+            bar.focus()
+            await _settle(pilot)
+            await pilot.press("down")
+            await _settle(pilot)
+            await _settle(pilot)
+            assert app.focused is not None and app.focused.id == "doctor-scroll"
+
+    @pytest.mark.asyncio
+    async def test_footer_enter_label_follows_the_selection(self):
+        """The ⏎ label names the selected check — which only repaints because the
+        footer's recompose signature now includes `description`."""
+        from club3090_cockpit.app import _DOCTOR_CHECKS
+
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            await self._enter_doctor(app, pilot)
+
+            # Read the RENDERED footer, not the binding objects: _relabel_binding
+            # mutates those either way, so asserting on them passes even with the
+            # recompose fix reverted (confirmed by negative control). The claim is
+            # about what the user SEES, so query the FooterKey widgets.
+            ff = app.query_one(FocusableFooter)
+
+            def enter_label():
+                for k in ff.query(FooterKey):
+                    if k.key == "enter":
+                        return k.description
+                return ""
+
+            assert enter_label() == _DOCTOR_CHECKS[0][2]
+            await pilot.press("down")
+            await _settle(pilot)
+            assert enter_label() == _DOCTOR_CHECKS[1][2]
+
+    @pytest.mark.asyncio
+    async def test_hotkeys_still_work_alongside_the_list(self):
+        """The list is ADDITIVE — the documented hotkeys keep firing."""
+        app, _, _ = make_app(surface="producer")
+        fired = []
+        app.action_doctor_verify_full = lambda: fired.append("V")  # type: ignore
+        async with app.run_test(size=(120, 44)) as pilot:
+            await _settle(pilot)
+            await self._enter_doctor(app, pilot)
+            await pilot.press("V")      # verify-full's hotkey, selection on card 0
+            await _settle(pilot)
+            assert fired == ["V"]
 
 
 class TestSubtabCycleScopedToDirectPanes:
@@ -11377,16 +11537,25 @@ class TestTier1PrimaryActionAndSKeyHonesty:
             assert app.check_action("primary_action", ()) is True
 
     @pytest.mark.asyncio
-    async def test_enter_not_advertised_on_doctor(self):
-        """⏎ no-ops on Doctor → check_action falsey so the footer never shows
-        the misleading 'Enter Select' there."""
+    async def test_enter_on_doctor_is_advertised_and_names_the_check(self):
+        """⏎ on Doctor runs the SELECTED check, so it is advertised — and labelled.
+
+        Was `test_enter_not_advertised_on_doctor`, which was right for a read-only
+        Doctor: ⏎ did nothing, so advertising it would have been the misleading
+        "Enter Select" the Modes rail was showing. Doctor's cards are now a
+        keyboard-navigable list whose ⏎ dispatches the selected check, so the
+        honest state is the opposite — the key IS shown, and its label names the
+        check rather than a generic verb."""
+        from club3090_cockpit.app import _DOCTOR_CHECKS
+
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot, tab="tab-doctor")
-            assert app.check_action("primary_action", ()) is False
-            # And the footer genuinely omits the enter key on Doctor.
+            assert app.check_action("primary_action", ()) is True
             footer_keys = {k.key for k in app.query(FooterKey)}
-            assert "enter" not in footer_keys
+            assert "enter" in footer_keys
+            labels = {k.description for k in app.query(FooterKey) if k.key == "enter"}
+            assert labels == {_DOCTOR_CHECKS[0][2]}
 
     @pytest.mark.asyncio
     async def test_enter_not_advertised_on_containers(self):

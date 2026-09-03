@@ -954,7 +954,7 @@ class HelpScreen(ModalScreen):
   ③ Gate:    [cyan]⏎[/cyan] launch validation step (gated)   [cyan]F[/cyan] full battery report.sh --full (~43-min · confirm · uses serving model)   [cyan]K[/cyan] boot-log KV back-solve vs kv-calc (read)
   ④ Measure: [cyan]⏎[/cyan] open report   [cyan]m[/cyan] vs catalog bar (read)   [cyan]s[/cyan] submit to localmaxxing (gated · never auto)
   ⑤ Promote:  [cyan]P[/cyan] scaffold the registry entry — slug + port are yours to edit; ⏎ writes the LOCAL layer (confirm-gated)
-  [cyan]v[/cyan] ▸ Evaluate via c3t [yellow](preview / mock this phase)[/yellow]
+  [cyan]v[/cyan] ▸ Evaluate via c3t [yellow](confirm-gated · RUNS against the serving model)[/yellow]
   [cyan]Ctrl+n[/cyan] New bring — clear ①/② state and start over
   Happy path: [cyan]2[/cyan] → paste repo → Inspect → Fit-check → [cyan]D[/cyan]? → [cyan]s[/cyan] → ⏎ Serve → ③ Gate → ④ Measure → [cyan]P[/cyan]
 """
@@ -4949,6 +4949,50 @@ class ValidateRunPane(Container):
         body.update("\n".join(lines))
 
 
+class DoctorScroll(ScrollableContainer):
+    """Doctor's scroll box, which is also its check LIST.
+
+    Arrows are handled in this widget's OWN ``on_key`` — the same scoping the
+    ModeSwitcher uses, and for the same reason: a focused widget sees key events
+    first, so ↑/↓ move the selection ONLY while Doctor's list holds focus and
+    reach the app's arrow model unchanged everywhere else.  Stopping the event
+    also suppresses ScrollableContainer's inherited ↑/↓ = scroll-a-line, which
+    this replaces: moving the selection scrolls it into view, so a line-scroll
+    that could strand the selection off-screen is not wanted.  PgUp/PgDn/Home/End
+    keep their inherited scrolling.
+
+    ⏎ is deliberately NOT handled here — it bubbles to the app's `primary_action`,
+    which dispatches per tab, so Doctor's ⏎ is declared the same way as Catalog's
+    and shows in the footer through the same path.
+    """
+
+    def on_key(self, event) -> None:
+        if event.key not in ("up", "down"):
+            return
+        pane = None
+        try:
+            pane = self.query_ancestor(DoctorPane)
+        except Exception:
+            return
+        if pane is None:
+            return
+        event.stop()
+        event.prevent_default()
+        # ↑ at the first check ascends to the tab bar, matching what a primary
+        # DataTable at cursor row 0 does (action_ascend_to_tabbar) — Doctor is not
+        # a DataTable, so that priority binding is gated off here and the same
+        # affordance has to be provided explicitly.
+        if event.key == "up" and pane.selected_index == 0:
+            try:
+                bar = self.app._active_tab_bar()   # type: ignore[attr-defined]
+            except Exception:
+                bar = None
+            if bar is not None:
+                bar.focus()
+            return
+        pane.move_selection(-1 if event.key == "up" else 1)
+
+
 class DoctorPane(Container):
     """Operate / Doctor tab: "is the running model serving correctly?".
 
@@ -4992,6 +5036,14 @@ class DoctorPane(Container):
         margin-bottom: 1;
         height: auto;
     }
+    /* The ↑/↓ selection. Doctor is a list of runnable checks, so the selected
+       one must be unmistakable — same accent-ring language as Button:focus. */
+    DoctorPane .doctor-card.-selected {
+        border: tall $accent;
+    }
+    DoctorPane .doctor-card.-selected .doctor-card-title {
+        text-style: bold reverse;
+    }
     DoctorPane .doctor-card-title {
         text-style: bold;
         color: $accent;
@@ -5002,6 +5054,58 @@ class DoctorPane(Container):
     }
     """
 
+    # ── Check selection (↑/↓ navigate · ⏎ runs) ──────────────────────────────
+    # Doctor is a list of six runnable checks. Before this it was reachable only
+    # by hotkey: the arrows scrolled and ⏎ did nothing, so a user who did not
+    # already know v/V/R/F/w/y could read the cards and not run any of them.
+    selected_index: int = 0
+
+    def on_mount(self) -> None:
+        self.paint_selection()
+
+    def move_selection(self, delta: int) -> None:
+        """Move the selection by ``delta``, CLAMPED (no wrap).
+
+        Clamped, not wrapping: the last two cards are `report --full` (~43 min,
+        uses the serving GPUs) and the power-cap sweep (mutates the GPU cap).
+        Wrapping past the end would land the cursor on those by holding ↓, which
+        is the wrong thing to make effortless.
+        """
+        target = max(0, min(self.selected_index + delta, len(_DOCTOR_CHECKS) - 1))
+        if target == self.selected_index:
+            return
+        self.selected_index = target
+        self.paint_selection()
+
+    def paint_selection(self) -> None:
+        """Apply the -selected class and scroll the selected card into view."""
+        for idx, (card_id, _action, _label) in enumerate(_DOCTOR_CHECKS):
+            try:
+                card = self.query_one(f"#{card_id}")
+            except Exception:
+                continue
+            card.set_class(idx == self.selected_index, "-selected")
+            if idx == self.selected_index:
+                try:
+                    card.scroll_visible(animate=False)
+                except Exception:
+                    pass
+        # The footer's ⏎ label names the SELECTED check, so it has to resync.
+        # Both halves are required and the pairing is the one the tab-activation
+        # handler uses: _sync_footer_labels mutates the binding description, and
+        # refresh_bindings fires the `bindings_changed` signal that lets the
+        # footer decide to recompose. Without the second call nothing re-renders
+        # and the label silently keeps the previous check's name.
+        try:
+            self.app._sync_footer_labels()   # type: ignore[attr-defined]
+            self.app.refresh_bindings()
+        except Exception:
+            pass
+
+    def selected_check(self) -> tuple[str, str, str]:
+        idx = max(0, min(self.selected_index, len(_DOCTOR_CHECKS) - 1))
+        return _DOCTOR_CHECKS[idx]
+
     def compose(self) -> ComposeResult:
         # #1153: a ScrollableContainer defaults to can_focus=True, so it sits in
         # the Tab chain as a DEAD STOP — one extra Tab before every real control.
@@ -5011,7 +5115,7 @@ class DoctorPane(Container):
         # has no table or list to Tab to — the scroll box IS the content, and
         # without focus ↓/PgDn do nothing on a page that overflows at 46 rows.
         # The lane panes keep can_focus=False because they have real controls.
-        with ScrollableContainer(id="doctor-scroll"):
+        with DoctorScroll(id="doctor-scroll"):
             yield Label(
                 "Doctor  [dim]— is the running model serving correctly?[/dim]",
                 id="doctor-heading",
@@ -5059,7 +5163,7 @@ class DoctorPane(Container):
                     "[dim]press [cyan]F[/cyan] — report.sh --full "
                     "([yellow]~43 min · uses the serving GPUs · confirm-gated[/yellow]): "
                     "streams into the ③ Gate; the artifact lands in results/ "
-                    "(viewable in Validate · Evidence)[/dim]",
+                    "(viewable in Bring & Validate · ④ Measure)[/dim]",
                     id="doctor-fullreport-body",
                 )
             with Container(classes="doctor-card", id="doctor-card-sweep"):
@@ -5074,9 +5178,11 @@ class DoctorPane(Container):
                     id="doctor-sweep-body",
                 )
             yield Label(
-                "[dim][cyan]y[/cyan] re-run health   ·   [cyan]v[/cyan] verify   ·   "
-                "[cyan]V[/cyan] verify-full   ·   [cyan]R[/cyan] report   ·   "
-                "[cyan]F[/cyan] report --full   ·   [cyan]w[/cyan] power-cap sweep[/dim]",
+                "[dim][cyan]↑↓[/cyan] pick a check   ·   [cyan]⏎[/cyan] run it   "
+                "[dim]— or jump straight to one:[/dim]   [cyan]y[/cyan] health   ·   "
+                "[cyan]v[/cyan] verify   ·   [cyan]V[/cyan] verify-full   ·   "
+                "[cyan]R[/cyan] report   ·   [cyan]F[/cyan] report --full   ·   "
+                "[cyan]w[/cyan] cap sweep[/dim]",
                 id="doctor-hint",
             )
 
@@ -5101,7 +5207,7 @@ class DoctorPane(Container):
             # here — a navigation pointer to the gated serve path.
             body.update(
                 "[red]✗[/red]  API not reachable\n"
-                "   [dim]→ fix: serve a model — Run · Catalog ([cyan]1[/cyan]), pick a "
+                "   [dim]→ fix: serve a model — Run & Operate · Catalog ([cyan]1[/cyan]), pick a "
                 "variant, [cyan]⏎[/cyan] (reconcile-gated)[/dim]"
             )
             return
@@ -5110,7 +5216,7 @@ class DoctorPane(Container):
         if not dr.serving:
             # Reachable endpoint but nothing served — point at the serve path.
             line += (
-                "\n   [dim]→ fix: serve a model — Run · Catalog ([cyan]1[/cyan]) "
+                "\n   [dim]→ fix: serve a model — Run & Operate · Catalog ([cyan]1[/cyan]) "
                 "[cyan]⏎[/cyan][/dim]"
             )
         body.update(line)
@@ -5132,7 +5238,7 @@ class DoctorPane(Container):
         if vs.error:
             body.update(
                 f"[red]✗[/red]  {vs.error}\n"
-                "   [dim]→ fix: serve a model — Run · Catalog ([cyan]1[/cyan]) "
+                "   [dim]→ fix: serve a model — Run & Operate · Catalog ([cyan]1[/cyan]) "
                 "[cyan]⏎[/cyan] (reconcile-gated)[/dim]"
             )
             return
@@ -5147,7 +5253,7 @@ class DoctorPane(Container):
                 lines.append(f"        [dim]→ {c.hint}[/dim]")
         if not vs.reachable:
             lines.append(
-                "   [dim]→ fix: serve a model — Run · Catalog ([cyan]1[/cyan]) "
+                "   [dim]→ fix: serve a model — Run & Operate · Catalog ([cyan]1[/cyan]) "
                 "[cyan]⏎[/cyan][/dim]"
             )
         body.update("\n".join(lines))
@@ -8554,8 +8660,13 @@ class FocusableFooter(Footer):
             active = self.screen.active_bindings
         except Exception:
             return ()
+        # `description` is part of the signature: the footer RENDERS it, so a
+        # recompose-suppression that ignored it made every `_relabel_binding`
+        # invisible whenever the visible key set was unchanged (③ Gate kept
+        # showing "⏎ Serve" from ② Serve indefinitely, and Doctor's ⏎ label could
+        # not follow the ↑/↓ selection at all).
         return tuple(
-            (binding.key, binding.action, enabled)
+            (binding.key, binding.action, enabled, binding.description)
             for (_node, binding, enabled, _tooltip) in active.values()
             if binding.show
         )
@@ -8634,7 +8745,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     # Producer lane (Bring & Validate) — filtered out on the lean surface.
     ("serve_untested", "Serve untested (② Serve)", "Producer lane — generate a compose + serve it untested"),
     ("measure_vs_bar", "Compare vs catalog bar (④ Measure)", "Producer lane — read · flags protocol"),
-    ("evaluate_target", "Evaluate running target (preview)", "Producer lane — c3t evaluate (mock this phase)"),
+    ("evaluate_target", "Evaluate running target", "Producer lane — c3t evaluate (confirm-gated · runs against the serving model)"),
     ("promote_catalog", "Promote this model (⑤)", "Producer lane — scaffold the registry entry; the write is confirm-gated"),
     ("search_hf", "Search Hugging Face repos (① Bring)", "Producer lane — search HF and fill the repo field (\\[f])"),
 )
@@ -8665,6 +8776,21 @@ _TAB_PRIMARY_LIST: dict[str, str] = {
 # DATATABLES and is shared with the ↓ descend / ↑ ascend gates, which need a list.
 # Doctor's scroll container is focused on tab activation instead (see
 # on_tabbed_content_tab_activated) so ↓/PgDn work on its overflowing page.
+# Operate · Doctor — the six check cards, in the order `compose` yields them.
+# ONE source of truth for three things that must never drift apart: the ↑/↓
+# navigation order, the ⏎ dispatch target, and the footer label.  A card added to
+# `DoctorPane.compose` without a row here is unreachable by keyboard; a row here
+# without a card raises on selection.  `test_doctor_registry_matches_compose_order`
+# asserts both directions against the rendered DOM.
+_DOCTOR_CHECKS: tuple[tuple[str, str, str], ...] = (
+    ("doctor-card-health",     "doctor_rerun",      "Re-run health"),
+    ("doctor-card-verify",     "doctor_verify",     "Verify serving"),
+    ("doctor-card-verifyfull", "doctor_verify_full", "Verify-full"),
+    ("doctor-card-report",     "rig_report",        "Rig report"),
+    ("doctor-card-fullreport", "full_report",       "Full report"),
+    ("doctor-card-sweep",      "power_cap_sweep",   "Cap sweep"),
+)
+
 _TAB_FOCUS_FALLBACK: dict[str, str] = {
     "tab-doctor": "#doctor-scroll",
 }
@@ -8828,10 +8954,10 @@ class CockpitApp(App):
         # Operate · Containers / Validate — context-sensitive read keys.
         Binding("t", "context_t", "Top / Sort", show=False),
         # Phase 5 — the three v2 hooks:
-        #   [v] Evaluate via c3t (mock this phase — label says so)
+        #   [v] Evaluate via c3t (confirm-gated; the launch is REAL)
         #   [P] Promotion scaffold preview (no live catalog write this phase)
         #   [O] Optimize for my card (kv-calc brain; apply = gated stage)
-        Binding("v", "evaluate_target", "Evaluate (preview)", show=False),
+        Binding("v", "evaluate_target", "Evaluate via c3t", show=False),
         Binding("P", "promote_catalog", "Scaffold preview", show=False),
         # R3b-1 — producer lane ② Serve: generate a compose + serve it untested
         # (also reachable via ⏎ on the ② Serve stage).
@@ -9206,7 +9332,7 @@ class CockpitApp(App):
                 bar = self._active_tab_bar()
                 if bar is None or focused is not bar:
                     return False
-                return self._primary_list_for_active_tab() is not None
+                return self._descend_target_for_active_tab() is not None
             # ascend_to_tabbar: [up] ascends in EXACTLY ONE case (priority binding):
             #   focus is the active tab's PRIMARY DataTable at cursor row 0 →
             #   ascend to the tab bar (above row 0 / off a primary list → the
@@ -9338,7 +9464,12 @@ class CockpitApp(App):
     # Doctor / Containers (mode 0) have NO ⏎ primary, so ⏎ is hidden there.
     def _primary_action_enabled(self) -> bool:
         if self._active_mode == 0:
-            return self._current_subtab() in ("tab-catalog", "tab-orchestration")
+            # tab-doctor joined this set when Doctor's cards became ↑/↓ selectable
+            # and ⏎-runnable. It was excluded while Doctor was read-only — and the
+            # Modes rail said "⏎ Select" there anyway, which was simply untrue.
+            return self._current_subtab() in (
+                "tab-catalog", "tab-orchestration", "tab-doctor",
+            )
         if self._active_mode == 1:
             return True
         return False
@@ -9371,6 +9502,16 @@ class CockpitApp(App):
                 enter_label = "Serve"
             elif tab == "tab-orchestration":
                 enter_label = "Switch scene"
+            elif tab == "tab-doctor":
+                # Name the SELECTED check, so ⏎ says what it will actually run
+                # rather than a generic verb — the whole point of a list you
+                # arrow through is that the commit key tracks the cursor.
+                try:
+                    enter_label = self.query_one(
+                        "#doctor-pane", DoctorPane
+                    ).selected_check()[2]
+                except Exception:
+                    enter_label = "Run check"
         elif self._active_mode == 1:
             tab = self._active_validate_tab()
             enter_label = {
@@ -12344,15 +12485,36 @@ class CockpitApp(App):
         except Exception:
             return None
 
+    def _descend_target_for_active_tab(self):
+        """What [down] on the tab bar descends INTO for the active tab.
+
+        The primary DataTable when the tab has one, else the tab's
+        _TAB_FOCUS_FALLBACK widget — Doctor has no table, but its scroll box IS
+        its check list, so [down] must reach it or the list is keyboard-reachable
+        only by Tab.  Kept separate from `_primary_list_for_active_tab`, which is
+        typed to DataTable and shared with the ↑-ascend gate.
+        """
+        table = self._primary_list_for_active_tab()
+        if table is not None:
+            return table
+        tab_id = self._current_subtab() or ""
+        selector = _TAB_FOCUS_FALLBACK.get(tab_id, "")
+        if not selector:
+            return None
+        try:
+            return self.query_one(selector)
+        except Exception:
+            return None
+
     def action_descend_to_content(self) -> None:
         """[down] on the tab bar → move focus INTO the active tab's primary list.
 
         Does NOT reset the list's cursor — the preserved row stays selected.  A
         no-op when there is no primary list (check_action also gates this away)."""
-        table = self._primary_list_for_active_tab()
-        if table is not None:
+        target = self._descend_target_for_active_tab()
+        if target is not None:
             try:
-                table.focus()
+                target.focus()
             except Exception:
                 pass
 
@@ -12429,8 +12591,35 @@ class CockpitApp(App):
                 self._run_primary()
             elif tab == "tab-orchestration":
                 self._operate_primary()
+            elif tab == "tab-doctor":
+                self._doctor_primary()
         elif self._active_mode == 1:
             self._validate_primary()
+
+    def _doctor_primary(self) -> None:
+        """⏎ on Operate · Doctor — run the SELECTED check.
+
+        Dispatches to the very same action the check's hotkey fires, so the
+        confirm gates come along for free: `full_report` and `power_cap_sweep`
+        are confirm-gated at their action, and pressing ⏎ on those cards gets the
+        same dialog `F`/`w` would.  Nothing is special-cased here — a check that
+        gains a gate later gains it on both paths at once.
+        """
+        try:
+            _card_id, action, _label = self.query_one(
+                "#doctor-pane", DoctorPane
+            ).selected_check()
+        except Exception:
+            return
+        # check_action gates the hotkeys (e.g. producer-only verbs); honour the
+        # same verdict for ⏎ so the two paths can never disagree about whether a
+        # check is currently allowed.
+        if self.check_action(action, ()) is False:
+            return
+        handler = getattr(self, f"action_{action}", None)
+        if handler is None:
+            return
+        handler()
 
     def _validate_primary(self) -> None:
         """⏎ in the Bring & Validate lane — context-specific per stage (R3b-1):
@@ -13767,11 +13956,13 @@ class CockpitApp(App):
         hook lives here); the live target is captured by the Operate estate poll
         and remains available via ``_target_obj``.
 
-        Confirm-gated, MOCK-ONLY launch — c3t runs the post-boot evaluator
-        against the live serving model (heavy).  The hand-off carries the SAME
-        ``ServingTarget`` object the Estate poll detected (design §4/§6.6); the
-        launch streams via ``launch_evaluate`` (write runner, NEVER live this
-        phase — conftest blocks the spawn, tests fake it)."""
+        Confirm-gated and REAL: the commit spawns ``scripts/c3t`` through the
+        production write runner and evaluates the live serving model (heavy).
+        This used to be labelled "mock this phase" in four places; the only thing
+        that made it a mock was ``conftest`` blocking the spawn in TESTS, which
+        does nothing in a real run.  The hand-off carries the SAME
+        ``ServingTarget`` object the Estate poll detected (design §4/§6.6) and
+        streams via ``launch_evaluate``."""
         if self._active_mode != 1:
             return
         handoff = self._data.evaluate_handoff(self._target_obj)
@@ -13793,18 +13984,19 @@ class CockpitApp(App):
 
     @work(exclusive=True, group="evaluate")
     async def launch_c3t_evaluate(self) -> None:
-        """Launch c3t scoped to the SHARED ServingTarget, streamed (MOCK-ONLY).
+        """Launch c3t scoped to the SHARED ServingTarget, streamed.
 
-        ⚠️  WIRED-BUT-MOCK-ONLY.  c3t runs tests against the live serving model;
-        the write runner is NEVER executed live this phase (conftest blocks the
-        spawn; tests inject a FakeWriteRunner).  The SAME ``ServingTarget`` the
-        Estate poll captured is passed by identity so c3t evaluates exactly what
-        is running."""
+        ⚠️  THIS RUNS FOR REAL — c3t runs tests against the live serving model
+        through the production write runner.  The former "NEVER executed live
+        this phase (conftest blocks the spawn)" note described the TEST
+        environment only; conftest does not run in a real session.  The SAME
+        ``ServingTarget`` the Estate poll captured is passed by identity so c3t
+        evaluates exactly what is running."""
         live = self._serve_live_pane()
         if live is not None:
             tgt = self._target_obj
             label = getattr(tgt, "model", "") or getattr(tgt, "url", "") or "target"
-            live.append_line(f"[green]▶ c3t evaluate[/green] {label} (mock-only this phase)")
+            live.append_line(f"[green]▶ c3t evaluate[/green] {label}")
 
         def _on_line(text: str) -> None:
             if live is not None:
