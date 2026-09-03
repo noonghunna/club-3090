@@ -67,6 +67,7 @@ own location; override with **`C3_REPO_ROOT=/path/to/club-3090`** if you install
 | `r` | refresh the catalog (re-reads the registry) |
 | `S` | settings — set Model Dir + HF token (`Ctrl+S` saves) |
 | `N` | new pod — Operate · Orchestration: compose a model + GPU set (fit-checked, gated) |
+| `c` | **view the compose** behind the focused row — Catalog (what the slug will run), Containers, or a lane stage. Read-only; shows the profile header, the file's actual image/port/ctx/KV, and the raw YAML. *(On Orchestration `c` is power-cap.)* |
 | `Y` | copy the focused context to the clipboard |
 | `.` | toggle the left rail (full-width content) |
 | `C` | toggle lean view (hide / restore the Bring & Validate mode) |

@@ -2413,6 +2413,171 @@ _ENGINE_BY_IMAGE = (
 )
 
 
+# Compose `Status:` header emoji → registry status word.  DUPLICATED from
+# scripts/lib/profiles/compose_registry.COMPOSE_STATUS_EMOJI on purpose: data.py
+# is stdlib-only and importable on the launcher's no-PyYAML path, so it must not
+# import the profiles package.  `test_status_emoji_map_parity` asserts the two
+# stay identical.
+COMPOSE_STATUS_EMOJI = {
+    "✅": "production",
+    "⚠️": "caveats",
+    "🧪": "experimental",
+    "🐣": "incubating",
+    "👁️": "preview",
+    "⏸️": "upstream-gated",
+    "🗑️": "deprecated",
+}
+
+# Statuses whose profile header MUST carry a Caveats: line (AGENTS.md Status enum).
+_CAVEATS_REQUIRED = frozenset({"caveats", "incubating", "preview", "upstream-gated", "deprecated"})
+
+# Canonical field order of the `# Profile (at-a-glance):` block.
+_HEADER_FIELDS = (
+    "Model", "Topology", "Drafter", "KV", "Vision", "Max ctx", "Genesis",
+    "Status", "Caveats", "Quality", "Best for",
+)
+
+
+@dataclass
+class ProfileHeader:
+    """The `# Profile (at-a-glance):` block, parsed.
+
+    Block-SCOPED, matching compose_registry.compose_header_status: fields are read
+    only between `# Profile (at-a-glance):` and the `# ---` separator, so a
+    free-form `# Status: ...` line further down cannot be mistaken for the schema.
+    ComposeFacts.status_header uses a looser any-line regex, which is fine for its
+    job (a quick Route-K sniff) but too loose to render as "the header".
+
+    Continuation-aware: an indented comment line inside the block that has no
+    `Key:` prefix appends to the previous field — 84 of 112 live composes carry a
+    multi-line `Caveats:` and dropping the continuations would show a truncated
+    caveat, which is worse than showing none.
+    """
+
+    present: bool = False
+    fields: dict = field(default_factory=dict)   # ordered, as encountered
+    status_word: str = ""                        # STATUS_VALUES word, or ""
+    line_of: dict = field(default_factory=dict)  # field -> 1-based line number
+
+    @property
+    def caveats_required(self) -> bool:
+        return self.status_word in _CAVEATS_REQUIRED
+
+    @property
+    def caveats_missing(self) -> bool:
+        return self.caveats_required and not self.fields.get("Caveats", "").strip()
+
+
+def parse_profile_header(text: str) -> ProfileHeader:
+    """Parse the profile-schema block. Never raises."""
+    hdr = ProfileHeader()
+    try:
+        lines = text.splitlines()
+    except Exception:
+        return hdr
+    in_block = False
+    last_key = ""
+    for idx, raw in enumerate(lines, start=1):
+        stripped = raw.strip()
+        if not in_block:
+            if stripped.startswith("# Profile (at-a-glance):"):
+                in_block = True
+                hdr.present = True
+            continue
+        if stripped.startswith("# --") or stripped.startswith("#--"):
+            break
+        if not stripped.startswith("#"):
+            # The block is a comment run; a non-comment line ends it.
+            break
+        body = stripped.lstrip("#").strip()
+        if not body:
+            continue
+        key = ""
+        for cand in _HEADER_FIELDS:
+            if body.startswith(cand + ":"):
+                key = cand
+                break
+        if key:
+            hdr.fields[key] = body[len(key) + 1:].strip()
+            hdr.line_of[key] = idx
+            last_key = key
+        elif last_key:
+            # Continuation of the previous field (the multi-line Caveats shape).
+            hdr.fields[last_key] = (hdr.fields[last_key] + " " + body).strip()
+    value = hdr.fields.get("Status", "")
+    for emoji, word in COMPOSE_STATUS_EMOJI.items():
+        if value.startswith(emoji):
+            hdr.status_word = word
+            break
+    return hdr
+
+
+@dataclass
+class ComposeProvenance:
+    """WHERE a compose came from — which decides whether c3 may edit it.
+
+    The asymmetry this exists to make legible: a CURATED compose is git-tracked
+    and shared, governed by the profile-schema gates, and changed through a PR.
+    Editing one in place silently diverges the user's checkout from upstream —
+    the failure is not a bad edit, it is a checkout that quietly serves something
+    the catalog misdescribes. A LOCAL-layer or EXTERNAL (Route-K) compose is the
+    user's own and freely editable.
+    """
+
+    kind: str = "missing"     # curated | local | generated | external | missing
+    path: str = ""            # absolute
+    rel: str = ""             # repo-relative when inside the root, else ""
+    editable: bool = False
+    reason: str = ""          # one user-facing line
+
+
+def classify_compose_provenance(path: str, repo_root) -> ComposeProvenance:
+    """Classify a compose path. Pure: no git, no I/O beyond exists()."""
+    from pathlib import Path
+
+    try:
+        root = Path(repo_root).resolve()
+        target = Path(path).expanduser()
+        target = (root / target) if not target.is_absolute() else target
+        target = target.resolve()
+    except Exception:
+        return ComposeProvenance(kind="missing", path=str(path), reason=f"MISSING · {path}")
+
+    prov = ComposeProvenance(path=str(target))
+    try:
+        prov.rel = str(target.relative_to(root))
+    except Exception:
+        prov.rel = ""
+
+    if not target.is_file():
+        prov.kind = "missing"
+        prov.reason = f"MISSING · {prov.rel or target}"
+        return prov
+
+    name = target.name
+    if name.startswith("c3-genc-") or name.startswith("_brought-"):
+        prov.kind = "generated"
+        prov.editable = True
+        prov.reason = "GENERATED · ephemeral — regenerated by ② Serve"
+        return prov
+    if prov.rel:
+        parts = Path(prov.rel).parts
+        if parts[:1] == ("models",):
+            prov.kind = "curated"
+            prov.editable = False
+            prov.reason = "CURATED · git-tracked · read-only here"
+            return prov
+        if parts[:3] == ("scripts", "lib", "profiles-local"):
+            prov.kind = "local"
+            prov.editable = True
+            prov.reason = "LOCAL LAYER · yours"
+            return prov
+    prov.kind = "external"
+    prov.editable = True
+    prov.reason = "YOUR FILE · outside the curated catalog"
+    return prov
+
+
 def derive_compose_facts(text: str, path: str = "") -> ComposeFacts:
     """Read a user-supplied compose (#1153 Route-K). Never raises.
 
@@ -2463,10 +2628,26 @@ def derive_compose_facts(text: str, path: str = "") -> ComposeFacts:
             continue
         toks.extend(t.strip('"').strip("'") for t in ln.split() if t.strip('"').strip("'"))
 
+    # YAML block-scalar introducers. A flag whose "value" is one of these did not
+    # get a value at all — the next line starts a literal block.
+    _BLOCK_SCALARS = {"|", ">", "|-", ">-", "|+", ">+"}
+    # A short flag directly after a shell is the SHELL's flag, not the engine's:
+    # `entrypoint: [bash, -c, |...]` is the standard vLLM compose shape, and its
+    # bash -c was being read as llama.cpp's -c (ctx-size), so max_ctx came back
+    # as "|" for every such compose.
+    _SHELLS = {"bash", "sh", "zsh", "/bin/bash", "/bin/sh"}
+
     def flag(*names: str) -> str:
-        for i, t in enumerate(toks):
-            base = t.split("=", 1)[0]
-            if base in names:
+        # Alias PRIORITY, not token order: callers list the canonical name first
+        # (e.g. "--max-model-len" before "-c"), so an unrelated short flag
+        # appearing earlier in the file must not win over the real one.
+        for name in names:
+            for i, t in enumerate(toks):
+                base = t.split("=", 1)[0]
+                if base != name:
+                    continue
+                if i > 0 and toks[i - 1] in _SHELLS and not name.startswith("--"):
+                    continue
                 if "=" in t:                      # --flag=value
                     v = t.split("=", 1)[1]
                 elif i + 1 < len(toks):           # --flag value
@@ -2474,7 +2655,7 @@ def derive_compose_facts(text: str, path: str = "") -> ComposeFacts:
                 else:
                     continue
                 v = v.strip().strip('"').strip("'")
-                if v and not v.startswith("-"):
+                if v and not v.startswith("-") and v not in _BLOCK_SCALARS:
                     return v
         return ""
 
