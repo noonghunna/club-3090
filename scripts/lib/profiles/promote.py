@@ -647,13 +647,44 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument(
         "--layer",
         choices=("local", "core"),
-        default="local",
+        default=None,          # None => "not chosen"; resolved to local below
         help="write target: local (default — scripts/lib/profiles-local/, never "
         "touches core) or core (curated catalog; needs " + _CORE_GATE_ENV + "=1)",
+    )
+    ap.add_argument(
+        "--yes", action="store_true",
+        help="skip the interactive layer confirm (implied when --layer is given, "
+        "or when stdin is not a TTY)",
     )
     ap.add_argument("--root", default=str(_DEFAULT_ROOT), help="repo root (default: this checkout)")
     ap.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     args = ap.parse_args(argv)
+
+    # #1142 item 6: `local` is the safe default, but it was taken SILENTLY — the
+    # user never learned a choice existed. Pose it when the layer was defaulted
+    # AND a human is present. c3 already does this (its Promote screen names all
+    # three destinations); this makes the CLI agree. Skipped when --layer was
+    # given (the cockpit always passes it and has its own confirm), under --yes,
+    # under --dry-run, and whenever stdin is not a TTY — so scripts and tests are
+    # untouched.
+    layer_defaulted = args.layer is None
+    args.layer = args.layer or "local"
+    if layer_defaulted and not args.yes and not args.dry_run and sys.stdin.isatty():
+        print(
+            f"[promote] no --layer given → writing the LOCAL layer "
+            f"(scripts/lib/profiles-local/, gitignored, never touches the curated "
+            f"catalog).\n[promote]   --layer core   = curated catalog "
+            f"(maintainer-only, needs {_CORE_GATE_ENV}=1)\n"
+            f"[promote]   export_pr.py = turn this local model into a PR bundle later",
+            file=sys.stderr,
+        )
+        try:
+            reply = input("[promote] write the LOCAL layer? [Y/n] ").strip().lower()
+        except EOFError:
+            reply = ""
+        if reply not in ("", "y", "yes"):
+            print("[promote] aborted — nothing written", file=sys.stderr)
+            return EXIT_COLLISION
 
     root = Path(args.root).resolve()
     # #1142: the shell launchers source <root>/.env, but these tools are invoked
@@ -697,7 +728,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     # ── Post-write sanity ───────────────────────────────────────────────────
     _post_write_checks(root, spec, profile_path)
     _info(f"import-sanity + registry-emit re-check passed for {slug}")
-    print(f"PROMOTE_OK {slug}")
+    # #1142 item 6: state the layer on every run — "PROMOTE_OK <slug>" alone left
+    # the reader unable to tell whether their model went to their own checkout or
+    # to the curated catalog.
+    print(f"PROMOTE_OK {slug} [layer={args.layer}]")
     return 0
 
 
