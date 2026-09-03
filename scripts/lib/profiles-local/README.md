@@ -33,6 +33,25 @@ python3 scripts/lib/profiles/promote.py --layer local --spec-env C3_PROMOTE_SPEC
 
 That writes all three artifacts above and prints `PROMOTE_OK <slug>`.
 
+## Removing a local model
+
+```
+python3 scripts/lib/profiles/demote.py --slug local/<name>            # asks first
+python3 scripts/lib/profiles/demote.py --slug local/<name> --dry-run  # show the plan
+```
+
+Removes all three artifacts and prints `DEMOTE_OK <slug>`. It takes the
+**registry entry out first**: if a later unlink fails you are left with files but
+no slug, never a slug pointing at files that are gone — the second is the one
+that breaks every launcher, because the catalog keeps offering a config whose
+compose no longer exists.
+
+It only ever touches this layer. There is no `--layer core`: a curated entry
+lives in git-tracked files and git is its removal tool, so asking to remove a
+non-`local/` slug is refused before anything is read. If two local slugs share a
+model id, the shared profile and compose tree are **kept** and only the slug you
+named is unregistered.
+
 ## The manual way
 
 1. Write `models.d/<id>.yml` (copy the shape of an existing
