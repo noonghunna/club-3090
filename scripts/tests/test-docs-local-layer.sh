@@ -61,11 +61,27 @@ done
 
 # promote.py must keep defaulting to the safe layer, and keep the core gate.
 python3 - <<'PY' || fail=1
-import re, sys
+import re, subprocess, sys
 src = open("scripts/lib/profiles/promote.py", encoding="utf-8").read()
 ok = True
-if not re.search(r'"--layer".*?default="local"', src, re.S):
-    print("  FAIL promote.py --layer no longer defaults to 'local'"); ok = False
+
+# BEHAVIOUR, not the literal. This check used to assert `default="local"` in the
+# argparse call — and went red when #1155 changed it to `default=None` + a
+# `args.layer or "local"` resolution, which preserves the behaviour exactly. A
+# guard that tests a spelling instead of an outcome fails on a correct change and
+# teaches people to edit the guard. Ask the tool what it does instead.
+help_out = subprocess.run(
+    [sys.executable, "scripts/lib/profiles/promote.py", "--help"],
+    capture_output=True, text=True,
+).stdout
+if "local (default" not in help_out:
+    print("  FAIL promote.py --help no longer states that LOCAL is the default")
+    ok = False
+if not re.search(r'choices=\("local",\s*"core"\)', src):
+    print("  FAIL promote.py --layer no longer offers exactly local|core"); ok = False
+# a defaulted (None) layer must still resolve to local, never to core
+if not re.search(r'args\.layer\s*=\s*args\.layer\s*or\s*"local"', src):
+    print("  FAIL a defaulted --layer no longer resolves to 'local'"); ok = False
 if '_CORE_GATE_ENV = "C3_ALLOW_CORE_PROMOTE"' not in src:
     print("  FAIL promote.py core gate env renamed/removed"); ok = False
 sys.exit(0 if ok else 1)

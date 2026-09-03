@@ -5496,6 +5496,67 @@ class TestPromoteHookWired:
             assert "scripts/tests/*.sh" in body   # authoritative-before-commit note
 
     @pytest.mark.asyncio
+    async def test_route_k_ingests_a_user_compose_and_arms_serve(self):
+        """#1153 Route-K: a compose path at ① is read, armed for ②, and reaches ⑤.
+
+        This is the BYOM position the funnel had no door for — weights already on
+        disk, compose already written. No HF call, no download, no catalog
+        reproduction: the user's file IS what gets served and registered."""
+        import tempfile as _tf
+        from pathlib import Path as _P
+
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        with _tf.TemporaryDirectory() as td:
+            cpath = _P(td) / "my-model.yml"
+            cpath.write_text(
+                "services:\n  vllm:\n    image: vllm/vllm-openai:v0.27.1\n"
+                '    ports:\n      - "${PORT:-20242}:8000"\n'
+                "    command:\n      - --model\n      - /mnt/models/huggingface/mine\n"
+                "      - --max-model-len\n      - \"131072\"\n",
+                encoding="utf-8",
+            )
+            async with app.run_test(size=(120, 40)) as pilot:
+                await _settle(pilot)
+                await pilot.press("2")
+                await _settle(pilot)
+                app.query_one("#lane-bring-url-input", Input).value = str(cpath)
+                app._trigger_lane_bring()
+                await _settle(pilot)
+
+                byo = app._last_byo
+                assert byo is not None and byo.route == "K", f"route={byo and byo.route}"
+                assert byo.error == ""
+                assert app._bring_swap_compose == str(cpath)
+                # what the compose stated, read back
+                facts = app._bring_compose_facts
+                assert facts.engine == "vllm"
+                assert facts.model_path == "/mnt/models/huggingface/mine"
+                assert facts.port == "20242"
+
+                # ① [s] must NOT demand a download: the weights probe only knows
+                # c3's own pull dir, and Route-K's compose points at its own weights
+                app._bring_advance_to_serve()
+                await _settle(pilot)
+
+                # and ⑤ carries the user's compose, not an empty string (#1156)
+                text, src = app._promote_compose_text()
+                assert "vllm/vllm-openai" in text
+                assert src == str(cpath)
+            assert wr.started == []      # nothing executed
+
+    async def test_route_k_only_triggers_on_a_real_compose_file(self):
+        """An HF repo must never be mistaken for a path, and a bogus path must not
+        claim to be one — it falls through to the HF check, whose error names the
+        repo."""
+        app, _, _ = make_app(surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            assert app._looks_like_compose_path("org/Model-Name") is False
+            assert app._looks_like_compose_path("unsloth/Qwen3-27B") is False
+            assert app._looks_like_compose_path("/nope/missing.yml") is False
+            assert app._looks_like_compose_path("") is False
+
     async def test_promote_spec_is_accepted_by_the_real_promote_executor(self):
         """#1156: validate the plan with the tool that will RUN it.
 
