@@ -1232,8 +1232,9 @@ class CatalogPane(Container):
             id="catalog-preview",
         )
         yield Label(
-            "[dim]\\[\\] model   \\[/] filter   \\[⏎] serve   \\[e] explain   "
-            "\\[d] set-default   \\[D] clear-default   \\[s] sort   \\[|] columns[/dim]",
+            "[dim]\\[\\] model   \\[/] filter   \\[⏎] serve   \\[c] compose   "
+            "\\[e] explain   \\[d] set-default   \\[D] clear-default   "
+            "\\[s] sort   \\[|] columns[/dim]",
             id="catalog-hint",
         )
 
@@ -2079,7 +2080,19 @@ class ComposeViewScreen(_CopyableModal, ModalScreen):
     }
     ComposeViewScreen #compose-scroll {
         height: 1fr;
-        border: solid $primary;
+        /* NO border here, and a right gutter instead.
+           A compose is arbitrary user text: the inkling-small moecache header
+           alone carries 27 U+FE0F (VS16) characters plus ambiguous-width ones
+           (— → ≥ ─ • …). Rich reserves 2 cells for those; many terminals draw 1
+           — the documented misalignment class in this repo's AGENTS.md. Any
+           fixed-width chrome to the RIGHT of that text lands in the wrong column
+           on exactly the rows that contain them, so the border appeared to break
+           up as you scrolled. Sanitising the text is not an option in a viewer
+           whose job is to show the file faithfully, so the fragile element goes
+           instead: the rule line above already separates the YAML from the facts,
+           and the gutter absorbs a one-cell overrun before it reaches the modal's
+           own border. */
+        padding: 0 2 0 0;
     }
     """
 
@@ -4797,6 +4810,7 @@ class OperateContainersPane(Container):
                 yield Static("[dim]highlight a container (move cursor) to load its config[/dim]", id="drill-config")
         yield Label(
             "[dim]move cursor or \\[l]/\\[t] to load detail · \\[l] logs   \\[t] top   "
+            "\\[c] compose   "
             "\\[f] follow   \\[s] restart · start if stopped (gated)   \\[x] stop (gated)   "
             "\\[X] rm (reconcile-gated)[/dim]",
             id="containers-hint",
