@@ -6531,6 +6531,20 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
             )
             return
         spec = self._edited_spec()
+        # #1156: refuse BEFORE pop_screen, next to the maintainer gate above and
+        # for the same reason — promote.py rejects an empty spec.compose.content
+        # (exit 3), and that refusal reached only the RunLog, so a doomed write
+        # read as "dispatched". Refusing here keeps the user's filled-in
+        # display_name/family instead of dropping them with the screen.
+        if not ((spec.get("compose") or {}).get("content") or "").strip():
+            self.notify(
+                "Nothing to register: ⑤ writes the compose that was actually "
+                "served — serve the model at ② first, then promote.",
+                title="Promote",
+                severity="error",
+                timeout=7,
+            )
+            return
         self.app.pop_screen()
         if self._on_stage_write is not None:
             self._on_stage_write(layer, spec)
@@ -13894,7 +13908,15 @@ class CockpitApp(App):
             )
             return
         meas = self._measurement_for_promote()
-        scaffold = self._data.promote_scaffold(byo=self._last_byo, measurement=meas)
+        # #1156: the scaffold's spec.compose.content was NEVER filled — the app
+        # called promote_scaffold() without compose_text, data.py defaulted it to
+        # "", and promote.py refuses an empty content (exit 3). Every "Write LOCAL
+        # layer" from this screen was refused, and the refusal only reached the
+        # RunLog, so it read as a success. Pass the compose ②③④ actually served.
+        compose_text, _compose_src = self._promote_compose_text()
+        scaffold = self._data.promote_scaffold(
+            byo=self._last_byo, measurement=meas, compose_text=compose_text,
+        )
         if not scaffold.computed:
             self.notify(
                 f"Cannot scaffold: {scaffold.error or 'incomplete BYO facts'}",
@@ -13908,10 +13930,8 @@ class CockpitApp(App):
         self.push_screen(
             PromoteScaffoldScreen(
                 scaffold,
-                on_stage_write=lambda layer, spec: self.push_screen(
-                    ConfirmActionScreen(
-                        self._data.promote_write_plan(scaffold, layer=layer, spec=spec)
-                    )
+                on_stage_write=lambda layer, spec: self._stage_promote_write(
+                    scaffold, layer, spec
                 ),
                 on_export_pr=lambda spec: self.push_screen(
                     ConfirmActionScreen(
@@ -13921,6 +13941,49 @@ class CockpitApp(App):
                 ),
             )
         )
+
+    def _stage_promote_write(self, scaffold, layer: str, spec: dict) -> None:
+        """Gate the ⑤ write on having a compose to register (#1156).
+
+        The PREVIEW is allowed without one — ⑤ is advertised as a preview and [P]
+        must still open after a bare fit-check. The WRITE is not: promote.py
+        refuses an empty ``spec.compose.content`` (exit 3), and that refusal used
+        to reach only the RunLog, so a doomed write reported as "dispatched".
+        Say it here, where the user is looking."""
+        if not ((spec.get("compose") or {}).get("content") or "").strip():
+            self.notify(
+                "Nothing to register: ⑤ writes the compose that was actually "
+                "served — serve the model at ② first, then promote.",
+                title="⑤ Promote",
+                severity="warning",
+                timeout=7,
+            )
+            return
+        self.push_screen(
+            ConfirmActionScreen(
+                self._data.promote_write_plan(scaffold, layer=layer, spec=spec)
+            )
+        )
+
+    def _promote_compose_text(self) -> tuple[str, str]:
+        """The compose ⑤ should register — the one ②③④ actually served (#1156).
+
+        Returns (text, source-path). ("", "") when nothing has been served, which
+        the caller turns into a visible refusal rather than a doomed write plan.
+
+        NOTE: only the CONTENT travels. `sibling_compose_path` is deliberately NOT
+        passed — it overrides the DESTINATION path, and promote.py requires a local
+        write to land under scripts/lib/profiles-local/composes/ (it refuses
+        anything outside the layer)."""
+        from pathlib import Path as _Path   # module-scope Path is not imported here
+
+        path = getattr(self, "_bring_swap_compose", "") or ""
+        if not path:
+            return "", ""
+        try:
+            return _Path(path).read_text(encoding="utf-8"), path
+        except OSError:
+            return "", path
 
     def _measurement_for_promote(self) -> Optional[Measurement]:
         """Best-effort Evidence measurement for the Promote scaffold: the matched
