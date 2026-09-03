@@ -93,6 +93,19 @@ FAKE_REPO_ROOT = Path("/tmp/fake-club-3090-test-root")
 # ---------------------------------------------------------------------------
 
 
+# #1156: a minimal but REAL compose — ⑤ must register the one that was served.
+_FAKE_COMPOSE = (
+    "# Profile (at-a-glance):\n"
+    "#   Status: 🐣 Incubating\n"
+    "# ---\n"
+    "services:\n"
+    "  llm:\n"
+    "    image: vllm/vllm-openai:v0.27.1\n"
+    "    ports:\n"
+    '      - "${PORT:-20242}:8000"\n'
+)
+
+
 class FakeRunner:
     """Canned-output read runner keyed on a substring of the command.
 
@@ -5483,6 +5496,86 @@ class TestPromoteHookWired:
             assert "scripts/tests/*.sh" in body   # authoritative-before-commit note
 
     @pytest.mark.asyncio
+    async def test_promote_spec_is_accepted_by_the_real_promote_executor(self):
+        """#1156: validate the plan with the tool that will RUN it.
+
+        The mock-only test asserts the plan's SHAPE and stops — a FakeWriteRunner
+        cannot disagree with you. That is exactly how a spec carrying an empty
+        `compose.content`, which promote.py refuses with exit 3 on every single
+        invocation, sat under a green suite. Feed the built spec to the real
+        executor in --dry-run (validates fully, writes nothing)."""
+        import os as _os
+        import subprocess as _sp
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _repo = _Path(__file__).resolve().parents[3]   # <repo>/tools/serve-cockpit/tests
+
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
+            app.screen.on_input_changed(None)
+            app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            app.screen.on_input_changed(None)
+            # #1156: ⑤ registers the compose ②③④ served; the write is refused
+            # without one. These tests exercise the GATE, not the compose source.
+            app.screen._scaffold.spec["compose"]["content"] = _FAKE_COMPOSE
+            app.screen.query_one("#promote-stage-btn", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmActionScreen)
+            spec_json = app.screen._plan.env["C3_PROMOTE_SPEC"]
+
+        env = dict(_os.environ)
+        env["C3_PROMOTE_SPEC"] = spec_json
+        env.pop("C3_ALLOW_CORE_PROMOTE", None)
+        res = _sp.run(
+            [_sys.executable, str(_repo / "scripts/lib/profiles/promote.py"),
+             "--spec-env", "C3_PROMOTE_SPEC", "--layer", "local",
+             "--root", str(_repo), "--dry-run"],
+            capture_output=True, text=True, env=env, cwd=str(_repo),
+        )
+        assert res.returncode == 0, (
+            "the real promote.py REFUSED the spec this screen builds:\n"
+            f"{res.stderr}{res.stdout}"
+        )
+        assert "REFUSED" not in res.stderr
+
+    async def test_promote_write_refused_without_a_served_compose(self):
+        """#1156: ⑤ registers the compose ②③④ served. With none in hand the write
+        must be refused ON SCREEN — not built into a plan promote.py will reject
+        with exit 3 while the RunLog swallows the reason."""
+        wr = FakeWriteRunner()
+        app, _, _ = make_app(write_runner=wr, surface="producer")
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            app.run_byo_check("unsloth/Qwen3-27B-abliterated", "vllm/dual")
+            await _settle(pilot)
+            await pilot.press("2")
+            await _settle(pilot)
+            await pilot.press("P")
+            await pilot.pause()
+            # the PREVIEW still opens — ⑤ is advertised as a preview
+            assert isinstance(app.screen, PromoteScaffoldScreen)
+            app.screen.query_one("#promote-display-input", Input).value = "Q"
+            app.screen.on_input_changed(None)
+            app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
+            app.screen.on_input_changed(None)
+            app.screen.query_one("#promote-stage-btn", Button).press()
+            await pilot.pause()
+            # ...but the WRITE is refused: no confirm screen, nothing dispatched
+            assert isinstance(app.screen, PromoteScaffoldScreen), (
+                "a write with no compose in hand must not reach the confirm gate"
+            )
+            assert wr.started == []
+
     async def test_promote_stage_write_is_gated_mock_only(self):
         """Staging the write opens the standard confirm gate; the plan is
         mock-only and writes nothing into scripts/ (no auto-fire)."""
@@ -5506,6 +5599,9 @@ class TestPromoteHookWired:
             assert app.screen.query_one("#promote-stage-btn", Button).disabled is True
             app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
             app.screen.on_input_changed(None)
+            # #1156: ⑤ registers the compose ②③④ served; the write is refused
+            # without one. These tests exercise the GATE, not the compose source.
+            app.screen._scaffold.spec["compose"]["content"] = _FAKE_COMPOSE
             assert app.screen.query_one("#promote-stage-btn", Button).disabled is False
             # Stage the gated write — routes through ConfirmActionScreen.
             app.screen.query_one("#promote-stage-btn", Button).press()
@@ -5520,6 +5616,9 @@ class TestPromoteHookWired:
             assert _spec["display_name"] == "Qwen3 27B Abliterated"
             assert _spec["family"] == "qwen3-dense"
             assert _spec["registry_entry"]["slug"].startswith("local/")
+            # #1156: THIS assertion was missing, and its absence let a plan that
+            # promote.py always refuses (empty compose.content) pass as green.
+            assert _spec["compose"]["content"].strip(), "spec.compose.content is empty"
             # Nothing executed yet — the write is mock-only and never auto-fired.
             assert wr.started == []
 
@@ -5563,6 +5662,9 @@ class TestPromoteHookWired:
             app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
             app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
             app.screen.on_input_changed(None)
+            # #1156: ⑤ registers the compose ②③④ served; the write is refused
+            # without one. These tests exercise the GATE, not the compose source.
+            app.screen._scaffold.spec["compose"]["content"] = _FAKE_COMPOSE
             # WITHOUT the flag: refused in-screen, nothing staged.
             app.screen._stage_write(layer="core")
             await pilot.pause()
@@ -11235,6 +11337,9 @@ class TestTier1PreviewModalEnterBindings:
             app.screen.query_one("#promote-display-input", Input).value = "Qwen3 27B Abliterated"
             app.screen.query_one("#promote-family-input", Input).value = "qwen3-dense"
             app.screen.on_input_changed(None)
+            # #1156: ⑤ registers the compose ②③④ served; the write is refused
+            # without one. These tests exercise the GATE, not the compose source.
+            app.screen._scaffold.spec["compose"]["content"] = _FAKE_COMPOSE
             await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, ConfirmActionScreen)
