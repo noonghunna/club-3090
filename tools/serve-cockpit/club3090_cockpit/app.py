@@ -1048,7 +1048,7 @@ class HelpScreen(ModalScreen):
             "",
             "  click row = select + preview   double-click row = model info (\\[i])",
             "  click column header = column picker ([|])",
-            "  [Y] copies the context-relevant text (OSC52 — needs an OSC52 terminal;",
+            "  \\[Y] copies the context-relevant text (OSC52 — needs an OSC52 terminal;",
             "  works over SSH). To drag-select raw text, hold SHIFT while dragging —",
             "  the terminal bypasses the app's mouse capture and selects natively.",
          ])
@@ -3401,12 +3401,12 @@ class ConfirmActionScreen(ModalScreen):
         if self._thinking == "inherit":
             lines.append(
                 "  [bold]thinking[/bold] [dim]inherit[/dim] — no env injected "
-                "(entrypoint default: off → instruct row) · [t] force-on"
+                "(entrypoint default: off → instruct row) · \\[t] force-on"
             )
         elif self._thinking == "on":
             lines.append(
                 "  [bold]thinking[/bold] [green]FORCE-ON[/green] "
-                "([green]ENABLE_THINKING=true[/green]) · [t] cycle"
+                "([green]ENABLE_THINKING=true[/green]) · \\[t] cycle"
             )
             lines.append(
                 f"  [bold]sampler[/bold] thinking row: temp "
@@ -3420,26 +3420,26 @@ class ConfirmActionScreen(ModalScreen):
                 lines.append(
                     "  [bold]sampler[/bold] card defaults apply"
                     + (" — inherited overrides cleared" if self._sampler_reset else "")
-                    + " · [r] reset to card defaults"
+                    + " · \\[r] reset to card defaults"
                 )
             else:
                 shown = ", ".join(f"{k}={v}" for k, v in sorted(ovr.items()))
                 lines.append(
                     "  [yellow]⚠ shell overrides beat the card row:[/yellow] "
-                    f"{shown} · [r] reset to card defaults"
+                    f"{shown} · \\[r] reset to card defaults"
                 )
         else:
             lines.append(
                 "  [bold]thinking[/bold] FORCE-OFF "
                 "([yellow]ENABLE_THINKING=false[/yellow] — pins the instruct row even "
-                "if the shell exports true) · [t] cycle"
+                "if the shell exports true) · \\[t] cycle"
             )
         # Persisted default (#1014 follow-up) — what switch.sh will resolve on
         # later launches. inherit has nothing to save ([T] is gated off there).
         persisted = self._thinking_persisted()
         disp = persisted if persisted else "none"
         suffix = (
-            f" · [T] save '{self._thinking}' as default"
+            f" · \\[T] save '{self._thinking}' as default"
             if self._thinking != "inherit"
             else ""
         )
@@ -3682,25 +3682,25 @@ class ConfirmActionScreen(ModalScreen):
                     lines.append(
                         "  [bold]int8 acts[/bold] [green]ON[/green] "
                         "([green]VLLM_MARLIN_INPUT_DTYPE=int8[/green] — W4A8 prefill "
-                        f"win, quality-tied ⚑{learn}) · [a] toggle"
+                        f"win, quality-tied ⚑{learn}) · \\[a] toggle"
                     )
                 else:
                     lines.append(
                         "  [bold]int8 acts[/bold] [dim]off[/dim] "
-                        f"(W4A8 int8 activations ⚑ experimental{learn}) · [a] enable"
+                        f"(W4A8 int8 activations ⚑ experimental{learn}) · \\[a] enable"
                     )
             elif mode == "inverted":
                 if self._act8_on:
                     lines.append(
                         "  [bold]int8 acts[/bold] [green]ON[/green] "
                         "(shipped default — W4A8 int8 activations, quality-tied ⚑"
-                        f"{learn}) · [a] disable"
+                        f"{learn}) · \\[a] disable"
                     )
                 else:
                     lines.append(
                         "  [bold]int8 acts[/bold] [dim]off[/dim] "
                         "(W4A16 via [green]W4A8=0[/green] — gives up the int8 prefill "
-                        f"win{learn}) · [a] enable"
+                        f"win{learn}) · \\[a] enable"
                     )
             elif mode == "fixed":
                 lines.append(
@@ -4819,7 +4819,7 @@ class OperateContainersPane(Container):
                     placeholder="Select a running container — its docker logs stream here.",
                 )
             with TabPane("Top", id="drill-tab-stats"):
-                yield Static("[dim]highlight a container (move cursor) or press [t] — docker top loads[/dim]", id="drill-stats")
+                yield Static("[dim]highlight a container (move cursor) or press \\[t] — docker top loads[/dim]", id="drill-stats")
             with TabPane("Config", id="drill-tab-config"):
                 yield Static("[dim]highlight a container (move cursor) to load its config[/dim]", id="drill-config")
         yield Label(
@@ -6650,8 +6650,8 @@ class FirstRunScreen(ModalScreen):
         lines += [
             "",
             " [cyan]1 · Pick[/cyan]     keys [1-3] choose the model above.",
-            " [cyan]2 · Download[/cyan] [d] — fetch its weights (resumable; the normal [D] action).",
-            " [cyan]3 · Launch[/cyan]   [l] — the usual reconcile-gated serve confirm.",
+            " [cyan]2 · Download[/cyan] \\[d] — fetch its weights (resumable; the normal \\[D] action).",
+            " [cyan]3 · Launch[/cyan]   \\[l] — the usual reconcile-gated serve confirm.",
         ]
         return "\n".join(lines)
 
@@ -7133,7 +7133,7 @@ class ExportPrBundleScreen(_CopyableModal, ModalScreen):
             )
             yield Static(self._body_text(), id="export-body")
             yield Label(
-                "[dim][Y] copy bundle paths · Esc Close[/dim]",
+                "[dim]\\[Y] copy bundle paths · Esc Close[/dim]",
             )
 
     def _body_text(self) -> str:
@@ -9031,7 +9031,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("power_cap", "Power cap…", "Orchestration — power-cap menu: default 230W / clear / custom W (gated)"),
     ("power_cap_sweep", "Power cap sweep", "Doctor — sweep power caps + bench at each (gated)"),
     ("container_logs", "Container logs", "Containers — stream the selected container's logs"),
-    ("container_follow", "Container log follow", "Containers — [f] arm/pause the live log tail for the selected container"),
+    ("container_follow", "Container log follow", "Containers — \\[f] arm/pause the live log tail for the selected container"),
     ("doctor_rerun", "Re-run Doctor health", "Doctor — re-run the live health read (read-only)"),
     ("doctor_verify", "Verify serving", "Doctor — send a test query to the model (verify.sh · read)"),
     ("doctor_verify_full", "Verify-full battery", "Doctor — functional battery (verify-full.sh · ~1-2 min · read)"),
@@ -10361,7 +10361,7 @@ class CockpitApp(App):
         # trusted otherwise) — a banner on the catalog status line ([S] to set).
         from pathlib import Path as _Path
         mdir = self._data.weights_model_dir()
-        note = "" if _Path(mdir).is_dir() else f"⚠ model dir not found ({mdir}) — press [S] to set it"
+        note = "" if _Path(mdir).is_dir() else f"⚠ model dir not found ({mdir}) — press \\[S] to set it"
         pane.set_model_dir_note(note)
         # First-run guide (fresh-rig onboarding): AFTER the weights join, an
         # all-absent catalog + no local measurements → the ONE-TIME dismissable
@@ -11436,7 +11436,7 @@ class CockpitApp(App):
         # second 20+ GB fetch of the same repo (#617).  [k] cancels.
         if repo in self._active_bring_download():
             self.notify(
-                f"Already downloading {repo} — press [k] to cancel.",
+                f"Already downloading {repo} — press \\[k] to cancel.",
                 title="Download", timeout=4,
             )
             return
@@ -11447,7 +11447,7 @@ class CockpitApp(App):
         if _disk is not None:
             self.notify(
                 f"Already downloading {repo} (pid {_disk.get('pid')}) — "
-                "press [k] to cancel.",
+                "press \\[k] to cancel.",
                 title="Download", timeout=4,
             )
             return
@@ -11482,7 +11482,7 @@ class CockpitApp(App):
         if size_gb and size_gb > 0 and not fits:
             self.notify(
                 f"Disk may be tight ({free_gb:.0f} GB free / ~{need_gb:.0f} needed) "
-                "— starting anyway; free space or change Model Dir [S] if it fails.",
+                "— starting anyway; free space or change Model Dir \\[S] if it fails.",
                 title="Download", severity="warning", timeout=8,
             )
         # One download at a time (shared runner + exclusive worker): starting a
@@ -13074,7 +13074,7 @@ class CockpitApp(App):
             getattr(byo, "repo", "")
         ):
             self.notify(
-                "Weights not on disk yet — press [D] to download first.",
+                "Weights not on disk yet — press \\[D] to download first.",
                 title="② Serve", severity="warning", timeout=4,
             )
             return
@@ -13445,7 +13445,7 @@ class CockpitApp(App):
         self.stream_container_logs(con.name)  # snapshot — rebases the anchor (Task 4)
         self._log_follow_timer = self.set_interval(_LOG_FOLLOW_PERIOD, self._log_follow_tick)
         self._set_log_follow_title()
-        self.notify("Log follow armed — [f] to pause", title="Logs", timeout=3)
+        self.notify("Log follow armed — \\[f] to pause", title="Logs", timeout=3)
 
     def _log_follow_pause(self) -> None:
         """following → paused: stop the timer (anchor/name kept)."""
@@ -14720,7 +14720,7 @@ class CockpitApp(App):
         if not swap_compose:
             self.notify(
                 "② Serve: apply-swap --emit-only produced no compose — see the log. "
-                "You can still press [D] to download + emit.",
+                "You can still press \\[D] to download + emit.",
                 title="② Serve", severity="warning", timeout=6,
             )
             return
@@ -14852,7 +14852,7 @@ class CockpitApp(App):
             weights_file = ""
         if not weights_file:
             self.notify(
-                "No .gguf on disk yet — press [D] to download the selected quant.",
+                "No .gguf on disk yet — press \\[D] to download the selected quant.",
                 title="② Serve", severity="warning", timeout=5,
             )
             return

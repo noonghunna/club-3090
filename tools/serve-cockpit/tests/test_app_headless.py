@@ -1232,13 +1232,22 @@ class TestNavNodesExist:
         """#1014 L3: while the resolved mode is thinking, the card shows the
         registry 'thinking' row (temp/top_p/presence) near the toggle; inherit
         shows no sampler row; force-off pins the instruct row explicitly."""
+        # Assert on the MARKUP-PARSED line, not the raw source string: the key
+        # hints are written `\\[t]` / `\\[r]`, and a raw-substring assertion for
+        # "[t]" passes whether or not the escape is present — so it never
+        # protected the thing it looks like it protects (Textual deletes an
+        # unescaped `[t]`).  Parsing first makes the assertion real.
+        def _seen(lines):
+            from textual.content import Content
+            return "\n".join(Content.from_markup(ln).plain for ln in lines)
+
         m = self._thinking_modal(tmp_path=tmp_path)
         inherit_lines = m._thinking_card_lines()
-        assert any("inherit" in ln and "[t]" in ln for ln in inherit_lines)
+        assert "[t]" in _seen(inherit_lines) and "inherit" in _seen(inherit_lines)
         assert not any("temp" in ln for ln in inherit_lines)
 
         m.action_cycle_thinking()   # → on
-        on_lines = "\n".join(m._thinking_card_lines())
+        on_lines = _seen(m._thinking_card_lines())
         assert "FORCE-ON" in on_lines and "ENABLE_THINKING=true" in on_lines
         assert "temp 1 · top_p 0.95 · presence 0" in on_lines, on_lines
         assert "model card" in on_lines and "[r] reset to card defaults" in on_lines
@@ -13772,10 +13781,14 @@ class TestSettings:
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             pane = app.query_one("#catalog-pane", CatalogPane)
-            pane.set_model_dir_note("⚠ model dir not found — press [S] to set it")
+            # Mirror the production note verbatim (app.py escapes the key hint):
+            # the banner is interpolated into a markup Static, so an unescaped
+            # "[S]" is deleted before the user sees it.
+            pane.set_model_dir_note("⚠ model dir not found — press \\[S] to set it")
             await pilot.pause()
-            status = str(app.query_one("#catalog-status", Label).render())
+            status = _renderable_text(app.query_one("#catalog-status", Label))
             assert "model dir not found" in status
+            assert "[S]" in status, status
 
     @pytest.mark.asyncio
     async def test_env_model_dir_picked_up(self, monkeypatch):
