@@ -8572,8 +8572,10 @@ class LaneServePane(Container):
 class LanePromotePane(Container):
     """⑤ Promote — checklist + the scaffold/write action.
 
-    Hosts [P] / the Preview button → PromoteScaffoldScreen.  Write remains
-    mock-only this phase (preview badge is persistent)."""
+    Hosts [P] / the Preview button → PromoteScaffoldScreen.  The write is
+    real: it runs promote.py to register the served compose into the LOCAL
+    layer, confirm-gated like every other write (the preview badge is
+    persistent)."""
 
     DEFAULT_CSS = """
     LanePromotePane {
