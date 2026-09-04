@@ -1232,13 +1232,22 @@ class TestNavNodesExist:
         """#1014 L3: while the resolved mode is thinking, the card shows the
         registry 'thinking' row (temp/top_p/presence) near the toggle; inherit
         shows no sampler row; force-off pins the instruct row explicitly."""
+        # Assert on the MARKUP-PARSED line, not the raw source string: the key
+        # hints are written `\\[t]` / `\\[r]`, and a raw-substring assertion for
+        # "[t]" passes whether or not the escape is present — so it never
+        # protected the thing it looks like it protects (Textual deletes an
+        # unescaped `[t]`).  Parsing first makes the assertion real.
+        def _seen(lines):
+            from textual.content import Content
+            return "\n".join(Content.from_markup(ln).plain for ln in lines)
+
         m = self._thinking_modal(tmp_path=tmp_path)
         inherit_lines = m._thinking_card_lines()
-        assert any("inherit" in ln and "[t]" in ln for ln in inherit_lines)
+        assert "[t]" in _seen(inherit_lines) and "inherit" in _seen(inherit_lines)
         assert not any("temp" in ln for ln in inherit_lines)
 
         m.action_cycle_thinking()   # → on
-        on_lines = "\n".join(m._thinking_card_lines())
+        on_lines = _seen(m._thinking_card_lines())
         assert "FORCE-ON" in on_lines and "ENABLE_THINKING=true" in on_lines
         assert "temp 1 · top_p 0.95 · presence 0" in on_lines, on_lines
         assert "model card" in on_lines and "[r] reset to card defaults" in on_lines
@@ -9930,19 +9939,28 @@ class TestFooterOutOfTabChain:
         # un-gating [2].  The mode keys [1]/[2] are now show=False permanently
         # (they cost scarce footer width on a 100-col terminal while the Modes
         # rail already teaches them), so a surface flip changes NO displayed
-        # binding and could no longer exercise this.  A mode flip can: entering
-        # the lane un-gates [⏎], which the footer does display.  It is also the
-        # change a user actually makes.
+        # binding and could no longer exercise this.
+        #
+        # It then used the mode flip un-gating [⏎].  That no longer works either:
+        # ⏎ is show=False on the app binding now (a focused DataTable's own
+        # `select_cursor` binding won the footer slot on Catalog / Orchestration /
+        # ③ Gate, so ⏎ appeared in some panes and not others for the same key;
+        # it is advertised in the Modes rail instead).  The invariant under test
+        # is unchanged — a REAL displayed-binding change must flip the signature
+        # and recompose — so it now rides on the same mode flip's DESCRIPTION
+        # change, which is exactly what `description`-in-the-signature exists for:
+        # `]` is relabelled "Next tab" → "Next stage".
         app, _, _ = make_app(surface="producer")
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             ff = app.query_one(FocusableFooter)
             sig_before = ff._last_binding_sig
-            # Sanity: [⏎] is NOT displayed in mode 0 (no ⏎ primary on entry).
-            assert "enter" not in {k.key for k in ff.query(FooterKey)}
-            await pilot.press("2")   # → Bring & Validate, where ⏎ = fit-check
+            labels_before = {k.key: k.description for k in ff.query(FooterKey)}
+            assert labels_before.get("right_square_bracket") == "Next tab", labels_before
+            await pilot.press("2")   # → Bring & Validate, where ] = "Next stage"
             await _settle(pilot)
-            assert "enter" in {k.key for k in ff.query(FooterKey)}
+            labels_after = {k.key: k.description for k in ff.query(FooterKey)}
+            assert labels_after.get("right_square_bracket") == "Next stage", labels_after
             assert ff._last_binding_sig != sig_before
 
 
@@ -10494,9 +10512,24 @@ class TestDoctorKeyboardNav:
             assert app.focused is not None and app.focused.id == "doctor-scroll"
 
     @pytest.mark.asyncio
-    async def test_footer_enter_label_follows_the_selection(self):
-        """The ⏎ label names the selected check — which only repaints because the
-        footer's recompose signature now includes `description`."""
+    async def test_enter_label_follows_the_selection(self):
+        """The ⏎ label names the SELECTED check and tracks ↑/↓.
+
+        Renamed from `test_footer_enter_label_follows_the_selection`: ⏎ is no
+        longer advertised in the footer at all (the app binding is show=False —
+        a focused DataTable's own `select_cursor` binding used to win that slot
+        on Catalog / Orchestration / ③ Gate, so ⏎ showed in some panes and not
+        others).  It is advertised in the Modes rail's `#mode-action-hint`, which
+        the same `_sync_footer_labels` line writes.  The invariant — the label
+        follows the cursor instead of naming a fixed check — is unchanged.
+
+        (The footer's recompose-signature-includes-`description` invariant that
+        this test used to double as a probe for is covered on its own by
+        `test_footer_recomposes_on_a_real_binding_change`.)
+
+        Read the RENDERED label, not the binding objects: `_relabel_binding`
+        mutates those either way, so asserting on them would pass even with the
+        repaint reverted."""
         from club3090_cockpit.app import _DOCTOR_CHECKS
 
         app, _, _ = make_app(surface="producer")
@@ -10504,22 +10537,15 @@ class TestDoctorKeyboardNav:
             await _settle(pilot)
             await self._enter_doctor(app, pilot)
 
-            # Read the RENDERED footer, not the binding objects: _relabel_binding
-            # mutates those either way, so asserting on them passes even with the
-            # recompose fix reverted (confirmed by negative control). The claim is
-            # about what the user SEES, so query the FooterKey widgets.
-            ff = app.query_one(FocusableFooter)
-
             def enter_label():
-                for k in ff.query(FooterKey):
-                    if k.key == "enter":
-                        return k.description
-                return ""
+                return _renderable_text(
+                    app.query_one("#mode-action-hint", Label)
+                ).strip()
 
-            assert enter_label() == _DOCTOR_CHECKS[0][2]
+            assert enter_label() == f"⏎ {_DOCTOR_CHECKS[0][2]}"
             await pilot.press("down")
             await _settle(pilot)
-            assert enter_label() == _DOCTOR_CHECKS[1][2]
+            assert enter_label() == f"⏎ {_DOCTOR_CHECKS[1][2]}"
 
     @pytest.mark.asyncio
     async def test_hotkeys_still_work_alongside_the_list(self):
@@ -11668,17 +11694,27 @@ class TestTier1PrimaryActionAndSKeyHonesty:
         "Enter Select" the Modes rail was showing. Doctor's cards are now a
         keyboard-navigable list whose ⏎ dispatches the selected check, so the
         honest state is the opposite — the key IS shown, and its label names the
-        check rather than a generic verb."""
+        check rather than a generic verb.
+
+        The ADVERTISEMENT moved: it used to read the Footer, but the app's ⏎
+        binding is show=False now — a focused DataTable's own `select_cursor`
+        binding won the footer slot, so ⏎ showed in some panes and vanished in
+        others (Catalog / Orchestration / ③ Gate all boot table-focused) for a key
+        that worked everywhere.  ⏎ is advertised in ONE place instead:
+        `#mode-action-hint` in the Modes rail, written by the same
+        `_sync_footer_labels` line that used to relabel the footer.  The invariant
+        this test protects — "⏎ is advertised on Doctor and names the SELECTED
+        check, not a generic verb" — is unchanged; only where it is read from."""
         from club3090_cockpit.app import _DOCTOR_CHECKS
 
         app, _, _ = make_app()
         async with app.run_test(size=(120, 40)) as pilot:
             await _enter_operate(pilot, tab="tab-doctor")
             assert app.check_action("primary_action", ()) is True
-            footer_keys = {k.key for k in app.query(FooterKey)}
-            assert "enter" in footer_keys
-            labels = {k.description for k in app.query(FooterKey) if k.key == "enter"}
-            assert labels == {_DOCTOR_CHECKS[0][2]}
+            hint = _renderable_text(app.query_one("#mode-action-hint", Label)).strip()
+            assert hint == f"⏎ {_DOCTOR_CHECKS[0][2]}", hint
+            # ...and it is NOT duplicated in the footer under a second label.
+            assert "enter" not in {k.key for k in app.query(FooterKey)}
 
     @pytest.mark.asyncio
     async def test_enter_not_advertised_on_containers(self):
@@ -13772,10 +13808,14 @@ class TestSettings:
         async with app.run_test(size=(120, 40)) as pilot:
             await _settle(pilot)
             pane = app.query_one("#catalog-pane", CatalogPane)
-            pane.set_model_dir_note("⚠ model dir not found — press [S] to set it")
+            # Mirror the production note verbatim (app.py escapes the key hint):
+            # the banner is interpolated into a markup Static, so an unescaped
+            # "[S]" is deleted before the user sees it.
+            pane.set_model_dir_note("⚠ model dir not found — press \\[S] to set it")
             await pilot.pause()
-            status = str(app.query_one("#catalog-status", Label).render())
+            status = _renderable_text(app.query_one("#catalog-status", Label))
             assert "model dir not found" in status
+            assert "[S]" in status, status
 
     @pytest.mark.asyncio
     async def test_env_model_dir_picked_up(self, monkeypatch):

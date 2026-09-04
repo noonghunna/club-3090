@@ -389,6 +389,28 @@ _CATALOG_COLUMNS: "list[tuple[str, str]]" = [
 ]
 _CATALOG_HEADERS = dict(_CATALOG_COLUMNS)
 _CATALOG_PINNED = {"slug"}  # identity — never hideable
+
+# #22 — narrow-terminal column default.  With all 16 columns on, an 80-col
+# terminal shows `model · slug · provider · we…` and nothing else: the table
+# needs 151 columns and gets 46, so the columns you actually PICK on (status,
+# ctx, TPS) sit ~100 columns off-screen right, reachable only by horizontal
+# scroll that nothing advertises.  Below _CATALOG_NARROW_COLS the config and
+# topology facets fold away by default, leaving identity + the decision columns.
+# This is a DEFAULT, not a lock: it applies only when the user has no persisted
+# [|] picker preference, and picking columns overrides it permanently.
+# Two tiers, because 80 and 120 are very different budgets.  Measured against
+# the rendered table width, not guessed:
+#   < 120 : fold the config + topology facets  → model · slug · ctx · TPS · status
+#   < 100 : also fold `model`  → slug · ctx · TPS · status  (the model is still
+#           named by the \\[\\] model-scope dropdown, the preview strip under the
+#           table, and the default group-by-model sort)
+_CATALOG_NARROW_COLS = 120
+_CATALOG_VERY_NARROW_COLS = 100
+_CATALOG_NARROW_HIDDEN = {
+    "provider", "weights", "gb", "kv", "act", "offload", "host_ram", "spec",
+    "8pk", "topo", "engine",
+}
+_CATALOG_VERY_NARROW_HIDDEN = _CATALOG_NARROW_HIDDEN | {"model"}
 _CATALOG_SORTS: "list[tuple[str, str]]" = [
     # The [s] catalog sort cycle, in order.  "model" is the DEFAULT — the
     # stable group-by-model registry view (switch.sh --list look); the other
@@ -410,18 +432,38 @@ def _sanitize_catalog_sort(saved: Any) -> str:
     return key if key in _CATALOG_SORT_KEYS else "model"
 
 
-def _sanitize_catalog_columns(saved: Any) -> tuple[list[str], set[str]]:
+def _sanitize_catalog_columns(
+    saved: Any, *, width: Optional[int] = None
+) -> tuple[list[str], set[str]]:
     """Normalise a persisted ``{"order": [...], "hidden": [...]}`` into a safe
     ``(order, hidden)`` pair: unknown keys dropped, canonical keys missing from
     a saved order inserted next to their canonical neighbour (a NEWLY-shipped
     column appears, visible, without wiping the user's layout), pinned keys
-    forced visible.  Tolerant of any malformed shape → canonical defaults."""
+    forced visible.  Tolerant of any malformed shape → canonical defaults.
+
+    ``width`` is the terminal width and applies ONLY when there is no persisted
+    preference: below ``_CATALOG_NARROW_COLS`` the default hidden set becomes
+    ``_CATALOG_NARROW_HIDDEN`` so the pick-decision columns are on screen
+    instead of scrolled off the right edge.  A user who has touched the [|]
+    picker keeps exactly what they chose, at every width."""
     default_order = [k for k, _ in _CATALOG_COLUMNS]
+
+    def _default_hidden() -> set[str]:
+        if width is None:
+            return set()
+        if width < _CATALOG_VERY_NARROW_COLS:
+            return set(_CATALOG_VERY_NARROW_HIDDEN) - _CATALOG_PINNED
+        if width < _CATALOG_NARROW_COLS:
+            return set(_CATALOG_NARROW_HIDDEN) - _CATALOG_PINNED
+        return set()
+
+    if not saved:
+        return list(default_order), _default_hidden()
     try:
         raw_order = [str(k) for k in (saved or {}).get("order", [])]
         raw_hidden = [str(k) for k in (saved or {}).get("hidden", [])]
     except (AttributeError, TypeError):
-        return list(default_order), set()
+        return list(default_order), _default_hidden()
     order = [k for k in raw_order if k in _CATALOG_HEADERS]
     # de-dup, first occurrence wins
     seen: set[str] = set()
@@ -999,13 +1041,23 @@ class HelpScreen(ModalScreen):
             "  [cyan]e[/cyan] explain   [cyan]i[/cyan] model info (metadata popup for the selected slug)",
             "  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default",
             "  [cyan]O[/cyan] ▸ Optimize for my card (kv-calc recs, advisory)",
+            # These six are show=False bindings whose ONLY other teaching surface
+            # is the pane's own hint line — which is itself clipped on a narrow
+            # terminal.  Help is where they have to be findable.
+            "  [cyan]\\ [/cyan]model scope (dropdown)   [cyan]/[/cyan] filter   "
+            "[cyan]s[/cyan] sort — group-by-model → TPS ↓ → GB ↑ → ctx ↓",
+            "  [cyan]h[/cyan] reveal 🗑️ deprecated + hardware-incompatible slugs   "
+            "[cyan]w[/cyan] downloaded-only",
+            "  [cyan]|[/cyan] columns picker (show/hide + reorder; persisted)   "
+            "[cyan]u[/cyan] copy the serving API URL",
             "",
             "[bold]Run & Operate · Orchestration[/bold]",
             "  [cyan]⏎[/cyan] switch scene   [cyan]k[/cyan] stop THIS model   [cyan]b[/cyan] restart serving   [cyan]n[/cyan] switch model (→ Catalog tab)   (writes gated)",
             "  [cyan]o[/cyan] stop ALL (tears down the whole estate)   [cyan]c[/cyan] power cap… (default 230W / clear / custom W)   (all gated)",
             "  [cyan]N[/cyan] new pod (run several models on GPU subsets — name · slug · GPU set, fit-checked + gated)",
             "[bold]Run & Operate · Containers[/bold]",
-            "  [cyan]l[/cyan] logs   [cyan]t[/cyan] top (read)   [cyan]s[/cyan] restart   [cyan]x[/cyan] stop   [cyan]X[/cyan] rm   (writes gated)",
+            "  [cyan]l[/cyan] logs   [cyan]t[/cyan] top   [cyan]c[/cyan] compose   [cyan]f[/cyan] follow (arm/pause the live tail)   (all read)",
+            "  [cyan]s[/cyan] restart · start if stopped   [cyan]x[/cyan] stop   [cyan]X[/cyan] rm   (writes gated)",
             "[bold]Run & Operate · Doctor[/bold]  — is it serving correctly?",
             "  [cyan]y[/cyan] health (read)   [cyan]v[/cyan] verify   [cyan]V[/cyan] verify-full   [cyan]R[/cyan] report   [cyan]F[/cyan] report --full   [cyan]w[/cyan] power-cap sweep (gated)",
         ]
@@ -1048,7 +1100,7 @@ class HelpScreen(ModalScreen):
             "",
             "  click row = select + preview   double-click row = model info (\\[i])",
             "  click column header = column picker ([|])",
-            "  [Y] copies the context-relevant text (OSC52 — needs an OSC52 terminal;",
+            "  \\[Y] copies the context-relevant text (OSC52 — needs an OSC52 terminal;",
             "  works over SSH). To drag-select raw text, hold SHIFT while dragging —",
             "  the terminal bypasses the app's mouse capture and selects natively.",
          ])
@@ -1160,7 +1212,12 @@ class CatalogPane(Container):
         height: 1fr;
     }
     CatalogPane #catalog-status {
-        height: 1;
+        /* `width: auto` computed a 112-col region against a 46-col viewport, so
+           the line was truncated horizontally at every realistic width — the
+           "run bench.sh / quality-test.sh" nudge never finished rendering below
+           ~170 cols.  1fr + auto height makes it wrap instead of vanish. */
+        width: 1fr;
+        height: auto;
         color: $text-muted;
         padding: 0 1;
     }
@@ -1183,6 +1240,13 @@ class CatalogPane(Container):
     }
     CatalogPane DataTable {
         height: 1fr;
+        /* The table is the pane.  With `height: 1fr` alone it lost every row to
+           its auto-height siblings (status / preview / hint) plus the 12-row
+           #serve-live that appears after a Start: at 80x24 it collapsed to
+           height 1 — not even the header — so starting a model made the list
+           you started it from vanish.  Floor it; the preview strip already has
+           `overflow-y: auto` and is the right thing to squeeze. */
+        min-height: 6;
     }
     CatalogPane #catalog-preview {
         height: auto;
@@ -1198,7 +1262,12 @@ class CatalogPane(Container):
         color: $text;
     }
     CatalogPane #catalog-hint {
-        height: 1;
+        /* This one IS in the app-level `width: 1fr` list, so it wraps — but
+           `height: 1` then clipped every wrapped row but the first.  At 80 cols
+           that cut the line at "[c]", so `[s] sort` and `[|] columns` never
+           rendered at ANY width below ~159.  Those two keys have no other
+           teaching surface, which is why they read as nonexistent. */
+        height: auto;
         color: $text-muted;
         padding: 0 1;
     }
@@ -1265,8 +1334,11 @@ class CatalogPane(Container):
         # the user's picker state ([|]), applied at launch from the persisted
         # "catalog_columns" settings key via apply_persisted_settings (an app
         # constructed directly — tests — starts canonical).
+        # `width` folds the config/topology facets away on a narrow terminal —
+        # but ONLY when there is no persisted [|] preference (see #22 above).
         self._col_order, self._col_hidden = _sanitize_catalog_columns(
-            getattr(self.app, "catalog_columns_pref", None)
+            getattr(self.app, "catalog_columns_pref", None),
+            width=getattr(getattr(self.app, "size", None), "width", None),
         )
         self._apply_columns_to_table(table)
         # Full enriched catalog, and the current filter substring.
@@ -2334,12 +2406,17 @@ class ExplainScreen(_CopyableModal, ModalScreen):
         Binding("Y", "app.copy_context", "Copy", show=True),
     ]
 
-    def __init__(self, slug: str, *, model: str = "", engine: str = "", **kwargs):
+    def __init__(self, slug: str, *, model: str = "", engine: str = "",
+                 status: str = "", **kwargs):
         super().__init__(**kwargs)
         self._slug = slug
-        # (model, engine) drive the cross-rig benchmark fold (Fold 3).
+        # (model, engine) drive the cross-rig benchmark fold (Fold 3).  They —
+        # and `status` — are ALSO the fallback for the identity rows: see
+        # `_rerender`.  The caller already holds these on the CatalogEntry, so
+        # the modal never has to show "—" for a fact the row behind it displays.
         self._model = model
         self._engine = engine
+        self._status = status
         # Cached detail (our-rig story) so the cross-rig benchmark rows folded in
         # from the retired Benchmarks tab can be appended once they arrive.
         self._detail: Optional[dict] = None
@@ -2379,15 +2456,38 @@ class ExplainScreen(_CopyableModal, ModalScreen):
         body = self.query_one("#explain-body", Static)
         detail, error = self._detail, self._detail_error
         if error or detail is None:
-            body.update(f"[red]explain failed:[/red] {error or 'no data'}")
+            # Even a hard failure should not hide what the caller already knows —
+            # the catalog row behind this modal is displaying these three fields.
+            known = [
+                f"  [bold]{label}[/bold]  {value}"
+                for label, value in (
+                    ("Model ", self._model),
+                    ("Engine", self._engine),
+                    ("Status", self._status),
+                )
+                if value
+            ]
+            head = f"[red]explain failed:[/red] {error or 'no data'}"
+            body.update("\n".join([head, "", *known]) if known else head)
             return
         reg = detail.get("registry", {}) or {}
         fit = detail.get("fit", {}) or {}
         benches = detail.get("benchmarks", []) or []
+        # `switch.sh --explain` can answer without a `registry` block (or with an
+        # empty one).  Reading it with a "—" default then rendered "Model — /
+        # Engine — / Status —" directly on top of a catalog row that was showing
+        # the real values — the modal contradicting the screen behind it.  The
+        # CatalogEntry's fields are the SAME registry facts, already in hand, so
+        # use them whenever explain doesn't carry its own.
+        model = reg.get("model") or self._model or "—"
+        engine = reg.get("engine") or self._engine or "—"
+        status = str(reg.get("status") or self._status or "")
         lines: list[str] = []
-        lines.append(f"  [bold]Model[/bold]   {reg.get('model', '—')}")
-        lines.append(f"  [bold]Engine[/bold]  {reg.get('engine', '—')}")
-        lines.append(f"  [bold]Status[/bold]  {_status_glyph(str(reg.get('status', '')))} {reg.get('status', '—')}")
+        lines.append(f"  [bold]Model[/bold]   {model}")
+        lines.append(f"  [bold]Engine[/bold]  {engine}")
+        lines.append(
+            f"  [bold]Status[/bold]  {_status_glyph(status)} {status or '—'}"
+        )
         if reg.get("status_note"):
             lines.append(f"  [bold]Caveat[/bold]  [yellow]{reg.get('status_note')}[/yellow]")
         lines.append(f"  [bold]Card[/bold]    {detail.get('card', '—')}")
@@ -3401,12 +3501,12 @@ class ConfirmActionScreen(ModalScreen):
         if self._thinking == "inherit":
             lines.append(
                 "  [bold]thinking[/bold] [dim]inherit[/dim] — no env injected "
-                "(entrypoint default: off → instruct row) · [t] force-on"
+                "(entrypoint default: off → instruct row) · \\[t] force-on"
             )
         elif self._thinking == "on":
             lines.append(
                 "  [bold]thinking[/bold] [green]FORCE-ON[/green] "
-                "([green]ENABLE_THINKING=true[/green]) · [t] cycle"
+                "([green]ENABLE_THINKING=true[/green]) · \\[t] cycle"
             )
             lines.append(
                 f"  [bold]sampler[/bold] thinking row: temp "
@@ -3420,26 +3520,26 @@ class ConfirmActionScreen(ModalScreen):
                 lines.append(
                     "  [bold]sampler[/bold] card defaults apply"
                     + (" — inherited overrides cleared" if self._sampler_reset else "")
-                    + " · [r] reset to card defaults"
+                    + " · \\[r] reset to card defaults"
                 )
             else:
                 shown = ", ".join(f"{k}={v}" for k, v in sorted(ovr.items()))
                 lines.append(
                     "  [yellow]⚠ shell overrides beat the card row:[/yellow] "
-                    f"{shown} · [r] reset to card defaults"
+                    f"{shown} · \\[r] reset to card defaults"
                 )
         else:
             lines.append(
                 "  [bold]thinking[/bold] FORCE-OFF "
                 "([yellow]ENABLE_THINKING=false[/yellow] — pins the instruct row even "
-                "if the shell exports true) · [t] cycle"
+                "if the shell exports true) · \\[t] cycle"
             )
         # Persisted default (#1014 follow-up) — what switch.sh will resolve on
         # later launches. inherit has nothing to save ([T] is gated off there).
         persisted = self._thinking_persisted()
         disp = persisted if persisted else "none"
         suffix = (
-            f" · [T] save '{self._thinking}' as default"
+            f" · \\[T] save '{self._thinking}' as default"
             if self._thinking != "inherit"
             else ""
         )
@@ -3682,25 +3782,25 @@ class ConfirmActionScreen(ModalScreen):
                     lines.append(
                         "  [bold]int8 acts[/bold] [green]ON[/green] "
                         "([green]VLLM_MARLIN_INPUT_DTYPE=int8[/green] — W4A8 prefill "
-                        f"win, quality-tied ⚑{learn}) · [a] toggle"
+                        f"win, quality-tied ⚑{learn}) · \\[a] toggle"
                     )
                 else:
                     lines.append(
                         "  [bold]int8 acts[/bold] [dim]off[/dim] "
-                        f"(W4A8 int8 activations ⚑ experimental{learn}) · [a] enable"
+                        f"(W4A8 int8 activations ⚑ experimental{learn}) · \\[a] enable"
                     )
             elif mode == "inverted":
                 if self._act8_on:
                     lines.append(
                         "  [bold]int8 acts[/bold] [green]ON[/green] "
                         "(shipped default — W4A8 int8 activations, quality-tied ⚑"
-                        f"{learn}) · [a] disable"
+                        f"{learn}) · \\[a] disable"
                     )
                 else:
                     lines.append(
                         "  [bold]int8 acts[/bold] [dim]off[/dim] "
                         "(W4A16 via [green]W4A8=0[/green] — gives up the int8 prefill "
-                        f"win{learn}) · [a] enable"
+                        f"win{learn}) · \\[a] enable"
                     )
             elif mode == "fixed":
                 lines.append(
@@ -4819,14 +4919,17 @@ class OperateContainersPane(Container):
                     placeholder="Select a running container — its docker logs stream here.",
                 )
             with TabPane("Top", id="drill-tab-stats"):
-                yield Static("[dim]highlight a container (move cursor) or press [t] — docker top loads[/dim]", id="drill-stats")
+                yield Static("[dim]highlight a container (move cursor) or press \\[t] — docker top loads[/dim]", id="drill-stats")
             with TabPane("Config", id="drill-tab-config"):
                 yield Static("[dim]highlight a container (move cursor) to load its config[/dim]", id="drill-config")
+        # Two deliberate lines, not one long wrap.  At 80x24 this pane gets 46
+        # columns, and the old single run-on hint wrapped to FOUR of the 24 rows
+        # — which is what squeezed the Logs RichLog down to two lines.  Reads /
+        # writes are split so the gating fact is stated once, and the full
+        # per-key detail lives in ? (Help), which carries all seven keys.
         yield Label(
-            "[dim]move cursor or \\[l]/\\[t] to load detail · \\[l] logs   \\[t] top   "
-            "\\[c] compose   "
-            "\\[f] follow   \\[s] restart · start if stopped (gated)   \\[x] stop (gated)   "
-            "\\[X] rm (reconcile-gated)[/dim]",
+            "[dim]\\[l] logs  \\[t] top  \\[c] compose  \\[f] follow\n"
+            "\\[s] restart  \\[x] stop  \\[X] rm  · gated[/dim]",
             id="containers-hint",
         )
 
@@ -6070,10 +6173,22 @@ class SettingsScreen(ModalScreen):
     }
     SettingsScreen > Vertical {
         width: 84;
+        /* An 80-col terminal is narrower than the card: without max-width the
+           right edge (and the Select's ▼) rendered off-screen. */
+        max-width: 100%;
         height: auto;
+        /* ~27 rows of fields on a 24-row terminal pushed BOTH the hint line and
+           the `^s Save / esc Cancel` Footer off the bottom of the screen — a
+           first-run user on a small terminal had no visible way to save.  Cap
+           the card at the viewport and let the fields scroll INSIDE it, so the
+           Footer stays pinned and reachable at every size. */
+        max-height: 100%;
         border: thick $accent;
         background: $surface;
         padding: 1 2;
+    }
+    SettingsScreen #settings-scroll {
+        height: auto;
     }
     SettingsScreen .settings-title {
         text-style: bold;
@@ -6115,40 +6230,50 @@ class SettingsScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label("Settings", classes="settings-title")
-            yield Label("Model dir  [dim](weights live under <dir>/huggingface/)[/dim]",
-                        classes="settings-field")
-            yield Input(value=self._model_dir, placeholder="/mnt/models/huggingface", id="set-model-dir")
-            tok_ph = ("hf_…  (leave blank to keep the current token)"
-                      if self._hf_token_set else "hf_…  (for gated / private repos)")
-            yield Label("HuggingFace token", classes="settings-field")
-            yield Input(value="", password=True, placeholder=tok_ph, id="set-hf-token")
-            yield Label("Director placement  [dim](ai-studio prompt-crafter · :8090)[/dim]",
-                        classes="settings-field")
-            yield Select(
-                [("GPU 0 — fast craft, ~4.6 GB (default)", "gpu0"),
-                 ("GPU 1 — only when free, not during video", "gpu1"),
-                 ("CPU — frees GPU0 for long video, slow craft", "cpu")],
-                value=self._director_device, allow_blank=False, id="set-director-device",
-            )
-            yield Label(
-                "Master logging  [dim](app + non-download commands · downloads always log)[/dim]",
-                classes="settings-field",
-            )
-            log_switch = Switch(value=self._log_enabled, id="set-c3-log")
-            log_switch.disabled = self._log_env_override
-            yield log_switch
-            if self._log_path:
-                yield Label(f"[dim]Active log: {self._log_path}[/dim]", classes="settings-field")
-            elif self._log_env_override:
+            # The fields scroll; the title and the Footer do not.  See the
+            # max-height note in DEFAULT_CSS.
+            with VerticalScroll(id="settings-scroll"):
+                yield Label("Model dir  [dim](weights live under <dir>/huggingface/)[/dim]",
+                            classes="settings-field")
+                yield Input(value=self._model_dir, placeholder="/mnt/models/huggingface",
+                            id="set-model-dir")
+                tok_ph = ("hf_…  (leave blank to keep the current token)"
+                          if self._hf_token_set else "hf_…  (for gated / private repos)")
+                yield Label("HuggingFace token", classes="settings-field")
+                yield Input(value="", password=True, placeholder=tok_ph, id="set-hf-token")
+                yield Label("Director placement  [dim](ai-studio prompt-crafter · :8090)[/dim]",
+                            classes="settings-field")
+                yield Select(
+                    [("GPU 0 — fast craft, ~4.6 GB (default)", "gpu0"),
+                     ("GPU 1 — only when free, not during video", "gpu1"),
+                     ("CPU — frees GPU0 for long video, slow craft", "cpu")],
+                    value=self._director_device, allow_blank=False, id="set-director-device",
+                )
                 yield Label(
-                    "[dim]C3_LOG controls this launch; change the shell override to alter it.[/dim]",
+                    "Master logging  [dim](app + non-download commands · downloads always log)[/dim]",
                     classes="settings-field",
                 )
-            yield Label(
-                "[dim]Ctrl+S save · Esc cancel · HF_HOME auto-derived under the model dir · "
-                "director change applies on next ai-studio start[/dim]",
-                classes="settings-field",
-            )
+                log_switch = Switch(value=self._log_enabled, id="set-c3-log")
+                log_switch.disabled = self._log_env_override
+                yield log_switch
+                if self._log_path:
+                    yield Label(f"[dim]Active log: {self._log_path}[/dim]",
+                                classes="settings-field")
+                elif self._log_env_override:
+                    yield Label(
+                        "[dim]C3_LOG controls this launch; change the shell override to "
+                        "alter it.[/dim]",
+                        classes="settings-field",
+                    )
+                # The "Ctrl+S save · Esc cancel" half of this line was a duplicate
+                # of the Footer directly below it, and duplicating it is what
+                # pushed the Footer off a 24-row screen.  Keep only what the
+                # Footer cannot say.
+                yield Label(
+                    "[dim]HF_HOME auto-derived under the model dir · "
+                    "director change applies on next ai-studio start[/dim]",
+                    classes="settings-field",
+                )
             yield Footer()
 
     def action_save(self) -> None:
@@ -6650,8 +6775,8 @@ class FirstRunScreen(ModalScreen):
         lines += [
             "",
             " [cyan]1 · Pick[/cyan]     keys [1-3] choose the model above.",
-            " [cyan]2 · Download[/cyan] [d] — fetch its weights (resumable; the normal [D] action).",
-            " [cyan]3 · Launch[/cyan]   [l] — the usual reconcile-gated serve confirm.",
+            " [cyan]2 · Download[/cyan] \\[d] — fetch its weights (resumable; the normal \\[D] action).",
+            " [cyan]3 · Launch[/cyan]   \\[l] — the usual reconcile-gated serve confirm.",
         ]
         return "\n".join(lines)
 
@@ -6996,6 +7121,13 @@ class PromoteScaffoldScreen(_CopyableModal, ModalScreen):
             return
         stage.disabled = not self._can_stage()
         core.disabled = not self._can_stage()
+        # Enabling the buttons is only HALF the state change: ``check_action``
+        # gates ⏎ / C on the same ``_can_stage()``, and the Footer caches that
+        # verdict.  Without this the footer keeps showing only "esc Close"
+        # after the required edits are filled, so the ⏎ that just became valid
+        # is invisible.  Mutating state never repaints the footer on its own —
+        # ``refresh_bindings()`` is the other half.
+        self.refresh_bindings()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "promote-stage-btn":
@@ -7133,7 +7265,7 @@ class ExportPrBundleScreen(_CopyableModal, ModalScreen):
             )
             yield Static(self._body_text(), id="export-body")
             yield Label(
-                "[dim][Y] copy bundle paths · Esc Close[/dim]",
+                "[dim]\\[Y] copy bundle paths · Esc Close[/dim]",
             )
 
     def _body_text(self) -> str:
@@ -7569,19 +7701,16 @@ class LaneBringPane(Container):
         height: auto;
         margin-top: 1;
     }
-    LaneBringPane #lane-bring-inspect-btn {
-        /* was width:14 with NO margin — below Button's min width, and it sat
-           flush against its neighbour so the two read as one control. */
-        width: 16;
-        margin-left: 2;
-    }
-    LaneBringPane #lane-bring-validate-compose-btn {
-        width: 20;
-        margin-left: 2;
-    }
-    LaneBringPane #lane-bring-search-btn {
-        width: auto;
-        margin-left: 2;
+    /* The three buttons were fixed at 16 / 20 / auto with `margin-left: 2` each
+       — 58 columns of demand in the 42 the pane gets at 80 wide.  The third
+       button overflowed the screen edge and "Validate compose" rendered as
+       "Va": still clickable, unreadable, and invisible as a control.  Share the
+       row instead (1fr each) with a floor that keeps every label legible, and
+       halve the gutters. */
+    LaneBringPane #lane-bring-actions Button {
+        width: 1fr;
+        min-width: 12;
+        margin-left: 1;
     }
     LaneBringPane #lane-bring-gguf-select {
         width: 36;
@@ -7904,6 +8033,12 @@ class LaneBringPane(Container):
                  downloading: bool = False) -> None:
         card = self.query_one("#lane-bring-result-card", Static)
         card.update(_byo_result_text(res, weights_present, downloading))
+        # At 80x24 the verdict lands below the fold — the answer to the question
+        # the user just asked would be off-screen with nothing saying so.
+        try:
+            card.scroll_visible(animate=False)
+        except Exception:
+            pass
         # Stateful next-hint: failure → repair; success → single valid next key.
         can_continue = False
         if getattr(res, "error", ""):
@@ -9016,6 +9151,8 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
     ("model_info", "Model info", "Catalog — metadata popup for the selected slug (\\[i])"),
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
+    ("toggle_catalog_model", "Model scope (Catalog)", "Catalog — narrow to one model (\\[\\] dropdown)"),
+    ("catalog_columns", "Catalog columns…", "Catalog — show/hide + reorder columns (\\[|] · persisted)"),
     ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated slugs (hidden by default)"),
     ("toggle_catalog_downloaded", "Show only downloaded", "Catalog — narrow to slugs whose weights are already on disk"),
     ("copy_endpoint", "Copy the serving API URL", "Run & Operate — copy http://<lan>:<port>/v1 for your agent/client (no auth by default)"),
@@ -9031,7 +9168,7 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("power_cap", "Power cap…", "Orchestration — power-cap menu: default 230W / clear / custom W (gated)"),
     ("power_cap_sweep", "Power cap sweep", "Doctor — sweep power caps + bench at each (gated)"),
     ("container_logs", "Container logs", "Containers — stream the selected container's logs"),
-    ("container_follow", "Container log follow", "Containers — [f] arm/pause the live log tail for the selected container"),
+    ("container_follow", "Container log follow", "Containers — \\[f] arm/pause the live log tail for the selected container"),
     ("doctor_rerun", "Re-run Doctor health", "Doctor — re-run the live health read (read-only)"),
     ("doctor_verify", "Verify serving", "Doctor — send a test query to the model (verify.sh · read)"),
     ("doctor_verify_full", "Verify-full battery", "Doctor — functional battery (verify-full.sh · ~1-2 min · read)"),
@@ -9144,6 +9281,13 @@ class CockpitCommands(Provider):
 
 # ── Main application ──────────────────────────────────────────────────────────────
 
+# Footer width policy (#16): at/above this many columns the footer shows the
+# redundant global keys (r Refresh · S Settings); below it they are hidden so the
+# pane's own context key is not the one that gets clipped.  120 is the width at
+# which the WORST case — Doctor, the only pane with two context keys ("v Verify
+# serving" + "y Re-run health") — still fits alongside them; at 100 it did not.
+_FOOTER_WIDE_COLS = 120
+
 # Containers log-follow (\\[f]) — docker-logs poll cadence while armed.  2s is
 # imperceptible for a log tail and keeps the read-runner calls cheap.
 _LOG_FOLLOW_PERIOD = 2.0
@@ -9169,6 +9313,8 @@ class CockpitApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("question_mark", "help", "Help", show=True),
+        # r / S are width-gated in the footer by _apply_footer_width_policy:
+        # shown at >= _FOOTER_WIDE_COLS, hidden below it.  See that method.
         Binding("r", "refresh", "Refresh", show=True),
         # Sub-tab cycle — shown when the mode has sub-tabs (check_action gates).
         # Both brackets show=True so [ and ] are symmetric in the footer (the
@@ -9228,7 +9374,24 @@ class CockpitApp(App):
         Binding("2", "mode_validate", "Bring & Validate", show=False),
         # Footer description is rewritten live by `_sync_footer_labels` (Fit-check /
         # Serve / Launch step / …) — "Select" is only the class default.
-        Binding("enter", "primary_action", "Select", show=True),
+        #
+        # show=False DELIBERATELY.  A focused DataTable declares its own
+        # `enter → select_cursor (show=False)`, and the deepest focused node
+        # wins the footer — so ⏎ silently vanished from the footer on every
+        # table-focused pane, which is the BOOT state of Catalog, Orchestration
+        # and ③ Gate.  The key itself always worked (RowSelected routes to
+        # `action_primary_action`); only the advertisement was inconsistent,
+        # present in some panes and absent in others for the same key.
+        #
+        # Rather than fight DataTable for the slot in the four primary tables,
+        # ⏎ is advertised in ONE consistent place instead: `#mode-action-hint`
+        # in the Modes rail, which `_sync_footer_labels` already writes with the
+        # SAME computed label ("⏎ Serve", "⏎ Fit-check", "⏎ Re-run health"), plus
+        # each pane's own hint line.  That is honest in every pane and frees
+        # ~14 columns of footer at 80 wide, where the footer is the scarcest
+        # space on screen.  `_relabel_binding` is still useful: it keeps the
+        # command-palette/tooltip text truthful.
+        Binding("enter", "primary_action", "Select", show=False),
         # Catalog (Run) — default pin management (.env write, gated=no GPU).
         Binding("d", "set_default", "Set default", show=False),
         Binding("D", "clear_default", "Clear default", show=False),
@@ -9361,6 +9524,14 @@ class CockpitApp(App):
     #evidence-hint, #lane-bring-hint, #lane-serve-hint, #lane-promote-hint {
         width: 1fr;
     }
+    /* Pane HEADINGS have exactly the same problem and were never added here:
+       being `width: auto` Labels they were TRUNCATED (not wrapped) at 80 cols —
+       "① Bring — inspect an HF model, or bring a co", "Doctor — is the running
+       model serving cor", "Gate (⏎ launches the selected step — confirm-".
+       Each loses the clause that says what the pane is for. */
+    #doctor-heading, #lane-bring-heading, #lane-serve-heading, #run-heading {
+        width: 1fr;
+    }
     #main-layout {
         height: 1fr;
     }
@@ -9417,8 +9588,19 @@ class CockpitApp(App):
     }
     #panel-run > #serve-live.serving {
         display: block;
-        height: 12;
+        /* Was a fixed `height: 12`.  On a 24-row terminal that 13-row sibling
+           squeezed #operate-tabs until the catalog DataTable collapsed to
+           height 1 — not even its header row survived, so starting a model made
+           the list you started it from disappear.  Take the space only when
+           there is space: `1fr` up to the old 12, with a min-height on the tabs
+           so the table always keeps a usable number of rows. */
+        height: 1fr;
+        max-height: 12;
+        min-height: 5;
         margin: 0 1 1 1;
+    }
+    #panel-run > #operate-tabs {
+        min-height: 12;
     }
     /* FIX 1 — while a ModalScreen is topmost, suppress the BASE FocusableFooter
        (the main screen's footer renders UNDER/around the modal otherwise, showing
@@ -9817,6 +9999,64 @@ class CockpitApp(App):
                         return
         except Exception:
             pass
+
+    def _set_binding_show(self, action: str, show: bool) -> bool:
+        """Flip a BINDING's footer visibility in place; True if it changed.
+
+        Per-instance copy, same pattern as `_relabel_binding`.  Note this is the
+        only way to hide a key WITHOUT disabling it: returning False from
+        `check_action` would also stop the key firing, and None would grey it
+        out — neither of which is wanted for keys that must keep working."""
+        import dataclasses
+
+        changed = False
+        try:
+            for bindings in self._bindings.key_to_bindings.values():
+                for i, b in enumerate(bindings):
+                    if b.action == action and b.show != show:
+                        bindings[i] = dataclasses.replace(b, show=show)
+                        changed = True
+        except Exception:
+            pass
+        return changed
+
+    def _apply_footer_width_policy(self, width: Optional[int] = None) -> None:
+        """Width-gate the two redundant global keys so the CONTEXT key survives.
+
+        The footer renders bindings in declaration order and the six globals are
+        declared first, so at 80 columns the key that is actually about the pane
+        you are looking at is the one that gets cut — measured: "s Sort" → "s
+        So", "s Restart" → "s Re", "v Verify serving" → "v Ve", and on ④ Measure
+        "s Submit" lost its description entirely.  That is exactly backwards.
+
+        `r` (Refresh) and `S` (Settings) are the two globals with a full fallback
+        elsewhere — both are in the ? Help overlay AND in the ^p command palette —
+        so they are the right ~23 columns to reclaim below _FOOTER_WIDE_COLS.
+        The KEYS keep working at every width; only the footer advertisement is
+        gated.  Above the threshold everything is shown as before."""
+        try:
+            # `width` comes from the Resize EVENT.  `self.size` is not updated
+            # yet while the event is being handled, so reading it here gated on
+            # the PREVIOUS width — the footer lagged one resize behind (verified:
+            # 140 → 80 still showed r/S, 80 → 140 then hid them).
+            if width is None:
+                width = self.size.width
+            wide = width >= _FOOTER_WIDE_COLS
+        except Exception:
+            return
+        changed = False
+        for action in ("refresh", "settings"):
+            if self._set_binding_show(action, wide):
+                changed = True
+        if changed:
+            # Flipping `show` is only half of it — the Footer caches the
+            # displayed-binding signature and will not repaint on its own.
+            self.refresh_bindings()
+
+    def on_resize(self, event) -> None:
+        self._apply_footer_width_policy(
+            getattr(getattr(event, "size", None), "width", None)
+        )
 
     def _sync_footer_labels(self) -> None:
         """Phase 1.3 — mirror the live meaning of context keys in the footer.
@@ -10361,7 +10601,7 @@ class CockpitApp(App):
         # trusted otherwise) — a banner on the catalog status line ([S] to set).
         from pathlib import Path as _Path
         mdir = self._data.weights_model_dir()
-        note = "" if _Path(mdir).is_dir() else f"⚠ model dir not found ({mdir}) — press [S] to set it"
+        note = "" if _Path(mdir).is_dir() else f"⚠ model dir not found ({mdir}) — press \\[S] to set it"
         pane.set_model_dir_note(note)
         # First-run guide (fresh-rig onboarding): AFTER the weights join, an
         # all-absent catalog + no local measurements → the ONE-TIME dismissable
@@ -11095,6 +11335,20 @@ class CockpitApp(App):
         except Exception:
             pass
 
+    def _scroll_bring_result_into_view(self) -> None:
+        """Bring ① Bring's verdict card on screen.
+
+        At 80x24 the result card sits below the fold after both Inspect and
+        Fit-check — the pane answers the user's question off-screen and nothing
+        indicates there is more to read.  Best-effort: a silent no-op when the
+        pane is not mounted."""
+        try:
+            self.query_one("#lane-bring-result-card", Static).scroll_visible(
+                animate=False
+            )
+        except Exception:
+            pass
+
     def _reveal_funnel_slugs(
         self, artifact_format: str, artifact_gb: Optional[float]
     ) -> None:
@@ -11123,13 +11377,22 @@ class CockpitApp(App):
             # Dogfood r2 — the pre-selected recommendation's details show
             # immediately (updates ride on_select_changed thereafter).
             pane.show_slug_details(self._funnel_slug_details(rec) if rec else "")
-            # Focus what was just revealed. Without this the user Tabs past the
-            # three action buttons to reach the config Select they were just told
-            # to pick from — four keys to reach the one control the pane is
-            # asking about. Deferred: the widget is not visible this cycle.
-            self.call_after_refresh(
-                lambda: self._focus_if_present("#lane-bring-profile-input")
-            )
+            # Focus what was just revealed, and focus the thing ⏎ actually does.
+            #
+            # This used to focus #lane-bring-profile-input (the config Select).
+            # That put the user in a keyboard trap: the footer and the Modes rail
+            # both say "⏎ Fit-check", but ⏎ on a focused Select opens its
+            # dropdown, so the advertised primary action was unreachable from the
+            # focus the app itself had just set.  The Fit-check button is the
+            # correct target — the Select is one Shift+Tab away and is already
+            # pre-set to the ⭐ recommendation, so the common path (accept the
+            # recommendation, fit-check it) is now zero keys instead of a trap.
+            # Deferred: the widgets are not visible this cycle.
+            def _focus_and_reveal() -> None:
+                self._focus_if_present("#lane-bring-fit-btn")
+                self._scroll_bring_result_into_view()
+
+            self.call_after_refresh(_focus_and_reveal)
             # Bug A (2026-07-09): the §2b size floor can hide EVERY slug — a 54G
             # bf16 repo on a 48G rig — leaving only the ✎ sentinel with NO
             # explanation.  Surface an honest verdict, distinguishing "too big for
@@ -11436,7 +11699,7 @@ class CockpitApp(App):
         # second 20+ GB fetch of the same repo (#617).  [k] cancels.
         if repo in self._active_bring_download():
             self.notify(
-                f"Already downloading {repo} — press [k] to cancel.",
+                f"Already downloading {repo} — press \\[k] to cancel.",
                 title="Download", timeout=4,
             )
             return
@@ -11447,7 +11710,7 @@ class CockpitApp(App):
         if _disk is not None:
             self.notify(
                 f"Already downloading {repo} (pid {_disk.get('pid')}) — "
-                "press [k] to cancel.",
+                "press \\[k] to cancel.",
                 title="Download", timeout=4,
             )
             return
@@ -11482,7 +11745,7 @@ class CockpitApp(App):
         if size_gb and size_gb > 0 and not fits:
             self.notify(
                 f"Disk may be tight ({free_gb:.0f} GB free / ~{need_gb:.0f} needed) "
-                "— starting anyway; free space or change Model Dir [S] if it fails.",
+                "— starting anyway; free space or change Model Dir \\[S] if it fails.",
                 title="Download", severity="warning", timeout=8,
             )
         # One download at a time (shared runner + exclusive worker): starting a
@@ -12880,7 +13143,14 @@ class CockpitApp(App):
             return
         # The screen loads its own detail + cross-rig on mount (so the body query
         # resolves against a fully-mounted modal — Fold 3 cross-rig fold included).
-        self.push_screen(ExplainScreen(entry.slug, model=entry.model, engine=entry.engine))
+        self.push_screen(
+            ExplainScreen(
+                entry.slug,
+                model=entry.model,
+                engine=entry.engine,
+                status=entry.status,
+            )
+        )
 
     def action_model_info(self) -> None:
         """[i] — the local-data model-info popup for the selected catalog row
@@ -13074,7 +13344,7 @@ class CockpitApp(App):
             getattr(byo, "repo", "")
         ):
             self.notify(
-                "Weights not on disk yet — press [D] to download first.",
+                "Weights not on disk yet — press \\[D] to download first.",
                 title="② Serve", severity="warning", timeout=4,
             )
             return
@@ -13445,7 +13715,7 @@ class CockpitApp(App):
         self.stream_container_logs(con.name)  # snapshot — rebases the anchor (Task 4)
         self._log_follow_timer = self.set_interval(_LOG_FOLLOW_PERIOD, self._log_follow_tick)
         self._set_log_follow_title()
-        self.notify("Log follow armed — [f] to pause", title="Logs", timeout=3)
+        self.notify("Log follow armed — \\[f] to pause", title="Logs", timeout=3)
 
     def _log_follow_pause(self) -> None:
         """following → paused: stop the timer (anchor/name kept)."""
@@ -14720,7 +14990,7 @@ class CockpitApp(App):
         if not swap_compose:
             self.notify(
                 "② Serve: apply-swap --emit-only produced no compose — see the log. "
-                "You can still press [D] to download + emit.",
+                "You can still press \\[D] to download + emit.",
                 title="② Serve", severity="warning", timeout=6,
             )
             return
@@ -14852,7 +15122,7 @@ class CockpitApp(App):
             weights_file = ""
         if not weights_file:
             self.notify(
-                "No .gguf on disk yet — press [D] to download the selected quant.",
+                "No .gguf on disk yet — press \\[D] to download the selected quant.",
                 title="② Serve", severity="warning", timeout=5,
             )
             return
@@ -15427,6 +15697,32 @@ class CockpitApp(App):
                 # reaching RowHighlighted.  The flag is managed entirely by the
                 # populate path ([r]-refresh) + the highlight handler.
             self.call_after_refresh(_do_focus)
+            return
+
+        # No primary list for this tab — the table-less lane stages (① Bring /
+        # ② Serve / ⑤ Promote) and mode-0 Doctor.  The comment above says focus
+        # should simply STAY on the tab bar here, and that is right whenever the
+        # focused widget survives the switch.  It does NOT when the OUTGOING tab
+        # owned it: a user typing in ① Bring's repo field who presses [s] to
+        # advance to ② Serve has their focused Input hidden, `app.focused` goes
+        # None, and the next Tab lands on the ModeSwitcher at the very top of the
+        # DOM instead of anywhere in the stage they just opened.  Re-home to the
+        # lane tab bar — the same target `_focus_mode_primary` uses for mode 1,
+        # and a ContentTabs rather than an Input so 1/2 and [ ] keep routing.
+        #
+        # Guarded on `focused is None` so this can only ever FILL a hole; it must
+        # never yank focus off a widget that is still live.
+        def _rehome_focus() -> None:
+            if self.focused is not None:
+                return
+            try:
+                bar = self._active_tab_bar()
+                if bar is not None:
+                    bar.focus()
+            except Exception:
+                pass
+
+        self.call_after_refresh(_rehome_focus)
 
     # ── Widget event handlers ─────────────────────────────────────────────────────────
 
