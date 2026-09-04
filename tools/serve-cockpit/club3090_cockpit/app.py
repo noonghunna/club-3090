@@ -1041,6 +1041,15 @@ class HelpScreen(ModalScreen):
             "  [cyan]e[/cyan] explain   [cyan]i[/cyan] model info (metadata popup for the selected slug)",
             "  [cyan]d[/cyan] set-default   [cyan]D[/cyan] clear-default",
             "  [cyan]O[/cyan] ▸ Optimize for my card (kv-calc recs, advisory)",
+            # These six are show=False bindings whose ONLY other teaching surface
+            # is the pane's own hint line — which is itself clipped on a narrow
+            # terminal.  Help is where they have to be findable.
+            "  [cyan]\\ [/cyan]model scope (dropdown)   [cyan]/[/cyan] filter   "
+            "[cyan]s[/cyan] sort — group-by-model → TPS ↓ → GB ↑ → ctx ↓",
+            "  [cyan]h[/cyan] reveal 🗑️ deprecated + hardware-incompatible slugs   "
+            "[cyan]w[/cyan] downloaded-only",
+            "  [cyan]|[/cyan] columns picker (show/hide + reorder; persisted)   "
+            "[cyan]u[/cyan] copy the serving API URL",
             "",
             "[bold]Run & Operate · Orchestration[/bold]",
             "  [cyan]⏎[/cyan] switch scene   [cyan]k[/cyan] stop THIS model   [cyan]b[/cyan] restart serving   [cyan]n[/cyan] switch model (→ Catalog tab)   (writes gated)",
@@ -9142,6 +9151,8 @@ _PALETTE_COMMANDS: tuple[tuple[str, str, str], ...] = (
     ("explain", "Explain selected slug", "Catalog — detail + cross-rig benchmarks"),
     ("model_info", "Model info", "Catalog — metadata popup for the selected slug (\\[i])"),
     ("filter_catalog", "Filter catalog", "Catalog — filter by slug / engine / status"),
+    ("toggle_catalog_model", "Model scope (Catalog)", "Catalog — narrow to one model (\\[\\] dropdown)"),
+    ("catalog_columns", "Catalog columns…", "Catalog — show/hide + reorder columns (\\[|] · persisted)"),
     ("toggle_catalog_deprecated", "Show/hide deprecated", "Catalog — reveal 🗑️ deprecated slugs (hidden by default)"),
     ("toggle_catalog_downloaded", "Show only downloaded", "Catalog — narrow to slugs whose weights are already on disk"),
     ("copy_endpoint", "Copy the serving API URL", "Run & Operate — copy http://<lan>:<port>/v1 for your agent/client (no auth by default)"),
@@ -15678,6 +15689,32 @@ class CockpitApp(App):
                 # reaching RowHighlighted.  The flag is managed entirely by the
                 # populate path ([r]-refresh) + the highlight handler.
             self.call_after_refresh(_do_focus)
+            return
+
+        # No primary list for this tab — the table-less lane stages (① Bring /
+        # ② Serve / ⑤ Promote) and mode-0 Doctor.  The comment above says focus
+        # should simply STAY on the tab bar here, and that is right whenever the
+        # focused widget survives the switch.  It does NOT when the OUTGOING tab
+        # owned it: a user typing in ① Bring's repo field who presses [s] to
+        # advance to ② Serve has their focused Input hidden, `app.focused` goes
+        # None, and the next Tab lands on the ModeSwitcher at the very top of the
+        # DOM instead of anywhere in the stage they just opened.  Re-home to the
+        # lane tab bar — the same target `_focus_mode_primary` uses for mode 1,
+        # and a ContentTabs rather than an Input so 1/2 and [ ] keep routing.
+        #
+        # Guarded on `focused is None` so this can only ever FILL a hole; it must
+        # never yank focus off a widget that is still live.
+        def _rehome_focus() -> None:
+            if self.focused is not None:
+                return
+            try:
+                bar = self._active_tab_bar()
+                if bar is not None:
+                    bar.focus()
+            except Exception:
+                pass
+
+        self.call_after_refresh(_rehome_focus)
 
     # ── Widget event handlers ─────────────────────────────────────────────────────────
 

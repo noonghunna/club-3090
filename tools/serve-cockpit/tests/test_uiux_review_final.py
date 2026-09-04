@@ -603,3 +603,97 @@ async def test_catalog_narrow_default_never_overrides_a_saved_picker_choice():
         visible = pane._visible_columns()
         assert "ctx" not in visible          # their choice honoured
         assert "provider" in visible         # narrow default NOT applied on top
+
+
+# ── keyboard economy ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_lane_stage_switch_never_leaves_focus_nowhere():
+    """A table-less lane stage (① Bring / ② Serve / ⑤ Promote) has no primary
+    list to focus.  When the OUTGOING tab owned the focused widget — a user
+    typing in ① Bring's repo field who presses [s] — hiding that pane left
+    `app.focused` None, and the next Tab landed on the ModeSwitcher at the top
+    of the DOM rather than anywhere in the stage they had just opened.
+
+    Focus is re-homed to the lane tab bar, the same target `_focus_mode_primary`
+    uses for mode 1."""
+    from textual.widgets import Input
+    from textual.widgets._tabs import Tabs
+
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("2")
+        await _settle(pilot)
+        await _settle(pilot)
+
+        for target in ("tab-serve", "tab-promote"):
+            app.query_one("#validate-tabs").active = "tab-bring"
+            await _settle(pilot)
+            app.query_one("#lane-bring-url-input", Input).focus()
+            await _settle(pilot)
+            await _settle(pilot)
+            assert isinstance(app.focused, Input)   # not a vacuous setup
+
+            app.query_one("#validate-tabs").active = target
+            await _settle(pilot)
+            await _settle(pilot)
+            assert app.focused is not None, f"focus black hole entering {target}"
+            assert isinstance(app.focused, Tabs), (
+                f"{target} re-homed focus to {app.focused!r}, not the lane tab bar"
+            )
+
+
+@pytest.mark.asyncio
+async def test_advance_to_serve_leaves_focus_somewhere_useful():
+    """The `[s]` Continue → ② Serve path specifically (the review's report)."""
+    from textual.widgets import Input
+    from textual.widgets._tabs import Tabs
+
+    app, _, _ = make_app(surface="producer")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("2")
+        await _settle(pilot)
+        app.query_one("#lane-bring-url-input", Input).focus()
+        await _settle(pilot)
+        await _settle(pilot)
+        app._advance_to_serve()
+        await _settle(pilot)
+        await _settle(pilot)
+        assert app.focused is not None
+        assert isinstance(app.focused, Tabs)
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "model scope",
+        "sort — group-by-model",
+        "deprecated + hardware-incompatible",
+        "downloaded-only",
+        "columns picker",
+        "copy the serving API URL",
+    ],
+)
+def test_help_teaches_the_hidden_catalog_keys(phrase):
+    """Six Catalog keys are `show=False` bindings whose only other teaching
+    surface is the pane hint line — which is itself clipped on a narrow
+    terminal.  Help must carry them.
+
+    Asserts on the MARKUP-PARSED help text, so a hint eaten by the markup parser
+    (see the key-hint sweep above) still fails."""
+    from club3090_cockpit.app import HelpScreen
+
+    text = Content.from_markup(HelpScreen(surface="producer").help_text).plain
+    assert phrase in text, f"{phrase!r} missing from Help"
+
+
+def test_help_shows_the_backslash_and_pipe_keys_literally():
+    """The two punctuation keys must survive the markup parse — `\\` in
+    particular is the escape character, so getting it into rendered output takes
+    care."""
+    from club3090_cockpit.app import HelpScreen
+
+    text = Content.from_markup(HelpScreen(surface="producer").help_text).plain
+    assert "\\ model scope" in text, text[:0] or "backslash key not rendered"
+    assert "| columns picker" in text
