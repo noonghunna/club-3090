@@ -6411,7 +6411,10 @@ class TestOptimizeBrain:
             body = str(app.screen.query_one("#optimize-body", Static).render())
             assert "kv-calc failed" in body                 # honest error card
             assert "Recommended max-model-len" not in body  # no fabricated numbers
-            assert app.screen.query_one("#optimize-apply", Button).disabled is True
+            # Rebased (c3 cleanup item 2): the unavailable card now HIDES the
+            # KV/Apply rows instead of greying them — absent, not disabled.
+            assert app.screen.query_one("#optimize-apply", Button).display is False
+            assert app.screen.query_one("#optimize-kv", Select).display is False
 
     @pytest.mark.asyncio
     async def test_skip_engine_gets_explicit_unsupported_message(self):
@@ -6424,10 +6427,39 @@ class TestOptimizeBrain:
             body = str(app.screen.query_one("#optimize-body", Static).render())
             assert "kvcalc_key=SKIP" in body
             assert "Recommended max-model-len" not in body
-            assert app.screen.query_one("#optimize-apply", Button).disabled is True
+            assert app.screen.query_one("#optimize-apply", Button).display is False
+            assert app.screen.query_one("#optimize-kv", Select).display is False
             # The SKIP check short-circuits BEFORE any kv-calc call.
             assert all("kv-calc.py" not in " ".join(c) for c in runner.calls
                        if "--fit " in " ".join(c))
+
+    @pytest.mark.asyncio
+    async def test_optimize_rows_restored_after_unavailable_report(self):
+        """c3 cleanup item 2 — hiding is not sticky: a screen that first shows
+        an unavailable report and later receives a good one must render the
+        KV/Apply rows again, enabled (`.display` toggles both directions)."""
+        from club3090_cockpit.app import OptimizeScreen
+        from club3090_cockpit.data import KvOption, OptimizerReport
+
+        app, runner, _ = make_app()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _settle(pilot)
+            await self._open_optimize(pilot, app, row=1)  # kvcalc_key=SKIP → unavailable
+            screen = app.screen
+            assert isinstance(screen, OptimizeScreen)
+            assert screen.query_one("#optimize-apply", Button).display is False
+            good = OptimizerReport(
+                available=True, slug="vllm/dual", engine="vllm", card="3090",
+                recommended_kv_format="fp8_e5m2", recommended_max_ctx=262144,
+                fit_vram_est_gb=18.0, band_gb=0.5,
+                options=[KvOption(kv_format="fp8_e5m2", solved_max_ctx=262144,
+                                  vram_est_gb=18.0, headroom_gb=6.0,
+                                  verdict="fits-clean")],
+            )
+            screen.set_report(good)
+            assert screen.query_one("#optimize-apply", Button).display is True
+            assert screen.query_one("#optimize-kv", Select).display is True
+            assert screen.query_one("#optimize-apply", Button).disabled is False
 
     @pytest.mark.asyncio
     async def test_optimize_is_a_noop_no_write(self):

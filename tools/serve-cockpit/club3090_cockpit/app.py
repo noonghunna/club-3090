@@ -7401,8 +7401,13 @@ class OptimizeScreen(ModalScreen):
         sel = self.query_one("#optimize-kv", Select)
         btn = self.query_one("#optimize-apply", Button)
         if not report.available:
-            sel.disabled = True
-            btn.disabled = True
+            # Hide the controls (absent, not merely greyed) and their rows, so
+            # the card is just the honest message — the KV label and advisory
+            # note go too, and ~6 rows of inert widgets don't sit under it.
+            sel.display = False
+            btn.display = False
+            for row in self.query(".optimize-row"):
+                row.display = False
             # Honest error / unsupported-engine card — never a fabricated rec.
             body.update(
                 f"  [red]{report.message}[/red]\n"
@@ -7413,6 +7418,12 @@ class OptimizeScreen(ModalScreen):
             )
             return
 
+        # A later available report must bring everything back (a screen that
+        # first showed an unavailable one must not render with no controls).
+        sel.display = True
+        btn.display = True
+        for row in self.query(".optimize-row"):
+            row.display = True
         lines = [
             f"  [bold]{report.slug}[/bold] · {report.engine or '—'} · card {report.card}",
             "",
