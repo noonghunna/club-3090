@@ -117,8 +117,6 @@ services:
       - "${MODEL_DIR:-../../../../../../models-cache}:/models:ro"
     environment:
       # Drafter toggle - docker forwards only what is declared here.
-      - SPEC_N=${SPEC_N:-}
-      - SPEC=${SPEC:-}
       # Expert-cache tuning — every value MEASURED on 2×24 GB, see Caveats.
       - GGML_CUDA_MOE_CACHE_ADMIT_AFTER=${MOE_ADMIT_AFTER:-64}
       - GGML_CUDA_MOE_CACHE_RESERVE_MB=${MOE_RESERVE_MB:-1536}
@@ -170,6 +168,14 @@ services:
       - GGML_EXPERT_PREFETCH=${EXPERT_PREFETCH:-0}
       - GGML_EXPERT_PREFETCH_SLOTS
       - LLAMA_ARG_LOG_VERBOSITY
+      # Bare passthrough — inert unless the caller sets it. Declared so a
+      # graph-reuse A/B can run through the REAL delivery path: docker forwards
+      # only what is listed here, so without this line the two arms of the
+      # experiment are byte-identical and the null result is an artifact of the
+      # harness rather than a measurement. Measured cost of losing reuse on
+      # Qwen3.8-Flash-Next: ~3.9 ms/token (+13.5% decode with it on, 2 boots/arm,
+      # 2026-09-04) — see learnings/moe-cache-engine.md §8b.
+      - LLAMA_GRAPH_REUSE_DISABLE
       # Prefix reuse via KV shifting (default 0 = OFF). The between-turn TTFT
       # lever for agent traffic — the llama.cpp analogue of the vLLM
       # mamba-align work on the qwen3.8 MTP composes (#1093), though a
