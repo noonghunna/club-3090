@@ -564,7 +564,7 @@ async def test_footer_keeps_the_context_key_at_every_width(width, must_show):
     [
         (80, ["slug", "ctx", "tps", "status"]),
         (100, ["model", "slug", "ctx", "tps", "status"]),
-        (120, [k for k, _ in __import__("club3090_cockpit.app", fromlist=["x"])._CATALOG_COLUMNS]),
+        (120, [k for k, _ in app_mod._CATALOG_COLUMNS]),
     ],
 )
 @pytest.mark.asyncio
@@ -591,9 +591,7 @@ async def test_catalog_narrow_default_never_overrides_a_saved_picker_choice():
 
     app, _, _ = make_app()
     app.catalog_columns_pref = {
-        "order": [k for k, _ in __import__(
-            "club3090_cockpit.app", fromlist=["x"]
-        )._CATALOG_COLUMNS],
+        "order": [k for k, _ in app_mod._CATALOG_COLUMNS],
         "hidden": ["ctx"],
     }
     async with app.run_test(size=(80, 24)) as pilot:
@@ -695,7 +693,7 @@ def test_help_shows_the_backslash_and_pipe_keys_literally():
     from club3090_cockpit.app import HelpScreen
 
     text = Content.from_markup(HelpScreen(surface="producer").help_text).plain
-    assert "\\ model scope" in text, text[:0] or "backslash key not rendered"
+    assert "\\ model scope" in text, "the backslash key did not survive the markup parse"
     assert "| columns picker" in text
 
 
